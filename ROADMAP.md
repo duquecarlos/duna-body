@@ -87,6 +87,18 @@ Model (person-scoped already; this adds):
 - Contacts: Finanzas orchestrator = session local_19b2985d-0843-4e85-b248-dc1ac667ce4a (direct). Lugares and Cuenta
   have no orchestrator: go through Main.
 
+## vida-v1 at Body's boundaries (Main, 2026-11-06 · `dev-protocol/contracts/vida-v1.md`)
+
+The contract governs what apps EXCHANGE, not Body's own tables. Body adopts it at two boundaries:
+- **Out (done):** `python -m body.vida_export` writes `BODY_HOME/vida/body-week-<monday>.json`, the Review section
+  `{area: "body", summary, metrics:[{key: "body.*", value, kind}], goals:[{goal_id, on_track}]}`. Every figure has
+  visibility `owner`. Personal's Sunday review reads the file, never Body's database.
+- **In (wave 4):** the shift import reads Personal's `turnos-*.json` as `work.shift` Events (FORMATO.md fields in
+  `data`); the newest source wins day by day.
+- When Body's goals/plans screens are built (wave 6), they follow vida-v1: goal `kind` metric|milestone with
+  `direction`, `area`, status `proposed` (a coach suggestion, which counts only once he confirms it), habit + habit_check,
+  structured cadence, goal_check per member, and a Plan `booking` where the final click is always his.
+
 ## Horizon — "Duna personal" (Carlos, 2026-11-06)
 
 Carlos: a global Duna for his whole life ("Duna human, automate your life"), joining the pieces that already exist
