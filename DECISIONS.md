@@ -231,3 +231,58 @@ Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 58 tests, OK
 before merging.
 
 Merge commit: see `git log -1 main` after this entry.
+
+## BODY-TURNOS-SYNC-1 -- shifts confirmed with one tap however many files arrived (2026-11-06)
+
+Extends `body/shift_import.py` within the design BODY-TURNOS-IMPORT-OBS-1 measured and BODY-TURNOS-IMPORT-1 built,
+approved by the orchestrator under ORCH-CARLOS-DELEGATES-TIER-1-1. Carlos's first import is about 33 files spanning
+several years at once, and confirming each one separately was the failure this fixes.
+
+`scripts/install-daily-sync.ps1` gains an optional `-ShiftsDir <folder>` parameter. Only when it is given, "Body app
+daily sync" gets a second action, `python -m body.shift_import --dir "<folder>"` (quoted, so a path with spaces
+works), run after the Garmin pull, working directory the repo. No default path lives in the script -- the folder is
+always the installer's own argument, per the template rule that goals/metrics/plans (and now the shifts folder) are
+data, never a person's path hardcoded into the app. `-Force` is kept so re-running replaces both tasks. The final
+`Write-Host` now reports whether shift import is on and from which folder.
+
+`body/shift_import.py` gains two functions:
+- `confirm_all(conn, person_id)` -- every `proposed` batch of this person, in `(received, extracted_at, id)` order,
+  each through the unchanged `confirm()`. **One transaction per batch, not one for the whole set**: `confirm()`'s
+  own `with conn:` commits as soon as it returns, so nesting it inside a second `with conn:` would not make the set
+  atomic without changing `confirm()`'s own transaction handling, which stayed out of scope here -- precedence,
+  manual-kept and the no-DELETE-of-manual rule are exactly what `confirm()` already enforces, one batch at a time.
+  Refuses up front, writing nothing, when the slot index is missing (the same `SlotIndexMissing` guard `confirm()`
+  applies). Returns counts: batches, days applied, days kept because a manual edit covers them, days kept because a
+  newer file covers them.
+- `summary_proposed(conn, person_id)` -- read-only: how many batches are waiting, the day range they span (min/max
+  `day` across their items), and the total distinct days/nights across all of them, for the one combined card.
+
+`body/web.py`'s `GET /shifts`: when more than one batch is `proposed`, renders one card -- "Llegaron N archivos de
+turnos · <mes año> → <mes año> · D días, K noches" (`t.month_year` on the earliest/latest day from
+`summary_proposed`) -- with a "Confirmar todos" button posting to the new `POST /shifts/confirm-all` (which calls
+`confirm_all` and 303s back to `/shifts?done=1&...` carrying the counts as plain integers in the query string, not
+health figures, so the page can show a one-line result: "Confirmaste N archivos: D días aplicados.", plus a kept-days
+note when any days were kept) and a `<details>` "Ver archivo por archivo" listing each batch with its own existing
+confirm/dismiss. With exactly one batch, the original single-batch card is unchanged. Hoy's notice now says
+"Llegaron N archivos de turnos: revísalos →" when more than one batch is proposed (unchanged wording for exactly
+one). Every new string added to both `body/i18n/es.json` and `en.json` (tú register, rule 1 "data arrives by itself;
+you only confirm"); `body/static/body.css` gained three rules for the `<details class="files">` tap target (44 px,
+rule 11) reusing the existing `.card`/`.k` look rather than a new component.
+
+`tests/test_shift_import.py`: `confirm_all` over three invented batches proposed out of order applies in
+`(received, extracted_at)` order and produces the exact same `shift` rows as confirming them one by one; refuses
+with the slot index missing (writes nothing, batches stay `proposed`); a manual day survives it; `summary_proposed`'s
+counts (including the all-proposed-empty case). Web: `/shifts` with 0, 1 and 3 proposed batches in both languages
+(the 3-batch case spans November→December, checked against `summary_proposed`'s day/night counts); `POST
+/shifts/confirm-all`. The installer is read as text, never executed: a test asserts `$ShiftsDir` exists, that
+`body.shift_import` appears only inside the `if ($ShiftsDir)` branch, and that no personal name or `Users` path
+appears in the script.
+
+No schema change (no `touches` on `body/db.py`); no cross-repo contract change. **Customer-facing bytes did change**
+(new confirm-all card, new i18n strings, the Hoy notice's many-files wording), which trips merge policy A's
+customer-bytes condition, as BODY-TURNOS-IMPORT-1 itself did before it. The spec's own GATE section says to stop
+before merging in that case, so this slice stops on `feat/body-turnos-sync-1` AWAITING_APPROVAL rather than merging,
+per `BODY-TURNOS-IMPORT-1-M`'s precedent for a later merge slice to review and land.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 66 tests, OK (58 before this slice, 8 added
+here), run once on the final branch tree before this entry.
