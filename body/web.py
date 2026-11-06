@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from . import db, garmin_adapter, listen, profile, readiness
+from . import db, garmin_adapter, history, listen, profile, readiness
 from .baselines import baseline
 from .i18n import LANGS, T
 
@@ -312,6 +312,126 @@ def trends(r: str = "all", m: str | None = None):
                    since=t.long_date(date.fromisoformat(since)) if since else "", days=t.num(days),
                    r=r, ranges=RANGES, fig_label=fig_label, nights=bool(nights),
                    month_title=t.month_year(month) if month else None)
+
+
+def _short_date(t: T, d: date) -> str:
+    """19 jun 2024 style: day, abbreviated month, year -- no weekday, unlike t.long_date."""
+    return f"{d.day} {t('date.months')[d.month - 1][:3]} {d.year}"
+
+
+def _kind_label(t: T, info: dict | None) -> str:
+    if not info:
+        return "—"
+    return t("activity.type." + info["key"]) if info["known"] else info["fallback_label"]
+
+
+def _finding_text(t: T, defs: dict, f: dict) -> str:
+    label = t("metric." + f["metric"])
+    value = _value(t, f["metric"], f["value"])
+    unit = _unit(t, defs[f["metric"]])
+    if f["axis"] == "weekday":
+        return t("history.find.weekday", metric=label, day=t("date.days")[f["index"]], value=value, unit=unit)
+    return t("history.find.month", metric=label, month=t("date.months")[f["index"]], value=value, unit=unit)
+
+
+TRAINING_COLORS = ["var(--body)", "var(--night)", "var(--amber)", "var(--info)", "var(--est)"]
+OTHER_COLOR = "var(--muted)"
+
+
+def _color_map(types: list[dict]) -> dict[str, str]:
+    colors, i = {}, 0
+    for ty in types:
+        if ty["key"] == "other":
+            colors["other"] = OTHER_COLOR
+        else:
+            colors[ty["key"]] = TRAINING_COLORS[i % len(TRAINING_COLORS)]
+            i += 1
+    return colors
+
+
+def _training_ctx(t: T, train: dict) -> dict:
+    colors = _color_map(train["types"])
+    types = [{"label": _kind_label(t, ty), "sessions": t.num(ty["sessions"]), "minutes": t.minutes(ty["minutes"]),
+              "km": f"{t.num(ty['km'], 1)} km" if ty["km"] is not None else None, "color": colors[ty["key"]]}
+             for ty in train["types"]]
+    max_minutes = train["max_month_minutes"] or 0.0
+    months = []
+    for m in train["months"]:
+        segs = [{"label": _kind_label(t, seg), "color": colors.get(seg["key"], OTHER_COLOR),
+                 "pct": (seg["minutes"] / max_minutes * 100) if max_minutes else 0.0} for seg in m["by_type"]]
+        months.append({"month": t.month_year(date.fromisoformat(m["month"] + "-01")),
+                       "href": f"/trends?m={m['month']}", "sessions": t.num(m["sessions"]),
+                       "minutes": t.minutes(m["minutes"]), "segs": segs})
+    yoy, yoy_ctx = train["yoy"], None
+    if yoy:
+        yoy_ctx = {"now": t("history.training_yoy_now", sessions=t.num(yoy["sessions_now"]),
+                             minutes=t.minutes(yoy["minutes_now"])),
+                   "prev": t("history.training_yoy_prev", sessions=t.num(yoy["sessions_year_ago"]),
+                             minutes=t.minutes(yoy["minutes_year_ago"]))}
+    return {"types": types, "months": months,
+            "usual_week": (t("history.training_usual_week", n=t.num(train["usual_week_sessions"]))
+                           if train["usual_week_sessions"] is not None else None),
+            "longest": _kind_label(t, train["longest_kind"]) if train["longest_kind"] else None,
+            "frequent": _kind_label(t, train["most_frequent_kind"]) if train["most_frequent_kind"] else None,
+            "yoy": yoy_ctx}
+
+
+def _pattern_rows(t: T, defs: dict, pat: dict) -> dict | None:
+    present = [k for k in history.PATTERN_KEYS if pat["metrics"].get(k)]
+    if not present:
+        return None
+    marks = {(f["metric"], f["axis"], f["index"]) for f in pat["findings"]}
+
+    def row(axis: str, idx: int, label: str) -> dict:
+        vals = []
+        for k in present:
+            b = pat["metrics"][k][axis][idx]
+            vals.append({"text": _value(t, k, b["center"]) if b else "—", "mark": (k, axis, idx) in marks})
+        return {"label": label, "vals": vals}
+
+    return {"heads": [t("trends.short." + k) for k in present],
+            "weekday": [row("weekday", i, t("date.days")[i][:3].capitalize()) for i in range(7)],
+            "month": [row("month", i, t("date.months")[i][:3].capitalize()) for i in range(12)]}
+
+
+def _shift_ctx(t: T, defs: dict, shift_data: dict) -> dict:
+    if not shift_data["has_shifts"]:
+        return {"has_shifts": False}
+    kinds = []
+    for row in shift_data["kinds"]:
+        metrics = [{"label": t("metric." + k), "value": _value(t, k, row["metrics"].get(k)),
+                    "unit": _unit(t, defs[k]) if row["metrics"].get(k) is not None else ""}
+                   for k in history.PATTERN_KEYS]
+        kinds.append({"kind": row["kind"], "kind_label": t("shift.kind." + row["kind"]),
+                      "days": t("history.days_count", n=t.num(row["days"])), "metrics": metrics})
+    return {"has_shifts": True, "kinds": kinds}
+
+
+@app.get("/history")
+def history_view():
+    conn, person, t = _ctx()
+    cov = history.coverage(conn)
+    if not cov:
+        return _render("soon.html", t=t, tab="trends", title=t("history.title"), text=t("soon.trends"))
+    defs = _defs(conn)
+    train = history.training(conn)
+    pat = history.patterns(conn)
+    shift_data = history.by_shift(conn)
+
+    since = _short_date(t, date.fromisoformat(cov["first_day"]))
+    coverage_line = t("history.coverage", since=since, days=t.num(cov["days_present"]))
+    gap_line = (t("history.coverage_gap", days=t.num(cov["longest_gap_days"]),
+                  start=_short_date(t, date.fromisoformat(cov["longest_gap_start"])),
+                  end=_short_date(t, date.fromisoformat(cov["longest_gap_end"])))
+                if cov["longest_gap_days"] > 0 else t("history.coverage_no_gap"))
+    hero_finding = _finding_text(t, defs, pat["findings"][0]) if pat["findings"] else None
+
+    return _render("history.html", t=t, tab="trends", coverage_line=coverage_line, gap_line=gap_line,
+                   activity_count=t.num(cov["activity_count"]), hero_finding=hero_finding,
+                   training=_training_ctx(t, train) if train else None,
+                   patterns=_pattern_rows(t, defs, pat),
+                   findings=[_finding_text(t, defs, f) for f in pat["findings"]],
+                   shift=_shift_ctx(t, defs, shift_data))
 
 
 @app.get("/goals")
