@@ -116,6 +116,11 @@ desk, a summary card other apps can read. Raised with Main.
 
 ## Decisions log
 
+- 2026-11-06 — Main: "body" is a hub product in code (duna-orders 2ba3ff99, console 30c8a416, hub.py). Still Carlos's:
+  deploy Pedidos, then mint a `body` caller key. Round 1 post ready in `docs/hub/round-1-para-productos.md`.
+  Cuenta household live in code (cuenta-api ca41be4a, cuenta-ui a9df7537); Body switches `household.py` to the claim
+  once it has its Cuenta client (CUENTA-API-CLIENTE-BODY-1, when hosted).
+
 - 2026-11-06 — Starting direction accepted (Main): `python-garminconnect` locally now, official Health API later; shifts via Personal session.
 - 2026-11-06 — Carlos: Hogar plan saved (own accounts, linked household, shared plans like a Kilimanjaro/El Cocuy
   prep). Body orchestrator may talk freely with other agents to coordinate.
