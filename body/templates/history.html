@@ -11,19 +11,26 @@
   <p class="note" style="margin:6px 0 0">{{ gap_line }} · {{ t('history.activities_count', n=activity_count) }}</p>
 </div>
 
+{% macro month_row(m) %}
+<a href="{{ m.href }}" style="display:block;margin-top:10px;text-decoration:none">
+  <div class="row k"><span>{{ m.month }}</span><span>{{ m.minutes }} · {{ m.sessions }}</span></div>
+  <div class="stage">{% for s in m.segs %}<i style="width:{{ s.pct }}%;background:{{ s.color }}" title="{{ s.label }}"></i>{% endfor %}</div>
+</a>
+{% endmacro %}
 {% if training %}
 <h2>{{ t('history.training_title') }}</h2>
 <div class="card">
   <div class="q">{{ t('history.training_q') }}</div>
-  {% for m in training.months %}
-  <a href="{{ m.href }}" style="display:block;margin-top:10px;text-decoration:none">
-    <div class="row k"><span>{{ m.month }}</span><span>{{ m.minutes }} · {{ m.sessions }}</span></div>
-    <div class="stage">{% for s in m.segs %}<i style="width:{{ s.pct }}%;background:{{ s.color }}" title="{{ s.label }}"></i>{% endfor %}</div>
-  </a>
-  {% endfor %}
   <div class="legend" style="margin-top:10px">
     {% for ty in training.types %}<span><i style="background:{{ ty.color }}"></i>{{ ty.label }} · {{ ty.minutes }}{% if ty.km %} · {{ ty.km }}{% endif %}</span>{% endfor %}
   </div>
+  {% for m in training.months %}{{ month_row(m) }}{% endfor %}
+  {% if training.months_older %}
+  <details class="files" style="margin-top:10px">
+    <summary class="k">{{ t('history.training_see_all') }}</summary>
+    {% for m in training.months_older %}{{ month_row(m) }}{% endfor %}
+  </details>
+  {% endif %}
   <p class="note" style="margin-top:8px">{{ t('trends.tap_month') }}</p>
 </div>
 

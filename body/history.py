@@ -143,7 +143,7 @@ def training(conn, person_id: int = db.DEFAULT_PERSON_ID) -> dict | None:
 
     def _type_row(key: str, v: dict) -> dict:
         return {**_kind_info(key), "sessions": v["sessions"], "minutes": v["duration_s"] / 60,
-                "km": v["distance_m"] / 1000 if v["distance_rows"] else None}
+                "km": v["distance_m"] / 1000 if v["distance_rows"] and v["distance_m"] > 0 else None}
 
     types = [_type_row(k, v) for k, v in top]
     if rest:
@@ -160,7 +160,7 @@ def training(conn, person_id: int = db.DEFAULT_PERSON_ID) -> dict | None:
         by_month_type[r["day"][:7]][bucket_key] += (r["duration_s"] or 0) / 60
 
     months = [{"month": m, "sessions": v["sessions"], "minutes": v["duration_s"] / 60,
-               "km": v["distance_m"] / 1000 if v["distance_rows"] else None,
+               "km": v["distance_m"] / 1000 if v["distance_rows"] and v["distance_m"] > 0 else None,
                "by_type": [{**_kind_info(k), "minutes": mins}
                            for k, mins in sorted(by_month_type[m].items(), key=lambda kv: -kv[1])]}
               for m, v in sorted(by_month.items())]

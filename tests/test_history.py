@@ -7,6 +7,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from datetime import date, timedelta
 
 from body import db, history, web
+from body.i18n import T
 
 START = date(2025, 9, 1)
 END = date(2025, 12, 31)
@@ -24,6 +25,9 @@ ACTIVITIES = [
     ("swimming", ["2025-09-15", "2025-10-15", "2025-11-15", "2025-12-15"], 1800, 1000),
     ("hiking", ["2025-09-20", "2025-10-20", "2025-12-20"], 1800, None),
     ("elliptical", ["2025-12-25"], 600, None),                # smallest total time: merged into "other"
+    ("strength_training", ["2025-09-03", "2025-09-17", "2025-10-01", "2025-10-15", "2025-11-01"], 1800, 0),
+    # distance_m = 0 (not None) on every session: Garmin reports an explicit zero for this type
+    # (BODY-HISTORIA-POLISH-1) -- total duration keeps it in the top 5, where the old "0.0 km" bug showed.
 ]
 
 NIGHT_SHIFT_DAYS = ["2025-09-05", "2025-09-12", "2025-09-19", "2025-09-26"]
@@ -116,13 +120,20 @@ class TrainingTest(unittest.TestCase):
         self.assertAlmostEqual(running["km"], 10 * 5000 / 1000)
         self.assertIsNone(by_key["cycling"]["km"])  # cycling never had a distance_m in this history
 
+    def test_zero_distance_type_has_no_km(self):
+        by_key = {t["key"]: t for t in self.train["types"]}
+        strength = by_key["strength_training"]
+        self.assertEqual(strength["sessions"], 5)
+        self.assertIsNone(strength["km"])  # every session reported distance_m = 0, never "0.0 km"
+
     def test_smallest_type_merges_into_other(self):
         keys = [t["key"] for t in self.train["types"]]
         self.assertEqual(len(keys), 6)  # 5 top types + "other"
         self.assertIn("other", keys)
         self.assertNotIn("elliptical", keys)
+        self.assertNotIn("hiking", keys)  # strength_training's total now outranks hiking's
         other = next(t for t in self.train["types"] if t["key"] == "other")
-        self.assertEqual(other["sessions"], 1)
+        self.assertEqual(other["sessions"], 1 + 3)  # elliptical + hiking
 
     def test_months_cover_the_full_range(self):
         months = {m["month"] for m in self.train["months"]}
@@ -170,6 +181,57 @@ class PatternsTest(unittest.TestCase):
         self.assertIn("high", sat)
 
 
+class FindingTextTest(unittest.TestCase):
+    """web._finding_text: a plain sentence, the metric in lower case, the direction said from `better`
+    (BODY-HISTORIA-POLISH-1)."""
+
+    def setUp(self):
+        self.conn = _mkconn()
+        _seed(self.conn)
+        self.pat = history.patterns(self.conn)
+        self.defs = web._defs(self.conn)
+        self.by_key = {(f["metric"], f["axis"]): f for f in self.pat["findings"]}
+
+    def test_lower_is_better_reads_the_worst_day_as_the_highest(self):
+        f = self.by_key[("resting_hr", "weekday")]  # Saturday: resting HR is worse the higher it runs
+        es = web._finding_text(T("es"), self.defs, f)
+        en = web._finding_text(T("en"), self.defs, f)
+        self.assertIn("pulso en reposo", es)
+        self.assertNotIn("Pulso en reposo", es)  # never the title-case label mid-sentence
+        self.assertIn("sube más", es)
+        self.assertIn("resting heart rate", en)
+        self.assertNotIn("Resting heart rate", en)
+        self.assertIn("runs highest", en)
+
+    def test_higher_is_better_reads_the_worst_month_as_the_lowest(self):
+        f = self.by_key[("sleep_minutes", "month")]  # December: sleep is worse the lower it runs
+        es = web._finding_text(T("es"), self.defs, f)
+        en = web._finding_text(T("en"), self.defs, f)
+        self.assertIn("sueño", es)
+        self.assertIn("baja más", es)
+        self.assertIn("sleep", en)
+        self.assertIn("runs lowest", en)
+
+
+class TrainingCtxOrderTest(unittest.TestCase):
+    """web._training_ctx: months newest first, split into the last 12 and the rest (BODY-HISTORIA-POLISH-1)."""
+
+    def test_months_newest_first_and_split_at_twelve(self):
+        months_asc = [{"month": f"2024-{m:02d}", "sessions": 1, "minutes": 30.0, "km": None, "by_type": []}
+                      for m in range(1, 13)]
+        months_asc += [{"month": "2025-01", "sessions": 1, "minutes": 30.0, "km": None, "by_type": []},
+                       {"month": "2025-02", "sessions": 1, "minutes": 30.0, "km": None, "by_type": []}]
+        train = {"types": [], "months": months_asc, "max_month_minutes": 30.0, "usual_week_sessions": None,
+                 "longest_kind": None, "most_frequent_kind": None, "yoy": None}
+        ctx = web._training_ctx(T("en"), train)
+        self.assertEqual(len(ctx["months"]), 12)
+        self.assertEqual(len(ctx["months_older"]), 2)
+        self.assertEqual(ctx["months"][0]["href"], "/trends?m=2025-02")   # newest first
+        self.assertEqual(ctx["months"][-1]["href"], "/trends?m=2024-03")
+        self.assertEqual(ctx["months_older"][0]["href"], "/trends?m=2024-02")
+        self.assertEqual(ctx["months_older"][-1]["href"], "/trends?m=2024-01")  # oldest last
+
+
 class ByShiftTest(unittest.TestCase):
     def test_empty_state_without_shifts(self):
         conn = _mkconn()
@@ -212,6 +274,15 @@ class HistoryRouteTest(unittest.TestCase):
         r = self.client.get("/history")
         self.assertEqual(r.status_code, 200)
         self.assertIn("Your story", r.text)
+
+    def test_hero_finding_is_not_repeated_in_the_patterns_list(self):
+        self.client.post("/settings/language", data={"lang": "en"})
+        r = self.client.get("/history")
+        conn = db.connect()
+        pat = history.patterns(conn)
+        defs = web._defs(conn)
+        hero_text = web._finding_text(T("en"), defs, pat["findings"][0])
+        self.assertEqual(r.text.count(hero_text), 1)
 
 
 if __name__ == "__main__":

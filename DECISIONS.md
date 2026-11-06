@@ -301,3 +301,51 @@ Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 66 tests, OK
 
 Merge commit: recorded in the next entry's git history (this entry precedes the `--no-ff` merge, per
 `BODY-TURNOS-IMPORT-1-M`'s precedent).
+
+## BODY-HISTORIA-POLISH-1 -- round 1 polish of «Tu historia» (2026-11-06)
+
+The orchestrator measured `/history` at 375 px on real data after BODY-HISTORIA-1 (`6f487ef`) and found four shapes
+worth fixing: the hero sentence read "Your toughest Resting heart rate: December (...)" -- the metric label kept its
+title case mid-sentence and said nothing about which direction was bad, and the same sentence then repeated in the
+Patterns findings below it; the training legend showed "0.0 km" for a type that never logs a distance (strength
+training); the training card listed every month since the first, oldest first, making the page roughly 3,600 px tall
+with the legend after all of it.
+
+**Findings as sentences.** `web._finding_text` no longer builds "Your toughest {label}": it now picks one of four
+templates by axis and by the metric's own `better` direction -- `history.find.weekday_better_lower`,
+`history.find.weekday_better_higher`, `history.find.month_better_lower`, `history.find.month_better_higher` (both
+`es.json` and `en.json`) -- and a new `metric.<key>.sentence` label (lower case, e.g. "pulso en reposo" /
+"resting heart rate") in place of the title-case `metric.<key>` label used elsewhere. A "lower is better" metric
+(`resting_hr`, `stress_avg`) reads as running highest where it is worst ("Tu pulso en reposo sube más los sábados" /
+"Your resting heart rate runs highest on Saturdays"); a "higher is better" metric (`sleep_minutes`, `hrv_last_night`,
+`body_battery_wake`) reads as running lowest. `history_view` now builds the hero from `pat["findings"][0]` and passes
+only `pat["findings"][1:]` to the Patterns card, so the hero sentence is never repeated below.
+
+**Distance only where it means something.** `history.training`'s `_type_row` and its per-month aggregation computed
+`km` from `distance_rows` alone (whether a row ever carried a non-null `distance_m`), so a type whose every session
+reports an explicit `distance_m = 0` (as Garmin does for strength training) still produced `0.0 / 1000 = 0.0`, read as
+truthy by the template's `{% if ty.km %}`. Both now also require `distance_m > 0`, so a zero or null total comes back
+as `None`, the same honest gap the rest of this module already uses.
+
+**Training list newest first, 12 months, legend moved up.** `web._training_ctx` reverses the month list `training()`
+builds (oldest first, for the stacked-bar `max_month_minutes` math) before handing it to the template, then splits it
+at `TRAINING_RECENT_MONTHS = 12`: the recent 12 render directly, the rest sit inside a `<details class="files">` --
+"Ver todos los meses" / "See every month" -- reusing the tap-target rule BODY-TURNOS-SYNC-1 already added for
+`body.css`'s `details.files summary`, so no new CSS was needed here. The legend moved in `history.html` from after
+the month list to directly under the card's question, above the bars.
+
+`tests/test_history.py`: a `strength_training` activity with `distance_m = 0` on every session (sized to outrank
+`hiking` for a top-5 slot, so the old bug's exact shape -- a zero distance inside the legend, not merged into
+"other" -- is reproduced and fixed); `FindingTextTest` checks both directions in both languages and that the
+title-case label never appears mid-sentence; `TrainingCtxOrderTest` checks `_training_ctx` reverses and splits at 12
+against a synthetic 14-month list (the seeded fixture only spans 4 months); `HistoryRouteTest` gained a check that the
+hero sentence's exact text appears exactly once in the rendered page. `test_smallest_type_merges_into_other` and
+`test_grouping_and_unknown_type_fallback` were updated for the new activity's effect on the top-5 ranking.
+
+No schema change (no `touches` on `body/db.py`); no cross-repo contract change. Customer-facing bytes did change (new
+sentence templates, new `*.sentence` labels, the moved legend, the `<details>` reveal) -- the spec's own GATE section
+instructs `Merge --no-ff into main` unconditionally on green, which this entry reads as the body's explicit
+authorization to merge past that condition, per the merge-policy-A rule that a spec's body can say so in words.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 71 tests, OK (66 before this slice, 5 added
+here), run once on the final branch tree before this entry.
