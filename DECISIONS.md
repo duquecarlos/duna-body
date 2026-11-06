@@ -211,3 +211,23 @@ new pattern invented), checking `/history` returns 200 with the right title text
 
 Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 33 tests, OK (16 before this slice, 17
 added here).
+
+## BODY-TURNOS-IMPORT-1-M -- land BODY-TURNOS-IMPORT-1 (2026-11-06)
+
+BODY-TURNOS-IMPORT-1 stopped on `feat/body-turnos-import-1` (branch tip `ce0b9bf6b3fe35300c80f7b4f8321387bcb7c677`)
+AWAITING_APPROVAL, tripping merge policy A on a schema change and new customer-facing strings, per the GATE section
+of its own spec. This slice carries no code change: approved by the orchestrator under
+ORCH-CARLOS-DELEGATES-TIER-1-1 after reviewing the diff (13 files, +901/-6) against `main` -- the schema additions
+in `body/db.py` (`shift_batch`, `shift_batch_item` with its slot index, `shift.batch_id` via the guarded ADD
+COLUMN, and `idx_shift_slot` inside a try/except IntegrityError with no DELETE), `body/shift_import.py`'s one
+DELETE (a day's `source LIKE 'personal:%'` rows inside `confirm()`, never a manual row), the confirm card, the Hoy
+notice, the i18n pair and the `CLAUDE.md` Tier 1 item, all as specced -- and merged unchanged.
+
+`main` had not moved since the branch was cut: `git merge-base main feat/body-turnos-import-1` and `git rev-parse
+main` both resolved to `6f487efecdd43bbfd9670fbaf131508de705e1b9`, so no merge of `main` into the branch was
+needed.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 58 tests, OK, run once on the branch tip
+before merging.
+
+Merge commit: see `git log -1 main` after this entry.
