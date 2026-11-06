@@ -119,6 +119,9 @@ def parse_day(day: str, raw: dict[str, Any]) -> DayData:
     m["body_battery_high"] = _num(s.get("bodyBatteryHighestValue"))
     m["body_battery_low"] = _num(s.get("bodyBatteryLowestValue"))
     m["body_battery_wake"] = _num(s.get("bodyBatteryAtWakeTime"))
+    m["respiration_awake"] = _num(s.get("avgWakingRespirationValue"))
+    hs = _num(s.get("highStressDuration"))
+    m["high_stress_min"] = round(hs / 60) if hs is not None else None
     mod, vig = _num(s.get("moderateIntensityMinutes")), _num(s.get("vigorousIntensityMinutes"))
     if mod is not None or vig is not None:
         m["intensity_minutes"] = (mod or 0) + 2 * (vig or 0)  # WHO-style: vigorous counts double
@@ -129,6 +132,12 @@ def parse_day(day: str, raw: dict[str, Any]) -> DayData:
     secs = _num(sl.get("sleepTimeSeconds"))
     m["sleep_minutes"] = round(secs / 60) if secs is not None else None
     m["sleep_score"] = _num(_get(sl, "sleepScores", "overall", "value"))
+    for key, field_ in (("sleep_deep_min", "deepSleepSeconds"), ("sleep_light_min", "lightSleepSeconds"),
+                        ("sleep_rem_min", "remSleepSeconds"), ("sleep_awake_min", "awakeSleepSeconds")):
+        v = _num(sl.get(field_))
+        m[key] = round(v / 60) if v is not None else None
+    m["sleep_need_min"] = _num(_get(sl, "sleepNeed", "actual"))
+    m["body_battery_sleep_charge"] = _num((raw.get("sleep") or {}).get("bodyBatteryChange"))
     out.sleep_start = _local_iso(sl.get("sleepStartTimestampLocal"))
     out.sleep_end = _local_iso(sl.get("sleepEndTimestampLocal"))
 

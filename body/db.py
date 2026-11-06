@@ -14,7 +14,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS person (
     id          INTEGER PRIMARY KEY,
     display_name TEXT NOT NULL,
-    timezone    TEXT NOT NULL DEFAULT 'Europe/Madrid'
+    timezone    TEXT NOT NULL DEFAULT 'America/Bogota'
 );
 
 -- What can be measured. Generic definitions, shared by every person.
@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS metric_def (
     key     TEXT PRIMARY KEY,
     label   TEXT NOT NULL,
     unit    TEXT NOT NULL,
-    better  TEXT NOT NULL CHECK (better IN ('higher', 'lower', 'neutral'))
+    better  TEXT NOT NULL CHECK (better IN ('higher', 'lower', 'neutral')),
+    kind    TEXT NOT NULL DEFAULT 'measured' CHECK (kind IN ('measured', 'estimated'))
 );
 
 -- One normalised number per person, day and metric.
@@ -117,7 +118,9 @@ CREATE TABLE IF NOT EXISTS weekly_check (
 );
 """
 
+# (key, label, unit, better, kind). 'estimated' = computed by Body, shown with «≈» and "how I calculate it".
 METRIC_DEFS = [
+    ("readiness", "Readiness", "pts", "higher", "estimated"),
     ("resting_hr", "Resting heart rate", "bpm", "lower"),
     ("hrv_last_night", "HRV (last night avg)", "ms", "higher"),
     ("hrv_weekly_avg", "HRV (7-day avg)", "ms", "higher"),
@@ -130,7 +133,16 @@ METRIC_DEFS = [
     ("steps", "Steps", "steps", "higher"),
     ("active_kcal", "Active calories", "kcal", "neutral"),
     ("intensity_minutes", "Intensity minutes", "min", "higher"),
+    ("sleep_need_min", "Sleep need (Garmin)", "min", "neutral"),
+    ("sleep_deep_min", "Deep sleep", "min", "higher"),
+    ("sleep_light_min", "Light sleep", "min", "neutral"),
+    ("sleep_rem_min", "REM sleep", "min", "higher"),
+    ("sleep_awake_min", "Awake during sleep", "min", "lower"),
+    ("body_battery_sleep_charge", "Body Battery charged overnight", "pts", "higher"),
+    ("respiration_awake", "Breathing rate (awake)", "brpm", "neutral"),
+    ("high_stress_min", "High stress time", "min", "lower"),
 ]
+METRIC_DEFS = [d if len(d) == 5 else (*d, "measured") for d in METRIC_DEFS]
 
 DEFAULT_PERSON_ID = 1
 
@@ -143,11 +155,20 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     return conn
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(metric_def)")}
+    if cols and "kind" not in cols:
+        conn.execute("ALTER TABLE metric_def ADD COLUMN kind TEXT NOT NULL DEFAULT 'measured'")
+    conn.execute("UPDATE person SET timezone = 'America/Bogota' WHERE timezone = 'Europe/Madrid'")
+
+
 def init(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    _migrate(conn)
     conn.executemany(
-        "INSERT INTO metric_def (key, label, unit, better) VALUES (?, ?, ?, ?) "
-        "ON CONFLICT(key) DO UPDATE SET label=excluded.label, unit=excluded.unit, better=excluded.better",
+        "INSERT INTO metric_def (key, label, unit, better, kind) VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET label=excluded.label, unit=excluded.unit, better=excluded.better, "
+        "kind=excluded.kind",
         METRIC_DEFS,
     )
     # One owner row so a single-person install works; no personal details.
@@ -193,7 +214,7 @@ def save_day(conn: sqlite3.Connection, day_data, person_id: int = DEFAULT_PERSON
 
 def load_day(conn: sqlite3.Connection, day: str, person_id: int = DEFAULT_PERSON_ID) -> dict:
     metrics = conn.execute(
-        "SELECT m.key, m.label, m.unit, d.value FROM metric_def m "
+        "SELECT m.key, m.label, m.unit, m.kind, d.value FROM metric_def m "
         "LEFT JOIN daily_metric d ON d.metric_key = m.key AND d.person_id = ? AND d.day = ? "
         "ORDER BY m.rowid",
         (person_id, day),
@@ -219,8 +240,28 @@ def load_day(conn: sqlite3.Connection, day: str, person_id: int = DEFAULT_PERSON
     }
 
 
+def set_metric(conn, day: str, key: str, value, source: str, person_id: int = DEFAULT_PERSON_ID) -> None:
+    if value is None:
+        conn.execute("DELETE FROM daily_metric WHERE person_id=? AND day=? AND metric_key=?", (person_id, day, key))
+    else:
+        conn.execute(
+            "INSERT OR REPLACE INTO daily_metric (person_id, day, metric_key, value, source) VALUES (?, ?, ?, ?, ?)",
+            (person_id, day, key, value, source),
+        )
+
+
+def series(conn, key: str, start: str, end: str, person_id: int = DEFAULT_PERSON_ID) -> dict[str, float]:
+    """Values of one metric for start <= day <= end."""
+    rows = conn.execute(
+        "SELECT day, value FROM daily_metric WHERE person_id=? AND metric_key=? AND day BETWEEN ? AND ?",
+        (person_id, key, start, end),
+    ).fetchall()
+    return {r["day"]: r["value"] for r in rows}
+
+
 def days_with_data(conn: sqlite3.Connection, person_id: int = DEFAULT_PERSON_ID) -> list[str]:
     rows = conn.execute(
-        "SELECT DISTINCT day FROM daily_metric WHERE person_id = ? ORDER BY day DESC", (person_id,)
+        "SELECT DISTINCT day FROM daily_metric WHERE person_id = ? AND source = 'garmin' ORDER BY day DESC",
+        (person_id,)
     ).fetchall()
     return [r["day"] for r in rows]

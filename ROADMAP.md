@@ -44,17 +44,37 @@ Out of scope for now: medical advice, food logging, manual metric entry, social 
 | Wave | What | Done when |
 |---|---|---|
 | 0 ✓ | Slice 1: sign-in, pull, SQLite, plain day page | Real day shows (2026-11-06) |
-| 1 | **Data base**: 90-day backfill; daily sync installed; sleep stages + sleep need + Body Battery charge parsed; timezone America/Bogota; baselines (30-day mean and normal range per metric) | 90 days in, baselines computed, tests |
-| 2 | **Design system + shell**: Duna tokens, Hanken Grotesk, light/dark without flash, bottom tabs / left rail, interaction states (ui-interaccion-v1), return-to-same-spot, installable PWA on the S25 over LAN | Shell passes 375 px + measured hover/focus checks |
-| 3 | **Hoy + Día** on real data, every figure drills to its day and back | Carlos uses it a morning |
+| 1 | **Data base**: 90-day backfill; sleep stages + sleep need + Body Battery charge parsed; timezone America/Bogota; baselines (30-day mean and normal range per metric); **readiness score v1** (estimated, versioned) | 90 days in, baselines computed, tests |
+| 2 | **Design system + shell**: Duna tokens, Hanken Grotesk, light/dark without flash, bottom tabs / left rail, interaction states (ui-interaccion-v1), return-to-same-spot, installable PWA on the S25 over LAN; **i18n es-CO (default) + en**, language as a person setting | Shell passes 375 px + measured hover/focus checks, both languages |
+| 3 | **Hoy + Día** on real data with ≈ readiness hero and "cómo lo calculo"; every figure drills to its day and back | Carlos uses it a morning |
 | 4 | **Turnos**: import Personal desk JSON (`C:\Personal\enel\turnos`, FORMATO.md) with one-tap confirm; strip chart; night-vs-day comparison; ≈ recovery days with "cómo lo calculo" | First real schedule imported and confirmed |
 | 5 | **Tendencias**: per-metric 7/30/90 with baseline band and night shading; all 12 metrics | |
 | 6 | **Metas**: goals, plan items with shift context, daily check-off on Hoy, weekly check in words | His real goals entered from his answers |
 | 7 | **Assistant** to agent-ui-v1 (read tools for every screen; proposes plan changes, he confirms) and tutorials-v1 | |
+| 7b | **Connections**: links out to other Duna apps where they hold the answer (night week → extra pay in Finanzas Personal); a read-only Body summary for other apps and for a future "Duna personal" | One working link each way with Finanzas |
+| 7c | **Hogar — linked people, shared plans** (Carlos, 2026-11-06): each person has their own account and data; two people can link as a household (`household`, `household_member`); a goal/plan can belong to a person or to the household, with plan items per member (e.g. "Kilimanjaro / El Cocuy prep" for both). Each sees only their own health numbers unless they choose to share a figure. Aligned with Finanzas `hogar` and Lugares shared memories | Two accounts linked, one shared plan with each person's own check |
 | 8 | **Duna product path**: Cuenta sign-in (`body` client), Duna host subdomain, Garmin Health API application, multi-person | Decision by Carlos |
 
 Each wave: census → mock (Se mantiene / Cambia / Nuevo from round 2) → build → phone test → rules back to DESIGN.md
 → transferable rules to the hub (once "body" is on the product list).
+
+## Plan — Hogar: linked people and shared plans (Carlos, 2026-11-06)
+
+Carlos: his girlfriend gets her own user, and their accounts are linked "because we're like a starting family".
+Same in Finanzas. Like the shared memories in Lugares, they can have **the same plans and projects**. Body example:
+a joint plan to get ready for their next adventure (Kilimanjaro; "Kukui" probably El Cocuy, to confirm).
+
+Model (person-scoped already; this adds):
+- `household(id, name)`, `household_member(household_id, person_id, role)`. Joining needs both people's consent.
+- `goal.owner` = a person OR a household; plan items assigned to one member or to both; each member's own weekly
+  check (her numbers vs her baseline, his vs his).
+- **Privacy by default:** health numbers stay private to their person; sharing is per figure, chosen by its owner
+  (e.g. "share my readiness with the household"), and can be withdrawn.
+- An adventure plan is a goal with a date and a target (e.g. "climb Kilimanjaro, Feb 2027") and plan items such
+  as weekly long hikes, altitude prep, sleep before travel; it can link to the trip in Lugares and the budget in
+  Finanzas (rule 17).
+- Coordinated with Finanzas (`hogar` entity, FIN-PERSONAL-INTAKE-1) and Lugares through Main / the hub, so a
+  household means the same thing in every Duna app.
 
 ## Horizon — "Duna personal" (Carlos, 2026-11-06)
 
@@ -73,6 +93,11 @@ desk, a summary card other apps can read. Raised with Main.
 ## Decisions log
 
 - 2026-11-06 — Starting direction accepted (Main): `python-garminconnect` locally now, official Health API later; shifts via Personal session.
+- 2026-11-06 — Carlos: Hogar plan saved (own accounts, linked household, shared plans like a Kilimanjaro/El Cocuy
+  prep). Body orchestrator may talk freely with other agents to coordinate.
+- 2026-11-06 — Carlos: approved mock v1 direction. **Duna family look.** **Spanish (es-CO) default + full English
+  version for him.** **Own readiness score** as the Hoy hero (not Body Battery). AI assistant like the other apps.
+  Connections to the other apps (e.g. Finanzas). Start building and go deeper as we go.
 - 2026-11-06 — Main: "body" joining the hub (ORDERS-HUB-PRODUCTO-BODY-1, ADMIN-HUB-PRODUCTO-BODY-1, hub.py PRODUCTS).
   Body can post once those deploy and Carlos mints a `body` caller key; then post DESIGN.md rules as para-productos
   and reply to existing rounds. "Duna personal" logged by Main as ORCH-BODY-HUB-AND-DUNA-PERSONAL-1 (horizon).

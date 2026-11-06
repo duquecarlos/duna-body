@@ -101,6 +101,8 @@ def day_view(day: str):
     cards = []
     for m in data["metrics"]:
         val, unit = _fmt(m["key"], m["value"])
+        if m.get("kind") == "estimated" and m["value"] is not None:
+            val = "≈ " + val
         unit = m["unit"] if unit is None else unit
         cls = "card empty" if m["value"] is None else "card"
         unit_html = f"<span class='unit'>{escape(unit)}</span>" if unit and m["value"] is not None else ""
