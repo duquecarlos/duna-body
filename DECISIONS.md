@@ -286,3 +286,18 @@ per `BODY-TURNOS-IMPORT-1-M`'s precedent for a later merge slice to review and l
 
 Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 66 tests, OK (58 before this slice, 8 added
 here), run once on the final branch tree before this entry.
+
+## BODY-TURNOS-SYNC-1-M -- land BODY-TURNOS-SYNC-1 (2026-11-06)
+
+Approved by the orchestrator under `ORCH-CARLOS-DELEGATES-TIER-1-1` after reviewing the diff (10 files, +384/-16)
+against `main`; merged unchanged. No code change in this slice.
+
+`main` had not moved since the branch was cut: `git merge-base feat/body-turnos-sync-1 main` and `git rev-parse main`
+both read `e8498159a258e0e7a4fa817944e848b4eb9a5c18`, matching the branch's recorded base, so no merge-forward was
+needed.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 66 tests, OK, run once on the branch tip
+(`65cecb7e3121c5c630905cdbcb59cbdf799c7112`) before this merge.
+
+Merge commit: recorded in the next entry's git history (this entry precedes the `--no-ff` merge, per
+`BODY-TURNOS-IMPORT-1-M`'s precedent).
