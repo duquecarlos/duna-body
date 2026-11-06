@@ -3,7 +3,38 @@
 {% block main %}
 <div class="top"><div><h1>{{ t('nav.shifts') }}</h1></div></div>
 
-{% if batch %}
+{% if many %}
+<div class="card">
+  <div class="badge">{{ t('shifts.confirm_badge') }}</div>
+  <p class="read" style="margin-top:6px">{{ t('shifts.confirm_summary_many', n=batches|length, from=summary_from, to=summary_to, days=summary_days, nights=summary_nights) }}</p>
+  <div class="confirm-actions">
+    <form method="post" action="/shifts/confirm-all">
+      <button type="submit" class="btn on">{{ t('shifts.confirm_all_btn') }}</button>
+    </form>
+  </div>
+  <details class="files" style="margin-top:10px">
+    <summary class="k">{{ t('shifts.per_file') }}</summary>
+    {% for b in batches %}
+    <div class="card" style="margin-top:8px">
+      <p class="read" style="margin-top:0">{{ t('shifts.confirm_summary', date=b.received_date, days=b.preview.day_count, nights=b.preview.night_count) }}</p>
+      {% if b.preview.kept_days %}
+      <p class="k" style="margin-top:6px">{{ t('shifts.kept_note', n=b.preview.kept_days|length) }}</p>
+      {% endif %}
+      <div class="confirm-actions">
+        <form method="post" action="/shifts/confirm">
+          <input type="hidden" name="batch_id" value="{{ b.batch.id }}">
+          <button type="submit" class="btn on">{{ t('shifts.confirm_btn') }}</button>
+        </form>
+        <form method="post" action="/shifts/dismiss">
+          <input type="hidden" name="batch_id" value="{{ b.batch.id }}">
+          <button type="submit" class="btn">{{ t('shifts.dismiss_btn') }}</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </details>
+</div>
+{% elif batch %}
 <div class="card">
   <div class="badge">{{ t('shifts.confirm_badge') }}</div>
   <p class="read" style="margin-top:6px">{{ t('shifts.confirm_summary', date=received_date, days=preview.day_count, nights=preview.night_count) }}</p>
@@ -29,5 +60,8 @@
   <p class="k" style="margin-top:8px">{{ t('shifts.last_confirmed', date=confirmed_date) }}</p>
   {% endif %}
 </div>
+{% endif %}
+{% if result_msg %}
+<p class="k" style="margin-top:8px">{{ result_msg }}</p>
 {% endif %}
 {% endblock %}

@@ -199,6 +199,68 @@ def dismiss(conn: sqlite3.Connection, batch_id: int) -> None:
         )
 
 
+def confirm_all(conn: sqlite3.Connection, person_id: int = db.DEFAULT_PERSON_ID) -> dict:
+    """Confirms every proposed batch of this person, in (received, extracted_at) order, each through the
+    unchanged confirm() -- so precedence, manual-kept and the no-DELETE-of-manual rule apply exactly as they
+    do one batch at a time. One transaction PER BATCH, not one for the whole set: confirm()'s own `with conn:`
+    commits as soon as it returns, so nesting it inside a second `with conn:` here would not make the set
+    atomic without changing confirm()'s own transaction handling, which stays out of scope for this slice.
+    Refuses up front, writing nothing, when the slot index is missing -- the same guard confirm() applies."""
+    if not slot_index_ok(conn):
+        raise SlotIndexMissing("the slot index is missing; confirm_all refuses until the migration creates it")
+    batches = conn.execute(
+        "SELECT id FROM shift_batch WHERE person_id = ? AND status = 'proposed' "
+        "ORDER BY received, extracted_at, id",
+        (person_id,),
+    ).fetchall()
+    days_applied = days_kept_manual = days_kept_newer = 0
+    for b in batches:
+        confirm(conn, b["id"])
+        counts = {
+            r["outcome"]: r["n"]
+            for r in conn.execute(
+                "SELECT outcome, COUNT(DISTINCT day) AS n FROM shift_batch_item WHERE batch_id = ? "
+                "GROUP BY outcome",
+                (b["id"],),
+            )
+        }
+        days_applied += counts.get("applied", 0)
+        days_kept_manual += counts.get("manual_kept", 0)
+        days_kept_newer += counts.get("newer_kept", 0)
+    return {
+        "batches": len(batches),
+        "days_applied": days_applied,
+        "days_kept_manual": days_kept_manual,
+        "days_kept_newer": days_kept_newer,
+    }
+
+
+def summary_proposed(conn: sqlite3.Connection, person_id: int = db.DEFAULT_PERSON_ID) -> dict:
+    """Read-only: how many batches are waiting, the day range they span, and total days/nights across all of
+    them -- for the one combined card shown when more than one file is proposed at once."""
+    batch_ids = [
+        r["id"]
+        for r in conn.execute(
+            "SELECT id FROM shift_batch WHERE person_id = ? AND status = 'proposed'", (person_id,)
+        ).fetchall()
+    ]
+    if not batch_ids:
+        return {"batch_count": 0, "first_day": None, "last_day": None, "day_count": 0, "night_count": 0}
+    placeholders = ",".join("?" * len(batch_ids))
+    items = conn.execute(
+        f"SELECT day, kind FROM shift_batch_item WHERE batch_id IN ({placeholders})", batch_ids
+    ).fetchall()
+    days = {it["day"] for it in items}
+    nights = {it["day"] for it in items if it["kind"] == "night"}
+    return {
+        "batch_count": len(batch_ids),
+        "first_day": min(days) if days else None,
+        "last_day": max(days) if days else None,
+        "day_count": len(days),
+        "night_count": len(nights),
+    }
+
+
 def latest_proposed(conn: sqlite3.Connection, person_id: int = db.DEFAULT_PERSON_ID):
     return conn.execute(
         "SELECT * FROM shift_batch WHERE person_id = ? AND status = 'proposed' "
