@@ -86,6 +86,9 @@ a.card:active{background:var(--wash)}
 .confirm-actions form{flex:1}
 .confirm-actions .btn{width:100%}
 .empty{border-style:dashed;color:var(--ink2)}
+details.files summary{cursor:pointer;min-height:44px;display:flex;align-items:center;list-style:none}
+details.files summary::-webkit-details-marker{display:none}
+details.files .card{margin-bottom:0}
 .badge{font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
 .shift{display:flex;align-items:center;gap:10px;border-radius:10px;padding:10px 12px;margin-bottom:10px;border:1px solid var(--soft);position:relative;overflow:hidden;background:var(--card)}
 .shift::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--line)}

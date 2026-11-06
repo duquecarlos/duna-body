@@ -7,7 +7,9 @@
 </div>
 
 <div class="shift">
-{% if proposed_batch %}
+{% if proposed_count > 1 %}
+  <a class="note" href="/shifts" style="margin:0 0 0 4px;text-decoration:underline">{{ t('today.shift_proposed_many', n=proposed_count) }}</a>
+{% elif proposed_count == 1 %}
   <a class="note" href="/shifts" style="margin:0 0 0 4px;text-decoration:underline">{{ t('today.shift_proposed') }}</a>
 {% else %}
   <div class="note" style="margin:0 0 0 4px">{{ t('today.shift_none') }}</div>

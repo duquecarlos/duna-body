@@ -249,6 +249,106 @@ class ShiftImportTest(unittest.TestCase):
         ).fetchone()["status"]
         self.assertEqual(status2, "dismissed")
 
+    # ---- confirm_all (BODY-TURNOS-SYNC-1): same confirm(), many files, one tap
+
+    def test_confirm_all_applies_in_order_matches_one_by_one(self):
+        a_path = FIXTURES / "turnos-demo-a.json"
+        b_path = FIXTURES / "turnos-demo-b.json"
+        c_path = _write({
+            "source": {"mail_subject": "T", "received": "2026-11-06T12:00:00-05:00", "attachment": "t.xlsx",
+                       "extracted_at": "2026-11-06T12:05:00-05:00"},
+            "person": "carlos", "timezone": "America/Bogota",
+            "shifts": [
+                {"day": "2026-11-11", "kind": "day", "code": "C", "start_local": "2026-11-11T08:00",
+                 "end_local": "2026-11-11T16:00", "holiday": False, "sunday": False, "note": "override"},
+                {"day": "2026-11-14", "kind": "night", "code": "N", "start_local": "2026-11-14T22:00",
+                 "end_local": "2026-11-15T06:00", "holiday": False, "sunday": False, "note": ""},
+            ],
+        }, "turnos-c.json")
+
+        # propose out of (received, extracted_at) order on purpose: C, A, B
+        shift_import.propose(self.conn, c_path, 1)
+        shift_import.propose(self.conn, a_path, 1)
+        shift_import.propose(self.conn, b_path, 1)
+        counts = shift_import.confirm_all(self.conn, 1)
+        self.assertEqual(counts["batches"], 3)
+        rows1 = {(r["day"], r["kind"], r["start_local"], r["source"]) for r in self.conn.execute(
+            "SELECT day, kind, start_local, source FROM shift WHERE person_id = 1"
+        ).fetchall()}
+
+        other_path = Path(tempfile.mkdtemp(prefix="body-shift-oneby-")) / "test.db"
+        conn2 = db.connect(other_path)
+        db.init(conn2)
+        a_id = shift_import.propose(conn2, a_path, 1)
+        shift_import.confirm(conn2, a_id)
+        b_id = shift_import.propose(conn2, b_path, 1)
+        shift_import.confirm(conn2, b_id)
+        c_id = shift_import.propose(conn2, c_path, 1)
+        shift_import.confirm(conn2, c_id)
+        rows2 = {(r["day"], r["kind"], r["start_local"], r["source"]) for r in conn2.execute(
+            "SELECT day, kind, start_local, source FROM shift WHERE person_id = 1"
+        ).fetchall()}
+        self.assertTrue(rows1)
+        self.assertEqual(rows1, rows2)
+
+    def test_confirm_all_manual_day_survives(self):
+        self.conn.execute(
+            "INSERT INTO shift (person_id, day, kind, start_local, end_local, source) "
+            "VALUES (1, '2026-11-09', 'night', '2026-11-09T23:00', '2026-11-10T07:00', 'manual')"
+        )
+        self.conn.commit()
+        shift_import.propose(self.conn, FIXTURES / "turnos-demo-a.json", 1)
+        shift_import.propose(self.conn, FIXTURES / "turnos-demo-b.json", 1)
+        counts = shift_import.confirm_all(self.conn, 1)
+        row = self.conn.execute(
+            "SELECT source, start_local FROM shift WHERE person_id = 1 AND day = '2026-11-09'"
+        ).fetchone()
+        self.assertEqual(row["source"], "manual")
+        self.assertEqual(row["start_local"], "2026-11-09T23:00")
+        self.assertGreater(counts["days_kept_manual"], 0)
+
+    def test_confirm_all_refuses_when_slot_index_missing(self):
+        path = Path(tempfile.mkdtemp(prefix="body-shift-idx2-")) / "idx.db"
+        conn = db.connect(path)
+        conn.executescript(db.SCHEMA)
+        conn.execute("INSERT INTO person (id, display_name) VALUES (1, 'Me')")
+        conn.execute("INSERT INTO shift (person_id, day, kind, source) VALUES (1, '2026-11-10', 'off', 'manual')")
+        conn.execute("INSERT INTO shift (person_id, day, kind, source) VALUES (1, '2026-11-10', 'off', 'manual')")
+        conn.commit()
+        db._migrate(conn)
+        self.assertFalse(shift_import.slot_index_ok(conn))
+        shift_import.propose(conn, FIXTURES / "turnos-demo-a.json", 1)
+        with self.assertRaises(shift_import.SlotIndexMissing):
+            shift_import.confirm_all(conn, 1)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM shift").fetchone()[0], 2)
+        self.assertEqual(
+            conn.execute("SELECT status FROM shift_batch WHERE person_id = 1").fetchone()["status"], "proposed"
+        )
+
+    def test_summary_proposed_counts(self):
+        shift_import.propose(self.conn, FIXTURES / "turnos-demo-a.json", 1)
+        shift_import.propose(self.conn, FIXTURES / "turnos-demo-b.json", 1)
+        c_path = _write({
+            "source": {"mail_subject": "T", "received": "2026-12-01T12:00:00-05:00", "attachment": "t.xlsx",
+                       "extracted_at": "2026-12-01T12:05:00-05:00"},
+            "person": "carlos", "timezone": "America/Bogota",
+            "shifts": [{"day": "2026-12-05", "kind": "night", "code": "N",
+                        "start_local": "2026-12-05T22:00", "end_local": "2026-12-06T06:00",
+                        "holiday": False, "sunday": False, "note": ""}],
+        }, "turnos-summary-c.json")
+        shift_import.propose(self.conn, c_path, 1)
+        summary = shift_import.summary_proposed(self.conn, 1)
+        self.assertEqual(summary["batch_count"], 3)
+        self.assertEqual(summary["first_day"], "2026-11-09")
+        self.assertEqual(summary["last_day"], "2026-12-05")
+        self.assertEqual(summary["day_count"], 6)
+        self.assertEqual(summary["night_count"], 3)
+
+    def test_summary_proposed_empty(self):
+        summary = shift_import.summary_proposed(self.conn, 1)
+        self.assertEqual(summary, {"batch_count": 0, "first_day": None, "last_day": None,
+                                    "day_count": 0, "night_count": 0})
+
     # ---- the measured gap (BODY-TURNOS-IMPORT-OBS-1) and its guard
 
     def test_slot_index_rejects_second_null_off_day(self):
@@ -328,6 +428,43 @@ class ShiftWebTest(unittest.TestCase):
         self.assertIn("Llegaron tus turnos", page)
         self.assertNotIn("Aún no hay turnos", page)
 
+    def test_shifts_page_with_three_proposed_batches_both_languages(self):
+        shift_import.propose(self.conn, FIXTURES / "turnos-demo-a.json", 1)
+        shift_import.propose(self.conn, FIXTURES / "turnos-demo-b.json", 1)
+        c_path = _write({
+            "source": {"mail_subject": "T", "received": "2026-12-01T12:00:00-05:00", "attachment": "t.xlsx",
+                       "extracted_at": "2026-12-01T12:05:00-05:00"},
+            "person": "carlos", "timezone": "America/Bogota",
+            "shifts": [{"day": "2026-12-05", "kind": "night", "code": "N",
+                        "start_local": "2026-12-05T22:00", "end_local": "2026-12-06T06:00",
+                        "holiday": False, "sunday": False, "note": ""}],
+        }, "turnos-three-c.json")
+        shift_import.propose(self.conn, c_path, 1)
+        page = self.client.get("/shifts").text
+        self.assertIn("Confirmar todos", page)
+        self.assertIn("Ver archivo por archivo", page)
+        self.assertIn("Noviembre 2026", page)
+        self.assertIn("Diciembre 2026", page)
+        self.assertIn("6 días, 3 noches", page)
+        self.client.post("/settings/language", data={"lang": "en"})
+        page_en = self.client.get("/shifts").text
+        self.assertIn("Confirm all", page_en)
+        self.assertIn("See file by file", page_en)
+        self.assertIn("November 2026", page_en)
+        self.assertIn("December 2026", page_en)
+        self.assertIn("6 days, 3 nights", page_en)
+
+    def test_post_confirm_all(self):
+        a_id = shift_import.propose(self.conn, FIXTURES / "turnos-demo-a.json", 1)
+        b_id = shift_import.propose(self.conn, FIXTURES / "turnos-demo-b.json", 1)
+        resp = self.client.post("/shifts/confirm-all")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("Confirmaste 2 archivos", resp.text)
+        status_a = self.conn.execute("SELECT status FROM shift_batch WHERE id = ?", (a_id,)).fetchone()["status"]
+        status_b = self.conn.execute("SELECT status FROM shift_batch WHERE id = ?", (b_id,)).fetchone()["status"]
+        self.assertEqual(status_a, "confirmed")
+        self.assertEqual(status_b, "confirmed")
+
     def test_confirm_and_dismiss_posts(self):
         a_id = shift_import.propose(self.conn, FIXTURES / "turnos-demo-a.json", 1)
         b_id = shift_import.propose(self.conn, FIXTURES / "turnos-demo-b.json", 1)
@@ -370,6 +507,22 @@ class ShiftImportCliTest(unittest.TestCase):
         out = buf.getvalue()
         self.assertIn("files read: 2", out)
         self.assertIn("batches proposed: 2", out)
+
+
+class InstallScriptTest(unittest.TestCase):
+    """The installer is never executed here; only its text is checked (BODY-TURNOS-SYNC-1)."""
+
+    def test_shiftsdir_param_used_only_inside_its_own_branch_and_no_personal_path(self):
+        text = (Path(__file__).parent.parent / "scripts" / "install-daily-sync.ps1").read_text(encoding="utf-8")
+        self.assertIn("$ShiftsDir", text)
+        branch_start = text.index("if ($ShiftsDir)")
+        branch_end = text.index("}", branch_start)
+        branch = text[branch_start:branch_end]
+        self.assertIn("body.shift_import", branch)
+        outside = text[:branch_start] + text[branch_end:]
+        self.assertNotIn("body.shift_import", outside)
+        self.assertNotIn("Users", text)
+        self.assertNotIn("Carlos", text)
 
 
 if __name__ == "__main__":

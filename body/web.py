@@ -129,7 +129,10 @@ def _batch_date(t: T, received: str) -> str:
 def today():
     conn, person, t = _ctx()
     day = _latest_day(conn)
-    proposed = shift_import.latest_proposed(conn)
+    proposed_count = conn.execute(
+        "SELECT COUNT(*) AS n FROM shift_batch WHERE person_id = ? AND status = 'proposed'",
+        (db.DEFAULT_PERSON_ID,),
+    ).fetchone()["n"]
     if not day:
         cmd = "python -m body.pull" if garmin_adapter.has_token() else "python -m body.login"
         return _render("soon.html", t=t, tab="today", title=t("today.title"), text=t("today.empty", cmd=cmd))
@@ -151,7 +154,7 @@ def today():
     return _render("today.html", t=t, tab="today", day=day, date_long=t.long_date(date.fromisoformat(day)),
                    synced=_synced(conn, person), r=r, reading=_reading(t, r), ready_avg=ready_avg,
                    ready_delta=ready_delta, ready_cls=ready_cls, cards=cards,
-                   missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_batch=proposed)
+                   missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_count=proposed_count)
 
 
 @app.get("/how/{day}")
@@ -215,16 +218,40 @@ def day_view(day: str):
 
 
 @app.get("/shifts")
-def shifts():
+def shifts(request: Request):
     conn, person, t = _ctx()
-    proposed = shift_import.latest_proposed(conn)
-    if proposed:
+    rows = conn.execute(
+        "SELECT * FROM shift_batch WHERE person_id = ? AND status = 'proposed' ORDER BY received, extracted_at",
+        (db.DEFAULT_PERSON_ID,),
+    ).fetchall()
+    result_msg = None
+    qp = request.query_params
+    if qp.get("done") == "1":
+        kept = int(qp.get("kept_manual", 0)) + int(qp.get("kept_newer", 0))
+        result_msg = t("shifts.confirm_all_result", batches=qp.get("batches", "0"), applied=qp.get("applied", "0"))
+        if kept:
+            result_msg += " " + t("shifts.confirm_all_kept", n=kept)
+    if len(rows) > 1:
+        summary = shift_import.summary_proposed(conn)
+        batches = [
+            {"batch": dict(b), "received_date": _batch_date(t, b["received"]),
+             "preview": shift_import.preview(conn, b["id"])}
+            for b in rows
+        ]
+        return _render("shifts.html", t=t, tab="shifts", batch=None, many=True, batches=batches,
+                       summary_from=t.month_year(date.fromisoformat(summary["first_day"])),
+                       summary_to=t.month_year(date.fromisoformat(summary["last_day"])),
+                       summary_days=summary["day_count"], summary_nights=summary["night_count"],
+                       result_msg=result_msg)
+    if rows:
+        proposed = rows[0]
         prev = shift_import.preview(conn, proposed["id"])
-        return _render("shifts.html", t=t, tab="shifts", batch=dict(proposed),
-                       received_date=_batch_date(t, proposed["received"]), preview=prev)
+        return _render("shifts.html", t=t, tab="shifts", batch=dict(proposed), many=False,
+                       received_date=_batch_date(t, proposed["received"]), preview=prev, result_msg=result_msg)
     confirmed = shift_import.latest_confirmed(conn)
-    return _render("shifts.html", t=t, tab="shifts", batch=None,
-                   confirmed_date=_batch_date(t, confirmed["received"]) if confirmed else None)
+    return _render("shifts.html", t=t, tab="shifts", batch=None, many=False,
+                   confirmed_date=_batch_date(t, confirmed["received"]) if confirmed else None,
+                   result_msg=result_msg)
 
 
 @app.post("/shifts/confirm")
@@ -237,6 +264,20 @@ async def shifts_confirm(request: Request):
         except (shift_import.ImportRefused, shift_import.SlotIndexMissing):
             pass
     return RedirectResponse("/shifts", status_code=303)
+
+
+@app.post("/shifts/confirm-all")
+async def shifts_confirm_all():
+    conn, _, _ = _ctx()
+    try:
+        result = shift_import.confirm_all(conn)
+    except (shift_import.ImportRefused, shift_import.SlotIndexMissing):
+        return RedirectResponse("/shifts", status_code=303)
+    return RedirectResponse(
+        f"/shifts?done=1&batches={result['batches']}&applied={result['days_applied']}"
+        f"&kept_manual={result['days_kept_manual']}&kept_newer={result['days_kept_newer']}",
+        status_code=303,
+    )
 
 
 @app.post("/shifts/dismiss")
