@@ -73,6 +73,9 @@ desk, a summary card other apps can read. Raised with Main.
 ## Decisions log
 
 - 2026-11-06 — Starting direction accepted (Main): `python-garminconnect` locally now, official Health API later; shifts via Personal session.
+- 2026-11-06 — Main: "body" joining the hub (ORDERS-HUB-PRODUCTO-BODY-1, ADMIN-HUB-PRODUCTO-BODY-1, hub.py PRODUCTS).
+  Body can post once those deploy and Carlos mints a `body` caller key; then post DESIGN.md rules as para-productos
+  and reply to existing rounds. "Duna personal" logged by Main as ORCH-BODY-HUB-AND-DUNA-PERSONAL-1 (horizon).
 - 2026-11-06 — Carlos: start the serious design work on Duna principles; research → principles → scope → plan →
   mocks → build. Round 1 mock delivered (demo data). Idea logged: "Duna personal" horizon.
 - 2026-11-06 — Main, under Carlos's trust: build slice 1 up to sign-in; responsive from day one (375 px), PC/LAN only;
