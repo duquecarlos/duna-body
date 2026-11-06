@@ -86,6 +86,39 @@ CREATE TABLE IF NOT EXISTS shift (
     PRIMARY KEY (person_id, day, start_local)
 );
 
+-- A set of shifts proposed from another app's extraction, confirmed or dismissed by the person.
+CREATE TABLE IF NOT EXISTS shift_batch (
+    id              INTEGER PRIMARY KEY,
+    person_id       INTEGER NOT NULL REFERENCES person(id),
+    file_name       TEXT NOT NULL,
+    received        TEXT NOT NULL,
+    extracted_at    TEXT NOT NULL,
+    source_person   TEXT,
+    source_timezone TEXT,
+    status          TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'confirmed', 'dismissed', 'superseded')),
+    day_count       INTEGER NOT NULL,
+    created_at      TEXT NOT NULL,
+    decided_at      TEXT,
+    UNIQUE (person_id, file_name, received, extracted_at)
+);
+
+-- One row per shift in a batch: the full record, including what `shift` has no column for.
+CREATE TABLE IF NOT EXISTS shift_batch_item (
+    id          INTEGER PRIMARY KEY,
+    batch_id    INTEGER NOT NULL REFERENCES shift_batch(id),
+    day         TEXT NOT NULL,
+    kind        TEXT NOT NULL CHECK (kind IN ('morning', 'afternoon', 'night', 'day', 'off', 'other')),
+    code        TEXT,
+    start_local TEXT,
+    end_local   TEXT,
+    holiday     INTEGER NOT NULL DEFAULT 0,
+    sunday      INTEGER NOT NULL DEFAULT 0,
+    note        TEXT,
+    outcome     TEXT CHECK (outcome IN ('applied', 'manual_kept', 'newer_kept') OR outcome IS NULL)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shift_batch_item_slot
+    ON shift_batch_item (batch_id, day, COALESCE(start_local, ''));
+
 -- Goals: metric, target, deadline. A plan is a list of items; a weekly check judges it.
 CREATE TABLE IF NOT EXISTS goal (
     id             INTEGER PRIMARY KEY,
@@ -171,6 +204,19 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if pcols and "language" not in pcols:
         conn.execute("ALTER TABLE person ADD COLUMN language TEXT NOT NULL DEFAULT 'es'")
     conn.execute("UPDATE person SET timezone = 'America/Bogota' WHERE timezone = 'Europe/Madrid'")
+    scols = {r[1] for r in conn.execute("PRAGMA table_info(shift)")}
+    if scols and "batch_id" not in scols:
+        conn.execute("ALTER TABLE shift ADD COLUMN batch_id INTEGER REFERENCES shift_batch(id)")
+    # Closes the gap the PK leaves open: SQLite treats each NULL start_local as distinct, so two off-day
+    # rows for the same person and day do not collide on the primary key alone (BODY-TURNOS-IMPORT-OBS-1).
+    # Never a DELETE here: on IntegrityError the table is left untouched and the missing index is reported
+    # by body/shift_import.py, which refuses to confirm until it exists.
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_shift_slot ON shift (person_id, day, COALESCE(start_local, ''))"
+        )
+    except sqlite3.IntegrityError:
+        pass
 
 
 def init(conn: sqlite3.Connection) -> None:

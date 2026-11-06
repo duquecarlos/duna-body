@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from . import db, garmin_adapter, history, listen, profile, readiness
+from . import db, garmin_adapter, history, listen, profile, readiness, shift_import
 from .baselines import baseline
 from .i18n import LANGS, T
 
@@ -121,10 +121,15 @@ def _parse_day(day: str) -> date:
         raise HTTPException(404)
 
 
+def _batch_date(t: T, received: str) -> str:
+    return _short_date(t, datetime.fromisoformat(received).date())
+
+
 @app.get("/")
 def today():
     conn, person, t = _ctx()
     day = _latest_day(conn)
+    proposed = shift_import.latest_proposed(conn)
     if not day:
         cmd = "python -m body.pull" if garmin_adapter.has_token() else "python -m body.login"
         return _render("soon.html", t=t, tab="today", title=t("today.title"), text=t("today.empty", cmd=cmd))
@@ -146,7 +151,7 @@ def today():
     return _render("today.html", t=t, tab="today", day=day, date_long=t.long_date(date.fromisoformat(day)),
                    synced=_synced(conn, person), r=r, reading=_reading(t, r), ready_avg=ready_avg,
                    ready_delta=ready_delta, ready_cls=ready_cls, cards=cards,
-                   missing_txt=", ".join(t("part." + m) for m in r.missing))
+                   missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_batch=proposed)
 
 
 @app.get("/how/{day}")
@@ -211,8 +216,36 @@ def day_view(day: str):
 
 @app.get("/shifts")
 def shifts():
-    _, _, t = _ctx()
-    return _render("soon.html", t=t, tab="shifts", title=t("nav.shifts"), text=t("soon.shifts"))
+    conn, person, t = _ctx()
+    proposed = shift_import.latest_proposed(conn)
+    if proposed:
+        prev = shift_import.preview(conn, proposed["id"])
+        return _render("shifts.html", t=t, tab="shifts", batch=dict(proposed),
+                       received_date=_batch_date(t, proposed["received"]), preview=prev)
+    confirmed = shift_import.latest_confirmed(conn)
+    return _render("shifts.html", t=t, tab="shifts", batch=None,
+                   confirmed_date=_batch_date(t, confirmed["received"]) if confirmed else None)
+
+
+@app.post("/shifts/confirm")
+async def shifts_confirm(request: Request):
+    batch_id = parse_qs((await request.body()).decode()).get("batch_id", [""])[0]
+    if batch_id.isdigit():
+        conn, _, _ = _ctx()
+        try:
+            shift_import.confirm(conn, int(batch_id))
+        except (shift_import.ImportRefused, shift_import.SlotIndexMissing):
+            pass
+    return RedirectResponse("/shifts", status_code=303)
+
+
+@app.post("/shifts/dismiss")
+async def shifts_dismiss(request: Request):
+    batch_id = parse_qs((await request.body()).decode()).get("batch_id", [""])[0]
+    if batch_id.isdigit():
+        conn, _, _ = _ctx()
+        shift_import.dismiss(conn, int(batch_id))
+    return RedirectResponse("/shifts", status_code=303)
 
 
 TREND_KEYS = ["readiness", "sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake", "steps"]

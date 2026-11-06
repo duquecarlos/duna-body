@@ -1,0 +1,16 @@
+{
+  "source": {"mail_subject": "TURNOS NOVIEMBRE A ENERO", "received": "2026-11-05T12:00:00-05:00",
+             "attachment": "turnos.xlsx", "extracted_at": "2026-11-05T12:05:00-05:00"},
+  "person": "carlos",
+  "timezone": "America/Bogota",
+  "shifts": [
+    {"day": "2026-11-09", "kind": "night", "code": "N",
+     "start_local": "2026-11-09T21:30", "end_local": "2026-11-10T05:30",
+     "holiday": false, "sunday": false, "note": "hora ajustada"},
+    {"day": "2026-11-10", "kind": "off", "code": "D",
+     "start_local": null, "end_local": null, "holiday": false, "sunday": false, "note": "descanso"},
+    {"day": "2026-11-13", "kind": "night", "code": "N",
+     "start_local": "2026-11-13T22:00", "end_local": "2026-11-14T06:00",
+     "holiday": false, "sunday": false, "note": ""}
+  ]
+}

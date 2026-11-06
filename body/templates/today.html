@@ -6,7 +6,13 @@
   <div class="meta">{% if synced %}{{ t('today.synced') }}<br>{{ synced }}{% else %}{{ t('today.no_sync') }}{% endif %}</div>
 </div>
 
-<div class="shift"><div class="note" style="margin:0 0 0 4px">{{ t('today.shift_none') }}</div></div>
+<div class="shift">
+{% if proposed_batch %}
+  <a class="note" href="/shifts" style="margin:0 0 0 4px;text-decoration:underline">{{ t('today.shift_proposed') }}</a>
+{% else %}
+  <div class="note" style="margin:0 0 0 4px">{{ t('today.shift_none') }}</div>
+{% endif %}
+</div>
 
 <a class="card est" href="/how/{{ day }}">
   <div class="q">{{ t('today.ready_q') }}</div>
