@@ -43,3 +43,27 @@ changed by this slice).
 Follow-up proposed, not done here: extract the `--lan` / listen-host choice out of `body/web.py` into its own small
 module, so that LAN exposure becomes a Tier 1 path of its own instead of being buried inside the file every UI slice
 touches.
+
+## BODY-WEB-LISTEN-HOST-1 -- listen-host choice moves into its own module (2026-11-06)
+
+Closes the BODY-REPO-RULES-1 follow-up above. The `--lan` listen-address decision (`host = "0.0.0.0" if a.lan else
+"127.0.0.1"`, plus the start-up print) moved out of `body/web.py`'s `main()` into a new, dependency-free module
+`body/listen.py`, which owns exactly that one decision. It exposes `LOCAL = "127.0.0.1"`, `listen_host(lan: bool) ->
+str` (`LOCAL` unless `lan`, then `"0.0.0.0"`), and `describe(lan: bool, port: int) -> str` (the start-up line: the
+local URL, or -- for LAN -- a line saying the app is OPEN TO EVERY DEVICE ON THIS NETWORK with the placeholder
+`<this-PC-IP>`, never the literal `0.0.0.0`). `body/web.py`'s `main()` now calls `listen.listen_host(a.lan)` and
+`listen.describe(a.lan, a.port)`; `access_log=False` and `log_level="warning"` are unchanged.
+
+Grep for `0.0.0.0` / `127.0.0.1` in `body/web.py` after the change found exactly one remaining hit: the module
+docstring's `http://127.0.0.1:8770` example at `body/web.py:1`, which stays because it is documentation of the local
+URL, not a listen-address decision.
+
+`tests/test_listen.py` imports `tests/_isolate.py` first, then checks `listen_host(False)` / `listen_host(True)`,
+that both `describe` lines carry the port and never the text `0.0.0.0` (decided here: a bind-all address is not a URL
+anyone can open, so the LAN line shows `<this-PC-IP>` instead), and that the LAN line differs from the local one.
+
+`CLAUDE.md`'s Tier 1 paragraph gained one item: "which network address the web app listens on `body/listen.py`",
+kept as one comma-separated paragraph.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 16 tests, OK (12 before this slice, 4 added
+here).
