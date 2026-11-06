@@ -47,7 +47,7 @@ Out of scope for now: medical advice, food logging, manual metric entry, social 
 | 1 | **Data base**: 90-day backfill; daily sync installed; sleep stages + sleep need + Body Battery charge parsed; timezone America/Bogota; baselines (30-day mean and normal range per metric) | 90 days in, baselines computed, tests |
 | 2 | **Design system + shell**: Duna tokens, Hanken Grotesk, light/dark without flash, bottom tabs / left rail, interaction states (ui-interaccion-v1), return-to-same-spot, installable PWA on the S25 over LAN | Shell passes 375 px + measured hover/focus checks |
 | 3 | **Hoy + Día** on real data, every figure drills to its day and back | Carlos uses it a morning |
-| 4 | **Turnos**: import Personal desk JSON (`C:\Personal\enel	urnos`, FORMATO.md) with one-tap confirm; strip chart; night-vs-day comparison; ≈ recovery days with "cómo lo calculo" | First real schedule imported and confirmed |
+| 4 | **Turnos**: import Personal desk JSON (`C:\Personal\enel\turnos`, FORMATO.md) with one-tap confirm; strip chart; night-vs-day comparison; ≈ recovery days with "cómo lo calculo" | First real schedule imported and confirmed |
 | 5 | **Tendencias**: per-metric 7/30/90 with baseline band and night shading; all 12 metrics | |
 | 6 | **Metas**: goals, plan items with shift context, daily check-off on Hoy, weekly check in words | His real goals entered from his answers |
 | 7 | **Assistant** to agent-ui-v1 (read tools for every screen; proposes plan changes, he confirms) and tutorials-v1 | |
