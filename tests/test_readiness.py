@@ -1,6 +1,8 @@
 """Baselines and readiness v1 on synthetic days (no Garmin, temp database)."""
 import tempfile
 import unittest
+
+from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from datetime import date, timedelta
 from pathlib import Path
 

@@ -89,7 +89,8 @@ CREATE TABLE IF NOT EXISTS shift (
 -- Goals: metric, target, deadline. A plan is a list of items; a weekly check judges it.
 CREATE TABLE IF NOT EXISTS goal (
     id             INTEGER PRIMARY KEY,
-    person_id      INTEGER NOT NULL REFERENCES person(id),
+    person_id      INTEGER NOT NULL REFERENCES person(id),   -- who created it
+    hogar_id       TEXT,                                     -- set = a household goal (hogar-v1), NULL = personal
     title          TEXT NOT NULL,
     metric_key     TEXT REFERENCES metric_def(key),
     target_value   REAL,
@@ -105,6 +106,7 @@ CREATE TABLE IF NOT EXISTS plan_item (
     title         TEXT NOT NULL,
     cadence       TEXT,                    -- e.g. 'daily', '3x/week'
     shift_context TEXT,                    -- e.g. 'before_night', 'after_night', 'off_days', NULL = always
+    assignee_person_id INTEGER REFERENCES person(id),  -- household plans: whose item; NULL = everyone
     active        INTEGER NOT NULL DEFAULT 1
 );
 
@@ -160,6 +162,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
     cols = {r[1] for r in conn.execute("PRAGMA table_info(metric_def)")}
     if cols and "kind" not in cols:
         conn.execute("ALTER TABLE metric_def ADD COLUMN kind TEXT NOT NULL DEFAULT 'measured'")
+    for table, col, ddl in (("goal", "hogar_id", "TEXT"),
+                            ("plan_item", "assignee_person_id", "INTEGER REFERENCES person(id)")):
+        tcols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if tcols and col not in tcols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
     pcols = {r[1] for r in conn.execute("PRAGMA table_info(person)")}
     if pcols and "language" not in pcols:
         conn.execute("ALTER TABLE person ADD COLUMN language TEXT NOT NULL DEFAULT 'es'")

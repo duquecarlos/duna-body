@@ -20,4 +20,4 @@ Backfill: `python -m body.pull --days 90`. Phone at home: `python -m body.web --
 - `body/garmin_adapter.py`: the only file that knows the unofficial `python-garminconnect` library.
 - `body/db.py`: SQLite schema. Metrics, sleep sessions, activities, **shifts**, goals, plan items and weekly checks are all data.
 - `body/login.py`, `body/pull.py`, `body/web.py`: sign in, pull, page.
-- Tests: `.venv\Scripts\python -m unittest discover -s tests` (needs `requirements-dev.txt`).
+- Tests: `.venv\Scripts\python -m unittest discover tests -t .` (every test imports `tests/_isolate.py` first, so tests never touch real data) (needs `requirements-dev.txt`).

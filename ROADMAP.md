@@ -79,6 +79,11 @@ Model (person-scoped already; this adds):
   consent; each app maps it to its own space. Censuses running (CUENTA-API-HOGAR-CENSO-1, LUGARES-HOGAR-CENSO-1,
   Finanzas). Main sends the final shape. **Until then, Body's household lives behind one module
   (`body/household.py`), so the source can be swapped from local to Cuenta without touching goals or plans.**
+- **Decided 2026-11-06 (ORCH-HOGAR-EN-CUENTA-1, contract `dev-protocol/contracts/hogar-v1.md`):** Cuenta holds who is in
+  a household (consent from both, no cap of two, one active household per person, anyone can leave at any time).
+  Body reads the `duna_hogar` claim `{id, miembros:[subs]}`. Body built `body/household.py` (local mirror of the
+  claim) + `goal.hogar_id` + `plan_item.assignee_person_id`. Switching to the claim needs Body's Cuenta client:
+  ask Main for CUENTA-API-CLIENTE-BODY-1 (with redirect URIs) when Body is hosted.
 - Contacts: Finanzas orchestrator = session local_19b2985d-0843-4e85-b248-dc1ac667ce4a (direct). Lugares and Cuenta
   have no orchestrator: go through Main.
 

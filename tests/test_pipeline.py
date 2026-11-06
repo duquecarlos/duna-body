@@ -1,11 +1,7 @@
 """End-to-end without Garmin: a fake payload goes through parse -> SQLite -> page."""
-import os
-import tempfile
 import unittest
-from pathlib import Path
 
-TMP = tempfile.mkdtemp()
-os.environ["BODY_HOME"] = TMP  # before importing body.*, so nothing touches the real home
+from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -43,10 +39,10 @@ class PipelineTest(unittest.TestCase):
         self.assertNotIn("stress_avg", d.metrics)
 
     def test_end_to_end_page(self):
+        self.assertTrue(str(config.DB_PATH).startswith(TMP))  # guard BEFORE any write
         conn = db.connect()
         db.init(conn)
         db.save_day(conn, garmin_adapter.parse_day("2026-11-05", FAKE_RAW))
-        self.assertTrue(str(config.DB_PATH).startswith(TMP))
         client = TestClient(web.app)
         home = client.get("/").text  # Hoy, Spanish by default
         self.assertIn("Hoy", home)
