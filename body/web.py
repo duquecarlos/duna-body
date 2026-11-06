@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from . import db, garmin_adapter, profile, readiness
+from . import db, garmin_adapter, listen, profile, readiness
 from .baselines import baseline
 from .i18n import LANGS, T
 
@@ -357,9 +357,8 @@ def main() -> None:
     p.add_argument("--lan", action="store_true", help="listen on the home network (for the phone)")
     p.add_argument("--port", type=int, default=8770)
     a = p.parse_args()
-    host = "0.0.0.0" if a.lan else "127.0.0.1"
-    print(f"Body app on http://{'<this-PC-IP>' if a.lan else '127.0.0.1'}:{a.port}")
-    uvicorn.run(app, host=host, port=a.port, access_log=False, log_level="warning")
+    print(listen.describe(a.lan, a.port))
+    uvicorn.run(app, host=listen.listen_host(a.lan), port=a.port, access_log=False, log_level="warning")
 
 
 if __name__ == "__main__":

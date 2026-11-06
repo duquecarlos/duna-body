@@ -56,7 +56,7 @@ Slices branch from `main` and merge back to `main` with `--no-ff`.
 Tier 1 slices run in a separate read-only session with no writes and no git mutation: the Garmin adapter
 `body/garmin_adapter.py` (the only module that may import garminconnect), Garmin sign-in and token handling
 `body/login.py`, where health data and the token live `body/config.py`, the SQLite schema and its migrations
-`body/db.py`, the export that hands health data to another app `body/vida_export.py`, and the test isolation guard
-`tests/_isolate.py`.
+`body/db.py`, the export that hands health data to another app `body/vida_export.py`, the test isolation guard
+`tests/_isolate.py`, and which network address the web app listens on `body/listen.py`.
 
 Everything else in this repository is Tier 2.
