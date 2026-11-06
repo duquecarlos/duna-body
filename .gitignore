@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+# Health data and Garmin tokens never go in the repo (they live in BODY_HOME, default ~/.body-app)
+data/
+*.db
+*.sqlite
+garmin_tokens/
+.env

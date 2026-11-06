@@ -1,6 +1,10 @@
 # Body app — roadmap
 
-Proposed 2026-11-06 by the Body app orchestrator. Status: **waiting for Carlos's answers** (stack OK? goals?).
+Proposed 2026-11-06 by the Body app orchestrator. Stack approved by Main under Carlos's trust (2026-11-06).
+Status: **slice 1 built and tested on fake data; waiting for Carlos to sign in** (`python -m body.login`). Goal questions still open.
+
+Implementation notes (slice 1): data and token live in `BODY_HOME` (default `~/.body-app`), not in `data/` in the repo.
+The page is served by plain FastAPI HTML (no template engine), local by default, `--lan` for the phone; measured at 375 px.
 
 ## Stack (proposed)
 
@@ -43,3 +47,6 @@ Done when: yesterday's real numbers from his watch show on the page, and nothing
 ## Decisions log
 
 - 2026-11-06 — Starting direction accepted (Main): `python-garminconnect` locally now, official Health API later; shifts via Personal session.
+- 2026-11-06 — Main, under Carlos's trust: build slice 1 up to sign-in; responsive from day one (375 px), PC/LAN only;
+  goals modelled generically with nothing personal seeded; shift schedule is a first-class input (`shift` table,
+  `plan_item.shift_context`). Goal questions wait for Carlos.
