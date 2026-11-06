@@ -2,6 +2,7 @@
 
     python -m body.vida_export                 # last full week (Monday to Sunday)
     python -m body.vida_export --week 2026-11-02
+    python -m body.vida_export --current       # the week that started this Monday (for the Sunday-evening review)
 
 Writes BODY_HOME/vida/body-week-<monday>.json in the Review section shape:
 {"area": "body", "summary", "metrics": [{key, value, kind}], "goals": [{goal_id, on_track}], ...}
@@ -50,9 +51,15 @@ def week_section(conn, monday: date, person_id: int = db.DEFAULT_PERSON_ID) -> d
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="python -m body.vida_export")
     p.add_argument("--week", help="the Monday of the week, YYYY-MM-DD (default: last full week)")
+    p.add_argument("--current", action="store_true", help="this week, Monday to today")
     a = p.parse_args(argv)
     today = date.today()
-    monday = date.fromisoformat(a.week) if a.week else today - timedelta(today.weekday() + 7)
+    if a.week:
+        monday = date.fromisoformat(a.week)
+    elif a.current:
+        monday = today - timedelta(today.weekday())
+    else:
+        monday = today - timedelta(today.weekday() + 7)
     if monday.weekday() != 0:
         print("--week must be a Monday")
         return 1
