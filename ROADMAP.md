@@ -75,6 +75,12 @@ Model (person-scoped already; this adds):
   Finanzas (rule 17).
 - Coordinated with Finanzas (`hogar` entity, FIN-PERSONAL-INTAKE-1) and Lugares through Main / the hub, so a
   household means the same thing in every Duna app.
+- **Main, 2026-11-06:** working hypothesis: one household = a group of personas in **Cuenta Duna**, with both people's
+  consent; each app maps it to its own space. Censuses running (CUENTA-API-HOGAR-CENSO-1, LUGARES-HOGAR-CENSO-1,
+  Finanzas). Main sends the final shape. **Until then, Body's household lives behind one module
+  (`body/household.py`), so the source can be swapped from local to Cuenta without touching goals or plans.**
+- Contacts: Finanzas orchestrator = session local_19b2985d-0843-4e85-b248-dc1ac667ce4a (direct). Lugares and Cuenta
+  have no orchestrator: go through Main.
 
 ## Horizon — "Duna personal" (Carlos, 2026-11-06)
 
