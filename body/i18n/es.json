@@ -116,5 +116,22 @@
   ],
   "date.long": "{weekday} {day} de {month}",
   "foot.not_medical": "Body muestra patrones en tus números. No es consejo médico.",
-  "how.need_short": "lo que necesitabas"
+  "how.need_short": "lo que necesitabas",
+  "trends.sub": "Tu historia desde {since} · {days} días con datos del reloj",
+  "trends.last30": "últimos 30 días",
+  "trends.vs_hist": "vs. tu historia",
+  "trends.monthly": "Promedio de cada mes",
+  "trends.normal": "Tu rango normal ({low}–{high})",
+  "trends.week_q": "¿Cómo es tu semana típica?",
+  "trends.week_note": "Promedios de toda tu historia por día de la semana. En negrita, el día más bajo de cada columna.",
+  "trends.q.readiness": "¿Cómo viene tu preparación?",
+  "trends.q.sleep_minutes": "¿Duermes más o menos que antes?",
+  "trends.q.hrv_last_night": "¿Está mejorando tu variabilidad del pulso?",
+  "trends.q.resting_hr": "¿Baja tu pulso en reposo?",
+  "trends.q.body_battery_wake": "¿Con cuánta energía te despiertas?",
+  "trends.q.steps": "¿Te mueves más que antes?",
+  "trends.short.readiness": "Prep.",
+  "trends.short.sleep_minutes": "Sueño",
+  "trends.short.hrv_last_night": "Variab.",
+  "trends.short.resting_hr": "Pulso"
 }

@@ -1,0 +1,80 @@
+"""Your long-term profile from the whole Garmin history: monthly line, normal range, typical week.
+
+Pure reads over daily_metric. Every number is against your own history, never population tables.
+"""
+from __future__ import annotations
+
+import statistics
+from dataclasses import dataclass
+from datetime import date, timedelta
+
+from . import db
+
+
+@dataclass
+class MetricProfile:
+    key: str
+    months: list[tuple[str, float, int]]   # (YYYY-MM, mean, days)
+    all_mean: float
+    low: float                             # p25 over all history
+    high: float                            # p75 over all history
+    last30: float | None
+    prev30: float | None
+    weekday: list[float | None]            # Monday..Sunday means
+    days: int
+    first_day: str
+
+
+def metric_profile(conn, key: str, today: str | None = None,
+                   person_id: int = db.DEFAULT_PERSON_ID) -> MetricProfile | None:
+    rows = conn.execute("SELECT day, value FROM daily_metric WHERE person_id=? AND metric_key=? ORDER BY day",
+                        (person_id, key)).fetchall()
+    if len(rows) < 14:
+        return None
+    vals = [r["value"] for r in rows]
+    by_month: dict[str, list[float]] = {}
+    by_wd: list[list[float]] = [[] for _ in range(7)]
+    for r in rows:
+        by_month.setdefault(r["day"][:7], []).append(r["value"])
+        by_wd[date.fromisoformat(r["day"]).weekday()].append(r["value"])
+    end = date.fromisoformat(today or rows[-1]["day"])
+    last = [r["value"] for r in rows if end - timedelta(30) < date.fromisoformat(r["day"]) <= end]
+    prev = [r["value"] for r in rows if end - timedelta(60) < date.fromisoformat(r["day"]) <= end - timedelta(30)]
+    q = statistics.quantiles(vals, n=4)
+    return MetricProfile(
+        key=key,
+        months=[(m, statistics.fmean(v), len(v)) for m, v in sorted(by_month.items()) if len(v) >= 7],
+        all_mean=statistics.fmean(vals), low=q[0], high=q[2],
+        last30=statistics.fmean(last) if last else None,
+        prev30=statistics.fmean(prev) if prev else None,
+        weekday=[statistics.fmean(w) if w else None for w in by_wd],
+        days=len(vals), first_day=rows[0]["day"],
+    )
+
+
+def month_svg(p: MetricProfile, width: int = 320, height: int = 120, color: str = "var(--body)") -> str:
+    """Server-side SVG: monthly means as a line, your all-history normal range as a band."""
+    pts = [m[1] for m in p.months]
+    if len(pts) < 2:
+        return ""
+    lo = min(min(pts), p.low)
+    hi = max(max(pts), p.high)
+    pad = (hi - lo) * 0.12 or 1
+    lo, hi = lo - pad, hi + pad
+    top, h = 6, height - 26
+
+    def y(v: float) -> float:
+        return top + h - (v - lo) / (hi - lo) * h
+
+    step = width / (len(pts) - 1)
+    line = " ".join(f"{i * step:.1f},{y(v):.1f}" for i, v in enumerate(pts))
+    band = (f'<rect x="0" y="{y(p.high):.1f}" width="{width}" height="{max(1, y(p.low) - y(p.high)):.1f}" '
+            f'style="fill:var(--inset)"/>')
+    last_x, last_y = (len(pts) - 1) * step, y(pts[-1])
+    first, lastm = p.months[0][0], p.months[-1][0]
+    # Fixed height, stretched width: lines keep their thickness (non-scaling-stroke); labels are HTML, not SVG text.
+    return (f'<svg viewBox="0 0 {width} {top + h + 6}" width="100%" height="110" role="img" preserveAspectRatio="none" '
+            f'style="display:block;margin-top:8px">{band}'
+            f'<polyline fill="none" style="stroke:{color}" stroke-width="2.2" vector-effect="non-scaling-stroke" '
+            f'stroke-linejoin="round" points="{line}"/></svg>'
+            f'<div class="row k" style="font-size:12px"><span>{first}</span><span>{lastm}</span></div>')

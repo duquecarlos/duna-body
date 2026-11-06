@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{{ t('nav.trends') }} · {{ t('app.name') }}{% endblock %}
+{% block main %}
+<div class="top"><div><h1>{{ t('nav.trends') }}</h1><p class="sub">{{ t('trends.sub', since=since, days=days) }}</p></div></div>
+
+{% for c in cards %}
+<div class="card" id="{{ c.key }}">
+  <div class="q">{{ c.question }}</div>
+  <div class="row" style="align-items:flex-end">
+    <div>{% if c.est %}<span class="approx fig">≈</span>{% endif %}<span class="fig">{{ c.last30 }}</span><span class="u">{{ c.unit }} · {{ t('trends.last30') }}</span></div>
+    <div class="delta {{ c.cls }}" style="text-align:right">{{ c.delta }}</div>
+  </div>
+  {{ c.svg|safe }}
+  <div class="legend" style="margin-top:4px"><span><i style="background:var(--body);height:3px;vertical-align:3px"></i>{{ t('trends.monthly') }}</span><span><i style="background:var(--inset)"></i>{{ t('trends.normal', low=c.low, high=c.high) }}</span></div>
+</div>
+{% endfor %}
+
+{% if week %}
+<div class="card">
+  <div class="q">{{ t('trends.week_q') }}</div>
+  <table class="parts">
+    <tr><th></th>{% for h in week.heads %}<th>{{ h }}</th>{% endfor %}</tr>
+    {% for d in week.rows %}<tr><td>{{ d.day }}</td>{% for v in d.vals %}<td class="nw{% if v.mark %} pts{% endif %}">{{ v.text }}</td>{% endfor %}</tr>{% endfor %}
+  </table>
+  <p class="note" style="margin:8px 0 0">{{ t('trends.week_note') }}</p>
+</div>
+{% endif %}
+{% endblock %}

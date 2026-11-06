@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from . import db, garmin_adapter, readiness
+from . import db, garmin_adapter, profile, readiness
 from .baselines import baseline
 from .i18n import LANGS, T
 
@@ -215,10 +215,54 @@ def shifts():
     return _render("soon.html", t=t, tab="shifts", title=t("nav.shifts"), text=t("soon.shifts"))
 
 
+TREND_KEYS = ["readiness", "sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake", "steps"]
+WEEK_KEYS = ["readiness", "sleep_minutes", "hrv_last_night", "resting_hr"]
+
+
 @app.get("/trends")
 def trends():
-    _, _, t = _ctx()
-    return _render("soon.html", t=t, tab="trends", title=t("nav.trends"), text=t("soon.trends"))
+    conn, person, t = _ctx()
+    defs = _defs(conn)
+    cards, since, days = [], None, 0
+    for k in TREND_KEYS:
+        p = profile.metric_profile(conn, k)
+        if not p:
+            continue
+        d = defs[k]
+        since = since or p.first_day
+        days = max(days, p.days)
+        delta, cls = "", "flat"
+        if p.last30 is not None:
+            diff = p.last30 - p.all_mean
+            spread = (p.high - p.low) or 1
+            if abs(diff) < spread * 0.15:
+                delta = t("delta.same")
+            else:
+                amount = t.minutes(abs(diff)) if _is_minutes(k) else t.num(abs(diff))
+                delta = f"{'↑' if diff > 0 else '↓'} {amount} {t('trends.vs_hist')}"
+                cls = "flat" if d["better"] == "neutral" else ("good" if (diff > 0) == (d["better"] == "higher") else "bad")
+        cards.append({"key": k, "question": t("trends.q." + k), "est": d["kind"] == "estimated",
+                      "last30": _value(t, k, p.last30), "unit": _unit(t, d), "delta": delta, "cls": cls,
+                      "svg": profile.month_svg(p), "low": _value(t, k, p.low), "high": _value(t, k, p.high)})
+    if not cards:
+        return _render("soon.html", t=t, tab="trends", title=t("nav.trends"), text=t("soon.trends"))
+    week = None
+    profs = [profile.metric_profile(conn, k) for k in WEEK_KEYS]
+    if all(profs):
+        cols = []
+        for k, p in zip(WEEK_KEYS, profs):
+            wd = p.weekday
+            worse = max if defs[k]["better"] == "lower" else min
+            present = [v for v in wd if v is not None]
+            spread = max(present) - min(present)
+            mark = wd.index(worse(present)) if spread >= (1 if not _is_minutes(k) else 5) else -1
+            cols.append([{"text": _value(t, k, v), "mark": i == mark} for i, v in enumerate(wd)])
+        week = {"heads": [t("trends.short." + k) for k in WEEK_KEYS],
+                "rows": [{"day": t("date.days")[i][:3].capitalize(), "vals": [c[i] for c in cols]} for i in range(7)]}
+    all_days = db.days_with_data(conn)
+    since, days = (all_days[-1], len(all_days)) if all_days else (since, days)
+    return _render("trends.html", t=t, tab="trends", cards=cards, week=week,
+                   since=t.long_date(date.fromisoformat(since)) if since else "", days=t.num(days))
 
 
 @app.get("/goals")

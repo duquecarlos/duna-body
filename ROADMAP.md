@@ -1,6 +1,7 @@
 # Body app — roadmap
 
 Proposed 2026-11-06 by the Body app orchestrator. Stack approved by Main under Carlos's trust (2026-11-06).
+Full Garmin history loaded 2026-11-06: 871 days (2024-06-19 → today), 391 activities.
 Status (2026-11-06, evening): **slice 1 done on real data** (Carlos signed in; 2 days, 12/12 metrics, activities).
 **Design round 1 open:** principles in `docs/DESIGN.md`, research in `docs/research/`, mock in `design/mocks/v1/`.
 Waiting for Carlos's notes on the mock and his answers to the goal questions.
@@ -48,7 +49,7 @@ Out of scope for now: medical advice, food logging, manual metric entry, social 
 | 2 | **Design system + shell**: Duna tokens, Hanken Grotesk, light/dark without flash, bottom tabs / left rail, interaction states (ui-interaccion-v1), return-to-same-spot, installable PWA on the S25 over LAN; **i18n es-CO (default) + en**, language as a person setting | Shell passes 375 px + measured hover/focus checks, both languages |
 | 3 | **Hoy + Día** on real data with ≈ readiness hero and "cómo lo calculo"; every figure drills to its day and back | Carlos uses it a morning |
 | 4 | **Turnos**: import Personal desk JSON (`C:\Personal\enel\turnos`, FORMATO.md) with one-tap confirm; strip chart; night-vs-day comparison; ≈ recovery days with "cómo lo calculo" | First real schedule imported and confirmed |
-| 5 | **Tendencias**: per-metric 7/30/90 with baseline band and night shading; all 12 metrics | |
+| 5 | **Tendencias**: first pass done 2026-11-06 on the whole history (871 days since 2024-06-19): last 30 days vs your history, a monthly line over your normal range, your typical week. Next: 7/30/90 switch, night-shift shading, all measures, drill to days | |
 | 6 | **Metas**: goals, plan items with shift context, daily check-off on Hoy, weekly check in words | His real goals entered from his answers |
 | 7 | **Assistant** to agent-ui-v1 (read tools for every screen; proposes plan changes, he confirms) and tutorials-v1 | |
 | 7b | **Connections**: links out to other Duna apps where they hold the answer (night week → extra pay in Finanzas Personal); a read-only Body summary for other apps and for a future "Duna personal" | One working link each way with Finanzas |

@@ -116,5 +116,22 @@
   ],
   "date.long": "{weekday}, {month} {day}",
   "foot.not_medical": "Body shows patterns in your numbers. It is not medical advice.",
-  "how.need_short": "what you needed"
+  "how.need_short": "what you needed",
+  "trends.sub": "Your history since {since} · {days} days of watch data",
+  "trends.last30": "last 30 days",
+  "trends.vs_hist": "vs. your history",
+  "trends.monthly": "Monthly average",
+  "trends.normal": "Your normal range ({low}–{high})",
+  "trends.week_q": "What does your typical week look like?",
+  "trends.week_note": "Averages over your whole history by weekday. In bold, the lowest day in each column.",
+  "trends.q.readiness": "How is your readiness trending?",
+  "trends.q.sleep_minutes": "Are you sleeping more or less than before?",
+  "trends.q.hrv_last_night": "Is your heart rate variability improving?",
+  "trends.q.resting_hr": "Is your resting heart rate going down?",
+  "trends.q.body_battery_wake": "How much energy do you wake up with?",
+  "trends.q.steps": "Are you moving more than before?",
+  "trends.short.readiness": "Ready",
+  "trends.short.sleep_minutes": "Sleep",
+  "trends.short.hrv_last_night": "HRV",
+  "trends.short.resting_hr": "RHR"
 }
