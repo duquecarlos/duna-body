@@ -1,19 +1,33 @@
 {% extends "base.html" %}
 {% block title %}{{ t('nav.trends') }} · {{ t('app.name') }}{% endblock %}
 {% block main %}
-<div class="top"><div><h1>{{ t('nav.trends') }}</h1><p class="sub">{{ t('trends.sub', since=since, days=days) }}</p></div></div>
+<div class="top"><div>
+  <h1>{{ t('nav.trends') }}</h1>
+  {% if month_title %}<p class="sub">{{ t('trends.month_sub', month=month_title) }}</p>
+  {% else %}<p class="sub">{{ t('trends.sub', since=since, days=days) }}</p>{% endif %}
+</div></div>
+
+<div class="seg" style="margin-bottom:12px">
+  {% for x in ranges %}<a class="btn{% if r == x %} on{% endif %}" href="/trends{% if x != 'all' %}?r={{ x }}{% endif %}"{% if r == x %} aria-current="page"{% endif %}>{{ t('trends.r.' + x) }}</a>{% endfor %}
+</div>
+{% if month_title %}<p style="margin:0 0 12px"><a href="/trends">{{ t('trends.back_hist') }}</a></p>{% endif %}
 
 {% for c in cards %}
 <div class="card" id="{{ c.key }}">
   <div class="q">{{ c.question }}</div>
   <div class="row" style="align-items:flex-end">
-    <div>{% if c.est %}<span class="approx fig">≈</span>{% endif %}<span class="fig">{{ c.last30 }}</span><span class="u">{{ c.unit }} · {{ t('trends.last30') }}</span></div>
+    <div>{% if c.est and c.last30 != '—' %}<span class="approx fig">≈</span>{% endif %}<span class="fig">{{ c.last30 }}</span><span class="u">{{ c.unit }} · {{ fig_label }}</span></div>
     <div class="delta {{ c.cls }}" style="text-align:right">{{ c.delta }}</div>
   </div>
   {{ c.svg|safe }}
-  <div class="legend" style="margin-top:4px"><span><i style="background:var(--body);height:3px;vertical-align:3px"></i>{{ t('trends.monthly') }}</span><span><i style="background:var(--inset)"></i>{{ t('trends.normal', low=c.low, high=c.high) }}</span></div>
+  <div class="legend" style="margin-top:4px">
+    <span><i style="background:var(--body);height:3px;vertical-align:3px"></i>{{ t('trends.monthly') if r == 'all' else t('trends.daily') }}</span>
+    <span><i style="background:var(--inset)"></i>{{ t('trends.normal', low=c.low, high=c.high) }}</span>
+    {% if nights %}<span><i style="background:var(--night);opacity:.35"></i>{{ t('trends.nights') }}</span>{% endif %}
+  </div>
 </div>
 {% endfor %}
+<p class="note">{{ t('trends.tap_month') if r == 'all' else t('trends.tap_day') }}</p>
 
 {% if week %}
 <div class="card">

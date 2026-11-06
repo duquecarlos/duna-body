@@ -45,6 +45,10 @@ class T:
         h, m = divmod(int(round(v)), 60)
         return f"{h} h {m:02d}" if h else f"{m} min"
 
+    def month_year(self, d: date) -> str:
+        m = self("date.months")[d.month - 1]
+        return f"{m[:1].upper()}{m[1:]} {d.year}"
+
     def long_date(self, d: date) -> str:
         return self("date.long", weekday=self("date.days")[d.weekday()], day=d.day,
                     month=self("date.months")[d.month - 1])

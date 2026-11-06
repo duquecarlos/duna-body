@@ -76,5 +76,80 @@ def month_svg(p: MetricProfile, width: int = 320, height: int = 120, color: str 
     return (f'<svg viewBox="0 0 {width} {top + h + 6}" width="100%" height="110" role="img" preserveAspectRatio="none" '
             f'style="display:block;margin-top:8px">{band}'
             f'<polyline fill="none" style="stroke:{color}" stroke-width="2.2" vector-effect="non-scaling-stroke" '
-            f'stroke-linejoin="round" points="{line}"/></svg>'
+            f'stroke-linejoin="round" points="{line}"/>{_hits([(i * step, f"/trends?m={m[0]}#{p.key}") for i, m in enumerate(p.months)], step, top + h + 6, [m[0] for m in p.months])}</svg>'
             f'<div class="row k" style="font-size:12px"><span>{first}</span><span>{lastm}</span></div>')
+
+
+def _hits(points: list[tuple[float, str]], step: float, height: float, titles: list[str]) -> str:
+    """Invisible full-height tap targets, one per point, each a link (URLs carry dates only, never values)."""
+    return "".join(f'<a href="{href}"><title>{title}</title><rect x="{max(0, x - step / 2):.1f}" y="0" '
+                   f'width="{step:.1f}" height="{height:.1f}" style="fill:transparent"/></a>'
+                   for (x, href), title in zip(points, titles))
+
+
+@dataclass
+class Window:
+    start: date
+    end: date
+    values: dict[str, float]               # day -> value, only days that have one
+    mean: float | None
+    prev_mean: float | None                # the window of the same length just before
+
+
+def window(conn, key: str, start: date, end: date, person_id: int = db.DEFAULT_PERSON_ID) -> Window:
+    vals = db.series(conn, key, start.isoformat(), end.isoformat(), person_id)
+    n = (end - start).days + 1
+    prev = db.series(conn, key, (start - timedelta(n)).isoformat(), (start - timedelta(1)).isoformat(), person_id)
+    return Window(start, end, vals, statistics.fmean(vals.values()) if vals else None,
+                  statistics.fmean(prev.values()) if prev else None)
+
+
+def window_svg(w: Window, low: float, high: float, nights: set[str] = frozenset(), width: int = 320,
+               height: int = 120, color: str = "var(--body)") -> str:
+    """Daily line over the window with your normal range as a band; night shifts shaded; a missing day breaks the
+    line (honest gaps, never a zero). Every day is a tap target that opens that day."""
+    days = [w.start + timedelta(i) for i in range((w.end - w.start).days + 1)]
+    pts = list(w.values.values())
+    if len(pts) < 2:
+        return ""
+    lo, hi = min(min(pts), low), max(max(pts), high)
+    pad = (hi - lo) * 0.12 or 1
+    lo, hi = lo - pad, hi + pad
+    top, h = 6, height - 26
+    full = top + h + 6
+
+    def y(v: float) -> float:
+        return top + h - (v - lo) / (hi - lo) * h
+
+    step = width / max(1, len(days) - 1)
+    out = [f'<rect x="0" y="{y(high):.1f}" width="{width}" height="{max(1, y(low) - y(high)):.1f}" '
+           f'style="fill:var(--inset)"/>']
+    for i, d in enumerate(days):
+        if d.isoformat() in nights:
+            out.append(f'<rect x="{max(0, i * step - step / 2):.1f}" y="0" width="{step:.1f}" height="{full:.1f}" '
+                       f'style="fill:var(--night);opacity:.18"/>')
+    runs, cur = [], []
+    for i, d in enumerate(days):
+        v = w.values.get(d.isoformat())
+        if v is None:
+            if cur:
+                runs.append(cur)
+            cur = []
+        else:
+            cur.append(f"{i * step:.1f},{y(v):.1f}")
+    if cur:
+        runs.append(cur)
+    for r in runs:
+        if len(r) == 1:
+            x, yy = r[0].split(",")
+            out.append(f'<line x1="{x}" y1="{yy}" x2="{x}" y2="{yy}" style="stroke:{color}" stroke-width="5" '
+                       f'stroke-linecap="round" vector-effect="non-scaling-stroke"/>')
+        else:
+            out.append(f'<polyline fill="none" style="stroke:{color}" stroke-width="2.2" '
+                       f'vector-effect="non-scaling-stroke" stroke-linejoin="round" points="{" ".join(r)}"/>')
+    out.append(_hits([(i * step, f"/day/{d.isoformat()}") for i, d in enumerate(days)], step, full,
+                     [d.isoformat() for d in days]))
+    return (f'<svg viewBox="0 0 {width} {full}" width="100%" height="110" role="img" preserveAspectRatio="none" '
+            f'style="display:block;margin-top:8px">{"".join(out)}</svg>'
+            f'<div class="row k" style="font-size:12px"><span>{days[0].isoformat()}</span>'
+            f'<span>{days[-1].isoformat()}</span></div>')

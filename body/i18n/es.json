@@ -133,5 +133,18 @@
   "trends.short.readiness": "Prep.",
   "trends.short.sleep_minutes": "Sueño",
   "trends.short.hrv_last_night": "Variab.",
-  "trends.short.resting_hr": "Pulso"
+  "trends.short.resting_hr": "Pulso",
+  "trends.vs_prev": "vs. el periodo anterior",
+  "trends.avg_n": "promedio, últimos {n} días",
+  "trends.month_avg": "promedio en {month}",
+  "trends.daily": "Diario",
+  "trends.r.7": "7 días",
+  "trends.r.30": "30 días",
+  "trends.r.90": "90 días",
+  "trends.r.all": "Historial",
+  "trends.nights": "Turno de noche",
+  "trends.tap_month": "Toca un mes para ver sus días.",
+  "trends.tap_day": "Toca un día para abrirlo.",
+  "trends.back_hist": "← Todo el historial",
+  "trends.month_sub": "{month}, día por día"
 }

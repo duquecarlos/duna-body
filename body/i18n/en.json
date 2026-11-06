@@ -133,5 +133,18 @@
   "trends.short.readiness": "Ready",
   "trends.short.sleep_minutes": "Sleep",
   "trends.short.hrv_last_night": "HRV",
-  "trends.short.resting_hr": "RHR"
+  "trends.short.resting_hr": "RHR",
+  "trends.vs_prev": "vs. the period before",
+  "trends.avg_n": "average, last {n} days",
+  "trends.month_avg": "average in {month}",
+  "trends.daily": "Daily",
+  "trends.r.7": "7 days",
+  "trends.r.30": "30 days",
+  "trends.r.90": "90 days",
+  "trends.r.all": "History",
+  "trends.nights": "Night shift",
+  "trends.tap_month": "Tap a month to see its days.",
+  "trends.tap_day": "Tap a day to open it.",
+  "trends.back_hist": "← Whole history",
+  "trends.month_sub": "{month}, day by day"
 }

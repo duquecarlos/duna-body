@@ -219,10 +219,50 @@ TREND_KEYS = ["readiness", "sleep_minutes", "hrv_last_night", "resting_hr", "bod
 WEEK_KEYS = ["readiness", "sleep_minutes", "hrv_last_night", "resting_hr"]
 
 
+RANGES = ["7", "30", "90", "all"]
+
+
+def _compare(t: T, k: str, d: dict, value, ref, spread: float, vs_key: str) -> tuple[str, str]:
+    if value is None or ref is None:
+        return "", "flat"
+    diff = value - ref
+    if abs(diff) < (spread or 1) * 0.15:
+        return t("delta.same"), "flat"
+    amount = t.minutes(abs(diff)) if _is_minutes(k) else t.num(abs(diff))
+    cls = "flat" if d["better"] == "neutral" else ("good" if (diff > 0) == (d["better"] == "higher") else "bad")
+    return f"{'↑' if diff > 0 else '↓'} {amount} {t(vs_key)}", cls
+
+
+def _nights(conn, start: date, end: date) -> set[str]:
+    return {r["day"] for r in conn.execute("SELECT day FROM shift WHERE person_id = ? AND kind = 'night' AND day "
+                                           "BETWEEN ? AND ?", (db.DEFAULT_PERSON_ID, start.isoformat(),
+                                                               end.isoformat()))}
+
+
 @app.get("/trends")
-def trends():
+def trends(r: str = "all", m: str | None = None):
+    """r = 7 | 30 | 90 | all (the whole history, monthly). m = YYYY-MM opens one month day by day (from a tap on
+    the monthly line). The URL carries a range or a month, never a value."""
     conn, person, t = _ctx()
     defs = _defs(conn)
+    last = _latest_day(conn)
+    month = None
+    if m:
+        try:
+            month = date.fromisoformat(m + "-01")
+        except ValueError:
+            raise HTTPException(404)
+        r = "month"
+    elif r not in RANGES:
+        r = "all"
+    start = end = None
+    if month:
+        start = month
+        end = (month.replace(day=28) + timedelta(4)).replace(day=1) - timedelta(1)
+    elif r != "all" and last:
+        end = date.fromisoformat(last)
+        start = end - timedelta(int(r) - 1)
+    nights = _nights(conn, start, end) if start else set()
     cards, since, days = [], None, 0
     for k in TREND_KEYS:
         p = profile.metric_profile(conn, k)
@@ -231,19 +271,20 @@ def trends():
         d = defs[k]
         since = since or p.first_day
         days = max(days, p.days)
-        delta, cls = "", "flat"
-        if p.last30 is not None:
-            diff = p.last30 - p.all_mean
-            spread = (p.high - p.low) or 1
-            if abs(diff) < spread * 0.15:
-                delta = t("delta.same")
+        spread = p.high - p.low
+        if start:
+            w = profile.window(conn, k, start, end)
+            if month:
+                delta, cls = _compare(t, k, d, w.mean, p.all_mean, spread, "trends.vs_hist")
             else:
-                amount = t.minutes(abs(diff)) if _is_minutes(k) else t.num(abs(diff))
-                delta = f"{'↑' if diff > 0 else '↓'} {amount} {t('trends.vs_hist')}"
-                cls = "flat" if d["better"] == "neutral" else ("good" if (diff > 0) == (d["better"] == "higher") else "bad")
+                delta, cls = _compare(t, k, d, w.mean, w.prev_mean, spread, "trends.vs_prev")
+            fig, svg = w.mean, profile.window_svg(w, p.low, p.high, nights)
+        else:
+            delta, cls = _compare(t, k, d, p.last30, p.all_mean, spread, "trends.vs_hist")
+            fig, svg = p.last30, profile.month_svg(p)
         cards.append({"key": k, "question": t("trends.q." + k), "est": d["kind"] == "estimated",
-                      "last30": _value(t, k, p.last30), "unit": _unit(t, d), "delta": delta, "cls": cls,
-                      "svg": profile.month_svg(p), "low": _value(t, k, p.low), "high": _value(t, k, p.high)})
+                      "last30": _value(t, k, fig), "unit": _unit(t, d) if fig is not None else "", "delta": delta,
+                      "cls": cls, "svg": svg, "low": _value(t, k, p.low), "high": _value(t, k, p.high)})
     if not cards:
         return _render("soon.html", t=t, tab="trends", title=t("nav.trends"), text=t("soon.trends"))
     week = None
@@ -261,8 +302,16 @@ def trends():
                 "rows": [{"day": t("date.days")[i][:3].capitalize(), "vals": [c[i] for c in cols]} for i in range(7)]}
     all_days = db.days_with_data(conn)
     since, days = (all_days[-1], len(all_days)) if all_days else (since, days)
-    return _render("trends.html", t=t, tab="trends", cards=cards, week=week,
-                   since=t.long_date(date.fromisoformat(since)) if since else "", days=t.num(days))
+    if month:
+        fig_label = t("trends.month_avg", month=t.month_year(month))
+    elif start:
+        fig_label = t("trends.avg_n", n=r)
+    else:
+        fig_label = t("trends.last30")
+    return _render("trends.html", t=t, tab="trends", cards=cards, week=week if r == "all" else None,
+                   since=t.long_date(date.fromisoformat(since)) if since else "", days=t.num(days),
+                   r=r, ranges=RANGES, fig_label=fig_label, nights=bool(nights),
+                   month_title=t.month_year(month) if month else None)
 
 
 @app.get("/goals")
