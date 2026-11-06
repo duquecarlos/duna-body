@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}{{ t('history.title') }} · {{ t('app.name') }}{% endblock %}
+{% block main %}
+<div class="top"><div>
+  <h1>{{ t('history.title') }}</h1>
+  <p class="sub">{{ coverage_line }}</p>
+</div></div>
+
+<div class="card">
+  <div class="q">{{ hero_finding or t('history.no_findings') }}</div>
+  <p class="note" style="margin:6px 0 0">{{ gap_line }} · {{ t('history.activities_count', n=activity_count) }}</p>
+</div>
+
+{% if training %}
+<h2>{{ t('history.training_title') }}</h2>
+<div class="card">
+  <div class="q">{{ t('history.training_q') }}</div>
+  {% for m in training.months %}
+  <a href="{{ m.href }}" style="display:block;margin-top:10px;text-decoration:none">
+    <div class="row k"><span>{{ m.month }}</span><span>{{ m.minutes }} · {{ m.sessions }}</span></div>
+    <div class="stage">{% for s in m.segs %}<i style="width:{{ s.pct }}%;background:{{ s.color }}" title="{{ s.label }}"></i>{% endfor %}</div>
+  </a>
+  {% endfor %}
+  <div class="legend" style="margin-top:10px">
+    {% for ty in training.types %}<span><i style="background:{{ ty.color }}"></i>{{ ty.label }} · {{ ty.minutes }}{% if ty.km %} · {{ ty.km }}{% endif %}</span>{% endfor %}
+  </div>
+  <p class="note" style="margin-top:8px">{{ t('trends.tap_month') }}</p>
+</div>
+
+<div class="card">
+  {% if training.usual_week %}<p class="read" style="margin:0 0 6px">{{ training.usual_week }}</p>{% endif %}
+  {% if training.frequent %}<p class="read" style="margin:0 0 6px">{{ t('history.training_frequent', kind=training.frequent) }}</p>{% endif %}
+  {% if training.longest %}<p class="read" style="margin:0">{{ t('history.training_longest', kind=training.longest) }}</p>{% endif %}
+</div>
+
+<div class="card">
+  <div class="q">{{ t('history.training_yoy_q') }}</div>
+  {% if training.yoy %}
+  <p class="read" style="margin:0 0 4px">{{ training.yoy.now }}</p>
+  <p class="read" style="margin:0">{{ training.yoy.prev }}</p>
+  {% else %}
+  <p class="note" style="margin:0">{{ t('history.training_yoy_none') }}</p>
+  {% endif %}
+</div>
+{% endif %}
+
+<h2>{{ t('history.patterns_title') }}</h2>
+{% if patterns %}
+<div class="card">
+  <div class="q">{{ t('history.patterns_weekday_q') }}</div>
+  <table class="parts">
+    <tr><th></th>{% for h in patterns.heads %}<th>{{ h }}</th>{% endfor %}</tr>
+    {% for d in patterns.weekday %}<tr><td>{{ d.label }}</td>{% for v in d.vals %}<td class="nw{% if v.mark %} pts{% endif %}">{{ v.text }}</td>{% endfor %}</tr>{% endfor %}
+  </table>
+</div>
+<div class="card">
+  <div class="q">{{ t('history.patterns_month_q') }}</div>
+  <table class="parts">
+    <tr><th></th>{% for h in patterns.heads %}<th>{{ h }}</th>{% endfor %}</tr>
+    {% for d in patterns.month %}<tr><td>{{ d.label }}</td>{% for v in d.vals %}<td class="nw{% if v.mark %} pts{% endif %}">{{ v.text }}</td>{% endfor %}</tr>{% endfor %}
+  </table>
+</div>
+{% if findings %}
+<div class="card">
+  {% for f in findings %}<p class="read" style="margin:{% if loop.first %}0{% else %}6px{% endif %} 0 0">{{ f }}</p>{% endfor %}
+</div>
+{% endif %}
+{% else %}
+<div class="card empty">{{ t('history.patterns_none') }}</div>
+{% endif %}
+
+<h2>{{ t('history.shift_title') }}</h2>
+{% if shift.has_shifts %}
+{% for k in shift.kinds %}
+<div class="shift {{ k.kind }}" style="display:block">
+  <div class="q">{{ k.kind_label }} · {{ k.days }}</div>
+  <div class="grid2 grid3">
+    {% for m in k.metrics %}<div class="card" style="margin:0"><div class="k">{{ m.label }}</div><div class="fig">{{ m.value }}{% if m.unit %}<span class="u">{{ m.unit }}</span>{% endif %}</div></div>{% endfor %}
+  </div>
+</div>
+{% endfor %}
+{% else %}
+<div class="card empty">{{ t('history.shift_empty') }} <a href="/shifts" style="text-decoration:underline">{{ t('nav.shifts') }}</a></div>
+{% endif %}
+{% endblock %}

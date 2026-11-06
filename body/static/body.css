@@ -87,7 +87,9 @@ a.card:active{background:var(--wash)}
 .shift{display:flex;align-items:center;gap:10px;border-radius:10px;padding:10px 12px;margin-bottom:10px;border:1px solid var(--soft);position:relative;overflow:hidden;background:var(--card)}
 .shift::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--line)}
 .shift.night{background:var(--night-tint)} .shift.night::before{background:var(--night)}
-.shift.day{background:var(--day-tint)} .shift.day::before{background:var(--amber)}
+.shift.day,.shift.morning,.shift.afternoon{background:var(--day-tint)}
+.shift.day::before,.shift.morning::before,.shift.afternoon::before{background:var(--amber)}
+.shift.off,.shift.other{background:var(--wash)} .shift.off::before,.shift.other::before{background:var(--line)}
 .bars{display:flex;gap:4px;align-items:center;margin-top:8px}
 .bars span{height:6px;border-radius:999px;background:var(--body)}
 table.parts{width:100%;border-collapse:collapse;font-size:14px}
