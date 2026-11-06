@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}{{ t('nav.shifts') }} · {{ t('app.name') }}{% endblock %}
+{% block main %}
+<div class="top"><div><h1>{{ t('nav.shifts') }}</h1></div></div>
+
+{% if batch %}
+<div class="card">
+  <div class="badge">{{ t('shifts.confirm_badge') }}</div>
+  <p class="read" style="margin-top:6px">{{ t('shifts.confirm_summary', date=received_date, days=preview.day_count, nights=preview.night_count) }}</p>
+  {% if preview.kept_days %}
+  <p class="k" style="margin-top:8px">{{ t('shifts.kept_note', n=preview.kept_days|length) }}</p>
+  {% endif %}
+  <div class="confirm-actions">
+    <form method="post" action="/shifts/confirm">
+      <input type="hidden" name="batch_id" value="{{ batch.id }}">
+      <button type="submit" class="btn on">{{ t('shifts.confirm_btn') }}</button>
+    </form>
+    <form method="post" action="/shifts/dismiss">
+      <input type="hidden" name="batch_id" value="{{ batch.id }}">
+      <button type="submit" class="btn">{{ t('shifts.dismiss_btn') }}</button>
+    </form>
+  </div>
+</div>
+{% else %}
+<div class="card empty">
+  <div class="badge">{{ t('soon.badge') }}</div>
+  <p class="read" style="margin-top:6px">{{ t('soon.shifts') }}</p>
+  {% if confirmed_date %}
+  <p class="k" style="margin-top:8px">{{ t('shifts.last_confirmed', date=confirmed_date) }}</p>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

@@ -65,6 +65,79 @@ anyone can open, so the LAN line shows `<this-PC-IP>` instead), and that the LAN
 `CLAUDE.md`'s Tier 1 paragraph gained one item: "which network address the web app listens on `body/listen.py`",
 kept as one comma-separated paragraph.
 
+## BODY-TURNOS-IMPORT-1 -- schema, propose/confirm, the Turnos confirm card (2026-11-06)
+
+Carries out BODY-TURNOS-IMPORT-OBS-1 (OBSERVED, 2026-11-06), approved by the orchestrator under
+ORCH-CARLOS-DELEGATES-TIER-1-1. Stage two of the Turnos import: the shift files Personal extracts from Carlos's
+schedule email (format in its `FORMATO.md`) can now be proposed and confirmed into `shift`, never written silently
+(docs/DESIGN.md rule 1).
+
+**Schema (`body/db.py`, additive only, as written):**
+```
+CREATE TABLE IF NOT EXISTS shift_batch (
+    id INTEGER PRIMARY KEY, person_id INTEGER NOT NULL REFERENCES person(id), file_name TEXT NOT NULL,
+    received TEXT NOT NULL, extracted_at TEXT NOT NULL, source_person TEXT, source_timezone TEXT,
+    status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed','confirmed','dismissed','superseded')),
+    day_count INTEGER NOT NULL, created_at TEXT NOT NULL, decided_at TEXT,
+    UNIQUE (person_id, file_name, received, extracted_at)
+);
+CREATE TABLE IF NOT EXISTS shift_batch_item (
+    id INTEGER PRIMARY KEY, batch_id INTEGER NOT NULL REFERENCES shift_batch(id), day TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('morning','afternoon','night','day','off','other')), code TEXT,
+    start_local TEXT, end_local TEXT, holiday INTEGER NOT NULL DEFAULT 0, sunday INTEGER NOT NULL DEFAULT 0,
+    note TEXT, outcome TEXT CHECK (outcome IN ('applied','manual_kept','newer_kept') OR outcome IS NULL)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shift_batch_item_slot ON shift_batch_item (batch_id, day, COALESCE(start_local, ''));
+```
+`_migrate()` adds `shift.batch_id INTEGER REFERENCES shift_batch(id)` behind the existing guarded-ADD-COLUMN
+check, then `CREATE UNIQUE INDEX IF NOT EXISTS idx_shift_slot ON shift (person_id, day, COALESCE(start_local, ''))`
+-- the index BODY-TURNOS-IMPORT-OBS-1 found missing, which is why two off-day rows (`start_local` NULL) for the
+same person and day did not collide on the primary key alone. **No DELETE, ever, in the migration**: the index
+creation is wrapped in `try/except sqlite3.IntegrityError: pass`, leaving any colliding rows untouched. The
+missing-index state is made visible by `body.shift_import.slot_index_ok(conn)`, and `confirm()` raises
+`SlotIndexMissing` and refuses to write until the index exists.
+
+**`body/shift_import.py` (new, added to Tier 1):** `propose(conn, path, person_id)` validates the whole file
+before any write and is a no-op (returns the existing batch id) on a repeat of the same
+`(person_id, file_name, received, extracted_at)`, dismissed or not. A batch's precedence is the pair
+`(received, extracted_at)` compared in that order. Refusal rules enforced, each refusing the whole file with
+zero rows written: unknown `kind`; malformed `day`; `start_local`'s date not matching `day`; non-null
+`start_local` on an `off` row or null `start_local` on a non-`off` row; two entries with the same `day` and the
+same `start_local` (null counts as one slot); an `off` entry and a working entry on the same `day`; a missing
+`source.received` or `source.extracted_at`. Two working entries on one day with different `start_local` are
+allowed. `confirm(conn, batch_id)` runs day by day in one transaction: a day with a `manual` row in `shift` is
+left alone (item outcome `manual_kept`); a day already carrying a newer confirmed batch's rows (by the
+precedence pair) is left alone (`newer_kept`); otherwise that day's `source LIKE 'personal:%'` rows (never a
+manual row) are deleted and the batch's items inserted with `source = 'personal:<file_name>'` and `batch_id`
+(`applied`). A previously confirmed batch whose every applied day has since been replaced is marked
+`superseded`. `dismiss(conn, batch_id)` retires a `proposed` batch. CLI: `python -m body.shift_import [--dir PATH]
+[--person-id N]`, reading `BODY_SHIFTS_DIR` itself (no default path in code), proposing every `turnos-*.json` in
+`(received, extracted_at)` order and printing counts only (files read, batches proposed, already known, refused)
+plus the refusing rule and day for each refusal -- never other file content. A `codigos.json` sidecar is ignored
+by the glob itself.
+
+**Web:** `/shifts` (new `body/templates/shifts.html`) shows a confirm card -- the mail's received date, day and
+night counts, and how many days a manual edit will keep -- with «Confirmar»/«Descartar» POSTs to
+`/shifts/confirm` and `/shifts/dismiss` (`batch_id` only, the `/settings/language` parse_qs + 303 pattern); with
+no proposed batch it keeps `soon.html`'s content plus the last confirmed batch's date if one exists. Hoy's static
+shift-none line becomes a link to `/shifts` ("Llegaron tus turnos: revísalos →" / "Your shifts arrived: review
+them →") when a batch is proposed, otherwise unchanged. Every new string is in both `body/i18n/es.json` and
+`en.json`. `CLAUDE.md`'s Tier 1 paragraph gained "the import that brings another app's shift files in
+`body/shift_import.py`", kept as one comma-separated paragraph.
+
+**Tests:** `tests/test_shift_import.py`, 25 tests, plus two invented fixtures (`turnos-demo-a.json`,
+`turnos-demo-b.json`; b's `received` is later and overlaps two of a's four days). Covers: idempotent re-propose;
+a same-`received`-later-`extracted_at` re-extraction winning after confirm; each decision-3 refusal rule with
+zero rows written; two slots on one day; newer-wins and older-marks-`newer_kept`; manual row kept; superseded;
+dismiss; the slot-index regression via raw SQL; the `IntegrityError` path leaving rows untouched and blocking
+confirm; `/shifts` and Hoy in both languages; the confirm/dismiss POSTs; the CLI with no folder configured.
+
+**Gate:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 58 tests, OK, on this slice's final tree.
+
+Stopped on the branch before merging (`feat/body-turnos-import-1`, slice commit `18d92bc1b75fe05a364a9262bce332583d5f88d1`):
+a schema change and new customer-facing strings both trip merge policy A, and the spec's own GATE section says to
+stop here rather than merge. The orchestrator merges.
+
 Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 16 tests, OK (12 before this slice, 4 added
 here).
 
@@ -138,3 +211,23 @@ new pattern invented), checking `/history` returns 200 with the right title text
 
 Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 33 tests, OK (16 before this slice, 17
 added here).
+
+## BODY-TURNOS-IMPORT-1-M -- land BODY-TURNOS-IMPORT-1 (2026-11-06)
+
+BODY-TURNOS-IMPORT-1 stopped on `feat/body-turnos-import-1` (branch tip `ce0b9bf6b3fe35300c80f7b4f8321387bcb7c677`)
+AWAITING_APPROVAL, tripping merge policy A on a schema change and new customer-facing strings, per the GATE section
+of its own spec. This slice carries no code change: approved by the orchestrator under
+ORCH-CARLOS-DELEGATES-TIER-1-1 after reviewing the diff (13 files, +901/-6) against `main` -- the schema additions
+in `body/db.py` (`shift_batch`, `shift_batch_item` with its slot index, `shift.batch_id` via the guarded ADD
+COLUMN, and `idx_shift_slot` inside a try/except IntegrityError with no DELETE), `body/shift_import.py`'s one
+DELETE (a day's `source LIKE 'personal:%'` rows inside `confirm()`, never a manual row), the confirm card, the Hoy
+notice, the i18n pair and the `CLAUDE.md` Tier 1 item, all as specced -- and merged unchanged.
+
+`main` had not moved since the branch was cut: `git merge-base main feat/body-turnos-import-1` and `git rev-parse
+main` both resolved to `6f487efecdd43bbfd9670fbaf131508de705e1b9`, so no merge of `main` into the branch was
+needed.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 58 tests, OK, run once on the branch tip
+before merging.
+
+Merge commit: see `git log -1 main` after this entry.

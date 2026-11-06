@@ -82,6 +82,9 @@ a.card:active{background:var(--wash)}
 .more{display:block;text-align:center;padding:11px;font-weight:600;font-size:14.5px;border:1px solid var(--soft);border-radius:10px;background:var(--card);min-height:44px}
 @media (hover:hover){.more:hover{background:var(--wash);border-color:var(--line)}}
 .note{color:var(--muted);font-size:14px}
+.confirm-actions{display:flex;gap:8px;margin-top:12px}
+.confirm-actions form{flex:1}
+.confirm-actions .btn{width:100%}
 .empty{border-style:dashed;color:var(--ink2)}
 .badge{font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
 .shift{display:flex;align-items:center;gap:10px;border-radius:10px;padding:10px 12px;margin-bottom:10px;border:1px solid var(--soft);position:relative;overflow:hidden;background:var(--card)}
