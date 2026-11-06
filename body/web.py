@@ -400,16 +400,22 @@ def _kind_label(t: T, info: dict | None) -> str:
 
 
 def _finding_text(t: T, defs: dict, f: dict) -> str:
-    label = t("metric." + f["metric"])
+    """A plain sentence, not "Your toughest {label}": the metric in its sentence form (never title case
+    mid-sentence) and the direction said from `better` -- a "lower is better" metric reads worst where it
+    runs highest, a "higher is better" metric reads worst where it runs lowest."""
+    metric = t("metric." + f["metric"] + ".sentence")
     value = _value(t, f["metric"], f["value"])
     unit = _unit(t, defs[f["metric"]])
+    better = defs[f["metric"]]["better"]
+    key = f"history.find.{f['axis']}_better_{better}"
     if f["axis"] == "weekday":
-        return t("history.find.weekday", metric=label, day=t("date.days")[f["index"]], value=value, unit=unit)
-    return t("history.find.month", metric=label, month=t("date.months")[f["index"]], value=value, unit=unit)
+        return t(key, metric=metric, day=t("date.days")[f["index"]], value=value, unit=unit)
+    return t(key, metric=metric, month=t("date.months")[f["index"]], value=value, unit=unit)
 
 
 TRAINING_COLORS = ["var(--body)", "var(--night)", "var(--amber)", "var(--info)", "var(--est)"]
 OTHER_COLOR = "var(--muted)"
+TRAINING_RECENT_MONTHS = 12
 
 
 def _color_map(types: list[dict]) -> dict[str, str]:
@@ -436,13 +442,14 @@ def _training_ctx(t: T, train: dict) -> dict:
         months.append({"month": t.month_year(date.fromisoformat(m["month"] + "-01")),
                        "href": f"/trends?m={m['month']}", "sessions": t.num(m["sessions"]),
                        "minutes": t.minutes(m["minutes"]), "segs": segs})
+    months.reverse()  # newest first (BODY-HISTORIA-POLISH-1): training() builds them oldest first
     yoy, yoy_ctx = train["yoy"], None
     if yoy:
         yoy_ctx = {"now": t("history.training_yoy_now", sessions=t.num(yoy["sessions_now"]),
                              minutes=t.minutes(yoy["minutes_now"])),
                    "prev": t("history.training_yoy_prev", sessions=t.num(yoy["sessions_year_ago"]),
                              minutes=t.minutes(yoy["minutes_year_ago"]))}
-    return {"types": types, "months": months,
+    return {"types": types, "months": months[:TRAINING_RECENT_MONTHS], "months_older": months[TRAINING_RECENT_MONTHS:],
             "usual_week": (t("history.training_usual_week", n=t.num(train["usual_week_sessions"]))
                            if train["usual_week_sessions"] is not None else None),
             "longest": _kind_label(t, train["longest_kind"]) if train["longest_kind"] else None,
@@ -504,7 +511,7 @@ def history_view():
                    activity_count=t.num(cov["activity_count"]), hero_finding=hero_finding,
                    training=_training_ctx(t, train) if train else None,
                    patterns=_pattern_rows(t, defs, pat),
-                   findings=[_finding_text(t, defs, f) for f in pat["findings"]],
+                   findings=[_finding_text(t, defs, f) for f in pat["findings"][1:]],
                    shift=_shift_ctx(t, defs, shift_data))
 
 
