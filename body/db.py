@@ -14,7 +14,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS person (
     id          INTEGER PRIMARY KEY,
     display_name TEXT NOT NULL,
-    timezone    TEXT NOT NULL DEFAULT 'America/Bogota'
+    timezone    TEXT NOT NULL DEFAULT 'America/Bogota',
+    language    TEXT NOT NULL DEFAULT 'es'
 );
 
 -- What can be measured. Generic definitions, shared by every person.
@@ -159,6 +160,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     cols = {r[1] for r in conn.execute("PRAGMA table_info(metric_def)")}
     if cols and "kind" not in cols:
         conn.execute("ALTER TABLE metric_def ADD COLUMN kind TEXT NOT NULL DEFAULT 'measured'")
+    pcols = {r[1] for r in conn.execute("PRAGMA table_info(person)")}
+    if pcols and "language" not in pcols:
+        conn.execute("ALTER TABLE person ADD COLUMN language TEXT NOT NULL DEFAULT 'es'")
     conn.execute("UPDATE person SET timezone = 'America/Bogota' WHERE timezone = 'Europe/Madrid'")
 
 
@@ -257,6 +261,25 @@ def series(conn, key: str, start: str, end: str, person_id: int = DEFAULT_PERSON
         (person_id, key, start, end),
     ).fetchall()
     return {r["day"]: r["value"] for r in rows}
+
+
+def person(conn, person_id: int = DEFAULT_PERSON_ID) -> dict:
+    return dict(conn.execute("SELECT * FROM person WHERE id = ?", (person_id,)).fetchone())
+
+
+def set_language(conn, lang: str, person_id: int = DEFAULT_PERSON_ID) -> None:
+    with conn:
+        conn.execute("UPDATE person SET language = ? WHERE id = ?", (lang, person_id))
+
+
+def day_values(conn, day: str, person_id: int = DEFAULT_PERSON_ID) -> dict[str, float]:
+    return {r["metric_key"]: r["value"] for r in conn.execute(
+        "SELECT metric_key, value FROM daily_metric WHERE person_id=? AND day=?", (person_id, day))}
+
+
+def last_sync(conn, person_id: int = DEFAULT_PERSON_ID) -> str | None:
+    r = conn.execute("SELECT MAX(fetched_at) AS t FROM raw_payload WHERE person_id=?", (person_id,)).fetchone()
+    return r["t"] if r else None
 
 
 def days_with_data(conn: sqlite3.Connection, person_id: int = DEFAULT_PERSON_ID) -> list[str]:

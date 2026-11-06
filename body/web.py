@@ -1,146 +1,260 @@
-"""The page. Local only: http://127.0.0.1:8770 (add --lan to open it on the phone at home).
+"""Body web app. Local only: http://127.0.0.1:8770 (add --lan to open it on the phone at home).
 
     python -m body.web
     python -m body.web --lan
+
+Screens follow docs/DESIGN.md. Every word comes from body/i18n (es default, en full version).
+Health values never go into URLs or logs (access log is off; URLs carry only dates).
 """
+from __future__ import annotations
+
 import argparse
 from datetime import date, datetime, timedelta
-from html import escape
+from pathlib import Path
+from urllib.parse import parse_qs
+from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from . import db, garmin_adapter
+from . import db, garmin_adapter, readiness
+from .baselines import baseline
+from .i18n import LANGS, T
 
+HERE = Path(__file__).parent
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
+env = Environment(loader=FileSystemLoader(HERE / "templates"), autoescape=select_autoescape())
 
-CSS = """
-:root { --bg:#f6f7f9; --card:#fff; --ink:#15181d; --muted:#667085; --line:#e4e7ec; --accent:#0e7c66; }
-@media (prefers-color-scheme: dark) {
-  :root { --bg:#0f1115; --card:#181b21; --ink:#e8eaed; --muted:#98a2b3; --line:#2a2f37; --accent:#3fc1a0; }
-}
-* { box-sizing: border-box; }
-body { margin:0; background:var(--bg); color:var(--ink);
-       font:16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-main { max-width:720px; margin:0 auto; padding:16px; }
-header { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:16px; }
-header h1 { font-size:20px; margin:0; }
-nav a { color:var(--accent); text-decoration:none; padding:8px 10px; border:1px solid var(--line);
-        border-radius:8px; background:var(--card); display:inline-block; min-width:44px; text-align:center; }
-.day { color:var(--muted); font-size:14px; }
-.grid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:10px; }
-@media (min-width:600px) { .grid { grid-template-columns:repeat(3, minmax(0,1fr)); } }
-.card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; }
-.card .label { color:var(--muted); font-size:13px; }
-.card .value { font-size:24px; font-weight:600; font-variant-numeric:tabular-nums; margin-top:2px; }
-.card .unit { font-size:13px; color:var(--muted); font-weight:400; margin-left:3px; }
-.empty .value { color:var(--muted); font-weight:400; }
-h2 { font-size:16px; margin:20px 0 8px; }
-ul.list { list-style:none; margin:0; padding:0; }
-ul.list li { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px 12px; margin-bottom:8px; }
-.note { color:var(--muted); font-size:14px; }
-code { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:1px 5px; }
-"""
+UNITS = {"bpm": "unit.bpm", "ms": "unit.ms", "pts": "unit.pts", "steps": "unit.steps", "kcal": "unit.kcal",
+         "brpm": "unit.brpm"}
+OF_100 = {"readiness", "stress_avg", "body_battery_high", "body_battery_low", "body_battery_wake", "sleep_score"}
+TODAY_CARDS = ["sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake"]
+STAGES = [("sleep_deep_min", "metric.sleep_deep_min", "var(--night)"),
+          ("sleep_light_min", "metric.sleep_light_min", "color-mix(in srgb, var(--night) 45%, var(--card))"),
+          ("sleep_rem_min", "metric.sleep_rem_min", "var(--body)"),
+          ("sleep_awake_min", "metric.sleep_awake_min", "var(--amber)")]
 
 
-def _fmt(key: str, value):
-    if value is None:
-        return "—", ""
-    if key == "sleep_minutes":
-        h, mn = divmod(int(value), 60)
-        return f"{h} h {mn:02d}", ""
-    if key == "steps":
-        return f"{int(value):,}".replace(",", " "), ""
-    return (f"{value:.0f}" if float(value).is_integer() or abs(value) >= 10 else f"{value:.1f}"), None
+def _ctx():
+    conn = db.connect()
+    db.init(conn)
+    person = db.person(conn)
+    return conn, person, T(person.get("language", "es"))
 
 
-def _t(iso):
-    """'2026-11-04T23:00' -> 'Wed 23:00'."""
-    if not iso:
-        return "?"
+def _render(name: str, **kw) -> HTMLResponse:
+    return HTMLResponse(env.get_template(name).render(**kw))
+
+
+def _defs(conn) -> dict[str, dict]:
+    return {r["key"]: dict(r) for r in conn.execute("SELECT * FROM metric_def ORDER BY rowid")}
+
+
+def _is_minutes(key: str) -> bool:
+    return key.endswith("_min") or key == "sleep_minutes"
+
+
+def _value(t: T, key: str, v) -> str:
+    if v is None:
+        return "—"
+    return t.minutes(v) if _is_minutes(key) else t.num(v)
+
+
+def _unit(t: T, d: dict) -> str:
+    if d["key"] in OF_100:
+        return t("unit.of100")
+    if _is_minutes(d["key"]):
+        return ""
+    return t(UNITS[d["unit"]]) if d["unit"] in UNITS else d["unit"]
+
+
+def _delta(conn, t: T, d: dict, day: str, v) -> tuple[str, str]:
+    """Delta vs your 30-day average: text and css class (good/bad/flat)."""
+    if v is None:
+        return "", "flat"
+    b = baseline(conn, d["key"], day)
+    if b is None:
+        return "", "flat"
+    diff = v - b.mean
+    z = b.z(v)
+    if z is None or abs(z) < 0.5:
+        return t("delta.same"), "flat"
+    arrow = "↑" if diff > 0 else "↓"
+    amount = t.minutes(abs(diff)) if _is_minutes(d["key"]) else t.num(abs(diff))
+    better = d["better"]
+    cls = "flat" if better == "neutral" else ("good" if (diff > 0) == (better == "higher") else "bad")
+    return f"{arrow} {amount} {t('delta.vs')}", cls
+
+
+def _latest_day(conn) -> str | None:
+    days = db.days_with_data(conn)
+    return days[0] if days else None
+
+
+def _reading(t: T, r: readiness.Readiness) -> str:
+    if not r.parts:
+        return ""
+    weakest = min(r.parts, key=lambda p: p.subscore)
+    strongest = max(r.parts, key=lambda p: p.subscore)
+    out = t("today.all_normal") if weakest.subscore >= 60 else t("today.weakest", part=t("part." + weakest.key))
+    if strongest.subscore >= 80 and strongest is not weakest:
+        out += " " + t("today.strongest", part=t("part." + strongest.key))
+    return out
+
+
+def _synced(conn, person) -> str | None:
+    ts = db.last_sync(conn)
+    if not ts:
+        return None
+    tz = ZoneInfo(person.get("timezone") or "America/Bogota")
+    local = datetime.fromisoformat(ts).astimezone(tz)
+    return local.strftime("%H:%M") if local.date() == datetime.now(tz).date() else None
+
+
+def _parse_day(day: str) -> date:
     try:
-        return datetime.fromisoformat(iso).strftime("%a %H:%M")
+        return date.fromisoformat(day)
     except ValueError:
-        return iso
-
-
-def _page(title: str, body: str) -> HTMLResponse:
-    return HTMLResponse(
-        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
-        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-        "<meta name='referrer' content='no-referrer'>"
-        f"<title>{escape(title)}</title><style>{CSS}</style></head>"
-        f"<body><main>{body}</main></body></html>"
-    )
+        raise HTTPException(404)
 
 
 @app.get("/")
-def home():
-    conn = db.connect()
-    db.init(conn)
-    days = db.days_with_data(conn)
-    if not days:
-        signed = garmin_adapter.has_token()
-        step = ("Run <code>python -m body.pull</code> to bring in your days."
-                if signed else "Sign in first: <code>python -m body.login</code>, then <code>python -m body.pull</code>.")
-        return _page("Body", f"<header><h1>Body</h1></header><p class='note'>No data yet. {step}</p>")
-    return RedirectResponse(f"/day/{days[0]}")
+def today():
+    conn, person, t = _ctx()
+    day = _latest_day(conn)
+    if not day:
+        cmd = "python -m body.pull" if garmin_adapter.has_token() else "python -m body.login"
+        return _render("soon.html", t=t, tab="today", title=t("today.title"), text=t("today.empty", cmd=cmd))
+    defs = _defs(conn)
+    vals = db.day_values(conn, day)
+    r = readiness.compute(conn, day)
+    rb = baseline(conn, "readiness", day)
+    ready_avg = ready_delta = None
+    ready_cls = "flat"
+    if r.score is not None and rb:
+        ready_avg = round(rb.mean)
+        ready_delta, ready_cls = _delta(conn, t, defs["readiness"], day, r.score)
+    cards = []
+    for k in TODAY_CARDS:
+        v = vals.get(k)
+        delta, cls = _delta(conn, t, defs[k], day, v)
+        cards.append({"key": k, "label": t("metric." + k), "value": _value(t, k, v),
+                      "unit": _unit(t, defs[k]) if v is not None else "", "delta": delta, "cls": cls})
+    return _render("today.html", t=t, tab="today", day=day, date_long=t.long_date(date.fromisoformat(day)),
+                   synced=_synced(conn, person), r=r, reading=_reading(t, r), ready_avg=ready_avg,
+                   ready_delta=ready_delta, ready_cls=ready_cls, cards=cards,
+                   missing_txt=", ".join(t("part." + m) for m in r.missing))
+
+
+@app.get("/how/{day}")
+def how(day: str):
+    d = _parse_day(day)
+    conn, person, t = _ctx()
+    r = readiness.compute(conn, d.isoformat())
+    parts = []
+    for p in r.parts:
+        ref_note = ""
+        if p.key == "sleep":
+            value, ref, ref_note = t.minutes(p.value), t.minutes(p.reference), t("how.need_short")
+        else:
+            value, ref = t.num(p.value), (t.num(p.reference) if p.reference is not None else "—")
+        label = t("part." + p.key)
+        parts.append({"label": label[:1].upper() + label[1:], "value": value, "ref": ref, "ref_note": ref_note,
+                      "score": t.num(p.subscore), "weight": f"{round(p.weight * 100)} %"})
+    missing = [t("part." + m) for m in r.missing]
+    return _render("how.html", t=t, tab="today", r=r, parts=parts, date_long=t.long_date(d),
+                   missing=[m[:1].upper() + m[1:] for m in missing])
 
 
 @app.get("/day/{day}")
 def day_view(day: str):
-    try:
-        d = date.fromisoformat(day)
-    except ValueError:
-        raise HTTPException(404)
-    conn = db.connect()
-    db.init(conn)
-    data = db.load_day(conn, d.isoformat())
-    prev_d, next_d = (d - timedelta(1)).isoformat(), (d + timedelta(1)).isoformat()
-
+    d = _parse_day(day)
+    conn, person, t = _ctx()
+    key = d.isoformat()
+    data = db.load_day(conn, key)
+    vals = {m["key"]: m["value"] for m in data["metrics"]}
+    defs = _defs(conn)
     cards = []
-    for m in data["metrics"]:
-        val, unit = _fmt(m["key"], m["value"])
-        if m.get("kind") == "estimated" and m["value"] is not None:
-            val = "≈ " + val
-        unit = m["unit"] if unit is None else unit
-        cls = "card empty" if m["value"] is None else "card"
-        unit_html = f"<span class='unit'>{escape(unit)}</span>" if unit and m["value"] is not None else ""
-        cards.append(f"<div class='{cls}'><div class='label'>{escape(m['label'])}</div>"
-                     f"<div class='value'>{escape(val)}{unit_html}</div></div>")
+    for k, df in defs.items():
+        v = vals.get(k)
+        delta, cls = _delta(conn, t, df, key, v)
+        cards.append({"key": k, "label": t("metric." + k), "value": _value(t, k, v), "raw": v,
+                      "unit": _unit(t, df), "delta": delta, "cls": cls, "est": df["kind"] == "estimated"})
+    sleep = None
+    if vals.get("sleep_minutes") is not None:
+        total_stage = sum(vals.get(s[0]) or 0 for s in STAGES)
+        stages = [{"label": t(lbl), "value": t.minutes(vals[k]), "color": col,
+                   "pct": round(100 * vals[k] / total_stage, 1)}
+                  for k, lbl, col in STAGES if vals.get(k)] if total_stage else []
+        win = data["sleep"] or {}
+        window = " → ".join(x[11:16] for x in (win.get("start_local"), win.get("end_local")) if x)
+        sleep = {"total": t.minutes(vals["sleep_minutes"]), "window": window, "stages": stages}
+    acts = []
+    for a in data["activities"]:
+        bits = []
+        if a["duration_s"]:
+            bits.append(t.minutes(a["duration_s"] / 60))
+        if a["distance_m"]:
+            bits.append(f"{t.num(a['distance_m'] / 1000, 1)} km")
+        if a["avg_hr"]:
+            bits.append(f"{t.num(a['avg_hr'])} {t('unit.bpm')}")
+        acts.append({"name": a["name"] or a["type"] or "—", "detail": " · ".join(bits)})
+    shifts = [{"kind": s["kind"], "text": f"{s['kind']}{' (' + s['code'] + ')' if s['code'] else ''} "
+               f"{(s['start_local'] or '')[11:16]} → {(s['end_local'] or '')[11:16]}"} for s in data["shifts"]]
+    return _render("day.html", t=t, tab="today", date_long=t.long_date(d), cards=cards, sleep=sleep,
+                   activities=acts, shifts=shifts, has_data=any(v is not None for v in vals.values()),
+                   prev=(d - timedelta(1)).isoformat(), next=(d + timedelta(1)).isoformat())
 
-    parts = [
-        "<header><h1>Body</h1><nav>"
-        f"<a href='/day/{prev_d}' aria-label='Previous day'>&#8249;</a> "
-        f"<a href='/day/{next_d}' aria-label='Next day'>&#8250;</a></nav></header>",
-        f"<p class='day'>{escape(d.strftime('%A %d %B %Y'))}</p>",
-        f"<section class='grid'>{''.join(cards)}</section>",
-    ]
-    if data["sleep"]:
-        s = data["sleep"]
-        parts.append(f"<h2>Sleep</h2><ul class='list'><li>{escape(_t(s['start_local']))} → "
-                     f"{escape(_t(s['end_local']))}</li></ul>")
-    parts.append("<h2>Shift</h2>")
-    if data["shifts"]:
-        parts.append("<ul class='list'>" + "".join(
-            f"<li>{escape(sh['kind'])}{' (' + escape(sh['code']) + ')' if sh['code'] else ''} "
-            f"{escape(_t(sh['start_local']))} → {escape(_t(sh['end_local']))}</li>"
-            for sh in data["shifts"]) + "</ul>")
-    else:
-        parts.append("<p class='note'>No shift recorded for this day yet.</p>")
-    parts.append("<h2>Activities</h2>")
-    if data["activities"]:
-        items = []
-        for a in data["activities"]:
-            mins = f"{a['duration_s'] / 60:.0f} min" if a["duration_s"] else ""
-            km = f" · {a['distance_m'] / 1000:.1f} km" if a["distance_m"] else ""
-            hr = f" · {a['avg_hr']:.0f} bpm avg" if a["avg_hr"] else ""
-            items.append(f"<li><strong>{escape(a['name'] or a['type'] or 'Activity')}</strong><br>"
-                         f"<span class='note'>{escape(mins + km + hr)}</span></li>")
-        parts.append("<ul class='list'>" + "".join(items) + "</ul>")
-    else:
-        parts.append("<p class='note'>No activities.</p>")
-    return _page(f"Body · {d.isoformat()}", "".join(parts))
+
+@app.get("/shifts")
+def shifts():
+    _, _, t = _ctx()
+    return _render("soon.html", t=t, tab="shifts", title=t("nav.shifts"), text=t("soon.shifts"))
+
+
+@app.get("/trends")
+def trends():
+    _, _, t = _ctx()
+    return _render("soon.html", t=t, tab="trends", title=t("nav.trends"), text=t("soon.trends"))
+
+
+@app.get("/goals")
+def goals():
+    _, _, t = _ctx()
+    return _render("soon.html", t=t, tab="goals", title=t("nav.goals"), text=t("soon.goals"))
+
+
+@app.get("/settings")
+def settings():
+    _, _, t = _ctx()
+    return _render("settings.html", t=t, tab="settings")
+
+
+@app.post("/settings/language")
+async def set_language(request: Request):
+    lang = parse_qs((await request.body()).decode()).get("lang", [""])[0]
+    if lang in LANGS:
+        conn, _, _ = _ctx()
+        db.set_language(conn, lang)
+    return RedirectResponse("/settings", status_code=303)
+
+
+SW = """// Body service worker: caches only static files, never health pages.
+const C='body-static-v2';
+self.addEventListener('install',e=>self.skipWaiting());
+self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k))))));
+self.addEventListener('fetch',e=>{const u=new URL(e.request.url);
+ if(u.origin===location.origin&&u.pathname.startsWith('/static/')){
+  e.respondWith(caches.open(C).then(c=>c.match(e.request).then(r=>r||fetch(e.request).then(n=>{c.put(e.request,n.clone());return n}))));}});
+"""
+
+
+@app.get("/sw.js")
+def sw():
+    return Response(SW, media_type="text/javascript")
 
 
 def main() -> None:

@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}{{ date_long }} · {{ t('app.name') }}{% endblock %}
+{% block main %}
+<div class="top">
+  <div><h1>{{ date_long }}</h1><p class="sub">{{ t('day.title') }}</p></div>
+  <div class="navday"><a class="btn" href="/day/{{ prev }}" aria-label="{{ t('day.prev') }}">‹</a><a class="btn" href="/day/{{ next }}" aria-label="{{ t('day.next') }}">›</a></div>
+</div>
+{% if not has_data %}<div class="card empty">{{ t('day.no_data') }}</div>{% endif %}
+{% if sleep %}
+<h2>{{ t('day.sleep') }}</h2>
+<div class="card" id="sleep_minutes">
+  <div class="row"><div class="fig">{{ sleep.total }}</div><div class="k">{{ sleep.window }}</div></div>
+  {% if sleep.stages %}<div class="stage">{% for s in sleep.stages %}<i style="width:{{ s.pct }}%;background:{{ s.color }}" title="{{ s.label }}"></i>{% endfor %}</div>
+  <div class="legend">{% for s in sleep.stages %}<span><i style="background:{{ s.color }}"></i>{{ s.label }} {{ s.value }}</span>{% endfor %}</div>{% endif %}
+</div>
+{% endif %}
+<h2>{{ t('day.shift') }}</h2>
+{% if shifts %}{% for sh in shifts %}<div class="shift {{ sh.kind }}"><div>{{ sh.text }}</div></div>{% endfor %}
+{% else %}<p class="note">{{ t('day.no_shift') }}</p>{% endif %}
+<h2>{{ t('day.all') }}</h2>
+<div class="grid2 grid3">
+{% for c in cards %}<div class="card{% if c.raw is none %} empty{% endif %}" id="{{ c.key }}"><div class="k">{{ c.label }}</div><div class="fig">{% if c.est and c.raw is not none %}<span class="approx">≈</span>{% endif %}{{ c.value }}{% if c.unit and c.raw is not none %}<span class="u">{{ c.unit }}</span>{% endif %}</div>{% if c.delta %}<div class="delta {{ c.cls }}">{{ c.delta }}</div>{% endif %}</div>{% endfor %}
+</div>
+<h2>{{ t('day.activities') }}</h2>
+{% if activities %}<ul class="list">{% for a in activities %}<li><strong>{{ a.name }}</strong><br><span class="note">{{ a.detail }}</span></li>{% endfor %}</ul>
+{% else %}<p class="note">{{ t('day.no_activities') }}</p>{% endif %}
+{% endblock %}

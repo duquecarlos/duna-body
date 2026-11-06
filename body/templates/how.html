@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}{{ t('how.title') }} · {{ t('app.name') }}{% endblock %}
+{% block main %}
+<div class="top"><div><h1>{{ t('how.title') }}</h1><p class="sub">{{ date_long }} · {{ t('how.sub') }}</p></div>
+<a class="btn" href="/" aria-label="{{ t('nav.today') }}">✕</a></div>
+<div class="card">
+  {% if r.score is not none %}<div><span class="approx fig">≈</span><span class="fig">{{ r.score }}</span><span class="u">{{ t('unit.of100') }}</span> <span class="chip {{ r.band }}">{{ t('band.' ~ r.band) }}</span></div>{% endif %}
+  <table class="parts" style="margin-top:10px">
+    <tr><th>{{ t('how.col_part') }}</th><th>{{ t('how.col_value') }}</th><th>{{ t('how.col_ref') }}</th><th>{{ t('how.col_score') }}</th></tr>
+    {% for p in parts %}
+    <tr><td>{{ p.label }}<div class="k">{{ t('how.col_weight') }} {{ p.weight }}</div></td><td class="nw">{{ p.value }}</td><td class="nw">{{ p.ref }}{% if p.ref_note %}<div class="k">{{ p.ref_note }}</div>{% endif %}</td><td class="pts nw">{{ p.score }}</td></tr>
+    {% endfor %}
+    {% for m in missing %}
+    <tr><td style="color:var(--muted)">{{ m }}</td><td>—</td><td>—</td><td>—</td></tr>
+    {% endfor %}
+  </table>
+</div>
+<p class="note">{{ t('how.explain') }}</p>
+<p class="note">{{ t('how.version', v=r.version) }}</p>
+{% endblock %}

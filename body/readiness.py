@@ -89,7 +89,8 @@ def compute(conn, day: str, person_id: int = db.DEFAULT_PERSON_ID) -> Readiness:
         raw["sleep"] = None
 
     bb = vals.get("body_battery_wake")
-    raw["battery"] = (_clamp(bb), bb, None) if bb is not None else None
+    bb_base = baseline(conn, "body_battery_wake", day)
+    raw["battery"] = (_clamp(bb), bb, bb_base.mean if bb_base else None) if bb is not None else None
 
     r = _vs_baseline(conn, "resting_hr", day, vals.get("resting_hr"), False)
     raw["resting_hr"] = (r[0], vals.get("resting_hr"), r[1]) if r else None

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}{{ t('today.title') }} · {{ t('app.name') }}{% endblock %}
+{% block main %}
+<div class="top">
+  <div><h1>{{ t('today.title') }}</h1><p class="sub">{{ date_long }}</p></div>
+  <div class="meta">{% if synced %}{{ t('today.synced') }}<br>{{ synced }}{% else %}{{ t('today.no_sync') }}{% endif %}</div>
+</div>
+
+<div class="shift"><div class="note" style="margin:0 0 0 4px">{{ t('today.shift_none') }}</div></div>
+
+<a class="card est" href="/how/{{ day }}">
+  <div class="q">{{ t('today.ready_q') }}</div>
+  {% if r.score is not none %}
+  <div class="row" style="align-items:flex-end">
+    <div><span class="approx big">≈</span><span class="big">{{ r.score }}</span><span class="u">{{ t('unit.of100') }}</span></div>
+    <div style="text-align:right">
+      <span class="chip {{ r.band }}">{{ t('band.' ~ r.band) }}</span>
+      {% if ready_avg is not none %}<div class="delta {{ ready_cls }}" style="margin-top:6px">{{ ready_delta }}</div><div class="k">{{ t('today.vs_avg', avg=ready_avg) }}</div>{% endif %}
+    </div>
+  </div>
+  <div class="k" style="margin-top:6px">{{ t('today.ready_label') }}</div>
+  <p class="read">{{ reading }}</p>
+  {% else %}
+  <div class="fig" style="color:var(--muted)">{{ t('today.no_score_short') }}</div>
+  <p class="read">{{ t('today.no_score', missing=missing_txt) }}</p>
+  {% endif %}
+  <span class="how">{{ t('today.how') }}</span>
+  <span class="chev">›</span>
+</a>
+
+<div class="grid2" style="margin-bottom:10px">
+{% for c in cards %}
+  <a class="card" href="/day/{{ day }}#{{ c.key }}">
+    <div class="k">{{ c.label }}</div>
+    <div class="fig">{{ c.value }}{% if c.unit %}<span class="u">{{ c.unit }}</span>{% endif %}</div>
+    <div class="delta {{ c.cls }}">{{ c.delta }}</div>
+  </a>
+{% endfor %}
+</div>
+<a class="more" href="/day/{{ day }}">{{ t('today.see_day') }}</a>
+{% endblock %}

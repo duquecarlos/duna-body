@@ -48,11 +48,18 @@ class PipelineTest(unittest.TestCase):
         db.save_day(conn, garmin_adapter.parse_day("2026-11-05", FAKE_RAW))
         self.assertTrue(str(config.DB_PATH).startswith(TMP))
         client = TestClient(web.app)
-        r = client.get("/", follow_redirects=False)
-        self.assertEqual(r.headers["location"], "/day/2026-11-05")
+        home = client.get("/").text  # Hoy, Spanish by default
+        self.assertIn("Hoy", home)
+        self.assertIn("Aún sin puntaje", home)  # one day only: no baseline yet, honest "not yet"
         page = client.get("/day/2026-11-05").text
-        for text in ("Resting heart rate", "52", "7 h 15", "10 432", "Evening run", "No shift recorded"):
+        for text in ("Pulso en reposo", "52", "7 h 15", "10.432", "Evening run", "No hay turno registrado"):
             self.assertIn(text, page)
+        client.post("/settings/language", data={"lang": "en"})
+        page = client.get("/day/2026-11-05").text
+        for text in ("Resting heart rate", "10,432", "No shift recorded"):
+            self.assertIn(text, page)
+        self.assertEqual(client.get("/how/2026-11-05").status_code, 200)
+        self.assertEqual(client.get("/day/not-a-date").status_code, 404)
 
 
 if __name__ == "__main__":
