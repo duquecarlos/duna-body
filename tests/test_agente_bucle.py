@@ -183,22 +183,26 @@ def _conteo_tope_env():
 
 
 class ConteoBreakerTest(unittest.TestCase):
+    """Uses "modelo-sin-precio", not the real default model: BODY-AGENTE-PRECIOS-1 ships a real
+    seed for claude-sonnet-5-5, so a model that must stay unpriced to exercise the count breaker
+    needs a name the seed never prices."""
+
     def setUp(self):
         self.conn = _conn()
         self.addCleanup(_conteo_tope_env())
 
     def test_the_201st_question_today_is_refused_without_calling_the_provider(self):
         for _ in range(200):
-            uso.registrar(self.conn, 1, "anthropic", "claude-sonnet-5-5", cliente.Uso(entrada=1, salida=1),
+            uso.registrar(self.conn, 1, "anthropic", "modelo-sin-precio", cliente.Uso(entrada=1, salida=1),
                           1, "texto", None)
         with self.assertRaises(uso.TopeRefusal):
-            uso.verificar_tope(self.conn, 1, "anthropic", "claude-sonnet-5-5")
+            uso.verificar_tope(self.conn, 1, "anthropic", "modelo-sin-precio")
 
     def test_under_the_count_ceiling_is_allowed(self):
         for _ in range(199):
-            uso.registrar(self.conn, 1, "anthropic", "claude-sonnet-5-5", cliente.Uso(entrada=1, salida=1),
+            uso.registrar(self.conn, 1, "anthropic", "modelo-sin-precio", cliente.Uso(entrada=1, salida=1),
                           1, "texto", None)
-        uso.verificar_tope(self.conn, 1, "anthropic", "claude-sonnet-5-5")  # does not raise
+        uso.verificar_tope(self.conn, 1, "anthropic", "modelo-sin-precio")  # does not raise
 
 
 class SpendCeilingTest(unittest.TestCase):

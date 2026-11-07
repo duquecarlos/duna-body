@@ -3238,3 +3238,55 @@ covers the two customer-facing sentences that stopped the prior slice (they reac
 Sunday review, not through a Body screen) and confirms the shape review: `shift` rows only, no new top-level
 field, an empty week emits nothing, the watch-days count is taken before the shift entries are appended, and the
 recovery entry comes from `turnos_costo.turno_de_hoy` for the week's Sunday -- the same rule Hoy uses.
+
+## BODY-AGENTE-PRECIOS-1 -- a versioned, cited price seed for the default model (2026-11-07)
+
+`precio_modelo` has stayed empty since `BODY-ASISTENTE-PROVEEDOR-1` (prices are DATA, never invented), so every
+question has fallen back to the 200/day count breaker (agent-capabilities-v1 amendment 5) instead of the real
+daily SPEND ceiling. This slice adds the price data and a loader, without ever overwriting a price an operator
+set by hand.
+
+**`body/agente/precios.json`** -- one model, the default: `anthropic` / `claude-sonnet-5-5`,
+`entrada=2,000,000`, `salida=10,000,000`, `cache_lectura=200,000`, `cache_escritura=2,500,000` micro-USD per
+million tokens. Source line, carried in the file itself (`fuente`): "Anthropic first-party API price table
+(cached 2026-10-06); cache write = 1.25x input (5-minute TTL)." `version: "precios-2026-10-06"`.
+
+**`body/agente/precios.py`**: `sembrar(conn, ruta=...) -> int` validates the whole file first (every model
+entry needs all four `tipo` -- entrada/salida/cache_lectura/cache_escritura -- each a positive integer) and
+raises `PreciosInvalidos`, inserting nothing, on a malformed file. On a valid file it inserts each
+`(proveedor, modelo, tipo)` with `INSERT OR IGNORE` and returns the count actually inserted -- a row already
+there (an operator's own price) is never touched. `python -m body.agente.precios` runs it against the
+configured database and prints only that count.
+
+**`body/agente/uso.py`**: `verificar_tope` now calls `precios.sembrar(conn)` once per process, behind a
+module-level flag, before its first spend computation -- a fresh install or the host gets prices with no hand
+step. A seeding failure is logged by its exception class name only and otherwise ignored; the count breaker
+still applies either way (fail closed, amendment 5). A model absent from the file, and never priced by an
+operator, stays unpriced -> count breaker, exactly as before this slice.
+
+**Tests** (`tests/test_agente_precios.py`, +8 tests, `tests/_isolate` imported first): `sembrar` on an empty
+table inserts 4 rows and `uso._precios` returns the seed's four values; a second run inserts 0; a pre-existing
+operator row for `entrada` is kept (sembrar then inserts only the other 3); a file missing a `tipo`, and a file
+with a negative value, each raise `PreciosInvalidos` and insert nothing; with the seed in place, a single
+huge-output row prices well past the default 2 USD ceiling and `verificar_tope` raises on the SPEND ceiling (not
+a count of 1); a small-usage row at the seed's rate is allowed; a model absent from the seed still falls back to
+the count breaker at 200 rows.
+
+**`tests/test_agente_bucle.py` adjusted** -- `ConteoBreakerTest`'s two tests (`test_the_201st_question...`,
+`test_under_the_count_ceiling_is_allowed`) used the real default model name `claude-sonnet-5-5` to stand in for
+an unpriced model, so the count breaker would fire. Now that this slice ships a real price for exactly that
+model, and `verificar_tope`'s own once-per-process auto-seed could price whichever connection calls it first in
+the whole suite, that assumption no longer holds. Both tests were changed to use the already-established
+`"modelo-sin-precio"` name instead (same convention `SpendCeilingTest`/`RowByRowPricingTest` already use in that
+file), decoupling them from the seed entirely. No other test in that file names the default model with
+`verificar_tope`; `TopeFailsClosedTest` keeps `claude-sonnet-5-5` on a closed connection, where the read fails
+before pricing is ever consulted, so it needed no change.
+
+**Gate:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 678 tests, OK (1 pre-existing skip), run
+once on this slice's final tree.
+
+**Merge.** The diff has no schema or migration change (`precio_modelo` and its columns already existed; this
+slice only inserts rows into it, never alters `body/db.py`), no cross-repo contract change, and no
+customer-facing bytes (a JSON price file, a loader module, and a one-process auto-seed are server-side; the
+README paragraph documents the mechanism for an operator, not a screen a person reads). Merge policy A's three
+conditions all pass, so this slice merges on green without waiting.

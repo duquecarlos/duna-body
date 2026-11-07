@@ -62,6 +62,16 @@ folder: the default `BODY_HOME`, the current `BODY_HOME` environment value, the 
 any folder that already holds a `body.db` it did not seed itself. The task catalog it drives is
 `tutoriales/catalogo.json`.
 
+## Asistente: precios del modelo
+
+The assistant's daily SPEND ceiling needs a price for the model in use; `body/agente/precios.json` holds a
+versioned, cited seed (today, the default model only) and `body/agente/precios.py` fills `precio_modelo`
+from it once per process, inserting only rows the table does not already have -- it never overwrites a
+price an operator set by hand. To correct a price, update that row directly (or run
+`python -m body.agente.precios` again after editing `precios.json` for a fresh install); the seed never
+undoes a hand correction. A model with no price anywhere falls back to the daily question-count limit
+instead of the spend ceiling.
+
 ## Layout
 
 - `body/garmin_adapter.py`: the only file that knows the unofficial `python-garminconnect` library.
