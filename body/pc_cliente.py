@@ -61,9 +61,21 @@ def leer_enlace() -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+class _SinRedirigir(urllib.request.HTTPRedirectHandler):
+    """Refuses every 3xx: urllib's default handler re-sends Authorization to the redirect target,
+    which would carry the device key to another host. Body's API routes never redirect, so a 3xx
+    here is reported as an HTTPError with that status instead of being followed."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_opener = urllib.request.build_opener(_SinRedirigir)
+
+
 def _abrir(req: urllib.request.Request):
     """The one call that touches the network. Tests patch this name with a fake, never the socket."""
-    return urllib.request.urlopen(req, timeout=TIMEOUT_S)
+    return _opener.open(req, timeout=TIMEOUT_S)
 
 
 def llamar(method: str, ruta: str, *, body: bytes | None = None,

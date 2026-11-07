@@ -29,7 +29,7 @@ def main(argv: list[str] | None = None) -> int:
         print("Enlace olvidado.")
         return 0
 
-    clave = getpass.getpass("Clave del dispositivo (bdy_...): ")
+    clave = getpass.getpass("Clave del dispositivo (bdy_...): ").strip()
     if not clave.startswith("bdy_"):
         print("Esa clave no tiene el formato esperado (debe empezar con bdy_).")
         return 1
