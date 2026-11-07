@@ -126,6 +126,10 @@ table.parts td{padding:8px 0;border-top:1px solid var(--soft);text-align:right;v
 table.parts td.pts{font-weight:700}
 table.parts td.nw,table.parts th{white-space:nowrap;padding-left:12px}
 table.parts th:first-child{padding-left:0}
+.costrow{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;min-height:44px;padding:8px 0;cursor:pointer}
+.costrow .nw{text-align:right;white-space:nowrap}
+@media (hover:hover){.costrow:hover{background:var(--wash)}}
+.costrow:active{background:var(--wash)}
 .list{list-style:none;margin:0;padding:0}
 .list li{background:var(--card);border:1px solid var(--soft);border-radius:10px;padding:10px 12px;margin-bottom:8px}
 .navday{display:flex;gap:6px}

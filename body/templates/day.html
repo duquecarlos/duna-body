@@ -17,6 +17,7 @@
 <h2>{{ t('day.shift') }}</h2>
 {% if shifts %}{% for sh in shifts %}<div class="shift {{ sh.kind }}"><div>{{ sh.text }}</div></div>{% endfor %}
 {% else %}<p class="note">{{ t('day.no_shift') }}</p>{% endif %}
+{% if block_ctx %}<p class="note" style="margin-top:6px">{{ block_ctx }} <a href="/shifts" style="text-decoration:underline">{{ t('day.shift_ctx_link') }}</a></p>{% endif %}
 <h2>{{ t('day.all') }}</h2>
 <div class="grid2 grid3">
 {% for c in cards %}<div class="card{% if c.raw is none %} empty{% endif %}" id="{{ c.key }}"><div class="k">{{ c.label }}</div><div class="fig">{% if c.est and c.raw is not none %}<span class="approx">≈</span>{% endif %}{{ c.value }}{% if c.unit and c.raw is not none %}<span class="u">{{ c.unit }}</span>{% endif %}</div>{% if c.delta %}<div class="delta {{ c.cls }}">{{ c.delta }}</div>{% endif %}</div>{% endfor %}

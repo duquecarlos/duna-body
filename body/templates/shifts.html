@@ -74,10 +74,15 @@
   <table class="parts" style="margin-top:8px">
     {% for f in filas %}
     <tr>
-      <td>{{ f.label }}<div class="k">{{ f.sub }}</div></td>
-      {% if f.value is not none %}
-      <td class="nw">{{ f.value }} <strong>{{ f.palabra }}</strong><div class="k">{{ t('shifts.cost_vs') }}</div></td>
+      {% if f.href %}
+      <td colspan="2" style="padding:0">
+        <a class="costrow" href="{{ f.href }}">
+          <span>{{ f.label }}<div class="k">{{ f.sub }}</div></span>
+          <span class="nw">{{ f.value }} <strong>{{ f.palabra }}</strong><div class="k">{{ t('shifts.cost_vs') }}</div></span>
+        </a>
+      </td>
       {% else %}
+      <td>{{ f.label }}<div class="k">{{ f.sub }}</div></td>
       <td class="nw" style="color:var(--muted)">—<div class="k">{{ t('shifts.sin_dato_corto') }}</div></td>
       {% endif %}
     </tr>

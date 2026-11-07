@@ -481,8 +481,15 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
     shifts = [{"kind": s["kind"], "text": f"{s['kind']}{' (' + s['code'] + ')' if s['code'] else ''} "
                f"{(s['start_local'] or '')[11:16]} → {(s['end_local'] or '')[11:16]}"} for s in data["shifts"]]
     has_data = any(v is not None for v in vals.values())
+    ctx = turnos_costo.contexto_dia(conn, person_id, d)
+    block_ctx = None
+    if ctx is not None:
+        if ctx["tipo"] == "noche":
+            block_ctx = t("day.shift_ctx_noche", n=ctx["n"], de=ctx["de"])
+        else:
+            block_ctx = t("day.shift_ctx_despues", n=ctx["n"])
     return _render("day.html", t=t, tab="today", date_long=t.long_date(d), cards=cards, sleep=sleep,
-                   activities=acts, shifts=shifts, has_data=has_data,
+                   activities=acts, shifts=shifts, has_data=has_data, block_ctx=block_ctx,
                    sync_text=None if has_data else _sync_status_text(conn, person, t),
                    prev=(d - timedelta(1)).isoformat(), next=(d + timedelta(1)).isoformat())
 
@@ -498,6 +505,12 @@ _STRIP_DAYS = _STRIP_WEEKS * 7
 _STRIP_KIND_ORDER = ["morning", "afternoon", "night", "day", "off", "other", "none"]
 
 
+def _es_extra_metric(key: str) -> bool:
+    """Whether `key` lives behind "Ver todas las medidas" on Tendencias (TREND_GROUPS, defined below --
+    resolved at call time, so the order of definitions in this file doesn't matter)."""
+    return any(key in keys for _, keys in TREND_GROUPS)
+
+
 def _turnos_filas(t: T, defs: dict, resumen: dict) -> list[dict]:
     filas = []
     for key in turnos_costo.MODELO["metricas"]:
@@ -505,15 +518,16 @@ def _turnos_filas(t: T, defs: dict, resumen: dict) -> list[dict]:
         d = defs.get(key, {})
         if v is None:
             filas.append({"label": t("metric." + key), "sub": t("shifts.cost_sub." + key),
-                         "value": None, "palabra": None})
+                         "value": None, "palabra": None, "href": None})
             continue
         diff, palabra = turnos_costo.diferencia_y_palabra(key, v)
         sign = "+" if diff >= 0 else "−"
         amount = t.minutes(abs(diff)) if _is_minutes(key) else t.num(abs(diff), 1)
         unit = _unit(t, d)
+        href = f"/trends?r=90&desde=turnos{'&todas=1' if _es_extra_metric(key) else ''}#{key}"
         filas.append({"label": t("metric." + key), "sub": t("shifts.cost_sub." + key),
                      "value": f"{sign}{amount}" + (f" {unit}" if unit else ""),
-                     "palabra": t("shifts.word." + palabra)})
+                     "palabra": t("shifts.word." + palabra), "href": href})
     return filas
 
 
@@ -730,11 +744,12 @@ def _trend_card(conn, t: T, defs: dict, k: str, start, end, month, nights, perso
 
 
 @app.get("/trends")
-def trends(r: str = "all", m: str | None = None, todas: str | None = None,
+def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde: str | None = None,
            person_id: int = Depends(identity.current_person_id)):
     """r = 7 | 30 | 90 | all (the whole history, monthly). m = YYYY-MM opens one month day by day (from a tap on
-    the monthly line). todas=1 keeps "Ver todas las medidas" open across a range switch. The URL carries a
-    range, a month or that flag, never a value."""
+    the monthly line). todas=1 keeps "Ver todas las medidas" open across a range switch. desde=turnos arrives
+    from a Turnos cost row (BODY-TURNOS-ENLACES-1) and shows the way back to it, kept on every range link. The
+    URL carries a range, a month or those flags, never a value."""
     conn, person, t = _ctx(person_id)
     defs = _defs(conn)
     last = _latest_day(conn, person_id)
@@ -809,7 +824,8 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None,
                    since=t.long_date(date.fromisoformat(since)) if since else "", days=t.num(days),
                    r=r, ranges=RANGES, fig_label=fig_label, nights=bool(nights),
                    month_title=t.month_year(month) if month else None,
-                   extra_groups=extra_groups, extra_count=extra_count, todas=todas == "1")
+                   extra_groups=extra_groups, extra_count=extra_count, todas=todas == "1",
+                   desde=desde if desde == "turnos" else None)
 
 
 def _short_date(t: T, d: date) -> str:
