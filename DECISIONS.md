@@ -1217,3 +1217,115 @@ step.
 
 Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 213 tests, OK (212 at the branch tip plus
 the one new `test_acr_is_a_rank_not_an_equality` case), run once on the final tree before this merge.
+
+## BODY-HOST-ENTRY-1 -- Body's deploy shape for duna-prod-1, text plus `--dry-run` only (2026-11-06)
+
+Carries out BODY-HOST-OBS-1 (OBSERVED, 2026-11-06: no deploy path existed) and BODY-HOSTING-PLAN-1 step 8a,
+built to Main's `host-deploy-v1` contract and its sensitive-data amendment. Nothing here ran on the host:
+every file was written and checked as text, and the gate never executes a `.sh` file or the entry script.
+Carlos installs the entry script himself, and every deploy still waits for his go.
+
+New files, all under `deploy/host/`: the root-owned entry script `duna-deploy-body` (`status` /
+`deploy [--dry-run]`, EUID-0 refusal and a fixed `PATH=` before anything else, a closed subcommand
+allowlist with `backup` reserved for BODY-HOST-BACKUP-1 and anything else a usage line plus exit 2), its
+sudoers line `duna-deploy-body.sudoers` (exactly `carlos ALL=(root) NOPASSWD:
+/usr/local/sbin/duna-deploy-body`), the product script `body-deploy.sh` that it `exec`s after the pull
+(builds `.venv` and installs the systemd units and the Caddy site as root, `runuser -u "$owner" --` for
+every git/pip/venv call, rolls back to `--before-sha` -- captured before the pull, validated as 40 hex
+here -- and restarts on any failed step), the five systemd units `body-web.service`,
+`body-pull.service`/`.timer` (daily 09:30 America/Bogota, pull then shift import), `body-vida.service`/
+`.timer` (Sundays 18:00, pull then `vida_export --current`, mirroring `scripts/install-daily-sync.ps1`'s
+own module entry points), `Caddyfile.body` (`reverse_proxy 127.0.0.1:8770`, security headers, no `log`
+directive, and `respond /login/cuenta/logout-token 404` so Cuenta's back-channel stays loopback-only),
+`body.env.example` (every variable name from decision 7 of the slice brief, blank except the two fixed
+URLs and the R2 bucket name), and `README.md` with Carlos's install lines. `CLAUDE.md`'s Tier 1 sentence
+now opens with `deploy/` ("what runs as root on the host"), ahead of the Garmin adapter.
+
+**Layout decided**: repo at `/srv/duna/repos/duna-body`, owned by Carlos's own host user (every git/pip/
+venv call in both scripts runs as that owner via `runuser`, never as root); system user `duna-body`
+(created by the entry script with `useradd --system --no-create-home --shell /usr/sbin/nologin` if
+missing) runs the three long-lived/scheduled services and owns `/srv/duna/data/body` (= `BODY_HOME`),
+mode 0700, created by the entry script and never deleted by it; env file at `/srv/duna/env/body.env`
+(root:duna-body, 0640, written by Carlos, never read back by either script -- neither contains `cat`,
+`echo`, `printf` or `source` against it). The web service binds `127.0.0.1:8770` only (no `--lan`); Caddy
+is the only path in. The health check hits `/healthz`, confirmed already present (`git log -S healthz`
+traces it to BODY-CUENTA-RP-1's own `d11d55c`), so the product script needs no fallback to `/`.
+
+**What stays by Carlos's hand**: installing the entry script and its sudoers line (`sudo install` +
+`sudo visudo -c`), writing `/srv/duna/env/body.env` from the example, the one-time copy of
+`Caddyfile.body` before the very first deploy (so Caddy has somewhere to proxy to), and triggering every
+`deploy` himself -- nothing here is wired to run on its own.
+
+**Assumptions for Main to confirm**: the private GitHub repo name is `duna-body` (one constant changes if
+Carlos names it otherwise); the host's main Caddyfile imports `/etc/caddy/sites/*`, as the README states.
+
+`tests/test_host_deploy.py` (`tests._isolate` imported first) checks all of this at the text level, no
+bash execution: the usage allowlist and exit-2 catch-all, the EUID check ahead of everything else
+(including the `PATH=` reset), every `git -C` call in both scripts prefixed by `runuser -u "$owner" --`,
+`--before-sha` captured before the pull and validated as 40 hex, the bare `exec` of the product script,
+every `systemctl`/`install`/`useradd` wrapped by a `run()` helper that echoes instead of executing (pip's
+own `install` subcommand excluded, since it is not the coreutils command the rule means), no dump of the
+env file, no `--pty`, no `rm` anywhere in either script, the sudoers file's exact single line, the
+README's install lines naming files that exist, each unit's `User=duna-body`/`EnvironmentFile=`/port
+8770/no `--lan`, the Caddyfile's proxy target and backchannel 404, `body.env.example`'s exact name set
+and blank-except-fixed values, and LF line endings on every file under `deploy/host/`.
+
+No schema or migration change; no cross-repo contract change (nothing here defines or consumes a DTO
+another repository mirrors). This touches root-run deploy code under Tier 1, so per this slice's own
+spec it stops `AWAITING_APPROVAL` on the branch clean rather than merging on green, whatever merge policy
+A's three conditions would otherwise say.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 241 tests, OK (213 at the branch tip
+plus 28 new in `tests/test_host_deploy.py`), run once on the final tree.
+
+## BODY-HOST-ENTRY-1-M -- land BODY-HOST-ENTRY-1 with seven fixes from the root-run review (2026-11-06)
+
+Approved by the orchestrator under `ORCH-CARLOS-DELEGATES-TIER-1-1` after reviewing every file of
+`feat/body-host-entry-1` against host-deploy-v1 and the sensitive-data amendment. Seven defects that would
+bite on the host's first run, or weaken the amendment, were found and fixed here, each with a new text-level
+test in `tests/test_host_deploy.py`:
+
+1. **Exec bit.** Both scripts were mode 100644 in git (the repo is authored on Windows), so a host checkout
+   could lose the executable bit entirely. `duna-deploy-body` now runs the product script as `exec /bin/bash
+   "$PRODUCT_SCRIPT" --before-sha "$before_sha"` (the `--dry-run` line matches), so execution never depends on
+   the bit at all; both scripts are also marked executable in the index (`git add --chmod=+x`, `update-index`
+   itself not being a granted verb here), `100755` now.
+2. **Health check retries.** The single `sleep 1` + one `curl` in `body-deploy.sh` is now a loop of up to 20
+   attempts, 1 s apart, succeeding on the first `200` from `/healthz`; only after 20 failed attempts does it
+   roll back.
+3. **Rollback reinstalls dependencies.** `rollback_and_fail()` now re-runs the owner's `pip install -q -r
+   requirements.txt` after `git reset --hard "$before_sha"`, before restarting the web service; if that pip
+   install fails, it still proceeds to restart and reports it in the failure message rather than silently
+   leaving the rolled-back checkout's dependencies mismatched.
+4. **Caddy validated before reload.** After installing the site file, `body-deploy.sh` now runs `caddy
+   validate --config /etc/caddy/Caddyfile --adapter caddyfile` before touching `systemctl`; on failure it
+   removes only the just-installed `/etc/caddy/sites/body.caddy` and fails naming the step, without ever
+   reaching `systemctl reload caddy`. This is the only `rm` in either script.
+5. **UMask=0077.** Added to `body-web.service`, `body-pull.service` and `body-vida.service`, alongside
+   `ProtectHome=yes`, so every file these services create is 0600, per the sensitive-data amendment's rule 1.
+6. **No shift import on the host yet.** `body-pull.service`'s second `ExecStart` (`body.shift_import`) is
+   removed -- shift files reach the host through an uploader that does not exist yet (`BODY-SHIFT-UPLOAD-1`,
+   a later slice). The unit's `Description=` and `README.md` were updated to say so.
+7. **Honest Caddy comment.** `Caddyfile.body`'s comment no longer claims the `/etc/caddy/sites/*` import is
+   "confirmed with Main" -- it now says this is an assumption Main confirms in the walk-through. `README.md`
+   gained a short "Host assumptions for Main to confirm in the walk-through" list: the import, `python3` on
+   root's `PATH`, `caddy` and `curl` installed, and the repo name `duna-body`.
+
+The `/healthz` deviation from the original spec text is accepted unchanged (BODY-CUENTA-RP-1 already landed
+that route). No other code changed.
+
+`main` had not moved since the branch was cut: `git merge-base HEAD main` and `git rev-parse main` both read
+`9927d3a84b02256214fe42960ee30ac50f05529f`, matching the branch's recorded base, so no merge-forward was
+needed.
+
+`tests/test_host_deploy.py` gained 13 new tests (one per fix, plus one extra each for the exec-bit and health-
+check-retry checks) and had one existing test (`test_no_rm_anywhere_in_either_script`) narrowed to
+`test_only_rm_touches_caddy_dst`, since fix 4 now needs exactly one `rm`.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 254 tests, OK (241 at the branch tip plus
+13 new in `tests/test_host_deploy.py`), run once on the final tree before this merge.
+
+Slice commit: `bc7144df5a39cdabfa93e010e729425d5cbb8bb2` on `feat/body-host-entry-1`.
+
+Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-host-entry-1` into `main`
+following this entry.

@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# duna-deploy-body -- root-owned entry point for Body's deploy on duna-prod-1 (host-deploy-v1).
+# Installed to /usr/local/sbin/duna-deploy-body; called only as:
+#   sudo -n /usr/local/sbin/duna-deploy-body <status|deploy [--dry-run]>
+set -Eeuo pipefail
+
+if [[ "${EUID}" -ne 0 ]]; then
+  echo "duna-deploy-body: refused -- must run as root (EUID 0)" >&2
+  exit 1
+fi
+
+PATH="/usr/sbin:/usr/bin:/sbin:/bin"
+export PATH
+
+REPO_DIR="/srv/duna/repos/duna-body"
+PRODUCT_SCRIPT="$REPO_DIR/deploy/host/body-deploy.sh"
+DATA_DIR="/srv/duna/data/body"
+DATA_USER="duna-body"
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: duna-deploy-body <command>
+  status              show unit status, deployed sha, data dir mode
+  deploy [--dry-run]  pull the repo and redeploy (--dry-run: print the plan, run nothing)
+  backup              not yet (BODY-HOST-BACKUP-1)
+USAGE
+}
+
+if [[ $# -lt 1 ]]; then
+  usage
+  exit 2
+fi
+
+cmd="$1"
+shift
+
+DRY_RUN=""
+
+run() {
+  if [[ -n "$DRY_RUN" ]]; then
+    printf '%s\n' "$*"
+  else
+    "$@"
+  fi
+}
+
+ensure_system_user() {
+  if ! id "$DATA_USER" >/dev/null 2>&1; then
+    run useradd --system --no-create-home --shell /usr/sbin/nologin "$DATA_USER"
+  fi
+}
+
+ensure_data_dir() {
+  run mkdir -p "$DATA_DIR"
+  run chown "$DATA_USER:$DATA_USER" "$DATA_DIR"
+  run chmod 0700 "$DATA_DIR"
+}
+
+case "$cmd" in
+  status)
+    if [[ $# -ne 0 ]]; then
+      usage
+      exit 2
+    fi
+    if [[ ! -d "$REPO_DIR" ]]; then
+      echo "duna-deploy-body: repo not found at $REPO_DIR" >&2
+      exit 1
+    fi
+    owner="$(stat -c %U "$REPO_DIR")"
+    for unit in body-web.service body-pull.timer body-vida.timer; do
+      state="$(run systemctl is-active "$unit" 2>/dev/null || true)"
+      echo "$unit: $state"
+    done
+    sha="$(runuser -u "$owner" -- git -C "$REPO_DIR" rev-parse HEAD)"
+    echo "deployed sha: $sha"
+    if [[ -d "$DATA_DIR" ]]; then
+      echo "data dir: $DATA_DIR mode $(stat -c %a "$DATA_DIR") owner $(stat -c %U "$DATA_DIR")"
+    else
+      echo "data dir: $DATA_DIR (not yet created)"
+    fi
+    exit 0
+    ;;
+  deploy)
+    if [[ $# -gt 1 ]]; then
+      usage
+      exit 2
+    fi
+    if [[ $# -eq 1 ]]; then
+      if [[ "$1" != "--dry-run" ]]; then
+        usage
+        exit 2
+      fi
+      DRY_RUN="1"
+    fi
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac
+
+if [[ ! -d "$REPO_DIR" ]]; then
+  echo "duna-deploy-body: repo not found at $REPO_DIR" >&2
+  exit 1
+fi
+owner="$(stat -c %U "$REPO_DIR")"
+
+ensure_system_user
+ensure_data_dir
+
+if [[ -n "$DRY_RUN" ]]; then
+  echo "runuser -u \"$owner\" -- git -C \"$REPO_DIR\" rev-parse HEAD"
+  echo "runuser -u \"$owner\" -- git -C \"$REPO_DIR\" fetch origin"
+  echo "runuser -u \"$owner\" -- git -C \"$REPO_DIR\" pull --ff-only"
+  echo "exec /bin/bash \"$PRODUCT_SCRIPT\" --before-sha <captured-sha>"
+  exit 0
+fi
+
+before_sha="$(runuser -u "$owner" -- git -C "$REPO_DIR" rev-parse HEAD)"
+runuser -u "$owner" -- git -C "$REPO_DIR" fetch origin
+runuser -u "$owner" -- git -C "$REPO_DIR" pull --ff-only
+
+exec /bin/bash "$PRODUCT_SCRIPT" --before-sha "$before_sha"
