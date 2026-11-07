@@ -4,7 +4,9 @@ Pure reads over daily_metric. Every number is against your own history, never po
 """
 from __future__ import annotations
 
+import html
 import statistics
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -51,8 +53,14 @@ def metric_profile(conn, key: str, today: str | None = None, *, person_id: int) 
     )
 
 
-def month_svg(p: MetricProfile, width: int = 320, height: int = 120, color: str = "var(--body)") -> str:
-    """Server-side SVG: monthly means as a line, your all-history normal range as a band."""
+def month_svg(p: MetricProfile, width: int = 320, height: int = 120, color: str = "var(--body)", *,
+              etiqueta_mes: Callable[[str], str] = lambda m: m,
+              aria_label: str | None = None) -> str:
+    """Server-side SVG: monthly means as a line, your all-history normal range as a band.
+
+    etiqueta_mes turns a "YYYY-MM" key into a reader's-language label (axis ends, tap titles); the default keeps
+    the ISO key so older callers are unaffected. aria_label, when given, names the metric and the span in words.
+    """
     pts = [m[1] for m in p.months]
     if len(pts) < 2:
         return ""
@@ -70,18 +78,20 @@ def month_svg(p: MetricProfile, width: int = 320, height: int = 120, color: str 
     band = (f'<rect x="0" y="{y(p.high):.1f}" width="{width}" height="{max(1, y(p.low) - y(p.high)):.1f}" '
             f'style="fill:var(--inset)"/>')
     last_x, last_y = (len(pts) - 1) * step, y(pts[-1])
-    first, lastm = p.months[0][0], p.months[-1][0]
+    first, lastm = html.escape(etiqueta_mes(p.months[0][0])), html.escape(etiqueta_mes(p.months[-1][0]))
+    aria = f' aria-label="{html.escape(aria_label)}"' if aria_label else ""
     # Fixed height, stretched width: lines keep their thickness (non-scaling-stroke); labels are HTML, not SVG text.
-    return (f'<svg viewBox="0 0 {width} {top + h + 6}" width="100%" height="110" role="img" preserveAspectRatio="none" '
-            f'style="display:block;margin-top:8px">{band}'
+    return (f'<svg viewBox="0 0 {width} {top + h + 6}" width="100%" height="110" role="img"{aria} '
+            f'preserveAspectRatio="none" style="display:block;margin-top:8px">{band}'
             f'<polyline fill="none" style="stroke:{color}" stroke-width="2.2" vector-effect="non-scaling-stroke" '
-            f'stroke-linejoin="round" points="{line}"/>{_hits([(i * step, f"/trends?m={m[0]}#{p.key}") for i, m in enumerate(p.months)], step, top + h + 6, [m[0] for m in p.months])}</svg>'
+            f'stroke-linejoin="round" points="{line}"/>{_hits([(i * step, f"/trends?m={m[0]}#{p.key}") for i, m in enumerate(p.months)], step, top + h + 6, [etiqueta_mes(m[0]) for m in p.months])}</svg>'
             f'<div class="row k" style="font-size:12px"><span>{first}</span><span>{lastm}</span></div>')
 
 
 def _hits(points: list[tuple[float, str]], step: float, height: float, titles: list[str]) -> str:
-    """Invisible full-height tap targets, one per point, each a link (URLs carry dates only, never values)."""
-    return "".join(f'<a href="{href}"><title>{title}</title><rect x="{max(0, x - step / 2):.1f}" y="0" '
+    """Invisible full-height tap targets, one per point, each a link (URLs carry dates only, never values).
+    titles are reader's-language labels; escaped here since they land in HTML."""
+    return "".join(f'<a href="{href}"><title>{html.escape(title)}</title><rect x="{max(0, x - step / 2):.1f}" y="0" '
                    f'width="{step:.1f}" height="{height:.1f}" style="fill:transparent"/></a>'
                    for (x, href), title in zip(points, titles))
 
@@ -104,9 +114,14 @@ def window(conn, key: str, start: date, end: date, person_id: int) -> Window:
 
 
 def window_svg(w: Window, low: float, high: float, nights: set[str] = frozenset(), width: int = 320,
-               height: int = 120, color: str = "var(--body)") -> str:
+               height: int = 120, color: str = "var(--body)", *,
+               etiqueta_dia: Callable[[date], str] = lambda d: d.isoformat(),
+               aria_label: str | None = None) -> str:
     """Daily line over the window with your normal range as a band; night shifts shaded; a missing day breaks the
-    line (honest gaps, never a zero). Every day is a tap target that opens that day."""
+    line (honest gaps, never a zero). Every day is a tap target that opens that day.
+
+    etiqueta_dia turns a day into a reader's-language label (axis ends, tap titles); the default keeps the ISO
+    date so older callers are unaffected. aria_label, when given, names the metric and the span in words."""
     days = [w.start + timedelta(i) for i in range((w.end - w.start).days + 1)]
     pts = list(w.values.values())
     if len(pts) < 2:
@@ -147,8 +162,10 @@ def window_svg(w: Window, low: float, high: float, nights: set[str] = frozenset(
             out.append(f'<polyline fill="none" style="stroke:{color}" stroke-width="2.2" '
                        f'vector-effect="non-scaling-stroke" stroke-linejoin="round" points="{" ".join(r)}"/>')
     out.append(_hits([(i * step, f"/day/{d.isoformat()}") for i, d in enumerate(days)], step, full,
-                     [d.isoformat() for d in days]))
-    return (f'<svg viewBox="0 0 {width} {full}" width="100%" height="110" role="img" preserveAspectRatio="none" '
-            f'style="display:block;margin-top:8px">{"".join(out)}</svg>'
-            f'<div class="row k" style="font-size:12px"><span>{days[0].isoformat()}</span>'
-            f'<span>{days[-1].isoformat()}</span></div>')
+                     [etiqueta_dia(d) for d in days]))
+    aria = f' aria-label="{html.escape(aria_label)}"' if aria_label else ""
+    first, lastd = html.escape(etiqueta_dia(days[0])), html.escape(etiqueta_dia(days[-1]))
+    return (f'<svg viewBox="0 0 {width} {full}" width="100%" height="110" role="img"{aria} '
+            f'preserveAspectRatio="none" style="display:block;margin-top:8px">{"".join(out)}</svg>'
+            f'<div class="row k" style="font-size:12px"><span>{first}</span>'
+            f'<span>{lastd}</span></div>')

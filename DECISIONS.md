@@ -3367,3 +3367,42 @@ the branch tip before merging.
 
 **Merge:** `--no-ff` of `feat/body-tendencias-todas-1` into `main`. Fast-forward-equivalent content: the merge
 commit's tree equals the branch tip's tree exactly, so no conflict and nothing resolved by guessing.
+
+## BODY-EJES-FECHAS-1 -- Tendencias' chart axes and tap targets read in the person's language (2026-11-07)
+
+The monthly and daily SVG builders in `body/profile.py` (`month_svg`, `window_svg`) were labelling their axis
+ends and each tap target's `<title>` with raw ISO text ("2026-09", "2026-10-08"), against DESIGN rule 10
+(plain Spanish) and rule 9 (charts explain themselves).
+
+**`body/profile.py`**: `month_svg` gains `etiqueta_mes: Callable[[str], str]` (default `lambda m: m`, keeping
+ISO) and `window_svg` gains `etiqueta_dia: Callable[[date], str]` (default `lambda d: d.isoformat()`); both
+default to today's ISO output so no other caller breaks. Both gain `aria_label: str | None = None`, inserted
+as the `<svg role="img">`'s `aria-label` when given. `_hits` now escapes (`html.escape`) each tap `<title>`
+before interpolating it; the axis-end `<span>` text is escaped the same way. Hrefs are unchanged -- URLs still
+carry ISO days/months, since they carry only dates, never values.
+
+**`body/web.py`**: `_trend_card` now passes the reader's-language helpers at both call sites -- `_short_date`
+(already in `body/web.py`) for `etiqueta_dia`, `T.month_year` for `etiqueta_mes` -- reusing the two existing
+date formatters rather than adding a third. A new `_chart_aria(t, metric, start_label, end_label)` composes
+the accessible name from the metric's own label (`t("metric." + k)`) and the two already-computed span ends,
+with a locale connector ("del ... al ..." in es, "..." - "..." in en); it carries no figure. For the monthly
+branch, the aria-label is only built when there are at least two qualifying months (`month_svg` itself returns
+`""` below that), avoiding an index error on `p.months[0]` when the list is empty.
+
+**Tests** (`tests/test_ejes_fechas.py`, 10 tests, `tests/_isolate` imported first, invented demo data): `/trends?r=30`
+in es shows no bare `\d{4}-\d{2}-\d{2}` text outside attributes (href and aria-label values stripped before
+matching) and its axis reads a Spanish month abbreviation; `/trends` (monthly, all) shows no bare `\d{4}-\d{2}`
+outside attributes; hrefs still carry ISO days (`/day/YYYY-MM-DD`) and months (`/trends?m=YYYY-MM#`); every
+`<title>` is non-ISO; every chart `<svg role="img">` carries an `aria-label` naming its metric; `en` renders
+English labels and English metric names in the aria-label; the builders called without the new keyword
+arguments still produce ISO output and no `aria-label` attribute (backward compatible). Also re-ran
+`tests/test_profile.py` and `tests/test_tendencias_todas.py` directly to check for regressions -- both green,
+unchanged.
+
+**Gate:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 701 tests, `OK (skipped=1)`, run once on
+this slice's final tree.
+
+**Merge.** The diff has no schema or migration change, no cross-repo contract change, but it DOES change
+customer-facing bytes: the text shown on every chart's axis ends and tap titles, and a new `aria-label` read
+by assistive technology. Merge policy A's customer-bytes condition trips, so this slice stops before the merge
+with `AWAITING_APPROVAL` rather than merging on green.
