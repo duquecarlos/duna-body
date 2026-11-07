@@ -819,9 +819,9 @@ def _short_date(t: T, d: date) -> str:
 
 def _chart_aria(t: T, metric: str, start_label: str, end_label: str) -> str:
     """Accessible name for a trend chart: the metric and its span in words, no figure in it
-    (BODY-EJES-FECHAS-1), e.g. "Sueño, del 19 jun 2024 al 6 nov 2026" / "Sleep, Jun 19 2024 - Nov 6 2026"."""
+    (BODY-EJES-FECHAS-1), e.g. "Sueño, del 19 jun 2024 al 6 nov 2026" / "Sleep, 19 Jun 2024 to 6 Nov 2026"."""
     return (f"{metric}, del {start_label} al {end_label}" if t.lang == "es"
-            else f"{metric}, {start_label} - {end_label}")
+            else f"{metric}, {start_label} to {end_label}")
 
 
 def _short_weekday_date(t: T, d: date) -> str:
