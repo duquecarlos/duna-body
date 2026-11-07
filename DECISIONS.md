@@ -4516,3 +4516,46 @@ migration) -- a schema change, failing merge policy A's first condition outright
 stop AWAITING_APPROVAL on the branch if your merge policy says so"). Slice commit
 `ac3128318e0ea98a4abcb675f0ce27f6bf9a5e43`; this ledger entry follows as its own commit on the same branch, since
 there is no merge for it to follow.
+
+## BODY-MODELOS-ESTANDAR-1-M -- two fixes to the AI model standard, then merged (2026-11-07)
+
+The orchestrator's review (`ORCH-CARLOS-DELEGATES-TIER-1-1`) approved `feat/body-modelos-estandar-1` (commit
+`6e512c6`) with two fixes to be made inside the slice's own files before landing.
+
+**Fix 1 -- one date basis for a dated price.** `body/agente/uso.py`'s `verificar_tope` asked `_precios(...,
+hoy)` for the person's own local calendar day (`_hoy_local`), while `_gasto_hoy_micro_usd` prices each usage row
+at the UTC date of its own `creado_en` -- the two could disagree near a person's local midnight (e.g. on
+2026-12-31 after 19:00 in Bogota, once the UTC day has already stepped to 2027-01-01 and Gemini's price with
+it). `verificar_tope` now computes `hoy` from `_ahora_utc().date()`, the same UTC date basis, with a comment
+saying why: a vendor's price step takes effect on a UTC date, so the two checks must agree. `uso.py`'s
+`_hoy_local` is now unused and removed (`body/agente/herramientas.py`'s `_hoy_local` is a separate function, for
+a goal's `start_day`, and is untouched). The day RANGE that bounds which rows count as "today"
+(`_rango_dia_local_utc`, the person's own local midnight) is a separate question from which date prices a row,
+and stays exactly as it was.
+
+**Fix 2 -- the price note.** `body/agente/precios.json`'s `fuente` called Anthropic's cache-write row (2_500_000,
+1.25x its input price, modelos-ia-v1.1's own cited figure) "the input price" -- it is not; only OpenAI's
+cache-write and Gemini's whole cache column fall back to the full input price, because no vendor figure is known
+for them. Rewrote the sentence to say that, and to say Anthropic's four figures and OpenAI's cached input are
+cited vendor prices from modelos-ia-v1.1. No number in the file changed.
+
+**Test.** `tests/test_modelos_estandar_1.py` gained `UtcDateBasisTest`: with the clock patched to
+`2027-01-01T03:00Z` (Bogota local `2026-12-31 22:00`) and a stored usage row at that same UTC instant, a spy on
+`uso._precios` shows `verificar_tope`'s priced check and `_gasto_hoy_micro_usd`'s row pricing both ask for
+`2027-01-01` -- the Gemini row that just stepped -- never `2026-12-31`. Run against the pre-fix code (by hand,
+not committed), this test fails: the priced check asked for `2026-12-31` instead, discriminating the fix.
+
+**Measured, against the spec.** `main` had not moved since the branch was cut (`git merge-base` equalled
+`main`'s tip, `7735200`); no merge of `main` into the branch was needed, and nothing was resolved by guessing.
+
+**Gate**, exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, run once on the branch after
+both fixes, foreground: `Ran 856 tests in 121.396s ... OK (skipped=1)` (one more than BODY-MODELOS-ESTANDAR-1's
+855: the new `UtcDateBasisTest`).
+
+**Merge.** The diff touches no schema or migration, no customer-facing bytes (`precios.json`'s `fuente` is a
+documentation field, never read by any code path, let alone shown to a person), and no cross-repo contract --
+merge policy A's three conditions all pass, and this spec's body says to merge. Fix commit
+`126c0b16b5936cc91b036ba96ba5ffd98fca0d65` on `feat/body-modelos-estandar-1`, merged `--no-ff` into `main` at
+`40d5534f38daca65eda7f6454008443b5cbebae3`. The merge commit's tree (`e156978c04647a52a51467db0f46f55d25d7d430`)
+is identical to the branch tip's tree (`git diff` between them is empty), so the gate above still describes the
+tree that landed; it was not re-run after the merge.
