@@ -29,6 +29,10 @@ ROUTE_TOOL = {
     "/goals/{goal_id}": "leer_meta",
     "/settings": "leer_ajustes",
     "/sw.js": None,               # the service worker script, not a data screen
+    "/healthz": None,             # liveness check, no data, no tool
+    "/login": None,               # sign-in plumbing, no data, no tool
+    "/login/cuenta/start": None,  # sign-in plumbing, no data, no tool
+    "/login/cuenta/callback": None,  # sign-in plumbing, no data, no tool
 }
 
 WRITER_NAMES = {

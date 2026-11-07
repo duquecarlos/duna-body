@@ -24,10 +24,12 @@ try{var th=localStorage.getItem('body.theme');var dark=th==='dark'||(th!=='light
   <a href="/trends" class="{{ 'on' if tab=='trends' }}" {% if tab=='trends' %}aria-current="page"{% endif %}><svg viewBox="0 0 24 24"><path d="M3 17l5-5 4 4 8-8"/><path d="M15 8h5v5"/></svg>{{ t('nav.trends') }}</a>
   <a href="/goals" class="{{ 'on' if tab=='goals' }}" {% if tab=='goals' %}aria-current="page"{% endif %}><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg>{{ t('nav.goals') }}</a>
   <a href="/settings" class="rail-foot {{ 'on' if tab=='settings' }}"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>{{ t('nav.settings') }}</a>
+  {% if hosted() %}<form method="post" action="/logout" class="rail-foot" style="margin-top:auto"><button type="submit" style="all:unset;display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:12px;padding:10px 12px;width:100%;cursor:pointer;color:#B9B6AE;font-size:15px;font-family:inherit"><svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" fill="none" stroke-width="1.8"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>{{ t('nav.logout') }}</button></form>{% endif %}
 </nav>
 <main><div class="wrap">
 {% block main %}{% endblock %}
-<p class="foot">{{ t('foot.not_medical') }}{% if tab != 'settings' %} · <a href="/settings" style="text-decoration:underline">{{ t('nav.settings') }}</a>{% endif %}</p>
+<p class="foot">{{ t('foot.not_medical') }}{% if tab != 'settings' %} · <a href="/settings" style="text-decoration:underline">{{ t('nav.settings') }}</a>{% endif %}{% if hosted() %} · <button type="submit" form="logout-form" style="all:unset;text-decoration:underline;cursor:pointer;color:inherit;font:inherit">{{ t('nav.logout') }}</button>{% endif %}</p>
+{% if hosted() %}<form id="logout-form" method="post" action="/logout" style="display:none"></form>{% endif %}
 </div></main>
 </div>
 <script>/* come back to the same spot (Paridad #30) */

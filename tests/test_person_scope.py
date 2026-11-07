@@ -3,15 +3,17 @@ read and write filters by that resolved person, and a row that belongs to anothe
 404 -- never 403, never the row. Two persons (A, B), invented demo data, no real health figures.
 """
 import inspect
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import baselines, config, db, goals, history, profile, readiness, shift_import, vida_export, web
+from body import baselines, config, cuenta, db, goals, history, profile, readiness, shift_import, vida_export, web
 from body import identity
 from body.agente import ajustes
 
@@ -174,6 +176,56 @@ class WebScopeTest(unittest.TestCase):
         r = client.post("/shifts/confirm", data={"batch_id": str(self.batch_a)})
         self.assertEqual(r.status_code, 404)
         self.assertEqual(self._batch_status(self.batch_a), "proposed")  # A's batch: untouched
+
+
+class HostedPersonScopeTest(unittest.TestCase):
+    """BODY-CUENTA-RP-1: with real Cuenta sessions (not dependency_overrides), two persons signed
+    in with two sessions see only their own rows and get 404 on the other's ids."""
+
+    def setUp(self):
+        conn = _reset_db(self)
+        self.gid_a, self.hid_a, self.batch_a = _seed_person(
+            conn, PERSON_A, "2026-11-01", "Goal for person A", "turnos-a.json", "2026-11-01T12:00:00-05:00")
+        self.gid_b, self.hid_b, self.batch_b = _seed_person(
+            conn, PERSON_B, "2026-11-10", "Goal for person B", "turnos-b.json", "2026-11-10T12:00:00-05:00")
+
+        env = {cuenta.ISSUER_ENV: "https://fake-cuenta.test", cuenta.PUBLIC_URL_ENV: "http://127.0.0.1:8770",
+               cuenta.CLIENT_SECRET_ENV: "s3cr3t"}
+        patcher = mock.patch.dict(os.environ, env)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+        self.token_a = cuenta.create_session(conn, PERSON_A, "sid-scope-a")
+        self.token_b = cuenta.create_session(conn, PERSON_B, "sid-scope-b")
+
+    def _client_as(self, token: str) -> TestClient:
+        c = TestClient(web.app, follow_redirects=False)
+        c.cookies.set(cuenta.SESSION_COOKIE, token)
+        return c
+
+    def test_two_sessions_see_only_their_own_goals_and_404_on_the_others_id(self):
+        ca, cb = self._client_as(self.token_a), self._client_as(self.token_b)
+
+        ra = ca.get("/goals")
+        self.assertEqual(ra.status_code, 200)
+        self.assertIn("Goal for person A", ra.text)
+        self.assertNotIn("Goal for person B", ra.text)
+
+        rb = cb.get("/goals")
+        self.assertEqual(rb.status_code, 200)
+        self.assertIn("Goal for person B", rb.text)
+        self.assertNotIn("Goal for person A", rb.text)
+
+        self.assertEqual(ca.get(f"/goals/{self.gid_a}").status_code, 200)
+        self.assertEqual(ca.get(f"/goals/{self.gid_b}").status_code, 404)
+        self.assertEqual(cb.get(f"/goals/{self.gid_b}").status_code, 200)
+        self.assertEqual(cb.get(f"/goals/{self.gid_a}").status_code, 404)
+
+    def test_no_session_cookie_redirects_to_login(self):
+        c = TestClient(web.app, follow_redirects=False)
+        r = c.get("/goals")
+        self.assertEqual(r.status_code, 303)
+        self.assertTrue(r.headers["location"].startswith("/login"))
 
 
 # ---- static guards: the resolver is the only seam, and nothing defaults person_id away ----

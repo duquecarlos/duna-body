@@ -1,0 +1,365 @@
+{
+  "contrato": "cuenta-duna-v1",
+  "emisor": "https://cuenta.duna.solutions",
+  "ahora": 1800000000,
+  "margen_segundos": 60,
+  "algoritmo": "RS256",
+  "jwks": {
+    "keys": [
+      {
+        "kty": "RSA",
+        "use": "sig",
+        "alg": "RS256",
+        "kid": "k1",
+        "n": "yAD5nfMBYShbfsvzqozEZWQ4F2457Zp7GV3_kh86-4iEs6bczTTVWsxXG_nxagPSmqSl6PDdnD-beh0Ravxa-tE11cIy1qdae9I7G0Pl6V1qMRwh4F_5-9ciE5LLGJ34Db5BzHqmpeOqYE_dIHzV1d1vKSuSJUffA7fawuxV7gGqk9j6dp371PNP6N1RRX37qDPvE337RYpAccSPdPmk47-zVgx3E5q4GAtaamV5ThwdWYXKyN8UAM4Ejn48OB5oDlqhqjnDL4kpdZoRBX5-s1TDIWDN2QPPxnCG4dzrnHVdriy3QyAm8WTLo_p0qSu6pDkWLClgMcqErGx8KKHY_JG1MK695O9evGpbaNh16fh2iawUlzmj0q6KDK8tBHJHNyYX-t222rcQaWq2BtItmF2NKT6lDVMvT3chNH0IKpDVP0ACf5lU-ydr27osAwMrBkOCiBzBUy0InuNIJUNrkm-FnEC_jzgfitA5_66mRhc2wvdvrQkO-tcoMHDeI6m7",
+        "e": "AQAB"
+      }
+    ]
+  },
+  "jwks_tras_refetch": {
+    "keys": [
+      {
+        "kty": "RSA",
+        "use": "sig",
+        "alg": "RS256",
+        "kid": "k1",
+        "n": "yAD5nfMBYShbfsvzqozEZWQ4F2457Zp7GV3_kh86-4iEs6bczTTVWsxXG_nxagPSmqSl6PDdnD-beh0Ravxa-tE11cIy1qdae9I7G0Pl6V1qMRwh4F_5-9ciE5LLGJ34Db5BzHqmpeOqYE_dIHzV1d1vKSuSJUffA7fawuxV7gGqk9j6dp371PNP6N1RRX37qDPvE337RYpAccSPdPmk47-zVgx3E5q4GAtaamV5ThwdWYXKyN8UAM4Ejn48OB5oDlqhqjnDL4kpdZoRBX5-s1TDIWDN2QPPxnCG4dzrnHVdriy3QyAm8WTLo_p0qSu6pDkWLClgMcqErGx8KKHY_JG1MK695O9evGpbaNh16fh2iawUlzmj0q6KDK8tBHJHNyYX-t222rcQaWq2BtItmF2NKT6lDVMvT3chNH0IKpDVP0ACf5lU-ydr27osAwMrBkOCiBzBUy0InuNIJUNrkm-FnEC_jzgfitA5_66mRhc2wvdvrQkO-tcoMHDeI6m7",
+        "e": "AQAB"
+      },
+      {
+        "kty": "RSA",
+        "use": "sig",
+        "alg": "RS256",
+        "kid": "k2",
+        "n": "lvMINbFOXOvqHyOEzWFgZ2r2yOaAJAR-wi3cnH8gz671NmxzfyDBsssKLIisI3faFmkqx6HCZDMhKxfU0tqyM7pPue0jVvz2fMgP8RaYC63U0arl-cmqeQMCIW6gyC7bDVZnwOa9T2MEbDew1PzDtGcRy6oJ7PT0Z2jQrEVmHBUafKY9WxO3MCJPem3Zp1qXZjaA_IGLmBSJciw-co_mY-iKS8Vd6qctLe58SbvjRhm8jYS470lvM_27S7jP_n5PoNlmNfQd9rx16YWKvTy99ZY9VLHRizR_UKO42QAE8rbPJ2NnCYAQKMq9YJf-jiKjhTAqra5qMzmJr9ytUD5W3f7nSrCBO-4pJ7Rs8lTOFqVrELN1R9Nh46NZ7vBT40BNQt44ovok343VtMy5Y1xk7fopbnTviwGbkApUHSN1OmHaWOvpGzhuD-4YwIplmDLSwHPi6cX1siYtqPJaLpOYv5s4WAbzTNrigPiI5MVpy5QL4Gf9p7mnAsWqbIngmYDp",
+        "e": "AQAB"
+      }
+    ]
+  },
+  "casos": [
+    {
+      "id": "id-valido-con-correo",
+      "tipo": "id_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsImF1ZCI6ImxvdGVzIiwiZXhwIjoxODAwMDAwMjQwLCJpYXQiOjE3OTk5OTk5NDAsImF1dGhfdGltZSI6MTc5OTk5OTkzNSwibm9uY2UiOiJuLTBTNl9XekEyTWoiLCJzaWQiOiJjOGUyZjVhMS02ZDk0LTRiMDctYTNlOC01ZjE3YjlkMmMwNDYiLCJhY3IiOiJwd2QiLCJhbXIiOlsicHdkIl0sImVtYWlsIjoicGVyc29uYUBlamVtcGxvLmNvIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsIm5hbWUiOiJQZXJzb25hIGRlIFBydWViYSIsImR1bmFfcHJvZHVjdG9zIjpbImxvdGVzIiwidGllbmRhIl0sImR1bmFfcGVyc29uYWwiOmZhbHNlfQ.DYssaEmvBEQ7xzO6RA54X5JRwwz9wl0Fj8dAqSNDvPrOILbPXIIyjKLGPtbMC_Vi2bDFZLiqw_KoQ9372G4NjfZDZTt_S6fYlVzX6LRZ6WXMRmwD0itSibJpCrNwsUuPvA3AuNKpIjyRrWvs19tG1fwrw70Ni7P9MPmKtbiOidyzJSzemeM6L5KVMGfpHXskdNt2Avs53g8KtjHwU8RlIVD1TrL8bX3WHcphm0kGa5Qo-j3ffK7l7NnudLXgSBGeX2PXiJJ1OHfqlOIguTI1FjoMBoKJpdu2XKC1PhvPzeUjf_UrJsrYbP-G5xCkmdl8WtoLkhpza_Y5Tr3n2OpIb9GbDAyXmM-V5rlbSs2yLNHX8i2iRLsqL69UDY3gkgCHvHPBMoFpBi78udOWuJwuOwgbs-4mmPRkzR2CI0s5PlqcmLNaVWBFCv_lp-z3jSEHG5_MTV-iOA-Eb4d_Htaw8NlHKSavCpwZZTDemfznZgVQljzH_XHrpotn3-gpENPO",
+      "esperado": "aceptar",
+      "codigo": null,
+      "nota": "The baseline. Map by `sub` only.",
+      "nonce_esperado": "n-0S6_WzA2Mj"
+    },
+    {
+      "id": "id-valido-solo-usuario",
+      "tipo": "id_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsInN1YiI6ImIyZDQ3ZTE5LThhNjAtNGMzZi04ZjEyLTkxYzVlN2EwM2I2NCIsImF1ZCI6ImxvdGVzIiwiZXhwIjoxODAwMDAwMjQwLCJpYXQiOjE3OTk5OTk5NDAsImF1dGhfdGltZSI6MTc5OTk5OTkzNSwibm9uY2UiOiJuLTBTNl9XekEyTWoiLCJzaWQiOiJjOGUyZjVhMS02ZDk0LTRiMDctYTNlOC01ZjE3YjlkMmMwNDYiLCJhY3IiOiJwd2QiLCJhbXIiOlsicHdkIl0sIm5hbWUiOiJDb2NpbmEgRm9nXHUwMGYzbiIsImR1bmFfcHJvZHVjdG9zIjpbImxvdGVzIiwidGllbmRhIl0sImR1bmFfcGVyc29uYWwiOmZhbHNlLCJwcmVmZXJyZWRfdXNlcm5hbWUiOiJjb2NpbmEuZm9nb24ifQ.Dut6Fgs9pkdrsd5b-ZTFX6epUQPzzA451kKOgcj3LIX41bTnNSDIkcjIaw1UxbAnRKzvbjOVptl0M99Juk_mwuwczKkIL-u6FzN7IHweBelh14_5qDQLu-8jg_QuaBmKYAW3Bbzxa0vj5YJV2qsVs9COiAWylPB3U2sUj6agIRuTEp_Ow8KqwtbjID-bSVU-KQ9pYzmFu3snfNBbWvC0gbwZ0deOPLPxhyR2KJhLAvYghNr3yXXwx_b9Z6YNlQfSvdRXy9Xs_5tcsF5ixyBvsHl-ENerDIeOtACs4rb4fVLHeM2iEHZZ89UQZOrUISb9_aEwr_IUzfjEgaxgwt7uxvoyYu8EXTzrWf5VddAJzXNceLa1I-VUI3VDkuZ2IcObfHF7x9oXn5N05IKVLELJFmZ4LvEpBtQdjtB83oE66KQLEcKPLJNuMWR2TlnfNgK72Yn5tD5Xk1HkhzXF5dzcwymmqSqV2ja0rRVsbvEuAngJCFHuCZn2sruakP4OXWXm",
+      "esperado": "aceptar",
+      "codigo": null,
+      "nota": "D1 (Carlos, 2026-10-07): a person may hold a username and no email. No `email` and no `email_verified` claim at all. A product that requires email FAILS this vector.",
+      "nonce_esperado": "n-0S6_WzA2Mj"
+    },
+    {
+      "id": "id-aud-otro-cliente",
+      "tipo": "id_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsImF1ZCI6ImZpbmFuemFzIiwiZXhwIjoxODAwMDAwMjQwLCJpYXQiOjE3OTk5OTk5NDAsImF1dGhfdGltZSI6MTc5OTk5OTkzNSwibm9uY2UiOiJuLTBTNl9XekEyTWoiLCJzaWQiOiJjOGUyZjVhMS02ZDk0LTRiMDctYTNlOC01ZjE3YjlkMmMwNDYiLCJhY3IiOiJwd2QiLCJhbXIiOlsicHdkIl0sImVtYWlsIjoicGVyc29uYUBlamVtcGxvLmNvIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsIm5hbWUiOiJQZXJzb25hIGRlIFBydWViYSIsImR1bmFfcHJvZHVjdG9zIjpbImxvdGVzIiwidGllbmRhIl0sImR1bmFfcGVyc29uYWwiOmZhbHNlfQ.qHlycuJAC_KhcUAVNkjgBasKxbYqy0PF5bsCMVlTwwk5R7cjwJ6pMLxqbj4TTpzKzZsRSKoWX6qCqoD68tMQgFcmsi3rOYAlwTdkHvKZSOVQm4ZlWMtmNnZIp3QrAyDX_X_C8uidWwABQrV0JcjK-jUDSKrw2JWfdN5tL2SLh4yAtU3TZ_aN39G7-iIq-f20Gz5PaYaHKPAmb5EKpnCyEqegwQp0OBE2Yk68GmVyHZyQGgQEYvA7ZC3PCR_3PA_MVVyZlhx6Uetr6tA0wnHEeg9pHpIdDbWwFGh3jXH3STFbdwW1ppWJzAb4dCWem4lkG6xigr_yJWpbRsBBgn0RnLQTkr1PnlixY0n29aKO7cWksTqgcUgaUN_434WCqd9OtC4i8k6ijqQsX4NVB9a_e-Eq5k-1VeLhOHrl3enFST_O3nH9MWWXm8xniPWypkMQvEgASIAtUlM93Op4A-3-cy3vg1LyjX3H4HwpQ0IBroDbespM-vaBW7HCgxHfl0f9",
+      "esperado": "rechazar",
+      "codigo": "aud",
+      "nota": "",
+      "nonce_esperado": "n-0S6_WzA2Mj"
+    },
+    {
+      "id": "id-aud-lista-sin-cliente",
+      "tipo": "id_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsImF1ZCI6WyJmaW5hbnphcyIsInBlZGlkb3MiXSwiZXhwIjoxODAwMDAwMjQwLCJpYXQiOjE3OTk5OTk5NDAsImF1dGhfdGltZSI6MTc5OTk5OTkzNSwibm9uY2UiOiJuLTBTNl9XekEyTWoiLCJzaWQiOiJjOGUyZjVhMS02ZDk0LTRiMDctYTNlOC01ZjE3YjlkMmMwNDYiLCJhY3IiOiJwd2QiLCJhbXIiOlsicHdkIl0sImVtYWlsIjoicGVyc29uYUBlamVtcGxvLmNvIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsIm5hbWUiOiJQZXJzb25hIGRlIFBydWViYSIsImR1bmFfcHJvZHVjdG9zIjpbImxvdGVzIiwidGllbmRhIl0sImR1bmFfcGVyc29uYWwiOmZhbHNlfQ.ZJPq5KN9DUGx3q_S5hNB7DagxYXPrfj4Ai4Zjjbc9sHSKiRb68825p4iYsVWpsq30g66_BOGXENP6nTZ3WgokOTuq1F8PuHstyFJLNHlOcOlq4QCR7ZJy9p0ZqvhKVfg-vd4xWXrLZipgQriOJgAyuyJ-2TgcQj2wJYh0tjUjgJwLeiqc03G4usBWHt32V1E8RbqWV3B39TPS07kKjzRS5PZFCoEAtl0L0G9gUn7uKpSIuCRbWuOkDhB-PtfabnvcqRG1Fba20HyNed3a7ZeXESWT80yJqGPd28dkCS_U0n_Pq6yUOxeXjOkkKv8c_DhjEGuhLnaZJNSBMHj3eWSXH4h1YKuGQhciDpSe45CsN7c7a187e3x6tN05NA8Xnd335OhcIT0_zeLmNg9wXb54uz9KFXqTzhDdOWZe82TF5HLRj57VF2Rv2Geqsozn0eaXjYXUYLCip6h88VyzJGyQ1wQlwtewZfxl3Agl3hKMynXwHRciRkrBOA4sf1DXpds",
+      "esperado": "rechazar",
+      "codigo": "aud",
+      "nota": "",
+      "nonce_esperado": "n-0S6_WzA2Mj"
+    },
+    {
+      "id": "id-aud-lista-con-cliente",
+      "tipo": "id_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsImF1ZCI6WyJsb3RlcyIsImZpbmFuemFzIl0sImV4cCI6MTgwMDAwMDI0MCwiaWF0IjoxNzk5OTk5OTQwLCJhdXRoX3RpbWUiOjE3OTk5OTk5MzUsIm5vbmNlIjoibi0wUzZfV3pBMk1qIiwic2lkIjoiYzhlMmY1YTEtNmQ5NC00YjA3LWEzZTgtNWYxN2I5ZDJjMDQ2IiwiYWNyIjoicHdkIiwiYW1yIjpbInB3ZCJdLCJlbWFpbCI6InBlcnNvbmFAZWplbXBsby5jbyIsImVtYWlsX3ZlcmlmaWVkIjp0cnVlLCJuYW1lIjoiUGVyc29uYSBkZSBQcnVlYmEiLCJkdW5hX3Byb2R1Y3RvcyI6WyJsb3RlcyIsInRpZW5kYSJdLCJkdW5hX3BlcnNvbmFsIjpmYWxzZX0.LhbYjBfQWtEFx0CrkbKTJYNnYqKPBKc0kvwzDCxbNwIGcNGZGcLwUPpUWPtqV4a2FN1dsx1mvjCZdFzGEwn9zBWVUTcBNxwDk-ASnikg7W3CmkM9m_KF5K3s9aM5Q7IgJ9zN6bxm8rxaswkqoRFLsVD3VjbUCrA3QfM9eTPa5kj3zgVAm6EWKbgFLdrl9km3ECUDQAZmqFXkYEbc0AFV4BVzJALFfxGTOvy43zqsOBFTKV0kTxKUFAByiQx226OSmGuf-h_R9qmrB4LMnA2is4yv4IGmhwle57EAQfhffT9D-zIpA5g6-u7_vUiqRrvgpESBLeiOonjQ1iXjbolCLjLXAqgqt_kM8TYN-rB5hmR8Q0f0HzqhqMziR_NhN4cr0PS5whBFUmhZwxO7_XIPiIT2AQJ3nz3XPspgctRQfGAbUmu1IZCaQo-xr0P6FfzsYqT5UY4T6nsQ-Pckz91O0yvHW3hn_71uIulbPMnoIulzrsTLndP2UvOcooZbVl4z",
+      "esperado": "rechazar",
+      "codigo": "aud",
+      "nota": "Cuenta always issues ONE audience; a list, even one naming this client, is refused.",
+      "nonce_esperado": "n-0S6_WzA2Mj"
+    },
+    {
+      "id": "id-iss-ajeno",
+      "tipo": "id_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucy5ldmlsLmNvIiwic3ViIjoiNmYxYzlhNTItM2I3ZS00ZDFhLTljNTUtMmE4ZTBmNGI3ZDMxIiwiYXVkIjoibG90ZXMiLCJleHAiOjE4MDAwMDAyNDAsImlhdCI6MTc5OTk5OTk0MCwiYXV0aF90aW1lIjoxNzk5OTk5OTM1LCJub25jZSI6Im4tMFM2X1d6QTJNaiIsInNpZCI6ImM4ZTJmNWExLTZkOTQtNGIwNy1hM2U4LTVmMTdiOWQyYzA0NiIsImFjciI6InB3ZCIsImFtciI6WyJwd2QiXSwiZW1haWwiOiJwZXJzb25hQGVqZW1wbG8uY28iLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwibmFtZSI6IlBlcnNvbmEgZGUgUHJ1ZWJhIiwiZHVuYV9wcm9kdWN0b3MiOlsibG90ZXMiLCJ0aWVuZGEiXSwiZHVuYV9wZXJzb25hbCI6ZmFsc2V9.KWgsKnsWz-iiOkLR_lTYqfDcbDGZZ0hz75QbcRzGid56HrV0c--ascyxwrIXZWD_rsH-kxvrqRFC6e63YGtGv8aterYDIu0QYaeW-G8Uxw06L2TDaetnCz9u5rLHK8w_KZLxWqYqlCry3o0LBlk5AGVYD3_rscZIvnwLeWA2z9KqoVwoxjF1ZwxT58iuacNAWwyR9BLA3TvQoxAYth-JvGTH71I1QgPdLmCTH_BYHpVp3szopKZ3KEJekiDsgHKz3f5pbXT3Ej8zOeJB70rNPWw-7zAcY6JBb9kWklgJdZf3N6EQk_BoAwwYBGGCBh8dqRqXz2TtC3Wnm-1b4BsxEbOzhlpWZFrm4aW3NOUtzMHYXOWboG_444-oV_TD2Gil7CA8y3fxFIRWkvw_U-lhtU60pamnWjzYyF3d_6NZitas-5o4QV7NxlqRJ1K3VBLxdlj86U-wMj5pA3Zcw7SBTihdO8hzK6T5sOyfC7JaZwrmb6G21G3VN_kO9E3oAEpf",
+      "esperado": "rechazar",
+      "codigo": "iss",
+      "nota": "",
+      "nonce_esperado": "n-0S6_WzA2Mj"
+    },
+    {
+      "id": "id-iss-barra-final",
+      "tipo": "id_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucy8iLCJzdWIiOiI2ZjFjOWE1Mi0zYjdlLTRkMWEtOWM1NS0yYThlMGY0YjdkMzEiLCJhdWQiOiJsb3RlcyIsImV4cCI6MTgwMDAwMDI0MCwiaWF0IjoxNzk5OTk5OTQwLCJhdXRoX3RpbWUiOjE3OTk5OTk5MzUsIm5vbmNlIjoibi0wUzZfV3pBMk1qIiwic2lkIjoiYzhlMmY1YTEtNmQ5NC00YjA3LWEzZTgtNWYxN2I5ZDJjMDQ2IiwiYWNyIjoicHdkIiwiYW1yIjpbInB3ZCJdLCJlbWFpbCI6InBlcnNvbmFAZWplbXBsby5jbyIsImVtYWlsX3ZlcmlmaWVkIjp0cnVlLCJuYW1lIjoiUGVyc29uYSBkZSBQcnVlYmEiLCJkdW5hX3Byb2R1Y3RvcyI6WyJsb3RlcyIsInRpZW5kYSJdLCJkdW5hX3BlcnNvbmFsIjpmYWxzZX0.eSUR1d37tO-qcxZ4ZMYgGU3BH8aXhpd3jMwJUxaNoNRTSdZk0mJIbSV2vl1pBrw_TgHGk_VPvJupTeDA-aRPbF3TJ8hHCjKP_Xm0Wnyr75_b0i6dbZng7F8w2e1oYTYSpqudugmT-BIImG4AJLP5kSgIctcMVHPT2edMOlH5S_CdIiyp_fdlsGcyx5PBn4mVa5IpGM-xZLtIUJtvQS1oxo9gdh_vT_71O2oy7StD_lvwb6blTgoViioay2cYu13v-dUxxesMFkRRLv2PH4hKvonWOnqDY-GAxPGbzF1bg8sYOHUkERWOPBA8UtF0nnVevCm3k9gBhtakv1ZTFaX-LQF2CLPN9xdHa_c9sgI8v8mmdpLn-xhj2KdKwOuhbi8b84uFOWp9PcKldlfw561yPlbxjWXaQ8WysbaR11JWXuqo9KeEKe789JJfJkTtHtJFh5-SPQAospDIskm-mafkIYAX6lkORoC0BSE7pb6cgLniHFTIOtUJaeQR9zzkIGgi",
+      "esperado": "rechazar",
+      "codigo": "iss",
+      "nota": "Exact string match: a trailing slash is a different issuer.",
+      "nonce_esperado": "n-0S6_WzA2Mj"
+    },
+    {
+      "id": "id-vencido",
+      "tipo": "id_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsImF1ZCI6ImxvdGVzIiwiZXhwIjoxNzk5OTk5OTM5LCJpYXQiOjE3OTk5OTk2MzksImF1dGhfdGltZSI6MTc5OTk5OTkzNSwibm9uY2UiOiJuLTBTNl9XekEyTWoiLCJzaWQiOiJjOGUyZjVhMS02ZDk0LTRiMDctYTNlOC01ZjE3YjlkMmMwNDYiLCJhY3IiOiJwd2QiLCJhbXIiOlsicHdkIl0sImVtYWlsIjoicGVyc29uYUBlamVtcGxvLmNvIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsIm5hbWUiOiJQZXJzb25hIGRlIFBydWViYSIsImR1bmFfcHJvZHVjdG9zIjpbImxvdGVzIiwidGllbmRhIl0sImR1bmFfcGVyc29uYWwiOmZhbHNlfQ.UpC5Fjoz4pWnmdG3AIb6czj66IhX_8y_0Ndov6wXMKMvKRjpl_ATGbJfQhX08G_7LfQNHSkuSWsRDsNhmUE2ns_4X1sHs91RYuOkxsrIv2QsaOX_UJ5xPl8d_S6D4Mb1DCB3XoWIuIolYLzV9JgZebOjz4onpcwFAsop2gthaPwfzyugEunuY0VuvH6Zde2TawI3FE_nesmUAe6tYo9oF0z2wn6zF9T8BUnSETpG_oohMBFZzdA-5j1uKm6Ei0VpKMAyHSq-kclo73ilh6kctS_3miR2WbbLKt6StqT76a4VDjzLLTTKI6hJ8yRZqt1U_iVw3fmaV7aO0D8hkpcGyZ2MzIBjLiraijHneJIF_xmPpdaE4B7iie9Bn3iOLPVMXqbE9sk-ictpkT61NRtRiJj_0PVOrtRjTMvlSdlw9ZweV5d9UXYoxTn1iFW6NFOMF98pGiyTM37fiHcajRNrHiyM4GydoEjG--y2OIcuVBtdI0I2jyvy8UubN-VqG_zp",
+      "esperado": "rechazar",
+      "codigo": "exp",
+      "nota": "61 s past `exp`: outside the 60 s leeway.",
+      "nonce_esperado": "n-0S6_WzA2Mj"
+    },
+    {
+      "id": "id-vencido-dentro-de-margen",
+      "tipo": "id_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsImF1ZCI6ImxvdGVzIiwiZXhwIjoxNzk5OTk5OTcwLCJpYXQiOjE3OTk5OTk2NzAsImF1dGhfdGltZSI6MTc5OTk5OTkzNSwibm9uY2UiOiJuLTBTNl9XekEyTWoiLCJzaWQiOiJjOGUyZjVhMS02ZDk0LTRiMDctYTNlOC01ZjE3YjlkMmMwNDYiLCJhY3IiOiJwd2QiLCJhbXIiOlsicHdkIl0sImVtYWlsIjoicGVyc29uYUBlamVtcGxvLmNvIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsIm5hbWUiOiJQZXJzb25hIGRlIFBydWViYSIsImR1bmFfcHJvZHVjdG9zIjpbImxvdGVzIiwidGllbmRhIl0sImR1bmFfcGVyc29uYWwiOmZhbHNlfQ.Nn_4l_RcazkG_0ALoGvLiz-g9QlGxoi8QsNwZpe8znNQAs3AyoejLYC_pg0J4kQQ1NOdD-V5q5Rx4hGIKb6lNgQpmNcumdoKgmc6eL19mjO6-e5bmSSNdR1lNa-5OrKtcb74OU0ntnw62eIWGupfrHPz3zPWMgc8oMPz5EVjfCyNEeFaOaelL5Ll_GmDdK5fkVCaEVBvCWYXqBnw90OtblSJkqaO4qDFfXSvtgTfpgRYTRCnLNIHrV09dJg7wFRbg8Bu2off8jvcrY8cT0-589YR5g56CW-t9VRpRen2H4rzj9yuFxzga1Hu5IFg3RAB7Ou9gUEzkp9KEsjMoVU3WPoSbRkl4wvFAmutkdmheSjvBKWBfU6bKBq2k64EJBrD049s6DqKxeIAkMUuTFd6kBWqpb7JU1ybD2BbmLRId5WOgWfrtUj0CO5N76TjaAkqPio9Z7RRxAGniY4Z9r2GSrcPm8l4dTo9PCsgcydVvSVb05VLYowTt4bS780fq_x2",
+      "esperado": "aceptar",
+      "codigo": null,
+      "nota": "30 s past `exp`: inside the 60 s leeway.",
+      "nonce_esperado": "n-0S6_WzA2Mj"
+    },
+    {
+      "id": "id-iat-futuro",
+      "tipo": "id_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsImF1ZCI6ImxvdGVzIiwiZXhwIjoxODAwMDAwNjAwLCJpYXQiOjE4MDAwMDAzMDAsImF1dGhfdGltZSI6MTc5OTk5OTkzNSwibm9uY2UiOiJuLTBTNl9XekEyTWoiLCJzaWQiOiJjOGUyZjVhMS02ZDk0LTRiMDctYTNlOC01ZjE3YjlkMmMwNDYiLCJhY3IiOiJwd2QiLCJhbXIiOlsicHdkIl0sImVtYWlsIjoicGVyc29uYUBlamVtcGxvLmNvIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsIm5hbWUiOiJQZXJzb25hIGRlIFBydWViYSIsImR1bmFfcHJvZHVjdG9zIjpbImxvdGVzIiwidGllbmRhIl0sImR1bmFfcGVyc29uYWwiOmZhbHNlfQ.tyyL-EE_v6UaPXuY1yK-Kc25HrVCnhs9j1wta5iVmvi2O81aXlNc4hy62tICdfndBsdnrFLMSMRz-7u-6b_wZIlkV05UyrheIEQ0j10i4IM0X52Pk8jYVQyQ5XRiuRayz_C6ouG7KzgYTauEBYtAn2oQBYu-mGl6Hd7xazHj_PJlsGEgZ9-ICLxEAZhGp2aqEg0aRz-aqVwIMnacwcgWSU7mYf4UbC-PT2YVhCZKqvpSbZJVwsy8YPEfArVpOWNegRwQFSuKYkHRwmVVQ35ymj2JecnbHpck7brXArNX0rDex4h0xT9LPoEkvqOJypgIRzYTpbtCy2uZtp5OLWSov0P4piveIdo9jZsUQqLVAE_1ZZ9i0Uo_UdtjfqDRBxXy4BhRmQoXTpYsrHvdGOxJLFc8Zq0MV_TvdLVoevjuu6BWN4IMpoKC4DRDRRjhpsNNodLLiBX5DmaAwsIrqGA-FKeXvNrVkBn5TtVPpcWcjlc-jf2LdHfqLzKGNoqeZfMF",
+      "esperado": "rechazar",
+      "codigo": "iat",
+      "nota": "Issued more than 60 s in the future.",
+      "nonce_esperado": "n-0S6_WzA2Mj"
+    },
+    {
+      "id": "id-nonce-distinto",
+      "tipo": "id_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsImF1ZCI6ImxvdGVzIiwiZXhwIjoxODAwMDAwMjQwLCJpYXQiOjE3OTk5OTk5NDAsImF1dGhfdGltZSI6MTc5OTk5OTkzNSwibm9uY2UiOiJvdHJvLW5vbmNlIiwic2lkIjoiYzhlMmY1YTEtNmQ5NC00YjA3LWEzZTgtNWYxN2I5ZDJjMDQ2IiwiYWNyIjoicHdkIiwiYW1yIjpbInB3ZCJdLCJlbWFpbCI6InBlcnNvbmFAZWplbXBsby5jbyIsImVtYWlsX3ZlcmlmaWVkIjp0cnVlLCJuYW1lIjoiUGVyc29uYSBkZSBQcnVlYmEiLCJkdW5hX3Byb2R1Y3RvcyI6WyJsb3RlcyIsInRpZW5kYSJdLCJkdW5hX3BlcnNvbmFsIjpmYWxzZX0.PhXWmwvqMT3DRv-Np0upPDDEtqN2skCt_GPtFT4a1iSg8qtG0_cA9HOZdyJN5metEEFFxlqJPlTkoksvYumdZnPFo9Msu3TVWIW_AQdSHBpZ6TcMBWAGpD4vElqeVTcbKbOCM4QKWLkItylfW1OxJfcy4r14rXYSbqD7WPPHKyU8eESzQTV1mOReCcT3x2iHQPW1xxZl0ML_soFVRb7zMXWealWhzA0wxqlJyPK4zXfV4-eZjU_6jAVj6BdK-65aXJOgTdz5VsT-GLG_1wkhUQUuCbblPwJ6rPNEZDJSHsHEusQ48IxyS7_dTVmajJX97Q-n8WKCMI58zubrBpmqCVOoWhZYkxVZqqg6ipVaQ1kPZWTvlB8EbWJoKlKsx1iXVQybGVoaSkkPl2q3_Pg_T0AMa9fVY6F0d6DksQeK1UocT-A_up4Yu4pdQ5r7afg_t7rc2tvLv0R7sm9VV3i-S2VsOvw0h2IxN35xSATwa8f3NeP0xohrWHeArHveQ1ZH",
+      "esperado": "rechazar",
+      "codigo": "nonce",
+      "nota": "",
+      "nonce_esperado": "n-0S6_WzA2Mj"
+    },
+    {
+      "id": "id-sin-nonce",
+      "tipo": "id_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsImF1ZCI6ImxvdGVzIiwiZXhwIjoxODAwMDAwMjQwLCJpYXQiOjE3OTk5OTk5NDAsImF1dGhfdGltZSI6MTc5OTk5OTkzNSwic2lkIjoiYzhlMmY1YTEtNmQ5NC00YjA3LWEzZTgtNWYxN2I5ZDJjMDQ2IiwiYWNyIjoicHdkIiwiYW1yIjpbInB3ZCJdLCJlbWFpbCI6InBlcnNvbmFAZWplbXBsby5jbyIsImVtYWlsX3ZlcmlmaWVkIjp0cnVlLCJuYW1lIjoiUGVyc29uYSBkZSBQcnVlYmEiLCJkdW5hX3Byb2R1Y3RvcyI6WyJsb3RlcyIsInRpZW5kYSJdLCJkdW5hX3BlcnNvbmFsIjpmYWxzZX0.tkEZn48ZNvRijjN7cXD5g0nH8GlVic_iRPf_E1y6zh06uV3qJLQtmI-U8dkbeJjzOZjUZwg3svIZrXb4-6yTd84fRsqTptCx5uHW8EBjlHe7bK3P81ZpkVU1sJdkaU9rJ29oO85NDleqmNYDqcmT2mETvJI2o8dstI4avlC7OU_FH-uz_TpCyX6wAvtOCVvgpYWiNqW3Fhj6XD0kBi_KJJ9nQoDyIgERQeSydf1WbXOcvmREPDzPERG-X0yZCH2ZBBnQ2tEUNl1YiuHWihEYSft1fIBdQmmr_cxY6i6bLV6AoY5YzVc1vtw0vW8Y36KKb1ffsOwlPRltiuE6YvlZ7NsQ_7MuwhhKkIvElZCyH1qAcCsgw2d8YPLoqZ0y9sqOFPBdv-LOiYTQojf091Qr6b19cfs7Z_WAHYxFoVbkcLtm_3wDd-ZkwcXsXZZtwOCrAysfPxLuQyEqsSIJUu6cqHEqezOBETThQ-Xpy3SqWNp2cijYAkVPojDD4FeYhqib",
+      "esperado": "rechazar",
+      "codigo": "nonce",
+      "nota": "",
+      "nonce_esperado": "n-0S6_WzA2Mj"
+    },
+    {
+      "id": "id-sin-sub",
+      "tipo": "id_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsImF1ZCI6ImxvdGVzIiwiZXhwIjoxODAwMDAwMjQwLCJpYXQiOjE3OTk5OTk5NDAsImF1dGhfdGltZSI6MTc5OTk5OTkzNSwibm9uY2UiOiJuLTBTNl9XekEyTWoiLCJzaWQiOiJjOGUyZjVhMS02ZDk0LTRiMDctYTNlOC01ZjE3YjlkMmMwNDYiLCJhY3IiOiJwd2QiLCJhbXIiOlsicHdkIl0sImVtYWlsIjoicGVyc29uYUBlamVtcGxvLmNvIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsIm5hbWUiOiJQZXJzb25hIGRlIFBydWViYSIsImR1bmFfcHJvZHVjdG9zIjpbImxvdGVzIiwidGllbmRhIl0sImR1bmFfcGVyc29uYWwiOmZhbHNlfQ.R7SDuPgLyBN78lgMD8RSoZSv6TOGh7qiAKoMtr_KpbQwxwBCwlONHAy1-ux_yw8xSq8pUQtaR3Boh1x8HXTW-qG_lOCw2SewdGySKafn4uEH8AAna1OlnnnqNiK7QnoMuZpnVdM9Og5y8ywBVC2WZ00Rdd6_u9DOCaBwMuT-tUQprjFyglNxYKNUIv7QD534mbxtzUXf4b_pXdyTMjEFXiSTxQB04ZcPJhnO-mVg0cJOdK94F4vhlfDaNrrfzbr8JKOiTAL2MnBx_Lvb5SBXPiRJQJV0A0ZKUGW-PEzG0eYTSDp0M0otuzXj728ZNHWLWsK5KDNzsEPcMFB73-PRNwiXB-8uN472NtkYM-9z9nAmwxjLPnRZ6PuDDTq70rZe4kH0j6Zxn2ynw2nJ3rDm5Z8cmXAaWSeIhxPhFAE2gxghoOd_ozjRwlZ1kudgWYNKlHALL7UhNPjkOd8vISGyzLnvLwIPYyOb9LWm70J0_WH7bKmtJdHqBF0eXf8mgUIT",
+      "esperado": "rechazar",
+      "codigo": "sub",
+      "nota": "",
+      "nonce_esperado": "n-0S6_WzA2Mj"
+    },
+    {
+      "id": "id-firma-alterada",
+      "tipo": "id_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsImF1ZCI6ImxvdGVzIiwiZXhwIjoxODAwMDAwMjQwLCJpYXQiOjE3OTk5OTk5NDAsImF1dGhfdGltZSI6MTc5OTk5OTkzNSwibm9uY2UiOiJuLTBTNl9XekEyTWoiLCJzaWQiOiJjOGUyZjVhMS02ZDk0LTRiMDctYTNlOC01ZjE3YjlkMmMwNDYiLCJhY3IiOiJwd2QiLCJhbXIiOlsicHdkIl0sImVtYWlsIjoicGVyc29uYUBlamVtcGxvLmNvIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsIm5hbWUiOiJQZXJzb25hIGRlIFBydWViYSIsImR1bmFfcHJvZHVjdG9zIjpbImxvdGVzIiwidGllbmRhIl0sImR1bmFfcGVyc29uYWwiOmZhbHNlfQ.AYssaEmvBEQ7xzO6RA54X5JRwwz9wl0Fj8dAqSNDvPrOILbPXIIyjKLGPtbMC_Vi2bDFZLiqw_KoQ9372G4NjfZDZTt_S6fYlVzX6LRZ6WXMRmwD0itSibJpCrNwsUuPvA3AuNKpIjyRrWvs19tG1fwrw70Ni7P9MPmKtbiOidyzJSzemeM6L5KVMGfpHXskdNt2Avs53g8KtjHwU8RlIVD1TrL8bX3WHcphm0kGa5Qo-j3ffK7l7NnudLXgSBGeX2PXiJJ1OHfqlOIguTI1FjoMBoKJpdu2XKC1PhvPzeUjf_UrJsrYbP-G5xCkmdl8WtoLkhpza_Y5Tr3n2OpIb9GbDAyXmM-V5rlbSs2yLNHX8i2iRLsqL69UDY3gkgCHvHPBMoFpBi78udOWuJwuOwgbs-4mmPRkzR2CI0s5PlqcmLNaVWBFCv_lp-z3jSEHG5_MTV-iOA-Eb4d_Htaw8NlHKSavCpwZZTDemfznZgVQljzH_XHrpotn3-gpENPO",
+      "esperado": "rechazar",
+      "codigo": "firma",
+      "nota": "",
+      "nonce_esperado": "n-0S6_WzA2Mj"
+    },
+    {
+      "id": "id-kid-siguiente-tras-refetch",
+      "tipo": "id_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsyIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsImF1ZCI6ImxvdGVzIiwiZXhwIjoxODAwMDAwMjQwLCJpYXQiOjE3OTk5OTk5NDAsImF1dGhfdGltZSI6MTc5OTk5OTkzNSwibm9uY2UiOiJuLTBTNl9XekEyTWoiLCJzaWQiOiJjOGUyZjVhMS02ZDk0LTRiMDctYTNlOC01ZjE3YjlkMmMwNDYiLCJhY3IiOiJwd2QiLCJhbXIiOlsicHdkIl0sImVtYWlsIjoicGVyc29uYUBlamVtcGxvLmNvIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsIm5hbWUiOiJQZXJzb25hIGRlIFBydWViYSIsImR1bmFfcHJvZHVjdG9zIjpbImxvdGVzIiwidGllbmRhIl0sImR1bmFfcGVyc29uYWwiOmZhbHNlfQ.eHgU2_s1bN0pvL4c2zQyCP7gRW0zws_IjJJK0Ur09dlsYi6b7jc61kkG86RPfS2bkx_el99VJpdSXEC-cx1nArIgptx6hue3pg5NneQDYEri7gzhdopkk2LdKuZUdxEps8MEgyGnLJONpAU1C171jcddaR_FavAmgSHjtaCDZr3b8osaOWfX7BUQzpnBIBcrVwoBeyyXe_P8YNKVfR2ZnJbgJaq7cBWP6VM-91Ibynmji55isCWYToL3hGudkvU7AmsaT2JAA0BiXgl-rADgg0OE9q8ZqrVf1dnRtrWZio0zqBSTQRqA8XL2o59it-lw_Yw6d8R1rwiH1GFZMbpi1pjXFFHG2rHPwvYzL4B_i3uK4xuLFlElkwG4a_o8Dh-LuvCZipb4u8bjUOtqB0a8dvqMg_YsYstRxAm1LJlZ6EK5SPPurR9zFHWxZxHlJCcQd0mhgvXQAo5od4OWiL63H6PLZOhJV8SHdXelZBQGZzOcq0o9oUWn4N2M65mWTLFz",
+      "esperado": "aceptar",
+      "codigo": null,
+      "nota": "Unknown `kid`: refetch the JWKS once (at most once a minute), find k2 in `jwks_tras_refetch`, verify.",
+      "nonce_esperado": "n-0S6_WzA2Mj"
+    },
+    {
+      "id": "id-kid-desconocido",
+      "tipo": "id_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6Ims5IiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsImF1ZCI6ImxvdGVzIiwiZXhwIjoxODAwMDAwMjQwLCJpYXQiOjE3OTk5OTk5NDAsImF1dGhfdGltZSI6MTc5OTk5OTkzNSwibm9uY2UiOiJuLTBTNl9XekEyTWoiLCJzaWQiOiJjOGUyZjVhMS02ZDk0LTRiMDctYTNlOC01ZjE3YjlkMmMwNDYiLCJhY3IiOiJwd2QiLCJhbXIiOlsicHdkIl0sImVtYWlsIjoicGVyc29uYUBlamVtcGxvLmNvIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsIm5hbWUiOiJQZXJzb25hIGRlIFBydWViYSIsImR1bmFfcHJvZHVjdG9zIjpbImxvdGVzIiwidGllbmRhIl0sImR1bmFfcGVyc29uYWwiOmZhbHNlfQ.UuDN6qbb-dPO9_TgYOWt1bWrglpELSORz_cYBGF0J_7wE8KNZ6VLHbQjnMYm9cT41KXuTnLd9Gqtt5_uGodpp0tyH8zp-nhF-QsfLlurK6tQW22xUNLHh96Ax5skOBhnciewzhXFZDHdn3EbnBvI7Eb0XwGRH--PQh0ybyN2z3FqZSkkyFaJaB54uVyOcejuq63EpJ-puiYBRy3EmArK9-vPY97qUVhoscHo8mBf193BeGisDC3IjDirCsBIQWbRdCHL8Rilg3VyL6glg8Fq6C8FGrv_LlPG0ecw0RQtRTY2Ag92iwFE5gnqqCBFDh7M95GYyqauw7BZfDaO9fX0---67aMKsTVfksPAzsD2MexflpUu7KrDh5n016OuDZzfJdVfQ8PEYdBiTqiJfdv0-dICGh2A2pJjAKBOqeTwJbOWIX_zSPnW9qHpTkE9TzCGXw0iP2teWj114Yi3DXACPggvix_7fCx8xC49DHZ-owiQ01bvoz-w2DUexk9s975N",
+      "esperado": "rechazar",
+      "codigo": "kid",
+      "nota": "Unknown even after the one refetch.",
+      "nonce_esperado": "n-0S6_WzA2Mj"
+    },
+    {
+      "id": "id-alg-hs256-con-clave-publica",
+      "tipo": "id_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsImF1ZCI6ImxvdGVzIiwiZXhwIjoxODAwMDAwMjQwLCJpYXQiOjE3OTk5OTk5NDAsImF1dGhfdGltZSI6MTc5OTk5OTkzNSwibm9uY2UiOiJuLTBTNl9XekEyTWoiLCJzaWQiOiJjOGUyZjVhMS02ZDk0LTRiMDctYTNlOC01ZjE3YjlkMmMwNDYiLCJhY3IiOiJwd2QiLCJhbXIiOlsicHdkIl0sImVtYWlsIjoicGVyc29uYUBlamVtcGxvLmNvIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsIm5hbWUiOiJQZXJzb25hIGRlIFBydWViYSIsImR1bmFfcHJvZHVjdG9zIjpbImxvdGVzIiwidGllbmRhIl0sImR1bmFfcGVyc29uYWwiOmZhbHNlfQ.BPlDgmdJy4shKF6FKD7C6eTBkL3Ulj5L21hU3s0mmMA",
+      "esperado": "rechazar",
+      "codigo": "alg",
+      "nota": "Only RS256 is accepted; the algorithm is pinned, never read from the header.",
+      "nonce_esperado": "n-0S6_WzA2Mj"
+    },
+    {
+      "id": "consola-acr-pwd",
+      "tipo": "id_token",
+      "cliente_id": "consola",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsImF1ZCI6ImNvbnNvbGEiLCJleHAiOjE4MDAwMDAyNDAsImlhdCI6MTc5OTk5OTk0MCwiYXV0aF90aW1lIjoxNzk5OTk5OTM1LCJub25jZSI6Im4tMFM2X1d6QTJNaiIsInNpZCI6ImM4ZTJmNWExLTZkOTQtNGIwNy1hM2U4LTVmMTdiOWQyYzA0NiIsImFjciI6InB3ZCIsImFtciI6WyJwd2QiXSwiZW1haWwiOiJwZXJzb25hQGVqZW1wbG8uY28iLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwibmFtZSI6IlBlcnNvbmEgZGUgUHJ1ZWJhIiwiZHVuYV9wcm9kdWN0b3MiOlsibG90ZXMiLCJ0aWVuZGEiXSwiZHVuYV9wZXJzb25hbCI6dHJ1ZX0.fL-sKsaQPVUmqVdXt_RJpRJbXh0N6iqwZWCEPZ9YsL4bfBpIuTpckrokk3kAKzGtytdOSP9wPi_9zm_vdDA40Nb0VQqHu5WB69fmHpmvDBrQfEba0l93KXzJXGvIfZbqPJrMr6njtrRjFka1SjnafJNk0PNk1nJknn1Jxjn1Pamx_6cl0jV1co4lmzPwVS7XI9GwOsrO34oJUiQXFbDEU7wdaFKCORWlzlmOVkbJxbRshjO_cjPzHwfkpqz94C_eeaHc4H64XfKOdyxP6LG1ekQITGZth4B6bXkHgVOI24wsxa16wJ1vgnT-MtnD61-e5TbZpR33XsjcEVAtgKpMH8oYStIfJFsvUkvRXr8u_pTIMXgfXalQWsBmdg2aSmeaDOFX2CTQH37CaW2FnT_B5LQ0dz6nXPpRzN5weKsoGD3EXaMg4P8VAKWwNtuZUgrnPOTjVAtVhsfrpG3vZ9Uo8GX4xjNGA4JHgVniDgE3iTwHOuLpVOQwzS7NVDFAq8gC",
+      "esperado": "rechazar",
+      "codigo": "acr",
+      "nota": "The console requires `acr=passkey` once the staff member has a passkey (contract 6).",
+      "nonce_esperado": "n-0S6_WzA2Mj",
+      "requiere_acr": "passkey"
+    },
+    {
+      "id": "consola-acr-passkey",
+      "tipo": "id_token",
+      "cliente_id": "consola",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsImF1ZCI6ImNvbnNvbGEiLCJleHAiOjE4MDAwMDAyNDAsImlhdCI6MTc5OTk5OTk0MCwiYXV0aF90aW1lIjoxNzk5OTk5OTM1LCJub25jZSI6Im4tMFM2X1d6QTJNaiIsInNpZCI6ImM4ZTJmNWExLTZkOTQtNGIwNy1hM2U4LTVmMTdiOWQyYzA0NiIsImFjciI6InBhc3NrZXkiLCJhbXIiOlsiaHdrIiwidXNlciJdLCJlbWFpbCI6InBlcnNvbmFAZWplbXBsby5jbyIsImVtYWlsX3ZlcmlmaWVkIjp0cnVlLCJuYW1lIjoiUGVyc29uYSBkZSBQcnVlYmEiLCJkdW5hX3Byb2R1Y3RvcyI6WyJsb3RlcyIsInRpZW5kYSJdLCJkdW5hX3BlcnNvbmFsIjp0cnVlfQ.RCjrhyfFIMcsi0_DLwXFFScBKqYh6Ea89UFzt4moDvvT3vcYNTWE1XVRguf8Bd4QILMU0_Jc7Lm_d5VmeZd_n_T-13MCAnKRl3wrH07l9pHy_63JGzAGR1wWTFjqmXuDLeEaPP109tBnMHrBVuaL4XJPAsP33OJfu35P-ZmSqhC2k0gt6twVe9LJdgvMaESwGt0v-HVvm4E77fsffNf3xe-lNyOaBFbu22vkB7esC6g3gbB0WB_I8bayI4PMgwjYlKt_woFoEN66Y36kd1bS-ESAYyCoMTv6CBGawpQlCy-C0fIk2ax2t69QRz4kblBRjBneAJp5b6IF4pG4eA_NEUIHi6-QzunwY8w8gw2oa7GB_rMt3wi-Jirlql0oeB8nR2Db1mfQkjvl0B2U-p4ITXc3Gd3dINYFWHZrN94HDdV4y0AeYOOw5SkoM7ecOZy4iPoTtWHZb2j6eYTf2in4wf1oSzA5-cfKnvs66wV8xnjv22AtAq2fGUGZmceJrAK8",
+      "esperado": "aceptar",
+      "codigo": null,
+      "nota": "",
+      "nonce_esperado": "n-0S6_WzA2Mj",
+      "requiere_acr": "passkey"
+    },
+    {
+      "id": "logout-con-sid",
+      "tipo": "logout_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoibG9nb3V0K2p3dCJ9.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsImF1ZCI6ImxvdGVzIiwiaWF0IjoxNzk5OTk5OTk1LCJleHAiOjE4MDAwMDAxMTUsImp0aSI6ImI4NjYzMTFmLTI4NWYtNDhlZC1hZmYwLTcyZmYyMWQ0MTMwMyIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsInNpZCI6ImM4ZTJmNWExLTZkOTQtNGIwNy1hM2U4LTVmMTdiOWQyYzA0NiIsImV2ZW50cyI6eyJodHRwOi8vc2NoZW1hcy5vcGVuaWQubmV0L2V2ZW50L2JhY2tjaGFubmVsLWxvZ291dCI6e319fQ.py4dOhAJ4aXcdhsuCNhsl7MkZ5nRfR66Sxbd6oX83nxpxVdusvCSEDSDFWlbQYQ-vUOFVTADduaZusp_9ZwyJUenthGbPrazmFv-cEf2UV7-bnAaZaj4d6sDQtgXKEQuO4D7doGko7WWJVbumSOkuNoqrfDX_ZWCOkW8rOL2dJTGs6Uw4FVKx16CQt7NmwlbrGf23mGdQrks9Jd2giy82_vdUgplNAB6PPuFmb6uVK4M0e_BLPbmhd_VOXh_OP_bnjLIkPPF-xmpk6y2TqWko4U1FHjWhUisQ28pp08UwvXPMZjPMjsWaORB3cjsV_aVvKqGXg5laNGdyhAWctNz9LuCbLbcNSfB4zOthbYqTK6z20hFDD1bsC5mZqL_9sBVtyE9aCh5gNyMIoeJ8nwHyrqzwM9y3Kn9-kTGws99FsJ24IRsovZjlxjzS2UZP7is9jsZ0C9vHZmpFcTqqupzsIYRvHkTG9pLhYGtVpsnPvomo3QoEWKatUrVIxrEgP3p",
+      "esperado": "aceptar",
+      "codigo": null,
+      "nota": "End the local session(s) whose stored `sid` matches.",
+      "alcance": "sesion"
+    },
+    {
+      "id": "logout-solo-sub",
+      "tipo": "logout_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoibG9nb3V0K2p3dCJ9.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsImF1ZCI6ImxvdGVzIiwiaWF0IjoxNzk5OTk5OTk1LCJleHAiOjE4MDAwMDAxMTUsImp0aSI6IjIwNjVmZDkxLTRkOTctNDYzZC05NGUwLWQ3ODRlNWM2MTJiOCIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsImV2ZW50cyI6eyJodHRwOi8vc2NoZW1hcy5vcGVuaWQubmV0L2V2ZW50L2JhY2tjaGFubmVsLWxvZ291dCI6e319fQ.ixJjmGsqoep-mUrvbN1vg9q27jWnEn3Lk8CItuuQ6vc5RQEIt23uP_javyLS82J-clvY7Si85aj6g-pQib81ES4gfm2yeHqsqIJoGObfeWxexMTwZ6WfvRS4AIFrW9oDeCtl07gVr38HVdkTIke1ac6PKzxkzLEkiDX21kqITV9KxehCGBX2ex3bKNhcmNmuIm-e_brn7PMq5ADn_gshQGv7xqwKjqlbfImROP7sfe2HHQYe-ayA_xzIQae1C8WE0izAwWb9_ASULX954MdnmyOsGFIgWBP9yHzV7jiqD7s3sRE_txjCRcCJST5ieqWvqc7NDJDjHxbPbv_7xVVkCVYbbTHquTFc-WSBTa0BcRVS88jillK6ln94BY48KOrqcaAHJJv47wyzHnOcJAnoAkYLft5g-hrgdngZJwJvXAZmdsfzTqyM2F-M3OxHty2ZPkFCGB306q_Rp1UxlT5LFhdqlOgw6P05G3CzFnbhRf_AaBivVZGIKrh4ulsEZhyn",
+      "esperado": "aceptar",
+      "codigo": null,
+      "nota": "No `sid`: end EVERY local session of the user linked to this `sub`.",
+      "alcance": "persona"
+    },
+    {
+      "id": "logout-sin-sub-ni-sid",
+      "tipo": "logout_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoibG9nb3V0K2p3dCJ9.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsImF1ZCI6ImxvdGVzIiwiaWF0IjoxNzk5OTk5OTk1LCJleHAiOjE4MDAwMDAxMTUsImp0aSI6ImM2YTU1YzZjLTAxOGYtNDZhOC1iZjI2LTBmMTExNGVkNDAwNCIsImV2ZW50cyI6eyJodHRwOi8vc2NoZW1hcy5vcGVuaWQubmV0L2V2ZW50L2JhY2tjaGFubmVsLWxvZ291dCI6e319fQ.ID8SlOwpnjFqH8RUPw2Ifyma4hakHlDfp-7RxGYspwAU_endTUoyN-4Qt80sgMTGOwsEbz9JwBXuTaIXhWtNwcqjR1DJsAqRRR3cp7MbmXiiCIyP7FLOwRnDlh20Ktd5p-44_QU48Q747hni1BXNWFd_BmZ9vEii47PoI3vkH9OXF5JcFcG82-8tY7XrmkXsM5ynMhJTNIq4bGtP0G7oc-pjPtNDungQ4SCowfOPFyWYWTb5Dq5joJlqdyPFGBL2tTBDm-ASFxlPZnGUdI3AkI8qqFtT_gaAFY3TYJPVD5aAB9yWms2ANBhrv9o_CxIXZgITmYcJrxunxIZxR3M836aYwRuhwo7HbNrAk2Cma5fGC6HQDE_bvEzCDis0xdeFhcjnRXKEesUKEDGbXsm-KM0ZRH38tvbCHqrJD3Li37vHOCrOgT7hdYYcGUAmyzoIKQB__yS4NY3hWSgnaYIG8AX7ecgPNKW-kMh-yKRYvRMhBT03n-ONLZDt3VMhhTWs",
+      "esperado": "rechazar",
+      "codigo": "sub_o_sid",
+      "nota": ""
+    },
+    {
+      "id": "logout-con-nonce",
+      "tipo": "logout_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoibG9nb3V0K2p3dCJ9.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsImF1ZCI6ImxvdGVzIiwiaWF0IjoxNzk5OTk5OTk1LCJleHAiOjE4MDAwMDAxMTUsImp0aSI6IjBjYmY1YTdlLTAxZDctNDlmOC1hNjY5LWZmMjQ0ZWU1YmNhYiIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsInNpZCI6ImM4ZTJmNWExLTZkOTQtNGIwNy1hM2U4LTVmMTdiOWQyYzA0NiIsImV2ZW50cyI6eyJodHRwOi8vc2NoZW1hcy5vcGVuaWQubmV0L2V2ZW50L2JhY2tjaGFubmVsLWxvZ291dCI6e319LCJub25jZSI6IngifQ.TEVriBtFvCPxAUJxnFlqJ_XexsL_bx8GTaNOPpX9DWel1fYTkfq6jwYbIOoXA0IJMl_OfAVnF3jNo9tLzDMhmGVP8VBhZTAMt6-vZQVhg2ccBA5iYB0PKF6OboHfPBjleleA74q5JZIE2L0ngRNRtV28-KI0ILCDEsOwgNQhs4m1A3ip2JsNRfiKbHJmG_psl0Iqqs5xo3BA9fojw7IfpDMCJCN3rN2lAhxKymflPEnX13N-zuj00g3fmnml5UcOXwlUQg8lvdn9E9k0abkJl4Uao6nJgFWAFMadwHsetgsm8ubnpciDr_nSYEvb5YfT38S9aP7ApSVSmyDwWuSDReenzTEZaxQkTXhoOfxu5hQ9bb8dBMyL0CGD-T2-xxrR_Gxhy85zUnwIAjM-OyzTKnHovMTcm1x3WycwOk-TW9_x-shdACJnMFksfa-zkGY39sluWufucgXNuhuVDcDTp-dhPhBEztqxxE3hhXOFgSo52CSzK06iHs1OR6OP92Rq",
+      "esperado": "rechazar",
+      "codigo": "nonce",
+      "nota": "Back-Channel Logout 1.0: a logout token MUST NOT carry `nonce`."
+    },
+    {
+      "id": "logout-sin-events",
+      "tipo": "logout_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoibG9nb3V0K2p3dCJ9.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsImF1ZCI6ImxvdGVzIiwiaWF0IjoxNzk5OTk5OTk1LCJleHAiOjE4MDAwMDAxMTUsImp0aSI6ImZkOWFiNzEyLTVkOGEtNDQ4Ny1hZWI0LWNlNmZjMDFhNjIxYyIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsInNpZCI6ImM4ZTJmNWExLTZkOTQtNGIwNy1hM2U4LTVmMTdiOWQyYzA0NiJ9.QtFMmacxTEIoiPUIVwBK8t9WtnPwbh4bhOHXKa1NUYT3e2md4lfCZTAx6h3mBWCqHaAuHR9N6MkQCSAbsSfYCZUaN42gbhq3-5GVzyvSYrJRv2ke2aPQOGtM8qz67nUs164uLokWVxq2p_HmsXGE6y1CM_pwSAg56-E6_3A7NEUKUc4rdlxYZB_Z-2ck3Rpf9GdLkOCVbA5RejfXIs7tBbvjVd8y1jGKB6ajzEuEs9I7JOgDGmKLwg209E-tG7Qs1tC6oXNZg37XiRAn-jbRVeoPsdP7GgTSO5p9Xepl9k9FW81DtMaLNhJwMaaUD-kINs2LrX4yo3g0x2885rjTJhfh3HxniSqNJrbYhY5CQOBsoIRw1YVuggxnuYriqRTWrvHBTwwEnuGpCgz2qzdQpXssRVtvdG_VBJlKECpt5g0XC8fdujONWLvbSNiBW5SKEVvw_DWMgYGTuOlRliUNZQoFNZK_hBYMeNym8xh_pVQ2MvoyeI4K4uu8A93B1nhd",
+      "esperado": "rechazar",
+      "codigo": "events",
+      "nota": ""
+    },
+    {
+      "id": "logout-events-sin-miembro",
+      "tipo": "logout_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoibG9nb3V0K2p3dCJ9.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsImF1ZCI6ImxvdGVzIiwiaWF0IjoxNzk5OTk5OTk1LCJleHAiOjE4MDAwMDAxMTUsImp0aSI6IjNkN2VhYjNjLTEzOTctNGY2MC04ZWM1LTE3ODJhYmU0YjExYSIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsInNpZCI6ImM4ZTJmNWExLTZkOTQtNGIwNy1hM2U4LTVmMTdiOWQyYzA0NiIsImV2ZW50cyI6eyJvdHJvIjp7fX19.Y9kC9vkK1urLaPfTi5epA6gPoJTyIMAfsEGnKbU1Lbz_FqaUqSzE5J6eYBYDrbN92jqfQLTA_DDjFboCvOp7DAd3mSSEBH-8RwJqiqLUI2WtDOj4p0kVrRfe7odDv_70llQajseyjbgLIROBe9UbXhvCMmwcsmDcOxqjga8ExjPEmXBoIrKjBh2vwmDZqXpjfWH7b_aidJFMQmLIHapQQ57xVqSHZ6a52VFUpRxtgL6IwMD_8ZRNhjjpDPscNNJu4TFO13kTOA1iEqOkbMSnp571YvSo3dNfGAvpSDnFQrwdp61DbtRJyOUM_OV_gETPbjQ2KWGOABeX2_-fTEDwSxmVUOifqVgUM9tiEDDfkYcnSGR9_VMMRQd9Gu3vEq33icXNlL5kcZIlS6CT0iz5KBxRmMxnwChc2jwBdZvEcFTex6A0n8-Ngfx4xG7dJc3yko7vC2P_eLG6fiEzMg5fEm5EzCjLczrgCVLnXTVgotYBFoFnMI0oWOw0WL653y7t",
+      "esperado": "rechazar",
+      "codigo": "events",
+      "nota": ""
+    },
+    {
+      "id": "logout-aud-otro-cliente",
+      "tipo": "logout_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoibG9nb3V0K2p3dCJ9.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsImF1ZCI6InBlZGlkb3MiLCJpYXQiOjE3OTk5OTk5OTUsImV4cCI6MTgwMDAwMDExNSwianRpIjoiZGQwNzU0MjctNTgyNS00ZDg4LWE2OGMtYTYyYzJhOWZmMTg5Iiwic3ViIjoiNmYxYzlhNTItM2I3ZS00ZDFhLTljNTUtMmE4ZTBmNGI3ZDMxIiwic2lkIjoiYzhlMmY1YTEtNmQ5NC00YjA3LWEzZTgtNWYxN2I5ZDJjMDQ2IiwiZXZlbnRzIjp7Imh0dHA6Ly9zY2hlbWFzLm9wZW5pZC5uZXQvZXZlbnQvYmFja2NoYW5uZWwtbG9nb3V0Ijp7fX19.nR3oc5bnr0OFsFyBPlVKwWDOFXeTl0xvstpWK5kHWZi_R47L4QuGO4JNKRY0Ze_sLQcqdzMxRPtbS85cmoXzy8FaAJ0aVAPRtH1EQjFxpciFNvGgcB3Dx00sCLQnWYSUH8v9l1X8mjm5kX8RDb0piaZeXxSuGFB2T37kHumjS4vS5sIFq60bHvsUiP-nS9v0mFtOA0--HQ2pZZASUNfeOwDq4H7mbfolD8ZlsJ-WkH4BIjdaEF-pA4GKdBUr8eWPiLdRtmveRIRqivSedMB4hsXepuDRVYCxmlitwVSgao2hEmwiXUzBZjRygNt1oQiQtegtqHEWCXA36-HribFrpbqTtUg5S7u9DX92tRKr-wYU31Q5csUBEGR4P-0S9Oa2u3e10j7WMOqf_NrIey8jAoA_gYobb84BXLXM-spmY4snFsAroheKs8C2G3hjduAXEAWyMTLHSH4GxJI_1j6oGQi_rysaSAsRsPO8isg9Xu2k0yacCB_bomFlgX8ucv1S",
+      "esperado": "rechazar",
+      "codigo": "aud",
+      "nota": ""
+    },
+    {
+      "id": "logout-vencido",
+      "tipo": "logout_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoibG9nb3V0K2p3dCJ9.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsImF1ZCI6ImxvdGVzIiwiaWF0IjoxNzk5OTk5NjAwLCJleHAiOjE3OTk5OTk4MDAsImp0aSI6IjM5ZDg0Yzg0LTRkNjYtNDFkMS05YjUwLTYxM2RmZTZiNWRlOCIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsInNpZCI6ImM4ZTJmNWExLTZkOTQtNGIwNy1hM2U4LTVmMTdiOWQyYzA0NiIsImV2ZW50cyI6eyJodHRwOi8vc2NoZW1hcy5vcGVuaWQubmV0L2V2ZW50L2JhY2tjaGFubmVsLWxvZ291dCI6e319fQ.epS9AWA-y2Gv8N5Wt6wF1hsKlMuwPyaafgVniUmxvkyHU-HsK-ClRoPYA_Iz7ZbWfrMumDceoOP3-D_YjReCOxzXmdXcP9PJdPoKC8A19s_uzxlioGn_aXoUI5Ac31G-O5pjUn6oU_64gx_nBTUUj68lTgOyKVHXGGKl_xTWQj9dJtLuD8S4Nm2J35ZFsmHk8c1Ea7NXgHZ2VdthhHrr-Qk4AHEK1pydxOdVT4y_QjG1ESttADHBJJwnc4_F_ZGvMlmUcVoESAQt4XgznytMCgfL-QF_l5CnFdBvbyuQyS9S-1o9cNJ4FSTuw5iACDB6lwV-eeQh4krZ3ZK4yo27Vm5_rA6ulqznqs7UJaS-uv1DhaKUNb2LpI-pnn0--fH6HYZ2AK2Rhq47dn_9pu2IbLzHkcR7Wpgpoh54Bop1Os3XVffSjTX_Q-nb1jtJu6QznVarYSwy9uPo4TPj5iciSMFVr2TJZXWTJpO_0Yzu-nUSKDVWAFfabxzS2nMDDvfw",
+      "esperado": "rechazar",
+      "codigo": "exp",
+      "nota": ""
+    },
+    {
+      "id": "logout-typ-jwt",
+      "tipo": "logout_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsImF1ZCI6ImxvdGVzIiwiaWF0IjoxNzk5OTk5OTk1LCJleHAiOjE4MDAwMDAxMTUsImp0aSI6IjdlNzQ3NjQ0LWMzNmQtNDdhNC1iNWM3LTVhMTRjMWUxNTYzOCIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsInNpZCI6ImM4ZTJmNWExLTZkOTQtNGIwNy1hM2U4LTVmMTdiOWQyYzA0NiIsImV2ZW50cyI6eyJodHRwOi8vc2NoZW1hcy5vcGVuaWQubmV0L2V2ZW50L2JhY2tjaGFubmVsLWxvZ291dCI6e319fQ.WsC2ZzYMe1GiPqo9dRYsUrwX-Sg6QYJn5CPetzKp1owQ3BCBTm8oWaGvwHYN06QETMz8DYoPf6VcahvtQgZmYnvYYckYGHhH-fumew68b8wxkVAs-AOrmi_U9HC89P8GDhqqrcNLe1MlE374zZlwEGxbOYb7VBpZ_qRal7NYTpXcVGLabZ1fraU877ZykUn7OMhMPqIs5o_6AC0Ht66XPDn2ctCL0qYAiGaykxJvZklc54eGAE1w2D_v-Lrdc-x_nxoy7b7V5jZ7aOnW2YpiMLtXAdkfkvB0hoVnvQfQdEBlQ4MuBjdwXm9o5CYmv4QeQRFhBWHlmhisOmMj4lIaO0Bx12I2FZAd3QYENgcozB-7dwxs5T9dS4JjCOn1Ob2V3Mu0w6QFco5Hr8urnPgVpqmA4aHxFrwfmPdnxCMlIo6NPG8SRmAMbBTPPc1fFgQOxnu2LYtcKmGA-Zbw17APvQq4_0TafrRrSSksaA8Z9SumTIXOgm9l75yVt62rEycz",
+      "esperado": "rechazar",
+      "codigo": "typ",
+      "nota": "`typ` MUST be `logout+jwt`, so an ID token can never be replayed as a logout token."
+    },
+    {
+      "id": "logout-id-token-reenviado",
+      "tipo": "logout_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsImF1ZCI6ImxvdGVzIiwiZXhwIjoxODAwMDAwMjQwLCJpYXQiOjE3OTk5OTk5NDAsImF1dGhfdGltZSI6MTc5OTk5OTkzNSwibm9uY2UiOiJuLTBTNl9XekEyTWoiLCJzaWQiOiJjOGUyZjVhMS02ZDk0LTRiMDctYTNlOC01ZjE3YjlkMmMwNDYiLCJhY3IiOiJwd2QiLCJhbXIiOlsicHdkIl0sImVtYWlsIjoicGVyc29uYUBlamVtcGxvLmNvIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsIm5hbWUiOiJQZXJzb25hIGRlIFBydWViYSIsImR1bmFfcHJvZHVjdG9zIjpbImxvdGVzIiwidGllbmRhIl0sImR1bmFfcGVyc29uYWwiOmZhbHNlfQ.DYssaEmvBEQ7xzO6RA54X5JRwwz9wl0Fj8dAqSNDvPrOILbPXIIyjKLGPtbMC_Vi2bDFZLiqw_KoQ9372G4NjfZDZTt_S6fYlVzX6LRZ6WXMRmwD0itSibJpCrNwsUuPvA3AuNKpIjyRrWvs19tG1fwrw70Ni7P9MPmKtbiOidyzJSzemeM6L5KVMGfpHXskdNt2Avs53g8KtjHwU8RlIVD1TrL8bX3WHcphm0kGa5Qo-j3ffK7l7NnudLXgSBGeX2PXiJJ1OHfqlOIguTI1FjoMBoKJpdu2XKC1PhvPzeUjf_UrJsrYbP-G5xCkmdl8WtoLkhpza_Y5Tr3n2OpIb9GbDAyXmM-V5rlbSs2yLNHX8i2iRLsqL69UDY3gkgCHvHPBMoFpBi78udOWuJwuOwgbs-4mmPRkzR2CI0s5PlqcmLNaVWBFCv_lp-z3jSEHG5_MTV-iOA-Eb4d_Htaw8NlHKSavCpwZZTDemfznZgVQljzH_XHrpotn3-gpENPO",
+      "esperado": "rechazar",
+      "codigo": "typ",
+      "nota": "A valid ID token posted to the logout endpoint."
+    },
+    {
+      "id": "logout-jti-repetido",
+      "tipo": "logout_token",
+      "cliente_id": "lotes",
+      "ahora": 1800000000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoibG9nb3V0K2p3dCJ9.eyJpc3MiOiJodHRwczovL2N1ZW50YS5kdW5hLnNvbHV0aW9ucyIsImF1ZCI6ImxvdGVzIiwiaWF0IjoxNzk5OTk5OTk1LCJleHAiOjE4MDAwMDAxMTUsImp0aSI6ImI4NjYzMTFmLTI4NWYtNDhlZC1hZmYwLTcyZmYyMWQ0MTMwMyIsInN1YiI6IjZmMWM5YTUyLTNiN2UtNGQxYS05YzU1LTJhOGUwZjRiN2QzMSIsInNpZCI6ImM4ZTJmNWExLTZkOTQtNGIwNy1hM2U4LTVmMTdiOWQyYzA0NiIsImV2ZW50cyI6eyJodHRwOi8vc2NoZW1hcy5vcGVuaWQubmV0L2V2ZW50L2JhY2tjaGFubmVsLWxvZ291dCI6e319fQ.py4dOhAJ4aXcdhsuCNhsl7MkZ5nRfR66Sxbd6oX83nxpxVdusvCSEDSDFWlbQYQ-vUOFVTADduaZusp_9ZwyJUenthGbPrazmFv-cEf2UV7-bnAaZaj4d6sDQtgXKEQuO4D7doGko7WWJVbumSOkuNoqrfDX_ZWCOkW8rOL2dJTGs6Uw4FVKx16CQt7NmwlbrGf23mGdQrks9Jd2giy82_vdUgplNAB6PPuFmb6uVK4M0e_BLPbmhd_VOXh_OP_bnjLIkPPF-xmpk6y2TqWko4U1FHjWhUisQ28pp08UwvXPMZjPMjsWaORB3cjsV_aVvKqGXg5laNGdyhAWctNz9LuCbLbcNSfB4zOthbYqTK6z20hFDD1bsC5mZqL_9sBVtyE9aCh5gNyMIoeJ8nwHyrqzwM9y3Kn9-kTGws99FsJ24IRsovZjlxjzS2UZP7is9jsZ0C9vHZmpFcTqqupzsIYRvHkTG9pLhYGtVpsnPvomo3QoEWKatUrVIxrEgP3p",
+      "esperado": "rechazar",
+      "codigo": "jti",
+      "nota": "Same `jti` as `logout-con-sid`, received second: refuse as a replay (keep seen `jti` for `exp`).",
+      "repetido_de": "logout-con-sid"
+    }
+  ]
+}
