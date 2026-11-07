@@ -2659,3 +2659,21 @@ this slice stops `AWAITING_APPROVAL` on the branch, unmerged, rather than mergin
 
 Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run once, foreground, on the final tree: 560
 tests, OK (1 skipped, pre-existing).
+
+## BODY-NIVEL-DATOS-UI-1-M -- land BODY-NIVEL-DATOS-UI-1 (2026-11-07)
+
+BODY-NIVEL-DATOS-UI-1 stopped on `feat/body-nivel-datos-ui-1` (branch tip `250ead371549bccfe24e90184cdce4cf48def573`)
+AWAITING_APPROVAL, tripping merge policy A's customer-facing-bytes condition. Approved by the orchestrator under
+`ORCH-CARLOS-DELEGATES-TIER-1-1` after review, approved as written, per its own measurement in the Browser pane
+(body-web-demo, scratch data, 375 px): three plain options with completo pre-selected, no sideways scroll,
+«Guardar» clear of the assistant button; saving resumen redirected with «Guardado.», kept resumen selected, and the
+Ajustes row read «Solo resúmenes». No code change in this slice.
+
+`main` had not moved since the branch was cut: `git merge-base main feat/body-nivel-datos-ui-1` and `git rev-parse
+main` both resolved to `77e49882d18b385c090573ac0022f89e34b85363`, so no merge-forward was needed.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 560 tests, OK (1 skipped, pre-existing), run
+once on the branch tip before this merge.
+
+Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-nivel-datos-ui-1` into `main` following
+this entry.
