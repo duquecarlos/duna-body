@@ -2755,3 +2755,51 @@ Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run twice on
 failure was fixed within `touches` by reverting the `body.css` edit, per protocol both runs are recorded): first
 run 586 tests, FAILED (2 failures, 1 skipped); second run on the corrected tree, 586 tests, FAILED (1 failure, 1
 skipped) -- the `test_agente_bucle.py` failure above. Stops `GATE_RED`, unmerged, on `feat/body-tutoriales-2`.
+
+## BODY-TUTORIALES-2-M -- five fixes land BODY-TUTORIALES-2 (2026-11-07)
+
+BODY-TUTORIALES-2 stopped `GATE_RED` on two pre-existing tests built on fragile literals. The orchestrator then
+measured the four doors in a real browser (demo, scratch data, 375 px) and found three more defects. Approved by
+the orchestrator under `ORCH-CARLOS-DELEGATES-TIER-1-1` after review; five fixes, each with a test:
+
+1. **Primeros pasos on the no-data Hoy.** `today()` returned `soon.html`, with no Primeros pasos card at all, for a
+   brand-new person (no day yet -- exactly the first visit). `primeros_pasos()` is now read once, before the early
+   return, and both `soon.html` and `today.html` receive it; `soon.html` renders the same card through a new
+   `primeros_pasos_card(t, primeros_pasos)` macro defined once in `base.html` (`{% from "base.html" import ...
+   with context %}`), not a copy of the markup.
+2. **No dead links on a local Body.** `/login`, `/garmin` and `/ajustes/dispositivos` 404 when `cuenta.hosted()` is
+   false. `tutoriales.SOLO_EN_LINEA` names exactly those three routes; `_tarea_ayuda_ctx` now takes `hosted` and
+   drops `pantalla_link` for a task whose target is in that set while local, flagging it `solo_en_linea` instead.
+   `ayuda.html` shows `ayuda.solo_en_linea` ("Solo en Body en línea" / "Only on Body online") in that case. A test
+   walks every `SOLO_EN_LINEA` route and asserts it 404s local and does not 404 hosted, so the set cannot drift
+   from the routes.
+3. **`test_agente_bucle.py`'s literal set.** `disponibles("ninguno")`'s expected set gains `leer_tutoriales`
+   (decision 5: a nivel-`ninguno` read tool) -- the test's subject (a tool above the current nivel is still refused
+   by `ejecutar`) is unchanged.
+4. **`test_sin_friccion.py`'s "55" guard, rebuilt.** The literal `55` resting-HR value is now the sentinel
+   `987.654321` (same pattern BODY-ASISTENTE-PROPUESTAS-1-M used for `test_backup.py`), which cannot occur in a
+   count, a date, a size or a static-asset hash; the assertion still checks the sentinel's exact text is absent.
+5. **The in-context link's style, back in CSS.** `.ayuda-ctx` is now one rule in `body/static/body.css`; the
+   anchor in `base.html` carries only the class, now that fix 4 removed the fragile-hash risk that made
+   BODY-TUTORIALES-2 keep this style inline.
+
+**Deviation.** `body/i18n/es.json` and `body/i18n/en.json` are outside this slice's `touches`, but `t()` shows a
+missing key's own name on screen rather than failing (by design, so a gap is noticed, never silently blank) --
+delivering fix 2's named bilingual text ("Solo en Body en línea" / "Only on Body online") was not possible without
+adding the one key, `ayuda.solo_en_linea`, to both files. No other key or string in either file was touched.
+
+**Deviation.** The dispatch's ledger-entry instruction quoted "three fixes" verbatim; the spec's own `surface` and
+numbered work list name five. This entry reports the measured count, five.
+
+**Merge policy, judged against this diff.** Schema: no. Cross-repo contract: no. Customer-facing bytes: yes -- the
+Primeros pasos card now appears on the no-data Hoy, Ayuda's text changes for three tasks in local mode, and the
+in-context link's visual rendering moves from an inline style to an equivalent CSS rule. The spec's own body (step
+6) says in words to merge `--no-ff` into `main` once the gate is green, under `ORCH-CARLOS-DELEGATES-TIER-1-1`'s
+approval of these five named fixes -- Merge Policy A's authorization-to-merge condition is met even though the
+bytes condition trips.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` (run with `-W ignore::ResourceWarning`, an
+accepted deviation, same tests) -- run once, foreground, on the final tree: 591 tests, OK (1 skipped, pre-existing).
+
+Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-tutoriales-2` into `main` following
+this entry.
