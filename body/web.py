@@ -719,7 +719,7 @@ def _trend_card(conn, t: T, defs: dict, k: str, start, end, month, nights, perso
     else:
         delta, cls = _compare(t, k, d, p.last30, p.all_mean, spread, "trends.vs_hist")
         etiqueta_mes = lambda m: t.month_year(date.fromisoformat(m + "-01"))
-        aria = (_chart_aria(t, metric_label, etiqueta_mes(p.months[0][0]), etiqueta_mes(p.months[-1][0]))
+        aria = (_chart_aria(t, metric_label, etiqueta_mes(p.months[0][0]), etiqueta_mes(p.months[-1][0]), months=True)
                 if len(p.months) >= 2 else None)
         fig, svg = p.last30, profile.month_svg(p, etiqueta_mes=etiqueta_mes, aria_label=aria)
     card = {"key": k, "question": t("trends.q." + k), "est": d["kind"] == "estimated",
@@ -817,11 +817,15 @@ def _short_date(t: T, d: date) -> str:
     return f"{d.day} {t('date.months')[d.month - 1][:3]} {d.year}"
 
 
-def _chart_aria(t: T, metric: str, start_label: str, end_label: str) -> str:
-    """Accessible name for a trend chart: the metric and its span in words, no figure in it
-    (BODY-EJES-FECHAS-1), e.g. "Sueño, del 19 jun 2024 al 6 nov 2026" / "Sleep, 19 Jun 2024 to 6 Nov 2026"."""
-    return (f"{metric}, del {start_label} al {end_label}" if t.lang == "es"
-            else f"{metric}, {start_label} to {end_label}")
+def _chart_aria(t: T, metric: str, start_label: str, end_label: str, months: bool = False) -> str:
+    """Accessible name for a trend chart: the metric and its span in words, no figure in it (BODY-EJES-FECHAS-1).
+    The connector words come from trends.aria_days / trends.aria_months in i18n, not literals here. A month span
+    reads mid-sentence in Spanish, so its month names go lowercase here -- t.month_year itself still capitalizes,
+    for the axis ends where they stand alone (BODY-EJES-FECHAS-1-M)."""
+    if months and t.lang == "es":
+        start_label, end_label = start_label.lower(), end_label.lower()
+    key = "trends.aria_months" if months else "trends.aria_days"
+    return t(key, metric=metric, desde=start_label, hasta=end_label)
 
 
 def _short_weekday_date(t: T, d: date) -> str:

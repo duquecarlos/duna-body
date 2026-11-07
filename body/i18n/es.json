@@ -364,6 +364,8 @@
   "trends.nights": "Turno de noche",
   "trends.tap_month": "Toca un mes para ver sus días.",
   "trends.tap_day": "Toca un día para abrirlo.",
+  "trends.aria_days": "{metric}, del {desde} al {hasta}",
+  "trends.aria_months": "{metric}, de {desde} a {hasta}",
   "trends.back_hist": "← Todo el historial",
   "trends.month_sub": "{month}, día por día",
   "trends.history_link": "Tu historia completa →",
