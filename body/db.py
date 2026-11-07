@@ -819,9 +819,28 @@ def set_trabaja_turnos(conn, value: bool, person_id: int) -> None:
 
 
 def trabaja_turnos_si(conn, person_id: int) -> bool:
-    """The one predicate every screen slice uses to show or hide Turnos: True only when the
-    stored value is 1 -- NULL (never asked) and 0 (said no) both hide it."""
-    return get_trabaja_turnos(conn, person_id) is True
+    """The one predicate every screen slice uses to show or hide Turnos.
+
+    True when the stored value is 1. Also True when it is NULL (never answered) AND the person
+    already has at least one row in shift or shift_batch -- read-time inference only, never a
+    write, so an explicit "no" (0) is never overridden. This matters because the migration's
+    backfill-to-1 (see _migrate) runs only when the trabaja_turnos column is ADDED to an existing
+    database; a database CREATED fresh -- every test, and the hosted Body, which starts empty and
+    receives shift files from the PC uploader -- never runs that backfill, so a person with shift
+    data would otherwise sit at NULL and Turnos would hide from the very person whose shifts are
+    arriving (BODY-TURNOS-INFERIR-1). False when the stored value is 0, or NULL with no shift data.
+    get_trabaja_turnos is unchanged: it reports only what is stored, so Primeros pasos keeps asking
+    while it is NULL."""
+    stored = get_trabaja_turnos(conn, person_id)
+    if stored is not None:
+        return stored
+    return conn.execute(
+        "SELECT EXISTS("
+        "SELECT 1 FROM shift WHERE person_id = ? "
+        "UNION SELECT 1 FROM shift_batch WHERE person_id = ?"
+        ")",
+        (person_id, person_id),
+    ).fetchone()[0] == 1
 
 
 def update_goal_target(conn, goal_id: int, person_id: int, *, target_value: float | None = None,

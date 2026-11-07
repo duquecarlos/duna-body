@@ -124,6 +124,36 @@ class AccessorTest(unittest.TestCase):
         self.assertTrue(db.trabaja_turnos_si(self.conn, pid))
         self.assertEqual(db.get_trabaja_turnos(self.conn, pid), True)
 
+    def test_trabaja_turnos_si_infers_from_shift_data_when_null(self):
+        """BODY-TURNOS-INFERIR-1: a fresh database never runs the migration's backfill, so NULL
+        with shift data must be read-time-inferred as True; an explicit 0 is never overridden."""
+        pid = db.DEFAULT_PERSON_ID
+        self.conn.execute(
+            "INSERT INTO shift (person_id, day, kind, start_local) VALUES (?, '2026-11-01', 'day', NULL)",
+            (pid,),
+        )
+        self.conn.commit()
+        self.assertIsNone(db.get_trabaja_turnos(self.conn, pid))
+        self.assertTrue(db.trabaja_turnos_si(self.conn, pid))
+
+        other = "INSERT INTO person (id, display_name) VALUES (2, 'B')"
+        self.conn.execute(other)
+        self.conn.execute(
+            "INSERT INTO shift_batch (person_id, file_name, received, extracted_at, day_count, created_at) "
+            "VALUES (2, 'turnos.pdf', '2026-11-01', '2026-11-01T00:00:00+00:00', 1, '2026-11-01T00:00:00+00:00')"
+        )
+        self.conn.commit()
+        self.assertIsNone(db.get_trabaja_turnos(self.conn, 2))
+        self.assertTrue(db.trabaja_turnos_si(self.conn, 2))
+
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (3, 'C')")
+        self.conn.commit()
+        self.assertIsNone(db.get_trabaja_turnos(self.conn, 3))
+        self.assertFalse(db.trabaja_turnos_si(self.conn, 3))
+
+        db.set_trabaja_turnos(self.conn, False, pid)
+        self.assertFalse(db.trabaja_turnos_si(self.conn, pid))
+
     def test_set_trabaja_turnos_rejects_a_non_bool(self):
         with self.assertRaises(TypeError):
             db.set_trabaja_turnos(self.conn, 1, db.DEFAULT_PERSON_ID)
