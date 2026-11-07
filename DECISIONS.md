@@ -4328,3 +4328,65 @@ message and a README change customer-facing bytes, but that slice was Tier 1 `de
 the host's own operator during a live deploy; the distinction is the surface, not a contradiction of the rule
 applied here.) All three of merge policy A's conditions clear, so this merges on green without waiting. Merged
 `--no-ff` into `main`, which is left checked out, clean.
+
+## BODY-TURNOS-ESQUEMA-1 -- the schema for the optional shift-work setting, nothing that reads it yet (2026-11-07)
+
+Carries out `BODY-TURNOS-OPCIONAL-OBS-1`'s slice 1 of five, under `ORCH-CARLOS-DELEGATES-TIER-1-1`, with three
+orchestrator decisions bounding this slice (quoted from the approval): **(a)** three states, not the census's
+`NOT NULL DEFAULT 0` -- `person.trabaja_turnos` is `NULL` (not answered yet), `0` (no) or `1` (yes), so onboarding
+can ask once and a screen can tell "never asked" from "said no"; Turnos shows only when the value is `1`
+(`trabaja_turnos_si`), so `NULL` and `0` both hide it. **(b)** the backfill to `1` runs ONCE, inside the same
+`_migrate` branch that adds the column (guarded by `"trabaja_turnos" not in pcols`), so a person who later
+answers "no" is never flipped back by a restart; it sets `1` for every person id found in `shift` or
+`shift_batch`, which is Carlos's own Turnos exactly as today. A fresh database gets the column from `CREATE
+TABLE person` itself, so the guard is already false and no backfill runs on it (it has no rows regardless).
+**(c)** the three accessors (`get_trabaja_turnos`, `set_trabaja_turnos`, `trabaja_turnos_si`) live in
+`body/db.py` (Tier 1) in this slice, so slices 2-5 (the screens) stay Tier 2.
+
+**Shape added.** `person.trabaja_turnos INTEGER CHECK (trabaja_turnos IN (0, 1))`, nullable, no default, in both
+`CREATE TABLE person` and a guarded `_migrate` ALTER (SQLite accepts a CHECK on `ALTER TABLE ADD COLUMN` when
+the default/NULL satisfies it for existing rows). `shift_batch.kind TEXT NOT NULL DEFAULT 'import' CHECK (kind IN
+('import', 'pattern'))`, in the CREATE and a guarded ALTER (SQLite fills the literal default into every existing
+row, which is why `kind` reads back `'import'` for a shift_batch row that predates this slice). `shift_pattern`
+(new table): `person_id INTEGER PRIMARY KEY REFERENCES person(id)`, `start_day TEXT NOT NULL`, `cycle TEXT NOT
+NULL CHECK (json_valid(cycle))` (a JSON array of `{"kind", "start_local", "end_local"}` entries; no
+parser/validator for its contents here -- slice 5 owns that), `horizon_weeks INTEGER NOT NULL DEFAULT 8 CHECK
+(horizon_weeks BETWEEN 1 AND 26)`, `updated_at TEXT NOT NULL`. The `shift.kind` vocabulary `kind` draws from,
+re-found verbatim in `body/shift_import.py`'s `VALID_KINDS` and the existing `shift`/`shift_batch_item` CHECK
+constraints: `{'morning', 'afternoon', 'night', 'day', 'off', 'other'}`.
+
+**Privacy.** `shift_pattern` has a `person_id` column, so `tests/test_privacidad.py`'s coverage test (every
+`person_id`-keyed table is in exactly one of `FULLY_HANDLED_TABLES` / `PARTIAL_EXPORT_TABLES` /
+`NEVER_EXPORTED_TABLES`) would fail without it; added to `FULLY_HANDLED_TABLES`, exported as the person's own
+row under `vida.shift_pattern` (or `null`), and deleted in `delete_person`. `person.trabaja_turnos` is exported
+in `persona`, alongside `language`.
+
+**Tests**, `tests/test_turnos_esquema_1.py` (new, 10 tests, `tests/_isolate.py` imported first, invented demo
+data only): an old-shape database (person without the column, shift rows for A, a shift_batch for B, nothing
+for C) migrates to A=1, B=1, C=NULL; setting C=0 and A=0 then re-running `db.init` leaves both unchanged (the
+backfill does not re-run); `trabaja_turnos_si` is true only for 1; `set_trabaja_turnos` rejects `1`, `"yes"` and
+`None` (not a `bool`); a fresh database has the column, `shift_pattern` and `shift_batch.kind`; an existing
+shift_batch row reads `kind = 'import'` after migration; export includes the person's `shift_pattern` row and
+`trabaja_turnos`; delete-all removes the `shift_pattern` row. Built the old-shape database by recreating `person`
+and `shift_batch` in their pre-slice shape rather than `ALTER TABLE ... DROP COLUMN` -- SQLite refuses to drop a
+column named by a `CHECK` constraint (`trabaja_turnos`, `kind`), which the first draft hit as three errors
+(`sqlite3.OperationalError: error in table person after drop column: incomplete input`) before this fix; that
+draft never reached a committed tree.
+
+**Pre-flight.** Dispatcher had already branched and checked out `feat/body-turnos-esquema-1`; `git rev-parse
+HEAD main` both read `59a94b18c16497cc068c4a8bc3faef0b2953b29e` (clean tree), so the branch was exactly at
+`main`'s tip -- no merge-in-first step was needed.
+
+**Gate**, exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`. First run, on the branch
+before the DROP COLUMN fix above: `Ran 850 tests in 151.435s ... FAILED (errors=3, skipped=1)` -- all three
+errors in the new test module's old-shape helper, none outside `touches:`. Fixed as described above; targeted
+re-runs of `tests.test_turnos_esquema_1` (10 tests) and `tests.test_privacidad` (25 tests) both green before the
+final full run: `Ran 850 tests in 152.347s ... OK (skipped=1)` (the one pre-existing POSIX-only skip, unrelated
+to this slice; 10 more tests than `BODY-ENV-LOCAL-1`'s last-recorded 840, all new here).
+
+**Merge.** `body/db.py`'s `CREATE TABLE person`, `CREATE TABLE shift_batch` and the new `CREATE TABLE
+shift_pattern` all changed -- a schema change, failing merge policy A's first condition outright regardless of
+the other two. Stopping `AWAITING_APPROVAL` on `feat/body-turnos-esquema-1` without merging, per this slice's own
+approval ("schema is Tier 1 -- stop AWAITING_APPROVAL on the branch if your merge policy says so; do not force a
+merge"). Slice commit `c19cd464c578b88c832f145e5334e376bfe56325`; this ledger entry follows as its own commit on
+the same branch, since there is no merge for it to follow.
