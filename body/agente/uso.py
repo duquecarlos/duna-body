@@ -10,14 +10,36 @@ closed, never open. "Today" is the person's own local day (their `person.timezon
 """
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from . import precios
+
 DEFAULT_TOPE_DIARIO_MICRO_USD = 2_000_000  # 2 USD
 DEFAULT_CONTEO_DIARIO = 200
 _TIPOS_PRECIO = ("entrada", "salida", "cache_lectura", "cache_escritura")
+
+_logger = logging.getLogger("body.agente.uso")
+_precios_sembrados = False
+
+
+def _asegurar_precios_sembrados(conn: sqlite3.Connection) -> None:
+    """Fills `precio_modelo` from the seed file once per process, before the first spend
+    computation, so a fresh install gets prices with no hand step. Never overwrites an
+    operator's own price (`precios.sembrar` is `INSERT OR IGNORE`). A seeding failure is logged
+    by its class name only and otherwise ignored -- the count breaker still applies either way
+    (fail closed, amendment 5)."""
+    global _precios_sembrados
+    if _precios_sembrados:
+        return
+    _precios_sembrados = True
+    try:
+        precios.sembrar(conn)
+    except Exception as e:
+        _logger.warning("precios.sembrar failed: %s", type(e).__name__)
 
 
 class TopeRefusal(Exception):
@@ -113,6 +135,7 @@ def verificar_tope(conn: sqlite3.Connection, person_id: int, proveedor: str, mod
     the PERSON'S OWN local day, not UTC's -- is already reached, or when the ceiling's own read
     fails for any reason."""
     try:
+        _asegurar_precios_sembrados(conn)
         diario, tope_conteo = _topes_persona(conn, person_id)
         inicio_utc, fin_utc = _rango_dia_local_utc(conn, person_id)
         gasto = None
