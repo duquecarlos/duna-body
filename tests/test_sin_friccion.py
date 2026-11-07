@@ -16,6 +16,8 @@ from body.i18n import T
 
 client = TestClient(web.app, follow_redirects=False)
 
+SENTINEL_VALUE = 987.654321  # cannot occur in a count, date, size or a static-asset hash
+
 
 def _reset_db(tc: unittest.TestCase):
     orig = config.DB_PATH
@@ -103,12 +105,12 @@ class TrendsTooLittleCensusTest(unittest.TestCase):
         for i in range(5):  # 5 days: under profile.metric_profile's 14-day floor
             conn.execute(
                 "INSERT INTO daily_metric (person_id, day, metric_key, value, source) VALUES "
-                "(1, ?, 'resting_hr', 55, 'garmin')", (f"2026-10-{i + 1:02d}",))
+                "(1, ?, 'resting_hr', ?, 'garmin')", (f"2026-10-{i + 1:02d}", SENTINEL_VALUE))
         conn.commit()
         r = client.get("/trends")
         self.assertEqual(r.status_code, 200)
         self.assertIn(_t("es", "trends.too_little", days=9), r.text)
-        self.assertNotIn("55", r.text)  # the count is shown, never the metric's own figure
+        self.assertNotIn(str(SENTINEL_VALUE), r.text)  # the count is shown, never the metric's own figure
         _set_lang("en")
         r = client.get("/trends")
         self.assertIn(_t("en", "trends.too_little", days=9), r.text)

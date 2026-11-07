@@ -358,9 +358,11 @@ def today(person_id: int = Depends(identity.current_person_id)):
         "SELECT COUNT(*) AS n FROM shift_batch WHERE person_id = ? AND status = 'proposed'",
         (person_id,),
     ).fetchone()["n"]
+    primeros = tutoriales.primeros_pasos(conn, person_id, cuenta.hosted())
+    primeros_pasos = primeros if any(not p["hecho"] for p in primeros) else None
     if not day:
         return _render("soon.html", t=t, tab="today", title=t("today.title"),
-                       text=_sync_status_text(conn, person, t))
+                       text=_sync_status_text(conn, person, t), primeros_pasos=primeros_pasos)
     defs = _defs(conn)
     vals = db.day_values(conn, day, person_id)
     r = readiness.compute(conn, day, person_id)
@@ -377,14 +379,13 @@ def today(person_id: int = Depends(identity.current_person_id)):
         cards.append({"key": k, "label": t("metric." + k), "value": _value(t, k, v),
                       "unit": _unit(t, defs[k]) if v is not None else "", "delta": delta, "cls": cls})
     today_local = _today_local(person)
-    primeros = tutoriales.primeros_pasos(conn, person_id, cuenta.hosted())
     return _render("today.html", t=t, tab="today", day=day, date_long=t.long_date(date.fromisoformat(day)),
                    synced=_synced(conn, person), r=r, reading=_reading(t, r), ready_avg=ready_avg,
                    ready_delta=ready_delta, ready_cls=ready_cls, cards=cards,
                    missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_count=proposed_count,
                    plan_habits=_today_due_habits(conn, t, person_id, today_local),
                    today_iso=today_local.isoformat(),
-                   primeros_pasos=primeros if any(not p["hecho"] for p in primeros) else None)
+                   primeros_pasos=primeros_pasos)
 
 
 @app.get("/how/{day}")
@@ -1194,20 +1195,24 @@ def settings(person_id: int = Depends(identity.current_person_id)):
 
 # ---- Ayuda (tutoriales-v1 section 5.1): chapters, their tasks, and the recorrido completo ---------
 
-def _tarea_ayuda_ctx(tarea: dict) -> dict:
+def _tarea_ayuda_ctx(tarea: dict, hosted: bool) -> dict:
+    objetivo = tutoriales.ir_a_pantalla(tarea)
+    solo_en_linea = objetivo in tutoriales.SOLO_EN_LINEA and not hosted
     return {
         "id": tarea["id"], "titulo": tarea["titulo"], "video": tutoriales.video(tarea["id"]),
-        "pantalla_link": tutoriales.ir_a_pantalla(tarea), "con_asistente": tarea["agente"] == "si",
+        "pantalla_link": None if solo_en_linea else objetivo, "solo_en_linea": solo_en_linea,
+        "con_asistente": tarea["agente"] == "si",
     }
 
 
 @app.get("/ayuda")
 def ayuda(person_id: int = Depends(identity.current_person_id)):
     _, _, t = _ctx(person_id)
+    hosted = cuenta.hosted()
     capitulos = []
     recorrido = []
     for c in tutoriales.capitulos_con_tareas():
-        tareas = [_tarea_ayuda_ctx(tarea) for tarea in c["tareas"]]
+        tareas = [_tarea_ayuda_ctx(tarea, hosted) for tarea in c["tareas"]]
         capitulos.append({"id": c["id"], "titulo": c["titulo"], "tareas": tareas})
         recorrido.extend(tarea for tarea in tareas if tarea["video"])
     return _render("ayuda.html", t=t, tab="settings", capitulos=capitulos, recorrido=recorrido)

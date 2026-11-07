@@ -36,6 +36,10 @@ ONBOARDING_ORDEN = (
     "iniciar-sesion-y-aceptar", "conectar-garmin", "vincular-este-pc", "primera-mirada-a-hoy",
 )
 
+SOLO_EN_LINEA = frozenset({"/login", "/garmin", "/ajustes/dispositivos"})
+"""Routes that answer 404 when `cuenta.hosted()` is false (section 7 fix b): Ayuda must not link to
+them, and the count here is checked against the live routes by a test, so it cannot drift."""
+
 
 def catalogo() -> dict:
     global _catalogo_cache

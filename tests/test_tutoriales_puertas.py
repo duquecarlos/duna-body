@@ -253,6 +253,48 @@ class PrimerosPasosOnHoyTest(_HostedModeTestCase):
         self.assertNotIn("Primeros pasos", r.text)
 
 
+class PrimerosPasosOnNoDataHoyTest(_HostedModeTestCase):
+    """A brand-new person's first visit: today() returns soon.html (no day yet). The checklist must
+    show there too, not only once there is a day to show (measured: a scratch Body with no watch
+    data showed no card)."""
+
+    def test_card_shows_on_the_no_data_hoy(self):
+        r = self.client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("Primeros pasos", r.text)
+        self.assertIn('href="/ayuda#iniciar-sesion-y-aceptar"', r.text)
+
+
+# ---- SOLO_EN_LINEA: routes that only exist hosted get no "Ir a la pantalla" link locally -----------
+
+class SoloEnLineaRoutesTest(_LocalModeTestCase):
+    def test_each_route_404s_locally(self):
+        for route in tutoriales.SOLO_EN_LINEA:
+            r = self.client.get(route)
+            self.assertEqual(r.status_code, 404, route)
+
+    def test_ayuda_shows_the_note_not_the_link(self):
+        r = self.client.get("/ayuda")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("Solo en Body en línea", r.text)
+        for route in tutoriales.SOLO_EN_LINEA:
+            self.assertNotIn(f'href="{route}"', r.text)
+
+
+class SoloEnLineaRoutesHostedTest(_HostedModeTestCase):
+    def test_each_route_does_not_404_hosted(self):
+        for route in tutoriales.SOLO_EN_LINEA:
+            r = self.client.get(route)
+            self.assertNotEqual(r.status_code, 404, route)
+
+    def test_ayuda_shows_the_link_not_the_note(self):
+        r = self.client.get("/ayuda")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn("Solo en Body en línea", r.text)
+        for route in tutoriales.SOLO_EN_LINEA:
+            self.assertIn(f'href="{route}"', r.text)
+
+
 # ---- the assistant's leer_tutoriales ---------------------------------------------------------------
 
 class LeerTutorialesToolTest(unittest.TestCase):
