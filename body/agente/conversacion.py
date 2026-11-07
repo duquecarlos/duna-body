@@ -51,3 +51,32 @@ def historial(conn: sqlite3.Connection, conversacion_id: int, person_id: int) ->
         (conversacion_id, person_id),
     ).fetchall()
     return [{"rol": r["rol"], "bloques": json.loads(r["contenido_json"])} for r in rows]
+
+
+def turnos_visibles(conn: sqlite3.Connection, conversacion_id: int, person_id: int) -> list[dict]:
+    """The visible turns of a conversation, for the panel to redraw after a page change: the
+    person's own questions and the assistant's answers, each `{"rol": "persona"|"asistente",
+    "texto": str, "pasos": int}`. Tool calls and tool results (stored as "usuario" blocks with no
+    "texto") never appear -- they are rebuilt from `pasos`, a count, not raw tool output.
+    Raises `ConversacionAjena` for another person's id or an id that does not exist.
+    """
+    verificar_propiedad(conn, conversacion_id, person_id)
+    turnos: list[dict] = []
+    actual: dict | None = None
+    for mensaje in historial(conn, conversacion_id, person_id):
+        bloques = mensaje["bloques"]
+        if mensaje["rol"] == "usuario":
+            textos = [b["texto"] for b in bloques if b.get("tipo") == "texto"]
+            if textos:
+                turnos.append({"rol": "persona", "texto": "".join(textos), "pasos": 0})
+                actual = None
+            continue
+        textos = [b["texto"] for b in bloques if b.get("tipo") == "texto" and b.get("texto")]
+        pasos_n = sum(1 for b in bloques if b.get("tipo") == "llamada_herramienta")
+        if actual is None:
+            actual = {"rol": "asistente", "texto": "", "pasos": 0}
+            turnos.append(actual)
+        if textos:
+            actual["texto"] += "".join(textos)
+        actual["pasos"] += pasos_n
+    return turnos

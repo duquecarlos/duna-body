@@ -315,6 +315,40 @@ class Gemini(Proveedor):
         return _desde_gemini(self._transporte(payload))
 
 
+# ---- Demo (BODY-ASISTENTE-PANEL-1 decision 8): no network, no key, so the panel can be measured
+# in a browser without a real provider. Selected only by BODY_AGENTE_PROVEEDOR=demo, never default.
+
+_DEMO_RESPUESTA = (
+    "Esto es una respuesta de muestra del asistente, para que puedas ver el panel sin un "
+    "proveedor de IA real conectado.\n\n"
+    "Así se ve una lista dentro de una respuesta:\n"
+    "- Primer punto de ejemplo\n"
+    "- Segundo punto de ejemplo\n"
+    "- Tercer punto de ejemplo\n\n"
+    "Y así se ve una tabla pequeña:\n\n"
+    "| Parte | Valor |\n"
+    "| --- | --- |\n"
+    "| Ejemplo A | 1 |\n"
+    "| Ejemplo B | 2 |\n"
+)
+
+
+class Demo(Proveedor):
+    """A scripted two-round exchange: round one asks for `leer_ajustes` (the one read tool that
+    exists at every nivel_datos), round two answers with fixed, invented Spanish text -- never a
+    figure from the tool's real result."""
+
+    def __init__(self):
+        self._ronda = 0
+
+    def responder(self, sistema: str, mensajes: list[dict], herramientas: list[dict]) -> Respuesta:
+        self._ronda += 1
+        if self._ronda == 1:
+            return Respuesta(bloques=[LlamadaHerramienta("demo_1", "leer_ajustes", {})],
+                              motivo_fin="tool_use", uso=Uso())
+        return Respuesta(bloques=[BloqueTexto(_DEMO_RESPUESTA)], motivo_fin="end_turn", uso=Uso())
+
+
 # ---- selection by env (BODY-ASISTENTE-PROVEEDOR-1 decision 1) -------------------------------
 
 _FABRICAS = {
@@ -329,6 +363,8 @@ def proveedor_configurado() -> Proveedor | None:
     configured" (web.py answers with the `no_configurado` SSE error). The app still starts either
     way: nothing here raises for a missing key."""
     nombre = os.environ.get("BODY_AGENTE_PROVEEDOR", PROVEEDOR_DEFAULT)
+    if nombre == "demo":
+        return Demo()
     entrada = _FABRICAS.get(nombre)
     if entrada is None:
         return None
