@@ -262,6 +262,16 @@ CREATE TABLE IF NOT EXISTS consentimiento (
     accepted_at TEXT NOT NULL,
     UNIQUE (person_id, version)
 );
+
+-- Each hosted person's Garmin token, encrypted at rest (BODY-GARMIN-HOST-1). ultimo_error holds
+-- an error CLASS name only (e.g. 'NotSignedIn'), never a message.
+CREATE TABLE IF NOT EXISTS garmin_cuenta (
+    person_id     INTEGER PRIMARY KEY REFERENCES person(id),
+    token_cifrado BLOB NOT NULL,
+    nonce         BLOB NOT NULL,
+    conectado_en  TEXT NOT NULL,
+    ultimo_error  TEXT
+);
 """
 
 # (key, label, unit, better, kind). 'estimated' = computed by Body, shown with «≈» and "how I calculate it".

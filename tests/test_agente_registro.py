@@ -36,6 +36,7 @@ ROUTE_TOOL = {
     "/privacidad/consentimiento": None,  # privacy plumbing; the assistant never reads or triggers it
     "/privacidad": None,          # privacy plumbing; the assistant never reads or triggers it
     "/privacidad/exportar": None,  # privacy plumbing; the assistant never reads or triggers it
+    "/garmin": None,              # account-connection plumbing; the assistant never reads or triggers it
 }
 
 WRITER_NAMES = {

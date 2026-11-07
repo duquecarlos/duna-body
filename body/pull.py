@@ -12,7 +12,7 @@ import sys
 import time
 from datetime import date, timedelta
 
-from . import db, garmin_adapter, readiness
+from . import cuenta, db, garmin_adapter, garmin_cuenta, readiness
 
 PAUSE_S = 1.0  # be gentle with Garmin's servers during a backfill
 EMPTY_STOP = 60  # --all stops after this many consecutive days with no watch data
@@ -54,16 +54,71 @@ def pull_all(conn, person_id: int) -> int:
     return saved
 
 
+def _pull_one_person(conn, person_id: int, days: list[str]) -> int | None:
+    """Pulls `days` for one hosted person, re-encrypting the stored token only if Garmin refreshed
+    it -- even when a later day raises, via the try/finally below. Returns the number of days
+    actually stored, or None when the person has no token to pull with. Raises whatever the
+    adapter or Garmin raise, with the days-saved-so-far attached as `.saved` on the exception so
+    the caller can still count them; the caller records the error and moves on to the next person."""
+    token = garmin_cuenta.leer(conn, person_id)
+    if token is None:
+        return None
+    token_before = token
+    saved = 0
+    try:
+        for i, d in enumerate(sorted(days)):
+            if i:
+                time.sleep(PAUSE_S)
+            data, token = garmin_adapter.fetch_day(d, token_str=token)
+            db.save_day(conn, data, person_id)
+            saved += 1
+    except Exception as e:
+        e.saved = saved
+        raise
+    finally:
+        if token != token_before:
+            garmin_cuenta.guardar(conn, person_id, token)
+    return saved
+
+
+def pull_hosted(conn, days: list[str]) -> tuple[int, int, int]:
+    """Loops over every person with a connected Garmin account. Returns (persons ok, persons
+    failed, days stored). Never prints a health figure -- counts only."""
+    ok = failed = saved = 0
+    for person_id in garmin_cuenta.every_person_id(conn):
+        try:
+            n = _pull_one_person(conn, person_id, days)
+        except Exception as e:
+            garmin_cuenta.registrar_error(conn, person_id, type(e).__name__)
+            failed += 1
+            saved += getattr(e, "saved", 0)
+            continue
+        if n is None:
+            continue
+        garmin_cuenta.limpiar_error(conn, person_id)
+        saved += n
+        ok += 1
+    return ok, failed, saved
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="python -m body.pull")
     p.add_argument("--date", help="one day, YYYY-MM-DD")
     p.add_argument("--days", type=int, default=2, help="how many days back from today (default 2)")
-    p.add_argument("--all", action="store_true", help="whole Garmin history (resumable)")
-    p.add_argument("--recompute", action="store_true", help="recompute readiness only, no Garmin calls")
+    p.add_argument("--all", action="store_true", help="whole Garmin history (resumable; local mode only)")
+    p.add_argument("--recompute", action="store_true",
+                    help="recompute readiness only, no Garmin calls (local mode only)")
     a = p.parse_args(argv)
 
     conn = db.connect()
     db.init(conn)
+
+    if cuenta.hosted():
+        days = [a.date] if a.date else [(date.today() - timedelta(n)).isoformat() for n in range(a.days)]
+        ok, failed, saved = pull_hosted(conn, days)
+        print(f"{ok} ok, {failed} failed, {saved} days stored", flush=True)
+        return 0
+
     person_id = db.local_person_id(conn)
     if a.all:
         try:
