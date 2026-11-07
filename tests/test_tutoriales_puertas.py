@@ -253,6 +253,20 @@ class PrimerosPasosOnHoyTest(_HostedModeTestCase):
         self.assertNotIn("Primeros pasos", r.text)
 
 
+class PrimerosPasosCardSingleSourceTest(unittest.TestCase):
+    """BODY-PRIMEROS-PASOS-MACRO-1: the card's markup is defined only once, in the
+    primeros_pasos_card macro -- never copied inline into a page template."""
+
+    def test_card_title_key_appears_once_across_templates(self):
+        templates_dir = Path(web.__file__).parent / "templates"
+        needle = "t('primeros_pasos.titulo')"
+        hits = []
+        for path in sorted(templates_dir.glob("*.html")):
+            count = path.read_text(encoding="utf-8").count(needle)
+            hits.extend([path.name] * count)
+        self.assertEqual(hits, ["base.html"])
+
+
 class PrimerosPasosOnNoDataHoyTest(_HostedModeTestCase):
     """A brand-new person's first visit: today() returns soon.html (no day yet). The checklist must
     show there too, not only once there is a day to show (measured: a scratch Body with no watch
