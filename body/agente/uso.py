@@ -5,8 +5,10 @@ One `uso_agente` row per question, including failed ones. Prices are DATA (`prec
 seeded EMPTY -- never invented here. The daily ceiling is a spend ceiling only when every row
 counted today is priced in full for its OWN model (a person may switch model mid-day); otherwise
 it falls back to the COUNT breaker (amendment 5). A ceiling whose own read fails REFUSES -- fail
-closed, never open. "Today" is the person's own local day (their `person.timezone`, default
-`America/Bogota`), not UTC's.
+closed, never open. The day RANGE that bounds which rows count as "today" is the person's own
+local day (their `person.timezone`, default `America/Bogota`); a dated PRICE, picked for a model
+or for a usage row, always goes by the UTC date, because a vendor's price step takes effect on a
+UTC date and the two must agree.
 """
 from __future__ import annotations
 
@@ -87,10 +89,18 @@ def _topes_persona(conn: sqlite3.Connection, person_id: int) -> tuple[int, int]:
     return diario, conteo
 
 
-def _precios(conn: sqlite3.Connection, proveedor: str, modelo: str) -> dict[str, int] | None:
+def _precios(conn: sqlite3.Connection, proveedor: str, modelo: str, fecha: str) -> dict[str, int] | None:
+    """The price in effect on `fecha` (YYYY-MM-DD): for each tipo, the row with the greatest
+    `desde <= fecha` -- a row applies from its date until the next row's date for the same
+    (proveedor, modelo, tipo) (BODY-MODELOS-ESTANDAR-1 decision 2). Still all-or-nothing over the
+    four tipos: a model missing even one priced tipo on that date is reported as unpriced."""
     rows = conn.execute(
-        "SELECT tipo, micro_usd_por_millon FROM precio_modelo WHERE proveedor = ? AND modelo = ?",
-        (proveedor, modelo),
+        "SELECT tipo, micro_usd_por_millon FROM precio_modelo AS p "
+        "WHERE proveedor = ? AND modelo = ? AND desde <= ? "
+        "AND desde = (SELECT MAX(desde) FROM precio_modelo AS p2 "
+        "             WHERE p2.proveedor = p.proveedor AND p2.modelo = p.modelo "
+        "             AND p2.tipo = p.tipo AND p2.desde <= ?)",
+        (proveedor, modelo, fecha, fecha),
     ).fetchall()
     if not rows:
         return None
@@ -99,20 +109,23 @@ def _precios(conn: sqlite3.Connection, proveedor: str, modelo: str) -> dict[str,
 
 
 def _gasto_hoy_micro_usd(conn: sqlite3.Connection, person_id: int, inicio_utc: str, fin_utc: str) -> int | None:
-    """Sums today's rows at EACH ROW'S OWN (proveedor, modelo) prices -- a person may switch model
-    mid-day. Returns None (fall back to the count breaker, amendment 5) when any of today's rows
-    was made with a model that has no full price."""
+    """Sums today's rows at EACH ROW'S OWN (proveedor, modelo) price ON ITS OWN DATE -- a person
+    may switch model mid-day, and a dated price can step between rows on the same day's boundary
+    (BODY-MODELOS-ESTANDAR-1). A row's date is the day of its own `creado_en`. Returns None (fall
+    back to the count breaker, amendment 5) when any of today's rows was made with a model that
+    has no full price on its own date."""
     rows = conn.execute(
-        "SELECT proveedor, modelo, entrada, salida, cache_lectura, cache_escritura FROM uso_agente "
+        "SELECT proveedor, modelo, creado_en, entrada, salida, cache_lectura, cache_escritura FROM uso_agente "
         "WHERE person_id = ? AND creado_en >= ? AND creado_en < ?",
         (person_id, inicio_utc, fin_utc),
     ).fetchall()
     total_micro = 0
-    precios_vistos: dict[tuple[str, str], dict[str, int] | None] = {}
+    precios_vistos: dict[tuple[str, str, str], dict[str, int] | None] = {}
     for r in rows:
-        clave = (r["proveedor"], r["modelo"])
+        fecha = r["creado_en"][:10]
+        clave = (r["proveedor"], r["modelo"], fecha)
         if clave not in precios_vistos:
-            precios_vistos[clave] = _precios(conn, *clave)
+            precios_vistos[clave] = _precios(conn, r["proveedor"], r["modelo"], fecha)
         precios = precios_vistos[clave]
         if precios is None:
             return None
@@ -131,15 +144,20 @@ def _conteo_hoy(conn: sqlite3.Connection, person_id: int, inicio_utc: str, fin_u
 
 
 def verificar_tope(conn: sqlite3.Connection, person_id: int, proveedor: str, modelo: str) -> None:
-    """Checked BEFORE the first model round. Raises `TopeRefusal` when today's ceiling -- today in
-    the PERSON'S OWN local day, not UTC's -- is already reached, or when the ceiling's own read
-    fails for any reason."""
+    """Checked BEFORE the first model round. Raises `TopeRefusal` when today's ceiling is already
+    reached, or when the ceiling's own read fails for any reason. "Today" for the day RANGE that
+    bounds which rows count is the person's own local day; the dated PRICE used to decide whether
+    this model is priced today is picked by the UTC date, to agree with `_gasto_hoy_micro_usd`."""
     try:
         _asegurar_precios_sembrados(conn)
         diario, tope_conteo = _topes_persona(conn, person_id)
+        # A vendor's price step takes effect on a UTC date, and `_gasto_hoy_micro_usd` prices
+        # each row by the UTC date of its own `creado_en` -- this check must agree with that,
+        # or the two can pick different rows for the same model near a person's local midnight.
+        hoy = _ahora_utc().date().isoformat()
         inicio_utc, fin_utc = _rango_dia_local_utc(conn, person_id)
         gasto = None
-        if _precios(conn, proveedor, modelo) is not None:
+        if _precios(conn, proveedor, modelo, hoy) is not None:
             gasto = _gasto_hoy_micro_usd(conn, person_id, inicio_utc, fin_utc)
         if gasto is not None:
             if gasto >= diario:

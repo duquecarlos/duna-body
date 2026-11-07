@@ -83,9 +83,14 @@ sobre lo que diga `.env`.
 ## Asistente: precios del modelo
 
 The assistant's daily SPEND ceiling needs a price for the model in use; `body/agente/precios.json` holds a
-versioned, cited seed (today, the default model only) and `body/agente/precios.py` fills `precio_modelo`
-from it once per process, inserting only rows the table does not already have -- it never overwrites a
-price an operator set by hand. To correct a price, update that row directly (or run
+versioned, cited seed for Duna's three standard models (`docs/contracts/modelos-ia-v1.md`: Anthropic
+`claude-sonnet-5-5`, OpenAI `gpt-6.1-sol`, Gemini `gemini-3.8-flash`) and `body/agente/precios.py` fills
+`precio_modelo` from it once per process, inserting only rows the table does not already have -- it never
+overwrites a price an operator set by hand. Each row carries a `desde` date: a price applies from its date
+until the next row's date for the same provider/model/type, which is how Gemini's own price step on
+2027-01-01 is a data row, not a code change. Gemini's cached input has no published figure yet, so it is
+priced at the full input price until Google's own page is read -- conservative, since it trips the spend
+ceiling early rather than late. To correct a price, update that row directly (or run
 `python -m body.agente.precios` again after editing `precios.json` for a fresh install); the seed never
 undoes a hand correction. A model with no price anywhere falls back to the daily question-count limit
 instead of the spend ceiling.

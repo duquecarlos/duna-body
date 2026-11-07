@@ -474,6 +474,9 @@ class EnvExampleTest(unittest.TestCase):
         "BODY_CUENTA_ISSUER": "https://cuenta.duna.solutions",
         "BODY_PUBLIC_URL": "https://body.duna.solutions",
         "BODY_R2_BUCKET": "duna-respaldo",
+        "BODY_AGENTE_MODELO_ANTHROPIC": "claude-sonnet-5-5",
+        "BODY_AGENTE_MODELO_OPENAI": "gpt-6.1-sol",
+        "BODY_AGENTE_MODELO_GEMINI": "gemini-3.8-flash",
     }
 
     def test_every_name_present_and_values_blank_except_fixed(self):

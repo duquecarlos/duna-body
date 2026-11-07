@@ -39,11 +39,13 @@ class SembrarTest(unittest.TestCase):
     def setUp(self):
         self.conn = _conn(self)
 
-    def test_sembrar_on_an_empty_table_inserts_four_rows(self):
+    def test_sembrar_on_an_empty_table_inserts_sixteen_rows(self):
+        # Four price entries in the seed (anthropic x1, openai x1, gemini x2 dated rows) x four
+        # tipos each (BODY-MODELOS-ESTANDAR-1).
         n = precios.sembrar(self.conn)
-        self.assertEqual(n, 4)
+        self.assertEqual(n, 16)
         self.assertEqual(
-            uso._precios(self.conn, PROVEEDOR, MODELO),
+            uso._precios(self.conn, PROVEEDOR, MODELO, "2026-11-07"),
             {"entrada": 2_000_000, "salida": 10_000_000, "cache_lectura": 200_000, "cache_escritura": 2_500_000},
         )
 
@@ -53,18 +55,19 @@ class SembrarTest(unittest.TestCase):
 
     def test_a_preexisting_operator_row_is_kept(self):
         self.conn.execute(
-            "INSERT INTO precio_modelo (proveedor, modelo, tipo, micro_usd_por_millon) VALUES (?, ?, 'entrada', ?)",
+            "INSERT INTO precio_modelo (proveedor, modelo, tipo, desde, micro_usd_por_millon) "
+            "VALUES (?, ?, 'entrada', '2000-01-01', ?)",
             (PROVEEDOR, MODELO, 999),
         )
         self.conn.commit()
         n = precios.sembrar(self.conn)
-        self.assertEqual(n, 3)  # the other three tipos; 'entrada' was already there
+        self.assertEqual(n, 15)  # every other row across every model; this one 'entrada' was already there
         self.assertEqual(_filas_tipo(self.conn, PROVEEDOR, MODELO)["entrada"], 999)
 
     def test_a_file_missing_a_tipo_inserts_nothing_and_raises(self):
         ruta = _ruta_json({
             "version": "x", "fuente": "x",
-            "precios": [{"proveedor": PROVEEDOR, "modelo": MODELO,
+            "precios": [{"proveedor": PROVEEDOR, "modelo": MODELO, "desde": "2000-01-01",
                          "micro_usd_por_millon": {"entrada": 1, "salida": 1, "cache_lectura": 1}}],
         })
         with self.assertRaises(precios.PreciosInvalidos):
@@ -74,8 +77,19 @@ class SembrarTest(unittest.TestCase):
     def test_a_file_with_a_negative_value_inserts_nothing_and_raises(self):
         ruta = _ruta_json({
             "version": "x", "fuente": "x",
-            "precios": [{"proveedor": PROVEEDOR, "modelo": MODELO,
+            "precios": [{"proveedor": PROVEEDOR, "modelo": MODELO, "desde": "2000-01-01",
                          "micro_usd_por_millon": {"entrada": -1, "salida": 1,
+                                                   "cache_lectura": 1, "cache_escritura": 1}}],
+        })
+        with self.assertRaises(precios.PreciosInvalidos):
+            precios.sembrar(self.conn, ruta=ruta)
+        self.assertEqual(_filas_tipo(self.conn, PROVEEDOR, MODELO), {})
+
+    def test_a_file_with_a_bad_desde_inserts_nothing_and_raises(self):
+        ruta = _ruta_json({
+            "version": "x", "fuente": "x",
+            "precios": [{"proveedor": PROVEEDOR, "modelo": MODELO, "desde": "07-11-2026",
+                         "micro_usd_por_millon": {"entrada": 1, "salida": 1,
                                                    "cache_lectura": 1, "cache_escritura": 1}}],
         })
         with self.assertRaises(precios.PreciosInvalidos):

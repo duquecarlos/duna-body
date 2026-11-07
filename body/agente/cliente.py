@@ -35,7 +35,13 @@ from . import ajustes
 
 ANTHROPIC_VERSION = "2023-06-01"
 PROVEEDOR_DEFAULT = "anthropic"
+
+# Duna's one set of AI models every assistant uses (modelos-ia-v1, docs/contracts/modelos-ia-v1.md):
+# with these as the code default, a key alone turns a provider on at the standard model -- no
+# BODY_AGENTE_MODELO_* line is required to run it (BODY-MODELOS-ESTANDAR-1).
 MODELO_DEFAULT = "claude-sonnet-5-5"
+MODELO_DEFAULT_OPENAI = "gpt-6.1-sol"
+MODELO_DEFAULT_GEMINI = "gemini-3.8-flash"
 ORDEN_PROVEEDORES = ("anthropic", "openai", "gemini")
 
 _logger = logging.getLogger("body.agente.cliente")
@@ -372,10 +378,18 @@ def _modelo_anthropic() -> str:
     return os.environ.get("BODY_AGENTE_MODELO_ANTHROPIC") or os.environ.get("BODY_AGENTE_MODELO") or MODELO_DEFAULT
 
 
+def _modelo_openai() -> str:
+    return os.environ.get("BODY_AGENTE_MODELO_OPENAI") or os.environ.get("BODY_AGENTE_MODELO") or MODELO_DEFAULT_OPENAI
+
+
+def _modelo_gemini() -> str:
+    return os.environ.get("BODY_AGENTE_MODELO_GEMINI") or os.environ.get("BODY_AGENTE_MODELO") or MODELO_DEFAULT_GEMINI
+
+
 _FABRICAS = {
     "anthropic": (Anthropic, "BODY_AGENTE_ANTHROPIC_API_KEY", _modelo_anthropic),
-    "openai": (OpenAI, "BODY_AGENTE_OPENAI_API_KEY", lambda: os.environ.get("BODY_AGENTE_MODELO_OPENAI")),
-    "gemini": (Gemini, "BODY_AGENTE_GEMINI_API_KEY", lambda: os.environ.get("BODY_AGENTE_MODELO_GEMINI")),
+    "openai": (OpenAI, "BODY_AGENTE_OPENAI_API_KEY", _modelo_openai),
+    "gemini": (Gemini, "BODY_AGENTE_GEMINI_API_KEY", _modelo_gemini),
 }
 
 
