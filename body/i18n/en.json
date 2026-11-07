@@ -364,6 +364,8 @@
   "trends.nights": "Night shift",
   "trends.tap_month": "Tap a month to see its days.",
   "trends.tap_day": "Tap a day to open it.",
+  "trends.aria_days": "{metric}, {desde} to {hasta}",
+  "trends.aria_months": "{metric}, {desde} to {hasta}",
   "trends.back_hist": "← Whole history",
   "trends.month_sub": "{month}, day by day",
   "trends.history_link": "Your full story →",

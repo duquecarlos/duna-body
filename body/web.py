@@ -706,16 +706,22 @@ def _trend_card(conn, t: T, defs: dict, k: str, start, end, month, nights, perso
         return None, None
     d = defs[k]
     spread = p.high - p.low
+    metric_label = t("metric." + k)
     if start:
         w = profile.window(conn, k, start, end, person_id)
         if month:
             delta, cls = _compare(t, k, d, w.mean, p.all_mean, spread, "trends.vs_hist")
         else:
             delta, cls = _compare(t, k, d, w.mean, w.prev_mean, spread, "trends.vs_prev")
-        fig, svg = w.mean, profile.window_svg(w, p.low, p.high, nights)
+        etiqueta_dia = lambda day: _short_date(t, day)
+        aria = _chart_aria(t, metric_label, etiqueta_dia(w.start), etiqueta_dia(w.end))
+        fig, svg = w.mean, profile.window_svg(w, p.low, p.high, nights, etiqueta_dia=etiqueta_dia, aria_label=aria)
     else:
         delta, cls = _compare(t, k, d, p.last30, p.all_mean, spread, "trends.vs_hist")
-        fig, svg = p.last30, profile.month_svg(p)
+        etiqueta_mes = lambda m: t.month_year(date.fromisoformat(m + "-01"))
+        aria = (_chart_aria(t, metric_label, etiqueta_mes(p.months[0][0]), etiqueta_mes(p.months[-1][0]), months=True)
+                if len(p.months) >= 2 else None)
+        fig, svg = p.last30, profile.month_svg(p, etiqueta_mes=etiqueta_mes, aria_label=aria)
     card = {"key": k, "question": t("trends.q." + k), "est": d["kind"] == "estimated",
             "last30": _value(t, k, fig), "unit": _unit(t, d) if fig is not None else "", "delta": delta,
             "cls": cls, "svg": svg, "low": _value(t, k, p.low), "high": _value(t, k, p.high),
@@ -809,6 +815,17 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None,
 def _short_date(t: T, d: date) -> str:
     """19 jun 2024 style: day, abbreviated month, year -- no weekday, unlike t.long_date."""
     return f"{d.day} {t('date.months')[d.month - 1][:3]} {d.year}"
+
+
+def _chart_aria(t: T, metric: str, start_label: str, end_label: str, months: bool = False) -> str:
+    """Accessible name for a trend chart: the metric and its span in words, no figure in it (BODY-EJES-FECHAS-1).
+    The connector words come from trends.aria_days / trends.aria_months in i18n, not literals here. A month span
+    reads mid-sentence in Spanish, so its month names go lowercase here -- t.month_year itself still capitalizes,
+    for the axis ends where they stand alone (BODY-EJES-FECHAS-1-M)."""
+    if months and t.lang == "es":
+        start_label, end_label = start_label.lower(), end_label.lower()
+    key = "trends.aria_months" if months else "trends.aria_days"
+    return t(key, metric=metric, desde=start_label, hasta=end_label)
 
 
 def _short_weekday_date(t: T, d: date) -> str:
