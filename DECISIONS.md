@@ -3406,3 +3406,34 @@ this slice's final tree.
 customer-facing bytes: the text shown on every chart's axis ends and tap titles, and a new `aria-label` read
 by assistive technology. Merge policy A's customer-bytes condition trips, so this slice stops before the merge
 with `AWAITING_APPROVAL` rather than merging on green.
+
+## BODY-EJES-FECHAS-1-M -- land BODY-EJES-FECHAS-1 after two fixes from a real-browser measurement (2026-11-07)
+
+The orchestrator measured Tendencias in a real browser (demo home, 375 px) after BODY-EJES-FECHAS-1 stopped
+`AWAITING_APPROVAL`, and found two defects: the monthly chart's accessible name read as a literal word-for-word
+translation (`"del Agosto 2026 al Noviembre 2026"`, capitalized months mid-sentence and a connector that
+doesn't read as natural Spanish), and `_chart_aria`'s connector words ("del ... al ...", "to") were literals in
+`body/web.py` rather than i18n content.
+
+**`body/i18n/es.json` / `en.json`**: two new keys, `trends.aria_days` (es "{metric}, del {desde} al {hasta}",
+en "{metric}, {desde} to {hasta}") and `trends.aria_months` (es "{metric}, de {desde} a {hasta}", en
+"{metric}, {desde} to {hasta}").
+
+**`body/web.py`**: `_chart_aria` gains a `months: bool = False` parameter and now composes its string through
+`t("trends.aria_days", ...)` or `t("trends.aria_months", ...)` -- no literal connector word remains in the
+function. For a month span in Spanish only, it lowercases the two month labels before interpolating them
+(`"Agosto 2026"` -> `"agosto 2026"`), since a month name reads lowercase mid-sentence in Spanish; `T.month_year`
+itself is untouched, so the axis-end `<span>` labels (where the month stands alone) keep their capital. The
+monthly call site in `_trend_card` now passes `months=True`; the daily call site is unchanged.
+
+**Tests** (`tests/test_ejes_fechas.py`, 4 new tests added to the existing 10): the monthly aria in es equals
+the lowercase "de agosto 2026 a noviembre 2026" form; the daily aria keeps "del 9 oct 2026 al 7 nov 2026"; en
+uses "to" for both spans; `body/web.py`'s `_chart_aria` function body contains neither " del " nor " al " as a
+literal (read from the source file).
+
+**Gate:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 705 tests, `OK (skipped=1)`, run once on
+this slice's final tree, before the merge.
+
+**Merge.** This spec's approval-reason named the exact browser measurement and its own body says "this spec is
+the approval" -- a merge authorization in words past merge policy A's customer-bytes condition (the diff does
+change the words assistive technology reads on every chart). Merged `--no-ff` into `main` on green.
