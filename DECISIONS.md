@@ -2803,3 +2803,30 @@ accepted deviation, same tests) -- run once, foreground, on the final tree: 591 
 
 Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-tutoriales-2` into `main` following
 this entry.
+
+## BODY-PRIMEROS-PASOS-MACRO-1 -- Hoy stops duplicating the Primeros pasos card (2026-11-07)
+
+The -M fixes in BODY-TUTORIALES-2-M (ledger entry above) added the `primeros_pasos_card` macro to
+`body/templates/base.html` and switched `soon.html` to call it, but its `touches` omitted `today.html`, so Hoy kept
+its own inline copy of the card markup alongside the macro -- the same card defined twice.
+
+`today.html` now imports and calls `primeros_pasos_card(t, primeros_pasos)` the same way `soon.html` does, and its
+inline `{% if primeros_pasos %} ... {% endif %}` copy is gone. The macro's markup in `base.html` and the removed
+inline copy were byte-identical (same card div, same `.plan` list, same `boxbtn`/`box` spans, same `/ayuda#` link),
+so nothing was reconciled going in -- the rendered HTML of Hoy is unchanged.
+
+`tests/test_tutoriales_puertas.py` gains `PrimerosPasosCardSingleSourceTest`, which counts occurrences of the
+card's title-key string across every `body/templates/*.html` file and asserts it appears exactly once, in
+`base.html` -- proof the card markup now has one source. The two existing tests that render Hoy with a first step
+undone, with seeded data (`PrimerosPasosOnHoyTest`) and without any day yet (`PrimerosPasosOnNoDataHoyTest`), still
+pass unchanged and still assert the card renders.
+
+**Merge policy, judged against this diff.** Schema: no. Cross-repo contract: no. Customer-facing bytes: no -- the
+rendered HTML of Hoy is unchanged, the only move is a second place the same markup could have diverged. All three
+Merge Policy A conditions hold, so this merges `--no-ff` into `main` on green without stopping.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run once, foreground, on the final tree: 592
+tests, OK (1 skipped, pre-existing).
+
+Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-primeros-pasos-macro-1` into `main`
+following this entry.
