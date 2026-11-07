@@ -297,7 +297,9 @@ class EstadoYEventosTest(unittest.TestCase):
         web.app.dependency_overrides[identity.current_person_id] = lambda: 1
         self.client = TestClient(web.app, follow_redirects=False)
 
-    def test_sse_stream_carries_a_propuesta_event_with_plain_word_antes_despues(self):
+    def test_sse_stream_carries_a_propuesta_event_with_labelled_antes_despues(self):
+        # BODY-ASISTENTE-PROPUESTAS-1-M fix (c): "Español" / "English" alone read as ambiguous in
+        # the browser -- each value now carries its "Antes: " / "Después: " i18n label.
         guion = [
             Respuesta(bloques=[LlamadaHerramienta("l1", "proponer_idioma", {"lang": "en"})],
                      motivo_fin="tool_use", uso=Uso()),
@@ -310,10 +312,31 @@ class EstadoYEventosTest(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         datos = _evento_data(r.text, "propuesta")
         self.assertEqual(datos["accion"], "proponer_idioma")
-        self.assertEqual(datos["antes"], "Español")
-        self.assertEqual(datos["despues"], "English")
+        self.assertEqual(datos["antes"], "Antes: Español")
+        self.assertEqual(datos["despues"], "Después: English")
         self.assertIn("aplicar", datos["etiquetas"])
         self.assertIn("descartar", datos["etiquetas"])
+
+    def test_insert_shaped_proponer_meta_carries_only_a_propuesta_label(self):
+        # proponer_meta has no "before" (amendment 1a, agent-capabilities-v1 section 2): the card
+        # must show only "Propuesta: …", never a bare, unlabelled value.
+        guion = [
+            Respuesta(bloques=[LlamadaHerramienta(
+                "l1", "proponer_meta",
+                {"titulo": "Bajar FC en reposo", "metric_key": "resting_hr",
+                 "direction": "lower", "target_value": 50.0, "deadline": "2026-12-01"})],
+                     motivo_fin="tool_use", uso=Uso()),
+            Respuesta(bloques=[BloqueTexto("listo")], motivo_fin="end_turn", uso=Uso()),
+        ]
+        proveedor = FakeProveedor(guion)
+        with patch.object(web.agente_cliente, "proveedor_configurado", return_value=proveedor):
+            r = self.client.post("/asistente/preguntar",
+                                 json={"pregunta": "nueva meta", "conversacion_id": None})
+        self.assertEqual(r.status_code, 200)
+        datos = _evento_data(r.text, "propuesta")
+        self.assertEqual(datos["accion"], "proponer_meta")
+        self.assertIsNone(datos["antes"])
+        self.assertTrue(datos["despues"].startswith("Propuesta: "))
 
     def test_status_block_appears_in_the_next_turns_system_prompt(self):
         guion = [

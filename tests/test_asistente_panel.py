@@ -179,6 +179,15 @@ class PropuestaCardJsTest(unittest.TestCase):
     def test_loaded_conversation_also_redraws_its_proposal_cards(self):
         self.assertIn("(datos.propuestas || []).forEach", self.text)
 
+    def test_the_card_is_queued_and_appended_after_the_steps_and_answer_not_on_arrival(self):
+        # BODY-ASISTENTE-PROPUESTAS-1-M fix (b): the propuesta SSE event can arrive before the
+        # turn's answer text does, so the card must not be appended to the turn on that event --
+        # only queued, then appended once agregarPasos has placed the steps under the question.
+        self.assertIn("propuestasPendientes.push(datos)", self.text)
+        pasos_idx = self.text.index("agregarPasos(turno.turno, pasos, answerEl)")
+        cards_idx = self.text.index("propuestasPendientes.forEach")
+        self.assertLess(pasos_idx, cards_idx)
+
 
 class AssistantJsFixesTest(unittest.TestCase):
     """Text-level checks of the five BODY-ASISTENTE-PANEL-1-M fixes (the orchestrator re-measures

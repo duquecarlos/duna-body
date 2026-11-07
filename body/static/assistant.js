@@ -506,6 +506,7 @@
     var textoAcum = "";
     var answerEl = null;
     var huboError = false;
+    var propuestasPendientes = [];
 
     function onEvento(nombre, datos) {
       if (nombre === "herramienta") {
@@ -522,11 +523,17 @@
         renderMD(textoAcum, answerEl);
         try { answerEl.scrollIntoView({ block: "start" }); } catch (e) {}
       } else if (nombre === "propuesta") {
-        turno.turno.appendChild(crearTarjetaPropuesta(datos));
+        // Queued, not appended here: this event can arrive before the turn's answer text does
+        // (a proposal tool call's round precedes the model's final round), and the card must sit
+        // under the answer, not between the question and the folded steps.
+        propuestasPendientes.push(datos);
       } else if (nombre === "fin") {
         turno.status.hidden = true;
         guardarConversacionId(datos.conversacion_id);
         agregarPasos(turno.turno, pasos, answerEl);
+        propuestasPendientes.forEach(function (p) {
+          turno.turno.appendChild(crearTarjetaPropuesta(p));
+        });
       } else if (nombre === "error") {
         huboError = true;
         turno.status.hidden = true;

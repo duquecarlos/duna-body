@@ -1225,6 +1225,11 @@ def _tarjeta_propuesta(t: T, defs: dict, registro: dict) -> dict:
         despues_txt = IDIOMA_LABEL.get(despues["lang"], despues["lang"])
     else:
         despues_txt = ""
+    if antes_txt is not None:
+        antes_txt = t("asistente.propuesta.antes", valor=antes_txt)
+        despues_txt = t("asistente.propuesta.despues", valor=despues_txt)
+    elif despues_txt:
+        despues_txt = t("asistente.propuesta.solo_propuesta", valor=despues_txt)
     return {
         "id": registro["id"], "accion": accion, "titulo": t("asistente.propuesta.titulo." + accion),
         "antes": antes_txt, "despues": despues_txt, "expira_en": registro["expira_en"],
