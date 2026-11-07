@@ -20,7 +20,7 @@
 {% if block_ctx %}<p class="note" style="margin-top:6px">{{ block_ctx }} <a class="taplink" href="/shifts">{{ t('day.shift_ctx_link') }}</a></p>{% endif %}
 <h2>{{ t('day.all') }}</h2>
 <div class="grid2 grid3">
-{% for c in cards %}<div class="card{% if c.raw is none %} empty{% endif %}" id="{{ c.key }}"><div class="k">{{ c.label }}</div><div class="fig">{% if c.est and c.raw is not none %}<span class="approx">≈</span>{% endif %}{{ c.value }}{% if c.unit and c.raw is not none %}<span class="u">{{ c.unit }}</span>{% endif %}</div>{% if c.delta %}<div class="delta {{ c.cls }}">{{ c.delta }}</div>{% endif %}</div>{% endfor %}
+{% for c in cards %}{% if c.href %}<a class="card" id="{{ c.key }}" href="{{ c.href }}">{% else %}<div class="card{% if c.raw is none %} empty{% endif %}" id="{{ c.key }}">{% endif %}<div class="k">{{ c.label }}</div><div class="fig">{% if c.est and c.raw is not none %}<span class="approx">≈</span>{% endif %}{{ c.value }}{% if c.unit and c.raw is not none %}<span class="u">{{ c.unit }}</span>{% endif %}</div>{% if c.delta %}<div class="delta {{ c.cls }}">{{ c.delta }}</div>{% endif %}{% if c.href %}</a>{% else %}</div>{% endif %}{% endfor %}
 </div>
 <h2>{{ t('day.activities') }}</h2>
 {% if activities %}<ul class="list">{% for a in activities %}<li><strong>{{ a.name }}</strong><br><span class="note">{{ a.detail }}</span></li>{% endfor %}</ul>

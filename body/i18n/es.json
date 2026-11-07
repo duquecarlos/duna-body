@@ -376,6 +376,8 @@
   "trends.aria_months": "{metric}, de {desde} a {hasta}",
   "trends.back_hist": "← Todo el historial",
   "trends.back_turnos": "‹ Volver a Turnos",
+  "trends.back_dia": "‹ Volver al día",
+  "trends.back_como": "‹ Volver a cómo lo calculo",
   "trends.month_sub": "{month}, día por día",
   "trends.history_link": "Tu historia completa →",
   "trends.short.stress_avg": "Estrés",

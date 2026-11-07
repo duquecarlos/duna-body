@@ -7,7 +7,7 @@
   {% else %}<p class="sub">{{ t('trends.sub', since=since, days=days) }}</p>{% endif %}
 </div></div>
 
-{% if desde == 'turnos' %}<p style="margin:0 0 12px"><a class="taplink" href="/shifts">{{ t('trends.back_turnos') }}</a></p>{% endif %}
+{% if back_href %}<p style="margin:0 0 12px"><a class="taplink" href="{{ back_href }}">{{ back_label }}</a></p>{% endif %}
 
 <div class="seg" style="margin-bottom:12px">
   {% for x in ranges %}
@@ -15,6 +15,7 @@
   {% if x != 'all' %}{% set _ = qs.append('r=' + x) %}{% endif %}
   {% if todas %}{% set _ = qs.append('todas=1') %}{% endif %}
   {% if desde %}{% set _ = qs.append('desde=' + desde) %}{% endif %}
+  {% if dia %}{% set _ = qs.append('dia=' + dia) %}{% endif %}
   <a class="btn{% if r == x %} on{% endif %}" href="/trends{% if qs %}?{{ qs|join('&') }}{% endif %}"{% if r == x %} aria-current="page"{% endif %}>{{ t('trends.r.' + x) }}</a>
   {% endfor %}
 </div>

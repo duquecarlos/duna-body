@@ -25,7 +25,7 @@
   <table class="parts" style="margin-top:10px">
     <tr><th>{{ t('how.col_part') }}</th><th>{{ t('how.col_value') }}</th><th>{{ t('how.col_ref') }}</th><th>{{ t('how.col_score') }}</th></tr>
     {% for p in parts %}
-    <tr><td>{{ p.label }}<div class="k">{{ t('how.col_weight') }} {{ p.weight }}</div></td><td class="nw">{{ p.value }}</td><td class="nw">{{ p.ref }}{% if p.ref_note %}<div class="k">{{ p.ref_note }}</div>{% endif %}</td><td class="pts nw">{{ p.score }}</td></tr>
+    <tr><td>{% if p.href %}<a class="taplink" href="{{ p.href }}">{{ p.label }}</a>{% else %}{{ p.label }}{% endif %}<div class="k">{{ t('how.col_weight') }} {{ p.weight }}</div></td><td class="nw">{{ p.value }}</td><td class="nw">{{ p.ref }}{% if p.ref_note %}<div class="k">{{ p.ref_note }}</div>{% endif %}</td><td class="pts nw">{{ p.score }}</td></tr>
     {% endfor %}
     {% for m in missing %}
     <tr><td style="color:var(--muted)">{{ m }}</td><td>—</td><td>—</td><td>—</td></tr>

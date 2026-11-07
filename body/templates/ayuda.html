@@ -8,7 +8,7 @@
   <div class="q">{{ t('ayuda.recorrido_completo') }}</div>
   <ol class="list" style="list-style:decimal;padding-left:20px;margin-top:6px">
   {% for tarea in recorrido %}
-    <li><a href="#{{ tarea.id }}" style="text-decoration:underline">{{ tarea.titulo }}</a></li>
+    <li><a class="taplink" href="#{{ tarea.id }}">{{ tarea.titulo }}</a></li>
   {% endfor %}
   </ol>
 </div>

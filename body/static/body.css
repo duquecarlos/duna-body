@@ -112,6 +112,7 @@ details.files summary::-webkit-details-marker{display:none}
 details.files .card{margin-bottom:0}
 .badge{font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
 .shift{display:flex;align-items:center;gap:10px;border-radius:10px;padding:10px 12px;margin-bottom:10px;border:1px solid var(--soft);position:relative;overflow:hidden;background:var(--card)}
+.shift .note{margin:0 0 0 4px}
 .shift::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--line)}
 .shift.night{background:var(--night-tint)} .shift.night::before{background:var(--night)}
 .shift.day,.shift.morning,.shift.afternoon{background:var(--day-tint)}
@@ -164,7 +165,7 @@ table.parts th:first-child{padding-left:0}
 .asis-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;border-bottom:1px solid var(--soft);flex:none}
 .asis-head strong{font-size:15px}
 .asis-head-actions{display:flex;align-items:center;gap:2px}
-.asis-icon-btn{display:flex;align-items:center;justify-content:center;min-width:40px;min-height:40px;border:0;background:none;border-radius:7px;color:var(--ink2);cursor:pointer;font-size:14px}
+.asis-icon-btn{display:flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;border:0;background:none;border-radius:7px;color:var(--ink2);cursor:pointer;font-size:14px}
 .asis-icon-btn:active{background:var(--wash)}
 @media (hover:hover){.asis-icon-btn:hover{background:var(--wash);color:var(--ink)}}
 .asis-mensajes{flex:1;overflow-y:auto;overscroll-behavior: contain;padding:12px 14px;scroll-behavior:smooth}
