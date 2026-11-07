@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}{{ t('ajustes.asistente.title') }} · {{ t('app.name') }}{% endblock %}
+{% block main %}
+<div class="top"><div><h1>{{ t('ajustes.asistente.title') }}</h1></div></div>
+{% if guardado %}
+<div class="card"><p class="read">{{ t('settings.saved') }}</p></div>
+{% endif %}
+<form method="post" action="/ajustes/asistente">
+  <div class="card">
+    <label class="radio"><input type="radio" name="nivel" value="completo" {% if nivel == 'completo' %}checked{% endif %}> {{ t('ajustes.asistente.opcion.completo') }}</label>
+    <p class="read" style="margin:4px 0 16px">{{ t('ajustes.asistente.opcion.completo.desc') }}</p>
+    <label class="radio"><input type="radio" name="nivel" value="resumen" {% if nivel == 'resumen' %}checked{% endif %}> {{ t('ajustes.asistente.opcion.resumen') }}</label>
+    <p class="read" style="margin:4px 0 16px">{{ t('ajustes.asistente.opcion.resumen.desc') }}</p>
+    <label class="radio"><input type="radio" name="nivel" value="ninguno" {% if nivel == 'ninguno' %}checked{% endif %}> {{ t('ajustes.asistente.opcion.ninguno') }}</label>
+    <p class="read" style="margin:4px 0 0">{{ t('ajustes.asistente.opcion.ninguno.desc') }}</p>
+  </div>
+  <p class="note">{{ t('ajustes.asistente.nota') }}</p>
+  <button type="submit" class="btn on" style="width:100%;margin-top:4px">{{ t('ajustes.asistente.guardar') }}</button>
+</form>
+{% endblock %}

@@ -2616,3 +2616,64 @@ Growth, not an in-app text. All three conditions clear, so this merges on green 
 
 Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run once, foreground, on the final tree: 554
 tests, OK (1 skipped, pre-existing).
+
+## BODY-NIVEL-DATOS-UI-1 -- the screen the consent text promises (2026-11-07)
+
+BODY-TUTORIALES-1's census found the gap: the privacy consent text says "al nivel que elijas en Ajustes", but no
+screen let a person choose `nivel_datos` -- only the assistant's `leer_ajustes` tool could read it
+(`body/agente/ajustes.py`, BODY-ASISTENTE-DATA-LEVEL-1). This slice gives it a screen.
+
+`GET /ajustes/asistente` (session-authenticated, works in local and hosted mode alike): title «Lo que ve el
+asistente», three radio options pre-selected on `ajustes.nivel_datos`, each with one plain sentence from
+`body/agente/ajustes.py`'s docstring meanings:
+
+- «Tus cifras día por día» (completo) -- «Cuando preguntas, el asistente puede leer los valores de cada día que tu
+  pregunta necesita.»
+- «Solo resúmenes» (resumen) -- «Solo promedios y conteos de una semana o más; nunca el valor de un día.»
+- «Sin cifras» (ninguno) -- «Solo fechas, tipos de turno, títulos de metas y ajustes; ninguna cifra de salud.»
+
+plus the line «Lo que el asistente lee se envía al proveedor de IA solo cuando tú preguntas.» and a «Guardar»
+button. `POST /ajustes/asistente` validates `nivel` against `ajustes.NIVELES` (an unknown value -> 400, nothing
+stored), calls `ajustes.set_nivel_datos`, and redirects 303 to `/ajustes/asistente?guardado=1`, which shows
+«Guardado.» once. `settings.html` gained an always-rendered row (not gated on `hosted()` or on a model provider
+being configured, since the choice is the person's regardless) showing the current choice's short name and linking
+the screen. Both `body/i18n/es.json` and `body/i18n/en.json` got the new keys.
+
+`tests/test_agente_registro.py`'s `ROUTE_TOOL` maps `/ajustes/asistente -> None`: the assistant reads this setting
+through `leer_ajustes` and never sets it itself, by design, so the new GET route is deliberately unmapped to a
+tool. `tutoriales/catalogo.json`'s `el-nivel-de-datos-del-asistente` task now points `pantalla` at
+`/ajustes/asistente` instead of the `/settings` placeholder BODY-TUTORIALES-1 left there -- the product gap that
+slice recorded is closed.
+
+`tests/test_nivel_datos_ui.py` (6 tests): default screen shows `completo` pre-selected; a POST of `resumen` stores
+it and `herramientas.disponibles` on the stored value returns fewer tools than before (read back through
+`ajustes.nivel_datos`, never assumed); an invalid value answers 400 and leaves the stored level unchanged; two
+persons, signed in through real Cuenta sessions as `tests/test_person_scope.py`'s hosted class does (not
+`dependency_overrides`), set their own level without touching the other's; both languages render the three option
+labels; `/settings`'s new row shows the current choice and links the screen.
+
+**Merge policy, judged against this diff.** Schema: no -- no table or migration changed. Cross-repo contract: no --
+nothing here is a wire shape another repository mirrors. **Customer-facing bytes: yes** -- a new screen's Spanish
+and English strings, and a new row on `/settings`, both read by a signed-in person. That trips merge policy A, so
+this slice stops `AWAITING_APPROVAL` on the branch, unmerged, rather than merging on green.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run once, foreground, on the final tree: 560
+tests, OK (1 skipped, pre-existing).
+
+## BODY-NIVEL-DATOS-UI-1-M -- land BODY-NIVEL-DATOS-UI-1 (2026-11-07)
+
+BODY-NIVEL-DATOS-UI-1 stopped on `feat/body-nivel-datos-ui-1` (branch tip `250ead371549bccfe24e90184cdce4cf48def573`)
+AWAITING_APPROVAL, tripping merge policy A's customer-facing-bytes condition. Approved by the orchestrator under
+`ORCH-CARLOS-DELEGATES-TIER-1-1` after review, approved as written, per its own measurement in the Browser pane
+(body-web-demo, scratch data, 375 px): three plain options with completo pre-selected, no sideways scroll,
+«Guardar» clear of the assistant button; saving resumen redirected with «Guardado.», kept resumen selected, and the
+Ajustes row read «Solo resúmenes». No code change in this slice.
+
+`main` had not moved since the branch was cut: `git merge-base main feat/body-nivel-datos-ui-1` and `git rev-parse
+main` both resolved to `77e49882d18b385c090573ac0022f89e34b85363`, so no merge-forward was needed.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 560 tests, OK (1 skipped, pre-existing), run
+once on the branch tip before this merge.
+
+Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-nivel-datos-ui-1` into `main` following
+this entry.

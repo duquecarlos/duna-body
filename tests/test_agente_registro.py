@@ -38,6 +38,7 @@ ROUTE_TOOL = {
     "/privacidad/exportar": None,  # privacy plumbing; the assistant never reads or triggers it
     "/garmin": None,              # account-connection plumbing; the assistant never reads or triggers it
     "/ajustes/dispositivos": None,  # device-key management; the assistant never reads or triggers it
+    "/ajustes/asistente": None,   # the setting itself; the assistant reads it through leer_ajustes, never sets it
     "/api/vida/semana": None,     # device-key API for Personal; the assistant never reads or triggers it
     "/asistente/conversacion/{conversacion_id}": None,  # the panel's own history reload, not a tool
 }

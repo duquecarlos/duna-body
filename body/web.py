@@ -29,6 +29,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from . import (cuenta, db, dispositivo, garmin_adapter, garmin_cuenta, goals, history, household, identity, listen,
                privacidad, profile, readiness, shift_import, vida_export)
+from .agente import ajustes as agente_ajustes
 from .agente import bucle as agente_bucle
 from .agente import cliente as agente_cliente
 from .agente import conversacion as agente_conversacion
@@ -1159,8 +1160,9 @@ async def habit_check(habit_id: int, request: Request, person_id: int = Depends(
 
 @app.get("/settings")
 def settings(person_id: int = Depends(identity.current_person_id)):
-    _, _, t = _ctx(person_id)
-    return _render("settings.html", t=t, tab="settings")
+    conn, _, t = _ctx(person_id)
+    nivel_datos = agente_ajustes.nivel_datos(conn, person_id)
+    return _render("settings.html", t=t, tab="settings", nivel_datos=nivel_datos)
 
 
 @app.post("/settings/language")
@@ -1170,6 +1172,29 @@ async def set_language(request: Request, person_id: int = Depends(identity.curre
         conn, _, _ = _ctx(person_id)
         db.set_language(conn, lang, person_id)
     return RedirectResponse("/settings", status_code=303)
+
+
+# ---- «Lo que ve el asistente» (BODY-NIVEL-DATOS-UI-1): the screen the consent text promises -------
+
+@app.get("/ajustes/asistente")
+def nivel_datos_view(request: Request, person_id: int = Depends(identity.current_person_id)):
+    conn, _, t = _ctx(person_id)
+    nivel = agente_ajustes.nivel_datos(conn, person_id)
+    guardado = request.query_params.get("guardado") == "1"
+    resp = _render("asistente_datos.html", t=t, tab="settings", nivel=nivel, guardado=guardado)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/ajustes/asistente")
+async def nivel_datos_guardar(request: Request, person_id: int = Depends(identity.current_person_id)):
+    f = await _form(request)
+    nivel = f.get("nivel") or ""
+    if nivel not in agente_ajustes.NIVELES:
+        raise HTTPException(400)
+    conn, _, _ = _ctx(person_id)
+    agente_ajustes.set_nivel_datos(conn, person_id, nivel)
+    return RedirectResponse("/ajustes/asistente?guardado=1", status_code=303)
 
 
 # ---- Assistant (BODY-ASISTENTE-PROVEEDOR-1): one tool loop, streamed as SSE ------------------
