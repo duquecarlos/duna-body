@@ -12,7 +12,7 @@ import sys
 import time
 from datetime import date, timedelta
 
-from . import db, garmin_adapter, readiness
+from . import cuenta, db, garmin_adapter, garmin_cuenta, readiness
 
 PAUSE_S = 1.0  # be gentle with Garmin's servers during a backfill
 EMPTY_STOP = 60  # --all stops after this many consecutive days with no watch data
@@ -54,16 +54,57 @@ def pull_all(conn, person_id: int) -> int:
     return saved
 
 
+def _pull_one_person(conn, person_id: int, days: list[str]) -> None:
+    """Pulls `days` for one hosted person, re-encrypting the stored token only if Garmin refreshed
+    it. Raises garmin_adapter.NotSignedIn if the token is rejected -- the caller records that and
+    moves on to the next person."""
+    token = garmin_cuenta.leer(conn, person_id)
+    if token is None:
+        return
+    token_before = token
+    for i, d in enumerate(sorted(days)):
+        if i:
+            time.sleep(PAUSE_S)
+        data, token = garmin_adapter.fetch_day(d, token_str=token)
+        db.save_day(conn, data, person_id)
+    if token != token_before:
+        garmin_cuenta.guardar(conn, person_id, token)
+
+
+def pull_hosted(conn, days: list[str]) -> tuple[int, int, int]:
+    """Loops over every person with a connected Garmin account. Returns (persons ok, persons
+    failed, days stored). Never prints a health figure -- counts only."""
+    ok = failed = saved = 0
+    for person_id in garmin_cuenta.every_person_id(conn):
+        try:
+            _pull_one_person(conn, person_id, days)
+        except garmin_adapter.NotSignedIn as e:
+            garmin_cuenta.registrar_error(conn, person_id, type(e).__name__)
+            failed += 1
+            continue
+        saved += len(days)
+        ok += 1
+    return ok, failed, saved
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="python -m body.pull")
     p.add_argument("--date", help="one day, YYYY-MM-DD")
     p.add_argument("--days", type=int, default=2, help="how many days back from today (default 2)")
-    p.add_argument("--all", action="store_true", help="whole Garmin history (resumable)")
-    p.add_argument("--recompute", action="store_true", help="recompute readiness only, no Garmin calls")
+    p.add_argument("--all", action="store_true", help="whole Garmin history (resumable; local mode only)")
+    p.add_argument("--recompute", action="store_true",
+                    help="recompute readiness only, no Garmin calls (local mode only)")
     a = p.parse_args(argv)
 
     conn = db.connect()
     db.init(conn)
+
+    if cuenta.hosted():
+        days = [a.date] if a.date else [(date.today() - timedelta(n)).isoformat() for n in range(a.days)]
+        ok, failed, saved = pull_hosted(conn, days)
+        print(f"{ok} ok, {failed} failed, {saved} days stored", flush=True)
+        return 0
+
     person_id = db.local_person_id(conn)
     if a.all:
         try:

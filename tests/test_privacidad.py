@@ -155,6 +155,43 @@ class ExportTest(unittest.TestCase):
         self.assertEqual(found, accounted)
 
 
+class GarminExportDeleteTest(unittest.TestCase):
+    """BODY-GARMIN-HOST-1: garmin_cuenta is a partial-export table (connected-since date only,
+    never the ciphertext) and the generic delete-all removes it."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "garmin.db"
+        self.conn = db.connect()
+        db.init(self.conn)
+
+    def _insert_row(self):
+        self.conn.execute(
+            "INSERT INTO garmin_cuenta (person_id, token_cifrado, nonce, conectado_en) VALUES "
+            "(1, ?, ?, '2026-11-01T00:00:00+00:00')",
+            (b"not-a-real-ciphertext-marker", b"\x00" * 12),
+        )
+        self.conn.commit()
+
+    def test_export_shows_connected_date_never_the_ciphertext(self):
+        self._insert_row()
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(data["garmin"], {"conectado_desde": "2026-11-01T00:00:00+00:00"})
+        self.assertNotIn("not-a-real-ciphertext-marker", json.dumps(data))
+
+    def test_export_with_no_garmin_row_is_none(self):
+        data = privacidad.export_person(self.conn, 1)
+        self.assertIsNone(data["garmin"])
+
+    def test_delete_all_removes_the_garmin_row(self):
+        self._insert_row()
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM garmin_cuenta WHERE person_id = 1").fetchone()[0], 0
+        )
+
+
 class DeleteAllTest(unittest.TestCase):
     def setUp(self):
         orig_db_path = config.DB_PATH

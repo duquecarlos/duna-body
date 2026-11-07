@@ -7,6 +7,7 @@ Privacy: never log payloads, tokens or credentials from here.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -45,9 +46,39 @@ def has_token() -> bool:
     return config.TOKEN_DIR.exists() and any(config.TOKEN_DIR.iterdir())
 
 
-def _client():
+def start_sign_in(email: str, password: str) -> tuple[str, str]:
+    """Hosted sign-in, step one: ("ok", token_str) on success, or ("needs_mfa", client_state_json)
+    when Garmin asks for a code -- finish with finish_sign_in(). email and password are used once
+    here and never stored, logged or returned."""
     from garminconnect import Garmin
 
+    api = Garmin(email=email, password=password, return_on_mfa=True)
+    status, state = api.login()
+    if status == "needs_mfa":
+        return "needs_mfa", json.dumps(state)
+    return "ok", api.client.dumps()
+
+
+def finish_sign_in(client_state_json: str, code: str) -> str:
+    """Hosted sign-in, step two: finishes the MFA login start_sign_in() began and returns the
+    token. code is used once here and never stored, logged or returned."""
+    from garminconnect import Garmin
+
+    api = Garmin(return_on_mfa=True)
+    api.resume_login(json.loads(client_state_json), code)
+    return api.client.dumps()
+
+
+def _client(token_str: str | None = None):
+    from garminconnect import Garmin
+
+    if token_str is not None:
+        api = Garmin(return_on_mfa=False)
+        try:
+            api.login(token_str)
+        except Exception as e:  # rejected token -> the person must reconnect on /garmin
+            raise NotSignedIn(f"Garmin token not accepted ({type(e).__name__}).") from None
+        return api
     if not has_token():
         raise NotSignedIn("No Garmin token yet. Run: python -m body.login")
     api = Garmin()
@@ -58,9 +89,15 @@ def _client():
     return api
 
 
-def fetch_day(day: str) -> DayData:
-    """Pull one calendar day from Garmin Connect."""
-    api = _client()
+def fetch_day(day: str, token_str: str | None = None):
+    """Pull one calendar day from Garmin Connect.
+
+    token_str=None: today's local TOKEN_DIR flow, unchanged; returns DayData.
+    token_str given (hosted, person-scoped): returns (DayData, token_after), where token_after is
+    token_str's value, possibly refreshed by Garmin during this call -- compare the two to decide
+    whether the caller must re-encrypt and store it.
+    """
+    api = _client(token_str)
     raw: dict[str, Any] = {}
     calls = {
         "user_summary": lambda: api.get_user_summary(day),
@@ -77,7 +114,10 @@ def fetch_day(day: str) -> DayData:
             errors[kind] = type(e).__name__
     if errors:
         raw["_errors"] = errors
-    return parse_day(day, raw)
+    data = parse_day(day, raw)
+    if token_str is None:
+        return data
+    return data, api.client.dumps()
 
 
 # ---------------------------------------------------------------- parsing (pure)

@@ -23,7 +23,9 @@ FULLY_HANDLED_TABLES = {
     "daily_metric", "sleep_session", "activity", "shift", "shift_batch",
     "goal", "habit_check", "goal_check", "plan", "ajuste_agente", "consentimiento", "hogar_local",
 }
-PARTIAL_EXPORT_TABLES = {"raw_payload"}  # kind/date only, never the stored JSON payload
+# raw_payload: kind/date only, never the stored JSON payload. garmin_cuenta: the connected-since
+# date only, never the encrypted token (BODY-GARMIN-HOST-1).
+PARTIAL_EXPORT_TABLES = {"raw_payload", "garmin_cuenta"}
 NEVER_EXPORTED_TABLES = {"sesion"}  # session plumbing, not data about the person's body or life
 
 
@@ -100,6 +102,12 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "SELECT hogar_id, member_sub FROM hogar_local WHERE person_id = ?", (person_id,)
     ).fetchone()
     ajustes = {"nivel_datos": agente_ajustes.nivel_datos(conn, person_id)}
+    # garmin_cuenta is a partial-export table: the connected-since date only, never the encrypted
+    # token or anything that could rebuild it.
+    garmin_row = conn.execute(
+        "SELECT conectado_en FROM garmin_cuenta WHERE person_id = ?", (person_id,)
+    ).fetchone()
+    garmin = {"conectado_desde": garmin_row["conectado_en"]} if garmin_row else None
 
     return {
         "formato": "body-export-v1",
@@ -114,6 +122,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "sincronizaciones": sincronizaciones,
         "consentimientos": consentimientos,
         "ajustes": ajustes,
+        "garmin": garmin,
     }
 
 
@@ -157,6 +166,7 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         conn.execute("DELETE FROM shift WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM ajuste_agente WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM consentimiento WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM garmin_cuenta WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM hogar_local WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM sesion WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM person WHERE id = ?", (person_id,))
@@ -165,7 +175,7 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
 
 def _borrar_fuera_de_bd(person_id: int) -> None:
     """Placeholder call point for anything this person's delete-all must also remove OUTSIDE the
-    database. Today: nothing. BODY-TOKEN-ENCRYPT-1 adds deleting this person's Garmin token here,
-    once the token store knows how to key a token by person rather than by this one PC's single
-    install. Takes only an id, never a figure, like every function in this module."""
+    database. Empty, and stays empty: BODY-GARMIN-HOST-1's Garmin token lives in `garmin_cuenta`,
+    a person-keyed table the generic deletes above already remove -- there is nothing left outside
+    the database. Takes only an id, never a figure, like every function in this module."""
     return None

@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import sys
+import time
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -25,7 +26,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from . import cuenta, db, goals, history, household, identity, listen, privacidad, profile, readiness, shift_import
+from . import (cuenta, db, garmin_adapter, garmin_cuenta, goals, history, household, identity, listen, privacidad,
+               profile, readiness, shift_import)
 from .baselines import baseline
 from .i18n import DEFAULT as DEFAULT_LANG
 from .i18n import LANGS, T
@@ -38,6 +40,7 @@ HERE = Path(__file__).parent
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     cuenta.ensure_configured()
+    garmin_cuenta.ensure_configured()
     yield
 
 
@@ -1147,6 +1150,108 @@ async def set_language(request: Request, person_id: int = Depends(identity.curre
         conn, _, _ = _ctx(person_id)
         db.set_language(conn, lang, person_id)
     return RedirectResponse("/settings", status_code=303)
+
+
+# ---- Garmin (hosted only): one connection per person, token encrypted by body/garmin_cuenta.py ----
+
+_MFA_TTL_SECONDS = 600
+_MFA_STATE: dict[str, tuple[str, float]] = {}  # session-token hash -> (client_state_json, started_at)
+
+_GARMIN_LAST_ERROR_KEYS = {"NotSignedIn": "garmin.error.not_signed_in"}
+_GARMIN_FORM_ERROR_KEYS = {"datos": "garmin.error.datos", "garmin": "garmin.error.generic",
+                           "mfa_expired": "garmin.error.mfa_expired"}
+
+
+def _garmin_last_error_text(t: T, error_cls: str | None) -> str | None:
+    if not error_cls:
+        return None
+    return t(_GARMIN_LAST_ERROR_KEYS.get(error_cls, "garmin.error.generic"))
+
+
+def _mfa_key(request: Request) -> str:
+    token = request.cookies.get(cuenta.SESSION_COOKIE) or ""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _garmin_ctx(t: T, conn, person_id: int, **extra) -> dict:
+    connected_since = garmin_cuenta.conectado_desde(conn, person_id)
+    ctx = {
+        "t": t, "tab": "settings",
+        "connected": connected_since is not None,
+        "connected_since": _short_date(t, datetime.fromisoformat(connected_since).date())
+                           if connected_since else None,
+        "error_text": _garmin_last_error_text(t, garmin_cuenta.ultimo_error(conn, person_id)),
+        "form_error": None, "mfa": False,
+    }
+    ctx.update(extra)
+    return ctx
+
+
+@app.get("/garmin")
+def garmin_view(request: Request, person_id: int = Depends(identity.current_person_id)):
+    if not cuenta.hosted():
+        raise HTTPException(404)
+    conn, _, t = _ctx(person_id)
+    err = request.query_params.get("error")
+    form_error = t(_GARMIN_FORM_ERROR_KEYS[err]) if err in _GARMIN_FORM_ERROR_KEYS else None
+    return _render("garmin.html", **_garmin_ctx(t, conn, person_id, form_error=form_error))
+
+
+@app.post("/garmin/conectar")
+async def garmin_conectar(request: Request, person_id: int = Depends(identity.current_person_id)):
+    if not cuenta.hosted():
+        raise HTTPException(404)
+    f = await _form(request)
+    email = (f.get("email") or "").strip()
+    password = f.get("password") or ""
+    if not email or not password:
+        return RedirectResponse("/garmin?error=datos", status_code=303)
+    try:
+        status, result = garmin_adapter.start_sign_in(email, password)
+    except Exception:
+        return RedirectResponse("/garmin?error=garmin", status_code=303)
+    finally:
+        password = None  # noqa: F841
+    if status == "needs_mfa":
+        _MFA_STATE[_mfa_key(request)] = (result, time.monotonic())
+        conn, _, t = _ctx(person_id)
+        return _render("garmin.html", **_garmin_ctx(t, conn, person_id, mfa=True))
+    conn, _, _ = _ctx(person_id)
+    garmin_cuenta.guardar(conn, person_id, result)
+    return RedirectResponse("/garmin", status_code=303)
+
+
+@app.post("/garmin/codigo")
+async def garmin_codigo(request: Request, person_id: int = Depends(identity.current_person_id)):
+    if not cuenta.hosted():
+        raise HTTPException(404)
+    f = await _form(request)
+    code = (f.get("code") or "").strip()
+    key = _mfa_key(request)
+    entry = _MFA_STATE.get(key)
+    if entry is None or time.monotonic() - entry[1] > _MFA_TTL_SECONDS:
+        return RedirectResponse("/garmin?error=mfa_expired", status_code=303)
+    client_state_json, _ = entry
+    try:
+        token = garmin_adapter.finish_sign_in(client_state_json, code)
+    except Exception:
+        # A wrong code may be retried within the same TTL window -- the state is kept, not popped.
+        return RedirectResponse("/garmin?error=garmin", status_code=303)
+    finally:
+        code = None  # noqa: F841
+    _MFA_STATE.pop(key, None)
+    conn, _, _ = _ctx(person_id)
+    garmin_cuenta.guardar(conn, person_id, token)
+    return RedirectResponse("/garmin", status_code=303)
+
+
+@app.post("/garmin/desconectar")
+def garmin_desconectar(person_id: int = Depends(identity.current_person_id)):
+    if not cuenta.hosted():
+        raise HTTPException(404)
+    conn, _, _ = _ctx(person_id)
+    garmin_cuenta.borrar(conn, person_id)
+    return RedirectResponse("/garmin", status_code=303)
 
 
 @app.get("/privacidad/consentimiento")
