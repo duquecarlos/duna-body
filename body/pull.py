@@ -111,8 +111,8 @@ def main(argv=None) -> int:
     a = p.parse_args(argv)
 
     conn = db.connect()
-    db.init(conn)
     try:
+        db.init(conn)
         return _run(conn, a)
     finally:
         conn.close()
