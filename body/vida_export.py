@@ -19,7 +19,7 @@ import statistics
 import sys
 from datetime import date, datetime, timedelta, timezone
 
-from . import config, cuenta, db, household
+from . import config, cuenta, db, household, turnos_costo
 
 PERSON_KEY = "carlos"  # vida-v1: local person key until Body has Cuenta sign-in
 WEEK_METRICS = ["readiness", "sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake", "stress_avg",
@@ -54,6 +54,29 @@ def week_section(conn, monday: date, person_id: int) -> dict:
         avg = statistics.fmean(vals)
         metrics.append({"key": f"body.{key}", "value": round(avg, 1), "kind": defs[key]["kind"],
                         "days": len(vals), "visibility": "owner"})
+
+    days = max((m["days"] for m in metrics), default=0)
+    summary = f"{days} of 7 days with watch data." if days else "No watch data this week."
+
+    shift_rows = conn.execute(
+        "SELECT kind FROM shift WHERE person_id = ? AND day BETWEEN ? AND ?",
+        (person_id, monday.isoformat(), sunday.isoformat()),
+    ).fetchall()
+    if shift_rows:
+        nights = sum(1 for r in shift_rows if r["kind"] == "night")
+        working_days = sum(1 for r in shift_rows if r["kind"] != "off")
+        metrics.append({"key": "body.shift_nights", "value": nights, "kind": "measured",
+                        "days": 7, "visibility": "owner"})
+        metrics.append({"key": "body.shift_working_days", "value": working_days, "kind": "measured",
+                        "days": 7, "visibility": "owner"})
+        if nights:
+            summary += f" {nights} night shift{'s' if nights != 1 else ''} this week."
+        recuperacion = turnos_costo.turno_de_hoy(conn, person_id, sunday)["recuperacion"]
+        if recuperacion is not None:
+            metrics.append({"key": "body.recovery_days_est", "value": recuperacion["estimado"],
+                            "kind": "estimated", "days": 7, "visibility": "owner"})
+            summary += f" Recovering from nights (about {recuperacion['estimado']} days)."
+
     goals = [{"goal_id": r["id"], "on_track": None if r["on_track"] is None else bool(r["on_track"])}
              for r in conn.execute(
                  "SELECT g.id, gc.on_track FROM goal g "
@@ -72,8 +95,6 @@ def week_section(conn, monday: date, person_id: int) -> dict:
                                 "on_track": None if r["on_track"] is None else bool(r["on_track"]),
                                 "note": r["note"]})
 
-    days = max((m["days"] for m in metrics), default=0)
-    summary = (f"{days} of 7 days with watch data." if days else "No watch data this week.")
     return {
         "area": "body", "summary": summary, "metrics": metrics, "goals": goals, "goal_checks": goal_checks,
         "person": person, "week_start": monday.isoformat(), "source": "body",
