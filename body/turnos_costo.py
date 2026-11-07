@@ -236,6 +236,30 @@ def turno_de_hoy(conn, person_id: int, hoy: date) -> dict:
     return {"hoy": hoy_shift, "siguiente": siguiente, "recuperacion": recuperacion}
 
 
+def contexto_dia(conn, person_id: int, dia: date) -> dict | None:
+    """Where `dia` sits relative to a night block (BODY-TURNOS-ENLACES-1): inside one ->
+    {"tipo": "noche", "n": k, "de": length} (k, length from `bloques_noche`'s own maximal run, so a
+    block already-confirmed ahead of `dia` still counts toward `length`); within `ventana_post` days
+    after a block's last night, and `dia` itself not a night -> {"tipo": "despues", "n": d}; else
+    None. Pure read of confirmed `shift` rows, nothing stored."""
+    ventana = MODELO["ventana_post"]
+    desde = (dia - timedelta(60)).isoformat()
+    hasta = (dia + timedelta(60)).isoformat()
+    bloques = bloques_noche(conn, person_id, desde, hasta)
+    anterior = None
+    for b in bloques:
+        inicio, fin = _parse(b.inicio), _parse(b.fin)
+        if inicio <= dia <= fin:
+            return {"tipo": "noche", "n": (dia - inicio).days + 1, "de": b.dias}
+        if fin < dia:
+            anterior = b
+    if anterior is not None:
+        d = (dia - _parse(anterior.fin)).days
+        if d <= ventana:
+            return {"tipo": "despues", "n": d}
+    return None
+
+
 def resumen(conn, person_id: int, hoy: date | None = None) -> dict:
     """Blocks of the last RESUMEN_DIAS days with their cost and recovery; the hero `dias_recuperacion`
     is the median recovery over blocks that have a figure, only when at least MODELO['min_bloques'] do;

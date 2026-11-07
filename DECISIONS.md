@@ -3561,3 +3561,48 @@ additive and nullable) and approved it as written, merge only.
 Gate run on the branch's final tree (`6883b18`): `.venv/Scripts/python.exe -m unittest discover tests -t .` --
 725 tests, `OK (skipped=1)`. Merged `--no-ff` into `main`; the merge introduced no changes beyond the branch's own
 (merge tree and branch tree are identical).
+
+## BODY-TURNOS-ENLACES-1 -- every figure opens what made it, and Dia says where a day sits in a night block (2026-11-07)
+
+DESIGN rule 3 for the night-shift figures BODY-TURNOS-COSTO-1 built: each row of Turnos' "¿Qué te cuesta una
+semana de noches?" now opens that measure on Tendencias, and Tendencias links back; Día says where a day sits
+relative to a night block.
+
+1. **Turnos -> Tendencias.** `_turnos_filas` (`body/web.py`) gives each cost row with a figure an `href`:
+   `/trends?r=90&desde=turnos#<metric>`, with `&todas=1` added when the metric is one of `web.TREND_GROUPS`'
+   own keys (checked through a small `_es_extra_metric` helper reading that constant, never a second list). A
+   row with "—" (no figure) carries no `href` and stays a plain two-`<td>` row; a row with a figure renders as
+   one `<a class="costrow">` spanning both columns (new CSS, `body/static/body.css`: flex, `min-height:44px`,
+   hover/active wash), so the whole row is the 44 px target, not just its value.
+2. **Way back.** `/trends` (`body/web.py`) now accepts `desde` (only `"turnos"` is kept, anything else is
+   dropped). With it, `trends.html` shows one small link at the top, `trends.back_turnos` ("‹ Volver a
+   Turnos" / "‹ Back to Shifts"), to `/shifts`, and every range-switch link keeps `desde=turnos` in its query
+   string alongside `todas=1`. Without it, nothing on Tendencias changes.
+3. **Día's place in a night block.** `turnos_costo.contexto_dia(conn, person_id, dia) -> dict | None`: searches
+   `bloques_noche` in a ±60-day window around `dia` (wide enough to include a block already confirmed ahead of
+   `dia`, so "Noche 3 de 5" can name the block's full length even when only 3 of its 5 nights are past).
+   `dia` inside a block's own `[inicio, fin]` -> `{"tipo": "noche", "n": k, "de": length}`; otherwise, the
+   nearest earlier block's last night within `MODELO["ventana_post"]` days -> `{"tipo": "despues", "n": d}`;
+   else `None`. Pure read of confirmed `shift` rows, nothing stored, no table, no flag. `day_view` (`body/web.py`)
+   renders it under the shift line, in the `.note` (soft/muted) style already used for Hoy's own recovery line
+   (`base.html`'s `hoy_turno_card`): `day.shift_ctx_noche` ("Noche {n} de {de} de este bloque" / "Night {n} of
+   {de} in this block") or `day.shift_ctx_despues` ("{n}.º día después de tus noches" / "Day {n} after your
+   nights" -- Spanish ordinal, English plain count, per decision 3's own wording), each followed by a link
+   `day.shift_ctx_link` ("Ver lo que te cuestan las noches ›" / "See what your nights cost you ›") to `/shifts`.
+
+New i18n keys (`body/i18n/es.json`, `body/i18n/en.json`): `trends.back_turnos`, `day.shift_ctx_noche`,
+`day.shift_ctx_despues`, `day.shift_ctx_link` -- es strings exactly as quoted above.
+
+**Tests**, `tests/test_turnos_enlaces.py` (`tests/_isolate.py` first; invented data; two persons; 18 tests):
+cost-row links with and without `todas=1`, every href free of a figure, a 44 px `.costrow` rule, a no-data row
+carrying no link; the Tendencias back link shown only with `desde=turnos` and kept across range links;
+`contexto_dia` for the 3rd night of a 5-night block, the 2nd day after one, a day outside the recovery window, a
+day with no shifts at all, and person B's shifts never reaching person A; Día rendering both cases in es and en
+with the link, and no line far from any block.
+
+**Gate**, run once on the final tree: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 743 tests,
+`OK (skipped=1)`.
+
+**Merge.** The diff changes customer-facing bytes (new Turnos row links, the Tendencias back link, Día's new
+block-position line, all in both languages) with no schema change and no cross-repo contract change. Merge
+policy A's customer-bytes condition trips, so this slice stops before the merge with `AWAITING_APPROVAL`.
