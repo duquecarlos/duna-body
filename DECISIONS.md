@@ -2440,3 +2440,99 @@ tests, OK (1 skipped, pre-existing).
 
 Merged into `main` with `--no-ff` as commit `e0e928f9da480e6c06c0309e9e5f3d6621214ae4` (tree `143e3f0f01689a01b26a8cce0a89f6382d440983`,
 identical to the branch tip's tree).
+
+## BODY-VO2MAX-1 -- cardio fitness from Garmin's max-metrics feed (2026-11-07)
+
+A measured gap, prompted by Carlos's own goals relayed from the Personal desk (hub PERSONAL-BODY-1, 2026-11-06):
+resting HR, HRV and cardio capacity at altitude are his focus, and `body/db.py`'s `METRIC_DEFS` had resting_hr, HRV,
+sleep and intensity_minutes but no cardio-fitness figure, while the installed `garminconnect` 0.3.20 offers
+`get_max_metrics(cdate)`.
+
+**Response shape -- unconfirmed.** `garminconnect/api/metrics.py`'s `get_max_metrics(cdate)` GETs
+`/metrics-service/metrics/maxmet/daily/{cdate}/{cdate}` and is type-hinted `dict[str, Any]`, but that URL shape
+matches the range-style pattern `get_max_metrics_range` also uses, which this package's own `get_max_metrics_latest`
+(a different, `/maxmet/latest/{cdate}` endpoint) documents as returning `generic`/`cycling`/`heatAltitudeAcclimation`
+keys. Neither the field names `vo2MaxPreciseValue`/`vo2MaxValue`/`fitnessAge` nor "list vs. dict" for
+`get_max_metrics` itself appear anywhere in the installed package (no fixture, no docstring beyond the type hint).
+`body/garmin_adapter.py` therefore parses defensively: `_max_metrics_entry` accepts a list (first dict entry) or a
+dict, else `{}`; `_first_num` prefers `vo2MaxPreciseValue` over `vo2MaxValue` within `generic`/`cycling`; `fitnessAge`
+is read from `generic` first, the top-level entry second. The real shape stays unconfirmed until the first live pull
+on Carlos's own account.
+
+**Adapter** (decision 1): `fetch_day`'s `calls` gains `"max_metrics": lambda: api.get_max_metrics(day)` inside the
+same per-call try/except as the other five feeds -- a failure is recorded in `_errors["max_metrics"]` by exception
+class and never stops the rest of the day. `parse_day` adds `vo2max`, `vo2max_cycling`, `fitness_age`, all `None`
+when absent, both for the local token path and the per-person hosted path (same `fetch_day`).
+
+**Catalogue** (decision 2, additive, `body/db.py` `METRIC_DEFS`): `("vo2max", "VO2 max", "ml/kg/min", "higher")`,
+`("vo2max_cycling", "VO2 max (cycling)", "ml/kg/min", "higher")`, `("fitness_age", "Fitness age", "years", "lower")`,
+all `kind="measured"` (the existing `len(d) == 5` default). `body/web.py`'s `UNITS` dict gains `"ml/kg/min"` and
+`"years"` so both render through `t()`; `es.json`/`en.json` gain `metric.vo2max` ("VO2 máx." / "VO2 max"),
+`metric.vo2max_cycling` ("VO2 máx. (bici)" / "VO2 max (cycling)"), `metric.fitness_age` ("Edad física" /
+"Fitness age"), and `unit.ml_kg_min` / `unit.years` ("años" / "years"). Readiness weights untouched. The goal-creation
+form (`/goals/new`) iterates every `metric_def` row with no restriction, so the three metrics are selectable there
+with no template change.
+
+**Tendencias** (decision 3): `body/web.py`'s `TREND_KEYS` gains `vo2max`, `vo2max_cycling`, `fitness_age` (each still
+needs `profile.metric_profile`'s 14-row floor before a card appears, same as every other metric); a new `SPARSE_KEYS`
+set marks these three, and each card dict carries `"sparse": k in SPARSE_KEYS`. `trends.html` renders
+`t('trends.sparse_note')` under the chart only for a sparse card -- es "Garmin lo actualiza solo después de una
+actividad que califica, así que los huecos son normales.", en "Garmin updates this only after a qualifying activity,
+so gaps are normal." A missing day already breaks the line honestly (`profile.window_svg`, unchanged).
+`trends.q.vo2max`/`.vo2max_cycling`/`.fitness_age` added in both languages so the three new cards' questions never
+fall back to a bare key.
+
+**Goals** (decision 4): no code change. `goals.py`'s `MIN_METRIC_DAYS` rule and the goal form's unrestricted metric
+list already give a sparse metric an honest "no data" week (`on_track = None`, read through the existing
+`goals.verdict.no_data` copy, "Aún sin datos suficientes" / not shown as failure) rather than a wrong verdict --
+confirmed by reading `weekly_check` and `goal_new_form`, not by changing them.
+
+**Assistant** (decision 5): `body/agente/herramientas.py`'s `TENDENCIA_METRICAS` gains `vo2max` and `fitness_age`
+(not `vo2max_cycling`, per the spec), which also widens `_PARAM_TENDENCIAS`'s `metric` enum since it is built from
+that tuple. `leer_tendencias`'s `nivel` stays `"resumen"` (unchanged).
+
+**Tests** (`tests/test_garmin_parse.py`, 6 new; `tests/test_vo2max.py`, 5 new): list-shaped and dict-shaped
+max-metrics fixtures parse to the three values; the precise value is preferred over the rounded one; a missing
+`max_metrics` key, an empty list, and unrecognised shapes (`"unexpected-shape"`, `None`, `{}`) all parse to `None`
+for all three keys; a `RuntimeError` from a faked `get_max_metrics` leaves `resting_hr` intact and records
+`_errors["max_metrics"] == "RuntimeError"`. Separately: the catalogue carries the three rows with their directions
+and `kind="measured"`; a 14-day vo2max series renders its Tendencias card (with the sparse note) for that person
+only, not for a person with no data; a goal on `vo2max` with fewer than `MIN_METRIC_DAYS` readings in its check week
+reads `on_track`/`metric_avg` as `None`, not a failure; `leer_tendencias` accepts `metric=vo2max` and still refuses
+`metric=vo2max_cycling` (ToolError, confirming decision 5's deliberate omission). No existing test needed a change;
+`tests/test_agente_registro.py`'s registry-shape assertions do not enumerate `TENDENCIA_METRICAS`.
+
+**Merge policy, judged against this diff.** Schema or migration: no -- `METRIC_DEFS` is additive rows through the
+existing `ON CONFLICT` upsert, no `ALTER TABLE`, no new table. Cross-repo contract: no -- nothing here is read by
+another repository. Customer-facing bytes: yes -- three new metric labels, three new Tendencias cards, a new sparse-
+data note, and the goal form's now-longer metric list are all bytes a person reads, in both languages. One of Merge
+Policy A's three conditions trips, and the spec's own GATE section says plainly: "Stop AWAITING_APPROVAL on the
+branch clean (Tier 1 adapter + customer-facing) unless merge policy says otherwise" -- the spec's body never says to
+merge past that condition. This slice stops on the branch, uncommitted to `main`, for review.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run once, foreground, on the final tree: 527
+tests, OK (1 skipped, pre-existing).
+
+Branch: `feat/body-vo2max-1`, not merged. Awaiting review of the new customer-facing strings and cards.
+
+## BODY-VO2MAX-1-M -- land BODY-VO2MAX-1 (2026-11-07)
+
+BODY-VO2MAX-1 stopped on `feat/body-vo2max-1` (branch tip `ba05eb361a54916da70803d8e637bac314354c07`)
+AWAITING_APPROVAL, tripping merge policy A's customer-facing-bytes condition (three new metric labels, three new
+Tendencias cards, the sparse-data note, the longer goal-form metric list, in both languages), per the GATE section
+of its own spec. This slice carries no code change: approved by the orchestrator under
+`ORCH-CARLOS-DELEGATES-TIER-1-1` after review of the adapter change and the new texts -- one more call inside the
+existing per-call try/except; pure defensive parsing of list- or dict-shaped max-metrics (the response shape is
+unconfirmed by the installed `garminconnect` package and stays unconfirmed until the first real pull); three generic
+catalogue rows; plain es/en texts including the sparse-data note; the assistant trends enum widened by two of the
+three metrics, as specced -- approved as written, no fixes.
+
+`main` had not moved since the branch was cut: `git merge-base feat/body-vo2max-1 main` and `git rev-parse main`
+both read `b901d4c2cb673c2492c6a2f58c3cf211a26105f0`, matching the branch's recorded base, so no merge-forward was
+needed.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 527 tests, OK (1 skipped, pre-existing), run
+once on the branch tip before this merge.
+
+Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-vo2max-1` into `main` following this
+entry.

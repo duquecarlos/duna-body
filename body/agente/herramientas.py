@@ -24,7 +24,8 @@ from .. import db, history, profile, readiness, shift_import
 from ..i18n import LANGS
 from . import ajustes, propuestas
 
-TENDENCIA_METRICAS = ("readiness", "sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake", "steps")
+TENDENCIA_METRICAS = ("readiness", "sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake", "steps",
+                      "vo2max", "fitness_age")
 RANGOS = ("7", "30", "90", "all")
 
 _SIN_PARAMETROS = {"type": "object", "properties": {}, "additionalProperties": False}
