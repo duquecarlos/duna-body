@@ -84,6 +84,14 @@ class ExecBitTest(unittest.TestCase):
             self.assertEqual(modes.get(path), "100755", f"{path} is not executable in the index")
 
 
+class NoHardcodedOwnerTest(unittest.TestCase):
+    def test_owner_is_never_hardcoded_to_carlos(self):
+        for path in SCRIPTS:
+            text = _read(path)
+            self.assertNotIn("carlos", text.lower())
+            self.assertIn("owner=", text.replace(" ", ""), f"{path.name} does not read owner at runtime")
+
+
 class GitOwnershipTest(unittest.TestCase):
     def test_every_git_dash_c_call_is_prefixed_by_runuser(self):
         for path in SCRIPTS:
@@ -163,6 +171,31 @@ class RollbackReinstallsDependenciesTest(unittest.TestCase):
         self.assertIn("pip", body, "rollback_and_fail does not reinstall dependencies")
 
 
+class VenvCheckTest(unittest.TestCase):
+    def setUp(self):
+        self.text = _read(PRODUCT)
+
+    def test_check_precedes_venv_creation_and_names_python3_venv(self):
+        check_idx = self.text.index("ensurepip")
+        venv_idx = self.text.index("python3 -m venv")
+        self.assertLess(check_idx, venv_idx)
+        self.assertIn("python3-venv is missing", self.text)
+        self.assertIn("sudo apt install python3-venv", self.text)
+
+    def test_check_runs_as_owner(self):
+        check_idx = self.text.index("ensurepip")
+        preceding = self.text[max(0, check_idx - 80):check_idx]
+        self.assertIn('runuser -u "$owner" --', preceding)
+
+    def test_check_failure_does_not_restart_the_service(self):
+        missing_idx = self.text.index("python3-venv is missing")
+        exit_idx = self.text.index("exit 1", missing_idx)
+        between = self.text[missing_idx:exit_idx]
+        self.assertNotIn("systemctl", between)
+        self.assertNotIn("rollback_and_fail", between)
+        self.assertNotIn("fail_step", between)
+
+
 class CaddyValidateBeforeReloadTest(unittest.TestCase):
     def test_validate_precedes_reload(self):
         text = _read(PRODUCT)
@@ -170,14 +203,53 @@ class CaddyValidateBeforeReloadTest(unittest.TestCase):
         reload_idx = text.rindex("systemctl reload caddy")
         self.assertLess(validate_idx, reload_idx)
 
-    def test_validate_failure_removes_only_caddy_dst_and_does_not_reload(self):
+    def test_validate_failure_restores_or_removes_and_does_not_reload(self):
         text = _read(PRODUCT)
         validate_idx = text.index("caddy validate")
         reload_idx = text.rindex("systemctl reload caddy")
         between = text[validate_idx:reload_idx]
         self.assertIn("rm", between)
         self.assertIn("$CADDY_DST", between)
+        self.assertIn("mv", between)
+        self.assertIn("$CADDY_BAK", between)
         self.assertIn("fail_step", between)
+
+
+class InstallCaddySiteIfChangedTest(unittest.TestCase):
+    def setUp(self):
+        self.text = _read(PRODUCT)
+
+    def test_cmp_guard_precedes_install(self):
+        cmp_idx = self.text.index("cmp -s")
+        self.assertIn("$CADDY_SRC", self.text[cmp_idx:cmp_idx + 60])
+        self.assertIn("$CADDY_DST", self.text[cmp_idx:cmp_idx + 60])
+        install_idx = self.text.index('install -o root -g root -m 644 "$CADDY_SRC" "$CADDY_DST"')
+        self.assertLess(cmp_idx, install_idx)
+
+    def test_backup_made_before_install_and_before_validate(self):
+        start = self.text.index("install_caddy_site_if_changed() {")
+        end = self.text.index("\n}\n", start)
+        body = self.text[start:end]
+        backup_idx = body.index("$CADDY_BAK")
+        install_idx = body.index('install -o root -g root -m 644 "$CADDY_SRC" "$CADDY_DST"')
+        validate_idx = body.index("caddy validate")
+        self.assertLess(backup_idx, install_idx)
+        self.assertLess(install_idx, validate_idx)
+
+    def test_reload_only_reachable_after_a_passing_validate(self):
+        start = self.text.index("install_caddy_site_if_changed() {")
+        end = self.text.index("\n}\n", start)
+        body = self.text[start:end]
+        validate_idx = body.index("caddy validate")
+        fail_step_idx = body.index("fail_step", validate_idx)
+        reload_idx = body.index("systemctl reload caddy")
+        self.assertLess(fail_step_idx, reload_idx)
+
+    def test_rollback_reuses_the_same_function(self):
+        start = self.text.index("rollback_and_fail() {")
+        end = self.text.index("\n}\n", start)
+        body = self.text[start:end]
+        self.assertIn("install_caddy_site_if_changed", body)
 
 
 class ServiceHardeningTest(unittest.TestCase):
@@ -203,14 +275,14 @@ class NoShiftImportYetTest(unittest.TestCase):
 
 
 class HonestCaddyCommentTest(unittest.TestCase):
-    def test_caddyfile_does_not_claim_confirmed(self):
+    def test_caddyfile_states_the_confirmed_import_path(self):
         text = _read(CADDYFILE)
-        self.assertNotIn("confirmed with Main", text)
-        self.assertIn("ASSUMPTION", text)
+        self.assertIn("confirmed by Main", text)
+        self.assertIn("/etc/caddy/sites/*.caddy", text)
 
-    def test_readme_lists_host_assumptions_for_main(self):
+    def test_readme_lists_hosts_facts_from_main(self):
         text = _read(README)
-        for token in ("python3", "caddy", "curl", "duna-body"):
+        for token in ("Ubuntu 24.04.4", "python3", "caddy", "duna-body", "python3-venv"):
             self.assertIn(token, text)
         self.assertNotIn("confirmed with Main", text)
 
@@ -223,6 +295,8 @@ class DryRunWrapperTest(unittest.TestCase):
             for lineno, line in enumerate(_read(path).splitlines(), start=1):
                 if "pip" in line and "install" in line:
                     continue  # pip's own subcommand, not the coreutils `install`
+                if "is missing" in line:
+                    continue  # the python3-venv refusal message, not a command
                 for m in self.SIDE_EFFECT_CMDS.finditer(line):
                     prefix = line[: m.start()]
                     self.assertTrue(
@@ -258,6 +332,13 @@ class DataDirTest(unittest.TestCase):
         self.assertIn('DATA_USER="duna-body"', text)
         self.assertIn('chmod 0700 "$DATA_DIR"', text)
         self.assertIn('chown "$DATA_USER:$DATA_USER" "$DATA_DIR"', text)
+
+    def test_system_user_created_with_its_own_group(self):
+        text = _read(ENTRY)
+        useradd_idx = text.index("useradd --system")
+        line_end = text.index("\n", useradd_idx)
+        line = text[useradd_idx:line_end]
+        self.assertIn("--user-group", line)
 
     def test_only_rm_touches_caddy_dst(self):
         for path in SCRIPTS:

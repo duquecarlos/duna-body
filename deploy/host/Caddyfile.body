@@ -1,8 +1,7 @@
 # body.duna.solutions -- Body's reverse proxy site on duna-prod-1 (host-deploy-v1).
 # No `log` directive on purpose: Caddy access logging for this site stays off; Body logs path
 # templates only (never a full URL or query string), in body/web.py.
-# Assumes the host's main Caddyfile imports /etc/caddy/sites/* -- an ASSUMPTION Main confirms in
-# the walk-through, not confirmed yet.
+# The host's main Caddyfile imports /etc/caddy/sites/*.caddy -- confirmed by Main, 2026-11-06.
 body.duna.solutions {
 	encode gzip
 

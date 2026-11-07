@@ -46,7 +46,7 @@ run() {
 
 ensure_system_user() {
   if ! id "$DATA_USER" >/dev/null 2>&1; then
-    run useradd --system --no-create-home --shell /usr/sbin/nologin "$DATA_USER"
+    run useradd --system --user-group --no-create-home --shell /usr/sbin/nologin "$DATA_USER"
   fi
 }
 
