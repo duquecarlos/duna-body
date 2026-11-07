@@ -227,6 +227,64 @@ CREATE TABLE IF NOT EXISTS ajuste_agente (
     updated_at TEXT NOT NULL
 );
 
+-- Conversations with Body's assistant (wave 7, stage two: BODY-ASISTENTE-PROVEEDOR-1).
+CREATE TABLE IF NOT EXISTS conversacion_agente (
+    id        INTEGER PRIMARY KEY,
+    person_id INTEGER NOT NULL REFERENCES person(id),
+    creada_en TEXT NOT NULL,
+    titulo    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_conversacion_agente_person ON conversacion_agente(person_id);
+
+-- One row per turn (question or answer, including tool calls and their results -- the person's
+-- own data, kept so the history sent back to the provider can be rebuilt server-side).
+CREATE TABLE IF NOT EXISTS mensaje_agente (
+    id              INTEGER PRIMARY KEY,
+    conversacion_id INTEGER NOT NULL REFERENCES conversacion_agente(id),
+    person_id       INTEGER NOT NULL REFERENCES person(id),
+    rol             TEXT NOT NULL CHECK (rol IN ('usuario', 'asistente')),
+    contenido_json  TEXT NOT NULL CHECK (json_valid(contenido_json)),
+    creado_en       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mensaje_agente_conv ON mensaje_agente(conversacion_id);
+
+-- One row per assistant question, including failed ones (agent-capabilities-v1 section 6,
+-- amendment 2: entrada/cache_lectura/cache_escritura are DISJOINT token counts).
+CREATE TABLE IF NOT EXISTS uso_agente (
+    id              INTEGER PRIMARY KEY,
+    person_id       INTEGER NOT NULL REFERENCES person(id),
+    creado_en       TEXT NOT NULL,
+    proveedor       TEXT NOT NULL,
+    modelo          TEXT NOT NULL,
+    entrada         INTEGER NOT NULL DEFAULT 0,
+    salida          INTEGER NOT NULL DEFAULT 0,
+    cache_lectura   INTEGER NOT NULL DEFAULT 0,
+    cache_escritura INTEGER NOT NULL DEFAULT 0,
+    rondas          INTEGER NOT NULL DEFAULT 0,
+    motivo_fin      TEXT,
+    codigo_error    TEXT,
+    es_pregunta     INTEGER NOT NULL DEFAULT 1 CHECK (es_pregunta IN (0, 1)),
+    superficie      TEXT NOT NULL DEFAULT 'asistente'
+);
+CREATE INDEX IF NOT EXISTS idx_uso_agente_person_dia ON uso_agente(person_id, creado_en);
+
+-- Prices are DATA, seeded empty -- never invented (amendment 5: nothing is costed at 0 because
+-- its price is missing; an unpriced model falls back to the count breaker instead).
+CREATE TABLE IF NOT EXISTS precio_modelo (
+    proveedor            TEXT NOT NULL,
+    modelo               TEXT NOT NULL,
+    tipo                 TEXT NOT NULL CHECK (tipo IN ('entrada', 'salida', 'cache_lectura', 'cache_escritura')),
+    micro_usd_por_millon INTEGER NOT NULL,
+    PRIMARY KEY (proveedor, modelo, tipo)
+);
+
+-- Per-person overrides of the daily ceilings, both nullable (NULL = use the env default).
+CREATE TABLE IF NOT EXISTS tope_agente (
+    person_id        INTEGER PRIMARY KEY REFERENCES person(id),
+    diario_micro_usd INTEGER,
+    conteo_diario    INTEGER
+);
+
 -- A signed-in session (Cuenta Duna, wave 8). Only a hash of the session token lives here -- the
 -- token itself is never stored.
 CREATE TABLE IF NOT EXISTS sesion (

@@ -1,0 +1,107 @@
+"""Usage rows and daily ceilings for Body's assistant (BODY-ASISTENTE-PROVEEDOR-1, decisions 5-6;
+agent-capabilities-v1 section 6, amendments 2 and 5).
+
+One `uso_agente` row per question, including failed ones. Prices are DATA (`precio_modelo`),
+seeded EMPTY -- never invented here. The daily ceiling is a spend ceiling only when every token
+kind the model could use is priced for it; otherwise it falls back to the COUNT breaker (amendment
+5). A ceiling whose own read fails REFUSES -- fail closed, never open.
+"""
+from __future__ import annotations
+
+import os
+import sqlite3
+from datetime import datetime, timezone
+
+DEFAULT_TOPE_DIARIO_MICRO_USD = 2_000_000  # 2 USD
+DEFAULT_CONTEO_DIARIO = 200
+_TIPOS_PRECIO = ("entrada", "salida", "cache_lectura", "cache_escritura")
+
+
+class TopeRefusal(Exception):
+    """The daily ceiling (spend or count) is already reached, or its own read failed."""
+
+
+def _ahora() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _hoy() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def _topes_persona(conn: sqlite3.Connection, person_id: int) -> tuple[int, int]:
+    diario = int(os.environ.get("BODY_AGENTE_TOPE_DIARIO_MICRO_USD", DEFAULT_TOPE_DIARIO_MICRO_USD))
+    conteo = int(os.environ.get("BODY_AGENTE_CONTEO_DIARIO", DEFAULT_CONTEO_DIARIO))
+    row = conn.execute(
+        "SELECT diario_micro_usd, conteo_diario FROM tope_agente WHERE person_id = ?", (person_id,)
+    ).fetchone()
+    if row is not None:
+        if row["diario_micro_usd"] is not None:
+            diario = row["diario_micro_usd"]
+        if row["conteo_diario"] is not None:
+            conteo = row["conteo_diario"]
+    return diario, conteo
+
+
+def _precios(conn: sqlite3.Connection, proveedor: str, modelo: str) -> dict[str, int] | None:
+    rows = conn.execute(
+        "SELECT tipo, micro_usd_por_millon FROM precio_modelo WHERE proveedor = ? AND modelo = ?",
+        (proveedor, modelo),
+    ).fetchall()
+    if not rows:
+        return None
+    precios = {r["tipo"]: r["micro_usd_por_millon"] for r in rows}
+    return precios if all(t in precios for t in _TIPOS_PRECIO) else None
+
+
+def _gasto_hoy_micro_usd(conn: sqlite3.Connection, person_id: int, dia: str, precios: dict[str, int]) -> int:
+    rows = conn.execute(
+        "SELECT entrada, salida, cache_lectura, cache_escritura FROM uso_agente "
+        "WHERE person_id = ? AND creado_en LIKE ?",
+        (person_id, dia + "%"),
+    ).fetchall()
+    total_micro = 0
+    for r in rows:
+        for tipo in _TIPOS_PRECIO:
+            total_micro += r[tipo] * precios[tipo]
+    return total_micro // 1_000_000
+
+
+def _conteo_hoy(conn: sqlite3.Connection, person_id: int, dia: str) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM uso_agente WHERE person_id = ? AND creado_en LIKE ? AND es_pregunta = 1",
+        (person_id, dia + "%"),
+    ).fetchone()
+    return row["n"]
+
+
+def verificar_tope(conn: sqlite3.Connection, person_id: int, proveedor: str, modelo: str) -> None:
+    """Checked BEFORE the first model round. Raises `TopeRefusal` when today's (UTC) ceiling is
+    already reached, or when the ceiling's own read fails for any reason."""
+    try:
+        dia = _hoy()
+        diario, tope_conteo = _topes_persona(conn, person_id)
+        precios = _precios(conn, proveedor, modelo)
+        if precios is not None:
+            if _gasto_hoy_micro_usd(conn, person_id, dia, precios) >= diario:
+                raise TopeRefusal()
+        else:
+            if _conteo_hoy(conn, person_id, dia) >= tope_conteo:
+                raise TopeRefusal()
+    except TopeRefusal:
+        raise
+    except Exception as e:
+        raise TopeRefusal() from e
+
+
+def registrar(conn: sqlite3.Connection, person_id: int, proveedor: str, modelo: str, uso,
+              rondas: int, motivo_fin: str | None, codigo_error: str | None,
+              es_pregunta: bool = True, superficie: str = "asistente") -> None:
+    with conn:
+        conn.execute(
+            "INSERT INTO uso_agente (person_id, creado_en, proveedor, modelo, entrada, salida, "
+            "cache_lectura, cache_escritura, rondas, motivo_fin, codigo_error, es_pregunta, superficie) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (person_id, _ahora(), proveedor, modelo, uso.entrada, uso.salida, uso.cache_lectura,
+             uso.cache_escritura, rondas, motivo_fin, codigo_error, 1 if es_pregunta else 0, superficie),
+        )

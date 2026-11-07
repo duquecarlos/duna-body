@@ -23,12 +23,16 @@ from urllib.parse import parse_qs, quote
 from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from . import (cuenta, db, dispositivo, garmin_adapter, garmin_cuenta, goals, history, household, identity, listen,
                privacidad, profile, readiness, shift_import, vida_export)
+from .agente import bucle as agente_bucle
+from .agente import cliente as agente_cliente
+from .agente import conversacion as agente_conversacion
+from .agente import uso as agente_uso
 from .baselines import baseline
 from .i18n import DEFAULT as DEFAULT_LANG
 from .i18n import LANGS, T
@@ -1161,6 +1165,92 @@ async def set_language(request: Request, person_id: int = Depends(identity.curre
         conn, _, _ = _ctx(person_id)
         db.set_language(conn, lang, person_id)
     return RedirectResponse("/settings", status_code=303)
+
+
+# ---- Assistant (BODY-ASISTENTE-PROVEEDOR-1): one tool loop, streamed as SSE ------------------
+
+MAX_PREGUNTA_CHARS = 2000
+
+
+def _evento_sse(nombre: str, data: dict) -> str:
+    return f"event: {nombre}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@app.post("/asistente/preguntar")
+async def asistente_preguntar(request: Request, person_id: int = Depends(identity.current_person_id)):
+    try:
+        cuerpo = await request.json()
+    except Exception:
+        raise HTTPException(400)
+    if not isinstance(cuerpo, dict):
+        raise HTTPException(400)
+    pregunta = cuerpo.get("pregunta")
+    if not isinstance(pregunta, str) or not (1 <= len(pregunta) <= MAX_PREGUNTA_CHARS):
+        raise HTTPException(400)
+    conversacion_id = cuerpo.get("conversacion_id")
+    if conversacion_id is not None and not isinstance(conversacion_id, int):
+        raise HTTPException(400)
+
+    conn, _, t = _ctx(person_id)
+    if conversacion_id is not None:
+        try:
+            agente_conversacion.verificar_propiedad(conn, conversacion_id, person_id)
+        except agente_conversacion.ConversacionAjena:
+            conn.close()
+            raise HTTPException(404)
+    else:
+        conversacion_id = agente_conversacion.crear(conn, person_id)
+
+    proveedor_nombre = os.environ.get("BODY_AGENTE_PROVEEDOR", agente_cliente.PROVEEDOR_DEFAULT)
+    modelo = os.environ.get("BODY_AGENTE_MODELO", agente_cliente.MODELO_DEFAULT)
+    proveedor = agente_cliente.proveedor_configurado()
+
+    async def generar():
+        try:
+            if proveedor is None:
+                yield _evento_sse("error", {"codigo": "no_configurado", "mensaje": t("agente.error.no_configurado")})
+                return
+            try:
+                agente_uso.verificar_tope(conn, person_id, proveedor_nombre, modelo)
+            except agente_uso.TopeRefusal:
+                agente_uso.registrar(conn, person_id, proveedor_nombre, modelo, agente_cliente.Uso(), 0,
+                                      None, "tope_diario")
+                yield _evento_sse("error", {"codigo": "tope_diario", "mensaje": t("agente.error.tope_diario")})
+                return
+
+            historial = agente_conversacion.historial(conn, conversacion_id, person_id)
+            historial.append({"rol": "usuario", "bloques": [{"tipo": "texto", "texto": pregunta}]})
+            try:
+                resultado = agente_bucle.ejecutar(conn, person_id, proveedor, t("agente.sistema"), historial)
+            except agente_bucle.LimiteRondas as e:
+                agente_uso.registrar(conn, person_id, proveedor_nombre, modelo, e.uso_total, e.rondas,
+                                      "limite_rondas", "limite_rondas")
+                yield _evento_sse("error", {"codigo": "limite_rondas", "mensaje": t("agente.error.limite_rondas")})
+                return
+            except agente_bucle.FalloProveedor as e:
+                agente_uso.registrar(conn, person_id, proveedor_nombre, modelo, e.uso_total, e.rondas,
+                                      None, "proveedor")
+                yield _evento_sse("error", {"codigo": "proveedor", "mensaje": t("agente.error.proveedor")})
+                return
+
+            for ev in resultado.eventos:
+                if isinstance(ev, agente_bucle.EventoHerramienta):
+                    yield _evento_sse("herramienta", {"nombre": ev.nombre})
+                else:
+                    yield _evento_sse("texto", {"delta": ev.texto})
+
+            agente_conversacion.agregar_mensaje(conn, conversacion_id, person_id, "usuario",
+                                                [{"tipo": "texto", "texto": pregunta}])
+            for m in resultado.nuevos_mensajes:
+                agente_conversacion.agregar_mensaje(conn, conversacion_id, person_id, m["rol"], m["bloques"])
+            agente_uso.registrar(conn, person_id, proveedor_nombre, modelo, resultado.uso_total, resultado.rondas,
+                                  "texto", None)
+            yield _evento_sse("fin", {"conversacion_id": conversacion_id, "rondas": resultado.rondas,
+                                      "motivo_fin": "texto"})
+        finally:
+            conn.close()
+
+    return StreamingResponse(generar(), media_type="text/event-stream")
 
 
 # ---- Garmin (hosted only): one connection per person, token encrypted by body/garmin_cuenta.py ----

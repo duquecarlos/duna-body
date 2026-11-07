@@ -354,5 +354,10 @@
   "activity.type.cardio": "Cardio",
   "activity.type.yoga": "Yoga",
   "activity.type.elliptical": "Elliptical",
-  "activity.type.other": "Other"
+  "activity.type.other": "Other",
+  "agente.sistema": "You are Body's assistant. You read this person's data only through your tools, never invent it. When something is missing (for example, no watch data), say so plainly instead of guessing. You never give medical advice: for medical questions, suggest talking to a health professional. Keep answers short, in a friendly, informal tone.",
+  "agente.error.no_configurado": "The assistant isn't configured yet.",
+  "agente.error.tope_diario": "Today's assistant usage limit has been reached. You can ask again tomorrow.",
+  "agente.error.proveedor": "The assistant couldn't answer right now. Try again in a bit.",
+  "agente.error.limite_rondas": "The answer stopped at the step limit. Try asking something more specific."
 }

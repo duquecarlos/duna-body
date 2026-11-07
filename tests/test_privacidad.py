@@ -13,6 +13,9 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from fastapi.testclient import TestClient
 
 from body import config, cuenta, db, dispositivo, goals, household, identity, privacidad, web
+from body.agente import conversacion as agente_conversacion
+from body.agente import uso as agente_uso
+from body.agente.cliente import Uso
 from tests.test_cuenta_rp import CuentaRpTestCase, ISSUER, SUB
 
 
@@ -218,6 +221,69 @@ class DispositivoExportDeleteTest(unittest.TestCase):
         privacidad.delete_person(self.conn, 1)
         self.assertEqual(
             self.conn.execute("SELECT COUNT(*) FROM dispositivo WHERE person_id = 1").fetchone()[0], 0
+        )
+
+
+class AsistenteExportDeleteTest(unittest.TestCase):
+    """BODY-ASISTENTE-PROVEEDOR-1: conversations, their messages, usage rows and the per-person
+    ceiling override are FULLY exported and deleted -- invented demo content only, no real figures."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "asistente.db"
+        self.conn = db.connect()
+        db.init(self.conn)
+
+    def _seed(self):
+        cid = agente_conversacion.crear(self.conn, 1, "Mi conversación")
+        agente_conversacion.agregar_mensaje(self.conn, cid, 1, "usuario",
+                                            [{"tipo": "texto", "texto": "¿cómo dormí anoche?"}])
+        agente_conversacion.agregar_mensaje(self.conn, cid, 1, "asistente",
+                                            [{"tipo": "texto", "texto": "dormiste bien"}])
+        agente_uso.registrar(self.conn, 1, "anthropic", "claude-sonnet-5-5", Uso(entrada=10, salida=4), 1,
+                             "texto", None)
+        self.conn.execute(
+            "INSERT INTO tope_agente (person_id, diario_micro_usd, conteo_diario) VALUES (1, 500000, 50)"
+        )
+        self.conn.commit()
+        return cid
+
+    def test_export_includes_the_conversation_and_usage_counts(self):
+        self._seed()
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(len(data["asistente"]["conversaciones"]), 1)
+        self.assertEqual(data["asistente"]["conversaciones"][0]["titulo"], "Mi conversación")
+        self.assertEqual(len(data["asistente"]["mensajes"]), 2)
+        self.assertEqual(len(data["asistente"]["uso"]), 1)
+        self.assertEqual(data["asistente"]["uso"][0]["entrada"], 10)
+        self.assertEqual(data["asistente"]["tope"], {"diario_micro_usd": 500000, "conteo_diario": 50})
+
+    def test_export_of_another_person_does_not_see_these_rows(self):
+        self._seed()
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 2)
+        self.assertEqual(data["asistente"]["conversaciones"], [])
+        self.assertEqual(data["asistente"]["mensajes"], [])
+        self.assertEqual(data["asistente"]["uso"], [])
+        self.assertIsNone(data["asistente"]["tope"])
+
+    def test_delete_all_removes_the_conversation_messages_usage_and_tope(self):
+        cid = self._seed()
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM conversacion_agente WHERE person_id = 1").fetchone()[0], 0
+        )
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM mensaje_agente WHERE conversacion_id = ?", (cid,)).fetchone()[0],
+            0,
+        )
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM uso_agente WHERE person_id = 1").fetchone()[0], 0
+        )
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM tope_agente WHERE person_id = 1").fetchone()[0], 0
         )
 
 

@@ -22,6 +22,7 @@ CONSENT_VERSION = "consentimiento-v1"
 FULLY_HANDLED_TABLES = {
     "daily_metric", "sleep_session", "activity", "shift", "shift_batch",
     "goal", "habit_check", "goal_check", "plan", "ajuste_agente", "consentimiento", "hogar_local",
+    "conversacion_agente", "mensaje_agente", "uso_agente", "tope_agente",
 }
 # raw_payload: kind/date only, never the stored JSON payload. garmin_cuenta: the connected-since
 # date only, never the encrypted token (BODY-GARMIN-HOST-1). dispositivo: name/scopes/dates only,
@@ -113,6 +114,23 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
     dispositivos = [dict(r) for r in conn.execute(
         "SELECT nombre, alcances, creado_en, usado_en FROM dispositivo WHERE person_id = ? ORDER BY creado_en",
         (person_id,))]
+    conversaciones = [dict(r) for r in conn.execute(
+        "SELECT id, creada_en, titulo FROM conversacion_agente WHERE person_id = ? ORDER BY id",
+        (person_id,))]
+    mensajes_agente = [dict(r) for r in conn.execute(
+        "SELECT id, conversacion_id, rol, contenido_json, creado_en FROM mensaje_agente "
+        "WHERE person_id = ? ORDER BY id", (person_id,))]
+    uso_agente_rows = [dict(r) for r in conn.execute(
+        "SELECT creado_en, proveedor, modelo, entrada, salida, cache_lectura, cache_escritura, rondas, "
+        "motivo_fin, codigo_error, es_pregunta, superficie FROM uso_agente WHERE person_id = ? ORDER BY id",
+        (person_id,))]
+    tope_agente_row = conn.execute(
+        "SELECT diario_micro_usd, conteo_diario FROM tope_agente WHERE person_id = ?", (person_id,)
+    ).fetchone()
+    asistente = {
+        "conversaciones": conversaciones, "mensajes": mensajes_agente, "uso": uso_agente_rows,
+        "tope": dict(tope_agente_row) if tope_agente_row else None,
+    }
 
     return {
         "formato": "body-export-v1",
@@ -129,6 +147,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "ajustes": ajustes,
         "garmin": garmin,
         "dispositivos": dispositivos,
+        "asistente": asistente,
     }
 
 
@@ -174,6 +193,10 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         conn.execute("DELETE FROM consentimiento WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM garmin_cuenta WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM dispositivo WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM mensaje_agente WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM conversacion_agente WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM uso_agente WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM tope_agente WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM hogar_local WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM sesion WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM person WHERE id = ?", (person_id,))
