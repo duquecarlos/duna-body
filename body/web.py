@@ -655,6 +655,17 @@ WEEK_KEYS = ["readiness", "sleep_minutes", "hrv_last_night", "resting_hr"]
 TREND_MIN_DAYS = 14  # body/profile.py's metric_profile() needs this many rows before a metric gets a card
 SPARSE_KEYS = {"vo2max", "vo2max_cycling", "fitness_age"}  # Garmin updates these only after qualifying activities
 
+# "Ver todas las medidas" (DESIGN rule 8): the rest of the catalogue, grouped by plain-word topic. The single
+# source both the page and tests/test_tendencias_todas.py read -- a key here that is not a METRIC_DEFS key
+# fails the test, on purpose. sleep_need_min (Garmin's own target) is deliberately never shown here.
+TREND_GROUPS = [
+    ("sleep", ["sleep_score", "sleep_deep_min", "sleep_rem_min", "sleep_light_min", "sleep_awake_min"]),
+    ("energy", ["body_battery_high", "body_battery_low", "body_battery_sleep_charge"]),
+    ("stress", ["stress_avg", "high_stress_min"]),
+    ("activity", ["intensity_minutes", "active_kcal"]),
+    ("breathing", ["respiration_awake"]),
+]
+
 
 def _trend_days_have(conn, person_id: int) -> int:
     """How many days the best-covered trend metric already has, for the honest-gap message below
@@ -687,10 +698,37 @@ def _nights(conn, start: date, end: date, person_id: int) -> set[str]:
                                            "BETWEEN ? AND ?", (person_id, start.isoformat(), end.isoformat()))}
 
 
+def _trend_card(conn, t: T, defs: dict, k: str, start, end, month, nights, person_id: int):
+    """One card -- own baseline, honest gaps, night shading, the month tap -- built the same way for the
+    default 9 and every extra metric behind "Ver todas las medidas" (DESIGN rules 3, 6, 7)."""
+    p = profile.metric_profile(conn, k, person_id=person_id)
+    if not p:
+        return None, None
+    d = defs[k]
+    spread = p.high - p.low
+    if start:
+        w = profile.window(conn, k, start, end, person_id)
+        if month:
+            delta, cls = _compare(t, k, d, w.mean, p.all_mean, spread, "trends.vs_hist")
+        else:
+            delta, cls = _compare(t, k, d, w.mean, w.prev_mean, spread, "trends.vs_prev")
+        fig, svg = w.mean, profile.window_svg(w, p.low, p.high, nights)
+    else:
+        delta, cls = _compare(t, k, d, p.last30, p.all_mean, spread, "trends.vs_hist")
+        fig, svg = p.last30, profile.month_svg(p)
+    card = {"key": k, "question": t("trends.q." + k), "est": d["kind"] == "estimated",
+            "last30": _value(t, k, fig), "unit": _unit(t, d) if fig is not None else "", "delta": delta,
+            "cls": cls, "svg": svg, "low": _value(t, k, p.low), "high": _value(t, k, p.high),
+            "sparse": k in SPARSE_KEYS, "subtitle": None}
+    return card, p
+
+
 @app.get("/trends")
-def trends(r: str = "all", m: str | None = None, person_id: int = Depends(identity.current_person_id)):
+def trends(r: str = "all", m: str | None = None, todas: str | None = None,
+           person_id: int = Depends(identity.current_person_id)):
     """r = 7 | 30 | 90 | all (the whole history, monthly). m = YYYY-MM opens one month day by day (from a tap on
-    the monthly line). The URL carries a range or a month, never a value."""
+    the monthly line). todas=1 keeps "Ver todas las medidas" open across a range switch. The URL carries a
+    range, a month or that flag, never a value."""
     conn, person, t = _ctx(person_id)
     defs = _defs(conn)
     last = _latest_day(conn, person_id)
@@ -713,27 +751,12 @@ def trends(r: str = "all", m: str | None = None, person_id: int = Depends(identi
     nights = _nights(conn, start, end, person_id) if start else set()
     cards, since, days = [], None, 0
     for k in TREND_KEYS:
-        p = profile.metric_profile(conn, k, person_id=person_id)
-        if not p:
+        card, p = _trend_card(conn, t, defs, k, start, end, month, nights, person_id)
+        if not card:
             continue
-        d = defs[k]
         since = since or p.first_day
         days = max(days, p.days)
-        spread = p.high - p.low
-        if start:
-            w = profile.window(conn, k, start, end, person_id)
-            if month:
-                delta, cls = _compare(t, k, d, w.mean, p.all_mean, spread, "trends.vs_hist")
-            else:
-                delta, cls = _compare(t, k, d, w.mean, w.prev_mean, spread, "trends.vs_prev")
-            fig, svg = w.mean, profile.window_svg(w, p.low, p.high, nights)
-        else:
-            delta, cls = _compare(t, k, d, p.last30, p.all_mean, spread, "trends.vs_hist")
-            fig, svg = p.last30, profile.month_svg(p)
-        cards.append({"key": k, "question": t("trends.q." + k), "est": d["kind"] == "estimated",
-                      "last30": _value(t, k, fig), "unit": _unit(t, d) if fig is not None else "", "delta": delta,
-                      "cls": cls, "svg": svg, "low": _value(t, k, p.low), "high": _value(t, k, p.high),
-                      "sparse": k in SPARSE_KEYS})
+        cards.append(card)
     if not cards:
         have = _trend_days_have(conn, person_id)
         if have:
@@ -741,6 +764,20 @@ def trends(r: str = "all", m: str | None = None, person_id: int = Depends(identi
                            text=t("trends.too_little", days=TREND_MIN_DAYS - have))
         return _render("soon.html", t=t, tab="trends", title=t("nav.trends"),
                        text=_sync_status_text(conn, person, t))
+    extra_groups, extra_count = [], 0
+    for group_key, keys in TREND_GROUPS:
+        group_cards = []
+        for k in keys:
+            card, p = _trend_card(conn, t, defs, k, start, end, month, nights, person_id)
+            if not card:
+                continue
+            since = since or p.first_day
+            days = max(days, p.days)
+            card["subtitle"] = t("trends.plain." + k)
+            group_cards.append(card)
+            extra_count += 1
+        if group_cards:
+            extra_groups.append({"title": t("trends.group." + group_key), "cards": group_cards})
     week = None
     profs = [profile.metric_profile(conn, k, person_id=person_id) for k in WEEK_KEYS]
     if all(profs):
@@ -765,7 +802,8 @@ def trends(r: str = "all", m: str | None = None, person_id: int = Depends(identi
     return _render("trends.html", t=t, tab="trends", cards=cards, week=week if r == "all" else None,
                    since=t.long_date(date.fromisoformat(since)) if since else "", days=t.num(days),
                    r=r, ranges=RANGES, fig_label=fig_label, nights=bool(nights),
-                   month_title=t.month_year(month) if month else None)
+                   month_title=t.month_year(month) if month else None,
+                   extra_groups=extra_groups, extra_count=extra_count, todas=todas == "1")
 
 
 def _short_date(t: T, d: date) -> str:
