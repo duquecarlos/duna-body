@@ -5,7 +5,8 @@
     python -m body.vida_export --current       # the week that started this Monday (for the Sunday-evening review)
 
 Writes BODY_HOME/vida/body-week-<monday>.json in the Review section shape:
-{"area": "body", "summary", "metrics": [{key, value, kind}], "goals": [{goal_id, on_track}], ...}
+{"area": "body", "summary", "metrics": [{key, value, kind}], "goals": [{goal_id, on_track}],
+ "goal_checks": [{goal_id, person, week_start, metric_avg, on_track, note}], ...}
 Files stay on this PC (rule 1). Personal reads the file, never Body's database (rule 2).
 Every figure is visibility "owner": health numbers are never shared by default.
 """
@@ -17,7 +18,7 @@ import statistics
 import sys
 from datetime import date, datetime, timedelta, timezone
 
-from . import config, db
+from . import config, db, household
 
 PERSON_KEY = "carlos"  # vida-v1: local person key until Body has Cuenta sign-in
 WEEK_METRICS = ["readiness", "sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake", "stress_avg",
@@ -37,12 +38,26 @@ def week_section(conn, monday: date, person_id: int = db.DEFAULT_PERSON_ID) -> d
                         "days": len(vals), "visibility": "owner"})
     goals = [{"goal_id": r["id"], "on_track": None if r["on_track"] is None else bool(r["on_track"])}
              for r in conn.execute(
-                 "SELECT g.id, w.on_track FROM goal g LEFT JOIN weekly_check w ON w.goal_id = g.id AND w.week_start = ? "
+                 "SELECT g.id, gc.on_track FROM goal g "
+                 "LEFT JOIN goal_check gc ON gc.goal_id = g.id AND gc.week_start = ? AND gc.person_id = g.person_id "
                  "WHERE g.person_id = ? AND g.status = 'active'", (monday.isoformat(), person_id))]
+
+    goal_checks = []
+    hh = household.household_of(conn, person_id)
+    if hh:
+        for r in conn.execute(
+                "SELECT gc.goal_id, gc.metric_avg, gc.on_track, gc.note FROM goal g "
+                "JOIN goal_check gc ON gc.goal_id = g.id AND gc.week_start = ? AND gc.person_id = ? "
+                "WHERE g.hogar_id = ? AND g.status = 'active'", (monday.isoformat(), person_id, hh.id)):
+            goal_checks.append({"goal_id": r["goal_id"], "person": PERSON_KEY, "week_start": monday.isoformat(),
+                                "metric_avg": r["metric_avg"],
+                                "on_track": None if r["on_track"] is None else bool(r["on_track"]),
+                                "note": r["note"]})
+
     days = max((m["days"] for m in metrics), default=0)
     summary = (f"{days} of 7 days with watch data." if days else "No watch data this week.")
     return {
-        "area": "body", "summary": summary, "metrics": metrics, "goals": goals,
+        "area": "body", "summary": summary, "metrics": metrics, "goals": goals, "goal_checks": goal_checks,
         "person": PERSON_KEY, "week_start": monday.isoformat(), "source": "body",
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
