@@ -2912,3 +2912,80 @@ nothing is proposed"), so the two assertions are now stale by design, not by a b
 file is in `touches:`, so neither was edited; fixing them (updating two string assertions to the new empty-state
 copy) is a one-line-each follow-up outside this slice's declared scope. Reported GATE_RED rather than widening the
 diff to fix them.
+
+## BODY-TURNOS-COSTO-1-M -- land BODY-TURNOS-COSTO-1: six fixes measured in a real browser, then merge (2026-11-07)
+
+The orchestrator measured BODY-TURNOS-COSTO-1's `/shifts` and `/shifts/como` in a real browser at 375px on a freshly
+seeded demo home (`ORCH-CARLOS-DELEGATES-TIER-1-1`) and found six things wrong, plus the two pre-existing tests the
+previous slice correctly reported as stale rather than fixed outside its `touches:`. This slice fixes all six, with
+a test apiece, then merges.
+
+a. **The two stale tests.** `tests/test_shift_import.py::ShiftWebTest::test_shifts_page_without_proposed_batch_es`
+   and `tests/test_sin_friccion.py::TurnosEmptyCensusTest::test_empty_both_languages` asserted the removed
+   `soon.shifts` placeholder. Both now assert `shifts.reason.sin_datos_reloj` instead (the no-batch Turnos page,
+   with no watch data at all either, is an honest empty state in both languages) -- the same subject, a different,
+   correct assertion. The now-fully-dead `soon.shifts` i18n key (no remaining reference anywhere) was removed from
+   both `es.json` and `en.json`.
+
+b. **Cost rows read the right way round.** Every row showed "+" because the table displayed the direction-SIGNED
+   cost (positive = worse), so less sleep read as "+49 min" -- more sleep. `turnos_costo.diferencia_y_palabra(metric,
+   costo)` now returns the pair a reader needs: the REAL difference (night-block mean minus reference mean, its own
+   sign -- recovered by applying the metric's `_signo` a second time, since it is always ±1) and a plain direction
+   word, `"peor" | "mejor" | "igual"`. The signed cost itself is untouched and still what `_costo_bloque`, the
+   recovery rule and the assistant tool use. "Igual" applies under a new per-unit threshold, `UMBRAL_IGUAL`:
+   **15 minutes of sleep, 1 bpm of resting HR, 1 ms of HRV, 3 points (of 0-100) for stress/Body Battery** -- small
+   enough that ordinary day-to-day noise doesn't read as a verdict. `web._turnos_filas` renders the real difference
+   with a true minus sign (U+2212, not a hyphen) and the i18n word (`shifts.word.peor/mejor/igual`).
+
+c. **Plain subtitles, not the name twice.** Rows showed "Sueño / sueño" etc. (the `metric.*.sentence` key, which
+   exists for a DIFFERENT purpose -- an inline lowercase mention inside `history.find.*` sentences -- and is
+   unchanged there). No existing Tendencias/Hoy copy fit a table-row subtitle, so five new `shifts.cost_sub.*` keys
+   were added: sleep "horas dormidas por noche, en promedio", resting HR "más bajo suele ser mejor forma", HRV "más
+   alto suele ser mejor descanso", stress "de 0 a 100, más bajo es más calma", Body Battery "tu energía al
+   despertar, de 0 a 100" (and their English equivalents).
+
+d. **Two questions, two cards.** The hero asked "¿Cuánto te cuesta...?" and the rows "¿Qué te cuesta...?" -- close
+   enough to read as the same question. The hero now asks a genuinely different one, `shifts.hero_q`: "¿Cuánto
+   tardas en recuperarte?" ("How long do you take to recover?"); the rows keep `shifts.cost_title` unchanged. The
+   hero's own number is now shown once -- the big "≈ 3" plus `shifts.hero_sub` ("días para recuperarte después de un
+   bloque de noches.", no `{n}` left in the sentence), not "≈ 3 días" twice.
+
+e. **The strip bands every kind, with words.** Morning and afternoon cells rendered `class="strip-cell "` (no band,
+   since the old `_STRIP_BAND` mapping folded both into "day" and the legend only listed Día/Noche/Descanso); a cell
+   with no readiness was blank; a cell's only accessible name was a bare number. Every `shift.kind`
+   (`morning`/`afternoon`/`night`/`day`/`off`/`other`, matching `shift_import.VALID_KINDS` 1:1) plus a new `none` for
+   a day with no shift row now gets its own strip-cell class and legend dot (`body.css`); the legend
+   (`web._turnos_strip`'s second return value) lists only the kinds actually present across the 8 weeks, in a fixed
+   order; a cell with no readiness score shows "—"; a heading `shifts.strip_title` ("Tus últimas 8 semanas") and
+   `shifts.strip_hint` ("Toca un día para verlo.") sit above the strip. Every cell gets an `aria-label` built from
+   `t.long_date()` -- weekday, day, month, **no year** -- rather than `_short_date()` (day, abbreviated month, year):
+   the first full gate run on this tree came back RED on an out-of-`touches:` test,
+   `tests/test_person_scope.py::WebScopeTest::test_shifts_page_shows_only_the_resolved_persons_batch_date`, because
+   every one of the strip's 56 calendar days now carries a readable date in its label, and one of them read
+   identically to an unrelated batch's `_short_date()`-formatted received date elsewhere on the same page once both
+   happened to name the same day. `t.long_date()` carries no year, so it cannot collide with `_batch_date()`'s
+   output, and a weekday-bearing label reads at least as well for a shift-pattern feature. Label shape: "<weekday>
+   <day> de <mes> · <turno> · preparación <n>" (es) or "... · sin datos del reloj" when there is no readiness score
+   for that day.
+
+f. **Cómo lo calculo.** "No es consejo médico" appeared three times (the lead `shifts.como_sub`, a closing
+   `shifts.como_no_medico`, and the footer `foot.not_medical`); dropped the closing duplicate (now unused, removed
+   from both i18n files), keeping the lead and the footer. Added the list of blocks counted: each block's first and
+   last night (`_short_date`, unchanged there -- this page has no strip to collide with), its length in nights, and
+   its recovery -- `shifts.como_bloque_dias` ("≈ N días") when `recuperacion_dias` is known, `shifts.sin_dato_corto`
+   ("sin datos del reloj") when the post-window for that block has not even finished yet (its last possible
+   check-day is still in the future relative to `hoy`), else `shifts.como_bloque_mas_de` ("más de 10 días") --
+   `ventana_post` elapsed with no recovery found.
+
+**Tests**: 25 new tests in `tests/test_turnos_costo.py` (`DireccionYPalabraTest`, `SubtitlesTest`,
+`HeroQuestionsTest`, `StripBandsTest`, `ComoListsBlocksTest`) plus the two corrected assertions in
+`test_shift_import.py` and `test_sin_friccion.py`.
+
+**Gate**: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run once, foreground, on the pre-merge
+branch tree. First run: **RED**, 1 failure (`test_person_scope.py`, described in fix e above), 1 pre-existing
+skip. Fixed per fix e; second run on the same tree (after the fix, before any further edit): **green**, 627 tests,
+1 pre-existing skip (POSIX-only). Merged `--no-ff` into `main` on a tree identical to the gated branch tip
+(`git rev-parse HEAD^{tree}` matched before and after the merge commit) -- not re-run.
+
+Commits: `fca4e7a961579785b043c4b1bc65fadcae07ec7a` (the six fixes, one commit), `c59cf118d80e7ed62b03446540877e87c8f8f41b`
+(merge into `main`).
