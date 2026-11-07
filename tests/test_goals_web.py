@@ -16,17 +16,14 @@ _STATIC_DIR = Path(__file__).resolve().parent.parent / "body" / "static"
 client = TestClient(web.app, follow_redirects=False)
 
 
-def _conn():
-    return db.connect()
-
-
 def _reset_db(tc: unittest.TestCase):
     """A fresh db for this test, nested under TMP (other tests guard that config.DB_PATH stays there),
     restored to its prior value on teardown so later test modules see it unchanged."""
     orig = config.DB_PATH
     tc.addCleanup(lambda: setattr(config, "DB_PATH", orig))
     config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "g.db"
-    conn = _conn()
+    conn = db.connect()
+    tc.addCleanup(conn.close)
     db.init(conn)
     return conn
 

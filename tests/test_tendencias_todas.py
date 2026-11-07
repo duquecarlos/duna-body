@@ -9,14 +9,16 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
+from tests._db import open_conn
+
 from body import config, db, identity, web
 from body.agente import herramientas
 
 PERSON_B = 2
 
 
-def _conn():
-    return db.connect(Path(tempfile.mkdtemp(dir=TMP)) / "tendencias_todas.db")
+def _conn(case: unittest.TestCase):
+    return open_conn(case, Path(tempfile.mkdtemp(dir=TMP)) / "tendencias_todas.db")
 
 
 def _as(person_id: int) -> None:
@@ -63,6 +65,7 @@ class TrendsPageWithExtrasTest(unittest.TestCase):
         self.addCleanup(web.app.dependency_overrides.clear)
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "trends.db"
         conn = db.connect()
+        self.addCleanup(conn.close)
         db.init(conn)
         conn.execute("INSERT INTO person (id, display_name) VALUES (?, 'B')", (PERSON_B,))
         # the default 9 -- only enough of them for the page to render cards at all
@@ -124,6 +127,7 @@ class TrendsPageWithExtrasTest(unittest.TestCase):
     def test_person_b_never_sees_person_a_extras(self):
         _as(PERSON_B)
         conn = db.connect()
+        self.addCleanup(conn.close)
         _seed_days(conn, PERSON_B, "resting_hr", "2026-09-01", 20, 60, -0.1)
         _seed_days(conn, PERSON_B, "sleep_minutes", "2026-09-01", 20, 400, 1)
         conn.commit()
@@ -135,6 +139,7 @@ class TrendsPageWithExtrasTest(unittest.TestCase):
 
     def test_no_control_when_no_extra_metric_has_data(self):
         conn = db.connect()
+        self.addCleanup(conn.close)
         _as(PERSON_B)
         _seed_days(conn, PERSON_B, "resting_hr", "2026-09-01", 20, 60, -0.1)
         _seed_days(conn, PERSON_B, "sleep_minutes", "2026-09-01", 20, 400, 1)
@@ -156,6 +161,7 @@ class TrendsPageWithExtrasTest(unittest.TestCase):
 
     def test_en_renders(self):
         conn = db.connect()
+        self.addCleanup(conn.close)
         db.set_language(conn, "en", 1)
         conn.commit()
         _as(1)
@@ -167,7 +173,7 @@ class TrendsPageWithExtrasTest(unittest.TestCase):
 
 class AssistantTrendsToolTest(unittest.TestCase):
     def test_leer_tendencias_accepts_sleep_rem_min(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         _seed_days(conn, 1, "sleep_rem_min", "2026-10-01", 14, 85, 0.3)
         conn.commit()

@@ -9,6 +9,8 @@ from pathlib import Path
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
+from tests._db import open_conn
+
 from body import db
 from body.agente import ajustes, bucle, cliente, conversacion
 
@@ -30,8 +32,8 @@ def _borrar_env(*nombres):
     return _restaurar
 
 
-def _conn():
-    c = db.connect(Path(tempfile.mkdtemp(dir=TMP)) / "a.db")
+def _conn(case: unittest.TestCase):
+    c = open_conn(case, Path(tempfile.mkdtemp(dir=TMP)) / "a.db")
     db.init(c)
     return c
 
@@ -90,7 +92,7 @@ class SelectionOrderTest(unittest.TestCase):
         os.environ["BODY_AGENTE_ANTHROPIC_API_KEY"] = "sk-a"
         os.environ["BODY_AGENTE_OPENAI_API_KEY"] = "sk-o"
         os.environ["BODY_AGENTE_MODELO_OPENAI"] = "gpt-x"
-        self.conn = _conn()
+        self.conn = _conn(self)
 
     def test_first_configured_wins_with_no_env_default_and_no_person_choice(self):
         disponibles = cliente.proveedores_configurados()
@@ -234,7 +236,7 @@ class GeminiSignaturePersistedAcrossConversationTest(unittest.TestCase):
     same question."""
 
     def test_signature_persisted_and_echoed_on_a_later_question(self):
-        conn = _conn()
+        conn = _conn(self)
         conv_id = conversacion.crear(conn, 1)
 
         respuestas_1 = [

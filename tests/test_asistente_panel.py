@@ -75,6 +75,7 @@ def _fill(path: str, day: str, goal_id: int) -> str:
 class ConfiguredEveryPageTest(unittest.TestCase):
     def setUp(self):
         self.conn, self.orig_db_path = _reset_db()
+        self.addCleanup(self.conn.close)
         self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig_db_path))
         self.gid = _seed(self.conn)
         self.addCleanup(_borrar_env(*_PROVIDER_ENV_VARS))
@@ -110,6 +111,7 @@ class ConfiguredEveryPageTest(unittest.TestCase):
 class NotConfiguredNoButtonTest(unittest.TestCase):
     def setUp(self):
         self.conn, self.orig_db_path = _reset_db()
+        self.addCleanup(self.conn.close)
         self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig_db_path))
         self.addCleanup(_borrar_env(*_PROVIDER_ENV_VARS))
         for n in _PROVIDER_ENV_VARS:
@@ -247,6 +249,7 @@ class ComoPluralI18nTest(unittest.TestCase):
 class DemoProviderTest(unittest.TestCase):
     def setUp(self):
         self.conn, self.orig_db_path = _reset_db()
+        self.addCleanup(self.conn.close)
         self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig_db_path))
         self.gid = _seed(self.conn)
         self.addCleanup(_borrar_env(*_PROVIDER_ENV_VARS))
@@ -274,6 +277,7 @@ class ConversacionEndpointTest(unittest.TestCase):
 
     def setUp(self):
         self.conn, self.orig_db_path = _reset_db()
+        self.addCleanup(self.conn.close)
         self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig_db_path))
         self.gid = _seed(self.conn)
         self.addCleanup(_borrar_env(*_PROVIDER_ENV_VARS))

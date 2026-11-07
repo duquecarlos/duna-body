@@ -35,6 +35,7 @@ class _CollectingHandler(logging.Handler):
 class DispositivoModuleTest(unittest.TestCase):
     def setUp(self):
         self.conn = db.connect(Path(tempfile.mkdtemp(dir=TMP)) / "a.db")
+        self.addCleanup(self.conn.close)
         db.init(self.conn)
         self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
         self.conn.commit()
@@ -92,6 +93,7 @@ class DispositivoHostedTestCase(unittest.TestCase):
         self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "dispositivo.db"
         self.conn = db.connect()
+        self.addCleanup(self.conn.close)
         db.init(self.conn)
         self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
         self.conn.commit()

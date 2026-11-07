@@ -9,14 +9,16 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
+from tests._db import open_conn
+
 from body import config, db, goals, identity, web
 from body.agente import herramientas
 
 PERSON_B = 2
 
 
-def _conn():
-    return db.connect(Path(tempfile.mkdtemp(dir=TMP)) / "vo2max.db")
+def _conn(case: unittest.TestCase):
+    return open_conn(case, Path(tempfile.mkdtemp(dir=TMP)) / "vo2max.db")
 
 
 def _as(person_id: int) -> None:
@@ -25,7 +27,7 @@ def _as(person_id: int) -> None:
 
 class CatalogueTest(unittest.TestCase):
     def test_three_rows_with_expected_directions_and_kind(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         rows = {r["key"]: r for r in conn.execute(
             "SELECT key, better, kind FROM metric_def WHERE key IN ('vo2max', 'vo2max_cycling', 'fitness_age')"
@@ -45,6 +47,7 @@ class TrendsPageTest(unittest.TestCase):
         self.addCleanup(web.app.dependency_overrides.clear)
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "trends.db"
         conn = db.connect()
+        self.addCleanup(conn.close)
         db.init(conn)
         conn.execute("INSERT INTO person (id, display_name) VALUES (?, 'B')", (PERSON_B,))
         for i in range(14):
@@ -65,7 +68,7 @@ class TrendsPageTest(unittest.TestCase):
 
 class GoalOnVo2maxTest(unittest.TestCase):
     def test_goal_created_and_sparse_week_reads_as_no_data_not_failure(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         gid = goals.propose(conn, 1, "Raise VO2 max", "2026-11-02", metric_key="vo2max", direction="raise",
                              target_value=50.0, baseline_value=44.0, deadline="2026-12-14")
@@ -80,7 +83,7 @@ class GoalOnVo2maxTest(unittest.TestCase):
 
 class AssistantTrendsToolTest(unittest.TestCase):
     def test_leer_tendencias_accepts_vo2max(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         for i in range(14):
             db.set_metric(conn, f"2026-10-{i + 1:02d}", "vo2max", 44.0 + i * 0.1, "garmin", 1)
@@ -90,7 +93,7 @@ class AssistantTrendsToolTest(unittest.TestCase):
         self.assertEqual(out["metricas"]["vo2max"]["dias_con_datos"], 14)
 
     def test_leer_tendencias_rejects_unknown_metric(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         with self.assertRaises(herramientas.ToolError):
             herramientas.ejecutar(conn, 1, "leer_tendencias", {"metric": "vo2max_cycling"}, "completo")

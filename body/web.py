@@ -1744,6 +1744,7 @@ def propuesta_descartar(propuesta_id: int, person_id: int = Depends(identity.cur
 
 
 @app.post("/asistente/propuestas/{propuesta_id}/deshacer")
+@_cierra_conexion
 def propuesta_deshacer(propuesta_id: int, person_id: int = Depends(identity.current_person_id)):
     conn, _, _ = _ctx(person_id)
     return _propuesta_respuesta(conn, person_id, propuesta_id, agente_propuestas.deshacer)

@@ -39,7 +39,9 @@ class CallbackStoresAuthTimeTest(_ReauthTestCase):
         ).fetchone()
         conn.close()
         self.assertIsNotNone(row["auth_time"])
-        self.assertTrue(cuenta.reciente(db.connect(), token))
+        conn2 = db.connect()
+        self.addCleanup(conn2.close)
+        self.assertTrue(cuenta.reciente(conn2, token))
 
     def test_token_without_auth_time_stores_null(self):
         _, token = self._sign_in_and_consent(auth_time=None)

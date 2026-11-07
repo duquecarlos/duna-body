@@ -8,11 +8,13 @@ from unittest import mock
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
+from tests._db import open_conn
+
 from body import db, goals, household, vida_export
 
 
-def _conn():
-    return db.connect(Path(tempfile.mkdtemp()) / "g.db")
+def _conn(case: unittest.TestCase):
+    return open_conn(case, Path(tempfile.mkdtemp()) / "g.db")
 
 
 def _seed_metric(conn, metric_key, person_id, day, value):
@@ -21,7 +23,7 @@ def _seed_metric(conn, metric_key, person_id, day, value):
 
 class LifecycleTest(unittest.TestCase):
     def test_proposed_active_paused_done(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         gid = goals.propose(conn, 1, "Lower resting HR", "2026-11-02", metric_key="resting_hr",
                              direction="lower", target_value=50.0, baseline_value=60.0, deadline="2026-12-14")
@@ -35,7 +37,7 @@ class LifecycleTest(unittest.TestCase):
         self.assertEqual(conn.execute("SELECT status FROM goal WHERE id=?", (gid,)).fetchone()[0], "done")
 
     def test_drop(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         gid = goals.propose(conn, 1, "Walk more", "2026-11-02", metric_key="steps", direction="raise",
                              target_value=9000.0, baseline_value=6000.0, deadline="2026-12-14")
@@ -45,7 +47,7 @@ class LifecycleTest(unittest.TestCase):
 
 class ProposedNeverCheckedTest(unittest.TestCase):
     def test_proposed_goal_not_checked_and_not_exported(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         gid = goals.propose(conn, 1, "Lower resting HR", "2026-11-02", metric_key="resting_hr",
                              direction="lower", target_value=50.0, baseline_value=60.0, deadline="2026-12-14")
@@ -61,7 +63,7 @@ class ProposedNeverCheckedTest(unittest.TestCase):
 
 class MetricOnTrackTest(unittest.TestCase):
     def test_raise_on_track(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         gid = goals.propose(conn, 1, "Steps", "2026-11-02", metric_key="steps", direction="raise",
                              target_value=9000.0, baseline_value=6000.0, deadline="2026-12-14")
@@ -72,7 +74,7 @@ class MetricOnTrackTest(unittest.TestCase):
         self.assertTrue(r["on_track"])
 
     def test_raise_off_track(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         gid = goals.propose(conn, 1, "Steps", "2026-11-02", metric_key="steps", direction="raise",
                              target_value=9000.0, baseline_value=6000.0, deadline="2026-12-14")
@@ -83,7 +85,7 @@ class MetricOnTrackTest(unittest.TestCase):
         self.assertFalse(r["on_track"])
 
     def test_lower_on_track(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         gid = goals.propose(conn, 1, "Resting HR", "2026-11-02", metric_key="resting_hr", direction="lower",
                              target_value=50.0, baseline_value=60.0, deadline="2026-12-14")
@@ -94,7 +96,7 @@ class MetricOnTrackTest(unittest.TestCase):
         self.assertTrue(r["on_track"])
 
     def test_lower_off_track(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         gid = goals.propose(conn, 1, "Resting HR", "2026-11-02", metric_key="resting_hr", direction="lower",
                              target_value=50.0, baseline_value=60.0, deadline="2026-12-14")
@@ -107,7 +109,7 @@ class MetricOnTrackTest(unittest.TestCase):
 
 class KeepBandTest(unittest.TestCase):
     def test_keep_inside_band(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         for i in range(20):
             _seed_metric(conn, "stress_avg", 1, f"2026-10-{1 + i:02d}", 30 + (i % 2))
@@ -121,7 +123,7 @@ class KeepBandTest(unittest.TestCase):
         self.assertTrue(r["on_track"])
 
     def test_keep_outside_band(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         for i in range(20):
             _seed_metric(conn, "stress_avg", 1, f"2026-10-{1 + i:02d}", 30 + (i % 2))
@@ -137,7 +139,7 @@ class KeepBandTest(unittest.TestCase):
 
 class FewerThanFourDaysTest(unittest.TestCase):
     def test_not_enough_data_is_null(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         gid = goals.propose(conn, 1, "Resting HR", "2026-11-02", metric_key="resting_hr", direction="lower",
                              target_value=50.0, baseline_value=60.0, deadline="2026-12-14")
@@ -151,7 +153,7 @@ class FewerThanFourDaysTest(unittest.TestCase):
 
 class MilestoneHabitsTest(unittest.TestCase):
     def test_milestone_from_habits_on_track(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         gid = goals.propose(conn, 1, "Finish 10k training plan", "2026-11-02", kind="milestone",
                              deadline="2026-12-14")
@@ -165,7 +167,7 @@ class MilestoneHabitsTest(unittest.TestCase):
         self.assertTrue(r["on_track"])
 
     def test_milestone_from_habits_off_track(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         gid = goals.propose(conn, 1, "Finish 10k training plan", "2026-11-02", kind="milestone",
                              deadline="2026-12-14")
@@ -179,7 +181,7 @@ class MilestoneHabitsTest(unittest.TestCase):
 
 class HabitContextTest(unittest.TestCase):
     def test_before_night_counts_only_matching_days(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         gid = goals.propose(conn, 1, "Finish 10k training plan", "2026-11-02", kind="milestone",
                              deadline="2026-12-14")
@@ -195,7 +197,7 @@ class HabitContextTest(unittest.TestCase):
         self.assertEqual(r["habits_done"], 1)
 
     def test_no_shifts_means_context_habit_not_due(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         gid = goals.propose(conn, 1, "Finish 10k training plan", "2026-11-02", kind="milestone",
                              deadline="2026-12-14")
@@ -208,7 +210,7 @@ class HabitContextTest(unittest.TestCase):
 
 class HouseholdGoalCheckTest(unittest.TestCase):
     def test_two_members_each_get_their_own_goal_check(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")
         conn.executescript(household.SCHEMA)
@@ -286,8 +288,8 @@ CREATE TABLE weekly_check (
 """
 
 
-def _build_old_db():
-    conn = db.connect(Path(tempfile.mkdtemp()) / "old.db")
+def _build_old_db(case: unittest.TestCase):
+    conn = open_conn(case, Path(tempfile.mkdtemp()) / "old.db")
     conn.executescript(OLD_GOAL_SCHEMA)
     conn.execute("INSERT INTO person (id, display_name) VALUES (1, 'Me')")
     conn.execute("INSERT INTO metric_def (key, label, unit, better) VALUES ('resting_hr', 'Resting HR', 'bpm', "
@@ -307,7 +309,7 @@ def _build_old_db():
 
 class MigrationTest(unittest.TestCase):
     def test_old_shape_migrates_to_new_shape(self):
-        conn = _build_old_db()
+        conn = _build_old_db(self)
         db.init(conn)
 
         goal = conn.execute("SELECT * FROM goal WHERE id=1").fetchone()
@@ -335,7 +337,7 @@ class MigrationTest(unittest.TestCase):
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone())
 
     def test_second_init_is_a_no_op(self):
-        conn = _build_old_db()
+        conn = _build_old_db(self)
         db.init(conn)
         before_goal = dict(conn.execute("SELECT * FROM goal WHERE id=1").fetchone())
         before_habits = [dict(r) for r in conn.execute("SELECT * FROM habit ORDER BY id")]
@@ -351,7 +353,7 @@ class MigrationTest(unittest.TestCase):
         self.assertEqual(before_gc, after_gc)
 
     def test_forced_count_mismatch_rolls_back(self):
-        conn = _build_old_db()
+        conn = _build_old_db(self)
         calls = {"n": 0}
         real = db._copy_habit_row
 

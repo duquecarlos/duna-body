@@ -12,6 +12,8 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
+from tests._db import open_conn
+
 from body import config, db, identity, turnos_costo, web
 from body.i18n import T
 
@@ -33,8 +35,8 @@ def _t(lang: str, key: str, **kw) -> str:
     return _esc(T(lang)(key, **kw))
 
 
-def _mkconn():
-    conn = db.connect(Path(tempfile.mkdtemp(dir=TMP)) / "t.db")
+def _mkconn(case: unittest.TestCase):
+    conn = open_conn(case, Path(tempfile.mkdtemp(dir=TMP)) / "t.db")
     db.init(conn)
     return conn
 
@@ -74,7 +76,7 @@ class NextShiftPureTest(unittest.TestCase):
     """turnos_costo.turno_de_hoy directly: 'siguiente' skips off days and stops at 14 days."""
 
     def test_skips_an_off_day_in_between(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         hoy = date(2026, 6, 1)
         _insert_shift(conn, PERSON_A, (hoy + timedelta(1)).isoformat(), kind="off")
         _insert_shift(conn, PERSON_A, (hoy + timedelta(2)).isoformat(), kind="night",
@@ -87,7 +89,7 @@ class NextShiftPureTest(unittest.TestCase):
         self.assertEqual(turno["siguiente"]["start_local"][:10], (hoy + timedelta(2)).isoformat())
 
     def test_a_shift_within_14_days_is_found(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         hoy = date(2026, 6, 1)
         _insert_shift(conn, PERSON_A, (hoy + timedelta(14)).isoformat(), kind="day",
                      start_local=f"{(hoy + timedelta(14)).isoformat()}T06:00:00",
@@ -97,7 +99,7 @@ class NextShiftPureTest(unittest.TestCase):
         self.assertIsNotNone(turno["siguiente"])
 
     def test_a_shift_beyond_14_days_is_not_found(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         hoy = date(2026, 6, 1)
         _insert_shift(conn, PERSON_A, (hoy + timedelta(15)).isoformat(), kind="day",
                      start_local=f"{(hoy + timedelta(15)).isoformat()}T06:00:00",
@@ -117,7 +119,7 @@ class RecoveryPureTest(unittest.TestCase):
         before the last one that their own recovery has already resolved by the time `turno_de_hoy`
         is asked about the last block -- so the hero median (`resumen`'s `dias_recuperacion`) is
         established from blocks other than the one under test, as it would be in real use."""
-        conn = _mkconn()
+        conn = _mkconn(self)
         hoy_base = date(2026, 6, 20)
         _fill_range(conn, PERSON_A, hoy_base - timedelta(140), hoy_base - timedelta(1), CONST)
         fin = None
@@ -163,6 +165,7 @@ class WebRenderTest(unittest.TestCase):
         self.addCleanup(web.app.dependency_overrides.clear)
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / name
         conn = db.connect()
+        self.addCleanup(conn.close)
         db.init(conn)
         conn.execute("INSERT INTO person (id, display_name) VALUES (?, 'B')", (PERSON_B,))
         conn.commit()

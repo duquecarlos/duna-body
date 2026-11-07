@@ -12,6 +12,8 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
+from tests._db import open_conn
+
 from body import config, db, identity, turnos_costo, web
 from body.i18n import T
 
@@ -24,8 +26,8 @@ def _as(person_id: int) -> None:
     web.app.dependency_overrides[identity.current_person_id] = lambda: person_id
 
 
-def _mkconn():
-    conn = db.connect(Path(tempfile.mkdtemp(dir=TMP)) / "t.db")
+def _mkconn(case: unittest.TestCase):
+    conn = open_conn(case, Path(tempfile.mkdtemp(dir=TMP)) / "t.db")
     db.init(conn)
     return conn
 
@@ -69,6 +71,7 @@ class CostRowLinksTest(unittest.TestCase):
         self.addCleanup(web.app.dependency_overrides.clear)
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "enlaces_filas.db"
         conn = db.connect()
+        self.addCleanup(conn.close)
         db.init(conn)
         today = date.today()
         _fill_range(conn, 1, today - timedelta(140), today - timedelta(1), CONST)
@@ -110,6 +113,7 @@ class CostRowNoDataTest(unittest.TestCase):
         self.addCleanup(web.app.dependency_overrides.clear)
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "enlaces_vacio.db"
         conn = db.connect()
+        self.addCleanup(conn.close)
         db.init(conn)
         conn.commit()
         _as(1)
@@ -133,6 +137,7 @@ class TrendsBackLinkTest(unittest.TestCase):
         self.addCleanup(web.app.dependency_overrides.clear)
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "enlaces_trends.db"
         conn = db.connect()
+        self.addCleanup(conn.close)
         db.init(conn)
         today = date.today()
         for i in range(20):
@@ -171,7 +176,7 @@ class ContextoDiaTest(unittest.TestCase):
     """Decision 3: turnos_costo.contexto_dia, a pure read over confirmed shift rows."""
 
     def test_third_night_of_a_five_night_block(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         inicio = date(2026, 3, 10)
         for i in range(5):
             _insert_shift(conn, 1, (inicio + timedelta(i)).isoformat())
@@ -179,7 +184,7 @@ class ContextoDiaTest(unittest.TestCase):
         self.assertEqual(turnos_costo.contexto_dia(conn, 1, dia), {"tipo": "noche", "n": 3, "de": 5})
 
     def test_second_day_after_the_blocks_last_night(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         inicio = date(2026, 3, 10)
         for i in range(5):
             _insert_shift(conn, 1, (inicio + timedelta(i)).isoformat())
@@ -189,7 +194,7 @@ class ContextoDiaTest(unittest.TestCase):
         self.assertEqual(turnos_costo.contexto_dia(conn, 1, dia), {"tipo": "despues", "n": 2})
 
     def test_a_day_outside_the_recovery_window_is_none(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         inicio = date(2026, 3, 10)
         for i in range(5):
             _insert_shift(conn, 1, (inicio + timedelta(i)).isoformat())
@@ -198,11 +203,11 @@ class ContextoDiaTest(unittest.TestCase):
         self.assertIsNone(turnos_costo.contexto_dia(conn, 1, dia))
 
     def test_a_day_with_no_shifts_at_all_is_none(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         self.assertIsNone(turnos_costo.contexto_dia(conn, 1, date(2026, 5, 1)))
 
     def test_person_b_shifts_never_change_person_as_context(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         conn.execute("INSERT INTO person (id, display_name, timezone, language) VALUES (2, 'B', "
                      "'America/Bogota', 'es')")
         inicio = date(2026, 3, 10)
@@ -225,6 +230,7 @@ class DiaRendersContextTest(unittest.TestCase):
         self.addCleanup(web.app.dependency_overrides.clear)
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "enlaces_dia.db"
         self.conn = db.connect()
+        self.addCleanup(self.conn.close)
         db.init(self.conn)
         self.inicio = date(2026, 3, 10)
         for i in range(5):
@@ -282,6 +288,7 @@ class DiaShiftVocabularyTest(unittest.TestCase):
         self.addCleanup(web.app.dependency_overrides.clear)
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "enlaces_vocab.db"
         self.conn = db.connect()
+        self.addCleanup(self.conn.close)
         db.init(self.conn)
         self.day = date(2026, 4, 1)
         _as(1)

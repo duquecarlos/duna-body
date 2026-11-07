@@ -41,6 +41,7 @@ class PipelineTest(unittest.TestCase):
     def test_end_to_end_page(self):
         self.assertTrue(str(config.DB_PATH).startswith(TMP))  # guard BEFORE any write
         conn = db.connect()
+        self.addCleanup(conn.close)
         db.init(conn)
         db.save_day(conn, garmin_adapter.parse_day("2026-11-05", FAKE_RAW), 1)
         client = TestClient(web.app)

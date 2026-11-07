@@ -6,6 +6,8 @@ from pathlib import Path
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
+from tests._db import open_conn
+
 from body import db
 from body.agente import cliente, precios, uso
 
@@ -13,8 +15,8 @@ PROVEEDOR = "anthropic"
 MODELO = "claude-sonnet-5-5"
 
 
-def _conn():
-    c = db.connect(Path(tempfile.mkdtemp(dir=TMP)) / "a.db")
+def _conn(case: unittest.TestCase):
+    c = open_conn(case, Path(tempfile.mkdtemp(dir=TMP)) / "a.db")
     db.init(c)
     return c
 
@@ -35,7 +37,7 @@ def _filas_tipo(conn, proveedor: str, modelo: str) -> dict[str, int]:
 
 class SembrarTest(unittest.TestCase):
     def setUp(self):
-        self.conn = _conn()
+        self.conn = _conn(self)
 
     def test_sembrar_on_an_empty_table_inserts_four_rows(self):
         n = precios.sembrar(self.conn)
@@ -83,7 +85,7 @@ class SembrarTest(unittest.TestCase):
 
 class SpendCeilingWithTheSeedTest(unittest.TestCase):
     def setUp(self):
-        self.conn = _conn()
+        self.conn = _conn(self)
         precios.sembrar(self.conn)
 
     def test_a_days_spend_is_computed_in_micro_usd_and_the_spend_ceiling_decides(self):
