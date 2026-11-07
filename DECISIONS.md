@@ -1081,3 +1081,109 @@ Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 174 tests, O
 before merging.
 
 Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-cuenta-schema-1` into `main`.
+
+## BODY-CUENTA-RP-1 -- hosted Cuenta Duna sign-in (2026-11-06)
+
+Hosted iff `BODY_CUENTA_ISSUER` is set (then `BODY_PUBLIC_URL` and `BODY_CUENTA_CLIENT_SECRET` are required, or
+the app refuses to start naming the missing variable, never a value). Local mode is unchanged: sign-in routes
+404, `identity.current_person_id` resolves to `db.local_person_id`.
+
+`body/cuenta.py` (new, Tier 1): the OIDC relying party for cuenta-duna-v1 -- authorize-URL construction with
+PKCE S256, the `flujo` cookie and its single-use `inicio_sesion` row, code exchange via `client_secret_basic`,
+pure ID-token/logout-token validation (`_verificar_claims`) built to pass every vector in
+`tests/fixtures/cuenta_vectores.json`, sessions keyed by a sha256 of the session token (sliding 14-day idle /
+30-day absolute via the `sesion` row's own `last_seen_at`/`expires_at`), sign-out and its `/oauth/logout`
+redirect (never an `id_token_hint`, never a stored ID token), and back-channel logout with jti replay
+protection in the durable `logout_jti` table. `acr` is compared by RANK (`pwd < passkey`), not exact string
+match, per the contract's own prose -- still passes every vector, and avoids wrongly refusing a passkey
+sign-in to a client whose minimum is `pwd`.
+
+`body/identity.py`: `current_person_id` resolves the hosted-mode session from `body_sesion`, raising
+`LoginRequired` (caught by `body/web.py`'s exception handler, which redirects to `/login`) for a page GET and
+a plain 401 for a POST; local mode untouched.
+
+`body/db.py` (Tier 1): `inicio_sesion` rebuilt from BODY-CUENTA-SCHEMA-1's `state_hash` shape to this
+contract's `flujo_hash` shape (`flujo_hash`, `state`, `nonce`, `code_verifier`, `return_to`, `created_at`), via
+the same `_rebuild_with_fk_off` helper the goal/habit/goal_check rebuilds use, with a 0-row count guard since
+the table has never been written -- never a `DELETE`. New `logout_jti(jti, exp)` table.
+
+`body/web.py`: `GET /login` and `/login/cuenta/start` (both start the flow), `GET /login/cuenta/callback`,
+`POST /logout`, `POST /login/cuenta/logout-token` (accepted only from a loopback client address), `GET
+/healthz` (200 "ok", both modes). A FastAPI lifespan calls `cuenta.ensure_configured()` so a misconfigured
+hosted deploy refuses to start before serving any request.
+
+`body/vincular_cuenta.py` (new): `python -m body.vincular_cuenta --csv <file> [--apply]` links an existing
+person to a sub by `id_local`, dry run by default, idempotent, refuses to change a link already set.
+
+`body/templates/sin_acceso.html` (new): standalone page (no app nav) with the Cuenta switcher link and a
+sign-out link to Cuenta's own `/oauth/logout` -- never a 403 dead end. `body/templates/base.html`: "Cerrar
+sesión" in the desktop rail nav and the mobile footer, hidden in local mode (`hosted()` is a new Jinja
+global). `body/i18n/{es,en}.json`: `nav.logout`, `cuenta.down`, `sin_acceso.title/text/switch`.
+
+`requirements.txt`: `PyJWT[crypto]==2.15.1`, `httpx==0.28.1` (both already installed; versions re-measured
+from the venv, not assumed).
+
+**Tests**: `tests/fixtures/cuenta_vectores.json` copied byte-for-byte from dev-protocol (verified by sha256)
+via `git cat-file`. `tests/test_cuenta_vectores.py` runs `cuenta.verificar_claims` over all 30 vectors -- all
+pass. `tests/test_cuenta_rp.py` (32 tests): a local fake RSA-keyed issuer exercises the full sign-in (new sub,
+already-linked sub, Sin acceso), every listed refusal (state mismatch, missing/foreign flujo, reused attempt,
+wrong nonce, token-endpoint error), sign-out, back-channel logout (by sid, by sub, replay,
+typ/events/nonce/missing-sub-and-sid, non-loopback caller), expired session -> `prompt=none`, `return_to`
+safety, local-mode parity, `/healthz`, and the startup refusal message. `tests/test_person_scope.py`: a new
+hosted-mode case with two real Cuenta sessions (not `dependency_overrides`) proves the same person-scope
+guarantee. `tests/test_cuenta_rp.py` also covers `vincular_cuenta`'s dry-run/apply/idempotent/refused behavior
+and the `inicio_sesion` shape rebuild.
+
+Gate run by the slice itself: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 210 tests, 1
+failure (`RouteMappingTest.test_every_get_route_has_a_mapping_decision` in `tests/test_agente_registro.py`,
+outside this slice's `touches`), 209 passing. The failure's cause: this slice's four new GET routes
+(`/healthz`, `/login`, `/login/cuenta/start`, `/login/cuenta/callback`) have no entry in that test's
+`ROUTE_TOOL` registry, which asserts every GET route in `body/web.py` carries an explicit tool-mapping
+decision. Per BODY-CUENTA-SCHEMA-1's own precedent for this same situation, the slice stops GATE_RED, unmerged,
+and does not write its own `DECISIONS.md` entry; BODY-CUENTA-RP-1-M below records the orchestrator's review,
+the route-mapping decisions, the back-channel proxy-header fix, and the merge.
+
+## BODY-CUENTA-RP-1-M -- lands BODY-CUENTA-RP-1, closes the route-mapping gap and the back-channel proxy gap (2026-11-06)
+
+Approved by the orchestrator under `ORCH-CARLOS-DELEGATES-TIER-1-1` after reviewing the branch (15 files,
++1788/-20, re-measured against `main` and matching): `flujo` and `body_sesion` cookies host-only, `HttpOnly`,
+`SameSite=Lax`, `Secure` on https; `state`/`nonce`/`verifier` in a `flujo`-keyed row; `client_secret_basic`;
+logout with `logout_hint=sid` and no `id_token_hint`; durable `logout_jti`; `return_to` validated; the secret
+read from the environment, never printed. The `acr` RANK comparison was accepted as written (cuenta-duna-v1
+section 3.2 says "compared as a RANK, pwd < passkey" explicitly). Approved with two additions, both carried out
+in this slice.
+
+**Route-mapping decisions** (`tests/test_agente_registro.py`'s `ROUTE_TOOL`): the four auth GET routes added by
+BODY-CUENTA-RP-1 -- `/healthz`, `/login`, `/login/cuenta/start`, `/login/cuenta/callback` -- each mapped to
+`None` with a one-line comment ("sign-in plumbing, no data, no tool"), the same pattern already used for
+`/goals/new` and `/sw.js`. This closes the gate's one failure without touching the registry's own guard logic.
+
+**Back-channel loopback check made true behind Caddy, in `body/web.py`'s `/login/cuenta/logout-token`**:
+behind a reverse proxy, a proxied request also arrives from `127.0.0.1`, so the existing client-address check
+alone is not a real boundary. The route now also refuses with 404 any request carrying `X-Forwarded-For`,
+`Forwarded`, `X-Forwarded-Host` or `X-Real-IP` (Caddy's `reverse_proxy` adds `X-Forwarded-For`), checked
+*before* the request body is read, so a flagged request never reaches `cuenta.handle_backchannel_logout` and
+ends no session. Two new tests in `tests/test_cuenta_rp.py`'s `BackchannelLogoutTest`:
+`test_loopback_with_x_forwarded_for_refused_and_no_session_ended` (a loopback call carrying a valid logout
+token plus `X-Forwarded-For` gets 404, and the session it names is still present afterward) and
+`test_loopback_without_proxy_headers_and_valid_token_still_200` (the same call with no proxy header still ends
+the session and returns 200, as before this slice). This check stands on its own; the entry-script slice will
+also block the path in Caddy.
+
+`main` had not moved since the branch was cut: `git rev-parse main` and `git merge-base
+feat/body-cuenta-rp-1 main` both resolved to `5dfd9619359c8109ba880fb0ad2806e355c95714`, matching the branch's
+recorded base, so no merge-forward was needed.
+
+No schema or migration change (no edit to `body/db.py`'s `SCHEMA`); no cross-repo contract change. The two auth
+routes' own existing behavior (200/303/400/403/404 bodies, redirects) is unchanged -- this slice only adds
+registry bookkeeping and a stricter refusal condition on a back-channel route a browser never renders -- so no
+customer-facing bytes either. All three of merge policy A's conditions pass, so this merges on green without a
+separate approval step, beyond the orchestrator's own approval of the Tier 1 build above.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 212 tests, OK (210 at the branch tip with
+one known failure, 2 added here; the fixed `RouteMappingTest` case plus the two new back-channel tests brings
+the total from 209 passing to 212 passing), run once on the branch tip (`1c6f8bb60a7eb59b2eaadf21a96fa9ed7990028e`)
+before this merge.
+
+Merge commit: recorded in the next commit's git history as the `--no-ff` merge of `feat/body-cuenta-rp-1` into
+`main`.
