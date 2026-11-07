@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 NIVELES = ("completo", "resumen", "ninguno")
 _DEFAULT = "completo"
+NOMBRES_PROVEEDOR = ("anthropic", "openai", "gemini")
 
 
 def nivel_datos(conn: sqlite3.Connection, person_id: int) -> str:
@@ -28,4 +29,23 @@ def set_nivel_datos(conn: sqlite3.Connection, person_id: int, nivel: str) -> Non
             "ON CONFLICT(person_id) DO UPDATE SET nivel_datos = excluded.nivel_datos, "
             "updated_at = excluded.updated_at",
             (person_id, nivel, now),
+        )
+
+
+def proveedor(conn: sqlite3.Connection, person_id: int) -> str | None:
+    """The person's own stored choice of provider, or None when they have not chosen one."""
+    row = conn.execute("SELECT proveedor FROM ajuste_agente WHERE person_id = ?", (person_id,)).fetchone()
+    return row["proveedor"] if row else None
+
+
+def set_proveedor(conn: sqlite3.Connection, person_id: int, nombre: str) -> None:
+    if nombre not in NOMBRES_PROVEEDOR:
+        raise ValueError(f"proveedor inválido: {nombre!r}; debe ser uno de {NOMBRES_PROVEEDOR}")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        conn.execute(
+            "INSERT INTO ajuste_agente (person_id, proveedor, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(person_id) DO UPDATE SET proveedor = excluded.proveedor, "
+            "updated_at = excluded.updated_at",
+            (person_id, nombre, now),
         )

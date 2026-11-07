@@ -224,6 +224,7 @@ CREATE TABLE IF NOT EXISTS plan (
 CREATE TABLE IF NOT EXISTS ajuste_agente (
     person_id  INTEGER PRIMARY KEY REFERENCES person(id),
     nivel_datos TEXT NOT NULL DEFAULT 'completo' CHECK (nivel_datos IN ('completo', 'resumen', 'ninguno')),
+    proveedor  TEXT,
     updated_at TEXT NOT NULL
 );
 
@@ -432,6 +433,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     scols = {r[1] for r in conn.execute("PRAGMA table_info(shift)")}
     if scols and "batch_id" not in scols:
         conn.execute("ALTER TABLE shift ADD COLUMN batch_id INTEGER REFERENCES shift_batch(id)")
+    acols = {r[1] for r in conn.execute("PRAGMA table_info(ajuste_agente)")}
+    if acols and "proveedor" not in acols:
+        conn.execute("ALTER TABLE ajuste_agente ADD COLUMN proveedor TEXT")
     # Closes the gap the PK leaves open: SQLite treats each NULL start_local as distinct, so two off-day
     # rows for the same person and day do not collide on the primary key alone (BODY-TURNOS-IMPORT-OBS-1).
     # Never a DELETE here: on IntegrityError the table is left untouched and the missing index is reported

@@ -31,9 +31,12 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from . import ajustes
+
 ANTHROPIC_VERSION = "2023-06-01"
 PROVEEDOR_DEFAULT = "anthropic"
 MODELO_DEFAULT = "claude-sonnet-5-5"
+ORDEN_PROVEEDORES = ("anthropic", "openai", "gemini")
 
 _logger = logging.getLogger("body.agente.cliente")
 
@@ -48,6 +51,7 @@ class LlamadaHerramienta:
     id: str
     nombre: str
     parametros: dict
+    firma: str | None = None  # Gemini's thoughtSignature, carried raw; other providers never set it.
 
 
 @dataclass(frozen=True)
@@ -158,59 +162,58 @@ class Anthropic(Proveedor):
         return _desde_anthropic(self._transporte(payload))
 
 
-# ---- OpenAI (Chat Completions API) -----------------------------------------------------------
+# ---- OpenAI (Responses API, house shape -- duna-lotes-api agente/proveedores/openai.py) -------
 
-def _mensajes_openai(mensajes: list[dict]) -> list[dict]:
-    out = []
+def _items_openai(mensajes: list[dict]) -> list[dict]:
+    items = []
     for m in mensajes:
-        resultados = [b for b in m["bloques"] if b["tipo"] == "resultado_herramienta"]
-        if resultados:
-            for b in resultados:
-                out.append({"role": "tool", "tool_call_id": b["id"], "content": _texto_resultado(b)})
-            continue
-        texto = "".join(b["texto"] for b in m["bloques"] if b["tipo"] == "texto")
-        if m["rol"] == "usuario":
-            out.append({"role": "user", "content": texto})
-            continue
-        llamadas = [b for b in m["bloques"] if b["tipo"] == "llamada_herramienta"]
-        msg = {"role": "assistant", "content": texto or None}
-        if llamadas:
-            msg["tool_calls"] = [
-                {"id": l["id"], "type": "function",
-                 "function": {"name": l["nombre"], "arguments": json.dumps(l["parametros"], ensure_ascii=False)}}
-                for l in llamadas
-            ]
-        out.append(msg)
-    return out
+        for b in m["bloques"]:
+            if b["tipo"] == "texto":
+                if not b["texto"]:
+                    continue
+                if m["rol"] == "usuario":
+                    items.append({"role": "user", "content": [{"type": "input_text", "text": b["texto"]}]})
+                else:
+                    items.append({"role": "assistant", "content": [{"type": "output_text", "text": b["texto"]}]})
+            elif b["tipo"] == "llamada_herramienta":
+                items.append({"type": "function_call", "call_id": b["id"], "name": b["nombre"],
+                              "arguments": json.dumps(b["parametros"], ensure_ascii=False)})
+            elif b["tipo"] == "resultado_herramienta":
+                items.append({"type": "function_call_output", "call_id": b["id"], "output": _texto_resultado(b)})
+    return items
 
 
 def _herramientas_openai(herramientas: list[dict]) -> list[dict]:
-    return [{"type": "function", "function": {"name": h["nombre"], "description": h["descripcion"],
-                                               "parameters": h["parametros"]}} for h in herramientas]
+    return [{"type": "function", "name": h["nombre"], "description": h["descripcion"],
+             "parameters": h["parametros"]} for h in herramientas]
 
 
 def _desde_openai(data: dict) -> Respuesta:
-    choice = data["choices"][0]
-    msg = choice.get("message") or {}
     bloques = []
-    if msg.get("content"):
-        bloques.append(BloqueTexto(msg["content"]))
-    for tc in msg.get("tool_calls") or []:
-        try:
-            args = json.loads(tc["function"]["arguments"])
-        except (TypeError, json.JSONDecodeError):
-            args = {}
-        bloques.append(LlamadaHerramienta(tc["id"], tc["function"]["name"], args))
+    for item in data.get("output", []):
+        tipo = item.get("type")
+        if tipo == "message":
+            for c in item.get("content", []):
+                if c.get("type") == "output_text":
+                    bloques.append(BloqueTexto(c.get("text", "")))
+        elif tipo == "function_call":
+            try:
+                args = json.loads(item.get("arguments") or "{}")
+            except (TypeError, json.JSONDecodeError):
+                args = {}
+            bloques.append(LlamadaHerramienta(item["call_id"], item["name"], args))
     u = data.get("usage") or {}
-    cacheados = ((u.get("prompt_tokens_details") or {}).get("cached_tokens", 0)) or 0
-    prompt = u.get("prompt_tokens", 0) or 0
-    uso = Uso(entrada=max(prompt - cacheados, 0), salida=u.get("completion_tokens", 0) or 0,
+    cacheados = ((u.get("input_tokens_details") or {}).get("cached_tokens", 0)) or 0
+    entrada = u.get("input_tokens", 0) or 0
+    uso = Uso(entrada=max(entrada - cacheados, 0), salida=u.get("output_tokens", 0) or 0,
               cache_lectura=cacheados, cache_escritura=0)
-    return Respuesta(bloques=bloques, motivo_fin=choice.get("finish_reason") or "", uso=uso)
+    incompleta = data.get("incomplete_details")
+    motivo_fin = incompleta.get("reason") or "incompleta" if incompleta else "completed"
+    return Respuesta(bloques=bloques, motivo_fin=motivo_fin, uso=uso)
 
 
 class OpenAI(Proveedor):
-    URL = "https://api.openai.com/v1/chat/completions"
+    URL = "https://api.openai.com/v1/responses"
 
     def __init__(self, modelo: str, api_key: str, transporte=None):
         self.modelo = modelo
@@ -231,8 +234,8 @@ class OpenAI(Proveedor):
             raise ProveedorError(type(e).__name__) from None
 
     def responder(self, sistema: str, mensajes: list[dict], herramientas: list[dict]) -> Respuesta:
-        payload = {"model": self.modelo,
-                   "messages": [{"role": "system", "content": sistema}] + _mensajes_openai(mensajes)}
+        payload = {"model": self.modelo, "instructions": sistema, "input": _items_openai(mensajes),
+                   "store": False}
         if herramientas:
             payload["tools"] = _herramientas_openai(herramientas)
         return _desde_openai(self._transporte(payload))
@@ -247,7 +250,11 @@ def _partes_gemini(bloques: list[dict]) -> list[dict]:
             if b["texto"]:
                 partes.append({"text": b["texto"]})
         elif b["tipo"] == "llamada_herramienta":
-            partes.append({"functionCall": {"name": b["nombre"], "args": b["parametros"]}})
+            parte = {"functionCall": {"name": b["nombre"], "args": b["parametros"]}}
+            firma = b.get("firma")
+            if firma is not None:
+                parte["thoughtSignature"] = firma
+            partes.append(parte)
         elif b["tipo"] == "resultado_herramienta":
             respuesta = {"error": b["error"]} if "error" in b else {"resultado": b["resultado"]}
             partes.append({"functionResponse": {"name": b["nombre"], "response": respuesta}})
@@ -277,7 +284,8 @@ def _desde_gemini(data: dict) -> Respuesta:
             bloques.append(BloqueTexto(parte["text"]))
         elif "functionCall" in parte:
             fc = parte["functionCall"]
-            bloques.append(LlamadaHerramienta(fc["name"], fc["name"], fc.get("args") or {}))
+            bloques.append(LlamadaHerramienta(fc["name"], fc["name"], fc.get("args") or {},
+                                              firma=parte.get("thoughtSignature")))
     meta = data.get("usageMetadata") or {}
     cacheados = meta.get("cachedContentTokenCount", 0) or 0
     prompt = meta.get("promptTokenCount", 0) or 0
@@ -358,28 +366,57 @@ class Demo(Proveedor):
         return Respuesta(bloques=[BloqueTexto(_DEMO_RESPUESTA)], motivo_fin="end_turn", uso=Uso())
 
 
-# ---- selection by env (BODY-ASISTENTE-PROVEEDOR-1 decision 1) -------------------------------
+# ---- selection across every configured provider (BODY-ASISTENTE-PROVEEDORES-1 decision 1/2) --
+
+def _modelo_anthropic() -> str:
+    return os.environ.get("BODY_AGENTE_MODELO_ANTHROPIC") or os.environ.get("BODY_AGENTE_MODELO") or MODELO_DEFAULT
+
 
 _FABRICAS = {
-    "anthropic": (Anthropic, "BODY_AGENTE_ANTHROPIC_API_KEY"),
-    "openai": (OpenAI, "BODY_AGENTE_OPENAI_API_KEY"),
-    "gemini": (Gemini, "BODY_AGENTE_GEMINI_API_KEY"),
+    "anthropic": (Anthropic, "BODY_AGENTE_ANTHROPIC_API_KEY", _modelo_anthropic),
+    "openai": (OpenAI, "BODY_AGENTE_OPENAI_API_KEY", lambda: os.environ.get("BODY_AGENTE_MODELO_OPENAI")),
+    "gemini": (Gemini, "BODY_AGENTE_GEMINI_API_KEY", lambda: os.environ.get("BODY_AGENTE_MODELO_GEMINI")),
 }
 
 
-def proveedor_configurado() -> Proveedor | None:
-    """None when the selected provider has no API key configured -- the assistant is then "not
-    configured" (web.py answers with the `no_configurado` SSE error). The app still starts either
-    way: nothing here raises for a missing key."""
-    nombre = os.environ.get("BODY_AGENTE_PROVEEDOR", PROVEEDOR_DEFAULT)
-    if nombre == "demo":
+def proveedores_configurados() -> dict[str, Proveedor]:
+    """Every provider whose API key AND model are both set, keyed by name, anthropic/openai/gemini
+    order. `demo` never appears here -- it is selected only by BODY_AGENTE_PROVEEDOR=demo,
+    exclusively (decision 1)."""
+    out: dict[str, Proveedor] = {}
+    for nombre in ORDEN_PROVEEDORES:
+        clase, var_key, modelo_fn = _FABRICAS[nombre]
+        api_key = os.environ.get(var_key)
+        modelo = modelo_fn()
+        if api_key and modelo:
+            out[nombre] = clase(modelo, api_key)
+    return out
+
+
+def nombre_elegido(disponibles: dict, conn=None, person_id: int | None = None) -> str | None:
+    """The provider name that would answer right now (decision 2): the person's stored choice if
+    it is configured; else BODY_AGENTE_PROVEEDOR if configured; else the first configured, in
+    anthropic/openai/gemini order; else None."""
+    if conn is not None and person_id is not None:
+        elegido = ajustes.proveedor(conn, person_id)
+        if elegido in disponibles:
+            return elegido
+    nombre_env = os.environ.get("BODY_AGENTE_PROVEEDOR", PROVEEDOR_DEFAULT)
+    if nombre_env in disponibles:
+        return nombre_env
+    for nombre in ORDEN_PROVEEDORES:
+        if nombre in disponibles:
+            return nombre
+    return None
+
+
+def proveedor_configurado(conn=None, person_id: int | None = None) -> Proveedor | None:
+    """None when nothing is configured -- the assistant is then "not configured" (web.py answers
+    with the `no_configurado` SSE error). The app still starts either way: nothing here raises for
+    a missing key."""
+    nombre_env = os.environ.get("BODY_AGENTE_PROVEEDOR", PROVEEDOR_DEFAULT)
+    if nombre_env == "demo":
         return Demo()
-    entrada = _FABRICAS.get(nombre)
-    if entrada is None:
-        return None
-    clase, var_key = entrada
-    api_key = os.environ.get(var_key)
-    if not api_key:
-        return None
-    modelo = os.environ.get("BODY_AGENTE_MODELO", MODELO_DEFAULT)
-    return clase(modelo, api_key)
+    disponibles = proveedores_configurados()
+    nombre = nombre_elegido(disponibles, conn, person_id)
+    return disponibles.get(nombre) if nombre else None

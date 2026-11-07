@@ -74,22 +74,22 @@ class AnthropicAdapterTest(unittest.TestCase):
 
 class OpenAiAdapterTest(unittest.TestCase):
     def test_prompt_tokens_including_cached_is_normalised_to_disjoint_counts(self):
+        # House shape (duna-lotes-api agente/proveedores/openai.py): /v1/responses, usage under
+        # input_tokens/input_tokens_details.cached_tokens, not the old chat-completions shape.
         data = {
-            "choices": [{"message": {"role": "assistant", "content": "Listo."}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 500, "completion_tokens": 20,
-                      "prompt_tokens_details": {"cached_tokens": 400}},
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": "Listo."}]}],
+            "usage": {"input_tokens": 500, "output_tokens": 20,
+                      "input_tokens_details": {"cached_tokens": 400}},
         }
         prov = cliente.OpenAI("gpt-x", "sk-fake", transporte=lambda payload: data)
         resp = prov.responder("sis", [{"rol": "usuario", "bloques": [{"tipo": "texto", "texto": "hola"}]}], [])
-        # OpenAI's prompt_tokens (500) INCLUDES the 400 cached tokens -- entrada excludes them.
+        # OpenAI's input_tokens (500) INCLUDES the 400 cached tokens -- entrada excludes them.
         self.assertEqual(resp.uso, cliente.Uso(entrada=100, salida=20, cache_lectura=400, cache_escritura=0))
 
     def test_tool_call_is_mapped_to_a_llamada_herramienta(self):
         data = {
-            "choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [
-                {"id": "call_9", "type": "function",
-                 "function": {"name": "leer_turnos", "arguments": "{}"}}]}, "finish_reason": "tool_calls"}],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            "output": [{"type": "function_call", "call_id": "call_9", "name": "leer_turnos", "arguments": "{}"}],
+            "usage": {"input_tokens": 10, "output_tokens": 5},
         }
         prov = cliente.OpenAI("gpt-x", "sk-fake", transporte=lambda payload: data)
         resp = prov.responder("sis", [{"rol": "usuario", "bloques": [{"tipo": "texto", "texto": "x"}]}], [])
@@ -117,28 +117,34 @@ class GeminiAdapterTest(unittest.TestCase):
         self.assertEqual(resp.bloques, [cliente.LlamadaHerramienta("leer_ajustes", "leer_ajustes", {})])
 
 
+_ENV_PROVEEDORES = ("BODY_AGENTE_PROVEEDOR", "BODY_AGENTE_MODELO", "BODY_AGENTE_ANTHROPIC_API_KEY",
+                    "BODY_AGENTE_MODELO_ANTHROPIC", "BODY_AGENTE_OPENAI_API_KEY", "BODY_AGENTE_MODELO_OPENAI",
+                    "BODY_AGENTE_GEMINI_API_KEY", "BODY_AGENTE_MODELO_GEMINI")
+
+
 class ProveedorConfiguradoTest(unittest.TestCase):
     def setUp(self):
-        self.addCleanup(_borrar_env("BODY_AGENTE_PROVEEDOR", "BODY_AGENTE_MODELO",
-                                    "BODY_AGENTE_ANTHROPIC_API_KEY", "BODY_AGENTE_OPENAI_API_KEY",
-                                    "BODY_AGENTE_GEMINI_API_KEY"))
-        for n in ("BODY_AGENTE_PROVEEDOR", "BODY_AGENTE_MODELO", "BODY_AGENTE_ANTHROPIC_API_KEY",
-                 "BODY_AGENTE_OPENAI_API_KEY", "BODY_AGENTE_GEMINI_API_KEY"):
+        self.addCleanup(_borrar_env(*_ENV_PROVEEDORES))
+        for n in _ENV_PROVEEDORES:
             os.environ.pop(n, None)
 
     def test_no_key_is_not_configured(self):
         self.assertIsNone(cliente.proveedor_configurado())
 
     def test_anthropic_key_configures_the_default_provider(self):
+        # BODY-ASISTENTE-PROVEEDORES-1 decision 1: anthropic keeps working with no model env var
+        # at all, falling back to MODELO_DEFAULT -- today's config keeps working unchanged.
         os.environ["BODY_AGENTE_ANTHROPIC_API_KEY"] = "sk-fake"
         prov = cliente.proveedor_configurado()
         self.assertIsInstance(prov, cliente.Anthropic)
 
-    def test_openai_selected_by_env_needs_its_own_key(self):
+    def test_openai_selected_by_env_needs_its_own_key_and_model(self):
         os.environ["BODY_AGENTE_PROVEEDOR"] = "openai"
-        os.environ["BODY_AGENTE_ANTHROPIC_API_KEY"] = "sk-fake"  # the wrong provider's key
-        self.assertIsNone(cliente.proveedor_configurado())
+        self.assertIsNone(cliente.proveedor_configurado())  # nothing configured at all
         os.environ["BODY_AGENTE_OPENAI_API_KEY"] = "sk-fake-openai"
+        # Key alone is not enough for openai/gemini (decision 1): no invented model default.
+        self.assertIsNone(cliente.proveedor_configurado())
+        os.environ["BODY_AGENTE_MODELO_OPENAI"] = "gpt-x"
         self.assertIsInstance(cliente.proveedor_configurado(), cliente.OpenAI)
 
 

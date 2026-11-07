@@ -15,6 +15,15 @@
     <p class="read" style="margin:4px 0 0">{{ t('ajustes.asistente.opcion.ninguno.desc') }}</p>
   </div>
   <p class="note">{{ t('ajustes.asistente.nota') }}</p>
+  {% if proveedores %}
+  <div class="card" style="margin-top:16px">
+    <p style="margin:0 0 8px"><strong>{{ t('ajustes.asistente.proveedor.titulo') }}</strong></p>
+    {% for p in proveedores %}
+    <label class="radio"><input type="radio" name="proveedor" value="{{ p.nombre }}" {% if p.nombre == proveedor_actual %}checked{% endif %}> {{ p.etiqueta }}</label>
+    {% endfor %}
+    <p class="note" style="margin:8px 0 0">{{ t('ajustes.asistente.proveedor.nota') }}</p>
+  </div>
+  {% endif %}
   <button type="submit" class="btn on" style="width:100%;margin-top:4px">{{ t('ajustes.asistente.guardar') }}</button>
 </form>
 {% endblock %}
