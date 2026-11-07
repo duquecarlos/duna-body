@@ -2514,3 +2514,25 @@ Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run once, fo
 tests, OK (1 skipped, pre-existing).
 
 Branch: `feat/body-vo2max-1`, not merged. Awaiting review of the new customer-facing strings and cards.
+
+## BODY-VO2MAX-1-M -- land BODY-VO2MAX-1 (2026-11-07)
+
+BODY-VO2MAX-1 stopped on `feat/body-vo2max-1` (branch tip `ba05eb361a54916da70803d8e637bac314354c07`)
+AWAITING_APPROVAL, tripping merge policy A's customer-facing-bytes condition (three new metric labels, three new
+Tendencias cards, the sparse-data note, the longer goal-form metric list, in both languages), per the GATE section
+of its own spec. This slice carries no code change: approved by the orchestrator under
+`ORCH-CARLOS-DELEGATES-TIER-1-1` after review of the adapter change and the new texts -- one more call inside the
+existing per-call try/except; pure defensive parsing of list- or dict-shaped max-metrics (the response shape is
+unconfirmed by the installed `garminconnect` package and stays unconfirmed until the first real pull); three generic
+catalogue rows; plain es/en texts including the sparse-data note; the assistant trends enum widened by two of the
+three metrics, as specced -- approved as written, no fixes.
+
+`main` had not moved since the branch was cut: `git merge-base feat/body-vo2max-1 main` and `git rev-parse main`
+both read `b901d4c2cb673c2492c6a2f58c3cf211a26105f0`, matching the branch's recorded base, so no merge-forward was
+needed.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 527 tests, OK (1 skipped, pre-existing), run
+once on the branch tip before this merge.
+
+Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-vo2max-1` into `main` following this
+entry.
