@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # body-backup.sh -- Body's off-host backup (host-deploy-v1-amendment-sensitive-data rule 3,
 # BODY-HOSTING-PLAN-1 step 8b). Called by duna-deploy-body backup [--dry-run]; runs as root, the
-# snapshot itself as duna-body via runuser. Encrypts to Carlos's age public key, uploads to R2
-# bucket duna-respaldo under body/, then deletes every local plaintext and encrypted copy.
+# snapshot itself as duna-body via runuser. Encrypts to the configured age public key, uploads to
+# R2 bucket duna-respaldo under body/, then deletes every local plaintext and encrypted copy.
 set -Eeuo pipefail
 
 if [[ "${EUID}" -ne 0 ]]; then
@@ -38,12 +38,14 @@ run() {
   fi
 }
 
-for bin_name in age curl; do
-  if ! command -v "$bin_name" >/dev/null 2>&1; then
-    echo "body-backup.sh: $bin_name is missing: run once on the host: sudo apt install $bin_name" >&2
-    exit 1
-  fi
-done
+if ! command -v age >/dev/null 2>&1; then
+  echo "body-backup.sh: age is missing: run once on the host: sudo apt install age" >&2
+  exit 1
+fi
+if ! command -v curl >/dev/null 2>&1; then
+  echo "body-backup.sh: curl is missing: run once on the host: sudo apt install curl" >&2
+  exit 1
+fi
 
 # Reads exactly these five names from $ENV_FILE by parsing KEY=value lines -- never `source`s or
 # `cat`s the file, and never prints a value, so a secret never reaches stdout/stderr or any log.

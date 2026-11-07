@@ -25,6 +25,7 @@ def _table_counts(path) -> dict:
 
 class SnapshotTest(unittest.TestCase):
     def setUp(self):
+        self._orig_home, self._orig_db = config.BODY_HOME, config.DB_PATH
         self.tmp = Path(tempfile.mkdtemp(prefix="body-backup-test-"))
         config.BODY_HOME = self.tmp
         config.DB_PATH = self.tmp / "body.db"
@@ -34,6 +35,9 @@ class SnapshotTest(unittest.TestCase):
         db.set_metric(conn, "2026-11-02", "resting_hr", 56, "garmin", 1)
         conn.commit()
         conn.close()
+
+    def tearDown(self):
+        config.BODY_HOME, config.DB_PATH = self._orig_home, self._orig_db
 
     def test_snapshot_matches_source_tables_and_counts(self):
         out_path = self.tmp / "snap.sqlite"
@@ -65,6 +69,7 @@ class SnapshotTest(unittest.TestCase):
 
 class CheckTest(unittest.TestCase):
     def setUp(self):
+        self._orig_home, self._orig_db = config.BODY_HOME, config.DB_PATH
         self.tmp = Path(tempfile.mkdtemp(prefix="body-backup-check-"))
         config.BODY_HOME = self.tmp
         config.DB_PATH = self.tmp / "body.db"
@@ -73,6 +78,9 @@ class CheckTest(unittest.TestCase):
         db.set_metric(conn, "2026-11-01", "resting_hr", 55, "garmin", 1)
         conn.commit()
         conn.close()
+
+    def tearDown(self):
+        config.BODY_HOME, config.DB_PATH = self._orig_home, self._orig_db
 
     def test_check_ok_prints_counts_not_values(self):
         snap_path = self.tmp / "snap.sqlite"
