@@ -1027,3 +1027,57 @@ page's text, `"Internal Server Error"`, is byte-for-byte what Starlette's own `S
 returned for an unhandled exception with no custom handler registered; no template, no i18n string and no 200-path
 screen changed), and no cross-repo contract change (nothing here is read by another repository). All three of
 merge policy A's conditions pass, so this merges on green without a separate approval step.
+
+## BODY-CUENTA-SCHEMA-1 -- schema half of Cuenta Duna sign-in (2026-11-06)
+
+Additive only, no existing row changes. `body/db.py`: a nullable `person.cuenta_sub` TEXT column, added by
+`_migrate` when missing (same guarded-`ALTER TABLE` pattern as `language` and `batch_id` before it), plus a
+partial unique index `person_cuenta_sub` on `person(cuenta_sub) WHERE cuenta_sub IS NOT NULL` (created with
+`CREATE UNIQUE INDEX IF NOT EXISTS` on every `_migrate` run, so the many NULLs before anyone signs in through
+Cuenta never collide). Three new tables: `sesion` (a signed-in session, keyed by `id_hash` -- a hash of the
+session token, never the token itself -- with `person_id REFERENCES person(id)`, `cuenta_sid` for back-channel
+logout lookups, and `created_at`/`last_seen_at`/`expires_at`, indexed on `cuenta_sid` and `person_id`);
+`inicio_sesion` (one short-lived, single-use sign-in attempt, keyed by `state_hash` -- a hash of OAuth `state`,
+never `state` itself -- carrying `nonce`, `code_verifier`, `return_to`, `created_at`); `consentimiento` (one
+accepted consent-text version per person, `UNIQUE (person_id, version)`, `person_id REFERENCES person(id)`). No
+sign-in code lands here -- BODY-CUENTA-RP-1 follows.
+
+**Tests**: `tests/test_cuenta_schema.py` (new, 9 tests, `_isolate` first, invented demo data): a fresh install
+has the column, the partial index and all three tables, and `init()` run twice is idempotent (person/metric_def
+row counts unchanged); a DB built from the pre-slice schema (today's `SCHEMA` with the three new tables
+dropped, since `person`'s own `CREATE TABLE` text never defined `cuenta_sub`) migrates cleanly through
+`_migrate`; `cuenta_sub` uniqueness (two persons both NULL coexist; a second person cannot take an
+already-used `cuenta_sub`); `consentimiento`'s `(person, version)` uniqueness; the `sesion` -> `person` foreign
+key.
+
+Gate run by the slice itself: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 174 tests, 1 failure
+in `tests/test_request_log.py`
+(`GetRequestLogTest.test_goal_detail_route_logs_template_not_the_id_or_query_string`), unrelated to this diff: a
+pre-existing, timing-dependent weak assertion in `BODY-REQUEST-LOG-SCRUB-1`'s own test (`assertNotIn(str(gid),
+msg)` checks the whole log line, which also carries the duration in ms, so it false-fails whenever that
+duration's digits contain gid's digit, and `gid` is always `1` in that test's fresh db). The slice did not
+merge and did not write this entry itself, stopping GATE_RED per the dev-protocol slice contract;
+BODY-CUENTA-SCHEMA-1-M below records the orchestrator's review, the test fix and the merge.
+
+## BODY-CUENTA-SCHEMA-1-M -- lands BODY-CUENTA-SCHEMA-1, fixes the request-log test's weak assertion (2026-11-06)
+
+Approved by the orchestrator under ORCH-CARLOS-DELEGATES-TIER-1-1 after reviewing the branch: `body/db.py`'s
+additions are exactly as BODY-CUENTA-SCHEMA-1 above decided, additive, no existing row changes. The one gate
+failure was `tests/test_request_log.py`'s goal-detail case asserting `str(goal_id)` -- `"1"` -- absent from the
+whole log line, which also contains the duration in ms, so it fails whenever the duration contains a `1`; the
+orchestrator's own spec (BODY-REQUEST-LOG-SCRUB-1) wrote that weak check. The request-log test's weak assertion
+fixed: `tests/test_request_log.py`'s goal-detail case now splits the logged line on whitespace and asserts the
+path field equals `/goals/{goal_id}` exactly, in place of `assertNotIn(str(gid), msg)` -- stronger (still fails
+if the raw id were logged as the path) and timing-free. The query-value check (`assertNotIn(SECRET_QUERY_VALUE,
+msg)`) is unchanged. No other case in that file has the same weak pattern: the other asserted-absent values
+(`SECRET_DAY`, `SECRET_FORM_VALUE`) are a dashed date and a decimal, neither of which can appear inside the
+`\d+ms` duration field or the `\d{3}` status field.
+
+`main` had not moved since the branch was cut: `git merge-base feat/body-cuenta-schema-1 main` and `git
+rev-parse main` both resolved to `9208038d7d77175f4602c35d183e5894233f017c`, so no merge of `main` into the
+branch was needed.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 174 tests, OK, run once on the branch tip
+before merging.
+
+Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-cuenta-schema-1` into `main`.
