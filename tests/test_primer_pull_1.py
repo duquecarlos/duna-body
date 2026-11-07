@@ -7,6 +7,7 @@ import contextlib
 import io
 import os
 import tempfile
+import threading
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
@@ -127,6 +128,37 @@ class BackfillWindowTest(unittest.TestCase):
         self.assertEqual((ok, failed, saved), (0, 0, 0))
         m.assert_not_called()
 
+    def test_person_with_a_recorded_error_is_skipped_without_an_adapter_call(self):
+        """A rejected or expired token must not be retried every 10 minutes (risks Garmin
+        rate-limiting). Another connected person in the same run is unaffected."""
+        garmin_cuenta.guardar(self.conn, 1, "tok-bad")
+        garmin_cuenta.registrar_error(self.conn, 1, "GarminAuthError")
+        garmin_cuenta.guardar(self.conn, 2, "tok-good")
+        calls: list[str] = []
+        with mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_stub_fetch_day(calls=calls)):
+            ok, failed, saved = pull.pull_backfill_hosted(self.conn, hoy=HOY)
+        self.assertEqual((ok, failed, saved), (1, 0, 15))  # only person 2
+        self.assertEqual(calls, _offsets(1, 15))  # person 1 never asked
+        self.assertIsNone(garmin_cuenta.marcador_backfill(self.conn, 1))
+        self.assertEqual(garmin_cuenta.marcador_backfill(self.conn, 2), calls[-1])
+        self.assertEqual(garmin_cuenta.ultimo_error(self.conn, 1), "GarminAuthError")  # unchanged
+
+    def test_backfill_resumes_once_a_reconnect_clears_the_recorded_error(self):
+        garmin_cuenta.guardar(self.conn, 1, "tok-bad")
+        garmin_cuenta.registrar_error(self.conn, 1, "GarminAuthError")
+        with mock.patch("body.pull.garmin_adapter.fetch_day") as m:
+            ok, failed, saved = pull.pull_backfill_hosted(self.conn, hoy=HOY)
+        self.assertEqual((ok, failed, saved), (0, 0, 0))
+        m.assert_not_called()
+
+        garmin_cuenta.guardar(self.conn, 1, "tok-new")  # a reconnect clears ultimo_error
+        self.assertIsNone(garmin_cuenta.ultimo_error(self.conn, 1))
+        calls: list[str] = []
+        with mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_stub_fetch_day(calls=calls)):
+            ok, failed, saved = pull.pull_backfill_hosted(self.conn, hoy=HOY)
+        self.assertEqual((ok, failed, saved), (1, 0, 15))
+        self.assertEqual(calls, _offsets(1, 15))
+
 
 class LockTest(unittest.TestCase):
     """The non-blocking file lock body/pull.py's daily hosted pull and --backfill both take."""
@@ -155,14 +187,34 @@ class LockTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         m.assert_not_called()
 
-    def test_held_lock_makes_the_daily_hosted_pull_exit_0_with_zero_adapter_calls(self):
+    def test_held_lock_makes_the_daily_hosted_pull_wait_then_exit_0_once_the_bound_elapses(self):
+        """The daily pull runs once a day, so a held lock must not make it skip immediately --
+        it waits up to LOCK_ESPERA_S (patched short here) before giving up the same way."""
         held = pull._try_lock()
         self.addCleanup(pull._unlock, held)
         garmin_cuenta.guardar(self.conn, 1, "tok-a")
-        with mock.patch("body.pull.garmin_adapter.fetch_day") as m:
-            rc = pull.main([])
+        buf = io.StringIO()
+        with mock.patch("body.pull.LOCK_ESPERA_S", 0.2), \
+             mock.patch("body.pull.LOCK_SONDEO_S", 0.05), \
+             mock.patch("body.pull.garmin_adapter.fetch_day") as m:
+            with contextlib.redirect_stdout(buf):
+                rc = pull.main([])
         self.assertEqual(rc, 0)
         m.assert_not_called()
+        self.assertIn("another pull is already running", buf.getvalue())
+
+    def test_daily_hosted_pull_waits_for_the_lock_then_completes_once_it_is_released(self):
+        held = pull._try_lock()
+        timer = threading.Timer(0.2, pull._unlock, args=(held,))
+        timer.start()
+        self.addCleanup(timer.cancel)
+        garmin_cuenta.guardar(self.conn, 1, "tok-a")
+        with mock.patch("body.pull.LOCK_ESPERA_S", 5), \
+             mock.patch("body.pull.LOCK_SONDEO_S", 0.05), \
+             mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_stub_fetch_day()) as m:
+            rc = pull.main(["--days", "1"])
+        self.assertEqual(rc, 0)
+        m.assert_called()
 
     def test_daily_hosted_pull_also_takes_the_lock(self):
         """Proven from the inside: while the daily pull's own adapter call is in flight, a second

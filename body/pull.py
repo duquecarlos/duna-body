@@ -9,8 +9,11 @@
                                         # newest first, toward the 90-day window (BODY-PRIMER-PULL-1)
     python -m body.pull --recompute     # only recompute readiness for every stored day
 
-The daily hosted pull and --backfill share a non-blocking file lock under BODY_HOME (`pull.lock`)
-so only one runs at a time; the other exits 0 quietly and the systemd timer tries again.
+The daily hosted pull and --backfill share a file lock under BODY_HOME (`pull.lock`) so only one
+runs at a time. --backfill takes it non-blocking and exits 0 quietly if the daily pull holds it --
+the backfill timer runs every 10 minutes, so skipping one run is harmless. The daily hosted pull
+runs once a day, so it WAITS for the lock (up to LOCK_ESPERA_S) if a backfill holds it, and only
+after that bound exits 0 with the same skip line.
 """
 import argparse
 import os
@@ -25,6 +28,8 @@ PAUSE_S = 1.0  # be gentle with Garmin's servers during a backfill
 EMPTY_STOP = 60  # --all stops after this many consecutive days with no watch data
 BACKFILL_DIAS = 90  # --backfill's window: the 90 days before today
 BACKFILL_PASO = 15  # at most this many days fetched per person per --backfill run
+LOCK_ESPERA_S = 1800  # the daily hosted pull's bound while it waits for a backfill holding the lock
+LOCK_SONDEO_S = 5  # how often it retries the non-blocking lock while waiting
 
 
 def _lock_path() -> Path:
@@ -50,6 +55,21 @@ def _try_lock():
         f.close()
         return None
     return f
+
+
+def _esperar_lock(max_s: float):
+    """Polls _try_lock() every LOCK_SONDEO_S seconds until it succeeds or max_s has elapsed.
+    Used by the daily hosted pull, which runs once a day (OnCalendar 09:30) and must not lose
+    that day's run to a backfill holding the lock; --backfill keeps the plain non-blocking
+    _try_lock(), since it runs every 10 minutes and skipping one run is harmless."""
+    deadline = time.monotonic() + max_s
+    while True:
+        lock = _try_lock()
+        if lock is not None:
+            return lock
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(LOCK_SONDEO_S)
 
 
 def _unlock(f) -> None:
@@ -198,11 +218,18 @@ def _backfill_one_person(conn, person_id: int, hoy: date) -> int | None:
 def pull_backfill_hosted(conn, hoy: date | None = None) -> tuple[int, int, int]:
     """Loops over every person with a connected Garmin account whose backfill marker has not yet
     reached the 90-day window's start, fetching up to BACKFILL_PASO more days each (newest first).
-    A person already complete, or not connected, costs no Garmin call. Returns (persons ok,
-    persons failed, days stored). Never prints a health figure -- counts only."""
+    A person already complete, or not connected, costs no Garmin call. A person whose last pull
+    recorded an error (a rejected or expired token, Garmin down, anything) is also skipped, with
+    no Garmin call and not counted as failed -- otherwise the backfill timer would retry a
+    rejected token every 10 minutes and risk Garmin rate-limiting the account. The daily pull
+    still tries them once a day and clears the error on success, which lets the backfill resume;
+    a reconnect (garmin_cuenta.guardar) also clears it. Returns (persons ok, persons failed, days
+    stored). Never prints a health figure -- counts only."""
     hoy = hoy or date.today()
     ok = failed = saved = 0
     for person_id in garmin_cuenta.every_person_id(conn):
+        if garmin_cuenta.ultimo_error(conn, person_id) is not None:
+            continue
         try:
             n = _backfill_one_person(conn, person_id, hoy)
         except Exception as e:
@@ -239,7 +266,7 @@ def main(argv=None) -> int:
 
 def _run(conn, a) -> int:
     if cuenta.hosted():
-        lock = _try_lock()
+        lock = _try_lock() if a.backfill else _esperar_lock(LOCK_ESPERA_S)
         if lock is None:
             print("another pull is already running; skipping this run.", flush=True)
             return 0
