@@ -328,31 +328,34 @@ def main(argv: list[str] | None = None) -> None:
     entries.sort(key=lambda e: (e[1], e[2]))
 
     conn = db.connect()
-    db.init(conn)
-    person_id = a.person_id if a.person_id is not None else db.local_person_id(conn)
-    read = proposed = known = refused = 0
-    notes: list[str] = []
-    for f, received, extracted_at in entries:
-        read += 1
-        existed = bool(received and extracted_at and conn.execute(
-            "SELECT 1 FROM shift_batch WHERE person_id = ? AND file_name = ? AND received = ? AND extracted_at = ?",
-            (person_id, f.name, received, extracted_at),
-        ).fetchone())
-        try:
-            propose(conn, f, person_id)
-        except ImportRefused as e:
-            refused += 1
-            notes.append(str(e))
-            continue
-        if existed:
-            known += 1
-        else:
-            proposed += 1
+    try:
+        db.init(conn)
+        person_id = a.person_id if a.person_id is not None else db.local_person_id(conn)
+        read = proposed = known = refused = 0
+        notes: list[str] = []
+        for f, received, extracted_at in entries:
+            read += 1
+            existed = bool(received and extracted_at and conn.execute(
+                "SELECT 1 FROM shift_batch WHERE person_id = ? AND file_name = ? AND received = ? AND extracted_at = ?",
+                (person_id, f.name, received, extracted_at),
+            ).fetchone())
+            try:
+                propose(conn, f, person_id)
+            except ImportRefused as e:
+                refused += 1
+                notes.append(str(e))
+                continue
+            if existed:
+                known += 1
+            else:
+                proposed += 1
 
-    line = f"files read: {read}, batches proposed: {proposed}, already known: {known}, files refused: {refused}"
-    if notes:
-        line += " (" + "; ".join(notes) + ")"
-    print(line)
+        line = f"files read: {read}, batches proposed: {proposed}, already known: {known}, files refused: {refused}"
+        if notes:
+            line += " (" + "; ".join(notes) + ")"
+        print(line)
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":

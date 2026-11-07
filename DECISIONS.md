@@ -3752,3 +3752,63 @@ database connection, and that module is not in `touches:`), left alone.
 **Merge.** No schema or migration change, no customer-facing byte changed (every edit is a test-only close or
 one decorator line with no behavior change), no cross-repo contract change. Merge policy A's three conditions
 all clear, so this slice merges on green without waiting.
+
+## BODY-CONEXIONES-T1-1 -- close the last two unclosed connections in Tier 1: shift_import and vida_export's
+own `main()` (2026-11-07)
+
+Carrying out BODY-CONEXIONES-T1-OBS-1's plan (OBSERVED at `f625ac0`): of the four connection-opening sites left
+in Tier 1 modules, `db.py`'s is a factory (returns the connection, never owns it), `identity.py`'s two already
+close in a `finally`, and `shift_import.main()` / `vida_export.main()` never closed theirs. This slice closes
+both, and widens `pull.py`'s existing `try/finally` to cover `db.init(conn)` too (identity.py's pattern: open,
+then `try: init + work finally: close`, so a failure in `init()` itself still closes the connection).
+
+**The three sites.**
+
+1. `body/shift_import.py` `main()`: `conn = db.connect()` through the final `print(line)` now sits inside
+   `try: ... finally: conn.close()`, with `db.init(conn)` moved inside the `try`. Every commit point
+   (`propose()`'s own `with conn:`) and every printed line are byte-for-byte unchanged -- the new wrapping
+   only widens what runs under `finally`, it does not touch what runs.
+2. `body/vida_export.py` `main()`: the same shape, from `conn = db.connect()` through the write and `return 0`.
+   The early `return 1` for hosted mode and the early `return 1` for a non-Monday `--week` both happen before
+   `conn = db.connect()` and stay exactly where they were -- hosted mode never opens a connection at all, so
+   `tests/test_dispositivo.py`'s `VidaExportHostedRefusalTest` (asserting `BODY_HOME/vida` stays absent) needed
+   no change.
+3. `body/pull.py` `main()`: `db.init(conn)` moved from before the `try` to its first line, so a migration
+   failure inside `init()` -- not just a failure inside `_run()` -- now also closes the connection.
+
+**Tests**, `tests/test_conexiones_cerradas.py` (the existing guard module), one new `MainClosesConnectionTest`
+with two tests per module (six total): a happy-path run of each `main()` against the isolated test home,
+wrapped in `warnings.catch_warnings(record=True)` + `warnings.simplefilter("always", ResourceWarning)` +
+`gc.collect()`, asserting no `sqlite3.Connection` `ResourceWarning`; and a run where `db.init` is patched to
+raise, with `db.connect` patched to return a `_CloseRecorder` wrapper, asserting `.closed` is `True` even
+though the exception propagates out of `main()` uncaught. `shift_import.main()` is driven with
+`["--dir", <tmp folder with the existing turnos-demo-a.json fixture>, "--person-id", "1"]` (the same minimum
+arguments `ShiftImportCliTest` already uses); `vida_export.main()` with `["--week", "2026-11-02"]` (a Monday,
+local/non-hosted mode, no existing CLI test to copy from); `pull.main()` with `["--date", "2026-11-01"]` and
+`body.pull.garmin_adapter.fetch_day` stubbed to return an empty `DayData` (no network), the same stubbing style
+`test_garmin_host.py`'s hosted-pull tests already use. The existing `shift_import` and `vida_export` tests
+(output files, rows, printed counts) were not touched and still pass unchanged.
+
+**A gate ran red first, from this slice's own test, not from the three sites.** The first full-suite run
+failed one pre-existing test, `tests.test_dispositivo.VidaExportHostedRefusalTest.test_main_refuses_and_writes_
+nothing`, which asserts `config.BODY_HOME / "vida"` does not exist after a hosted-mode refusal. `BODY_HOME` is
+one directory shared by every test module in a single `unittest discover` process (set once, at import, by
+`tests/_isolate.py`), and the new `vida_export` happy-path test ran earlier in file order and had just created
+that same `vida/` directory by writing a real weekly file into it -- a test-isolation gap in the new test, not
+a defect in the three sites or in the refusal test. Fixed by giving that one test its own `config.BODY_HOME`
+for its duration (`tempfile.mkdtemp(dir=TMP)`, restored via `addCleanup`, the same pattern `test_pc_cliente.py`
+and `test_backup.py` already use for the same directory). The gate was then run once more on the corrected tree
+and not re-run again.
+
+**Gate**, run (twice, for the reason above) with the plain command: `.venv/Scripts/python.exe -m unittest
+discover tests -t .` -- first run: 756 tests, one failure (`VidaExportHostedRefusalTest`, above), `skipped=1`;
+second run, final tree: 756 tests, `OK (skipped=1)`.
+
+**Diagnostic** (not the gate), the same method the prior entry used:
+`.venv/Scripts/python.exe -X tracemalloc=5 -W always::ResourceWarning -m unittest discover tests -t .` -- before
+this slice (per BODY-CONEXIONES-CERRADAS-2's entry above) 1 occurrence of `ResourceWarning: unclosed database`,
+from `body/shift_import.py:330`; after this slice's change, on the final tree, 0 occurrences.
+
+**Merge.** No schema or migration change, no customer-facing byte changed (every edit is a `try/finally`
+widening with no printed line, file content or commit point changed; the rest is test-only), no cross-repo
+contract change. Merge policy A's three conditions all clear, so this slice merges on green without waiting.

@@ -121,14 +121,18 @@ def main(argv=None) -> int:
         print("--week must be a Monday")
         return 1
     conn = db.connect()
-    db.init(conn)
-    person_id = db.local_person_id(conn)
-    out_dir = config.BODY_HOME / "vida"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"body-week-{monday.isoformat()}.json"
-    path.write_text(json.dumps(week_section(conn, monday, person_id), ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"Wrote {path}")  # the path only; never the values
-    return 0
+    try:
+        db.init(conn)
+        person_id = db.local_person_id(conn)
+        out_dir = config.BODY_HOME / "vida"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / f"body-week-{monday.isoformat()}.json"
+        path.write_text(json.dumps(week_section(conn, monday, person_id), ensure_ascii=False, indent=2),
+                        encoding="utf-8")
+        print(f"Wrote {path}")  # the path only; never the values
+        return 0
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":
