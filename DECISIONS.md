@@ -3135,3 +3135,35 @@ autoescape renders its apostrophes as `&#39;`; fixed in the test, not the templa
 (`sesion.auth_time`, additive) and customer-facing bytes (the new `privacidad.html` lines and the three new
 `es`/`en` strings). Stopped clean on `feat/body-borrar-reauth-1`, `AWAITING_APPROVAL`, for the orchestrator to
 review before merging.
+
+## BODY-BORRAR-REAUTH-1-M -- lands BODY-BORRAR-REAUTH-1, with a future-`auth_time` defect fixed (2026-11-07)
+
+Under ORCH-CARLOS-DELEGATES-TIER-1-1, the orchestrator reviewed BODY-BORRAR-REAUTH-1's diff line by line and found
+one defect: `cuenta.reciente` compared only `age <= segundos`, so a negative age (an `auth_time` in the future --
+clock skew, or a malformed claim) counted as recent indefinitely, forever.
+
+* **Fix** (`body/cuenta.py`, `reciente`): the age (now minus `auth_time`, in seconds) must now satisfy
+  `-MARGEN_SEGUNDOS <= age <= segundos`, bounding it below by the same clock-skew allowance the ID-token
+  verification already uses (`MARGEN_SEGUNDOS = 60`), not just above. An `auth_time` more than that allowance in
+  the future is stale, same as one too far in the past.
+* **Tests** (`tests/test_borrar_reauth.py`, new `ReauthWindowBoundsTest`): builds a session row with a given
+  `auth_time` and calls `cuenta.reciente` with `body.cuenta.datetime.now` patched to a fixed instant, so the edge
+  cases land exactly on the second instead of drifting with how long the DB round-trip takes. Covers: `auth_time`
+  an hour in the future -> not recent; a few seconds in the future, within the clock-skew allowance -> recent;
+  exactly at the 600 s edge -> recent; one second past it -> not recent. (The first version of the last two tests
+  used real wall-clock time with no patch and was flaky -- see gate, below.)
+
+**Gate**: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run twice, foreground, on this slice's own
+tree before the merge (the command never changed). First run: **RED**, 663 tests, 1 failure, 1 pre-existing skip --
+`ReauthWindowBoundsTest.test_auth_time_exactly_at_the_600s_edge_is_recent`, timed against the real wall clock, lost
+its edge to the milliseconds the DB round-trip took. Fixed by patching `body.cuenta.datetime.now` to a fixed instant
+instead of using real time (described above). Second run: **green**, 663 tests, 1 pre-existing skip.
+
+`main` had not moved since the branch was cut (its tip was still the branch's own base, `4076955`), so no merge from
+`main` was needed. Merged `feat/body-borrar-reauth-1` into `main` with `--no-ff`; the merge is content-identical to
+the branch tip (empty `git diff` between them), so the gate above stands for the merged tree without re-running it.
+
+Merge policy A: this slice's own diff (the `reciente` bound and its tests) has no schema change, no customer-facing
+bytes, and no cross-repo contract change, so it merges on green under this spec's approval. The schema change and
+customer-facing bytes that stopped BODY-BORRAR-REAUTH-1 were already reviewed and accepted in this spec's
+approval-reason before this slice started.
