@@ -66,8 +66,31 @@ install_units() {
   done
 }
 
-install_caddy_site() {
+CADDY_BAK="${CADDY_DST}.bak"
+
+install_caddy_site_if_changed() {
+  if [[ -f "$CADDY_DST" ]] && cmp -s "$CADDY_SRC" "$CADDY_DST"; then
+    return 0
+  fi
+
+  local had_backup="no"
+  if [[ -f "$CADDY_DST" ]]; then
+    run cp "$CADDY_DST" "$CADDY_BAK"
+    had_backup="yes"
+  fi
+
   run install -o root -g root -m 644 "$CADDY_SRC" "$CADDY_DST"
+
+  if ! run caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile; then
+    if [[ "$had_backup" == "yes" ]]; then
+      run mv "$CADDY_BAK" "$CADDY_DST"
+    else
+      run rm -f "$CADDY_DST"
+    fi
+    fail_step "caddy validate" "no"
+  fi
+
+  run systemctl reload caddy
 }
 
 rollback_and_fail() {
@@ -78,28 +101,27 @@ rollback_and_fail() {
     deps_ok="no"
   fi
   install_units
-  install_caddy_site
+  install_caddy_site_if_changed
   run systemctl daemon-reload
   run systemctl restart body-web.service
   fail_step "$step (rollback dependencies reinstalled: $deps_ok)" "yes"
 }
+
+if ! run runuser -u "$owner" -- python3 -c "import ensurepip, venv"; then
+  echo "body-deploy.sh: python3-venv is missing: run once on the host: sudo apt install python3-venv" >&2
+  exit 1
+fi
 
 runuser -u "$owner" -- python3 -m venv "$REPO_DIR/.venv"
 runuser -u "$owner" -- "$REPO_DIR/.venv/bin/pip" install -q -r "$REPO_DIR/requirements.txt" \
   || rollback_and_fail "pip install"
 
 install_units
-install_caddy_site
-
-if ! run caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile; then
-  run rm -f "$CADDY_DST"
-  fail_step "caddy validate" "no"
-fi
+install_caddy_site_if_changed
 
 run systemctl daemon-reload
 run systemctl enable body-web.service body-pull.timer body-vida.timer
 run systemctl restart body-web.service
-run systemctl reload caddy
 
 health_ok=""
 for attempt in $(seq 1 20); do

@@ -19,9 +19,8 @@ Write `/srv/duna/env/body.env` by hand (owner root, group `duna-body`, mode 0640
 `deploy/host/body.env.example` -- that file names every variable and how to generate it; no value
 is ever committed to this repository.
 
-Before the first deploy, Caddy needs somewhere to proxy to, so copy the site once by hand (this
-assumes the host's main Caddyfile imports `/etc/caddy/sites/*` -- an assumption Main confirms in
-the walk-through, not confirmed yet):
+Before the first deploy, Caddy needs somewhere to proxy to, so copy the site once by hand (the
+host's main Caddyfile imports `/etc/caddy/sites/*.caddy`, confirmed by Main, 2026-11-06):
 
     sudo cp deploy/host/Caddyfile.body /etc/caddy/sites/body.caddy
     sudo systemctl reload caddy
@@ -46,12 +45,23 @@ reinstalls, restarts, and exits non-zero naming the step that failed.
 `body-pull.service` runs only the Garmin pull, not the shift import: shift files reach the host
 through an uploader that is not built yet (BODY-SHIFT-UPLOAD-1).
 
-## Host assumptions for Main to confirm in the walk-through
+## Host facts, confirmed by Main (2026-11-06)
 
-* the host's main Caddyfile imports `/etc/caddy/sites/*`
-* `python3` is on root's `PATH`
-* `caddy` and `curl` are installed
-* the repository is named `duna-body` at `/srv/duna/repos/duna-body`
+* the host is Ubuntu 24.04.4, so `python3` is 3.12
+* the main Caddyfile imports `/etc/caddy/sites/*.caddy` -- the `.caddy` suffix is required
+* the Caddy site is installed the way Lugares and Pagos do it (`install_caddy_site_if_changed`
+  in `body-deploy.sh`): only if changed, the previous file kept as a `.bak`, restored (no reload)
+  if `caddy validate` fails
+* the repository owner is read at runtime with `stat -c %U`, never hardcoded
+* `duna-body` is a system user created with its own group (`useradd --system --user-group ...`)
+
+Ubuntu ships `python3-venv` separately from `python3`, so if the venv build step refuses with
+"python3-venv is missing", run once, by hand:
+
+    sudo apt install python3-venv
+
+`deploy` checks for this itself and names the exact command if it's missing; it does not try a
+second way to build the venv.
 
 ## What installs where
 

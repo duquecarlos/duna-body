@@ -1329,3 +1329,54 @@ Slice commit: `bc7144df5a39cdabfa93e010e729425d5cbb8bb2` on `feat/body-host-entr
 
 Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-host-entry-1` into `main`
 following this entry.
+
+## BODY-HOST-ENTRY-2 -- align Caddy install, the venv check and the system user with Main's duna-prod-1 facts (2026-11-06)
+
+Follows BODY-HOST-OBS-1 and BODY-HOST-ENTRY-1(-M). Main's walk-through answer replaces the host assumptions
+BODY-HOST-ENTRY-1 wrote: the host is Ubuntu 24.04.4, so `python3` is 3.12; the main Caddyfile imports
+`/etc/caddy/sites/*.caddy` (the `.caddy` suffix is required); the repo owner is read at runtime with
+`stat -c %U`, as the scripts already did; and `duna-body` is a system user created with its own group.
+
+**Caddy, the Lugares way.** `body-deploy.sh`'s `install_caddy_site` is replaced by
+`install_caddy_site_if_changed`: it does nothing if `/etc/caddy/sites/body.caddy` already matches the repo's
+`Caddyfile.body` byte for byte (`cmp -s`); otherwise it backs up the existing file to `.bak` (if one exists),
+installs the new one, and runs `caddy validate --config /etc/caddy/Caddyfile`. On failure it restores the
+`.bak` (or removes the new file when there was no backup), fails naming the step, and never reaches
+`systemctl reload caddy`; on success it reloads. `rollback_and_fail()` now calls this same function instead
+of the old unconditional installer, so a rollback's Caddy handling matches a normal deploy's. This replaces
+the "remove on failure" logic BODY-HOST-ENTRY-1-M added.
+
+**Missing `python3-venv`.** Before building the venv, `body-deploy.sh` runs, as the checkout owner,
+`python3 -c "import ensurepip, venv"`. If that fails, it exits non-zero naming the one-time hand step --
+`sudo apt install python3-venv` -- without touching `systemctl`, so the service is not restarted. Chosen
+over a second install path through `uv`: one way to build the venv, and the gap stays visible instead of
+being papered over.
+
+**System user.** `duna-deploy-body`'s `ensure_system_user` now runs `useradd --system --user-group
+--no-create-home --shell /usr/sbin/nologin duna-body`, so `chown duna-body:duna-body` can never fail for
+want of the group.
+
+**README and Caddyfile.** `README.md`'s "Host assumptions for Main to confirm" list is replaced by "Host
+facts, confirmed by Main (2026-11-06)" (Ubuntu 24.04.4, the `.caddy` suffix, the Lugares install pattern,
+the runtime-read owner, `duna-body`'s own group), plus the one-time `sudo apt install python3-venv` hand
+step. `Caddyfile.body`'s comment no longer calls the sites-import path an unconfirmed assumption; it states
+Main confirmed it, with the `.caddy` suffix.
+
+`tests/test_host_deploy.py` gained: the `cmp -s` guard and the backup-before-install-before-validate
+ordering, with reload unreachable past a failed validate and the rollback path reusing the same function
+(`InstallCaddySiteIfChangedTest`); the venv check preceding `python3 -m venv`, naming `python3-venv`, and
+not touching `systemctl`/`fail_step`/`rollback_and_fail` on failure (`VenvCheckTest`); `--user-group` on the
+`useradd` call; and that neither script ever hardcodes the owner to `carlos`. One existing test
+(`test_validate_failure_removes_only_caddy_dst_and_does_not_reload`) was widened to also require the
+`mv`/`$CADDY_BAK` restore path, and the README/Caddyfile honesty tests were updated for the new wording.
+
+No schema or migration change; no cross-repo contract or DTO change. But this changes bytes Carlos reads as
+the deploy's own operator -- the README's host-facts section, the Caddyfile's confirmation comment, and the
+new `python3-venv` refusal message -- so Merge Policy A's "no customer-facing bytes" condition trips. Per
+ORCH-APPROVED-IS-BUILD-NOT-MERGE-1, `approved: yes` on this slice's header authorizes the build, not a merge
+past that tripped condition, and the spec body does not say in words that this slice may merge anyway -- it
+only says "merge unless merge policy says stop." So this stops `AWAITING_APPROVAL` on the branch clean,
+for the same reason BODY-HOST-ENTRY-1 did.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 263 tests, OK (254 at the branch tip
+plus 9 new in `tests/test_host_deploy.py`), run once on the final tree.
