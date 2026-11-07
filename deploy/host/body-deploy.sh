@@ -18,7 +18,7 @@ UNIT_DST_DIR="/etc/systemd/system"
 CADDY_SRC="$REPO_DIR/deploy/host/Caddyfile.body"
 CADDY_DST="/etc/caddy/sites/body.caddy"
 HEALTH_URL="http://127.0.0.1:8770/healthz"
-UNITS=(body-web.service body-pull.service body-pull.timer body-vida.service body-vida.timer)
+UNITS=(body-web.service body-pull.service body-pull.timer body-vida.service body-vida.timer body-backup.service body-backup.timer)
 
 DRY_RUN=""
 
@@ -120,7 +120,7 @@ install_units
 install_caddy_site_if_changed
 
 run systemctl daemon-reload
-run systemctl enable body-web.service body-pull.timer body-vida.timer
+run systemctl enable body-web.service body-pull.timer body-vida.timer body-backup.timer
 run systemctl restart body-web.service
 
 health_ok=""

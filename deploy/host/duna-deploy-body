@@ -14,6 +14,7 @@ export PATH
 
 REPO_DIR="/srv/duna/repos/duna-body"
 PRODUCT_SCRIPT="$REPO_DIR/deploy/host/body-deploy.sh"
+PRODUCT_BACKUP_SCRIPT="$REPO_DIR/deploy/host/body-backup.sh"
 DATA_DIR="/srv/duna/data/body"
 DATA_USER="duna-body"
 
@@ -22,7 +23,7 @@ usage() {
 usage: duna-deploy-body <command>
   status              show unit status, deployed sha, data dir mode
   deploy [--dry-run]  pull the repo and redeploy (--dry-run: print the plan, run nothing)
-  backup              not yet (BODY-HOST-BACKUP-1)
+  backup [--dry-run]  snapshot, encrypt and upload to R2, delete the plaintext (--dry-run: print the plan, run nothing)
 USAGE
 }
 
@@ -67,12 +68,14 @@ case "$cmd" in
       exit 1
     fi
     owner="$(stat -c %U "$REPO_DIR")"
-    for unit in body-web.service body-pull.timer body-vida.timer; do
+    for unit in body-web.service body-pull.timer body-vida.timer body-backup.timer; do
       state="$(run systemctl is-active "$unit" 2>/dev/null || true)"
       echo "$unit: $state"
     done
     sha="$(runuser -u "$owner" -- git -C "$REPO_DIR" rev-parse HEAD)"
     echo "deployed sha: $sha"
+    backup_last_run="$(run systemctl show -p ExecMainExitTimestamp --value body-backup.service 2>/dev/null || true)"
+    echo "body-backup.service last run: ${backup_last_run:-never}"
     if [[ -d "$DATA_DIR" ]]; then
       echo "data dir: $DATA_DIR mode $(stat -c %a "$DATA_DIR") owner $(stat -c %U "$DATA_DIR")"
     else
@@ -81,6 +84,19 @@ case "$cmd" in
     exit 0
     ;;
   deploy)
+    if [[ $# -gt 1 ]]; then
+      usage
+      exit 2
+    fi
+    if [[ $# -eq 1 ]]; then
+      if [[ "$1" != "--dry-run" ]]; then
+        usage
+        exit 2
+      fi
+      DRY_RUN="1"
+    fi
+    ;;
+  backup)
     if [[ $# -gt 1 ]]; then
       usage
       exit 2
@@ -103,6 +119,14 @@ if [[ ! -d "$REPO_DIR" ]]; then
   echo "duna-deploy-body: repo not found at $REPO_DIR" >&2
   exit 1
 fi
+
+if [[ "$cmd" == "backup" ]]; then
+  if [[ -n "$DRY_RUN" ]]; then
+    exec /bin/bash "$PRODUCT_BACKUP_SCRIPT" --dry-run
+  fi
+  exec /bin/bash "$PRODUCT_BACKUP_SCRIPT"
+fi
+
 owner="$(stat -c %U "$REPO_DIR")"
 
 ensure_system_user
