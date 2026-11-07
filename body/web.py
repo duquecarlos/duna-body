@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -962,7 +964,16 @@ def sw():
     return Response(SW, media_type="text/javascript")
 
 
+def _ensure_streams() -> None:
+    """pythonw has no console, so sys.stdout/sys.stderr are None -- give uvicorn's logging a stream to write to."""
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w")
+
+
 def main() -> None:
+    _ensure_streams()
     import uvicorn
 
     p = argparse.ArgumentParser(prog="python -m body.web")

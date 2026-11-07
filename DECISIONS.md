@@ -593,3 +593,30 @@ own commit, after the append above) -- 105 tests, OK.
 
 Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-metas-screens-1` into `main`
 following this entry.
+
+## BODY-WEB-PYTHONW-1 -- the web app no longer crashes under pythonw (2026-11-06)
+
+The "Body app web" scheduled task from `BODY-WEB-AUTOSTART-1` runs `pythonw.exe` so no console window appears at
+logon, but `pythonw.exe` gives the process no console at all: `sys.stdout` and `sys.stderr` are `None`. The
+orchestrator measured this directly -- the registered task ran and exited with `LastTaskResult 1`, nothing
+listened on port 8770, the same command run with `python.exe` served normally, and simulating `pythonw` (setting
+both streams to `None` before running `body.web` as `__main__`) reproduced `logging/config.py ...  ValueError:
+Unable to configure formatter 'default'` -- uvicorn's default log config builds stream handlers on the missing
+streams.
+
+**Fix, in `body/web.py`.** A new `_ensure_streams()`: if `sys.stdout` is `None`, replace it with
+`open(os.devnull, "w")`; same for `sys.stderr`. `main()` calls it first, before anything prints or uvicorn is
+imported. No log file is written -- health data never goes to a log, so the access log stays off
+(`access_log=False`, `log_level="warning"`, both unchanged, as the spec required).
+
+`tests/test_web_entry.py` (new, 3 tests, `tests/_isolate` imported first): `_ensure_streams()` with both streams
+set to `None` (restored in `finally`) leaves both non-`None` and writable; with both present it leaves the exact
+same objects in place (`assertIs`); `main()` with `sys.stdout`/`sys.stderr` both `None` and `uvicorn.run` patched
+reaches `uvicorn.run` without raising, called with `access_log=False`.
+
+No schema or migration change; no cross-repo contract change; no customer-facing bytes (nothing a browser ever
+renders changed -- this is a startup-only fix for a server that has no console to show anything on). Merges on
+green per merge policy A.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 108 tests, OK (105 before this slice, 3
+added here), run once on the final branch tree before this entry.
