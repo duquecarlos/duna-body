@@ -4409,3 +4409,110 @@ merging: `Ran 850 tests in 101.874s ... OK (skipped=1)`.
 **Merge.** `--no-ff` into `main`, merge commit `19233ef58916e2e0f3693e5c8007ae830b234df5`. Merge tree
 (`f550cefd441f41ff708829d66af3266445639e3d`) equals the branch tip's tree exactly (`git diff` empty), confirming
 nothing was resolved or altered in the merge. `main` left checked out, clean.
+
+## BODY-MODELOS-ESTANDAR-1 -- Duna's AI model standard (modelos-ia-v1) (2026-11-07)
+
+Carries out `BODY-MODELOS-ESTANDAR-OBS-1` (OBSERVED at `fb16ee9`) under `ORCH-CARLOS-DELEGATES-TIER-1-1`, putting
+Body's assistant on Duna's one set of AI models (`modelos-ia-v1`, decided by Main on Carlos's own ask "make a
+standard of what model will be used, check the difference and solve them").
+
+**Decision 1 -- code defaults for all three providers.** `MODELO_DEFAULT_OPENAI = "gpt-6.1-sol"` and
+`MODELO_DEFAULT_GEMINI = "gemini-3.8-flash"` added beside `MODELO_DEFAULT = "claude-sonnet-5-5"` in
+`body/agente/cliente.py`; `_modelo_openai()`/`_modelo_gemini()` now mirror `_modelo_anthropic()`'s fallback
+chain (`BODY_AGENTE_MODELO_<X>` -> `BODY_AGENTE_MODELO` -> the provider's standard default). The live gate in
+`proveedores_configurados()` is unchanged code (`if api_key and modelo`) -- with every provider's model function
+now always returning a default, the key alone decides whether a provider turns on, at the standard model. A
+provider with no key still stays off.
+
+**Decision 2 -- dated prices as `desde` only.** `precio_modelo` (`body/db.py`) gains `desde TEXT NOT NULL DEFAULT
+'2000-01-01'`; its primary key becomes `(proveedor, modelo, tipo, desde)`. A row applies from its date until the
+next row's date for the same (proveedor, modelo, tipo) -- one column, so it can never leave a gap or an overlap
+the way a `desde`/`hasta` pair could. SQLite cannot `ALTER` a primary key, so `_migrate_precios` (new, called
+from `init()` BEFORE `executescript(SCHEMA)`, the same ordering as `_migrate_metas`/`_migrate_cuenta`) rebuilds
+the table in one transaction (`_rebuild_precio_modelo_table`, reusing `_rebuild_with_fk_off`) when an existing
+table lacks `desde`: every row, including an operator's own hand-set price, is copied with `desde = '2000-01-01'`,
+never lost. The `DEFAULT '2000-01-01'` on the column (not asked for by the spec, found necessary by the gate --
+see Measured, below) keeps a raw `INSERT INTO precio_modelo (proveedor, modelo, tipo, micro_usd_por_millon)
+VALUES (...)` with no `desde` column working exactly as before, for the pre-existing tests outside `touches:`
+that write that table directly. `body/agente/uso.py`'s `_precios(conn, proveedor, modelo, fecha)` now takes a
+date and picks, per tipo, the row with the greatest `desde <= fecha` (a correlated-subquery `MAX(desde)`, all
+four tipos still required or the model is reported unpriced); `_gasto_hoy_micro_usd` prices each usage row by the
+date of its OWN `creado_en` (`row["creado_en"][:10]`), not "today", since a price can step between rows on the
+same day's boundary. A new `_hoy_local()` gives `verificar_tope` the person's own local calendar day for its
+"is the live model priced right now" check.
+
+**Decision 3 -- cached input per modelos-ia-v1.1** (Main, 2026-11-07, asked by Body): `body/agente/precios.json`
+now seeds all three standard models, each row carrying its `desde`: Anthropic `claude-sonnet-5-5` (desde
+`2000-01-01`, unchanged from the prior seed); OpenAI `gpt-6.1-sol` (desde `2000-01-01`, cached input 10 cents =
+100_000 micro-USD/million, OpenAI's own published price); Gemini `gemini-3.8-flash` TWICE -- desde `2000-01-01`
+at 75/375/75/75 cents (in/out/cache-in/cache-write) and desde `2027-01-01` at 150/750/150/150 cents, Gemini's own
+cache price being NOT KNOWN so priced at the full input rate both before and after the step (conservative: the
+spend ceiling trips early, never late, never under-counts). `cache_escritura` for OpenAI and Gemini is seeded at
+the input price for the same reason: both adapters report 0 such tokens today (`cache_escritura=0` in
+`_desde_openai`/`_desde_gemini`), so it is a placeholder price that can never under-count a real charge.
+`body/agente/precios.py` validates `desde` as a `YYYY-MM-DD` string; `sembrar()`'s `INSERT OR IGNORE` is now keyed
+on all four columns, so an operator's own price for one tipo on one date is still never overwritten.
+
+**Decision 4 -- the dead fallback in `body/web.py`.** The census's `os.environ.get('BODY_AGENTE_MODELO',
+agente_cliente.MODELO_DEFAULT)` read a SECOND copy of the same env var `_modelo_anthropic()` already folds into
+its own fallback chain, reached only when nothing is configured (`resuelto is None`) -- at which point
+`proveedor_configurado()` is also `None` and `generar()` returns on the `no_configurado` error before `modelo` is
+read, in production. Measured (see below) that `tests/test_agente_propuestas.py` patches `proveedor_configurado`
+ALONE, independently of `proveedores_configurados()`/`nombre_elegido()`, which breaks that invariant under test
+and DOES reach this line with a `FakeProveedor` that has no `.modelo` attribute -- so the fix is `modelo =
+configurados[resuelto].modelo if resuelto else agente_cliente.MODELO_DEFAULT`, reading the client's own default
+CONSTANT (removing the redundant env lookup) rather than an object attribute that not every test double carries.
+No customer-facing text changed.
+
+**Contract copy.** `docs/contracts/modelos-ia-v1.md` copied byte for byte from
+`C:/Duna/body/dev-protocol/contracts/modelos-ia-v1.md` via `shutil.copyfile`; sha256
+`77422651a7d0e1704ea6d854740273ee0fbc603bc8375b36831637088ece0862` verified against the spec's figure. Added to
+`docs/contracts/README.md` in alphabetical order (between `host-deploy-v1-amendment-sensitive-data.md` and
+`tutoriales-v1.md`), file count corrected eight -> nine.
+
+**Host env, README.** `deploy/host/body.env.example`'s three `BODY_AGENTE_MODELO_*` lines now carry the standard
+values as their default text (keys stay blank); the surrounding comment explains the key-alone-turns-it-on
+behavior and names `modelos-ia-v1`. `README.md`'s «Asistente: precios del modelo» section now names the three
+standard models, the `desde` dating, and Gemini's cached-input-at-full-price caveat.
+
+**Tests.** `tests/test_host_deploy.py`'s `EnvExampleTest.FIXED` gained the three `BODY_AGENTE_MODELO_*` names at
+their standard values (the three API key names stay in the blank-required set). `tests/test_agente_cliente.py`'s
+`test_openai_selected_by_env_needs_its_own_key_and_model` renamed/rewritten
+(`..._configures_at_the_standard_model_once_keyed`): key alone now configures OpenAI at
+`MODELO_DEFAULT_OPENAI`, an explicit `BODY_AGENTE_MODELO_OPENAI` still overrides it.
+`tests/test_agente_proveedores.py`'s `test_key_alone_does_not_configure_openai_or_gemini` renamed/rewritten
+(`..._configures_openai_and_gemini_at_the_standard_model`) to assert the opposite of its old name, now that
+decision 1 is code, not env; `test_model_alone_does_not_configure_openai_or_gemini` (model set, no key -> `{}`)
+needed no change. `tests/test_agente_precios.py` updated for the 16-row seed (4 price entries x 4 tipos) and the
+`(proveedor, modelo, tipo, desde)` key throughout (`uso._precios` now takes a date; the operator-row and
+missing-tipo/negative-value fixtures now carry `desde`), plus a new `test_a_file_with_a_bad_desde_...` case.
+New `tests/test_modelos_estandar_1.py` (4 tests): an old-shape `precio_modelo` with an operator row survives
+`db.init()`'s rebuild at `desde = '2000-01-01'` and is not overwritten by `sembrar()`; a Gemini usage date of
+`2026-12-31` prices at the first seed row, `2027-01-01` at the second.
+
+**Measured, against the spec.** First full gate run (`Ran 855 tests in 115.268s ... FAILED (failures=2, errors=8,
+skipped=1)`, before the fixes below) surfaced two faults the census and spec text did not anticipate, both
+outside `touches:` and fixed without widening it: (1) `tests/test_agente_bucle.py`'s `RowByRowPricingTest`/`SpendCeilingTest` insert into
+`precio_modelo` with the OLD four-column shape directly (no `desde`) -- fixed by giving the column `DEFAULT
+'2000-01-01'` rather than editing that test file; (2) placing the `desde`-rebuild check inside `_migrate()`
+itself (after its own `UPDATE person SET timezone = ...` line, which opens an implicit DML transaction in
+Python's legacy sqlite3 transaction handling) raised `sqlite3.OperationalError: cannot start a transaction within
+a transaction` inside `_rebuild_with_fk_off`'s own `BEGIN` -- fixed by moving the check into a new
+`_migrate_precios()`, called from `init()` BEFORE `executescript(SCHEMA)`, the same position
+`_migrate_metas`/`_migrate_cuenta` already use for exactly this reason. A third fault, also outside `touches:`
+and fixed inside `body/web.py` itself: the spec's "point the dead fallback at the client's own resolution" read
+as `proveedor.modelo`, which 500'd four tests in `tests/test_agente_propuestas.py` whose `FakeProveedor` mock has
+no `.modelo` attribute (decision 4, above, has the actual fix).
+
+**Gate**, exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, run once (after all three
+fixes above) on the final tree, foreground: `Ran 855 tests in 164.163s ... OK (skipped=1)` (5 more tests than
+`BODY-TURNOS-ESQUEMA-1`'s last-recorded 850: the new `test_modelos_estandar_1.py`'s 4, plus
+`test_a_file_with_a_bad_desde_inserts_nothing_and_raises` in `test_agente_precios.py`).
+
+**Merge.** `body/db.py`'s `precio_modelo` table changed shape (new `desde` column, new primary key, a rebuild
+migration) -- a schema change, failing merge policy A's first condition outright regardless of the other two
+(no customer-facing bytes changed; no cross-repo contract changed). Stopping `AWAITING_APPROVAL` on
+`feat/body-modelos-estandar-1` without merging, per this slice's own approval ("Schema and deploy are Tier 1:
+stop AWAITING_APPROVAL on the branch if your merge policy says so"). Slice commit
+`ac3128318e0ea98a4abcb675f0ce27f6bf9a5e43`; this ledger entry follows as its own commit on the same branch, since
+there is no merge for it to follow.
