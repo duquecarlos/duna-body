@@ -9,6 +9,7 @@ Health values never go into URLs or logs (access log is off; URLs carry only dat
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -30,6 +31,27 @@ HERE = Path(__file__).parent
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 env = Environment(loader=FileSystemLoader(HERE / "templates"), autoescape=select_autoescape())
+
+
+def _static_hash(directory: Path) -> str:
+    """sha256 over every file under `directory` (sorted relative path + bytes), first 10 hex chars --
+    changes whenever any static file's content changes, so a cache keyed on it never goes stale."""
+    h = hashlib.sha256()
+    for p in sorted(directory.rglob("*")):
+        if p.is_file():
+            h.update(str(p.relative_to(directory)).replace("\\", "/").encode())
+            h.update(p.read_bytes())
+    return h.hexdigest()[:10]
+
+
+STATIC_HASH = _static_hash(HERE / "static")
+
+
+def static_url(path: str) -> str:
+    return f"/static/{path}?v={STATIC_HASH}"
+
+
+env.globals["static_url"] = static_url
 
 UNITS = {"bpm": "unit.bpm", "ms": "unit.ms", "pts": "unit.pts", "steps": "unit.steps", "kcal": "unit.kcal",
          "brpm": "unit.brpm"}
@@ -949,8 +971,8 @@ async def set_language(request: Request):
     return RedirectResponse("/settings", status_code=303)
 
 
-SW = """// Body service worker: caches only static files, never health pages.
-const C='body-static-v2';
+SW_TEMPLATE = """// Body service worker: caches only static files, never health pages.
+const C='body-static-HASHPLACEHOLDER';
 self.addEventListener('install',e=>self.skipWaiting());
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k))))));
 self.addEventListener('fetch',e=>{const u=new URL(e.request.url);
@@ -958,10 +980,12 @@ self.addEventListener('fetch',e=>{const u=new URL(e.request.url);
   e.respondWith(caches.open(C).then(c=>c.match(e.request).then(r=>r||fetch(e.request).then(n=>{c.put(e.request,n.clone());return n}))));}});
 """
 
+SW = SW_TEMPLATE.replace("HASHPLACEHOLDER", STATIC_HASH)
+
 
 @app.get("/sw.js")
 def sw():
-    return Response(SW, media_type="text/javascript")
+    return Response(SW, media_type="text/javascript", headers={"Cache-Control": "no-cache"})
 
 
 def _ensure_streams() -> None:
