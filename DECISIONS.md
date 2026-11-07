@@ -1694,3 +1694,57 @@ tip plus 29 new: 26 in `tests/test_garmin_host.py`, 3 in `tests/test_privacidad.
 
 Slice commit: `b31387e9062904ee4157988e299dafb3c0bb4021` on `feat/body-garmin-host-1`, not yet merged --
 awaiting the orchestrator's review of the schema and customer-bytes conditions above.
+
+## BODY-GARMIN-HOST-1-M -- six fixes land BODY-GARMIN-HOST-1 (2026-11-07)
+
+Approved by the orchestrator under `ORCH-CARLOS-DELEGATES-TIER-1-1` after review; six fixes, inside
+`BODY-GARMIN-HOST-1`'s own files, then merge:
+
+1. **Wrong MFA code keeps the code form.** `POST /garmin/codigo` used to redirect to `/garmin?error=garmin`
+   on a rejected code, which sent the person back to the email/password form and lost the pending MFA
+   state's context from their view. It now re-renders `garmin.html` with `mfa=True` and `form_error` set
+   to the existing generic sentence, so the code input stays on screen for another try (the state itself
+   was already kept, not popped, inside the same TTL window).
+2. **Expired MFA states pruned.** `_MFA_STATE`'s only write (`garmin_conectar`, on `"needs_mfa"`) now
+   calls a new `_prune_mfa_state()` first, dropping every entry older than `_MFA_TTL_SECONDS` before
+   adding the new one -- the process-local dict no longer grows with abandoned sign-in attempts.
+3. **The hosted pull survives any one person's failure.** `pull_hosted` caught only
+   `garmin_adapter.NotSignedIn`; any other exception from Garmin or the adapter crashed the whole loop,
+   leaving every later person unpulled. It now catches `Exception`, records `type(e).__name__`.
+   `_pull_one_person` wraps its day loop in try/finally so a refreshed token is still stored even when a
+   later day raises, and the days already saved before the failure are attached to the exception
+   (`e.saved`) so `pull_hosted`'s `saved` total still counts them. A person whose `leer()` returns `None`
+   (the row disappeared between listing and reading) is skipped quietly, never counted as ok.
+4. **A successful pull clears the last error.** New `garmin_cuenta.limpiar_error(conn, person_id)`, called
+   by `pull_hosted` after a person's days pull without an exception -- a transient failure no longer sticks
+   on the Garmin page forever once the next pull succeeds.
+5. **The token key must be exactly 32 bytes.** `garmin_cuenta._key()` and `ensure_configured()` both now
+   decode `BODY_TOKEN_KEY` through a shared `_decode_key()` that refuses anything but 64 hex characters
+   (32 bytes); the message names the variable and `openssl rand -hex 32`, never the value.
+6. **A rejected connection offers reconnecting in place.** `garmin.html`: when connected and `ultimo_error`
+   is set, the email/password form now renders above the "Desconectar" button (connecting again
+   overwrites the row and `guardar` already clears the error, so no separate disconnect step is needed
+   first). `_garmin_last_error_text`'s fallback changed from `garmin.error.generic` to a new
+   `garmin.error.pull_failed` key (es: "La última sincronización con Garmin falló. Body lo intentará de
+   nuevo mañana."; en: "The last sync with Garmin failed. Body will try again tomorrow.") -- `NotSignedIn`
+   still reads as the existing `garmin.error.not_signed_in` sentence, and `garmin.error.generic` stays
+   reserved for the sign-in form itself.
+
+**Tests.** `tests/test_garmin_host.py` gained 10: the MFA-wrong-code re-render and its retry-within-TTL,
+pruning an old MFA state on the next write, the wrong-key-length refusal in both `ensure_configured()`
+and at use time, a generic mid-loop exception that still keeps a refreshed token and counts the day
+already stored, a success clearing a previous error, `leer()` returning `None` not counted as ok, and
+three for the reconnect-in-place template (pull-failure text with the form above Desconectar,
+`NotSignedIn`'s existing sentence, and the error-free case showing only Desconectar). One pre-existing
+test (`test_wrong_code_shows_generic_error_and_stores_nothing`) was renamed and rewritten in place for
+the new re-render behavior rather than the old redirect.
+
+**No other code changed.** The diff stayed inside `body/garmin_cuenta.py`, `body/pull.py`, `body/web.py`,
+`body/templates/garmin.html`, `body/i18n/es.json`, `body/i18n/en.json` and `tests/test_garmin_host.py`, as
+`BODY-GARMIN-HOST-1-M`'s `touches:` listed.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 352 tests, OK (skipped=1), run once on
+the final tree (342 at the branch tip plus the 10 new tests above).
+
+Slice commit: `423dd7ea90acff0c9e960a6a399eb3fddd585138` on `feat/body-garmin-host-1`. Merged `--no-ff`
+into `main` as `f3c31adbdccf8103c1e9428823f29ce3e1abbb35`.
