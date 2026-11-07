@@ -3545,3 +3545,19 @@ decision 2 instead of the old behavior.
 migration-order risk) and customer-facing bytes (the new provider radio's labels and note on
 `/ajustes/asistente`). Merge policy A's schema and customer-bytes conditions both trip, so this slice stops before
 the merge with `AWAITING_APPROVAL`.
+
+## BODY-ASISTENTE-PROVEEDORES-1-M -- merge BODY-ASISTENTE-PROVEEDORES-1, approved as written after diff review (2026-11-07)
+
+BODY-ASISTENTE-PROVEEDORES-1 landed every provider in Body's assistant (commit `6883b18`) and stopped
+`AWAITING_APPROVAL` on a Tier 1 provider client, a schema column and customer-facing bytes. Under
+ORCH-CARLOS-DELEGATES-TIER-1-1, the orchestrator reviewed that commit against the house model (OpenAI's
+`/v1/responses` with `"store": False` and `incomplete_details` read as incomplete; Gemini's `thoughtSignature`
+carried raw on `LlamadaHerramienta.firma` and echoed as a sibling of `functionCall`; `proveedores_configurados`
+requiring key AND model; `proveedor_configurado` and the usage row both resolving through `nombre_elegido`; the
+radio rendering only with 2+ configured and refusing an unconfigured name with 400; `ajuste_agente.proveedor`
+additive and nullable) and approved it as written, merge only.
+
+`main` had not moved since the branch was cut (both at `a371834`), so no rebase or conflict resolution was needed.
+Gate run on the branch's final tree (`6883b18`): `.venv/Scripts/python.exe -m unittest discover tests -t .` --
+725 tests, `OK (skipped=1)`. Merged `--no-ff` into `main`; the merge introduced no changes beyond the branch's own
+(merge tree and branch tree are identical).
