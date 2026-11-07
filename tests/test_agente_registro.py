@@ -47,12 +47,12 @@ def _seed(conn) -> int:
     db.init(conn)
     for i in range(20):
         day = f"2026-10-{i + 1:02d}"
-        db.set_metric(conn, day, "hrv_last_night", 55 + i % 5, "garmin")
-        db.set_metric(conn, day, "sleep_minutes", 400 + i, "garmin")
-        db.set_metric(conn, day, "resting_hr", 58 - i % 3, "garmin")
-        db.set_metric(conn, day, "body_battery_wake", 70 + i % 10, "garmin")
-        db.set_metric(conn, day, "stress_avg", 20 + i % 5, "garmin")
-        db.set_metric(conn, day, "steps", 7000 + i * 50, "garmin")
+        db.set_metric(conn, day, "hrv_last_night", 55 + i % 5, "garmin", 1)
+        db.set_metric(conn, day, "sleep_minutes", 400 + i, "garmin", 1)
+        db.set_metric(conn, day, "resting_hr", 58 - i % 3, "garmin", 1)
+        db.set_metric(conn, day, "body_battery_wake", 70 + i % 10, "garmin", 1)
+        db.set_metric(conn, day, "stress_avg", 20 + i % 5, "garmin", 1)
+        db.set_metric(conn, day, "steps", 7000 + i * 50, "garmin", 1)
     conn.execute(
         "INSERT INTO shift (person_id, day, kind, start_local, source) VALUES "
         "(1, '2026-10-05', 'night', '2026-10-05T22:00:00', 'manual')"

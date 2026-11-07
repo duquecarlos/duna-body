@@ -29,8 +29,7 @@ class Baseline:
         return (value - self.mean) / self.sd
 
 
-def baseline(conn, metric: str, day: str, window: int = WINDOW_DAYS,
-             person_id: int = db.DEFAULT_PERSON_ID) -> Baseline | None:
+def baseline(conn, metric: str, day: str, window: int = WINDOW_DAYS, *, person_id: int) -> Baseline | None:
     d = date.fromisoformat(day)
     start, end = (d - timedelta(window)).isoformat(), (d - timedelta(1)).isoformat()
     vals = list(db.series(conn, metric, start, end, person_id).values())

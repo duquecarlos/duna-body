@@ -42,7 +42,7 @@ class PipelineTest(unittest.TestCase):
         self.assertTrue(str(config.DB_PATH).startswith(TMP))  # guard BEFORE any write
         conn = db.connect()
         db.init(conn)
-        db.save_day(conn, garmin_adapter.parse_day("2026-11-05", FAKE_RAW))
+        db.save_day(conn, garmin_adapter.parse_day("2026-11-05", FAKE_RAW), 1)
         client = TestClient(web.app)
         home = client.get("/").text  # Hoy, Spanish by default
         self.assertIn("Hoy", home)

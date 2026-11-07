@@ -25,7 +25,7 @@ WEEK_METRICS = ["readiness", "sleep_minutes", "hrv_last_night", "resting_hr", "b
                 "steps", "intensity_minutes"]
 
 
-def week_section(conn, monday: date, person_id: int = db.DEFAULT_PERSON_ID) -> dict:
+def week_section(conn, monday: date, person_id: int) -> dict:
     sunday = monday + timedelta(6)
     defs = {r["key"]: dict(r) for r in conn.execute("SELECT * FROM metric_def")}
     metrics = []
@@ -80,10 +80,11 @@ def main(argv=None) -> int:
         return 1
     conn = db.connect()
     db.init(conn)
+    person_id = db.local_person_id(conn)
     out_dir = config.BODY_HOME / "vida"
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"body-week-{monday.isoformat()}.json"
-    path.write_text(json.dumps(week_section(conn, monday), ensure_ascii=False, indent=2), encoding="utf-8")
+    path.write_text(json.dumps(week_section(conn, monday, person_id), ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Wrote {path}")  # the path only; never the values
     return 0
 

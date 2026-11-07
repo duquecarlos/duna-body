@@ -25,8 +25,7 @@ class MetricProfile:
     first_day: str
 
 
-def metric_profile(conn, key: str, today: str | None = None,
-                   person_id: int = db.DEFAULT_PERSON_ID) -> MetricProfile | None:
+def metric_profile(conn, key: str, today: str | None = None, *, person_id: int) -> MetricProfile | None:
     rows = conn.execute("SELECT day, value FROM daily_metric WHERE person_id=? AND metric_key=? ORDER BY day",
                         (person_id, key)).fetchall()
     if len(rows) < 14:
@@ -96,7 +95,7 @@ class Window:
     prev_mean: float | None                # the window of the same length just before
 
 
-def window(conn, key: str, start: date, end: date, person_id: int = db.DEFAULT_PERSON_ID) -> Window:
+def window(conn, key: str, start: date, end: date, person_id: int) -> Window:
     vals = db.series(conn, key, start.isoformat(), end.isoformat(), person_id)
     n = (end - start).days + 1
     prev = db.series(conn, key, (start - timedelta(n)).isoformat(), (start - timedelta(1)).isoformat(), person_id)

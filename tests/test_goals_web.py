@@ -38,7 +38,7 @@ class EmptyStateTest(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("Empieza con la primera.", r.text)
 
-        db.set_language(conn, "en")
+        db.set_language(conn, "en", 1)
         r = client.get("/goals")
         self.assertEqual(r.status_code, 200)
         self.assertIn("Start with your first one.", r.text)
@@ -128,7 +128,7 @@ class ActivateAndHabitTest(unittest.TestCase):
 class ContextHabitOnHoyTest(unittest.TestCase):
     def test_before_night_shown_and_hidden(self):
         conn = _reset_db(self)
-        db.set_metric(conn, "2026-11-01", "resting_hr", 55, "garmin")
+        db.set_metric(conn, "2026-11-01", "resting_hr", 55, "garmin", 1)
         gid = goals.propose(conn, 1, "Dormir antes de la noche", "2026-11-02", metric_key="sleep_minutes",
                             direction="raise", target_value=420.0, baseline_value=350.0,
                             deadline="2026-12-31")

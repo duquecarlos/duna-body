@@ -18,13 +18,13 @@ PAUSE_S = 1.0  # be gentle with Garmin's servers during a backfill
 EMPTY_STOP = 60  # --all stops after this many consecutive days with no watch data
 
 
-def _stored(conn) -> set[str]:
-    return set(db.days_with_data(conn))
+def _stored(conn, person_id: int) -> set[str]:
+    return set(db.days_with_data(conn, person_id))
 
 
-def pull_all(conn) -> int:
+def pull_all(conn, person_id: int) -> int:
     """Walk back day by day until EMPTY_STOP empty days in a row. Returns days saved."""
-    stored = _stored(conn)
+    stored = _stored(conn, person_id)
     d = date.fromisoformat(min(stored)) if stored else date.today()
     empty = saved = 0
     while empty < EMPTY_STOP:
@@ -43,7 +43,7 @@ def pull_all(conn) -> int:
                 print(f"Still no answer. Stopped at {key}; run `python -m body.pull --all` later to resume.")
                 return saved
         if data.metrics or data.activities:
-            db.save_day(conn, data)
+            db.save_day(conn, data, person_id)
             saved += 1
             empty = 0
         else:
@@ -64,9 +64,10 @@ def main(argv=None) -> int:
 
     conn = db.connect()
     db.init(conn)
+    person_id = db.local_person_id(conn)
     if a.all:
         try:
-            pull_all(conn)
+            pull_all(conn, person_id)
         except garmin_adapter.NotSignedIn as e:
             print(e)
             return 2
@@ -80,13 +81,13 @@ def main(argv=None) -> int:
             except garmin_adapter.NotSignedIn as e:
                 print(e)
                 return 2
-            db.save_day(conn, data)
+            db.save_day(conn, data, person_id)
             missing = data.raw.get("_errors")
             # Counts only: health values never go to logs or stdout.
             print(f"{d}: {len(data.metrics)} metrics, {len(data.activities)} activities"
                   + (f", missing feeds: {', '.join(missing)}" if missing else ""), flush=True)
     # Baselines depend on earlier days, so recompute every stored day in order (cheap, local).
-    n = readiness.recompute_all(conn)
+    n = readiness.recompute_all(conn, person_id)
     print(f"Readiness updated for {n} days.")
     return 0
 

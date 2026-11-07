@@ -19,7 +19,7 @@ def make_db(days=31, hrv=50.0, rhr=55.0, stress=30.0):
         for k, v in (("hrv_last_night", hrv + 2 * wobble), ("resting_hr", rhr + wobble),
                      ("stress_avg", stress + 3 * wobble), ("sleep_minutes", 450), ("sleep_need_min", 480),
                      ("body_battery_wake", 75)):
-            db.set_metric(conn, d, k, v, "garmin")
+            db.set_metric(conn, d, k, v, "garmin", 1)
     conn.commit()
     return conn, (start + timedelta(days - 1)).isoformat()
 
@@ -27,36 +27,36 @@ def make_db(days=31, hrv=50.0, rhr=55.0, stress=30.0):
 class ReadinessTest(unittest.TestCase):
     def test_baseline_excludes_the_day_and_needs_seven_days(self):
         conn, last = make_db(days=5)
-        self.assertIsNone(baselines.baseline(conn, "hrv_last_night", last))
+        self.assertIsNone(baselines.baseline(conn, "hrv_last_night", last, person_id=1))
         conn, last = make_db()
-        b = baselines.baseline(conn, "hrv_last_night", last)
+        b = baselines.baseline(conn, "hrv_last_night", last, person_id=1)
         self.assertEqual(b.n, 30)
         self.assertAlmostEqual(b.mean, 50, delta=0.2)
 
     def test_normal_day_scores_near_seventy_plus(self):
         conn, last = make_db()
-        r = readiness.compute(conn, last)
+        r = readiness.compute(conn, last, 1)
         self.assertIsNotNone(r.score)
         self.assertTrue(60 <= r.score <= 85, r.score)
         self.assertEqual(len(r.parts), 5)
 
     def test_bad_night_scores_lower(self):
         conn, last = make_db()
-        normal = readiness.compute(conn, last).score
+        normal = readiness.compute(conn, last, 1).score
         for k, v in (("hrv_last_night", 38), ("sleep_minutes", 300), ("body_battery_wake", 40), ("resting_hr", 60)):
-            db.set_metric(conn, last, k, v, "garmin")
-        bad = readiness.compute(conn, last)
+            db.set_metric(conn, last, k, v, "garmin", 1)
+        bad = readiness.compute(conn, last, 1)
         self.assertLess(bad.score, normal - 20)
         self.assertEqual(bad.band, "low")
 
     def test_too_little_data_gives_no_score(self):
         conn, last = make_db(days=3)
-        r = readiness.compute(conn, last)
+        r = readiness.compute(conn, last, 1)
         self.assertIsNone(r.score)  # only sleep + battery available; honest "not yet"
 
     def test_update_stores_estimate_with_version(self):
         conn, last = make_db()
-        readiness.update(conn, last)
+        readiness.update(conn, last, 1)
         row = conn.execute("SELECT source FROM daily_metric WHERE metric_key='readiness' AND day=?", (last,)).fetchone()
         self.assertEqual(row["source"], readiness.VERSION)
         kind = conn.execute("SELECT kind FROM metric_def WHERE key='readiness'").fetchone()["kind"]

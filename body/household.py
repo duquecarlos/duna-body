@@ -12,8 +12,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from . import db
-
 SCHEMA = """
 -- Local mirror of Cuenta's duna_hogar claim (one active household per person, like Cuenta).
 CREATE TABLE IF NOT EXISTS hogar_local (
@@ -44,5 +42,5 @@ class LocalSource:
 current_source = LocalSource()
 
 
-def household_of(conn, person_id: int = db.DEFAULT_PERSON_ID) -> Household | None:
+def household_of(conn, person_id: int) -> Household | None:
     return current_source.household_of(conn, person_id)

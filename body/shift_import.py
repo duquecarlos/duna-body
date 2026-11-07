@@ -70,7 +70,7 @@ def _validate(shifts: list[dict]) -> None:
         day_kind.setdefault(day, kind)
 
 
-def propose(conn: sqlite3.Connection, path: str | Path, person_id: int = db.DEFAULT_PERSON_ID) -> int:
+def propose(conn: sqlite3.Connection, path: str | Path, person_id: int) -> int:
     """Validates the whole file first and writes nothing on any error. Re-proposing the same
     (person, file_name, received, extracted_at) is a no-op that returns the existing batch id."""
     path = Path(path)
@@ -199,7 +199,7 @@ def dismiss(conn: sqlite3.Connection, batch_id: int) -> None:
         )
 
 
-def confirm_all(conn: sqlite3.Connection, person_id: int = db.DEFAULT_PERSON_ID) -> dict:
+def confirm_all(conn: sqlite3.Connection, person_id: int) -> dict:
     """Confirms every proposed batch of this person, in (received, extracted_at) order, each through the
     unchanged confirm() -- so precedence, manual-kept and the no-DELETE-of-manual rule apply exactly as they
     do one batch at a time. One transaction PER BATCH, not one for the whole set: confirm()'s own `with conn:`
@@ -235,7 +235,7 @@ def confirm_all(conn: sqlite3.Connection, person_id: int = db.DEFAULT_PERSON_ID)
     }
 
 
-def summary_proposed(conn: sqlite3.Connection, person_id: int = db.DEFAULT_PERSON_ID) -> dict:
+def summary_proposed(conn: sqlite3.Connection, person_id: int) -> dict:
     """Read-only: how many batches are waiting, the day range they span, and total days/nights across all of
     them -- for the one combined card shown when more than one file is proposed at once."""
     batch_ids = [
@@ -261,7 +261,7 @@ def summary_proposed(conn: sqlite3.Connection, person_id: int = db.DEFAULT_PERSO
     }
 
 
-def latest_proposed(conn: sqlite3.Connection, person_id: int = db.DEFAULT_PERSON_ID):
+def latest_proposed(conn: sqlite3.Connection, person_id: int):
     return conn.execute(
         "SELECT * FROM shift_batch WHERE person_id = ? AND status = 'proposed' "
         "ORDER BY received DESC, extracted_at DESC, id DESC LIMIT 1",
@@ -269,7 +269,7 @@ def latest_proposed(conn: sqlite3.Connection, person_id: int = db.DEFAULT_PERSON
     ).fetchone()
 
 
-def latest_confirmed(conn: sqlite3.Connection, person_id: int = db.DEFAULT_PERSON_ID):
+def latest_confirmed(conn: sqlite3.Connection, person_id: int):
     return conn.execute(
         "SELECT * FROM shift_batch WHERE person_id = ? AND status = 'confirmed' "
         "ORDER BY received DESC, extracted_at DESC, id DESC LIMIT 1",
@@ -284,7 +284,7 @@ def _candidate_files(folder: Path) -> list[Path]:
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="python -m body.shift_import")
     ap.add_argument("--dir")
-    ap.add_argument("--person-id", type=int, default=db.DEFAULT_PERSON_ID)
+    ap.add_argument("--person-id", type=int, default=None, help="default: the local person")
     a = ap.parse_args(argv)
 
     folder_str = a.dir or os.environ.get("BODY_SHIFTS_DIR")
@@ -308,16 +308,17 @@ def main(argv: list[str] | None = None) -> None:
 
     conn = db.connect()
     db.init(conn)
+    person_id = a.person_id if a.person_id is not None else db.local_person_id(conn)
     read = proposed = known = refused = 0
     notes: list[str] = []
     for f, received, extracted_at in entries:
         read += 1
         existed = bool(received and extracted_at and conn.execute(
             "SELECT 1 FROM shift_batch WHERE person_id = ? AND file_name = ? AND received = ? AND extracted_at = ?",
-            (a.person_id, f.name, received, extracted_at),
+            (person_id, f.name, received, extracted_at),
         ).fetchone())
         try:
-            propose(conn, f, a.person_id)
+            propose(conn, f, person_id)
         except ImportRefused as e:
             refused += 1
             notes.append(str(e))
