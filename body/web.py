@@ -25,11 +25,11 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from . import cuenta, db, goals, history, household, identity, listen, profile, readiness, shift_import
+from . import cuenta, db, goals, history, household, identity, listen, privacidad, profile, readiness, shift_import
 from .baselines import baseline
 from .i18n import DEFAULT as DEFAULT_LANG
 from .i18n import LANGS, T
-from .identity import LoginRequired
+from .identity import ConsentRequired, LoginRequired
 from .request_log import RequestLogMiddleware
 
 HERE = Path(__file__).parent
@@ -75,6 +75,13 @@ def _login_required(request: Request, exc: LoginRequired) -> RedirectResponse:
     if exc.prompt:
         qs += f"&prompt={exc.prompt}"
     return RedirectResponse(f"/login?{qs}", status_code=303)
+
+
+@app.exception_handler(ConsentRequired)
+def _consent_required(request: Request, exc: ConsentRequired) -> RedirectResponse:
+    return RedirectResponse(
+        f"/privacidad/consentimiento?return_to={quote(exc.return_to, safe='')}", status_code=303
+    )
 
 
 _CUENTA_DOWN_TEMPLATE = env.from_string(
@@ -1140,6 +1147,70 @@ async def set_language(request: Request, person_id: int = Depends(identity.curre
         conn, _, _ = _ctx(person_id)
         db.set_language(conn, lang, person_id)
     return RedirectResponse("/settings", status_code=303)
+
+
+@app.get("/privacidad/consentimiento")
+def consentimiento_form(request: Request, person_id: int = Depends(identity.current_person_id)):
+    if not cuenta.hosted():
+        raise HTTPException(404)
+    _, _, t = _ctx(person_id)
+    return_to = cuenta.safe_return_to(request.query_params.get("return_to"))
+    return _render("consentimiento.html", t=t, tab=None, return_to=return_to)
+
+
+@app.post("/privacidad/consentimiento")
+async def consentimiento_decide(request: Request, person_id: int = Depends(identity.current_person_id)):
+    if not cuenta.hosted():
+        raise HTTPException(404)
+    f = await _form(request)
+    return_to = cuenta.safe_return_to(f.get("return_to"))
+    if f.get("decision") == "acepto":
+        conn, _, _ = _ctx(person_id)
+        privacidad.record_consent(conn, person_id)
+        return RedirectResponse(return_to, status_code=303)
+    conn = db.connect()
+    db.init(conn)
+    sid = cuenta.end_session(conn, request.cookies.get(cuenta.SESSION_COOKIE))
+    conn.close()
+    resp = RedirectResponse(cuenta.logout_url(sid), status_code=303)
+    cuenta.clear_session_cookie(resp)
+    return resp
+
+
+@app.get("/privacidad")
+def privacidad_view(request: Request, person_id: int = Depends(identity.current_person_id)):
+    conn, person, t = _ctx(person_id)
+    row = conn.execute(
+        "SELECT accepted_at FROM consentimiento WHERE person_id = ? AND version = ?",
+        (person_id, privacidad.CONSENT_VERSION),
+    ).fetchone()
+    accepted_date = _short_date(t, datetime.fromisoformat(row["accepted_at"]).date()) if row else None
+    return _render("privacidad.html", t=t, tab="settings", version=privacidad.CONSENT_VERSION,
+                   accepted_date=accepted_date, delete_word=t("privacidad.borrar_palabra"),
+                   error=request.query_params.get("error") == "confirmacion")
+
+
+@app.get("/privacidad/exportar")
+def privacidad_exportar(person_id: int = Depends(identity.current_person_id)):
+    conn, _, _ = _ctx(person_id)
+    data = privacidad.export_person(conn, person_id)
+    body = json.dumps(data, ensure_ascii=False, indent=2)
+    return Response(body, media_type="application/json",
+                    headers={"Content-Disposition": f'attachment; filename="body-{date.today().isoformat()}.json"'})
+
+
+@app.post("/privacidad/borrar")
+async def privacidad_borrar(request: Request, person_id: int = Depends(identity.current_person_id)):
+    f = await _form(request)
+    conn, _, t = _ctx(person_id)
+    if (f.get("confirmacion") or "").strip() != t("privacidad.borrar_palabra"):
+        conn.close()
+        return RedirectResponse("/privacidad?error=confirmacion", status_code=303)
+    privacidad.delete_person(conn, person_id)
+    conn.close()
+    if cuenta.hosted():
+        return RedirectResponse(cuenta.logout_url(None), status_code=303)
+    return RedirectResponse("/", status_code=303)
 
 
 SW_TEMPLATE = """// Body service worker: caches only static files, never health pages.

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="{{ t.lang }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#F4F2ED">
+<title>{{ t('privacidad.consentimiento.titulo') }} · {{ t('app.name') }}</title>
+<script>/* theme before paint: no flash */
+try{var th=localStorage.getItem('body.theme');var dark=th==='dark'||(th!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches);if(dark)document.documentElement.dataset.theme='dark'}catch(e){}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="{{ static_url('body.css') }}">
+<link rel="icon" href="{{ static_url('icon.svg') }}" type="image/svg+xml">
+</head>
+<body>
+<div class="shell"><main><div class="wrap">
+<div class="top"><div><h1>{{ t('privacidad.consentimiento.titulo') }}</h1></div></div>
+<div class="card">
+  <p class="read">{{ t('privacidad.consentimiento.que') }}</p>
+  <p class="read">{{ t('privacidad.consentimiento.por_que') }}</p>
+  <p class="read">{{ t('privacidad.consentimiento.donde') }}</p>
+  <p class="read">{{ t('privacidad.consentimiento.derechos') }}</p>
+  <p class="read">{{ t('privacidad.consentimiento.no_medico') }}</p>
+  <form method="post" action="/privacidad/consentimiento" style="margin-top:16px">
+    <input type="hidden" name="return_to" value="{{ return_to }}">
+    <div class="seg">
+      <button class="btn" type="submit" name="decision" value="acepto">{{ t('privacidad.consentimiento.aceptar') }}</button>
+      <button class="btn" type="submit" name="decision" value="no">{{ t('privacidad.consentimiento.no_aceptar') }}</button>
+    </div>
+  </form>
+  <p class="read">{{ t('privacidad.consentimiento.al_no_aceptar') }}</p>
+</div>
+</div></main></div>
+</body>
+</html>

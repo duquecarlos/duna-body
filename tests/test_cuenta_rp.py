@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
-from body import config, cuenta, db, vincular_cuenta, web
+from body import config, cuenta, db, privacidad, vincular_cuenta, web
 
 ISSUER = "https://fake-cuenta.test"
 PUBLIC_URL = "http://127.0.0.1:8770"
@@ -209,8 +209,21 @@ class FullSignInTest(CuentaRpTestCase):
     def test_signed_in_person_sees_their_own_today_page(self):
         r = self._sign_in(return_to="/")
         self.assertEqual(r.status_code, 303)
+        conn = db.connect()
+        person_id = conn.execute("SELECT id FROM person WHERE cuenta_sub = ?", (SUB,)).fetchone()["id"]
+        privacidad.record_consent(conn, person_id)
+        conn.close()
         r2 = self.client.get("/")
         self.assertEqual(r2.status_code, 200)
+
+    def test_signed_in_person_without_consent_is_redirected_to_consentimiento(self):
+        r = self._sign_in(return_to="/")
+        self.assertEqual(r.status_code, 303)
+        r2 = self.client.get("/")
+        self.assertEqual(r2.status_code, 303)
+        location = r2.headers["location"]
+        self.assertTrue(location.startswith("/privacidad/consentimiento?"))
+        self.assertIn("return_to=%2F", location)
 
     def test_body_missing_from_duna_productos_shows_sin_acceso(self):
         before = self._db_count("SELECT COUNT(*) FROM person")

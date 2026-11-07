@@ -13,7 +13,8 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import baselines, config, cuenta, db, goals, history, profile, readiness, shift_import, vida_export, web
+from body import baselines, config, cuenta, db, goals, history, privacidad, profile, readiness, shift_import, \
+    vida_export, web
 from body import identity
 from body.agente import ajustes
 
@@ -204,6 +205,10 @@ class HostedPersonScopeTest(unittest.TestCase):
         return c
 
     def test_two_sessions_see_only_their_own_goals_and_404_on_the_others_id(self):
+        conn = db.connect()
+        privacidad.record_consent(conn, PERSON_A)
+        privacidad.record_consent(conn, PERSON_B)
+        conn.close()
         ca, cb = self._client_as(self.token_a), self._client_as(self.token_b)
 
         ra = ca.get("/goals")
