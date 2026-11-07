@@ -29,6 +29,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from markupsafe import Markup
 
 from . import (cuenta, db, dispositivo, garmin_adapter, garmin_cuenta, goals, history, household, identity, listen,
                privacidad, profile, readiness, shift_import, turnos_costo, tutoriales, vida_export)
@@ -288,13 +289,23 @@ def _synced(conn, person) -> str | None:
 def _sync_status_text(conn, person: dict, t: T) -> str:
     """An empty state never dead-ends (BODY-SIN-FRICCION-1): say the sync runs on its own and name the
     last successful sync's date, if one is recorded. Never invents a schedule time -- the actual time
-    is a per-install Task Scheduler setting (scripts/install-daily-sync.ps1 -At) this app cannot read."""
+    is a per-install Task Scheduler setting (scripts/install-daily-sync.ps1 -At) this app cannot read.
+    In hosted mode, with no sync yet, WHEN data will arrive is knowable (BODY-PRIMER-DIA-1): the host
+    pull runs once a day, in the morning, so a connected watch says so instead of just "it hasn't
+    synced yet"; a watch not yet connected keeps that sentence and adds a link to connect one."""
     ts = db.last_sync(conn, person["id"])
-    if not ts:
-        return t("sync.runs") + " " + t("sync.none_yet")
-    tz = ZoneInfo(person.get("timezone") or "America/Bogota")
-    last_date = datetime.fromisoformat(ts).astimezone(tz).date()
-    return t("sync.runs") + " " + t("sync.last", date=_short_date(t, last_date))
+    if ts:
+        tz = ZoneInfo(person.get("timezone") or "America/Bogota")
+        last_date = datetime.fromisoformat(ts).astimezone(tz).date()
+        return t("sync.runs") + " " + t("sync.last", date=_short_date(t, last_date))
+    if cuenta.hosted():
+        if garmin_cuenta.conectado(conn, person["id"]):
+            return t("sync.hosted_connected")
+        return Markup(
+            html.escape(t("sync.runs") + " " + t("sync.none_yet")) +
+            ' <a class="taplink" href="/garmin">' + html.escape(t("sync.connect_watch")) + "</a>"
+        )
+    return t("sync.runs") + " " + t("sync.none_yet")
 
 
 def _parse_day(day: str) -> date:
@@ -344,7 +355,8 @@ def login_callback(request: Request):
                                         dict(request.query_params))
     except cuenta.FlowRefused:
         conn.close()
-        return Response("Sign-in refused", status_code=400, media_type="text/plain")
+        return HTMLResponse(env.get_template("acceso_rechazado.html").render(t=T(DEFAULT_LANG)),
+                            status_code=400)
     except cuenta.CuentaUnavailable:
         conn.close()
         return _cuenta_down_page()

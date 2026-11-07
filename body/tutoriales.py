@@ -125,20 +125,21 @@ def tarea_en_ruta(path: str) -> dict | None:
 def primeros_pasos(conn: sqlite3.Connection, person_id: int, hosted: bool) -> list[dict]:
     """The Primeros pasos checklist (tutoriales-v1 section 5.3, 7b, decision 4): each item's tick is
     read, at call time, from data Body already has -- never a stored flag. `vincular-este-pc` is
-    local-mode-only skipped (the PC already *is* the app there), and `primera-mirada-a-hoy` is done
-    exactly when every item before it is."""
+    local-mode-only skipped (the PC already *is* the app there). `primera-mirada-a-hoy` is done when
+    the person has signed in/consented and has data (BODY-PRIMER-DIA-1): those are the two items a
+    hosted person without a PC can complete, so `vincular-este-pc` stays its own item, ticked as
+    before, and no longer gates it."""
     tareas = {t["id"]: t for t in catalogo()["tareas"] if t.get("onboarding")}
     inicio = privacidad.has_consented(conn, person_id) if hosted else True
     tiene_datos = conn.execute(
         "SELECT 1 FROM daily_metric WHERE person_id = ? LIMIT 1", (person_id,)
     ).fetchone() is not None
     vinculado = bool(dispositivo.listar(conn, person_id)) if hosted else None
-    otros = [inicio, tiene_datos] + ([bool(vinculado)] if hosted else [])
     hecho = {
         "iniciar-sesion-y-aceptar": inicio,
         "conectar-garmin": tiene_datos,
         "vincular-este-pc": bool(vinculado),
-        "primera-mirada-a-hoy": all(otros),
+        "primera-mirada-a-hoy": inicio and tiene_datos,
     }
     out = []
     for tid in ONBOARDING_ORDEN:
