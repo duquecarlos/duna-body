@@ -2677,3 +2677,129 @@ once on the branch tip before this merge.
 
 Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-nivel-datos-ui-1` into `main` following
 this entry.
+
+## BODY-TUTORIALES-2 -- tutoriales-v1 step 4's four doors (2026-11-07)
+
+BODY-TUTORIALES-1 gave Body the task census and `tutoriales/catalogo.json`. This slice builds the four doors
+tutoriales-v1 section 5 asks of every product, all reading that catalog and Growth's manifest through a new
+`body/tutoriales.py`.
+
+**`body/tutoriales.py`**: `catalogo()` loads the JSON once per process. `manifest()` fetches
+`{BODY_TUTORIALES_BASE_URL}/body/manifest.json` with httpx (3 s timeout), cached in process for 10 minutes keyed
+by the full URL; with no base URL, a raised exception, or a reply that is not `{"tareas": {...}}`, it reads as `{}`
+-- Ayuda still renders every task, each showing "Video en preparación" in place of a video (section 7's own rule).
+`video(task_id)` is the manifest entry or `None`. `ir_a_pantalla(tarea)` is the task's own `pantalla` when static,
+else `pantalla_lista` when given, else `None` -- a dynamic `pantalla` with no list gets no "Ir a la pantalla" link.
+`tarea_en_ruta(path)` matches a concrete request path against every task's `pantalla` pattern (dynamic segments
+become `[^/]+`) and returns the first match in catalog order, or `None`. `primeros_pasos(conn, person_id, hosted)`
+is section 7b's read, never a flag: `iniciar-sesion-y-aceptar` = `privacidad.has_consented` (hosted) / always true
+(local); `conectar-garmin` = any `daily_metric` row exists for the person (data-true in both modes, so the Garmin
+adapter is never imported here); `vincular-este-pc` = an unrevoked `dispositivo` row (hosted) / omitted entirely
+(local -- the PC already is the app); `primera-mirada-a-hoy` = true exactly when every item before it is.
+`BODY_TUTORIALES_BASE_URL` was added to `deploy/host/body.env.example` (blank) and to
+`tests/test_host_deploy.py`'s `EnvExampleTest.NAMES`.
+
+**Door 1, Ayuda** (`GET /ayuda`, session-authenticated, local and hosted alike): every chapter in order with its
+tasks, each showing its video (`<video controls preload="none" poster=...>` with the horizontal `<source>`, a
+vertical `<source media="(max-width: 768px)">`, and a `<track kind="subtitles">`, all from the manifest) or "Video
+en preparación"; "Ir a la pantalla" when `ir_a_pantalla` names one; "También puedes pedírselo al asistente" on
+`agente: si` tasks. A "Recorrido completo" card at the top lists every task that already has a video, in catalog
+order, as plain anchored links -- no custom player, matching tutoriales-v1 section 1's "a playlist, never a
+separate recording". Linked from a new `settings.html` card and from the footer line next to "Ajustes".
+
+**Door 2, in context**: one helper in `base.html`, not a copy in each screen template -- `tarea_en_contexto()` (a
+Jinja global) reads the current request's raw ASGI path from a context variable set by a small new
+`_CaminoActualMiddleware` in `body/web.py` (plain ASGI, not `BaseHTTPMiddleware`, so it wraps the whole stack
+including the thread-pooled sync endpoint; contextvars propagate into `anyio.to_thread.run_sync`, confirmed by a
+throwaway check before relying on it) and matches it against `tarea_en_ruta`. When a task matches, a small
+"¿Cómo se hace?" link to `/ayuda#<task-id>` renders above every screen's own content, styled inline (no new
+`body/static/body.css` rule, so the static-asset hash -- and every test that pins it -- stays untouched).
+
+**Door 3, Primeros pasos**: on `/` (Hoy), only while `primeros_pasos()` returns at least one unticked item; each
+item links its Ayuda entry and shows done/not-done with the existing `.box`/`.boxbtn` classes `today.html` already
+had for habit checks. The card disappears entirely once every item is done -- no stored flag, so it can never
+disagree with the data.
+
+**Door 4, the assistant**: `leer_tutoriales(consulta?)` in `body/agente/herramientas.py`, `tipo: lectura`, `nivel:
+ninguno` (it reads no health figure). With no `consulta`, or with one, it returns up to 5 catalog tasks (title,
+chapter title, `pantalla`, `agente`, `has_video`, `url: /ayuda#<id>`), filtered case-insensitively against the
+title or chapter title when `consulta` is given. `agente.sistema` (both languages) gained one sentence: use
+`leer_tutoriales` and link the task when asked how to do something; never invent steps.
+`tests/test_agente_registro.py`'s `ROUTE_TOOL` maps `/ayuda -> leer_tutoriales`, and its tool-count/level
+assertions moved from nine to ten `lectura` tools and from 13 to 14 total.
+
+`tests/test_tutoriales_puertas.py` (26 tests): every chapter and task renders; a manifest-listed task shows
+`<video>`/`<track>`, an unlisted one shows "Video en preparación", and env-unset or a raised fetch error still
+renders every task at 200; the manifest fetch's URL is asserted equal to `base + "/body/manifest.json"` (no
+person data in it); `ir_a_pantalla` unit tests cover the dynamic-without-`pantalla_lista` case directly (the real
+catalog currently has none in that state, so this is exercised at the function level, not through `/ayuda`); the
+in-context door appears on `/trends` and `/goals/new` pointing at the right anchors and is absent on `/goals`
+(no task there); `primeros_pasos` unit tests cover hosted-with-nothing (all unticked), hosted-with-everything (all
+done), and local mode (PC item omitted, hosted-only); two HTTP tests on `/` show the card appearing while
+something is missing and disappearing once consent, a `daily_metric` row and a device all exist;
+`leer_tutoriales` tests cover the 5-item cap, the title/chapter filter, one entry's exact shape, and availability
+at `nivel_datos: ninguno`.
+
+**GATE_RED, found on the final tree, not fixed, because the fix is outside this slice's `touches`.**
+`tests/test_agente_bucle.py::NivelDatosEnforcementTest::test_tool_not_offered_at_the_current_nivel_is_still_refused_by_ejecutar`
+hardcodes the exact set `herramientas.disponibles("ninguno")` must return. `leer_tutoriales` is, by this slice's
+own decision 5 (`nivel: ninguno`, required by the spec, not a choice this slice made), now a member of that set,
+so the hardcoded assertion fails -- the only fix is a one-line addition of `"leer_tutoriales"` to that test's
+expected set, in a file this slice's `touches` does not list (`tests/test_agente_bucle.py`). No other test outside
+`touches` broke: a first gate run also failed `tests/test_sin_friccion.py` on a coincidental substring collision
+("55" inside the then-changed static-asset hash query string) caused by a `body/static/body.css` edit this slice
+made and then reverted in favor of an inline style, which is why `body/static/body.css` shows no net diff despite
+being in `touches`.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run twice on this branch (the first run's extra
+failure was fixed within `touches` by reverting the `body.css` edit, per protocol both runs are recorded): first
+run 586 tests, FAILED (2 failures, 1 skipped); second run on the corrected tree, 586 tests, FAILED (1 failure, 1
+skipped) -- the `test_agente_bucle.py` failure above. Stops `GATE_RED`, unmerged, on `feat/body-tutoriales-2`.
+
+## BODY-TUTORIALES-2-M -- five fixes land BODY-TUTORIALES-2 (2026-11-07)
+
+BODY-TUTORIALES-2 stopped `GATE_RED` on two pre-existing tests built on fragile literals. The orchestrator then
+measured the four doors in a real browser (demo, scratch data, 375 px) and found three more defects. Approved by
+the orchestrator under `ORCH-CARLOS-DELEGATES-TIER-1-1` after review; five fixes, each with a test:
+
+1. **Primeros pasos on the no-data Hoy.** `today()` returned `soon.html`, with no Primeros pasos card at all, for a
+   brand-new person (no day yet -- exactly the first visit). `primeros_pasos()` is now read once, before the early
+   return, and both `soon.html` and `today.html` receive it; `soon.html` renders the same card through a new
+   `primeros_pasos_card(t, primeros_pasos)` macro defined once in `base.html` (`{% from "base.html" import ...
+   with context %}`), not a copy of the markup.
+2. **No dead links on a local Body.** `/login`, `/garmin` and `/ajustes/dispositivos` 404 when `cuenta.hosted()` is
+   false. `tutoriales.SOLO_EN_LINEA` names exactly those three routes; `_tarea_ayuda_ctx` now takes `hosted` and
+   drops `pantalla_link` for a task whose target is in that set while local, flagging it `solo_en_linea` instead.
+   `ayuda.html` shows `ayuda.solo_en_linea` ("Solo en Body en línea" / "Only on Body online") in that case. A test
+   walks every `SOLO_EN_LINEA` route and asserts it 404s local and does not 404 hosted, so the set cannot drift
+   from the routes.
+3. **`test_agente_bucle.py`'s literal set.** `disponibles("ninguno")`'s expected set gains `leer_tutoriales`
+   (decision 5: a nivel-`ninguno` read tool) -- the test's subject (a tool above the current nivel is still refused
+   by `ejecutar`) is unchanged.
+4. **`test_sin_friccion.py`'s "55" guard, rebuilt.** The literal `55` resting-HR value is now the sentinel
+   `987.654321` (same pattern BODY-ASISTENTE-PROPUESTAS-1-M used for `test_backup.py`), which cannot occur in a
+   count, a date, a size or a static-asset hash; the assertion still checks the sentinel's exact text is absent.
+5. **The in-context link's style, back in CSS.** `.ayuda-ctx` is now one rule in `body/static/body.css`; the
+   anchor in `base.html` carries only the class, now that fix 4 removed the fragile-hash risk that made
+   BODY-TUTORIALES-2 keep this style inline.
+
+**Deviation.** `body/i18n/es.json` and `body/i18n/en.json` are outside this slice's `touches`, but `t()` shows a
+missing key's own name on screen rather than failing (by design, so a gap is noticed, never silently blank) --
+delivering fix 2's named bilingual text ("Solo en Body en línea" / "Only on Body online") was not possible without
+adding the one key, `ayuda.solo_en_linea`, to both files. No other key or string in either file was touched.
+
+**Deviation.** The dispatch's ledger-entry instruction quoted "three fixes" verbatim; the spec's own `surface` and
+numbered work list name five. This entry reports the measured count, five.
+
+**Merge policy, judged against this diff.** Schema: no. Cross-repo contract: no. Customer-facing bytes: yes -- the
+Primeros pasos card now appears on the no-data Hoy, Ayuda's text changes for three tasks in local mode, and the
+in-context link's visual rendering moves from an inline style to an equivalent CSS rule. The spec's own body (step
+6) says in words to merge `--no-ff` into `main` once the gate is green, under `ORCH-CARLOS-DELEGATES-TIER-1-1`'s
+approval of these five named fixes -- Merge Policy A's authorization-to-merge condition is met even though the
+bytes condition trips.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` (run with `-W ignore::ResourceWarning`, an
+accepted deviation, same tests) -- run once, foreground, on the final tree: 591 tests, OK (1 skipped, pre-existing).
+
+Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-tutoriales-2` into `main` following
+this entry.

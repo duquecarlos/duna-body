@@ -439,6 +439,7 @@ class EnvExampleTest(unittest.TestCase):
         "BODY_R2_ENDPOINT",
         "BODY_R2_BUCKET",
         "BODY_AGENTE_ANTHROPIC_API_KEY",
+        "BODY_TUTORIALES_BASE_URL",
     ]
     FIXED = {
         "BODY_CUENTA_ISSUER": "https://cuenta.duna.solutions",

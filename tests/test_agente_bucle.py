@@ -117,7 +117,7 @@ class NivelDatosEnforcementTest(unittest.TestCase):
         ajustes.set_nivel_datos(conn, 1, "ninguno")
         ofrecidas = {h["nombre"] for h in herramientas.disponibles("ninguno")}
         self.assertEqual(ofrecidas, {
-            "leer_turnos", "leer_ajustes",
+            "leer_turnos", "leer_ajustes", "leer_tutoriales",
             "proponer_meta", "proponer_cambio_meta", "proponer_confirmar_turnos", "proponer_idioma",
         })
 
