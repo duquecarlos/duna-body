@@ -111,6 +111,7 @@
   "goals.field_target": "Target value",
   "goals.field_baseline": "Starting point",
   "goals.field_deadline": "Date",
+  "goals.field_deadline_metric": "Goal date",
   "goals.field_visibility": "Visibility",
   "goals.visibility.private": "Private",
   "goals.visibility.household": "Household",

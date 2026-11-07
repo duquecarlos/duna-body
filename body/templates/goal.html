@@ -56,7 +56,7 @@
   {% else %}
   <p class="note" style="margin:0">{{ t('goals.no_habits') }}</p>
   {% endif %}
-  <details style="margin-top:10px">
+  <details class="files" style="margin-top:10px">
     <summary class="k">{{ t('goals.add_habit') }}</summary>
     <form method="post" action="/goals/{{ goal.id }}/habits" style="margin-top:8px">
       <input type="text" name="title" class="field" placeholder="{{ t('goals.habit_title_ph') }}" required>

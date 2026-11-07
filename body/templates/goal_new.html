@@ -5,10 +5,8 @@
 <form method="post" action="/goals/new">
   <div class="card">
     <div class="q">{{ t('goals.field_kind') }}</div>
-    <select name="kind" id="kind-select" class="field" onchange="bodyGoalKind()">
-      <option value="metric">{{ t('goals.kind.metric') }}</option>
-      <option value="milestone">{{ t('goals.kind.milestone') }}</option>
-    </select>
+    <label class="radio"><input type="radio" name="kind" value="metric" checked> {{ t('goals.kind.metric') }}</label>
+    <label class="radio"><input type="radio" name="kind" value="milestone"> {{ t('goals.kind.milestone') }}</label>
   </div>
 
   <div class="card">
@@ -28,24 +26,27 @@
     </select>
   </div>
 
-  <div class="card" id="metric-fields">
-    <div class="q">{{ t('goals.field_metric') }}</div>
-    <select name="metric_key" id="metric-select" class="field" onchange="bodyMetricChange()">
-      {% for m in metrics %}<option value="{{ m.key }}" data-direction="{{ m.direction }}" data-baseline="{{ m.baseline if m.baseline is not none else '' }}">{{ m.label }}{% if m.unit %} ({{ m.unit }}){% endif %}</option>{% endfor %}
-    </select>
-    <div class="q" style="margin-top:12px">{{ t('goals.field_direction') }}</div>
-    <select name="direction" id="direction-select" class="field">
-      {% for d in directions %}<option value="{{ d }}">{{ t('goals.direction.' + d) }}</option>{% endfor %}
-    </select>
-    <div class="q" style="margin-top:12px">{{ t('goals.field_target') }}</div>
-    <input type="number" step="any" name="target_value" class="field">
-    <div class="q" style="margin-top:12px">{{ t('goals.field_baseline') }}</div>
-    <input type="number" step="any" name="baseline_value" id="baseline-input" class="field">
-    <div class="k" style="margin-top:4px">{{ t('goals.from_data') }}</div>
-  </div>
+  <fieldset class="metric-only">
+    <div class="card">
+      <div class="q">{{ t('goals.field_metric') }}</div>
+      <select name="metric_key" id="metric-select" class="field" onchange="bodyMetricChange()">
+        {% for m in metrics %}<option value="{{ m.key }}" data-direction="{{ m.direction }}" data-baseline="{{ m.baseline if m.baseline is not none else '' }}">{{ m.label }}{% if m.unit %} ({{ m.unit }}){% endif %}</option>{% endfor %}
+      </select>
+      <div class="q" style="margin-top:12px">{{ t('goals.field_direction') }}</div>
+      <select name="direction" id="direction-select" class="field">
+        {% for d in directions %}<option value="{{ d }}">{{ t('goals.direction.' + d) }}</option>{% endfor %}
+      </select>
+      <div class="q" style="margin-top:12px">{{ t('goals.field_target') }}</div>
+      <input type="number" step="any" name="target_value" class="field">
+      <div class="q" style="margin-top:12px">{{ t('goals.field_baseline') }}</div>
+      <input type="number" step="any" name="baseline_value" id="baseline-input" class="field">
+      <div class="k" style="margin-top:4px">{{ t('goals.from_data') }}</div>
+    </div>
+  </fieldset>
 
   <div class="card">
-    <div class="q">{{ t('goals.field_deadline') }}</div>
+    <div class="q metric-only">{{ t('goals.field_deadline_metric') }}</div>
+    <div class="q milestone-only">{{ t('goals.field_deadline') }}</div>
     <input type="date" name="deadline" class="field" required>
   </div>
 
@@ -62,17 +63,12 @@
   <button type="submit" class="btn on" style="width:100%;margin-top:4px">{{ t('goals.create_btn') }}</button>
 </form>
 <script>
-function bodyGoalKind(){
-  var metric = document.getElementById('kind-select').value === 'metric';
-  document.getElementById('metric-fields').style.display = metric ? '' : 'none';
-}
 function bodyMetricChange(){
   var opt = document.getElementById('metric-select').selectedOptions[0];
   if(!opt) return;
   document.getElementById('direction-select').value = opt.dataset.direction;
   if(opt.dataset.baseline){document.getElementById('baseline-input').value = opt.dataset.baseline}
 }
-bodyGoalKind();
 bodyMetricChange();
 </script>
 {% endblock %}

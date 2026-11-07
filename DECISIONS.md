@@ -620,3 +620,48 @@ green per merge policy A.
 
 Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 108 tests, OK (105 before this slice, 3
 added here), run once on the final branch tree before this entry.
+
+## BODY-METAS-SCREENS-POLISH-1 -- two fixes from the 375 px measurement of the Metas screens (2026-11-06)
+
+Branched from `main`. Fixes the two gaps the orchestrator's 375 px pass of `BODY-METAS-SCREENS-1` recorded
+against `docs/DESIGN.md` rule 11 (phone first, 44 px targets): on `/goals/new`, 9 interactive elements rendered
+under 36 px tall, and the form showed the metric-only fields (metric, direction, target, starting point) even
+when «Hito» / "Milestone" was chosen.
+
+**44 px, in `body/static/body.css`.** `.field`'s and `.btn`'s `min-height` raised from 40px to 44px -- both are
+`min-height`, not a fixed height, so taller content (the `why` textarea, multi-line buttons) still grows. Every
+control in the touched templates reaches `.field`/`.btn`/`.boxbtn` through those shared classes with no inline
+height override; re-reading each of `goal_new.html`, `goal.html`, `goals.html`, `today.html` and `shifts.html`
+found none. `goal.html`'s "Agregar hábito" `<details>` (the one disclosure trigger in the touched templates not
+already carrying `.files`) gained that class, so its `<summary>` picks up the existing `details.files summary`
+44 px rule the same way `shifts.html`'s per-file list and `goals.html`'s archive already do.
+
+**Kind-dependent fields without JS, in `goal_new.html`.** The goal-kind `<select>` became two radio inputs,
+`name="kind"` `value="metric"`/`"milestone"` (metric checked by default, same as the select's first option),
+each wrapped in a `label.radio` (new CSS: `display:flex`, `gap:8px`, `min-height:44px`, with the native input
+sized to a visible 20px box) -- the 44 px checkbox/radio label rule from the same spec line. The metric-only
+block (metric, direction, target, baseline) moved into a `<fieldset class="metric-only">` around its existing
+`.card`; a new global `fieldset{border:0;margin:0;padding:0}` keeps it invisible as a box so the `.card` inside
+still looks like every other card. Hidden with `form:has(input[name=kind][value=milestone]:checked)
+.metric-only{display:none}` -- no JavaScript, as the spec asked; supported by the phone's Chrome. The date
+field keeps one input for both kinds but swaps its label: `.q.metric-only` ("Fecha meta" / "Goal date", new key
+`goals.field_deadline_metric` in both `es.json` and `en.json`) and `.q.milestone-only` (the existing
+`goals.field_deadline`, "Fecha" / "Date"; `.milestone-only` is hidden by default and shown by the same `:has()`
+rule). `body/web.py`'s `/goals/new` POST handler reads `kind`/`metric_key`/`direction`/`target_value`/
+`baseline_value`/`deadline` from form fields by name regardless of control type, so the server-side validation
+for each kind is unchanged, per the spec. The `bodyGoalKind()` script (the old select's onchange) was removed
+along with the select; `bodyMetricChange()` (direction/baseline autofill from the chosen metric) is unrelated
+to the kind switch and stays.
+
+**Tests**, in `tests/test_goals_web.py` (2 new): `/goals/new`'s rendered HTML carries `metric-only` and both
+`name="kind" value="metric"`/`"milestone"` radio inputs; `body/static/body.css`, read as text, contains the
+`.btn` and `.field` rules with `min-height:44px`.
+
+No schema or migration change; no cross-repo contract change. This diff is customer-facing bytes end to end --
+new radio markup and a new label a person taps and reads, a new i18n key, a resized tap target on every button
+and input in the app -- so it trips merge policy A's customer-bytes condition regardless of the gate's result.
+Per this spec's own GATE section, it stops here, on `feat/body-metas-screens-polish-1`, clean, as
+`AWAITING_APPROVAL` rather than merging.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 110 tests, OK (108 before this slice, 2
+added here), run once on the final branch tree before this entry.
