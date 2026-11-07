@@ -1840,3 +1840,46 @@ new: 26 in `tests/test_dispositivo.py`, 2 in `tests/test_privacidad.py`, 1 net i
 
 Slice commit: `17e441b1bb8107b10b8865e2cf3bc53c8b482bc6` on `feat/body-dispositivo-1`, not yet merged --
 awaiting the orchestrator's review of the schema and customer-bytes conditions above.
+
+## BODY-DISPOSITIVO-1-M -- three fixes land BODY-DISPOSITIVO-1 (2026-11-07)
+
+Approved by the orchestrator under `ORCH-CARLOS-DELEGATES-TIER-1-1` after review; three fixes, inside
+`BODY-DISPOSITIVO-1`'s own files, then merge:
+
+1. **vida-v1's `person` follows the Cuenta sub, not the literal local key.** New
+   `vida_export.vida_person(conn, person_id)`: the person's `cuenta_sub` when Cuenta-linked, else
+   `os.environ.get("BODY_PERSON_KEY", PERSON_KEY)` -- a local install with no Cuenta sign-in keeps
+   today's value unchanged. `week_section`'s own `person` field and every `goal_checks[].person` now
+   call it instead of reading the module constant directly. Carries out the worker follow-up
+   `BODY-VIDA-PERSON-KEY-GENERIC-1`.
+2. **`/api/turnos` refuses an oversized body before reading it.** A `Content-Length` header above
+   `MAX_TURNOS_BODY_BYTES` now answers 413 immediately, with nothing read from the request. The route
+   then reads `request.stream()` into a capped buffer, stopping and answering 413 the moment more than
+   the maximum has arrived -- so a missing or lying `Content-Length` can no longer make it buffer an
+   unbounded body.
+3. **`GET`/`POST /ajustes/dispositivos` are never cached.** Both responses now carry
+   `Cache-Control: no-store` (the POST response is the one that ever shows a new key).
+
+**Tests.** `tests/test_vida_export.py` gained `VidaPersonTest` (3 tests): a hosted person with a
+`cuenta_sub` gets the sub (in `vida_person` and in `week_section`'s `person`), two persons with
+different subs get different values, and a local person with no sub keeps `PERSON_KEY`.
+`tests/test_dispositivo.py` gained 4: the Ajustes GET and POST responses both carry `no-store`; an
+oversized `Content-Length` against a tiny actual body answers 413 without the small body changing the
+outcome (proving the header path, not the stream, refused it); a lying, under-reported `Content-Length`
+against an actually oversized body still answers 413 (proving the streaming cap, not the header,
+catches that case).
+
+**No other code changed.** The diff stayed inside `body/vida_export.py`, `body/web.py`,
+`tests/test_dispositivo.py` and `tests/test_vida_export.py`, as `BODY-DISPOSITIVO-1-M`'s `touches:`
+listed.
+
+**Merge policy.** This diff touches none of Merge Policy A's three conditions -- no schema or migration
+change, no customer-facing bytes (the fixes are server-side request handling and an internal field's
+source value, not new strings or screens), no cross-repo contract change -- so it merges on green
+without waiting.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 388 tests, OK (skipped=1), run once
+on the final tree (381 at the branch tip plus the 7 new tests above).
+
+Slice commit: `952f1ec62f26c97dde0fc84bb9c7b9e84111c825` on `feat/body-dispositivo-1`. Merged `--no-ff`
+into `main` as `8411e7952ebe22f8f4d06fb5e1599b906d7db24d`.
