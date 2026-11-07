@@ -3812,3 +3812,73 @@ from `body/shift_import.py:330`; after this slice's change, on the final tree, 0
 **Merge.** No schema or migration change, no customer-facing byte changed (every edit is a `try/finally`
 widening with no printed line, file content or commit point changed; the rest is test-only), no cross-repo
 contract change. Merge policy A's three conditions all clear, so this slice merges on green without waiting.
+
+## BODY-PULIDO-1 -- 44px tap targets, Dia's cards and Como lo calculo's part rows join Turnos' way-back
+mechanism to Tendencias (2026-11-07)
+
+The first round from BODY-DISENO-CENSO-1's read-only audit: tap targets under 44px, and DESIGN rule 3 ("every
+figure opens what made it, with a way back") not yet reaching Dia or Como lo calculo the way it already reaches
+Turnos (BODY-TURNOS-ENLACES-1).
+
+**Decisions taken.**
+
+1. **One way-back mechanism for all three origins.** `/trends`'s `desde` query parameter now accepts `turnos`,
+   `dia` or `como` (anything else is dropped, as before); `dia` and `como` also take `dia=<YYYY-MM-DD>`
+   (`web.py`'s `trends()`, validated the same way `_parse_day` validates -- `date.fromisoformat` -- but an
+   invalid or missing `dia` drops `desde` too, rather than 404ing the page). Tendencias shows one back link at
+   the top (`<a class="taplink">`): `desde=turnos` -> `/shifts` (unchanged), `desde=dia` -> `/day/<dia>`,
+   `desde=como` -> `/how/<dia>`. Range links keep both `desde` and `dia` when present. The new helper
+   `_tendencias_href(key, desde, dia)` (next to `_es_extra_metric`) builds the `/trends?r=30&desde=...&dia=...
+   [&todas=1]#<key>` href from a metric key, returning `None` when the key has no card on Tendencias (checked
+   against `TREND_KEYS` and `TREND_GROUPS`, the same lookups `_es_extra_metric` already uses) -- the single
+   place both Dia and Como lo calculo call into.
+2. **Dia's cards.** `day_view()` now sets `href` on each card via `_tendencias_href(k, "dia", key)` when the
+   day has a value for that metric; `day.html`'s card loop renders the card as `<a class="card">` when `href`
+   is set, a plain `<div class="card">` otherwise (the same `<a class="card">`/`<div class="card">` choice
+   Hoy's own cards already make, in `today.html`). A card with no value, or whose metric has no Tendencias
+   card (e.g. `sleep_need_min`, deliberately absent from Tendencias per `TREND_GROUPS`'s own comment), stays a
+   plain div. The whole card is the link, so no extra sizing was needed for 44px.
+3. **Como lo calculo's part rows.** `readiness.Part` carries no metric key of its own (its keys are `hrv`,
+   `sleep`, `battery`, `resting_hr`, `stress`), so a small dict, `PART_METRIC`, sits next to `how()` and maps
+   each to its Tendencias metric key (`hrv_last_night`, `sleep_minutes`, `body_battery_wake`, `resting_hr`,
+   `stress_avg`). `how()` builds each part's `href` via `_tendencias_href(metric_key, "como", day)` when the
+   part has a value and maps to a metric with a card; `how.html` links only the row's first-cell label
+   (`<a class="taplink">`), the row stays a `<tr>`. A part with no value, or no mapping, is not a link; the
+   missing-part rows (already rendered separately, for parts readiness couldn't compute at all) are untouched.
+4. **44px tap targets.** `.taplink` already matched the target shape (`display:inline-flex;align-items:
+   center;min-height:44px`), so only its reach widened: `base.html`'s `hoy_turno_card` macro's three
+   `<a class="note" href="/shifts" style="...">` links (shown on Hoy and on `soon.html` before any data has
+   synced) are now `<a class="note taplink" href="/shifts">`, with the inline `margin`/`text-decoration` moved
+   to a new CSS rule, `.shift .note{margin:0 0 0 4px}` (the two non-link `.note` divs in the same macro keep
+   that margin too, unstyled otherwise); `ayuda.html`'s recorrido list links are `<a class="taplink"
+   href="#...">`; `sin_acceso.html`'s two links (switch account, log out) both carry `taplink`. `.asis-icon-
+   btn` (the assistant panel's icon buttons, on every screen) went from `min-width:40px;min-height:40px` to
+   `44px;44px`. The Turnos strip was not touched, per the spec.
+
+**New strings**, `trends.back_dia` / `trends.back_como`, next to the existing `trends.back_turnos`:
+es: "‹ Volver al día" / "‹ Volver a cómo lo calculo"; en: "‹ Back to the day" / "‹ Back to how it's calculated".
+
+**Part -> metric mapping used** (`web.py`'s `PART_METRIC`, added for this slice -- no such mapping existed
+before): `hrv` -> `hrv_last_night`, `sleep` -> `sleep_minutes`, `battery` -> `body_battery_wake`, `resting_hr`
+-> `resting_hr`, `stress` -> `stress_avg`. All five already have a Tendencias card (the first four are
+`TREND_KEYS` defaults; `stress_avg` lives behind "Ver todas las medidas" in `TREND_GROUPS`'s `stress` group,
+so a Como lo calculo link to it carries `todas=1`).
+
+**Tests**, `tests/test_pulido_1.py` (22 tests): Dia's cards (default-metric link with no `todas`, extra-group
+link with `todas=1`, a valued metric with no Tendencias card staying a div, a dash card having no link); Como's
+rows (a valued part linking with `desde=como`, a valueless part never linking, English); Tendencias' back link
+for each of the three `desde` values, an invalid or missing `dia` and an unknown `desde` showing none, and
+range links keeping `desde` and `dia` together; person-scope isolation across Dia and Como; the CSS/markup
+checks for `.asis-icon-btn`, `hoy_turno_card`'s three links, Ayuda's recorrido links and sin_acceso.html's
+links. `tests/test_turnos_enlaces.py` needed no change -- none of its assertions pinned the markup this slice
+touched (its `desde=turnos` tests don't exercise `dia`, and its text-content and CSS-class assertions still
+hold against the new `_tendencias_href`-based implementation).
+
+**Gate**, run once on the final tree with the plain command: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -- `Ran 778 tests ... OK (skipped=1)`.
+
+**Merge: AWAITING_APPROVAL, stopped on customer-bytes.** This diff changes what a person reads and taps: two
+new strings (`trends.back_dia`, `trends.back_como`) in both languages, Dia's metric cards and Como lo calculo's
+part-row labels becoming links, and the assistant's icon buttons and the three shift-card/Ayuda/sin-acceso
+links growing to 44px. Merge policy A's customer-bytes condition fails, so this slice stops before merging, on
+the branch, for the orchestrator to measure in a browser against the demo home, per the spec's own instruction.

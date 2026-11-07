@@ -472,11 +472,18 @@ def today(person_id: int = Depends(identity.current_person_id)):
                    primeros_pasos=primeros_pasos)
 
 
+# readiness.Part.key -> the Tendencias metric it reads from (readiness.Part carries no metric key of its
+# own). BODY-PULIDO-1: how()'s part rows link to their own measure through this.
+PART_METRIC = {"hrv": "hrv_last_night", "sleep": "sleep_minutes", "battery": "body_battery_wake",
+               "resting_hr": "resting_hr", "stress": "stress_avg"}
+
+
 @app.get("/how/{day}")
 @_cierra_conexion
 def how(day: str, person_id: int = Depends(identity.current_person_id)):
     d = _parse_day(day)
     conn, person, t = _ctx(person_id)
+    today_local = _today_local(person)
     r = readiness.compute(conn, d.isoformat(), person_id)
     parts = []
     for p in r.parts:
@@ -486,8 +493,11 @@ def how(day: str, person_id: int = Depends(identity.current_person_id)):
         else:
             value, ref = t.num(p.value), (t.num(p.reference) if p.reference is not None else "—")
         label = t("part." + p.key)
+        metric_key = PART_METRIC.get(p.key)
+        href = (_tendencias_href(metric_key, "como", d.isoformat(), today_local)
+                if metric_key and p.value is not None else None)
         parts.append({"label": label[:1].upper() + label[1:], "value": value, "ref": ref, "ref_note": ref_note,
-                      "score": t.num(p.subscore), "weight": f"{round(p.weight * 100)} %"})
+                      "score": t.num(p.subscore), "weight": f"{round(p.weight * 100)} %", "href": href})
     missing = [t("part." + m) for m in r.missing]
     return _render("how.html", t=t, tab="today", r=r, parts=parts, date_long=t.long_date(d),
                    missing=[m[:1].upper() + m[1:] for m in missing])
@@ -498,6 +508,7 @@ def how(day: str, person_id: int = Depends(identity.current_person_id)):
 def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
     d = _parse_day(day)
     conn, person, t = _ctx(person_id)
+    today_local = _today_local(person)
     key = d.isoformat()
     data = db.load_day(conn, key, person_id)
     vals = {m["key"]: m["value"] for m in data["metrics"]}
@@ -506,8 +517,10 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
     for k, df in defs.items():
         v = vals.get(k)
         delta, cls = _delta(conn, t, df, key, v, person_id)
+        href = _tendencias_href(k, "dia", key, today_local) if v is not None else None
         cards.append({"key": k, "label": t("metric." + k), "value": _value(t, k, v), "raw": v,
-                      "unit": _unit(t, df), "delta": delta, "cls": cls, "est": df["kind"] == "estimated"})
+                      "unit": _unit(t, df), "delta": delta, "cls": cls, "est": df["kind"] == "estimated",
+                      "href": href})
     sleep = None
     if vals.get("sleep_minutes") is not None:
         total_stage = sum(vals.get(s[0]) or 0 for s in STAGES)
@@ -565,6 +578,30 @@ def _es_extra_metric(key: str) -> bool:
     """Whether `key` lives behind "Ver todas las medidas" on Tendencias (TREND_GROUPS, defined below --
     resolved at call time, so the order of definitions in this file doesn't matter)."""
     return any(key in keys for _, keys in TREND_GROUPS)
+
+
+def _rango_que_contiene(dia: date, today_local: date) -> str:
+    """The Tendencias range whose window actually contains `dia`, relative to the person's own today
+    (BODY-PULIDO-1-M: r=30 opened for a day outside that 30-day window). Within the last 30 days -> r=30;
+    within 90 -> r=90; older -> no r at all, the monthly/all-time view that reaches any day."""
+    age = (today_local - dia).days
+    if age <= 30:
+        return "r=30"
+    if age <= 90:
+        return "r=90"
+    return ""
+
+
+def _tendencias_href(key: str, desde: str, dia: str, today_local: date) -> str | None:
+    """A measure's own Tendencias card, with a way back to where the tap came from -- Dia's cards and
+    Como lo calculo's part rows (BODY-PULIDO-1), same shape as Turnos' cost rows. None when `key` has
+    no card there (TREND_KEYS or an extra group), so the caller leaves the figure unlinked."""
+    if key not in TREND_KEYS and not _es_extra_metric(key):
+        return None
+    todas = "&todas=1" if _es_extra_metric(key) else ""
+    rango = _rango_que_contiene(date.fromisoformat(dia), today_local)
+    r_part = f"{rango}&" if rango else ""
+    return f"/trends?{r_part}desde={desde}&dia={dia}{todas}#{key}"
 
 
 def _turnos_filas(t: T, defs: dict, resumen: dict) -> list[dict]:
@@ -807,14 +844,31 @@ def _trend_card(conn, t: T, defs: dict, k: str, start, end, month, nights, perso
 @app.get("/trends")
 @_cierra_conexion
 def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde: str | None = None,
-           person_id: int = Depends(identity.current_person_id)):
+           dia: str | None = None, person_id: int = Depends(identity.current_person_id)):
     """r = 7 | 30 | 90 | all (the whole history, monthly). m = YYYY-MM opens one month day by day (from a tap on
-    the monthly line). todas=1 keeps "Ver todas las medidas" open across a range switch. desde=turnos arrives
-    from a Turnos cost row (BODY-TURNOS-ENLACES-1) and shows the way back to it, kept on every range link. The
-    URL carries a range, a month or those flags, never a value."""
+    the monthly line). todas=1 keeps "Ver todas las medidas" open across a range switch. desde=turnos|dia|como
+    arrives from a Turnos cost row, a Dia card or a Como lo calculo row (BODY-TURNOS-ENLACES-1, BODY-PULIDO-1)
+    and shows the way back, kept on every range link; dia=<YYYY-MM-DD> names the day to go back to for
+    desde=dia/como, and an unparseable dia drops both. The URL carries a range, a month or those flags, never
+    a value."""
     conn, person, t = _ctx(person_id)
     defs = _defs(conn)
     last = _latest_day(conn, person_id)
+    desde_dia = None
+    if desde in ("dia", "como") and dia:
+        try:
+            desde_dia = date.fromisoformat(dia).isoformat()
+        except ValueError:
+            desde_dia = None
+    if desde not in ("turnos", "dia", "como") or (desde in ("dia", "como") and not desde_dia):
+        desde = None
+    back_href = back_label = None
+    if desde == "turnos":
+        back_href, back_label = "/shifts", t("trends.back_turnos")
+    elif desde == "dia":
+        back_href, back_label = f"/day/{desde_dia}", t("trends.back_dia")
+    elif desde == "como":
+        back_href, back_label = f"/how/{desde_dia}", t("trends.back_como")
     month = None
     if m:
         try:
@@ -887,7 +941,7 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
                    r=r, ranges=RANGES, fig_label=fig_label, nights=bool(nights),
                    month_title=t.month_year(month) if month else None,
                    extra_groups=extra_groups, extra_count=extra_count, todas=todas == "1",
-                   desde=desde if desde == "turnos" else None)
+                   desde=desde, dia=desde_dia, back_href=back_href, back_label=back_label)
 
 
 def _short_date(t: T, d: date) -> str:

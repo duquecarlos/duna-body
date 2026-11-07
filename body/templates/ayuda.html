@@ -8,7 +8,7 @@
   <div class="q">{{ t('ayuda.recorrido_completo') }}</div>
   <ol class="list" style="list-style:decimal;padding-left:20px;margin-top:6px">
   {% for tarea in recorrido %}
-    <li><a href="#{{ tarea.id }}" style="text-decoration:underline">{{ tarea.titulo }}</a></li>
+    <li><a class="taplink" href="#{{ tarea.id }}">{{ tarea.titulo }}</a></li>
   {% endfor %}
   </ol>
 </div>
@@ -30,7 +30,7 @@
   <p class="note">{{ t('ayuda.en_preparacion') }}</p>
   {% endif %}
   {% if tarea.pantalla_link %}
-  <p class="read"><a href="{{ tarea.pantalla_link }}" style="text-decoration:underline">{{ t('ayuda.ir_a_pantalla') }} →</a></p>
+  <p class="read"><a class="taplink" href="{{ tarea.pantalla_link }}">{{ t('ayuda.ir_a_pantalla') }} →</a></p>
   {% elif tarea.solo_en_linea %}
   <p class="note">{{ t('ayuda.solo_en_linea') }}</p>
   {% endif %}
