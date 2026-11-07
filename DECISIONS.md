@@ -4390,3 +4390,22 @@ the other two. Stopping `AWAITING_APPROVAL` on `feat/body-turnos-esquema-1` with
 approval ("schema is Tier 1 -- stop AWAITING_APPROVAL on the branch if your merge policy says so; do not force a
 merge"). Slice commit `c19cd464c578b88c832f145e5334e376bfe56325`; this ledger entry follows as its own commit on
 the same branch, since there is no merge for it to follow.
+
+## BODY-TURNOS-ESQUEMA-1-M -- land BODY-TURNOS-ESQUEMA-1 (2026-11-07)
+
+Lands `BODY-TURNOS-ESQUEMA-1` (`30b58bd3dbf88c658650171748d8a4936354e039`) as written, per
+`ORCH-CARLOS-DELEGATES-TIER-1-1`'s review: `person.trabaja_turnos` nullable with `CHECK (0, 1)`, the one-time
+backfill to `1` inside the add-column branch, `shift_batch.kind` defaulted to `'import'`, `shift_pattern` with
+`json_valid(cycle)` and a 1-26 week horizon, the three accessors, the privacidad export/delete-all coverage. No
+code change in this slice -- the branch merges exactly as the orchestrator reviewed it.
+
+**Pre-flight.** Branch clean, tip `30b58bd3dbf88c658650171748d8a4936354e039`. `main`'s tip
+(`59a94b18c16497cc068c4a8bc3faef0b2953b29e`) equals `git merge-base feat/body-turnos-esquema-1 main`, so `main`
+had not moved since the branch was cut; no merge-in-first step needed.
+
+**Gate**, exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, run once on the branch before
+merging: `Ran 850 tests in 101.874s ... OK (skipped=1)`.
+
+**Merge.** `--no-ff` into `main`, merge commit `19233ef58916e2e0f3693e5c8007ae830b234df5`. Merge tree
+(`f550cefd441f41ff708829d66af3266445639e3d`) equals the branch tip's tree exactly (`git diff` empty), confirming
+nothing was resolved or altered in the merge. `main` left checked out, clean.
