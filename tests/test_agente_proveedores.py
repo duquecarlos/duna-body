@@ -46,10 +46,16 @@ class MembershipTest(unittest.TestCase):
         for n in _ENV_NAMES:
             os.environ.pop(n, None)
 
-    def test_key_alone_does_not_configure_openai_or_gemini(self):
+    def test_key_alone_configures_openai_and_gemini_at_the_standard_model(self):
+        # BODY-MODELOS-ESTANDAR-1 decision 1: code defaults for all three providers mean a key
+        # alone turns a provider on, at Duna's standard model -- unchanged from decision 1's "key
+        # AND model" gate in code, since the model line now always resolves to a default.
         os.environ["BODY_AGENTE_OPENAI_API_KEY"] = "sk-fake"
         os.environ["BODY_AGENTE_GEMINI_API_KEY"] = "key-fake"
-        self.assertEqual(cliente.proveedores_configurados(), {})
+        configurados = cliente.proveedores_configurados()
+        self.assertEqual(set(configurados), {"openai", "gemini"})
+        self.assertEqual(configurados["openai"].modelo, cliente.MODELO_DEFAULT_OPENAI)
+        self.assertEqual(configurados["gemini"].modelo, cliente.MODELO_DEFAULT_GEMINI)
 
     def test_model_alone_does_not_configure_openai_or_gemini(self):
         os.environ["BODY_AGENTE_MODELO_OPENAI"] = "gpt-x"

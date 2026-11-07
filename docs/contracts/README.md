@@ -1,6 +1,6 @@
 # Duna contracts, read-only copies
 
-These eight files are read-only copies of contracts Main (the main orchestrator) owns at
+These nine files are read-only copies of contracts Main (the main orchestrator) owns at
 `C:\Duna\dev-protocol\contracts\` (two of them, `hogar-v1.md` and `vida-v1.md`, say so themselves at FORK-1). **Main owns
 the source. A change is made there and copied here (`BODY-CONTRATOS-1`'s copy step: `shutil.copyfile` per file, verified
 byte for byte by sha256). Never edit a file in this directory directly** -- edit the source and re-copy.
@@ -16,5 +16,6 @@ restatement of it.
 | `hogar-v1.md` | Household plans and goals: Body reads the hogar claim from Cuenta sign-in (or the service API) once it has a Cuenta client, and keeps health figures private within the household unless a person shares one. | `54f74c133df0665328db3e4f54f871fa5819e93c94892d37dba615017c59233d` |
 | `host-deploy-v1.md` | How Body's own `deploy/` scripts reach `duna-prod-1` over SSH: root-owned scripts, `sudo` without a password only for them. | `19ecacf85d340414c301c204b76441b82cbcf76a9431cc845da31c910b989813` |
 | `host-deploy-v1-amendment-sensitive-data.md` | Body is the amendment's first case: health data kept in a SQLite file on the host (not Neon), never in a log/URL/hub item/worker report, with consent, export and delete at sign-in. | `902de086f0930a4beec5ec67260f085c855291dd02d18be0a567710ab40139e8` |
+| `modelos-ia-v1.md` | Duna's one set of AI models every assistant uses: Body's code defaults for all three providers (`claude-sonnet-5-5`, `gpt-6.1-sol`, `gemini-3.8-flash`), its dated prices in `precio_modelo`, and the host env example naming the standard. | `77422651a7d0e1704ea6d854740273ee0fbc603bc8375b36831637088ece0862` |
 | `tutoriales-v1.md` | The task census `tutoriales/catalogo.json` (chapters and tasks from Body's real routes and assistant tools) and the seeded demo tenant `python -m body.demo` that a recording can drive, per section 8 steps 1-2. | `11d44b94eaae10147aabe654aaa4611f4ee38b4bbd57c2d9ad6b093d52a63865` |
 | `vida-v1.md` | The shared life-coach shapes (Event, Metric, Goal, `goal_check`) that Body's own `body/db.py` and weekly check adopted, with `body.*` namespaced metric keys and Garmin as a `source`. | `ff3354e1e10c4987570825fb41e60ac3f22fe76771998f884086e7b4a60dac7b` |

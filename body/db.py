@@ -290,12 +290,16 @@ CREATE INDEX IF NOT EXISTS idx_uso_agente_person_dia ON uso_agente(person_id, cr
 
 -- Prices are DATA, seeded empty -- never invented (amendment 5: nothing is costed at 0 because
 -- its price is missing; an unpriced model falls back to the count breaker instead).
+-- `desde` (BODY-MODELOS-ESTANDAR-1 decision 2) makes a price DATED: a row applies from its date
+-- until the next row's date for the same (proveedor, modelo, tipo) -- one column, so it can never
+-- leave a gap or an overlap the way a desde/hasta pair could.
 CREATE TABLE IF NOT EXISTS precio_modelo (
     proveedor            TEXT NOT NULL,
     modelo               TEXT NOT NULL,
     tipo                 TEXT NOT NULL CHECK (tipo IN ('entrada', 'salida', 'cache_lectura', 'cache_escritura')),
+    desde                TEXT NOT NULL DEFAULT '2000-01-01',
     micro_usd_por_millon INTEGER NOT NULL,
-    PRIMARY KEY (proveedor, modelo, tipo)
+    PRIMARY KEY (proveedor, modelo, tipo, desde)
 );
 
 -- Per-person overrides of the daily ceilings, both nullable (NULL = use the env default).
@@ -492,6 +496,39 @@ def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
     return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)).fetchone() is not None
 
 
+def _precio_modelo_needs_desde(conn: sqlite3.Connection) -> bool:
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(precio_modelo)")}
+    return bool(cols) and "desde" not in cols
+
+
+def _rebuild_precio_modelo_table(conn: sqlite3.Connection) -> None:
+    """precio_modelo gains `desde` as part of its primary key (BODY-MODELOS-ESTANDAR-1 decision 2):
+    SQLite cannot ALTER a primary key, so this rebuilds the table in one transaction, the same
+    guarded shape as the goal/habit/goal_check and inicio_sesion rebuilds above. Every existing row
+    -- including an operator's own hand-set price -- gets desde '2000-01-01', never lost."""
+    def step(conn):
+        old_rows = conn.execute("SELECT * FROM precio_modelo").fetchall()
+        conn.execute(
+            "CREATE TABLE precio_modelo_nuevo ("
+            "proveedor TEXT NOT NULL, modelo TEXT NOT NULL, "
+            "tipo TEXT NOT NULL CHECK (tipo IN ('entrada', 'salida', 'cache_lectura', 'cache_escritura')), "
+            "desde TEXT NOT NULL DEFAULT '2000-01-01', micro_usd_por_millon INTEGER NOT NULL, "
+            "PRIMARY KEY (proveedor, modelo, tipo, desde))"
+        )
+        for r in old_rows:
+            conn.execute(
+                "INSERT INTO precio_modelo_nuevo (proveedor, modelo, tipo, desde, micro_usd_por_millon) "
+                "VALUES (?, ?, ?, '2000-01-01', ?)",
+                (r["proveedor"], r["modelo"], r["tipo"], r["micro_usd_por_millon"]),
+            )
+        new_count = conn.execute("SELECT COUNT(*) FROM precio_modelo_nuevo").fetchone()[0]
+        if new_count != len(old_rows):
+            raise RuntimeError(f"precio_modelo rebuild count mismatch: {len(old_rows)} -> {new_count}")
+        conn.execute("DROP TABLE precio_modelo")
+        conn.execute("ALTER TABLE precio_modelo_nuevo RENAME TO precio_modelo")
+    _rebuild_with_fk_off(conn, step)
+
+
 def _goal_needs_rebuild(conn: sqlite3.Connection) -> bool:
     row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'goal'").fetchone()
     return row is not None and "'proposed'" not in row[0]
@@ -653,9 +690,15 @@ def _migrate_cuenta(conn: sqlite3.Connection) -> None:
         _rebuild_inicio_sesion_table(conn)
 
 
+def _migrate_precios(conn: sqlite3.Connection) -> None:
+    if _table_exists(conn, "precio_modelo") and _precio_modelo_needs_desde(conn):
+        _rebuild_precio_modelo_table(conn)
+
+
 def init(conn: sqlite3.Connection) -> None:
     _migrate_metas(conn)
     _migrate_cuenta(conn)
+    _migrate_precios(conn)
     conn.executescript(SCHEMA)
     _migrate(conn)
     conn.executemany(

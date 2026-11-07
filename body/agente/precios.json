@@ -1,6 +1,16 @@
-{"version": "precios-2026-10-06",
- "fuente": "Anthropic first-party API price table (cached 2026-10-06); cache write = 1.25x input (5-minute TTL)",
+{"version": "precios-2026-11-07 (modelos-ia-v1.1)",
+ "fuente": "Duna's AI model standard (docs/contracts/modelos-ia-v1.md, v1.1 2026-11-07). Anthropic and OpenAI cache_escritura, and Gemini's whole cache column, are priced at the full INPUT price because no vendor figure is known for them -- conservative: the spend ceiling trips early, never late, never under-counts.",
  "precios": [
-   {"proveedor": "anthropic", "modelo": "claude-sonnet-5-5",
+   {"proveedor": "anthropic", "modelo": "claude-sonnet-5-5", "desde": "2000-01-01",
     "micro_usd_por_millon": {"entrada": 2000000, "salida": 10000000,
-                              "cache_lectura": 200000, "cache_escritura": 2500000}}]}
+                              "cache_lectura": 200000, "cache_escritura": 2500000}},
+   {"proveedor": "openai", "modelo": "gpt-6.1-sol", "desde": "2000-01-01",
+    "micro_usd_por_millon": {"entrada": 2000000, "salida": 10000000,
+                              "cache_lectura": 100000, "cache_escritura": 2000000}},
+   {"proveedor": "gemini", "modelo": "gemini-3.8-flash", "desde": "2000-01-01",
+    "micro_usd_por_millon": {"entrada": 750000, "salida": 3750000,
+                              "cache_lectura": 750000, "cache_escritura": 750000}},
+   {"proveedor": "gemini", "modelo": "gemini-3.8-flash", "desde": "2027-01-01",
+    "micro_usd_por_millon": {"entrada": 1500000, "salida": 7500000,
+                              "cache_lectura": 1500000, "cache_escritura": 1500000}}
+ ]}

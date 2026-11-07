@@ -138,14 +138,16 @@ class ProveedorConfiguradoTest(unittest.TestCase):
         prov = cliente.proveedor_configurado()
         self.assertIsInstance(prov, cliente.Anthropic)
 
-    def test_openai_selected_by_env_needs_its_own_key_and_model(self):
+    def test_openai_selected_by_env_configures_at_the_standard_model_once_keyed(self):
         os.environ["BODY_AGENTE_PROVEEDOR"] = "openai"
         self.assertIsNone(cliente.proveedor_configurado())  # nothing configured at all
         os.environ["BODY_AGENTE_OPENAI_API_KEY"] = "sk-fake-openai"
-        # Key alone is not enough for openai/gemini (decision 1): no invented model default.
-        self.assertIsNone(cliente.proveedor_configurado())
+        # Key alone now configures it, at Duna's standard model (BODY-MODELOS-ESTANDAR-1 decision 1).
+        prov = cliente.proveedor_configurado()
+        self.assertIsInstance(prov, cliente.OpenAI)
+        self.assertEqual(prov.modelo, cliente.MODELO_DEFAULT_OPENAI)
         os.environ["BODY_AGENTE_MODELO_OPENAI"] = "gpt-x"
-        self.assertIsInstance(cliente.proveedor_configurado(), cliente.OpenAI)
+        self.assertEqual(cliente.proveedor_configurado().modelo, "gpt-x")
 
 
 class NoKeyInUrlTest(unittest.TestCase):

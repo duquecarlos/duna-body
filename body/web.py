@@ -1733,8 +1733,11 @@ async def asistente_preguntar(request: Request, person_id: int = Depends(identit
         configurados = agente_cliente.proveedores_configurados()
         resuelto = agente_cliente.nombre_elegido(configurados, conn, person_id)
         proveedor_nombre = resuelto or proveedor_env
-        modelo = (configurados[resuelto].modelo if resuelto
-                  else os.environ.get("BODY_AGENTE_MODELO", agente_cliente.MODELO_DEFAULT))
+        # `resuelto` is None when nothing is configured -- `generar()` then returns on the
+        # no_configurado error before `modelo` is read in production. This reads the client's OWN
+        # default constant rather than a second BODY_AGENTE_MODELO lookup, so no second default
+        # exists (BODY-MODELOS-ESTANDAR-1 decision 4).
+        modelo = configurados[resuelto].modelo if resuelto else agente_cliente.MODELO_DEFAULT
     proveedor = agente_cliente.proveedor_configurado(conn, person_id)
 
     async def generar():
