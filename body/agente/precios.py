@@ -77,4 +77,7 @@ if __name__ == "__main__":
 
     _conn = db.connect(config.DB_PATH)
     db.init(_conn)
-    print(sembrar(_conn))
+    try:
+        print(sembrar(_conn))
+    finally:
+        _conn.close()

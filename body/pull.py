@@ -112,7 +112,13 @@ def main(argv=None) -> int:
 
     conn = db.connect()
     db.init(conn)
+    try:
+        return _run(conn, a)
+    finally:
+        conn.close()
 
+
+def _run(conn, a) -> int:
     if cuenta.hosted():
         days = [a.date] if a.date else [(date.today() - timedelta(n)).isoformat() for n in range(a.days)]
         ok, failed, saved = pull_hosted(conn, days)

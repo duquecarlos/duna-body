@@ -326,8 +326,10 @@ def main(argv: list[str] | None = None) -> None:
     from . import db
     conn = db.connect()
     db.init(conn)
-    counts = _seed(conn, dias=args.dias, idioma=args.idioma)
-    conn.close()
+    try:
+        counts = _seed(conn, dias=args.dias, idioma=args.idioma)
+    finally:
+        conn.close()
 
     marker_path.write_text(
         json.dumps({"seed": SEED, "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}),

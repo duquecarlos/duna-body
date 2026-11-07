@@ -69,10 +69,13 @@ def main(argv: list[str] | None = None) -> int:
     rows = read_rows(a.csv)
     conn = db.connect()
     db.init(conn)
-    result = plan(conn, rows)
-    applied = failed = None
-    if a.apply:
-        applied, failed = apply(conn, result["to_link"])
+    try:
+        result = plan(conn, rows)
+        applied = failed = None
+        if a.apply:
+            applied, failed = apply(conn, result["to_link"])
+    finally:
+        conn.close()
 
     print(f"to link: {len(result['to_link'])}")
     print(f"already linked: {len(result['already_linked'])}")

@@ -19,6 +19,7 @@ import sys
 import time
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
+from functools import wraps
 from pathlib import Path
 from urllib.parse import parse_qs, quote
 from zoneinfo import ZoneInfo
@@ -151,11 +152,54 @@ STAGES = [("sleep_deep_min", "metric.sleep_deep_min", "var(--night)"),
           ("sleep_awake_min", "metric.sleep_awake_min", "var(--amber)")]
 
 
+# BODY-CONEXIONES-CERRADAS-1: _ctx() opens one connection per route call and stores it here so a
+# route that calls _ctx() more than once (an early-return branch, then a fallback) still leaves
+# exactly one connection to close. The close itself happens in _cierra_conexion[_async] below, which
+# wraps the route function directly rather than a middleware or a separate FastAPI dependency --
+# sqlite3 connections are thread-affine, and either of those could run its cleanup on a different
+# worker thread than the one that opened the connection.
+_REQUEST_CONN: contextvars.ContextVar = contextvars.ContextVar("_request_conn", default=None)
+
+
 def _ctx(person_id: int) -> tuple:
-    conn = db.connect()
-    db.init(conn)
+    conn = _REQUEST_CONN.get()
+    if conn is None:
+        conn = db.connect()
+        db.init(conn)
+        _REQUEST_CONN.set(conn)
     person = db.person(conn, person_id)
     return conn, person, T(person.get("language", "es"))
+
+
+def _cierra_conexion(fn):
+    """Decorates a sync route that calls _ctx(): closes whichever connection it opened, once the
+    route function returns, in the same thread that opened it."""
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        token = _REQUEST_CONN.set(None)
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            conn = _REQUEST_CONN.get()
+            if conn is not None:
+                conn.close()
+            _REQUEST_CONN.reset(token)
+    return wrapper
+
+
+def _cierra_conexion_async(fn):
+    """Same as _cierra_conexion, for an `async def` route."""
+    @wraps(fn)
+    async def wrapper(*args, **kwargs):
+        token = _REQUEST_CONN.set(None)
+        try:
+            return await fn(*args, **kwargs)
+        finally:
+            conn = _REQUEST_CONN.get()
+            if conn is not None:
+                conn.close()
+            _REQUEST_CONN.reset(token)
+    return wrapper
 
 
 def _render(name: str, **kw) -> HTMLResponse:
@@ -279,8 +323,10 @@ def login_start(request: Request):
     max_age = 600 if request.query_params.get("max_age") == "600" else None
     conn = db.connect()
     db.init(conn)
-    url, flujo_id = cuenta.start_login(conn, return_to, prompt=prompt, max_age=max_age)
-    conn.close()
+    try:
+        url, flujo_id = cuenta.start_login(conn, return_to, prompt=prompt, max_age=max_age)
+    finally:
+        conn.close()
     resp = RedirectResponse(url, status_code=303)
     cuenta.set_flujo_cookie(resp, flujo_id)
     return resp
@@ -385,6 +431,7 @@ def _hoy_turno_ctx(t: T, conn, person_id: int, today_local: date) -> dict:
 
 
 @app.get("/")
+@_cierra_conexion
 def today(person_id: int = Depends(identity.current_person_id)):
     conn, person, t = _ctx(person_id)
     day = _latest_day(conn, person_id)
@@ -426,6 +473,7 @@ def today(person_id: int = Depends(identity.current_person_id)):
 
 
 @app.get("/how/{day}")
+@_cierra_conexion
 def how(day: str, person_id: int = Depends(identity.current_person_id)):
     d = _parse_day(day)
     conn, person, t = _ctx(person_id)
@@ -446,6 +494,7 @@ def how(day: str, person_id: int = Depends(identity.current_person_id)):
 
 
 @app.get("/day/{day}")
+@_cierra_conexion
 def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
     d = _parse_day(day)
     conn, person, t = _ctx(person_id)
@@ -565,6 +614,7 @@ def _turnos_strip(conn, person_id: int, today_local: date, t: T) -> tuple[list[d
 
 
 @app.get("/shifts")
+@_cierra_conexion
 def shifts(request: Request, person_id: int = Depends(identity.current_person_id)):
     conn, person, t = _ctx(person_id)
     rows = conn.execute(
@@ -622,6 +672,7 @@ def _turnos_bloque_linea(t: T, b: dict, hoy: date) -> str:
 
 
 @app.get("/shifts/como")
+@_cierra_conexion
 def shifts_como(person_id: int = Depends(identity.current_person_id)):
     conn, person, t = _ctx(person_id)
     today_local = _today_local(person)
@@ -634,6 +685,7 @@ def shifts_como(person_id: int = Depends(identity.current_person_id)):
 
 
 @app.post("/shifts/confirm")
+@_cierra_conexion_async
 async def shifts_confirm(request: Request, person_id: int = Depends(identity.current_person_id)):
     batch_id = parse_qs((await request.body()).decode()).get("batch_id", [""])[0]
     if batch_id.isdigit():
@@ -647,6 +699,7 @@ async def shifts_confirm(request: Request, person_id: int = Depends(identity.cur
 
 
 @app.post("/shifts/confirm-all")
+@_cierra_conexion_async
 async def shifts_confirm_all(person_id: int = Depends(identity.current_person_id)):
     conn, _, _ = _ctx(person_id)
     try:
@@ -661,6 +714,7 @@ async def shifts_confirm_all(person_id: int = Depends(identity.current_person_id
 
 
 @app.post("/shifts/dismiss")
+@_cierra_conexion_async
 async def shifts_dismiss(request: Request, person_id: int = Depends(identity.current_person_id)):
     batch_id = parse_qs((await request.body()).decode()).get("batch_id", [""])[0]
     if batch_id.isdigit():
@@ -751,6 +805,7 @@ def _trend_card(conn, t: T, defs: dict, k: str, start, end, month, nights, perso
 
 
 @app.get("/trends")
+@_cierra_conexion
 def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde: str | None = None,
            person_id: int = Depends(identity.current_person_id)):
     """r = 7 | 30 | 90 | all (the whole history, monthly). m = YYYY-MM opens one month day by day (from a tap on
@@ -953,6 +1008,7 @@ def _shift_ctx(t: T, defs: dict, shift_data: dict) -> dict:
 
 
 @app.get("/history")
+@_cierra_conexion
 def history_view(person_id: int = Depends(identity.current_person_id)):
     conn, person, t = _ctx(person_id)
     cov = history.coverage(conn, person_id)
@@ -1169,6 +1225,7 @@ def _verdict_sentence(t: T, defs: dict, g, check: dict) -> str:
 
 
 @app.get("/goals")
+@_cierra_conexion
 def goals_list(person_id: int = Depends(identity.current_person_id)):
     conn, person, t = _ctx(person_id)
     today = _today_local(person)
@@ -1209,6 +1266,7 @@ def goals_list(person_id: int = Depends(identity.current_person_id)):
 
 
 @app.get("/goals/new")
+@_cierra_conexion
 def goal_new_form(person_id: int = Depends(identity.current_person_id)):
     conn, person, t = _ctx(person_id)
     defs = _defs(conn)
@@ -1224,6 +1282,7 @@ def goal_new_form(person_id: int = Depends(identity.current_person_id)):
 
 
 @app.post("/goals/new")
+@_cierra_conexion_async
 async def goal_new_create(request: Request, person_id: int = Depends(identity.current_person_id)):
     conn, person, t = _ctx(person_id)
     f = await _form(request)
@@ -1263,6 +1322,7 @@ async def goal_new_create(request: Request, person_id: int = Depends(identity.cu
 
 
 @app.get("/goals/{goal_id}")
+@_cierra_conexion
 def goal_detail(goal_id: int, person_id: int = Depends(identity.current_person_id)):
     conn, person, t = _ctx(person_id)
     g = conn.execute("SELECT * FROM goal WHERE id = ? AND person_id = ?", (goal_id, person_id)).fetchone()
@@ -1328,6 +1388,7 @@ def _owned_goal_or_404(conn, goal_id: int, person_id: int) -> None:
 
 
 @app.post("/goals/{goal_id}/activate")
+@_cierra_conexion
 def goal_activate(goal_id: int, person_id: int = Depends(identity.current_person_id)):
     conn, _, _ = _ctx(person_id)
     _owned_goal_or_404(conn, goal_id, person_id)
@@ -1336,6 +1397,7 @@ def goal_activate(goal_id: int, person_id: int = Depends(identity.current_person
 
 
 @app.post("/goals/{goal_id}/pause")
+@_cierra_conexion
 def goal_pause(goal_id: int, person_id: int = Depends(identity.current_person_id)):
     conn, _, _ = _ctx(person_id)
     _owned_goal_or_404(conn, goal_id, person_id)
@@ -1344,6 +1406,7 @@ def goal_pause(goal_id: int, person_id: int = Depends(identity.current_person_id
 
 
 @app.post("/goals/{goal_id}/finish")
+@_cierra_conexion
 def goal_finish(goal_id: int, person_id: int = Depends(identity.current_person_id)):
     conn, _, _ = _ctx(person_id)
     _owned_goal_or_404(conn, goal_id, person_id)
@@ -1352,6 +1415,7 @@ def goal_finish(goal_id: int, person_id: int = Depends(identity.current_person_i
 
 
 @app.post("/goals/{goal_id}/drop")
+@_cierra_conexion
 def goal_drop(goal_id: int, person_id: int = Depends(identity.current_person_id)):
     conn, _, _ = _ctx(person_id)
     _owned_goal_or_404(conn, goal_id, person_id)
@@ -1360,6 +1424,7 @@ def goal_drop(goal_id: int, person_id: int = Depends(identity.current_person_id)
 
 
 @app.post("/goals/{goal_id}/habits")
+@_cierra_conexion_async
 async def goal_add_habit(goal_id: int, request: Request, person_id: int = Depends(identity.current_person_id)):
     conn, _, _ = _ctx(person_id)
     _owned_goal_or_404(conn, goal_id, person_id)
@@ -1371,6 +1436,7 @@ async def goal_add_habit(goal_id: int, request: Request, person_id: int = Depend
 
 
 @app.post("/habits/{habit_id}/check")
+@_cierra_conexion_async
 async def habit_check(habit_id: int, request: Request, person_id: int = Depends(identity.current_person_id)):
     conn, _, _ = _ctx(person_id)
     f = await _form(request)
@@ -1390,6 +1456,7 @@ async def habit_check(habit_id: int, request: Request, person_id: int = Depends(
 
 
 @app.get("/settings")
+@_cierra_conexion
 def settings(person_id: int = Depends(identity.current_person_id)):
     conn, _, t = _ctx(person_id)
     nivel_datos = agente_ajustes.nivel_datos(conn, person_id)
@@ -1409,6 +1476,7 @@ def _tarea_ayuda_ctx(tarea: dict, hosted: bool) -> dict:
 
 
 @app.get("/ayuda")
+@_cierra_conexion
 def ayuda(person_id: int = Depends(identity.current_person_id)):
     _, _, t = _ctx(person_id)
     hosted = cuenta.hosted()
@@ -1422,6 +1490,7 @@ def ayuda(person_id: int = Depends(identity.current_person_id)):
 
 
 @app.post("/settings/language")
+@_cierra_conexion_async
 async def set_language(request: Request, person_id: int = Depends(identity.current_person_id)):
     lang = parse_qs((await request.body()).decode()).get("lang", [""])[0]
     if lang in LANGS:
@@ -1440,6 +1509,7 @@ PROVEEDOR_LABEL_KEYS = {
 
 
 @app.get("/ajustes/asistente")
+@_cierra_conexion
 def nivel_datos_view(request: Request, person_id: int = Depends(identity.current_person_id)):
     conn, _, t = _ctx(person_id)
     nivel = agente_ajustes.nivel_datos(conn, person_id)
@@ -1457,6 +1527,7 @@ def nivel_datos_view(request: Request, person_id: int = Depends(identity.current
 
 
 @app.post("/ajustes/asistente")
+@_cierra_conexion_async
 async def nivel_datos_guardar(request: Request, person_id: int = Depends(identity.current_person_id)):
     f = await _form(request)
     nivel = f.get("nivel") or ""
@@ -1634,6 +1705,7 @@ async def asistente_preguntar(request: Request, person_id: int = Depends(identit
 
 
 @app.get("/asistente/conversacion/{conversacion_id}")
+@_cierra_conexion
 def asistente_conversacion(conversacion_id: int, person_id: int = Depends(identity.current_person_id)):
     conn, _, t = _ctx(person_id)
     try:
@@ -1658,12 +1730,14 @@ def _propuesta_respuesta(conn, person_id: int, propuesta_id: int, accion) -> JSO
 
 
 @app.post("/asistente/propuestas/{propuesta_id}/aplicar")
+@_cierra_conexion
 def propuesta_aplicar(propuesta_id: int, person_id: int = Depends(identity.current_person_id)):
     conn, _, _ = _ctx(person_id)
     return _propuesta_respuesta(conn, person_id, propuesta_id, agente_propuestas.aplicar)
 
 
 @app.post("/asistente/propuestas/{propuesta_id}/descartar")
+@_cierra_conexion
 def propuesta_descartar(propuesta_id: int, person_id: int = Depends(identity.current_person_id)):
     conn, _, _ = _ctx(person_id)
     return _propuesta_respuesta(conn, person_id, propuesta_id, agente_propuestas.descartar)
@@ -1717,6 +1791,7 @@ def _garmin_ctx(t: T, conn, person_id: int, **extra) -> dict:
 
 
 @app.get("/garmin")
+@_cierra_conexion
 def garmin_view(request: Request, person_id: int = Depends(identity.current_person_id)):
     if not cuenta.hosted():
         raise HTTPException(404)
@@ -1727,6 +1802,7 @@ def garmin_view(request: Request, person_id: int = Depends(identity.current_pers
 
 
 @app.post("/garmin/conectar")
+@_cierra_conexion_async
 async def garmin_conectar(request: Request, person_id: int = Depends(identity.current_person_id)):
     if not cuenta.hosted():
         raise HTTPException(404)
@@ -1752,6 +1828,7 @@ async def garmin_conectar(request: Request, person_id: int = Depends(identity.cu
 
 
 @app.post("/garmin/codigo")
+@_cierra_conexion_async
 async def garmin_codigo(request: Request, person_id: int = Depends(identity.current_person_id)):
     if not cuenta.hosted():
         raise HTTPException(404)
@@ -1778,6 +1855,7 @@ async def garmin_codigo(request: Request, person_id: int = Depends(identity.curr
 
 
 @app.post("/garmin/desconectar")
+@_cierra_conexion
 def garmin_desconectar(person_id: int = Depends(identity.current_person_id)):
     if not cuenta.hosted():
         raise HTTPException(404)
@@ -1787,6 +1865,7 @@ def garmin_desconectar(person_id: int = Depends(identity.current_person_id)):
 
 
 @app.get("/privacidad/consentimiento")
+@_cierra_conexion
 def consentimiento_form(request: Request, person_id: int = Depends(identity.current_person_id)):
     if not cuenta.hosted():
         raise HTTPException(404)
@@ -1796,6 +1875,7 @@ def consentimiento_form(request: Request, person_id: int = Depends(identity.curr
 
 
 @app.post("/privacidad/consentimiento")
+@_cierra_conexion_async
 async def consentimiento_decide(request: Request, person_id: int = Depends(identity.current_person_id)):
     if not cuenta.hosted():
         raise HTTPException(404)
@@ -1815,6 +1895,7 @@ async def consentimiento_decide(request: Request, person_id: int = Depends(ident
 
 
 @app.get("/privacidad")
+@_cierra_conexion
 def privacidad_view(request: Request, person_id: int = Depends(identity.current_person_id)):
     conn, person, t = _ctx(person_id)
     row = conn.execute(
@@ -1834,6 +1915,7 @@ def privacidad_view(request: Request, person_id: int = Depends(identity.current_
 
 
 @app.get("/privacidad/exportar")
+@_cierra_conexion
 def privacidad_exportar(person_id: int = Depends(identity.current_person_id)):
     conn, _, _ = _ctx(person_id)
     data = privacidad.export_person(conn, person_id)
@@ -1843,6 +1925,7 @@ def privacidad_exportar(person_id: int = Depends(identity.current_person_id)):
 
 
 @app.post("/privacidad/borrar")
+@_cierra_conexion_async
 async def privacidad_borrar(request: Request, person_id: int = Depends(identity.current_person_id)):
     f = await _form(request)
     conn, _, t = _ctx(person_id)
@@ -1879,6 +1962,7 @@ def _dispositivo_row(t: T, d: dict) -> dict:
 
 
 @app.get("/ajustes/dispositivos")
+@_cierra_conexion
 def dispositivos_view(person_id: int = Depends(identity.current_person_id)):
     if not cuenta.hosted():
         raise HTTPException(404)
@@ -1890,6 +1974,7 @@ def dispositivos_view(person_id: int = Depends(identity.current_person_id)):
 
 
 @app.post("/ajustes/dispositivos")
+@_cierra_conexion_async
 async def dispositivos_crear(request: Request, person_id: int = Depends(identity.current_person_id)):
     if not cuenta.hosted():
         raise HTTPException(404)
@@ -1914,6 +1999,7 @@ async def dispositivos_crear(request: Request, person_id: int = Depends(identity
 
 
 @app.post("/ajustes/dispositivos/{dispositivo_id}/revocar")
+@_cierra_conexion
 def dispositivos_revocar(dispositivo_id: int, person_id: int = Depends(identity.current_person_id)):
     if not cuenta.hosted():
         raise HTTPException(404)
@@ -1929,6 +2015,7 @@ MAX_TURNOS_BODY_BYTES = 256 * 1024
 
 
 @app.post("/api/turnos")
+@_cierra_conexion_async
 async def api_turnos(request: Request, person_id: int = Depends(identity.person_from_device("turnos:subir"))):
     file_name = request.headers.get("x-body-archivo") or ""
     if not _TURNOS_FILENAME_RE.match(file_name):
@@ -1968,6 +2055,7 @@ async def api_turnos(request: Request, person_id: int = Depends(identity.person_
 
 
 @app.get("/api/vida/semana")
+@_cierra_conexion
 def api_vida_semana(semana: str | None = None,
                      person_id: int = Depends(identity.person_from_device("vida:leer"))):
     if semana:
