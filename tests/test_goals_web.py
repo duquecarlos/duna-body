@@ -11,6 +11,8 @@ from fastapi.testclient import TestClient
 
 from body import config, db, goals, household, web
 
+_STATIC_DIR = Path(__file__).resolve().parent.parent / "body" / "static"
+
 client = TestClient(web.app, follow_redirects=False)
 
 
@@ -166,6 +168,24 @@ class GoalDetailKindTest(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("Subir el Cocuy", r.text)
         self.assertIn("Fecha: 1 jun 2027", r.text)
+
+
+class NewGoalFormKindTest(unittest.TestCase):
+    def test_metric_only_group_and_both_kind_radios(self):
+        _reset_db(self)
+        r = client.get("/goals/new")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("metric-only", r.text)
+        self.assertIn('name="kind" value="metric"', r.text)
+        self.assertIn('name="kind" value="milestone"', r.text)
+
+
+class FormTapTargetCssTest(unittest.TestCase):
+    def test_buttons_and_inputs_are_44px(self):
+        css = (_STATIC_DIR / "body.css").read_text(encoding="utf-8")
+        self.assertIn(".btn{display:inline-flex;align-items:center;justify-content:center;"
+                      "white-space:nowrap;min-width:44px;min-height:44px", css)
+        self.assertIn(".field{display:block;width:100%;min-height:44px", css)
 
 
 class HouseholdGoalDetailTest(unittest.TestCase):

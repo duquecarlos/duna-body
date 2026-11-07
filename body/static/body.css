@@ -91,8 +91,14 @@ a.card:active{background:var(--wash)}
 .box{width:20px;height:20px;border:1.5px solid var(--line);border-radius:5px;flex:none;position:relative}
 .box.done{background:var(--body);border-color:var(--body)}
 .box.done::after{content:"";position:absolute;left:6px;top:2px;width:5px;height:10px;border:solid var(--card);border-width:0 2px 2px 0;transform:rotate(45deg)}
-.field{display:block;width:100%;min-height:40px;padding:6px 10px;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--ink);font:inherit}
+.field{display:block;width:100%;min-height:44px;padding:6px 10px;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--ink);font:inherit}
 textarea.field{min-height:72px;padding-top:8px}
+fieldset{border:0;margin:0;padding:0}
+.radio{display:flex;align-items:center;gap:8px;min-height:44px}
+.radio input{width:20px;height:20px;flex:none;margin:0}
+.milestone-only{display:none}
+form:has(input[name=kind][value=milestone]:checked) .metric-only{display:none}
+form:has(input[name=kind][value=milestone]:checked) .milestone-only{display:block}
 .more{display:block;text-align:center;padding:11px;font-weight:600;font-size:14.5px;border:1px solid var(--soft);border-radius:10px;background:var(--card);min-height:44px}
 @media (hover:hover){.more:hover{background:var(--wash);border-color:var(--line)}}
 .note{color:var(--muted);font-size:14px}
@@ -122,7 +128,7 @@ table.parts th:first-child{padding-left:0}
 .list{list-style:none;margin:0;padding:0}
 .list li{background:var(--card);border:1px solid var(--soft);border-radius:10px;padding:10px 12px;margin-bottom:8px}
 .navday{display:flex;gap:6px}
-.btn{display:inline-flex;align-items:center;justify-content:center;white-space:nowrap;min-width:44px;min-height:40px;padding:0 12px;border-radius:7px;border:1px solid var(--line);background:var(--card);font-weight:600;font-size:14px;color:var(--ink);cursor:pointer;font-family:inherit}
+.btn{display:inline-flex;align-items:center;justify-content:center;white-space:nowrap;min-width:44px;min-height:44px;padding:0 12px;border-radius:7px;border:1px solid var(--line);background:var(--card);font-weight:600;font-size:14px;color:var(--ink);cursor:pointer;font-family:inherit}
 .btn:active{background:var(--inset)}
 @media (hover:hover){.btn:hover{background:var(--wash);border-color:var(--ink2)}}
 .btn.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}

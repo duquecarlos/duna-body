@@ -111,6 +111,7 @@
   "goals.field_target": "Meta (valor)",
   "goals.field_baseline": "Punto de partida",
   "goals.field_deadline": "Fecha",
+  "goals.field_deadline_metric": "Fecha meta",
   "goals.field_visibility": "Visibilidad",
   "goals.visibility.private": "Privada",
   "goals.visibility.household": "Del hogar",
