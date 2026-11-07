@@ -114,6 +114,20 @@ class CredentialsOnlyViaCurlConfigTest(unittest.TestCase):
         self.assertIn("--aws-sigv4", self.text)
         self.assertIn("aws:amz:auto:s3", self.text)
 
+    def test_curl_runs_quiet_with_errors_shown(self):
+        curl_invocations = [
+            line for line in self.text.splitlines() if "--aws-sigv4" in line
+        ]
+        self.assertEqual(len(curl_invocations), 2, "expected the real and dry-run curl lines")
+        for line in curl_invocations:
+            self.assertIn("-sS", line, f"curl missing -sS: {line}")
+
+    def test_dry_run_line_also_shows_dash_s_dash_s(self):
+        dry_run_line = next(
+            line for line in self.text.splitlines() if "echo \"printf" in line
+        )
+        self.assertIn("-sS", dry_run_line)
+
 
 class PlaintextDeletionTrapTest(unittest.TestCase):
     def test_trap_removes_plain_file(self):
@@ -125,6 +139,25 @@ class PlaintextDeletionTrapTest(unittest.TestCase):
         self.assertIn("$plain_file", body)
         trap_idx = text.index("trap cleanup_plain EXIT")
         self.assertGreater(trap_idx, func_idx)
+
+    def test_trap_also_removes_the_encrypted_copy(self):
+        text = _read(BACKUP)
+        func_idx = text.index("cleanup_plain() {")
+        func_end = text.index("\n}\n", func_idx)
+        body = text[func_idx:func_end]
+        self.assertIn("$enc_file", body)
+
+
+class EnvValueQuoteStrippingTest(unittest.TestCase):
+    def test_read_env_var_strips_one_pair_of_surrounding_quotes(self):
+        text = _read(BACKUP)
+        func_idx = text.index("read_env_var() {")
+        func_end = text.index("\n}\n", func_idx)
+        body = text[func_idx:func_end]
+        self.assertIn('"$value" == \\"*\\"', body)
+        self.assertIn("\"$value\" == \\'*\\'", body)
+        self.assertNotIn("echo", body)
+        self.assertNotIn("printf '%s\\n' \"$value\"", body)
 
 
 class DeployInstallsBackupUnitsTest(unittest.TestCase):

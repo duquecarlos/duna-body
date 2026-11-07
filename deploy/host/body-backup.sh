@@ -51,9 +51,17 @@ fi
 # `cat`s the file, and never prints a value, so a secret never reaches stdout/stderr or any log.
 read_env_var() {
   local name="$1"
-  local line
+  local line value
   line="$(grep -E "^${name}=" "$ENV_FILE" 2>/dev/null | tail -n1)"
-  printf '%s' "${line#*=}"
+  value="${line#*=}"
+  if [[ "$value" == \"*\" ]]; then
+    value="${value#\"}"
+    value="${value%\"}"
+  elif [[ "$value" == \'*\' ]]; then
+    value="${value#\'}"
+    value="${value%\'}"
+  fi
+  printf '%s' "$value"
 }
 
 recipient="$(read_env_var BODY_BACKUP_AGE_RECIPIENT)"
@@ -84,7 +92,7 @@ url="$endpoint/$bucket/$object_key"
 # Always runs on exit, success or failure, so the plaintext copy never survives this script --
 # the "deletes the plaintext immediately after encrypting" rule, enforced even on a crash.
 cleanup_plain() {
-  rm -f "$plain_file"
+  rm -f "$plain_file" "$enc_file"
 }
 trap cleanup_plain EXIT
 
@@ -97,11 +105,11 @@ run rm -f "$plain_file"
 # The secret never becomes an argv string: curl reads it from stdin via -K -, fed by a bash
 # builtin (printf), so it never appears in this or any other process's command line.
 if [[ -n "$DRY_RUN" ]]; then
-  echo "printf 'user = \"<access-key>:<secret-key>\"\\n' | curl --fail --aws-sigv4 \"aws:amz:auto:s3\" -K - -T \"$enc_file\" \"$url\""
+  echo "printf 'user = \"<access-key>:<secret-key>\"\\n' | curl -sS --fail --aws-sigv4 \"aws:amz:auto:s3\" -K - -T \"$enc_file\" \"$url\""
   object_size="<dry-run>"
 else
   printf 'user = "%s:%s"\n' "$access_key" "$secret_key" \
-    | curl --fail --aws-sigv4 "aws:amz:auto:s3" -K - -T "$enc_file" "$url"
+    | curl -sS --fail --aws-sigv4 "aws:amz:auto:s3" -K - -T "$enc_file" "$url"
   object_size="$(stat -c %s "$enc_file")"
 fi
 
