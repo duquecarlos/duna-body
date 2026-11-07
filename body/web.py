@@ -116,7 +116,7 @@ def _cuenta_down_page() -> HTMLResponse:
     return HTMLResponse(_CUENTA_DOWN_TEMPLATE.render(t=T(DEFAULT_LANG), tab=None))
 
 UNITS = {"bpm": "unit.bpm", "ms": "unit.ms", "pts": "unit.pts", "steps": "unit.steps", "kcal": "unit.kcal",
-         "brpm": "unit.brpm"}
+         "brpm": "unit.brpm", "ml/kg/min": "unit.ml_kg_min", "years": "unit.years"}
 OF_100 = {"readiness", "stress_avg", "body_battery_high", "body_battery_low", "body_battery_wake", "sleep_score"}
 TODAY_CARDS = ["sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake"]
 STAGES = [("sleep_deep_min", "metric.sleep_deep_min", "var(--night)"),
@@ -501,9 +501,11 @@ async def shifts_dismiss(request: Request, person_id: int = Depends(identity.cur
     return RedirectResponse("/shifts", status_code=303)
 
 
-TREND_KEYS = ["readiness", "sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake", "steps"]
+TREND_KEYS = ["readiness", "sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake", "steps",
+              "vo2max", "vo2max_cycling", "fitness_age"]
 WEEK_KEYS = ["readiness", "sleep_minutes", "hrv_last_night", "resting_hr"]
 TREND_MIN_DAYS = 14  # body/profile.py's metric_profile() needs this many rows before a metric gets a card
+SPARSE_KEYS = {"vo2max", "vo2max_cycling", "fitness_age"}  # Garmin updates these only after qualifying activities
 
 
 def _trend_days_have(conn, person_id: int) -> int:
@@ -582,7 +584,8 @@ def trends(r: str = "all", m: str | None = None, person_id: int = Depends(identi
             fig, svg = p.last30, profile.month_svg(p)
         cards.append({"key": k, "question": t("trends.q." + k), "est": d["kind"] == "estimated",
                       "last30": _value(t, k, fig), "unit": _unit(t, d) if fig is not None else "", "delta": delta,
-                      "cls": cls, "svg": svg, "low": _value(t, k, p.low), "high": _value(t, k, p.high)})
+                      "cls": cls, "svg": svg, "low": _value(t, k, p.low), "high": _value(t, k, p.high),
+                      "sparse": k in SPARSE_KEYS})
     if not cards:
         have = _trend_days_have(conn, person_id)
         if have:

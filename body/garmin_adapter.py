@@ -105,6 +105,7 @@ def fetch_day(day: str, token_str: str | None = None):
         "hrv": lambda: api.get_hrv_data(day),
         "body_battery": lambda: api.get_body_battery(day),
         "activities": lambda: api.get_activities_by_date(day, day),
+        "max_metrics": lambda: api.get_max_metrics(day),
     }
     errors = {}
     for kind, call in calls.items():
@@ -137,6 +138,29 @@ def _get(d: Any, *path: str) -> Any:
             return None
         d = d.get(p)
     return d
+
+
+def _first_num(d: Any, *keys: str) -> float | None:
+    if not isinstance(d, dict):
+        return None
+    for k in keys:
+        v = _num(d.get(k))
+        if v is not None:
+            return v
+    return None
+
+
+def _max_metrics_entry(raw: Any) -> dict:
+    """Garmin's maxmet endpoint is seen as either a list of per-day entries or a single dict
+    (unconfirmed by the installed garminconnect package -- parsed defensively either way)."""
+    if isinstance(raw, list):
+        for entry in raw:
+            if isinstance(entry, dict):
+                return entry
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    return {}
 
 
 def _local_iso(ms: Any) -> str | None:
@@ -184,6 +208,14 @@ def parse_day(day: str, raw: dict[str, Any]) -> DayData:
     hrv = _get(raw.get("hrv"), "hrvSummary") or {}
     m["hrv_last_night"] = _num(hrv.get("lastNightAvg"))
     m["hrv_weekly_avg"] = _num(hrv.get("weeklyAvg"))
+
+    mm = _max_metrics_entry(raw.get("max_metrics"))
+    generic = mm.get("generic") if isinstance(mm.get("generic"), dict) else {}
+    cycling = mm.get("cycling") if isinstance(mm.get("cycling"), dict) else {}
+    m["vo2max"] = _first_num(generic, "vo2MaxPreciseValue", "vo2MaxValue")
+    m["vo2max_cycling"] = _first_num(cycling, "vo2MaxPreciseValue", "vo2MaxValue")
+    fitness_age = _first_num(generic, "fitnessAge")
+    m["fitness_age"] = fitness_age if fitness_age is not None else _num(mm.get("fitnessAge"))
 
     if m["body_battery_high"] is None:  # fall back to the body-battery feed
         bb = raw.get("body_battery")

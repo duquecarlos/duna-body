@@ -1,0 +1,105 @@
+"""BODY-VO2MAX-1: parsing of Garmin's max-metrics feed (VO2 max estimate, fitness age).
+
+The installed garminconnect 0.3.20 package names no confirmed field shape for get_max_metrics
+beyond its dict[str, Any] type hint, so parse_day is defensive: list or dict, missing keys -> None.
+Fixtures below are invented shapes only, never real health figures.
+"""
+import unittest
+from unittest import mock
+
+from tests._isolate import TMP  # noqa: F401  (must come before any body import)
+
+from body import config, garmin_adapter
+
+LIST_RAW = [{
+    "generic": {"vo2MaxPreciseValue": 47.3, "vo2MaxValue": 47},
+    "cycling": {"vo2MaxPreciseValue": 45.8, "vo2MaxValue": 46},
+    "fitnessAge": 33,
+}]
+
+DICT_RAW = {
+    "generic": {"vo2MaxValue": 48, "fitnessAge": 31},
+    "cycling": {"vo2MaxValue": 44},
+}
+
+
+class ShapeParsingTest(unittest.TestCase):
+    def test_list_shaped_response_parses(self):
+        d = garmin_adapter.parse_day("2026-11-05", {"max_metrics": LIST_RAW})
+        self.assertEqual(d.metrics["vo2max"], 47.3)
+        self.assertEqual(d.metrics["vo2max_cycling"], 45.8)
+        self.assertEqual(d.metrics["fitness_age"], 33)
+
+    def test_dict_shaped_response_parses(self):
+        d = garmin_adapter.parse_day("2026-11-05", {"max_metrics": DICT_RAW})
+        self.assertEqual(d.metrics["vo2max"], 48)
+        self.assertEqual(d.metrics["vo2max_cycling"], 44)
+        self.assertEqual(d.metrics["fitness_age"], 31)
+
+    def test_precise_value_preferred_over_rounded(self):
+        d = garmin_adapter.parse_day("2026-11-05", {"max_metrics": LIST_RAW})
+        self.assertEqual(d.metrics["vo2max"], 47.3)
+        self.assertNotEqual(d.metrics["vo2max"], 47)
+
+    def test_missing_max_metrics_key_is_none(self):
+        d = garmin_adapter.parse_day("2026-11-05", {})
+        self.assertNotIn("vo2max", d.metrics)
+        self.assertNotIn("vo2max_cycling", d.metrics)
+        self.assertNotIn("fitness_age", d.metrics)
+
+    def test_empty_list_and_unrecognised_shapes_are_none(self):
+        for raw in ([], "unexpected-shape", None, {}):
+            d = garmin_adapter.parse_day("2026-11-05", {"max_metrics": raw})
+            self.assertNotIn("vo2max", d.metrics)
+            self.assertNotIn("vo2max_cycling", d.metrics)
+            self.assertNotIn("fitness_age", d.metrics)
+
+
+class FakeGarminMaxMetricsFails:
+    """Replaces garminconnect.Garmin: every call but get_max_metrics succeeds. Invented data only."""
+
+    def __init__(self, **kw):
+        self.client = mock.Mock()
+        self.client.dumps.return_value = "tok-demo"
+
+    def login(self, tokenstore=None):
+        return None, None
+
+    def get_user_summary(self, day):
+        return {"restingHeartRate": 55}
+
+    def get_sleep_data(self, day):
+        return {}
+
+    def get_hrv_data(self, day):
+        return {}
+
+    def get_body_battery(self, day):
+        return []
+
+    def get_activities_by_date(self, start, end):
+        return []
+
+    def get_max_metrics(self, day):
+        raise RuntimeError("demo max-metrics failure")
+
+
+class FetchDayMaxMetricsFailureTest(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch("garminconnect.Garmin", FakeGarminMaxMetricsFails)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        config.TOKEN_DIR.mkdir(parents=True, exist_ok=True)
+        token_file = config.TOKEN_DIR / "garmin_tokens.json"
+        token_file.write_text('{"demo": true}', encoding="utf-8")
+        self.addCleanup(token_file.unlink, missing_ok=True)  # TOKEN_DIR is shared across this test run
+
+    def test_other_metrics_survive_and_the_error_class_is_recorded(self):
+        data = garmin_adapter.fetch_day("2026-11-05")
+        self.assertEqual(data.metrics["resting_hr"], 55)
+        self.assertNotIn("vo2max", data.metrics)
+        self.assertEqual(data.raw["_errors"]["max_metrics"], "RuntimeError")
+
+
+if __name__ == "__main__":
+    unittest.main()

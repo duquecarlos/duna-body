@@ -389,6 +389,9 @@ METRIC_DEFS = [
     ("body_battery_sleep_charge", "Body Battery charged overnight", "pts", "higher"),
     ("respiration_awake", "Breathing rate (awake)", "brpm", "neutral"),
     ("high_stress_min", "High stress time", "min", "lower"),
+    ("vo2max", "VO2 max", "ml/kg/min", "higher"),
+    ("vo2max_cycling", "VO2 max (cycling)", "ml/kg/min", "higher"),
+    ("fitness_age", "Fitness age", "years", "lower"),
 ]
 METRIC_DEFS = [d if len(d) == 5 else (*d, "measured") for d in METRIC_DEFS]
 
