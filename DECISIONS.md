@@ -2297,3 +2297,75 @@ tests, OK (1 skipped, pre-existing). 460 at `main`'s tip (`61b97f0`), plus 10 ne
 
 Branch: `feat/body-asistente-panel-1`, not merged. Awaiting a browser measurement of the panel and review of the new
 customer-facing strings.
+
+## BODY-ASISTENTE-PANEL-1-M -- five fixes from the orchestrator's browser measurement (2026-11-07)
+
+Approved by the orchestrator under `ORCH-CARLOS-DELEGATES-TIER-1-1` after review; five fixes, measured at 375 px and
+1600 px in the Browser pane against the `demo` provider on scratch data.
+
+**a. Enter sends on a computer.** `assistant.js` now binds a `keydown` listener on `#asis-input`: at >= 768 px
+(`!esMovil()`) a plain `Enter` calls `e.preventDefault()` and `formEl.requestSubmit()`; `Shift+Enter` or any key on a
+phone falls through to the textarea's own newline. Previously nothing intercepted `Enter` at all, so it only ever
+inserted a line break and the question sat in the box.
+
+**b. Lists without a blank line first.** `renderMD()`'s old list check required *every* line in a block to match
+the `-`/`*`/`N.` marker, so a block that opened with plain text ("Así se ve una lista:\n- a\n- b") fell through to
+the single-paragraph case and ran the dashes together. `tipoLinea()` now classifies each line as `ul`/`ol`/`p`, and
+`renderLineas()` walks the block once, grouping consecutive lines of the same type into their own `<p>`/`<ul>`/`<ol>`
+-- a list starts the moment a list-marker line appears, blank line or not.
+
+**c. R5 order and a correct plural.** Two separate bugs, both visible only once a reply started streaming:
+(1) `.asis-status{display:flex}`'s own class selector beat the UA `[hidden]{display:none}` rule on origin
+precedence, so `turno.status.hidden = true` never actually hid the "Pensando…" line -- fixed with an explicit
+`.asis-status[hidden]{display:none}` rule in `body.css`. (2) `agregarPasos()` always `appendChild`ed the folded
+steps `<details>` at the end of the turn, after the answer; it now takes the turn's `answerEl` and
+`insertBefore(det, answerEl)`s when one exists, putting the steps between the question and the answer. The plural
+was a single hard-coded template (`"... {n} pasos"`); `asistente.como` in both `es.json`/`en.json` now carries
+`"singular|plural"` in one string (`"Cómo lo hice · {n} paso|Cómo lo hice · {n} pasos"`), and `assistant.js`'s new
+`formatComo(n)` splits on `"|"` and picks the first form only when `n === 1`. No template change was needed in
+`base.html` (outside this slice's `touches`): the key still forwards as one opaque string.
+
+**d. The conversation survives a page change.** A new `GET /asistente/conversacion/{conversacion_id}`
+(session-authenticated via `identity.current_person_id`) calls a new `agente_conversacion.turnos_visibles()`, which
+replays `historial()` and rebuilds only the visible turns -- `{"rol": "persona"|"asistente", "texto": str, "pasos":
+int}` -- by treating a stored "usuario" message with no `"texto"` block (a tool result) as invisible, and folding
+every assistant message between two questions into one answer, summing its `llamada_herramienta` blocks into
+`pasos`. An unknown or another person's id raises the existing `ConversacionAjena` (unchanged from
+BODY-ASISTENTE-PROVEEDOR-1's `verificar_propiedad`), mapped to a 404, same as the POST route. `assistant.js` now
+fetches this on script load when `sessionStorage` already holds a `conversacion_id`, rebuilding the message list
+from the returned turns; a 404 response clears the stored id. Adding this GET route trips
+`test_agente_registro.py`'s `RouteMappingTest` (every GET route in `web.py` needs a tool-mapping decision or the
+test fails on purpose) -- mapped to `None` there, one line, as the spec's own text for this fix anticipated
+("registry guard: map it to `None`"). That file is outside this slice's declared `touches`; see Deviations below.
+
+**e. Full size is actually full.** `anchoCompleto()` subtracted the rail's 220 px even though the panel's
+`z-index` already sits above the rail, which combined with `right:0; left:auto` in `body.css` put the panel's left
+edge at `x=220` instead of `0`; it now simply returns `window.innerWidth`. `aplicarTamano()` also set `--asis-mr`
+(the main column's reflow margin) to the panel's own width for every size including `completo`, shrinking main to a
+sliver; it now only does that for `lado`/`ancho` -- `completo` leaves `--asis-mr` at `0px` so main keeps its normal
+width behind the overlay.
+
+**Tests** (`tests/test_asistente_panel.py`, +11): `AssistantJsFixesTest` (6) and a CSS check for
+`.asis-status[hidden]` are text-level, since the orchestrator re-measures the real behaviour in a browser after the
+merge; `ComoPluralI18nTest` checks both `es.json`/`en.json` carry a distinct singular and plural form;
+`ConversacionEndpointTest` (3) drives a full demo exchange through `TestClient`, then confirms the GET route returns
+exactly the two expected turns with no raw tool result, 404s an unknown id, and 404s a second person's id (seeded
+directly into the `person` table for the test).
+
+**Deviations.** `tests/test_agente_registro.py` is not in this slice's declared `touches`, but a new GET route
+mechanically requires an entry in its `ROUTE_TOOL` registry or the gate goes red; the spec's own text for fix (d)
+named this exact requirement ("registry guard: map it to `None`"), so the one-line addition is made and called out
+here rather than silently widened. The WORK section's ledger-text template said "three fixes" (carried over from
+BODY-ASISTENTE-PROVEEDOR-1-M's own entry); this entry says five, matching the spec's defect list and this slice's
+actual diff.
+
+**Merge policy, re-judged against this diff.** Schema: no. Cross-repo contract: no. Customer-facing bytes: yes --
+`assistant.js`, `body.css` and the `asistente.como` strings are read by every signed-in person once a provider is
+configured, same as the parent slice. The spec's own body (step 6) says in words to merge `--no-ff` into `main` once
+the gate is green, under the orchestrator's own `ORCH-CARLOS-DELEGATES-TIER-1-1` approval of these five named
+defects -- Merge Policy A's authorization-to-merge condition is met even though the bytes condition trips.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run once, foreground, on the final tree: 481
+tests, OK (1 skipped, pre-existing). 470 at this branch's starting tip (`96b07b2`), plus 11 new here.
+
+Merged into `main` with `--no-ff` immediately after this entry.
