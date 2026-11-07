@@ -4098,3 +4098,23 @@ tests -t .` -- `Ran 812 tests in 51.262s ... OK (skipped=1)` (799 before this sl
 `acceso_rechazado.*` and `sync.hosted_connected`/`sync.connect_watch` strings, the new template) -- merge policy
 A's customer-bytes condition trips, and this spec's own body says plainly "Customer-facing: stop
 AWAITING_APPROVAL clean on the branch." Committed on `feat/body-primer-dia-1`, gate green, nothing merged.
+
+## BODY-PRIMER-DIA-1-M -- land BODY-PRIMER-DIA-1 after orchestrator review (2026-11-07)
+
+BODY-PRIMER-DIA-1 (above) stopped `AWAITING_APPROVAL` on customer-facing bytes, as its own spec required. The
+orchestrator reviewed the diff (the hosted-only texts cannot render in the local demo): the refused page is a
+localised 400 with one 44 px link to `/login` and no internal reason; the hosted empty state names the connected
+watch and the morning sync, the not-connected branch escapes its text and links to the existing `/garmin` route;
+"Primera mirada a Hoy" = consented and has data. Approved as written, no fixes. No Accept-Language mechanism
+exists in the codebase (confirmed again here), so the deviation BODY-PRIMER-DIA-1 already recorded stands
+unchanged.
+
+`main` had not moved since the branch was cut: `git merge-base main feat/body-primer-dia-1` equals `main`'s own
+tip, `31ae704`, so no merge from `main` was needed and nothing was resolved by guessing.
+
+**Gate**, run once on the final tree with the plain command: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -- `Ran 812 tests in 51.351s ... OK (skipped=1)`, matching the floor BODY-PRIMER-DIA-1 already
+measured.
+
+**Merge: this spec is the approval.** Merged `--no-ff` into `main`; `main` left checked out, clean. Branch
+`feat/body-primer-dia-1` kept.
