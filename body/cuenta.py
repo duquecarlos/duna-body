@@ -480,7 +480,8 @@ def reciente(conn, session_token_or_row, segundos: int = 600) -> bool:
     if not row or not row["auth_time"]:
         return False
     auth_time = datetime.fromisoformat(row["auth_time"])
-    return (datetime.now(timezone.utc) - auth_time).total_seconds() <= segundos
+    age = (datetime.now(timezone.utc) - auth_time).total_seconds()
+    return -MARGEN_SEGUNDOS <= age <= segundos
 
 
 def end_session(conn, token: str | None) -> str | None:

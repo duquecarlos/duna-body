@@ -4,6 +4,8 @@ ORCH-HOST-SENSITIVE-DATA-1, part 3). Invented demo data only, no real health fig
 """
 import tempfile
 import unittest
+import unittest.mock as mock
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -188,6 +190,56 @@ class ReauthScreenTest(_ReauthTestCase):
         r = self.client.get("/privacidad")
         self.assertNotIn("Listo, ya confirmaste", r.text)
         self.assertNotIn("No pudimos confirmar", r.text)
+
+
+class ReauthWindowBoundsTest(unittest.TestCase):
+    """BODY-BORRAR-REAUTH-1-M: `reciente` must reject an auth_time in the future beyond the
+    ID-token verification's own clock-skew allowance (`MARGEN_SEGUNDOS`), not treat a skewed or
+    malformed claim as recent indefinitely."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "local.db"
+        self.conn = db.connect()
+        db.init(self.conn)
+        self.addCleanup(self.conn.close)
+
+    def _row_with_auth_time(self, auth_time_iso):
+        id_hash = "hash-" + auth_time_iso
+        self.conn.execute(
+            "INSERT INTO sesion (id_hash, person_id, created_at, last_seen_at, expires_at, auth_time) "
+            "VALUES (?, 1, '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00', "
+            "'2099-01-01T00:00:00+00:00', ?)",
+            (id_hash, auth_time_iso),
+        )
+        self.conn.commit()
+        return self.conn.execute("SELECT * FROM sesion WHERE id_hash = ?", (id_hash,)).fetchone()
+
+    def _reciente_at_offset(self, offset_seconds: int) -> bool:
+        """Builds a session whose `auth_time` is `offset_seconds` before a fixed `now`, then calls
+        `reciente` with `cuenta.datetime.now` patched to that same fixed instant -- so the edge
+        cases land exactly on the second instead of drifting with how long the DB round-trip
+        takes. A negative offset puts `auth_time` in the future."""
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        auth_time = now - timedelta(seconds=offset_seconds)
+        row = self._row_with_auth_time(auth_time.isoformat(timespec="seconds"))
+        with mock.patch("body.cuenta.datetime") as d:
+            d.now.return_value = now
+            d.fromisoformat = datetime.fromisoformat
+            return cuenta.reciente(self.conn, row)
+
+    def test_auth_time_an_hour_in_the_future_is_not_recent(self):
+        self.assertFalse(self._reciente_at_offset(-3600))
+
+    def test_auth_time_a_few_seconds_in_the_future_is_recent(self):
+        self.assertTrue(self._reciente_at_offset(-5))
+
+    def test_auth_time_exactly_at_the_600s_edge_is_recent(self):
+        self.assertTrue(self._reciente_at_offset(600))
+
+    def test_auth_time_just_past_the_600s_edge_is_not_recent(self):
+        self.assertFalse(self._reciente_at_offset(601))
 
 
 class LocalModeUnchangedTest(unittest.TestCase):
