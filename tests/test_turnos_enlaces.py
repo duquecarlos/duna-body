@@ -144,7 +144,7 @@ class TrendsBackLinkTest(unittest.TestCase):
 
     def test_back_link_shown_when_desde_turnos(self):
         page = self.client.get("/trends?r=90&desde=turnos").text
-        self.assertIn('<a href="/shifts">', page)
+        self.assertIn('<a class="taplink" href="/shifts">', page)
         self.assertIn(T("es")("trends.back_turnos"), page)
 
     def test_range_links_keep_desde(self):
@@ -155,6 +155,16 @@ class TrendsBackLinkTest(unittest.TestCase):
     def test_no_back_link_without_desde(self):
         page = self.client.get("/trends?r=90").text
         self.assertNotIn(T("es")("trends.back_turnos"), page)
+
+
+class TapTargetClassTest(unittest.TestCase):
+    """Decision (BODY-TURNOS-ENLACES-1-M): the two new links are at least a 44px tap target, via one
+    shared CSS class rather than an inline style."""
+
+    def test_taplink_class_declares_min_height_44px(self):
+        css = Path("body/static/body.css").read_text(encoding="utf-8")
+        self.assertIn(".taplink{", css)
+        self.assertIn("min-height:44px", css.split(".taplink{", 1)[1].split("}", 1)[0])
 
 
 class ContextoDiaTest(unittest.TestCase):
@@ -226,7 +236,7 @@ class DiaRendersContextTest(unittest.TestCase):
         dia = self.inicio + timedelta(2)
         page = self.client.get(f"/day/{dia.isoformat()}").text
         self.assertIn("Noche 3 de 5 de este bloque", page)
-        self.assertIn('<a href="/shifts"', page)
+        self.assertIn('<a class="taplink" href="/shifts"', page)
         self.assertIn(T("es")("day.shift_ctx_link"), page)
 
     def test_renders_despues_in_spanish_with_ordinal(self):
@@ -258,6 +268,50 @@ class DiaRendersContextTest(unittest.TestCase):
         dia = self.inicio + timedelta(90)
         page = self.client.get(f"/day/{dia.isoformat()}").text
         self.assertNotIn(T("es")("day.shift_ctx_link"), page)
+
+
+class DiaShiftVocabularyTest(unittest.TestCase):
+    """Decision (BODY-TURNOS-ENLACES-1-M): Dia's shift line speaks the shared shift.kind.* vocabulary,
+    not the raw stored kind, in both languages -- the kind itself stays the CSS class."""
+
+    client = TestClient(web.app, follow_redirects=False)
+
+    def setUp(self):
+        self.orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig_db_path))
+        self.addCleanup(web.app.dependency_overrides.clear)
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "enlaces_vocab.db"
+        self.conn = db.connect()
+        db.init(self.conn)
+        self.day = date(2026, 4, 1)
+        _as(1)
+
+    def test_night_shift_shows_noche_in_spanish_not_the_raw_kind(self):
+        _insert_shift(self.conn, 1, self.day.isoformat(), kind="night")
+        self.conn.commit()
+        page = self.client.get(f"/day/{self.day.isoformat()}").text
+        self.assertIn("<div>" + T("es")("shift.kind.night"), page)
+        self.assertNotIn("<div>night", page)
+
+    def test_night_shift_shows_the_english_key_value_in_english(self):
+        db.set_language(self.conn, "en", 1)
+        _insert_shift(self.conn, 1, self.day.isoformat(), kind="night")
+        self.conn.commit()
+        page = self.client.get(f"/day/{self.day.isoformat()}").text
+        self.assertIn("<div>" + T("en")("shift.kind.night"), page)
+
+    def test_off_day_shows_the_spanish_label_not_off(self):
+        _insert_shift(self.conn, 1, self.day.isoformat(), kind="off")
+        self.conn.commit()
+        page = self.client.get(f"/day/{self.day.isoformat()}").text
+        self.assertIn("<div>" + T("es")("shift.kind.off"), page)
+        self.assertNotIn("<div>off", page)
+
+    def test_kind_class_stays_the_raw_value(self):
+        _insert_shift(self.conn, 1, self.day.isoformat(), kind="night")
+        self.conn.commit()
+        page = self.client.get(f"/day/{self.day.isoformat()}").text
+        self.assertIn('class="shift night"', page)
 
 
 if __name__ == "__main__":

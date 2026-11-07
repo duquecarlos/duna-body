@@ -127,6 +127,7 @@ table.parts td.pts{font-weight:700}
 table.parts td.nw,table.parts th{white-space:nowrap;padding-left:12px}
 table.parts th:first-child{padding-left:0}
 .costrow{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;min-height:44px;padding:8px 0;cursor:pointer}
+.taplink{display:inline-flex;align-items:center;min-height:44px;text-decoration:underline}
 .costrow .nw{text-align:right;white-space:nowrap}
 @media (hover:hover){.costrow:hover{background:var(--wash)}}
 .costrow:active{background:var(--wash)}

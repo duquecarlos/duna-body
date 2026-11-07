@@ -478,8 +478,15 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
         if a["avg_hr"]:
             bits.append(f"{t.num(a['avg_hr'])} {t('unit.bpm')}")
         acts.append({"name": a["name"] or a["type"] or "—", "detail": " · ".join(bits)})
-    shifts = [{"kind": s["kind"], "text": f"{s['kind']}{' (' + s['code'] + ')' if s['code'] else ''} "
-               f"{(s['start_local'] or '')[11:16]} → {(s['end_local'] or '')[11:16]}"} for s in data["shifts"]]
+    shifts = []
+    for s in data["shifts"]:
+        kind = s["kind"]
+        key = "shift.kind." + kind
+        label = t(key)
+        if label == key:
+            label = kind
+        shifts.append({"kind": kind, "text": f"{label}{' (' + s['code'] + ')' if s['code'] else ''} "
+                       f"{(s['start_local'] or '')[11:16]} → {(s['end_local'] or '')[11:16]}"})
     has_data = any(v is not None for v in vals.values())
     ctx = turnos_costo.contexto_dia(conn, person_id, d)
     block_ctx = None
