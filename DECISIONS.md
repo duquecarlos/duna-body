@@ -438,3 +438,25 @@ change, so this slice stops on `feat/body-metas-1` AWAITING_APPROVAL rather than
 
 Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 91 tests, OK (71 before this slice, 20 added
 here), run once on the final branch tree before this entry.
+
+## BODY-METAS-1-M -- land BODY-METAS-1 (2026-11-06)
+
+Approved by the orchestrator under `ORCH-CARLOS-DELEGATES-TIER-1-1` after reviewing the diff (6 files, +928/-38)
+against `main`: `db.py` shares one column definition between `SCHEMA` and the rebuilds; `init()` runs
+`_migrate_metas` before `executescript(SCHEMA)`, so an existing `plan_item`/`weekly_check` is rebuilt before
+`CREATE IF NOT EXISTS` could shadow it; each rebuild runs in `_rebuild_with_fk_off` (foreign keys off, `BEGIN`,
+copy, count compare, `PRAGMA foreign_key_check`, rollback and raise on any failure, foreign keys restored), the
+`goal` rebuild guarded by its CHECK text lacking `'proposed'`; legacy cadence mapped with the text kept in
+`cadence_text_legacy`; `goals.py` and `vida_export` as specced. The real database was backed up by the
+orchestrator before merge (`~/.body-app/body.db.bak-pre-metas-2026-11-06`). Merged unchanged -- no code change in
+this slice.
+
+`main` had not moved since the branch was cut: `git merge-base feat/body-metas-1 main` and `git rev-parse main`
+both read `14f3ea6e895dd15d1dcacefe3804ce5a88ae2ad1`, matching the branch's recorded base, so no merge-forward was
+needed.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 91 tests, OK, run once on the branch tip
+(`e203c83c5a8fe97c01b64c6e51e7d39b4f801a76`) before this merge.
+
+Merge commit: recorded in the next entry's git history (this entry precedes the `--no-ff` merge, per
+`BODY-TURNOS-IMPORT-1-M`'s precedent).
