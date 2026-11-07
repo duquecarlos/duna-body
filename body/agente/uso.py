@@ -5,8 +5,10 @@ One `uso_agente` row per question, including failed ones. Prices are DATA (`prec
 seeded EMPTY -- never invented here. The daily ceiling is a spend ceiling only when every row
 counted today is priced in full for its OWN model (a person may switch model mid-day); otherwise
 it falls back to the COUNT breaker (amendment 5). A ceiling whose own read fails REFUSES -- fail
-closed, never open. "Today" is the person's own local day (their `person.timezone`, default
-`America/Bogota`), not UTC's.
+closed, never open. The day RANGE that bounds which rows count as "today" is the person's own
+local day (their `person.timezone`, default `America/Bogota`); a dated PRICE, picked for a model
+or for a usage row, always goes by the UTC date, because a vendor's price step takes effect on a
+UTC date and the two must agree.
 """
 from __future__ import annotations
 
@@ -59,13 +61,6 @@ def _zona_persona(conn: sqlite3.Connection, person_id: int) -> ZoneInfo:
     row = conn.execute("SELECT timezone FROM person WHERE id = ?", (person_id,)).fetchone()
     nombre = (row["timezone"] if row is not None else None) or "America/Bogota"
     return ZoneInfo(nombre)
-
-
-def _hoy_local(conn: sqlite3.Connection, person_id: int) -> str:
-    """The person's own local calendar day (YYYY-MM-DD), used both for the usage-day range below
-    and for picking today's dated price (BODY-MODELOS-ESTANDAR-1 decision 2)."""
-    tz = _zona_persona(conn, person_id)
-    return _ahora_utc().astimezone(tz).date().isoformat()
 
 
 def _rango_dia_local_utc(conn: sqlite3.Connection, person_id: int) -> tuple[str, str]:
@@ -149,13 +144,17 @@ def _conteo_hoy(conn: sqlite3.Connection, person_id: int, inicio_utc: str, fin_u
 
 
 def verificar_tope(conn: sqlite3.Connection, person_id: int, proveedor: str, modelo: str) -> None:
-    """Checked BEFORE the first model round. Raises `TopeRefusal` when today's ceiling -- today in
-    the PERSON'S OWN local day, not UTC's -- is already reached, or when the ceiling's own read
-    fails for any reason."""
+    """Checked BEFORE the first model round. Raises `TopeRefusal` when today's ceiling is already
+    reached, or when the ceiling's own read fails for any reason. "Today" for the day RANGE that
+    bounds which rows count is the person's own local day; the dated PRICE used to decide whether
+    this model is priced today is picked by the UTC date, to agree with `_gasto_hoy_micro_usd`."""
     try:
         _asegurar_precios_sembrados(conn)
         diario, tope_conteo = _topes_persona(conn, person_id)
-        hoy = _hoy_local(conn, person_id)
+        # A vendor's price step takes effect on a UTC date, and `_gasto_hoy_micro_usd` prices
+        # each row by the UTC date of its own `creado_en` -- this check must agree with that,
+        # or the two can pick different rows for the same model near a person's local midnight.
+        hoy = _ahora_utc().date().isoformat()
         inicio_utc, fin_utc = _rango_dia_local_utc(conn, person_id)
         gasto = None
         if _precios(conn, proveedor, modelo, hoy) is not None:

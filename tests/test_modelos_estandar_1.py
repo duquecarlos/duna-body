@@ -1,9 +1,12 @@
 """BODY-MODELOS-ESTANDAR-1: cases that fit neither test_agente_precios.py nor
-test_agente_proveedores.py -- the precio_modelo rebuild on an old-shape install, and dated-price
-picking across Gemini's 2027-01-01 step."""
+test_agente_proveedores.py -- the precio_modelo rebuild on an old-shape install, dated-price
+picking across Gemini's 2027-01-01 step, and (BODY-MODELOS-ESTANDAR-1-M) the single UTC date
+basis a dated price is picked by."""
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
@@ -73,6 +76,44 @@ class DatedPricePickTest(unittest.TestCase):
             uso._precios(self.conn, "gemini", "gemini-3.8-flash", "2027-01-01"),
             {"entrada": 1_500_000, "salida": 7_500_000, "cache_lectura": 1_500_000, "cache_escritura": 1_500_000},
         )
+
+
+class UtcDateBasisTest(unittest.TestCase):
+    """Fix 1 (BODY-MODELOS-ESTANDAR-1-M): `verificar_tope`'s "is this model priced today" check
+    and `_gasto_hoy_micro_usd`'s per-row pricing must pick a dated price by the SAME date basis --
+    the UTC date -- or they can disagree near a person's local midnight. "Now" is frozen at
+    2027-01-01T03:00Z, Bogota local 2026-12-31 22:00: the UTC day has already stepped to
+    2027-01-01 (Gemini's price step) while the local day has not."""
+
+    def setUp(self):
+        self.conn = open_conn(self, Path(tempfile.mkdtemp(dir=TMP)) / "c.db")
+        db.init(self.conn)
+        precios.sembrar(self.conn)
+        self._ahora = datetime(2027, 1, 1, 3, 0, tzinfo=timezone.utc)
+        # Bogota 2026-12-31 21:00 -- inside the person's local "today" range, UTC date 2027-01-01.
+        self.conn.execute(
+            "INSERT INTO uso_agente (person_id, creado_en, proveedor, modelo, entrada, salida, "
+            "cache_lectura, cache_escritura, rondas, motivo_fin, codigo_error, es_pregunta, superficie) "
+            "VALUES (1, '2027-01-01T02:00:00+00:00', 'gemini', 'gemini-3.8-flash', 1000000, 0, 0, 0, "
+            "1, 'texto', NULL, 1, 'asistente')"
+        )
+        self.conn.commit()
+
+    def test_both_checks_pick_the_2027_01_01_gemini_row(self):
+        fechas_vistas = []
+        original = uso._precios
+
+        def _precios_espia(conn, proveedor, modelo, fecha):
+            fechas_vistas.append(fecha)
+            return original(conn, proveedor, modelo, fecha)
+
+        with patch("body.agente.uso._ahora_utc", return_value=self._ahora), \
+             patch("body.agente.uso._precios", side_effect=_precios_espia):
+            uso.verificar_tope(self.conn, 1, "gemini", "gemini-3.8-flash")
+
+        # Both the priced check (the upcoming call) and the row pricing (the stored row) asked
+        # for the SAME date -- the UTC one, 2027-01-01 -- never the local 2026-12-31.
+        self.assertEqual(set(fechas_vistas), {"2027-01-01"})
 
 
 if __name__ == "__main__":

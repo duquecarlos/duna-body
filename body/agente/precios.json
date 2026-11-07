@@ -1,5 +1,5 @@
 {"version": "precios-2026-11-07 (modelos-ia-v1.1)",
- "fuente": "Duna's AI model standard (docs/contracts/modelos-ia-v1.md, v1.1 2026-11-07). Anthropic and OpenAI cache_escritura, and Gemini's whole cache column, are priced at the full INPUT price because no vendor figure is known for them -- conservative: the spend ceiling trips early, never late, never under-counts.",
+ "fuente": "Duna's AI model standard (docs/contracts/modelos-ia-v1.md, v1.1 2026-11-07). OpenAI's cache_escritura and Gemini's whole cache column are priced at the full INPUT price because no vendor figure is known for them -- conservative: the spend ceiling trips early, never late, never under-counts. Anthropic's four figures and OpenAI's cache_lectura are cited vendor prices from modelos-ia-v1.1 (Anthropic's cache_escritura is 1.25x its input price, not the input price itself).",
  "precios": [
    {"proveedor": "anthropic", "modelo": "claude-sonnet-5-5", "desde": "2000-01-01",
     "micro_usd_por_millon": {"entrada": 2000000, "salida": 10000000,
