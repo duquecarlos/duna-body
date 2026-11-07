@@ -12,12 +12,14 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
+from tests._db import open_conn
+
 from body import config, db, goals, identity, web
 from body.agente import ajustes, bucle, cliente, conversacion, herramientas, uso
 
 
-def _conn():
-    c = db.connect(Path(tempfile.mkdtemp(dir=TMP)) / "a.db")
+def _conn(case: unittest.TestCase):
+    c = open_conn(case, Path(tempfile.mkdtemp(dir=TMP)) / "a.db")
     db.init(c)
     return c
 
@@ -54,7 +56,7 @@ def _llamada(nombre: str, params: dict | None = None, call_id: str = "call_1", u
 
 class TwoRoundToolLoopTest(unittest.TestCase):
     def test_streams_herramienta_then_texto_then_reports_a_final_answer(self):
-        conn = _conn()
+        conn = _conn(self)
         _seed(conn)
         prov = FakeProveedor([
             _llamada("leer_hoy", {}, uso=cliente.Uso(entrada=10, salida=5)),
@@ -73,7 +75,7 @@ class TwoRoundToolLoopTest(unittest.TestCase):
 
 class RondasCapTest(unittest.TestCase):
     def test_nine_rounds_of_a_refused_tool_call_hits_the_eight_round_cap(self):
-        conn = _conn()
+        conn = _conn(self)
         _seed(conn)
         # Every call names an unknown tool, so each is refused by ejecutar() (a ToolError, no
         # actual read) -- the loop keeps going round after round without ever spending read
@@ -89,7 +91,7 @@ class RondasCapTest(unittest.TestCase):
 
 class LecturasCapTest(unittest.TestCase):
     def test_six_tool_calls_in_one_round_hits_the_five_read_cap(self):
-        conn = _conn()
+        conn = _conn(self)
         _seed(conn)
         respuesta_con_seis_llamadas = cliente.Respuesta(
             bloques=[cliente.LlamadaHerramienta(f"c{i}", "leer_hoy", {}) for i in range(6)],
@@ -112,7 +114,7 @@ class NivelDatosEnforcementTest(unittest.TestCase):
         tool ABOVE it that the model calls anyway: ejecutar() refuses it (enforcement at
         dispatch, decision 2), and the loop turns that into a tool-result error fed back to the
         model rather than raising."""
-        conn = _conn()
+        conn = _conn(self)
         _seed(conn)
         ajustes.set_nivel_datos(conn, 1, "ninguno")
         ofrecidas = {h["nombre"] for h in herramientas.disponibles("ninguno")}
@@ -132,7 +134,7 @@ class NivelDatosEnforcementTest(unittest.TestCase):
         self.assertIn("error", resultado_herramienta)
 
     def test_resumen_hides_completo_only_tools(self):
-        conn = _conn()
+        conn = _conn(self)
         _seed(conn)
         ajustes.set_nivel_datos(conn, 1, "resumen")
         nombres = {h["nombre"] for h in herramientas.disponibles(ajustes.nivel_datos(conn, 1))}
@@ -147,6 +149,7 @@ class ConversacionAjenaTest(unittest.TestCase):
         self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig_db_path))
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "conv.db"
         self.conn = db.connect()
+        self.addCleanup(self.conn.close)
         db.init(self.conn)
         self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
         self.conn.commit()
@@ -188,7 +191,7 @@ class ConteoBreakerTest(unittest.TestCase):
     needs a name the seed never prices."""
 
     def setUp(self):
-        self.conn = _conn()
+        self.conn = _conn(self)
         self.addCleanup(_conteo_tope_env())
 
     def test_the_201st_question_today_is_refused_without_calling_the_provider(self):
@@ -207,7 +210,7 @@ class ConteoBreakerTest(unittest.TestCase):
 
 class SpendCeilingTest(unittest.TestCase):
     def setUp(self):
-        self.conn = _conn()
+        self.conn = _conn(self)
         self.conn.execute(
             "INSERT INTO precio_modelo (proveedor, modelo, tipo, micro_usd_por_millon) VALUES "
             "('anthropic', 'modelo-con-precio', 'entrada', 3000000), "
@@ -248,7 +251,7 @@ def _env_tope_diario():
 
 class TopeFailsClosedTest(unittest.TestCase):
     def test_a_failing_ceiling_read_refuses(self):
-        conn = _conn()
+        conn = _conn(self)
         conn.close()  # a closed connection makes the ceiling's own read fail
         with self.assertRaises(uso.TopeRefusal):
             uso.verificar_tope(conn, 1, "anthropic", "claude-sonnet-5-5")
@@ -271,7 +274,7 @@ class LocalDayBoundaryTest(unittest.TestCase):
     rows below while their BOGOTA calendar day differs."""
 
     def setUp(self):
-        self.conn = _conn()
+        self.conn = _conn(self)
         self.addCleanup(_conteo_tope_env())
         os.environ["BODY_AGENTE_CONTEO_DIARIO"] = "1"
         self._ahora = datetime(2026, 11, 2, 5, 30, tzinfo=timezone.utc)  # Bogota 2026-11-02 00:30
@@ -295,7 +298,7 @@ class RowByRowPricingTest(unittest.TestCase):
     current model's rate applied to every row."""
 
     def setUp(self):
-        self.conn = _conn()
+        self.conn = _conn(self)
         self.conn.execute(
             "INSERT INTO precio_modelo (proveedor, modelo, tipo, micro_usd_por_millon) VALUES "
             "('anthropic', 'modelo-a', 'entrada', 0), "
@@ -334,7 +337,7 @@ class RowByRowPricingTest(unittest.TestCase):
 
 class UsoRegistradoTest(unittest.TestCase):
     def test_one_row_per_question_with_the_fakes_counts(self):
-        conn = _conn()
+        conn = _conn(self)
         _seed(conn)
         prov = FakeProveedor([_texto("hola", uso=cliente.Uso(entrada=11, salida=4, cache_lectura=2,
                                                               cache_escritura=1))])

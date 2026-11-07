@@ -38,6 +38,7 @@ def _reset_db(tc: unittest.TestCase):
     tc.addCleanup(web.app.dependency_overrides.clear)
     config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "scope.db"
     conn = db.connect()
+    tc.addCleanup(conn.close)
     db.init(conn)
     conn.execute("INSERT INTO person (id, display_name) VALUES (?, 'B')", (PERSON_B,))
     conn.commit()

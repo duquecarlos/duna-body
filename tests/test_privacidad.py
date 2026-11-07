@@ -117,6 +117,7 @@ class ExportTest(unittest.TestCase):
         self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "export.db"
         self.conn = db.connect()
+        self.addCleanup(self.conn.close)
         db.init(self.conn)
         self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
         self.conn.commit()
@@ -168,6 +169,7 @@ class GarminExportDeleteTest(unittest.TestCase):
         self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "garmin.db"
         self.conn = db.connect()
+        self.addCleanup(self.conn.close)
         db.init(self.conn)
 
     def _insert_row(self):
@@ -205,6 +207,7 @@ class DispositivoExportDeleteTest(unittest.TestCase):
         self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "dispositivo.db"
         self.conn = db.connect()
+        self.addCleanup(self.conn.close)
         db.init(self.conn)
 
     def test_export_has_the_fields_but_never_token_hash(self):
@@ -234,6 +237,7 @@ class AsistenteExportDeleteTest(unittest.TestCase):
         self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "asistente.db"
         self.conn = db.connect()
+        self.addCleanup(self.conn.close)
         db.init(self.conn)
 
     def _seed(self):
@@ -297,6 +301,7 @@ class PropuestaExportDeleteTest(unittest.TestCase):
         self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "propuesta.db"
         self.conn = db.connect()
+        self.addCleanup(self.conn.close)
         db.init(self.conn)
 
     def _seed(self):
@@ -343,6 +348,7 @@ class DeleteAllTest(unittest.TestCase):
         self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "delete.db"
         self.conn = db.connect()
+        self.addCleanup(self.conn.close)
         db.init(self.conn)
         self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
         self.conn.commit()

@@ -13,6 +13,8 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
+from tests._db import open_conn
+
 from body import config, db, turnos_costo, web
 from body.agente import herramientas
 from body.i18n import T
@@ -25,8 +27,8 @@ OFF_DELTA = {"sleep_minutes": -80.0, "resting_hr": 10.0, "hrv_last_night": -20.0
 _ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
-def _mkconn():
-    conn = db.connect(Path(tempfile.mkdtemp(dir=TMP)) / "t.db")
+def _mkconn(case: unittest.TestCase):
+    conn = open_conn(case, Path(tempfile.mkdtemp(dir=TMP)) / "t.db")
     db.init(conn)
     return conn
 
@@ -62,7 +64,7 @@ def _seed_block(conn, person_id: int, inicio: date, dias: int, recovery_target: 
 
 class BloquesNocheTest(unittest.TestCase):
     def test_consecutive_nights_form_one_block(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         for day in ("2026-03-02", "2026-03-03", "2026-03-04", "2026-03-05", "2026-03-06"):
             _insert_shift(conn, 1, day)
         bloques = turnos_costo.bloques_noche(conn, 1, "2026-03-01", "2026-03-10")
@@ -70,7 +72,7 @@ class BloquesNocheTest(unittest.TestCase):
         self.assertEqual((bloques[0].inicio, bloques[0].fin, bloques[0].dias), ("2026-03-02", "2026-03-06", 5))
 
     def test_an_off_day_splits_the_run(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         for day in ("2026-03-02", "2026-03-03"):
             _insert_shift(conn, 1, day)
         _insert_shift(conn, 1, "2026-03-04", kind="off")
@@ -81,14 +83,14 @@ class BloquesNocheTest(unittest.TestCase):
         self.assertEqual([b.dias for b in bloques], [2, 2])
 
     def test_a_single_night_is_a_block_of_one(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         _insert_shift(conn, 1, "2026-03-02")
         bloques = turnos_costo.bloques_noche(conn, 1, "2026-03-01", "2026-03-10")
         self.assertEqual(len(bloques), 1)
         self.assertEqual(bloques[0].dias, 1)
 
     def test_person_b_shifts_never_affect_person_a(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         conn.execute("INSERT INTO person (id, display_name, timezone, language) VALUES (2, 'B', "
                      "'America/Bogota', 'es')")
         for day in ("2026-03-02", "2026-03-03", "2026-03-04"):
@@ -102,7 +104,7 @@ class BloquesNocheTest(unittest.TestCase):
 class ReferenciaTest(unittest.TestCase):
     def test_mean_and_band_match_the_baseline_quantile_rule(self):
         import statistics
-        conn = _mkconn()
+        conn = _mkconn(self)
         hoy = date(2026, 6, 1)
         vals = list(range(1, 16))  # 15 distinct values, well over min_dias_referencia (10)
         start = hoy - timedelta(120)
@@ -118,7 +120,7 @@ class ReferenciaTest(unittest.TestCase):
         self.assertEqual(r.n, 15)
 
     def test_fewer_than_min_dias_referencia_is_a_gap(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         hoy = date(2026, 6, 1)
         start = hoy - timedelta(120)
         for i in range(5):  # fewer than MODELO['min_dias_referencia'] (10)
@@ -127,7 +129,7 @@ class ReferenciaTest(unittest.TestCase):
         self.assertIsNone(ref["resting_hr"])
 
     def test_excludes_night_days_and_the_post_window(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         hoy = date(2026, 6, 1)
         start, end = hoy - timedelta(120), hoy - timedelta(1)
         _fill_range(conn, 1, start, end, {"resting_hr": 55.0})
@@ -145,7 +147,7 @@ class ReferenciaTest(unittest.TestCase):
 
 class CostoBloqueTest(unittest.TestCase):
     def test_a_lower_resting_hr_during_nights_is_not_worse(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         bloque = turnos_costo.Bloque(inicio="2026-04-01", fin="2026-04-05", dias=5)
         ref = {"resting_hr": turnos_costo.Referencia(media=60.0, bajo=55.0, alto=65.0, n=20)}
         d = date(2026, 4, 1)
@@ -156,7 +158,7 @@ class CostoBloqueTest(unittest.TestCase):
         self.assertLess(costo["resting_hr"], 0)  # negative: a lower resting HR is NOT worse
 
     def test_higher_resting_hr_during_nights_is_worse(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         bloque = turnos_costo.Bloque(inicio="2026-04-01", fin="2026-04-05", dias=5)
         ref = {"resting_hr": turnos_costo.Referencia(media=60.0, bajo=55.0, alto=65.0, n=20)}
         d = date(2026, 4, 1)
@@ -167,14 +169,14 @@ class CostoBloqueTest(unittest.TestCase):
         self.assertGreater(costo["resting_hr"], 0)
 
     def test_missing_values_stay_missing(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         bloque = turnos_costo.Bloque(inicio="2026-04-01", fin="2026-04-05", dias=5)
         ref = {"resting_hr": turnos_costo.Referencia(media=60.0, bajo=55.0, alto=65.0, n=20)}
         costo = turnos_costo._costo_bloque(conn, 1, bloque, ref)
         self.assertIsNone(costo["resting_hr"])
 
     def test_no_reference_is_a_gap(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         bloque = turnos_costo.Bloque(inicio="2026-04-01", fin="2026-04-05", dias=5)
         costo = turnos_costo._costo_bloque(conn, 1, bloque, {"resting_hr": None})
         self.assertIsNone(costo["resting_hr"])
@@ -189,7 +191,7 @@ class RecuperacionBloqueTest(unittest.TestCase):
             db.set_metric(conn, day.isoformat(), m, self.IN if i < n_in_band else self.OUT, "garmin", 1)
 
     def test_recovery_found_when_three_of_five_are_back_for_two_days(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         fin = date(2026, 1, 10)
         bloque = turnos_costo.Bloque(inicio="2026-01-06", fin=fin.isoformat(), dias=5)
         self._set_day(conn, fin + timedelta(1), 2)  # d=1: only 2 in band
@@ -201,7 +203,7 @@ class RecuperacionBloqueTest(unittest.TestCase):
         self.assertEqual(recup, 3)
 
     def test_not_reached_within_the_window_is_none(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         fin = date(2026, 1, 10)
         bloque = turnos_costo.Bloque(inicio="2026-01-06", fin=fin.isoformat(), dias=5)
         for i in range(1, turnos_costo.MODELO["ventana_post"] + 2):
@@ -211,7 +213,7 @@ class RecuperacionBloqueTest(unittest.TestCase):
         self.assertIsNone(recup)
 
     def test_fewer_than_three_metrics_with_values_is_a_gap(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         fin = date(2026, 1, 10)
         bloque = turnos_costo.Bloque(inicio="2026-01-06", fin=fin.isoformat(), dias=5)
         hoy = date(2026, 2, 1)  # no values set at all for the scan window
@@ -230,7 +232,7 @@ class ResumenTest(unittest.TestCase):
         _seed_block(conn, person_id, date(2026, 4, 27), 5, recovery_target=2)
 
     def test_median_over_blocks_with_a_figure(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         self._seed_three_blocks(conn, 1)
         r = turnos_costo.resumen(conn, 1, hoy=self.HOY)
         self.assertEqual(r["dias_recuperacion"], 4)  # median of [6, 4, 2]
@@ -239,7 +241,7 @@ class ResumenTest(unittest.TestCase):
         self.assertEqual(len(r["bloques"]), 3)
 
     def test_person_isolation(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         self._seed_three_blocks(conn, 1)
         conn.execute("INSERT INTO person (id, display_name, timezone, language) VALUES (2, 'B', "
                      "'America/Bogota', 'es')")
@@ -249,26 +251,26 @@ class ResumenTest(unittest.TestCase):
         self.assertEqual(r1["dias_recuperacion"], 4)
 
     def test_sin_datos_reloj(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         r = turnos_costo.resumen(conn, 1, hoy=self.HOY)
         self.assertIsNone(r["dias_recuperacion"])
         self.assertEqual(r["motivo"], "sin_datos_reloj")
 
     def test_sin_turnos(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         db.set_metric(conn, "2026-05-01", "resting_hr", 55.0, "garmin", 1)
         r = turnos_costo.resumen(conn, 1, hoy=self.HOY)
         self.assertEqual(r["motivo"], "sin_turnos")
 
     def test_sin_noches(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         db.set_metric(conn, "2026-05-01", "resting_hr", 55.0, "garmin", 1)
         _insert_shift(conn, 1, "2026-05-01", kind="day")
         r = turnos_costo.resumen(conn, 1, hoy=self.HOY)
         self.assertEqual(r["motivo"], "sin_noches")
 
     def test_pocos_bloques(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         db.set_metric(conn, "2026-05-01", "resting_hr", 55.0, "garmin", 1)
         for day in ("2026-05-10", "2026-05-11", "2026-05-12"):
             _insert_shift(conn, 1, day)
@@ -354,6 +356,7 @@ class HeroQuestionsTest(unittest.TestCase):
         self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "hq.db"
         conn = db.connect()
+        self.addCleanup(conn.close)
         db.init(conn)
         return conn
 
@@ -383,6 +386,7 @@ class StripBandsTest(unittest.TestCase):
         self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / name
         conn = db.connect()
+        self.addCleanup(conn.close)
         db.init(conn)
         return conn
 
@@ -423,6 +427,7 @@ class ComoListsBlocksTest(unittest.TestCase):
         self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "como.db"
         conn = db.connect()
+        self.addCleanup(conn.close)
         db.init(conn)
         return conn
 
@@ -450,6 +455,7 @@ class WebAndToolTest(unittest.TestCase):
         self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "w.db"
         conn = db.connect()
+        self.addCleanup(conn.close)
         db.init(conn)
         return conn
 

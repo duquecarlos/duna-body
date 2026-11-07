@@ -4,7 +4,9 @@ sqlite3.Connection. Deterministic because the fix closes explicitly (decorators 
 around db.connect()), not by relying on garbage collection to eventually close a leaked connection --
 gc.collect() here is just belt-and-suspenders, not what makes the assertion pass.
 """
+import ast
 import gc
+import inspect
 import tempfile
 import unittest
 import warnings
@@ -48,6 +50,51 @@ class ConexionesCerradasTest(unittest.TestCase):
         sqlite_leaks = [w for w in caught
                         if issubclass(w.category, ResourceWarning) and "sqlite3.Connection" in str(w.message)]
         self.assertEqual([], [str(w.message) for w in sqlite_leaks])
+
+
+_CLOSE_DECORATORS = {"_cierra_conexion", "_cierra_conexion_async"}
+
+# asistente_preguntar returns a StreamingResponse whose generator keeps using the connection
+# after the route function itself returns (BODY-CONEXIONES-CERRADAS-1 decision 1) -- it already
+# closes that connection correctly in the generator's own `finally`, so it carries neither decorator.
+_ALLOWED_WITHOUT_DECORATOR = {"asistente_preguntar"}
+
+
+def _decorator_name(node) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    return None
+
+
+def _calls_ctx(func_node) -> bool:
+    for node in ast.walk(func_node):
+        if node is func_node:
+            continue
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_ctx":
+            return True
+    return False
+
+
+class RouteClosesItsConnectionTest(unittest.TestCase):
+    """Guard for BODY-CONEXIONES-CERRADAS-2: every top-level function in body/web.py that calls
+    _ctx( -- the exact name, not a helper like _hoy_turno_ctx -- carries _cierra_conexion or
+    _cierra_conexion_async, except the one documented exception in _ALLOWED_WITHOUT_DECORATOR."""
+
+    def test_every_route_calling_ctx_carries_a_close_decorator(self):
+        source = inspect.getsource(web)
+        tree = ast.parse(source)
+        missing = []
+        for node in tree.body:
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not _calls_ctx(node):
+                continue
+            if node.name in _ALLOWED_WITHOUT_DECORATOR:
+                continue
+            names = {_decorator_name(d) for d in node.decorator_list}
+            if not (names & _CLOSE_DECORATORS):
+                missing.append(node.name)
+        self.assertEqual(missing, [])
 
 
 if __name__ == "__main__":

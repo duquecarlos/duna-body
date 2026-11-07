@@ -91,10 +91,11 @@ class FakeGarmin:
         return []
 
 
-def _fresh_db(name: str):
+def _fresh_db(case: unittest.TestCase, name: str):
     orig_db_path = config.DB_PATH
     config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / name
     conn = db.connect()
+    case.addCleanup(conn.close)
     db.init(conn)
     return conn, orig_db_path
 
@@ -103,7 +104,7 @@ def _fresh_db(name: str):
 
 class EncryptionTest(unittest.TestCase):
     def setUp(self):
-        self.conn, orig = _fresh_db("enc.db")
+        self.conn, orig = _fresh_db(self, "enc.db")
         self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
         self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
         self.conn.commit()
@@ -182,7 +183,7 @@ class EnsureConfiguredTest(unittest.TestCase):
             self.assertNotIn(short_key, str(ctx.exception))
 
     def test_key_of_wrong_length_refuses_at_use_time_too(self):
-        conn, orig = _fresh_db("key_len.db")
+        conn, orig = _fresh_db(self, "key_len.db")
         self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
         with mock.patch.dict(os.environ, {garmin_cuenta.KEY_ENV: "aa" * 16}):
             with self.assertRaises(RuntimeError) as ctx:
@@ -409,7 +410,7 @@ class RequestLogScrubTest(GarminHostedTestCase):
 
 class PullHostedTest(unittest.TestCase):
     def setUp(self):
-        self.conn, orig = _fresh_db("pull.db")
+        self.conn, orig = _fresh_db(self, "pull.db")
         self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
         self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
         self.conn.commit()
@@ -478,7 +479,7 @@ class PullHostedTest(unittest.TestCase):
 
 class LocalModeTest(unittest.TestCase):
     def setUp(self):
-        self.conn, orig = _fresh_db("local.db")
+        self.conn, orig = _fresh_db(self, "local.db")
         self.conn.close()
         self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
         self.client = TestClient(web.app, follow_redirects=False)

@@ -20,6 +20,7 @@ def _reset_db(tc: unittest.TestCase):
     tc.addCleanup(lambda: setattr(config, "DB_PATH", orig))
     config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "g.db"
     conn = db.connect()
+    tc.addCleanup(conn.close)
     db.init(conn)
     return conn
 

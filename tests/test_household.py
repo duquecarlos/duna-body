@@ -5,12 +5,14 @@ import unittest
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from pathlib import Path
 
+from tests._db import open_conn
+
 from body import db, household
 
 
 class HouseholdTest(unittest.TestCase):
     def test_none_then_shared(self):
-        conn = db.connect(Path(tempfile.mkdtemp()) / "h.db")
+        conn = open_conn(self, Path(tempfile.mkdtemp()) / "h.db")
         db.init(conn)
         self.assertIsNone(household.household_of(conn, 1))
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")

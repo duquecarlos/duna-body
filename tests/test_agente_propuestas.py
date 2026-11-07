@@ -80,6 +80,7 @@ class ProponerCreaRegistroTest(unittest.TestCase):
 
     def setUp(self):
         self.conn, self.orig = _reset_db()
+        self.addCleanup(self.conn.close)
         self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig))
 
     def test_proponer_meta_writes_nothing_to_goal(self):
@@ -132,6 +133,7 @@ class NoProponibleTest(unittest.TestCase):
 class UnaPropuestaPorRondaTest(unittest.TestCase):
     def setUp(self):
         self.conn, self.orig = _reset_db()
+        self.addCleanup(self.conn.close)
         self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig))
 
     def test_second_proposal_in_the_same_round_gets_a_tool_error(self):
@@ -157,6 +159,7 @@ class AplicarEscribeTest(unittest.TestCase):
 
     def setUp(self):
         self.conn, self.orig = _reset_db()
+        self.addCleanup(self.conn.close)
         self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig))
 
     def test_aplicar_proponer_meta_creates_the_goal_only_for_that_person(self):
@@ -215,6 +218,7 @@ class AplicarEscribeTest(unittest.TestCase):
 class DeshacerTest(unittest.TestCase):
     def setUp(self):
         self.conn, self.orig = _reset_db()
+        self.addCleanup(self.conn.close)
         self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig))
 
     def test_deshacer_restores_the_value_before(self):
@@ -253,6 +257,7 @@ class RutasPropuestaTest(unittest.TestCase):
 
     def setUp(self):
         self.conn, self.orig = _reset_db()
+        self.addCleanup(self.conn.close)
         self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig))
         self.addCleanup(web.app.dependency_overrides.clear)
         web.app.dependency_overrides[identity.current_person_id] = lambda: 1
@@ -292,6 +297,7 @@ class EstadoYEventosTest(unittest.TestCase):
 
     def setUp(self):
         self.conn, self.orig = _reset_db()
+        self.addCleanup(self.conn.close)
         self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig))
         self.addCleanup(web.app.dependency_overrides.clear)
         web.app.dependency_overrides[identity.current_person_id] = lambda: 1

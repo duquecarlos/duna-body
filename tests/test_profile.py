@@ -6,12 +6,14 @@ import tempfile
 from datetime import date, timedelta
 from pathlib import Path
 
+from tests._db import open_conn
+
 from body import db, profile
 
 
 class ProfileTest(unittest.TestCase):
     def test_profile(self):
-        conn = db.connect(Path(tempfile.mkdtemp()) / "p.db")
+        conn = open_conn(self, Path(tempfile.mkdtemp()) / "p.db")
         db.init(conn)
         start = date(2026, 1, 1)
         for i in range(90):
@@ -26,7 +28,7 @@ class ProfileTest(unittest.TestCase):
         self.assertIn('href="/trends?m=2026-01#sleep_minutes"', profile.month_svg(p))  # month drills to its days
 
     def test_window(self):
-        conn = db.connect(Path(tempfile.mkdtemp()) / "w.db")
+        conn = open_conn(self, Path(tempfile.mkdtemp()) / "w.db")
         db.init(conn)
         for i in range(20):
             if i != 15:  # one night without the watch

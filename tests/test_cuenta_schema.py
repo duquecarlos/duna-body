@@ -10,19 +10,21 @@ from pathlib import Path
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
+from tests._db import open_conn
+
 from body import db
 
 
-def _db(name: str) -> sqlite3.Connection:
-    return db.connect(Path(tempfile.mkdtemp(dir=TMP)) / name)
+def _db(case: unittest.TestCase, name: str) -> sqlite3.Connection:
+    return open_conn(case, Path(tempfile.mkdtemp(dir=TMP)) / name)
 
 
-def _old_db(name: str) -> sqlite3.Connection:
+def _old_db(case: unittest.TestCase, name: str) -> sqlite3.Connection:
     """A DB built from the schema as it stood before this slice. db.SCHEMA's CREATE TABLE person
     never defined cuenta_sub (that column is only ever added by _migrate, like batch_id before it),
     so executing today's SCHEMA and dropping the three new tables reproduces the pre-slice shape
     exactly -- the person/goal/metric_def DDL text is unchanged by this slice."""
-    conn = _db(name)
+    conn = _db(case, name)
     conn.executescript(db.SCHEMA)
     conn.execute("DROP TABLE sesion")
     conn.execute("DROP TABLE inicio_sesion")
@@ -33,7 +35,7 @@ def _old_db(name: str) -> sqlite3.Connection:
 
 class FreshDbTest(unittest.TestCase):
     def setUp(self):
-        self.conn = _db("fresh.db")
+        self.conn = _db(self, "fresh.db")
         db.init(self.conn)
 
     def test_person_has_cuenta_sub_column(self):
@@ -61,7 +63,7 @@ class FreshDbTest(unittest.TestCase):
 
 class MigrationPreservesRowsTest(unittest.TestCase):
     def test_init_on_old_schema_adds_pieces_without_changing_existing_rows(self):
-        conn = _old_db("migrate.db")
+        conn = _old_db(self, "migrate.db")
         conn.execute("INSERT INTO person (id, display_name) VALUES (1, 'Me')")
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Other')")
         conn.execute(
@@ -107,7 +109,7 @@ class MigrationPreservesRowsTest(unittest.TestCase):
 
 class CuentaSubUniquenessTest(unittest.TestCase):
     def setUp(self):
-        self.conn = _db("sub.db")
+        self.conn = _db(self, "sub.db")
         db.init(self.conn)
         self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Other')")
         self.conn.execute("INSERT INTO person (id, display_name) VALUES (3, 'Third')")
@@ -126,7 +128,7 @@ class CuentaSubUniquenessTest(unittest.TestCase):
 
 class ConsentimientoTest(unittest.TestCase):
     def setUp(self):
-        self.conn = _db("consent.db")
+        self.conn = _db(self, "consent.db")
         db.init(self.conn)
 
     def test_duplicate_person_version_refused(self):
@@ -143,7 +145,7 @@ class ConsentimientoTest(unittest.TestCase):
 
 class SesionForeignKeyTest(unittest.TestCase):
     def test_session_for_a_missing_person_is_refused(self):
-        conn = _db("fk.db")
+        conn = _db(self, "fk.db")
         db.init(conn)
         with self.assertRaises(sqlite3.IntegrityError):
             conn.execute(

@@ -27,6 +27,7 @@ def _reset_db(tc: unittest.TestCase):
     tc.addCleanup(web.app.dependency_overrides.clear)
     config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "nivel.db"
     conn = db.connect()
+    tc.addCleanup(conn.close)
     db.init(conn)
     return conn
 

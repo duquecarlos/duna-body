@@ -406,6 +406,7 @@ class VincularCuentaTest(unittest.TestCase):
         self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "vincular.db"
         self.conn = db.connect()
+        self.addCleanup(self.conn.close)
         db.init(self.conn)
         self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Other')")
         self.conn.commit()

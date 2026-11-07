@@ -6,6 +6,8 @@ from datetime import date, timedelta
 from pathlib import Path
 import tempfile
 
+from tests._db import open_conn
+
 from body import db, goals, household, turnos_costo, vida_export
 
 METRICS = turnos_costo.MODELO["metricas"]
@@ -45,7 +47,7 @@ def _seed_block(conn, person_id: int, inicio: date, dias: int, recovery_target: 
 
 class VidaExportTest(unittest.TestCase):
     def test_week_section_shape(self):
-        conn = db.connect(Path(tempfile.mkdtemp()) / "v.db")
+        conn = open_conn(self, Path(tempfile.mkdtemp()) / "v.db")
         db.init(conn)
         monday = date(2026, 11, 2)
         for i in range(5):
@@ -64,7 +66,7 @@ class VidaExportTest(unittest.TestCase):
         self.assertEqual(s["goal_checks"], [])
 
     def test_goals_only_active_with_their_own_check(self):
-        conn = db.connect(Path(tempfile.mkdtemp()) / "v2.db")
+        conn = open_conn(self, Path(tempfile.mkdtemp()) / "v2.db")
         db.init(conn)
         monday = date(2026, 11, 2)
         proposed_id = goals.propose(conn, 1, "Proposed goal", "2026-11-02", metric_key="steps", direction="raise",
@@ -81,7 +83,7 @@ class VidaExportTest(unittest.TestCase):
         self.assertNotIn(proposed_id, [g["goal_id"] for g in s["goals"]])
 
     def test_goal_checks_for_shared_household_goals(self):
-        conn = db.connect(Path(tempfile.mkdtemp()) / "v3.db")
+        conn = open_conn(self, Path(tempfile.mkdtemp()) / "v3.db")
         db.init(conn)
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")
         conn.executescript(household.SCHEMA)
@@ -109,7 +111,7 @@ class ShiftSectionTest(unittest.TestCase):
     """BODY-TURNOS-EXPORT-WORK-SHIFT-1: shift_nights / shift_working_days from confirmed shift rows."""
 
     def test_night_and_working_day_counts(self):
-        conn = db.connect(Path(tempfile.mkdtemp()) / "sh1.db")
+        conn = open_conn(self, Path(tempfile.mkdtemp()) / "sh1.db")
         db.init(conn)
         monday = date(2026, 11, 2)
         kinds = ["night", "night", "night", "off", "off", "day", "morning"]
@@ -124,7 +126,7 @@ class ShiftSectionTest(unittest.TestCase):
         self.assertEqual(by_key["body.shift_working_days"]["kind"], "measured")
 
     def test_no_shift_rows_means_no_shift_keys(self):
-        conn = db.connect(Path(tempfile.mkdtemp()) / "sh2.db")
+        conn = open_conn(self, Path(tempfile.mkdtemp()) / "sh2.db")
         db.init(conn)
         monday = date(2026, 11, 2)
         s = vida_export.week_section(conn, monday, 1)
@@ -134,7 +136,7 @@ class ShiftSectionTest(unittest.TestCase):
         self.assertNotIn("body.recovery_days_est", keys)
 
     def test_proposed_shifts_are_not_counted(self):
-        conn = db.connect(Path(tempfile.mkdtemp()) / "sh3.db")
+        conn = open_conn(self, Path(tempfile.mkdtemp()) / "sh3.db")
         db.init(conn)
         monday = date(2026, 11, 2)
         conn.execute(
@@ -153,7 +155,7 @@ class ShiftSectionTest(unittest.TestCase):
         self.assertNotIn("body.shift_nights", keys)
 
     def test_person_b_shifts_never_reach_person_a(self):
-        conn = db.connect(Path(tempfile.mkdtemp()) / "sh4.db")
+        conn = open_conn(self, Path(tempfile.mkdtemp()) / "sh4.db")
         db.init(conn)
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")
         monday = date(2026, 11, 2)
@@ -164,7 +166,7 @@ class ShiftSectionTest(unittest.TestCase):
         self.assertNotIn("body.shift_nights", keys)
 
     def test_shape_still_holds_with_shift_keys_present(self):
-        conn = db.connect(Path(tempfile.mkdtemp()) / "sh5.db")
+        conn = open_conn(self, Path(tempfile.mkdtemp()) / "sh5.db")
         db.init(conn)
         monday = date(2026, 11, 2)
         _insert_shift(conn, 1, monday.isoformat(), kind="night")
@@ -180,7 +182,7 @@ class RecoverySectionTest(unittest.TestCase):
     rule turnos_costo.turno_de_hoy uses for Hoy, evaluated for the week's Sunday."""
 
     def _seeded(self, recovery_target: int = 3, blocks: int = 3):
-        conn = db.connect(Path(tempfile.mkdtemp()) / "rec.db")
+        conn = open_conn(self, Path(tempfile.mkdtemp()) / "rec.db")
         db.init(conn)
         hoy_base = date(2026, 6, 20)
         _fill_range(conn, 1, hoy_base - timedelta(140), hoy_base - timedelta(1), CONST)
@@ -213,7 +215,7 @@ class RecoverySectionTest(unittest.TestCase):
 
 class VidaPersonTest(unittest.TestCase):
     def test_hosted_person_with_a_sub_gets_the_sub(self):
-        conn = db.connect(Path(tempfile.mkdtemp()) / "p1.db")
+        conn = open_conn(self, Path(tempfile.mkdtemp()) / "p1.db")
         db.init(conn)
         conn.execute("UPDATE person SET cuenta_sub = ? WHERE id = 1", ("sub-demo-1",))
         conn.commit()
@@ -222,7 +224,7 @@ class VidaPersonTest(unittest.TestCase):
         self.assertEqual(vida_export.week_section(conn, monday, 1)["person"], "sub-demo-1")
 
     def test_two_persons_get_different_values(self):
-        conn = db.connect(Path(tempfile.mkdtemp()) / "p2.db")
+        conn = open_conn(self, Path(tempfile.mkdtemp()) / "p2.db")
         db.init(conn)
         conn.execute("INSERT INTO person (id, display_name, cuenta_sub) VALUES (2, 'B', ?)", ("sub-demo-b",))
         conn.execute("UPDATE person SET cuenta_sub = ? WHERE id = 1", ("sub-demo-a",))
@@ -231,7 +233,7 @@ class VidaPersonTest(unittest.TestCase):
         self.assertEqual(vida_export.vida_person(conn, 2), "sub-demo-b")
 
     def test_local_person_keeps_the_old_key(self):
-        conn = db.connect(Path(tempfile.mkdtemp()) / "p3.db")
+        conn = open_conn(self, Path(tempfile.mkdtemp()) / "p3.db")
         db.init(conn)
         self.assertEqual(vida_export.vida_person(conn, 1), vida_export.PERSON_KEY)
         monday = date(2026, 11, 2)

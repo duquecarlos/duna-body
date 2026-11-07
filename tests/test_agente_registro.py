@@ -12,6 +12,8 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.routing import APIRoute
 
+from tests._db import open_conn
+
 from body import db, goals, web
 from body.agente import ajustes, herramientas
 
@@ -53,8 +55,8 @@ WRITE_SQL_PREFIXES = ("INSERT", "UPDATE", "DELETE", "REPLACE")
 MAX_WALK_DEPTH = 8
 
 
-def _conn():
-    return db.connect(Path(tempfile.mkdtemp(dir=TMP)) / "a.db")
+def _conn(case: unittest.TestCase):
+    return open_conn(case, Path(tempfile.mkdtemp(dir=TMP)) / "a.db")
 
 
 def _seed(conn) -> int:
@@ -217,7 +219,7 @@ class StaticGuardTest(unittest.TestCase):
 
 class BehaviouralGuardTest(unittest.TestCase):
     def test_running_every_lectura_tool_does_not_change_the_database(self):
-        conn = _conn()
+        conn = _conn(self)
         gid = _seed(conn)
         casos = _all_tool_calls()
         casos["leer_meta"] = {"goal_id": gid}
@@ -245,20 +247,20 @@ class DisponiblesTest(unittest.TestCase):
 
 class EjecutarGuardTest(unittest.TestCase):
     def test_leer_dia_refused_at_resumen_and_ninguno(self):
-        conn = _conn()
+        conn = _conn(self)
         _seed(conn)
         for nivel in ("resumen", "ninguno"):
             with self.assertRaises(herramientas.ToolError):
                 herramientas.ejecutar(conn, 1, "leer_dia", {"day": "2026-10-05"}, nivel)
 
     def test_unknown_tool_refused(self):
-        conn = _conn()
+        conn = _conn(self)
         _seed(conn)
         with self.assertRaises(herramientas.ToolError):
             herramientas.ejecutar(conn, 1, "leer_no_existe", {}, "completo")
 
     def test_missing_required_param_refused(self):
-        conn = _conn()
+        conn = _conn(self)
         _seed(conn)
         with self.assertRaises(herramientas.ToolError):
             herramientas.ejecutar(conn, 1, "leer_dia", {}, "completo")
@@ -266,7 +268,7 @@ class EjecutarGuardTest(unittest.TestCase):
 
 class ResumenHasNoDailyValuesTest(unittest.TestCase):
     def test_leer_tendencias_reports_aggregates_only(self):
-        conn = _conn()
+        conn = _conn(self)
         _seed(conn)
         out = herramientas.ejecutar(conn, 1, "leer_tendencias", {"rango": "30"}, "resumen")
         self.assertTrue(out["metricas"])
@@ -280,7 +282,7 @@ class ResumenHasNoDailyValuesTest(unittest.TestCase):
                                           f"{campo} is not an aggregate: {metrica[campo]!r}")
 
     def test_leer_historia_reports_aggregates_only(self):
-        conn = _conn()
+        conn = _conn(self)
         _seed(conn)
         out = herramientas.ejecutar(conn, 1, "leer_historia", {}, "resumen")
         self.assertIsInstance(out["cobertura"], dict)
@@ -289,7 +291,7 @@ class ResumenHasNoDailyValuesTest(unittest.TestCase):
 
 class SinVerificacionTest(unittest.TestCase):
     def test_leer_metas_says_sin_verificacion_when_none_exists(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         gid = goals.propose(conn, 1, "Meta sin verificar", "2026-10-01", metric_key="steps", direction="raise",
                             target_value=9000.0, baseline_value=6000.0, deadline="2026-12-01")
@@ -299,7 +301,7 @@ class SinVerificacionTest(unittest.TestCase):
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM goal_check").fetchone()[0], 0)
 
     def test_leer_meta_says_sin_verificacion_when_none_exists(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         gid = goals.propose(conn, 1, "Meta sin verificar", "2026-10-01", metric_key="steps", direction="raise",
                             target_value=9000.0, baseline_value=6000.0, deadline="2026-12-01")
@@ -309,7 +311,7 @@ class SinVerificacionTest(unittest.TestCase):
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM goal_check").fetchone()[0], 0)
 
     def test_leer_meta_unknown_goal(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         out = herramientas.ejecutar(conn, 1, "leer_meta", {"goal_id": 999}, "resumen")
         self.assertFalse(out["encontrada"])
@@ -317,12 +319,12 @@ class SinVerificacionTest(unittest.TestCase):
 
 class NivelDatosTest(unittest.TestCase):
     def test_default_completo_with_no_row(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         self.assertEqual(ajustes.nivel_datos(conn, 1), "completo")
 
     def test_set_get_round_trip(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         ajustes.set_nivel_datos(conn, 1, "resumen")
         self.assertEqual(ajustes.nivel_datos(conn, 1), "resumen")
@@ -330,13 +332,13 @@ class NivelDatosTest(unittest.TestCase):
         self.assertEqual(ajustes.nivel_datos(conn, 1), "ninguno")
 
     def test_invalid_level_refused_by_the_function(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         with self.assertRaises(ValueError):
             ajustes.set_nivel_datos(conn, 1, "parcial")
 
     def test_invalid_level_refused_by_the_check_constraint(self):
-        conn = _conn()
+        conn = _conn(self)
         db.init(conn)
         with self.assertRaises(sqlite3.IntegrityError):
             conn.execute(
@@ -346,7 +348,7 @@ class NivelDatosTest(unittest.TestCase):
 
 class JsonSerializableTest(unittest.TestCase):
     def test_every_lectura_tool_output_survives_json_dumps(self):
-        conn = _conn()
+        conn = _conn(self)
         gid = _seed(conn)
         casos = _all_tool_calls()
         casos["leer_meta"] = {"goal_id": gid}

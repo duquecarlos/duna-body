@@ -18,9 +18,10 @@ from body.agente import herramientas
 MANIFEST_BASE = "https://media.example.test"
 
 
-def _fresh_client() -> tuple[TestClient, "sqlite3.Connection"]:
+def _fresh_client(case: unittest.TestCase) -> tuple[TestClient, "sqlite3.Connection"]:
     config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "a.db"
     conn = db.connect()
+    case.addCleanup(conn.close)
     db.init(conn)
     return TestClient(web.app, follow_redirects=False), conn
 
@@ -32,7 +33,7 @@ class _LocalModeTestCase(unittest.TestCase):
         self.orig_db_path = config.DB_PATH
         self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig_db_path))
         self.addCleanup(tutoriales._manifest_cache.clear)
-        self.client, self.conn = _fresh_client()
+        self.client, self.conn = _fresh_client(self)
         self.assertNotIn(cuenta.ISSUER_ENV, os.environ)
 
 
@@ -44,7 +45,7 @@ class _HostedModeTestCase(unittest.TestCase):
         self.orig_db_path = config.DB_PATH
         self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig_db_path))
         self.addCleanup(tutoriales._manifest_cache.clear)
-        self.client, self.conn = _fresh_client()
+        self.client, self.conn = _fresh_client(self)
         patcher_env = mock.patch.dict(os.environ, {cuenta.ISSUER_ENV: "https://fake-cuenta.test"})
         patcher_env.start()
         self.addCleanup(patcher_env.stop)
@@ -199,6 +200,7 @@ class PrimerosPasosFunctionTest(unittest.TestCase):
         self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "a.db"
         self.conn = db.connect()
+        self.addCleanup(self.conn.close)
         db.init(self.conn)
 
     def test_hosted_with_nothing_is_all_unticked(self):
@@ -317,6 +319,7 @@ class LeerTutorialesToolTest(unittest.TestCase):
         self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "a.db"
         self.conn = db.connect()
+        self.addCleanup(self.conn.close)
         db.init(self.conn)
         self.addCleanup(tutoriales._manifest_cache.clear)
 

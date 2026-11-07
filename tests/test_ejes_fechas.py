@@ -12,6 +12,8 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
+from tests._db import open_conn
+
 from body import config, db, identity, profile, web
 from body.i18n import T
 
@@ -46,6 +48,7 @@ class TrendsAxisLabelsTest(unittest.TestCase):
         self.addCleanup(web.app.dependency_overrides.clear)
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "ejes.db"
         conn = db.connect()
+        self.addCleanup(conn.close)
         db.init(conn)
         _seed_days(conn, 1, "resting_hr", "2026-09-01", 68, 58, -0.1)
         _seed_days(conn, 1, "sleep_minutes", "2026-09-01", 68, 410, 0.3)
@@ -90,6 +93,7 @@ class TrendsAxisLabelsTest(unittest.TestCase):
 
     def test_en_renders_english_labels(self):
         conn = db.connect()
+        self.addCleanup(conn.close)
         db.set_language(conn, "en", 1)
         conn.commit()
         page = self.client.get("/trends?r=30").text
@@ -104,7 +108,7 @@ class BuildersBackwardCompatTest(unittest.TestCase):
     """Called without the new keyword arguments, the builders still produce ISO -- no other caller breaks."""
 
     def test_month_svg_without_new_args_is_iso(self):
-        conn = db.connect(Path(tempfile.mkdtemp(dir=TMP)) / "m.db")
+        conn = open_conn(self, Path(tempfile.mkdtemp(dir=TMP)) / "m.db")
         db.init(conn)
         start = date(2026, 1, 1)
         for i in range(60):
@@ -116,7 +120,7 @@ class BuildersBackwardCompatTest(unittest.TestCase):
         self.assertNotIn("aria-label", svg)
 
     def test_window_svg_without_new_args_is_iso(self):
-        conn = db.connect(Path(tempfile.mkdtemp(dir=TMP)) / "w.db")
+        conn = open_conn(self, Path(tempfile.mkdtemp(dir=TMP)) / "w.db")
         db.init(conn)
         for i in range(10):
             db.set_metric(conn, (date(2026, 3, 1) + timedelta(i)).isoformat(), "resting_hr", 50, "garmin", 1)

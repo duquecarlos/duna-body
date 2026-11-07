@@ -6,6 +6,8 @@ from pathlib import Path
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from datetime import date, timedelta
 
+from tests._db import open_conn
+
 from body import db, history, web
 from body.i18n import T
 
@@ -34,8 +36,8 @@ NIGHT_SHIFT_DAYS = ["2025-09-05", "2025-09-12", "2025-09-19", "2025-09-26"]
 DAY_SHIFT_DAYS = ["2025-09-08", "2025-09-15", "2025-09-22"]
 
 
-def _mkconn():
-    conn = db.connect(Path(tempfile.mkdtemp()) / "t.db")
+def _mkconn(case: unittest.TestCase):
+    conn = open_conn(case, Path(tempfile.mkdtemp()) / "t.db")
     db.init(conn)
     return conn
 
@@ -77,11 +79,11 @@ def _seed(conn):
 
 class CoverageTest(unittest.TestCase):
     def setUp(self):
-        self.conn = _mkconn()
+        self.conn = _mkconn(self)
         _seed(self.conn)
 
     def test_no_data_is_none(self):
-        self.assertIsNone(history.coverage(_mkconn(), 1))
+        self.assertIsNone(history.coverage(_mkconn(self), 1))
 
     def test_dates_and_gap(self):
         cov = history.coverage(self.conn, 1)
@@ -98,12 +100,12 @@ class CoverageTest(unittest.TestCase):
 
 class TrainingTest(unittest.TestCase):
     def setUp(self):
-        self.conn = _mkconn()
+        self.conn = _mkconn(self)
         _seed(self.conn)
         self.train = history.training(self.conn, 1)
 
     def test_no_activities_is_none(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         db.set_metric(conn, START.isoformat(), "resting_hr", 55.0, "garmin", 1)
         self.assertIsNone(history.training(conn, 1))
 
@@ -149,7 +151,7 @@ class TrainingTest(unittest.TestCase):
 
 class PatternsTest(unittest.TestCase):
     def setUp(self):
-        self.conn = _mkconn()
+        self.conn = _mkconn(self)
         _seed(self.conn)
         self.pat = history.patterns(self.conn, 1)
 
@@ -186,7 +188,7 @@ class FindingTextTest(unittest.TestCase):
     (BODY-HISTORIA-POLISH-1)."""
 
     def setUp(self):
-        self.conn = _mkconn()
+        self.conn = _mkconn(self)
         _seed(self.conn)
         self.pat = history.patterns(self.conn, 1)
         self.defs = web._defs(self.conn)
@@ -234,13 +236,13 @@ class TrainingCtxOrderTest(unittest.TestCase):
 
 class ByShiftTest(unittest.TestCase):
     def test_empty_state_without_shifts(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         db.set_metric(conn, START.isoformat(), "resting_hr", 55.0, "garmin", 1)
         conn.commit()
         self.assertEqual(history.by_shift(conn, 1), {"has_shifts": False, "kinds": []})
 
     def test_populated_state(self):
-        conn = _mkconn()
+        conn = _mkconn(self)
         _seed(conn)
         result = history.by_shift(conn, 1)
         self.assertTrue(result["has_shifts"])
@@ -259,6 +261,7 @@ class HistoryRouteTest(unittest.TestCase):
         from fastapi.testclient import TestClient
 
         conn = db.connect()  # the isolated BODY_HOME db that web.py's _ctx() also opens
+        cls.addClassCleanup(conn.close)
         db.init(conn)
         _seed(conn)
         cls.client = TestClient(web.app)
@@ -279,6 +282,7 @@ class HistoryRouteTest(unittest.TestCase):
         self.client.post("/settings/language", data={"lang": "en"})
         r = self.client.get("/history")
         conn = db.connect()
+        self.addCleanup(conn.close)
         pat = history.patterns(conn, 1)
         defs = web._defs(conn)
         hero_text = web._finding_text(T("en"), defs, pat["findings"][0])

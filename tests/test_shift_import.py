@@ -31,6 +31,7 @@ class ShiftImportTest(unittest.TestCase):
         self.assertTrue(str(TMP))  # guard present
         path = Path(tempfile.mkdtemp(prefix="body-shift-test-")) / "test.db"
         self.conn = db.connect(path)
+        self.addCleanup(self.conn.close)
         db.init(self.conn)
 
     # ---- propose / idempotency
@@ -279,6 +280,7 @@ class ShiftImportTest(unittest.TestCase):
 
         other_path = Path(tempfile.mkdtemp(prefix="body-shift-oneby-")) / "test.db"
         conn2 = db.connect(other_path)
+        self.addCleanup(conn2.close)
         db.init(conn2)
         a_id = shift_import.propose(conn2, a_path, 1)
         shift_import.confirm(conn2, a_id)
@@ -311,6 +313,7 @@ class ShiftImportTest(unittest.TestCase):
     def test_confirm_all_refuses_when_slot_index_missing(self):
         path = Path(tempfile.mkdtemp(prefix="body-shift-idx2-")) / "idx.db"
         conn = db.connect(path)
+        self.addCleanup(conn.close)
         conn.executescript(db.SCHEMA)
         conn.execute("INSERT INTO person (id, display_name) VALUES (1, 'Me')")
         conn.execute("INSERT INTO shift (person_id, day, kind, source) VALUES (1, '2026-11-10', 'off', 'manual')")
@@ -365,6 +368,7 @@ class ShiftImportTest(unittest.TestCase):
     def test_migration_swallows_integrity_error_and_leaves_rows_untouched(self):
         path = Path(tempfile.mkdtemp(prefix="body-shift-idx-")) / "idx.db"
         conn = db.connect(path)
+        self.addCleanup(conn.close)
         conn.executescript(db.SCHEMA)
         conn.execute("INSERT INTO person (id, display_name) VALUES (1, 'Me')")
         conn.execute("INSERT INTO shift (person_id, day, kind, source) VALUES (1, '2026-11-10', 'off', 'manual')")
@@ -385,6 +389,7 @@ class ShiftWebTest(unittest.TestCase):
         self._orig_db_path = config.DB_PATH
         config.DB_PATH = Path(tempfile.mkdtemp(prefix="body-shift-web-")) / "test.db"
         self.conn = db.connect()
+        self.addCleanup(self.conn.close)
         db.init(self.conn)
         self.client = TestClient(web.app)
 
