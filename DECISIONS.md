@@ -501,3 +501,79 @@ Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 91 tests, OK
 
 Merge commit: recorded in the next entry's git history (this entry precedes the `--no-ff` merge, per
 `BODY-TURNOS-IMPORT-1-M`'s precedent).
+
+## BODY-METAS-SCREENS-1 -- the Metas screens, built to design round 1 (2026-11-06)
+
+Branched from `main` (`c3fd89bc1b60a4dbea3cc6bd69a4d4c016452f33`). Built on `BODY-METAS-1`'s `body/goals.py` and
+schema; `body/goals.py` itself is untouched (called, not modified), and no Tier 1 path (`body/db.py`,
+`body/garmin_adapter.py`, `body/login.py`, `body/config.py`, `body/vida_export.py`, `tests/_isolate.py`,
+`body/listen.py`, `body/shift_import.py`) was touched.
+
+**Routes, in `body/web.py`.** `GET /goals` (`goals.html`): active goals as cards (chip verdict, this week's
+figure, target/deadline sentence, a progress bar, "Empezaste en ... De tus datos" for metric goals), a
+«Propuestas» section with one-tap «Activar»/«Descartar» forms, and a collapsed «Archivo» (`<details>`, as
+`shifts.html`'s per-file list) for paused/done/dropped goals; an honest empty card when there are no goals at
+all. `GET/POST /goals/new` (`goal_new.html`): kind (medida/hito), title, why, area, and for a metric goal the
+metric (from `metric_def`), direction (defaulted client-side from the metric's `better`, editable), target,
+baseline (prefilled from `baselines.baseline()`, "De tus datos"), deadline; for a milestone, just the date;
+visibility private/household only offered when `household.household_of()` finds one. Creates the goal with
+`goals.propose(..., status='proposed')` and redirects to its detail. `GET /goals/{id}` (`goal.html`): the
+metric goal's line from baseline to target by deadline (a small inline SVG, see below), the last 8 weeks'
+`goal_check` rows in words, its habits with this week's done/due and a check-off box on the days they're due,
+and pause/finish/drop (or activate/discard for a still-proposed goal). A household goal also lists every other
+member's own latest `goal_check` verdict, read from the same local db (today's model, per `household.py`'s own
+comment: no cross-install sync yet). `POST /goals/{id}/activate|pause|finish|drop`, `POST /goals/{id}/habits`
+(adds a habit: title, cadence per/times, optional shift context), `POST /habits/{id}/check` (day + done,
+redirects to a `back` path) -- the one check-off endpoint serves both Hoy's plan card and the goal detail, per
+the spec's surface line. `GET /` (`today()`) gained a plan card: today's due habits across every active goal,
+each a one-tap check box; renders nothing when none are due.
+
+**Shift-context due days are never re-derived here.** `_due_days_for`/`_is_due_today`/`_habit_progress` in
+`body/web.py` call `goals._context_due_days`/`goals._week_days` directly (private, but the rule they implement
+is the sensitive part the spec said to call, not re-implement); only the per-habit and per-day grouping around
+them is new, local display code.
+
+**Where this departs from the mock, and why.** (1) The mock's Metas screen shows one goal's full "¿Está
+funcionando?" sentence and habit breakdown inline on the list. The spec's own per-screen split puts that
+review on the detail page instead (item 2), one tap from the list card's chip -- DESIGN.md rule 2, "answer
+first, context one step away, never deleted". (2) The mock drew only metric-goal examples; milestone goals
+(not mocked) get: list card figure "{done} de {due} esta semana" and a progress bar reading time elapsed from
+start to deadline (no metric line to plot); detail page shows the deadline and habits only, as the spec asked,
+with no chart. (3) The goal-detail chart (dashed target line from baseline to target, the actual weekly
+averages plotted over it, today marked) is new -- `body/profile.py`'s chart helpers are built for daily Garmin
+history, not a goal's own plan, and `body/profile.py` is not in this slice's `touches:`, so a small
+`_goal_line_svg` was written locally in `body/web.py` instead of extending it.
+
+**i18n.** Every new string added to both `es.json` and `en.json` under matching keys (checked programmatically:
+no key exists in one file and not the other). Verdict words: "En camino" / "Sin cambio aún" / "Aún sin datos
+suficientes" (es), "On track" / "Off track" / "Not enough data yet" (en), as the spec asked.
+
+**Tests** (`tests/test_goals_web.py`, new, 8 tests, `tests/_isolate` imported first): the empty state in both
+languages; `/goals` with an active, a proposed and an archived (paused) goal all present together; creating a
+metric goal and a milestone goal through `POST /goals/new`, landing on each one's detail still `proposed` with
+an «Activar» button; activating a goal, adding a habit, checking it off, and seeing that check land in
+`habit_check`; a `before_night` habit shown on Hoy on the day before an invented night shift and hidden on a
+day with no matching shift; goal detail rendering for both kinds; a household goal's other member's check
+rendered by name. No health figure appears in any redirect `Location` (checked by regex on `/goals/\d+` and
+exact `/` matches) or anywhere in a test fixture (all invented).
+
+A real defect was caught and fixed while writing these tests: the test module's helper repointed
+`config.DB_PATH` outside `tests._isolate`'s `TMP` directory and never restored it, so a later-loaded module in
+the same `unittest discover` run (`test_pipeline.py`, alphabetically after `test_goals_web.py`) inherited the
+wrong path and failed its own "still under TMP" guard. Fixed by nesting the new path under `TMP` and restoring
+the original via `addCleanup` after each test -- the same pattern `test_shift_import.py` already uses for this
+exact hazard.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 105 tests, OK (97 before this slice, 8
+added here), run once on the final branch tree before this entry.
+
+**Merge.** This diff is customer-facing bytes from end to end (every screen, every string a person reads), so
+it trips merge policy A's customer-bytes condition regardless of the gate's result. Per this spec's own GATE
+section, it stops here, on `feat/body-metas-screens-1`, clean, as `AWAITING_APPROVAL` rather than merging.
+
+Layout points for the orchestrator's 375 px pass: the goal detail's pause/finish/discard row is three
+`.confirm-actions` buttons across one flex row, which may be tight at phone width; the habit check-off control
+(`.boxbtn`) is sized 28 px wide by a 44 px tall tap target around a visually smaller 20 px box, to keep the
+mock's look while meeting the 44 px rule; the new goal-line SVG has no on-screen legend/caption, unlike
+`trends.html`'s charts; metric goal creation takes target/baseline as a raw number in the metric's own unit
+(e.g. minutes for sleep), not a friendlier time picker.

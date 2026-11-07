@@ -9,6 +9,7 @@ Health values never go into URLs or logs (access log is off; URLs carry only dat
 from __future__ import annotations
 
 import argparse
+import json
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -19,7 +20,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from . import db, garmin_adapter, history, listen, profile, readiness, shift_import
+from . import db, garmin_adapter, goals, history, household, listen, profile, readiness, shift_import
 from .baselines import baseline
 from .i18n import LANGS, T
 
@@ -47,6 +48,19 @@ def _ctx():
 
 def _render(name: str, **kw) -> HTMLResponse:
     return HTMLResponse(env.get_template(name).render(**kw))
+
+
+async def _form(request: Request) -> dict:
+    return {k: v[0] for k, v in parse_qs((await request.body()).decode()).items()}
+
+
+def _today_local(person: dict) -> date:
+    tz = ZoneInfo(person.get("timezone") or "America/Bogota")
+    return datetime.now(tz).date()
+
+
+def _week_monday(d: date) -> date:
+    return d - timedelta(d.weekday())
 
 
 def _defs(conn) -> dict[str, dict]:
@@ -151,10 +165,13 @@ def today():
         delta, cls = _delta(conn, t, defs[k], day, v)
         cards.append({"key": k, "label": t("metric." + k), "value": _value(t, k, v),
                       "unit": _unit(t, defs[k]) if v is not None else "", "delta": delta, "cls": cls})
+    today_local = _today_local(person)
     return _render("today.html", t=t, tab="today", day=day, date_long=t.long_date(date.fromisoformat(day)),
                    synced=_synced(conn, person), r=r, reading=_reading(t, r), ready_avg=ready_avg,
                    ready_delta=ready_delta, ready_cls=ready_cls, cards=cards,
-                   missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_count=proposed_count)
+                   missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_count=proposed_count,
+                   plan_habits=_today_due_habits(conn, t, db.DEFAULT_PERSON_ID, today_local),
+                   today_iso=today_local.isoformat())
 
 
 @app.get("/how/{day}")
@@ -515,10 +532,404 @@ def history_view():
                    shift=_shift_ctx(t, defs, shift_data))
 
 
+AREAS = ["body", "money", "adventure", "growth", "work", "home"]
+DIRECTIONS = ["raise", "lower", "keep"]
+CONTEXTS = ("before_night", "after_night", "off_days")
+BETTER_TO_DIRECTION = {"higher": "raise", "lower": "lower", "neutral": "keep"}
+
+
+def _fig_unit(t: T, key: str, v, defs: dict) -> str:
+    val = _value(t, key, v)
+    if val == "—":
+        return val
+    u = _unit(t, defs[key])
+    return f"{val} {u}" if u else val
+
+
+def _habit_cadence(h) -> dict:
+    return json.loads(h["cadence"])
+
+
+def _cadence_text(t: T, cadence: dict) -> str:
+    per = t("goals.cadence.per." + cadence.get("per", "week"))
+    return t("goals.cadence", n=cadence.get("times", 1), per=per)
+
+
+def _context_label(t: T, context: str | None) -> str | None:
+    return t("habit.context." + context) if context else None
+
+
+def _due_days_for(conn, person_id: int, monday: date, context: str | None) -> list[str]:
+    """The days of this week a habit is due. Calls goals.py's own shift-context rule
+    (_context_due_days / _week_days) rather than re-deriving it here."""
+    return goals._context_due_days(conn, person_id, monday, context) if context else goals._week_days(monday)
+
+
+def _habit_progress(conn, h, person_id: int, monday: date) -> tuple[int, int]:
+    due_days = _due_days_for(conn, person_id, monday, _habit_cadence(h).get("context"))
+    if not due_days:
+        return 0, 0
+    placeholders = ",".join("?" * len(due_days))
+    done = conn.execute(
+        f"SELECT COUNT(*) FROM habit_check WHERE habit_id = ? AND person_id = ? AND done = 1 "
+        f"AND day IN ({placeholders})", (h["id"], person_id, *due_days)).fetchone()[0]
+    return done, len(due_days)
+
+
+def _habit_checked(conn, habit_id: int, person_id: int, day: str) -> bool:
+    row = conn.execute("SELECT done FROM habit_check WHERE habit_id = ? AND person_id = ? AND day = ?",
+                       (habit_id, person_id, day)).fetchone()
+    return bool(row and row["done"])
+
+
+def _is_due_today(conn, h, person_id: int, today: date) -> bool:
+    context = _habit_cadence(h).get("context")
+    if not context:
+        return True
+    return today.isoformat() in _due_days_for(conn, person_id, _week_monday(today), context)
+
+
+def _habits_for_goal(conn, goal_id: int, person_id: int):
+    return conn.execute(
+        "SELECT * FROM habit WHERE goal_id = ? AND active = 1 "
+        "AND (assignee_person_id IS NULL OR assignee_person_id = ?) ORDER BY id",
+        (goal_id, person_id)).fetchall()
+
+
+def _today_due_habits(conn, t: T, person_id: int, today: date) -> list[dict]:
+    rows = conn.execute(
+        "SELECT h.*, g.title AS goal_title FROM habit h JOIN goal g ON g.id = h.goal_id "
+        "WHERE g.person_id = ? AND g.status = 'active' AND h.active = 1 "
+        "AND (h.assignee_person_id IS NULL OR h.assignee_person_id = ?) ORDER BY h.id",
+        (person_id, person_id)).fetchall()
+    out = []
+    for h in rows:
+        if not _is_due_today(conn, h, person_id, today):
+            continue
+        out.append({"id": h["id"], "title": h["title"], "goal_title": h["goal_title"],
+                    "context": _context_label(t, _habit_cadence(h).get("context")),
+                    "checked": _habit_checked(conn, h["id"], person_id, today.isoformat())})
+    return out
+
+
+def _verdict(t: T, on_track) -> tuple[str, str]:
+    if on_track is None:
+        return "", t("goals.verdict.no_data")
+    return ("ok", t("goals.verdict.on")) if on_track else ("warn", t("goals.verdict.off"))
+
+
+def _metric_pct(g, current) -> float | None:
+    if g["target_value"] is None or g["baseline_value"] is None:
+        return None
+    span = g["target_value"] - g["baseline_value"]
+    if span == 0:
+        return 100.0
+    if current is None:
+        return 0.0
+    return max(0.0, min(100.0, (current - g["baseline_value"]) / span * 100))
+
+
+def _time_pct(g, today: date) -> float | None:
+    if not g["deadline"] or not g["start_day"]:
+        return None
+    s, e = date.fromisoformat(g["start_day"]), date.fromisoformat(g["deadline"])
+    if e <= s:
+        return 100.0
+    return max(0.0, min(100.0, (today - s).days / (e - s).days * 100))
+
+
+def _goal_target_text(t: T, defs: dict, g) -> str:
+    date_txt = _short_date(t, date.fromisoformat(g["deadline"])) if g["deadline"] else "—"
+    if g["kind"] == "metric":
+        return t("goals.card.target", target=_fig_unit(t, g["metric_key"], g["target_value"], defs), date=date_txt)
+    return t("goals.card.milestone_date", date=date_txt)
+
+
+def _goal_check_row(conn, goal_id: int, person_id: int, week_start: str) -> dict:
+    row = conn.execute("SELECT * FROM goal_check WHERE goal_id = ? AND person_id = ? AND week_start = ?",
+                       (goal_id, person_id, week_start)).fetchone()
+    if row:
+        return dict(row)
+    result = goals.weekly_check(conn, goal_id, person_id, week_start)
+    return result or {"on_track": None, "metric_avg": None, "habits_done": 0, "habits_due": 0}
+
+
+def _goal_line_svg(g, checks, today: date, width: int = 320, height: int = 120,
+                    color: str = "var(--body)") -> str:
+    """The straight target line from baseline at start_day to target at deadline, with the
+    actual weekly averages plotted over it and today marked. Small and local to this screen,
+    since body/profile.py's chart helpers are built for daily_metric history, not a goal's plan."""
+    start, end = date.fromisoformat(g["start_day"]), date.fromisoformat(g["deadline"])
+    if end <= start:
+        return ""
+    baseline_v, target_v = g["baseline_value"], g["target_value"]
+    lo, hi = min(baseline_v, target_v), max(baseline_v, target_v)
+    pad = (hi - lo) * 0.15 or 1
+    lo, hi = lo - pad, hi + pad
+    top, h = 6, height - 26
+    span_days = (end - start).days
+
+    def x(d: date) -> float:
+        return max(0.0, min(1.0, (d - start).days / span_days)) * width
+
+    def y(v: float) -> float:
+        return top + h - (v - lo) / (hi - lo) * h
+
+    out = [f'<line x1="{x(start):.1f}" y1="{y(baseline_v):.1f}" x2="{x(end):.1f}" y2="{y(target_v):.1f}" '
+           f'style="stroke:var(--muted)" stroke-width="1.6" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>']
+    pts = sorted((date.fromisoformat(c["week_start"]) + timedelta(6), c["metric_avg"]) for c in checks)
+    pts = [(d, v) for d, v in pts if start <= d <= end]
+    if len(pts) >= 2:
+        points = " ".join(f"{x(d):.1f},{y(v):.1f}" for d, v in pts)
+        out.append(f'<polyline fill="none" style="stroke:{color}" stroke-width="2.2" '
+                   f'vector-effect="non-scaling-stroke" stroke-linejoin="round" points="{points}"/>')
+    elif len(pts) == 1:
+        out.append(f'<circle cx="{x(pts[0][0]):.1f}" cy="{y(pts[0][1]):.1f}" r="4" style="fill:{color}"/>')
+    today_x = x(min(max(today, start), end))
+    out.append(f'<line x1="{today_x:.1f}" y1="{top}" x2="{today_x:.1f}" y2="{top + h}" '
+               f'style="stroke:var(--line)" stroke-width="1"/>')
+    return (f'<svg viewBox="0 0 {width} {top + h + 6}" width="100%" height="110" role="img" '
+            f'preserveAspectRatio="none" style="display:block;margin-top:8px">{"".join(out)}</svg>')
+
+
+def _verdict_sentence(t: T, defs: dict, g, check: dict) -> str:
+    _, verdict = _verdict(t, check["on_track"])
+    if g["kind"] == "metric" and check["metric_avg"] is not None:
+        return t("goals.history.metric", verdict=verdict, value=_fig_unit(t, g["metric_key"], check["metric_avg"], defs))
+    if g["kind"] == "milestone" and check["habits_due"]:
+        return t("goals.history.milestone", verdict=verdict, done=check["habits_done"], due=check["habits_due"])
+    return verdict
+
+
 @app.get("/goals")
-def goals():
-    _, _, t = _ctx()
-    return _render("soon.html", t=t, tab="goals", title=t("nav.goals"), text=t("soon.goals"))
+def goals_list():
+    conn, person, t = _ctx()
+    person_id = db.DEFAULT_PERSON_ID
+    today = _today_local(person)
+    week_start = _week_monday(today).isoformat()
+    defs = _defs(conn)
+
+    active = conn.execute("SELECT * FROM goal WHERE person_id = ? AND status = 'active' ORDER BY id",
+                          (person_id,)).fetchall()
+    proposed = conn.execute("SELECT * FROM goal WHERE person_id = ? AND status = 'proposed' ORDER BY id",
+                            (person_id,)).fetchall()
+    archived = conn.execute(
+        "SELECT * FROM goal WHERE person_id = ? AND status IN ('paused', 'done', 'dropped') ORDER BY id",
+        (person_id,)).fetchall()
+
+    cards = []
+    for g in active:
+        check = _goal_check_row(conn, g["id"], person_id, week_start)
+        cls, verdict = _verdict(t, check["on_track"])
+        if g["kind"] == "metric":
+            fig = _fig_unit(t, g["metric_key"], check["metric_avg"], defs)
+            started = (t("goals.card.started", value=_fig_unit(t, g["metric_key"], g["baseline_value"], defs))
+                      if g["baseline_value"] is not None else None)
+            pct = _metric_pct(g, check["metric_avg"])
+        else:
+            fig = t("goals.card.milestone_fig", done=check["habits_done"] or 0, due=check["habits_due"] or 0)
+            started = None
+            pct = _time_pct(g, today)
+        cards.append({"id": g["id"], "title": g["title"], "cls": cls, "verdict": verdict, "fig": fig,
+                      "period": t("goals.card.this_week"), "target_text": _goal_target_text(t, defs, g),
+                      "started": started, "pct": round(pct) if pct is not None else None})
+
+    proposed_cards = [{"id": g["id"], "title": g["title"], "sub": _goal_target_text(t, defs, g)} for g in proposed]
+    archived_cards = [{"id": g["id"], "title": g["title"], "status_text": t("goals.status." + g["status"])}
+                      for g in archived]
+
+    return _render("goals.html", t=t, tab="goals", cards=cards, proposed=proposed_cards, archived=archived_cards,
+                   empty=not (active or proposed or archived))
+
+
+@app.get("/goals/new")
+def goal_new_form():
+    conn, person, t = _ctx()
+    person_id = db.DEFAULT_PERSON_ID
+    defs = _defs(conn)
+    today = _today_local(person).isoformat()
+    metrics = []
+    for k, d in defs.items():
+        b = baseline(conn, k, today, person_id=person_id)
+        metrics.append({"key": k, "label": t("metric." + k), "unit": _unit(t, d),
+                        "direction": BETTER_TO_DIRECTION[d["better"]], "baseline": b.mean if b else None})
+    hh = household.household_of(conn, person_id)
+    return _render("goal_new.html", t=t, tab="goals", metrics=metrics, areas=AREAS, directions=DIRECTIONS,
+                   has_household=bool(hh and len(hh.member_ids) > 1))
+
+
+@app.post("/goals/new")
+async def goal_new_create(request: Request):
+    conn, person, t = _ctx()
+    person_id = db.DEFAULT_PERSON_ID
+    f = await _form(request)
+    kind = f.get("kind")
+    title = (f.get("title") or "").strip()
+    if not title or kind not in ("metric", "milestone"):
+        return RedirectResponse("/goals/new", status_code=303)
+    today = _today_local(person).isoformat()
+    why = (f.get("why") or "").strip() or None
+    area = f.get("area") if f.get("area") in AREAS else "body"
+    hh = household.household_of(conn, person_id)
+    visibility = "household" if f.get("visibility") == "household" and hh else "private"
+    hogar_id = hh.id if visibility == "household" else None
+    if kind == "metric":
+        defs = _defs(conn)
+        metric_key, direction = f.get("metric_key"), f.get("direction")
+        if metric_key not in defs or direction not in DIRECTIONS or not f.get("deadline"):
+            return RedirectResponse("/goals/new", status_code=303)
+        try:
+            target_value = float(f.get("target_value", ""))
+            baseline_value = float(f.get("baseline_value", ""))
+        except ValueError:
+            return RedirectResponse("/goals/new", status_code=303)
+        gid = goals.propose(conn, person_id, title, today, area=area, why=why, kind="metric",
+                            metric_key=metric_key, direction=direction, target_value=target_value,
+                            baseline_value=baseline_value, deadline=f["deadline"], hogar_id=hogar_id,
+                            visibility=visibility)
+    else:
+        if not f.get("deadline"):
+            return RedirectResponse("/goals/new", status_code=303)
+        gid = goals.propose(conn, person_id, title, today, area=area, why=why, kind="milestone",
+                            deadline=f["deadline"], hogar_id=hogar_id, visibility=visibility)
+    return RedirectResponse(f"/goals/{gid}", status_code=303)
+
+
+@app.get("/goals/{goal_id}")
+def goal_detail(goal_id: int):
+    conn, person, t = _ctx()
+    person_id = db.DEFAULT_PERSON_ID
+    g = conn.execute("SELECT * FROM goal WHERE id = ? AND person_id = ?", (goal_id, person_id)).fetchone()
+    if not g:
+        raise HTTPException(404)
+    defs = _defs(conn)
+    today = _today_local(person)
+    monday = _week_monday(today)
+    if g["status"] == "active":
+        _goal_check_row(conn, goal_id, person_id, monday.isoformat())  # upserts this week's check if missing
+
+    chart = None
+    if g["kind"] == "metric" and g["deadline"] and g["baseline_value"] is not None and g["target_value"] is not None:
+        checks_for_chart = conn.execute(
+            "SELECT week_start, metric_avg FROM goal_check WHERE goal_id = ? AND person_id = ? "
+            "AND metric_avg IS NOT NULL ORDER BY week_start", (goal_id, person_id)).fetchall()
+        chart = _goal_line_svg(g, checks_for_chart, today)
+
+    history_rows = conn.execute(
+        "SELECT * FROM goal_check WHERE goal_id = ? AND person_id = ? ORDER BY week_start DESC LIMIT 8",
+        (goal_id, person_id)).fetchall()
+    history_list = [{"week": t("goals.week_of", date=_short_date(t, date.fromisoformat(r["week_start"]))),
+                     "text": _verdict_sentence(t, defs, g, dict(r))} for r in history_rows]
+
+    habit_rows = []
+    for h in _habits_for_goal(conn, goal_id, person_id):
+        done, due = _habit_progress(conn, h, person_id, monday)
+        habit_rows.append({
+            "id": h["id"], "title": h["title"], "cadence": _cadence_text(t, _habit_cadence(h)),
+            "context": _context_label(t, _habit_cadence(h).get("context")),
+            "progress": t("goals.habit.progress", done=done, due=due) if due else t("goals.habit.not_due"),
+            "due_today": _is_due_today(conn, h, person_id, today),
+            "checked_today": _habit_checked(conn, h["id"], person_id, today.isoformat()),
+        })
+
+    members = None
+    if g["visibility"] == "household":
+        hh = household.household_of(conn, person_id)
+        other_ids = [m for m in (hh.member_ids if hh else ()) if m != person_id]
+        if other_ids:
+            members = []
+            for mid in other_ids:
+                mrow = conn.execute("SELECT display_name FROM person WHERE id = ?", (mid,)).fetchone()
+                crow = conn.execute(
+                    "SELECT * FROM goal_check WHERE goal_id = ? AND person_id = ? ORDER BY week_start DESC LIMIT 1",
+                    (goal_id, mid)).fetchone()
+                _, verdict = _verdict(t, crow["on_track"] if crow else None)
+                members.append({"name": mrow["display_name"] if mrow else f"#{mid}", "verdict": verdict})
+
+    latest_on_track = history_rows[0]["on_track"] if history_rows else None
+    cls, verdict = _verdict(t, latest_on_track)
+
+    return _render("goal.html", t=t, tab="goals", goal=g, cls=cls, verdict=verdict, chart=chart,
+                   history=history_list, habits=habit_rows, members=members,
+                   target_text=_goal_target_text(t, defs, g), area_label=t("goals.area." + g["area"]),
+                   today=today.isoformat())
+
+
+@app.post("/goals/{goal_id}/activate")
+def goal_activate(goal_id: int):
+    conn, _, _ = _ctx()
+    if conn.execute("SELECT 1 FROM goal WHERE id = ? AND person_id = ?",
+                    (goal_id, db.DEFAULT_PERSON_ID)).fetchone():
+        goals.activate(conn, goal_id)
+    return RedirectResponse(f"/goals/{goal_id}", status_code=303)
+
+
+@app.post("/goals/{goal_id}/pause")
+def goal_pause(goal_id: int):
+    conn, _, _ = _ctx()
+    if conn.execute("SELECT 1 FROM goal WHERE id = ? AND person_id = ?",
+                    (goal_id, db.DEFAULT_PERSON_ID)).fetchone():
+        goals.pause(conn, goal_id)
+    return RedirectResponse(f"/goals/{goal_id}", status_code=303)
+
+
+@app.post("/goals/{goal_id}/finish")
+def goal_finish(goal_id: int):
+    conn, _, _ = _ctx()
+    if conn.execute("SELECT 1 FROM goal WHERE id = ? AND person_id = ?",
+                    (goal_id, db.DEFAULT_PERSON_ID)).fetchone():
+        goals.finish(conn, goal_id)
+    return RedirectResponse("/goals", status_code=303)
+
+
+@app.post("/goals/{goal_id}/drop")
+def goal_drop(goal_id: int):
+    conn, _, _ = _ctx()
+    if conn.execute("SELECT 1 FROM goal WHERE id = ? AND person_id = ?",
+                    (goal_id, db.DEFAULT_PERSON_ID)).fetchone():
+        goals.drop(conn, goal_id)
+    return RedirectResponse("/goals", status_code=303)
+
+
+@app.post("/goals/{goal_id}/habits")
+async def goal_add_habit(goal_id: int, request: Request):
+    conn, _, _ = _ctx()
+    person_id = db.DEFAULT_PERSON_ID
+    if not conn.execute("SELECT 1 FROM goal WHERE id = ? AND person_id = ?", (goal_id, person_id)).fetchone():
+        raise HTTPException(404)
+    f = await _form(request)
+    title = (f.get("title") or "").strip()
+    if title:
+        per = f.get("per") if f.get("per") in ("day", "week", "month") else "week"
+        try:
+            times = max(1, int(f.get("times", "1")))
+        except ValueError:
+            times = 1
+        context = f.get("context") or None
+        cadence = {"per": per, "times": times}
+        if context in CONTEXTS:
+            cadence["context"] = context
+        goals.add_habit(conn, goal_id, title, cadence)
+    return RedirectResponse(f"/goals/{goal_id}", status_code=303)
+
+
+@app.post("/habits/{habit_id}/check")
+async def habit_check(habit_id: int, request: Request):
+    conn, _, _ = _ctx()
+    person_id = db.DEFAULT_PERSON_ID
+    f = await _form(request)
+    day = f.get("day")
+    try:
+        date.fromisoformat(day)
+    except (TypeError, ValueError):
+        raise HTTPException(404)
+    owned = conn.execute(
+        "SELECT 1 FROM habit h JOIN goal g ON g.id = h.goal_id WHERE h.id = ? AND g.person_id = ?",
+        (habit_id, person_id)).fetchone()
+    if owned:
+        goals.check_habit(conn, habit_id, person_id, day, f.get("done") == "1")
+    back = f.get("back") or "/"
+    return RedirectResponse(back, status_code=303)
 
 
 @app.get("/settings")

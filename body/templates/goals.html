@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}{{ t('nav.goals') }} · {{ t('app.name') }}{% endblock %}
+{% block main %}
+<div class="top">
+  <div><h1>{{ t('nav.goals') }}</h1><p class="sub">{{ t('goals.sub') }}</p></div>
+  <a class="btn" href="/goals/new">{{ t('goals.new_btn') }}</a>
+</div>
+
+{% if empty %}
+<div class="card empty">
+  <p class="read" style="margin-top:0">{{ t('goals.empty_text') }}</p>
+  <a class="btn on" style="margin-top:10px;display:inline-flex" href="/goals/new">{{ t('goals.new_btn') }}</a>
+</div>
+{% endif %}
+
+{% for c in cards %}
+<a class="card" href="/goals/{{ c.id }}">
+  <div class="row"><div class="q" style="margin:0">{{ c.title }}</div><span class="chip {{ c.cls }}">{{ c.verdict }}</span></div>
+  <div class="row" style="margin-top:8px;align-items:flex-end">
+    <div><span class="fig">{{ c.fig }}</span><span class="u">{{ c.period }}</span></div>
+    <div class="k" style="text-align:right">{{ c.target_text }}</div>
+  </div>
+  {% if c.pct is not none %}<div class="bar"><span style="width:{{ c.pct }}%"></span></div>{% endif %}
+  {% if c.started %}<div class="k">{{ c.started }} <span class="chip">{{ t('goals.from_data') }}</span></div>{% endif %}
+  <span class="chev" style="top:auto;bottom:12px">›</span>
+</a>
+{% endfor %}
+
+{% if proposed %}
+<h2>{{ t('goals.section_proposed') }}</h2>
+{% for p in proposed %}
+<div class="card">
+  <div class="q">{{ p.title }}</div>
+  <div class="k">{{ p.sub }}</div>
+  <div class="confirm-actions">
+    <form method="post" action="/goals/{{ p.id }}/activate"><button class="btn on" type="submit">{{ t('goals.activate_btn') }}</button></form>
+    <form method="post" action="/goals/{{ p.id }}/drop"><button class="btn" type="submit">{{ t('goals.discard_btn') }}</button></form>
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+
+{% if archived %}
+<details class="files" style="margin-top:10px">
+  <summary class="k">{{ t('goals.section_archive') }}</summary>
+  {% for a in archived %}
+  <a class="card" href="/goals/{{ a.id }}" style="margin-top:8px">
+    <div class="row"><div class="q" style="margin:0">{{ a.title }}</div><span class="chip">{{ a.status_text }}</span></div>
+  </a>
+  {% endfor %}
+</details>
+{% endif %}
+
+<p class="note" style="text-align:center;margin-top:14px">{{ t('goals.footer') }}</p>
+{% endblock %}
