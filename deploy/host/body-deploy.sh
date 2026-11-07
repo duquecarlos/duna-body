@@ -18,7 +18,8 @@ UNIT_DST_DIR="/etc/systemd/system"
 CADDY_SRC="$REPO_DIR/deploy/host/Caddyfile.body"
 CADDY_DST="/etc/caddy/sites/body.caddy"
 HEALTH_URL="http://127.0.0.1:8770/healthz"
-UNITS=(body-web.service body-pull.service body-pull.timer body-vida.service body-vida.timer body-backup.service body-backup.timer)
+UNITS=(body-web.service body-pull.service body-pull.timer body-backup.service body-backup.timer)
+RETIRED_UNITS=(body-vida.service body-vida.timer)
 
 DRY_RUN=""
 
@@ -63,6 +64,19 @@ fail_step() {
 install_units() {
   for unit in "${UNITS[@]}"; do
     run install -o root -g root -m 644 "$UNIT_SRC_DIR/$unit" "$UNIT_DST_DIR/$unit"
+  done
+}
+
+remove_retired_units() {
+  # BODY-DISPOSITIVO-1: the weekly vida-v1 export moved from a host timer to the per-person
+  # API /api/vida/semana -- a leftover unit from before this deploy is stopped, disabled and
+  # removed, never left running against the wrong person.
+  for unit in "${RETIRED_UNITS[@]}"; do
+    if [[ -f "$UNIT_DST_DIR/$unit" ]]; then
+      run systemctl stop "$unit"
+      run systemctl disable "$unit"
+      run rm -f "$UNIT_DST_DIR/$unit"
+    fi
   done
 }
 
@@ -117,10 +131,11 @@ runuser -u "$owner" -- "$REPO_DIR/.venv/bin/pip" install -q -r "$REPO_DIR/requir
   || rollback_and_fail "pip install"
 
 install_units
+remove_retired_units
 install_caddy_site_if_changed
 
 run systemctl daemon-reload
-run systemctl enable body-web.service body-pull.timer body-vida.timer body-backup.timer
+run systemctl enable body-web.service body-pull.timer body-backup.timer
 run systemctl restart body-web.service
 
 health_ok=""

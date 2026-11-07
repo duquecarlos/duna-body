@@ -13,8 +13,6 @@ SUDOERS = HOST_DIR / "duna-deploy-body.sudoers"
 WEB_UNIT = HOST_DIR / "body-web.service"
 PULL_UNIT = HOST_DIR / "body-pull.service"
 PULL_TIMER = HOST_DIR / "body-pull.timer"
-VIDA_UNIT = HOST_DIR / "body-vida.service"
-VIDA_TIMER = HOST_DIR / "body-vida.timer"
 CADDYFILE = HOST_DIR / "Caddyfile.body"
 ENV_EXAMPLE = HOST_DIR / "body.env.example"
 README = HOST_DIR / "README.md"
@@ -254,7 +252,7 @@ class InstallCaddySiteIfChangedTest(unittest.TestCase):
 
 class ServiceHardeningTest(unittest.TestCase):
     def test_umask_and_protecthome_in_every_service(self):
-        for path in (WEB_UNIT, PULL_UNIT, VIDA_UNIT):
+        for path in (WEB_UNIT, PULL_UNIT):
             text = _read(path)
             self.assertIn("UMask=0077", text, f"{path.name} missing UMask=0077")
             self.assertIn("ProtectHome=yes", text, f"{path.name} missing ProtectHome=yes")
@@ -340,14 +338,14 @@ class DataDirTest(unittest.TestCase):
         line = text[useradd_idx:line_end]
         self.assertIn("--user-group", line)
 
-    def test_only_rm_touches_caddy_dst(self):
+    def test_only_rm_touches_caddy_dst_or_a_retired_unit(self):
         for path in SCRIPTS:
             for lineno, line in enumerate(_read(path).splitlines(), start=1):
                 if re.search(r"\brm\b", line):
-                    self.assertIn(
-                        "$CADDY_DST", line,
+                    self.assertTrue(
+                        "$CADDY_DST" in line or "$UNIT_DST_DIR" in line,
                         f"{path.name}:{lineno}: 'rm' found touching something other than "
-                        f"$CADDY_DST: {line}",
+                        f"$CADDY_DST or a retired unit: {line}",
                     )
 
 
@@ -393,13 +391,23 @@ class SystemdUnitTest(unittest.TestCase):
         self.assertIn("OnCalendar=", timer)
         self.assertIn("Persistent=true", timer)
 
-    def test_vida_unit_and_timer(self):
-        unit = _read(VIDA_UNIT)
-        self.assertIn("User=duna-body", unit)
-        self.assertIn("EnvironmentFile=", unit)
-        timer = _read(VIDA_TIMER)
-        self.assertIn("OnCalendar=", timer)
-        self.assertIn("Persistent=true", timer)
+    def test_vida_unit_retired(self):
+        text = _read(PRODUCT)
+        units_line = next(l for l in text.splitlines() if l.startswith("UNITS="))
+        enable_line = next(l for l in text.splitlines() if l.startswith("run systemctl enable"))
+        self.assertNotIn("body-vida", units_line)
+        self.assertNotIn("body-vida", enable_line)
+        self.assertFalse((HOST_DIR / "body-vida.service").exists())
+        self.assertFalse((HOST_DIR / "body-vida.timer").exists())
+
+    def test_retired_unit_removal_goes_through_run(self):
+        text = _read(PRODUCT)
+        start = text.index("remove_retired_units() {")
+        end = text.index("\n}\n", start)
+        body = text[start:end]
+        self.assertIn("RETIRED_UNITS", text)
+        for cmd in ("run systemctl stop", "run systemctl disable", "run rm -f"):
+            self.assertIn(cmd, body)
 
 
 class CaddyfileTest(unittest.TestCase):

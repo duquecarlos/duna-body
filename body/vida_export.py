@@ -18,11 +18,18 @@ import statistics
 import sys
 from datetime import date, datetime, timedelta, timezone
 
-from . import config, db, household
+from . import config, cuenta, db, household
 
 PERSON_KEY = "carlos"  # vida-v1: local person key until Body has Cuenta sign-in
 WEEK_METRICS = ["readiness", "sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake", "stress_avg",
                 "steps", "intensity_minutes"]
+
+
+def current_week_monday(today: date | None = None) -> date:
+    """The week `--current` picks: Monday of the week `today` falls in. body/web.py's
+    GET /api/vida/semana reuses this for its own default, rather than re-deriving it."""
+    today = today or date.today()
+    return today - timedelta(today.weekday())
 
 
 def week_section(conn, monday: date, person_id: int) -> dict:
@@ -68,11 +75,14 @@ def main(argv=None) -> int:
     p.add_argument("--week", help="the Monday of the week, YYYY-MM-DD (default: last full week)")
     p.add_argument("--current", action="store_true", help="this week, Monday to today")
     a = p.parse_args(argv)
+    if cuenta.hosted():
+        print("hosted: the weekly Body section is served per person at /api/vida/semana")
+        return 1
     today = date.today()
     if a.week:
         monday = date.fromisoformat(a.week)
     elif a.current:
-        monday = today - timedelta(today.weekday())
+        monday = current_week_monday(today)
     else:
         monday = today - timedelta(today.weekday() + 7)
     if monday.weekday() != 0:

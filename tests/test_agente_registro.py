@@ -37,6 +37,8 @@ ROUTE_TOOL = {
     "/privacidad": None,          # privacy plumbing; the assistant never reads or triggers it
     "/privacidad/exportar": None,  # privacy plumbing; the assistant never reads or triggers it
     "/garmin": None,              # account-connection plumbing; the assistant never reads or triggers it
+    "/ajustes/dispositivos": None,  # device-key management; the assistant never reads or triggers it
+    "/api/vida/semana": None,     # device-key API for Personal; the assistant never reads or triggers it
 }
 
 WRITER_NAMES = {

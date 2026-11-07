@@ -70,11 +70,10 @@ def _validate(shifts: list[dict]) -> None:
         day_kind.setdefault(day, kind)
 
 
-def propose(conn: sqlite3.Connection, path: str | Path, person_id: int) -> int:
+def propose_data(conn: sqlite3.Connection, data: dict, file_name: str, person_id: int) -> int:
     """Validates the whole file first and writes nothing on any error. Re-proposing the same
-    (person, file_name, received, extracted_at) is a no-op that returns the existing batch id."""
-    path = Path(path)
-    data = json.loads(path.read_text(encoding="utf-8"))
+    (person, file_name, received, extracted_at) is a no-op that returns the existing batch id.
+    Shared by the path-based `propose` below and body/web.py's POST /api/turnos."""
     source = data.get("source") or {}
     received = source.get("received")
     extracted_at = source.get("extracted_at")
@@ -87,7 +86,7 @@ def propose(conn: sqlite3.Connection, path: str | Path, person_id: int) -> int:
 
     existing = conn.execute(
         "SELECT id FROM shift_batch WHERE person_id = ? AND file_name = ? AND received = ? AND extracted_at = ?",
-        (person_id, path.name, received, extracted_at),
+        (person_id, file_name, received, extracted_at),
     ).fetchone()
     if existing:
         return existing["id"]
@@ -98,7 +97,7 @@ def propose(conn: sqlite3.Connection, path: str | Path, person_id: int) -> int:
         cur = conn.execute(
             "INSERT INTO shift_batch (person_id, file_name, received, extracted_at, source_person, "
             "source_timezone, status, day_count, created_at) VALUES (?, ?, ?, ?, ?, ?, 'proposed', ?, ?)",
-            (person_id, path.name, received, extracted_at, data.get("person"), data.get("timezone"),
+            (person_id, file_name, received, extracted_at, data.get("person"), data.get("timezone"),
              day_count, now),
         )
         batch_id = cur.lastrowid
@@ -109,6 +108,28 @@ def propose(conn: sqlite3.Connection, path: str | Path, person_id: int) -> int:
               int(bool(s.get("holiday"))), int(bool(s.get("sunday"))), s.get("note")) for s in shifts],
         )
     return batch_id
+
+
+def propose(conn: sqlite3.Connection, path: str | Path, person_id: int) -> int:
+    path = Path(path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return propose_data(conn, data, path.name, person_id)
+
+
+_MOTIVO_ESQUEMA_PREFIXES = ("missing source.",)
+_MOTIVO_DUPLICADO_MARKERS = ("duplicate slot", "both present")
+
+
+def refusal_motivo(exc: ImportRefused) -> str:
+    """Classifies an ImportRefused into a reason CLASS that never carries a date -- used by
+    body/web.py's POST /api/turnos, which must never echo the exception's own message (it
+    carries a day)."""
+    msg = str(exc)
+    if msg.startswith(_MOTIVO_ESQUEMA_PREFIXES):
+        return "esquema"
+    if any(marker in msg for marker in _MOTIVO_DUPLICADO_MARKERS):
+        return "turno_duplicado"
+    return "dia_malformado"
 
 
 def preview(conn: sqlite3.Connection, batch_id: int) -> dict:
