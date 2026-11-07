@@ -898,3 +898,91 @@ own commit, after the append above).
 
 Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-sin-friccion-1` into `main`
 following this entry.
+
+## BODY-PERSON-SCOPE-1 -- Body stops assuming one person (2026-11-06)
+
+Carries out BODY-HOST-OBS-1 (OBSERVED, 2026-11-06), which measured identity as unscoped at the web layer only:
+`body/db.py` defined `DEFAULT_PERSON_ID = 1` and 52 sites across `body/web.py` and the data modules defaulted
+`person_id` to it, even though every lower module already took `person_id` as a parameter. Required by
+host-deploy-v1-amendment-sensitive-data rule 4 (every read filtered by the signed-in person, B gets 404 on A's
+row). No schema change and no data change: the same rows, read through an explicit person instead of a
+default.
+
+**Census**: `grep -rn DEFAULT_PERSON_ID body/ tests/` before this slice found 48 occurrences across 11 files --
+9 keyword-defaulted parameters in `body/db.py` itself (`save_day`, `load_day`, `set_metric`, `series`,
+`person`, `set_language`, `day_values`, `last_sync`, `days_with_data`), one default each in
+`body/baselines.py` (`baseline`), `body/profile.py` (`metric_profile`, `window` -- 2), `body/readiness.py`
+(`compute`, `update`, `recompute_all` -- 3), `body/history.py` (`coverage`, `training`, `patterns`,
+`by_shift` -- 4), `body/household.py` (`household_of`), `body/vida_export.py` (`week_section`),
+`body/agente/ajustes.py` (`nivel_datos`), `body/shift_import.py` (`propose`, `confirm_all`,
+`summary_proposed`, `latest_proposed`, `latest_confirmed`, and the CLI's `--person-id` default -- 6), 15
+literal uses of `db.DEFAULT_PERSON_ID` in `body/web.py`'s route bodies and SQL parameters, and 3 in
+`tests/test_history.py`'s seed helper. After this slice, `grep -rn DEFAULT_PERSON_ID body/` finds 3
+occurrences, all in `body/db.py` (the constant's definition, `init()`'s one-time seed insert, and the new
+`local_person_id()`); no other module under `body/` mentions it.
+
+**The resolver, `body/identity.py`**: `current_person_id(request: Request) -> int`, wired into every route as
+a FastAPI dependency (`person_id: int = Depends(identity.current_person_id)`), not called directly, so a test
+can swap it with `app.dependency_overrides[identity.current_person_id] = lambda: other_id` without touching
+any route. Today, with no Cuenta sign-in, it resolves to `db.local_person_id(conn)`, a new one-line function
+that returns `DEFAULT_PERSON_ID` -- the one row `init()` ensures exists. This is the single seam wave 8's
+Cuenta sign-in slice will replace.
+
+**`person_id` is now required** everywhere the census found a default, in every function listed above: the
+keyword (or positional, matching each function's existing style) was kept, only the `= db.DEFAULT_PERSON_ID`
+default dropped. `body/goals.py` and `body/agente/herramientas.py` were already fully explicit (in `touches`
+but needed no edit). CLI entry points resolve the local person once at the top and pass it down:
+`body/pull.py`'s `main()` calls `db.local_person_id(conn)` once and threads it through `pull_all`/`_stored`/
+`readiness.recompute_all`/`db.save_day`; `body/shift_import.py`'s `main()` keeps its `--person-id` flag but
+defaults it to `None` and resolves `db.local_person_id(conn)` when absent; `body/vida_export.py`'s `main()`
+does the same before calling `week_section`.
+
+**`body/web.py`**: `_ctx(person_id: int)` (was `_ctx()`) opens the connection and loads the person row by that
+id; every route gets `person_id` through `Depends(identity.current_person_id)` and passes it to `_ctx` and to
+every person-scoped call below it (`_delta`, `_latest_day`, `_trend_days_have`, `_nights`,
+`db.day_values`/`load_day`/`last_sync`/`set_language`/`days_with_data`, `baseline`, `readiness.compute`,
+`profile.metric_profile`/`window`, `history.coverage`/`training`/`patterns`/`by_shift`,
+`household.household_of`, `shift_import.*`). `_synced`/`_sync_status_text` read `person["id"]` from the
+already-resolved person dict rather than taking a second parameter.
+
+**404 on another person's row, never a silent no-op**: `GET /goals/{goal_id}` already 404d; `POST
+/goals/{goal_id}/activate|pause|finish|drop|habits` and `POST /habits/{habit_id}/check` used to silently skip
+the write and redirect back to a page that then 404d (for the goal routes) or to `back` with no write at all
+(for the habit check) -- both now raise `HTTPException(404)` directly, via two small helpers
+(`_owned_goal_or_404`, used by the five goal routes; the habit-check route's existing ownership `SELECT` now
+raises instead of silently skipping). `shift_import.confirm`/`dismiss` take only a `batch_id` and trusted the
+batch row's own `person_id` with no cross-check at the route -- `POST /shifts/confirm` and `POST
+/shifts/dismiss` now check `_owned_batch_or_404` (a new helper) before calling either, so a batch id from
+another person 404s instead of being confirmed or dismissed. `household.py`'s rule is unchanged: a household
+goal's other members are read only through `household_of`, never another member's private health figures.
+Day-based routes (`/day/{day}`, `/how/{day}`) take no id of another person's row; they already filter by the
+resolved `person_id` and show an honest empty state for a day with no data for that person, which needed no
+404.
+
+**No behaviour change in local mode**: every existing test stayed green with only the explicit-argument edits
+each call site needed (listed below); the local person's pages render identically.
+
+**Tests**: `tests/test_history.py`, `test_profile.py`, `test_readiness.py`, `test_vida_export.py`,
+`test_goals_web.py`, `test_pipeline.py`, `test_agente_registro.py` -- every call site the census found that
+relied on a now-removed default got its `person_id` (or `1`, matching how that test already seeded the local
+person) made explicit; no assertion changed. `tests/test_person_scope.py` (new, 10 tests, `_isolate` first,
+invented demo data, two persons A and B): seeds each with a day of data, an active goal with a daily habit
+and a check, and a proposed shift batch; overrides the resolver to A and checks `/`, `/goals` and `/shifts`
+render only A's goal/habit titles and batch date, not B's (and the mirror for B); checks `GET
+/goals/{goal_id}` 404s on the other person's id; checks `POST
+/goals/{goal_id}/activate|pause|finish|drop|habits`, `POST /habits/{habit_id}/check` and `POST
+/shifts/confirm|dismiss` all 404 on the other person's id and leave that id's row unchanged afterwards; a
+static check (`pathlib.Path.rglob`) that no `.py` file under `body/` except `db.py` mentions
+`DEFAULT_PERSON_ID`; a static check (`inspect.signature`) that every function the census found has no default
+for its `person_id` parameter.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 160 tests, OK (150 before this slice, 10
+added here), run once on this slice's final tree.
+
+This slice's diff has no schema or migration change (no `CREATE`/`ALTER` in `body/db.py`'s `SCHEMA`), no
+customer-facing bytes (no template, no i18n string, no screen renders differently for the local person --
+the new 404s fire only for an id that belongs to a different person, which cannot occur in today's
+single-person install), and no cross-repo contract change (`vida_export.week_section`'s JSON shape is
+unchanged; only its Python signature gained a required parameter). All three of merge policy A's conditions
+pass, so this merges on green without a separate approval step, unlike BODY-ASISTENTE-REGISTRO-1 and
+BODY-SIN-FRICCION-1 above, which each tripped one.
