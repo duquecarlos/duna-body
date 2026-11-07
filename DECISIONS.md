@@ -1883,3 +1883,103 @@ on the final tree (381 at the branch tip plus the 7 new tests above).
 
 Slice commit: `952f1ec62f26c97dde0fc84bb9c7b9e84111c825` on `feat/body-dispositivo-1`. Merged `--no-ff`
 into `main` as `8411e7952ebe22f8f4d06fb5e1599b906d7db24d`.
+
+## BODY-PC-CLIENTE-1 -- the PC side of a hosted Body: link, upload shifts, fetch the week (2026-11-07)
+
+Carries out `BODY-SHIFT-UPLOAD-OBS-1`'s PC-side follow-ups (`BODY-SHIFT-UPLOAD-CLIENT-1` and
+`BODY-SHIFT-UPLOAD-INSTALL-1`, folded into one slice because neither is useful alone), approved by
+the orchestrator under `ORCH-CARLOS-DELEGATES-TIER-1-1`, against the two device-key routes
+`BODY-DISPOSITIVO-1` built -- restated verbatim from `body/web.py` as merged (re-found, not copied
+from the spec):
+
+- `POST /api/turnos` -- `Authorization: Bearer <key>` (scope `turnos:subir`), header
+  `X-Body-Archivo` (file name, must match `^turnos-.*\.json$`), a raw JSON body capped at
+  `256 * 1024` bytes (refused by `Content-Length` before any read, and again by the streaming cap).
+  200 `{"lote", "turnos", "nuevo"}`; 400 bad file name; 413 too large; 422
+  `{"error": "archivo_rechazado", "motivo": <class>}`; 401 `{"error": "no_autorizado"}` with
+  `WWW-Authenticate: Bearer`; 403 `{"error": "alcance"}`.
+- `GET /api/vida/semana?semana=YYYY-MM-DD` (scope `vida:leer`, same Bearer header). 200 the
+  `vida_export.week_section` JSON with `Cache-Control: no-store`; 400 a malformed or non-Monday
+  `semana`; 401/403 as above.
+
+**`body/pc_cliente.py`** (new, shared). The link file `BODY_HOME/dispositivo.json` = `{"url",
+"clave"}`, written with `chmod(0o600)` best-effort (the same pattern `body/backup.py`'s own snapshot
+write already uses). `leer_enlace()` raises `EnlaceFaltante`, a plain refusal naming
+`python -m body.conectar_pc` and never the key. `llamar(method, ruta, *, body=None, headers=None) ->
+(status, json-or-None)` over `urllib.request` (stdlib only; TLS verified by default -- httpx stays a
+dev-only test dependency), a 30 s timeout, `Authorization: Bearer` from the saved key, and the URL
+refused unless it is `https://`, or `http://` to `localhost`/`127.0.0.1` (for local testing). The one
+call that reaches a socket is `_abrir()`, a thin wrapper over `urllib.request.urlopen`; every test
+patches that one name with a fake, so nothing in this slice contacts `body.duna.solutions`.
+
+**`python -m body.conectar_pc [--url] [--olvidar]`**: the key is read with `getpass.getpass`
+(hidden, never on argv, never echoed) and checked for the `bdy_` prefix before anything is saved or
+sent anywhere; then checked with one `GET /api/vida/semana`: 200 -> "PC conectado."; 401 -> "Esa
+clave no sirve o fue desconectada." and the link file is removed; 403 -> names the missing
+permission (`vida:leer`). `--olvidar` deletes the link file.
+
+**`python -m body.subir_turnos [--dir]`** (folder default `BODY_SHIFTS_DIR`, reusing
+`shift_import._candidate_files` rather than re-globbing): every `turnos-*.json` whose sha256 is not
+already in `BODY_HOME/turnos-subidos.json` is POSTed with its name in `X-Body-Archivo`. 200 records
+the sha whether or not `nuevo` is true (the host already having it is still "known" to this PC);
+422 prints the file name and the `motivo` class and does NOT record the sha, so a fixed file
+retries on the next run; 401/403 stops immediately (writing what was recorded so far) and says to
+reconnect. Prints counts only -- "N subidos, M ya estaban, K rechazados" -- never a file's date or
+shift content.
+
+**`python -m body.traer_semana [--semana YYYY-MM-DD]`**: one `GET /api/vida/semana`, written to
+exactly the path `body/vida_export.py` writes locally (re-found: `BODY_HOME/vida/body-week-
+<monday>.json`; `vida_export.current_week_monday()` reused for the default Monday rather than
+re-derived), atomically (temp file + `os.replace`), `chmod(0o600)` best-effort. Prints only the
+path.
+
+**Installer, `scripts/install-daily-sync.ps1`**: new `[switch]$Hosted`. Refuses (`exit 1`) until
+`BODY_HOME\dispositivo.json` exists, naming `python -m body.conectar_pc`; refuses (`exit 1`) without
+`-ShiftsDir`. Registers "Body app shift upload" (daily, default `09:15`) running `body.subir_turnos
+--dir <ShiftsDir>`, and "Body app weekly fetch" (Sundays, reusing `$SundayAt`'s existing `18:00`
+default -- the weekly file's current time) running `body.traer_semana`; then unregisters "Body app
+daily sync", "Body app weekly file" and "Body app web" if present, and its `Write-Host` summary says
+what it registered and removed. **Deviation from the spec's exact wording**, recorded rather than
+guessed past: decision 5 said to "re-find any existing time" for the shift-upload default before
+falling back to 09:15; grepping this repository and its `*.md` files for an existing "Personal
+extraction time" found none recorded anywhere outside the spec's own sentence, so the spec's stated
+default (09:15) was used as given. Without `-Hosted`, the script runs the exact same logic as
+before -- same `$At` default `09:30`, same three task names and actions -- confirmed by a test that
+reads the text after the new `if ($Hosted) { ... }` block and finds all three original
+`Register-ScheduledTask` calls unchanged and neither new task name present there.
+
+**README**: new "Body en el servidor: conectar este PC" section (mint the key in Ajustes ->
+"Conexión del PC", run `conectar_pc`, run the installer with `-Hosted`).
+
+**Tests** (`tests/test_pc_cliente.py`, new, 33 tests, `tests/_isolate` imported first; every
+network call is a fake patched onto `pc_cliente._abrir`): the link file holds the key and is
+`0600` where the OS supports it (this run is on Windows, so that one assertion is skipped there);
+the key never appears in captured stdout/stderr or in the request's own `full_url`; `conectar_pc`'s
+source has no `--clave`/`--key` flag; `http://` to a non-local host is refused without writing the
+link file or leaking the key; `conectar_pc`'s 200/401 (file removed)/403 paths; `subir_turnos`
+uploads only files whose sha differs, records the sha on 200 regardless of `nuevo`, does not record
+on 422 so a fixed file retries, stops at the first 401/403, and its printed output matches neither
+`\d{4}-\d{2}-\d{2}` nor shift content; `traer_semana` writes the exact local path atomically (no
+leftover `.tmp` file), prints only that path, and never prints a metric value from the payload; the
+installer's text -- `-Hosted` registers the two new tasks and unregisters the three old ones,
+refuses without the link file and without `-ShiftsDir`, and the non-hosted path is unchanged.
+
+**Merge policy.** No schema or migration change (`body/db.py` untouched). No cross-repo contract
+change (the wire is the one `BODY-DISPOSITIVO-1` already shipped, called here unchanged, not
+redefined). Customer bytes: the new scheduled-task names, the installer's `Write-Host` summary, the
+three new commands' own printed lines, and the README section are read only by Carlos running his
+own PC tooling from a terminal -- never a screen or an i18n string the hosted app serves, the same
+distinction `BODY-WEB-AUTOSTART-1` drew for its own installer/README changes ("not customer-facing
+application bytes (no screen, no i18n string)"). None of Merge Policy A's three conditions trip, so
+this merges on green without waiting.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .`. First run on this branch: RED (1
+failure) -- `tests.test_pc_cliente.SubirTurnosTest.test_uploads_only_new_files` wrote two fixture
+files with byte-identical content, so `subir_turnos`'s own sha-based dedup correctly skipped the
+second file within that same run (`len(calls) == 1`, not the `2` the test expected) -- a bug in the
+new test's fixture, not in `body/subir_turnos.py`; fixed by giving the two files distinct
+`source.attachment` values. Final run: 421 tests, OK (skipped=1), run once on the final tree (388 at
+the branch tip, per `BODY-DISPOSITIVO-1-M`'s own entry above, plus the 33 new tests here).
+
+Slice commit: see `git log -1` on `feat/body-pc-cliente-1` before the merge below. Merged `--no-ff`
+into `main`.

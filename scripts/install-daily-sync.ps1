@@ -7,12 +7,53 @@
 # Remove with: Unregister-ScheduledTask -TaskName "Body app daily sync"; Unregister-ScheduledTask -TaskName "Body app weekly file"; Unregister-ScheduledTask -TaskName "Body app web"
 # Example with shift import on: .\install-daily-sync.ps1 -ShiftsDir "C:\path\to\your\shifts\folder"
 # Example with the web app open to the home network too: .\install-daily-sync.ps1 -Lan
-param([string]$At = "09:30", [string]$SundayAt = "18:00", [string]$ShiftsDir, [int]$Port = 8770, [switch]$Lan)
+#
+# -Hosted: the host (body.duna.solutions) does the pull and runs the web app instead of this PC.
+# Link this PC first with `python -m body.conectar_pc`, then run with -Hosted (-ShiftsDir required):
+#   "Body app shift upload"  daily: uploads new shift files to the hosted Body
+#   "Body app weekly fetch"  Sundays: fetches this week's Body section for the Personal Sunday review
+# -Hosted also removes "Body app daily sync", "Body app weekly file" and "Body app web" if present.
+# Example, hosted: .\install-daily-sync.ps1 -Hosted -ShiftsDir "C:\path\to\your\shifts\folder"
+param([string]$At, [string]$SundayAt = "18:00", [string]$ShiftsDir, [int]$Port = 8770, [switch]$Lan, [switch]$Hosted)
 $repo = Split-Path $PSScriptRoot -Parent
 $py = "$repo\.venv\Scripts\python.exe"
 $pyw = "$repo\.venv\Scripts\pythonw.exe"
 $webPy = if (Test-Path $pyw) { $pyw } else { $py }
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RunOnlyIfNetworkAvailable
+
+if ($Hosted) {
+    $bodyHome = if ($env:BODY_HOME) { $env:BODY_HOME } else { "$env:USERPROFILE\.body-app" }
+    if (-not (Test-Path "$bodyHome\dispositivo.json")) {
+        Write-Host "Este PC no esta conectado todavia. Corre primero: python -m body.conectar_pc"
+        exit 1
+    }
+    if (-not $ShiftsDir) {
+        Write-Host "-Hosted necesita -ShiftsDir (la carpeta donde llegan los archivos turnos-*.json)."
+        exit 1
+    }
+    if (-not $At) { $At = "09:15" }
+
+    $removed = @()
+    foreach ($name in @("Body app daily sync", "Body app weekly file", "Body app web")) {
+        if (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) {
+            Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
+            Unregister-ScheduledTask -TaskName $name -Confirm:$false
+            $removed += $name
+        }
+    }
+
+    $uploadAction = New-ScheduledTaskAction -Execute $py -Argument "-m body.subir_turnos --dir `"$ShiftsDir`"" -WorkingDirectory $repo
+    Register-ScheduledTask -TaskName "Body app shift upload" -Action $uploadAction -Trigger (New-ScheduledTaskTrigger -Daily -At $At) -Settings $settings -Description "Uploads new shift files to the hosted Body" -Force | Out-Null
+
+    $fetchAction = New-ScheduledTaskAction -Execute $py -Argument "-m body.traer_semana" -WorkingDirectory $repo
+    Register-ScheduledTask -TaskName "Body app weekly fetch" -Action $fetchAction -Trigger (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At $SundayAt) -Settings $settings -Description "Fetches this week's Body section from the hosted server for the Personal Sunday review" -Force | Out-Null
+
+    $removedMsg = if ($removed.Count) { "Quitadas: $($removed -join ', ')." } else { "No habia tareas locales que quitar." }
+    Write-Host "Registradas: Body app shift upload a las $At (desde $ShiftsDir), Body app weekly fetch los domingos a las $SundayAt. $removedMsg"
+    exit 0
+}
+
+if (-not $At) { $At = "09:30" }
 
 $dailyActions = @(New-ScheduledTaskAction -Execute $py -Argument "-m body.pull --days 2" -WorkingDirectory $repo)
 if ($ShiftsDir) {

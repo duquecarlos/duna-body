@@ -27,6 +27,22 @@ files when `-ShiftsDir` is given), **Body app weekly file** writes the week's fi
 and **Body app web** starts the web app at logon and restarts it if it stops, so it keeps running without a hand
 step. It is local-only (`http://127.0.0.1:8770`) unless `-Lan` is passed.
 
+## Body en el servidor: conectar este PC
+
+When Body runs on the hosted server (`body.duna.solutions`) instead of this PC, this PC still uploads shift
+files and fetches the weekly Body section for Personal -- through the device-key API, never by reading the
+server's database directly.
+
+```powershell
+# 1. Mint a device key in the hosted app: Ajustes -> "Conexion del PC"
+.\.venv\Scripts\python -m body.conectar_pc          # pastes the key, hidden; checks the connection
+.\scripts\install-daily-sync.ps1 -Hosted -ShiftsDir "C:\path\to\your\shifts\folder"
+```
+
+`-Hosted` registers **Body app shift upload** (daily) and **Body app weekly fetch** (Sundays), and removes the
+three local-mode tasks above, since the host now does both the pull and the web app. Forget the connection with
+`python -m body.conectar_pc --olvidar`.
+
 ## Layout
 
 - `body/garmin_adapter.py`: the only file that knows the unofficial `python-garminconnect` library.
