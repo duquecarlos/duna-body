@@ -4,6 +4,7 @@
 {% block main %}
 <div class="top"><div><h1>{{ title }}</h1></div></div>
 {% if tab == 'today' %}{{ hoy_turno_card(t, turno, proposed_count) }}{% endif %}
+{% if back_href %}<p style="margin:0 0 12px"><a class="taplink" href="{{ back_href }}">{{ back_label }}</a></p>{% endif %}
 <div class="card empty"><div class="badge">{{ t('soon.badge') }}</div><p class="read" style="margin-top:6px">{{ text }}</p></div>
 {% if primeros_pasos %}{{ primeros_pasos_card(t, primeros_pasos) }}{% endif %}
 {% endblock %}

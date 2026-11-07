@@ -30,6 +30,7 @@
     <div class="delta {{ c.cls }}" style="text-align:right">{{ c.delta }}</div>
   </div>
   {{ c.svg|safe }}
+  <p class="note" style="margin:4px 0 0">{{ t('trends.chart_hint') }}</p>
   {% if c.sparse %}<p class="note" style="margin:4px 0 0">{{ t('trends.sparse_note') }}</p>{% endif %}
   <div class="legend" style="margin-top:4px">
     <span><i style="background:var(--body);height:3px;vertical-align:3px"></i>{{ t('trends.monthly') if r == 'all' else t('trends.daily') }}</span>
