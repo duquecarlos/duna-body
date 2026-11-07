@@ -31,8 +31,8 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup
 
-from . import (cuenta, db, dispositivo, garmin_adapter, garmin_cuenta, goals, history, household, identity, listen,
-               privacidad, profile, readiness, shift_import, turnos_costo, tutoriales, vida_export)
+from . import (cuenta, db, dispositivo, entorno, garmin_adapter, garmin_cuenta, goals, history, household, identity,
+               listen, privacidad, profile, readiness, shift_import, turnos_costo, tutoriales, vida_export)
 from .agente import ajustes as agente_ajustes
 from .agente import bucle as agente_bucle
 from .agente import cliente as agente_cliente
@@ -2188,8 +2188,12 @@ def _ensure_streams() -> None:
 
 
 def main() -> None:
+    _, ignorados = entorno.cargar()
     _ensure_streams()
     import uvicorn
+
+    if ignorados > 0:
+        print(f".env: {ignorados} line(s) ignored -- only BODY_AGENTE_* names are read from this file.")
 
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(message)s"))
