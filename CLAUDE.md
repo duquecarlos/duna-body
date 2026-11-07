@@ -12,6 +12,11 @@ later", so build the template, not one person: goals, metrics and plans are data
 This repository is worked by slices dispatched from the Body orchestrator at `C:\Duna\body\dev-protocol`. The plan is
 `ROADMAP.md`. The design rules are `docs/DESIGN.md`. The ledger is `DECISIONS.md`, append-only.
 
+The Duna contracts this product builds to -- agent capabilities, the assistant UI standard, Cuenta Duna sign-in, the
+household (hogar), host deploy and its sensitive-data amendment, and the shared life-coach shapes (vida) -- live as
+read-only copies in `docs/contracts/`, owned by Main and copied here. Read the relevant one before building to it,
+instead of a spec's restatement of it.
+
 ## Starting direction, proposed by Main and accepted 2026-11-06
 
 * **Data, now:** the open-source `python-garminconnect` library, running locally on his PC, pulls daily figures: resting

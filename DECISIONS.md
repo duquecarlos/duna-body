@@ -2368,4 +2368,36 @@ defects -- Merge Policy A's authorization-to-merge condition is met even though 
 Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run once, foreground, on the final tree: 481
 tests, OK (1 skipped, pre-existing). 470 at this branch's starting tip (`96b07b2`), plus 11 new here.
 
+## BODY-CONTRATOS-1 -- the seven Duna contracts Body builds to, as read-only copies (2026-11-07)
+
+BODY-ASISTENTE-PANEL-1's worker was refused reading `C:/Duna/body/dev-protocol/contracts/agent-ui-v1.md` and had to
+build from the spec's own restatement of it instead of the contract itself. This slice gives body-app its own
+read-only copies, under `docs/contracts/`, of the seven contracts it implements, copied byte for byte (`shutil.copyfile`)
+from `C:/Duna/body/dev-protocol/contracts/` and verified by sha256 against the source:
+
+| File | sha256 |
+|---|---|
+| `agent-capabilities-v1.md` | `2636338d1aee1a6783b490a315e7d98f21bbcdd4725ecf32635a4b9baff9cecc` |
+| `agent-ui-v1.md` | `bb40b06e3d171d62031c16b2e0173a94e8dd1279fcf64a857ba4bb63e690c9da` |
+| `cuenta-duna-v1.md` | `7657ffeba2803d9a36a0e2537c56cf33615d47e68d9a75375f74deb83e1b29b4` |
+| `hogar-v1.md` | `54f74c133df0665328db3e4f54f871fa5819e93c94892d37dba615017c59233d` |
+| `host-deploy-v1.md` | `19ecacf85d340414c301c204b76441b82cbcf76a9431cc845da31c910b989813` |
+| `host-deploy-v1-amendment-sensitive-data.md` | `902de086f0930a4beec5ec67260f085c855291dd02d18be0a567710ab40139e8` |
+| `vida-v1.md` | `ff3354e1e10c4987570825fb41e60ac3f22fe76771998f884086e7b4a60dac7b` |
+
+Every file's source and copy hash matched exactly (no edit, no CRLF/LF difference to call out). `docs/contracts/README.md`
+says in words that these are read-only, that Main owns the source and a change is made there and copied here, and lists
+each file with what Body implements from it and its sha256. `CLAUDE.md` gained one short paragraph near the top of its
+"How this repository is worked" section, pointing to `docs/contracts/` and telling a session to read the relevant
+contract there before building to it.
+
+**Merge policy, judged against this diff.** Schema: no. Cross-repo contract: no -- these files are copies of contracts
+owned elsewhere, not a change to one. Customer-facing bytes: no -- nothing a signed-in person sees changed; this is
+documentation for the sessions that build this repository. All three conditions clear, so this merges on green without
+a stop.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run once, foreground, on the final tree: 481 tests,
+OK (1 skipped, pre-existing). Unchanged from this branch's starting tip (`018b569`); this slice touched no test and no
+application code.
+
 Merged into `main` with `--no-ff` immediately after this entry.
