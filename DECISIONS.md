@@ -681,3 +681,43 @@ own commit, after the append above) -- 110 tests, OK.
 
 Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-metas-screens-polish-1` into `main`
 following this entry.
+
+## BODY-STATIC-VERSION-1 -- a CSS/JS change now reaches a phone that already cached the old one (2026-11-06)
+
+Measured by the orchestrator: in the Browser pane, `/goals/new` kept drawing the OLD stylesheet
+(`/static/body.css?v=3`, 8,321 bytes, no new rules) while the file on disk was 10,238 bytes with them, because
+the service worker (`body-static-v2`) answers every `/static/` request from its own cache first and
+`base.html` always linked the same hand-bumped `body.css?v=3`. Carlos's phone carries the same worker, so this
+was not only a browser-pane artifact.
+
+Fix, in `body/web.py`: `_static_hash(directory)` hashes (sha256, first 10 hex chars) every file under a
+directory by sorted relative path plus bytes; `STATIC_HASH = _static_hash(HERE / "static")` is computed once
+at import, and `static_url(path)` returns `/static/<path>?v=<STATIC_HASH>`, registered as a Jinja global
+(`env.globals["static_url"]`) rather than threaded through every `_render()` call, since -- unlike `t()`,
+which is per-request (the person's chosen language) and passed as a kwarg each render -- it carries no
+per-request state. The service worker's cache name is now `body-static-<STATIC_HASH>` (built once at import by
+substituting into `SW_TEMPLATE`, not an f-string, to avoid escaping the worker's own JS braces); its existing
+`activate` handler already deletes every cache key that isn't the current one, so a new build's hash evicts
+the old cache automatically. `/sw.js` now answers with `Cache-Control: no-cache` so the browser never caches
+the worker script itself; it still caches only `/static/` and never a health page.
+
+`body/templates/base.html`: all three `/static/` references (`body.css`, `manifest.webmanifest`, `icon.svg`)
+now go through `{{ static_url(...) }}`; grepped every template under `body/templates/` for `/static/` first --
+`base.html` was the only one with any (the other templates all `{% extends "base.html" %}` and carry no
+static references of their own).
+
+**Tests**, `tests/test_static_version.py` (6 new): `/` (via a fresh empty db, which renders `soon.html`,
+itself extending `base.html`) links `body.css` with `?v=` equal to `web.STATIC_HASH`; `web.static_url("body.css")`
+returns the same URL; no file under `body/templates/` contains a literal `?v=`; `/sw.js` carries
+`body-static-<STATIC_HASH>` in its text and answers `Cache-Control: no-cache`; `web._static_hash()` called on a
+temp directory changes when a file's bytes change and is stable across two directories with identical
+content -- no real static file is edited by the tests.
+
+No schema or migration change; no cross-repo contract change. No customer-facing bytes either: the rendered
+CSS, icon and manifest are byte-for-byte what they always were, and the service worker's cache-key scheme is
+plumbing a person never reads -- only the cache-busting query string and the worker's internal cache name
+change, never anything visible on a screen. All three of merge policy A's conditions pass, so this merges on
+green without stopping for approval.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 116 tests, OK (110 before this slice, 6
+added here), run once on the final branch tree before this entry.

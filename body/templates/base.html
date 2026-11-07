@@ -11,9 +11,9 @@ try{var th=localStorage.getItem('body.theme');var dark=th==='dark'||(th!=='light
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="/static/body.css?v=3">
-<link rel="manifest" href="/static/manifest.webmanifest">
-<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{{ static_url('body.css') }}">
+<link rel="manifest" href="{{ static_url('manifest.webmanifest') }}">
+<link rel="icon" href="{{ static_url('icon.svg') }}" type="image/svg+xml">
 </head>
 <body>
 <div class="shell">
