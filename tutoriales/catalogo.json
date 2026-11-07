@@ -183,7 +183,7 @@
       "titulo": "El nivel de datos del asistente",
       "capitulo": "privacidad",
       "orden": 3,
-      "pantalla": "/settings",
+      "pantalla": "/ajustes/asistente",
       "agente": "si",
       "onboarding": false
     },

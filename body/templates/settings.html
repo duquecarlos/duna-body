@@ -12,6 +12,12 @@
 <div class="card">
   <a href="/privacidad" class="q" style="display:block;color:inherit;text-decoration:none">{{ t('settings.privacy') }} →</a>
 </div>
+<div class="card">
+  <a href="/ajustes/asistente" class="q" style="display:flex;justify-content:space-between;gap:8px;color:inherit;text-decoration:none">
+    <span>{{ t('settings.asistente_datos') }}</span>
+    <span>{{ t('ajustes.asistente.opcion.' + nivel_datos) }} →</span>
+  </a>
+</div>
 {% if hosted() %}
 <div class="card">
   <a href="/garmin" class="q" style="display:block;color:inherit;text-decoration:none">{{ t('settings.garmin') }} →</a>
