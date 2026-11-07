@@ -2401,3 +2401,42 @@ OK (1 skipped, pre-existing). Unchanged from this branch's starting tip (`018b56
 application code.
 
 Merged into `main` with `--no-ff` immediately after this entry.
+
+## BODY-ASISTENTE-PROPUESTAS-1-M -- three browser-measured fixes to the proposal card (2026-11-07)
+
+BODY-ASISTENTE-PROPUESTAS-1 stopped GATE_RED on one pre-existing privacy test whose literal `"55"` collided with a
+byte count once this slice's tables grew the backup file, and the orchestrator measured the proposal card in a real
+browser (demo provider, scratch data, 375 px): apply switched the language, undo restored it, the card's state
+survived a page change, but three things were visibly wrong. Approved by the orchestrator under
+`ORCH-CARLOS-DELEGATES-TIER-1-1` after review; three fixes, each with a test:
+
+1. **The backup privacy guard, restored.** `tests/test_backup.py`'s invented demo values are now sentinel floats
+   (`987.654321`, `876.543219`) and a sentinel source string (`zz-sentinel-source-zz`) instead of plain integers --
+   none can occur as a substring of the `bytes=<N> tables=<M>` integer counts `backup.main()`/`backup.check()` print,
+   so the guard's own test construction can never collide again the way `"55"`/`"56"` did. Every assertion still
+   checks that the sentinel's exact text is absent from the output; none was deleted or loosened.
+2. **Card under the answer.** `body/static/assistant.js`: the `propuesta` SSE event's tool-call round precedes the
+   model's final round, so the event can arrive before any answer text does. The card is no longer appended to the
+   turn on arrival (that put it between the question and the folded steps); it is queued in
+   `propuestasPendientes` and appended once `agregarPasos` has placed the steps, after the answer -- live, and the
+   conversation-GET restore path already appended cards after a turn's answer, so it needed no change.
+3. **Labelled before/after.** `body/web.py`'s `_tarjeta_propuesta` now wraps `antes`/`despues` with the i18n keys
+   `asistente.propuesta.antes` ("Antes: {valor}" / "Before: {valor}"), `.despues` ("Después: {valor}" /
+   "After: {valor}"), and `.solo_propuesta` ("Propuesta: {valor}" / "Proposal: {valor}") for the insert-shaped
+   `proponer_meta`, which has no before. A card used to read just "Español" / "English"; it now reads
+   "Antes: Español" / "Después: English".
+
+**Deviation.** The spec's step 4 said "the slice already wrote its own entry" for BODY-ASISTENTE-PROPUESTAS-1; measured,
+`DECISIONS.md` carried no such entry (the original slice stopped GATE_RED before reaching its own ledger step). This
+entry covers only the three fixes approved for this `-M` slice, not a restatement of the base feature.
+
+**Merge policy, judged against this diff.** Schema: no. Cross-repo contract: no. Customer-facing bytes: yes -- the
+card's label text and its on-screen position both changed. The spec's own body (step 6) says in words to merge
+`--no-ff` into `main` once the gate is green, under `ORCH-CARLOS-DELEGATES-TIER-1-1`'s approval of these three named
+fixes -- Merge Policy A's authorization-to-merge condition is met even though the bytes condition trips.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run once, foreground, on the final tree: 516
+tests, OK (1 skipped, pre-existing).
+
+Merged into `main` with `--no-ff` as commit `e0e928f9da480e6c06c0309e9e5f3d6621214ae4` (tree `143e3f0f01689a01b26a8cce0a89f6382d440983`,
+identical to the branch tip's tree).
