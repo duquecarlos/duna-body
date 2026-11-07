@@ -214,6 +214,38 @@ CREATE TABLE IF NOT EXISTS ajuste_agente (
     nivel_datos TEXT NOT NULL DEFAULT 'completo' CHECK (nivel_datos IN ('completo', 'resumen', 'ninguno')),
     updated_at TEXT NOT NULL
 );
+
+-- A signed-in session (Cuenta Duna, wave 8). Only a hash of the session token lives here -- the
+-- token itself is never stored.
+CREATE TABLE IF NOT EXISTS sesion (
+    id_hash      TEXT PRIMARY KEY,
+    person_id    INTEGER NOT NULL REFERENCES person(id),
+    cuenta_sid   TEXT,                  -- Cuenta's ID token `sid`, so back-channel logout can find this row
+    created_at   TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    expires_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sesion_cuenta_sid ON sesion(cuenta_sid);
+CREATE INDEX IF NOT EXISTS idx_sesion_person_id ON sesion(person_id);
+
+-- One Cuenta sign-in attempt, minutes long and single use. Only a hash of `state` lives here --
+-- like the session token above, the state itself is never stored.
+CREATE TABLE IF NOT EXISTS inicio_sesion (
+    state_hash    TEXT PRIMARY KEY,
+    nonce         TEXT NOT NULL,
+    code_verifier TEXT NOT NULL,
+    return_to     TEXT,
+    created_at    TEXT NOT NULL
+);
+
+-- One accepted consent text, by version, per person (sensitive-data amendment rule 6).
+CREATE TABLE IF NOT EXISTS consentimiento (
+    id          INTEGER PRIMARY KEY,
+    person_id   INTEGER NOT NULL REFERENCES person(id),
+    version     TEXT NOT NULL,
+    accepted_at TEXT NOT NULL,
+    UNIQUE (person_id, version)
+);
 """
 
 # (key, label, unit, better, kind). 'estimated' = computed by Body, shown with «≈» and "how I calculate it".
@@ -265,6 +297,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     pcols = {r[1] for r in conn.execute("PRAGMA table_info(person)")}
     if pcols and "language" not in pcols:
         conn.execute("ALTER TABLE person ADD COLUMN language TEXT NOT NULL DEFAULT 'es'")
+    if pcols and "cuenta_sub" not in pcols:
+        conn.execute("ALTER TABLE person ADD COLUMN cuenta_sub TEXT")
+    if pcols:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS person_cuenta_sub ON person(cuenta_sub) WHERE cuenta_sub IS NOT NULL"
+        )
     conn.execute("UPDATE person SET timezone = 'America/Bogota' WHERE timezone = 'Europe/Madrid'")
     scols = {r[1] for r in conn.execute("PRAGMA table_info(shift)")}
     if scols and "batch_id" not in scols:
