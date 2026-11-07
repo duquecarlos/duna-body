@@ -4,7 +4,9 @@ itself never knows which vendor adapter would have produced them."""
 import os
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
@@ -240,6 +242,84 @@ class TopeFailsClosedTest(unittest.TestCase):
         conn.close()  # a closed connection makes the ceiling's own read fail
         with self.assertRaises(uso.TopeRefusal):
             uso.verificar_tope(conn, 1, "anthropic", "claude-sonnet-5-5")
+
+
+def _insertar_fila_uso(conn, creado_en: str, modelo: str = "modelo-sin-precio", person_id: int = 1) -> None:
+    conn.execute(
+        "INSERT INTO uso_agente (person_id, creado_en, proveedor, modelo, entrada, salida, "
+        "cache_lectura, cache_escritura, rondas, motivo_fin, codigo_error, es_pregunta, superficie) "
+        "VALUES (?, ?, 'anthropic', ?, 1, 1, 0, 0, 1, 'texto', NULL, 1, 'asistente')",
+        (person_id, creado_en, modelo),
+    )
+    conn.commit()
+
+
+class LocalDayBoundaryTest(unittest.TestCase):
+    """Fix (b): `verificar_tope` counts today's rows over [local midnight, next local midnight) in
+    the person's OWN timezone (default America/Bogota, UTC-5, no DST) -- never UTC's calendar day.
+    "Now" is frozen just after Bogota local midnight, so the UTC calendar day is the same for both
+    rows below while their BOGOTA calendar day differs."""
+
+    def setUp(self):
+        self.conn = _conn()
+        self.addCleanup(_conteo_tope_env())
+        os.environ["BODY_AGENTE_CONTEO_DIARIO"] = "1"
+        self._ahora = datetime(2026, 11, 2, 5, 30, tzinfo=timezone.utc)  # Bogota 2026-11-02 00:30
+
+    def test_a_row_from_yesterdays_bogota_day_is_not_counted_as_today(self):
+        # Bogota 2026-11-01 23:30 -- UTC calendar day is already Nov 2, but Bogota's is still Nov 1.
+        _insertar_fila_uso(self.conn, "2026-11-02T04:30:00+00:00")
+        with patch("body.agente.uso._ahora_utc", return_value=self._ahora):
+            uso.verificar_tope(self.conn, 1, "anthropic", "modelo-sin-precio")  # 0 rows today: no raise
+
+    def test_a_row_from_todays_bogota_day_is_counted(self):
+        # Bogota 2026-11-02 00:15 -- today, local.
+        _insertar_fila_uso(self.conn, "2026-11-02T05:15:00+00:00")
+        with patch("body.agente.uso._ahora_utc", return_value=self._ahora):
+            with self.assertRaises(uso.TopeRefusal):
+                uso.verificar_tope(self.conn, 1, "anthropic", "modelo-sin-precio")
+
+
+class RowByRowPricingTest(unittest.TestCase):
+    """Fix (c): today's spend sums each row at ITS OWN (proveedor, modelo) prices, never at the
+    current model's rate applied to every row."""
+
+    def setUp(self):
+        self.conn = _conn()
+        self.conn.execute(
+            "INSERT INTO precio_modelo (proveedor, modelo, tipo, micro_usd_por_millon) VALUES "
+            "('anthropic', 'modelo-a', 'entrada', 0), "
+            "('anthropic', 'modelo-a', 'salida', 1000000), "
+            "('anthropic', 'modelo-a', 'cache_lectura', 0), "
+            "('anthropic', 'modelo-a', 'cache_escritura', 0), "
+            "('anthropic', 'modelo-b', 'entrada', 0), "
+            "('anthropic', 'modelo-b', 'salida', 2000000), "
+            "('anthropic', 'modelo-b', 'cache_lectura', 0), "
+            "('anthropic', 'modelo-b', 'cache_escritura', 0)"
+        )
+        self.conn.commit()
+        self.addCleanup(_env_tope_diario())
+        self.addCleanup(_conteo_tope_env())
+
+    def test_two_priced_models_today_are_summed_each_at_its_own_rate(self):
+        uso.registrar(self.conn, 1, "anthropic", "modelo-a", cliente.Uso(entrada=0, salida=1_000_000),
+                      1, "texto", None)
+        uso.registrar(self.conn, 1, "anthropic", "modelo-b", cliente.Uso(entrada=0, salida=1_000_000),
+                      1, "texto", None)
+        # Row-by-row: $1 (modelo-a) + $2 (modelo-b) = $3 = 3_000_000 micro-USD. A ceiling of
+        # 2_500_000 sits BELOW the correct sum but ABOVE what pricing every row at modelo-a's own
+        # rate alone would give ($1 + $1 = 2_000_000) -- so this discriminates the fix.
+        os.environ["BODY_AGENTE_TOPE_DIARIO_MICRO_USD"] = "2500000"
+        with self.assertRaises(uso.TopeRefusal):
+            uso.verificar_tope(self.conn, 1, "anthropic", "modelo-a")
+
+    def test_one_unpriced_row_today_falls_back_to_the_count_breaker(self):
+        os.environ["BODY_AGENTE_CONTEO_DIARIO"] = "1"
+        uso.registrar(self.conn, 1, "anthropic", "modelo-a", cliente.Uso(entrada=0, salida=1), 1, "texto", None)
+        uso.registrar(self.conn, 1, "anthropic", "modelo-sin-precio", cliente.Uso(entrada=0, salida=1),
+                      1, "texto", None)
+        with self.assertRaises(uso.TopeRefusal):
+            uso.verificar_tope(self.conn, 1, "anthropic", "modelo-a")
 
 
 class UsoRegistradoTest(unittest.TestCase):

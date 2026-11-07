@@ -297,8 +297,8 @@ class Gemini(Proveedor):
 
     def _post_real(self, payload: dict) -> dict:
         try:
-            r = httpx.post(self._url(), json=payload, timeout=60.0, params={"key": self.api_key},
-                           headers={"content-type": "application/json"})
+            r = httpx.post(self._url(), json=payload, timeout=60.0,
+                           headers={"x-goog-api-key": self.api_key, "content-type": "application/json"})
             r.raise_for_status()
             return r.json()
         except httpx.HTTPStatusError as e:

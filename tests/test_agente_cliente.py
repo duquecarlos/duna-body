@@ -142,6 +142,62 @@ class ProveedorConfiguradoTest(unittest.TestCase):
         self.assertIsInstance(cliente.proveedor_configurado(), cliente.OpenAI)
 
 
+class NoKeyInUrlTest(unittest.TestCase):
+    """BODY-ASISTENTE-PROVEEDOR-1-M fix (a): the key travels in exactly one auth header, never in
+    a URL or query parameter -- no HTTP log can carry it. A recording fake at the `httpx.post`
+    boundary, for all three adapters."""
+
+    @staticmethod
+    def _transporte_grabador(respuesta_json):
+        llamadas = []
+
+        def _post(url, *, json=None, timeout=None, headers=None, params=None):
+            llamadas.append({"url": url, "params": params, "headers": dict(headers or {})})
+
+            class _Respuesta:
+                def raise_for_status(self):
+                    pass
+
+                def json(self):
+                    return respuesta_json
+            return _Respuesta()
+        return llamadas, _post
+
+    def test_anthropic_key_is_only_in_the_x_api_key_header(self):
+        llamadas, post = self._transporte_grabador(
+            {"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn", "usage": {}})
+        with patch("httpx.post", side_effect=post):
+            prov = cliente.Anthropic("claude-sonnet-5-5", "sk-clave-secreta")
+            prov.responder("sis", [{"rol": "usuario", "bloques": [{"tipo": "texto", "texto": "x"}]}], [])
+        llamada = llamadas[0]
+        self.assertNotIn("sk-clave-secreta", llamada["url"])
+        self.assertIsNone(llamada["params"])
+        self.assertEqual(llamada["headers"].get("x-api-key"), "sk-clave-secreta")
+
+    def test_openai_key_is_only_in_the_authorization_header(self):
+        llamadas, post = self._transporte_grabador(
+            {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}], "usage": {}})
+        with patch("httpx.post", side_effect=post):
+            prov = cliente.OpenAI("gpt-x", "sk-clave-secreta-openai")
+            prov.responder("sis", [{"rol": "usuario", "bloques": [{"tipo": "texto", "texto": "x"}]}], [])
+        llamada = llamadas[0]
+        self.assertNotIn("sk-clave-secreta-openai", llamada["url"])
+        self.assertIsNone(llamada["params"])
+        self.assertEqual(llamada["headers"].get("authorization"), "Bearer sk-clave-secreta-openai")
+
+    def test_gemini_key_is_only_in_the_x_goog_api_key_header_never_in_params(self):
+        llamadas, post = self._transporte_grabador(
+            {"candidates": [{"content": {"parts": [{"text": "ok"}]}, "finishReason": "STOP"}],
+             "usageMetadata": {}})
+        with patch("httpx.post", side_effect=post):
+            prov = cliente.Gemini("gemini-x", "key-clave-secreta")
+            prov.responder("sis", [{"rol": "usuario", "bloques": [{"tipo": "texto", "texto": "x"}]}], [])
+        llamada = llamadas[0]
+        self.assertNotIn("key-clave-secreta", llamada["url"])
+        self.assertIsNone(llamada["params"])
+        self.assertEqual(llamada["headers"].get("x-goog-api-key"), "key-clave-secreta")
+
+
 class NoLoggedBodyTest(unittest.TestCase):
     """Decision 1: never log a request or response body, a prompt, a tool result, or a key --
     only an error's class name or HTTP status."""

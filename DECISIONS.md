@@ -2148,3 +2148,47 @@ not pre-declared, blank, in the example file -- see `deviations`), without touch
 
 Branch: `feat/body-asistente-proveedor-1`, not merged. Awaiting review of the schema and the new
 customer-facing strings.
+
+## BODY-ASISTENTE-PROVEEDOR-1-M -- lands BODY-ASISTENTE-PROVEEDOR-1 with three fixes (2026-11-07)
+
+Approved by the orchestrator under `ORCH-CARLOS-DELEGATES-TIER-1-1` after review (the review
+covered `cliente.py`, `bucle.py`, `conversacion.py`, `uso.py` and the privacy coverage); three
+fixes required before landing.
+
+**Fix (a), key out of the URL** (`body/agente/cliente.py`): `Gemini._post_real` sent its key as
+`params={"key": self.api_key}` -- a query parameter that any HTTP access log can carry. It now
+sends it in the `x-goog-api-key` header, alongside `content-type`, with no `params` at all --
+matching how Anthropic (`x-api-key`) and OpenAI (`authorization: Bearer`) already send theirs.
+Test (`NoKeyInUrlTest`, `tests/test_agente_cliente.py`): a recording fake patched onto `httpx.post`
+for all three adapters asserts the key string appears in no URL and no `params`, only in the one
+named header.
+
+**Fix (b), the person's own day** (`body/agente/uso.py`): `verificar_tope` compared `creado_en`
+(UTC) against `LIKE '<UTC today>%'` -- a Bogota person's 11pm-1am window was bucketed by UTC's
+calendar day, not theirs. `_rango_dia_local_utc` now reads `person.timezone` (default
+`America/Bogota`, same column and default `web.py` already uses via `ZoneInfo`), builds [local
+midnight, next local midnight) in that zone from `_ahora_utc()` (split out from `_ahora` so a test
+can freeze "now"), converts both bounds to UTC and queries `creado_en` by range (`>= ... < ...`),
+never `LIKE`. Test (`LocalDayBoundaryTest`): with "now" frozen at Bogota 2026-11-02 00:30 (UTC
+2026-11-02 05:30), a row at Bogota 2026-11-01 23:30 (UTC 04:30, same UTC calendar day) is NOT
+counted as today; a row at Bogota 2026-11-02 00:15 (UTC 05:15) IS.
+
+**Fix (c), row-by-row pricing** (`body/agente/uso.py`): `_gasto_hoy_micro_usd` priced every row of
+the day at the CURRENT request's `(proveedor, modelo)` prices, so a person who switched models
+mid-day had yesterday's-model rows mispriced at today's model's rate. It now looks up each row's
+OWN `(proveedor, modelo)` prices (cached per key within the call) and sums each at its own rate;
+if any of today's rows carries a model with no full price, the function returns `None` and
+`verificar_tope` falls back to the COUNT breaker for the whole check (amendment 5: never cost
+anything at 0). Tests (`RowByRowPricingTest`): two rows under two different priced models sum to
+exactly each model's own rate (a ceiling set between the correct sum and what pricing every row at
+the current model's rate alone would give discriminates the fix); one of today's rows carrying an
+unpriced model forces the count breaker.
+
+No schema change (the existing `creado_en` index already supports a range query; `person.timezone`
+already existed) and no new customer-facing bytes -- merge policy A's three conditions all clear,
+so this slice merges on green without a further stop.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 460 tests, OK (1 skipped,
+pre-existing). 453 at `feat/body-asistente-proveedor-1`'s tip, plus 7 new here (3 + 4).
+
+Merge: `--no-ff` into `main`.
