@@ -8,13 +8,19 @@
 </div></div>
 
 <div class="seg" style="margin-bottom:12px">
-  {% for x in ranges %}<a class="btn{% if r == x %} on{% endif %}" href="/trends{% if x != 'all' %}?r={{ x }}{% endif %}"{% if r == x %} aria-current="page"{% endif %}>{{ t('trends.r.' + x) }}</a>{% endfor %}
+  {% for x in ranges %}
+  {% set qs = [] %}
+  {% if x != 'all' %}{% set _ = qs.append('r=' + x) %}{% endif %}
+  {% if todas %}{% set _ = qs.append('todas=1') %}{% endif %}
+  <a class="btn{% if r == x %} on{% endif %}" href="/trends{% if qs %}?{{ qs|join('&') }}{% endif %}"{% if r == x %} aria-current="page"{% endif %}>{{ t('trends.r.' + x) }}</a>
+  {% endfor %}
 </div>
 {% if month_title %}<p style="margin:0 0 12px"><a href="/trends">{{ t('trends.back_hist') }}</a></p>{% endif %}
 
-{% for c in cards %}
+{% macro render_card(c) %}
 <div class="card" id="{{ c.key }}">
   <div class="q">{{ c.question }}</div>
+  {% if c.subtitle %}<p class="sub" style="margin:2px 0 8px">{{ c.subtitle }}</p>{% endif %}
   <div class="row" style="align-items:flex-end">
     <div>{% if c.est and c.last30 != '—' %}<span class="approx fig">≈</span>{% endif %}<span class="fig">{{ c.last30 }}</span><span class="u">{{ c.unit }} · {{ fig_label }}</span></div>
     <div class="delta {{ c.cls }}" style="text-align:right">{{ c.delta }}</div>
@@ -27,8 +33,20 @@
     {% if nights %}<span><i style="background:var(--night);opacity:.35"></i>{{ t('trends.nights') }}</span>{% endif %}
   </div>
 </div>
-{% endfor %}
+{% endmacro %}
+
+{% for c in cards %}{{ render_card(c) }}{% endfor %}
 <p class="note">{{ t('trends.tap_month') if r == 'all' else t('trends.tap_day') }}</p>
+
+{% if extra_groups %}
+<details class="files" style="margin-top:10px"{% if todas %} open{% endif %}>
+  <summary class="k">{{ t('trends.ver_todas', n=extra_count) }}</summary>
+  {% for g in extra_groups %}
+  <h2>{{ g.title }}</h2>
+  {% for c in g.cards %}{{ render_card(c) }}{% endfor %}
+  {% endfor %}
+</details>
+{% endif %}
 
 {% if week %}
 <div class="card">

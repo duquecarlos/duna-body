@@ -3290,3 +3290,62 @@ slice only inserts rows into it, never alters `body/db.py`), no cross-repo contr
 customer-facing bytes (a JSON price file, a loader module, and a one-process auto-seed are server-side; the
 README paragraph documents the mechanism for an operator, not a screen a person reads). Merge policy A's three
 conditions all pass, so this slice merges on green without waiting.
+
+## BODY-TENDENCIAS-TODAS-1 -- Tendencias gains "Ver todas las medidas" for the rest of the catalogue (2026-11-07)
+
+Tendencias wave 5 showed 9 of the catalogue's measures (`TREND_KEYS`) while Body stores more every day. This
+slice adds a "Ver todas las medidas" control (DESIGN rule 8, simple by default and detail on demand) that opens
+the rest, grouped by plain-word topic, each card built exactly like the existing 9.
+
+**`body/web.py`**: `TREND_GROUPS`, the single source both the page and the tests read -- five groups, each key
+re-checked against `METRIC_DEFS` by `tests/test_tendencias_todas.py` (a key that is not there fails the test):
+- **Sueño / Sleep**: `sleep_score`, `sleep_deep_min`, `sleep_rem_min`, `sleep_light_min`, `sleep_awake_min`
+- **Energía / Energy**: `body_battery_high`, `body_battery_low`, `body_battery_sleep_charge`
+- **Estrés / Stress**: `stress_avg`, `high_stress_min`
+- **Actividad / Activity**: `intensity_minutes`, `active_kcal`
+- **Respiración / Breathing**: `respiration_awake`
+
+Deliberately never shown anywhere: `sleep_need_min` (Garmin's own target, not a measure of the person).
+
+The existing per-metric loop body was pulled into one helper, `_trend_card(conn, t, defs, k, start, end, month,
+nights, person_id)`, so the default 9 and every extra metric build their card through the exact same code path:
+own baseline, `TREND_MIN_DAYS` (14), honest gaps, night shading, the month tap. Direction-neutral metrics
+(`active_kcal`, `sleep_light_min`, `respiration_awake`) show the value and the baseline with no better/worse
+colour -- already the behaviour of the existing `_compare` helper for `better == "neutral"`, needing no new
+branch. The route gained a `todas` query parameter (`todas=1` keeps the control open across a range switch);
+the range-selector links in the template now carry it forward when it is set.
+
+**`body/templates/trends.html`**: a `render_card` macro (same markup the 9 cards always used, now shared), and
+a `<details class="files">` -- the house "see more" pattern already used in `history.html`, `shifts.html` and
+`goals.html` -- holding one `<h2>` per non-empty group and that group's cards. The control's own summary line
+reads "Ver todas las medidas ({n} más)", `n` counting only the extra cards that actually have data; a group
+with zero cards is omitted entirely, and when no extra metric has data the whole control is not rendered.
+
+**`body/i18n/es.json` / `en.json`**: a question line (`trends.q.<key>`) and a plain-word subtitle
+(`trends.plain.<key>`) for each of the 13 extra metrics, plus the 5 group titles and `trends.ver_todas`. No
+medical claims (DESIGN rule 12); subtitles as written, es: REM "la fase de sueño de los sueños", despierto en
+la noche "minutos despierto durante la noche", carga nocturna "cuánta energía recuperaste durmiendo", estrés
+alto "minutos con estrés alto en el día", respiración "respiraciones por minuto despierto".
+
+**`body/agente/herramientas.py`**: `TENDENCIA_METRICAS` gains the 13 group keys so the assistant's
+`leer_tendencias` tool can answer about any of them; its `nivel` stays `resumen`, unchanged.
+
+**Tests** (`tests/test_tendencias_todas.py`, 13 tests, `tests/_isolate` imported first, two persons, invented
+demo data): every group key exists in `METRIC_DEFS`; `sleep_need_min` is in no group; with data for some extras
+the 9 default cards render outside the `<details>` and the extra cards render inside it, grouped, with the
+summary's count correct; a group with zero cards is omitted (breathing, left unseeded); a metric with fewer
+than `TREND_MIN_DAYS` rows gets no card (`sleep_awake_min`, seeded with 5 days); a neutral metric's card never
+carries `delta good`/`delta bad`; person B never sees person A's extra cards, and an all-default-only person
+gets no control at all; `todas=1` renders the `<details>` open and the range-selector links carry `todas=1`
+forward; the page renders in `es` and in `en`; the assistant's `leer_tendencias` tool accepts `sleep_rem_min`.
+Also re-ran `tests/test_agente_registro.py` and `tests/test_vo2max.py` directly to check for regressions in the
+registry and the existing trends page -- both green, unchanged.
+
+**Gate:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 691 tests, OK (1 pre-existing skip), run
+once on this slice's final tree.
+
+**Merge.** The diff has no schema or migration change (`METRIC_DEFS` and the `metric_def` table already carried
+every group key; nothing in `body/db.py` changed) and no cross-repo contract change, but it DOES change
+customer-facing bytes: new question lines, new plain-word subtitles, new group titles, and a new on-screen
+control, all read by a person on the Tendencias screen. Merge policy A's customer-bytes condition trips, so
+this slice stops before the merge with `AWAITING_APPROVAL` rather than merging on green.

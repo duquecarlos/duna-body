@@ -25,7 +25,10 @@ from ..i18n import LANGS
 from . import ajustes, propuestas
 
 TENDENCIA_METRICAS = ("readiness", "sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake", "steps",
-                      "vo2max", "fitness_age")
+                      "vo2max", "fitness_age",
+                      "sleep_score", "sleep_deep_min", "sleep_rem_min", "sleep_light_min", "sleep_awake_min",
+                      "body_battery_high", "body_battery_low", "body_battery_sleep_charge",
+                      "stress_avg", "high_stress_min", "intensity_minutes", "active_kcal", "respiration_awake")
 RANGOS = ("7", "30", "90", "all")
 
 _SIN_PARAMETROS = {"type": "object", "properties": {}, "additionalProperties": False}
