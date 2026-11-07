@@ -1,0 +1,18 @@
+[Unit]
+Description=Body app hosted Garmin backfill (last 90 days)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=duna-body
+EnvironmentFile=/srv/duna/env/body.env
+Environment=BODY_HOME=/srv/duna/data/body
+WorkingDirectory=/srv/duna/repos/duna-body
+ExecStart=/srv/duna/repos/duna-body/.venv/bin/python -m body.pull --backfill
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/srv/duna/data/body
+PrivateTmp=yes
+UMask=0077

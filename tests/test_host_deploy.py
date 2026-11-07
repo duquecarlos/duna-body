@@ -13,6 +13,8 @@ SUDOERS = HOST_DIR / "duna-deploy-body.sudoers"
 WEB_UNIT = HOST_DIR / "body-web.service"
 PULL_UNIT = HOST_DIR / "body-pull.service"
 PULL_TIMER = HOST_DIR / "body-pull.timer"
+BACKFILL_UNIT = HOST_DIR / "body-backfill.service"
+BACKFILL_TIMER = HOST_DIR / "body-backfill.timer"
 CADDYFILE = HOST_DIR / "Caddyfile.body"
 ENV_EXAMPLE = HOST_DIR / "body.env.example"
 README = HOST_DIR / "README.md"
@@ -252,7 +254,7 @@ class InstallCaddySiteIfChangedTest(unittest.TestCase):
 
 class ServiceHardeningTest(unittest.TestCase):
     def test_umask_and_protecthome_in_every_service(self):
-        for path in (WEB_UNIT, PULL_UNIT):
+        for path in (WEB_UNIT, PULL_UNIT, BACKFILL_UNIT):
             text = _read(path)
             self.assertIn("UMask=0077", text, f"{path.name} missing UMask=0077")
             self.assertIn("ProtectHome=yes", text, f"{path.name} missing ProtectHome=yes")
@@ -390,6 +392,27 @@ class SystemdUnitTest(unittest.TestCase):
         timer = _read(PULL_TIMER)
         self.assertIn("OnCalendar=", timer)
         self.assertIn("Persistent=true", timer)
+
+    def test_backfill_unit_and_timer(self):
+        unit = _read(BACKFILL_UNIT)
+        self.assertIn("User=duna-body", unit)
+        self.assertIn("EnvironmentFile=", unit)
+        self.assertIn("UMask=0077", unit)
+        self.assertIn("Type=oneshot", unit)
+        exec_starts = [l for l in unit.splitlines() if l.startswith("ExecStart=")]
+        self.assertEqual(len(exec_starts), 1)
+        self.assertIn("body.pull --backfill", exec_starts[0])
+        timer = _read(BACKFILL_TIMER)
+        self.assertIn("OnBootSec=2min", timer)
+        self.assertIn("OnUnitActiveSec=10min", timer)
+
+    def test_backfill_unit_installed_and_enabled(self):
+        text = _read(PRODUCT)
+        units_line = next(l for l in text.splitlines() if l.startswith("UNITS="))
+        enable_line = next(l for l in text.splitlines() if l.startswith("run systemctl enable"))
+        self.assertIn("body-backfill.service", units_line)
+        self.assertIn("body-backfill.timer", units_line)
+        self.assertIn("body-backfill.timer", enable_line)
 
     def test_vida_unit_retired(self):
         text = _read(PRODUCT)

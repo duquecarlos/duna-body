@@ -290,9 +290,10 @@ def _sync_status_text(conn, person: dict, t: T) -> str:
     """An empty state never dead-ends (BODY-SIN-FRICCION-1): say the sync runs on its own and name the
     last successful sync's date, if one is recorded. Never invents a schedule time -- the actual time
     is a per-install Task Scheduler setting (scripts/install-daily-sync.ps1 -At) this app cannot read.
-    In hosted mode, with no sync yet, WHEN data will arrive is knowable (BODY-PRIMER-DIA-1): the host
-    pull runs once a day, in the morning, so a connected watch says so instead of just "it hasn't
-    synced yet"; a watch not yet connected keeps that sentence and adds a link to connect one."""
+    In hosted mode, with no sync yet, WHEN data will arrive is knowable: a connected watch's first
+    figures come from the --backfill timer within minutes, not the next day's pull (BODY-PRIMER-
+    PULL-1), so a connected watch says so instead of just "it hasn't synced yet"; a watch not yet
+    connected keeps that sentence and adds a link to connect one."""
     ts = db.last_sync(conn, person["id"])
     if ts:
         tz = ZoneInfo(person.get("timezone") or "America/Bogota")

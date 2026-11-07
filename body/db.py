@@ -324,13 +324,15 @@ CREATE TABLE IF NOT EXISTS consentimiento (
 );
 
 -- Each hosted person's Garmin token, encrypted at rest (BODY-GARMIN-HOST-1). ultimo_error holds
--- an error CLASS name only (e.g. 'NotSignedIn'), never a message.
+-- an error CLASS name only (e.g. 'NotSignedIn'), never a message. backfill_hasta (BODY-PRIMER-
+-- PULL-1) is the oldest day --backfill has already attempted for this person; NULL = not started.
 CREATE TABLE IF NOT EXISTS garmin_cuenta (
-    person_id     INTEGER PRIMARY KEY REFERENCES person(id),
-    token_cifrado BLOB NOT NULL,
-    nonce         BLOB NOT NULL,
-    conectado_en  TEXT NOT NULL,
-    ultimo_error  TEXT
+    person_id      INTEGER PRIMARY KEY REFERENCES person(id),
+    token_cifrado  BLOB NOT NULL,
+    nonce          BLOB NOT NULL,
+    conectado_en   TEXT NOT NULL,
+    ultimo_error   TEXT,
+    backfill_hasta TEXT
 );
 
 -- A proposal the assistant made: nothing on the target changes until the person taps Aplicar in
@@ -436,6 +438,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     acols = {r[1] for r in conn.execute("PRAGMA table_info(ajuste_agente)")}
     if acols and "proveedor" not in acols:
         conn.execute("ALTER TABLE ajuste_agente ADD COLUMN proveedor TEXT")
+    gcols = {r[1] for r in conn.execute("PRAGMA table_info(garmin_cuenta)")}
+    if gcols and "backfill_hasta" not in gcols:
+        conn.execute("ALTER TABLE garmin_cuenta ADD COLUMN backfill_hasta TEXT")
     # Closes the gap the PK leaves open: SQLite treats each NULL start_local as distinct, so two off-day
     # rows for the same person and day do not collide on the primary key alone (BODY-TURNOS-IMPORT-OBS-1).
     # Never a DELETE here: on IntegrityError the table is left untouched and the missing index is reported
