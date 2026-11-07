@@ -302,6 +302,47 @@ Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 66 tests, OK
 Merge commit: recorded in the next entry's git history (this entry precedes the `--no-ff` merge, per
 `BODY-TURNOS-IMPORT-1-M`'s precedent).
 
+## BODY-WEB-AUTOSTART-1 -- the web app runs without a hand step (2026-11-06)
+
+Carlos wants his hand steps close to zero: today the web app ran only when someone started it, so after the shift
+import proposed 33 batches there was no current server for him to confirm them in. `scripts/install-daily-sync.ps1`
+now registers a third task, "Body app web", alongside the existing daily sync and weekly file.
+
+The task runs `-m body.web --port $Port` (new `[int]$Port = 8770` parameter), plus ` --lan` only inside the
+`if ($Lan)` branch (new `[switch]$Lan`); local-only is the default -- opening it to the home network is one
+explicit flag, never the default, per `body/listen.py`'s own local-first rule. Its trigger is
+`New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME`, its own settings object (`$webSettings`, never the shared
+`$settings` the other two tasks use, since this one must not wait on a network condition to start): no network
+condition, `-ExecutionTimeLimit ([TimeSpan]::Zero)` so it runs indefinitely, `-RestartCount 3 -RestartInterval
+(New-TimeSpan -Minutes 1)` so a crash recovers on its own, `-MultipleInstances IgnoreNew` so a logon during an
+already-running session cannot start a second copy. Right after `-Force` registering, any already-running instance
+of the task is stopped (`Stop-ScheduledTask`, `-ErrorAction SilentlyContinue` for "not running") and then started
+again (`Start-ScheduledTask`), so a re-install picks up new code immediately rather than waiting for the next
+logon. The action uses `pythonw.exe` from the venv when it exists there (no console window popping up at logon),
+falling back to `python.exe` otherwise -- `pythonw.exe` was present in this repository's `.venv\Scripts`, so that
+is the executable the registered task actually uses. The header comment and the three-task remove line were
+updated to match; the final `Write-Host` gained a line with the local URL and, only when `-Lan` is passed, the
+plain warning that every device on the home network can open it.
+
+No `body/listen.py` or `body/web.py` change -- the task only ever passes the flags those modules already accept
+(`--lan`, `--port`), so Tier 1 is untouched.
+
+`README.md` gained a short "Keep it running" section: the install line (with and without `-Lan`), and what each of
+the three tasks does, no personal path.
+
+`tests/test_installer.py` (new, 6 tests, `tests/_isolate.py` imported first): reads the `.ps1` as text and asserts
+the web task's trigger assignment contains `New-ScheduledTaskTrigger` and `-AtLogOn`, and that its
+`Register-ScheduledTask` call passes `-Trigger $webTrigger`; `--lan` appears only inside the `if ($Lan) { ... }`
+block and nowhere else in the file; the literal `0.0.0.0` never appears; no `C:\Duna` or `C:\Users` absolute path
+appears; the web task's `Register-ScheduledTask` call uses `-Settings $webSettings`, never `-Settings $settings`;
+the `# Remove with:` comment line names all three task names.
+
+No schema or migration change; no cross-repo contract change; the installer's console output and the README are
+not customer-facing application bytes (no screen, no i18n string). Merges on green per merge policy A.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 97 tests, OK (91 before this slice, 6 added
+here), run once on the final branch tree before this entry.
+
 ## BODY-HISTORIA-POLISH-1 -- round 1 polish of «Tu historia» (2026-11-06)
 
 The orchestrator measured `/history` at 375 px on real data after BODY-HISTORIA-1 (`6f487ef`) and found four shapes
