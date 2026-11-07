@@ -5,7 +5,7 @@
   <div><h1>{{ date_long }}</h1><p class="sub">{{ t('day.title') }}</p></div>
   <div class="navday"><a class="btn" href="/day/{{ prev }}" aria-label="{{ t('day.prev') }}">‹</a><a class="btn" href="/day/{{ next }}" aria-label="{{ t('day.next') }}">›</a></div>
 </div>
-{% if not has_data %}<div class="card empty">{{ t('day.no_data') }}</div>{% endif %}
+{% if not has_data %}<div class="card empty"><p class="read" style="margin:0">{{ t('day.no_data') }}</p><p class="note" style="margin:6px 0 0">{{ sync_text }}</p></div>{% endif %}
 {% if sleep %}
 <h2>{{ t('day.sleep') }}</h2>
 <div class="card" id="sleep_minutes">

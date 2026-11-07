@@ -23,7 +23,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from . import db, garmin_adapter, goals, history, household, listen, profile, readiness, shift_import
+from . import db, goals, history, household, listen, profile, readiness, shift_import
 from .baselines import baseline
 from .i18n import LANGS, T
 
@@ -152,6 +152,18 @@ def _synced(conn, person) -> str | None:
     return local.strftime("%H:%M") if local.date() == datetime.now(tz).date() else None
 
 
+def _sync_status_text(conn, person: dict, t: T) -> str:
+    """An empty state never dead-ends (BODY-SIN-FRICCION-1): say the sync runs on its own and name the
+    last successful sync's date, if one is recorded. Never invents a schedule time -- the actual time
+    is a per-install Task Scheduler setting (scripts/install-daily-sync.ps1 -At) this app cannot read."""
+    ts = db.last_sync(conn)
+    if not ts:
+        return t("sync.runs") + " " + t("sync.none_yet")
+    tz = ZoneInfo(person.get("timezone") or "America/Bogota")
+    last_date = datetime.fromisoformat(ts).astimezone(tz).date()
+    return t("sync.runs") + " " + t("sync.last", date=_short_date(t, last_date))
+
+
 def _parse_day(day: str) -> date:
     try:
         return date.fromisoformat(day)
@@ -172,8 +184,8 @@ def today():
         (db.DEFAULT_PERSON_ID,),
     ).fetchone()["n"]
     if not day:
-        cmd = "python -m body.pull" if garmin_adapter.has_token() else "python -m body.login"
-        return _render("soon.html", t=t, tab="today", title=t("today.title"), text=t("today.empty", cmd=cmd))
+        return _render("soon.html", t=t, tab="today", title=t("today.title"),
+                       text=_sync_status_text(conn, person, t))
     defs = _defs(conn)
     vals = db.day_values(conn, day)
     r = readiness.compute(conn, day)
@@ -253,8 +265,10 @@ def day_view(day: str):
         acts.append({"name": a["name"] or a["type"] or "—", "detail": " · ".join(bits)})
     shifts = [{"kind": s["kind"], "text": f"{s['kind']}{' (' + s['code'] + ')' if s['code'] else ''} "
                f"{(s['start_local'] or '')[11:16]} → {(s['end_local'] or '')[11:16]}"} for s in data["shifts"]]
+    has_data = any(v is not None for v in vals.values())
     return _render("day.html", t=t, tab="today", date_long=t.long_date(d), cards=cards, sleep=sleep,
-                   activities=acts, shifts=shifts, has_data=any(v is not None for v in vals.values()),
+                   activities=acts, shifts=shifts, has_data=has_data,
+                   sync_text=None if has_data else _sync_status_text(conn, person, t),
                    prev=(d - timedelta(1)).isoformat(), next=(d + timedelta(1)).isoformat())
 
 
@@ -332,6 +346,19 @@ async def shifts_dismiss(request: Request):
 
 TREND_KEYS = ["readiness", "sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake", "steps"]
 WEEK_KEYS = ["readiness", "sleep_minutes", "hrv_last_night", "resting_hr"]
+TREND_MIN_DAYS = 14  # body/profile.py's metric_profile() needs this many rows before a metric gets a card
+
+
+def _trend_days_have(conn) -> int:
+    """How many days the best-covered trend metric already has, for the honest-gap message below
+    TREND_MIN_DAYS -- a count, never a figure (BODY-SIN-FRICCION-1)."""
+    placeholders = ",".join("?" * len(TREND_KEYS))
+    rows = conn.execute(
+        f"SELECT COUNT(*) AS n FROM daily_metric WHERE person_id = ? AND metric_key IN ({placeholders}) "
+        "GROUP BY metric_key",
+        (db.DEFAULT_PERSON_ID, *TREND_KEYS),
+    ).fetchall()
+    return max((r["n"] for r in rows), default=0)
 
 
 RANGES = ["7", "30", "90", "all"]
@@ -401,7 +428,12 @@ def trends(r: str = "all", m: str | None = None):
                       "last30": _value(t, k, fig), "unit": _unit(t, d) if fig is not None else "", "delta": delta,
                       "cls": cls, "svg": svg, "low": _value(t, k, p.low), "high": _value(t, k, p.high)})
     if not cards:
-        return _render("soon.html", t=t, tab="trends", title=t("nav.trends"), text=t("soon.trends"))
+        have = _trend_days_have(conn)
+        if have:
+            return _render("soon.html", t=t, tab="trends", title=t("nav.trends"),
+                           text=t("trends.too_little", days=TREND_MIN_DAYS - have))
+        return _render("soon.html", t=t, tab="trends", title=t("nav.trends"),
+                       text=_sync_status_text(conn, person, t))
     week = None
     profs = [profile.metric_profile(conn, k) for k in WEEK_KEYS]
     if all(profs):
@@ -534,7 +566,8 @@ def history_view():
     conn, person, t = _ctx()
     cov = history.coverage(conn)
     if not cov:
-        return _render("soon.html", t=t, tab="trends", title=t("history.title"), text=t("soon.trends"))
+        return _render("soon.html", t=t, tab="trends", title=t("history.title"),
+                       text=_sync_status_text(conn, person, t))
     defs = _defs(conn)
     train = history.training(conn)
     pat = history.patterns(conn)
@@ -581,6 +614,25 @@ def _cadence_text(t: T, cadence: dict) -> str:
 
 def _context_label(t: T, context: str | None) -> str | None:
     return t("habit.context." + context) if context else None
+
+
+def _parse_new_habit(f: dict, prefix: str = "") -> tuple[str | None, dict | None]:
+    """Reads title/times/per/context fields the same way for the goal detail's 'add a habit' form
+    and goal creation's optional first-habit block (BODY-SIN-FRICCION-1, prefix='habit_' there so
+    its fields never collide with the goal's own 'title'). Empty title = no habit, (None, None)."""
+    title = (f.get(prefix + "title") or "").strip()
+    if not title:
+        return None, None
+    per = f.get(prefix + "per") if f.get(prefix + "per") in ("day", "week", "month") else "week"
+    try:
+        times = max(1, int(f.get(prefix + "times", "1")))
+    except ValueError:
+        times = 1
+    context = f.get(prefix + "context") or None
+    cadence = {"per": per, "times": times}
+    if context in CONTEXTS:
+        cadence["context"] = context
+    return title, cadence
 
 
 def _due_days_for(conn, person_id: int, monday: date, context: str | None) -> list[str]:
@@ -816,6 +868,9 @@ async def goal_new_create(request: Request):
             return RedirectResponse("/goals/new", status_code=303)
         gid = goals.propose(conn, person_id, title, today, area=area, why=why, kind="milestone",
                             deadline=f["deadline"], hogar_id=hogar_id, visibility=visibility)
+    habit_title, habit_cadence = _parse_new_habit(f, "habit_")
+    if habit_title:
+        goals.add_habit(conn, gid, habit_title, habit_cadence)
     return RedirectResponse(f"/goals/{gid}", status_code=303)
 
 
@@ -922,17 +977,8 @@ async def goal_add_habit(goal_id: int, request: Request):
     if not conn.execute("SELECT 1 FROM goal WHERE id = ? AND person_id = ?", (goal_id, person_id)).fetchone():
         raise HTTPException(404)
     f = await _form(request)
-    title = (f.get("title") or "").strip()
+    title, cadence = _parse_new_habit(f)
     if title:
-        per = f.get("per") if f.get("per") in ("day", "week", "month") else "week"
-        try:
-            times = max(1, int(f.get("times", "1")))
-        except ValueError:
-            times = 1
-        context = f.get("context") or None
-        cadence = {"per": per, "times": times}
-        if context in CONTEXTS:
-            cadence["context"] = context
         goals.add_habit(conn, goal_id, title, cadence)
     return RedirectResponse(f"/goals/{goal_id}", status_code=303)
 
