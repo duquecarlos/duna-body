@@ -207,6 +207,13 @@ CREATE TABLE IF NOT EXISTS plan (
     booking   TEXT CHECK (booking IS NULL OR json_valid(booking)),
     status    TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'accepted', 'done', 'skipped'))
 );
+
+-- How much health data the assistant's tools may read for this person (wave 7, stage one).
+CREATE TABLE IF NOT EXISTS ajuste_agente (
+    person_id  INTEGER PRIMARY KEY REFERENCES person(id),
+    nivel_datos TEXT NOT NULL DEFAULT 'completo' CHECK (nivel_datos IN ('completo', 'resumen', 'ninguno')),
+    updated_at TEXT NOT NULL
+);
 """
 
 # (key, label, unit, better, kind). 'estimated' = computed by Body, shown with «≈» and "how I calculate it".

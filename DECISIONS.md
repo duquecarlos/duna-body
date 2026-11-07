@@ -721,3 +721,95 @@ green without stopping for approval.
 
 Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 116 tests, OK (110 before this slice, 6
 added here), run once on the final branch tree before this entry.
+
+## BODY-ASISTENTE-REGISTRO-1 -- stage one of the assistant: nivel_datos and a static lectura tool registry (2026-11-06)
+
+Carries out BODY-ASISTENTE-OBS-1 (OBSERVED, 2026-11-06), slice (a) of its plan: the data half of wave 7's
+assistant, with no model call, no provider client and no screen. Two pieces.
+
+**`ajuste_agente`** (`body/db.py`'s `SCHEMA`, one `CREATE TABLE IF NOT EXISTS`, additive, no rebuild, no
+existing row touched): `person_id INTEGER PRIMARY KEY REFERENCES person(id)`, `nivel_datos TEXT NOT NULL
+DEFAULT 'completo' CHECK(nivel_datos IN ('completo','resumen','ninguno'))`, `updated_at TEXT NOT NULL`. The
+three levels and the default are Carlos's own answer, recorded in the Body orchestrator's ledger as
+BODY-ASSISTANT-DATA-LEVEL-1 ("Assistant: 1."). `body/agente/ajustes.py` reads it (`nivel_datos`, row or
+`"completo"` with no row) and writes it (`set_nivel_datos`, validated against the `NIVELES` tuple, upserted,
+`updated_at` stamped) -- the only writer this slice adds.
+
+**The registry**, `body/agente/herramientas.py`, `HERRAMIENTAS`: nine entries, every one `tipo: "lectura"`,
+each `nombre` -> minimum `nivel`:
+
+| nombre | nivel | screen |
+|---|---|---|
+| `leer_hoy` | completo | `/` |
+| `leer_dia` | completo | `/day/{day}` |
+| `leer_como_calculo` | completo | `/how/{day}` |
+| `leer_tendencias` | resumen | `/trends` |
+| `leer_historia` | resumen | `/history` |
+| `leer_metas` | resumen | `/goals` |
+| `leer_meta` | resumen | `/goals/{goal_id}` |
+| `leer_turnos` | ninguno | `/shifts` |
+| `leer_ajustes` | ninguno | `/settings` |
+
+Each `funcion(conn, person_id, **params)` calls an existing read function (`readiness.compute`,
+`db.day_values`, `db.load_day`, `db.person`, `db.days_with_data`, `profile.metric_profile`, `profile.window`,
+`history.coverage/training/patterns/by_shift`, `shift_import.summary_proposed/latest_confirmed`) or a plain
+`SELECT`; none calls `body/web.py`, so the module stays free of FastAPI/Jinja. `leer_metas` and `leer_meta`
+read the newest EXISTING `goal_check` row with a direct `SELECT ... ORDER BY week_start DESC LIMIT`, saying
+"sin verificación aún" when there is none, rather than calling `_goal_check_row` / `goals.weekly_check` --
+`/goals` and `/goals/{goal_id}` upsert that row on a normal visit, and a `lectura` tool must never write.
+`leer_tendencias`'s aggregates (means, p25/p75, counts) never include `profile.Window.values` (the per-day
+dict `window()` also returns), so a `resumen`-level answer never carries a single day's figure.
+
+`disponibles(nivel)` filters the registry by rank (`ninguno` < `resumen` < `completo`): `completo` returns all
+nine, `resumen` the six at `resumen`/`ninguno`, `ninguno` the two at `ninguno`. `ejecutar(conn, person_id,
+nombre, params, nivel)` raises `ToolError` for an unknown name, a tool above the caller's `nivel`, or
+parameters that fail the entry's small JSON-schema `parametros` dict (required keys, enum, type, and an ISO
+date format check) -- otherwise it calls the tool and returns its (JSON-serialisable) dict.
+
+**Tests**, `tests/test_agente_registro.py` (`_isolate` first, invented demo data only; 20 new): a `ROUTE_TOOL`
+mapping from every GET route in `body/web.py` (`app.routes`, `APIRoute`, `"GET" in r.methods`) to its tool or
+to `None` with a reason (`/goals/new` is a creation form, `/sw.js` a static asset) -- the test asserts the
+route set equals this mapping's keys exactly, so an added or removed GET route fails until the mapping is
+updated by hand. A STATIC guard (`ast` + `inspect`, bounded at depth 8, a `seen` set against cycles) walks
+each tool's source and the `body/`-module functions it calls, transitively, flagging a `conn.execute`/
+`executemany` whose first-argument string literal starts with INSERT/UPDATE/DELETE/REPLACE, or a call to any
+of the thirteen known writer names (`weekly_check`, `propose`, `activate`, `pause`, `finish`, `drop`,
+`add_habit`, `check_habit`, `confirm`, `confirm_all`, `dismiss`, `set_language`, `set_nivel_datos`) -- none of
+the nine reaches one. A BEHAVIOURAL guard runs every tool on a seeded database and asserts `conn.total_changes`
+does not move. `disponibles` is checked against the exact three level sets above; `ejecutar` is checked to
+refuse `leer_dia` at `resumen` and `ninguno`, an unknown tool name, and a call missing `leer_dia`'s required
+`day`. `leer_tendencias` and `leer_historia` are checked to carry no per-day value. `leer_metas`/`leer_meta`
+are checked to say "sin verificación aún" (and to leave `goal_check` at zero rows) when none exists yet, and
+`leer_meta` to report `encontrada: False` for an unknown `goal_id`. `nivel_datos` is checked for its
+`"completo"` default with no row, a set/get round trip, and refusal of an invalid level both by
+`set_nivel_datos` (`ValueError`) and by the table's own `CHECK` (`sqlite3.IntegrityError`). Every tool's
+output is checked to survive `json.dumps`.
+
+**Tier 1 path added**: `CLAUDE.md`'s Tier 1 sentence now also names `body/agente/cliente.py` ("the client that
+will send anything to a model provider ... the only module that may do so, once it exists"), so the slice
+that writes it is gated before it exists.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 136 tests, OK (116 before this slice, 20
+added here), run once on this slice's final tree.
+
+This slice's diff adds one `CREATE TABLE IF NOT EXISTS` to `body/db.py`'s `SCHEMA` -- a schema change, merge
+policy A's first condition. No customer-facing bytes (no template, no screen, no string a person reads) and
+no cross-repo contract change, but failing one condition is enough: per this slice's own spec ("Schema
+change: stop on the branch clean and report AWAITING_APPROVAL (merge policy A) unless the policy says
+otherwise") this stops on the branch, committed, unmerged, for approval.
+
+## BODY-ASISTENTE-REGISTRO-1-M -- landing BODY-ASISTENTE-REGISTRO-1 unchanged (2026-11-06)
+
+Approved by the orchestrator under `ORCH-CARLOS-DELEGATES-TIER-1-1` after reviewing the diff; merged unchanged.
+No code changed in this slice: only this ledger entry was added before the merge.
+
+Branch `feat/body-asistente-registro-1` was at `3a01e83621ae085227a140bc0d6131cb3ec19cb9`, cut from `main` at
+`62e0770901c97bab68d0ac7d3e7d866c7eaa08b0`. `main` had not moved since -- its tip was still
+`62e0770901c97bab68d0ac7d3e7d866c7eaa08b0`, equal to the branch's merge-base with it -- so nothing was merged
+forward into the branch first.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run once on the final tree (this entry's
+own commit, after the append above) -- 136 tests, OK.
+
+Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-asistente-registro-1` into `main`
+following this entry.
