@@ -4197,3 +4197,52 @@ tests -t .` -- `Ran 826 tests in 98.921s ... OK (skipped=1)` (812 before this sl
 customer-facing bytes (`sync.hosted_connected`'s es/en text) -- merge policy A's schema and customer-bytes
 conditions both trip, and this spec's approval authorises the build, not the merge. Committed on
 `feat/body-primer-pull-1`, gate green, nothing merged.
+
+## BODY-PRIMER-PULL-1-M -- lands BODY-PRIMER-PULL-1 with two fixes from the orchestrator's review (2026-11-07)
+
+ORCH-CARLOS-DELEGATES-TIER-1-1 approved BODY-PRIMER-PULL-1's diff (the `backfill_hasta` column and its
+migration, the marker/window walk, the lock, the units, the hosted empty-state text) but required two fixes
+before landing, both inside `body/pull.py`:
+
+**1. The daily hosted pull now waits for the lock instead of skipping.** `_run` used the same non-blocking
+`_try_lock()` for both the daily hosted pull (`deploy/host/body-pull.service`, `OnCalendar` 09:30 once a day)
+and `--backfill` (every 10 minutes). Skipping on a held lock is right for the backfill timer -- it tries again
+in 10 minutes -- but wrong for the daily pull, which would simply lose that day's run. A new `_esperar_lock
+(max_s)` polls `_try_lock()` every `LOCK_SONDEO_S` (5s) until it succeeds or `max_s` elapses, and the daily
+pull calls it with the new module constant `LOCK_ESPERA_S = 1800` (30 minutes); only past that bound does it
+print the existing skip line and exit 0. `--backfill` keeps calling `_try_lock()` directly, unchanged. One
+lock implementation throughout; no new dependency. Local mode is untouched -- it never takes the lock.
+
+**2. The backfill now skips a person whose last pull recorded an error.** `pull_backfill_hosted` retried
+every connected person every run, so a person with a rejected or expired token (`garmin_cuenta.ultimo_error`
+set by `registrar_error`) would be hit every 10 minutes indefinitely -- a real risk of Garmin rate-limiting or
+locking the account. It now checks `garmin_cuenta.ultimo_error(conn, person_id)` (the accessor already
+existed; `body/garmin_cuenta.py` was not in this slice's `touches:`, so nothing there changed) and skips such a
+person before any adapter call, without counting them as failed and without moving their backfill marker.
+Nothing else changes: the daily pull still tries everyone once a day and calls `limpiar_error` on success, and
+a reconnect (`garmin_cuenta.guardar`) already clears `ultimo_error` too -- either path lets the backfill
+resume on its own, with no new wiring needed.
+
+**Tests**, `tests/test_primer_pull_1.py` (+3 over BODY-PRIMER-PULL-1's 12): the existing held-lock daily-pull
+test was rewritten to patch `LOCK_ESPERA_S`/`LOCK_SONDEO_S` short and assert the same exit-0-with-skip-line
+behaviour now happens only once that bound elapses; a new test holds the lock, releases it from a
+`threading.Timer` shortly after, and proves the daily pull waits then completes (an adapter call happens) in
+real time but on a patched short bound, not a 30-minute sleep; two new `BackfillWindowTest` cases prove a
+person with a recorded error gets zero adapter calls and an unmoved marker while another connected person in
+the same run still backfills, and that a reconnect's `guardar` (clearing `ultimo_error`) lets the next run
+resume. `--backfill`'s own held-lock test was unaffected -- it still calls `_try_lock()` directly, unchanged.
+
+**Pre-flight.** Branch tip measured at `309a012e02c590a3619f104ea22492f5d3a0a6f5`, matching the spec. `git
+merge-base feat/body-primer-pull-1 main` equalled `main`'s own tip (`77005906f11107b7c90a2c35db1115c24595552e`),
+so `main` had not moved since the branch was cut; no merge-in-first step was needed.
+
+**Gate**, run once on the branch tip with the fixes committed: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -- `Ran 829 tests in 80.131s ... OK (skipped=1)` (826 before this slice, +3: the two new
+backfill-skip tests plus the one new waits-then-completes lock test; one existing test was rewritten, not
+added). Merged `--no-ff` into `main`; since `main` had not moved, the merge tree
+(`7f410873b6efc470d97bb77ec555ba364271ed08`) is identical to the branch tip's tree, so the gate was not re-run
+after the merge.
+
+**Merge.** This spec's approval said "Then merge." in words, and the actual diff (`body/pull.py`,
+`tests/test_primer_pull_1.py`) carries no schema change, no customer-facing bytes and no cross-repo contract --
+merge policy A's three conditions all pass. Merged `--no-ff` into `main`, which is left checked out, clean.
