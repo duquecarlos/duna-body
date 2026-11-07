@@ -3882,3 +3882,37 @@ new strings (`trends.back_dia`, `trends.back_como`) in both languages, Dia's met
 part-row labels becoming links, and the assistant's icon buttons and the three shift-card/Ayuda/sin-acceso
 links growing to 44px. Merge policy A's customer-bytes condition fails, so this slice stops before merging, on
 the branch, for the orchestrator to measure in a browser against the demo home, per the spec's own instruction.
+
+## BODY-PULIDO-1-M -- Ayuda's per-task link reaches 44px, Dia/Como open the Tendencias range that contains the
+day; lands BODY-PULIDO-1 (2026-11-07)
+
+The orchestrator measured BODY-PULIDO-1 in a real browser at 375 px against the demo home (per that entry's
+`AWAITING_APPROVAL`) and found two defects, both fixed here before the merge:
+
+**Ayuda's per-task link.** `ayuda.html`'s "Ir a la pantalla →" link (`{{ tarea.pantalla_link }}`, shown only
+when a task names a concrete screen) carried `style="text-decoration:underline"` alone -- no `.taplink`, so
+it measured well under 44px, unlike the chapter's own `recorrido` links which already had the class. It now
+carries `class="taplink"` in place of the inline style; `.taplink` already includes the underline, so the
+visible rendering is unchanged.
+
+**The Tendencias range now contains the day.** Dia's cards and Como lo calculo's part rows built their own
+measure's Tendencias link with a fixed `r=30`, so a day older than 30 days opened a 30-day window that did not
+contain it -- a dead-looking anchor jump. `web.py` gained `_rango_que_contiene(dia, today_local)`, used by both
+callers through `_tendencias_href` (now taking `today_local`): within the last 30 days of the person's own
+today -> `r=30`; within 90 -> `r=90`; older -> no `r` at all (Tendencias' monthly/all-time view, which reaches
+any day). `how()` and `day_view()` each compute `today_local` via the existing `_today_local(person)` helper
+and pass it through; no new helper for "today" was needed.
+
+**Tests**, `tests/test_pulido_1.py` (30 tests, up from 22): the three existing classes that built hrefs from a
+fixed calendar date now use a date 10 days before `date.today()` instead, so they keep exercising the `r=30`
+branch regardless of when the suite runs. Added `TapTargetsTest.test_ayuda_ir_a_pantalla_link_carries_taplink`
+and a new `TendenciasRangeContainsDayTest` (Dia and Como, each at 10/60/200 days old -> `r=30`/`r=90`/no `r`;
+`desde` and `dia` survive in the href across all three ranges).
+
+**Gate**, run once on the final tree with the plain command: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -- `Ran 786 tests ... OK (skipped=1)`.
+
+**Merge: this spec is its own approval.** The diff touches customer-facing bytes (Ayuda's link class, the
+Tendencias hrefs Dia and Como build), which trips merge policy A's customer-bytes condition on its own: but
+this spec's body says in words to merge after the gate, carrying BODY-PULIDO-1's approval forward along with
+its own. Merged `--no-ff` into `main`; `main` left checked out, clean. Branch `feat/body-pulido-1` kept.
