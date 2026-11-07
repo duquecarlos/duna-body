@@ -1492,3 +1492,111 @@ Slice commit: `f5759815a3dbb91f706525cfd98fd90a9caab4bf` on `feat/body-privacida
 
 Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-privacidad-1` into `main`
 following this entry.
+
+## BODY-HOST-BACKUP-1 -- off-host backup, encrypted to age, uploaded to R2 (2026-11-07)
+
+Carries out `host-deploy-v1-amendment-sensitive-data` rule 3 and `BODY-HOSTING-PLAN-1` step 8b: a
+consistent SQLite copy, encrypted to Carlos's `age` public key, uploaded to R2 bucket `duna-respaldo`
+under `body/`, plaintext deleted; a daily systemd timer runs it; 30-day retention is an R2 lifecycle
+rule (hand step); a restore check Carlos runs on his PC proves a backup opens. No Python dependency
+added: the `age` CLI and curl's built-in `--aws-sigv4`; retention by an R2 lifecycle rule rather than
+list-and-delete in bash.
+
+**`body/backup.py`.** `snapshot(out_path)` opens `config.DB_PATH` read-only (`file:...?mode=ro`) and
+writes a consistent copy with `sqlite3.Connection.backup()` -- never a plain file copy, which could
+catch the live database mid-write -- mode 0600 (a no-op on filesystems without POSIX bits, which is
+why its own test skips on non-POSIX). `check(path)` opens a decrypted copy, runs `PRAGMA
+integrity_check`, and on `ok` prints the table count and each table's row count; neither path ever
+prints a value from any row. `python -m body.backup snapshot --out <path>` / `check <path>`, exit 0/1.
+
+**`deploy/host/body-backup.sh`**, run as root by `duna-deploy-body backup [--dry-run]` (no pull
+first): reads `BODY_BACKUP_AGE_RECIPIENT` and the four `BODY_R2_*` names from
+`/srv/duna/env/body.env` by parsing `KEY=value` lines for exactly those names -- never `source`s or
+`cat`s the file, never prints a value. Refuses naming the exact hand step if `age` or `curl` is
+missing (`age is missing: run once on the host: sudo apt install age`, matching the python3-venv
+refusal's shape from BODY-HOST-ENTRY-2). Makes a scratch dir under
+`/srv/duna/data/body/backup-tmp` (0700, `duna-body`); runs the snapshot as `runuser -u duna-body --`
+with `BODY_HOME` set; `age -r "$recipient" -o <file>.age <file>`; deletes the plaintext immediately
+and again in a `trap` on EXIT, so it never survives even a crash. Uploads
+`body/body-<UTC timestamp>.sqlite.age` with `curl --fail --aws-sigv4 "aws:amz:auto:s3" -K - -T
+<file> <endpoint>/<bucket>/<key>`, the R2 access key and secret fed to `-K -` by a `printf` piped
+into curl's stdin -- a bash builtin, so the secret is never a process's argv, never echoed. Removes
+the local `.age` after a successful upload; prints only the object key and size.
+
+**Timer.** `body-backup.service` (oneshot, root, `ExecStart=/usr/local/sbin/duna-deploy-body
+backup`) + `body-backup.timer` (daily 03:30 America/Bogota, `Persistent=true`). `body-deploy.sh`
+installs both and enables the timer, folded into the existing `UNITS` array and `systemctl enable`
+line the same way the pull/vida timers already are.
+
+**Entry.** `duna-deploy-body backup [--dry-run]` execs `body-backup.sh` directly (no pull, unlike
+`deploy`); `status` now reports `body-backup.timer`'s state and `body-backup.service`'s last run via
+`systemctl show -p ExecMainExitTimestamp`.
+
+**README.md** documents the flow, the `sudo apt install age` hand step, the R2 lifecycle rule (30-day
+retention on bucket `duna-respaldo`, prefix `body/`, a hand step, not code), and the restore check
+Carlos runs on his PC (`winget install FiloSottile.age`, `age -d -i duna-backup.key -o restore.sqlite
+<file>.age`, `python -m body.backup check restore.sqlite`, then delete the plaintext copy).
+
+**Found and fixed while gating:** `tests/test_backup.py`'s `SnapshotTest`/`CheckTest` patched
+`config.BODY_HOME`/`config.DB_PATH` in `setUp` to point at a throwaway database but never restored
+them, leaking into every test that ran afterward in the same process. The first full-gate run caught
+this itself -- `tests.test_pipeline.PipelineTest.test_end_to_end_page`'s own guard (`config.DB_PATH`
+must start under the isolate's `TMP`) failed because of the leak, not because of anything in
+`test_pipeline.py`. Fixed with a `tearDown` that restores both. Also fixed: the `age`/`curl` missing
+check was templated through a shared `$bin_name`, so the literal refusal message the decision
+requires was never actually produced; split into two explicit checks. Both fixes are in the second
+commit below.
+
+**Merge policy.** No schema or migration change; no cross-repo contract or DTO change. But this
+changes bytes Carlos reads as the deploy's own operator -- `README.md`'s new "Off-host backup"
+section, `duna-deploy-body`'s usage and `status` output, and the new `age`/`curl` refusal messages --
+so Merge Policy A's "no customer-facing bytes" condition trips, the same way it did for
+BODY-HOST-ENTRY-2. The spec body does not say in words that this slice may merge past that condition,
+so this stops `AWAITING_APPROVAL` on the branch clean, for the same reason BODY-HOST-ENTRY-2 did.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 309 tests, OK, skipped=1 (the
+POSIX-only `chmod 0600` check, skipped on this Windows worker), run once on the final tree (277 at
+the branch tip plus 32 new: 6 in `tests/test_backup.py`, 26 in `tests/test_host_backup.py`).
+
+Commits on `feat/body-host-backup-1`: implementation (`f8a0e9f5dc49f3bcefe95cb62872e9327a4337d1`) and
+the leak/message fix (`f2fa5417575d6fac74f02dd5e54f7db653e67bdc`), not yet merged -- awaiting the
+orchestrator's review of the customer-bytes condition above.
+
+## BODY-HOST-BACKUP-1-M -- land BODY-HOST-BACKUP-1 (2026-11-07)
+
+Approved by the orchestrator under `ORCH-CARLOS-DELEGATES-TIER-1-1` after reviewing the root-run
+backup script (`deploy/host/body-backup.sh`), `body/backup.py` and the unit/timer/entry wiring:
+consistent snapshot via the sqlite backup API as `duna-body`; env parsed for five names only, never
+sourced or printed; `age` to the public recipient; plaintext removed in an EXIT trap; R2 credentials
+reach curl only through `-K -` fed by `printf` (never argv); object key `body/body-<UTC>.sqlite.age`;
+both deviations (`git add --chmod`, the two literal refusal messages) accepted. Three fixes required
+before landing, all inside the script and its text tests; approved with them.
+
+**Three fixes, in `deploy/host/body-backup.sh`.** (a) The `cleanup_plain` EXIT trap now removes both
+`$plain_file` and `$enc_file` (`rm -f "$plain_file" "$enc_file"`), so an upload failure cannot leave an
+encrypted copy piling up in `backup-tmp`. (b) `curl` runs with `-sS` (quiet progress, errors still
+shown) in both the real upload command and the echoed dry-run line, so the journal no longer carries a
+progress meter. (c) `read_env_var` strips one pair of surrounding double or single quotes from the
+value after the `KEY=value` split (systemd env files allow `KEY="value"`), still printing nothing.
+
+`tests/test_host_backup.py` gained one text test per fix: the trap's body contains `$enc_file`; every
+`curl` line carrying `--aws-sigv4` (the real command and the dry-run echo, exactly 2) carries `-sS`;
+`read_env_var`'s body strips a matching pair of `"`/`'` and never echoes or printfs the raw value. No
+other code changed.
+
+**Merge.** `main` had not moved since the branch was cut: `git merge-base feat/body-host-backup-1 main`
+and `git rev-parse main` both read `3f70dc8402624b99e45096e50df1c9b9da11b0c1`, matching the branch's
+recorded base, so no merge-forward was needed. This slice's own diff is three internal fixes to the
+backup script and its tests -- no schema change, no cross-repo contract change -- but one of them
+(curl's `-sS`) changes the dry-run line's own echoed text, which is operator-facing output the same way
+BODY-HOST-BACKUP-1's own entry classified. This spec's WORK section explicitly instructs "Merge
+`--no-ff` into `main`" after the fixes and the gate, which this entry reads as the body's authorization
+to merge past that condition, per the merge-policy-A rule that a spec's body can say so in words.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 313 tests, OK, skipped=1, run once
+on the final tree before this merge (309 at the branch tip plus 4 new: one test per fix above).
+
+Slice commit: `a2c275e2688931f8424c1ee08ff241d9bdbba6aa` on `feat/body-host-backup-1`.
+
+Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-host-backup-1` into `main`
+following this entry.

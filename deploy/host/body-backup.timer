@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily off-host backup (03:30 America/Bogota)
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 America/Bogota
+Persistent=true
+
+[Install]
+WantedBy=timers.target

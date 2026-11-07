@@ -40,10 +40,36 @@ site as root. After restarting the web service it checks `http://127.0.0.1:8770/
 BODY-CUENTA-RP-1); on any failure it rolls back to the commit that was deployed before the pull,
 reinstalls, restarts, and exits non-zero naming the step that failed.
 
-`backup` is reserved for BODY-HOST-BACKUP-1 and is not implemented yet.
-
 `body-pull.service` runs only the Garmin pull, not the shift import: shift files reach the host
 through an uploader that is not built yet (BODY-SHIFT-UPLOAD-1).
+
+## Off-host backup (BODY-HOST-BACKUP-1)
+
+A daily timer runs `duna-deploy-body backup`, which execs `deploy/host/body-backup.sh` (no pull):
+it takes a consistent copy of the database (`sqlite3.Connection.backup()`, never a plain file
+copy), encrypts it with `age` to the public key in `BODY_BACKUP_AGE_RECIPIENT`, uploads it to the
+`duna-respaldo` R2 bucket under `body/` with `curl --aws-sigv4`, and deletes every local plaintext
+and encrypted copy (the plaintext deletion is in a `trap`, so it runs even on failure). R2
+credentials reach `curl` only through its `-K -` stdin config, never as a command argument.
+
+    sudo -n /usr/local/sbin/duna-deploy-body backup --dry-run
+    sudo -n /usr/local/sbin/duna-deploy-body backup
+
+If the host is missing the `age` CLI, `backup` refuses and names the exact command to run once:
+`sudo apt install age` (same for `curl`, which Ubuntu 24.04 ships at 8.x with `--aws-sigv4` built in).
+
+**Retention is a hand step, not code**: in the Cloudflare R2 dashboard, add a lifecycle rule on
+bucket `duna-respaldo`, prefix `body/`, that deletes objects after 30 days.
+
+**Restore check, once at the first deploy, on Carlos's PC** (where the `age` private key lives,
+never on the server):
+
+    # install age for Windows once: winget install FiloSottile.age
+    # download the newest body/*.age object from the R2 dashboard, then:
+    age -d -i duna-backup.key -o restore.sqlite <file>.age
+    .venv\Scripts\python.exe -m body.backup check restore.sqlite
+    # expect: ok, a table count, and per-table row counts -- never a value from any row
+    del restore.sqlite
 
 ## Host facts, confirmed by Main (2026-11-06)
 
@@ -73,6 +99,7 @@ second way to build the venv.
 | `body-web.service` | `/etc/systemd/system/body-web.service` | `body-deploy.sh` |
 | `body-pull.service`, `body-pull.timer` | `/etc/systemd/system/` | `body-deploy.sh` |
 | `body-vida.service`, `body-vida.timer` | `/etc/systemd/system/` | `body-deploy.sh` |
+| `body-backup.service`, `body-backup.timer` | `/etc/systemd/system/` | `body-deploy.sh` |
 | `Caddyfile.body` | `/etc/caddy/sites/body.caddy` | `body-deploy.sh` (and Carlos, once, above) |
 
 ## Layout on the host
@@ -82,6 +109,9 @@ second way to build the venv.
   as root.
 * `/srv/duna/data/body` (`BODY_HOME`) -- owned by the `duna-body` system user, mode 0700. The web,
   pull and vida services run as that same user and only read the checkout.
+* `/srv/duna/data/body/backup-tmp` -- scratch directory for `body-backup.sh`, mode 0700, owned by
+  `duna-body`; it never holds anything once a backup run finishes (both the plaintext and the
+  encrypted copy are deleted locally after the upload).
 * `/srv/duna/env/body.env` -- root:duna-body, mode 0640, written by Carlos from
   `body.env.example`.
 * The web service listens on `127.0.0.1:8770` only; Caddy is the only way in, over HTTPS, at

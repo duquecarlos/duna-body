@@ -1,0 +1,9 @@
+[Unit]
+Description=Body app daily off-host backup (BODY-HOST-BACKUP-1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/duna-deploy-body backup
