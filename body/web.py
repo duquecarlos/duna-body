@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import os
 import sys
 from datetime import date, datetime, timedelta
@@ -26,9 +27,11 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from . import db, goals, history, household, identity, listen, profile, readiness, shift_import
 from .baselines import baseline
 from .i18n import LANGS, T
+from .request_log import RequestLogMiddleware
 
 HERE = Path(__file__).parent
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+app.add_middleware(RequestLogMiddleware)
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 env = Environment(loader=FileSystemLoader(HERE / "templates"), autoescape=select_autoescape())
 
@@ -1048,6 +1051,13 @@ def _ensure_streams() -> None:
 def main() -> None:
     _ensure_streams()
     import uvicorn
+
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(message)s"))
+    request_logger = logging.getLogger("body.request")
+    request_logger.setLevel(logging.INFO)
+    request_logger.addHandler(handler)
+    request_logger.propagate = False
 
     p = argparse.ArgumentParser(prog="python -m body.web")
     p.add_argument("--lan", action="store_true", help="listen on the home network (for the phone)")
