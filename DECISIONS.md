@@ -4621,3 +4621,38 @@ foreground: `Ran 880 tests in 131.133s ... OK (skipped=1)` (the 24 new tests in
 on both Ajustes and Hoy, in two languages) -- merge policy A's customer-bytes condition fails, and the
 spec's approval reason says to stop `AWAITING_APPROVAL` for the orchestrator's 375 px browser check. Not
 merged; stays on `feat/body-turnos-opcional-2`.
+
+## BODY-TURNOS-OPCIONAL-2-M -- two fixes from the browser measurement, then merged (2026-11-07)
+
+`ORCH-CARLOS-DELEGATES-TIER-1-1`'s 375 px browser measurement of BODY-TURNOS-OPCIONAL-2 approved it with two
+fixes, both applied on `feat/body-turnos-opcional-2` and landed in this merge.
+
+**Fix 1 -- the /settings help door.** The new `trabajas-por-turnos` task shares its `pantalla` (`/settings`)
+with the pre-existing `pagarle-a-duna` task, and `tarea_en_ruta()` returns the first catalog match in array
+order. Placing the new task earlier in `tutoriales/catalogo.json`'s `tareas` array (BODY-TURNOS-OPCIONAL-2's
+own change) had moved the in-context "¿Cómo se hace?" door on `/settings` from `pagarle-a-duna` to the new
+task -- a change nobody asked for. Moved `trabajas-por-turnos` to after `pagarle-a-duna` in the array (no
+`orden` value touched) so `tarea_en_ruta('/settings')` resolves to `pagarle-a-duna` again, as it did at
+`01f79ed`. Display order does not depend on array position: Primeros pasos orders by `ONBOARDING_ORDEN` and
+`capitulos_con_tareas()` sorts each chapter's tasks by `orden` -- neither reads array position -- so the task
+still shows third in Primeros pasos and third in its chapter. Pinned both: a new test asserting
+`tarea_en_ruta('/settings')["id"] == "pagarle-a-duna"`, and a new test asserting `capitulos_con_tareas()`'s
+`primeros-pasos` chapter lists its five tasks in the same order as before.
+
+**Fix 2 -- English.** `body/i18n/en.json`'s `settings.turnos.desc` read "...and how long you take to
+recover," a Spanish-shaped phrase; corrected to "...and how long it takes you to recover." Spanish
+(`es.json`) was already correct and is unchanged. Pinned with a test fetching `/settings` in English and
+checking for the corrected phrase, not the old one.
+
+**Gate**, exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, run once on the branch
+after both fixes, foreground: `Ran 883 tests in 136.463s ... OK (skipped=1)` (the 3 new tests above, over
+BODY-TURNOS-OPCIONAL-2's 880).
+
+**Merge.** `main` had not moved since the branch was cut (`01f79ed`, confirmed by `git merge-base`), so no
+rebase was needed. Merged `feat/body-turnos-opcional-2` into `main` with `--no-ff`
+(`06ac1ce3fbe165ba9d01eda5f917d74803eed79b` the fix commit, `d37246234448f3e2028349b14519791d32fe0901` the
+merge commit). The merge commit's tree (`f43f9e5f2c4d922932250d1eb2e6d7c85142af2c`) is identical to the
+branch tip's tree (`git diff` between them is empty), so the gate above still describes the tree that
+landed; it was not re-run after the merge. The diff still carries the customer-facing bytes merge policy A
+would normally stop on, but this spec's body says in words to merge after the two fixes -- that is this
+slice's merge authorization.
