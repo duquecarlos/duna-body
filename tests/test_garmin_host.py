@@ -3,6 +3,7 @@ Body's own page and the token is stored AES-256-GCM encrypted, keyed by person. 
 client replaces garminconnect.Garmin throughout -- no network, invented demo data only.
 """
 import hashlib
+import json
 import logging
 import os
 import tempfile
@@ -169,6 +170,25 @@ class EnsureConfiguredTest(unittest.TestCase):
             os.environ[garmin_cuenta.KEY_ENV] = TOKEN_KEY_HEX
             garmin_cuenta.ensure_configured()  # must not raise
 
+    def test_hosted_with_wrong_length_key_refuses_and_names_only_the_variable(self):
+        short_key = "11" * 16  # 16 bytes, not the required 32
+        with mock.patch.dict(os.environ):
+            os.environ[cuenta.ISSUER_ENV] = "https://fake-cuenta.test"
+            os.environ[garmin_cuenta.KEY_ENV] = short_key
+            with self.assertRaises(RuntimeError) as ctx:
+                garmin_cuenta.ensure_configured()
+            self.assertIn(garmin_cuenta.KEY_ENV, str(ctx.exception))
+            self.assertIn("openssl rand -hex 32", str(ctx.exception))
+            self.assertNotIn(short_key, str(ctx.exception))
+
+    def test_key_of_wrong_length_refuses_at_use_time_too(self):
+        conn, orig = _fresh_db("key_len.db")
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
+        with mock.patch.dict(os.environ, {garmin_cuenta.KEY_ENV: "aa" * 16}):
+            with self.assertRaises(RuntimeError) as ctx:
+                garmin_cuenta.guardar(conn, 1, "a-demo-token-string")
+            self.assertIn(garmin_cuenta.KEY_ENV, str(ctx.exception))
+
 
 # ---- hosted web routes --------------------------------------------------------------------------
 
@@ -235,15 +255,33 @@ class MfaFlowTest(GarminHostedTestCase):
         self.assertEqual(garmin_cuenta.leer(conn, pid), MFA_TOKEN)
         conn.close()
 
-    def test_wrong_code_shows_generic_error_and_stores_nothing(self):
+    def test_wrong_code_re_renders_the_code_form_and_stores_nothing(self):
         pid = self._signed_in_person_id()
         self.client.post("/garmin/conectar", data={"email": MFA_EMAIL, "password": "whatever-demo"})
         r = self.client.post("/garmin/codigo", data={"code": BAD_CODE})
-        self.assertEqual(r.status_code, 303)
-        self.assertIn("error=garmin", r.headers["location"])
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('name="code"', r.text)  # the code form stays, not a redirect to email/password
         conn = db.connect()
         self.assertIsNone(garmin_cuenta.leer(conn, pid))
         conn.close()
+
+    def test_wrong_code_can_be_retried_within_the_ttl(self):
+        pid = self._signed_in_person_id()
+        self.client.post("/garmin/conectar", data={"email": MFA_EMAIL, "password": "whatever-demo"})
+        self.client.post("/garmin/codigo", data={"code": BAD_CODE})
+        r = self.client.post("/garmin/codigo", data={"code": GOOD_CODE})
+        self.assertEqual(r.status_code, 303)
+        conn = db.connect()
+        self.assertEqual(garmin_cuenta.leer(conn, pid), MFA_TOKEN)
+        conn.close()
+
+    def test_old_mfa_state_is_pruned_on_the_next_write(self):
+        self._signed_in_person_id()
+        web._MFA_STATE["stale-demo-key"] = (
+            json.dumps(MFA_STATE), time.monotonic() - web._MFA_TTL_SECONDS - 1
+        )
+        self.client.post("/garmin/conectar", data={"email": MFA_EMAIL, "password": "whatever-demo"})
+        self.assertNotIn("stale-demo-key", web._MFA_STATE)
 
     def test_expired_mfa_state_is_refused(self):
         self._signed_in_person_id()
@@ -310,6 +348,41 @@ class IsolationTest(GarminHostedTestCase):
         conn.close()
 
 
+class ReconnectInPlaceTest(GarminHostedTestCase):
+    def test_connected_with_pull_failure_shows_reconnect_form_above_disconnect(self):
+        pid = self._signed_in_person_id()
+        conn = db.connect()
+        garmin_cuenta.guardar(conn, pid, GOOD_TOKEN)
+        garmin_cuenta.registrar_error(conn, pid, "ValueError")
+        conn.close()
+
+        r = self.client.get("/garmin")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("última sincronización con Garmin falló", r.text)
+        self.assertIn('name="email"', r.text)
+        self.assertLess(r.text.index('name="email"'), r.text.index("Desconectar"))
+
+    def test_connected_with_not_signed_in_uses_the_existing_sentence(self):
+        pid = self._signed_in_person_id()
+        conn = db.connect()
+        garmin_cuenta.guardar(conn, pid, GOOD_TOKEN)
+        garmin_cuenta.registrar_error(conn, pid, "NotSignedIn")
+        conn.close()
+
+        r = self.client.get("/garmin")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("Garmin rechazó el acceso guardado", r.text)
+        self.assertIn('name="email"', r.text)
+
+    def test_connected_without_error_shows_only_disconnect(self):
+        self._signed_in_person_id()
+        self.client.post("/garmin/conectar", data={"email": GOOD_EMAIL, "password": "whatever-demo"})
+        r = self.client.get("/garmin")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn('name="email"', r.text)
+        self.assertIn("Desconectar", r.text)
+
+
 class RequestLogScrubTest(GarminHostedTestCase):
     def test_connect_request_log_has_no_email_or_password(self):
         self._signed_in_person_id()
@@ -369,6 +442,34 @@ class PullHostedTest(unittest.TestCase):
         self.assertEqual(before, after)
 
     def test_person_with_no_garmin_row_is_skipped_quietly(self):
+        ok, failed, saved = pull.pull_hosted(self.conn, ["2026-11-01"])
+        self.assertEqual((ok, failed, saved), (0, 0, 0))
+
+    def test_generic_exception_mid_loop_keeps_the_refreshed_token_and_counts_days_stored(self):
+        garmin_cuenta.guardar(self.conn, 1, GOOD_TOKEN)
+        day_one = garmin_adapter.DayData(day="2026-11-01")
+        patcher = mock.patch(
+            "body.pull.garmin_adapter.fetch_day",
+            side_effect=[(day_one, "tok-refreshed-mid"), ValueError("demo failure, not NotSignedIn")],
+        )
+        patcher.start(); self.addCleanup(patcher.stop)
+
+        ok, failed, saved = pull.pull_hosted(self.conn, ["2026-11-01", "2026-11-02"])
+        self.assertEqual((ok, failed, saved), (0, 1, 1))
+        self.assertEqual(garmin_cuenta.ultimo_error(self.conn, 1), "ValueError")
+        self.assertEqual(garmin_cuenta.leer(self.conn, 1), "tok-refreshed-mid")
+
+    def test_success_clears_a_previous_error(self):
+        garmin_cuenta.guardar(self.conn, 1, GOOD_TOKEN)
+        garmin_cuenta.registrar_error(self.conn, 1, "NotSignedIn")
+        ok, failed, saved = pull.pull_hosted(self.conn, ["2026-11-01"])
+        self.assertEqual((ok, failed, saved), (1, 0, 1))
+        self.assertIsNone(garmin_cuenta.ultimo_error(self.conn, 1))
+
+    def test_leer_returning_none_is_not_counted_as_ok(self):
+        garmin_cuenta.guardar(self.conn, 1, GOOD_TOKEN)
+        patcher = mock.patch("body.pull.garmin_cuenta.leer", return_value=None)
+        patcher.start(); self.addCleanup(patcher.stop)
         ok, failed, saved = pull.pull_hosted(self.conn, ["2026-11-01"])
         self.assertEqual((ok, failed, saved), (0, 0, 0))
 

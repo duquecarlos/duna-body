@@ -54,21 +54,31 @@ def pull_all(conn, person_id: int) -> int:
     return saved
 
 
-def _pull_one_person(conn, person_id: int, days: list[str]) -> None:
+def _pull_one_person(conn, person_id: int, days: list[str]) -> int | None:
     """Pulls `days` for one hosted person, re-encrypting the stored token only if Garmin refreshed
-    it. Raises garmin_adapter.NotSignedIn if the token is rejected -- the caller records that and
-    moves on to the next person."""
+    it -- even when a later day raises, via the try/finally below. Returns the number of days
+    actually stored, or None when the person has no token to pull with. Raises whatever the
+    adapter or Garmin raise, with the days-saved-so-far attached as `.saved` on the exception so
+    the caller can still count them; the caller records the error and moves on to the next person."""
     token = garmin_cuenta.leer(conn, person_id)
     if token is None:
-        return
+        return None
     token_before = token
-    for i, d in enumerate(sorted(days)):
-        if i:
-            time.sleep(PAUSE_S)
-        data, token = garmin_adapter.fetch_day(d, token_str=token)
-        db.save_day(conn, data, person_id)
-    if token != token_before:
-        garmin_cuenta.guardar(conn, person_id, token)
+    saved = 0
+    try:
+        for i, d in enumerate(sorted(days)):
+            if i:
+                time.sleep(PAUSE_S)
+            data, token = garmin_adapter.fetch_day(d, token_str=token)
+            db.save_day(conn, data, person_id)
+            saved += 1
+    except Exception as e:
+        e.saved = saved
+        raise
+    finally:
+        if token != token_before:
+            garmin_cuenta.guardar(conn, person_id, token)
+    return saved
 
 
 def pull_hosted(conn, days: list[str]) -> tuple[int, int, int]:
@@ -77,12 +87,16 @@ def pull_hosted(conn, days: list[str]) -> tuple[int, int, int]:
     ok = failed = saved = 0
     for person_id in garmin_cuenta.every_person_id(conn):
         try:
-            _pull_one_person(conn, person_id, days)
-        except garmin_adapter.NotSignedIn as e:
+            n = _pull_one_person(conn, person_id, days)
+        except Exception as e:
             garmin_cuenta.registrar_error(conn, person_id, type(e).__name__)
             failed += 1
+            saved += getattr(e, "saved", 0)
             continue
-        saved += len(days)
+        if n is None:
+            continue
+        garmin_cuenta.limpiar_error(conn, person_id)
+        saved += n
         ok += 1
     return ok, failed, saved
 

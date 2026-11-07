@@ -20,21 +20,38 @@ KEY_ENV = "BODY_TOKEN_KEY"
 _NONCE_LEN = 12
 
 
+def _decode_key(hex_key: str) -> bytes:
+    """Refuses anything but exactly 32 bytes of hex -- the message names the variable and how to
+    generate a valid one, never the value itself."""
+    try:
+        raw = bytes.fromhex(hex_key)
+    except ValueError:
+        raw = b""
+    if len(raw) != 32:
+        raise RuntimeError(
+            f"{KEY_ENV} must be exactly 32 bytes of hex (64 hex characters). "
+            f"Generate one with: openssl rand -hex 32"
+        )
+    return raw
+
+
 def _key() -> bytes:
     hex_key = os.environ.get(KEY_ENV)
     if not hex_key:
         raise RuntimeError(f"{KEY_ENV} is not set")
-    return bytes.fromhex(hex_key)
+    return _decode_key(hex_key)
 
 
 def ensure_configured() -> None:
     """Called once from body/web.py's lifespan, before the app accepts any request. Hosted mode
-    with no key refuses to start; the message never carries a value. Mirrors
-    cuenta.ensure_configured()'s pattern."""
+    with no key, or a key that is not exactly 32 bytes of hex, refuses to start; the message never
+    carries a value. Mirrors cuenta.ensure_configured()'s pattern."""
     if not cuenta.hosted():
         return
-    if not os.environ.get(KEY_ENV):
+    hex_key = os.environ.get(KEY_ENV)
+    if not hex_key:
         raise RuntimeError(f"{KEY_ENV} is required when {cuenta.ISSUER_ENV} is set")
+    _decode_key(hex_key)
 
 
 def _aad(person_id: int) -> bytes:
@@ -97,6 +114,11 @@ def registrar_error(conn: sqlite3.Connection, person_id: int, error_cls: str) ->
         conn.execute(
             "UPDATE garmin_cuenta SET ultimo_error = ? WHERE person_id = ?", (error_cls, person_id)
         )
+
+
+def limpiar_error(conn: sqlite3.Connection, person_id: int) -> None:
+    with conn:
+        conn.execute("UPDATE garmin_cuenta SET ultimo_error = NULL WHERE person_id = ?", (person_id,))
 
 
 def every_person_id(conn: sqlite3.Connection) -> list[int]:

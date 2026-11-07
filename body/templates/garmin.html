@@ -18,6 +18,18 @@
   {% if error_text %}<p class="read bad">{{ error_text }}</p>{% endif %}
 </div>
 {% if connected %}
+{% if error_text %}
+<div class="card">
+  <p class="read">{{ t('garmin.explain') }}</p>
+  <form method="post" action="/garmin/conectar" style="margin-top:12px">
+    <div class="q">{{ t('garmin.email_label') }}</div>
+    <input type="email" name="email" class="field" autocomplete="username" style="margin-bottom:12px">
+    <div class="q">{{ t('garmin.password_label') }}</div>
+    <input type="password" name="password" class="field" autocomplete="current-password" style="margin-bottom:12px">
+    <button class="btn" type="submit">{{ t('garmin.connect_btn') }}</button>
+  </form>
+</div>
+{% endif %}
 <div class="card">
   <form method="post" action="/garmin/desconectar">
     <button class="btn" type="submit">{{ t('garmin.disconnect_btn') }}</button>

@@ -193,6 +193,7 @@
   "garmin.error.generic": "Garmin no aceptó estos datos. Intenta otra vez.",
   "garmin.error.mfa_expired": "El código expiró. Conéctate otra vez.",
   "garmin.error.not_signed_in": "Garmin rechazó el acceso guardado. Conéctate otra vez.",
+  "garmin.error.pull_failed": "La última sincronización con Garmin falló. Body lo intentará de nuevo mañana.",
   "unit.min": "min",
   "unit.h": "h",
   "unit.bpm": "lpm",

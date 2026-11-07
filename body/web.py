@@ -1165,12 +1165,18 @@ _GARMIN_FORM_ERROR_KEYS = {"datos": "garmin.error.datos", "garmin": "garmin.erro
 def _garmin_last_error_text(t: T, error_cls: str | None) -> str | None:
     if not error_cls:
         return None
-    return t(_GARMIN_LAST_ERROR_KEYS.get(error_cls, "garmin.error.generic"))
+    return t(_GARMIN_LAST_ERROR_KEYS.get(error_cls, "garmin.error.pull_failed"))
 
 
 def _mfa_key(request: Request) -> str:
     token = request.cookies.get(cuenta.SESSION_COOKIE) or ""
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _prune_mfa_state() -> None:
+    cutoff = time.monotonic() - _MFA_TTL_SECONDS
+    for k in [k for k, (_, started) in _MFA_STATE.items() if started < cutoff]:
+        _MFA_STATE.pop(k, None)
 
 
 def _garmin_ctx(t: T, conn, person_id: int, **extra) -> dict:
@@ -1213,6 +1219,7 @@ async def garmin_conectar(request: Request, person_id: int = Depends(identity.cu
     finally:
         password = None  # noqa: F841
     if status == "needs_mfa":
+        _prune_mfa_state()
         _MFA_STATE[_mfa_key(request)] = (result, time.monotonic())
         conn, _, t = _ctx(person_id)
         return _render("garmin.html", **_garmin_ctx(t, conn, person_id, mfa=True))
@@ -1236,7 +1243,9 @@ async def garmin_codigo(request: Request, person_id: int = Depends(identity.curr
         token = garmin_adapter.finish_sign_in(client_state_json, code)
     except Exception:
         # A wrong code may be retried within the same TTL window -- the state is kept, not popped.
-        return RedirectResponse("/garmin?error=garmin", status_code=303)
+        conn, _, t = _ctx(person_id)
+        return _render("garmin.html",
+                       **_garmin_ctx(t, conn, person_id, mfa=True, form_error=t("garmin.error.generic")))
     finally:
         code = None  # noqa: F841
     _MFA_STATE.pop(key, None)
