@@ -665,3 +665,19 @@ Per this spec's own GATE section, it stops here, on `feat/body-metas-screens-pol
 
 Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 110 tests, OK (108 before this slice, 2
 added here), run once on the final branch tree before this entry.
+
+## BODY-METAS-SCREENS-POLISH-1-M -- landing BODY-METAS-SCREENS-POLISH-1 unchanged (2026-11-06)
+
+Approved by the orchestrator under `ORCH-CARLOS-DELEGATES-TIER-1-1` after reviewing the diff; merged unchanged.
+No code changed in this slice: only this ledger entry was added before the merge.
+
+Branch `feat/body-metas-screens-polish-1` was at `bf56f683686b707cbde038c46290a8ad599d19ed`, cut from `main` at
+`a0f12978707d37b40afd5c5b83a935c8d903eb76`. `main` had not moved since -- its tip was still
+`a0f12978707d37b40afd5c5b83a935c8d903eb76`, equal to the branch's merge-base with it -- so nothing was merged
+forward into the branch first.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run once on the final tree (this entry's
+own commit, after the append above) -- 110 tests, OK.
+
+Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-metas-screens-polish-1` into `main`
+following this entry.
