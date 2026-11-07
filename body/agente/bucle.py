@@ -100,7 +100,8 @@ def ejecutar(conn: sqlite3.Connection, person_id: int, proveedor: Proveedor, sis
             eventos.append(EventoTexto(texto))
 
         bloques_asistente = [{"tipo": "texto", "texto": tx} for tx in textos] + [
-            {"tipo": "llamada_herramienta", "id": l.id, "nombre": l.nombre, "parametros": l.parametros}
+            {"tipo": "llamada_herramienta", "id": l.id, "nombre": l.nombre, "parametros": l.parametros,
+             **({"firma": l.firma} if l.firma is not None else {})}
             for l in llamadas
         ]
         mensajes.append({"rol": "asistente", "bloques": bloques_asistente})

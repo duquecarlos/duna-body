@@ -1409,12 +1409,26 @@ async def set_language(request: Request, person_id: int = Depends(identity.curre
 
 # ---- «Lo que ve el asistente» (BODY-NIVEL-DATOS-UI-1): the screen the consent text promises -------
 
+PROVEEDOR_LABEL_KEYS = {
+    "anthropic": "ajustes.asistente.proveedor.anthropic",
+    "openai": "ajustes.asistente.proveedor.openai",
+    "gemini": "ajustes.asistente.proveedor.gemini",
+}
+
+
 @app.get("/ajustes/asistente")
 def nivel_datos_view(request: Request, person_id: int = Depends(identity.current_person_id)):
     conn, _, t = _ctx(person_id)
     nivel = agente_ajustes.nivel_datos(conn, person_id)
+    configurados = agente_cliente.proveedores_configurados()
+    proveedores = None
+    proveedor_actual = None
+    if len(configurados) >= 2:
+        proveedores = [{"nombre": n, "etiqueta": t(PROVEEDOR_LABEL_KEYS[n])} for n in configurados]
+        proveedor_actual = agente_cliente.nombre_elegido(configurados, conn, person_id)
     guardado = request.query_params.get("guardado") == "1"
-    resp = _render("asistente_datos.html", t=t, tab="settings", nivel=nivel, guardado=guardado)
+    resp = _render("asistente_datos.html", t=t, tab="settings", nivel=nivel, guardado=guardado,
+                   proveedores=proveedores, proveedor_actual=proveedor_actual)
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -1427,6 +1441,11 @@ async def nivel_datos_guardar(request: Request, person_id: int = Depends(identit
         raise HTTPException(400)
     conn, _, _ = _ctx(person_id)
     agente_ajustes.set_nivel_datos(conn, person_id, nivel)
+    proveedor = f.get("proveedor")
+    if proveedor:
+        if proveedor not in agente_cliente.proveedores_configurados():
+            raise HTTPException(400)
+        agente_ajustes.set_proveedor(conn, person_id, proveedor)
     return RedirectResponse("/ajustes/asistente?guardado=1", status_code=303)
 
 
@@ -1524,10 +1543,16 @@ async def asistente_preguntar(request: Request, person_id: int = Depends(identit
     else:
         conversacion_id = agente_conversacion.crear(conn, person_id)
 
-    proveedor_nombre = os.environ.get("BODY_AGENTE_PROVEEDOR", agente_cliente.PROVEEDOR_DEFAULT)
-    modelo = ("demo" if proveedor_nombre == "demo"
-              else os.environ.get("BODY_AGENTE_MODELO", agente_cliente.MODELO_DEFAULT))
-    proveedor = agente_cliente.proveedor_configurado()
+    proveedor_env = os.environ.get("BODY_AGENTE_PROVEEDOR", agente_cliente.PROVEEDOR_DEFAULT)
+    if proveedor_env == "demo":
+        proveedor_nombre, modelo = "demo", "demo"
+    else:
+        configurados = agente_cliente.proveedores_configurados()
+        resuelto = agente_cliente.nombre_elegido(configurados, conn, person_id)
+        proveedor_nombre = resuelto or proveedor_env
+        modelo = (configurados[resuelto].modelo if resuelto
+                  else os.environ.get("BODY_AGENTE_MODELO", agente_cliente.MODELO_DEFAULT))
+    proveedor = agente_cliente.proveedor_configurado(conn, person_id)
 
     async def generar():
         try:

@@ -3437,3 +3437,111 @@ this slice's final tree, before the merge.
 **Merge.** This spec's approval-reason named the exact browser measurement and its own body says "this spec is
 the approval" -- a merge authorization in words past merge policy A's customer-bytes condition (the diff does
 change the words assistive technology reads on every chart). Merged `--no-ff` into `main` on green.
+
+## BODY-ASISTENTE-PROVEEDORES-1 -- every provider in Body's assistant, chosen, aligned with the house model (2026-11-07)
+
+Carlos, relayed by Main: "Remember to includes every provider in every Agent App Assistant." Measured before this
+slice: `body/agente/cliente.py` already had `Anthropic`, `OpenAI` and `Gemini` adapters and an env selector, but
+only one could ever be live (one key, one model, chosen by `BODY_AGENTE_PROVEEDOR`); the OpenAI adapter called
+`/v1/chat/completions` with no `store: false`; the Gemini adapter never echoed `thoughtSignature`
+(LOTES-API-GEMINI-THOUGHT-SIGNATURE-1's measured 400 on a thinking model's second tool-call turn); and
+`body.env.example` listed only the Anthropic key. This slice makes every configured provider available at once,
+lets the person choose among them, and aligns the OpenAI and Gemini wire shapes with duna-lotes-api's own adapters
+(restated verbatim in the spec, read by the orchestrator 2026-11-07).
+
+**`body/agente/cliente.py`**: `proveedores_configurados() -> dict[str, Proveedor]` returns every provider whose
+API key AND model are BOTH set (anthropic/openai/gemini order). Anthropic's model falls back
+`BODY_AGENTE_MODELO_ANTHROPIC` -> `BODY_AGENTE_MODELO` -> `MODELO_DEFAULT`, so today's single-provider config keeps
+working unchanged; OpenAI and Gemini take no invented model default (`BODY_AGENTE_MODELO_OPENAI` /
+`BODY_AGENTE_MODELO_GEMINI` unset means off, even with a key present). `nombre_elegido(disponibles, conn, person_id)`
+resolves which one answers: the person's own stored choice if it is configured, else `BODY_AGENTE_PROVEEDOR` if
+configured, else the first configured, else None; `proveedor_configurado(conn=None, person_id=None)` keeps its old
+name and zero-arg call shape (every existing caller, including the mocked SSE tests in
+`tests/test_agente_propuestas.py`, keeps working) and now layers the person's choice underneath it. `demo` stays
+env-only and exclusive, unchanged.
+
+`LlamadaHerramienta` gains `firma: str | None = None` for Gemini's `thoughtSignature`, carried raw and never
+interpreted; the Gemini response parser reads it off each `functionCall` part exactly as sent, and the request
+builder writes it back as a SIBLING of `functionCall` on that same part (never inside it) when the block carries a
+`firma`. `body/agente/bucle.py`'s persisted `llamada_herramienta` block now includes a `firma` key only when the
+call carried one, in the existing JSON column (`mensaje_agente.contenido_json`) -- no schema change for it -- so a
+signature survives a conversation reload and is echoed again on a LATER question, not only the next round of the
+same one.
+
+OpenAI moves to the house shape (duna-lotes-api `agente/proveedores/openai.py`): `POST
+https://api.openai.com/v1/responses`, body `{"model", "instructions": sistema, "input": [...], "store": False}` (no
+`stream`), tool specs flattened to `{"type": "function", "name", "description", "parameters"}`. Items: user
+`{"role": "user", "content": [{"type": "input_text", "text"}]}`, assistant text
+`{"role": "assistant", "content": [{"type": "output_text", "text"}]}`, a tool call
+`{"type": "function_call", "call_id", "name", "arguments"}` (the call's own `id` round-trips as `call_id` on both
+the call and its `function_call_output`), its result `{"type": "function_call_output", "call_id", "output"}`.
+Response parsing reads `output` (a list of `message`/`function_call` items, several function_calls in order all
+yield a `LlamadaHerramienta` each); usage `entrada = input_tokens - input_tokens_details.cached_tokens`;
+`incomplete_details.reason` (e.g. `max_output_tokens`) becomes `motivo_fin`, never read as a complete answer's
+"completed".
+
+**`body/agente/ajustes.py`**: `NOMBRES_PROVEEDOR = ("anthropic", "openai", "gemini")`; `proveedor(conn, person_id)`
+reads the stored choice (None = none stored); `set_proveedor(conn, person_id, nombre)` upserts it into
+`ajuste_agente`, refusing (`ValueError`) a name outside the three.
+
+**`body/db.py`**: `ajuste_agente` gains `proveedor TEXT` (nullable, no CHECK -- additive migration in the file's
+own existing style, matching `language`/`cuenta_sub`/`auth_time`/`batch_id`, none of which carry a CHECK either);
+`_migrate` adds the column via `ALTER TABLE` for an existing database that predates it.
+
+**`body/web.py`**: `/ajustes/asistente` GET adds a provider radio -- «Con qué IA responde el asistente» -- shown
+ONLY when `len(proveedores_configurados()) >= 2`, listing only the configured ones as "Claude (Anthropic)",
+"ChatGPT (OpenAI)", "Gemini (Google)", the resolved current choice preselected. POST accepts an optional
+`proveedor` field alongside `nivel`; a name not currently in `proveedores_configurados()` -> 400, nothing stored.
+The `/asistente/preguntar` SSE endpoint still calls `agente_cliente.proveedor_configurado(conn, person_id)` for the
+provider instance itself (kept as the one mockable call site, since `tests/test_agente_propuestas.py` -- outside
+this slice's touches -- patches exactly that name), but now resolves `proveedor_nombre`/`modelo` for the
+`uso_agente` row independently through `proveedores_configurados()` + `nombre_elegido()`, falling back to the bare
+env default string when nothing is actually configured (never `None` into `uso_agente.proveedor`, which is
+`NOT NULL`) -- this keeps every existing mocked-provider test's recorded usage row exactly as before.
+
+**`body/templates/asistente_datos.html`, `body/i18n/es.json`/`en.json`**: the new radio block and its four keys
+(`ajustes.asistente.proveedor.titulo`, `.anthropic`, `.openai`, `.gemini`, `.nota`). es:
+"Con qué IA responde el asistente" / "Claude (Anthropic)" / "ChatGPT (OpenAI)" / "Gemini (Google)" / "Lo que el
+asistente lee se envía solo a la IA que elijas, y solo cuando preguntas." en: "Which AI answers the assistant" /
+same three labels / "What the assistant reads is sent only to the AI you choose, and only when you ask."
+
+**`deploy/host/body.env.example`**: replaced the single Anthropic-only block with six blank lines, each with its
+own one-line comment: `BODY_AGENTE_PROVEEDOR` (blank means anthropic, the default), `BODY_AGENTE_ANTHROPIC_API_KEY`,
+`BODY_AGENTE_MODELO_ANTHROPIC`, `BODY_AGENTE_OPENAI_API_KEY`, `BODY_AGENTE_MODELO_OPENAI`,
+`BODY_AGENTE_GEMINI_API_KEY`, `BODY_AGENTE_MODELO_GEMINI`. `tests/test_host_deploy.py`'s `EnvExampleTest.NAMES`
+updated to the new six-name list; all stay blank (no FIXED value), matching every other secret/key line in the
+file.
+
+**Tests**: new `tests/test_agente_proveedores.py` -- membership needs key AND model per provider (openai/gemini),
+anthropic keeps working with only `BODY_AGENTE_MODELO` or nothing; the three-step selection order and an
+unconfigured stored choice falling through to the env default and then to the first configured; the OpenAI request
+payload matches the house shape byte-for-byte (`store` False, `instructions`, the four item shapes, flattened
+`tools`, URL `/v1/responses`); a response with text plus two `function_call` items yields both calls in order;
+usage `entrada` excludes `cached_tokens`; an `incomplete_details` response's `motivo_fin` is the reason, never
+"completed"; a Gemini response with a signed first `functionCall` part and an unsigned second one produces
+`firma`/`None` respectively, and the next request echoes the signature as a sibling of `functionCall` on that part
+only; a signature survives `bucle.ejecutar` -> `conversacion.agregar_mensaje` -> `conversacion.historial` ->
+`bucle.ejecutar` again (a second, later question in the same conversation) and is still echoed. Updated
+`tests/test_nivel_datos_ui.py` with a `ProviderRadioTest`: the radio is absent with only one provider configured,
+present and correctly filtered with two or more, a POST stores a per-person choice (person B unaffected), and an
+unconfigured name refuses with 400. Updated `tests/test_agente_cliente.py`'s `OpenAiAdapterTest` fixtures to the
+new `output`/`usage.input_tokens_details` shape (the old `choices`/`prompt_tokens_details` shape no longer parses),
+and `ProveedorConfiguradoTest`'s OpenAI-by-env test to also require `BODY_AGENTE_MODELO_OPENAI` before the adapter
+is selected (the house-shape literal that legitimately changed under decision 1).
+
+**Gate, first run (RED):** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 725 tests, 1 failure + 4
+errors. The 4 errors were `tests/test_agente_propuestas.py` (outside this slice's touches): its mocked-provider
+tests patch `web.agente_cliente.proveedor_configurado` directly, and an earlier draft of the SSE endpoint had
+stopped calling that name at all -- fixed by keeping it as the sole call site for the provider instance (see
+`body/web.py` above). The 1 failure was this slice's own `test_openai_selected_by_env_needs_its_own_key_and_model`,
+written against the OLD single-provider semantics (expected `None` when the env-chosen provider's key was
+missing, not accounting for the new fallback-to-first-configured rule) -- fixed by rewriting the test to match
+decision 2 instead of the old behavior.
+
+**Gate, second run (GREEN):** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 725 tests,
+`OK (skipped=1)`, run on this slice's final tree.
+
+**Merge.** The diff has a schema change (`ajuste_agente` gains a nullable `proveedor` column, additive, no
+migration-order risk) and customer-facing bytes (the new provider radio's labels and note on
+`/ajustes/asistente`). Merge policy A's schema and customer-bytes conditions both trip, so this slice stops before
+the merge with `AWAITING_APPROVAL`.

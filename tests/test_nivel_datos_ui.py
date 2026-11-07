@@ -127,6 +127,61 @@ class BothLanguagesRenderTest(unittest.TestCase):
         self.assertIn("No figures", r.text)
 
 
+_PROVEEDOR_ENV = ("BODY_AGENTE_PROVEEDOR", "BODY_AGENTE_ANTHROPIC_API_KEY", "BODY_AGENTE_MODELO_ANTHROPIC",
+                  "BODY_AGENTE_OPENAI_API_KEY", "BODY_AGENTE_MODELO_OPENAI",
+                  "BODY_AGENTE_GEMINI_API_KEY", "BODY_AGENTE_MODELO_GEMINI")
+
+
+class ProviderRadioTest(unittest.TestCase):
+    """BODY-ASISTENTE-PROVEEDORES-1 decision 3: the provider radio shows only with two or more
+    providers configured, lists only the configured ones, and a POST stores a per-person choice
+    or refuses an unconfigured name."""
+
+    def setUp(self):
+        self.conn = _reset_db(self)
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (?, 'B')", (PERSON_B,))
+        self.conn.commit()
+        guardado = {k: os.environ.pop(k, None) for k in _PROVEEDOR_ENV}
+        self.addCleanup(lambda: [os.environ.update({k: v}) if v is not None else os.environ.pop(k, None)
+                                 for k, v in guardado.items()])
+
+    def test_radio_hidden_with_only_one_provider_configured(self):
+        os.environ["BODY_AGENTE_ANTHROPIC_API_KEY"] = "sk-a"
+        r = client.get("/ajustes/asistente")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn('name="proveedor"', r.text)
+
+    def test_radio_shows_and_lists_only_configured_providers_with_two_or_more(self):
+        os.environ["BODY_AGENTE_ANTHROPIC_API_KEY"] = "sk-a"
+        os.environ["BODY_AGENTE_OPENAI_API_KEY"] = "sk-o"
+        os.environ["BODY_AGENTE_MODELO_OPENAI"] = "gpt-x"
+        r = client.get("/ajustes/asistente")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('name="proveedor" value="anthropic"', r.text)
+        self.assertIn('name="proveedor" value="openai"', r.text)
+        self.assertNotIn('name="proveedor" value="gemini"', r.text)
+        self.assertIn("Claude (Anthropic)", r.text)
+        self.assertIn("ChatGPT (OpenAI)", r.text)
+
+    def test_stores_a_valid_choice_per_person_person_b_unaffected(self):
+        os.environ["BODY_AGENTE_ANTHROPIC_API_KEY"] = "sk-a"
+        os.environ["BODY_AGENTE_OPENAI_API_KEY"] = "sk-o"
+        os.environ["BODY_AGENTE_MODELO_OPENAI"] = "gpt-x"
+
+        r = client.post("/ajustes/asistente", data={"nivel": "completo", "proveedor": "openai"})
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(ajustes.proveedor(self.conn, PERSON_A), "openai")
+        self.assertIsNone(ajustes.proveedor(self.conn, PERSON_B))
+
+    def test_refuses_an_unconfigured_name_with_400(self):
+        os.environ["BODY_AGENTE_ANTHROPIC_API_KEY"] = "sk-a"
+        os.environ["BODY_AGENTE_OPENAI_API_KEY"] = "sk-o"
+        os.environ["BODY_AGENTE_MODELO_OPENAI"] = "gpt-x"
+        r = client.post("/ajustes/asistente", data={"nivel": "completo", "proveedor": "gemini"})
+        self.assertEqual(r.status_code, 400)
+        self.assertIsNone(ajustes.proveedor(self.conn, PERSON_A))
+
+
 class SettingsRowShowsCurrentChoiceTest(unittest.TestCase):
     def test_settings_row_shows_current_choice_and_links_the_screen(self):
         conn = _reset_db(self)
