@@ -41,6 +41,7 @@ ROUTE_TOOL = {
     "/ajustes/asistente": None,   # the setting itself; the assistant reads it through leer_ajustes, never sets it
     "/api/vida/semana": None,     # device-key API for Personal; the assistant never reads or triggers it
     "/asistente/conversacion/{conversacion_id}": None,  # the panel's own history reload, not a tool
+    "/ayuda": "leer_tutoriales",
 }
 
 WRITER_NAMES = {
@@ -82,7 +83,7 @@ def _all_tool_calls():
     return {
         "leer_hoy": {}, "leer_dia": {"day": "2026-10-05"}, "leer_como_calculo": {"day": "2026-10-05"},
         "leer_tendencias": {}, "leer_historia": {}, "leer_metas": {}, "leer_meta": gid_placeholder,
-        "leer_turnos": {}, "leer_ajustes": {},
+        "leer_turnos": {}, "leer_ajustes": {}, "leer_tutoriales": {},
     }
 
 
@@ -153,14 +154,15 @@ NUNCA_PROPUESTA = {
 
 
 class RegistryShapeTest(unittest.TestCase):
-    def test_nine_lectura_tools_with_expected_levels(self):
+    def test_ten_lectura_tools_with_expected_levels(self):
         expected_levels = {
             "leer_hoy": "completo", "leer_dia": "completo", "leer_como_calculo": "completo",
             "leer_tendencias": "resumen", "leer_historia": "resumen", "leer_metas": "resumen",
             "leer_meta": "resumen", "leer_turnos": "ninguno", "leer_ajustes": "ninguno",
+            "leer_tutoriales": "ninguno",
         }
         lectura = [h for h in herramientas.HERRAMIENTAS if h["tipo"] == "lectura"]
-        self.assertEqual(len(lectura), 9)
+        self.assertEqual(len(lectura), 10)
         self.assertEqual({h["nombre"]: h["nivel"] for h in lectura}, expected_levels)
 
     def test_four_propuesta_tools_at_nivel_ninguno(self):
@@ -171,7 +173,7 @@ class RegistryShapeTest(unittest.TestCase):
 
     def test_every_entry_has_a_known_tipo(self):
         self.assertTrue(all(h["tipo"] in ("lectura", "propuesta") for h in herramientas.HERRAMIENTAS))
-        self.assertEqual(len(herramientas.HERRAMIENTAS), 13)
+        self.assertEqual(len(herramientas.HERRAMIENTAS), 14)
 
 
 class RouteMappingTest(unittest.TestCase):

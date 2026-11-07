@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}{{ t('ayuda.titulo') }} · {{ t('app.name') }}{% endblock %}
+{% block main %}
+<div class="top"><div><h1>{{ t('ayuda.titulo') }}</h1></div></div>
+
+{% if recorrido %}
+<div class="card">
+  <div class="q">{{ t('ayuda.recorrido_completo') }}</div>
+  <ol class="list" style="list-style:decimal;padding-left:20px;margin-top:6px">
+  {% for tarea in recorrido %}
+    <li><a href="#{{ tarea.id }}" style="text-decoration:underline">{{ tarea.titulo }}</a></li>
+  {% endfor %}
+  </ol>
+</div>
+{% endif %}
+
+{% for capitulo in capitulos %}
+<h2>{{ capitulo.titulo }}</h2>
+{% for tarea in capitulo.tareas %}
+<div class="card" id="{{ tarea.id }}">
+  <div class="q">{{ tarea.titulo }}</div>
+  {% if tarea.video %}
+  <video controls preload="none" {% if tarea.video.poster %}poster="{{ tarea.video.poster }}"{% endif %}
+         style="width:100%;border-radius:8px;background:var(--inset);display:block">
+    {% if tarea.video.vertical %}<source src="{{ tarea.video.vertical }}" media="(max-width: 768px)">{% endif %}
+    {% if tarea.video.horizontal %}<source src="{{ tarea.video.horizontal }}">{% endif %}
+    {% if tarea.video.subtitulos %}<track kind="subtitles" src="{{ tarea.video.subtitulos }}" default>{% endif %}
+  </video>
+  {% else %}
+  <p class="note">{{ t('ayuda.en_preparacion') }}</p>
+  {% endif %}
+  {% if tarea.pantalla_link %}
+  <p class="read"><a href="{{ tarea.pantalla_link }}" style="text-decoration:underline">{{ t('ayuda.ir_a_pantalla') }} →</a></p>
+  {% endif %}
+  {% if tarea.con_asistente %}
+  <p class="note">{{ t('ayuda.con_asistente') }}</p>
+  {% endif %}
+</div>
+{% endfor %}
+{% endfor %}
+{% endblock %}

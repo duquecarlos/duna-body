@@ -20,7 +20,7 @@ import sqlite3
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .. import db, history, profile, readiness, shift_import
+from .. import db, history, profile, readiness, shift_import, tutoriales
 from ..i18n import LANGS
 from . import ajustes, propuestas
 
@@ -80,6 +80,12 @@ _PARAM_PROPONER_IDIOMA = {
     "required": ["lang"],
     "additionalProperties": False,
 }
+_PARAM_LEER_TUTORIALES = {
+    "type": "object",
+    "properties": {"consulta": {"type": "string"}},
+    "additionalProperties": False,
+}
+_LEER_TUTORIALES_MAX = 5
 
 
 def _readiness_dict(r: readiness.Readiness) -> dict:
@@ -177,6 +183,27 @@ def _leer_turnos(conn: sqlite3.Connection, person_id: int) -> dict:
         "ultimo_confirmado": ({"recibido": confirmado["received"], "dias": confirmado["day_count"]}
                                if confirmado else None),
     }
+
+
+def _leer_tutoriales(conn: sqlite3.Connection, person_id: int, consulta: str | None = None) -> dict:
+    """tutoriales-v1 section 5.4: answers "¿cómo hago X?" from the catalog, never invented steps.
+    `consulta`, when given, keeps only tasks whose title or chapter title matches case-insensitively;
+    either way the result is capped at `_LEER_TUTORIALES_MAX`."""
+    data = tutoriales.catalogo()
+    capitulo_titulo = {c["id"]: c["titulo"] for c in data["capitulos"]}
+    tareas = data["tareas"]
+    if consulta:
+        q = consulta.strip().lower()
+        tareas = [t for t in tareas
+                  if q in t["titulo"].lower() or q in capitulo_titulo.get(t["capitulo"], "").lower()]
+    out = []
+    for t in tareas[:_LEER_TUTORIALES_MAX]:
+        out.append({
+            "id": t["id"], "titulo": t["titulo"], "capitulo": capitulo_titulo.get(t["capitulo"], t["capitulo"]),
+            "pantalla": t.get("pantalla"), "agente": t["agente"],
+            "has_video": tutoriales.video(t["id"]) is not None, "url": f"/ayuda#{t['id']}",
+        })
+    return {"tareas": out}
 
 
 def _leer_ajustes(conn: sqlite3.Connection, person_id: int) -> dict:
@@ -281,6 +308,10 @@ HERRAMIENTAS = [
     {"nombre": "leer_ajustes", "tipo": "lectura", "nivel": "ninguno",
      "descripcion": "Tus datos de perfil (nombre, zona horaria, idioma) y tu nivel de datos del asistente.",
      "parametros": _SIN_PARAMETROS, "funcion": _leer_ajustes},
+    {"nombre": "leer_tutoriales", "tipo": "lectura", "nivel": "ninguno",
+     "descripcion": "Los tutoriales del catálogo de Body: su capítulo, su pantalla, si el asistente ya lo hace "
+                     "y si ya existe un video. Úsala para responder cómo se hace algo en la app.",
+     "parametros": _PARAM_LEER_TUTORIALES, "funcion": _leer_tutoriales},
     {"nombre": "proponer_meta", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone crear una meta nueva de tipo métrica. No la crea: registra la propuesta "
                      "para que la persona la apruebe en el chat.",

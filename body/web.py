@@ -9,6 +9,7 @@ Health values never go into URLs or logs (access log is off; URLs carry only dat
 from __future__ import annotations
 
 import argparse
+import contextvars
 import hashlib
 import json
 import logging
@@ -28,7 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from . import (cuenta, db, dispositivo, garmin_adapter, garmin_cuenta, goals, history, household, identity, listen,
-               privacidad, profile, readiness, shift_import, vida_export)
+               privacidad, profile, readiness, shift_import, tutoriales, vida_export)
 from .agente import ajustes as agente_ajustes
 from .agente import bucle as agente_bucle
 from .agente import cliente as agente_cliente
@@ -52,6 +53,29 @@ async def _lifespan(app: FastAPI):
 
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=_lifespan)
+
+# ---- Current request path, for base.html's one in-context "¿Cómo se hace?" helper (tutoriales-v1
+# section 5.2, decision 3) -- set from the raw ASGI path before routing, so no screen template
+# needs to pass its own copy down to the shared base template.
+_RUTA_ACTUAL: contextvars.ContextVar[str] = contextvars.ContextVar("_ruta_actual", default="")
+
+
+class _CaminoActualMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        token = _RUTA_ACTUAL.set(scope.get("path", ""))
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            _RUTA_ACTUAL.reset(token)
+
+
+app.add_middleware(_CaminoActualMiddleware)
 app.add_middleware(RequestLogMiddleware)
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 env = Environment(loader=FileSystemLoader(HERE / "templates"), autoescape=select_autoescape())
@@ -78,6 +102,7 @@ def static_url(path: str) -> str:
 env.globals["static_url"] = static_url
 env.globals["hosted"] = cuenta.hosted
 env.globals["asistente_configurado"] = lambda: agente_cliente.proveedor_configurado() is not None
+env.globals["tarea_en_contexto"] = lambda: tutoriales.tarea_en_ruta(_RUTA_ACTUAL.get())
 
 
 @app.exception_handler(LoginRequired)
@@ -352,12 +377,14 @@ def today(person_id: int = Depends(identity.current_person_id)):
         cards.append({"key": k, "label": t("metric." + k), "value": _value(t, k, v),
                       "unit": _unit(t, defs[k]) if v is not None else "", "delta": delta, "cls": cls})
     today_local = _today_local(person)
+    primeros = tutoriales.primeros_pasos(conn, person_id, cuenta.hosted())
     return _render("today.html", t=t, tab="today", day=day, date_long=t.long_date(date.fromisoformat(day)),
                    synced=_synced(conn, person), r=r, reading=_reading(t, r), ready_avg=ready_avg,
                    ready_delta=ready_delta, ready_cls=ready_cls, cards=cards,
                    missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_count=proposed_count,
                    plan_habits=_today_due_habits(conn, t, person_id, today_local),
-                   today_iso=today_local.isoformat())
+                   today_iso=today_local.isoformat(),
+                   primeros_pasos=primeros if any(not p["hecho"] for p in primeros) else None)
 
 
 @app.get("/how/{day}")
@@ -1163,6 +1190,27 @@ def settings(person_id: int = Depends(identity.current_person_id)):
     conn, _, t = _ctx(person_id)
     nivel_datos = agente_ajustes.nivel_datos(conn, person_id)
     return _render("settings.html", t=t, tab="settings", nivel_datos=nivel_datos)
+
+
+# ---- Ayuda (tutoriales-v1 section 5.1): chapters, their tasks, and the recorrido completo ---------
+
+def _tarea_ayuda_ctx(tarea: dict) -> dict:
+    return {
+        "id": tarea["id"], "titulo": tarea["titulo"], "video": tutoriales.video(tarea["id"]),
+        "pantalla_link": tutoriales.ir_a_pantalla(tarea), "con_asistente": tarea["agente"] == "si",
+    }
+
+
+@app.get("/ayuda")
+def ayuda(person_id: int = Depends(identity.current_person_id)):
+    _, _, t = _ctx(person_id)
+    capitulos = []
+    recorrido = []
+    for c in tutoriales.capitulos_con_tareas():
+        tareas = [_tarea_ayuda_ctx(tarea) for tarea in c["tareas"]]
+        capitulos.append({"id": c["id"], "titulo": c["titulo"], "tareas": tareas})
+        recorrido.extend(tarea for tarea in tareas if tarea["video"])
+    return _render("ayuda.html", t=t, tab="settings", capitulos=capitulos, recorrido=recorrido)
 
 
 @app.post("/settings/language")
