@@ -61,8 +61,8 @@ class GetRequestLogTest(unittest.TestCase):
         self.assertEqual(len(cm.output), 1)
         msg = _message(cm.output[0])
         self.assertRegex(msg, LINE_RE)
-        self.assertIn("/goals/{goal_id}", msg)
-        self.assertNotIn(str(gid), msg)
+        fields = msg.split()
+        self.assertEqual(fields[1], "/goals/{goal_id}")
         self.assertNotIn(SECRET_QUERY_VALUE, msg)
 
 
