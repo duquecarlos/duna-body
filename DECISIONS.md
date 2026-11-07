@@ -813,3 +813,66 @@ own commit, after the append above) -- 136 tests, OK.
 
 Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-asistente-registro-1` into `main`
 following this entry.
+
+## BODY-SIN-FRICCION-1 -- Lotes' "sin fricción" principles, adopted into Body (2026-11-06)
+
+Transferable principles from Lotes' "sin fricción" rounds (hub `hit_01m6p3jv5fnw4pfd5wsckxr0j5`,
+`hit_01m6pm4aagg2hgz8b36ehbw7cf`; Body replied `revisado` 2026-11-06): an empty state never dead-ends, a picker
+with an empty catalogue keeps its label and a create option, and a new goal can get its first habit in the
+same flow.
+
+**Census of every empty state** (grepped `empty`, `no_data`, `_empty` across `body/templates/`; `soon.html`
+call sites in `body/web.py`):
+
+| screen / state | before | after |
+|---|---|---|
+| Hoy, no day ever synced | `today.empty`: "Ejecuta {cmd}" (a CLI instruction, not a web fix) | `sync.runs` + (`sync.last` with the last successful sync's date, from `db.last_sync`, or `sync.none_yet`) |
+| Día, no data for that day | `day.no_data` alone, no explanation | `day.no_data` + the same sync explanation (`sync_text`) |
+| Tendencias, zero days ever synced | fell to `soon.trends` (a description of the trends charts, not an explanation) | the same sync explanation as Hoy/Día |
+| Tendencias, 1-13 days (no metric reaches `profile.metric_profile`'s 14-day floor) | silently fell to the same `soon.trends` text, with no count | `trends.too_little`: the day count still needed (`TREND_MIN_DAYS - have`, a count, never a figure) |
+| Tu historia, zero days ever synced | fell to `soon.trends` (wrong title's worth of text: "Tu historia" page, trends-chart copy) | the same sync explanation |
+| Tu historia, patterns/shift empty (`history.patterns_none`, `history.shift_empty`) | already links `/shifts` | kept unchanged |
+| Turnos, nothing proposed or confirmed (`soon.shifts`) | already says shift files arrive via the Personal import | kept unchanged |
+| Metas, no goals (`goals.empty_text`) | already offers "+ Nueva" | kept unchanged |
+
+`today.empty` (and its unused `cmd`/`garmin_adapter.has_token()` plumbing) is removed; nothing else referenced
+it. The new `_sync_status_text(conn, person, t)` helper (`body/web.py`) is shared by all four zero-data states
+above. It never invents a schedule time -- the actual time is a per-install Windows Task Scheduler setting
+(`scripts/install-daily-sync.ps1`'s `-At`) this app cannot read -- it only says the sync runs on its own, and
+names the last successful sync's date when `db.last_sync` has one.
+
+**Picker with an empty catalogue** (`body/templates/goal_new.html`): the Metric row, when `metrics` is empty,
+keeps its `goals.field_metric` label and shows `goals.metric_empty` ("metrics appear after your first sync")
+instead of an empty `<select>`. In today's code this is defensive only -- `db.init()` reseeds `metric_def` on
+every request, so the catalogue can't actually run dry -- exercised in the test by patching `web._defs` to
+return `{}`. The Visibility row, when there is no household, now always renders its `goals.field_visibility`
+label; without a household it shows `goals.household_empty` instead of vanishing (no new creation flow:
+Cuenta owns households, per `hogar-v1`). This IS today's live default state for a single-person install, so
+the test needs no mocking. `bodyMetricChange()`'s JS guards `document.getElementById('metric-select')` being
+null now that the `<select>` can be absent.
+
+**First habit in the same flow** (`body/templates/goal_new.html`, `body/web.py`): the "+ Nueva" form gets an
+optional habit block (`habit_title`/`habit_times`/`habit_per`/`habit_context`, prefixed so they never collide
+with the goal's own `title` field) inside a `<details>`, the same shape `goal.html`'s "add a habit" form
+already uses. `goal_new_create` parses it with the new `_parse_new_habit(f, prefix)` helper (factored out of
+`goal_add_habit`, which now calls the same helper with no prefix) and, when filled, calls `goals.add_habit` in
+the same request before redirecting to `/goals/{gid}`, so the new goal's detail page lists the habit already.
+An empty block creates no habit -- unchanged behaviour.
+
+**Not applicable in Body** (recorded, not built, per the spec): photo/receipt slots, prices, −/+ counters,
+sales and commissions -- Body has none of these.
+
+**Tests**, `tests/test_sin_friccion.py` (`_isolate` first, invented demo data; 14 new): one test class per
+census row above plus the two pickers and the habit-creation flow, each checked in Spanish and English;
+`NoFigureInRedirectTest` checks a goal-creation redirect (with a habit attached) carries only `/goals/{id}`,
+no query string.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 150 tests, OK (136 before this slice, 14
+added here), run once on this slice's final tree.
+
+This slice's diff changes customer-facing text and markup in `body/templates/day.html`,
+`body/templates/goal_new.html`, `body/web.py` and both `body/i18n/*.json` files -- no schema or migration
+change, no cross-repo contract change, but
+merge policy A's "customer-facing bytes" condition trips on its own. Per this slice's own spec ("Customer-
+facing bytes: stop on the branch clean and report AWAITING_APPROVAL unless merge policy says otherwise"),
+this stops on the branch, committed, unmerged, for approval.

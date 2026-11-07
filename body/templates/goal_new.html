@@ -29,6 +29,7 @@
   <fieldset class="metric-only">
     <div class="card">
       <div class="q">{{ t('goals.field_metric') }}</div>
+      {% if metrics %}
       <select name="metric_key" id="metric-select" class="field" onchange="bodyMetricChange()">
         {% for m in metrics %}<option value="{{ m.key }}" data-direction="{{ m.direction }}" data-baseline="{{ m.baseline if m.baseline is not none else '' }}">{{ m.label }}{% if m.unit %} ({{ m.unit }}){% endif %}</option>{% endfor %}
       </select>
@@ -41,6 +42,9 @@
       <div class="q" style="margin-top:12px">{{ t('goals.field_baseline') }}</div>
       <input type="number" step="any" name="baseline_value" id="baseline-input" class="field">
       <div class="k" style="margin-top:4px">{{ t('goals.from_data') }}</div>
+      {% else %}
+      <p class="note" style="margin:0">{{ t('goals.metric_empty') }}</p>
+      {% endif %}
     </div>
   </fieldset>
 
@@ -50,21 +54,47 @@
     <input type="date" name="deadline" class="field" required>
   </div>
 
-  {% if has_household %}
   <div class="card">
     <div class="q">{{ t('goals.field_visibility') }}</div>
+    {% if has_household %}
     <select name="visibility" class="field">
       <option value="private">{{ t('goals.visibility.private') }}</option>
       <option value="household">{{ t('goals.visibility.household') }}</option>
     </select>
+    {% else %}
+    <p class="note" style="margin:0">{{ t('goals.household_empty') }}</p>
+    {% endif %}
   </div>
-  {% endif %}
+
+  <div class="card">
+    <details class="files">
+      <summary class="k">{{ t('goals.add_habit') }}</summary>
+      <div style="margin-top:8px">
+        <input type="text" name="habit_title" class="field" placeholder="{{ t('goals.habit_title_ph') }}">
+        <div class="row" style="margin-top:8px;gap:8px;justify-content:flex-start">
+          <input type="number" name="habit_times" class="field" min="1" value="1" style="flex:0 0 70px">
+          <select name="habit_per" class="field" style="flex:1">
+            <option value="day">{{ t('goals.cadence.per.day') }}</option>
+            <option value="week" selected>{{ t('goals.cadence.per.week') }}</option>
+            <option value="month">{{ t('goals.cadence.per.month') }}</option>
+          </select>
+        </div>
+        <select name="habit_context" class="field" style="margin-top:8px">
+          <option value="">{{ t('goals.habit_no_context') }}</option>
+          <option value="before_night">{{ t('habit.context.before_night') }}</option>
+          <option value="after_night">{{ t('habit.context.after_night') }}</option>
+          <option value="off_days">{{ t('habit.context.off_days') }}</option>
+        </select>
+      </div>
+    </details>
+  </div>
 
   <button type="submit" class="btn on" style="width:100%;margin-top:4px">{{ t('goals.create_btn') }}</button>
 </form>
 <script>
 function bodyMetricChange(){
-  var opt = document.getElementById('metric-select').selectedOptions[0];
+  var sel = document.getElementById('metric-select');
+  var opt = sel && sel.selectedOptions[0];
   if(!opt) return;
   document.getElementById('direction-select').value = opt.dataset.direction;
   if(opt.dataset.baseline){document.getElementById('baseline-input').value = opt.dataset.baseline}
