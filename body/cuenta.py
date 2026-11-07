@@ -140,6 +140,17 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _auth_time_iso(valor) -> str | None:
+    """The verified ID token's `auth_time` (epoch seconds) as ISO UTC, or None when it is absent
+    or not an integer -- a session with no `auth_time` is STALE, never treated as "now"."""
+    if isinstance(valor, bool) or not isinstance(valor, int):
+        return None
+    try:
+        return datetime.fromtimestamp(valor, tz=timezone.utc).isoformat(timespec="seconds")
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
 # ---- network seam (patched in tests) -------------------------------------------------------------
 
 def _get_json(url: str) -> dict:
@@ -328,7 +339,8 @@ def _sweep_expired_attempts(conn, now_iso: str) -> None:
     conn.execute("DELETE FROM inicio_sesion WHERE created_at < ?", (cutoff,))
 
 
-def start_login(conn, return_to: str | None, prompt: str | None = None) -> tuple[str, str]:
+def start_login(conn, return_to: str | None, prompt: str | None = None,
+                 max_age: int | None = None) -> tuple[str, str]:
     """Stores a new sign-in attempt and returns (authorize_url, flujo_cookie_value)."""
     now = _now_iso()
     _sweep_expired_attempts(conn, now)
@@ -349,6 +361,8 @@ def start_login(conn, return_to: str | None, prompt: str | None = None) -> tuple
     }
     if prompt in ("none", "login"):
         params["prompt"] = prompt
+    if max_age is not None:
+        params["max_age"] = max_age
     url = f"{issuer()}/oauth/authorize?{urlencode(params)}"
     return url, flujo_id
 
@@ -389,7 +403,7 @@ def handle_callback(conn, flujo_cookie: str | None, params: dict) -> CallbackRes
     person_id = resolve_person(conn, claims)
     if person_id is None:
         return CallbackResult(kind="sin_acceso", claims=claims)
-    token = create_session(conn, person_id, claims.get("sid"))
+    token = create_session(conn, person_id, claims.get("sid"), _auth_time_iso(claims.get("auth_time")))
     return CallbackResult(kind="session", return_to=row["return_to"], session_token=token)
 
 
@@ -412,15 +426,15 @@ def resolve_person(conn, claims: dict) -> int | None:
 
 # ---- sessions (`sesion`) ---------------------------------------------------------------------------
 
-def create_session(conn, person_id: int, cuenta_sid: str | None) -> str:
+def create_session(conn, person_id: int, cuenta_sid: str | None, auth_time: str | None = None) -> str:
     token = _random_token(32)
     now = datetime.now(timezone.utc)
     now_s = now.isoformat(timespec="seconds")
     expires_s = (now + timedelta(days=SESSION_ABSOLUTE_DAYS)).isoformat(timespec="seconds")
     conn.execute(
-        "INSERT INTO sesion (id_hash, person_id, cuenta_sid, created_at, last_seen_at, expires_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (_sha256_hex(token), person_id, cuenta_sid, now_s, now_s, expires_s),
+        "INSERT INTO sesion (id_hash, person_id, cuenta_sid, auth_time, created_at, last_seen_at, expires_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (_sha256_hex(token), person_id, cuenta_sid, auth_time, now_s, now_s, expires_s),
     )
     conn.commit()
     return token
@@ -448,6 +462,26 @@ def resolve_session(conn, token: str | None, now: datetime | None = None) -> tup
         )
         conn.commit()
     return row["person_id"], True
+
+
+def reciente(conn, session_token_or_row, segundos: int = 600) -> bool:
+    """True only when the session's `auth_time` is present and within `segundos` of now -- the
+    sensitive-data re-authentication gate (ORCH-HOST-SENSITIVE-DATA-1 part 3). A session with no
+    `auth_time` (pre-migration, or a token that never carried one) is STALE, never treated as
+    recent. Takes either a session token (looked up fresh) or an already-fetched `sesion` row."""
+    if session_token_or_row is None:
+        return False
+    if isinstance(session_token_or_row, str):
+        row = conn.execute(
+            "SELECT auth_time FROM sesion WHERE id_hash = ?", (_sha256_hex(session_token_or_row),)
+        ).fetchone()
+    else:
+        row = session_token_or_row
+    if not row or not row["auth_time"]:
+        return False
+    auth_time = datetime.fromisoformat(row["auth_time"])
+    age = (datetime.now(timezone.utc) - auth_time).total_seconds()
+    return -MARGEN_SEGUNDOS <= age <= segundos
 
 
 def end_session(conn, token: str | None) -> str | None:

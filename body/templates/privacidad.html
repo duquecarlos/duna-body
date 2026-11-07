@@ -15,6 +15,14 @@
   <div class="q">{{ t('privacidad.borrar_title') }}</div>
   <p class="read">{{ t('privacidad.borrar_desc') }}</p>
   <p class="read">{{ t('privacidad.borrar_hogar_note') }}</p>
+  {% if es_hosted %}<p class="read">{{ t('privacidad.borrar_reauth_nota') }}</p>{% endif %}
+  {% if reauth_ok is not none %}
+    {% if reauth_ok %}
+      <p class="read">{{ t('privacidad.borrar_reauth_ok') }}</p>
+    {% else %}
+      <p class="read bad">{{ t('privacidad.borrar_reauth_fallo') }}</p>
+    {% endif %}
+  {% endif %}
   {% if error %}<p class="read bad">{{ t('privacidad.borrar_error', palabra=delete_word) }}</p>{% endif %}
   <form method="post" action="/privacidad/borrar" style="margin-top:12px">
     <div class="q">{{ t('privacidad.borrar_label', palabra=delete_word) }}</div>

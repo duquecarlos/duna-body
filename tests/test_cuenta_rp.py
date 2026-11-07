@@ -23,6 +23,8 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from body import config, cuenta, db, privacidad, vincular_cuenta, web
 
+_DEFAULT_AUTH_TIME = object()  # sentinel: "not given" (use now) vs. explicit None (omit the claim)
+
 ISSUER = "https://fake-cuenta.test"
 PUBLIC_URL = "http://127.0.0.1:8770"
 CLIENT_SECRET = "s3cr3t-test-only"
@@ -50,11 +52,14 @@ class FakeIssuer:
         return jwt.encode(claims, self.key, algorithm="RS256", headers={"kid": KID, "typ": typ})
 
     def id_token(self, *, nonce: str, sub: str = SUB, duna_productos=("body",), sid: str = "sid-demo-1",
-                 acr: str = "pwd", extra: dict | None = None) -> str:
+                 acr: str = "pwd", auth_time=_DEFAULT_AUTH_TIME, extra: dict | None = None) -> str:
         now = int(time.time())
         claims = {"iss": ISSUER, "sub": sub, "aud": cuenta.CLIENT_ID, "exp": now + 300, "iat": now,
                   "nonce": nonce, "sid": sid, "acr": acr, "duna_productos": list(duna_productos),
                   "name": "Persona de Prueba"}
+        resolved_auth_time = now if auth_time is _DEFAULT_AUTH_TIME else auth_time
+        if resolved_auth_time is not None:
+            claims["auth_time"] = resolved_auth_time
         if extra:
             claims.update(extra)
         return self.sign(claims)
@@ -131,10 +136,11 @@ class CuentaRpTestCase(unittest.TestCase):
             conn.close()
 
     def _sign_in(self, *, duna_productos=("body",), return_to: str | None = None, sub: str = SUB,
-                sid: str = "sid-demo-1"):
+                sid: str = "sid-demo-1", auth_time=_DEFAULT_AUTH_TIME, extra: dict | None = None):
         auth = self._start_login(return_to)
         self.issuer.next_id_token = self.issuer.id_token(nonce=auth["nonce"], sub=sub,
-                                                          duna_productos=duna_productos, sid=sid)
+                                                          duna_productos=duna_productos, sid=sid,
+                                                          auth_time=auth_time, extra=extra)
         return self.client.get(
             "/login/cuenta/callback", params={"code": "auth-code-1", "state": auth["state"]}
         )
