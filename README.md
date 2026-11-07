@@ -43,6 +43,25 @@ server's database directly.
 three local-mode tasks above, since the host now does both the pull and the web app. Forget the connection with
 `python -m body.conectar_pc --olvidar`.
 
+## Demo para tutoriales
+
+Growth records each task's video against a seeded demo tenant, never against a real person's data
+(tutoriales-v1 section 8). To run one:
+
+```powershell
+$env:BODY_HOME = "C:\path\to\a\scratch\folder"
+.\.venv\Scripts\python -m body.demo --home $env:BODY_HOME --dias 90
+$env:BODY_AGENTE_PROVEEDOR = "demo"
+.\.venv\Scripts\python -m body.web
+```
+
+`body.demo` seeds one invented person ("Demo"), ~90 days of invented watch figures, a rotating shift
+pattern with a night week, three goals with weekly checks and one habit -- always through the app's own
+functions, with a fixed random seed so two runs give identical data. It **refuses** to touch a real data
+folder: the default `BODY_HOME`, the current `BODY_HOME` environment value, the production host path, or
+any folder that already holds a `body.db` it did not seed itself. The task catalog it drives is
+`tutoriales/catalogo.json`.
+
 ## Layout
 
 - `body/garmin_adapter.py`: the only file that knows the unofficial `python-garminconnect` library.
