@@ -3064,3 +3064,74 @@ freshly seeded, a proposed batch's link still led with no empty line; confirming
 
 **Gate**: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run once, foreground, on the branch tip
 before merging. **Green**, 640 tests, 1 pre-existing skip.
+
+## BODY-BORRAR-REAUTH-1 -- deleting everything on the hosted Body requires a fresh Cuenta sign-in (2026-11-07)
+
+Carrying out BODY-BORRAR-REAUTH-OBS-1's plan (ORCH-CARLOS-DELEGATES-TIER-1-1): `auth_time` appeared nowhere in
+`body/`, though the ID token carries it, and `sesion` had no column for it. Additive and fail-closed throughout --
+this slice can only add a sign-in step, never remove one.
+
+* **Schema**: `sesion.auth_time TEXT NULL` (ISO UTC), added the same way `person.language`/`person.cuenta_sub` were
+  -- `CREATE TABLE IF NOT EXISTS` in `SCHEMA` for a fresh install, an `ALTER TABLE ... ADD COLUMN` in `_migrate` for
+  an existing one. No backfill: every existing session row reads `auth_time IS NULL`, which is STALE by the rule
+  below, never treated as "now".
+* **RP** (`body/cuenta.py`): `handle_callback` reads `auth_time` from the already-verified ID token and converts it
+  (epoch seconds -> ISO UTC) with a new `_auth_time_iso` helper; a token with no `auth_time`, or one that is not an
+  integer, stores `NULL`. `create_session` gained an `auth_time` parameter (default `None`, so every other caller is
+  unaffected -- there was only the one caller). `start_login` gained `max_age: int | None`; when given, it is sent
+  as `max_age` alongside `prompt` in the authorize URL. `body/web.py`'s `login_start` accepts `max_age` from the
+  query only as the literal `"600"` (anything else is ignored, so a caller cannot ask Cuenta for an arbitrary
+  freshness window through this route). No extra check was added for "the IdP ignored `max_age`": a stale
+  `auth_time` coming back just fails the gate below again, which is what stops the loop from silently succeeding.
+* **The gate**: `cuenta.reciente(conn, session_token_or_row, segundos=600) -> bool`, added beside `end_session`.
+  True only when the session's `auth_time` is present and within `segundos` (default 600) of now; takes either a
+  session token (looked up fresh) or an already-fetched `sesion` row, so both the RP's web routes and a test can
+  call it without re-reading the row. Wired into `POST /privacidad/borrar`, hosted only, **before** the typed-word
+  check: a session that is not recent deletes nothing and 303s to
+  `/login/cuenta/start?prompt=login&max_age=600&return_to=%2Fprivacidad%3Freauth%3D1`. `return_to` is a query
+  string (`/privacidad?reauth=1`), and it survives `cuenta.safe_return_to` unchanged -- that function only checks a
+  leading single `/`, so a query string in the value was never a problem; the round trip never carries the typed
+  word, only the flag. On return, Cuenta's normal callback path mints a fresh session (new `auth_time`) and redirects
+  to `return_to` as it always does, landing back on `/privacidad?reauth=1`. Local mode is untouched: `cuenta.hosted()`
+  guards the whole gate, so a local install still deletes on the word alone, as before this slice.
+* **Screen** (`privacidad.html`, hosted only): a standing line under the delete form says re-authentication may be
+  asked for ("Para borrar todo te pediremos iniciar sesión de nuevo si hace más de 10 minutos que lo hiciste." / "To
+  delete everything we'll ask you to sign in again if it's been more than 10 minutes since you last did."). With
+  `?reauth=1` and a recent session: "Listo, ya confirmaste que eres tú. Escribe la palabra para borrar todo." / "Done,
+  you confirmed it's you. Type the word to delete everything." With `?reauth=1` and still not recent (the IdP ignored
+  `max_age`, or the person took too long): "No pudimos confirmar que eres tú. Inténtalo de nuevo." / "We couldn't
+  confirm it's you. Please try again." The typed-word field is never pre-filled. The template kwarg for "is this
+  install hosted" is named `es_hosted`, not `hosted` -- `base.html` already has a Jinja global function literally
+  named `hosted()` (used for the logout link), and the first draft of this route shadowed it with a plain boolean,
+  which made every call to `hosted()` elsewhere on the page raise (caught by the gate's first run, see below).
+* **Nothing else is gated.** BODY-BORRAR-REAUTH-OBS-1 found no other route destructive enough to need this: there is
+  no household-leave route, and device revoke (`/dispositivos`) and Garmin disconnect (`/garmin/desconectar`) are
+  both reversible by re-linking. The next irreversible route this product adds should reuse `cuenta.reciente`
+  rather than inventing its own freshness check.
+
+**Tests** (`tests/test_borrar_reauth.py`, `_isolate` first, hosted helpers reused from `tests/test_cuenta_rp.py`,
+vectors/fakes only, no network): the callback stores `auth_time` from a valid token and treats a missing or
+non-integer one as `NULL`; a pre-migration session row (no `auth_time`) is stale; `start_login(max_age=600)` puts
+`max_age=600` and `prompt=login` in the authorize URL, and is omitted when not given; `login_start` accepts only the
+literal `600` and ignores any other value; `POST /privacidad/borrar` with a stale session deletes nothing and
+redirects to the fresh sign-in with the encoded `return_to`, and that redirect never carries the typed word; a recent
+session with the right word still deletes (the existing delete coverage, `tests/test_privacidad.py`, holds unchanged);
+a recent session with the wrong word takes the same unchanged error path; `?reauth=1` shows the right line in each
+state, in both `es` and `en`; local mode deletes on the word alone, as today. `tests/test_cuenta_rp.py`'s shared
+`FakeIssuer.id_token` and `CuentaRpTestCase._sign_in` gained an `auth_time` parameter (default: "now", so every
+existing sign-in in both that file and `tests/test_privacidad.py` keeps producing a session the new gate treats as
+recent) and an `extra` passthrough was added to `_sign_in` to reach `id_token`'s existing `extra` parameter.
+
+**Gate**: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run three times, foreground, on this slice's
+tree (the exact command above never changed across runs). First run: **RED**, 659 tests, 5 failures, all
+`tests/test_borrar_reauth.py::ReauthScreenTest` -- `GET /privacidad` 500'd because the route's `_render` call passed
+`hosted=...` as a template kwarg, shadowing `base.html`'s Jinja global function `hosted()` (described above). Fixed
+by renaming the kwarg to `es_hosted`. Second run: **RED**, 659 tests, 1 failure -- the new
+`test_reauth_fallo_line_shown_when_session_is_stale_en` asserted the unescaped English sentence while Jinja
+autoescape renders its apostrophes as `&#39;`; fixed in the test, not the template. Third run: **green**, 659 tests,
+1 pre-existing skip (POSIX-only).
+
+**Not merged.** This slice's diff fails two of merge policy A's three conditions: a schema change
+(`sesion.auth_time`, additive) and customer-facing bytes (the new `privacidad.html` lines and the three new
+`es`/`en` strings). Stopped clean on `feat/body-borrar-reauth-1`, `AWAITING_APPROVAL`, for the orchestrator to
+review before merging.
