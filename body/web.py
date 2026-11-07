@@ -1264,14 +1264,15 @@ def _goal_line_svg(t: T, defs: dict, g, checks, today: date, width: int = 320, h
 
     out = [f'<line x1="{x(start):.1f}" y1="{y(baseline_v):.1f}" x2="{x(end):.1f}" y2="{y(target_v):.1f}" '
            f'style="stroke:var(--muted)" stroke-width="1.6" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>']
-    pts = sorted((date.fromisoformat(c["week_start"]) + timedelta(6), c["metric_avg"]) for c in checks)
-    pts = [(d, v) for d, v in pts if start <= d <= end]
+    pts = sorted((date.fromisoformat(c["week_start"]), date.fromisoformat(c["week_start"]) + timedelta(6),
+                  c["metric_avg"]) for c in checks)
+    pts = [(ws, d, v) for ws, d, v in pts if start <= d <= end]
     if len(pts) >= 2:
-        line_pts = " ".join(f"{x(d):.1f},{y(v):.1f}" for d, v in pts)
+        line_pts = " ".join(f"{x(d):.1f},{y(v):.1f}" for _, d, v in pts)
         out.append(f'<polyline fill="none" style="stroke:{color}" stroke-width="2.2" '
                    f'vector-effect="non-scaling-stroke" stroke-linejoin="round" points="{line_pts}"/>')
     elif len(pts) == 1:
-        out.append(f'<circle cx="{x(pts[0][0]):.1f}" cy="{y(pts[0][1]):.1f}" r="4" style="fill:{color}"/>')
+        out.append(f'<circle cx="{x(pts[0][1]):.1f}" cy="{y(pts[0][2]):.1f}" r="4" style="fill:{color}"/>')
     today_x = x(min(max(today, start), end))
     out.append(f'<line x1="{today_x:.1f}" y1="{top}" x2="{today_x:.1f}" y2="{top + h}" '
                f'style="stroke:var(--line)" stroke-width="1"/>')
@@ -1285,8 +1286,8 @@ def _goal_line_svg(t: T, defs: dict, g, checks, today: date, width: int = 320, h
         f'<span><i style="background:var(--line);width:1px;height:12px"></i>{t("goals.legend_today")}</span>'
         '</div>')
     data_pts = [{"x": max(0.0, min(1.0, (d - start).days / span_days)),
-                 "label": t("goals.chart_week_label", date=_short_date(t, d), value=_fig_unit(t, g["metric_key"], v, defs))}
-                for d, v in pts]
+                 "label": t("goals.chart_week_label", date=_short_date(t, ws), value=_fig_unit(t, g["metric_key"], v, defs))}
+                for ws, d, v in pts]
     return profile.chart_figure(svg + legend, data_pts)
 
 

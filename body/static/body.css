@@ -145,7 +145,8 @@ table.parts th:first-child{padding-left:0}
 .stage i{display:block;height:100%}
 .legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12.5px;color:var(--ink2)}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
-figure.chart{margin:0;position:relative;touch-action:none;cursor:pointer}
+figure.chart{margin:0;position:relative;touch-action:pan-y;cursor:pointer}
+figure.chart:focus-visible{outline:2px solid var(--focus);outline-offset:4px;border-radius:8px}
 .chart-marker{position:absolute;top:0;width:1px;background:var(--line);pointer-events:none}
 .chart-marker[hidden]{display:none}
 .chart-readout{margin-top:6px;font-size:13px;color:var(--ink2)}

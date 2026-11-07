@@ -3997,3 +3997,50 @@ new hint strings under every Tendencias and goal chart, a new legend and accessi
 new "Abrir el día/mes ›" taplinks in the tap/drag readout, and the restored "‹ Volver al día" link on
 `soon.html`. Merge policy A's customer-bytes condition fails and the spec says to stop here, so this slice
 stops before merging, on the branch, for the orchestrator to judge the script in a browser.
+
+## BODY-PULIDO-2-M -- a real tap reads instead of navigating, charts stop blocking vertical scroll, weekly
+labels name the Monday, the focusable chart gets a visible focus ring; lands BODY-PULIDO-2 (2026-11-07)
+
+The orchestrator measured BODY-PULIDO-2 in a real browser at 375 px against the demo home (per that entry's
+`AWAITING_APPROVAL`) and found four defects, all fixed here before the merge:
+
+**A tap reads, it does not leave.** A real click on the per-day hit-region `<a>` inside an enhanced figure's
+svg navigated straight to `/day/<day>`, before the reader ever saw the readout -- only a synthetic pointer
+event had been exercised before. `charts.js` now adds a capture-phase `click` listener on the figure that,
+when the click's target is an anchor inside the svg (`svg.contains(a)`), calls `preventDefault()` and selects
+the nearest point instead; the readout's own "Abrir el día ›" link lives in the `figcaption` outside the svg
+and is never touched by this listener, so it still navigates. Without JavaScript the hit-region markup and its
+links are unchanged.
+
+**The page still scrolls.** `figure.chart{touch-action:none}` blocked every vertical drag that started on a
+stacked chart. It is now `touch-action:pan-y` (native vertical scroll stays; a horizontal drag scrubs the
+chart), and `charts.js`'s `pointermove` handler now waits for the first few pixels of a drag to decide its
+direction -- a drag that resolves mostly vertical sets `dragging = false` and lets the browser's own pan take
+over, instead of calling `show()` on every move.
+
+**Week labels name the Monday.** The goal chart's weekly `data-points` label (`goals.chart_week_label`,
+"Semana del {date}") was built from the same date the point is plotted on -- `week_start + 6` days, the
+Sunday the check's average week ends on -- so every label named a Sunday. `_goal_line_svg` now carries each
+check's `week_start` (the Monday) alongside its plotted day; the plotted x/y are unchanged, only the label's
+date now reads the Monday.
+
+**Visible focus.** `figure.chart` is `tabIndex = 0` (charts.js) but had no focus style of its own; the page's
+global `:focus-visible{outline:2px solid var(--focus)}` rule turned out not to render visibly on it in the
+browser the orchestrator measured in. Added `figure.chart:focus-visible{outline:2px solid var(--focus);
+outline-offset:4px;border-radius:8px}`, reusing the app's existing `--focus` token rather than introducing one.
+
+**Tests**, `tests/test_pulido_2.py` (4 new tests, 9 -> 13): `ChartsJsSourceTest` gained a test that the
+capture-phase click listener exists, calls `preventDefault`, is scoped via `svg.contains`, and never
+references the readout's `caption`; a test that `body.css` declares `touch-action:pan-y` and not `:none`; and
+a test that `figure.chart:focus-visible` declares an outline. A new `GoalChartWeekLabelTest` seeds a goal and
+a weekly check at `week_start = "2026-08-10"` (a Monday) and asserts the rendered label carries "10 ago" and
+not "16 ago" (the Sunday six days later).
+
+**Gate**, run once on the final tree with the plain command: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -- `Ran 799 tests in 61.113s ... OK (skipped=1)` (795 before this slice, +4 new).
+
+**Merge: this spec is its own approval.** The diff touches customer-facing bytes (the click-cancelling
+behaviour, the scroll behaviour, the weekly label's date, the focus ring) -- merge policy A's customer-bytes
+condition trips on its own, but this spec's body says in words to merge after the gate, carrying BODY-PULIDO-2's
+approval forward along with its own. Merged `--no-ff` into `main`; `main` left checked out, clean. Branch
+`feat/body-pulido-2` kept.

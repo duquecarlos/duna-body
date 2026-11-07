@@ -180,6 +180,35 @@ class GoalChartTest(unittest.TestCase):
             self.assertNotIn("day", p)
             self.assertNotIn("m", p)
 
+class GoalChartWeekLabelTest(unittest.TestCase):
+    """BODY-PULIDO-2-M fix 3: the goal chart's weekly label names the check's week_start (a Monday),
+    not the Sunday the point is plotted on -- the point's x position is unaffected."""
+
+    def setUp(self):
+        self.conn = _fresh_db(self, "pulido2_week_label.db")
+        _seed_days(self.conn, 1, "resting_hr", "2026-08-01", 60, 60, -0.1)
+        self.conn.commit()
+        self.gid = goals.propose(self.conn, 1, "Bajar el pulso en reposo", "2026-08-01", metric_key="resting_hr",
+                                 direction="lower", target_value=52.0, baseline_value=60.0,
+                                 deadline="2026-11-30")
+        goals.activate(self.conn, self.gid)
+        goals.weekly_check(self.conn, self.gid, 1, "2026-08-10")  # a Monday
+        self.conn.commit()
+        self.client = TestClient(web.app, follow_redirects=False)
+        _as(1)
+
+    def test_label_names_the_monday_not_the_sunday(self):
+        page = self.client.get(f"/goals/{self.gid}").text
+        points = None
+        for attrs, _ in _figures(page):
+            p = _points_of(attrs)
+            if p:
+                points = p
+        self.assertIsNotNone(points)
+        labels = [p["label"] for p in points]
+        self.assertTrue(any("10 ago" in label for label in labels), labels)
+        self.assertFalse(any("16 ago" in label for label in labels), labels)
+
 
 class SoonBackLinkTest(unittest.TestCase):
     """The "not enough days yet" page keeps the way back that `desde` promised (the gap BODY-PULIDO-1 left)."""
@@ -206,6 +235,29 @@ class ChartsJsSourceTest(unittest.TestCase):
         self.assertNotIn("fetch(", src)
         for u in re.findall(r'"(/[^"\s]*)"', src):
             self.assertTrue(u.startswith("/day/") or u.startswith("/trends?m="), u)
+
+    def test_svg_anchor_taps_are_cancelled_in_capture_phase_not_the_readout(self):
+        """BODY-PULIDO-2-M fix 1: a real tap on the per-day hit-region link inside the svg must read, not
+        navigate away -- so the click listener runs in the capture phase, is scoped to anchors inside the
+        svg, and never touches the readout's own "Abrir el día" link (outside the svg, left alone)."""
+        src = (_STATIC_DIR / "charts.js").read_text(encoding="utf-8")
+        m = re.search(r'addEventListener\("click",\s*function[^{]*\{(.*?)\},\s*true\)', src, re.S)
+        self.assertIsNotNone(m, "no capture-phase click listener found")
+        body = m.group(1)
+        self.assertIn("preventDefault", body)
+        self.assertIn("svg.contains", body)
+        self.assertNotIn("caption", body)
+
+    def test_touch_action_allows_native_vertical_scroll(self):
+        """BODY-PULIDO-2-M fix 2: a thumb starting on a stacked chart must still scroll the page."""
+        css = (_STATIC_DIR / "body.css").read_text(encoding="utf-8")
+        self.assertIn("touch-action:pan-y", css)
+        self.assertNotIn("touch-action:none", css)
+
+    def test_focusable_chart_has_a_visible_focus_style(self):
+        """BODY-PULIDO-2-M fix 4: figure.chart is tabIndex=0 (charts.js) and must show a focus ring."""
+        css = (_STATIC_DIR / "body.css").read_text(encoding="utf-8")
+        self.assertRegex(css, r'figure\.chart:focus-visible\{[^}]*outline:')
 
 
 class PersonIsolationTest(unittest.TestCase):

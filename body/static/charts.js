@@ -84,13 +84,35 @@
       return best;
     }
 
-    var dragging = false;
+    fig.addEventListener("click", function (e) {
+      var a = e.target.closest ? e.target.closest("a") : null;
+      if (a && svg.contains(a)) {
+        e.preventDefault();
+        show(nearest(fracFor(e.clientX)));
+      }
+    }, true);
+
+    var dragging = false, decided = false, horizontal = false, startX = 0, startY = 0;
     fig.addEventListener("pointerdown", function (e) {
       dragging = true;
+      decided = false;
+      horizontal = false;
+      startX = e.clientX;
+      startY = e.clientY;
       show(nearest(fracFor(e.clientX)));
     });
     fig.addEventListener("pointermove", function (e) {
       if (!dragging) return;
+      if (!decided) {
+        var dx = Math.abs(e.clientX - startX), dy = Math.abs(e.clientY - startY);
+        if (dx < 4 && dy < 4) return;
+        decided = true;
+        horizontal = dx >= dy;
+        if (!horizontal) {
+          dragging = false;
+          return;
+        }
+      }
       show(nearest(fracFor(e.clientX)));
     });
     fig.addEventListener("pointerup", function () {
