@@ -3704,3 +3704,51 @@ unclosed database` occurrences remain in the gate's own (non-tracemalloc) output
 **Merge.** No schema or migration change, no customer-facing byte changed (no template, static file, i18n
 string or response body touched), no cross-repo contract change. Merge policy A's three conditions all clear,
 so this slice merges on green without waiting.
+
+## BODY-CONEXIONES-CERRADAS-2 -- finishes closing every sqlite connection a test module opens (2026-11-07)
+
+Picks up BODY-CONEXIONES-CERRADAS-1's 403 after-measurement, all but one of them (`body/shift_import.py:330`,
+Tier 1, left for a follow-up) traced to a test module opening a connection without closing it:
+
+1. **The 33 test modules listed in that slice's entry.** Each now closes what it opens, through one of three
+   shapes depending on how the connection was already being used: `tests/_db.py`'s `open_conn(case, path)`
+   (`db.connect(path)` plus `case.addCleanup(conn.close)`) for a one-shot `conn = db.connect(...)` a test
+   method owns outright; `self.addCleanup(conn.close)` right after `db.connect()` in a `setUp` (or inline in a
+   test method) when the connection is handed off to helpers, a `self.conn` other test methods read, or a
+   `TestClient` fixture that outlives the open call; `cls.addClassCleanup(conn.close)` for the one
+   `setUpClass`-scoped connection (`test_history.py`'s `HistoryRouteTest`). Several helpers that opened a
+   connection without taking the test case (`_conn()`, `_mkconn()`, `_reset_db()`, `_fresh_db()`, `_db()`,
+   `_build_old_db()`, `_fresh_client()`, `make_db()`) were given a `case: unittest.TestCase` parameter so the
+   close could be registered at the one place the connection is actually created, rather than threading a
+   close through every caller. No assertion, fixture shape or test behavior changed -- every edit is a close.
+2. **`body/web.py`.** `propuesta_deshacer` now carries `@_cierra_conexion`, matching its two sibling routes
+   `propuesta_aplicar` / `propuesta_descartar` (flagged in the orchestrator's diff review of
+   BODY-CONEXIONES-CERRADAS-1: harmless today, since `_propuesta_respuesta` -- the function all three call --
+   already closes the connection itself, but the three routes should read the same instead of one being the
+   odd one out).
+3. **The guard** (`tests/test_conexiones_cerradas.py`, extended): a new `RouteClosesItsConnectionTest` parses
+   `body/web.py`'s own source with `ast`, finds every top-level function that calls `_ctx(` by its exact name
+   (so a helper like `_hoy_turno_ctx` or `_tarea_ayuda_ctx`, which only take `conn` as a parameter, never
+   matches), and asserts its decorator list carries `_cierra_conexion` or `_cierra_conexion_async` -- except
+   `asistente_preguntar`, named in an explicit allow-list with the same reason BODY-CONEXIONES-CERRADAS-1 gave
+   for leaving it undecorated (its `StreamingResponse` generator outlives the route call and closes the
+   connection itself, in its own `finally`). Static, so a future route that calls `_ctx(` and forgets the
+   decorator fails this test before it ever reaches the dynamic guard above it.
+
+**Measure**, both counted by me, both from
+`.venv/Scripts/python.exe -X tracemalloc=5 -W always::ResourceWarning -m unittest discover tests -t .`
+(a diagnostic run, not the gate): before (this slice's starting tree) 403 occurrences of `ResourceWarning:
+unclosed database`, one from `body/shift_import.py:330` and the rest spread across the 33 test modules listed
+above; after (final tree) 1 occurrence, from `body/shift_import.py:330` (Tier 1, out of `touches:`, left as the
+follow-up BODY-CONEXIONES-CERRADAS-1 named) -- zero from any module in `touches:`. The same run also shows one
+unrelated `ResourceWarning: unclosed file` from `tests/test_web_entry.py` (a `nul`-device file handle, not a
+database connection, and that module is not in `touches:`), left alone.
+
+**Gate**, run once on the final tree, plain command (no diagnostic flags):
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -- 750 tests (749 plus the one new assertion in
+`RouteClosesItsConnectionTest`), `OK (skipped=1)`, one `ResourceWarning: unclosed database` remains (the same
+`shift_import.py:330` occurrence above).
+
+**Merge.** No schema or migration change, no customer-facing byte changed (every edit is a test-only close or
+one decorator line with no behavior change), no cross-repo contract change. Merge policy A's three conditions
+all clear, so this slice merges on green without waiting.
