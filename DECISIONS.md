@@ -1600,3 +1600,97 @@ Slice commit: `a2c275e2688931f8424c1ee08ff241d9bdbba6aa` on `feat/body-host-back
 
 Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-host-backup-1` into `main`
 following this entry.
+
+## BODY-GARMIN-HOST-1 -- each hosted person connects their own Garmin account (2026-11-07)
+
+Carries out `BODY-HOSTING-PLAN-1` step 7 and Carlos's own choice `BODY-PULL-LOCATION-1` ("the host
+pulls"), approved under `ORCH-CARLOS-DELEGATES-TIER-1-1`. Built to the sensitive-data amendment rule
+2: outside-account access encrypted at rest with AES-256-GCM, key from the env file, only the person
+signs in, deleting the person deletes the token. Local mode (Carlos's PC, `python -m body.login`,
+the token folder) is byte-for-byte unchanged.
+
+**Encryption shape.** A new table, `garmin_cuenta(person_id PRIMARY KEY, token_cifrado BLOB, nonce
+BLOB, conectado_en TEXT, ultimo_error TEXT)`, additive in `body/db.py`'s `SCHEMA`. `body/garmin_cuenta.py`
+is the only module that touches it: AES-256-GCM via `cryptography`'s `AESGCM`, the 32-byte key read
+from hex env `BODY_TOKEN_KEY`, a random 12-byte nonce per write, and associated data
+`b"body-garmin:" + str(person_id)` so a ciphertext copied to another person's row fails to decrypt
+(`cryptography.exceptions.InvalidTag`) rather than handing over their Garmin access. `ensure_configured()`
+mirrors `cuenta.ensure_configured()`'s pattern: hosted mode with no key refuses to start, naming only
+the variable, and `body/web.py`'s lifespan calls it alongside the existing Cuenta check. `ultimo_error`
+holds an error CLASS name only (e.g. `NotSignedIn`), never a message or figure.
+
+**The flow.** Measured in the installed `garminconnect` 0.3.20 before writing any of this: `Garmin(...,
+return_on_mfa=True)`; `login()` returns `("needs_mfa", client_state)` when Garmin asks for a code,
+`client_state` a JSON-serializable dict; `resume_login(client_state, code)` finishes it on a fresh
+`Garmin` instance; `Tokens.loads(str)` **does exist** (`garminconnect/client/tokens.py`), so the
+temp-file fallback the spec asked me to consider if it did not was never needed -- `Garmin.login()`
+also already tells a stored path from an inline token string via its own `_looks_like_json` check, so
+`_client(token_str)` just calls `api.login(token_str)` directly.
+
+`body/garmin_adapter.py` (Tier 1, the only module importing `garminconnect`) gains `start_sign_in(email,
+password) -> ("ok", token_str) | ("needs_mfa", client_state_json)` and `finish_sign_in(client_state_json,
+code) -> token_str`, both using email/password/code once and never storing, logging or returning them.
+`fetch_day(day, token_str=None)` keeps its exact prior behaviour and return type (`DayData`) when
+`token_str` is `None` (local, unchanged); given a `token_str` it returns `(DayData, token_after)` instead,
+where `token_after` is Garmin's possibly-refreshed value of that same token, for the caller to compare
+and decide whether to re-encrypt.
+
+**Web (hosted only; 404 in local mode, per `cuenta.hosted()`).** `GET /garmin` renders connected-since
+date, not-connected, or the last error in words (never the stored class name verbatim -- a small mapping
+in `body/web.py` turns it into a sentence, falling back to a generic one); the connect form (email,
+`type=password`/`autocomplete="current-password"`) says plainly that Body passes the password to Garmin
+once and keeps only the access Garmin returns, encrypted. `POST /garmin/conectar` calls `start_sign_in`;
+on `"needs_mfa"` the `client_state_json` is kept server-side in a process-local dict keyed by a sha256 of
+the session-token cookie, 10-minute TTL (checked, not swept in the background -- the dict is small and
+per-process); the code form is rendered directly in that response, not a redirect. `POST /garmin/codigo`
+calls `finish_sign_in`; a wrong code keeps the pending state for another try inside the same TTL window,
+an expired or missing one is refused. `POST /garmin/desconectar` deletes the row. Every route scopes
+through `identity.current_person_id` with no resource id in the URL, so one person can never reach or
+change another's connection. Garmin exceptions always surface as one of two generic sentences, never
+the exception text. `body/templates/settings.html` gained a «Garmin» row, hosted-only. The request-log
+scrub already covers these routes (it logs method/route-template/status/duration only); a test confirms
+it for `/garmin/conectar` specifically. The assistant's route registry (`tests/test_agente_registro.py`)
+maps `/garmin` to no tool, like the other privacy/account-plumbing routes.
+
+**The pull loop.** `python -m body.pull` branches on `cuenta.hosted()` at the top of `main()`; hosted mode
+(`--all`/`--recompute` are local-only) loops over every `garmin_cuenta.every_person_id()`, decrypts,
+calls `fetch_day(day, token_str=...)` per day (same per-day logic, same `PAUSE_S` between days), and
+re-encrypts only if the token actually changed (`token != token_before`) -- confirmed by a test that the
+stored nonce is untouched when it did not. A person whose token is rejected raises `NotSignedIn`;
+`pull_hosted` catches it, records the class name in `ultimo_error`, and continues with the next person.
+Prints counts only (`N ok, N failed, N days stored`). `deploy/host/body-pull.service` needed no change:
+it already runs `python -m body.pull --days 2`, now per person as the decision asked.
+
+**Privacy (`BODY-PRIVACIDAD-1` extended).** `garmin_cuenta` joins `PARTIAL_EXPORT_TABLES`: the export
+shows `{"conectado_desde": <date>}`, built from `conectado_en` alone, never the ciphertext column.
+`delete_person()` gained an explicit `DELETE FROM garmin_cuenta`, so the generic person-table delete
+removes it as any other person-keyed table; `_borrar_fuera_de_bd`'s docstring now says it stays empty
+because nothing about a Garmin connection lives outside the database any more.
+
+**Deviations.** None from the spec's decisions. One thing the spec asked me to re-find came back
+differently from what it flagged as a possibility: `Tokens.loads(str)` exists, so no temp-file
+workaround was written.
+
+**Tests.** `tests/test_garmin_host.py` (new, 26 tests): encryption round-trip, wrong AAD, wrong key,
+`ensure_configured` in both modes, sign-in ok, MFA start/finish/wrong-code/expired/no-pending, desconectar,
+cross-person isolation, the request-log scrub, the pull loop (one person failing leaves the other pulled,
+a refreshed token re-encrypted, an unchanged one left alone, a person with no row skipped), and local
+mode (routes 404, `fetch_day` unchanged both with and without a local token). All against a fake Garmin
+client patched in as `garminconnect.Garmin` -- no network, invented demo data only.
+`tests/test_privacidad.py` gained `GarminExportDeleteTest` (3 tests: export shows the date only, export
+with no row is `None`, delete-all removes the row). `tests/test_agente_registro.py`: `/garmin` added to
+`ROUTE_TOOL` as `None`. `tests/test_host_deploy.py` needed no change (`body-pull.service` is unchanged).
+
+**Merge policy.** This diff adds a table to `body/db.py`'s `SCHEMA` (a schema change) and changes bytes
+Carlos reads as a signed-in person -- the new `/garmin` page, the Settings «Garmin» row, and the new
+`garmin.*` strings in both `body/i18n/es.json` and `en.json`. Two of Merge Policy A's three conditions
+trip (schema, customer-bytes); the spec's body says to stop `AWAITING_APPROVAL` on a clean branch for a
+Tier 1 + customer-facing slice unless the policy says otherwise, and it does not say otherwise here. So
+this stops before merging, the same way `BODY-HOST-BACKUP-1` did.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 342 tests, OK, skipped=1 (the
+POSIX-only `chmod 0600` check, unrelated to this slice), run once on the final tree (313 at the branch
+tip plus 29 new: 26 in `tests/test_garmin_host.py`, 3 in `tests/test_privacidad.py`).
+
+Slice commit: `b31387e9062904ee4157988e299dafb3c0bb4021` on `feat/body-garmin-host-1`, not yet merged --
+awaiting the orchestrator's review of the schema and customer-bytes conditions above.
