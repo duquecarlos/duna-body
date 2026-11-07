@@ -1,5 +1,5 @@
 [Unit]
-Description=Body app daily Garmin pull + shift import
+Description=Body app daily Garmin pull
 After=network-online.target
 Wants=network-online.target
 
@@ -10,8 +10,9 @@ EnvironmentFile=/srv/duna/env/body.env
 Environment=BODY_HOME=/srv/duna/data/body
 WorkingDirectory=/srv/duna/repos/duna-body
 ExecStart=/srv/duna/repos/duna-body/.venv/bin/python -m body.pull --days 2
-ExecStart=/srv/duna/repos/duna-body/.venv/bin/python -m body.shift_import
 NoNewPrivileges=yes
 ProtectSystem=strict
+ProtectHome=yes
 ReadWritePaths=/srv/duna/data/body
 PrivateTmp=yes
+UMask=0077

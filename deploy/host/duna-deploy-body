@@ -112,7 +112,7 @@ if [[ -n "$DRY_RUN" ]]; then
   echo "runuser -u \"$owner\" -- git -C \"$REPO_DIR\" rev-parse HEAD"
   echo "runuser -u \"$owner\" -- git -C \"$REPO_DIR\" fetch origin"
   echo "runuser -u \"$owner\" -- git -C \"$REPO_DIR\" pull --ff-only"
-  echo "exec \"$PRODUCT_SCRIPT\" --before-sha <captured-sha>"
+  echo "exec /bin/bash \"$PRODUCT_SCRIPT\" --before-sha <captured-sha>"
   exit 0
 fi
 
@@ -120,4 +120,4 @@ before_sha="$(runuser -u "$owner" -- git -C "$REPO_DIR" rev-parse HEAD)"
 runuser -u "$owner" -- git -C "$REPO_DIR" fetch origin
 runuser -u "$owner" -- git -C "$REPO_DIR" pull --ff-only
 
-exec "$PRODUCT_SCRIPT" --before-sha "$before_sha"
+exec /bin/bash "$PRODUCT_SCRIPT" --before-sha "$before_sha"

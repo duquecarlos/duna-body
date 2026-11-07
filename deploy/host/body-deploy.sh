@@ -72,12 +72,16 @@ install_caddy_site() {
 
 rollback_and_fail() {
   local step="$1"
+  local deps_ok="yes"
   runuser -u "$owner" -- git -C "$REPO_DIR" reset --hard "$before_sha"
+  if ! runuser -u "$owner" -- "$REPO_DIR/.venv/bin/pip" install -q -r "$REPO_DIR/requirements.txt"; then
+    deps_ok="no"
+  fi
   install_units
   install_caddy_site
   run systemctl daemon-reload
   run systemctl restart body-web.service
-  fail_step "$step" "yes"
+  fail_step "$step (rollback dependencies reinstalled: $deps_ok)" "yes"
 }
 
 runuser -u "$owner" -- python3 -m venv "$REPO_DIR/.venv"
@@ -87,13 +91,26 @@ runuser -u "$owner" -- "$REPO_DIR/.venv/bin/pip" install -q -r "$REPO_DIR/requir
 install_units
 install_caddy_site
 
+if ! run caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile; then
+  run rm -f "$CADDY_DST"
+  fail_step "caddy validate" "no"
+fi
+
 run systemctl daemon-reload
 run systemctl enable body-web.service body-pull.timer body-vida.timer
 run systemctl restart body-web.service
 run systemctl reload caddy
 
-sleep 1
-if ! curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then
+health_ok=""
+for attempt in $(seq 1 20); do
+  code="$(curl -fsS -o /dev/null -w '%{http_code}' "$HEALTH_URL" 2>/dev/null || true)"
+  if [[ "$code" == "200" ]]; then
+    health_ok="1"
+    break
+  fi
+  sleep 1
+done
+if [[ -z "$health_ok" ]]; then
   rollback_and_fail "health check"
 fi
 

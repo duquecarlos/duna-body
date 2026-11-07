@@ -13,8 +13,10 @@ Restart=on-failure
 RestartSec=5
 NoNewPrivileges=yes
 ProtectSystem=strict
+ProtectHome=yes
 ReadWritePaths=/srv/duna/data/body
 PrivateTmp=yes
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

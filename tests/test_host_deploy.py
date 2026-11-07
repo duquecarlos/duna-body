@@ -69,6 +69,21 @@ class ProductScriptBasicsTest(unittest.TestCase):
         self.assertIn('PATH="/usr/sbin:/usr/bin:/sbin:/bin"', self.text)
 
 
+class ExecBitTest(unittest.TestCase):
+    def test_both_scripts_executable_in_git_index(self):
+        import subprocess
+
+        out = subprocess.run(
+            ["git", "ls-files", "-s", "deploy/host/duna-deploy-body", "deploy/host/body-deploy.sh"],
+            cwd=ROOT, capture_output=True, text=True, check=True,
+        ).stdout
+        modes = dict(
+            (line.split()[3], line.split()[0]) for line in out.splitlines() if line.strip()
+        )
+        for path in ("deploy/host/duna-deploy-body", "deploy/host/body-deploy.sh"):
+            self.assertEqual(modes.get(path), "100755", f"{path} is not executable in the index")
+
+
 class GitOwnershipTest(unittest.TestCase):
     def test_every_git_dash_c_call_is_prefixed_by_runuser(self):
         for path in SCRIPTS:
@@ -90,19 +105,114 @@ class BeforeShaTest(unittest.TestCase):
 
     def test_entry_passes_before_sha_to_exec(self):
         text = _read(ENTRY)
-        self.assertIn('exec "$PRODUCT_SCRIPT" --before-sha "$before_sha"', text)
+        self.assertIn('exec /bin/bash "$PRODUCT_SCRIPT" --before-sha "$before_sha"', text)
 
     def test_entry_execs_product_script(self):
         text = _read(ENTRY)
         self.assertTrue(
-            any(line.strip().startswith('exec "$PRODUCT_SCRIPT"') for line in text.splitlines()),
-            "no bare 'exec \"$PRODUCT_SCRIPT\"' line found",
+            any(
+                line.strip().startswith('exec /bin/bash "$PRODUCT_SCRIPT"')
+                for line in text.splitlines()
+            ),
+            "no bare 'exec /bin/bash \"$PRODUCT_SCRIPT\"' line found",
         )
+
+    def test_exec_line_uses_bin_bash_not_the_exec_bit(self):
+        text = _read(ENTRY)
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("exec ") or '"exec ' in stripped:
+                self.assertIn(
+                    "/bin/bash", stripped,
+                    f"exec line does not run the script through /bin/bash: {line}",
+                )
 
     def test_product_validates_before_sha_is_40_hex(self):
         text = _read(PRODUCT)
         self.assertIn("[0-9a-f]{40}", text)
         self.assertIn("--before-sha", text)
+
+
+class HealthCheckRetryTest(unittest.TestCase):
+    def test_bare_sleep_1_then_single_curl_is_gone(self):
+        text = _read(PRODUCT)
+        self.assertNotIn(
+            'sleep 1\nif ! curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then', text,
+            "old single-shot 'sleep 1' + one curl check still present",
+        )
+
+    def test_retry_loop_bound_present(self):
+        text = _read(PRODUCT)
+        self.assertRegex(text, r"\bfor\b.*\b(1\s+20|20)\b")
+        self.assertIn("health_ok", text)
+
+    def test_health_check_succeeds_on_200_before_rollback(self):
+        text = _read(PRODUCT)
+        healthz_idx = text.index("HEALTH_URL")
+        rollback_idx = text.rindex('rollback_and_fail "health check"')
+        self.assertLess(healthz_idx, rollback_idx)
+        self.assertIn("200", text)
+
+
+class RollbackReinstallsDependenciesTest(unittest.TestCase):
+    def test_pip_appears_inside_rollback_and_fail(self):
+        text = _read(PRODUCT)
+        start = text.index("rollback_and_fail() {")
+        end = text.index("\n}\n", start)
+        body = text[start:end]
+        self.assertIn("pip", body, "rollback_and_fail does not reinstall dependencies")
+
+
+class CaddyValidateBeforeReloadTest(unittest.TestCase):
+    def test_validate_precedes_reload(self):
+        text = _read(PRODUCT)
+        validate_idx = text.index("caddy validate")
+        reload_idx = text.rindex("systemctl reload caddy")
+        self.assertLess(validate_idx, reload_idx)
+
+    def test_validate_failure_removes_only_caddy_dst_and_does_not_reload(self):
+        text = _read(PRODUCT)
+        validate_idx = text.index("caddy validate")
+        reload_idx = text.rindex("systemctl reload caddy")
+        between = text[validate_idx:reload_idx]
+        self.assertIn("rm", between)
+        self.assertIn("$CADDY_DST", between)
+        self.assertIn("fail_step", between)
+
+
+class ServiceHardeningTest(unittest.TestCase):
+    def test_umask_and_protecthome_in_every_service(self):
+        for path in (WEB_UNIT, PULL_UNIT, VIDA_UNIT):
+            text = _read(path)
+            self.assertIn("UMask=0077", text, f"{path.name} missing UMask=0077")
+            self.assertIn("ProtectHome=yes", text, f"{path.name} missing ProtectHome=yes")
+
+
+class NoShiftImportYetTest(unittest.TestCase):
+    def test_pull_unit_runs_only_the_pull(self):
+        text = _read(PULL_UNIT)
+        self.assertNotIn("shift_import", text)
+        exec_starts = [l for l in text.splitlines() if l.startswith("ExecStart=")]
+        self.assertEqual(len(exec_starts), 1)
+        self.assertIn("body.pull", exec_starts[0])
+
+    def test_readme_says_so(self):
+        text = _read(README)
+        self.assertIn("shift import", text)
+        self.assertIn("uploader", text)
+
+
+class HonestCaddyCommentTest(unittest.TestCase):
+    def test_caddyfile_does_not_claim_confirmed(self):
+        text = _read(CADDYFILE)
+        self.assertNotIn("confirmed with Main", text)
+        self.assertIn("ASSUMPTION", text)
+
+    def test_readme_lists_host_assumptions_for_main(self):
+        text = _read(README)
+        for token in ("python3", "caddy", "curl", "duna-body"):
+            self.assertIn(token, text)
+        self.assertNotIn("confirmed with Main", text)
 
 
 class DryRunWrapperTest(unittest.TestCase):
@@ -149,11 +259,15 @@ class DataDirTest(unittest.TestCase):
         self.assertIn('chmod 0700 "$DATA_DIR"', text)
         self.assertIn('chown "$DATA_USER:$DATA_USER" "$DATA_DIR"', text)
 
-    def test_no_rm_anywhere_in_either_script(self):
+    def test_only_rm_touches_caddy_dst(self):
         for path in SCRIPTS:
             for lineno, line in enumerate(_read(path).splitlines(), start=1):
                 if re.search(r"\brm\b", line):
-                    self.fail(f"{path.name}:{lineno}: 'rm' found: {line}")
+                    self.assertIn(
+                        "$CADDY_DST", line,
+                        f"{path.name}:{lineno}: 'rm' found touching something other than "
+                        f"$CADDY_DST: {line}",
+                    )
 
 
 class SudoersTest(unittest.TestCase):

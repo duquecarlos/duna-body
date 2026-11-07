@@ -20,7 +20,8 @@ Write `/srv/duna/env/body.env` by hand (owner root, group `duna-body`, mode 0640
 is ever committed to this repository.
 
 Before the first deploy, Caddy needs somewhere to proxy to, so copy the site once by hand (this
-assumes the host's main Caddyfile imports `/etc/caddy/sites/*` -- to confirm with Main):
+assumes the host's main Caddyfile imports `/etc/caddy/sites/*` -- an assumption Main confirms in
+the walk-through, not confirmed yet):
 
     sudo cp deploy/host/Caddyfile.body /etc/caddy/sites/body.caddy
     sudo systemctl reload caddy
@@ -41,6 +42,16 @@ BODY-CUENTA-RP-1); on any failure it rolls back to the commit that was deployed 
 reinstalls, restarts, and exits non-zero naming the step that failed.
 
 `backup` is reserved for BODY-HOST-BACKUP-1 and is not implemented yet.
+
+`body-pull.service` runs only the Garmin pull, not the shift import: shift files reach the host
+through an uploader that is not built yet (BODY-SHIFT-UPLOAD-1).
+
+## Host assumptions for Main to confirm in the walk-through
+
+* the host's main Caddyfile imports `/etc/caddy/sites/*`
+* `python3` is on root's `PATH`
+* `caddy` and `curl` are installed
+* the repository is named `duna-body` at `/srv/duna/repos/duna-body`
 
 ## What installs where
 

@@ -13,5 +13,7 @@ ExecStart=/srv/duna/repos/duna-body/.venv/bin/python -m body.pull --days 2
 ExecStart=/srv/duna/repos/duna-body/.venv/bin/python -m body.vida_export --current
 NoNewPrivileges=yes
 ProtectSystem=strict
+ProtectHome=yes
 ReadWritePaths=/srv/duna/data/body
 PrivateTmp=yes
+UMask=0077
