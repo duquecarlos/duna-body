@@ -3219,3 +3219,22 @@ stopped `BODY-TURNOS-SYNC-1` and `BODY-METAS-SCREENS-1` before their own merges,
 `i18n` file was touched here. Per merge policy A and this spec's own GATE section (which only says to merge "unless
 merge policy says stop," never stating in words that this slice may merge past that condition), this slice stops
 on `feat/body-turnos-export-work-shift-1` AWAITING_APPROVAL rather than merging.
+
+## BODY-TURNOS-EXPORT-WORK-SHIFT-1-M -- lands BODY-TURNOS-EXPORT-WORK-SHIFT-1, merge only (2026-11-07)
+
+Carries out `BODY-TURNOS-EXPORT-WORK-SHIFT-1-M` under `ORCH-CARLOS-DELEGATES-TIER-1-1`: the orchestrator reviewed
+the diff left `AWAITING_APPROVAL` by `BODY-TURNOS-EXPORT-WORK-SHIFT-1` above and approved it as written -- merge
+only, no further change to `body/vida_export.py` or its tests.
+
+Branch tip was `d04c839` as expected, tree clean. `main`'s tip (`677633c`) equalled the branch's own base
+(measured with `git merge-base`), so `main` had not moved since the branch was cut and no merge from `main` was
+needed.
+
+**Gate:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 670 tests, OK (1 pre-existing skip), run
+once on the branch tip before the merge.
+
+Merged `feat/body-turnos-export-work-shift-1` into `main` with `--no-ff`. The orchestrator's approval-reason
+covers the two customer-facing sentences that stopped the prior slice (they reach Carlos through Personal's
+Sunday review, not through a Body screen) and confirms the shape review: `shift` rows only, no new top-level
+field, an empty week emits nothing, the watch-days count is taken before the shift entries are appended, and the
+recovery entry comes from `turnos_costo.turno_de_hoy` for the week's Sunday -- the same rule Hoy uses.
