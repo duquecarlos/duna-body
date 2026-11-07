@@ -20,7 +20,7 @@ CONSENT_VERSION = "consentimiento-v1"
 # Checked by tests/test_privacidad.py's coverage test: a new person-keyed table that is added to
 # neither set fails that test, so it can never slip past export or delete-all unnoticed.
 FULLY_HANDLED_TABLES = {
-    "daily_metric", "sleep_session", "activity", "shift", "shift_batch",
+    "daily_metric", "sleep_session", "activity", "shift", "shift_batch", "shift_pattern",
     "goal", "habit_check", "goal_check", "plan", "ajuste_agente", "consentimiento", "hogar_local",
     "conversacion_agente", "mensaje_agente", "uso_agente", "tope_agente", "propuesta_agente",
 }
@@ -85,6 +85,8 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
             "SELECT * FROM shift WHERE person_id = ? ORDER BY day", (person_id,))],
         "shift_batches": [dict(r) for r in conn.execute(
             "SELECT * FROM shift_batch WHERE person_id = ? ORDER BY received", (person_id,))],
+        "shift_pattern": (lambda r: dict(r) if r else None)(conn.execute(
+            "SELECT * FROM shift_pattern WHERE person_id = ?", (person_id,)).fetchone()),
     }
     dias = [dict(r) for r in conn.execute(
         "SELECT day, metric_key, value, source FROM daily_metric WHERE person_id = ? ORDER BY day",
@@ -139,7 +141,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "formato": "body-export-v1",
         "exportado_en": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "persona": {"display_name": person["display_name"], "timezone": person["timezone"],
-                    "language": person["language"]},
+                    "language": person["language"], "trabaja_turnos": person["trabaja_turnos"]},
         "hogar": dict(hogar_row) if hogar_row else None,
         "vida": vida,
         "dias": dias,
@@ -198,6 +200,7 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         )
         conn.execute("DELETE FROM shift_batch WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM shift WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM shift_pattern WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM ajuste_agente WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM consentimiento WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM garmin_cuenta WHERE person_id = ?", (person_id,))
