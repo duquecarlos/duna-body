@@ -1549,7 +1549,9 @@ async def habit_check(habit_id: int, request: Request, person_id: int = Depends(
 def settings(person_id: int = Depends(identity.current_person_id)):
     conn, _, t = _ctx(person_id)
     nivel_datos = agente_ajustes.nivel_datos(conn, person_id)
-    return _render("settings.html", t=t, tab="settings", nivel_datos=nivel_datos)
+    trabaja_turnos = db.get_trabaja_turnos(conn, person_id)
+    return _render("settings.html", t=t, tab="settings", nivel_datos=nivel_datos,
+                   trabaja_turnos=trabaja_turnos)
 
 
 # ---- Ayuda (tutoriales-v1 section 5.1): chapters, their tasks, and the recorrido completo ---------
@@ -1586,6 +1588,20 @@ async def set_language(request: Request, person_id: int = Depends(identity.curre
         conn, _, _ = _ctx(person_id)
         db.set_language(conn, lang, person_id)
     return RedirectResponse("/settings", status_code=303)
+
+
+@app.post("/settings/trabaja_turnos")
+@_cierra_conexion_async
+async def set_trabaja_turnos(request: Request, person_id: int = Depends(identity.current_person_id)):
+    f = parse_qs((await request.body()).decode())
+    valor = f.get("valor", [""])[0]
+    if valor in ("si", "no"):
+        conn, _, _ = _ctx(person_id)
+        db.set_trabaja_turnos(conn, valor == "si", person_id)
+    volver = f.get("volver", ["/settings"])[0]
+    if volver not in ("/", "/settings"):
+        volver = "/settings"
+    return RedirectResponse(volver, status_code=303)
 
 
 # ---- «Lo que ve el asistente» (BODY-NIVEL-DATOS-UI-1): the screen the consent text promises -------

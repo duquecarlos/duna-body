@@ -10,6 +10,15 @@
   </form>
 </div>
 <div class="card">
+  <div class="q">{{ t('settings.turnos.pregunta') }}</div>
+  <form method="post" action="/settings/trabaja_turnos" class="seg">
+    <input type="hidden" name="volver" value="/settings">
+    <button class="btn {{ 'on' if trabaja_turnos==True }}" name="valor" value="si">{{ t('settings.turnos.si') }}</button>
+    <button class="btn {{ 'on' if trabaja_turnos==False }}" name="valor" value="no">{{ t('settings.turnos.no') }}</button>
+  </form>
+  <p class="note" style="margin-top:8px">{{ t('settings.turnos.desc') }}</p>
+</div>
+<div class="card">
   <a href="/ayuda" class="q" style="display:block;color:inherit;text-decoration:none">{{ t('settings.ayuda') }} →</a>
 </div>
 <div class="card">

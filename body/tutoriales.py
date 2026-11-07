@@ -19,7 +19,7 @@ from pathlib import Path
 
 import httpx
 
-from . import dispositivo, privacidad
+from . import db, dispositivo, privacidad
 
 ROOT = Path(__file__).resolve().parent.parent
 CATALOGO_PATH = ROOT / "tutoriales" / "catalogo.json"
@@ -33,7 +33,8 @@ _manifest_cache: dict[str, tuple[float, dict]] = {}
 _PARAM_RE = re.compile(r"\{[^}]+\}")
 
 ONBOARDING_ORDEN = (
-    "iniciar-sesion-y-aceptar", "conectar-garmin", "vincular-este-pc", "primera-mirada-a-hoy",
+    "iniciar-sesion-y-aceptar", "conectar-garmin", "trabajas-por-turnos", "vincular-este-pc",
+    "primera-mirada-a-hoy",
 )
 
 SOLO_EN_LINEA = frozenset({"/login", "/garmin", "/ajustes/dispositivos"})
@@ -138,6 +139,7 @@ def primeros_pasos(conn: sqlite3.Connection, person_id: int, hosted: bool) -> li
     hecho = {
         "iniciar-sesion-y-aceptar": inicio,
         "conectar-garmin": tiene_datos,
+        "trabajas-por-turnos": db.get_trabaja_turnos(conn, person_id) is not None,
         "vincular-este-pc": bool(vinculado),
         "primera-mirada-a-hoy": inicio and tiene_datos,
     }

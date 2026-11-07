@@ -4559,3 +4559,65 @@ merge policy A's three conditions all pass, and this spec's body says to merge. 
 `40d5534f38daca65eda7f6454008443b5cbebae3`. The merge commit's tree (`e156978c04647a52a51467db0f46f55d25d7d430`)
 is identical to the branch tip's tree (`git diff` between them is empty), so the gate above still describes the
 tree that landed; it was not re-run after the merge.
+
+## BODY-TURNOS-OPCIONAL-2 -- the one-time «¿Trabajas por turnos?» question, answered in place
+
+Slice 2 of BODY-TURNOS-OPCIONAL-OBS-1's plan under Carlos's ruling A (`ORCH-CARLOS-DELEGATES-TIER-1-1`, Carlos
+chose option A on 2026-11-07). This slice only RECORDS the answer through the accessors
+`BODY-TURNOS-ESQUEMA-1` merged (`db.get_trabaja_turnos`, `db.set_trabaja_turnos`, `db.trabaja_turnos_si`);
+hiding Turnos when the answer is not yes is slice 3, and the PC-link rule is slice 4.
+
+**The orchestrator's four decisions, as built:**
+1. The question is answered IN PLACE on the Primeros pasos card (two 44 px buttons posting
+   `valor=si|no` and `volver=/`), not by sending the person to Ajustes -- `body/templates/base.html`'s
+   `primeros_pasos_card` macro renders the question and the two buttons in place of the plain link for the
+   `trabajas-por-turnos` item while it is unanswered, and renders it ticked like every other item once
+   answered.
+2. Its item (`trabajas-por-turnos`) sits in `ONBOARDING_ORDEN` and in `tutoriales/catalogo.json`'s `orden`
+   right after `conectar-garmin` and right before `vincular-este-pc` (renumbered `vincular-este-pc` to 4 and
+   `primera-mirada-a-hoy` to 5), because slice 4 makes the PC step depend on this answer.
+3. It ticks from data: `tutoriales.primeros_pasos()` computes its `hecho` as
+   `db.get_trabaja_turnos(conn, person_id) is not None`, never a stored flag, exactly like every other
+   Primeros pasos item. It is not skipped in local mode (only `vincular-este-pc` is local-mode-skipped).
+4. `POST /settings/trabaja_turnos` (`body/web.py`, written like `set_language`: the
+   `_cierra_conexion_async` decorator, `parse_qs` of the raw body) takes `volver` from an allowlist of
+   exactly `"/"` or `"/settings"`; anything else (`https://example.com`, `//evil`, missing) falls back to
+   `"/settings"`. `valor` must be `si` or `no`; anything else changes nothing.
+
+**Ajustes.** `body/templates/settings.html` gained a card right after the language card: the question, a
+two-button `seg` form identical in shape to the language one (the stored answer's button carries `btn on`;
+neither does when the value is NULL), and one description line under it. `GET /settings` now also passes
+`trabaja_turnos` (`db.get_trabaja_turnos(conn, person_id)`) to the template.
+
+**i18n**, added to both `body/i18n/es.json` and `body/i18n/en.json` (verbatim in this slice's structured
+report's `customer_bytes`): `settings.turnos.pregunta`, `settings.turnos.si`, `settings.turnos.no`,
+`settings.turnos.desc`. No hard-coded text was added to any template.
+
+**Tests.** New `tests/test_turnos_opcional_2.py` (imports `tests/_isolate.py` first): the route stores
+1/0 and redirects to the allowlisted target, a foreign or missing `volver` falls back to `/settings`, a bad
+or missing `valor` changes nothing; Ajustes marks the stored answer `on` and neither when NULL; the item's
+position in `ONBOARDING_ORDEN` and in the catalog's `orden`; `primeros_pasos()`'s `hecho` for NULL/si/no and
+that it shows in local mode too; the Hoy card renders two buttons while unanswered and a ticked link once
+answered, in hosted and local mode; both languages render the question on Ajustes and on Hoy. Updated
+`tests/test_tutoriales_puertas.py`'s onboarding-id-set assertions (`PrimerosPasosFunctionTest`) and its
+"everything done" / "card disappears" cases to include `trabajas-por-turnos`, and its
+`LeerTutorialesToolTest.test_consulta_filters_by_title_or_chapter_case_insensitively` case to include the new
+task (its catalog title contains "turnos", so the existing "TURNO" query now also matches it) --
+restoring each case's subject, not deleting it. `tests/test_primer_dia_1.py` needed no change: nothing in it
+pins the full onboarding id set or count.
+
+**Measured, not assumed.** The in-context "¿Cómo se hace?" door on `/settings` (`tarea_en_ruta`, first
+catalog match by `pantalla`) now resolves to `trabajas-por-turnos` instead of `pagarle-a-duna`, because the
+new task's `pantalla` is also `/settings` and it now sits earlier in the catalog's `tareas` array. No test
+pinned the previous behaviour; this is a side effect of two tasks sharing one `pantalla`, not a defect this
+spec asked to avoid, and the new door is arguably the more relevant one for a page that now carries this
+exact question.
+
+**Gate**, exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, run once on the branch,
+foreground: `Ran 880 tests in 131.133s ... OK (skipped=1)` (the 24 new tests in
+`tests/test_turnos_opcional_2.py`, over BODY-MODELOS-ESTANDAR-1-M's prior count).
+
+**Merge.** The diff adds new customer-facing bytes (the question, its two answers and its description line,
+on both Ajustes and Hoy, in two languages) -- merge policy A's customer-bytes condition fails, and the
+spec's approval reason says to stop `AWAITING_APPROVAL` for the orchestrator's 375 px browser check. Not
+merged; stays on `feat/body-turnos-opcional-2`.
