@@ -1577,7 +1577,7 @@ def settings(person_id: int = Depends(identity.current_person_id)):
     nivel_datos = agente_ajustes.nivel_datos(conn, person_id)
     trabaja_turnos = db.get_trabaja_turnos(conn, person_id)
     return _render("settings.html", t=t, tab="settings", nivel_datos=nivel_datos,
-                   trabaja_turnos=trabaja_turnos, turnos=trabaja_turnos is True)
+                   trabaja_turnos=trabaja_turnos, turnos=_turnos_on(conn, person_id))
 
 
 # ---- Ayuda (tutoriales-v1 section 5.1): chapters, their tasks, and the recorrido completo ---------

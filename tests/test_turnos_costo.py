@@ -406,6 +406,8 @@ class StripBandsTest(unittest.TestCase):
 
     def test_day_without_readiness_shows_em_dash_and_a_label(self):
         conn = self._reset_db("strip2.db")  # no shifts, no metrics at all
+        # a shift worker whose shifts have not arrived yet (ruling BODY-TURNOS-OPCIONAL-1)
+        db.set_trabaja_turnos(conn, True, 1)
         r = self.client.get("/shifts")
         self.assertEqual(r.status_code, 200)
         cells = re.findall(r'<a class="strip-cell[^"]*"[^>]*>', r.text)
@@ -489,7 +491,9 @@ class WebAndToolTest(unittest.TestCase):
             self.client.post("/settings/language", data={"lang": "es"})
 
     def test_empty_state_with_no_shifts(self):
-        self._reset_db()
+        conn = self._reset_db()
+        # a shift worker whose shifts have not arrived yet (ruling BODY-TURNOS-OPCIONAL-1)
+        db.set_trabaja_turnos(conn, True, 1)
         r = self.client.get("/shifts")
         self.assertEqual(r.status_code, 200)
         self.assertIn(_t("es", "shifts.reason.sin_datos_reloj"), r.text)

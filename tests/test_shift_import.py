@@ -397,6 +397,8 @@ class ShiftWebTest(unittest.TestCase):
         config.DB_PATH = self._orig_db_path
 
     def test_shifts_page_without_proposed_batch_es(self):
+        # a shift worker whose shifts have not arrived yet (ruling BODY-TURNOS-OPCIONAL-1)
+        db.set_trabaja_turnos(self.conn, True, 1)
         page = self.client.get("/shifts").text
         self.assertIn("Turnos", page)
         # no shifts and no watch data at all -- an honest empty state, not the removed "soon" placeholder
