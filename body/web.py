@@ -350,6 +350,39 @@ async def backchannel_logout(request: Request):
     return Response(status_code=200 if ok else 400)
 
 
+def _hoy_turno_ctx(t: T, conn, person_id: int, today_local: date) -> dict:
+    """Hoy's second promise (BODY-HOY-TURNO-1): today's shift, the next one, and a recovery line --
+    one vocabulary with Turnos' strip (shift.kind.*, the same band classes)."""
+    turno = turnos_costo.turno_de_hoy(conn, person_id, today_local)
+    hoy, siguiente, recuperacion = turno["hoy"], turno["siguiente"], turno["recuperacion"]
+
+    hoy_texto = None
+    if hoy is not None:
+        palabra = t("shift.kind." + hoy["kind"])
+        if hoy["start_local"] and hoy["end_local"]:
+            hoy_texto = t("today.shift_today_hours", turno=palabra,
+                         inicio=hoy["start_local"][11:16], fin=hoy["end_local"][11:16])
+        else:
+            hoy_texto = t("today.shift_today", turno=palabra)
+
+    siguiente_texto = None
+    if siguiente is not None and siguiente["start_local"]:
+        palabra = t("shift.kind." + siguiente["kind"])
+        fecha = _short_weekday_date(t, date.fromisoformat(siguiente["start_local"][:10]))
+        if siguiente["end_local"]:
+            siguiente_texto = t("today.shift_next_hours", turno=palabra, fecha=fecha,
+                                inicio=siguiente["start_local"][11:16], fin=siguiente["end_local"][11:16])
+        else:
+            siguiente_texto = t("today.shift_next", turno=palabra, fecha=fecha)
+
+    recuperacion_texto = None
+    if recuperacion is not None:
+        recuperacion_texto = t("today.recovery", dia=recuperacion["dia"], estimado=recuperacion["estimado"])
+
+    return {"clase": hoy["kind"] if hoy is not None else None, "hoy_texto": hoy_texto,
+            "siguiente_texto": siguiente_texto, "recuperacion_texto": recuperacion_texto}
+
+
 @app.get("/")
 def today(person_id: int = Depends(identity.current_person_id)):
     conn, person, t = _ctx(person_id)
@@ -360,9 +393,12 @@ def today(person_id: int = Depends(identity.current_person_id)):
     ).fetchone()["n"]
     primeros = tutoriales.primeros_pasos(conn, person_id, cuenta.hosted())
     primeros_pasos = primeros if any(not p["hecho"] for p in primeros) else None
+    today_local = _today_local(person)
+    turno_ctx = _hoy_turno_ctx(t, conn, person_id, today_local)
     if not day:
         return _render("soon.html", t=t, tab="today", title=t("today.title"),
-                       text=_sync_status_text(conn, person, t), primeros_pasos=primeros_pasos)
+                       text=_sync_status_text(conn, person, t), primeros_pasos=primeros_pasos,
+                       proposed_count=proposed_count, turno=turno_ctx)
     defs = _defs(conn)
     vals = db.day_values(conn, day, person_id)
     r = readiness.compute(conn, day, person_id)
@@ -378,11 +414,11 @@ def today(person_id: int = Depends(identity.current_person_id)):
         delta, cls = _delta(conn, t, defs[k], day, v, person_id)
         cards.append({"key": k, "label": t("metric." + k), "value": _value(t, k, v),
                       "unit": _unit(t, defs[k]) if v is not None else "", "delta": delta, "cls": cls})
-    today_local = _today_local(person)
     return _render("today.html", t=t, tab="today", day=day, date_long=t.long_date(date.fromisoformat(day)),
                    synced=_synced(conn, person), r=r, reading=_reading(t, r), ready_avg=ready_avg,
                    ready_delta=ready_delta, ready_cls=ready_cls, cards=cards,
                    missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_count=proposed_count,
+                   turno=turno_ctx,
                    plan_habits=_today_due_habits(conn, t, person_id, today_local),
                    today_iso=today_local.isoformat(),
                    primeros_pasos=primeros_pasos)
@@ -734,6 +770,12 @@ def trends(r: str = "all", m: str | None = None, person_id: int = Depends(identi
 def _short_date(t: T, d: date) -> str:
     """19 jun 2024 style: day, abbreviated month, year -- no weekday, unlike t.long_date."""
     return f"{d.day} {t('date.months')[d.month - 1][:3]} {d.year}"
+
+
+def _short_weekday_date(t: T, d: date) -> str:
+    """jue 13 nov style: abbreviated weekday, day, abbreviated month -- no year, for a shift within
+    the next 14 days (BODY-HOY-TURNO-1)."""
+    return f"{t('date.days')[d.weekday()][:3]} {d.day} {t('date.months')[d.month - 1][:3]}"
 
 
 def _kind_label(t: T, info: dict | None) -> str:

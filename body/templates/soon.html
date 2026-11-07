@@ -1,8 +1,9 @@
 {% extends "base.html" %}
-{% from "base.html" import primeros_pasos_card with context %}
+{% from "base.html" import primeros_pasos_card, hoy_turno_card with context %}
 {% block title %}{{ title }} · {{ t('app.name') }}{% endblock %}
 {% block main %}
 <div class="top"><div><h1>{{ title }}</h1></div></div>
+{% if tab == 'today' %}{{ hoy_turno_card(t, turno, proposed_count) }}{% endif %}
 <div class="card empty"><div class="badge">{{ t('soon.badge') }}</div><p class="read" style="margin-top:6px">{{ text }}</p></div>
 {% if primeros_pasos %}{{ primeros_pasos_card(t, primeros_pasos) }}{% endif %}
 {% endblock %}
