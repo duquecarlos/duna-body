@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "base.html" import primeros_pasos_card with context %}
 {% block title %}{{ t('today.title') }} · {{ t('app.name') }}{% endblock %}
 {% block main %}
 <div class="top">
@@ -36,21 +37,7 @@
   <span class="chev">›</span>
 </a>
 
-{% if primeros_pasos %}
-<div class="card">
-  <div class="q">{{ t('primeros_pasos.titulo') }}</div>
-  <ul class="plan" style="margin-top:6px">
-  {% for item in primeros_pasos %}
-    <li>
-      <a href="/ayuda#{{ item.id }}" style="display:flex;gap:10px;align-items:flex-start;color:inherit;text-decoration:none;width:100%">
-        <span class="boxbtn" aria-hidden="true"><span class="box{% if item.hecho %} done{% endif %}"></span></span>
-        <span>{{ item.titulo }}</span>
-      </a>
-    </li>
-  {% endfor %}
-  </ul>
-</div>
-{% endif %}
+{% if primeros_pasos %}{{ primeros_pasos_card(t, primeros_pasos) }}{% endif %}
 
 {% if plan_habits %}
 <div class="card">
