@@ -349,3 +349,114 @@ authorization to merge past that condition, per the merge-policy-A rule that a s
 
 Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 71 tests, OK (66 before this slice, 5 added
 here), run once on the final branch tree before this entry.
+
+## BODY-METAS-1 -- goal/habit/goal_check: vida-v1 shapes for Metas' data half (2026-11-06)
+
+Carries out `BODY-METAS-OBS-1`, approved by the orchestrator under `ORCH-CARLOS-DELEGATES-TIER-1-1`. The
+investigation's findings re-verified unchanged: `goal`'s CHECK had no `'proposed'`, `plan_item`/`weekly_check` had
+zero writers anywhere and one reader (`vida_export.week_section`'s goals list), `test_household.py` asserted only
+`goal.hogar_id`. No real goal, habit or weekly-check row existed anywhere this slice could touch; the migration test
+builds the old shape from scratch. Seeds no goal of Carlos's.
+
+**Tables, in `body/db.py`.** `goal` widened to vida-v1's shape: `area` (six-value closed list, default `'body'`),
+`why`, `kind` (`metric` | `milestone`, default `'metric'`), `direction` (`raise` | `lower` | `keep`, nullable),
+`visibility` (`private` | `household`, default `'private'`), and `status`'s CHECK widened to add `'proposed'`
+(DDL default stays `'active'`; `goals.propose()` sets `'proposed'` explicitly in code, not the DDL, per the
+orchestrator's decision). A table-level CHECK ties `kind` to its required fields: `metric` needs `metric_key` and
+`direction`; `milestone` needs `deadline` and no `metric_key`. `plan_item` -> `habit` (`cadence` now `TEXT NOT NULL
+CHECK (json_valid(cadence))`, `cadence_text_legacy` added, `shift_context` folded into the JSON's `context` key).
+`habit_check(habit_id, person_id, day, done, note)`, new, `PRIMARY KEY (habit_id, person_id, day)`. `weekly_check` ->
+`goal_check(id, goal_id, person_id, week_start, metric_avg, on_track, habits_done, habits_due, rule_version, note)`,
+`UNIQUE (goal_id, person_id, week_start)` (person added; a weekly rule version travels with every row). `plan(id,
+person_id, hogar_id, goal_id NULL, day, time, title, booking JSON, status)`, new. `_GOAL_COLUMNS`/`_HABIT_COLUMNS`/
+`_GOAL_CHECK_COLUMNS` are shared string constants between `SCHEMA` (fresh installs) and the rebuild functions
+(existing installs), so the two paths cannot drift apart.
+
+**Rebuild procedure and its guard.** `_migrate_metas()` runs before `SCHEMA`'s `executescript` (not after, as the
+rest of `_migrate()` runs): the new table names (`habit`, `goal_check`) differ from the old (`plan_item`,
+`weekly_check`), so if `SCHEMA` ran first it would create an empty `habit`/`goal_check` before the rebuild had a
+chance to populate them from the old data. Each rebuild is guarded to fire once: `goal` rebuilds when its
+`sqlite_master.sql` text lacks `'proposed'`; `habit` rebuilds when `plan_item` exists and `habit` does not;
+`goal_check` rebuilds when `weekly_check` exists and `goal_check` does not. `_rebuild_with_fk_off()` wraps each
+rebuild in one explicit transaction (`PRAGMA foreign_keys = OFF` before an explicit `BEGIN`, per SQLite's documented
+12-step ALTER procedure): create the new table, copy every row through a per-row function (`_copy_goal_row` /
+`_copy_habit_row` / `_copy_goal_check_row`, each a module-level function so a test can intercept one row), compare
+`count(*)` old vs new and run `PRAGMA foreign_key_check`, and only then `DROP` the old table and `RENAME`/commit; any
+mismatch, violation or exception rolls back the whole transaction (including the `CREATE TABLE`) and raises, leaving
+the old table exactly as it was. Legacy `goal` rows: `kind='metric'` when `metric_key` was set (direction inferred
+from that metric's `metric_def.better` -- `higher`->`raise`, `lower`->`lower`, `neutral`->`keep`, since the old shape
+never recorded direction), else `kind='milestone'`; `area='body'`, `visibility='private'`, `why=NULL` for every
+copied row. Legacy `plan_item.cadence` free text: `'daily'` -> `{"per":"day","times":1}`, `'Nx/week'` (case
+insensitive) -> `{"per":"week","times":N}`, anything else -> `{"per":"week","times":1}`; the original text is kept in
+`cadence_text_legacy`; `shift_context` becomes the JSON's `context` key. Legacy `weekly_check` rows take their
+goal's `person_id` and `rule_version='legacy'`.
+
+**`body/goals.py`** (Tier 2: no schema, sends nothing anywhere). `propose`/`activate`/`pause`/`finish`/`drop` are
+thin status setters over `goal`; `add_habit`/`check_habit` (upsert on `(habit_id, person_id, day)`). `weekly_check(
+conn, goal_id, person_id, week_start)` returns `None` and writes nothing for a goal whose `status != 'active'` --
+proposed, paused, done and dropped goals are never checked or counted. The rule, `RULE_VERSION = "metas-v1"`:
+habits for the person (assigned to them or to everyone) are "due" every day of the week, narrowed to the days a
+`context` habit's shift condition holds (`before_night`/`after_night`/`off_days`, read from `shift`; no matching
+shift day this week -> that habit contributes 0 due and 0 done, "not due" as the spec says); a `metric` goal needs
+`MIN_METRIC_DAYS = 4` days of data this week or `on_track`/`metric_avg` are both `NULL`; `direction='keep'` compares
+the week's average against the person's own p25-p75 band (`baselines.baseline`, evaluated as of the week's Monday);
+`raise`/`lower` compare it against the straight line from `baseline_value` at `start_day` to `target_value` at
+`deadline`, evaluated at the week's Sunday (clamped to the line's two ends; `on_track=NULL` if the goal carries no
+deadline or no baseline/target, an honest gap); a `milestone` goal's `on_track` comes from habits alone, >=
+`MILESTONE_ON_TRACK_PCT = 0.70` of due habits done when any are due, else `NULL`. `habits_done`/`habits_due` are
+always computed and stored, even for a metric goal, for display.
+
+**`body/vida_export.py`**: `goals` now reads `goal_check` (was `weekly_check`), joined on the person's own
+`person_id` as well as `week_start`, for the person's own `status='active'` goals -- same shape as before
+(`{goal_id, on_track}`). New `goal_checks` list, per vida-v1 (`goal_id, person, week_start, metric_avg, on_track,
+note`): for the exporting person's household (via `household.household_of`), their own `goal_check` rows on that
+household's `status='active'` shared goals (`goal.hogar_id` matching). Body has no per-member vida person-key for
+anyone but the exporting installation's owner (no Cuenta sign-in yet, per `body/household.py`'s own comment), so
+`goal_checks` carries the file's existing local placeholder, `PERSON_KEY = "carlos"`, same as the rest of this
+export -- it is this installation's own check on a shared goal, not a merge of every member's.
+
+**Tier.** `body/goals.py` stays Tier 2 as decided: it owns no schema and sends nothing anywhere. Re-read
+`CLAUDE.md`'s Tier 1 paragraph for a table name this slice makes false -- none; it names modules, not table names,
+so it is left unchanged.
+
+**Tests** (`tests/test_goals.py`, new, 18 tests; `tests/test_vida_export.py`, +2 tests): lifecycle
+(proposed->active->paused->done; drop); a proposed goal is never checked (`weekly_check` returns `None`, writes no
+row) and never exported; metric on-track/off-track for `raise` and `lower`; `keep` inside and outside the band;
+fewer than 4 days -> `NULL`; milestone from habits, on and off track; a `before_night` habit counted only on the day
+before a recorded night shift, and not due at all with no shifts recorded; a shared household goal split into two
+members' own `goal_check` rows. Migration test: the exact old shape quoted in `BODY-METAS-OBS-1` built from scratch,
+rows inserted, `db.init()` run, every row's survival asserted under the new shape with mapped cadence JSON and
+`rule_version='legacy'`, a second `init()` changing nothing, and a monkeypatched `_copy_habit_row` forcing a count
+mismatch that rolls back leaving `plan_item` intact and `habit` never created. `tests/test_vida_export.py` gained
+`goals` filtering out a proposed goal and a `goal_checks` case for a shared household goal.
+`tests/test_household.py` needed no change: `hogar_id` stayed a column of `goal`, never moved.
+
+No cross-repo contract change; no customer-facing bytes (no screens -- `BODY-METAS-SCREENS-1` follows). **Schema did
+change** (`goal` rebuilt, `plan_item`/`weekly_check` replaced by `habit`/`goal_check`, `habit_check`/`plan` added),
+which trips merge policy A's schema condition. The spec's own GATE section says to stop before merging on a schema
+change, so this slice stops on `feat/body-metas-1` AWAITING_APPROVAL rather than merging.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 91 tests, OK (71 before this slice, 20 added
+here), run once on the final branch tree before this entry.
+
+## BODY-METAS-1-M -- land BODY-METAS-1 (2026-11-06)
+
+Approved by the orchestrator under `ORCH-CARLOS-DELEGATES-TIER-1-1` after reviewing the diff (6 files, +928/-38)
+against `main`: `db.py` shares one column definition between `SCHEMA` and the rebuilds; `init()` runs
+`_migrate_metas` before `executescript(SCHEMA)`, so an existing `plan_item`/`weekly_check` is rebuilt before
+`CREATE IF NOT EXISTS` could shadow it; each rebuild runs in `_rebuild_with_fk_off` (foreign keys off, `BEGIN`,
+copy, count compare, `PRAGMA foreign_key_check`, rollback and raise on any failure, foreign keys restored), the
+`goal` rebuild guarded by its CHECK text lacking `'proposed'`; legacy cadence mapped with the text kept in
+`cadence_text_legacy`; `goals.py` and `vida_export` as specced. The real database was backed up by the
+orchestrator before merge (`~/.body-app/body.db.bak-pre-metas-2026-11-06`). Merged unchanged -- no code change in
+this slice.
+
+`main` had not moved since the branch was cut: `git merge-base feat/body-metas-1 main` and `git rev-parse main`
+both read `14f3ea6e895dd15d1dcacefe3804ce5a88ae2ad1`, matching the branch's recorded base, so no merge-forward was
+needed.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 91 tests, OK, run once on the branch tip
+(`e203c83c5a8fe97c01b64c6e51e7d39b4f801a76`) before this merge.
+
+Merge commit: recorded in the next entry's git history (this entry precedes the `--no-ff` merge, per
+`BODY-TURNOS-IMPORT-1-M`'s precedent).

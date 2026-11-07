@@ -4,13 +4,65 @@ The schema is the template for a future multi-person product, so every row carri
 person_id. Nothing personal is seeded; only generic metric definitions are.
 """
 import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
 from . import config
 
-SCHEMA = """
+_CADENCE_N_PER_WEEK = re.compile(r"^\s*(\d+)\s*x\s*/\s*week\s*$", re.IGNORECASE)
+
+# Shared between SCHEMA (fresh installs) and the rebuild functions below (existing installs),
+# so the two paths can never drift apart.
+_GOAL_COLUMNS = """
+    id             INTEGER PRIMARY KEY,
+    person_id      INTEGER NOT NULL REFERENCES person(id),
+    hogar_id       TEXT,
+    area           TEXT NOT NULL DEFAULT 'body' CHECK (area IN ('body', 'money', 'adventure', 'growth', 'work', 'home')),
+    title          TEXT NOT NULL,
+    why            TEXT,
+    kind           TEXT NOT NULL DEFAULT 'metric' CHECK (kind IN ('metric', 'milestone')),
+    metric_key     TEXT REFERENCES metric_def(key),
+    direction      TEXT CHECK (direction IN ('raise', 'lower', 'keep') OR direction IS NULL),
+    target_value   REAL,
+    baseline_value REAL,
+    start_day      TEXT NOT NULL,
+    deadline       TEXT,
+    status         TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('proposed', 'active', 'paused', 'done', 'dropped')),
+    visibility     TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'household')),
+    CHECK (
+        (kind = 'metric' AND metric_key IS NOT NULL AND direction IS NOT NULL)
+        OR
+        (kind = 'milestone' AND metric_key IS NULL AND deadline IS NOT NULL)
+    )
+"""
+
+_HABIT_COLUMNS = """
+    id                  INTEGER PRIMARY KEY,
+    goal_id             INTEGER NOT NULL REFERENCES goal(id),
+    title               TEXT NOT NULL,
+    cadence             TEXT NOT NULL CHECK (json_valid(cadence)),
+    cadence_text_legacy TEXT,
+    assignee_person_id  INTEGER REFERENCES person(id),
+    active              INTEGER NOT NULL DEFAULT 1
+"""
+
+_GOAL_CHECK_COLUMNS = """
+    id           INTEGER PRIMARY KEY,
+    goal_id      INTEGER NOT NULL REFERENCES goal(id),
+    person_id    INTEGER NOT NULL REFERENCES person(id),
+    week_start   TEXT NOT NULL,
+    metric_avg   REAL,
+    on_track     INTEGER,
+    habits_done  INTEGER,
+    habits_due   INTEGER,
+    rule_version TEXT NOT NULL,
+    note         TEXT,
+    UNIQUE (goal_id, person_id, week_start)
+"""
+
+SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS person (
     id          INTEGER PRIMARY KEY,
     display_name TEXT NOT NULL,
@@ -119,38 +171,41 @@ CREATE TABLE IF NOT EXISTS shift_batch_item (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_shift_batch_item_slot
     ON shift_batch_item (batch_id, day, COALESCE(start_local, ''));
 
--- Goals: metric, target, deadline. A plan is a list of items; a weekly check judges it.
+-- Goals: metric or milestone, with a plan. vida-v1 shape (dev-protocol/contracts/vida-v1.md).
 CREATE TABLE IF NOT EXISTS goal (
-    id             INTEGER PRIMARY KEY,
-    person_id      INTEGER NOT NULL REFERENCES person(id),   -- who created it
-    hogar_id       TEXT,                                     -- set = a household goal (hogar-v1), NULL = personal
-    title          TEXT NOT NULL,
-    metric_key     TEXT REFERENCES metric_def(key),
-    target_value   REAL,
-    baseline_value REAL,
-    start_day      TEXT NOT NULL,
-    deadline       TEXT,
-    status         TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'done', 'dropped'))
+{_GOAL_COLUMNS}
 );
 
-CREATE TABLE IF NOT EXISTS plan_item (
-    id            INTEGER PRIMARY KEY,
-    goal_id       INTEGER NOT NULL REFERENCES goal(id),
-    title         TEXT NOT NULL,
-    cadence       TEXT,                    -- e.g. 'daily', '3x/week'
-    shift_context TEXT,                    -- e.g. 'before_night', 'after_night', 'off_days', NULL = always
-    assignee_person_id INTEGER REFERENCES person(id),  -- household plans: whose item; NULL = everyone
-    active        INTEGER NOT NULL DEFAULT 1
+-- A recurring habit that serves a goal; cadence is JSON, e.g. {{"per": "week", "times": 3}}.
+CREATE TABLE IF NOT EXISTS habit (
+{_HABIT_COLUMNS}
 );
 
-CREATE TABLE IF NOT EXISTS weekly_check (
-    id          INTEGER PRIMARY KEY,
-    goal_id     INTEGER NOT NULL REFERENCES goal(id),
-    week_start  TEXT NOT NULL,             -- Monday, YYYY-MM-DD
-    metric_avg  REAL,
-    on_track    INTEGER,                   -- 1 / 0 / NULL (not enough data)
-    note        TEXT,
-    UNIQUE (goal_id, week_start)
+CREATE TABLE IF NOT EXISTS habit_check (
+    habit_id  INTEGER NOT NULL REFERENCES habit(id),
+    person_id INTEGER NOT NULL REFERENCES person(id),
+    day       TEXT NOT NULL,
+    done      INTEGER NOT NULL CHECK (done IN (0, 1)),
+    note      TEXT,
+    PRIMARY KEY (habit_id, person_id, day)
+);
+
+-- One row per member per goal per week: the weekly on-track rule's output (RULE_VERSION in body/goals.py).
+CREATE TABLE IF NOT EXISTS goal_check (
+{_GOAL_CHECK_COLUMNS}
+);
+
+-- A scheduled thing to do, maybe tied to a goal. vida-v1 shape.
+CREATE TABLE IF NOT EXISTS plan (
+    id        INTEGER PRIMARY KEY,
+    person_id INTEGER NOT NULL REFERENCES person(id),
+    hogar_id  TEXT,
+    goal_id   INTEGER REFERENCES goal(id),
+    day       TEXT NOT NULL,
+    time      TEXT,
+    title     TEXT NOT NULL,
+    booking   TEXT CHECK (booking IS NULL OR json_valid(booking)),
+    status    TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'accepted', 'done', 'skipped'))
 );
 """
 
@@ -195,11 +250,6 @@ def _migrate(conn: sqlite3.Connection) -> None:
     cols = {r[1] for r in conn.execute("PRAGMA table_info(metric_def)")}
     if cols and "kind" not in cols:
         conn.execute("ALTER TABLE metric_def ADD COLUMN kind TEXT NOT NULL DEFAULT 'measured'")
-    for table, col, ddl in (("goal", "hogar_id", "TEXT"),
-                            ("plan_item", "assignee_person_id", "INTEGER REFERENCES person(id)")):
-        tcols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
-        if tcols and col not in tcols:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
     pcols = {r[1] for r in conn.execute("PRAGMA table_info(person)")}
     if pcols and "language" not in pcols:
         conn.execute("ALTER TABLE person ADD COLUMN language TEXT NOT NULL DEFAULT 'es'")
@@ -219,7 +269,147 @@ def _migrate(conn: sqlite3.Connection) -> None:
         pass
 
 
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)).fetchone() is not None
+
+
+def _goal_needs_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'goal'").fetchone()
+    return row is not None and "'proposed'" not in row[0]
+
+
+def _map_legacy_cadence(cadence_text: str | None) -> dict:
+    """plan_item.cadence was free text ('daily', '3x/week', ...); habit.cadence is JSON (vida-v1)."""
+    if cadence_text:
+        if cadence_text.strip().lower() == "daily":
+            return {"per": "day", "times": 1}
+        m = _CADENCE_N_PER_WEEK.match(cadence_text)
+        if m:
+            return {"per": "week", "times": int(m.group(1))}
+    return {"per": "week", "times": 1}
+
+
+def _copy_goal_row(conn: sqlite3.Connection, r: sqlite3.Row, old_cols: set, better_by_key: dict) -> None:
+    metric_key = r["metric_key"] if "metric_key" in old_cols else None
+    if metric_key is not None:
+        kind = "metric"
+        direction = {"higher": "raise", "lower": "lower", "neutral": "keep"}.get(better_by_key.get(metric_key),
+                                                                                   "keep")
+    else:
+        kind, direction = "milestone", None
+    conn.execute(
+        "INSERT INTO goal_new (id, person_id, hogar_id, area, title, why, kind, metric_key, direction, "
+        "target_value, baseline_value, start_day, deadline, status, visibility) "
+        "VALUES (?, ?, ?, 'body', ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'private')",
+        (r["id"], r["person_id"], r["hogar_id"] if "hogar_id" in old_cols else None, r["title"], kind, metric_key,
+         direction, r["target_value"], r["baseline_value"], r["start_day"], r["deadline"], r["status"]),
+    )
+
+
+def _copy_habit_row(conn: sqlite3.Connection, r: sqlite3.Row, old_cols: set) -> None:
+    cadence_text = r["cadence"] if "cadence" in old_cols else None
+    shift_context = r["shift_context"] if "shift_context" in old_cols else None
+    cadence = _map_legacy_cadence(cadence_text)
+    if shift_context:
+        cadence["context"] = shift_context
+    conn.execute(
+        "INSERT INTO habit (id, goal_id, title, cadence, cadence_text_legacy, assignee_person_id, active) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (r["id"], r["goal_id"], r["title"], json.dumps(cadence), cadence_text,
+         r["assignee_person_id"] if "assignee_person_id" in old_cols else None, r["active"]),
+    )
+
+
+def _copy_goal_check_row(conn: sqlite3.Connection, r: sqlite3.Row, goal_person: dict) -> None:
+    conn.execute(
+        "INSERT INTO goal_check (id, goal_id, person_id, week_start, metric_avg, on_track, habits_done, "
+        "habits_due, rule_version, note) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, 'legacy', ?)",
+        (r["id"], r["goal_id"], goal_person.get(r["goal_id"]), r["week_start"], r["metric_avg"], r["on_track"],
+         r["note"]),
+    )
+
+
+def _rebuild_with_fk_off(conn: sqlite3.Connection, step) -> None:
+    """Run `step(conn)` as one transaction with foreign keys off (SQLite's 12-step ALTER procedure),
+    then check for violations before committing; on any failure, roll back and raise so the old
+    tables are left untouched."""
+    fk_was_on = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("BEGIN")
+    try:
+        step(conn)
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(f"rebuild left foreign key violations: {violations}")
+    except Exception:
+        conn.rollback()
+        raise
+    else:
+        conn.commit()
+    finally:
+        conn.execute(f"PRAGMA foreign_keys = {'ON' if fk_was_on else 'OFF'}")
+
+
+def _rebuild_goal_table(conn: sqlite3.Connection) -> None:
+    def step(conn):
+        better_by_key = {r["key"]: r["better"] for r in conn.execute("SELECT key, better FROM metric_def")}
+        old_cols = {r[1] for r in conn.execute("PRAGMA table_info(goal)")}
+        old_rows = conn.execute("SELECT * FROM goal").fetchall()
+        conn.execute(f"CREATE TABLE goal_new ({_GOAL_COLUMNS})")
+        for r in old_rows:
+            _copy_goal_row(conn, r, old_cols, better_by_key)
+        new_count = conn.execute("SELECT COUNT(*) FROM goal_new").fetchone()[0]
+        if new_count != len(old_rows):
+            raise RuntimeError(f"goal rebuild count mismatch: {len(old_rows)} -> {new_count}")
+        conn.execute("DROP TABLE goal")
+        conn.execute("ALTER TABLE goal_new RENAME TO goal")
+    _rebuild_with_fk_off(conn, step)
+
+
+def _rebuild_habit_table(conn: sqlite3.Connection) -> None:
+    def step(conn):
+        old_cols = {r[1] for r in conn.execute("PRAGMA table_info(plan_item)")}
+        old_rows = conn.execute("SELECT * FROM plan_item").fetchall()
+        conn.execute(f"CREATE TABLE habit ({_HABIT_COLUMNS})")
+        for r in old_rows:
+            _copy_habit_row(conn, r, old_cols)
+        new_count = conn.execute("SELECT COUNT(*) FROM habit").fetchone()[0]
+        if new_count != len(old_rows):
+            raise RuntimeError(f"habit rebuild count mismatch: {len(old_rows)} -> {new_count}")
+        conn.execute("DROP TABLE plan_item")
+    _rebuild_with_fk_off(conn, step)
+
+
+def _rebuild_goal_check_table(conn: sqlite3.Connection) -> None:
+    def step(conn):
+        old_rows = conn.execute("SELECT * FROM weekly_check").fetchall()
+        goal_person = {r["id"]: r["person_id"] for r in conn.execute("SELECT id, person_id FROM goal")}
+        conn.execute(f"CREATE TABLE goal_check ({_GOAL_CHECK_COLUMNS})")
+        for r in old_rows:
+            _copy_goal_check_row(conn, r, goal_person)
+        new_count = conn.execute("SELECT COUNT(*) FROM goal_check").fetchone()[0]
+        if new_count != len(old_rows):
+            raise RuntimeError(f"goal_check rebuild count mismatch: {len(old_rows)} -> {new_count}")
+        conn.execute("DROP TABLE weekly_check")
+    _rebuild_with_fk_off(conn, step)
+
+
+def _migrate_metas(conn: sqlite3.Connection) -> None:
+    """goal/plan_item/weekly_check -> vida-v1's goal/habit/goal_check shapes (BODY-METAS-1).
+
+    Each rebuild runs guarded (detects the old shape) so it fires once; on a fresh install none of
+    the old tables exist and SCHEMA below creates the new shapes directly.
+    """
+    if _goal_needs_rebuild(conn):
+        _rebuild_goal_table(conn)
+    if _table_exists(conn, "plan_item") and not _table_exists(conn, "habit"):
+        _rebuild_habit_table(conn)
+    if _table_exists(conn, "weekly_check") and not _table_exists(conn, "goal_check"):
+        _rebuild_goal_check_table(conn)
+
+
 def init(conn: sqlite3.Connection) -> None:
+    _migrate_metas(conn)
     conn.executescript(SCHEMA)
     _migrate(conn)
     conn.executemany(
