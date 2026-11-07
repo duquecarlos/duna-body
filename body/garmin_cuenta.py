@@ -123,3 +123,17 @@ def limpiar_error(conn: sqlite3.Connection, person_id: int) -> None:
 
 def every_person_id(conn: sqlite3.Connection) -> list[int]:
     return [r["person_id"] for r in conn.execute("SELECT person_id FROM garmin_cuenta ORDER BY person_id")]
+
+
+def marcador_backfill(conn: sqlite3.Connection, person_id: int) -> str | None:
+    """The oldest day (YYYY-MM-DD) this person's hosted --backfill has already attempted -- with
+    or without data -- so it is never asked again. None if backfill hasn't started yet."""
+    row = conn.execute(
+        "SELECT backfill_hasta FROM garmin_cuenta WHERE person_id = ?", (person_id,)
+    ).fetchone()
+    return row["backfill_hasta"] if row else None
+
+
+def avanzar_backfill(conn: sqlite3.Connection, person_id: int, hasta: str) -> None:
+    with conn:
+        conn.execute("UPDATE garmin_cuenta SET backfill_hasta = ? WHERE person_id = ?", (hasta, person_id))

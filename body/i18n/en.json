@@ -38,7 +38,7 @@
   "sync.runs": "The sync runs on its own, every day.",
   "sync.last": "Last sync with data: {date}.",
   "sync.none_yet": "It hasn't synced successfully yet.",
-  "sync.hosted_connected": "Your watch is connected. Body brings your data once a day, in the morning; your first figures appear after that first sync.",
+  "sync.hosted_connected": "Your watch is connected. Body is bringing in your last 90 days; your first figures appear within minutes.",
   "sync.connect_watch": "Connect your watch ›",
   "band.high": "High",
   "band.medium": "Medium",

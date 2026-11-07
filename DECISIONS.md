@@ -4118,3 +4118,82 @@ measured.
 
 **Merge: this spec is the approval.** Merged `--no-ff` into `main`; `main` left checked out, clean. Branch
 `feat/body-primer-dia-1` kept.
+
+## BODY-PRIMER-PULL-1 -- bounded hosted backfill, a second timer, serialised with a lock (2026-11-07)
+
+Carrying out BODY-PRIMER-PULL-OBS-1's recommendation (OBSERVED at `7700590`): the hosted pull only ever fetched
+a rolling 2-day window, so a newly connected person's Tendencias, baselines and readiness stayed empty for
+weeks. `body/pull.py` gets `python -m body.pull --backfill` (hosted only) plus a second systemd timer that
+calls it every 10 minutes.
+
+**1. The marker.** `garmin_cuenta` gets one new nullable column, `backfill_hasta` (a `db.py` migration in the
+existing style, same pattern as `ajuste_agente.proveedor`): the oldest day (YYYY-MM-DD) this person's backfill
+has already attempted, with or without data. `NULL` = not started. Two new `garmin_cuenta.py` functions,
+`marcador_backfill` (read) and `avanzar_backfill` (write), named like its existing `leer`/`guardar`.
+
+**2. The window and the batch.** `BACKFILL_DIAS = 90`, `BACKFILL_PASO = 15` in `pull.py`. Per run, per
+connected person: `_dias_pendientes_backfill` computes up to 15 days older than the marker (or older than
+yesterday, if the marker is still `NULL`) down to `today - 90`, newest first; `[]` once the marker has reached
+that limit -- zero Garmin calls, zero cost. `_backfill_one_person` fetches that batch day by day (newest
+first, so recent figures land first), advancing `avanzar_backfill` after each day -- including an empty one --
+so it is never asked again, re-encrypting a refreshed token exactly as `_pull_one_person` does (re-used, not
+copied). `pull_backfill_hosted` loops every connected person the same way `pull_hosted` does: one person's
+`NotSignedIn` or any other exception is recorded with `registrar_error` and costs that person's progress for
+this run only; the rest still progress. Only counts and dates are ever printed.
+
+**3. The lock.** A new non-blocking exclusive lock under `BODY_HOME` (`pull.lock`), taken by `_run` around
+both the daily hosted pull and `--backfill` (never around the raw `pull_hosted`/`pull_backfill_hosted`
+functions themselves, so the existing direct-call tests in `test_garmin_host.py` needed no changes). POSIX:
+`fcntl.flock(f, LOCK_EX | LOCK_NB)`. Windows (dev/test only -- the host is Linux): `msvcrt.locking(fd,
+LK_NBLCK, 1)` on a 1-byte region at offset 0, confirmed by hand first (two separate handles to the same path in
+the same process: the second genuinely blocks) and then by the gate's own `LockTest`. Held lock -> the run
+prints "another pull is already running; skipping this run." and exits 0; the timer tries again in 10 minutes.
+Local mode never takes it (unchanged local behaviour, as the spec required).
+
+**4. `--backfill` in local mode refuses.** Local mode has `--all` for the same job; `--backfill` prints a
+one-line refusal and exits 2, without touching the lock or Garmin.
+
+**5. Units.** `deploy/host/body-backfill.service` (oneshot, `ExecStart=... python -m body.pull --backfill`,
+every other directive copied from `body-pull.service` unchanged) and `body-backfill.timer`
+(`OnBootSec=2min`, `OnUnitActiveSec=10min`). `body-deploy.sh`'s `UNITS` array and its `systemctl enable` line
+both gained the two new files, the same way `body-pull`'s own entries read. `body-pull.service` itself needed
+no edit -- the lock lives in application code, not the unit.
+
+**6. Text.** `sync.hosted_connected` (hosted, connected, no data yet) changed from "once a day, in the
+morning" (no longer true -- the backfill timer runs every 10 minutes) to, in Spanish: "Tu reloj ya está
+conectado. Body está trayendo tus últimos 90 días; las primeras cifras aparecen en unos minutos."; in English:
+"Your watch is connected. Body is bringing in your last 90 days; your first figures appear within minutes."
+Still names no clock time. `tests/test_primer_dia_1.py` needed no textual edit (its assertions read the key
+dynamically via `_t()`), only its one test method's name, which had baked in the old "once a day" wording.
+
+**Tests**, `tests/test_primer_pull_1.py` (new, 12 tests, no network -- every Garmin call stubbed through
+`body.pull.garmin_adapter.fetch_day`, patched the same way `test_garmin_host.py` does): one run fetches 15 days
+newest-first and moves the marker; 6 repeated runs exhaust the 90-day window, a 7th makes zero adapter calls; a
+day fetched once (empty or not) is never asked again; one person's adapter error is recorded and the other
+person still progresses; a refreshed token is re-saved; an unconnected person costs no call; a held lock makes
+both `--backfill` and the daily hosted pull exit 0 with zero adapter calls, and the daily pull is proven to
+hold the lock from the inside (a nested lock attempt during its own in-flight call fails) and to release it
+again once it finishes; local mode refuses `--backfill` without any adapter call; the printed backfill line is
+asserted character-for-character, proving no health figure reaches stdout. `tests/test_host_deploy.py` gained
+two tests (`BackfillUnitTest`-style) for the new unit files' directives and `body-deploy.sh`'s wiring of them;
+nothing existing there was weakened. `tests/test_garmin_host.py` needed no change -- it calls `pull_hosted`
+directly, never through the now-locked `_run`.
+
+**Deviation, found and fixed inside this slice, recorded rather than hidden.** The first `_try_lock()` draft
+read one byte of the lock file before taking the OS lock, to decide whether to write a seed byte first. On
+Windows that read itself raised `PermissionError` whenever the byte it tried to read fell inside a region
+another handle already held locked -- so a *held* lock made the second `_try_lock()` crash instead of
+returning `None`. Confirmed by hand (`msvcrt.locking` on a zero-length file works with no pre-write needed) and
+fixed by dropping the read/write entirely; `_try_lock` now only seeks to offset 0 and locks. The gate's first
+run on this slice's tree was RED on that bug (1 failure, 2 errors, in the two held-lock tests and the
+from-the-inside daily-pull test) -- `Ran 826 tests in 256.956s ... FAILED (failures=1, errors=2, skipped=1)`.
+Fixed, then run once more as this slice's recorded gate (below); no other change was needed.
+
+**Gate**, run once on the final tree with the plain command: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -- `Ran 826 tests in 98.921s ... OK (skipped=1)` (812 before this slice, +14: 12 in
+`test_primer_pull_1.py`, 2 in `test_host_deploy.py`).
+
+**Merge: stopped before it.** The diff changes the schema (`garmin_cuenta.backfill_hasta`, a new column) and
+customer-facing bytes (`sync.hosted_connected`'s es/en text) -- merge policy A's schema and customer-bytes
+conditions both trip, and this spec's approval authorises the build, not the merge. Committed on
+`feat/body-primer-pull-1`, gate green, nothing merged.

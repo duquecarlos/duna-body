@@ -1,0 +1,9 @@
+[Unit]
+Description=Body app hosted Garmin backfill, every 10 minutes until complete
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+
+[Install]
+WantedBy=timers.target

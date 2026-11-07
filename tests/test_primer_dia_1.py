@@ -102,7 +102,7 @@ class CallbackRefusedTest(_HostedModeTestCase):
 # ---- 2. Empty state says WHEN data will arrive, in hosted mode -------------------------------------
 
 class HostedEmptySyncTextTest(_HostedModeTestCase):
-    def test_connected_watch_says_once_a_day_in_the_morning(self):
+    def test_connected_watch_says_backfill_is_coming(self):
         self._connect_garmin()
         r = self.client.get("/")
         self.assertEqual(r.status_code, 200)

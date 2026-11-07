@@ -38,7 +38,7 @@
   "sync.runs": "La sincronización corre sola, todos los días.",
   "sync.last": "Última sincronización con datos: {date}.",
   "sync.none_yet": "Todavía no ha sincronizado con éxito.",
-  "sync.hosted_connected": "Tu reloj ya está conectado. Body trae tus datos una vez al día, en la mañana; tus primeras cifras aparecen después de esa primera sincronización.",
+  "sync.hosted_connected": "Tu reloj ya está conectado. Body está trayendo tus últimos 90 días; las primeras cifras aparecen en unos minutos.",
   "sync.connect_watch": "Conectar tu reloj ›",
   "band.high": "Alta",
   "band.medium": "Media",
