@@ -3349,3 +3349,21 @@ every group key; nothing in `body/db.py` changed) and no cross-repo contract cha
 customer-facing bytes: new question lines, new plain-word subtitles, new group titles, and a new on-screen
 control, all read by a person on the Tendencias screen. Merge policy A's customer-bytes condition trips, so
 this slice stops before the merge with `AWAITING_APPROVAL` rather than merging on green.
+
+## BODY-TENDENCIAS-TODAS-1-M -- land BODY-TENDENCIAS-TODAS-1, approved as written after browser measurement (2026-11-07)
+
+ORCH-CARLOS-DELEGATES-TIER-1-1 measured the branch in a real browser on a freshly seeded demo home at 375 px:
+details control closed by default (44 px target), "Ver todas las medidas (13 más)"; open (`todas=1`) it shows
+five group headings and 13 cards, each with its chart, plain subtitle and night shading; neutral `active_kcal`
+carries `delta flat`, deep sleep a judged delta; the range links keep `todas=1`; docW 375, no element past the
+viewport. Approved as written, merge only -- the raw ISO dates on chart axes predate this slice and are fixed
+separately.
+
+Pre-flight: branch tip `5fe5c8d` matched the spec exactly; `main` had not moved (`git merge-base` ==
+`git rev-parse main` == `7062ecf`, the branch's recorded base), so no merge-from-main was needed.
+
+**Gate:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 691 tests, `OK (skipped=1)`, run once on
+the branch tip before merging.
+
+**Merge:** `--no-ff` of `feat/body-tendencias-todas-1` into `main`. Fast-forward-equivalent content: the merge
+commit's tree equals the branch tip's tree exactly, so no conflict and nothing resolved by guessing.
