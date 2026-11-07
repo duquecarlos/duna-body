@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import contextvars
 import hashlib
+import html
 import json
 import logging
 import os
@@ -819,6 +820,7 @@ def _trend_card(conn, t: T, defs: dict, k: str, start, end, month, nights, perso
     d = defs[k]
     spread = p.high - p.low
     metric_label = t("metric." + k)
+    valor_fmt = lambda v: _fig_unit(t, k, v, defs)
     if start:
         w = profile.window(conn, k, start, end, person_id)
         if month:
@@ -827,13 +829,15 @@ def _trend_card(conn, t: T, defs: dict, k: str, start, end, month, nights, perso
             delta, cls = _compare(t, k, d, w.mean, w.prev_mean, spread, "trends.vs_prev")
         etiqueta_dia = lambda day: _short_date(t, day)
         aria = _chart_aria(t, metric_label, etiqueta_dia(w.start), etiqueta_dia(w.end))
-        fig, svg = w.mean, profile.window_svg(w, p.low, p.high, nights, etiqueta_dia=etiqueta_dia, aria_label=aria)
+        fig, svg = w.mean, profile.window_svg(w, p.low, p.high, nights, etiqueta_dia=etiqueta_dia, aria_label=aria,
+                                              valor_fmt=valor_fmt, link_label=t("trends.chart_open_day"))
     else:
         delta, cls = _compare(t, k, d, p.last30, p.all_mean, spread, "trends.vs_hist")
         etiqueta_mes = lambda m: t.month_year(date.fromisoformat(m + "-01"))
         aria = (_chart_aria(t, metric_label, etiqueta_mes(p.months[0][0]), etiqueta_mes(p.months[-1][0]), months=True)
                 if len(p.months) >= 2 else None)
-        fig, svg = p.last30, profile.month_svg(p, etiqueta_mes=etiqueta_mes, aria_label=aria)
+        fig, svg = p.last30, profile.month_svg(p, etiqueta_mes=etiqueta_mes, aria_label=aria,
+                                               valor_fmt=valor_fmt, link_label=t("trends.chart_open_month"))
     card = {"key": k, "question": t("trends.q." + k), "est": d["kind"] == "estimated",
             "last30": _value(t, k, fig), "unit": _unit(t, d) if fig is not None else "", "delta": delta,
             "cls": cls, "svg": svg, "low": _value(t, k, p.low), "high": _value(t, k, p.high),
@@ -898,9 +902,11 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
         have = _trend_days_have(conn, person_id)
         if have:
             return _render("soon.html", t=t, tab="trends", title=t("nav.trends"),
-                           text=t("trends.too_little", days=TREND_MIN_DAYS - have))
+                           text=t("trends.too_little", days=TREND_MIN_DAYS - have),
+                           back_href=back_href, back_label=back_label)
         return _render("soon.html", t=t, tab="trends", title=t("nav.trends"),
-                       text=_sync_status_text(conn, person, t))
+                       text=_sync_status_text(conn, person, t),
+                       back_href=back_href, back_label=back_label)
     extra_groups, extra_count = [], 0
     for group_key, keys in TREND_GROUPS:
         group_cards = []
@@ -1231,11 +1237,15 @@ def _goal_check_row(conn, goal_id: int, person_id: int, week_start: str) -> dict
     return result or {"on_track": None, "metric_avg": None, "habits_done": 0, "habits_due": 0}
 
 
-def _goal_line_svg(g, checks, today: date, width: int = 320, height: int = 120,
+def _goal_line_svg(t: T, defs: dict, g, checks, today: date, width: int = 320, height: int = 120,
                     color: str = "var(--body)") -> str:
     """The straight target line from baseline at start_day to target at deadline, with the
     actual weekly averages plotted over it and today marked. Small and local to this screen,
-    since body/profile.py's chart helpers are built for daily_metric history, not a goal's plan."""
+    since body/profile.py's chart helpers are built for daily_metric history, not a goal's plan.
+
+    Accessible name, legend and a per-week tap/drag readout (DESIGN rule 9, BODY-PULIDO-2): the aria-label and
+    legend name the plan and its dates, never a raw baseline or target figure; weekly points in data-points
+    carry a label only, no day -- a week is not a day, so charts.js shows no link for them."""
     start, end = date.fromisoformat(g["start_day"]), date.fromisoformat(g["deadline"])
     if end <= start:
         return ""
@@ -1257,16 +1267,27 @@ def _goal_line_svg(g, checks, today: date, width: int = 320, height: int = 120,
     pts = sorted((date.fromisoformat(c["week_start"]) + timedelta(6), c["metric_avg"]) for c in checks)
     pts = [(d, v) for d, v in pts if start <= d <= end]
     if len(pts) >= 2:
-        points = " ".join(f"{x(d):.1f},{y(v):.1f}" for d, v in pts)
+        line_pts = " ".join(f"{x(d):.1f},{y(v):.1f}" for d, v in pts)
         out.append(f'<polyline fill="none" style="stroke:{color}" stroke-width="2.2" '
-                   f'vector-effect="non-scaling-stroke" stroke-linejoin="round" points="{points}"/>')
+                   f'vector-effect="non-scaling-stroke" stroke-linejoin="round" points="{line_pts}"/>')
     elif len(pts) == 1:
         out.append(f'<circle cx="{x(pts[0][0]):.1f}" cy="{y(pts[0][1]):.1f}" r="4" style="fill:{color}"/>')
     today_x = x(min(max(today, start), end))
     out.append(f'<line x1="{today_x:.1f}" y1="{top}" x2="{today_x:.1f}" y2="{top + h}" '
                f'style="stroke:var(--line)" stroke-width="1"/>')
-    return (f'<svg viewBox="0 0 {width} {top + h + 6}" width="100%" height="110" role="img" '
-            f'preserveAspectRatio="none" style="display:block;margin-top:8px">{"".join(out)}</svg>')
+    aria = html.escape(f"{g['title']}: {t('goals.chart_aria', start=_short_date(t, start), end=_short_date(t, end))}")
+    svg = (f'<svg viewBox="0 0 {width} {top + h + 6}" width="100%" height="110" role="img" aria-label="{aria}" '
+           f'preserveAspectRatio="none" style="display:block;margin-top:8px">{"".join(out)}</svg>')
+    legend = (
+        '<div class="legend" style="margin-top:4px">'
+        f'<span><i style="background:none;border-top:1.6px dashed var(--muted);height:0;width:12px"></i>{t("goals.legend_plan")}</span>'
+        f'<span><i style="background:{color};height:3px;vertical-align:3px"></i>{t("goals.legend_avg")}</span>'
+        f'<span><i style="background:var(--line);width:1px;height:12px"></i>{t("goals.legend_today")}</span>'
+        '</div>')
+    data_pts = [{"x": max(0.0, min(1.0, (d - start).days / span_days)),
+                 "label": t("goals.chart_week_label", date=_short_date(t, d), value=_fig_unit(t, g["metric_key"], v, defs))}
+                for d, v in pts]
+    return profile.chart_figure(svg + legend, data_pts)
 
 
 def _verdict_sentence(t: T, defs: dict, g, check: dict) -> str:
@@ -1393,7 +1414,7 @@ def goal_detail(goal_id: int, person_id: int = Depends(identity.current_person_i
         checks_for_chart = conn.execute(
             "SELECT week_start, metric_avg FROM goal_check WHERE goal_id = ? AND person_id = ? "
             "AND metric_avg IS NOT NULL ORDER BY week_start", (goal_id, person_id)).fetchall()
-        chart = _goal_line_svg(g, checks_for_chart, today)
+        chart = _goal_line_svg(t, defs, g, checks_for_chart, today)
 
     history_rows = conn.execute(
         "SELECT * FROM goal_check WHERE goal_id = ? AND person_id = ? ORDER BY week_start DESC LIMIT 8",

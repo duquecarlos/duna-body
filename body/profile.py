@@ -5,6 +5,7 @@ Pure reads over daily_metric. Every number is against your own history, never po
 from __future__ import annotations
 
 import html
+import json
 import statistics
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -53,14 +54,39 @@ def metric_profile(conn, key: str, today: str | None = None, *, person_id: int) 
     )
 
 
+def _points_attr(points: list[dict]) -> str:
+    """One JSON array, html-escaped for a data-points="..." attribute (BODY-PULIDO-2): never a raw figure
+    anywhere this does not already appear (titles already carry it), nothing in it but what the reader sees."""
+    return html.escape(json.dumps(points, ensure_ascii=False, separators=(",", ":")), quote=True)
+
+
+def chart_figure(body: str, points: list[dict] | None, *, link_label: str | None = None,
+                  data_key: str | None = None) -> str:
+    """Wraps a chart's svg+range markup in <figure class="chart">, optionally enhanced with data-points
+    for charts.js's tap/drag readout (DESIGN rule 9). Without points, the figure carries no data-points and
+    charts.js leaves it alone -- the existing hit regions are the no-JS path and stay exactly as they are."""
+    if not points:
+        return f'<figure class="chart">{body}</figure>'
+    attrs = f' data-points="{_points_attr(points)}"'
+    if link_label:
+        attrs += f' data-link-label="{html.escape(link_label, quote=True)}"'
+    if data_key:
+        attrs += f' data-key="{html.escape(data_key, quote=True)}"'
+    return f'<figure class="chart"{attrs}>{body}</figure>'
+
+
 def month_svg(p: MetricProfile, width: int = 320, height: int = 120, color: str = "var(--body)", *,
               etiqueta_mes: Callable[[str], str] = lambda m: m,
-              aria_label: str | None = None) -> str:
+              aria_label: str | None = None,
+              valor_fmt: Callable[[float], str] | None = None,
+              link_label: str | None = None) -> str:
     """Server-side SVG: monthly means as a line, your all-history normal range as a band.
 
     etiqueta_mes turns a "YYYY-MM" key into a reader's-language label (axis ends, tap titles); the default keeps
     the ISO key so older callers are unaffected. aria_label, when given, names the metric and the span in words.
-    """
+    valor_fmt, when given, formats a mean for the per-point readout (BODY-PULIDO-2); link_label is the taplink
+    text charts.js shows next to a point's month link (the month key is carried in data-points for that link,
+    never a raw value)."""
     pts = [m[1] for m in p.months]
     if len(pts) < 2:
         return ""
@@ -81,11 +107,16 @@ def month_svg(p: MetricProfile, width: int = 320, height: int = 120, color: str 
     first, lastm = html.escape(etiqueta_mes(p.months[0][0])), html.escape(etiqueta_mes(p.months[-1][0]))
     aria = f' aria-label="{html.escape(aria_label)}"' if aria_label else ""
     # Fixed height, stretched width: lines keep their thickness (non-scaling-stroke); labels are HTML, not SVG text.
-    return (f'<svg viewBox="0 0 {width} {top + h + 6}" width="100%" height="110" role="img"{aria} '
+    body = (f'<svg viewBox="0 0 {width} {top + h + 6}" width="100%" height="110" role="img"{aria} '
             f'preserveAspectRatio="none" style="display:block;margin-top:8px">{band}'
             f'<polyline fill="none" style="stroke:{color}" stroke-width="2.2" vector-effect="non-scaling-stroke" '
             f'stroke-linejoin="round" points="{line}"/>{_hits([(i * step, f"/trends?m={m[0]}#{p.key}") for i, m in enumerate(p.months)], step, top + h + 6, [etiqueta_mes(m[0]) for m in p.months])}</svg>'
             f'<div class="row k" style="font-size:12px"><span>{first}</span><span>{lastm}</span></div>')
+    points = None
+    if valor_fmt:
+        points = [{"x": i / (len(pts) - 1), "label": f"{etiqueta_mes(m[0])}: {valor_fmt(m[1])}", "m": m[0]}
+                  for i, m in enumerate(p.months)]
+    return chart_figure(body, points, link_label=link_label, data_key=p.key)
 
 
 def _hits(points: list[tuple[float, str]], step: float, height: float, titles: list[str]) -> str:
@@ -116,12 +147,16 @@ def window(conn, key: str, start: date, end: date, person_id: int) -> Window:
 def window_svg(w: Window, low: float, high: float, nights: set[str] = frozenset(), width: int = 320,
                height: int = 120, color: str = "var(--body)", *,
                etiqueta_dia: Callable[[date], str] = lambda d: d.isoformat(),
-               aria_label: str | None = None) -> str:
+               aria_label: str | None = None,
+               valor_fmt: Callable[[float], str] | None = None,
+               link_label: str | None = None) -> str:
     """Daily line over the window with your normal range as a band; night shifts shaded; a missing day breaks the
     line (honest gaps, never a zero). Every day is a tap target that opens that day.
 
     etiqueta_dia turns a day into a reader's-language label (axis ends, tap titles); the default keeps the ISO
-    date so older callers are unaffected. aria_label, when given, names the metric and the span in words."""
+    date so older callers are unaffected. aria_label, when given, names the metric and the span in words.
+    valor_fmt, when given, formats a day's value for the per-point readout (BODY-PULIDO-2); link_label is the
+    taplink text charts.js shows next to a point's day link (the URL still carries only the day, never a value)."""
     days = [w.start + timedelta(i) for i in range((w.end - w.start).days + 1)]
     pts = list(w.values.values())
     if len(pts) < 2:
@@ -165,7 +200,13 @@ def window_svg(w: Window, low: float, high: float, nights: set[str] = frozenset(
                      [etiqueta_dia(d) for d in days]))
     aria = f' aria-label="{html.escape(aria_label)}"' if aria_label else ""
     first, lastd = html.escape(etiqueta_dia(days[0])), html.escape(etiqueta_dia(days[-1]))
-    return (f'<svg viewBox="0 0 {width} {full}" width="100%" height="110" role="img"{aria} '
+    body = (f'<svg viewBox="0 0 {width} {full}" width="100%" height="110" role="img"{aria} '
             f'preserveAspectRatio="none" style="display:block;margin-top:8px">{"".join(out)}</svg>'
             f'<div class="row k" style="font-size:12px"><span>{first}</span>'
             f'<span>{lastd}</span></div>')
+    points = None
+    if valor_fmt:
+        points = [{"x": i / (len(days) - 1), "label": f"{etiqueta_dia(d)}: {valor_fmt(w.values[d.isoformat()])}",
+                   "day": d.isoformat()}
+                  for i, d in enumerate(days) if d.isoformat() in w.values]
+    return chart_figure(body, points, link_label=link_label)

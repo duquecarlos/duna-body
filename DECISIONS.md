@@ -3916,3 +3916,84 @@ tests -t .` -- `Ran 786 tests ... OK (skipped=1)`.
 Tendencias hrefs Dia and Como build), which trips merge policy A's customer-bytes condition on its own: but
 this spec's body says in words to merge after the gate, carrying BODY-PULIDO-1's approval forward along with
 its own. Merged `--no-ff` into `main`; `main` left checked out, clean. Branch `feat/body-pulido-1` kept.
+
+## BODY-PULIDO-2 -- value on tap for Tendencias' and Metas' charts, soon.html's way back (2026-11-07)
+
+DESIGN rule 9 ("charts explain themselves: legend, scale, value on tap, «Toca un día…»") and rule 11 (44px): a
+90-day Tendencias chart gave each day ~3.5px of tap width on a phone, so "value on tap" was not reachable
+without a mouse; Metas' goal chart had no accessible name, no legend and no value on tap at all; and the "aún
+no hay suficientes días" page (`soon.html`, `trends()`'s no-cards branch) dropped the way back that `desde`
+already computed, just never passed through.
+
+**One small script, `body/static/charts.js`** (loaded from `base.html`, same `static_url()` versioning as
+`assistant.js`, no dependencies, no network call). It enhances every `<figure class="chart" data-points="...">`:
+a tap or drag anywhere on the figure selects the nearest point by x and shows a readout (a `<figcaption
+aria-live="polite">`) below the chart -- the point's label as the server wrote it, and, when the point carries
+a day or a month, a taplink to it. A thin marker (`.chart-marker`) shows the selected x. The figure is made
+focusable only once JS enhances it (`tabIndex`); ←/→ move the selection. Without JS nothing changes: the
+existing per-day/per-month `<a><title><rect>` hit regions in `body/profile.py` stay exactly as they were --
+they are the no-JS path BODY-EJES-FECHAS-1 already pinned.
+
+**The server writes the points, never the script.** `profile.py` gained `chart_figure()` (wraps a chart's
+existing svg+range markup in `<figure class="chart">`, adding `data-points` only when a `valor_fmt` is given)
+and `_points_attr()` (one html-escaped JSON array). `window_svg()` and `month_svg()` each take new `valor_fmt`
+and `link_label` keyword args (default `None`, so every existing caller is unaffected -- pinned by
+`BuildersBackwardCompatTest`); `_trend_card` in `web.py` now passes `valor_fmt=lambda v: _fig_unit(t, k, v,
+defs)` and the matching `trends.chart_open_day`/`trends.chart_open_month` link label. A daily point carries
+`{x, label, day}` (href becomes `/day/<day>`, built by charts.js); a monthly point carries `{x, label, m}`
+(href becomes `/trends?m=<m>#<key>`, `<key>` read from the figure's own `data-key`, `MetricProfile.key` --
+never a second parameter). No URL charts.js builds carries anything but a day or a month; no raw figure
+reaches an attribute that didn't already carry one (the per-day/-month `<title>`s already did, via dates
+only).
+
+**The goal chart** (`_goal_line_svg` in `web.py`, shown by `goal.html` -- `goals.html` holds the list, not the
+chart): now takes `t` and `defs` to build an aria-label naming the goal and both dates (`goals.chart_aria`,
+built by string concatenation, never `.format()`, since a goal's title is free text Carlos typed and must
+never be run through `str.format`'s `{}` substitution) and a three-item legend (`goals.legend_plan/_avg/_today`)
+drawn with the dashed/solid/thin-vertical strokes the svg itself uses. Its weekly points carry `{x, label}`
+only -- no `day`, no `m` -- so charts.js shows no link for them, a week not being a day.
+
+**Hint text**, one key each: `trends.chart_hint` ("Toca o desliza sobre la gráfica para ver cada día" / "Tap or
+drag on the chart to see each day"), rendered under every Tendencias chart (daily and monthly alike), and
+`goals.chart_hint` ("... cada semana" / "... each week") under the goal chart.
+
+**soon.html's way back.** `trends()` already computed `back_href`/`back_label` from `desde`/`dia` before its
+no-cards branch, but the two `_render("soon.html", ...)` calls in that branch never passed them through --
+BODY-PULIDO-1 added the mechanism for the cards page and this gap went unnoticed until the orchestrator found
+it measuring BODY-PULIDO-1. Both calls now pass `back_href=back_href, back_label=back_label`; `soon.html`
+renders the same `<a class="taplink">` block `trends.html` already used, guarded by `{% if back_href %}` so
+every other `soon.html` caller (Hoy, History) is unaffected by the undefined default.
+
+**Strings as written** -- es / en:
+- `trends.chart_hint`: "Toca o desliza sobre la gráfica para ver cada día" / "Tap or drag on the chart to see
+  each day"
+- `trends.chart_open_day`: "Abrir el día ›" / "Open the day ›"
+- `trends.chart_open_month`: "Abrir el mes ›" / "Open the month ›"
+- `goals.chart_hint`: "Toca o desliza sobre la gráfica para ver cada semana" / "Tap or drag on the chart to see
+  each week"
+- `goals.chart_aria`: "plan desde {start} hasta {end}" / "plan from {start} to {end}" (prefixed with the
+  goal's own title by string concatenation)
+- `goals.chart_week_label`: "Semana del {date}: {value}" / "Week of {date}: {value}"
+- `goals.legend_plan` / `_avg` / `_today`: "Plan" / "Tu promedio semanal" / "Hoy" -- "Plan" / "Your weekly
+  average" / "Today"
+
+**Tests**, `tests/test_pulido_2.py` (9 new tests): r=30 and r=90 daily charts carry one `data-points` entry
+per day (ISO day, localised non-ISO label), the per-day hit regions and the hint text stay; English labels are
+not bare ISO; the all-time monthly view's points carry a month key and no day, with `data-key`/`data-link-label`
+on the figure; the goal chart's svg has `role="img"` and an aria-label naming the goal and both dates with
+neither the baseline nor the target value present, its three legend labels render, and its weekly points carry
+neither `day` nor `m`; `soon.html` shows "‹ Volver al día" when reached via `desde=dia` and shows no back link
+without it; `charts.js` contains no `fetch(` and no literal URL other than `/day/` and `/trends?m=`; and a
+second person's chart values never reach the first person's page. `tests/test_ejes_fechas.py` needed no edit
+-- nothing it pins moved (its `_strip_attrs` already drops whole attributes, so the new `data-points` content
+is invisible to it; `BuildersBackwardCompatTest` calls the builders without the new keyword args and still
+gets the unwrapped-looking body it asserts on, now inside a plain `<figure class="chart">` it never checks for).
+
+**Gate**, run once on the final tree with the plain command: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -- `Ran 795 tests in 82.793s ... OK (skipped=1)` (786 before this slice, +9 new).
+
+**Merge: AWAITING_APPROVAL, stopped on customer-bytes.** This diff changes what a person reads and taps: two
+new hint strings under every Tendencias and goal chart, a new legend and accessible name on the goal chart,
+new "Abrir el día/mes ›" taplinks in the tap/drag readout, and the restored "‹ Volver al día" link on
+`soon.html`. Merge policy A's customer-bytes condition fails and the spec says to stop here, so this slice
+stops before merging, on the branch, for the orchestrator to judge the script in a browser.

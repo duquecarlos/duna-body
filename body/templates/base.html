@@ -139,6 +139,7 @@ try{var th=localStorage.getItem('body.theme');var dark=th==='dark'||(th!=='light
 <script id="asis-i18n" type="application/json">{{ asis_i18n | tojson }}</script>
 <script src="{{ static_url('assistant.js') }}" defer></script>
 {% endif %}
+<script src="{{ static_url('charts.js') }}" defer></script>
 <script>/* come back to the same spot (Paridad #30) */
 (function(){var k='body.scroll:'+location.pathname;try{var y=sessionStorage.getItem(k);if(y)scrollTo(0,+y)}catch(e){}
 addEventListener('pagehide',function(){try{sessionStorage.setItem(k,scrollY)}catch(e){}})})();
