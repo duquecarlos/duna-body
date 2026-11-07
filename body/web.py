@@ -75,6 +75,7 @@ def static_url(path: str) -> str:
 
 env.globals["static_url"] = static_url
 env.globals["hosted"] = cuenta.hosted
+env.globals["asistente_configurado"] = lambda: agente_cliente.proveedor_configurado() is not None
 
 
 @app.exception_handler(LoginRequired)
@@ -1202,7 +1203,8 @@ async def asistente_preguntar(request: Request, person_id: int = Depends(identit
         conversacion_id = agente_conversacion.crear(conn, person_id)
 
     proveedor_nombre = os.environ.get("BODY_AGENTE_PROVEEDOR", agente_cliente.PROVEEDOR_DEFAULT)
-    modelo = os.environ.get("BODY_AGENTE_MODELO", agente_cliente.MODELO_DEFAULT)
+    modelo = ("demo" if proveedor_nombre == "demo"
+              else os.environ.get("BODY_AGENTE_MODELO", agente_cliente.MODELO_DEFAULT))
     proveedor = agente_cliente.proveedor_configurado()
 
     async def generar():

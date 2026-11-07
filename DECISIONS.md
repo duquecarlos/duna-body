@@ -2192,3 +2192,108 @@ Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 460 tests, O
 pre-existing). 453 at `feat/body-asistente-proveedor-1`'s tip, plus 7 new here (3 + 4).
 
 Merge: `--no-ff` into `main`.
+
+## BODY-ASISTENTE-PANEL-1 -- the assistant people see: one shared panel on every screen (2026-11-07)
+
+Carries out BODY-ASISTENTE-OBS-1's slice (c) to `agent-ui-v1` (the orchestrator's contract, read read-only at
+`C:\Duna\body\dev-protocol\contracts\agent-ui-v1.md`; this session's sandbox could not open a path outside
+`C:\Duna\body-app`, so R1-R6 were followed as the spec itself restated them in full, not re-read from the contract
+file -- an `unknowns` item below). Touches the Tier 1 provider module only to add `Demo`, selectable only by
+`BODY_AGENTE_PROVEEDOR=demo`, never a default; no other Tier 1 file in `web.py`/`cliente.py`'s surface changed.
+
+**Mount** (decision 1): `env.globals["asistente_configurado"]` (`body/web.py`), the same idiom already used for
+`hosted()`, calls `agente_cliente.proveedor_configurado() is not None`. `base.html` wraps the button, the panel and
+`assistant.js` in `{% if asistente_configurado() %}`; not configured renders neither (`NotConfiguredNoButtonTest`).
+
+**R1** (button): `.asis-btn`, fixed bottom-right, `var(--body)` (Body's own calm-green mark, not a loud colour),
+`aria-label` from `asistente.abrir`. Below 1024 px the phone bottom tab bar is fixed at the viewport bottom (`.tabs`,
+64 px + `env(safe-area-inset-bottom)`), so `.asis-btn`'s own bottom offset adds that height there; at >= 1024 px the
+rail moves to the left and the button sits at the plain corner margin. `assistant.js` measures the button's own
+rendered height and writes it to `--asis-pad`, which `main`'s `padding-bottom` now adds on top of its existing 96 px
+(phone) / 48 px (desktop) reserve -- so the scrolling content's last row is never covered, on any viewport, without a
+hand-measured breakpoint number. A `.asis-dot` shows while a question is in flight, or after an answer/error arrived
+while the panel was closed, and clears when the panel opens. MEETS.
+
+**R3** (sizes): < 768 px, `.asis-panel` is `position:fixed;inset:0` -- a full-screen sheet, with `#asis-cerrar` and an
+`Escape` keydown listener both closing it. >= 768 px, three named stops (`lado` 400 px, `ancho` 50% of the viewport,
+`completo` = viewport minus the 220 px rail when it is showing) cycled by `#asis-size`, one draggable inner edge
+(`#asis-resize`, pointer events, `cursor:ew-resize`) continuously resizing between 400 px and 50% while in `lado` or
+`ancho`, and the main column's `margin-right` tracks the open panel's width live via the `--asis-mr` custom
+property -- so the page beside it reflows instead of being covered, while the 220 px rail itself never moves. Both
+the chosen stop and the dragged width are written to `localStorage` (`body.asis.tamano`, `body.asis.ancho`) and read
+back on the next page load, each access wrapped in `try`/`catch`. MEETS.
+
+**R4** (scroll containment): `.asis-mensajes{overflow-y:auto;overscroll-behavior: contain}` (message list never
+scroll-chains the page behind it); on a phone, opening the panel sets `document.body.style.overflow='hidden'` after
+recording `window.scrollY`, and closing restores the exact position with `window.scrollTo`. MEETS.
+
+**R5** (status and answer): one `.asis-status` line under the question, replaced on every `herramienta` SSE event via
+`i18n.herramientas[nombre]` (nine phrases, one per read tool, e.g. `leer_tendencias` -> "Mirando tus tendencias…",
+`leer_turnos` -> "Revisando tus turnos…"), falling back to the generic `agente.pensando` ("Pensando…") when a tool
+name is missing from the map. The answer renders under the question as `texto` deltas arrive, and the tool-call
+sequence folds into a collapsed `<details class="asis-steps">` labelled `asistente.como` ("Cómo lo hice · {n}
+pasos", `{n}` substituted client-side with the step count) once the turn ends. An `error` event renders as one
+`.asis-error` sentence, keyed by `codigo` through `i18n.errores` (`no_configurado`, `tope_diario`, `proveedor`,
+`limite_rondas`, reusing `web.py`'s own four existing `agente.error.*` strings verbatim, plus a new fifth,
+`agente.error.red`, for a client-side network failure the server never sees) with a `asistente.reintentar`
+("Reintentar") button that calls `preguntar()` again with the same question text. MEETS.
+
+**R6** (safe rendering): `assistant.js`'s `renderMD()` never assigns HTML -- every node is `document.createElement`
+plus `textContent`, for paragraphs, `-`/`1.` lists, `**bold**` (via `inlineNodes()`), `#`/`##` headings, and pipe
+tables (parsed into a real `<table>`, wrapped in `.asis-table-wrap{overflow-x:auto}` so a wide table scrolls inside
+itself, never the page). Confirmed by `AssistantJsSafetyTest`: the file's text contains neither `innerHTML` nor
+`eval(`. MEETS.
+
+**The endpoint, as found** (`body/web.py`'s `/asistente/preguntar`, from BODY-ASISTENTE-PROVEEDOR-1 -- unchanged
+here except for decision 8's model-name fix below): POST body `{pregunta, conversacion_id, lugar}`; SSE payloads
+restated verbatim from `_evento_sse` calls in the running code -- `herramienta`: `{"nombre": ev.nombre}`; `texto`:
+`{"delta": ev.texto}`; `fin`: `{"conversacion_id": conversacion_id, "rondas": resultado.rondas, "motivo_fin":
+"texto"}`; `error`: `{"codigo": <no_configurado|tope_diario|proveedor|limite_rondas>, "mensaje": t(...)}`.
+`assistant.js` posts with `fetch` (not `EventSource`, which cannot POST), reads the body with
+`response.body.getReader()`, and parses `event:`/`data:` frames split on blank lines. No CSRF header exists anywhere
+in this app (session auth is a `samesite=lax` cookie only, confirmed by grep); `assistant.js` sends none.
+`conversacion_id` persists in `sessionStorage` across pages in the same tab; `#asis-nueva` ("Nueva conversación")
+clears it and the message list.
+
+**Decision 8, the `demo` provider** (`body/agente/cliente.py`): `Demo(Proveedor)` answers a scripted two-round
+exchange -- round one calls `leer_ajustes` (the one read tool whose own `nivel` is `"ninguno"`, the lowest rank, so
+it is offered at every `nivel_datos`); round two returns a fixed, invented Spanish paragraph with a list and a
+two-row table, built entirely from static text, never a field of the real tool result. `Uso()` defaults to all
+zeros, matching "its usage counts are zeros". `proveedor_configurado()` returns `Demo()` only when
+`BODY_AGENTE_PROVEEDOR=demo`, checked before the real-provider dict and needing no API key; every other value falls
+through to the existing anthropic/openai/gemini path unchanged, so `demo` is never reachable without the env flag
+(`DemoProviderTest.test_demo_is_never_selected_without_the_env_flag`). `web.py`'s `asistente_preguntar` now sets
+`modelo="demo"` when the provider name is `demo` (`agente_uso.registrar`'s rows would otherwise carry the unrelated
+default model name "claude-sonnet-5-5" even though no such model answered) -- the one line in `web.py` beyond the
+`asistente_configurado` global.
+
+**Copy** (decision 9): `asistente.titulo` "Asistente", `asistente.placeholder` "Pregúntale a Body…",
+`asistente.nota` "Body te responde con tus datos. No es consejo médico.", both es (tú) and en, added with full
+key parity (`es.json`/`en.json` now have identical key sets).
+
+**Tests** (`tests/test_asistente_panel.py`, 7; `tests/test_agente_cliente.py`, +3): every non-API, non-redirect,
+signed-in `GET` page (today, how/{day}, day/{day}, shifts, trends, history, goals, goals/new, goals/{goal_id},
+settings, privacidad, garmin, ajustes/dispositivos where hosted) renders `id="asis-btn"`, `id="asis-panel"` and the
+hashed `assistant.js` `<script src>` when `BODY_AGENTE_PROVEEDOR=demo`, and none of the three when no provider is
+configured; the panel markup carries `role="dialog"`, `aria-modal="true"` and the `#asis-size` control;
+`body.css`'s text contains `overscroll-behavior: contain` and the `max-width:767.98px` full-screen rule for
+`.asis-panel`; `assistant.js`'s text contains neither `innerHTML` nor `eval(`; a full demo exchange through
+`/asistente/preguntar` streams `event: herramienta` before `event: texto` before `event: fin`, and `leer_ajustes`
+appears in the stream. In `test_agente_cliente.py`: `Demo` is never selected without the env flag even with a real
+key present for another provider; it needs no key itself; a `httpx.post` patched to raise `AssertionError` on any
+call proves both of its scripted rounds make no network call.
+
+**Merge policy.** Schema change: NO -- no table or migration touched. Customer-facing bytes: YES -- the panel itself
+(a button and a dialog shown on every signed-in screen) and roughly twenty new i18n strings are new bytes a person
+reads, even behind the `asistente_configurado()` gate that keeps them invisible until a provider (including `demo`)
+is configured. Cross-repo contract: no -- `/asistente/preguntar`'s shape is unchanged from
+BODY-ASISTENTE-PROVEEDOR-1, and `agent-ui-v1` is consumed here, not altered. One of Merge Policy A's three
+conditions trips, and the spec's own gate section says to stop AWAITING_APPROVAL on customer-facing bytes unless the
+spec's body says otherwise -- it says the orchestrator measures the panel in a browser before approving, i.e. it
+says the opposite. This slice stops on the branch, uncommitted to `main`, for review.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run once, foreground, on the final tree: 470
+tests, OK (1 skipped, pre-existing). 460 at `main`'s tip (`61b97f0`), plus 10 new here (7 + 3).
+
+Branch: `feat/body-asistente-panel-1`, not merged. Awaiting a browser measurement of the panel and review of the new
+customer-facing strings.

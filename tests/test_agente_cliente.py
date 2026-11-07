@@ -198,6 +198,39 @@ class NoKeyInUrlTest(unittest.TestCase):
         self.assertEqual(llamada["headers"].get("x-goog-api-key"), "key-clave-secreta")
 
 
+class DemoProviderTest(unittest.TestCase):
+    """BODY-ASISTENTE-PANEL-1 decision 8: demo is selected only by the env flag, never default,
+    and makes no network call."""
+
+    def setUp(self):
+        self.addCleanup(_borrar_env("BODY_AGENTE_PROVEEDOR", "BODY_AGENTE_ANTHROPIC_API_KEY"))
+        os.environ.pop("BODY_AGENTE_PROVEEDOR", None)
+        os.environ.pop("BODY_AGENTE_ANTHROPIC_API_KEY", None)
+
+    def test_demo_is_never_selected_without_the_env_flag(self):
+        self.assertIsNone(cliente.proveedor_configurado())
+        os.environ["BODY_AGENTE_ANTHROPIC_API_KEY"] = "sk-fake"
+        self.assertNotIsInstance(cliente.proveedor_configurado(), cliente.Demo)
+
+    def test_demo_env_flag_selects_it_with_no_key_needed(self):
+        os.environ["BODY_AGENTE_PROVEEDOR"] = "demo"
+        self.assertIsInstance(cliente.proveedor_configurado(), cliente.Demo)
+
+    def test_demo_makes_no_network_call_across_its_two_scripted_rounds(self):
+        os.environ["BODY_AGENTE_PROVEEDOR"] = "demo"
+        with patch("httpx.post", side_effect=AssertionError("Demo must never call the network")):
+            prov = cliente.proveedor_configurado()
+            self.assertIsInstance(prov, cliente.Demo)
+            mensajes = [{"rol": "usuario", "bloques": [{"tipo": "texto", "texto": "¿cómo voy?"}]}]
+            r1 = prov.responder("sis", mensajes, [])
+            self.assertEqual(r1.motivo_fin, "tool_use")
+            self.assertEqual(r1.uso, cliente.Uso())
+            self.assertEqual(r1.bloques[0].nombre, "leer_ajustes")
+            r2 = prov.responder("sis", mensajes, [])
+            self.assertEqual(r2.motivo_fin, "end_turn")
+            self.assertEqual(r2.uso, cliente.Uso())
+
+
 class NoLoggedBodyTest(unittest.TestCase):
     """Decision 1: never log a request or response body, a prompt, a tool result, or a key --
     only an error's class name or HTTP status."""
