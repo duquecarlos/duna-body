@@ -62,6 +62,24 @@ folder: the default `BODY_HOME`, the current `BODY_HOME` environment value, the 
 any folder that already holds a `body.db` it did not seed itself. The task catalog it drives is
 `tutoriales/catalogo.json`.
 
+## Asistente: tu clave de IA
+
+El asistente responde con la clave de un proveedor (Anthropic, OpenAI o Gemini). La forma normal en este PC:
+copia `.env.example` a `.env` en esta misma carpeta, pega tus claves ahi (solo se leen las lineas que
+empiezan con `BODY_AGENTE_`) y reinicia la tarea "Body app web" (o vuelve a correr `python -m body.web`).
+`.env` nunca se sube al repositorio (`.gitignore`); el servidor usa en cambio
+`deploy/host/body.env.example` -> `/srv/duna/env/body.env`.
+
+Alternativa para una sola sesion de PowerShell, sin tocar ningun archivo:
+
+```powershell
+$env:BODY_AGENTE_ANTHROPIC_API_KEY = "sk-..."
+.\.venv\Scripts\python -m body.web
+```
+
+Una variable ya definida en tu entorno real (PowerShell, o tus variables de usuario de Windows) siempre gana
+sobre lo que diga `.env`.
+
 ## Asistente: precios del modelo
 
 The assistant's daily SPEND ceiling needs a price for the model in use; `body/agente/precios.json` holds a
