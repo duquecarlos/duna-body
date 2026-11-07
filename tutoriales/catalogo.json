@@ -31,15 +31,6 @@
       "onboarding": true
     },
     {
-      "id": "trabajas-por-turnos",
-      "titulo": "¿Trabajas por turnos?",
-      "capitulo": "primeros-pasos",
-      "orden": 3,
-      "pantalla": "/settings",
-      "agente": "no_aun",
-      "onboarding": true
-    },
-    {
       "id": "vincular-este-pc",
       "titulo": "Vincular este PC",
       "capitulo": "primeros-pasos",
@@ -204,6 +195,15 @@
       "pantalla": "/settings",
       "agente": "no_aun",
       "onboarding": false
+    },
+    {
+      "id": "trabajas-por-turnos",
+      "titulo": "¿Trabajas por turnos?",
+      "capitulo": "primeros-pasos",
+      "orden": 3,
+      "pantalla": "/settings",
+      "agente": "no_aun",
+      "onboarding": true
     }
   ]
 }

@@ -128,6 +128,33 @@ class OnboardingOrderTest(unittest.TestCase):
         self.assertLess(tareas["conectar-garmin"]["orden"], tareas["trabajas-por-turnos"]["orden"])
         self.assertLess(tareas["trabajas-por-turnos"]["orden"], tareas["vincular-este-pc"]["orden"])
 
+    def test_shows_third_in_its_chapter_despite_array_position(self):
+        """BODY-TURNOS-OPCIONAL-2-M: the task was moved to the end of the catalog's `tareas` array
+        (fix 1, to restore the /settings help door) -- display order comes from `orden`, not array
+        position, so it must still render third in Primeros pasos and in its chapter."""
+        capitulo = next(c for c in tutoriales.capitulos_con_tareas() if c["id"] == "primeros-pasos")
+        self.assertEqual(
+            [t["id"] for t in capitulo["tareas"]],
+            [
+                "iniciar-sesion-y-aceptar",
+                "conectar-garmin",
+                "trabajas-por-turnos",
+                "vincular-este-pc",
+                "primera-mirada-a-hoy",
+            ],
+        )
+
+
+class AyudaHelpDoorTest(unittest.TestCase):
+    """BODY-TURNOS-OPCIONAL-2-M fix 1: `trabajas-por-turnos` shares its `pantalla` (/settings) with
+    the pre-existing `pagarle-a-duna` task. The in-context "¿Cómo se hace?" door must keep resolving
+    to the task that held it before this slice, not to the newer one."""
+
+    def test_settings_help_door_resolves_to_pagarle_a_duna(self):
+        tarea = tutoriales.tarea_en_ruta("/settings")
+        self.assertIsNotNone(tarea)
+        self.assertEqual(tarea["id"], "pagarle-a-duna")
+
 
 class PrimerosPasosHechoTest(unittest.TestCase):
     def setUp(self):
@@ -215,6 +242,13 @@ class BothLanguagesTest(_LocalModeTestCase):
         self.client.post("/settings/language", data={"lang": "en"})
         r = self.client.get("/")
         self.assertIn("Do you work shifts?", r.text)
+
+    def test_english_description_reads_how_long_it_takes_you(self):
+        """BODY-TURNOS-OPCIONAL-2-M fix 2."""
+        self.client.post("/settings/language", data={"lang": "en"})
+        r = self.client.get("/settings")
+        self.assertIn("how long it takes you to recover", r.text)
+        self.assertNotIn("how long you take to recover", r.text)
 
 
 if __name__ == "__main__":
