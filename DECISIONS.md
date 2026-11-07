@@ -3167,3 +3167,55 @@ Merge policy A: this slice's own diff (the `reciente` bound and its tests) has n
 bytes, and no cross-repo contract change, so it merges on green under this spec's approval. The schema change and
 customer-facing bytes that stopped BODY-BORRAR-REAUTH-1 were already reviewed and accepted in this spec's
 approval-reason before this slice started.
+
+## BODY-TURNOS-EXPORT-WORK-SHIFT-1 -- the weekly Body section gains the week's shifts (2026-11-07)
+
+Carries out `BODY-TURNOS-EXPORT-WORK-SHIFT-1`, approved by the orchestrator under `ORCH-CARLOS-DELEGATES-TIER-1-1`,
+following `BODY-SHIFT-UPLOAD-OBS-1`'s census of the vida-v1 Review section's real shape. Closes the follow-up
+recorded since `BODY-TURNOS-IMPORT-1`: "vida_export week_section() gains work.shift counts".
+
+**`body/vida_export.py`'s `week_section`** now reads the person's CONFIRMED `shift` rows for Monday..Sunday (one
+plain `SELECT kind FROM shift WHERE person_id = ? AND day BETWEEN ? AND ?`, never `shift_batch_item`, which holds
+only proposed rows) and, only when at least one such row exists, appends up to three entries to `metrics`, same
+shape the existing metric entries already use (`key, value, kind, days, visibility`):
+
+* `body.shift_nights` -- count of `kind = 'night'`, `kind: "measured"`.
+* `body.shift_working_days` -- count of `kind != 'off'`, `kind: "measured"`.
+* `body.recovery_days_est` -- only when `turnos_costo.turno_de_hoy(conn, person_id, sunday)["recuperacion"]` is not
+  `None` (the same recovery-window rule Hoy uses, evaluated for the week's own Sunday, which already requires
+  `turnos_costo.resumen`'s hero `dias_recuperacion` to exist): the hero's `estimado`, `kind: "estimated"`.
+
+No shift rows in the week means none of the three entries -- an absent week is not "0 nights". `kind` reuses
+metric_def's existing vocabulary (`measured` / `estimated`); no new value, no new top-level field, nothing sent to
+a new destination (vida-v1 rules 3-4, as the spec's approval-reason already measured). The existing watch-days
+sentence ("N of 7 days with watch data.") stays first, computed before the shift block so the new entries' own
+`"days": 7` can never leak into that count; a plain sentence is appended for a night count and, separately, for an
+active recovery window (both can appear together when a week both carries nights and ends inside a recovery tail
+from an earlier block).
+
+`GET /api/vida/semana` (`body/web.py`) was re-read and is unchanged -- it only calls `vida_export.week_section`,
+so the new entries reach it automatically; it is not in this slice's `touches:`.
+
+**Tests** (`tests/test_vida_export.py`, +10 tests, `tests/_isolate` imported first, invented data; helpers
+`_insert_shift`/`_fill_range`/`_seed_block` duplicated locally, matching the shape `tests/test_turnos_costo.py` and
+`tests/test_hoy_turno.py` already use for the same fixtures): a week of 3 nights, 2 off days and 2 other working
+days -> `shift_nights` 3, `shift_working_days` 5; no shift rows in the week -> none of the three keys; a
+`shift_batch_item` row (proposed, unconfirmed) is never counted; person B's confirmed shift never reaches person
+A's section; the existing shape assertions (`area`, `week_start`, `visibility`) still hold with shift keys present.
+Recovery, reusing `tests/test_hoy_turno.py`'s own three-block fixture and its exact `hoy = fin + timedelta(1)`: with
+3 blocks (>= `min_bloques`) the week whose Sunday is that day gets `body.recovery_days_est` = 3, `kind: "estimated"`;
+with only 1 block (fewer than `min_bloques`, `motivo = "pocos_bloques"`) the same Sunday gets no
+`recovery_days_est`. Existing assertions untouched.
+
+**Gate:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 670 tests, OK (1 pre-existing skip), run
+once on this slice's final tree before this entry.
+
+**Merge.** The diff has no schema or migration change (no `touches` on `body/db.py`) and no cross-repo contract
+change (additive use of vida-v1's already-documented `metrics: [{key, value, kind}]` shape, per rule 4, pre-measured
+in the spec's own approval-reason). It does change customer-facing bytes: the two new plain-English sentences
+appended to `summary` ("N night shift(s) this week.", "Recovering from nights (about N days).") are text a person
+reads, in this case Carlos, once Personal's Sunday review renders this section -- the same category of change that
+stopped `BODY-TURNOS-SYNC-1` and `BODY-METAS-SCREENS-1` before their own merges, even though no Body screen or
+`i18n` file was touched here. Per merge policy A and this spec's own GATE section (which only says to merge "unless
+merge policy says stop," never stating in words that this slice may merge past that condition), this slice stops
+on `feat/body-turnos-export-work-shift-1` AWAITING_APPROVAL rather than merging.
