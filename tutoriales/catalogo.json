@@ -31,10 +31,19 @@
       "onboarding": true
     },
     {
+      "id": "trabajas-por-turnos",
+      "titulo": "¿Trabajas por turnos?",
+      "capitulo": "primeros-pasos",
+      "orden": 3,
+      "pantalla": "/settings",
+      "agente": "no_aun",
+      "onboarding": true
+    },
+    {
       "id": "vincular-este-pc",
       "titulo": "Vincular este PC",
       "capitulo": "primeros-pasos",
-      "orden": 3,
+      "orden": 4,
       "pantalla": "/ajustes/dispositivos",
       "agente": "no_aun",
       "onboarding": true
@@ -43,7 +52,7 @@
       "id": "primera-mirada-a-hoy",
       "titulo": "Primera mirada a Hoy",
       "capitulo": "primeros-pasos",
-      "orden": 4,
+      "orden": 5,
       "pantalla": "/",
       "agente": "si",
       "onboarding": true

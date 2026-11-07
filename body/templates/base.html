@@ -25,10 +25,21 @@
   <ul class="plan" style="margin-top:6px">
   {% for item in primeros_pasos %}
     <li>
+    {% if item.id == 'trabajas-por-turnos' and not item.hecho %}
+      <div style="display:flex;flex-direction:column;gap:8px;width:100%">
+        <span>{{ t('settings.turnos.pregunta') }}</span>
+        <form method="post" action="/settings/trabaja_turnos" class="seg">
+          <input type="hidden" name="volver" value="/">
+          <button class="btn" name="valor" value="si">{{ t('settings.turnos.si') }}</button>
+          <button class="btn" name="valor" value="no">{{ t('settings.turnos.no') }}</button>
+        </form>
+      </div>
+    {% else %}
       <a href="/ayuda#{{ item.id }}" style="display:flex;gap:10px;align-items:flex-start;color:inherit;text-decoration:none;width:100%">
         <span class="boxbtn" aria-hidden="true"><span class="box{% if item.hecho %} done{% endif %}"></span></span>
         <span>{{ item.titulo }}</span>
       </a>
+    {% endif %}
     </li>
   {% endfor %}
   </ul>

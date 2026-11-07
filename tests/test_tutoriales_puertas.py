@@ -206,20 +206,23 @@ class PrimerosPasosFunctionTest(unittest.TestCase):
     def test_hosted_with_nothing_is_all_unticked(self):
         items = tutoriales.primeros_pasos(self.conn, 1, hosted=True)
         self.assertEqual({i["id"] for i in items},
-                         {"iniciar-sesion-y-aceptar", "conectar-garmin", "vincular-este-pc", "primera-mirada-a-hoy"})
+                         {"iniciar-sesion-y-aceptar", "conectar-garmin", "trabajas-por-turnos",
+                          "vincular-este-pc", "primera-mirada-a-hoy"})
         self.assertFalse(any(i["hecho"] for i in items))
 
     def test_hosted_with_consent_metric_and_device_is_all_done(self):
         privacidad.record_consent(self.conn, 1)
         db.set_metric(self.conn, "2026-01-01", "resting_hr", 58, "garmin", 1)
         dispositivo.crear(self.conn, 1, "Mi PC", {"turnos:subir"})
+        db.set_trabaja_turnos(self.conn, True, 1)
         items = tutoriales.primeros_pasos(self.conn, 1, hosted=True)
         self.assertTrue(all(i["hecho"] for i in items))
 
     def test_local_mode_hides_the_pc_item(self):
         items = tutoriales.primeros_pasos(self.conn, 1, hosted=False)
         self.assertEqual({i["id"] for i in items},
-                         {"iniciar-sesion-y-aceptar", "conectar-garmin", "primera-mirada-a-hoy"})
+                         {"iniciar-sesion-y-aceptar", "conectar-garmin", "trabajas-por-turnos",
+                          "primera-mirada-a-hoy"})
 
     def test_local_mode_iniciar_sesion_is_always_done(self):
         items = {i["id"]: i["hecho"] for i in tutoriales.primeros_pasos(self.conn, 1, hosted=False)}
@@ -250,6 +253,7 @@ class PrimerosPasosOnHoyTest(_HostedModeTestCase):
         self._seed_one_day()
         privacidad.record_consent(self.conn, 1)
         dispositivo.crear(self.conn, 1, "Mi PC", {"turnos:subir"})
+        db.set_trabaja_turnos(self.conn, False, 1)
         r = self.client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertNotIn("Primeros pasos", r.text)
@@ -331,7 +335,8 @@ class LeerTutorialesToolTest(unittest.TestCase):
     def test_consulta_filters_by_title_or_chapter_case_insensitively(self):
         out = herramientas.ejecutar(self.conn, 1, "leer_tutoriales", {"consulta": "TURNO"}, "completo")
         ids = {t["id"] for t in out["tareas"]}
-        self.assertEqual(ids, {"confirmar-los-turnos-propuestos", "leer-lo-que-cuesta-una-semana-nocturna"})
+        self.assertEqual(ids, {"confirmar-los-turnos-propuestos", "leer-lo-que-cuesta-una-semana-nocturna",
+                                "trabajas-por-turnos"})
         self.assertLessEqual(len(out["tareas"]), 5)
 
     def test_entry_shape_and_url(self):
