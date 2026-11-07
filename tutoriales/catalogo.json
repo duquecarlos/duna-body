@@ -1,0 +1,200 @@
+{
+  "version": 1,
+  "producto": "body",
+  "capitulos": [
+    { "id": "primeros-pasos", "titulo": "Primeros pasos", "orden": 1 },
+    { "id": "tu-dia", "titulo": "Tu día", "orden": 2 },
+    { "id": "turnos", "titulo": "Turnos", "orden": 3 },
+    { "id": "tendencias", "titulo": "Tendencias", "orden": 4 },
+    { "id": "metas", "titulo": "Metas", "orden": 5 },
+    { "id": "asistente", "titulo": "El asistente", "orden": 6 },
+    { "id": "privacidad", "titulo": "Privacidad", "orden": 7 },
+    { "id": "tu-cuenta-y-pagos", "titulo": "Tu cuenta y pagos", "orden": 8 }
+  ],
+  "tareas": [
+    {
+      "id": "iniciar-sesion-y-aceptar",
+      "titulo": "Iniciar sesión y aceptar",
+      "capitulo": "primeros-pasos",
+      "orden": 1,
+      "pantalla": "/login",
+      "agente": "no_aun",
+      "onboarding": true
+    },
+    {
+      "id": "conectar-garmin",
+      "titulo": "Conectar tu Garmin",
+      "capitulo": "primeros-pasos",
+      "orden": 2,
+      "pantalla": "/garmin",
+      "agente": "no_aun",
+      "onboarding": true
+    },
+    {
+      "id": "vincular-este-pc",
+      "titulo": "Vincular este PC",
+      "capitulo": "primeros-pasos",
+      "orden": 3,
+      "pantalla": "/ajustes/dispositivos",
+      "agente": "no_aun",
+      "onboarding": true
+    },
+    {
+      "id": "primera-mirada-a-hoy",
+      "titulo": "Primera mirada a Hoy",
+      "capitulo": "primeros-pasos",
+      "orden": 4,
+      "pantalla": "/",
+      "agente": "si",
+      "onboarding": true
+    },
+    {
+      "id": "leer-hoy-y-el-puntaje",
+      "titulo": "Leer Hoy y el puntaje de preparación",
+      "capitulo": "tu-dia",
+      "orden": 1,
+      "pantalla": "/",
+      "agente": "si",
+      "onboarding": false
+    },
+    {
+      "id": "abrir-un-dia",
+      "titulo": "Abrir un día",
+      "capitulo": "tu-dia",
+      "orden": 2,
+      "pantalla": "/day/{day}",
+      "pantalla_lista": "/",
+      "agente": "si",
+      "onboarding": false
+    },
+    {
+      "id": "como-se-calcula-un-valor",
+      "titulo": "Cómo se calcula un valor",
+      "capitulo": "tu-dia",
+      "orden": 3,
+      "pantalla": "/how/{day}",
+      "pantalla_lista": "/",
+      "agente": "si",
+      "onboarding": false
+    },
+    {
+      "id": "confirmar-los-turnos-propuestos",
+      "titulo": "Confirmar los turnos propuestos",
+      "capitulo": "turnos",
+      "orden": 1,
+      "pantalla": "/shifts",
+      "agente": "si",
+      "onboarding": false
+    },
+    {
+      "id": "leer-lo-que-cuesta-una-semana-nocturna",
+      "titulo": "Leer lo que cuesta una semana nocturna",
+      "capitulo": "turnos",
+      "orden": 2,
+      "pantalla": "/history",
+      "agente": "si",
+      "onboarding": false
+    },
+    {
+      "id": "comparar-una-metrica-con-tu-base",
+      "titulo": "Comparar una métrica con tu base",
+      "capitulo": "tendencias",
+      "orden": 1,
+      "pantalla": "/trends",
+      "agente": "si",
+      "onboarding": false
+    },
+    {
+      "id": "ver-tu-condicion-cardiovascular",
+      "titulo": "Ver tu condición cardiovascular",
+      "capitulo": "tendencias",
+      "orden": 2,
+      "pantalla": "/trends",
+      "agente": "si",
+      "onboarding": false
+    },
+    {
+      "id": "crear-una-meta",
+      "titulo": "Crear una meta",
+      "capitulo": "metas",
+      "orden": 1,
+      "pantalla": "/goals/new",
+      "agente": "si",
+      "onboarding": false
+    },
+    {
+      "id": "verificar-si-esta-funcionando",
+      "titulo": "Verificar si está funcionando",
+      "capitulo": "metas",
+      "orden": 2,
+      "pantalla": "/goals/{goal_id}",
+      "pantalla_lista": "/goals",
+      "agente": "si",
+      "onboarding": false
+    },
+    {
+      "id": "cambiar-el-objetivo",
+      "titulo": "Cambiar el objetivo",
+      "capitulo": "metas",
+      "orden": 3,
+      "pantalla": "/goals/{goal_id}",
+      "pantalla_lista": "/goals",
+      "agente": "si",
+      "onboarding": false
+    },
+    {
+      "id": "hacer-una-pregunta",
+      "titulo": "Hacerle una pregunta al asistente",
+      "capitulo": "asistente",
+      "orden": 1,
+      "pantalla": "/",
+      "agente": "si",
+      "onboarding": false
+    },
+    {
+      "id": "aplicar-o-descartar-una-propuesta",
+      "titulo": "Aplicar o descartar una propuesta",
+      "capitulo": "asistente",
+      "orden": 2,
+      "pantalla": "/",
+      "agente": "si",
+      "onboarding": false
+    },
+    {
+      "id": "descargar-todo",
+      "titulo": "Descargar todo",
+      "capitulo": "privacidad",
+      "orden": 1,
+      "pantalla": "/privacidad",
+      "agente": "no_aun",
+      "onboarding": false
+    },
+    {
+      "id": "borrar-todo",
+      "titulo": "Borrar todo",
+      "capitulo": "privacidad",
+      "orden": 2,
+      "pantalla": "/privacidad",
+      "agente": "no_aun",
+      "onboarding": false
+    },
+    {
+      "id": "el-nivel-de-datos-del-asistente",
+      "titulo": "El nivel de datos del asistente",
+      "capitulo": "privacidad",
+      "orden": 3,
+      "pantalla": "/settings",
+      "agente": "si",
+      "onboarding": false
+    },
+    {
+      "id": "pagarle-a-duna",
+      "titulo": "Pagarle a Duna",
+      "capitulo": "tu-cuenta-y-pagos",
+      "orden": 1,
+      "pantalla": "/settings",
+      "agente": "no_aun",
+      "onboarding": false
+    }
+  ]
+}

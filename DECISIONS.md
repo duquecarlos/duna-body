@@ -2536,3 +2536,83 @@ once on the branch tip before this merge.
 
 Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-vo2max-1` into `main` following this
 entry.
+
+## BODY-TUTORIALES-1 -- the task census and a seeded demo tenant for tutorial recordings (2026-11-07)
+
+Carlos's tutorials idea (Main, 2026-11-05, `docs/contracts/tutoriales-v1.md`) needs two things from every product
+before Growth can record a single video: the task census as a catalog file, and a demo tenant a recording can drive
+without ever touching a real person's data. This slice gives Body both.
+
+**Contract copy.** `docs/contracts/tutoriales-v1.md`, copied byte for byte (`shutil.copyfile`) from
+`C:/Duna/body/dev-protocol/contracts/tutoriales-v1.md` and verified by sha256 against the source: both read
+`11d44b94eaae10147aabe654aaa4611f4ee38b4bbd57c2d9ad6b093d52a63865`. `docs/contracts/README.md` gained its row (count
+bumped from seven to eight files).
+
+**Catalog** `tutoriales/catalogo.json` (section 7's shape, `"producto": "body"`): 8 chapters, 20 tasks, derived from
+`body/web.py`'s real GET routes and `body/agente/herramientas.py`'s tool registry -- none invented.
+
+| Chapter | Tasks | `agente: si` today |
+|---|---|---|
+| `primeros-pasos` (onboarding) | iniciar-sesion-y-aceptar, conectar-garmin, vincular-este-pc, primera-mirada-a-hoy | primera-mirada-a-hoy |
+| `tu-dia` | leer-hoy-y-el-puntaje, abrir-un-dia, como-se-calcula-un-valor | all three |
+| `turnos` | confirmar-los-turnos-propuestos, leer-lo-que-cuesta-una-semana-nocturna | both |
+| `tendencias` | comparar-una-metrica-con-tu-base, ver-tu-condicion-cardiovascular | both |
+| `metas` | crear-una-meta, verificar-si-esta-funcionando, cambiar-el-objetivo | all three |
+| `asistente` | hacer-una-pregunta, aplicar-o-descartar-una-propuesta | both |
+| `privacidad` | descargar-todo, borrar-todo, el-nivel-de-datos-del-asistente | el-nivel-de-datos-del-asistente only |
+| `tu-cuenta-y-pagos` | pagarle-a-duna | no (`no_aun`) |
+
+14 tasks are `agente: si` (leer_hoy, leer_dia, leer_como_calculo, leer_tendencias, leer_historia, leer_metas/leer_meta,
+proponer_confirmar_turnos, proponer_meta, proponer_cambio_meta and leer_ajustes already cover them); 6 are `no_aun`
+(sign-in/consent, connecting Garmin, linking a PC, export, delete, and paying Duna -- each a real screen with no
+matching assistant tool yet). Section 6's "Tu cuenta y pagos" chapter gets one task, `pagarle-a-duna`, pointed at
+`/settings` with `agente: "no_aun"`: Body has no billing today, so this task's real content waits for Body's own
+payment plan, same as `pagarle-a-duna`'s `pantalla` is a placeholder on the nearest real screen rather than an
+invented one. `el-nivel-de-datos-del-asistente` has no dedicated screen yet either (no UI reads or sets
+`ajuste_agente.nivel_datos` today) -- its `pantalla` points at `/settings`, the nearest real screen, and its segment
+1 ("en la app") is a product gap this slice records rather than fixes, per tutoriales-v1 section 2.
+
+`tests/test_tutoriales_catalogo.py` (13 tests): the JSON parses with section 7's fields; chapter and task ids are
+unique and kebab-case; every task's `capitulo` exists; every `pantalla`/`pantalla_lista` matches a real route in
+`body.web.app` (dynamic segments compared by pattern, e.g. `/day/{day}` against `/day/{day}`); every `agente: si`
+task names a tool that exists in `herramientas.HERRAMIENTAS`, via an explicit task-id -> tool-name mapping kept in
+the test, checked both ways (every `si` task is in the mapping, every `no_aun` task is not).
+
+**Demo** `body/demo.py` -- `python -m body.demo --home <folder> [--dias 90] [--idioma es|en]`. Seeds, through the
+app's own functions (`db.init`, `db.save_day` with a local `DayData`-shaped dataclass built from invented numbers so
+this module never imports the Tier 1 `body/garmin_adapter.py`, `goals.propose`/`activate`/`add_habit`/`check_habit`,
+`shift_import.propose_data`/`confirm`): one person "Demo", `--dias` days (default 90) of every catalogue metric
+except the computed `readiness` (sparse, as in real life -- 92% for the eight "today"-card metrics, 75% for the
+twelve secondary ones, every 14th day for the three cardio ones), a repeating 4-week shift pattern
+(morning/afternoon/night/day, weekends off) with one night week in four -- confirmed for every week but the most
+recent, left `proposed` for the last 7 days so there is something to confirm -- three active goals (sleep,
+resting heart rate, steps) with real weekly checks computed by `goals.weekly_check` (not fabricated), and one habit
+("sleep before a night shift", `before_night` context) with some checks seeded. A night shift (and the day right
+after) lowers the day's sleep/HRV/battery and raises resting HR/stress by a fixed amount before sampling, so the
+"what a night week costs" task has something real to show. Fixed seed (`20261105`): two runs produce byte-identical
+rows (timestamps of creation aside). Prints only counts and the folder -- never a figure.
+
+**Refusals** (non-zero exit, a plain message, nothing written): `--home` missing; `--home` resolves to the default
+`BODY_HOME` (`~/.body-app`); `--home` resolves to the *current* `BODY_HOME` environment value; `--home` resolves to
+`/srv/duna/data/body`; the folder already holds a `body.db` with no `DEMO` marker file next to it (re-running into an
+already demo-marked folder deletes and rebuilds it, so the marker is also how a stale demo gets refreshed).
+
+`tests/test_demo.py` (14 tests, run as a subprocess throughout so this module never mutates `body.config`'s
+process-wide `BODY_HOME` for tests that run after it): every refusal path (missing `--home`, default home, current
+env home, an existing non-demo `body.db`), a re-run into a demo-marked folder rebuilding instead of refusing, stdout
+carrying only the folder line and plain integer counts, a seeded home having the one demo person, a day count inside
+the requested span, every non-computed catalogue metric present at least once, at least one night-kind shift row,
+three active goals with at least one `goal_check` row, exactly one habit, the `DEMO` marker's JSON, and two
+independent runs producing an identical row checksum across every seeded table (creation timestamps excluded).
+
+`README.md` gained a "Demo para tutoriales" section: the `BODY_HOME` + `body.demo` + `BODY_AGENTE_PROVEEDOR=demo`
+recipe Growth uses, and that it never touches a real folder.
+
+**Merge policy, judged against this diff.** Schema: no -- no table or migration changed. Cross-repo contract: no --
+the catalog's shape is this product's own census under a contract Main owns elsewhere, not a wire format another
+repository mirrors. Customer-facing bytes: no -- `tutoriales/catalogo.json` and `body/demo.py` are read by Growth's
+tooling and by tests, not rendered on any screen a signed-in person opens; the README section is documentation for
+Growth, not an in-app text. All three conditions clear, so this merges on green without a stop.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run once, foreground, on the final tree: 554
+tests, OK (1 skipped, pre-existing).
