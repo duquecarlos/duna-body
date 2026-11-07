@@ -3603,6 +3603,33 @@ with the link, and no line far from any block.
 **Gate**, run once on the final tree: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 743 tests,
 `OK (skipped=1)`.
 
+## BODY-TURNOS-ENLACES-1-M -- 44 px tap targets on the two new links, Dia speaks the shift vocabulary (2026-11-07)
+
+BODY-TURNOS-ENLACES-1 had stopped `AWAITING_APPROVAL` on two defects the orchestrator measured in a real browser
+(demo home, 375 px). Both fixed, then merged.
+
+1. **Tap targets.** Tendencias' back link (`trends.back_turnos`) and Día's link to Turnos
+   (`day.shift_ctx_link`) were bare inline text, 20 px tall. New shared class `.taplink`
+   (`body/static/body.css`: `display:inline-flex;align-items:center;min-height:44px`) replaces the
+   `style="text-decoration:underline"` Día's link carried; both `<a>` tags now carry `class="taplink"`
+   (`body/templates/trends.html`, `body/templates/day.html`).
+2. **Día speaks the shift vocabulary.** Día's shift line (`day_view`, `body/web.py`) showed the raw
+   stored `kind` in Spanish text ("night", "off"). It now reads `t("shift.kind." + kind)`, the same keys
+   Hoy and Turnos already use, falling back to the raw kind only if that key is missing in both
+   languages (so a stored kind the shared vocabulary never named shows itself rather than the key
+   string) -- the code in brackets and the times are unchanged, and the `kind` CSS class stays the raw
+   value.
+
+**Tests**, `tests/test_turnos_enlaces.py`: both links carry `class="taplink"`; `.taplink` declares
+`min-height:44px`; Día in es shows "Noche" (not "night") for a night shift and "Descanso" (not "off")
+for a day off; en shows the `shift.kind.night` key's own English value; the shift `<div>`'s CSS class
+stays the raw kind.
+
+**Gate**, run once on the branch's final tree: `.venv/Scripts/python.exe -m unittest discover tests -t .`
+-- 748 tests, `OK (skipped=1)` (a first run, before the one in-scope pre-existing test was updated for the
+new `taplink` class, had failed that one test; fixed, then this run). Merged `--no-ff` into `main`, which also
+landed BODY-TURNOS-ENLACES-1 itself (never merged while `AWAITING_APPROVAL`).
+
 **Merge.** The diff changes customer-facing bytes (new Turnos row links, the Tendencias back link, Día's new
 block-position line, all in both languages) with no schema change and no cross-repo contract change. Merge
 policy A's customer-bytes condition trips, so this slice stops before the merge with `AWAITING_APPROVAL`.
