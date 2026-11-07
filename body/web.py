@@ -13,6 +13,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -22,16 +23,16 @@ from urllib.parse import parse_qs, quote
 from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from . import (cuenta, db, garmin_adapter, garmin_cuenta, goals, history, household, identity, listen, privacidad,
-               profile, readiness, shift_import)
+from . import (cuenta, db, dispositivo, garmin_adapter, garmin_cuenta, goals, history, household, identity, listen,
+               privacidad, profile, readiness, shift_import, vida_export)
 from .baselines import baseline
 from .i18n import DEFAULT as DEFAULT_LANG
 from .i18n import LANGS, T
-from .identity import ConsentRequired, LoginRequired
+from .identity import ConsentRequired, DispositivoNoAutorizado, DispositivoSinAlcance, LoginRequired
 from .request_log import RequestLogMiddleware
 
 HERE = Path(__file__).parent
@@ -85,6 +86,16 @@ def _consent_required(request: Request, exc: ConsentRequired) -> RedirectRespons
     return RedirectResponse(
         f"/privacidad/consentimiento?return_to={quote(exc.return_to, safe='')}", status_code=303
     )
+
+
+@app.exception_handler(DispositivoNoAutorizado)
+def _dispositivo_no_autorizado(request: Request, exc: DispositivoNoAutorizado) -> JSONResponse:
+    return JSONResponse({"error": "no_autorizado"}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
+
+
+@app.exception_handler(DispositivoSinAlcance)
+def _dispositivo_sin_alcance(request: Request, exc: DispositivoSinAlcance) -> JSONResponse:
+    return JSONResponse({"error": "alcance"}, status_code=403)
 
 
 _CUENTA_DOWN_TEMPLATE = env.from_string(
@@ -1325,6 +1336,126 @@ async def privacidad_borrar(request: Request, person_id: int = Depends(identity.
     if cuenta.hosted():
         return RedirectResponse(cuenta.logout_url(None), status_code=303)
     return RedirectResponse("/", status_code=303)
+
+
+# ---- Device keys (hosted only): «Conexión del PC» on Ajustes, BODY-DISPOSITIVO-1 -----------------
+
+_ALCANCE_LABELS = {"turnos:subir": "dispositivos.scope.turnos", "vida:leer": "dispositivos.scope.vida"}
+
+
+def _dispositivo_row(t: T, d: dict) -> dict:
+    return {
+        "id": d["id"], "nombre": d["nombre"],
+        "alcances": ", ".join(t(_ALCANCE_LABELS[a]) for a in d["alcances"].split() if a in _ALCANCE_LABELS),
+        "creado": _short_date(t, datetime.fromisoformat(d["creado_en"]).date()),
+        "usado": _short_date(t, date.fromisoformat(d["usado_en"])) if d["usado_en"] else None,
+    }
+
+
+@app.get("/ajustes/dispositivos")
+def dispositivos_view(person_id: int = Depends(identity.current_person_id)):
+    if not cuenta.hosted():
+        raise HTTPException(404)
+    conn, _, t = _ctx(person_id)
+    items = [_dispositivo_row(t, d) for d in dispositivo.listar(conn, person_id)]
+    resp = _render("dispositivos.html", t=t, tab="settings", items=items, new_key=None)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/ajustes/dispositivos")
+async def dispositivos_crear(request: Request, person_id: int = Depends(identity.current_person_id)):
+    if not cuenta.hosted():
+        raise HTTPException(404)
+    f = await _form(request)
+    conn, _, t = _ctx(person_id)
+    nombre = (f.get("nombre") or "").strip()
+    if not nombre:
+        items = [_dispositivo_row(t, d) for d in dispositivo.listar(conn, person_id)]
+        resp = _render("dispositivos.html", t=t, tab="settings", items=items, new_key=None)
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    alcances = set()
+    if f.get("alcance_turnos") == "1":
+        alcances.add("turnos:subir")
+    if f.get("alcance_vida") == "1":
+        alcances.add("vida:leer")
+    new_key = dispositivo.crear(conn, person_id, nombre, alcances)
+    items = [_dispositivo_row(t, d) for d in dispositivo.listar(conn, person_id)]
+    resp = _render("dispositivos.html", t=t, tab="settings", items=items, new_key=new_key)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/ajustes/dispositivos/{dispositivo_id}/revocar")
+def dispositivos_revocar(dispositivo_id: int, person_id: int = Depends(identity.current_person_id)):
+    if not cuenta.hosted():
+        raise HTTPException(404)
+    conn, _, _ = _ctx(person_id)
+    dispositivo.revocar(conn, person_id, dispositivo_id)
+    return RedirectResponse("/ajustes/dispositivos", status_code=303)
+
+
+# ---- Device-key API (hosted only): a PC script sends `Authorization: Bearer <key>` -----------------
+
+_TURNOS_FILENAME_RE = re.compile(r"^turnos-.*\.json$")
+MAX_TURNOS_BODY_BYTES = 256 * 1024
+
+
+@app.post("/api/turnos")
+async def api_turnos(request: Request, person_id: int = Depends(identity.person_from_device("turnos:subir"))):
+    file_name = request.headers.get("x-body-archivo") or ""
+    if not _TURNOS_FILENAME_RE.match(file_name):
+        raise HTTPException(400)
+    content_length = request.headers.get("content-length")
+    if content_length is not None and content_length.isdigit() and int(content_length) > MAX_TURNOS_BODY_BYTES:
+        raise HTTPException(413)
+    chunks = bytearray()
+    async for chunk in request.stream():
+        chunks.extend(chunk)
+        if len(chunks) > MAX_TURNOS_BODY_BYTES:
+            raise HTTPException(413)
+    body = bytes(chunks)
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return JSONResponse({"error": "archivo_rechazado", "motivo": "esquema"}, status_code=422)
+    if not isinstance(data, dict):
+        return JSONResponse({"error": "archivo_rechazado", "motivo": "esquema"}, status_code=422)
+    conn, _, _ = _ctx(person_id)
+    before = conn.execute(
+        "SELECT COUNT(*) AS n FROM shift_batch WHERE person_id = ?", (person_id,)
+    ).fetchone()["n"]
+    try:
+        batch_id = shift_import.propose_data(conn, data, file_name, person_id)
+    except shift_import.ImportRefused as e:
+        return JSONResponse(
+            {"error": "archivo_rechazado", "motivo": shift_import.refusal_motivo(e)}, status_code=422
+        )
+    after = conn.execute(
+        "SELECT COUNT(*) AS n FROM shift_batch WHERE person_id = ?", (person_id,)
+    ).fetchone()["n"]
+    turnos = conn.execute(
+        "SELECT COUNT(*) AS n FROM shift_batch_item WHERE batch_id = ?", (batch_id,)
+    ).fetchone()["n"]
+    return {"lote": batch_id, "turnos": turnos, "nuevo": after > before}
+
+
+@app.get("/api/vida/semana")
+def api_vida_semana(semana: str | None = None,
+                     person_id: int = Depends(identity.person_from_device("vida:leer"))):
+    if semana:
+        try:
+            monday = date.fromisoformat(semana)
+        except ValueError:
+            raise HTTPException(400)
+        if monday.weekday() != 0:
+            raise HTTPException(400)
+    else:
+        monday = vida_export.current_week_monday()
+    conn, _, _ = _ctx(person_id)
+    data = vida_export.week_section(conn, monday, person_id)
+    return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
 
 SW_TEMPLATE = """// Body service worker: caches only static files, never health pages.

@@ -24,8 +24,9 @@ FULLY_HANDLED_TABLES = {
     "goal", "habit_check", "goal_check", "plan", "ajuste_agente", "consentimiento", "hogar_local",
 }
 # raw_payload: kind/date only, never the stored JSON payload. garmin_cuenta: the connected-since
-# date only, never the encrypted token (BODY-GARMIN-HOST-1).
-PARTIAL_EXPORT_TABLES = {"raw_payload", "garmin_cuenta"}
+# date only, never the encrypted token (BODY-GARMIN-HOST-1). dispositivo: name/scopes/dates only,
+# never token_hash (BODY-DISPOSITIVO-1).
+PARTIAL_EXPORT_TABLES = {"raw_payload", "garmin_cuenta", "dispositivo"}
 NEVER_EXPORTED_TABLES = {"sesion"}  # session plumbing, not data about the person's body or life
 
 
@@ -108,6 +109,10 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "SELECT conectado_en FROM garmin_cuenta WHERE person_id = ?", (person_id,)
     ).fetchone()
     garmin = {"conectado_desde": garmin_row["conectado_en"]} if garmin_row else None
+    # dispositivo is a partial-export table: name, scopes and dates only, never token_hash.
+    dispositivos = [dict(r) for r in conn.execute(
+        "SELECT nombre, alcances, creado_en, usado_en FROM dispositivo WHERE person_id = ? ORDER BY creado_en",
+        (person_id,))]
 
     return {
         "formato": "body-export-v1",
@@ -123,6 +128,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "consentimientos": consentimientos,
         "ajustes": ajustes,
         "garmin": garmin,
+        "dispositivos": dispositivos,
     }
 
 
@@ -167,6 +173,7 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         conn.execute("DELETE FROM ajuste_agente WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM consentimiento WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM garmin_cuenta WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM dispositivo WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM hogar_local WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM sesion WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM person WHERE id = ?", (person_id,))

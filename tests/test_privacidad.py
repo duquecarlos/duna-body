@@ -12,7 +12,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import config, cuenta, db, goals, household, identity, privacidad, web
+from body import config, cuenta, db, dispositivo, goals, household, identity, privacidad, web
 from tests.test_cuenta_rp import CuentaRpTestCase, ISSUER, SUB
 
 
@@ -189,6 +189,35 @@ class GarminExportDeleteTest(unittest.TestCase):
         privacidad.delete_person(self.conn, 1)
         self.assertEqual(
             self.conn.execute("SELECT COUNT(*) FROM garmin_cuenta WHERE person_id = 1").fetchone()[0], 0
+        )
+
+
+class DispositivoExportDeleteTest(unittest.TestCase):
+    """BODY-DISPOSITIVO-1: dispositivo is a partial-export table (name, scopes, dates -- never
+    token_hash) and the generic delete-all removes it."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "dispositivo.db"
+        self.conn = db.connect()
+        db.init(self.conn)
+
+    def test_export_has_the_fields_but_never_token_hash(self):
+        key = dispositivo.crear(self.conn, 1, "PC de prueba", {"turnos:subir"})
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(len(data["dispositivos"]), 1)
+        row = data["dispositivos"][0]
+        self.assertEqual(row["nombre"], "PC de prueba")
+        self.assertEqual(set(row), {"nombre", "alcances", "creado_en", "usado_en"})
+        self.assertNotIn(key, json.dumps(data))
+        self.assertNotIn("token_hash", json.dumps(data))
+
+    def test_delete_all_removes_the_dispositivo_rows(self):
+        dispositivo.crear(self.conn, 1, "PC de prueba", {"turnos:subir"})
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM dispositivo WHERE person_id = 1").fetchone()[0], 0
         )
 
 

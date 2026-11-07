@@ -98,7 +98,6 @@ second way to build the venv.
 | `body-deploy.sh` | stays in the checkout | execed by `duna-deploy-body` |
 | `body-web.service` | `/etc/systemd/system/body-web.service` | `body-deploy.sh` |
 | `body-pull.service`, `body-pull.timer` | `/etc/systemd/system/` | `body-deploy.sh` |
-| `body-vida.service`, `body-vida.timer` | `/etc/systemd/system/` | `body-deploy.sh` |
 | `body-backup.service`, `body-backup.timer` | `/etc/systemd/system/` | `body-deploy.sh` |
 | `Caddyfile.body` | `/etc/caddy/sites/body.caddy` | `body-deploy.sh` (and Carlos, once, above) |
 
@@ -107,8 +106,11 @@ second way to build the venv.
 * `/srv/duna/repos/duna-body` -- the checkout, owned by Carlos's own host user. `.venv` lives
   inside it; the host is the only place `pip install` runs, and it always runs as that owner, not
   as root.
-* `/srv/duna/data/body` (`BODY_HOME`) -- owned by the `duna-body` system user, mode 0700. The web,
-  pull and vida services run as that same user and only read the checkout.
+* `/srv/duna/data/body` (`BODY_HOME`) -- owned by the `duna-body` system user, mode 0700. The web
+  and pull services run as that same user and only read the checkout. The weekly vida-v1 export
+  (BODY-DISPOSITIVO-1) is no longer a host timer: it is built on demand, per person, by
+  `GET /api/vida/semana`, so a leftover `body-vida.service`/`.timer` from an earlier deploy is
+  stopped, disabled and removed by `body-deploy.sh` instead of installed.
 * `/srv/duna/data/body/backup-tmp` -- scratch directory for `body-backup.sh`, mode 0700, owned by
   `duna-body`; it never holds anything once a backup run finishes (both the plaintext and the
   encrypted copy are deleted locally after the upload).

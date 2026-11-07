@@ -13,12 +13,17 @@ Hosted mode also gates on consent (BODY-PRIVACIDAD-1, sensitive-data amendment r
 person with no accepted row for body/privacidad.py's current CONSENT_VERSION cannot reach any page
 except the consent routes themselves, raising `ConsentRequired` (a page GET) or a plain 403 (a POST)
 instead. Local mode never gates: one person, on their own PC.
+
+A second seam, `person_from_device`, resolves WHO a device-key API request serves (BODY-DISPOSITIVO-1):
+hosted only (body/web.py 404s these routes in local mode before this is ever reached), reading
+`Authorization: Bearer <key>` rather than a cookie, and never gated by consent -- a key exists only
+after the person has already consented and signed in to mint it.
 """
 from __future__ import annotations
 
 from fastapi import HTTPException, Request
 
-from . import cuenta, db, privacidad
+from . import cuenta, db, dispositivo, privacidad
 
 # The consent routes themselves, exempt from the gate below so accepting or declining is reachable.
 _CONSENT_EXEMPT_PATHS = {"/privacidad/consentimiento"}
@@ -33,6 +38,14 @@ class LoginRequired(Exception):
 class ConsentRequired(Exception):
     def __init__(self, return_to: str):
         self.return_to = return_to
+
+
+class DispositivoNoAutorizado(Exception):
+    """No key, an unknown key, or a revoked one. body/web.py answers 401 with WWW-Authenticate."""
+
+
+class DispositivoSinAlcance(Exception):
+    """A live key whose scopes do not cover the route. body/web.py answers 403."""
 
 
 def current_person_id(request: Request) -> int:
@@ -55,3 +68,31 @@ def current_person_id(request: Request) -> int:
     if request.method == "POST":
         raise HTTPException(401)
     raise LoginRequired(cuenta.safe_return_to(request.url.path), prompt="none" if existed else None)
+
+
+def person_from_device(scope: str):
+    """A FastAPI dependency factory for the device-key API routes: returns the key's person_id
+    when the key is live and carries `scope`, else raises `DispositivoNoAutorizado` (401) or
+    `DispositivoSinAlcance` (403). Local mode 404s before this is ever reached."""
+
+    def _dep(request: Request) -> int:
+        if not cuenta.hosted():
+            raise HTTPException(404)
+        auth = request.headers.get("authorization") or ""
+        if not auth.startswith("Bearer "):
+            raise DispositivoNoAutorizado()
+        key = auth[len("Bearer "):]
+        conn = db.connect()
+        try:
+            db.init(conn)
+            result = dispositivo.resolver(conn, key)
+        finally:
+            conn.close()
+        if result is None:
+            raise DispositivoNoAutorizado()
+        person_id, alcances = result
+        if scope not in alcances:
+            raise DispositivoSinAlcance()
+        return person_id
+
+    return _dep

@@ -1748,3 +1748,95 @@ the final tree (342 at the branch tip plus the 10 new tests above).
 
 Slice commit: `423dd7ea90acff0c9e960a6a399eb3fddd585138` on `feat/body-garmin-host-1`. Merged `--no-ff`
 into `main` as `f3c31adbdccf8103c1e9428823f29ce3e1abbb35`.
+
+## BODY-DISPOSITIVO-1 -- device keys for a linked PC, the shift-upload and vida APIs (2026-11-07)
+
+Carries out `BODY-SHIFT-UPLOAD-OBS-1` (OBSERVED: shifts enter only from a PC folder, no non-browser
+credential exists in Body, the weekly vida file is written on the host where Personal cannot reach it,
+and the host's `body-vida` unit runs `vida_export` for `db.local_person_id` -- wrong once several
+people live on one host) under `ORCH-CARLOS-DELEGATES-TIER-1-1`. Design decided by the orchestrator: one
+device key per linked PC carrying explicit scopes, rather than one key per purpose.
+
+**The key.** `dispositivo(id, person_id, nombre, token_hash UNIQUE, alcances, creado_en, usado_en,
+revocado_en)`, additive in `body/db.py`'s `SCHEMA`, plus an index on `person_id`. `body/dispositivo.py`
+is the only module that touches it: `crear` returns a `bdy_`-prefixed key once
+(`secrets.token_urlsafe(32)`) and stores only its sha256 hex; `resolver` looks the hash up, confirms
+with `hmac.compare_digest`, refuses a revoked row, and stamps `usado_en` (date precision); `listar`
+never returns the hash and excludes revoked rows; `revocar` sets `revocado_en` only on the caller's own
+row (another person's id changes nothing). Scopes are a space-separated set from `{turnos:subir,
+vida:leer}`.
+
+**Resolving a device request.** `body/identity.py` gains `person_from_device(scope)`, a FastAPI
+dependency factory: hosted only (local mode 404s before it is ever reached); no `Authorization: Bearer
+<key>`, or an unknown/revoked key, raises `DispositivoNoAutorizado` (401, `WWW-Authenticate: Bearer`,
+`{"error": "no_autorizado"}`); a live key without `scope` raises `DispositivoSinAlcance` (403,
+`{"error": "alcance"}`). Neither is gated by consent -- a key exists only after the person has already
+consented and signed in to mint it -- and neither ever redirects.
+
+**Ajustes.** `GET /ajustes/dispositivos` (session-authenticated, hosted only, 404 in local mode) lists
+each linked PC (name, scopes in words, created, last used) with a «Desconectar» button
+(`POST /ajustes/dispositivos/<id>/revocar`, 303 back) and a «Conectar un PC» form (name, both scopes
+checked by default). The POST response is a 200 render of the same page showing the new key once, with
+a plain sentence to copy it now because Body cannot show it again; a later GET never shows it.
+`settings.html` gained a «Conexión del PC» row, hosted-only, next to the Garmin one.
+`tests/test_agente_registro.py`'s route registry maps this GET, and the new `GET /api/vida/semana`
+below, to no tool.
+
+**`POST /api/turnos`** (scope `turnos:subir`): the shift file as the raw JSON body, max 256 KB (413
+beyond), the file name in an `X-Body-Archivo` header that must match `turnos-*.json` (400 otherwise).
+`body/shift_import.py`'s `propose` is refactored into a shared `propose_data(conn, data, file_name,
+person_id)`, used unchanged by the path-based CLI import and now by this route. A new
+`refusal_motivo(exc)` classifies an `ImportRefused` into one of three reason classes -- `esquema` (a
+missing `source.received`/`source.extracted_at`), `dia_malformado` (an unknown kind, a malformed day, a
+missing or mismatched `start_local`), `turno_duplicado` (a duplicate slot, or an off day and a working
+shift both present) -- so the route's 422 body (`{"error": "archivo_rechazado", "motivo": <class>}`)
+never echoes `ImportRefused`'s own message, which carries a day. A successful call answers `{"lote":
+<batch id>, "turnos": <count>, "nuevo": true|false}`; the person still confirms the proposed batch at
+`/shifts`, unchanged.
+
+**`GET /api/vida/semana`** (scope `vida:leer`): optional `?semana=YYYY-MM-DD` (a Monday), default the
+week `vida_export`'s own `--current` picks -- pulled out into `vida_export.current_week_monday()` and
+reused by both. Returns `vida_export.week_section(conn, monday, person_id)` as JSON with `Cache-Control:
+no-store`; no figure ever reaches the URL.
+
+**The host timer retired.** `vida_export.main()` now checks `cuenta.hosted()` first and, if set, prints
+"hosted: the weekly Body section is served per person at /api/vida/semana" and returns 1, writing
+nothing. `deploy/host/body-vida.service` and `.timer` are deleted (`git rm`); `body-deploy.sh` drops
+them from `UNITS` and the `systemctl enable` line, and a new `remove_retired_units()` stops, disables
+and removes a leftover `body-vida.{service,timer}` from an earlier deploy, if present, through the
+existing dry-run `run` helper, before `daemon-reload`. `deploy/host/README.md` updated to match.
+
+**Privacy.** `dispositivo` joins `PARTIAL_EXPORT_TABLES`: the export carries name, scopes and dates,
+never `token_hash`. `delete_person()` gained an explicit `DELETE FROM dispositivo`.
+
+**Deviations.** None from the spec's decisions.
+
+**Tests.** `tests/test_dispositivo.py` (new, 26 tests): the module itself (key shape, hash-only storage,
+resolver ok/revoked/unknown, `listar` excludes revoked rows and never returns the hash, `revocar`
+cross-person no-op); the Ajustes page (key shown once, gone on a later GET, revoke only the caller's own
+row); `/api/turnos` (every status the spec lists, a valid file scoped to the key's own person and
+visible only at that person's `/shifts`, the same file twice answering `nuevo: false`, a malformed
+file's 422 body holding no date string); `/api/vida/semana` (scope enforcement, each key seeing only its
+own person's figures, `no-store`); `vida_export.main()`'s hosted refusal; the request log carrying no
+Authorization value and no body text. `tests/test_privacidad.py` gained `DispositivoExportDeleteTest`
+(2 tests). `tests/test_agente_registro.py`: `/ajustes/dispositivos` and `/api/vida/semana` added to
+`ROUTE_TOOL` as `None`. `tests/test_host_deploy.py`: the retired vida unit/timer constants and their
+test removed, `ServiceHardeningTest` no longer reads them, two new tests cover the retirement itself
+(the unit's absence from `UNITS` and the enable line, and `remove_retired_units()` going through `run`),
+and the `rm`-only-touches-`$CADDY_DST` test widened to also allow a retired unit's path. The existing
+path-based shift-import tests (`tests/test_shift_import.py`) pass unchanged.
+
+**Merge policy.** This diff adds a table to `body/db.py`'s `SCHEMA` (a schema change) and changes bytes
+Carlos reads as a signed-in person -- the new `/ajustes/dispositivos` page, the Settings «Conexión del
+PC» row, and the new `dispositivos.*`/`settings.dispositivos` strings in both `body/i18n/es.json` and
+`en.json`. Two of Merge Policy A's three conditions trip (schema, customer-bytes); the spec's body says
+nothing about merging past them, so this stops `AWAITING_APPROVAL` on a clean branch, the same way
+`BODY-GARMIN-HOST-1` did.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 381 tests, OK (skipped=1, the
+POSIX-only check, unrelated to this slice), run once on the final tree (352 at the branch tip plus 29
+new: 26 in `tests/test_dispositivo.py`, 2 in `tests/test_privacidad.py`, 1 net in
+`tests/test_host_deploy.py`).
+
+Slice commit: `17e441b1bb8107b10b8865e2cf3bc53c8b482bc6` on `feat/body-dispositivo-1`, not yet merged --
+awaiting the orchestrator's review of the schema and customer-bytes conditions above.

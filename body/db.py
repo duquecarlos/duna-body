@@ -272,6 +272,20 @@ CREATE TABLE IF NOT EXISTS garmin_cuenta (
     conectado_en  TEXT NOT NULL,
     ultimo_error  TEXT
 );
+
+-- One device key per linked PC, carrying explicit scopes (BODY-DISPOSITIVO-1). Only the key's
+-- sha256 hex ever reaches this table -- the plain key is shown once, at creation, and never again.
+CREATE TABLE IF NOT EXISTS dispositivo (
+    id          INTEGER PRIMARY KEY,
+    person_id   INTEGER NOT NULL REFERENCES person(id),
+    nombre      TEXT NOT NULL,
+    token_hash  TEXT NOT NULL UNIQUE,
+    alcances    TEXT NOT NULL,
+    creado_en   TEXT NOT NULL,
+    usado_en    TEXT,
+    revocado_en TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_dispositivo_person ON dispositivo(person_id);
 """
 
 # (key, label, unit, better, kind). 'estimated' = computed by Body, shown with «≈» and "how I calculate it".
