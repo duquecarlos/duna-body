@@ -2830,3 +2830,85 @@ tests, OK (1 skipped, pre-existing).
 
 Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-primeros-pasos-macro-1` into `main`
 following this entry.
+
+## BODY-TURNOS-COSTO-1 -- Turnos' hero: what a week of nights costs and how long recovery takes (2026-11-07)
+
+Built `body/turnos_costo.py`, pure reads, model `turnos-v1`: `{"metricas": ["sleep_minutes", "resting_hr",
+"hrv_last_night", "stress_avg", "body_battery_wake"], "min_bloques": 2, "ventana_post": 10, "dias_estables": 2,
+"min_dias_referencia": 10}`.
+
+* **Blocks**: `bloques_noche(conn, person_id, desde, hasta)` reads maximal runs of consecutive confirmed
+  `shift.kind = 'night'` days from the `shift` table (never `shift_batch_item`, which holds unconfirmed proposals) --
+  an `off` day, or any non-night kind, always splits a run.
+* **Reference ("tus semanas de día")**: per metric, mean and normal band over the person's own non-night,
+  non-post-window days in the 120 days before "today" (`REFERENCIA_DIAS`). The band is the SAME rule
+  `body/baselines.py`'s `baseline()` uses -- 25th/75th percentile via `statistics.quantiles(vals, n=4)`, taking
+  `q[0]`/`q[2]` -- reused as the same formula, not called directly, because the reference population differs (120
+  days excluding nights and their recovery tail, not a 30-day trailing window ending at a single day). Fewer than
+  `min_dias_referencia` values leaves that metric's reference `None` (honest gap).
+* **Cost of a block**: mean during the block plus the next `dias_estables` days, minus the reference mean, signed by
+  the metric's own direction in `db.METRIC_DEFS` (`better`) so a positive cost always means "worse" regardless of
+  whether the metric's normal is higher-is-better or lower-is-better -- a resting heart rate that drops during a
+  night block is NOT counted as worse.
+* **Recovery of a block**: the first day `d >= 1` after the block's last night such that `d` and the next
+  `dias_estables - 1` days each have at least 3 of the 5 metrics (that have both a value and a reference) inside
+  their reference band. Not reached within `ventana_post` days (or a day's data does not exist yet) -> `None`.
+* **`resumen(conn, person_id, hoy=None)`**: blocks of the last 180 days with their cost and recovery; the hero
+  `dias_recuperacion` is the median recovery over blocks that have one, only when at least `min_bloques` (2) do,
+  else `None` with a reason code -- `sin_datos_reloj` (no Garmin data ever), `sin_turnos` (no confirmed shift rows
+  at all), `sin_noches` (shifts confirmed, no night blocks in range), `pocos_bloques` (blocks exist, too few have a
+  recovery figure), checked in that priority order.
+
+**Screen** `/shifts`: the confirm UI (proposed batch(es), or the last-confirmed date) keeps leading when there is
+one; below it, or as the page itself when nothing is proposed, the hero card (`.card.est`, the same soft-ink
+"≈"/`.big` pattern Hoy's readiness hero uses) linking to `/shifts/como`, a per-metric cost table ("¿Qué te cuesta una
+semana de noches?", each row "vs. tus semanas de día", `—` + "sin datos del reloj" when missing), and an 8-week
+(56-day) strip of day cells banded by shift kind (night/day/off, reusing the `--night`/`--amber`/`--line` tokens)
+with the day's readiness score when one exists, each cell linking to `/day/{day}`. Nothing is stored; every figure
+is computed at read time. This REPLACES the old `soon.shifts` placeholder card for the no-batch-proposed state (that
+copy promised the feature "arrives once we import your shifts" -- it now exists, so the placeholder is gone).
+
+`/shifts/como` reuses `how.html` (a `modo='turnos'` branch alongside the existing readiness explanation) to name the
+model version, the rule in plain words, how many blocks were counted and how many had a recovery figure, and "No es
+un consejo médico: son patrones en tus propios números."
+
+**Assistant**: `leer_costo_turnos`, nivel `resumen` (block counts, lengths, recovery days and per-metric mean
+differences are aggregates over a week or more, never a single day's value) returns `resumen()`'s own content. The
+registry guard (`tests/test_agente_registro.py`) now maps `/shifts` to BOTH `leer_turnos` (the existing
+pending/confirmed-batch summary) and `leer_costo_turnos`, and `/shifts/como` to `leer_costo_turnos`; the guard was
+extended to accept a tuple of tool names for one route. The tutoriales catalog's `leer-lo-que-cuesta-una-semana-
+nocturna` task now points `pantalla` at `/shifts` (was `/history`) and the catalog test's task→tool mapping now
+names `leer_costo_turnos` (was `leer_historia`).
+
+**Demo**: `body/demo.py`'s existing week-cycle (`[morning, afternoon, night, day]`, 4-week period, weekends off)
+already produces 3 confirmed night blocks of 5 nights each within its 90-day default span for every anchor date
+checked (worst case found across 400 consecutive anchor dates: still 3) -- so no change was needed to the shift
+pattern itself. What DID need extending: the demo's night effect on metrics only applied to the night day and the
+single day after, which let a block "recover" in one day -- too fast to show a believable multi-day recovery. Added
+`_recovery_factor(day)`, which scales `NIGHT_EFFECT` by `1.0` on a night day and tapers `0.7 / 0.4 / 0.15` over the
+three days after, then zero -- still the same fixed seed, so two runs stay identical. `_seed()` now also reports
+`bloques_turno_noche` (computed with the real `turnos_costo.bloques_noche`, not a re-derivation), and
+`tests/test_demo.py` gained `test_has_at_least_three_night_blocks`, asserting `>= 3` on the real `--dias 90` run.
+
+**Tests** (`tests/test_turnos_costo.py`, 25 tests, `_isolate` first): block detection (consecutive nights, an off day
+splits a run, a single night is a block of one, person isolation); the reference's mean/band match
+`statistics.quantiles(..., n=4)` directly, fewer than `min_dias_referencia` values is a gap, nights and the post
+window are excluded; a lower resting HR during nights is NOT worse (and a higher one is), a missing reference or
+missing values stay a gap; recovery found on day 3 when 3 of 5 metrics return for 2 days, not reached is `None`,
+fewer than 3 metrics with values is a gap; the median over three blocks with engineered recovery days 2/4/6 is 4,
+person isolation, and each of the four reason codes; `/shifts` renders the hero with "≈", the per-metric rows and
+56 strip cells linking `/day/...`, the empty state with no data, es and en both render; `/shifts/como` names
+`turnos-v1`; the assistant tool's payload has no dict keyed by an ISO day mapped to a plain number (checked by a
+recursive scan, not a fixed key list).
+
+**Gate (RED, not merged)**: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run once, foreground, on
+the final tree: 618 tests, 2 failures, 1 skipped (pre-existing, POSIX-only). Both failures are PRE-EXISTING tests in
+files this slice's `touches:` does not list -- `tests/test_shift_import.py::ShiftWebTest::
+test_shifts_page_without_proposed_batch_es` and `tests/test_sin_friccion.py::TurnosEmptyCensusTest::
+test_empty_both_languages` -- and both assert the literal `soon.shifts` placeholder copy ("Aquí verás lo que te
+cuesta una semana de noches... Llega cuando importemos tus turnos") for `/shifts` with nothing proposed. That is
+exactly the state this slice's spec says to replace with the real hero (decision 2: "as the page itself when
+nothing is proposed"), so the two assertions are now stale by design, not by a bug in this slice's own code. Neither
+file is in `touches:`, so neither was edited; fixing them (updating two string assertions to the new empty-state
+copy) is a one-line-each follow-up outside this slice's declared scope. Reported GATE_RED rather than widening the
+diff to fix them.
