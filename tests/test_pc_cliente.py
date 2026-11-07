@@ -5,6 +5,7 @@ pc_cliente's transport is a fake. Invented demo data only, no real health figure
 from __future__ import annotations
 
 import contextlib
+import email.message
 import io
 import json
 import os
@@ -13,6 +14,7 @@ import stat
 import tempfile
 import unittest
 import urllib.error
+import urllib.request
 from datetime import timedelta
 from pathlib import Path
 from unittest import mock
@@ -38,6 +40,29 @@ class _FakeResponse:
 
     def read(self) -> bytes:
         return self._body
+
+
+class _FakeHTTPResponse:
+    """Minimal stand-in for http.client.HTTPResponse, enough for OpenerDirector's redirect path."""
+
+    def __init__(self, status: int, headers: email.message.Message, body: bytes = b""):
+        self.status = status
+        self.code = status
+        self.msg = ""
+        self.headers = headers
+        self._body = body
+
+    def info(self):
+        return self.headers
+
+    def read(self, *a, **k):
+        return self._body
+
+    def geturl(self):
+        return "https://fake.test/api/vida/semana"
+
+    def close(self):
+        pass
 
 
 def _http_error(code: int, payload: dict | None = None) -> urllib.error.HTTPError:
@@ -94,6 +119,35 @@ class EnlaceFileTest(_TempHomeTestCase):
         self.assertNotIn("--key", text)
 
 
+# ---- redirects are refused, never followed -----------------------------------------------------
+
+class RedirectRefusedTest(_TempHomeTestCase):
+    def setUp(self):
+        super().setUp()
+        pc_cliente.escribir_enlace("https://fake.test", TEST_KEY)
+
+    def test_redirect_to_another_host_is_never_followed(self):
+        calls = []
+
+        def fake_do_open(self, http_class, req, **kwargs):
+            calls.append(req.full_url)
+            headers = email.message.Message()
+            headers["Location"] = "https://evil.example/elsewhere"
+            return _FakeHTTPResponse(302, headers)
+
+        with mock.patch.object(urllib.request.AbstractHTTPHandler, "do_open", fake_do_open):
+            status, _data = pc_cliente.llamar("GET", "/api/vida/semana")
+
+        self.assertEqual(status, 302)
+        self.assertEqual(len(calls), 1, "a redirect target must never be requested")
+        self.assertNotIn("evil.example", calls[0])
+
+    def test_opener_has_the_no_redirect_handler_not_the_default(self):
+        handlers = pc_cliente._opener.handle_error.get("http", {}).get(302, [])
+        self.assertTrue(any(type(h) is pc_cliente._SinRedirigir for h in handlers))
+        self.assertFalse(any(type(h) is urllib.request.HTTPRedirectHandler for h in handlers))
+
+
 # ---- python -m body.conectar_pc ----------------------------------------------------------------
 
 class ConectarPcTest(_TempHomeTestCase):
@@ -147,6 +201,13 @@ class ConectarPcTest(_TempHomeTestCase):
         self.assertEqual(rc, 1)
         self.assertNotIn(TEST_KEY, out)
         self.assertFalse((config.BODY_HOME / pc_cliente.ENLACE_NAME).exists())
+
+    def test_key_whitespace_trimmed_before_check_and_save(self):
+        rc, out, _ = self._run([], TEST_KEY + " \n", lambda req: _FakeResponse(200, b"{}"))
+        self.assertEqual(rc, 0)
+        path = config.BODY_HOME / pc_cliente.ENLACE_NAME
+        data = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(data["clave"], TEST_KEY)
 
     def test_olvidar_removes_the_link(self):
         pc_cliente.escribir_enlace("https://fake.test", TEST_KEY)

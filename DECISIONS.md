@@ -1983,3 +1983,45 @@ the branch tip, per `BODY-DISPOSITIVO-1-M`'s own entry above, plus the 33 new te
 
 Slice commit: see `git log -1` on `feat/body-pc-cliente-1` before the merge below. Merged `--no-ff`
 into `main`.
+
+## BODY-PC-CLIENTE-2 -- refuse redirects, trim a pasted device key (2026-11-07)
+
+Post-merge review of `BODY-PC-CLIENTE-1` found that `pc_cliente._abrir` called `urllib.request.
+urlopen` directly, which uses urllib's default `HTTPRedirectHandler`: on a 3xx it re-sends the
+original request's headers, Authorization included, to the redirect target. A redirect to another
+host would carry the device key there. Body's own API routes never redirect, so refusing every 3xx
+loses nothing and turns a would-be key leak into an ordinary error status.
+
+`body/pc_cliente.py`: new `_SinRedirigir(urllib.request.HTTPRedirectHandler)` whose
+`redirect_request` always returns `None`; a module-level `_opener = urllib.request.build_opener
+(_SinRedirigir)` (subclassing the default handler means `build_opener` installs this one in its
+place, not alongside it); `_abrir` now calls `_opener.open(req, timeout=TIMEOUT_S)` instead of
+`urllib.request.urlopen`, and stays the one function tests patch for every other call. With no
+handler accepting the redirect, urllib's own `HTTPDefaultErrorHandler` raises the `HTTPError` that
+was already the error path, so `llamar` returns the 3xx status like any other error code --
+unchanged for every caller, which already print an unexpected status by its number alone.
+
+`body/conectar_pc.py`: the key read by `getpass.getpass` is now `.strip()`-ed before both the
+`bdy_` prefix check and the call to `escribir_enlace`, so a pasted key with a trailing space or
+newline is checked and saved without it.
+
+**Tests** (`tests/test_pc_cliente.py`, +3): `RedirectRefusedTest` patches `urllib.request.
+AbstractHTTPHandler.do_open` (not `_abrir`, so the real opener and its redirect handler run) to
+serve one 302 to another host and asserts `llamar` returns `302` and that the handler is called
+exactly once -- the redirect target is never requested; a second test asserts the opener's
+`handle_error["http"][302]` list holds a `_SinRedirigir` instance and not a plain
+`urllib.request.HTTPRedirectHandler`. `ConectarPcTest` gained a case where the fake typed key
+carries a trailing space and newline and the saved link file's `clave` matches the trimmed key
+exactly.
+
+**Merge policy.** No schema or migration change. No cross-facing bytes: nothing printed or saved
+changes shape, only what is accepted as a key and how a redirect status is reported internally. No
+cross-repo contract change: the wire Body's hosted API serves is untouched; this only hardens how
+the PC client reaches it. None of Merge Policy A's three conditions trip, so this merges on green
+without waiting. Same observed-report as the slice it hardens: `BODY-SHIFT-UPLOAD-OBS-1`.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 424 tests, OK, run once on the
+final tree (421 at `feat/body-pc-cliente-1`'s merge, plus the 3 new tests here).
+
+Slice commit: see `git log -1` on `feat/body-pc-cliente-2` before the merge below. Merged `--no-ff`
+into `main`.
