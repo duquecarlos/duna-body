@@ -1358,7 +1358,9 @@ def dispositivos_view(person_id: int = Depends(identity.current_person_id)):
         raise HTTPException(404)
     conn, _, t = _ctx(person_id)
     items = [_dispositivo_row(t, d) for d in dispositivo.listar(conn, person_id)]
-    return _render("dispositivos.html", t=t, tab="settings", items=items, new_key=None)
+    resp = _render("dispositivos.html", t=t, tab="settings", items=items, new_key=None)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.post("/ajustes/dispositivos")
@@ -1370,7 +1372,9 @@ async def dispositivos_crear(request: Request, person_id: int = Depends(identity
     nombre = (f.get("nombre") or "").strip()
     if not nombre:
         items = [_dispositivo_row(t, d) for d in dispositivo.listar(conn, person_id)]
-        return _render("dispositivos.html", t=t, tab="settings", items=items, new_key=None)
+        resp = _render("dispositivos.html", t=t, tab="settings", items=items, new_key=None)
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
     alcances = set()
     if f.get("alcance_turnos") == "1":
         alcances.add("turnos:subir")
@@ -1378,7 +1382,9 @@ async def dispositivos_crear(request: Request, person_id: int = Depends(identity
         alcances.add("vida:leer")
     new_key = dispositivo.crear(conn, person_id, nombre, alcances)
     items = [_dispositivo_row(t, d) for d in dispositivo.listar(conn, person_id)]
-    return _render("dispositivos.html", t=t, tab="settings", items=items, new_key=new_key)
+    resp = _render("dispositivos.html", t=t, tab="settings", items=items, new_key=new_key)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.post("/ajustes/dispositivos/{dispositivo_id}/revocar")
@@ -1401,9 +1407,15 @@ async def api_turnos(request: Request, person_id: int = Depends(identity.person_
     file_name = request.headers.get("x-body-archivo") or ""
     if not _TURNOS_FILENAME_RE.match(file_name):
         raise HTTPException(400)
-    body = await request.body()
-    if len(body) > MAX_TURNOS_BODY_BYTES:
+    content_length = request.headers.get("content-length")
+    if content_length is not None and content_length.isdigit() and int(content_length) > MAX_TURNOS_BODY_BYTES:
         raise HTTPException(413)
+    chunks = bytearray()
+    async for chunk in request.stream():
+        chunks.extend(chunk)
+        if len(chunks) > MAX_TURNOS_BODY_BYTES:
+            raise HTTPException(413)
+    body = bytes(chunks)
     try:
         data = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):

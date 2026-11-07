@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import statistics
 import sys
 from datetime import date, datetime, timedelta, timezone
@@ -32,8 +33,18 @@ def current_week_monday(today: date | None = None) -> date:
     return today - timedelta(today.weekday())
 
 
+def vida_person(conn, person_id: int) -> str:
+    """vida-v1's `person`: the Cuenta Duna sub when this person has one (hosted, linked); until
+    then, a local person key set by the app (BODY_PERSON_KEY, or PERSON_KEY unchanged, so a local
+    install's weekly file keeps today's value)."""
+    row = conn.execute("SELECT cuenta_sub FROM person WHERE id = ?", (person_id,)).fetchone()
+    sub = row["cuenta_sub"] if row else None
+    return sub or os.environ.get("BODY_PERSON_KEY", PERSON_KEY)
+
+
 def week_section(conn, monday: date, person_id: int) -> dict:
     sunday = monday + timedelta(6)
+    person = vida_person(conn, person_id)
     defs = {r["key"]: dict(r) for r in conn.execute("SELECT * FROM metric_def")}
     metrics = []
     for key in WEEK_METRICS:
@@ -56,7 +67,7 @@ def week_section(conn, monday: date, person_id: int) -> dict:
                 "SELECT gc.goal_id, gc.metric_avg, gc.on_track, gc.note FROM goal g "
                 "JOIN goal_check gc ON gc.goal_id = g.id AND gc.week_start = ? AND gc.person_id = ? "
                 "WHERE g.hogar_id = ? AND g.status = 'active'", (monday.isoformat(), person_id, hh.id)):
-            goal_checks.append({"goal_id": r["goal_id"], "person": PERSON_KEY, "week_start": monday.isoformat(),
+            goal_checks.append({"goal_id": r["goal_id"], "person": person, "week_start": monday.isoformat(),
                                 "metric_avg": r["metric_avg"],
                                 "on_track": None if r["on_track"] is None else bool(r["on_track"]),
                                 "note": r["note"]})
@@ -65,7 +76,7 @@ def week_section(conn, monday: date, person_id: int) -> dict:
     summary = (f"{days} of 7 days with watch data." if days else "No watch data this week.")
     return {
         "area": "body", "summary": summary, "metrics": metrics, "goals": goals, "goal_checks": goal_checks,
-        "person": PERSON_KEY, "week_start": monday.isoformat(), "source": "body",
+        "person": person, "week_start": monday.isoformat(), "source": "body",
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
 

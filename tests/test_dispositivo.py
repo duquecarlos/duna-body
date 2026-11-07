@@ -151,6 +151,16 @@ class AjustesPageTest(DispositivoHostedTestCase):
         self.assertEqual(r.status_code, 303)
         self.assertIsNotNone(dispositivo.resolver(self.conn, key_b))
 
+    def test_get_never_cached(self):
+        web.app.dependency_overrides[identity.current_person_id] = lambda: 1
+        r = self.client.get("/ajustes/dispositivos")
+        self.assertEqual(r.headers.get("cache-control"), "no-store")
+
+    def test_post_never_cached(self):
+        web.app.dependency_overrides[identity.current_person_id] = lambda: 1
+        r = self.client.post("/ajustes/dispositivos", data={"nombre": "Mi PC"})
+        self.assertEqual(r.headers.get("cache-control"), "no-store")
+
 
 # ---- POST /api/turnos ------------------------------------------------------------------------------
 
@@ -193,6 +203,22 @@ class ApiTurnosTest(DispositivoHostedTestCase):
 
     def test_over_256kb_413(self):
         r = self._post(b"x" * (257 * 1024), auth=f"Bearer {self.key}")
+        self.assertEqual(r.status_code, 413)
+
+    def test_oversized_content_length_413_without_reading_the_body(self):
+        # the actual body is tiny; only a lying Content-Length header claims it is too big. A 413
+        # here proves the header was checked before the (small, otherwise-acceptable) body was read.
+        headers = {"X-Body-Archivo": "turnos-demo-a.json", "Authorization": f"Bearer {self.key}",
+                   "Content-Length": str(300 * 1024)}
+        r = self.client.post("/api/turnos", content=b"{}", headers=headers)
+        self.assertEqual(r.status_code, 413)
+
+    def test_lying_small_content_length_still_capped_by_the_stream(self):
+        # Content-Length under-reports a body that is actually oversized. The header check alone
+        # would let this through, so the streaming cap must still catch it.
+        headers = {"X-Body-Archivo": "turnos-demo-a.json", "Authorization": f"Bearer {self.key}",
+                   "Content-Length": "2"}
+        r = self.client.post("/api/turnos", content=b"x" * (257 * 1024), headers=headers)
         self.assertEqual(r.status_code, 413)
 
     def test_valid_file_proposes_a_batch_for_the_keys_person_only(self):

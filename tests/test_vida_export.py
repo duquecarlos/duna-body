@@ -71,5 +71,32 @@ class VidaExportTest(unittest.TestCase):
         self.assertTrue(gc["on_track"])
 
 
+class VidaPersonTest(unittest.TestCase):
+    def test_hosted_person_with_a_sub_gets_the_sub(self):
+        conn = db.connect(Path(tempfile.mkdtemp()) / "p1.db")
+        db.init(conn)
+        conn.execute("UPDATE person SET cuenta_sub = ? WHERE id = 1", ("sub-demo-1",))
+        conn.commit()
+        self.assertEqual(vida_export.vida_person(conn, 1), "sub-demo-1")
+        monday = date(2026, 11, 2)
+        self.assertEqual(vida_export.week_section(conn, monday, 1)["person"], "sub-demo-1")
+
+    def test_two_persons_get_different_values(self):
+        conn = db.connect(Path(tempfile.mkdtemp()) / "p2.db")
+        db.init(conn)
+        conn.execute("INSERT INTO person (id, display_name, cuenta_sub) VALUES (2, 'B', ?)", ("sub-demo-b",))
+        conn.execute("UPDATE person SET cuenta_sub = ? WHERE id = 1", ("sub-demo-a",))
+        conn.commit()
+        self.assertEqual(vida_export.vida_person(conn, 1), "sub-demo-a")
+        self.assertEqual(vida_export.vida_person(conn, 2), "sub-demo-b")
+
+    def test_local_person_keeps_the_old_key(self):
+        conn = db.connect(Path(tempfile.mkdtemp()) / "p3.db")
+        db.init(conn)
+        self.assertEqual(vida_export.vida_person(conn, 1), vida_export.PERSON_KEY)
+        monday = date(2026, 11, 2)
+        self.assertEqual(vida_export.week_section(conn, monday, 1)["person"], vida_export.PERSON_KEY)
+
+
 if __name__ == "__main__":
     unittest.main()
