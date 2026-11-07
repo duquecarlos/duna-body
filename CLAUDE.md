@@ -58,7 +58,8 @@ Tier 1 slices run in a separate read-only session with no writes and no git muta
 `body/login.py`, where health data and the token live `body/config.py`, the SQLite schema and its migrations
 `body/db.py`, the export that hands health data to another app `body/vida_export.py`, the test isolation guard
 `tests/_isolate.py`, which network address the web app listens on `body/listen.py`, the import that brings
-another app's shift files in `body/shift_import.py`, and the client that will send anything to a model provider
-`body/agente/cliente.py` (the only module that may do so, once it exists).
+another app's shift files in `body/shift_import.py`, the client that will send anything to a model provider
+`body/agente/cliente.py` (the only module that may do so, once it exists), Cuenta Duna sign-in
+`body/cuenta.py`, and the identity resolver `body/identity.py` (who is signed in).
 
 Everything else in this repository is Tier 2.

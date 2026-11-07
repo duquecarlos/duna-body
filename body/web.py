@@ -14,9 +14,10 @@ import json
 import logging
 import os
 import sys
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, quote
 from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -24,13 +25,23 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from . import db, goals, history, household, identity, listen, profile, readiness, shift_import
+from . import cuenta, db, goals, history, household, identity, listen, profile, readiness, shift_import
 from .baselines import baseline
+from .i18n import DEFAULT as DEFAULT_LANG
 from .i18n import LANGS, T
+from .identity import LoginRequired
 from .request_log import RequestLogMiddleware
 
 HERE = Path(__file__).parent
-app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    cuenta.ensure_configured()
+    yield
+
+
+app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=_lifespan)
 app.add_middleware(RequestLogMiddleware)
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 env = Environment(loader=FileSystemLoader(HERE / "templates"), autoescape=select_autoescape())
@@ -55,6 +66,27 @@ def static_url(path: str) -> str:
 
 
 env.globals["static_url"] = static_url
+env.globals["hosted"] = cuenta.hosted
+
+
+@app.exception_handler(LoginRequired)
+def _login_required(request: Request, exc: LoginRequired) -> RedirectResponse:
+    qs = f"return_to={quote(exc.return_to, safe='')}"
+    if exc.prompt:
+        qs += f"&prompt={exc.prompt}"
+    return RedirectResponse(f"/login?{qs}", status_code=303)
+
+
+_CUENTA_DOWN_TEMPLATE = env.from_string(
+    '{% extends "base.html" %}{% block main %}'
+    '<div class="top"><div><h1>{{ t("app.name") }}</h1></div></div>'
+    '<div class="card"><p class="read">{{ t("cuenta.down") }}</p></div>'
+    "{% endblock %}"
+)
+
+
+def _cuenta_down_page() -> HTMLResponse:
+    return HTMLResponse(_CUENTA_DOWN_TEMPLATE.render(t=T(DEFAULT_LANG), tab=None))
 
 UNITS = {"bpm": "unit.bpm", "ms": "unit.ms", "pts": "unit.pts", "steps": "unit.steps", "kcal": "unit.kcal",
          "brpm": "unit.brpm"}
@@ -176,6 +208,86 @@ def _parse_day(day: str) -> date:
 
 def _batch_date(t: T, received: str) -> str:
     return _short_date(t, datetime.fromisoformat(received).date())
+
+
+@app.get("/healthz")
+def healthz():
+    return Response("ok", media_type="text/plain")
+
+
+@app.get("/login")
+@app.get("/login/cuenta/start")
+def login_start(request: Request):
+    if not cuenta.hosted():
+        raise HTTPException(404)
+    return_to = cuenta.safe_return_to(request.query_params.get("return_to"))
+    prompt = request.query_params.get("prompt")
+    prompt = prompt if prompt in ("none", "login") else None
+    conn = db.connect()
+    db.init(conn)
+    url, flujo_id = cuenta.start_login(conn, return_to, prompt=prompt)
+    conn.close()
+    resp = RedirectResponse(url, status_code=303)
+    cuenta.set_flujo_cookie(resp, flujo_id)
+    return resp
+
+
+@app.get("/login/cuenta/callback")
+def login_callback(request: Request):
+    if not cuenta.hosted():
+        raise HTTPException(404)
+    conn = db.connect()
+    db.init(conn)
+    try:
+        result = cuenta.handle_callback(conn, request.cookies.get(cuenta.FLUJO_COOKIE),
+                                        dict(request.query_params))
+    except cuenta.FlowRefused:
+        conn.close()
+        return Response("Sign-in refused", status_code=400, media_type="text/plain")
+    except cuenta.CuentaUnavailable:
+        conn.close()
+        return _cuenta_down_page()
+    if result.kind == "reauth":
+        conn.close()
+        return RedirectResponse(f"/login?return_to={quote(result.return_to or '/', safe='')}",
+                                status_code=303)
+    if result.kind == "sin_acceso":
+        conn.close()
+        return _render("sin_acceso.html", t=T(DEFAULT_LANG),
+                       switcher_url=cuenta.SWITCHER_URL, logout_url=cuenta.logout_url(None))
+    conn.close()
+    resp = RedirectResponse(result.return_to or "/", status_code=303)
+    cuenta.set_session_cookie(resp, result.session_token)
+    cuenta.clear_flujo_cookie(resp)
+    return resp
+
+
+@app.post("/logout")
+def logout(request: Request):
+    if not cuenta.hosted():
+        raise HTTPException(404)
+    conn = db.connect()
+    db.init(conn)
+    sid = cuenta.end_session(conn, request.cookies.get(cuenta.SESSION_COOKIE))
+    conn.close()
+    resp = RedirectResponse(cuenta.logout_url(sid), status_code=303)
+    cuenta.clear_session_cookie(resp)
+    return resp
+
+
+@app.post("/login/cuenta/logout-token")
+async def backchannel_logout(request: Request):
+    if not cuenta.hosted():
+        raise HTTPException(404)
+    host = request.client.host if request.client else None
+    if host not in ("127.0.0.1", "::1"):
+        raise HTTPException(403)
+    f = await _form(request)
+    conn = db.connect()
+    db.init(conn)
+    ok = cuenta.handle_backchannel_logout(conn, f.get("logout_token", ""))
+    conn.close()
+    return Response(status_code=200 if ok else 400)
 
 
 @app.get("/")

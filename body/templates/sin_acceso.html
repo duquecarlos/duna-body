@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="{{ t.lang }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#F4F2ED">
+<title>{{ t('sin_acceso.title') }} · {{ t('app.name') }}</title>
+<script>/* theme before paint: no flash */
+try{var th=localStorage.getItem('body.theme');var dark=th==='dark'||(th!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches);if(dark)document.documentElement.dataset.theme='dark'}catch(e){}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="{{ static_url('body.css') }}">
+<link rel="icon" href="{{ static_url('icon.svg') }}" type="image/svg+xml">
+</head>
+<body>
+<div class="shell"><main><div class="wrap">
+<div class="top"><div><h1>{{ t('sin_acceso.title') }}</h1></div></div>
+<div class="card">
+  <p class="read">{{ t('sin_acceso.text') }}</p>
+  <p style="margin-top:16px"><a href="{{ switcher_url }}">{{ t('sin_acceso.switch') }}</a></p>
+  <p style="margin-top:8px"><a href="{{ logout_url }}">{{ t('nav.logout') }}</a></p>
+</div>
+</div></main></div>
+</body>
+</html>

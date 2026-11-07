@@ -62,6 +62,18 @@ _GOAL_CHECK_COLUMNS = """
     UNIQUE (goal_id, person_id, week_start)
 """
 
+# cuenta-duna-v1 (BODY-CUENTA-RP-1): keyed by a hash of the `flujo` cookie value, not of OAuth
+# `state` -- the cookie is the single-use handle the browser carries; `state` is just one of the
+# values stored under it.
+_INICIO_SESION_COLUMNS = """
+    flujo_hash    TEXT PRIMARY KEY,
+    state         TEXT NOT NULL,
+    nonce         TEXT NOT NULL,
+    code_verifier TEXT NOT NULL,
+    return_to     TEXT,
+    created_at    TEXT NOT NULL
+"""
+
 SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS person (
     id          INTEGER PRIMARY KEY,
@@ -228,14 +240,18 @@ CREATE TABLE IF NOT EXISTS sesion (
 CREATE INDEX IF NOT EXISTS idx_sesion_cuenta_sid ON sesion(cuenta_sid);
 CREATE INDEX IF NOT EXISTS idx_sesion_person_id ON sesion(person_id);
 
--- One Cuenta sign-in attempt, minutes long and single use. Only a hash of `state` lives here --
--- like the session token above, the state itself is never stored.
+-- One Cuenta sign-in attempt, minutes long and single use. Keyed by a hash of the `flujo` cookie
+-- value the browser carries -- like the session token above, neither the cookie value nor the
+-- OAuth `state` it stores is kept in the clear.
 CREATE TABLE IF NOT EXISTS inicio_sesion (
-    state_hash    TEXT PRIMARY KEY,
-    nonce         TEXT NOT NULL,
-    code_verifier TEXT NOT NULL,
-    return_to     TEXT,
-    created_at    TEXT NOT NULL
+{_INICIO_SESION_COLUMNS}
+);
+
+-- Every back-channel logout `jti` ever accepted, kept until its own `exp` so a replay is refused
+-- even across a restart (cuenta-duna-v1's back-channel logout check `jti`).
+CREATE TABLE IF NOT EXISTS logout_jti (
+    jti TEXT PRIMARY KEY,
+    exp INTEGER NOT NULL
 );
 
 -- One accepted consent text, by version, per person (sensitive-data amendment rule 6).
@@ -458,8 +474,35 @@ def _migrate_metas(conn: sqlite3.Connection) -> None:
         _rebuild_goal_check_table(conn)
 
 
+def _inicio_sesion_needs_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'inicio_sesion'"
+    ).fetchone()
+    return row is not None and "flujo_hash" not in row[0]
+
+
+def _rebuild_inicio_sesion_table(conn: sqlite3.Connection) -> None:
+    """BODY-CUENTA-SCHEMA-1's `inicio_sesion` (keyed by `state_hash`) -> BODY-CUENTA-RP-1's shape
+    (keyed by `flujo_hash`, carrying `state` itself). This table has never been written by any
+    shipped code, so the count compare below is expected to find 0 rows -- never a DELETE, the
+    same guard the goal/habit/goal_check rebuilds above use."""
+    def step(conn):
+        old_rows = conn.execute("SELECT * FROM inicio_sesion").fetchall()
+        if old_rows:
+            raise RuntimeError(f"inicio_sesion rebuild expected 0 rows, found {len(old_rows)}")
+        conn.execute("DROP TABLE inicio_sesion")
+        conn.execute(f"CREATE TABLE inicio_sesion ({_INICIO_SESION_COLUMNS})")
+    _rebuild_with_fk_off(conn, step)
+
+
+def _migrate_cuenta(conn: sqlite3.Connection) -> None:
+    if _table_exists(conn, "inicio_sesion") and _inicio_sesion_needs_rebuild(conn):
+        _rebuild_inicio_sesion_table(conn)
+
+
 def init(conn: sqlite3.Connection) -> None:
     _migrate_metas(conn)
+    _migrate_cuenta(conn)
     conn.executescript(SCHEMA)
     _migrate(conn)
     conn.executemany(
