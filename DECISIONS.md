@@ -1561,3 +1561,42 @@ the branch tip plus 32 new: 6 in `tests/test_backup.py`, 26 in `tests/test_host_
 Commits on `feat/body-host-backup-1`: implementation (`f8a0e9f5dc49f3bcefe95cb62872e9327a4337d1`) and
 the leak/message fix (`f2fa5417575d6fac74f02dd5e54f7db653e67bdc`), not yet merged -- awaiting the
 orchestrator's review of the customer-bytes condition above.
+
+## BODY-HOST-BACKUP-1-M -- land BODY-HOST-BACKUP-1 (2026-11-07)
+
+Approved by the orchestrator under `ORCH-CARLOS-DELEGATES-TIER-1-1` after reviewing the root-run
+backup script (`deploy/host/body-backup.sh`), `body/backup.py` and the unit/timer/entry wiring:
+consistent snapshot via the sqlite backup API as `duna-body`; env parsed for five names only, never
+sourced or printed; `age` to the public recipient; plaintext removed in an EXIT trap; R2 credentials
+reach curl only through `-K -` fed by `printf` (never argv); object key `body/body-<UTC>.sqlite.age`;
+both deviations (`git add --chmod`, the two literal refusal messages) accepted. Three fixes required
+before landing, all inside the script and its text tests; approved with them.
+
+**Three fixes, in `deploy/host/body-backup.sh`.** (a) The `cleanup_plain` EXIT trap now removes both
+`$plain_file` and `$enc_file` (`rm -f "$plain_file" "$enc_file"`), so an upload failure cannot leave an
+encrypted copy piling up in `backup-tmp`. (b) `curl` runs with `-sS` (quiet progress, errors still
+shown) in both the real upload command and the echoed dry-run line, so the journal no longer carries a
+progress meter. (c) `read_env_var` strips one pair of surrounding double or single quotes from the
+value after the `KEY=value` split (systemd env files allow `KEY="value"`), still printing nothing.
+
+`tests/test_host_backup.py` gained one text test per fix: the trap's body contains `$enc_file`; every
+`curl` line carrying `--aws-sigv4` (the real command and the dry-run echo, exactly 2) carries `-sS`;
+`read_env_var`'s body strips a matching pair of `"`/`'` and never echoes or printfs the raw value. No
+other code changed.
+
+**Merge.** `main` had not moved since the branch was cut: `git merge-base feat/body-host-backup-1 main`
+and `git rev-parse main` both read `3f70dc8402624b99e45096e50df1c9b9da11b0c1`, matching the branch's
+recorded base, so no merge-forward was needed. This slice's own diff is three internal fixes to the
+backup script and its tests -- no schema change, no cross-repo contract change -- but one of them
+(curl's `-sS`) changes the dry-run line's own echoed text, which is operator-facing output the same way
+BODY-HOST-BACKUP-1's own entry classified. This spec's WORK section explicitly instructs "Merge
+`--no-ff` into `main`" after the fixes and the gate, which this entry reads as the body's authorization
+to merge past that condition, per the merge-policy-A rule that a spec's body can say so in words.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 313 tests, OK, skipped=1, run once
+on the final tree before this merge (309 at the branch tip plus 4 new: one test per fix above).
+
+Slice commit: `a2c275e2688931f8424c1ee08ff241d9bdbba6aa` on `feat/body-host-backup-1`.
+
+Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-host-backup-1` into `main`
+following this entry.
