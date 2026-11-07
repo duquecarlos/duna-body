@@ -4246,3 +4246,85 @@ after the merge.
 **Merge.** This spec's approval said "Then merge." in words, and the actual diff (`body/pull.py`,
 `tests/test_primer_pull_1.py`) carries no schema change, no customer-facing bytes and no cross-repo contract --
 merge policy A's three conditions all pass. Merged `--no-ff` into `main`, which is left checked out, clean.
+
+## BODY-ENV-LOCAL-1 -- a local `.env` so Carlos can paste the assistant's API key once (2026-11-07)
+
+Relayed by Main 2026-11-07, Carlos's words: "He have to create an [env] file local to put that, because right now
+that is the single value that I'm still having here ready to paste." Measured on `main` at `fb16ee9`: no dotenv
+loader existed; every assistant setting was read straight from `os.environ`; `.env` was already in `.gitignore`.
+
+**1. `body/entorno.py` (new).** A ~30-line, dependency-free parser. `RUTA_DEFECTO` is `<repo root>/.env`, found
+from this module's own path (`Path(__file__).resolve().parents[1]`), never from the current directory. `cargar
+(ruta=None, entorno=os.environ) -> (cargados, ignorados)`: missing file returns `(0, 0)` silently; otherwise reads
+UTF-8 with BOM tolerance (`utf-8-sig`), skips blank/`#` lines, strips one `export ` prefix, splits on the first
+`=`, strips surrounding whitespace and one matching pair of quotes from the value. A name not starting with
+`BODY_AGENTE_` or not matching `[A-Z0-9_]+` is **ignored and counted** -- the allowlist decision: `body/cuenta.py`
+decides hosted mode from `bool(os.environ.get(ISSUER_ENV))`, so a stray Cuenta line in a local file would
+silently flip the PC into hosted mode, and host secrets belong in the server's own env file
+(`deploy/host/body.env.example`), never here. A name already present in `entorno` is left alone and not counted
+as loaded -- **the real environment wins**: the host's systemd `EnvironmentFile` and Carlos's own Windows user
+variables keep precedence over this file. An empty value is never loaded. Never logs or returns a value.
+
+**2. `body/web.py`.** `main()` calls `entorno.cargar()` as its first line, before `_ensure_streams()` or anything
+else -- never at module import, so no test or other module ever touches a real file just by importing `body.web`.
+If any line was ignored, it prints exactly one line naming the count and the rule (".env: N line(s) ignored --
+only BODY_AGENTE_* names are read from this file."), placed after `_ensure_streams()` so it can never crash
+against a `None` stdout under `pythonw`. No new dependency -- a plain stdlib parser, no install step.
+
+**3. `.env.example` (new, committed; `.env` stays in `.gitignore`).** A header pointing at the local workflow
+(copy to `.env`, paste keys, restart "Body app web") and naming the hosted file
+(`deploy/host/body.env.example` -> `/srv/duna/env/body.env`) as the separate, unrelated path for the server. The
+seven keys match `body/agente/cliente.py`'s `_FABRICAS` and `deploy/host/body.env.example` exactly (re-checked
+against both; no name differs), with Duna's model standard filled in and every API key left empty:
+`BODY_AGENTE_PROVEEDOR=anthropic`, `BODY_AGENTE_MODELO_ANTHROPIC=claude-sonnet-5-5`,
+`BODY_AGENTE_MODELO_OPENAI=gpt-6.1-sol`, `BODY_AGENTE_MODELO_GEMINI=gemini-3.8-flash`.
+
+**4. `README.md`.** A new "Asistente: tu clave de IA" section makes `.env.example` -> `.env` the normal PC way to
+set a key, and keeps the `$env:BODY_AGENTE_ANTHROPIC_API_KEY = "..."` form as the documented alternative for one
+PowerShell session, stating that the real environment always wins over the file.
+
+**Tests**, `tests/test_env_local_1.py` (new, 11 tests, `tests/_isolate.py` imported first, every case on a temp
+directory and a plain dict as `entorno`, never the real repo `.env`): a `BODY_AGENTE_` line loads; `BODY_CUENTA_
+ISSUER`, `BODY_HOME`, `PATH` and a lowercase name are ignored and counted (4 in one file); a name already in
+`entorno` is left untouched and not counted; double and single surrounding quotes are stripped; `export ` is
+accepted; a UTF-8 BOM is tolerated; comments and blank lines are skipped; an empty value is not loaded; a missing
+file returns `(0, 0)`; `RUTA_DEFECTO` equals the test file's own repo root's `.env`. The eleventh test proves a
+fresh import of `body.web` never calls `entorno.cargar` -- it pops `body.web` out of `sys.modules`, imports it
+fresh under a patched `entorno.cargar`, asserts not-called, then restores the *original* module object into
+`sys.modules` rather than reloading the shared one in place.
+
+**A caught regression, not shipped.** The first draft of that eleventh test used `importlib.reload(web)` on the
+real, shared module object. A full-suite run on that draft came back **RED**, 5 failures, all in
+`tests/test_person_scope.py` and `tests/test_pulido_1.py` -- neither file is in this slice's `touches:` and
+neither has anything to do with environment loading. Running those two files alone (`python -m unittest
+tests.test_person_scope tests.test_pulido_1`) passed clean (42 tests, OK), proving the failures were cross-module
+pollution, not a real defect in those files. Disabling only the reload-based test and re-running the full suite
+confirmed it: green, 840 tests. The reload mutated `body.web`'s module object in place -- same identity every
+other already-imported test module holds a reference to -- rebuilding its FastAPI `app`, routes and context vars
+out from under tests that ran afterward in the same process. Rewritten as the pop/restore-into-a-throwaway-import
+shown above, which confines the fresh module execution to an object nothing else ever looks up. This was caught
+and fixed before the gate counted below; it never reached a committed tree.
+
+**Pre-flight.** Branch tip (this slice's own commit) measured at `cb6e8bac7f3194a3d65062507bd9072234ae1aee`. `git
+merge-base feat/body-env-local-1 main` equalled `main`'s own tip (`fb16ee9d4be8046f59f7db54776946d4dfe5c1ca`), so
+`main` had not moved since the branch was cut; no merge-in-first step was needed.
+
+**Gate**, run once on the final branch tree, exact command `.venv/Scripts/python.exe -m unittest discover tests
+-t .`: `Ran 840 tests in 134.586s ... OK (skipped=1)` (one pre-existing POSIX-only skip, unrelated to this
+slice).
+
+**Merge.** This spec's approval said to merge "if your merge policy allows it (no customer-facing bytes; no
+schema)" -- conditional, not an override, so merge policy A's own three conditions govern. No schema or
+migration change (`body/db.py` untouched); no cross-repo contract or DTO change. The diff does touch `README.md`
+and adds one new printed line in `body/web.py`'s `main()` -- bytes Carlos reads as this app's own local operator
+-- so this slice classified them against this ledger's own precedent rather than guessing: `BODY-WEB-AUTOSTART-1`
+("no customer-facing bytes (nothing a browser ever renders changed -- this is a startup-only fix for a server
+that has no console to show anything on)") and the installer slice at this ledger's line 340-341 ("the
+installer's console output and the README are not customer-facing application bytes (no screen, no i18n
+string)") both hold, in this Tier 2 repository, that console text and README wording are not customer-facing
+bytes unless they are a template or an i18n string a browser renders. Neither is true of this diff -- no
+`templates/`, no `i18n/` file changed. (A different ledger entry, `BODY-HOST-ENTRY-2`, called a console refusal
+message and a README change customer-facing bytes, but that slice was Tier 1 `deploy/` work read by Carlos as
+the host's own operator during a live deploy; the distinction is the surface, not a contradiction of the rule
+applied here.) All three of merge policy A's conditions clear, so this merges on green without waiting. Merged
+`--no-ff` into `main`, which is left checked out, clean.
