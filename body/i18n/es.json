@@ -379,6 +379,6 @@
   "asistente.nueva": "Nueva conversación",
   "asistente.tamano": "Cambiar tamaño",
   "asistente.enviar": "Preguntar",
-  "asistente.como": "Cómo lo hice · {n} pasos",
+  "asistente.como": "Cómo lo hice · {n} paso|Cómo lo hice · {n} pasos",
   "asistente.reintentar": "Reintentar"
 }

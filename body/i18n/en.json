@@ -379,6 +379,6 @@
   "asistente.nueva": "New conversation",
   "asistente.tamano": "Change size",
   "asistente.enviar": "Ask",
-  "asistente.como": "How I did it · {n} steps",
+  "asistente.como": "How I did it · {n} step|How I did it · {n} steps",
   "asistente.reintentar": "Retry"
 }

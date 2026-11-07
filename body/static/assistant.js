@@ -26,7 +26,7 @@
   i18n.herramientas = i18n.herramientas || {};
   i18n.errores = i18n.errores || {};
   i18n.pensando = i18n.pensando || "…";
-  i18n.como = i18n.como || "{n}";
+  i18n.como = i18n.como || "{n}|{n}";
   i18n.reintentar = i18n.reintentar || "";
 
   // ---- small storage helpers: every read/write in try/catch, the panel works without either ----
@@ -62,15 +62,12 @@
   function esMovil() {
     return window.matchMedia("(max-width:767.98px)").matches;
   }
-  function railVisible() {
-    return window.matchMedia("(min-width:1024px)").matches;
-  }
   function clampAncho(px) {
     var max = Math.max(window.innerWidth * 0.5, 400);
     return Math.min(Math.max(px, 400), max);
   }
   function anchoCompleto() {
-    return window.innerWidth - (railVisible() ? 220 : 0);
+    return window.innerWidth;
   }
 
   function actualizarDot() {
@@ -95,10 +92,13 @@
       sizeBtn.hidden = false;
       sizeBtn.textContent = tamano === "lado" ? "◫" : tamano === "ancho" ? "▭" : "⛶";
     }
-    if (resizeEl) resizeEl.hidden = tamano === "completo";
-    var px = tamano === "completo" ? anchoCompleto() : clampAncho(anchoPx);
+    var esCompleto = tamano === "completo";
+    if (resizeEl) resizeEl.hidden = esCompleto;
+    var px = esCompleto ? anchoCompleto() : clampAncho(anchoPx);
     document.documentElement.style.setProperty("--asis-w", px + "px");
-    document.documentElement.style.setProperty("--asis-mr", panelAbierto ? px + "px" : "0px");
+    // "completo" overlays the whole window above the rail; the main column keeps its own width
+    // behind it, so it never gets the margin-right reflow the side/wide sizes use.
+    document.documentElement.style.setProperty("--asis-mr", panelAbierto && !esCompleto ? px + "px" : "0px");
   }
 
   function abrir() {
@@ -249,6 +249,41 @@
     return wrap;
   }
 
+  // A line starting with "- ", "* " or "N. " starts or continues a list even when no blank line
+  // sets it off from the text before it (models write "Texto:\n- a\n- b" as one block).
+  function tipoLinea(l) {
+    if (/^[-*]\s+/.test(l)) return "ul";
+    if (/^\d+[.)]\s+/.test(l)) return "ol";
+    return "p";
+  }
+
+  function renderLineas(lineas, contenedor) {
+    var i = 0;
+    while (i < lineas.length) {
+      var tipo = tipoLinea(lineas[i]);
+      var grupo = [lineas[i]];
+      i++;
+      while (i < lineas.length && tipoLinea(lineas[i]) === tipo) {
+        grupo.push(lineas[i]);
+        i++;
+      }
+      if (tipo === "p") {
+        var p = document.createElement("p");
+        p.appendChild(inlineNodes(grupo.join(" ")));
+        contenedor.appendChild(p);
+      } else {
+        var marcador = tipo === "ul" ? /^[-*]\s+/ : /^\d+[.)]\s+/;
+        var listEl = document.createElement(tipo === "ul" ? "ul" : "ol");
+        grupo.forEach(function (l) {
+          var li = document.createElement("li");
+          li.appendChild(inlineNodes(l.replace(marcador, "")));
+          listEl.appendChild(li);
+        });
+        contenedor.appendChild(listEl);
+      }
+    }
+  }
+
   function renderMD(texto, contenedor) {
     contenedor.textContent = "";
     var bloques = texto.split(/\n\s*\n/);
@@ -262,34 +297,20 @@
         contenedor.appendChild(hEl);
         continue;
       }
-      if (lineas.every(function (l) { return /^[-*]\s+/.test(l); })) {
-        var ul = document.createElement("ul");
-        lineas.forEach(function (l) {
-          var li = document.createElement("li");
-          li.appendChild(inlineNodes(l.replace(/^[-*]\s+/, "")));
-          ul.appendChild(li);
-        });
-        contenedor.appendChild(ul);
-        continue;
-      }
-      if (lineas.every(function (l) { return /^\d+[.)]\s+/.test(l); })) {
-        var ol = document.createElement("ol");
-        lineas.forEach(function (l) {
-          var li2 = document.createElement("li");
-          li2.appendChild(inlineNodes(l.replace(/^\d+[.)]\s+/, "")));
-          ol.appendChild(li2);
-        });
-        contenedor.appendChild(ol);
-        continue;
-      }
-      if (lineas.length >= 1 && lineas.every(function (l) { return l.trim().charAt(0) === "|"; })) {
+      if (lineas.every(function (l) { return l.trim().charAt(0) === "|"; })) {
         contenedor.appendChild(renderTabla(lineas));
         continue;
       }
-      var p = document.createElement("p");
-      p.appendChild(inlineNodes(lineas.join(" ")));
-      contenedor.appendChild(p);
+      renderLineas(lineas, contenedor);
     }
+  }
+
+  // i18n.como carries both forms, singular and plural, separated by "|" (base.html forwards it
+  // as one opaque string -- no template change needed for the plural to be correct).
+  function formatComo(n) {
+    var partes = String(i18n.como || "{n}").split("|");
+    var tmpl = (n === 1 && partes.length > 1) ? partes[0] : partes[partes.length - 1];
+    return tmpl.replace("{n}", String(n));
   }
 
   // ---- the question/answer turn ---------------------------------------------------------
@@ -315,12 +336,12 @@
     return { turno: turno, status: status, statusTxt: statusTxt };
   }
 
-  function agregarPasos(turno, pasos) {
+  function agregarPasos(turno, pasos, answerEl) {
     if (!pasos.length) return;
     var det = document.createElement("details");
     det.className = "asis-steps";
     var sum = document.createElement("summary");
-    sum.textContent = i18n.como.replace("{n}", String(pasos.length));
+    sum.textContent = formatComo(pasos.length);
     det.appendChild(sum);
     var ul = document.createElement("ul");
     pasos.forEach(function (nombre) {
@@ -329,7 +350,12 @@
       ul.appendChild(li);
     });
     det.appendChild(ul);
-    turno.appendChild(det);
+    // R5 order: the folded steps sit above the answer, under the question.
+    if (answerEl && answerEl.parentNode === turno) {
+      turno.insertBefore(det, answerEl);
+    } else {
+      turno.appendChild(det);
+    }
   }
 
   function mostrarError(turno, codigo, pregunta) {
@@ -405,7 +431,7 @@
       } else if (nombre === "fin") {
         turno.status.hidden = true;
         guardarConversacionId(datos.conversacion_id);
-        agregarPasos(turno.turno, pasos);
+        agregarPasos(turno.turno, pasos, answerEl);
       } else if (nombre === "error") {
         huboError = true;
         turno.status.hidden = true;
@@ -446,4 +472,67 @@
       preguntar(texto);
     });
   }
+
+  // On a computer (>=768px) Enter sends and Shift+Enter inserts a line; on a phone Enter inserts
+  // a line (the on-screen keyboard has no Shift) and the send button submits.
+  if (inputEl && formEl) {
+    inputEl.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter" || e.shiftKey || esMovil()) return;
+      e.preventDefault();
+      if (formEl.requestSubmit) formEl.requestSubmit();
+      else formEl.dispatchEvent(new Event("submit", { cancelable: true }));
+    });
+  }
+
+  // ---- restoring a conversation after a page change: the id lives in sessionStorage, the turns
+  // themselves do not (so a GET of another person's id, or a 404, cannot leak anything) ---------
+  function renderTurnoCargado(contenedor, t) {
+    if (t.rol === "persona") {
+      var turno = document.createElement("div");
+      turno.className = "asis-turno";
+      var q = document.createElement("p");
+      q.className = "asis-msg-q";
+      q.textContent = t.texto;
+      turno.appendChild(q);
+      contenedor.appendChild(turno);
+      return turno;
+    }
+    return null;
+  }
+
+  function cargarConversacion(id) {
+    fetch("/asistente/conversacion/" + id, { credentials: "same-origin" }).then(function (resp) {
+      if (resp.status === 404) {
+        limpiarConversacionId();
+        return null;
+      }
+      return resp.ok ? resp.json() : null;
+    }).then(function (turnos) {
+      if (!turnos) return;
+      mensajesEl.textContent = "";
+      var turnoActual = null;
+      turnos.forEach(function (t) {
+        if (t.rol === "persona") {
+          turnoActual = renderTurnoCargado(mensajesEl, t);
+          return;
+        }
+        if (!turnoActual) return;
+        if (t.pasos) {
+          var det = document.createElement("details");
+          det.className = "asis-steps";
+          var sum = document.createElement("summary");
+          sum.textContent = formatComo(t.pasos);
+          det.appendChild(sum);
+          turnoActual.appendChild(det);
+        }
+        var answerEl = document.createElement("div");
+        answerEl.className = "asis-answer";
+        renderMD(t.texto || "", answerEl);
+        turnoActual.appendChild(answerEl);
+      });
+    }).catch(function () {});
+  }
+
+  var idAlCargar = leerConversacionId();
+  if (idAlCargar) cargarConversacion(idAlCargar);
 })();

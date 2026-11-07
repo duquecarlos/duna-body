@@ -39,6 +39,7 @@ ROUTE_TOOL = {
     "/garmin": None,              # account-connection plumbing; the assistant never reads or triggers it
     "/ajustes/dispositivos": None,  # device-key management; the assistant never reads or triggers it
     "/api/vida/semana": None,     # device-key API for Personal; the assistant never reads or triggers it
+    "/asistente/conversacion/{conversacion_id}": None,  # the panel's own history reload, not a tool
 }
 
 WRITER_NAMES = {

@@ -1,6 +1,7 @@
 """BODY-ASISTENTE-PANEL-1: the assistant panel that every signed-in page mounts (agent-ui-v1),
 and the `demo` provider that lets it be measured in a browser with no real key."""
 import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -134,6 +135,13 @@ class CssContentTest(unittest.TestCase):
         self.assertIn("max-width:767.98px", text)
         self.assertIn(".asis-panel", text)
 
+    def test_the_status_line_actually_hides_once_it_carries_the_hidden_attribute(self):
+        # .asis-status{display:flex} alone beats the UA [hidden]{display:none} rule on origin
+        # precedence, so turno.status.hidden=true in JS did nothing without this rule (fix c).
+        css = Path(__file__).resolve().parent.parent / "body" / "static" / "body.css"
+        text = css.read_text(encoding="utf-8")
+        self.assertIn(".asis-status[hidden]{display:none}", text)
+
 
 class AssistantJsSafetyTest(unittest.TestCase):
     def test_no_innerhtml_assignment_with_model_text_and_no_eval(self):
@@ -141,6 +149,61 @@ class AssistantJsSafetyTest(unittest.TestCase):
         text = js.read_text(encoding="utf-8")
         self.assertNotIn("innerHTML", text)
         self.assertNotIn("eval(", text)
+
+
+class AssistantJsFixesTest(unittest.TestCase):
+    """Text-level checks of the five BODY-ASISTENTE-PANEL-1-M fixes (the orchestrator re-measures
+    the real behaviour in a browser after the merge)."""
+
+    @classmethod
+    def setUpClass(cls):
+        js = Path(__file__).resolve().parent.parent / "body" / "static" / "assistant.js"
+        cls.text = js.read_text(encoding="utf-8")
+
+    def test_enter_submits_on_a_computer_and_shift_enter_or_mobile_insert_a_line(self):
+        self.assertIn('e.key !== "Enter" || e.shiftKey || esMovil()', self.text)
+        self.assertIn("formEl.requestSubmit", self.text)
+
+    def test_a_list_line_starts_or_continues_a_list_without_a_preceding_blank_line(self):
+        self.assertIn("function tipoLinea(l)", self.text)
+        self.assertIn("function renderLineas(lineas, contenedor)", self.text)
+        # The old bug: a whole block rendered as one paragraph unless EVERY line matched the
+        # list marker. The fix groups line by line instead.
+        self.assertNotIn("lineas.every(function (l) { return /^[-*]", self.text)
+        self.assertNotIn("lineas.every(function (l) { return /^\\d+[.)]", self.text)
+
+    def test_the_folded_steps_are_inserted_above_the_answer_not_appended_after_it(self):
+        self.assertIn("turno.insertBefore(det, answerEl)", self.text)
+
+    def test_como_plural_is_read_from_the_pipe_separated_i18n_string(self):
+        self.assertIn("function formatComo(n)", self.text)
+        self.assertIn('String(i18n.como || "{n}").split("|")', self.text)
+        self.assertIn("formatComo(pasos.length)", self.text)
+
+    def test_full_size_covers_the_whole_window_and_does_not_reflow_the_main_column(self):
+        self.assertIn("return window.innerWidth;", self.text)
+        self.assertNotIn("innerWidth - (railVisible", self.text)
+        self.assertIn('panelAbierto && !esCompleto ? px + "px" : "0px"', self.text)
+
+    def test_the_panel_fetches_and_renders_the_stored_conversation_on_page_load(self):
+        self.assertIn('fetch("/asistente/conversacion/" + id', self.text)
+        self.assertIn("resp.status === 404", self.text)
+        self.assertIn("limpiarConversacionId();", self.text)
+        self.assertIn("var idAlCargar = leerConversacionId();", self.text)
+
+
+class ComoPluralI18nTest(unittest.TestCase):
+    def test_es_and_en_como_carry_a_distinct_singular_and_plural_form(self):
+        import json as _json
+        base = Path(__file__).resolve().parent.parent / "body" / "i18n"
+        es = _json.loads((base / "es.json").read_text(encoding="utf-8"))["asistente.como"]
+        en = _json.loads((base / "en.json").read_text(encoding="utf-8"))["asistente.como"]
+        for valor in (es, en):
+            partes = valor.split("|")
+            self.assertEqual(len(partes), 2)
+            self.assertNotEqual(partes[0], partes[1])
+            self.assertIn("{n}", partes[0])
+            self.assertIn("{n}", partes[1])
 
 
 class DemoProviderTest(unittest.TestCase):
@@ -166,6 +229,55 @@ class DemoProviderTest(unittest.TestCase):
         self.assertLess(herramienta_idx, texto_idx)
         self.assertLess(texto_idx, fin_idx)
         self.assertIn("leer_ajustes", r.text)
+
+
+class ConversacionEndpointTest(unittest.TestCase):
+    """GET /asistente/conversacion/{id} (fix d): the panel's own turns, never a raw tool result."""
+
+    def setUp(self):
+        self.conn, self.orig_db_path = _reset_db()
+        self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig_db_path))
+        self.gid = _seed(self.conn)
+        self.addCleanup(_borrar_env(*_PROVIDER_ENV_VARS))
+        for n in _PROVIDER_ENV_VARS:
+            os.environ.pop(n, None)
+        os.environ["BODY_AGENTE_PROVEEDOR"] = "demo"
+        self.addCleanup(web.app.dependency_overrides.clear)
+        web.app.dependency_overrides[identity.current_person_id] = lambda: 1
+        self.client = TestClient(web.app, follow_redirects=False)
+
+    def _preguntar_y_obtener_id(self, pregunta: str) -> int:
+        r = self.client.post("/asistente/preguntar", json={"pregunta": pregunta, "conversacion_id": None})
+        self.assertEqual(r.status_code, 200)
+        m = re.search(r'"conversacion_id":\s*(\d+)', r.text)
+        self.assertIsNotNone(m)
+        return int(m.group(1))
+
+    def test_returns_only_the_visible_turns_question_then_answer_with_a_step_count(self):
+        cid = self._preguntar_y_obtener_id("¿cómo voy?")
+        r = self.client.get(f"/asistente/conversacion/{cid}")
+        self.assertEqual(r.status_code, 200)
+        turnos = r.json()
+        self.assertEqual(len(turnos), 2)
+        self.assertEqual(turnos[0], {"rol": "persona", "texto": "¿cómo voy?", "pasos": 0})
+        self.assertEqual(turnos[1]["rol"], "asistente")
+        self.assertEqual(turnos[1]["pasos"], 1)
+        self.assertIn("Primer punto de ejemplo", turnos[1]["texto"])
+        for turno in turnos:
+            self.assertNotIn("resultado", turno)
+            self.assertNotIn("leer_ajustes", turno.get("texto", ""))
+
+    def test_unknown_conversacion_id_is_404(self):
+        r = self.client.get("/asistente/conversacion/999999")
+        self.assertEqual(r.status_code, 404)
+
+    def test_another_persons_conversacion_id_is_404(self):
+        cid = self._preguntar_y_obtener_id("¿cómo voy?")
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        web.app.dependency_overrides[identity.current_person_id] = lambda: 2
+        r = self.client.get(f"/asistente/conversacion/{cid}")
+        self.assertEqual(r.status_code, 404)
 
 
 if __name__ == "__main__":

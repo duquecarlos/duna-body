@@ -165,6 +165,7 @@ table.parts th:first-child{padding-left:0}
 .asis-turno{margin-bottom:18px}
 .asis-msg-q{font-weight:600;font-size:14.5px;margin:0 0 6px}
 .asis-status{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13.5px}
+.asis-status[hidden]{display:none}
 .asis-status .asis-spin{width:8px;height:8px;border-radius:50%;background:var(--body);flex:none}
 @media (prefers-reduced-motion: no-preference){.asis-status .asis-spin{animation:asis-pulse 1s ease-in-out infinite}}
 @keyframes asis-pulse{0%,100%{opacity:.3}50%{opacity:1}}

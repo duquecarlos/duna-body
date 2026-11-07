@@ -1255,6 +1255,18 @@ async def asistente_preguntar(request: Request, person_id: int = Depends(identit
     return StreamingResponse(generar(), media_type="text/event-stream")
 
 
+@app.get("/asistente/conversacion/{conversacion_id}")
+def asistente_conversacion(conversacion_id: int, person_id: int = Depends(identity.current_person_id)):
+    conn, _, _ = _ctx(person_id)
+    try:
+        turnos = agente_conversacion.turnos_visibles(conn, conversacion_id, person_id)
+    except agente_conversacion.ConversacionAjena:
+        conn.close()
+        raise HTTPException(404)
+    conn.close()
+    return JSONResponse(turnos)
+
+
 # ---- Garmin (hosted only): one connection per person, token encrypted by body/garmin_cuenta.py ----
 
 _MFA_TTL_SECONDS = 600
