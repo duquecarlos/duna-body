@@ -141,6 +141,16 @@ def _walk_for_writers(func, seen: set, depth: int, found: list) -> None:
             _walk_for_writers(target, seen, depth + 1, found)
 
 
+PROPUESTA_NOMBRES = {"proponer_meta", "proponer_cambio_meta", "proponer_confirmar_turnos", "proponer_idioma"}
+# Privacy and account controls deliberately NEVER become proposal tools (BODY-ASISTENTE-PROPUESTAS-1
+# approval reason): nivel_datos, consent, export, delete-all, device keys, Garmin connection,
+# household membership all stay on their own screens.
+NUNCA_PROPUESTA = {
+    "set_nivel_datos", "record_consent", "export_person", "delete_person", "crear_dispositivo",
+    "revocar_dispositivo", "conectar_garmin", "desconectar_garmin", "unir_hogar", "salir_hogar",
+}
+
+
 class RegistryShapeTest(unittest.TestCase):
     def test_nine_lectura_tools_with_expected_levels(self):
         expected_levels = {
@@ -148,9 +158,19 @@ class RegistryShapeTest(unittest.TestCase):
             "leer_tendencias": "resumen", "leer_historia": "resumen", "leer_metas": "resumen",
             "leer_meta": "resumen", "leer_turnos": "ninguno", "leer_ajustes": "ninguno",
         }
-        self.assertEqual(len(herramientas.HERRAMIENTAS), 9)
-        self.assertEqual({h["nombre"]: h["nivel"] for h in herramientas.HERRAMIENTAS}, expected_levels)
-        self.assertTrue(all(h["tipo"] == "lectura" for h in herramientas.HERRAMIENTAS))
+        lectura = [h for h in herramientas.HERRAMIENTAS if h["tipo"] == "lectura"]
+        self.assertEqual(len(lectura), 9)
+        self.assertEqual({h["nombre"]: h["nivel"] for h in lectura}, expected_levels)
+
+    def test_four_propuesta_tools_at_nivel_ninguno(self):
+        propuesta = [h for h in herramientas.HERRAMIENTAS if h["tipo"] == "propuesta"]
+        self.assertEqual({h["nombre"] for h in propuesta}, PROPUESTA_NOMBRES)
+        self.assertTrue(all(h["nivel"] == "ninguno" for h in propuesta))
+        self.assertFalse(PROPUESTA_NOMBRES & NUNCA_PROPUESTA)
+
+    def test_every_entry_has_a_known_tipo(self):
+        self.assertTrue(all(h["tipo"] in ("lectura", "propuesta") for h in herramientas.HERRAMIENTAS))
+        self.assertEqual(len(herramientas.HERRAMIENTAS), 13)
 
 
 class RouteMappingTest(unittest.TestCase):
@@ -167,13 +187,31 @@ class RouteMappingTest(unittest.TestCase):
 class StaticGuardTest(unittest.TestCase):
     def test_no_lectura_tool_reaches_a_writer(self):
         for h in herramientas.HERRAMIENTAS:
+            if h["tipo"] != "lectura":
+                continue
             found: list[str] = []
             _walk_for_writers(h["funcion"], set(), 0, found)
             self.assertEqual(found, [], f"{h['nombre']} reaches a writer: {found}")
 
+    def test_no_lectura_tool_imports_propuestas(self):
+        # Decision 1: only a `propuesta` tool may import body/agente/propuestas.py. A `lectura`
+        # tool's source never even names the module.
+        for h in herramientas.HERRAMIENTAS:
+            if h["tipo"] != "lectura":
+                continue
+            src = textwrap.dedent(inspect.getsource(h["funcion"]))
+            self.assertNotIn("propuestas", src, f"{h['nombre']} (lectura) references propuestas")
+
+    def test_every_propuesta_tool_creates_a_record_through_propuestas(self):
+        for h in herramientas.HERRAMIENTAS:
+            if h["tipo"] != "propuesta":
+                continue
+            src = textwrap.dedent(inspect.getsource(h["funcion"]))
+            self.assertIn("propuestas.crear", src, f"{h['nombre']} (propuesta) never calls propuestas.crear")
+
 
 class BehaviouralGuardTest(unittest.TestCase):
-    def test_running_every_tool_does_not_change_the_database(self):
+    def test_running_every_lectura_tool_does_not_change_the_database(self):
         conn = _conn()
         gid = _seed(conn)
         casos = _all_tool_calls()
@@ -302,12 +340,13 @@ class NivelDatosTest(unittest.TestCase):
 
 
 class JsonSerializableTest(unittest.TestCase):
-    def test_every_tool_output_survives_json_dumps(self):
+    def test_every_lectura_tool_output_survives_json_dumps(self):
         conn = _conn()
         gid = _seed(conn)
         casos = _all_tool_calls()
         casos["leer_meta"] = {"goal_id": gid}
-        self.assertEqual(set(casos), {h["nombre"] for h in herramientas.HERRAMIENTAS})
+        lectura_nombres = {h["nombre"] for h in herramientas.HERRAMIENTAS if h["tipo"] == "lectura"}
+        self.assertEqual(set(casos), lectura_nombres)
         for nombre, params in casos.items():
             out = herramientas.ejecutar(conn, 1, nombre, params, "completo")
             json.dumps(out)

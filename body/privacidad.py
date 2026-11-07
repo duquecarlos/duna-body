@@ -22,7 +22,7 @@ CONSENT_VERSION = "consentimiento-v1"
 FULLY_HANDLED_TABLES = {
     "daily_metric", "sleep_session", "activity", "shift", "shift_batch",
     "goal", "habit_check", "goal_check", "plan", "ajuste_agente", "consentimiento", "hogar_local",
-    "conversacion_agente", "mensaje_agente", "uso_agente", "tope_agente",
+    "conversacion_agente", "mensaje_agente", "uso_agente", "tope_agente", "propuesta_agente",
 }
 # raw_payload: kind/date only, never the stored JSON payload. garmin_cuenta: the connected-since
 # date only, never the encrypted token (BODY-GARMIN-HOST-1). dispositivo: name/scopes/dates only,
@@ -127,9 +127,12 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
     tope_agente_row = conn.execute(
         "SELECT diario_micro_usd, conteo_diario FROM tope_agente WHERE person_id = ?", (person_id,)
     ).fetchone()
+    propuestas_agente = [dict(r) for r in conn.execute(
+        "SELECT id, conversacion_id, accion, objetivo_id, antes_json, despues_json, estado, creada_en, "
+        "expira_en, resuelta_en FROM propuesta_agente WHERE person_id = ? ORDER BY id", (person_id,))]
     asistente = {
         "conversaciones": conversaciones, "mensajes": mensajes_agente, "uso": uso_agente_rows,
-        "tope": dict(tope_agente_row) if tope_agente_row else None,
+        "tope": dict(tope_agente_row) if tope_agente_row else None, "propuestas": propuestas_agente,
     }
 
     return {
@@ -177,6 +180,12 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         conn.execute(
             "DELETE FROM plan WHERE person_id = ? OR goal_id IN (SELECT id FROM goal WHERE person_id = ?)",
             (person_id, person_id),
+        )
+        # propuesta_agente.objetivo_id references goal(id) -- cleared before goal itself goes, same
+        # as habit/habit_check/goal_check/plan above.
+        conn.execute(
+            "DELETE FROM propuesta_agente WHERE person_id = ? OR objetivo_id IN "
+            "(SELECT id FROM goal WHERE person_id = ?)", (person_id, person_id),
         )
         conn.execute("DELETE FROM goal WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM daily_metric WHERE person_id = ?", (person_id,))

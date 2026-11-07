@@ -54,6 +54,11 @@ class EventoHerramienta:
 
 
 @dataclass(frozen=True)
+class EventoPropuesta:
+    registro: dict
+
+
+@dataclass(frozen=True)
 class ResultadoBucle:
     eventos: list                 # EventoTexto | EventoHerramienta, in order
     texto_final: str
@@ -69,7 +74,7 @@ def _tool_specs(nivel: str) -> list[dict]:
 
 
 def ejecutar(conn: sqlite3.Connection, person_id: int, proveedor: Proveedor, sistema: str,
-             mensajes: list[dict]) -> ResultadoBucle:
+             mensajes: list[dict], conversacion_id: int | None = None) -> ResultadoBucle:
     nivel = ajustes.nivel_datos(conn, person_id)
     tools = _tool_specs(nivel)
     inicio = len(mensajes)
@@ -104,7 +109,28 @@ def ejecutar(conn: sqlite3.Connection, person_id: int, proveedor: Proveedor, sis
             return ResultadoBucle(eventos, "".join(textos), rondas, lecturas, uso_total, mensajes[inicio:])
 
         resultados = []
+        propuestas_esta_ronda = 0
         for l in llamadas:
+            if herramientas.tipo_de(l.nombre) == "propuesta":
+                if propuestas_esta_ronda >= 1:
+                    # agent-capabilities-v1 section 2, decision 2: at most one proposal per round.
+                    resultados.append({"tipo": "resultado_herramienta", "id": l.id, "nombre": l.nombre,
+                                        "error": "a lo sumo una propuesta por ronda"})
+                    continue
+                propuestas_esta_ronda += 1
+                eventos.append(EventoHerramienta(l.nombre))
+                try:
+                    salida = herramientas.ejecutar(conn, person_id, l.nombre, l.parametros, nivel, conversacion_id)
+                except herramientas.ToolError as e:
+                    resultados.append({"tipo": "resultado_herramienta", "id": l.id, "nombre": l.nombre,
+                                        "error": str(e)})
+                    continue
+                registro = salida.pop("_registro", None)
+                if registro is not None:
+                    eventos.append(EventoPropuesta(registro))
+                resultados.append({"tipo": "resultado_herramienta", "id": l.id, "nombre": l.nombre,
+                                    "resultado": salida})
+                continue
             if lecturas >= MAX_LECTURAS:
                 # A refusal consumes no read budget, so this cap is only ever hit by an actual,
                 # successful read -- never by a tool call that was going to be refused anyway.

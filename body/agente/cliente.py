@@ -336,7 +336,11 @@ _DEMO_RESPUESTA = (
 class Demo(Proveedor):
     """A scripted two-round exchange: round one asks for `leer_ajustes` (the one read tool that
     exists at every nivel_datos), round two answers with fixed, invented Spanish text -- never a
-    figure from the tool's real result."""
+    figure from the tool's real result.
+
+    BODY-ASISTENTE-PROPUESTAS-1 decision 8: when the question contains "idioma", round one calls
+    `proponer_idioma` (toward "en", the simplest "other language" a stateless demo can target) so
+    the orchestrator can measure the proposal card in a browser."""
 
     def __init__(self):
         self._ronda = 0
@@ -344,6 +348,11 @@ class Demo(Proveedor):
     def responder(self, sistema: str, mensajes: list[dict], herramientas: list[dict]) -> Respuesta:
         self._ronda += 1
         if self._ronda == 1:
+            ultima = mensajes[-1]["bloques"] if mensajes else []
+            pregunta = "".join(b.get("texto", "") for b in ultima if b.get("tipo") == "texto")
+            if "idioma" in pregunta.lower():
+                return Respuesta(bloques=[LlamadaHerramienta("demo_1", "proponer_idioma", {"lang": "en"})],
+                                  motivo_fin="tool_use", uso=Uso())
             return Respuesta(bloques=[LlamadaHerramienta("demo_1", "leer_ajustes", {})],
                               motivo_fin="tool_use", uso=Uso())
         return Respuesta(bloques=[BloqueTexto(_DEMO_RESPUESTA)], motivo_fin="end_turn", uso=Uso())

@@ -105,15 +105,21 @@ class LecturasCapTest(unittest.TestCase):
 class NivelDatosEnforcementTest(unittest.TestCase):
     def test_tool_not_offered_at_the_current_nivel_is_still_refused_by_ejecutar(self):
         """nivel_datos='ninguno' still offers leer_turnos/leer_ajustes (their OWN nivel is
-        'ninguno' -- herramientas.disponibles is not literally empty there). What the current
-        nivel refuses is a tool ABOVE it that the model calls anyway: ejecutar() refuses it
-        (enforcement at dispatch, decision 2), and the loop turns that into a tool-result error
-        fed back to the model rather than raising."""
+        'ninguno' -- herramientas.disponibles is not literally empty there), plus every
+        'propuesta' tool (BODY-ASISTENTE-PROPUESTAS-1 decision 2: proposal tools carry
+        nivel='ninguno' too, since they never read health data -- they stage a change for the
+        person to apply, so nivel_datos does not gate them). What the current nivel refuses is a
+        tool ABOVE it that the model calls anyway: ejecutar() refuses it (enforcement at
+        dispatch, decision 2), and the loop turns that into a tool-result error fed back to the
+        model rather than raising."""
         conn = _conn()
         _seed(conn)
         ajustes.set_nivel_datos(conn, 1, "ninguno")
         ofrecidas = {h["nombre"] for h in herramientas.disponibles("ninguno")}
-        self.assertEqual(ofrecidas, {"leer_turnos", "leer_ajustes"})
+        self.assertEqual(ofrecidas, {
+            "leer_turnos", "leer_ajustes",
+            "proponer_meta", "proponer_cambio_meta", "proponer_confirmar_turnos", "proponer_idioma",
+        })
 
         prov = FakeProveedor([
             _llamada("leer_hoy", {}),  # forced: not offered at nivel 'ninguno'

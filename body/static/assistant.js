@@ -376,6 +376,99 @@
     turno.appendChild(div);
   }
 
+  // ---- proposal cards (BODY-ASISTENTE-PROPUESTAS-1): nothing changes until the person taps
+  // Aplicar here. Built with textContent only, like every other answer node. ------------------
+  function etiquetaEstado(etiquetas, estado) {
+    var mapa = {
+      aplicada: etiquetas.aplicada, descartada: etiquetas.descartada, deshecha: etiquetas.deshecha,
+      expirada: etiquetas.no_vigente, ya_resuelta: etiquetas.no_vigente,
+      propuesta_desactualizada: etiquetas.desactualizada, sin_deshacer: etiquetas.sin_deshacer,
+    };
+    return mapa[estado] || estado;
+  }
+
+  function actualizarTarjeta(card, estado, etiquetas, puedeDeshacer) {
+    card.acciones.textContent = "";
+    card.resultado.textContent = etiquetaEstado(etiquetas, estado);
+    card.resultado.hidden = false;
+    if (estado === "aplicada" && puedeDeshacer) {
+      var btnDeshacer = document.createElement("button");
+      btnDeshacer.type = "button";
+      btnDeshacer.className = "btn";
+      btnDeshacer.textContent = etiquetas.deshacer;
+      btnDeshacer.addEventListener("click", function () {
+        llamarPropuesta(card, card.id, "deshacer", etiquetas, false);
+      });
+      card.acciones.appendChild(btnDeshacer);
+    }
+  }
+
+  function llamarPropuesta(card, id, ruta, etiquetas, puedeDeshacer) {
+    fetch("/asistente/propuestas/" + id + "/" + ruta, { method: "POST", credentials: "same-origin" })
+      .then(function (resp) { return resp.json(); })
+      .then(function (datos) { actualizarTarjeta(card, datos.estado, etiquetas, puedeDeshacer); })
+      .catch(function () {});
+  }
+
+  function crearTarjetaPropuesta(datos) {
+    var etiquetas = datos.etiquetas || {};
+    var wrap = document.createElement("div");
+    wrap.className = "asis-propuesta";
+    var titulo = document.createElement("strong");
+    titulo.textContent = datos.titulo;
+    wrap.appendChild(titulo);
+    if (datos.antes) {
+      var antes = document.createElement("p");
+      antes.className = "asis-propuesta-antes";
+      antes.textContent = datos.antes;
+      wrap.appendChild(antes);
+    }
+    var despues = document.createElement("p");
+    despues.className = "asis-propuesta-despues";
+    despues.textContent = datos.despues;
+    wrap.appendChild(despues);
+    var acciones = document.createElement("div");
+    acciones.className = "asis-propuesta-acciones";
+    var resultado = document.createElement("p");
+    resultado.className = "asis-propuesta-resultado";
+    resultado.hidden = true;
+    var card = { id: datos.id, acciones: acciones, resultado: resultado };
+    if (datos.estado === "propuesta") {
+      var btnAplicar = document.createElement("button");
+      btnAplicar.type = "button";
+      btnAplicar.className = "btn";
+      btnAplicar.textContent = etiquetas.aplicar;
+      btnAplicar.addEventListener("click", function () {
+        llamarPropuesta(card, datos.id, "aplicar", etiquetas, datos.deshacer);
+      });
+      var btnDescartar = document.createElement("button");
+      btnDescartar.type = "button";
+      btnDescartar.className = "btn";
+      btnDescartar.textContent = etiquetas.descartar;
+      btnDescartar.addEventListener("click", function () {
+        llamarPropuesta(card, datos.id, "descartar", etiquetas, datos.deshacer);
+      });
+      acciones.appendChild(btnAplicar);
+      acciones.appendChild(btnDescartar);
+    } else {
+      resultado.hidden = false;
+      resultado.textContent = etiquetaEstado(etiquetas, datos.estado);
+      if (datos.estado === "aplicada" && datos.deshacer) {
+        var btnDeshacer2 = document.createElement("button");
+        btnDeshacer2.type = "button";
+        btnDeshacer2.className = "btn";
+        btnDeshacer2.textContent = etiquetas.deshacer;
+        btnDeshacer2.addEventListener("click", function () {
+          llamarPropuesta(card, datos.id, "deshacer", etiquetas, false);
+        });
+        acciones.appendChild(btnDeshacer2);
+      }
+    }
+    wrap.appendChild(acciones);
+    wrap.appendChild(resultado);
+    return wrap;
+  }
+
   // ---- reading the SSE body: a POST response, so EventSource cannot be used -----------------
   function leerSSE(response, onEvento) {
     var reader = response.body.getReader();
@@ -428,6 +521,8 @@
         }
         renderMD(textoAcum, answerEl);
         try { answerEl.scrollIntoView({ block: "start" }); } catch (e) {}
+      } else if (nombre === "propuesta") {
+        turno.turno.appendChild(crearTarjetaPropuesta(datos));
       } else if (nombre === "fin") {
         turno.status.hidden = true;
         guardarConversacionId(datos.conversacion_id);
@@ -507,11 +602,11 @@
         return null;
       }
       return resp.ok ? resp.json() : null;
-    }).then(function (turnos) {
-      if (!turnos) return;
+    }).then(function (datos) {
+      if (!datos) return;
       mensajesEl.textContent = "";
       var turnoActual = null;
-      turnos.forEach(function (t) {
+      (datos.turnos || []).forEach(function (t) {
         if (t.rol === "persona") {
           turnoActual = renderTurnoCargado(mensajesEl, t);
           return;
@@ -529,6 +624,9 @@
         answerEl.className = "asis-answer";
         renderMD(t.texto || "", answerEl);
         turnoActual.appendChild(answerEl);
+      });
+      (datos.propuestas || []).forEach(function (p) {
+        mensajesEl.appendChild(crearTarjetaPropuesta(p));
       });
     }).catch(function () {});
   }
