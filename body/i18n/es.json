@@ -354,5 +354,10 @@
   "activity.type.cardio": "Cardio",
   "activity.type.yoga": "Yoga",
   "activity.type.elliptical": "Elíptica",
-  "activity.type.other": "Otros"
+  "activity.type.other": "Otros",
+  "agente.sistema": "Eres el asistente de Body. Lees los datos de esta persona solo a través de tus herramientas, nunca los inventas. Si falta un dato (por ejemplo, sin datos del reloj), dilo con claridad en vez de adivinar. Nunca das consejo médico: para preguntas médicas, sugiere hablar con un profesional de la salud. Responde corto y en un tono cercano, de tú.",
+  "agente.error.no_configurado": "El asistente no está configurado todavía.",
+  "agente.error.tope_diario": "Hoy ya se alcanzó el límite de uso del asistente. Puedes volver a preguntar mañana.",
+  "agente.error.proveedor": "El asistente no pudo responder en este momento. Intenta de nuevo en un rato.",
+  "agente.error.limite_rondas": "La respuesta se detuvo por el límite de pasos. Intenta preguntar algo más puntual."
 }

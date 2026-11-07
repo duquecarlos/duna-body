@@ -2025,3 +2025,170 @@ final tree (421 at `feat/body-pc-cliente-1`'s merge, plus the 3 new tests here).
 
 Slice commit: see `git log -1` on `feat/body-pc-cliente-2` before the merge below. Merged `--no-ff`
 into `main`.
+
+## BODY-ASISTENTE-PROVEEDOR-1 -- the assistant's brain, server side (2026-11-07)
+
+Carrying out `BODY-ASISTENTE-OBS-1`'s slice (b), under `ORCH-CARLOS-DELEGATES-TIER-1-1`. The one
+part not the orchestrator's to approve -- sending health figures to the model provider -- Carlos
+approved himself, typed 2026-11-06 ("Assistant: 1", `BODY-ASSISTANT-DATA-LEVEL-1`).
+
+**Provider interface** `body/agente/cliente.py` (Tier 1, the only module that sends anything to a
+model provider): `Proveedor.responder(sistema, mensajes, herramientas) -> Respuesta`, with
+`Anthropic` (Messages API), `OpenAI` (Chat Completions) and `Gemini` (`generateContent`) adapters,
+each taking an injectable transport so tests never touch the network. Messages and tools travel in
+one generic shape (`{"rol", "bloques": [...]}`, blocks `texto` / `llamada_herramienta` /
+`resultado_herramienta`) that each adapter converts to and from its own wire format. Usage is
+normalised to DISJOINT counts at this boundary (agent-capabilities-v1 amendment 2): a vendor that
+reports prompt tokens INCLUDING cached ones (OpenAI's `prompt_tokens`, Gemini's
+`promptTokenCount`) has the cached part subtracted once; Anthropic's `input_tokens` already
+excludes the cache. Selection by env: `BODY_AGENTE_PROVEEDOR` (default `anthropic`),
+`BODY_AGENTE_MODELO` (default `claude-sonnet-5-5`), `BODY_AGENTE_ANTHROPIC_API_KEY` /
+`BODY_AGENTE_OPENAI_API_KEY` / `BODY_AGENTE_GEMINI_API_KEY`. No key for the selected provider ->
+`proveedor_configurado()` returns `None` (the assistant is "not configured"; the app still
+starts). No adapter path ever logs a request or response body, a prompt, a tool result or a key --
+only an error's class name or HTTP status, via `logging.getLogger("body.agente.cliente")`.
+
+**Loop** `body/agente/bucle.py`: tools offered = `herramientas.disponibles(nivel)` for the
+person's CURRENT `nivel_datos`; every call still goes through `herramientas.ejecutar(...,
+nivel)` -- enforcement at dispatch, not only at offer. A tool error (unknown tool, wrong nivel,
+bad params) becomes a `resultado_herramienta` block carrying `error`, fed back to the model, never
+an exception shown to the person. At most `MAX_RONDAS = 8` model rounds; at most `MAX_LECTURAS =
+5` *successful* tool reads -- a refused call costs no read budget, so the two caps are
+independently reachable (a run of refused calls can exhaust the round cap without ever touching
+the read cap, and vice versa). Past either cap, `ejecutar` raises `LimiteRondas` (carrying the
+usage already spent) rather than guessing an answer; a failed provider call raises
+`FalloProveedor` (same reason). Measured against `herramientas.disponibles('ninguno')`: it is NOT
+literally empty -- `leer_turnos` and `leer_ajustes` carry nivel `'ninguno'` themselves, so they
+stay offered even when the person's own data level is `'ninguno'`; the loop does not re-restrict
+beyond `disponibles`/`ejecutar`'s existing rank check (see `deviations`).
+
+**Conversations** `body/agente/conversacion.py`, tables `conversacion_agente(id, person_id,
+creada_en, titulo)` and `mensaje_agente(id, conversacion_id, person_id, rol, contenido_json,
+creado_en)`. Tool results ARE stored (the person's own data, on Body's own disk), so
+`conversacion.historial()` rebuilds the exact history (including past tool calls and their
+results) that `bucle.ejecutar` sends back to the provider -- server-stored history needs no
+signing (agent-capabilities-v1 section 7). `verificar_propiedad` raises `ConversacionAjena` for an
+unknown or another person's `conversacion_id`; `web.py` turns that into a 404.
+
+**Endpoint** `POST /asistente/preguntar` (session-authenticated like every POST; hosted consent
+gate applies via the existing `identity.current_person_id` dependency): JSON `{"pregunta": str
+(1..2000 chars), "conversacion_id": int|null, "lugar": str|null}` -> an SSE stream
+(`text/event-stream`, hand-written with `StreamingResponse` -- `sse-starlette` is not installed
+and nothing installs in this slice) with events `texto` (`{"delta"}`), `herramienta`
+(`{"nombre"}`), `fin` (`{"conversacion_id", "rondas", "motivo_fin"}`), `error` (`{"codigo",
+"mensaje"}`, codigo one of `no_configurado` / `tope_diario` / `proveedor` / `limite_rondas`, the
+sentence from `body/i18n`). `lugar` is accepted and currently unused (reserved for a later panel;
+agent-ui-v1's `accion_en_pantalla`/places registry is not part of this slice). Every outcome,
+including every error, writes exactly one `uso_agente` row before the stream ends.
+
+**Usage and ceilings** `body/agente/uso.py`, table `uso_agente` with section 6's per-request
+fields exactly (`person_id, creado_en, proveedor, modelo, entrada, salida, cache_lectura,
+cache_escritura, rondas, motivo_fin, codigo_error, es_pregunta, superficie`). `precio_modelo
+(proveedor, modelo, tipo, micro_usd_por_millon)` is seeded EMPTY -- no price invented here.
+`verificar_tope`, checked BEFORE the first model round: the daily spend ceiling
+(`BODY_AGENTE_TOPE_DIARIO_MICRO_USD`, default 2 000 000 micro-USD = $2) applies only when
+`precio_modelo` has a row for ALL FOUR token kinds of the request's model; otherwise the COUNT
+breaker applies (`BODY_AGENTE_CONTEO_DIARIO`, default 200 questions/person/day) -- amendment 5's
+"nothing is ever costed at 0 because its price is missing." Per-person overrides as data,
+`tope_agente(person_id, diario_micro_usd, conteo_diario)`, both nullable. Any failure inside
+`verificar_tope` (including a closed/broken connection) raises `TopeRefusal` -- fails CLOSED, never
+open. The monthly question count is only ever counted via the existing `uso_agente` rows (no
+monthly ceiling exists, by design: amendment 5 says it never refuses, so nothing enforces it).
+
+**Privacy** (`body/privacidad.py`): `conversacion_agente`, `mensaje_agente`, `uso_agente` and
+`tope_agente` added to `FULLY_HANDLED_TABLES`; `export_person` returns them under a new
+`"asistente"` key (conversations, messages, usage rows, the ceiling override); `delete_person`
+deletes `mensaje_agente` before `conversacion_agente` (FK order) and both usage tables.
+`precio_modelo` carries no `person_id` and needs no entry in any of the three export/delete sets
+(it is not person data). The coverage test (`test_every_person_table_is_exported_or_excepted`)
+and a dedicated `AsistenteExportDeleteTest` (export shows the seeded rows and only this person's;
+delete-all removes all four) both pass.
+
+**requirements**: `httpx==0.28.1` was already moved from `requirements-dev.txt` to
+`requirements.txt` by `BODY-CUENTA-RP-1` (`cuenta.py` already uses it for Cuenta Duna's OIDC
+calls) -- see `deviations`. Neither file was touched in this slice.
+
+**Tests** (`tests/test_agente_cliente.py`, 11; `tests/test_agente_bucle.py`, 15;
+`tests/test_privacidad.py`, +3): each adapter's disjoint-usage mapping from a scripted vendor
+response, including the OpenAI/Gemini "prompt includes cached" normalisation; no key ->
+`proveedor_configurado()` is `None`; a failed call (via a patched `httpx.post`, no real network)
+logs only the error's class name, never the prompt, a tool result, or the key
+(`self.assertLogs` on `body.agente.cliente`). A two-round tool conversation streams
+`EventoHerramienta` then `EventoTexto`; the round cap (nine rounds of a refused, unknown-tool
+call -- it never touches the read budget) and the read cap (six tool calls in one round)
+independently; nivel `'ninguno'` still offers `leer_turnos`/`leer_ajustes` but a forced
+`leer_hoy` call is refused by `ejecutar` and fed back as a tool error; nivel `'resumen'` hides
+`leer_dia`/`leer_hoy`; another person's `conversacion_id` 404s, at both the `conversacion.py` and
+the `/asistente/preguntar` layer; the count breaker refuses the 201st question of the day without
+ever calling the fake provider; a fully-priced model over the spend ceiling refuses; an unpriced
+model falls back to (and is bound by) the count breaker; a closed connection makes the ceiling
+read fail closed; one `uso_agente` row carries the fake's exact disjoint counts; the `body.request`
+log line for `/asistente/preguntar` never contains the question text.
+
+**Merge policy.** Schema change: YES -- `body/db.py` gained five new tables
+(`conversacion_agente`, `mensaje_agente`, `uso_agente`, `precio_modelo`, `tope_agente`). Customer-
+facing bytes: YES -- new i18n strings (`agente.sistema`, `agente.error.no_configurado`,
+`agente.error.tope_diario`, `agente.error.proveedor`, `agente.error.limite_rondas`) are returned
+by the new endpoint, even though no panel calls it yet. Cross-repo contract: no other repository
+mirrors this shape today (this slice is server-only; `agent-ui-v1`'s event names are a future
+panel's concern, read here only for naming, per the spec's own note). Two of Merge Policy A's
+three conditions trip, and the spec's own gate section says plainly: "Stop AWAITING_APPROVAL on
+the branch clean (Tier 1 + customer-facing) unless merge policy says otherwise" -- it says nothing
+otherwise. This slice stops on the branch, uncommitted to `main`, for review.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run twice on the final tree.
+First run: 453 tests, 1 failure (`test_host_deploy.EnvExampleTest`: adding
+`BODY_AGENTE_OPENAI_API_KEY`/`BODY_AGENTE_GEMINI_API_KEY` to `deploy/host/body.env.example`, as
+decision 1 originally asked, broke that file's own enumeration test in a module outside this
+slice's `touches:` list). Fixed by leaving only `BODY_AGENTE_ANTHROPIC_API_KEY` in the example
+file (the OpenAI/Gemini keys are still read from the environment by `cliente.py`; they are simply
+not pre-declared, blank, in the example file -- see `deviations`), without touching
+`tests/test_host_deploy.py`. Second run: 453 tests, OK (1 skipped, pre-existing). 424 tests at
+`feat/body-pc-cliente-2`'s merge, plus 29 new here (11 + 15 + 3).
+
+Branch: `feat/body-asistente-proveedor-1`, not merged. Awaiting review of the schema and the new
+customer-facing strings.
+
+## BODY-ASISTENTE-PROVEEDOR-1-M -- lands BODY-ASISTENTE-PROVEEDOR-1 with three fixes (2026-11-07)
+
+Approved by the orchestrator under `ORCH-CARLOS-DELEGATES-TIER-1-1` after review (the review
+covered `cliente.py`, `bucle.py`, `conversacion.py`, `uso.py` and the privacy coverage); three
+fixes required before landing.
+
+**Fix (a), key out of the URL** (`body/agente/cliente.py`): `Gemini._post_real` sent its key as
+`params={"key": self.api_key}` -- a query parameter that any HTTP access log can carry. It now
+sends it in the `x-goog-api-key` header, alongside `content-type`, with no `params` at all --
+matching how Anthropic (`x-api-key`) and OpenAI (`authorization: Bearer`) already send theirs.
+Test (`NoKeyInUrlTest`, `tests/test_agente_cliente.py`): a recording fake patched onto `httpx.post`
+for all three adapters asserts the key string appears in no URL and no `params`, only in the one
+named header.
+
+**Fix (b), the person's own day** (`body/agente/uso.py`): `verificar_tope` compared `creado_en`
+(UTC) against `LIKE '<UTC today>%'` -- a Bogota person's 11pm-1am window was bucketed by UTC's
+calendar day, not theirs. `_rango_dia_local_utc` now reads `person.timezone` (default
+`America/Bogota`, same column and default `web.py` already uses via `ZoneInfo`), builds [local
+midnight, next local midnight) in that zone from `_ahora_utc()` (split out from `_ahora` so a test
+can freeze "now"), converts both bounds to UTC and queries `creado_en` by range (`>= ... < ...`),
+never `LIKE`. Test (`LocalDayBoundaryTest`): with "now" frozen at Bogota 2026-11-02 00:30 (UTC
+2026-11-02 05:30), a row at Bogota 2026-11-01 23:30 (UTC 04:30, same UTC calendar day) is NOT
+counted as today; a row at Bogota 2026-11-02 00:15 (UTC 05:15) IS.
+
+**Fix (c), row-by-row pricing** (`body/agente/uso.py`): `_gasto_hoy_micro_usd` priced every row of
+the day at the CURRENT request's `(proveedor, modelo)` prices, so a person who switched models
+mid-day had yesterday's-model rows mispriced at today's model's rate. It now looks up each row's
+OWN `(proveedor, modelo)` prices (cached per key within the call) and sums each at its own rate;
+if any of today's rows carries a model with no full price, the function returns `None` and
+`verificar_tope` falls back to the COUNT breaker for the whole check (amendment 5: never cost
+anything at 0). Tests (`RowByRowPricingTest`): two rows under two different priced models sum to
+exactly each model's own rate (a ceiling set between the correct sum and what pricing every row at
+the current model's rate alone would give discriminates the fix); one of today's rows carrying an
+unpriced model forces the count breaker.
+
+No schema change (the existing `creado_en` index already supports a range query; `person.timezone`
+already existed) and no new customer-facing bytes -- merge policy A's three conditions all clear,
+so this slice merges on green without a further stop.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 460 tests, OK (1 skipped,
+pre-existing). 453 at `feat/body-asistente-proveedor-1`'s tip, plus 7 new here (3 + 4).
+
+Merge: `--no-ff` into `main`.
