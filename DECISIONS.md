@@ -4044,3 +4044,57 @@ behaviour, the scroll behaviour, the weekly label's date, the focus ring) -- mer
 condition trips on its own, but this spec's body says in words to merge after the gate, carrying BODY-PULIDO-2's
 approval forward along with its own. Merged `--no-ff` into `main`; `main` left checked out, clean. Branch
 `feat/body-pulido-2` kept.
+
+## BODY-PRIMER-DIA-1 -- three first-day fixes from the first-day census (2026-11-07)
+
+BODY-PRIMER-DIA-CENSO-1 (OBSERVED, 2026-11-07) found three quality defects on a hosted person's very first day.
+This slice fixes the three that are quality, not product shape.
+
+**1. Sign-in refused was the only plain-English dead end on the whole sign-in path.** The Cuenta callback's
+`except cuenta.FlowRefused:` in `body/web.py` returned `Response("Sign-in refused", status_code=400,
+media_type="text/plain")`. It now renders a new template, `body/templates/acceso_rechazado.html` (built like
+`sin_acceso.html`'s shape: one card, one `taplink`), with new i18n keys `acceso_rechazado.title/text/retry`,
+still at 400, with one `taplink` to `/login`. One generic message either way -- it never exposes which
+cuenta-duna-v1 check failed. **Deviation:** the spec's decision said to pick the page's language "the way the
+other pre-sign-in pages do (re-find `sin_acceso`'s route and copy its choice)," naming the request's
+Accept-Language. Measured: no route in `body/web.py` reads `Accept-Language` anywhere -- `sin_acceso` and the
+Cuenta-down page both always render with `T(DEFAULT_LANG)` regardless of request headers, because the person
+is not known yet and Body has no other way to guess their language pre-sign-in. The new page follows that
+same, actual pattern (`T(DEFAULT_LANG)`), not an Accept-Language mechanism that does not exist in this
+codebase.
+
+**2. The empty-state sync text never said WHEN data would arrive.** `_sync_status_text` in `body/web.py`, used
+by Hoy/Día/Tendencias/Historial's empty states, always said only "the sync runs on its own" plus "it hasn't
+synced yet." In hosted mode with no sync yet, that is now knowable: a connected watch (`garmin_cuenta.conectado`)
+gets a new sentence, `sync.hosted_connected` -- "once a day, in the morning," no clock time, since the actual
+time is a per-install Task Scheduler setting this app cannot read. A watch not yet connected keeps the existing
+two sentences and adds a `taplink` to `/garmin`, new key `sync.connect_watch`. The link is returned as a
+`markupsafe.Markup` (jinja2's own escaping dependency, already installed) so the four call sites in
+`soon.html`/`day.html` -- neither in `touches` -- render it without being touched themselves: Jinja2's
+autoescape skips re-escaping a value that is already `Markup`. Local mode is unchanged (the docstring's
+original reason -- Body cannot read a per-install schedule time -- still holds there, and only there).
+
+**3. «Primera mirada a Hoy» silently required a PC.** `tutoriales.primeros_pasos` ticked it only when every
+earlier item was done, including `vincular-este-pc` -- so a hosted person with no PC, who had signed in,
+consented and already had data, could never tick it. It is now `inicio and tiene_datos` only; `vincular-este-pc`
+stays its own item, ticked exactly as before (`bool(vinculado)`), and no longer gates it.
+
+**Tests**, `tests/test_primer_dia_1.py` (new, 13 tests): `CallbackRefusedTest` (5) -- 400 + `text/html`, the
+Spanish title/text/retry link present, no English on the Spanish page, no internal reason (`FlowRefused`,
+`Traceback`) in the body, and `Accept-Language: en` does not change the page. `HostedEmptySyncTextTest` (4) --
+connected shows `sync.hosted_connected` and not `sync.none_yet`, that sentence names no clock time, not-connected
+keeps the old sentences plus a link to `/garmin`, and the connected sentence exists in English too.
+`LocalModeSyncTextUnchangedTest` (1) -- local mode keeps the old text and gets no Garmin link.
+`PrimerosPasosNoPcGateTest` (3) -- consented + data + no PC completes "primera-mirada-a-hoy" while
+"vincular-este-pc" stays unticked; consented without data does not complete it; with a PC linked too, both
+tick. `tests/test_tutoriales_puertas.py` and `tests/test_sin_friccion.py` (both in `touches`) needed no edits:
+neither pinned the old PC-gates-primera-mirada behaviour or the old plain-text refusal body, so both still pass
+unchanged.
+
+**Gate**, run once on the final tree with the plain command: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -- `Ran 812 tests in 51.262s ... OK (skipped=1)` (799 before this slice, +13 new).
+
+**Merge: stopped before it, as the spec said to.** The diff adds customer-facing bytes (the new
+`acceso_rechazado.*` and `sync.hosted_connected`/`sync.connect_watch` strings, the new template) -- merge policy
+A's customer-bytes condition trips, and this spec's own body says plainly "Customer-facing: stop
+AWAITING_APPROVAL clean on the branch." Committed on `feat/body-primer-dia-1`, gate green, nothing merged.
