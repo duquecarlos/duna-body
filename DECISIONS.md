@@ -1462,7 +1462,9 @@ inside `touches:` and a file needed outside it means stop, not widen scope alone
 mechanical -- in each, call `privacidad.record_consent(conn, person_id)` for the signed-in person(s) before
 the assertions that expect a normal page -- but it touches two files this slice was not approved to edit, so
 it is left for the dispatcher to fold into a fast-follow (or to re-dispatch this slice with `touches`
-widened to include them).
+widened to include them). Open follow-up: **BODY-PRIVACIDAD-GATE-FIX-1** -- update those two tests to call
+`privacidad.record_consent` for their signed-in person(s) before the assertions that now expect a normal
+page; not done here because neither file is in this slice's `touches:`.
 
 Commits on `feat/body-privacidad-1`: implementation and ledger, not yet merged -- the gate above is red, so
 no merge was attempted regardless of merge-policy classification.
