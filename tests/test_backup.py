@@ -11,6 +11,12 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from body import backup, config, db
 
+# Sentinel demo values: fractional, so their text form can never be a substring
+# of the integer `bytes=<N> tables=<M>` counts backup.main()/backup.check() print.
+SENTINEL_VALUE_A = 987.654321
+SENTINEL_VALUE_B = 876.543219
+SENTINEL_SOURCE = "zz-sentinel-source-zz"
+
 
 def _table_counts(path) -> dict:
     conn = sqlite3.connect(path)
@@ -31,8 +37,8 @@ class SnapshotTest(unittest.TestCase):
         config.DB_PATH = self.tmp / "body.db"
         conn = db.connect()
         db.init(conn)
-        db.set_metric(conn, "2026-11-01", "resting_hr", 55, "garmin", 1)
-        db.set_metric(conn, "2026-11-02", "resting_hr", 56, "garmin", 1)
+        db.set_metric(conn, "2026-11-01", "resting_hr", SENTINEL_VALUE_A, SENTINEL_SOURCE, 1)
+        db.set_metric(conn, "2026-11-02", "resting_hr", SENTINEL_VALUE_B, SENTINEL_SOURCE, 1)
         conn.commit()
         conn.close()
 
@@ -63,8 +69,9 @@ class SnapshotTest(unittest.TestCase):
         output = buf.getvalue()
         self.assertIn("bytes=", output)
         self.assertIn("tables=", output)
-        self.assertNotIn("55", output)
-        self.assertNotIn("56", output)
+        self.assertNotIn(str(SENTINEL_VALUE_A), output)
+        self.assertNotIn(str(SENTINEL_VALUE_B), output)
+        self.assertNotIn(SENTINEL_SOURCE, output)
 
 
 class CheckTest(unittest.TestCase):
@@ -75,7 +82,7 @@ class CheckTest(unittest.TestCase):
         config.DB_PATH = self.tmp / "body.db"
         conn = db.connect()
         db.init(conn)
-        db.set_metric(conn, "2026-11-01", "resting_hr", 55, "garmin", 1)
+        db.set_metric(conn, "2026-11-01", "resting_hr", SENTINEL_VALUE_A, SENTINEL_SOURCE, 1)
         conn.commit()
         conn.close()
 
@@ -92,7 +99,8 @@ class CheckTest(unittest.TestCase):
         output = buf.getvalue()
         self.assertIn("ok", output.splitlines())
         self.assertIn("tables=", output)
-        self.assertNotIn("55", output)
+        self.assertNotIn(str(SENTINEL_VALUE_A), output)
+        self.assertNotIn(SENTINEL_SOURCE, output)
 
     def test_check_fails_on_corrupted_file(self):
         bad_path = self.tmp / "bad.sqlite"
@@ -101,7 +109,8 @@ class CheckTest(unittest.TestCase):
         with redirect_stdout(buf):
             ok = backup.check(bad_path)
         self.assertFalse(ok)
-        self.assertNotIn("55", buf.getvalue())
+        self.assertNotIn(str(SENTINEL_VALUE_A), buf.getvalue())
+        self.assertNotIn(SENTINEL_SOURCE, buf.getvalue())
 
     def test_main_check_exit_codes(self):
         snap_path = self.tmp / "snap-main.sqlite"

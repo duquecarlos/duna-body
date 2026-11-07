@@ -331,6 +331,26 @@ CREATE TABLE IF NOT EXISTS garmin_cuenta (
     ultimo_error  TEXT
 );
 
+-- A proposal the assistant made: nothing on the target changes until the person taps Aplicar in
+-- the chat (agent-capabilities-v1 section 2 + amendment 1, BODY-ASISTENTE-PROPUESTAS-1).
+CREATE TABLE IF NOT EXISTS propuesta_agente (
+    id              INTEGER PRIMARY KEY,
+    person_id       INTEGER NOT NULL REFERENCES person(id),
+    conversacion_id INTEGER NOT NULL REFERENCES conversacion_agente(id),
+    accion          TEXT NOT NULL CHECK (accion IN
+                        ('proponer_meta', 'proponer_cambio_meta', 'proponer_confirmar_turnos', 'proponer_idioma')),
+    objetivo_id     INTEGER REFERENCES goal(id),
+    antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
+    despues_json    TEXT NOT NULL CHECK (json_valid(despues_json)),
+    estado          TEXT NOT NULL DEFAULT 'propuesta'
+                        CHECK (estado IN ('propuesta', 'aplicada', 'descartada', 'expirada', 'deshecha')),
+    creada_en       TEXT NOT NULL,
+    expira_en       TEXT NOT NULL,
+    resuelta_en     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_propuesta_agente_conv ON propuesta_agente(conversacion_id);
+CREATE INDEX IF NOT EXISTS idx_propuesta_agente_person ON propuesta_agente(person_id);
+
 -- One device key per linked PC, carrying explicit scopes (BODY-DISPOSITIVO-1). Only the key's
 -- sha256 hex ever reaches this table -- the plain key is shown once, at creation, and never again.
 CREATE TABLE IF NOT EXISTS dispositivo (
@@ -688,6 +708,27 @@ def person(conn, person_id: int) -> dict:
 def set_language(conn, lang: str, person_id: int) -> None:
     with conn:
         conn.execute("UPDATE person SET language = ? WHERE id = ?", (lang, person_id))
+
+
+def update_goal_target(conn, goal_id: int, person_id: int, *, target_value: float | None = None,
+                        deadline: str | None = None) -> bool:
+    """Updates an existing, owned goal's target_value and/or deadline. Returns whether a row
+    changed. No screen calls this yet -- body/goals.py has no editor for an active goal's target --
+    so this is the assistant proposal's own write path (BODY-ASISTENTE-PROPUESTAS-1), built the same
+    way body/goals.py's own setters are: a plain per-field UPDATE, scoped to the owner."""
+    sets, vals = [], []
+    if target_value is not None:
+        sets.append("target_value = ?")
+        vals.append(target_value)
+    if deadline is not None:
+        sets.append("deadline = ?")
+        vals.append(deadline)
+    if not sets:
+        return False
+    vals += [goal_id, person_id]
+    with conn:
+        cur = conn.execute(f"UPDATE goal SET {', '.join(sets)} WHERE id = ? AND person_id = ?", vals)
+    return cur.rowcount == 1
 
 
 def day_values(conn, day: str, person_id: int) -> dict[str, float]:

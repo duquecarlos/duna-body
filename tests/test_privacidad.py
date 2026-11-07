@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from body import config, cuenta, db, dispositivo, goals, household, identity, privacidad, web
 from body.agente import conversacion as agente_conversacion
+from body.agente import propuestas as agente_propuestas
 from body.agente import uso as agente_uso
 from body.agente.cliente import Uso
 from tests.test_cuenta_rp import CuentaRpTestCase, ISSUER, SUB
@@ -285,6 +286,55 @@ class AsistenteExportDeleteTest(unittest.TestCase):
         self.assertEqual(
             self.conn.execute("SELECT COUNT(*) FROM tope_agente WHERE person_id = 1").fetchone()[0], 0
         )
+
+
+class PropuestaExportDeleteTest(unittest.TestCase):
+    """BODY-ASISTENTE-PROPUESTAS-1: a proposal record is FULLY exported and deleted -- invented
+    demo content only, no real figures."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "propuesta.db"
+        self.conn = db.connect()
+        db.init(self.conn)
+
+    def _seed(self):
+        cid = agente_conversacion.crear(self.conn, 1, "Mi conversación")
+        registro = agente_propuestas.crear(self.conn, 1, cid, "proponer_idioma", {"lang": "en"},
+                                           antes={"lang": "es"})
+        return registro["id"]
+
+    def test_export_includes_the_proposal(self):
+        pid = self._seed()
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(len(data["asistente"]["propuestas"]), 1)
+        self.assertEqual(data["asistente"]["propuestas"][0]["id"], pid)
+        self.assertEqual(data["asistente"]["propuestas"][0]["accion"], "proponer_idioma")
+
+    def test_export_of_another_person_does_not_see_this_row(self):
+        self._seed()
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 2)
+        self.assertEqual(data["asistente"]["propuestas"], [])
+
+    def test_delete_all_removes_the_proposal(self):
+        self._seed()
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM propuesta_agente WHERE person_id = 1").fetchone()[0], 0
+        )
+
+    def test_delete_all_removes_a_proposal_pointing_at_a_deleted_goal(self):
+        gid = goals.propose(self.conn, 1, "Meta", "2026-10-01", metric_key="resting_hr", direction="lower",
+                            target_value=50.0, baseline_value=60.0, deadline="2026-12-01")
+        cid = agente_conversacion.crear(self.conn, 1)
+        agente_propuestas.crear(self.conn, 1, cid, "proponer_cambio_meta", {"target_value": 48.0},
+                                objetivo_id=gid, antes={"target_value": 50.0})
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM propuesta_agente").fetchone()[0], 0)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM goal WHERE id = ?", (gid,)).fetchone()[0], 0)
 
 
 class DeleteAllTest(unittest.TestCase):

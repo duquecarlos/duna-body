@@ -32,6 +32,7 @@ from . import (cuenta, db, dispositivo, garmin_adapter, garmin_cuenta, goals, hi
 from .agente import bucle as agente_bucle
 from .agente import cliente as agente_cliente
 from .agente import conversacion as agente_conversacion
+from .agente import propuestas as agente_propuestas
 from .agente import uso as agente_uso
 from .baselines import baseline
 from .i18n import DEFAULT as DEFAULT_LANG
@@ -1171,10 +1172,70 @@ async def set_language(request: Request, person_id: int = Depends(identity.curre
 # ---- Assistant (BODY-ASISTENTE-PROVEEDOR-1): one tool loop, streamed as SSE ------------------
 
 MAX_PREGUNTA_CHARS = 2000
+IDIOMA_LABEL = {"es": "Español", "en": "English"}
+_ETIQUETA_KEYS = {
+    "aplicar": "asistente.propuesta.aplicar", "descartar": "asistente.propuesta.descartar",
+    "deshacer": "asistente.propuesta.deshacer", "aplicada": "asistente.propuesta.aplicada",
+    "descartada": "asistente.propuesta.descartada", "deshecha": "asistente.propuesta.deshecha",
+    "no_vigente": "asistente.propuesta.no_vigente", "desactualizada": "asistente.propuesta.desactualizada",
+    "sin_deshacer": "asistente.propuesta.sin_deshacer",
+}
 
 
 def _evento_sse(nombre: str, data: dict) -> str:
     return f"event: {nombre}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _etiquetas(t: T) -> dict:
+    return {k: t(v) for k, v in _ETIQUETA_KEYS.items()}
+
+
+def _objetivo_txt(t: T, defs: dict, metric_key: str | None, target_value, deadline: str) -> str:
+    fecha = _short_date(t, date.fromisoformat(deadline))
+    if metric_key is None or target_value is None:
+        return t("goals.card.milestone_date", date=fecha)
+    return t("asistente.propuesta.meta_objetivo", valor=_fig_unit(t, metric_key, target_value, defs), fecha=fecha)
+
+
+def _tarjeta_propuesta(t: T, defs: dict, registro: dict) -> dict:
+    """The `propuesta` SSE event payload (agent-capabilities-v1 section 2, decision 5): `antes`/
+    `despues` are short plain-word strings in the person's language, built here from the record's
+    structured JSON -- never stored as text. `etiquetas` carries this card's button and result
+    labels pre-rendered, since body/templates/base.html (outside this slice's touches) is the only
+    other place assistant.js could read i18n text from."""
+    accion = registro["accion"]
+    despues = registro["despues_json"]
+    antes_json = registro["antes_json"]
+    antes_txt: str | None = None
+    if accion == "proponer_meta":
+        despues_txt = t("asistente.propuesta.meta_nueva", metric=t("metric." + despues["metric_key"]),
+                        direccion=t("asistente.propuesta.direccion." + despues["direction"]),
+                        valor=_fig_unit(t, despues["metric_key"], despues["target_value"], defs),
+                        fecha=_short_date(t, date.fromisoformat(despues["deadline"])))
+    elif accion == "proponer_cambio_meta":
+        metric_key = despues.get("metric_key")
+        antes_txt = _objetivo_txt(t, defs, metric_key, antes_json["target_value"], antes_json["deadline"])
+        despues_txt = _objetivo_txt(t, defs, metric_key, despues["target_value"], despues["deadline"])
+    elif accion == "proponer_confirmar_turnos":
+        resumen = antes_json["resumen"]
+        antes_txt = t("asistente.propuesta.turnos_actual", n=t.num(resumen["batch_count"]))
+        despues_txt = t("asistente.propuesta.turnos_nuevo")
+    elif accion == "proponer_idioma":
+        antes_txt = IDIOMA_LABEL.get(antes_json["lang"], antes_json["lang"])
+        despues_txt = IDIOMA_LABEL.get(despues["lang"], despues["lang"])
+    else:
+        despues_txt = ""
+    if antes_txt is not None:
+        antes_txt = t("asistente.propuesta.antes", valor=antes_txt)
+        despues_txt = t("asistente.propuesta.despues", valor=despues_txt)
+    elif despues_txt:
+        despues_txt = t("asistente.propuesta.solo_propuesta", valor=despues_txt)
+    return {
+        "id": registro["id"], "accion": accion, "titulo": t("asistente.propuesta.titulo." + accion),
+        "antes": antes_txt, "despues": despues_txt, "expira_en": registro["expira_en"],
+        "deshacer": accion not in agente_propuestas.SIN_DESHACER, "estado": registro["estado"],
+        "etiquetas": _etiquetas(t),
+    }
 
 
 @app.post("/asistente/preguntar")
@@ -1222,8 +1283,13 @@ async def asistente_preguntar(request: Request, person_id: int = Depends(identit
 
             historial = agente_conversacion.historial(conn, conversacion_id, person_id)
             historial.append({"rol": "usuario", "bloques": [{"tipo": "texto", "texto": pregunta}]})
+            sistema = t("agente.sistema")
+            estados = agente_propuestas.estado_conversacion(conn, person_id, conversacion_id)
+            if estados:
+                lineas = "\n".join(f"- #{p['id']} {p['accion']}: {p['estado']}" for p in estados)
+                sistema += "\n\n" + t("agente.estado_propuestas_header") + "\n" + lineas
             try:
-                resultado = agente_bucle.ejecutar(conn, person_id, proveedor, t("agente.sistema"), historial)
+                resultado = agente_bucle.ejecutar(conn, person_id, proveedor, sistema, historial, conversacion_id)
             except agente_bucle.LimiteRondas as e:
                 agente_uso.registrar(conn, person_id, proveedor_nombre, modelo, e.uso_total, e.rondas,
                                       "limite_rondas", "limite_rondas")
@@ -1235,9 +1301,12 @@ async def asistente_preguntar(request: Request, person_id: int = Depends(identit
                 yield _evento_sse("error", {"codigo": "proveedor", "mensaje": t("agente.error.proveedor")})
                 return
 
+            defs = _defs(conn)
             for ev in resultado.eventos:
                 if isinstance(ev, agente_bucle.EventoHerramienta):
                     yield _evento_sse("herramienta", {"nombre": ev.nombre})
+                elif isinstance(ev, agente_bucle.EventoPropuesta):
+                    yield _evento_sse("propuesta", _tarjeta_propuesta(t, defs, ev.registro))
                 else:
                     yield _evento_sse("texto", {"delta": ev.texto})
 
@@ -1257,14 +1326,44 @@ async def asistente_preguntar(request: Request, person_id: int = Depends(identit
 
 @app.get("/asistente/conversacion/{conversacion_id}")
 def asistente_conversacion(conversacion_id: int, person_id: int = Depends(identity.current_person_id)):
-    conn, _, _ = _ctx(person_id)
+    conn, _, t = _ctx(person_id)
     try:
         turnos = agente_conversacion.turnos_visibles(conn, conversacion_id, person_id)
     except agente_conversacion.ConversacionAjena:
         conn.close()
         raise HTTPException(404)
+    defs = _defs(conn)
+    tarjetas = [_tarjeta_propuesta(t, defs, r) for r in agente_propuestas.listar(conn, person_id, conversacion_id)]
     conn.close()
-    return JSONResponse(turnos)
+    return JSONResponse({"turnos": turnos, "propuestas": tarjetas})
+
+
+def _propuesta_respuesta(conn, person_id: int, propuesta_id: int, accion) -> JSONResponse:
+    try:
+        resultado = accion(conn, person_id, propuesta_id)
+    except agente_propuestas.PropuestaAjena:
+        conn.close()
+        raise HTTPException(404)
+    conn.close()
+    return JSONResponse(resultado)
+
+
+@app.post("/asistente/propuestas/{propuesta_id}/aplicar")
+def propuesta_aplicar(propuesta_id: int, person_id: int = Depends(identity.current_person_id)):
+    conn, _, _ = _ctx(person_id)
+    return _propuesta_respuesta(conn, person_id, propuesta_id, agente_propuestas.aplicar)
+
+
+@app.post("/asistente/propuestas/{propuesta_id}/descartar")
+def propuesta_descartar(propuesta_id: int, person_id: int = Depends(identity.current_person_id)):
+    conn, _, _ = _ctx(person_id)
+    return _propuesta_respuesta(conn, person_id, propuesta_id, agente_propuestas.descartar)
+
+
+@app.post("/asistente/propuestas/{propuesta_id}/deshacer")
+def propuesta_deshacer(propuesta_id: int, person_id: int = Depends(identity.current_person_id)):
+    conn, _, _ = _ctx(person_id)
+    return _propuesta_respuesta(conn, person_id, propuesta_id, agente_propuestas.deshacer)
 
 
 # ---- Garmin (hosted only): one connection per person, token encrypted by body/garmin_cuenta.py ----

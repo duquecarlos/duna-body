@@ -7,15 +7,22 @@ module is plain Python called with a connection a caller already opened.
 `leer_metas` and `leer_meta` read the newest EXISTING `goal_check` row with a plain SELECT. They must
 never call `goals.weekly_check` (what `body/web.py`'s `_goal_check_row` does) -- that function upserts a
 row, and a `lectura` tool must never write (BODY-ASISTENTE-OBS-1).
+
+The four `proponer_*` tools below are `tipo: propuesta` (BODY-ASISTENTE-PROPUESTAS-1): they create a
+server-side proposal record through `body/agente/propuestas.py` and never write the target
+themselves. `propuestas.py` is the one module a `propuesta` tool may import -- the static guard in
+tests/test_agente_registro.py checks that a `lectura` tool's call graph never reaches it.
 """
 from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from .. import db, history, profile, readiness, shift_import
-from . import ajustes
+from ..i18n import LANGS
+from . import ajustes, propuestas
 
 TENDENCIA_METRICAS = ("readiness", "sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake", "steps")
 RANGOS = ("7", "30", "90", "all")
@@ -39,6 +46,37 @@ _PARAM_TENDENCIAS = {
         "rango": {"type": "string", "enum": list(RANGOS)},
         "metric": {"type": "string", "enum": list(TENDENCIA_METRICAS)},
     },
+    "additionalProperties": False,
+}
+
+DIRECTIONS = ("raise", "lower", "keep")
+
+_PARAM_PROPONER_META = {
+    "type": "object",
+    "properties": {
+        "metric_key": {"type": "string"},
+        "direction": {"type": "string", "enum": list(DIRECTIONS)},
+        "target_value": {"type": "number"},
+        "deadline": {"type": "string", "format": "date"},
+        "titulo": {"type": "string"},
+    },
+    "required": ["metric_key", "direction", "target_value", "deadline", "titulo"],
+    "additionalProperties": False,
+}
+_PARAM_PROPONER_CAMBIO_META = {
+    "type": "object",
+    "properties": {
+        "goal_id": {"type": "integer"},
+        "target_value": {"type": "number"},
+        "deadline": {"type": "string", "format": "date"},
+    },
+    "required": ["goal_id"],
+    "additionalProperties": False,
+}
+_PARAM_PROPONER_IDIOMA = {
+    "type": "object",
+    "properties": {"lang": {"type": "string", "enum": list(LANGS)}},
+    "required": ["lang"],
     "additionalProperties": False,
 }
 
@@ -146,6 +184,74 @@ def _leer_ajustes(conn: sqlite3.Connection, person_id: int) -> dict:
             "nivel_datos": ajustes.nivel_datos(conn, person_id)}
 
 
+def _hoy_local(conn: sqlite3.Connection, person_id: int) -> str:
+    p = db.person(conn, person_id)
+    tz = ZoneInfo(p.get("timezone") or "America/Bogota")
+    return datetime.now(tz).date().isoformat()
+
+
+def _proponer_meta(conn: sqlite3.Connection, person_id: int, conversacion_id: int, metric_key: str,
+                    direction: str, target_value, deadline: str, titulo: str) -> dict:
+    titulo = (titulo or "").strip()
+    if not titulo:
+        raise ToolError("falta el título de la meta")
+    if direction not in DIRECTIONS:
+        raise ToolError(f"direction inválida: {direction!r}; debe ser una de {DIRECTIONS}")
+    if conn.execute("SELECT 1 FROM metric_def WHERE key = ?", (metric_key,)).fetchone() is None:
+        raise ToolError(f"metric_key desconocida: {metric_key!r}")
+    try:
+        date.fromisoformat(deadline)
+    except ValueError:
+        raise ToolError("deadline debe ser una fecha ISO (AAAA-MM-DD)")
+    despues = {"metric_key": metric_key, "direction": direction, "target_value": float(target_value),
+               "deadline": deadline, "titulo": titulo, "start_day": _hoy_local(conn, person_id)}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "proponer_meta", despues)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
+def _proponer_cambio_meta(conn: sqlite3.Connection, person_id: int, conversacion_id: int, goal_id: int,
+                           target_value=None, deadline: str | None = None) -> dict:
+    if target_value is None and deadline is None:
+        raise ToolError("se necesita target_value y/o deadline")
+    g = conn.execute("SELECT * FROM goal WHERE id = ? AND person_id = ?", (goal_id, person_id)).fetchone()
+    if g is None:
+        raise ToolError(f"meta desconocida: {goal_id!r}")
+    if target_value is not None and g["kind"] != "metric":
+        raise ToolError("target_value solo aplica a metas de tipo métrica")
+    if deadline is not None:
+        try:
+            date.fromisoformat(deadline)
+        except ValueError:
+            raise ToolError("deadline debe ser una fecha ISO (AAAA-MM-DD)")
+    antes = {"target_value": g["target_value"], "deadline": g["deadline"]}
+    despues = {"target_value": float(target_value) if target_value is not None else g["target_value"],
+               "deadline": deadline if deadline is not None else g["deadline"],
+               "metric_key": g["metric_key"], "titulo": g["title"]}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "proponer_cambio_meta", despues,
+                                 objetivo_id=goal_id, antes=antes)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
+def _proponer_confirmar_turnos(conn: sqlite3.Connection, person_id: int, conversacion_id: int) -> dict:
+    resumen = shift_import.summary_proposed(conn, person_id)
+    if resumen["batch_count"] == 0:
+        raise ToolError("no hay turnos propuestos por confirmar")
+    registro = propuestas.crear(conn, person_id, conversacion_id, "proponer_confirmar_turnos", {},
+                                 antes={"resumen": resumen})
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
+def _proponer_idioma(conn: sqlite3.Connection, person_id: int, conversacion_id: int, lang: str) -> dict:
+    if lang not in LANGS:
+        raise ToolError(f"idioma inválido: {lang!r}; debe ser uno de {LANGS}")
+    actual = db.person(conn, person_id)["language"]
+    if actual == lang:
+        raise ToolError("ya está en ese idioma")
+    registro = propuestas.crear(conn, person_id, conversacion_id, "proponer_idioma", {"lang": lang},
+                                 antes={"lang": actual})
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
 HERRAMIENTAS = [
     {"nombre": "leer_hoy", "tipo": "lectura", "nivel": "completo",
      "descripcion": "Qué tan listo estás hoy: el puntaje de preparación y los valores del día más reciente.",
@@ -174,6 +280,22 @@ HERRAMIENTAS = [
     {"nombre": "leer_ajustes", "tipo": "lectura", "nivel": "ninguno",
      "descripcion": "Tus datos de perfil (nombre, zona horaria, idioma) y tu nivel de datos del asistente.",
      "parametros": _SIN_PARAMETROS, "funcion": _leer_ajustes},
+    {"nombre": "proponer_meta", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone crear una meta nueva de tipo métrica. No la crea: registra la propuesta "
+                     "para que la persona la apruebe en el chat.",
+     "parametros": _PARAM_PROPONER_META, "funcion": _proponer_meta},
+    {"nombre": "proponer_cambio_meta", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone cambiar el valor objetivo y/o la fecha de una meta existente de la persona. "
+                     "No la cambia: registra la propuesta para que la persona la apruebe en el chat.",
+     "parametros": _PARAM_PROPONER_CAMBIO_META, "funcion": _proponer_cambio_meta},
+    {"nombre": "proponer_confirmar_turnos", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone confirmar todos los lotes de turnos propuestos pendientes. No los confirma: "
+                     "registra la propuesta para que la persona la apruebe en el chat.",
+     "parametros": _SIN_PARAMETROS, "funcion": _proponer_confirmar_turnos},
+    {"nombre": "proponer_idioma", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone cambiar el idioma de la aplicación. No lo cambia: registra la propuesta "
+                     "para que la persona la apruebe en el chat.",
+     "parametros": _PARAM_PROPONER_IDIOMA, "funcion": _proponer_idioma},
 ]
 
 _BY_NAME = {h["nombre"]: h for h in HERRAMIENTAS}
@@ -188,6 +310,11 @@ def disponibles(nivel: str) -> list[dict]:
     if nivel not in ajustes.NIVELES:
         raise ToolError(f"nivel inválido: {nivel!r}; debe ser uno de {ajustes.NIVELES}")
     return [h for h in HERRAMIENTAS if _RANK[h["nivel"]] <= _RANK[nivel]]
+
+
+def tipo_de(nombre: str) -> str | None:
+    entrada = _BY_NAME.get(nombre)
+    return entrada["tipo"] if entrada else None
 
 
 def _validar_parametros(schema: dict, params: dict) -> None:
@@ -217,7 +344,8 @@ def _validar_parametros(schema: dict, params: dict) -> None:
                 raise ToolError(f"{clave!r} debe ser una fecha ISO (AAAA-MM-DD)")
 
 
-def ejecutar(conn: sqlite3.Connection, person_id: int, nombre: str, params: dict | None, nivel: str):
+def ejecutar(conn: sqlite3.Connection, person_id: int, nombre: str, params: dict | None, nivel: str,
+             conversacion_id: int | None = None):
     if nivel not in ajustes.NIVELES:
         raise ToolError(f"nivel inválido: {nivel!r}; debe ser uno de {ajustes.NIVELES}")
     entrada = _BY_NAME.get(nombre)
@@ -227,4 +355,8 @@ def ejecutar(conn: sqlite3.Connection, person_id: int, nombre: str, params: dict
         raise ToolError(f"{nombre!r} requiere nivel_datos >= {entrada['nivel']!r}; el ajuste actual es {nivel!r}")
     params = params or {}
     _validar_parametros(entrada["parametros"], params)
+    if entrada["tipo"] == "propuesta":
+        if conversacion_id is None:
+            raise ToolError(f"{nombre!r} requiere una conversación")
+        return entrada["funcion"](conn, person_id, conversacion_id, **params)
     return entrada["funcion"](conn, person_id, **params)

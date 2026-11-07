@@ -151,6 +151,44 @@ class AssistantJsSafetyTest(unittest.TestCase):
         self.assertNotIn("eval(", text)
 
 
+class PropuestaCardJsTest(unittest.TestCase):
+    """BODY-ASISTENTE-PROPUESTAS-1: the card's Aplicar/Descartar/Deshacer buttons, built the same
+    textContent-only way as every other answer node (still covered by AssistantJsSafetyTest above)."""
+
+    @classmethod
+    def setUpClass(cls):
+        js = Path(__file__).resolve().parent.parent / "body" / "static" / "assistant.js"
+        cls.text = js.read_text(encoding="utf-8")
+
+    def test_crea_tarjeta_propuesta_builds_aplicar_and_descartar_buttons(self):
+        self.assertIn("function crearTarjetaPropuesta(datos)", self.text)
+        self.assertIn("etiquetas.aplicar", self.text)
+        self.assertIn("etiquetas.descartar", self.text)
+        self.assertIn("etiquetas.deshacer", self.text)
+
+    def test_buttons_post_to_the_propuesta_routes(self):
+        self.assertIn('"/asistente/propuestas/" + id + "/" + ruta', self.text)
+        self.assertIn('"aplicar"', self.text)
+        self.assertIn('"descartar"', self.text)
+        self.assertIn('"deshacer"', self.text)
+
+    def test_the_sse_loop_renders_the_propuesta_event_as_a_card(self):
+        self.assertIn('nombre === "propuesta"', self.text)
+        self.assertIn("crearTarjetaPropuesta(datos)", self.text)
+
+    def test_loaded_conversation_also_redraws_its_proposal_cards(self):
+        self.assertIn("(datos.propuestas || []).forEach", self.text)
+
+    def test_the_card_is_queued_and_appended_after_the_steps_and_answer_not_on_arrival(self):
+        # BODY-ASISTENTE-PROPUESTAS-1-M fix (b): the propuesta SSE event can arrive before the
+        # turn's answer text does, so the card must not be appended to the turn on that event --
+        # only queued, then appended once agregarPasos has placed the steps under the question.
+        self.assertIn("propuestasPendientes.push(datos)", self.text)
+        pasos_idx = self.text.index("agregarPasos(turno.turno, pasos, answerEl)")
+        cards_idx = self.text.index("propuestasPendientes.forEach")
+        self.assertLess(pasos_idx, cards_idx)
+
+
 class AssistantJsFixesTest(unittest.TestCase):
     """Text-level checks of the five BODY-ASISTENTE-PANEL-1-M fixes (the orchestrator re-measures
     the real behaviour in a browser after the merge)."""
@@ -257,7 +295,9 @@ class ConversacionEndpointTest(unittest.TestCase):
         cid = self._preguntar_y_obtener_id("¿cómo voy?")
         r = self.client.get(f"/asistente/conversacion/{cid}")
         self.assertEqual(r.status_code, 200)
-        turnos = r.json()
+        datos = r.json()
+        self.assertIn("propuestas", datos)
+        turnos = datos["turnos"]
         self.assertEqual(len(turnos), 2)
         self.assertEqual(turnos[0], {"rol": "persona", "texto": "¿cómo voy?", "pasos": 0})
         self.assertEqual(turnos[1]["rol"], "asistente")
