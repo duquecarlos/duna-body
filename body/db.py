@@ -79,7 +79,10 @@ CREATE TABLE IF NOT EXISTS person (
     id          INTEGER PRIMARY KEY,
     display_name TEXT NOT NULL,
     timezone    TEXT NOT NULL DEFAULT 'America/Bogota',
-    language    TEXT NOT NULL DEFAULT 'es'
+    language    TEXT NOT NULL DEFAULT 'es',
+    -- NULL = not answered yet, 0 = no, 1 = yes (BODY-TURNOS-ESQUEMA-1 ruling (a)): a screen can tell
+    -- "never asked" from "said no", and Turnos shows only when this is 1.
+    trabaja_turnos INTEGER CHECK (trabaja_turnos IN (0, 1))
 );
 
 -- What can be measured. Generic definitions, shared by every person.
@@ -163,6 +166,9 @@ CREATE TABLE IF NOT EXISTS shift_batch (
     day_count       INTEGER NOT NULL,
     created_at      TEXT NOT NULL,
     decided_at      TEXT,
+    -- 'import': extracted from another app's file (the only kind before BODY-TURNOS-ESQUEMA-1).
+    -- 'pattern': expanded from the person's own hand-entered shift_pattern (slice 5).
+    kind            TEXT NOT NULL DEFAULT 'import' CHECK (kind IN ('import', 'pattern')),
     UNIQUE (person_id, file_name, received, extracted_at)
 );
 
@@ -182,6 +188,19 @@ CREATE TABLE IF NOT EXISTS shift_batch_item (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_shift_batch_item_slot
     ON shift_batch_item (batch_id, day, COALESCE(start_local, ''));
+
+-- One row per person: the hand-entered repeating cycle (slice 5 expands it into proposed
+-- shift_batch rows, the same propose-then-confirm flow as a file import). `cycle` is a JSON array
+-- of {"kind", "start_local", "end_local"} entries, one per day of the cycle; `kind` is from the
+-- same vocabulary as shift.kind -- 'morning', 'afternoon', 'night', 'day', 'off', 'other'
+-- (body/shift_import.py's VALID_KINDS). No parser/validator for `cycle` here; slice 5 owns it.
+CREATE TABLE IF NOT EXISTS shift_pattern (
+    person_id     INTEGER PRIMARY KEY REFERENCES person(id),
+    start_day     TEXT NOT NULL,
+    cycle         TEXT NOT NULL CHECK (json_valid(cycle)),
+    horizon_weeks INTEGER NOT NULL DEFAULT 8 CHECK (horizon_weeks BETWEEN 1 AND 26),
+    updated_at    TEXT NOT NULL
+);
 
 -- Goals: metric or milestone, with a plan. vida-v1 shape (dev-protocol/contracts/vida-v1.md).
 CREATE TABLE IF NOT EXISTS goal (
@@ -424,6 +443,16 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE person ADD COLUMN language TEXT NOT NULL DEFAULT 'es'")
     if pcols and "cuenta_sub" not in pcols:
         conn.execute("ALTER TABLE person ADD COLUMN cuenta_sub TEXT")
+    if pcols and "trabaja_turnos" not in pcols:
+        conn.execute("ALTER TABLE person ADD COLUMN trabaja_turnos INTEGER CHECK (trabaja_turnos IN (0, 1))")
+        # Backfill ONCE, inside this same branch (ruling (b)): it runs exactly when the column is
+        # first added, never again, so a person who later answers "no" is never flipped back to 1
+        # by a restart. Every person with a row in shift or shift_batch already has shift data,
+        # which is Carlos's own Turnos exactly as today.
+        conn.execute(
+            "UPDATE person SET trabaja_turnos = 1 WHERE id IN ("
+            "SELECT person_id FROM shift UNION SELECT person_id FROM shift_batch)"
+        )
     if pcols:
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS person_cuenta_sub ON person(cuenta_sub) WHERE cuenta_sub IS NOT NULL"
@@ -441,6 +470,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     gcols = {r[1] for r in conn.execute("PRAGMA table_info(garmin_cuenta)")}
     if gcols and "backfill_hasta" not in gcols:
         conn.execute("ALTER TABLE garmin_cuenta ADD COLUMN backfill_hasta TEXT")
+    sbcols = {r[1] for r in conn.execute("PRAGMA table_info(shift_batch)")}
+    if sbcols and "kind" not in sbcols:
+        conn.execute(
+            "ALTER TABLE shift_batch ADD COLUMN kind TEXT NOT NULL DEFAULT 'import' "
+            "CHECK (kind IN ('import', 'pattern'))"
+        )
     # Closes the gap the PK leaves open: SQLite treats each NULL start_local as distinct, so two off-day
     # rows for the same person and day do not collide on the primary key alone (BODY-TURNOS-IMPORT-OBS-1).
     # Never a DELETE here: on IntegrityError the table is left untouched and the missing index is reported
@@ -724,6 +759,26 @@ def person(conn, person_id: int) -> dict:
 def set_language(conn, lang: str, person_id: int) -> None:
     with conn:
         conn.execute("UPDATE person SET language = ? WHERE id = ?", (lang, person_id))
+
+
+def get_trabaja_turnos(conn, person_id: int) -> bool | None:
+    """NULL = not answered yet; otherwise True (1) or False (0)."""
+    row = conn.execute("SELECT trabaja_turnos FROM person WHERE id = ?", (person_id,)).fetchone()
+    value = row["trabaja_turnos"] if row else None
+    return None if value is None else bool(value)
+
+
+def set_trabaja_turnos(conn, value: bool, person_id: int) -> None:
+    if not isinstance(value, bool):
+        raise TypeError(f"trabaja_turnos must be a bool, got {type(value).__name__}")
+    with conn:
+        conn.execute("UPDATE person SET trabaja_turnos = ? WHERE id = ?", (int(value), person_id))
+
+
+def trabaja_turnos_si(conn, person_id: int) -> bool:
+    """The one predicate every screen slice uses to show or hide Turnos: True only when the
+    stored value is 1 -- NULL (never asked) and 0 (said no) both hide it."""
+    return get_trabaja_turnos(conn, person_id) is True
 
 
 def update_goal_target(conn, goal_id: int, person_id: int, *, target_value: float | None = None,
