@@ -577,3 +577,19 @@ Layout points for the orchestrator's 375 px pass: the goal detail's pause/finish
 mock's look while meeting the 44 px rule; the new goal-line SVG has no on-screen legend/caption, unlike
 `trends.html`'s charts; metric goal creation takes target/baseline as a raw number in the metric's own unit
 (e.g. minutes for sleep), not a friendlier time picker.
+
+## BODY-METAS-SCREENS-1-M -- merging BODY-METAS-SCREENS-1 unchanged (2026-11-06)
+
+Approved by the orchestrator under `ORCH-CARLOS-DELEGATES-TIER-1-1` after reviewing the diff; merged unchanged.
+No code changed in this slice: only this ledger entry was added before the merge.
+
+Branch `feat/body-metas-screens-1` was at `c06b719b550a50c82d1ca92a1ab886e33541f271` (tree
+`003ce5d051137daac597ce119d1fd290e8abd5ae`), cut from `main` at `c3fd89bc1b60a4dbea3cc6bd69a4d4c016452f33`.
+`main` had not moved since -- its tip was still `c3fd89bc1b60a4dbea3cc6bd69a4d4c016452f33`, equal to the
+branch's merge-base with it -- so nothing was merged forward into the branch first.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run once on the final tree (this entry's
+own commit, after the append above) -- 105 tests, OK.
+
+Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-metas-screens-1` into `main`
+following this entry.
