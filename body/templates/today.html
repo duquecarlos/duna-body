@@ -7,7 +7,7 @@
   <div class="meta">{% if synced %}{{ t('today.synced') }}<br>{{ synced }}{% else %}{{ t('today.no_sync') }}{% endif %}</div>
 </div>
 
-{{ hoy_turno_card(t, turno, proposed_count) }}
+{% if turnos %}{{ hoy_turno_card(t, turno, proposed_count) }}{% endif %}
 
 <a class="card est" href="/how/{{ day }}">
   <div class="q">{{ t('today.ready_q') }}</div>

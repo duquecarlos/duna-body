@@ -23,6 +23,7 @@ def _fresh_client(case: unittest.TestCase) -> tuple[TestClient, "sqlite3.Connect
     conn = db.connect()
     case.addCleanup(conn.close)
     db.init(conn)
+    db.set_trabaja_turnos(conn, True, 1)
     return TestClient(web.app, follow_redirects=False), conn
 
 
