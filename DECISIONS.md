@@ -3053,3 +3053,14 @@ the guard above; second run on the same tree: **green**, 640 tests, 1 pre-existi
 strings per language, a new CSS band class wired onto the shift block, "Día N de ≈ M..." linking `/shifts`) -- one
 of merge policy A's three stop conditions. Stopped clean on `feat/body-hoy-turno-1`, `AWAITING_APPROVAL`, for the
 orchestrator to measure in a browser against the demo home before merging.
+
+## BODY-HOY-TURNO-1-M -- land BODY-HOY-TURNO-1 (2026-11-07)
+
+Approved as written after browser measurement (ORCH-CARLOS-DELEGATES-TIER-1-1): on the branch, with a demo home
+freshly seeded, a proposed batch's link still led with no empty line; confirming it showed "Hoy: Descanso" banded
+`shift off`; an invented night two days ahead showed "Próximo: Noche, lun 9 nov · 22:00–06:00"; measured at 375 px.
+`main` had not moved since the branch was cut (its tip was still the branch's own base, `0ae1c19`), so no merge from
+`main` was needed. Merged `feat/body-hoy-turno-1` into `main` with `--no-ff`, unchanged.
+
+**Gate**: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run once, foreground, on the branch tip
+before merging. **Green**, 640 tests, 1 pre-existing skip.
