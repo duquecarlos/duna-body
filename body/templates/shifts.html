@@ -52,15 +52,52 @@
     </form>
   </div>
 </div>
-{% else %}
-<div class="card empty">
-  <div class="badge">{{ t('soon.badge') }}</div>
-  <p class="read" style="margin-top:6px">{{ t('soon.shifts') }}</p>
-  {% if confirmed_date %}
-  <p class="k" style="margin-top:8px">{{ t('shifts.last_confirmed', date=confirmed_date) }}</p>
-  {% endif %}
-</div>
+{% elif confirmed_date %}
+<p class="k" style="margin-top:-4px;margin-bottom:10px">{{ t('shifts.last_confirmed', date=confirmed_date) }}</p>
 {% endif %}
+
+<a class="card est" href="/shifts/como">
+  <div class="q">{{ t('shifts.hero_q') }}</div>
+  {% if hero_dias is not none %}
+  <div><span class="approx big">≈</span><span class="big">{{ hero_dias }}</span></div>
+  <p class="read">{{ t('shifts.hero_sub') }}</p>
+  {% else %}
+  <div class="fig" style="color:var(--muted)">{{ t('shifts.no_hero_short') }}</div>
+  <p class="read">{{ t('shifts.reason.' ~ motivo) }}</p>
+  {% endif %}
+  <span class="how">{{ t('today.how') }}</span>
+  <span class="chev">›</span>
+</a>
+
+<div class="card">
+  <div class="k">{{ t('shifts.cost_title') }}</div>
+  <table class="parts" style="margin-top:8px">
+    {% for f in filas %}
+    <tr>
+      <td>{{ f.label }}<div class="k">{{ f.sub }}</div></td>
+      {% if f.value is not none %}
+      <td class="nw">{{ f.value }} <strong>{{ f.palabra }}</strong><div class="k">{{ t('shifts.cost_vs') }}</div></td>
+      {% else %}
+      <td class="nw" style="color:var(--muted)">—<div class="k">{{ t('shifts.sin_dato_corto') }}</div></td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<h2>{{ t('shifts.strip_title') }}</h2>
+<p class="k" style="margin-top:-4px">{{ t('shifts.strip_hint') }}</p>
+<div class="strip">
+  {% for c in strip %}
+  <a class="strip-cell {{ c.band }}" href="/day/{{ c.day }}" aria-label="{{ c.label }}">{% if c.score is not none %}{{ c.score }}{% else %}—{% endif %}</a>
+  {% endfor %}
+</div>
+<div class="strip-legend">
+  {% for l in strip_legend %}
+  <span><span class="dot {{ l.kind }}"></span>{{ l.label }}</span>
+  {% endfor %}
+</div>
+
 {% if result_msg %}
 <p class="k" style="margin-top:8px">{{ result_msg }}</p>
 {% endif %}

@@ -150,16 +150,17 @@ class HistorySectionsAlreadyGoodCensusTest(unittest.TestCase):
 
 
 class TurnosEmptyCensusTest(unittest.TestCase):
-    """Turnos with nothing proposed or confirmed already says where shift files come from -- keep."""
+    """Turnos with nothing proposed or confirmed, and no watch data at all, is an honest empty state
+    (BODY-TURNOS-COSTO-1-M) -- the hero reads a reason code instead of a generic 'soon' placeholder."""
 
     def test_empty_both_languages(self):
         _reset_db(self)
         r = client.get("/shifts")
         self.assertEqual(r.status_code, 200)
-        self.assertIn(_t("es", "soon.shifts"), r.text)
+        self.assertIn(_t("es", "shifts.reason.sin_datos_reloj"), r.text)
         _set_lang("en")
         r = client.get("/shifts")
-        self.assertIn(_t("en", "soon.shifts"), r.text)
+        self.assertIn(_t("en", "shifts.reason.sin_datos_reloj"), r.text)
 
 
 class MetasEmptyCensusTest(unittest.TestCase):

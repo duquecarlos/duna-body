@@ -12,6 +12,7 @@ from pathlib import Path
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
+from body import turnos_costo
 from body.db import METRIC_DEFS
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -132,6 +133,11 @@ class SeededContentTest(unittest.TestCase):
     def test_has_a_night_week(self):
         nights = self.conn.execute("SELECT COUNT(*) FROM shift WHERE kind = 'night'").fetchone()[0]
         self.assertGreater(nights, 0)
+
+    def test_has_at_least_three_night_blocks(self):
+        row = self.conn.execute("SELECT MIN(day), MAX(day) FROM shift").fetchone()
+        bloques = turnos_costo.bloques_noche(self.conn, 1, row[0], row[1])
+        self.assertGreaterEqual(len(bloques), 3)
 
     def test_has_three_active_goals_with_checks(self):
         goals = self.conn.execute("SELECT id FROM goal WHERE status = 'active'").fetchall()

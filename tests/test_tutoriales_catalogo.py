@@ -26,7 +26,7 @@ TASK_TOOL = {
     "abrir-un-dia": "leer_dia",
     "como-se-calcula-un-valor": "leer_como_calculo",
     "confirmar-los-turnos-propuestos": "proponer_confirmar_turnos",
-    "leer-lo-que-cuesta-una-semana-nocturna": "leer_historia",
+    "leer-lo-que-cuesta-una-semana-nocturna": "leer_costo_turnos",
     "comparar-una-metrica-con-tu-base": "leer_tendencias",
     "ver-tu-condicion-cardiovascular": "leer_tendencias",
     "crear-una-meta": "proponer_meta",

@@ -21,7 +21,8 @@ ROUTE_TOOL = {
     "/": "leer_hoy",
     "/how/{day}": "leer_como_calculo",
     "/day/{day}": "leer_dia",
-    "/shifts": "leer_turnos",
+    "/shifts": ("leer_turnos", "leer_costo_turnos"),
+    "/shifts/como": "leer_costo_turnos",
     "/trends": "leer_tendencias",
     "/history": "leer_historia",
     "/goals": "leer_metas",
@@ -83,7 +84,7 @@ def _all_tool_calls():
     return {
         "leer_hoy": {}, "leer_dia": {"day": "2026-10-05"}, "leer_como_calculo": {"day": "2026-10-05"},
         "leer_tendencias": {}, "leer_historia": {}, "leer_metas": {}, "leer_meta": gid_placeholder,
-        "leer_turnos": {}, "leer_ajustes": {}, "leer_tutoriales": {},
+        "leer_turnos": {}, "leer_costo_turnos": {}, "leer_ajustes": {}, "leer_tutoriales": {},
     }
 
 
@@ -158,11 +159,11 @@ class RegistryShapeTest(unittest.TestCase):
         expected_levels = {
             "leer_hoy": "completo", "leer_dia": "completo", "leer_como_calculo": "completo",
             "leer_tendencias": "resumen", "leer_historia": "resumen", "leer_metas": "resumen",
-            "leer_meta": "resumen", "leer_turnos": "ninguno", "leer_ajustes": "ninguno",
-            "leer_tutoriales": "ninguno",
+            "leer_meta": "resumen", "leer_turnos": "ninguno", "leer_costo_turnos": "resumen",
+            "leer_ajustes": "ninguno", "leer_tutoriales": "ninguno",
         }
         lectura = [h for h in herramientas.HERRAMIENTAS if h["tipo"] == "lectura"]
-        self.assertEqual(len(lectura), 10)
+        self.assertEqual(len(lectura), 11)
         self.assertEqual({h["nombre"]: h["nivel"] for h in lectura}, expected_levels)
 
     def test_four_propuesta_tools_at_nivel_ninguno(self):
@@ -173,7 +174,7 @@ class RegistryShapeTest(unittest.TestCase):
 
     def test_every_entry_has_a_known_tipo(self):
         self.assertTrue(all(h["tipo"] in ("lectura", "propuesta") for h in herramientas.HERRAMIENTAS))
-        self.assertEqual(len(herramientas.HERRAMIENTAS), 14)
+        self.assertEqual(len(herramientas.HERRAMIENTAS), 15)
 
 
 class RouteMappingTest(unittest.TestCase):
@@ -182,8 +183,9 @@ class RouteMappingTest(unittest.TestCase):
         self.assertTrue(get_paths)
         self.assertEqual(get_paths, set(ROUTE_TOOL),
                          "a GET route appeared or disappeared with no tool-mapping decision")
-        for path, tool_name in ROUTE_TOOL.items():
-            if tool_name is not None:
+        for path, entry in ROUTE_TOOL.items():
+            tool_names = entry if isinstance(entry, tuple) else (entry,) if entry is not None else ()
+            for tool_name in tool_names:
                 self.assertIn(tool_name, herramientas._BY_NAME, f"{path} -> unknown tool {tool_name!r}")
 
 
