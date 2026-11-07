@@ -36,6 +36,27 @@
   <span class="chev">›</span>
 </a>
 
+{% if plan_habits %}
+<div class="card">
+  <div class="q">{{ t('today.plan_title') }}</div>
+  <ul class="plan" style="margin-top:6px">
+  {% for h in plan_habits %}
+    <li>
+      <form method="post" action="/habits/{{ h.id }}/check" style="margin:0">
+        <input type="hidden" name="day" value="{{ today_iso }}">
+        <input type="hidden" name="back" value="/">
+        <input type="hidden" name="done" value="{{ '0' if h.checked else '1' }}">
+        <button type="submit" class="boxbtn" aria-label="{{ h.title }}"><span class="box{% if h.checked %} done{% endif %}"></span></button>
+      </form>
+      <div>{{ h.title }}{% if h.context %} <span class="chip night">{{ h.context }}</span>{% endif %}
+        <div class="k">{{ h.goal_title }}</div>
+      </div>
+    </li>
+  {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 <div class="grid2" style="margin-bottom:10px">
 {% for c in cards %}
   <a class="card" href="/day/{{ day }}#{{ c.key }}">

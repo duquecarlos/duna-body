@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}{{ goal.title }} · {{ t('app.name') }}{% endblock %}
+{% block main %}
+<div class="top">
+  <div><h1>{{ goal.title }}</h1><p class="sub">{{ area_label }}</p></div>
+  <span class="chip {{ cls }}">{{ verdict }}</span>
+</div>
+
+{% if goal.why %}<p class="read" style="margin-top:0">{{ goal.why }}</p>{% endif %}
+
+<div class="card">
+  <div class="q">{{ target_text }}</div>
+  {% if goal.kind == 'metric' %}
+    {% if chart %}{{ chart|safe }}{% else %}<p class="note" style="margin:0">{{ t('goals.chart_soon') }}</p>{% endif %}
+  {% endif %}
+</div>
+
+{% if members %}
+<div class="card">
+  <div class="q">{{ t('goals.household_title') }}</div>
+  {% for m in members %}<div class="row k" style="padding:4px 0">{{ m.name }}<span>{{ m.verdict }}</span></div>{% endfor %}
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="q">{{ t('goals.history_title') }}</div>
+  {% if history %}
+  {% for hrow in history %}<p class="read" style="margin:{{ '0' if loop.first else '6px' }} 0 0">{{ hrow.week }}: {{ hrow.text }}</p>{% endfor %}
+  {% else %}
+  <p class="note" style="margin:0">{{ t('goals.history_none') }}</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="q">{{ t('goals.habits_title') }}</div>
+  {% if habits %}
+  <ul class="plan" style="margin-top:6px">
+  {% for h in habits %}
+    <li>
+      {% if h.due_today %}
+      <form method="post" action="/habits/{{ h.id }}/check" style="margin:0">
+        <input type="hidden" name="day" value="{{ today }}">
+        <input type="hidden" name="back" value="/goals/{{ goal.id }}">
+        <input type="hidden" name="done" value="{{ '0' if h.checked_today else '1' }}">
+        <button type="submit" class="boxbtn" aria-label="{{ h.title }}"><span class="box{% if h.checked_today %} done{% endif %}"></span></button>
+      </form>
+      {% else %}
+      <span class="boxbtn"><span class="box" style="opacity:.4;border-style:dashed"></span></span>
+      {% endif %}
+      <div>{{ h.title }}{% if h.context %} <span class="chip night">{{ h.context }}</span>{% endif %}
+        <div class="k">{{ h.cadence }} · {{ h.progress }}</div>
+      </div>
+    </li>
+  {% endfor %}
+  </ul>
+  {% else %}
+  <p class="note" style="margin:0">{{ t('goals.no_habits') }}</p>
+  {% endif %}
+  <details style="margin-top:10px">
+    <summary class="k">{{ t('goals.add_habit') }}</summary>
+    <form method="post" action="/goals/{{ goal.id }}/habits" style="margin-top:8px">
+      <input type="text" name="title" class="field" placeholder="{{ t('goals.habit_title_ph') }}" required>
+      <div class="row" style="margin-top:8px;gap:8px;justify-content:flex-start">
+        <input type="number" name="times" class="field" min="1" value="1" style="flex:0 0 70px">
+        <select name="per" class="field" style="flex:1">
+          <option value="day">{{ t('goals.cadence.per.day') }}</option>
+          <option value="week" selected>{{ t('goals.cadence.per.week') }}</option>
+          <option value="month">{{ t('goals.cadence.per.month') }}</option>
+        </select>
+      </div>
+      <select name="context" class="field" style="margin-top:8px">
+        <option value="">{{ t('goals.habit_no_context') }}</option>
+        <option value="before_night">{{ t('habit.context.before_night') }}</option>
+        <option value="after_night">{{ t('habit.context.after_night') }}</option>
+        <option value="off_days">{{ t('habit.context.off_days') }}</option>
+      </select>
+      <button type="submit" class="btn on" style="margin-top:8px;width:100%">{{ t('goals.add_habit_btn') }}</button>
+    </form>
+  </details>
+</div>
+
+<div class="confirm-actions">
+{% if goal.status == 'proposed' %}
+  <form method="post" action="/goals/{{ goal.id }}/activate"><button class="btn on" type="submit">{{ t('goals.activate_btn') }}</button></form>
+  <form method="post" action="/goals/{{ goal.id }}/drop"><button class="btn" type="submit">{{ t('goals.discard_btn') }}</button></form>
+{% elif goal.status == 'active' %}
+  <form method="post" action="/goals/{{ goal.id }}/pause"><button class="btn" type="submit">{{ t('goals.pause_btn') }}</button></form>
+  <form method="post" action="/goals/{{ goal.id }}/finish"><button class="btn" type="submit">{{ t('goals.finish_btn') }}</button></form>
+  <form method="post" action="/goals/{{ goal.id }}/drop"><button class="btn" type="submit">{{ t('goals.discard_btn') }}</button></form>
+{% endif %}
+</div>
+{% endblock %}
