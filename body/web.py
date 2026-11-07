@@ -276,9 +276,10 @@ def login_start(request: Request):
     return_to = cuenta.safe_return_to(request.query_params.get("return_to"))
     prompt = request.query_params.get("prompt")
     prompt = prompt if prompt in ("none", "login") else None
+    max_age = 600 if request.query_params.get("max_age") == "600" else None
     conn = db.connect()
     db.init(conn)
-    url, flujo_id = cuenta.start_login(conn, return_to, prompt=prompt)
+    url, flujo_id = cuenta.start_login(conn, return_to, prompt=prompt, max_age=max_age)
     conn.close()
     resp = RedirectResponse(url, status_code=303)
     cuenta.set_flujo_cookie(resp, flujo_id)
@@ -1718,9 +1719,15 @@ def privacidad_view(request: Request, person_id: int = Depends(identity.current_
         (person_id, privacidad.CONSENT_VERSION),
     ).fetchone()
     accepted_date = _short_date(t, datetime.fromisoformat(row["accepted_at"]).date()) if row else None
+    es_hosted = cuenta.hosted()
+    reauth_ok = None
+    if es_hosted and request.query_params.get("reauth") == "1":
+        token = request.cookies.get(cuenta.SESSION_COOKIE)
+        reauth_ok = cuenta.reciente(conn, token)
     return _render("privacidad.html", t=t, tab="settings", version=privacidad.CONSENT_VERSION,
                    accepted_date=accepted_date, delete_word=t("privacidad.borrar_palabra"),
-                   error=request.query_params.get("error") == "confirmacion")
+                   error=request.query_params.get("error") == "confirmacion",
+                   es_hosted=es_hosted, reauth_ok=reauth_ok)
 
 
 @app.get("/privacidad/exportar")
@@ -1736,6 +1743,14 @@ def privacidad_exportar(person_id: int = Depends(identity.current_person_id)):
 async def privacidad_borrar(request: Request, person_id: int = Depends(identity.current_person_id)):
     f = await _form(request)
     conn, _, t = _ctx(person_id)
+    if cuenta.hosted():
+        token = request.cookies.get(cuenta.SESSION_COOKIE)
+        if not cuenta.reciente(conn, token):
+            conn.close()
+            return_to = quote("/privacidad?reauth=1", safe="")
+            return RedirectResponse(
+                f"/login/cuenta/start?prompt=login&max_age=600&return_to={return_to}", status_code=303
+            )
     if (f.get("confirmacion") or "").strip() != t("privacidad.borrar_palabra"):
         conn.close()
         return RedirectResponse("/privacidad?error=confirmacion", status_code=303)

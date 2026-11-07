@@ -291,6 +291,7 @@ CREATE TABLE IF NOT EXISTS sesion (
     id_hash      TEXT PRIMARY KEY,
     person_id    INTEGER NOT NULL REFERENCES person(id),
     cuenta_sid   TEXT,                  -- Cuenta's ID token `sid`, so back-channel logout can find this row
+    auth_time    TEXT,                  -- ISO UTC, from the ID token's `auth_time`; NULL = stale (BODY-BORRAR-REAUTH-1)
     created_at   TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
     expires_at   TEXT NOT NULL
@@ -425,6 +426,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "CREATE UNIQUE INDEX IF NOT EXISTS person_cuenta_sub ON person(cuenta_sub) WHERE cuenta_sub IS NOT NULL"
         )
     conn.execute("UPDATE person SET timezone = 'America/Bogota' WHERE timezone = 'Europe/Madrid'")
+    sescols = {r[1] for r in conn.execute("PRAGMA table_info(sesion)")}
+    if sescols and "auth_time" not in sescols:
+        conn.execute("ALTER TABLE sesion ADD COLUMN auth_time TEXT")
     scols = {r[1] for r in conn.execute("PRAGMA table_info(shift)")}
     if scols and "batch_id" not in scols:
         conn.execute("ALTER TABLE shift ADD COLUMN batch_id INTEGER REFERENCES shift_batch(id)")
