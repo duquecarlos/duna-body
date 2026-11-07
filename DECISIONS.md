@@ -1187,3 +1187,33 @@ before this merge.
 
 Merge commit: recorded in the next commit's git history as the `--no-ff` merge of `feat/body-cuenta-rp-1` into
 `main`.
+
+## BODY-CUENTA-VECTORES-2 -- re-copy Cuenta's shared vector file after Main added the acr-rank vector (2026-11-06)
+
+dev-protocol's `contracts/cuenta-duna-v1/vectores.json` was regenerated at commit `dc698125` with a new case,
+`id-valido-acr-passkey-minimo-pwd`: a passkey sign-in (`acr: "passkey"`) to a client whose `requiere_acr` is
+`"pwd"`, expected `aceptar`. Its own reference verifier (`verificar_vectores.py` at the same commit) now
+checks `acr` as a RANK (`RANGO_ACR = {"pwd": 0, "passkey": 1}`), rejecting only when the token's rank is
+*below* the client's minimum -- never by exact-string equality, which would wrongly refuse this vector.
+
+`tests/fixtures/cuenta_vectores.json` was overwritten with the exact bytes of that commit's file (copied via
+`git -C ../dev-protocol show dc698125:contracts/cuenta-duna-v1/vectores.json`, piped through a Python
+subprocess straight to disk so no byte passed through hand-transcription) -- 31 cases, confirmed by loading
+the JSON and counting `casos` before touching anything else. `body/cuenta.py`'s `verificar_claims` already
+compares `acr` by rank, not equality (BODY-CUENTA-RP-1's own design note says so explicitly), so no change was
+needed there, and none was made -- this slice touches no file under `body/`.
+
+`tests/test_cuenta_vectores.py`: `test_vector_count_matches_the_copied_fixture` now expects 31 (was 30), and a
+new `test_acr_is_a_rank_not_an_equality` asserts `id-valido-acr-passkey-minimo-pwd` is accepted on its own,
+independent of the full-fixture loop, so a future change that breaks only the rank comparison fails a test
+that names the behavior. The existing full-fixture loop (`test_every_vector_matches_its_expected_result`)
+already threads `requiere_acr=caso.get("requiere_acr")` into `cuenta.verificar_claims` -- that plumbing was
+already in place from BODY-CUENTA-RP-1, so the loop's shape did not need to change.
+
+No schema or migration change; no cross-repo contract change (the fixture is a copy of Cuenta's own published
+test vectors, not a DTO this app defines); no customer-facing bytes (nothing under `tests/` is served to a
+user). All three of merge policy A's conditions pass, so this merges on green without a separate approval
+step.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 213 tests, OK (212 at the branch tip plus
+the one new `test_acr_is_a_rank_not_an_equality` case), run once on the final tree before this merge.
