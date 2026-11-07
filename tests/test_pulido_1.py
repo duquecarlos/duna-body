@@ -40,7 +40,7 @@ class DiaCardLinksTest(unittest.TestCase):
         self.addCleanup(web.app.dependency_overrides.clear)
         self.conn = _mkdb("pulido_dia.db")
         self.addCleanup(self.conn.close)
-        self.day = date(2026, 4, 1)
+        self.day = date.today() - timedelta(10)
         db.set_metric(self.conn, self.day.isoformat(), "resting_hr", 55.0, "garmin", 1)
         db.set_metric(self.conn, self.day.isoformat(), "stress_avg", 20.0, "garmin", 1)
         db.set_metric(self.conn, self.day.isoformat(), "sleep_need_min", 460.0, "garmin", 1)
@@ -81,7 +81,7 @@ class ComoRowLinksTest(unittest.TestCase):
         self.addCleanup(web.app.dependency_overrides.clear)
         self.conn = _mkdb("pulido_como.db")
         self.addCleanup(self.conn.close)
-        self.day = date(2026, 4, 3)
+        self.day = date.today() - timedelta(10)
         db.set_metric(self.conn, self.day.isoformat(), "body_battery_wake", 72.0, "garmin", 1)
         self.conn.commit()
         _as(1)
@@ -178,7 +178,7 @@ class PersonScopeTest(unittest.TestCase):
         self.addCleanup(self.conn.close)
         self.conn.execute("INSERT INTO person (id, display_name, timezone, language) VALUES (2, 'B', "
                           "'America/Bogota', 'es')")
-        self.day = date(2026, 4, 2)
+        self.day = date.today() - timedelta(10)
         db.set_metric(self.conn, self.day.isoformat(), "resting_hr", 70.0, "garmin", PERSON_B)
         db.set_metric(self.conn, self.day.isoformat(), "body_battery_wake", 65.0, "garmin", PERSON_B)
         self.conn.commit()
@@ -218,9 +218,74 @@ class TapTargetsTest(unittest.TestCase):
         html = Path("body/templates/ayuda.html").read_text(encoding="utf-8")
         self.assertIn('<a class="taplink" href="#{{ tarea.id }}">', html)
 
+    def test_ayuda_ir_a_pantalla_link_carries_taplink(self):
+        html = Path("body/templates/ayuda.html").read_text(encoding="utf-8")
+        self.assertIn('<a class="taplink" href="{{ tarea.pantalla_link }}">', html)
+
     def test_sin_acceso_links_carry_taplink(self):
         html = Path("body/templates/sin_acceso.html").read_text(encoding="utf-8")
         self.assertEqual(html.count('class="taplink"'), 2)
+
+
+class TendenciasRangeContainsDayTest(unittest.TestCase):
+    """BODY-PULIDO-1-M: a Dia card's or Como's part row's own Tendencias link opens a range that
+    actually contains that day -- r=30 within the last 30 days, r=90 within 90, no r (the monthly,
+    all-time view) past that -- never a fixed r=30 that cannot show an old day."""
+
+    client = TestClient(web.app, follow_redirects=False)
+
+    def setUp(self):
+        self.orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig_db_path))
+        self.addCleanup(web.app.dependency_overrides.clear)
+        self.conn = _mkdb("pulido_rango.db")
+        self.addCleanup(self.conn.close)
+        self.today = date.today()
+        for age in (10, 60, 200):
+            d = (self.today - timedelta(age)).isoformat()
+            db.set_metric(self.conn, d, "resting_hr", 55.0, "garmin", 1)
+            db.set_metric(self.conn, d, "body_battery_wake", 60.0, "garmin", 1)
+        self.conn.commit()
+        _as(1)
+
+    def _day(self, age: int) -> str:
+        return (self.today - timedelta(age)).isoformat()
+
+    def test_dia_card_10_days_old_opens_r30(self):
+        day = self._day(10)
+        page = self.client.get(f"/day/{day}").text
+        self.assertIn(f'href="/trends?r=30&amp;desde=dia&amp;dia={day}#resting_hr"', page)
+
+    def test_dia_card_60_days_old_opens_r90(self):
+        day = self._day(60)
+        page = self.client.get(f"/day/{day}").text
+        self.assertIn(f'href="/trends?r=90&amp;desde=dia&amp;dia={day}#resting_hr"', page)
+
+    def test_dia_card_200_days_old_opens_no_r(self):
+        day = self._day(200)
+        page = self.client.get(f"/day/{day}").text
+        self.assertIn(f'href="/trends?desde=dia&amp;dia={day}#resting_hr"', page)
+
+    def test_como_row_10_days_old_opens_r30(self):
+        day = self._day(10)
+        page = self.client.get(f"/how/{day}").text
+        self.assertIn(f'href="/trends?r=30&amp;desde=como&amp;dia={day}#body_battery_wake"', page)
+
+    def test_como_row_60_days_old_opens_r90(self):
+        day = self._day(60)
+        page = self.client.get(f"/how/{day}").text
+        self.assertIn(f'href="/trends?r=90&amp;desde=como&amp;dia={day}#body_battery_wake"', page)
+
+    def test_como_row_200_days_old_opens_no_r(self):
+        day = self._day(200)
+        page = self.client.get(f"/how/{day}").text
+        self.assertIn(f'href="/trends?desde=como&amp;dia={day}#body_battery_wake"', page)
+
+    def test_dia_href_keeps_desde_and_dia_for_all_three_ranges(self):
+        for age in (10, 60, 200):
+            day = self._day(age)
+            page = self.client.get(f"/day/{day}").text
+            self.assertIn(f"desde=dia&amp;dia={day}", page)
 
 
 if __name__ == "__main__":
