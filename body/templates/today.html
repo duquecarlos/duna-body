@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "base.html" import primeros_pasos_card with context %}
+{% from "base.html" import primeros_pasos_card, hoy_turno_card with context %}
 {% block title %}{{ t('today.title') }} · {{ t('app.name') }}{% endblock %}
 {% block main %}
 <div class="top">
@@ -7,15 +7,7 @@
   <div class="meta">{% if synced %}{{ t('today.synced') }}<br>{{ synced }}{% else %}{{ t('today.no_sync') }}{% endif %}</div>
 </div>
 
-<div class="shift">
-{% if proposed_count > 1 %}
-  <a class="note" href="/shifts" style="margin:0 0 0 4px;text-decoration:underline">{{ t('today.shift_proposed_many', n=proposed_count) }}</a>
-{% elif proposed_count == 1 %}
-  <a class="note" href="/shifts" style="margin:0 0 0 4px;text-decoration:underline">{{ t('today.shift_proposed') }}</a>
-{% else %}
-  <div class="note" style="margin:0 0 0 4px">{{ t('today.shift_none') }}</div>
-{% endif %}
-</div>
+{{ hoy_turno_card(t, turno, proposed_count) }}
 
 <a class="card est" href="/how/{{ day }}">
   <div class="q">{{ t('today.ready_q') }}</div>

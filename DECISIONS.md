@@ -2989,3 +2989,67 @@ skip. Fixed per fix e; second run on the same tree (after the fix, before any fu
 
 Commits: `fca4e7a961579785b043c4b1bc65fadcae07ec7a` (the six fixes, one commit), `c59cf118d80e7ed62b03446540877e87c8f8f41b`
 (merge into `main`).
+
+## BODY-HOY-TURNO-1 -- Hoy's second promise: today's confirmed shift, the next one, and recovery (2026-11-07)
+
+Hoy's shift line only ever said whether a schedule had ARRIVED (`today.shift_proposed(_many)`/`today.shift_none`); it
+never showed a confirmed shift. `docs/DESIGN.md`'s Hoy row promises "readiness + the shift ahead" -- this slice builds
+the second half.
+
+**Calendar-day source**: `body/web.py::_today_local(person)` (line ~169) -- the same function every other
+calendar-day read in this file already uses (habits due, the Turnos strip, the goals week), resolved from the
+person's own `timezone` column, defaulting to `America/Bogota`. Hoy's readiness still uses the latest watch day as
+"now" (unchanged); the new shift block uses `_today_local`, exactly as decision 1 required. No second notion of
+"today" was introduced.
+
+* **`turnos_costo.turno_de_hoy(conn, person_id, hoy)`** (pure read, no web import, same shape as `resumen()`):
+  `{"hoy": <shift or None>, "siguiente": <next confirmed non-off shift within 14 days, or None>, "recuperacion":
+  <None or {"dia": N, "estimado": M}>}`. A shift is `{kind, code, start_local, end_local}`, read straight from the
+  confirmed `shift` table (never `shift_batch_item`). `siguiente` walks `hoy+1 .. hoy+14` and returns the first
+  confirmed row whose kind isn't `off`. `recuperacion` is computed only when today's own shift (if any) isn't
+  `night`: it finds the most recent night block ending before `hoy` (via the existing `bloques_noche`, scanned back
+  `RESUMEN_DIAS`), takes `N = (hoy - fin).days`, and -- only when `N <= MODELO["ventana_post"]` AND `resumen(conn,
+  person_id, hoy)` has a hero figure `M` AND `N <= M` -- returns `{"dia": N, "estimado": M}`. The `N <= M` test
+  (not just `N <= ventana_post`) is what makes the field disappear once the person is already recovered by the
+  estimate, even while still inside the wider 10-day tracking window; a night shift today, or too few historical
+  blocks for `resumen` to produce a hero figure at all, both suppress it outright.
+* **`web._hoy_turno_ctx(t, conn, person_id, today_local)`** turns that dict into display strings using the SAME
+  vocabulary as Turnos' strip (`shift.kind.*`, and the shift's own `kind` as the CSS class -- `.shift.night`,
+  `.shift.day`/`.morning`/`.afternoon`, `.shift.off`/`.other` already existed in `body.css` for this exact purpose,
+  unused until now): "Hoy: Noche · 22:00–06:00" when hours are known, "Hoy: Descanso" for an `off` day (no hours
+  needed), "Próximo: Mañana, jue 13 nov · 06:00–14:00" for the next one (new `web._short_weekday_date`: abbreviated
+  weekday + day + abbreviated month, no year -- the only addition to date formatting), and "Día 2 de ≈ 3 para
+  recuperarte de tus noches" linking `/shifts` for recovery. Five new i18n keys per language
+  (`today.shift_today(_hours)`, `today.shift_next(_hours)`, `today.recovery`).
+* **One macro, `base.html`'s `hoy_turno_card(t, turno, proposed_count)`** (same pattern as `primeros_pasos_card`),
+  replacing the confirmed-state half of `today.html`'s old `<div class="shift">` block and now also used by
+  `soon.html` (guarded by `{% if tab == 'today' %}`, since `soon.html` is shared with the empty Tendencias/Historia
+  screens, which pass neither `turno` nor `proposed_count`) -- the no-watch-data Hoy shows the same shift block as
+  the full one. The "Llegaron tus turnos" / "Llegaron N archivos" link still leads, above the shift lines, exactly
+  as before.
+* **Fix found by the existing gate, not by a new test**: the first full run came back RED on
+  `tests/test_shift_import.py::ShiftWebTest::test_today_page_links_to_shifts_when_batch_proposed` (not in this
+  slice's `touches:`, so not edited) -- it asserts that `today.shift_none` never appears once a batch is proposed.
+  The macro's first draft showed the empty sentence whenever there was no confirmed shift AND no next one,
+  independent of `proposed_count`; that's wrong when a batch just arrived and nothing is confirmed yet. Added
+  `proposed_count == 0` to that line's guard, restoring the original exclusive behaviour for the empty state while
+  still letting a confirmed "Hoy: ..."/"Próximo: ..."/recovery line show alongside the link when one exists.
+
+**Tests** (`tests/test_hoy_turno.py`, 13 tests, `_isolate` first): `turno_de_hoy` directly -- `siguiente` skips an
+`off` day in between, is found at exactly 14 days out and not at 15; recovery reads `{"dia": 1, "estimado": 3}` and
+`{"dia": 2, "estimado": 3}` on days 1 and 2 after a block whose hero (from two earlier, already-resolved blocks) is
+3, is absent on day 4 (`N > M`), absent when a new night shift lands on the very day being asked about, and absent
+with only one block ever recorded (`dias_recuperacion` stays `None`, below `min_bloques`). Through the web layer:
+a night shift today renders `class="shift night"`, "Noche" and "22:00–06:00"; an `off` day renders "Hoy: Descanso";
+a proposed batch's link still renders above the "Hoy: ..." line; the no-data Hoy (`soon.html`) renders the identical
+block; person B's shift never reaches person A's page (own kind/hours absent, A's own `off` state shown instead);
+both es and en render, hours included.
+
+**Gate**: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run once, foreground, on the final tree.
+First run: **RED**, 640 tests, 1 failure (`test_shift_import.py`, described above), 1 pre-existing skip. Fixed per
+the guard above; second run on the same tree: **green**, 640 tests, 1 pre-existing skip (POSIX-only).
+
+**Not merged.** This slice's diff is customer-facing (new copy and markup on Hoy and the no-data Hoy: five new
+strings per language, a new CSS band class wired onto the shift block, "Día N de ≈ M..." linking `/shifts`) -- one
+of merge policy A's three stop conditions. Stopped clean on `feat/body-hoy-turno-1`, `AWAITING_APPROVAL`, for the
+orchestrator to measure in a browser against the demo home before merging.

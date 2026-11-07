@@ -1,3 +1,24 @@
+{% macro hoy_turno_card(t, turno, proposed_count) %}
+<div class="shift{% if turno.clase %} {{ turno.clase }}{% endif %}">
+{% if proposed_count > 1 %}
+  <a class="note" href="/shifts" style="margin:0 0 0 4px;text-decoration:underline">{{ t('today.shift_proposed_many', n=proposed_count) }}</a>
+{% elif proposed_count == 1 %}
+  <a class="note" href="/shifts" style="margin:0 0 0 4px;text-decoration:underline">{{ t('today.shift_proposed') }}</a>
+{% endif %}
+{% if turno.hoy_texto %}
+  <div class="note" style="margin:0 0 0 4px">{{ turno.hoy_texto }}</div>
+{% endif %}
+{% if turno.siguiente_texto %}
+  <div class="note" style="margin:0 0 0 4px">{{ turno.siguiente_texto }}</div>
+{% endif %}
+{% if turno.recuperacion_texto %}
+  <a class="note" href="/shifts" style="margin:0 0 0 4px;text-decoration:underline">{{ turno.recuperacion_texto }}</a>
+{% endif %}
+{% if proposed_count == 0 and not turno.hoy_texto and not turno.siguiente_texto and not turno.recuperacion_texto %}
+  <div class="note" style="margin:0 0 0 4px">{{ t('today.shift_none') }}</div>
+{% endif %}
+</div>
+{% endmacro %}
 {% macro primeros_pasos_card(t, primeros_pasos) %}
 <div class="card">
   <div class="q">{{ t('primeros_pasos.titulo') }}</div>

@@ -196,6 +196,46 @@ def _motivo(conn, person_id: int, bloques: list[Bloque]) -> str:
     return "pocos_bloques"
 
 
+def _shift_on(conn, person_id: int, day_iso: str) -> dict | None:
+    row = conn.execute(
+        "SELECT kind, code, start_local, end_local FROM shift WHERE person_id = ? AND day = ? "
+        "ORDER BY start_local LIMIT 1",
+        (person_id, day_iso),
+    ).fetchone()
+    return None if row is None else {"kind": row["kind"], "code": row["code"],
+                                      "start_local": row["start_local"], "end_local": row["end_local"]}
+
+
+def turno_de_hoy(conn, person_id: int, hoy: date) -> dict:
+    """Hoy's second promise (BODY-HOY-TURNO-1): today's confirmed shift, the next confirmed shift
+    ahead (skipping 'off' days, within 14 days), and -- when the person is still inside a recovery
+    window after their last night block -- how far into it they are. Pure read, all from confirmed
+    `shift` rows and this module's own `resumen()`; nothing stored."""
+    hoy_shift = _shift_on(conn, person_id, hoy.isoformat())
+
+    siguiente = None
+    for i in range(1, 15):
+        candidato = _shift_on(conn, person_id, (hoy + timedelta(i)).isoformat())
+        if candidato is not None and candidato["kind"] != "off":
+            siguiente = candidato
+            break
+
+    recuperacion = None
+    if hoy_shift is None or hoy_shift["kind"] != "night":
+        desde = (hoy - timedelta(RESUMEN_DIAS)).isoformat()
+        hasta = (hoy - timedelta(1)).isoformat()
+        bloques = bloques_noche(conn, person_id, desde, hasta)
+        if bloques:
+            fin = _parse(bloques[-1].fin)
+            n = (hoy - fin).days
+            if n <= MODELO["ventana_post"]:
+                m = resumen(conn, person_id, hoy)["dias_recuperacion"]
+                if m is not None and n <= m:
+                    recuperacion = {"dia": n, "estimado": m}
+
+    return {"hoy": hoy_shift, "siguiente": siguiente, "recuperacion": recuperacion}
+
+
 def resumen(conn, person_id: int, hoy: date | None = None) -> dict:
     """Blocks of the last RESUMEN_DIAS days with their cost and recovery; the hero `dias_recuperacion`
     is the median recovery over blocks that have a figure, only when at least MODELO['min_bloques'] do;
