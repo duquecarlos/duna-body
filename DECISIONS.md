@@ -876,3 +876,25 @@ change, no cross-repo contract change, but
 merge policy A's "customer-facing bytes" condition trips on its own. Per this slice's own spec ("Customer-
 facing bytes: stop on the branch clean and report AWAITING_APPROVAL unless merge policy says otherwise"),
 this stops on the branch, committed, unmerged, for approval.
+
+## BODY-SIN-FRICCION-1-M -- land BODY-SIN-FRICCION-1 (2026-11-06)
+
+Approved by the orchestrator under `ORCH-CARLOS-DELEGATES-TIER-1-1` after reviewing the diff; merged unchanged.
+No code changed in this slice: only this ledger entry was added before the merge. Approval reasoning: the two
+deviations recorded above (trends' empty branch split into no-data vs too-few-days with a days-still-needed
+count, and the history fallback's wrong copy fixed; the empty-metric picker branch kept as defensive and
+tested by patching) were reviewed and accepted. Measured in a real browser at 375 px on the branch with the
+service worker cleared: `/goals/new` has 16 visible controls, none under 44 px, the optional "Add a habit"
+block with title/times/per/context, no horizontal scroll; `/day` for a date with no data says the sync runs
+on its own and names the last sync date.
+
+Branch `feat/body-sin-friccion-1` was at `3f490f925470374d7b3e05272eb2d62b3ce8641f`, cut from `main` at
+`03e476e20869a2e2efe8e663919e34de25c72f41`. `main` had not moved since -- its tip was still
+`03e476e20869a2e2efe8e663919e34de25c72f41`, equal to the branch's merge-base with it -- so nothing was merged
+forward into the branch first.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run once on the final tree (this entry's
+own commit, after the append above).
+
+Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-sin-friccion-1` into `main`
+following this entry.
