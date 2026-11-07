@@ -1468,3 +1468,27 @@ page; not done here because neither file is in this slice's `touches:`.
 
 Commits on `feat/body-privacidad-1`: implementation and ledger, not yet merged -- the gate above is red, so
 no merge was attempted regardless of merge-policy classification.
+
+## BODY-PRIVACIDAD-1-M -- land BODY-PRIVACIDAD-1 (2026-11-06)
+
+Approved by the orchestrator under ORCH-CARLOS-DELEGATES-TIER-1-1 to fold in the fix named above as
+BODY-PRIVACIDAD-GATE-FIX-1 and merge. `main` had not moved since the branch was cut (its tip and the
+branch's merge-base both read `1227029b289a65681a4eecd0bd1fee91730b97e2`), so no merge-forward was needed.
+
+In `tests/test_cuenta_rp.py`'s `FullSignInTest.test_signed_in_person_sees_their_own_today_page` and
+`tests/test_person_scope.py`'s
+`HostedPersonScopeTest.test_two_sessions_see_only_their_own_goals_and_404_on_the_others_id`, each now calls
+`privacidad.record_consent(conn, person_id)` for the signed-in person(s) before the assertion that expects a
+normal page -- the fix keeps each test's subject (session and person scoping) and only supplies the consent
+the new gate requires. Added one new case,
+`FullSignInTest.test_signed_in_person_without_consent_is_redirected_to_consentimiento`, asserting the gate's
+own effect on sign-in: a freshly signed-in person with no consent row is redirected to
+`/privacidad/consentimiento?return_to=...`. No other file changed.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 277 tests, OK, run once on the final
+tree before this merge (276 recorded by BODY-PRIVACIDAD-1 plus the one new case above, all green).
+
+Slice commit: `f5759815a3dbb91f706525cfd98fd90a9caab4bf` on `feat/body-privacidad-1`.
+
+Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-privacidad-1` into `main`
+following this entry.
