@@ -1,0 +1,20 @@
+[Unit]
+Description=Body app web server
+After=network.target
+
+[Service]
+Type=simple
+User=duna-body
+EnvironmentFile=/srv/duna/env/body.env
+Environment=BODY_HOME=/srv/duna/data/body
+WorkingDirectory=/srv/duna/repos/duna-body
+ExecStart=/srv/duna/repos/duna-body/.venv/bin/python -m body.web --port 8770
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/srv/duna/data/body
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

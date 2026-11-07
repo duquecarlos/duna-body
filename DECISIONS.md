@@ -1217,3 +1217,63 @@ step.
 
 Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 213 tests, OK (212 at the branch tip plus
 the one new `test_acr_is_a_rank_not_an_equality` case), run once on the final tree before this merge.
+
+## BODY-HOST-ENTRY-1 -- Body's deploy shape for duna-prod-1, text plus `--dry-run` only (2026-11-06)
+
+Carries out BODY-HOST-OBS-1 (OBSERVED, 2026-11-06: no deploy path existed) and BODY-HOSTING-PLAN-1 step 8a,
+built to Main's `host-deploy-v1` contract and its sensitive-data amendment. Nothing here ran on the host:
+every file was written and checked as text, and the gate never executes a `.sh` file or the entry script.
+Carlos installs the entry script himself, and every deploy still waits for his go.
+
+New files, all under `deploy/host/`: the root-owned entry script `duna-deploy-body` (`status` /
+`deploy [--dry-run]`, EUID-0 refusal and a fixed `PATH=` before anything else, a closed subcommand
+allowlist with `backup` reserved for BODY-HOST-BACKUP-1 and anything else a usage line plus exit 2), its
+sudoers line `duna-deploy-body.sudoers` (exactly `carlos ALL=(root) NOPASSWD:
+/usr/local/sbin/duna-deploy-body`), the product script `body-deploy.sh` that it `exec`s after the pull
+(builds `.venv` and installs the systemd units and the Caddy site as root, `runuser -u "$owner" --` for
+every git/pip/venv call, rolls back to `--before-sha` -- captured before the pull, validated as 40 hex
+here -- and restarts on any failed step), the five systemd units `body-web.service`,
+`body-pull.service`/`.timer` (daily 09:30 America/Bogota, pull then shift import), `body-vida.service`/
+`.timer` (Sundays 18:00, pull then `vida_export --current`, mirroring `scripts/install-daily-sync.ps1`'s
+own module entry points), `Caddyfile.body` (`reverse_proxy 127.0.0.1:8770`, security headers, no `log`
+directive, and `respond /login/cuenta/logout-token 404` so Cuenta's back-channel stays loopback-only),
+`body.env.example` (every variable name from decision 7 of the slice brief, blank except the two fixed
+URLs and the R2 bucket name), and `README.md` with Carlos's install lines. `CLAUDE.md`'s Tier 1 sentence
+now opens with `deploy/` ("what runs as root on the host"), ahead of the Garmin adapter.
+
+**Layout decided**: repo at `/srv/duna/repos/duna-body`, owned by Carlos's own host user (every git/pip/
+venv call in both scripts runs as that owner via `runuser`, never as root); system user `duna-body`
+(created by the entry script with `useradd --system --no-create-home --shell /usr/sbin/nologin` if
+missing) runs the three long-lived/scheduled services and owns `/srv/duna/data/body` (= `BODY_HOME`),
+mode 0700, created by the entry script and never deleted by it; env file at `/srv/duna/env/body.env`
+(root:duna-body, 0640, written by Carlos, never read back by either script -- neither contains `cat`,
+`echo`, `printf` or `source` against it). The web service binds `127.0.0.1:8770` only (no `--lan`); Caddy
+is the only path in. The health check hits `/healthz`, confirmed already present (`git log -S healthz`
+traces it to BODY-CUENTA-RP-1's own `d11d55c`), so the product script needs no fallback to `/`.
+
+**What stays by Carlos's hand**: installing the entry script and its sudoers line (`sudo install` +
+`sudo visudo -c`), writing `/srv/duna/env/body.env` from the example, the one-time copy of
+`Caddyfile.body` before the very first deploy (so Caddy has somewhere to proxy to), and triggering every
+`deploy` himself -- nothing here is wired to run on its own.
+
+**Assumptions for Main to confirm**: the private GitHub repo name is `duna-body` (one constant changes if
+Carlos names it otherwise); the host's main Caddyfile imports `/etc/caddy/sites/*`, as the README states.
+
+`tests/test_host_deploy.py` (`tests._isolate` imported first) checks all of this at the text level, no
+bash execution: the usage allowlist and exit-2 catch-all, the EUID check ahead of everything else
+(including the `PATH=` reset), every `git -C` call in both scripts prefixed by `runuser -u "$owner" --`,
+`--before-sha` captured before the pull and validated as 40 hex, the bare `exec` of the product script,
+every `systemctl`/`install`/`useradd` wrapped by a `run()` helper that echoes instead of executing (pip's
+own `install` subcommand excluded, since it is not the coreutils command the rule means), no dump of the
+env file, no `--pty`, no `rm` anywhere in either script, the sudoers file's exact single line, the
+README's install lines naming files that exist, each unit's `User=duna-body`/`EnvironmentFile=`/port
+8770/no `--lan`, the Caddyfile's proxy target and backchannel 404, `body.env.example`'s exact name set
+and blank-except-fixed values, and LF line endings on every file under `deploy/host/`.
+
+No schema or migration change; no cross-repo contract change (nothing here defines or consumes a DTO
+another repository mirrors). This touches root-run deploy code under Tier 1, so per this slice's own
+spec it stops `AWAITING_APPROVAL` on the branch clean rather than merging on green, whatever merge policy
+A's three conditions would otherwise say.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 241 tests, OK (213 at the branch tip
+plus 28 new in `tests/test_host_deploy.py`), run once on the final tree.

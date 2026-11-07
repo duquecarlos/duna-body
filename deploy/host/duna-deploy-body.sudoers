@@ -1,0 +1,1 @@
+carlos ALL=(root) NOPASSWD: /usr/local/sbin/duna-deploy-body

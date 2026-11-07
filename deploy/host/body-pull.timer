@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily Garmin pull + shift import (09:30 America/Bogota)
+
+[Timer]
+OnCalendar=*-*-* 09:30:00 America/Bogota
+Persistent=true
+
+[Install]
+WantedBy=timers.target
