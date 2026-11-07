@@ -275,6 +275,9 @@ def logout(request: Request):
     return resp
 
 
+_BACKCHANNEL_PROXY_HEADERS = ("x-forwarded-for", "forwarded", "x-forwarded-host", "x-real-ip")
+
+
 @app.post("/login/cuenta/logout-token")
 async def backchannel_logout(request: Request):
     if not cuenta.hosted():
@@ -282,6 +285,10 @@ async def backchannel_logout(request: Request):
     host = request.client.host if request.client else None
     if host not in ("127.0.0.1", "::1"):
         raise HTTPException(403)
+    if any(h in request.headers for h in _BACKCHANNEL_PROXY_HEADERS):
+        # Behind Caddy, a proxied request also arrives from 127.0.0.1 -- the client-address
+        # check alone is not enough. Caddy's reverse_proxy adds X-Forwarded-For.
+        raise HTTPException(404)
     f = await _form(request)
     conn = db.connect()
     db.init(conn)

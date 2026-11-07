@@ -363,6 +363,23 @@ class BackchannelLogoutTest(CuentaRpTestCase):
         lb = self._loopback_client()
         self.assertEqual(lb.post("/login/cuenta/logout-token", data={"logout_token": token}).status_code, 400)
 
+    def test_loopback_with_x_forwarded_for_refused_and_no_session_ended(self):
+        self._sign_in(sid="sid-proxy")
+        token = self.issuer.logout_token(sub=None, sid="sid-proxy", jti="jti-proxy")
+        lb = self._loopback_client()
+        r = lb.post("/login/cuenta/logout-token", data={"logout_token": token},
+                    headers={"X-Forwarded-For": "1.2.3.4"})
+        self.assertEqual(r.status_code, 404)
+        self.assertEqual(self._db_count("SELECT COUNT(*) FROM sesion WHERE cuenta_sid = ?", "sid-proxy"), 1)
+
+    def test_loopback_without_proxy_headers_and_valid_token_still_200(self):
+        self._sign_in(sid="sid-clean")
+        token = self.issuer.logout_token(sub=None, sid="sid-clean", jti="jti-clean")
+        lb = self._loopback_client()
+        r = lb.post("/login/cuenta/logout-token", data={"logout_token": token})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self._db_count("SELECT COUNT(*) FROM sesion WHERE cuenta_sid = ?", "sid-clean"), 0)
+
 
 class VincularCuentaTest(unittest.TestCase):
     def setUp(self):
