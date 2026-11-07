@@ -986,3 +986,44 @@ single-person install), and no cross-repo contract change (`vida_export.week_sec
 unchanged; only its Python signature gained a required parameter). All three of merge policy A's conditions
 pass, so this merges on green without a separate approval step, unlike BODY-ASISTENTE-REGISTRO-1 and
 BODY-SIN-FRICCION-1 above, which each tripped one.
+
+## BODY-REQUEST-LOG-SCRUB-1 -- a request log that cannot carry a health figure (2026-11-06)
+
+Premise re-verified (BODY-HOST-OBS-1): uvicorn still runs with `access_log=False` and `log_level="warning"` and no
+request-logging middleware existed, so a host operator had no way to see that requests were failing.
+
+**`body/request_log.py`** (new): `RequestLogMiddleware`, a Starlette `BaseHTTPMiddleware`. On every request it logs
+one line to the `body.request` logger: `"%s %s %d %dms"` (method, the matched route's path TEMPLATE from
+`request.scope["route"].path`, status code, duration in ms) -- e.g. `GET /day/{day} 200 3ms`. No route matched
+(a 404 on an unknown path) logs `-` as the template, e.g. `GET - 404`. The query string, request body, headers,
+cookies, client IP and user agent never reach the logger, because the line is built only from the method, the
+route object and the response's own status code -- none of those can hold a value from the request. An unhandled
+exception raised by the route is caught in the middleware's own `try/except` around `call_next`: it logs
+`"%s %s 500 %s"` (method, template, the exception's class name only -- never `str(exc)`, never a traceback) and
+returns a plain `PlainTextResponse("Internal Server Error", 500)` built fresh in the middleware, so no exception
+text reaches the response body either. Because `add_middleware` places this middleware between Starlette's
+`ServerErrorMiddleware` (outermost) and `ExceptionMiddleware`/the router (innermost), swallowing the exception here
+means nothing is re-raised to uvicorn's own traceback logger -- `ServerErrorMiddleware` never sees it.
+
+**`body/web.py`**: `app.add_middleware(RequestLogMiddleware)` right after the `FastAPI()` app is created. `main()`
+now configures the `body.request` logger once, at INFO, with a `StreamHandler(sys.stderr)` (stderr is where
+`_ensure_streams()` already points pythonw's otherwise-missing stream, and where systemd's journal picks it up on
+a host) and `propagate = False` so it never doubles through the root logger. `access_log=False` and
+`log_level="warning"` on `uvicorn.run` are unchanged -- no log file is written anywhere.
+
+**Tests** (`tests/test_request_log.py`, new, 5 tests, `_isolate` first, invented demo values, no real health
+data): `GET /day/<day>?x=<value>` and `GET /goals/<id>?x=<value>` each log exactly one line matching
+`^(GET|POST) \S+ \d{3} \d+ms$`, containing the route template (`/day/{day}`, `/goals/{goal_id}`) and neither the
+date, the goal id, nor the query value; `POST /goals/new` with `target_value=73.123` logs `/goals/new` and never
+`73.123`; `GET` on an unmatched path logs `GET - 404`; patching `web._delta` to raise `ValueError("73.123")` inside
+`GET /day/<day>` yields a 500 response whose body does not contain `73.123`, and a log line containing `/day/{day}`,
+`500` and `ValueError` but not `73.123`.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 165 tests, OK (160 before this slice, 5 added
+here), run once on this slice's final tree.
+
+This slice's diff has no schema or migration change (no edit to `body/db.py`), no customer-facing bytes (the 500
+page's text, `"Internal Server Error"`, is byte-for-byte what Starlette's own `ServerErrorMiddleware` already
+returned for an unhandled exception with no custom handler registered; no template, no i18n string and no 200-path
+screen changed), and no cross-repo contract change (nothing here is read by another repository). All three of
+merge policy A's conditions pass, so this merges on green without a separate approval step.
