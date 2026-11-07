@@ -1380,3 +1380,24 @@ for the same reason BODY-HOST-ENTRY-1 did.
 
 Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 263 tests, OK (254 at the branch tip
 plus 9 new in `tests/test_host_deploy.py`), run once on the final tree.
+
+## BODY-HOST-ENTRY-2-M -- land BODY-HOST-ENTRY-2 unchanged (2026-11-06)
+
+Approved by the orchestrator under `ORCH-CARLOS-DELEGATES-TIER-1-1` after reviewing the diff: the
+`install_caddy_site_if_changed` function follows Lugares' pattern exactly (`cmp -s` guard, `.bak`, `caddy
+validate`, restore or remove on failure, no reload after a failed validate); the venv check refuses with
+"python3-venv is missing: run once on the host: sudo apt install python3-venv" before creating the venv;
+`useradd` carries `--user-group`; `README.md` carries Main's host facts. Approved as written, merged
+unchanged -- no code change in this slice.
+
+`main` had not moved since the branch was cut: `git merge-base HEAD main` and `git rev-parse main` both read
+`998a0a718d9420f1be33dabee4beec5f6b391614`, matching the branch's recorded base, so no merge-forward was
+needed.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 263 tests, OK, run once on the final
+tree before this merge (same count BODY-HOST-ENTRY-2 recorded; this entry's own run reconciled against it).
+
+Slice commit: `aa83370c61166bcaa0f0f221f0f232e40bed457f` on `feat/body-host-entry-2`.
+
+Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-host-entry-2` into `main`
+following this entry.
