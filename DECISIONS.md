@@ -3633,3 +3633,74 @@ landed BODY-TURNOS-ENLACES-1 itself (never merged while `AWAITING_APPROVAL`).
 **Merge.** The diff changes customer-facing bytes (new Turnos row links, the Tendencias back link, Día's new
 block-position line, all in both languages) with no schema change and no cross-repo contract change. Merge
 policy A's customer-bytes condition trips, so this slice stops before the merge with `AWAITING_APPROVAL`.
+
+## BODY-CONEXIONES-CERRADAS-1 -- every sqlite connection the app opens is closed deterministically (2026-11-07)
+
+The gate's ~1,300 `ResourceWarning` lines (orchestrator's measurement on `main` 4ef4186) were almost entirely
+one opening site: `body/web.py`'s `_ctx()`, called at the top of nearly every route, which opened a connection
+and returned it for the route to use but never closed it. Fixed without touching any template, i18n string or
+response body:
+
+1. **`body/web.py`.** `_ctx()` now stores the connection it opens in a `contextvars.ContextVar`
+   (`_REQUEST_CONN`) instead of handing out one the caller must remember to close. Two new decorators,
+   `_cierra_conexion` (sync routes) and `_cierra_conexion_async` (`async def` routes), wrap the 42 route
+   functions that call `_ctx()` and close whatever connection ended up in that var once the route returns --
+   in the same call, same thread, as the one that opened it. That last point is deliberate: sqlite3
+   connections are thread-affine (`check_same_thread` defaults to `True`, and `body/db.py` is Tier 1, not
+   touched here), and FastAPI may run a sync route in any worker thread, so a middleware or a separate
+   `Depends(..., yield)` dependency closing the connection later could run on a *different* thread than the
+   one that opened it and raise. Wrapping the route call itself keeps open and close in the same call.
+   `asistente_preguntar` (`/asistente/preguntar`) is deliberately NOT wrapped: it returns a `StreamingResponse`
+   whose generator keeps using the connection after the route function itself returns, and already closes it
+   correctly in its own `finally`. `login_start` (`/login`, a plain `db.connect()` outside `_ctx()`) now closes
+   in a `try/finally` instead of a single unconditional call after the line that can raise.
+2. **`body/pull.py`, `body/demo.py`, `body/vincular_cuenta.py`, `body/agente/precios.py`.** None of these were
+   contributing to the gate's count (nothing in the suite exercises their `main()`/`__main__` paths), but each
+   opened a connection without closing it on every path: `pull.main()` never closed its connection at all;
+   `vincular_cuenta.main()` likewise; `demo.main()` and `precios.py`'s `__main__` block closed only on the
+   success path. All four now close in `try/finally`, per decision 1's rule (any function that opens a
+   connection it does not return closes it on every path) -- `pull.main()` split its body into `_run(conn, a)`
+   so the `try/finally` wraps the whole thing without re-indenting it.
+3. **`tests/_db.py`** (new): a helper, `open_conn(case, path=None)`, for the next slice to adopt --
+   `db.connect(path)` plus `case.addCleanup(conn.close)`. No existing test module was edited to use it, per
+   this slice's scope.
+4. **The guard** (`tests/test_conexiones_cerradas.py`, new): exercises 11 of the now-decorated routes (`/`,
+   `/goals`, `/goals/new`, `/trends`, `/history`, `/settings`, `/shifts`, `/shifts/como`, `/ayuda`,
+   `/privacidad`, `/ajustes/asistente`) through the FastAPI test client inside
+   `warnings.catch_warnings(record=True)` with `gc.collect()` before and after, and asserts no `ResourceWarning`
+   mentioning `sqlite3.Connection` was recorded. Deterministic by construction (the fix closes explicitly, not
+   by relying on GC to eventually collect a leaked connection) -- `gc.collect()` is belt-and-suspenders, not
+   load-bearing, so no GC-timing flake was a concern.
+
+**Not fixed, out of scope (not in `touches:`), for the next slice to pick up:**
+- `body/shift_import.py:330` (Tier 1) -- 1 occurrence in the after-measurement below.
+- Every remaining occurrence traces to a **test module** opening a connection in `setUp`/a helper without an
+  `addCleanup`/`tearDown` close (counts measured on the after tree, same tracemalloc run as the after figure
+  below): `test_shift_import.py` 33, `test_turnos_costo.py` 29, `test_dispositivo.py` 26, `test_history.py` 22,
+  `test_turnos_enlaces.py` 22, `test_tutoriales_puertas.py` 22, `test_agente_propuestas.py` 21, `test_goals.py`
+  18, `test_agente_bucle.py` 17, `test_privacidad.py` 16, `test_agente_registro.py` 14, `test_garmin_host.py`
+  14, `test_sin_friccion.py` 14, `test_hoy_turno.py` 13, `test_tendencias_todas.py` 13, `test_vida_export.py`
+  13, `test_ejes_fechas.py` 11, `test_nivel_datos_ui.py` 10, `test_cuenta_schema.py` 9, `test_goals_web.py` 9,
+  `test_person_scope.py` 9, `test_agente_precios.py` 8, `test_asistente_panel.py` 7, `test_agente_proveedores.py`
+  6, `test_readiness.py` 6, `test_request_log.py` 5, `test_vo2max.py` 5, `test_cuenta_rp.py` 4,
+  `test_profile.py` 2, `test_borrar_reauth.py` 1, `test_household.py` 1, `test_pipeline.py` 1,
+  `test_static_version.py` 1. `tests/_db.py` (above) is offered for these to adopt.
+
+**Measure**, both counted by me, both from
+`.venv/Scripts/python.exe -X tracemalloc=5 -W always::ResourceWarning -m unittest discover tests -t .`
+(a diagnostic run, not the gate -- it names each opening site; counts are of distinct `ResourceWarning:
+unclosed database` occurrences, not output lines): before (this slice's starting tree) 661, all 258 from
+`body/web.py:155` (`_ctx()`) and 1 from `body/web.py:280` (`login_start`), the rest already test-module/
+`shift_import.py` occurrences as listed above; after (final tree) 403, zero tracing to any `body/` module in
+`touches:` -- every occurrence in `touches:` is gone; the remainder is the out-of-scope list above (one test
+module, `test_vida_export.py`, shows a 1-occurrence shift between runs at a different line in the same file --
+test order/GC-timing noise, not a regression, since no `touches:` module appears at all).
+
+**Gate**, run once on the final tree, plain command (no diagnostic flags):
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -- 749 tests, `OK (skipped=1)`, 398 `ResourceWarning:
+unclosed database` occurrences remain in the gate's own (non-tracemalloc) output (796 lines mentioning
+`ResourceWarning`, down from the orchestrator's ~1,300), all tracing to the same out-of-scope list above.
+
+**Merge.** No schema or migration change, no customer-facing byte changed (no template, static file, i18n
+string or response body touched), no cross-repo contract change. Merge policy A's three conditions all clear,
+so this slice merges on green without waiting.
