@@ -797,3 +797,19 @@ policy A's first condition. No customer-facing bytes (no template, no screen, no
 no cross-repo contract change, but failing one condition is enough: per this slice's own spec ("Schema
 change: stop on the branch clean and report AWAITING_APPROVAL (merge policy A) unless the policy says
 otherwise") this stops on the branch, committed, unmerged, for approval.
+
+## BODY-ASISTENTE-REGISTRO-1-M -- landing BODY-ASISTENTE-REGISTRO-1 unchanged (2026-11-06)
+
+Approved by the orchestrator under `ORCH-CARLOS-DELEGATES-TIER-1-1` after reviewing the diff; merged unchanged.
+No code changed in this slice: only this ledger entry was added before the merge.
+
+Branch `feat/body-asistente-registro-1` was at `3a01e83621ae085227a140bc0d6131cb3ec19cb9`, cut from `main` at
+`62e0770901c97bab68d0ac7d3e7d866c7eaa08b0`. `main` had not moved since -- its tip was still
+`62e0770901c97bab68d0ac7d3e7d866c7eaa08b0`, equal to the branch's merge-base with it -- so nothing was merged
+forward into the branch first.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run once on the final tree (this entry's
+own commit, after the append above) -- 136 tests, OK.
+
+Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-asistente-registro-1` into `main`
+following this entry.
