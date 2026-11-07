@@ -1401,3 +1401,68 @@ Slice commit: `aa83370c61166bcaa0f0f221f0f232e40bed457f` on `feat/body-host-entr
 
 Merge commit: recorded in git history as the `--no-ff` merge of `feat/body-host-entry-2` into `main`
 following this entry.
+
+## BODY-PRIVACIDAD-1 -- consent, export and delete-all (2026-11-06)
+
+Carries out BODY-HOST-OBS-1 (OBSERVED: no consent, export or delete existed) and BODY-HOSTING-PLAN-1 step 6,
+to Main's sensitive-data amendment rule 6 (Ley 1581 dato sensible). Added `body/privacidad.py`: consent
+version `consentimiento-v1` (es/en text in `body/i18n/*.json`, short and plain -- what Body keeps, why,
+where, the person's rights, "this is information, not medical advice"); `export_person(conn, person_id)`;
+`delete_person(conn, person_id)`.
+
+Gate (`body/identity.py`, hosted mode only -- local mode never gates): after resolving a session,
+`current_person_id` checks `privacidad.has_consented` for the current version; a page GET with none raises
+`ConsentRequired`, which `body/web.py` turns into a 303 to `/privacidad/consentimiento?return_to=<path>`; a
+POST answers 403. Only `/privacidad/consentimiento` itself is exempt -- `/healthz`, static files and the
+other sign-in routes never call `current_person_id` at all, so they needed no exemption.
+
+Routes (`body/web.py`): `GET`/`POST /privacidad/consentimiento` (accept stores the row and 303s to
+`return_to`; decline runs the same sign-out as `/logout` -- nothing is kept beyond the person row Cuenta's
+sign-in already created), `GET /privacidad` (Ajustes' new "Privacidad" row: consent date, download, delete),
+`GET /privacidad/exportar` (`Content-Disposition: attachment; filename="body-<date>.json"`, no figure in the
+URL), `POST /privacidad/borrar` (requires the typed word, `BORRAR` es / `DELETE` en, from i18n).
+
+Export shape: `{"formato": "body-export-v1", "exportado_en", "persona", "hogar", "vida": {goals, habits,
+habit_checks, goal_checks, plans, shifts, shift_batches}, "dias", "actividades", "sueno",
+"sincronizaciones", "consentimientos", "ajustes"}`. Generic coverage, checked by
+`ExportTest.test_every_person_table_is_exported_or_excepted`: every table with a literal `person_id` column
+(found via `PRAGMA table_info` over `sqlite_master`) must be in `privacidad.FULLY_HANDLED_TABLES`,
+`PARTIAL_EXPORT_TABLES` (`raw_payload` -- kind/date only, never the stored JSON payload) or
+`NEVER_EXPORTED_TABLES` (`sesion`) -- a new person table that is in none of the three fails that test. This
+walk also caught `body/household.py`'s `hogar_local` (not in `touches`, not edited, only called, the same
+way `body/db.py` and `body/cuenta.py` are) -- it is lazily created, so both `export_person` and
+`delete_person` run `household.SCHEMA` first to guarantee it exists before the generic discovery looks for
+person tables.
+
+Delete-all: one transaction, foreign keys ON. Deletes every row this person owns, clears
+`habit.assignee_person_id` where it points at them, and removes every `habit_check`/`goal_check` tied to a
+goal THEY created regardless of who logged it -- a shared household goal they made disappears for every
+member too, matched by `DeleteAllTest.test_right_word_deletes_every_row_of_a_and_takes_bs_check_on_as_shared_goal`
+(the other member's own goal, habit and daily metrics are untouched). Hosted redirects through Cuenta's
+logout; local re-creates the one local person empty on the next request via `db.init`'s existing `INSERT OR
+IGNORE`. `_borrar_fuera_de_bd(person_id)` is a named, currently-empty call point for BODY-TOKEN-ENCRYPT-1 to
+add deleting this person's Garmin token.
+
+Registry guard (`tests/test_agente_registro.py`): the three new GET routes added to `ROUTE_TOOL`, mapped to
+`None` -- privacy plumbing the assistant never reads or triggers.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 276 tests, **2 failures**, run once on
+the final tree:
+
+- `tests.test_cuenta_rp.FullSignInTest.test_signed_in_person_sees_their_own_today_page`
+- `tests.test_person_scope.HostedPersonScopeTest.test_two_sessions_see_only_their_own_goals_and_404_on_the_others_id`
+
+Both fail for the same reason: each signs a hosted person in (or opens a session directly via
+`cuenta.create_session`) and then asserts a normal page renders -- true before this slice, false now, since
+a hosted person who has never accepted `consentimiento-v1` is exactly who the new gate is built to redirect.
+This is the designed behavior in decision 2, not a bug; the two tests assert pre-consent-gate behavior from
+BODY-CUENTA-RP-1 and BODY-PERSON-SCOPE-1. Neither `tests/test_cuenta_rp.py` nor `tests/test_person_scope.py`
+is in this slice's `touches:`, and the instructions governing this dispatch are explicit that a diff stays
+inside `touches:` and a file needed outside it means stop, not widen scope alone. The fix is small and
+mechanical -- in each, call `privacidad.record_consent(conn, person_id)` for the signed-in person(s) before
+the assertions that expect a normal page -- but it touches two files this slice was not approved to edit, so
+it is left for the dispatcher to fold into a fast-follow (or to re-dispatch this slice with `touches`
+widened to include them).
+
+Commits on `feat/body-privacidad-1`: implementation and ledger, not yet merged -- the gate above is red, so
+no merge was attempted regardless of merge-policy classification.

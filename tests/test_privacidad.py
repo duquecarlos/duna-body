@@ -1,0 +1,244 @@
+"""BODY-PRIVACIDAD-1: consent, export and delete-all (host-deploy-v1-amendment-sensitive-data rule
+6, Ley 1581 dato sensible; BODY-HOSTING-PLAN-1 step 6). Invented demo data only, no real health
+figures.
+"""
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+from tests._isolate import TMP  # noqa: F401  (must come before any body import)
+
+from fastapi.testclient import TestClient
+
+from body import config, cuenta, db, goals, household, identity, privacidad, web
+from tests.test_cuenta_rp import CuentaRpTestCase, ISSUER, SUB
+
+
+class HostedConsentGateTest(CuentaRpTestCase):
+    def test_page_get_redirects_to_consent_when_none_accepted(self):
+        self._sign_in(return_to="/")
+        r = self.client.get("/")
+        self.assertEqual(r.status_code, 303)
+        self.assertTrue(r.headers["location"].startswith("/privacidad/consentimiento?return_to="))
+
+    def test_post_without_consent_is_403(self):
+        self._sign_in()
+        r = self.client.post("/goals/1/pause")
+        self.assertEqual(r.status_code, 403)
+
+    def test_healthz_and_logout_still_work_without_consent(self):
+        self._sign_in()
+        self.assertEqual(self.client.get("/healthz").status_code, 200)
+        self.assertEqual(self.client.post("/logout").status_code, 303)
+
+    def test_accepting_stores_the_version_and_then_the_original_page_renders(self):
+        self._sign_in(return_to="/goals")
+        r1 = self.client.get("/goals")
+        self.assertEqual(r1.status_code, 303)
+        location = r1.headers["location"]
+        self.assertTrue(location.startswith("/privacidad/consentimiento?"))
+        return_to = parse_qs(urlparse(location).query)["return_to"][0]
+
+        r2 = self.client.get(location)
+        self.assertEqual(r2.status_code, 200)
+
+        r3 = self.client.post("/privacidad/consentimiento", data={"decision": "acepto", "return_to": return_to})
+        self.assertEqual(r3.status_code, 303)
+        self.assertEqual(r3.headers["location"], return_to)
+        self.assertEqual(
+            self._db_count("SELECT COUNT(*) FROM consentimiento WHERE version = ?", privacidad.CONSENT_VERSION), 1
+        )
+
+        r4 = self.client.get("/goals")
+        self.assertEqual(r4.status_code, 200)
+
+    def test_declining_signs_out_and_keeps_nothing_new(self):
+        self._sign_in(return_to="/")
+        location = self.client.get("/").headers["location"]
+        return_to = parse_qs(urlparse(location).query)["return_to"][0]
+
+        r = self.client.post("/privacidad/consentimiento", data={"decision": "no", "return_to": return_to})
+        self.assertEqual(r.status_code, 303)
+        self.assertTrue(r.headers["location"].startswith(f"{ISSUER}/oauth/logout?"))
+        self.assertEqual(self._db_count("SELECT COUNT(*) FROM sesion"), 0)
+        self.assertEqual(self._db_count("SELECT COUNT(*) FROM consentimiento"), 0)
+
+
+class ConsentTextLanguageTest(CuentaRpTestCase):
+    def test_both_languages_render_the_consent_text(self):
+        self._sign_in()
+        conn = db.connect()
+        person_id = conn.execute("SELECT id FROM person WHERE cuenta_sub = ?", (SUB,)).fetchone()["id"]
+
+        db.set_language(conn, "es", person_id)
+        r_es = self.client.get("/privacidad/consentimiento")
+        self.assertEqual(r_es.status_code, 200)
+        self.assertIn("Antes de empezar", r_es.text)
+
+        db.set_language(conn, "en", person_id)
+        r_en = self.client.get("/privacidad/consentimiento")
+        self.assertEqual(r_en.status_code, 200)
+        self.assertIn("Before we start", r_en.text)
+        conn.close()
+
+
+class LocalModeNoGateTest(unittest.TestCase):
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "local.db"
+        conn = db.connect()
+        db.init(conn)
+        conn.close()
+        self.client = TestClient(web.app, follow_redirects=False)
+
+    def test_no_gate_in_local_mode(self):
+        self.assertEqual(self.client.get("/").status_code, 200)
+
+    def test_consent_routes_404_in_local_mode(self):
+        self.assertEqual(self.client.get("/privacidad/consentimiento").status_code, 404)
+        self.assertEqual(self.client.post("/privacidad/consentimiento").status_code, 404)
+
+
+def _override_person(tc: unittest.TestCase, person_id: int) -> None:
+    tc.addCleanup(web.app.dependency_overrides.clear)
+    web.app.dependency_overrides[identity.current_person_id] = lambda: person_id
+
+
+class ExportTest(unittest.TestCase):
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "export.db"
+        self.conn = db.connect()
+        db.init(self.conn)
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        _override_person(self, 1)
+        self.client = TestClient(web.app, follow_redirects=False)
+
+    def test_export_has_attachment_header_and_only_this_persons_rows(self):
+        db.set_metric(self.conn, "2026-11-01", "resting_hr", 55.0, "garmin", 1)
+        db.set_metric(self.conn, "2026-11-01", "resting_hr", 60.0, "garmin", 2)
+        gid_a = goals.propose(self.conn, 1, "A's goal", "2026-11-01", metric_key="resting_hr", direction="lower",
+                              target_value=45.0, baseline_value=55.0, deadline="2027-01-01")
+        goals.propose(self.conn, 2, "B's goal", "2026-11-01", metric_key="resting_hr", direction="lower",
+                      target_value=45.0, baseline_value=55.0, deadline="2027-01-01")
+        self.conn.execute(
+            "INSERT INTO sesion (id_hash, person_id, created_at, last_seen_at, expires_at) VALUES "
+            "('h1', 1, '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00', '2099-01-01T00:00:00+00:00')"
+        )
+        self.conn.commit()
+
+        r = self.client.get("/privacidad/exportar")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('attachment; filename="body-', r.headers["content-disposition"])
+
+        data = json.loads(r.text)
+        self.assertEqual(data["formato"], "body-export-v1")
+        titles = {g["title"] for g in data["vida"]["goals"]}
+        self.assertIn("A's goal", titles)
+        self.assertNotIn("B's goal", titles)
+        days = {d["day"] for d in data["dias"]}
+        self.assertIn("2026-11-01", days)
+        self.assertEqual(len(data["dias"]), 1)
+        self.assertNotIn("sesion", data)
+
+    def test_every_person_table_is_exported_or_excepted(self):
+        self.conn.executescript(household.SCHEMA)
+        found = privacidad.person_tables(self.conn)
+        accounted = (
+            privacidad.FULLY_HANDLED_TABLES | privacidad.PARTIAL_EXPORT_TABLES | privacidad.NEVER_EXPORTED_TABLES
+        )
+        self.assertEqual(found, accounted)
+
+
+class DeleteAllTest(unittest.TestCase):
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "delete.db"
+        self.conn = db.connect()
+        db.init(self.conn)
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        _override_person(self, 1)
+        self.client = TestClient(web.app, follow_redirects=False)
+
+    def test_wrong_word_is_refused_and_nothing_is_deleted(self):
+        r = self.client.post("/privacidad/borrar", data={"confirmacion": "nope"})
+        self.assertEqual(r.status_code, 303)
+        self.assertIn("error=confirmacion", r.headers["location"])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM person WHERE id = 1").fetchone()[0], 1)
+
+    def test_right_word_deletes_every_row_of_a_and_takes_bs_check_on_as_shared_goal(self):
+        gid_a = goals.propose(self.conn, 1, "Shared goal", "2026-11-01", metric_key="resting_hr", direction="lower",
+                              target_value=45.0, baseline_value=55.0, deadline="2027-01-01",
+                              hogar_id="h-1", visibility="household")
+        goals.activate(self.conn, gid_a)
+        hid = goals.add_habit(self.conn, gid_a, "shared habit", {"per": "day", "times": 1})
+        goals.check_habit(self.conn, hid, 1, "2026-11-01", True)
+        goals.check_habit(self.conn, hid, 2, "2026-11-01", True)
+        self.conn.execute(
+            "INSERT INTO goal_check (goal_id, person_id, week_start, metric_avg, on_track, habits_done, "
+            "habits_due, rule_version) VALUES (?, 2, '2026-11-02', 50.0, 1, 1, 1, 'test')", (gid_a,)
+        )
+        gid_b = goals.propose(self.conn, 2, "B's own goal", "2026-11-01", metric_key="resting_hr",
+                              direction="lower", target_value=45.0, baseline_value=55.0, deadline="2027-01-01")
+        goals.activate(self.conn, gid_b)
+        db.set_metric(self.conn, "2026-11-01", "resting_hr", 55.0, "garmin", 1)
+        db.set_metric(self.conn, "2026-11-01", "resting_hr", 60.0, "garmin", 2)
+        self.conn.execute(
+            "INSERT INTO sesion (id_hash, person_id, created_at, last_seen_at, expires_at) VALUES "
+            "('h1', 1, '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00', '2099-01-01T00:00:00+00:00')"
+        )
+        self.conn.commit()
+
+        r = self.client.post("/privacidad/borrar", data={"confirmacion": "BORRAR"})
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(r.headers["location"], "/")
+
+        self.conn.executescript(household.SCHEMA)
+        for table in sorted(privacidad.person_tables(self.conn)):
+            n = self.conn.execute(f"SELECT COUNT(*) FROM {table} WHERE person_id = 1").fetchone()[0]
+            self.assertEqual(n, 0, f"{table} still has a row for the deleted person")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM person WHERE id = 1").fetchone()[0], 0)
+
+        # The household consequence: the shared goal A created, and B's own check on it, go too.
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM goal WHERE id = ?", (gid_a,)).fetchone()[0], 0)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM goal_check WHERE goal_id = ?", (gid_a,)).fetchone()[0], 0
+        )
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM habit_check WHERE habit_id = ?", (hid,)).fetchone()[0], 0
+        )
+
+        # B's own goal and metric are untouched.
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM goal WHERE id = ?", (gid_b,)).fetchone()[0], 1)
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT COUNT(*) FROM daily_metric WHERE person_id = 2 AND day = '2026-11-01'"
+            ).fetchone()[0],
+            1,
+        )
+
+
+class HostedDeleteRedirectTest(CuentaRpTestCase):
+    def test_delete_redirects_through_cuenta_logout_and_removes_the_session(self):
+        self._sign_in()
+        pid = self._db_count("SELECT id FROM person WHERE cuenta_sub = ?", SUB)
+        conn = db.connect()
+        privacidad.record_consent(conn, pid)
+        conn.close()
+
+        r = self.client.post("/privacidad/borrar", data={"confirmacion": "BORRAR"})
+        self.assertEqual(r.status_code, 303)
+        self.assertTrue(r.headers["location"].startswith(f"{ISSUER}/oauth/logout?"))
+        self.assertEqual(self._db_count("SELECT COUNT(*) FROM person WHERE id = ?", pid), 0)
+        self.assertEqual(self._db_count("SELECT COUNT(*) FROM sesion"), 0)
+
+
+if __name__ == "__main__":
+    unittest.main()
