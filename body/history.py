@@ -56,7 +56,7 @@ def _kind_info(key: str | None) -> dict | None:
     return {"key": key, "known": key in KNOWN_ACTIVITY_TYPES, "fallback_label": _prettify(key)}
 
 
-def coverage(conn, person_id: int = db.DEFAULT_PERSON_ID) -> dict | None:
+def coverage(conn, person_id: int) -> dict | None:
     """First/last day with watch data, how many days are missing in between, the longest gap, activities."""
     days = sorted(db.days_with_data(conn, person_id))
     if not days:
@@ -109,7 +109,7 @@ def _year_over_year(rows, last_day: date) -> dict | None:
     }
 
 
-def training(conn, person_id: int = db.DEFAULT_PERSON_ID) -> dict | None:
+def training(conn, person_id: int) -> dict | None:
     """Activities grouped by type, by month (with a by-type minute breakdown for a stacked bar), your
     usual week, and a year-over-year compare of the last 90 days (None when there is no data from a year
     ago, never a 0)."""
@@ -203,7 +203,7 @@ def _candidate(metric: str, axis: str, buckets: list[dict | None], better: str, 
             "impact": spread / sd if sd else spread}
 
 
-def patterns(conn, person_id: int = db.DEFAULT_PERSON_ID) -> dict:
+def patterns(conn, person_id: int) -> dict:
     """Weekday and month/season profiles (your own p25-p75 band) for sleep, resting HR, HRV, stress and
     Body Battery, plus up to three plain-language findings picked by spread / your own spread, filtered by
     a noise floor so a flat week or month never produces a finding."""
@@ -239,7 +239,7 @@ def patterns(conn, person_id: int = db.DEFAULT_PERSON_ID) -> dict:
     return {"metrics": metrics, "findings": candidates[:MAX_FINDINGS]}
 
 
-def by_shift(conn, person_id: int = db.DEFAULT_PERSON_ID) -> dict:
+def by_shift(conn, person_id: int) -> dict:
     """The same metrics as patterns(), grouped by shift kind, for the days that have a shift row. An
     explicit no-shifts-yet state when there are none, for an honest empty card pointing to Turnos."""
     shift_rows = conn.execute(

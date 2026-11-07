@@ -15,10 +15,10 @@ class VidaExportTest(unittest.TestCase):
         db.init(conn)
         monday = date(2026, 11, 2)
         for i in range(5):
-            db.set_metric(conn, (monday + timedelta(i)).isoformat(), "resting_hr", 55 + i, "garmin")
-            db.set_metric(conn, (monday + timedelta(i)).isoformat(), "readiness", 70, "body-v1")
+            db.set_metric(conn, (monday + timedelta(i)).isoformat(), "resting_hr", 55 + i, "garmin", 1)
+            db.set_metric(conn, (monday + timedelta(i)).isoformat(), "readiness", 70, "body-v1", 1)
         conn.commit()
-        s = vida_export.week_section(conn, monday)
+        s = vida_export.week_section(conn, monday, 1)
         self.assertEqual(s["area"], "body")
         self.assertEqual(s["week_start"], "2026-11-02")
         by_key = {m["key"]: m for m in s["metrics"]}
@@ -39,10 +39,10 @@ class VidaExportTest(unittest.TestCase):
                                    target_value=50.0, baseline_value=60.0, deadline="2026-12-14")
         goals.activate(conn, active_id)
         for i in range(7):
-            db.set_metric(conn, (monday + timedelta(i)).isoformat(), "resting_hr", 55, "garmin")
+            db.set_metric(conn, (monday + timedelta(i)).isoformat(), "resting_hr", 55, "garmin", 1)
         goals.weekly_check(conn, active_id, 1, "2026-11-02")
 
-        s = vida_export.week_section(conn, monday)
+        s = vida_export.week_section(conn, monday, 1)
         self.assertEqual(s["goals"], [{"goal_id": active_id, "on_track": True}])
         self.assertNotIn(proposed_id, [g["goal_id"] for g in s["goals"]])
 

@@ -54,11 +54,11 @@ def _clamp(x: float) -> float:
     return max(0.0, min(100.0, x))
 
 
-def _vs_baseline(conn, metric: str, day: str, value, higher_is_better: bool):
+def _vs_baseline(conn, metric: str, day: str, value, higher_is_better: bool, person_id: int):
     """70 = your normal; +/-20 per standard deviation."""
     if value is None:
         return None
-    b = baseline(conn, metric, day)
+    b = baseline(conn, metric, day, person_id=person_id)
     if b is None:
         return None
     z = b.z(value)
@@ -67,7 +67,7 @@ def _vs_baseline(conn, metric: str, day: str, value, higher_is_better: bool):
     return _clamp(70 + 20 * (z if higher_is_better else -z)), b.mean
 
 
-def compute(conn, day: str, person_id: int = db.DEFAULT_PERSON_ID) -> Readiness:
+def compute(conn, day: str, person_id: int) -> Readiness:
     vals = {r["metric_key"]: r["value"] for r in conn.execute(
         "SELECT metric_key, value FROM daily_metric WHERE person_id=? AND day=?", (person_id, day))}
     yesterday = (date.fromisoformat(day) - timedelta(1)).isoformat()
@@ -75,13 +75,13 @@ def compute(conn, day: str, person_id: int = db.DEFAULT_PERSON_ID) -> Readiness:
 
     raw: dict[str, tuple[float, float | None, float | None] | None] = {}
 
-    r = _vs_baseline(conn, "hrv_last_night", day, vals.get("hrv_last_night"), True)
+    r = _vs_baseline(conn, "hrv_last_night", day, vals.get("hrv_last_night"), True, person_id)
     raw["hrv"] = (r[0], vals.get("hrv_last_night"), r[1]) if r else None
 
     slept, need = vals.get("sleep_minutes"), vals.get("sleep_need_min")
     if slept is not None:
         if not need:
-            b = baseline(conn, "sleep_minutes", day)
+            b = baseline(conn, "sleep_minutes", day, person_id=person_id)
             need = max(b.mean, 420) if b else 480
         ratio = slept / need
         raw["sleep"] = (_clamp(100 - (1 - ratio) * 160), slept, need)  # 90% of need -> 84, 70% -> 52
@@ -89,13 +89,13 @@ def compute(conn, day: str, person_id: int = db.DEFAULT_PERSON_ID) -> Readiness:
         raw["sleep"] = None
 
     bb = vals.get("body_battery_wake")
-    bb_base = baseline(conn, "body_battery_wake", day)
+    bb_base = baseline(conn, "body_battery_wake", day, person_id=person_id)
     raw["battery"] = (_clamp(bb), bb, bb_base.mean if bb_base else None) if bb is not None else None
 
-    r = _vs_baseline(conn, "resting_hr", day, vals.get("resting_hr"), False)
+    r = _vs_baseline(conn, "resting_hr", day, vals.get("resting_hr"), False, person_id)
     raw["resting_hr"] = (r[0], vals.get("resting_hr"), r[1]) if r else None
 
-    r = _vs_baseline(conn, "stress_avg", yesterday, y_stress, False)
+    r = _vs_baseline(conn, "stress_avg", yesterday, y_stress, False, person_id)
     raw["stress"] = (r[0], y_stress, r[1]) if r else None
 
     parts = [Part(k, v[1], v[2], round(v[0], 1), WEIGHTS[k]) for k, v in raw.items() if v]
@@ -108,14 +108,14 @@ def compute(conn, day: str, person_id: int = db.DEFAULT_PERSON_ID) -> Readiness:
     return Readiness(day, round(score), parts, missing)
 
 
-def update(conn, day: str, person_id: int = db.DEFAULT_PERSON_ID) -> Readiness:
+def update(conn, day: str, person_id: int) -> Readiness:
     res = compute(conn, day, person_id)
     with conn:
         db.set_metric(conn, day, METRIC, res.score, VERSION, person_id)
     return res
 
 
-def recompute_all(conn, person_id: int = db.DEFAULT_PERSON_ID) -> int:
+def recompute_all(conn, person_id: int) -> int:
     days = sorted(db.days_with_data(conn, person_id))
     for d in days:
         update(conn, d, person_id)

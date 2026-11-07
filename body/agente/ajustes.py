@@ -9,13 +9,11 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timezone
 
-from .. import db
-
 NIVELES = ("completo", "resumen", "ninguno")
 _DEFAULT = "completo"
 
 
-def nivel_datos(conn: sqlite3.Connection, person_id: int = db.DEFAULT_PERSON_ID) -> str:
+def nivel_datos(conn: sqlite3.Connection, person_id: int) -> str:
     row = conn.execute("SELECT nivel_datos FROM ajuste_agente WHERE person_id = ?", (person_id,)).fetchone()
     return row["nivel_datos"] if row else _DEFAULT
 

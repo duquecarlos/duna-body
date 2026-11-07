@@ -18,12 +18,12 @@ from pathlib import Path
 from urllib.parse import parse_qs
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from . import db, goals, history, household, listen, profile, readiness, shift_import
+from . import db, goals, history, household, identity, listen, profile, readiness, shift_import
 from .baselines import baseline
 from .i18n import LANGS, T
 
@@ -63,10 +63,10 @@ STAGES = [("sleep_deep_min", "metric.sleep_deep_min", "var(--night)"),
           ("sleep_awake_min", "metric.sleep_awake_min", "var(--amber)")]
 
 
-def _ctx():
+def _ctx(person_id: int) -> tuple:
     conn = db.connect()
     db.init(conn)
-    person = db.person(conn)
+    person = db.person(conn, person_id)
     return conn, person, T(person.get("language", "es"))
 
 
@@ -109,11 +109,11 @@ def _unit(t: T, d: dict) -> str:
     return t(UNITS[d["unit"]]) if d["unit"] in UNITS else d["unit"]
 
 
-def _delta(conn, t: T, d: dict, day: str, v) -> tuple[str, str]:
+def _delta(conn, t: T, d: dict, day: str, v, person_id: int) -> tuple[str, str]:
     """Delta vs your 30-day average: text and css class (good/bad/flat)."""
     if v is None:
         return "", "flat"
-    b = baseline(conn, d["key"], day)
+    b = baseline(conn, d["key"], day, person_id=person_id)
     if b is None:
         return "", "flat"
     diff = v - b.mean
@@ -127,8 +127,8 @@ def _delta(conn, t: T, d: dict, day: str, v) -> tuple[str, str]:
     return f"{arrow} {amount} {t('delta.vs')}", cls
 
 
-def _latest_day(conn) -> str | None:
-    days = db.days_with_data(conn)
+def _latest_day(conn, person_id: int) -> str | None:
+    days = db.days_with_data(conn, person_id)
     return days[0] if days else None
 
 
@@ -144,7 +144,7 @@ def _reading(t: T, r: readiness.Readiness) -> str:
 
 
 def _synced(conn, person) -> str | None:
-    ts = db.last_sync(conn)
+    ts = db.last_sync(conn, person["id"])
     if not ts:
         return None
     tz = ZoneInfo(person.get("timezone") or "America/Bogota")
@@ -156,7 +156,7 @@ def _sync_status_text(conn, person: dict, t: T) -> str:
     """An empty state never dead-ends (BODY-SIN-FRICCION-1): say the sync runs on its own and name the
     last successful sync's date, if one is recorded. Never invents a schedule time -- the actual time
     is a per-install Task Scheduler setting (scripts/install-daily-sync.ps1 -At) this app cannot read."""
-    ts = db.last_sync(conn)
+    ts = db.last_sync(conn, person["id"])
     if not ts:
         return t("sync.runs") + " " + t("sync.none_yet")
     tz = ZoneInfo(person.get("timezone") or "America/Bogota")
@@ -176,29 +176,29 @@ def _batch_date(t: T, received: str) -> str:
 
 
 @app.get("/")
-def today():
-    conn, person, t = _ctx()
-    day = _latest_day(conn)
+def today(person_id: int = Depends(identity.current_person_id)):
+    conn, person, t = _ctx(person_id)
+    day = _latest_day(conn, person_id)
     proposed_count = conn.execute(
         "SELECT COUNT(*) AS n FROM shift_batch WHERE person_id = ? AND status = 'proposed'",
-        (db.DEFAULT_PERSON_ID,),
+        (person_id,),
     ).fetchone()["n"]
     if not day:
         return _render("soon.html", t=t, tab="today", title=t("today.title"),
                        text=_sync_status_text(conn, person, t))
     defs = _defs(conn)
-    vals = db.day_values(conn, day)
-    r = readiness.compute(conn, day)
-    rb = baseline(conn, "readiness", day)
+    vals = db.day_values(conn, day, person_id)
+    r = readiness.compute(conn, day, person_id)
+    rb = baseline(conn, "readiness", day, person_id=person_id)
     ready_avg = ready_delta = None
     ready_cls = "flat"
     if r.score is not None and rb:
         ready_avg = round(rb.mean)
-        ready_delta, ready_cls = _delta(conn, t, defs["readiness"], day, r.score)
+        ready_delta, ready_cls = _delta(conn, t, defs["readiness"], day, r.score, person_id)
     cards = []
     for k in TODAY_CARDS:
         v = vals.get(k)
-        delta, cls = _delta(conn, t, defs[k], day, v)
+        delta, cls = _delta(conn, t, defs[k], day, v, person_id)
         cards.append({"key": k, "label": t("metric." + k), "value": _value(t, k, v),
                       "unit": _unit(t, defs[k]) if v is not None else "", "delta": delta, "cls": cls})
     today_local = _today_local(person)
@@ -206,15 +206,15 @@ def today():
                    synced=_synced(conn, person), r=r, reading=_reading(t, r), ready_avg=ready_avg,
                    ready_delta=ready_delta, ready_cls=ready_cls, cards=cards,
                    missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_count=proposed_count,
-                   plan_habits=_today_due_habits(conn, t, db.DEFAULT_PERSON_ID, today_local),
+                   plan_habits=_today_due_habits(conn, t, person_id, today_local),
                    today_iso=today_local.isoformat())
 
 
 @app.get("/how/{day}")
-def how(day: str):
+def how(day: str, person_id: int = Depends(identity.current_person_id)):
     d = _parse_day(day)
-    conn, person, t = _ctx()
-    r = readiness.compute(conn, d.isoformat())
+    conn, person, t = _ctx(person_id)
+    r = readiness.compute(conn, d.isoformat(), person_id)
     parts = []
     for p in r.parts:
         ref_note = ""
@@ -231,17 +231,17 @@ def how(day: str):
 
 
 @app.get("/day/{day}")
-def day_view(day: str):
+def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
     d = _parse_day(day)
-    conn, person, t = _ctx()
+    conn, person, t = _ctx(person_id)
     key = d.isoformat()
-    data = db.load_day(conn, key)
+    data = db.load_day(conn, key, person_id)
     vals = {m["key"]: m["value"] for m in data["metrics"]}
     defs = _defs(conn)
     cards = []
     for k, df in defs.items():
         v = vals.get(k)
-        delta, cls = _delta(conn, t, df, key, v)
+        delta, cls = _delta(conn, t, df, key, v, person_id)
         cards.append({"key": k, "label": t("metric." + k), "value": _value(t, k, v), "raw": v,
                       "unit": _unit(t, df), "delta": delta, "cls": cls, "est": df["kind"] == "estimated"})
     sleep = None
@@ -272,12 +272,18 @@ def day_view(day: str):
                    prev=(d - timedelta(1)).isoformat(), next=(d + timedelta(1)).isoformat())
 
 
+def _owned_batch_or_404(conn, batch_id: int, person_id: int) -> None:
+    if not conn.execute("SELECT 1 FROM shift_batch WHERE id = ? AND person_id = ?",
+                        (batch_id, person_id)).fetchone():
+        raise HTTPException(404)
+
+
 @app.get("/shifts")
-def shifts(request: Request):
-    conn, person, t = _ctx()
+def shifts(request: Request, person_id: int = Depends(identity.current_person_id)):
+    conn, person, t = _ctx(person_id)
     rows = conn.execute(
         "SELECT * FROM shift_batch WHERE person_id = ? AND status = 'proposed' ORDER BY received, extracted_at",
-        (db.DEFAULT_PERSON_ID,),
+        (person_id,),
     ).fetchall()
     result_msg = None
     qp = request.query_params
@@ -287,7 +293,7 @@ def shifts(request: Request):
         if kept:
             result_msg += " " + t("shifts.confirm_all_kept", n=kept)
     if len(rows) > 1:
-        summary = shift_import.summary_proposed(conn)
+        summary = shift_import.summary_proposed(conn, person_id)
         batches = [
             {"batch": dict(b), "received_date": _batch_date(t, b["received"]),
              "preview": shift_import.preview(conn, b["id"])}
@@ -303,17 +309,18 @@ def shifts(request: Request):
         prev = shift_import.preview(conn, proposed["id"])
         return _render("shifts.html", t=t, tab="shifts", batch=dict(proposed), many=False,
                        received_date=_batch_date(t, proposed["received"]), preview=prev, result_msg=result_msg)
-    confirmed = shift_import.latest_confirmed(conn)
+    confirmed = shift_import.latest_confirmed(conn, person_id)
     return _render("shifts.html", t=t, tab="shifts", batch=None, many=False,
                    confirmed_date=_batch_date(t, confirmed["received"]) if confirmed else None,
                    result_msg=result_msg)
 
 
 @app.post("/shifts/confirm")
-async def shifts_confirm(request: Request):
+async def shifts_confirm(request: Request, person_id: int = Depends(identity.current_person_id)):
     batch_id = parse_qs((await request.body()).decode()).get("batch_id", [""])[0]
     if batch_id.isdigit():
-        conn, _, _ = _ctx()
+        conn, _, _ = _ctx(person_id)
+        _owned_batch_or_404(conn, int(batch_id), person_id)
         try:
             shift_import.confirm(conn, int(batch_id))
         except (shift_import.ImportRefused, shift_import.SlotIndexMissing):
@@ -322,10 +329,10 @@ async def shifts_confirm(request: Request):
 
 
 @app.post("/shifts/confirm-all")
-async def shifts_confirm_all():
-    conn, _, _ = _ctx()
+async def shifts_confirm_all(person_id: int = Depends(identity.current_person_id)):
+    conn, _, _ = _ctx(person_id)
     try:
-        result = shift_import.confirm_all(conn)
+        result = shift_import.confirm_all(conn, person_id)
     except (shift_import.ImportRefused, shift_import.SlotIndexMissing):
         return RedirectResponse("/shifts", status_code=303)
     return RedirectResponse(
@@ -336,10 +343,11 @@ async def shifts_confirm_all():
 
 
 @app.post("/shifts/dismiss")
-async def shifts_dismiss(request: Request):
+async def shifts_dismiss(request: Request, person_id: int = Depends(identity.current_person_id)):
     batch_id = parse_qs((await request.body()).decode()).get("batch_id", [""])[0]
     if batch_id.isdigit():
-        conn, _, _ = _ctx()
+        conn, _, _ = _ctx(person_id)
+        _owned_batch_or_404(conn, int(batch_id), person_id)
         shift_import.dismiss(conn, int(batch_id))
     return RedirectResponse("/shifts", status_code=303)
 
@@ -349,14 +357,14 @@ WEEK_KEYS = ["readiness", "sleep_minutes", "hrv_last_night", "resting_hr"]
 TREND_MIN_DAYS = 14  # body/profile.py's metric_profile() needs this many rows before a metric gets a card
 
 
-def _trend_days_have(conn) -> int:
+def _trend_days_have(conn, person_id: int) -> int:
     """How many days the best-covered trend metric already has, for the honest-gap message below
     TREND_MIN_DAYS -- a count, never a figure (BODY-SIN-FRICCION-1)."""
     placeholders = ",".join("?" * len(TREND_KEYS))
     rows = conn.execute(
         f"SELECT COUNT(*) AS n FROM daily_metric WHERE person_id = ? AND metric_key IN ({placeholders}) "
         "GROUP BY metric_key",
-        (db.DEFAULT_PERSON_ID, *TREND_KEYS),
+        (person_id, *TREND_KEYS),
     ).fetchall()
     return max((r["n"] for r in rows), default=0)
 
@@ -375,19 +383,18 @@ def _compare(t: T, k: str, d: dict, value, ref, spread: float, vs_key: str) -> t
     return f"{'↑' if diff > 0 else '↓'} {amount} {t(vs_key)}", cls
 
 
-def _nights(conn, start: date, end: date) -> set[str]:
+def _nights(conn, start: date, end: date, person_id: int) -> set[str]:
     return {r["day"] for r in conn.execute("SELECT day FROM shift WHERE person_id = ? AND kind = 'night' AND day "
-                                           "BETWEEN ? AND ?", (db.DEFAULT_PERSON_ID, start.isoformat(),
-                                                               end.isoformat()))}
+                                           "BETWEEN ? AND ?", (person_id, start.isoformat(), end.isoformat()))}
 
 
 @app.get("/trends")
-def trends(r: str = "all", m: str | None = None):
+def trends(r: str = "all", m: str | None = None, person_id: int = Depends(identity.current_person_id)):
     """r = 7 | 30 | 90 | all (the whole history, monthly). m = YYYY-MM opens one month day by day (from a tap on
     the monthly line). The URL carries a range or a month, never a value."""
-    conn, person, t = _ctx()
+    conn, person, t = _ctx(person_id)
     defs = _defs(conn)
-    last = _latest_day(conn)
+    last = _latest_day(conn, person_id)
     month = None
     if m:
         try:
@@ -404,10 +411,10 @@ def trends(r: str = "all", m: str | None = None):
     elif r != "all" and last:
         end = date.fromisoformat(last)
         start = end - timedelta(int(r) - 1)
-    nights = _nights(conn, start, end) if start else set()
+    nights = _nights(conn, start, end, person_id) if start else set()
     cards, since, days = [], None, 0
     for k in TREND_KEYS:
-        p = profile.metric_profile(conn, k)
+        p = profile.metric_profile(conn, k, person_id=person_id)
         if not p:
             continue
         d = defs[k]
@@ -415,7 +422,7 @@ def trends(r: str = "all", m: str | None = None):
         days = max(days, p.days)
         spread = p.high - p.low
         if start:
-            w = profile.window(conn, k, start, end)
+            w = profile.window(conn, k, start, end, person_id)
             if month:
                 delta, cls = _compare(t, k, d, w.mean, p.all_mean, spread, "trends.vs_hist")
             else:
@@ -428,14 +435,14 @@ def trends(r: str = "all", m: str | None = None):
                       "last30": _value(t, k, fig), "unit": _unit(t, d) if fig is not None else "", "delta": delta,
                       "cls": cls, "svg": svg, "low": _value(t, k, p.low), "high": _value(t, k, p.high)})
     if not cards:
-        have = _trend_days_have(conn)
+        have = _trend_days_have(conn, person_id)
         if have:
             return _render("soon.html", t=t, tab="trends", title=t("nav.trends"),
                            text=t("trends.too_little", days=TREND_MIN_DAYS - have))
         return _render("soon.html", t=t, tab="trends", title=t("nav.trends"),
                        text=_sync_status_text(conn, person, t))
     week = None
-    profs = [profile.metric_profile(conn, k) for k in WEEK_KEYS]
+    profs = [profile.metric_profile(conn, k, person_id=person_id) for k in WEEK_KEYS]
     if all(profs):
         cols = []
         for k, p in zip(WEEK_KEYS, profs):
@@ -447,7 +454,7 @@ def trends(r: str = "all", m: str | None = None):
             cols.append([{"text": _value(t, k, v), "mark": i == mark} for i, v in enumerate(wd)])
         week = {"heads": [t("trends.short." + k) for k in WEEK_KEYS],
                 "rows": [{"day": t("date.days")[i][:3].capitalize(), "vals": [c[i] for c in cols]} for i in range(7)]}
-    all_days = db.days_with_data(conn)
+    all_days = db.days_with_data(conn, person_id)
     since, days = (all_days[-1], len(all_days)) if all_days else (since, days)
     if month:
         fig_label = t("trends.month_avg", month=t.month_year(month))
@@ -562,16 +569,16 @@ def _shift_ctx(t: T, defs: dict, shift_data: dict) -> dict:
 
 
 @app.get("/history")
-def history_view():
-    conn, person, t = _ctx()
-    cov = history.coverage(conn)
+def history_view(person_id: int = Depends(identity.current_person_id)):
+    conn, person, t = _ctx(person_id)
+    cov = history.coverage(conn, person_id)
     if not cov:
         return _render("soon.html", t=t, tab="trends", title=t("history.title"),
                        text=_sync_status_text(conn, person, t))
     defs = _defs(conn)
-    train = history.training(conn)
-    pat = history.patterns(conn)
-    shift_data = history.by_shift(conn)
+    train = history.training(conn, person_id)
+    pat = history.patterns(conn, person_id)
+    shift_data = history.by_shift(conn, person_id)
 
     since = _short_date(t, date.fromisoformat(cov["first_day"]))
     coverage_line = t("history.coverage", since=since, days=t.num(cov["days_present"]))
@@ -778,9 +785,8 @@ def _verdict_sentence(t: T, defs: dict, g, check: dict) -> str:
 
 
 @app.get("/goals")
-def goals_list():
-    conn, person, t = _ctx()
-    person_id = db.DEFAULT_PERSON_ID
+def goals_list(person_id: int = Depends(identity.current_person_id)):
+    conn, person, t = _ctx(person_id)
     today = _today_local(person)
     week_start = _week_monday(today).isoformat()
     defs = _defs(conn)
@@ -819,9 +825,8 @@ def goals_list():
 
 
 @app.get("/goals/new")
-def goal_new_form():
-    conn, person, t = _ctx()
-    person_id = db.DEFAULT_PERSON_ID
+def goal_new_form(person_id: int = Depends(identity.current_person_id)):
+    conn, person, t = _ctx(person_id)
     defs = _defs(conn)
     today = _today_local(person).isoformat()
     metrics = []
@@ -835,9 +840,8 @@ def goal_new_form():
 
 
 @app.post("/goals/new")
-async def goal_new_create(request: Request):
-    conn, person, t = _ctx()
-    person_id = db.DEFAULT_PERSON_ID
+async def goal_new_create(request: Request, person_id: int = Depends(identity.current_person_id)):
+    conn, person, t = _ctx(person_id)
     f = await _form(request)
     kind = f.get("kind")
     title = (f.get("title") or "").strip()
@@ -875,9 +879,8 @@ async def goal_new_create(request: Request):
 
 
 @app.get("/goals/{goal_id}")
-def goal_detail(goal_id: int):
-    conn, person, t = _ctx()
-    person_id = db.DEFAULT_PERSON_ID
+def goal_detail(goal_id: int, person_id: int = Depends(identity.current_person_id)):
+    conn, person, t = _ctx(person_id)
     g = conn.execute("SELECT * FROM goal WHERE id = ? AND person_id = ?", (goal_id, person_id)).fetchone()
     if not g:
         raise HTTPException(404)
@@ -934,48 +937,48 @@ def goal_detail(goal_id: int):
                    today=today.isoformat())
 
 
+def _owned_goal_or_404(conn, goal_id: int, person_id: int) -> None:
+    if not conn.execute("SELECT 1 FROM goal WHERE id = ? AND person_id = ?",
+                        (goal_id, person_id)).fetchone():
+        raise HTTPException(404)
+
+
 @app.post("/goals/{goal_id}/activate")
-def goal_activate(goal_id: int):
-    conn, _, _ = _ctx()
-    if conn.execute("SELECT 1 FROM goal WHERE id = ? AND person_id = ?",
-                    (goal_id, db.DEFAULT_PERSON_ID)).fetchone():
-        goals.activate(conn, goal_id)
+def goal_activate(goal_id: int, person_id: int = Depends(identity.current_person_id)):
+    conn, _, _ = _ctx(person_id)
+    _owned_goal_or_404(conn, goal_id, person_id)
+    goals.activate(conn, goal_id)
     return RedirectResponse(f"/goals/{goal_id}", status_code=303)
 
 
 @app.post("/goals/{goal_id}/pause")
-def goal_pause(goal_id: int):
-    conn, _, _ = _ctx()
-    if conn.execute("SELECT 1 FROM goal WHERE id = ? AND person_id = ?",
-                    (goal_id, db.DEFAULT_PERSON_ID)).fetchone():
-        goals.pause(conn, goal_id)
+def goal_pause(goal_id: int, person_id: int = Depends(identity.current_person_id)):
+    conn, _, _ = _ctx(person_id)
+    _owned_goal_or_404(conn, goal_id, person_id)
+    goals.pause(conn, goal_id)
     return RedirectResponse(f"/goals/{goal_id}", status_code=303)
 
 
 @app.post("/goals/{goal_id}/finish")
-def goal_finish(goal_id: int):
-    conn, _, _ = _ctx()
-    if conn.execute("SELECT 1 FROM goal WHERE id = ? AND person_id = ?",
-                    (goal_id, db.DEFAULT_PERSON_ID)).fetchone():
-        goals.finish(conn, goal_id)
+def goal_finish(goal_id: int, person_id: int = Depends(identity.current_person_id)):
+    conn, _, _ = _ctx(person_id)
+    _owned_goal_or_404(conn, goal_id, person_id)
+    goals.finish(conn, goal_id)
     return RedirectResponse("/goals", status_code=303)
 
 
 @app.post("/goals/{goal_id}/drop")
-def goal_drop(goal_id: int):
-    conn, _, _ = _ctx()
-    if conn.execute("SELECT 1 FROM goal WHERE id = ? AND person_id = ?",
-                    (goal_id, db.DEFAULT_PERSON_ID)).fetchone():
-        goals.drop(conn, goal_id)
+def goal_drop(goal_id: int, person_id: int = Depends(identity.current_person_id)):
+    conn, _, _ = _ctx(person_id)
+    _owned_goal_or_404(conn, goal_id, person_id)
+    goals.drop(conn, goal_id)
     return RedirectResponse("/goals", status_code=303)
 
 
 @app.post("/goals/{goal_id}/habits")
-async def goal_add_habit(goal_id: int, request: Request):
-    conn, _, _ = _ctx()
-    person_id = db.DEFAULT_PERSON_ID
-    if not conn.execute("SELECT 1 FROM goal WHERE id = ? AND person_id = ?", (goal_id, person_id)).fetchone():
-        raise HTTPException(404)
+async def goal_add_habit(goal_id: int, request: Request, person_id: int = Depends(identity.current_person_id)):
+    conn, _, _ = _ctx(person_id)
+    _owned_goal_or_404(conn, goal_id, person_id)
     f = await _form(request)
     title, cadence = _parse_new_habit(f)
     if title:
@@ -984,9 +987,8 @@ async def goal_add_habit(goal_id: int, request: Request):
 
 
 @app.post("/habits/{habit_id}/check")
-async def habit_check(habit_id: int, request: Request):
-    conn, _, _ = _ctx()
-    person_id = db.DEFAULT_PERSON_ID
+async def habit_check(habit_id: int, request: Request, person_id: int = Depends(identity.current_person_id)):
+    conn, _, _ = _ctx(person_id)
     f = await _form(request)
     day = f.get("day")
     try:
@@ -996,24 +998,25 @@ async def habit_check(habit_id: int, request: Request):
     owned = conn.execute(
         "SELECT 1 FROM habit h JOIN goal g ON g.id = h.goal_id WHERE h.id = ? AND g.person_id = ?",
         (habit_id, person_id)).fetchone()
-    if owned:
-        goals.check_habit(conn, habit_id, person_id, day, f.get("done") == "1")
+    if not owned:
+        raise HTTPException(404)
+    goals.check_habit(conn, habit_id, person_id, day, f.get("done") == "1")
     back = f.get("back") or "/"
     return RedirectResponse(back, status_code=303)
 
 
 @app.get("/settings")
-def settings():
-    _, _, t = _ctx()
+def settings(person_id: int = Depends(identity.current_person_id)):
+    _, _, t = _ctx(person_id)
     return _render("settings.html", t=t, tab="settings")
 
 
 @app.post("/settings/language")
-async def set_language(request: Request):
+async def set_language(request: Request, person_id: int = Depends(identity.current_person_id)):
     lang = parse_qs((await request.body()).decode()).get("lang", [""])[0]
     if lang in LANGS:
-        conn, _, _ = _ctx()
-        db.set_language(conn, lang)
+        conn, _, _ = _ctx(person_id)
+        db.set_language(conn, lang, person_id)
     return RedirectResponse("/settings", status_code=303)
 
 

@@ -50,27 +50,27 @@ def _seed(conn):
         hrv = 50.0 + (0.2 if d.weekday() == 5 else 0.0)        # near-flat: under the noise floor
         sleep = 380.0 if d.month == 12 else 450.0              # December clearly worse (less sleep)
         for key, v in (("resting_hr", rhr), ("hrv_last_night", hrv), ("sleep_minutes", sleep)):
-            db.set_metric(conn, d.isoformat(), key, v, "garmin")
+            db.set_metric(conn, d.isoformat(), key, v, "garmin", 1)
         d += timedelta(1)
     for i, (kind, days, duration_s, distance_m) in enumerate(ACTIVITIES):
         for j, day in enumerate(days):
             conn.execute(
                 "INSERT INTO activity (person_id, source_id, day, start_local, type, name, duration_s, "
                 "distance_m, avg_hr, max_hr, calories, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (db.DEFAULT_PERSON_ID, f"act-{i}-{j}", day, f"{day}T06:00:00", kind, kind, duration_s,
+                (1, f"act-{i}-{j}", day, f"{day}T06:00:00", kind, kind, duration_s,
                  distance_m, 120, 150, 300, "garmin"),
             )
     for day in NIGHT_SHIFT_DAYS:
         conn.execute(
             "INSERT INTO shift (person_id, day, kind, code, start_local, end_local, source) "
             "VALUES (?, ?, 'night', 'N', ?, ?, 'manual')",
-            (db.DEFAULT_PERSON_ID, day, f"{day}T22:00:00", f"{day}T06:00:00"),
+            (1, day, f"{day}T22:00:00", f"{day}T06:00:00"),
         )
     for day in DAY_SHIFT_DAYS:
         conn.execute(
             "INSERT INTO shift (person_id, day, kind, code, start_local, end_local, source) "
             "VALUES (?, ?, 'day', 'D', ?, ?, 'manual')",
-            (db.DEFAULT_PERSON_ID, day, f"{day}T06:00:00", f"{day}T14:00:00"),
+            (1, day, f"{day}T06:00:00", f"{day}T14:00:00"),
         )
     conn.commit()
 
@@ -81,10 +81,10 @@ class CoverageTest(unittest.TestCase):
         _seed(self.conn)
 
     def test_no_data_is_none(self):
-        self.assertIsNone(history.coverage(_mkconn()))
+        self.assertIsNone(history.coverage(_mkconn(), 1))
 
     def test_dates_and_gap(self):
-        cov = history.coverage(self.conn)
+        cov = history.coverage(self.conn, 1)
         self.assertEqual(cov["first_day"], START.isoformat())
         self.assertEqual(cov["last_day"], END.isoformat())
         self.assertEqual(cov["days_total"], (END - START).days + 1)
@@ -100,12 +100,12 @@ class TrainingTest(unittest.TestCase):
     def setUp(self):
         self.conn = _mkconn()
         _seed(self.conn)
-        self.train = history.training(self.conn)
+        self.train = history.training(self.conn, 1)
 
     def test_no_activities_is_none(self):
         conn = _mkconn()
-        db.set_metric(conn, START.isoformat(), "resting_hr", 55.0, "garmin")
-        self.assertIsNone(history.training(conn))
+        db.set_metric(conn, START.isoformat(), "resting_hr", 55.0, "garmin", 1)
+        self.assertIsNone(history.training(conn, 1))
 
     def test_grouping_and_unknown_type_fallback(self):
         by_key = {t["key"]: t for t in self.train["types"]}
@@ -151,7 +151,7 @@ class PatternsTest(unittest.TestCase):
     def setUp(self):
         self.conn = _mkconn()
         _seed(self.conn)
-        self.pat = history.patterns(self.conn)
+        self.pat = history.patterns(self.conn, 1)
 
     def test_weekday_finding_above_the_noise_floor(self):
         findings = {(f["metric"], f["axis"]): f for f in self.pat["findings"]}
@@ -188,7 +188,7 @@ class FindingTextTest(unittest.TestCase):
     def setUp(self):
         self.conn = _mkconn()
         _seed(self.conn)
-        self.pat = history.patterns(self.conn)
+        self.pat = history.patterns(self.conn, 1)
         self.defs = web._defs(self.conn)
         self.by_key = {(f["metric"], f["axis"]): f for f in self.pat["findings"]}
 
@@ -235,14 +235,14 @@ class TrainingCtxOrderTest(unittest.TestCase):
 class ByShiftTest(unittest.TestCase):
     def test_empty_state_without_shifts(self):
         conn = _mkconn()
-        db.set_metric(conn, START.isoformat(), "resting_hr", 55.0, "garmin")
+        db.set_metric(conn, START.isoformat(), "resting_hr", 55.0, "garmin", 1)
         conn.commit()
-        self.assertEqual(history.by_shift(conn), {"has_shifts": False, "kinds": []})
+        self.assertEqual(history.by_shift(conn, 1), {"has_shifts": False, "kinds": []})
 
     def test_populated_state(self):
         conn = _mkconn()
         _seed(conn)
-        result = history.by_shift(conn)
+        result = history.by_shift(conn, 1)
         self.assertTrue(result["has_shifts"])
         kinds = {k["kind"]: k for k in result["kinds"]}
         self.assertEqual(kinds["night"]["days"], len(NIGHT_SHIFT_DAYS))
@@ -279,7 +279,7 @@ class HistoryRouteTest(unittest.TestCase):
         self.client.post("/settings/language", data={"lang": "en"})
         r = self.client.get("/history")
         conn = db.connect()
-        pat = history.patterns(conn)
+        pat = history.patterns(conn, 1)
         defs = web._defs(conn)
         hero_text = web._finding_text(T("en"), defs, pat["findings"][0])
         self.assertEqual(r.text.count(hero_text), 1)

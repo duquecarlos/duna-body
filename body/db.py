@@ -242,7 +242,12 @@ METRIC_DEFS = [
 ]
 METRIC_DEFS = [d if len(d) == 5 else (*d, "measured") for d in METRIC_DEFS]
 
-DEFAULT_PERSON_ID = 1
+DEFAULT_PERSON_ID = 1  # the local person's id; nowhere outside this module (local_person_id() is the seam)
+
+
+def local_person_id(conn: sqlite3.Connection) -> int:
+    """The person a local install (no Cuenta sign-in) resolves to -- the row init() ensures exists."""
+    return DEFAULT_PERSON_ID
 
 
 def connect(path: Path | None = None) -> sqlite3.Connection:
@@ -432,7 +437,7 @@ def init(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def save_day(conn: sqlite3.Connection, day_data, person_id: int = DEFAULT_PERSON_ID) -> None:
+def save_day(conn: sqlite3.Connection, day_data, person_id: int) -> None:
     """Store one DayData from an adapter (raw payloads, metrics, sleep, activities)."""
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     d = day_data.day
@@ -466,7 +471,7 @@ def save_day(conn: sqlite3.Connection, day_data, person_id: int = DEFAULT_PERSON
             )
 
 
-def load_day(conn: sqlite3.Connection, day: str, person_id: int = DEFAULT_PERSON_ID) -> dict:
+def load_day(conn: sqlite3.Connection, day: str, person_id: int) -> dict:
     metrics = conn.execute(
         "SELECT m.key, m.label, m.unit, m.kind, d.value FROM metric_def m "
         "LEFT JOIN daily_metric d ON d.metric_key = m.key AND d.person_id = ? AND d.day = ? "
@@ -494,7 +499,7 @@ def load_day(conn: sqlite3.Connection, day: str, person_id: int = DEFAULT_PERSON
     }
 
 
-def set_metric(conn, day: str, key: str, value, source: str, person_id: int = DEFAULT_PERSON_ID) -> None:
+def set_metric(conn, day: str, key: str, value, source: str, person_id: int) -> None:
     if value is None:
         conn.execute("DELETE FROM daily_metric WHERE person_id=? AND day=? AND metric_key=?", (person_id, day, key))
     else:
@@ -504,7 +509,7 @@ def set_metric(conn, day: str, key: str, value, source: str, person_id: int = DE
         )
 
 
-def series(conn, key: str, start: str, end: str, person_id: int = DEFAULT_PERSON_ID) -> dict[str, float]:
+def series(conn, key: str, start: str, end: str, person_id: int) -> dict[str, float]:
     """Values of one metric for start <= day <= end."""
     rows = conn.execute(
         "SELECT day, value FROM daily_metric WHERE person_id=? AND metric_key=? AND day BETWEEN ? AND ?",
@@ -513,26 +518,26 @@ def series(conn, key: str, start: str, end: str, person_id: int = DEFAULT_PERSON
     return {r["day"]: r["value"] for r in rows}
 
 
-def person(conn, person_id: int = DEFAULT_PERSON_ID) -> dict:
+def person(conn, person_id: int) -> dict:
     return dict(conn.execute("SELECT * FROM person WHERE id = ?", (person_id,)).fetchone())
 
 
-def set_language(conn, lang: str, person_id: int = DEFAULT_PERSON_ID) -> None:
+def set_language(conn, lang: str, person_id: int) -> None:
     with conn:
         conn.execute("UPDATE person SET language = ? WHERE id = ?", (lang, person_id))
 
 
-def day_values(conn, day: str, person_id: int = DEFAULT_PERSON_ID) -> dict[str, float]:
+def day_values(conn, day: str, person_id: int) -> dict[str, float]:
     return {r["metric_key"]: r["value"] for r in conn.execute(
         "SELECT metric_key, value FROM daily_metric WHERE person_id=? AND day=?", (person_id, day))}
 
 
-def last_sync(conn, person_id: int = DEFAULT_PERSON_ID) -> str | None:
+def last_sync(conn, person_id: int) -> str | None:
     r = conn.execute("SELECT MAX(fetched_at) AS t FROM raw_payload WHERE person_id=?", (person_id,)).fetchone()
     return r["t"] if r else None
 
 
-def days_with_data(conn: sqlite3.Connection, person_id: int = DEFAULT_PERSON_ID) -> list[str]:
+def days_with_data(conn: sqlite3.Connection, person_id: int) -> list[str]:
     rows = conn.execute(
         "SELECT DISTINCT day FROM daily_metric WHERE person_id = ? AND source = 'garmin' ORDER BY day DESC",
         (person_id,)
