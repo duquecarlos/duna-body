@@ -31,7 +31,14 @@ MIN_BANDA_VALORES = 3    # a day qualifies toward recovery when at least this ma
 
 REASON_CODES = ("sin_turnos", "sin_noches", "pocos_bloques", "sin_datos_reloj")
 
+# Below this many units of real difference, a row reads "igual" instead of "peor"/"mejor"
+# (BODY-TURNOS-COSTO-1-M, fix b): roughly a quarter-hour of sleep, a beat of resting HR, a
+# millisecond of HRV, three points of a 0-100 scale -- small enough that a reader's own day-to-day
+# noise would otherwise read as a verdict.
+UMBRAL_IGUAL = {"min": 15.0, "bpm": 1.0, "ms": 1.0, "pts": 3.0}
+
 _BETTER = {d[0]: d[3] for d in db.METRIC_DEFS}
+_UNIT = {d[0]: d[2] for d in db.METRIC_DEFS}
 
 
 @dataclass
@@ -118,6 +125,18 @@ def _signo(metric: str) -> int:
     """So the signed cost is always positive when a night week is WORSE, whichever direction the
     metric's own normal is better in (db.METRIC_DEFS)."""
     return 1 if _BETTER.get(metric) == "lower" else -1
+
+
+def diferencia_y_palabra(metric: str, costo: float) -> tuple[float, str]:
+    """From a metric's signed cost (positive = worse, `_costo_bloque`'s convention, kept for the
+    recovery rule and the assistant tool), the REAL difference a reader should see -- night-block
+    mean minus reference mean, its own sign -- and a plain direction word: 'peor' | 'mejor' | 'igual'
+    (BODY-TURNOS-COSTO-1-M, fix b). Applying `_signo` a second time undoes the first signing, since
+    it is always +-1."""
+    diff = costo * _signo(metric)
+    if abs(diff) < UMBRAL_IGUAL.get(_UNIT.get(metric, ""), 0.0):
+        return diff, "igual"
+    return diff, "peor" if costo > 0 else "mejor"
 
 
 def _costo_bloque(conn, person_id: int, bloque: Bloque, ref: dict[str, Referencia | None]) -> dict[str, float | None]:

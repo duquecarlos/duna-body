@@ -57,10 +57,10 @@
 {% endif %}
 
 <a class="card est" href="/shifts/como">
-  <div class="q">{{ t('shifts.cost_q') }}</div>
+  <div class="q">{{ t('shifts.hero_q') }}</div>
   {% if hero_dias is not none %}
   <div><span class="approx big">≈</span><span class="big">{{ hero_dias }}</span></div>
-  <p class="read">{{ t('shifts.hero', n=hero_dias) }}</p>
+  <p class="read">{{ t('shifts.hero_sub') }}</p>
   {% else %}
   <div class="fig" style="color:var(--muted)">{{ t('shifts.no_hero_short') }}</div>
   <p class="read">{{ t('shifts.reason.' ~ motivo) }}</p>
@@ -76,7 +76,7 @@
     <tr>
       <td>{{ f.label }}<div class="k">{{ f.sub }}</div></td>
       {% if f.value is not none %}
-      <td class="nw">{{ f.value }}<div class="k">{{ t('shifts.cost_vs') }}</div></td>
+      <td class="nw">{{ f.value }} <strong>{{ f.palabra }}</strong><div class="k">{{ t('shifts.cost_vs') }}</div></td>
       {% else %}
       <td class="nw" style="color:var(--muted)">—<div class="k">{{ t('shifts.sin_dato_corto') }}</div></td>
       {% endif %}
@@ -85,15 +85,17 @@
   </table>
 </div>
 
+<h2>{{ t('shifts.strip_title') }}</h2>
+<p class="k" style="margin-top:-4px">{{ t('shifts.strip_hint') }}</p>
 <div class="strip">
   {% for c in strip %}
-  <a class="strip-cell {{ c.band or '' }}" href="/day/{{ c.day }}">{% if c.score is not none %}{{ c.score }}{% endif %}</a>
+  <a class="strip-cell {{ c.band }}" href="/day/{{ c.day }}" aria-label="{{ c.label }}">{% if c.score is not none %}{{ c.score }}{% else %}—{% endif %}</a>
   {% endfor %}
 </div>
 <div class="strip-legend">
-  <span><span class="dot" style="background:var(--amber)"></span>{{ t('shift.kind.day') }}</span>
-  <span><span class="dot" style="background:var(--night)"></span>{{ t('shift.kind.night') }}</span>
-  <span><span class="dot" style="background:var(--line)"></span>{{ t('shift.kind.off') }}</span>
+  {% for l in strip_legend %}
+  <span><span class="dot {{ l.kind }}"></span>{{ l.label }}</span>
+  {% endfor %}
 </div>
 
 {% if result_msg %}

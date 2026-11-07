@@ -300,6 +300,148 @@ def _no_day_keyed_values(obj) -> bool:
     return True
 
 
+class DireccionYPalabraTest(unittest.TestCase):
+    """BODY-TURNOS-COSTO-1-M fix b: the row shows the REAL difference (its own sign), not the always-
+    positive signed cost, with a plain direction word."""
+
+    def test_less_sleep_and_lower_hrv_read_negative_and_worse(self):
+        # sleep_minutes and hrv_last_night are both "higher is better" -- a signed cost that is
+        # positive (worse) came from a value BELOW the reference, so the real difference is negative.
+        diff, palabra = turnos_costo.diferencia_y_palabra("sleep_minutes", 49.0)
+        self.assertLess(diff, 0)
+        self.assertEqual(palabra, "peor")
+        diff, palabra = turnos_costo.diferencia_y_palabra("hrv_last_night", 11.4)
+        self.assertLess(diff, 0)
+        self.assertEqual(palabra, "peor")
+
+    def test_higher_resting_hr_reads_positive_and_worse(self):
+        # resting_hr is "lower is better" -- a positive signed cost came from a value ABOVE the
+        # reference, so the real difference stays positive.
+        diff, palabra = turnos_costo.diferencia_y_palabra("resting_hr", 5.0)
+        self.assertGreater(diff, 0)
+        self.assertEqual(palabra, "peor")
+
+    def test_a_negative_cost_reads_mejor(self):
+        diff, palabra = turnos_costo.diferencia_y_palabra("resting_hr", -5.0)
+        self.assertLess(diff, 0)
+        self.assertEqual(palabra, "mejor")
+
+    def test_under_the_threshold_reads_igual(self):
+        diff, palabra = turnos_costo.diferencia_y_palabra("resting_hr", 0.4)  # under UMBRAL_IGUAL["bpm"] (1.0)
+        self.assertEqual(palabra, "igual")
+
+
+class SubtitlesTest(unittest.TestCase):
+    """BODY-TURNOS-COSTO-1-M fix c: a plain explanation, never the metric's own name repeated."""
+
+    def test_no_row_subtitle_equals_its_name(self):
+        for lang in ("es", "en"):
+            t = T(lang)
+            for key in turnos_costo.MODELO["metricas"]:
+                name = t("metric." + key)
+                sub = t("shifts.cost_sub." + key)
+                self.assertNotEqual(sub.casefold(), name.casefold(), f"{lang}/{key}")
+
+
+class HeroQuestionsTest(unittest.TestCase):
+    """BODY-TURNOS-COSTO-1-M fix d: the hero and the rows ask two different questions, and the hero
+    shows its own number only once."""
+
+    client = TestClient(web.app, follow_redirects=False)
+
+    def _reset_db(self):
+        orig = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "hq.db"
+        conn = db.connect()
+        db.init(conn)
+        return conn
+
+    def test_hero_question_differs_from_rows_question_and_number_shown_once(self):
+        conn = self._reset_db()
+        today = date.today()
+        _fill_range(conn, 1, today - timedelta(140), today - timedelta(1), CONST)
+        _seed_block(conn, 1, today - timedelta(100), 5, recovery_target=2)
+        _seed_block(conn, 1, today - timedelta(40), 5, recovery_target=2)
+        conn.commit()
+        r = self.client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(_t("es", "shifts.hero_q"), r.text)
+        self.assertIn(_t("es", "shifts.cost_title"), r.text)
+        self.assertNotEqual(_t("es", "shifts.hero_q"), _t("es", "shifts.cost_title"))
+        self.assertEqual(r.text.count("≈"), 1)  # the big figure, not repeated in the sentence below it
+
+
+class StripBandsTest(unittest.TestCase):
+    """BODY-TURNOS-COSTO-1-M fix e: every shift.kind gets its own class and word, a day without a
+    shift reads 'none', a day without readiness shows an em dash, and every cell is labelled."""
+
+    client = TestClient(web.app, follow_redirects=False)
+
+    def _reset_db(self, name: str):
+        orig = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / name
+        conn = db.connect()
+        db.init(conn)
+        return conn
+
+    def test_morning_and_afternoon_cells_carry_their_kind_classes(self):
+        conn = self._reset_db("strip1.db")
+        today = date.today()
+        _insert_shift(conn, 1, (today - timedelta(5)).isoformat(), kind="morning")
+        _insert_shift(conn, 1, (today - timedelta(6)).isoformat(), kind="afternoon")
+        conn.commit()
+        r = self.client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('class="strip-cell morning"', r.text)
+        self.assertIn('class="strip-cell afternoon"', r.text)
+        self.assertIn(_t("es", "shift.kind.morning"), r.text)
+        self.assertIn(_t("es", "shift.kind.afternoon"), r.text)
+        self.assertNotIn(_t("es", "shift.kind.off"), r.text)  # legend lists only the kinds present
+
+    def test_day_without_readiness_shows_em_dash_and_a_label(self):
+        conn = self._reset_db("strip2.db")  # no shifts, no metrics at all
+        r = self.client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        cells = re.findall(r'<a class="strip-cell[^"]*"[^>]*>', r.text)
+        self.assertEqual(len(cells), 56)
+        self.assertTrue(all('aria-label="' in c for c in cells))
+        self.assertIn('class="strip-cell none"', r.text)
+        self.assertIn(_t("es", "shifts.sin_dato_corto"), r.text)  # trailing segment of every cell's label
+        self.assertIn(">—</a>", r.text)
+
+
+class ComoListsBlocksTest(unittest.TestCase):
+    """BODY-TURNOS-COSTO-1-M fix f: /shifts/como lists the blocks counted, and the not-medical-advice
+    line appears at most twice (the lead and the footer, not a third closing duplicate)."""
+
+    client = TestClient(web.app, follow_redirects=False)
+
+    def _reset_db(self):
+        orig = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "como.db"
+        conn = db.connect()
+        db.init(conn)
+        return conn
+
+    def test_lists_each_block_with_its_recovery_and_the_phrase_is_not_tripled(self):
+        conn = self._reset_db()
+        today = date.today()
+        _fill_range(conn, 1, today - timedelta(140), today - timedelta(1), CONST)
+        _seed_block(conn, 1, today - timedelta(100), 5, recovery_target=2)
+        _seed_block(conn, 1, today - timedelta(40), 5, recovery_target=2)
+        conn.commit()
+        resumen = turnos_costo.resumen(conn, 1, hoy=today)
+        r = self.client.get("/shifts/como")
+        self.assertEqual(r.status_code, 200)
+        self.assertLessEqual(r.text.lower().count("consejo médico"), 2)
+        for b in resumen["bloques"]:
+            self.assertIn(web._short_date(T("es"), date.fromisoformat(b["inicio"])), r.text)
+        self.assertIn(_t("es", "shifts.como_bloque_dias", n=2), r.text)
+
+
 class WebAndToolTest(unittest.TestCase):
     client = TestClient(web.app, follow_redirects=False)
 

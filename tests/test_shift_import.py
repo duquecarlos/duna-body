@@ -14,6 +14,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from fastapi.testclient import TestClient  # noqa: E402
 
 from body import config, db, shift_import, web  # noqa: E402
+from body.i18n import T  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -393,7 +394,8 @@ class ShiftWebTest(unittest.TestCase):
     def test_shifts_page_without_proposed_batch_es(self):
         page = self.client.get("/shifts").text
         self.assertIn("Turnos", page)
-        self.assertIn("Aquí verás lo que te cuesta", page)
+        # no shifts and no watch data at all -- an honest empty state, not the removed "soon" placeholder
+        self.assertIn(T("es")("shifts.reason.sin_datos_reloj"), page)
 
     def test_shifts_page_with_proposed_batch_both_languages(self):
         shift_import.propose(self.conn, FIXTURES / "turnos-demo-a.json", 1)
