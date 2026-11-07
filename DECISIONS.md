@@ -4800,3 +4800,37 @@ failures are accounted for above; none is fixable inside this slice's `touches:`
 need the orchestrator's browser check, and this slice's own predicate change is customer-bytes-adjacent in
 the same way (it changes which already-written screens render for a given person), so it stops at the same
 gate rather than merging itself.
+
+## BODY-TURNOS-OPCIONAL-3-FIX -- the /settings bypass and the six empty-state tests, closing BODY-TURNOS-INFERIR-1's
+7 failures (2026-11-07)
+
+Finishes BODY-TURNOS-OPCIONAL-3 on its branch, per the orchestrator's review of `fa57b9a` under
+`ORCH-CARLOS-DELEGATES-TIER-1-1`.
+
+**The bug.** `/settings` (`body/web.py`) computed its Turnos tab from
+`db.get_trabaja_turnos(conn, person_id) is True` -- the stored answer only -- instead of the shared
+`_turnos_on(conn, person_id)` every other route uses. A person inferred True (NULL, with shift data) kept
+the tab everywhere except Ajustes. Grepped the whole file for every other `get_trabaja_turnos(` call: only
+this one site decided visibility; `trabaja_turnos` itself stays `db.get_trabaja_turnos(...)` unchanged,
+since it still marks the stored Sí/No radio as `on`. Fix: `turnos=_turnos_on(conn, person_id)`.
+
+**The six tests.** Each built a person with no shift data at all and asserted Turnos' honest empty states;
+under ruling BODY-TURNOS-OPCIONAL-1 those screens exist only for a person who works shifts, so each test's
+subject is now a shift worker whose shifts have not arrived yet. Added
+`db.set_trabaja_turnos(conn, True, <their person>)` in the narrowest place that covers each one, no
+assertion changed:
+`test_dispositivo.ApiTurnosTest.test_valid_file_proposes_a_batch_for_the_keys_person_only` (person 2, in the
+test body, right before its `/shifts` check),
+`test_shift_import.ShiftWebTest.test_shifts_page_without_proposed_batch_es` (person 1, in the test),
+`test_sin_friccion.HistorySectionsAlreadyGoodCensusTest.test_patterns_and_shift_empty_link_turnos` and
+`test_sin_friccion.TurnosEmptyCensusTest.test_empty_both_languages` (person 1, in each test),
+`test_turnos_costo.StripBandsTest.test_day_without_readiness_shows_em_dash_and_a_label` and
+`test_turnos_costo.WebAndToolTest.test_empty_state_with_no_shifts` (person 1, in each test).
+
+**Gate**, exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, run once, foreground:
+`Ran 924 tests in 92.391s ... OK (skipped=1)`. Same 924 as the previous entry's red run; all 7 failures it
+named are gone, 0 new failures.
+
+Not merged: **AWAITING_APPROVAL**, stays on `feat/body-turnos-opcional-3` -- the approval for this slice says
+in words to stop here for the orchestrator's 375 px browser check, so the merge waits on that regardless of
+this diff's own shape.
