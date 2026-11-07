@@ -64,7 +64,14 @@ class CuentaVectorsTest(unittest.TestCase):
     def test_vector_count_matches_the_copied_fixture(self):
         # Guards against a silently truncated copy of dev-protocol's vectors.json.
         v = _load_vectors()
-        self.assertEqual(len(v["casos"]), 30)
+        self.assertEqual(len(v["casos"]), 31)
+
+    def test_acr_is_a_rank_not_an_equality(self):
+        # id-valido-acr-passkey-minimo-pwd: a passkey sign-in meets a client's pwd minimum.
+        v = _load_vectors()
+        caso = next(c for c in v["casos"] if c["id"] == "id-valido-acr-passkey-minimo-pwd")
+        got = _verify_one(v, caso, set())
+        self.assertIsNone(got)
 
 
 if __name__ == "__main__":
