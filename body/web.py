@@ -29,7 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from . import (cuenta, db, dispositivo, garmin_adapter, garmin_cuenta, goals, history, household, identity, listen,
-               privacidad, profile, readiness, shift_import, tutoriales, vida_export)
+               privacidad, profile, readiness, shift_import, turnos_costo, tutoriales, vida_export)
 from .agente import ajustes as agente_ajustes
 from .agente import bucle as agente_bucle
 from .agente import cliente as agente_cliente
@@ -456,6 +456,44 @@ def _owned_batch_or_404(conn, batch_id: int, person_id: int) -> None:
         raise HTTPException(404)
 
 
+_STRIP_WEEKS = 8
+_STRIP_DAYS = _STRIP_WEEKS * 7
+_STRIP_BAND = {"night": "night", "off": "off", "day": "day", "morning": "day", "afternoon": "day"}
+
+
+def _turnos_filas(t: T, defs: dict, resumen: dict) -> list[dict]:
+    filas = []
+    for key in turnos_costo.MODELO["metricas"]:
+        v = resumen["costo_promedio"].get(key)
+        d = defs.get(key, {})
+        if v is None:
+            filas.append({"label": t("metric." + key), "sub": t("metric." + key + ".sentence"),
+                         "value": None})
+            continue
+        sign = "+" if v >= 0 else "-"
+        amount = t.minutes(abs(v)) if _is_minutes(key) else t.num(abs(v), 1)
+        unit = _unit(t, d)
+        filas.append({"label": t("metric." + key), "sub": t("metric." + key + ".sentence"),
+                     "value": f"{sign}{amount}" + (f" {unit}" if unit else "")})
+    return filas
+
+
+def _turnos_strip(conn, person_id: int, today_local: date) -> list[dict]:
+    start = today_local - timedelta(_STRIP_DAYS - 1)
+    rows = conn.execute(
+        "SELECT day, kind FROM shift WHERE person_id = ? AND day BETWEEN ? AND ?",
+        (person_id, start.isoformat(), today_local.isoformat()),
+    ).fetchall()
+    kind_by_day = {r["day"]: r["kind"] for r in rows}
+    strip = []
+    for i in range(_STRIP_DAYS):
+        d = (start + timedelta(i)).isoformat()
+        kind = kind_by_day.get(d)
+        score = readiness.compute(conn, d, person_id).score
+        strip.append({"day": d, "band": _STRIP_BAND.get(kind), "score": score})
+    return strip
+
+
 @app.get("/shifts")
 def shifts(request: Request, person_id: int = Depends(identity.current_person_id)):
     conn, person, t = _ctx(person_id)
@@ -470,6 +508,10 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
         result_msg = t("shifts.confirm_all_result", batches=qp.get("batches", "0"), applied=qp.get("applied", "0"))
         if kept:
             result_msg += " " + t("shifts.confirm_all_kept", n=kept)
+    today_local = _today_local(person)
+    resumen = turnos_costo.resumen(conn, person_id, hoy=today_local)
+    costo_ctx = {"hero_dias": resumen["dias_recuperacion"], "motivo": resumen["motivo"],
+                 "filas": _turnos_filas(t, _defs(conn), resumen), "strip": _turnos_strip(conn, person_id, today_local)}
     if len(rows) > 1:
         summary = shift_import.summary_proposed(conn, person_id)
         batches = [
@@ -481,16 +523,27 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
                        summary_from=t.month_year(date.fromisoformat(summary["first_day"])),
                        summary_to=t.month_year(date.fromisoformat(summary["last_day"])),
                        summary_days=summary["day_count"], summary_nights=summary["night_count"],
-                       result_msg=result_msg)
+                       result_msg=result_msg, **costo_ctx)
     if rows:
         proposed = rows[0]
         prev = shift_import.preview(conn, proposed["id"])
         return _render("shifts.html", t=t, tab="shifts", batch=dict(proposed), many=False,
-                       received_date=_batch_date(t, proposed["received"]), preview=prev, result_msg=result_msg)
+                       received_date=_batch_date(t, proposed["received"]), preview=prev, result_msg=result_msg,
+                       **costo_ctx)
     confirmed = shift_import.latest_confirmed(conn, person_id)
     return _render("shifts.html", t=t, tab="shifts", batch=None, many=False,
                    confirmed_date=_batch_date(t, confirmed["received"]) if confirmed else None,
-                   result_msg=result_msg)
+                   result_msg=result_msg, **costo_ctx)
+
+
+@app.get("/shifts/como")
+def shifts_como(person_id: int = Depends(identity.current_person_id)):
+    conn, person, t = _ctx(person_id)
+    today_local = _today_local(person)
+    resumen = turnos_costo.resumen(conn, person_id, hoy=today_local)
+    return _render("how.html", t=t, tab="shifts", modo="turnos", version=resumen["version"],
+                   n_bloques=len(resumen["bloques"]), n_con_recuperacion=resumen["bloques_con_recuperacion"],
+                   n_estables=turnos_costo.MODELO["dias_estables"], n_referencia=turnos_costo.REFERENCIA_DIAS)
 
 
 @app.post("/shifts/confirm")

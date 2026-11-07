@@ -124,11 +124,25 @@ def _shift_kind_for(d: date) -> str:
     return _CYCLE[_week_index(d) % 4]
 
 
-def _value(rng: random.Random, key: str, affected: bool) -> float:
+_RECOVERY_FACTOR = {0: 1.0, 1: 0.7, 2: 0.4, 3: 0.15}  # days since the block's last night -> effect scale
+
+
+def _recovery_factor(d: date) -> float:
+    """0 while in a night block; tapers off over a few days after it (BODY-TURNOS-COSTO-1: the demo
+    must show a believable multi-day recovery, not an instant one)."""
+    if _shift_kind_for(d) == "night":
+        return 1.0
+    for back, factor in _RECOVERY_FACTOR.items():
+        if back and _shift_kind_for(d - timedelta(back)) == "night":
+            return factor
+    return 0.0
+
+
+def _value(rng: random.Random, key: str, factor: float) -> float:
     lo, hi = RANGES[key]
     v = rng.uniform(lo, hi)
-    if affected:
-        v += NIGHT_EFFECT.get(key, 0)
+    if factor:
+        v += NIGHT_EFFECT.get(key, 0) * factor
     v = max(0.0, v)
     if key in _PCT_KEYS:
         v = min(100.0, v)
@@ -162,7 +176,7 @@ def _avg_metric(conn, db, key: str, days: list[date], person_id: int) -> float |
 
 
 def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
-    from . import db, goals, shift_import
+    from . import db, goals, shift_import, turnos_costo
 
     person_id = db.local_person_id(conn)
     conn.execute("UPDATE person SET display_name = 'Demo', timezone = 'America/Bogota' WHERE id = ?", (person_id,))
@@ -174,17 +188,17 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
 
     metric_rows = activity_rows = 0
     for d in all_days:
-        affected = _shift_kind_for(d) == "night" or _shift_kind_for(d - timedelta(1)) == "night"
+        factor = _recovery_factor(d)
         metrics = {}
         for key in CORE_DENSE:
             if rng.random() < 0.92:
-                metrics[key] = _value(rng, key, affected)
+                metrics[key] = _value(rng, key, factor)
         for key in SECONDARY:
             if rng.random() < 0.75:
-                metrics[key] = _value(rng, key, affected)
+                metrics[key] = _value(rng, key, factor)
         if d.day % 14 == 0:
             for key in CARDIO_SPARSE:
-                metrics[key] = _value(rng, key, False)
+                metrics[key] = _value(rng, key, 0.0)
         metric_rows += len(metrics)
 
         sleep_start = sleep_end = None
@@ -222,6 +236,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     proposed_id = _import_shifts(conn, shift_import, person_id, proposed_days, "turnos-demo-propuestos.json",
                                   received=proposed_days[0].isoformat())
     night_weeks = len({_week_index(d) for d in all_days if _shift_kind_for(d) == "night"})
+    night_blocks = len(turnos_costo.bloques_noche(conn, person_id, all_days[0].isoformat(), all_days[-1].isoformat()))
 
     window = all_days[:14]
     base_sleep = _avg_metric(conn, db, "sleep_minutes", window, person_id) or 420.0
@@ -270,7 +285,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
         "personas": 1, "dias_sembrados": dias, "valores_diarios": metric_rows, "actividades": activity_rows,
         "lotes_turnos_confirmados": 1 if confirmed_id is not None else 0,
         "lotes_turnos_propuestos": 1 if proposed_id is not None else 0,
-        "semanas_nocturnas": night_weeks, "metas_activas": 3, "habitos": 1,
+        "semanas_nocturnas": night_weeks, "bloques_turno_noche": night_blocks, "metas_activas": 3, "habitos": 1,
         "verificaciones_semanales": checks, "chequeos_habito": habit_checks,
     }
 

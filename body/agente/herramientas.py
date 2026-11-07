@@ -20,7 +20,7 @@ import sqlite3
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .. import db, history, profile, readiness, shift_import, tutoriales
+from .. import db, history, profile, readiness, shift_import, turnos_costo, tutoriales
 from ..i18n import LANGS
 from . import ajustes, propuestas
 
@@ -185,6 +185,12 @@ def _leer_turnos(conn: sqlite3.Connection, person_id: int) -> dict:
     }
 
 
+def _leer_costo_turnos(conn: sqlite3.Connection, person_id: int) -> dict:
+    """Aggregates over a week or more (block counts, lengths, recovery days, per-metric mean
+    differences) -- never a single day's value, so nivel 'resumen' may read it (BODY-TURNOS-COSTO-1)."""
+    return turnos_costo.resumen(conn, person_id)
+
+
 def _leer_tutoriales(conn: sqlite3.Connection, person_id: int, consulta: str | None = None) -> dict:
     """tutoriales-v1 section 5.4: answers "¿cómo hago X?" from the catalog, never invented steps.
     `consulta`, when given, keeps only tasks whose title or chapter title matches case-insensitively;
@@ -305,6 +311,11 @@ HERRAMIENTAS = [
     {"nombre": "leer_turnos", "tipo": "lectura", "nivel": "ninguno",
      "descripcion": "Los turnos propuestos pendientes de confirmar y el último lote confirmado.",
      "parametros": _SIN_PARAMETROS, "funcion": _leer_turnos},
+    {"nombre": "leer_costo_turnos", "tipo": "lectura", "nivel": "resumen",
+     "descripcion": "Cuánto cuesta una semana de turnos nocturnos y cuántos días tarda en recuperarse, "
+                     "comparado con sus semanas de día: bloques de noches, su costo por medida y su "
+                     "recuperación, nunca el valor de un día.",
+     "parametros": _SIN_PARAMETROS, "funcion": _leer_costo_turnos},
     {"nombre": "leer_ajustes", "tipo": "lectura", "nivel": "ninguno",
      "descripcion": "Tus datos de perfil (nombre, zona horaria, idioma) y tu nivel de datos del asistente.",
      "parametros": _SIN_PARAMETROS, "funcion": _leer_ajustes},

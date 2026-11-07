@@ -91,7 +91,7 @@
       "titulo": "Leer lo que cuesta una semana nocturna",
       "capitulo": "turnos",
       "orden": 2,
-      "pantalla": "/history",
+      "pantalla": "/shifts",
       "agente": "si",
       "onboarding": false
     },
