@@ -5981,3 +5981,48 @@ entry's own commit. `main` left checked out, working tree clean.
 Merging past a customer-facing-bytes condition is authorised here because this spec's own body says so in words
 ("Then merge") -- merge policy A's AWAITING_APPROVAL stop from the prior entry does not re-apply to a spec whose
 body explicitly authorises the merge it is approving.
+
+## BODY-HANDOFF-ACTUAL-1 -- HANDOFF.md and ROADMAP.md rewritten from the code, not from FORK-1 (2026-11-07)
+
+`HANDOFF.md` still read as the first session left it at FORK-1 (2026-11-06: "last commit 17a00c3; 12 tests pass",
+Turnos/Metas/the assistant listed as a numbered "Next slices" not started, a web server "started by this session"
+on port 8772). All four are built and merged; a session opening this repository was reading a project that no
+longer existed. `ROADMAP.md`'s status line and a few sentences had the same problem. Both are rewritten; every
+claim below rests on a symbol, route, table or commit measured in this tree, never on a ledger sentence.
+
+**HANDOFF.md -- rewritten in full.** New opening paragraph (what this repo is, who dispatches into it, where the
+rules/plan/design/history live), a per-piece table measured from `body/web.py`'s routes, `body/db.py`'s `SCHEMA`,
+`body/agente/herramientas.py`'s tool registry, `deploy/host/`, and `README.md`; the "Running processes" line
+corrected to the scheduled task "Body app web" on port 8770 (the stale "started by this session on 8772" line
+removed); "What waits on Carlos" trimmed to his own items with no figures; "Next" now points to the orchestrator's
+queue instead of a numbered list (the old one went stale the moment it was written); "Contacts" kept as still true.
+
+**ROADMAP.md -- state sentences corrected, intent and decisions log untouched.**
+
+| Old (false) | New (measured) |
+|---|---|
+| "Status (2026-11-06, evening): slice 1 done on real data (Carlos signed in; 2 days, 12/12 metrics, activities)." / "Design round 1 open ... Waiting for Carlos's notes on the mock" | "Status (2026-11-07): waves 0-7c are built and merged on `main`" (git log: BODY-TURNOS-*, BODY-METAS-*, BODY-ASISTENTE-*, BODY-HOGAR-* all merged into `main`), building proceeded wave by wave rather than waiting on mock notes (Carlos, logged below: "Start building and go deeper as we go") |
+| Waves 1-7, 7c carried no state mark (only wave 0 had "✓") | Waves 1, 2, 3, 4, 5, 6, 7, 7c marked "✓" -- each has merged commits and passing tests (`test_readiness.py`, `test_turnos_*`, `test_hoy_turno.py`, `test_tendencias_todas.py`, `test_goals*.py`, `test_asistente_*`, `test_hogar_*`) |
+| Wave 6: "goals, plan items with shift context" | "built as goal/habit/goal_check (no separate `plan_item` table; shift context lives on the habit's assignee and the goal/habit rows, not on `plan`)" -- `body/db.py`'s `plan` table (line 245) has no `shift_context` column; there is no `plan_item` table at all |
+| Wave 7b: "One working link each way with Finanzas" (no state) | "-- not started; waits on his Finanzas Personal space" -- no Finanzas route or module exists in `body/` |
+| Wave 7c: "household", "household_member" tables | "built as `body/household.py` mirroring Cuenta's `duna_hogar` claim, `goal.hogar_id`, and `body/compartir.py`'s per-figure sharing (not a separate `household_member` table)" -- `git grep household_member` finds no such table in `body/db.py` |
+| Wave 8: "Cuenta sign-in (`body` client) ... Duna host subdomain" with no state | "Cuenta sign-in and a hosted subdomain path are already built; the Garmin Health API application and true multi-person are not" -- `body/cuenta.py` (OIDC relying party, `/login/cuenta/start`/`callback`), `deploy/host/Caddyfile.body` and `body.duna.solutions` in `README.md` |
+| Hogar plan section: "+ `plan_item.assignee_person_id`. Switching to the claim needs Body's Cuenta client: ask Main for CUENTA-API-CLIENTE-BODY-1 ... when Body is hosted." | "+ `habit.assignee_person_id` (there is no `plan_item` table; `habit` carries the assignee). **Built:** Body has its own Cuenta client (`body/cuenta.py` ...) -- CUENTA-API-CLIENTE-BODY-1 is done, not pending." -- `body/db.py` line 47 (`assignee_person_id` is a `habit` column); `body/cuenta.py` exists and is exercised by `tests/test_cuenta_rp.py`, `tests/test_hogar_cuenta_1.py` |
+| Decisions log (2026-11-06, Main): "Body switches `household.py` to the claim once it has its Cuenta client (CUENTA-API-CLIENTE-BODY-1, when hosted)." | "Body switched `household.py` to the claim once BODY-HOGAR-CUENTA-1 built its Cuenta client (`body/cuenta.py`) -- done, no longer pending." -- `git log --oneline main` shows `BODY-HOGAR-CUENTA-1` and `BODY-HOGAR-CUENTA-DB-INIT-1` merged (`48ed2e8`, `c5a31f6`) |
+
+Everything else in both files -- every wave's "What"/"Done when" description, the decisions log's dated entries and
+Carlos's quotes, the open goal questions, the Hogar plan's design rationale -- is intent or history and was left
+untouched, per this spec's approval (documentation only; ROADMAP keeps its intent).
+
+**Gate, run once, foreground, exact command** `.venv/Scripts/python.exe -m unittest discover tests -t .`:
+
+    Ran 1121 tests in 129.355s
+    OK (skipped=1)
+
+Same count as the prior ledger entry's own gate run (1121) -- nothing in this tree changed test behavior, as
+expected for a documentation-only slice. `git status --porcelain` was empty both before and after the run.
+
+**Merged.** Documentation only (`HANDOFF.md`, `ROADMAP.md`, this ledger entry) -- no schema change, no
+customer-facing bytes (nothing in `body/templates/`, `body/i18n/`, or any served route changed), no cross-repo
+contract change. Merge policy A's three conditions all pass, and this spec's `approved: yes` plus its
+approval-reason cover documentation changes with "no Tier 1 path" -- merged on green without waiting.
