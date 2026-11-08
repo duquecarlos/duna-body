@@ -574,6 +574,43 @@ class ReconnectInPlaceTest(GarminHostedTestCase):
         self.assertIn("Desconectar", r.text)
 
 
+class FirstConnectHintTest(GarminHostedTestCase):
+    """BODY-GARMIN-H2-FIRST-CONNECT-HINT-1: the not-yet-connected form names the 90-day backfill
+    and its minutes-scale first result, so a hosted person knows what pressing Conectar does."""
+
+    def test_never_connected_sees_the_hint_in_es_and_en(self):
+        self._signed_in_person_id()
+        r_es = self.client.get("/garmin")
+        self.assertEqual(r_es.status_code, 200)
+        self.assertIn("No conectado", r_es.text)
+        self.assertIn("Al conectar, Body trae tus últimos 90 días", r_es.text)
+
+        self.client.post("/settings/language", data={"lang": "en"})
+        r_en = self.client.get("/garmin")
+        self.assertIn("When you connect, Body brings in your last 90 days", r_en.text)
+
+    def test_connected_person_does_not_see_the_hint(self):
+        self._signed_in_person_id()
+        self.client.post("/garmin/conectar", data={"email": GOOD_EMAIL, "password": "whatever-demo"})
+        r = self.client.get("/garmin")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn("Al conectar, Body trae tus últimos 90 días", r.text)
+
+    def test_mfa_step_does_not_show_the_hint(self):
+        self._signed_in_person_id()
+        r = self.client.post("/garmin/conectar", data={"email": MFA_EMAIL, "password": "whatever-demo"})
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('name="code"', r.text)
+        self.assertNotIn("Al conectar, Body trae tus últimos 90 días", r.text)
+
+    def test_form_action_and_fields_unchanged(self):
+        self._signed_in_person_id()
+        r = self.client.get("/garmin")
+        self.assertIn('action="/garmin/conectar"', r.text)
+        self.assertIn('name="email"', r.text)
+        self.assertIn('name="password"', r.text)
+
+
 class RequestLogScrubTest(GarminHostedTestCase):
     def test_connect_request_log_has_no_email_or_password(self):
         self._signed_in_person_id()

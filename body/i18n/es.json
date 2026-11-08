@@ -315,6 +315,7 @@
   "privacidad.borrar_error": "Escribiste algo distinto a {palabra}. No borramos nada.",
   "garmin.title": "Garmin",
   "garmin.explain": "Body le pasa tu contraseña a Garmin una sola vez, y solo guarda el acceso que Garmin te devuelve, cifrado.",
+  "garmin.first_connect": "Al conectar, Body trae tus últimos 90 días; las primeras cifras aparecen en unos minutos.",
   "garmin.status.connected": "Conectado desde {date}.",
   "garmin.status.not_connected": "No conectado.",
   "garmin.email_label": "Correo de Garmin",

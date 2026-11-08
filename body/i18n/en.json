@@ -315,6 +315,7 @@
   "privacidad.borrar_error": "You typed something other than {palabra}. We deleted nothing.",
   "garmin.title": "Garmin",
   "garmin.explain": "Body passes your password to Garmin once, and keeps only the access Garmin gives back, encrypted.",
+  "garmin.first_connect": "When you connect, Body brings in your last 90 days; the first figures appear within minutes.",
   "garmin.status.connected": "Connected since {date}.",
   "garmin.status.not_connected": "Not connected.",
   "garmin.email_label": "Garmin email",

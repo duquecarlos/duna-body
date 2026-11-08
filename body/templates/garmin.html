@@ -38,6 +38,7 @@
 {% else %}
 <div class="card">
   <p class="read">{{ t('garmin.explain') }}</p>
+  <p class="read">{{ t('garmin.first_connect') }}</p>
   <form method="post" action="/garmin/conectar" class="mt-12">
     <div class="q">{{ t('garmin.email_label') }}</div>
     <input type="email" name="email" class="field mb-12" autocomplete="username">
