@@ -9608,3 +9608,61 @@ restart, which is outside this slice -- the orchestrator's own step). No passwor
 secret or real health figure was read, printed, stored or logged by this slice -- every figure
 above is a byte count, a ratio, or a test count, never a health value. `git status --porcelain` is
 empty on `main` at the merge commit, before this ledger entry's own commit.
+
+## BODY-FUENTE-CACHE-1 -- fonts are cached forever by path, with or without `v`
+
+BODY-RENDIMIENTO-3's `_StaticConCache` only granted the forever `Cache-Control` to a request whose
+`v` matched `comun.STATIC_HASH`. The self-hosted font (BODY-FUENTES-PROPIAS-1) has no `v` and
+cannot easily get one: it is referenced from `body/static/body.css`'s two `@font-face` rules
+(`src:url(/static/fonts/hanken-grotesk/...woff2)`), and `body.css` is a static file, not a
+template, so it cannot call `static_url`. `base.html`'s preload link (and every other template
+that preloads the latin font) uses that same literal, unversioned URL -- it must stay byte-identical
+to the `@font-face` URL or the preload is wasted.
+
+**The rule, and why it is safe.** A font file is immutable by its path alone, so it does not need a
+`v` to earn the forever-cache: every byte under `body/static/fonts/` is already pinned by sha256 in
+`tests/test_fuentes_propias.py` (the two `.woff2` files and the LICENSE), so an in-place change to
+any of them already fails the gate before this slice, and a new font version has to ship under a
+new path (a new file or directory name) with its own pinned hash -- it can never silently replace
+bytes an old cached copy still points at. `body/web.py`'s `_StaticConCache.file_response` now treats
+any request whose resolved on-disk path falls under `body/static/fonts/` as immutable regardless of
+`v`, alongside the existing `v == comun.STATIC_HASH` rule; `_FUENTES_DIR` is the one `fonts/`
+directory this checks against, resolved once at import time.
+
+**The guard.** BODY-RENDIMIENTO-3 and BODY-FUENTES-PROPIAS-1 already pinned the three files under
+`body/static/fonts/hanken-grotesk/` by sha256, each in its own test. This slice adds
+`EveryFontFileIsPinnedTest` (`tests/test_fuentes_propias.py`): it walks `body/static/fonts/`
+recursively, compares the set of relative paths found against `_FUENTES_DIR_FILES` (the same three
+pinned hashes, gathered once), and asserts they are equal -- not just that every known file is
+pinned, but that nothing new on disk is UNpinned -- then re-hashes every pinned file and asserts the
+count checked equals the count found on disk. A new font file added without a pinned hash fails
+this test before it can reach `main`.
+
+**Tests** (`tests/test_rendimiento_red.py`): `StaticCachingTest` is split into `VERSIONED_PATHS`
+(`body.css`, `charts.js`, which still revalidate with no `v` or a stale `v`) and `FONT_PATH` (the
+latin `.woff2`, which is asserted immutable in all three cases -- current `v`, no `v`, stale `v`).
+
+**docs/DESIGN.md**: a new `(BODY-FUENTE-CACHE-1)` paragraph under rule 13, next to the existing
+`(BODY-RENDIMIENTO-3)` caching material -- a font is immutable by path, which is what lets it share
+the forever-cache with no `v`, and a font update arrives under a new path with its hash pinned and
+`body.css` plus every preload link changed together.
+
+**Gate**, once, foreground, on the slice commit: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -- `Ran 1344 tests in 151.375s ... OK (skipped=1)`. 1344 = BODY-RENDIMIENTO-3's own
+floor of 1343 plus this slice's one new test (`StaticCachingTest`'s four methods are renamed/
+rewritten in place, net zero; `EveryFontFileIsPinnedTest` adds one); reconciled, not re-derived.
+
+**Merge.** `git merge --no-ff feat/body-fuente-cache-1` onto `main` (prior tip
+`cc7139cdfc2b0290a05738a042fc1c92eb5c6eea`), producing merge commit
+`56e118ef25e09c349f798ea322d899bec283cafb`. The merge tree and the branch tree are the same tree --
+`HEAD^{tree}` and `feat/body-fuente-cache-1^{tree}` both equal
+`ac37e92ad0877ccfddcece0bbc36ab7a7081c472`, so the diff between them is empty and the gate above,
+run on the slice commit `182596fba23691d14a2183cbe7a2d4558336f8ac` whose tree is this same tree,
+stands for the merge without a second run.
+
+No schema or migration change, no customer-facing string or layout change, no cross-repo contract
+change -- merge policy A applies, merged on green without waiting for further approval (this
+spec's own approval reason covers the merge). No password, token, session secret or real health
+figure was read, printed, stored or logged by this slice -- every figure above is a byte count or a
+test count, never a health value. `git status --porcelain` is empty on `main` at the merge commit,
+before this ledger entry's own commit.
