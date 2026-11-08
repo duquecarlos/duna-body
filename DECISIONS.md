@@ -6231,3 +6231,143 @@ authorises the merge. `--no-ff` into `main`.
 **What this spec got wrong, measured:** nothing load-bearing. `body/web.py` and `body/agente/herramientas.py`
 needed no edits, as the spec anticipated as a live possibility ("if none does, say so") -- recorded here instead of
 widening `touches:` for a no-op diff.
+
+## BODY-LIVE-CHECKOUT-1 -- every scheduled task runs from a refreshed sibling worktree (2026-11-08)
+
+Carlos's PC runs scheduled tasks (the web app at logon, the daily Garmin pull, the weekly file) out of this same
+repository. A dispatched worker's unmerged branch lives in this repo's own working tree -- so without a fix,
+"restart the web task" or "run the daily pull" mid-slice would serve or read whatever branch a worker happened to
+have checked out at that moment, not `main`. This slice adds a second, sibling checkout on disk (`-LiveDir`,
+default `"$repo-live"`) that holds nothing but `main`, refreshed to `main`'s latest commit at the start of every
+task run, and routes every scheduled task's action through it instead of through `$repo` directly.
+
+`body/vivo.py` is the new allowlisted launcher (`python -m body.vivo <task>`), added to `TAREAS`: `pull`,
+`shift_import`, `vida_export`, `subir_turnos`, `traer_semana`, `web`.
+
+* `refrescar(vivo)` moves `vivo` to `main`'s current commit. It REFUSES to touch anything that is not a linked
+  worktree (compares `--git-dir` with `--git-common-dir`; equal means this is the repo's own main working tree,
+  never to be moved), refuses a `vivo` that is not clean (`git status --porcelain` non-empty), and always
+  `git checkout --detach main` -- never a branch checkout, so `vivo` is never left on a ref a later `git worktree`
+  operation could conflict with. A refresh that cannot proceed (dirty, not a worktree, git failure, timeout) is a
+  fail-safe, not an abort: the result is one of the `sin_cambio:<reason>` words, logged, and `main()` still runs
+  the task against whatever commit is already on disk -- always a `main` commit from some earlier, successful
+  refresh, never a branch, because `refrescar` never leaves `vivo` on anything else.
+* `repo_principal(vivo)` resolves the parent of `vivo`'s `--git-common-dir` -- the main repository that owns the
+  worktree -- so the launcher can find `$repo\.env` even though the live checkout has none of its own.
+* `main()` refreshes, logs one line (`<resultado> <vivo.name> <sha>`), sets `BODY_ENV_FILE` (via
+  `os.environ.setdefault`, so an already-set value is never overridden) to `repo_principal(vivo)/.env`, then runs
+  the task.
+* `body/entorno.py`'s `cargar()` now prefers `BODY_ENV_FILE` over `RUTA_DEFECTO` when no `ruta` is given, since the
+  live checkout has no `.env` of its own and must read the main repo's.
+
+`scripts/install-daily-sync.ps1` gains `-LiveDir` (default `"$repo-live"`), creates that worktree with
+`git worktree add --detach $LiveDir main` if missing, and routes every scheduled task's action through
+`-m body.vivo <task>` with `-WorkingDirectory $LiveDir` instead of `$repo`.
+
+**Stopped GATE_RED, not merged.** The worker's own gate (`.venv/Scripts/python.exe -m unittest discover tests -t
+.`) came back red on two tests outside this slice's `touches:` -- `tests/test_pc_cliente.py` and
+`tests/test_shift_import.py` still asserted the pre-existing direct module names (`body.subir_turnos`,
+`body.shift_import`) that this slice's own script no longer contains, since every action now reads
+`-m body.vivo <task>` instead. The worker stopped on the branch (`feat/body-live-checkout-1`, tip `cc74f6a`)
+without merging and without writing this ledger entry -- both done now, by the orchestrator's review and its
+continuation BODY-LIVE-CHECKOUT-1-M below, which also fixed two further defects the review found in the design
+above: `web`'s `os.execve` on Windows, and the installer's text-matched worktree-reuse check. See that entry for
+what changed and why.
+
+## BODY-LIVE-CHECKOUT-1-M -- land it with three fixes: in-process tasks, a real worktree check, the drifted tests (2026-11-08)
+
+Continuation of BODY-LIVE-CHECKOUT-1 above, after the orchestrator's review (`BODY-LIVE-CHECKOUT-OBS-1`). Three
+defects, fixed on the same branch before merging.
+
+**(1) `body/vivo.py`: `web` no longer uses `os.execve`.** On Windows, CPython's `os.execve` does not replace the
+process image -- it starts a NEW process and the calling process then exits. So the PID Task Scheduler's "Body app
+web" action launched was gone the moment `os.execve` ran: the task read as finished, its restart policy
+(`-RestartCount`/`-RestartInterval`) never watched the real server, `Stop-ScheduledTask` no longer stopped it, and
+the next `Start-ScheduledTask` would launch a second server on the same port. Fixed per the orchestrator's ruling:
+every task, `web` included, now runs IN-PROCESS, right after the refresh, via
+`runpy.run_module(TAREAS[tarea], run_name="__main__", alter_sys=True)` -- the same PID throughout, no child
+process, no console. Before that call: `os.environ.setdefault("BODY_ENV_FILE", ...)`, `os.chdir(vivo)`, and
+`vivo`'s path is moved to `sys.path[0]` (removed if already present, then inserted at the front) so the task
+module resolves against the just-refreshed tree. `sys.argv` is set to `[TAREAS[tarea], *resto]` before the call.
+A `SystemExit` the task raises propagates as this launcher's exit code (`int` codes returned as-is; `None` is 0;
+anything else is printed to stderr, when `sys.stdout` is not `None`, and returns 1); a normal return is 0. The
+`_despachar` function and the `subprocess` spawn of a python interpreter are gone; `subprocess` remains only for
+the `git` calls `refrescar`/`repo_principal` already made.
+
+A guard runs before the refresh: if any `body*` entry in `sys.modules` is not `body` or `body.vivo` -- a module a
+wrapper or a previous task in the same process could have left cached with code the refresh is about to replace
+on disk -- the refresh is skipped, the logged word is `sin_cambio:modulos_previos`, and the task still runs (never
+aborted). In production this never trips: a freshly started `python -m body.vivo <task>` process has imported
+only `body` and `body.vivo` by the time `main()` runs. The module's docstring's `web` paragraph is rewritten to
+describe the in-process design and why `os.execve` was wrong on Windows. The one log line is now printed only
+when `sys.stdout is not None`, so a `pythonw`-launched task (no stdout) cannot fail on it.
+
+**(2) `scripts/install-daily-sync.ps1`: the worktree-reuse check now asks git, not a text match.** The script
+decided whether `$LiveDir` was already a worktree of `$repo` by matching `$LiveDir` (or its `Resolve-Path`) as
+text against `git -C $repo worktree list --porcelain`. `--porcelain` prints forward slashes
+(`worktree C:/Duna/body-app-live`) while `$LiveDir` and `Resolve-Path` carry backslashes on Windows, so the
+`-match [regex]::Escape(...)` comparison never succeeded -- a SECOND run of the installer always tried
+`git worktree add --detach $LiveDir main` again, which exits 1 because the worktree already exists. Fixed: if
+`Test-Path $LiveDir`, the script runs `git -C $LiveDir rev-parse --git-common-dir`, resolves that (relative to
+`$LiveDir` when git prints a relative path) with `Resolve-Path`, and compares it case-insensitively against
+`(Resolve-Path "$repo\.git")` -- `Resolve-Path` on both sides normalises the separators, so the comparison is
+exact rather than textual. Equal -> reuse the existing tree (no `worktree add`). `$LiveDir` exists and is NOT a
+worktree of `$repo` (not a git repo at all, or a worktree of a different repo) -> prints a Spanish message naming
+`$LiveDir` and `$repo`, and `exit 1` without touching it. `$LiveDir` absent -> `git -C $repo worktree add --detach
+$LiveDir main`, unchanged.
+
+**(3) The two drifting tests, now fixed instead of deferred.** `tests/test_pc_cliente.py`'s
+`test_hosted_registers_shift_upload_and_weekly_fetch` asserted `"body.subir_turnos"` and `"body.traer_semana"` as
+literal substrings of the hosted block; `tests/test_shift_import.py`'s
+`test_shiftsdir_param_used_only_inside_its_own_branch_and_no_personal_path` asserted `"body.shift_import"` inside
+the `-ShiftsDir` branch. Both strings stopped appearing once BODY-LIVE-CHECKOUT-1 routed every action through
+`-m body.vivo <task>` (`"body.vivo subir_turnos"`, `"body.vivo traer_semana"`, `"body.vivo shift_import"` --
+`body.subir_turnos` and the others are never substrings of those). Both assertions now check the `body.vivo
+<task>` form instead, each still inside the same block/branch the original test checked, so each test's subject
+is unchanged: the hosted block still proves it registers the shift-upload and weekly-fetch tasks; the
+`-ShiftsDir` test still proves shift import appears only inside its own branch.
+
+**New tests**, `tests/test_vivo.py::MainTest`: `main` is asserted to call `runpy.run_module("body.<task>",
+run_name="__main__", alter_sys=True)` with `os.chdir(vivo)` and `sys.argv` set beforehand and `BODY_ENV_FILE`
+pointing at the main repo's `.env`; a `SystemExit` from the task propagates its code, a normal return is 0; a
+dedicated test patches both `os.execve` (to raise if called) and `subprocess.run` (to fail if invoked with
+`sys.executable` as the command) and confirms `main(["web", ...])` returns 0 without tripping either; another
+injects an extra `body.*` module into `sys.modules` and confirms `refrescar` is skipped, the task still runs, and
+the log line reads `sin_cambio:modulos_previos`; another sets `sys.stdout` to `None` and confirms `main` does not
+raise. `tests/test_installer.py::InstallerWorktreeReuseTest`: the script no longer contains
+`worktree list --porcelain` or the `-match [regex]::Escape($LiveDir)` text match; it contains
+`git -C $LiveDir rev-parse --git-common-dir` and compares against `Resolve-Path -LiteralPath "$repo\.git"`; the
+`Test-Path $LiveDir` branch contains an `exit 1` and the `worktree add` call is outside it (in the `else`).
+
+**Gate, run once, foreground, exact command:**
+
+    .venv/Scripts/python.exe -m unittest discover tests -t .
+
+    Ran 1161 tests in 249.284s
+    OK (skipped=1)
+
+Green. (1161 vs. the first slice's own 1139-test floor from the sibling BODY-FECHA-FUTURA-1-M entry above is not a
+comparable figure -- that floor was a different slice's tree; this slice added tests of its own, counted in the
+`figures` of its STOP report.)
+
+**Merge.** Diff: `body/vivo.py`, `scripts/install-daily-sync.ps1`, `tests/test_vivo.py`,
+`tests/test_installer.py`, `tests/test_pc_cliente.py`, `tests/test_shift_import.py`, `README.md` (unchanged --
+nothing in it named the fixed internals), `DECISIONS.md`. No schema or migration change, no customer-facing byte
+(every change is to an internal launcher, an install script run by Carlos's own hand, and tests), no cross-repo
+contract change. Merge policy A's three conditions are clear and this spec's body explicitly authorises the merge
+("Then merge."). `--no-ff` into `main`.
+
+**Hand steps for Carlos.** Nothing runs on its own: re-run the installer once, from an elevated PowerShell, with
+whatever flags you used before (for example `.\scripts\install-daily-sync.ps1` or with `-ShiftsDir`/`-Lan`/
+`-Hosted` as before) -- it re-registers the three scheduled tasks pointing at the fixed `body.vivo`, and reuses
+the existing `-LiveDir` worktree rather than failing on it (fix 2 above is exactly what makes that reuse work now).
+No `-LiveDir` worktree exists yet on this PC as of this merge, so the very first run still creates it fresh either
+way. To undo: `Unregister-ScheduledTask -TaskName "Body app daily sync"; Unregister-ScheduledTask -TaskName "Body
+app weekly file"; Unregister-ScheduledTask -TaskName "Body app web"`, then `git -C <repo> worktree remove
+<LiveDir>` (as the script's own header comment already says).
+
+**What this spec got wrong, measured:** it named only `tests/test_pc_cliente.py:433` and
+`tests/test_shift_import.py:530-532` as the drifted assertions to fix. `tests/test_pc_cliente.py:434`
+(`"body.traer_semana"`) has the identical defect for the same reason and was failing for the same test method
+(masked by `assertIn` stopping at the first failed assertion, on line 433) -- fixed alongside it, inside the same
+`touches:` the spec already named for that file.
