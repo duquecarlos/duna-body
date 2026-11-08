@@ -6988,3 +6988,76 @@ Merge policy A: no schema change, no customer-facing bytes, no cross-repo contra
 (five files, all under `body/` and `body/rutas/`, no template or i18n text touched) -- merges on green per
 this spec's approval. Merged `feat/body-web-estructura-2` into `main` with `--no-ff` (merge commit
 `23223e82f3c9d58ee1dfc7481b8f2f84221fda56`). `main` is left checked out, `git status --porcelain` empty.
+
+## BODY-WEB-ESTRUCTURA-3 -- un-vacuate the connection guard, remove the shims it hid behind (2026-11-08)
+
+Orchestrator review after BODY-WEB-ESTRUCTURA-2 found two defects the split introduced, and no more routes
+move until both are fixed.
+
+**The connection guard had been vacuous since BODY-WEB-ESTRUCTURA-1.**
+`tests/test_conexiones_cerradas.py::RouteClosesItsConnectionTest` read only `inspect.getsource(web)` and its
+`_calls_ctx`/`_decorator_name` matched only a bare `ast.Name` `_ctx(` call and a bare `ast.Name` decorator --
+every route that had already moved into `body/rutas/*.py` calls `comun._ctx(...)` and carries
+`@comun._cierra_conexion`, both `ast.Attribute` forms the guard could not see. It had checked zero routes
+since the first module moved out, and stayed green doing it. Rewritten to read every route module through a
+new `tests/_rutas.py::modulos_con_rutas()` (parses `body/web.py` plus every `body/rutas/*.py`, by glob, so a
+new router module needs no edit here), to match `_ctx(` bare or as `<name>._ctx(`, and to resolve a
+decorator's name through its final attribute too. It now checks every route handler that calls `_ctx` in
+`body/web.py`, `body/rutas/ayuda.py`, `body/rutas/dispositivos.py` and `body/rutas/privacidad.py` -- 51 in
+total (40 + 1 + 5 + 5) -- and found no real missing decorator: all 51 already carry
+`_cierra_conexion`/`_cierra_conexion_async`, except the one documented exception
+(`asistente_preguntar`, which closes its own connection inside its streaming generator's `finally`).
+Non-vacuousness is asserted, not assumed: a plain substring count of `"_ctx("` inside each route-decorated
+function's own source slice (a method sharing no code with the AST walk) must be `<=` the number the walk
+actually found, and every router module that carries a route must be one the walk actually checked. Proved
+to bite in scratch (not committed): dropping `@comun._cierra_conexion` from `ayuda()` failed the guard,
+naming `ayuda.py:ayuda`; restored before commit.
+
+`tests/test_ejes_fechas.py::test_web_source_has_no_literal_del_al_connector` no longer reads
+`body/web.py` by path -- it locates whichever module in `modulos_con_rutas()` defines `_chart_aria` and fails
+loudly if none does, so a future move of that helper is read correctly instead of silently checking the wrong
+file (or the old behaviour: an `.index()` crash).
+
+**The four re-export shims ruling BODY-WEB-ESTRUCTURA-PLAN-1 rule 3 forbids are gone.**
+`_static_hash`, `STATIC_HASH`, `static_url` (from BODY-WEB-ESTRUCTURA-1-M) and `_short_date` (from
+BODY-WEB-ESTRUCTURA-2) were each a top-level `X = comun.Y` in `body/web.py`, kept specifically so the tests
+that called `web.X` would keep working -- the previous two ledger entries said so in words. Removed; `web.py`'s
+own ~18 call sites of `_short_date` and its one use of `STATIC_HASH` now read `comun.X`; the four tests that
+read them off `body.web` (`tests/test_static_version.py`, `tests/test_asistente_panel.py:90`,
+`tests/test_sin_friccion.py:66`, `tests/test_turnos_costo.py:450`) now import `from body.rutas import comun`
+and read `comun.X` instead.
+
+**Two new guards**, both proved to bite in scratch (not committed) and reverted before the real commit:
+- `tests/test_guardia_parches.py::NoShimAliasGuardTest` -- no top-level assignment in `body/web.py` or
+  `body/rutas/*.py` may be a bare `NAME = <module>.ATTR` alias. Proof: adding `_shim_prueba = comun._ctx` to
+  `body/rutas/ayuda.py` failed the guard, naming the exact line; reverted.
+- `tests/test_guardia_parches.py::RouteModuleAttrReadGuardTest` -- extends the existing patch-target guard
+  (guard (a)) beyond patch calls: every `name.ATTR` read anywhere in `tests/`, where `name` resolves to
+  `body.web` or a `body.rutas` module, must name an attribute truly defined at that module's own top level
+  (`_defined_at_top_level(..., strict=True)`, which also now rejects a shim-alias assignment as a definition).
+  A module dunder such as `__file__` is exempted -- it is never defined by source, every module carries it.
+  Proof: adding a read of `web.STATIC_HASH` (now gone) to `tests/test_static_version.py` failed the guard,
+  naming the exact owner and attribute; reverted.
+
+No route moved in this slice; `touches:` stayed inside `body/web.py`, `tests/_rutas.py` and the test modules
+named above.
+
+Gate, exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, run once on the branch tip:
+
+    Ran 1200 tests in 142.010s
+    OK (skipped=1)
+
+1198 (BODY-WEB-ESTRUCTURA-2's count) + 2 new guard tests (`NoShimAliasGuardTest`,
+`RouteModuleAttrReadGuardTest`) = 1200. No test removed.
+
+Merge policy A: no schema change, no customer-facing bytes, no cross-repo contract change in the actual diff
+(nine files, all under `body/` or `tests/`, no template or i18n text touched) -- merges on green per this
+spec's approval. Commits: fix `ddfd477d8319ac2d446d9bc30ceb3ce2a0a8a129`, merge
+`6d280c161394fdbc4ccc65f86070f769da3e8374` (both pasted from `git rev-parse`). The merge commit's tree
+(`77328fa05a096a19e8ea40e283256bc22b3e4a74`) is identical to the branch tip's tree (verified with `git diff`,
+empty, before writing this entry rather than re-run after), so the gate above is the gate `main` now carries.
+`main` is left checked out, `git status --porcelain` empty.
+
+**Remaining moves in BODY-WEB-ESTRUCTURA-PLAN-1's sequence**, per this slice's spec: BODY-WEB-ESTRUCTURA-4
+(ajustes + asistente), -5 (metas), -6 (turnos), -7 (hoy + tendencias + historial), -8 (sign-in -- Cuenta
+login/logout -- + Garmin/MFA, reviewed before merge as Tier 1).
