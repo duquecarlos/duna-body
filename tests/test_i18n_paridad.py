@@ -83,8 +83,9 @@ _FIXED_DYNAMIC = {
     "shifts.word.+": ["peor", "mejor", "igual"],
     # body/turnos_costo.py _motivo(): the only four reasons it returns.
     "shifts.reason.~": ["sin_turnos", "sin_noches", "pocos_bloques", "sin_datos_reloj"],
-    # body/patron_turnos.py validar(): per-row error codes (its whole-cycle "largo_invalido" is
-    # filtered out by index before reaching t(), so it never needs an i18n string).
+    # body/patron_turnos.py validar(): per-row error codes. Its whole-cycle "largo_invalido" (index
+    # None) reaches t() through this same prefix too, since BODY-PATRON-ERROR-CICLO-1 -- checked
+    # directly by tests/test_patron_error_ciclo_1.py, not enumerated here.
     "patron.error.+": ["tipo_desconocido", "hora_invalida", "misma_hora", "descanso_con_hora"],
     # body/web.py TREND_KEYS + TREND_GROUPS -- every metric that gets a Tendencias card.
     "trends.q.+": _TREND_Q_KEYS,

@@ -183,7 +183,8 @@ class LockTest(unittest.TestCase):
         self.addCleanup(pull._unlock, held)
         garmin_cuenta.guardar(self.conn, 1, "tok-a")
         with mock.patch("body.pull.garmin_adapter.fetch_day") as m:
-            rc = pull.main(["--backfill"])
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = pull.main(["--backfill"])
         self.assertEqual(rc, 0)
         m.assert_not_called()
 
@@ -212,7 +213,8 @@ class LockTest(unittest.TestCase):
         with mock.patch("body.pull.LOCK_ESPERA_S", 5), \
              mock.patch("body.pull.LOCK_SONDEO_S", 0.05), \
              mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_stub_fetch_day()) as m:
-            rc = pull.main(["--days", "1"])
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = pull.main(["--days", "1"])
         self.assertEqual(rc, 0)
         m.assert_called()
 
@@ -229,7 +231,8 @@ class LockTest(unittest.TestCase):
             return garmin_adapter.DayData(day=day, metrics={"resting_hr": 55.0}), token_str
 
         with mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=fetch):
-            rc = pull.main(["--days", "1"])
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = pull.main(["--days", "1"])
         self.assertEqual(rc, 0)
         self.assertEqual(observed_during_run, [None])
 
@@ -245,7 +248,8 @@ class LocalModeRefusesBackfillTest(unittest.TestCase):
     def test_local_mode_refuses_backfill_without_any_adapter_call(self):
         self.assertNotIn(cuenta.ISSUER_ENV, os.environ)
         with mock.patch("body.pull.garmin_adapter.fetch_day") as m:
-            rc = pull.main(["--backfill"])
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = pull.main(["--backfill"])
         self.assertEqual(rc, 2)
         m.assert_not_called()
 
@@ -257,6 +261,8 @@ class NoHealthFigureInOutputTest(unittest.TestCase):
         patcher.start(); self.addCleanup(patcher.stop)
         env_patcher = mock.patch.dict(os.environ, {cuenta.ISSUER_ENV: "https://fake-cuenta.test"})
         env_patcher.start(); self.addCleanup(env_patcher.stop)
+        sleep_patcher = mock.patch("body.pull.time.sleep")  # PAUSE_S would otherwise slow this file a lot
+        sleep_patcher.start(); self.addCleanup(sleep_patcher.stop)
 
     def test_backfill_prints_only_counts(self):
         garmin_cuenta.guardar(self.conn, 1, "tok-a")

@@ -2,6 +2,9 @@
 
 Builds throwaway git repos in a temp directory -- never touches this repository's own worktree.
 """
+import contextlib
+import io
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -30,19 +33,39 @@ def _head_is_detached(cwd) -> bool:
     return _git(cwd, "symbolic-ref", "-q", "HEAD").returncode != 0
 
 
+_base: Path | None = None
+_repo: Path | None = None
+_live: Path | None = None
+_initial_sha: str | None = None
+
+
+def setUpModule():
+    """One throwaway repo + worktree, built once for the whole module (git on Windows is slow to
+    spawn -- BODY-TESTS-VELOCIDAD-1). Every test gets a clean start by resetting both trees back
+    to this initial commit rather than re-running `init`/`worktree add`."""
+    global _base, _repo, _live, _initial_sha
+    _base = Path(tempfile.mkdtemp(prefix="body-vivo-test-"))
+    _repo = _base / "repo"
+    _repo.mkdir()
+    _git_ok(_repo, "init", "-b", "main")
+    _git_ok(_repo, "config", "user.email", "test@example.com")
+    _git_ok(_repo, "config", "user.name", "Test")
+    (_repo / "a.txt").write_text("1", encoding="utf-8")
+    _git_ok(_repo, "add", "a.txt")
+    _git_ok(_repo, "commit", "-m", "first")
+    _initial_sha = _git_ok(_repo, "rev-parse", "main")
+    _live = _base / "live"
+    _git_ok(_repo, "worktree", "add", "--detach", str(_live), "main")
+
+
+def tearDownModule():
+    shutil.rmtree(_base, ignore_errors=True)
+
+
 class _RepoFixture(unittest.TestCase):
     def setUp(self):
-        base = Path(tempfile.mkdtemp(prefix="body-vivo-test-"))
-        self.repo = base / "repo"
-        self.repo.mkdir()
-        _git_ok(self.repo, "init", "-b", "main")
-        _git_ok(self.repo, "config", "user.email", "test@example.com")
-        _git_ok(self.repo, "config", "user.name", "Test")
-        (self.repo / "a.txt").write_text("1", encoding="utf-8")
-        _git_ok(self.repo, "add", "a.txt")
-        _git_ok(self.repo, "commit", "-m", "first")
-        self.live = base / "live"
-        _git_ok(self.repo, "worktree", "add", "--detach", str(self.live), "main")
+        self.repo = _repo
+        self.live = _live
 
     def _commit_on_main(self, texto: str) -> str:
         (self.repo / "a.txt").write_text(texto, encoding="utf-8")
@@ -52,6 +75,16 @@ class _RepoFixture(unittest.TestCase):
 
 
 class RefrescarTest(_RepoFixture):
+    """The only class whose tests commit on main or dirty the live tree, so it is the only one
+    that needs each test reset back to the shared fixture's initial commit."""
+
+    def setUp(self):
+        super().setUp()
+        # No test here ever creates an untracked file -- only `a.txt`'s tracked content changes --
+        # so a plain reset/force-checkout is enough; no separate `clean` is needed.
+        _git_ok(self.repo, "reset", "--hard", _initial_sha)
+        _git_ok(self.live, "checkout", "--force", "--detach", _initial_sha)
+
     def test_mueve_el_arbol_vivo_a_la_nueva_main(self):
         antes = _git_ok(self.live, "rev-parse", "HEAD")
         nueva = self._commit_on_main("segundo")
@@ -104,7 +137,8 @@ class MainTest(_RepoFixture):
         self.addCleanup(lambda: setattr(sys, "path", self._path_original))
 
     def test_tarea_fuera_del_allowlist_sale_con_2(self):
-        self.assertEqual(vivo.main(["no-existe"]), 2)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(vivo.main(["no-existe"]), 2)
 
     def test_corre_la_tarea_con_runpy_en_el_mismo_proceso(self):
         capturado = {}
@@ -116,9 +150,11 @@ class MainTest(_RepoFixture):
             capturado["argv"] = list(sys.argv)
 
         with patch.object(vivo, "arbol_vivo", return_value=self.live), \
+             patch.object(vivo, "refrescar", return_value="ya_al_dia"), \
              patch.object(vivo.os, "chdir") as mock_chdir, \
              patch.object(vivo.runpy, "run_module", side_effect=_run_module) as mock_run_module, \
-             patch.dict(vivo.os.environ, {}, clear=False):
+             patch.dict(vivo.os.environ, {}, clear=False), \
+             contextlib.redirect_stdout(io.StringIO()):
             codigo = vivo.main(["pull", "--days", "2"])
 
             self.assertEqual(
@@ -135,27 +171,33 @@ class MainTest(_RepoFixture):
 
     def test_systemexit_de_la_tarea_propaga_su_codigo(self):
         with patch.object(vivo, "arbol_vivo", return_value=self.live), \
+             patch.object(vivo, "refrescar", return_value="ya_al_dia"), \
              patch.object(vivo.os, "chdir"), \
              patch.object(vivo.runpy, "run_module", side_effect=SystemExit(7)), \
-             patch.dict(vivo.os.environ, {}, clear=False):
+             patch.dict(vivo.os.environ, {}, clear=False), \
+             contextlib.redirect_stdout(io.StringIO()):
             codigo = vivo.main(["pull"])
 
         self.assertEqual(codigo, 7)
 
     def test_retorno_normal_de_la_tarea_es_cero(self):
         with patch.object(vivo, "arbol_vivo", return_value=self.live), \
+             patch.object(vivo, "refrescar", return_value="ya_al_dia"), \
              patch.object(vivo.os, "chdir"), \
              patch.object(vivo.runpy, "run_module", return_value=None), \
-             patch.dict(vivo.os.environ, {}, clear=False):
+             patch.dict(vivo.os.environ, {}, clear=False), \
+             contextlib.redirect_stdout(io.StringIO()):
             codigo = vivo.main(["pull"])
 
         self.assertEqual(codigo, 0)
 
     def test_body_env_file_ya_puesto_no_se_sobreescribe(self):
         with patch.object(vivo, "arbol_vivo", return_value=self.live), \
+             patch.object(vivo, "refrescar", return_value="ya_al_dia"), \
              patch.object(vivo.os, "chdir"), \
              patch.object(vivo.runpy, "run_module"), \
-             patch.dict(vivo.os.environ, {"BODY_ENV_FILE": "C:/otra/ruta/.env"}):
+             patch.dict(vivo.os.environ, {"BODY_ENV_FILE": "C:/otra/ruta/.env"}), \
+             contextlib.redirect_stdout(io.StringIO()):
             vivo.main(["pull"])
             self.assertEqual(vivo.os.environ["BODY_ENV_FILE"], "C:/otra/ruta/.env")
 
@@ -170,13 +212,15 @@ class MainTest(_RepoFixture):
             return subprocess_run_original(cmd, *args, **kwargs)
 
         with patch.object(vivo, "arbol_vivo", return_value=self.live), \
+             patch.object(vivo, "refrescar", return_value="ya_al_dia"), \
              patch.object(vivo.os, "chdir"), \
              patch.object(vivo.runpy, "run_module") as mock_run_module, \
              patch.object(
                  vivo.os, "execve", side_effect=AssertionError("os.execve must not be called")
              ), \
              patch.object(vivo.subprocess, "run", side_effect=_subprocess_run_vigilado), \
-             patch.dict(vivo.os.environ, {}, clear=False):
+             patch.dict(vivo.os.environ, {}, clear=False), \
+             contextlib.redirect_stdout(io.StringIO()):
             codigo = vivo.main(["web", "--port", "1"])
 
         self.assertEqual(codigo, 0)
@@ -210,6 +254,7 @@ class MainTest(_RepoFixture):
 
     def test_no_falla_sin_stdout_como_bajo_pythonw(self):
         with patch.object(vivo, "arbol_vivo", return_value=self.live), \
+             patch.object(vivo, "refrescar", return_value="ya_al_dia"), \
              patch.object(vivo.os, "chdir"), \
              patch.object(vivo.runpy, "run_module"), \
              patch.object(vivo.sys, "stdout", None), \
