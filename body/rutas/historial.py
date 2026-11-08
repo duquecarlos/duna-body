@@ -1,0 +1,138 @@
+"""Historial (BODY-WEB-ESTRUCTURA-7): the `/history` screen -- coverage, training, patterns and
+the by-shift breakdown. Pure move: path, method, templates and body identical.
+"""
+from __future__ import annotations
+
+from datetime import date
+
+from fastapi import APIRouter, Depends
+
+from .. import db, history, identity
+from ..i18n import T
+from . import comun
+
+router = APIRouter()
+
+TRAINING_COLORS = ["var(--body)", "var(--night)", "var(--amber)", "var(--info)", "var(--est)"]
+OTHER_COLOR = "var(--muted)"
+TRAINING_RECENT_MONTHS = 12
+
+
+def _kind_label(t: T, info: dict | None) -> str:
+    if not info:
+        return "—"
+    return t("activity.type." + info["key"]) if info["known"] else info["fallback_label"]
+
+
+def _color_map(types: list[dict]) -> dict[str, str]:
+    colors, i = {}, 0
+    for ty in types:
+        if ty["key"] == "other":
+            colors["other"] = OTHER_COLOR
+        else:
+            colors[ty["key"]] = TRAINING_COLORS[i % len(TRAINING_COLORS)]
+            i += 1
+    return colors
+
+
+def _training_ctx(t: T, train: dict) -> dict:
+    colors = _color_map(train["types"])
+    types = [{"label": _kind_label(t, ty), "sessions": t.num(ty["sessions"]), "minutes": t.minutes(ty["minutes"]),
+              "km": f"{t.num(ty['km'], 1)} km" if ty["km"] is not None else None, "color": colors[ty["key"]]}
+             for ty in train["types"]]
+    max_minutes = train["max_month_minutes"] or 0.0
+    months = []
+    for m in train["months"]:
+        segs = [{"label": _kind_label(t, seg), "color": colors.get(seg["key"], OTHER_COLOR),
+                 "pct": (seg["minutes"] / max_minutes * 100) if max_minutes else 0.0} for seg in m["by_type"]]
+        months.append({"month": t.month_year(date.fromisoformat(m["month"] + "-01")),
+                       "href": f"/trends?m={m['month']}", "sessions": t.num(m["sessions"]),
+                       "minutes": t.minutes(m["minutes"]), "segs": segs})
+    months.reverse()  # newest first (BODY-HISTORIA-POLISH-1): training() builds them oldest first
+    yoy, yoy_ctx = train["yoy"], None
+    if yoy:
+        yoy_ctx = {"now": t("history.training_yoy_now", sessions=t.num(yoy["sessions_now"]),
+                             minutes=t.minutes(yoy["minutes_now"])),
+                   "prev": t("history.training_yoy_prev", sessions=t.num(yoy["sessions_year_ago"]),
+                             minutes=t.minutes(yoy["minutes_year_ago"]))}
+    return {"types": types, "months": months[:TRAINING_RECENT_MONTHS], "months_older": months[TRAINING_RECENT_MONTHS:],
+            "usual_week": (t("history.training_usual_week", n=t.num(train["usual_week_sessions"]))
+                           if train["usual_week_sessions"] is not None else None),
+            "longest": _kind_label(t, train["longest_kind"]) if train["longest_kind"] else None,
+            "frequent": _kind_label(t, train["most_frequent_kind"]) if train["most_frequent_kind"] else None,
+            "yoy": yoy_ctx}
+
+
+def _finding_text(t: T, defs: dict, f: dict) -> str:
+    """A plain sentence, not "Your toughest {label}": the metric in its sentence form (never title case
+    mid-sentence) and the direction said from `better` -- a "lower is better" metric reads worst where it
+    runs highest, a "higher is better" metric reads worst where it runs lowest."""
+    metric = t("metric." + f["metric"] + ".sentence")
+    value = comun._value(t, f["metric"], f["value"])
+    unit = comun._unit(t, defs[f["metric"]])
+    better = defs[f["metric"]]["better"]
+    key = f"history.find.{f['axis']}_better_{better}"
+    if f["axis"] == "weekday":
+        return t(key, metric=metric, day=t("date.days")[f["index"]], value=value, unit=unit)
+    return t(key, metric=metric, month=t("date.months")[f["index"]], value=value, unit=unit)
+
+
+def _pattern_rows(t: T, defs: dict, pat: dict) -> dict | None:
+    present = [k for k in history.PATTERN_KEYS if pat["metrics"].get(k)]
+    if not present:
+        return None
+    marks = {(f["metric"], f["axis"], f["index"]) for f in pat["findings"]}
+
+    def row(axis: str, idx: int, label: str) -> dict:
+        vals = []
+        for k in present:
+            b = pat["metrics"][k][axis][idx]
+            vals.append({"text": comun._value(t, k, b["center"]) if b else "—", "mark": (k, axis, idx) in marks})
+        return {"label": label, "vals": vals}
+
+    return {"heads": [t("trends.short." + k) for k in present],
+            "weekday": [row("weekday", i, t("date.days")[i][:3].capitalize()) for i in range(7)],
+            "month": [row("month", i, t("date.months")[i][:3].capitalize()) for i in range(12)]}
+
+
+def _shift_ctx(t: T, defs: dict, shift_data: dict) -> dict:
+    if not shift_data["has_shifts"]:
+        return {"has_shifts": False}
+    kinds = []
+    for row in shift_data["kinds"]:
+        metrics = [{"label": t("metric." + k), "value": comun._value(t, k, row["metrics"].get(k)),
+                    "unit": comun._unit(t, defs[k]) if row["metrics"].get(k) is not None else ""}
+                   for k in history.PATTERN_KEYS]
+        kinds.append({"kind": row["kind"], "kind_label": t("shift.kind." + row["kind"]),
+                      "days": t("history.days_count", n=t.num(row["days"])), "metrics": metrics})
+    return {"has_shifts": True, "kinds": kinds}
+
+
+@router.get("/history")
+@comun._cierra_conexion
+def history_view(person_id: int = Depends(identity.current_person_id)):
+    conn, person, t = comun._ctx(person_id)
+    turnos_on = db.trabaja_turnos_si(conn, person_id)
+    cov = history.coverage(conn, person_id)
+    if not cov:
+        return comun._render("soon.html", t=t, tab="trends", title=t("history.title"),
+                       text=comun._sync_status_text(conn, person, t), turnos=turnos_on)
+    defs = comun._defs(conn)
+    train = history.training(conn, person_id)
+    pat = history.patterns(conn, person_id)
+    shift_data = history.by_shift(conn, person_id)
+
+    since = comun._short_date(t, date.fromisoformat(cov["first_day"]))
+    coverage_line = t("history.coverage", since=since, days=t.num(cov["days_present"]))
+    gap_line = (t("history.coverage_gap", days=t.num(cov["longest_gap_days"]),
+                  start=comun._short_date(t, date.fromisoformat(cov["longest_gap_start"])),
+                  end=comun._short_date(t, date.fromisoformat(cov["longest_gap_end"])))
+                if cov["longest_gap_days"] > 0 else t("history.coverage_no_gap"))
+    hero_finding = _finding_text(t, defs, pat["findings"][0]) if pat["findings"] else None
+
+    return comun._render("history.html", t=t, tab="trends", coverage_line=coverage_line, gap_line=gap_line,
+                   activity_count=t.num(cov["activity_count"]), hero_finding=hero_finding,
+                   training=_training_ctx(t, train) if train else None,
+                   patterns=_pattern_rows(t, defs, pat),
+                   findings=[_finding_text(t, defs, f) for f in pat["findings"][1:]],
+                   shift=_shift_ctx(t, defs, shift_data), turnos=turnos_on)

@@ -176,6 +176,12 @@ _ALLOWED_WITHOUT_DECORATOR = {"asistente_preguntar"}
 
 _HTTP_METHODS = {"get", "post", "put", "delete", "patch"}
 
+# BODY-WEB-ESTRUCTURA-7: comun.py's /sw.js serves a static asset by content (the cache name built
+# from STATIC_HASH) -- it is not about any person's own data, opens no connection, and so carries
+# no route that calls _ctx. A module named here may have routes without a single one of them
+# calling _ctx; every OTHER router module must still have at least one that does.
+_MODULES_WITHOUT_A_CTX_ROUTE = {"comun.py"}
+
 
 def _decorator_name(node) -> str | None:
     """The decorator's own name -- a bare `@_cierra_conexion` or the final attribute of
@@ -258,7 +264,8 @@ class RouteClosesItsConnectionTest(unittest.TestCase):
         self.assertEqual(missing, [])
         self.assertGreaterEqual(checked, expected_min)
         self.assertTrue(modules_with_routes, "no router module carries a route -- the scan is broken")
-        self.assertEqual(modules_checked, modules_with_routes,
+        allowed_unchecked = {p for p in modules_with_routes if p.name in _MODULES_WITHOUT_A_CTX_ROUTE}
+        self.assertEqual(modules_checked | allowed_unchecked, modules_with_routes,
                           f"a router module has routes but none call _ctx -- checked {modules_checked} "
                           f"vs routed {modules_with_routes}")
 

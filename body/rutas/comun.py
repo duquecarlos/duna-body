@@ -9,24 +9,34 @@ once, when this module is imported -- never from body/web.py, which would re-run
 throwaway re-import of body.web (tests/test_env_local_1.py's ImportarWebTest) and risk closing
 over a second, separate copy of a name this module already owns. web.py's middleware sets and
 resets `comun._RUTA_ACTUAL`; nothing else outside this module touches it.
+
+BODY-WEB-ESTRUCTURA-7: also carries its own `router` for the one route that belongs with its own
+data rather than with any screen (`/sw.js`, next to the STATIC_HASH it serves), and TREND_KEYS /
+TREND_GROUPS / _latest_day / _sync_status_text, each read by two or more of Hoy, Día, Tendencias
+and Turnos.
 """
 from __future__ import annotations
 
 import contextvars
 import hashlib
+import html
 import json
-from datetime import date
+from datetime import date, datetime
 from functools import wraps
 from pathlib import Path
 from urllib.parse import parse_qs
+from zoneinfo import ZoneInfo
 
-from fastapi import Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Request
+from fastapi.responses import HTMLResponse, Response
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from markupsafe import Markup
 
-from .. import cuenta, db, fechas, tutoriales
+from .. import cuenta, db, fechas, garmin_cuenta, tutoriales
 from ..agente import cliente as agente_cliente
 from ..i18n import T
+
+router = APIRouter()
 
 HERE = Path(__file__).parent.parent
 
@@ -161,22 +171,66 @@ def _defs(conn) -> dict[str, dict]:
     return {r["key"]: dict(r) for r in conn.execute("SELECT * FROM metric_def ORDER BY rowid")}
 
 
-# BODY-WEB-ESTRUCTURA-6: _GRUPOS_EXTRA is set once by body/web.py, right after it defines its own
-# TREND_GROUPS -- the "Ver todas las medidas" catalogue (DESIGN rule 8) stays web.py's own data,
-# never moved here, because tests/test_tendencias_todas.py (outside this slice's `touches:`) reads
-# `web.TREND_GROUPS` directly. But Turnos' own cost-row hrefs (body/rutas/turnos.py's
-# `_turnos_filas`, BODY-TURNOS-ENLACES-1) need the exact same "does this key live behind the extra
-# accordion" check that web.py's `_tendencias_href` already uses, read from the one catalogue, not
-# duplicated (tests/test_turnos_enlaces.py's own docstring) -- so web.py hands its list over here
-# once, at import time, the same way its _CaminoActualMiddleware hands over _RUTA_ACTUAL above.
-_GRUPOS_EXTRA: list[tuple[str, list[str]]] = []
+# BODY-WEB-ESTRUCTURA-7: TREND_KEYS and TREND_GROUPS live here, not in Tendencias (body/rutas/
+# tendencias.py), because Día (body/rutas/hoy.py's _tendencias_href) and Turnos (body/rutas/
+# turnos.py's _turnos_filas, via _es_extra_metric below) both read them too -- two-or-more-domains
+# puts a name in comun.py (ESTRUCTURA-4's own rule). ESTRUCTURA-6 could not move TREND_GROUPS here
+# outright because tests/test_tendencias_todas.py, outside that slice's own `touches:`, read
+# `web.TREND_GROUPS` directly; this slice's spec grants every test module, so there is no reader
+# left behind this time.
+TREND_KEYS = ["readiness", "sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake", "steps",
+              "vo2max", "vo2max_cycling", "fitness_age"]
+
+# "Ver todas las medidas" (DESIGN rule 8): the rest of the catalogue, grouped by plain-word topic. The single
+# source every reader -- the Tendencias page, tests/test_tendencias_todas.py and Turnos' own cost rows --
+# reads from. sleep_need_min (Garmin's own target) is deliberately never shown here.
+TREND_GROUPS = [
+    ("sleep", ["sleep_score", "sleep_deep_min", "sleep_rem_min", "sleep_light_min", "sleep_awake_min"]),
+    ("energy", ["body_battery_high", "body_battery_low", "body_battery_sleep_charge"]),
+    ("stress", ["stress_avg", "high_stress_min"]),
+    ("activity", ["intensity_minutes", "active_kcal"]),
+    ("breathing", ["respiration_awake"]),
+]
 
 
 def _es_extra_metric(key: str) -> bool:
-    """Whether `key` lives behind "Ver todas las medidas" on Tendencias -- called from body/web.py's
-    Día domain (_tendencias_href) and from Turnos (body/rutas/turnos.py's _turnos_filas), so it
-    lives here rather than with either (BODY-WEB-ESTRUCTURA-6)."""
-    return any(key in keys for _, keys in _GRUPOS_EXTRA)
+    """Whether `key` lives behind "Ver todas las medidas" on Tendencias -- called from Día
+    (body/rutas/hoy.py's _tendencias_href) and from Turnos (body/rutas/turnos.py's
+    _turnos_filas), so it lives here rather than with either (BODY-WEB-ESTRUCTURA-6)."""
+    return any(key in keys for _, keys in TREND_GROUPS)
+
+
+def _latest_day(conn, person_id: int) -> str | None:
+    """BODY-WEB-ESTRUCTURA-7: called from Hoy's today() and from Tendencias' trends(), so it lives
+    here rather than with either."""
+    days = db.days_with_data(conn, person_id)
+    return days[0] if days else None
+
+
+def _sync_status_text(conn, person: dict, t: T) -> str:
+    """An empty state never dead-ends (BODY-SIN-FRICCION-1): say the sync runs on its own and name the
+    last successful sync's date, if one is recorded. Never invents a schedule time -- the actual time
+    is a per-install Task Scheduler setting (scripts/install-daily-sync.ps1 -At) this app cannot read.
+    In hosted mode, with no sync yet, WHEN data will arrive is knowable: a connected watch's first
+    figures come from the --backfill timer within minutes, not the next day's pull (BODY-PRIMER-
+    PULL-1), so a connected watch says so instead of just "it hasn't synced yet"; a watch not yet
+    connected keeps that sentence and adds a link to connect one.
+
+    BODY-WEB-ESTRUCTURA-7: called from Hoy's today(), Día's day_view() and Historial's
+    history_view(), so it lives here rather than with any one of them."""
+    ts = db.last_sync(conn, person["id"])
+    if ts:
+        tz = ZoneInfo(person.get("timezone") or "America/Bogota")
+        last_date = datetime.fromisoformat(ts).astimezone(tz).date()
+        return t("sync.runs") + " " + t("sync.last", date=_short_date(t, last_date))
+    if cuenta.hosted():
+        if garmin_cuenta.conectado(conn, person["id"]):
+            return t("sync.hosted_connected")
+        return Markup(
+            html.escape(t("sync.runs") + " " + t("sync.none_yet")) +
+            ' <a class="taplink" href="/garmin">' + html.escape(t("sync.connect_watch")) + "</a>"
+        )
+    return t("sync.runs") + " " + t("sync.none_yet")
 
 
 async def _form(request: Request) -> dict:
@@ -213,3 +267,24 @@ def _habit_checked(conn, habit_id: int, person_id: int, day: str) -> bool:
     row = conn.execute("SELECT done FROM habit_check WHERE habit_id = ? AND person_id = ? AND day = ?",
                        (habit_id, person_id, day)).fetchone()
     return bool(row and row["done"])
+
+
+# BODY-WEB-ESTRUCTURA-7: /sw.js belongs here, not with any screen -- it serves the cache name built
+# from STATIC_HASH above, the one name in this module every static asset's own URL already carries
+# (static_url()), so the cache-busting value and the route that publishes it to the service worker
+# stay next to each other rather than in a page module that has nothing to do with caching.
+SW_TEMPLATE = """// Body service worker: caches only static files, never health pages.
+const C='body-static-HASHPLACEHOLDER';
+self.addEventListener('install',e=>self.skipWaiting());
+self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k))))));
+self.addEventListener('fetch',e=>{const u=new URL(e.request.url);
+ if(u.origin===location.origin&&u.pathname.startsWith('/static/')){
+  e.respondWith(caches.open(C).then(c=>c.match(e.request).then(r=>r||fetch(e.request).then(n=>{c.put(e.request,n.clone());return n}))));}});
+"""
+
+SW = SW_TEMPLATE.replace("HASHPLACEHOLDER", STATIC_HASH)
+
+
+@router.get("/sw.js")
+def sw():
+    return Response(SW, media_type="text/javascript", headers={"Cache-Control": "no-cache"})

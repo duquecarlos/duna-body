@@ -354,6 +354,40 @@ class NoShimAliasGuardTest(unittest.TestCase):
         self.assertEqual(offenders, [], f"shim alias assignment(s): {offenders}")
 
 
+def _is_module_attr_target(node: ast.Assign) -> bool:
+    """True for a top-level `comun.X = ...` / `fechas.Y = ...`: a bare assignment whose TARGET is
+    an attribute of another name -- the reverse of `_is_shim_alias_assign`, whose VALUE is the
+    attribute. BODY-WEB-ESTRUCTURA-7: body/web.py filled `comun._GRUPOS_EXTRA` this way, right
+    after defining its own `TREND_GROUPS`, so that `comun._es_extra_metric` could read it without
+    the constant actually moving -- the exact shape ruling BODY-WEB-ESTRUCTURA-1-M forbids
+    ("never configure comun's state from web.py at import time"), because the `_RUTA_ACTUAL`
+    comparison it was modeled on does not hold: comun owns that contextvar itself and web.py's own
+    middleware only sets and resets it per request, it never fills a comun-owned list once at
+    import time the way this assignment did."""
+    return (len(node.targets) == 1 and isinstance(node.targets[0], ast.Attribute)
+            and isinstance(node.targets[0].value, ast.Name))
+
+
+class NoReverseShimGuardTest(unittest.TestCase):
+    """BODY-WEB-ESTRUCTURA-7: no top-level assignment in body/web.py or body/rutas/*.py fills a
+    slot on another body module from outside it. Three slices in a row (ESTRUCTURA-4 through -6)
+    a worker invented a workaround for a test it could not edit instead of stopping BLOCKED, so
+    this guard is absolute -- every test module is in this slice's `touches:`, so there is no
+    reader a fix cannot move along with the name."""
+
+    def test_no_top_level_assignment_targets_another_body_modules_attribute(self):
+        offenders = []
+        for path, tree in modulos_con_rutas():
+            for node in tree.body:
+                if isinstance(node, ast.Assign) and _is_module_attr_target(node):
+                    owner = node.targets[0].value.id
+                    attr = node.targets[0].attr
+                    offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno} "
+                                      f"{owner}.{attr} = ...")
+        self.assertEqual(offenders, [], f"reverse shim assignment(s) (a module filling another "
+                          f"module's slot at import time): {offenders}")
+
+
 # (defining module, function name) -> allowed to keep the pure-forward shape below.
 #
 # comun._today_local is the one SANCTIONED shim: kept deliberately so the route clock has its own

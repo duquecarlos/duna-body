@@ -13,6 +13,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from fastapi.testclient import TestClient
 
 from body import config, db, web
+from body.rutas import hoy
 
 client = TestClient(web.app, follow_redirects=False)
 
@@ -98,7 +99,7 @@ class UnmatchedRouteLogsDashTest(unittest.TestCase):
 class UnhandledExceptionLogTest(unittest.TestCase):
     def test_raising_route_logs_class_name_not_the_message_and_hides_it_from_the_response(self):
         _reset_db(self)
-        with mock.patch.object(web, "_delta", side_effect=ValueError(SECRET_FORM_VALUE)):
+        with mock.patch.object(hoy, "_delta", side_effect=ValueError(SECRET_FORM_VALUE)):
             with self.assertLogs("body.request", level="INFO") as cm:
                 r = client.get(f"/day/{SECRET_DAY}")
         self.assertEqual(r.status_code, 500)

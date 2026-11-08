@@ -13,6 +13,7 @@ from tests._db import open_conn
 
 from body import config, db, identity, web
 from body.agente import herramientas
+from body.rutas import comun
 
 PERSON_B = 2
 
@@ -36,16 +37,16 @@ def _seed_days(conn, person_id: int, key: str, start: str, n: int, base: float, 
 class GroupsCatalogueTest(unittest.TestCase):
     def test_every_group_key_exists_in_metric_defs(self):
         defined = {d[0] for d in db.METRIC_DEFS}
-        for _, keys in web.TREND_GROUPS:
+        for _, keys in comun.TREND_GROUPS:
             for k in keys:
                 self.assertIn(k, defined, f"{k} is not a METRIC_DEFS key")
 
     def test_sleep_need_min_is_never_in_a_group(self):
-        all_keys = {k for _, keys in web.TREND_GROUPS for k in keys}
+        all_keys = {k for _, keys in comun.TREND_GROUPS for k in keys}
         self.assertNotIn("sleep_need_min", all_keys)
 
     def test_expected_group_keys(self):
-        groups = dict(web.TREND_GROUPS)
+        groups = dict(comun.TREND_GROUPS)
         self.assertEqual(set(groups["sleep"]),
                           {"sleep_score", "sleep_deep_min", "sleep_rem_min", "sleep_light_min", "sleep_awake_min"})
         self.assertEqual(set(groups["energy"]),

@@ -18,6 +18,7 @@ from tests._rutas import modulos_con_rutas
 
 from body import config, db, identity, profile, web
 from body.i18n import T
+from body.rutas import tendencias
 
 ATTR_RE = re.compile(r'\s+[\w-]+="[^"]*"')
 ISO_DAY_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -139,18 +140,18 @@ class ChartAriaConnectorsTest(unittest.TestCase):
 
     def test_es_daily_span_keeps_del_al(self):
         t = T("es")
-        aria = web._chart_aria(t, "Sueño", "9 oct 2026", "7 nov 2026")
+        aria = tendencias._chart_aria(t, "Sueño", "9 oct 2026", "7 nov 2026")
         self.assertEqual(aria, "Sueño, del 9 oct 2026 al 7 nov 2026")
 
     def test_es_monthly_span_is_lowercase_de_a(self):
         t = T("es")
-        aria = web._chart_aria(t, "Sueño", "Agosto 2026", "Noviembre 2026", months=True)
+        aria = tendencias._chart_aria(t, "Sueño", "Agosto 2026", "Noviembre 2026", months=True)
         self.assertEqual(aria, "Sueño, de agosto 2026 a noviembre 2026")
 
     def test_en_daily_and_monthly_both_use_to(self):
         t = T("en")
-        daily = web._chart_aria(t, "Sleep", "9 Oct 2026", "7 Nov 2026")
-        monthly = web._chart_aria(t, "Sleep", "August 2026", "November 2026", months=True)
+        daily = tendencias._chart_aria(t, "Sleep", "9 Oct 2026", "7 Nov 2026")
+        monthly = tendencias._chart_aria(t, "Sleep", "August 2026", "November 2026", months=True)
         self.assertEqual(daily, "Sleep, 9 Oct 2026 to 7 Nov 2026")
         self.assertEqual(monthly, "Sleep, August 2026 to November 2026")
 

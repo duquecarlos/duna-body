@@ -10,8 +10,7 @@ import unittest
 
 from body import db, history
 from body import turnos_costo
-from body import web
-from body.rutas import metas, turnos
+from body.rutas import comun, metas, tendencias, turnos
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 I18N_DIR = ROOT / "body" / "i18n"
@@ -66,9 +65,9 @@ def _scan_calls():
 # value actually comes from (not re-typed by hand). The dict key matches what `_scan_calls` records:
 # the literal prefix exactly as it appears before the '+' or '~' in the source.
 _METRIC_KEYS = [d[0] for d in db.METRIC_DEFS]
-_TREND_GROUP_KEYS = [k for _, keys in web.TREND_GROUPS for k in keys]
-_TREND_Q_KEYS = web.TREND_KEYS + _TREND_GROUP_KEYS
-_TREND_SHORT_KEYS = sorted(set(web.WEEK_KEYS) | set(history.PATTERN_KEYS))
+_TREND_GROUP_KEYS = [k for _, keys in comun.TREND_GROUPS for k in keys]
+_TREND_Q_KEYS = comun.TREND_KEYS + _TREND_GROUP_KEYS
+_TREND_SHORT_KEYS = sorted(set(tendencias.WEEK_KEYS) | set(history.PATTERN_KEYS))
 
 _FIXED_DYNAMIC = {
     # body/web.py: t("metric." + k) -- every metric Body knows about (body/db.py METRIC_DEFS).
@@ -93,7 +92,7 @@ _FIXED_DYNAMIC = {
     # body/web.py TREND_GROUPS -- only the "Ver todas las medidas" extras get a plain-word subtitle.
     "trends.plain.+": _TREND_GROUP_KEYS,
     # body/web.py TREND_GROUPS' own group names.
-    "trends.group.+": [g for g, _ in web.TREND_GROUPS],
+    "trends.group.+": [g for g, _ in comun.TREND_GROUPS],
     # body/web.py WEEK_KEYS ∪ history.PATTERN_KEYS -- every metric the week/weekday tables can show.
     "trends.short.+": _TREND_SHORT_KEYS,
     # body/history.py KNOWN_ACTIVITY_TYPES -- the Garmin activity types Body has a label for.
@@ -115,7 +114,7 @@ _FIXED_DYNAMIC = {
     # body/templates/today.html, how.html: t('band.' ~ r.band) -- readiness.py Readiness.band().
     "band.~": ["high", "medium", "low"],
     # body/templates/trends.html: t('trends.r.' + x) -- the range picker's own values.
-    "trends.r.+": web.RANGES,
+    "trends.r.+": tendencias.RANGES,
 }
 
 # body/web.py _finding_text(): key = f"history.find.{axis}_better_{better}", then t(key, ...) -- a
