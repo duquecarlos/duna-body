@@ -325,6 +325,7 @@
   "garmin.error.datos": "Escribe tu correo y tu contraseña de Garmin.",
   "garmin.error.demasiados": "Demasiados intentos seguidos. Espera una hora e inténtalo de nuevo.",
   "garmin.error.generic": "Garmin no aceptó estos datos. Intenta otra vez.",
+  "garmin.error.mfa_demasiados": "Demasiados códigos equivocados. Vuelve a empezar con tu correo y tu contraseña.",
   "garmin.error.mfa_expired": "El código expiró. Conéctate otra vez.",
   "garmin.error.not_signed_in": "Garmin rechazó el acceso guardado. Conéctate otra vez.",
   "garmin.error.pull_failed": "La última sincronización con Garmin falló. Body lo intentará de nuevo mañana.",
