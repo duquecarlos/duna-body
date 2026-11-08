@@ -31,8 +31,8 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup
 
-from . import (compartir, cuenta, db, dispositivo, enlaces, entorno, garmin_adapter, garmin_cuenta, goals, history,
-               household, identity, listen, patron_turnos, privacidad, profile, readiness, shift_import,
+from . import (compartir, cuenta, db, dispositivo, enlaces, entorno, fechas, garmin_adapter, garmin_cuenta, goals,
+               history, household, identity, listen, patron_turnos, privacidad, profile, readiness, shift_import,
                turnos_costo, tutoriales, vida_export)
 from .agente import ajustes as agente_ajustes
 from .agente import bucle as agente_bucle
@@ -223,8 +223,7 @@ async def _form(request: Request) -> dict:
 
 
 def _today_local(person: dict) -> date:
-    tz = ZoneInfo(person.get("timezone") or "America/Bogota")
-    return datetime.now(tz).date()
+    return fechas.hoy_local(person)
 
 
 def _week_monday(d: date) -> date:
@@ -1751,7 +1750,7 @@ def goal_quitar_enlace(goal_id: int, app_key: str, person_id: int = Depends(iden
 @app.post("/habits/{habit_id}/check")
 @_cierra_conexion_async
 async def habit_check(habit_id: int, request: Request, person_id: int = Depends(identity.current_person_id)):
-    conn, _, _ = _ctx(person_id)
+    conn, person, _ = _ctx(person_id)
     f = await _form(request)
     day = f.get("day")
     try:
@@ -1766,7 +1765,11 @@ async def habit_check(habit_id: int, request: Request, person_id: int = Depends(
     # for themselves; a habit assigned to someone else cannot be checked by this viewer.
     if row["assignee_person_id"] is not None and row["assignee_person_id"] != person_id:
         raise HTTPException(404)
-    goals.check_habit(conn, habit_id, person_id, day, f.get("done") == "1")
+    try:
+        goals.check_habit(conn, habit_id, person_id, day, f.get("done") == "1",
+                           hoy=_today_local(person))
+    except ValueError:
+        raise HTTPException(404)
     back = f.get("back") or "/"
     return RedirectResponse(back, status_code=303)
 

@@ -9,7 +9,7 @@ import json
 import statistics
 from datetime import date, timedelta
 
-from . import baselines, db, household
+from . import baselines, db, fechas, household
 
 RULE_VERSION = "metas-v2"
 MIN_METRIC_DAYS = 4             # fewer days with data this week -> on_track = NULL, an honest gap
@@ -101,7 +101,16 @@ def add_habit(conn, goal_id, title, cadence: dict, *, assignee_person_id=None, a
     return cur.lastrowid
 
 
-def check_habit(conn, habit_id, person_id, day, done: bool, note: str | None = None) -> None:
+def check_habit(conn, habit_id, person_id, day, done: bool, note: str | None = None, *,
+                 hoy: date) -> None:
+    """A habit check is an ACTUAL record -- something that already happened. Every caller states
+    today (keyword-only, no default -- the web route the person's real local today, the demo its
+    own scenario day, each test its fixture's today): a `day` beyond `hoy` plus one day of
+    tolerance is refused (`ValueError`, nothing written -- BODY-FECHA-FUTURA-1, hub hit_01m6w6cn8x).
+    This function never reads the clock itself, so a caller cannot forget to enforce the rule by
+    omission (BODY-FECHA-FUTURA-1-M)."""
+    if not fechas.fecha_real_valida(date.fromisoformat(day), hoy):
+        raise ValueError(f"check_habit: day {day!r} is past {person_id}'s local today {hoy.isoformat()}")
     with conn:
         conn.execute(
             "INSERT INTO habit_check (habit_id, person_id, day, done, note) VALUES (?, ?, ?, ?, ?) "

@@ -6090,3 +6090,144 @@ approval-reason name exactly this cleanup as covered, including if a touched pat
 green without waiting. Merge commit `e94c4ec`; its tree (`5383a92`) is identical to the slice branch tip's tree
 (`git diff` between the merge commit and the pre-merge branch tip `7cd8d65` is empty), so the gate above, run on the
 branch tip, is also the gate of what landed on `main`.
+
+## BODY-FECHA-FUTURA-1 -- a habit check refuses a day past local today + 1; GATE_RED, not merged (2026-11-08)
+
+Adopting Lotes' hub principle (hit_01m6w6cn8x, LOTES-API-FECHA-FUTURA-1): a record of something that already
+happened refuses a date past the person's local today plus one day of tolerance; the future lives in plans.
+
+**Census (every hand-dated write in `body/web.py`, `body/templates/`, `/api/*`, `body/agente/`):**
+
+| Route / tool | Field | Class | Kept as-is? |
+|---|---|---|---|
+| `POST /habits/{id}/check` (`body/web.py:1751`, `goals.check_habit`) | `day` | **ACTUAL** -- a check that a habit was done on day D | No -- this slice enforces it |
+| `POST /goals/new` (`body/web.py:1541`, `goals.propose`) | `deadline` | PLAN | Yes, untouched |
+| `POST /shifts/patron` (`body/web.py:861`, `patron_turnos.guardar`) | `start_day` | PLAN | Yes, untouched |
+| `POST /shifts/confirm`, `/shifts/confirm-all`, `/shifts/dismiss` | `batch_id` only | neither -- confirms/dismisses an already-proposed import, no new date entered | n/a |
+| `POST /api/turnos` (`shift_import.propose_data`) | shift dates inside the uploaded file | PLAN (future shifts) -- also not hand-typed, a file import | Yes, untouched |
+| `GET /api/vida/semana` | `semana` query param | read-only, not stored | n/a |
+| Assistant tools (`body/agente/herramientas.py`) | -- | the registry is `lectura`/`propuesta` only (module docstring); `_proponer_meta`'s `start_day` is a PLAN field, machine-set to today, never person-supplied; **no tool checks a habit today** -- nothing to enforce | n/a |
+| Garmin pull, shift-file import | -- | not hand-dated by a person; left alone per spec | n/a |
+
+Exactly one hand-dated ACTUAL exists: the habit check. Both templates that submit it (`goal.html:46`,
+`today.html:41`) send a hidden `day` field pre-filled with the server's own `today`/`today_iso` -- confirming the
+approval-reason's "the screens only ever send today or a day of the current week" -- so no customer-facing wording
+was needed; this stayed inside merge policy A's bytes condition throughout.
+
+**The helper, `body/fechas.py`:** `hoy_local(person: dict) -> date` (the person's `timezone`, default
+`America/Bogota`, `datetime.now(tz).date()` -- the exact logic both duplicates had) and
+`fecha_real_valida(day: date, hoy: date) -> bool` = `day <= hoy + timedelta(days=1)`. `web._today_local` and
+`herramientas._hoy_local` now both delegate to it in one line each (kept as thin wrappers -- removing them would
+have touched every one of their ~15 call sites across `body/web.py` for no benefit).
+
+**Deviation from the spec's step 3, measured, not assumed.** The spec asked for `goals.check_habit` to compute
+`hoy_local` itself and refuse unconditionally. Implemented literally, that broke pre-existing tests OUTSIDE this
+slice's `touches:` that call `check_habit` directly with fixture dates unrelated to the real calendar --
+`tests/test_habito_veces_1.py` (3 tests, e.g. `"2026-11-15"`) and `tests/test_person_scope.py` (`_seed_person`'s
+hardcoded `"2026-11-10"`) -- measured by running them after the literal change, before writing anything else.
+`check_habit` instead takes an optional `hoy: date | None = None`; the refusal fires only when a caller passes it.
+Every pre-existing caller (demo seeding, the whole existing test suite) passes none and is byte-for-byte unaffected
+-- `check_habit` stays the pure function over its arguments it always was. `body/web.py`'s route is the one real
+caller and always passes `hoy=_today_local(person)`, wrapping the `ValueError` in the same `HTTPException(404)` the
+route already gives a malformed `day`. No assistant tool calls `check_habit` (census above), so
+`herramientas.py` needed no enforcement call, only the `_hoy_local` delegation.
+
+**Tests, `tests/test_fecha_futura_1.py` (17, all new, all green in isolation):** the pure predicate (today, +1
+accepted; +2 refused; a past day of the week accepted); `hoy_local` reading a different calendar date for Bogota
+vs. Tokyo from the same UTC instant (`body.fechas.datetime` patched, person's own timezone decides); `check_habit`
+with an explicit `hoy` for all four day cases plus one proving the no-`hoy` path is unchanged; the same four day
+cases through the real `/habits/{id}/check` route (`web._today_local` patched); a goal deadline and a shift-pattern
+`start_day` a year and two months out, both still accepted.
+
+**GATE_RED -- found by the one full-suite run, not by this slice's own diff.** Gate, run once, foreground, exact
+command `.venv/Scripts/python.exe -m unittest discover tests -t .`:
+
+    Ran 1139 tests in 180.163s
+    FAILED (failures=1, skipped=1)
+
+1139 = the prior floor 1122 (BODY-HOGAR-SCHEMA-LIMPIEZA-2's gate, same command) plus this slice's 17 new tests,
+exactly. The one failure, `tests.test_hogar_miembro_1.HabitCheckTest.test_member_checks_shared_and_own_habit_not_others`
+(outside this slice's `touches:`), is this slice's enforcement correctly firing on a pre-existing test that never
+mocked `web._today_local` (three sibling tests in the same file, lines 212/250/382, do). That test's own fixture
+week is anchored to a hardcoded `_TODAY = date(2026, 11, 12)` and sends `_WEEK_DAYS[1]` = `2026-11-10` -- which, on
+real wall-clock calendar date 2026-11-08 (this run), is two days past real today and so is correctly 404'd; the test
+still asserts `303`. It is a time-bomb that happened to be green on every previous day this file was gated, and
+will go green again on its own once the real calendar reaches 2026-11-09 -- but TODAY, on THIS tree, it is red, and
+this slice measured that, not guessed it. Fixing it needs one line inside `tests/test_hogar_miembro_1.py` (the same
+`mock.patch.object(web, "_today_local", return_value=_TODAY)` its three siblings already use), a file this slice's
+`touches:` does not cover and this slice does not widen into on its own. Per protocol, a red this slice cannot fix
+inside its declared `touches:` stops GATE_RED, not merge.
+
+**Not merged.** Work is committed on `feat/body-fecha-futura-1`; `main` is unchanged at `868a707`. `git status
+--porcelain` is empty on the branch. An orchestrator follow-up should add that one `mock.patch` line to
+`tests/test_hogar_miembro_1.py` (or re-run this slice's gate on a day the fixture's own week has caught up) and
+then merge -- the diff itself needs no further change.
+
+## BODY-FECHA-FUTURA-1-M -- the opt-in `hoy` becomes required, landing BODY-FECHA-FUTURA-1 (2026-11-08)
+
+**Ruling, from the orchestrator, applied verbatim.** BODY-FECHA-FUTURA-1 made `goals.check_habit`'s `hoy` optional
+(`hoy: date | None = None`) to keep ~30 pre-existing calls with fixture dates working without touching them. A rule
+a caller can forget to pass is not enforced in the single writer, which is what the hub principle (hit_01m6w6cn8x)
+asks for. So `hoy` becomes a required, keyword-only argument with no default: `check_habit(conn, habit_id,
+person_id, day, done, note=None, *, hoy: date)`. Every caller now states what today is -- the web route the
+person's real local today, the demo its own scenario day, each test its fixture's today. `check_habit` still reads
+no clock itself (the worker's original, sound reason for the opt-in shape) -- omitting `hoy` is simply a
+`TypeError` now, so the rule cannot be bypassed by a caller forgetting it.
+
+**Signature and docstring**, `body/goals.py`:
+
+    def check_habit(conn, habit_id, person_id, day, done: bool, note: str | None = None, *,
+                     hoy: date) -> None:
+
+`fechas.fecha_real_valida` is applied unconditionally; the docstring now says every caller states today and the
+function never reads the clock.
+
+**Every call site, found by `git grep -n "check_habit(" -- body tests` before the change (31 call sites, one
+`def`) and reconciled after:**
+
+* `body/web.py:1769` -- already passed `hoy=_today_local(person)` as a keyword; untouched.
+* `body/demo.py:289,333` -- now pass `hoy=anchor` (`anchor = date.today()`, the demo's own "today" the whole
+  scenario is built around, `body/demo.py:195`). Both call sites are already gated by `if date.fromisoformat(dd) <=
+  anchor`, so every day they ever wrote was `<= anchor`; passing `hoy=anchor` changes nothing the demo writes.
+* `body/agente/herramientas.py` -- no call to `check_habit` (confirmed again by the same grep); nothing to change,
+  as the original slice's census already found.
+* Every test call (29 sites across `tests/test_fecha_futura_1.py`, `test_goals.py`, `test_habito_veces_1.py`,
+  `test_hogar_miembro_1.py`, `test_person_scope.py`, `test_privacidad.py`, `test_vida_export.py`) now passes `hoy=`
+  the fixture's own "today": its module `_TODAY`/`_MONDAY`/`_WEEK` constant, an already-local `today` variable
+  (reordered above its first use in two `test_habito_veces_1.py` cases so it exists before the calls that need it),
+  or the latest day that call's own loop checks -- chosen so no test's assertions changed, only the new keyword was
+  added. No test's expected values were touched.
+
+**`tests/test_fecha_futura_1.py`:** `test_no_hoy_passed_keeps_the_old_behaviour` (asserted a future day written with
+no `hoy`) is replaced by `test_no_hoy_passed_is_a_type_error`, asserting `TypeError` and that nothing is stored --
+the opt-in path no longer exists to test.
+
+**`tests/test_hogar_miembro_1.py::HabitCheckTest::test_member_checks_shared_and_own_habit_not_others`** (the
+collateral GATE_RED the prior slice stopped on, outside its own `touches:`) now wraps its three `client.post`
+calls in `mock.patch.object(web, "_today_local", return_value=_TODAY)`, exactly as its three siblings in the same
+file already do (lines 212, 250 -- now also patched for its own direct `check_habit` calls -- and 382).
+
+**A second collateral found by this slice's own edit, fixed inside `touches:` before the one gate run**:
+`test_viewer_sees_their_own_history_not_the_creators` (same file) calls `check_habit` directly (not through the
+route) for every day of `_WEEK_DAYS` (person 2) and the first four (person 1); passing the file's `_TODAY`
+(2026-11-12, a Thursday) as `hoy` refused `_WEEK_DAYS[5]`/`[6]` (Saturday/Sunday, past `_TODAY`+1). Fixed by
+passing each loop's own latest day as `hoy` (`_WEEK_DAYS[3]` and `_WEEK_DAYS[6]` respectively) instead of the
+module `_TODAY` -- this is a direct data-seeding call, not a route call, so there is no reason it must share the
+route's later `_today_local` mock.
+
+**Gate, run once, foreground, exact command:**
+
+    .venv/Scripts/python.exe -m unittest discover tests -t .
+
+    Ran 1139 tests in 134.459s
+    OK (skipped=1)
+
+1139 matches the prior slice's own count exactly (no test added or removed -- one renamed, same file). Green.
+
+**Merge.** No schema or migration change, no customer-facing byte (the refusal is still the route's existing 404,
+unchanged), no cross-repo contract change -- merge policy A's three conditions are clear and this spec's body
+authorises the merge. `--no-ff` into `main`.
+
+**What this spec got wrong, measured:** nothing load-bearing. `body/web.py` and `body/agente/herramientas.py`
+needed no edits, as the spec anticipated as a live possibility ("if none does, say so") -- recorded here instead of
+widening `touches:` for a no-op diff.

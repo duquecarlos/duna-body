@@ -33,7 +33,7 @@ class PerDayTest(unittest.TestCase):
         hid = goals.add_habit(conn, gid, "Estirar", {"per": "day", "times": 1})
         habit = conn.execute("SELECT * FROM habit WHERE id = ?", (hid,)).fetchone()
         for day in _WEEK[:3]:
-            goals.check_habit(conn, hid, 1, day, True)
+            goals.check_habit(conn, hid, 1, day, True, hoy=date.fromisoformat(_WEEK[2]))
         done, due, period = goals.habit_progress(conn, habit, 1, _MONDAY)
         self.assertEqual((done, due, period), (3, 7, "day"))
 
@@ -56,7 +56,7 @@ class PerWeekTimesTest(unittest.TestCase):
         db.init(conn)
         gid = _goal(conn)
         habit = self._habit(conn, gid, 2)
-        goals.check_habit(conn, habit["id"], 1, _WEEK[0], True)
+        goals.check_habit(conn, habit["id"], 1, _WEEK[0], True, hoy=date.fromisoformat(_WEEK[0]))
         done, due, period = goals.habit_progress(conn, habit, 1, _MONDAY)
         self.assertEqual((done, due, period), (1, 2, "week"))
 
@@ -66,7 +66,7 @@ class PerWeekTimesTest(unittest.TestCase):
         gid = _goal(conn)
         habit = self._habit(conn, gid, 7)
         for day in _WEEK:
-            goals.check_habit(conn, habit["id"], 1, day, True)
+            goals.check_habit(conn, habit["id"], 1, day, True, hoy=date.fromisoformat(_WEEK[6]))
         done, due, period = goals.habit_progress(conn, habit, 1, _MONDAY)
         self.assertEqual((done, due, period), (7, 7, "week"))
 
@@ -76,7 +76,7 @@ class PerWeekTimesTest(unittest.TestCase):
         gid = _goal(conn)
         habit = self._habit(conn, gid, 2)
         for day in _WEEK[:5]:  # 5 checks, but due is only 2
-            goals.check_habit(conn, habit["id"], 1, day, True)
+            goals.check_habit(conn, habit["id"], 1, day, True, hoy=date.fromisoformat(_WEEK[4]))
         done, due, period = goals.habit_progress(conn, habit, 1, _MONDAY)
         self.assertEqual((done, due, period), (2, 2, "week"))
 
@@ -92,7 +92,7 @@ class ContextFewerDaysThanTimesTest(unittest.TestCase):
         conn.execute("INSERT INTO shift (person_id, day, kind, start_local) VALUES (1, '2026-11-05', 'night', "
                      "'2026-11-05T20:00:00')")
         conn.commit()
-        goals.check_habit(conn, hid, 1, "2026-11-04", True)
+        goals.check_habit(conn, hid, 1, "2026-11-04", True, hoy=date(2026, 11, 4))
         done, due, period = goals.habit_progress(conn, habit, 1, _MONDAY)
         self.assertEqual((done, due, period), (1, 1, "week"))  # due = min(3, 1), not 3
 
@@ -104,9 +104,9 @@ class PerMonthTest(unittest.TestCase):
         gid = _goal(conn)
         hid = goals.add_habit(conn, gid, "Pesarse", {"per": "month", "times": 2})
         habit = conn.execute("SELECT * FROM habit WHERE id = ?", (hid,)).fetchone()
-        goals.check_habit(conn, hid, 1, "2026-11-03", True)
-        goals.check_habit(conn, hid, 1, "2026-11-10", True)
         today = date(2026, 11, 15)
+        goals.check_habit(conn, hid, 1, "2026-11-03", True, hoy=today)
+        goals.check_habit(conn, hid, 1, "2026-11-10", True, hoy=today)
         done, due, period = goals.habit_progress(conn, habit, 1, _MONDAY, today)
         self.assertEqual((done, due, period), (2, 2, "month"))
 
@@ -116,9 +116,9 @@ class PerMonthTest(unittest.TestCase):
         gid = _goal(conn)
         hid = goals.add_habit(conn, gid, "Pesarse", {"per": "month", "times": 2})
         habit = conn.execute("SELECT * FROM habit WHERE id = ?", (hid,)).fetchone()
-        for day in ("2026-11-03", "2026-11-10", "2026-11-12"):  # 3 checks, times is 2
-            goals.check_habit(conn, hid, 1, day, True)
         today = date(2026, 11, 15)
+        for day in ("2026-11-03", "2026-11-10", "2026-11-12"):  # 3 checks, times is 2
+            goals.check_habit(conn, hid, 1, day, True, hoy=today)
         done, due, period = goals.habit_progress(conn, habit, 1, _MONDAY, today)
         self.assertEqual((done, due, period), (2, 2, "month"))
 
@@ -127,7 +127,7 @@ class PerMonthTest(unittest.TestCase):
         db.init(conn)
         gid = _goal(conn)
         hid = goals.add_habit(conn, gid, "Pesarse", {"per": "month", "times": 2})
-        goals.check_habit(conn, hid, 1, "2026-11-03", True)
+        goals.check_habit(conn, hid, 1, "2026-11-03", True, hoy=date(2026, 11, 3))
         r = goals.weekly_check(conn, gid, 1, _MONDAY.isoformat())
         self.assertEqual(r["habits_due"], 0)
         self.assertIsNone(r["on_track"])  # 0 due habits -> no verdict, not a false on-track
@@ -141,8 +141,8 @@ class DueTodayTest(unittest.TestCase):
         hid = goals.add_habit(conn, gid, "Entrenar", {"per": "week", "times": 2})
         habit = conn.execute("SELECT * FROM habit WHERE id = ?", (hid,)).fetchone()
         self.assertTrue(goals.habit_due_today(conn, habit, 1, date.fromisoformat(_WEEK[0])))
-        goals.check_habit(conn, hid, 1, _WEEK[0], True)
-        goals.check_habit(conn, hid, 1, _WEEK[1], True)
+        goals.check_habit(conn, hid, 1, _WEEK[0], True, hoy=date.fromisoformat(_WEEK[1]))
+        goals.check_habit(conn, hid, 1, _WEEK[1], True, hoy=date.fromisoformat(_WEEK[1]))
         self.assertFalse(goals.habit_due_today(conn, habit, 1, date.fromisoformat(_WEEK[2])))
 
     def test_day_cadence_stays_due_today_even_once_checked(self):
@@ -151,7 +151,7 @@ class DueTodayTest(unittest.TestCase):
         gid = _goal(conn)
         hid = goals.add_habit(conn, gid, "Estirar", {"per": "day", "times": 1})
         habit = conn.execute("SELECT * FROM habit WHERE id = ?", (hid,)).fetchone()
-        goals.check_habit(conn, hid, 1, _WEEK[0], True)
+        goals.check_habit(conn, hid, 1, _WEEK[0], True, hoy=date.fromisoformat(_WEEK[0]))
         self.assertTrue(goals.habit_due_today(conn, habit, 1, date.fromisoformat(_WEEK[0])))
 
     def test_week_cadence_stays_due_today_on_the_quota_completing_day(self):
@@ -160,8 +160,8 @@ class DueTodayTest(unittest.TestCase):
         gid = _goal(conn)
         hid = goals.add_habit(conn, gid, "Entrenar", {"per": "week", "times": 2})
         habit = conn.execute("SELECT * FROM habit WHERE id = ?", (hid,)).fetchone()
-        goals.check_habit(conn, hid, 1, _WEEK[0], True)  # Monday: 1st of 2
-        goals.check_habit(conn, hid, 1, _WEEK[1], True)  # Tuesday: 2nd of 2, quota met today
+        goals.check_habit(conn, hid, 1, _WEEK[0], True, hoy=date.fromisoformat(_WEEK[1]))  # Monday: 1st of 2
+        goals.check_habit(conn, hid, 1, _WEEK[1], True, hoy=date.fromisoformat(_WEEK[1]))  # Tuesday: 2nd of 2, quota met today
         self.assertTrue(goals.habit_due_today(conn, habit, 1, date.fromisoformat(_WEEK[1])))
         self.assertFalse(goals.habit_due_today(conn, habit, 1, date.fromisoformat(_WEEK[2])))
 
@@ -171,9 +171,9 @@ class DueTodayTest(unittest.TestCase):
         gid = _goal(conn)
         hid = goals.add_habit(conn, gid, "Pesarse", {"per": "month", "times": 2})
         habit = conn.execute("SELECT * FROM habit WHERE id = ?", (hid,)).fetchone()
-        goals.check_habit(conn, hid, 1, "2026-11-03", True)  # 1st of 2
-        goals.check_habit(conn, hid, 1, "2026-11-15", True)  # 2nd of 2, quota met today
         today = date(2026, 11, 15)
+        goals.check_habit(conn, hid, 1, "2026-11-03", True, hoy=today)  # 1st of 2
+        goals.check_habit(conn, hid, 1, "2026-11-15", True, hoy=today)  # 2nd of 2, quota met today
         self.assertTrue(goals.habit_due_today(conn, habit, 1, today))
         self.assertFalse(goals.habit_due_today(conn, habit, 1, date(2026, 11, 16)))
 
@@ -184,8 +184,8 @@ class MilestoneOnTrackWithTimesTest(unittest.TestCase):
         db.init(conn)
         gid = _goal(conn)
         hid = goals.add_habit(conn, gid, "Entrenar", {"per": "week", "times": 2})
-        goals.check_habit(conn, hid, 1, _WEEK[0], True)
-        goals.check_habit(conn, hid, 1, _WEEK[1], True)
+        goals.check_habit(conn, hid, 1, _WEEK[0], True, hoy=date.fromisoformat(_WEEK[1]))
+        goals.check_habit(conn, hid, 1, _WEEK[1], True, hoy=date.fromisoformat(_WEEK[1]))
         r = goals.weekly_check(conn, gid, 1, _MONDAY.isoformat())
         self.assertEqual(r["habits_done"], 2)
         self.assertEqual(r["habits_due"], 2)

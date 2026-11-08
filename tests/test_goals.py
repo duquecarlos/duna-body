@@ -160,7 +160,7 @@ class MilestoneHabitsTest(unittest.TestCase):
         goals.activate(conn, gid)
         hid = goals.add_habit(conn, gid, "Run", {"per": "day", "times": 1})
         for i in range(5):  # 5 of 7 days done = 71% >= 70%
-            goals.check_habit(conn, hid, 1, f"2026-11-{2 + i:02d}", True)
+            goals.check_habit(conn, hid, 1, f"2026-11-{2 + i:02d}", True, hoy=date(2026, 11, 6))
         r = goals.weekly_check(conn, gid, 1, "2026-11-02")
         self.assertEqual(r["habits_due"], 7)
         self.assertEqual(r["habits_done"], 5)
@@ -174,7 +174,7 @@ class MilestoneHabitsTest(unittest.TestCase):
         goals.activate(conn, gid)
         hid = goals.add_habit(conn, gid, "Run", {"per": "day", "times": 1})
         for i in range(3):  # 3 of 7 = 43%
-            goals.check_habit(conn, hid, 1, f"2026-11-{2 + i:02d}", True)
+            goals.check_habit(conn, hid, 1, f"2026-11-{2 + i:02d}", True, hoy=date(2026, 11, 4))
         r = goals.weekly_check(conn, gid, 1, "2026-11-02")
         self.assertFalse(r["on_track"])
 
@@ -191,7 +191,7 @@ class HabitContextTest(unittest.TestCase):
         conn.execute("INSERT INTO shift (person_id, day, kind, start_local) VALUES (1, '2026-11-05', 'night', "
                      "'2026-11-05T20:00:00')")
         conn.commit()
-        goals.check_habit(conn, hid, 1, "2026-11-04", True)  # the day before the night shift
+        goals.check_habit(conn, hid, 1, "2026-11-04", True, hoy=date(2026, 11, 4))  # the day before the night shift
         r = goals.weekly_check(conn, gid, 1, "2026-11-02")
         self.assertEqual(r["habits_due"], 1)
         self.assertEqual(r["habits_done"], 1)
@@ -222,9 +222,9 @@ class HouseholdGoalCheckTest(unittest.TestCase):
         goals.activate(conn, gid)
         hid = goals.add_habit(conn, gid, "Walk", {"per": "day", "times": 1})
         for i in range(5):  # person 1: 5 of 7 = 71% >= 70%
-            goals.check_habit(conn, hid, 1, f"2026-11-{2 + i:02d}", True)
+            goals.check_habit(conn, hid, 1, f"2026-11-{2 + i:02d}", True, hoy=date(2026, 11, 6))
         for i in range(3):  # person 2: 3 of 7 = 43%
-            goals.check_habit(conn, hid, 2, f"2026-11-{2 + i:02d}", True)
+            goals.check_habit(conn, hid, 2, f"2026-11-{2 + i:02d}", True, hoy=date(2026, 11, 6))
         r1 = goals.weekly_check(conn, gid, 1, "2026-11-02")
         r2 = goals.weekly_check(conn, gid, 2, "2026-11-02")
         self.assertTrue(r1["on_track"])

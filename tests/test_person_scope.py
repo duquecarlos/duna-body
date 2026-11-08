@@ -6,6 +6,7 @@ import inspect
 import os
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest import mock
 
@@ -53,7 +54,7 @@ def _seed_person(conn, person_id: int, day: str, title: str, batch_name: str, re
                         target_value=45.0, baseline_value=55.0, deadline="2027-01-01")
     goals.activate(conn, gid)
     hid = goals.add_habit(conn, gid, f"{title} habit", {"per": "day", "times": 1})
-    goals.check_habit(conn, hid, person_id, day, True)
+    goals.check_habit(conn, hid, person_id, day, True, hoy=date.fromisoformat(day))
     conn.execute(
         "INSERT INTO shift_batch (person_id, file_name, received, extracted_at, status, day_count, created_at) "
         "VALUES (?, ?, ?, ?, 'proposed', 1, ?)",

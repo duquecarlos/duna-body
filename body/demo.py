@@ -286,7 +286,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     while monday <= anchor_monday:
         for dd in goals._context_due_days(conn, person_id, monday, "before_night"):
             if date.fromisoformat(dd) <= anchor:
-                goals.check_habit(conn, habit_id, person_id, dd, rng.random() < 0.7)
+                goals.check_habit(conn, habit_id, person_id, dd, rng.random() < 0.7, hoy=anchor)
                 habit_checks += 1
         monday += timedelta(7)
 
@@ -330,7 +330,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     while monday <= anchor_monday:
         for dd in (monday.isoformat(), (monday + timedelta(3)).isoformat()):
             if date.fromisoformat(dd) <= anchor:
-                goals.check_habit(conn, habit_both_id, ana_id, dd, rng.random() < 0.7)
+                goals.check_habit(conn, habit_both_id, ana_id, dd, rng.random() < 0.7, hoy=anchor)
                 hogar_habit_checks += 1
         if goals.weekly_check(conn, gid_hogar, ana_id, monday.isoformat()):
             hogar_checks += 1
