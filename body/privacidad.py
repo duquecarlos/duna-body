@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import date, datetime, timezone
 
-from . import compartir, household
+from . import compartir, enlaces, household
 from .agente import ajustes as agente_ajustes
 
 CONSENT_VERSION = "consentimiento-v1"
@@ -28,6 +28,10 @@ FULLY_HANDLED_TABLES = {
 # raw_payload: kind/date only, never the stored JSON payload. garmin_cuenta: the connected-since
 # date only, never the encrypted token (BODY-GARMIN-HOST-1). dispositivo: name/scopes/dates only,
 # never token_hash (BODY-DISPOSITIVO-1).
+#
+# habit and goal_enlace carry no literal `person_id` column (person_tables() below would never find
+# them) -- both are owned through goal_id instead, and both are still fully exported and deleted,
+# via a join on goal.person_id (habit above, goal_enlace through body/enlaces.py).
 PARTIAL_EXPORT_TABLES = {"raw_payload", "garmin_cuenta", "dispositivo"}
 NEVER_EXPORTED_TABLES = {"sesion"}  # session plumbing, not data about the person's body or life
 
@@ -88,6 +92,9 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
             "SELECT * FROM shift_batch WHERE person_id = ? ORDER BY received", (person_id,))],
         "shift_pattern": (lambda r: dict(r) if r else None)(conn.execute(
             "SELECT * FROM shift_pattern WHERE person_id = ?", (person_id,)).fetchone()),
+        # goal_enlace carries no person_id of its own (like habit above) -- enlaces.export_rows
+        # joins through goal_id, the only module that reads this table.
+        "enlaces": enlaces.export_rows(conn, person_id),
     }
     dias = [dict(r) for r in conn.execute(
         "SELECT day, metric_key, value, source FROM daily_metric WHERE person_id = ? ORDER BY day",
@@ -166,9 +173,9 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
     created -- a shared household goal they made disappears for every member too, as the privacy
     page says. One transaction, foreign keys ON (set by db.connect already): on any error nothing
     is left half-deleted."""
-    conn.executescript(household.SCHEMA)
     with conn:
         conn.execute("UPDATE habit SET assignee_person_id = NULL WHERE assignee_person_id = ?", (person_id,))
+        enlaces.delete_rows_for_person(conn, person_id)
         conn.execute(
             "DELETE FROM habit_check WHERE person_id = ? OR habit_id IN ("
             "SELECT id FROM habit WHERE goal_id IN (SELECT id FROM goal WHERE person_id = ?))",

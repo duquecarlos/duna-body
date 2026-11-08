@@ -37,8 +37,8 @@ def _row_checksum(conn: sqlite3.Connection) -> str:
     the same seed can be compared without their wall-clock-dependent columns disagreeing."""
     h = hashlib.sha256()
     tables = ["person", "daily_metric", "sleep_session", "activity", "shift", "shift_batch",
-              "shift_batch_item", "goal", "habit", "habit_check", "goal_check"]
-    excluded = {"creado_en", "created_at", "decided_at", "extracted_at", "received"}
+              "shift_batch_item", "goal", "habit", "habit_check", "goal_check", "goal_enlace"]
+    excluded = {"creado_en", "created_at", "creado_at", "decided_at", "extracted_at", "received"}
     for name in tables:
         cols = [r[1] for r in conn.execute(f"PRAGMA table_info({name})") if r[1] not in excluded]
         order = ", ".join(cols)
@@ -173,6 +173,14 @@ class SeededContentTest(unittest.TestCase):
         self.assertGreaterEqual(len(rows), 1)
         for _day, value in rows:
             self.assertIsNotNone(value)
+
+    def test_ana_s_household_goal_has_a_lugares_link(self):
+        row = self.conn.execute(
+            "SELECT ge.app, ge.ref FROM goal_enlace ge JOIN goal g ON g.id = ge.goal_id "
+            "WHERE g.visibility = 'household'").fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], "lugares")
+        self.assertRegex(row[1], r"^[1-9][0-9]{0,11}$")
 
     def test_demo_marker_written(self):
         marker = Path(self.folder) / "DEMO"

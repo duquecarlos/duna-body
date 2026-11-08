@@ -31,9 +31,9 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup
 
-from . import (compartir, cuenta, db, dispositivo, entorno, garmin_adapter, garmin_cuenta, goals, history, household,
-               identity, listen, patron_turnos, privacidad, profile, readiness, shift_import, turnos_costo,
-               tutoriales, vida_export)
+from . import (compartir, cuenta, db, dispositivo, enlaces, entorno, garmin_adapter, garmin_cuenta, goals, history,
+               household, identity, listen, patron_turnos, privacidad, profile, readiness, shift_import,
+               turnos_costo, tutoriales, vida_export)
 from .agente import ajustes as agente_ajustes
 from .agente import bucle as agente_bucle
 from .agente import cliente as agente_cliente
@@ -1583,7 +1583,7 @@ async def goal_new_create(request: Request, person_id: int = Depends(identity.cu
 
 @app.get("/goals/{goal_id}")
 @_cierra_conexion
-def goal_detail(goal_id: int, person_id: int = Depends(identity.current_person_id)):
+def goal_detail(goal_id: int, request: Request, person_id: int = Depends(identity.current_person_id)):
     conn, person, t = _ctx(person_id)
     access = goals.goal_access(conn, goal_id, person_id)
     if access is None:
@@ -1652,9 +1652,14 @@ def goal_detail(goal_id: int, person_id: int = Depends(identity.current_person_i
     latest_on_track = history_rows[0]["on_track"] if history_rows else None
     cls, verdict = _verdict(t, latest_on_track)
 
+    enlace_error_app = request.query_params.get("app")
+    if request.query_params.get("enlace") != "invalido" or enlace_error_app not in enlaces.APPS:
+        enlace_error_app = None
+
     return _render("goal.html", t=t, tab="goals", goal=g, cls=cls, verdict=verdict, chart=chart,
                    history=history_list, habits=habit_rows, members=members, shared_line=shared_line,
-                   is_creator=(access == "creator"),
+                   is_creator=(access == "creator"), enlaces=enlaces.enlaces_de(conn, goal_id),
+                   apps_por_enlazar=enlaces.apps_por_enlazar(conn, goal_id), enlace_error_app=enlace_error_app,
                    target_text=_goal_target_text(t, defs, g), area_label=t("goals.area." + g["area"]),
                    today=today.isoformat(), turnos=_turnos_on(conn, person_id))
 
@@ -1717,6 +1722,30 @@ async def goal_add_habit(goal_id: int, request: Request, person_id: int = Depend
         assignee = person_id if g["visibility"] == "household" and f.get("for") == "me" else None
         goals.add_habit(conn, goal_id, title, cadence, assignee_person_id=assignee)
     return RedirectResponse(f"/goals/{goal_id}", status_code=303)
+
+
+@app.post("/goals/{goal_id}/enlaces")
+@_cierra_conexion_async
+async def goal_add_enlace(goal_id: int, request: Request, person_id: int = Depends(identity.current_person_id)):
+    conn, _, _ = _ctx(person_id)
+    _require_creator(conn, goal_id, person_id)
+    f = await _form(request)
+    app_key = f.get("app")
+    ref = enlaces.ref_desde_entrada(app_key, f.get("entrada"))
+    if ref is None:
+        suffix = f"&app={app_key}" if app_key in enlaces.APPS else ""
+        return RedirectResponse(f"/goals/{goal_id}?enlace=invalido{suffix}#enlaces", status_code=303)
+    enlaces.enlazar(conn, goal_id, app_key, ref)
+    return RedirectResponse(f"/goals/{goal_id}#enlaces", status_code=303)
+
+
+@app.post("/goals/{goal_id}/enlaces/{app_key}/quitar")
+@_cierra_conexion
+def goal_quitar_enlace(goal_id: int, app_key: str, person_id: int = Depends(identity.current_person_id)):
+    conn, _, _ = _ctx(person_id)
+    _require_creator(conn, goal_id, person_id)
+    enlaces.quitar(conn, goal_id, app_key)
+    return RedirectResponse(f"/goals/{goal_id}#enlaces", status_code=303)
 
 
 @app.post("/habits/{habit_id}/check")

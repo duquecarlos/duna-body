@@ -93,6 +93,36 @@
   </details>
 </div>
 
+{% if enlaces or (is_creator and apps_por_enlazar) %}
+<div class="card" id="enlaces">
+  <div class="q">{{ t('goals.enlace.title') }}</div>
+  {% for e in enlaces %}
+  <div class="row k" style="padding:4px 0">
+    <a class="taplink" href="{{ e.url }}" target="_blank" rel="noopener noreferrer">{{ t(e.label_key) }} ↗</a>
+    {% if is_creator %}
+    <form method="post" action="/goals/{{ goal.id }}/enlaces/{{ e.app }}/quitar" style="margin:0">
+      <button type="submit" class="btn">{{ t('goals.enlace.quitar_btn') }}</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endfor %}
+  <p class="note" style="margin:4px 0 0">{{ t('goals.enlace.privacy_note') }}</p>
+  {% if is_creator %}
+  {% for a in apps_por_enlazar %}
+  <details class="files" style="margin-top:10px"{% if a.app == enlace_error_app %} open{% endif %}>
+    <summary class="k">{{ t(a.add_summary_key) }}</summary>
+    <form method="post" action="/goals/{{ goal.id }}/enlaces" style="margin-top:8px">
+      {% if a.app == enlace_error_app %}<p class="read bad" style="margin-top:0">{{ t(a.error_key) }}</p>{% endif %}
+      <input type="hidden" name="app" value="{{ a.app }}">
+      <input type="text" name="entrada" class="field" placeholder="{{ t(a.field_key) }}" required>
+      <button type="submit" class="btn on" style="margin-top:8px;width:100%">{{ t('goals.enlace.add_btn') }}</button>
+    </form>
+  </details>
+  {% endfor %}
+  {% endif %}
+</div>
+{% endif %}
+
 {% if is_creator %}
 <div class="confirm-actions">
 {% if goal.status == 'proposed' %}
