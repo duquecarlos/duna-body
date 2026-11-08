@@ -43,7 +43,10 @@ comes from; the Body-specific reading is in *italics*. When a new rule arrives f
 9. **Charts explain themselves** (Finanzas). *Legend, scale, value on tap, "Toca un día…". One colour per series.
    Card titles are questions (Paridad #33).*
 10. **Plain Spanish, tú** (house voice). *Cuenta register (with «¿ ¡»). No "HRV" without a plain subtitle the first
-    time ("variabilidad del pulso: más alto suele ser mejor descanso"). Units on every figure.*
+    time ("variabilidad del pulso: más alto suele ser mejor descanso"). Units on every figure. Body speaks tú,
+    everywhere, including the assistant's fixed answers; never usted (BODY-REGISTRO-TU-1). A link is never followed
+    directly by punctuation -- a chat client can read it as part of the link. Both guarded by
+    tests/test_registro_tu.py.*
 11. **Phone first** (375 px, 44 px targets, bottom tabs; left rail ≥ 1024). Hover only under `(hover:hover)`;
     visible pressed and focus states; reduced motion respected (ui-interaccion-v1).
 12. **Never medical advice.** *The app shows patterns in your own numbers and the plan you chose. It does not
