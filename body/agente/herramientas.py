@@ -21,7 +21,7 @@ import sqlite3
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .. import db, goals, history, household, profile, readiness, shift_import, turnos_costo, tutoriales
+from .. import db, enlaces, goals, history, household, profile, readiness, shift_import, turnos_costo, tutoriales
 from ..i18n import LANGS
 from . import ajustes, propuestas
 
@@ -209,7 +209,8 @@ def _leer_meta(conn: sqlite3.Connection, person_id: int, goal_id: int) -> dict:
         "meta": {"id": g["id"], "titulo": g["title"], "tipo": g["kind"], "area": g["area"], "estado": g["status"],
                  "metric_key": g["metric_key"], "direccion": g["direction"], "valor_objetivo": g["target_value"],
                  "valor_base": g["baseline_value"], "inicio": g["start_day"], "plazo": g["deadline"],
-                 "compartida": g["visibility"] == "household"},
+                 "compartida": g["visibility"] == "household",
+                 "enlaces": [{"app": e["app"], "url": e["url"]} for e in enlaces.enlaces_de(conn, goal_id)]},
         "habitos": [{"id": h["id"], "titulo": h["title"], "cadencia": json.loads(h["cadence"]),
                      "asignado_a": _habito_asignado_a(conn, person_id, h)} for h in habitos],
         "verificaciones": [dict(c) for c in verificaciones] if verificaciones else "sin verificación aún",

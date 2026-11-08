@@ -185,7 +185,7 @@ def _avg_metric(conn, db, key: str, days: list[date], person_id: int) -> float |
 
 
 def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
-    from . import compartir, db, goals, household, shift_import, turnos_costo
+    from . import compartir, db, enlaces, goals, household, shift_import, turnos_costo
 
     person_id = db.local_person_id(conn)
     conn.execute("UPDATE person SET display_name = 'Demo', timezone = 'America/Bogota' WHERE id = ?", (person_id,))
@@ -318,6 +318,9 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
                               kind="milestone", deadline=hogar_deadline, hogar_id=_HOGAR_ID,
                               visibility="household")
     goals.activate(conn, gid_hogar)
+    # DESIGN rule 17 (BODY-HOGAR-ENLACE-1): the adventure goal links to its trip in Lugares -- an
+    # invented demo id, never a real one.
+    enlaces.enlazar(conn, gid_hogar, "lugares", "4821")
     habit_both_id = goals.add_habit(conn, gid_hogar, _HOGAR_HABIT_BOTH[idioma], {"per": "week", "times": 2})
     goals.add_habit(conn, gid_hogar, _HOGAR_HABIT_ANA[idioma], {"per": "week", "times": 1},
                      assignee_person_id=ana_id)

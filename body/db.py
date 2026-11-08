@@ -227,6 +227,20 @@ CREATE TABLE IF NOT EXISTS goal_check (
 {_GOAL_CHECK_COLUMNS}
 );
 
+-- A goal can point at where the rest of its plan lives in another Duna app, instead of copying it
+-- (DESIGN rule 17; BODY-HOGAR-ENLACE-1). `app` is a key into the registry in body/enlaces.py, the
+-- only module that reads or writes this table -- NOT CHECK-constrained, because the registry in
+-- code is the authority: an app key no longer known there is simply not rendered. One link per app
+-- per goal (UNIQUE), never a title or URL copied from the other app -- only its opaque `ref`.
+CREATE TABLE IF NOT EXISTS goal_enlace (
+    id         INTEGER PRIMARY KEY,
+    goal_id    INTEGER NOT NULL REFERENCES goal(id),
+    app        TEXT NOT NULL,
+    ref        TEXT NOT NULL,
+    creado_at  TEXT NOT NULL,
+    UNIQUE (goal_id, app)
+);
+
 -- A scheduled thing to do, maybe tied to a goal. vida-v1 shape.
 CREATE TABLE IF NOT EXISTS plan (
     id        INTEGER PRIMARY KEY,

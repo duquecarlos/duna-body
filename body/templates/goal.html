@@ -93,6 +93,35 @@
   </details>
 </div>
 
+{% if enlaces or is_creator %}
+<div class="card">
+  <div class="q">{{ t('goals.enlace.title') }}</div>
+  {% if enlace_error %}<p class="read bad" style="margin-top:0">{{ t('goals.enlace.error') }}</p>{% endif %}
+  {% for e in enlaces %}
+  <div class="row k" style="padding:4px 0">
+    <a class="taplink" href="{{ e.url }}" target="_blank" rel="noopener noreferrer">{{ t(e.label_key) }} ↗</a>
+    {% if is_creator %}
+    <form method="post" action="/goals/{{ goal.id }}/enlaces/{{ e.app }}/quitar" style="margin:0">
+      <button type="submit" class="btn">{{ t('goals.enlace.quitar_btn') }}</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% if enlaces %}<p class="note" style="margin:4px 0 0">{{ t('goals.enlace.privacy_note') }}</p>{% endif %}
+  {% if is_creator %}
+  <details class="files" style="margin-top:10px">
+    <summary class="k">{{ t('goals.enlace.add_summary') }}</summary>
+    <form method="post" action="/goals/{{ goal.id }}/enlaces" style="margin-top:8px">
+      <input type="hidden" name="app" value="lugares">
+      <input type="text" name="entrada" class="field" placeholder="{{ t('goals.enlace.field_entrada') }}" required>
+      <button type="submit" class="btn on" style="margin-top:8px;width:100%">{{ t('goals.enlace.add_btn') }}</button>
+    </form>
+    {% if not enlaces %}<p class="note" style="margin:8px 0 0">{{ t('goals.enlace.privacy_note') }}</p>{% endif %}
+  </details>
+  {% endif %}
+</div>
+{% endif %}
+
 {% if is_creator %}
 <div class="confirm-actions">
 {% if goal.status == 'proposed' %}
