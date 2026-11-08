@@ -8514,3 +8514,41 @@ Commit (pasted from `git rev-parse`, not retyped): `55da3bed99149b610f68386c238c
 `feat/body-seguridad-2`, base `main` at `7e78b400e964fd4b7f1fb26b1db9c94cd4a8c752`. No password, token,
 session secret or health figure was read, printed or logged by this slice. `git status --porcelain` is empty
 on the branch, before this ledger entry's own commit.
+
+## BODY-SEGURIDAD-2-M -- merge BODY-SEGURIDAD-2 into main, as built (2026-11-08)
+
+`feat/body-seguridad-2` (tip `e44ff408073b07e0d88ebb849350c302c559beee`) merged `--no-ff` into `main` as
+built, no fixes, on the orchestrator's approval (`ORCH-CARLOS-DELEGATES-TIER-1-1`, against
+`BODY-SEGURIDAD-CENSO-1`).
+
+**Orchestrator's measurement** (copied from the approval-reason): measured in the Browser pane at 375 px on
+body-web-demo (invented data). The served policy is `default-src 'self'; script-src 'self'; style-src 'self'
+'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self'
+data:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none';
+frame-ancestors 'none'; form-action 'self'`. An injected inline script is BLOCKED
+(`securitypolicyviolation`, `script-src-elem`). Hoy, Turnos, Tendencias, Metas, a goal, Nueva meta, Día,
+Cómo calculo, Historia, Ayuda and Ajustes load with no violation of their own (the only console error on
+each was the orchestrator's injected test script, identified by its sha256). Nueva meta's metric select
+fills direction and baseline on change. Ajustes «Claro» switches and stores the theme, and a stored dark
+theme applies before paint after reload. The assistant panel opens, `POST /asistente/preguntar` 200, the
+demo answer streams in at scrollWidth 375. Scroll position is restored on back and on a fresh visit.
+Hosted-only `form-action` (Cuenta's origin for sign-out / consent reject / account deletion) is pinned by
+the slice's own tests, not measurable locally.
+
+**Open follow-ups carried forward, not closed by this merge:**
+- `BODY-FUENTES-PROPIAS-1` -- self-host Hanken Grotesk instead of `https://fonts.googleapis.com` /
+  `https://fonts.gstatic.com`.
+- The `style-src 'unsafe-inline'` gap -- 22 templates still carry `style="..."` attributes, and server-built
+  SVG (Tendencias/charts) does too; `'unsafe-inline'` stays in `style-src` until those move.
+
+**Gate**, run once on the branch tip before the merge: `.venv/Scripts/python.exe -m unittest discover tests
+-t .` -- `Ran 1276 tests in 125.190s ... OK (skipped=1)`, matching the figure the branch's own ledger entry
+recorded.
+
+**Merge.** `git merge --no-ff feat/body-seguridad-2` onto `main` at
+`7e78b400e964fd4b7f1fb26b1db9c94cd4a8c752`, producing merge commit
+`de2002e8a5be13f0b7ca7400612ef3f29c23303a`. Merge tree `3afddca0dd90ad67e492fac2bb3a0a846d2b3ae3` equals
+the branch tip's own tree exactly (`diff feat/body-seguridad-2..main` empty after the merge) -- no
+conflicts, no change beyond the branch's own content. No password, token, session secret or health figure
+was read, printed or logged by this slice. `git status --porcelain` is empty on `main` after this merge,
+before this ledger entry's own commit.
