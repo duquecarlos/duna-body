@@ -37,10 +37,8 @@ async def consentimiento_decide(request: Request, person_id: int = Depends(ident
         conn, _, _ = comun._ctx(person_id)
         privacidad.record_consent(conn, person_id)
         return RedirectResponse(return_to, status_code=303)
-    conn = db.connect()
-    db.init(conn)
+    conn, _, _ = comun._ctx(person_id)
     sid = cuenta.end_session(conn, request.cookies.get(cuenta.SESSION_COOKIE))
-    conn.close()
     resp = RedirectResponse(cuenta.logout_url(sid), status_code=303)
     cuenta.clear_session_cookie(resp)
     return resp
