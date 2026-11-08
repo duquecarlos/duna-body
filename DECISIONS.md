@@ -8171,6 +8171,13 @@ against the current, otherwise-unrelated `body.cuenta`/`body.rutas.*` on disk), 
 The same request against this slice's own `body/web.py` is exactly guard (a)'s own first case, and answers 403
 with the `origen_rechazado.html` page instead.
 
+**Noticed, not fixed here (BODY-SEGURIDAD-CADDY-HEADER-DUPE-1):** `deploy/host/Caddyfile.body`'s own `header`
+block already sets `X-Content-Type-Options` and `Referrer-Policy` for hosted traffic -- reading it (required by
+this slice's own spec, for the Origin rule's scheme reasoning above) shows those two now duplicate
+`body/seguridad.py`'s own app-level headers on every hosted response. Both sides agree on the exact value, so
+this is harmless, not a defect; tidying it is a `deploy/` change, Tier 1 and outside this slice's `touches:`, so
+it is left for its own slice rather than touched here.
+
 **`docs/DESIGN.md`**, rule 13 ("Health data stays home"), three lines added: unsafe methods are same-origin
 only, checked by one middleware (`body/seguridad.py`); every response carries the fixed header set named above;
 every redirect built from request data goes through `cuenta.safe_return_to`.
