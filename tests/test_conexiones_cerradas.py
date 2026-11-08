@@ -273,41 +273,74 @@ class RouteClosesItsConnectionTest(unittest.TestCase):
                           f"vs routed {modules_with_routes}")
 
 
-# BODY-SESION-CONEXION-1: body/rutas/privacidad.py:40 (consentimiento_decide's "decline" branch)
-# opens its own connection the same unguarded way sesion.py's four routes did before this slice --
-# found while building the guard below, left unfixed because it is outside this slice's `touches:`
-# (DECISIONS.md's BODY-SESION-CONEXION-1 entry lists it for a later slice).
-_KNOWN_DIRECT_CONNECT_OFFENDERS = {("privacidad.py", "consentimiento_decide")}
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_BODY_DIR = _REPO_ROOT / "body"
 
 
-def _stmt_lists(func_node):
-    """Every list of statements reachable from `func_node`: its own body, plus the body/orelse/
-    finalbody of each nested if/for/while/try, and each except handler's body."""
-    lists = [func_node.body]
-    for child in ast.walk(func_node):
-        if child is func_node:
-            continue
-        for attr in ("body", "orelse", "finalbody"):
-            lst = getattr(child, attr, None)
-            if isinstance(lst, list):
-                lists.append(lst)
-        for h in getattr(child, "handlers", []) or []:
-            lists.append(h.body)
-    return lists
+def _modulos_bajo_body() -> list[tuple[Path, ast.Module]]:
+    """(path, parsed module) for every body/**/*.py file, __pycache__ excluded (BODY-PRIVACIDAD-
+    CONEXION-1): the widened scope for DirectConnectClosesInFinallyTest below -- a bare
+    db.connect() can be opened in a CLI entry point or a dependency function, not only in a routed
+    module, so the earlier scope (modulos_con_rutas(), body/web.py plus body/rutas/*.py only) missed
+    body/vincular_cuenta.py and body/demo.py's own offending sites entirely."""
+    paths = sorted(p for p in _BODY_DIR.rglob("*.py") if "__pycache__" not in p.parts)
+    return [(p, ast.parse(p.read_text(encoding="utf-8"), filename=str(p))) for p in paths]
+
+
+def _is_db_connect_call(call: ast.Call) -> bool:
+    """True for `db.connect(...)` specifically -- the attribute's base name is literally `db`
+    (every body/ module that opens a connection binds the import as `db`, never aliased or
+    imported as a bare name; checked by grep, not assumed). Excludes `sqlite3.connect(...)`
+    (body/db.py's own connect() implementation, body/backup.py's off-host snapshot/check), which
+    is a different, already-reviewed connection path this guard is not about."""
+    f = call.func
+    return isinstance(f, ast.Attribute) and f.attr == "connect" and isinstance(f.value, ast.Name) and f.value.id == "db"
 
 
 def _connect_assigns(stmts):
-    """(stmts, index, var_name) for each `var = db.connect(...)` / `var = X.connect(...)` found at
-    the top of `stmts`."""
+    """(stmts, index, var_name) for each `var = db.connect(...)` found at the top of `stmts`."""
     found = []
     for i, stmt in enumerate(stmts):
         if (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
                 and isinstance(stmt.targets[0], ast.Name)
                 and isinstance(stmt.value, ast.Call)
-                and isinstance(stmt.value.func, ast.Attribute)
-                and stmt.value.func.attr == "connect"):
+                and _is_db_connect_call(stmt.value)):
             found.append((stmts, i, stmt.targets[0].id))
     return found
+
+
+def _connect_sites(tree):
+    """(scope, stmts, index, var_name) for every `var = db.connect(...)` found anywhere in `tree`
+    -- `scope` is the name of the nearest enclosing function, or "<module>" for module-level code
+    (e.g. a CLI's own `if __name__ == "__main__":` block) outside any function. Each statement
+    list in the module is visited exactly once, so nothing is double-counted."""
+    found = []
+
+    def visit(stmts, scope):
+        for s, i, v in _connect_assigns(stmts):
+            found.append((scope, s, i, v))
+        for stmt in stmts:
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                visit(stmt.body, stmt.name)
+                continue
+            for attr in ("body", "orelse", "finalbody"):
+                nested = getattr(stmt, attr, None)
+                if isinstance(nested, list):
+                    visit(nested, scope)
+            for h in getattr(stmt, "handlers", []) or []:
+                visit(h.body, scope)
+
+    visit(tree.body, "<module>")
+    return found
+
+
+def _count_db_connect_calls(tree) -> int:
+    """Independent count of every `db.connect(...)` call anywhere in `tree`, by a plain ast.walk
+    over Call nodes rather than through _connect_sites/_connect_assigns -- mirrors
+    RouteClosesItsConnectionTest's own expected_min cross-check: if the scan above regressed to
+    matching nothing, `checked` would drop to zero while this count stayed positive and the
+    assertion below would fail instead of passing quietly."""
+    return sum(1 for node in ast.walk(tree) if isinstance(node, ast.Call) and _is_db_connect_call(node))
 
 
 def _closes_right_after(stmts, i, var_name) -> bool:
@@ -335,34 +368,46 @@ def _closes_right_after(stmts, i, var_name) -> bool:
     return False
 
 
-class DirectConnectClosesInFinallyTest(unittest.TestCase):
-    """Guard for BODY-SESION-CONEXION-1: a route-decorated function may open its own connection
-    with a bare db.connect() rather than through comun._ctx -- true before sign-in, when there is
-    no person_id for _ctx to scope by. Such a connection must close in the `finally` of a `try`
-    that starts on the very next statement after the assignment (ast: the statement right after
-    `X = db.connect()` is a `Try` whose `finalbody` calls `X.close()`), or a
-    `with contextlib.closing(...)` in its place. `_KNOWN_DIRECT_CONNECT_OFFENDERS` carries the one
-    pre-existing offender found while building this guard, outside this slice's `touches:`."""
+# BODY-PRIVACIDAD-CONEXION-1: _ctx's own connect site (body/rutas/comun.py) deliberately does not
+# close what it opens -- it stores the connection in a contextvar for _cierra_conexion[_async] to
+# close once the route returns (BODY-CONEXIONES-CERRADAS-1 decision 1), the one sanctioned
+# exception to the pattern this guard checks.
+#
+# agente/precios.py's own CLI block (`if __name__ == "__main__":`) calls db.init(_conn) before its
+# try, same as vincular_cuenta.py and demo.py did -- found by this widened guard but outside this
+# slice's `touches:` (agente/precios.py is not listed there), so left as a known offender for a
+# later slice rather than fixed here.
+_ALLOWED_DIRECT_CONNECT = {("comun.py", "_ctx"), ("precios.py", "<module>")}
 
-    def test_every_route_level_connect_closes_right_after(self):
+
+class DirectConnectClosesInFinallyTest(unittest.TestCase):
+    """Guard for BODY-SESION-CONEXION-1, widened in BODY-PRIVACIDAD-CONEXION-1 to every module
+    under body/ (not only a routed one): any function, or a module's own top-level code, may open
+    its own connection with a bare db.connect() rather than through comun._ctx -- true before
+    sign-in, when there is no person_id for _ctx to scope by, and true for a CLI entry point,
+    which has no request to scope by at all. Such a connection must close in the `finally` of a
+    `try` that starts on the very next statement after the assignment (ast: the statement right
+    after `X = db.connect()` is a `Try` whose `finalbody` calls `X.close()`), or a
+    `with contextlib.closing(...)` in its place. `_ALLOWED_DIRECT_CONNECT` carries the sanctioned
+    exception and the one pre-existing offender found while widening this guard, outside this
+    slice's `touches:`."""
+
+    def test_every_db_connect_closes_right_after(self):
         offenders = []
         checked = 0
-        for path, tree in modulos_con_rutas():
-            for node in tree.body:
-                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        expected_min = 0
+        for path, tree in _modulos_bajo_body():
+            expected_min += _count_db_connect_calls(tree)
+            for scope, stmts, i, var_name in _connect_sites(tree):
+                checked += 1
+                if _closes_right_after(stmts, i, var_name):
                     continue
-                if not any(_is_route_decorator(d) for d in node.decorator_list):
+                if (path.name, scope) in _ALLOWED_DIRECT_CONNECT:
                     continue
-                for stmts in _stmt_lists(node):
-                    for stmts2, i, var_name in _connect_assigns(stmts):
-                        checked += 1
-                        if _closes_right_after(stmts2, i, var_name):
-                            continue
-                        if (path.name, node.name) in _KNOWN_DIRECT_CONNECT_OFFENDERS:
-                            continue
-                        offenders.append(f"{path.name}:{node.name}")
-        self.assertGreater(checked, 0,
-                            "no route function calls db.connect() directly -- guard checks nothing")
+                offenders.append(f"{path.name}:{scope}")
+        self.assertGreater(expected_min, 0,
+                            "no db.connect() call found anywhere under body/ -- guard checks nothing")
+        self.assertGreaterEqual(checked, expected_min)
         self.assertEqual(offenders, [])
 
 

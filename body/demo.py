@@ -380,8 +380,8 @@ def main(argv: list[str] | None = None) -> None:
 
     from . import db
     conn = db.connect()
-    db.init(conn)
     try:
+        db.init(conn)
         counts = _seed(conn, dias=args.dias, idioma=args.idioma)
     finally:
         conn.close()

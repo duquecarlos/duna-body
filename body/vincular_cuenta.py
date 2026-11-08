@@ -68,8 +68,8 @@ def main(argv: list[str] | None = None) -> int:
 
     rows = read_rows(a.csv)
     conn = db.connect()
-    db.init(conn)
     try:
+        db.init(conn)
         result = plan(conn, rows)
         applied = failed = None
         if a.apply:

@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
@@ -19,6 +20,34 @@ from body.agente import propuestas as agente_propuestas
 from body.agente import uso as agente_uso
 from body.agente.cliente import Uso
 from tests.test_cuenta_rp import CuentaRpTestCase, ISSUER, SUB
+
+
+class _CloseRecorder:
+    """Wraps a real sqlite3.Connection, recording whether close() was ever called on it (same
+    technique as tests/test_sesion_conexion_1.py)."""
+
+    def __init__(self, real):
+        self._real = real
+        self.closed = False
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    def close(self):
+        self.closed = True
+        self._real.close()
+
+
+def _recording_connect():
+    real_connect = db.connect
+    recorders: list[_CloseRecorder] = []
+
+    def _connect(*a, **kw):
+        rec = _CloseRecorder(real_connect(*a, **kw))
+        recorders.append(rec)
+        return rec
+
+    return _connect, recorders
 
 
 class HostedConsentGateTest(CuentaRpTestCase):
@@ -69,6 +98,25 @@ class HostedConsentGateTest(CuentaRpTestCase):
         self.assertTrue(r.headers["location"].startswith(f"{ISSUER}/oauth/logout?"))
         self.assertEqual(self._db_count("SELECT COUNT(*) FROM sesion"), 0)
         self.assertEqual(self._db_count("SELECT COUNT(*) FROM consentimiento"), 0)
+
+    def test_declining_closes_its_connection_and_response_is_unchanged(self):
+        """BODY-PRIVACIDAD-CONEXION-1: the decline branch now takes its connection from
+        comun._ctx(person_id) (the @comun._cierra_conexion_async decorator closes it), rather than
+        its own unguarded db.connect()/db.close() -- same recording technique as
+        tests/test_sesion_conexion_1.py uses for sesion.py's own direct-connect routes."""
+        self._sign_in(return_to="/")
+        location = self.client.get("/").headers["location"]
+        return_to = parse_qs(urlparse(location).query)["return_to"][0]
+
+        connect, recorders = _recording_connect()
+        with mock.patch.object(db, "connect", side_effect=connect):
+            r = self.client.post("/privacidad/consentimiento", data={"decision": "no", "return_to": return_to})
+
+        self.assertTrue(recorders)
+        self.assertTrue(all(rec.closed for rec in recorders))
+        self.assertEqual(r.status_code, 303)
+        self.assertTrue(r.headers["location"].startswith(f"{ISSUER}/oauth/logout?"))
+        self.assertIn("Max-Age=0", r.headers.get("set-cookie", ""))
 
 
 class ConsentTextLanguageTest(CuentaRpTestCase):
