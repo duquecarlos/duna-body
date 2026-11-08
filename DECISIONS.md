@@ -6858,3 +6858,68 @@ OK (skipped=1)`.
   today). Not actioned here: neither is in this slice's `touches:` and neither is red on this tree. Worth an
   audit before BODY-WEB-ESTRUCTURA-PLAN-1's next slice moves a bigger domain, since a wider route set is more
   likely to intersect whatever these two actually check.
+
+## BODY-WEB-ESTRUCTURA-1-M -- one shared route flattener, comun configures its own Jinja globals
+
+Landed BODY-WEB-ESTRUCTURA-1 with the two fixes its GATE_RED stop named, then merged.
+
+**Fix 1 -- one route flattener for all five readers.** FastAPI 0.162.0 keeps an `include_router()` call as one
+lazy `_IncludedRouter` wrapper in `app.routes` rather than flattening it eagerly, so a filter that only checks
+`isinstance(r, APIRoute)` or `hasattr(r, "path")` over `app.routes` misses every route reached through it. Five
+readers carried their own copy of this knowledge, two of them already stale: `tests/test_web_entry.py`'s
+`RouteSetTest._flatten` (the one that already descended into `_IncludedRouter` correctly),
+`tests/test_agente_registro.py::RouteMappingTest` and `tests/test_asistente_panel.py` (`isinstance(r, APIRoute)`,
+~lines 185/68 -- these two actually missed `/ayuda`/`/healthz`), and `tests/test_tutoriales_catalogo.py`
+(`hasattr(r, "path")`, ~line 52 -- a `Mount` also has `.path`, so this one happened not to miss anything, but for
+the wrong reason). New `tests/_rutas.py` (no `test_` prefix, not a test module) holds the one function,
+`rutas_planas(routes)`: yields a plain `Route`/`APIRoute`/`Mount` as itself (a `Mount`'s own `.routes` is never
+descended into, so `("/static", ())` keeps showing up as the mount entry itself, exactly as
+`test_web_entry.py::RouteSetTest.BEFORE` expects), unwraps an `_IncludedRouter` through
+`.original_router.routes`, and descends into anything else exposing `.routes`. All five readers now call it;
+`test_web_entry.py`'s private `_flatten` staticmethod is gone. `tests/test_guardia_parches.py` gets a new guard,
+`test_no_test_module_reads_dot_routes_directly`: an AST scan over every `tests/test_*.py` file that fails on any
+`.routes` attribute read except as the direct argument to a `rutas_planas(...)` call -- so a sixth reader
+growing its own copy fails the gate instead of shipping quietly. (`tests/test_guardia_parches.py` itself turned
+out to carry no flattener of its own to replace, contrary to this slice's own spec text -- only
+`tests/test_web_entry.py` did; the spec's claim was not re-verified before being written, this slice's own
+measurement was.)
+
+**Fix 2 -- comun configures its own state.** The four `comun.env.globals[...]` assignments (`static_url`,
+`hosted`, `asistente_configurado`, `tarea_en_contexto`) and the `_RUTA_ACTUAL` contextvar `tarea_en_contexto`
+closes over now live in `body/rutas/comun.py`, assigned once, at comun's own import, by plain assignment --
+`setdefault` is gone. `web.py`'s `_CaminoActualMiddleware` now sets/resets `comun._RUTA_ACTUAL` instead of a
+module-local copy. `hosted` (`cuenta.hosted`), `asistente_configurado` (closes over
+`agente_cliente.proveedor_configurado`) and `tarea_en_contexto` (closes over `tutoriales.tarea_en_ruta` and
+comun's own `_RUTA_ACTUAL`) needed nothing web.py owns -- `comun.py` now imports `cuenta`, `tutoriales` and
+`..agente.cliente as agente_cliente` directly (confirmed none of the three imports `body.web` or
+`body.rutas.comun`, so no cycle). `static_url` needed `STATIC_HASH`, a sha256 over `body/static`'s contents --
+not actually app-specific, just directory-specific, and `comun.HERE` already resolves to the same `body/`
+directory `web.py`'s own `HERE` does. So `_static_hash`/`STATIC_HASH`/`static_url` moved into `comun.py`
+outright, computed once there; `body/web.py` keeps all three names as plain aliases
+(`static_url = comun.static_url`, etc.) onto comun's copy, since `tests/test_static_version.py` (outside this
+slice's `touches:`) reads `web.STATIC_HASH`/`web.static_url`/`web._static_hash` directly and must keep working
+unchanged. `comun.py` still imports nothing from `body.web` (`test_rutas_modules_never_import_web` stays green).
+
+Proof the throwaway re-import no longer disturbs the real app's Jinja globals: `tests.test_env_local_1
+tests.test_pulido_3` run together in one process -- 32 tests, OK (both were the reproduction case for the
+`setdefault` workaround this fix replaces).
+
+**`body/fechas.py` and `CLAUDE.md`** were in this slice's `touches:` but needed no edit: `fechas.py`'s
+docstring already named `body/web.py`'s `_today_local` from an earlier slice, before `_today_local` moved to
+`comun.py` -- already stale, not something this slice's two fixes touch, and out of scope here. `CLAUDE.md`
+has no line naming where the Jinja globals or `_RUTA_ACTUAL` live, so nothing needed correcting.
+
+Gate, exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, run once on the branch tip
+(commit `9a79ca40d137299a5fd714efde0eab0a167f41ef`), whose tree is identical to this merge's tree (verified by
+`git diff`, empty, before merging rather than re-run after):
+
+    Ran 1198 tests in 134.862s
+    OK (skipped=1)
+
+1198 = the prior GATE_RED run's 1197 (BODY-WEB-ESTRUCTURA-1's own gate, same command) plus this slice's one new
+guard test (`test_no_test_module_reads_dot_routes_directly`), with the prior one failure now fixed -- the
+`RouteMappingTest` failure this slice's fix 1 corrects.
+
+Merged `feat/body-web-estructura-1` into `main` with `--no-ff` (this spec's approval covers the merge; no
+schema change, no customer-facing bytes, no cross-repo contract change in the actual diff). `main` is left
+checked out, `git status --porcelain` empty.
