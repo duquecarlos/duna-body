@@ -6463,3 +6463,61 @@ pasted from `git rev-parse`, not retyped).
 the estimate -- it states "estimada"/"estimated" in ordinary visible text (`today.ready_label`) next to the number,
 not inside an `aria-label` attribute. So "reuse that wording" (the spec's instruction) meant reusing the two words
 themselves, not an existing `aria-label` pattern, since Hoy's hero has none to match.
+
+## BODY-I18N-GUARD-1 -- a test that notices when es.json and en.json drift apart (2026-11-08)
+
+DESIGN rule 10/15 ("every es string has an en twin") had no test behind it -- `body/i18n/__init__.py`'s
+`T.__call__` falls back to Spanish on a missing English key, and to the raw key on a missing both, silently, so a
+gap would only ever surface as a wrong-language sentence or a literal key on Carlos's screen (BODY-DISENO-CENSO-2's
+unknown). Added `tests/test_i18n_paridad.py`.
+
+**What the first run (alone) found: nothing.** `body/i18n/es.json` and `body/i18n/en.json` already carry the exact
+same 566 keys, with matching `{placeholder}` names, matching list lengths (`date.days`, `date.months`), and no
+empty or whitespace-only value. Checked with a throwaway script before writing the test (deleted, never committed):
+`set(es) - set(en)` and `set(en) - set(es)` both empty; a `string.Formatter().parse()` pass over every shared key
+found zero placeholder mismatches. **No string was added to either file; this slice's only change is the new test
+module.**
+
+**Literal keys.** Scanned every `t('…')` / `t("…")` call with a string-literal first argument across
+`body/templates/**/*.html` and `body/**/*.py` (a regex over source, not an import) -- 375 distinct literal keys,
+every one present in `es.json`.
+
+**Dynamic keys (`prefix + variable` / `prefix ~ variable`).** 22 distinct dynamic prefixes found across templates
+and code, every one checked against the fixed list its value actually comes from, read from source (not re-typed
+by hand):
+`metric.` (`body.db.METRIC_DEFS`, 24 keys), `part.` (`readiness.py`'s `WEIGHTS` keys: hrv/sleep/battery/
+resting_hr/stress), `shift.kind.` (`web._STRIP_KIND_ORDER`, 7), `shifts.cost_sub.` (`turnos_costo.MODELO
+["metricas"]`, 5), `shifts.word.` (`diferencia_y_palabra()`'s 3 return words), `shifts.reason.` (`_motivo()`'s 4
+return codes), `patron.error.` (`patron_turnos.validar()`'s per-row codes, 4 -- its whole-cycle `largo_invalido` is
+filtered out by index before reaching `t()`, so it needs no i18n string and is not asserted), `trends.q.`
+(`TREND_KEYS` ∪ `TREND_GROUPS` values, 22), `trends.plain.` (`TREND_GROUPS` values, 13), `trends.group.`
+(`TREND_GROUPS` names, 5), `trends.short.` (`WEEK_KEYS` ∪ `history.PATTERN_KEYS`, 6), `trends.r.` (`web.RANGES`,
+4), `activity.type.` (`history.KNOWN_ACTIVITY_TYPES`, 18), `goals.area.` / `goals.direction.` /
+`asistente.propuesta.direccion.` (`web.AREAS` / `web.DIRECTIONS`), `habit.context.` (3 option values),
+`goals.cadence.per.` (3), `goals.status.` (3, the archive-only subset of the 5-value DB `CHECK`), `ajustes.
+asistente.opcion.` (3, the DB `CHECK` for `nivel_datos`), `asistente.propuesta.titulo.` (4), `band.` (3, `readiness.
+Readiness.band()`'s 3 return values). Every one resolves inside `es.json`. The test asserts the found set of
+dynamic prefixes equals this known set exactly, so a NEW dynamic prefix with no fixed-list entry fails loudly
+rather than being silently skipped.
+
+**One key built from a bare variable, invisible to both regexes above:** `body/web.py`'s `_finding_text()` sets
+`key = f"history.find.{axis}_better_{better}"` then calls `t(key, ...)` -- neither a string literal nor an
+f-string argument to `t()` itself. Checked on its own (`test_history_find_keys_exist`): `axis` is `weekday` or
+`month`; `better` is `higher` or `lower` only, because `history.py` filters `PATTERN_KEYS` findings to
+`better != "neutral"` before this runs (confirmed by reading that filter, not assumed) -- so only 4 keys are
+reachable, and all 4 exist.
+
+**Sanity check that the guard is not a no-op:** before reverting, temporarily deleted `en.json`'s `"nav.today"`
+key and changed one placeholder name, re-ran the module alone, confirmed `test_same_key_set` and
+`test_placeholders_and_shapes_match` both failed and named the exact offending key (`nav.today`, `today.vs_avg`).
+Reverted with `git checkout -- body/i18n/en.json` before any commit.
+
+**Gate**, run once on the final branch tree: `.venv/Scripts/python.exe -m unittest discover tests -t .` --
+`Ran 1187 tests in 153.682s ... OK (skipped=1)` (1181 before this slice, +6 new in `test_i18n_paridad.py`).
+
+Merge policy A: no schema or migration change, no customer-facing bytes (the only diff is a new test module --
+`body/i18n/es.json` and `body/i18n/en.json` are untouched), no cross-repo contract change. `--no-ff` into `main`.
+
+Commits: test `447beec4f64791566ee84e3647ef943786a97248`, merge `2bb6cb1b706d91586cae8b9a92cba351d26082d9`
+(both pasted from `git rev-parse`, not retyped). The merge commit's tree (`7fdeb39bfaf57c6776a8b88303ed5fc33d0210f3`)
+is identical to the branch tip's tree, so the gate above is the gate `main` now carries, not re-run after the merge.
