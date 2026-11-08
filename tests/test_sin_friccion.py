@@ -135,6 +135,8 @@ class HistorySectionsAlreadyGoodCensusTest(unittest.TestCase):
 
     def test_patterns_and_shift_empty_link_turnos(self):
         conn = _reset_db(self)
+        # a shift worker whose shifts have not arrived yet (ruling BODY-TURNOS-OPCIONAL-1)
+        db.set_trabaja_turnos(conn, True, 1)
         conn.execute(
             "INSERT INTO daily_metric (person_id, day, metric_key, value, source) VALUES "
             "(1, '2026-10-01', 'resting_hr', 55, 'garmin')")
@@ -155,7 +157,9 @@ class TurnosEmptyCensusTest(unittest.TestCase):
     (BODY-TURNOS-COSTO-1-M) -- the hero reads a reason code instead of a generic 'soon' placeholder."""
 
     def test_empty_both_languages(self):
-        _reset_db(self)
+        conn = _reset_db(self)
+        # a shift worker whose shifts have not arrived yet (ruling BODY-TURNOS-OPCIONAL-1)
+        db.set_trabaja_turnos(conn, True, 1)
         r = client.get("/shifts")
         self.assertEqual(r.status_code, 200)
         self.assertIn(_t("es", "shifts.reason.sin_datos_reloj"), r.text)

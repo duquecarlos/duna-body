@@ -240,6 +240,8 @@ class ApiTurnosTest(DispositivoHostedTestCase):
 
         web.app.dependency_overrides[identity.current_person_id] = lambda: 1
         self.assertEqual(self.client.get("/shifts").status_code, 200)
+        # a shift worker whose shifts have not arrived yet (ruling BODY-TURNOS-OPCIONAL-1)
+        db.set_trabaja_turnos(self.conn, True, 2)
         web.app.dependency_overrides[identity.current_person_id] = lambda: 2
         self.assertEqual(self.client.get("/shifts").status_code, 200)
 

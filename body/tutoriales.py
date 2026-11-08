@@ -82,14 +82,18 @@ def video(task_id: str) -> dict | None:
     return manifest().get("tareas", {}).get(task_id)
 
 
-def capitulos_con_tareas() -> list[dict]:
-    """Chapters in order, each with its tasks in order (tutoriales-v1 section 5.1, Ayuda)."""
+def capitulos_con_tareas(incluir_turnos: bool = True) -> list[dict]:
+    """Chapters in order, each with its tasks in order (tutoriales-v1 section 5.1, Ayuda).
+    `incluir_turnos=False` (BODY-TURNOS-OPCIONAL-3) leaves out the `turnos` chapter entirely, for a
+    person who has not said they work shifts -- no empty heading left in its place."""
     data = catalogo()
     tareas_por_capitulo: dict[str, list[dict]] = {}
     for t in data["tareas"]:
         tareas_por_capitulo.setdefault(t["capitulo"], []).append(t)
     out = []
     for c in sorted(data["capitulos"], key=lambda c: c["orden"]):
+        if c["id"] == "turnos" and not incluir_turnos:
+            continue
         tareas = sorted(tareas_por_capitulo.get(c["id"], []), key=lambda t: t["orden"])
         out.append({"id": c["id"], "titulo": c["titulo"], "tareas": tareas})
     return out

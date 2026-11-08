@@ -73,6 +73,7 @@ class CostRowLinksTest(unittest.TestCase):
         conn = db.connect()
         self.addCleanup(conn.close)
         db.init(conn)
+        db.set_trabaja_turnos(conn, True, 1)
         today = date.today()
         _fill_range(conn, 1, today - timedelta(140), today - timedelta(1), CONST)
         _seed_block(conn, 1, today - timedelta(20), 5)
@@ -115,6 +116,7 @@ class CostRowNoDataTest(unittest.TestCase):
         conn = db.connect()
         self.addCleanup(conn.close)
         db.init(conn)
+        db.set_trabaja_turnos(conn, True, 1)
         conn.commit()
         _as(1)
 
@@ -232,6 +234,7 @@ class DiaRendersContextTest(unittest.TestCase):
         self.conn = db.connect()
         self.addCleanup(self.conn.close)
         db.init(self.conn)
+        db.set_trabaja_turnos(self.conn, True, 1)
         self.inicio = date(2026, 3, 10)
         for i in range(5):
             _insert_shift(self.conn, 1, (self.inicio + timedelta(i)).isoformat())
@@ -290,6 +293,7 @@ class DiaShiftVocabularyTest(unittest.TestCase):
         self.conn = db.connect()
         self.addCleanup(self.conn.close)
         db.init(self.conn)
+        db.set_trabaja_turnos(self.conn, True, 1)
         self.day = date(2026, 4, 1)
         _as(1)
 

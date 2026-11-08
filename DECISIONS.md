@@ -4656,3 +4656,181 @@ branch tip's tree (`git diff` between them is empty), so the gate above still de
 landed; it was not re-run after the merge. The diff still carries the customer-facing bytes merge policy A
 would normally stop on, but this spec's body says in words to merge after the two fixes -- that is this
 slice's merge authorization.
+
+## BODY-TURNOS-OPCIONAL-3 -- Turnos disappears for a person who has not said they work shifts; gate red
+outside `touches:` (2026-11-07)
+
+Slice 3 of BODY-TURNOS-OPCIONAL-OBS-1's plan (OBSERVED at `fb16ee9`), under Carlos's ruling A (orchestrator
+ledger BODY-TURNOS-OPCIONAL-1: "a screen whose data cannot arrive for this person is not shown to them").
+Branch `feat/body-turnos-opcional-3` from `main`.
+
+**Decision 1 -- one predicate.** Every shift surface the OBS-1 census found is gated on the single
+`db.trabaja_turnos_si(conn, person_id)` (merged in BODY-TURNOS-ESQUEMA-1): NULL (not answered) and False
+both hide it, only True shows exactly what shows today. No screen re-derives it -- `body/web.py` adds one
+helper, `_turnos_on(conn, person_id)`, that calls it, computed once per request and passed to the template
+the same way `tab` already is. `base.html`'s Turnos nav tab is now `{% if turnos %}`-wrapped, and since that
+nav is unconditional on every page, every one of `web.py`'s ~26 `_render()` calls that extends `base.html`
+now passes `turnos=` -- not only the shift-specific routes. `today.html`'s `hoy_turno_card`, `day.html`'s
+«Tus turnos» block (including the "Noche N de M" / "N.º día después" line) and `history.html`'s «Tus turnos
+por tipo» card are each wrapped in `{% if turnos %}` so nothing -- no heading, no gap -- is left in their
+place. `trends.html` needed no template change: `web.py`'s `trends()` now computes the `nights` set (night-
+shift shading) only `if start and turnos_on`, which already empties both the SVG shading and the
+`nights=bool(nights)` flag the legend is gated on.
+
+**Decision 2 -- 404s.** `/shifts`, `/shifts/como`, and the three shift POST routes (`/shifts/confirm`,
+`/shifts/confirm-all`, `/shifts/dismiss`) now 404 when the predicate is False, the same
+`raise HTTPException(404)` pattern `SOLO_EN_LINEA` already uses for local mode -- a bookmark cannot reach a
+screen whose data cannot arrive.
+
+**Ayuda.** `tutoriales.capitulos_con_tareas()` gained `incluir_turnos: bool = True` (the default keeps every
+existing caller's behaviour, including the one test calling it with no arguments); `/ayuda` passes
+`incluir_turnos=turnos_on` and leaves the `turnos` chapter out of the list entirely when False, rather than
+rendering an empty one.
+
+**Decision 3 -- the assistant.** `herramientas.disponibles(nivel)` is the one place the tool list offered to
+the model is assembled (`body/agente/bucle.py`'s `_tool_specs`), and `bucle.py` is Tier 2 but outside this
+slice's `touches:`, so the signal reaches it through a module-level contextvar (`_TURNOS_ACTUAL`, default
+`True`, the same pattern `web.py` already uses for `_RUTA_ACTUAL`) instead of a new parameter on
+`disponibles()` that would have required editing `bucle.py`'s call site. `web.py`'s `asistente_preguntar`
+sets it once per request (`agente_herramientas.fijar_turnos_actual(_turnos_on(conn, person_id))`) before
+calling into `agente_bucle.ejecutar`, and `disponibles()` leaves `leer_turnos`, `leer_costo_turnos` and
+`proponer_confirmar_turnos` off the list it returns when the contextvar reads False -- a person who has not
+said they work shifts is never offered them, so the assistant never talks about shifts nobody has.
+`_leer_historia`'s `por_turno` key is left out of its result (not offered then failing) when the predicate is
+False, read directly from the `conn`/`person_id` the tool already has -- no contextvar needed there.
+`ejecutar()` itself is unchanged: the orchestrator's decision was "not offered", not "refused if called
+anyway", and widening it to a hard refusal would have been scope this slice was not asked for.
+
+**Decision 4, unchanged by this slice.** Shift data already stored is not deleted when a person answers no
+(hiding is reversible, deleting is not -- privacy's delete-all still removes it); `body/vida_export.py` is
+untouched (Tier 1, data-driven: no confirmed shift, no shift fields); a proposal already created stays as
+it is.
+
+**Tests.** `tests/test_turnos_opcional_3.py` (new -- `tests/test_agente_herramientas.py` named in the spec
+did not exist, so its cases live here instead, as the spec allowed): three fixtures (the setting NULL, False,
+True) sharing the IDENTICAL stored shift rows (a night today, a 5-night block 20 days back, 140 days of
+steady metrics) prove the hiding comes from the setting, never from missing data -- the nav link, Hoy's
+card, Día's block line, Historial's por-tipo card, Tendencias' night shading, `/shifts`, `/shifts/como`,
+Ayuda's chapter, the assistant's tool list and the history tool's `por_turno`, each checked present for True
+and absent for both NULL and False. Updated `tests/test_hoy_turno.py` (`WebRenderTest._reset_db`),
+`tests/test_turnos_enlaces.py` (four `setUp`s: `CostRowLinksTest`, `CostRowNoDataTest`,
+`DiaRendersContextTest`, `DiaShiftVocabularyTest`), and `tests/test_tutoriales_puertas.py` (`_fresh_client`,
+shared by every `_LocalModeTestCase`/`_HostedModeTestCase`) to call `db.set_trabaja_turnos(conn, True, 1)`
+for their subject -- restoring what each already tested, never deleting a case.
+
+**Measured, not assumed: `touches:` was narrower than the behaviour change.** The full gate (below) failed
+20 pre-existing tests, every one in a file the spec did not list in `touches:` -- `tests/test_dispositivo.py`,
+`tests/test_person_scope.py`, `tests/test_pipeline.py`, `tests/test_shift_import.py`,
+`tests/test_sin_friccion.py`, `tests/test_turnos_costo.py`. Each builds a fresh test database whose default
+person has a NULL `trabaja_turnos` (the one-time backfill to 1 in `body/db.py`'s `_migrate()` only runs when
+the `trabaja_turnos` column is first ADDED to an EXISTING database -- a brand-new database's schema already
+has the column, so the backfill branch never runs for it) with stored shift rows, and expects `/shifts`,
+`/shifts/como`, or a shift-bearing Hoy/Historial page to render at 200 -- exactly the behaviour decision 2
+now changes to 404/hidden. This is the predictable consequence of the predicate being honoured everywhere it
+now is, not an incidental break, and it cannot be fixed without writing to files outside this slice's
+`touches:`, so it stops here rather than widening its own scope. A follow-up slice naming those six files in
+`touches:` and adding one `db.set_trabaja_turnos(conn, True, <their person>)` line to each affected `setUp`
+(the same fix already applied four times above, to the files this slice could touch) would turn the gate
+green.
+
+**Gate**, exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, run on the branch,
+foreground, twice (the second run only to read which one test is skipped, for this entry -- both runs gave
+the identical count): `Ran 913 tests in 135.612s ... FAILED (failures=20, skipped=1)`. 913 = main's prior
+883 (BODY-TURNOS-OPCIONAL-2-M's own count) plus the 30 new cases in `tests/test_turnos_opcional_3.py`. Not
+merged: **GATE_RED**, stays on `feat/body-turnos-opcional-3`.
+
+## BODY-TURNOS-INFERIR-1 -- the predicate infers Turnos from shift data on a fresh database (2026-11-07)
+
+Under `ORCH-CARLOS-DELEGATES-TIER-1-1`, against `BODY-TURNOS-OPCIONAL-OBS-1` (which named read-time inference
+as the alternative to a migration-only default). Fixes the previous entry's GATE_RED: `_migrate()`'s
+backfill-to-1 for `person.trabaja_turnos` runs only when that column is ADDED to an EXISTING database, so a
+database CREATED fresh -- every test, and the hosted Body, which starts empty and receives shift files from
+the PC uploader -- never runs it, leaving a person with shift data at NULL, and Turnos hiding from the very
+person whose shifts are arriving.
+
+**The rule.** `db.trabaja_turnos_si(conn, person_id)`: stored 1 -> True. Stored 0 -> False, always (an
+explicit "no" is never overridden). Stored NULL -> True when the person has at least one row in `shift` or
+`shift_batch` (one `SELECT EXISTS(... UNION ...)` query, evaluated only when the stored value is NULL),
+False otherwise. This is read-time inference, never a write -- `get_trabaja_turnos` is unchanged, so Primeros
+pasos keeps asking «¿Trabajas por turnos?» while the stored value is NULL regardless of what
+`trabaja_turnos_si` infers.
+
+**Tests.** `tests/test_turnos_esquema_1.py`'s `AccessorTest` gained
+`test_trabaja_turnos_si_infers_from_shift_data_when_null`: NULL + a `shift` row -> True, NULL + a
+`shift_batch` row only -> True, NULL + nothing -> False, then an explicit 0 on the same person with the
+`shift` row still present -> False. `tests/test_turnos_opcional_3.py`'s `NullSettingTest` (SETTING=None,
+sharing the three fixtures' identical shift rows) now shows exactly what `SiSettingTest` shows, since the
+stored shift rows make it infer True; a new `NullSettingNoShiftsTest` (SETTING=None, `WITH_SHIFTS=False`,
+built by giving `_seed` a `with_shifts` flag that skips every `_insert_shift` call) proves the NULL-with-
+nothing-to-infer-from case still hides everything -- nav, Hoy/Día/Historial/Tendencias cards, `/shifts` and
+`/shifts/como` 404, Ayuda's chapter, the assistant's tool list and `leer_historia`'s `por_turno`.
+
+**Measured: the previous entry's "every one... builds a person WITH shift rows" does not hold for all 20.**
+The one gate run below still fails 7 tests, and none of them has shift data at all:
+`test_dispositivo.ApiTurnosTest.test_valid_file_proposes_a_batch_for_the_keys_person_only` (its person 2,
+0 `shift_batch` rows by its own assertion), `test_shift_import.ShiftWebTest.test_shifts_page_without_proposed_batch_es`
+(fresh `db.init`, no shift insert), `test_sin_friccion.HistorySectionsAlreadyGoodCensusTest.test_patterns_and_shift_empty_link_turnos`
+and `test_sin_friccion.TurnosEmptyCensusTest.test_empty_both_languages` (both state "no watch data at all" in
+their own docstrings), and `test_turnos_costo.StripBandsTest.test_day_without_readiness_shows_em_dash_and_a_label`
+and `test_turnos_costo.WebAndToolTest.test_empty_state_with_no_shifts` (both comment "no shifts, no metrics at
+all"). These 6 are the same honest-empty-state design gap the previous entry's own ruling already flagged for
+the orchestrator's browser check (BODY-TURNOS-OPCIONAL-OBS-1's hide slice stays AWAITING_APPROVAL for exactly
+this); inference has nothing to infer from when there is no shift data, so they are unaffected by this fix and
+`touches:` does not cover the route/template files that would change their outcome. Not widened.
+
+**New finding, inside this slice's own touched test file:** the 7th failure is
+`test_turnos_opcional_3.NullSettingTest.test_nav_shifts_link`. Every other check in that fixture (Hoy's card,
+Día's block, Historial's card, Tendencias' shading, `/shifts`, `/shifts/como`, Ayuda's chapter, the assistant's
+tool list, `leer_historia`'s `por_turno`) now correctly shows for NULL-with-shift-rows, because each of those
+routes computes its `turnos` context through the shared `_turnos_on(conn, person_id)` helper (`body/web.py`),
+which calls `db.trabaja_turnos_si` and so picks up this fix immediately. `/settings` does not: its handler
+(`body/web.py` lines ~1577-1580) reads `trabaja_turnos = db.get_trabaja_turnos(conn, person_id)` and passes
+`turnos=trabaja_turnos is True` straight into the template, bypassing `_turnos_on`/`trabaja_turnos_si`
+entirely -- a one-line omission from BODY-TURNOS-OPCIONAL-3's own implementation (it updated every other
+route to the shared helper but not this one), invisible until a NULL value needed to be inferred as True,
+which only became possible with this slice. `body/web.py` is Tier 2 but outside this slice's `touches:`, so
+it was not edited; a one-line follow-up (`turnos=_turnos_on(conn, person_id)` in the `/settings` handler)
+would close it.
+
+**Gate**, exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, run once, foreground:
+`Ran 924 tests in 123.529s ... FAILED (failures=7, skipped=1)`. 924 = the previous entry's 913 plus the 11
+new/changed cases across `tests/test_turnos_esquema_1.py` and `tests/test_turnos_opcional_3.py`. All 7
+failures are accounted for above; none is fixable inside this slice's `touches:`. Not merged:
+**AWAITING_APPROVAL**, stays on `feat/body-turnos-opcional-3` -- the hide slice's customer-facing bytes still
+need the orchestrator's browser check, and this slice's own predicate change is customer-bytes-adjacent in
+the same way (it changes which already-written screens render for a given person), so it stops at the same
+gate rather than merging itself.
+
+## BODY-TURNOS-OPCIONAL-3-FIX -- the /settings bypass and the six empty-state tests, closing BODY-TURNOS-INFERIR-1's
+7 failures (2026-11-07)
+
+Finishes BODY-TURNOS-OPCIONAL-3 on its branch, per the orchestrator's review of `fa57b9a` under
+`ORCH-CARLOS-DELEGATES-TIER-1-1`.
+
+**The bug.** `/settings` (`body/web.py`) computed its Turnos tab from
+`db.get_trabaja_turnos(conn, person_id) is True` -- the stored answer only -- instead of the shared
+`_turnos_on(conn, person_id)` every other route uses. A person inferred True (NULL, with shift data) kept
+the tab everywhere except Ajustes. Grepped the whole file for every other `get_trabaja_turnos(` call: only
+this one site decided visibility; `trabaja_turnos` itself stays `db.get_trabaja_turnos(...)` unchanged,
+since it still marks the stored Sí/No radio as `on`. Fix: `turnos=_turnos_on(conn, person_id)`.
+
+**The six tests.** Each built a person with no shift data at all and asserted Turnos' honest empty states;
+under ruling BODY-TURNOS-OPCIONAL-1 those screens exist only for a person who works shifts, so each test's
+subject is now a shift worker whose shifts have not arrived yet. Added
+`db.set_trabaja_turnos(conn, True, <their person>)` in the narrowest place that covers each one, no
+assertion changed:
+`test_dispositivo.ApiTurnosTest.test_valid_file_proposes_a_batch_for_the_keys_person_only` (person 2, in the
+test body, right before its `/shifts` check),
+`test_shift_import.ShiftWebTest.test_shifts_page_without_proposed_batch_es` (person 1, in the test),
+`test_sin_friccion.HistorySectionsAlreadyGoodCensusTest.test_patterns_and_shift_empty_link_turnos` and
+`test_sin_friccion.TurnosEmptyCensusTest.test_empty_both_languages` (person 1, in each test),
+`test_turnos_costo.StripBandsTest.test_day_without_readiness_shows_em_dash_and_a_label` and
+`test_turnos_costo.WebAndToolTest.test_empty_state_with_no_shifts` (person 1, in each test).
+
+**Gate**, exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, run once, foreground:
+`Ran 924 tests in 92.391s ... OK (skipped=1)`. Same 924 as the previous entry's red run; all 7 failures it
+named are gone, 0 new failures.
+
+Not merged: **AWAITING_APPROVAL**, stays on `feat/body-turnos-opcional-3` -- the approval for this slice says
+in words to stop here for the orchestrator's 375 px browser check, so the merge waits on that regardless of
+this diff's own shape.

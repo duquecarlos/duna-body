@@ -37,6 +37,7 @@ from .agente import ajustes as agente_ajustes
 from .agente import bucle as agente_bucle
 from .agente import cliente as agente_cliente
 from .agente import conversacion as agente_conversacion
+from .agente import herramientas as agente_herramientas
 from .agente import propuestas as agente_propuestas
 from .agente import uso as agente_uso
 from .baselines import baseline
@@ -206,6 +207,14 @@ def _cierra_conexion_async(fn):
 
 def _render(name: str, **kw) -> HTMLResponse:
     return HTMLResponse(env.get_template(name).render(**kw))
+
+
+def _turnos_on(conn, person_id: int) -> bool:
+    """Whether every shift surface (BODY-TURNOS-OPCIONAL-3) shows for this person -- the nav tab, Hoy's
+    card, Día's block line, Historial's por-tipo card, Tendencias' night shading, /shifts, Ayuda's
+    chapter, and the assistant's shift tools. NULL (not answered) and False both hide it; only True
+    shows it, computed once per request from the one predicate db.trabaja_turnos_si."""
+    return db.trabaja_turnos_si(conn, person_id)
 
 
 async def _form(request: Request) -> dict:
@@ -448,6 +457,7 @@ def _hoy_turno_ctx(t: T, conn, person_id: int, today_local: date) -> dict:
 @_cierra_conexion
 def today(person_id: int = Depends(identity.current_person_id)):
     conn, person, t = _ctx(person_id)
+    turnos_on = _turnos_on(conn, person_id)
     day = _latest_day(conn, person_id)
     proposed_count = conn.execute(
         "SELECT COUNT(*) AS n FROM shift_batch WHERE person_id = ? AND status = 'proposed'",
@@ -460,7 +470,7 @@ def today(person_id: int = Depends(identity.current_person_id)):
     if not day:
         return _render("soon.html", t=t, tab="today", title=t("today.title"),
                        text=_sync_status_text(conn, person, t), primeros_pasos=primeros_pasos,
-                       proposed_count=proposed_count, turno=turno_ctx)
+                       proposed_count=proposed_count, turno=turno_ctx, turnos=turnos_on)
     defs = _defs(conn)
     vals = db.day_values(conn, day, person_id)
     r = readiness.compute(conn, day, person_id)
@@ -480,7 +490,7 @@ def today(person_id: int = Depends(identity.current_person_id)):
                    synced=_synced(conn, person), r=r, reading=_reading(t, r), ready_avg=ready_avg,
                    ready_delta=ready_delta, ready_cls=ready_cls, cards=cards,
                    missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_count=proposed_count,
-                   turno=turno_ctx,
+                   turno=turno_ctx, turnos=turnos_on,
                    plan_habits=_today_due_habits(conn, t, person_id, today_local),
                    today_iso=today_local.isoformat(),
                    primeros_pasos=primeros_pasos)
@@ -497,6 +507,7 @@ PART_METRIC = {"hrv": "hrv_last_night", "sleep": "sleep_minutes", "battery": "bo
 def how(day: str, person_id: int = Depends(identity.current_person_id)):
     d = _parse_day(day)
     conn, person, t = _ctx(person_id)
+    turnos_on = _turnos_on(conn, person_id)
     today_local = _today_local(person)
     r = readiness.compute(conn, d.isoformat(), person_id)
     parts = []
@@ -514,7 +525,7 @@ def how(day: str, person_id: int = Depends(identity.current_person_id)):
                       "score": t.num(p.subscore), "weight": f"{round(p.weight * 100)} %", "href": href})
     missing = [t("part." + m) for m in r.missing]
     return _render("how.html", t=t, tab="today", r=r, parts=parts, date_long=t.long_date(d),
-                   missing=[m[:1].upper() + m[1:] for m in missing])
+                   missing=[m[:1].upper() + m[1:] for m in missing], turnos=turnos_on)
 
 
 @app.get("/day/{day}")
@@ -522,6 +533,7 @@ def how(day: str, person_id: int = Depends(identity.current_person_id)):
 def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
     d = _parse_day(day)
     conn, person, t = _ctx(person_id)
+    turnos_on = _turnos_on(conn, person_id)
     today_local = _today_local(person)
     key = d.isoformat()
     data = db.load_day(conn, key, person_id)
@@ -574,7 +586,8 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
     return _render("day.html", t=t, tab="today", date_long=t.long_date(d), cards=cards, sleep=sleep,
                    activities=acts, shifts=shifts, has_data=has_data, block_ctx=block_ctx,
                    sync_text=None if has_data else _sync_status_text(conn, person, t),
-                   prev=(d - timedelta(1)).isoformat(), next=(d + timedelta(1)).isoformat())
+                   prev=(d - timedelta(1)).isoformat(), next=(d + timedelta(1)).isoformat(),
+                   turnos=turnos_on)
 
 
 def _owned_batch_or_404(conn, batch_id: int, person_id: int) -> None:
@@ -668,6 +681,9 @@ def _turnos_strip(conn, person_id: int, today_local: date, t: T) -> tuple[list[d
 @_cierra_conexion
 def shifts(request: Request, person_id: int = Depends(identity.current_person_id)):
     conn, person, t = _ctx(person_id)
+    turnos_on = _turnos_on(conn, person_id)
+    if not turnos_on:
+        raise HTTPException(404)
     rows = conn.execute(
         "SELECT * FROM shift_batch WHERE person_id = ? AND status = 'proposed' ORDER BY received, extracted_at",
         (person_id,),
@@ -695,17 +711,17 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
                        summary_from=t.month_year(date.fromisoformat(summary["first_day"])),
                        summary_to=t.month_year(date.fromisoformat(summary["last_day"])),
                        summary_days=summary["day_count"], summary_nights=summary["night_count"],
-                       result_msg=result_msg, **costo_ctx)
+                       result_msg=result_msg, turnos=turnos_on, **costo_ctx)
     if rows:
         proposed = rows[0]
         prev = shift_import.preview(conn, proposed["id"])
         return _render("shifts.html", t=t, tab="shifts", batch=dict(proposed), many=False,
                        received_date=_batch_date(t, proposed["received"]), preview=prev, result_msg=result_msg,
-                       **costo_ctx)
+                       turnos=turnos_on, **costo_ctx)
     confirmed = shift_import.latest_confirmed(conn, person_id)
     return _render("shifts.html", t=t, tab="shifts", batch=None, many=False,
                    confirmed_date=_batch_date(t, confirmed["received"]) if confirmed else None,
-                   result_msg=result_msg, **costo_ctx)
+                   result_msg=result_msg, turnos=turnos_on, **costo_ctx)
 
 
 def _turnos_bloque_linea(t: T, b: dict, hoy: date) -> str:
@@ -726,21 +742,25 @@ def _turnos_bloque_linea(t: T, b: dict, hoy: date) -> str:
 @_cierra_conexion
 def shifts_como(person_id: int = Depends(identity.current_person_id)):
     conn, person, t = _ctx(person_id)
+    if not _turnos_on(conn, person_id):
+        raise HTTPException(404)
     today_local = _today_local(person)
     resumen = turnos_costo.resumen(conn, person_id, hoy=today_local)
     bloques = [_turnos_bloque_linea(t, b, today_local) for b in resumen["bloques"]]
     return _render("how.html", t=t, tab="shifts", modo="turnos", version=resumen["version"],
                    n_bloques=len(resumen["bloques"]), n_con_recuperacion=resumen["bloques_con_recuperacion"],
                    n_estables=turnos_costo.MODELO["dias_estables"], n_referencia=turnos_costo.REFERENCIA_DIAS,
-                   bloques=bloques)
+                   bloques=bloques, turnos=True)
 
 
 @app.post("/shifts/confirm")
 @_cierra_conexion_async
 async def shifts_confirm(request: Request, person_id: int = Depends(identity.current_person_id)):
+    conn, _, _ = _ctx(person_id)
+    if not _turnos_on(conn, person_id):
+        raise HTTPException(404)
     batch_id = parse_qs((await request.body()).decode()).get("batch_id", [""])[0]
     if batch_id.isdigit():
-        conn, _, _ = _ctx(person_id)
         _owned_batch_or_404(conn, int(batch_id), person_id)
         try:
             shift_import.confirm(conn, int(batch_id))
@@ -753,6 +773,8 @@ async def shifts_confirm(request: Request, person_id: int = Depends(identity.cur
 @_cierra_conexion_async
 async def shifts_confirm_all(person_id: int = Depends(identity.current_person_id)):
     conn, _, _ = _ctx(person_id)
+    if not _turnos_on(conn, person_id):
+        raise HTTPException(404)
     try:
         result = shift_import.confirm_all(conn, person_id)
     except (shift_import.ImportRefused, shift_import.SlotIndexMissing):
@@ -767,9 +789,11 @@ async def shifts_confirm_all(person_id: int = Depends(identity.current_person_id
 @app.post("/shifts/dismiss")
 @_cierra_conexion_async
 async def shifts_dismiss(request: Request, person_id: int = Depends(identity.current_person_id)):
+    conn, _, _ = _ctx(person_id)
+    if not _turnos_on(conn, person_id):
+        raise HTTPException(404)
     batch_id = parse_qs((await request.body()).decode()).get("batch_id", [""])[0]
     if batch_id.isdigit():
-        conn, _, _ = _ctx(person_id)
         _owned_batch_or_404(conn, int(batch_id), person_id)
         shift_import.dismiss(conn, int(batch_id))
     return RedirectResponse("/shifts", status_code=303)
@@ -869,6 +893,7 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
     desde=dia/como, and an unparseable dia drops both. The URL carries a range, a month or those flags, never
     a value."""
     conn, person, t = _ctx(person_id)
+    turnos_on = _turnos_on(conn, person_id)
     defs = _defs(conn)
     last = _latest_day(conn, person_id)
     desde_dia = None
@@ -902,7 +927,7 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
     elif r != "all" and last:
         end = date.fromisoformat(last)
         start = end - timedelta(int(r) - 1)
-    nights = _nights(conn, start, end, person_id) if start else set()
+    nights = _nights(conn, start, end, person_id) if start and turnos_on else set()
     cards, since, days = [], None, 0
     for k in TREND_KEYS:
         card, p = _trend_card(conn, t, defs, k, start, end, month, nights, person_id)
@@ -916,10 +941,10 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
         if have:
             return _render("soon.html", t=t, tab="trends", title=t("nav.trends"),
                            text=t("trends.too_little", days=TREND_MIN_DAYS - have),
-                           back_href=back_href, back_label=back_label)
+                           back_href=back_href, back_label=back_label, turnos=turnos_on)
         return _render("soon.html", t=t, tab="trends", title=t("nav.trends"),
                        text=_sync_status_text(conn, person, t),
-                       back_href=back_href, back_label=back_label)
+                       back_href=back_href, back_label=back_label, turnos=turnos_on)
     extra_groups, extra_count = [], 0
     for group_key, keys in TREND_GROUPS:
         group_cards = []
@@ -960,7 +985,7 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
                    r=r, ranges=RANGES, fig_label=fig_label, nights=bool(nights),
                    month_title=t.month_year(month) if month else None,
                    extra_groups=extra_groups, extra_count=extra_count, todas=todas == "1",
-                   desde=desde, dia=desde_dia, back_href=back_href, back_label=back_label)
+                   desde=desde, dia=desde_dia, back_href=back_href, back_label=back_label, turnos=turnos_on)
 
 
 def _short_date(t: T, d: date) -> str:
@@ -1084,10 +1109,11 @@ def _shift_ctx(t: T, defs: dict, shift_data: dict) -> dict:
 @_cierra_conexion
 def history_view(person_id: int = Depends(identity.current_person_id)):
     conn, person, t = _ctx(person_id)
+    turnos_on = _turnos_on(conn, person_id)
     cov = history.coverage(conn, person_id)
     if not cov:
         return _render("soon.html", t=t, tab="trends", title=t("history.title"),
-                       text=_sync_status_text(conn, person, t))
+                       text=_sync_status_text(conn, person, t), turnos=turnos_on)
     defs = _defs(conn)
     train = history.training(conn, person_id)
     pat = history.patterns(conn, person_id)
@@ -1106,7 +1132,7 @@ def history_view(person_id: int = Depends(identity.current_person_id)):
                    training=_training_ctx(t, train) if train else None,
                    patterns=_pattern_rows(t, defs, pat),
                    findings=[_finding_text(t, defs, f) for f in pat["findings"][1:]],
-                   shift=_shift_ctx(t, defs, shift_data))
+                   shift=_shift_ctx(t, defs, shift_data), turnos=turnos_on)
 
 
 AREAS = ["body", "money", "adventure", "growth", "work", "home"]
@@ -1351,7 +1377,7 @@ def goals_list(person_id: int = Depends(identity.current_person_id)):
                       for g in archived]
 
     return _render("goals.html", t=t, tab="goals", cards=cards, proposed=proposed_cards, archived=archived_cards,
-                   empty=not (active or proposed or archived))
+                   empty=not (active or proposed or archived), turnos=_turnos_on(conn, person_id))
 
 
 @app.get("/goals/new")
@@ -1367,7 +1393,7 @@ def goal_new_form(person_id: int = Depends(identity.current_person_id)):
                         "direction": BETTER_TO_DIRECTION[d["better"]], "baseline": b.mean if b else None})
     hh = household.household_of(conn, person_id)
     return _render("goal_new.html", t=t, tab="goals", metrics=metrics, areas=AREAS, directions=DIRECTIONS,
-                   has_household=bool(hh and len(hh.member_ids) > 1))
+                   has_household=bool(hh and len(hh.member_ids) > 1), turnos=_turnos_on(conn, person_id))
 
 
 @app.post("/goals/new")
@@ -1467,7 +1493,7 @@ def goal_detail(goal_id: int, person_id: int = Depends(identity.current_person_i
     return _render("goal.html", t=t, tab="goals", goal=g, cls=cls, verdict=verdict, chart=chart,
                    history=history_list, habits=habit_rows, members=members,
                    target_text=_goal_target_text(t, defs, g), area_label=t("goals.area." + g["area"]),
-                   today=today.isoformat())
+                   today=today.isoformat(), turnos=_turnos_on(conn, person_id))
 
 
 def _owned_goal_or_404(conn, goal_id: int, person_id: int) -> None:
@@ -1551,7 +1577,7 @@ def settings(person_id: int = Depends(identity.current_person_id)):
     nivel_datos = agente_ajustes.nivel_datos(conn, person_id)
     trabaja_turnos = db.get_trabaja_turnos(conn, person_id)
     return _render("settings.html", t=t, tab="settings", nivel_datos=nivel_datos,
-                   trabaja_turnos=trabaja_turnos)
+                   trabaja_turnos=trabaja_turnos, turnos=_turnos_on(conn, person_id))
 
 
 # ---- Ayuda (tutoriales-v1 section 5.1): chapters, their tasks, and the recorrido completo ---------
@@ -1569,15 +1595,16 @@ def _tarea_ayuda_ctx(tarea: dict, hosted: bool) -> dict:
 @app.get("/ayuda")
 @_cierra_conexion
 def ayuda(person_id: int = Depends(identity.current_person_id)):
-    _, _, t = _ctx(person_id)
+    conn, _, t = _ctx(person_id)
+    turnos_on = _turnos_on(conn, person_id)
     hosted = cuenta.hosted()
     capitulos = []
     recorrido = []
-    for c in tutoriales.capitulos_con_tareas():
+    for c in tutoriales.capitulos_con_tareas(incluir_turnos=turnos_on):
         tareas = [_tarea_ayuda_ctx(tarea, hosted) for tarea in c["tareas"]]
         capitulos.append({"id": c["id"], "titulo": c["titulo"], "tareas": tareas})
         recorrido.extend(tarea for tarea in tareas if tarea["video"])
-    return _render("ayuda.html", t=t, tab="settings", capitulos=capitulos, recorrido=recorrido)
+    return _render("ayuda.html", t=t, tab="settings", capitulos=capitulos, recorrido=recorrido, turnos=turnos_on)
 
 
 @app.post("/settings/language")
@@ -1626,7 +1653,7 @@ def nivel_datos_view(request: Request, person_id: int = Depends(identity.current
         proveedor_actual = agente_cliente.nombre_elegido(configurados, conn, person_id)
     guardado = request.query_params.get("guardado") == "1"
     resp = _render("asistente_datos.html", t=t, tab="settings", nivel=nivel, guardado=guardado,
-                   proveedores=proveedores, proveedor_actual=proveedor_actual)
+                   proveedores=proveedores, proveedor_actual=proveedor_actual, turnos=_turnos_on(conn, person_id))
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -1733,6 +1760,7 @@ async def asistente_preguntar(request: Request, person_id: int = Depends(identit
         raise HTTPException(400)
 
     conn, _, t = _ctx(person_id)
+    agente_herramientas.fijar_turnos_actual(_turnos_on(conn, person_id))
     if conversacion_id is not None:
         try:
             agente_conversacion.verificar_propiedad(conn, conversacion_id, person_id)
@@ -1888,7 +1916,7 @@ def _prune_mfa_state() -> None:
 def _garmin_ctx(t: T, conn, person_id: int, **extra) -> dict:
     connected_since = garmin_cuenta.conectado_desde(conn, person_id)
     ctx = {
-        "t": t, "tab": "settings",
+        "t": t, "tab": "settings", "turnos": _turnos_on(conn, person_id),
         "connected": connected_since is not None,
         "connected_since": _short_date(t, datetime.fromisoformat(connected_since).date())
                            if connected_since else None,
@@ -2020,7 +2048,7 @@ def privacidad_view(request: Request, person_id: int = Depends(identity.current_
     return _render("privacidad.html", t=t, tab="settings", version=privacidad.CONSENT_VERSION,
                    accepted_date=accepted_date, delete_word=t("privacidad.borrar_palabra"),
                    error=request.query_params.get("error") == "confirmacion",
-                   es_hosted=es_hosted, reauth_ok=reauth_ok)
+                   es_hosted=es_hosted, reauth_ok=reauth_ok, turnos=_turnos_on(conn, person_id))
 
 
 @app.get("/privacidad/exportar")
@@ -2077,7 +2105,8 @@ def dispositivos_view(person_id: int = Depends(identity.current_person_id)):
         raise HTTPException(404)
     conn, _, t = _ctx(person_id)
     items = [_dispositivo_row(t, d) for d in dispositivo.listar(conn, person_id)]
-    resp = _render("dispositivos.html", t=t, tab="settings", items=items, new_key=None)
+    resp = _render("dispositivos.html", t=t, tab="settings", items=items, new_key=None,
+                   turnos=_turnos_on(conn, person_id))
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -2092,7 +2121,8 @@ async def dispositivos_crear(request: Request, person_id: int = Depends(identity
     nombre = (f.get("nombre") or "").strip()
     if not nombre:
         items = [_dispositivo_row(t, d) for d in dispositivo.listar(conn, person_id)]
-        resp = _render("dispositivos.html", t=t, tab="settings", items=items, new_key=None)
+        resp = _render("dispositivos.html", t=t, tab="settings", items=items, new_key=None,
+                       turnos=_turnos_on(conn, person_id))
         resp.headers["Cache-Control"] = "no-store"
         return resp
     alcances = set()
@@ -2102,7 +2132,8 @@ async def dispositivos_crear(request: Request, person_id: int = Depends(identity
         alcances.add("vida:leer")
     new_key = dispositivo.crear(conn, person_id, nombre, alcances)
     items = [_dispositivo_row(t, d) for d in dispositivo.listar(conn, person_id)]
-    resp = _render("dispositivos.html", t=t, tab="settings", items=items, new_key=new_key)
+    resp = _render("dispositivos.html", t=t, tab="settings", items=items, new_key=new_key,
+                   turnos=_turnos_on(conn, person_id))
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

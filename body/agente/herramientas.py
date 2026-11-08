@@ -15,6 +15,7 @@ tests/test_agente_registro.py checks that a `lectura` tool's call graph never re
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import sqlite3
 from datetime import date, datetime, timedelta
@@ -23,6 +24,20 @@ from zoneinfo import ZoneInfo
 from .. import db, history, profile, readiness, shift_import, turnos_costo, tutoriales
 from ..i18n import LANGS
 from . import ajustes, propuestas
+
+# BODY-TURNOS-OPCIONAL-3: whether the CURRENT request's person has said they work shifts, set once by
+# body/web.py (the only caller of body/agente/bucle.py's ejecutar()) before it drives the tool loop --
+# the same contextvar pattern web.py already uses for _RUTA_ACTUAL. disponibles() reads it to leave
+# the three shift tools off the list offered to the model; body/agente/bucle.py's own
+# `herramientas.disponibles(nivel)` call needs no change. Default True: a caller that never sets it
+# (every existing test, a tool executed directly) sees every tool nivel already allows, unchanged.
+_TURNOS_ACTUAL: contextvars.ContextVar[bool] = contextvars.ContextVar("_turnos_actual", default=True)
+
+TURNOS_HERRAMIENTAS = frozenset({"leer_turnos", "leer_costo_turnos", "proponer_confirmar_turnos"})
+
+
+def fijar_turnos_actual(valor: bool) -> None:
+    _TURNOS_ACTUAL.set(bool(valor))
 
 TENDENCIA_METRICAS = ("readiness", "sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake", "steps",
                       "vo2max", "fitness_age",
@@ -140,8 +155,11 @@ def _leer_tendencias(conn: sqlite3.Connection, person_id: int, rango: str = "30"
 
 
 def _leer_historia(conn: sqlite3.Connection, person_id: int) -> dict:
-    return {"cobertura": history.coverage(conn, person_id), "entrenamiento": history.training(conn, person_id),
-            "patrones": history.patterns(conn, person_id), "por_turno": history.by_shift(conn, person_id)}
+    out = {"cobertura": history.coverage(conn, person_id), "entrenamiento": history.training(conn, person_id),
+           "patrones": history.patterns(conn, person_id)}
+    if db.trabaja_turnos_si(conn, person_id):
+        out["por_turno"] = history.by_shift(conn, person_id)
+    return out
 
 
 def _ultima_verificacion(conn: sqlite3.Connection, goal_id: int, person_id: int):
@@ -355,7 +373,9 @@ class ToolError(Exception):
 def disponibles(nivel: str) -> list[dict]:
     if nivel not in ajustes.NIVELES:
         raise ToolError(f"nivel inválido: {nivel!r}; debe ser uno de {ajustes.NIVELES}")
-    return [h for h in HERRAMIENTAS if _RANK[h["nivel"]] <= _RANK[nivel]]
+    turnos_on = _TURNOS_ACTUAL.get()
+    return [h for h in HERRAMIENTAS if _RANK[h["nivel"]] <= _RANK[nivel]
+            and (turnos_on or h["nombre"] not in TURNOS_HERRAMIENTAS)]
 
 
 def tipo_de(nombre: str) -> str | None:

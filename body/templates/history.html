@@ -76,6 +76,7 @@
 <div class="card empty">{{ t('history.patterns_none') }}</div>
 {% endif %}
 
+{% if turnos %}
 <h2>{{ t('history.shift_title') }}</h2>
 {% if shift.has_shifts %}
 {% for k in shift.kinds %}
@@ -88,5 +89,6 @@
 {% endfor %}
 {% else %}
 <div class="card empty">{{ t('history.shift_empty') }} <a href="/shifts" style="text-decoration:underline">{{ t('nav.shifts') }}</a></div>
+{% endif %}
 {% endif %}
 {% endblock %}

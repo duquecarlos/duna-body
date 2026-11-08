@@ -168,6 +168,7 @@ class WebRenderTest(unittest.TestCase):
         self.addCleanup(conn.close)
         db.init(conn)
         conn.execute("INSERT INTO person (id, display_name) VALUES (?, 'B')", (PERSON_B,))
+        db.set_trabaja_turnos(conn, True, PERSON_A)
         conn.commit()
         return conn
 
