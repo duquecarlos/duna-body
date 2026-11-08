@@ -9666,3 +9666,126 @@ spec's own approval reason covers the merge). No password, token, session secret
 figure was read, printed, stored or logged by this slice -- every figure above is a byte count or a
 test count, never a health value. `git status --porcelain` is empty on `main` at the merge commit,
 before this ledger entry's own commit.
+
+## BODY-ESTADOS-VACIOS-1 -- every screen swept for a sparse or brand-new person, not just
+Carlos-with-871-days
+
+The existing GET sweeps (`tests/test_get_sin_escritura.py`, `tests/test_persona_fuga.py`,
+`tests/test_rendimiento.py`) all run on ONE populated fixture (`body/demo.py`'s seed, 30+ days,
+every metric, shifts, goals). None of them had ever rendered the whole app for a sparse or empty
+person, so a `None`, a `nan`, a crash or an empty chart frame on a fresh account would first be
+seen by a real person -- this slice's own surface statement. `tests/test_estados_vacios.py` closes
+that gap with a guard; it found nothing to fix.
+
+**The seven states**, each built with the same low-level helpers the other sweeps use
+(`db.set_metric`, direct `shift`/`goal`/`habit` rows, `db.set_trabaja_turnos`), each seeded TWICE
+(once `language='es'`, once `'en'`) -- 14 person rows in all:
+
+| state | shape |
+|---|---|
+| A | brand new: a `person` row only -- no metrics, no shifts, no goals, no devices |
+| B | one day of data, today, every metric a watch can send (`body/demo.py`'s own `CORE_DENSE + SECONDARY + CARDIO_SPARSE` catalogue, one invented value per key -- the midpoint of `demo.RANGES`, never a real figure) |
+| C | 20 days with ONLY `sleep_minutes` -- a watch/setting sending some metrics but not others |
+| D | `trabaja_turnos = 1`, zero `shift` rows, zero metrics -- the `"sin_datos_reloj"` reason code's own path |
+| D2 | `trabaja_turnos = 1`, one 3-night confirmed block 6-4 days ago, zero daily_metric rows before or after it |
+| E | an active metric goal on `vo2max` (zero `daily_metric` rows for that key, ever) plus an active milestone goal with one habit and zero `habit_check` rows |
+| F | 10 days of a full metric set, all of them 49-40 days before today -- the last-sync-40-days-ago state |
+
+**The sweep**: every GET route `tests/_rutas.rutas_planas` finds on `body.web.app` (26 routes,
+measured by the same `RouteSetUnchangedTest`-style assertion the other sweeps use), for each of the
+14 person rows, with `/day/{day}` and `/how/{day}` parameterised on that state's own plausible days
+(today, or -- for C/D2/F -- the day that actually exercises the sparse/gap shape: C's first and
+last sleep day, D2's night-block start and the first data-free day after it, F's stale last-sync
+day and today) and `/goals/{goal_id}` parameterised on E's two goal ids. `/asistente/conversacion/
+{conversacion_id}` is excluded (needs a seeded conversation, `body/agente` is outside this slice's
+`touches`) and `/api/vida/semana` always 404s in local mode before any person is resolved
+(`identity.person_from_device` raises `HTTPException(404)` ahead of `cuenta.hosted()` even being
+read) -- neither is a coverage gap this slice leaves silently open, both are named in the test
+module's own docstring. **352** (route x state x language) calls total, measured by
+`tests/_isolate`-isolated run, never re-derived by hand:
+
+    A/es 24  A/en 24  B/es 24  B/en 24  C/es 26  C/en 26  D/es 24  D/en 24
+    D2/es 26 D2/en 26 E/es 26  E/en 26  F/es 26  F/en 26
+
+**Per call**, for a 200: no `Traceback`, `undefined`, or a bare word-boundary `None`/`nan`/`NaN`/
+`inf` (checked on every response, HTML or JSON, since a computed-NaN float could leak into the
+JSON export too); on an HTML response only, no literal `{{`, `}}`, `{%`, `[]` or `{}` (an empty list
+or dict is an ordinary JSON value on `/privacidad/exportar`, and `/sw.js`'s own `}}` is plain
+JavaScript -- both excluded by content-type, not by an allow-list: no allow-list was needed in
+practice) and no `<polyline points="...">` with fewer than 2 coordinate pairs. Per route: status
+200, or the route's own documented answer -- 404 for every hosted-only route in local mode
+(`/garmin`, `/ajustes/dispositivos`, `/login`, `/login/cuenta/start`, `/login/cuenta/callback`,
+`/privacidad/consentimiento`, `/api/vida/semana`), 404 for `/shifts`, `/shifts/como`,
+`/shifts/patron` when `trabaja_turnos_si` is false (every state but D/D2), 200 otherwise.
+Non-vacuous: all 14 state/language rows reach `/` with 200, asserted by name, and the total swept
+count is asserted well above a token sample.
+
+**Result: zero defects.** No crash, no raw-value leak, no short polyline turned up anywhere in the
+352 calls -- confirmed by hand on three of the more exposed shapes (F's `/` with a 40-day-stale
+day, D's `/shifts` with the toggle on and nothing in it, E's `/goals/{id}` with a zero-data metric
+chart): each renders its own honest-gap sentence (e.g. "Aún no hay turnos... puedes escribir tu
+propio patrón aquí", "Aún no hay datos de tu reloj para calcular esto", "Aún sin datos
+suficientes") rather than a blank, a zero or a crash. This slice's own approval
+(`ORCH-CARLOS-DELEGATES-TIER-1-1`) authorised fixing a crash or a raw leak with an existing i18n
+string if the guard found one; it found none, so no route, template or domain module changes
+alongside the guard, and the existing populated-fixture suite stayed green unchanged (no fix means
+no risk of changing a populated person's own screens).
+
+**Why none of the seven states crashed** -- read, not guessed, while building each seeder: this
+app's "honest gaps" rule (`docs/DESIGN.md`) was already enforced call-by-call in the modules this
+slice could have touched -- `profile.metric_profile` returns `None` under 14 rows and every chart
+builder (`profile.window_svg`/`month_svg`, `metas._goal_line_svg`) returns `""` or a single
+`<circle>` under 2 points rather than a malformed `<polyline>`; `readiness.compute` needs
+`MIN_PARTS = 3` scored parts before it scores at all; `turnos_costo.resumen`/`referencia` return
+`None` per metric under `min_dias_referencia` and name a `REASON_CODES` reason instead of a number;
+`history.coverage`/`training`/`patterns` each return `None` or an empty structure under their own
+minimums (`PATTERN_MIN_N = 4`, `len(rows) < 14`, `not rows`). This slice is the first to have
+exercised that rule end-to-end, across every screen, for a person who never had 30+ days to hide
+the edge in.
+
+**Product follow-ups** (rendering is honest but could read better; reported per this slice's
+approval, not built -- each needs new customer wording or a new empty-state layout, which the
+approval reserves for the orchestrator to spec with a measured mock), ranked:
+
+1. **F's Hoy shows a stale day with no "this is old" cue.** `/` for a person whose watch stopped
+   syncing 40 days ago renders the readiness screen for that LAST day it has, dated in the page
+   (e.g. "martes 29 de septiembre") with "Sin sincronizar hoy" in the meta line -- but nothing
+   says the card itself is 40 days old, or that today's real date is something else entirely. A
+   returning person could read a 40-day-old readiness card as current. Proposed: when the
+   rendered day is more than a few days before the person's real local today, say so plainly next
+   to the date (an existing-pattern sentence, "últimos datos de hace N días", not a new chrome
+   element).
+2. **D's `/shifts` repeats "sin datos del reloj" five times in a row.** With the toggle on and
+   zero shift rows AND zero metrics, the top card already says the honest, useful thing ("Aún no
+   hay turnos... puedes escribir tu propio patrón aquí") -- but the cost table below it still
+   renders all five metric rows, each reading "sin datos del reloj", adding five lines that say
+   the same thing the top card already said. Proposed: hide the cost table entirely (not just its
+   rows) until there is at least one confirmed night block, the same honest-gap-at-the-section-
+   level `/trends` already applies.
+3. **E's zero-data goal chart shows a bare plan line with no caption.** `/goals/{id}` for a
+   metric goal with zero actual readings renders the dashed plan line and a "Hoy" marker but no
+   actual-progress line or dot -- technically honest (nothing invented), but a first-time viewer
+   sees an almost-empty chart with no sentence explaining why. Proposed: a one-line caption under
+   the chart when there is no actual-progress point yet (e.g. "aún no hay promedios semanales que
+   mostrar"), reusing the same honest-gap voice as the weekly-review card right below it.
+
+**Gate**, once, foreground, on the slice branch tip: `.venv/Scripts/python.exe -m unittest
+discover tests -t .` -- `Ran 1345 tests in 242.725s ... OK (skipped=1)`. 1345 = the prior floor of
+1344 (BODY-FUENTE-CACHE-1's ledger entry above) plus this slice's one new test method
+(`EstadosVaciosTest.test_every_sparse_state_sweeps_clean`); reconciled, not re-derived.
+
+**Merge.** `git merge --no-ff feat/body-estados-vacios-1` onto `main` (prior tip
+`7e00ebbb95b1122a1d14ef7bd409aac49d2ad3b5`), producing merge commit
+`4fb02604ddd2dfcd9fe8fd547ff991b89f22cc5b`. The merge tree and the branch tree are the same tree --
+`HEAD^{tree}` and `feat/body-estados-vacios-1^{tree}` both equal
+`e21ede8ef4947b8df45dd0d892e9ddc3daeb085a`, so the diff between them is empty and the gate above,
+run on the slice commit `663f8ebfc7e59f21874164cd81c030f0c68715ba` whose tree is this same tree,
+stands for the merge without a second run.
+
+No schema or migration change (no file under `touches:` besides the new test module was changed --
+the guard found nothing to fix), no customer-facing string or layout change, no cross-repo contract
+change -- merge policy A applies, merged on green without waiting for further approval (this
+spec's own approval reason covers the merge). Every figure in this entry is a route count, a day
+count or a test count; every "invented value" is `demo.RANGES`' own midpoint, never a figure read
+from a real person's data -- `~/.body-app/` was never opened. `git status --porcelain` is empty on
+`main` at the merge commit, before this ledger entry's own commit.
