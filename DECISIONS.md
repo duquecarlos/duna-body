@@ -10037,3 +10037,48 @@ discover tests -t .` -- `Ran 1356 tests in 168.372s ... OK (skipped=1)`.
 into `main` (merge strategy `ort`, no conflicts). Tree identity proven: merge tree
 `2249eadc85ddc0457364a9e3ab50a011b37b08a6` equals the branch tip's own tree exactly. `main` left
 checked out, `git status --porcelain` empty (before this ledger entry's own commit).
+
+## BODY-GARMIN-PRIMERA-CONEXION-1 -- names the 90-day backfill before the first connect (2026-11-08)
+
+BODY-ESTADOS-VACIOS-3's follow-up (b) above (H2: `/garmin` not-connected is a dead-end screen with
+no indication of what connecting does). New key `garmin.first_connect`, es: "Al conectar, Body
+trae tus últimos 90 días; las primeras cifras aparecen en unos minutos."; en: "When you connect,
+Body brings in your last 90 days; the first figures appear within minutes." Confirmed against
+BODY-PRIMER-PULL-1's own facts before writing it, rather than assumed: `BACKFILL_DIAS = 90` and the
+`body-backfill.timer`'s `OnUnitActiveSec=10min` (`body/pull.py`, cited at DECISIONS.md:4134-4136 and
+:4157-4158) -- the same "90 days" / "minutes" pairing `sync.hosted_connected` already promises post-
+connection (`body/rutas/comun.py:227`). `body/templates/garmin.html`: `<p class="read">{{
+t('garmin.first_connect') }}</p>` added directly after `garmin.explain`'s paragraph, inside the
+not-connected `{% else %}` card only (the form, its action and its two fields are untouched; the
+connected, reconnect-on-error and MFA branches are untouched).
+
+**Follow-ups from the same surface, NOT taken, with the orchestrator's reasons** (so nobody re-opens
+them blind): (a) `BODY-PRIVACIDAD-CONSENTIMIENTO-COPY-1` -- `consentimiento.html` already states
+what is kept, why, where, for how long, the rights, not-medical, and what declining does, with both
+buttons equal weight; no dark pattern, nothing to add. (c) `BODY-DISPOSITIVOS-EXPLAINER-CROSSLINK-1`
+-- `dispositivos.html:13` already shows `dispositivos.explain` above the form, and the screen is
+already in `tutoriales.py`'s catalog (`vincular-este-pc`); the cross-link exists.
+
+**Tests**, `tests/test_garmin_host.py` (+4): `FirstConnectHintTest` -- a never-connected hosted
+person sees the sentence in es, then in en after `/settings/language`; a connected person does not;
+the MFA code-entry step does not; the form's `action="/garmin/conectar"` and its `email`/`password`
+fields are unchanged. `tests/test_estados_vacios_hosted.py` needed no change -- its leak check
+(`_leaks_in`, word-boundary and Jinja/SVG-literal scan) is generic and already covers the new
+string; no count in it is pinned to a specific number of customer strings.
+
+**Gate**, once, foreground, on this slice's own merged tip: `.venv/Scripts/python.exe -m unittest
+discover tests -t .` -- `Ran 1360 tests in 159.145s ... OK (skipped=1)` (1356 before this slice, +4,
+all in `test_garmin_host.py`).
+
+**Merge.** The diff adds customer-facing bytes (the new es/en sentence), which trips merge policy
+A's customer-bytes condition on its own -- but this spec's approval-reason (`ORCH-CARLOS-DELEGATES-
+TIER-1-1`) says in words "This spec approves the merge," scoped to exactly this one sentence in an
+existing card on a hosted-only page with the form, its fields and its action unchanged. Merged on
+that authorisation, not withheld.
+
+**Commits**: slice `814fe6f3dea43179e0acc0ba8152d16b821177e3` on
+`feat/body-garmin-primera-conexion-1` (base `main` at `0d8aca69cb1349e9c857f63125428b5a9e9e9efc`),
+merge `d6cdc3eda6e1717d6da477d8e2eb1172d237fafe` into `main` (merge strategy `ort`, no conflicts).
+Tree identity proven: merge tree `4b2f539d156b7f0c0fe5acbd3e581d96fb03e82d` equals the branch tip's
+own tree exactly. `main` left checked out, `git status --porcelain` empty (before this ledger
+entry's own commit).
