@@ -8552,3 +8552,150 @@ the branch tip's own tree exactly (`diff feat/body-seguridad-2..main` empty afte
 conflicts, no change beyond the branch's own content. No password, token, session secret or health figure
 was read, printed or logged by this slice. `git status --porcelain` is empty on `main` after this merge,
 before this ledger entry's own commit.
+
+## BODY-SEGURIDAD-3 -- GET routes stop writing `goal_check`; the daily pull becomes the one writer
+(2026-11-08)
+
+`tests/test_get_sin_escritura.py`'s own sweep (new in this slice) states the defect plainly: `/goals` and
+`/goals/{goal_id}` both called `body/rutas/metas.py`'s `_goal_check_row`, which upserted a `goal_check` row
+through `goals.weekly_check` the first time anyone viewed a goal in a given week -- freezing that week's
+verdict at whoever opened the page first, for every viewer, for the rest of the week. Read from the diff
+this slice inherited and built on (the previous worker stopped BLOCKED on an unrelated red, with this fix
+itself complete and reviewed):
+
+(a) **`/goals` and `/goals/{goal_id}` wrote on a GET.** Fixed by splitting `goals.weekly_check` in two:
+`goals.evaluar_semana` computes a goal_check body (same fields, same `rule_version`) WITHOUT writing
+anything; `weekly_check` keeps the upsert, calling `evaluar_semana` for the numbers. Both GET routes now
+call `evaluar_semana` for the viewer's current week, live, every time -- never a stored row for that week,
+which would go stale the moment any habit or metric changes for the rest of the week.
+
+(b) **Showing the current week twice.** Once (a) made the current week always computed live, a *stored*
+`goal_check` row for that same week (written by an earlier day's daily pull, before the week ended) would
+otherwise still show up in `/goals/{goal_id}`'s 8-week history and its metric chart alongside the fresh
+live value. Both queries now exclude `week_start = <this Monday>` and splice the live `evaluar_semana`
+value in instead, so the current week is shown exactly once, always fresh.
+
+(c) **No writer left.** With `weekly_check`'s write-path reserved for closing a finished week, nothing
+called it any more. `goals.cerrar_semanas(conn, person_id, *, hoy)` is the new one writer: it writes this
+week's AND last week's `goal_check` row for every ACTIVE goal `person_id` can see (own goals plus shared
+household milestones, the same `goal_scope_sql` scope `/goals` itself uses) -- last week too, so data that
+lands late (a Sunday's Garmin numbers pulled on Monday) still lands in the week it belongs to.
+`body/pull.py` is the one caller: a new `_cerrar_semanas_seguro` wraps it so a failure there is caught,
+printed as a counts-only line naming the exception TYPE (`body/errores.py`'s `texto_seguro`, never its
+message -- no health figure, no token, nothing but a class name), and never counted as a Garmin failure or
+allowed to stop the next person. Wired into the hosted daily pull (`pull_hosted`), hosted `--backfill`
+(`pull_backfill_hosted`), and the local sync (`_run`, which previously called `goals.cerrar_semanas` bare --
+a failure there would have failed the whole local sync; now it goes through the same safe wrapper).
+
+`body/agente/herramientas.py`'s docstring is updated to name both new write paths (`weekly_check`,
+`cerrar_semanas`) in its "a `lectura` tool must never write" rule (BODY-ASISTENTE-OBS-1), and to say
+explicitly why `leer_metas`/`leer_meta` do NOT use the new live `evaluar_semana` either: an active goal
+with no data yet would read as a computed "no verdict" dict instead of the "sin verificación aún" text
+every other read tool and existing test already depends on.
+
+**Guard**, `tests/test_get_sin_escritura.py`: seeds `body/demo.py`'s own demo database (two people, three
+metric goals, a shared household milestone, habits, 30 days of data -- invented, no real figure), then
+calls every one of the app's 26 GET routes (`tests/_rutas.py`'s `rutas_planas`) with a real id substituted
+in, snapshotting every table's content before and after each call. Only `/login` and `/login/cuenta/start`
+are allowed to write (the pre-auth sign-in start storing its PKCE/state row before any session cookie
+exists -- inert in this sweep's local-mode test run, kept so the guard still holds under a hosted run).
+Any other GET route that changes a single row fails the test by name.
+
+**Open follow-up, not resolved here -- `BODY-PULL-RELOJ-1`:** `cerrar_semanas` only ever re-closes the
+CURRENT and PREVIOUS week. Data that lands later than that -- a long `--backfill` run restoring Garmin
+days from further back than one week, or a habit check corrected after the fact -- updates the raw
+`daily_metric`/`habit_check` rows but never revisits the correspondingly older `goal_check` row, which
+stays whatever it was computed as on the day it was closed. Worth a dedicated look once backfill depth or
+late corrections become a real scenario; not a regression from this slice (the old `weekly_check`-on-GET
+path had the same one-shot-per-week limit, just triggered differently), so not fixed here. (This follow-up
+ID is reconstructed from reading the inherited diff and this slice's own build -- the previous worker's own
+report, if it named this differently, was not available to this session.)
+
+**Gate**, run once on the branch's final tree, together with BODY-SEGURIDAD-3-M's own additions (one
+combined commit; see that entry): `.venv/Scripts/python.exe -m unittest discover tests -t .` --
+`Ran 1294 tests in 146.569s ... OK (skipped=1)` (1276 before this pair of slices, +18 new tests: 1 in
+`test_get_sin_escritura.py`, 10 in `test_goals.py`, 1 in `test_goals_web.py`, 6 in `test_primer_pull_1.py`).
+
+## BODY-SEGURIDAD-3-M -- every person with a goal gets their weekly check, not only the ones connected to
+Garmin; merge BODY-SEGURIDAD-3 into `main` (2026-11-08)
+
+Finished and landed BODY-SEGURIDAD-3 (above), inherited complete and uncommitted on `feat/body-seguridad-3`
+and reviewed and accepted by the orchestrator (`ORCH-CARLOS-DELEGATES-TIER-1-1`, against
+`BODY-SEGURIDAD-CENSO-1`), with two fixes made in this slice:
+
+**1. The household test's SUBJECT, kept; its body, rewritten.** `tests/test_hogar_miembro_1.py`'s
+`OwnWeeklyCheckTest.test_viewer_sees_their_own_history_not_the_creators` asserted that VIEWING
+`/goals/{id}` had upserted the viewer's own `goal_check` row -- exactly the write-on-GET BODY-SEGURIDAD-3
+removes, and the one red the previous worker's gate left (correctly BLOCKED on it rather than touching a
+file outside that slice's `touches:`). Rewritten to keep rule 3 (BODY-HOGAR-MIEMBRO-1: the viewer's own
+weekly check comes from the viewer's own habit checks, never the creator's) as its subject: (a) views
+`/goals/{gid}` as the viewer (person 2), asserts the page shows their own live verdict ("1 de 1", the
+BODY-HABITO-VECES-1 cap) and that the view wrote NOTHING (`goal_check` row count stays 0); (b) then runs
+`goals.cerrar_semanas(conn, 2, hoy=...)` -- what the daily pull does -- and asserts the STORED row for
+person 2 is `(1, 1)`, keyed to person 2 alone (no row for person 1, the creator). Searched the rest of
+`tests/` for any other test relying on a GET writing `goal_check` (every `client.get(...)` call site in
+every file that also touches `goal_check`, `weekly_check` or `_goal_check_row`): none found -- every other
+`goals.weekly_check` call in the suite seeds data directly, never through a GET.
+
+**2. The hosted pull now closes weeks for every person with a visible goal, connected to Garmin or not.**
+Before this fix, `pull_hosted`/`pull_backfill_hosted` called `_cerrar_semanas_seguro` only inside the
+Garmin loop, for persons whose pull succeeded that day (`garmin_cuenta.every_person_id`) -- so a household
+member with no Garmin connection at all, or whose pull failed, never got a `goal_check` row stored for
+their own habit goals, even though a habit goal's verdict never depends on Garmin data. Added
+`goals.personas_con_meta_activa(conn)` (`body/goals.py`): every person who can see an active goal -- a
+goal's own creator (any goal, any visibility), plus every member of the household behind a
+`visibility='household', kind='milestone'` goal (the only kind a household can share, same rule
+`goal_access`/`goal_scope_sql` already enforce) -- read from the `goal` and `hogar_miembro` tables, never
+from `garmin_cuenta`. `body/pull.py` gained `_cerrar_semanas_todas(conn)`, which sweeps that list through
+the existing `_cerrar_semanas_seguro` once each; the per-person call that used to sit inside the Garmin
+loop was removed from both `pull_hosted` (`body/pull.py:195`, after the loop) and `pull_backfill_hosted`
+(`body/pull.py:276`, after the loop) and replaced by one call to the sweep after each loop, so nobody is
+closed twice. **Backfill**: chose to run the SAME sweep there too (not skip it) -- it is cheap next to the
+Garmin network calls `--backfill` already makes, and a day backfilled into the current or previous week
+can change that week's stored verdict, so leaving it out would mean the fresher data from a backfill run
+only reaches `goal_check` on the next daily pull, up to a day later for no real saving.
+
+**3. The local sync goes through the same safe wrapper.** `_run` called `goals.cerrar_semanas` bare, so an
+exception closing weeks would have failed the whole local sync's exit code, unlike the hosted path.
+Replaced with `_cerrar_semanas_seguro(conn, person_id)` (`body/pull.py:350`, right after
+`readiness.recompute_all`) -- runs after every local path that stores or recomputes data: the default/
+`--days`/`--date` pull, `--all`, and `--recompute` all reach this same line, since it sits after the
+if/elif block that handles those three, not inside any branch of it.
+
+**New tests** (`tests/test_primer_pull_1.py`'s `WeeklyChecksHostedTest`, rewritten from BODY-SEGURIDAD-3's
+inherited version, and `tests/test_goals.py`'s new `PersonasConMetaActivaTest`): a person with an active
+habit goal and no `garmin_cuenta` row at all gets swept by `pull_hosted` and by `pull_backfill_hosted`
+alike; a person whose Garmin pull raised still gets theirs (the sweep runs after the loop regardless of
+that loop's own ok/failed counts); nobody is swept twice (call count equals the number of distinct persons,
+checked by set-equality against the call list); a raising `goals.cerrar_semanas` for one person still lets
+the next person's weekly check land (`"weekly checks: 1 rows"` in stdout) and never marks either person's
+Garmin pull as failed. `tests/test_primer_pull_1.py`'s existing `test_backfill_prints_only_counts` is
+updated for the new scope rule: with no goal in that test's database, the sweep now closes nobody and
+prints nothing (previously it printed `"weekly checks: 0 rows"` unconditionally for the one connected
+person).
+
+`docs/DESIGN.md` rule 13's BODY-SEGURIDAD-3 paragraph gained one sentence naming this: the hosted daily
+pull sweeps every person who can see an active goal, not only the Garmin-connected ones.
+
+**Gate**, run once on the branch's final tree (one commit covers both BODY-SEGURIDAD-3's inherited fix and
+this slice's two fixes -- `BODY-SEGURIDAD-3 / BODY-SEGURIDAD-3-M: GET routes stop writing goal_check; the
+daily pull closes weeks for everyone with a visible goal`):
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -- `Ran 1294 tests in 146.569s ... OK
+(skipped=1)` (1276 before, +18: 1 in `test_get_sin_escritura.py`, 10 in `test_goals.py` (3
+`EvaluarSemanaNoWriteTest`, 3 `CerrarSemanasTest` inherited, 4 new `PersonasConMetaActivaTest`), 1 in
+`test_goals_web.py`, 6 in `test_primer_pull_1.py` (5 `WeeklyChecksHostedTest`, 1 `WeeklyChecksLocalTest`)).
+
+**Merge.** Commit `a9578f8ecbd453e43622072b93a1a8de03897cd4` on branch `feat/body-seguridad-3`, base `main`
+at `8169c3b89e1f00f39556909d631902e476f6fd13`. `git merge --no-ff feat/body-seguridad-3` onto `main`,
+producing merge commit `ba4a42d0032c143f19f0eaf4991dc6fb699fbaa2`. Merge tree
+`c3c44a927a15afecc269b50b1245b9e2b26f0918` equals the branch tip's own tree exactly (`diff
+feat/body-seguridad-3..main` empty after the merge) -- no conflicts, no change beyond the branch's own
+content. Diff stays inside Tier 2 (`body/goals.py`, `body/pull.py`, `body/rutas/metas.py`,
+`body/agente/herramientas.py`, `docs/DESIGN.md` and five test files): no schema or migration change; a
+cross-repo contract was not touched. This diff does change customer-visible behaviour (which week's
+verdict a goal page shows, and when it is computed) -- the spec's own approval-reason ("Tier 2 files, no
+schema change, reversible; the daily sync writes the same goal_check rows the screens wrote, now fresh ...
+This spec approves the merge.") authorises merging past that in words, so this slice merges on green rather
+than stopping AWAITING_APPROVAL. No password, token, session secret or health figure was read, printed or
+logged by this slice. `git status --porcelain` is empty on `main` after this merge, before this ledger
+entry's own commit.
