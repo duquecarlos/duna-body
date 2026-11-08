@@ -5,14 +5,14 @@
 <div class="top"><div><h1>{{ t('shifts.como_titulo') }}</h1><p class="sub">{{ t('shifts.como_sub') }}</p></div>
 <a class="btn" href="/shifts" aria-label="{{ t('nav.shifts') }}">✕</a></div>
 <div class="card">
-  <p class="read" style="margin-top:0">{{ t('shifts.como_explica', n_estables=n_estables, n_referencia=n_referencia) }}</p>
-  <p class="k" style="margin-top:8px">{{ t('shifts.como_bloques', n=n_bloques, con=n_con_recuperacion) }}</p>
+  <p class="read mt-0">{{ t('shifts.como_explica', n_estables=n_estables, n_referencia=n_referencia) }}</p>
+  <p class="k mt-8">{{ t('shifts.como_bloques', n=n_bloques, con=n_con_recuperacion) }}</p>
 </div>
 {% if bloques %}
 <div class="card">
   <div class="k">{{ t('shifts.como_bloques_title') }}</div>
-  <ul class="list" style="margin-top:6px">
-    {% for linea in bloques %}<li style="margin-top:4px">{{ linea }}</li>{% endfor %}
+  <ul class="list mt-6">
+    {% for linea in bloques %}<li class="mt-4">{{ linea }}</li>{% endfor %}
   </ul>
 </div>
 {% endif %}
@@ -22,13 +22,13 @@
 <a class="btn" href="/" aria-label="{{ t('nav.today') }}">✕</a></div>
 <div class="card">
   {% if r.score is not none %}<div><span class="approx fig">≈</span><span class="fig">{{ r.score }}</span><span class="u">{{ t('unit.of100') }}</span> <span class="chip {{ r.band }}">{{ t('band.' ~ r.band) }}</span></div>{% endif %}
-  <table class="parts" style="margin-top:10px">
+  <table class="parts mt-10">
     <tr><th>{{ t('how.col_part') }}</th><th>{{ t('how.col_value') }}</th><th>{{ t('how.col_ref') }}</th><th>{{ t('how.col_score') }}</th></tr>
     {% for p in parts %}
     <tr><td>{% if p.href %}<a class="taplink" href="{{ p.href }}">{{ p.label }}</a>{% else %}{{ p.label }}{% endif %}<div class="k">{{ t('how.col_weight') }} {{ p.weight }}</div></td><td class="nw">{{ p.value }}</td><td class="nw">{{ p.ref }}{% if p.ref_note %}<div class="k">{{ p.ref_note }}</div>{% endif %}</td><td class="pts nw">{{ p.score }}</td></tr>
     {% endfor %}
     {% for m in missing %}
-    <tr><td style="color:var(--muted)">{{ m }}</td><td>—</td><td>—</td><td>—</td></tr>
+    <tr><td class="c-muted">{{ m }}</td><td>—</td><td>—</td><td>—</td></tr>
     {% endfor %}
   </table>
 </div>

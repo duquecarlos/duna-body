@@ -3,32 +3,32 @@
 {% block main %}
 {% set kinds = ['morning', 'afternoon', 'night', 'day', 'off', 'other'] %}
 <div class="top"><div><h1>{{ t('patron.titulo') }}</h1></div></div>
-<p class="read" style="margin-top:-4px">{{ t('patron.intro') }}</p>
+<p class="read mt-n4">{{ t('patron.intro') }}</p>
 
 <div class="card">
-  <form method="get" action="/shifts/patron" class="row" style="gap:10px;flex-wrap:wrap">
-    <label style="flex:1;min-width:140px">
-      <span class="q" style="margin-bottom:4px;display:block">{{ t('patron.dias_label') }}</span>
+  <form method="get" action="/shifts/patron" class="row gap-10 flex-wrap">
+    <label class="flex-1 minw-140">
+      <span class="q mb-4 block">{{ t('patron.dias_label') }}</span>
       <input type="number" name="dias" min="1" max="56" value="{{ dias }}" class="field">
     </label>
-    <button type="submit" class="btn" style="align-self:flex-end">{{ t('patron.dias_update_btn') }}</button>
+    <button type="submit" class="btn self-end">{{ t('patron.dias_update_btn') }}</button>
   </form>
 </div>
 
 <form method="post" action="/shifts/patron">
   {% if errores_ciclo %}
   <div class="card">
-    {% for msg in errores_ciclo %}<p class="k bad" style="margin:4px 0">{{ msg }}</p>{% endfor %}
+    {% for msg in errores_ciclo %}<p class="k bad mt-4 mb-4">{{ msg }}</p>{% endfor %}
   </div>
   {% endif %}
   <input type="hidden" name="dias" value="{{ dias }}">
   <div class="card">
     <label>
-      <span class="q" style="display:block">{{ t('patron.start_day_label') }}</span>
+      <span class="q block">{{ t('patron.start_day_label') }}</span>
       <input type="date" name="start_day" value="{{ start_day }}" class="field" required>
     </label>
-    <label style="margin-top:12px;display:block">
-      <span class="q" style="display:block">{{ t('patron.horizon_label') }}</span>
+    <label class="mt-12 block">
+      <span class="q block">{{ t('patron.horizon_label') }}</span>
       <input type="number" name="horizon_weeks" min="1" max="26" value="{{ horizon_weeks }}" class="field" required>
     </label>
   </div>
@@ -36,30 +36,30 @@
   {% for f in filas %}
   <div class="card">
     <div class="q">{{ f.label }}</div>
-    {% if f.error %}<p class="k bad" style="margin:4px 0">{{ f.error }}</p>{% endif %}
-    <select name="kind_{{ f.idx }}" class="field" style="margin-top:6px">
+    {% if f.error %}<p class="k bad mt-4 mb-4">{{ f.error }}</p>{% endif %}
+    <select name="kind_{{ f.idx }}" class="field mt-6">
       {% for k in kinds %}<option value="{{ k }}" {% if k == f.kind %}selected{% endif %}>{{ t('shift.kind.' + k) }}</option>{% endfor %}
     </select>
-    <div class="row" style="gap:10px;margin-top:8px">
-      <label style="flex:1">
-        <span class="k" style="display:block;margin-bottom:2px">{{ t('patron.start_label') }}</span>
+    <div class="row gap-10 mt-8">
+      <label class="flex-1">
+        <span class="k block mb-2">{{ t('patron.start_label') }}</span>
         <input type="time" name="start_{{ f.idx }}" value="{{ f.start }}" class="field">
       </label>
-      <label style="flex:1">
-        <span class="k" style="display:block;margin-bottom:2px">{{ t('patron.end_label') }}</span>
+      <label class="flex-1">
+        <span class="k block mb-2">{{ t('patron.end_label') }}</span>
         <input type="time" name="end_{{ f.idx }}" value="{{ f.end }}" class="field">
       </label>
     </div>
   </div>
   {% endfor %}
 
-  <button type="submit" class="btn on" style="width:100%;margin-top:4px">{{ t('patron.save_btn') }}</button>
+  <button type="submit" class="btn on w-100 mt-4">{{ t('patron.save_btn') }}</button>
 </form>
 
 {% if tiene_patron %}
-<div class="card" style="margin-top:10px">
-  <p class="k" style="margin-top:0">{{ t('patron.quitar_note') }}</p>
-  <form method="post" action="/shifts/patron/quitar" style="margin-top:8px">
+<div class="card mt-10">
+  <p class="k mt-0">{{ t('patron.quitar_note') }}</p>
+  <form method="post" action="/shifts/patron/quitar" class="mt-8">
     <button type="submit" class="btn">{{ t('patron.quitar_btn') }}</button>
   </form>
 </div>

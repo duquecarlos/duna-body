@@ -231,3 +231,93 @@ figure.chart:focus-visible{outline:2px solid var(--focus);outline-offset:4px;bor
 .strip-legend .dot.afternoon{background:var(--amber-deep)}
 .strip-legend .dot.off,.strip-legend .dot.none{background:var(--line)}
 .strip-legend .dot.other{background:var(--ink2)}
+
+/* ---------- utilities (BODY-ESTILOS-1): every inline style="..." in a template or in server-built
+   markup is replaced by one of these, so style-src can drop 'unsafe-inline'. Appended last on purpose:
+   a plain class above (.q, .card, .read, .plan, .chev, .box, .legend i, table.parts td, .grid2 .card,
+   .btn, .row...) sets some of the same properties, and CSS breaks a tie between two selectors of equal
+   specificity by source order -- later wins -- so a class below always overrides one of those. The one
+   exception is a compound selector (`.grid2 .card`, `table.parts td`), which beats a single class by
+   specificity regardless of order; DECISIONS.md's BODY-ESTILOS-1 entry lists every such case and how
+   each is handled. ---------- */
+.m-0{margin:0}
+.mt-0{margin-top:0}
+.mt-2{margin-top:2px}
+.mt-4{margin-top:4px}
+.mt-6{margin-top:6px}
+.mt-8{margin-top:8px}
+.mt-10{margin-top:10px}
+.mt-12{margin-top:12px}
+.mt-14{margin-top:14px}
+.mt-16{margin-top:16px}
+.mt-n4{margin-top:-4px}
+.mt-auto{margin-top:auto}
+.mb-0{margin-bottom:0}
+.mb-2{margin-bottom:2px}
+.mb-4{margin-bottom:4px}
+.mb-6{margin-bottom:6px}
+.mb-8{margin-bottom:8px}
+.mb-10{margin-bottom:10px}
+.mb-12{margin-bottom:12px}
+.mb-16{margin-bottom:16px}
+.p-0{padding:0}
+table.parts td.p-0{padding:0}
+.py-4{padding:4px 0}
+.flex-1{flex:1}
+.flex-70{flex:0 0 70px}
+.minw-140{min-width:140px}
+.w-100{width:100%}
+.block{display:block}
+.inline-flex{display:inline-flex}
+.hidden{display:none}
+.no-underline{text-decoration:none}
+.text-right{text-align:right}
+.text-center{text-align:center}
+.items-end{align-items:flex-end}
+.self-end{align-self:flex-end}
+.gap-8{gap:8px}
+.gap-10{gap:10px}
+.gap-12{gap:12px}
+.flex-wrap{flex-wrap:wrap}
+.justify-start{justify-content:flex-start}
+.op-18{opacity:.18}
+.op-35{opacity:.35}
+.box-ghost{opacity:.4;border-style:dashed}
+.chev-low{top:auto;bottom:12px}
+.list-decimal{list-style:decimal;padding-left:20px}
+.key-mono{font-family:monospace;word-break:break-all}
+.fs-12{font-size:12px}
+.c-muted{color:var(--muted)}
+.fill-transparent{fill:transparent}
+.stroke-muted{stroke:var(--muted)}
+.stroke-line{stroke:var(--line)}
+.chart-svg{display:block;margin-top:8px}
+.settings-row{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:44px;color:inherit;text-decoration:none}
+.steps-col{display:flex;flex-direction:column;gap:8px;width:100%}
+.help-link{display:flex;gap:10px;align-items:flex-start;color:inherit;text-decoration:none;width:100%}
+.rail-logout-btn{all:unset;display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:12px;padding:10px 12px;width:100%;cursor:pointer;color:#B9B6AE;font-size:15px;font-family:inherit}
+.foot-logout-btn{all:unset;text-decoration:underline;cursor:pointer;color:inherit;font:inherit}
+.ayuda-img{width:100%;border-radius:8px;background:var(--inset);display:block}
+.legend-line{height:3px;vertical-align:3px}
+.legend-dash{background:none;border-top:1.6px dashed var(--muted);height:0;width:12px}
+.legend-today{background:var(--line);width:1px;height:12px}
+
+/* ---------- fixed data-series palette (BODY-ESTILOS-1): the only colours any template or any
+   server-built SVG ever needed were var(--night), the 45%-mixed night tint, var(--body), var(--amber),
+   var(--info), var(--est), var(--muted) and var(--inset) (sleep stages: body/rutas/hoy.py STAGES;
+   training types and month segments: body/rutas/historial.py's colour map; the normal-range band and
+   chart line: body/profile.py and body/rutas/metas.py, both always called with the one default colour).
+   Each is a class now, set on `background` (for an HTML swatch), `fill` and `stroke` (for an SVG shape)
+   together, never a var(...) string in markup. ---------- */
+.c-night{background:var(--night);fill:var(--night)}
+.c-night-light{background:color-mix(in srgb, var(--night) 45%, var(--card));fill:color-mix(in srgb, var(--night) 45%, var(--card))}
+.c-body{background:var(--body);fill:var(--body)}
+.c-amber{background:var(--amber);fill:var(--amber)}
+.c-info{background:var(--info);fill:var(--info)}
+.c-est{background:var(--est);fill:var(--est)}
+.c-other{background:var(--muted);fill:var(--muted)}
+.c-inset{background:var(--inset);fill:var(--inset)}
+/* stroke-only: a polyline/line keeps its own fill="none" attribute, which a `fill` in .c-* would
+   override (an SVG presentation attribute loses to any CSS rule) -- so a stroked line gets its
+   colour from here instead, never from a .c-* class. */
+.stroke-body{stroke:var(--body)}

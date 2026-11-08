@@ -8,45 +8,45 @@
 
 <div class="card">
   <div class="q">{{ hero_finding or t('history.no_findings') }}</div>
-  <p class="note" style="margin:6px 0 0">{{ gap_line }} · {{ t('history.activities_count', n=activity_count) }}</p>
+  <p class="note mt-6 mb-0">{{ gap_line }} · {{ t('history.activities_count', n=activity_count) }}</p>
 </div>
 
 {% macro month_row(m) %}
-<a href="{{ m.href }}" style="display:block;margin-top:10px;text-decoration:none">
+<a href="{{ m.href }}" class="block mt-10 no-underline">
   <div class="row k"><span>{{ m.month }}</span><span>{{ m.minutes }} · {{ m.sessions }}</span></div>
-  <div class="stage">{% for s in m.segs %}<i style="width:{{ s.pct }}%;background:{{ s.color }}" title="{{ s.label }}"></i>{% endfor %}</div>
+  <svg class="stage" viewBox="0 0 100 10" preserveAspectRatio="none">{% set ns = namespace(x=0) %}{% for s in m.segs %}<rect x="{{ ns.x }}" y="0" width="{{ s.pct }}" height="10" class="{{ s.cls }}"><title>{{ s.label }}</title></rect>{% set ns.x = ns.x + s.pct %}{% endfor %}</svg>
 </a>
 {% endmacro %}
 {% if training %}
 <h2>{{ t('history.training_title') }}</h2>
 <div class="card">
   <div class="q">{{ t('history.training_q') }}</div>
-  <div class="legend" style="margin-top:10px">
-    {% for ty in training.types %}<span><i style="background:{{ ty.color }}"></i>{{ ty.label }} · {{ ty.minutes }}{% if ty.km %} · {{ ty.km }}{% endif %}</span>{% endfor %}
+  <div class="legend mt-10">
+    {% for ty in training.types %}<span><i class="{{ ty.cls }}"></i>{{ ty.label }} · {{ ty.minutes }}{% if ty.km %} · {{ ty.km }}{% endif %}</span>{% endfor %}
   </div>
   {% for m in training.months %}{{ month_row(m) }}{% endfor %}
   {% if training.months_older %}
-  <details class="files" style="margin-top:10px">
+  <details class="files mt-10">
     <summary class="k">{{ t('history.training_see_all') }}</summary>
     {% for m in training.months_older %}{{ month_row(m) }}{% endfor %}
   </details>
   {% endif %}
-  <p class="note" style="margin-top:8px">{{ t('trends.tap_month') }}</p>
+  <p class="note mt-8">{{ t('trends.tap_month') }}</p>
 </div>
 
 <div class="card">
-  {% if training.usual_week %}<p class="read" style="margin:0 0 6px">{{ training.usual_week }}</p>{% endif %}
-  {% if training.frequent %}<p class="read" style="margin:0 0 6px">{{ t('history.training_frequent', kind=training.frequent) }}</p>{% endif %}
-  {% if training.longest %}<p class="read" style="margin:0">{{ t('history.training_longest', kind=training.longest) }}</p>{% endif %}
+  {% if training.usual_week %}<p class="read mt-0 mb-6">{{ training.usual_week }}</p>{% endif %}
+  {% if training.frequent %}<p class="read mt-0 mb-6">{{ t('history.training_frequent', kind=training.frequent) }}</p>{% endif %}
+  {% if training.longest %}<p class="read m-0">{{ t('history.training_longest', kind=training.longest) }}</p>{% endif %}
 </div>
 
 <div class="card">
   <div class="q">{{ t('history.training_yoy_q') }}</div>
   {% if training.yoy %}
-  <p class="read" style="margin:0 0 4px">{{ training.yoy.now }}</p>
-  <p class="read" style="margin:0">{{ training.yoy.prev }}</p>
+  <p class="read mt-0 mb-4">{{ training.yoy.now }}</p>
+  <p class="read m-0">{{ training.yoy.prev }}</p>
   {% else %}
-  <p class="note" style="margin:0">{{ t('history.training_yoy_none') }}</p>
+  <p class="note m-0">{{ t('history.training_yoy_none') }}</p>
   {% endif %}
 </div>
 {% endif %}
@@ -69,7 +69,7 @@
 </div>
 {% if findings %}
 <div class="card">
-  {% for f in findings %}<p class="read" style="margin:{% if loop.first %}0{% else %}6px{% endif %} 0 0">{{ f }}</p>{% endfor %}
+  {% for f in findings %}<p class="read {{ 'mt-0' if loop.first else 'mt-6' }}">{{ f }}</p>{% endfor %}
 </div>
 {% endif %}
 {% else %}
@@ -80,10 +80,10 @@
 <h2>{{ t('history.shift_title') }}</h2>
 {% if shift.has_shifts %}
 {% for k in shift.kinds %}
-<div class="shift {{ k.kind }}" style="display:block">
+<div class="shift {{ k.kind }} block">
   <div class="q">{{ k.kind_label }} · {{ k.days }}</div>
   <div class="grid2 grid3">
-    {% for m in k.metrics %}<div class="card" style="margin:0"><div class="k">{{ m.label }}</div><div class="fig">{{ m.value }}{% if m.unit %}<span class="u">{{ m.unit }}</span>{% endif %}</div></div>{% endfor %}
+    {% for m in k.metrics %}<div class="card"><div class="k">{{ m.label }}</div><div class="fig">{{ m.value }}{% if m.unit %}<span class="u">{{ m.unit }}</span>{% endif %}</div></div>{% endfor %}
   </div>
 </div>
 {% endfor %}

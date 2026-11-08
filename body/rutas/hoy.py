@@ -17,10 +17,11 @@ from . import comun
 router = APIRouter()
 
 TODAY_CARDS = ["sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake"]
-STAGES = [("sleep_deep_min", "metric.sleep_deep_min", "var(--night)"),
-          ("sleep_light_min", "metric.sleep_light_min", "color-mix(in srgb, var(--night) 45%, var(--card))"),
-          ("sleep_rem_min", "metric.sleep_rem_min", "var(--body)"),
-          ("sleep_awake_min", "metric.sleep_awake_min", "var(--amber)")]
+# Each stage's fixed palette class (body/static/body.css), never a var(...) string in markup (BODY-ESTILOS-1).
+STAGES = [("sleep_deep_min", "metric.sleep_deep_min", "c-night"),
+          ("sleep_light_min", "metric.sleep_light_min", "c-night-light"),
+          ("sleep_rem_min", "metric.sleep_rem_min", "c-body"),
+          ("sleep_awake_min", "metric.sleep_awake_min", "c-amber")]
 
 
 def _delta(conn, t: T, d: dict, day: str, v, person_id: int) -> tuple[str, str]:
@@ -289,9 +290,9 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
     sleep = None
     if vals.get("sleep_minutes") is not None:
         total_stage = sum(vals.get(s[0]) or 0 for s in STAGES)
-        stages = [{"label": t(lbl), "value": t.minutes(vals[k]), "color": col,
+        stages = [{"label": t(lbl), "value": t.minutes(vals[k]), "cls": cls,
                    "pct": round(100 * vals[k] / total_stage, 1)}
-                  for k, lbl, col in STAGES if vals.get(k)] if total_stage else []
+                  for k, lbl, cls in STAGES if vals.get(k)] if total_stage else []
         win = data["sleep"] or {}
         window = " → ".join(x[11:16] for x in (win.get("start_local"), win.get("end_local")) if x)
         sleep = {"total": t.minutes(vals["sleep_minutes"]), "window": window, "stages": stages}

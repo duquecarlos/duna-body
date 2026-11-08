@@ -6,50 +6,50 @@
   <span class="chip {{ cls }}">{{ verdict }}</span>
 </div>
 
-{% if shared_line %}<p class="k" style="margin-top:0">{{ shared_line }}</p>{% endif %}
-{% if goal.why %}<p class="read" style="margin-top:0">{{ goal.why }}</p>{% endif %}
+{% if shared_line %}<p class="k mt-0">{{ shared_line }}</p>{% endif %}
+{% if goal.why %}<p class="read mt-0">{{ goal.why }}</p>{% endif %}
 
 <div class="card">
   <div class="q">{{ target_text }}</div>
   {% if goal.kind == 'metric' %}
-    {% if chart %}{{ chart|safe }}<p class="note" style="margin:4px 0 0">{{ t('goals.chart_hint') }}</p>
-    {% else %}<p class="note" style="margin:0">{{ t('goals.chart_soon') }}</p>{% endif %}
+    {% if chart %}{{ chart|safe }}<p class="note mt-4 mb-0">{{ t('goals.chart_hint') }}</p>
+    {% else %}<p class="note m-0">{{ t('goals.chart_soon') }}</p>{% endif %}
   {% endif %}
 </div>
 
 {% if members %}
 <div class="card">
   <div class="q">{{ t('goals.household_title') }}</div>
-  {% for m in members %}<div class="row k" style="padding:4px 0">{{ m.name }}<span class="chip {{ m.cls }}">{{ m.verdict }}</span></div>{% endfor %}
+  {% for m in members %}<div class="row k py-4">{{ m.name }}<span class="chip {{ m.cls }}">{{ m.verdict }}</span></div>{% endfor %}
 </div>
 {% endif %}
 
 <div class="card">
   <div class="q">{{ t('goals.history_title') }}</div>
   {% if history %}
-  {% for hrow in history %}<p class="read" style="margin:{{ '0' if loop.first else '6px' }} 0 0">{{ hrow.week }}: {{ hrow.text }}</p>{% endfor %}
+  {% for hrow in history %}<p class="read {{ 'mt-0' if loop.first else 'mt-6' }}">{{ hrow.week }}: {{ hrow.text }}</p>{% endfor %}
   {% else %}
-  <p class="note" style="margin:0">{{ t('goals.history_none') }}</p>
+  <p class="note m-0">{{ t('goals.history_none') }}</p>
   {% endif %}
 </div>
 
 <div class="card">
   <div class="q">{{ t('goals.habits_title') }}</div>
   {% if habits %}
-  <ul class="plan" style="margin-top:6px">
+  <ul class="plan mt-6">
   {% for h in habits %}
     <li>
       {% if not h.mine %}
       <span class="boxbtn-spacer" aria-hidden="true"></span>
       {% elif h.due_today %}
-      <form method="post" action="/habits/{{ h.id }}/check" style="margin:0">
+      <form method="post" action="/habits/{{ h.id }}/check" class="m-0">
         <input type="hidden" name="day" value="{{ today }}">
         <input type="hidden" name="back" value="/goals/{{ goal.id }}">
         <input type="hidden" name="done" value="{{ '0' if h.checked_today else '1' }}">
         <button type="submit" class="boxbtn" aria-label="{{ h.title }}"><span class="box{% if h.checked_today %} done{% endif %}"></span></button>
       </form>
       {% else %}
-      <span class="boxbtn"><span class="box" style="opacity:.4;border-style:dashed"></span></span>
+      <span class="boxbtn"><span class="box box-ghost"></span></span>
       {% endif %}
       <div>{{ h.title }}{% if h.context %} <span class="chip {{ h.context_cls }}">{{ h.context }}</span>{% endif %}
         {% if h.mine %}
@@ -62,33 +62,33 @@
   {% endfor %}
   </ul>
   {% else %}
-  <p class="note" style="margin:0">{{ t('goals.no_habits') }}</p>
+  <p class="note m-0">{{ t('goals.no_habits') }}</p>
   {% endif %}
-  <details class="files" style="margin-top:10px">
+  <details class="files mt-10">
     <summary class="k">{{ t('goals.add_habit') }}</summary>
-    <form method="post" action="/goals/{{ goal.id }}/habits" style="margin-top:8px">
+    <form method="post" action="/goals/{{ goal.id }}/habits" class="mt-8">
       <input type="text" name="title" class="field" placeholder="{{ t('goals.habit_title_ph') }}" required>
-      <div class="row" style="margin-top:8px;gap:8px;justify-content:flex-start">
-        <input type="number" name="times" class="field" min="1" value="1" style="flex:0 0 70px">
-        <select name="per" class="field" style="flex:1">
+      <div class="row mt-8 gap-8 justify-start">
+        <input type="number" name="times" class="field flex-70" min="1" value="1">
+        <select name="per" class="field flex-1">
           <option value="day">{{ t('goals.cadence.per.day') }}</option>
           <option value="week" selected>{{ t('goals.cadence.per.week') }}</option>
           <option value="month">{{ t('goals.cadence.per.month') }}</option>
         </select>
       </div>
-      <select name="context" class="field" style="margin-top:8px">
+      <select name="context" class="field mt-8">
         <option value="">{{ t('goals.habit_no_context') }}</option>
         <option value="before_night">{{ t('habit.context.before_night') }}</option>
         <option value="after_night">{{ t('habit.context.after_night') }}</option>
         <option value="off_days">{{ t('habit.context.off_days') }}</option>
       </select>
       {% if goal.visibility == 'household' %}
-      <div class="row" style="margin-top:8px;gap:12px;justify-content:flex-start">
+      <div class="row mt-8 gap-12 justify-start">
         <label class="radio"><input type="radio" name="for" value="both" checked> {{ t('goals.habit_for_both') }}</label>
         <label class="radio"><input type="radio" name="for" value="me"> {{ t('goals.habit_for_me') }}</label>
       </div>
       {% endif %}
-      <button type="submit" class="btn on" style="margin-top:8px;width:100%">{{ t('goals.add_habit_btn') }}</button>
+      <button type="submit" class="btn on mt-8 w-100">{{ t('goals.add_habit_btn') }}</button>
     </form>
   </details>
 </div>
@@ -97,25 +97,25 @@
 <div class="card" id="enlaces">
   <div class="q">{{ t('goals.enlace.title') }}</div>
   {% for e in enlaces %}
-  <div class="row k" style="padding:4px 0">
+  <div class="row k py-4">
     <a class="taplink" href="{{ e.url }}" target="_blank" rel="noopener noreferrer">{{ t(e.label_key) }} ↗</a>
     {% if is_creator %}
-    <form method="post" action="/goals/{{ goal.id }}/enlaces/{{ e.app }}/quitar" style="margin:0">
+    <form method="post" action="/goals/{{ goal.id }}/enlaces/{{ e.app }}/quitar" class="m-0">
       <button type="submit" class="btn">{{ t('goals.enlace.quitar_btn') }}</button>
     </form>
     {% endif %}
   </div>
   {% endfor %}
-  <p class="note" style="margin:4px 0 0">{{ t('goals.enlace.privacy_note') }}</p>
+  <p class="note mt-4 mb-0">{{ t('goals.enlace.privacy_note') }}</p>
   {% if is_creator %}
   {% for a in apps_por_enlazar %}
-  <details class="files" style="margin-top:10px"{% if a.app == enlace_error_app %} open{% endif %}>
+  <details class="files mt-10"{% if a.app == enlace_error_app %} open{% endif %}>
     <summary class="k">{{ t(a.add_summary_key) }}</summary>
-    <form method="post" action="/goals/{{ goal.id }}/enlaces" style="margin-top:8px">
-      {% if a.app == enlace_error_app %}<p class="read bad" style="margin-top:0">{{ t(a.error_key) }}</p>{% endif %}
+    <form method="post" action="/goals/{{ goal.id }}/enlaces" class="mt-8">
+      {% if a.app == enlace_error_app %}<p class="read bad mt-0">{{ t(a.error_key) }}</p>{% endif %}
       <input type="hidden" name="app" value="{{ a.app }}">
       <input type="text" name="entrada" class="field" placeholder="{{ t(a.field_key) }}" required>
-      <button type="submit" class="btn on" style="margin-top:8px;width:100%">{{ t('goals.enlace.add_btn') }}</button>
+      <button type="submit" class="btn on mt-8 w-100">{{ t('goals.enlace.add_btn') }}</button>
     </form>
   </details>
   {% endfor %}

@@ -16,16 +16,16 @@
     <button class="btn {{ 'on' if trabaja_turnos==True }}" name="valor" value="si">{{ t('settings.turnos.si') }}</button>
     <button class="btn {{ 'on' if trabaja_turnos==False }}" name="valor" value="no">{{ t('settings.turnos.no') }}</button>
   </form>
-  <p class="note" style="margin-top:8px">{{ t('settings.turnos.desc') }}</p>
+  <p class="note mt-8">{{ t('settings.turnos.desc') }}</p>
 </div>
 {% if has_household %}
 <div class="card">
   <div class="q">{{ t('settings.compartir.titulo') }}</div>
-  <ul class="plan" style="margin-top:6px">
+  <ul class="plan mt-6">
   {% for m in metrics_compartir if m.shared %}
     <li>
-      <div style="flex:1">{{ m.label }}</div>
-      <form method="post" action="/settings/compartir" style="margin:0">
+      <div class="flex-1">{{ m.label }}</div>
+      <form method="post" action="/settings/compartir" class="m-0">
         <input type="hidden" name="metric_key" value="{{ m.key }}">
         <input type="hidden" name="accion" value="retirar">
         <button type="submit" class="btn on">{{ t('settings.compartir.accion.retirar') }}</button>
@@ -33,13 +33,13 @@
     </li>
   {% endfor %}
   </ul>
-  <details class="files" style="margin-top:6px">
+  <details class="files mt-6">
     <summary class="k">{{ t('settings.compartir.elegir') }}</summary>
-    <ul class="plan" style="margin-top:6px">
+    <ul class="plan mt-6">
     {% for m in metrics_compartir if not m.shared %}
       <li>
-        <div style="flex:1">{{ m.label }}</div>
-        <form method="post" action="/settings/compartir" style="margin:0">
+        <div class="flex-1">{{ m.label }}</div>
+        <form method="post" action="/settings/compartir" class="m-0">
           <input type="hidden" name="metric_key" value="{{ m.key }}">
           <input type="hidden" name="accion" value="compartir">
           <button type="submit" class="btn">{{ t('settings.compartir.accion.compartir') }}</button>
@@ -48,29 +48,29 @@
     {% endfor %}
     </ul>
   </details>
-  <p class="note" style="margin-top:8px">{{ t('settings.compartir.nota') }}</p>
+  <p class="note mt-8">{{ t('settings.compartir.nota') }}</p>
 </div>
 {% else %}
 <div class="card">
   <p class="note">{{ t('settings.compartir.sin_hogar') }}</p>
 </div>
 {% endif %}
-<a href="/ayuda" class="card" style="display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:44px;color:inherit;text-decoration:none">
-  <span class="q" style="margin:0">{{ t('settings.ayuda') }}</span><span class="k">→</span>
+<a href="/ayuda" class="card settings-row">
+  <span class="q m-0">{{ t('settings.ayuda') }}</span><span class="k">→</span>
 </a>
-<a href="/privacidad" class="card" style="display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:44px;color:inherit;text-decoration:none">
-  <span class="q" style="margin:0">{{ t('settings.privacy') }}</span><span class="k">→</span>
+<a href="/privacidad" class="card settings-row">
+  <span class="q m-0">{{ t('settings.privacy') }}</span><span class="k">→</span>
 </a>
-<a href="/ajustes/asistente" class="card" style="display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:44px;color:inherit;text-decoration:none">
-  <span class="q" style="margin:0">{{ t('settings.asistente_datos') }}</span>
+<a href="/ajustes/asistente" class="card settings-row">
+  <span class="q m-0">{{ t('settings.asistente_datos') }}</span>
   <span class="k">{{ t('ajustes.asistente.opcion.' + nivel_datos) }} →</span>
 </a>
 {% if hosted() %}
-<a href="/garmin" class="card" style="display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:44px;color:inherit;text-decoration:none">
-  <span class="q" style="margin:0">{{ t('settings.garmin') }}</span><span class="k">→</span>
+<a href="/garmin" class="card settings-row">
+  <span class="q m-0">{{ t('settings.garmin') }}</span><span class="k">→</span>
 </a>
-<a href="/ajustes/dispositivos" class="card" style="display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:44px;color:inherit;text-decoration:none">
-  <span class="q" style="margin:0">{{ t('settings.dispositivos') }}</span><span class="k">→</span>
+<a href="/ajustes/dispositivos" class="card settings-row">
+  <span class="q m-0">{{ t('settings.dispositivos') }}</span><span class="k">→</span>
 </a>
 {% endif %}
 <div class="card">

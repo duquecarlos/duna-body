@@ -41,7 +41,7 @@ class ProfileTest(unittest.TestCase):
         svg = profile.window_svg(w, 49, 52, nights={"2026-03-12"})
         self.assertEqual(svg.count("<polyline"), 2)        # the missing day breaks the line, no zero drawn
         self.assertIn('href="/day/2026-03-16"', svg)       # every day, even the gap, opens its day
-        self.assertIn("var(--night)", svg)                 # night shift shaded
+        self.assertIn("c-night", svg)                      # night shift shaded
 
 
 if __name__ == "__main__":

@@ -384,6 +384,109 @@ class RedirectTargetsAreSafeTest(unittest.TestCase):
         self.assertEqual(stale, set(), f"ALLOWLIST entry no longer matches any call site: {stale}")
 
 
+# ---- BODY-ESTILOS-1 guards: style-src drops 'unsafe-inline' -----------------------------------
+
+_TEMPLATE_STYLE_ATTR_RE = re.compile(r"style\s*=", re.IGNORECASE)
+
+
+def _template_style_offenders() -> list[str]:
+    """Every raw `style=` (any case, any spacing) left in a template's source text. Proved to catch
+    201 occurrences across 22 templates on main 61cb029 -- the count this slice's own spec measured --
+    before this slice moved each one to a class in body.css."""
+    offenders = []
+    for path in sorted(TEMPLATES_DIR.glob("*.html")):
+        text = path.read_text(encoding="utf-8")
+        for m in _TEMPLATE_STYLE_ATTR_RE.finditer(text):
+            line = text.count("\n", 0, m.start()) + 1
+            offenders.append(f"{path.relative_to(ROOT)}:{line}")
+    return offenders
+
+
+class NoInlineStyleInTemplatesTest(unittest.TestCase):
+    """Guard (a): no template under body/templates holds a `style="..."` attribute any more."""
+
+    def test_no_style_attribute_in_any_template(self):
+        self.assertEqual(_template_style_offenders(), [])
+
+
+_PY_STYLE_SUBSTR_RE = re.compile(r"style\s*=", re.IGNORECASE)
+
+
+def _python_markup_style_offenders() -> list[tuple[str, int]]:
+    """An ast scan of every .py file under body/ for a string constant or an f-string's literal
+    chunk containing `style=` -- the server-built SVG/HTML body/profile.py and body/rutas/metas.py
+    used to assemble with f-strings. Proved to catch 11 lines in body/profile.py and 9 in
+    body/rutas/metas.py on main 61cb029 before this slice moved each one to a class."""
+    offenders = []
+    scanned = 0
+    for path in sorted(BODY_DIR.rglob("*.py")):
+        scanned += 1
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        rel = str(path.relative_to(ROOT)).replace("\\", "/")
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if _PY_STYLE_SUBSTR_RE.search(node.value):
+                    offenders.append((rel, node.lineno))
+            elif isinstance(node, ast.JoinedStr):
+                for chunk in node.values:
+                    if (isinstance(chunk, ast.Constant) and isinstance(chunk.value, str)
+                            and _PY_STYLE_SUBSTR_RE.search(chunk.value)):
+                        offenders.append((rel, node.lineno))
+    assert scanned > 0, "no .py file found under body/ -- the scan itself is broken"
+    return offenders
+
+
+class NoInlineStyleInPythonMarkupTest(unittest.TestCase):
+    """Guard (b): no string constant or f-string chunk under body/ assembles a `style=` attribute
+    any more -- body/profile.py's and body/rutas/metas.py's server-built SVG now carry a class
+    instead."""
+
+    def test_no_style_attribute_built_in_python(self):
+        self.assertEqual(_python_markup_style_offenders(), [])
+
+
+_JS_SET_ATTR_STYLE_RE = re.compile(r"setAttribute\(\s*['\"]style['\"]", re.IGNORECASE)
+_JS_LITERAL_STYLE_ATTR_RE = re.compile(r"(?<!\.)\bstyle\s*=", re.IGNORECASE)
+
+
+def _js_style_attribute_offenders() -> list[str]:
+    """Every body/static/*.js line that sets the `style` ATTRIBUTE -- `setAttribute('style', ...)`
+    or a template string/innerHTML assembling `style="..."` -- never a CSSOM property set such as
+    `el.style.left = ...` or `el.style.setProperty(...)`, which charts.js and assistant.js already
+    use and which this guard deliberately leaves alone: the negative lookbehind on `style\\s*=`
+    refuses to match when `style` is itself preceded by a `.` (a property access), so `el.style =`
+    would still be flagged -- nothing in body/static does that -- while `el.style.left =` is not,
+    because the character right before `=` there is `t` from `.left`, not `style`."""
+    offenders = []
+    for path in sorted((STATIC_DIR).glob("*.js")):
+        text = path.read_text(encoding="utf-8")
+        for pattern in (_JS_SET_ATTR_STYLE_RE, _JS_LITERAL_STYLE_ATTR_RE):
+            for m in pattern.finditer(text):
+                line = text.count("\n", 0, m.start()) + 1
+                offenders.append(f"{path.relative_to(ROOT)}:{line}")
+    return offenders
+
+
+class NoJsSetsStyleAttributeTest(unittest.TestCase):
+    """Guard (c): no script under body/static sets the `style` attribute -- CSSOM property sets
+    (`el.style.prop = ...`, `el.style.setProperty(...)`) are not CSP-relevant and stay."""
+
+    def test_no_js_sets_the_style_attribute(self):
+        self.assertEqual(_js_style_attribute_offenders(), [])
+
+
+class StyleSrcHasNoUnsafeInlineTest(unittest.TestCase):
+    """Guard (d): style-src carries no 'unsafe-inline' any more -- the gap BODY-SEGURIDAD-2 left and
+    this slice closes, now that guards (a)-(c) prove nothing needs it."""
+
+    def test_style_src_has_no_unsafe_inline(self):
+        csp = seguridad.content_security_policy()
+        directives = {d.strip() for d in csp.split(";")}
+        style_src = next(d for d in directives if d.startswith("style-src"))
+        self.assertNotIn("'unsafe-inline'", style_src)
+        self.assertIn("style-src 'self' https://fonts.googleapis.com", directives)
+
+
 class SafeReturnToTest(unittest.TestCase):
     """cuenta.safe_return_to's own refusal cases (BODY-SEGURIDAD-1 item 4)."""
 

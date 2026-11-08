@@ -9,7 +9,7 @@
 <div class="card">
   <div class="q">{{ t('privacidad.exportar_title') }}</div>
   <p class="read">{{ t('privacidad.exportar_desc') }}</p>
-  <p style="margin-top:12px"><a class="btn" href="/privacidad/exportar">{{ t('privacidad.exportar_btn') }}</a></p>
+  <p class="mt-12"><a class="btn" href="/privacidad/exportar">{{ t('privacidad.exportar_btn') }}</a></p>
 </div>
 <div class="card">
   <div class="q">{{ t('privacidad.borrar_title') }}</div>
@@ -24,9 +24,9 @@
     {% endif %}
   {% endif %}
   {% if error %}<p class="read bad">{{ t('privacidad.borrar_error', palabra=delete_word) }}</p>{% endif %}
-  <form method="post" action="/privacidad/borrar" style="margin-top:12px">
+  <form method="post" action="/privacidad/borrar" class="mt-12">
     <div class="q">{{ t('privacidad.borrar_label', palabra=delete_word) }}</div>
-    <input type="text" name="confirmacion" class="field" autocomplete="off" style="margin-bottom:12px">
+    <input type="text" name="confirmacion" class="field mb-12" autocomplete="off">
     <button class="btn" type="submit">{{ t('privacidad.borrar_btn') }}</button>
   </form>
 </div>
