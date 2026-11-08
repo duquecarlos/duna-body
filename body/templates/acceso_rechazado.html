@@ -6,9 +6,7 @@
 <meta name="referrer" content="same-origin">
 <meta name="theme-color" content="#F4F2ED">
 <title>{{ t('acceso_rechazado.title') }} · {{ t('app.name') }}</title>
-<script>/* theme before paint: no flash */
-try{var th=localStorage.getItem('body.theme');var dark=th==='dark'||(th!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches);if(dark)document.documentElement.dataset.theme='dark'}catch(e){}
-</script>
+<script src="{{ static_url('tema.js') }}"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="{{ static_url('body.css') }}">

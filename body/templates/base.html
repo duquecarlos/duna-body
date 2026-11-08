@@ -55,9 +55,7 @@
 <meta name="referrer" content="same-origin">
 <meta name="theme-color" content="#F4F2ED">
 <title>{% block title %}{{ t('app.name') }}{% endblock %}</title>
-<script>/* theme before paint: no flash */
-try{var th=localStorage.getItem('body.theme');var dark=th==='dark'||(th!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches);if(dark)document.documentElement.dataset.theme='dark'}catch(e){}
-</script>
+<script src="{{ static_url('tema.js') }}"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="{{ static_url('body.css') }}">
@@ -153,10 +151,6 @@ try{var th=localStorage.getItem('body.theme');var dark=th==='dark'||(th!=='light
 <script src="{{ static_url('assistant.js') }}" defer></script>
 {% endif %}
 <script src="{{ static_url('charts.js') }}" defer></script>
-<script>/* come back to the same spot (Paridad #30) */
-(function(){var k='body.scroll:'+location.pathname;try{var y=sessionStorage.getItem(k);if(y)scrollTo(0,+y)}catch(e){}
-addEventListener('pagehide',function(){try{sessionStorage.setItem(k,scrollY)}catch(e){}})})();
-if('serviceWorker' in navigator&&isSecureContext){navigator.serviceWorker.register('/sw.js').catch(function(){})}
-</script>
+<script src="{{ static_url('pagina.js') }}" defer></script>
 </body>
 </html>

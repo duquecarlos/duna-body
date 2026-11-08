@@ -1,6 +1,11 @@
 """BODY-SEGURIDAD-1: the same-origin check for unsafe methods, the fixed response-header set, and
 the redirect-target guard (`cuenta.safe_return_to`).
 
+BODY-SEGURIDAD-2 adds the script-src half of the Content-Security-Policy: every inline executable
+<script> and inline event-handler attribute moved to /static (CSS01ScriptGuard / HandlerGuard
+below), and the policy itself grew from `frame-ancestors 'none'` alone to the full header built by
+`body.seguridad.content_security_policy()`.
+
 Local mode only (no BODY_CUENTA_ISSUER): the Origin/Referer check runs ahead of
 `identity.current_person_id`, so it refuses a cross-site POST/PUT/PATCH/DELETE before any route
 handler, any auth check or any database write -- exactly the property these tests exercise.
@@ -8,10 +13,12 @@ handler, any auth check or any database write -- exactly the property these test
 from __future__ import annotations
 
 import ast
+import os
 import re
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
@@ -19,11 +26,12 @@ from tests._rutas import rutas_planas
 
 from fastapi.testclient import TestClient
 
-from body import config, db, seguridad, web
+from body import config, cuenta, db, seguridad, web
 
 ROOT = Path(__file__).resolve().parent.parent
 BODY_DIR = ROOT / "body"
 TEMPLATES_DIR = BODY_DIR / "templates"
+STATIC_DIR = BODY_DIR / "static"
 
 _PATH_PARAM_RE = re.compile(r"\{[^{}]+\}")
 
@@ -135,13 +143,20 @@ class RefusalPageLanguageTest(SeguridadTestCase):
 
 
 class SecurityHeadersTest(SeguridadTestCase):
-    """Guard (d): the fixed header set on a 200 page, a 404, a 303 redirect, and a /static file."""
+    """Guard (c): the fixed header set, and the full CSP, on a 200 page, a 404, a 303 redirect,
+    and a /static file -- in local mode, where form-action is 'self' alone."""
 
     def _assert_headers(self, r) -> None:
         self.assertEqual(r.headers.get("x-content-type-options"), "nosniff")
         self.assertEqual(r.headers.get("referrer-policy"), "same-origin")
         self.assertEqual(r.headers.get("x-frame-options"), "DENY")
-        self.assertEqual(r.headers.get("content-security-policy"), "frame-ancestors 'none'")
+        csp = r.headers.get("content-security-policy")
+        self.assertEqual(csp, seguridad.content_security_policy())
+        directives = {d.strip() for d in csp.split(";")}
+        script_src = next(d for d in directives if d.startswith("script-src"))
+        self.assertNotIn("'unsafe-inline'", script_src)
+        self.assertNotIn("'unsafe-eval'", script_src)
+        self.assertIn("form-action 'self'", directives)
         self.assertEqual(r.headers.get("cross-origin-opener-policy"), "same-origin")
 
     def test_200_page(self):
@@ -173,6 +188,104 @@ class NoReferrerMetaGoneTest(unittest.TestCase):
             if re.search(r'<meta\s+name="referrer"\s+content="no-referrer"', path.read_text(encoding="utf-8")):
                 offenders.append(str(path.relative_to(ROOT)))
         self.assertEqual(offenders, [])
+
+
+# ---- BODY-SEGURIDAD-2 guards -----------------------------------------------------------------
+
+_SCRIPT_OPEN_RE = re.compile(r"<script\b([^>]*)>", re.IGNORECASE)
+_HANDLER_ATTR_RE = re.compile(r'\bon[a-z]+\s*=\s*"', re.IGNORECASE)
+_STATIC_URL_JS_RE = re.compile(r"static_url\('([^']+\.js)'\)")
+
+
+def _inline_script_offenders() -> list[str]:
+    """Every `<script>` tag under body/templates with neither `src=` nor
+    `type="application/json"` -- an executable inline script script-src 'self' would block.
+    Proved to catch all 8 pre-slice offenders (base.html:58,156; settings.html:84;
+    goal_new.html:97; the four standalone pages' theme-before-paint copy) before this slice's
+    templates moved them to /static."""
+    offenders = []
+    for path in sorted(TEMPLATES_DIR.glob("*.html")):
+        text = path.read_text(encoding="utf-8")
+        for m in _SCRIPT_OPEN_RE.finditer(text):
+            attrs = m.group(1)
+            if "src=" in attrs:
+                continue
+            if re.search(r'type\s*=\s*"application/json"', attrs):
+                continue
+            line = text.count("\n", 0, m.start()) + 1
+            offenders.append(f"{path.relative_to(ROOT)}:{line}")
+    return offenders
+
+
+class InlineScriptGoneTest(unittest.TestCase):
+    """Guard (a): no template under body/templates holds an executable inline <script> any more."""
+
+    def test_no_executable_inline_script(self):
+        self.assertEqual(_inline_script_offenders(), [])
+
+
+def _inline_handler_offenders() -> list[str]:
+    offenders = []
+    for path in sorted(TEMPLATES_DIR.glob("*.html")):
+        text = path.read_text(encoding="utf-8")
+        for m in _HANDLER_ATTR_RE.finditer(text):
+            line = text.count("\n", 0, m.start()) + 1
+            offenders.append(f"{path.relative_to(ROOT)}:{line}")
+    return offenders
+
+
+class InlineEventHandlerGoneTest(unittest.TestCase):
+    """Guard (b): no template holds an inline event-handler attribute (onchange=, onclick=, ...)
+    any more -- goal_new.html's onchange="bodyMetricChange()" was the one offender."""
+
+    def test_no_inline_event_handler_attribute(self):
+        self.assertEqual(_inline_handler_offenders(), [])
+
+
+class StaticUrlScriptsExistTest(unittest.TestCase):
+    """Guard (d): every static_url('...js') a template references names a file that exists under
+    body/static -- including the four new ones this slice adds."""
+
+    def test_every_referenced_js_file_exists(self):
+        referenced = set()
+        for path in sorted(TEMPLATES_DIR.glob("*.html")):
+            referenced.update(_STATIC_URL_JS_RE.findall(path.read_text(encoding="utf-8")))
+        self.assertIn("tema.js", referenced)
+        self.assertIn("pagina.js", referenced)
+        self.assertIn("ajustes_tema.js", referenced)
+        self.assertIn("meta_nueva.js", referenced)
+        missing = [name for name in referenced if not (STATIC_DIR / name).is_file()]
+        self.assertEqual(missing, [])
+
+
+class FormActionOriginTest(unittest.TestCase):
+    """Guard (e): form-action is 'self' alone locally, and 'self' plus Cuenta's issuer origin
+    once hosted -- the origin a Body form's POST (/logout, /privacidad/consentimiento,
+    /privacidad/borrar) can 303-redirect to, via cuenta.logout_url(...)."""
+
+    def test_local_mode_is_self_only(self):
+        self.assertNotIn(cuenta.ISSUER_ENV, os.environ)
+        self.assertEqual(seguridad._form_action_sources(), ["'self'"])
+
+    def test_hosted_mode_adds_cuenta_issuer_origin(self):
+        with mock.patch.dict(os.environ, {cuenta.ISSUER_ENV: "https://fake-cuenta.test"}):
+            self.assertEqual(seguridad._form_action_sources(), ["'self'", "https://fake-cuenta.test"])
+
+    def test_hosted_mode_strips_a_path_from_the_issuer(self):
+        with mock.patch.dict(os.environ, {cuenta.ISSUER_ENV: "https://fake-cuenta.test/realm"}):
+            self.assertEqual(seguridad._form_action_sources(), ["'self'", "https://fake-cuenta.test"])
+
+
+class HostedResponseCarriesFormActionTest(SeguridadTestCase):
+    """The same thing, end to end: a real response served hosted carries Cuenta's origin in
+    form-action, whatever status code the route itself answers with."""
+
+    def test_hosted_response_header_includes_issuer_origin(self):
+        with mock.patch.dict(os.environ, {cuenta.ISSUER_ENV: "https://fake-cuenta.test"}):
+            r = self.client.get("/")
+        csp = r.headers.get("content-security-policy")
+        directives = {d.strip() for d in csp.split(";")}
+        self.assertIn("form-action 'self' https://fake-cuenta.test", directives)
 
 
 # ---- Guard (f): every RedirectResponse(...) target is either fixed, or provably sanitized -------

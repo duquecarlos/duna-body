@@ -27,13 +27,58 @@ from .rutas import comun
 
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
-SECURITY_HEADERS = (
-    (b"x-content-type-options", b"nosniff"),
-    (b"referrer-policy", b"same-origin"),
-    (b"x-frame-options", b"DENY"),
-    (b"content-security-policy", b"frame-ancestors 'none'"),
-    (b"cross-origin-opener-policy", b"same-origin"),
+# Content-Security-Policy (BODY-SEGURIDAD-2), built from parts so a test can read each one.
+# style-src keeps 'unsafe-inline': 22 templates carry style="..." attributes, and server-built SVG
+# (trends/charts) does too -- that gap is recorded in docs/DESIGN.md and the ledger, not silently
+# dropped. form-action is 'self' plus Cuenta's issuer origin, and only when hosted: a Body form's
+# POST (/logout, /privacidad/consentimiento, /privacidad/borrar) can 303-redirect to Cuenta's
+# /oauth/logout, built by cuenta.logout_url from cuenta.issuer() -- Chrome applies form-action to
+# the redirect that follows a form submission, not only to the form's own action= attribute.
+_CSP_FIXED_DIRECTIVES = (
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data:",
+    "connect-src 'self'",
+    "manifest-src 'self'",
+    "worker-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "frame-ancestors 'none'",
 )
+
+
+def _origin(url: str) -> str:
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+def _form_action_sources() -> list[str]:
+    sources = ["'self'"]
+    if cuenta.hosted():
+        sources.append(_origin(cuenta.issuer()))
+    return sources
+
+
+def csp_directives() -> list[str]:
+    """The policy's directives, in order -- a plain function so a test can read the parts instead
+    of re-parsing a long header literal."""
+    return [*_CSP_FIXED_DIRECTIVES, "form-action " + " ".join(_form_action_sources())]
+
+
+def content_security_policy() -> str:
+    return "; ".join(csp_directives())
+
+
+def _security_headers() -> tuple[tuple[bytes, bytes], ...]:
+    return (
+        (b"x-content-type-options", b"nosniff"),
+        (b"referrer-policy", b"same-origin"),
+        (b"x-frame-options", b"DENY"),
+        (b"content-security-policy", content_security_policy().encode("latin-1")),
+        (b"cross-origin-opener-policy", b"same-origin"),
+    )
 
 
 def _normalize_host(host_port: str) -> str:
@@ -94,7 +139,7 @@ def _send_with_security_headers(send: Send) -> Send:
         if message["type"] == "http.response.start":
             headers = message.setdefault("headers", [])
             present = {name.lower() for name, _ in headers}
-            headers.extend((name, value) for name, value in SECURITY_HEADERS if name not in present)
+            headers.extend((name, value) for name, value in _security_headers() if name not in present)
         await send(message)
 
     return wrapped

@@ -30,7 +30,7 @@
     <div class="card">
       <div class="q">{{ t('goals.field_metric') }}</div>
       {% if metrics %}
-      <select name="metric_key" id="metric-select" class="field" onchange="bodyMetricChange()">
+      <select name="metric_key" id="metric-select" class="field">
         {% for m in metrics %}<option value="{{ m.key }}" data-direction="{{ m.direction }}" data-baseline="{{ m.baseline if m.baseline is not none else '' }}">{{ m.label }}{% if m.unit %} ({{ m.unit }}){% endif %}</option>{% endfor %}
       </select>
       <div class="q" style="margin-top:12px">{{ t('goals.field_direction') }}</div>
@@ -94,14 +94,5 @@
 
   <button type="submit" class="btn on" style="width:100%;margin-top:4px">{{ t('goals.create_btn') }}</button>
 </form>
-<script>
-function bodyMetricChange(){
-  var sel = document.getElementById('metric-select');
-  var opt = sel && sel.selectedOptions[0];
-  if(!opt) return;
-  document.getElementById('direction-select').value = opt.dataset.direction;
-  if(opt.dataset.baseline){document.getElementById('baseline-input').value = opt.dataset.baseline}
-}
-bodyMetricChange();
-</script>
+<script src="{{ static_url('meta_nueva.js') }}" defer></script>
 {% endblock %}
