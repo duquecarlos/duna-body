@@ -107,7 +107,7 @@
   "shifts.sin_dato_corto": "no watch data",
   "shifts.strip_title": "Your last 8 weeks",
   "shifts.strip_hint": "Tap a day to see it.",
-  "shifts.strip_cell": "{fecha} · {turno} · readiness {n}",
+  "shifts.strip_cell": "{fecha} · {turno} · readiness ≈ {n} (estimated)",
   "shifts.strip_cell_sin_dato": "{fecha} · {turno} · no watch data",
   "shifts.como_titulo": "How I calculate your recovery",
   "shifts.como_sub": "It's an estimate from your own numbers. It is not medical advice.",

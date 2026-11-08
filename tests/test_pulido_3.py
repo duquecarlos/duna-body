@@ -165,6 +165,19 @@ class TurnosStripApproxTest(unittest.TestCase):
         cells = re.findall(r'<a class="strip-cell[^"]*"[^>]*>(.*?)</a>', r.text)
         self.assertTrue(any(c == "—" for c in cells))
 
+    def test_scored_cell_aria_label_states_the_estimate_in_words_in_spanish(self):
+        with mock.patch.object(web, "_today_local", return_value=_TODAY):
+            r = client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        self.assertRegex(r.text, r'aria-label="[^"]*preparación ≈ \d+ \(estimada\)"')
+
+    def test_scored_cell_aria_label_states_the_estimate_in_words_in_english(self):
+        db.set_language(self.conn, "en", 1)
+        with mock.patch.object(web, "_today_local", return_value=_TODAY):
+            r = client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        self.assertRegex(r.text, r'aria-label="[^"]*readiness ≈ \d+ \(estimated\)"')
+
 
 # ---- BODY-PULIDO-DIA-ACTIVIDAD-1: no raw Garmin type code on Dia -------------------------------
 
