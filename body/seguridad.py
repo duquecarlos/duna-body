@@ -35,11 +35,13 @@ UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # /privacidad/consentimiento, /privacidad/borrar) can 303-redirect to Cuenta's /oauth/logout, built
 # by cuenta.logout_url from cuenta.issuer() -- Chrome applies form-action to the redirect that
 # follows a form submission, not only to the form's own action= attribute.
+# style-src and font-src carry no third-party origin any more (BODY-FUENTES-PROPIAS-1): Hanken
+# Grotesk is self-hosted from body/static/fonts/, so no page view tells Google the visitor's IP.
 _CSP_FIXED_DIRECTIVES = (
     "default-src 'self'",
     "script-src 'self'",
-    "style-src 'self' https://fonts.googleapis.com",
-    "font-src 'self' https://fonts.gstatic.com",
+    "style-src 'self'",
+    "font-src 'self'",
     "img-src 'self' data:",
     "connect-src 'self'",
     "manifest-src 'self'",

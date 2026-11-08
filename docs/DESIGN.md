@@ -50,8 +50,8 @@ comes from; the Body-specific reading is in *italics*. When a new rule arrives f
     (`onchange=`, …) any more -- every one moved to `body/static/*.js`, loaded through `static_url(...)`, so
     `script-src 'self'` holds with no `'unsafe-inline'`. The full policy (`body/seguridad.py`'s
     `content_security_policy()`, built from named parts so a test can read each one):
-    `default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com;
-    font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; manifest-src 'self';
+    `default-src 'self'; script-src 'self'; style-src 'self';
+    font-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self';
     worker-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`, plus
     Cuenta's issuer origin in `form-action` once hosted (a `/logout`, `/privacidad/consentimiento` or
     `/privacidad/borrar` POST can 303-redirect there, via `cuenta.logout_url`, and Chrome applies `form-action`
@@ -73,9 +73,17 @@ comes from; the Body-specific reading is in *italics*. When a new rule arrives f
     an inline `<svg>` that replaces a block `<div>` needs its own `display:block; width:100%` (`svg.bar`,
     `svg.stage`), since an `<svg>` with no CSS width renders at its `viewBox` width instead of its container's.
     `tests/test_seguridad.py` guards the no-`style=` rule (templates, Python-built markup, static scripts) and
-    that `style-src` carries no `'unsafe-inline'`. Google Fonts (`fonts.googleapis.com`, `fonts.gstatic.com`)
-    is the only third-party origin the policy allows, for Hanken Grotesk; self-hosting it instead is open as
-    **BODY-FUENTES-PROPIAS-1**, not done here.
+    that `style-src` carries no `'unsafe-inline'`. No page loads anything from a third-party origin
+    (**BODY-FUENTES-PROPIAS-1**): Hanken Grotesk is self-hosted, two `@font-face` rules at the top of
+    `body/static/body.css` (one per subset, `latin` and `latin-ext`), from `.woff2` files committed under
+    `body/static/fonts/hanken-grotesk/` with their SIL Open Font License beside them -- the same files Duna's
+    own console commits (`duna-admin-ui`, ADMIN-FUENTES-LOCALES-1). `body/web.py` registers `font/woff2` with
+    `mimetypes` before the `/static` mount, since Python's `mimetypes` has no entry for `.woff2` on its own.
+    `tests/test_fuentes_propias.py` guards all of this: each font file served as `font/woff2` and
+    byte-identical to its sha256; no template or static file names `fonts.googleapis.com` or
+    `fonts.gstatic.com`; the served policy's `style-src` and `font-src` carry no `https:` origin; the LICENSE
+    ships beside the fonts. A new typeface comes in the same way: committed `.woff2` files plus their licence
+    under `body/static/fonts/`, never fetched from a third party at request time.
     (BODY-SEGURIDAD-4): any attempt that reaches a third party (Garmin) on a person's behalf is limited per
     person; the limit refuses before the third party is called, so Body's own server can never be used as a
     relay to try many credentials against it.
