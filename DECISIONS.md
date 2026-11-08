@@ -6026,3 +6026,67 @@ expected for a documentation-only slice. `git status --porcelain` was empty both
 customer-facing bytes (nothing in `body/templates/`, `body/i18n/`, or any served route changed), no cross-repo
 contract change. Merge policy A's three conditions all pass, and this spec's `approved: yes` plus its
 approval-reason cover documentation changes with "no Tier 1 path" -- merged on green without waiting.
+
+## BODY-HOGAR-SCHEMA-LIMPIEZA-2 -- household.SCHEMA removed, its 23 redundant callers cut over to db.init (2026-11-08)
+
+Continues BODY-HOGAR-SCHEMA-LIMPIEZA-1, which stopped on the first attempt's branch with an empty diff: the
+orchestrator's grep behind that spec had been truncated and undercounted the real work. This slice re-ran both
+greps itself before touching anything.
+
+**Before, on the branch tip (= `main` at `3456670`):**
+
+    git grep -n "household.SCHEMA\|SCHEMA" -- body/household.py
+    body/household.py:30:SCHEMA = f"""
+
+    git grep -n "household.SCHEMA" -- body tests
+    body/demo.py:299, body/privacidad.py:74, tests/test_goals.py:216,266, tests/test_goals_web.py:192,214,233,
+    252,269,304,341, tests/test_hogar_compartir_1.py:44, tests/test_hogar_cuenta_1.py:202,214,226,
+    tests/test_hogar_enlace_1.py:44,364 (364 was a docstring describing a past fix, not a call),
+    tests/test_hogar_miembro_1.py:49, tests/test_household.py:19, tests/test_privacidad.py:155,357,432,
+    tests/test_vida_export.py:89 -- 23 hits across 11 files, exactly as this spec's surface measured.
+
+`body/db.py:732` (`_ensure_hogar_miembro`, called from `db.init` at line 767) creates `hogar_miembro` from
+`household._COLUMNS` on every database, fresh or existing -- the one creation path confirmed before any edit, per
+this spec's step 1 STOP condition.
+
+**What changed.** Removed the `conn.executescript(household.SCHEMA)` call from `privacidad.export_person` (its
+connection is always `db.init`-ed first, by `web.py`'s `_ctx`) and from `demo.py`'s `_seed` (its connection is
+`db.init`-ed in `main` before `_seed` runs). In all 21 test-file call sites, the connection already had `db.init`
+run on it earlier in the same test or fixture (`_conn`/`_reset_db`/explicit `db.init(conn)`), so every one was a
+straight deletion -- none needed a `db.init(conn)` added. The one docstring hit (`test_hogar_enlace_1.py:364`,
+quoting the exact call as history from BODY-HOGAR-ENLACE-1-M's fix 4) was reworded to keep its meaning without the
+literal string, so the final grep is a true zero. `SCHEMA` was deleted from `body/household.py`; `_COLUMNS` and its
+docstring stay, now pointing at `db.init`/`_ensure_hogar_miembro` as the single creation path. Six files lost their
+now-unused `household` import (`demo.py`, `privacidad.py`, `test_goals_web.py`, `test_hogar_compartir_1.py`,
+`test_hogar_enlace_1.py`, `test_hogar_miembro_1.py`); `test_goals.py`, `test_household.py`, `test_privacidad.py`,
+`test_vida_export.py`, `test_hogar_cuenta_1.py` kept it (still calling `household.household_of` or
+`household.sincronizar_desde_claim`).
+
+Added `ExportDoesNotCommitTest` to `tests/test_hogar_cuenta_1.py`: begins a write, calls `privacidad.export_person`,
+rolls back, and asserts the write did not survive -- confirming `export_person` no longer runs an `executescript`
+that would have committed the caller's open transaction out from under it.
+
+**After, same two greps:**
+
+    git grep -n "household.SCHEMA" -- body tests
+    (no output)
+
+    git grep -n "SCHEMA" -- body/household.py
+    (no output)
+
+**Gate, run once, foreground, exact command** `.venv/Scripts/python.exe -m unittest discover tests -t .`:
+
+    Ran 1122 tests in 143.981s
+    OK (skipped=1)
+
+One more test than the prior ledger entry's 1121 (the new rollback test); `git status --porcelain` was empty before
+the run and after it, and no `.gate_tmp_*` or scratch file was left in the repository.
+
+**Merged.** `git diff` across the slice touches only call sites of a now-dead constant and one test addition -- no
+schema or migration change (the table's shape and its one creation path, `_ensure_hogar_miembro`/`_COLUMNS`, are
+unchanged), no customer-facing byte (nothing in `body/templates/`, `body/i18n/`, or any served route), no
+cross-repo contract change. Merge policy A's three conditions all pass; this spec's `approved: yes` plus its
+approval-reason name exactly this cleanup as covered, including if a touched path classed Tier 1 -- merged on
+green without waiting. Merge commit `e94c4ec`; its tree (`5383a92`) is identical to the slice branch tip's tree
+(`git diff` between the merge commit and the pre-merge branch tip `7cd8d65` is empty), so the gate above, run on the
+branch tip, is also the gate of what landed on `main`.
