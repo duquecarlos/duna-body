@@ -11,6 +11,8 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
+from tests._rutas import rutas_planas
+
 from body import config, db, goals, identity, web
 
 # Routes that answer with something other than a signed-in base.html page: a non-HTML API, a
@@ -65,7 +67,7 @@ def _seed(conn) -> int:
 
 
 def _get_paths():
-    return {r.path for r in web.app.routes if isinstance(r, APIRoute) and "GET" in r.methods}
+    return {r.path for r in rutas_planas(web.app.routes) if isinstance(r, APIRoute) and "GET" in r.methods}
 
 
 def _fill(path: str, day: str, goal_id: int) -> str:

@@ -268,6 +268,36 @@ class PatchTargetGuardTest(unittest.TestCase):
         self.assertEqual(not_defined, [], f"stale patch target(s):\n{offenders_text}")
         self.assertEqual(reimported, [], f"patch target(s) with a re-importing module:\n{offenders_text}")
 
+    def test_no_test_module_reads_dot_routes_directly(self):
+        """BODY-WEB-ESTRUCTURA-1-M: every test that needs the app's real route set reads it
+        through tests/_rutas.py's rutas_planas() -- the one place that knows FastAPI 0.162 wraps
+        an included router in a non-flattened `_IncludedRouter`. A test file that instead reads
+        some object's `.routes` itself would carry its own, independently stale copy of that
+        knowledge (as tests/test_web_entry.py, tests/test_agente_registro.py,
+        tests/test_asistente_panel.py and tests/test_tutoriales_catalogo.py each did before this
+        slice). The one allowed `.routes` read anywhere in a test file is the argument passed
+        straight into a `rutas_planas(...)` call, e.g. `rutas_planas(web.app.routes)`."""
+        offenders = []
+        for path in _iter_test_files():
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            allowed: set[tuple[int, int]] = set()
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                f = node.func
+                name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
+                if name != "rutas_planas":
+                    continue
+                for arg in node.args:
+                    for sub in ast.walk(arg):
+                        if isinstance(sub, ast.Attribute) and sub.attr == "routes":
+                            allowed.add((sub.lineno, sub.col_offset))
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.Attribute) and node.attr == "routes"
+                        and (node.lineno, node.col_offset) not in allowed):
+                    offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}")
+        self.assertEqual(offenders, [], f"test module(s) reading `.routes` directly: {offenders}")
+
     def test_rutas_modules_never_import_web(self):
         offenders = []
         for path in sorted((BODY_DIR / "rutas").glob("*.py")):

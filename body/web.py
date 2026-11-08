@@ -9,7 +9,6 @@ Health values never go into URLs or logs (access log is off; URLs carry only dat
 from __future__ import annotations
 
 import argparse
-import contextvars
 import hashlib
 import html
 import json
@@ -60,13 +59,12 @@ async def _lifespan(app: FastAPI):
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=_lifespan)
 
-# ---- Current request path, for base.html's one in-context "¿Cómo se hace?" helper (tutoriales-v1
-# section 5.2, decision 3) -- set from the raw ASGI path before routing, so no screen template
-# needs to pass its own copy down to the shared base template.
-_RUTA_ACTUAL: contextvars.ContextVar[str] = contextvars.ContextVar("_ruta_actual", default="")
-
 
 class _CaminoActualMiddleware:
+    """Sets comun._RUTA_ACTUAL from the raw ASGI path before routing, for base.html's one
+    in-context "¿Cómo se hace?" helper (tutoriales-v1 section 5.2, decision 3) -- comun owns the
+    contextvar itself (BODY-WEB-ESTRUCTURA-1-M), since the lambda that reads it lives there."""
+
     def __init__(self, app):
         self.app = app
 
@@ -74,11 +72,11 @@ class _CaminoActualMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        token = _RUTA_ACTUAL.set(scope.get("path", ""))
+        token = comun._RUTA_ACTUAL.set(scope.get("path", ""))
         try:
             await self.app(scope, receive, send)
         finally:
-            _RUTA_ACTUAL.reset(token)
+            comun._RUTA_ACTUAL.reset(token)
 
 
 app.add_middleware(_CaminoActualMiddleware)
@@ -87,33 +85,11 @@ app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 app.include_router(ayuda.router)
 
 
-def _static_hash(directory: Path) -> str:
-    """sha256 over every file under `directory` (sorted relative path + bytes), first 10 hex chars --
-    changes whenever any static file's content changes, so a cache keyed on it never goes stale."""
-    h = hashlib.sha256()
-    for p in sorted(directory.rglob("*")):
-        if p.is_file():
-            h.update(str(p.relative_to(directory)).replace("\\", "/").encode())
-            h.update(p.read_bytes())
-    return h.hexdigest()[:10]
-
-
-STATIC_HASH = _static_hash(HERE / "static")
-
-
-def static_url(path: str) -> str:
-    return f"/static/{path}?v={STATIC_HASH}"
-
-
-# setdefault, not assignment: comun.env is a singleton that survives a throwaway re-import of this
-# module (tests/test_env_local_1.py's ImportarWebTest), and a second call here would otherwise
-# clobber "tarea_en_contexto" with a lambda closing over THAT import's own, separate _RUTA_ACTUAL --
-# never set by the real app's middleware, so the in-context help link would silently stop rendering
-# for every test that runs afterward in the same process.
-comun.env.globals.setdefault("static_url", static_url)
-comun.env.globals.setdefault("hosted", cuenta.hosted)
-comun.env.globals.setdefault("asistente_configurado", lambda: agente_cliente.proveedor_configurado() is not None)
-comun.env.globals.setdefault("tarea_en_contexto", lambda: tutoriales.tarea_en_ruta(_RUTA_ACTUAL.get()))
+# static_url/STATIC_HASH/_static_hash are comun's (BODY-WEB-ESTRUCTURA-1-M): kept here too, as
+# plain aliases, since tests/test_static_version.py reads them straight off this module.
+_static_hash = comun._static_hash
+STATIC_HASH = comun.STATIC_HASH
+static_url = comun.static_url
 
 
 @app.exception_handler(LoginRequired)

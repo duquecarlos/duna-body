@@ -9,6 +9,8 @@ from pathlib import Path
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
+from tests._rutas import rutas_planas
+
 from body import web
 from body.agente import herramientas
 
@@ -49,7 +51,7 @@ def _load() -> dict:
 
 
 def _real_routes() -> set[str]:
-    return {_normalize(r.path) for r in web.app.routes if hasattr(r, "path")}
+    return {_normalize(r.path) for r in rutas_planas(web.app.routes)}
 
 
 class CatalogShapeTest(unittest.TestCase):

@@ -5,6 +5,8 @@ from unittest.mock import patch
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
+from tests._rutas import rutas_planas
+
 from body import web
 
 
@@ -33,7 +35,8 @@ class RouteSetTest(unittest.TestCase):
     """BODY-WEB-ESTRUCTURA-1: moving /ayuda and /healthz into body/rutas/ayuda.py must not add, drop
     or rename a single route. This (method, path) set was captured from `main` before that move --
     FastAPI 0.162 keeps an included router as one lazy `_IncludedRouter` wrapper in app.routes rather
-    than flattening it eagerly, so _flatten() descends into it the same way for both sides."""
+    than flattening it eagerly, so tests/_rutas.py's rutas_planas() descends into it the same way for
+    both sides."""
 
     BEFORE = {
         ("/", ("GET",)),
@@ -97,19 +100,9 @@ class RouteSetTest(unittest.TestCase):
         ("/trends", ("GET",)),
     }
 
-    @staticmethod
-    def _flatten(routes):
-        for r in routes:
-            if hasattr(r, "path"):
-                yield r
-            elif hasattr(r, "original_router"):
-                yield from RouteSetTest._flatten(r.original_router.routes)
-            elif hasattr(r, "routes"):
-                yield from RouteSetTest._flatten(r.routes)
-
     def test_route_set_is_unchanged_by_the_ayuda_move(self):
         after = {(r.path, tuple(sorted(getattr(r, "methods", None) or [])))
-                 for r in self._flatten(web.app.routes)}
+                 for r in rutas_planas(web.app.routes)}
         self.assertEqual(len(after), len(self.BEFORE))
         self.assertEqual(after, self.BEFORE)
 

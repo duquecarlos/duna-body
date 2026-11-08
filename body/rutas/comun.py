@@ -3,10 +3,17 @@ environment, the one-connection-per-request pattern, and the handful of module-l
 or more route domains call. Never imports body.web -- web.py imports this module, and every
 other route module reaches these names as comun.X, never through a from-import (a from-import
 copies the binding, and a test's patch on this module would then miss it).
+
+BODY-WEB-ESTRUCTURA-1-M: comun configures its own Jinja globals and the one contextvar they need,
+once, when this module is imported -- never from body/web.py, which would re-run on every
+throwaway re-import of body.web (tests/test_env_local_1.py's ImportarWebTest) and risk closing
+over a second, separate copy of a name this module already owns. web.py's middleware sets and
+resets `comun._RUTA_ACTUAL`; nothing else outside this module touches it.
 """
 from __future__ import annotations
 
 import contextvars
+import hashlib
 from datetime import date
 from functools import wraps
 from pathlib import Path
@@ -16,12 +23,42 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from .. import db, fechas
+from .. import cuenta, db, fechas, tutoriales
+from ..agente import cliente as agente_cliente
 from ..i18n import T
 
 HERE = Path(__file__).parent.parent
 
 env = Environment(loader=FileSystemLoader(HERE / "templates"), autoescape=select_autoescape())
+
+# ---- Current request path, for base.html's one in-context "¿Cómo se hace?" helper (tutoriales-v1
+# section 5.2, decision 3) -- set from the raw ASGI path before routing, so no screen template
+# needs to pass its own copy down to the shared base template.
+_RUTA_ACTUAL: contextvars.ContextVar[str] = contextvars.ContextVar("_ruta_actual", default="")
+
+
+def _static_hash(directory: Path) -> str:
+    """sha256 over every file under `directory` (sorted relative path + bytes), first 10 hex chars --
+    changes whenever any static file's content changes, so a cache keyed on it never goes stale."""
+    h = hashlib.sha256()
+    for p in sorted(directory.rglob("*")):
+        if p.is_file():
+            h.update(str(p.relative_to(directory)).replace("\\", "/").encode())
+            h.update(p.read_bytes())
+    return h.hexdigest()[:10]
+
+
+STATIC_HASH = _static_hash(HERE / "static")
+
+
+def static_url(path: str) -> str:
+    return f"/static/{path}?v={STATIC_HASH}"
+
+
+env.globals["static_url"] = static_url
+env.globals["hosted"] = cuenta.hosted
+env.globals["asistente_configurado"] = lambda: agente_cliente.proveedor_configurado() is not None
+env.globals["tarea_en_contexto"] = lambda: tutoriales.tarea_en_ruta(_RUTA_ACTUAL.get())
 
 
 # BODY-CONEXIONES-CERRADAS-1: _ctx() opens one connection per route call and stores it here so a
