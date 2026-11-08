@@ -9,7 +9,6 @@ Health values never go into URLs or logs (access log is off; URLs carry only dat
 from __future__ import annotations
 
 import argparse
-import contextvars
 import hashlib
 import html
 import json
@@ -46,6 +45,7 @@ from .i18n import DEFAULT as DEFAULT_LANG
 from .i18n import LANGS, T
 from .identity import ConsentRequired, DispositivoNoAutorizado, DispositivoSinAlcance, LoginRequired
 from .request_log import RequestLogMiddleware
+from .rutas import ayuda, comun
 
 HERE = Path(__file__).parent
 
@@ -59,13 +59,12 @@ async def _lifespan(app: FastAPI):
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=_lifespan)
 
-# ---- Current request path, for base.html's one in-context "¿Cómo se hace?" helper (tutoriales-v1
-# section 5.2, decision 3) -- set from the raw ASGI path before routing, so no screen template
-# needs to pass its own copy down to the shared base template.
-_RUTA_ACTUAL: contextvars.ContextVar[str] = contextvars.ContextVar("_ruta_actual", default="")
-
 
 class _CaminoActualMiddleware:
+    """Sets comun._RUTA_ACTUAL from the raw ASGI path before routing, for base.html's one
+    in-context "¿Cómo se hace?" helper (tutoriales-v1 section 5.2, decision 3) -- comun owns the
+    contextvar itself (BODY-WEB-ESTRUCTURA-1-M), since the lambda that reads it lives there."""
+
     def __init__(self, app):
         self.app = app
 
@@ -73,41 +72,24 @@ class _CaminoActualMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        token = _RUTA_ACTUAL.set(scope.get("path", ""))
+        token = comun._RUTA_ACTUAL.set(scope.get("path", ""))
         try:
             await self.app(scope, receive, send)
         finally:
-            _RUTA_ACTUAL.reset(token)
+            comun._RUTA_ACTUAL.reset(token)
 
 
 app.add_middleware(_CaminoActualMiddleware)
 app.add_middleware(RequestLogMiddleware)
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
-env = Environment(loader=FileSystemLoader(HERE / "templates"), autoescape=select_autoescape())
+app.include_router(ayuda.router)
 
 
-def _static_hash(directory: Path) -> str:
-    """sha256 over every file under `directory` (sorted relative path + bytes), first 10 hex chars --
-    changes whenever any static file's content changes, so a cache keyed on it never goes stale."""
-    h = hashlib.sha256()
-    for p in sorted(directory.rglob("*")):
-        if p.is_file():
-            h.update(str(p.relative_to(directory)).replace("\\", "/").encode())
-            h.update(p.read_bytes())
-    return h.hexdigest()[:10]
-
-
-STATIC_HASH = _static_hash(HERE / "static")
-
-
-def static_url(path: str) -> str:
-    return f"/static/{path}?v={STATIC_HASH}"
-
-
-env.globals["static_url"] = static_url
-env.globals["hosted"] = cuenta.hosted
-env.globals["asistente_configurado"] = lambda: agente_cliente.proveedor_configurado() is not None
-env.globals["tarea_en_contexto"] = lambda: tutoriales.tarea_en_ruta(_RUTA_ACTUAL.get())
+# static_url/STATIC_HASH/_static_hash are comun's (BODY-WEB-ESTRUCTURA-1-M): kept here too, as
+# plain aliases, since tests/test_static_version.py reads them straight off this module.
+_static_hash = comun._static_hash
+STATIC_HASH = comun.STATIC_HASH
+static_url = comun.static_url
 
 
 @app.exception_handler(LoginRequired)
@@ -135,7 +117,7 @@ def _dispositivo_sin_alcance(request: Request, exc: DispositivoSinAlcance) -> JS
     return JSONResponse({"error": "alcance"}, status_code=403)
 
 
-_CUENTA_DOWN_TEMPLATE = env.from_string(
+_CUENTA_DOWN_TEMPLATE = comun.env.from_string(
     '{% extends "base.html" %}{% block main %}'
     '<div class="top"><div><h1>{{ t("app.name") }}</h1></div></div>'
     '<div class="card"><p class="read">{{ t("cuenta.down") }}</p></div>'
@@ -154,76 +136,6 @@ STAGES = [("sleep_deep_min", "metric.sleep_deep_min", "var(--night)"),
           ("sleep_light_min", "metric.sleep_light_min", "color-mix(in srgb, var(--night) 45%, var(--card))"),
           ("sleep_rem_min", "metric.sleep_rem_min", "var(--body)"),
           ("sleep_awake_min", "metric.sleep_awake_min", "var(--amber)")]
-
-
-# BODY-CONEXIONES-CERRADAS-1: _ctx() opens one connection per route call and stores it here so a
-# route that calls _ctx() more than once (an early-return branch, then a fallback) still leaves
-# exactly one connection to close. The close itself happens in _cierra_conexion[_async] below, which
-# wraps the route function directly rather than a middleware or a separate FastAPI dependency --
-# sqlite3 connections are thread-affine, and either of those could run its cleanup on a different
-# worker thread than the one that opened the connection.
-_REQUEST_CONN: contextvars.ContextVar = contextvars.ContextVar("_request_conn", default=None)
-
-
-def _ctx(person_id: int) -> tuple:
-    conn = _REQUEST_CONN.get()
-    if conn is None:
-        conn = db.connect()
-        db.init(conn)
-        _REQUEST_CONN.set(conn)
-    person = db.person(conn, person_id)
-    return conn, person, T(person.get("language", "es"))
-
-
-def _cierra_conexion(fn):
-    """Decorates a sync route that calls _ctx(): closes whichever connection it opened, once the
-    route function returns, in the same thread that opened it."""
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        token = _REQUEST_CONN.set(None)
-        try:
-            return fn(*args, **kwargs)
-        finally:
-            conn = _REQUEST_CONN.get()
-            if conn is not None:
-                conn.close()
-            _REQUEST_CONN.reset(token)
-    return wrapper
-
-
-def _cierra_conexion_async(fn):
-    """Same as _cierra_conexion, for an `async def` route."""
-    @wraps(fn)
-    async def wrapper(*args, **kwargs):
-        token = _REQUEST_CONN.set(None)
-        try:
-            return await fn(*args, **kwargs)
-        finally:
-            conn = _REQUEST_CONN.get()
-            if conn is not None:
-                conn.close()
-            _REQUEST_CONN.reset(token)
-    return wrapper
-
-
-def _render(name: str, **kw) -> HTMLResponse:
-    return HTMLResponse(env.get_template(name).render(**kw))
-
-
-def _turnos_on(conn, person_id: int) -> bool:
-    """Whether every shift surface (BODY-TURNOS-OPCIONAL-3) shows for this person -- the nav tab, Hoy's
-    card, Día's block line, Historial's por-tipo card, Tendencias' night shading, /shifts, Ayuda's
-    chapter, and the assistant's shift tools. NULL (not answered) and False both hide it; only True
-    shows it, computed once per request from the one predicate db.trabaja_turnos_si."""
-    return db.trabaja_turnos_si(conn, person_id)
-
-
-async def _form(request: Request) -> dict:
-    return {k: v[0] for k, v in parse_qs((await request.body()).decode()).items()}
-
-
-def _today_local(person: dict) -> date:
-    return fechas.hoy_local(person)
 
 
 def _week_monday(d: date) -> date:
@@ -329,11 +241,6 @@ def _batch_date(t: T, received: str) -> str:
     return _short_date(t, datetime.fromisoformat(received).date())
 
 
-@app.get("/healthz")
-def healthz():
-    return Response("ok", media_type="text/plain")
-
-
 @app.get("/login")
 @app.get("/login/cuenta/start")
 def login_start(request: Request):
@@ -365,7 +272,7 @@ def login_callback(request: Request):
                                         dict(request.query_params))
     except cuenta.FlowRefused:
         conn.close()
-        return HTMLResponse(env.get_template("acceso_rechazado.html").render(t=T(DEFAULT_LANG)),
+        return HTMLResponse(comun.env.get_template("acceso_rechazado.html").render(t=T(DEFAULT_LANG)),
                             status_code=400)
     except cuenta.CuentaUnavailable:
         conn.close()
@@ -376,7 +283,7 @@ def login_callback(request: Request):
                                 status_code=303)
     if result.kind == "sin_acceso":
         conn.close()
-        return _render("sin_acceso.html", t=T(DEFAULT_LANG),
+        return comun._render("sin_acceso.html", t=T(DEFAULT_LANG),
                        switcher_url=cuenta.SWITCHER_URL, logout_url=cuenta.logout_url(None))
     conn.close()
     resp = RedirectResponse(result.return_to or "/", status_code=303)
@@ -412,7 +319,7 @@ async def backchannel_logout(request: Request):
         # Behind Caddy, a proxied request also arrives from 127.0.0.1 -- the client-address
         # check alone is not enough. Caddy's reverse_proxy adds X-Forwarded-For.
         raise HTTPException(404)
-    f = await _form(request)
+    f = await comun._form(request)
     conn = db.connect()
     db.init(conn)
     ok = cuenta.handle_backchannel_logout(conn, f.get("logout_token", ""))
@@ -454,10 +361,10 @@ def _hoy_turno_ctx(t: T, conn, person_id: int, today_local: date) -> dict:
 
 
 @app.get("/")
-@_cierra_conexion
+@comun._cierra_conexion
 def today(person_id: int = Depends(identity.current_person_id)):
-    conn, person, t = _ctx(person_id)
-    turnos_on = _turnos_on(conn, person_id)
+    conn, person, t = comun._ctx(person_id)
+    turnos_on = comun._turnos_on(conn, person_id)
     day = _latest_day(conn, person_id)
     proposed_count = conn.execute(
         "SELECT COUNT(*) AS n FROM shift_batch WHERE person_id = ? AND status = 'proposed'",
@@ -465,10 +372,10 @@ def today(person_id: int = Depends(identity.current_person_id)):
     ).fetchone()["n"]
     primeros = tutoriales.primeros_pasos(conn, person_id, cuenta.hosted())
     primeros_pasos = primeros if any(not p["hecho"] for p in primeros) else None
-    today_local = _today_local(person)
+    today_local = comun._today_local(person)
     turno_ctx = _hoy_turno_ctx(t, conn, person_id, today_local)
     if not day:
-        return _render("soon.html", t=t, tab="today", title=t("today.title"),
+        return comun._render("soon.html", t=t, tab="today", title=t("today.title"),
                        text=_sync_status_text(conn, person, t), primeros_pasos=primeros_pasos,
                        proposed_count=proposed_count, turno=turno_ctx, turnos=turnos_on)
     defs = _defs(conn)
@@ -486,7 +393,7 @@ def today(person_id: int = Depends(identity.current_person_id)):
         delta, cls = _delta(conn, t, defs[k], day, v, person_id)
         cards.append({"key": k, "label": t("metric." + k), "value": _value(t, k, v),
                       "unit": _unit(t, defs[k]) if v is not None else "", "delta": delta, "cls": cls})
-    return _render("today.html", t=t, tab="today", day=day, date_long=t.long_date(date.fromisoformat(day)),
+    return comun._render("today.html", t=t, tab="today", day=day, date_long=t.long_date(date.fromisoformat(day)),
                    synced=_synced(conn, person), r=r, reading=_reading(t, r), ready_avg=ready_avg,
                    ready_delta=ready_delta, ready_cls=ready_cls, cards=cards,
                    missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_count=proposed_count,
@@ -504,12 +411,12 @@ PART_METRIC = {"hrv": "hrv_last_night", "sleep": "sleep_minutes", "battery": "bo
 
 
 @app.get("/how/{day}")
-@_cierra_conexion
+@comun._cierra_conexion
 def how(day: str, person_id: int = Depends(identity.current_person_id)):
     d = _parse_day(day)
-    conn, person, t = _ctx(person_id)
-    turnos_on = _turnos_on(conn, person_id)
-    today_local = _today_local(person)
+    conn, person, t = comun._ctx(person_id)
+    turnos_on = comun._turnos_on(conn, person_id)
+    today_local = comun._today_local(person)
     r = readiness.compute(conn, d.isoformat(), person_id)
     parts = []
     for p in r.parts:
@@ -525,17 +432,17 @@ def how(day: str, person_id: int = Depends(identity.current_person_id)):
         parts.append({"label": label[:1].upper() + label[1:], "value": value, "ref": ref, "ref_note": ref_note,
                       "score": t.num(p.subscore), "weight": f"{round(p.weight * 100)} %", "href": href})
     missing = [t("part." + m) for m in r.missing]
-    return _render("how.html", t=t, tab="today", r=r, parts=parts, date_long=t.long_date(d),
+    return comun._render("how.html", t=t, tab="today", r=r, parts=parts, date_long=t.long_date(d),
                    missing=[m[:1].upper() + m[1:] for m in missing], turnos=turnos_on)
 
 
 @app.get("/day/{day}")
-@_cierra_conexion
+@comun._cierra_conexion
 def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
     d = _parse_day(day)
-    conn, person, t = _ctx(person_id)
-    turnos_on = _turnos_on(conn, person_id)
-    today_local = _today_local(person)
+    conn, person, t = comun._ctx(person_id)
+    turnos_on = comun._turnos_on(conn, person_id)
+    today_local = comun._today_local(person)
     key = d.isoformat()
     data = db.load_day(conn, key, person_id)
     vals = {m["key"]: m["value"] for m in data["metrics"]}
@@ -584,7 +491,7 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
             block_ctx = t("day.shift_ctx_noche", n=ctx["n"], de=ctx["de"])
         else:
             block_ctx = t("day.shift_ctx_despues", n=ctx["n"])
-    return _render("day.html", t=t, tab="today", date_long=t.long_date(d), cards=cards, sleep=sleep,
+    return comun._render("day.html", t=t, tab="today", date_long=t.long_date(d), cards=cards, sleep=sleep,
                    activities=acts, shifts=shifts, has_data=has_data, block_ctx=block_ctx,
                    sync_text=None if has_data else _sync_status_text(conn, person, t),
                    prev=(d - timedelta(1)).isoformat(), next=(d + timedelta(1)).isoformat(),
@@ -679,10 +586,10 @@ def _turnos_strip(conn, person_id: int, today_local: date, t: T) -> tuple[list[d
 
 
 @app.get("/shifts")
-@_cierra_conexion
+@comun._cierra_conexion
 def shifts(request: Request, person_id: int = Depends(identity.current_person_id)):
-    conn, person, t = _ctx(person_id)
-    turnos_on = _turnos_on(conn, person_id)
+    conn, person, t = comun._ctx(person_id)
+    turnos_on = comun._turnos_on(conn, person_id)
     if not turnos_on:
         raise HTTPException(404)
     rows = conn.execute(
@@ -696,7 +603,7 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
         result_msg = t("shifts.confirm_all_result", batches=qp.get("batches", "0"), applied=qp.get("applied", "0"))
         if kept:
             result_msg += " " + t("shifts.confirm_all_kept", n=kept)
-    today_local = _today_local(person)
+    today_local = comun._today_local(person)
     resumen = turnos_costo.resumen(conn, person_id, hoy=today_local)
     strip, strip_legend = _turnos_strip(conn, person_id, today_local, t)
     costo_ctx = {"hero_dias": resumen["dias_recuperacion"], "motivo": resumen["motivo"],
@@ -710,7 +617,7 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
             for b in rows
         ]
         many_mixed = any(b["kind"] == "pattern" for b in rows)
-        return _render("shifts.html", t=t, tab="shifts", batch=None, many=True, batches=batches,
+        return comun._render("shifts.html", t=t, tab="shifts", batch=None, many=True, batches=batches,
                        many_mixed=many_mixed,
                        summary_from=t.month_year(date.fromisoformat(summary["first_day"])),
                        summary_to=t.month_year(date.fromisoformat(summary["last_day"])),
@@ -719,11 +626,11 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
     if rows:
         proposed = rows[0]
         prev = _patron_preview_ctx(t, shift_import.preview(conn, proposed["id"]))
-        return _render("shifts.html", t=t, tab="shifts", batch=dict(proposed), many=False,
+        return comun._render("shifts.html", t=t, tab="shifts", batch=dict(proposed), many=False,
                        received_date=_batch_date(t, proposed["received"]), preview=prev, result_msg=result_msg,
                        turnos=turnos_on, tiene_patron=tiene_patron, **costo_ctx)
     confirmed = shift_import.latest_confirmed(conn, person_id)
-    return _render("shifts.html", t=t, tab="shifts", batch=None, many=False,
+    return comun._render("shifts.html", t=t, tab="shifts", batch=None, many=False,
                    confirmed_date=_batch_date(t, confirmed["received"]) if confirmed else None,
                    result_msg=result_msg, turnos=turnos_on, tiene_patron=tiene_patron, **costo_ctx)
 
@@ -751,25 +658,25 @@ def _turnos_bloque_linea(t: T, b: dict, hoy: date) -> str:
 
 
 @app.get("/shifts/como")
-@_cierra_conexion
+@comun._cierra_conexion
 def shifts_como(person_id: int = Depends(identity.current_person_id)):
-    conn, person, t = _ctx(person_id)
-    if not _turnos_on(conn, person_id):
+    conn, person, t = comun._ctx(person_id)
+    if not comun._turnos_on(conn, person_id):
         raise HTTPException(404)
-    today_local = _today_local(person)
+    today_local = comun._today_local(person)
     resumen = turnos_costo.resumen(conn, person_id, hoy=today_local)
     bloques = [_turnos_bloque_linea(t, b, today_local) for b in resumen["bloques"]]
-    return _render("how.html", t=t, tab="shifts", modo="turnos", version=resumen["version"],
+    return comun._render("how.html", t=t, tab="shifts", modo="turnos", version=resumen["version"],
                    n_bloques=len(resumen["bloques"]), n_con_recuperacion=resumen["bloques_con_recuperacion"],
                    n_estables=turnos_costo.MODELO["dias_estables"], n_referencia=turnos_costo.REFERENCIA_DIAS,
                    bloques=bloques, turnos=True)
 
 
 @app.post("/shifts/confirm")
-@_cierra_conexion_async
+@comun._cierra_conexion_async
 async def shifts_confirm(request: Request, person_id: int = Depends(identity.current_person_id)):
-    conn, _, _ = _ctx(person_id)
-    if not _turnos_on(conn, person_id):
+    conn, _, _ = comun._ctx(person_id)
+    if not comun._turnos_on(conn, person_id):
         raise HTTPException(404)
     batch_id = parse_qs((await request.body()).decode()).get("batch_id", [""])[0]
     if batch_id.isdigit():
@@ -782,10 +689,10 @@ async def shifts_confirm(request: Request, person_id: int = Depends(identity.cur
 
 
 @app.post("/shifts/confirm-all")
-@_cierra_conexion_async
+@comun._cierra_conexion_async
 async def shifts_confirm_all(person_id: int = Depends(identity.current_person_id)):
-    conn, _, _ = _ctx(person_id)
-    if not _turnos_on(conn, person_id):
+    conn, _, _ = comun._ctx(person_id)
+    if not comun._turnos_on(conn, person_id):
         raise HTTPException(404)
     try:
         result = shift_import.confirm_all(conn, person_id)
@@ -799,10 +706,10 @@ async def shifts_confirm_all(person_id: int = Depends(identity.current_person_id
 
 
 @app.post("/shifts/dismiss")
-@_cierra_conexion_async
+@comun._cierra_conexion_async
 async def shifts_dismiss(request: Request, person_id: int = Depends(identity.current_person_id)):
-    conn, _, _ = _ctx(person_id)
-    if not _turnos_on(conn, person_id):
+    conn, _, _ = comun._ctx(person_id)
+    if not comun._turnos_on(conn, person_id):
         raise HTTPException(404)
     batch_id = parse_qs((await request.body()).decode()).get("batch_id", [""])[0]
     if batch_id.isdigit():
@@ -841,34 +748,34 @@ def _patron_filas(t: T, cycle: list[dict], start_day: date, errores: dict[int, s
 
 
 @app.get("/shifts/patron")
-@_cierra_conexion
+@comun._cierra_conexion
 def shifts_patron(request: Request, person_id: int = Depends(identity.current_person_id)):
-    conn, person, t = _ctx(person_id)
-    if not _turnos_on(conn, person_id):
+    conn, person, t = comun._ctx(person_id)
+    if not comun._turnos_on(conn, person_id):
         raise HTTPException(404)
     guardado = patron_turnos.leer(conn, person_id)
     dias = _patron_dias(request.query_params.get("dias"), guardado)
-    start_day = date.fromisoformat(guardado["start_day"]) if guardado else _today_local(person)
+    start_day = date.fromisoformat(guardado["start_day"]) if guardado else comun._today_local(person)
     horizon_weeks = guardado["horizon_weeks"] if guardado else _PATRON_DEFAULT_HORIZONTE
     cycle = guardado["cycle"] if guardado and len(guardado["cycle"]) == dias else (
         [{"kind": "off", "start": None, "end": None}] * dias)
-    return _render("shift_pattern.html", t=t, tab="shifts", turnos=True, dias=dias,
+    return comun._render("shift_pattern.html", t=t, tab="shifts", turnos=True, dias=dias,
                    start_day=start_day.isoformat(), horizon_weeks=horizon_weeks,
                    filas=_patron_filas(t, cycle, start_day), tiene_patron=guardado is not None)
 
 
 @app.post("/shifts/patron")
-@_cierra_conexion_async
+@comun._cierra_conexion_async
 async def shifts_patron_save(request: Request, person_id: int = Depends(identity.current_person_id)):
-    conn, person, t = _ctx(person_id)
-    if not _turnos_on(conn, person_id):
+    conn, person, t = comun._ctx(person_id)
+    if not comun._turnos_on(conn, person_id):
         raise HTTPException(404)
-    f = await _form(request)
+    f = await comun._form(request)
     dias = _patron_dias(f.get("dias"), None)
     try:
         start_day = date.fromisoformat(f.get("start_day") or "")
     except ValueError:
-        start_day = _today_local(person)
+        start_day = comun._today_local(person)
     try:
         horizon_weeks = max(1, min(26, int(f.get("horizon_weeks", ""))))
     except ValueError:
@@ -887,22 +794,22 @@ async def shifts_patron_save(request: Request, person_id: int = Depends(identity
     except patron_turnos.PatronInvalido as e:
         errores = {err["index"]: err["code"] for err in e.errors if err["index"] is not None}
         errores_ciclo = [t("patron.error." + err["code"]) for err in e.errors if err["index"] is None]
-        return _render("shift_pattern.html", t=t, tab="shifts", turnos=True, dias=dias,
+        return comun._render("shift_pattern.html", t=t, tab="shifts", turnos=True, dias=dias,
                        start_day=start_day.isoformat(), horizon_weeks=horizon_weeks,
                        filas=_patron_filas(t, cycle, start_day, errores),
                        errores_ciclo=errores_ciclo,
                        tiene_patron=patron_turnos.leer(conn, person_id) is not None)
 
     patron_turnos.guardar(conn, person_id, start_day.isoformat(), cycle, horizon_weeks)
-    patron_turnos.proponer(conn, person_id, _today_local(person))
+    patron_turnos.proponer(conn, person_id, comun._today_local(person))
     return RedirectResponse("/shifts", status_code=303)
 
 
 @app.post("/shifts/patron/quitar")
-@_cierra_conexion_async
+@comun._cierra_conexion_async
 async def shifts_patron_quitar(person_id: int = Depends(identity.current_person_id)):
-    conn, _, _ = _ctx(person_id)
-    if not _turnos_on(conn, person_id):
+    conn, _, _ = comun._ctx(person_id)
+    if not comun._turnos_on(conn, person_id):
         raise HTTPException(404)
     patron_turnos.quitar(conn, person_id)
     for r in conn.execute(
@@ -997,7 +904,7 @@ def _trend_card(conn, t: T, defs: dict, k: str, start, end, month, nights, perso
 
 
 @app.get("/trends")
-@_cierra_conexion
+@comun._cierra_conexion
 def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde: str | None = None,
            dia: str | None = None, person_id: int = Depends(identity.current_person_id)):
     """r = 7 | 30 | 90 | all (the whole history, monthly). m = YYYY-MM opens one month day by day (from a tap on
@@ -1006,8 +913,8 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
     and shows the way back, kept on every range link; dia=<YYYY-MM-DD> names the day to go back to for
     desde=dia/como, and an unparseable dia drops both. The URL carries a range, a month or those flags, never
     a value."""
-    conn, person, t = _ctx(person_id)
-    turnos_on = _turnos_on(conn, person_id)
+    conn, person, t = comun._ctx(person_id)
+    turnos_on = comun._turnos_on(conn, person_id)
     defs = _defs(conn)
     last = _latest_day(conn, person_id)
     desde_dia = None
@@ -1053,10 +960,10 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
     if not cards:
         have = _trend_days_have(conn, person_id)
         if have:
-            return _render("soon.html", t=t, tab="trends", title=t("nav.trends"),
+            return comun._render("soon.html", t=t, tab="trends", title=t("nav.trends"),
                            text=t("trends.too_little", days=TREND_MIN_DAYS - have),
                            back_href=back_href, back_label=back_label, turnos=turnos_on)
-        return _render("soon.html", t=t, tab="trends", title=t("nav.trends"),
+        return comun._render("soon.html", t=t, tab="trends", title=t("nav.trends"),
                        text=_sync_status_text(conn, person, t),
                        back_href=back_href, back_label=back_label, turnos=turnos_on)
     extra_groups, extra_count = [], 0
@@ -1094,7 +1001,7 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
         fig_label = t("trends.avg_n", n=r)
     else:
         fig_label = t("trends.last30")
-    return _render("trends.html", t=t, tab="trends", cards=cards, week=week if r == "all" else None,
+    return comun._render("trends.html", t=t, tab="trends", cards=cards, week=week if r == "all" else None,
                    since=t.long_date(date.fromisoformat(since)) if since else "", days=t.num(days),
                    r=r, ranges=RANGES, fig_label=fig_label, nights=bool(nights),
                    month_title=t.month_year(month) if month else None,
@@ -1261,13 +1168,13 @@ def _shift_ctx(t: T, defs: dict, shift_data: dict) -> dict:
 
 
 @app.get("/history")
-@_cierra_conexion
+@comun._cierra_conexion
 def history_view(person_id: int = Depends(identity.current_person_id)):
-    conn, person, t = _ctx(person_id)
-    turnos_on = _turnos_on(conn, person_id)
+    conn, person, t = comun._ctx(person_id)
+    turnos_on = comun._turnos_on(conn, person_id)
     cov = history.coverage(conn, person_id)
     if not cov:
-        return _render("soon.html", t=t, tab="trends", title=t("history.title"),
+        return comun._render("soon.html", t=t, tab="trends", title=t("history.title"),
                        text=_sync_status_text(conn, person, t), turnos=turnos_on)
     defs = _defs(conn)
     train = history.training(conn, person_id)
@@ -1282,7 +1189,7 @@ def history_view(person_id: int = Depends(identity.current_person_id)):
                 if cov["longest_gap_days"] > 0 else t("history.coverage_no_gap"))
     hero_finding = _finding_text(t, defs, pat["findings"][0]) if pat["findings"] else None
 
-    return _render("history.html", t=t, tab="trends", coverage_line=coverage_line, gap_line=gap_line,
+    return comun._render("history.html", t=t, tab="trends", coverage_line=coverage_line, gap_line=gap_line,
                    activity_count=t.num(cov["activity_count"]), hero_finding=hero_finding,
                    training=_training_ctx(t, train) if train else None,
                    patterns=_pattern_rows(t, defs, pat),
@@ -1501,10 +1408,10 @@ def _verdict_sentence(t: T, defs: dict, g, check: dict) -> str:
 
 
 @app.get("/goals")
-@_cierra_conexion
+@comun._cierra_conexion
 def goals_list(person_id: int = Depends(identity.current_person_id)):
-    conn, person, t = _ctx(person_id)
-    today = _today_local(person)
+    conn, person, t = comun._ctx(person_id)
+    today = comun._today_local(person)
     week_start = _week_monday(today).isoformat()
     defs = _defs(conn)
 
@@ -1541,36 +1448,36 @@ def goals_list(person_id: int = Depends(identity.current_person_id)):
     archived_cards = [{"id": g["id"], "title": g["title"], "status_text": t("goals.status." + g["status"]),
                        "shared_line": _shared_line(conn, t, g, person_id)} for g in archived]
 
-    return _render("goals.html", t=t, tab="goals", cards=cards, proposed=proposed_cards, archived=archived_cards,
-                   empty=not (active or proposed or archived), turnos=_turnos_on(conn, person_id))
+    return comun._render("goals.html", t=t, tab="goals", cards=cards, proposed=proposed_cards, archived=archived_cards,
+                   empty=not (active or proposed or archived), turnos=comun._turnos_on(conn, person_id))
 
 
 @app.get("/goals/new")
-@_cierra_conexion
+@comun._cierra_conexion
 def goal_new_form(person_id: int = Depends(identity.current_person_id)):
-    conn, person, t = _ctx(person_id)
+    conn, person, t = comun._ctx(person_id)
     defs = _defs(conn)
-    today = _today_local(person).isoformat()
+    today = comun._today_local(person).isoformat()
     metrics = []
     for k, d in defs.items():
         b = baseline(conn, k, today, person_id=person_id)
         metrics.append({"key": k, "label": t("metric." + k), "unit": _unit(t, d),
                         "direction": BETTER_TO_DIRECTION[d["better"]], "baseline": b.mean if b else None})
     hh = household.household_of(conn, person_id)
-    return _render("goal_new.html", t=t, tab="goals", metrics=metrics, areas=AREAS, directions=DIRECTIONS,
-                   has_household=bool(hh and len(hh.member_ids) > 1), turnos=_turnos_on(conn, person_id))
+    return comun._render("goal_new.html", t=t, tab="goals", metrics=metrics, areas=AREAS, directions=DIRECTIONS,
+                   has_household=bool(hh and len(hh.member_ids) > 1), turnos=comun._turnos_on(conn, person_id))
 
 
 @app.post("/goals/new")
-@_cierra_conexion_async
+@comun._cierra_conexion_async
 async def goal_new_create(request: Request, person_id: int = Depends(identity.current_person_id)):
-    conn, person, t = _ctx(person_id)
-    f = await _form(request)
+    conn, person, t = comun._ctx(person_id)
+    f = await comun._form(request)
     kind = f.get("kind")
     title = (f.get("title") or "").strip()
     if not title or kind not in ("metric", "milestone"):
         return RedirectResponse("/goals/new", status_code=303)
-    today = _today_local(person).isoformat()
+    today = comun._today_local(person).isoformat()
     why = (f.get("why") or "").strip() or None
     area = f.get("area") if f.get("area") in AREAS else "body"
     hh = household.household_of(conn, person_id)
@@ -1605,15 +1512,15 @@ async def goal_new_create(request: Request, person_id: int = Depends(identity.cu
 
 
 @app.get("/goals/{goal_id}")
-@_cierra_conexion
+@comun._cierra_conexion
 def goal_detail(goal_id: int, request: Request, person_id: int = Depends(identity.current_person_id)):
-    conn, person, t = _ctx(person_id)
+    conn, person, t = comun._ctx(person_id)
     access = goals.goal_access(conn, goal_id, person_id)
     if access is None:
         raise HTTPException(404)
     g = conn.execute("SELECT * FROM goal WHERE id = ?", (goal_id,)).fetchone()
     defs = _defs(conn)
-    today = _today_local(person)
+    today = comun._today_local(person)
     monday = _week_monday(today)
     if g["status"] == "active":
         _goal_check_row(conn, goal_id, person_id, monday.isoformat())  # upserts THIS VIEWER's check if missing
@@ -1681,12 +1588,12 @@ def goal_detail(goal_id: int, request: Request, person_id: int = Depends(identit
     if request.query_params.get("enlace") != "invalido" or enlace_error_app not in enlaces.APPS:
         enlace_error_app = None
 
-    return _render("goal.html", t=t, tab="goals", goal=g, cls=cls, verdict=verdict, chart=chart,
+    return comun._render("goal.html", t=t, tab="goals", goal=g, cls=cls, verdict=verdict, chart=chart,
                    history=history_list, habits=habit_rows, members=members, shared_line=shared_line,
                    is_creator=(access == "creator"), enlaces=enlaces.enlaces_de(conn, goal_id),
                    apps_por_enlazar=enlaces.apps_por_enlazar(conn, goal_id), enlace_error_app=enlace_error_app,
                    target_text=_goal_target_text(t, defs, g), area_label=t("goals.area." + g["area"]),
-                   today=today.isoformat(), turnos=_turnos_on(conn, person_id))
+                   today=today.isoformat(), turnos=comun._turnos_on(conn, person_id))
 
 
 def _require_creator(conn, goal_id: int, person_id: int) -> None:
@@ -1697,49 +1604,49 @@ def _require_creator(conn, goal_id: int, person_id: int) -> None:
 
 
 @app.post("/goals/{goal_id}/activate")
-@_cierra_conexion
+@comun._cierra_conexion
 def goal_activate(goal_id: int, person_id: int = Depends(identity.current_person_id)):
-    conn, _, _ = _ctx(person_id)
+    conn, _, _ = comun._ctx(person_id)
     _require_creator(conn, goal_id, person_id)
     goals.activate(conn, goal_id)
     return RedirectResponse(f"/goals/{goal_id}", status_code=303)
 
 
 @app.post("/goals/{goal_id}/pause")
-@_cierra_conexion
+@comun._cierra_conexion
 def goal_pause(goal_id: int, person_id: int = Depends(identity.current_person_id)):
-    conn, _, _ = _ctx(person_id)
+    conn, _, _ = comun._ctx(person_id)
     _require_creator(conn, goal_id, person_id)
     goals.pause(conn, goal_id)
     return RedirectResponse(f"/goals/{goal_id}", status_code=303)
 
 
 @app.post("/goals/{goal_id}/finish")
-@_cierra_conexion
+@comun._cierra_conexion
 def goal_finish(goal_id: int, person_id: int = Depends(identity.current_person_id)):
-    conn, _, _ = _ctx(person_id)
+    conn, _, _ = comun._ctx(person_id)
     _require_creator(conn, goal_id, person_id)
     goals.finish(conn, goal_id)
     return RedirectResponse("/goals", status_code=303)
 
 
 @app.post("/goals/{goal_id}/drop")
-@_cierra_conexion
+@comun._cierra_conexion
 def goal_drop(goal_id: int, person_id: int = Depends(identity.current_person_id)):
-    conn, _, _ = _ctx(person_id)
+    conn, _, _ = comun._ctx(person_id)
     _require_creator(conn, goal_id, person_id)
     goals.drop(conn, goal_id)
     return RedirectResponse("/goals", status_code=303)
 
 
 @app.post("/goals/{goal_id}/habits")
-@_cierra_conexion_async
+@comun._cierra_conexion_async
 async def goal_add_habit(goal_id: int, request: Request, person_id: int = Depends(identity.current_person_id)):
-    conn, _, _ = _ctx(person_id)
+    conn, _, _ = comun._ctx(person_id)
     if goals.goal_access(conn, goal_id, person_id) is None:
         raise HTTPException(404)
     g = conn.execute("SELECT visibility FROM goal WHERE id = ?", (goal_id,)).fetchone()
-    f = await _form(request)
+    f = await comun._form(request)
     title, cadence = _parse_new_habit(f)
     if title:
         # BODY-HOGAR-MIEMBRO-1 rule 4: on a household goal, the adder (creator or member) picks
@@ -1750,11 +1657,11 @@ async def goal_add_habit(goal_id: int, request: Request, person_id: int = Depend
 
 
 @app.post("/goals/{goal_id}/enlaces")
-@_cierra_conexion_async
+@comun._cierra_conexion_async
 async def goal_add_enlace(goal_id: int, request: Request, person_id: int = Depends(identity.current_person_id)):
-    conn, _, _ = _ctx(person_id)
+    conn, _, _ = comun._ctx(person_id)
     _require_creator(conn, goal_id, person_id)
-    f = await _form(request)
+    f = await comun._form(request)
     app_key = f.get("app")
     ref = enlaces.ref_desde_entrada(app_key, f.get("entrada"))
     if ref is None:
@@ -1765,19 +1672,19 @@ async def goal_add_enlace(goal_id: int, request: Request, person_id: int = Depen
 
 
 @app.post("/goals/{goal_id}/enlaces/{app_key}/quitar")
-@_cierra_conexion
+@comun._cierra_conexion
 def goal_quitar_enlace(goal_id: int, app_key: str, person_id: int = Depends(identity.current_person_id)):
-    conn, _, _ = _ctx(person_id)
+    conn, _, _ = comun._ctx(person_id)
     _require_creator(conn, goal_id, person_id)
     enlaces.quitar(conn, goal_id, app_key)
     return RedirectResponse(f"/goals/{goal_id}#enlaces", status_code=303)
 
 
 @app.post("/habits/{habit_id}/check")
-@_cierra_conexion_async
+@comun._cierra_conexion_async
 async def habit_check(habit_id: int, request: Request, person_id: int = Depends(identity.current_person_id)):
-    conn, person, _ = _ctx(person_id)
-    f = await _form(request)
+    conn, person, _ = comun._ctx(person_id)
+    f = await comun._form(request)
     day = f.get("day")
     try:
         date.fromisoformat(day)
@@ -1793,7 +1700,7 @@ async def habit_check(habit_id: int, request: Request, person_id: int = Depends(
         raise HTTPException(404)
     try:
         goals.check_habit(conn, habit_id, person_id, day, f.get("done") == "1",
-                           hoy=_today_local(person))
+                           hoy=comun._today_local(person))
     except ValueError:
         raise HTTPException(404)
     back = f.get("back") or "/"
@@ -1801,26 +1708,26 @@ async def habit_check(habit_id: int, request: Request, person_id: int = Depends(
 
 
 @app.get("/settings")
-@_cierra_conexion
+@comun._cierra_conexion
 def settings(person_id: int = Depends(identity.current_person_id)):
-    conn, _, t = _ctx(person_id)
+    conn, _, t = comun._ctx(person_id)
     nivel_datos = agente_ajustes.nivel_datos(conn, person_id)
     trabaja_turnos = db.get_trabaja_turnos(conn, person_id)
     hh = household.household_of(conn, person_id)
     compartidas = {r["metric_key"] for r in compartir.mis_compartidas(conn, person_id)} if hh else set()
     metrics_compartir = [{"key": k, "label": t("metric." + k), "shared": k in compartidas}
                           for k in _defs(conn)] if hh else []
-    return _render("settings.html", t=t, tab="settings", nivel_datos=nivel_datos,
-                   trabaja_turnos=trabaja_turnos, turnos=_turnos_on(conn, person_id),
+    return comun._render("settings.html", t=t, tab="settings", nivel_datos=nivel_datos,
+                   trabaja_turnos=trabaja_turnos, turnos=comun._turnos_on(conn, person_id),
                    has_household=bool(hh), metrics_compartir=metrics_compartir)
 
 
 @app.post("/settings/compartir")
-@_cierra_conexion_async
+@comun._cierra_conexion_async
 async def post_compartir(request: Request, person_id: int = Depends(identity.current_person_id)):
-    f = await _form(request)
+    f = await comun._form(request)
     metric_key, accion = f.get("metric_key", ""), f.get("accion", "")
-    conn, _, _ = _ctx(person_id)
+    conn, _, _ = comun._ctx(person_id)
     if accion == "compartir":
         try:
             compartir.compartir(conn, person_id, metric_key)
@@ -1831,50 +1738,23 @@ async def post_compartir(request: Request, person_id: int = Depends(identity.cur
     return RedirectResponse("/settings", status_code=303)
 
 
-# ---- Ayuda (tutoriales-v1 section 5.1): chapters, their tasks, and the recorrido completo ---------
-
-def _tarea_ayuda_ctx(tarea: dict, hosted: bool) -> dict:
-    objetivo = tutoriales.ir_a_pantalla(tarea)
-    solo_en_linea = objetivo in tutoriales.SOLO_EN_LINEA and not hosted
-    return {
-        "id": tarea["id"], "titulo": tarea["titulo"], "video": tutoriales.video(tarea["id"]),
-        "pantalla_link": None if solo_en_linea else objetivo, "solo_en_linea": solo_en_linea,
-        "con_asistente": tarea["agente"] == "si",
-    }
-
-
-@app.get("/ayuda")
-@_cierra_conexion
-def ayuda(person_id: int = Depends(identity.current_person_id)):
-    conn, _, t = _ctx(person_id)
-    turnos_on = _turnos_on(conn, person_id)
-    hosted = cuenta.hosted()
-    capitulos = []
-    recorrido = []
-    for c in tutoriales.capitulos_con_tareas(incluir_turnos=turnos_on):
-        tareas = [_tarea_ayuda_ctx(tarea, hosted) for tarea in c["tareas"]]
-        capitulos.append({"id": c["id"], "titulo": c["titulo"], "tareas": tareas})
-        recorrido.extend(tarea for tarea in tareas if tarea["video"])
-    return _render("ayuda.html", t=t, tab="settings", capitulos=capitulos, recorrido=recorrido, turnos=turnos_on)
-
-
 @app.post("/settings/language")
-@_cierra_conexion_async
+@comun._cierra_conexion_async
 async def set_language(request: Request, person_id: int = Depends(identity.current_person_id)):
     lang = parse_qs((await request.body()).decode()).get("lang", [""])[0]
     if lang in LANGS:
-        conn, _, _ = _ctx(person_id)
+        conn, _, _ = comun._ctx(person_id)
         db.set_language(conn, lang, person_id)
     return RedirectResponse("/settings", status_code=303)
 
 
 @app.post("/settings/trabaja_turnos")
-@_cierra_conexion_async
+@comun._cierra_conexion_async
 async def set_trabaja_turnos(request: Request, person_id: int = Depends(identity.current_person_id)):
     f = parse_qs((await request.body()).decode())
     valor = f.get("valor", [""])[0]
     if valor in ("si", "no"):
-        conn, _, _ = _ctx(person_id)
+        conn, _, _ = comun._ctx(person_id)
         db.set_trabaja_turnos(conn, valor == "si", person_id)
     volver = f.get("volver", ["/settings"])[0]
     if volver not in ("/", "/settings"):
@@ -1892,9 +1772,9 @@ PROVEEDOR_LABEL_KEYS = {
 
 
 @app.get("/ajustes/asistente")
-@_cierra_conexion
+@comun._cierra_conexion
 def nivel_datos_view(request: Request, person_id: int = Depends(identity.current_person_id)):
-    conn, _, t = _ctx(person_id)
+    conn, _, t = comun._ctx(person_id)
     nivel = agente_ajustes.nivel_datos(conn, person_id)
     configurados = agente_cliente.proveedores_configurados()
     proveedores = None
@@ -1903,20 +1783,20 @@ def nivel_datos_view(request: Request, person_id: int = Depends(identity.current
         proveedores = [{"nombre": n, "etiqueta": t(PROVEEDOR_LABEL_KEYS[n])} for n in configurados]
         proveedor_actual = agente_cliente.nombre_elegido(configurados, conn, person_id)
     guardado = request.query_params.get("guardado") == "1"
-    resp = _render("asistente_datos.html", t=t, tab="settings", nivel=nivel, guardado=guardado,
-                   proveedores=proveedores, proveedor_actual=proveedor_actual, turnos=_turnos_on(conn, person_id))
+    resp = comun._render("asistente_datos.html", t=t, tab="settings", nivel=nivel, guardado=guardado,
+                   proveedores=proveedores, proveedor_actual=proveedor_actual, turnos=comun._turnos_on(conn, person_id))
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
 
 @app.post("/ajustes/asistente")
-@_cierra_conexion_async
+@comun._cierra_conexion_async
 async def nivel_datos_guardar(request: Request, person_id: int = Depends(identity.current_person_id)):
-    f = await _form(request)
+    f = await comun._form(request)
     nivel = f.get("nivel") or ""
     if nivel not in agente_ajustes.NIVELES:
         raise HTTPException(400)
-    conn, _, _ = _ctx(person_id)
+    conn, _, _ = comun._ctx(person_id)
     agente_ajustes.set_nivel_datos(conn, person_id, nivel)
     proveedor = f.get("proveedor")
     if proveedor:
@@ -2010,8 +1890,8 @@ async def asistente_preguntar(request: Request, person_id: int = Depends(identit
     if conversacion_id is not None and not isinstance(conversacion_id, int):
         raise HTTPException(400)
 
-    conn, _, t = _ctx(person_id)
-    agente_herramientas.fijar_turnos_actual(_turnos_on(conn, person_id))
+    conn, _, t = comun._ctx(person_id)
+    agente_herramientas.fijar_turnos_actual(comun._turnos_on(conn, person_id))
     if conversacion_id is not None:
         try:
             agente_conversacion.verificar_propiedad(conn, conversacion_id, person_id)
@@ -2092,9 +1972,9 @@ async def asistente_preguntar(request: Request, person_id: int = Depends(identit
 
 
 @app.get("/asistente/conversacion/{conversacion_id}")
-@_cierra_conexion
+@comun._cierra_conexion
 def asistente_conversacion(conversacion_id: int, person_id: int = Depends(identity.current_person_id)):
-    conn, _, t = _ctx(person_id)
+    conn, _, t = comun._ctx(person_id)
     try:
         turnos = agente_conversacion.turnos_visibles(conn, conversacion_id, person_id)
     except agente_conversacion.ConversacionAjena:
@@ -2117,23 +1997,23 @@ def _propuesta_respuesta(conn, person_id: int, propuesta_id: int, accion) -> JSO
 
 
 @app.post("/asistente/propuestas/{propuesta_id}/aplicar")
-@_cierra_conexion
+@comun._cierra_conexion
 def propuesta_aplicar(propuesta_id: int, person_id: int = Depends(identity.current_person_id)):
-    conn, _, _ = _ctx(person_id)
+    conn, _, _ = comun._ctx(person_id)
     return _propuesta_respuesta(conn, person_id, propuesta_id, agente_propuestas.aplicar)
 
 
 @app.post("/asistente/propuestas/{propuesta_id}/descartar")
-@_cierra_conexion
+@comun._cierra_conexion
 def propuesta_descartar(propuesta_id: int, person_id: int = Depends(identity.current_person_id)):
-    conn, _, _ = _ctx(person_id)
+    conn, _, _ = comun._ctx(person_id)
     return _propuesta_respuesta(conn, person_id, propuesta_id, agente_propuestas.descartar)
 
 
 @app.post("/asistente/propuestas/{propuesta_id}/deshacer")
-@_cierra_conexion
+@comun._cierra_conexion
 def propuesta_deshacer(propuesta_id: int, person_id: int = Depends(identity.current_person_id)):
-    conn, _, _ = _ctx(person_id)
+    conn, _, _ = comun._ctx(person_id)
     return _propuesta_respuesta(conn, person_id, propuesta_id, agente_propuestas.deshacer)
 
 
@@ -2167,7 +2047,7 @@ def _prune_mfa_state() -> None:
 def _garmin_ctx(t: T, conn, person_id: int, **extra) -> dict:
     connected_since = garmin_cuenta.conectado_desde(conn, person_id)
     ctx = {
-        "t": t, "tab": "settings", "turnos": _turnos_on(conn, person_id),
+        "t": t, "tab": "settings", "turnos": comun._turnos_on(conn, person_id),
         "connected": connected_since is not None,
         "connected_since": _short_date(t, datetime.fromisoformat(connected_since).date())
                            if connected_since else None,
@@ -2179,22 +2059,22 @@ def _garmin_ctx(t: T, conn, person_id: int, **extra) -> dict:
 
 
 @app.get("/garmin")
-@_cierra_conexion
+@comun._cierra_conexion
 def garmin_view(request: Request, person_id: int = Depends(identity.current_person_id)):
     if not cuenta.hosted():
         raise HTTPException(404)
-    conn, _, t = _ctx(person_id)
+    conn, _, t = comun._ctx(person_id)
     err = request.query_params.get("error")
     form_error = t(_GARMIN_FORM_ERROR_KEYS[err]) if err in _GARMIN_FORM_ERROR_KEYS else None
-    return _render("garmin.html", **_garmin_ctx(t, conn, person_id, form_error=form_error))
+    return comun._render("garmin.html", **_garmin_ctx(t, conn, person_id, form_error=form_error))
 
 
 @app.post("/garmin/conectar")
-@_cierra_conexion_async
+@comun._cierra_conexion_async
 async def garmin_conectar(request: Request, person_id: int = Depends(identity.current_person_id)):
     if not cuenta.hosted():
         raise HTTPException(404)
-    f = await _form(request)
+    f = await comun._form(request)
     email = (f.get("email") or "").strip()
     password = f.get("password") or ""
     if not email or not password:
@@ -2208,19 +2088,19 @@ async def garmin_conectar(request: Request, person_id: int = Depends(identity.cu
     if status == "needs_mfa":
         _prune_mfa_state()
         _MFA_STATE[_mfa_key(request)] = (result, time.monotonic())
-        conn, _, t = _ctx(person_id)
-        return _render("garmin.html", **_garmin_ctx(t, conn, person_id, mfa=True))
-    conn, _, _ = _ctx(person_id)
+        conn, _, t = comun._ctx(person_id)
+        return comun._render("garmin.html", **_garmin_ctx(t, conn, person_id, mfa=True))
+    conn, _, _ = comun._ctx(person_id)
     garmin_cuenta.guardar(conn, person_id, result)
     return RedirectResponse("/garmin", status_code=303)
 
 
 @app.post("/garmin/codigo")
-@_cierra_conexion_async
+@comun._cierra_conexion_async
 async def garmin_codigo(request: Request, person_id: int = Depends(identity.current_person_id)):
     if not cuenta.hosted():
         raise HTTPException(404)
-    f = await _form(request)
+    f = await comun._form(request)
     code = (f.get("code") or "").strip()
     key = _mfa_key(request)
     entry = _MFA_STATE.get(key)
@@ -2231,46 +2111,46 @@ async def garmin_codigo(request: Request, person_id: int = Depends(identity.curr
         token = garmin_adapter.finish_sign_in(client_state_json, code)
     except Exception:
         # A wrong code may be retried within the same TTL window -- the state is kept, not popped.
-        conn, _, t = _ctx(person_id)
-        return _render("garmin.html",
+        conn, _, t = comun._ctx(person_id)
+        return comun._render("garmin.html",
                        **_garmin_ctx(t, conn, person_id, mfa=True, form_error=t("garmin.error.generic")))
     finally:
         code = None  # noqa: F841
     _MFA_STATE.pop(key, None)
-    conn, _, _ = _ctx(person_id)
+    conn, _, _ = comun._ctx(person_id)
     garmin_cuenta.guardar(conn, person_id, token)
     return RedirectResponse("/garmin", status_code=303)
 
 
 @app.post("/garmin/desconectar")
-@_cierra_conexion
+@comun._cierra_conexion
 def garmin_desconectar(person_id: int = Depends(identity.current_person_id)):
     if not cuenta.hosted():
         raise HTTPException(404)
-    conn, _, _ = _ctx(person_id)
+    conn, _, _ = comun._ctx(person_id)
     garmin_cuenta.borrar(conn, person_id)
     return RedirectResponse("/garmin", status_code=303)
 
 
 @app.get("/privacidad/consentimiento")
-@_cierra_conexion
+@comun._cierra_conexion
 def consentimiento_form(request: Request, person_id: int = Depends(identity.current_person_id)):
     if not cuenta.hosted():
         raise HTTPException(404)
-    _, _, t = _ctx(person_id)
+    _, _, t = comun._ctx(person_id)
     return_to = cuenta.safe_return_to(request.query_params.get("return_to"))
-    return _render("consentimiento.html", t=t, tab=None, return_to=return_to)
+    return comun._render("consentimiento.html", t=t, tab=None, return_to=return_to)
 
 
 @app.post("/privacidad/consentimiento")
-@_cierra_conexion_async
+@comun._cierra_conexion_async
 async def consentimiento_decide(request: Request, person_id: int = Depends(identity.current_person_id)):
     if not cuenta.hosted():
         raise HTTPException(404)
-    f = await _form(request)
+    f = await comun._form(request)
     return_to = cuenta.safe_return_to(f.get("return_to"))
     if f.get("decision") == "acepto":
-        conn, _, _ = _ctx(person_id)
+        conn, _, _ = comun._ctx(person_id)
         privacidad.record_consent(conn, person_id)
         return RedirectResponse(return_to, status_code=303)
     conn = db.connect()
@@ -2283,9 +2163,9 @@ async def consentimiento_decide(request: Request, person_id: int = Depends(ident
 
 
 @app.get("/privacidad")
-@_cierra_conexion
+@comun._cierra_conexion
 def privacidad_view(request: Request, person_id: int = Depends(identity.current_person_id)):
-    conn, person, t = _ctx(person_id)
+    conn, person, t = comun._ctx(person_id)
     row = conn.execute(
         "SELECT accepted_at FROM consentimiento WHERE person_id = ? AND version = ?",
         (person_id, privacidad.CONSENT_VERSION),
@@ -2296,16 +2176,16 @@ def privacidad_view(request: Request, person_id: int = Depends(identity.current_
     if es_hosted and request.query_params.get("reauth") == "1":
         token = request.cookies.get(cuenta.SESSION_COOKIE)
         reauth_ok = cuenta.reciente(conn, token)
-    return _render("privacidad.html", t=t, tab="settings", version=privacidad.CONSENT_VERSION,
+    return comun._render("privacidad.html", t=t, tab="settings", version=privacidad.CONSENT_VERSION,
                    accepted_date=accepted_date, delete_word=t("privacidad.borrar_palabra"),
                    error=request.query_params.get("error") == "confirmacion",
-                   es_hosted=es_hosted, reauth_ok=reauth_ok, turnos=_turnos_on(conn, person_id))
+                   es_hosted=es_hosted, reauth_ok=reauth_ok, turnos=comun._turnos_on(conn, person_id))
 
 
 @app.get("/privacidad/exportar")
-@_cierra_conexion
+@comun._cierra_conexion
 def privacidad_exportar(person_id: int = Depends(identity.current_person_id)):
-    conn, _, _ = _ctx(person_id)
+    conn, _, _ = comun._ctx(person_id)
     data = privacidad.export_person(conn, person_id)
     body = json.dumps(data, ensure_ascii=False, indent=2)
     return Response(body, media_type="application/json",
@@ -2313,10 +2193,10 @@ def privacidad_exportar(person_id: int = Depends(identity.current_person_id)):
 
 
 @app.post("/privacidad/borrar")
-@_cierra_conexion_async
+@comun._cierra_conexion_async
 async def privacidad_borrar(request: Request, person_id: int = Depends(identity.current_person_id)):
-    f = await _form(request)
-    conn, _, t = _ctx(person_id)
+    f = await comun._form(request)
+    conn, _, t = comun._ctx(person_id)
     if cuenta.hosted():
         token = request.cookies.get(cuenta.SESSION_COOKIE)
         if not cuenta.reciente(conn, token):
@@ -2350,30 +2230,30 @@ def _dispositivo_row(t: T, d: dict) -> dict:
 
 
 @app.get("/ajustes/dispositivos")
-@_cierra_conexion
+@comun._cierra_conexion
 def dispositivos_view(person_id: int = Depends(identity.current_person_id)):
     if not cuenta.hosted():
         raise HTTPException(404)
-    conn, _, t = _ctx(person_id)
+    conn, _, t = comun._ctx(person_id)
     items = [_dispositivo_row(t, d) for d in dispositivo.listar(conn, person_id)]
-    resp = _render("dispositivos.html", t=t, tab="settings", items=items, new_key=None,
-                   turnos=_turnos_on(conn, person_id))
+    resp = comun._render("dispositivos.html", t=t, tab="settings", items=items, new_key=None,
+                   turnos=comun._turnos_on(conn, person_id))
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
 
 @app.post("/ajustes/dispositivos")
-@_cierra_conexion_async
+@comun._cierra_conexion_async
 async def dispositivos_crear(request: Request, person_id: int = Depends(identity.current_person_id)):
     if not cuenta.hosted():
         raise HTTPException(404)
-    f = await _form(request)
-    conn, _, t = _ctx(person_id)
+    f = await comun._form(request)
+    conn, _, t = comun._ctx(person_id)
     nombre = (f.get("nombre") or "").strip()
     if not nombre:
         items = [_dispositivo_row(t, d) for d in dispositivo.listar(conn, person_id)]
-        resp = _render("dispositivos.html", t=t, tab="settings", items=items, new_key=None,
-                       turnos=_turnos_on(conn, person_id))
+        resp = comun._render("dispositivos.html", t=t, tab="settings", items=items, new_key=None,
+                       turnos=comun._turnos_on(conn, person_id))
         resp.headers["Cache-Control"] = "no-store"
         return resp
     alcances = set()
@@ -2383,18 +2263,18 @@ async def dispositivos_crear(request: Request, person_id: int = Depends(identity
         alcances.add("vida:leer")
     new_key = dispositivo.crear(conn, person_id, nombre, alcances)
     items = [_dispositivo_row(t, d) for d in dispositivo.listar(conn, person_id)]
-    resp = _render("dispositivos.html", t=t, tab="settings", items=items, new_key=new_key,
-                   turnos=_turnos_on(conn, person_id))
+    resp = comun._render("dispositivos.html", t=t, tab="settings", items=items, new_key=new_key,
+                   turnos=comun._turnos_on(conn, person_id))
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
 
 @app.post("/ajustes/dispositivos/{dispositivo_id}/revocar")
-@_cierra_conexion
+@comun._cierra_conexion
 def dispositivos_revocar(dispositivo_id: int, person_id: int = Depends(identity.current_person_id)):
     if not cuenta.hosted():
         raise HTTPException(404)
-    conn, _, _ = _ctx(person_id)
+    conn, _, _ = comun._ctx(person_id)
     dispositivo.revocar(conn, person_id, dispositivo_id)
     return RedirectResponse("/ajustes/dispositivos", status_code=303)
 
@@ -2406,7 +2286,7 @@ MAX_TURNOS_BODY_BYTES = 256 * 1024
 
 
 @app.post("/api/turnos")
-@_cierra_conexion_async
+@comun._cierra_conexion_async
 async def api_turnos(request: Request, person_id: int = Depends(identity.person_from_device("turnos:subir"))):
     file_name = request.headers.get("x-body-archivo") or ""
     if not _TURNOS_FILENAME_RE.match(file_name):
@@ -2426,7 +2306,7 @@ async def api_turnos(request: Request, person_id: int = Depends(identity.person_
         return JSONResponse({"error": "archivo_rechazado", "motivo": "esquema"}, status_code=422)
     if not isinstance(data, dict):
         return JSONResponse({"error": "archivo_rechazado", "motivo": "esquema"}, status_code=422)
-    conn, _, _ = _ctx(person_id)
+    conn, _, _ = comun._ctx(person_id)
     before = conn.execute(
         "SELECT COUNT(*) AS n FROM shift_batch WHERE person_id = ?", (person_id,)
     ).fetchone()["n"]
@@ -2446,7 +2326,7 @@ async def api_turnos(request: Request, person_id: int = Depends(identity.person_
 
 
 @app.get("/api/vida/semana")
-@_cierra_conexion
+@comun._cierra_conexion
 def api_vida_semana(semana: str | None = None,
                      person_id: int = Depends(identity.person_from_device("vida:leer"))):
     if semana:
@@ -2458,7 +2338,7 @@ def api_vida_semana(semana: str | None = None,
             raise HTTPException(400)
     else:
         monday = vida_export.current_week_monday()
-    conn, _, _ = _ctx(person_id)
+    conn, _, _ = comun._ctx(person_id)
     data = vida_export.week_section(conn, monday, person_id)
     return JSONResponse(data, headers={"Cache-Control": "no-store"})
 

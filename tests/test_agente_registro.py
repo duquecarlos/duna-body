@@ -13,6 +13,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from fastapi.routing import APIRoute
 
 from tests._db import open_conn
+from tests._rutas import rutas_planas
 
 from body import db, goals, web
 from body.agente import ajustes, herramientas
@@ -182,7 +183,7 @@ class RegistryShapeTest(unittest.TestCase):
 
 class RouteMappingTest(unittest.TestCase):
     def test_every_get_route_has_a_mapping_decision(self):
-        get_paths = {r.path for r in web.app.routes if isinstance(r, APIRoute) and "GET" in r.methods}
+        get_paths = {r.path for r in rutas_planas(web.app.routes) if isinstance(r, APIRoute) and "GET" in r.methods}
         self.assertTrue(get_paths)
         self.assertEqual(get_paths, set(ROUTE_TOOL),
                          "a GET route appeared or disappeared with no tool-mapping decision")

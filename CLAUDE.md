@@ -44,6 +44,13 @@ jobs print counts and dates only. No third-party analytics. Mocks and fixtures u
 Every test module imports `tests/_isolate.py` first (a test once wrote fake data into the real database, 2026-11-05).
 A new test module without that import is a defect.
 
+## Structure
+
+`body/web.py` assembles the app (FastAPI construction, middleware, `main()`) and still holds every
+route not yet moved out; routes live in `body/rutas/<dominio>.py`, shared plumbing in
+`body/rutas/comun.py`, and tests patch the module that owns a name -- `tests/test_guardia_parches.py`
+enforces it (BODY-WEB-ESTRUCTURA-1).
+
 ## The gate
 
 Exactly this command, from the repository root, its result read from the process:

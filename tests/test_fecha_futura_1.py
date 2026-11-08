@@ -16,6 +16,7 @@ from tests._db import open_conn
 from fastapi.testclient import TestClient
 
 from body import config, db, fechas, goals, identity, patron_turnos, web
+from body.rutas import comun
 
 
 def _conn(case: unittest.TestCase):
@@ -138,7 +139,7 @@ class HabitCheckRouteTest(unittest.TestCase):
         self.hoy = date(2026, 11, 8)
 
     def _check(self, day: str):
-        with mock.patch.object(web, "_today_local", return_value=self.hoy):
+        with mock.patch.object(comun, "_today_local", return_value=self.hoy):
             return self.client.post(f"/habits/{self.hid}/check", data={"day": day, "done": "1", "back": "/"})
 
     def test_today_is_accepted(self):
