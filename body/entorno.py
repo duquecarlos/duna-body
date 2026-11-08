@@ -2,6 +2,11 @@
 key on his own PC (BODY-ENV-LOCAL-1). Read only by `body/web.py`'s `main()`, before uvicorn starts,
 never at import, so tests and other modules never touch a real file.
 
+The secret keeps ONE home: the main repo's own `.env`. The live checkout a scheduled task runs
+from (BODY-LIVE-CHECKOUT-1) has no `.env` of its own, so `body/vivo.py` sets `BODY_ENV_FILE` to the
+main repo's `.env` path before running the child task; `cargar()` with no `ruta` prefers that
+variable over `RUTA_DEFECTO`, so a task run from the live tree still reads the one real file.
+
 ALLOWLIST: only names starting with `PREFIJO` are taken from the file; everything else is ignored
 and counted, never loaded -- a stray Cuenta or host-secret line here must never reach os.environ.
 The real environment always wins: a name already set there is left alone. Never logs or returns a
@@ -20,7 +25,9 @@ _EXPORT = re.compile(r"^export\s+")
 
 
 def cargar(ruta: Path | None = None, entorno=os.environ) -> tuple[int, int]:
-    ruta = RUTA_DEFECTO if ruta is None else ruta
+    if ruta is None:
+        desde_vivo = entorno.get("BODY_ENV_FILE")
+        ruta = Path(desde_vivo) if desde_vivo else RUTA_DEFECTO
     if not ruta.exists():
         return 0, 0
     texto = ruta.read_text(encoding="utf-8-sig")

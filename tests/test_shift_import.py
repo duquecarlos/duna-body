@@ -527,9 +527,9 @@ class InstallScriptTest(unittest.TestCase):
         branch_start = text.index("if ($ShiftsDir)")
         branch_end = text.index("}", branch_start)
         branch = text[branch_start:branch_end]
-        self.assertIn("body.shift_import", branch)
+        self.assertIn("body.vivo shift_import", branch)
         outside = text[:branch_start] + text[branch_end:]
-        self.assertNotIn("body.shift_import", outside)
+        self.assertNotIn("body.vivo shift_import", outside)
         self.assertNotIn("Users", text)
         self.assertNotIn("Carlos", text)
 

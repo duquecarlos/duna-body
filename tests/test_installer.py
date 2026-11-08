@@ -49,5 +49,67 @@ class InstallerWebTaskTest(unittest.TestCase):
         self.assertIn("Body app web", line)
 
 
+class InstallerLiveCheckoutTest(unittest.TestCase):
+    """BODY-LIVE-CHECKOUT-1: every task action runs through body.vivo from -LiveDir."""
+
+    def setUp(self):
+        self.text = SCRIPT.read_text(encoding="utf-8")
+
+    def _actions(self):
+        return re.findall(r"New-ScheduledTaskAction[^\n]*", self.text)
+
+    def test_every_action_runs_through_body_vivo(self):
+        actions = self._actions()
+        self.assertTrue(actions, "no New-ScheduledTaskAction calls found")
+        self.assertIn('$webArgs = "-m body.vivo web', self.text)
+        for action in actions:
+            if "-Argument $webArgs" in action:
+                continue
+            self.assertIn("-m body.vivo ", action, f"not routed through body.vivo: {action}")
+            self.assertNotRegex(action, r"-m body\.(?!vivo)\w+",
+                                 f"action bypasses body.vivo: {action}")
+
+    def test_every_action_working_directory_is_livedir(self):
+        actions = self._actions()
+        self.assertTrue(actions)
+        for action in actions:
+            self.assertIn("-WorkingDirectory $LiveDir", action,
+                           f"action does not use $LiveDir: {action}")
+
+    def test_livedir_default_has_no_absolute_personal_path(self):
+        m = re.search(r'if\s*\(-not\s*\$LiveDir\)\s*\{\s*\$LiveDir\s*=\s*"([^"]+)"', self.text)
+        self.assertIsNotNone(m, "no default $LiveDir assignment found")
+        self.assertNotIn("C:\\", m.group(1))
+
+    def test_worktree_added_detached(self):
+        self.assertIn("git -C $repo worktree add --detach $LiveDir main", self.text)
+
+    def test_no_absolute_personal_path(self):
+        self.assertNotIn("C:\\Duna", self.text)
+        self.assertNotIn("C:\\Users", self.text)
+
+
+class InstallerWorktreeReuseTest(unittest.TestCase):
+    """BODY-LIVE-CHECKOUT-1-M: the reuse decision asks git, not a text match on the path."""
+
+    def setUp(self):
+        self.text = SCRIPT.read_text(encoding="utf-8")
+
+    def test_no_longer_matches_worktree_list_with_match(self):
+        self.assertNotIn("worktree list --porcelain", self.text)
+        self.assertNotIn("-match [regex]::Escape($LiveDir)", self.text)
+
+    def test_reuse_decision_uses_rev_parse_git_common_dir(self):
+        self.assertIn("git -C $LiveDir rev-parse --git-common-dir", self.text)
+        self.assertIn('Resolve-Path -LiteralPath "$repo\\.git"', self.text)
+
+    def test_refuses_a_livedir_that_is_not_this_repos_worktree(self):
+        start = self.text.index("if (Test-Path -LiteralPath $LiveDir)")
+        close = self.text.index("\n} else {", start)
+        block = self.text[start:close]
+        self.assertIn("exit 1", block)
+        self.assertIn("worktree add", self.text[close:])
+
+
 if __name__ == "__main__":
     unittest.main()

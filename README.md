@@ -62,6 +62,36 @@ folder: the default `BODY_HOME`, the current `BODY_HOME` environment value, the 
 any folder that already holds a `body.db` it did not seed itself. The task catalog it drives is
 `tutoriales/catalogo.json`.
 
+## Lo que corre en tu PC / What runs on your PC
+
+Every scheduled task (the web app, the daily pull, the weekly file) runs from a second, sibling
+checkout of this repo on disk -- `<this folder>-live` by default -- that only ever holds `main`.
+A launcher (`python -m body.vivo <task>`) refreshes that checkout to `main`'s latest commit at
+the start of every run, then runs the task from there. This is why a dispatched change on a
+branch in THIS folder never reaches your running web app or your scheduled pulls until it is
+merged to `main` and a task next starts -- and why "restart the web task" always means "serve
+`main`", even if this folder's own working tree is mid-review on a branch at that moment.
+
+The assistant key keeps one home: this repo's own `.env` (below). The live checkout has no `.env`
+of its own -- the launcher points every task at this folder's `.env` through the `BODY_ENV_FILE`
+variable, so you only ever edit one file.
+
+Nothing on your PC changes until you re-run the installer:
+
+```powershell
+.\scripts\install-daily-sync.ps1
+```
+
+It creates the live checkout the first time (`<this folder>-live`), or reuses it if it is already
+there, and points every scheduled task's action at `python -m body.vivo <task>` running from it.
+Pass `-LiveDir "C:\path\you\want"` to put it somewhere else.
+
+To undo: remove the scheduled tasks as shown above, then
+
+```powershell
+git -C "<this folder>" worktree remove "<this folder>-live"
+```
+
 ## Asistente: tu clave de IA
 
 El asistente responde con la clave de un proveedor (Anthropic, OpenAI o Gemini). La forma normal en este PC:
