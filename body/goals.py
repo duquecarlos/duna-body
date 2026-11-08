@@ -197,7 +197,7 @@ def habit_due_today(conn, habit, person_id: int, today: date) -> bool:
     cadence = json.loads(habit["cadence"])
     context = cadence.get("context")
     per = cadence.get("per", "week")
-    monday = today - timedelta(today.weekday())
+    monday = fechas.lunes_de(today)
     due_days = _context_due_days(conn, person_id, monday, context) if context else _week_days(monday)
     if today.isoformat() not in due_days:
         return False

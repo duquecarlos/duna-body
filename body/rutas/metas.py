@@ -10,7 +10,7 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import db, enlaces, goals, household, identity, profile
+from .. import db, enlaces, fechas, goals, household, identity, profile
 from ..baselines import baseline
 from ..i18n import T
 from . import comun
@@ -21,10 +21,6 @@ AREAS = ["body", "money", "adventure", "growth", "work", "home"]
 DIRECTIONS = ["raise", "lower", "keep"]
 CONTEXTS = ("before_night", "after_night", "off_days")
 BETTER_TO_DIRECTION = {"higher": "raise", "lower": "lower", "neutral": "keep"}
-
-
-def _week_monday(d: date) -> date:
-    return d - timedelta(d.weekday())
 
 
 def _cadence_text(t: T, cadence: dict) -> str:
@@ -179,7 +175,7 @@ def _verdict_sentence(t: T, defs: dict, g, check: dict) -> str:
 def goals_list(person_id: int = Depends(identity.current_person_id)):
     conn, person, t = comun._ctx(person_id)
     today = comun._today_local(person)
-    week_start = _week_monday(today).isoformat()
+    week_start = fechas.lunes_de(today).isoformat()
     defs = comun._defs(conn)
 
     hh = household.household_of(conn, person_id)
@@ -288,7 +284,7 @@ def goal_detail(goal_id: int, request: Request, person_id: int = Depends(identit
     g = conn.execute("SELECT * FROM goal WHERE id = ?", (goal_id,)).fetchone()
     defs = comun._defs(conn)
     today = comun._today_local(person)
-    monday = _week_monday(today)
+    monday = fechas.lunes_de(today)
     if g["status"] == "active":
         _goal_check_row(conn, goal_id, person_id, monday.isoformat())  # upserts THIS VIEWER's check if missing
 
