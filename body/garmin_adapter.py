@@ -8,6 +8,7 @@ Privacy: never log payloads, tokens or credentials from here.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -15,6 +16,16 @@ from typing import Any, Callable
 from . import config
 
 SOURCE = "garmin"
+
+# BODY-LOGIN-MENSAJES-1: garminconnect's own logger calls (api/_common.py, api/base.py and the
+# five client/*.py modules, all getLogger(__name__) under "garminconnect") have no handler
+# anywhere in Body's logging config, so Python's logging.lastResort would otherwise write their
+# text straight to stderr. A NullHandler on the shared "garminconnect" namespace satisfies every
+# descendant logger's search for a handler, and propagate=False stops the record climbing past
+# here to a handler something else configures on the root logger.
+_garminconnect_logger = logging.getLogger("garminconnect")
+_garminconnect_logger.addHandler(logging.NullHandler())
+_garminconnect_logger.propagate = False
 
 
 @dataclass

@@ -12,6 +12,8 @@ import re
 import sqlite3
 from pathlib import Path
 
+from .. import errores
+
 _RUTA_PRECIOS = Path(__file__).with_name("precios.json")
 _TIPOS = ("entrada", "salida", "cache_lectura", "cache_escritura")
 _FECHA_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -25,11 +27,11 @@ def _filas_validadas(ruta: Path) -> list[tuple[str, str, str, str, int]]:
     try:
         texto = ruta.read_text(encoding="utf-8")
     except OSError as e:
-        raise PreciosInvalidos(f"cannot read {ruta}: {e}") from e
+        raise PreciosInvalidos(f"cannot read {ruta}: {errores.texto_seguro(e)}") from None
     try:
         datos = json.loads(texto)
     except json.JSONDecodeError as e:
-        raise PreciosInvalidos(f"{ruta} is not valid JSON: {e}") from e
+        raise PreciosInvalidos(f"{ruta} is not valid JSON: {errores.texto_seguro(e)}") from None
 
     precios = datos.get("precios") if isinstance(datos, dict) else None
     if not isinstance(precios, list) or not precios:

@@ -13,7 +13,7 @@ import os
 import sys
 from datetime import date
 
-from . import config, pc_cliente, vida_export
+from . import config, errores, pc_cliente, vida_export
 
 VIDA_DIR_NAME = "vida"
 
@@ -26,7 +26,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         pc_cliente.leer_enlace()
     except pc_cliente.EnlaceFaltante as e:
-        print(str(e))
+        print(errores.texto_propio(e))
         return 1
 
     ruta = "/api/vida/semana"

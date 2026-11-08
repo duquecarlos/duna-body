@@ -15,7 +15,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import config, pc_cliente
+from . import config, errores, pc_cliente
 from .shift_import import _candidate_files
 
 SUBIDOS_NAME = "turnos-subidos.json"
@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         pc_cliente.leer_enlace()
     except pc_cliente.EnlaceFaltante as e:
-        print(str(e))
+        print(errores.texto_propio(e))
         return 1
 
     subidos = _leer_subidos()
