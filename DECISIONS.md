@@ -10082,3 +10082,111 @@ merge `d6cdc3eda6e1717d6da477d8e2eb1172d237fafe` into `main` (merge strategy `or
 Tree identity proven: merge tree `4b2f539d156b7f0c0fe5acbd3e581d96fb03e82d` equals the branch tip's
 own tree exactly. `main` left checked out, `git status --porcelain` empty (before this ledger
 entry's own commit).
+
+## BODY-REGISTRO-TU-1 -- two register guards, and the one ambiguous string they let through once
+
+Adopts hub item `hit_01m6ymj1w53wcm7ghds29vpk1s` (Pedidos, `ORDERS-QUESTION-ROUTING-REGISTER-PACK-1`):
+every fixed customer sentence keeps its product's register, and a link is never followed directly
+by punctuation a chat client could read as part of it. Body speaks tú, in one register, to one
+person; nothing guarded that until now.
+
+**Census.** Every fixed Spanish customer sentence in the repository:
+- `body/i18n/es.json`: 575 top-level keys, 573 string values (the other two, `date.days` and
+  `date.months`, are lists of words with no register at all).
+- `body/i18n/en.json`: the same shape, 575 keys / 573 strings (mirrored, for guard 2's scan and for
+  checking English alignment on the one fixed string).
+- `tutoriales/catalogo.json` (not in `touches:`, read-only): 29 titles (8 chapters + 21 tasks), all
+  infinitive or noun-phrase task names ("Confirmar los turnos propuestos", "Descargar todo") --
+  infinitives carry no tú/usted register, so none could be a violation; no fix needed.
+- `body/**/*.py`: the orchestrator's two named files plus every other file with an accented Spanish
+  character were read. `body/agente/herramientas.py`'s Spanish is tool `descripcion` text (sent to
+  the model, never the person) and `ToolError` messages -- `body/agente/bucle.py`'s own docstring
+  states a tool error "becomes a tool-result error text fed back to the model, never an exception
+  shown to the person," confirmed by reading `bucle.py`'s loop. `body/turnos_costo.py`'s Spanish is
+  internal state codes ('peor'/'mejor'/'igual', 'sin_turnos', ...) looked up through es.json/en.json
+  keys elsewhere, not fixed sentences themselves. `body/agente/propuestas.py` and
+  `body/agente/conversacion.py` have no Spanish customer sentence (SQL, English docstrings, and
+  internal state tags like 'aplicada'/'descartada'). `body/conectar_pc.py`, `body/pc_cliente.py`,
+  `body/traer_semana.py`, `body/subir_turnos.py` print CLI messages to Carlos on his own PC, already
+  tú ("Corre: python -m body.conectar_pc"). `body/templates/goal.html` and every other template have
+  no hardcoded Spanish sentence outside `t()` calls (`settings.html`'s one non-ASCII literal is the
+  language name "Español", not a sentence). Conclusion: every fixed customer sentence in this
+  repository lives in `body/i18n/es.json` / `en.json`; nothing else needed scanning by guard 1.
+
+**Guard 1 -- register (`tests/test_registro_tu.py`, `TestRegistroTuEsJson`).** Scans every es.json
+string (573, non-vacuous) for: `usted`/`ustedes`; the formal imperatives `ingrese`, `seleccione`,
+`haga`, `escriba`, `elija`, `intente`, `verifique`, `revise`, `toque`, `pulse`, `presione`,
+`confirme`, `agregue`, `conecte`, `descargue`; and the specific risky phrases `le recomendamos`,
+`le enviamos`, `lo invitamos`, `le pedimos`, `le sugerimos` (bare `le`/`lo`/`la` are not matched --
+in this app's Spanish they are almost always relative pronouns ("lo que...") or definite articles
+("la hora..."), never a formal "you"). 0 hits. A second scan covers `su`/`sus`/`tiene`/`puede`
+(573 strings, non-vacuous): 12 real hits, all third person about a thing, listed in the allow-list
+below with the reason each is safe; 0 hits outside the allow-list. A third test asserts the
+allow-list has no stale entries (every listed key still matches). Two bite-proof tests: the word
+pattern matches a planted `"Ingrese su correo"`; the phrase pattern matches a planted
+`"Le recomendamos revisar su conexión"`.
+
+**Guard 2 -- no punctuation glued to a link (`TestEnlaceSinPuntuacionPegada`).** Scans es.json (573)
++ en.json (573) + every string constant in `body/agente/*.py` except Tier 1 `cliente.py`
+(`herramientas.py`, `bucle.py`, `propuestas.py`, `conversacion.py`, `ajustes.py` -- 861 constants,
+including docstrings and SQL, to keep the scan honestly non-vacuous rather than hand-picking which
+literals count) -- 2007 strings total, non-vacuous. Checks for `.`, `,`, `;`, `:`, `)` or `!`
+immediately after a `{...url...}`/`{link}`/`{enlace}`/`{href}`-shaped placeholder, or after a
+literal `http(s)://` token where the punctuation ends the token (next character is whitespace, a
+quote, a closing bracket, or end of string -- so a dot that is part of the link's own path, followed
+by more path, is not a false hit). 0 hits: no link in this codebase is ever followed by punctuation.
+Two bite-proof tests (planted `"Mira esto: {url}."`, planted `"Ve a https://body.app."`) and one
+false-positive guard (`"Ve a https://body.app/ruta para mas info"` does not trip the raw-URL check).
+
+**Allow-list** (`su`/`sus`/`tiene`/`puede`, each third person about a thing, never the reader):
+
+| es.json key | string | why it is safe |
+|---|---|---|
+| `how.explain` | "...las demás se reparten su peso." | "su" = the other score parts' own weight |
+| `soon.goals` | "Aquí vivirán tus metas, su plan..." | "su" = the goals' own plan |
+| `goals.enlace.field_entrada` | "...o su número" | "su" = the trip's own number |
+| `settings.compartir.nota` | "Solo ven el último valor y su fecha." | "su" = that value's own date |
+| `today.hogar.procedencia` | "{name} compartió esto · su reloj..." | "su" = that household member's watch |
+| `goals.visibility_milestone_note` | "...cada quien lleva sus propios números." | "sus" = each member's own figures |
+| `trends.tap_month` | "Toca un mes para ver sus días." | "sus" = that month's own days |
+| `sin_acceso.text` | "Tu cuenta Duna no tiene acceso..." | "tiene" subject is "tu cuenta", not a direct address |
+| `goals.no_habits` | (fixed below) | "tiene" subject is "esta meta" |
+| `ajustes.asistente.opcion.completo.desc` | "...el asistente puede leer..." | "puede" subject is "el asistente" |
+| `dispositivos.new_key_intro` | "...Body no puede mostrarla otra vez." | "puede" subject is "Body" |
+| `asistente.propuesta.sin_deshacer` | "Esto no se puede deshacer." | "se puede" is impersonal, not usted |
+
+**String changed** (meaning and length class kept, per the approval):
+
+| key | before | after |
+|---|---|---|
+| `es.json` `goals.no_habits` | "Aún no tiene hábitos." | "Esta meta aún no tiene hábitos." |
+| `en.json` `goals.no_habits` | "No habits yet." | "This goal doesn't have habits yet." |
+
+Read alone, "Aún no tiene hábitos." / "No habits yet." name no subject, and in an app that
+otherwise addresses the reader as tú, "tiene" without one reads as a stray formal "you have no
+habits." `body/templates/goal.html:65` renders the key standalone (`{{ t('goals.no_habits') }}`)
+inside the goal detail page, so naming the goal in the string itself, rather than changing the
+template, fixes it without touching how or where the key is used. English did not already name the
+goal either ("No habits yet."), so it was aligned the same way.
+
+**docs/DESIGN.md** rule 10 ("Plain Spanish, tú") now states in words: Body speaks tú everywhere,
+including the assistant's fixed answers, never usted; a link is never followed directly by
+punctuation; both guarded by `tests/test_registro_tu.py`.
+
+**Gate**, once, foreground, on this slice's own merged tip: `.venv/Scripts/python.exe -m unittest
+discover tests -t .` -- `Ran 1369 tests in 153.602s ... OK (skipped=1)` (1360 before this slice, +9,
+all in the new `tests/test_registro_tu.py`).
+
+**Merge.** The diff changes two customer-facing strings (`goals.no_habits` in es.json and en.json),
+which trips merge policy A's customer-bytes condition on its own -- but this spec's approval-reason
+(`ORCH-CARLOS-DELEGATES-TIER-1-1`) says in words "This spec approves the merge," scoped to fixes for
+exactly the strings the two guards caught, each listed above-this-line before -> after, for the
+orchestrator's post-merge review. `body/agente/cliente.py` was read (to confirm it is model-facing
+and has no customer sentence needing a guard scan) but not changed. Merged on that authorisation,
+not withheld.
+
+**Commits**: slice `6c64541e0bfca4454c7fa48f6d580f5e71d339da` on `feat/body-registro-tu-1` (base
+`main` at `e0171fe01d7562243a6c0c85915bbf9655947ab8`), merge `3dc22def40fc1ba36ee470574754402b1752882e`
+into `main` (merge strategy `ort`, no conflicts). Tree identity proven: merge tree
+`9b5b456f5b708b2b29e35cf037ea75558f8e1ede` equals the branch tip's own tree exactly. `main` left
+checked out, `git status --porcelain` empty (before this ledger entry's own commit).
