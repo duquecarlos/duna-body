@@ -7745,3 +7745,82 @@ Commits (pasted from `git rev-parse`, not retyped): fix `7bc55d9cbd5cbf119b57fa5
 match) -- no conflict, no extra change, gate not re-run on the merge per tree-identity proof. `git status
 --porcelain` empty on `main` after the merge, before this ledger entry's own commit. No password, token, session
 secret or health figure was read, printed or logged by this slice.
+
+## BODY-CALIDAD-1 -- own the week-start date, one y-scale helper, split demo.py's `_seed` (2026-11-08)
+
+First slice from BODY-CALIDAD-CENSO-1 (OBSERVED, base `7bc269e`). Three Tier 2 structure fixes, each
+behaviour-preserving (no customer byte, no schema change, no behaviour change).
+
+**1. Week start.** `body/fechas.py` gains `lunes_de(d: date) -> date`: Monday of `d`'s ISO week, documented as
+Monday-first, no timezone (the caller passes a date already local to whoever's week it is). The five Tier 2
+open-coded sites now call through the module: `body/demo.py:126` (`_week_index`) and `body/demo.py:273-274`
+(`first_monday`/`anchor_monday` in `_seed`), `body/goals.py:200` (`habit_due_today`), and
+`body/rutas/metas.py:27` (`_week_monday`, deleted; its two readers at the old `goals_list` and `goal_detail`
+now call `fechas.lunes_de` directly). `body/vida_export.py:33` keeps its own copy -- it is Tier 1 (the export
+that hands health data to another app) and out of reach for this Tier 2 slice; named here for a later Tier 1
+slice, as BODY-CALIDAD-CENSO-1 asked.
+
+**Guard**: `tests/test_guardia_parches.py` gains `NoOpenCodedWeekMondayGuardTest`, an AST scan of every
+`body/*.py` file (excluding `fechas.py` and the allow-listed `vida_export.py`) for a `BinOp` subtraction whose
+right operand is exactly `timedelta(<expr>.weekday())` (one positional arg, no keywords) -- it does not require
+the left operand to match `<expr>`, so it also catches `all_days[0] - timedelta(all_days[0].weekday())`.
+Proved it bites in the scratchpad (not committed): calling the matcher directly against the five pre-refactor
+snippets (the exact `d`/`today`/`all_days[0]` shapes removed above, plus the allow-listed `vida_export.py`
+shape) all return `True`; two unrelated subtractions -- `timedelta(days=7)` and `timedelta(today.weekday() +
+7)` (vida_export.py's own *previous*-week calculation, a different shape) -- both return `False`. The guard
+test itself passes on the current tree (`tests.test_guardia_parches.NoOpenCodedWeekMondayGuardTest`: 1 test,
+ok).
+
+New `tests/test_fechas_semana.py`: a Monday (`2026-11-09`, its own Monday), a Sunday (`2026-11-08` ->
+`2026-11-02`), a year boundary (`2026-01-01`, a Thursday -> `2025-12-29`, the previous calendar year), a leap
+day (`2024-02-29`, a Thursday -> `2024-02-26`).
+
+**2. `body/profile.py`**: the two identical y-scale closures in `month_svg` and `window_svg` (`def y(v):
+return top + h - (v - lo) / (hi - lo) * h`) become one `_y_scale(lo, hi, top, h)` helper; both call sites now
+do `y = _y_scale(lo, hi, top, h)`. Chart output is unchanged -- `tests/test_profile.py` and
+`tests/test_ejes_fechas.py` already render both charts and stayed green unchanged.
+
+**3. `body/demo.py`**: `_seed` (~160 lines, every table in one function) splits into `_seed_person` (person
+row + language), `_day_metrics`/`_day_activity` (one day's metrics+sleep / one day's activity, the exact draw
+order the original per-day loop used), `_seed_days` (the per-day loop and `save_day` calls, driving the two
+above), `_seed_shifts` (shift import, confirm, night-week/night-block counts), `_seed_goals_and_habits` (the
+demo person's three goals, one habit, their weekly and habit checks) and `_seed_household` (Ana, the shared
+household, her goal, its habits and checks). `_seed` itself is now the sequence of calls, threading the same
+single `random.Random(SEED)` instance through in the original order (metrics+activity per day, then habit
+checks, then Ana's metric seeding, then the household habit checks) -- rng consumption order is what the
+two-run determinism test actually depends on, not just final values, so the split could not regroup "metrics"
+and "activities" into two separate full passes over `all_days` without changing which random draw lands on
+which day.
+
+**Demo output proof (counts only, no health figures)**: before touching `body/demo.py`, built the demo
+database with fixed arguments (`--dias 40 --idioma es`) using the pre-refactor `body/demo.py`/`fechas.py`/
+`goals.py` (reconstructed from `git show HEAD:<path>` into a scratch package) and, separately, the
+post-refactor tree, both into scratch homes outside `BODY_HOME`. Row counts per table, before vs. after:
+person 2/2, daily_metric 657/657, sleep_session 35/35, activity 12/12, shift 33/33, shift_batch 2/2,
+shift_batch_item 40/40, goal 4/4, habit 3/3, habit_check 13/13, goal_check 22/22, goal_enlace 1/1 -- every pair
+equal. A SHA-256 over every table's rows (creation timestamps excluded, same technique
+`tests/test_demo.py`'s `DeterminismTest` already uses) matched exactly:
+`210e8cb25dbe442cff0a516494222fad6984b3e4f4ace480304291d06d349489` on both sides. `tests/test_demo.py` (already
+in the repo, unmodified) stayed green, including its own `DeterminismTest.test_two_runs_give_identical_rows`
+on the refactored code.
+
+**Tier 1 candidates for a later two-stage slice**, from BODY-CALIDAD-CENSO-1's figures: three identical
+provider `__init__` bodies in `body/agente/cliente.py` (~143, ~224, ~304), and `body/login.py` has no test that
+exercises it.
+
+**Gate**, run once on the branch tip tree: `.venv/Scripts/python.exe -m unittest discover tests -t .` --
+`Ran 1215 tests in 125.606s ... OK (skipped=1)`.
+
+Merge policy A: no schema or migration change, no customer-facing bytes, no cross-repo contract change in the
+actual diff (`body/fechas.py`, `body/demo.py`, `body/goals.py`, `body/profile.py`, `body/rutas/metas.py`,
+`tests/test_fechas_semana.py`, `tests/test_guardia_parches.py`) -- pure internal refactor, chart and demo
+output byte-identical. This spec's own approval-reason (`ORCH-CARLOS-DELEGATES-TIER-1-1`) approves the merge
+outright.
+
+Commits (pasted from `git rev-parse`, not retyped): fix `2b969162215249697dcc345267718aac1558692e` on branch
+`feat/body-calidad-1`, branched from `main` `7bc269e5100d7302215f9f2d550555f990bf5ec3`. Merged into `main`
+with `--no-ff`: merge commit `9d5358052908b5a94359c65a17778becdf164099`, merge tree
+`bfa8e8597e1539c2f587098b237ab7f1b887e2d7`, identical to the branch tip's own tree (`git rev-parse` of both
+match) -- no conflict, no extra change, gate not re-run on the merge per tree-identity proof. `git status
+--porcelain` empty on `main` after the merge, before this ledger entry's own commit. No password, token,
+session secret or health figure was read, printed or logged by this slice.
