@@ -7923,3 +7923,52 @@ itself) and fix `cc1280204add9c79fc2cb6cf36de3a8c70531e6d` (the `builtins.input`
 match) -- no conflict, no extra change. `git status --porcelain` empty on `main` after the merge, before this
 ledger entry's own commit. No password, token, session secret or health figure was read, printed or logged by
 this slice -- every test fixture email, password and code above is an invented demo string.
+
+## BODY-ERRORES-CENSO-2 -- widen the exception-text guard to all of body/ (2026-11-08)
+
+Follow-up to BODY-LOGIN-MENSAJES-1 (merged `d223b74`, ledger `f9b9b7c`), which scoped
+`tests/test_errores_texto.py`'s AST guard to the eight files it touched (`_SITIOS_DEL_CENSO`) because a
+whole-package run of the same scanner also found four pre-existing, unrelated sites: `body/backup.py:55`
+and three sites inside `body/vivo.py`'s `_motivo()` (lines 90, 104, 116). Re-running that same scanner over
+every file under `body/` (excluding `body/errores.py` itself), by hand, before touching anything, found
+exactly those same four offenders and no others -- confirming the prior slice's own census was complete.
+
+**The four sites, before -> after:**
+- `body/backup.py:55` -- `except sqlite3.DatabaseError as exc: print(f"integrity_check failed: {exc}")` ->
+  `print(f"integrity_check failed: {errores.texto_seguro(exc)}")`. The step that failed
+  (`integrity_check`) is unchanged in the printed line; only the library's own message text is gone,
+  replaced by the exception's type name.
+- `body/vivo.py:90, 104, 116` -- three `except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
+  return f"sin_cambio:{_motivo(str(exc))}"` inside `refrescar()` -> `_motivo(errores.texto_seguro(exc))`.
+  `_motivo()` still truncates to 40 chars and replaces spaces with underscores; since
+  `texto_seguro()` returns a bare type name (e.g. `RuntimeError`), that truncation is now a no-op in
+  practice. The `'sin_cambio:<reason>'` shape is unchanged. No test in `tests/test_vivo.py` asserts a
+  reason string produced by any of these three paths (only `sin_cambio:sucio`, `sin_cambio:no_es_arbol_vivo`
+  and `sin_cambio:modulos_previos`, none of which go through `_motivo(str(exc))`), so no test needed
+  updating.
+
+**The guard**: `tests/test_errores_texto.py`'s `_SITIOS_DEL_CENSO` eight-file list is gone. The new
+`_modulos_body()` globs every `*.py` under `body/` (excluding `__pycache__` and `body/errores.py` itself)
+and the renamed `test_todo_body_queda_limpio` scans all of them, asserting zero offenders. Non-vacuous: it
+first asserts the glob found at least 40 files (measured count: 62, well above the floor, so a silently
+empty glob can't pass the zero-offenders check for the wrong reason).
+
+**Gate**, run once on the branch tip tree, before the merge:
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -- `Ran 1228 tests in 140.104s ... OK
+(skipped=1)`. Same count as BODY-LOGIN-MENSAJES-1's own gate (1228): this slice replaced one test
+(`test_los_sitios_del_censo_quedan_limpios` -> `test_todo_body_queda_limpio`) rather than adding one.
+
+Merge policy A: no schema or migration change, no customer-facing bytes (every changed string is a
+terminal `print()` line or a test/ledger file -- `body/backup.py` and `body/vivo.py` print to a console or
+a scheduled-task log, never to a page a customer reads), no cross-repo contract change, in the actual diff
+(`body/backup.py`, `body/vivo.py`, `tests/test_errores_texto.py`). This spec's own approval-reason
+(`ORCH-CARLOS-DELEGATES-TIER-1-1`) approves the merge outright; `body/backup.py` and `body/vivo.py` are
+Tier 2 in this repository.
+
+Commits (pasted from `git rev-parse`, not retyped): fix `350ac4e9366c72cce446438d7b9f12a397a32704` on
+branch `feat/body-errores-censo-2`, branched from `main` `f9b9b7cab24d95a8dc03696dd090db3e1af506f0`. Merged
+into `main` with `--no-ff`: merge commit `8677e71bbd444834852ffcaf140fde0165e0a632`, merge tree
+`ae3f8185ec9681ff00eb3ab82050464b91783eab`, identical to the branch tip's own tree (`git rev-parse` of both
+match) -- no conflict, no extra change. `git status --porcelain` empty on `main` after the merge, before
+this ledger entry's own commit. No password, token, session secret or health figure was read, printed or
+logged by this slice.
