@@ -6521,3 +6521,47 @@ Merge policy A: no schema or migration change, no customer-facing bytes (the onl
 Commits: test `447beec4f64791566ee84e3647ef943786a97248`, merge `2bb6cb1b706d91586cae8b9a92cba351d26082d9`
 (both pasted from `git rev-parse`, not retyped). The merge commit's tree (`7fdeb39bfaf57c6776a8b88303ed5fc33d0210f3`)
 is identical to the branch tip's tree, so the gate above is the gate `main` now carries, not re-run after the merge.
+
+## BODY-PATRON-ERROR-CICLO-1 -- a whole-cycle patron error now renders, instead of a silent re-render (2026-11-08)
+
+Worker follow-up from `BODY-PATRON-LARGO-INVALIDO-SILENT-1` (noted in `BODY-I18N-GUARD-1`): `patron_turnos.validar()`
+can raise a whole-cycle error (`{"index": None, "code": "largo_invalido"}`), and `web.shifts_patron_save` kept only
+per-row errors (`if err["index"] is not None`), so a whole-cycle refusal re-rendered the form with no message at
+all -- and there was no `patron.error.largo_invalido` string. Latent today (`_patron_dias` clamps the cycle to
+1..56, so today's form cannot produce it), but DESIGN's "anything off the normal flow raises a flag" means a
+refusal must never be silent, and the next caller of `validar` (an API, the assistant) will not clamp.
+
+- `web.shifts_patron_save`: splits `PatronInvalido.errors` into per-row (`index` not `None`, as before, keyed to
+  each row) and whole-cycle (`index is None`), translating the whole-cycle codes with the same
+  `t("patron.error." + code)` call the per-row path already used, into `errores_ciclo` (a list of already-translated
+  strings, not codes) passed to the template.
+- `shift_pattern.html`: when `errores_ciclo` is non-empty, a form-level error line at the top of `<form>`, one `<p
+  class="k bad">` per message -- the same class the per-row errors already use.
+- `body/i18n/es.json` / `en.json`: `patron.error.largo_invalido` -- es "El ciclo debe tener entre 1 y 56 días.", en
+  "The cycle must be between 1 and 56 days." (the bound read from `validar()`'s own check, not re-typed). The
+  missing twin of the existing `patron.error.*` family, same voice.
+- `tests/test_patron_error_ciclo_1.py` (4 tests, new module, `tests/_isolate.py` imported first): patches
+  `body.patron_turnos.validar` to raise the whole-cycle error and asserts the message renders in es and en and
+  nothing is saved; a per-row error still renders on its row and the whole-cycle string does not leak in; a valid
+  form still saves and redirects. `tests/test_turnos_opcional_5.py` needed no change -- its 39 tests still pass
+  unchanged, confirmed by running that module alone before the full gate.
+
+Because the whole-cycle message is now built in Python with the same `t("patron.error." + code)` call the per-row
+path already used (not a new `t(...)` call inside the template), the i18n parity guard's dynamic-prefix scan
+(`tests/test_i18n_paridad.py`) sees no new prefix -- `patron.error.+` was already in its fixed list. That guard file
+is outside this slice's `touches:`, so its stale comment ("its whole-cycle `largo_invalido` is filtered out by
+index before reaching `t()`, so it never needs an i18n string") was left as written; `largo_invalido` now does
+reach `t()`, by index `None`'s own path rather than the per-row one the comment describes. Left for the next slice
+that touches that file.
+
+**Gate**, run once on the final branch tree: `.venv/Scripts/python.exe -m unittest discover tests -t .` --
+`Ran 1191 tests in 161.689s ... OK (skipped=1)` (1187 before this slice, +4 new in `tests/test_patron_error_ciclo_1.py`).
+
+Merge policy A: no schema or migration change; customer-facing bytes DID change (the new form-level error line and
+the `patron.error.largo_invalido` string pair) -- authorised by this spec's own approval reason
+(`ORCH-CARLOS-DELEGATES-TIER-1-1`, "This spec approves the merge"); no cross-repo contract change. `--no-ff` into
+`main`.
+
+Commits: fix `df805dcb2e96a1c89bb58a8922e39f91f653e674`, merge `cb68f4ff59d0806eb1ae084ad61e4825aae45c50` (both
+pasted from `git rev-parse`, not retyped). The merge commit's tree (`ffcc6dc1d62d2e31f3422abdac81564c08e0b994`) is
+identical to the branch tip's tree, so the gate above is the gate `main` now carries, not re-run after the merge.
