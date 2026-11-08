@@ -7338,3 +7338,116 @@ open follow-up. Measured: `body/db.py:889-899`'s own docstring already documents
 `_turnos_on`'s one-line summary did -- true when stored 1; also true when NULL (never answered) and the
 person already has shift data (read-time inference, never a write, so an explicit "no" is never overridden);
 false when stored 0, or NULL with no shift data. Nothing to fold in.
+
+## BODY-WEB-ESTRUCTURA-7 -- fix the comun._GRUPOS_EXTRA reverse shim; Hoy+Dia, Tendencias and Historial move out
+of web.py (2026-11-08)
+
+**The review defect, fixed first.** ESTRUCTURA-6 left `comun.py` with `_GRUPOS_EXTRA: list = []`, an empty
+slot `web.py` filled at import time right after its own `TREND_GROUPS` definition
+(`comun._GRUPOS_EXTRA = TREND_GROUPS`) -- exactly the shape ruling BODY-WEB-ESTRUCTURA-1-M forbids ("never
+configure comun's state from web.py at import time"), modeled on a comparison (the `_RUTA_ACTUAL`
+contextvar) that does not hold: comun owns that contextvar itself and web.py's own middleware only sets and
+resets it per request, it never fills a comun-owned list once at import time the way this assignment did.
+Fixed by adding `tests/test_guardia_parches.py`'s `NoReverseShimGuardTest`: a new top-level AST scan,
+`_is_module_attr_target`, matching any `comun.X = ...` / `fechas.Y = ...` top-level assignment in `body/web.py`
+or `body/rutas/*.py` -- the reverse of the existing `NoShimAliasGuardTest` (whose shape is `X = comun.Y`, a
+`Name` target with an `Attribute` value; this one is an `Attribute` target with any value). Proof it bites on
+the pre-fix line, run standalone before any other edit in this slice:
+
+    AssertionError: Lists differ: ['body\\web.py:521 comun._GRUPOS_EXTRA = ...'] != []
+
+Fixed by moving `TREND_KEYS` and `TREND_GROUPS` into `comun.py` as real constants (two-or-more-domains puts a
+name there per ESTRUCTURA-4's own rule, and Día's `_tendencias_href` and Tendencias' `trends()` both read
+`TREND_KEYS`, while Turnos' `_turnos_filas` reads `TREND_GROUPS` through `_es_extra_metric`), which
+`comun._es_extra_metric` now reads directly; the test this slice's spec grants that ESTRUCTURA-6 could not
+(`tests/test_tendencias_todas.py`) moved its three `web.TREND_GROUPS` reads to `comun.TREND_GROUPS` in the
+same commit, so there is no reader left pointing at the old location.
+
+**Hoy + Día -> `body/rutas/hoy.py`, a pure move.** `/`, `/how/{day}`, `/day/{day}`, `router = APIRouter()`,
+included from `web.py`. Constants and helpers that only Hoy or Día called move with it: `TODAY_CARDS`,
+`STAGES`, `_delta`, `_reading`, `_synced`, `_parse_day`, `_today_due_habits`, `_short_weekday_date`,
+`_hoy_turno_ctx`, `_dia_relativo`, `_hogar_compartido_ctx`, `PART_METRIC`, `_rango_que_contiene`,
+`_tendencias_href`, `_activity_name`.
+
+**Tendencias -> `body/rutas/tendencias.py`, a pure move.** `/trends`, `router = APIRouter()`. Constants and
+helpers that only Tendencias called move with it: `WEEK_KEYS`, `TREND_MIN_DAYS`, `SPARSE_KEYS`, `RANGES`,
+`_trend_days_have`, `_compare`, `_nights`, `_chart_aria`, `_trend_card`.
+
+**Historial -> `body/rutas/historial.py`, a pure move.** `/history`, `router = APIRouter()`. Constants and
+helpers that only Historial called move with it: `TRAINING_COLORS`, `OTHER_COLOR`, `TRAINING_RECENT_MONTHS`,
+`_kind_label`, `_color_map`, `_training_ctx`, `_finding_text`, `_pattern_rows`, `_shift_ctx`.
+
+**Shared between two or more of the above, moved to `comun.py`.** `TREND_KEYS`, `TREND_GROUPS` (Día +
+Tendencias + Turnos, above); `_latest_day` (Hoy's `today()` + Tendencias' `trends()`); `_sync_status_text`
+(Hoy's `today()`, Día's `day_view()`, Historial's `history_view()`).
+
+**`/sw.js` -> `comun.py`'s own router, next to `STATIC_HASH`.** It serves the cache name the static-asset
+helpers in that same module already build (`static_url()`); it is not a screen, has nothing to do with any
+person's data, and opens no database connection, so it belongs with the data it serves rather than with any
+of the three screens this slice moved. `comun.py` gained its own `router = APIRouter()` for this one route.
+
+**Test readers of every moved name, moved to their new owner (measured by grep for each name across all
+touched test files, not assumed from the move alone).** `tests/test_i18n_paridad.py`: `web.TREND_GROUPS` (2
+sites) and `web.RANGES` -> `comun.TREND_GROUPS` / `comun.TREND_KEYS` / `tendencias.RANGES`, `web.WEEK_KEYS` ->
+`tendencias.WEEK_KEYS` (added `comun, tendencias` to its `from body.rutas import ...` line; the `web` import
+itself became unused and was dropped). `tests/test_tendencias_todas.py`: `web.TREND_GROUPS` (3 sites) ->
+`comun.TREND_GROUPS` (added `from body.rutas import comun`). `tests/test_ejes_fechas.py`: `web._chart_aria` (3
+sites) -> `tendencias._chart_aria` (added `from body.rutas import tendencias`). `tests/test_history.py`:
+`web._finding_text` (3 sites) and `web._training_ctx` -> `historial._finding_text` /
+`historial._training_ctx` (added `historial` to its existing `from body.rutas import comun` line).
+`tests/test_request_log.py`: `mock.patch.object(web, "_delta", ...)` -> `mock.patch.object(hoy, "_delta",
+...)` (added `from body.rutas import hoy`). `tests/test_turnos_enlaces.py`, `tests/test_hogar_compartir_1.py`,
+`tests/test_pulido_1.py` read only through `TestClient(web.app, ...)` or mention the moved names in prose
+comments, not code -- confirmed by grep, no edit needed.
+
+**Deviation: the connection guard needed one new, documented exception, not a workaround.**
+`tests/test_conexiones_cerradas.py`'s `RouteClosesItsConnectionTest` asserted `modules_checked ==
+modules_with_routes` -- every router module with at least one route must have at least one route calling
+`_ctx(`. That held through ESTRUCTURA-6 because every router module's only routes touched the database; it no
+longer holds once `comun.py` carries `/sw.js`, a route that genuinely needs no connection. Fixed by naming the
+one exception in a short, documented module-level set (`_MODULES_WITHOUT_A_CTX_ROUTE = {"comun.py"}`), the
+same pattern `_ALLOWED_WITHOUT_DECORATOR` already uses for `asistente_preguntar`'s one exception, and relaxing
+the assertion to `modules_checked | allowed_unchecked == modules_with_routes`. The guard still fails if any
+OTHER router module loses its only `_ctx`-calling route, or if a genuinely connection-needing route stops
+calling `_ctx`; it only stops demanding a connection from a route that was never going to open one.
+
+Route set: before, 59 (method, path) entries (ESTRUCTURA-6's own count, confirmed unchanged rather than
+re-measured from scratch); after, 59, same set -- `git diff main --` on the four touched route modules shows
+exactly six `@app.get(...)` lines removed and six matching `@router.get(...)` lines added, one per relocated
+route (`/`, `/how/{day}`, `/day/{day}`, `/trends`, `/history`, `/sw.js`), no path or method changed.
+
+Connection guard (`tests/test_conexiones_cerradas.py`'s `RouteClosesItsConnectionTest`) after the move:
+`checked` 51, `expected_min` 51 (both unchanged from ESTRUCTURA-6 -- no `_ctx`-calling route added or
+removed, only moved), 12 router modules now carry at least one route (`web.py` plus 11 under `body/rutas/`,
+up from 8: `hoy`, `tendencias`, `historial` and `comun` itself are new to carrying a route), 11 of the 12
+checked, `comun.py` the one documented exception above.
+
+`body/web.py`: 1042 -> 352 lines (-690; `git diff bd9591a --numstat`: 9 insertions, 699 deletions).
+`body/rutas/comun.py`: 215 -> 290 lines (+75; 92 insertions, 17 deletions). `body/rutas/hoy.py`: new, 329
+lines. `body/rutas/tendencias.py`: new, 198 lines. `body/rutas/historial.py`: new, 138 lines. What remains in
+`web.py`: the FastAPI app, its lifespan and middleware, the four exception handlers, the Cuenta-down template
+and page, sign-in (`/login`, `/login/cuenta/start`, `/login/cuenta/callback`, `/logout`,
+`/login/cuenta/logout-token`), Garmin + MFA (`/garmin`, `/garmin/conectar`, `/garmin/codigo`,
+`/garmin/desconectar`), `_ensure_streams()` and `main()` -- exactly sign-in plus Garmin/MFA plus app wiring, as
+this spec's step 4 asked, deferred to ESTRUCTURA-8 (reviewed before merge as Tier 1) rather than moved here.
+
+Gate, exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, run once on the branch tip
+(commit `56531e6abe854329f4839ce0e8dd9193d9b4757e`):
+
+    Ran 1202 tests in 121.844s
+    OK (skipped=1)
+
+One more than ESTRUCTURA-6's floor (1201) -- the one new test, `NoReverseShimGuardTest`; nothing else added or
+removed, only moved and repointed.
+
+Merge policy A: no schema change, no customer-facing bytes, no cross-repo contract change in the actual diff
+(12 files, all under `body/` or `tests/`, no template or i18n text touched) -- merges on green per this spec's
+approval ("This spec approves the merge"). Sign-in and Garmin/MFA do not move here, per the approval-reason.
+Commits: fix `56531e6abe854329f4839ce0e8dd9193d9b4757e`, merge
+`17f0c86806e864a7e9762e846862f38eb2e7d2f9` (both pasted from `git rev-parse`/`git log`). The merge commit's
+tree (`ff6b76a45f8fae999acfbcb2cb8ff187cb01a5b5`) is identical to the branch tip's tree (`git diff
+feat/body-web-estructura-7 HEAD`, empty, checked before writing this entry rather than re-run after), so the
+gate above is the gate `main` now carries. `main` is left checked out, `git status --porcelain` empty.
+
+**Remaining in BODY-WEB-ESTRUCTURA-PLAN-1's sequence:** ESTRUCTURA-8 (sign-in -- Cuenta login/logout -- and
+Garmin/MFA), reviewed before merge as Tier 1.
