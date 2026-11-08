@@ -62,4 +62,25 @@
 {% endfor %}
 </div>
 <a class="more" href="/day/{{ day }}">{{ t('today.see_day') }}</a>
+
+{% if hogar_compartido %}
+<div class="card">
+  <div class="q">{{ t('today.hogar.titulo') }}</div>
+  <ul class="plan" style="margin-top:6px">
+  {% for item in hogar_compartido %}
+    <li style="display:block">
+      <div class="k">{{ item.name }} · {{ item.metric_label }}</div>
+      {% if item.sin_dato %}
+      <div class="note">{{ t('today.hogar.sin_dato') }}</div>
+      {% else %}
+      <div class="row">
+        <span class="fig">{{ item.value_text }}</span>
+        <span class="k">{{ item.day_text }}</span>
+      </div>
+      {% endif %}
+    </li>
+  {% endfor %}
+  </ul>
+</div>
+{% endif %}
 {% endblock %}

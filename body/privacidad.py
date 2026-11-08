@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import date, datetime, timezone
 
-from . import household
+from . import compartir, household
 from .agente import ajustes as agente_ajustes
 
 CONSENT_VERSION = "consentimiento-v1"
@@ -23,6 +23,7 @@ FULLY_HANDLED_TABLES = {
     "daily_metric", "sleep_session", "activity", "shift", "shift_batch", "shift_pattern",
     "goal", "habit_check", "goal_check", "plan", "ajuste_agente", "consentimiento", "hogar_local",
     "conversacion_agente", "mensaje_agente", "uso_agente", "tope_agente", "propuesta_agente",
+    "figura_compartida",
 }
 # raw_payload: kind/date only, never the stored JSON payload. garmin_cuenta: the connected-since
 # date only, never the encrypted token (BODY-GARMIN-HOST-1). dispositivo: name/scopes/dates only,
@@ -105,6 +106,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
     hogar_row = conn.execute(
         "SELECT hogar_id, member_sub FROM hogar_local WHERE person_id = ?", (person_id,)
     ).fetchone()
+    figuras_compartidas = compartir.export_rows(conn, person_id)
     ajustes = {"nivel_datos": agente_ajustes.nivel_datos(conn, person_id)}
     # garmin_cuenta is a partial-export table: the connected-since date only, never the encrypted
     # token or anything that could rebuild it.
@@ -143,6 +145,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "persona": {"display_name": person["display_name"], "timezone": person["timezone"],
                     "language": person["language"], "trabaja_turnos": person["trabaja_turnos"]},
         "hogar": dict(hogar_row) if hogar_row else None,
+        "figuras_compartidas": figuras_compartidas,
         "vida": vida,
         "dias": dias,
         "actividades": actividades,
@@ -211,6 +214,7 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         conn.execute("DELETE FROM tope_agente WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM hogar_local WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM sesion WHERE person_id = ?", (person_id,))
+        compartir.delete_rows(conn, person_id)
         conn.execute("DELETE FROM person WHERE id = ?", (person_id,))
     _borrar_fuera_de_bd(person_id)
 

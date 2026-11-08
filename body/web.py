@@ -31,9 +31,9 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup
 
-from . import (cuenta, db, dispositivo, entorno, garmin_adapter, garmin_cuenta, goals, history, household, identity,
-               listen, patron_turnos, privacidad, profile, readiness, shift_import, turnos_costo, tutoriales,
-               vida_export)
+from . import (compartir, cuenta, db, dispositivo, entorno, garmin_adapter, garmin_cuenta, goals, history, household,
+               identity, listen, patron_turnos, privacidad, profile, readiness, shift_import, turnos_costo,
+               tutoriales, vida_export)
 from .agente import ajustes as agente_ajustes
 from .agente import bucle as agente_bucle
 from .agente import cliente as agente_cliente
@@ -494,7 +494,8 @@ def today(person_id: int = Depends(identity.current_person_id)):
                    turno=turno_ctx, turnos=turnos_on,
                    plan_habits=_today_due_habits(conn, t, person_id, today_local),
                    today_iso=today_local.isoformat(),
-                   primeros_pasos=primeros_pasos)
+                   primeros_pasos=primeros_pasos,
+                   hogar_compartido=_hogar_compartido_ctx(conn, t, person_id, defs, today_local))
 
 
 # readiness.Part.key -> the Tendencias metric it reads from (readiness.Part carries no metric key of its
@@ -1103,6 +1104,33 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
 def _short_date(t: T, d: date) -> str:
     """19 jun 2024 style: day, abbreviated month, year -- no weekday, unlike t.long_date."""
     return f"{d.day} {t('date.months')[d.month - 1][:3]} {d.year}"
+
+
+def _dia_relativo(t: T, day: str, today_local: date) -> str:
+    """«hoy», «ayer», or the short date, for a shared figure's own day (BODY-HOGAR-COMPARTIR-1)."""
+    d = date.fromisoformat(day)
+    if d == today_local:
+        return t("hogar.dia_hoy")
+    if d == today_local - timedelta(1):
+        return t("hogar.dia_ayer")
+    return _short_date(t, d)
+
+
+def _hogar_compartido_ctx(conn, t: T, person_id: int, defs: dict, today_local: date) -> list[dict]:
+    """Hoy's «Tu hogar» card: each shared figure visible to this viewer (compartir.visibles_para),
+    the app's existing value+unit formatting, and its day as «hoy»/«ayer»/the short date -- or a
+    plain "no data" line when the owner has no value yet for it (never a guess)."""
+    out = []
+    for item in compartir.visibles_para(conn, person_id):
+        sin_dato = item["value"] is None
+        out.append({
+            "name": item["name"],
+            "metric_label": t("metric." + item["metric_key"]),
+            "sin_dato": sin_dato,
+            "value_text": None if sin_dato else _fig_unit(t, item["metric_key"], item["value"], defs),
+            "day_text": None if sin_dato else _dia_relativo(t, item["day"], today_local),
+        })
+    return out
 
 
 def _chart_aria(t: T, metric: str, start_label: str, end_label: str, months: bool = False) -> str:
@@ -1720,8 +1748,29 @@ def settings(person_id: int = Depends(identity.current_person_id)):
     conn, _, t = _ctx(person_id)
     nivel_datos = agente_ajustes.nivel_datos(conn, person_id)
     trabaja_turnos = db.get_trabaja_turnos(conn, person_id)
+    hh = household.household_of(conn, person_id)
+    compartidas = {r["metric_key"] for r in compartir.mis_compartidas(conn, person_id)} if hh else set()
+    metrics_compartir = [{"key": k, "label": t("metric." + k), "shared": k in compartidas}
+                          for k in _defs(conn)] if hh else []
     return _render("settings.html", t=t, tab="settings", nivel_datos=nivel_datos,
-                   trabaja_turnos=trabaja_turnos, turnos=_turnos_on(conn, person_id))
+                   trabaja_turnos=trabaja_turnos, turnos=_turnos_on(conn, person_id),
+                   has_household=bool(hh), metrics_compartir=metrics_compartir)
+
+
+@app.post("/settings/compartir")
+@_cierra_conexion_async
+async def post_compartir(request: Request, person_id: int = Depends(identity.current_person_id)):
+    f = await _form(request)
+    metric_key, accion = f.get("metric_key", ""), f.get("accion", "")
+    conn, _, _ = _ctx(person_id)
+    if accion == "compartir":
+        try:
+            compartir.compartir(conn, person_id, metric_key)
+        except ValueError:
+            pass
+    elif accion == "retirar":
+        compartir.retirar(conn, person_id, metric_key)
+    return RedirectResponse("/settings", status_code=303)
 
 
 # ---- Ayuda (tutoriales-v1 section 5.1): chapters, their tasks, and the recorrido completo ---------

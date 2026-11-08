@@ -392,6 +392,22 @@ CREATE TABLE IF NOT EXISTS dispositivo (
     revocado_en TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_dispositivo_person ON dispositivo(person_id);
+
+-- One figure a person has chosen to share with one household, with its own history (hogar-v1:
+-- "sharing is per figure, chosen by its owner, and can be withdrawn"; BODY-HOGAR-COMPARTIR-1).
+-- Withdrawing sets withdrawn_at rather than deleting the row, so the person can see what they
+-- shared and when; re-sharing inserts a NEW row. hogar_id is TEXT, matching goal.hogar_id and
+-- hogar_local.hogar_id (body/household.py's Household.id is also typed str).
+CREATE TABLE IF NOT EXISTS figura_compartida (
+    id           INTEGER PRIMARY KEY,
+    person_id    INTEGER NOT NULL REFERENCES person(id),
+    metric_key   TEXT NOT NULL REFERENCES metric_def(key),
+    hogar_id     TEXT NOT NULL,
+    shared_at    TEXT NOT NULL,
+    withdrawn_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_figura_compartida_activa
+    ON figura_compartida (person_id, metric_key, hogar_id) WHERE withdrawn_at IS NULL;
 """
 
 # (key, label, unit, better, kind). 'estimated' = computed by Body, shown with «≈» and "how I calculate it".

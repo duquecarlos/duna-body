@@ -185,7 +185,7 @@ def _avg_metric(conn, db, key: str, days: list[date], person_id: int) -> float |
 
 
 def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
-    from . import db, goals, household, shift_import, turnos_costo
+    from . import compartir, db, goals, household, shift_import, turnos_costo
 
     person_id = db.local_person_id(conn)
     conn.execute("UPDATE person SET display_name = 'Demo', timezone = 'America/Bogota' WHERE id = ?", (person_id,))
@@ -300,6 +300,16 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     conn.executemany("INSERT INTO hogar_local (person_id, hogar_id) VALUES (?, ?)",
                       [(person_id, _HOGAR_ID), (ana_id, _HOGAR_ID)])
     conn.commit()
+    # Ana shares one figure with the household (BODY-HOGAR-COMPARTIR-1), so the demo person's own
+    # Hoy shows the «Tu hogar» card. She needs her OWN short invented history of it -- never the
+    # demo person's numbers copied -- or the card can only ever say "sin dato" and the value path
+    # is unmeasurable; a few of her own days, inside the same catalogue range, are enough.
+    ana_days = all_days[-5:]
+    for d in ana_days:
+        db.set_metric(conn, d.isoformat(), "resting_hr", _value(rng, "resting_hr", 0.0), "garmin", ana_id)
+    conn.commit()
+    metric_rows += len(ana_days)
+    compartir.compartir(conn, ana_id, "resting_hr")
 
     hogar_deadline = (anchor + timedelta(days=84)).isoformat()
     gid_hogar = goals.propose(conn, ana_id, _HOGAR_GOAL_TITLE[idioma], start_day, area="adventure",
