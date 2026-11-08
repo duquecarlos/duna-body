@@ -7247,3 +7247,94 @@ empty, before writing this entry rather than re-run after), so the gate above is
 **Remaining moves in BODY-WEB-ESTRUCTURA-PLAN-1's sequence**, per this slice's spec: -6 (turnos),
 -7 (hoy + tendencias + historial), -8 (sign-in -- Cuenta login/logout -- + Garmin/MFA, reviewed before merge
 as Tier 1).
+
+## BODY-WEB-ESTRUCTURA-6 -- delete comun._turnos_on, move Turnos out of web.py (2026-11-08)
+
+Sixth slice of BODY-WEB-ESTRUCTURA-PLAN-1. Two things: the worker follow-up BODY-WEB-ESTRUCTURA-TURNOS-ON-SHIM-1,
+fixed first, and a pure move.
+
+**`comun._turnos_on` deleted.** The one-line forward to `db.trabaja_turnos_si(conn, person_id)`
+(BODY-TURNOS-OPCIONAL-3, allow-listed in ESTRUCTURA-5 because its callers sat outside that slice's `touches:`)
+is gone. Every call site now reaches `db.trabaja_turnos_si(conn, person_id)` directly: `body/web.py` (6 sites
+staying -- Hoy, Día's `how`/`day_view`, Tendencias, Historial, Garmin's `_garmin_ctx`), `body/rutas/ajustes.py`
+(2), `asistente.py` (1, `agente_herramientas.fijar_turnos_actual(...)`), `ayuda.py` (1), `dispositivos.py` (3),
+`metas.py` (3), `privacidad.py` (1), and the 8 sites inside the Turnos routes moving below. `asistente.py`,
+`ayuda.py`, `dispositivos.py` and `metas.py` did not import `db` before; each now does.
+`tests/test_guardia_parches.py`'s `_ALLOWED_FUNCTION_SHIMS` shrinks to `comun._today_local` alone, the one
+sanctioned wrapper.
+
+**Turnos, a pure move.** `/shifts`, `/shifts/como`, `/shifts/confirm`, `/shifts/confirm-all`, `/shifts/dismiss`,
+`/shifts/patron` GET+POST, `/shifts/patron/quitar` -> new `body/rutas/turnos.py`, `router = APIRouter()`,
+included from `web.py` next to the other six. Helpers only Turnos called move with it: `_batch_date`,
+`_owned_batch_or_404`, `_STRIP_WEEKS`/`_STRIP_DAYS`/`_STRIP_KIND_ORDER`, `_turnos_filas`, `_turnos_strip`,
+`_patron_preview_ctx`, `_turnos_bloque_linea`, `_PATRON_DEFAULT_DIAS`/`_PATRON_DEFAULT_HORIZONTE`,
+`_patron_dias`, `_patron_filas` (each measured by grep across `body/web.py` and `tests/` to have no caller
+left behind).
+
+**Deviation: `_es_extra_metric` could not move as a plain re-definition.** `_turnos_filas`'s cost-row hrefs
+call `_es_extra_metric(key)` (BODY-TURNOS-ENLACES-1's "&todas=1", read from `TREND_GROUPS`, not duplicated --
+that test's own docstring) -- the same predicate `web.py`'s `_tendencias_href` already calls (Día domain,
+staying in `web.py`). Two domains calling it (Día + Turnos) means it moves to `comun.py` by this plan's own
+rule, but its body reads `TREND_GROUPS`, a module-level catalogue `_tendencias_href` also needs and that
+`web.py` cannot give up: `tests/test_tendencias_todas.py` reads `web.TREND_GROUPS` directly at three call
+sites and sits outside this slice's `touches:` -- moving the constant would break a test this slice has no
+grant to fix, exactly the "reader not in touches" case the spec says to stop and name rather than shim around.
+Measured fix, not a shim of either guarded shape: `comun.py` gets `_GRUPOS_EXTRA: list = []`, a slot `web.py`
+sets once, at import time, right after its own `TREND_GROUPS` definition (`comun._GRUPOS_EXTRA =
+TREND_GROUPS`) -- the same pattern this module already uses for `_RUTA_ACTUAL` (set from `web.py`'s
+`_CaminoActualMiddleware`), not a new one. `comun._es_extra_metric(key)` reads `_GRUPOS_EXTRA`; `web.py`'s
+`_tendencias_href` and `turnos.py`'s `_turnos_filas` both call `comun._es_extra_metric(key)`. `TREND_GROUPS`
+itself never moves and `test_tendencias_todas.py` is untouched -- confirmed green by the targeted run below.
+Neither `NoShimAliasGuardTest` nor `NoShimFunctionGuardTest` flags this (the first matches only a bare
+`name = module.attr`; the second matches only a function whose whole body is one forwarding call) because it
+is not that shape: `_es_extra_metric` carries its own logic, `_GRUPOS_EXTRA` is data the guards do not scan.
+
+**Test readers of moved names, moved to their new owner.** `tests/test_person_scope.py`'s
+`web._batch_date(...)` (two call sites) -> `turnos._batch_date(...)` (added `from body.rutas import turnos`).
+`tests/test_i18n_paridad.py`'s `web._STRIP_KIND_ORDER` -> `turnos._STRIP_KIND_ORDER` (added `turnos` to its
+existing `from body.rutas import metas, turnos` line). `tests/test_patron_error_ciclo_1.py`'s docstring
+mention of `web.shifts_patron_save` (no code reference, prose only) -> `turnos.shifts_patron_save`. No other
+touched test file reads a moved name by dotted attribute (measured by grep for `web\.` outside `web.app` across
+all 18 touched test files); the rest exercise Turnos purely through `TestClient(web.app, ...)` and need no
+edit, which the pure move's route-set equality below confirms.
+
+Route set: before, 59 (method, path) entries (captured via `tests/_rutas.py` on `main` at
+`4a48c6e1c8c6c66aff1962fe6431301abca63df4`); after, the same 59, identical set (`tests/test_web_entry.py`'s
+`RouteSetTest`, green) -- only which module registers each one changed.
+
+Connection guard (`tests/test_conexiones_cerradas.py`'s `RouteClosesItsConnectionTest`) after the move:
+`checked` 51, `expected_min` 51, 8 router modules carry a route (`web.py` plus the seven under
+`body/rutas/`), all 8 checked -- non-vacuous, measured by re-running its own walk standalone rather than
+read off a passing assertion.
+
+`body/web.py`: 1338 -> 1042 lines (-296; `git diff --numstat 4a48c6e d79668f -- body/web.py`: 17 insertions,
+313 deletions). `body/rutas/turnos.py`: new, 312 lines. `body/rutas/comun.py`: 208 -> 215 lines (+7; `git diff
+--numstat 4a48c6e d79668f -- body/rutas/comun.py`: 19 insertions, 12 deletions -- `_turnos_on` removed,
+`_GRUPOS_EXTRA`/`_es_extra_metric` and their docstrings added, and a stale ESTRUCTURA-4-era `_defs` docstring
+corrected in passing to match ESTRUCTURA-5's actual fix).
+
+Gate, exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, run once on the branch tip
+(commit `d79668fcca6e5303ed1be78fd5da150c49f70a5f`):
+
+    Ran 1201 tests in 132.716s
+    OK (skipped=1)
+
+Same count as ESTRUCTURA-5's floor (1201) -- no test added or removed, only moved and repointed.
+
+Merge policy A: no schema change, no customer-facing bytes, no cross-repo contract change in the actual diff
+(13 files, all under `body/` or `tests/`, no template or i18n text touched) -- merges on green per this spec's
+approval. Commits: fix `d79668fcca6e5303ed1be78fd5da150c49f70a5f`, merge
+`87fddad173b1a4ae88a679e8d95069a035b34007` (both pasted from `git rev-parse`). The merge commit's tree
+(`db42715be4ab3e84f21df2bf26f110fcd69cce12`) is identical to the branch tip's tree (verified with `git diff`,
+empty, before writing this entry rather than re-run after), so the gate above is the gate `main` now carries.
+`main` is left checked out, `git status --porcelain` empty.
+
+**Remaining moves in BODY-WEB-ESTRUCTURA-PLAN-1's sequence**, per this slice's spec: -7 (hoy + tendencias +
+historial), -8 (sign-in -- Cuenta login/logout -- + Garmin/MFA, reviewed before merge as Tier 1).
+
+**No open follow-up needed for the predicate's documentation.** This spec asked, if `db.trabaja_turnos_si`
+did not already document the NULL/False/True meaning `_turnos_on`'s docstring recorded, to name that as an
+open follow-up. Measured: `body/db.py:889-899`'s own docstring already documents it, more precisely than
+`_turnos_on`'s one-line summary did -- true when stored 1; also true when NULL (never answered) and the
+person already has shift data (read-time inference, never a write, so an explicit "no" is never overridden);
+false when stored 0, or NULL with no shift data. Nothing to fold in.
