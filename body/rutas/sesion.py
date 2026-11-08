@@ -42,8 +42,8 @@ def login_start(request: Request):
     prompt = prompt if prompt in ("none", "login") else None
     max_age = 600 if request.query_params.get("max_age") == "600" else None
     conn = db.connect()
-    db.init(conn)
     try:
+        db.init(conn)
         url, flujo_id = cuenta.start_login(conn, return_to, prompt=prompt, max_age=max_age)
     finally:
         conn.close()
@@ -57,30 +57,28 @@ def login_callback(request: Request):
     if not cuenta.hosted():
         raise HTTPException(404)
     conn = db.connect()
-    db.init(conn)
     try:
-        result = cuenta.handle_callback(conn, request.cookies.get(cuenta.FLUJO_COOKIE),
-                                        dict(request.query_params))
-    except cuenta.FlowRefused:
+        db.init(conn)
+        try:
+            result = cuenta.handle_callback(conn, request.cookies.get(cuenta.FLUJO_COOKIE),
+                                            dict(request.query_params))
+        except cuenta.FlowRefused:
+            return HTMLResponse(comun.env.get_template("acceso_rechazado.html").render(t=T(DEFAULT_LANG)),
+                                status_code=400)
+        except cuenta.CuentaUnavailable:
+            return _cuenta_down_page()
+        if result.kind == "reauth":
+            return RedirectResponse(f"/login?return_to={quote(result.return_to or '/', safe='')}",
+                                    status_code=303)
+        if result.kind == "sin_acceso":
+            return comun._render("sin_acceso.html", t=T(DEFAULT_LANG),
+                           switcher_url=cuenta.SWITCHER_URL, logout_url=cuenta.logout_url(None))
+        resp = RedirectResponse(result.return_to or "/", status_code=303)
+        cuenta.set_session_cookie(resp, result.session_token)
+        cuenta.clear_flujo_cookie(resp)
+        return resp
+    finally:
         conn.close()
-        return HTMLResponse(comun.env.get_template("acceso_rechazado.html").render(t=T(DEFAULT_LANG)),
-                            status_code=400)
-    except cuenta.CuentaUnavailable:
-        conn.close()
-        return _cuenta_down_page()
-    if result.kind == "reauth":
-        conn.close()
-        return RedirectResponse(f"/login?return_to={quote(result.return_to or '/', safe='')}",
-                                status_code=303)
-    if result.kind == "sin_acceso":
-        conn.close()
-        return comun._render("sin_acceso.html", t=T(DEFAULT_LANG),
-                       switcher_url=cuenta.SWITCHER_URL, logout_url=cuenta.logout_url(None))
-    conn.close()
-    resp = RedirectResponse(result.return_to or "/", status_code=303)
-    cuenta.set_session_cookie(resp, result.session_token)
-    cuenta.clear_flujo_cookie(resp)
-    return resp
 
 
 @router.post("/logout")
@@ -88,9 +86,11 @@ def logout(request: Request):
     if not cuenta.hosted():
         raise HTTPException(404)
     conn = db.connect()
-    db.init(conn)
-    sid = cuenta.end_session(conn, request.cookies.get(cuenta.SESSION_COOKIE))
-    conn.close()
+    try:
+        db.init(conn)
+        sid = cuenta.end_session(conn, request.cookies.get(cuenta.SESSION_COOKIE))
+    finally:
+        conn.close()
     resp = RedirectResponse(cuenta.logout_url(sid), status_code=303)
     cuenta.clear_session_cookie(resp)
     return resp
@@ -112,7 +112,9 @@ async def backchannel_logout(request: Request):
         raise HTTPException(404)
     f = await comun._form(request)
     conn = db.connect()
-    db.init(conn)
-    ok = cuenta.handle_backchannel_logout(conn, f.get("logout_token", ""))
-    conn.close()
+    try:
+        db.init(conn)
+        ok = cuenta.handle_backchannel_logout(conn, f.get("logout_token", ""))
+    finally:
+        conn.close()
     return Response(status_code=200 if ok else 400)
