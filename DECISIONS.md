@@ -5447,3 +5447,95 @@ extra query and docstring in `body/goals.py`, plus its test file -- no schema or
 cross-repo contract. Customer-facing counts (Hoy's due-today list) are the one merge-policy-A condition
 this diff trips, and it is exactly what this spec's approval-reason classified and approved. Merged
 `--no-ff` into `main`.
+
+## BODY-HOGAR-COMPARTIR-1 -- a person can share one figure at a time with their household, and withdraw it (2026-11-07)
+
+Roadmap wave 7c and the hogar-v1 contract promise it ("health numbers stay private to their person; sharing is per
+figure, chosen by its owner, and can be withdrawn"; "Body keeps health figures private unless a person shares a
+specific one"). BODY-HOGAR-OBS-1 found nothing of it built -- no table, no route, no screen. Orchestrator ledger
+BODY-HOGAR-PLAN-1 ruling 3 (against BODY-HOGAR-OBS-1's proposed shape: person, metric key, household, since,
+withdrawn) rules: a share is a ROW per (person, metric_key, household) with shared_at/withdrawn_at -- withdrawing
+sets withdrawn_at (history kept), re-sharing inserts a new row; at most one ACTIVE row per (person, metric_key,
+household), enforced by a partial unique index.
+
+**Schema** (`body/db.py`, Tier 1), created by `db.init` the same `CREATE TABLE IF NOT EXISTS` way every table is --
+nothing to backfill:
+
+    CREATE TABLE IF NOT EXISTS figura_compartida (
+        id           INTEGER PRIMARY KEY,
+        person_id    INTEGER NOT NULL REFERENCES person(id),
+        metric_key   TEXT NOT NULL REFERENCES metric_def(key),
+        hogar_id     TEXT NOT NULL,
+        shared_at    TEXT NOT NULL,
+        withdrawn_at TEXT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_figura_compartida_activa
+        ON figura_compartida (person_id, metric_key, hogar_id) WHERE withdrawn_at IS NULL;
+
+`hogar_id` is `TEXT`, matching `goal.hogar_id` (`TEXT`, nullable) and `hogar_local.hogar_id` (`TEXT NOT NULL`);
+`body/household.py`'s `Household.id` is likewise typed `str`.
+
+**`body/compartir.py` (new) -- the only module that reads or writes the table.** `compartir(conn, person_id,
+metric_key)` refuses (`ValueError`, nothing written) with no active household (`household.household_of`) or an
+unknown metric key; sharing an already-active figure is a no-op (the existing `shared_at` is kept). `retirar(conn,
+person_id, metric_key)` sets `withdrawn_at` on every currently active row for that person/metric (a no-op when
+nothing is active); the row stays, as history. `mis_compartidas(conn, person_id)` lists this person's own active
+shares with `since`, for the Ajustes card. `visibles_para(conn, viewer_id)` returns `{name, metric_key, value, day}`
+for every OTHER member of the viewer's active household with an active share in THAT SAME household (membership
+read only through `household.household_of`, so a stranger, a different household, a person who left, or an owner
+who withdrew all drop out on their own, with no extra filtering needed); `value`/`day` are the owner's LATEST
+`daily_metric` row for the key, or `(None, None)` when they have none yet -- never a series, a baseline, a history,
+or a guess. `export_rows`/`delete_rows` exist so `body/privacidad.py` never queries the table itself.
+
+**`body/privacidad.py`**: `figura_compartida` added to `FULLY_HANDLED_TABLES`; `export_person` adds a
+`figuras_compartidas` key (this person's own rows, including withdrawn ones, via `compartir.export_rows`);
+`delete_person` calls `compartir.delete_rows` from inside its existing single `with conn:` block (that function
+does its own `DELETE` with no transaction of its own, so nesting it never commits the outer transaction early).
+
+**Ajustes** (`body/templates/settings.html`, `body/web.py`'s `settings` route): shown only when
+`household.household_of` is not None, a card «Compartir con tu hogar» / "Share with your household" lists every
+`metric_def` metric (the catalogue is data -- none filtered out) with its label and a Compartir/Dejar de compartir
+("Share"/"Stop sharing") button, 44 px (the existing `.btn` class already is), POSTing to the new
+`POST /settings/compartir` route (`metric_key`, `accion` in `{compartir, retirar}`) and redirecting back to
+`/settings`; a closing line "Solo ven el último valor y su fecha..." / "They only see the latest value...". Without
+a household, one line says sharing becomes available with one, nothing else. No new GET route.
+
+**Hoy** (`body/templates/today.html`, the `today` route): when `compartir.visibles_para` is non-empty, a quiet card
+«Tu hogar» / "Your household" lists each shared figure: name · metric label · value with unit (the app's existing
+`_fig_unit` formatting) · its day, as «hoy»/«ayer» (new helper `_dia_relativo`, relative to the viewer's own
+`today_local`) or the short date -- or a plain "no data yet" line when the owner has none. Absent otherwise, and
+only on Hoy (not wired into `soon.html`, which is not in this slice's `touches`, so a viewer with no Garmin day yet
+never sees the card even if a figure is shared).
+
+**`body/demo.py`**: Ana (BODY-HOGAR-MIEMBRO-1's invented partner) shares `resting_hr` with the demo household, so
+the demo person's own Hoy shows the card.
+
+**i18n**, both languages (`body/i18n/es.json`, `en.json`): `settings.compartir.*` (titulo, sin_hogar, accion.compartir,
+accion.retirar, nota), `hogar.dia_hoy`/`hogar.dia_ayer`, `today.hogar.titulo`/`today.hogar.sin_dato`. Metric labels
+and units reuse the existing `metric.*`/`unit.*` keys.
+
+**Tests added** (`tests/test_hogar_compartir_1.py`, 25; `tests/test_privacidad.py`'s new `CompartidoExportDeleteTest`,
+3; `tests/test_demo.py`, 1): share/withdraw/re-share with history kept; the partial unique index refuses a second
+active row and allows a withdrawn one to coexist with a new active one; refusal with no household and with an
+unknown metric key; `visibles_para` for a viewer sees only an active household member's active share, and sees
+nothing for a stranger in a different household, a stranger with no household, a member who left (both directions),
+or an owner after withdrawal, or a viewer with no household; only the latest day's value is ever returned or
+rendered on Hoy (seeded three days, asserted the older two never appear, and a "no data yet" owner renders that
+line); the Ajustes card in both languages, including the share/withdraw round trip through the route; demo seeds
+exactly one active share for Ana; export and delete-all include the table.
+
+**Gate, run once, foreground, exact command** `.venv/Scripts/python.exe -m unittest discover tests -t .`:
+
+    Ran 1051 tests in 136.783s
+    OK (skipped=1)
+
+1051 is 1022 (the prior entry's measured count) + 29 new tests (25 + 3 + 1 above); no test removed. The one skip is
+pre-existing and unrelated. (A first run on the pre-fix tree failed one new assertion in `tests/test_hogar_compartir_1.py`
+itself -- `assertNotIn("70", r.text)` false-matched the static asset cache-busting hash `819f75aca0` in every page;
+fixed to assert on the formatted `"70 lpm"`/`"60 lpm"` instead, and re-run once on the corrected tree.)
+
+**Not merged -- AWAITING_APPROVAL.** This spec's approval-reason says in words: "Tier 1 path: body/db.py (new table +
+migration). Customer-facing (Ajustes card, Hoy card): stop AWAITING_APPROVAL." The diff adds exactly that -- a new
+table and unique index in `body/db.py`, and customer-visible bytes on both Ajustes and Hoy -- so this slice stops
+before the merge on `feat/body-hogar-compartir-1` for the orchestrator's review. No cross-repo contract or DTO is
+touched.
