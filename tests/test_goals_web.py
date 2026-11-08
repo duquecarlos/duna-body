@@ -190,7 +190,9 @@ class HouseholdGoalDetailTest(unittest.TestCase):
         conn = _reset_db(self)
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")
         conn.executescript(household.SCHEMA)
-        conn.executemany("INSERT INTO hogar_local (person_id, hogar_id) VALUES (?, ?)", [(1, "h-1"), (2, "h-1")])
+        conn.executemany(
+            "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
+            [(1, "h-1"), (2, "h-1")])
         conn.commit()
         gid = goals.propose(conn, 1, "Caminar juntos", "2026-11-02", kind="milestone", deadline="2026-12-14",
                             hogar_id="h-1", visibility="household")
@@ -210,7 +212,9 @@ class MetricHouseholdFormTest(unittest.TestCase):
         conn = _reset_db(self)
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")
         conn.executescript(household.SCHEMA)
-        conn.executemany("INSERT INTO hogar_local (person_id, hogar_id) VALUES (?, ?)", [(1, "h-1"), (2, "h-1")])
+        conn.executemany(
+            "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
+            [(1, "h-1"), (2, "h-1")])
         conn.commit()
         resp = client.post("/goals/new", data={
             "kind": "metric", "title": "Bajar el pulso", "area": "body",
@@ -227,7 +231,9 @@ class MetricHouseholdFormTest(unittest.TestCase):
         conn = _reset_db(self)
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")
         conn.executescript(household.SCHEMA)
-        conn.executemany("INSERT INTO hogar_local (person_id, hogar_id) VALUES (?, ?)", [(1, "h-1"), (2, "h-1")])
+        conn.executemany(
+            "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
+            [(1, "h-1"), (2, "h-1")])
         conn.commit()
         resp = client.post("/goals/new", data={
             "kind": "milestone", "title": "Subir el Cocuy", "area": "adventure",
@@ -244,7 +250,9 @@ class GoalNewFormMilestoneOnlyVisibilityTest(unittest.TestCase):
         conn = _reset_db(self)
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")
         conn.executescript(household.SCHEMA)
-        conn.executemany("INSERT INTO hogar_local (person_id, hogar_id) VALUES (?, ?)", [(1, "h-1"), (2, "h-1")])
+        conn.executemany(
+            "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
+            [(1, "h-1"), (2, "h-1")])
         conn.commit()
         r = client.get("/goals/new")
         self.assertEqual(r.status_code, 200)
@@ -259,7 +267,9 @@ class ListCardSharedLineTest(unittest.TestCase):
         conn = _reset_db(self)
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Owner')")
         conn.executescript(household.SCHEMA)
-        conn.executemany("INSERT INTO hogar_local (person_id, hogar_id) VALUES (?, ?)", [(1, "h-1"), (2, "h-1")])
+        conn.executemany(
+            "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
+            [(1, "h-1"), (2, "h-1")])
         conn.commit()
         gid = goals.propose(conn, 2, "Subir el Cocuy", "2026-11-02", kind="milestone", deadline="2027-06-01",
                             hogar_id="h-1", visibility="household")
@@ -292,7 +302,9 @@ class LegacyMetricHouseholdRowWebTest(unittest.TestCase):
         conn = _reset_db(self)
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")
         conn.executescript(household.SCHEMA)
-        conn.executemany("INSERT INTO hogar_local (person_id, hogar_id) VALUES (?, ?)", [(1, "h-1"), (2, "h-1")])
+        conn.executemany(
+            "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
+            [(1, "h-1"), (2, "h-1")])
         gid = goals.propose(conn, 1, "Old shared metric goal", "2026-11-02", metric_key="steps",
                             direction="raise", target_value=9000.0, baseline_value=6000.0,
                             deadline="2026-12-14")
@@ -327,7 +339,9 @@ class OtherMemberHabitRowTest(unittest.TestCase):
         conn = _reset_db(self)
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Ana')")
         conn.executescript(household.SCHEMA)
-        conn.executemany("INSERT INTO hogar_local (person_id, hogar_id) VALUES (?, ?)", [(1, "h-1"), (2, "h-1")])
+        conn.executemany(
+            "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
+            [(1, "h-1"), (2, "h-1")])
         conn.commit()
         gid = goals.propose(conn, 1, "Aventura compartida", "2026-11-02", kind="milestone",
                             deadline="2027-06-01", hogar_id="h-1", visibility="household")

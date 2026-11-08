@@ -42,8 +42,9 @@ def _add_person(conn, pid: int, name: str, lang: str = "es"):
 
 def _link_household(conn, *person_ids, hogar_id="h-1"):
     conn.executescript(household.SCHEMA)
-    conn.executemany("INSERT INTO hogar_local (person_id, hogar_id) VALUES (?, ?)",
-                      [(pid, hogar_id) for pid in person_ids])
+    conn.executemany(
+        "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
+        [(pid, hogar_id) for pid in person_ids])
     conn.commit()
 
 
@@ -124,9 +125,11 @@ class ShareWithdrawReshareTest(unittest.TestCase):
         self.assertEqual([r["metric_key"] for r in compartir.mis_compartidas(conn, 1)], ["resting_hr"])
 
         # Person 1 moves to a new household; the share stays recorded under h-old.
-        conn.execute("UPDATE hogar_local SET hogar_id = 'h-new' WHERE person_id = 1")
+        conn.execute("UPDATE hogar_miembro SET hogar_id = 'h-new' WHERE person_id = 1")
         _add_person(conn, 3, "NewPartner")
-        conn.execute("INSERT INTO hogar_local (person_id, hogar_id) VALUES (3, 'h-new')")
+        conn.execute(
+            "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) "
+            "VALUES (3, 'h-new', '2026-01-01T00:00:00+00:00')")
         conn.commit()
 
         self.assertEqual(compartir.mis_compartidas(conn, 1), [])
@@ -215,7 +218,7 @@ class VisibilityTest(unittest.TestCase):
         compartir.compartir(conn, 2, "resting_hr")
         self.assertEqual(len(compartir.visibles_para(conn, 1)), 1)
 
-        conn.execute("DELETE FROM hogar_local WHERE person_id = 2")
+        conn.execute("DELETE FROM hogar_miembro WHERE person_id = 2")
         conn.commit()
         self.assertEqual(compartir.visibles_para(conn, 1), [])
         # And the person who left sees nothing of their former household either.

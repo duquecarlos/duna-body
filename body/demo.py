@@ -297,8 +297,10 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     )
     ana_id = ana_cur.lastrowid
     conn.executescript(household.SCHEMA)
-    conn.executemany("INSERT INTO hogar_local (person_id, hogar_id) VALUES (?, ?)",
-                      [(person_id, _HOGAR_ID), (ana_id, _HOGAR_ID)])
+    hogar_now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    conn.executemany(
+        "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, ?)",
+        [(person_id, _HOGAR_ID, hogar_now), (ana_id, _HOGAR_ID, hogar_now)])
     conn.commit()
     # Ana shares one figure with the household (BODY-HOGAR-COMPARTIR-1), so the demo person's own
     # Hoy shows the «Tu hogar» card. She needs her OWN short invented history of it -- never the

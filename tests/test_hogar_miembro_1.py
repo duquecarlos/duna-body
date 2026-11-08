@@ -47,8 +47,9 @@ def _rename(conn, pid: int, name: str):
 
 def _link_household(conn, *person_ids, hogar_id="h-1"):
     conn.executescript(household.SCHEMA)
-    conn.executemany("INSERT INTO hogar_local (person_id, hogar_id) VALUES (?, ?)",
-                      [(pid, hogar_id) for pid in person_ids])
+    conn.executemany(
+        "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
+        [(pid, hogar_id) for pid in person_ids])
     conn.commit()
 
 
@@ -106,7 +107,7 @@ class VisibilityTest(unittest.TestCase):
         _add_person(conn, 4, "Left")
         _link_household(conn, 1, 4)
         gid = _shared_milestone(conn, 1)
-        conn.execute("DELETE FROM hogar_local WHERE person_id = 4")
+        conn.execute("DELETE FROM hogar_miembro WHERE person_id = 4")
         conn.commit()
 
         _as(self, 4)

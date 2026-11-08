@@ -355,8 +355,9 @@ class CompartidoExportDeleteTest(unittest.TestCase):
         db.init(self.conn)
         self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
         self.conn.executescript(household.SCHEMA)
-        self.conn.executemany("INSERT INTO hogar_local (person_id, hogar_id) VALUES (?, ?)",
-                              [(1, "h-1"), (2, "h-1")])
+        self.conn.executemany(
+            "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
+            [(1, "h-1"), (2, "h-1")])
         self.conn.commit()
 
     def test_export_includes_metric_key_and_dates_never_a_figure(self):

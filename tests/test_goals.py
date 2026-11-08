@@ -214,7 +214,9 @@ class HouseholdGoalCheckTest(unittest.TestCase):
         db.init(conn)
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")
         conn.executescript(household.SCHEMA)
-        conn.executemany("INSERT INTO hogar_local (person_id, hogar_id) VALUES (?, ?)", [(1, "h-1"), (2, "h-1")])
+        conn.executemany(
+            "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
+            [(1, "h-1"), (2, "h-1")])
         conn.commit()
         gid = goals.propose(conn, 1, "Shared steps goal", "2026-11-02", kind="milestone",
                              deadline="2026-12-14", hogar_id="h-1", visibility="household")
@@ -262,7 +264,9 @@ class LegacyMetricHouseholdRowTest(unittest.TestCase):
         db.init(conn)
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")
         conn.executescript(household.SCHEMA)
-        conn.executemany("INSERT INTO hogar_local (person_id, hogar_id) VALUES (?, ?)", [(1, "h-1"), (2, "h-1")])
+        conn.executemany(
+            "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
+            [(1, "h-1"), (2, "h-1")])
         gid = goals.propose(conn, 1, "Old shared metric goal", "2026-11-02", metric_key="steps",
                             direction="raise", target_value=9000.0, baseline_value=6000.0,
                             deadline="2026-12-14")
