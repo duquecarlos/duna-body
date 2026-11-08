@@ -5404,3 +5404,46 @@ on the goal page and Hoy, and verdicts): stop AWAITING_APPROVAL." The diff chang
 the goal page's per-habit progress line and its wording for a monthly habit, Hoy's due-today list, and
 every milestone verdict built on habits with `times` != 1 -- so this slice stops before the merge on
 `feat/body-habito-veces-1`, commit `28e3fcd`, for the orchestrator's review.
+
+## BODY-HABITO-VECES-1-M -- due-today now stays listed, ticked, on the quota-completing day for `per='week'`/`per='month'` too (2026-11-07)
+
+Lands `BODY-HABITO-VECES-1` with one fix, approved by the orchestrator (spec `body-habito-veces-1-m.md`,
+approval-reason `ORCH-CARLOS-DELEGATES-TIER-1-1`): `goals.habit_due_today` returned `False` for a
+per='week' or per='month' habit the instant its quota was met, including on the day the quota-completing
+check happened. A 2-a-week habit ticked for the second time on Hoy vanished from Hoy at once -- no visible
+tick, no way to untick it that day. The prior entry's rule ("A habit already checked today stays listed,
+ticked, as today") had been applied to `per='day'` only; `per='week'`/`per='month'` fell straight through
+to `done < due`, which is `False` the moment `done` reaches `due`.
+
+**The fix**, `body/goals.py::habit_due_today`: for `per='week'`/`per='month'`, H is due today when today
+is one of H's due days AND (the period's `done < due`, OR P has a `done = 1` check of H dated today). The
+second half is new -- a direct query for a check on today's date, rather than reading it off
+`habit_progress`'s period totals, since a period that is already satisfied gives no way to tell "satisfied
+before today" apart from "satisfied today" from the totals alone. `per='day'` is unchanged (no extra gate
+at all). Docstring updated to state the exception.
+
+**Tests added**, `tests/test_habito_veces_1.py`: a 2-a-week habit checked Monday and again Tuesday stays
+due on Tuesday (the quota-completing day) and is not due Wednesday; a monthly habit (times=2) whose second
+check lands on the 15th stays due on the 15th and is not due on the 16th. The existing due-today test
+(quota met on an earlier day, checked on a later day) was left as is -- it never exercised the
+quota-completing day itself, which is exactly the gap this fix closes.
+
+**Merge of `main`**: not needed before the fix. `main`'s tip at dispatch (`32d3f30`,
+`BODY-HOGAR-MIEMBRO-1-M2`'s ledger entry) was already an ancestor of the branch's pre-fix tip `30892aa`
+(the branch was cut after that commit landed on `main`), measured by `git merge-base HEAD main` returning
+`32d3f30` before any change -- the spec's warning that `main` had moved did not apply here.
+
+**Gate, run once, foreground, exact command** `.venv/Scripts/python.exe -m unittest discover tests -t .`,
+on the branch before the merge into `main`:
+
+    Ran 1022 tests in 165.245s
+    OK (skipped=1)
+
+1022 is 1020 (the prior entry's measured count, not the spec's rounded "1019 + 1 skipped") + 2 new tests.
+The one skip is pre-existing and unrelated.
+
+**Merged.** The diff beyond the already-approved `BODY-HABITO-VECES-1` work is confined to one function's
+extra query and docstring in `body/goals.py`, plus its test file -- no schema or migration change, no
+cross-repo contract. Customer-facing counts (Hoy's due-today list) are the one merge-policy-A condition
+this diff trips, and it is exactly what this spec's approval-reason classified and approved. Merged
+`--no-ff` into `main`.
