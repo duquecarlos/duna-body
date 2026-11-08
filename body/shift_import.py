@@ -1,11 +1,15 @@
 """Imports shift files that another app (Personal) extracts from Carlos's schedule email, in the format
 FORMATO.md describes (one `turnos-<received month>_<...>.json` per schedule mail; every non-matching file,
-such as a `codigos.json` sidecar, is ignored). Nothing is written silently: a file is validated whole and
-proposed as a batch, and only a human confirm writes it into `shift` (docs/DESIGN.md rule 1).
+such as a `codigos.json` sidecar, is ignored). A batch is a file OR a hand-entered pattern the person typed
+themselves (`body/patron_turnos.py`, `shift_batch.kind = 'pattern'`) -- either way, nothing is written
+silently: a batch is validated whole and proposed, and only a human confirm writes it into `shift`
+(docs/DESIGN.md rule 1).
 
 A batch's precedence is the pair (received, extracted_at), compared in that order: Personal re-extracts the
 same mail (same `received`, later `extracted_at`) when a shift's hours or code are corrected, and that
-re-extraction must win over the earlier one for the days it covers.
+re-extraction must win over the earlier one for the days it covers. A pattern batch's `received` is the day
+it was proposed, so a later file or a later pattern edit wins over an earlier one for the same day exactly
+the same way.
 """
 from __future__ import annotations
 
@@ -70,10 +74,14 @@ def _validate(shifts: list[dict]) -> None:
         day_kind.setdefault(day, kind)
 
 
-def propose_data(conn: sqlite3.Connection, data: dict, file_name: str, person_id: int) -> int:
+def propose_data(conn: sqlite3.Connection, data: dict, file_name: str, person_id: int,
+                  kind: str = "import") -> int:
     """Validates the whole file first and writes nothing on any error. Re-proposing the same
     (person, file_name, received, extracted_at) is a no-op that returns the existing batch id.
-    Shared by the path-based `propose` below and body/web.py's POST /api/turnos."""
+    Shared by the path-based `propose` below, body/web.py's POST /api/turnos, and
+    body/patron_turnos.py's `proponer` (kind='pattern')."""
+    if kind not in ("import", "pattern"):
+        raise ImportRefused(f"unknown batch kind {kind!r}")
     source = data.get("source") or {}
     received = source.get("received")
     extracted_at = source.get("extracted_at")
@@ -96,9 +104,10 @@ def propose_data(conn: sqlite3.Connection, data: dict, file_name: str, person_id
     with conn:
         cur = conn.execute(
             "INSERT INTO shift_batch (person_id, file_name, received, extracted_at, source_person, "
-            "source_timezone, status, day_count, created_at) VALUES (?, ?, ?, ?, ?, ?, 'proposed', ?, ?)",
+            "source_timezone, status, day_count, created_at, kind) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?)",
             (person_id, file_name, received, extracted_at, data.get("person"), data.get("timezone"),
-             day_count, now),
+             day_count, now, kind),
         )
         batch_id = cur.lastrowid
         conn.executemany(
@@ -146,12 +155,17 @@ def preview(conn: sqlite3.Connection, batch_id: int) -> dict:
         if conn.execute("SELECT 1 FROM shift WHERE person_id = ? AND day = ? AND source = 'manual'",
                         (person_id, d)).fetchone()
     )
-    return {"batch": dict(batch), "day_count": len(by_day), "night_count": len(night_days), "kept_days": kept_days}
+    days = sorted(by_day)
+    return {"batch": dict(batch), "day_count": len(by_day), "night_count": len(night_days), "kept_days": kept_days,
+            "first_day": days[0] if days else None, "last_day": days[-1] if days else None}
 
 
 def confirm(conn: sqlite3.Connection, batch_id: int) -> None:
     """Day by day, one transaction: a manual row is kept, a newer confirmed batch's days are kept, and
-    everything else is replaced -- never a manual row, and never anything but this person's import rows."""
+    everything else is replaced -- never a manual row, and never anything but this person's own batch
+    rows (file or pattern). A pattern batch's rows are stamped `source = 'patron:<file_name>'`; an
+    import batch's keep `'personal:<file_name>'`; the replaceable-row predicate below widens to
+    either prefix so a pattern batch can replace an import's rows and vice versa."""
     if not slot_index_ok(conn):
         raise SlotIndexMissing("the slot index is missing; confirm refuses until the migration creates it")
     batch = conn.execute("SELECT * FROM shift_batch WHERE id = ?", (batch_id,)).fetchone()
@@ -175,7 +189,8 @@ def confirm(conn: sqlite3.Connection, batch_id: int) -> None:
                 continue
             existing = conn.execute(
                 "SELECT b.received, b.extracted_at FROM shift s JOIN shift_batch b ON b.id = s.batch_id "
-                "WHERE s.person_id = ? AND s.day = ? AND s.source LIKE 'personal:%' LIMIT 1",
+                "WHERE s.person_id = ? AND s.day = ? AND (s.source LIKE 'personal:%' OR s.source LIKE 'patron:%') "
+                "LIMIT 1",
                 (person_id, day),
             ).fetchone()
             if existing and (existing["received"], existing["extracted_at"]) > order:
@@ -183,14 +198,17 @@ def confirm(conn: sqlite3.Connection, batch_id: int) -> None:
                     conn.execute("UPDATE shift_batch_item SET outcome = 'newer_kept' WHERE id = ?", (it["id"],))
                 continue
             conn.execute(
-                "DELETE FROM shift WHERE person_id = ? AND day = ? AND source LIKE 'personal:%'", (person_id, day)
+                "DELETE FROM shift WHERE person_id = ? AND day = ? "
+                "AND (source LIKE 'personal:%' OR source LIKE 'patron:%')",
+                (person_id, day),
             )
+            source_prefix = "patron" if batch["kind"] == "pattern" else "personal"
             for it in day_items:
                 conn.execute(
                     "INSERT INTO shift (person_id, day, kind, code, start_local, end_local, source, batch_id) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (person_id, day, it["kind"], it["code"], it["start_local"], it["end_local"],
-                     f"personal:{batch['file_name']}", batch_id),
+                     f"{source_prefix}:{batch['file_name']}", batch_id),
                 )
                 conn.execute("UPDATE shift_batch_item SET outcome = 'applied' WHERE id = ?", (it["id"],))
         conn.execute(
