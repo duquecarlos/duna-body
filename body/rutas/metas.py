@@ -98,12 +98,12 @@ def _goal_target_text(t: T, defs: dict, g) -> str:
     return t("goals.card.milestone_date", date=date_txt)
 
 
-def _goal_check_row(conn, goal_id: int, person_id: int, week_start: str) -> dict:
-    row = conn.execute("SELECT * FROM goal_check WHERE goal_id = ? AND person_id = ? AND week_start = ?",
-                       (goal_id, person_id, week_start)).fetchone()
-    if row:
-        return dict(row)
-    result = goals.weekly_check(conn, goal_id, person_id, week_start)
+def _current_week_check(conn, goal_id: int, person_id: int, week_start: str) -> dict:
+    """The current week's verdict, computed live on every view (BODY-SEGURIDAD-3): never a stored
+    row, which would freeze the week's verdict at whoever opened it first and never update again
+    that week. `goals.evaluar_semana` writes nothing; the one writer is body/pull.py's
+    `cerrar_semanas`, run by the daily pull."""
+    result = goals.evaluar_semana(conn, goal_id, person_id, week_start)
     return result or {"on_track": None, "metric_avg": None, "habits_done": 0, "habits_due": 0}
 
 
@@ -190,7 +190,7 @@ def goals_list(person_id: int = Depends(identity.current_person_id)):
 
     cards = []
     for g in active:
-        check = _goal_check_row(conn, g["id"], person_id, week_start)
+        check = _current_week_check(conn, g["id"], person_id, week_start)
         cls, verdict = _verdict(t, check["on_track"])
         if g["kind"] == "metric":
             fig = comun._fig_unit(t, g["metric_key"], check["metric_avg"], defs)
@@ -285,21 +285,29 @@ def goal_detail(goal_id: int, request: Request, person_id: int = Depends(identit
     defs = comun._defs(conn)
     today = comun._today_local(person)
     monday = fechas.lunes_de(today)
-    if g["status"] == "active":
-        _goal_check_row(conn, goal_id, person_id, monday.isoformat())  # upserts THIS VIEWER's check if missing
+    week_start = monday.isoformat()
+    # The current week is computed live, never stored by a GET (BODY-SEGURIDAD-3): a row for it,
+    # if one exists from the daily pull, is excluded from the queries below and replaced with this
+    # fresher value everywhere it would otherwise show, so it is never shown twice.
+    current_check = goals.evaluar_semana(conn, goal_id, person_id, week_start)
 
     chart = None
     if g["kind"] == "metric" and g["deadline"] and g["baseline_value"] is not None and g["target_value"] is not None:
-        checks_for_chart = conn.execute(
+        checks_for_chart = [dict(r) for r in conn.execute(
             "SELECT week_start, metric_avg FROM goal_check WHERE goal_id = ? AND person_id = ? "
-            "AND metric_avg IS NOT NULL ORDER BY week_start", (goal_id, person_id)).fetchall()
+            "AND metric_avg IS NOT NULL AND week_start != ? ORDER BY week_start",
+            (goal_id, person_id, week_start)).fetchall()]
+        if current_check is not None and current_check["metric_avg"] is not None:
+            checks_for_chart.append({"week_start": week_start, "metric_avg": current_check["metric_avg"]})
         chart = _goal_line_svg(t, defs, g, checks_for_chart, today)
 
-    history_rows = conn.execute(
-        "SELECT * FROM goal_check WHERE goal_id = ? AND person_id = ? ORDER BY week_start DESC LIMIT 8",
-        (goal_id, person_id)).fetchall()
+    history_rows = [dict(r) for r in conn.execute(
+        "SELECT * FROM goal_check WHERE goal_id = ? AND person_id = ? AND week_start != ? "
+        "ORDER BY week_start DESC LIMIT 7", (goal_id, person_id, week_start)).fetchall()]
+    if current_check is not None:
+        history_rows.insert(0, current_check)
     history_list = [{"week": t("goals.week_of", date=comun._short_date(t, date.fromisoformat(r["week_start"]))),
-                     "text": _verdict_sentence(t, defs, g, dict(r))} for r in history_rows]
+                     "text": _verdict_sentence(t, defs, g, r)} for r in history_rows]
 
     habit_rows = []
     for h in _habits_for_goal(conn, goal_id):

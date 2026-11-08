@@ -208,6 +208,135 @@ class HabitContextTest(unittest.TestCase):
         self.assertIsNone(r["on_track"])
 
 
+class EvaluarSemanaNoWriteTest(unittest.TestCase):
+    def test_writes_nothing(self):
+        conn = _conn(self)
+        db.init(conn)
+        gid = goals.propose(conn, 1, "Steps", "2026-11-02", metric_key="steps", direction="raise",
+                             target_value=9000.0, baseline_value=6000.0, deadline="2026-12-14")
+        goals.activate(conn, gid)
+        for i in range(7):
+            _seed_metric(conn, "steps", 1, f"2026-11-{2 + i:02d}", 9500)
+        r = goals.evaluar_semana(conn, gid, 1, "2026-11-02")
+        self.assertTrue(r["on_track"])
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM goal_check").fetchone()[0], 0)
+
+    def test_non_active_goal_returns_none_and_writes_nothing(self):
+        conn = _conn(self)
+        db.init(conn)
+        gid = goals.propose(conn, 1, "Steps", "2026-11-02", metric_key="steps", direction="raise",
+                             target_value=9000.0, baseline_value=6000.0, deadline="2026-12-14")
+        self.assertIsNone(goals.evaluar_semana(conn, gid, 1, "2026-11-02"))
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM goal_check").fetchone()[0], 0)
+
+    def test_same_fields_as_weekly_check(self):
+        conn = _conn(self)
+        db.init(conn)
+        gid = goals.propose(conn, 1, "Steps", "2026-11-02", metric_key="steps", direction="raise",
+                             target_value=9000.0, baseline_value=6000.0, deadline="2026-12-14")
+        goals.activate(conn, gid)
+        for i in range(7):
+            _seed_metric(conn, "steps", 1, f"2026-11-{2 + i:02d}", 9500)
+        computed = goals.evaluar_semana(conn, gid, 1, "2026-11-02")
+        written = goals.weekly_check(conn, gid, 1, "2026-11-02")
+        self.assertEqual(computed, written)
+
+
+class CerrarSemanasTest(unittest.TestCase):
+    def test_hoy_is_required_and_keyword_only(self):
+        conn = _conn(self)
+        db.init(conn)
+        with self.assertRaises(TypeError):
+            goals.cerrar_semanas(conn, 1)
+
+    def test_writes_this_and_last_week_for_active_goals_only(self):
+        conn = _conn(self)
+        db.init(conn)
+        gid_active = goals.propose(conn, 1, "Steps", "2026-10-01", metric_key="steps", direction="raise",
+                                    target_value=9000.0, baseline_value=6000.0, deadline="2026-12-14")
+        goals.activate(conn, gid_active)
+        gid_proposed = goals.propose(conn, 1, "Other", "2026-10-01", metric_key="steps", direction="raise",
+                                      target_value=9000.0, baseline_value=6000.0, deadline="2026-12-14")
+        n = goals.cerrar_semanas(conn, 1, hoy=date(2026, 11, 5))  # a Thursday; Monday is 2026-11-02
+        self.assertEqual(n, 2)
+        rows = conn.execute("SELECT week_start FROM goal_check WHERE goal_id = ? ORDER BY week_start",
+                            (gid_active,)).fetchall()
+        self.assertEqual([r["week_start"] for r in rows], ["2026-10-26", "2026-11-02"])
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM goal_check WHERE goal_id = ?", (gid_proposed,)).fetchone()[0], 0)
+
+    def test_household_milestone_included_for_a_member(self):
+        conn = _conn(self)
+        db.init(conn)
+        conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")
+        conn.executemany(
+            "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
+            [(1, "h-1"), (2, "h-1")])
+        conn.commit()
+        gid = goals.propose(conn, 1, "Shared steps goal", "2026-10-01", kind="milestone", deadline="2026-12-14",
+                            hogar_id="h-1", visibility="household")
+        goals.activate(conn, gid)
+        n = goals.cerrar_semanas(conn, 2, hoy=date(2026, 11, 5))  # person 2: a member, not the creator
+        self.assertEqual(n, 2)
+        rows = conn.execute(
+            "SELECT week_start FROM goal_check WHERE goal_id = ? AND person_id = ? ORDER BY week_start",
+            (gid, 2)).fetchall()
+        self.assertEqual([r["week_start"] for r in rows], ["2026-10-26", "2026-11-02"])
+
+
+class PersonasConMetaActivaTest(unittest.TestCase):
+    """BODY-SEGURIDAD-3-M: the person list the daily pull sweeps to close weeks comes from the
+    goal table (own goals plus shared household milestones), never from garmin_cuenta."""
+
+    def test_own_active_goal_only(self):
+        conn = _conn(self)
+        db.init(conn)
+        gid = goals.propose(conn, 1, "Steps", "2026-10-01", metric_key="steps", direction="raise",
+                            target_value=9000.0, baseline_value=6000.0, deadline="2026-12-14")
+        goals.activate(conn, gid)
+        self.assertEqual(goals.personas_con_meta_activa(conn), [1])
+
+    def test_proposed_or_archived_goal_excluded(self):
+        conn = _conn(self)
+        db.init(conn)
+        goals.propose(conn, 1, "Steps", "2026-10-01", metric_key="steps", direction="raise",
+                      target_value=9000.0, baseline_value=6000.0, deadline="2026-12-14")
+        gid_done = goals.propose(conn, 1, "Old", "2026-10-01", metric_key="steps", direction="raise",
+                                 target_value=9000.0, baseline_value=6000.0, deadline="2026-12-14")
+        goals.activate(conn, gid_done)
+        goals.finish(conn, gid_done)
+        self.assertEqual(goals.personas_con_meta_activa(conn), [])
+
+    def test_household_milestone_includes_every_member_not_only_the_creator(self):
+        conn = _conn(self)
+        db.init(conn)
+        conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")
+        conn.executemany(
+            "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
+            [(1, "h-1"), (2, "h-1")])
+        conn.commit()
+        gid = goals.propose(conn, 1, "Shared steps goal", "2026-10-01", kind="milestone", deadline="2026-12-14",
+                            hogar_id="h-1", visibility="household")
+        goals.activate(conn, gid)
+        self.assertEqual(goals.personas_con_meta_activa(conn), [1, 2])
+
+    def test_legacy_household_metric_goal_does_not_add_the_member(self):
+        """A pre-BODY-HOGAR-MIEMBRO-1-M row (visibility='household', kind='metric') is never
+        shared -- the same exclusion goal_access and goal_scope_sql apply."""
+        conn = _conn(self)
+        db.init(conn)
+        conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")
+        conn.executemany(
+            "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
+            [(1, "h-1"), (2, "h-1")])
+        gid = goals.propose(conn, 1, "Legacy", "2026-10-01", metric_key="steps", direction="raise",
+                            target_value=9000.0, baseline_value=6000.0, deadline="2026-12-14")
+        conn.execute("UPDATE goal SET visibility = 'household', hogar_id = 'h-1' WHERE id = ?", (gid,))
+        goals.activate(conn, gid)
+        conn.commit()
+        self.assertEqual(goals.personas_con_meta_activa(conn), [1])
+
+
 class HouseholdGoalCheckTest(unittest.TestCase):
     def test_two_members_each_get_their_own_goal_check(self):
         conn = _conn(self)

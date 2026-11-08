@@ -22,7 +22,7 @@ import time
 from datetime import date, timedelta
 from pathlib import Path
 
-from . import config, cuenta, db, garmin_adapter, garmin_cuenta, readiness
+from . import config, cuenta, db, errores, fechas, garmin_adapter, garmin_cuenta, goals, readiness
 
 PAUSE_S = 1.0  # be gentle with Garmin's servers during a backfill
 EMPTY_STOP = 60  # --all stops after this many consecutive days with no watch data
@@ -148,9 +148,36 @@ def _pull_one_person(conn, person_id: int, days: list[str]) -> int | None:
     return saved
 
 
+def _cerrar_semanas_seguro(conn, person_id: int) -> None:
+    """The one writer of goal_check (BODY-SEGURIDAD-3): closes this person's current and previous
+    week. A failure here is never a Garmin failure and never stops the next person -- caught,
+    printed as a counts-only line with the exception TYPE (body/errores.py's texto_seguro),
+    nothing else happens."""
+    try:
+        hoy = fechas.hoy_local(db.person(conn, person_id))
+        n = goals.cerrar_semanas(conn, person_id, hoy=hoy)
+        print(f"weekly checks: {n} rows", flush=True)
+    except Exception as e:
+        print(f"weekly checks failed: {errores.texto_seguro(e)}", flush=True)
+
+
+def _cerrar_semanas_todas(conn) -> None:
+    """Closes weeks, once each, for EVERY person who can see an active goal (own or shared
+    household milestone, `goals.personas_con_meta_activa`) -- connected to Garmin or not, pulled
+    OK or failed today (BODY-SEGURIDAD-3-M). Run once after the Garmin loop in both the daily
+    hosted pull and --backfill, replacing the per-connected-person call that used to sit inside
+    that loop: the person list comes from the goal table, never from
+    `garmin_cuenta.every_person_id`, so a habit goal's own member who has no Garmin connection at
+    all still gets their weekly checks stored."""
+    for person_id in goals.personas_con_meta_activa(conn):
+        _cerrar_semanas_seguro(conn, person_id)
+
+
 def pull_hosted(conn, days: list[str]) -> tuple[int, int, int]:
-    """Loops over every person with a connected Garmin account. Returns (persons ok, persons
-    failed, days stored). Never prints a health figure -- counts only."""
+    """Loops over every person with a connected Garmin account, then closes weeks for every
+    person who can see an active goal (`_cerrar_semanas_todas`) -- connected or not, pulled OK or
+    failed today (BODY-SEGURIDAD-3-M). Returns (persons ok, persons failed, days stored). Never
+    prints a health figure -- counts only."""
     ok = failed = saved = 0
     for person_id in garmin_cuenta.every_person_id(conn):
         try:
@@ -165,6 +192,7 @@ def pull_hosted(conn, days: list[str]) -> tuple[int, int, int]:
         garmin_cuenta.limpiar_error(conn, person_id)
         saved += n
         ok += 1
+    _cerrar_semanas_todas(conn)
     return ok, failed, saved
 
 
@@ -223,8 +251,11 @@ def pull_backfill_hosted(conn, hoy: date | None = None) -> tuple[int, int, int]:
     no Garmin call and not counted as failed -- otherwise the backfill timer would retry a
     rejected token every 10 minutes and risk Garmin rate-limiting the account. The daily pull
     still tries them once a day and clears the error on success, which lets the backfill resume;
-    a reconnect (garmin_cuenta.guardar) also clears it. Returns (persons ok, persons failed, days
-    stored). Never prints a health figure -- counts only."""
+    a reconnect (garmin_cuenta.guardar) also clears it. Also closes weeks for every person who can
+    see an active goal (`_cerrar_semanas_todas`), same as the daily pull -- cheap next to the
+    Garmin calls this loop already makes, and a day backfilled into the current or previous week
+    can change that week's stored verdict (BODY-SEGURIDAD-3-M). Returns (persons ok, persons
+    failed, days stored). Never prints a health figure -- counts only."""
     hoy = hoy or date.today()
     ok = failed = saved = 0
     for person_id in garmin_cuenta.every_person_id(conn):
@@ -242,6 +273,7 @@ def pull_backfill_hosted(conn, hoy: date | None = None) -> tuple[int, int, int]:
         garmin_cuenta.limpiar_error(conn, person_id)
         saved += n
         ok += 1
+    _cerrar_semanas_todas(conn)
     return ok, failed, saved
 
 
@@ -311,6 +343,11 @@ def _run(conn, a) -> int:
     # Baselines depend on earlier days, so recompute every stored day in order (cheap, local).
     n = readiness.recompute_all(conn, person_id)
     print(f"Readiness updated for {n} days.")
+    # Through the same safe wrapper the hosted path uses (BODY-SEGURIDAD-3-M): a failure here
+    # prints a type-only line and the sync still exits 0, instead of failing the whole run. Runs
+    # after every local path that stores or recomputes data -- --all, --recompute, and the
+    # default/--days/--date pull all reach this line.
+    _cerrar_semanas_seguro(conn, person_id)
     return 0
 
 

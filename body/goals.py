@@ -2,6 +2,11 @@
 
 Pure functions over a connection. No schema of its own and nothing sent anywhere, so this stays
 Tier 2 even though goal/habit/goal_check are Tier 1 tables.
+
+`evaluar_semana` computes a goal_check body without writing; every GET route uses it for the
+current week, live (BODY-SEGURIDAD-3). `weekly_check` adds the upsert; its only caller is
+`cerrar_semanas`, run once a day by body/pull.py -- the one writer of goal_check. No GET route may
+call `weekly_check` or `cerrar_semanas` (guarded by tests/test_get_sin_escritura.py).
 """
 from __future__ import annotations
 
@@ -247,12 +252,11 @@ def _expected_on_line(goal, monday: date) -> float | None:
     return goal["baseline_value"] + frac * (goal["target_value"] - goal["baseline_value"])
 
 
-def weekly_check(conn, goal_id: int, person_id: int, week_start: str) -> dict | None:
-    """Compute and upsert this person's goal_check row for this goal and week.
-
-    Returns None without writing anything for a goal that is not active: a proposed, paused,
-    done or dropped goal is never checked.
-    """
+def evaluar_semana(conn, goal_id: int, person_id: int, week_start: str) -> dict | None:
+    """Computes this person's goal_check body for this goal and week -- WITHOUT writing anything
+    (BODY-SEGURIDAD-3): the read-only half of what used to be weekly_check's only shape. Same
+    fields, same rule_version. Returns None for a goal that is not active: a proposed, paused,
+    done or dropped goal is never checked, computed or stored."""
     goal = conn.execute("SELECT * FROM goal WHERE id = ?", (goal_id,)).fetchone()
     if goal is None or goal["status"] != "active":
         return None
@@ -277,6 +281,20 @@ def weekly_check(conn, goal_id: int, person_id: int, week_start: str) -> dict | 
     elif habits_due > 0:
         on_track = (habits_done / habits_due) >= MILESTONE_ON_TRACK_PCT
 
+    return {"goal_id": goal_id, "person_id": person_id, "week_start": week_start, "metric_avg": metric_avg,
+            "on_track": on_track, "habits_done": habits_done, "habits_due": habits_due, "rule_version": RULE_VERSION}
+
+
+def weekly_check(conn, goal_id: int, person_id: int, week_start: str) -> dict | None:
+    """Compute (evaluar_semana) and upsert this person's goal_check row for this goal and week.
+
+    Returns None without writing anything for a goal that is not active: a proposed, paused,
+    done or dropped goal is never checked. The only writer is body/pull.py's cerrar_semanas
+    (BODY-SEGURIDAD-3): nothing on a GET route may call this.
+    """
+    result = evaluar_semana(conn, goal_id, person_id, week_start)
+    if result is None:
+        return None
     with conn:
         conn.execute(
             "INSERT INTO goal_check (goal_id, person_id, week_start, metric_avg, on_track, habits_done, "
@@ -285,7 +303,46 @@ def weekly_check(conn, goal_id: int, person_id: int, week_start: str) -> dict | 
             "metric_avg = excluded.metric_avg, on_track = excluded.on_track, "
             "habits_done = excluded.habits_done, habits_due = excluded.habits_due, "
             "rule_version = excluded.rule_version",
-            (goal_id, person_id, week_start, metric_avg, on_track, habits_done, habits_due, RULE_VERSION),
+            (goal_id, person_id, week_start, result["metric_avg"], result["on_track"], result["habits_done"],
+             result["habits_due"], RULE_VERSION),
         )
-    return {"goal_id": goal_id, "person_id": person_id, "week_start": week_start, "metric_avg": metric_avg,
-            "on_track": on_track, "habits_done": habits_done, "habits_due": habits_due, "rule_version": RULE_VERSION}
+    return result
+
+
+def cerrar_semanas(conn, person_id: int, *, hoy: date) -> int:
+    """Writes this week's and last week's goal_check row for every ACTIVE goal `person_id` can see
+    (own goals plus shared household milestones, `goal_scope_sql` -- the same scope /goals uses).
+    The one writer of goal_check (BODY-SEGURIDAD-3), run by the daily pull: last week is included
+    too so late data (a Sunday pulled on Monday) still lands in the week it belongs to. `hoy` is
+    required and keyword-only (the clock rule, BODY-TIER1-LIMPIEZA-1) -- this function never reads
+    the clock itself. Returns the number of goal_check rows written."""
+    hh = household.household_of(conn, person_id)
+    scope_sql, scope_params = goal_scope_sql(person_id, hh)
+    goal_ids = [r["id"] for r in conn.execute(
+        f"SELECT id FROM goal WHERE status = 'active' AND {scope_sql}", scope_params)]
+    this_monday = fechas.lunes_de(hoy)
+    last_monday = this_monday - timedelta(7)
+    written = 0
+    for goal_id in goal_ids:
+        for week_start in (this_monday.isoformat(), last_monday.isoformat()):
+            if weekly_check(conn, goal_id, person_id, week_start) is not None:
+                written += 1
+    return written
+
+
+def personas_con_meta_activa(conn) -> list[int]:
+    """Every person who can see at least one ACTIVE goal: a goal's own creator, plus -- for a
+    visibility='household' kind='milestone' goal (the only kind a household can share,
+    BODY-HOGAR-MIEMBRO-1-M) -- every member of its household (`hogar_miembro`). The daily pull
+    (body/pull.py, BODY-SEGURIDAD-3-M) closes weeks for each of these once, whether or not they
+    have a connected Garmin account: a habit goal's verdict never depends on Garmin data, so a
+    household member with no Garmin connection, or whose pull failed today, still gets theirs."""
+    ids = {r["person_id"] for r in conn.execute("SELECT DISTINCT person_id FROM goal WHERE status = 'active'")}
+    hogares = [r["hogar_id"] for r in conn.execute(
+        "SELECT DISTINCT hogar_id FROM goal WHERE status = 'active' AND visibility = 'household' "
+        "AND kind = 'milestone' AND hogar_id IS NOT NULL")]
+    if hogares:
+        placeholders = ",".join("?" * len(hogares))
+        ids.update(r["person_id"] for r in conn.execute(
+            f"SELECT person_id FROM hogar_miembro WHERE hogar_id IN ({placeholders})", hogares))
+    return sorted(ids)

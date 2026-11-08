@@ -5,8 +5,11 @@ unknown name, or a call with the wrong parameters. No provider client, no networ
 module is plain Python called with a connection a caller already opened.
 
 `leer_metas` and `leer_meta` read the newest EXISTING `goal_check` row with a plain SELECT. They must
-never call `goals.weekly_check` (what `body/web.py`'s `_goal_check_row` does) -- that function upserts a
-row, and a `lectura` tool must never write (BODY-ASISTENTE-OBS-1).
+never call `goals.weekly_check` or `goals.cerrar_semanas` (BODY-SEGURIDAD-3's writers) -- a `lectura`
+tool must never write (BODY-ASISTENTE-OBS-1). `goals.evaluar_semana` is the read-only path a tool
+could use to show the current week's verdict live, the way body/rutas/metas.py's screens do; left
+unused here because an active goal with no data yet would then read as a computed "no verdict" dict
+instead of "sin verificación aún" -- the shape every other read tool and existing test depends on.
 
 The four `proponer_*` tools below are `tipo: propuesta` (BODY-ASISTENTE-PROPUESTAS-1): they create a
 server-side proposal record through `body/agente/propuestas.py` and never write the target

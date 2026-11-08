@@ -168,6 +168,37 @@ class GoalDetailKindTest(unittest.TestCase):
         self.assertIn("Fecha: 1 jun 2027", r.text)
 
 
+class CurrentWeekLiveTest(unittest.TestCase):
+    """BODY-SEGURIDAD-3 defect (a): the current week's verdict must never freeze at the first
+    view -- it is computed live on every GET, never stored by one."""
+
+    def test_verdict_changes_as_data_arrives_mid_week(self):
+        conn = _reset_db(self)
+        gid = goals.propose(conn, 1, "Caminar más", "2026-11-02", metric_key="steps", direction="raise",
+                            target_value=9000.0, baseline_value=6000.0, deadline="2026-12-14")
+        goals.activate(conn, gid)
+        db.set_metric(conn, "2026-11-02", "steps", 9500, "garmin", 1)
+        db.set_metric(conn, "2026-11-03", "steps", 9500, "garmin", 1)
+        conn.commit()
+
+        with mock.patch.object(comun, "_today_local", return_value=date(2026, 11, 3)):
+            r1 = client.get(f"/goals/{gid}")
+        self.assertEqual(r1.status_code, 200)
+        self.assertIn("Aún sin datos suficientes", r1.text)  # fewer than MIN_METRIC_DAYS days of data
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM goal_check").fetchone()[0], 0)
+
+        db.set_metric(conn, "2026-11-04", "steps", 9500, "garmin", 1)
+        db.set_metric(conn, "2026-11-05", "steps", 9500, "garmin", 1)
+        conn.commit()
+
+        with mock.patch.object(comun, "_today_local", return_value=date(2026, 11, 5)):
+            r2 = client.get(f"/goals/{gid}")
+        self.assertEqual(r2.status_code, 200)
+        self.assertNotIn("Aún sin datos suficientes", r2.text)
+        self.assertIn("En camino", r2.text)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM goal_check").fetchone()[0], 0)
+
+
 class NewGoalFormKindTest(unittest.TestCase):
     def test_metric_only_group_and_both_kind_radios(self):
         _reset_db(self)
