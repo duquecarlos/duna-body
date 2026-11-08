@@ -9,6 +9,7 @@ import os
 import tempfile
 import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -612,7 +613,7 @@ class PullHostedTest(unittest.TestCase):
         garmin_cuenta.guardar(self.conn, 1, GOOD_TOKEN)
         garmin_cuenta.guardar(self.conn, 2, BAD_TOKEN)
 
-        ok, failed, saved = pull.pull_hosted(self.conn, ["2026-11-01"])
+        ok, failed, saved = pull.pull_hosted(self.conn, fecha="2026-11-01")
         self.assertEqual((ok, failed, saved), (1, 1, 1))
         self.assertEqual(garmin_cuenta.ultimo_error(self.conn, 2), "NotSignedIn")
         self.assertIsNone(garmin_cuenta.ultimo_error(self.conn, 1))
@@ -621,18 +622,18 @@ class PullHostedTest(unittest.TestCase):
 
     def test_refreshed_token_is_re_encrypted(self):
         garmin_cuenta.guardar(self.conn, 1, REFRESH_TOKEN)
-        pull.pull_hosted(self.conn, ["2026-11-01"])
+        pull.pull_hosted(self.conn, fecha="2026-11-01")
         self.assertEqual(garmin_cuenta.leer(self.conn, 1), REFRESHED_TOKEN)
 
     def test_unchanged_token_is_not_rewritten(self):
         garmin_cuenta.guardar(self.conn, 1, GOOD_TOKEN)
         before = self.conn.execute("SELECT nonce FROM garmin_cuenta WHERE person_id = 1").fetchone()["nonce"]
-        pull.pull_hosted(self.conn, ["2026-11-01"])
+        pull.pull_hosted(self.conn, fecha="2026-11-01")
         after = self.conn.execute("SELECT nonce FROM garmin_cuenta WHERE person_id = 1").fetchone()["nonce"]
         self.assertEqual(before, after)
 
     def test_person_with_no_garmin_row_is_skipped_quietly(self):
-        ok, failed, saved = pull.pull_hosted(self.conn, ["2026-11-01"])
+        ok, failed, saved = pull.pull_hosted(self.conn, fecha="2026-11-01")
         self.assertEqual((ok, failed, saved), (0, 0, 0))
 
     def test_generic_exception_mid_loop_keeps_the_refreshed_token_and_counts_days_stored(self):
@@ -644,7 +645,7 @@ class PullHostedTest(unittest.TestCase):
         )
         patcher.start(); self.addCleanup(patcher.stop)
 
-        ok, failed, saved = pull.pull_hosted(self.conn, ["2026-11-01", "2026-11-02"])
+        ok, failed, saved = pull.pull_hosted(self.conn, n_days=2)
         self.assertEqual((ok, failed, saved), (0, 1, 1))
         self.assertEqual(garmin_cuenta.ultimo_error(self.conn, 1), "ValueError")
         self.assertEqual(garmin_cuenta.leer(self.conn, 1), "tok-refreshed-mid")
@@ -652,7 +653,7 @@ class PullHostedTest(unittest.TestCase):
     def test_success_clears_a_previous_error(self):
         garmin_cuenta.guardar(self.conn, 1, GOOD_TOKEN)
         garmin_cuenta.registrar_error(self.conn, 1, "NotSignedIn")
-        ok, failed, saved = pull.pull_hosted(self.conn, ["2026-11-01"])
+        ok, failed, saved = pull.pull_hosted(self.conn, fecha="2026-11-01")
         self.assertEqual((ok, failed, saved), (1, 0, 1))
         self.assertIsNone(garmin_cuenta.ultimo_error(self.conn, 1))
 
@@ -660,8 +661,71 @@ class PullHostedTest(unittest.TestCase):
         garmin_cuenta.guardar(self.conn, 1, GOOD_TOKEN)
         patcher = mock.patch("body.pull.garmin_cuenta.leer", return_value=None)
         patcher.start(); self.addCleanup(patcher.stop)
-        ok, failed, saved = pull.pull_hosted(self.conn, ["2026-11-01"])
+        ok, failed, saved = pull.pull_hosted(self.conn, fecha="2026-11-01")
         self.assertEqual((ok, failed, saved), (0, 0, 0))
+
+
+class PullHostedPerPersonZoneTest(unittest.TestCase):
+    """BODY-PULL-RELOJ-1: with no explicit `fecha`, each person's day list comes from their own
+    local today (`fechas.hoy_local`), not the server's -- the hosted timer fires at one fixed
+    server instant, so a person in a zone far from the server's would otherwise be asked for the
+    wrong "today"."""
+
+    def setUp(self):
+        self.conn, orig = _fresh_db(self, "pull_zones.db")
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        patcher_key = mock.patch.dict(os.environ, {garmin_cuenta.KEY_ENV: TOKEN_KEY_HEX})
+        patcher_key.start(); self.addCleanup(patcher_key.stop)
+
+    def test_each_person_gets_their_own_today_and_yesterday(self):
+        self.conn.execute("UPDATE person SET timezone = 'America/Bogota' WHERE id = 1")
+        self.conn.execute("UPDATE person SET timezone = 'Pacific/Auckland' WHERE id = 2")
+        self.conn.commit()
+        garmin_cuenta.guardar(self.conn, 1, "tok-bogota")
+        garmin_cuenta.guardar(self.conn, 2, "tok-auckland")
+        # One real instant: Nov 8 18:00 in Bogota (UTC-5) but already Nov 9 noon in Auckland
+        # (UTC+13 in NZ daylight time) -- the server date and person 2's own date differ.
+        instant = datetime(2026, 11, 8, 23, 0, tzinfo=timezone.utc)
+        calls_by_token: dict[str, list[str]] = {"tok-bogota": [], "tok-auckland": []}
+
+        def fetch(day, token_str=None):
+            calls_by_token[token_str].append(day)
+            return garmin_adapter.DayData(day=day, metrics={"resting_hr": 55.0}), token_str
+
+        with mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=fetch), \
+             mock.patch("body.pull.time.sleep"), \
+             mock.patch("body.fechas.datetime", **{
+                 "now.side_effect": lambda tz=None: instant.astimezone(tz) if tz else instant}):
+            ok, failed, saved = pull.pull_hosted(self.conn, n_days=2)
+        self.assertEqual((ok, failed, saved), (2, 0, 4))
+        self.assertEqual(calls_by_token["tok-bogota"], ["2026-11-07", "2026-11-08"])
+        self.assertEqual(calls_by_token["tok-auckland"], ["2026-11-08", "2026-11-09"])
+
+    def test_backfill_without_hoy_uses_each_persons_own_local_date(self):
+        self.conn.execute("UPDATE person SET timezone = 'America/Bogota' WHERE id = 1")
+        self.conn.execute("UPDATE person SET timezone = 'Pacific/Auckland' WHERE id = 2")
+        self.conn.commit()
+        garmin_cuenta.guardar(self.conn, 1, "tok-bogota")
+        garmin_cuenta.guardar(self.conn, 2, "tok-auckland")
+        instant = datetime(2026, 11, 8, 23, 0, tzinfo=timezone.utc)
+        calls_by_token: dict[str, list[str]] = {"tok-bogota": [], "tok-auckland": []}
+
+        def fetch(day, token_str=None):
+            calls_by_token[token_str].append(day)
+            return garmin_adapter.DayData(day=day, metrics={"resting_hr": 55.0}), token_str
+
+        with mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=fetch), \
+             mock.patch("body.pull.time.sleep"), \
+             mock.patch("body.fechas.datetime", **{
+                 "now.side_effect": lambda tz=None: instant.astimezone(tz) if tz else instant}):
+            ok, failed, saved = pull.pull_backfill_hosted(self.conn)
+        self.assertEqual((ok, failed, saved), (2, 0, 30))
+        # Bogota's own today is Nov 8: newest requested day is Nov 7 (yesterday).
+        self.assertEqual(calls_by_token["tok-bogota"][0], "2026-11-07")
+        # Auckland's own today is Nov 9: newest requested day is Nov 8 (yesterday).
+        self.assertEqual(calls_by_token["tok-auckland"][0], "2026-11-08")
 
 
 # ---- local mode: routes 404, the pull-day path is unchanged ---------------------------------------

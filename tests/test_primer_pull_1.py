@@ -283,7 +283,7 @@ class WeeklyChecksHostedTest(unittest.TestCase):
         self.conn.commit()
         with mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_stub_fetch_day()), \
              mock.patch("body.pull.goals.cerrar_semanas", return_value=0) as m_cerrar:
-            ok, failed, saved = pull.pull_hosted(self.conn, [HOY.isoformat()])
+            ok, failed, saved = pull.pull_hosted(self.conn, fecha=HOY.isoformat())
         self.assertEqual((ok, failed), (1, 0))  # only person 1 had a token to pull with
         self.assertEqual(m_cerrar.call_count, 2)  # both are swept regardless
         called_persons = sorted(c.args[1] for c in m_cerrar.call_args_list)
@@ -296,9 +296,9 @@ class WeeklyChecksHostedTest(unittest.TestCase):
         with mock.patch("body.pull.garmin_adapter.fetch_day",
                         side_effect=_stub_fetch_day(error_token="tok-a")), \
              mock.patch("body.pull.goals.cerrar_semanas", return_value=0) as m_cerrar:
-            ok, failed, saved = pull.pull_hosted(self.conn, [HOY.isoformat()])
+            ok, failed, saved = pull.pull_hosted(self.conn, fecha=HOY.isoformat())
         self.assertEqual((ok, failed), (0, 1))  # the Garmin pull itself failed
-        m_cerrar.assert_called_once_with(self.conn, 1, hoy=mock.ANY)  # the sweep still ran for them
+        m_cerrar.assert_called_once_with(self.conn, 1, hoy=mock.ANY, desde=None)  # the sweep still ran for them
 
     def test_nobody_is_closed_twice(self):
         garmin_cuenta.guardar(self.conn, 1, "tok-a")
@@ -308,7 +308,7 @@ class WeeklyChecksHostedTest(unittest.TestCase):
         self.conn.commit()
         with mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_stub_fetch_day()), \
              mock.patch("body.pull.goals.cerrar_semanas", return_value=0) as m_cerrar:
-            pull.pull_hosted(self.conn, [HOY.isoformat()])
+            pull.pull_hosted(self.conn, fecha=HOY.isoformat())
         self.assertEqual(m_cerrar.call_count, 2)  # not 3+: the per-person call inside the Garmin
         called_persons = [c.args[1] for c in m_cerrar.call_args_list]  # loop was removed, not kept
         self.assertEqual(sorted(called_persons), [1, 2])
@@ -327,6 +327,20 @@ class WeeklyChecksHostedTest(unittest.TestCase):
         called_persons = sorted(c.args[1] for c in m_cerrar.call_args_list)
         self.assertEqual(called_persons, [1, 2])
 
+    def test_backfill_passes_the_oldest_stored_day_as_desde_so_old_weeks_reclose(self):
+        """BODY-SEMANAS-TARDIAS-1: cerrar_semanas on its own only re-closes the current and
+        previous week, so a backfill restoring days from three weeks back (one run's 15-day
+        batch, newest first, already reaches that far) must pass the oldest of those as `desde`
+        so that older goal_check row gets revisited too."""
+        garmin_cuenta.guardar(self.conn, 1, "tok-a")
+        _add_active_habit_goal(self.conn, 1)
+        self.conn.commit()
+        with mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_stub_fetch_day()), \
+             mock.patch("body.pull.goals.cerrar_semanas", return_value=0) as m_cerrar:
+            pull.pull_backfill_hosted(self.conn, hoy=HOY)
+        oldest = _offsets(1, 15)[-1]  # the oldest of the 15 days fetched this run
+        m_cerrar.assert_called_once_with(self.conn, 1, hoy=mock.ANY, desde=date.fromisoformat(oldest))
+
     def test_cerrar_semanas_failure_for_one_person_does_not_stop_the_next(self):
         garmin_cuenta.guardar(self.conn, 1, "tok-a")
         garmin_cuenta.guardar(self.conn, 2, "tok-b")
@@ -337,7 +351,7 @@ class WeeklyChecksHostedTest(unittest.TestCase):
         with mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_stub_fetch_day()), \
              mock.patch("body.pull.goals.cerrar_semanas", side_effect=[RuntimeError("boom"), 1]), \
              contextlib.redirect_stdout(buf):
-            ok, failed, saved = pull.pull_hosted(self.conn, [HOY.isoformat()])
+            ok, failed, saved = pull.pull_hosted(self.conn, fecha=HOY.isoformat())
         self.assertEqual((ok, failed), (2, 0))  # neither person counted as a Garmin failure
         self.assertIsNone(garmin_cuenta.ultimo_error(self.conn, 1))
         self.assertIsNone(garmin_cuenta.ultimo_error(self.conn, 2))

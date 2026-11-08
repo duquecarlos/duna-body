@@ -384,5 +384,47 @@ class OtherMemberHabitRowTest(unittest.TestCase):
         self.assertIn("boxbtn-spacer", row_html)
 
 
+class HabitCheckLateCorrectionTest(unittest.TestCase):
+    """BODY-SEMANAS-TARDIAS-1: cerrar_semanas (the daily pull) only ever re-closes the current and
+    previous week, so a habit check POSTed for an OLDER week must re-close that one week itself,
+    in the same request; a check for the current week writes no goal_check row at all -- that
+    week is still the daily pull's alone."""
+
+    def test_check_for_an_older_week_updates_its_stored_goal_check_row(self):
+        conn = _reset_db(self)
+        gid = goals.propose(conn, 1, "Steps", "2026-09-01", kind="milestone", deadline="2027-01-01")
+        goals.activate(conn, gid)
+        hid = goals.add_habit(conn, gid, "Caminar", {"per": "day", "times": 1})
+        conn.commit()
+        # A stale row, as if the daily pull had closed this week once already, three weeks before
+        # "today" (2026-11-05, a Thursday; this week's Monday is 2026-11-02).
+        goals.weekly_check(conn, gid, 1, "2026-10-12")
+        stale = conn.execute("SELECT habits_done FROM goal_check WHERE goal_id = ? AND week_start = ?",
+                             (gid, "2026-10-12")).fetchone()
+        self.assertEqual(stale["habits_done"], 0)
+
+        with mock.patch.object(comun, "_today_local", return_value=date(2026, 11, 5)):
+            r = client.post(f"/habits/{hid}/check", data={"day": "2026-10-13", "done": "1", "back": "/"})
+        self.assertEqual(r.status_code, 303)
+
+        row = conn.execute("SELECT habits_done FROM goal_check WHERE goal_id = ? AND week_start = ?",
+                           (gid, "2026-10-12")).fetchone()
+        self.assertEqual(row["habits_done"], 1)
+
+    def test_check_for_the_current_week_writes_no_goal_check_row(self):
+        conn = _reset_db(self)
+        gid = goals.propose(conn, 1, "Steps", "2026-09-01", kind="milestone", deadline="2027-01-01")
+        goals.activate(conn, gid)
+        hid = goals.add_habit(conn, gid, "Caminar", {"per": "day", "times": 1})
+        conn.commit()
+
+        with mock.patch.object(comun, "_today_local", return_value=date(2026, 11, 5)):
+            r = client.post(f"/habits/{hid}/check", data={"day": "2026-11-05", "done": "1", "back": "/"})
+        self.assertEqual(r.status_code, 303)
+
+        n = conn.execute("SELECT COUNT(*) FROM goal_check WHERE goal_id = ?", (gid,)).fetchone()[0]
+        self.assertEqual(n, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

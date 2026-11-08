@@ -309,23 +309,35 @@ def weekly_check(conn, goal_id: int, person_id: int, week_start: str) -> dict | 
     return result
 
 
-def cerrar_semanas(conn, person_id: int, *, hoy: date) -> int:
+def cerrar_semanas(conn, person_id: int, *, hoy: date, desde: date | None = None) -> int:
     """Writes this week's and last week's goal_check row for every ACTIVE goal `person_id` can see
     (own goals plus shared household milestones, `goal_scope_sql` -- the same scope /goals uses).
     The one writer of goal_check (BODY-SEGURIDAD-3), run by the daily pull: last week is included
     too so late data (a Sunday pulled on Monday) still lands in the week it belongs to. `hoy` is
     required and keyword-only (the clock rule, BODY-TIER1-LIMPIEZA-1) -- this function never reads
-    the clock itself. Returns the number of goal_check rows written."""
+    the clock itself.
+
+    `desde` (BODY-SEMANAS-TARDIAS-1): cerrar_semanas on its own only ever re-closes the current and
+    previous week, so data landing further back than that -- a backfill restoring older days, or a
+    late habit-check correction -- used to leave the correspondingly older goal_check row stale.
+    When given, every week from `lunes_de(desde)` up to (but not including) last week is re-closed
+    too. Returns the number of goal_check rows written."""
     hh = household.household_of(conn, person_id)
     scope_sql, scope_params = goal_scope_sql(person_id, hh)
     goal_ids = [r["id"] for r in conn.execute(
         f"SELECT id FROM goal WHERE status = 'active' AND {scope_sql}", scope_params)]
     this_monday = fechas.lunes_de(hoy)
     last_monday = this_monday - timedelta(7)
+    weeks = [this_monday, last_monday]
+    if desde is not None:
+        monday = fechas.lunes_de(desde)
+        while monday < last_monday:
+            weeks.append(monday)
+            monday += timedelta(7)
     written = 0
     for goal_id in goal_ids:
-        for week_start in (this_monday.isoformat(), last_monday.isoformat()):
-            if weekly_check(conn, goal_id, person_id, week_start) is not None:
+        for week in weeks:
+            if weekly_check(conn, goal_id, person_id, week.isoformat()) is not None:
                 written += 1
     return written
 

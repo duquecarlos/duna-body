@@ -283,6 +283,35 @@ class CerrarSemanasTest(unittest.TestCase):
             (gid, 2)).fetchall()
         self.assertEqual([r["week_start"] for r in rows], ["2026-10-26", "2026-11-02"])
 
+    def test_desde_recloses_the_older_weeks_and_no_others(self):
+        """BODY-SEMANAS-TARDIAS-1: `desde` re-closes every week from its own Monday up to (not
+        including) last week -- which cerrar_semanas already re-closes on its own -- and nothing
+        further back than that."""
+        conn = _conn(self)
+        db.init(conn)
+        gid = goals.propose(conn, 1, "Steps", "2026-09-01", metric_key="steps", direction="raise",
+                            target_value=9000.0, baseline_value=6000.0, deadline="2026-12-14")
+        goals.activate(conn, gid)
+        # hoy a Thursday (Monday 2026-11-02); desde's own Monday is 2026-10-19, one week before
+        # last week (2026-10-26) -- exactly one extra older week, no further back.
+        n = goals.cerrar_semanas(conn, 1, hoy=date(2026, 11, 5), desde=date(2026, 10, 20))
+        self.assertEqual(n, 3)
+        rows = conn.execute("SELECT week_start FROM goal_check WHERE goal_id = ? ORDER BY week_start",
+                            (gid,)).fetchall()
+        self.assertEqual([r["week_start"] for r in rows], ["2026-10-19", "2026-10-26", "2026-11-02"])
+
+    def test_desde_on_or_after_last_monday_adds_nothing(self):
+        conn = _conn(self)
+        db.init(conn)
+        gid = goals.propose(conn, 1, "Steps", "2026-09-01", metric_key="steps", direction="raise",
+                            target_value=9000.0, baseline_value=6000.0, deadline="2026-12-14")
+        goals.activate(conn, gid)
+        n = goals.cerrar_semanas(conn, 1, hoy=date(2026, 11, 5), desde=date(2026, 10, 29))  # last week itself
+        self.assertEqual(n, 2)
+        rows = conn.execute("SELECT week_start FROM goal_check WHERE goal_id = ? ORDER BY week_start",
+                            (gid,)).fetchall()
+        self.assertEqual([r["week_start"] for r in rows], ["2026-10-26", "2026-11-02"])
+
 
 class PersonasConMetaActivaTest(unittest.TestCase):
     """BODY-SEGURIDAD-3-M: the person list the daily pull sweeps to close weeks comes from the
