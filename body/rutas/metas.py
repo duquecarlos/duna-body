@@ -149,10 +149,14 @@ def _goal_line_svg(t: T, defs: dict, g, checks, today: date, width: int = 320, h
     aria = html.escape(f"{g['title']}: {t('goals.chart_aria', start=comun._short_date(t, start), end=comun._short_date(t, end))}")
     svg = (f'<svg viewBox="0 0 {width} {top + h + 6}" width="100%" height="110" role="img" aria-label="{aria}" '
            f'preserveAspectRatio="none" class="chart-svg">{"".join(out)}</svg>')
+    # BODY-ESTADOS-VACIOS-2-M2: the legend names only what is actually drawn -- `pts` (not
+    # `checks` before the start/end filter above) is the same condition the polyline/circle branch
+    # just used, so zero weekly points in the plotted range means no "Tu promedio semanal" entry.
+    avg_entry = (f'<span><i class="c-{color_cls} legend-line"></i>{t("goals.legend_avg")}</span>' if pts else "")
     legend = (
         '<div class="legend mt-4">'
         f'<span><i class="legend-dash"></i>{t("goals.legend_plan")}</span>'
-        f'<span><i class="c-{color_cls} legend-line"></i>{t("goals.legend_avg")}</span>'
+        f'{avg_entry}'
         f'<span><i class="legend-today"></i>{t("goals.legend_today")}</span>'
         '</div>')
     data_pts = [{"x": max(0.0, min(1.0, (d - start).days / span_days)),
@@ -292,6 +296,7 @@ def goal_detail(goal_id: int, request: Request, person_id: int = Depends(identit
     current_check = goals.evaluar_semana(conn, goal_id, person_id, week_start)
 
     chart = None
+    chart_sin_puntos = False
     if g["kind"] == "metric" and g["deadline"] and g["baseline_value"] is not None and g["target_value"] is not None:
         checks_for_chart = [dict(r) for r in conn.execute(
             "SELECT week_start, metric_avg FROM goal_check WHERE goal_id = ? AND person_id = ? "
@@ -300,6 +305,15 @@ def goal_detail(goal_id: int, request: Request, person_id: int = Depends(identit
         if current_check is not None and current_check["metric_avg"] is not None:
             checks_for_chart.append({"week_start": week_start, "metric_avg": current_check["metric_avg"]})
         chart = _goal_line_svg(t, defs, g, checks_for_chart, today)
+        # BODY-GOAL-CHART-NO-CAPTION-1: the dashed plan line draws with zero actual weekly points
+        # (useful on its own -- it shows the path to the target before any data arrives), but
+        # goals.chart_hint invites tapping/dragging weeks that are not there. Caption on the real
+        # gap, goals.chart_soon, instead -- the same honest-gap sentence the no-chart-at-all branch
+        # already uses. charts.js never attaches a tap affordance here either way: _goal_line_svg
+        # builds data_pts from these same checks, so zero checks means an empty list, and
+        # profile.chart_figure omits data-points entirely for an empty list (`if not points`) --
+        # confirmed by reading chart_figure, not assumed.
+        chart_sin_puntos = not checks_for_chart
 
     history_rows = [dict(r) for r in conn.execute(
         "SELECT * FROM goal_check WHERE goal_id = ? AND person_id = ? AND week_start != ? "
@@ -360,6 +374,7 @@ def goal_detail(goal_id: int, request: Request, person_id: int = Depends(identit
         enlace_error_app = None
 
     return comun._render("goal.html", t=t, tab="goals", goal=g, cls=cls, verdict=verdict, chart=chart,
+                   chart_sin_puntos=chart_sin_puntos,
                    history=history_list, habits=habit_rows, members=members, shared_line=shared_line,
                    is_creator=(access == "creator"), enlaces=enlaces.enlaces_de(conn, goal_id),
                    apps_por_enlazar=enlaces.apps_por_enlazar(conn, goal_id), enlace_error_app=enlace_error_app,

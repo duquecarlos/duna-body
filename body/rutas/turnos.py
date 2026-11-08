@@ -105,8 +105,14 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
     today_local = comun._today_local(person)
     resumen = turnos_costo.resumen(conn, person_id, hoy=today_local)
     strip, strip_legend = _turnos_strip(conn, person_id, today_local, t)
+    filas = _turnos_filas(t, comun._defs(conn), resumen)
+    # BODY-SHIFTS-REDUNDANT-EMPTY-TABLE-1: the hero card above already names the one reason there is
+    # no estimate (shifts.reason.*) -- five more rows each saying "sin datos del reloj" would only
+    # repeat it. Drop the whole card when every row is empty; a partial row (at least one figure) is
+    # informative on its own and keeps rendering exactly as before.
+    costo_vacio = all(f["href"] is None for f in filas)
     costo_ctx = {"hero_dias": resumen["dias_recuperacion"], "motivo": resumen["motivo"],
-                 "filas": _turnos_filas(t, comun._defs(conn), resumen), "strip": strip, "strip_legend": strip_legend}
+                 "filas": filas, "costo_vacio": costo_vacio, "strip": strip, "strip_legend": strip_legend}
     tiene_patron = patron_turnos.leer(conn, person_id) is not None
     if len(rows) > 1:
         summary = shift_import.summary_proposed(conn, person_id)

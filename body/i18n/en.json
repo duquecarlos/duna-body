@@ -38,6 +38,8 @@
   "today.shift_next": "Next: {turno}, {fecha}",
   "today.shift_next_hours": "Next: {turno}, {fecha} · {inicio}–{fin}",
   "today.recovery": "Day {dia} of ≈ {estimado} to recover from your nights",
+  "today.stale": "Latest watch data: {date}, {n} days ago.",
+  "today.stale_link": "Check the Garmin connection",
   "sync.runs": "The sync runs on its own, every day.",
   "sync.last": "Last sync with data: {date}.",
   "sync.none_yet": "It hasn't synced successfully yet.",
