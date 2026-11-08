@@ -7972,3 +7972,102 @@ into `main` with `--no-ff`: merge commit `8677e71bbd444834852ffcaf140fde0165e0a6
 match) -- no conflict, no extra change. `git status --porcelain` empty on `main` after the merge, before
 this ledger entry's own commit. No password, token, session secret or health figure was read, printed or
 logged by this slice.
+
+## BODY-TIER1-LIMPIEZA-1 -- the hosted week default's server-clock trap, and the rest of BODY-TIER1-LIMPIEZA-OBS-1's census (2026-11-08)
+
+Stage two of the OBSERVED census (BODY-TIER1-LIMPIEZA-OBS-1, base `3c4d0ae`), plus one real defect the
+orchestrator measured while reviewing it.
+
+**The defect.** `vida_export.current_week_monday(today=None)` defaulted to `date.today()` -- the SERVER's
+own date, not the person's. `body/rutas/dispositivos.py`'s `GET /api/vida/semana` (no `semana` query)
+called it with no argument on the host, while every other "today" in Body has been `fechas.hoy_local(person)`
+(America/Bogota by default) since BODY-FECHA-FUTURA-1. `body/traer_semana.py` asked the server with
+`?semana=` when given, but named the SAVED FILE from its own, local, `current_week_monday()` call rather
+than the server's answer. The window: on a UTC host, from Sunday 19:00 Bogota the server's own
+`date.today()` has already rolled to Monday while Bogota is still Sunday -- the PC's `traer_semana.py`
+would then write the server's (wrong, early) week into the file name Personal's Sunday review reads
+(vida-v1's `week_start`). Same rule as BODY-FECHA-FUTURA-1-M: a date default that can silently be the
+wrong clock is a trap.
+
+**The fix.** `current_week_monday(*, hoy: date) -> date` now REQUIRES `hoy`, keyword-only (no default) --
+callers must supply their own correct clock. It returns `fechas.lunes_de(hoy)` (previously it open-coded
+`today - timedelta(today.weekday())` itself). The local CLI (`vida_export.main`) passes its own machine's
+`date.today()`, now for both `--current` (`current_week_monday(hoy=today)`) and the "last full week"
+default, which was ALSO open-coded (`today - timedelta(today.weekday() + 7)`, a shape the then-matcher did
+not catch) and is now `fechas.lunes_de(today) - timedelta(days=7)`. The hosted route
+(`body/rutas/dispositivos.py`'s `api_vida_semana`) now fetches `person` from `comun._ctx(person_id)` before
+branching and passes `hoy=comun._today_local(person)` -- the same patchable route clock every other route
+reads. `body/traer_semana.py` no longer calls `current_week_monday` at all: it names the saved file from
+the HTTP payload's own `week_start` field (the server's answer -- one source of truth), still sends
+`?semana=` when `--semana` is given, and refuses with a plain line and a non-zero exit -- writing no file
+-- when the payload's `week_start` is missing or not a Monday (no exception text is ever involved; this is
+just a missing/invalid field check).
+
+**The guard.** `tests/test_guardia_parches.py`'s `_is_week_monday_subtraction` matched only the bare
+`<x> - timedelta(<x>.weekday())` shape; `vida_export.py:119`'s `today - timedelta(today.weekday() + 7)` form
+slipped past it, which is why `_ALLOWED_WEEK_MONDAY_FILES = {"vida_export.py"}` existed as an allowlist.
+The matcher is widened (`_is_weekday_based_offset`, `_timedelta_weekday_offset`) to also catch
+`<x>.weekday() + <n>` / `<n> + <x>.weekday()`, and both the positional and `timedelta(days=...)` keyword
+forms. Proof the widened matcher bites where the old one missed, run in the worker's scratchpad against
+`git show main:body/vida_export.py` (base `3c4d0ae`, before this slice's own fix, never the edited working
+tree): `old matcher hits: [33]` / `new matcher hits: [33, 119]` -- the old matcher caught only line 33
+(the `current_week_monday` default), the widened one also catches line 119 (the "last full week" default).
+With both of `vida_export.py`'s own open-coded sites now replaced by `fechas.lunes_de()`, nothing needs the
+allowlist any more, so `_ALLOWED_WEEK_MONDAY_FILES` is deleted along with the `if path.name in (..., *_ALLOWED_WEEK_MONDAY_FILES)`
+exemption -- the guard now runs over every file under `body/` with no exception.
+
+**The provider `__init__` cleanup.** `body/agente/cliente.py`'s `Anthropic`, `OpenAI` and `Gemini` each
+carried a byte-identical `def __init__(self, modelo, api_key, transporte=None): self.modelo = modelo;
+self.api_key = api_key; self._transporte = transporte or self._post_real`, while `Proveedor` (their common
+base) had none. The three are gone; `Proveedor.__init__` now owns that body, and `self._post_real` still
+resolves correctly through the instance's own class at call time (Python resolves `self.<name>` dynamically,
+not when `__init__` was defined). `Demo`, whose `__init__(self)` takes no provider arguments at all, is
+unchanged -- it never called the shared one. The key is still read only in `proveedores_configurados()`,
+never in any `__init__`.
+
+**Tests.** `tests/test_vida_export.py` -- `CurrentWeekMondayTest`: `current_week_monday()` with no `hoy`
+raises `TypeError`; `current_week_monday(hoy=date(2026, 11, 8))` (a Sunday) returns `date(2026, 11, 2)`.
+`tests/test_dispositivo.py` -- `ApiVidaSemanaTest.setUp` now seeds its "this week" metric at
+`current_week_monday(hoy=fechas.hoy_local({"timezone": "America/Bogota"}))` rather than the old bare call;
+new `ApiVidaSemanaClockTest.test_default_week_uses_the_route_clock_not_a_bare_today` patches
+`comun._today_local` (the sanctioned route-clock shim) to a frozen Sunday and asserts the route's own
+`week_start` answer is that Sunday's Monday -- proving the route reads its own patchable clock rather than
+some other (e.g. the server's bare `date.today()`) day, which is exactly the shape the old code could not
+have honoured since it called `current_week_monday()` with no argument at all. `tests/test_pc_cliente.py`
+-- `TraerSemanaTest`: the existing "writes the exact local path" test now gives the fake HTTP reply its own
+`week_start` and asserts the file is named from it; new
+`test_names_the_file_from_the_payloads_week_start_even_when_different_from_the_requested_semana` sends
+`--semana` for one Monday while the fake server answers with a different `week_start`, and asserts the file
+is named from the ANSWER, not the request; new `test_explicit_semana_still_sent_as_the_query_param` asserts
+`--semana` still appends `?semana=` to the request URL; new `test_reply_without_week_start_refuses_and_writes_nothing`
+and `test_reply_with_a_non_monday_week_start_refuses_and_writes_nothing` each assert exit code 1 and that
+`BODY_HOME/vida` is never created. `tests/test_agente_cliente.py` -- `ProveedorInitSharedTest`: each of
+`Anthropic`/`OpenAI`/`Gemini`'s `__init__` is identically `Proveedor.__init__` (`assertIs`); constructing any
+of the three positionally still sets `modelo`, `api_key` and `_transporte` (a fake transport, checked by
+identity); `Demo.__init__` is NOT `Proveedor.__init__`. No existing test needed a `hoy=` update beyond the
+two files above -- `tests/test_agente_proveedores.py` was unaffected (it never calls a provider's
+`__init__` directly; `proveedores_configurados()` still constructs `clase(modelo, api_key)` positionally,
+unchanged).
+
+**Gate**, run once on the final tree (after fixing one `NameError` in this slice's own new test --
+`tests/test_dispositivo.py` needed `from datetime import date`, missed on the first pass; the first run was
+RED on that bug alone, in a file inside this slice's own `touches:`, so it was fixed and the gate run again
+as the one authoritative measurement on the corrected tree): `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -- `Ran 1237 tests in 124.026s ... OK (skipped=1)`.
+
+Merge policy A: no schema or migration change; no customer-facing bytes (every changed string is a
+terminal `print()` line, an internal computed date, or a test/ledger file -- the only user-visible shape
+touched is vida-v1's `week_start` field, whose SHAPE is unchanged and whose VALUE now matches the
+contract's own meaning, a Monday of the person's week, more often than before); no cross-repo contract or
+DTO shape change, in the actual diff (`body/vida_export.py`, `body/rutas/dispositivos.py`,
+`body/traer_semana.py`, `body/agente/cliente.py`, and five test files). This spec's own approval-reason
+says outright: "This spec approves the merge." `body/vida_export.py` and `body/agente/cliente.py` are
+Tier 1 in this repository; `body/rutas/dispositivos.py` and `body/traer_semana.py` are Tier 2.
+
+Commits (pasted from `git rev-parse`, not retyped): fix `4e451599f06de225e14e10fa34b01e9971b256c6` on
+branch `feat/body-tier1-limpieza-1`, branched from `main` `3c4d0aed50866ed89ef76b942f54398c09257324`.
+Merged into `main` with `--no-ff`: merge commit `6f614d04c303b0b0e696bc15b58f80fd5caf89bf`, merge tree
+`c7b07926485fdc7832a500563bb04092e5b2d51e`, identical to the branch tip's own tree (`git rev-parse` of
+both match) -- no conflict, no extra change. `git status --porcelain` empty on `main` after the merge,
+before this ledger entry's own commit. No password, token, session secret or health figure was read,
+printed or logged by this slice.
