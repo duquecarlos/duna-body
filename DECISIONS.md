@@ -7824,3 +7824,102 @@ with `--no-ff`: merge commit `9d5358052908b5a94359c65a17778becdf164099`, merge t
 match) -- no conflict, no extra change, gate not re-run on the merge per tree-identity proof. `git status
 --porcelain` empty on `main` after the merge, before this ledger entry's own commit. No password, token,
 session secret or health figure was read, printed or logged by this slice.
+
+## BODY-LOGIN-MENSAJES-1 -- exception text leaving the process is type-only, never the message (2026-11-08)
+
+Stage two of BODY-LOGIN-MENSAJES-OBS-1 (OBSERVED): the census found `body/login.py`'s failure line printing
+`f"Sign-in failed: {type(e).__name__}: {e}"` -- the full text of whatever garminconnect's sign-in path raised,
+which can be built out of the typed email or password -- plus eight more sites in `body/` that rendered a
+caught exception's raw text, and garminconnect's own `logger.exception`/`logger.warning` calls (its SSO
+client and `api/_common.py`/`api/base.py`), which reach no handler anywhere in Body's logging config and so
+fall through to Python's `logging.lastResort` and print to stderr (the host's journal).
+
+**The helper, `body/errores.py` (new)**: `texto_seguro(exc)` returns only `type(exc).__name__` -- safe for any
+exception. `texto_propio(exc)` returns `str(exc)` but only when `type(exc).__module__` is `"body"` or starts
+with `"body."`; on anything else it raises `TypeError`, naming the module it refused.
+
+**Every site the census named, before -> after, and which it is**:
+| site | before | after | kind |
+|---|---|---|---|
+| `body/login.py:20` | `f"Sign-in failed: {type(e).__name__}: {e}"` | `f"Sign-in failed: {errores.texto_seguro(e)}"` | third-party (`except Exception`) |
+| `body/conectar_pc.py:40` | `print(str(e))` | `print(errores.texto_propio(e))` | own (`pc_cliente.UrlRefusada`) |
+| `body/subir_turnos.py:60` | `print(str(e))` | `print(errores.texto_propio(e))` | own (`pc_cliente.EnlaceFaltante`) |
+| `body/traer_semana.py:29` | `print(str(e))` | `print(errores.texto_propio(e))` | own (`pc_cliente.EnlaceFaltante`) |
+| `body/shift_import.py:364` | `notes.append(str(e))` | `notes.append(errores.texto_propio(e))` | own (`ImportRefused`, message still names the day, as before -- user-facing meaning kept) |
+| `body/agente/bucle.py:127` | `"error": str(e)` | `"error": errores.texto_propio(e)` | own (`herramientas.ToolError`) |
+| `body/agente/bucle.py:144` | `"error": str(e)` | `"error": errores.texto_propio(e)` | own (`herramientas.ToolError`) |
+| `body/agente/precios.py:28` | `f"cannot read {ruta}: {e}"` `from e` | `f"cannot read {ruta}: {errores.texto_seguro(e)}"` `from None` | third-party (`OSError`) embedded in `PreciosInvalidos`'s own message; chain cut to match `garmin_adapter._client`'s existing pattern |
+| `body/agente/precios.py:32` | `f"{ruta} is not valid JSON: {e}"` `from e` | `f"{ruta} is not valid JSON: {errores.texto_seguro(e)}"` `from None` | third-party (`json.JSONDecodeError`), same treatment |
+
+`body/garmin_adapter.py`'s `_client` was already type-only (`type(e).__name__`, chain cut with `from None`) and
+is unchanged; it is the pattern the rest of the slice now matches everywhere else.
+
+**Logger silencing**: `body/garmin_adapter.py`, at import, does
+`logging.getLogger("garminconnect").addHandler(logging.NullHandler()); .propagate = False`. garminconnect's
+own `getLogger(__name__)` calls are `garminconnect.api._common` (shared by `api/base.py` too, which imports
+the same `logger` object) and five under `garminconnect.client.*` (`__init__`, `sso`, `session`, `tokens`,
+`transport`) -- all descendants of the single `"garminconnect"` namespace. Attaching the handler there
+satisfies every descendant's search for a handler (so `logging.lastResort` never fires) and `propagate=False`
+there stops the record climbing to whatever the host's root logger has, without needing to name all six
+submodules by hand or chase any more the library adds later.
+
+**The guard, `tests/test_errores_texto.py`**: an AST scan (`ofensas_en_fuente`) walks each `except ... as
+<name>:` handler's body for a direct render of the bare bound name -- `str(name)`/`repr(name)`/`format(name)`
+(builtin or `x.format(name)`), a `%` operand, or an f-string `FormattedValue` whose value IS the bare name.
+`type(name).__name__` and `name.__class__.__name__` are never flagged, because at the position examined they
+are an `Attribute`/`Call`, never the bare name -- which is also why calling `errores.texto_seguro(e)` /
+`errores.texto_propio(e)` from inside an f-string is not a self-violation. Proven to bite on `main`'s own
+`body/login.py` (scratchpad, `git show main:body/login.py` through the scanner):
+`["main:body/login.py:20: except-as 'e' -> f-string{e}"]`.
+
+The guard's zero-offenders assertion (`test_los_sitios_del_censo_quedan_limpios`) is scoped to the eight files
+this slice touches, not all of `body/**/*.py` -- **deviation from the spec's literal wording** ("ast scan of
+body/\*\*/\*.py"). Running the same scanner once, by hand, over the whole package (not asserted anywhere, so it
+cannot redden the gate) found four more offenders, pre-existing and outside this slice's `touches:`:
+`body/backup.py:55` (`f"integrity_check failed: {exc}"` on a `sqlite3.DatabaseError`) and `body/vivo.py:90,104,116`
+(`str(exc)` on a `RuntimeError`/`OSError`/`subprocess.TimeoutExpired`, nested inside `_motivo()`, which already
+truncates to 40 characters but does not route through the helper). Neither file is in `touches:` and neither
+is part of BODY-LOGIN-MENSAJES-OBS-1's nine-site census (Garmin sign-in message paths only), so they were left
+for a follow-up rather than widened into here. **Open follow-up: BODY-ERRORES-CENSO-2** -- route
+`body/backup.py:55` and `body/vivo.py:90,104,116` through `body/errores.py` and then widen the guard's
+assertion to all of `body/**/*.py`.
+
+**Tests**: `tests/test_errores_texto.py` (new, 9 tests) -- both helpers, the logger-silencing proof (a
+`garminconnect.client.sso` record at ERROR, captured via `contextlib.redirect_stderr`, produces no output),
+the guard catching the pre-slice pattern, the guard not flagging `type().__name__`/the helper calls, and the
+zero-offenders assertion over the eight owned files. `tests/test_login.py` (new, `body/login.py`'s first test
+module, 4 tests) -- success calls `sign_in` with the typed email and the `getpass` value, returns 0, prints
+the success line; failure (an exception whose message embeds an invented demo email and password) returns 1
+with neither string in captured stdout or stderr, only the exception's type name; the MFA `prompt_mfa`
+callable reads `input()` and strips it; the password never appears in captured output on the success path.
+Patches `builtins.input`, not `body.login.input` -- `tests/test_guardia_parches.py`'s existing patch-target
+guard (BODY-WEB-ESTRUCTURA-1) correctly refused the latter (`input` is a builtin, not defined at
+`body/login.py`'s own top level) on the first gate run; fixed before the gate that is reported below.
+`tests/test_garmin_host.py`, `tests/test_shift_import.py` and `tests/test_agente_bucle.py` needed no change --
+none asserted on a message this slice altered (`test_agente_bucle.py` only checks an `"error"` key is present;
+`ToolError`'s message is unchanged by `texto_propio`, which returns the same `str(exc)` as before for a body
+exception).
+
+**Gate**, run once on the branch tip tree (after the `builtins.input` fix):
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -- `Ran 1228 tests in 119.739s ... OK (skipped=1)`.
+A first run on the pre-fix tree failed exactly one test (`test_every_body_patch_targets_the_owning_module`);
+not reported as the gate result, since it was this slice's own new test file, fixed, then gated once more on
+the corrected tree per this protocol's "fix the root cause, then gate the final tree" rule rather than
+retried hoping for green on an unchanged tree.
+
+Merge policy A: no schema or migration change, no customer-facing bytes (every changed string is a terminal
+print, a tool-result error string, or a docs/ledger line -- no web page text touched, no i18n key added or
+changed), no cross-repo contract change, in the actual diff (`body/errores.py`, `body/login.py`,
+`body/garmin_adapter.py`, `body/shift_import.py`, `body/conectar_pc.py`, `body/subir_turnos.py`,
+`body/traer_semana.py`, `body/agente/bucle.py`, `body/agente/precios.py`, `docs/DESIGN.md`,
+`tests/test_errores_texto.py`, `tests/test_login.py`). This spec's own approval-reason
+(`ORCH-CARLOS-DELEGATES-TIER-1-1`, against BODY-LOGIN-MENSAJES-OBS-1) approves the merge outright.
+
+Commits (pasted from `git rev-parse`, not retyped): fix `1ee79b38f0167279ff118b78bdd6d29b37e52504` (the slice
+itself) and fix `cc1280204add9c79fc2cb6cf36de3a8c70531e6d` (the `builtins.input` correction) on branch
+`feat/body-login-mensajes-1`, branched from `main` `891cc022cda9ac6603074958d3fef2a079034888`. Merged into
+`main` with `--no-ff`: merge commit `d223b74a85bbe2122545e0299f5ad81c34809ffa`, merge tree
+`7b82fbb3ce67fd82fff5e6e38829d52b0ea300b9`, identical to the branch tip's own tree (`git rev-parse` of both
+match) -- no conflict, no extra change. `git status --porcelain` empty on `main` after the merge, before this
+ledger entry's own commit. No password, token, session secret or health figure was read, printed or logged by
+this slice -- every test fixture email, password and code above is an invented demo string.
