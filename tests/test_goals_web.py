@@ -9,7 +9,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import config, db, goals, household, identity, web
+from body import config, db, goals, identity, web
 
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "body" / "static"
 
@@ -189,7 +189,6 @@ class HouseholdGoalDetailTest(unittest.TestCase):
     def test_member_check_shown(self):
         conn = _reset_db(self)
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")
-        conn.executescript(household.SCHEMA)
         conn.executemany(
             "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
             [(1, "h-1"), (2, "h-1")])
@@ -211,7 +210,6 @@ class MetricHouseholdFormTest(unittest.TestCase):
     def test_metric_kind_with_household_in_form_still_stores_private(self):
         conn = _reset_db(self)
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")
-        conn.executescript(household.SCHEMA)
         conn.executemany(
             "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
             [(1, "h-1"), (2, "h-1")])
@@ -230,7 +228,6 @@ class MetricHouseholdFormTest(unittest.TestCase):
     def test_milestone_kind_with_household_in_form_stores_household(self):
         conn = _reset_db(self)
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")
-        conn.executescript(household.SCHEMA)
         conn.executemany(
             "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
             [(1, "h-1"), (2, "h-1")])
@@ -249,7 +246,6 @@ class GoalNewFormMilestoneOnlyVisibilityTest(unittest.TestCase):
     def test_visibility_card_is_milestone_only_with_its_note(self):
         conn = _reset_db(self)
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")
-        conn.executescript(household.SCHEMA)
         conn.executemany(
             "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
             [(1, "h-1"), (2, "h-1")])
@@ -266,7 +262,6 @@ class ListCardSharedLineTest(unittest.TestCase):
     def test_shared_line_for_creator_and_member_es_and_en(self):
         conn = _reset_db(self)
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Owner')")
-        conn.executescript(household.SCHEMA)
         conn.executemany(
             "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
             [(1, "h-1"), (2, "h-1")])
@@ -301,7 +296,6 @@ class LegacyMetricHouseholdRowWebTest(unittest.TestCase):
     def test_member_cannot_reach_a_legacy_metric_household_goal(self):
         conn = _reset_db(self)
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")
-        conn.executescript(household.SCHEMA)
         conn.executemany(
             "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
             [(1, "h-1"), (2, "h-1")])
@@ -338,7 +332,6 @@ class OtherMemberHabitRowTest(unittest.TestCase):
     def test_other_members_habit_row_has_no_checkbox_or_button(self):
         conn = _reset_db(self)
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Ana')")
-        conn.executescript(household.SCHEMA)
         conn.executemany(
             "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
             [(1, "h-1"), (2, "h-1")])

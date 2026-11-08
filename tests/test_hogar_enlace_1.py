@@ -13,7 +13,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import config, db, enlaces, goals, household, identity, privacidad, web
+from body import config, db, enlaces, goals, identity, privacidad, web
 
 client = TestClient(web.app, follow_redirects=False)
 
@@ -41,7 +41,6 @@ def _add_person(conn, pid: int, name: str):
 
 
 def _link_household(conn, *person_ids, hogar_id="h-1"):
-    conn.executescript(household.SCHEMA)
     conn.executemany(
         "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
         [(pid, hogar_id) for pid in person_ids])
@@ -361,10 +360,10 @@ class ExportDeleteTest(unittest.TestCase):
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM goal WHERE id = ?", (gid,)).fetchone()[0], 0)
 
     def test_delete_all_still_deletes_everything_with_no_executescript_commit_to_lean_on(self):
-        """privacidad.delete_person no longer runs conn.executescript(household.SCHEMA) (fix 4,
-        now redundant since BODY-HOGAR-CUENTA-DB-INIT-1 made db.init create hogar_miembro
-        unconditionally) -- confirms delete-all still deletes everything through its own
-        `with conn:` transaction, not through that executescript's implicit commit."""
+        """privacidad.delete_person no longer runs an executescript of the household module's old
+        schema constant (fix 4, now redundant since BODY-HOGAR-CUENTA-DB-INIT-1 made db.init create
+        hogar_miembro unconditionally) -- confirms delete-all still deletes everything through its
+        own `with conn:` transaction, not through that executescript's implicit commit."""
         conn = _reset_db(self)
         gid = _goal(conn, 1, kind="milestone", deadline="2027-01-01")
         enlaces.enlazar(conn, gid, "lugares", "4821")

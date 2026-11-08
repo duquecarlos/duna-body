@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import date, datetime, timezone
 
-from . import compartir, enlaces, household
+from . import compartir, enlaces
 from .agente import ajustes as agente_ajustes
 
 CONSENT_VERSION = "consentimiento-v1"
@@ -71,7 +71,6 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
     """Everything this person's own export holds: `body-<date>.json` in body/web.py's download.
     Reads only rows this person owns -- a household member's own checks on a shared goal are theirs
     to export from their own account, not this one."""
-    conn.executescript(household.SCHEMA)
     person = dict(conn.execute("SELECT * FROM person WHERE id = ?", (person_id,)).fetchone())
 
     vida = {

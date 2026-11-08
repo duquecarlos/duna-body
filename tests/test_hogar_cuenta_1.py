@@ -199,7 +199,6 @@ class HourlyRefreshTest(unittest.TestCase):
 
     def test_not_called_when_a_cuenta_row_is_fresh(self):
         conn, token = self._signed_in()
-        conn.executescript(household.SCHEMA)
         fresh = datetime.now(timezone.utc).isoformat(timespec="seconds")
         conn.execute(
             "INSERT INTO hogar_miembro (person_id, hogar_id, fuente, actualizado_at) VALUES (2, 'h-1', 'cuenta', ?)",
@@ -211,7 +210,6 @@ class HourlyRefreshTest(unittest.TestCase):
 
     def test_not_called_for_a_fuente_local_row_even_when_stale(self):
         conn, token = self._signed_in()
-        conn.executescript(household.SCHEMA)
         old = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat(timespec="seconds")
         conn.execute(
             "INSERT INTO hogar_miembro (person_id, hogar_id, fuente, actualizado_at) VALUES (2, 'h-1', 'local', ?)",
@@ -223,7 +221,6 @@ class HourlyRefreshTest(unittest.TestCase):
 
     def test_network_error_keeps_the_existing_mirror(self):
         conn, token = self._signed_in()
-        conn.executescript(household.SCHEMA)
         old = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat(timespec="seconds")
         conn.execute(
             "INSERT INTO hogar_miembro (person_id, hogar_id, fuente, actualizado_at) VALUES (2, 'h-1', 'cuenta', ?)",
@@ -410,6 +407,22 @@ class ExportDeleteTest(unittest.TestCase):
         self.assertEqual(
             conn.execute("SELECT COUNT(*) FROM hogar_miembro WHERE person_id = 1").fetchone()[0], 0
         )
+
+
+class ExportDoesNotCommitTest(unittest.TestCase):
+    """BODY-HOGAR-SCHEMA-LIMPIEZA-2: export_person no longer runs conn.executescript(...), which
+    used to COMMIT whatever transaction was already open on `conn` before it ran. Called inside an
+    open write, it must leave that write exactly as open as it found it -- a caller's rollback after
+    an export still rolls back."""
+
+    def test_export_inside_an_open_transaction_leaves_the_write_rolled_back(self):
+        conn = _conn(self)
+        conn.execute("BEGIN")
+        conn.execute("UPDATE person SET display_name = 'Changed' WHERE id = 1")
+        privacidad.export_person(conn, 1)
+        conn.rollback()
+        name = conn.execute("SELECT display_name FROM person WHERE id = 1").fetchone()["display_name"]
+        self.assertNotEqual(name, "Changed")
 
 
 if __name__ == "__main__":

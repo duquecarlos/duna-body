@@ -185,7 +185,7 @@ def _avg_metric(conn, db, key: str, days: list[date], person_id: int) -> float |
 
 
 def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
-    from . import compartir, db, enlaces, goals, household, shift_import, turnos_costo
+    from . import compartir, db, enlaces, goals, shift_import, turnos_costo
 
     person_id = db.local_person_id(conn)
     conn.execute("UPDATE person SET display_name = 'Demo', timezone = 'America/Bogota' WHERE id = ?", (person_id,))
@@ -296,7 +296,6 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
         (_ANA_NAME, idioma),
     )
     ana_id = ana_cur.lastrowid
-    conn.executescript(household.SCHEMA)
     hogar_now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     conn.executemany(
         "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, ?)",
