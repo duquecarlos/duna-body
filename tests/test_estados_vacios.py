@@ -96,6 +96,16 @@ def _mk_person(conn, lang: str, name: str) -> int:
     return cur.lastrowid
 
 
+def _use_or_make(conn, lang: str, name: str, pid: int | None) -> int:
+    """BODY-ESTADOS-VACIOS-3: a hosted sweep signs a person in first (Cuenta Duna's own flow
+    creates the row) and passes that `pid` here instead of letting this seed create a new one --
+    the row exists already, so only its language needs setting."""
+    if pid is not None:
+        conn.execute("UPDATE person SET language = ? WHERE id = ?", (lang, pid))
+        return pid
+    return _mk_person(conn, lang, name)
+
+
 def _full_day(conn, person_id: int, day: str) -> None:
     for key in _FULL_METRIC_KEYS:
         db.set_metric(conn, day, key, _INVENTED[key], "garmin", person_id)
@@ -110,15 +120,15 @@ def _full_day(conn, person_id: int, day: str) -> None:
 
 
 # ---- A: brand new -- a person row only ----------------------------------------------------------
-def _seed_A(conn, lang: str) -> dict:
-    pid = _mk_person(conn, lang, "A")
+def _seed_A(conn, lang: str, pid: int | None = None) -> dict:
+    pid = _use_or_make(conn, lang, "A", pid)
     conn.commit()
     return {"person_id": pid, "days": [TODAY.isoformat()], "goal_ids": [], "turnos_on": False}
 
 
 # ---- B: one day of data, today, every metric a watch can send -------------------------------
-def _seed_B(conn, lang: str) -> dict:
-    pid = _mk_person(conn, lang, "B")
+def _seed_B(conn, lang: str, pid: int | None = None) -> dict:
+    pid = _use_or_make(conn, lang, "B", pid)
     day = TODAY.isoformat()
     _full_day(conn, pid, day)
     conn.commit()
@@ -126,8 +136,8 @@ def _seed_B(conn, lang: str) -> dict:
 
 
 # ---- C: 20 days with ONLY sleep -- a watch/setting that sends some metrics but not others -------
-def _seed_C(conn, lang: str) -> dict:
-    pid = _mk_person(conn, lang, "C")
+def _seed_C(conn, lang: str, pid: int | None = None) -> dict:
+    pid = _use_or_make(conn, lang, "C", pid)
     days = [(TODAY - timedelta(19 - i)).isoformat() for i in range(20)]
     for i, day in enumerate(days):
         db.set_metric(conn, day, "sleep_minutes", 400 + i, "garmin", pid)
@@ -136,16 +146,16 @@ def _seed_C(conn, lang: str) -> dict:
 
 
 # ---- D: trabaja_turnos = yes, zero shift rows, zero metrics (the honest "sin_datos_reloj" path) -
-def _seed_D(conn, lang: str) -> dict:
-    pid = _mk_person(conn, lang, "D")
+def _seed_D(conn, lang: str, pid: int | None = None) -> dict:
+    pid = _use_or_make(conn, lang, "D", pid)
     db.set_trabaja_turnos(conn, True, pid)
     conn.commit()
     return {"person_id": pid, "days": [TODAY.isoformat()], "goal_ids": [], "turnos_on": True}
 
 
 # ---- D2: one night block, trabaja_turnos = yes, no watch data at all (before or after) -----------
-def _seed_D2(conn, lang: str) -> dict:
-    pid = _mk_person(conn, lang, "D2")
+def _seed_D2(conn, lang: str, pid: int | None = None) -> dict:
+    pid = _use_or_make(conn, lang, "D2", pid)
     db.set_trabaja_turnos(conn, True, pid)
     start = TODAY - timedelta(6)
     for i in range(3):
@@ -161,8 +171,8 @@ def _seed_D2(conn, lang: str) -> dict:
 
 
 # ---- E: an active metric goal on a metric with no data at all, a habit goal with zero checks ----
-def _seed_E(conn, lang: str) -> dict:
-    pid = _mk_person(conn, lang, "E")
+def _seed_E(conn, lang: str, pid: int | None = None) -> dict:
+    pid = _use_or_make(conn, lang, "E", pid)
     today_iso = TODAY.isoformat()
     deadline = (TODAY + timedelta(60)).isoformat()
     gid_metric = goals.propose(conn, pid, "ZZE-METRIC", today_iso, kind="metric", metric_key="vo2max",
@@ -176,8 +186,8 @@ def _seed_E(conn, lang: str) -> dict:
 
 
 # ---- F: data only in the past -- the last day is 40 days ago, the watch stopped syncing ---------
-def _seed_F(conn, lang: str) -> dict:
-    pid = _mk_person(conn, lang, "F")
+def _seed_F(conn, lang: str, pid: int | None = None) -> dict:
+    pid = _use_or_make(conn, lang, "F", pid)
     last_day = TODAY - timedelta(40)
     for i in range(10):
         _full_day(conn, pid, (last_day - timedelta(9 - i)).isoformat())
