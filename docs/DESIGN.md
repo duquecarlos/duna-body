@@ -44,8 +44,21 @@ comes from; the Body-specific reading is in *italics*. When a new rule arrives f
     network's) is never shown, logged or stored -- the exception's TYPE name only, through `body/errores.py`
     (BODY-LOGIN-MENSAJES-1). (BODY-SEGURIDAD-1): every POST/PUT/PATCH/DELETE is same-origin only, checked by one
     middleware (`body/seguridad.py`); every response carries a fixed header set (`X-Content-Type-Options`,
-    `Referrer-Policy`, `X-Frame-Options`, `Content-Security-Policy: frame-ancestors 'none'`,
-    `Cross-Origin-Opener-Policy`); every redirect built from request data goes through `cuenta.safe_return_to`.
+    `Referrer-Policy`, `X-Frame-Options`, `Cross-Origin-Opener-Policy`) plus the Content-Security-Policy below;
+    every redirect built from request data goes through `cuenta.safe_return_to`.
+    (BODY-SEGURIDAD-2): no template holds an executable inline `<script>` or an inline event-handler attribute
+    (`onchange=`, …) any more -- every one moved to `body/static/*.js`, loaded through `static_url(...)`, so
+    `script-src 'self'` holds with no `'unsafe-inline'`. The full policy (`body/seguridad.py`'s
+    `content_security_policy()`, built from named parts so a test can read each one):
+    `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+    font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; manifest-src 'self';
+    worker-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`, plus
+    Cuenta's issuer origin in `form-action` once hosted (a `/logout`, `/privacidad/consentimiento` or
+    `/privacidad/borrar` POST can 303-redirect there, via `cuenta.logout_url`, and Chrome applies `form-action`
+    to that redirect, not only to the form's own `action=`). Remaining gap: `style-src` still carries
+    `'unsafe-inline'` -- 22 templates (and server-built SVG) use `style="..."` attributes; untouched by this
+    slice. Google Fonts (`fonts.googleapis.com`, `fonts.gstatic.com`) is the only third-party origin the policy
+    allows, for Hanken Grotesk; self-hosting it instead is open as **BODY-FUENTES-PROPIAS-1**, not done here.
     (BODY-SEGURIDAD-4): any attempt that reaches a third party (Garmin) on a person's behalf is limited per
     person; the limit refuses before the third party is called, so Body's own server can never be used as a
     relay to try many credentials against it.
