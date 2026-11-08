@@ -18,7 +18,7 @@ DEMO_CODE = "445566"
 
 class SignInOkTest(unittest.TestCase):
     def test_success_calls_sign_in_with_typed_values_and_prints_the_success_line(self):
-        with mock.patch("body.login.input", return_value=DEMO_EMAIL), \
+        with mock.patch("builtins.input", return_value=DEMO_EMAIL), \
              mock.patch("body.login.getpass.getpass", return_value=DEMO_PASSWORD), \
              mock.patch("body.login.garmin_adapter.sign_in") as sign_in:
             buf = io.StringIO()
@@ -33,7 +33,7 @@ class SignInOkTest(unittest.TestCase):
         self.assertIn("Signed in", buf.getvalue())
 
     def test_password_is_never_printed_on_success(self):
-        with mock.patch("body.login.input", return_value=DEMO_EMAIL), \
+        with mock.patch("builtins.input", return_value=DEMO_EMAIL), \
              mock.patch("body.login.getpass.getpass", return_value=DEMO_PASSWORD), \
              mock.patch("body.login.garmin_adapter.sign_in"):
             buf = io.StringIO()
@@ -45,7 +45,7 @@ class SignInOkTest(unittest.TestCase):
 class SignInFailureTest(unittest.TestCase):
     def test_failure_returns_1_and_never_prints_the_password_or_email(self):
         exc = RuntimeError(f"rejected: user={DEMO_EMAIL} pass={DEMO_PASSWORD}")
-        with mock.patch("body.login.input", return_value=DEMO_EMAIL), \
+        with mock.patch("builtins.input", return_value=DEMO_EMAIL), \
              mock.patch("body.login.getpass.getpass", return_value=DEMO_PASSWORD), \
              mock.patch("body.login.garmin_adapter.sign_in", side_effect=exc):
             out = io.StringIO()
@@ -60,14 +60,14 @@ class SignInFailureTest(unittest.TestCase):
         self.assertIn("RuntimeError", combinado)
 
     def test_mfa_prompt_callable_reads_input_and_strips_it(self):
-        with mock.patch("body.login.input", return_value=DEMO_EMAIL), \
+        with mock.patch("builtins.input", return_value=DEMO_EMAIL), \
              mock.patch("body.login.getpass.getpass", return_value=DEMO_PASSWORD), \
              mock.patch("body.login.garmin_adapter.sign_in") as sign_in:
             with contextlib.redirect_stdout(io.StringIO()):
                 login.main()
 
         prompt_mfa = sign_in.call_args.kwargs["prompt_mfa"]
-        with mock.patch("body.login.input", return_value=f"  {DEMO_CODE}  "):
+        with mock.patch("builtins.input", return_value=f"  {DEMO_CODE}  "):
             self.assertEqual(prompt_mfa(), DEMO_CODE)
 
 
