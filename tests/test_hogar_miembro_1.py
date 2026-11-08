@@ -251,11 +251,13 @@ class OwnWeeklyCheckTest(unittest.TestCase):
             _as(self, 2)
             r = client.get(f"/goals/{gid}")
         self.assertEqual(r.status_code, 200)
-        # the viewer's own weekly check (7 of 7) was upserted; the creator's (4 of 7) stays theirs
+        # BODY-HABITO-VECES-1: per='week', times=1 -> due = min(1, 7) = 1, done capped at due.
+        # the viewer's own weekly check (1 of 1, was 7 of 7 under metas-v1) was upserted; the
+        # creator's (also 1 of 1, was 4 of 7) stays theirs
         own_check = conn.execute(
             "SELECT habits_done, habits_due FROM goal_check WHERE goal_id = ? AND person_id = 2",
             (gid,)).fetchone()
-        self.assertEqual((own_check["habits_done"], own_check["habits_due"]), (7, 7))
+        self.assertEqual((own_check["habits_done"], own_check["habits_due"]), (1, 1))
         self.assertNotIn("4 de 7", r.text)
 
 

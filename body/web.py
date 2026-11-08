@@ -1293,21 +1293,9 @@ def _parse_new_habit(f: dict, prefix: str = "") -> tuple[str | None, dict | None
     return title, cadence
 
 
-def _due_days_for(conn, person_id: int, monday: date, context: str | None) -> list[str]:
-    """The days of this week a habit is due. Calls goals.py's own shift-context rule
-    (_context_due_days / _week_days) rather than re-deriving it here."""
-    return goals._context_due_days(conn, person_id, monday, context) if context else goals._week_days(monday)
-
-
-def _habit_progress(conn, h, person_id: int, monday: date) -> tuple[int, int]:
-    due_days = _due_days_for(conn, person_id, monday, _habit_cadence(h).get("context"))
-    if not due_days:
-        return 0, 0
-    placeholders = ",".join("?" * len(due_days))
-    done = conn.execute(
-        f"SELECT COUNT(*) FROM habit_check WHERE habit_id = ? AND person_id = ? AND done = 1 "
-        f"AND day IN ({placeholders})", (h["id"], person_id, *due_days)).fetchone()[0]
-    return done, len(due_days)
+def _habit_progress(conn, h, person_id: int, monday: date, today: date) -> tuple[int, int, str]:
+    """(done, due, period) for H this week/month -- goals.habit_progress, the one rule."""
+    return goals.habit_progress(conn, h, person_id, monday, today)
 
 
 def _habit_checked(conn, habit_id: int, person_id: int, day: str) -> bool:
@@ -1317,10 +1305,7 @@ def _habit_checked(conn, habit_id: int, person_id: int, day: str) -> bool:
 
 
 def _is_due_today(conn, h, person_id: int, today: date) -> bool:
-    context = _habit_cadence(h).get("context")
-    if not context:
-        return True
-    return today.isoformat() in _due_days_for(conn, person_id, _week_monday(today), context)
+    return goals.habit_due_today(conn, h, person_id, today)
 
 
 def _habits_for_goal(conn, goal_id: int):
@@ -1602,9 +1587,15 @@ def goal_detail(goal_id: int, person_id: int = Depends(identity.current_person_i
         row = {"id": h["id"], "title": h["title"], "cadence": _cadence_text(t, cadence),
                "context": _context_label(t, cadence.get("context")), "mine": is_mine}
         if is_mine:
-            done, due = _habit_progress(conn, h, person_id, monday)
+            done, due, period = _habit_progress(conn, h, person_id, monday, today)
+            if period == "month":
+                progress = t("goals.habit.progress_month", done=done, due=due)
+            elif due:
+                progress = t("goals.habit.progress", done=done, due=due)
+            else:
+                progress = t("goals.habit.not_due")
             row.update({
-                "progress": t("goals.habit.progress", done=done, due=due) if due else t("goals.habit.not_due"),
+                "progress": progress,
                 "due_today": _is_due_today(conn, h, person_id, today),
                 "checked_today": _habit_checked(conn, h["id"], person_id, today.isoformat()),
             })
