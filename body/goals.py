@@ -9,11 +9,37 @@ import json
 import statistics
 from datetime import date, timedelta
 
-from . import baselines, db
+from . import baselines, db, household
 
 RULE_VERSION = "metas-v1"
 MIN_METRIC_DAYS = 4             # fewer days with data this week -> on_track = NULL, an honest gap
 MILESTONE_ON_TRACK_PCT = 0.70   # share of due habits that must be done for a milestone week to be on track
+
+
+def goal_access(conn, goal_id: int, person_id: int) -> str | None:
+    """'creator' if this person created goal G, 'member' if G is visibility='household' and shared
+    with their ACTIVE household (body/household.py's household_of, the one place membership is
+    read), else None (treat as not found: every goal/habit route and the assistant's read tools
+    check here instead of keeping their own `person_id = ?` clause -- BODY-HOGAR-MIEMBRO-1)."""
+    g = conn.execute("SELECT person_id, hogar_id, visibility FROM goal WHERE id = ?", (goal_id,)).fetchone()
+    if g is None:
+        return None
+    if g["person_id"] == person_id:
+        return "creator"
+    if g["visibility"] == "household" and g["hogar_id"]:
+        hh = household.household_of(conn, person_id)
+        if hh and hh.id == g["hogar_id"]:
+            return "member"
+    return None
+
+
+def goal_scope_sql(person_id: int, hh) -> tuple[str, tuple]:
+    """A WHERE fragment (and its params) selecting every goal `person_id` may see: their own, plus
+    any visibility='household' goal shared with `hh` (their `household.household_of` result, or
+    None). The one scope every goal-listing site uses, instead of a bare `person_id = ?`."""
+    if hh:
+        return "(person_id = ? OR (visibility = 'household' AND hogar_id = ?))", (person_id, hh.id)
+    return "person_id = ?", (person_id,)
 
 
 def propose(conn, person_id, title, start_day, *, area="body", why=None, kind="metric", metric_key=None,

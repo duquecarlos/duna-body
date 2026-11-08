@@ -115,10 +115,10 @@ class SeededContentTest(unittest.TestCase):
     def tearDownClass(cls):
         cls.conn.close()
 
-    def test_has_one_demo_person(self):
-        rows = self.conn.execute("SELECT display_name FROM person").fetchall()
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["display_name"], "Demo")
+    def test_has_two_demo_persons(self):
+        rows = self.conn.execute("SELECT display_name FROM person ORDER BY id").fetchall()
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([r["display_name"] for r in rows], ["Demo", "Ana"])
 
     def test_day_count_matches_requested_span(self):
         days = {r["day"] for r in self.conn.execute("SELECT DISTINCT day FROM daily_metric")}
@@ -139,15 +139,22 @@ class SeededContentTest(unittest.TestCase):
         bloques = turnos_costo.bloques_noche(self.conn, 1, row[0], row[1])
         self.assertGreaterEqual(len(bloques), 3)
 
-    def test_has_three_active_goals_with_checks(self):
+    def test_has_four_active_goals_with_checks(self):
         goals = self.conn.execute("SELECT id FROM goal WHERE status = 'active'").fetchall()
-        self.assertEqual(len(goals), 3)
+        self.assertEqual(len(goals), 4)
         checks = self.conn.execute("SELECT COUNT(*) FROM goal_check").fetchone()[0]
         self.assertGreater(checks, 0)
 
-    def test_has_one_habit(self):
+    def test_has_three_habits(self):
         habits = self.conn.execute("SELECT COUNT(*) FROM habit").fetchone()[0]
-        self.assertEqual(habits, 1)
+        self.assertEqual(habits, 3)
+
+    def test_has_one_household_goal_created_by_ana(self):
+        row = self.conn.execute(
+            "SELECT person_id FROM goal WHERE visibility = 'household'").fetchone()
+        self.assertIsNotNone(row)
+        creator = self.conn.execute("SELECT display_name FROM person WHERE id = ?", (row[0],)).fetchone()
+        self.assertEqual(creator["display_name"], "Ana")
 
     def test_demo_marker_written(self):
         marker = Path(self.folder) / "DEMO"

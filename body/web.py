@@ -1323,19 +1323,20 @@ def _is_due_today(conn, h, person_id: int, today: date) -> bool:
     return today.isoformat() in _due_days_for(conn, person_id, _week_monday(today), context)
 
 
-def _habits_for_goal(conn, goal_id: int, person_id: int):
-    return conn.execute(
-        "SELECT * FROM habit WHERE goal_id = ? AND active = 1 "
-        "AND (assignee_person_id IS NULL OR assignee_person_id = ?) ORDER BY id",
-        (goal_id, person_id)).fetchall()
+def _habits_for_goal(conn, goal_id: int):
+    """Every active habit of G, whoever it is assigned to -- goal_detail renders a habit assigned
+    to another household member as theirs (name only), never this viewer's own checkbox."""
+    return conn.execute("SELECT * FROM habit WHERE goal_id = ? AND active = 1 ORDER BY id", (goal_id,)).fetchall()
 
 
 def _today_due_habits(conn, t: T, person_id: int, today: date) -> list[dict]:
+    hh = household.household_of(conn, person_id)
+    scope_sql, scope_params = goals.goal_scope_sql(person_id, hh)
     rows = conn.execute(
-        "SELECT h.*, g.title AS goal_title FROM habit h JOIN goal g ON g.id = h.goal_id "
-        "WHERE g.person_id = ? AND g.status = 'active' AND h.active = 1 "
-        "AND (h.assignee_person_id IS NULL OR h.assignee_person_id = ?) ORDER BY h.id",
-        (person_id, person_id)).fetchall()
+        f"SELECT h.*, g.title AS goal_title FROM habit h JOIN goal g ON g.id = h.goal_id "
+        f"WHERE g.status = 'active' AND {scope_sql} AND h.active = 1 "
+        f"AND (h.assignee_person_id IS NULL OR h.assignee_person_id = ?) ORDER BY h.id",
+        (*scope_params, person_id)).fetchall()
     out = []
     for h in rows:
         if not _is_due_today(conn, h, person_id, today):
@@ -1459,13 +1460,15 @@ def goals_list(person_id: int = Depends(identity.current_person_id)):
     week_start = _week_monday(today).isoformat()
     defs = _defs(conn)
 
-    active = conn.execute("SELECT * FROM goal WHERE person_id = ? AND status = 'active' ORDER BY id",
-                          (person_id,)).fetchall()
-    proposed = conn.execute("SELECT * FROM goal WHERE person_id = ? AND status = 'proposed' ORDER BY id",
-                            (person_id,)).fetchall()
+    hh = household.household_of(conn, person_id)
+    scope_sql, scope_params = goals.goal_scope_sql(person_id, hh)
+    active = conn.execute(f"SELECT * FROM goal WHERE status = 'active' AND {scope_sql} ORDER BY id",
+                          scope_params).fetchall()
+    proposed = conn.execute(f"SELECT * FROM goal WHERE status = 'proposed' AND {scope_sql} ORDER BY id",
+                            scope_params).fetchall()
     archived = conn.execute(
-        "SELECT * FROM goal WHERE person_id = ? AND status IN ('paused', 'done', 'dropped') ORDER BY id",
-        (person_id,)).fetchall()
+        f"SELECT * FROM goal WHERE status IN ('paused', 'done', 'dropped') AND {scope_sql} ORDER BY id",
+        scope_params).fetchall()
 
     cards = []
     for g in active:
@@ -1552,14 +1555,15 @@ async def goal_new_create(request: Request, person_id: int = Depends(identity.cu
 @_cierra_conexion
 def goal_detail(goal_id: int, person_id: int = Depends(identity.current_person_id)):
     conn, person, t = _ctx(person_id)
-    g = conn.execute("SELECT * FROM goal WHERE id = ? AND person_id = ?", (goal_id, person_id)).fetchone()
-    if not g:
+    access = goals.goal_access(conn, goal_id, person_id)
+    if access is None:
         raise HTTPException(404)
+    g = conn.execute("SELECT * FROM goal WHERE id = ?", (goal_id,)).fetchone()
     defs = _defs(conn)
     today = _today_local(person)
     monday = _week_monday(today)
     if g["status"] == "active":
-        _goal_check_row(conn, goal_id, person_id, monday.isoformat())  # upserts this week's check if missing
+        _goal_check_row(conn, goal_id, person_id, monday.isoformat())  # upserts THIS VIEWER's check if missing
 
     chart = None
     if g["kind"] == "metric" and g["deadline"] and g["baseline_value"] is not None and g["target_value"] is not None:
@@ -1575,17 +1579,26 @@ def goal_detail(goal_id: int, person_id: int = Depends(identity.current_person_i
                      "text": _verdict_sentence(t, defs, g, dict(r))} for r in history_rows]
 
     habit_rows = []
-    for h in _habits_for_goal(conn, goal_id, person_id):
-        done, due = _habit_progress(conn, h, person_id, monday)
-        habit_rows.append({
-            "id": h["id"], "title": h["title"], "cadence": _cadence_text(t, _habit_cadence(h)),
-            "context": _context_label(t, _habit_cadence(h).get("context")),
-            "progress": t("goals.habit.progress", done=done, due=due) if due else t("goals.habit.not_due"),
-            "due_today": _is_due_today(conn, h, person_id, today),
-            "checked_today": _habit_checked(conn, h["id"], person_id, today.isoformat()),
-        })
+    for h in _habits_for_goal(conn, goal_id):
+        cadence = _habit_cadence(h)
+        is_mine = h["assignee_person_id"] is None or h["assignee_person_id"] == person_id
+        row = {"id": h["id"], "title": h["title"], "cadence": _cadence_text(t, cadence),
+               "context": _context_label(t, cadence.get("context")), "mine": is_mine}
+        if is_mine:
+            done, due = _habit_progress(conn, h, person_id, monday)
+            row.update({
+                "progress": t("goals.habit.progress", done=done, due=due) if due else t("goals.habit.not_due"),
+                "due_today": _is_due_today(conn, h, person_id, today),
+                "checked_today": _habit_checked(conn, h["id"], person_id, today.isoformat()),
+            })
+        else:
+            other = conn.execute("SELECT display_name FROM person WHERE id = ?",
+                                 (h["assignee_person_id"],)).fetchone()
+            row["assignee_name"] = t("goals.habit_assignee", name=other["display_name"] if other else "?")
+        habit_rows.append(row)
 
     members = None
+    shared_line = None
     if g["visibility"] == "household":
         hh = household.household_of(conn, person_id)
         other_ids = [m for m in (hh.member_ids if hh else ()) if m != person_id]
@@ -1598,19 +1611,26 @@ def goal_detail(goal_id: int, person_id: int = Depends(identity.current_person_i
                     (goal_id, mid)).fetchone()
                 _, verdict = _verdict(t, crow["on_track"] if crow else None)
                 members.append({"name": mrow["display_name"] if mrow else f"#{mid}", "verdict": verdict})
+        if access == "creator":
+            shared_line = t("goals.shared_by_you")
+        else:
+            creator = conn.execute("SELECT display_name FROM person WHERE id = ?", (g["person_id"],)).fetchone()
+            shared_line = t("goals.shared_by", name=creator["display_name"] if creator else "?")
 
     latest_on_track = history_rows[0]["on_track"] if history_rows else None
     cls, verdict = _verdict(t, latest_on_track)
 
     return _render("goal.html", t=t, tab="goals", goal=g, cls=cls, verdict=verdict, chart=chart,
-                   history=history_list, habits=habit_rows, members=members,
+                   history=history_list, habits=habit_rows, members=members, shared_line=shared_line,
+                   is_creator=(access == "creator"),
                    target_text=_goal_target_text(t, defs, g), area_label=t("goals.area." + g["area"]),
                    today=today.isoformat(), turnos=_turnos_on(conn, person_id))
 
 
-def _owned_goal_or_404(conn, goal_id: int, person_id: int) -> None:
-    if not conn.execute("SELECT 1 FROM goal WHERE id = ? AND person_id = ?",
-                        (goal_id, person_id)).fetchone():
+def _require_creator(conn, goal_id: int, person_id: int) -> None:
+    """Editing G and activate/pause/finish/drop stay with the creator in v1 (BODY-HOGAR-MIEMBRO-1
+    rule 5) -- a member, or a stranger, gets 404 exactly like an unknown goal."""
+    if goals.goal_access(conn, goal_id, person_id) != "creator":
         raise HTTPException(404)
 
 
@@ -1618,7 +1638,7 @@ def _owned_goal_or_404(conn, goal_id: int, person_id: int) -> None:
 @_cierra_conexion
 def goal_activate(goal_id: int, person_id: int = Depends(identity.current_person_id)):
     conn, _, _ = _ctx(person_id)
-    _owned_goal_or_404(conn, goal_id, person_id)
+    _require_creator(conn, goal_id, person_id)
     goals.activate(conn, goal_id)
     return RedirectResponse(f"/goals/{goal_id}", status_code=303)
 
@@ -1627,7 +1647,7 @@ def goal_activate(goal_id: int, person_id: int = Depends(identity.current_person
 @_cierra_conexion
 def goal_pause(goal_id: int, person_id: int = Depends(identity.current_person_id)):
     conn, _, _ = _ctx(person_id)
-    _owned_goal_or_404(conn, goal_id, person_id)
+    _require_creator(conn, goal_id, person_id)
     goals.pause(conn, goal_id)
     return RedirectResponse(f"/goals/{goal_id}", status_code=303)
 
@@ -1636,7 +1656,7 @@ def goal_pause(goal_id: int, person_id: int = Depends(identity.current_person_id
 @_cierra_conexion
 def goal_finish(goal_id: int, person_id: int = Depends(identity.current_person_id)):
     conn, _, _ = _ctx(person_id)
-    _owned_goal_or_404(conn, goal_id, person_id)
+    _require_creator(conn, goal_id, person_id)
     goals.finish(conn, goal_id)
     return RedirectResponse("/goals", status_code=303)
 
@@ -1645,7 +1665,7 @@ def goal_finish(goal_id: int, person_id: int = Depends(identity.current_person_i
 @_cierra_conexion
 def goal_drop(goal_id: int, person_id: int = Depends(identity.current_person_id)):
     conn, _, _ = _ctx(person_id)
-    _owned_goal_or_404(conn, goal_id, person_id)
+    _require_creator(conn, goal_id, person_id)
     goals.drop(conn, goal_id)
     return RedirectResponse("/goals", status_code=303)
 
@@ -1654,11 +1674,16 @@ def goal_drop(goal_id: int, person_id: int = Depends(identity.current_person_id)
 @_cierra_conexion_async
 async def goal_add_habit(goal_id: int, request: Request, person_id: int = Depends(identity.current_person_id)):
     conn, _, _ = _ctx(person_id)
-    _owned_goal_or_404(conn, goal_id, person_id)
+    if goals.goal_access(conn, goal_id, person_id) is None:
+        raise HTTPException(404)
+    g = conn.execute("SELECT visibility FROM goal WHERE id = ?", (goal_id,)).fetchone()
     f = await _form(request)
     title, cadence = _parse_new_habit(f)
     if title:
-        goals.add_habit(conn, goal_id, title, cadence)
+        # BODY-HOGAR-MIEMBRO-1 rule 4: on a household goal, the adder (creator or member) picks
+        # "for me" (assignee = themselves) or "for both" (assignee = NULL, the default).
+        assignee = person_id if g["visibility"] == "household" and f.get("for") == "me" else None
+        goals.add_habit(conn, goal_id, title, cadence, assignee_person_id=assignee)
     return RedirectResponse(f"/goals/{goal_id}", status_code=303)
 
 
@@ -1672,10 +1697,13 @@ async def habit_check(habit_id: int, request: Request, person_id: int = Depends(
         date.fromisoformat(day)
     except (TypeError, ValueError):
         raise HTTPException(404)
-    owned = conn.execute(
-        "SELECT 1 FROM habit h JOIN goal g ON g.id = h.goal_id WHERE h.id = ? AND g.person_id = ?",
-        (habit_id, person_id)).fetchone()
-    if not owned:
+    row = conn.execute(
+        "SELECT h.assignee_person_id, h.goal_id FROM habit h WHERE h.id = ?", (habit_id,)).fetchone()
+    if row is None or goals.goal_access(conn, row["goal_id"], person_id) is None:
+        raise HTTPException(404)
+    # BODY-HOGAR-MIEMBRO-1 rule 2: a member checks off a habit only when it is for both (NULL) or
+    # for themselves; a habit assigned to someone else cannot be checked by this viewer.
+    if row["assignee_person_id"] is not None and row["assignee_person_id"] != person_id:
         raise HTTPException(404)
     goals.check_habit(conn, habit_id, person_id, day, f.get("done") == "1")
     back = f.get("back") or "/"
