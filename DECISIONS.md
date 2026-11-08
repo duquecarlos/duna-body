@@ -9050,3 +9050,53 @@ merge-only slice lands it after the orchestrator re-measures in the browser. Bra
 `61cb029df3e39bd5ad6c3d4e99df75c466ba82ad`. No password, token, session secret or real health
 figure was read, printed, stored or logged by this slice. `git status --porcelain` is empty on the
 branch after this commit, before this ledger entry's own commit.
+
+## BODY-ESTILOS-1-M2 -- merge BODY-ESTILOS-1 + BODY-ESTILOS-1-M into `main`, as built
+
+Merged `feat/body-estilos-1` (tip `71e87d46f86cfe840ff75eae9f5b85829ab99ee8`) into `main` with
+`--no-ff`, no fixes, per the orchestrator's own approval and its side-by-side measurement, not a
+re-measurement by this slice.
+
+**The orchestrator's measurement (copied from the approval, not re-run here).** `ORCH-CARLOS-
+DELEGATES-TIER-1-1`, against the BODY-ESTILOS-1-M STOP report (`AWAITING_APPROVAL`, `71e87d4`):
+main exported with `git archive` into the orchestrator's own scratchpad and served on port 8774,
+the branch on 8773, both on the same invented demo data, the same pane (375x812, the same
+device-pixel ratio). 20 screens compared (Hoy, Día, Cómo se hace, Metas, goals 1-4, Nueva meta,
+Historia, Privacidad, Ajustes, Turnos, Cómo calculo, Mi patrón, Tendencias in three views, Ayuda,
+Ajustes del asistente), every element on 35 computed properties plus its box: 0 style differences
+and 0 position/size differences on every element both versions share. The only structural changes
+are the intended ones: the sleep-stage bar on Día, the four goal progress bars on Metas and the
+month bars on Historia are now `<svg>` where main had `<div>`, each with the same box as main
+(314x10, 314x6) and each segment the same box and colour. With the page scripts running (Hoy with
+the assistant panel open, Nueva meta, Tendencias, Ajustes), the console showed no
+Content-Security-Policy style violation, against the served policy `style-src 'self'
+https://fonts.googleapis.com`.
+
+**The measuring method, recorded as reusable** because it is the thing that made the comparison
+trustworthy and should be reached for again rather than reinvented: serve `main` from a `git
+archive` copy standing next to the branch, on the same invented demo data, in the same pane size
+and device-pixel ratio, and compare element by element -- computed style and box, not a screenshot
+diff. A *stored* baseline (a saved screenshot or a cached DOM dump from an earlier run) drifts from
+the live branch as scroll position, font hinting and device-pixel ratio shift between runs; serving
+both trees side by side at measurement time removes that drift instead of hoping it is small.
+
+**What this closes.** The `style-src 'unsafe-inline'` gap BODY-SEGURIDAD-2 had left open is closed:
+the served policy for `style-src` is now `'self' https://fonts.googleapis.com`, with no
+`'unsafe-inline'` token, and the side-by-side run above found no console CSP violation on any of
+the four script-bearing pages exercised.
+
+**Open follow-up, `BODY-FUENTES-PROPIAS-1`:** self-host the font this app already loads from Google
+Fonts, then drop `fonts.googleapis.com` and `fonts.gstatic.com` from the Content-Security-Policy
+entirely -- the policy still reaches two third-party hosts for the typeface alone. Not done here:
+out of this slice's `touches:` (`DECISIONS.md` only) and not part of what BODY-ESTILOS-1/-M built.
+
+**This slice's own steps.** `feat/body-estilos-1` tip confirmed `71e87d46f86cfe840ff75eae9f5b85829
+ab99ee8`, tree clean, before the merge. Gate run once, foreground, on that tip, command
+`.venv/Scripts/python.exe -m unittest discover tests -t .`: `Ran 1314 tests in 159.611s ...
+OK (skipped=1)`, matching the branch's own prior-recorded 1314 (above) -- no drift. Merged
+`--no-ff` into `main` (merge commit `dedad8cc07d2d8987ed0c25e07231f7ccb4d4fa5`); merge tree
+`2f0a813f94943fd1ac261b3302dc693cdc80b2f6` equals the branch tip's own tree exactly (`git diff
+HEAD feat/body-estilos-1` empty), so the merge carried the measured tree forward with no
+reconciliation needed and the gate above stands for `main` too. No password, token, session secret
+or real health figure was read, printed, stored or logged by this slice. `git status --porcelain`
+is empty on `main` after this commit, before this ledger entry's own commit.
