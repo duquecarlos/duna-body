@@ -12,7 +12,7 @@
 <div class="card">
   <div class="q">{{ target_text }}</div>
   {% if goal.kind == 'metric' %}
-    {% if chart %}{{ chart|safe }}<p class="note mt-4 mb-0">{{ t('goals.chart_hint') }}</p>
+    {% if chart %}{{ chart|safe }}<p class="note mt-4 mb-0">{{ t('goals.chart_soon') if chart_sin_puntos else t('goals.chart_hint') }}</p>
     {% else %}<p class="note m-0">{{ t('goals.chart_soon') }}</p>{% endif %}
   {% endif %}
 </div>

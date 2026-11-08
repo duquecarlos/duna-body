@@ -4,10 +4,12 @@ body/web.py before this slice. Pure move: path, method, templates and bodies ide
 """
 from __future__ import annotations
 
+import html
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
+from markupsafe import Markup
 
 from .. import compartir, cuenta, db, goals, history, household, identity, readiness, turnos_costo, tutoriales
 from ..baselines import baseline
@@ -51,6 +53,25 @@ def _reading(t: T, r: readiness.Readiness) -> str:
     if strongest.subscore >= 80 and strongest is not weakest:
         out += " " + t("today.strongest", part=t("part." + strongest.key))
     return out
+
+
+def _stale_ctx(t: T, day: str, today_local: date) -> Markup | None:
+    """BODY-HOY-STALE-DATA-1: the readiness card renders the latest day WITH data, however old --
+    honest (every figure is that day's own), but a returning person could mistake a stale card for
+    today's. dias 0 or 1 is the normal morning state (today, or last night not yet synced) and
+    changes nothing; dias >= 2 says the figures' own age once, plainly, above the score. The link
+    goes to the one place a stale person can act on the sync in their mode: /garmin (hosted) shows
+    the connection and lets them reconnect; in local mode the sync is a per-install Task Scheduler
+    setting this app cannot read or trigger (comun._sync_status_text's own docstring), so /settings
+    -- the app's one settings hub -- is the nearest actionable page, not a sync screen that does not
+    exist locally."""
+    dias = (today_local - date.fromisoformat(day)).days
+    if dias < 2:
+        return None
+    link = "/garmin" if cuenta.hosted() else "/settings"
+    text = t("today.stale", date=comun._short_date(t, date.fromisoformat(day)), n=dias)
+    return Markup(html.escape(text) + ' <a class="taplink" href="' + link + '">' +
+                  html.escape(t("today.stale_link")) + "</a>")
 
 
 def _synced(conn, person) -> str | None:
@@ -191,7 +212,8 @@ def today(person_id: int = Depends(identity.current_person_id)):
         cards.append({"key": k, "label": t("metric." + k), "value": comun._value(t, k, v),
                       "unit": comun._unit(t, defs[k]) if v is not None else "", "delta": delta, "cls": cls})
     return comun._render("today.html", t=t, tab="today", day=day, date_long=t.long_date(date.fromisoformat(day)),
-                   synced=_synced(conn, person), r=r, reading=_reading(t, r), ready_avg=ready_avg,
+                   synced=_synced(conn, person), stale=_stale_ctx(t, day, today_local),
+                   r=r, reading=_reading(t, r), ready_avg=ready_avg,
                    ready_delta=ready_delta, ready_cls=ready_cls, cards=cards,
                    missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_count=proposed_count,
                    turno=turno_ctx, turnos=turnos_on,

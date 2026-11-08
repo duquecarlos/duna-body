@@ -26,7 +26,12 @@ comes from; the Body-specific reading is in *italics*. When a new rule arrives f
 5. **Your baseline, not a population norm.** *Every comparison is "vs. tu promedio de 30 días" or "vs. tus semanas
    de día". No judgement colours from generic tables.*
 6. **Honest gaps** (legibilidad, owner brief). *No watch that night → «—» + "sin datos del reloj". Never 0, never a
-   chart of zeros. Empty states say what will appear and when.*
+   chart of zeros. Empty states say what will appear and when.* Stale data says its own age once, above the figures
+   it qualifies, not silently (BODY-HOY-STALE-DATA-1: threshold 2 days, since 0-1 is the normal morning before that
+   night's sync). A screen whose whole section would be nothing but the same gap repeated shows that gap once, in
+   the hero, and drops the empty section entirely (BODY-SHIFTS-REDUNDANT-EMPTY-TABLE-1); a section with at least one
+   real figure stays, gaps and all -- a partial gap is still informative. A chart with no data points says so in its
+   caption, never invites a tap or drag over nothing (BODY-GOAL-CHART-NO-CAPTION-1).
 7. **Shifts are the axis.** *Days are banded by shift kind (bar + tint + word: Día, Noche, Descanso), on every
    time chart.*
 8. **Simple by default, detail on demand** (Sencillo/Detallado). *Hoy shows 4 figures; "Ver todo" opens the rest.

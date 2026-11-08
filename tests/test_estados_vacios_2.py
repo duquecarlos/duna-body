@@ -1,0 +1,216 @@
+"""BODY-ESTADOS-VACIOS-2: the three empty-state follow-ups BODY-ESTADOS-VACIOS-1 reported wording
+or layout for, rather than a crash or a raw-value leak -- Hoy's stale-data flag, Turnos' dropped
+cost table when every row is empty, and Metas' zero-points chart caption.
+
+Reuses tests/test_estados_vacios.py's state builders (seed_B, seed_D, seed_E, seed_F, _reset_db,
+_mk_person, _full_day, TODAY) rather than re-deriving them, and adds the handful of new shapes this
+slice's three checks need: one day short of "stale" (dias=1), a shifts state with one metric
+present (the partial-data case the hidden-table rule must NOT hide), and a metric goal with real
+weekly readings (the chart_hint case the zero-points caption rule must NOT touch).
+"""
+import tempfile
+import unittest
+from datetime import date, timedelta
+from pathlib import Path
+
+from tests._isolate import TMP  # noqa: F401  (must come before any body import)
+
+from fastapi.testclient import TestClient
+
+from body import config, db, demo, fechas, goals, identity, web
+from body.i18n import T
+from body.rutas import comun
+from tests.test_estados_vacios import TODAY, _full_day, _mk_person, _reset_db, _seed_B, _seed_D, _seed_E, _seed_F
+
+client = TestClient(web.app, follow_redirects=False)
+
+
+def _use(conn, person_id: int) -> None:
+    web.app.dependency_overrides[identity.current_person_id] = (lambda pid=person_id: pid)
+
+
+def _clear(tc: unittest.TestCase) -> None:
+    tc.addCleanup(web.app.dependency_overrides.clear)
+
+
+# ---- one day short of "stale" (dias=1): yesterday's night, not yet synced today -----------------
+def _seed_dias_1(conn, lang: str) -> dict:
+    pid = _mk_person(conn, lang, "G1")
+    day = (TODAY - timedelta(1)).isoformat()
+    _full_day(conn, pid, day)
+    conn.commit()
+    return {"person_id": pid, "day": day}
+
+
+# ---- Turnos, one metric present: the partial-data case the hidden-table rule must keep -----------
+_PARTIAL_METRIC = "resting_hr"
+
+
+def _seed_turnos_parcial(conn, lang: str) -> dict:
+    pid = _mk_person(conn, lang, "H")
+    db.set_trabaja_turnos(conn, True, pid)
+    night_fin = TODAY - timedelta(13)
+    for i in range(3):
+        d = (night_fin - timedelta(2 - i)).isoformat()
+        nd = (night_fin - timedelta(1 - i)).isoformat()
+        conn.execute(
+            "INSERT INTO shift (person_id, day, kind, code, start_local, end_local, source) "
+            "VALUES (?, ?, 'night', 'N', ?, ?, 'manual')",
+            (pid, d, f"{d}T22:00:00", f"{nd}T06:00:00"))
+    # The block's own cost window (inicio..fin+dias_estables=2): one metric, every other left unset.
+    for i in range(5):
+        d = (night_fin - timedelta(2) + timedelta(i)).isoformat()
+        db.set_metric(conn, d, _PARTIAL_METRIC, 60.0 + i, "garmin", pid)
+    # The reference window (>= min_dias_referencia=10), well outside the block's own excluded span.
+    for i in range(12):
+        d = (TODAY - timedelta(100 + i)).isoformat()
+        db.set_metric(conn, d, _PARTIAL_METRIC, 58.0 + i * 0.1, "garmin", pid)
+    conn.commit()
+    return {"person_id": pid}
+
+
+# ---- a metric goal with real weekly readings: the chart_hint case the caption rule must keep -----
+def _seed_meta_con_lecturas(conn, lang: str) -> dict:
+    pid = _mk_person(conn, lang, "I")
+    today_iso = TODAY.isoformat()
+    deadline = (TODAY + timedelta(60)).isoformat()
+    gid = goals.propose(conn, pid, "ZZI-METRIC", today_iso, kind="metric", metric_key="vo2max",
+                        direction="raise", target_value=50.0, baseline_value=40.0, deadline=deadline)
+    goals.activate(conn, gid)
+    monday = fechas.lunes_de(TODAY)
+    for i in range(4):
+        db.set_metric(conn, (monday + timedelta(i)).isoformat(), "vo2max", 42.0 + i, "garmin", pid)
+    conn.commit()
+    return {"person_id": pid, "goal_id": gid}
+
+
+class HoyStaleDataTest(unittest.TestCase):
+    """BODY-HOY-STALE-DATA-1: the stale line and its n, in both languages; nothing for dias 0 or 1."""
+
+    def setUp(self):
+        self.conn = _reset_db(self)
+        _clear(self)
+
+    def test_stale_line_f_40_dias_es_y_en(self):
+        last_day = TODAY - timedelta(40)
+        for lang in ("es", "en"):
+            ids = _seed_F(self.conn, lang)
+            _use(self.conn, ids["person_id"])
+            t = T(lang)
+            expected_date = comun._short_date(t, last_day)
+            expected = t("today.stale", date=expected_date, n=40)
+            r = client.get("/")
+            self.assertEqual(r.status_code, 200)
+            self.assertIn(expected, r.text, f"{lang}: stale line missing or wrong n for a 40-day-old day")
+            self.assertIn(t("today.stale_link"), r.text)
+
+    def test_dias_0_no_stale_line(self):
+        ids = _seed_B(self.conn, "es")
+        _use(self.conn, ids["person_id"])
+        r = client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn(T("es")("today.stale_link"), r.text)
+
+    def test_dias_1_no_stale_line(self):
+        ids = _seed_dias_1(self.conn, "es")
+        _use(self.conn, ids["person_id"])
+        r = client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn(T("es")("today.stale_link"), r.text)
+
+
+class TurnosCostoVacioTest(unittest.TestCase):
+    """BODY-SHIFTS-REDUNDANT-EMPTY-TABLE-1: the cost table drops entirely when every row is empty,
+    and keeps rendering, partial figures and all, when at least one row has one."""
+
+    def setUp(self):
+        self.conn = _reset_db(self)
+        _clear(self)
+
+    def test_todo_vacio_sin_tabla_hero_presente(self):
+        ids = _seed_D(self.conn, "es")
+        _use(self.conn, ids["person_id"])
+        r = client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        t = T("es")
+        self.assertNotIn(t("shifts.cost_title"), r.text)
+        self.assertIn(t("shifts.reason.sin_datos_reloj"), r.text)
+
+    def test_parcial_una_fila_con_dato_mantiene_tabla(self):
+        ids = _seed_turnos_parcial(self.conn, "es")
+        _use(self.conn, ids["person_id"])
+        r = client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        t = T("es")
+        self.assertIn(t("shifts.cost_title"), r.text)
+        table = r.text[r.text.index('<table class="parts mt-8">'):r.text.index("</table>")]
+        self.assertEqual(table.count('class="costrow"'), 1,
+                         "exactly one metric (resting_hr) has a figure in this fixture")
+        self.assertEqual(table.count(t("shifts.sin_dato_corto")), 4,
+                         "the other four metrics stay honest gaps")
+
+
+class GoalChartCaptionTest(unittest.TestCase):
+    """BODY-GOAL-CHART-NO-CAPTION-1: chart_soon (not chart_hint) when the plan line has zero actual
+    points; chart_hint stays once there is at least one."""
+
+    def setUp(self):
+        self.conn = _reset_db(self)
+        _clear(self)
+
+    def test_cero_puntos_usa_chart_soon(self):
+        ids = _seed_E(self.conn, "es")
+        gid_metric = ids["goal_ids"][0]
+        _use(self.conn, ids["person_id"])
+        r = client.get(f"/goals/{gid_metric}")
+        self.assertEqual(r.status_code, 200)
+        t = T("es")
+        self.assertIn(t("goals.chart_soon"), r.text)
+        self.assertNotIn(t("goals.chart_hint"), r.text)
+
+    def test_con_puntos_usa_chart_hint(self):
+        ids = _seed_meta_con_lecturas(self.conn, "es")
+        _use(self.conn, ids["person_id"])
+        r = client.get(f"/goals/{ids['goal_id']}")
+        self.assertEqual(r.status_code, 200)
+        t = T("es")
+        self.assertIn(t("goals.chart_hint"), r.text)
+        self.assertNotIn(t("goals.chart_soon"), r.text)
+
+
+class PersonaCompletaSinCambiosTest(unittest.TestCase):
+    """None of the three follow-ups touches a fully populated person's own screens -- the new
+    strings never appear, and the sections they could have hidden/changed stay exactly as before."""
+
+    def setUp(self):
+        self.conn = _reset_db(self)
+        self.addCleanup(web.app.dependency_overrides.clear)
+
+    def test_demo_person_unchanged(self):
+        demo._seed(self.conn, dias=30, idioma="es")
+        person_id = 1
+        db.set_trabaja_turnos(self.conn, True, person_id)
+        goal_id = self.conn.execute(
+            "SELECT id FROM goal WHERE person_id = ? ORDER BY id LIMIT 1", (person_id,)).fetchone()[0]
+        self.conn.commit()
+        _use(self.conn, person_id)
+        t = T("es")
+
+        r_home = client.get("/")
+        self.assertEqual(r_home.status_code, 200)
+        self.assertNotIn(t("today.stale_link"), r_home.text)
+
+        r_shifts = client.get("/shifts")
+        self.assertEqual(r_shifts.status_code, 200)
+        self.assertIn(t("shifts.cost_title"), r_shifts.text,
+                     "a populated person's cost table keeps rendering, same as before this slice")
+
+        r_goal = client.get(f"/goals/{goal_id}")
+        self.assertEqual(r_goal.status_code, 200)
+        self.assertIn(t("goals.chart_hint"), r_goal.text,
+                     "demo's own weekly checks give this goal real points -- chart_hint, not chart_soon")
+        self.assertNotIn(t("goals.chart_soon"), r_goal.text)
+
+
+if __name__ == "__main__":
+    unittest.main()

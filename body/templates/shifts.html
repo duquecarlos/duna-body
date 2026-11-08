@@ -86,6 +86,7 @@
   <span class="chev">›</span>
 </a>
 
+{% if not costo_vacio %}
 <div class="card">
   <div class="k">{{ t('shifts.cost_title') }}</div>
   <table class="parts mt-8">
@@ -106,6 +107,7 @@
     {% endfor %}
   </table>
 </div>
+{% endif %}
 
 <h2>{{ t('shifts.strip_title') }}</h2>
 <p class="k mt-n4">{{ t('shifts.strip_hint') }}</p>

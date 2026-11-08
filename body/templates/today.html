@@ -9,6 +9,8 @@
 
 {% if turnos %}{{ hoy_turno_card(t, turno, proposed_count) }}{% endif %}
 
+{% if stale %}<div class="note mb-8">{{ stale }}</div>{% endif %}
+
 <a class="card est" href="/how/{{ day }}">
   <div class="q">{{ t('today.ready_q') }}</div>
   {% if r.score is not none %}

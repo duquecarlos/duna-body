@@ -38,6 +38,8 @@
   "today.shift_next": "Próximo: {turno}, {fecha}",
   "today.shift_next_hours": "Próximo: {turno}, {fecha} · {inicio}–{fin}",
   "today.recovery": "Día {dia} de ≈ {estimado} para recuperarte de tus noches",
+  "today.stale": "Últimos datos del reloj: {date}, hace {n} días.",
+  "today.stale_link": "Ver la sincronización",
   "sync.runs": "La sincronización corre sola, todos los días.",
   "sync.last": "Última sincronización con datos: {date}.",
   "sync.none_yet": "Todavía no ha sincronizado con éxito.",
