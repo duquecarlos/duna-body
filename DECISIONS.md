@@ -5272,3 +5272,48 @@ new ones and the 4 restored ones, passed.
 cannot fix without writing to `tests/test_vida_export.py` and `tests/test_privacidad.py`, neither declared
 in this spec's `touches:`. Per the dispatch protocol, a red that cannot be fixed inside `touches:` stops
 here rather than widening scope. Branch `feat/body-hogar-miembro-1` left as is, nothing merged into `main`.
+
+## BODY-HOGAR-MIEMBRO-1-M2 -- the last two metric-household tests restored as milestones, then merged
+(2026-11-07)
+
+Closes `BODY-HOGAR-MIEMBRO-1-M-FOLLOWUP-1`. The orchestrator's `-M` spec missed two files in its
+`touches:`: `tests/test_vida_export.py::VidaExportTest.test_goal_checks_for_shared_household_goals` and
+`tests/test_privacidad.py::DeleteAllTest.test_right_word_deletes_every_row_of_a_and_takes_bs_check_on_as_
+shared_goal`, both calling `goals.propose(...)` with `visibility='household'` and the default
+`kind='metric'` -- exactly what `-M` fix 1 now refuses with `ValueError`. Restored both the same way the
+four tests in the `-M` entry were restored: the shared goal becomes `kind="milestone"` (keeping the title,
+`deadline`, `hogar_id`, `visibility`; dropping `metric_key`, `direction`, `target_value`,
+`baseline_value`), judged by habit checks instead of metric readings.
+
+`test_goal_checks_for_shared_household_goals`: one habit `{"per": "day", "times": 1}`, checked by person 1
+on all seven days of the week, so `weekly_check` finds `habits_done/habits_due = 7/7` and reports
+`on_track`. Every assertion on the exported `goal_checks` row is unchanged.
+
+`test_right_word_deletes_every_row_of_a_and_takes_bs_check_on_as_shared_goal`: `gid_a` becomes the same
+milestone shape; its hand-inserted `goal_check` row for person 2 now carries `metric_avg = NULL` (a
+milestone has no metric average) instead of a made-up `50.0`. `gid_b` (B's own private metric goal) is
+untouched. Every assertion -- A's rows all gone, B's goal and metric kept -- is unchanged.
+
+Grepped `tests/` for `visibility=['"]household['"]` after the edit: every remaining hit already passes
+`kind="milestone"` (`tests/test_hogar_miembro_1.py`, `tests/test_goals_web.py`, `tests/test_goals.py`'s
+`HouseholdGoalCheckTest` and `GoalProposeRefusesMetricHouseholdTest.test_milestone_household_still_allowed`),
+plus one deliberate exception that stays a metric goal on purpose:
+`tests/test_goals.py::LegacyMetricHouseholdRowTest` builds its row with raw SQL
+(`UPDATE goal SET hogar_id = ..., visibility = 'household'`), never through `goals.propose`, to simulate a
+pre-fix row that predates the refusal -- not a case this slice's `touches:` covers.
+
+**Gate, run once, foreground, exact command** `.venv/Scripts/python.exe -m unittest discover tests -t .`:
+
+    Ran 1008 tests in 134.475s
+    OK (skipped=1)
+
+Same 1008 as the `-M` entry's run (no test added or removed, two restored from error to pass); the one
+skip is pre-existing and unrelated.
+
+**Merged.** `main` had not moved since `c72dc09` (the `-M` entry's own merge), so no rebase was needed.
+Fix commit `5614897` on `feat/body-hogar-miembro-1`, merged `--no-ff` into `main` as `97f1dcea`; the merge
+commit's tree (`ad21d5d5`) is identical to the branch tip's tree, confirmed with `git diff` before this
+entry. `main` left checked out and clean. Diff for this slice is two test files only -- no schema,
+no customer-facing bytes, no cross-repo contract -- so merge policy A's green-on-gate path applied; the
+customer-facing bytes that landed with it (the list card line, the `goal_new` line, the habit row) were
+already approved in `BODY-HOGAR-MIEMBRO-1-M`'s own approval, per this spec's approval-reason.
