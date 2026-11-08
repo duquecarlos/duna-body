@@ -22,17 +22,32 @@
 <div class="card">
   <div class="q">{{ t('settings.compartir.titulo') }}</div>
   <ul class="plan" style="margin-top:6px">
-  {% for m in metrics_compartir %}
+  {% for m in metrics_compartir if m.shared %}
     <li>
       <div style="flex:1">{{ m.label }}</div>
       <form method="post" action="/settings/compartir" style="margin:0">
         <input type="hidden" name="metric_key" value="{{ m.key }}">
-        <input type="hidden" name="accion" value="{{ 'retirar' if m.shared else 'compartir' }}">
-        <button type="submit" class="btn {{ 'on' if m.shared }}">{{ t('settings.compartir.accion.retirar') if m.shared else t('settings.compartir.accion.compartir') }}</button>
+        <input type="hidden" name="accion" value="retirar">
+        <button type="submit" class="btn on">{{ t('settings.compartir.accion.retirar') }}</button>
       </form>
     </li>
   {% endfor %}
   </ul>
+  <details class="files" style="margin-top:6px">
+    <summary class="k">{{ t('settings.compartir.elegir') }}</summary>
+    <ul class="plan" style="margin-top:6px">
+    {% for m in metrics_compartir if not m.shared %}
+      <li>
+        <div style="flex:1">{{ m.label }}</div>
+        <form method="post" action="/settings/compartir" style="margin:0">
+          <input type="hidden" name="metric_key" value="{{ m.key }}">
+          <input type="hidden" name="accion" value="compartir">
+          <button type="submit" class="btn">{{ t('settings.compartir.accion.compartir') }}</button>
+        </form>
+      </li>
+    {% endfor %}
+    </ul>
+  </details>
   <p class="note" style="margin-top:8px">{{ t('settings.compartir.nota') }}</p>
 </div>
 {% else %}

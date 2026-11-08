@@ -163,6 +163,17 @@ class SeededContentTest(unittest.TestCase):
             (ana_id,)).fetchall()
         self.assertEqual([r[0] for r in rows], ["resting_hr"])
 
+    def test_ana_has_her_own_short_history_of_the_shared_figure(self):
+        """BODY-HOGAR-COMPARTIR-1-M fix 4: Ana needs values of her OWN, or the Hoy card she feeds
+        can only ever say "sin dato" and the value path is never measurable."""
+        ana_id = self.conn.execute("SELECT id FROM person WHERE display_name = 'Ana'").fetchone()[0]
+        rows = self.conn.execute(
+            "SELECT day, value FROM daily_metric WHERE person_id = ? AND metric_key = 'resting_hr' ORDER BY day",
+            (ana_id,)).fetchall()
+        self.assertGreaterEqual(len(rows), 1)
+        for _day, value in rows:
+            self.assertIsNotNone(value)
+
     def test_demo_marker_written(self):
         marker = Path(self.folder) / "DEMO"
         self.assertTrue(marker.exists())

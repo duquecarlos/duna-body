@@ -113,6 +113,25 @@ class ShareWithdrawReshareTest(unittest.TestCase):
         active = compartir.mis_compartidas(conn, 1)
         self.assertEqual([r["metric_key"] for r in active], ["resting_hr"])
 
+    def test_mis_compartidas_ignores_a_share_left_in_an_old_household(self):
+        """BODY-HOGAR-COMPARTIR-1-M fix 1: after moving households, a share active only in the OLD
+        household is not listed, and the new household cannot see it either -- the same `hogar_id`
+        both functions read."""
+        conn = _reset_db(self)
+        _add_person(conn, 2, "OldPartner")
+        _link_household(conn, 1, 2, hogar_id="h-old")
+        compartir.compartir(conn, 1, "resting_hr")
+        self.assertEqual([r["metric_key"] for r in compartir.mis_compartidas(conn, 1)], ["resting_hr"])
+
+        # Person 1 moves to a new household; the share stays recorded under h-old.
+        conn.execute("UPDATE hogar_local SET hogar_id = 'h-new' WHERE person_id = 1")
+        _add_person(conn, 3, "NewPartner")
+        conn.execute("INSERT INTO hogar_local (person_id, hogar_id) VALUES (3, 'h-new')")
+        conn.commit()
+
+        self.assertEqual(compartir.mis_compartidas(conn, 1), [])
+        self.assertEqual(compartir.visibles_para(conn, 3), [])
+
 
 class UniqueIndexTest(unittest.TestCase):
     def test_two_active_rows_for_the_same_person_metric_household_is_refused(self):
@@ -280,6 +299,27 @@ class LatestValueOnlyTest(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertNotIn("Tu hogar", r.text)
 
+    def test_card_renders_after_the_persons_own_content(self):
+        """BODY-HOGAR-COMPARTIR-1-M fix 2: the «Tu hogar» card is the last card on Hoy, after the
+        viewer's own readiness card and the «see the whole day» link, before the page footer."""
+        conn = _reset_db(self)
+        _add_person(conn, 2, "Partner")
+        _link_household(conn, 1, 2)
+        db.set_metric(conn, "2026-11-12", "resting_hr", 55.0, "garmin", 2)
+        db.set_metric(conn, "2026-11-12", "resting_hr", 58.0, "garmin", 1)
+        conn.commit()
+        compartir.compartir(conn, 2, "resting_hr")
+
+        _as(self, 1)
+        with mock.patch.object(web, "_today_local", return_value=_TODAY):
+            r = client.get("/")
+        self.assertEqual(r.status_code, 200)
+        see_day_pos = r.text.index("Ver todo el día")
+        hogar_pos = r.text.index("Tu hogar")
+        footer_pos = r.text.index("No es consejo médico")
+        self.assertLess(see_day_pos, hogar_pos)
+        self.assertLess(hogar_pos, footer_pos)
+
 
 class AjustesCardTest(unittest.TestCase):
     def test_no_household_shows_the_one_line_only(self):
@@ -339,6 +379,40 @@ class AjustesCardTest(unittest.TestCase):
         r = client.post("/settings/compartir", data={"metric_key": "resting_hr", "accion": "compartir"})
         self.assertEqual(r.status_code, 303)
         self.assertEqual(_rows(conn, 1, "resting_hr"), [])
+
+    def test_with_nothing_shared_the_summary_is_the_only_row_besides_the_privacy_line(self):
+        """BODY-HOGAR-COMPARTIR-1-M fix 3: closed by default, no "Dejar de compartir" button yet."""
+        conn = _reset_db(self)
+        _add_person(conn, 2, "Partner")
+        _link_household(conn, 1, 2)
+        _as(self, 1)
+        r = client.get("/settings")
+        self.assertIn('<details class="files" style="margin-top:6px">', r.text)
+        self.assertNotIn("Dejar de compartir", r.text)
+        self.assertIn("Elegir qué compartir", r.text)
+
+    def test_an_active_share_sits_outside_the_details_the_rest_inside(self):
+        conn = _reset_db(self)
+        _add_person(conn, 2, "Partner")
+        _link_household(conn, 1, 2)
+        _as(self, 1)
+        client.post("/settings/compartir", data={"metric_key": "resting_hr", "accion": "compartir"})
+
+        r = client.get("/settings")
+        details_pos = r.text.index("<details")
+        retirar_pos = r.text.index("Dejar de compartir")
+        otra_compartir_pos = r.text.index(">Compartir<")
+        self.assertLess(retirar_pos, details_pos)
+        self.assertGreater(otra_compartir_pos, details_pos)
+
+    def test_summary_in_english(self):
+        conn = _reset_db(self)
+        _add_person(conn, 2, "Partner", lang="en")
+        _link_household(conn, 1, 2)
+        db.set_language(conn, "en", 1)
+        _as(self, 1)
+        r = client.get("/settings")
+        self.assertIn("Choose what to share", r.text)
 
 
 class ExportDeleteTest(unittest.TestCase):

@@ -214,6 +214,7 @@
   "settings.turnos.desc": "If you work shifts, Body shows Turnos: what a week of nights costs you and how long it takes you to recover.",
   "settings.compartir.titulo": "Share with your household",
   "settings.compartir.sin_hogar": "Once you have a household, you'll be able to share your figures with whoever is in it.",
+  "settings.compartir.elegir": "Choose what to share",
   "settings.compartir.accion.compartir": "Share",
   "settings.compartir.accion.retirar": "Stop sharing",
   "settings.compartir.nota": "They only see the latest value and its date. You can stop sharing any time.",

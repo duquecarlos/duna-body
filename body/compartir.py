@@ -57,11 +57,19 @@ def retirar(conn: sqlite3.Connection, person_id: int, metric_key: str) -> None:
 
 
 def mis_compartidas(conn: sqlite3.Connection, person_id: int) -> list[dict]:
-    """This person's own active shares: [{metric_key, since}], for the Ajustes card."""
+    """This person's own active shares IN THEIR CURRENT ACTIVE HOUSEHOLD only: [{metric_key, since}],
+    for the Ajustes card. A share left active in a household the person has since moved out of is
+    not listed here -- nobody in that old household can see it any more either (`visibles_para`
+    reads the same `hogar_id`), so Ajustes marking the figure "shared" would be a lie. `retirar`
+    still withdraws everywhere regardless of household, which stays the safe direction. Empty with
+    no active household."""
+    hh = household.household_of(conn, person_id)
+    if hh is None:
+        return []
     rows = conn.execute(
-        "SELECT metric_key, shared_at FROM figura_compartida WHERE person_id = ? AND withdrawn_at IS NULL "
-        "ORDER BY metric_key",
-        (person_id,),
+        "SELECT metric_key, shared_at FROM figura_compartida WHERE person_id = ? AND hogar_id = ? "
+        "AND withdrawn_at IS NULL ORDER BY metric_key",
+        (person_id, hh.id),
     ).fetchall()
     return [{"metric_key": r["metric_key"], "since": r["shared_at"]} for r in rows]
 
