@@ -9,6 +9,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from fastapi.testclient import TestClient
 
 from body import config, db, web
+from body.rutas import comun
 
 client = TestClient(web.app, follow_redirects=False)
 
@@ -30,10 +31,10 @@ class StaticUrlTest(unittest.TestCase):
         _reset_db(self)
         r = client.get("/")
         self.assertEqual(r.status_code, 200)
-        self.assertIn(f"/static/body.css?v={web.STATIC_HASH}", r.text)
+        self.assertIn(f"/static/body.css?v={comun.STATIC_HASH}", r.text)
 
     def test_static_url_helper(self):
-        self.assertEqual(web.static_url("body.css"), f"/static/body.css?v={web.STATIC_HASH}")
+        self.assertEqual(comun.static_url("body.css"), f"/static/body.css?v={comun.STATIC_HASH}")
 
 
 class NoLiteralVersionInTemplatesTest(unittest.TestCase):
@@ -46,7 +47,7 @@ class ServiceWorkerTest(unittest.TestCase):
     def test_cache_name_carries_hash_and_response_is_not_cached(self):
         r = client.get("/sw.js")
         self.assertEqual(r.status_code, 200)
-        self.assertIn(f"body-static-{web.STATIC_HASH}", r.text)
+        self.assertIn(f"body-static-{comun.STATIC_HASH}", r.text)
         self.assertEqual(r.headers.get("cache-control"), "no-cache")
 
 
@@ -55,9 +56,9 @@ class StaticHashChangesWithContentTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
             (d / "a.txt").write_bytes(b"one")
-            h1 = web._static_hash(d)
+            h1 = comun._static_hash(d)
             (d / "a.txt").write_bytes(b"two")
-            h2 = web._static_hash(d)
+            h2 = comun._static_hash(d)
             self.assertNotEqual(h1, h2)
 
     def test_same_content_gives_the_same_hash(self):
@@ -65,7 +66,7 @@ class StaticHashChangesWithContentTest(unittest.TestCase):
             d1, d2 = Path(d1), Path(d2)
             (d1 / "a.txt").write_bytes(b"same")
             (d2 / "a.txt").write_bytes(b"same")
-            self.assertEqual(web._static_hash(d1), web._static_hash(d2))
+            self.assertEqual(comun._static_hash(d1), comun._static_hash(d2))
 
 
 if __name__ == "__main__":

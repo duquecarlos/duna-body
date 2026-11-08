@@ -86,13 +86,6 @@ app.include_router(privacidad_rutas.router)
 app.include_router(dispositivos.router)
 
 
-# static_url/STATIC_HASH/_static_hash are comun's (BODY-WEB-ESTRUCTURA-1-M): kept here too, as
-# plain aliases, since tests/test_static_version.py reads them straight off this module.
-_static_hash = comun._static_hash
-STATIC_HASH = comun.STATIC_HASH
-static_url = comun.static_url
-
-
 @app.exception_handler(LoginRequired)
 def _login_required(request: Request, exc: LoginRequired) -> RedirectResponse:
     qs = f"return_to={quote(exc.return_to, safe='')}"
@@ -220,7 +213,7 @@ def _sync_status_text(conn, person: dict, t: T) -> str:
     if ts:
         tz = ZoneInfo(person.get("timezone") or "America/Bogota")
         last_date = datetime.fromisoformat(ts).astimezone(tz).date()
-        return t("sync.runs") + " " + t("sync.last", date=_short_date(t, last_date))
+        return t("sync.runs") + " " + t("sync.last", date=comun._short_date(t, last_date))
     if cuenta.hosted():
         if garmin_cuenta.conectado(conn, person["id"]):
             return t("sync.hosted_connected")
@@ -239,7 +232,7 @@ def _parse_day(day: str) -> date:
 
 
 def _batch_date(t: T, received: str) -> str:
-    return _short_date(t, datetime.fromisoformat(received).date())
+    return comun._short_date(t, datetime.fromisoformat(received).date())
 
 
 @app.get("/login")
@@ -640,14 +633,14 @@ def _patron_preview_ctx(t: T, prev: dict) -> dict:
     """Adds the short from/to dates a pattern batch's card reads ("del X al Y") to shift_import.preview()'s
     own dict, without changing its existing keys."""
     return {**prev,
-            "from_date": _short_date(t, date.fromisoformat(prev["first_day"])) if prev["first_day"] else None,
-            "to_date": _short_date(t, date.fromisoformat(prev["last_day"])) if prev["last_day"] else None}
+            "from_date": comun._short_date(t, date.fromisoformat(prev["first_day"])) if prev["first_day"] else None,
+            "to_date": comun._short_date(t, date.fromisoformat(prev["last_day"])) if prev["last_day"] else None}
 
 
 def _turnos_bloque_linea(t: T, b: dict, hoy: date) -> str:
-    inicio = _short_date(t, date.fromisoformat(b["inicio"]))
+    inicio = comun._short_date(t, date.fromisoformat(b["inicio"]))
     fin_dt = date.fromisoformat(b["fin"])
-    fin = _short_date(t, fin_dt)
+    fin = comun._short_date(t, fin_dt)
     if b["recuperacion_dias"] is not None:
         recuperacion = t("shifts.como_bloque_dias", n=b["recuperacion_dias"])
     else:
@@ -886,7 +879,7 @@ def _trend_card(conn, t: T, defs: dict, k: str, start, end, month, nights, perso
             delta, cls = _compare(t, k, d, w.mean, p.all_mean, spread, "trends.vs_hist")
         else:
             delta, cls = _compare(t, k, d, w.mean, w.prev_mean, spread, "trends.vs_prev")
-        etiqueta_dia = lambda day: _short_date(t, day)
+        etiqueta_dia = lambda day: comun._short_date(t, day)
         aria = _chart_aria(t, metric_label, etiqueta_dia(w.start), etiqueta_dia(w.end))
         fig, svg = w.mean, profile.window_svg(w, p.low, p.high, nights, etiqueta_dia=etiqueta_dia, aria_label=aria,
                                               valor_fmt=valor_fmt, link_label=t("trends.chart_open_day"))
@@ -1010,11 +1003,6 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
                    desde=desde, dia=desde_dia, back_href=back_href, back_label=back_label, turnos=turnos_on)
 
 
-# _short_date is comun's (BODY-WEB-ESTRUCTURA-2): kept here too, as a plain alias, since
-# tests/test_turnos_costo.py and tests/test_sin_friccion.py call it straight off this module.
-_short_date = comun._short_date
-
-
 def _dia_relativo(t: T, day: str, today_local: date) -> str:
     """«hoy», «ayer», or the short date, for a shared figure's own day (BODY-HOGAR-COMPARTIR-1)."""
     d = date.fromisoformat(day)
@@ -1022,7 +1010,7 @@ def _dia_relativo(t: T, day: str, today_local: date) -> str:
         return t("hogar.dia_hoy")
     if d == today_local - timedelta(1):
         return t("hogar.dia_ayer")
-    return _short_date(t, d)
+    return comun._short_date(t, d)
 
 
 def _hogar_compartido_ctx(conn, t: T, person_id: int, defs: dict, today_local: date) -> list[dict]:
@@ -1182,11 +1170,11 @@ def history_view(person_id: int = Depends(identity.current_person_id)):
     pat = history.patterns(conn, person_id)
     shift_data = history.by_shift(conn, person_id)
 
-    since = _short_date(t, date.fromisoformat(cov["first_day"]))
+    since = comun._short_date(t, date.fromisoformat(cov["first_day"]))
     coverage_line = t("history.coverage", since=since, days=t.num(cov["days_present"]))
     gap_line = (t("history.coverage_gap", days=t.num(cov["longest_gap_days"]),
-                  start=_short_date(t, date.fromisoformat(cov["longest_gap_start"])),
-                  end=_short_date(t, date.fromisoformat(cov["longest_gap_end"])))
+                  start=comun._short_date(t, date.fromisoformat(cov["longest_gap_start"])),
+                  end=comun._short_date(t, date.fromisoformat(cov["longest_gap_end"])))
                 if cov["longest_gap_days"] > 0 else t("history.coverage_no_gap"))
     hero_finding = _finding_text(t, defs, pat["findings"][0]) if pat["findings"] else None
 
@@ -1330,7 +1318,7 @@ def _time_pct(g, today: date) -> float | None:
 
 
 def _goal_target_text(t: T, defs: dict, g) -> str:
-    date_txt = _short_date(t, date.fromisoformat(g["deadline"])) if g["deadline"] else "—"
+    date_txt = comun._short_date(t, date.fromisoformat(g["deadline"])) if g["deadline"] else "—"
     if g["kind"] == "metric":
         return t("goals.card.target", target=_fig_unit(t, g["metric_key"], g["target_value"], defs), date=date_txt)
     return t("goals.card.milestone_date", date=date_txt)
@@ -1384,7 +1372,7 @@ def _goal_line_svg(t: T, defs: dict, g, checks, today: date, width: int = 320, h
     today_x = x(min(max(today, start), end))
     out.append(f'<line x1="{today_x:.1f}" y1="{top}" x2="{today_x:.1f}" y2="{top + h}" '
                f'style="stroke:var(--line)" stroke-width="1"/>')
-    aria = html.escape(f"{g['title']}: {t('goals.chart_aria', start=_short_date(t, start), end=_short_date(t, end))}")
+    aria = html.escape(f"{g['title']}: {t('goals.chart_aria', start=comun._short_date(t, start), end=comun._short_date(t, end))}")
     svg = (f'<svg viewBox="0 0 {width} {top + h + 6}" width="100%" height="110" role="img" aria-label="{aria}" '
            f'preserveAspectRatio="none" style="display:block;margin-top:8px">{"".join(out)}</svg>')
     legend = (
@@ -1394,7 +1382,7 @@ def _goal_line_svg(t: T, defs: dict, g, checks, today: date, width: int = 320, h
         f'<span><i style="background:var(--line);width:1px;height:12px"></i>{t("goals.legend_today")}</span>'
         '</div>')
     data_pts = [{"x": max(0.0, min(1.0, (d - start).days / span_days)),
-                 "label": t("goals.chart_week_label", date=_short_date(t, ws), value=_fig_unit(t, g["metric_key"], v, defs))}
+                 "label": t("goals.chart_week_label", date=comun._short_date(t, ws), value=_fig_unit(t, g["metric_key"], v, defs))}
                 for ws, d, v in pts]
     return profile.chart_figure(svg + legend, data_pts)
 
@@ -1536,7 +1524,7 @@ def goal_detail(goal_id: int, request: Request, person_id: int = Depends(identit
     history_rows = conn.execute(
         "SELECT * FROM goal_check WHERE goal_id = ? AND person_id = ? ORDER BY week_start DESC LIMIT 8",
         (goal_id, person_id)).fetchall()
-    history_list = [{"week": t("goals.week_of", date=_short_date(t, date.fromisoformat(r["week_start"]))),
+    history_list = [{"week": t("goals.week_of", date=comun._short_date(t, date.fromisoformat(r["week_start"]))),
                      "text": _verdict_sentence(t, defs, g, dict(r))} for r in history_rows]
 
     habit_rows = []
@@ -1829,7 +1817,7 @@ def _etiquetas(t: T) -> dict:
 
 
 def _objetivo_txt(t: T, defs: dict, metric_key: str | None, target_value, deadline: str) -> str:
-    fecha = _short_date(t, date.fromisoformat(deadline))
+    fecha = comun._short_date(t, date.fromisoformat(deadline))
     if metric_key is None or target_value is None:
         return t("goals.card.milestone_date", date=fecha)
     return t("asistente.propuesta.meta_objetivo", valor=_fig_unit(t, metric_key, target_value, defs), fecha=fecha)
@@ -1849,7 +1837,7 @@ def _tarjeta_propuesta(t: T, defs: dict, registro: dict) -> dict:
         despues_txt = t("asistente.propuesta.meta_nueva", metric=t("metric." + despues["metric_key"]),
                         direccion=t("asistente.propuesta.direccion." + despues["direction"]),
                         valor=_fig_unit(t, despues["metric_key"], despues["target_value"], defs),
-                        fecha=_short_date(t, date.fromisoformat(despues["deadline"])))
+                        fecha=comun._short_date(t, date.fromisoformat(despues["deadline"])))
     elif accion == "proponer_cambio_meta":
         metric_key = despues.get("metric_key")
         antes_txt = _objetivo_txt(t, defs, metric_key, antes_json["target_value"], antes_json["deadline"])
@@ -2050,7 +2038,7 @@ def _garmin_ctx(t: T, conn, person_id: int, **extra) -> dict:
     ctx = {
         "t": t, "tab": "settings", "turnos": comun._turnos_on(conn, person_id),
         "connected": connected_since is not None,
-        "connected_since": _short_date(t, datetime.fromisoformat(connected_since).date())
+        "connected_since": comun._short_date(t, datetime.fromisoformat(connected_since).date())
                            if connected_since else None,
         "error_text": _garmin_last_error_text(t, garmin_cuenta.ultimo_error(conn, person_id)),
         "form_error": None, "mfa": False,
@@ -2142,7 +2130,7 @@ self.addEventListener('fetch',e=>{const u=new URL(e.request.url);
   e.respondWith(caches.open(C).then(c=>c.match(e.request).then(r=>r||fetch(e.request).then(n=>{c.put(e.request,n.clone());return n}))));}});
 """
 
-SW = SW_TEMPLATE.replace("HASHPLACEHOLDER", STATIC_HASH)
+SW = SW_TEMPLATE.replace("HASHPLACEHOLDER", comun.STATIC_HASH)
 
 
 @app.get("/sw.js")

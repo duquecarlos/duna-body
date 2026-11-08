@@ -2,6 +2,7 @@
 (DESIGN rules 9, 10). URLs still carry ISO dates -- they carry only dates, never values. Invented demo data only,
 no real health figures.
 """
+import ast
 import re
 import tempfile
 import unittest
@@ -13,6 +14,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from fastapi.testclient import TestClient
 
 from tests._db import open_conn
+from tests._rutas import modulos_con_rutas
 
 from body import config, db, identity, profile, web
 from body.i18n import T
@@ -153,9 +155,19 @@ class ChartAriaConnectorsTest(unittest.TestCase):
         self.assertEqual(monthly, "Sleep, August 2026 to November 2026")
 
     def test_web_source_has_no_literal_del_al_connector(self):
-        src = (Path(__file__).parent.parent / "body" / "web.py").read_text(encoding="utf-8")
+        owner_path = None
+        for path, tree in modulos_con_rutas():
+            if any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "_chart_aria"
+                   for node in tree.body):
+                owner_path = path
+                break
+        self.assertIsNotNone(
+            owner_path, "_chart_aria is not defined in body/web.py or any body/rutas/*.py module"
+        )
+        src = owner_path.read_text(encoding="utf-8")
         start = src.index("def _chart_aria")
-        end = src.index("\ndef ", start + 1)
+        next_def = src.find("\ndef ", start + 1)
+        end = next_def if next_def != -1 else len(src)
         body = src[start:end]
         self.assertNotIn(" del ", body)
         self.assertNotIn(" al ", body)

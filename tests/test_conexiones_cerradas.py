@@ -7,7 +7,6 @@ gc.collect() here is just belt-and-suspenders, not what makes the assertion pass
 import ast
 import contextlib
 import gc
-import inspect
 import io
 import tempfile
 import unittest
@@ -18,6 +17,8 @@ from unittest import mock
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
+
+from tests._rutas import modulos_con_rutas
 
 from body import config, db, garmin_adapter, pull, shift_import, vida_export, web
 
@@ -173,42 +174,93 @@ _CLOSE_DECORATORS = {"_cierra_conexion", "_cierra_conexion_async"}
 # closes that connection correctly in the generator's own `finally`, so it carries neither decorator.
 _ALLOWED_WITHOUT_DECORATOR = {"asistente_preguntar"}
 
+_HTTP_METHODS = {"get", "post", "put", "delete", "patch"}
+
 
 def _decorator_name(node) -> str | None:
+    """The decorator's own name -- a bare `@_cierra_conexion` or the final attribute of
+    `@comun._cierra_conexion` (BODY-WEB-ESTRUCTURA-3: a route in body/rutas/ carries the
+    attribute form, since the close decorators live in body/rutas/comun.py, not in the route's
+    own module)."""
     if isinstance(node, ast.Name):
         return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
     return None
 
 
 def _calls_ctx(func_node) -> bool:
+    """True if `func_node`'s body calls `_ctx(` bare or as an attribute of any name
+    (`comun._ctx(`) -- the same two forms a route's close decorator can take."""
     for node in ast.walk(func_node):
         if node is func_node:
             continue
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_ctx":
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        if isinstance(f, ast.Name) and f.id == "_ctx":
+            return True
+        if isinstance(f, ast.Attribute) and f.attr == "_ctx":
             return True
     return False
 
 
+def _is_route_decorator(node) -> bool:
+    """True for `@router.get(...)` / `@app.post(...)` and the other HTTP-method decorators --
+    what makes a function a route handler, independent of whether it calls _ctx."""
+    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _HTTP_METHODS)
+
+
+def _func_text(source_lines: list[str], node) -> str:
+    end = getattr(node, "end_lineno", node.lineno)
+    return "\n".join(source_lines[node.lineno - 1:end])
+
+
 class RouteClosesItsConnectionTest(unittest.TestCase):
-    """Guard for BODY-CONEXIONES-CERRADAS-2: every top-level function in body/web.py that calls
-    _ctx( -- the exact name, not a helper like _hoy_turno_ctx -- carries _cierra_conexion or
-    _cierra_conexion_async, except the one documented exception in _ALLOWED_WITHOUT_DECORATOR."""
+    """Guard for BODY-CONEXIONES-CERRADAS-2 / BODY-WEB-ESTRUCTURA-3: every top-level function in
+    body/web.py or a body/rutas/*.py module that calls _ctx( -- bare or as comun._ctx( -- carries
+    _cierra_conexion or _cierra_conexion_async (bare or as comun.X), except the one documented
+    exception in _ALLOWED_WITHOUT_DECORATOR.
+
+    Non-vacuous by construction: this guard used to read only `inspect.getsource(web)` and match
+    only a bare `_ctx(` call, so it checked zero of the routes already moved into body/rutas/ --
+    a green test that tested nothing (BODY-WEB-ESTRUCTURA-3). `checked` (what the AST walk this
+    guard runs actually found) is cross-checked here against `expected_min`, a plain substring
+    count of "_ctx(" inside each route-decorated function's own source slice -- a method sharing
+    no code with `_calls_ctx`, so if the walk regresses to matching nothing, `checked` drops to
+    zero while `expected_min` stays positive and the assertion fails instead of passing quietly."""
 
     def test_every_route_calling_ctx_carries_a_close_decorator(self):
-        source = inspect.getsource(web)
-        tree = ast.parse(source)
         missing = []
-        for node in tree.body:
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            if not _calls_ctx(node):
-                continue
-            if node.name in _ALLOWED_WITHOUT_DECORATOR:
-                continue
-            names = {_decorator_name(d) for d in node.decorator_list}
-            if not (names & _CLOSE_DECORATORS):
-                missing.append(node.name)
+        checked = 0
+        expected_min = 0
+        modules_with_routes = set()
+        modules_checked = set()
+        for path, tree in modulos_con_rutas():
+            source_lines = path.read_text(encoding="utf-8").splitlines()
+            for node in tree.body:
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if any(_is_route_decorator(d) for d in node.decorator_list):
+                    modules_with_routes.add(path)
+                    if "_ctx(" in _func_text(source_lines, node):
+                        expected_min += 1
+                if not _calls_ctx(node):
+                    continue
+                checked += 1
+                modules_checked.add(path)
+                if node.name in _ALLOWED_WITHOUT_DECORATOR:
+                    continue
+                names = {_decorator_name(d) for d in node.decorator_list}
+                if not (names & _CLOSE_DECORATORS):
+                    missing.append(f"{path.name}:{node.name}")
         self.assertEqual(missing, [])
+        self.assertGreaterEqual(checked, expected_min)
+        self.assertTrue(modules_with_routes, "no router module carries a route -- the scan is broken")
+        self.assertEqual(modules_checked, modules_with_routes,
+                          f"a router module has routes but none call _ctx -- checked {modules_checked} "
+                          f"vs routed {modules_with_routes}")
 
 
 if __name__ == "__main__":

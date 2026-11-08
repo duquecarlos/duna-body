@@ -18,6 +18,7 @@ from tests._db import open_conn
 from body import config, db, turnos_costo, web
 from body.agente import herramientas
 from body.i18n import T
+from body.rutas import comun
 
 METRICS = turnos_costo.MODELO["metricas"]
 CONST = {"sleep_minutes": 420.0, "resting_hr": 55.0, "hrv_last_night": 60.0, "stress_avg": 25.0,
@@ -447,7 +448,7 @@ class ComoListsBlocksTest(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertLessEqual(r.text.lower().count("consejo médico"), 2)
         for b in resumen["bloques"]:
-            self.assertIn(web._short_date(T("es"), date.fromisoformat(b["inicio"])), r.text)
+            self.assertIn(comun._short_date(T("es"), date.fromisoformat(b["inicio"])), r.text)
         self.assertIn(_t("es", "shifts.como_bloque_dias", n=2), r.text)
 
 

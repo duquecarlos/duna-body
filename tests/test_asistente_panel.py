@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from tests._rutas import rutas_planas
 
 from body import config, db, goals, identity, web
+from body.rutas import comun
 
 # Routes that answer with something other than a signed-in base.html page: a non-HTML API, a
 # static asset, a liveness check, or sign-in/consent plumbing the assistant never mounts on.
@@ -87,7 +88,7 @@ class ConfiguredEveryPageTest(unittest.TestCase):
         self.client = TestClient(web.app, follow_redirects=False)
 
     def test_every_base_page_renders_the_button_and_loads_the_versioned_script(self):
-        script_tag = f'src="{web.static_url("assistant.js")}"'
+        script_tag = f'src="{comun.static_url("assistant.js")}"'
         pages_checked = 0
         for path in _get_paths():
             if path in _NO_BASE_PAGE:
