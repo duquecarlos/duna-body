@@ -5808,3 +5808,94 @@ existing database that already has the table changes nothing; a fresh database g
 otherwise get lazily), no customer-facing bytes, and no cross-repo contract or DTO shape -- merge policy A holds, and
 this spec's approval-reason says explicitly that it approves the merge too. Fix commit `1f3e942` on
 `feat/body-hogar-cuenta-db-init-1`, merged `--no-ff` into `main`.
+
+## BODY-HOGAR-ENLACE-1 -- a goal can link to the place where the rest of its plan lives in another Duna app (2026-11-07)
+
+Under `ORCH-CARLOS-DELEGATES-TIER-1-1`, against BODY-HOGAR-OBS-1's follow-up BODY-HOGAR-LINK-OUT-1, ruled by the
+orchestrator ledger BODY-HOGAR-PLAN-1 ruling 5 and (cont. 4): links are ROWS (a goal may have several, one per app at
+most in v1), `app` is a key into one code registry of known apps and their URL shape, and Body stores only the app key
+and that app's own opaque `ref` -- never a title copied from the other app, never a URL typed by the person (the URL
+is always BUILT from the registry, so no arbitrary link can be planted on a shared goal). Lugares' trip is `viaje`,
+integer id, opened at `https://lugares.duna.solutions/viajes/{id}`, access is Lugares' own lista membership. Finanzas
+has no goal/budget entity with a stable id today (Finanzas orchestrator, 2026-11-07), so it is left out of the
+registry until it has one.
+
+**Schema (`body/db.py`), verbatim:**
+
+    CREATE TABLE IF NOT EXISTS goal_enlace (
+        id         INTEGER PRIMARY KEY,
+        goal_id    INTEGER NOT NULL REFERENCES goal(id),
+        app        TEXT NOT NULL,
+        ref        TEXT NOT NULL,
+        creado_at  TEXT NOT NULL,
+        UNIQUE (goal_id, app)
+    );
+
+`app` is deliberately not CHECK-constrained: the registry in code is the authority, and an app key no longer known
+there is simply not rendered. Created by `db.init`'s `CREATE TABLE IF NOT EXISTS` on fresh and existing databases
+alike -- nothing to backfill.
+
+**`body/enlaces.py` (new) -- the only module that reads or writes the table, and the registry.** `APPS` has one entry
+in v1:
+
+    "lugares": {
+        "label_key": "goals.enlace.app.lugares",
+        "origin_env": "DUNA_LUGARES_ORIGEN",
+        "origin_default": "https://lugares.duna.solutions",
+        "path": "/viajes/{ref}",
+        "ref_pattern": re.compile(r"^[1-9][0-9]{0,11}$"),
+    }
+
+`url_de(app, ref)` builds the URL from the registry (`urllib.parse.quote`), None for an unknown app or an invalid ref.
+`ref_desde_entrada(app, texto)` accepts what a person actually pastes -- the bare id, or a full trip URL on the
+registry's own origin and path, with or without a trailing slash, query or fragment -- and returns the id; a URL on
+any other host or path, or junk, returns None. `enlazar` upserts on `(goal_id, app)` (one link per app); `quitar`
+deletes one; `enlaces_de` returns only registry apps whose stored ref still builds a valid URL -- an unknown app key
+already stored is silently skipped, never rendered.
+
+**Access.** Adding or removing a link stays with the goal's creator (`goals.goal_access(...) == 'creator'`, ruling 1
+of BODY-HOGAR-MIEMBRO-1) -- a member or a stranger gets 404, the same as every other creator-only goal action. Seeing
+it: anyone `goals.goal_access` lets see the goal.
+
+**`body/web.py`.** Two POST routes, `/goals/{goal_id}/enlaces` (form fields `app`, `entrada`) and
+`/goals/{goal_id}/enlaces/{app}/quitar`, both redirecting back to the goal page; an entry `ref_desde_entrada` rejects
+redirects to `/goals/{goal_id}?enlace=invalido`, which `goal_detail` reads into an inline error. Neither route is a
+GET, so `tests/test_agente_registro.py`'s GET-route-to-tool guard (`ROUTE_TOOL`) is unaffected -- it enumerates GET
+routes only, confirmed by reading that test before writing the routes.
+
+**`body/templates/goal.html`.** A quiet "Enlaces" card: each link as "Viaje en Lugares ↗" / "Lugares trip ↗"
+(`target="_blank" rel="noopener noreferrer"`, `.taplink`'s 44 px tap target); for the creator a "Quitar"/"Remove" per
+link and, collapsed in a `<details>`, "Enlazar un viaje de Lugares" / "Link a Lugares trip" with a text field and a
+button; a note line "Se abre en Lugares; solo lo ven quienes tienen acceso allí." / "Opens in Lugares; only people
+with access there can see it." Members see the link and that line, no form. Without links and not the creator, the
+block is absent. Both languages, 8 new keys each in `body/i18n/es.json` / `en.json`.
+
+**`body/privacidad.py`** and **`body/agente/herramientas.py`.** `goal_enlace` carries no literal `person_id` column
+(its only foreign key is `goal_id`), so it is handled the same way `habit` already is: exported and deleted through a
+join on `goal.person_id`, via `enlaces.export_rows` / `enlaces.delete_rows_for_person`, OUTSIDE
+`privacidad.FULLY_HANDLED_TABLES` -- that set is checked by `person_tables()`, which looks for a literal `person_id`
+column, so adding `goal_enlace` to it would have made `test_every_person_table_is_exported_or_excepted` fail (`found`
+missing the table, `accounted` claiming it). This is a deviation from the spec's literal "add `goal_enlace` to
+`FULLY_HANDLED_TABLES`" -- measured against the existing test and the `habit` precedent, not followed literally.
+`_leer_meta`'s `meta` dict gains `"enlaces": [{app, url}]`.
+
+**Demo.** Ana's shared household goal gets a Lugares link with invented ref `"4821"`. `tests/test_demo.py`'s
+determinism checksum gained `goal_enlace` to its table list and `creado_at` to its excluded (wall-clock) columns --
+without the latter, two demo runs would disagree on that column's value.
+
+**Tests (`tests/test_hogar_enlace_1.py`, 30 tests):** `ref_desde_entrada` (bare id, full URL, trailing slash, query,
+fragment, another host, another path, `0`, negative, letters, over-long number, empty, unknown app), `url_de` (env
+origin, default origin, unknown app, invalid ref), unknown app stored not rendered, creator adds/replaces/removes, a
+member sees the link and gets 404 on add/remove, a stranger sees neither the goal nor the link, the rendered `<a>`
+has `rel="noopener noreferrer"` and the BUILT url never the pasted string (pasted a full URL with a query string,
+confirmed the query string is absent from the page), es and en strings, export and delete-all.
+
+**Gate, run once, foreground, exact command** `.venv/Scripts/python.exe -m unittest discover tests -t .`:
+
+    Ran 1115 tests in 176.780s
+    OK (skipped=1)
+
+**AWAITING_APPROVAL, not merged.** The diff touches `body/db.py` with a new table (schema change) and customer-facing
+bytes (`body/templates/goal.html`, `body/i18n/es.json`, `body/i18n/en.json`) -- merge policy A fails on two of its
+three conditions, and this spec's approval-reason says explicitly to stop before merge on the goal page. Commit
+`64bfc00` on `feat/body-hogar-enlace-1`, left unmerged for review.
