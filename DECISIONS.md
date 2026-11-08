@@ -9914,3 +9914,34 @@ tests, all green, including the two new ones (`test_local_mode_aviso_has_no_link
 STOP AWAITING_APPROVAL (not merged): this slice's own approval (`ORCH-CARLOS-DELEGATES-TIER-1-1`)
 says in words to stop before merging, so the orchestrator can re-measure at 375 px. A merge slice
 follows.
+
+## BODY-ESTADOS-VACIOS-2-M3 -- land BODY-ESTADOS-VACIOS-2 + -M + -M2 as built, no fixes
+
+Merged `feat/body-estados-vacios-2` (tip `901e82c`) into `main` with `--no-ff`, on the approval
+`ORCH-CARLOS-DELEGATES-TIER-1-1`, which names this spec as the merge's own authorization. No file
+was touched beyond the merge itself: the merge commit's tree equals the branch tip's tree exactly
+(`git rev-parse <sha>^{tree}` -- both `4f8d0002e44a3ba46813035e291fdab4018a2966`).
+
+**The orchestrator's own measurement**, recorded here as the merge's basis rather than re-taken:
+the Browser pane at 375x812 against an INVENTED sparse person (data last seen 40 days ago, shifts
+turned on with none recorded, a VO2 max goal with no readings), served with its own `BODY_HOME`.
+Hoy: the stale line renders as an amber `.aviso` box with ink text, above the readiness card,
+legible in both the dark and light themes; in local mode it carries no link. No horizontal
+overflow at body width 375 px. The only inline style anywhere on the page is the runtime CSSOM
+`--asis-pad` the assistant panel sets on `<html>`, which already existed before this round.
+Turnos: the all-empty cost table is gone and the hero's own reason stands alone with nothing
+beneath it. Goal: the chart's caption reads `goals.chart_soon`, and the legend shows Plan and Hoy
+only -- no `legend_avg` swatch when there are no points to draw it from.
+
+**The measuring method, recorded as reusable**: an invented sparse person, in its own `BODY_HOME`,
+served next to the populated demo, is how the empty and near-empty states get seen at all -- the
+populated demo never exercises them. The next round that touches an empty or sparse state should
+reach for the same device rather than inventing a fresh one.
+
+**Gate**, once, foreground, on the branch tip before the merge (`901e82c`): `.venv/Scripts/
+python.exe -m unittest discover tests -t .` -- `Ran 1355 tests in 168.320s ... OK (skipped=1)`,
+matching the floor the spec supplied exactly.
+
+**Commits**: merge `b48db67de294459f5edb9c27f125a50b377ad3b6` into `main`, tree
+`4f8d0002e44a3ba46813035e291fdab4018a2966`. `main` left checked out, `git status --porcelain`
+empty.
