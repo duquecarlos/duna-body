@@ -8071,3 +8071,129 @@ Merged into `main` with `--no-ff`: merge commit `6f614d04c303b0b0e696bc15b58f80f
 both match) -- no conflict, no extra change. `git status --porcelain` empty on `main` after the merge,
 before this ledger entry's own commit. No password, token, session secret or health figure was read,
 printed or logged by this slice.
+
+## BODY-SEGURIDAD-1 -- same-origin check for unsafe methods, fixed security headers, the referrer trap, safe_return_to's backslash defect (2026-11-08)
+
+First fix slice from BODY-SEGURIDAD-CENSO-1 (an OBSERVED census run in a separate read-only Tier 1 session,
+reported COMPLETE against this repository's `32a806d` -- it wrote nothing here, so there is no earlier ledger
+entry for it to point to; its findings are quoted in this slice's own spec instead): 58 routes, zero CSRF/Origin
+checks anywhere, zero response security headers, one open-redirect site. This slice bundles the census's ranked
+items 1 (cross-site POST/PUT/PATCH/DELETE), 2 (fixed response headers, deliberately WITHOUT a script/style
+Content-Security-Policy -- that needs the app's 7 inline `<script>` blocks moved to files first, BODY-SEGURIDAD-2)
+and 6 (open redirects), plus a defect the orchestrator found while reviewing the census: `cuenta.safe_return_to`
+accepted `/\evil.example` (it starts with `/`, not `//`) -- a browser reads a backslash as a forward slash, so
+that value is a protocol-relative redirect off this site exactly like `//evil.example` already was refused.
+
+**The Origin rule** (`body/seguridad.py`, new: one ASGI middleware, `SeguridadMiddleware`; `body/web.py` only
+adds it with `app.add_middleware(SeguridadMiddleware)`, after `_CaminoActualMiddleware` and
+`RequestLogMiddleware` -- web.py stays the pure assembler, BODY-WEB-ESTRUCTURA-PLAN-1). For
+POST/PUT/PATCH/DELETE only: `Origin` present and not the literal string `"null"` -> allowed iff its
+`host[:port]` (lower-cased, default port 80/443 dropped) equals the request's own `Host` header, normalised
+the same way, OR (hosted mode only) the host of `cuenta.public_url()`; `Origin` absent and `Referer` present
+-> the same host check against `Referer`'s own URL; BOTH absent -> allowed unconditionally, because a browser
+always sends `Origin` on a cross-site unsafe request and a request with neither is therefore never a browser
+(the PC client authenticating with its device key, `/login/cuenta/logout-token`'s own server-to-server call from
+Cuenta Duna, curl, a test) -- the session cookie is never ambient on a request like that, so there is nothing
+for an Origin check to protect; `Origin: null` -> always refused. HOST is compared, never scheme: behind Caddy
+(`deploy/host/Caddyfile.body`'s `reverse_proxy 127.0.0.1:8770`, read, not changed) the proxy preserves the
+inbound `Host` header unchanged while terminating TLS itself, so `request.url.scheme` can read `http` on the
+very same request whose browser-sent `Origin` reads `https` -- comparing scheme as well would refuse every
+real hosted request. No exemption list was needed: every one of the app's device-key and server-to-server POST
+routes already sends neither header, so the "both absent" rule covers them without naming a single one.
+
+**The referrer trap**, measured by the orchestrator before this slice started. `base.html`,
+`acceso_rechazado.html`, `consentimiento.html` and `sin_acceso.html` all set
+`<meta name="referrer" content="no-referrer">`. Per the Fetch standard, a non-CORS POST sent from a page whose
+referrer policy is `no-referrer` carries `Origin: null` -- so the Origin rule above, left alone, would have
+refused every one of Body's own form submissions (the habit checkbox, goal actions, settings, sign-out, ...),
+not just a cross-site one. All four now say `content="same-origin"` instead: a cross-site request still arrives
+with no `Referer` and `Origin: null` (still refused), while Body's own forms now send a same-origin `Origin`
+the rule allows. `base.html` carries a one-line comment explaining why, next to the meta tag.
+
+**The refusal page.** `body/templates/origen_rechazado.html` (new): standalone like `sin_acceso.html` and
+`acceso_rechazado.html` -- no nav, the theme-before-paint script, one sentence, one link home (`/`) -- served
+at 403 by the middleware above through `comun.env.get_template(...)`. New i18n keys, es + en, in both
+`body/i18n/es.json` and `body/i18n/en.json`: `origen_rechazado.title` ("Esto no se hizo" / "This wasn't done"),
+`origen_rechazado.text` ("Esta acción vino de otra página y no se hizo. Vuelve a Body e inténtalo desde aquí." /
+"This action came from another page and was not done. Go back to Body and try it from here."),
+`origen_rechazado.volver` ("Volver a Body" / "Back to Body").
+
+**Fixed response headers**, the same middleware, on every response -- grepped `body/` first for every route
+that sets any header by name (`dispositivos.py`, `ajustes.py`, `pwa.py`, `privacidad.py`, `web.py`'s own
+`WWW-Authenticate`): only `Cache-Control`, `Content-Disposition` and `WWW-Authenticate` appear, none of the
+five below, so nothing is overwritten: `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`,
+`X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'` (`frame-ancestors` only, by design --
+no `script-src`/`style-src` until BODY-SEGURIDAD-2 moves the inline scripts out), `Cross-Origin-Opener-Policy:
+same-origin`. Added by wrapping ASGI `send` on the `http.response.start` message, so they land on a 200, a 404,
+a 403, a redirect and a `/static` file alike; each header is added only if a route has not already set that
+exact name (`setdefault`-style), so a future route-level override still wins.
+
+**The redirect fix.** `cuenta.safe_return_to(raw)` now refuses: anything not starting with `/`, or equal to `/`
+followed by `/` or `\` (the backslash defect above); any value containing a literal `\` anywhere else; any
+value containing `://`; any value containing a control character (`ord(c) < 0x20` or `0x7f`). `/%5Cx`
+(percent-encoded backslash) is deliberately ALLOWED: it is the two characters `%`, `5`, `C`, never a literal
+backslash, so a browser resolves it as an ordinary same-origin path segment and it cannot affect how the
+authority is parsed -- refusing it would only reject a harmless path. `body/rutas/metas.py`'s `habit_check`
+(`POST /habits/{habit_id}/check`) now reads its `back` field through `cuenta.safe_return_to` (previously
+`f.get("back") or "/"`, unchecked). `body/rutas/ajustes.py`'s `set_trabaja_turnos`'s `volver` allow-list
+(narrowed to exactly `{"/", "/settings"}`) is left exactly as it was -- it is already stricter than
+`safe_return_to`, so there is nothing to tighten there.
+
+**Guards**, `tests/test_seguridad.py` (new). (a) Every one of the app's unsafe-method routes -- read from the
+live app via `tests/_rutas.rutas_planas`, filtered to the methods `seguridad.UNSAFE_METHODS` names, never
+typed by hand -- refuses a `https://evil.example` Origin with 403 and the `origen_rechazado.html` text, before
+any handler, auth check or database write; asserts the checked count equals the route count found and that it
+is greater than zero (measured: 32, all POST, no PUT/PATCH/DELETE route exists in the app). (b) a same-origin
+`Origin`, a same-origin-only `Referer` (no `Origin`), and neither header present, each reach the handler
+(`POST /settings/language`, which always answers 303). (c) `Origin: null` -> 403. (d) the five headers are
+present on a 200 page, a 404, a 303 redirect and a `/static` file. (e) no template under `body/templates`
+still sets `<meta name="referrer" content="no-referrer">`. (f) an `ast` scan over every `RedirectResponse(...)`
+call under `body/`: its target must be a fixed string literal, an f-string whose literal LEADING chunk already
+fixes the string as `/` followed by a non-`/`-non-`\` character (nothing a later substitution inserts can
+rewind characters the fixed prefix already determined), a direct `cuenta.safe_return_to(...)` or
+`cuenta.logout_url(...)` call, or a bare variable assigned from `cuenta.safe_return_to(...)` earlier in the same
+function -- or else named in a small, reasoned `ALLOWLIST` the test also checks for staleness (an entry that no
+longer matches any call site fails the test): `body/rutas/sesion.py:50` (`url` is `cuenta.start_login()`'s own
+externally-built authorize URL, on Cuenta Duna's domain by design, never request data), `sesion.py:76`
+(`result.return_to` was already passed through `safe_return_to` at write time, in the same module's
+`login_start`, before being stored in the row `handle_callback` reads it back from), `body/rutas/ajustes.py:72`
+(its own stricter `{"/", "/settings"}` allow-list, left as is per this slice's own instruction above). The scan
+found no other call site outside these two generic rules and this three-entry allowlist, across every
+`RedirectResponse(` call in `body/` (41 call sites in total, by grep, before this slice's one fix to
+`metas.py`'s `habit_check`).
+
+**Proof that (a) bites on `main`**, run once in the worker's own scratchpad, never committed: `main`'s own
+`body/web.py` at `32a806d` (this slice's base, confirmed by `git rev-parse main`) was loaded, byte for byte via
+`git show main:body/web.py`, as a module inside the real `body` package (so its relative imports resolve
+against the current, otherwise-unrelated `body.cuenta`/`body.rutas.*` on disk), against a throwaway
+`BODY_HOME`. Posting `POST /settings/trabaja_turnos` with `Origin: https://evil.example` and no cookie answered
+`303 /` -- the handler ran and set `trabaja_turnos`, with no Origin check of any kind standing in the way.
+The same request against this slice's own `body/web.py` is exactly guard (a)'s own first case, and answers 403
+with the `origen_rechazado.html` page instead.
+
+**`docs/DESIGN.md`**, rule 13 ("Health data stays home"), three lines added: unsafe methods are same-origin
+only, checked by one middleware (`body/seguridad.py`); every response carries the fixed header set named above;
+every redirect built from request data goes through `cuenta.safe_return_to`.
+
+**Gate**, run once on the final tree: `.venv/Scripts/python.exe -m unittest discover tests -t .` --
+`Ran 1251 tests in 128.537s ... OK (skipped=1)`.
+
+Merge policy A, judged against the actual diff: no schema or migration change (nothing in `body/db.py` or any
+migration touched). No cross-repo contract or DTO shape change (every touched file is `body/seguridad.py`
+(new), `body/web.py`, `body/cuenta.py`, `body/rutas/metas.py`, four templates, two i18n files, `docs/DESIGN.md`
+and `tests/test_seguridad.py`; nothing here is a wire shape another repository mirrors). Customer-facing bytes
+DID change: `origen_rechazado.html` is a new screen with three new strings, es + en, named above -- this spec's
+own approval-reason says in words that the orchestrator measures real form posts in a browser at 375 px before
+a separate `-M` slice merges, so this worker stops `AWAITING_APPROVAL` on the branch clean rather than merging,
+exactly as instructed, whatever merge policy A's other two conditions would otherwise have allowed on their
+own. `body/cuenta.py` is Tier 1 in this repository (Cuenta Duna sign-in); this slice's own approval-reason
+names the change to it in advance as "one helper's input check, tightening only" -- `safe_return_to` gained
+refusal cases, changed no call site's shape, and is covered by `SafeReturnToTest` above. Every other touched
+file is Tier 2.
+
+Commits (pasted from `git rev-parse`, not retyped): fix `73336eecacdf5def45fec93759ab87a9d51db21d` on branch
+`feat/body-seguridad-1`, branched from `main` `32a806d379e3c06bf0ed5f048f650e8e3d4a9757`. Not merged -- stops
+`AWAITING_APPROVAL` on the branch, per this slice's own approval-reason, for the orchestrator's browser
+measurement of the new customer-facing strings before a separate `-M` slice merges. No password, token, session
+secret or health figure was read, printed or logged by this slice. `git status --porcelain` empty on the
+branch, before this ledger entry's own commit.
