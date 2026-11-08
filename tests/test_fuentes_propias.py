@@ -34,6 +34,18 @@ _FONT_FILES = {
         "768af2923e0ab1549f1dfba0a5c8ea749c4c01f01d8e77ffaf7fcd12f57a0a24",
 }
 
+# BODY-FUENTE-CACHE-1: every file under body/static/fonts/ (relative to that directory), the same
+# three hashes already pinned above and in LicenseShipsBesideFontsTest -- gathered here once so
+# EveryFontFileIsPinnedTest can prove the set on disk is exactly this set, no more and no fewer.
+_FUENTES_DIR_FILES = {
+    "hanken-grotesk/hanken-grotesk-latin-wght-normal.woff2":
+        "e9201eddf1d41d0b62253295d869ce3cf65768f7102b797f02c7f8c876b4a9d5",
+    "hanken-grotesk/hanken-grotesk-latin-ext-wght-normal.woff2":
+        "768af2923e0ab1549f1dfba0a5c8ea749c4c01f01d8e77ffaf7fcd12f57a0a24",
+    "hanken-grotesk/LICENSE":
+        "ef8780a5a0864714268dd7b6e00de9b39605a1dd61650ed2fa0af9b79b857967",
+}
+
 _THIRD_PARTY_RE = re.compile(r"fonts\.googleapis\.com|fonts\.gstatic\.com")
 
 # BODY-FUENTES-PROPIAS-1-M: these are the three files git must store byte-exact. autocrlf on
@@ -144,6 +156,29 @@ class LicenseShipsBesideFontsTest(unittest.TestCase):
             hashlib.sha256(license_path.read_bytes()).hexdigest(),
             "ef8780a5a0864714268dd7b6e00de9b39605a1dd61650ed2fa0af9b79b857967",
         )
+
+
+class EveryFontFileIsPinnedTest(unittest.TestCase):
+    """Guard (g) (BODY-FUENTE-CACHE-1): a font file is immutable by its path alone -- so every file
+    under body/static/fonts/ must have its sha256 pinned here, no more and no fewer, or an in-place
+    change (or a new file that nobody pinned) ships quietly. Non-vacuous: the set of pinned paths is
+    compared to the set actually on disk, and the count checked must equal both."""
+
+    def test_every_file_on_disk_is_pinned_and_matches(self):
+        on_disk = sorted(
+            p.relative_to(FONTS_DIR.parent).as_posix()
+            for p in (FONTS_DIR.parent).rglob("*")
+            if p.is_file()
+        )
+        self.assertGreater(len(on_disk), 0)
+        self.assertEqual(on_disk, sorted(_FUENTES_DIR_FILES))
+
+        checked = 0
+        for rel_path, expected_sha256 in _FUENTES_DIR_FILES.items():
+            actual = hashlib.sha256((FONTS_DIR.parent / rel_path).read_bytes()).hexdigest()
+            self.assertEqual(actual, expected_sha256, rel_path)
+            checked += 1
+        self.assertEqual(checked, len(on_disk))
 
 
 class TrackedBlobByteExactTest(unittest.TestCase):
