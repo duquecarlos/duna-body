@@ -9,6 +9,7 @@ hiding or showing is proved to come from the setting, never from missing data), 
 case has no shift rows at all (so inference has nothing to infer from, and it hides). Invented demo
 data only, no real health figures.
 """
+import re
 import tempfile
 import unittest
 from datetime import date, timedelta
@@ -209,6 +210,19 @@ class NoSettingTest(_SettingChecks, unittest.TestCase):
 
 class SiSettingTest(_SettingChecks, unittest.TestCase):
     SETTING = True
+
+
+class TabsBarSharesWidthTest(unittest.TestCase):
+    """BODY-TURNOS-OPCIONAL-3-M: the phone bottom bar must share its width among however many tabs
+    it has, not fix four columns -- with Turnos hidden, three tabs must not sit bunched in the left
+    three quarters with an empty slot on the right. Regression pin; the visual check at 375 px is
+    the orchestrator's own measurement."""
+
+    def test_tabs_rule_has_no_fixed_four_column_grid(self):
+        css = Path("body/static/body.css").read_text(encoding="utf-8")
+        m = re.search(r"\.tabs\{[^}]*\}", css)
+        self.assertIsNotNone(m, ".tabs rule not found in body.css")
+        self.assertNotIn("repeat(4", m.group(0))
 
 
 if __name__ == "__main__":
