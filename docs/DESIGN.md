@@ -40,7 +40,9 @@ comes from; the Body-specific reading is in *italics*. When a new rule arrives f
 12. **Never medical advice.** *The app shows patterns in your own numbers and the plan you chose. It does not
     diagnose. Abnormal readings point to "habla con tu médico", nothing more.*
 13. **Health data stays home** (Body CLAUDE.md). *Local DB; no values in URLs or logs; no third-party analytics;
-    mocks use invented demo data.*
+    mocks use invented demo data.* Exception text from outside Body (a library's, the filesystem's, a parser's, the
+    network's) is never shown, logged or stored -- the exception's TYPE name only, through `body/errores.py`
+    (BODY-LOGIN-MENSAJES-1).
 14. **Assistant, to agent-ui-v1** (Carlos asked for it like the other apps, 2026-11-06) (one tap, 3 sizes, proposes → you confirm → undo). Built with parity: every
     screen ships with the assistant's read tool.
 

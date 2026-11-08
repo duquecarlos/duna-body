@@ -11,6 +11,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass, field
 
+from .. import errores
 from . import ajustes, herramientas
 from .cliente import BloqueTexto, LlamadaHerramienta, Proveedor, ProveedorError, Uso
 
@@ -124,7 +125,7 @@ def ejecutar(conn: sqlite3.Connection, person_id: int, proveedor: Proveedor, sis
                     salida = herramientas.ejecutar(conn, person_id, l.nombre, l.parametros, nivel, conversacion_id)
                 except herramientas.ToolError as e:
                     resultados.append({"tipo": "resultado_herramienta", "id": l.id, "nombre": l.nombre,
-                                        "error": str(e)})
+                                        "error": errores.texto_propio(e)})
                     continue
                 registro = salida.pop("_registro", None)
                 if registro is not None:
@@ -141,7 +142,7 @@ def ejecutar(conn: sqlite3.Connection, person_id: int, proveedor: Proveedor, sis
                 salida = herramientas.ejecutar(conn, person_id, l.nombre, l.parametros, nivel)
             except herramientas.ToolError as e:
                 resultados.append({"tipo": "resultado_herramienta", "id": l.id, "nombre": l.nombre,
-                                    "error": str(e)})
+                                    "error": errores.texto_propio(e)})
                 continue
             lecturas += 1
             resultados.append({"tipo": "resultado_herramienta", "id": l.id, "nombre": l.nombre,

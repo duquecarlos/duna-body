@@ -13,7 +13,7 @@ import argparse
 import getpass
 import sys
 
-from . import pc_cliente
+from . import errores, pc_cliente
 
 DEFAULT_URL = "https://body.duna.solutions"
 
@@ -37,7 +37,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         pc_cliente.escribir_enlace(a.url, clave)
     except pc_cliente.UrlRefusada as e:
-        print(str(e))
+        print(errores.texto_propio(e))
         return 1
 
     try:

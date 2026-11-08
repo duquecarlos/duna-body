@@ -21,7 +21,7 @@ from collections import defaultdict
 from datetime import date, datetime
 from pathlib import Path
 
-from . import db
+from . import db, errores
 
 VALID_KINDS = {"morning", "afternoon", "night", "day", "off", "other"}
 SLOT_INDEX_NAME = "idx_shift_slot"
@@ -361,7 +361,7 @@ def main(argv: list[str] | None = None) -> None:
                 propose(conn, f, person_id)
             except ImportRefused as e:
                 refused += 1
-                notes.append(str(e))
+                notes.append(errores.texto_propio(e))
                 continue
             if existed:
                 known += 1
