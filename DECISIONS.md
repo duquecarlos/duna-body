@@ -7548,3 +7548,33 @@ Commit (pasted from `git rev-parse`, not retyped): `69e93526034396cd70ba15d1c80e
 
 **BODY-WEB-ESTRUCTURA-PLAN-1's sequence is now built in full** (ESTRUCTURA-1 through -8); only this last slice's
 merge is outstanding, pending the orchestrator's review of sign-in and Garmin/MFA.
+
+## BODY-WEB-ESTRUCTURA-8-M -- land BODY-WEB-ESTRUCTURA-8 after the orchestrator's review (2026-11-08)
+
+The orchestrator's review of branch `feat/body-web-estructura-8` (tip `c4f63f98630a3f2d403d4d8ae883bf2e31275302`),
+held back by ESTRUCTURA-8's own AWAITING_APPROVAL stop: an ast comparison of every function and assignment
+moved into `body/rutas/sesion.py`, `garmin.py` and `pwa.py` against main's `body/web.py` and `comun.py` found
+21 identical and 0 different (normalising only `comun.` qualification and `@app.`/`@router.`); `_MFA_STATE` is
+one dict owned by `body/rutas/garmin.py`, and `tests/test_garmin_host.py`'s order-independence protections
+(clear in setUp + addCleanup) were re-pointed to that owner, not dropped; `body/web.py` is 136 lines --
+lifespan, middleware, static mount, 13 `include_router` calls, four app-level exception handlers,
+`_ensure_streams`, `main()`; `/sw.js` lives in `body/rutas/pwa.py` (accepted: plumbing holds no route);
+`_cuenta_down_page` moved with its only caller (accepted: it is inline, not an exception handler); the
+connection guard's module exemption `{"pwa.py", "sesion.py"}` (accepted: it only lifts the per-module
+non-vacuity floor; every function that calls `_ctx` is still checked). No defect found in the move.
+
+**Gate**, run once on the branch tip before the merge: `.venv/Scripts/python.exe -m unittest discover tests -t
+.` -- `Ran 1202 tests in 112.348s ... OK (skipped=1)`, same count as ESTRUCTURA-8's own floor.
+
+Merge policy A: no schema or migration change, no customer-facing bytes, no cross-repo contract change in the
+actual diff (`CLAUDE.md`, `DECISIONS.md`, `body/rutas/comun.py`, `body/rutas/garmin.py`, `body/rutas/pwa.py`,
+`body/rutas/sesion.py`, `body/web.py`, `tests/test_conexiones_cerradas.py`, `tests/test_garmin_host.py`). This
+spec's approval-reason names the review above and approves the merge outright.
+
+Merged `feat/body-web-estructura-8` into `main` with `--no-ff`: merge commit
+`3aa81f755bfbfa3eaa605b17256afede6529e6e7`, merge tree `4ad5f3d72f24de9c41191b7638be7c4af18135b3`, identical to
+the branch tip's own tree -- the merge carried the branch forward with no conflict and no extra change.
+`git status --porcelain` empty on `main` after the merge, before this ledger entry's own commit. No password,
+token, session secret or health figure was read, printed or logged by this slice.
+
+**BODY-WEB-ESTRUCTURA-PLAN-1 is complete -- body/web.py is the app assembler only.**
