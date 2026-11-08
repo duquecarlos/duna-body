@@ -14,6 +14,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from fastapi.testclient import TestClient
 
 from body import compartir, config, db, identity, web
+from body.rutas import comun
 
 client = TestClient(web.app, follow_redirects=False)
 
@@ -267,7 +268,7 @@ class LatestValueOnlyTest(unittest.TestCase):
         compartir.compartir(conn, 2, "resting_hr")
 
         _as(self, 1)
-        with mock.patch.object(web, "_today_local", return_value=_TODAY):
+        with mock.patch.object(comun, "_today_local", return_value=_TODAY):
             r = client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertIn("Partner", r.text)
@@ -284,7 +285,7 @@ class LatestValueOnlyTest(unittest.TestCase):
         compartir.compartir(conn, 2, "resting_hr")
 
         _as(self, 1)
-        with mock.patch.object(web, "_today_local", return_value=_TODAY):
+        with mock.patch.object(comun, "_today_local", return_value=_TODAY):
             r = client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertIn("Partner", r.text)
@@ -296,7 +297,7 @@ class LatestValueOnlyTest(unittest.TestCase):
         conn.commit()
 
         _as(self, 1)
-        with mock.patch.object(web, "_today_local", return_value=_TODAY):
+        with mock.patch.object(comun, "_today_local", return_value=_TODAY):
             r = client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertNotIn("Tu hogar", r.text)
@@ -313,7 +314,7 @@ class LatestValueOnlyTest(unittest.TestCase):
         compartir.compartir(conn, 2, "resting_hr")
 
         _as(self, 1)
-        with mock.patch.object(web, "_today_local", return_value=_TODAY):
+        with mock.patch.object(comun, "_today_local", return_value=_TODAY):
             r = client.get("/")
         self.assertEqual(r.status_code, 200)
         see_day_pos = r.text.index("Ver todo el día")

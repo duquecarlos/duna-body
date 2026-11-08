@@ -29,6 +29,91 @@ class EnsureStreamsTest(unittest.TestCase):
         self.assertIs(sys.stderr, marker_err)
 
 
+class RouteSetTest(unittest.TestCase):
+    """BODY-WEB-ESTRUCTURA-1: moving /ayuda and /healthz into body/rutas/ayuda.py must not add, drop
+    or rename a single route. This (method, path) set was captured from `main` before that move --
+    FastAPI 0.162 keeps an included router as one lazy `_IncludedRouter` wrapper in app.routes rather
+    than flattening it eagerly, so _flatten() descends into it the same way for both sides."""
+
+    BEFORE = {
+        ("/", ("GET",)),
+        ("/ajustes/asistente", ("GET",)),
+        ("/ajustes/asistente", ("POST",)),
+        ("/ajustes/dispositivos", ("GET",)),
+        ("/ajustes/dispositivos", ("POST",)),
+        ("/ajustes/dispositivos/{dispositivo_id}/revocar", ("POST",)),
+        ("/api/turnos", ("POST",)),
+        ("/api/vida/semana", ("GET",)),
+        ("/asistente/conversacion/{conversacion_id}", ("GET",)),
+        ("/asistente/preguntar", ("POST",)),
+        ("/asistente/propuestas/{propuesta_id}/aplicar", ("POST",)),
+        ("/asistente/propuestas/{propuesta_id}/descartar", ("POST",)),
+        ("/asistente/propuestas/{propuesta_id}/deshacer", ("POST",)),
+        ("/ayuda", ("GET",)),
+        ("/day/{day}", ("GET",)),
+        ("/garmin", ("GET",)),
+        ("/garmin/codigo", ("POST",)),
+        ("/garmin/conectar", ("POST",)),
+        ("/garmin/desconectar", ("POST",)),
+        ("/goals", ("GET",)),
+        ("/goals/new", ("GET",)),
+        ("/goals/new", ("POST",)),
+        ("/goals/{goal_id}", ("GET",)),
+        ("/goals/{goal_id}/activate", ("POST",)),
+        ("/goals/{goal_id}/drop", ("POST",)),
+        ("/goals/{goal_id}/enlaces", ("POST",)),
+        ("/goals/{goal_id}/enlaces/{app_key}/quitar", ("POST",)),
+        ("/goals/{goal_id}/finish", ("POST",)),
+        ("/goals/{goal_id}/habits", ("POST",)),
+        ("/goals/{goal_id}/pause", ("POST",)),
+        ("/habits/{habit_id}/check", ("POST",)),
+        ("/healthz", ("GET",)),
+        ("/history", ("GET",)),
+        ("/how/{day}", ("GET",)),
+        ("/login", ("GET",)),
+        ("/login/cuenta/callback", ("GET",)),
+        ("/login/cuenta/logout-token", ("POST",)),
+        ("/login/cuenta/start", ("GET",)),
+        ("/logout", ("POST",)),
+        ("/privacidad", ("GET",)),
+        ("/privacidad/borrar", ("POST",)),
+        ("/privacidad/consentimiento", ("GET",)),
+        ("/privacidad/consentimiento", ("POST",)),
+        ("/privacidad/exportar", ("GET",)),
+        ("/settings", ("GET",)),
+        ("/settings/compartir", ("POST",)),
+        ("/settings/language", ("POST",)),
+        ("/settings/trabaja_turnos", ("POST",)),
+        ("/shifts", ("GET",)),
+        ("/shifts/como", ("GET",)),
+        ("/shifts/confirm", ("POST",)),
+        ("/shifts/confirm-all", ("POST",)),
+        ("/shifts/dismiss", ("POST",)),
+        ("/shifts/patron", ("GET",)),
+        ("/shifts/patron", ("POST",)),
+        ("/shifts/patron/quitar", ("POST",)),
+        ("/static", ()),
+        ("/sw.js", ("GET",)),
+        ("/trends", ("GET",)),
+    }
+
+    @staticmethod
+    def _flatten(routes):
+        for r in routes:
+            if hasattr(r, "path"):
+                yield r
+            elif hasattr(r, "original_router"):
+                yield from RouteSetTest._flatten(r.original_router.routes)
+            elif hasattr(r, "routes"):
+                yield from RouteSetTest._flatten(r.routes)
+
+    def test_route_set_is_unchanged_by_the_ayuda_move(self):
+        after = {(r.path, tuple(sorted(getattr(r, "methods", None) or [])))
+                 for r in self._flatten(web.app.routes)}
+        self.assertEqual(len(after), len(self.BEFORE))
+        self.assertEqual(after, self.BEFORE)
+
+
 class MainEntryTest(unittest.TestCase):
     def test_main_reaches_uvicorn_run_with_no_streams(self):
         old_out, old_err, old_argv = sys.stdout, sys.stderr, sys.argv

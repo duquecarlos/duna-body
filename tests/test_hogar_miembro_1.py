@@ -12,6 +12,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from fastapi.testclient import TestClient
 
 from body import config, db, goals, identity, web
+from body.rutas import comun
 
 client = TestClient(web.app, follow_redirects=False)
 
@@ -171,7 +172,7 @@ class HabitCheckTest(unittest.TestCase):
 
         _as(self, 2)
         day = _WEEK_DAYS[1]
-        with mock.patch.object(web, "_today_local", return_value=_TODAY):
+        with mock.patch.object(comun, "_today_local", return_value=_TODAY):
             self.assertEqual(client.post(f"/habits/{hid_both}/check",
                                          data={"day": day, "done": "1", "back": "/"}).status_code, 303)
             self.assertEqual(client.post(f"/habits/{hid_partner}/check",
@@ -210,7 +211,7 @@ class HabitCheckTest(unittest.TestCase):
         conn.commit()
 
         _as(self, 2)
-        with mock.patch.object(web, "_today_local", return_value=_TODAY):
+        with mock.patch.object(comun, "_today_local", return_value=_TODAY):
             r = client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertIn("Entrenar piernas", r.text)
@@ -248,7 +249,7 @@ class OwnWeeklyCheckTest(unittest.TestCase):
             goals.check_habit(conn, hid, 2, day, True, hoy=date.fromisoformat(_WEEK_DAYS[6]))
         conn.commit()
 
-        with mock.patch.object(web, "_today_local", return_value=_TODAY):
+        with mock.patch.object(comun, "_today_local", return_value=_TODAY):
             _as(self, 2)
             r = client.get(f"/goals/{gid}")
         self.assertEqual(r.status_code, 200)
@@ -380,7 +381,7 @@ class PrivacyTest(unittest.TestCase):
                      (hid_partner, _WEEK_DAYS[1]))
         conn.commit()
 
-        with mock.patch.object(web, "_today_local", return_value=_TODAY):
+        with mock.patch.object(comun, "_today_local", return_value=_TODAY):
             _as(self, 1)
             r_owner = client.get(f"/goals/{gid}")
             _as(self, 2)

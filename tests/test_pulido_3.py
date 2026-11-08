@@ -19,6 +19,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from fastapi.testclient import TestClient
 
 from body import compartir, config, db, goals, identity, web
+from body.rutas import comun
 
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "body" / "static"
 _TODAY = date(2026, 11, 12)
@@ -154,26 +155,26 @@ class TurnosStripApproxTest(unittest.TestCase):
         _as(self, 1)
 
     def test_scored_cell_carries_the_same_approx_marker_as_hoy(self):
-        with mock.patch.object(web, "_today_local", return_value=_TODAY):
+        with mock.patch.object(comun, "_today_local", return_value=_TODAY):
             r = client.get("/shifts")
         self.assertEqual(r.status_code, 200)
         self.assertIn('<span class="approx">≈</span>', r.text)
 
     def test_a_day_with_no_score_still_shows_a_plain_dash(self):
-        with mock.patch.object(web, "_today_local", return_value=_TODAY):
+        with mock.patch.object(comun, "_today_local", return_value=_TODAY):
             r = client.get("/shifts")
         cells = re.findall(r'<a class="strip-cell[^"]*"[^>]*>(.*?)</a>', r.text)
         self.assertTrue(any(c == "—" for c in cells))
 
     def test_scored_cell_aria_label_states_the_estimate_in_words_in_spanish(self):
-        with mock.patch.object(web, "_today_local", return_value=_TODAY):
+        with mock.patch.object(comun, "_today_local", return_value=_TODAY):
             r = client.get("/shifts")
         self.assertEqual(r.status_code, 200)
         self.assertRegex(r.text, r'aria-label="[^"]*preparación ≈ \d+ \(estimada\)"')
 
     def test_scored_cell_aria_label_states_the_estimate_in_words_in_english(self):
         db.set_language(self.conn, "en", 1)
-        with mock.patch.object(web, "_today_local", return_value=_TODAY):
+        with mock.patch.object(comun, "_today_local", return_value=_TODAY):
             r = client.get("/shifts")
         self.assertEqual(r.status_code, 200)
         self.assertRegex(r.text, r'aria-label="[^"]*readiness ≈ \d+ \(estimated\)"')
@@ -225,20 +226,20 @@ class HogarProvenanceTest(unittest.TestCase):
         _as(self, 1)
 
     def test_row_states_provenance_in_words_in_spanish(self):
-        with mock.patch.object(web, "_today_local", return_value=_TODAY):
+        with mock.patch.object(comun, "_today_local", return_value=_TODAY):
             r = client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertIn("Ana compartió esto · su reloj · hoy", r.text)
 
     def test_row_states_provenance_in_words_in_english(self):
         db.set_language(self.conn, "en", 1)
-        with mock.patch.object(web, "_today_local", return_value=_TODAY):
+        with mock.patch.object(comun, "_today_local", return_value=_TODAY):
             r = client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertIn("Shared by Ana · their watch · today", r.text)
 
     def test_the_row_itself_is_never_a_link(self):
-        with mock.patch.object(web, "_today_local", return_value=_TODAY):
+        with mock.patch.object(comun, "_today_local", return_value=_TODAY):
             r = client.get("/")
         hogar_start = r.text.index("Tu hogar")
         hogar_card = r.text[hogar_start:r.text.index("</ul>", hogar_start)]
@@ -262,7 +263,7 @@ class HabitContextChipTest(unittest.TestCase):
         goals.add_habit(self.conn, gid, "Estirar", {"per": "day", "times": 1, "context": "off_days"})
         self.conn.commit()
 
-        with mock.patch.object(web, "_today_local", return_value=_TODAY):
+        with mock.patch.object(comun, "_today_local", return_value=_TODAY):
             r = client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertIn('<span class="chip off">días libres</span>', r.text)
@@ -277,7 +278,7 @@ class HabitContextChipTest(unittest.TestCase):
         goals.add_habit(self.conn, gid, "Siesta corta", {"per": "day", "times": 1, "context": "before_night"})
         self.conn.commit()
 
-        with mock.patch.object(web, "_today_local", return_value=_TODAY):
+        with mock.patch.object(comun, "_today_local", return_value=_TODAY):
             r = client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertIn('<span class="chip night">antes de noche</span>', r.text)

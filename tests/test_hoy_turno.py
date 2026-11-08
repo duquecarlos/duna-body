@@ -16,6 +16,7 @@ from tests._db import open_conn
 
 from body import config, db, identity, turnos_costo, web
 from body.i18n import T
+from body.rutas import comun
 
 METRICS = turnos_costo.MODELO["metricas"]
 CONST = {"sleep_minutes": 420.0, "resting_hr": 55.0, "hrv_last_night": 60.0, "stress_avg": 25.0,
@@ -179,7 +180,7 @@ class WebRenderTest(unittest.TestCase):
         _insert_shift(conn, PERSON_A, hoy.isoformat(), kind="night",
                      start_local=f"{hoy.isoformat()}T22:00:00", end_local=f"{(hoy + timedelta(1)).isoformat()}T06:00:00")
         conn.commit()
-        with mock.patch.object(web, "_today_local", return_value=hoy):
+        with mock.patch.object(comun, "_today_local", return_value=hoy):
             r = self.client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertIn('class="shift night"', r.text)
@@ -192,7 +193,7 @@ class WebRenderTest(unittest.TestCase):
         db.set_metric(conn, hoy.isoformat(), "resting_hr", 55.0, "garmin", PERSON_A)
         _insert_shift(conn, PERSON_A, hoy.isoformat(), kind="off")
         conn.commit()
-        with mock.patch.object(web, "_today_local", return_value=hoy):
+        with mock.patch.object(comun, "_today_local", return_value=hoy):
             r = self.client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertIn(_t("es", "today.shift_today", turno=_t("es", "shift.kind.off")), r.text)
@@ -208,7 +209,7 @@ class WebRenderTest(unittest.TestCase):
             (PERSON_A, "2026-06-01T00:00:00", "2026-06-01T00:00:00", "2026-06-01T00:00:00"),
         )
         conn.commit()
-        with mock.patch.object(web, "_today_local", return_value=hoy):
+        with mock.patch.object(comun, "_today_local", return_value=hoy):
             r = self.client.get("/")
         self.assertEqual(r.status_code, 200)
         link = _t("es", "today.shift_proposed")
@@ -223,7 +224,7 @@ class WebRenderTest(unittest.TestCase):
         _insert_shift(conn, PERSON_A, hoy.isoformat(), kind="night",
                      start_local=f"{hoy.isoformat()}T22:00:00", end_local=f"{(hoy + timedelta(1)).isoformat()}T06:00:00")
         conn.commit()
-        with mock.patch.object(web, "_today_local", return_value=hoy):
+        with mock.patch.object(comun, "_today_local", return_value=hoy):
             r = self.client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertIn(_t("es", "soon.badge"), r.text)  # confirms this is soon.html, the no-data Hoy
@@ -239,7 +240,7 @@ class WebRenderTest(unittest.TestCase):
                      start_local=f"{hoy.isoformat()}T22:00:00", end_local=f"{(hoy + timedelta(1)).isoformat()}T06:00:00")
         conn.commit()
         web.app.dependency_overrides[identity.current_person_id] = lambda: PERSON_A
-        with mock.patch.object(web, "_today_local", return_value=hoy):
+        with mock.patch.object(comun, "_today_local", return_value=hoy):
             r = self.client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertNotIn('class="shift night"', r.text)
@@ -253,12 +254,12 @@ class WebRenderTest(unittest.TestCase):
         _insert_shift(conn, PERSON_A, hoy.isoformat(), kind="night",
                      start_local=f"{hoy.isoformat()}T22:00:00", end_local=f"{(hoy + timedelta(1)).isoformat()}T06:00:00")
         conn.commit()
-        with mock.patch.object(web, "_today_local", return_value=hoy):
+        with mock.patch.object(comun, "_today_local", return_value=hoy):
             r = self.client.get("/")
         self.assertIn(_t("es", "shift.kind.night"), r.text)
 
         db.set_language(conn, "en", PERSON_A)
-        with mock.patch.object(web, "_today_local", return_value=hoy):
+        with mock.patch.object(comun, "_today_local", return_value=hoy):
             r = self.client.get("/")
         self.assertIn(_t("en", "shift.kind.night"), r.text)
         self.assertIn(_t("en", "today.shift_today_hours", turno=_t("en", "shift.kind.night"),

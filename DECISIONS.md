@@ -6722,3 +6722,124 @@ module), no cross-repo contract change. `--no-ff` into `main`.
 Commits: fix `78e1dbe06babcecbb9d272662ae01b33c291e212`, merge `1a8c7069074f8d9cddc960964df0205352ebf9e9` (both
 pasted from `git rev-parse`, not retyped). The merge commit's tree (`25c7e766ad67d69d42e0ba32b03f1ebcd664b883`) is
 identical to the branch tip's tree, so the gate above is the gate `main` now carries, not re-run after the merge.
+
+## BODY-WEB-ESTRUCTURA-1 -- first route moved out of body/web.py into body/rutas/; GATE_RED, not merged (2026-11-08)
+
+First slice of BODY-WEB-ESTRUCTURA-PLAN-1 (from BODY-WEB-ESTRUCTURA-OBS-1): proves the module-split pattern on
+the lowest-risk domain, Ayuda (`/ayuda`, `/healthz`), before any later slice moves a bigger one.
+
+**Measured first (scratchpad ast script):** for each module-level name in `body/web.py`, which routes call it.
+`_ctx`, `_cierra_conexion`, `_cierra_conexion_async`, `_render`, `_turnos_on`, `_form` are the plan's own named
+shared-plumbing set (comun owns these regardless of how many of today's two modules call each one, since every
+future domain's routes will). `_delta`, `_defs`, `agente_cliente`, `_MFA_STATE`, `_week_monday` are each called
+by exactly one domain today (not Ayuda) -- left in `body/web.py`, patches unchanged.
+
+**Moved to `body/rutas/comun.py`:** `env` (the Jinja `Environment`), `_render`, `_REQUEST_CONN`, `_ctx`,
+`_cierra_conexion`, `_cierra_conexion_async`, `_turnos_on`, `_form`, and `_today_local` (see clock decision
+below). `comun.py` imports only `db`, `fechas`, `i18n.T` from the package -- it does not import `body.web`
+(`tests/test_guardia_parches.py::test_rutas_modules_never_import_web` asserts this for every module under
+`body/rutas/`, not just `comun`).
+
+**Moved to `body/rutas/ayuda.py`:** the `/healthz` liveness probe and the `/ayuda` route plus its one private
+helper `_tarea_ayuda_ctx` -- identical decorators (path, no `response_class` override, same `_cierra_conexion`
+wrap), identical body. `router = APIRouter()`, included via `app.include_router(ayuda.router)` in `web.py`
+right after the static mount.
+
+**No re-export shim.** `web.py`'s own remaining routes reach every moved name as `comun.X` (e.g. `comun._ctx`,
+`comun._render`), never through a bare name or a `from .rutas.comun import X`. Verified by regex sweep after the
+rewrite: zero occurrences of an unqualified call to any moved name remain in `body/web.py`.
+
+**The clock decision: kept the wrapper, now `comun._today_local`, not deleted.** `body/fechas.py`'s own
+docstring already records that `web._today_local` and `herramientas._hoy_local` are two independent wrappers
+over `fechas.hoy_local`. `tests/test_turnos_opcional_3.py`'s `setUp` patches the web-level clock for its whole
+`TestCase`, and two of its own test methods (`test_assistant_tool_list`, `test_history_tool_por_turno`) call
+`herramientas.ejecutar(...)` directly in the SAME test class -- relying on the assistant's own clock path staying
+real/unmocked while the route's clock is patched. Patching `fechas.hoy_local` globally (the spec's preferred
+default) would mock both paths at once, changing that test's behaviour. Found by static reading of the test
+file, not by running it to failure first -- the gate is run once, per protocol, so this had to be decided before
+that run, not discovered by it. Kept as a one-line wrapper, `comun._today_local(person) -> fechas.hoy_local(person)`,
+and all 29 `mock.patch.object(web, "_today_local", ...)` call sites (7 files: `test_fecha_futura_1.py` 1,
+`test_goals_web.py` 3, `test_hogar_miembro_1.py` 4, `test_hogar_compartir_1.py` 4, `test_hoy_turno.py` 7,
+`test_pulido_3.py` 9, `test_turnos_opcional_3.py` 1) now read `patch.object(comun, "_today_local", ...)`, each
+file importing `comun` alongside its existing `web` import.
+
+**`tests/test_guardia_parches.py` (new, 2 tests), the patch-target guard.** Scans every `tests/test_*.py` module
+by AST for `patch(...)` / `patch.object(...)` calls (matched on the called name alone, immune to how the target
+got imported), resolves each one to the real runtime object the same way `unittest.mock` itself resolves a
+dotted string target -- the longest importable module prefix, then plain `getattr` for the rest -- so
+`patch.object(web.agente_cliente, "proveedor_configurado")` correctly resolves to `body.agente.cliente`, the
+module that actually owns and reads that name, not `body.web`. For every patch whose resolved owner is a body
+module: (a) asserts the attribute is defined at that module's own top level (`def`/`class`/assignment/import
+binding, read from source, not `getattr`, so an inherited or merely-reachable name doesn't pass); (b) asserts no
+other module under `body/` does `from <owner> import <name>` (resolved through relative imports via
+`importlib.util.resolve_name`), which would make a patch on the real owner miss that module's own copied
+binding. A second test asserts no module under `body/rutas/` imports `body.web`. **Scan result on this tree: 107
+body-module patch targets found across the suite, zero (a) violations, zero (b) violations** -- the allow-list
+for pre-existing (b) offenders (`_ALLOWED_REIMPORTS`) is empty; none exist today.
+
+**Proved the guard bites**, in a scratchpad copy, never committed: a file with
+`mock.patch.object(web, "_today_local", return_value=None)` (the stale target from before this slice's rename)
+run through the guard's own resolution + top-level check:
+
+    resolved patch targets in the stale case: [('body.web', '_today_local', False)]
+      body.web._today_local: FAIL (attr NOT defined at module top level -- stale patch target)
+
+**Route set, before vs. after: 59 == 59, identical, counts and full set.** Captured on `main` first
+(`body/web.py`'s unmodified `app.routes`, 59 `(method, path)` pairs including the `/static` mount) before any
+edit, in the scratchpad, written as a hardcoded set nothing figure-like -- route paths, not health data.
+FastAPI 0.162.0 (installed in `.venv`) represents an `include_router()` call as one lazy `_IncludedRouter`
+wrapper in `app.routes` rather than flattening it eagerly (new in this version; the whole reason the next
+finding below exists), so `tests/test_web_entry.py::RouteSetTest` descends into `.original_router.routes` the
+same way on both sides before comparing. `web.py`'s own routes: 56 (58 before this move, minus `/ayuda` and
+`/healthz`); `ayuda.router`: 2; `/static` mount: 1. Total 59, matching the pre-move count exactly -- a pure move,
+no route path, method, status, template, string or behaviour change.
+
+`body/web.py`: 2515 -> 2419 lines. New: `body/rutas/__init__.py` 3, `body/rutas/comun.py` 99,
+`body/rutas/ayuda.py` 43, `tests/test_guardia_parches.py` 302.
+
+**A real regression found and fixed, inside `touches:`.** `comun.env` is a cross-import singleton (unlike the
+old `web.py`-local `env`, recreated fresh every time `web.py` was imported). `tests/test_env_local_1.py`'s
+`ImportarWebTest` deliberately re-imports `body.web` into a throwaway module object to assert it never calls
+`entorno.cargar()` at import time -- and that throwaway import re-executed
+`comun.env.globals["tarea_en_contexto"] = lambda: tutoriales.tarea_en_ruta(_RUTA_ACTUAL.get())`, overwriting the
+shared `comun.env.globals` entry with a lambda closing over the THROWAWAY module's own, separate
+`_RUTA_ACTUAL` contextvar -- never set by the real app's middleware, so every request through the real,
+long-lived `web.app` (used by every other test's `TestClient`) silently stopped getting a value for it, and the
+in-context "¿Cómo se hace?" link disappeared from every page rendered afterward in the same process. Reproduced
+in isolation (`tests.test_env_local_1 tests.test_pulido_3`: FAIL before the fix, OK after) before concluding it
+was the cause, not guessed. Fixed with `dict.setdefault` in place of plain assignment for all four
+`comun.env.globals[...]` lines in `body/web.py` -- the three other globals (`static_url`, `hosted`,
+`asistente_configurado`) are harmless to re-assign (each closes over something that resolves to the same
+underlying object on a second import), but `setdefault` on all four keeps the one rule simple: comun.env's
+globals are configured once, by whichever import runs first.
+
+**GATE_RED -- found by the one full-suite run (plus one confirming re-run after the fix above), not fixable
+inside this slice's `touches:`.** Gate, exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`:
+
+    Ran 1197 tests in 115.497s
+    FAILED (failures=1, skipped=1)
+
+1197 = the prior floor 1194 (BODY-TESTS-VELOCIDAD-2's gate, same command, confirmed by this slice's own baseline
+run on unmodified `main`: `Ran 1194 tests in 107.928s ... OK (skipped=1)`) plus this slice's 3 new tests (2 in
+`test_guardia_parches.py`, 1 `RouteSetTest` in `test_web_entry.py`), exactly. The one failure,
+`tests.test_agente_registro.RouteMappingTest.test_every_get_route_has_a_mapping_decision` (`tests/test_agente_registro.py`
+is not in this slice's `touches:`), computes its own GET-route set as
+`{r.path for r in web.app.routes if isinstance(r, APIRoute) and "GET" in r.methods}` -- a filter that, under
+FastAPI 0.162.0, silently excludes every route reached through an `_IncludedRouter` (see the route-set finding
+above), so `/ayuda` and `/healthz` vanish from its computed set the moment `web.py` calls `app.include_router(...)`
+for the first time, anywhere, regardless of which domain moved. This is not specific to Ayuda or to how this
+slice built it: **the very first `include_router()` call in this codebase**, which BODY-WEB-ESTRUCTURA-PLAN-1
+asks every future domain-move slice to add, trips this same assertion on this FastAPI version. The one-line fix
+(flatten `_IncludedRouter` into its `original_router.routes` before filtering, exactly as
+`tests/test_web_entry.py::RouteSetTest._flatten` and this slice's own guard already do) belongs in
+`tests/test_agente_registro.py`, a file this slice's `touches:` does not cover and does not widen into on its
+own. Per protocol, a red this slice cannot fix inside its declared `touches:` stops GATE_RED, not merge.
+
+**Not merged.** Work is committed on `feat/body-web-estructura-1`; `main` is unchanged at
+`5e845a256e29707a518d9d5534e8b4ede6d2ff25`. `git status --porcelain` is empty on the branch. **Open follow-up
+for the orchestrator**:
+add the one-line `_IncludedRouter`-flattening fix to `tests/test_agente_registro.py`'s
+`RouteMappingTest.test_every_get_route_has_a_mapping_decision` (BODY-WEB-ESTRUCTURA-PLAN-1's very next slice will
+hit the identical failure on whichever domain it moves, since the cause is `include_router()` itself, not this
+slice's choice of domain) -- then this slice's branch gates green with no other change, `Ran 1197 tests ...
+OK (skipped=1)`.

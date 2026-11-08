@@ -10,6 +10,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from fastapi.testclient import TestClient
 
 from body import config, db, goals, identity, web
+from body.rutas import comun
 
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "body" / "static"
 
@@ -138,12 +139,12 @@ class ContextHabitOnHoyTest(unittest.TestCase):
             "(1, '2026-11-13', 'night', '2026-11-13T22:00:00', '2026-11-14T06:00:00')")
         conn.commit()
 
-        with mock.patch.object(web, "_today_local", return_value=date(2026, 11, 12)):
+        with mock.patch.object(comun, "_today_local", return_value=date(2026, 11, 12)):
             r = client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertIn("Siesta antes de turno", r.text)
 
-        with mock.patch.object(web, "_today_local", return_value=date(2026, 11, 9)):
+        with mock.patch.object(comun, "_today_local", return_value=date(2026, 11, 9)):
             r = client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertNotIn("Siesta antes de turno", r.text)
@@ -317,7 +318,7 @@ class LegacyMetricHouseholdRowWebTest(unittest.TestCase):
         r_page = client.get(f"/goals/{gid}")
         self.assertEqual(r_page.status_code, 404)
 
-        with mock.patch.object(web, "_today_local", return_value=date(2026, 11, 2)):
+        with mock.patch.object(comun, "_today_local", return_value=date(2026, 11, 2)):
             r_hoy = client.get("/")
         self.assertEqual(r_hoy.status_code, 200)
         self.assertNotIn("Caminar", r_hoy.text)

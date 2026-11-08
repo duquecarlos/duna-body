@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 
 from body import config, db, identity, tutoriales, web
 from body.agente import herramientas
+from body.rutas import comun
 
 PERSON_ID = 1
 CONST = {"sleep_minutes": 420.0, "resting_hr": 55.0, "hrv_last_night": 60.0, "stress_avg": 25.0,
@@ -91,7 +92,7 @@ class _SettingChecks:
         web.app.dependency_overrides[identity.current_person_id] = lambda: PERSON_ID
         self.client = TestClient(web.app, follow_redirects=False)
 
-        patcher = mock.patch.object(web, "_today_local", return_value=self.hoy)
+        patcher = mock.patch.object(comun, "_today_local", return_value=self.hoy)
         patcher.start()
         self.addCleanup(patcher.stop)
 
