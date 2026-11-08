@@ -26,10 +26,25 @@ $pyw = "$repo\.venv\Scripts\pythonw.exe"
 $webPy = if (Test-Path $pyw) { $pyw } else { $py }
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RunOnlyIfNetworkAvailable
 
-$existingWorktrees = & git -C $repo worktree list --porcelain
-$liveDirFull = (Resolve-Path -LiteralPath $LiveDir -ErrorAction SilentlyContinue)
-$isWorktree = $existingWorktrees -match [regex]::Escape($LiveDir) -or ($liveDirFull -and ($existingWorktrees -match [regex]::Escape($liveDirFull.Path)))
-if (-not $isWorktree) {
+$repoGitDir = (Resolve-Path -LiteralPath "$repo\.git").Path
+if (Test-Path -LiteralPath $LiveDir) {
+    $liveIsWorktreeOfRepo = $false
+    $liveCommonDirRaw = & git -C $LiveDir rev-parse --git-common-dir 2>$null
+    if ($LASTEXITCODE -eq 0 -and $liveCommonDirRaw) {
+        $liveCommonDirRaw = $liveCommonDirRaw.Trim()
+        if (-not [System.IO.Path]::IsPathRooted($liveCommonDirRaw)) {
+            $liveCommonDirRaw = Join-Path (Resolve-Path -LiteralPath $LiveDir).Path $liveCommonDirRaw
+        }
+        $liveCommonDirFull = (Resolve-Path -LiteralPath $liveCommonDirRaw -ErrorAction SilentlyContinue)
+        if ($liveCommonDirFull) {
+            $liveIsWorktreeOfRepo = $liveCommonDirFull.Path -ieq $repoGitDir
+        }
+    }
+    if (-not $liveIsWorktreeOfRepo) {
+        Write-Host "$LiveDir ya existe y no es un arbol vivo de $repo. No lo toco; borralo o elige otro -LiveDir."
+        exit 1
+    }
+} else {
     $hasMain = & git -C $repo rev-parse --verify --quiet main
     if (-not $hasMain) {
         Write-Host "El repo en $repo no tiene una rama 'main'. No puedo crear el arbol vivo en $LiveDir."

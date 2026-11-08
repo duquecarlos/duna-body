@@ -89,5 +89,27 @@ class InstallerLiveCheckoutTest(unittest.TestCase):
         self.assertNotIn("C:\\Users", self.text)
 
 
+class InstallerWorktreeReuseTest(unittest.TestCase):
+    """BODY-LIVE-CHECKOUT-1-M: the reuse decision asks git, not a text match on the path."""
+
+    def setUp(self):
+        self.text = SCRIPT.read_text(encoding="utf-8")
+
+    def test_no_longer_matches_worktree_list_with_match(self):
+        self.assertNotIn("worktree list --porcelain", self.text)
+        self.assertNotIn("-match [regex]::Escape($LiveDir)", self.text)
+
+    def test_reuse_decision_uses_rev_parse_git_common_dir(self):
+        self.assertIn("git -C $LiveDir rev-parse --git-common-dir", self.text)
+        self.assertIn('Resolve-Path -LiteralPath "$repo\\.git"', self.text)
+
+    def test_refuses_a_livedir_that_is_not_this_repos_worktree(self):
+        start = self.text.index("if (Test-Path -LiteralPath $LiveDir)")
+        close = self.text.index("\n} else {", start)
+        block = self.text[start:close]
+        self.assertIn("exit 1", block)
+        self.assertIn("worktree add", self.text[close:])
+
+
 if __name__ == "__main__":
     unittest.main()

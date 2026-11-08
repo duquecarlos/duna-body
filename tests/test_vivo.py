@@ -93,45 +93,130 @@ class RepoPrincipalTest(_RepoFixture):
 
 
 class MainTest(_RepoFixture):
+    """`main` runs the task in-process via `runpy.run_module`, never `os.execve` or a subprocess
+    spawn of a python interpreter (BODY-LIVE-CHECKOUT-1-M)."""
+
+    def setUp(self):
+        super().setUp()
+        self._argv_original = list(sys.argv)
+        self._path_original = list(sys.path)
+        self.addCleanup(lambda: setattr(sys, "argv", self._argv_original))
+        self.addCleanup(lambda: setattr(sys, "path", self._path_original))
+
     def test_tarea_fuera_del_allowlist_sale_con_2(self):
         self.assertEqual(vivo.main(["no-existe"]), 2)
 
-    def test_despacha_con_body_env_file_apuntando_al_repo_principal(self):
+    def test_corre_la_tarea_con_runpy_en_el_mismo_proceso(self):
         capturado = {}
 
-        def _stub(tarea, cmd, cwd, env):
-            capturado["tarea"] = tarea
-            capturado["cmd"] = cmd
-            capturado["cwd"] = cwd
-            capturado["env"] = env
-            return 0
+        def _run_module(nombre, run_name=None, alter_sys=None):
+            capturado["nombre"] = nombre
+            capturado["run_name"] = run_name
+            capturado["alter_sys"] = alter_sys
+            capturado["argv"] = list(sys.argv)
 
         with patch.object(vivo, "arbol_vivo", return_value=self.live), \
-             patch.object(vivo, "_despachar", side_effect=_stub) as mock_despachar:
+             patch.object(vivo.os, "chdir") as mock_chdir, \
+             patch.object(vivo.runpy, "run_module", side_effect=_run_module) as mock_run_module, \
+             patch.dict(vivo.os.environ, {}, clear=False):
             codigo = vivo.main(["pull", "--days", "2"])
 
+            self.assertEqual(
+                Path(vivo.os.environ["BODY_ENV_FILE"]).resolve(), (self.repo / ".env").resolve()
+            )
+
         self.assertEqual(codigo, 0)
-        mock_despachar.assert_called_once()
-        self.assertEqual(capturado["tarea"], "pull")
-        self.assertEqual(capturado["cmd"], [sys.executable, "-m", "body.pull", "--days", "2"])
-        self.assertEqual(capturado["cwd"], self.live)
-        self.assertEqual(
-            Path(capturado["env"]["BODY_ENV_FILE"]).resolve(), (self.repo / ".env").resolve()
-        )
+        mock_chdir.assert_called_once_with(self.live)
+        mock_run_module.assert_called_once()
+        self.assertEqual(capturado["nombre"], "body.pull")
+        self.assertEqual(capturado["run_name"], "__main__")
+        self.assertTrue(capturado["alter_sys"])
+        self.assertEqual(capturado["argv"], ["body.pull", "--days", "2"])
+
+    def test_systemexit_de_la_tarea_propaga_su_codigo(self):
+        with patch.object(vivo, "arbol_vivo", return_value=self.live), \
+             patch.object(vivo.os, "chdir"), \
+             patch.object(vivo.runpy, "run_module", side_effect=SystemExit(7)), \
+             patch.dict(vivo.os.environ, {}, clear=False):
+            codigo = vivo.main(["pull"])
+
+        self.assertEqual(codigo, 7)
+
+    def test_retorno_normal_de_la_tarea_es_cero(self):
+        with patch.object(vivo, "arbol_vivo", return_value=self.live), \
+             patch.object(vivo.os, "chdir"), \
+             patch.object(vivo.runpy, "run_module", return_value=None), \
+             patch.dict(vivo.os.environ, {}, clear=False):
+            codigo = vivo.main(["pull"])
+
+        self.assertEqual(codigo, 0)
 
     def test_body_env_file_ya_puesto_no_se_sobreescribe(self):
-        capturado = {}
-
-        def _stub(tarea, cmd, cwd, env):
-            capturado["env"] = env
-            return 0
-
         with patch.object(vivo, "arbol_vivo", return_value=self.live), \
-             patch.object(vivo, "_despachar", side_effect=_stub), \
+             patch.object(vivo.os, "chdir"), \
+             patch.object(vivo.runpy, "run_module"), \
              patch.dict(vivo.os.environ, {"BODY_ENV_FILE": "C:/otra/ruta/.env"}):
             vivo.main(["pull"])
+            self.assertEqual(vivo.os.environ["BODY_ENV_FILE"], "C:/otra/ruta/.env")
 
-        self.assertEqual(capturado["env"]["BODY_ENV_FILE"], "C:/otra/ruta/.env")
+    def test_no_usa_execve_ni_subprocess_para_lanzar_la_tarea(self):
+        subprocess_run_original = vivo.subprocess.run
+
+        def _subprocess_run_vigilado(cmd, *args, **kwargs):
+            primero = cmd[0] if isinstance(cmd, (list, tuple)) else cmd
+            self.assertNotEqual(
+                primero, sys.executable, "la tarea no debe lanzarse con subprocess.run"
+            )
+            return subprocess_run_original(cmd, *args, **kwargs)
+
+        with patch.object(vivo, "arbol_vivo", return_value=self.live), \
+             patch.object(vivo.os, "chdir"), \
+             patch.object(vivo.runpy, "run_module") as mock_run_module, \
+             patch.object(
+                 vivo.os, "execve", side_effect=AssertionError("os.execve must not be called")
+             ), \
+             patch.object(vivo.subprocess, "run", side_effect=_subprocess_run_vigilado), \
+             patch.dict(vivo.os.environ, {}, clear=False):
+            codigo = vivo.main(["web", "--port", "1"])
+
+        self.assertEqual(codigo, 0)
+        mock_run_module.assert_called_once_with("body.web", run_name="__main__", alter_sys=True)
+
+    def test_modulos_body_previos_se_registran_pero_la_tarea_igual_corre(self):
+        nombre_falso = "body._fixture_modulos_previos"
+        sys.modules[nombre_falso] = object()
+        self.addCleanup(sys.modules.pop, nombre_falso, None)
+        buf = []
+
+        class _Stdout:
+            def write(self, texto):
+                buf.append(texto)
+
+            def flush(self):
+                pass
+
+        with patch.object(vivo, "arbol_vivo", return_value=self.live), \
+             patch.object(vivo, "refrescar") as mock_refrescar, \
+             patch.object(vivo.os, "chdir"), \
+             patch.object(vivo.runpy, "run_module") as mock_run_module, \
+             patch.object(vivo.sys, "stdout", _Stdout()), \
+             patch.dict(vivo.os.environ, {}, clear=False):
+            codigo = vivo.main(["pull"])
+
+        self.assertEqual(codigo, 0)
+        mock_refrescar.assert_not_called()
+        mock_run_module.assert_called_once()
+        self.assertIn("sin_cambio:modulos_previos", "".join(buf))
+
+    def test_no_falla_sin_stdout_como_bajo_pythonw(self):
+        with patch.object(vivo, "arbol_vivo", return_value=self.live), \
+             patch.object(vivo.os, "chdir"), \
+             patch.object(vivo.runpy, "run_module"), \
+             patch.object(vivo.sys, "stdout", None), \
+             patch.dict(vivo.os.environ, {}, clear=False):
+            codigo = vivo.main(["pull"])
+
+        self.assertEqual(codigo, 0)
 
 
 if __name__ == "__main__":

@@ -13,16 +13,21 @@ not a worktree, git failure) is a fail-safe, not an abort: `main()` still runs t
 whatever commit is already checked out there, which is always a `main` commit the tree was
 detached at on some earlier, successful refresh -- never a branch.
 
-`web` replaces this process (`os.execve`) rather than being spawned and waited on: on Windows
-that keeps the same PID the Task Scheduler action launched, so the task's own restart policy
-(`-RestartCount`/`-RestartInterval` on "Body app web") watches the real server process, not a
-thin wrapper around it, and no second process or console is created -- a `pythonw`-launched task
-stays consoleless because there never is a second process. Every other task is one-shot: it is
-simplest, and correct, to run it and exit with its own code.
+Every task, including `web`, runs IN-PROCESS, via `runpy.run_module` right after the refresh --
+never spawned and waited on, and never exec'd into a replacement process. Windows CPython has no
+`exec`: `os.execve` there starts a NEW process and the launcher exits, so the PID Task Scheduler
+launched would be gone -- "Body app web" would read as finished, its restart policy would never
+watch the server, `Stop-ScheduledTask` would no longer stop it, and the next `Start-ScheduledTask`
+would launch a second server on the same port. Running in-process instead keeps the same PID the
+Task Scheduler action launched throughout the task's life, so `web`'s restart policy
+(`-RestartCount`/`-RestartInterval` on "Body app web") watches the real server, and no second
+process or console is ever created -- a `pythonw`-launched task stays consoleless. The task's own
+`SystemExit` becomes this launcher's exit code; a normal return is 0.
 """
 from __future__ import annotations
 
 import os
+import runpy
 import subprocess
 import sys
 from pathlib import Path
@@ -113,11 +118,14 @@ def refrescar(vivo: Path) -> str:
     return "actualizado" if antes != despues else "ya_al_dia"
 
 
-def _despachar(tarea: str, cmd: list[str], cwd: Path, env: dict) -> int:
-    if tarea == "web":
-        os.chdir(cwd)
-        os.execve(cmd[0], cmd, env)  # pragma: no cover -- replaces this process, never returns
-    return subprocess.run(cmd, cwd=cwd, env=env).returncode
+def _modulos_body_inesperados() -> list[str]:
+    """`body*` entries in `sys.modules` other than `body` and `body.vivo` -- modules a previous
+    task in this same process could have left cached, surviving the refresh with stale code."""
+    return sorted(
+        nombre
+        for nombre in sys.modules
+        if (nombre == "body" or nombre.startswith("body.")) and nombre not in ("body", "body.vivo")
+    )
 
 
 def _uso() -> None:
@@ -133,19 +141,38 @@ def main(argv: list[str] | None = None) -> int:
     tarea, *resto = argv
 
     vivo = arbol_vivo()
-    resultado = refrescar(vivo)
+    if _modulos_body_inesperados():
+        resultado = "sin_cambio:modulos_previos"
+    else:
+        resultado = refrescar(vivo)
     try:
         sha = _rev_parse(vivo, "--short", "HEAD")
     except (RuntimeError, OSError, subprocess.TimeoutExpired):
         sha = "?"
-    print(f"{resultado} {vivo.name} {sha}")
+    if sys.stdout is not None:
+        print(f"{resultado} {vivo.name} {sha}")
 
     principal = repo_principal(vivo)
-    env = dict(os.environ)
-    env.setdefault("BODY_ENV_FILE", str(principal / ".env"))
+    os.environ.setdefault("BODY_ENV_FILE", str(principal / ".env"))
 
-    cmd = [sys.executable, "-m", TAREAS[tarea], *resto]
-    return _despachar(tarea, cmd, vivo, env)
+    os.chdir(vivo)
+    vivo_str = str(vivo)
+    if vivo_str in sys.path:
+        sys.path.remove(vivo_str)
+    sys.path.insert(0, vivo_str)
+
+    sys.argv = [TAREAS[tarea], *resto]
+    try:
+        runpy.run_module(TAREAS[tarea], run_name="__main__", alter_sys=True)
+    except SystemExit as exc:
+        if exc.code is None:
+            return 0
+        if isinstance(exc.code, int):
+            return exc.code
+        if sys.stdout is not None:
+            print(exc.code, file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

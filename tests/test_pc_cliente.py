@@ -430,8 +430,8 @@ class InstallerHostedTest(unittest.TestCase):
         block = self._hosted_block()
         self.assertIn('Register-ScheduledTask -TaskName "Body app shift upload"', block)
         self.assertIn('Register-ScheduledTask -TaskName "Body app weekly fetch"', block)
-        self.assertIn("body.subir_turnos", block)
-        self.assertIn("body.traer_semana", block)
+        self.assertIn("body.vivo subir_turnos", block)
+        self.assertIn("body.vivo traer_semana", block)
         self.assertIn("-ShiftsDir", self.text)
 
     def test_hosted_unregisters_the_three_old_tasks(self):
