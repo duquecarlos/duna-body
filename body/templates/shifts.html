@@ -6,17 +6,21 @@
 {% if many %}
 <div class="card">
   <div class="badge">{{ t('shifts.confirm_badge') }}</div>
-  <p class="read" style="margin-top:6px">{{ t('shifts.confirm_summary_many', n=batches|length, from=summary_from, to=summary_to, days=summary_days, nights=summary_nights) }}</p>
+  <p class="read" style="margin-top:6px">{{ t('shifts.confirm_summary_many_mixed' if many_mixed else 'shifts.confirm_summary_many', n=batches|length, from=summary_from, to=summary_to, days=summary_days, nights=summary_nights) }}</p>
   <div class="confirm-actions">
     <form method="post" action="/shifts/confirm-all">
       <button type="submit" class="btn on">{{ t('shifts.confirm_all_btn') }}</button>
     </form>
   </div>
   <details class="files" style="margin-top:10px">
-    <summary class="k">{{ t('shifts.per_file') }}</summary>
+    <summary class="k">{{ t('shifts.per_file_mixed' if many_mixed else 'shifts.per_file') }}</summary>
     {% for b in batches %}
     <div class="card" style="margin-top:8px">
+      {% if b.batch.kind == 'pattern' %}
+      <p class="read" style="margin-top:0">{{ t('shifts.confirm_summary_patron', days=b.preview.day_count, nights=b.preview.night_count, from=b.preview.from_date, to=b.preview.to_date) }}</p>
+      {% else %}
       <p class="read" style="margin-top:0">{{ t('shifts.confirm_summary', date=b.received_date, days=b.preview.day_count, nights=b.preview.night_count) }}</p>
+      {% endif %}
       {% if b.preview.kept_days %}
       <p class="k" style="margin-top:6px">{{ t('shifts.kept_note', n=b.preview.kept_days|length) }}</p>
       {% endif %}
@@ -37,7 +41,11 @@
 {% elif batch %}
 <div class="card">
   <div class="badge">{{ t('shifts.confirm_badge') }}</div>
+  {% if batch.kind == 'pattern' %}
+  <p class="read" style="margin-top:6px">{{ t('shifts.confirm_summary_patron', days=preview.day_count, nights=preview.night_count, from=preview.from_date, to=preview.to_date) }}</p>
+  {% else %}
   <p class="read" style="margin-top:6px">{{ t('shifts.confirm_summary', date=received_date, days=preview.day_count, nights=preview.night_count) }}</p>
+  {% endif %}
   {% if preview.kept_days %}
   <p class="k" style="margin-top:8px">{{ t('shifts.kept_note', n=preview.kept_days|length) }}</p>
   {% endif %}
@@ -54,6 +62,15 @@
 </div>
 {% elif confirmed_date %}
 <p class="k" style="margin-top:-4px;margin-bottom:10px">{{ t('shifts.last_confirmed', date=confirmed_date) }}</p>
+{% else %}
+<div class="card">
+  <p class="read" style="margin-top:0">{{ t('patron.empty_intro') }}</p>
+  <a class="btn on" href="/shifts/patron" style="margin-top:8px">{{ t('patron.door_change') if tiene_patron else t('patron.door_new') }}</a>
+</div>
+{% endif %}
+
+{% if many or batch or confirmed_date %}
+<p class="k" style="margin-top:-4px;margin-bottom:10px"><a class="taplink" href="/shifts/patron">{{ t('patron.door_change') if tiene_patron else t('patron.door_new') }}</a></p>
 {% endif %}
 
 <a class="card est" href="/shifts/como">

@@ -30,6 +30,7 @@ ROUTE_TOOL = {
     "/goals": "leer_metas",
     "/goals/new": None,          # a creation form, not a data screen
     "/goals/{goal_id}": "leer_meta",
+    "/shifts/patron": None,       # a creation form, not a data screen
     "/settings": "leer_ajustes",
     "/sw.js": None,               # the service worker script, not a data screen
     "/healthz": None,             # liveness check, no data, no tool

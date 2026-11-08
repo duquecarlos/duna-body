@@ -32,7 +32,8 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup
 
 from . import (cuenta, db, dispositivo, entorno, garmin_adapter, garmin_cuenta, goals, history, household, identity,
-               listen, privacidad, profile, readiness, shift_import, turnos_costo, tutoriales, vida_export)
+               listen, patron_turnos, privacidad, profile, readiness, shift_import, turnos_costo, tutoriales,
+               vida_export)
 from .agente import ajustes as agente_ajustes
 from .agente import bucle as agente_bucle
 from .agente import cliente as agente_cliente
@@ -700,28 +701,39 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
     strip, strip_legend = _turnos_strip(conn, person_id, today_local, t)
     costo_ctx = {"hero_dias": resumen["dias_recuperacion"], "motivo": resumen["motivo"],
                  "filas": _turnos_filas(t, _defs(conn), resumen), "strip": strip, "strip_legend": strip_legend}
+    tiene_patron = patron_turnos.leer(conn, person_id) is not None
     if len(rows) > 1:
         summary = shift_import.summary_proposed(conn, person_id)
         batches = [
             {"batch": dict(b), "received_date": _batch_date(t, b["received"]),
-             "preview": shift_import.preview(conn, b["id"])}
+             "preview": _patron_preview_ctx(t, shift_import.preview(conn, b["id"]))}
             for b in rows
         ]
+        many_mixed = any(b["kind"] == "pattern" for b in rows)
         return _render("shifts.html", t=t, tab="shifts", batch=None, many=True, batches=batches,
+                       many_mixed=many_mixed,
                        summary_from=t.month_year(date.fromisoformat(summary["first_day"])),
                        summary_to=t.month_year(date.fromisoformat(summary["last_day"])),
                        summary_days=summary["day_count"], summary_nights=summary["night_count"],
-                       result_msg=result_msg, turnos=turnos_on, **costo_ctx)
+                       result_msg=result_msg, turnos=turnos_on, tiene_patron=tiene_patron, **costo_ctx)
     if rows:
         proposed = rows[0]
-        prev = shift_import.preview(conn, proposed["id"])
+        prev = _patron_preview_ctx(t, shift_import.preview(conn, proposed["id"]))
         return _render("shifts.html", t=t, tab="shifts", batch=dict(proposed), many=False,
                        received_date=_batch_date(t, proposed["received"]), preview=prev, result_msg=result_msg,
-                       turnos=turnos_on, **costo_ctx)
+                       turnos=turnos_on, tiene_patron=tiene_patron, **costo_ctx)
     confirmed = shift_import.latest_confirmed(conn, person_id)
     return _render("shifts.html", t=t, tab="shifts", batch=None, many=False,
                    confirmed_date=_batch_date(t, confirmed["received"]) if confirmed else None,
-                   result_msg=result_msg, turnos=turnos_on, **costo_ctx)
+                   result_msg=result_msg, turnos=turnos_on, tiene_patron=tiene_patron, **costo_ctx)
+
+
+def _patron_preview_ctx(t: T, prev: dict) -> dict:
+    """Adds the short from/to dates a pattern batch's card reads ("del X al Y") to shift_import.preview()'s
+    own dict, without changing its existing keys."""
+    return {**prev,
+            "from_date": _short_date(t, date.fromisoformat(prev["first_day"])) if prev["first_day"] else None,
+            "to_date": _short_date(t, date.fromisoformat(prev["last_day"])) if prev["last_day"] else None}
 
 
 def _turnos_bloque_linea(t: T, b: dict, hoy: date) -> str:
@@ -796,6 +808,106 @@ async def shifts_dismiss(request: Request, person_id: int = Depends(identity.cur
     if batch_id.isdigit():
         _owned_batch_or_404(conn, int(batch_id), person_id)
         shift_import.dismiss(conn, int(batch_id))
+    return RedirectResponse("/shifts", status_code=303)
+
+
+_PATRON_DEFAULT_DIAS = 7
+_PATRON_DEFAULT_HORIZONTE = 8
+
+
+def _patron_dias(raw: str | None, guardado: dict | None) -> int:
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        n = len(guardado["cycle"]) if guardado else _PATRON_DEFAULT_DIAS
+    return max(1, min(56, n))
+
+
+def _patron_filas(t: T, cycle: list[dict], start_day: date, errores: dict[int, str] | None = None) -> list[dict]:
+    errores = errores or {}
+    filas = []
+    for i, entry in enumerate(cycle):
+        codigo = errores.get(i)
+        filas.append({
+            "idx": i,
+            "n": i + 1,
+            "label": t("patron.dia_label", n=i + 1, fecha=t.long_date(start_day + timedelta(i))),
+            "kind": entry.get("kind") or "off",
+            "start": entry.get("start") or "",
+            "end": entry.get("end") or "",
+            "error": t("patron.error." + codigo) if codigo else None,
+        })
+    return filas
+
+
+@app.get("/shifts/patron")
+@_cierra_conexion
+def shifts_patron(request: Request, person_id: int = Depends(identity.current_person_id)):
+    conn, person, t = _ctx(person_id)
+    if not _turnos_on(conn, person_id):
+        raise HTTPException(404)
+    guardado = patron_turnos.leer(conn, person_id)
+    dias = _patron_dias(request.query_params.get("dias"), guardado)
+    start_day = date.fromisoformat(guardado["start_day"]) if guardado else _today_local(person)
+    horizon_weeks = guardado["horizon_weeks"] if guardado else _PATRON_DEFAULT_HORIZONTE
+    cycle = guardado["cycle"] if guardado and len(guardado["cycle"]) == dias else (
+        [{"kind": "off", "start": None, "end": None}] * dias)
+    return _render("shift_pattern.html", t=t, tab="shifts", turnos=True, dias=dias,
+                   start_day=start_day.isoformat(), horizon_weeks=horizon_weeks,
+                   filas=_patron_filas(t, cycle, start_day), tiene_patron=guardado is not None)
+
+
+@app.post("/shifts/patron")
+@_cierra_conexion_async
+async def shifts_patron_save(request: Request, person_id: int = Depends(identity.current_person_id)):
+    conn, person, t = _ctx(person_id)
+    if not _turnos_on(conn, person_id):
+        raise HTTPException(404)
+    f = await _form(request)
+    dias = _patron_dias(f.get("dias"), None)
+    try:
+        start_day = date.fromisoformat(f.get("start_day") or "")
+    except ValueError:
+        start_day = _today_local(person)
+    try:
+        horizon_weeks = max(1, min(26, int(f.get("horizon_weeks", ""))))
+    except ValueError:
+        horizon_weeks = _PATRON_DEFAULT_HORIZONTE
+
+    cycle = []
+    for i in range(dias):
+        kind = f.get(f"kind_{i}") or "off"
+        if kind == "off":
+            cycle.append({"kind": "off", "start": None, "end": None})
+        else:
+            cycle.append({"kind": kind, "start": f.get(f"start_{i}") or None, "end": f.get(f"end_{i}") or None})
+
+    try:
+        patron_turnos.validar(cycle)
+    except patron_turnos.PatronInvalido as e:
+        errores = {err["index"]: err["code"] for err in e.errors if err["index"] is not None}
+        return _render("shift_pattern.html", t=t, tab="shifts", turnos=True, dias=dias,
+                       start_day=start_day.isoformat(), horizon_weeks=horizon_weeks,
+                       filas=_patron_filas(t, cycle, start_day, errores),
+                       tiene_patron=patron_turnos.leer(conn, person_id) is not None)
+
+    patron_turnos.guardar(conn, person_id, start_day.isoformat(), cycle, horizon_weeks)
+    patron_turnos.proponer(conn, person_id, _today_local(person))
+    return RedirectResponse("/shifts", status_code=303)
+
+
+@app.post("/shifts/patron/quitar")
+@_cierra_conexion_async
+async def shifts_patron_quitar(person_id: int = Depends(identity.current_person_id)):
+    conn, _, _ = _ctx(person_id)
+    if not _turnos_on(conn, person_id):
+        raise HTTPException(404)
+    patron_turnos.quitar(conn, person_id)
+    for r in conn.execute(
+        "SELECT id FROM shift_batch WHERE person_id = ? AND status = 'proposed' AND kind = 'pattern'",
+        (person_id,),
+    ).fetchall():
+        shift_import.dismiss(conn, r["id"])
     return RedirectResponse("/shifts", status_code=303)
 
 
