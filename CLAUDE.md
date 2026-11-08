@@ -46,10 +46,15 @@ A new test module without that import is a defect.
 
 ## Structure
 
-`body/web.py` assembles the app (FastAPI construction, middleware, `main()`) and still holds every
-route not yet moved out; routes live in `body/rutas/<dominio>.py`, shared plumbing in
-`body/rutas/comun.py`, and tests patch the module that owns a name -- `tests/test_guardia_parches.py`
-enforces it (BODY-WEB-ESTRUCTURA-1).
+`body/web.py` is the app assembler only (FastAPI construction, lifespan, middleware, the shared
+exception handlers, the static mount, every `include_router()` call, and `main()`) -- it holds no
+route of its own (BODY-WEB-ESTRUCTURA-8). Every route lives in `body/rutas/<dominio>.py`: ajustes,
+asistente, ayuda, dispositivos, garmin (the Garmin connection and its MFA state), historial, hoy,
+metas, privacidad, pwa (the PWA service worker, `/sw.js`), sesion (the Cuenta Duna sign-in session),
+tendencias and turnos. Shared plumbing -- the Jinja environment, the one-connection-per-request
+helpers, and names two or more domains read -- lives in `body/rutas/comun.py`, which holds no route
+of its own. Tests patch the module that owns a name -- `tests/test_guardia_parches.py` enforces it
+(BODY-WEB-ESTRUCTURA-1).
 
 ## The gate
 
