@@ -273,5 +273,98 @@ class RouteClosesItsConnectionTest(unittest.TestCase):
                           f"vs routed {modules_with_routes}")
 
 
+# BODY-SESION-CONEXION-1: body/rutas/privacidad.py:40 (consentimiento_decide's "decline" branch)
+# opens its own connection the same unguarded way sesion.py's four routes did before this slice --
+# found while building the guard below, left unfixed because it is outside this slice's `touches:`
+# (DECISIONS.md's BODY-SESION-CONEXION-1 entry lists it for a later slice).
+_KNOWN_DIRECT_CONNECT_OFFENDERS = {("privacidad.py", "consentimiento_decide")}
+
+
+def _stmt_lists(func_node):
+    """Every list of statements reachable from `func_node`: its own body, plus the body/orelse/
+    finalbody of each nested if/for/while/try, and each except handler's body."""
+    lists = [func_node.body]
+    for child in ast.walk(func_node):
+        if child is func_node:
+            continue
+        for attr in ("body", "orelse", "finalbody"):
+            lst = getattr(child, attr, None)
+            if isinstance(lst, list):
+                lists.append(lst)
+        for h in getattr(child, "handlers", []) or []:
+            lists.append(h.body)
+    return lists
+
+
+def _connect_assigns(stmts):
+    """(stmts, index, var_name) for each `var = db.connect(...)` / `var = X.connect(...)` found at
+    the top of `stmts`."""
+    found = []
+    for i, stmt in enumerate(stmts):
+        if (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+                and isinstance(stmt.targets[0], ast.Name)
+                and isinstance(stmt.value, ast.Call)
+                and isinstance(stmt.value.func, ast.Attribute)
+                and stmt.value.func.attr == "connect"):
+            found.append((stmts, i, stmt.targets[0].id))
+    return found
+
+
+def _closes_right_after(stmts, i, var_name) -> bool:
+    """True when the statement right after `stmts[i]` (the `var = ...connect()` assignment) is a
+    `try` whose `finally` closes `var_name`, or a `with contextlib.closing(var_name)`."""
+    if i + 1 >= len(stmts):
+        return False
+    nxt = stmts[i + 1]
+    if isinstance(nxt, ast.Try):
+        for stmt in nxt.finalbody:
+            for node in ast.walk(stmt):
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and node.func.attr == "close" and isinstance(node.func.value, ast.Name)
+                        and node.func.value.id == var_name):
+                    return True
+        return False
+    if isinstance(nxt, ast.With):
+        for item in nxt.items:
+            ctx = item.context_expr
+            if (isinstance(ctx, ast.Call) and isinstance(ctx.func, ast.Attribute)
+                    and ctx.func.attr == "closing" and ctx.args
+                    and isinstance(ctx.args[0], ast.Name) and ctx.args[0].id == var_name):
+                return True
+        return False
+    return False
+
+
+class DirectConnectClosesInFinallyTest(unittest.TestCase):
+    """Guard for BODY-SESION-CONEXION-1: a route-decorated function may open its own connection
+    with a bare db.connect() rather than through comun._ctx -- true before sign-in, when there is
+    no person_id for _ctx to scope by. Such a connection must close in the `finally` of a `try`
+    that starts on the very next statement after the assignment (ast: the statement right after
+    `X = db.connect()` is a `Try` whose `finalbody` calls `X.close()`), or a
+    `with contextlib.closing(...)` in its place. `_KNOWN_DIRECT_CONNECT_OFFENDERS` carries the one
+    pre-existing offender found while building this guard, outside this slice's `touches:`."""
+
+    def test_every_route_level_connect_closes_right_after(self):
+        offenders = []
+        checked = 0
+        for path, tree in modulos_con_rutas():
+            for node in tree.body:
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if not any(_is_route_decorator(d) for d in node.decorator_list):
+                    continue
+                for stmts in _stmt_lists(node):
+                    for stmts2, i, var_name in _connect_assigns(stmts):
+                        checked += 1
+                        if _closes_right_after(stmts2, i, var_name):
+                            continue
+                        if (path.name, node.name) in _KNOWN_DIRECT_CONNECT_OFFENDERS:
+                            continue
+                        offenders.append(f"{path.name}:{node.name}")
+        self.assertGreater(checked, 0,
+                            "no route function calls db.connect() directly -- guard checks nothing")
+        self.assertEqual(offenders, [])
+
+
 if __name__ == "__main__":
     unittest.main()
