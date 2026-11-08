@@ -8159,8 +8159,8 @@ externally-built authorize URL, on Cuenta Duna's domain by design, never request
 `login_start`, before being stored in the row `handle_callback` reads it back from), `body/rutas/ajustes.py:72`
 (its own stricter `{"/", "/settings"}` allow-list, left as is per this slice's own instruction above). The scan
 found no other call site outside these two generic rules and this three-entry allowlist, across every
-`RedirectResponse(` call in `body/` (41 call sites in total, by grep, before this slice's one fix to
-`metas.py`'s `habit_check`).
+`RedirectResponse(` call in `body/` (43 call sites in total, counted by the same `ast` walk the guard test
+itself runs, after this slice's one fix to `metas.py`'s `habit_check`).
 
 **Proof that (a) bites on `main`**, run once in the worker's own scratchpad, never committed: `main`'s own
 `body/web.py` at `32a806d` (this slice's base, confirmed by `git rev-parse main`) was loaded, byte for byte via
