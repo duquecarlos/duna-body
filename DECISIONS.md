@@ -6565,3 +6565,92 @@ the `patron.error.largo_invalido` string pair) -- authorised by this spec's own 
 Commits: fix `df805dcb2e96a1c89bb58a8922e39f91f653e674`, merge `cb68f4ff59d0806eb1ae084ad61e4825aae45c50` (both
 pasted from `git rev-parse`, not retyped). The merge commit's tree (`ffcc6dc1d62d2e31f3422abdac81564c08e0b994`) is
 identical to the branch tip's tree, so the gate above is the gate `main` now carries, not re-run after the merge.
+
+## BODY-TESTS-VELOCIDAD-1 -- the order dependency in test_garmin_host, and a faster test_vivo/test_primer_pull_1 (2026-11-08)
+
+**The order dependency, root cause.** Reproduced exactly as specified: in one process, imported `tests._isolate`,
+then loaded and ran `tests.test_agente_bucle` through `tests.test_fecha_futura_1` (sorted) each with
+`unittest.defaultTestLoader.loadTestsFromName` + a fresh `TextTestRunner`, then `tests.test_garmin_host` --
+`MfaFlowTest.test_expired_mfa_state_is_refused` raised `KeyError` on a key it had itself just inserted, and
+`test_old_mfa_state_is_pruned_on_the_next_write` found its own stale entry never pruned. Bisected by instrumenting
+`web._mfa_key`, `web._prune_mfa_state` and `web._MFA_STATE` directly: both failures trace to `tests.test_garmin_host`
+binding its own `web` name to a **different module object** than the one `web.app`'s route handlers actually run
+against -- confirmed by `tests.test_garmin_host.web is web: False` where the right-hand `web` is the module every
+earlier-imported test file (e.g. `tests.test_cuenta_rp`, whose `TestClient(web.app, ...)` IS the real app) already
+holds.
+
+The leak is in `tests/test_env_local_1.py`'s `ImportarWebTest.test_importar_body_web_no_llama_cargar`: it does
+`del sys.modules["body.web"]`, re-imports it (building a second, throwaway module object with its own empty
+`_MFA_STATE`), then `finally: sys.modules["body.web"] = original` -- restoring the `sys.modules` dict entry, but
+**not** the `body` package's own cached `web` attribute, which Python's import machinery also pointed at the
+throwaway copy during the re-import and never un-sets. Confirmed empirically (`tests/test_import_semantics.py` in
+scratchpad, not committed) that both `from body import web` and `import body.web as web` resolve through
+`getattr(sys.modules["body"], "web")`, never through `sys.modules["body.web"]` directly -- so any module whose
+*first* `body.web` import happens after that test has run binds to the orphaned copy. `unittest discover` imports
+every test module during collection, before any test runs, so the production gate never hits this window; the
+spec's own prescribed reproduction (load-then-run-immediately, one module at a time) does, because it imports
+`tests.test_garmin_host` for the first time only when the loader reaches it -- after `test_env_local_1` has already
+corrupted the attribute.
+
+The true fix belongs in `tests/test_env_local_1.py` (also restore `sys.modules["body"].web = original`), but that
+file is outside this slice's `touches:`. Fixed within `tests/test_garmin_host.py` instead: rebind `web =
+sys.modules["body.web"]` right after the normal import, bypassing the stale attribute entirely, and cleared
+`web._MFA_STATE` in `MfaFlowTest.setUp`/`addCleanup` for defense in depth against any other process-wide leak into
+that dict. Re-ran the same 19-module sequence: all green (`tests.test_garmin_host: OK (ran 36, failures=0,
+errors=0)`). **Open follow-up** (`BODY-TEST-ENV-LOCAL-WEB-ATTR-RESTORE-1`): `tests/test_env_local_1.py`'s restore is
+still incomplete and will corrupt the `body.web` attribute for any future test module first imported after it runs
+outside a `discover`-style collection -- a later slice touching that file should add the attribute restore too.
+No code in `body/web.py` was at fault -- `/garmin/conectar`'s prune-then-insert order was already correct -- so no
+production change.
+
+**`tests/test_vivo.py`** (27.6 s -> 12.86 s for its 13 tests, alone). Built the throwaway git repo + worktree once
+for the whole module (`setUpModule`/`tearDownModule`) instead of once per test. Only `RefrescarTest` mutates the
+trees (commits on main, dirties the live checkout), so only its own `setUp` resets them (`git reset --hard
+<initial-sha>` on the repo, `git checkout --force --detach <initial-sha>` on the live tree -- no test here ever
+creates an untracked file, so no separate `clean` is needed); `MainTest` and `RepoPrincipalTest` never mutate
+either tree and no longer pay for a reset they don't need. Also patched `vivo.refrescar` in the `MainTest` cases
+whose subject is the `runpy`/`chdir`/`sys.argv` wiring, not `refrescar`'s own correctness (which `RefrescarTest`
+already owns) -- though profiling showed this call was already short-circuited by `_modulos_body_inesperados()`,
+since `tests/_isolate.py` always has `body.config` imported first, so the mock is for clarity and future-proofing,
+not where the time went. Target was under 8 s; not reached. Profiled with `cProfile` per-test: the remaining ~9 s is
+`RefrescarTest`'s 4 tests calling `vivo.refrescar()` for real, which itself makes ~6 git subprocess calls (measured
+at 125-350 ms per spawn on this machine) -- unavoidable without weakening `RefrescarTest`'s own assertions or
+touching `body/vivo.py` (outside `touches:` and not a code defect), since testing `refrescar()` directly is that
+class's whole subject.
+
+**`tests/test_primer_pull_1.py`** (18.7 s -> 2.37 s for its 15 tests, alone). `cProfile` showed 14.46 s of the
+original 16.5 s was `time.sleep`, all inside `NoHealthFigureInOutputTest.test_backfill_prints_only_counts`: unlike
+every other class in the file, its `setUp` never patched `body.pull.time.sleep`, so its real 15-day backfill slept
+for real (`PAUSE_S = 1.0`) between every one of the 15 days. Patched it the same way `BackfillWindowTest.setUp`
+already does. Comfortably under the 5 s target.
+
+**Quiet tests**, within `touches:` only. `tests/test_vivo.py`: six `MainTest` cases let `vivo.main()`'s own print
+of `f"{resultado} {vivo.name} {sha}"` (and one let `_uso()`'s usage text to stderr) leak to the gate's output;
+wrapped each with `contextlib.redirect_stdout`/`redirect_stderr` since the print is not that test's subject (one
+test already captures and asserts on it -- left as is). `tests/test_primer_pull_1.py`: four `LockTest`/
+`LocalModeRefusesBackfillTest` cases let `pull.main()`'s "another pull is already running", "N ok, N failed, N days
+stored" or "local mode has no --backfill" print leak; wrapped the same way (one `LockTest` case already captures
+and asserts on its print -- left as is). Other modules seen printing to the gate's own output during the full run,
+left for a later slice: `body/cuenta.py`'s `refrescar_hogar`/hogar-sync-failure lines, from `tests/test_hogar_cuenta_1.py`
+and `tests/test_agente_cliente.py`.
+
+**`tests/test_i18n_paridad.py`**: corrected the comment BODY-PATRON-ERROR-CICLO-1 left stale -- the whole-cycle
+`"largo_invalido"` code does reach `t()` now, through the same `"patron.error." + code` call, by the index-`None`
+path rather than the per-row one the old comment described. The fixed-value list itself needed no change
+(`largo_invalido` is checked directly by `tests/test_patron_error_ciclo_1.py`, not enumerated by this generic
+parity guard).
+
+**Timings, same machine, before -> after (module alone):** `test_vivo`: 27.6 s -> 12.86 s. `test_primer_pull_1`:
+18.7 s -> 2.37 s (target 5 s, met). `test_garmin_host`: 36 tests, ~4.8 s, unchanged (order dependency was a
+correctness bug, not a speed one).
+
+**Gate**, run once on the final branch tree: `.venv/Scripts/python.exe -m unittest discover tests -t .` --
+`Ran 1191 tests in 99.855s ... OK (skipped=1)`, same 1191 count as `BODY-PATRON-ERROR-CICLO-1` (no test added or
+removed). The orchestrator's own baseline on `main` `cb68f4f`, same command, one process, alphabetical: wall 203 s.
+
+Merge policy A: no schema or migration change, no customer-facing bytes (every changed file is a test module), no
+cross-repo contract change. `--no-ff` into `main`.
+
+Commits: fix `941b27727a33459274118d38d8706f9533659172`, merge `ba2bda8c0136afad8a2a92e455f5078a783d08be` (both
+pasted from `git rev-parse`, not retyped). The merge commit's tree (`e79aff64a7afbe68780f7843ddd9a2a0cd2d8cdf`) is
+identical to the branch tip's tree, so the gate above is the gate `main` now carries, not re-run after the merge.
