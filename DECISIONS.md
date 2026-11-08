@@ -6843,3 +6843,18 @@ add the one-line `_IncludedRouter`-flattening fix to `tests/test_agente_registro
 hit the identical failure on whichever domain it moves, since the cause is `include_router()` itself, not this
 slice's choice of domain) -- then this slice's branch gates green with no other change, `Ran 1197 tests ...
 OK (skipped=1)`.
+
+**Two follow-up IDs, coined here, not actioned by this slice:**
+
+- **BODY-WEB-ESTRUCTURA-AGENTE-REGISTRO-ROUTE-FLATTEN-1**: the fix named in the paragraph above --
+  `tests/test_agente_registro.py::RouteMappingTest.test_every_get_route_has_a_mapping_decision`'s
+  `{r.path for r in web.app.routes if isinstance(r, APIRoute) and "GET" in r.methods}` needs to descend into
+  `_IncludedRouter.original_router.routes` first. Not actioned here: outside this slice's `touches:`, and this
+  is the only one of the three sibling checks found (below) that the gate actually turned red on today.
+- **BODY-WEB-ESTRUCTURA-ROUTE-FLATTEN-AUDIT-1**: `tests/test_asistente_panel.py:68` has the identical
+  `isinstance(r, APIRoute)` filter (did not fail today -- whatever it compares `_get_paths()` against
+  apparently never requires `/ayuda`/`/healthz` to be present) and `tests/test_tutoriales_catalogo.py:52` filters
+  with `hasattr(r, "path")`, which a plain `_IncludedRouter` also fails (same latent gap, also not tripped
+  today). Not actioned here: neither is in this slice's `touches:` and neither is red on this tree. Worth an
+  audit before BODY-WEB-ESTRUCTURA-PLAN-1's next slice moves a bigger domain, since a wider route set is more
+  likely to intersect whatever these two actually check.
