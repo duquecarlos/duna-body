@@ -205,10 +205,12 @@ class PrimerosPasosFunctionTest(unittest.TestCase):
         db.init(self.conn)
 
     def test_hosted_with_nothing_is_all_unticked(self):
+        """BODY-TURNOS-OPCIONAL-4: with no turnos setting and no device, `vincular-este-pc` does not
+        apply and is not listed at all."""
         items = tutoriales.primeros_pasos(self.conn, 1, hosted=True)
         self.assertEqual({i["id"] for i in items},
                          {"iniciar-sesion-y-aceptar", "conectar-garmin", "trabajas-por-turnos",
-                          "vincular-este-pc", "primera-mirada-a-hoy"})
+                          "primera-mirada-a-hoy"})
         self.assertFalse(any(i["hecho"] for i in items))
 
     def test_hosted_with_consent_metric_and_device_is_all_done(self):

@@ -156,8 +156,11 @@ class PrimerosPasosNoPcGateTest(unittest.TestCase):
         db.init(self.conn)
 
     def test_consented_and_has_data_without_pc_completes_primera_mirada(self):
+        """BODY-TURNOS-OPCIONAL-4: `vincular-este-pc` only applies to a shift worker or someone who
+        already linked a device, so this subject answers "works shifts" to keep seeing the item."""
         privacidad.record_consent(self.conn, 1)
         db.set_metric(self.conn, "2026-01-01", "resting_hr", 58, "garmin", 1)
+        db.set_trabaja_turnos(self.conn, True, 1)
         items = {i["id"]: i["hecho"] for i in tutoriales.primeros_pasos(self.conn, 1, hosted=True)}
         self.assertTrue(items["primera-mirada-a-hoy"])
         self.assertFalse(items["vincular-este-pc"])
