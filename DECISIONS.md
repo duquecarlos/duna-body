@@ -5244,7 +5244,8 @@ two independent `goal_check` rows, now from habit checks instead of metric readi
 `tests/test_goals_web.py::HouseholdGoalDetailTest.test_member_check_shown` (unchanged in substance, just
 `kind='milestone'` instead of the implicit metric default).
 
-**Found, not fixed: two more tests outside this spec's `touches` have the same subject.**
+**Found, not fixed: two more tests outside this spec's `touches` have the same subject (tracked as
+follow-up `BODY-HOGAR-MIEMBRO-1-M-FOLLOWUP-1`).**
 `tests/test_vida_export.py::VidaExportTest.test_goal_checks_for_shared_household_goals` (line 93) and
 `tests/test_privacidad.py::DeleteAllTest.test_right_word_deletes_every_row_of_a_and_takes_bs_check_on_as_
 shared_goal` (line 365) both call `goals.propose(...)` with `visibility='household'` and the default
