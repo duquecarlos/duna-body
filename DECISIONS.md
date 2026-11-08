@@ -7451,3 +7451,100 @@ gate above is the gate `main` now carries. `main` is left checked out, `git stat
 
 **Remaining in BODY-WEB-ESTRUCTURA-PLAN-1's sequence:** ESTRUCTURA-8 (sign-in -- Cuenta login/logout -- and
 Garmin/MFA), reviewed before merge as Tier 1.
+
+## BODY-WEB-ESTRUCTURA-8 -- the Cuenta session and Garmin/MFA move out of web.py, /sw.js out of comun (2026-11-08)
+
+Last slice of BODY-WEB-ESTRUCTURA-PLAN-1. body/web.py (352 lines before this slice) is now the app assembler
+only -- FastAPI construction, `_lifespan`, `_CaminoActualMiddleware`, the two `add_middleware` calls, the static
+mount, every `include_router()` call, the four `@app.exception_handler` handlers (`LoginRequired`,
+`ConsentRequired`, `DispositivoNoAutorizado`, `DispositivoSinAlcance`), `_ensure_streams()` and `main()` -- 136
+lines, no route of its own.
+
+**Moved to `body/rutas/sesion.py`** (the Cuenta Duna sign-in session): `login_start` (`/login`,
+`/login/cuenta/start`), `login_callback` (`/login/cuenta/callback`), `logout` (`/logout`), `backchannel_logout`
+(`/login/cuenta/logout-token`), with `_BACKCHANNEL_PROXY_HEADERS`. `_cuenta_down_page` and
+`_CUENTA_DOWN_TEMPLATE` move here too, not left in web.py as app-level wiring: their only caller is
+`login_callback`'s `CuentaUnavailable` branch, and once that caller moves, the only module that can hold them
+without a router module importing body.web (the absolute rule every ESTRUCTURA slice holds to) is sesion.py
+itself. There is no app-level `@app.exception_handler(CuentaUnavailable)` in the code to leave behind --
+`CuentaUnavailable` is caught inline in `login_callback`'s own `try`/`except`, not through FastAPI's exception-
+handler mechanism, so nothing here is actually an "exception handler" in the sense the four handlers that do
+stay in web.py are.
+
+**Moved to `body/rutas/garmin.py`** (the Garmin connection, hosted only): `garmin_view` (`/garmin`),
+`garmin_conectar` (`/garmin/conectar`), `garmin_codigo` (`/garmin/codigo`), `garmin_desconectar`
+(`/garmin/desconectar`), with `_MFA_TTL_SECONDS`, `_MFA_STATE` (still exactly one dict, now owned here), `_mfa_key`,
+`_prune_mfa_state`, `_garmin_ctx`, `_garmin_last_error_text`, `_GARMIN_LAST_ERROR_KEYS` and
+`_GARMIN_FORM_ERROR_KEYS`.
+
+**`/sw.js` decision:** moved out of `body/rutas/comun.py` into a new `body/rutas/pwa.py`, not into web.py.
+comun.py is shared plumbing (the Jinja environment, the one-connection-per-request helpers, names two or more
+screen domains read) and the review item that opened this move said plumbing should not itself hold a route --
+adding `/sw.js` to web.py instead would just put it back in the "temporary holding pen" this whole
+BODY-WEB-ESTRUCTURA-PLAN-1 sequence exists to empty, rather than give it the small, discoverable module a
+`body/rutas/*.py` glob (tests/_rutas.py's `modulos_con_rutas`) already expects. `pwa.py` reads `comun.STATIC_HASH`
+or Response, the same value every static asset's own URL already carries (`comun.static_url()`); comun.py now
+holds neither a route nor a `router` attribute.
+
+**Test readers moved:** `tests/test_garmin_host.py` now imports `body.rutas.garmin as garmin_rutas` and reads
+`garmin_rutas._MFA_STATE` / `garmin_rutas._MFA_TTL_SECONDS` in place of `web._MFA_STATE` / `web._MFA_TTL_SECONDS`
+(7 call sites across `MfaFlowTest.setUp`, `test_old_mfa_state_is_pruned_on_the_next_write` and
+`test_expired_mfa_state_is_refused`) -- the BODY-TESTS-VELOCIDAD-1/-2 order-independence protections (clearing
+`_MFA_STATE` in `setUp`/`addCleanup`) move with it, unchanged in shape, now against the new owner. No other test
+module in this slice's `touches:` read a moved name through `web.X`, confirmed by grep across every file in the
+list before editing any of them.
+
+`tests/test_conexiones_cerradas.py`'s `_MODULES_WITHOUT_A_CTX_ROUTE` guard set changes from `{"comun.py"}` to
+`{"pwa.py", "sesion.py"}`: pwa.py's `/sw.js` serves a static asset by content, same reasoning as before; sesion.py
+is a second, new member this slice's own move exposed -- its five routes open their own connection with plain
+`db.connect()`/`db.init()` (exactly as they did in web.py before this slice, unchanged by the move) rather than
+through `comun._ctx`, because there is no `person_id` to scope a connection by before sign-in has happened. The
+guard's own cross-check (`checked` vs `expected_min`, `modules_checked` vs `modules_with_routes`) caught this on
+the first run of the order-dependency reproduction below -- `AssertionError: ... sesion.py : a router module has
+routes but none call _ctx` -- before `sesion.py` was added to the set.
+
+**Reproduction of BODY-TESTS-VELOCIDAD-1/-2's sequence**, one process: `tests._isolate`, then every module from
+`tests.test_agente_bucle` through `tests.test_fecha_futura_1` (sorted, the same list the spec named), then
+`tests.test_garmin_host` -- `Ran 345 tests in 35.990s ... OK (skipped=1)`, no order dependency; `MfaFlowTest`'s
+`_MFA_STATE`-clearing `setUp` runs clean against `garmin_rutas._MFA_STATE` whichever position `test_garmin_host`
+loads in.
+
+**Route set, before/after:** unchanged -- `tests/test_web_entry.py::RouteSetTest` (captured from `main` at
+BODY-WEB-ESTRUCTURA-1 and re-asserted, unedited, through every slice since) stays green: 59 `(path, methods)`
+pairs, same 59 both sides, `/login`, `/login/cuenta/start`, `/login/cuenta/callback`, `/logout`,
+`/login/cuenta/logout-token`, `/garmin`, `/garmin/conectar`, `/garmin/codigo`, `/garmin/desconectar` and `/sw.js`
+all present with the same methods as before this slice.
+
+**Connection guard's checked count:** `RouteClosesItsConnectionTest` now walks 14 router modules with at least
+one route (`ajustes.py`, `asistente.py`, `ayuda.py`, `dispositivos.py`, `garmin.py`, `historial.py`, `hoy.py`,
+`metas.py`, `privacidad.py`, `pwa.py`, `sesion.py`, `tendencias.py`, `turnos.py`, `web.py` -- web.py's own routes
+are the four exception handlers, decorated but none call `_ctx`, so it is not itself in
+`_MODULES_WITHOUT_A_CTX_ROUTE` yet still passes: the guard only requires every module *with a route calling
+`_ctx`* to carry the close decorator, and counts a module with zero `_ctx`-calling routes as vacuously fine
+unless it is excluded from `modules_with_routes` -- re-read: web.py's exception handlers are not
+`@app.get`/`@app.post`-style route decorators at all, so web.py never enters `modules_with_routes` in the first
+place). `garmin.py`'s four routes all call `comun._ctx` and all carry `comun._cierra_conexion[_async]`, unchanged
+from web.py. `sesion.py`'s five routes call neither `_ctx` nor a close decorator, exactly as in web.py before
+this slice, and `pwa.py`'s one route likewise -- both now named in `_MODULES_WITHOUT_A_CTX_ROUTE`.
+
+`CLAUDE.md`'s Structure section rewritten: web.py is the app assembler only, every router module in
+`body/rutas/` named by what it owns (sesion = the Cuenta Duna sign-in session, garmin = the Garmin connection
+and its MFA state, pwa = `/sw.js`), comun.py holds no route of its own.
+
+**Gate**, run once on the final branch tree: `.venv/Scripts/python.exe -m unittest discover tests -t .` --
+`Ran 1202 tests in 115.670s ... OK (skipped=1)`, same 1202 count as ESTRUCTURA-7's floor (no test added or
+removed, only moved and repointed).
+
+Merge policy A: no schema or migration change, no customer-facing bytes (every changed file is under `body/`,
+`tests/` or `CLAUDE.md` -- no template or i18n text touched), no cross-repo contract change in the actual diff.
+But this spec's own approval-reason is explicit: *"The build is approved; the MERGE is not -- sign-in, the
+Cuenta session and Garmin MFA state are reviewed by the orchestrator first (a merge slice follows)."* STOP
+AWAITING_APPROVAL on the branch; not merged. No password, token, session secret or health figure was read,
+printed or logged by this slice.
+
+Commit (pasted from `git rev-parse`, not retyped): `69e93526034396cd70ba15d1c80ebb8fe264441b`, on branch
+`feat/body-web-estructura-8`, branched from `main` `4c80934b41a037084adb7f9cf1b6152ddb97d196`. `git status
+--porcelain` empty on the branch after this commit, before this ledger entry's own commit.
+
+**BODY-WEB-ESTRUCTURA-PLAN-1's sequence is now built in full** (ESTRUCTURA-1 through -8); only this last slice's
+merge is outstanding, pending the orchestrator's review of sign-in and Garmin/MFA.
