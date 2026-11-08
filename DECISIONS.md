@@ -9945,3 +9945,95 @@ matching the floor the spec supplied exactly.
 **Commits**: merge `b48db67de294459f5edb9c27f125a50b377ad3b6` into `main`, tree
 `4f8d0002e44a3ba46813035e291fdab4018a2966`. `main` left checked out, `git status --porcelain`
 empty.
+
+## BODY-ESTADOS-VACIOS-3 -- hosted mode's own sweep, before body.duna.solutions is the next deploy
+
+Cuenta is deployed (Main, 2026-11-08) and Body's next deploy is hosted and multi-person from day
+one. BODY-ESTADOS-VACIOS-1 (ledger 0776687) swept every GET route as six sparse people, but only in
+LOCAL mode: every hosted-only route (`/garmin`, `/ajustes/dispositivos`, `/login`,
+`/login/cuenta/start`, `/login/cuenta/callback`, `/privacidad/consentimiento`, `/api/vida/semana`)
+was a documented 404 there, never actually rendered for a person. This slice sweeps hosted mode
+itself, as a new person (never person 1), before that deploy.
+
+**Mechanism**: a real Cuenta Duna session, built the exact way `tests/test_cuenta_rp.py`'s
+`CuentaRpTestCase` already does (its fake issuer, its hosted env, its fresh temp db) -- the same
+mechanism `tests/test_garmin_host.py` and `tests/test_hogar_cuenta_1.py` build on. This is the
+faithful choice over a `dependency_overrides` swap on `identity.current_person_id`: that override
+would replace the very function the consent gate (`identity.ConsentRequired`) and the
+unsigned-request path (`identity.LoginRequired`) live inside, so it could never observe either one
+-- and this slice exists specifically to exercise both (its new H1 state IS the consent gate).
+Each person in the sweep is a brand-new `TestClient` (its own cookie jar) signed in with its own
+invented `sub`, so Cuenta Duna assigns it a real, fresh person id -- never 1, exactly as a second
+hosted sign-up would get one.
+
+**People**: reused directly from `tests/test_estados_vacios.py`'s own seed builders (A, B, C, D,
+D2, E, F), each now taking an optional `pid` -- the row Cuenta Duna's sign-in already created --
+instead of making its own. Two states only hosted mode has: H1 (signed in, consent not yet
+accepted) and H2 (signed in, consented, Garmin never connected). Each of the 9 states in both
+Spanish and English, for 18 signed-in persons, plus one unsigned pass and person 1 -- populated in
+the same database with a distinctive invented display name, goal title and habit name
+(`ZZ1-PERSONA-UNO-MARCADOR`, `ZZ1-META-UNO-MARCADOR`, `ZZ1-HABITO-UNO-MARCADOR`) that no other
+person in this sweep ever shares a household or goal with, so their appearance on anyone else's
+page is unambiguously a leak.
+
+**The sweep**: every GET route `tests/_rutas.rutas_planas` finds, including the seven hosted-only
+ones, for every one of the 19 person-passes (18 signed-in + 1 unsigned) -- 342 (route, person)
+calls in total (every GET route in the app times the 19 passes; some are skipped per person when a
+`{day}`/`{goal_id}` parameter has no id to substitute, matching ESTADOS-VACIOS-1's own rule). Same
+assertions as ESTADOS-VACIOS-1 (no 500, the documented status, the five-word leak regex plus the
+four Jinja/SVG literals plus the `<polyline` under-2-points check on every 200 HTML page), plus:
+no page for anyone other than person 1 ever contains one of person 1's three markers; the unsigned
+pass answers its documented status on every route and never 200 with data; H1 is redirected (303)
+to `/privacidad/consentimiento` on every route except that one itself (which it reaches, 200,
+since the consent screen is explicitly exempt from its own gate); every one of the seven
+hosted-only routes was actually exercised (never silently skipped, never still 404) and the three
+whose own correct behaviour CAN be 200 (`/garmin`, `/ajustes/dispositivos`,
+`/privacidad/consentimiento`) answered 200 for at least one person.
+
+**No fix was needed.** The sweep found zero crashes and zero raw-value or cross-person leaks --
+every hosted route this slice's approval (`ORCH-CARLOS-DELEGATES-TIER-1-1`) asked to guard already
+answers its own GET correctly for a second, fresh, unconsented or newly-consented person.
+
+**Deviation from the spec's literal wording** (`deviations`, recorded here too): the spec's step 3
+asked to assert "each hosted-only route was rendered at least once with 200 for some person." Four
+of the seven's own DOCUMENTED, correct behaviour is never 200: `/login` and `/login/cuenta/start`
+always redirect (303) to the issuer regardless of who asks; `/login/cuenta/callback` with no real
+authorization-code round trip is always refused (400, `cuenta.FlowRefused`); `/api/vida/semana`
+with no device key is always 401. Measured directly against the running app rather than assumed:
+this slice asserts those four were exercised and never 404 (proving they are no longer the LOCAL
+sweep's blanket 404), and asserts 200 specifically for the three that can actually answer it
+(`/garmin`, `/ajustes/dispositivos`, `/privacidad/consentimiento`).
+
+**Isolation**: `tests/_isolate.py` imported first in the new test module, exactly as every other
+test module here does; the new module writes only to its own fresh temp database (via
+`CuentaRpTestCase.setUp`'s `config.DB_PATH` redirect), never to `BODY_HOME`. No real health
+figure, password, token or secret appears anywhere in the new module, this entry, or any commit.
+
+**Follow-ups reported, not built** (structure and proposed behaviour only, ranked -- no new
+customer wording or layout, per the approval's own bound):
+1. `/privacidad/consentimiento` for H1: the consent screen itself is the one page a newly
+   signed-in, unconsented person can always reach, and this sweep confirms it renders 200 -- but
+   this slice did not inspect whether its own copy gives that person enough to decide (what Body
+   collects, why, and the exact two actions: accept or decline-and-sign-out). Proposed: a short,
+   explicit "what this means" list above the two buttons, reusing existing privacidad.* strings
+   where any already say this.
+2. `/garmin` for H2 (consented, watch never connected): renders 200 with the existing "No
+   conectado" + email/password form -- functionally fine, structurally a dead-end screen with no
+   indication of what happens after connecting (first data arrives within minutes per
+   BODY-PRIMER-PULL-1, but H2's own page never says so before they try). Proposed: reuse
+   `sync.hosted_connected`'s sibling copy, or a one-line "first data arrives within minutes" hint,
+   on the pre-connection form itself.
+3. `/ajustes/dispositivos` for any newly-consented person with zero device keys: renders 200 with
+   an empty list and the "create a key" form -- no explanation of what a device key is FOR (the PC
+   sync script) before the person is asked to name one. Proposed: a one-line explainer above the
+   form, likely already covered by `ayuda`'s own tutorial for this screen (`tutoriales.py`) and so
+   possibly just a missing cross-link rather than new copy.
+
+**Gate**, once, foreground, on this slice's own merged tip: `.venv/Scripts/python.exe -m unittest
+discover tests -t .` -- `Ran 1356 tests in 168.372s ... OK (skipped=1)`.
+
+**Commits**: slice `430bd125140b5b6f17e47855c4f9177da50fe7ff` on `feat/body-estados-vacios-3`
+(base `main` at `2b35fd82a761df2340361e700ee01f977af67b78`), merge `ba23d664c3f11b0e115394602b0b533bc8771e4e`
+into `main` (merge strategy `ort`, no conflicts). Tree identity proven: merge tree
+`2249eadc85ddc0457364a9e3ab50a011b37b08a6` equals the branch tip's own tree exactly. `main` left
+checked out, `git status --porcelain` empty (before this ledger entry's own commit).
