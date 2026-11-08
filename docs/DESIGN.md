@@ -135,6 +135,14 @@ comes from; the Body-specific reading is in *italics*. When a new rule arrives f
     any other, loaded through `static_url` the same way, so it follows this same rule with no special case.
     `/sw.js` keeps `Cache-Control: no-cache` on purpose (it is not a hashed `/static` URL -- a stale service
     worker would keep serving an old cache name).
+    (BODY-FUENTE-CACHE-1): a file under `/static/fonts/` gets the forever `Cache-Control` with or without
+    `v`, because it is immutable by its path alone -- `tests/test_fuentes_propias.py` pins every file under
+    `body/static/fonts/` by sha256, so an in-place change already fails the gate. This is what lets the
+    self-hosted font (BODY-FUENTES-PROPIAS-1) get the same forever-cache as a versioned `/static` asset even
+    though it carries no `v`: it is referenced from `body.css`'s `@font-face` `src:url(...)`, a static file,
+    not a template, and `base.html`'s preload link must keep that exact same URL or the preload is wasted. A
+    font update arrives under a new directory or file name, its hash pinned alongside the old one, with
+    `body.css` and every preload link changed together to point at it.
 14. **Assistant, to agent-ui-v1** (Carlos asked for it like the other apps, 2026-11-06) (one tap, 3 sizes, proposes → you confirm → undo). Built with parity: every
     screen ships with the assistant's read tool.
 

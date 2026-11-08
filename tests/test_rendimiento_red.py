@@ -133,32 +133,39 @@ class AssistantStreamKeepsStreamingTest(_RendimientoTestCase):
 
 class StaticCachingTest(_RendimientoTestCase):
     """(2): a /static request whose `v` equals the current hash is cached forever; any other `v`
-    (absent, stale, or foreign) revalidates instead, for body.css, a script, and the self-hosted
-    woff2 font."""
+    (absent, stale, or foreign) revalidates instead, for body.css and a script. A font under
+    /static/fonts/ (BODY-FUENTE-CACHE-1) is immutable by path alone -- cached forever with or
+    without `v`, since it has none to carry."""
 
-    PATHS = (
+    VERSIONED_PATHS = (
         "body.css",
         "charts.js",
-        "fonts/hanken-grotesk/hanken-grotesk-latin-wght-normal.woff2",
     )
+    FONT_PATH = "fonts/hanken-grotesk/hanken-grotesk-latin-wght-normal.woff2"
 
     def test_current_v_is_cached_forever(self):
-        for path in self.PATHS:
+        for path in self.VERSIONED_PATHS + (self.FONT_PATH,):
             r = self.client.get(f"/static/{path}?v={comun.STATIC_HASH}")
             self.assertEqual(r.status_code, 200, path)
             self.assertEqual(r.headers.get("cache-control"), "public, max-age=31536000, immutable", path)
 
-    def test_missing_v_revalidates(self):
-        for path in self.PATHS:
+    def test_missing_v_revalidates_except_the_font(self):
+        for path in self.VERSIONED_PATHS:
             r = self.client.get(f"/static/{path}")
             self.assertEqual(r.status_code, 200, path)
             self.assertEqual(r.headers.get("cache-control"), "no-cache", path)
+        r = self.client.get(f"/static/{self.FONT_PATH}")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.headers.get("cache-control"), "public, max-age=31536000, immutable")
 
-    def test_stale_v_revalidates(self):
-        for path in self.PATHS:
+    def test_stale_v_revalidates_except_the_font(self):
+        for path in self.VERSIONED_PATHS:
             r = self.client.get(f"/static/{path}?v=0000000000")
             self.assertEqual(r.status_code, 200, path)
             self.assertEqual(r.headers.get("cache-control"), "no-cache", path)
+        r = self.client.get(f"/static/{self.FONT_PATH}?v=0000000000")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.headers.get("cache-control"), "public, max-age=31536000, immutable")
 
     def test_sw_js_keeps_no_cache(self):
         r = self.client.get("/sw.js")

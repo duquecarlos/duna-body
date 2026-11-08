@@ -61,6 +61,9 @@ class _CaminoActualMiddleware:
             comun._RUTA_ACTUAL.reset(token)
 
 
+_FUENTES_DIR = (HERE / "static" / "fonts").resolve()
+
+
 class _StaticConCache(StaticFiles):
     """Static files already carry a content hash in their own URL (comun.static_url's `?v=`), so a
     request whose `v` matches comun.STATIC_HASH right now can be cached forever -- that URL can
@@ -71,14 +74,24 @@ class _StaticConCache(StaticFiles):
     `file_response` alone covers both outcomes: it runs before the mount decides between the full
     FileResponse and a 304 NotModifiedResponse, and NotModifiedResponse already carries
     Cache-Control through from the headers set here (starlette.staticfiles.NotModifiedResponse.
-    NOT_MODIFIED_HEADERS)."""
+    NOT_MODIFIED_HEADERS).
+
+    BODY-FUENTE-CACHE-1: a file under /static/fonts/ gets the forever-cache with or without `v`.
+    The self-hosted font (BODY-FUENTES-PROPIAS-1) has no `v` to carry -- it is referenced from
+    body.css's @font-face `src:url(...)`, a static file, not a template, and base.html's preload
+    must keep that same literal URL or the preload is wasted -- but it is immutable anyway: every
+    file under body/static/fonts/ has its sha256 pinned in tests/test_fuentes_propias.py, so an
+    in-place change already fails the gate, and a new font version ships under a new path with its
+    own pinned hash."""
 
     def file_response(self, *args, **kwargs):
         response = super().file_response(*args, **kwargs)
         scope = args[2] if len(args) > 2 else kwargs["scope"]
+        full_path = args[0] if args else kwargs["full_path"]
         v = parse_qs(scope.get("query_string", b"").decode("latin-1")).get("v", [None])[0]
+        inmutable = v == comun.STATIC_HASH or Path(full_path).resolve().is_relative_to(_FUENTES_DIR)
         response.headers["cache-control"] = (
-            "public, max-age=31536000, immutable" if v == comun.STATIC_HASH else "no-cache"
+            "public, max-age=31536000, immutable" if inmutable else "no-cache"
         )
         return response
 
