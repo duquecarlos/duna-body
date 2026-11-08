@@ -9488,3 +9488,123 @@ spec's own approval reason covers the merge). No password, token, session secret
 figure was read, printed, stored or logged by this slice -- every figure above is a statement count
 or a day/window boundary, never a health value. `git status --porcelain` is empty on `main` at the
 merge commit, before this ledger entry's own commit.
+
+## BODY-RENDIMIENTO-3 -- the app compresses pages in transit, /static is cached forever by its hash
+
+Surface (BODY-RENDIMIENTO-OBS-1, measured by the orchestrator on `main` `7febf4f`): the LAN gets
+every page uncompressed (only the hosted copy is compressed, by Caddy); `/static` files already
+carry a content hash in their own URL but the mount still answers only with ETag/Last-Modified, so
+every page view makes a conditional request for `body.css`, the scripts and the font. Decision
+recorded there and binding here: Tendencias' own markup is NOT changed in this slice.
+
+**Middleware, `body/web.py`.** Starlette (installed) `1.10.0`. `GZipMiddleware` (from
+`starlette.middleware.gzip`, re-exported by `fastapi.middleware.gzip`), `minimum_size=1000`, added
+between `_CaminoActualMiddleware` and `SeguridadMiddleware`'s `add_middleware` calls. Starlette
+prepends each `add_middleware` call so the LAST one added ends up OUTERMOST (the existing comment
+on `RequestLogMiddleware` already said so); the result, outer to inner:
+`RequestLogMiddleware -> SeguridadMiddleware -> GZipMiddleware -> _CaminoActualMiddleware -> routes`.
+GZip sits next to the routes and the `/static` mount so it compresses the actual bytes they
+produce; `SeguridadMiddleware` wraps it, so its send-wrapper appends the fixed security-header set
+(`X-Content-Type-Options`, `Referrer-Policy`, `X-Frame-Options`, the CSP, `Cross-Origin-Opener-
+Policy`) onto whatever GZip already sent (`Content-Encoding`, `Vary`, a recomputed
+`Content-Length`) -- different header names, no conflict, proven by
+`SecurityHeadersSurviveGzipTest`. `RequestLogMiddleware` stays outermost, unchanged invariant (a
+`SeguridadMiddleware` refusal still reaches the log).
+
+**Streaming exclusion (1a).** The assistant's answer is `body/rutas/asistente.py`'s
+`asistente_preguntar` (`POST /asistente/preguntar`), a `StreamingResponse` with
+`media_type="text/event-stream"`. This installed Starlette version's `GZipMiddleware` already
+excludes `text/event-stream` (and `font/woff2`) by default
+(`DEFAULT_EXCLUDED_CONTENT_TYPES`, `starlette/middleware/gzip.py`), so no Body-specific exclusion
+code was written -- the cleanest means available was to rely on the default rather than add to or
+override it. Read from `starlette/middleware/gzip.py`'s `IdentityResponder.send_with_compression`:
+when the content type is excluded, every `http.response.start` and `http.response.body` message is
+forwarded with `await self.send(message)` immediately, one inbound chunk to one outbound message,
+same as an uncompressed response -- never buffered. `AssistantStreamKeepsStreamingTest` proves this
+through the real app and the `demo` provider's two-round, three-event exchange (`herramienta`,
+`texto`, `fin`): the response carries no `Content-Encoding`, and the three events arrive as 3 or
+more separate raw chunks (`r.iter_raw()`), not one chunk at the end.
+
+**Compression (1b/1c), measured** (demo data built for this slice: 150 days times every
+`comun.TREND_KEYS` and `TREND_GROUPS` key, invented values, no real health figure):
+
+| route | plain | gzip | ratio |
+|---|---|---|---|
+| `/trends?r=90` | 555,555 B | 26,848 B | 0.048 |
+| `/trends` (all) | 58,973 B | 4,811 B | 0.082 |
+| `/trends?m=2026-02` | 192,495 B | 10,576 B | 0.055 |
+
+(figures measured in-process against this slice's own fixture, not the orchestrator's surface
+fixture -- same property, different data, so the absolute bytes differ from the surface's
+459 KB/174 KB/45 KB; both agree the page is highly repetitive and compresses many-fold.)
+`TrendsGzipRoundTripTest` proves, against the real app: a request carrying `Accept-Encoding: gzip`
+gets back `Content-Encoding: gzip` and a `Vary` header naming `Accept-Encoding`, and
+`gzip.decompress` of the raw response equals the plain body byte for byte; a request that sends an
+empty `Accept-Encoding` gets the plain body straight, with no `Content-Encoding` at all.
+
+**Hosted, Caddy (1d), no network -- from `encode gzip`'s documented behaviour**
+(`deploy/host/Caddyfile.body:6`): Caddy's `encode` directive does not apply its own compression to
+a response that already carries a `Content-Encoding` header -- it is written to avoid double-
+encoding an upstream that already compressed, not to compress on top of it. Since Body's own
+`GZipMiddleware` already sets `Content-Encoding: gzip` on a compressible response before Caddy
+ever sees it, Caddy passes that response through unchanged; it only compresses the (rarer)
+response Body left uncompressed (below `minimum_size`, or an excluded content type that Caddy's
+own default exclusions do not also cover).
+
+**BREACH oracle, decided.** The question: what secret, if any, sits in a Body page next to
+attacker-reflected input, now that the page is compressed (Body has no CSRF token in forms; same-
+origin checks are by Origin/Host, `body/seguridad.py`). Searched the one genuine secret any Body
+page ever renders: `body/rutas/dispositivos.py`'s `dispositivos_crear` (`POST
+/ajustes/dispositivos`) puts a freshly-minted device bearer key into `dispositivos.html`'s
+`new_key`. It is not a BREACH target: (1) it is a brand-new, single-use secret each time the route
+runs, not a stable one repeated across many probes -- BREACH needs the SAME secret present across
+many requests while only the attacker-controlled part varies; (2) the route is a POST, an unsafe
+method, refused cross-site before any handler runs by `SeguridadMiddleware`'s Origin/Referer check,
+so an attacker cannot trigger it from another origin at all; (3) its response carries
+`Cache-Control: no-store`; (4) no other part of that same response reflects open-ended attacker-
+chosen text next to the key -- the only user-supplied string on the page (the device's own name)
+is typed by the account holder on their own page, not a remote attacker's repeatable input. No
+other Body page echoes free-form, attacker-controlled text into rendered markup at all (query
+params that reach templates are dates/ids, validated and narrow, never raw text). Decision: no
+route is excluded from compression for BREACH; none carries the shape BREACH needs.
+
+**Static caching (2), `body/web.py`'s `_StaticConCache(StaticFiles)`**, the file where the `/static`
+mount lives: overrides `file_response` only, which runs before the base class decides between the
+full `FileResponse` and a 304 `NotModifiedResponse` -- setting `Cache-Control` there covers both,
+since `NotModifiedResponse.NOT_MODIFIED_HEADERS` already carries `cache-control` through. A request
+whose `v` query parameter equals the CURRENT `comun.STATIC_HASH` gets
+`public, max-age=31536000, immutable`; any other `v` (absent, stale, or foreign) gets `no-cache`,
+falling back to the ETag/Last-Modified revalidation the mount already did. `/sw.js` is untouched
+(still `no-cache`, `body/rutas/pwa.py`) -- it is not a hashed `/static` URL. The web app manifest
+(`manifest.webmanifest`) is a plain `/static` file loaded through `static_url` like any other
+(`base.html`'s `<link rel="manifest">`), so it gets the same rule automatically, no special case.
+`StaticCachingTest` proves all three outcomes for `body.css`, `charts.js` and the self-hosted
+`.woff2` font. Every template's `static_url` output already uses the current hash by construction
+(`static_url` appends `comun.STATIC_HASH` itself, pinned by `tests/test_static_version.py`'s
+existing `StaticUrlTest`) -- nothing to extend there; this slice re-ran that module to confirm
+(green).
+
+**docs/DESIGN.md**: a new `(BODY-RENDIMIENTO-3)` paragraph under rule 13, next to the existing
+`static_url`/CSP material -- the app compresses pages itself (so the LAN gets it too), the
+streaming exclusion is Starlette's default, the `/static` caching rule, and the manifest following
+the same rule with no special case.
+
+**Gate**, once, foreground, on the merge's tree: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -- `Ran 1343 tests in 137.170s ... OK (skipped=1)`. 1343 = BODY-RENDIMIENTO-2's own
+floor of 1334 plus this slice's 9 new tests; reconciled, not re-derived.
+
+**Merge.** `git merge --no-ff feat/body-rendimiento-3` onto `main` (prior tip
+`7febf4f6bd0f4b09444f49f881415aa96834db01`), producing merge commit
+`30e29b139a917abcb2bcdd2b99d2a56470d83ed1`. The merge tree and the branch tree are the same tree --
+`HEAD^{tree}` and `feat/body-rendimiento-3^{tree}` both equal
+`5d15be9e6eab47d8726022e4cfdf2b3211d1cfd0`, so the diff between them is empty and the gate above,
+run on the slice commit `14aacced67f098a5b350b1865075e77e0497314d` whose tree is this same tree,
+stands for the merge without a second run.
+
+No schema or migration change, no customer-facing string or layout change, no cross-repo contract
+change -- merge policy A applies, merged on green without waiting for further approval (this
+spec's own approval reason covers the merge; it also stated it checks the live headers after the
+restart, which is outside this slice -- the orchestrator's own step). No password, token, session
+secret or real health figure was read, printed, stored or logged by this slice -- every figure
+above is a byte count, a ratio, or a test count, never a health value. `git status --porcelain` is
+empty on `main` at the merge commit, before this ledger entry's own commit.
