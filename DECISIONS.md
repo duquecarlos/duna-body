@@ -5176,3 +5176,98 @@ strings, a new "for me"/"for both" radio, the shared-with-household line, the me
 by a second person) -- merge policy A's customer-bytes condition -- and this spec's approval-reason says
 in words to stop here for the orchestrator's 375 px browser check on the demo. Branch `feat/body-hogar
 -miembro-1` left as is, gate green, nothing merged into `main`.
+
+## BODY-HOGAR-MIEMBRO-1-M -- three fixes from the orchestrator's review and browser measurement of
+BODY-HOGAR-MIEMBRO-1 (2026-11-07) (GATE_RED, not merged)
+
+Carries the three fixes the orchestrator's AWAITING_APPROVAL review of `BODY-HOGAR-MIEMBRO-1` asked for,
+on top of that slice's unchanged tip (`2c588cb`). `main` had not moved from the branch's base (`c72dc09`),
+so no merge-in was needed before starting.
+
+**Fix 1 -- a household goal is a milestone in v1.** A metric goal's verdict and chart are judged on its
+own `baseline_value`, which only its creator has (orchestrator ledger `BODY-HOGAR-PLAN-1` (cont.)): a
+member reading a shared metric goal would be judged on the creator's numbers without knowing it. Rather
+than carry per-member baselines (a v2 question), this slice closes the hole by making a household goal a
+milestone, always: `goals.propose(...)` now raises `ValueError` (writing nothing) for `kind='metric'` with
+`visibility='household'`. `POST /goals/new` no longer trusts the form's `visibility` field for a metric
+goal -- the server always stores `visibility='private'`, `hogar_id=NULL` for `kind='metric'`, whatever the
+form sent (so a tampered or JavaScript-less submission still can't create a shared metric goal).
+`goal_new.html`'s visibility card now sits inside `<fieldset class="milestone-only">`, the same CSS
+`:has()` mechanism `metric-only`/`milestone-only` already used (no JavaScript) -- so the household choice
+is only ever shown while "Hito / aventura" is selected -- with one new line under the select,
+`goals.visibility_milestone_note` ("Las metas compartidas son hitos: cada quien lleva sus propios
+números." / "Shared goals are milestones: each person keeps their own numbers."). `goals.goal_access` and
+`goals.goal_scope_sql`'s 'member' branch now additionally require `kind = 'milestone'`, so a goal that was
+already marked `visibility='household'` with `kind='metric'` before this slice (the only way one can still
+exist, since `propose` now refuses to create one) stays creator-only on every surface -- Metas' list, the
+goal page (404), Hoy's habits, and habit check-off (404) -- forever. Both functions' docstrings cite
+`BODY-HOGAR-PLAN-1 (cont.)` for the reason. Grepped `body/agente/` for any path that creates or edits a
+goal's `visibility` or `kind`: only `herramientas._proponer_meta` -> `propuestas._escribir_aplicacion`'s
+`proponer_meta` branch creates a goal, and it never passes `visibility` (stays the default `'private'`) or
+a `kind` other than the default `'metric'` -- so no assistant path could ever hit the refusal, and none
+needed changing.
+
+**Fix 2 -- the list card.** Metas' list card for a household goal (active, proposed, and inside the
+archive `<details>`) now carries the same quiet line the goal page already showed: `goals.shared_by_you`
+for the creator, `goals.shared_by` (names the creator) for a member. Computed in the route -- a new
+`web._shared_line(conn, t, g, person_id)` -- not the template; `goal_detail` was refactored to call the
+same helper instead of repeating the creator/member branch inline.
+
+**Fix 3 -- another member's habit row.** `goal.html`'s "not mine" branch used to draw a `<span
+class="box">` styled `opacity:.3;border-style:dashed` -- still the same 20×20, bordered, rounded-corner
+shape as a real checkbox, just faint, which reads as a disabled control rather than "not yours to check".
+It is now an empty `<span class="boxbtn-spacer">` (new rule in `body.css`: same `width:28px;min-height:44px`
+as `.boxbtn` for row alignment, no border, no background, no `cursor:pointer`) -- the row stays aligned
+with the others, "De Ana" still names whose habit it is, and nothing checkbox- or button-shaped remains.
+
+**Strings, es/en:** one new key, `goals.visibility_milestone_note` ("Las metas compartidas son hitos: cada
+quien lleva sus propios números." / "Shared goals are milestones: each person keeps their own numbers.").
+No existing string's text changed.
+
+**Tests.** `tests/test_goals.py`: `HouseholdMetricRefusedTest` (propose refuses metric+household and
+writes nothing; milestone+household still allowed), `LegacyMetricHouseholdRowTest` (a goal updated to
+`visibility='household'` after creation, bypassing `propose`, stays creator-only via `goal_access` and
+`goal_scope_sql`). `tests/test_goals_web.py`: `MetricHouseholdFormTest` (`POST /goals/new` with
+`kind=metric&visibility=household` stores private; `kind=milestone&visibility=household` still stores
+household), `GoalNewFormMilestoneOnlyVisibilityTest` (the visibility card sits in `milestone-only`, with
+its note), `ListCardSharedLineTest` (the list card's shared line for creator and member, es and en),
+`LegacyMetricHouseholdRowWebTest` (a legacy metric household row is unreachable on `/goals`, `/goals/<id>`,
+`/` (Hoy), and `/habits/<id>/check`), `OtherMemberHabitRowTest` (no `type="checkbox"` or `<button` near
+another member's habit row). **Restored subjects, no case deleted:** four existing tests whose subject was
+a metric household goal were changed to a milestone household goal, keeping the same thing under test --
+`tests/test_hogar_miembro_1.py::OwnWeeklyCheckTest.test_viewer_sees_their_own_history_not_the_creators`
+(the viewer's own weekly figure vs. the creator's, now habits_done/due instead of metric_avg),
+`tests/test_hogar_miembro_1.py::PrivacyTest.test_other_members_figures_are_absent` (no other member's
+figure leaks, now habit-check counts instead of metric averages),
+`tests/test_goals.py::HouseholdGoalCheckTest.test_two_members_each_get_their_own_goal_check` (two members,
+two independent `goal_check` rows, now from habit checks instead of metric readings),
+`tests/test_goals_web.py::HouseholdGoalDetailTest.test_member_check_shown` (unchanged in substance, just
+`kind='milestone'` instead of the implicit metric default).
+
+**Found, not fixed: two more tests outside this spec's `touches` have the same subject.**
+`tests/test_vida_export.py::VidaExportTest.test_goal_checks_for_shared_household_goals` (line 93) and
+`tests/test_privacidad.py::DeleteAllTest.test_right_word_deletes_every_row_of_a_and_takes_bs_check_on_as_
+shared_goal` (line 365) both call `goals.propose(...)` with `visibility='household'` and the default
+`kind='metric'`, exactly the combination Fix 1 refuses. Neither file is in this spec's `touches:`, so
+neither was edited -- widening `touches` is not this worker's call to make. Both now raise `ValueError` at
+that call and the suite reports them as errors. A follow-up slice with `touches:` widened to include these
+two files should restore their subjects to a milestone household goal the same way the four tests above
+were restored (habit checks in place of metric readings; neither test's core assertion -- a shared goal's
+`goal_check` rows exist and export correctly; a shared goal's rows cascade-delete and a co-member's check on
+it is taken over -- depends on the goal being a metric kind).
+
+**Gate, run once, foreground, exact command** `.venv/Scripts/python.exe -m unittest discover tests -t .`:
+
+    Ran 1008 tests in 157.764s
+    FAILED (errors=2, skipped=1)
+
+1008 = the prior entry's 999 (then 1 skipped) plus this slice's 9 new tests (3 in `tests/test_goals.py`, 6
+in `tests/test_goals_web.py`); no test was removed. The 2 errors are exactly the two tests named above,
+reproduced individually before this full run to confirm they are this slice's own refusal firing on an
+out-of-scope call site, not a flake or an unrelated regression; every other test, including this slice's 9
+new ones and the 4 restored ones, passed.
+
+**Stopped GATE_RED, not merged.** The gate is red on the branch's final tree for a reason this worker
+cannot fix without writing to `tests/test_vida_export.py` and `tests/test_privacidad.py`, neither declared
+in this spec's `touches:`. Per the dispatch protocol, a red that cannot be fixed inside `touches:` stops
+here rather than widening scope. Branch `feat/body-hogar-miembro-1` left as is, nothing merged into `main`.
