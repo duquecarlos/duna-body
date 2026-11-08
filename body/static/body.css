@@ -82,6 +82,7 @@ a.card:active{background:var(--wash)}
 .chip.ok{background:color-mix(in srgb,var(--ok) 16%,transparent);color:var(--ok)}
 .chip.warn{background:var(--amber-tint);color:var(--amber-deep)}
 .chip.night{background:var(--night-tint);color:var(--night)}
+.chip.off{background:var(--wash);color:var(--ink2)}
 .bar{height:6px;background:var(--inset);border-radius:999px;overflow:hidden;margin:8px 0 4px}
 .bar span{display:block;height:100%;background:var(--body)}
 .plan{list-style:none;margin:0;padding:0}
@@ -103,7 +104,7 @@ form:has(input[name=kind][value=milestone]:checked) .milestone-only{display:bloc
 .more{display:block;text-align:center;padding:11px;font-weight:600;font-size:14.5px;border:1px solid var(--soft);border-radius:10px;background:var(--card);min-height:44px}
 @media (hover:hover){.more:hover{background:var(--wash);border-color:var(--line)}}
 .note{color:var(--muted);font-size:14px}
-.ayuda-ctx{display:block;text-align:right;font-size:12.5px;font-weight:600;color:var(--ink2);text-decoration:underline;text-underline-offset:3px;margin-bottom:6px}
+.ayuda-ctx{display:flex;justify-content:flex-end;align-items:center;min-height:44px;font-size:12.5px;font-weight:600;color:var(--ink2);text-decoration:underline;text-underline-offset:3px;margin-bottom:6px}
 .confirm-actions{display:flex;gap:8px;margin-top:12px}
 .confirm-actions form{flex:1}
 .confirm-actions .btn{width:100%}
@@ -142,6 +143,7 @@ table.parts th:first-child{padding-left:0}
 .btn.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
 .seg{display:inline-flex;gap:6px;flex-wrap:wrap}
 .foot{margin-top:28px;text-align:center;font-size:12.5px;color:var(--muted)}
+.foot a{display:inline-flex;align-items:center;min-height:44px;text-decoration:underline}
 .stage{display:flex;height:10px;border-radius:999px;overflow:hidden;margin:8px 0 6px;background:var(--inset)}
 .stage i{display:block;height:100%}
 .legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12.5px;color:var(--ink2)}

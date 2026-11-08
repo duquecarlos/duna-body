@@ -111,7 +111,7 @@
 <p class="k" style="margin-top:-4px">{{ t('shifts.strip_hint') }}</p>
 <div class="strip">
   {% for c in strip %}
-  <a class="strip-cell {{ c.band }}" href="/day/{{ c.day }}" aria-label="{{ c.label }}">{% if c.score is not none %}{{ c.score }}{% else %}—{% endif %}</a>
+  <a class="strip-cell {{ c.band }}" href="/day/{{ c.day }}" aria-label="{{ c.label }}">{% if c.score is not none %}<span class="approx">≈</span>{{ c.score }}{% else %}—{% endif %}</a>
   {% endfor %}
 </div>
 <div class="strip-legend">

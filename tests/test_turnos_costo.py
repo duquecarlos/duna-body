@@ -372,7 +372,9 @@ class HeroQuestionsTest(unittest.TestCase):
         self.assertIn(_t("es", "shifts.hero_q"), r.text)
         self.assertIn(_t("es", "shifts.cost_title"), r.text)
         self.assertNotEqual(_t("es", "shifts.hero_q"), _t("es", "shifts.cost_title"))
-        self.assertEqual(r.text.count("≈"), 1)  # the big figure, not repeated in the sentence below it
+        hero = re.search(r'<a class="card est"[^>]*>.*?</a>', r.text, re.S)
+        self.assertIsNotNone(hero)
+        self.assertEqual(hero.group(0).count("≈"), 1)  # the big figure, not repeated in the sentence below it
 
 
 class StripBandsTest(unittest.TestCase):

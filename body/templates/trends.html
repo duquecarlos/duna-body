@@ -19,7 +19,7 @@
   <a class="btn{% if r == x %} on{% endif %}" href="/trends{% if qs %}?{{ qs|join('&') }}{% endif %}"{% if r == x %} aria-current="page"{% endif %}>{{ t('trends.r.' + x) }}</a>
   {% endfor %}
 </div>
-{% if month_title %}<p style="margin:0 0 12px"><a href="/trends">{{ t('trends.back_hist') }}</a></p>{% endif %}
+{% if month_title %}<p style="margin:0 0 12px"><a class="taplink" href="/trends">{{ t('trends.back_hist') }}</a></p>{% endif %}
 
 {% macro render_card(c) %}
 <div class="card" id="{{ c.key }}">

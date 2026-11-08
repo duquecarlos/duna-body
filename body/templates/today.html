@@ -43,7 +43,7 @@
         <input type="hidden" name="done" value="{{ '0' if h.checked else '1' }}">
         <button type="submit" class="boxbtn" aria-label="{{ h.title }}"><span class="box{% if h.checked %} done{% endif %}"></span></button>
       </form>
-      <div>{{ h.title }}{% if h.context %} <span class="chip night">{{ h.context }}</span>{% endif %}
+      <div>{{ h.title }}{% if h.context %} <span class="chip {{ h.context_cls }}">{{ h.context }}</span>{% endif %}
         <div class="k">{{ h.goal_title }}</div>
       </div>
     </li>
@@ -69,14 +69,12 @@
   <ul class="plan" style="margin-top:6px">
   {% for item in hogar_compartido %}
     <li style="display:block">
-      <div class="k">{{ item.name }} · {{ item.metric_label }}</div>
+      <div class="k">{{ item.metric_label }}</div>
       {% if item.sin_dato %}
-      <div class="note">{{ t('today.hogar.sin_dato') }}</div>
+      <div class="note">{{ item.name }} · {{ t('today.hogar.sin_dato') }}</div>
       {% else %}
-      <div class="row">
-        <span class="fig">{{ item.value_text }}</span>
-        <span class="k">{{ item.day_text }}</span>
-      </div>
+      <div class="fig">{{ item.value_text }}</div>
+      <div class="note">{{ item.procedencia }}</div>
       {% endif %}
     </li>
   {% endfor %}
