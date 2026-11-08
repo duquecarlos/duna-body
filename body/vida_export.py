@@ -19,18 +19,20 @@ import statistics
 import sys
 from datetime import date, datetime, timedelta, timezone
 
-from . import config, cuenta, db, household, turnos_costo
+from . import config, cuenta, db, fechas, household, turnos_costo
 
 PERSON_KEY = "carlos"  # vida-v1: local person key until Body has Cuenta sign-in
 WEEK_METRICS = ["readiness", "sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake", "stress_avg",
                 "steps", "intensity_minutes"]
 
 
-def current_week_monday(today: date | None = None) -> date:
-    """The week `--current` picks: Monday of the week `today` falls in. body/web.py's
-    GET /api/vida/semana reuses this for its own default, rather than re-deriving it."""
-    today = today or date.today()
-    return today - timedelta(today.weekday())
+def current_week_monday(*, hoy: date) -> date:
+    """The week `--current` picks: Monday of the week `hoy` falls in. `hoy` is required and
+    keyword-only (ruling BODY-FECHA-FUTURA-1-M): a silent `date.today()` default is the SERVER's
+    own date, never the right stand-in for a particular person's "today". The local CLI passes
+    its own machine's date; body/rutas/dispositivos.py's GET /api/vida/semana passes the route's
+    own local-time clock (comun._today_local(person))."""
+    return fechas.lunes_de(hoy)
 
 
 def vida_person(conn, person_id: int) -> str:
@@ -114,9 +116,9 @@ def main(argv=None) -> int:
     if a.week:
         monday = date.fromisoformat(a.week)
     elif a.current:
-        monday = current_week_monday(today)
+        monday = current_week_monday(hoy=today)
     else:
-        monday = today - timedelta(today.weekday() + 7)
+        monday = fechas.lunes_de(today) - timedelta(days=7)
     if monday.weekday() != 0:
         print("--week must be a Monday")
         return 1

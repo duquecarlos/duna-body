@@ -80,6 +80,11 @@ class ProveedorError(Exception):
 
 
 class Proveedor:
+    def __init__(self, modelo: str, api_key: str, transporte=None):
+        self.modelo = modelo
+        self.api_key = api_key
+        self._transporte = transporte or self._post_real
+
     def responder(self, sistema: str, mensajes: list[dict], herramientas: list[dict]) -> Respuesta:
         raise NotImplementedError
 
@@ -139,11 +144,6 @@ def _desde_anthropic(data: dict) -> Respuesta:
 
 class Anthropic(Proveedor):
     URL = "https://api.anthropic.com/v1/messages"
-
-    def __init__(self, modelo: str, api_key: str, transporte=None):
-        self.modelo = modelo
-        self.api_key = api_key
-        self._transporte = transporte or self._post_real
 
     def _post_real(self, payload: dict) -> dict:
         try:
@@ -221,11 +221,6 @@ def _desde_openai(data: dict) -> Respuesta:
 class OpenAI(Proveedor):
     URL = "https://api.openai.com/v1/responses"
 
-    def __init__(self, modelo: str, api_key: str, transporte=None):
-        self.modelo = modelo
-        self.api_key = api_key
-        self._transporte = transporte or self._post_real
-
     def _post_real(self, payload: dict) -> dict:
         try:
             r = httpx.post(self.URL, json=payload, timeout=60.0,
@@ -301,11 +296,6 @@ def _desde_gemini(data: dict) -> Respuesta:
 
 
 class Gemini(Proveedor):
-    def __init__(self, modelo: str, api_key: str, transporte=None):
-        self.modelo = modelo
-        self.api_key = api_key
-        self._transporte = transporte or self._post_real
-
     def _url(self) -> str:
         return f"https://generativelanguage.googleapis.com/v1beta/models/{self.modelo}:generateContent"
 

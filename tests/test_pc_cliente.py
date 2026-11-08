@@ -15,13 +15,13 @@ import tempfile
 import unittest
 import urllib.error
 import urllib.request
-from datetime import timedelta
+from datetime import date
 from pathlib import Path
 from unittest import mock
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
-from body import config, conectar_pc, pc_cliente, subir_turnos, traer_semana, vida_export
+from body import config, conectar_pc, pc_cliente, subir_turnos, traer_semana
 
 TEST_KEY = "bdy_test-key-0123456789"
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "install-daily-sync.ps1"
@@ -353,31 +353,63 @@ class TraerSemanaTest(_TempHomeTestCase):
         return rc, buf.getvalue()
 
     def test_writes_the_exact_local_path_atomically_and_prints_only_it(self):
-        payload = {"area": "body", "metrics": [{"key": "body.resting_hr", "value": 58.0}]}
+        payload = {"area": "body", "week_start": "2026-11-02",
+                   "metrics": [{"key": "body.resting_hr", "value": 58.0}]}
 
         def abrir(req):
             return _FakeResponse(200, json.dumps(payload).encode())
 
         rc, out = self._run([], abrir)
         self.assertEqual(rc, 0)
-        monday = vida_export.current_week_monday()
-        expected = config.BODY_HOME / "vida" / f"body-week-{monday.isoformat()}.json"
+        expected = config.BODY_HOME / "vida" / "body-week-2026-11-02.json"
         self.assertEqual(out.strip(), str(expected))
         self.assertNotIn("58.0", out)
         self.assertTrue(expected.exists())
         self.assertEqual(json.loads(expected.read_text(encoding="utf-8")), payload)
         self.assertFalse(expected.with_name(expected.name + ".tmp").exists())
 
-    def test_explicit_week_uses_that_monday(self):
-        monday = vida_export.current_week_monday() - timedelta(days=7)
+    def test_names_the_file_from_the_payloads_week_start_even_when_different_from_the_requested_semana(self):
+        # BODY-TIER1-LIMPIEZA-1: the file name follows the SERVER's own answer, one source of
+        # truth -- never the PC's own idea of the week, even when --semana asked for another one.
+        requested = date(2026, 10, 26)
+        answered = date(2026, 11, 2)
 
         def abrir(req):
-            return _FakeResponse(200, b"{}")
+            return _FakeResponse(200, json.dumps({"week_start": answered.isoformat()}).encode())
+
+        rc, out = self._run(["--semana", requested.isoformat()], abrir)
+        self.assertEqual(rc, 0)
+        expected = config.BODY_HOME / "vida" / f"body-week-{answered.isoformat()}.json"
+        self.assertEqual(out.strip(), str(expected))
+        self.assertFalse((config.BODY_HOME / "vida" / f"body-week-{requested.isoformat()}.json").exists())
+
+    def test_explicit_semana_still_sent_as_the_query_param(self):
+        monday = date(2026, 10, 26)
+        seen = {}
+
+        def abrir(req):
+            seen["url"] = req.full_url
+            return _FakeResponse(200, json.dumps({"week_start": monday.isoformat()}).encode())
 
         rc, out = self._run(["--semana", monday.isoformat()], abrir)
         self.assertEqual(rc, 0)
-        expected = config.BODY_HOME / "vida" / f"body-week-{monday.isoformat()}.json"
-        self.assertEqual(out.strip(), str(expected))
+        self.assertIn(f"semana={monday.isoformat()}", seen["url"])
+
+    def test_reply_without_week_start_refuses_and_writes_nothing(self):
+        def abrir(req):
+            return _FakeResponse(200, json.dumps({"area": "body"}).encode())
+
+        rc, out = self._run([], abrir)
+        self.assertEqual(rc, 1)
+        self.assertFalse((config.BODY_HOME / "vida").exists())
+
+    def test_reply_with_a_non_monday_week_start_refuses_and_writes_nothing(self):
+        def abrir(req):
+            return _FakeResponse(200, json.dumps({"week_start": "2026-11-03"}).encode())
+
+        rc, out = self._run([], abrir)
+        self.assertEqual(rc, 1)
+        self.assertFalse((config.BODY_HOME / "vida").exists())
 
     def test_401_stops_without_writing(self):
         def abrir(req):

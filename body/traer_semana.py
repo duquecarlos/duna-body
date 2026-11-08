@@ -13,7 +13,7 @@ import os
 import sys
 from datetime import date
 
-from . import config, errores, pc_cliente, vida_export
+from . import config, errores, pc_cliente
 
 VIDA_DIR_NAME = "vida"
 
@@ -49,7 +49,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"El servidor respondió con un error inesperado ({status}).")
         return 1
 
-    monday = date.fromisoformat(a.semana) if a.semana else vida_export.current_week_monday()
+    week_start = data.get("week_start") if isinstance(data, dict) else None
+    monday = None
+    if isinstance(week_start, str):
+        try:
+            candidato = date.fromisoformat(week_start)
+        except ValueError:
+            candidato = None
+        if candidato is not None and candidato.weekday() == 0:
+            monday = candidato
+    if monday is None:
+        print("El servidor no envió una semana válida (week_start).")
+        return 1
+
     out_dir = config.BODY_HOME / VIDA_DIR_NAME
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"body-week-{monday.isoformat()}.json"

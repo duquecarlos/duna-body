@@ -72,6 +72,28 @@ class AnthropicAdapterTest(unittest.TestCase):
         self.assertIn("2026-11-01", tool_result["content"])
 
 
+class ProveedorInitSharedTest(unittest.TestCase):
+    """BODY-TIER1-LIMPIEZA-1: Anthropic/OpenAI/Gemini construct positionally through the shared
+    Proveedor.__init__ -- no provider subclass defines its own anymore (they were byte-identical).
+    Demo keeps its own, different __init__ unchanged."""
+
+    def test_init_is_owned_by_the_base_class(self):
+        for cls in (cliente.Anthropic, cliente.OpenAI, cliente.Gemini):
+            self.assertIs(cls.__init__, cliente.Proveedor.__init__)
+
+    def test_positional_construction_sets_modelo_api_key_and_transporte(self):
+        def fake_transporte(payload):
+            return {}
+        for cls in (cliente.Anthropic, cliente.OpenAI, cliente.Gemini):
+            prov = cls("model-x", "key-x", fake_transporte)
+            self.assertEqual(prov.modelo, "model-x")
+            self.assertEqual(prov.api_key, "key-x")
+            self.assertIs(prov._transporte, fake_transporte)
+
+    def test_demo_keeps_its_own_different_init(self):
+        self.assertIsNot(cliente.Demo.__init__, cliente.Proveedor.__init__)
+
+
 class OpenAiAdapterTest(unittest.TestCase):
     def test_prompt_tokens_including_cached_is_normalised_to_disjoint_counts(self):
         # House shape (duna-lotes-api agente/proveedores/openai.py): /v1/responses, usage under

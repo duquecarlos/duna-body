@@ -546,39 +546,60 @@ class RouteModuleAttrReadGuardTest(unittest.TestCase):
         self.assertEqual(offenders, [], f"stale attribute read(s):\n" + "\n".join(offenders))
 
 
+def _is_weekday_call(node) -> bool:
+    """True for a bare `<x>.weekday()` call: no args, no keywords."""
+    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "weekday"
+            and not node.args and not node.keywords)
+
+
+def _is_weekday_based_offset(node) -> bool:
+    """True for `<x>.weekday()` alone, or `<x>.weekday() + <n>` / `<n> + <x>.weekday()` -- the
+    "N days before/after this week's Monday" shape body/vida_export.py's old "last full week"
+    default used (`today.weekday() + 7`), which the narrower weekday()-only match below used to
+    miss entirely (BODY-TIER1-LIMPIEZA-1)."""
+    if _is_weekday_call(node):
+        return True
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _is_weekday_call(node.left) or _is_weekday_call(node.right)
+    return False
+
+
+def _timedelta_weekday_offset(call: ast.Call) -> bool:
+    """True for `timedelta(<weekday-based offset>)` or `timedelta(days=<weekday-based offset>)`
+    -- both the positional and the `days=` keyword form."""
+    if not (isinstance(call.func, ast.Name) and call.func.id == "timedelta"):
+        return False
+    if len(call.args) == 1 and not call.keywords:
+        return _is_weekday_based_offset(call.args[0])
+    if not call.args and len(call.keywords) == 1 and call.keywords[0].arg == "days":
+        return _is_weekday_based_offset(call.keywords[0].value)
+    return False
+
+
 def _is_week_monday_subtraction(node: ast.BinOp) -> bool:
-    """True for `<x> - timedelta(<x>.weekday())` -- the open-coded "Monday of x's week" shape
-    body/fechas.py's lunes_de() now owns (BODY-CALIDAD-1). Matches on the right operand's shape
-    alone (a bare `timedelta(EXPR.weekday())` call, one positional arg, no keywords), not on the
-    left operand matching EXPR -- the only site that would miss by requiring that equality is
-    body/demo.py's `all_days[0] - timedelta(all_days[0].weekday())`, which this is written to
-    catch too."""
+    """True for `<x> - timedelta(<x>.weekday())`, `<x> - timedelta(<x>.weekday() + <n>)`, and
+    their `timedelta(days=...)` keyword forms -- the open-coded "Monday of x's week" (or N days
+    off it) shape body/fechas.py's lunes_de() now owns (BODY-CALIDAD-1, widened BODY-TIER1-
+    LIMPIEZA-1). Matches on the right operand's shape alone, not on the left operand matching
+    EXPR -- the only site that would miss by requiring that equality is body/demo.py's
+    `all_days[0] - timedelta(all_days[0].weekday())`, which this is written to catch too."""
     if not isinstance(node.op, ast.Sub):
         return False
     right = node.right
-    if not (isinstance(right, ast.Call) and isinstance(right.func, ast.Name) and right.func.id == "timedelta"):
-        return False
-    if len(right.args) != 1 or right.keywords:
-        return False
-    arg = right.args[0]
-    return (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute) and arg.func.attr == "weekday"
-            and not arg.args and not arg.keywords)
-
-
-# body/vida_export.py is Tier 1 (the export that hands health data to another app) and out of
-# reach for a Tier 2 slice -- BODY-CALIDAD-1 names it here for a later Tier 1 slice rather than
-# editing it.
-_ALLOWED_WEEK_MONDAY_FILES = {"vida_export.py"}
+    return isinstance(right, ast.Call) and _timedelta_weekday_offset(right)
 
 
 class NoOpenCodedWeekMondayGuardTest(unittest.TestCase):
     """BODY-CALIDAD-1: body/fechas.py's lunes_de(d) is the one place "Monday of d's week" is
-    computed; no other body/ module re-derives it with `d - timedelta(d.weekday())`."""
+    computed; no other body/ module re-derives it with `d - timedelta(d.weekday())` or the same
+    shape offset by N days (BODY-TIER1-LIMPIEZA-1 widened the match to also catch that offset
+    form -- body/vida_export.py no longer needs an allowlist exemption: its own two open-coded
+    sites were both replaced by fechas.lunes_de() in that slice)."""
 
     def test_no_module_open_codes_week_monday_outside_fechas(self):
         offenders = []
         for path in _iter_body_files():
-            if path.name in ("fechas.py", *_ALLOWED_WEEK_MONDAY_FILES):
+            if path.name == "fechas.py":
                 continue
             tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
