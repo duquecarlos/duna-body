@@ -15,11 +15,12 @@ import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 
 from . import cuenta, entorno, garmin_cuenta, listen
 from .identity import ConsentRequired, DispositivoNoAutorizado, DispositivoSinAlcance, LoginRequired
@@ -60,7 +61,39 @@ class _CaminoActualMiddleware:
             comun._RUTA_ACTUAL.reset(token)
 
 
+class _StaticConCache(StaticFiles):
+    """Static files already carry a content hash in their own URL (comun.static_url's `?v=`), so a
+    request whose `v` matches comun.STATIC_HASH right now can be cached forever -- that URL can
+    only ever point at these exact bytes, and the day the file changes the hash does too, giving
+    the browser a new URL to fetch. Any other request (no `v`, a stale one, or a foreign one typed
+    by hand) falls back to the no-cache revalidation the mount already does with its ETag/
+    Last-Modified pair, instead of risking a stale asset on a permanent cache. Overriding
+    `file_response` alone covers both outcomes: it runs before the mount decides between the full
+    FileResponse and a 304 NotModifiedResponse, and NotModifiedResponse already carries
+    Cache-Control through from the headers set here (starlette.staticfiles.NotModifiedResponse.
+    NOT_MODIFIED_HEADERS)."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        scope = args[2] if len(args) > 2 else kwargs["scope"]
+        v = parse_qs(scope.get("query_string", b"").decode("latin-1")).get("v", [None])[0]
+        response.headers["cache-control"] = (
+            "public, max-age=31536000, immutable" if v == comun.STATIC_HASH else "no-cache"
+        )
+        return response
+
+
 app.add_middleware(_CaminoActualMiddleware)
+# GZipMiddleware sits right next to the app (outside _CaminoActualMiddleware, inside
+# SeguridadMiddleware): it compresses the actual bytes the routes and the /static mount produce,
+# and whatever it adds (Content-Encoding, Vary, a recomputed Content-Length) is just more headers
+# by the time SeguridadMiddleware's send wrapper appends the fixed security-header set on the way
+# out (BODY-RENDIMIENTO-3) -- so every response keeps those headers whether or not it was
+# compressed. Starlette's own exclude list already carries `text/event-stream` (the assistant's
+# streamed answer, body/rutas/asistente.py's StreamingResponse) and `font/woff2` (already
+# compressed), so neither is buffered or recompressed; GZipResponder forwards an excluded
+# content-type's chunks one-for-one, immediately, same as an uncompressed response would.
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(SeguridadMiddleware)
 # Added last, so outermost: a SeguridadMiddleware refusal still reaches the request log
 # (BODY-SEGURIDAD-1-M -- a cross-site attempt is off the normal flow and must be visible).
@@ -69,7 +102,7 @@ app.add_middleware(RequestLogMiddleware)
 # `mimetypes.guess_type("x.woff2")` == `(None, None)`), which would serve the self-hosted font as
 # a guessed type instead of `font/woff2`.
 mimetypes.add_type("font/woff2", ".woff2")
-app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
+app.mount("/static", _StaticConCache(directory=HERE / "static"), name="static")
 app.include_router(pwa.router)
 app.include_router(ayuda.router)
 app.include_router(privacidad_rutas.router)
