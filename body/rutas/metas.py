@@ -10,7 +10,7 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import db, enlaces, fechas, goals, household, identity, profile
+from .. import cuenta, db, enlaces, fechas, goals, household, identity, profile
 from ..baselines import baseline
 from ..i18n import T
 from . import comun
@@ -466,5 +466,5 @@ async def habit_check(habit_id: int, request: Request, person_id: int = Depends(
                            hoy=comun._today_local(person))
     except ValueError:
         raise HTTPException(404)
-    back = f.get("back") or "/"
+    back = cuenta.safe_return_to(f.get("back"))
     return RedirectResponse(back, status_code=303)

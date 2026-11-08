@@ -115,9 +115,21 @@ def _secure_cookies() -> bool:
 
 
 def safe_return_to(raw: str | None) -> str:
-    if raw and raw.startswith("/") and not raw.startswith("//"):
-        return raw
-    return "/"
+    """"/" alone, or "/" followed by a character that is neither "/" nor "\\" -- and nowhere in
+    the value a "\\", a control character, or a "://" scheme separator. A browser reads a
+    backslash as a forward slash, so "/\\evil.example" (which starts with "/", not "//") is a
+    protocol-relative redirect off this site exactly like "//evil.example" (BODY-SEGURIDAD-1)."""
+    if not raw:
+        return "/"
+    if raw == "/":
+        return "/"
+    if not raw.startswith("/") or raw[1] in ("/", "\\"):
+        return "/"
+    if "\\" in raw or "://" in raw:
+        return "/"
+    if any(ord(c) < 0x20 or ord(c) == 0x7f for c in raw):
+        return "/"
+    return raw
 
 
 # ---- small helpers ------------------------------------------------------------------------------

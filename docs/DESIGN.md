@@ -42,7 +42,10 @@ comes from; the Body-specific reading is in *italics*. When a new rule arrives f
 13. **Health data stays home** (Body CLAUDE.md). *Local DB; no values in URLs or logs; no third-party analytics;
     mocks use invented demo data.* Exception text from outside Body (a library's, the filesystem's, a parser's, the
     network's) is never shown, logged or stored -- the exception's TYPE name only, through `body/errores.py`
-    (BODY-LOGIN-MENSAJES-1).
+    (BODY-LOGIN-MENSAJES-1). (BODY-SEGURIDAD-1): every POST/PUT/PATCH/DELETE is same-origin only, checked by one
+    middleware (`body/seguridad.py`); every response carries a fixed header set (`X-Content-Type-Options`,
+    `Referrer-Policy`, `X-Frame-Options`, `Content-Security-Policy: frame-ancestors 'none'`,
+    `Cross-Origin-Opener-Policy`); every redirect built from request data goes through `cuenta.safe_return_to`.
 14. **Assistant, to agent-ui-v1** (Carlos asked for it like the other apps, 2026-11-06) (one tap, 3 sizes, proposes → you confirm → undo). Built with parity: every
     screen ships with the assistant's read tool.
 
