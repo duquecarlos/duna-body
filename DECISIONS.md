@@ -9397,3 +9397,94 @@ No password, token, session secret or real health figure was read, printed, stor
 this slice -- every figure above is a statement or connection count, never a health value.
 `git status --porcelain` is empty on `main` at the merge commit, before this ledger entry's own
 commit.
+
+## BODY-RENDIMIENTO-2 -- one in-memory reader for a person's metrics over a window
+
+Slice 2 of BODY-RENDIMIENTO-OBS-1. After BODY-RENDIMIENTO-1, `/shifts` still ran ~307 statements
+on this repo's own fixture: `body/rutas/turnos.py`'s `_turnos_strip` called `readiness.compute`
+once per day for 56 strip days (6-7 queries each: the day's own values, yesterday's stress, and up
+to four `baselines.baseline` calls, each a 30-day `db.series` window), and `body/turnos_costo.py`'s
+`resumen` called `db.series` once per metric per block (`_costo_bloque`, 5 metrics) and
+`db.day_values` once per candidate day per block (`_dia_en_banda`/`_recuperacion_bloque`, up to 20
+days per block), on top of its own `referencia` (5 more `db.series` calls).
+
+**The reader.** `body/lector.py`'s `Lector(conn, person_id, desde, hasta, metrics)` (new module,
+Tier 2) loads every one of `metrics` over `[desde, hasta]` with one SELECT per metric against
+`daily_metric` -- its own read-only query, the same columns `db.series` reads, so `body/lector.py`
+never imports `body/db.py` (Tier 1). It answers `series(metric, start, end)` and `day_values(day)`
+from that in-memory dict with EXACTLY `db.series`/`db.day_values`'s own semantics (same keys, same
+inclusive bounds via plain ISO-string comparison, same missing-day behaviour, same value types);
+`day_values` is restricted to the metrics the reader was built with, which every call site here
+already reads through a fixed, known metric list, so the restriction changes nothing a caller sees.
+
+**Call sites.** `readiness.compute` and `baselines.baseline` take `lector` as an optional keyword
+(default `None`, the original per-call queries -- every caller that does not loop over days, e.g.
+`body/rutas/hoy.py`'s single-day calls, `body/goals.py`, `body/rutas/metas.py`, is unchanged).
+`readiness.METRICS` names the six metrics a `compute` call can touch (`hrv_last_night`,
+`sleep_minutes`, `sleep_need_min`, `body_battery_wake`, `resting_hr`, `stress_avg`) -- the set a
+caller builds a `Lector` with before looping `compute` over many days. `_turnos_strip` builds ONE
+`Lector` for the whole 56-day strip, window `[start - 31, today_local]` (30 days of
+`baselines.WINDOW_DAYS` plus one extra day: the stress part's baseline is computed on YESTERDAY,
+so the earliest strip day's own window reaches one day further back than `WINDOW_DAYS` alone --
+found by a failing equality test, not reasoned out in advance) and passes it through every
+`readiness.compute` call. `turnos_costo.referencia`, `_costo_bloque`, `_dia_en_banda` and
+`_recuperacion_bloque` take the same optional `lector` keyword; `resumen` builds ONE `Lector` over
+`[hoy - RESUMEN_DIAS, hoy + dias_estables]` (wide enough for `referencia`'s own
+`[hoy - REFERENCIA_DIAS, hoy - 1]`, since `REFERENCIA_DIAS <= RESUMEN_DIAS`, and for every block's
+cost and recovery window, none of which reaches past `hoy + dias_estables`) and threads it through
+all four. `body/rutas/hoy.py` needed no change: its Turnos card calls `turno_de_hoy` (which calls
+`resumen`, already reader-backed) and `readiness.compute` only once per request, never in a loop --
+checked directly, not assumed.
+
+**Equality, not approximation.** Every number stays pinned to the pre-reader path:
+- `tests/test_baselines.py` (new): `baseline()` with and without a `Lector`, matching and no-baseline cases.
+- `tests/test_readiness.py`: `compute()` with and without a `Lector`, a normal day and a too-little-data day,
+  field by field (score, version, missing, every part's value/reference/subscore/weight).
+- `tests/test_turnos_costo.py`'s new `LectorEqualityTest`: `referencia`, `_costo_bloque`, `_dia_en_banda`
+  and `_recuperacion_bloque`, each with and without a `Lector`.
+- `tests/test_rendimiento_turnos.py` (new), a richer fixture (~220 days, three night blocks of
+  different lengths, two day-shift blocks, one day in five left as a gap): every one of the 56
+  strip days' `readiness.compute` matches field by field; `resumen()` matches for several `hoy`
+  values, including one before any night block (`motivo == "sin_turnos"`) and ones landing inside
+  the fixture's gaps; and `/shifts`' own rendered HTML is byte-identical with the reader against a
+  test-only switch -- patching the `Lector` name in both `body.rutas.turnos` and `body.turnos_costo`
+  (where each is imported) to a stub returning `None`, which forces every `lector=` kwarg this
+  slice added back onto its original, unchanged branch.
+
+**Statements, this repo's own fixture** (`demo._seed(dias=30, idioma="es")` + one assistant
+conversation, same fixture `tests/test_rendimiento.py` already used):
+
+| route | before | after | new ceiling |
+|---|---|---|---|
+| `/shifts` | 307 | 38 | 50 |
+| `/shifts/como` | 35 | 19 | 25 |
+| `/` | 55 | 55 (unchanged -- single day, no loop) | 75 (unchanged) |
+
+`tests/test_rendimiento.py`'s `_CEILINGS["/shifts"]` and `["/shifts/como"]` drop from their old
+400/46 (`/shifts` carried its own much-higher ceiling with a comment naming this slice) to 50/25 --
+the same ~30% margin rule as every other route. `/` keeps its existing ceiling: `_hoy_turno_ctx`
+and the single `readiness.compute` call there never loop over days, so this slice made no change
+to `body/rutas/hoy.py`, though it was named in `touches:` for this exact check.
+
+**docs/DESIGN.md**: a new sentence under rule 13's `(BODY-RENDIMIENTO-1)` paragraph -- a screen that
+needs one metric across many days reads that window once, never once per day, naming `Lector` and
+its call sites.
+
+**Gate**, once, foreground, on the tree that became the slice commit (no edit happened between the
+run and the commit): `.venv/Scripts/python.exe -m unittest discover tests -t .` --
+`Ran 1334 tests in 157.452s ... OK (skipped=1)`.
+
+**Merge.** `git merge --no-ff feat/body-rendimiento-2` onto `main` (prior tip
+`da06bf61781f4c1913789eb47b7011aee0836874`), producing merge commit
+`b4e7074e91cb16639acf967c6feaba4b698411f3`. The merge tree and the branch tree are the same tree --
+`HEAD^{tree}` and `feat/body-rendimiento-2^{tree}` both equal
+`3a409c03ba39fcd33c8f27e62de59f623cbee0c2`, so the diff between them is empty and the gate above,
+run on the slice commit `cac9b07b5dda2a960b304a76a578fb846af1f1ae` whose tree is this same tree,
+stands for the merge without a second run.
+
+No schema or migration change, no customer-facing string or layout change, no cross-repo contract
+change -- merge policy A applies, merged on green without waiting for further approval (this
+spec's own approval reason covers the merge). No password, token, session secret or real health
+figure was read, printed, stored or logged by this slice -- every figure above is a statement count
+or a day/window boundary, never a health value. `git status --porcelain` is empty on `main` at the
+merge commit, before this ledger entry's own commit.
