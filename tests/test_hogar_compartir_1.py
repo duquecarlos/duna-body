@@ -390,7 +390,7 @@ class AjustesCardTest(unittest.TestCase):
         _link_household(conn, 1, 2)
         _as(self, 1)
         r = client.get("/settings")
-        self.assertIn('<details class="files" style="margin-top:6px">', r.text)
+        self.assertIn('<details class="files mt-6">', r.text)
         self.assertNotIn("Dejar de compartir", r.text)
         self.assertIn("Elegir qué compartir", r.text)
 

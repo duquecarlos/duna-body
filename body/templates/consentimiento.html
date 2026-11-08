@@ -21,7 +21,7 @@
   <p class="read">{{ t('privacidad.consentimiento.donde') }}</p>
   <p class="read">{{ t('privacidad.consentimiento.derechos') }}</p>
   <p class="read">{{ t('privacidad.consentimiento.no_medico') }}</p>
-  <form method="post" action="/privacidad/consentimiento" style="margin-top:16px">
+  <form method="post" action="/privacidad/consentimiento" class="mt-16">
     <input type="hidden" name="return_to" value="{{ return_to }}">
     <div class="seg">
       <button class="btn" type="submit" name="decision" value="acepto">{{ t('privacidad.consentimiento.aceptar') }}</button>

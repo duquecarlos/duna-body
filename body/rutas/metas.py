@@ -108,7 +108,7 @@ def _current_week_check(conn, goal_id: int, person_id: int, week_start: str) -> 
 
 
 def _goal_line_svg(t: T, defs: dict, g, checks, today: date, width: int = 320, height: int = 120,
-                    color: str = "var(--body)") -> str:
+                    color_cls: str = "body") -> str:
     """The straight target line from baseline at start_day to target at deadline, with the
     actual weekly averages plotted over it and today marked. Small and local to this screen,
     since body/profile.py's chart helpers are built for daily_metric history, not a goal's plan.
@@ -133,27 +133,27 @@ def _goal_line_svg(t: T, defs: dict, g, checks, today: date, width: int = 320, h
         return top + h - (v - lo) / (hi - lo) * h
 
     out = [f'<line x1="{x(start):.1f}" y1="{y(baseline_v):.1f}" x2="{x(end):.1f}" y2="{y(target_v):.1f}" '
-           f'style="stroke:var(--muted)" stroke-width="1.6" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>']
+           f'class="stroke-muted" stroke-width="1.6" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>']
     pts = sorted((date.fromisoformat(c["week_start"]), date.fromisoformat(c["week_start"]) + timedelta(6),
                   c["metric_avg"]) for c in checks)
     pts = [(ws, d, v) for ws, d, v in pts if start <= d <= end]
     if len(pts) >= 2:
         line_pts = " ".join(f"{x(d):.1f},{y(v):.1f}" for _, d, v in pts)
-        out.append(f'<polyline fill="none" style="stroke:{color}" stroke-width="2.2" '
+        out.append(f'<polyline fill="none" class="stroke-{color_cls}" stroke-width="2.2" '
                    f'vector-effect="non-scaling-stroke" stroke-linejoin="round" points="{line_pts}"/>')
     elif len(pts) == 1:
-        out.append(f'<circle cx="{x(pts[0][1]):.1f}" cy="{y(pts[0][2]):.1f}" r="4" style="fill:{color}"/>')
+        out.append(f'<circle cx="{x(pts[0][1]):.1f}" cy="{y(pts[0][2]):.1f}" r="4" class="c-{color_cls}"/>')
     today_x = x(min(max(today, start), end))
     out.append(f'<line x1="{today_x:.1f}" y1="{top}" x2="{today_x:.1f}" y2="{top + h}" '
-               f'style="stroke:var(--line)" stroke-width="1"/>')
+               f'class="stroke-line" stroke-width="1"/>')
     aria = html.escape(f"{g['title']}: {t('goals.chart_aria', start=comun._short_date(t, start), end=comun._short_date(t, end))}")
     svg = (f'<svg viewBox="0 0 {width} {top + h + 6}" width="100%" height="110" role="img" aria-label="{aria}" '
-           f'preserveAspectRatio="none" style="display:block;margin-top:8px">{"".join(out)}</svg>')
+           f'preserveAspectRatio="none" class="chart-svg">{"".join(out)}</svg>')
     legend = (
-        '<div class="legend" style="margin-top:4px">'
-        f'<span><i style="background:none;border-top:1.6px dashed var(--muted);height:0;width:12px"></i>{t("goals.legend_plan")}</span>'
-        f'<span><i style="background:{color};height:3px;vertical-align:3px"></i>{t("goals.legend_avg")}</span>'
-        f'<span><i style="background:var(--line);width:1px;height:12px"></i>{t("goals.legend_today")}</span>'
+        '<div class="legend mt-4">'
+        f'<span><i class="legend-dash"></i>{t("goals.legend_plan")}</span>'
+        f'<span><i class="c-{color_cls} legend-line"></i>{t("goals.legend_avg")}</span>'
+        f'<span><i class="legend-today"></i>{t("goals.legend_today")}</span>'
         '</div>')
     data_pts = [{"x": max(0.0, min(1.0, (d - start).days / span_days)),
                  "label": t("goals.chart_week_label", date=comun._short_date(t, ws), value=comun._fig_unit(t, g["metric_key"], v, defs))}

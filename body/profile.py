@@ -83,7 +83,7 @@ def chart_figure(body: str, points: list[dict] | None, *, link_label: str | None
     return f'<figure class="chart"{attrs}>{body}</figure>'
 
 
-def month_svg(p: MetricProfile, width: int = 320, height: int = 120, color: str = "var(--body)", *,
+def month_svg(p: MetricProfile, width: int = 320, height: int = 120, color_cls: str = "body", *,
               etiqueta_mes: Callable[[str], str] = lambda m: m,
               aria_label: str | None = None,
               valor_fmt: Callable[[float], str] | None = None,
@@ -108,16 +108,16 @@ def month_svg(p: MetricProfile, width: int = 320, height: int = 120, color: str 
     step = width / (len(pts) - 1)
     line = " ".join(f"{i * step:.1f},{y(v):.1f}" for i, v in enumerate(pts))
     band = (f'<rect x="0" y="{y(p.high):.1f}" width="{width}" height="{max(1, y(p.low) - y(p.high)):.1f}" '
-            f'style="fill:var(--inset)"/>')
+            f'class="c-inset"/>')
     last_x, last_y = (len(pts) - 1) * step, y(pts[-1])
     first, lastm = html.escape(etiqueta_mes(p.months[0][0])), html.escape(etiqueta_mes(p.months[-1][0]))
     aria = f' aria-label="{html.escape(aria_label)}"' if aria_label else ""
     # Fixed height, stretched width: lines keep their thickness (non-scaling-stroke); labels are HTML, not SVG text.
     body = (f'<svg viewBox="0 0 {width} {top + h + 6}" width="100%" height="110" role="img"{aria} '
-            f'preserveAspectRatio="none" style="display:block;margin-top:8px">{band}'
-            f'<polyline fill="none" style="stroke:{color}" stroke-width="2.2" vector-effect="non-scaling-stroke" '
+            f'preserveAspectRatio="none" class="chart-svg">{band}'
+            f'<polyline fill="none" class="stroke-{color_cls}" stroke-width="2.2" vector-effect="non-scaling-stroke" '
             f'stroke-linejoin="round" points="{line}"/>{_hits([(i * step, f"/trends?m={m[0]}#{p.key}") for i, m in enumerate(p.months)], step, top + h + 6, [etiqueta_mes(m[0]) for m in p.months])}</svg>'
-            f'<div class="row k" style="font-size:12px"><span>{first}</span><span>{lastm}</span></div>')
+            f'<div class="row k fs-12"><span>{first}</span><span>{lastm}</span></div>')
     points = None
     if valor_fmt:
         points = [{"x": i / (len(pts) - 1), "label": f"{etiqueta_mes(m[0])}: {valor_fmt(m[1])}", "m": m[0]}
@@ -129,7 +129,7 @@ def _hits(points: list[tuple[float, str]], step: float, height: float, titles: l
     """Invisible full-height tap targets, one per point, each a link (URLs carry dates only, never values).
     titles are reader's-language labels; escaped here since they land in HTML."""
     return "".join(f'<a href="{href}"><title>{html.escape(title)}</title><rect x="{max(0, x - step / 2):.1f}" y="0" '
-                   f'width="{step:.1f}" height="{height:.1f}" style="fill:transparent"/></a>'
+                   f'width="{step:.1f}" height="{height:.1f}" class="fill-transparent"/></a>'
                    for (x, href), title in zip(points, titles))
 
 
@@ -151,7 +151,7 @@ def window(conn, key: str, start: date, end: date, person_id: int) -> Window:
 
 
 def window_svg(w: Window, low: float, high: float, nights: set[str] = frozenset(), width: int = 320,
-               height: int = 120, color: str = "var(--body)", *,
+               height: int = 120, color_cls: str = "body", *,
                etiqueta_dia: Callable[[date], str] = lambda d: d.isoformat(),
                aria_label: str | None = None,
                valor_fmt: Callable[[float], str] | None = None,
@@ -176,11 +176,11 @@ def window_svg(w: Window, low: float, high: float, nights: set[str] = frozenset(
 
     step = width / max(1, len(days) - 1)
     out = [f'<rect x="0" y="{y(high):.1f}" width="{width}" height="{max(1, y(low) - y(high)):.1f}" '
-           f'style="fill:var(--inset)"/>']
+           f'class="c-inset"/>']
     for i, d in enumerate(days):
         if d.isoformat() in nights:
             out.append(f'<rect x="{max(0, i * step - step / 2):.1f}" y="0" width="{step:.1f}" height="{full:.1f}" '
-                       f'style="fill:var(--night);opacity:.18"/>')
+                       f'class="c-night op-18"/>')
     runs, cur = [], []
     for i, d in enumerate(days):
         v = w.values.get(d.isoformat())
@@ -195,18 +195,18 @@ def window_svg(w: Window, low: float, high: float, nights: set[str] = frozenset(
     for r in runs:
         if len(r) == 1:
             x, yy = r[0].split(",")
-            out.append(f'<line x1="{x}" y1="{yy}" x2="{x}" y2="{yy}" style="stroke:{color}" stroke-width="5" '
+            out.append(f'<line x1="{x}" y1="{yy}" x2="{x}" y2="{yy}" class="stroke-{color_cls}" stroke-width="5" '
                        f'stroke-linecap="round" vector-effect="non-scaling-stroke"/>')
         else:
-            out.append(f'<polyline fill="none" style="stroke:{color}" stroke-width="2.2" '
+            out.append(f'<polyline fill="none" class="stroke-{color_cls}" stroke-width="2.2" '
                        f'vector-effect="non-scaling-stroke" stroke-linejoin="round" points="{" ".join(r)}"/>')
     out.append(_hits([(i * step, f"/day/{d.isoformat()}") for i, d in enumerate(days)], step, full,
                      [etiqueta_dia(d) for d in days]))
     aria = f' aria-label="{html.escape(aria_label)}"' if aria_label else ""
     first, lastd = html.escape(etiqueta_dia(days[0])), html.escape(etiqueta_dia(days[-1]))
     body = (f'<svg viewBox="0 0 {width} {full}" width="100%" height="110" role="img"{aria} '
-            f'preserveAspectRatio="none" style="display:block;margin-top:8px">{"".join(out)}</svg>'
-            f'<div class="row k" style="font-size:12px"><span>{first}</span>'
+            f'preserveAspectRatio="none" class="chart-svg">{"".join(out)}</svg>'
+            f'<div class="row k fs-12"><span>{first}</span>'
             f'<span>{lastd}</span></div>')
     points = None
     if valor_fmt:

@@ -13,8 +13,9 @@ from . import comun
 
 router = APIRouter()
 
-TRAINING_COLORS = ["var(--body)", "var(--night)", "var(--amber)", "var(--info)", "var(--est)"]
-OTHER_COLOR = "var(--muted)"
+# Fixed palette classes (body/static/body.css), never a var(...) string in markup (BODY-ESTILOS-1).
+TRAINING_COLOR_CLASSES = ["c-body", "c-night", "c-amber", "c-info", "c-est"]
+OTHER_COLOR_CLASS = "c-other"
 TRAINING_RECENT_MONTHS = 12
 
 
@@ -28,9 +29,9 @@ def _color_map(types: list[dict]) -> dict[str, str]:
     colors, i = {}, 0
     for ty in types:
         if ty["key"] == "other":
-            colors["other"] = OTHER_COLOR
+            colors["other"] = OTHER_COLOR_CLASS
         else:
-            colors[ty["key"]] = TRAINING_COLORS[i % len(TRAINING_COLORS)]
+            colors[ty["key"]] = TRAINING_COLOR_CLASSES[i % len(TRAINING_COLOR_CLASSES)]
             i += 1
     return colors
 
@@ -38,12 +39,12 @@ def _color_map(types: list[dict]) -> dict[str, str]:
 def _training_ctx(t: T, train: dict) -> dict:
     colors = _color_map(train["types"])
     types = [{"label": _kind_label(t, ty), "sessions": t.num(ty["sessions"]), "minutes": t.minutes(ty["minutes"]),
-              "km": f"{t.num(ty['km'], 1)} km" if ty["km"] is not None else None, "color": colors[ty["key"]]}
+              "km": f"{t.num(ty['km'], 1)} km" if ty["km"] is not None else None, "cls": colors[ty["key"]]}
              for ty in train["types"]]
     max_minutes = train["max_month_minutes"] or 0.0
     months = []
     for m in train["months"]:
-        segs = [{"label": _kind_label(t, seg), "color": colors.get(seg["key"], OTHER_COLOR),
+        segs = [{"label": _kind_label(t, seg), "cls": colors.get(seg["key"], OTHER_COLOR_CLASS),
                  "pct": (seg["minutes"] / max_minutes * 100) if max_minutes else 0.0} for seg in m["by_type"]]
         months.append({"month": t.month_year(date.fromisoformat(m["month"] + "-01")),
                        "href": f"/trends?m={m['month']}", "sessions": t.num(m["sessions"]),

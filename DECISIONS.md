@@ -8914,3 +8914,139 @@ words ("This spec approves the merge of the guard"). No password, token, session
 health figure was read, printed, stored or logged by this slice -- every figure and marker used
 is invented demo data, as `CLAUDE.md`'s privacy section requires. `git status --porcelain` is
 empty on `main` after this merge, before this ledger entry's own commit.
+
+## BODY-ESTILOS-1 -- replace every inline `style="..."` with a class, drop `style-src 'unsafe-inline'`
+
+Every `style="..."` attribute in the 22 templates (201 attributes, measured: `git grep -o
+"style=" main -- body/templates | wc -l` == 201, `git grep -o "style=" HEAD -- body/templates |
+wc -l` == 0) and every inline `style=` built into server-side SVG by `body/profile.py` and
+`body/rutas/metas.py` (20 attributes, same measurement, `main` 20 -> `HEAD` 0) becomes a class in
+`body/static/body.css`:
+
+- **Spacing/layout utilities** (`.mt-8`, `.mb-12`, `.gap-10`, `.text-right`, `.flex-1`,
+  `.items-end`, `.w-100`, `.block`, `.hidden`, ... -- ~45 classes) for every `margin`, `padding`,
+  `display`, `flex`, `gap`, `align-*`/`justify-*`, `width`, `opacity` and `text-align` value an
+  inline style had set, each one a fixed value rather than an arbitrary one (a utility class, not
+  an escape hatch for new values).
+- **A small set of named component classes** for markup-specific shapes that recur: `.settings-row`
+  (the tappable settings-list row), `.steps-col`/`.help-link` (the help walkthrough list),
+  `.rail-logout-btn`/`.foot-logout-btn` (the two differently-styled logout controls, `all:unset`
+  based), `.ayuda-img`, `.chart-svg` (every chart `<svg>`'s `display:block;margin-top:8px`), and
+  `.legend-line`/`.legend-dash`/`.legend-today` (the three chart-legend swatch shapes).
+- **A fixed data-series palette**, `.c-night`/`.c-night-light`/`.c-body`/`.c-amber`/`.c-info`/
+  `.c-est`/`.c-other`/`.c-inset`, each setting `background` (HTML swatches) and `fill` (SVG shapes)
+  together to the same token, plus a stroke-only `.stroke-body` (and `.stroke-muted`/`.stroke-line`
+  for the two fixed-colour reference lines) for a `<polyline>`/`<line>`, since a `fill` in a `.c-*`
+  class would override its own `fill="none"` attribute (an SVG presentation attribute loses to any
+  CSS rule, so a stroked line gets its colour only from a `stroke-*` class). The only colours any
+  template or server-built SVG ever needed were these eight tokens (sleep stages:
+  `body/rutas/hoy.py`'s `STAGES`; training types and month segments: `body/rutas/historial.py`'s
+  colour map; the normal-range band and chart line: `body/profile.py` and `body/rutas/metas.py`,
+  always called with the one default colour) -- both now carry a palette class name instead of a
+  `var(...)` string.
+- **Dynamic bars become geometry, not style.** A goal's progress bar (`goals.html`), a day's sleep
+  stages (`day.html`) and a month's training segments (`history.html`) were each a `<div>` with a
+  `<span>`/`<i>` sized by `style="width:...%"`; each is now an inline `<svg class="bar"|"stage">`
+  with `<rect>` elements sized by `width=`/`height=` geometry attributes, which CSP's `style-src`
+  does not govern at all.
+
+`body/seguridad.py`'s `content_security_policy()` drops `'unsafe-inline'` from `style-src`, which
+now reads `style-src 'self' https://fonts.googleapis.com`. `tests/test_seguridad.py` gained four
+guards: no template carries `style=`, no Python-built markup carries `style=` (CSSOM property
+*sets* in `body/static/*.js`, e.g. `el.style.display = ...`, are excluded on purpose -- those are
+JS, not markup, and are not what `style-src` governs), no static script carries one either, and
+`style-src` itself carries no `'unsafe-inline'`. `tests/test_profile.py`'s one assertion on the old
+`var(--night)` string is updated to the new class name.
+
+**Stopped BLOCKED, correctly**, on 8 tests outside this slice's `touches:` that assert literal
+`style="..."` text for a subject this slice's own diff changed how it renders: `tests/
+test_tendencias_todas.py:94,122,154,161`, `tests/test_hogar_compartir_1.py:393`, `tests/
+test_pulido_3.py:320-322`, `tests/test_turnos_opcional_3.py:151` (both the `NullSettingTest` and
+`SiSettingTest` subclasses of its shared `_SettingChecks` mixin).
+
+**Gate** was not re-run to green past that block (per protocol: a reproducing failure outside
+`touches:` is not fixed by widening scope without approval) -- 8 failures recorded, branch
+committed at `419129a1b8919252a8270f492c20222bbf84c85f`, not merged.
+
+## BODY-ESTILOS-1-M -- fix 3 measured cascade regressions, add a 4th found by systematic audit, land the 8 tests
+
+ORCH-CARLOS-DELEGATES-TIER-1-1 dispatched this slice against BODY-ESTILOS-1's BLOCKED report and
+the orchestrator's own browser measurement of the branch at 375px against a computed-style and
+layout fingerprint of main (`61cb029df3e39bd5ad6c3d4e99df75c466ba82ad`), which found three visible
+regressions -- each the same shape: an inline `style=` always wins the cascade regardless of
+specificity, but the class that replaced it does not, so wherever the class it replaced was less
+specific than an existing component rule, replacing the attribute with the class let the component
+rule win where the attribute used to.
+
+**The three measured fixes:**
+
+| # | Regression | Losing rule (specificity) | Winning rule before fix (specificity) | Fix (selector) | Main value restored |
+|---|---|---|---|---|---|
+| 1 | Hoy plan row collapses 82px -> 69px | `.block{display:block}` (0,1,0) | `.plan li{display:flex}` (0,1,1) | `.plan li.block{display:block}` (0,2,1) | `display:block` on both `<li class="block">` in `today.html` (the sleep-score plan row and the household-shared plan row) |
+| 2 | Every chart-legend line/dash/today swatch renders as a 10x10 square | `.legend-line`/`.legend-dash`/`.legend-today` (0,1,0) | `.legend i{width:10px;height:10px;...}` (0,1,1) | `.legend i.legend-line`/`.legend i.legend-dash`/`.legend i.legend-today` (0,2,1) | legend-line 10x3px, `vertical-align:3px`; legend-dash 12px wide, 0 tall, 1.6px dashed top border; legend-today 1x12px |
+| 3 | `svg.bar` (`/goals`) and `svg.stage` (`/day/{date}`, `/history`) render 100px wide (their `viewBox` width) instead of the card's full width; `svg.bar` also added a ~6px line-box gap under each goal card | no rule set a width or `display:block` on the `<svg>` | (none -- missing declaration, not a losing one) | `svg.bar{display:block;width:100%}`, `svg.stage{display:block;width:100%}` (0,1,1, beats the dead `.bar`/`.stage` single-class rules those two selectors still also match) | full card width (~313px at 375px viewport), no added gap |
+
+**A fourth, found by the audit below, that the browser measurement did not catch:** `today.html`'s
+and `shifts.html`'s "no score yet" / "no hero yet" text (`<a class="card est">...<div class="fig
+c-muted">`) rendered in `var(--ink)` (full ink) instead of `var(--muted)` (grey) -- main's `style=
+"color:var(--muted)"` on that `<div>` beat `.est .fig{color:var(--ink);font-weight:600}` (already
+present on main, confirmed: `git show main:body/static/body.css | grep -n ".est .fig"` -> line 75,
+unchanged by this branch); the branch's `.c-muted{color:var(--muted)}` (0,1,0) could not, against
+`.est .fig` (0,2,0). Fixed with `.est .fig.c-muted{color:var(--muted)}` (0,3,0); `font-weight:600`
+was already correct (main's inline style never touched it either).
+
+**Systematic audit.** Every one of the 70 selectors `body/static/body.css`'s BODY-ESTILOS-1 diff
+added (`git diff main...feat/body-estilos-1 -- body/static/body.css | grep -cE "^\+[a-zA-Z.][^{]*
+\{"` == 70, including the already-compound `table.parts td.p-0` the previous worker had already
+fixed) was traced to every actual element it is applied to, across all 22 templates and
+`body/profile.py`/`body/rutas/metas.py`, and checked against every pre-existing compound selector
+(two classes, or a class + element/pseudo -- `.tabs a` family, `a.card,button.card`, `.grid2 .card`,
+`.chip.*`, `.box.done`, `.plan li`, `.list li`, `.costrow .nw`, `.confirm-actions .btn`, `.est
+.big,.est .fig`, `.shift .note`/`.shift.*`, `.foot a`, `.legend i`, `.strip-cell.*`, `.strip-legend
+.dot.*`, `table.parts th/td` and its `:first-child` compounds, `.asis-* …` descendant rules,
+`.tabs .rail-foot`) that could match the same element and set the same property. Beyond the four
+fixes above, the only other coincidence found was `.tabs .rail-foot{margin-top:auto}` (0,2,0,
+desktop-only) against the new `.mt-auto{margin-top:auto}` (0,1,0) on `base.html`'s logout form
+(inside `<nav class="tabs">`): the compound always wins there regardless of the utility class, but
+both set the identical value, so there is no visible difference and nothing to fix. No other class
+among the 70 matches an element also reached by a higher- or equal-and-later-but-actually-losing
+specificity rule setting the same property; 66 of the 70 audited classes needed no change.
+
+**The 8 out-of-touches tests**, each rewritten to assert the class (or SVG class) that now carries
+the style, never a literal `style="..."`, same subject:
+
+| Test | Old assertion | New assertion |
+|---|---|---|
+| `test_tendencias_todas.py:94` | `page.index('<details class="files"')` | `page.index('<details class="files mt-10"')` |
+| `test_tendencias_todas.py:122` | `page.index('class="legend"', start)` | `page.index('class="legend mt-4"', start)` |
+| `test_tendencias_todas.py:154` | `assertIn('<details class="files" style="margin-top:10px" open>', page)` | `assertIn('<details class="files mt-10" open>', page)` |
+| `test_tendencias_todas.py:161` | `assertIn('<details class="files" style="margin-top:10px">', page)` | `assertIn('<details class="files mt-10">', page)` |
+| `test_hogar_compartir_1.py:393` | `assertIn('<details class="files" style="margin-top:6px">', r.text)` | `assertIn('<details class="files mt-6">', r.text)` |
+| `test_pulido_3.py:320-322` | `assertRegex(r.text, r'<a href="/ayuda" class="card" style="[^"]*min-height:44px[^"]*">')` (x3, `/privacidad`, `/ajustes/asistente`) | `assertIn('<a href="/ayuda" class="card settings-row">', r.text)` (x3) |
+| `test_turnos_opcional_3.py:151` (`NullSettingTest`, `SiSettingTest`) | `assertIn("fill:var(--night)", r.text)` / else `assertNotIn(...)` | `assertIn('class="c-night op-18"', r.text)` / else `assertNotIn(...)` |
+
+No assertion was deleted without a replacement checking the same structural outcome; all four
+files are now within `touches:` and pass.
+
+**`docs/DESIGN.md`** (security section, rule 13): the stale "remaining gap: `style-src` still
+carries `'unsafe-inline'`" note and the stale policy string (which still listed `'unsafe-inline'`)
+are corrected to the landed state, and the compound-selector trap is written down as a standing
+rule: spacing/layout through the named utility classes, data-series colour only through the fixed
+palette classes, never a `style=` attribute anywhere; a utility or modifier class meant to override
+a component rule that is itself a compound selector must be written as a compound selector too, so
+it wins on specificity rather than on source order; an inline `<svg>` replacing a block `<div>`
+needs its own `display:block; width:100%`.
+
+**Gate**, run once on this branch's final tree, command `.venv/Scripts/python.exe -m unittest
+discover tests -t .`: `Ran 1314 tests in 169.912s ... OK (skipped=1)` (1310 on `main` at
+`BODY-PERSONA-FUGA-1`'s merge, +4 from this branch's own `test_seguridad.py` guards).
+
+**Stopped `AWAITING_APPROVAL`, not merged**, per the spec's own instruction ("this slice BUILDS and
+GATES on the branch and STOPS AWAITING_APPROVAL WITHOUT MERGING"): the diff is customer-facing CSS
+(`body/static/body.css`, `docs/DESIGN.md`, four test files), which fails merge policy A's
+customer-bytes condition on its own terms regardless of this slice's own classification, so a
+merge-only slice lands it after the orchestrator re-measures in the browser. Branch tip
+`a51c2a8ecb41fc031d9bb4b9a976c6b3accac6b9` on `feat/body-estilos-1`, base `main` unchanged at
+`61cb029df3e39bd5ad6c3d4e99df75c466ba82ad`. No password, token, session secret or real health
+figure was read, printed, stored or logged by this slice. `git status --porcelain` is empty on the
+branch after this commit, before this ledger entry's own commit.

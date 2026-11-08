@@ -7,9 +7,9 @@
   {% else %}<p class="sub">{{ t('trends.sub', since=since, days=days) }}</p>{% endif %}
 </div></div>
 
-{% if back_href %}<p style="margin:0 0 12px"><a class="taplink" href="{{ back_href }}">{{ back_label }}</a></p>{% endif %}
+{% if back_href %}<p class="mt-0 mb-12"><a class="taplink" href="{{ back_href }}">{{ back_label }}</a></p>{% endif %}
 
-<div class="seg" style="margin-bottom:12px">
+<div class="seg mb-12">
   {% for x in ranges %}
   {% set qs = [] %}
   {% if x != 'all' %}{% set _ = qs.append('r=' + x) %}{% endif %}
@@ -19,23 +19,23 @@
   <a class="btn{% if r == x %} on{% endif %}" href="/trends{% if qs %}?{{ qs|join('&') }}{% endif %}"{% if r == x %} aria-current="page"{% endif %}>{{ t('trends.r.' + x) }}</a>
   {% endfor %}
 </div>
-{% if month_title %}<p style="margin:0 0 12px"><a class="taplink" href="/trends">{{ t('trends.back_hist') }}</a></p>{% endif %}
+{% if month_title %}<p class="mt-0 mb-12"><a class="taplink" href="/trends">{{ t('trends.back_hist') }}</a></p>{% endif %}
 
 {% macro render_card(c) %}
 <div class="card" id="{{ c.key }}">
   <div class="q">{{ c.question }}</div>
-  {% if c.subtitle %}<p class="sub" style="margin:2px 0 8px">{{ c.subtitle }}</p>{% endif %}
-  <div class="row" style="align-items:flex-end">
+  {% if c.subtitle %}<p class="sub mt-2 mb-8">{{ c.subtitle }}</p>{% endif %}
+  <div class="row items-end">
     <div>{% if c.est and c.last30 != '—' %}<span class="approx fig">≈</span>{% endif %}<span class="fig">{{ c.last30 }}</span><span class="u">{{ c.unit }} · {{ fig_label }}</span></div>
-    <div class="delta {{ c.cls }}" style="text-align:right">{{ c.delta }}</div>
+    <div class="delta {{ c.cls }} text-right">{{ c.delta }}</div>
   </div>
   {{ c.svg|safe }}
-  <p class="note" style="margin:4px 0 0">{{ t('trends.chart_hint') }}</p>
-  {% if c.sparse %}<p class="note" style="margin:4px 0 0">{{ t('trends.sparse_note') }}</p>{% endif %}
-  <div class="legend" style="margin-top:4px">
-    <span><i style="background:var(--body);height:3px;vertical-align:3px"></i>{{ t('trends.monthly') if r == 'all' else t('trends.daily') }}</span>
-    <span><i style="background:var(--inset)"></i>{{ t('trends.normal', low=c.low, high=c.high) }}</span>
-    {% if nights %}<span><i style="background:var(--night);opacity:.35"></i>{{ t('trends.nights') }}</span>{% endif %}
+  <p class="note mt-4 mb-0">{{ t('trends.chart_hint') }}</p>
+  {% if c.sparse %}<p class="note mt-4 mb-0">{{ t('trends.sparse_note') }}</p>{% endif %}
+  <div class="legend mt-4">
+    <span><i class="c-body legend-line"></i>{{ t('trends.monthly') if r == 'all' else t('trends.daily') }}</span>
+    <span><i class="c-inset"></i>{{ t('trends.normal', low=c.low, high=c.high) }}</span>
+    {% if nights %}<span><i class="c-night op-35"></i>{{ t('trends.nights') }}</span>{% endif %}
   </div>
 </div>
 {% endmacro %}
@@ -44,7 +44,7 @@
 <p class="note">{{ t('trends.tap_month') if r == 'all' else t('trends.tap_day') }}</p>
 
 {% if extra_groups %}
-<details class="files" style="margin-top:10px"{% if todas %} open{% endif %}>
+<details class="files mt-10"{% if todas %} open{% endif %}>
   <summary class="k">{{ t('trends.ver_todas', n=extra_count) }}</summary>
   {% for g in extra_groups %}
   <h2>{{ g.title }}</h2>
@@ -60,7 +60,7 @@
     <tr><th></th>{% for h in week.heads %}<th>{{ h }}</th>{% endfor %}</tr>
     {% for d in week.rows %}<tr><td>{{ d.day }}</td>{% for v in d.vals %}<td class="nw{% if v.mark %} pts{% endif %}">{{ v.text }}</td>{% endfor %}</tr>{% endfor %}
   </table>
-  <p class="note" style="margin:8px 0 0">{{ t('trends.week_note') }}</p>
+  <p class="note mt-8 mb-0">{{ t('trends.week_note') }}</p>
 </div>
 {% endif %}
 <a class="more" href="/history">{{ t('trends.history_link') }}</a>

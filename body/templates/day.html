@@ -5,20 +5,20 @@
   <div><h1>{{ date_long }}</h1><p class="sub">{{ t('day.title') }}</p></div>
   <div class="navday"><a class="btn" href="/day/{{ prev }}" aria-label="{{ t('day.prev') }}">‹</a><a class="btn" href="/day/{{ next }}" aria-label="{{ t('day.next') }}">›</a></div>
 </div>
-{% if not has_data %}<div class="card empty"><p class="read" style="margin:0">{{ t('day.no_data') }}</p><p class="note" style="margin:6px 0 0">{{ sync_text }}</p></div>{% endif %}
+{% if not has_data %}<div class="card empty"><p class="read m-0">{{ t('day.no_data') }}</p><p class="note mt-6 mb-0">{{ sync_text }}</p></div>{% endif %}
 {% if sleep %}
 <h2>{{ t('day.sleep') }}</h2>
 <div class="card" id="sleep_minutes">
   <div class="row"><div class="fig">{{ sleep.total }}</div><div class="k">{{ sleep.window }}</div></div>
-  {% if sleep.stages %}<div class="stage">{% for s in sleep.stages %}<i style="width:{{ s.pct }}%;background:{{ s.color }}" title="{{ s.label }}"></i>{% endfor %}</div>
-  <div class="legend">{% for s in sleep.stages %}<span><i style="background:{{ s.color }}"></i>{{ s.label }} {{ s.value }}</span>{% endfor %}</div>{% endif %}
+  {% if sleep.stages %}<svg class="stage" viewBox="0 0 100 10" preserveAspectRatio="none">{% set ns = namespace(x=0) %}{% for s in sleep.stages %}<rect x="{{ ns.x }}" y="0" width="{{ s.pct }}" height="10" class="{{ s.cls }}"><title>{{ s.label }}</title></rect>{% set ns.x = ns.x + s.pct %}{% endfor %}</svg>
+  <div class="legend">{% for s in sleep.stages %}<span><i class="{{ s.cls }}"></i>{{ s.label }} {{ s.value }}</span>{% endfor %}</div>{% endif %}
 </div>
 {% endif %}
 {% if turnos %}
 <h2>{{ t('day.shift') }}</h2>
 {% if shifts %}{% for sh in shifts %}<div class="shift {{ sh.kind }}"><div>{{ sh.text }}</div></div>{% endfor %}
 {% else %}<p class="note">{{ t('day.no_shift') }}</p>{% endif %}
-{% if block_ctx %}<p class="note" style="margin-top:6px">{{ block_ctx }} <a class="taplink" href="/shifts">{{ t('day.shift_ctx_link') }}</a></p>{% endif %}
+{% if block_ctx %}<p class="note mt-6">{{ block_ctx }} <a class="taplink" href="/shifts">{{ t('day.shift_ctx_link') }}</a></p>{% endif %}
 {% endif %}
 <h2>{{ t('day.all') }}</h2>
 <div class="grid2 grid3">

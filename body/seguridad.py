@@ -28,16 +28,17 @@ from .rutas import comun
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 # Content-Security-Policy (BODY-SEGURIDAD-2), built from parts so a test can read each one.
-# style-src keeps 'unsafe-inline': 22 templates carry style="..." attributes, and server-built SVG
-# (trends/charts) does too -- that gap is recorded in docs/DESIGN.md and the ledger, not silently
-# dropped. form-action is 'self' plus Cuenta's issuer origin, and only when hosted: a Body form's
-# POST (/logout, /privacidad/consentimiento, /privacidad/borrar) can 303-redirect to Cuenta's
-# /oauth/logout, built by cuenta.logout_url from cuenta.issuer() -- Chrome applies form-action to
-# the redirect that follows a form submission, not only to the form's own action= attribute.
+# style-src no longer carries 'unsafe-inline' (BODY-ESTILOS-1 closed that gap): every template's
+# style="..." attribute and every server-built SVG's inline style became a class in body.css or a
+# plain SVG attribute, proved empty by tests/test_seguridad.py's guards. form-action is 'self' plus
+# Cuenta's issuer origin, and only when hosted: a Body form's POST (/logout,
+# /privacidad/consentimiento, /privacidad/borrar) can 303-redirect to Cuenta's /oauth/logout, built
+# by cuenta.logout_url from cuenta.issuer() -- Chrome applies form-action to the redirect that
+# follows a form submission, not only to the form's own action= attribute.
 _CSP_FIXED_DIRECTIVES = (
     "default-src 'self'",
     "script-src 'self'",
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "style-src 'self' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",
     "img-src 'self' data:",
     "connect-src 'self'",

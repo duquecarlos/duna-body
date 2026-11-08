@@ -148,9 +148,9 @@ class _SettingChecks:
         r = self.client.get("/trends?r=90")
         self.assertEqual(r.status_code, 200)
         if self.on:
-            self.assertIn("fill:var(--night)", r.text)
+            self.assertIn('class="c-night op-18"', r.text)
         else:
-            self.assertNotIn("fill:var(--night)", r.text)
+            self.assertNotIn('class="c-night op-18"', r.text)
             self.assertNotIn('href="/shifts"', r.text)
 
     # ---- /shifts and /shifts/como ------------------------------------------------------------------

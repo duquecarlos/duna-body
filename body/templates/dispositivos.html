@@ -5,7 +5,7 @@
 {% if new_key %}
 <div class="card">
   <p class="read">{{ t('dispositivos.new_key_intro') }}</p>
-  <p class="read" style="font-family:monospace;word-break:break-all">{{ new_key }}</p>
+  <p class="read key-mono">{{ new_key }}</p>
   <p class="read">{{ t('dispositivos.new_key_warning') }}</p>
 </div>
 {% endif %}
@@ -19,7 +19,7 @@
   <p class="read">{{ d.alcances }}</p>
   <p class="read">{{ t('dispositivos.created_label', date=d.creado) }}</p>
   <p class="read">{% if d.usado %}{{ t('dispositivos.last_used_label', date=d.usado) }}{% else %}{{ t('dispositivos.never_used') }}{% endif %}</p>
-  <form method="post" action="/ajustes/dispositivos/{{ d.id }}/revocar" style="margin-top:12px">
+  <form method="post" action="/ajustes/dispositivos/{{ d.id }}/revocar" class="mt-12">
     <button class="btn" type="submit">{{ t('dispositivos.disconnect_btn') }}</button>
   </form>
 </div>
@@ -29,12 +29,12 @@
 {% endif %}
 <div class="card">
   <div class="q">{{ t('dispositivos.connect_title') }}</div>
-  <form method="post" action="/ajustes/dispositivos" style="margin-top:12px">
+  <form method="post" action="/ajustes/dispositivos" class="mt-12">
     <div class="q">{{ t('dispositivos.name_label') }}</div>
-    <input type="text" name="nombre" class="field" required style="margin-bottom:12px">
+    <input type="text" name="nombre" class="field mb-12" required>
     <label class="radio"><input type="checkbox" name="alcance_turnos" value="1" checked> {{ t('dispositivos.scope.turnos') }}</label>
     <label class="radio"><input type="checkbox" name="alcance_vida" value="1" checked> {{ t('dispositivos.scope.vida') }}</label>
-    <button class="btn" type="submit" style="margin-top:12px">{{ t('dispositivos.connect_btn') }}</button>
+    <button class="btn mt-12" type="submit">{{ t('dispositivos.connect_btn') }}</button>
   </form>
 </div>
 {% endblock %}

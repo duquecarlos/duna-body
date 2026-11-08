@@ -33,17 +33,17 @@
       <select name="metric_key" id="metric-select" class="field">
         {% for m in metrics %}<option value="{{ m.key }}" data-direction="{{ m.direction }}" data-baseline="{{ m.baseline if m.baseline is not none else '' }}">{{ m.label }}{% if m.unit %} ({{ m.unit }}){% endif %}</option>{% endfor %}
       </select>
-      <div class="q" style="margin-top:12px">{{ t('goals.field_direction') }}</div>
+      <div class="q mt-12">{{ t('goals.field_direction') }}</div>
       <select name="direction" id="direction-select" class="field">
         {% for d in directions %}<option value="{{ d }}">{{ t('goals.direction.' + d) }}</option>{% endfor %}
       </select>
-      <div class="q" style="margin-top:12px">{{ t('goals.field_target') }}</div>
+      <div class="q mt-12">{{ t('goals.field_target') }}</div>
       <input type="number" step="any" name="target_value" class="field">
-      <div class="q" style="margin-top:12px">{{ t('goals.field_baseline') }}</div>
+      <div class="q mt-12">{{ t('goals.field_baseline') }}</div>
       <input type="number" step="any" name="baseline_value" id="baseline-input" class="field">
-      <div class="k" style="margin-top:4px">{{ t('goals.from_data') }}</div>
+      <div class="k mt-4">{{ t('goals.from_data') }}</div>
       {% else %}
-      <p class="note" style="margin:0">{{ t('goals.metric_empty') }}</p>
+      <p class="note m-0">{{ t('goals.metric_empty') }}</p>
       {% endif %}
     </div>
   </fieldset>
@@ -62,9 +62,9 @@
       <option value="private">{{ t('goals.visibility.private') }}</option>
       <option value="household">{{ t('goals.visibility.household') }}</option>
     </select>
-    <p class="note" style="margin-top:6px">{{ t('goals.visibility_milestone_note') }}</p>
+    <p class="note mt-6">{{ t('goals.visibility_milestone_note') }}</p>
     {% else %}
-    <p class="note" style="margin:0">{{ t('goals.household_empty') }}</p>
+    <p class="note m-0">{{ t('goals.household_empty') }}</p>
     {% endif %}
   </div>
   </fieldset>
@@ -72,17 +72,17 @@
   <div class="card">
     <details class="files">
       <summary class="k">{{ t('goals.add_habit') }}</summary>
-      <div style="margin-top:8px">
+      <div class="mt-8">
         <input type="text" name="habit_title" class="field" placeholder="{{ t('goals.habit_title_ph') }}">
-        <div class="row" style="margin-top:8px;gap:8px;justify-content:flex-start">
-          <input type="number" name="habit_times" class="field" min="1" value="1" style="flex:0 0 70px">
-          <select name="habit_per" class="field" style="flex:1">
+        <div class="row mt-8 gap-8 justify-start">
+          <input type="number" name="habit_times" class="field flex-70" min="1" value="1">
+          <select name="habit_per" class="field flex-1">
             <option value="day">{{ t('goals.cadence.per.day') }}</option>
             <option value="week" selected>{{ t('goals.cadence.per.week') }}</option>
             <option value="month">{{ t('goals.cadence.per.month') }}</option>
           </select>
         </div>
-        <select name="habit_context" class="field" style="margin-top:8px">
+        <select name="habit_context" class="field mt-8">
           <option value="">{{ t('goals.habit_no_context') }}</option>
           <option value="before_night">{{ t('habit.context.before_night') }}</option>
           <option value="after_night">{{ t('habit.context.after_night') }}</option>
@@ -92,7 +92,7 @@
     </details>
   </div>
 
-  <button type="submit" class="btn on" style="width:100%;margin-top:4px">{{ t('goals.create_btn') }}</button>
+  <button type="submit" class="btn on w-100 mt-4">{{ t('goals.create_btn') }}</button>
 </form>
 <script src="{{ static_url('meta_nueva.js') }}" defer></script>
 {% endblock %}

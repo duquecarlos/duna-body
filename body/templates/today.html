@@ -12,17 +12,17 @@
 <a class="card est" href="/how/{{ day }}">
   <div class="q">{{ t('today.ready_q') }}</div>
   {% if r.score is not none %}
-  <div class="row" style="align-items:flex-end">
+  <div class="row items-end">
     <div><span class="approx big">≈</span><span class="big">{{ r.score }}</span><span class="u">{{ t('unit.of100') }}</span></div>
-    <div style="text-align:right">
+    <div class="text-right">
       <span class="chip {{ r.band }}">{{ t('band.' ~ r.band) }}</span>
-      {% if ready_avg is not none %}<div class="delta {{ ready_cls }}" style="margin-top:6px">{{ ready_delta }}</div><div class="k">{{ t('today.vs_avg', avg=ready_avg) }}</div>{% endif %}
+      {% if ready_avg is not none %}<div class="delta {{ ready_cls }} mt-6">{{ ready_delta }}</div><div class="k">{{ t('today.vs_avg', avg=ready_avg) }}</div>{% endif %}
     </div>
   </div>
-  <div class="k" style="margin-top:6px">{{ t('today.ready_label') }}</div>
+  <div class="k mt-6">{{ t('today.ready_label') }}</div>
   <p class="read">{{ reading }}</p>
   {% else %}
-  <div class="fig" style="color:var(--muted)">{{ t('today.no_score_short') }}</div>
+  <div class="fig c-muted">{{ t('today.no_score_short') }}</div>
   <p class="read">{{ t('today.no_score', missing=missing_txt) }}</p>
   {% endif %}
   <span class="how">{{ t('today.how') }}</span>
@@ -34,10 +34,10 @@
 {% if plan_habits %}
 <div class="card">
   <div class="q">{{ t('today.plan_title') }}</div>
-  <ul class="plan" style="margin-top:6px">
+  <ul class="plan mt-6">
   {% for h in plan_habits %}
     <li>
-      <form method="post" action="/habits/{{ h.id }}/check" style="margin:0">
+      <form method="post" action="/habits/{{ h.id }}/check" class="m-0">
         <input type="hidden" name="day" value="{{ today_iso }}">
         <input type="hidden" name="back" value="/">
         <input type="hidden" name="done" value="{{ '0' if h.checked else '1' }}">
@@ -52,7 +52,7 @@
 </div>
 {% endif %}
 
-<div class="grid2" style="margin-bottom:10px">
+<div class="grid2 mb-10">
 {% for c in cards %}
   <a class="card" href="/day/{{ day }}#{{ c.key }}">
     <div class="k">{{ c.label }}</div>
@@ -66,9 +66,9 @@
 {% if hogar_compartido %}
 <div class="card">
   <div class="q">{{ t('today.hogar.titulo') }}</div>
-  <ul class="plan" style="margin-top:6px">
+  <ul class="plan mt-6">
   {% for item in hogar_compartido %}
-    <li style="display:block">
+    <li class="block">
       <div class="k">{{ item.metric_label }}</div>
       {% if item.sin_dato %}
       <div class="note">{{ item.name }} · {{ t('today.hogar.sin_dato') }}</div>

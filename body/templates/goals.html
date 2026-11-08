@@ -8,22 +8,22 @@
 
 {% if empty %}
 <div class="card empty">
-  <p class="read" style="margin-top:0">{{ t('goals.empty_text') }}</p>
-  <a class="btn on" style="margin-top:10px;display:inline-flex" href="/goals/new">{{ t('goals.new_btn') }}</a>
+  <p class="read mt-0">{{ t('goals.empty_text') }}</p>
+  <a class="btn on mt-10" href="/goals/new">{{ t('goals.new_btn') }}</a>
 </div>
 {% endif %}
 
 {% for c in cards %}
 <a class="card" href="/goals/{{ c.id }}">
-  <div class="row"><div class="q" style="margin:0">{{ c.title }}</div><span class="chip {{ c.cls }}">{{ c.verdict }}</span></div>
-  {% if c.shared_line %}<p class="k" style="margin:2px 0 0">{{ c.shared_line }}</p>{% endif %}
-  <div class="row" style="margin-top:8px;align-items:flex-end">
+  <div class="row"><div class="q m-0">{{ c.title }}</div><span class="chip {{ c.cls }}">{{ c.verdict }}</span></div>
+  {% if c.shared_line %}<p class="k mt-2 mb-0">{{ c.shared_line }}</p>{% endif %}
+  <div class="row mt-8 items-end">
     <div><span class="fig">{{ c.fig }}</span><span class="u">{{ c.period }}</span></div>
-    <div class="k" style="text-align:right">{{ c.target_text }}</div>
+    <div class="k text-right">{{ c.target_text }}</div>
   </div>
-  {% if c.pct is not none %}<div class="bar"><span style="width:{{ c.pct }}%"></span></div>{% endif %}
+  {% if c.pct is not none %}<svg class="bar" viewBox="0 0 100 6" preserveAspectRatio="none"><rect x="0" y="0" width="{{ c.pct }}" height="6" class="c-body"></rect></svg>{% endif %}
   {% if c.started %}<div class="k">{{ c.started }} <span class="chip">{{ t('goals.from_data') }}</span></div>{% endif %}
-  <span class="chev" style="top:auto;bottom:12px">›</span>
+  <span class="chev chev-low">›</span>
 </a>
 {% endfor %}
 
@@ -32,7 +32,7 @@
 {% for p in proposed %}
 <div class="card">
   <div class="q">{{ p.title }}</div>
-  {% if p.shared_line %}<p class="k" style="margin:2px 0 0">{{ p.shared_line }}</p>{% endif %}
+  {% if p.shared_line %}<p class="k mt-2 mb-0">{{ p.shared_line }}</p>{% endif %}
   <div class="k">{{ p.sub }}</div>
   <div class="confirm-actions">
     <form method="post" action="/goals/{{ p.id }}/activate"><button class="btn on" type="submit">{{ t('goals.activate_btn') }}</button></form>
@@ -43,16 +43,16 @@
 {% endif %}
 
 {% if archived %}
-<details class="files" style="margin-top:10px">
+<details class="files mt-10">
   <summary class="k">{{ t('goals.section_archive') }}</summary>
   {% for a in archived %}
-  <a class="card" href="/goals/{{ a.id }}" style="margin-top:8px">
-    <div class="row"><div class="q" style="margin:0">{{ a.title }}</div><span class="chip">{{ a.status_text }}</span></div>
-    {% if a.shared_line %}<p class="k" style="margin:2px 0 0">{{ a.shared_line }}</p>{% endif %}
+  <a class="card mt-8" href="/goals/{{ a.id }}">
+    <div class="row"><div class="q m-0">{{ a.title }}</div><span class="chip">{{ a.status_text }}</span></div>
+    {% if a.shared_line %}<p class="k mt-2 mb-0">{{ a.shared_line }}</p>{% endif %}
   </a>
   {% endfor %}
 </details>
 {% endif %}
 
-<p class="note" style="text-align:center;margin-top:14px">{{ t('goals.footer') }}</p>
+<p class="note text-center mt-14">{{ t('goals.footer') }}</p>
 {% endblock %}
