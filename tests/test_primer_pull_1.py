@@ -15,7 +15,7 @@ from unittest import mock
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
-from body import config, cuenta, db, garmin_adapter, garmin_cuenta, pull
+from body import config, cuenta, db, garmin_adapter, garmin_cuenta, goals, pull
 
 TOKEN_KEY_HEX = "33" * 32
 HOY = date(2026, 11, 7)
@@ -254,6 +254,118 @@ class LocalModeRefusesBackfillTest(unittest.TestCase):
         m.assert_not_called()
 
 
+def _add_active_habit_goal(conn, person_id: int) -> int:
+    gid = goals.propose(conn, person_id, "Steps", HOY.isoformat(), kind="milestone", deadline="2027-01-01")
+    goals.activate(conn, gid)
+    return gid
+
+
+class WeeklyChecksHostedTest(unittest.TestCase):
+    """BODY-SEGURIDAD-3-M: the hosted pull closes weeks, once each, for every person who can see
+    an active goal -- connected to Garmin or not, pulled OK or failed today -- through the
+    every-person sweep (`goals.personas_con_meta_activa` / `_cerrar_semanas_todas`), for the daily
+    pull and for --backfill alike, and never letting a failure there count as a Garmin failure or
+    stop the next person."""
+
+    def setUp(self):
+        self.conn = _fresh_db(self, "weekly_hosted.db")
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        patcher = mock.patch.dict(os.environ, {garmin_cuenta.KEY_ENV: TOKEN_KEY_HEX})
+        patcher.start(); self.addCleanup(patcher.stop)
+        sleep_patcher = mock.patch("body.pull.time.sleep")
+        sleep_patcher.start(); self.addCleanup(sleep_patcher.stop)
+
+    def test_daily_pull_closes_weeks_for_every_person_with_a_goal_not_only_connected_ones(self):
+        garmin_cuenta.guardar(self.conn, 1, "tok-a")  # person 1: connected
+        _add_active_habit_goal(self.conn, 1)
+        _add_active_habit_goal(self.conn, 2)  # person 2: an active goal, NO garmin_cuenta row
+        self.conn.commit()
+        with mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_stub_fetch_day()), \
+             mock.patch("body.pull.goals.cerrar_semanas", return_value=0) as m_cerrar:
+            ok, failed, saved = pull.pull_hosted(self.conn, [HOY.isoformat()])
+        self.assertEqual((ok, failed), (1, 0))  # only person 1 had a token to pull with
+        self.assertEqual(m_cerrar.call_count, 2)  # both are swept regardless
+        called_persons = sorted(c.args[1] for c in m_cerrar.call_args_list)
+        self.assertEqual(called_persons, [1, 2])
+
+    def test_person_whose_pull_raised_still_gets_their_weekly_checks(self):
+        garmin_cuenta.guardar(self.conn, 1, "tok-a")
+        _add_active_habit_goal(self.conn, 1)
+        self.conn.commit()
+        with mock.patch("body.pull.garmin_adapter.fetch_day",
+                        side_effect=_stub_fetch_day(error_token="tok-a")), \
+             mock.patch("body.pull.goals.cerrar_semanas", return_value=0) as m_cerrar:
+            ok, failed, saved = pull.pull_hosted(self.conn, [HOY.isoformat()])
+        self.assertEqual((ok, failed), (0, 1))  # the Garmin pull itself failed
+        m_cerrar.assert_called_once_with(self.conn, 1, hoy=mock.ANY)  # the sweep still ran for them
+
+    def test_nobody_is_closed_twice(self):
+        garmin_cuenta.guardar(self.conn, 1, "tok-a")
+        garmin_cuenta.guardar(self.conn, 2, "tok-b")
+        _add_active_habit_goal(self.conn, 1)
+        _add_active_habit_goal(self.conn, 2)
+        self.conn.commit()
+        with mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_stub_fetch_day()), \
+             mock.patch("body.pull.goals.cerrar_semanas", return_value=0) as m_cerrar:
+            pull.pull_hosted(self.conn, [HOY.isoformat()])
+        self.assertEqual(m_cerrar.call_count, 2)  # not 3+: the per-person call inside the Garmin
+        called_persons = [c.args[1] for c in m_cerrar.call_args_list]  # loop was removed, not kept
+        self.assertEqual(sorted(called_persons), [1, 2])
+        self.assertEqual(len(called_persons), len(set(called_persons)))
+
+    def test_backfill_also_closes_weeks_for_every_person_with_a_goal(self):
+        garmin_cuenta.guardar(self.conn, 1, "tok-a")
+        _add_active_habit_goal(self.conn, 1)
+        _add_active_habit_goal(self.conn, 2)  # no garmin_cuenta row at all
+        self.conn.commit()
+        with mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_stub_fetch_day()), \
+             mock.patch("body.pull.goals.cerrar_semanas", return_value=0) as m_cerrar:
+            ok, failed, saved = pull.pull_backfill_hosted(self.conn, hoy=HOY)
+        self.assertEqual(ok, 1)
+        self.assertEqual(m_cerrar.call_count, 2)
+        called_persons = sorted(c.args[1] for c in m_cerrar.call_args_list)
+        self.assertEqual(called_persons, [1, 2])
+
+    def test_cerrar_semanas_failure_for_one_person_does_not_stop_the_next(self):
+        garmin_cuenta.guardar(self.conn, 1, "tok-a")
+        garmin_cuenta.guardar(self.conn, 2, "tok-b")
+        _add_active_habit_goal(self.conn, 1)
+        _add_active_habit_goal(self.conn, 2)
+        self.conn.commit()
+        buf = io.StringIO()
+        with mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_stub_fetch_day()), \
+             mock.patch("body.pull.goals.cerrar_semanas", side_effect=[RuntimeError("boom"), 1]), \
+             contextlib.redirect_stdout(buf):
+            ok, failed, saved = pull.pull_hosted(self.conn, [HOY.isoformat()])
+        self.assertEqual((ok, failed), (2, 0))  # neither person counted as a Garmin failure
+        self.assertIsNone(garmin_cuenta.ultimo_error(self.conn, 1))
+        self.assertIsNone(garmin_cuenta.ultimo_error(self.conn, 2))
+        self.assertIn("weekly checks failed: RuntimeError", buf.getvalue())
+        self.assertIn("weekly checks: 1 rows", buf.getvalue())  # the second person still got theirs
+        self.assertNotIn("boom", buf.getvalue())  # the exception TYPE only, never its message
+
+
+class WeeklyChecksLocalTest(unittest.TestCase):
+    """BODY-SEGURIDAD-3: the local daily sync is the one writer of goal_check in local mode too,
+    calling goals.cerrar_semanas once after its day-pull, with the local person's own today."""
+
+    def test_local_pull_calls_cerrar_semanas_with_the_local_persons_today(self):
+        conn = _fresh_db(self, "weekly_local.db")
+        buf = io.StringIO()
+        with mock.patch("body.pull.garmin_adapter.fetch_day",
+                        return_value=garmin_adapter.DayData(day="2026-11-07", metrics={"resting_hr": 55.0})), \
+             mock.patch("body.pull.goals.cerrar_semanas", return_value=2) as m_cerrar, \
+             contextlib.redirect_stdout(buf):
+            rc = pull.main(["--date", "2026-11-07"])
+        self.assertEqual(rc, 0)
+        m_cerrar.assert_called_once()
+        call_args, call_kwargs = m_cerrar.call_args
+        self.assertEqual(call_args[1], db.local_person_id(conn))
+        self.assertIn("hoy", call_kwargs)
+        self.assertIn("weekly checks: 2 rows", buf.getvalue())
+
+
 class NoHealthFigureInOutputTest(unittest.TestCase):
     def setUp(self):
         self.conn = _fresh_db(self, "print.db")
@@ -271,6 +383,8 @@ class NoHealthFigureInOutputTest(unittest.TestCase):
             with contextlib.redirect_stdout(buf):
                 rc = pull.main(["--backfill"])
         self.assertEqual(rc, 0)
+        # Nobody has a goal in this test's database, so the weekly-check sweep closes nobody and
+        # prints nothing (BODY-SEGURIDAD-3-M: the sweep's person list comes from the goal table).
         self.assertEqual(buf.getvalue().strip(), "backfill: 1 ok, 0 failed, 15 days stored")
 
 

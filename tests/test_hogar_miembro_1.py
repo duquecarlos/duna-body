@@ -249,18 +249,26 @@ class OwnWeeklyCheckTest(unittest.TestCase):
             goals.check_habit(conn, hid, 2, day, True, hoy=date.fromisoformat(_WEEK_DAYS[6]))
         conn.commit()
 
+        # BODY-SEGURIDAD-3: viewing /goals/{id} computes the viewer's current week live
+        # (goals.evaluar_semana) from the viewer's own habit checks, and writes nothing.
         with mock.patch.object(comun, "_today_local", return_value=_TODAY):
             _as(self, 2)
             r = client.get(f"/goals/{gid}")
         self.assertEqual(r.status_code, 200)
         # BODY-HABITO-VECES-1: per='week', times=1 -> due = min(1, 7) = 1, done capped at due.
-        # the viewer's own weekly check (1 of 1, was 7 of 7 under metas-v1) was upserted; the
-        # creator's (also 1 of 1, was 4 of 7) stays theirs
+        self.assertIn("1 de 1", r.text)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM goal_check").fetchone()[0], 0)
+
+        # the daily pull (goals.cerrar_semanas) is the one writer: it stores the VIEWER's own
+        # verdict, computed from the viewer's own checks -- the creator's 4-of-7 never lands here.
+        n = goals.cerrar_semanas(conn, 2, hoy=_TODAY)
+        self.assertEqual(n, 2)  # this week and last week
         own_check = conn.execute(
-            "SELECT habits_done, habits_due FROM goal_check WHERE goal_id = ? AND person_id = 2",
-            (gid,)).fetchone()
+            "SELECT habits_done, habits_due FROM goal_check WHERE goal_id = ? AND person_id = 2 "
+            "AND week_start = ?", (gid, _MONDAY.isoformat())).fetchone()
         self.assertEqual((own_check["habits_done"], own_check["habits_due"]), (1, 1))
-        self.assertNotIn("4 de 7", r.text)
+        self.assertIsNone(conn.execute(
+            "SELECT 1 FROM goal_check WHERE goal_id = ? AND person_id = 1", (gid,)).fetchone())
 
 
 class AddHabitChoiceTest(unittest.TestCase):

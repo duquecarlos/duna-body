@@ -62,6 +62,18 @@ comes from; the Body-specific reading is in *italics*. When a new rule arrives f
     (BODY-SEGURIDAD-4): any attempt that reaches a third party (Garmin) on a person's behalf is limited per
     person; the limit refuses before the third party is called, so Body's own server can never be used as a
     relay to try many credentials against it.
+    (BODY-SEGURIDAD-3): a GET route never writes -- guarded by `tests/test_get_sin_escritura.py`, which sweeps
+    every GET route against a populated database and fails if a single row changes (two routes, `/goals` and
+    `/goals/{goal_id}`, broke this before by upserting a `goal_check` row through `goals.weekly_check` the
+    first time anyone viewed a goal in a week, freezing that week's verdict at whoever opened it first).
+    `goals.cerrar_semanas`, called once per person by the daily pull (`body/pull.py`, hosted and local), is the
+    one writer of `goal_check`; it closes that person's current and previous week for every active goal they
+    can see. The hosted daily pull closes weeks for every person who can see an active goal
+    (`goals.personas_con_meta_activa`), not only the ones with a connected Garmin account: a habit goal's
+    verdict never depends on Garmin data, so a household member with no Garmin connection, or whose pull
+    failed that day, still gets theirs (BODY-SEGURIDAD-3-M). Screens compute the current week live, every
+    time, with `goals.evaluar_semana` (pure, no write) and show it instead of any stored row for that same
+    week.
 14. **Assistant, to agent-ui-v1** (Carlos asked for it like the other apps, 2026-11-06) (one tap, 3 sizes, proposes → you confirm → undo). Built with parity: every
     screen ships with the assistant's read tool.
 
