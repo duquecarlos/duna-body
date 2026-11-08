@@ -1,1 +1,19 @@
 * text eol=lf
+
+# autocrlf on this machine plus the text rule above rewrote binary bytes in
+# .woff2 font files and normalised the CRLF LICENSE's line endings, measured
+# in BODY-FUENTES-PROPIAS-1. Binary assets are never text.
+*.woff2 binary
+*.woff binary
+*.ttf binary
+*.otf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.sqlite binary
+*.db binary
+body/static/fonts/**/LICENSE -text

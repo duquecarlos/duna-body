@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import hashlib
 import re
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -33,6 +35,20 @@ _FONT_FILES = {
 }
 
 _THIRD_PARTY_RE = re.compile(r"fonts\.googleapis\.com|fonts\.gstatic\.com")
+
+# BODY-FUENTES-PROPIAS-1-M: these are the three files git must store byte-exact. autocrlf on
+# this machine plus the old `* text eol=lf` rule rewrote binary bytes on `git add` (2 bytes lost
+# from each .woff2, 93 from the CRLF LICENSE) until .gitattributes marked them non-text -- see
+# DECISIONS.md. This guards the TRACKED blob, so a future .gitattributes change that lets git
+# rewrite them again goes red.
+_TRACKED_FILES = {
+    "body/static/fonts/hanken-grotesk/hanken-grotesk-latin-wght-normal.woff2":
+        "e9201eddf1d41d0b62253295d869ce3cf65768f7102b797f02c7f8c876b4a9d5",
+    "body/static/fonts/hanken-grotesk/hanken-grotesk-latin-ext-wght-normal.woff2":
+        "768af2923e0ab1549f1dfba0a5c8ea749c4c01f01d8e77ffaf7fcd12f57a0a24",
+    "body/static/fonts/hanken-grotesk/LICENSE":
+        "ef8780a5a0864714268dd7b6e00de9b39605a1dd61650ed2fa0af9b79b857967",
+}
 
 
 class _FuentesTestCase(unittest.TestCase):
@@ -128,6 +144,31 @@ class LicenseShipsBesideFontsTest(unittest.TestCase):
             hashlib.sha256(license_path.read_bytes()).hexdigest(),
             "ef8780a5a0864714268dd7b6e00de9b39605a1dd61650ed2fa0af9b79b857967",
         )
+
+
+class TrackedBlobByteExactTest(unittest.TestCase):
+    """Guard (f): the blob git has COMMITTED for each font/licence file hashes to the expected
+    value -- not just the file on disk. Catches a .gitattributes regression that lets `git add`
+    rewrite these bytes again (BODY-FUENTES-PROPIAS-1-M)."""
+
+    def test_tracked_blob_matches_expected_hash(self):
+        if shutil.which("git") is None:
+            self.skipTest("git is not available on PATH")
+        if not (ROOT / ".git").exists():
+            self.skipTest("not running inside a git checkout")
+
+        checked = 0
+        for rel_path, expected_sha256 in _TRACKED_FILES.items():
+            result = subprocess.run(
+                ["git", "cat-file", "-p", f"HEAD:{rel_path}"],
+                cwd=ROOT,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+            actual = hashlib.sha256(result.stdout).hexdigest()
+            self.assertEqual(actual, expected_sha256, rel_path)
+            checked += 1
+        self.assertEqual(checked, len(_TRACKED_FILES))
 
 
 if __name__ == "__main__":
