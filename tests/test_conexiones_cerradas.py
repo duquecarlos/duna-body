@@ -372,12 +372,7 @@ def _closes_right_after(stmts, i, var_name) -> bool:
 # close what it opens -- it stores the connection in a contextvar for _cierra_conexion[_async] to
 # close once the route returns (BODY-CONEXIONES-CERRADAS-1 decision 1), the one sanctioned
 # exception to the pattern this guard checks.
-#
-# agente/precios.py's own CLI block (`if __name__ == "__main__":`) calls db.init(_conn) before its
-# try, same as vincular_cuenta.py and demo.py did -- found by this widened guard but outside this
-# slice's `touches:` (agente/precios.py is not listed there), so left as a known offender for a
-# later slice rather than fixed here.
-_ALLOWED_DIRECT_CONNECT = {("comun.py", "_ctx"), ("precios.py", "<module>")}
+_ALLOWED_DIRECT_CONNECT = {("comun.py", "_ctx")}
 
 
 class DirectConnectClosesInFinallyTest(unittest.TestCase):
@@ -388,9 +383,8 @@ class DirectConnectClosesInFinallyTest(unittest.TestCase):
     which has no request to scope by at all. Such a connection must close in the `finally` of a
     `try` that starts on the very next statement after the assignment (ast: the statement right
     after `X = db.connect()` is a `Try` whose `finalbody` calls `X.close()`), or a
-    `with contextlib.closing(...)` in its place. `_ALLOWED_DIRECT_CONNECT` carries the sanctioned
-    exception and the one pre-existing offender found while widening this guard, outside this
-    slice's `touches:`."""
+    `with contextlib.closing(...)` in its place. `_ALLOWED_DIRECT_CONNECT` carries the one
+    sanctioned exception, _ctx."""
 
     def test_every_db_connect_closes_right_after(self):
         offenders = []

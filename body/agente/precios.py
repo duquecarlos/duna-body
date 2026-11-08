@@ -84,8 +84,8 @@ if __name__ == "__main__":
     from body import config, db
 
     _conn = db.connect(config.DB_PATH)
-    db.init(_conn)
     try:
+        db.init(_conn)
         print(sembrar(_conn))
     finally:
         _conn.close()
