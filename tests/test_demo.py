@@ -156,6 +156,13 @@ class SeededContentTest(unittest.TestCase):
         creator = self.conn.execute("SELECT display_name FROM person WHERE id = ?", (row[0],)).fetchone()
         self.assertEqual(creator["display_name"], "Ana")
 
+    def test_ana_shares_one_figure_with_the_household(self):
+        ana_id = self.conn.execute("SELECT id FROM person WHERE display_name = 'Ana'").fetchone()[0]
+        rows = self.conn.execute(
+            "SELECT metric_key FROM figura_compartida WHERE person_id = ? AND withdrawn_at IS NULL",
+            (ana_id,)).fetchall()
+        self.assertEqual([r[0] for r in rows], ["resting_hr"])
+
     def test_demo_marker_written(self):
         marker = Path(self.folder) / "DEMO"
         self.assertTrue(marker.exists())

@@ -185,7 +185,7 @@ def _avg_metric(conn, db, key: str, days: list[date], person_id: int) -> float |
 
 
 def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
-    from . import db, goals, household, shift_import, turnos_costo
+    from . import compartir, db, goals, household, shift_import, turnos_costo
 
     person_id = db.local_person_id(conn)
     conn.execute("UPDATE person SET display_name = 'Demo', timezone = 'America/Bogota' WHERE id = ?", (person_id,))
@@ -300,6 +300,9 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     conn.executemany("INSERT INTO hogar_local (person_id, hogar_id) VALUES (?, ?)",
                       [(person_id, _HOGAR_ID), (ana_id, _HOGAR_ID)])
     conn.commit()
+    # Ana shares one figure with the household (BODY-HOGAR-COMPARTIR-1), so the demo person's own
+    # Hoy shows the «Tu hogar» card.
+    compartir.compartir(conn, ana_id, "resting_hr")
 
     hogar_deadline = (anchor + timedelta(days=84)).isoformat()
     gid_hogar = goals.propose(conn, ana_id, _HOGAR_GOAL_TITLE[idioma], start_day, area="adventure",
