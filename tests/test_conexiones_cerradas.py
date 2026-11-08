@@ -176,11 +176,14 @@ _ALLOWED_WITHOUT_DECORATOR = {"asistente_preguntar"}
 
 _HTTP_METHODS = {"get", "post", "put", "delete", "patch"}
 
-# BODY-WEB-ESTRUCTURA-7: comun.py's /sw.js serves a static asset by content (the cache name built
-# from STATIC_HASH) -- it is not about any person's own data, opens no connection, and so carries
-# no route that calls _ctx. A module named here may have routes without a single one of them
-# calling _ctx; every OTHER router module must still have at least one that does.
-_MODULES_WITHOUT_A_CTX_ROUTE = {"comun.py"}
+# BODY-WEB-ESTRUCTURA-8: pwa.py's /sw.js serves a static asset by content (the cache name built
+# from comun.STATIC_HASH) -- it is not about any person's own data, opens no connection, and so
+# carries no route that calls _ctx. sesion.py's routes open their own connection with plain
+# db.connect()/db.init() (as they did in web.py before this slice, unchanged by the move) rather
+# than through comun._ctx -- there is no person_id to scope by before sign-in has happened. A
+# module named here may have routes without a single one of them calling _ctx; every OTHER
+# router module must still have at least one that does.
+_MODULES_WITHOUT_A_CTX_ROUTE = {"pwa.py", "sesion.py"}
 
 
 def _decorator_name(node) -> str | None:

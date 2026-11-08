@@ -18,6 +18,7 @@ from cryptography.exceptions import InvalidTag
 from fastapi.testclient import TestClient
 
 from body import config, cuenta, db, garmin_adapter, garmin_cuenta, privacidad, pull, web
+from body.rutas import garmin as garmin_rutas
 from tests.test_cuenta_rp import SUB, CuentaRpTestCase
 
 TOKEN_KEY_HEX = "11" * 32
@@ -245,8 +246,8 @@ class SignInOkTest(GarminHostedTestCase):
 class MfaFlowTest(GarminHostedTestCase):
     def setUp(self):
         super().setUp()
-        web._MFA_STATE.clear()  # independent of any entry another test left behind in this process-wide dict
-        self.addCleanup(web._MFA_STATE.clear)
+        garmin_rutas._MFA_STATE.clear()  # independent of any entry another test left behind in this process-wide dict
+        self.addCleanup(garmin_rutas._MFA_STATE.clear)
 
     def test_needs_mfa_then_finish_with_code_stores_token(self):
         pid = self._signed_in_person_id()
@@ -283,19 +284,19 @@ class MfaFlowTest(GarminHostedTestCase):
 
     def test_old_mfa_state_is_pruned_on_the_next_write(self):
         self._signed_in_person_id()
-        web._MFA_STATE["stale-demo-key"] = (
-            json.dumps(MFA_STATE), time.monotonic() - web._MFA_TTL_SECONDS - 1
+        garmin_rutas._MFA_STATE["stale-demo-key"] = (
+            json.dumps(MFA_STATE), time.monotonic() - garmin_rutas._MFA_TTL_SECONDS - 1
         )
         self.client.post("/garmin/conectar", data={"email": MFA_EMAIL, "password": "whatever-demo"})
-        self.assertNotIn("stale-demo-key", web._MFA_STATE)
+        self.assertNotIn("stale-demo-key", garmin_rutas._MFA_STATE)
 
     def test_expired_mfa_state_is_refused(self):
         self._signed_in_person_id()
         self.client.post("/garmin/conectar", data={"email": MFA_EMAIL, "password": "whatever-demo"})
         token = self.client.cookies.get(cuenta.SESSION_COOKIE)
         key = hashlib.sha256(token.encode()).hexdigest()
-        state_json, _ = web._MFA_STATE[key]
-        web._MFA_STATE[key] = (state_json, time.monotonic() - web._MFA_TTL_SECONDS - 1)
+        state_json, _ = garmin_rutas._MFA_STATE[key]
+        garmin_rutas._MFA_STATE[key] = (state_json, time.monotonic() - garmin_rutas._MFA_TTL_SECONDS - 1)
 
         r = self.client.post("/garmin/codigo", data={"code": GOOD_CODE})
         self.assertEqual(r.status_code, 303)

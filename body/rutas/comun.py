@@ -10,10 +10,11 @@ throwaway re-import of body.web (tests/test_env_local_1.py's ImportarWebTest) an
 over a second, separate copy of a name this module already owns. web.py's middleware sets and
 resets `comun._RUTA_ACTUAL`; nothing else outside this module touches it.
 
-BODY-WEB-ESTRUCTURA-7: also carries its own `router` for the one route that belongs with its own
-data rather than with any screen (`/sw.js`, next to the STATIC_HASH it serves), and TREND_KEYS /
-TREND_GROUPS / _latest_day / _sync_status_text, each read by two or more of Hoy, Día, Tendencias
-and Turnos.
+BODY-WEB-ESTRUCTURA-7 gave this module its own `router` for the one route that belonged with its
+own data rather than with any screen (`/sw.js`, next to the STATIC_HASH it serves) -- moved out
+again in BODY-WEB-ESTRUCTURA-8 to body/rutas/pwa.py: plumbing should not itself hold a route.
+TREND_KEYS / TREND_GROUPS / _latest_day / _sync_status_text stay here, each read by two or more
+of Hoy, Día, Tendencias and Turnos.
 """
 from __future__ import annotations
 
@@ -27,16 +28,14 @@ from pathlib import Path
 from urllib.parse import parse_qs
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi import Request
+from fastapi.responses import HTMLResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup
 
 from .. import cuenta, db, fechas, garmin_cuenta, tutoriales
 from ..agente import cliente as agente_cliente
 from ..i18n import T
-
-router = APIRouter()
 
 HERE = Path(__file__).parent.parent
 
@@ -267,24 +266,3 @@ def _habit_checked(conn, habit_id: int, person_id: int, day: str) -> bool:
     row = conn.execute("SELECT done FROM habit_check WHERE habit_id = ? AND person_id = ? AND day = ?",
                        (habit_id, person_id, day)).fetchone()
     return bool(row and row["done"])
-
-
-# BODY-WEB-ESTRUCTURA-7: /sw.js belongs here, not with any screen -- it serves the cache name built
-# from STATIC_HASH above, the one name in this module every static asset's own URL already carries
-# (static_url()), so the cache-busting value and the route that publishes it to the service worker
-# stay next to each other rather than in a page module that has nothing to do with caching.
-SW_TEMPLATE = """// Body service worker: caches only static files, never health pages.
-const C='body-static-HASHPLACEHOLDER';
-self.addEventListener('install',e=>self.skipWaiting());
-self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k))))));
-self.addEventListener('fetch',e=>{const u=new URL(e.request.url);
- if(u.origin===location.origin&&u.pathname.startsWith('/static/')){
-  e.respondWith(caches.open(C).then(c=>c.match(e.request).then(r=>r||fetch(e.request).then(n=>{c.put(e.request,n.clone());return n}))));}});
-"""
-
-SW = SW_TEMPLATE.replace("HASHPLACEHOLDER", STATIC_HASH)
-
-
-@router.get("/sw.js")
-def sw():
-    return Response(SW, media_type="text/javascript", headers={"Cache-Control": "no-cache"})
