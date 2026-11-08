@@ -14,7 +14,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from . import config
+from . import config, errores
 
 
 def _table_names(conn: sqlite3.Connection) -> list[str]:
@@ -52,7 +52,7 @@ def check(path: Path) -> bool:
         try:
             result = conn.execute("PRAGMA integrity_check").fetchone()[0]
         except sqlite3.DatabaseError as exc:
-            print(f"integrity_check failed: {exc}")
+            print(f"integrity_check failed: {errores.texto_seguro(exc)}")
             return False
         if result != "ok":
             print(f"integrity_check failed: {result}")

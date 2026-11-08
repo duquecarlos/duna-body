@@ -1,17 +1,16 @@
-"""BODY-LOGIN-MENSAJES-1: body/errores.py is Body's one rule for exception text that leaves the
-process -- the TYPE name only, unless the exception is one of Body's own classes whose message
-Body itself composed. Three things are tested here: the two helper functions, that
-garminconnect's own logging never reaches a handler (so its library text cannot land in the
-host's journal through Python's logging.lastResort), and an AST guard that fails any other spot
-in the files this slice owns that renders an `except ... as <name>` name's text directly.
+"""BODY-LOGIN-MENSAJES-1 / BODY-ERRORES-CENSO-2: body/errores.py is Body's one rule for exception
+text that leaves the process -- the TYPE name only, unless the exception is one of Body's own
+classes whose message Body itself composed. Three things are tested here: the two helper
+functions, that garminconnect's own logging never reaches a handler (so its library text cannot
+land in the host's journal through Python's logging.lastResort), and an AST guard that scans
+EVERY module under body/ (excluding body/errores.py itself) and asserts zero offenders -- any
+spot that renders an `except ... as <name>` name's text directly through an f-string,
+`.format()`, `str()`, `repr()` or `%`.
 
-The guard's scan is scoped to the files BODY-LOGIN-MENSAJES-1 touches (`_SITIOS_DEL_CENSO`), not
-all of body/**/*.py: a whole-package run of the same scanner (done once, by hand, while writing
-this slice) also finds body/backup.py:55 and three sites in body/vivo.py (`str(exc)` on a
-RuntimeError/OSError/TimeoutExpired bound name, truncated to 40 chars by `_motivo()` but not
-routed through the helper) -- both outside this slice's `touches:`, pre-existing, and unrelated
-to the Garmin sign-in census this slice was dispatched against. They are left for a follow-up
-slice rather than widened into here.
+BODY-LOGIN-MENSAJES-1 scoped this guard to the eight files it touched (`_SITIOS_DEL_CENSO`);
+BODY-ERRORES-CENSO-2 widened it to the whole package and routed the four sites a whole-package
+scan found (body/backup.py:55, body/vivo.py:90/104/116) through body/errores.py, since a guard
+scoped to a file list goes stale the day a new module is added.
 """
 import ast
 import contextlib
@@ -25,17 +24,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from body import errores, garmin_adapter, shift_import  # noqa: F401 (garmin_adapter: import-time silencing)
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-
-_SITIOS_DEL_CENSO = [
-    "body/login.py",
-    "body/garmin_adapter.py",
-    "body/shift_import.py",
-    "body/conectar_pc.py",
-    "body/subir_turnos.py",
-    "body/traer_semana.py",
-    "body/agente/bucle.py",
-    "body/agente/precios.py",
-]
+_BODY_ROOT = _REPO_ROOT / "body"
 
 
 def _es_nombre_desnudo(nodo, nombre: str) -> bool:
@@ -96,6 +85,15 @@ def ofensas_en_fuente(fuente: str, archivo: str = "<fuente>") -> list[str]:
 def ofensas_en_archivo(ruta_relativa: str) -> list[str]:
     ruta = _REPO_ROOT / ruta_relativa
     return ofensas_en_fuente(ruta.read_text(encoding="utf-8"), ruta_relativa)
+
+
+def _modulos_body() -> list[Path]:
+    """Every .py file under body/, excluding __pycache__ and body/errores.py itself (the module
+    the guard exists to steer callers toward, not to scan for the pattern it defines)."""
+    return sorted(
+        p for p in _BODY_ROOT.rglob("*.py")
+        if "__pycache__" not in p.parts and p.name != "errores.py"
+    )
 
 
 class TextoSeguroTest(unittest.TestCase):
@@ -164,10 +162,14 @@ class GuardaAstTest(unittest.TestCase):
         )
         self.assertEqual(ofensas_en_fuente(fuente_segura), [])
 
-    def test_los_sitios_del_censo_quedan_limpios(self):
+    def test_todo_body_queda_limpio(self):
+        modulos = _modulos_body()
+        # Non-vacuous: a glob that silently matched nothing would make the assertion below
+        # pass for the wrong reason. body/ holds far more than this many files today.
+        self.assertGreaterEqual(len(modulos), 40)
         offenders = []
-        for ruta in _SITIOS_DEL_CENSO:
-            offenders.extend(ofensas_en_archivo(ruta))
+        for ruta in modulos:
+            offenders.extend(ofensas_en_archivo(str(ruta.relative_to(_REPO_ROOT)).replace("\\", "/")))
         self.assertEqual(offenders, [], "sitios sin pasar por body/errores.py:\n" + "\n".join(offenders))
 
 

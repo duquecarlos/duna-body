@@ -32,6 +32,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from . import errores
+
 TAREAS = {
     "web": "body.web",
     "pull": "body.pull",
@@ -87,7 +89,7 @@ def refrescar(vivo: Path) -> str:
         git_dir = _rev_parse(vivo, "--git-dir")
         common_dir = _rev_parse(vivo, "--git-common-dir")
     except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
-        return f"sin_cambio:{_motivo(str(exc))}"
+        return f"sin_cambio:{_motivo(errores.texto_seguro(exc))}"
 
     if _ruta_absoluta(vivo, git_dir) == _ruta_absoluta(vivo, common_dir):
         return "sin_cambio:no_es_arbol_vivo"
@@ -101,7 +103,7 @@ def refrescar(vivo: Path) -> str:
     try:
         antes = _rev_parse(vivo, "HEAD")
     except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
-        return f"sin_cambio:{_motivo(str(exc))}"
+        return f"sin_cambio:{_motivo(errores.texto_seguro(exc))}"
 
     try:
         checkout = _git(vivo, "checkout", "--detach", "main", timeout=_TIMEOUT_CHECKOUT)
@@ -113,7 +115,7 @@ def refrescar(vivo: Path) -> str:
     try:
         despues = _rev_parse(vivo, "HEAD")
     except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
-        return f"sin_cambio:{_motivo(str(exc))}"
+        return f"sin_cambio:{_motivo(errores.texto_seguro(exc))}"
 
     return "actualizado" if antes != despues else "ya_al_dia"
 
