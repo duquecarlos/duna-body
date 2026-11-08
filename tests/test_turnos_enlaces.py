@@ -13,6 +13,8 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from fastapi.testclient import TestClient
 
 from tests._db import open_conn
+from tests.test_estados_vacios import _seed_D
+from tests.test_estados_vacios_2 import _seed_turnos_parcial
 
 from body import config, db, identity, turnos_costo, web
 from body.i18n import T
@@ -104,7 +106,12 @@ class CostRowLinksTest(unittest.TestCase):
 
 
 class CostRowNoDataTest(unittest.TestCase):
-    """A row with no figure ('--') never links anywhere."""
+    """A row with no figure ('--') never links anywhere. BODY-ESTADOS-VACIOS-2 moved the all-empty
+    case -- where the whole cost table disappears instead of rendering all em-dashes -- to
+    test_all_empty_drops_the_table below; this test now runs on a partial-data fixture (reused from
+    tests/test_estados_vacios_2.py), the only shape where an em-dash row still renders. That module's
+    own test_parcial_una_fila_con_dato_mantiene_tabla counts the rows; this one checks the link-safety
+    property that is this file's subject, so the two are not duplicates of each other."""
 
     client = TestClient(web.app, follow_redirects=False)
 
@@ -113,18 +120,32 @@ class CostRowNoDataTest(unittest.TestCase):
         self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig_db_path))
         self.addCleanup(web.app.dependency_overrides.clear)
         config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "enlaces_vacio.db"
-        conn = db.connect()
-        self.addCleanup(conn.close)
-        db.init(conn)
-        db.set_trabaja_turnos(conn, True, 1)
-        conn.commit()
-        _as(1)
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
 
     def test_no_link_and_the_em_dash_row_remains(self):
+        ids = _seed_turnos_parcial(self.conn, "es")
+        _as(ids["person_id"])
+        t = T("es")
         page = self.client.get("/shifts").text
-        self.assertNotIn('class="costrow"', page)
-        self.assertIn(">—<div", page)
-        self.assertIn(T("es")("shifts.sin_dato_corto"), page)
+        self.assertIn(t("shifts.cost_title"), page)
+        table = page[page.index('<table class="parts mt-8">'):page.index("</table>")]
+        rows = re.findall(r"<tr>(.*?)</tr>", table, re.S)
+        em_dash_rows = [row for row in rows if "—<div" in row]
+        self.assertTrue(em_dash_rows, "expected at least one em-dash row in a partial fixture")
+        for row in em_dash_rows:
+            self.assertNotIn("<a", row)
+        self.assertIn(t("shifts.sin_dato_corto"), table)
+
+    def test_all_empty_drops_the_table(self):
+        ids = _seed_D(self.conn, "es")
+        _as(ids["person_id"])
+        t = T("es")
+        page = self.client.get("/shifts").text
+        self.assertNotIn(t("shifts.cost_title"), page)
+        self.assertNotIn(">—<div", page)
+        self.assertIn(t("shifts.reason.sin_datos_reloj"), page)
 
 
 class TrendsBackLinkTest(unittest.TestCase):

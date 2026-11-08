@@ -2,11 +2,15 @@
 or layout for, rather than a crash or a raw-value leak -- Hoy's stale-data flag, Turnos' dropped
 cost table when every row is empty, and Metas' zero-points chart caption.
 
-Reuses tests/test_estados_vacios.py's state builders (seed_B, seed_D, seed_E, seed_F, _reset_db,
+Reuses tests/test_estados_vacios.py's state builders (seed_B, seed_E, seed_F, _reset_db,
 _mk_person, _full_day, TODAY) rather than re-deriving them, and adds the handful of new shapes this
 slice's three checks need: one day short of "stale" (dias=1), a shifts state with one metric
 present (the partial-data case the hidden-table rule must NOT hide), and a metric goal with real
 weekly readings (the chart_hint case the zero-points caption rule must NOT touch).
+
+BODY-ESTADOS-VACIOS-2-M (a follow-up slice) moved the all-empty cost-table case to
+tests/test_turnos_enlaces.py::CostRowNoDataTest, which also owns _seed_D's import now; this
+module's own _seed_turnos_parcial stays here and is reused from there.
 """
 import tempfile
 import unittest
@@ -20,7 +24,7 @@ from fastapi.testclient import TestClient
 from body import config, db, demo, fechas, goals, identity, web
 from body.i18n import T
 from body.rutas import comun
-from tests.test_estados_vacios import TODAY, _full_day, _mk_person, _reset_db, _seed_B, _seed_D, _seed_E, _seed_F
+from tests.test_estados_vacios import TODAY, _full_day, _mk_person, _reset_db, _seed_B, _seed_E, _seed_F
 
 client = TestClient(web.app, follow_redirects=False)
 
@@ -121,20 +125,15 @@ class HoyStaleDataTest(unittest.TestCase):
 
 class TurnosCostoVacioTest(unittest.TestCase):
     """BODY-SHIFTS-REDUNDANT-EMPTY-TABLE-1: the cost table drops entirely when every row is empty,
-    and keeps rendering, partial figures and all, when at least one row has one."""
+    and keeps rendering, partial figures and all, when at least one row has one. The all-empty case
+    (cost_title absent, hero reason present) moved to tests/test_turnos_enlaces.py::CostRowNoDataTest
+    ::test_all_empty_drops_the_table (BODY-ESTADOS-VACIOS-2-M), which keeps the same assertions and
+    adds a check that no em-dash row survives -- that test is the stronger of the two, so it is not
+    repeated here."""
 
     def setUp(self):
         self.conn = _reset_db(self)
         _clear(self)
-
-    def test_todo_vacio_sin_tabla_hero_presente(self):
-        ids = _seed_D(self.conn, "es")
-        _use(self.conn, ids["person_id"])
-        r = client.get("/shifts")
-        self.assertEqual(r.status_code, 200)
-        t = T("es")
-        self.assertNotIn(t("shifts.cost_title"), r.text)
-        self.assertIn(t("shifts.reason.sin_datos_reloj"), r.text)
 
     def test_parcial_una_fila_con_dato_mantiene_tabla(self):
         ids = _seed_turnos_parcial(self.conn, "es")

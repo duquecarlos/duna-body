@@ -9789,3 +9789,73 @@ spec's own approval reason covers the merge). Every figure in this entry is a ro
 count or a test count; every "invented value" is `demo.RANGES`' own midpoint, never a figure read
 from a real person's data -- `~/.body-app/` was never opened. `git status --porcelain` is empty on
 `main` at the merge commit, before this ledger entry's own commit.
+
+## BODY-ESTADOS-VACIOS-2 -- the three product follow-ups BODY-ESTADOS-VACIOS-1 reported, plus
+BODY-ESTADOS-VACIOS-2-M's test move that unblocks the merge
+
+Implements the three follow-ups BODY-ESTADOS-VACIOS-1 reported above (not built there, under that
+slice's own approval, since each needs new wording or layout a guard alone cannot add) and, as a
+second slice (`-2-M`), moves one pinned test that the first slice's own rule change left failing on
+`main`'s old behaviour -- outside the first slice's `touches:`, so it stopped BLOCKED rather than
+editing it. Built on `feat/body-estados-vacios-2` at `8141e43b5a903cd6fc7d045dd713be8683d37c4f`.
+
+**Decision 1 -- Hoy's stale-data line.** `/` gets a line above the readiness card
+(`today.stale` + `today.stale_link`, reusing the existing `.note` gap style) when the latest day
+with any data is 2 or more days behind the person's local today; `dias` 0 or 1 changes nothing, so
+a watch that is merely a day behind (today's night not yet synced) never sees it. The link target
+depends on hosting: `/garmin` when `cuenta.hosted()` (the in-app connection screen), `/settings`
+when local (the nearest actionable page this app has -- the sync itself runs as a per-install Task
+Scheduler job outside anything this app can read or trigger). Both branches are read, not guessed:
+`body/rutas/hoy.py` reads `cuenta.hosted()` the same way every other hosted/local branch in this
+app already does.
+
+**Decision 2 -- Turnos drops the all-empty cost table, keeps the partial one.** `/shifts`'s cost
+table (5 metric rows, each either a figure that links to `/trends` or an honest em-dash) is dropped
+entirely (`costo_vacio`, decided once in the route: `all(f["href"] is None for f in filas)`) when
+every row has no figure -- removing five identical "sin datos del reloj" lines that repeated what
+the hero card above already said. A partial row (at least one metric with a figure) keeps the table
+rendering exactly as before, em-dashes and all, so a person with a few days of data loses nothing.
+
+**Decision 3 -- Metas' zero-points chart caption.** `/goals/{id}`'s chart caption reads
+`goals.chart_soon` instead of `goals.chart_hint` when the plan line has zero actual weekly points
+(`chart_sin_puntos`, decided once in the route). The tap layer needed no JS change: read before
+touching anything, `profile.chart_figure`'s own `if not points` branch already omits the
+data-point layer under zero points, so a caption mismatch was the only gap -- a zero-point chart
+never carried a tap layer to begin with, caption aside.
+
+**BODY-ESTADOS-VACIOS-2-M's move -- `tests/test_turnos_enlaces.py::CostRowNoDataTest`.** Its
+`test_no_link_and_the_em_dash_row_remains` pinned the OLD rule (cost table always renders, even
+all-empty) on an all-empty fixture; Decision 2 above makes that fixture's own assertion wrong on
+purpose. The class's docstring subject -- "a row with no figure ('--') never links anywhere" --
+still holds, and after Decision 2 it only ever shows up in the PARTIAL state (the all-empty state
+has no table left to carry such a row). So the test keeps its class and its subject but moves to
+the partial-data fixture `tests/test_estados_vacios_2.py::_seed_turnos_parcial` already built (one
+metric, `resting_hr`, with a figure; the other four with none), imported rather than duplicated.
+Its new assertion parses the rendered `<table class="parts mt-8">...</table>` into `<tr>` rows (not
+a page-wide substring, since the table now carries a row that DOES link) and checks, per row, that
+every em-dash row (`"—<div" in row`) contains no `<a` tag -- the property the class's name is
+about -- while `shifts.sin_dato_corto` and the row with a figure both still render.
+
+The all-empty case the moved test used to cover gets its own new test in the same class,
+`test_all_empty_drops_the_table`, on the old all-empty fixture (`tests/test_estados_vacios.py::
+_seed_D` imported, not duplicated): no `shifts.cost_title` text, no em-dash row at all, and the
+hero's `shifts.reason.sin_datos_reloj` text present. This duplicates the scenario (not the
+assertions) of `tests/test_estados_vacios_2.py::TurnosCostoVacioTest::
+test_todo_vacio_sin_tabla_hero_presente`, which checked only `cost_title` absent + hero reason
+present; the new test is a strict superset (same two assertions plus the em-dash check), so the
+weaker original was deleted from `test_estados_vacios_2.py` rather than kept alongside a duplicate,
+and that module's class docstring now points at the stronger one. `test_estados_vacios_2.py`'s
+other Turnos test, `test_parcial_una_fila_con_dato_mantiene_tabla` (same partial fixture, counts
+exactly 1 costrow + 4 no-data cells), stays: it checks row COUNT, the moved test checks row LINK
+SAFETY -- different properties of the same fixture, not a duplicate of each other.
+
+**Gate**, once, foreground, on this slice's own tip: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -- `Ran 1353 tests in 300.713s ... OK (skipped=1)`. Targeted run first (`python -m
+unittest tests.test_turnos_enlaces tests.test_estados_vacios_2 tests.test_estados_vacios -v`): 32
+tests, all green, including both new `CostRowNoDataTest` methods.
+
+STOP AWAITING_APPROVAL (not merged): this slice's own approval
+(`ORCH-CARLOS-DELEGATES-TIER-1-1`) says in words to stop before merging, for the orchestrator's own
+375px browser measurement of Decisions 1-3's customer-facing bytes (the stale line, the dropped
+table, the caption swap) -- a measurement this slice's gate cannot substitute for. A merge slice
+follows once that measurement is in.
