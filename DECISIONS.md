@@ -5018,3 +5018,67 @@ without widening its own scope, instead of editing a file it was not granted.
 `tests/test_agente_registro.py`'s `ROUTE_TOOL` dict (most likely `None` with a reason -- `/shifts/patron`
 is a creation/edit form like `/goals/new`, not a data screen the assistant would read), to be made by
 whichever slice is granted that file.
+
+## BODY-TURNOS-OPCIONAL-5-M -- 2026-11-07, landing BODY-TURNOS-OPCIONAL-5 with five fixes, then merged
+
+`BODY-TURNOS-OPCIONAL-5-M`, approved against `BODY-TURNOS-OPCIONAL-OBS-1` (the orchestrator's browser
+measurement of `feat/body-turnos-opcional-5`, tip `744f0f6`) under `ORCH-CARLOS-DELEGATES-TIER-1-1`. The
+branch was clean at the expected tip and `main` had not moved since the branch was cut (`merge-base ==
+a523d79 == main`), so no rebase was needed before the five fixes.
+
+**(1) The route-mapping decision.** `tests/test_agente_registro.py`'s `ROUTE_TOOL` gained `"/shifts/patron":
+None,  # a creation form, not a data screen`, the same treatment as `/goals/new`: the route is a GET form,
+never read by the assistant. This alone turned the gate's one failure (`RouteMappingTest
+.test_every_get_route_has_a_mapping_decision`) green.
+
+**(2) The four dashes.** `patron.intro` and `patron.quitar_note`, es and en, each had a bare " -- " where a
+real dash belonged. `patron.intro` now reads, es: "Escribe el ciclo que se repite y Body te propondrá tus
+turnos de las próximas semanas, igual que si llegaran en un archivo."; en: "Write the cycle that repeats
+and Body will propose your shifts for the coming weeks, just as if they arrived in a file." `patron
+.quitar_note` now uses a colon in both languages: es "Tus turnos ya confirmados se quedan como están: son
+tu historial."; en "Your confirmed shifts stay as they are: they're your history." Both i18n files were
+grepped for any other " -- " added by slice 5; none remained outside these two keys.
+
+**(3) The combined card no longer calls a pattern proposal a file.** `body/web.py`'s `/shifts` handler now
+computes `many_mixed = any(b["kind"] == "pattern" for b in rows)` when more than one batch is waiting, and
+passes it to the template; the template picks `shifts.confirm_summary_many_mixed` /
+`shifts.per_file_mixed` over the existing `shifts.confirm_summary_many` / `shifts.per_file` when
+`many_mixed` is true. New keys, es: "Tienes {n} propuestas de turnos · {from} → {to} · {days} días, {nights}
+noches." and "Ver una por una"; en: "{n} shift proposals waiting · {from} → {to} · {days} days, {nights}
+nights." and "See one by one". An all-import batch set (`many_mixed` false) keeps the existing wording
+exactly as `tests/test_shift_import.py` pins it -- that file was not touched.
+
+**(4) Hoy's empty-shift note names both sources.** `today.shift_none` no longer says shifts come only "from
+your email"; es: "Aún no hay turnos. Cuando lleguen de tu correo, o escribas tu patrón en Turnos, los
+verás aquí."; en: "No shifts yet. Once they arrive from your email, or you write your pattern in Shifts,
+you'll see them here." -- each language names its own `nav.shifts` label. No test pinned the old wording
+verbatim, so none needed updating.
+
+**(5) The schema comment, corrected, comment only.** `body/db.py`'s comment above `CREATE TABLE
+shift_pattern` named the cycle entries `{"kind", "start_local", "end_local"}`; slice 5 (which the comment
+itself says owns the field) actually stores `{"kind", "start", "end"}` with `start`/`end` as `"HH:MM"`
+strings, null on an `off` day, validated and expanded by `body/patron_turnos.py` (which now exists, so the
+comment's old "no parser/validator here" line was also stale). `git diff --stat` on `body/db.py` shows `5
++++--`, every changed line a `--` SQL comment; no DDL, no migration code, nothing else in the file
+changed.
+
+**Tests.** `tests/test_turnos_opcional_5.py` gained `CombinedCardWordingTest` (4 tests): a mixed
+import+pattern batch set shows the new combined-card wording in both languages and not the old
+file-by-file toggle label; an all-import batch set still shows the old "Llegaron" / "Ver archivo por
+archivo" wording; the four dash-fixed strings (`patron.intro`, `patron.quitar_note`, es and en) carry no
+" -- ".
+
+**Gate, run once, foreground, exact command** `.venv/Scripts/python.exe -m unittest discover tests -t .`:
+
+    Ran 975 tests in 100.078s
+    OK (skipped=1)
+
+975 = the prior entry's 971 (970 passing + 1 known failure) plus this slice's 4 new tests, with the one
+route-mapping failure now fixed; the one skip is the same pre-existing POSIX-only skip. Not re-run after
+the merge: the merge commit's tree (`065b50b1...`) is byte-identical to the branch tip's tree gated just
+before merging (`git diff feat/body-turnos-opcional-5 main` empty, both `rev-parse ...^{tree}` equal), so
+the green run above already covers the merged tree.
+
+**Merged** `feat/body-turnos-opcional-5` into `main` with `--no-ff` (this spec's approval-reason names the
+merge in words, past merge policy A's customer-bytes condition: "Approved with the five fixes."). `main`
+left checked out, clean.
