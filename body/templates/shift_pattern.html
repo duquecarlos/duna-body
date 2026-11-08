@@ -16,6 +16,11 @@
 </div>
 
 <form method="post" action="/shifts/patron">
+  {% if errores_ciclo %}
+  <div class="card">
+    {% for msg in errores_ciclo %}<p class="k bad" style="margin:4px 0">{{ msg }}</p>{% endfor %}
+  </div>
+  {% endif %}
   <input type="hidden" name="dias" value="{{ dias }}">
   <div class="card">
     <label>

@@ -250,6 +250,7 @@
   "patron.error.hora_invalida": "Escribe la hora de inicio y de fin.",
   "patron.error.misma_hora": "La hora de inicio y la de fin no pueden ser iguales.",
   "patron.error.descanso_con_hora": "Un día de descanso no lleva hora.",
+  "patron.error.largo_invalido": "El ciclo debe tener entre 1 y 56 días.",
   "settings.ayuda": "Ayuda",
   "settings.privacy": "Privacidad",
   "settings.garmin": "Garmin",
