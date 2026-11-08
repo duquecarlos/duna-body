@@ -4,7 +4,11 @@
 #   "Body app weekly file"  Sundays 18:00: pull, then write this week's file for the Personal Sunday review (19:00)
 #   "Body app web"          at logon: runs the web app (local only by default; add -Lan to also open it on the
 #                           home network) and restarts it if it stops
-# Remove with: Unregister-ScheduledTask -TaskName "Body app daily sync"; Unregister-ScheduledTask -TaskName "Body app weekly file"; Unregister-ScheduledTask -TaskName "Body app web"
+# Every task action runs through `python -m body.vivo <task>` from a SIBLING git worktree (-LiveDir,
+# default "$repo-live") detached at `main`, refreshed at the start of every run (BODY-LIVE-CHECKOUT-1) --
+# so "restart the web task" always serves `main`, even while this repo's own working tree sits on a
+# branch mid-slice. The venv stays the one at $repo\.venv; only the code tree differs.
+# Remove with: Unregister-ScheduledTask -TaskName "Body app daily sync"; Unregister-ScheduledTask -TaskName "Body app weekly file"; Unregister-ScheduledTask -TaskName "Body app web"; git -C <repo> worktree remove <LiveDir>
 # Example with shift import on: .\install-daily-sync.ps1 -ShiftsDir "C:\path\to\your\shifts\folder"
 # Example with the web app open to the home network too: .\install-daily-sync.ps1 -Lan
 #
@@ -14,12 +18,29 @@
 #   "Body app weekly fetch"  Sundays: fetches this week's Body section for the Personal Sunday review
 # -Hosted also removes "Body app daily sync", "Body app weekly file" and "Body app web" if present.
 # Example, hosted: .\install-daily-sync.ps1 -Hosted -ShiftsDir "C:\path\to\your\shifts\folder"
-param([string]$At, [string]$SundayAt = "18:00", [string]$ShiftsDir, [int]$Port = 8770, [switch]$Lan, [switch]$Hosted)
+param([string]$At, [string]$SundayAt = "18:00", [string]$ShiftsDir, [int]$Port = 8770, [switch]$Lan, [switch]$Hosted, [string]$LiveDir)
 $repo = Split-Path $PSScriptRoot -Parent
+if (-not $LiveDir) { $LiveDir = "$repo-live" }
 $py = "$repo\.venv\Scripts\python.exe"
 $pyw = "$repo\.venv\Scripts\pythonw.exe"
 $webPy = if (Test-Path $pyw) { $pyw } else { $py }
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RunOnlyIfNetworkAvailable
+
+$existingWorktrees = & git -C $repo worktree list --porcelain
+$liveDirFull = (Resolve-Path -LiteralPath $LiveDir -ErrorAction SilentlyContinue)
+$isWorktree = $existingWorktrees -match [regex]::Escape($LiveDir) -or ($liveDirFull -and ($existingWorktrees -match [regex]::Escape($liveDirFull.Path)))
+if (-not $isWorktree) {
+    $hasMain = & git -C $repo rev-parse --verify --quiet main
+    if (-not $hasMain) {
+        Write-Host "El repo en $repo no tiene una rama 'main'. No puedo crear el arbol vivo en $LiveDir."
+        exit 1
+    }
+    git -C $repo worktree add --detach $LiveDir main
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "No pude crear el arbol vivo en $LiveDir (git worktree add --detach)."
+        exit 1
+    }
+}
 
 if ($Hosted) {
     $bodyHome = if ($env:BODY_HOME) { $env:BODY_HOME } else { "$env:USERPROFILE\.body-app" }
@@ -42,10 +63,10 @@ if ($Hosted) {
         }
     }
 
-    $uploadAction = New-ScheduledTaskAction -Execute $py -Argument "-m body.subir_turnos --dir `"$ShiftsDir`"" -WorkingDirectory $repo
+    $uploadAction = New-ScheduledTaskAction -Execute $py -Argument "-m body.vivo subir_turnos --dir `"$ShiftsDir`"" -WorkingDirectory $LiveDir
     Register-ScheduledTask -TaskName "Body app shift upload" -Action $uploadAction -Trigger (New-ScheduledTaskTrigger -Daily -At $At) -Settings $settings -Description "Uploads new shift files to the hosted Body" -Force | Out-Null
 
-    $fetchAction = New-ScheduledTaskAction -Execute $py -Argument "-m body.traer_semana" -WorkingDirectory $repo
+    $fetchAction = New-ScheduledTaskAction -Execute $py -Argument "-m body.vivo traer_semana" -WorkingDirectory $LiveDir
     Register-ScheduledTask -TaskName "Body app weekly fetch" -Action $fetchAction -Trigger (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At $SundayAt) -Settings $settings -Description "Fetches this week's Body section from the hosted server for the Personal Sunday review" -Force | Out-Null
 
     $removedMsg = if ($removed.Count) { "Quitadas: $($removed -join ', ')." } else { "No habia tareas locales que quitar." }
@@ -55,19 +76,19 @@ if ($Hosted) {
 
 if (-not $At) { $At = "09:30" }
 
-$dailyActions = @(New-ScheduledTaskAction -Execute $py -Argument "-m body.pull --days 2" -WorkingDirectory $repo)
+$dailyActions = @(New-ScheduledTaskAction -Execute $py -Argument "-m body.vivo pull --days 2" -WorkingDirectory $LiveDir)
 if ($ShiftsDir) {
-    $dailyActions += New-ScheduledTaskAction -Execute $py -Argument "-m body.shift_import --dir `"$ShiftsDir`"" -WorkingDirectory $repo
+    $dailyActions += New-ScheduledTaskAction -Execute $py -Argument "-m body.vivo shift_import --dir `"$ShiftsDir`"" -WorkingDirectory $LiveDir
 }
 Register-ScheduledTask -TaskName "Body app daily sync" -Action $dailyActions -Trigger (New-ScheduledTaskTrigger -Daily -At $At) -Settings $settings -Description "Pulls Garmin data into the local Body app database" -Force | Out-Null
 
-$pull = New-ScheduledTaskAction -Execute $py -Argument "-m body.pull --days 2" -WorkingDirectory $repo
-$file = New-ScheduledTaskAction -Execute $py -Argument "-m body.vida_export --current" -WorkingDirectory $repo
+$pull = New-ScheduledTaskAction -Execute $py -Argument "-m body.vivo pull --days 2" -WorkingDirectory $LiveDir
+$file = New-ScheduledTaskAction -Execute $py -Argument "-m body.vivo vida_export --current" -WorkingDirectory $LiveDir
 Register-ScheduledTask -TaskName "Body app weekly file" -Action @($pull, $file) -Trigger (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At $SundayAt) -Settings $settings -Description "Writes Body's weekly vida-v1 file for the Personal Sunday review" -Force | Out-Null
 
-$webArgs = "-m body.web --port $Port"
+$webArgs = "-m body.vivo web --port $Port"
 if ($Lan) { $webArgs += " --lan" }
-$webAction = New-ScheduledTaskAction -Execute $webPy -Argument $webArgs -WorkingDirectory $repo
+$webAction = New-ScheduledTaskAction -Execute $webPy -Argument $webArgs -WorkingDirectory $LiveDir
 $webTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $webSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew
 Register-ScheduledTask -TaskName "Body app web" -Action $webAction -Trigger $webTrigger -Settings $webSettings -Description "Runs the Body app web server at logon, restarting it if it stops" -Force | Out-Null

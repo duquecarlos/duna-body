@@ -96,6 +96,15 @@ class CargarTest(unittest.TestCase):
         raiz_repo = Path(__file__).resolve().parents[1]
         self.assertEqual(entorno.RUTA_DEFECTO, raiz_repo / ".env")
 
+    def test_body_env_file_gana_sobre_ruta_defecto(self):
+        """BODY-LIVE-CHECKOUT-1: the live checkout has no .env of its own; body.vivo sets
+        BODY_ENV_FILE to the main repo's .env and cargar() must prefer it."""
+        otra_ruta = self._ruta("BODY_AGENTE_ANTHROPIC_API_KEY=sk-vivo\n")
+        entorno_fake = {"BODY_ENV_FILE": str(otra_ruta)}
+        cargados, ignorados = entorno.cargar(None, entorno_fake)
+        self.assertEqual((cargados, ignorados), (1, 0))
+        self.assertEqual(entorno_fake["BODY_AGENTE_ANTHROPIC_API_KEY"], "sk-vivo")
+
 
 class ImportarWebTest(unittest.TestCase):
     def test_importar_body_web_no_llama_cargar(self):
