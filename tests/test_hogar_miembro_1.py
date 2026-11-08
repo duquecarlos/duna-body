@@ -237,24 +237,26 @@ class OwnWeeklyCheckTest(unittest.TestCase):
         conn = _reset_db(self)
         _add_person(conn, 2, "Partner")
         _link_household(conn, 1, 2)
-        gid = goals.propose(conn, 1, "Caminar juntos", _WEEK_DAYS[0], metric_key="steps", direction="raise",
-                            target_value=9000.0, baseline_value=6000.0, deadline="2027-01-01",
+        gid = goals.propose(conn, 1, "Caminar juntos", _WEEK_DAYS[0], kind="milestone", deadline="2027-01-01",
                             hogar_id="h-1", visibility="household")
         goals.activate(conn, gid)
+        hid = goals.add_habit(conn, gid, "Caminar", {"per": "week", "times": 1})
         for day in _WEEK_DAYS[:4]:
-            db.set_metric(conn, day, "steps", 7000.0, "garmin", 1)
-            db.set_metric(conn, day, "steps", 11000.0, "garmin", 2)
+            goals.check_habit(conn, hid, 1, day, True)
+        for day in _WEEK_DAYS:
+            goals.check_habit(conn, hid, 2, day, True)
         conn.commit()
 
         with mock.patch.object(web, "_today_local", return_value=_TODAY):
             _as(self, 2)
             r = client.get(f"/goals/{gid}")
         self.assertEqual(r.status_code, 200)
-        # the viewer's own weekly average (11000) was upserted; the creator's (7000) stays theirs
+        # the viewer's own weekly check (7 of 7) was upserted; the creator's (4 of 7) stays theirs
         own_check = conn.execute(
-            "SELECT metric_avg FROM goal_check WHERE goal_id = ? AND person_id = 2", (gid,)).fetchone()
-        self.assertEqual(own_check["metric_avg"], 11000.0)
-        self.assertNotIn("7000", r.text)
+            "SELECT habits_done, habits_due FROM goal_check WHERE goal_id = ? AND person_id = 2",
+            (gid,)).fetchone()
+        self.assertEqual((own_check["habits_done"], own_check["habits_due"]), (7, 7))
+        self.assertNotIn("4 de 7", r.text)
 
 
 class AddHabitChoiceTest(unittest.TestCase):
@@ -362,15 +364,15 @@ class PrivacyTest(unittest.TestCase):
         conn = _reset_db(self)
         _add_person(conn, 2, "Partner")
         _link_household(conn, 1, 2)
-        gid = goals.propose(conn, 1, "Bajar juntos el pulso", _WEEK_DAYS[0], metric_key="resting_hr",
-                            direction="lower", target_value=45.0, baseline_value=60.0, deadline="2027-01-01",
-                            hogar_id="h-1", visibility="household")
+        gid = goals.propose(conn, 1, "Bajar juntos el pulso", _WEEK_DAYS[0], kind="milestone",
+                            deadline="2027-01-01", hogar_id="h-1", visibility="household")
         goals.activate(conn, gid)
-        for day in _WEEK_DAYS[:4]:
-            db.set_metric(conn, day, "resting_hr", 51.0, "garmin", 1)
-            db.set_metric(conn, day, "resting_hr", 93.0, "garmin", 2)
+        hid_creator = goals.add_habit(conn, gid, "Caminar", {"per": "week", "times": 1}, assignee_person_id=1)
         hid_partner = goals.add_habit(conn, gid, "Estiramientos", {"per": "week", "times": 1},
                                       assignee_person_id=2)
+        for day in _WEEK_DAYS[:4]:
+            conn.execute("INSERT INTO habit_check (habit_id, person_id, day, done) VALUES (?, 1, ?, 1)",
+                         (hid_creator, day))
         conn.execute("INSERT INTO habit_check (habit_id, person_id, day, done) VALUES (?, 2, ?, 1)",
                      (hid_partner, _WEEK_DAYS[1]))
         conn.commit()
@@ -383,9 +385,8 @@ class PrivacyTest(unittest.TestCase):
 
         self.assertEqual(r_owner.status_code, 200)
         self.assertEqual(r_partner.status_code, 200)
-        self.assertNotIn("93", r_owner.text)    # the creator never sees Partner's average
-        self.assertNotIn("51", r_partner.text)  # Partner never sees the creator's average
-        self.assertNotIn("1 de 7", r_owner.text)  # nor Partner's habit-check count
+        self.assertNotIn("1 de 7", r_owner.text)  # the creator never sees Partner's habit-check count
+        self.assertNotIn("4 de 7", r_partner.text)  # nor does Partner see the creator's
 
 
 class AssistantReadToolTest(unittest.TestCase):

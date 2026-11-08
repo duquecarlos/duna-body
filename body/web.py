@@ -1347,6 +1347,18 @@ def _today_due_habits(conn, t: T, person_id: int, today: date) -> list[dict]:
     return out
 
 
+def _shared_line(conn, t: T, g, person_id: int) -> str | None:
+    """The quiet line a household goal carries wherever it's shown -- Metas' list card (rule 1 asked
+    for it there too, BODY-HOGAR-MIEMBRO-1-M) and the goal page: creator's own line, or who created it
+    for a member."""
+    if g["visibility"] != "household":
+        return None
+    if g["person_id"] == person_id:
+        return t("goals.shared_by_you")
+    creator = conn.execute("SELECT display_name FROM person WHERE id = ?", (g["person_id"],)).fetchone()
+    return t("goals.shared_by", name=creator["display_name"] if creator else "?")
+
+
 def _verdict(t: T, on_track) -> tuple[str, str]:
     if on_track is None:
         return "", t("goals.verdict.no_data")
@@ -1485,11 +1497,13 @@ def goals_list(person_id: int = Depends(identity.current_person_id)):
             pct = _time_pct(g, today)
         cards.append({"id": g["id"], "title": g["title"], "cls": cls, "verdict": verdict, "fig": fig,
                       "period": t("goals.card.this_week"), "target_text": _goal_target_text(t, defs, g),
-                      "started": started, "pct": round(pct) if pct is not None else None})
+                      "started": started, "pct": round(pct) if pct is not None else None,
+                      "shared_line": _shared_line(conn, t, g, person_id)})
 
-    proposed_cards = [{"id": g["id"], "title": g["title"], "sub": _goal_target_text(t, defs, g)} for g in proposed]
-    archived_cards = [{"id": g["id"], "title": g["title"], "status_text": t("goals.status." + g["status"])}
-                      for g in archived]
+    proposed_cards = [{"id": g["id"], "title": g["title"], "sub": _goal_target_text(t, defs, g),
+                       "shared_line": _shared_line(conn, t, g, person_id)} for g in proposed]
+    archived_cards = [{"id": g["id"], "title": g["title"], "status_text": t("goals.status." + g["status"]),
+                       "shared_line": _shared_line(conn, t, g, person_id)} for g in archived]
 
     return _render("goals.html", t=t, tab="goals", cards=cards, proposed=proposed_cards, archived=archived_cards,
                    empty=not (active or proposed or archived), turnos=_turnos_on(conn, person_id))
@@ -1524,7 +1538,10 @@ async def goal_new_create(request: Request, person_id: int = Depends(identity.cu
     why = (f.get("why") or "").strip() or None
     area = f.get("area") if f.get("area") in AREAS else "body"
     hh = household.household_of(conn, person_id)
-    visibility = "household" if f.get("visibility") == "household" and hh else "private"
+    # A household goal is a milestone in v1 (BODY-HOGAR-MIEMBRO-1-M): the server decides this, not
+    # the form -- goals.propose refuses kind='metric' with visibility='household' too, but a metric
+    # goal is always private whatever the (possibly tampered or JS-less) form sent.
+    visibility = "household" if kind == "milestone" and f.get("visibility") == "household" and hh else "private"
     hogar_id = hh.id if visibility == "household" else None
     if kind == "metric":
         defs = _defs(conn)
@@ -1611,11 +1628,7 @@ def goal_detail(goal_id: int, person_id: int = Depends(identity.current_person_i
                     (goal_id, mid)).fetchone()
                 _, verdict = _verdict(t, crow["on_track"] if crow else None)
                 members.append({"name": mrow["display_name"] if mrow else f"#{mid}", "verdict": verdict})
-        if access == "creator":
-            shared_line = t("goals.shared_by_you")
-        else:
-            creator = conn.execute("SELECT display_name FROM person WHERE id = ?", (g["person_id"],)).fetchone()
-            shared_line = t("goals.shared_by", name=creator["display_name"] if creator else "?")
+        shared_line = _shared_line(conn, t, g, person_id)
 
     latest_on_track = history_rows[0]["on_track"] if history_rows else None
     cls, verdict = _verdict(t, latest_on_track)

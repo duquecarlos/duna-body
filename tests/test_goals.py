@@ -216,19 +216,66 @@ class HouseholdGoalCheckTest(unittest.TestCase):
         conn.executescript(household.SCHEMA)
         conn.executemany("INSERT INTO hogar_local (person_id, hogar_id) VALUES (?, ?)", [(1, "h-1"), (2, "h-1")])
         conn.commit()
-        gid = goals.propose(conn, 1, "Shared steps goal", "2026-11-02", metric_key="steps", direction="raise",
-                             target_value=9000.0, baseline_value=6000.0, deadline="2026-12-14", hogar_id="h-1",
-                             visibility="household")
+        gid = goals.propose(conn, 1, "Shared steps goal", "2026-11-02", kind="milestone",
+                             deadline="2026-12-14", hogar_id="h-1", visibility="household")
         goals.activate(conn, gid)
-        for i in range(7):
-            _seed_metric(conn, "steps", 1, f"2026-11-{2 + i:02d}", 9500)
-            _seed_metric(conn, "steps", 2, f"2026-11-{2 + i:02d}", 6200)
+        hid = goals.add_habit(conn, gid, "Walk", {"per": "day", "times": 1})
+        for i in range(5):  # person 1: 5 of 7 = 71% >= 70%
+            goals.check_habit(conn, hid, 1, f"2026-11-{2 + i:02d}", True)
+        for i in range(3):  # person 2: 3 of 7 = 43%
+            goals.check_habit(conn, hid, 2, f"2026-11-{2 + i:02d}", True)
         r1 = goals.weekly_check(conn, gid, 1, "2026-11-02")
         r2 = goals.weekly_check(conn, gid, 2, "2026-11-02")
         self.assertTrue(r1["on_track"])
         self.assertFalse(r2["on_track"])
         rows = conn.execute("SELECT person_id FROM goal_check WHERE goal_id=? ORDER BY person_id", (gid,)).fetchall()
         self.assertEqual([r["person_id"] for r in rows], [1, 2])
+
+
+class HouseholdMetricRefusedTest(unittest.TestCase):
+    """BODY-HOGAR-MIEMBRO-1-M fix 1: a household goal is a milestone -- a metric goal can't be shared."""
+
+    def test_propose_refuses_metric_household_and_writes_nothing(self):
+        conn = _conn(self)
+        db.init(conn)
+        with self.assertRaises(ValueError):
+            goals.propose(conn, 1, "Shared steps goal", "2026-11-02", metric_key="steps", direction="raise",
+                          target_value=9000.0, baseline_value=6000.0, deadline="2026-12-14", hogar_id="h-1",
+                          visibility="household")
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM goal").fetchone()[0], 0)
+
+    def test_milestone_household_still_allowed(self):
+        conn = _conn(self)
+        db.init(conn)
+        gid = goals.propose(conn, 1, "Shared milestone", "2026-11-02", kind="milestone",
+                            deadline="2026-12-14", hogar_id="h-1", visibility="household")
+        self.assertEqual(conn.execute("SELECT visibility FROM goal WHERE id = ?", (gid,)).fetchone()[0],
+                         "household")
+
+
+class LegacyMetricHouseholdRowTest(unittest.TestCase):
+    """A metric goal marked household from before this slice (the only way one can still exist,
+    since goals.propose now refuses to create one) stays creator-only, forever."""
+
+    def test_legacy_metric_household_row_is_creator_only(self):
+        conn = _conn(self)
+        db.init(conn)
+        conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")
+        conn.executescript(household.SCHEMA)
+        conn.executemany("INSERT INTO hogar_local (person_id, hogar_id) VALUES (?, ?)", [(1, "h-1"), (2, "h-1")])
+        gid = goals.propose(conn, 1, "Old shared metric goal", "2026-11-02", metric_key="steps",
+                            direction="raise", target_value=9000.0, baseline_value=6000.0,
+                            deadline="2026-12-14")
+        conn.execute("UPDATE goal SET hogar_id = 'h-1', visibility = 'household' WHERE id = ?", (gid,))
+        conn.commit()
+
+        self.assertEqual(goals.goal_access(conn, gid, 1), "creator")
+        self.assertIsNone(goals.goal_access(conn, gid, 2))
+
+        hh = household.household_of(conn, 2)
+        scope_sql, scope_params = goals.goal_scope_sql(2, hh)
+        rows = conn.execute(f"SELECT id FROM goal WHERE {scope_sql}", scope_params).fetchall()
+        self.assertEqual([r["id"] for r in rows], [])
 
 
 OLD_GOAL_SCHEMA = """

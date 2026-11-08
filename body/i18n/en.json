@@ -168,6 +168,7 @@
   "goals.field_visibility": "Visibility",
   "goals.visibility.private": "Private",
   "goals.visibility.household": "Household",
+  "goals.visibility_milestone_note": "Shared goals are milestones: each person keeps their own numbers.",
   "goals.shared_by_you": "Shared with your household",
   "goals.shared_by": "Shared with your household · created by {name}",
   "goals.habit_for_both": "For both of us",

@@ -17,16 +17,20 @@ MILESTONE_ON_TRACK_PCT = 0.70   # share of due habits that must be done for a mi
 
 
 def goal_access(conn, goal_id: int, person_id: int) -> str | None:
-    """'creator' if this person created goal G, 'member' if G is visibility='household' and shared
-    with their ACTIVE household (body/household.py's household_of, the one place membership is
-    read), else None (treat as not found: every goal/habit route and the assistant's read tools
-    check here instead of keeping their own `person_id = ?` clause -- BODY-HOGAR-MIEMBRO-1)."""
-    g = conn.execute("SELECT person_id, hogar_id, visibility FROM goal WHERE id = ?", (goal_id,)).fetchone()
+    """'creator' if this person created goal G, 'member' if G is visibility='household', kind=
+    'milestone' and shared with their ACTIVE household (body/household.py's household_of, the one
+    place membership is read), else None (treat as not found: every goal/habit route and the
+    assistant's read tools check here instead of keeping their own `person_id = ?` clause --
+    BODY-HOGAR-MIEMBRO-1). The kind='milestone' requirement (BODY-HOGAR-MIEMBRO-1-M) is a household
+    goal is a milestone in v1: a metric goal keeps only the creator's baseline_value, so a member's
+    verdict and chart would silently read the wrong person's plan (BODY-HOGAR-PLAN-1 (cont.)) --
+    a legacy row still marked household with kind='metric' stays creator-only, forever."""
+    g = conn.execute("SELECT person_id, hogar_id, visibility, kind FROM goal WHERE id = ?", (goal_id,)).fetchone()
     if g is None:
         return None
     if g["person_id"] == person_id:
         return "creator"
-    if g["visibility"] == "household" and g["hogar_id"]:
+    if g["visibility"] == "household" and g["kind"] == "milestone" and g["hogar_id"]:
         hh = household.household_of(conn, person_id)
         if hh and hh.id == g["hogar_id"]:
             return "member"
@@ -35,17 +39,27 @@ def goal_access(conn, goal_id: int, person_id: int) -> str | None:
 
 def goal_scope_sql(person_id: int, hh) -> tuple[str, tuple]:
     """A WHERE fragment (and its params) selecting every goal `person_id` may see: their own, plus
-    any visibility='household' goal shared with `hh` (their `household.household_of` result, or
-    None). The one scope every goal-listing site uses, instead of a bare `person_id = ?`."""
+    any visibility='household', kind='milestone' goal shared with `hh` (their `household.household_of`
+    result, or None). The one scope every goal-listing site uses, instead of a bare `person_id = ?`.
+    kind='milestone' is required for the same reason goal_access requires it (BODY-HOGAR-MIEMBRO-1-M,
+    citing BODY-HOGAR-PLAN-1 (cont.)): a legacy metric household row stays out of every member's list."""
     if hh:
-        return "(person_id = ? OR (visibility = 'household' AND hogar_id = ?))", (person_id, hh.id)
+        return ("(person_id = ? OR (visibility = 'household' AND kind = 'milestone' AND hogar_id = ?))",
+                (person_id, hh.id))
     return "person_id = ?", (person_id,)
 
 
 def propose(conn, person_id, title, start_day, *, area="body", why=None, kind="metric", metric_key=None,
             direction=None, target_value=None, baseline_value=None, deadline=None, hogar_id=None,
             visibility="private") -> int:
-    """Create a goal with status 'proposed'. Returns its id."""
+    """Create a goal with status 'proposed'. Returns its id.
+
+    Refuses (ValueError, nothing written) a metric goal proposed as visibility='household': a
+    household goal is a milestone in v1 (BODY-HOGAR-MIEMBRO-1-M) -- a metric goal's verdict and
+    chart are judged on its own baseline_value, which only its creator has, so sharing one would
+    silently judge every member on the creator's numbers (BODY-HOGAR-PLAN-1 (cont.))."""
+    if visibility == "household" and kind == "metric":
+        raise ValueError("a household goal is a milestone in v1: a metric goal cannot be visibility='household'")
     with conn:
         cur = conn.execute(
             "INSERT INTO goal (person_id, hogar_id, area, title, why, kind, metric_key, direction, "

@@ -40,7 +40,7 @@
   {% for h in habits %}
     <li>
       {% if not h.mine %}
-      <span class="boxbtn"><span class="box" style="opacity:.3;border-style:dashed"></span></span>
+      <span class="boxbtn-spacer" aria-hidden="true"></span>
       {% elif h.due_today %}
       <form method="post" action="/habits/{{ h.id }}/check" style="margin:0">
         <input type="hidden" name="day" value="{{ today }}">
