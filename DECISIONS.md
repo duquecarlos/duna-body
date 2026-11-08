@@ -4865,3 +4865,38 @@ test.
 **Merged.** `main` had not moved since the branch was cut (still at `f4e964d`), so no rebase was needed. Fix
 commit `4a98a70`, merged `--no-ff` into `main` at `d4445ba` (merge tree equal to the branch tip's tree, diff
 empty). `main` is left checked out, clean.
+
+## BODY-TURNOS-OPCIONAL-4 -- vincular-este-pc, shown only to a person it applies to (2026-11-07)
+
+Slice 4 of BODY-TURNOS-OPCIONAL-OBS-1's plan under Carlos's ruling A (orchestrator ledger
+BODY-TURNOS-OPCIONAL-1: "the PC-link onboarding step applies only to a person who has a file source").
+Before this slice, `tutoriales.primeros_pasos()` listed `vincular-este-pc` for every hosted person,
+including a phone-first customer with no reason to ever run a Python script on a PC
+(BODY-PRIMER-DIA-CENSO-1 finding DIA-5).
+
+**The rule.** `vincular-este-pc` is now listed, hosted, only when `db.trabaja_turnos_si(conn, person_id)`
+is True OR the person already has a device key (`dispositivo.listar` non-empty) -- resolving the census's
+one UNKNOWN (a device key carries both `turnos:subir` and `vida:leer`, so a key alone is not a clean "file
+source" signal; the orchestrator's ruling settled it: a shift worker may bring files from a PC, and anyone
+who already linked one keeps seeing the step they completed). The device list is computed once, in
+`primeros_pasos()`, and reused for both this visibility check and the existing `vinculado` tick. The
+item's own tick rule (`vinculado`, unchanged) and local mode (step already skipped there) are untouched.
+The Ajustes "Dispositivos" card and the Ayuda task stay where they are, per the ruling.
+
+**Tests**, `tests/test_turnos_opcional_4.py` (new): the full setting x device matrix (NULL/0/1, with/
+without a device key) against both visibility and the unchanged tick, local mode never listing the step,
+and that the remaining items keep their order and the checklist can complete without it.
+`tests/test_tutoriales_puertas.py`'s `test_hosted_with_nothing_is_all_unticked` updated: a hosted person
+with nothing no longer sees `vincular-este-pc` at all, so the expected id set drops it (still asserts
+nothing is ticked). `tests/test_primer_dia_1.py`'s
+`test_consented_and_has_data_without_pc_completes_primera_mirada` updated: its subject now answers
+"works shifts" (`db.set_trabaja_turnos(conn, True, 1)`) so the item stays visible-but-unticked, restoring
+the same assertion rather than deleting it. No other test in `touches:` needed a change -- every other
+hosted fixture already sets `trabaja_turnos` or a device key.
+
+**Gate**, exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, run once, foreground:
+`Ran 936 tests in 135.025s ... OK (skipped=1)`. 936 = the prior entry's 925 plus this slice's 11 new tests
+in `test_turnos_opcional_4.py`.
+
+Not merged: **AWAITING_APPROVAL** on `feat/body-turnos-opcional-4` -- the approval reason says in words to
+stop here, since what Primeros pasos lists is customer-facing.
