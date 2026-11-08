@@ -17,21 +17,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-# Shared with body/db.py's migration (hogar_local -> hogar_miembro), so the table's shape is
-# defined exactly once.
+# Shared with body/db.py's `_ensure_hogar_miembro`, the ONE place `hogar_miembro` is created
+# (called from `db.init` on every database, fresh or existing), so the table's shape is defined
+# exactly once.
 _COLUMNS = """
     person_id      INTEGER PRIMARY KEY REFERENCES person(id),
     hogar_id       TEXT NOT NULL,
     member_sub     TEXT,
     fuente         TEXT NOT NULL DEFAULT 'local' CHECK (fuente IN ('local', 'cuenta')),
     actualizado_at TEXT NOT NULL
-"""
-
-SCHEMA = f"""
--- Local mirror of Cuenta's duna_hogar claim (one active household per person, like Cuenta).
-CREATE TABLE IF NOT EXISTS hogar_miembro (
-{_COLUMNS}
-);
 """
 
 

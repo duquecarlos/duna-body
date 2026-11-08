@@ -12,7 +12,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import compartir, config, cuenta, db, dispositivo, goals, household, identity, privacidad, web
+from body import compartir, config, cuenta, db, dispositivo, goals, identity, privacidad, web
 from body.agente import conversacion as agente_conversacion
 from body.agente import propuestas as agente_propuestas
 from body.agente import uso as agente_uso
@@ -152,7 +152,6 @@ class ExportTest(unittest.TestCase):
         self.assertNotIn("sesion", data)
 
     def test_every_person_table_is_exported_or_excepted(self):
-        self.conn.executescript(household.SCHEMA)
         found = privacidad.person_tables(self.conn)
         accounted = (
             privacidad.FULLY_HANDLED_TABLES | privacidad.PARTIAL_EXPORT_TABLES | privacidad.NEVER_EXPORTED_TABLES
@@ -354,7 +353,6 @@ class CompartidoExportDeleteTest(unittest.TestCase):
         self.addCleanup(self.conn.close)
         db.init(self.conn)
         self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
-        self.conn.executescript(household.SCHEMA)
         self.conn.executemany(
             "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
             [(1, "h-1"), (2, "h-1")])
@@ -429,7 +427,6 @@ class DeleteAllTest(unittest.TestCase):
         self.assertEqual(r.status_code, 303)
         self.assertEqual(r.headers["location"], "/")
 
-        self.conn.executescript(household.SCHEMA)
         for table in sorted(privacidad.person_tables(self.conn)):
             n = self.conn.execute(f"SELECT COUNT(*) FROM {table} WHERE person_id = 1").fetchone()[0]
             self.assertEqual(n, 0, f"{table} still has a row for the deleted person")

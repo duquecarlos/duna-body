@@ -213,7 +213,6 @@ class HouseholdGoalCheckTest(unittest.TestCase):
         conn = _conn(self)
         db.init(conn)
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")
-        conn.executescript(household.SCHEMA)
         conn.executemany(
             "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
             [(1, "h-1"), (2, "h-1")])
@@ -263,7 +262,6 @@ class LegacyMetricHouseholdRowTest(unittest.TestCase):
         conn = _conn(self)
         db.init(conn)
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")
-        conn.executescript(household.SCHEMA)
         conn.executemany(
             "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
             [(1, "h-1"), (2, "h-1")])

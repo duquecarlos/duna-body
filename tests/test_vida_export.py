@@ -8,7 +8,7 @@ import tempfile
 
 from tests._db import open_conn
 
-from body import db, goals, household, turnos_costo, vida_export
+from body import db, goals, turnos_costo, vida_export
 
 METRICS = turnos_costo.MODELO["metricas"]
 CONST = {"sleep_minutes": 420.0, "resting_hr": 55.0, "hrv_last_night": 60.0, "stress_avg": 25.0,
@@ -86,7 +86,6 @@ class VidaExportTest(unittest.TestCase):
         conn = open_conn(self, Path(tempfile.mkdtemp()) / "v3.db")
         db.init(conn)
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")
-        conn.executescript(household.SCHEMA)
         conn.executemany(
             "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
             [(1, "h-1"), (2, "h-1")])

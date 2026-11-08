@@ -13,7 +13,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import compartir, config, db, household, identity, web
+from body import compartir, config, db, identity, web
 
 client = TestClient(web.app, follow_redirects=False)
 
@@ -41,7 +41,6 @@ def _add_person(conn, pid: int, name: str, lang: str = "es"):
 
 
 def _link_household(conn, *person_ids, hogar_id="h-1"):
-    conn.executescript(household.SCHEMA)
     conn.executemany(
         "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
         [(pid, hogar_id) for pid in person_ids])
