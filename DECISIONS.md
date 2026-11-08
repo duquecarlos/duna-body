@@ -9207,3 +9207,48 @@ customer-facing CSS/template changes the previous worker already committed befor
 merges. No password, token, session secret or real health figure was read, printed, stored or
 logged by this slice. `git status --porcelain` is empty on `feat/body-fuentes-propias-1` after
 commit `0f813b1f7b307f85234e20345fffd2f27afa4fd6`, before this ledger entry's own commit.
+
+## BODY-FUENTES-PROPIAS-1-M2 -- lands BODY-FUENTES-PROPIAS-1 + BODY-FUENTES-PROPIAS-1-M into main
+
+Merges `feat/body-fuentes-propias-1` (tip `316222cddc525ed1f79ba29bfebbdbf2ffbd508e`) into `main`
+as built, with no fixes, per this slice's approval, which carries the orchestrator's own
+side-by-side measurement as the merge authorization.
+
+**The measurement this merge rests on** (copied from the approval reason, `ORCH-CARLOS-DELEGATES-
+TIER-1-1`): Main (a `git archive` copy on port 8774, fonts from Google) and the branch (port 8773)
+ran on the same invented demo data, in the same pane, at 375x812 and the same device-pixel ratio.
+19 screens, 5,133 elements: 0 differences in 36 computed properties (font-family included) and in
+every box measured to 0.1 px. The self-hosted file gives the same glyph metrics as Google's. On
+the branch, the only font request is
+`/static/fonts/hanken-grotesk/hanken-grotesk-latin-wght-normal.woff2`, answered 200. Nothing goes
+to fonts.googleapis.com or fonts.gstatic.com. The latin-ext face stays unloaded, because no
+Spanish text needs it. The served policy is `style-src 'self'; font-src 'self'`, with no
+third-party origin left. This closes `BODY-FUENTES-PROPIAS-1`'s census follow-up: no page in this
+app loads anything from a third-party origin.
+
+**Gate, once, on the branch tip before merging** (`316222cddc525ed1f79ba29bfebbdbf2ffbd508e`),
+command `.venv/Scripts/python.exe -m unittest discover tests -t .`: `Ran 1320 tests in 204.990s ...
+OK (skipped=1)` -- reconciles exactly with the spec's supplied floor (1320 + 1 skipped on the
+branch).
+
+**Merge.** `git merge --no-ff feat/body-fuentes-propias-1` onto `main` (prior tip
+`4d7a8ccd02a0525442a0aa2e466b64b0009c9d95`), producing merge commit
+`ba75f64ad2776892f7a29c30adcd816ba192ffb9`. The merge tree and the branch tree are the same tree:
+`HEAD^{tree}` and `feat/body-fuentes-propias-1^{tree}` both equal
+`39917d9d82b286282588fb04ebcfe8d5c2db28f2` -- the diff between them is empty, so no checkout step
+altered a single byte.
+
+**Post-merge hashes** (`git cat-file -p HEAD:<path>` and the working-tree file, sha256, each pair
+verified equal): `hanken-grotesk-latin-wght-normal.woff2` --
+`e9201eddf1d41d0b62253295d869ce3cf65768f7102b797f02c7f8c876b4a9d5` (HEAD) =
+`e9201eddf1d41d0b62253295d869ce3cf65768f7102b797f02c7f8c876b4a9d5` (worktree);
+`hanken-grotesk-latin-ext-wght-normal.woff2` --
+`768af2923e0ab1549f1dfba0a5c8ea749c4c01f01d8e77ffaf7fcd12f57a0a24` (HEAD) =
+`768af2923e0ab1549f1dfba0a5c8ea749c4c01f01d8e77ffaf7fcd12f57a0a24` (worktree); `LICENSE` --
+`ef8780a5a0864714268dd7b6e00de9b39605a1dd61650ed2fa0af9b79b857967` (HEAD) =
+`ef8780a5a0864714268dd7b6e00de9b39605a1dd61650ed2fa0af9b79b857967` (worktree). All six equal the
+source values the prior slices recorded; the merge checkout rewrote nothing.
+
+No password, token, session secret or real health figure was read, printed, stored or logged by
+this slice. `git status --porcelain` is empty on `main` at the merge commit, before this ledger
+entry's own commit.
