@@ -354,6 +354,119 @@ class NoShimAliasGuardTest(unittest.TestCase):
         self.assertEqual(offenders, [], f"shim alias assignment(s): {offenders}")
 
 
+# (defining module, function name) -> allowed to keep the pure-forward shape below.
+#
+# comun._today_local is the one SANCTIONED shim: kept deliberately so the route clock has its own
+# patch point (ESTRUCTURA-1's decision), rather than left for the guard below to flag as the
+# exact shape it exists to catch.
+#
+# comun._turnos_on is a pre-existing instance of the same shape (`return
+# db.trabaja_turnos_si(conn, person_id)`, BODY-TURNOS-OPCIONAL-3, unrelated to this slice's move),
+# found only once this guard existed to look -- mirroring how _ALLOWED_REIMPORTS above allow-lists
+# a pre-existing re-import rather than refactoring it. It cannot be fixed inside this slice's
+# `touches:`: its callers are body/rutas/ayuda.py, body/rutas/dispositivos.py and
+# body/rutas/privacidad.py, none of them touched by BODY-WEB-ESTRUCTURA-5. Removing it (inlining
+# db.trabaja_turnos_si at each call site) is BODY-WEB-ESTRUCTURA-PLAN-1's to schedule, not this
+# guard's to force by breaking the gate on code this slice has no grant to change.
+_ALLOWED_FUNCTION_SHIMS: set[tuple[str, str]] = {
+    ("body.rutas.comun", "_today_local"),
+    ("body.rutas.comun", "_turnos_on"),
+}
+
+
+def _route_module_import_bindings(mod_name: str, is_init: bool, tree: ast.Module) -> dict[str, str]:
+    """Local name -> dotted path, for every top-level import in a body/ source file, resolved the
+    same way Python's own import machinery resolves a relative import. Mirrors _import_bindings
+    (which does this for a test file) but for a body/ module: `from .rutas import comun`,
+    `from .. import goals`, and `from .baselines import baseline` all become absolute dotted
+    paths that _resolve_dotted below can walk, whether the name they bind turns out to be a
+    module or a plain attribute."""
+    bindings: dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom):
+            resolved = _resolve_relative_module(mod_name, is_init, node)
+            if resolved is None:
+                continue
+            for alias in node.names:
+                bindings[alias.asname or alias.name] = f"{resolved}.{alias.name}"
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "body" or alias.name.startswith("body."):
+                    bindings[alias.asname or alias.name.split(".")[0]] = alias.asname or alias.name
+    return bindings
+
+
+def _shim_function_target(node) -> tuple[str, str] | None:
+    """(local base name, attr) when NODE is a PURE forwarding wrapper: its body -- a leading
+    docstring aside -- is a single `return <name>.<attr>(p1, p2, ...)` whose call arguments are
+    exactly its own parameters, unchanged and in the same order. Exactly the shape a re-export
+    shim takes when it is a def instead of a bare assignment (BODY-WEB-ESTRUCTURA-5: ESTRUCTURA-4
+    built `def _defs(conn): return comun._defs(conn)` in body/web.py after the real move, and the
+    assignment-alias guard above does not see a def at all).
+
+    The argument check matters: it is what tells this shape apart from a genuine adapter that
+    reshapes its input before forwarding, such as body/web.py's `_batch_date(t, received)`,
+    whose body calls `comun._short_date(t, datetime.fromisoformat(received).date())` -- a real
+    conversion, not a redirect, even though its own body is also one `return module.attr(...)`
+    statement. A shim carries no logic of its own; this is the structural test for that."""
+    if node.args.vararg or node.args.kwarg or node.args.kwonlyargs or node.args.posonlyargs:
+        return None  # none of the real shims take **kwargs/*args; keep the match exact
+    body = node.body
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) \
+            and isinstance(body[0].value.value, str):
+        body = body[1:]
+    if len(body) != 1 or not isinstance(body[0], ast.Return) or body[0].value is None:
+        return None
+    call = body[0].value
+    if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Name)):
+        return None
+    if call.keywords:
+        return None
+    params = [a.arg for a in node.args.args]
+    if len(call.args) != len(params):
+        return None
+    if not all(isinstance(a, ast.Name) and a.id == p for a, p in zip(call.args, params)):
+        return None
+    return call.func.value.id, call.func.attr
+
+
+class NoShimFunctionGuardTest(unittest.TestCase):
+    """BODY-WEB-ESTRUCTURA-5: no top-level function in body/web.py or body/rutas/*.py exists only
+    to forward to another body module's function under the same or a different name. A patch on
+    the real owner misses a route written through this module's own wrapper, same failure mode as
+    the bare-assignment shim NoShimAliasGuardTest already catches -- this guard catches the def
+    shape. The one sanctioned wrapper, comun._today_local over fechas.hoy_local, is allow-listed
+    by name."""
+
+    def test_no_top_level_function_only_forwards_to_another_body_modules_function(self):
+        offenders = []
+        for path, tree in modulos_con_rutas():
+            mod_name, is_init = _module_name_for(path)
+            bindings = _route_module_import_bindings(mod_name, is_init, tree)
+            for node in tree.body:
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                target = _shim_function_target(node)
+                if target is None:
+                    continue
+                base_name, attr = target
+                dotted = bindings.get(base_name)
+                if dotted is None:
+                    continue
+                try:
+                    owner = _resolve_dotted(dotted)
+                except (ImportError, AttributeError):
+                    continue
+                if not inspect.ismodule(owner):
+                    continue
+                if (mod_name, node.name) in _ALLOWED_FUNCTION_SHIMS:
+                    continue
+                offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno} "
+                                  f"def {node.name}(...): return {base_name}.{attr}(...)")
+        self.assertEqual(offenders, [], f"shim function(s): {offenders}")
+
+
 _DUNDER_RE = re.compile(r"^__.+__$")
 
 

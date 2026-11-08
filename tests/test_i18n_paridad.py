@@ -11,6 +11,7 @@ import unittest
 from body import db, history
 from body import turnos_costo
 from body import web
+from body.rutas import metas
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 I18N_DIR = ROOT / "body" / "i18n"
@@ -97,10 +98,10 @@ _FIXED_DYNAMIC = {
     "trends.short.+": _TREND_SHORT_KEYS,
     # body/history.py KNOWN_ACTIVITY_TYPES -- the Garmin activity types Body has a label for.
     "activity.type.+": sorted(history.KNOWN_ACTIVITY_TYPES),
-    # body/web.py AREAS / DIRECTIONS (also reused for asistente.propuesta.direccion.).
-    "goals.area.+": web.AREAS,
-    "goals.direction.+": web.DIRECTIONS,
-    "asistente.propuesta.direccion.+": web.DIRECTIONS,
+    # body/rutas/metas.py AREAS / DIRECTIONS (also reused for asistente.propuesta.direccion.).
+    "goals.area.+": metas.AREAS,
+    "goals.direction.+": metas.DIRECTIONS,
+    "asistente.propuesta.direccion.+": metas.DIRECTIONS,
     # body/templates/goal.html, goal_new.html option values.
     "habit.context.+": ["before_night", "after_night", "off_days"],
     "goals.cadence.per.+": ["day", "week", "month"],

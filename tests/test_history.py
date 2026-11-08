@@ -10,6 +10,7 @@ from tests._db import open_conn
 
 from body import db, history, web
 from body.i18n import T
+from body.rutas import comun
 
 START = date(2025, 9, 1)
 END = date(2025, 12, 31)
@@ -191,7 +192,7 @@ class FindingTextTest(unittest.TestCase):
         self.conn = _mkconn(self)
         _seed(self.conn)
         self.pat = history.patterns(self.conn, 1)
-        self.defs = web._defs(self.conn)
+        self.defs = comun._defs(self.conn)
         self.by_key = {(f["metric"], f["axis"]): f for f in self.pat["findings"]}
 
     def test_lower_is_better_reads_the_worst_day_as_the_highest(self):
@@ -284,7 +285,7 @@ class HistoryRouteTest(unittest.TestCase):
         conn = db.connect()
         self.addCleanup(conn.close)
         pat = history.patterns(conn, 1)
-        defs = web._defs(conn)
+        defs = comun._defs(conn)
         hero_text = web._finding_text(T("en"), defs, pat["findings"][0])
         self.assertEqual(r.text.count(hero_text), 1)
 

@@ -190,7 +190,7 @@ class MetricPickerEmptyCatalogueTest(unittest.TestCase):
         _reset_db(self)
         # db.init() reseeds metric_def on every request, so an empty catalogue can only happen if
         # it is somehow queried before that seeding -- exactly the defensive case this guards.
-        with mock.patch.object(web, "_defs", return_value={}):
+        with mock.patch.object(comun, "_defs", return_value={}):
             r = client.get("/goals/new")
             self.assertEqual(r.status_code, 200)
             self.assertIn(_t("es", "goals.field_metric"), r.text)

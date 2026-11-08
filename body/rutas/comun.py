@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import contextvars
 import hashlib
+import json
 from datetime import date
 from functools import wraps
 from pathlib import Path
@@ -182,3 +183,26 @@ def _today_local(person: dict) -> date:
     (body/fechas.py's own docstring: web.py and herramientas.py each grew the same clock and both
     now delegate here). Patching fechas.hoy_local itself would mock that unrelated path too."""
     return fechas.hoy_local(person)
+
+
+def _habit_cadence(h) -> dict:
+    """BODY-WEB-ESTRUCTURA-5: called by two domains still apart -- Hoy's due-today card in web.py
+    and Metas' goal detail in body/rutas/metas.py -- so it lives here rather than with either."""
+    return json.loads(h["cadence"])
+
+
+def _context_label(t: T, context: str | None) -> str | None:
+    return t("habit.context." + context) if context else None
+
+
+def _context_chip_cls(context: str | None) -> str:
+    """DESIGN rule 7: a habit's context chip borrows a shift band's own family -- before/after a
+    night shift keep the night tint (still about a night), but off_days is not a night and gets
+    the off-day family the shift band and strip already use (`.shift.off`, `.strip-cell.off`)."""
+    return "off" if context == "off_days" else "night"
+
+
+def _habit_checked(conn, habit_id: int, person_id: int, day: str) -> bool:
+    row = conn.execute("SELECT done FROM habit_check WHERE habit_id = ? AND person_id = ? AND day = ?",
+                       (habit_id, person_id, day)).fetchone()
+    return bool(row and row["done"])
