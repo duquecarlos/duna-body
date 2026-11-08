@@ -8283,3 +8283,73 @@ Commits (pasted from `git rev-parse`, not retyped): fix `f9315076081f0aca77588c2
 `feat/body-seguridad-1`, merged `--no-ff` into `main` as `b595aa725935c4424f1314084eb772714793db2f`. No
 password, token, session secret or health figure was read, printed or logged by this slice. `git status
 --porcelain` empty on `main`, before this ledger entry's own commit.
+
+## BODY-SEGURIDAD-4 -- per-person attempt limits on the Garmin sign-in relay
+
+Against BODY-SEGURIDAD-CENSO-1's item 4: `body/rutas/garmin.py` let a signed-in person submit
+`/garmin/conectar` (a Garmin email + password) and `/garmin/codigo` (the MFA code) without any limit. The real
+harm was never only guessing a code -- any Body account could use Body's own server as a relay to try many
+Garmin email/password pairs, and Garmin answers that by rate-limiting or blocking the host's address, which
+breaks the daily pull for every person on that host. The limit has to key on the signed-in `person_id`, not the
+session cookie, so signing out and back in (a fresh cookie) does not reset it.
+
+**Two limits, in the route module, no schema change:**
+
+1. **Sign-in attempts** (`/garmin/conectar`): at most 5 failed attempts per `person_id` in a sliding hour, kept
+   in a new module-level `_SIGNIN_FAILURES: dict[int, list[float]]` next to the existing `_MFA_STATE`, read
+   through `time.monotonic()` and pruned on every call. A failure is the adapter raising (today's `error=garmin`
+   redirect); an empty form (`error=datos`) does not count and is checked first, before the limit; `needs_mfa`
+   does not count either way; a direct success clears the person's failures. The 6th attempt inside the window
+   is refused with `/garmin?error=demasiados` *before* `garmin_adapter.start_sign_in` is called -- the password
+   never reaches Garmin, and Garmin never sees the 6th failed attempt from this host on this person's behalf.
+2. **MFA code attempts** (`/garmin/codigo`): at most 5 wrong codes per MFA state. The `_MFA_STATE` tuple grew a
+   third field, `wrong_codes` (`(client_state_json, started_at, wrong_codes)`), incremented on each wrong code.
+   The 5th wrong code pops the state and redirects to `/garmin?error=demasiados` instead of letting the code be
+   retried for the rest of the 10-minute TTL window; the person starts again from the email form, which is a
+   fresh sign-in attempt under limit 1. `_prune_mfa_state` keeps pruning by `started_at`, unchanged in shape.
+
+**Why per person, not per session:** a new session (sign out, sign back in, a different browser) must not reset
+either counter, or the limit would only ever slow down the honest case and never the relay abuse it exists for.
+Both counters are plain in-process dicts, exactly like the existing `_MFA_STATE`, acceptable because the host
+runs a single process: `deploy/host/body-web.service`'s `ExecStart` is `.../python -m body.web --port 8770`
+with no `--workers` flag, and `body/web.py`'s `main()` calls `uvicorn.run(app, ...)` with no `workers=` argument
+either -- `uvicorn.run` defaults to one worker when the argument is omitted, so one process holds both dicts for
+the whole host.
+
+**Message**, new key `garmin.error.demasiados` (es + en), reused for both limits -- the same plain sentence
+reads correctly for a code lockout too, since neither limit names a number of seconds:
+- es: «Demasiados intentos seguidos. Espera una hora e inténtalo de nuevo.»
+- en: "Too many attempts in a row. Wait an hour and try again."
+
+`garmin.html` needed no change -- its existing `{% if form_error %}` card at the top of the page already
+renders whatever string `garmin_view` resolves for `error=demasiados`, exactly as it does for the other
+`_GARMIN_FORM_ERROR_KEYS` entries.
+
+**Tests**, `tests/test_garmin_host.py` (the adapter patched throughout, no network): `SignInAttemptLimitTest` --
+5 failures then the 6th refused with `garmin_adapter.start_sign_in` asserted never called; the window slides
+(stale timestamps past the hour let a 6th attempt through); a direct success clears the person's failure list;
+an empty form does not add to it; a second, independently signed-in person is unaffected; the new message
+renders in both es and en (via `/settings/language`). `MfaAttemptLimitTest` -- 4 wrong codes keep re-rendering
+the code form (state kept), the 5th drops the state and answers `error=demasiados`; a further POST after that
+drop gets `error=mfa_expired`, because the state is simply gone and that is the existing no-pending-state case,
+not a separate code path; a right code on the 3rd try still connects and stores the token. Two existing tests
+that read or wrote `_MFA_STATE` entries directly (`test_old_mfa_state_is_pruned_on_the_next_write`,
+`test_expired_mfa_state_is_refused`) were updated for the tuple's new third field; neither test's own assertion
+changed. No test wrote a real-looking secret anywhere.
+
+**Gate**, run once on the branch's final tree (`ba38dfae0cf613334ebe7e5ea5f152338324c566`, confirmed equal to
+the merge commit's own tree before merging, so not re-run after the merge): `.venv/Scripts/python.exe -m
+unittest discover tests -t .` -- `Ran 1265 tests in 114.209s ... OK (skipped=1)`.
+
+Merge policy A, judged against this slice's own diff: no schema or migration change -- two in-memory dicts, the
+same shape of state `_MFA_STATE` already held. No cross-repo contract or DTO shape change -- every touched file
+is `body/rutas/garmin.py`, `body/i18n/es.json`, `body/i18n/en.json`, `tests/test_garmin_host.py`,
+`docs/DESIGN.md`. Customer-facing bytes DID change -- one new string, `garmin.error.demasiados`, in both
+languages -- but this spec's own approval-reason says in words "This spec approves the merge," so the merge
+proceeds rather than stopping with `AWAITING_APPROVAL`.
+
+Commits (pasted from `git rev-parse`, not retyped): fix `ba38dfae0cf613334ebe7e5ea5f152338324c566` on branch
+`feat/body-seguridad-4`, merged `--no-ff` into `main` as `2786eb3daf57d7550e5330c90a1da3d9338d1e95` (tree
+`d00a75dabaa6c657ae407c78c6259224256fba1f`, equal to the branch tip's own tree). No password, token, session
+secret or health figure was read, printed or logged by this slice. `git status --porcelain` empty on `main`,
+before this ledger entry's own commit.
