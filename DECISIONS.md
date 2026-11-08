@@ -7157,3 +7157,93 @@ gate above is the gate `main` now carries. `main` is left checked out, `git stat
 **Remaining moves in BODY-WEB-ESTRUCTURA-PLAN-1's sequence**, per this slice's spec: -5 (metas), -6 (turnos),
 -7 (hoy + tendencias + historial), -8 (sign-in -- Cuenta login/logout -- + Garmin/MFA, reviewed before merge
 as Tier 1).
+
+## BODY-WEB-ESTRUCTURA-5 -- fix the _defs shim, extend the guard, move Metas (2026-11-08)
+
+Fifth slice of BODY-WEB-ESTRUCTURA-PLAN-1. Two things: a review defect from ESTRUCTURA-4, fixed first, and
+a pure move.
+
+**The `_defs` shim.** ESTRUCTURA-4's ledger entry (above) accepted `web.py`'s `def _defs(conn): return
+comun._defs(conn)` as an exception, reasoning it "trips neither `NoShimAliasGuardTest` ... nor
+`RouteModuleAttrReadGuardTest`'s strict check" -- true, but beside the point this spec raised: it is exactly
+the shape rule 3 forbids ("not a function whose whole body forwards to another module's function"), just one
+the existing guards could not see because neither looks at `FunctionDef` bodies. Fixed: `_defs` deleted from
+`web.py`; its ~5 remaining internal call sites (today/day, trends, turnos-costo cards -- the rest were inside
+the Metas block removed below) now read `comun._defs(conn)` directly; `tests/test_history.py`'s two readers
+(`web._defs(self.conn)` / `web._defs(conn)`, lines 194 and 287, cited in ESTRUCTURA-4's own entry as the
+reason the shim stayed) now read `comun._defs(...)` -- that file is in this slice's `touches:`, so the
+reason to keep the shim is gone. `tests/test_sin_friccion.py`'s `mock.patch.object(web, "_defs", ...)`
+(`MetricPickerEmptyCatalogueTest`, testing the since-moved `/goals/new`) now patches `comun._defs`.
+
+**The guard, extended.** `tests/test_guardia_parches.py` gets `NoShimFunctionGuardTest`: a top-level function
+in `body/web.py` or `body/rutas/*.py` is a shim when its body (one docstring aside) is a single `return
+<module>.<attr>(p1, p2, ...)` whose call arguments are its own parameters, unchanged and in the same order.
+The argument check is load-bearing, not cosmetic: without it the first version of this guard also flagged
+`web.py`'s `_batch_date(t, received)`, whose body is one statement too (`return comun._short_date(t,
+datetime.fromisoformat(received).date())`) but transforms its argument before forwarding -- a genuine
+adapter, not a re-export. Resolving the call's base name to a real module reuses `_resolve_dotted` (already
+used for test patch-string targets) over a new `_route_module_import_bindings`, rather than a narrower
+"only a bare `from . import X`" check that would have missed `from .rutas import comun` (`web.py`'s own
+import line) and so missed `_defs` itself. Proof the guard bites (run on the pre-fix tree, pasted verbatim):
+
+    AssertionError: Lists differ: ['body\\web.py:131 def _defs(...): return [172 chars]..)'] != []
+    - ['body\\web.py:131 def _defs(...): return comun._defs(...)',
+    -  'body\\web.py:1211 def _habit_progress(...): return goals.habit_progress(...)',
+    -  'body\\web.py:1222 def _is_due_today(...): return goals.habit_due_today(...)']
+
+**Deviation: the live scan found two more pre-existing instances than the spec named**, once this guard
+existed to look. `web.py`'s `_habit_progress` and `_is_due_today` (pure forwards to `goals.habit_progress` /
+`goals.habit_due_today`) are both inside the Metas move below -- `_habit_progress` was Metas-only and is
+inlined into `goal_detail`'s one call site rather than carried into `metas.py` as a relocated shim;
+`_is_due_today` was called by both Metas (`goal_detail`) and Hoy's `_today_due_habits` (staying in `web.py`),
+so it is likewise inlined at both call sites (`goals.habit_due_today(...)` directly) instead of surviving as
+a two-domain wrapper that would still trip the guard wherever it landed. A third, `comun._turnos_on`
+(`return db.trabaja_turnos_si(conn, person_id)`, BODY-TURNOS-OPCIONAL-3, unrelated to this slice's move),
+could not be fixed the same way: its callers are `body/rutas/ayuda.py`, `dispositivos.py` and `privacidad.py`,
+none of them in this slice's `touches:`. Allow-listed alongside `comun._today_local` instead, with a comment
+explaining why, mirroring this same file's existing `_ALLOWED_REIMPORTS` precedent for a pre-existing,
+out-of-scope finding. The spec said "allow-list `comun._today_local` only" -- this is the one place this
+slice's actual diff departs from that line, and it is a measured finding, not a choice to leave the shape
+unfixed where it could be fixed.
+
+**Metas, a pure move.** `/goals`, `/goals/new` GET+POST, `/goals/{goal_id}` and its actions (`activate`,
+`pause`, `finish`, `drop`, `habits`, `enlaces`, `enlaces/{app_key}/quitar`), `/habits/{habit_id}/check` ->
+new `body/rutas/metas.py`, `router = APIRouter()`, included from `web.py` next to `ajustes`/`asistente`.
+`AREAS`, `DIRECTIONS`, `CONTEXTS`, `BETTER_TO_DIRECTION`, `_week_monday`, `_cadence_text`,
+`_parse_new_habit`, `_habits_for_goal`, `_shared_line`, `_verdict`, `_metric_pct`, `_time_pct`,
+`_goal_target_text`, `_goal_check_row`, `_goal_line_svg`, `_verdict_sentence`, `_require_creator` move with
+it (each called only from Metas routes, measured by grep across `body/web.py` and `tests/`).
+`_habit_cadence`, `_context_label`, `_context_chip_cls`, `_habit_checked` move to `comun.py` instead of
+`metas.py`: `_today_due_habits` (Hoy's due-today card, line ~372, staying in `web.py`) calls all four
+alongside `goal_detail` (Metas) -- two domains still apart, same measurement ESTRUCTURA-2/4 used for
+`_short_date`/`_fig_unit`. `tests/test_i18n_paridad.py`'s `web.AREAS`/`web.DIRECTIONS` (the third, for
+`asistente.propuesta.direccion.+`, reuses the same list under a different i18n key, not a code dependency)
+now read `metas.AREAS`/`metas.DIRECTIONS`.
+
+Route set: before, 59 (method, path) entries (captured via `tests/_rutas.py` on `main` at
+`281544006624b04b32fa358210794a4cfd3556ce`); after, the same 59, identical set (diffed, empty) -- only
+which module registers each one changed.
+
+`body/web.py`: 1832 -> 1338 lines (-494; `git diff --numstat 2815440 81741cc -- body/web.py`: 27
+insertions, 521 deletions).
+
+Gate, exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, run once on the branch tip
+(commit `e57f51a8497ee594905d47b1a91be787270b51b7`), whose tree is identical to this merge's tree (`git
+diff feat/body-web-estructura-5 HEAD`, empty, checked before writing this entry rather than re-run after):
+
+    Ran 1201 tests in 113.923s
+    OK (skipped=1)
+
+1200 (BODY-WEB-ESTRUCTURA-4's count) + 1 new guard test (`NoShimFunctionGuardTest`) = 1201. No test removed.
+
+Merge policy A: no schema change, no customer-facing bytes, no cross-repo contract change in the actual diff
+(seven files, all under `body/` or `tests/`, no template or i18n text touched) -- merges on green per this
+spec's approval. Commits: fix `e57f51a8497ee594905d47b1a91be787270b51b7`, merge
+`81741ccad3355799285fc301dbd0bb55b16dd882` (both pasted from `git rev-parse`). The merge commit's tree
+(`341c3433433c153212e0a7d8da7ebcb889f3b33d`) is identical to the branch tip's tree (verified with `git diff`,
+empty, before writing this entry rather than re-run after), so the gate above is the gate `main` now carries.
+`main` is left checked out, `git status --porcelain` empty.
+
+**Remaining moves in BODY-WEB-ESTRUCTURA-PLAN-1's sequence**, per this slice's spec: -6 (turnos),
+-7 (hoy + tendencias + historial), -8 (sign-in -- Cuenta login/logout -- + Garmin/MFA, reviewed before merge
+as Tier 1).
