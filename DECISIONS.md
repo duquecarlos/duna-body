@@ -4914,3 +4914,107 @@ needed. Gate on the branch tip `cf73f68`, run once, foreground, exact command
 -- 935 passed + 1 skipped, matching the spec's supplied floor exactly. Merged `--no-ff` into `main` at
 `9fee410` (merge tree `c296f7c`, equal to the branch tip's tree; diff empty). `main` is left checked out,
 clean.
+
+## BODY-TURNOS-OPCIONAL-5 -- a hand-typed shift pattern, proposed through the same propose-then-confirm
+flow a file import uses (GATE_RED, not landed)
+
+Slice 5 of 5 of `BODY-TURNOS-OPCIONAL-OBS-1`'s plan under Carlos's ruling A (orchestrator ledger
+`BODY-TURNOS-OPCIONAL-1`: "if on, the person can enter a pattern by hand, through the same
+propose-then-confirm flow"), against the schema `BODY-TURNOS-ESQUEMA-1` already merged. New module
+`body/patron_turnos.py` owns the cycle's parsing, validation, storage and expansion; `body/shift_import.py`
+(Tier 1) gains a `kind` parameter on `propose_data` and widens `confirm()`'s replaceable-row predicate;
+`GET/POST /shifts/patron` and `POST /shifts/patron/quitar` in `body/web.py` are the screen.
+
+**The two rulings in the approval, carried out as written.** (1) A pattern is expanded only from the
+person's own TODAY forward, never into the past: `patron_turnos.expandir(pattern, desde)` starts at
+`max(desde, start_day)`, so a later edit never rewrites history, and a dedicated test
+(`test_never_emits_a_day_before_hoy_even_when_start_day_is_in_the_past`) confirms no day before `desde`
+is ever produced even when `start_day` sits years in the past. (2) `confirm()`'s replaceable-row predicate
+(the precedence lookup and the DELETE) widens from `source LIKE 'personal:%'` to `(source LIKE
+'personal:%' OR source LIKE 'patron:%')`; a pattern batch's rows are stamped `source =
+'patron:<file_name>'` (`file_name` is the literal `"patron-manual"`), an import batch's keep
+`'personal:<file_name>'`; a `'manual'` row is untouched either way (the `source = 'manual'` check is a
+separate, unchanged branch). Two tests confirm precedence both ways on an overlapping day: a pattern
+confirmed after an import (later `received`) replaces the import's row, and an import confirmed after a
+pattern (later `received`) replaces the pattern's row.
+
+**Formats matched, not invented.** FORMATO.md does not exist in this repository (only referenced in
+comments); the format was read from `tests/fixtures/turnos-demo-a.json` and `body/demo.py`'s own seeding
+instead. `start_local`/`end_local` in the expanded `shifts` list: `"YYYY-MM-DDTHH:MM"`, matching the
+fixture exactly. `source.received`: a plain `"YYYY-MM-DD"` date string, matching the existing precedent at
+`body/demo.py:233` (`received=confirmed_days[0].isoformat()`) -- not a full datetime with a UTC offset
+like the fixture's `source.received`, because that precedent already establishes a bare date as a valid
+`received` value, and `hoy` (the day the pattern was proposed) has no time component of its own to invent.
+`source.extracted_at`: `datetime.now().isoformat(timespec="seconds")`, matching `shift_import.py`'s own
+repeated use of that exact expression for a batch's own timestamps.
+
+**One correction to BODY-TURNOS-ESQUEMA-1's own schema comment, not to the approval.** That slice's
+`CREATE TABLE shift_pattern` comment describes `cycle` entries as `{"kind", "start_local", "end_local"}`,
+but this slice's approval spells the cycle entry as `{"kind", "start", "end"}` -- a different field name
+for the same purpose. Since `shift_pattern`'s own comment says "no parser/validator for its contents here
+-- slice 5 owns that", and `db.py` is explicitly out of this slice's `touches:` (no schema change), this
+slice follows the approval's own spelling (`"start"`/`"end"`) rather than editing a comment it cannot
+touch. The two names describe the same two fields; no behavior is at stake, only which key a dict uses
+internally to `patron_turnos.py`.
+
+**`shift.source` / `'personal:'` readers found by grep, outside `shift_import.py` itself:** none. Checked
+`body/web.py`, `body/turnos_costo.py`, `body/history.py`, `body/readiness.py`, `body/profile.py` and
+`body/db.py` for any other reader of the `shift` table's `source` column or a `'personal:'` literal;
+`body/db.py:747`'s `"source"` key belongs to the unrelated `activity` table (Garmin's own source field),
+not `shift`. Nothing outside `touches:` needed a change.
+
+**Screen** (`body/templates/shift_pattern.html`, `body/templates/shifts.html`). Cycle length first:
+`GET /shifts/patron?dias=N` (a plain GET form, no JavaScript) re-renders N rows, prefilling from the saved
+pattern only when its length equals N; a row's label reuses `t.long_date` (no new date-formatting code).
+The six kinds reuse the existing `shift.kind.*` labels; no new CSS class was needed (`.field`, `.btn`,
+`.bad`, `.taplink`, `.k`, `.card` already carry everything, including the 44px targets). On a bad row,
+`patron_turnos.validar()` collects every invalid row (not just the first) into a list of `{"index",
+"code"}`, so the web layer can show a message on each one at once, with every other field's input kept
+exactly as submitted. An `off` row's leftover times are zeroed server-side before validation (`kind ==
+"off"` forces `start`/`end` to `None`), so the library's own "off day with a time" refusal is reachable
+only by calling `patron_turnos.validar()` directly (tested), never through the screen. `/shifts`: a
+`kind='pattern'` batch's card now reads "Tu patrón: N días, M noches, del X al Y." instead of the mail
+wording, in both the single- and many-batch views (`shift_import.preview()` gained `first_day`/`last_day`
+keys, additive, to compute the X/Y dates); a door to `/shifts/patron` sits in the truly-empty state
+("Aún no hay turnos. Llegan de tu correo si vinculas tu PC, o puedes escribir tu propio patrón aquí.") and
+as a secondary line under existing content otherwise, reading "Escribir mi patrón" with no pattern saved
+or "Cambiar mi patrón" with one. `today.shift_none` (`body/templates/base.html`, "Cuando lleguen de tu
+correo los verás aquí") carries the same "only from mail" assumption for a person with no PC, but
+`base.html` and `today.html` are both outside this slice's `touches:`, so it is left as found and named
+here instead of changed.
+
+**Tests**, `tests/test_turnos_opcional_5.py` (new, 35 tests, `tests/_isolate.py` imported first, invented
+demo data only): every refusal code individually, multiple bad rows reported together, the exception
+message never containing a `:` or a `-` (no time, no date); midnight-crossing expansion, never a day
+before `hoy`, the cycle phase anchored to `start_day` even when expansion starts later, index wrap, exact
+horizon length; `propose_data`'s default `kind` staying `'import'` and an unknown `kind` refusing and
+writing nothing; the full guardar/proponer/confirm flow including both overlap directions, a manual row
+kept, a re-save dismissing the earlier pattern proposal while an import batch proposed meanwhile stays
+untouched, and `quitar` leaving confirmed rows; the web screen's 404 when the setting is off (all three
+routes), row count rendering, the bad-row re-render with input kept, the save-then-redirect showing the
+pattern card in both languages, and the door's two wordings.
+
+**Gate, run once, foreground, exact command** `.venv/Scripts/python.exe -m unittest discover tests -t .`:
+
+    Ran 971 tests in 122.876s
+    FAILED (failures=1, skipped=1)
+
+971 = the prior entry's 936 plus this slice's 35 new tests; the one skip is the same pre-existing
+POSIX-only skip noted in earlier entries, unrelated to this slice. The one failure:
+`tests.test_agente_registro.RouteMappingTest.test_every_get_route_has_a_mapping_decision` --
+`'/shifts/patron' : a GET route appeared or disappeared with no tool-mapping decision`. That guard (its own
+docstring: "A new GET route with no entry here fails the test below on purpose") requires a one-line
+addition to the `ROUTE_TOOL` dict literally written inside `tests/test_agente_registro.py` -- a file this
+slice never touched and was never granted in `touches:` (`body/patron_turnos.py`, `body/web.py`,
+`body/templates/shifts.html`, `body/templates/shift_pattern.html`, `body/i18n/es.json`, `body/i18n/en.json`,
+`body/static/body.css`, `tests/test_turnos_opcional_5.py`, `DECISIONS.md`). `POST /shifts/patron` and
+`POST /shifts/patron/quitar` are not GET routes and do not trip this guard; only the new `GET
+/shifts/patron` does. This is a real consequence of this slice's own diff, not flakiness or an unrelated
+pre-existing failure, and it cannot be fixed inside this slice's `touches:` -- per the dispatch's own
+instruction ("Red you cannot fix inside touches: -> stop GATE_RED on the branch"), this slice stops here
+without widening its own scope, instead of editing a file it was not granted.
+
+**Not merged: GATE_RED** on `feat/body-turnos-opcional-5`. The fix is a one-line decision in
+`tests/test_agente_registro.py`'s `ROUTE_TOOL` dict (most likely `None` with a reason -- `/shifts/patron`
+is a creation/edit form like `/goals/new`, not a data screen the assistant would read), to be made by
+whichever slice is granted that file.
