@@ -154,6 +154,29 @@ class DueTodayTest(unittest.TestCase):
         goals.check_habit(conn, hid, 1, _WEEK[0], True)
         self.assertTrue(goals.habit_due_today(conn, habit, 1, date.fromisoformat(_WEEK[0])))
 
+    def test_week_cadence_stays_due_today_on_the_quota_completing_day(self):
+        conn = _conn(self)
+        db.init(conn)
+        gid = _goal(conn)
+        hid = goals.add_habit(conn, gid, "Entrenar", {"per": "week", "times": 2})
+        habit = conn.execute("SELECT * FROM habit WHERE id = ?", (hid,)).fetchone()
+        goals.check_habit(conn, hid, 1, _WEEK[0], True)  # Monday: 1st of 2
+        goals.check_habit(conn, hid, 1, _WEEK[1], True)  # Tuesday: 2nd of 2, quota met today
+        self.assertTrue(goals.habit_due_today(conn, habit, 1, date.fromisoformat(_WEEK[1])))
+        self.assertFalse(goals.habit_due_today(conn, habit, 1, date.fromisoformat(_WEEK[2])))
+
+    def test_month_cadence_stays_due_today_on_the_quota_completing_day(self):
+        conn = _conn(self)
+        db.init(conn)
+        gid = _goal(conn)
+        hid = goals.add_habit(conn, gid, "Pesarse", {"per": "month", "times": 2})
+        habit = conn.execute("SELECT * FROM habit WHERE id = ?", (hid,)).fetchone()
+        goals.check_habit(conn, hid, 1, "2026-11-03", True)  # 1st of 2
+        goals.check_habit(conn, hid, 1, "2026-11-15", True)  # 2nd of 2, quota met today
+        today = date(2026, 11, 15)
+        self.assertTrue(goals.habit_due_today(conn, habit, 1, today))
+        self.assertFalse(goals.habit_due_today(conn, habit, 1, date(2026, 11, 16)))
+
 
 class MilestoneOnTrackWithTimesTest(unittest.TestCase):
     def test_milestone_with_only_a_twice_a_week_habit_done_twice_is_on_track(self):

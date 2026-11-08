@@ -179,9 +179,12 @@ def habit_progress(conn, habit, person_id: int, monday: date, today: date | None
 def habit_due_today(conn, habit, person_id: int, today: date) -> bool:
     """True when H is due today (THE RULE, BODY-HABITO-VECES-1): today is in H's due days for
     this week, and -- for per='week'/'month' only -- H is not already satisfied for its own
-    period (this week's `done < due`, or this month's checks < `times`). per='day' has no extra
-    gate: each day is its own due instance, so a habit already checked today stays listed,
-    ticked, as today."""
+    period (this week's `done < due`, or this month's checks < `times`), UNLESS today itself
+    carries the done=1 check that satisfied it: a habit already checked today stays listed,
+    ticked, as today, even on the day its quota is met, so there is still something to untick
+    (BODY-HABITO-VECES-1-M -- the worker's first pass applied this only to per='day'). per='day'
+    has no extra gate: each day is its own due instance, so a habit already checked today stays
+    listed, ticked, as today."""
     cadence = json.loads(habit["cadence"])
     context = cadence.get("context")
     per = cadence.get("per", "week")
@@ -192,7 +195,13 @@ def habit_due_today(conn, habit, person_id: int, today: date) -> bool:
     if per == "day":
         return True
     done, due, _ = habit_progress(conn, habit, person_id, monday, today)
-    return done < due
+    if done < due:
+        return True
+    checked_today = conn.execute(
+        "SELECT 1 FROM habit_check WHERE habit_id = ? AND person_id = ? AND day = ? AND done = 1",
+        (habit["id"], person_id, today.isoformat()),
+    ).fetchone()
+    return checked_today is not None
 
 
 def _habits_progress(conn, goal_id: int, person_id: int, monday: date) -> tuple[int, int]:
