@@ -197,6 +197,7 @@
   "goals.habit_title_ph": "What will you do?",
   "goals.habit_no_context": "Every day",
   "goals.habit.progress": "{done} of {due} this week",
+  "goals.habit.progress_month": "{done} of {due} this month",
   "goals.habit.not_due": "Not due this week",
   "goals.cadence": "{n}× {per}",
   "goals.cadence.per.day": "a day",

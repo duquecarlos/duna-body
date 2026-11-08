@@ -11,7 +11,7 @@ from datetime import date, timedelta
 
 from . import baselines, db, household
 
-RULE_VERSION = "metas-v1"
+RULE_VERSION = "metas-v2"
 MIN_METRIC_DAYS = 4             # fewer days with data this week -> on_track = NULL, an honest gap
 MILESTONE_ON_TRACK_PCT = 0.70   # share of due habits that must be done for a milestone week to be on track
 
@@ -134,8 +134,80 @@ def _context_due_days(conn, person_id: int, monday: date, context: str) -> list[
     return days
 
 
+def habit_progress(conn, habit, person_id: int, monday: date, today: date | None = None) -> tuple[int, int, str]:
+    """(done, due, period) for habit H, this person, in H's own cadence period -- THE RULE
+    (BODY-HABITO-VECES-1, orchestrator ledger), the one place `times` is read:
+
+    days = the week starting `monday` that H can be done on (its shift `context` days via
+    `_context_due_days`, or all seven via `_week_days`); checked = P's done=1 checks of H on
+    those days.
+
+      per='day'   -> due = len(days); done = min(checked, due). `times` > 1 a day cannot be told
+                     apart by one check a day, so the count stays per day.
+      per='week'  -> due = min(times, len(days)); done = min(checked, due).
+      per='month' -> period='month' tells `_habits_progress` to add nothing for H to the WEEKLY
+                     tally (due 0 for the week). done/due returned here are instead H's own
+                     calendar-month figure: done = P's checks so far this month (the month of
+                     `today`, default the end of `monday`'s week), due = `times`.
+    """
+    cadence = json.loads(habit["cadence"])
+    per = cadence.get("per", "week")
+    times = max(1, cadence.get("times", 1))
+    if per == "month":
+        day = today or (monday + timedelta(6))
+        start = day.replace(day=1)
+        checked = conn.execute(
+            "SELECT COUNT(*) FROM habit_check WHERE habit_id = ? AND person_id = ? AND done = 1 "
+            "AND day >= ? AND day <= ?",
+            (habit["id"], person_id, start.isoformat(), day.isoformat()),
+        ).fetchone()[0]
+        return min(checked, times), times, "month"
+    context = cadence.get("context")
+    due_days = _context_due_days(conn, person_id, monday, context) if context else _week_days(monday)
+    if not due_days:
+        return 0, 0, per
+    placeholders = ",".join("?" * len(due_days))
+    checked = conn.execute(
+        f"SELECT COUNT(*) FROM habit_check WHERE habit_id = ? AND person_id = ? AND done = 1 "
+        f"AND day IN ({placeholders})",
+        (habit["id"], person_id, *due_days),
+    ).fetchone()[0]
+    due = len(due_days) if per == "day" else min(times, len(due_days))
+    return min(checked, due), due, per
+
+
+def habit_due_today(conn, habit, person_id: int, today: date) -> bool:
+    """True when H is due today (THE RULE, BODY-HABITO-VECES-1): today is in H's due days for
+    this week, and -- for per='week'/'month' only -- H is not already satisfied for its own
+    period (this week's `done < due`, or this month's checks < `times`), UNLESS today itself
+    carries the done=1 check that satisfied it: a habit already checked today stays listed,
+    ticked, as today, even on the day its quota is met, so there is still something to untick
+    (BODY-HABITO-VECES-1-M -- the worker's first pass applied this only to per='day'). per='day'
+    has no extra gate: each day is its own due instance, so a habit already checked today stays
+    listed, ticked, as today."""
+    cadence = json.loads(habit["cadence"])
+    context = cadence.get("context")
+    per = cadence.get("per", "week")
+    monday = today - timedelta(today.weekday())
+    due_days = _context_due_days(conn, person_id, monday, context) if context else _week_days(monday)
+    if today.isoformat() not in due_days:
+        return False
+    if per == "day":
+        return True
+    done, due, _ = habit_progress(conn, habit, person_id, monday, today)
+    if done < due:
+        return True
+    checked_today = conn.execute(
+        "SELECT 1 FROM habit_check WHERE habit_id = ? AND person_id = ? AND day = ? AND done = 1",
+        (habit["id"], person_id, today.isoformat()),
+    ).fetchone()
+    return checked_today is not None
+
+
 def _habits_progress(conn, goal_id: int, person_id: int, monday: date) -> tuple[int, int]:
-    """(habits_done, habits_due) for this goal, this person, this week."""
+    """(habits_done, habits_due) for this goal, this person, this week -- sums `habit_progress`,
+    skipping a per='month' habit's own figure (period='month' means due 0 for the week, by THE
+    RULE)."""
     habits = conn.execute(
         "SELECT id, cadence FROM habit WHERE goal_id = ? AND active = 1 "
         "AND (assignee_person_id IS NULL OR assignee_person_id = ?)",
@@ -143,18 +215,11 @@ def _habits_progress(conn, goal_id: int, person_id: int, monday: date) -> tuple[
     ).fetchall()
     done = due = 0
     for h in habits:
-        cadence = json.loads(h["cadence"])
-        context = cadence.get("context")
-        due_days = _context_due_days(conn, person_id, monday, context) if context else _week_days(monday)
-        if not due_days:
+        h_done, h_due, period = habit_progress(conn, h, person_id, monday)
+        if period == "month":
             continue
-        due += len(due_days)
-        placeholders = ",".join("?" * len(due_days))
-        done += conn.execute(
-            f"SELECT COUNT(*) FROM habit_check WHERE habit_id = ? AND person_id = ? AND done = 1 "
-            f"AND day IN ({placeholders})",
-            (h["id"], person_id, *due_days),
-        ).fetchone()[0]
+        done += h_done
+        due += h_due
     return done, due
 
 

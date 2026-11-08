@@ -5317,3 +5317,90 @@ entry. `main` left checked out and clean. Diff for this slice is two test files 
 no customer-facing bytes, no cross-repo contract -- so merge policy A's green-on-gate path applied; the
 customer-facing bytes that landed with it (the list card line, the `goal_new` line, the habit row) were
 already approved in `BODY-HOGAR-MIEMBRO-1-M`'s own approval, per this spec's approval-reason.
+
+## BODY-HABITO-VECES-1 -- a habit's cadence `times` is now read when counting what is due (2026-11-07)
+
+Measured on `BODY-HOGAR-MIEMBRO-1`'s demo (orchestrator ledger `BODY-HOGAR-PLAN-1 (cont.)`): a habit cadence
+`{"per": "week", "times": 2}` with no context counted all 7 days of the week as due, in two separate places
+that both ignored `times` -- `body/goals.py`'s `_habits_progress` (the weekly check, which also feeds every
+milestone's on-track verdict) and `body/web.py`'s `_habit_progress` / `_is_due_today` (the goal page and
+Hoy). A twice-a-week habit read "0 de 7 esta semana", stayed listed as due on Hoy after both of the week's
+checks were done, and a milestone goal built on such habits could never reach `MILESTONE_ON_TRACK_PCT`
+(70%) -- its verdict was wrong by construction.
+
+**The rule** (the orchestrator's, recorded in the spec): for habit H, person P and the week starting
+`monday`, let `days` = the week's days H can be done on (its shift `context` days via
+`goals._context_due_days`, or all seven via `goals._week_days`), and `checked` = P's `done = 1` checks of H
+on those days.
+
+* `per = "day"`: due = `len(days)`; done = `min(checked, due)`. `times` > 1 a day cannot be told apart by
+  one check a day, so the count stays per day (unchanged from before this fix).
+* `per = "week"`: due = `min(times, len(days))`; done = `min(checked, due)`.
+* `per = "month"`: it does not enter the weekly due count (due 0 for the week); the goal page shows its own
+  calendar-month figure instead -- done = P's checks so far this month, due = `times`.
+* Due today (Hoy): H is due today when today is in `days` AND -- for `week`/`month` only -- H is not
+  already satisfied for its own period (`checked < due` this week, or this month's checks `< times`).
+  `per = "day"` has no extra gate: each day is its own due instance, so a habit already checked today
+  stays listed, ticked, as today.
+
+**One function, every call site.** `body/goals.py` gains `habit_progress(conn, habit, person_id, monday,
+today=None) -> (done, due, period)` and `habit_due_today(conn, habit, person_id, today) -> bool`, the one
+place `times` is read. Call sites, all now going through it:
+
+* `goals._habits_progress` (the weekly check, `goals.weekly_check`'s milestone branch) -- sums `done`/`due`
+  across a goal's habits, skipping a `period == "month"` habit (it contributes nothing to the weekly
+  tally, by the rule above).
+* `body/web.py::_habit_progress` -- thin wrapper over `goals.habit_progress`, called from the goal-detail
+  page's habit rows.
+* `body/web.py::_is_due_today` -- thin wrapper over `goals.habit_due_today`, called from the goal-detail
+  page (`due_today`) and `_today_due_habits` (Hoy's plan card).
+* `body/web.py`'s old `_due_days_for` wrapper is gone -- its shift-context logic is now only inside
+  `goals.habit_progress` / `goals.habit_due_today`.
+* `body/agente/herramientas.py`: grepped for every habit-reporting tool before touching it. `_leer_meta`
+  returns a habit's raw `cadencia` dict and the viewer's own `goal_check` rows (`habits_done`/`habits_due`
+  columns), which are already written by `weekly_check` through the shared rule; no second copy of the
+  rule existed there to fix, so this file has no diff in this slice (the spec listed it defensively under
+  "any assistant tool ... that reports habit progress" -- measured none does, independent of the fix).
+
+`RULE_VERSION` moves `"metas-v1"` -> `"metas-v2"`; past `goal_check` rows are not recomputed (unchanged
+rows from before this fix keep reading `"metas-v1"`, an honest record of which rule judged them).
+
+New i18n strings, `goals.habit.progress_month` (both locales): es "{done} de {due} este mes", en "{done} of
+{due} this month" -- shown on the goal page for a monthly habit in place of the existing "{done} de {due}
+esta semana" line, which is unchanged for day/week habits.
+
+**Tests**, new file `tests/test_habito_veces_1.py`: per='day' (due unaffected by `times`), per='week' with
+times 1/2/7 (due = 1/2/7), a `before_night` context with one shift so only 1 day is due against
+times=3 (due = 1, not 3), per='month' (done/due = this month's checks capped at `times`, and a month habit
+contributing (0, 0) to the weekly tally so a milestone with only a month habit stays `on_track = NULL`
+rather than a false verdict), done capped at due for an over-checked week, due-today turning false once a
+twice-a-week habit has two checks, and a milestone with only a twice-a-week habit, done twice, reading
+`on_track = True` (2 of 2 = 100% >= 70%).
+
+**Existing test updated** (its subject restored, not deleted): `tests/test_hogar_miembro_1.py`'s
+`OwnWeeklyCheckTest.test_viewer_sees_their_own_history_not_the_creators` seeds a `per='week', times=1`
+habit checked on all 7 days of the week. Under `metas-v1` that read `(habits_done, habits_due) = (7, 7)`;
+under the fix, due = `min(1, 7) = 1` and done is capped at it, so the pair is now `(1, 1)`. The test's
+subject -- the viewer's own weekly check is upserted and distinct from the creator's -- is unchanged; only
+the two numbers moved, and the comment above the assertion now says so.
+
+Every other habit-cadence test read for count-breaking numbers (`tests/test_goals.py`,
+`tests/test_goals_web.py`, the rest of `tests/test_hogar_miembro_1.py`, `tests/test_agente_registro.py`):
+none asserted a `habits_done`/`habits_due` pair, a progress string, or a due-today boolean on a cadence
+where the old and new rule disagree (every `per='day'` case; every `per='week', times=1` case whose
+`days` already equalled 1 or whose assertion didn't touch the count; the context test whose single due day
+already capped due at 1 under the old rule too).
+
+**Gate, run once, foreground, exact command** `.venv/Scripts/python.exe -m unittest discover tests -t .`:
+
+    Ran 1020 tests in 175.986s
+    OK (skipped=1)
+
+1020 is 1008 (the prior entry's count) + 12 new cases in `tests/test_habito_veces_1.py`; no test removed.
+The one skip is pre-existing and unrelated.
+
+**Not merged -- AWAITING_APPROVAL.** This spec's approval-reason says in words: "Customer-facing (counts
+on the goal page and Hoy, and verdicts): stop AWAITING_APPROVAL." The diff changes exactly that --
+the goal page's per-habit progress line and its wording for a monthly habit, Hoy's due-today list, and
+every milestone verdict built on habits with `times` != 1 -- so this slice stops before the merge on
+`feat/body-habito-veces-1`, commit `28e3fcd`, for the orchestrator's review.
