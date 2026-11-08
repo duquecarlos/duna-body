@@ -5899,3 +5899,85 @@ confirmed the query string is absent from the page), es and en strings, export a
 bytes (`body/templates/goal.html`, `body/i18n/es.json`, `body/i18n/en.json`) -- merge policy A fails on two of its
 three conditions, and this spec's approval-reason says explicitly to stop before merge on the goal page. Commit
 `64bfc00` on `feat/body-hogar-enlace-1`, left unmerged for review.
+
+## BODY-HOGAR-ENLACE-1-M -- four fixes from the AWAITING_APPROVAL review, then merged (2026-11-07)
+
+ORCH-CARLOS-DELEGATES-TIER-1-1's review of BODY-HOGAR-ENLACE-1 (tip `c0b4538`) measured four defects in the goal
+page's "Enlaces" card and accepted everything else -- the schema, `enlaces.py`'s URL building and ref validation,
+creator-only access, export/delete-all. This slice fixes the four and merges.
+
+**Fix 1 -- the error was off-screen and the field hidden.** A rejected paste redirected to
+`/goals/{id}?enlace=invalido`, which rendered a top-of-page error with the matching `<details>` fold still closed --
+at 375 px the error sat below the fold that held the field it was about. Now the "Enlaces" card carries `id="enlaces"`;
+a rejected paste redirects to `/goals/{goal_id}?enlace=invalido&app=<app>#enlaces` (`app` only when it is a known
+registry key -- never the pasted text), and that render opens the matching fold with its error line directly above
+its field. A successful add or remove now redirects to `/goals/{goal_id}#enlaces` instead of the bare goal URL, so
+the browser lands on the card either way.
+
+**Fix 2 -- the fold stayed offered after the goal already had its one link per app.** `goal_enlace` is
+`UNIQUE (goal_id, app)`, so posting the form again after a link exists would silently replace it rather than warn.
+The fold is now the correct remedy for that shape: a goal with a link for an app shows no fold for that app (Quitar,
+then link again, is the only way to change it). The privacy note now renders once, whenever there is a link or a
+fold to offer; a creator with no links and nothing left to link sees no "Enlaces" block at all, same as before.
+
+**Fix 3 -- the template hard-coded Lugares, so the registry in `body/enlaces.py` was not the authority the ruling
+says it is.** Each `APPS` entry now also carries `add_summary_key`, `field_key` and `error_key` (Lugares keeps the
+existing `goals.enlace.add_summary` / `goals.enlace.field_entrada` / `goals.enlace.error`). A new
+`enlaces.apps_por_enlazar(conn, goal_id) -> list[{app, add_summary_key, field_key, error_key}]` returns registry
+apps this goal has no link for yet, in registry order (a plain `[app for app, spec in APPS.items() if app not in
+linked]`, since `APPS` is a dict and Python 3.7+ keeps insertion order). `body/templates/goal.html` loops over it --
+one fold per unlinked app, the hidden `app` input carrying `{{ a.app }}`, every word looked up through `t(a.*_key)`
+-- and no longer contains `value="lugares"` or any other literal app key or app-specific wording. A second app would
+be one registry entry; the template would not change.
+
+**Fix 4 -- `privacidad.delete_person` ran `conn.executescript(household.SCHEMA)`, now redundant and risky.**
+BODY-HOGAR-CUENTA-DB-INIT-1 made `db.init` create `hogar_miembro` unconditionally, so `delete_person` no longer needs
+to create that table itself before deleting from it -- and `executescript` commits whatever transaction happens to
+be open, which the function's own docstring says it does not do (`with conn:`, one transaction, all-or-nothing). The
+call is removed from `delete_person`. `privacidad.export_person`'s own `conn.executescript(household.SCHEMA)` call
+(line 74) is untouched -- outside this spec's `touches:`, not part of the defect, and `household.py` itself is
+untouched throughout.
+
+    $ git grep -n "household.SCHEMA\|executescript" body/
+    body/db.py:769:    conn.executescript(SCHEMA)
+    body/demo.py:299:    conn.executescript(household.SCHEMA)
+    body/privacidad.py:74:    conn.executescript(household.SCHEMA)
+
+`household.SCHEMA` still has two users in `body/` (`demo.py` and `privacidad.py`'s `export_person`) -- not an unused
+symbol to queue for removal.
+
+**Strings changed.** No new i18n keys -- fix 3 reuses the existing `goals.enlace.add_summary` / `field_entrada` /
+`error` strings through the registry instead of a template literal. The only new customer-visible byte is the
+`id="enlaces"` attribute and the `#enlaces` fragment on three redirects (`/goals/{id}enlaces`
+add-success/invalid/remove), none of them visible text.
+
+**Tests (`tests/test_hogar_enlace_1.py`, 36 tests, up from 30):** the two redirect-location assertions updated for
+the `#enlaces` fragment and (on the invalid path) the `&app=lugares` query and the absence of the pasted text; a new
+render test confirms the redirect's target page opens the matching fold with the error line directly above the
+field (`<details ... open ...>...error...field placeholder`, regex over the live response text); a defensive test
+confirms an unknown `app` query value never forces a fold open; a new `RegistryIsTheAuthorityTest` class patches a
+second, temporary registry entry into `enlaces.APPS` and confirms both folds render from the registry (not a
+literal), then only the still-unlinked one after linking the patched app, plus a direct read of
+`body/templates/goal.html` confirming it holds no `value="lugares"` literal; a new test confirms a goal already
+linked for its only registry app shows no fold for that app; `LanguageTest`'s two tests were split to check the fold
+wording on an unlinked goal and the link/privacy wording after linking it (fix 2 means the two could no longer share
+one goal, since linking removes the fold); a new delete-all test seeds an uncommitted write before calling
+`delete_person` and confirms it still removes everything, including the link, the goal and the person row -- the
+regression fix 4's removal could have introduced if `delete_person`'s own `with conn:` could not be relied on
+without the removed call's incidental commit.
+
+**Gate, run once, foreground, exact command** `.venv/Scripts/python.exe -m unittest discover tests -t .`:
+
+    Ran 1121 tests in 215.044s
+    OK (skipped=1)
+
+(1121 vs. the prior entry's 1115: +6 in `test_hogar_enlace_1.py` net of the 30 already there, 36 now.)
+
+**Merged.** Fix commit `b0a0bcf` on `feat/body-hogar-enlace-1` (base `c5a31f6`, branch tip before this slice
+`c0b4538`), gate green on that tree, merged `--no-ff` into `main` as `4f1747e` -- merge tree equal to the branch tree
+(`8e1556b`), confirmed with `git diff HEAD feat/body-hogar-enlace-1 --stat` producing no output before this ledger
+entry's own commit. `main` left checked out, working tree clean.
+
+Merging past a customer-facing-bytes condition is authorised here because this spec's own body says so in words
+("Then merge") -- merge policy A's AWAITING_APPROVAL stop from the prior entry does not re-apply to a spec whose
+body explicitly authorises the merge it is approving.
