@@ -6414,3 +6414,52 @@ below it) still holds -- the assertion is just scoped to the wrong element now t
 whole-page count and assert on the hero card's html slice instead) is in `tests/test_turnos_costo.py`, which is not
 in this slice's `touches:`, so it is not made here. Follow-up: **BODY-PULIDO-3-TURNOS-HERO-COUNT-1** -- rescope that
 one assertion to the hero card's own markup (`touches: tests/test_turnos_costo.py`).
+
+## BODY-PULIDO-3-M -- land BODY-PULIDO-3 with two fixes, then merge (2026-11-08)
+
+Landed `feat/body-pulido-3` (tip `9a9a06a`) into `main` after fixing the GATE_RED **BODY-PULIDO-3-TURNOS-HERO-COUNT-1**
+named, plus an accessibility gap the browser measurement's acceptance review found in the same strip cell.
+
+**Fix 1 -- rescope the "shown once" count to the hero card.**
+`tests/test_turnos_costo.py::HeroQuestionsTest::test_hero_question_differs_from_rows_question_and_number_shown_once`
+asserted `r.text.count("≈") == 1` over the whole `/shifts` page. Its subject is "the hero's own figure is not repeated
+in the sentence below it", which held only while no other «≈» existed on the page -- TURNOS-SCORE-1 (this round, DESIGN
+rule 4) now puts one on every scored strip cell (56 of them on this test's seed), so the whole-page count broke for a
+reason unrelated to the hero. Fix: extract the hero's own markup first (`re.search(r'<a class="card est"[^>]*>.*?</a>',
+r.text, re.S)`, matching `shifts.html`'s `<a class="card est" href="/shifts/como">` block) and count «≈» inside that
+slice only -- still exactly 1. The assertion's subject and comment are unchanged; nothing was loosened to `>= 1`.
+
+**Fix 2 -- the strip cell's aria-label named the estimate as a measured number.** `shifts.strip_cell` built
+`aria-label="{fecha} · {turno} · preparación {n}"` (es) / `"... readiness {n}"` (en) for a scored cell -- a screen
+reader heard "preparación 76", no different from a measured figure, even though the cell's visible text already
+carries the «≈» marker (TURNOS-SCORE-1). Fix: both strings now spell the estimate out in words, reusing the exact
+wording Hoy's hero already uses for its own estimated readiness number (`today.ready_label`: "Tu preparación ·
+estimada" / "Your readiness · estimated") --
+- es: `"shifts.strip_cell"`: `"{fecha} · {turno} · preparación {n}"` → `"{fecha} · {turno} · preparación ≈ {n} (estimada)"`
+- en: `"shifts.strip_cell"`: `"{fecha} · {turno} · readiness {n}"` → `"{fecha} · {turno} · readiness ≈ {n} (estimated)"`
+
+`shifts.strip_cell_sin_dato` (the no-watch-data label) is unchanged, since it names no figure to mark as estimated.
+No change was needed in `body/web.py`: `_strip` already calls `t("shifts.strip_cell", fecha=fecha, turno=turno,
+n=score)`, so the new wording took effect from the i18n string alone.
+
+**Tests.** `tests/test_pulido_3.py` gained two cases in `TurnosStripApproxTest`: a scored cell's `aria-label` matches
+`preparación ≈ \d+ \(estimada\)` in Spanish and `readiness ≈ \d+ \(estimated\)` in English, on the same seeded strip
+the class's existing tests already render.
+
+**Gate**, run once on the final branch tree before merge: `.venv/Scripts/python.exe -m unittest discover tests -t .`
+-- `Ran 1181 tests in 187.769s ... OK (skipped=1)` (1179 before this slice's two new tests, +2 new, the one GATE_RED
+test now passing again). The merge commit's tree (`8585a00c4f7f50ea9bacb912edf55585af8322d1`) is identical to the
+gated branch tip's tree, so this is the gate `main` now carries too -- not re-run after the merge.
+
+Merge policy A: no schema or migration change, no cross-repo contract change. The strip cell's visible text and its
+`aria-label` are customer-facing bytes, so this is a customer-bytes change under merge policy A -- but this spec's
+own body named both exact strings to change and ended with "Then merge," so the merge past that condition is
+authorised in words, not inferred from `approved: yes` alone. `--no-ff` into `main`.
+
+Commits: fix `3a4b3a840db715e1ff0de587d208f9f3e4a8bfb3`, merge `7f6d0163ccab62e56510418e7e8af5485e604c5a` (both
+pasted from `git rev-parse`, not retyped).
+
+**What this spec measured that it didn't already know:** Hoy's hero (`today.html`) has no `aria-label` of its own for
+the estimate -- it states "estimada"/"estimated" in ordinary visible text (`today.ready_label`) next to the number,
+not inside an `aria-label` attribute. So "reuse that wording" (the spec's instruction) meant reusing the two words
+themselves, not an existing `aria-label` pattern, since Hoy's hero has none to match.
