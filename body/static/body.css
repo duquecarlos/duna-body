@@ -1,5 +1,23 @@
 /* Body app — Duna family tokens (dev-protocol/research/design-admin-2026-10-06/duna-tokens.css) + Body marks.
    One source of styles (ui-interaccion-v1). Light by default; dark by system or by choice, without flash. */
+
+/* Hanken Grotesk, self-hosted (BODY-FUENTES-PROPIAS-1): the same files Duna's console commits
+   (ADMIN-FUENTES-LOCALES-1), one variable-weight file per subset. unicode-range values are the
+   well-known Google Fonts latin / latin-ext ranges (no local source fixes the exact ranges these
+   two files were built with -- see DECISIONS.md), so the browser only downloads latin-ext when a
+   character it covers actually appears; Spanish never needs it, since Latin-1 (the latin
+   subset's own U+0000-00FF) already covers every accented character Spanish uses. */
+@font-face{
+  font-family:"Hanken Grotesk";font-style:normal;font-weight:100 900;font-display:swap;
+  src:url(/static/fonts/hanken-grotesk/hanken-grotesk-latin-wght-normal.woff2) format("woff2");
+  unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+2074,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face{
+  font-family:"Hanken Grotesk";font-style:normal;font-weight:100 900;font-display:swap;
+  src:url(/static/fonts/hanken-grotesk/hanken-grotesk-latin-ext-wght-normal.woff2) format("woff2");
+  unicode-range:U+0100-02AF,U+0304,U+0308,U+0329,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20CF,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
 :root{
   --paper:#F4F2ED; --card:#FCFBF8; --wash:#F8F7F3; --inset:#ECEAE4; --line:#C9C6BF; --soft:#E2DFD8;
   --ink:#121212; --ink2:#4A4844; --muted:#6B6863;

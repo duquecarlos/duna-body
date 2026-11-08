@@ -484,7 +484,7 @@ class StyleSrcHasNoUnsafeInlineTest(unittest.TestCase):
         directives = {d.strip() for d in csp.split(";")}
         style_src = next(d for d in directives if d.startswith("style-src"))
         self.assertNotIn("'unsafe-inline'", style_src)
-        self.assertIn("style-src 'self' https://fonts.googleapis.com", directives)
+        self.assertIn("style-src 'self'", directives)
 
 
 class SafeReturnToTest(unittest.TestCase):

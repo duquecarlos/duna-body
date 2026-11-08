@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import mimetypes
 import os
 import sys
 from contextlib import asynccontextmanager
@@ -64,6 +65,10 @@ app.add_middleware(SeguridadMiddleware)
 # Added last, so outermost: a SeguridadMiddleware refusal still reaches the request log
 # (BODY-SEGURIDAD-1-M -- a cross-site attempt is off the normal flow and must be visible).
 app.add_middleware(RequestLogMiddleware)
+# Python's mimetypes has no .woff2 entry (BODY-FUENTES-PROPIAS-1: measured
+# `mimetypes.guess_type("x.woff2")` == `(None, None)`), which would serve the self-hosted font as
+# a guessed type instead of `font/woff2`.
+mimetypes.add_type("font/woff2", ".woff2")
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 app.include_router(pwa.router)
 app.include_router(ayuda.router)

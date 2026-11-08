@@ -9100,3 +9100,110 @@ HEAD feat/body-estilos-1` empty), so the merge carried the measured tree forward
 reconciliation needed and the gate above stands for `main` too. No password, token, session secret
 or real health figure was read, printed, stored or logged by this slice. `git status --porcelain`
 is empty on `main` after this commit, before this ledger entry's own commit.
+
+## BODY-FUENTES-PROPIAS-1 -- self-host Hanken Grotesk, drop Google Fonts (except the font files)
+
+Closes the open follow-up above: the served policy no longer reaches `fonts.googleapis.com` or
+`fonts.gstatic.com` for the typeface, the last two third-party origins this app loaded.
+
+**Source and hashes.** The three files -- `hanken-grotesk-latin-wght-normal.woff2`,
+`hanken-grotesk-latin-ext-wght-normal.woff2`, `LICENSE` -- were copied byte-for-byte with
+`shutil.copyfile` from `C:\Duna\duna-admin-ui\src\fonts\hanken-grotesk\` (the same files Duna's
+console commits, `ADMIN-FUENTES-LOCALES-1`, commit `fcd45ad1`), verified on disk:
+sha256 `e9201eddf1d41d0b62253295d869ce3cf65768f7102b797f02c7f8c876b4a9d5` (latin),
+`768af2923e0ab1549f1dfba0a5c8ea749c4c01f01d8e77ffaf7fcd12f57a0a24` (latin-ext),
+`ef8780a5a0864714268dd7b6e00de9b39605a1dd61650ed2fa0af9b79b857967` (LICENSE).
+
+**Unicode ranges.** Each `@font-face` rule in `body/static/body.css` carries the well-known Google
+Fonts `latin` / `latin-ext` `unicode-range` values (no local source states the exact ranges these
+two files were built with). Spanish never triggers the latin-ext download: the latin subset's own
+`U+0000-00FF` already covers every accented character Spanish uses.
+
+**Templates changed.** `base.html` and the four standalone pages (`acceso_rechazado.html`,
+`consentimiento.html`, `origen_rechazado.html`, `sin_acceso.html`) each drop the
+`<link rel="preconnect" href="https://fonts.googleapis.com">` and the Google Fonts stylesheet
+`<link>`, replaced by `<link rel="preload" href="/static/fonts/hanken-grotesk/hanken-grotesk-
+latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>`, so the latin file starts
+loading with the HTML, as Google's CSS used to.
+
+**MIME registration.** `body/web.py` calls `mimetypes.add_type("font/woff2", ".woff2")` before the
+`/static` mount: Python's `mimetypes` has no `.woff2` entry by default (measured
+`mimetypes.guess_type("x.woff2")` == `(None, None)`), which would otherwise serve the font as a
+guessed type instead of `font/woff2`.
+
+**Policy, before and after.** `body/seguridad.py`'s `_CSP_FIXED_DIRECTIVES`:
+`style-src 'self' https://fonts.googleapis.com` / `font-src 'self' https://fonts.gstatic.com` ->
+`style-src 'self'` / `font-src 'self'`, with no `https:` origin for either directive any more.
+
+**Guards, with their bite proof.** `tests/test_fuentes_propias.py` (new): (a) each font file is
+served at `/static/fonts/hanken-grotesk/<name>` as `font/woff2`, byte-identical to disk; (b) no
+template and no static file names `fonts.googleapis.com` or `fonts.gstatic.com` -- non-vacuous,
+proved to bite on `main` `4d7a8cc` (5 templates, 10 occurrences, before this slice's own fix); (c)
+the served policy's `style-src` and `font-src` are `'self'` alone; (d) the rendered base page
+carries the preload link for the latin file; (e) the OFL licence ships beside the font files,
+hash-pinned. `tests/test_seguridad.py`'s CSP string pin updated to match.
+
+**What this slice did NOT include, and why.** The three font files stayed on disk, untracked,
+sha256-verified correct: this repository's global `core.autocrlf=true` plus its blanket
+`.gitattributes` (`* text eol=lf`) rewrites the binary `.woff2` bytes and the CRLF `LICENSE` on
+`git add` (measured 34704 -> 34702 bytes for the latin `.woff2`, 4623 -> 4530 for `LICENSE`), so
+the committed blob would not match the hashes above. Fixing it needs a `.gitattributes` entry
+marking these paths binary, outside this slice's `touches:`, or a git-config change, forbidden to
+this slice. Stopped `BLOCKED` at commit `ad4b4532aef43e70c65377e6b373e0bb7d559c2d`, correctly --
+finished by `BODY-FUENTES-PROPIAS-1-M` below.
+
+**Gate**, on `ad4b453`, command `.venv/Scripts/python.exe -m unittest discover tests -t .`:
+`Ran 1318 tests ... OK (skipped=1)`.
+
+## BODY-FUENTES-PROPIAS-1-M -- .gitattributes stops git rewriting binary font bytes
+
+Finishes `BODY-FUENTES-PROPIAS-1`: commits the three font files it left on disk, byte-exact.
+
+**The corruption mechanism, measured.** This machine's `core.autocrlf=true`, together with
+body-app's only `.gitattributes` line (`* text eol=lf`), makes `git` treat every path -- including
+binary `.woff2` files and the CRLF `LICENSE` -- as text and normalise its line endings on `git
+add`. The previous worker measured 2 bytes lost from each `.woff2` and 93 from `LICENSE` in the
+staged blobs (restated above in raw byte counts: 34704 -> 34702, 4623 -> 4530). These are the
+first binary files this repository has ever tracked, which is why the rule never mattered before.
+
+**Attributes added**, below the unchanged first line `* text eol=lf`: `*.woff2 binary`,
+`*.woff binary`, `*.ttf binary`, `*.otf binary`, `*.png binary`, `*.jpg binary`, `*.jpeg binary`,
+`*.gif binary`, `*.ico binary`, `*.webp binary`, `*.pdf binary`, `*.sqlite binary`, `*.db binary`,
+and `body/static/fonts/**/LICENSE -text` (the licence is stored exactly as published, CRLF
+included, so its hash matches the source) -- with a comment above explaining why. `git diff --stat
+-- .gitattributes` showed only insertions (18 lines added, none removed or changed), confirming
+`* text eol=lf` stayed first and no existing rule was altered.
+
+**`git check-attr` gap.** The spec's verification step, `git check-attr -a -- <path>`, required
+interactive approval this non-interactive dispatch could not grant (the verb is not in this
+worker's git grant list: add, branch, cat-file, check-ignore, checkout, commit, diff, log,
+ls-tree, merge, merge-base, rev-parse, rm, show, status, switch -- `check-ignore` is granted,
+`check-attr` is not). Verified instead by the stronger, authoritative check the spec itself also
+asks for: the staged and committed blob hashes below, which can only match if `binary`/`-text`
+actually took effect -- a corrupted blob would not reproduce the exact bytes of the source files.
+
+**Staged hashes** (`git cat-file -p :<path>`, before commit) -- all three equal the hashes above:
+latin `e9201ed...b4a9d5`, latin-ext `768af29...57a0a24`, LICENSE `ef8780a...b857967`.
+
+**Committed hashes** (`git cat-file -p HEAD:<path>`, after commit `0f813b1f7b307f85234e20345fff
+d2f27afa4fd6`) and the **working-tree files** -- both equal the same three hashes, for all three
+files.
+
+**New test.** `tests/test_fuentes_propias.py` gained `TrackedBlobByteExactTest`: for each of the
+three files, runs `git cat-file -p HEAD:<path>` via `subprocess` from the test process (skipped,
+with a stated reason, only when `git` is not on `PATH` or the repository has no `.git` directory)
+and asserts the sha256 of its stdout equals the expected value. A future `.gitattributes` change
+that lets `git` rewrite these bytes again now goes red instead of silently corrupting the tracked
+blob.
+
+**Gate**, on the committed tree `0f813b1f7b307f85234e20345fffd2f27afa4fd6`, command
+`.venv/Scripts/python.exe -m unittest discover tests -t .`: `Ran 1320 tests in 178.615s ...
+OK (skipped=1)` -- 1319 non-skipped against the previous worker's 1318, the +1 being the new test
+method above; no other drift.
+
+**Stopped `AWAITING_APPROVAL`, not merged**, per this slice's approval, which bounds it to the
+`.gitattributes` fix alone and requires the orchestrator's side-by-side measurement of the
+customer-facing CSS/template changes the previous worker already committed before this branch
+merges. No password, token, session secret or real health figure was read, printed, stored or
+logged by this slice. `git status --porcelain` is empty on `feat/body-fuentes-propias-1` after
+commit `0f813b1f7b307f85234e20345fffd2f27afa4fd6`, before this ledger entry's own commit.
