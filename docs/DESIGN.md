@@ -123,6 +123,18 @@ comes from; the Body-specific reading is in *italics*. When a new rule arrives f
     `/shifts`' 56-day strip and `turnos_costo`'s block cost and recovery math -- build one `Lector` for their
     whole window and pass it through. The reader's own numbers are pinned equal to the pre-reader path by
     tests, never approximated.
+    (BODY-RENDIMIENTO-3): a page is compressed by the app itself (`GZipMiddleware` in `body/web.py`, next to the
+    routes and inside `SeguridadMiddleware`, so the fixed security-header set still lands on every response,
+    compressed or not), so the LAN gets gzip too, not only the hosted copy behind Caddy's `encode gzip`. The
+    assistant's streamed answer (`text/event-stream`) is excluded from compression and never buffered, by
+    Starlette's own default exclude list, not a Body-specific rule. A `/static` file's own URL already carries
+    a content hash (`static_url`'s `?v=`, rule above): a request whose `v` equals the CURRENT hash
+    (`comun.STATIC_HASH`) gets `Cache-Control: public, max-age=31536000, immutable` -- that exact URL can only
+    ever mean these bytes -- and any other `v` (absent, stale, or foreign) gets `no-cache`, revalidating with the
+    ETag the mount already sends. The web app manifest (`manifest.webmanifest`) is a plain `/static` file like
+    any other, loaded through `static_url` the same way, so it follows this same rule with no special case.
+    `/sw.js` keeps `Cache-Control: no-cache` on purpose (it is not a hashed `/static` URL -- a stale service
+    worker would keep serving an old cache name).
 14. **Assistant, to agent-ui-v1** (Carlos asked for it like the other apps, 2026-11-06) (one tap, 3 sizes, proposes → you confirm → undo). Built with parity: every
     screen ships with the assistant's read tool.
 
