@@ -9859,3 +9859,58 @@ STOP AWAITING_APPROVAL (not merged): this slice's own approval
 375px browser measurement of Decisions 1-3's customer-facing bytes (the stale line, the dropped
 table, the caption swap) -- a measurement this slice's gate cannot substitute for. A merge slice
 follows once that measurement is in.
+
+## BODY-ESTADOS-VACIOS-2-M2 -- the three defects that measurement found, fixed on the same branch
+
+Built on `feat/body-estados-vacios-2` at `b9b7ae727748f6ff8b66341ed911955045adea3a` (-M's tip). The
+orchestrator's own 375 px browser measurement of BODY-ESTADOS-VACIOS-2 (`8141e43`, plus -M's test
+move) on an invented sparse person -- data last seen 40 days ago, shifts on with none, a VO2 max
+goal with no readings -- found Turnos and the goal caption right (the all-empty cost table stays
+gone, `goals.chart_soon` stays swapped in) and three defects in what remained.
+
+**Decision 1 -- the stale line is a flag, not a footnote.** `body/static/body.css` gets `.aviso`,
+mirroring `.shift` (rounded, padded, bordered, left-bar `::before`), with the amber tokens already
+in both themes (`--amber` for the bar, `--amber-tint` for the background) and ink text at body
+size -- not `.note`'s muted 14 px. `today.html` renders the stale line as `<div class="aviso">` in
+the same position as before (above the readiness card, outside the `<a class="card est">` it
+cannot nest inside, since a link cannot nest inside a link). No colour stronger than amber: a gap,
+never an alarm, never medical.
+
+**Decision 2 -- the link goes only where it can be kept.** `body/rutas/hoy.py`'s `_stale_ctx` drops
+the `/settings` guess entirely: local mode now renders the stale sentence with no link at all,
+since no local page shows the sync (the sync itself is a per-install Task Scheduler setting this
+app cannot read, `comun._sync_status_text`'s own docstring) and a link promising a page that is
+not there is worse than no link. Hosted mode keeps the link, now to `/garmin` with a relabeled
+`today.stale_link` ("Ver la conexión con Garmin" / "Check the Garmin connection") -- the page that
+actually shows the connection and the last sync error.
+
+**Decision 3 -- the legend matches the drawing.** `body/rutas/metas.py`'s `_goal_line_svg` omits
+the `goals.legend_avg` ("Tu promedio semanal") entry, with its green swatch, when `pts` -- the same
+list that decides whether the polyline or the single-point circle is drawn -- is empty. Plan
+(`goals.legend_plan`) and Hoy/today (`goals.legend_today`) stay unconditional; only the series that
+is not drawn loses its legend entry, and only when it has zero points plotted (one point still
+draws a circle and keeps the entry).
+
+**Tests**, `tests/test_estados_vacios_2.py`: the existing stale-line test now checks `class="aviso"`
+in both languages instead of the old link assertion; a new `test_local_mode_aviso_has_no_link`
+checks the aviso's own HTML has no `<a`; a new `StaleDataHostedLinkTest` patches the hosted env the
+same three variables `tests/test_cuenta_rp.py::CuentaRpTestCase` patches (plus `garmin_cuenta.
+KEY_ENV`, read by the same lifespan `ensure_configured()` call) and checks the aviso links
+`/garmin` with the new label. `GoalChartCaptionTest`'s two cases each gained a `legend_avg`
+assertion (absent at zero points, present with real readings), and `PersonaCompletaSinCambiosTest`
+gained a no-`aviso` check and a `legend_avg` check for the fully populated demo person. The i18n
+parity suite (`test_i18n_paridad`) and the ESTADOS-VACIOS-1 sweep (`test_estados_vacios`) stay
+green, run as part of the full gate below.
+
+`docs/DESIGN.md` rule 6 (Honest gaps) gets two lines: `.aviso`'s own rule (amber, never red, never
+a link to a page that is not there) and that a chart's legend names only what it draws.
+
+**Gate**, once, foreground, on this slice's own tip: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -- `Ran 1355 tests in 174.770s ... OK (skipped=1)`. Targeted run first (`python -m
+unittest tests.test_estados_vacios_2 tests.test_estados_vacios tests.test_turnos_enlaces -v`): 34
+tests, all green, including the two new ones (`test_local_mode_aviso_has_no_link`,
+`StaleDataHostedLinkTest::test_hosted_aviso_links_garmin_with_new_label`).
+
+STOP AWAITING_APPROVAL (not merged): this slice's own approval (`ORCH-CARLOS-DELEGATES-TIER-1-1`)
+says in words to stop before merging, so the orchestrator can re-measure at 375 px. A merge slice
+follows.
