@@ -7645,3 +7645,72 @@ Merged into `main` with `--no-ff`: merge commit `da794823eb6b99e08d627e98cdb0937
 empty) -- no conflict, no extra change. `git status --porcelain` empty on `main` after the merge, before this
 ledger entry's own commit. No password, token, session secret or health figure was read, printed or logged by
 this slice.
+
+## BODY-PRIVACIDAD-CONEXION-1 -- close the consent-decline branch through _ctx, widen the direct-connect guard
+(2026-11-08)
+
+The follow-up BODY-SESION-CONEXION-1 left for a later slice: `body/rutas/privacidad.py`'s `consentimiento_decide`
+(the "decline consent" branch of `POST /privacidad/consentimiento`) opened its own `conn = db.connect()` /
+`db.init(conn)`, ended the session, and closed by hand with no `try` -- the exact shape BODY-SESION-CONEXION-1
+fixed in `sesion.py`, except this route is already wrapped in `@comun._cierra_conexion_async` and its accept
+branch already uses `comun._ctx(person_id)`. **Fix**: the decline branch now takes its connection the same way
+(`conn, _, _ = comun._ctx(person_id)`), so the decorator closes it -- one connection mechanism per route, not
+two. Every response, status code, redirect and cookie is byte-identical (`tests/test_privacidad.py`'s existing
+`test_declining_signs_out_and_keeps_nothing_new` stayed green unedited).
+
+**`_KNOWN_DIRECT_CONNECT_OFFENDERS`** (the one entry for `privacidad.py:consentimiento_decide`) is deleted --
+nothing needs it now.
+
+**Guard widened** (`tests/test_conexiones_cerradas.py::DirectConnectClosesInFinallyTest`), from
+`tests/_rutas.py`'s `modulos_con_rutas()` (body/web.py plus body/rutas/*.py only) to every module under `body/`
+(`ast` over `body/**/*.py`, `__pycache__` excluded -- measured 62 files): the same
+`var = db.connect(...)`-immediately-followed-by-`Try`/`finalbody`-close-or-`with contextlib.closing(...)` check,
+now scoped by nearest enclosing function name (or `"<module>"` for a CLI's own top-level
+`if __name__ == "__main__":` code, outside any function) instead of only route-decorated ones.
+`_is_db_connect_call` narrows the match to the attribute's base name being literally `db` (checked by grep:
+every body/ module that opens a connection binds the import as `db`, never aliased or bare), so
+`sqlite3.connect(...)` in `body/db.py`'s own `connect()` implementation and `body/backup.py`'s off-host
+snapshot/check is correctly left alone -- a different, already-reviewed path this guard is not about.
+Non-vacuous: `expected_min`, an independent `ast.walk` count of every `db.connect(...)` Call node, cross-checked
+against `checked` (measured 13 and 13, equal, after the fix above -- 14 real sites before it, minus
+`privacidad.py`'s now gone). `_ALLOWED_DIRECT_CONNECT` replaces the old exemption set with two entries:
+`comun.py`'s `_ctx` (the sanctioned request-connection pattern -- it hands the connection to
+`_cierra_conexion[_async]` to close after the route returns, rather than closing it itself, per
+BODY-CONEXIONES-CERRADAS-1 decision 1) and `precios.py`'s `"<module>"` (see deviation below).
+
+**Two CLI fixes**, `db.init(conn)` moved inside the existing `try` (a failing migration no longer leaks the
+connection): `body/vincular_cuenta.py:70` (`main()`) and `body/demo.py:382` (`main()`). Both measured by the
+orchestrator before this slice started; this slice only moved the one line in each.
+
+**Deviation from the spec**: the spec's measurement of modules "outside body/rutas/" that already close in a
+`finally` named `identity.py` (x2), `pull.py`, `shift_import.py` and `vida_export.py` as compliant and
+`vincular_cuenta.py`/`demo.py` as the only two offenders. Measured directly (grep for `db.connect(` under
+`body/`, then read each site): `body/agente/precios.py:86`, inside its own `if __name__ == "__main__":` block,
+has the identical shape -- `_conn = db.connect(config.DB_PATH)` / `db.init(_conn)` / `try: ... finally:
+_conn.close()`, `db.init` called before the `try` the same way `vincular_cuenta.py` and `demo.py` did. This
+module is not in this slice's `touches:`, so it was not fixed here; the widened guard catches it honestly and it
+is listed in `_ALLOWED_DIRECT_CONNECT` as a documented known offender, named here for a later slice rather than
+silently excluded or silently left to fail the gate.
+
+**Tests**: `tests/test_privacidad.py` gains
+`HostedConsentGateTest.test_declining_closes_its_connection_and_response_is_unchanged` -- wraps `db.connect` to
+record every connection the decline branch opens (same technique as `tests/test_sesion_conexion_1.py`), asserts
+all are closed, and that the redirect (`{ISSUER}/oauth/logout?...`) and the cleared session cookie
+(`Max-Age=0`) are unchanged.
+
+**Gate**, run once on the final branch tree: `.venv/Scripts/python.exe -m unittest discover tests -t .` --
+`Ran 1210 tests in 111.906s ... OK (skipped=1)` (1209 before this slice + 1 new test in `test_privacidad.py` =
+1210; the widened guard replaces one existing test method rather than adding one).
+
+Merge policy A: no schema or migration change, no customer-facing bytes, no cross-repo contract change in the
+actual diff (`body/rutas/privacidad.py`, `body/vincular_cuenta.py`, `body/demo.py`,
+`tests/test_conexiones_cerradas.py`, `tests/test_privacidad.py`) -- resource handling and a test guard only,
+every response byte-identical on every path. This spec's own approval-reason approves the merge outright.
+
+Commits (pasted from `git rev-parse`/`git log`, not retyped): fix `4f7fba48b3adb307790b4da9d6fdf12c040c60fd` on
+branch `feat/body-privacidad-conexion-1`, branched from `main` `a9542f1d46b9f3fe9996e3a65b0d1a5c3959d8ff`. Merged
+into `main` with `--no-ff`: merge commit `adae52aca800aac964a9d1dfceb55bdd29960bb5`, merge tree
+`8234761f8b399b0e8c89b844222cbfa12fc43ab5`, identical to the branch tip's own tree (`git rev-parse` of both
+match) -- no conflict, no extra change, gate not re-run on the merge per tree-identity proof. `git status
+--porcelain` empty on `main` after the merge, before this ledger entry's own commit. No password, token, session
+secret or health figure was read, printed or logged by this slice.
