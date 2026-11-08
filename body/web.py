@@ -886,9 +886,11 @@ async def shifts_patron_save(request: Request, person_id: int = Depends(identity
         patron_turnos.validar(cycle)
     except patron_turnos.PatronInvalido as e:
         errores = {err["index"]: err["code"] for err in e.errors if err["index"] is not None}
+        errores_ciclo = [t("patron.error." + err["code"]) for err in e.errors if err["index"] is None]
         return _render("shift_pattern.html", t=t, tab="shifts", turnos=True, dias=dias,
                        start_day=start_day.isoformat(), horizon_weeks=horizon_weeks,
                        filas=_patron_filas(t, cycle, start_day, errores),
+                       errores_ciclo=errores_ciclo,
                        tiene_patron=patron_turnos.leer(conn, person_id) is not None)
 
     patron_turnos.guardar(conn, person_id, start_day.isoformat(), cycle, horizon_weeks)
