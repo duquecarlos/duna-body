@@ -4834,3 +4834,34 @@ named are gone, 0 new failures.
 Not merged: **AWAITING_APPROVAL**, stays on `feat/body-turnos-opcional-3` -- the approval for this slice says
 in words to stop here for the orchestrator's 375 px browser check, so the merge waits on that regardless of
 this diff's own shape.
+
+## BODY-TURNOS-OPCIONAL-3-M -- the bottom bar's fixed four columns, and landing the branch (2026-11-07)
+
+Lands `feat/body-turnos-opcional-3` on `main`: BODY-TURNOS-OPCIONAL-3 (Turnos disappears for a person who has
+not said they work shifts), BODY-TURNOS-INFERIR-1 (`trabaja_turnos_si` infers True from existing shift data
+when the setting is NULL), and BODY-TURNOS-OPCIONAL-3-FIX (the `/settings` bypass and six empty-state test
+fixes), after the orchestrator's `ORCH-CARLOS-DELEGATES-TIER-1-1` browser measurement found one remaining
+defect and approved a fix for it.
+
+**The defect.** The phone bottom bar is a fixed four-column grid
+(`.tabs{...grid-template-columns:repeat(4,1fr)...}` in `body/static/body.css`). With Turnos hidden, the three
+remaining tabs sat in the left three quarters of the bar with an empty slot on the right (measured by the
+orchestrator at 375 px: three 94 px tabs at x 0/94/188 in a 375 px bar), instead of sharing the bar's full
+width.
+
+**The fix.** `grid-template-columns:repeat(4,1fr)` became `grid-auto-flow:column;grid-auto-columns:1fr`, so
+the bar's columns are however many tab links it holds, each getting an equal share of the width -- three tabs
+split it into thirds, four into quarters. The `>=1024px` left-rail media query (`DESIGN.md` rule 11) already
+switches `.tabs` to `display:flex;flex-direction:column` and never referenced `grid-template-columns`, so the
+rail needed no change. Static URLs carry a content hash (`BODY-STATIC-VERSION-1`), so nothing else is needed
+for browsers to pick up the new rule. Added `TabsBarSharesWidthTest` to `tests/test_turnos_opcional_3.py`: a
+regression pin reading `body/static/body.css` and asserting the `.tabs` rule has no fixed `repeat(4` column
+count; the visual check at 375 px was the orchestrator's own measurement, not this slice's.
+
+**Gate**, exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, run once, foreground:
+`Ran 925 tests in 105.956s ... OK (skipped=1)`. 925 = the previous entry's 924 plus this slice's one new
+test.
+
+**Merged.** `main` had not moved since the branch was cut (still at `f4e964d`), so no rebase was needed. Fix
+commit `4a98a70`, merged `--no-ff` into `main` at `d4445ba` (merge tree equal to the branch tip's tree, diff
+empty). `main` is left checked out, clean.
