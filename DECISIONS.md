@@ -8353,3 +8353,66 @@ Commits (pasted from `git rev-parse`, not retyped): fix `ba38dfae0cf613334ebe7e5
 `d00a75dabaa6c657ae407c78c6259224256fba1f`, equal to the branch tip's own tree). No password, token, session
 secret or health figure was read, printed or logged by this slice. `git status --porcelain` empty on `main`,
 before this ledger entry's own commit.
+
+## BODY-SEGURIDAD-4-B -- closing the MFA-cycling gap and the false wait-an-hour message
+
+Orchestrator review of BODY-SEGURIDAD-4 (merged `2786eb3`, ledger `9d736d8`, gate 1265) found two defects in
+`body/rutas/garmin.py`. (1) **The limit could be cycled.** `_SIGNIN_FAILURES` (as it was named) counted only an
+outright adapter exception. A `needs_mfa` start was never counted, and dropping the MFA state after 5 wrong
+codes cleared nothing counted either -- so someone who knew (or was testing) the password could loop
+`conectar` -> 5 wrong codes -> `conectar` -> 5 wrong codes without ever reaching the hourly limit, and each
+`conectar` makes Garmin send a fresh code to the account owner. (2) **The drop message lied.** After the MFA
+state was dropped the page said "Demasiados intentos seguidos. Espera una hora..." (`garmin.error.demasiados`),
+but nothing made that person wait an hour -- a fresh email+password start was accepted immediately, so the
+sentence was false in that case.
+
+**One rule now governs the hourly limit: every sign-in start counts unless it ends with a token stored.** In
+`garmin_conectar`, an attempt is recorded both when the adapter raises (as before) and, now, when it answers
+`needs_mfa` -- the start is counted the moment it happens, not deferred to however the MFA state later resolves.
+The person's attempts are cleared only when a token is actually stored: a direct success in `garmin_conectar`,
+or a right code in `garmin_codigo`. An MFA state that is later dropped (5 wrong codes) or left to expire
+therefore stays counted, because nothing clears it on either path. Consequence: at most 5 starts per person
+per hour, so at most 25 code guesses per hour, and at most 5 codes Garmin sends to the account owner per hour
+through Body. The dict is renamed `_SIGNIN_ATTEMPTS` (was `_SIGNIN_FAILURES`) since it now counts starts, not
+only failures; `_prune_signin_failures` is renamed `_prune_signin_attempts` to match, and the comments at each
+use site were rewritten for the new meaning.
+
+**Message**, new key `garmin.error.mfa_demasiados` (es + en), used only by the wrong-code drop redirect
+(`/garmin?error=mfa_demasiados`, added to `_GARMIN_FORM_ERROR_KEYS`) -- a true sentence that tells the person
+to start over, instead of the false "wait an hour":
+- es: «Demasiados códigos equivocados. Vuelve a empezar con tu correo y tu contraseña.»
+- en: "Too many wrong codes. Start again with your email and password."
+
+`garmin.error.demasiados` is unchanged and stays for the hourly limit itself; `garmin.html` needed no change,
+reusing the same `form_error` card.
+
+**Tests**, `tests/test_garmin_host.py` (the adapter patched throughout, no network), all renamed references
+from `_SIGNIN_FAILURES` to `_SIGNIN_ATTEMPTS`: `SignInAttemptLimitTest` gained
+`test_completing_mfa_clears_the_person_so_a_later_start_is_allowed` (an MFA start is counted, a right code
+clears it, five more failed starts afterwards are still allowed) and
+`test_mfa_cycle_does_not_evade_the_hourly_limit` (five rounds of `conectar` (needs_mfa) + 5 wrong codes each,
+then the 6th `conectar` is refused with `garmin_adapter.start_sign_in` asserted never called -- the cycle this
+slice closes). `MfaAttemptLimitTest` gained `test_mfa_demasiados_message_renders_in_es_and_en` and
+`test_expired_mfa_state_stays_counted_in_signin_attempts` (an MFA state aged past its TTL still answers
+`error=mfa_expired`, and the person's earlier counted start is still in `_SIGNIN_ATTEMPTS` afterwards). The
+existing `test_five_wrong_codes_drop_the_state_and_redirect_to_demasiados` was renamed
+`..._redirect_to_mfa_demasiados` and its assertion changed from `error=demasiados` to `error=mfa_demasiados`,
+since that is now the true redirect for a dropped MFA state; `test_success_clears_failures` was renamed
+`test_success_clears_attempts` (same body, new dict name) with no behaviour change.
+
+**Gate**, run once on the merge commit's own tree (confirmed equal to the branch tip's tree before merging, so
+not re-run after the merge): `.venv/Scripts/python.exe -m unittest discover tests -t .` -- `Ran 1269 tests in
+124.632s ... OK (skipped=1)` (1265 + the 4 new tests above).
+
+Merge policy A, judged against this slice's own diff: no schema or migration change -- one in-memory dict
+renamed and extended, same shape. No cross-repo contract or DTO shape change -- every touched file is
+`body/rutas/garmin.py`, `body/i18n/es.json`, `body/i18n/en.json`, `tests/test_garmin_host.py`, `DECISIONS.md`.
+Customer-facing bytes did change -- one new string, `garmin.error.mfa_demasiados`, in both languages -- but
+this spec's own approval-reason says in words "This spec approves the merge," so the merge proceeds rather
+than stopping with `AWAITING_APPROVAL`.
+
+Commits (pasted from `git rev-parse`, not retyped): fix `1f4e523bc438517e8f8f205caaaf69ac4376fb95` on branch
+`feat/body-seguridad-4-b`, merged `--no-ff` into `main` as `59ece4d8e7acd455125a29ea2a20be509b35abb9` (tree
+`19c970a5d0ce789282ada0f510d7ef2c842e0b57`, equal to the branch tip's own tree, verified by `git rev-parse` on
+both before writing this entry). No password, token, session secret or health figure was read, printed or
+logged by this slice. `git status --porcelain` is empty on `main`, before this ledger entry's own commit.
