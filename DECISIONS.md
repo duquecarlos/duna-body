@@ -8805,3 +8805,112 @@ from the merge commit above (`git show 1601702069d04e5ae0425a552c7c72c28abe7b4d:
 confirmed 8701 lines, matching `main` before this slice) and re-appending this entry correctly.
 The bad commit is left in branch history rather than amended (this repository's standing rule:
 create a new commit, never amend); its content is superseded by this commit and by HEAD.
+
+## BODY-PERSONA-FUGA-1 -- a black-box guard over BODY-SEGURIDAD-CENSO-1's one recorded unknown
+(2026-11-08)
+
+BODY-SEGURIDAD-CENSO-1 named one thing it could not settle by reading: the internal row-level
+person-scoping filtering inside `body/history.py`, `body/readiness.py`, `body/turnos_costo.py`,
+`body/compartir.py` and `body/household.py` was read as a consistent pattern, never checked
+line-by-line against what the app actually renders. This slice builds that check as a black-box
+guard, `tests/test_persona_fuga.py`: two invented people (A = person 1, B = person 2), seeded in
+every person-owned table with a marker or figure that cannot belong to anyone else, then every
+screen, the device-key API and every assistant read tool rendered as each of them in turn. No
+leak was found.
+
+**What was seeded**, in `_seed_person`, once per person: `daily_metric` (20 days x 6 metrics,
+B's figures far outside any real range -- the spec's own examples, resting HR 187, 98765 steps,
+17h43 sleep), `readiness`/`baseline` via the normal `readiness.recompute_all` (never a hand-built
+row), `activity`, `sleep_session`, `shift`, `shift_batch`/`shift_batch_item`, `shift_pattern` via
+`patron_turnos.guardar`, four `goal` rows covering every status (active metric goal with a habit,
+a habit check, a weekly goal_check and a `goal_enlace`; a proposed milestone; an archived/paused
+milestone) plus `plan`, `ajuste_agente`, `consentimiento`, `conversacion_agente`/`mensaje_agente`,
+a `propuesta_agente` via `agente_propuestas.crear`, `dispositivo`, `garmin_cuenta` (an
+obviously-fake token string, `FAKE-TEST-TOKEN-ZZ<tag>-NOT-REAL`, encrypted with a random
+per-test `BODY_TOKEN_KEY` -- no real credential anywhere), `inicio_sesion` via
+`cuenta.create_session`, and one row each of `raw_payload`, `uso_agente`, `tope_agente`. That is
+every table `body/privacidad.py` knows (`FULLY_HANDLED_TABLES | PARTIAL_EXPORT_TABLES |
+NEVER_EXPORTED_TABLES`) plus the three reached only through another id (`habit`, `goal_enlace`,
+`shift_batch_item`) -- `TableCensusTest` asserts this set is exhaustive and that every one of
+those tables has a seeded row, so a new person-owned table added later and left unseeded fails
+loudly instead of silently going unchecked. `hogar_miembro` and `figura_compartida` are the two
+exceptions -- `compartir.compartir` and `household_of` both require an active household to exist
+at all, so these are seeded only once A and B are linked, in the linked-state tests.
+
+**Two markers turned out unusable, and are recorded rather than forced in:**
+`shift_batch_item.code` (seeded as `ZZ<tag>-LOTE` for the table census) is read by no screen, API
+or export today -- `turnos.py`'s preview and `shifts.html` show only counts and kept-days, and
+`privacidad.export_person`'s `shift_batches` section is a plain `SELECT * FROM shift_batch`,
+never joined to its items -- so it is excluded from the "must render somewhere" marker list
+rather than making that half of the guard vacuous. `plan.title` and `raw_payload.payload` are
+likewise seeded for table-census completeness only, read by nothing.
+
+**A figure was tried and measured to self-collide, not assumed:** `resting_hr` was first included
+in the set of "figures that must never appear for the other person." Running the suite failed
+with `'55' unexpectedly found in` B's own `/privacidad/exportar` response -- A's resting_hr of 55
+matched the *seconds* field of that export's own timestamp (`...T18:31:55+00:00`), nothing to do
+with A at all. Any one- or two-digit figure is a hostage to every hour/minute/second/day field a
+page prints, so the guard's figure set was narrowed to `("steps", "sleep_minutes")` -- both
+render with a thousands separator or an "h"/"min" split (`"98.765"`, `"17 h 43"`) that cannot
+occur by coincidence, and the raw export carries the same value unformatted (`98765.0`), so no
+collision either way. `hrv_last_night`, `body_battery_wake` and `stress_avg` are seeded (for
+baseline/Tendencias/Historial realism) but never searched for as leak markers, for the same
+reason. The one place this slice does check a `resting_hr` figure is a single targeted `assertIn`
+on A's own Hoy page, confirming B's deliberately-shared figure appears there -- a presence check
+on one page, where the short-number collision risk does not apply.
+
+**Unlinked sweep** (`UnlinkedSweepTest`, `DeviceAndPropuestaCrossIdTest`): every one of the 26 GET
+routes this app has (`RouteSetUnchangedTest` cross-checks that number against
+`tests._rutas.rutas_planas(web.app.routes)`, so a new route added later and left off the hand
+list fails instead of going unswept), substituting each id-taking route's own id and the other
+person's id in turn (`/goals/{id}`, `/asistente/conversacion/{id}`, `/how/{day}`, `/day/{day}`),
+the device-key `/api/vida/semana`, and all 11 assistant read tools (`leer_hoy`, `leer_dia`,
+`leer_como_calculo`, `leer_tendencias`, `leer_historia`, `leer_metas`, `leer_meta`,
+`leer_turnos`, `leer_costo_turnos`, `leer_ajustes`, `leer_tutoriales`) -- run as A looking for B's
+markers, then as B looking for A's, well over 25 routes-plus-tools each way (asserted, not just
+counted on faith). Two new resource types this slice's own seed introduces -- a device key, an
+assistant proposal -- got the same cross-id check goals/habits already had under
+BODY-PERSON-SCOPE-1: revoking or acting on the other person's row 404s (or, for device revoke, a
+silent same-status no-op whose proof is the untouched `revocado_en` column, not the response
+code). Not one foreign marker or figure appeared either way, and every marker/figure DID appear
+somewhere for its own owner (a marker that renders nowhere would make the whole guard vacuous,
+not a real result).
+
+**Linked and shared sweep** (`LinkedSharingSweepTest`): A and B linked into one household
+(`hogar_miembro`), B shares exactly `resting_hr` (`compartir.compartir`) and creates one
+household-visibility milestone goal (`ZZB-META-COMPARTIDA`, `kind="milestone"` -- a metric goal
+can never be shared, per BODY-HOGAR-MIEMBRO-1-M). Confirmed allowed: B's shared resting_hr figure
+appears on A's Hoy page; B's shared goal title appears on A's `/goals` list and its own detail
+page. Confirmed still forbidden, over the same full sweep: every other marker and figure B owns --
+private goal, habit, habit note, activity, device, conversation, the other five metrics -- never
+appears anywhere for A, and (since A shared nothing back) nothing of A's ever appears for B.
+
+**`vida_export` checked separately** (`VidaExportNoLeakTest`), both the hosted `/api/vida/semana`
+route (A's own device key) and the `vida_export.week_section` module function called directly,
+unlinked and after B links and shares `resting_hr` -- carries no marker or figure of the other
+person in either state. (`compartir`'s per-figure sharing only ever reaches the Hoy household
+card; `vida_export`'s week section does not read it, so this is a plain absence check, no
+allow-list needed.)
+
+No real leak was found at any point in this slice. Every failure the test run surfaced along the
+way (the resting_hr collision above; a marker-prefix collision between `ZZ<tag>-META` and its own
+`-COMPARTIDA`/`-PROPUESTA`/`-ARCHIVADA` suffixes, fixed by renaming the private goal's marker to
+`ZZ<tag>-META-PRIVADA`; a `KeyError` after resting_hr left `_FIGURE_KEYS`; an undercounted sweep
+total; a missing route, `/login/cuenta/callback`, in the plain-route list) was a bug in this test
+module's own authorship, not in the product it tests -- none weakened what the guard checks.
+
+**Gate**, run once on this branch's final tree: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -- `Ran 1310 tests in 156.856s ... OK (skipped=1)`.
+
+**Merge.** Commit `0203c407e5d96044f12de1c87770f9cbf9215cd6` on branch
+`feat/body-persona-fuga-1`, base `main` at `f9f16748cdd18abd45bdb86805d24b50b4d22cfa`. `git merge
+--no-ff feat/body-persona-fuga-1` onto `main`, producing merge commit
+`892411a6c877575bcacef953dfc9d711d19bbdb4`. Merge tree `3ab0f6c2b91942276b566fa7c4821254222ff851`
+equals the branch tip's own tree exactly -- no conflicts, no change beyond the branch's own
+content. Diff is tests-only (`tests/test_persona_fuga.py`, new file): no schema or migration
+change, no customer-facing bytes (no template, string or route touched -- this slice adds no
+product code at all), no cross-repo contract. The spec's own approval authorises the merge in
+words ("This spec approves the merge of the guard"). No password, token, session secret or real
+health figure was read, printed, stored or logged by this slice -- every figure and marker used
+is invented demo data, as `CLAUDE.md`'s privacy section requires. `git status --porcelain` is
+empty on `main` after this merge, before this ledger entry's own commit.
