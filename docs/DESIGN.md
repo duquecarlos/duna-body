@@ -115,6 +115,14 @@ comes from; the Body-specific reading is in *italics*. When a new rule arrives f
     with a concurrent writer (the daily pull, the assistant) waits up to 5s instead of failing immediately --
     it changes nothing in the database file, unlike a journal-mode change, which this slice deliberately leaves
     alone (BODY-RENDIMIENTO-WAL-1, not done).
+    (BODY-RENDIMIENTO-2): a screen that needs one metric across many days reads that whole window ONCE, never
+    once per day -- `body/lector.py`'s `Lector` loads it with one SELECT per metric, then answers
+    `series`/`day_values` from memory with `body/db.py`'s own semantics. `readiness.compute` and
+    `baselines.baseline` take it as an optional `lector=` keyword (default `None`, the original per-call
+    queries, so every caller that does not loop over days is unchanged); the few call sites that do loop --
+    `/shifts`' 56-day strip and `turnos_costo`'s block cost and recovery math -- build one `Lector` for their
+    whole window and pass it through. The reader's own numbers are pinned equal to the pre-reader path by
+    tests, never approximated.
 14. **Assistant, to agent-ui-v1** (Carlos asked for it like the other apps, 2026-11-06) (one tap, 3 sizes, proposes → you confirm → undo). Built with parity: every
     screen ships with the assistant's read tool.
 

@@ -9,6 +9,7 @@ from pathlib import Path
 from tests._db import open_conn
 
 from body import baselines, db, readiness
+from body.lector import Lector
 
 
 def make_db(case: unittest.TestCase, days=31, hrv=50.0, rhr=55.0, stress=30.0):
@@ -63,6 +64,37 @@ class ReadinessTest(unittest.TestCase):
         self.assertEqual(row["source"], readiness.VERSION)
         kind = conn.execute("SELECT kind FROM metric_def WHERE key='readiness'").fetchone()["kind"]
         self.assertEqual(kind, "estimated")
+
+
+class ReadinessLectorEqualityTest(unittest.TestCase):
+    """`readiness.compute` with a `body/lector.py` Lector must give EXACTLY the same `Readiness`
+    as the original per-call query path (BODY-RENDIMIENTO-2)."""
+
+    def _parts(self, r: readiness.Readiness):
+        return [(p.key, p.value, p.reference, p.subscore, p.weight) for p in r.parts]
+
+    def test_matches_on_a_normal_day(self):
+        conn, last = make_db(self)
+        # +1: the stress part's baseline is computed on yesterday, one day further back than
+        # WINDOW_DAYS alone reaches (body/rutas/turnos.py carries the same margin).
+        start = date.fromisoformat(last) - timedelta(baselines.WINDOW_DAYS + 1)
+        lector = Lector(conn, 1, start.isoformat(), last, readiness.METRICS)
+        without = readiness.compute(conn, last, 1)
+        with_lector = readiness.compute(conn, last, 1, lector=lector)
+        self.assertEqual(with_lector.score, without.score)
+        self.assertEqual(with_lector.version, without.version)
+        self.assertEqual(with_lector.missing, without.missing)
+        self.assertEqual(self._parts(with_lector), self._parts(without))
+
+    def test_matches_with_too_little_data(self):
+        conn, last = make_db(self, days=3)
+        start = date.fromisoformat(last) - timedelta(baselines.WINDOW_DAYS + 1)
+        lector = Lector(conn, 1, start.isoformat(), last, readiness.METRICS)
+        without = readiness.compute(conn, last, 1)
+        with_lector = readiness.compute(conn, last, 1, lector=lector)
+        self.assertIsNone(without.score)
+        self.assertIsNone(with_lector.score)
+        self.assertEqual(with_lector.missing, without.missing)
 
 
 if __name__ == "__main__":

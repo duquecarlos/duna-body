@@ -8,9 +8,11 @@ its own real cost. This pins that cost with a ceiling per route, measured on thi
 populated fixture, plus headroom -- the exact measured values and the margin are in this slice's
 ledger entry (DECISIONS.md).
 
-`/shifts` stays far above every other route (its own per-day DayData cost, not touched by this
-slice) and keeps its own, much higher ceiling with a comment naming the slice that will bring it
-down -- BODY-RENDIMIENTO-2.
+`/shifts` carried a much higher ceiling than every other route until BODY-RENDIMIENTO-2: the
+screen's own per-day readiness and cost math queried the database fresh for every one of its 56
+strip days and every night block, instead of reading its metric window once (`body/lector.py`'s
+`Lector`, now threaded through `readiness.compute`, `baselines.baseline` and `turnos_costo`'s block
+math). It now carries the same margin rule as every other route.
 
 Non-vacuous: the route set checked below must equal the app's whole GET route set, not a sample --
 checked by comparing the two sets directly, not just their counts.
@@ -32,7 +34,8 @@ client = TestClient(web.app, follow_redirects=False)
 # route path -> statement ceiling. Measured on this module's own fixture (demo._seed(dias=30) +
 # one assistant conversation) right after BODY-RENDIMIENTO-1's fix, with headroom so a small,
 # legitimate change to a route does not make this test flaky. The measured value for each one, and
-# the margin applied, are in BODY-RENDIMIENTO-1's ledger entry.
+# the margin applied, are in BODY-RENDIMIENTO-1's ledger entry -- except /shifts and /shifts/como,
+# remeasured after BODY-RENDIMIENTO-2's reader fix, in that slice's own ledger entry.
 _CEILINGS = {
     "/": 75,
     "/ajustes/asistente": 16,
@@ -55,10 +58,8 @@ _CEILINGS = {
     "/privacidad/consentimiento": 9,
     "/privacidad/exportar": 43,
     "/settings": 24,
-    # Stays high until BODY-RENDIMIENTO-2: /shifts builds a DayData-shaped row per day in its
-    # window, a per-day cost this slice did not touch (BODY-RENDIMIENTO-OBS-1's own scope note).
-    "/shifts": 400,
-    "/shifts/como": 46,
+    "/shifts": 50,
+    "/shifts/como": 25,
     "/shifts/patron": 16,
     "/sw.js": 3,
     "/trends": 51,

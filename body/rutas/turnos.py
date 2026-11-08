@@ -9,8 +9,9 @@ from urllib.parse import parse_qs
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import db, identity, patron_turnos, readiness, shift_import, turnos_costo
+from .. import baselines, db, identity, patron_turnos, readiness, shift_import, turnos_costo
 from ..i18n import T
+from ..lector import Lector
 from . import comun
 
 router = APIRouter()
@@ -58,13 +59,19 @@ def _turnos_strip(conn, person_id: int, today_local: date, t: T) -> tuple[list[d
         (person_id, start.isoformat(), today_local.isoformat()),
     ).fetchall()
     kind_by_day = {r["day"]: r["kind"] for r in rows}
+    # One reader for the whole strip, covering every day's own 30-day baseline look-back
+    # (BODY-RENDIMIENTO-2) -- `readiness.compute` would otherwise query it fresh per day. +1 on
+    # top of the baseline window: the stress part's baseline is computed on YESTERDAY, so the
+    # earliest strip day's own window reaches one day further back than WINDOW_DAYS alone.
+    lector = Lector(conn, person_id, (start - timedelta(baselines.WINDOW_DAYS + 1)).isoformat(),
+                     today_local.isoformat(), readiness.METRICS)
     strip = []
     present: set[str] = set()
     for i in range(_STRIP_DAYS):
         d = (start + timedelta(i)).isoformat()
         kind = kind_by_day.get(d) or "none"
         present.add(kind)
-        score = readiness.compute(conn, d, person_id).score
+        score = readiness.compute(conn, d, person_id, lector=lector).score
         # long_date (weekday, day, month -- no year) rather than _short_date: a cell's own day is
         # always within the last 8 weeks, so the year adds nothing and only risks reading the same
         # as an unrelated batch's received date elsewhere on the page.

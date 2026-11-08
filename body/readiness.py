@@ -25,6 +25,10 @@ METRIC = "readiness"
 WEIGHTS = {"hrv": 0.30, "sleep": 0.25, "battery": 0.20, "resting_hr": 0.15, "stress": 0.10}
 MIN_PARTS = 3
 
+# Every metric a `compute` call can touch, across its own vals and every baseline it looks up --
+# the set a caller builds a Lector with before looping `compute` over many days (BODY-RENDIMIENTO-2).
+METRICS = ("hrv_last_night", "sleep_minutes", "sleep_need_min", "body_battery_wake", "resting_hr", "stress_avg")
+
 
 @dataclass
 class Part:
@@ -54,11 +58,11 @@ def _clamp(x: float) -> float:
     return max(0.0, min(100.0, x))
 
 
-def _vs_baseline(conn, metric: str, day: str, value, higher_is_better: bool, person_id: int):
+def _vs_baseline(conn, metric: str, day: str, value, higher_is_better: bool, person_id: int, lector=None):
     """70 = your normal; +/-20 per standard deviation."""
     if value is None:
         return None
-    b = baseline(conn, metric, day, person_id=person_id)
+    b = baseline(conn, metric, day, person_id=person_id, lector=lector)
     if b is None:
         return None
     z = b.z(value)
@@ -67,21 +71,29 @@ def _vs_baseline(conn, metric: str, day: str, value, higher_is_better: bool, per
     return _clamp(70 + 20 * (z if higher_is_better else -z)), b.mean
 
 
-def compute(conn, day: str, person_id: int) -> Readiness:
-    vals = {r["metric_key"]: r["value"] for r in conn.execute(
-        "SELECT metric_key, value FROM daily_metric WHERE person_id=? AND day=?", (person_id, day))}
+def compute(conn, day: str, person_id: int, *, lector=None) -> Readiness:
+    """`lector`, when given, is a `body.lector.Lector` built over a window that covers `day` and the
+    30 days before it -- every value and baseline below then comes from memory instead of a fresh
+    query (BODY-RENDIMIENTO-2). None (the default) keeps the original per-call queries, unchanged."""
+    if lector is not None:
+        vals = lector.day_values(day)
+    else:
+        vals = {r["metric_key"]: r["value"] for r in conn.execute(
+            "SELECT metric_key, value FROM daily_metric WHERE person_id=? AND day=?", (person_id, day))}
     yesterday = (date.fromisoformat(day) - timedelta(1)).isoformat()
-    y_stress = db.series(conn, "stress_avg", yesterday, yesterday, person_id).get(yesterday)
+    y_series = lector.series("stress_avg", yesterday, yesterday) if lector is not None \
+        else db.series(conn, "stress_avg", yesterday, yesterday, person_id)
+    y_stress = y_series.get(yesterday)
 
     raw: dict[str, tuple[float, float | None, float | None] | None] = {}
 
-    r = _vs_baseline(conn, "hrv_last_night", day, vals.get("hrv_last_night"), True, person_id)
+    r = _vs_baseline(conn, "hrv_last_night", day, vals.get("hrv_last_night"), True, person_id, lector)
     raw["hrv"] = (r[0], vals.get("hrv_last_night"), r[1]) if r else None
 
     slept, need = vals.get("sleep_minutes"), vals.get("sleep_need_min")
     if slept is not None:
         if not need:
-            b = baseline(conn, "sleep_minutes", day, person_id=person_id)
+            b = baseline(conn, "sleep_minutes", day, person_id=person_id, lector=lector)
             need = max(b.mean, 420) if b else 480
         ratio = slept / need
         raw["sleep"] = (_clamp(100 - (1 - ratio) * 160), slept, need)  # 90% of need -> 84, 70% -> 52
@@ -89,13 +101,13 @@ def compute(conn, day: str, person_id: int) -> Readiness:
         raw["sleep"] = None
 
     bb = vals.get("body_battery_wake")
-    bb_base = baseline(conn, "body_battery_wake", day, person_id=person_id)
+    bb_base = baseline(conn, "body_battery_wake", day, person_id=person_id, lector=lector)
     raw["battery"] = (_clamp(bb), bb, bb_base.mean if bb_base else None) if bb is not None else None
 
-    r = _vs_baseline(conn, "resting_hr", day, vals.get("resting_hr"), False, person_id)
+    r = _vs_baseline(conn, "resting_hr", day, vals.get("resting_hr"), False, person_id, lector)
     raw["resting_hr"] = (r[0], vals.get("resting_hr"), r[1]) if r else None
 
-    r = _vs_baseline(conn, "stress_avg", yesterday, y_stress, False, person_id)
+    r = _vs_baseline(conn, "stress_avg", yesterday, y_stress, False, person_id, lector)
     raw["stress"] = (r[0], y_stress, r[1]) if r else None
 
     parts = [Part(k, v[1], v[2], round(v[0], 1), WEIGHTS[k]) for k, v in raw.items() if v]
