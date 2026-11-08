@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from body import config, db, goals, identity, web
 from body.agente import bucle as agente_bucle
+from body.agente import cliente as agente_cliente
 from body.agente import conversacion as agente_conversacion
 from body.agente import herramientas, propuestas
 from body.agente.cliente import BloqueTexto, LlamadaHerramienta, Respuesta, Uso
@@ -312,7 +313,7 @@ class EstadoYEventosTest(unittest.TestCase):
             Respuesta(bloques=[BloqueTexto("listo")], motivo_fin="end_turn", uso=Uso()),
         ]
         proveedor = FakeProveedor(guion)
-        with patch.object(web.agente_cliente, "proveedor_configurado", return_value=proveedor):
+        with patch.object(agente_cliente, "proveedor_configurado", return_value=proveedor):
             r = self.client.post("/asistente/preguntar",
                                  json={"pregunta": "cambia el idioma", "conversacion_id": None})
         self.assertEqual(r.status_code, 200)
@@ -335,7 +336,7 @@ class EstadoYEventosTest(unittest.TestCase):
             Respuesta(bloques=[BloqueTexto("listo")], motivo_fin="end_turn", uso=Uso()),
         ]
         proveedor = FakeProveedor(guion)
-        with patch.object(web.agente_cliente, "proveedor_configurado", return_value=proveedor):
+        with patch.object(agente_cliente, "proveedor_configurado", return_value=proveedor):
             r = self.client.post("/asistente/preguntar",
                                  json={"pregunta": "nueva meta", "conversacion_id": None})
         self.assertEqual(r.status_code, 200)
@@ -352,7 +353,7 @@ class EstadoYEventosTest(unittest.TestCase):
             Respuesta(bloques=[BloqueTexto("ok")], motivo_fin="end_turn", uso=Uso()),
         ]
         proveedor = FakeProveedor(guion)
-        with patch.object(web.agente_cliente, "proveedor_configurado", return_value=proveedor):
+        with patch.object(agente_cliente, "proveedor_configurado", return_value=proveedor):
             r1 = self.client.post("/asistente/preguntar",
                                   json={"pregunta": "cambia el idioma", "conversacion_id": None})
             cid = int(re.search(r'"conversacion_id":\s*(\d+)', r1.text).group(1))
@@ -369,7 +370,7 @@ class EstadoYEventosTest(unittest.TestCase):
             Respuesta(bloques=[BloqueTexto("listo")], motivo_fin="end_turn", uso=Uso()),
         ]
         proveedor = FakeProveedor(guion)
-        with patch.object(web.agente_cliente, "proveedor_configurado", return_value=proveedor):
+        with patch.object(agente_cliente, "proveedor_configurado", return_value=proveedor):
             r1 = self.client.post("/asistente/preguntar",
                                   json={"pregunta": "cambia el idioma", "conversacion_id": None})
         cid = int(re.search(r'"conversacion_id":\s*(\d+)', r1.text).group(1))
