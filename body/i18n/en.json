@@ -196,7 +196,7 @@
   "goals.history.milestone": "{verdict} · {done} of {due} habits",
   "goals.week_of": "week of {date}",
   "goals.habits_title": "Habits",
-  "goals.no_habits": "No habits yet.",
+  "goals.no_habits": "This goal doesn't have habits yet.",
   "goals.add_habit": "Add a habit",
   "goals.add_habit_btn": "Add",
   "goals.habit_title_ph": "What will you do?",

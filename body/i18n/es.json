@@ -196,7 +196,7 @@
   "goals.history.milestone": "{verdict} · {done} de {due} hábitos",
   "goals.week_of": "semana del {date}",
   "goals.habits_title": "Hábitos",
-  "goals.no_habits": "Aún no tiene hábitos.",
+  "goals.no_habits": "Esta meta aún no tiene hábitos.",
   "goals.add_habit": "Agregar hábito",
   "goals.add_habit_btn": "Agregar",
   "goals.habit_title_ph": "¿Qué vas a hacer?",
