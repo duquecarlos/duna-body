@@ -464,11 +464,7 @@ def refrescar_hogar(conn, person_id: int) -> None:
 
 def _debe_refrescar_hogar(conn, person_id: int) -> bool:
     """True when this person has no `hogar_miembro` row, or their 'cuenta' row is older than
-    LAST_SEEN_UPDATE_SECONDS (one hour). A 'local' row (demo/tests) is never refreshed from Cuenta.
-    The table-creation statement here is a single `execute()`, never `executescript()`: this is
-    called from inside resolve_session, right after its own last-seen UPDATE, and `executescript`
-    would COMMIT that write early (BODY-HOGAR-CUENTA-1-M)."""
-    conn.execute(household.SCHEMA)
+    LAST_SEEN_UPDATE_SECONDS (one hour). A 'local' row (demo/tests) is never refreshed from Cuenta."""
     row = conn.execute(
         "SELECT fuente, actualizado_at FROM hogar_miembro WHERE person_id = ?", (person_id,)
     ).fetchone()

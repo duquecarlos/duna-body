@@ -707,17 +707,25 @@ def _migrate_cuenta(conn: sqlite3.Connection) -> None:
         _rebuild_inicio_sesion_table(conn)
 
 
+def _ensure_hogar_miembro(conn: sqlite3.Connection) -> None:
+    """Creates `hogar_miembro` on every database, fresh or existing -- from
+    `household._COLUMNS` (body/household.py's one definition of the table's shape), so the
+    request-path functions that used to create it lazily (household.household_of,
+    household.sincronizar_desde_claim, cuenta._debe_refrescar_hogar -- BODY-HOGAR-CUENTA-DB-INIT-1)
+    no longer need to. Runs before `_migrate_hogar`, which then only copies rows and drops
+    `hogar_local`."""
+    from . import household
+    conn.execute(f"CREATE TABLE IF NOT EXISTS hogar_miembro ({household._COLUMNS})")
+
+
 def _migrate_hogar(conn: sqlite3.Connection) -> None:
-    """hogar_local (pre BODY-HOGAR-CUENTA-1) -> hogar_miembro (body/household.py's SCHEMA, the
-    one definition of the table's shape), once and idempotently: a database that never had
-    hogar_local -- fresh, or already migrated -- is untouched here; hogar_miembro itself is
-    created lazily, wherever household.SCHEMA is first applied."""
+    """hogar_local (pre BODY-HOGAR-CUENTA-1) -> hogar_miembro (created unconditionally by
+    `_ensure_hogar_miembro`, called just before this), once and idempotently: a database that
+    never had hogar_local -- fresh, or already migrated -- is untouched here."""
     if not _table_exists(conn, "hogar_local"):
         return
-    from . import household
 
     def step(conn):
-        conn.execute(f"CREATE TABLE IF NOT EXISTS hogar_miembro ({household._COLUMNS})")
         old_rows = conn.execute("SELECT person_id, hogar_id, member_sub FROM hogar_local").fetchall()
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         for r in old_rows:
@@ -742,6 +750,7 @@ def init(conn: sqlite3.Connection) -> None:
     _migrate_metas(conn)
     _migrate_cuenta(conn)
     _migrate_precios(conn)
+    _ensure_hogar_miembro(conn)
     _migrate_hogar(conn)
     conn.executescript(SCHEMA)
     _migrate(conn)

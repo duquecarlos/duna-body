@@ -42,7 +42,6 @@ class Household:
 
 
 def household_of(conn, person_id: int) -> Household | None:
-    conn.execute(SCHEMA)
     row = conn.execute("SELECT hogar_id FROM hogar_miembro WHERE person_id = ?", (person_id,)).fetchone()
     if not row:
         return None
@@ -82,11 +81,7 @@ def sincronizar_desde_claim(conn, person_id: int, claims) -> str:
       Body person yet is skipped -- they join when they first sign in.
 
     One transaction; a member with no linked Body user is simply absent from it, never an error.
-    The table-creation statement here is a single `execute()`, never `executescript()`: the latter
-    COMMITs any transaction already open on `conn` before running, which would end a caller's
-    transaction early (BODY-HOGAR-CUENTA-1-M).
     """
-    conn.execute(SCHEMA)
     if not isinstance(claims, dict) or "duna_hogar" not in claims:
         return "sin_dato"
     valor = claims["duna_hogar"]

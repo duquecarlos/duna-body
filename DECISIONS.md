@@ -5760,3 +5760,51 @@ is pre-existing and unrelated.
 **Merged.** The diff touches no schema or migration, no customer-facing bytes, and no cross-repo contract or DTO
 shape -- merge policy A holds, and this spec's body says explicitly to merge after the fixes. Fix commit `e890a2c`
 on `feat/body-hogar-cuenta-1`, merged `--no-ff` into `main`.
+
+## BODY-HOGAR-CUENTA-DB-INIT-1 -- db.init creates hogar_miembro unconditionally (2026-11-07)
+
+`BODY-HOGAR-CUENTA-1-M` measured that `db.init` on a FRESH database never created `hogar_miembro` -- `_migrate_hogar`
+created it only when migrating from a pre-existing `hogar_local` -- so three request-path functions
+(`household.household_of`, `household.sincronizar_desde_claim`, `cuenta._debe_refrescar_hogar`) ran
+`CREATE TABLE IF NOT EXISTS` on every call, DDL on the sign-in and session-touch path, to make the table exist. Every
+other table is created by `db.init`; this was the one exception.
+
+**`body/db.py`.** New `_ensure_hogar_miembro`, called from `init()` before `_migrate_hogar`, creates `hogar_miembro`
+unconditionally from `household._COLUMNS` -- the same column text `_migrate_hogar` already used, via a function-local
+`from . import household` (the same way `_migrate_hogar` already avoided the circular import: `household.py` has no
+module-level import of `db`). `_migrate_hogar`'s own `CREATE TABLE IF NOT EXISTS` is removed from its `step`; it now
+only copies rows from `hogar_local` into the already-existing table and drops it. Its idempotency and row-count check
+are unchanged.
+
+**Removed the three lazy creates** and their docstring paragraphs about `execute()` vs `executescript()` (no longer
+needed: nothing here opens a transaction before the table is created, since `db.init` already made it exist).
+`household.SCHEMA` stays -- `git grep -n "SCHEMA)" body/` after the change:
+
+    body/db.py:755:    conn.executescript(SCHEMA)
+    body/demo.py:299:    conn.executescript(household.SCHEMA)
+    body/privacidad.py:70:    conn.executescript(household.SCHEMA)
+    body/privacidad.py:169:    conn.executescript(household.SCHEMA)
+
+`body/demo.py` and `body/privacidad.py` still call `household.SCHEMA` directly; both are outside this slice's
+`touches`, so `SCHEMA` (and its lazy-create pattern there) is left alone.
+
+**Tests.** `LazyTableCreationTest` (which documented the gap) became `DbInitCreatesHogarMiembroTest`: `db.init` on a
+fresh database creates `hogar_miembro` with exactly `_COLUMNS`'s five columns, and calling `db.init` twice on a fresh
+database is idempotent. `MigrationTest` (unchanged) already covered a database with `hogar_local` migrating with
+rows copied and `hogar_local` dropped, idempotently. `TransactionSafetyTest` gained a case for a malformed-but-present
+`duna_hogar` value (`{"duna_hogar": "not-a-dict"}`, a "value claim" as opposed to the existing absent-key `{}` case),
+confirming `sincronizar_desde_claim` still does not commit a caller's open transaction. Checked every other test
+module calling `household.household_of`, `household.sincronizar_desde_claim` or `cuenta._debe_refrescar_hogar`
+(`test_goals.py`, `test_household.py`, `test_person_scope.py`): each calls `db.init` (or `executescript(household.SCHEMA)`
+directly) before relying on the table, so none depended on the removed lazy creates.
+
+**Gate, run once, foreground, exact command** `.venv/Scripts/python.exe -m unittest discover tests -t .`:
+
+    Ran 1084 tests in 149.404s
+    OK (skipped=1)
+
+**Merged.** The diff touches `body/db.py` (DDL moved, not a schema shape change: `CREATE TABLE IF NOT EXISTS` on an
+existing database that already has the table changes nothing; a fresh database gets the same empty table it would
+otherwise get lazily), no customer-facing bytes, and no cross-repo contract or DTO shape -- merge policy A holds, and
+this spec's approval-reason says explicitly that it approves the merge too. Fix commit `1f3e942` on
+`feat/body-hogar-cuenta-db-init-1`, merged `--no-ff` into `main`.

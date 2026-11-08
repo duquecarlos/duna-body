@@ -319,23 +319,43 @@ class TransactionSafetyTest(unittest.TestCase):
         name = conn.execute("SELECT display_name FROM person WHERE id = 2").fetchone()["display_name"]
         self.assertNotEqual(name, "Changed")
 
+    def test_sincronizar_desde_claim_with_a_malformed_value_does_not_commit_an_open_transaction(self):
+        """A present but malformed `duna_hogar` value is a 'value claim' (unlike the absent-key
+        case above) but still returns early as 'sin_dato', before the function's own `with conn:`
+        writes -- so it must not commit either."""
+        conn = _conn(self)
+        conn.execute("BEGIN")
+        conn.execute("UPDATE person SET display_name = 'Changed' WHERE id = 1")
+        outcome = household.sincronizar_desde_claim(conn, 1, {"duna_hogar": "not-a-dict"})
+        self.assertEqual(outcome, "sin_dato")
+        conn.rollback()
+        name = conn.execute("SELECT display_name FROM person WHERE id = 1").fetchone()["display_name"]
+        self.assertNotEqual(name, "Changed")
 
-class LazyTableCreationTest(unittest.TestCase):
-    """`db.init` itself does not create `hogar_miembro` on a database that never had `hogar_local`
-    (measured against the repository, BODY-HOGAR-CUENTA-1-M -- db.py is outside this slice's
-    `touches`, so the table stays lazily created here, via a single `execute()` that cannot commit
-    a caller's open transaction, rather than `db.init`'s job)."""
 
-    def test_household_module_creates_hogar_miembro_lazily_on_a_fresh_db(self):
-        path = Path(tempfile.mkdtemp(dir=TMP)) / "lazy.db"
+class DbInitCreatesHogarMiembroTest(unittest.TestCase):
+    """`db.init` itself creates `hogar_miembro` unconditionally, from `household._COLUMNS`,
+    instead of leaving it to be created lazily by a request-path function
+    (BODY-HOGAR-CUENTA-DB-INIT-1, against BODY-HOGAR-CUENTA-1-M's measured gap)."""
+
+    def test_db_init_creates_hogar_miembro_on_a_fresh_database(self):
+        path = Path(tempfile.mkdtemp(dir=TMP)) / "fresh.db"
         conn = db.connect(path)
         self.addCleanup(conn.close)
         db.init(conn)
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        self.assertNotIn("hogar_miembro", tables)
-        household.sincronizar_desde_claim(conn, 1, {})
-        tables2 = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        self.assertIn("hogar_miembro", tables2)
+        self.assertIn("hogar_miembro", tables)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(hogar_miembro)")}
+        self.assertEqual(cols, {"person_id", "hogar_id", "member_sub", "fuente", "actualizado_at"})
+
+    def test_db_init_twice_on_a_fresh_database_is_idempotent(self):
+        path = Path(tempfile.mkdtemp(dir=TMP)) / "fresh2.db"
+        conn = db.connect(path)
+        self.addCleanup(conn.close)
+        db.init(conn)
+        db.init(conn)
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        self.assertIn("hogar_miembro", tables)
 
 
 class MigrationTest(unittest.TestCase):
