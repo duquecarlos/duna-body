@@ -17,10 +17,16 @@ of the routes that had already moved into body/rutas/ -- a green test that teste
 from __future__ import annotations
 
 import ast
+import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _BODY_DIR = _REPO_ROOT / "body"
+
+# Verbs that change a database's content (BODY-RENDIMIENTO-1's two statement-level guards:
+# tests/test_get_sin_escritura.py and tests/test_rendimiento.py).
+_WRITE_VERBS = {"INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "ALTER", "DROP"}
 
 
 def modulos_con_rutas() -> list[tuple[Path, ast.Module]]:
@@ -43,3 +49,43 @@ def rutas_planas(routes):
             yield from rutas_planas(r.original_router.routes)
         elif hasattr(r, "routes"):
             yield from rutas_planas(r.routes)
+
+
+@contextmanager
+def contar_sql():
+    """Context manager, one per measurement: wraps `sqlite3.connect` for its duration so EVERY
+    connection the app opens -- every call reaches sqlite3.connect() only through body.db.connect
+    -- is traced. Yields a dict with `connections` (how many were opened), `statements` (every SQL
+    statement run on any of them) and `writes` (statements whose verb is in _WRITE_VERBS, plus a
+    COMMIT that followed one -- a read-only transaction's COMMIT, if any, is never counted).
+
+    Used by tests/test_get_sin_escritura.py (asserts `writes == 0` per GET route) and
+    tests/test_rendimiento.py (asserts ceilings on `statements` and `connections` per route).
+    Restores the real sqlite3.connect in `finally`, so a failure inside the `with` block never
+    leaves every later sqlite3.connect call patched.
+    """
+    stats = {"connections": 0, "statements": 0, "writes": 0}
+    real_connect = sqlite3.connect
+    dirty: set[int] = set()
+
+    def _trace(conn_id: int, sql: str):
+        stats["statements"] += 1
+        verb = sql.strip().split(None, 1)[0].upper() if sql.strip() else ""
+        if verb in _WRITE_VERBS:
+            stats["writes"] += 1
+            dirty.add(conn_id)
+        elif verb == "COMMIT" and conn_id in dirty:
+            stats["writes"] += 1
+            dirty.discard(conn_id)
+
+    def _traced_connect(*a, **kw):
+        conn = real_connect(*a, **kw)
+        stats["connections"] += 1
+        conn.set_trace_callback(lambda sql, _cid=id(conn): _trace(_cid, sql))
+        return conn
+
+    sqlite3.connect = _traced_connect
+    try:
+        yield stats
+    finally:
+        sqlite3.connect = real_connect

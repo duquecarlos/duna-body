@@ -51,7 +51,7 @@ class DispositivoSinAlcance(Exception):
 def current_person_id(request: Request) -> int:
     conn = db.connect()
     try:
-        db.init(conn)
+        db.ensure_ready(conn)
         if not cuenta.hosted():
             return db.local_person_id(conn)
         token = request.cookies.get(cuenta.SESSION_COOKIE)
@@ -84,7 +84,7 @@ def person_from_device(scope: str):
         key = auth[len("Bearer "):]
         conn = db.connect()
         try:
-            db.init(conn)
+            db.ensure_ready(conn)
             result = dispositivo.resolver(conn, key)
         finally:
             conn.close()

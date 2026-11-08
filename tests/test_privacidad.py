@@ -500,6 +500,38 @@ class DeleteAllTest(unittest.TestCase):
         )
 
 
+class LocalPersonRecreatedAfterDeleteTest(unittest.TestCase):
+    """BODY-RENDIMIENTO-1: local mode (identity.current_person_id -> db.local_person_id) can reach
+    /privacidad/borrar -- privacidad_borrar (body/rutas/privacidad.py) carries no cuenta.hosted()
+    gate, unlike the consent routes. Before this slice, the next request's db.init(conn) (run
+    unconditionally on every request) silently recreated the deleted local person row 1; now that
+    db.ensure_ready only runs init() once per process per DB file, nothing would otherwise notice
+    the row is gone. db.local_person_id's own SELECT-then-INSERT-if-absent is what recreates it."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "local_borrar.db"
+        self.client = TestClient(web.app, follow_redirects=False)
+
+    def test_get_after_local_delete_still_works(self):
+        r1 = self.client.get("/")
+        self.assertEqual(r1.status_code, 200)
+
+        conn = db.connect()
+        self.addCleanup(conn.close)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM person WHERE id = 1").fetchone()[0], 1)
+
+        r2 = self.client.post("/privacidad/borrar", data={"confirmacion": "BORRAR"})
+        self.assertEqual(r2.status_code, 303)
+        self.assertEqual(r2.headers["location"], "/")
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM person WHERE id = 1").fetchone()[0], 0)
+
+        r3 = self.client.get("/")
+        self.assertEqual(r3.status_code, 200)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM person WHERE id = 1").fetchone()[0], 1)
+
+
 class HostedDeleteRedirectTest(CuentaRpTestCase):
     def test_delete_redirects_through_cuenta_logout_and_removes_the_session(self):
         self._sign_in()

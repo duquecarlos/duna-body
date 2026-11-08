@@ -3,6 +3,14 @@ read-only"; the orchestrator's own reading of main found two GETs that were not 
 `/goals/{goal_id}` both called `_goal_check_row`, which upserted a goal_check row through
 `goals.weekly_check` the first time anyone opened a goal in a week. This sweeps every GET route
 the app defines, with a populated database, and asserts none of them changed a single row.
+
+BODY-RENDIMIENTO-1 widens the guard to the STATEMENT level: before this slice, `db.init(conn)` ran
+on every request and executed real INSERT/UPSERT statements whose rows happened to already match
+(so the content-dump comparison below saw no difference even though writes were happening) --
+a write that leaves identical rows is invisible to `_dump`, by its own docstring. The database is
+now made ready once, before the sweep starts (`db.ensure_ready` in `_reset_db`), and
+`tests._rutas.contar_sql` traces every connection the app opens during each route call, so a write
+statement is caught even when it changes nothing.
 """
 import tempfile
 import unittest
@@ -14,7 +22,7 @@ from fastapi.testclient import TestClient
 
 from body import config, db, demo, web
 from body.agente import conversacion as agente_conversacion
-from tests._rutas import rutas_planas
+from tests._rutas import contar_sql, rutas_planas
 
 client = TestClient(web.app, follow_redirects=False)
 
@@ -34,7 +42,7 @@ def _reset_db(tc: unittest.TestCase):
     config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "sweep.db"
     conn = db.connect()
     tc.addCleanup(conn.close)
-    db.init(conn)
+    db.ensure_ready(conn)  # made ready BEFORE the sweep, so first-touch setup is not counted below
     return conn
 
 
@@ -53,11 +61,9 @@ def _seed(conn) -> dict:
 
 
 def _dump(conn) -> dict:
-    """A deterministic snapshot of every table's actual rows, in a fixed column order -- content,
-    not statement activity, so db.init()'s own unconditional upsert of metric_def/person (run by
-    every request's identity.current_person_id and comun._ctx, changing nothing once the content
-    already matches) never shows up as a difference. A sqlite3 authorizer would instead fire on
-    that upsert's own INSERT statement every single request, whether or not it changes a row."""
+    """A deterministic snapshot of every table's actual rows, in a fixed column order. Kept
+    alongside the statement-level guard below, not in place of it: this alone would miss a write
+    that leaves identical rows (the gap BODY-RENDIMIENTO-1's module docstring names)."""
     tables = [r[0] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
     out = {}
@@ -86,17 +92,23 @@ class GetRoutesWriteNothingTest(unittest.TestCase):
 
         swept = 0
         offenders = []
+        write_offenders = []
         for route in get_routes:
             path = _fill(route.path, ids)
             before = _dump(dump_conn)
-            client.get(path)
+            with contar_sql() as stats:
+                client.get(path)
             after = _dump(dump_conn)
             swept += 1
             if before != after and route.path not in _ALLOWED_WRITE_PATHS:
                 offenders.append(route.path)
+            if stats["writes"] and route.path not in _ALLOWED_WRITE_PATHS:
+                write_offenders.append((route.path, stats["writes"]))
 
         self.assertEqual(swept, len(get_routes))
         self.assertEqual(offenders, [], f"GET route(s) wrote to the database: {offenders}")
+        self.assertEqual(write_offenders, [],
+                          f"GET route(s) ran a write statement (even if it changed no row): {write_offenders}")
 
 
 if __name__ == "__main__":
