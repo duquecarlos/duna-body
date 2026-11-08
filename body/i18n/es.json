@@ -323,6 +323,7 @@
   "garmin.mfa_desc": "Garmin te envió un código de verificación. Escríbelo aquí.",
   "garmin.mfa_submit": "Enviar código",
   "garmin.error.datos": "Escribe tu correo y tu contraseña de Garmin.",
+  "garmin.error.demasiados": "Demasiados intentos seguidos. Espera una hora e inténtalo de nuevo.",
   "garmin.error.generic": "Garmin no aceptó estos datos. Intenta otra vez.",
   "garmin.error.mfa_expired": "El código expiró. Conéctate otra vez.",
   "garmin.error.not_signed_in": "Garmin rechazó el acceso guardado. Conéctate otra vez.",

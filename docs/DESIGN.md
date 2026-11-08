@@ -46,6 +46,9 @@ comes from; the Body-specific reading is in *italics*. When a new rule arrives f
     middleware (`body/seguridad.py`); every response carries a fixed header set (`X-Content-Type-Options`,
     `Referrer-Policy`, `X-Frame-Options`, `Content-Security-Policy: frame-ancestors 'none'`,
     `Cross-Origin-Opener-Policy`); every redirect built from request data goes through `cuenta.safe_return_to`.
+    (BODY-SEGURIDAD-4): any attempt that reaches a third party (Garmin) on a person's behalf is limited per
+    person; the limit refuses before the third party is called, so Body's own server can never be used as a
+    relay to try many credentials against it.
 14. **Assistant, to agent-ui-v1** (Carlos asked for it like the other apps, 2026-11-06) (one tap, 3 sizes, proposes → you confirm → undo). Built with parity: every
     screen ships with the assistant's read tool.
 

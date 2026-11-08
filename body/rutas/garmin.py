@@ -19,11 +19,16 @@ from . import comun
 router = APIRouter()
 
 _MFA_TTL_SECONDS = 600
-_MFA_STATE: dict[str, tuple[str, float]] = {}  # session-token hash -> (client_state_json, started_at)
+_MFA_MAX_ATTEMPTS = 5
+_MFA_STATE: dict[str, tuple[str, float, int]] = {}  # session-token hash -> (client_state_json, started_at, wrong_codes)
+
+_SIGNIN_MAX_ATTEMPTS = 5
+_SIGNIN_WINDOW_SECONDS = 3600
+_SIGNIN_FAILURES: dict[int, list[float]] = {}  # person_id -> failure timestamps within the sliding window
 
 _GARMIN_LAST_ERROR_KEYS = {"NotSignedIn": "garmin.error.not_signed_in"}
-_GARMIN_FORM_ERROR_KEYS = {"datos": "garmin.error.datos", "garmin": "garmin.error.generic",
-                           "mfa_expired": "garmin.error.mfa_expired"}
+_GARMIN_FORM_ERROR_KEYS = {"datos": "garmin.error.datos", "demasiados": "garmin.error.demasiados",
+                           "garmin": "garmin.error.generic", "mfa_expired": "garmin.error.mfa_expired"}
 
 
 def _garmin_last_error_text(t: T, error_cls: str | None) -> str | None:
@@ -39,8 +44,18 @@ def _mfa_key(request: Request) -> str:
 
 def _prune_mfa_state() -> None:
     cutoff = time.monotonic() - _MFA_TTL_SECONDS
-    for k in [k for k, (_, started) in _MFA_STATE.items() if started < cutoff]:
+    for k in [k for k, (_, started, _wrong) in _MFA_STATE.items() if started < cutoff]:
         _MFA_STATE.pop(k, None)
+
+
+def _prune_signin_failures() -> None:
+    cutoff = time.monotonic() - _SIGNIN_WINDOW_SECONDS
+    for pid in list(_SIGNIN_FAILURES):
+        kept = [ts for ts in _SIGNIN_FAILURES[pid] if ts > cutoff]
+        if kept:
+            _SIGNIN_FAILURES[pid] = kept
+        else:
+            _SIGNIN_FAILURES.pop(pid, None)
 
 
 def _garmin_ctx(t: T, conn, person_id: int, **extra) -> dict:
@@ -78,17 +93,24 @@ async def garmin_conectar(request: Request, person_id: int = Depends(identity.cu
     password = f.get("password") or ""
     if not email or not password:
         return RedirectResponse("/garmin?error=datos", status_code=303)
+    _prune_signin_failures()
+    if len(_SIGNIN_FAILURES.get(person_id, [])) >= _SIGNIN_MAX_ATTEMPTS:
+        # Refused before the adapter is called -- the password is never sent to Garmin, and
+        # Garmin never sees another failed attempt from this host on this person's behalf.
+        return RedirectResponse("/garmin?error=demasiados", status_code=303)
     try:
         status, result = garmin_adapter.start_sign_in(email, password)
     except Exception:
+        _SIGNIN_FAILURES.setdefault(person_id, []).append(time.monotonic())
         return RedirectResponse("/garmin?error=garmin", status_code=303)
     finally:
         password = None  # noqa: F841
     if status == "needs_mfa":
         _prune_mfa_state()
-        _MFA_STATE[_mfa_key(request)] = (result, time.monotonic())
+        _MFA_STATE[_mfa_key(request)] = (result, time.monotonic(), 0)
         conn, _, t = comun._ctx(person_id)
         return comun._render("garmin.html", **_garmin_ctx(t, conn, person_id, mfa=True))
+    _SIGNIN_FAILURES.pop(person_id, None)
     conn, _, _ = comun._ctx(person_id)
     garmin_cuenta.guardar(conn, person_id, result)
     return RedirectResponse("/garmin", status_code=303)
@@ -105,11 +127,17 @@ async def garmin_codigo(request: Request, person_id: int = Depends(identity.curr
     entry = _MFA_STATE.get(key)
     if entry is None or time.monotonic() - entry[1] > _MFA_TTL_SECONDS:
         return RedirectResponse("/garmin?error=mfa_expired", status_code=303)
-    client_state_json, _ = entry
+    client_state_json, started_at, wrong_codes = entry
     try:
         token = garmin_adapter.finish_sign_in(client_state_json, code)
     except Exception:
-        # A wrong code may be retried within the same TTL window -- the state is kept, not popped.
+        # A wrong code may be retried within the same TTL window, up to _MFA_MAX_ATTEMPTS --
+        # past that the state is dropped so the person starts again from the email form.
+        wrong_codes += 1
+        if wrong_codes >= _MFA_MAX_ATTEMPTS:
+            _MFA_STATE.pop(key, None)
+            return RedirectResponse("/garmin?error=demasiados", status_code=303)
+        _MFA_STATE[key] = (client_state_json, started_at, wrong_codes)
         conn, _, t = comun._ctx(person_id)
         return comun._render("garmin.html",
                        **_garmin_ctx(t, conn, person_id, mfa=True, form_error=t("garmin.error.generic")))
