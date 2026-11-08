@@ -6923,3 +6923,68 @@ guard test (`test_no_test_module_reads_dot_routes_directly`), with the prior one
 Merged `feat/body-web-estructura-1` into `main` with `--no-ff` (this spec's approval covers the merge; no
 schema change, no customer-facing bytes, no cross-repo contract change in the actual diff). `main` is left
 checked out, `git status --porcelain` empty.
+
+## BODY-WEB-ESTRUCTURA-2 -- privacidad and dispositivos out of body/web.py, _short_date to comun
+
+Second slice of BODY-WEB-ESTRUCTURA-PLAN-1, a pure move. Two domains out of `body/web.py`:
+
+- **privacidad** (`/privacidad/consentimiento` GET+POST, `/privacidad`, `/privacidad/exportar`,
+  `/privacidad/borrar`) -> `body/rutas/privacidad.py`.
+- **dispositivos** (`/ajustes/dispositivos` GET+POST, `/ajustes/dispositivos/{dispositivo_id}/revocar`,
+  `/api/turnos`, `/api/vida/semana`, plus the one-domain helper `_dispositivo_row`) -> new
+  `body/rutas/dispositivos.py`, one module for the pairing screen on Ajustes and the API it authorises, per
+  the spec's own reasoning (one domain, not two).
+
+Both router modules `router = APIRouter()`, included from `web.py` next to `ayuda.router`. The import of
+`body.rutas.privacidad` is aliased `privacidad_rutas` in `web.py` to avoid shadowing the pre-existing
+`body.privacidad` import (the module privacidad.py's routes call for consent/export/delete) -- the two are
+distinct packages at distinct dotted paths, no runtime collision, the alias is only to keep the name
+`privacidad` unambiguous to a reader of `web.py`'s own import line.
+
+**`_short_date` moves to `comun.py`.** Measured with the same AST reasoning the first slice's spec named for
+exactly this helper: it is called by domains still in `web.py` (sync status, historial, goals, turnos) as well
+as by the two domains moving out here, so two-or-more-domains puts it in `comun.py`, not with either mover.
+`web.py` keeps `_short_date = comun._short_date` as a plain alias -- the same pattern `STATIC_HASH`/
+`static_url`/`_static_hash` already used in BODY-WEB-ESTRUCTURA-1-M -- since `tests/test_turnos_costo.py:450`
+and `tests/test_sin_friccion.py:66` (both outside this slice's `touches:`) call `web._short_date(...)` directly
+and must keep working unchanged. `web.py`'s own ~18 remaining call sites of `_short_date` needed no edit: the
+bare name still resolves to the alias at call time, same as `STATIC_HASH`'s existing bare use at the
+service-worker template line.
+
+`_dispositivo_row` is called only within the dispositivos domain (two call sites, both in
+`dispositivos_view`/`dispositivos_crear`) -- moved with it, not to comun.
+
+Three now-unused imports removed from `web.py`: the `dispositivo`, `privacidad` and `vida_export` body-package
+imports (each was reached only from the routes that just moved out; `shift_import` stays, still used by the
+turnos-pattern domain) and the `re` module import (`_TURNOS_FILENAME_RE`, its only user, moved with the
+device-key API).
+
+**`body/fechas.py`'s stale docstring** (named by this slice's spec) corrected: it still read `` `body/web.py`'s
+`_today_local` `` -- stale since BODY-WEB-ESTRUCTURA-1-M moved `_today_local` to `comun.py` and
+BODY-WEB-ESTRUCTURA-1-M's own ledger entry noted the staleness but left it, out of that slice's `touches:`. Now
+reads `` `body/rutas/comun.py`'s `_today_local` ``.
+
+No test patched a moved name (confirmed: `test_every_body_patch_targets_the_owning_module` green, and a direct
+grep for `_dispositivo_row`/`MAX_TURNOS_BODY_BYTES`/`_TURNOS_FILENAME_RE`/`_ALCANCE_LABELS` under `tests/`
+found only an unrelated test method name containing "dispositivo") -- `tests/test_web_entry.py`,
+`tests/test_guardia_parches.py` and `tests/_rutas.py` needed no edit; they were in `touches:` as a
+contingency the measurement did not trigger.
+
+Route set: `tests/test_web_entry.py::RouteSetTest.BEFORE` (54 method+path entries) is unchanged by this move
+and stays the test's own assertion -- paths, methods and the mount entry are identical, only which module
+registers each one changed. `web.py`: 2395 -> 2185 lines (-210).
+
+Gate, exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, run once on the branch tip
+(commit `d4bc7b68c049a91d69754f16c8b3bc410ae68faa`), whose tree is identical to this merge's tree (verified by
+`git diff feat/body-web-estructura-2 HEAD`, empty, before writing this entry rather than re-run after):
+
+    Ran 1198 tests in 114.218s
+    OK (skipped=1)
+
+Same count as BODY-WEB-ESTRUCTURA-1-M's gate (1198, no test added or removed by this slice -- it is a pure
+move with no new behaviour to cover).
+
+Merge policy A: no schema change, no customer-facing bytes, no cross-repo contract change in the actual diff
+(five files, all under `body/` and `body/rutas/`, no template or i18n text touched) -- merges on green per
+this spec's approval. Merged `feat/body-web-estructura-2` into `main` with `--no-ff` (merge commit
+`23223e82f3c9d58ee1dfc7481b8f2f84221fda56`). `main` is left checked out, `git status --porcelain` empty.
