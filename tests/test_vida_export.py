@@ -90,12 +90,12 @@ class VidaExportTest(unittest.TestCase):
         conn.executemany("INSERT INTO hogar_local (person_id, hogar_id) VALUES (?, ?)", [(1, "h-1"), (2, "h-1")])
         conn.commit()
         monday = date(2026, 11, 2)
-        gid = goals.propose(conn, 1, "Shared steps goal", "2026-11-02", metric_key="steps", direction="raise",
-                             target_value=9000.0, baseline_value=6000.0, deadline="2026-12-14", hogar_id="h-1",
-                             visibility="household")
+        gid = goals.propose(conn, 1, "Shared steps goal", "2026-11-02", kind="milestone",
+                             deadline="2026-12-14", hogar_id="h-1", visibility="household")
         goals.activate(conn, gid)
+        hid = goals.add_habit(conn, gid, "walk", {"per": "day", "times": 1})
         for i in range(7):
-            db.set_metric(conn, (monday + timedelta(i)).isoformat(), "steps", 9500, "garmin", 1)
+            goals.check_habit(conn, hid, 1, (monday + timedelta(i)).isoformat(), True)
         goals.weekly_check(conn, gid, 1, "2026-11-02")
 
         s = vida_export.week_section(conn, monday, 1)

@@ -78,6 +78,15 @@ _GOAL_TITLES = {
 }
 _HABIT_TITLE = {"es": "Dormir antes de un turno nocturno", "en": "Sleep before a night shift"}
 
+# BODY-HOGAR-MIEMBRO-1: a second, invented demo person ("Ana") in one household with the demo
+# person, and a shared goal SHE creates, so the demo person -- browsing as themselves -- sees the
+# member view (BODY-HOGAR-PLAN-1 rulings 1-2).
+_ANA_NAME = "Ana"
+_HOGAR_ID = "demo-hogar-1"
+_HOGAR_GOAL_TITLE = {"es": "Preparar el ascenso", "en": "Prepare for the climb"}
+_HOGAR_HABIT_BOTH = {"es": "Entrenar piernas", "en": "Train legs"}
+_HOGAR_HABIT_ANA = {"es": "Revisar el equipo", "en": "Check the gear"}
+
 
 @dataclass
 class _DayData:
@@ -176,7 +185,7 @@ def _avg_metric(conn, db, key: str, days: list[date], person_id: int) -> float |
 
 
 def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
-    from . import db, goals, shift_import, turnos_costo
+    from . import db, goals, household, shift_import, turnos_costo
 
     person_id = db.local_person_id(conn)
     conn.execute("UPDATE person SET display_name = 'Demo', timezone = 'America/Bogota' WHERE id = ?", (person_id,))
@@ -281,12 +290,44 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
                 habit_checks += 1
         monday += timedelta(7)
 
+    # A second demo person, one household with the demo person, and a shared goal Ana creates.
+    ana_cur = conn.execute(
+        "INSERT INTO person (display_name, timezone, language) VALUES (?, 'America/Bogota', ?)",
+        (_ANA_NAME, idioma),
+    )
+    ana_id = ana_cur.lastrowid
+    conn.executescript(household.SCHEMA)
+    conn.executemany("INSERT INTO hogar_local (person_id, hogar_id) VALUES (?, ?)",
+                      [(person_id, _HOGAR_ID), (ana_id, _HOGAR_ID)])
+    conn.commit()
+
+    hogar_deadline = (anchor + timedelta(days=84)).isoformat()
+    gid_hogar = goals.propose(conn, ana_id, _HOGAR_GOAL_TITLE[idioma], start_day, area="adventure",
+                              kind="milestone", deadline=hogar_deadline, hogar_id=_HOGAR_ID,
+                              visibility="household")
+    goals.activate(conn, gid_hogar)
+    habit_both_id = goals.add_habit(conn, gid_hogar, _HOGAR_HABIT_BOTH[idioma], {"per": "week", "times": 2})
+    goals.add_habit(conn, gid_hogar, _HOGAR_HABIT_ANA[idioma], {"per": "week", "times": 1},
+                     assignee_person_id=ana_id)
+
+    hogar_checks = hogar_habit_checks = 0
+    hogar_recent_monday = max(first_monday, anchor_monday - timedelta(21))
+    monday = hogar_recent_monday
+    while monday <= anchor_monday:
+        for dd in (monday.isoformat(), (monday + timedelta(3)).isoformat()):
+            if date.fromisoformat(dd) <= anchor:
+                goals.check_habit(conn, habit_both_id, ana_id, dd, rng.random() < 0.7)
+                hogar_habit_checks += 1
+        if goals.weekly_check(conn, gid_hogar, ana_id, monday.isoformat()):
+            hogar_checks += 1
+        monday += timedelta(7)
+
     return {
-        "personas": 1, "dias_sembrados": dias, "valores_diarios": metric_rows, "actividades": activity_rows,
+        "personas": 2, "dias_sembrados": dias, "valores_diarios": metric_rows, "actividades": activity_rows,
         "lotes_turnos_confirmados": 1 if confirmed_id is not None else 0,
         "lotes_turnos_propuestos": 1 if proposed_id is not None else 0,
-        "semanas_nocturnas": night_weeks, "bloques_turno_noche": night_blocks, "metas_activas": 3, "habitos": 1,
-        "verificaciones_semanales": checks, "chequeos_habito": habit_checks,
+        "semanas_nocturnas": night_weeks, "bloques_turno_noche": night_blocks, "metas_activas": 4, "habitos": 3,
+        "verificaciones_semanales": checks + hogar_checks, "chequeos_habito": habit_checks + hogar_habit_checks,
     }
 
 

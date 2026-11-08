@@ -6,6 +6,7 @@
   <span class="chip {{ cls }}">{{ verdict }}</span>
 </div>
 
+{% if shared_line %}<p class="k" style="margin-top:0">{{ shared_line }}</p>{% endif %}
 {% if goal.why %}<p class="read" style="margin-top:0">{{ goal.why }}</p>{% endif %}
 
 <div class="card">
@@ -38,7 +39,9 @@
   <ul class="plan" style="margin-top:6px">
   {% for h in habits %}
     <li>
-      {% if h.due_today %}
+      {% if not h.mine %}
+      <span class="boxbtn-spacer" aria-hidden="true"></span>
+      {% elif h.due_today %}
       <form method="post" action="/habits/{{ h.id }}/check" style="margin:0">
         <input type="hidden" name="day" value="{{ today }}">
         <input type="hidden" name="back" value="/goals/{{ goal.id }}">
@@ -49,7 +52,11 @@
       <span class="boxbtn"><span class="box" style="opacity:.4;border-style:dashed"></span></span>
       {% endif %}
       <div>{{ h.title }}{% if h.context %} <span class="chip night">{{ h.context }}</span>{% endif %}
+        {% if h.mine %}
         <div class="k">{{ h.cadence }} · {{ h.progress }}</div>
+        {% else %}
+        <div class="k">{{ h.cadence }} · <span class="chip">{{ h.assignee_name }}</span></div>
+        {% endif %}
       </div>
     </li>
   {% endfor %}
@@ -75,11 +82,18 @@
         <option value="after_night">{{ t('habit.context.after_night') }}</option>
         <option value="off_days">{{ t('habit.context.off_days') }}</option>
       </select>
+      {% if goal.visibility == 'household' %}
+      <div class="row" style="margin-top:8px;gap:12px;justify-content:flex-start">
+        <label class="radio"><input type="radio" name="for" value="both" checked> {{ t('goals.habit_for_both') }}</label>
+        <label class="radio"><input type="radio" name="for" value="me"> {{ t('goals.habit_for_me') }}</label>
+      </div>
+      {% endif %}
       <button type="submit" class="btn on" style="margin-top:8px;width:100%">{{ t('goals.add_habit_btn') }}</button>
     </form>
   </details>
 </div>
 
+{% if is_creator %}
 <div class="confirm-actions">
 {% if goal.status == 'proposed' %}
   <form method="post" action="/goals/{{ goal.id }}/activate"><button class="btn on" type="submit">{{ t('goals.activate_btn') }}</button></form>
@@ -90,4 +104,5 @@
   <form method="post" action="/goals/{{ goal.id }}/drop"><button class="btn" type="submit">{{ t('goals.discard_btn') }}</button></form>
 {% endif %}
 </div>
+{% endif %}
 {% endblock %}

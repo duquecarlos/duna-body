@@ -54,6 +54,7 @@
     <input type="date" name="deadline" class="field" required>
   </div>
 
+  <fieldset class="milestone-only">
   <div class="card">
     <div class="q">{{ t('goals.field_visibility') }}</div>
     {% if has_household %}
@@ -61,10 +62,12 @@
       <option value="private">{{ t('goals.visibility.private') }}</option>
       <option value="household">{{ t('goals.visibility.household') }}</option>
     </select>
+    <p class="note" style="margin-top:6px">{{ t('goals.visibility_milestone_note') }}</p>
     {% else %}
     <p class="note" style="margin:0">{{ t('goals.household_empty') }}</p>
     {% endif %}
   </div>
+  </fieldset>
 
   <div class="card">
     <details class="files">

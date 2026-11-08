@@ -21,7 +21,7 @@ import sqlite3
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .. import db, history, profile, readiness, shift_import, turnos_costo, tutoriales
+from .. import db, goals, history, household, profile, readiness, shift_import, turnos_costo, tutoriales
 from ..i18n import LANGS
 from . import ajustes, propuestas
 
@@ -171,18 +171,35 @@ def _ultima_verificacion(conn: sqlite3.Connection, goal_id: int, person_id: int)
 
 
 def _leer_metas(conn: sqlite3.Connection, person_id: int) -> dict:
-    rows = conn.execute("SELECT * FROM goal WHERE person_id = ? AND status = 'active' ORDER BY id",
-                        (person_id,)).fetchall()
+    """Own goals plus any household goal shared with this person (BODY-HOGAR-MIEMBRO-1 rule 7) --
+    `goals.goal_scope_sql`, the same scope body/web.py's goals_list uses. Only this person's OWN
+    weekly check (`_ultima_verificacion` is keyed by `person_id`), never another member's."""
+    hh = household.household_of(conn, person_id)
+    where, params = goals.goal_scope_sql(person_id, hh)
+    rows = conn.execute(f"SELECT * FROM goal WHERE {where} AND status = 'active' ORDER BY id", params).fetchall()
     return {"metas": [{"id": g["id"], "titulo": g["title"], "tipo": g["kind"], "area": g["area"],
+                       "compartida": g["visibility"] == "household",
                        "ultima_verificacion": _ultima_verificacion(conn, g["id"], person_id)} for g in rows]}
 
 
+def _habito_asignado_a(conn: sqlite3.Connection, person_id: int, h) -> str:
+    if h["assignee_person_id"] is None:
+        return "ambos"
+    if h["assignee_person_id"] == person_id:
+        return "tú"
+    other = conn.execute("SELECT display_name FROM person WHERE id = ?", (h["assignee_person_id"],)).fetchone()
+    return other["display_name"] if other else "?"
+
+
 def _leer_meta(conn: sqlite3.Connection, person_id: int, goal_id: int) -> dict:
-    g = conn.execute("SELECT * FROM goal WHERE id = ? AND person_id = ?", (goal_id, person_id)).fetchone()
-    if g is None:
+    """Creator or household member may read G (`goals.goal_access`, BODY-HOGAR-MIEMBRO-1 rule 7);
+    `verificaciones` stays keyed by `person_id` -- this viewer's own weekly checks only."""
+    if goals.goal_access(conn, goal_id, person_id) is None:
         return {"encontrada": False}
-    habitos = conn.execute("SELECT id, title, cadence FROM habit WHERE goal_id = ? AND active = 1 ORDER BY id",
-                           (goal_id,)).fetchall()
+    g = conn.execute("SELECT * FROM goal WHERE id = ?", (goal_id,)).fetchone()
+    habitos = conn.execute(
+        "SELECT id, title, cadence, assignee_person_id FROM habit WHERE goal_id = ? AND active = 1 ORDER BY id",
+        (goal_id,)).fetchall()
     verificaciones = conn.execute(
         "SELECT * FROM goal_check WHERE goal_id = ? AND person_id = ? ORDER BY week_start DESC LIMIT 8",
         (goal_id, person_id),
@@ -191,8 +208,10 @@ def _leer_meta(conn: sqlite3.Connection, person_id: int, goal_id: int) -> dict:
         "encontrada": True,
         "meta": {"id": g["id"], "titulo": g["title"], "tipo": g["kind"], "area": g["area"], "estado": g["status"],
                  "metric_key": g["metric_key"], "direccion": g["direction"], "valor_objetivo": g["target_value"],
-                 "valor_base": g["baseline_value"], "inicio": g["start_day"], "plazo": g["deadline"]},
-        "habitos": [{"id": h["id"], "titulo": h["title"], "cadencia": json.loads(h["cadence"])} for h in habitos],
+                 "valor_base": g["baseline_value"], "inicio": g["start_day"], "plazo": g["deadline"],
+                 "compartida": g["visibility"] == "household"},
+        "habitos": [{"id": h["id"], "titulo": h["title"], "cadencia": json.loads(h["cadence"]),
+                     "asignado_a": _habito_asignado_a(conn, person_id, h)} for h in habitos],
         "verificaciones": [dict(c) for c in verificaciones] if verificaciones else "sin verificación aún",
     }
 

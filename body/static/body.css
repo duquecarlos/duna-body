@@ -88,6 +88,7 @@ a.card:active{background:var(--wash)}
 .plan li{display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-top:1px solid var(--soft)}
 .plan li:first-child{border-top:0}
 .boxbtn{display:inline-flex;align-items:center;justify-content:center;flex:none;width:28px;min-height:44px;background:none;border:0;padding:0;margin:0;cursor:pointer}
+.boxbtn-spacer{display:inline-flex;flex:none;width:28px;min-height:44px}
 .box{width:20px;height:20px;border:1.5px solid var(--line);border-radius:5px;flex:none;position:relative}
 .box.done{background:var(--body);border-color:var(--body)}
 .box.done::after{content:"";position:absolute;left:6px;top:2px;width:5px;height:10px;border:solid var(--card);border-width:0 2px 2px 0;transform:rotate(45deg)}

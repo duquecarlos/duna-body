@@ -16,6 +16,7 @@
 {% for c in cards %}
 <a class="card" href="/goals/{{ c.id }}">
   <div class="row"><div class="q" style="margin:0">{{ c.title }}</div><span class="chip {{ c.cls }}">{{ c.verdict }}</span></div>
+  {% if c.shared_line %}<p class="k" style="margin:2px 0 0">{{ c.shared_line }}</p>{% endif %}
   <div class="row" style="margin-top:8px;align-items:flex-end">
     <div><span class="fig">{{ c.fig }}</span><span class="u">{{ c.period }}</span></div>
     <div class="k" style="text-align:right">{{ c.target_text }}</div>
@@ -31,6 +32,7 @@
 {% for p in proposed %}
 <div class="card">
   <div class="q">{{ p.title }}</div>
+  {% if p.shared_line %}<p class="k" style="margin:2px 0 0">{{ p.shared_line }}</p>{% endif %}
   <div class="k">{{ p.sub }}</div>
   <div class="confirm-actions">
     <form method="post" action="/goals/{{ p.id }}/activate"><button class="btn on" type="submit">{{ t('goals.activate_btn') }}</button></form>
@@ -46,6 +48,7 @@
   {% for a in archived %}
   <a class="card" href="/goals/{{ a.id }}" style="margin-top:8px">
     <div class="row"><div class="q" style="margin:0">{{ a.title }}</div><span class="chip">{{ a.status_text }}</span></div>
+    {% if a.shared_line %}<p class="k" style="margin:2px 0 0">{{ a.shared_line }}</p>{% endif %}
   </a>
   {% endfor %}
 </details>

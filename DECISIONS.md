@@ -5082,3 +5082,193 @@ the green run above already covers the merged tree.
 **Merged** `feat/body-turnos-opcional-5` into `main` with `--no-ff` (this spec's approval-reason names the
 merge in words, past merge policy A's customer-bytes condition: "Approved with the five fixes."). `main`
 left checked out, clean.
+
+## BODY-HOGAR-MIEMBRO-1 -- a household goal reaches every member, not only its creator
+(AWAITING_APPROVAL, not merged)
+
+Carries out orchestrator ledger `BODY-HOGAR-PLAN-1` rulings 1-2 against `BODY-HOGAR-OBS-1`: every goal
+read path gated on `goal.person_id = viewer`, so `visibility = 'household'` reached nobody and wave 7c's
+done-when did not hold. ROADMAP's Hogar plan (Carlos, 2026-11-06) already defines what a member gets --
+shared goal, plan items per member, each member's own weekly check against their own baseline, health
+figures private -- so this slice builds that, and keeps creator-only editing as a reversible v1 choice.
+No Tier 1 path touched: `db.py`, `household.py`'s source, `identity.py`, `cuenta.py`, `vida_export.py`
+stay as they are.
+
+**One shared access helper, in `body/goals.py` (not `web.py`, so the assistant can reach it too) without
+a circular import:** `goal_access(conn, goal_id, person_id) -> 'creator' | 'member' | None`, and a sibling
+`goal_scope_sql(person_id, hh) -> (sql, params)` for the listing queries, both reading membership through
+`household.household_of` only, never a direct query of its table. Sites moved onto `goal_access`:
+`body/web.py`'s `goal_detail` (view gating, the shared-with-household line, and `is_creator` for the
+template), the new `_require_creator` (replacing `_owned_goal_or_404`, deleted) used by `goal_activate`,
+`goal_pause`, `goal_finish`, `goal_drop`, `goal_add_habit`, and `habit_check`; `body/agente/herramientas
+.py`'s `_leer_meta`. Sites moved onto `goal_scope_sql`: `web.py`'s `goals_list` and `_today_due_habits`;
+`herramientas.py`'s `_leer_metas`. `web.py`'s `_habits_for_goal` dropped its own `person_id` filter (it
+used to silently exclude a habit assigned to someone else); it now returns every active habit of G and
+`goal_detail` decides per row whether it is this viewer's (own checkbox, own progress) or another
+member's (name only, via the new `goals.habit_assignee` string, no checkbox, no progress count).
+
+**Rules 1-6, each against the three-way fixture (creator, member, a stranger or a person who left):**
+(1) a member sees G in Metas, in the same status sections as their own goals, and on G's page with
+«Compartida con tu hogar · la creó {name}» / "Shared with your household · created by {name}" (the
+creator sees the line without "la creó"/"created by"); a stranger or a person whose `hogar_local` row was
+removed (simulating leaving, since the local mirror carries no "left" state of its own, only presence or
+absence of the row) gets 404, same as an unknown goal. (2) a member checks off a habit whose
+`assignee_person_id` is NULL or themselves; `habit_check` now 404s a habit assigned to someone else
+instead of the old blanket `g.person_id = viewer`; `_today_due_habits` lists a household goal's due
+habits for a member the same way it already did for their own. (3) `goal_detail`'s chart, history and
+`goal_check` upsert were already keyed by the VIEWER's `person_id`, so the only change was opening the
+page to a member at all; the members block (unchanged logic, `goals.household_title`) lists every other
+member, the creator included, by verdict word only. (4) the add-habit form grows a «Para mí» / «Para los
+dos» ("For me" / "For both of us") radio pair, shown only when `goal.visibility == 'household'`; the
+adder -- creator or member -- picks their own assignment, defaulting to "both" (NULL) when the field is
+missing. (5) `_require_creator` 404s a member on all four status routes exactly like a stranger; `goal
+.html`'s `<div class="confirm-actions">` block is now wrapped in `{% if is_creator %}`, so a member never
+sees the buttons at all. (6) a dedicated test seeds the two members with resting-hr/steps averages ~40
+apart and asserts neither figure, nor the other's habit-check count ("1 de 7"), appears on the other's
+render of G; the chart and history were already per-viewer (rule 3), so nothing new leaks there.
+
+**Rule 7, the assistant.** `_leer_metas` and `_leer_meta` (`body/agente/herramientas.py`) now read through
+`goals.goal_scope_sql` / `goals.goal_access` instead of `person_id = ?`, so a member's household goals
+appear in `leer_metas` (with a new `"compartida"` flag) and `leer_meta` answers for a member exactly as it
+does for the creator -- `verificaciones` stays keyed by the caller's own `person_id`, never another
+member's. `leer_meta`'s `habitos` entries gained `"asignado_a"`: `"ambos"`, `"tú"`, or the other member's
+`display_name` -- never a figure, only who a habit is for, the same thing the page already shows.
+`body/agente/propuestas.py` needed no change: `_proponer_cambio_meta`'s `WHERE id = ? AND person_id = ?`
+was already creator-only (`goal.person_id` IS the creator), so that half of rule 7 already held. The
+other half -- "a proposal to add a habit follows rule 4" -- is vacuous today: no `proponer_agregar_habito`
+tool exists in the registry, and the WORK section asked for no new one, so this is recorded as a note for
+whoever adds that tool later, not a change made here.
+
+**Rule 8, the demo (`body/demo.py`).** A second invented person, "Ana" (id 2, never a real person's
+data), one household (`hogar_local`, id `demo-hogar-1`) linking the demo person and Ana, and one shared
+milestone goal CREATED BY ANA -- «Preparar el ascenso» / "Prepare for the climb" -- with a habit for both
+(«Entrenar piernas» / "Train legs") and one for Ana only («Revisar el equipo» / "Check the gear"), plus a
+three-week history of Ana's own habit checks and weekly `goal_check` rows so her checks exist. The demo
+person's own three goals are untouched. `tests/test_demo.py` counts updated: two persons ("Demo", "Ana"),
+four active goals, three habits, plus a new assertion that the one `visibility = 'household'` goal's
+creator is Ana.
+
+**Strings, es/en:** `goals.shared_by_you` ("Compartida con tu hogar" / "Shared with your household"),
+`goals.shared_by` ("Compartida con tu hogar · la creó {name}" / "Shared with your household · created by
+{name}"), `goals.habit_for_both` ("Para los dos" / "For both of us"), `goals.habit_for_me` ("Para mí" /
+"For me"), `goals.habit_assignee` ("De {name}" / "{name}'s").
+
+**Tests.** New `tests/test_hogar_miembro_1.py`, 23 tests: `VisibilityTest`, `SharedLineTest` (both
+languages), `HabitCheckTest`, `OwnWeeklyCheckTest`, `AddHabitChoiceTest`, `CreatorOnlyTest`,
+`PrivacyTest` (rule 6), `AssistantReadToolTest` (rule 7) -- a creator, a member, a stranger, and a person
+who left, throughout. `tests/test_goals_web.py`'s `HouseholdGoalDetailTest.test_member_check_shown` was
+left exactly as it stood (its subject -- the creator viewing their own shared goal with a member's
+verdict shown -- never changed); no case anywhere was deleted.
+
+**Gate, run once, foreground, exact command** `.venv/Scripts/python.exe -m unittest discover tests -t .`:
+
+    Ran 999 tests in 130.963s
+    OK (skipped=1)
+
+999 = the prior entry's 975 plus this slice's 23 new tests in `tests/test_hogar_miembro_1.py` plus one
+new test in `tests/test_demo.py` (`test_has_one_household_goal_created_by_ana`); its other three renamed
+tests (`test_has_two_demo_persons`, `test_has_four_active_goals_with_checks`, `test_has_three_habits`)
+keep the same one-test-each shape they always had, just updated counts and names. The same pre-existing
+POSIX-only skip is untouched.
+
+**Stopped AWAITING_APPROVAL, not merged.** The diff changes customer-facing bytes (templates, i18n
+strings, a new "for me"/"for both" radio, the shared-with-household line, the members block now reachable
+by a second person) -- merge policy A's customer-bytes condition -- and this spec's approval-reason says
+in words to stop here for the orchestrator's 375 px browser check on the demo. Branch `feat/body-hogar
+-miembro-1` left as is, gate green, nothing merged into `main`.
+
+## BODY-HOGAR-MIEMBRO-1-M -- three fixes from the orchestrator's review and browser measurement of
+BODY-HOGAR-MIEMBRO-1 (2026-11-07) (GATE_RED, not merged)
+
+Carries the three fixes the orchestrator's AWAITING_APPROVAL review of `BODY-HOGAR-MIEMBRO-1` asked for,
+on top of that slice's unchanged tip (`2c588cb`). `main` had not moved from the branch's base (`c72dc09`),
+so no merge-in was needed before starting.
+
+**Fix 1 -- a household goal is a milestone in v1.** A metric goal's verdict and chart are judged on its
+own `baseline_value`, which only its creator has (orchestrator ledger `BODY-HOGAR-PLAN-1` (cont.)): a
+member reading a shared metric goal would be judged on the creator's numbers without knowing it. Rather
+than carry per-member baselines (a v2 question), this slice closes the hole by making a household goal a
+milestone, always: `goals.propose(...)` now raises `ValueError` (writing nothing) for `kind='metric'` with
+`visibility='household'`. `POST /goals/new` no longer trusts the form's `visibility` field for a metric
+goal -- the server always stores `visibility='private'`, `hogar_id=NULL` for `kind='metric'`, whatever the
+form sent (so a tampered or JavaScript-less submission still can't create a shared metric goal).
+`goal_new.html`'s visibility card now sits inside `<fieldset class="milestone-only">`, the same CSS
+`:has()` mechanism `metric-only`/`milestone-only` already used (no JavaScript) -- so the household choice
+is only ever shown while "Hito / aventura" is selected -- with one new line under the select,
+`goals.visibility_milestone_note` ("Las metas compartidas son hitos: cada quien lleva sus propios
+números." / "Shared goals are milestones: each person keeps their own numbers."). `goals.goal_access` and
+`goals.goal_scope_sql`'s 'member' branch now additionally require `kind = 'milestone'`, so a goal that was
+already marked `visibility='household'` with `kind='metric'` before this slice (the only way one can still
+exist, since `propose` now refuses to create one) stays creator-only on every surface -- Metas' list, the
+goal page (404), Hoy's habits, and habit check-off (404) -- forever. Both functions' docstrings cite
+`BODY-HOGAR-PLAN-1 (cont.)` for the reason. Grepped `body/agente/` for any path that creates or edits a
+goal's `visibility` or `kind`: only `herramientas._proponer_meta` -> `propuestas._escribir_aplicacion`'s
+`proponer_meta` branch creates a goal, and it never passes `visibility` (stays the default `'private'`) or
+a `kind` other than the default `'metric'` -- so no assistant path could ever hit the refusal, and none
+needed changing.
+
+**Fix 2 -- the list card.** Metas' list card for a household goal (active, proposed, and inside the
+archive `<details>`) now carries the same quiet line the goal page already showed: `goals.shared_by_you`
+for the creator, `goals.shared_by` (names the creator) for a member. Computed in the route -- a new
+`web._shared_line(conn, t, g, person_id)` -- not the template; `goal_detail` was refactored to call the
+same helper instead of repeating the creator/member branch inline.
+
+**Fix 3 -- another member's habit row.** `goal.html`'s "not mine" branch used to draw a `<span
+class="box">` styled `opacity:.3;border-style:dashed` -- still the same 20×20, bordered, rounded-corner
+shape as a real checkbox, just faint, which reads as a disabled control rather than "not yours to check".
+It is now an empty `<span class="boxbtn-spacer">` (new rule in `body.css`: same `width:28px;min-height:44px`
+as `.boxbtn` for row alignment, no border, no background, no `cursor:pointer`) -- the row stays aligned
+with the others, "De Ana" still names whose habit it is, and nothing checkbox- or button-shaped remains.
+
+**Strings, es/en:** one new key, `goals.visibility_milestone_note` ("Las metas compartidas son hitos: cada
+quien lleva sus propios números." / "Shared goals are milestones: each person keeps their own numbers.").
+No existing string's text changed.
+
+**Tests.** `tests/test_goals.py`: `HouseholdMetricRefusedTest` (propose refuses metric+household and
+writes nothing; milestone+household still allowed), `LegacyMetricHouseholdRowTest` (a goal updated to
+`visibility='household'` after creation, bypassing `propose`, stays creator-only via `goal_access` and
+`goal_scope_sql`). `tests/test_goals_web.py`: `MetricHouseholdFormTest` (`POST /goals/new` with
+`kind=metric&visibility=household` stores private; `kind=milestone&visibility=household` still stores
+household), `GoalNewFormMilestoneOnlyVisibilityTest` (the visibility card sits in `milestone-only`, with
+its note), `ListCardSharedLineTest` (the list card's shared line for creator and member, es and en),
+`LegacyMetricHouseholdRowWebTest` (a legacy metric household row is unreachable on `/goals`, `/goals/<id>`,
+`/` (Hoy), and `/habits/<id>/check`), `OtherMemberHabitRowTest` (no `type="checkbox"` or `<button` near
+another member's habit row). **Restored subjects, no case deleted:** four existing tests whose subject was
+a metric household goal were changed to a milestone household goal, keeping the same thing under test --
+`tests/test_hogar_miembro_1.py::OwnWeeklyCheckTest.test_viewer_sees_their_own_history_not_the_creators`
+(the viewer's own weekly figure vs. the creator's, now habits_done/due instead of metric_avg),
+`tests/test_hogar_miembro_1.py::PrivacyTest.test_other_members_figures_are_absent` (no other member's
+figure leaks, now habit-check counts instead of metric averages),
+`tests/test_goals.py::HouseholdGoalCheckTest.test_two_members_each_get_their_own_goal_check` (two members,
+two independent `goal_check` rows, now from habit checks instead of metric readings),
+`tests/test_goals_web.py::HouseholdGoalDetailTest.test_member_check_shown` (unchanged in substance, just
+`kind='milestone'` instead of the implicit metric default).
+
+**Found, not fixed: two more tests outside this spec's `touches` have the same subject (tracked as
+follow-up `BODY-HOGAR-MIEMBRO-1-M-FOLLOWUP-1`).**
+`tests/test_vida_export.py::VidaExportTest.test_goal_checks_for_shared_household_goals` (line 93) and
+`tests/test_privacidad.py::DeleteAllTest.test_right_word_deletes_every_row_of_a_and_takes_bs_check_on_as_
+shared_goal` (line 365) both call `goals.propose(...)` with `visibility='household'` and the default
+`kind='metric'`, exactly the combination Fix 1 refuses. Neither file is in this spec's `touches:`, so
+neither was edited -- widening `touches` is not this worker's call to make. Both now raise `ValueError` at
+that call and the suite reports them as errors. A follow-up slice with `touches:` widened to include these
+two files should restore their subjects to a milestone household goal the same way the four tests above
+were restored (habit checks in place of metric readings; neither test's core assertion -- a shared goal's
+`goal_check` rows exist and export correctly; a shared goal's rows cascade-delete and a co-member's check on
+it is taken over -- depends on the goal being a metric kind).
+
+**Gate, run once, foreground, exact command** `.venv/Scripts/python.exe -m unittest discover tests -t .`:
+
+    Ran 1008 tests in 157.764s
+    FAILED (errors=2, skipped=1)
+
+1008 = the prior entry's 999 (then 1 skipped) plus this slice's 9 new tests (3 in `tests/test_goals.py`, 6
+in `tests/test_goals_web.py`); no test was removed. The 2 errors are exactly the two tests named above,
+reproduced individually before this full run to confirm they are this slice's own refusal firing on an
+out-of-scope call site, not a flake or an unrelated regression; every other test, including this slice's 9
+new ones and the 4 restored ones, passed.
+
+**Stopped GATE_RED, not merged.** The gate is red on the branch's final tree for a reason this worker
+cannot fix without writing to `tests/test_vida_export.py` and `tests/test_privacidad.py`, neither declared
+in this spec's `touches:`. Per the dispatch protocol, a red that cannot be fixed inside `touches:` stops
+here rather than widening scope. Branch `feat/body-hogar-miembro-1` left as is, nothing merged into `main`.

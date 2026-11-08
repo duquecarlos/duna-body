@@ -362,16 +362,15 @@ class DeleteAllTest(unittest.TestCase):
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM person WHERE id = 1").fetchone()[0], 1)
 
     def test_right_word_deletes_every_row_of_a_and_takes_bs_check_on_as_shared_goal(self):
-        gid_a = goals.propose(self.conn, 1, "Shared goal", "2026-11-01", metric_key="resting_hr", direction="lower",
-                              target_value=45.0, baseline_value=55.0, deadline="2027-01-01",
-                              hogar_id="h-1", visibility="household")
+        gid_a = goals.propose(self.conn, 1, "Shared goal", "2026-11-01", kind="milestone",
+                              deadline="2027-01-01", hogar_id="h-1", visibility="household")
         goals.activate(self.conn, gid_a)
         hid = goals.add_habit(self.conn, gid_a, "shared habit", {"per": "day", "times": 1})
         goals.check_habit(self.conn, hid, 1, "2026-11-01", True)
         goals.check_habit(self.conn, hid, 2, "2026-11-01", True)
         self.conn.execute(
             "INSERT INTO goal_check (goal_id, person_id, week_start, metric_avg, on_track, habits_done, "
-            "habits_due, rule_version) VALUES (?, 2, '2026-11-02', 50.0, 1, 1, 1, 'test')", (gid_a,)
+            "habits_due, rule_version) VALUES (?, 2, '2026-11-02', NULL, 1, 1, 1, 'test')", (gid_a,)
         )
         gid_b = goals.propose(self.conn, 2, "B's own goal", "2026-11-01", metric_key="resting_hr",
                               direction="lower", target_value=45.0, baseline_value=55.0, deadline="2027-01-01")
