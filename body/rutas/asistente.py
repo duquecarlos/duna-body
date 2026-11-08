@@ -17,7 +17,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from .. import identity
+from .. import db, identity
 from ..agente import bucle as agente_bucle
 from ..agente import cliente as agente_cliente
 from ..agente import conversacion as agente_conversacion
@@ -112,7 +112,7 @@ async def asistente_preguntar(request: Request, person_id: int = Depends(identit
         raise HTTPException(400)
 
     conn, _, t = comun._ctx(person_id)
-    agente_herramientas.fijar_turnos_actual(comun._turnos_on(conn, person_id))
+    agente_herramientas.fijar_turnos_actual(db.trabaja_turnos_si(conn, person_id))
     if conversacion_id is not None:
         try:
             agente_conversacion.verificar_propiedad(conn, conversacion_id, person_id)

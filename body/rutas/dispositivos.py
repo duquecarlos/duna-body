@@ -11,7 +11,7 @@ from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from .. import cuenta, dispositivo, identity, shift_import, vida_export
+from .. import cuenta, db, dispositivo, identity, shift_import, vida_export
 from ..i18n import T
 from . import comun
 
@@ -39,7 +39,7 @@ def dispositivos_view(person_id: int = Depends(identity.current_person_id)):
     conn, _, t = comun._ctx(person_id)
     items = [_dispositivo_row(t, d) for d in dispositivo.listar(conn, person_id)]
     resp = comun._render("dispositivos.html", t=t, tab="settings", items=items, new_key=None,
-                   turnos=comun._turnos_on(conn, person_id))
+                   turnos=db.trabaja_turnos_si(conn, person_id))
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -55,7 +55,7 @@ async def dispositivos_crear(request: Request, person_id: int = Depends(identity
     if not nombre:
         items = [_dispositivo_row(t, d) for d in dispositivo.listar(conn, person_id)]
         resp = comun._render("dispositivos.html", t=t, tab="settings", items=items, new_key=None,
-                       turnos=comun._turnos_on(conn, person_id))
+                       turnos=db.trabaja_turnos_si(conn, person_id))
         resp.headers["Cache-Control"] = "no-store"
         return resp
     alcances = set()
@@ -66,7 +66,7 @@ async def dispositivos_crear(request: Request, person_id: int = Depends(identity
     new_key = dispositivo.crear(conn, person_id, nombre, alcances)
     items = [_dispositivo_row(t, d) for d in dispositivo.listar(conn, person_id)]
     resp = comun._render("dispositivos.html", t=t, tab="settings", items=items, new_key=new_key,
-                   turnos=comun._turnos_on(conn, person_id))
+                   turnos=db.trabaja_turnos_si(conn, person_id))
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

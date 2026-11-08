@@ -11,7 +11,7 @@ import unittest
 from body import db, history
 from body import turnos_costo
 from body import web
-from body.rutas import metas
+from body.rutas import metas, turnos
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 I18N_DIR = ROOT / "body" / "i18n"
@@ -77,7 +77,7 @@ _FIXED_DYNAMIC = {
     "part.+": ["hrv", "sleep", "battery", "resting_hr", "stress"],
     # body/web.py, body/templates/shift_pattern.html: t("shift.kind." + k) / t('shift.kind.' + k) --
     # _STRIP_KIND_ORDER is the superset (it also covers the strip's "no shift" legend entry).
-    "shift.kind.+": web._STRIP_KIND_ORDER,
+    "shift.kind.+": turnos._STRIP_KIND_ORDER,
     # body/web.py: t("shifts.cost_sub." + key) -- the cost model's own metric list (turnos_costo.MODELO).
     "shifts.cost_sub.+": turnos_costo.MODELO["metricas"],
     # body/turnos_costo.py diferencia_y_palabra(): the only three words it returns.

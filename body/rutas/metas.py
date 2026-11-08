@@ -10,7 +10,7 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import enlaces, goals, household, identity, profile
+from .. import db, enlaces, goals, household, identity, profile
 from ..baselines import baseline
 from ..i18n import T
 from . import comun
@@ -216,7 +216,7 @@ def goals_list(person_id: int = Depends(identity.current_person_id)):
                        "shared_line": _shared_line(conn, t, g, person_id)} for g in archived]
 
     return comun._render("goals.html", t=t, tab="goals", cards=cards, proposed=proposed_cards, archived=archived_cards,
-                   empty=not (active or proposed or archived), turnos=comun._turnos_on(conn, person_id))
+                   empty=not (active or proposed or archived), turnos=db.trabaja_turnos_si(conn, person_id))
 
 
 @router.get("/goals/new")
@@ -232,7 +232,7 @@ def goal_new_form(person_id: int = Depends(identity.current_person_id)):
                         "direction": BETTER_TO_DIRECTION[d["better"]], "baseline": b.mean if b else None})
     hh = household.household_of(conn, person_id)
     return comun._render("goal_new.html", t=t, tab="goals", metrics=metrics, areas=AREAS, directions=DIRECTIONS,
-                   has_household=bool(hh and len(hh.member_ids) > 1), turnos=comun._turnos_on(conn, person_id))
+                   has_household=bool(hh and len(hh.member_ids) > 1), turnos=db.trabaja_turnos_si(conn, person_id))
 
 
 @router.post("/goals/new")
@@ -360,7 +360,7 @@ def goal_detail(goal_id: int, request: Request, person_id: int = Depends(identit
                    is_creator=(access == "creator"), enlaces=enlaces.enlaces_de(conn, goal_id),
                    apps_por_enlazar=enlaces.apps_por_enlazar(conn, goal_id), enlace_error_app=enlace_error_app,
                    target_text=_goal_target_text(t, defs, g), area_label=t("goals.area." + g["area"]),
-                   today=today.isoformat(), turnos=comun._turnos_on(conn, person_id))
+                   today=today.isoformat(), turnos=db.trabaja_turnos_si(conn, person_id))
 
 
 def _require_creator(conn, goal_id: int, person_id: int) -> None:

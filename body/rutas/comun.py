@@ -122,14 +122,6 @@ def _short_date(t: T, d: date) -> str:
     return f"{d.day} {t('date.months')[d.month - 1][:3]} {d.year}"
 
 
-def _turnos_on(conn, person_id: int) -> bool:
-    """Whether every shift surface (BODY-TURNOS-OPCIONAL-3) shows for this person -- the nav tab, Hoy's
-    card, Día's block line, Historial's por-tipo card, Tendencias' night shading, /shifts, Ayuda's
-    chapter, and the assistant's shift tools. NULL (not answered) and False both hide it; only True
-    shows it, computed once per request from the one predicate db.trabaja_turnos_si."""
-    return db.trabaja_turnos_si(conn, person_id)
-
-
 UNITS = {"bpm": "unit.bpm", "ms": "unit.ms", "pts": "unit.pts", "steps": "unit.steps", "kcal": "unit.kcal",
          "brpm": "unit.brpm", "ml/kg/min": "unit.ml_kg_min", "years": "unit.years"}
 OF_100 = {"readiness", "stress_avg", "body_battery_high", "body_battery_low", "body_battery_wake", "sleep_score"}
@@ -165,11 +157,26 @@ def _fig_unit(t: T, key: str, v, defs: dict) -> str:
 
 
 def _defs(conn) -> dict[str, dict]:
-    """BODY-WEB-ESTRUCTURA-4: the canonical definition. web.py keeps its own `_defs` as a thin
-    wrapper over this one -- not moved outright, because tests/test_history.py:194,287 (outside
-    this slice's `touches:`) read `web._defs(conn)` directly, and this slice's grant does not
-    widen scope to that file."""
+    """BODY-WEB-ESTRUCTURA-4: the canonical definition, reached everywhere as comun._defs(conn)."""
     return {r["key"]: dict(r) for r in conn.execute("SELECT * FROM metric_def ORDER BY rowid")}
+
+
+# BODY-WEB-ESTRUCTURA-6: _GRUPOS_EXTRA is set once by body/web.py, right after it defines its own
+# TREND_GROUPS -- the "Ver todas las medidas" catalogue (DESIGN rule 8) stays web.py's own data,
+# never moved here, because tests/test_tendencias_todas.py (outside this slice's `touches:`) reads
+# `web.TREND_GROUPS` directly. But Turnos' own cost-row hrefs (body/rutas/turnos.py's
+# `_turnos_filas`, BODY-TURNOS-ENLACES-1) need the exact same "does this key live behind the extra
+# accordion" check that web.py's `_tendencias_href` already uses, read from the one catalogue, not
+# duplicated (tests/test_turnos_enlaces.py's own docstring) -- so web.py hands its list over here
+# once, at import time, the same way its _CaminoActualMiddleware hands over _RUTA_ACTUAL above.
+_GRUPOS_EXTRA: list[tuple[str, list[str]]] = []
+
+
+def _es_extra_metric(key: str) -> bool:
+    """Whether `key` lives behind "Ver todas las medidas" on Tendencias -- called from body/web.py's
+    Día domain (_tendencias_href) and from Turnos (body/rutas/turnos.py's _turnos_filas), so it
+    lives here rather than with either (BODY-WEB-ESTRUCTURA-6)."""
+    return any(key in keys for _, keys in _GRUPOS_EXTRA)
 
 
 async def _form(request: Request) -> dict:
