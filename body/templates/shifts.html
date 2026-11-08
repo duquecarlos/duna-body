@@ -6,14 +6,14 @@
 {% if many %}
 <div class="card">
   <div class="badge">{{ t('shifts.confirm_badge') }}</div>
-  <p class="read" style="margin-top:6px">{{ t('shifts.confirm_summary_many', n=batches|length, from=summary_from, to=summary_to, days=summary_days, nights=summary_nights) }}</p>
+  <p class="read" style="margin-top:6px">{{ t('shifts.confirm_summary_many_mixed' if many_mixed else 'shifts.confirm_summary_many', n=batches|length, from=summary_from, to=summary_to, days=summary_days, nights=summary_nights) }}</p>
   <div class="confirm-actions">
     <form method="post" action="/shifts/confirm-all">
       <button type="submit" class="btn on">{{ t('shifts.confirm_all_btn') }}</button>
     </form>
   </div>
   <details class="files" style="margin-top:10px">
-    <summary class="k">{{ t('shifts.per_file') }}</summary>
+    <summary class="k">{{ t('shifts.per_file_mixed' if many_mixed else 'shifts.per_file') }}</summary>
     {% for b in batches %}
     <div class="card" style="margin-top:8px">
       {% if b.batch.kind == 'pattern' %}

@@ -191,9 +191,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_shift_batch_item_slot
 
 -- One row per person: the hand-entered repeating cycle (slice 5 expands it into proposed
 -- shift_batch rows, the same propose-then-confirm flow as a file import). `cycle` is a JSON array
--- of {"kind", "start_local", "end_local"} entries, one per day of the cycle; `kind` is from the
+-- of {"kind", "start", "end"} entries, one per day of the cycle; `kind` is from the
 -- same vocabulary as shift.kind -- 'morning', 'afternoon', 'night', 'day', 'off', 'other'
--- (body/shift_import.py's VALID_KINDS). No parser/validator for `cycle` here; slice 5 owns it.
+-- (body/shift_import.py's VALID_KINDS); `start`/`end` are "HH:MM" strings, null on an `off` day.
+-- Validated and expanded by body/patron_turnos.py.
 CREATE TABLE IF NOT EXISTS shift_pattern (
     person_id     INTEGER PRIMARY KEY REFERENCES person(id),
     start_day     TEXT NOT NULL,

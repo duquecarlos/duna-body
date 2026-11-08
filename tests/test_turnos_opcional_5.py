@@ -393,5 +393,57 @@ class FormRenderTest(unittest.TestCase):
         )
 
 
+# ============================================================================================
+# Web: /shifts combined card wording (BODY-TURNOS-OPCIONAL-5-M)
+# ============================================================================================
+
+class CombinedCardWordingTest(unittest.TestCase):
+    client = TestClient(web.app, follow_redirects=False)
+
+    def setUp(self):
+        self.conn = _fresh_conn(self)
+        db.set_trabaja_turnos(self.conn, True, 1)
+        self.conn.commit()
+        self.addCleanup(web.app.dependency_overrides.clear)
+        _as(1)
+
+    def test_mixed_batches_show_new_wording_es(self):
+        shift_import.propose(self.conn, Path(__file__).parent / "fixtures" / "turnos-demo-a.json", 1)
+        patron_turnos.guardar(self.conn, 1, "2026-01-01", NIGHT_OFF_CYCLE, 1)
+        patron_turnos.proponer(self.conn, 1, date(2026, 1, 1))
+        page = self.client.get("/shifts").text
+        self.assertIn("Tienes", page)
+        self.assertIn("propuestas de turnos", page)
+        self.assertIn("Ver una por una", page)
+        self.assertNotIn("Ver archivo por archivo", page)
+
+    def test_mixed_batches_show_new_wording_en(self):
+        db.set_language(self.conn, "en", 1)
+        self.conn.commit()
+        shift_import.propose(self.conn, Path(__file__).parent / "fixtures" / "turnos-demo-a.json", 1)
+        patron_turnos.guardar(self.conn, 1, "2026-01-01", NIGHT_OFF_CYCLE, 1)
+        patron_turnos.proponer(self.conn, 1, date(2026, 1, 1))
+        page = self.client.get("/shifts").text
+        self.assertIn("shift proposals waiting", page)
+        self.assertIn("See one by one", page)
+        self.assertNotIn("shift files arrived", page)
+        self.assertNotIn("See file by file", page)
+
+    def test_all_import_batches_keep_old_wording(self):
+        shift_import.propose(self.conn, Path(__file__).parent / "fixtures" / "turnos-demo-a.json", 1)
+        shift_import.propose(self.conn, Path(__file__).parent / "fixtures" / "turnos-demo-b.json", 1)
+        page = self.client.get("/shifts").text
+        self.assertIn("Llegaron", page)
+        self.assertIn("Ver archivo por archivo", page)
+        self.assertNotIn("propuestas de turnos", page)
+        self.assertNotIn("Ver una por una", page)
+
+    def test_the_four_fixed_strings_carry_no_double_dash(self):
+        for lang in ("es", "en"):
+            t = T(lang)
+            self.assertNotIn(" -- ", t("patron.intro"))
+            self.assertNotIn(" -- ", t("patron.quitar_note"))
+
+
 if __name__ == "__main__":
     unittest.main()

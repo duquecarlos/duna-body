@@ -709,7 +709,9 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
              "preview": _patron_preview_ctx(t, shift_import.preview(conn, b["id"]))}
             for b in rows
         ]
+        many_mixed = any(b["kind"] == "pattern" for b in rows)
         return _render("shifts.html", t=t, tab="shifts", batch=None, many=True, batches=batches,
+                       many_mixed=many_mixed,
                        summary_from=t.month_year(date.fromisoformat(summary["first_day"])),
                        summary_to=t.month_year(date.fromisoformat(summary["last_day"])),
                        summary_days=summary["day_count"], summary_nights=summary["night_count"],
