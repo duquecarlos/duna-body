@@ -17,7 +17,10 @@ comes from; the Body-specific reading is in *italics*. When a new rule arrives f
    the Personal desk. Nothing is typed by hand except goals and a one-tap confirm.*
 2. **Answer first, context one step away, never deleted** (Finanzas pulido). *One hero per screen; the rest opens.*
 3. **Every figure opens what made it, with a way back** (Paridad #32, Lotes P2). *Resting HR → 30-day trend → the
-   nights behind it → that day. Back always returns to the same spot (Paridad #30).*
+   nights behind it → that day. Back always returns to the same spot (Paridad #30).* Exception (ORCH-CARLOS-DELEGATES-
+   TIER-1-1, 2026-11-08): a figure another person shared with you (Hoy «Tu hogar») is never a link, because nothing
+   of theirs sits behind it for you to open -- the row states its provenance in words instead (who shared it, that
+   it came from their watch, and the day).
 4. **Measured ≠ estimated** (Lotes/Finanzas confianza). *Watch figures solid ink. Derived ones ("días para
    recuperarte", "costo de la semana") soft, rounded, with «≈» and "cómo lo calculo".*
 5. **Your baseline, not a population norm.** *Every comparison is "vs. tu promedio de 30 días" or "vs. tus semanas

@@ -20,7 +20,7 @@
 {% if members %}
 <div class="card">
   <div class="q">{{ t('goals.household_title') }}</div>
-  {% for m in members %}<div class="row k" style="padding:4px 0">{{ m.name }}<span>{{ m.verdict }}</span></div>{% endfor %}
+  {% for m in members %}<div class="row k" style="padding:4px 0">{{ m.name }}<span class="chip {{ m.cls }}">{{ m.verdict }}</span></div>{% endfor %}
 </div>
 {% endif %}
 
@@ -51,7 +51,7 @@
       {% else %}
       <span class="boxbtn"><span class="box" style="opacity:.4;border-style:dashed"></span></span>
       {% endif %}
-      <div>{{ h.title }}{% if h.context %} <span class="chip night">{{ h.context }}</span>{% endif %}
+      <div>{{ h.title }}{% if h.context %} <span class="chip {{ h.context_cls }}">{{ h.context }}</span>{% endif %}
         {% if h.mine %}
         <div class="k">{{ h.cadence }} · {{ h.progress }}</div>
         {% else %}

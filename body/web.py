@@ -566,7 +566,7 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
             bits.append(f"{t.num(a['distance_m'] / 1000, 1)} km")
         if a["avg_hr"]:
             bits.append(f"{t.num(a['avg_hr'])} {t('unit.bpm')}")
-        acts.append({"name": a["name"] or a["type"] or "—", "detail": " · ".join(bits)})
+        acts.append({"name": _activity_name(t, a), "detail": " · ".join(bits)})
     shifts = []
     for s in data["shifts"]:
         kind = s["kind"]
@@ -1117,8 +1117,10 @@ def _dia_relativo(t: T, day: str, today_local: date) -> str:
 
 def _hogar_compartido_ctx(conn, t: T, person_id: int, defs: dict, today_local: date) -> list[dict]:
     """Hoy's «Tu hogar» card: each shared figure visible to this viewer (compartir.visibles_para),
-    the app's existing value+unit formatting, and its day as «hoy»/«ayer»/the short date -- or a
-    plain "no data" line when the owner has no value yet for it (never a guess)."""
+    the app's existing value+unit formatting, and -- DESIGN rule 3's one exception, the row is
+    never a link, since nothing of the owner's sits behind it for this viewer to open -- a plain-
+    words provenance line (who shared it, that it came from their watch, and «hoy»/«ayer»/the short
+    date) in place of one. A plain "no data" line when the owner has no value yet (never a guess)."""
     out = []
     for item in compartir.visibles_para(conn, person_id):
         sin_dato = item["value"] is None
@@ -1127,7 +1129,8 @@ def _hogar_compartido_ctx(conn, t: T, person_id: int, defs: dict, today_local: d
             "metric_label": t("metric." + item["metric_key"]),
             "sin_dato": sin_dato,
             "value_text": None if sin_dato else _fig_unit(t, item["metric_key"], item["value"], defs),
-            "day_text": None if sin_dato else _dia_relativo(t, item["day"], today_local),
+            "procedencia": None if sin_dato else t("today.hogar.procedencia", name=item["name"],
+                                                    day=_dia_relativo(t, item["day"], today_local)),
         })
     return out
 
@@ -1153,6 +1156,17 @@ def _kind_label(t: T, info: dict | None) -> str:
     if not info:
         return "—"
     return t("activity.type." + info["key"]) if info["known"] else info["fallback_label"]
+
+
+def _activity_name(t: T, a) -> str:
+    """Día's activity list (DESIGN rule 10): an unnamed activity shows its translated kind when
+    Garmin's own type code is one this app knows (the i18n map `_kind_label` reads); an unknown
+    code never prints the raw code, only a plain generic label."""
+    if a["name"]:
+        return a["name"]
+    if a["type"] in history.KNOWN_ACTIVITY_TYPES:
+        return t("activity.type." + a["type"])
+    return t("activity.generic")
 
 
 def _finding_text(t: T, defs: dict, f: dict) -> str:
@@ -1301,6 +1315,13 @@ def _context_label(t: T, context: str | None) -> str | None:
     return t("habit.context." + context) if context else None
 
 
+def _context_chip_cls(context: str | None) -> str:
+    """DESIGN rule 7: a habit's context chip borrows a shift band's own family -- before/after a
+    night shift keep the night tint (still about a night), but off_days is not a night and gets
+    the off-day family the shift band and strip already use (`.shift.off`, `.strip-cell.off`)."""
+    return "off" if context == "off_days" else "night"
+
+
 def _parse_new_habit(f: dict, prefix: str = "") -> tuple[str | None, dict | None]:
     """Reads title/times/per/context fields the same way for the goal detail's 'add a habit' form
     and goal creation's optional first-habit block (BODY-SIN-FRICCION-1, prefix='habit_' there so
@@ -1353,8 +1374,9 @@ def _today_due_habits(conn, t: T, person_id: int, today: date) -> list[dict]:
     for h in rows:
         if not _is_due_today(conn, h, person_id, today):
             continue
+        context = _habit_cadence(h).get("context")
         out.append({"id": h["id"], "title": h["title"], "goal_title": h["goal_title"],
-                    "context": _context_label(t, _habit_cadence(h).get("context")),
+                    "context": _context_label(t, context), "context_cls": _context_chip_cls(context),
                     "checked": _habit_checked(conn, h["id"], person_id, today.isoformat())})
     return out
 
@@ -1612,7 +1634,8 @@ def goal_detail(goal_id: int, request: Request, person_id: int = Depends(identit
         cadence = _habit_cadence(h)
         is_mine = h["assignee_person_id"] is None or h["assignee_person_id"] == person_id
         row = {"id": h["id"], "title": h["title"], "cadence": _cadence_text(t, cadence),
-               "context": _context_label(t, cadence.get("context")), "mine": is_mine}
+               "context": _context_label(t, cadence.get("context")),
+               "context_cls": _context_chip_cls(cadence.get("context")), "mine": is_mine}
         if is_mine:
             done, due, period = _habit_progress(conn, h, person_id, monday, today)
             if period == "month":
@@ -1644,8 +1667,9 @@ def goal_detail(goal_id: int, request: Request, person_id: int = Depends(identit
                 crow = conn.execute(
                     "SELECT * FROM goal_check WHERE goal_id = ? AND person_id = ? ORDER BY week_start DESC LIMIT 1",
                     (goal_id, mid)).fetchone()
-                _, verdict = _verdict(t, crow["on_track"] if crow else None)
-                members.append({"name": mrow["display_name"] if mrow else f"#{mid}", "verdict": verdict})
+                member_cls, verdict = _verdict(t, crow["on_track"] if crow else None)
+                members.append({"name": mrow["display_name"] if mrow else f"#{mid}", "verdict": verdict,
+                                "cls": member_cls})
         shared_line = _shared_line(conn, t, g, person_id)
 
     latest_on_track = history_rows[0]["on_track"] if history_rows else None

@@ -77,7 +77,7 @@ try{var th=localStorage.getItem('body.theme');var dark=th==='dark'||(th!=='light
 {% set tarea_ctx = tarea_en_contexto() %}
 {% if tarea_ctx %}<a class="ayuda-ctx" href="/ayuda#{{ tarea_ctx.id }}">{{ t('ayuda.como_se_hace') }}</a>{% endif %}
 {% block main %}{% endblock %}
-<p class="foot">{{ t('foot.not_medical') }} · <a href="/ayuda" style="text-decoration:underline">{{ t('nav.ayuda') }}</a>{% if tab != 'settings' %} · <a href="/settings" style="text-decoration:underline">{{ t('nav.settings') }}</a>{% endif %}{% if hosted() %} · <button type="submit" form="logout-form" style="all:unset;text-decoration:underline;cursor:pointer;color:inherit;font:inherit">{{ t('nav.logout') }}</button>{% endif %}</p>
+<p class="foot">{{ t('foot.not_medical') }} · <a href="/ayuda">{{ t('nav.ayuda') }}</a>{% if tab != 'settings' %} · <a href="/settings">{{ t('nav.settings') }}</a>{% endif %}{% if hosted() %} · <button type="submit" form="logout-form" style="all:unset;text-decoration:underline;cursor:pointer;color:inherit;font:inherit">{{ t('nav.logout') }}</button>{% endif %}</p>
 {% if hosted() %}<form id="logout-form" method="post" action="/logout" style="display:none"></form>{% endif %}
 </div></main>
 </div>

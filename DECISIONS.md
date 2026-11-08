@@ -6371,3 +6371,45 @@ app weekly file"; Unregister-ScheduledTask -TaskName "Body app web"`, then `git 
 (`"body.traer_semana"`) has the identical defect for the same reason and was failing for the same test method
 (masked by `assertIn` stopping at the first failed assertion, on line 433) -- fixed alongside it, inside the same
 `touches:` the spec already named for that file.
+
+## BODY-PULIDO-3 -- the BODY-DISENO-CENSO-2 round's 7 candidate slices, built together (2026-11-08)
+
+Each site re-found in the code (static census words below are what the code actually held, not a restatement):
+
+**1. NAV-GLOBAL-2 (rule 11, 44px tap targets).** Five sites, none reaching 44px before this slice:
+- `base.html`'s in-context help door: `<a class="ayuda-ctx" href="/ayuda#{{ tarea_ctx.id }}">{{ t('ayuda.como_se_hace') }}</a>` -- a `display:block;text-align:right` row with no `min-height`.
+- `base.html`'s two `.foot` links (Ayuda, Ajustes): `<a href="/ayuda" style="text-decoration:underline">...</a>` / `<a href="/settings" style="text-decoration:underline">...</a>` -- plain inline anchors, no tap-target sizing.
+- `trends.html`'s back-to-Tendencias link (shown inside a month drill-down): `<a href="/trends">{{ t('trends.back_hist') }}</a>` -- no class at all.
+- `history.html`'s shift-empty link: `<a href="/shifts" style="text-decoration:underline">{{ t('nav.shifts') }}</a>`.
+
+Fix: one shared rule per layout shape, reusing the existing `.taplink` class (`display:inline-flex;align-items:center;min-height:44px;text-decoration:underline`, unchanged) for the two inline-flow sites (`trends.html`'s back link and `history.html`'s shift-empty link now carry `class="taplink"`, their redundant inline underline style dropped); `.ayuda-ctx` changed from `display:block;text-align:right` to `display:flex;justify-content:flex-end;align-items:center;min-height:44px` (same right-aligned, full-width look, now 44px tall); a new `.foot a{display:inline-flex;align-items:center;min-height:44px;text-decoration:underline}` rule picks up both `.foot` links without a template change beyond dropping their now-redundant inline style. `body/static/body.css`, `body/templates/base.html`, `trends.html`, `history.html`.
+
+**2. TURNOS-SCORE-1 (rule 4, measured ≠ estimated).** `shifts.html`'s strip cell: `{% if c.score is not none %}{{ c.score }}{% else %}—{% endif %}` -- Body's own estimated readiness score, printed as a bare number, no «≈». Fix: `<span class="approx">≈</span>{{ c.score }}` in the scored branch, reusing the plain `.approx` class `day.html` already uses for its own estimated metric cards (no size modifier needed at the strip's 11px cell text) -- the same marker Hoy's hero, Como lo calculo and the strip's own hero (`shifts.hero_dias`) already carry. `body/templates/shifts.html`.
+
+**3. DIA-ACTIVIDAD-1 (rule 10, plain language).** `body/web.py`'s `day_view`: `acts.append({"name": a["name"] or a["type"] or "—", "detail": ...})` -- an unnamed activity fell back to Garmin's raw `type` code verbatim (e.g. a code with no `activity.type.*` entry would print the code itself). Fix: new `_activity_name(t, a)` helper -- a known type (`history.KNOWN_ACTIVITY_TYPES`) reads its existing `activity.type.<key>` label (the same i18n map `_kind_label` already reads for History); an unknown or missing type reads the new `activity.generic` key ("Actividad" / "Activity") instead of the code. `body/web.py`, `body/i18n/es.json`, `body/i18n/en.json`.
+
+**4. HOGAR-ENLACE-HOY-1 (rule 3's one exception, ORCH-CARLOS-DELEGATES-TIER-1-1).** `today.html`'s «Tu hogar» row already had no `<a>` (rule 3 was not literally violated -- nothing of the owner's sat behind the row), but it also carried no provenance: `<div class="k">{{ item.name }} · {{ item.metric_label }}</div>` followed by the figure and a bare day word, with no mention that the figure came from someone else's watch. Fix: `_hogar_compartido_ctx` in `body/web.py` now builds a `procedencia` sentence (new key `today.hogar.procedencia`: es "{name} compartió esto · su reloj · {day}", en "Shared by {name} · their watch · {day}") in place of the old bare `day_text`, reusing the existing `_dia_relativo` hoy/ayer/short-date helper for `{day}`; `today.html`'s row now shows the metric label, the figure, and this sentence -- still no `<a>` anywhere in the card. `docs/DESIGN.md` rule 3 gained one sentence recording the exception. `body/web.py`, `body/templates/today.html`, `body/i18n/es.json`, `body/i18n/en.json`, `docs/DESIGN.md`.
+
+**5. HABITO-CONTEXTO-1 (rule 7, shifts are the axis).** `today.html` and `goal.html` both hardcoded `<span class="chip night">{{ h.context }}</span>` for every habit context chip, including `off_days` -- a day off is not a night, but it read with the night tint. Fix: new `_context_chip_cls(context)` in `body/web.py` returns `"off"` for `off_days` and `"night"` otherwise (before_night/after_night keep the night family, per the spec); `_today_due_habits` and `goal_detail`'s habit rows now carry `context_cls` alongside the existing translated `context` label; both templates render `class="chip {{ h.context_cls }}"`. New CSS `.chip.off{background:var(--wash);color:var(--ink2)}`, reusing the same off-day family `.shift.off`/`.strip-cell.off` already use. `body/web.py`, `body/templates/today.html`, `body/templates/goal.html`, `body/static/body.css`.
+
+**6. METAS-MIEMBROS-1.** `goal_detail` in `body/web.py`: `_, verdict = _verdict(t, crow["on_track"] if crow else None)` -- the class `_verdict` returns alongside the verdict word was thrown away, so `goal.html`'s members block rendered `{{ m.name }}<span>{{ m.verdict }}</span>`, a bare uncoloured span, while the viewer's own verdict two cards above kept its `<span class="chip {{ cls }}">`. Fix: keep the class as `member_cls`, pass it through as `cls` on each member dict; `goal.html` now renders `<span class="chip {{ m.cls }}">{{ m.verdict }}</span>`, the same shape the viewer's own verdict already used. `body/web.py`, `body/templates/goal.html`.
+
+**7. AJUSTES-1 (rule 11, 44px tap targets).** Five rows in `settings.html` (Ayuda, Privacidad, Asistente, and, when hosted, Garmin and Dispositivos) wrapped a `<div class="card">` around an inner `<a class="q" style="display:block;...">` -- only the text's own line box was the link, not the card's padding around it. Fix: the `<a>` IS the card now (`<a href="/ayuda" class="card" style="display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:44px;...">`), the whole row tappable at a guaranteed 44px, the existing "→" arrow kept as the affordance, no JavaScript. `body/templates/settings.html`.
+
+**Tests**, `tests/test_pulido_3.py` (18 new): the shared CSS rules read straight from `body.css`; the five NAV-GLOBAL-2 sites rendered end to end (`.ayuda-ctx` and the two `.foot` links on an ordinary `/trends` page, the back-to-Tendencias `taplink` on a month view, the shift-empty `taplink` on History); the strip's scored cell carries `<span class="approx">≈</span>` and an unscored cell still shows a plain dash; Día's activity fallback reads a known type's translated label, never a raw unknown code, in both languages; the «Tu hogar» row states its provenance in both languages and is never inside an `<a>`; a habit's `off_days` chip gets `chip off` never `chip night`, while `before_night` keeps `chip night`; a household goal's other-member verdict renders `<span class="chip ok">En camino</span>`, never the bare `<span>` shape; the three always-visible Ajustes rows are each one `<a class="card">` carrying `min-height:44px`.
+
+**Gate**, run once on the final tree with the plain command: `.venv/Scripts/python.exe -m unittest discover tests -t
+.` -- `Ran 1179 tests in 203.230s ... FAILED (failures=1, skipped=1)` (1161 before this slice, +18 new; 1 pre-existing
+test now fails as a direct, correct consequence of fix 2 above).
+
+**GATE_RED, not fixable inside `touches:`.** `tests/test_turnos_costo.py::HeroQuestionsTest::
+test_hero_question_differs_from_rows_question_and_number_shown_once` asserts `r.text.count("≈") == 1` on the whole
+`/shifts` page, with the comment "the big figure, not repeated in the sentence below it" -- written when the strip
+cells carried no «≈» at all, so counting the whole page happened to equal counting just the hero figure. Fix 2 above
+(TURNOS-SCORE-1, required by this slice's own spec and DESIGN rule 4) now correctly marks every scored strip cell
+with the same «≈», so the same seed in that test (two five-night blocks over 140 days) now yields 32 marks on the
+page, not 1. The test's intent (the hero figure's own «≈» is not duplicated in `shifts.hero_sub`'s reading text
+below it) still holds -- the assertion is just scoped to the wrong element now that a second, correct source of
+«≈» exists on the same page by design. The one-line fix (narrow the count to the hero card's own markup, or drop the
+whole-page count and assert on the hero card's html slice instead) is in `tests/test_turnos_costo.py`, which is not
+in this slice's `touches:`, so it is not made here.
