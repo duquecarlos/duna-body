@@ -85,6 +85,27 @@ class PostRequestLogTest(unittest.TestCase):
         self.assertNotIn(SECRET_FORM_VALUE, msg)
 
 
+class RefusedCrossSiteRequestLogsOnceTest(unittest.TestCase):
+    """BODY-SEGURIDAD-1-M: SeguridadMiddleware's 403 is off the normal flow and must still reach
+    the request log -- exactly one record, status 403, never the Origin value or the query
+    string (RequestLogMiddleware now wraps SeguridadMiddleware, not the other way around)."""
+
+    def test_cross_site_post_logs_one_403_record_without_origin_or_query_string(self):
+        _reset_db(self)
+        with self.assertLogs("body.request", level="INFO") as cm:
+            r = client.post(f"/settings/language?x={SECRET_QUERY_VALUE}",
+                             headers={"Origin": "https://evil.example"})
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(len(cm.output), 1)
+        msg = _message(cm.output[0])
+        fields = msg.split()
+        self.assertEqual(fields[0], "POST")
+        self.assertEqual(fields[1], "-")  # refused before routing -- no route template to log
+        self.assertEqual(fields[2], "403")
+        self.assertNotIn("evil.example", msg)
+        self.assertNotIn(SECRET_QUERY_VALUE, msg)
+
+
 class UnmatchedRouteLogsDashTest(unittest.TestCase):
     def test_unmatched_path_logs_dash_as_template(self):
         _reset_db(self)

@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from . import cuenta, entorno, garmin_cuenta, listen
 from .identity import ConsentRequired, DispositivoNoAutorizado, DispositivoSinAlcance, LoginRequired
 from .request_log import RequestLogMiddleware
+from .seguridad import SeguridadMiddleware
 from .rutas import (ajustes, asistente, ayuda, comun, dispositivos, garmin, historial, hoy, metas,
                      privacidad as privacidad_rutas, pwa, sesion, tendencias, turnos)
 
@@ -59,6 +60,9 @@ class _CaminoActualMiddleware:
 
 
 app.add_middleware(_CaminoActualMiddleware)
+app.add_middleware(SeguridadMiddleware)
+# Added last, so outermost: a SeguridadMiddleware refusal still reaches the request log
+# (BODY-SEGURIDAD-1-M -- a cross-site attempt is off the normal flow and must be visible).
 app.add_middleware(RequestLogMiddleware)
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 app.include_router(pwa.router)

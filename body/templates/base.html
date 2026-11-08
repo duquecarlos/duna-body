@@ -50,7 +50,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="referrer" content="no-referrer">
+<!-- same-origin, not no-referrer: body/seguridad.py's Origin check for POST/PUT/PATCH/DELETE
+     refuses Origin: null, which is what no-referrer makes the browser send on our OWN forms. -->
+<meta name="referrer" content="same-origin">
 <meta name="theme-color" content="#F4F2ED">
 <title>{% block title %}{{ t('app.name') }}{% endblock %}</title>
 <script>/* theme before paint: no flash */
