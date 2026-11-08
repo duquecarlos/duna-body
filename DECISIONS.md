@@ -4900,3 +4900,17 @@ in `test_turnos_opcional_4.py`.
 
 Not merged: **AWAITING_APPROVAL** on `feat/body-turnos-opcional-4` -- the approval reason says in words to
 stop here, since what Primeros pasos lists is customer-facing.
+
+## BODY-TURNOS-OPCIONAL-4-M -- land BODY-TURNOS-OPCIONAL-4 (2026-11-07)
+
+Merge-only slice, approved by ORCH-CARLOS-DELEGATES-TIER-1-1 (merge policy A ruling: the diff holds
+customer-facing bytes -- `primeros_pasos()`'s `vincular-este-pc` listing -- but the approval reviewed it
+against `8ae3ee8` and found it exactly the ruling with no new strings and no layout change, so approved as
+built with no fixes).
+
+`main` had not moved since the branch was cut (still at `8ae3ee8`, the branch's own base), so no rebase was
+needed. Gate on the branch tip `cf73f68`, run once, foreground, exact command
+`.venv/Scripts/python.exe -m unittest discover tests -t .`: `Ran 936 tests in 118.772s ... OK (skipped=1)`
+-- 935 passed + 1 skipped, matching the spec's supplied floor exactly. Merged `--no-ff` into `main` at
+`9fee410` (merge tree `c296f7c`, equal to the branch tip's tree; diff empty). `main` is left checked out,
+clean.
