@@ -18,10 +18,10 @@ from __future__ import annotations
 import contextvars
 import json
 import sqlite3
-from datetime import date, datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import date, timedelta
 
-from .. import db, enlaces, goals, history, household, profile, readiness, shift_import, turnos_costo, tutoriales
+from .. import db, enlaces, fechas, goals, history, household, profile, readiness, shift_import, turnos_costo, \
+    tutoriales
 from ..i18n import LANGS
 from . import ajustes, propuestas
 
@@ -260,9 +260,7 @@ def _leer_ajustes(conn: sqlite3.Connection, person_id: int) -> dict:
 
 
 def _hoy_local(conn: sqlite3.Connection, person_id: int) -> str:
-    p = db.person(conn, person_id)
-    tz = ZoneInfo(p.get("timezone") or "America/Bogota")
-    return datetime.now(tz).date().isoformat()
+    return fechas.hoy_local(db.person(conn, person_id)).isoformat()
 
 
 def _proponer_meta(conn: sqlite3.Connection, person_id: int, conversacion_id: int, metric_key: str,
