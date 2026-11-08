@@ -115,6 +115,12 @@ def _render(name: str, **kw) -> HTMLResponse:
     return HTMLResponse(env.get_template(name).render(**kw))
 
 
+def _short_date(t: T, d: date) -> str:
+    """19 jun 2024 style: day, abbreviated month, year -- no weekday, unlike t.long_date. Shared by
+    two or more route domains (BODY-WEB-ESTRUCTURA-2), so it lives here rather than with any one."""
+    return f"{d.day} {t('date.months')[d.month - 1][:3]} {d.year}"
+
+
 def _turnos_on(conn, person_id: int) -> bool:
     """Whether every shift surface (BODY-TURNOS-OPCIONAL-3) shows for this person -- the nav tab, Hoy's
     card, Día's block line, Historial's por-tipo card, Tendencias' night shading, /shifts, Ayuda's
