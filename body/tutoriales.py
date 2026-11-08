@@ -129,17 +129,23 @@ def tarea_en_ruta(path: str) -> dict | None:
 
 def primeros_pasos(conn: sqlite3.Connection, person_id: int, hosted: bool) -> list[dict]:
     """The Primeros pasos checklist (tutoriales-v1 section 5.3, 7b, decision 4): each item's tick is
-    read, at call time, from data Body already has -- never a stored flag. `vincular-este-pc` is
-    local-mode-only skipped (the PC already *is* the app there). `primera-mirada-a-hoy` is done when
-    the person has signed in/consented and has data (BODY-PRIMER-DIA-1): those are the two items a
-    hosted person without a PC can complete, so `vincular-este-pc` stays its own item, ticked as
-    before, and no longer gates it."""
+    read, at call time, from data Body already has -- never a stored flag. `primera-mirada-a-hoy` is
+    done when the person has signed in/consented and has data (BODY-PRIMER-DIA-1): those are the two
+    items a hosted person without a PC can complete, so `vincular-este-pc` stays its own item, ticked
+    as before, and no longer gates it. `vincular-este-pc` is local-mode-only skipped (the PC already
+    *is* the app there) and, hosted, is listed only for a person it applies to (ruling
+    BODY-TURNOS-OPCIONAL-1: the PC-link step applies only to a person who has a file source) --
+    someone who works shifts (`db.trabaja_turnos_si`) may bring files from a PC, and someone who
+    already linked one (`dispositivo.listar` non-empty) keeps seeing the step they completed; nobody
+    else is asked to run a script (BODY-TURNOS-OPCIONAL-4)."""
     tareas = {t["id"]: t for t in catalogo()["tareas"] if t.get("onboarding")}
     inicio = privacidad.has_consented(conn, person_id) if hosted else True
     tiene_datos = conn.execute(
         "SELECT 1 FROM daily_metric WHERE person_id = ? LIMIT 1", (person_id,)
     ).fetchone() is not None
-    vinculado = bool(dispositivo.listar(conn, person_id)) if hosted else None
+    dispositivos = dispositivo.listar(conn, person_id) if hosted else []
+    vinculado = bool(dispositivos) if hosted else None
+    aplica_pc = hosted and (db.trabaja_turnos_si(conn, person_id) or bool(dispositivos))
     hecho = {
         "iniciar-sesion-y-aceptar": inicio,
         "conectar-garmin": tiene_datos,
@@ -149,7 +155,7 @@ def primeros_pasos(conn: sqlite3.Connection, person_id: int, hosted: bool) -> li
     }
     out = []
     for tid in ONBOARDING_ORDEN:
-        if tid == "vincular-este-pc" and not hosted:
+        if tid == "vincular-este-pc" and not aplica_pc:
             continue
         out.append({"id": tid, "titulo": tareas[tid]["titulo"], "hecho": hecho[tid]})
     return out
