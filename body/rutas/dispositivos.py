@@ -131,6 +131,7 @@ async def api_turnos(request: Request, person_id: int = Depends(identity.person_
 @comun._cierra_conexion
 def api_vida_semana(semana: str | None = None,
                      person_id: int = Depends(identity.person_from_device("vida:leer"))):
+    conn, person, _ = comun._ctx(person_id)
     if semana:
         try:
             monday = date.fromisoformat(semana)
@@ -139,7 +140,6 @@ def api_vida_semana(semana: str | None = None,
         if monday.weekday() != 0:
             raise HTTPException(400)
     else:
-        monday = vida_export.current_week_monday()
-    conn, _, _ = comun._ctx(person_id)
+        monday = vida_export.current_week_monday(hoy=comun._today_local(person))
     data = vida_export.week_section(conn, monday, person_id)
     return JSONResponse(data, headers={"Cache-Control": "no-store"})

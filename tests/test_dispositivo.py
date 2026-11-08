@@ -9,6 +9,7 @@ import os
 import re
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest import mock
 
@@ -16,7 +17,8 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import config, cuenta, db, dispositivo, identity, vida_export, web
+from body import config, cuenta, db, dispositivo, fechas, identity, vida_export, web
+from body.rutas import comun
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -271,7 +273,7 @@ class ApiVidaSemanaTest(DispositivoHostedTestCase):
         super().setUp()
         self.key_a = dispositivo.crear(self.conn, 1, "PC A", {"vida:leer"})
         self.key_b = dispositivo.crear(self.conn, 2, "PC B", {"vida:leer"})
-        monday = vida_export.current_week_monday()
+        monday = vida_export.current_week_monday(hoy=fechas.hoy_local({"timezone": "America/Bogota"}))
         db.set_metric(self.conn, monday.isoformat(), "resting_hr", 58.0, "garmin", 1)
         db.set_metric(self.conn, monday.isoformat(), "resting_hr", 70.0, "garmin", 2)
         self.conn.commit()
@@ -296,6 +298,21 @@ class ApiVidaSemanaTest(DispositivoHostedTestCase):
     def test_no_store_header(self):
         r = self.client.get("/api/vida/semana", headers={"Authorization": f"Bearer {self.key_a}"})
         self.assertEqual(r.headers.get("cache-control"), "no-store")
+
+
+class ApiVidaSemanaClockTest(DispositivoHostedTestCase):
+    """BODY-TIER1-LIMPIEZA-1: the default week comes from the route's own local-time clock
+    (comun._today_local, patchable like every other route's), never a bare date.today() -- the
+    defect this slice fixes. Frozen at a Sunday the person's own clock still reports, proving the
+    route honours that clock rather than some other (e.g. the server's UTC) day."""
+
+    def test_default_week_uses_the_route_clock_not_a_bare_today(self):
+        key = dispositivo.crear(self.conn, 1, "PC A", {"vida:leer"})
+        sunday = date(2026, 11, 8)
+        with mock.patch.object(comun, "_today_local", return_value=sunday):
+            r = self.client.get("/api/vida/semana", headers={"Authorization": f"Bearer {key}"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["week_start"], "2026-11-02")
 
 
 # ---- vida_export's hosted refusal -----------------------------------------------------------------

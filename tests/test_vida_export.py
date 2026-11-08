@@ -242,5 +242,18 @@ class VidaPersonTest(unittest.TestCase):
         self.assertEqual(vida_export.week_section(conn, monday, 1)["person"], vida_export.PERSON_KEY)
 
 
+class CurrentWeekMondayTest(unittest.TestCase):
+    """BODY-TIER1-LIMPIEZA-1: `hoy` is required and keyword-only -- a silent `date.today()`
+    default is a trap (ruling BODY-FECHA-FUTURA-1-M)."""
+
+    def test_hoy_is_required(self):
+        with self.assertRaises(TypeError):
+            vida_export.current_week_monday()
+
+    def test_returns_the_monday_of_hoys_week(self):
+        hoy = date(2026, 11, 8)  # a Sunday
+        self.assertEqual(vida_export.current_week_monday(hoy=hoy), date(2026, 11, 2))
+
+
 if __name__ == "__main__":
     unittest.main()
