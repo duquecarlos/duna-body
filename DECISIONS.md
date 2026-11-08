@@ -6654,3 +6654,71 @@ cross-repo contract change. `--no-ff` into `main`.
 Commits: fix `941b27727a33459274118d38d8706f9533659172`, merge `ba2bda8c0136afad8a2a92e455f5078a783d08be` (both
 pasted from `git rev-parse`, not retyped). The merge commit's tree (`e79aff64a7afbe68780f7843ddd9a2a0cd2d8cdf`) is
 identical to the branch tip's tree, so the gate above is the gate `main` now carries, not re-run after the merge.
+
+## BODY-TESTS-VELOCIDAD-2 -- the sys.modules leak at its root, and quieting the gate's cuenta prints (2026-11-08)
+
+Follow-up to `BODY-TESTS-VELOCIDAD-1`'s open follow-up `BODY-TEST-ENV-LOCAL-WEB-ATTR-RESTORE-1`.
+
+**Root cause, fixed in `tests/test_env_local_1.py::ImportarWebTest`.** `del sys.modules["body.web"]`, re-import,
+`finally: sys.modules["body.web"] = original` restored only the `sys.modules` dict entry -- never the `body`
+package's own cached `web` attribute (`sys.modules["body"].web`), which the re-import repoints at the throwaway
+module and which `from body import web` / `import body.web as x` both resolve through, not through `sys.modules`
+directly. Any module whose first `body.web` import happens after this test runs (outside a `discover`-style
+collection, where every module is already imported before any test runs) bound to the orphan. A second, latent
+leak in the same three lines: when `body.web` was NOT yet imported before the test, `original` was `None`, and the
+`finally` wrote `sys.modules["body.web"] = None` -- poisoning every later `import body.web` with an `ImportError`.
+
+Fixed with an `_AUSENTE` sentinel distinct from `None`, saving both `sys.modules.get("body.web", _AUSENTE)` and
+`getattr(sys.modules["body"], "web", _AUSENTE)` before the test body runs, and restoring both exactly in `finally`
+-- popping the `sys.modules` entry and deleting the package attribute when either was absent before, instead of
+ever writing `None` into either slot. Plain `try`/`finally`, not `patch.dict(sys.modules, ...)`: `patch.dict` only
+restores the `sys.modules` entry it is given, never the package's own attribute, so it would not have covered the
+real leak.
+
+**Guard**, new `tests/test_aislamiento_modulos.py`: runs `ImportarWebTest` through a `unittest.TextTestRunner`
+in-process (output to an `io.StringIO`, not the gate's own
+stream) and asserts afterwards that `sys.modules["body.web"] is sys.modules["body"].web` and that `import body.web`
+yields that same object, for both the present-before case (the ordinary one, every other test already relies on
+it) and the absent-before case (temporarily popping `sys.modules["body.web"]` and deleting the `body.web`
+attribute, running the guarded test, asserting both are absent again, then restoring the real module in its own
+`finally` so the rest of the suite is unaffected).
+
+**`tests/test_garmin_host.py`**: VELOCIDAD-1's `web = sys.modules["body.web"]` rebinding workaround, and its
+explanatory comment, removed -- the leak it sidestepped is fixed at the source now. Confirmed by reproduction
+below before removing it. `MfaFlowTest.setUp` still clears `web._MFA_STATE` (a test owns its own state,
+independent of why this particular leak no longer exists). Also dropped the now-unused `import sys`.
+
+**Reproduction, both green:**
+- `tests.test_agente_bucle` through `tests.test_fecha_futura_1` (sorted, 19 modules -- `test_aislamiento_modulos`
+  and `test_env_local_1` both fall inside that range on their own) then `tests.test_garmin_host`:
+  `Ran 345 tests in 33.593s ... OK (skipped=1)`.
+- `tests.test_env_local_1` first, then `tests.test_garmin_host`: `Ran 48 tests in 5.251s ... OK` (no
+  `tests/test_web.py` exists in this repository, so that third module was omitted).
+
+**Quieting the gate's cuenta prints**, `body/cuenta.py` itself unchanged. Measured first (standalone and inside a
+full `discover` run) that the four lines named in the spec's surface are stdout, buffered relative to unittest's
+own stderr-based dot/`OK` output, so they land as a trailing block after `OK` in the combined stream rather than
+"during" any one module's own output -- the spec's attribution of them to `tests/test_agente_cliente.py` does not
+hold: that module makes no `print()` call anywhere in it and produces zero extra output, alone or inside the full
+suite, before or after this slice's changes. Fixed in `tests/test_hogar_cuenta_1.py` only, the three prints that
+are reachable from today's tests, each wrapped in `contextlib.redirect_stdout` and asserted on since the print is
+each test's own subject: `SignInSyncTest.test_sign_in_still_succeeds_when_the_sync_raises` (`"cuenta: hogar sync
+failed for 1 person (RuntimeError)"`), `HourlyRefreshTest.test_network_error_keeps_the_existing_mirror`
+(`"refrescar_hogar: network error for 1 person (ConnectError)"`), and
+`NonDictClaimsTest.test_refrescar_hogar_keeps_the_mirror_when_the_answer_is_not_a_dict` (`"refrescar_hogar:
+non-dict answer for 1 person"`). The fourth line in the surface, `resolve_session`'s own
+`"resolve_session: hogar refresh failed for 1 person (...)"` at `body/cuenta.py:520`, is not reached by any test in
+this repository today: it only fires when `refrescar_hogar` itself raises past its own `httpx.HTTPError`/`ValueError`
+catch, which no current test triggers, so there was nothing to quiet or assert on. **Open follow-up**: no other
+module printed to the gate's own output in the full run below -- the gate is clean.
+
+**Gate**, run once on the final tree: `.venv/Scripts/python.exe -m unittest discover tests -t .` --
+`Ran 1194 tests in 106.546s ... OK (skipped=1)` (1191 before this slice, +3 for the three new
+`test_aislamiento_modulos.py` tests; no stray print reached the output).
+
+Merge policy A: no schema or migration change, no customer-facing bytes (every changed or added file is a test
+module), no cross-repo contract change. `--no-ff` into `main`.
+
+Commits: fix `78e1dbe06babcecbb9d272662ae01b33c291e212`, merge `1a8c7069074f8d9cddc960964df0205352ebf9e9` (both
+pasted from `git rev-parse`, not retyped). The merge commit's tree (`25c7e766ad67d69d42e0ba32b03f1ebcd664b883`) is
+identical to the branch tip's tree, so the gate above is the gate `main` now carries, not re-run after the merge.
