@@ -9252,3 +9252,148 @@ source values the prior slices recorded; the merge checkout rewrote nothing.
 No password, token, session secret or real health figure was read, printed, stored or logged by
 this slice. `git status --porcelain` is empty on `main` at the merge commit, before this ledger
 entry's own commit.
+
+## BODY-RENDIMIENTO-1 -- the schema is made ready once per process per DB file, not on every request
+
+Stage one of `BODY-RENDIMIENTO-OBS-1` (OBSERVED, base `cc38a840060a6d77c026734e02eb0217bbff53a9`), which measured
+`db.init(conn)` running on every one of 7 per-request call sites: `identity.py:54`
+(`current_person_id`), `identity.py:87` (`person_from_device`), `rutas/comun.py:87` (`_ctx`),
+`rutas/sesion.py:46,61,90,116` -- the five guarded migrations, `executescript(SCHEMA)` (48
+`CREATE ... IF NOT EXISTS`), `_migrate`, a 48-row `METRIC_DEFS` upsert and an `INSERT OR IGNORE`
+of person 1, then a `COMMIT`, on two connections, every page view.
+
+**The fix.** `body/db.py` gained `ensure_ready(conn)`: runs `init(conn)` the first time this
+process meets a DB file, a no-op after. Keyed on `(resolved_path, os.stat(path).st_ino)` -- the
+file's identity, read from `PRAGMA database_list` plus `os.stat` -- not on the `Connection` object
+or the path string alone, so a test that points `config.DB_PATH` at a fresh temp dir, or deletes
+and recreates the file, gets a new key and is made ready again even from the same process (proven:
+`os.stat().st_ino` differs after delete+recreate on this NTFS volume, measured directly). Guarded
+by one `threading.Lock` held across the whole check-then-init-then-mark sequence (routes run in a
+threadpool, and `CREATE TABLE IF NOT EXISTS` plus the upserts are idempotent, but serializing the
+rare first touch is simpler than reasoning about two concurrent `init()` runs). All 7 per-request
+sites now call `ensure_ready`, never `init` directly; `init` itself is unchanged and keeps its 6
+CLI callers (precios, demo, pull, shift_import, vida_export, vincular_cuenta) untouched, each
+already calling it once per process.
+
+**Before -> after, measured on this slice's own populated fixture** (`demo._seed(dias=30)` + one
+assistant conversation), with `tests._rutas.contar_sql` tracing every connection the app opens:
+
+- **Before** (proven by temporarily reverting the 3 call sites back to `db.init(conn)` and running
+  `tests/test_get_sin_escritura.py`'s new statement-level assertion against that reverted tree,
+  then restoring the fix -- see "the guard" below): every one of the 20 non-404 GET routes ran 86
+  write statements per request (43 for the 3 routes that 404 before reaching a screen in local
+  mode but still open a connection) -- `init()`'s own migrations/schema/upserts, every time,
+  regardless of the route's own work.
+- **After**: 0 write statements on every GET route (see the ceilings table below for the full
+  per-route statement/connection count). No route opens more than 2 connections; most open 2
+  (`comun._ctx`'s connection plus `identity.current_person_id`'s own), a few 404 before opening a
+  second.
+
+**busy_timeout.** `db.connect()` now sets `PRAGMA busy_timeout = 5000` right after
+`PRAGMA foreign_keys = ON`: a reader that collides with the daily pull's or the assistant's write
+used to fail at once (SQLite's default busy behaviour); it now waits up to 5s for the writer to
+finish. Stores nothing in the database file -- not a journal-mode change (`BODY-RENDIMIENTO-WAL-1`,
+below, is the journal-mode question, deliberately not touched here).
+
+**Local person after a deletion.** `/privacidad/borrar` (`body/rutas/privacidad.py`'s
+`privacidad_borrar`) carries no `cuenta.hosted()` gate, unlike the consent routes right above it in
+the same file -- local mode CAN reach it, and `privacidad.delete_person` ends with
+`DELETE FROM person WHERE id = ?`. Before this slice, the NEXT request's unconditional `db.init(conn)`
+silently re-created person 1 (`INSERT OR IGNORE INTO person ...`) before anything else ran, so the
+gap was invisible. With `ensure_ready` making the schema ready only once, nothing would otherwise
+notice person 1 is gone. Fixed in `db.local_person_id` (`body/db.py`): a `SELECT` first, an
+`INSERT OR IGNORE` only when absent, so the normal path (the row already exists) writes nothing.
+Pinned by `tests/test_privacidad.py`'s `LocalPersonRecreatedAfterDeleteTest`: GET `/` works, POST
+`/privacidad/borrar` with the confirmation word deletes person 1, GET `/` works again and person 1
+exists again. Proven to bite: reverting `local_person_id` to its old one-line body and re-running
+this test gave `AssertionError: 500 != 200` on the second GET `/`; restoring the fix made it pass
+again.
+
+**The guard, widened to the statement level** (`tests/test_get_sin_escritura.py`). Content-dump
+comparison alone cannot see a write that leaves every row unchanged -- `init()`'s own
+`INSERT OR IGNORE`/upsert statements did exactly that on every request before this slice, invisible
+to the old guard's `_dump()` compare. `tests/_rutas.py` gained `contar_sql()`: wraps
+`sqlite3.connect` for its duration (the only way the app reaches it is through `body.db.connect`),
+traces every connection with `set_trace_callback`, and counts statements whose verb is INSERT,
+UPDATE, DELETE, REPLACE, CREATE, ALTER or DROP, plus a COMMIT that followed one. The sweep now
+calls `db.ensure_ready` (not `db.init`) in its fixture, so first-touch setup is made ready BEFORE
+the sweep starts and is never counted as a route's own write; each route call is wrapped in its own
+`contar_sql()` so counts never leak between routes. Both the old content-dump compare and the new
+statement-count assertion are kept (`before != after` and `stats["writes"]`), against the same
+`_ALLOWED_WRITE_PATHS` allow-list (`/login`, `/login/cuenta/start`, inert in local mode).
+**Bite proof**: with the 3 call sites temporarily reverted to `db.init(conn)` (db.py's
+`ensure_ready`/`busy_timeout`/`local_person_id` left as this slice leaves them -- irrelevant to
+this proof, since the reverted routes never call `ensure_ready` at all), the new assertion failed
+with 20 offending routes, each showing a non-zero write count: `/ayuda`, `/privacidad/consentimiento`
+(404, 43), `/privacidad`, `/privacidad/exportar`, `/ajustes/dispositivos` (404, 43), `/settings`,
+`/ajustes/asistente`, `/asistente/conversacion/{conversacion_id}`, `/goals`, `/goals/new`,
+`/goals/{goal_id}`, `/shifts`, `/shifts/como`, `/shifts/patron`, `/`, `/how/{day}`, `/day/{day}`,
+`/trends`, `/history`, `/garmin` (404, 43) -- every other route ran 86 writes. Restoring the fix
+made the assertion pass (0 writes on every route); full output of both runs is in this session's
+transcript, not pasted here (no health figure in either -- these are statement counts only).
+
+**A cost ceiling** (new file, `tests/test_rendimiento.py`). Reuses `tests._rutas.contar_sql` and
+`rutas_planas`; its own `_reset_db`/`_seed`/`_fill` mirror the GET guard's fixture (same
+`demo._seed(dias=30, idioma="es")` + one conversation, no real figure). For every GET route,
+measured statements and connections per request on that fixture, right after this slice's fix,
+then set each ceiling to the measured value plus headroom (so a small, legitimate change to a
+route does not make the test flaky). Non-vacuous: asserts the app's whole GET-route path set
+equals the ceiling table's key set, not just a count match.
+
+| route | measured statements | ceiling | connections |
+|---|---|---|---|
+| `/` | 55 | 75 | 2 |
+| `/ajustes/asistente` | 11 | 16 | 2 |
+| `/ajustes/dispositivos` (404, local mode) | 4 | 9 | 1 |
+| `/api/vida/semana` (404) | 0 | 3 | 0 |
+| `/asistente/conversacion/{conversacion_id}` | 12 | 17 | 2 |
+| `/ayuda` | 10 | 15 | 2 |
+| `/day/{day}` | 34 | 45 | 2 |
+| `/garmin` (404, local mode) | 4 | 9 | 1 |
+| `/goals` | 30 | 40 | 2 |
+| `/goals/new` | 37 | 48 | 2 |
+| `/goals/{goal_id}` | 25 | 33 | 2 |
+| `/healthz` | 0 | 3 | 0 |
+| `/history` | 22 | 29 | 2 |
+| `/how/{day}` | 16 | 21 | 2 |
+| `/login` (404, local mode) | 0 | 3 | 0 |
+| `/login/cuenta/callback` (404, local mode) | 0 | 3 | 0 |
+| `/login/cuenta/start` (404, local mode) | 0 | 3 | 0 |
+| `/privacidad` | 11 | 16 | 2 |
+| `/privacidad/consentimiento` (404, local mode) | 4 | 9 | 1 |
+| `/privacidad/exportar` | 33 | 43 | 2 |
+| `/settings` | 18 | 24 | 2 |
+| `/shifts` | 307 | 400 (own ceiling -- see below) | 2 |
+| `/shifts/como` | 35 | 46 | 2 |
+| `/shifts/patron` | 11 | 16 | 2 |
+| `/sw.js` | 0 | 3 | 0 |
+| `/trends` | 39 | 51 | 2 |
+
+`/shifts` keeps its own, much higher ceiling (307 measured, 400 ceiling) with a comment naming
+`BODY-RENDIMIENTO-2`: it builds a DayData-shaped row per day in its window, a per-day cost this
+slice's spec named out of scope and did not touch. Every route measured opens at most 2
+connections; the test also asserts no route exceeds 2 as a flat rule (not a measured-plus-margin
+figure, since the approval reason states it directly).
+
+**Not done: BODY-RENDIMIENTO-WAL-1 (WAL journal mode).** The approval reason for this slice names
+it explicitly as out of scope: WAL persistently changes the real DB file's journal mode and adds
+files beside it (`-wal`, `-shm`) on Carlos's own machine, a change this slice's spec reserves for
+its own decision rather than bundling it with a purely in-process memo and a busy-wait pragma, both
+of which store nothing in the file.
+
+**Gate**, once, foreground, on the tree that became the slice commit (no edit happened between the
+run and the commit): `.venv/Scripts/python.exe -m unittest discover tests -t .` --
+`Ran 1322 tests in 163.009s ... OK (skipped=1)`.
+
+**Merge.** `git merge --no-ff feat/body-rendimiento-1` onto `main` (prior tip
+`cc38a840060a6d77c026734e02eb0217bbff53a9`), producing merge commit `054c3ad3459443383a871fd1f8ba9d5b6c7d28d5`.
+The merge tree and the branch tree are the same tree -- `HEAD^{tree}` and
+`feat/body-rendimiento-1^{tree}` both equal `20a87b3cf3df3ba2dc211bd2797d9d5e08e1fc74`, so the diff
+between them is empty and no checkout step altered a byte; the gate above, run on the slice commit
+`e66c84daaf7665393878458c7716d96e626761de` whose tree is this same tree, stands for the merge
+without a second run.
+
+No password, token, session secret or real health figure was read, printed, stored or logged by
+this slice -- every figure above is a statement or connection count, never a health value.
+`git status --porcelain` is empty on `main` at the merge commit, before this ledger entry's own
+commit.
