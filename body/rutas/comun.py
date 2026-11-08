@@ -129,6 +129,48 @@ def _turnos_on(conn, person_id: int) -> bool:
     return db.trabaja_turnos_si(conn, person_id)
 
 
+UNITS = {"bpm": "unit.bpm", "ms": "unit.ms", "pts": "unit.pts", "steps": "unit.steps", "kcal": "unit.kcal",
+         "brpm": "unit.brpm", "ml/kg/min": "unit.ml_kg_min", "years": "unit.years"}
+OF_100 = {"readiness", "stress_avg", "body_battery_high", "body_battery_low", "body_battery_wake", "sleep_score"}
+
+
+def _is_minutes(key: str) -> bool:
+    return key.endswith("_min") or key == "sleep_minutes"
+
+
+def _value(t: T, key: str, v) -> str:
+    if v is None:
+        return "—"
+    return t.minutes(v) if _is_minutes(key) else t.num(v)
+
+
+def _unit(t: T, d: dict) -> str:
+    if d["key"] in OF_100:
+        return t("unit.of100")
+    if _is_minutes(d["key"]):
+        return ""
+    return t(UNITS[d["unit"]]) if d["unit"] in UNITS else d["unit"]
+
+
+def _fig_unit(t: T, key: str, v, defs: dict) -> str:
+    """BODY-WEB-ESTRUCTURA-4: moved here with _value/_unit/_is_minutes/UNITS/OF_100 -- called by
+    two or more domains still in web.py (goals, history/trends) as well as by the asistente domain
+    moved out in this slice, so two-or-more-domains puts the whole cluster in comun.py."""
+    val = _value(t, key, v)
+    if val == "—":
+        return val
+    u = _unit(t, defs[key])
+    return f"{val} {u}" if u else val
+
+
+def _defs(conn) -> dict[str, dict]:
+    """BODY-WEB-ESTRUCTURA-4: the canonical definition. web.py keeps its own `_defs` as a thin
+    wrapper over this one -- not moved outright, because tests/test_history.py:194,287 (outside
+    this slice's `touches:`) read `web._defs(conn)` directly, and this slice's grant does not
+    widen scope to that file."""
+    return {r["key"]: dict(r) for r in conn.execute("SELECT * FROM metric_def ORDER BY rowid")}
+
+
 async def _form(request: Request) -> dict:
     return {k: v[0] for k, v in parse_qs((await request.body()).decode()).items()}
 

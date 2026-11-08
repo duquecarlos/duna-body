@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, quote
 from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup
@@ -32,19 +32,12 @@ from markupsafe import Markup
 from . import (compartir, cuenta, db, enlaces, entorno, fechas, garmin_adapter, garmin_cuenta, goals,
                history, household, identity, listen, patron_turnos, profile, readiness, shift_import,
                turnos_costo, tutoriales)
-from .agente import ajustes as agente_ajustes
-from .agente import bucle as agente_bucle
-from .agente import cliente as agente_cliente
-from .agente import conversacion as agente_conversacion
-from .agente import herramientas as agente_herramientas
-from .agente import propuestas as agente_propuestas
-from .agente import uso as agente_uso
 from .baselines import baseline
 from .i18n import DEFAULT as DEFAULT_LANG
-from .i18n import LANGS, T
+from .i18n import T
 from .identity import ConsentRequired, DispositivoNoAutorizado, DispositivoSinAlcance, LoginRequired
 from .request_log import RequestLogMiddleware
-from .rutas import ayuda, comun, dispositivos, privacidad as privacidad_rutas
+from .rutas import ajustes, asistente, ayuda, comun, dispositivos, privacidad as privacidad_rutas
 
 HERE = Path(__file__).parent
 
@@ -84,6 +77,8 @@ app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 app.include_router(ayuda.router)
 app.include_router(privacidad_rutas.router)
 app.include_router(dispositivos.router)
+app.include_router(ajustes.router)
+app.include_router(asistente.router)
 
 
 @app.exception_handler(LoginRequired)
@@ -122,9 +117,6 @@ _CUENTA_DOWN_TEMPLATE = comun.env.from_string(
 def _cuenta_down_page() -> HTMLResponse:
     return HTMLResponse(_CUENTA_DOWN_TEMPLATE.render(t=T(DEFAULT_LANG), tab=None))
 
-UNITS = {"bpm": "unit.bpm", "ms": "unit.ms", "pts": "unit.pts", "steps": "unit.steps", "kcal": "unit.kcal",
-         "brpm": "unit.brpm", "ml/kg/min": "unit.ml_kg_min", "years": "unit.years"}
-OF_100 = {"readiness", "stress_avg", "body_battery_high", "body_battery_low", "body_battery_wake", "sleep_score"}
 TODAY_CARDS = ["sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake"]
 STAGES = [("sleep_deep_min", "metric.sleep_deep_min", "var(--night)"),
           ("sleep_light_min", "metric.sleep_light_min", "color-mix(in srgb, var(--night) 45%, var(--card))"),
@@ -137,25 +129,10 @@ def _week_monday(d: date) -> date:
 
 
 def _defs(conn) -> dict[str, dict]:
-    return {r["key"]: dict(r) for r in conn.execute("SELECT * FROM metric_def ORDER BY rowid")}
-
-
-def _is_minutes(key: str) -> bool:
-    return key.endswith("_min") or key == "sleep_minutes"
-
-
-def _value(t: T, key: str, v) -> str:
-    if v is None:
-        return "—"
-    return t.minutes(v) if _is_minutes(key) else t.num(v)
-
-
-def _unit(t: T, d: dict) -> str:
-    if d["key"] in OF_100:
-        return t("unit.of100")
-    if _is_minutes(d["key"]):
-        return ""
-    return t(UNITS[d["unit"]]) if d["unit"] in UNITS else d["unit"]
+    """BODY-WEB-ESTRUCTURA-4: kept as a thin wrapper over comun._defs, the new canonical definition
+    moved there -- tests/test_history.py:194,287 (outside this slice's touches) read web._defs(conn)
+    directly, so the name stays here rather than being deleted."""
+    return comun._defs(conn)
 
 
 def _delta(conn, t: T, d: dict, day: str, v, person_id: int) -> tuple[str, str]:
@@ -170,7 +147,7 @@ def _delta(conn, t: T, d: dict, day: str, v, person_id: int) -> tuple[str, str]:
     if z is None or abs(z) < 0.5:
         return t("delta.same"), "flat"
     arrow = "↑" if diff > 0 else "↓"
-    amount = t.minutes(abs(diff)) if _is_minutes(d["key"]) else t.num(abs(diff))
+    amount = t.minutes(abs(diff)) if comun._is_minutes(d["key"]) else t.num(abs(diff))
     better = d["better"]
     cls = "flat" if better == "neutral" else ("good" if (diff > 0) == (better == "higher") else "bad")
     return f"{arrow} {amount} {t('delta.vs')}", cls
@@ -385,8 +362,8 @@ def today(person_id: int = Depends(identity.current_person_id)):
     for k in TODAY_CARDS:
         v = vals.get(k)
         delta, cls = _delta(conn, t, defs[k], day, v, person_id)
-        cards.append({"key": k, "label": t("metric." + k), "value": _value(t, k, v),
-                      "unit": _unit(t, defs[k]) if v is not None else "", "delta": delta, "cls": cls})
+        cards.append({"key": k, "label": t("metric." + k), "value": comun._value(t, k, v),
+                      "unit": comun._unit(t, defs[k]) if v is not None else "", "delta": delta, "cls": cls})
     return comun._render("today.html", t=t, tab="today", day=day, date_long=t.long_date(date.fromisoformat(day)),
                    synced=_synced(conn, person), r=r, reading=_reading(t, r), ready_avg=ready_avg,
                    ready_delta=ready_delta, ready_cls=ready_cls, cards=cards,
@@ -446,8 +423,8 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
         v = vals.get(k)
         delta, cls = _delta(conn, t, df, key, v, person_id)
         href = _tendencias_href(k, "dia", key, today_local) if v is not None else None
-        cards.append({"key": k, "label": t("metric." + k), "value": _value(t, k, v), "raw": v,
-                      "unit": _unit(t, df), "delta": delta, "cls": cls, "est": df["kind"] == "estimated",
+        cards.append({"key": k, "label": t("metric." + k), "value": comun._value(t, k, v), "raw": v,
+                      "unit": comun._unit(t, df), "delta": delta, "cls": cls, "est": df["kind"] == "estimated",
                       "href": href})
     sleep = None
     if vals.get("sleep_minutes") is not None:
@@ -544,8 +521,8 @@ def _turnos_filas(t: T, defs: dict, resumen: dict) -> list[dict]:
             continue
         diff, palabra = turnos_costo.diferencia_y_palabra(key, v)
         sign = "+" if diff >= 0 else "−"
-        amount = t.minutes(abs(diff)) if _is_minutes(key) else t.num(abs(diff), 1)
-        unit = _unit(t, d)
+        amount = t.minutes(abs(diff)) if comun._is_minutes(key) else t.num(abs(diff), 1)
+        unit = comun._unit(t, d)
         href = f"/trends?r=90&desde=turnos{'&todas=1' if _es_extra_metric(key) else ''}#{key}"
         filas.append({"label": t("metric." + key), "sub": t("shifts.cost_sub." + key),
                      "value": f"{sign}{amount}" + (f" {unit}" if unit else ""),
@@ -853,7 +830,7 @@ def _compare(t: T, k: str, d: dict, value, ref, spread: float, vs_key: str) -> t
     diff = value - ref
     if abs(diff) < (spread or 1) * 0.15:
         return t("delta.same"), "flat"
-    amount = t.minutes(abs(diff)) if _is_minutes(k) else t.num(abs(diff))
+    amount = t.minutes(abs(diff)) if comun._is_minutes(k) else t.num(abs(diff))
     cls = "flat" if d["better"] == "neutral" else ("good" if (diff > 0) == (d["better"] == "higher") else "bad")
     return f"{'↑' if diff > 0 else '↓'} {amount} {t(vs_key)}", cls
 
@@ -872,7 +849,7 @@ def _trend_card(conn, t: T, defs: dict, k: str, start, end, month, nights, perso
     d = defs[k]
     spread = p.high - p.low
     metric_label = t("metric." + k)
-    valor_fmt = lambda v: _fig_unit(t, k, v, defs)
+    valor_fmt = lambda v: comun._fig_unit(t, k, v, defs)
     if start:
         w = profile.window(conn, k, start, end, person_id)
         if month:
@@ -891,8 +868,8 @@ def _trend_card(conn, t: T, defs: dict, k: str, start, end, month, nights, perso
         fig, svg = p.last30, profile.month_svg(p, etiqueta_mes=etiqueta_mes, aria_label=aria,
                                                valor_fmt=valor_fmt, link_label=t("trends.chart_open_month"))
     card = {"key": k, "question": t("trends.q." + k), "est": d["kind"] == "estimated",
-            "last30": _value(t, k, fig), "unit": _unit(t, d) if fig is not None else "", "delta": delta,
-            "cls": cls, "svg": svg, "low": _value(t, k, p.low), "high": _value(t, k, p.high),
+            "last30": comun._value(t, k, fig), "unit": comun._unit(t, d) if fig is not None else "", "delta": delta,
+            "cls": cls, "svg": svg, "low": comun._value(t, k, p.low), "high": comun._value(t, k, p.high),
             "sparse": k in SPARSE_KEYS, "subtitle": None}
     return card, p
 
@@ -983,8 +960,8 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
             worse = max if defs[k]["better"] == "lower" else min
             present = [v for v in wd if v is not None]
             spread = max(present) - min(present)
-            mark = wd.index(worse(present)) if spread >= (1 if not _is_minutes(k) else 5) else -1
-            cols.append([{"text": _value(t, k, v), "mark": i == mark} for i, v in enumerate(wd)])
+            mark = wd.index(worse(present)) if spread >= (1 if not comun._is_minutes(k) else 5) else -1
+            cols.append([{"text": comun._value(t, k, v), "mark": i == mark} for i, v in enumerate(wd)])
         week = {"heads": [t("trends.short." + k) for k in WEEK_KEYS],
                 "rows": [{"day": t("date.days")[i][:3].capitalize(), "vals": [c[i] for c in cols]} for i in range(7)]}
     all_days = db.days_with_data(conn, person_id)
@@ -1026,7 +1003,7 @@ def _hogar_compartido_ctx(conn, t: T, person_id: int, defs: dict, today_local: d
             "name": item["name"],
             "metric_label": t("metric." + item["metric_key"]),
             "sin_dato": sin_dato,
-            "value_text": None if sin_dato else _fig_unit(t, item["metric_key"], item["value"], defs),
+            "value_text": None if sin_dato else comun._fig_unit(t, item["metric_key"], item["value"], defs),
             "procedencia": None if sin_dato else t("today.hogar.procedencia", name=item["name"],
                                                     day=_dia_relativo(t, item["day"], today_local)),
         })
@@ -1072,8 +1049,8 @@ def _finding_text(t: T, defs: dict, f: dict) -> str:
     mid-sentence) and the direction said from `better` -- a "lower is better" metric reads worst where it
     runs highest, a "higher is better" metric reads worst where it runs lowest."""
     metric = t("metric." + f["metric"] + ".sentence")
-    value = _value(t, f["metric"], f["value"])
-    unit = _unit(t, defs[f["metric"]])
+    value = comun._value(t, f["metric"], f["value"])
+    unit = comun._unit(t, defs[f["metric"]])
     better = defs[f["metric"]]["better"]
     key = f"history.find.{f['axis']}_better_{better}"
     if f["axis"] == "weekday":
@@ -1135,7 +1112,7 @@ def _pattern_rows(t: T, defs: dict, pat: dict) -> dict | None:
         vals = []
         for k in present:
             b = pat["metrics"][k][axis][idx]
-            vals.append({"text": _value(t, k, b["center"]) if b else "—", "mark": (k, axis, idx) in marks})
+            vals.append({"text": comun._value(t, k, b["center"]) if b else "—", "mark": (k, axis, idx) in marks})
         return {"label": label, "vals": vals}
 
     return {"heads": [t("trends.short." + k) for k in present],
@@ -1148,8 +1125,8 @@ def _shift_ctx(t: T, defs: dict, shift_data: dict) -> dict:
         return {"has_shifts": False}
     kinds = []
     for row in shift_data["kinds"]:
-        metrics = [{"label": t("metric." + k), "value": _value(t, k, row["metrics"].get(k)),
-                    "unit": _unit(t, defs[k]) if row["metrics"].get(k) is not None else ""}
+        metrics = [{"label": t("metric." + k), "value": comun._value(t, k, row["metrics"].get(k)),
+                    "unit": comun._unit(t, defs[k]) if row["metrics"].get(k) is not None else ""}
                    for k in history.PATTERN_KEYS]
         kinds.append({"kind": row["kind"], "kind_label": t("shift.kind." + row["kind"]),
                       "days": t("history.days_count", n=t.num(row["days"])), "metrics": metrics})
@@ -1190,14 +1167,6 @@ AREAS = ["body", "money", "adventure", "growth", "work", "home"]
 DIRECTIONS = ["raise", "lower", "keep"]
 CONTEXTS = ("before_night", "after_night", "off_days")
 BETTER_TO_DIRECTION = {"higher": "raise", "lower": "lower", "neutral": "keep"}
-
-
-def _fig_unit(t: T, key: str, v, defs: dict) -> str:
-    val = _value(t, key, v)
-    if val == "—":
-        return val
-    u = _unit(t, defs[key])
-    return f"{val} {u}" if u else val
 
 
 def _habit_cadence(h) -> dict:
@@ -1320,7 +1289,7 @@ def _time_pct(g, today: date) -> float | None:
 def _goal_target_text(t: T, defs: dict, g) -> str:
     date_txt = comun._short_date(t, date.fromisoformat(g["deadline"])) if g["deadline"] else "—"
     if g["kind"] == "metric":
-        return t("goals.card.target", target=_fig_unit(t, g["metric_key"], g["target_value"], defs), date=date_txt)
+        return t("goals.card.target", target=comun._fig_unit(t, g["metric_key"], g["target_value"], defs), date=date_txt)
     return t("goals.card.milestone_date", date=date_txt)
 
 
@@ -1382,7 +1351,7 @@ def _goal_line_svg(t: T, defs: dict, g, checks, today: date, width: int = 320, h
         f'<span><i style="background:var(--line);width:1px;height:12px"></i>{t("goals.legend_today")}</span>'
         '</div>')
     data_pts = [{"x": max(0.0, min(1.0, (d - start).days / span_days)),
-                 "label": t("goals.chart_week_label", date=comun._short_date(t, ws), value=_fig_unit(t, g["metric_key"], v, defs))}
+                 "label": t("goals.chart_week_label", date=comun._short_date(t, ws), value=comun._fig_unit(t, g["metric_key"], v, defs))}
                 for ws, d, v in pts]
     return profile.chart_figure(svg + legend, data_pts)
 
@@ -1390,7 +1359,7 @@ def _goal_line_svg(t: T, defs: dict, g, checks, today: date, width: int = 320, h
 def _verdict_sentence(t: T, defs: dict, g, check: dict) -> str:
     _, verdict = _verdict(t, check["on_track"])
     if g["kind"] == "metric" and check["metric_avg"] is not None:
-        return t("goals.history.metric", verdict=verdict, value=_fig_unit(t, g["metric_key"], check["metric_avg"], defs))
+        return t("goals.history.metric", verdict=verdict, value=comun._fig_unit(t, g["metric_key"], check["metric_avg"], defs))
     if g["kind"] == "milestone" and check["habits_due"]:
         return t("goals.history.milestone", verdict=verdict, done=check["habits_done"], due=check["habits_due"])
     return verdict
@@ -1419,8 +1388,8 @@ def goals_list(person_id: int = Depends(identity.current_person_id)):
         check = _goal_check_row(conn, g["id"], person_id, week_start)
         cls, verdict = _verdict(t, check["on_track"])
         if g["kind"] == "metric":
-            fig = _fig_unit(t, g["metric_key"], check["metric_avg"], defs)
-            started = (t("goals.card.started", value=_fig_unit(t, g["metric_key"], g["baseline_value"], defs))
+            fig = comun._fig_unit(t, g["metric_key"], check["metric_avg"], defs)
+            started = (t("goals.card.started", value=comun._fig_unit(t, g["metric_key"], g["baseline_value"], defs))
                       if g["baseline_value"] is not None else None)
             pct = _metric_pct(g, check["metric_avg"])
         else:
@@ -1450,7 +1419,7 @@ def goal_new_form(person_id: int = Depends(identity.current_person_id)):
     metrics = []
     for k, d in defs.items():
         b = baseline(conn, k, today, person_id=person_id)
-        metrics.append({"key": k, "label": t("metric." + k), "unit": _unit(t, d),
+        metrics.append({"key": k, "label": t("metric." + k), "unit": comun._unit(t, d),
                         "direction": BETTER_TO_DIRECTION[d["better"]], "baseline": b.mean if b else None})
     hh = household.household_of(conn, person_id)
     return comun._render("goal_new.html", t=t, tab="goals", metrics=metrics, areas=AREAS, directions=DIRECTIONS,
@@ -1694,316 +1663,6 @@ async def habit_check(habit_id: int, request: Request, person_id: int = Depends(
         raise HTTPException(404)
     back = f.get("back") or "/"
     return RedirectResponse(back, status_code=303)
-
-
-@app.get("/settings")
-@comun._cierra_conexion
-def settings(person_id: int = Depends(identity.current_person_id)):
-    conn, _, t = comun._ctx(person_id)
-    nivel_datos = agente_ajustes.nivel_datos(conn, person_id)
-    trabaja_turnos = db.get_trabaja_turnos(conn, person_id)
-    hh = household.household_of(conn, person_id)
-    compartidas = {r["metric_key"] for r in compartir.mis_compartidas(conn, person_id)} if hh else set()
-    metrics_compartir = [{"key": k, "label": t("metric." + k), "shared": k in compartidas}
-                          for k in _defs(conn)] if hh else []
-    return comun._render("settings.html", t=t, tab="settings", nivel_datos=nivel_datos,
-                   trabaja_turnos=trabaja_turnos, turnos=comun._turnos_on(conn, person_id),
-                   has_household=bool(hh), metrics_compartir=metrics_compartir)
-
-
-@app.post("/settings/compartir")
-@comun._cierra_conexion_async
-async def post_compartir(request: Request, person_id: int = Depends(identity.current_person_id)):
-    f = await comun._form(request)
-    metric_key, accion = f.get("metric_key", ""), f.get("accion", "")
-    conn, _, _ = comun._ctx(person_id)
-    if accion == "compartir":
-        try:
-            compartir.compartir(conn, person_id, metric_key)
-        except ValueError:
-            pass
-    elif accion == "retirar":
-        compartir.retirar(conn, person_id, metric_key)
-    return RedirectResponse("/settings", status_code=303)
-
-
-@app.post("/settings/language")
-@comun._cierra_conexion_async
-async def set_language(request: Request, person_id: int = Depends(identity.current_person_id)):
-    lang = parse_qs((await request.body()).decode()).get("lang", [""])[0]
-    if lang in LANGS:
-        conn, _, _ = comun._ctx(person_id)
-        db.set_language(conn, lang, person_id)
-    return RedirectResponse("/settings", status_code=303)
-
-
-@app.post("/settings/trabaja_turnos")
-@comun._cierra_conexion_async
-async def set_trabaja_turnos(request: Request, person_id: int = Depends(identity.current_person_id)):
-    f = parse_qs((await request.body()).decode())
-    valor = f.get("valor", [""])[0]
-    if valor in ("si", "no"):
-        conn, _, _ = comun._ctx(person_id)
-        db.set_trabaja_turnos(conn, valor == "si", person_id)
-    volver = f.get("volver", ["/settings"])[0]
-    if volver not in ("/", "/settings"):
-        volver = "/settings"
-    return RedirectResponse(volver, status_code=303)
-
-
-# ---- «Lo que ve el asistente» (BODY-NIVEL-DATOS-UI-1): the screen the consent text promises -------
-
-PROVEEDOR_LABEL_KEYS = {
-    "anthropic": "ajustes.asistente.proveedor.anthropic",
-    "openai": "ajustes.asistente.proveedor.openai",
-    "gemini": "ajustes.asistente.proveedor.gemini",
-}
-
-
-@app.get("/ajustes/asistente")
-@comun._cierra_conexion
-def nivel_datos_view(request: Request, person_id: int = Depends(identity.current_person_id)):
-    conn, _, t = comun._ctx(person_id)
-    nivel = agente_ajustes.nivel_datos(conn, person_id)
-    configurados = agente_cliente.proveedores_configurados()
-    proveedores = None
-    proveedor_actual = None
-    if len(configurados) >= 2:
-        proveedores = [{"nombre": n, "etiqueta": t(PROVEEDOR_LABEL_KEYS[n])} for n in configurados]
-        proveedor_actual = agente_cliente.nombre_elegido(configurados, conn, person_id)
-    guardado = request.query_params.get("guardado") == "1"
-    resp = comun._render("asistente_datos.html", t=t, tab="settings", nivel=nivel, guardado=guardado,
-                   proveedores=proveedores, proveedor_actual=proveedor_actual, turnos=comun._turnos_on(conn, person_id))
-    resp.headers["Cache-Control"] = "no-store"
-    return resp
-
-
-@app.post("/ajustes/asistente")
-@comun._cierra_conexion_async
-async def nivel_datos_guardar(request: Request, person_id: int = Depends(identity.current_person_id)):
-    f = await comun._form(request)
-    nivel = f.get("nivel") or ""
-    if nivel not in agente_ajustes.NIVELES:
-        raise HTTPException(400)
-    conn, _, _ = comun._ctx(person_id)
-    agente_ajustes.set_nivel_datos(conn, person_id, nivel)
-    proveedor = f.get("proveedor")
-    if proveedor:
-        if proveedor not in agente_cliente.proveedores_configurados():
-            raise HTTPException(400)
-        agente_ajustes.set_proveedor(conn, person_id, proveedor)
-    return RedirectResponse("/ajustes/asistente?guardado=1", status_code=303)
-
-
-# ---- Assistant (BODY-ASISTENTE-PROVEEDOR-1): one tool loop, streamed as SSE ------------------
-
-MAX_PREGUNTA_CHARS = 2000
-IDIOMA_LABEL = {"es": "Español", "en": "English"}
-_ETIQUETA_KEYS = {
-    "aplicar": "asistente.propuesta.aplicar", "descartar": "asistente.propuesta.descartar",
-    "deshacer": "asistente.propuesta.deshacer", "aplicada": "asistente.propuesta.aplicada",
-    "descartada": "asistente.propuesta.descartada", "deshecha": "asistente.propuesta.deshecha",
-    "no_vigente": "asistente.propuesta.no_vigente", "desactualizada": "asistente.propuesta.desactualizada",
-    "sin_deshacer": "asistente.propuesta.sin_deshacer",
-}
-
-
-def _evento_sse(nombre: str, data: dict) -> str:
-    return f"event: {nombre}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-
-def _etiquetas(t: T) -> dict:
-    return {k: t(v) for k, v in _ETIQUETA_KEYS.items()}
-
-
-def _objetivo_txt(t: T, defs: dict, metric_key: str | None, target_value, deadline: str) -> str:
-    fecha = comun._short_date(t, date.fromisoformat(deadline))
-    if metric_key is None or target_value is None:
-        return t("goals.card.milestone_date", date=fecha)
-    return t("asistente.propuesta.meta_objetivo", valor=_fig_unit(t, metric_key, target_value, defs), fecha=fecha)
-
-
-def _tarjeta_propuesta(t: T, defs: dict, registro: dict) -> dict:
-    """The `propuesta` SSE event payload (agent-capabilities-v1 section 2, decision 5): `antes`/
-    `despues` are short plain-word strings in the person's language, built here from the record's
-    structured JSON -- never stored as text. `etiquetas` carries this card's button and result
-    labels pre-rendered, since body/templates/base.html (outside this slice's touches) is the only
-    other place assistant.js could read i18n text from."""
-    accion = registro["accion"]
-    despues = registro["despues_json"]
-    antes_json = registro["antes_json"]
-    antes_txt: str | None = None
-    if accion == "proponer_meta":
-        despues_txt = t("asistente.propuesta.meta_nueva", metric=t("metric." + despues["metric_key"]),
-                        direccion=t("asistente.propuesta.direccion." + despues["direction"]),
-                        valor=_fig_unit(t, despues["metric_key"], despues["target_value"], defs),
-                        fecha=comun._short_date(t, date.fromisoformat(despues["deadline"])))
-    elif accion == "proponer_cambio_meta":
-        metric_key = despues.get("metric_key")
-        antes_txt = _objetivo_txt(t, defs, metric_key, antes_json["target_value"], antes_json["deadline"])
-        despues_txt = _objetivo_txt(t, defs, metric_key, despues["target_value"], despues["deadline"])
-    elif accion == "proponer_confirmar_turnos":
-        resumen = antes_json["resumen"]
-        antes_txt = t("asistente.propuesta.turnos_actual", n=t.num(resumen["batch_count"]))
-        despues_txt = t("asistente.propuesta.turnos_nuevo")
-    elif accion == "proponer_idioma":
-        antes_txt = IDIOMA_LABEL.get(antes_json["lang"], antes_json["lang"])
-        despues_txt = IDIOMA_LABEL.get(despues["lang"], despues["lang"])
-    else:
-        despues_txt = ""
-    if antes_txt is not None:
-        antes_txt = t("asistente.propuesta.antes", valor=antes_txt)
-        despues_txt = t("asistente.propuesta.despues", valor=despues_txt)
-    elif despues_txt:
-        despues_txt = t("asistente.propuesta.solo_propuesta", valor=despues_txt)
-    return {
-        "id": registro["id"], "accion": accion, "titulo": t("asistente.propuesta.titulo." + accion),
-        "antes": antes_txt, "despues": despues_txt, "expira_en": registro["expira_en"],
-        "deshacer": accion not in agente_propuestas.SIN_DESHACER, "estado": registro["estado"],
-        "etiquetas": _etiquetas(t),
-    }
-
-
-@app.post("/asistente/preguntar")
-async def asistente_preguntar(request: Request, person_id: int = Depends(identity.current_person_id)):
-    try:
-        cuerpo = await request.json()
-    except Exception:
-        raise HTTPException(400)
-    if not isinstance(cuerpo, dict):
-        raise HTTPException(400)
-    pregunta = cuerpo.get("pregunta")
-    if not isinstance(pregunta, str) or not (1 <= len(pregunta) <= MAX_PREGUNTA_CHARS):
-        raise HTTPException(400)
-    conversacion_id = cuerpo.get("conversacion_id")
-    if conversacion_id is not None and not isinstance(conversacion_id, int):
-        raise HTTPException(400)
-
-    conn, _, t = comun._ctx(person_id)
-    agente_herramientas.fijar_turnos_actual(comun._turnos_on(conn, person_id))
-    if conversacion_id is not None:
-        try:
-            agente_conversacion.verificar_propiedad(conn, conversacion_id, person_id)
-        except agente_conversacion.ConversacionAjena:
-            conn.close()
-            raise HTTPException(404)
-    else:
-        conversacion_id = agente_conversacion.crear(conn, person_id)
-
-    proveedor_env = os.environ.get("BODY_AGENTE_PROVEEDOR", agente_cliente.PROVEEDOR_DEFAULT)
-    if proveedor_env == "demo":
-        proveedor_nombre, modelo = "demo", "demo"
-    else:
-        configurados = agente_cliente.proveedores_configurados()
-        resuelto = agente_cliente.nombre_elegido(configurados, conn, person_id)
-        proveedor_nombre = resuelto or proveedor_env
-        # `resuelto` is None when nothing is configured -- `generar()` then returns on the
-        # no_configurado error before `modelo` is read in production. This reads the client's OWN
-        # default constant rather than a second BODY_AGENTE_MODELO lookup, so no second default
-        # exists (BODY-MODELOS-ESTANDAR-1 decision 4).
-        modelo = configurados[resuelto].modelo if resuelto else agente_cliente.MODELO_DEFAULT
-    proveedor = agente_cliente.proveedor_configurado(conn, person_id)
-
-    async def generar():
-        try:
-            if proveedor is None:
-                yield _evento_sse("error", {"codigo": "no_configurado", "mensaje": t("agente.error.no_configurado")})
-                return
-            try:
-                agente_uso.verificar_tope(conn, person_id, proveedor_nombre, modelo)
-            except agente_uso.TopeRefusal:
-                agente_uso.registrar(conn, person_id, proveedor_nombre, modelo, agente_cliente.Uso(), 0,
-                                      None, "tope_diario")
-                yield _evento_sse("error", {"codigo": "tope_diario", "mensaje": t("agente.error.tope_diario")})
-                return
-
-            historial = agente_conversacion.historial(conn, conversacion_id, person_id)
-            historial.append({"rol": "usuario", "bloques": [{"tipo": "texto", "texto": pregunta}]})
-            sistema = t("agente.sistema")
-            estados = agente_propuestas.estado_conversacion(conn, person_id, conversacion_id)
-            if estados:
-                lineas = "\n".join(f"- #{p['id']} {p['accion']}: {p['estado']}" for p in estados)
-                sistema += "\n\n" + t("agente.estado_propuestas_header") + "\n" + lineas
-            try:
-                resultado = agente_bucle.ejecutar(conn, person_id, proveedor, sistema, historial, conversacion_id)
-            except agente_bucle.LimiteRondas as e:
-                agente_uso.registrar(conn, person_id, proveedor_nombre, modelo, e.uso_total, e.rondas,
-                                      "limite_rondas", "limite_rondas")
-                yield _evento_sse("error", {"codigo": "limite_rondas", "mensaje": t("agente.error.limite_rondas")})
-                return
-            except agente_bucle.FalloProveedor as e:
-                agente_uso.registrar(conn, person_id, proveedor_nombre, modelo, e.uso_total, e.rondas,
-                                      None, "proveedor")
-                yield _evento_sse("error", {"codigo": "proveedor", "mensaje": t("agente.error.proveedor")})
-                return
-
-            defs = _defs(conn)
-            for ev in resultado.eventos:
-                if isinstance(ev, agente_bucle.EventoHerramienta):
-                    yield _evento_sse("herramienta", {"nombre": ev.nombre})
-                elif isinstance(ev, agente_bucle.EventoPropuesta):
-                    yield _evento_sse("propuesta", _tarjeta_propuesta(t, defs, ev.registro))
-                else:
-                    yield _evento_sse("texto", {"delta": ev.texto})
-
-            agente_conversacion.agregar_mensaje(conn, conversacion_id, person_id, "usuario",
-                                                [{"tipo": "texto", "texto": pregunta}])
-            for m in resultado.nuevos_mensajes:
-                agente_conversacion.agregar_mensaje(conn, conversacion_id, person_id, m["rol"], m["bloques"])
-            agente_uso.registrar(conn, person_id, proveedor_nombre, modelo, resultado.uso_total, resultado.rondas,
-                                  "texto", None)
-            yield _evento_sse("fin", {"conversacion_id": conversacion_id, "rondas": resultado.rondas,
-                                      "motivo_fin": "texto"})
-        finally:
-            conn.close()
-
-    return StreamingResponse(generar(), media_type="text/event-stream")
-
-
-@app.get("/asistente/conversacion/{conversacion_id}")
-@comun._cierra_conexion
-def asistente_conversacion(conversacion_id: int, person_id: int = Depends(identity.current_person_id)):
-    conn, _, t = comun._ctx(person_id)
-    try:
-        turnos = agente_conversacion.turnos_visibles(conn, conversacion_id, person_id)
-    except agente_conversacion.ConversacionAjena:
-        conn.close()
-        raise HTTPException(404)
-    defs = _defs(conn)
-    tarjetas = [_tarjeta_propuesta(t, defs, r) for r in agente_propuestas.listar(conn, person_id, conversacion_id)]
-    conn.close()
-    return JSONResponse({"turnos": turnos, "propuestas": tarjetas})
-
-
-def _propuesta_respuesta(conn, person_id: int, propuesta_id: int, accion) -> JSONResponse:
-    try:
-        resultado = accion(conn, person_id, propuesta_id)
-    except agente_propuestas.PropuestaAjena:
-        conn.close()
-        raise HTTPException(404)
-    conn.close()
-    return JSONResponse(resultado)
-
-
-@app.post("/asistente/propuestas/{propuesta_id}/aplicar")
-@comun._cierra_conexion
-def propuesta_aplicar(propuesta_id: int, person_id: int = Depends(identity.current_person_id)):
-    conn, _, _ = comun._ctx(person_id)
-    return _propuesta_respuesta(conn, person_id, propuesta_id, agente_propuestas.aplicar)
-
-
-@app.post("/asistente/propuestas/{propuesta_id}/descartar")
-@comun._cierra_conexion
-def propuesta_descartar(propuesta_id: int, person_id: int = Depends(identity.current_person_id)):
-    conn, _, _ = comun._ctx(person_id)
-    return _propuesta_respuesta(conn, person_id, propuesta_id, agente_propuestas.descartar)
-
-
-@app.post("/asistente/propuestas/{propuesta_id}/deshacer")
-@comun._cierra_conexion
-def propuesta_deshacer(propuesta_id: int, person_id: int = Depends(identity.current_person_id)):
-    conn, _, _ = comun._ctx(person_id)
-    return _propuesta_respuesta(conn, person_id, propuesta_id, agente_propuestas.deshacer)
 
 
 # ---- Garmin (hosted only): one connection per person, token encrypted by body/garmin_cuenta.py ----
