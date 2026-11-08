@@ -10,7 +10,7 @@ from tests._db import open_conn
 
 from body import db, history, web
 from body.i18n import T
-from body.rutas import comun
+from body.rutas import comun, historial
 
 START = date(2025, 9, 1)
 END = date(2025, 12, 31)
@@ -185,8 +185,8 @@ class PatternsTest(unittest.TestCase):
 
 
 class FindingTextTest(unittest.TestCase):
-    """web._finding_text: a plain sentence, the metric in lower case, the direction said from `better`
-    (BODY-HISTORIA-POLISH-1)."""
+    """historial._finding_text: a plain sentence, the metric in lower case, the direction said from
+    `better` (BODY-HISTORIA-POLISH-1)."""
 
     def setUp(self):
         self.conn = _mkconn(self)
@@ -197,8 +197,8 @@ class FindingTextTest(unittest.TestCase):
 
     def test_lower_is_better_reads_the_worst_day_as_the_highest(self):
         f = self.by_key[("resting_hr", "weekday")]  # Saturday: resting HR is worse the higher it runs
-        es = web._finding_text(T("es"), self.defs, f)
-        en = web._finding_text(T("en"), self.defs, f)
+        es = historial._finding_text(T("es"), self.defs, f)
+        en = historial._finding_text(T("en"), self.defs, f)
         self.assertIn("pulso en reposo", es)
         self.assertNotIn("Pulso en reposo", es)  # never the title-case label mid-sentence
         self.assertIn("sube más", es)
@@ -208,8 +208,8 @@ class FindingTextTest(unittest.TestCase):
 
     def test_higher_is_better_reads_the_worst_month_as_the_lowest(self):
         f = self.by_key[("sleep_minutes", "month")]  # December: sleep is worse the lower it runs
-        es = web._finding_text(T("es"), self.defs, f)
-        en = web._finding_text(T("en"), self.defs, f)
+        es = historial._finding_text(T("es"), self.defs, f)
+        en = historial._finding_text(T("en"), self.defs, f)
         self.assertIn("sueño", es)
         self.assertIn("baja más", es)
         self.assertIn("sleep", en)
@@ -217,7 +217,8 @@ class FindingTextTest(unittest.TestCase):
 
 
 class TrainingCtxOrderTest(unittest.TestCase):
-    """web._training_ctx: months newest first, split into the last 12 and the rest (BODY-HISTORIA-POLISH-1)."""
+    """historial._training_ctx: months newest first, split into the last 12 and the rest
+    (BODY-HISTORIA-POLISH-1)."""
 
     def test_months_newest_first_and_split_at_twelve(self):
         months_asc = [{"month": f"2024-{m:02d}", "sessions": 1, "minutes": 30.0, "km": None, "by_type": []}
@@ -226,7 +227,7 @@ class TrainingCtxOrderTest(unittest.TestCase):
                        {"month": "2025-02", "sessions": 1, "minutes": 30.0, "km": None, "by_type": []}]
         train = {"types": [], "months": months_asc, "max_month_minutes": 30.0, "usual_week_sessions": None,
                  "longest_kind": None, "most_frequent_kind": None, "yoy": None}
-        ctx = web._training_ctx(T("en"), train)
+        ctx = historial._training_ctx(T("en"), train)
         self.assertEqual(len(ctx["months"]), 12)
         self.assertEqual(len(ctx["months_older"]), 2)
         self.assertEqual(ctx["months"][0]["href"], "/trends?m=2025-02")   # newest first
@@ -286,7 +287,7 @@ class HistoryRouteTest(unittest.TestCase):
         self.addCleanup(conn.close)
         pat = history.patterns(conn, 1)
         defs = comun._defs(conn)
-        hero_text = web._finding_text(T("en"), defs, pat["findings"][0])
+        hero_text = historial._finding_text(T("en"), defs, pat["findings"][0])
         self.assertEqual(r.text.count(hero_text), 1)
 
 
