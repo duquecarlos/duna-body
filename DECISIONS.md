@@ -5539,3 +5539,58 @@ migration). Customer-facing (Ajustes card, Hoy card): stop AWAITING_APPROVAL." T
 table and unique index in `body/db.py`, and customer-visible bytes on both Ajustes and Hoy -- so this slice stops
 before the merge on `feat/body-hogar-compartir-1` for the orchestrator's review. No cross-repo contract or DTO is
 touched.
+
+## BODY-HOGAR-COMPARTIR-1-M -- four fixes from the orchestrator's review and browser measurement, then merged (2026-11-07)
+
+Lands BODY-HOGAR-COMPARTIR-1 (reviewed above) with four defects it shipped with fixed first.
+
+**Fix 1 -- `compartir.mis_compartidas(conn, person_id)` now reads the person's CURRENT active household only.**
+It calls `household.household_of` itself and filters `WHERE hogar_id = ?` on that household's id (empty list with
+no active household), the same `hogar_id` `visibles_para` already reads. Before this fix it read every active row
+for the person regardless of which household recorded it, so after moving households Ajustes kept marking a figure
+"shared" that nobody in the new household -- or the old one -- could actually see. `retirar` is unchanged: it still
+withdraws every active row for the person regardless of household, which stays the safe direction (a person who
+moves away should not keep broadcasting into a household they already left, by accident of forgetting which one
+holds the stale share).
+
+**Fix 2 -- Hoy's «Tu hogar» card moved to last.** It now renders after the viewer's own readiness card, the
+first-steps card (when present), the plan-habits card (when present), the metric grid, and the "see the whole day"
+link -- the last card on the page, directly before `base.html`'s footer. Before this fix it sat third, between the
+first-steps card and the person's own plan/metrics, so another person's figure could outrank the viewer's own day.
+
+**Fix 3 -- the Ajustes card no longer lists all 24 metrics flat.** Figures the person currently shares render first,
+each with "Dejar de compartir" (unchanged markup/button). The remaining metrics sit inside a `<details class="files">`
+(the app's existing collapsed-section pattern, `goal.html`/`trends.html`/etc., 44 px `summary`, closed by default)
+whose summary reads `settings.compartir.elegir` -- "Elegir qué compartir" / "Choose what to share" (new i18n key,
+both languages) -- each with "Compartir". With nothing shared, the summary row is the only row besides the privacy
+note. No JavaScript: `<details>` is native. Buttons are still the existing 44 px `.btn`.
+
+**Fix 4 -- the demo's Ana now has her own short history of the figure she shares.** `body/demo.py` writes `resting_hr`
+for Ana over the last 5 days of the seeded span, each value drawn from the same `RANGES["resting_hr"]` the demo
+already uses for the main person (via the existing `_value` helper, factor 0 -- not a copy of the demo person's own
+numbers). Before this fix Ana shared a figure she had never recorded, so the demo's Hoy card could only ever render
+"sin dato" and the value-rendering path was never exercised by anyone looking at the demo tenant.
+
+**Tests added** (`tests/test_hogar_compartir_1.py`, 5; `tests/test_demo.py`, 1 -- 6 total): fix 1 -- a share recorded
+under an old household is absent from `mis_compartidas` after the person moves to a new one, and the new household's
+other member cannot see it via `visibles_para` either; fix 2 -- the rendered Hoy page orders "Ver todo el día" (the
+last of the person's own content) before "Tu hogar" before the page footer's "No es consejo médico"; fix 3 -- with
+nothing shared, `<details class="files" style="margin-top:6px">` (no `open` attribute) and "Elegir qué compartir"
+are present and "Dejar de compartir" is not; with one active share, "Dejar de compartir" sits before the `<details`
+tag and the unshared metrics' "Compartir" buttons sit after it; the English summary string renders; fix 4 -- Ana's
+`daily_metric` rows for `resting_hr` exist and every value is non-null.
+
+**Gate, run once, foreground, exact command** `.venv/Scripts/python.exe -m unittest discover tests -t .`:
+
+    Ran 1057 tests in 128.182s
+    OK (skipped=1)
+
+1057 is 1051 (BODY-HOGAR-COMPARTIR-1's measured count, confirmed unmoved: `main` was still at `ba704c7`, the sha the
+branch was cut from, when this slice started) + 6 new tests above; no test removed; the one skip is pre-existing and
+unrelated.
+
+**Merged.** Diff reviewed against merge policy A: no schema or migration change (no edit to `body/db.py`; the table
+and index from BODY-HOGAR-COMPARTIR-1 are untouched), and while Ajustes' and Hoy's markup both changed, that
+customer-facing change is exactly what this spec's approval-reason authorizes in words ("Approved with the four
+fixes") on top of an already-approved, reviewed table -- no cross-repo contract or DTO touched. Merged `--no-ff`
+into `main`; `main` left checked out, clean.
