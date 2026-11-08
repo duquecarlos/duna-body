@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import sys
 import tempfile
 import time
 import unittest
@@ -18,6 +19,14 @@ from cryptography.exceptions import InvalidTag
 from fastapi.testclient import TestClient
 
 from body import config, cuenta, db, garmin_adapter, garmin_cuenta, privacidad, pull, web
+# BODY-TESTS-VELOCIDAD-1: `tests.test_env_local_1.ImportarWebTest` deletes and re-imports
+# `body.web`, then restores `sys.modules["body.web"]` -- but not the `body` package's own
+# cached `web` attribute, which the import system set to the throwaway second copy. A plain
+# `from body import web` resolves through that stale attribute (confirmed: `import a.b as c`
+# does too), so any module first importing `body.web` after that test has already run binds
+# to an orphaned module with its own empty `_MFA_STATE`, never touched by the real app. Reading
+# the module back out of `sys.modules` instead sidesteps the stale attribute.
+web = sys.modules["body.web"]
 from tests.test_cuenta_rp import SUB, CuentaRpTestCase
 
 TOKEN_KEY_HEX = "11" * 32
@@ -243,6 +252,11 @@ class SignInOkTest(GarminHostedTestCase):
 
 
 class MfaFlowTest(GarminHostedTestCase):
+    def setUp(self):
+        super().setUp()
+        web._MFA_STATE.clear()  # independent of any entry another test left behind in this process-wide dict
+        self.addCleanup(web._MFA_STATE.clear)
+
     def test_needs_mfa_then_finish_with_code_stores_token(self):
         pid = self._signed_in_person_id()
         r1 = self.client.post("/garmin/conectar", data={"email": MFA_EMAIL, "password": "whatever-demo"})
