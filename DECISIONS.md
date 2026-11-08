@@ -7714,3 +7714,34 @@ into `main` with `--no-ff`: merge commit `adae52aca800aac964a9d1dfceb55bdd29960b
 match) -- no conflict, no extra change, gate not re-run on the merge per tree-identity proof. `git status
 --porcelain` empty on `main` after the merge, before this ledger entry's own commit. No password, token, session
 secret or health figure was read, printed or logged by this slice.
+
+## BODY-PRECIOS-CONEXION-1 -- close `agente/precios.py`'s CLI connection on a failing migration (2026-11-08)
+
+Follow-up to BODY-PRIVACIDAD-CONEXION-1, which named `body/agente/precios.py`'s `if __name__ == "__main__":`
+block as a known offender outside its own `touches:` and listed `("precios.py", "<module>")` in
+`_ALLOWED_DIRECT_CONNECT` rather than fix it there. Same shape as the two CLI fixes in that slice
+(`vincular_cuenta.py`, `demo.py`): `_conn = db.connect(config.DB_PATH)` was followed by `db.init(_conn)` and
+only then the `try`/`finally` that closes `_conn` -- a failing migration raised before the `try` and leaked the
+connection. `db.init(_conn)` moved inside the `try`, directly above `print(sembrar(_conn))`; no behaviour change
+on success.
+
+`_ALLOWED_DIRECT_CONNECT` in `tests/test_conexiones_cerradas.py` narrowed back to its one sanctioned exception,
+`{("comun.py", "_ctx")}` -- `comun.py`'s `_ctx` hands its connection to `_cierra_conexion[_async]` to close
+after the route returns (BODY-CONEXIONES-CERRADAS-1 decision 1); every other direct-connect site under `body/`
+now closes in the `finally` right after its own `try`, so the guard's allow-list carries no known offender.
+
+**Gate**, run once on the final branch tree: `.venv/Scripts/python.exe -m unittest discover tests -t .` --
+`Ran 1210 tests in 124.509s ... OK (skipped=1)` (same count as before this slice -- it changes which paths the
+existing guard test allows, not how many tests exist).
+
+Merge policy A: no schema or migration change, no customer-facing bytes, no cross-repo contract change in the
+actual diff (`body/agente/precios.py`, `tests/test_conexiones_cerradas.py`) -- a CLI block's resource handling
+and a test allow-list only. This spec's own approval-reason approves the merge outright.
+
+Commits (pasted from `git rev-parse`, not retyped): fix `7bc55d9cbd5cbf119b57fa5da19cde09f4169a2c` on branch
+`feat/body-precios-conexion-1`, branched from `main` `1a33c9b16d7726a899ed830f34b4eee74da38a56`. Merged into
+`main` with `--no-ff`: merge commit `5204c12f84b3ebb45edcec35e7f561b9efdca88c`, merge tree
+`8f5fe87e2695c7aedbc67df330b6d1fb3263409a`, identical to the branch tip's own tree (`git rev-parse` of both
+match) -- no conflict, no extra change, gate not re-run on the merge per tree-identity proof. `git status
+--porcelain` empty on `main` after the merge, before this ledger entry's own commit. No password, token, session
+secret or health figure was read, printed or logged by this slice.
