@@ -310,13 +310,15 @@ class MfaFlowTest(GarminHostedTestCase):
 
 
 class SignInAttemptLimitTest(GarminHostedTestCase):
-    """BODY-SEGURIDAD-4: at most 5 failed /garmin/conectar attempts per person in a sliding hour --
-    the 6th is refused before the adapter (and so Garmin) is ever called."""
+    """BODY-SEGURIDAD-4-B: at most 5 /garmin/conectar starts per person in a sliding hour -- the
+    6th is refused before the adapter (and so Garmin) is ever called. Every start counts unless it
+    ends with a token stored, so a needs_mfa start counts too (BODY-SEGURIDAD-4-B closes the cycle
+    that let a person loop conectar -> 5 codes -> conectar -> 5 codes without ever being limited)."""
 
     def setUp(self):
         super().setUp()
-        garmin_rutas._SIGNIN_FAILURES.clear()
-        self.addCleanup(garmin_rutas._SIGNIN_FAILURES.clear)
+        garmin_rutas._SIGNIN_ATTEMPTS.clear()
+        self.addCleanup(garmin_rutas._SIGNIN_ATTEMPTS.clear)
 
     def test_five_failures_then_sixth_is_refused_without_calling_the_adapter(self):
         self._signed_in_person_id()
@@ -333,25 +335,55 @@ class SignInAttemptLimitTest(GarminHostedTestCase):
         for _ in range(5):
             self.client.post("/garmin/conectar", data={"email": BAD_EMAIL, "password": "whatever-demo"})
         stale = time.monotonic() - garmin_rutas._SIGNIN_WINDOW_SECONDS - 1
-        garmin_rutas._SIGNIN_FAILURES[pid] = [stale] * 5
+        garmin_rutas._SIGNIN_ATTEMPTS[pid] = [stale] * 5
         r = self.client.post("/garmin/conectar", data={"email": GOOD_EMAIL, "password": "whatever-demo"})
         self.assertEqual(r.status_code, 303)
         self.assertEqual(r.headers["location"], "/garmin")
 
-    def test_success_clears_failures(self):
+    def test_success_clears_attempts(self):
         pid = self._signed_in_person_id()
         for _ in range(4):
             self.client.post("/garmin/conectar", data={"email": BAD_EMAIL, "password": "whatever-demo"})
         r = self.client.post("/garmin/conectar", data={"email": GOOD_EMAIL, "password": "whatever-demo"})
         self.assertEqual(r.status_code, 303)
         self.assertEqual(r.headers["location"], "/garmin")
-        self.assertNotIn(pid, garmin_rutas._SIGNIN_FAILURES)
+        self.assertNotIn(pid, garmin_rutas._SIGNIN_ATTEMPTS)
 
     def test_empty_form_does_not_count(self):
         pid = self._signed_in_person_id()
         for _ in range(10):
             self.client.post("/garmin/conectar", data={"email": "", "password": ""})
-        self.assertNotIn(pid, garmin_rutas._SIGNIN_FAILURES)
+        self.assertNotIn(pid, garmin_rutas._SIGNIN_ATTEMPTS)
+
+    def test_completing_mfa_clears_the_person_so_a_later_start_is_allowed(self):
+        pid = self._signed_in_person_id()
+        self.addCleanup(garmin_rutas._MFA_STATE.clear)
+        self.client.post("/garmin/conectar", data={"email": MFA_EMAIL, "password": "whatever-demo"})
+        self.assertIn(pid, garmin_rutas._SIGNIN_ATTEMPTS)
+        self.client.post("/garmin/codigo", data={"code": GOOD_CODE})
+        self.assertNotIn(pid, garmin_rutas._SIGNIN_ATTEMPTS)
+
+        for _ in range(5):
+            r = self.client.post("/garmin/conectar", data={"email": BAD_EMAIL, "password": "whatever-demo"})
+        self.assertEqual(r.status_code, 303)
+        self.assertIn("error=garmin", r.headers["location"])  # the 5th still reached the adapter
+
+    def test_mfa_cycle_does_not_evade_the_hourly_limit(self):
+        # BODY-SEGURIDAD-4-B: looping conectar -> 5 wrong codes -> conectar -> 5 wrong codes, without
+        # ever completing MFA, used to never trip the hourly limit. Each needs_mfa start now counts.
+        self._signed_in_person_id()
+        self.addCleanup(garmin_rutas._MFA_STATE.clear)
+        for _ in range(5):
+            r = self.client.post("/garmin/conectar", data={"email": MFA_EMAIL, "password": "whatever-demo"})
+            self.assertEqual(r.status_code, 200)
+            for _ in range(5):
+                r = self.client.post("/garmin/codigo", data={"code": BAD_CODE})
+            self.assertIn("error=mfa_demasiados", r.headers["location"])
+
+        with mock.patch("body.rutas.garmin.garmin_adapter.start_sign_in") as adapter:
+            r = self.client.post("/garmin/conectar", data={"email": MFA_EMAIL, "password": "whatever-demo"})
+        self.assertIn("error=demasiados", r.headers["location"])
+        adapter.assert_not_called()
 
     def test_a_different_person_is_unaffected(self):
         self._signed_in_person_id()
@@ -393,8 +425,10 @@ class MfaAttemptLimitTest(GarminHostedTestCase):
         super().setUp()
         garmin_rutas._MFA_STATE.clear()
         self.addCleanup(garmin_rutas._MFA_STATE.clear)
+        garmin_rutas._SIGNIN_ATTEMPTS.clear()
+        self.addCleanup(garmin_rutas._SIGNIN_ATTEMPTS.clear)
 
-    def test_five_wrong_codes_drop_the_state_and_redirect_to_demasiados(self):
+    def test_five_wrong_codes_drop_the_state_and_redirect_to_mfa_demasiados(self):
         self._signed_in_person_id()
         self.client.post("/garmin/conectar", data={"email": MFA_EMAIL, "password": "whatever-demo"})
         for _ in range(4):
@@ -403,8 +437,35 @@ class MfaAttemptLimitTest(GarminHostedTestCase):
 
         r = self.client.post("/garmin/codigo", data={"code": BAD_CODE})
         self.assertEqual(r.status_code, 303)
-        self.assertIn("error=demasiados", r.headers["location"])
+        self.assertIn("error=mfa_demasiados", r.headers["location"])
         self.assertEqual(len(garmin_rutas._MFA_STATE), 0)
+
+    def test_mfa_demasiados_message_renders_in_es_and_en(self):
+        self._signed_in_person_id()
+        self.client.post("/garmin/conectar", data={"email": MFA_EMAIL, "password": "whatever-demo"})
+        for _ in range(5):
+            self.client.post("/garmin/codigo", data={"code": BAD_CODE})
+
+        r_es = self.client.get("/garmin?error=mfa_demasiados")
+        self.assertIn("Demasiados códigos equivocados", r_es.text)
+
+        self.client.post("/settings/language", data={"lang": "en"})
+        r_en = self.client.get("/garmin?error=mfa_demasiados")
+        self.assertIn("Too many wrong codes", r_en.text)
+
+    def test_expired_mfa_state_stays_counted_in_signin_attempts(self):
+        pid = self._signed_in_person_id()
+        self.client.post("/garmin/conectar", data={"email": MFA_EMAIL, "password": "whatever-demo"})
+        self.assertIn(pid, garmin_rutas._SIGNIN_ATTEMPTS)
+        token = self.client.cookies.get(cuenta.SESSION_COOKIE)
+        key = hashlib.sha256(token.encode()).hexdigest()
+        state_json, _, wrong_codes = garmin_rutas._MFA_STATE[key]
+        garmin_rutas._MFA_STATE[key] = (state_json, time.monotonic() - garmin_rutas._MFA_TTL_SECONDS - 1, wrong_codes)
+
+        r = self.client.post("/garmin/codigo", data={"code": GOOD_CODE})
+        self.assertEqual(r.status_code, 303)
+        self.assertIn("error=mfa_expired", r.headers["location"])
+        self.assertIn(pid, garmin_rutas._SIGNIN_ATTEMPTS)
 
     def test_sixth_post_after_the_drop_gets_mfa_expired_since_no_state_remains(self):
         # The 5th wrong code already dropped the state and answered error=demasiados -- a further
