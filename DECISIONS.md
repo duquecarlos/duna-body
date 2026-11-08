@@ -8416,3 +8416,101 @@ Commits (pasted from `git rev-parse`, not retyped): fix `1f4e523bc438517e8f8f205
 `19c970a5d0ce789282ada0f510d7ef2c842e0b57`, equal to the branch tip's own tree, verified by `git rev-parse` on
 both before writing this entry). No password, token, session secret or health figure was read, printed or
 logged by this slice. `git status --porcelain` is empty on `main`, before this ledger entry's own commit.
+
+## BODY-SEGURIDAD-2 -- script-src 'self': every inline script and handler moved to /static (2026-11-08)
+
+Second half of `BODY-SEGURIDAD-CENSO-1`'s item 2 (the first half, `frame-ancestors 'none'` alone, shipped as
+`BODY-SEGURIDAD-1`). A `script-src` policy needs the inline code out first, so this slice moves every
+executable inline `<script>` block and the one inline `onchange=` attribute into `body/static/*.js`, loaded
+through `static_url(...)` (`BODY-STATIC-VERSION-1`'s cache-busting), then turns `script-src 'self'` on.
+
+**What moved where**, behaviour-identical:
+- **`tema.js`** -- theme-before-paint (`base.html:58` and the four standalone pages' copy:
+  `acceso_rechazado.html:9`, `consentimiento.html:9`, `sin_acceso.html:9`, `origen_rechazado.html:9`). Loaded
+  as a plain blocking `<script src>` in `<head>`, no `defer`/`async`, so it still runs before first paint.
+- **`pagina.js`** -- scroll restore + service-worker registration (`base.html:156`). Loaded with `defer`:
+  scroll restore still works, because a deferred script runs after the document is parsed (just before
+  `DOMContentLoaded`), the same relative timing it had at the bottom of `<body>` before, and
+  `location.pathname` plus the `pagehide` listener never depended on `DOMContentLoaded` having fired.
+- **`ajustes_tema.js`** -- settings.html's theme buttons (`settings.html:84`). Loaded with `defer`, so
+  `#theme`'s buttons already exist when it runs.
+- **`meta_nueva.js`** -- `goal_new.html`'s `bodyMetricChange` (`goal_new.html:97`), plus the inline
+  `onchange="bodyMetricChange()"` attribute (`goal_new.html:33`), now an
+  `addEventListener('change', bodyMetricChange)` call inside the file; it still runs once on load as before.
+
+`base.html:150`'s `<script id="asis-i18n" type="application/json">` data block is untouched -- CSP's
+`script-src` never executes a `type="application/json"` block, so it was never the problem.
+
+**The policy**, `body/seguridad.py`'s `content_security_policy()`, built from `_CSP_FIXED_DIRECTIVES` plus a
+`form-action` computed per request, so a test reads named parts instead of re-parsing one long literal:
+
+| Directive | Value | Reason |
+|---|---|---|
+| `default-src` | `'self'` | floor for anything not named below |
+| `script-src` | `'self'` | the point of this slice -- no inline script left to need `'unsafe-inline'` |
+| `style-src` | `'self' 'unsafe-inline' https://fonts.googleapis.com` | **remaining gap, not closed here** -- 22 templates carry `style="..."` attributes, and server-built SVG (Tendencias/charts) does too; `'unsafe-inline'` stays until those are moved |
+| `font-src` | `'self' https://fonts.gstatic.com` | Hanken Grotesk's font files |
+| `img-src` | `'self' data:` | the `data:` SVG icon and any inline-data image |
+| `connect-src` | `'self'` | `assistant.js`'s `fetch` calls are same-origin only (confirmed by reading the file) |
+| `manifest-src` | `'self'` | the PWA manifest |
+| `worker-src` | `'self'` | the service worker |
+| `object-src` | `'none'` | no plugin content anywhere |
+| `base-uri` | `'none'` | nothing sets `<base>` |
+| `frame-ancestors` | `'none'` | unchanged from `BODY-SEGURIDAD-1` |
+| `form-action` | `'self'` locally; `'self' <Cuenta's issuer origin>` once hosted | see census below |
+
+**form-action census.** Grepped every `RedirectResponse(...)` under `body/rutas/` and every `method="post"`
+form under `body/templates/` for a target outside Body. Three POST forms can 303-redirect off-site, all to
+the same place -- Cuenta's OIDC issuer, via `cuenta.logout_url(sid)` (built from `cuenta.issuer()`):
+- `/logout` (`body/rutas/sesion.py:94`) -- always redirects to `cuenta.logout_url(sid)` when hosted.
+- `/privacidad/consentimiento` (`body/rutas/privacidad.py:42`) -- redirects there when the person declines
+  consent.
+- `/privacidad/borrar` (`body/rutas/privacidad.py:96`) -- redirects there after a hosted account deletion.
+  (The re-auth branch at `privacidad.py:88` redirects to `/login/cuenta/start?...`, a Body path, not off-site.)
+
+No other `RedirectResponse` target in `body/rutas/` leaves Body's own origin (confirmed against
+`tests/test_seguridad.py`'s existing `RedirectTargetsAreSafeTest`, which already enumerates every
+`RedirectResponse` call site). So the one off-site origin `form-action` needs, only when hosted, is Cuenta's
+issuer origin -- scheme + host, stripped of any path, via `seguridad._origin(cuenta.issuer())`. Built at
+request time from `cuenta.hosted()`/`cuenta.issuer()`, never a literal, so it tracks whichever Cuenta
+environment Body is actually configured against.
+
+**Guards**, `tests/test_seguridad.py`:
+- (a) `InlineScriptGoneTest` -- no template under `body/templates` holds a `<script>` tag with neither
+  `src=` nor `type="application/json"`. Proved to catch all 8 pre-slice offenders by running the exact same
+  regex against `main`'s templates before writing any fix (scratchpad, not committed):
+  `['body/templates/base.html:58', 'body/templates/base.html:156', 'body/templates/settings.html:84', 'body/templates/goal_new.html:97', 'body/templates/acceso_rechazado.html:9', 'body/templates/consentimiento.html:9', 'body/templates/sin_acceso.html:9', 'body/templates/origen_rechazado.html:9']`.
+- (b) `InlineEventHandlerGoneTest` -- no template holds an `\bon[a-z]+="` attribute (word-boundary, so
+  `viewport`/`content`/`aria-controls` false-positives from a looser pattern are excluded); only
+  `goal_new.html:33`'s `onchange=` existed, now gone.
+- (c) `SecurityHeadersTest` -- every response's `Content-Security-Policy` header equals
+  `seguridad.content_security_policy()` exactly, and its `script-src` directive carries neither
+  `'unsafe-inline'` nor `'unsafe-eval'`.
+- (d) `StaticUrlScriptsExistTest` -- every `static_url('...js')` a template references (including the four
+  new files) names a file that exists under `body/static`.
+- (e) `FormActionOriginTest` / `HostedResponseCarriesFormActionTest` -- `form-action` is `'self'` alone
+  locally (`os.environ` has no `BODY_CUENTA_ISSUER`) and `'self' https://fake-cuenta.test` once
+  `cuenta.ISSUER_ENV` is patched the way the existing hosted tests do (e.g. `tests/test_dispositivo.py`),
+  checked at the function level and once more end to end through a real `TestClient` response.
+
+**docs/DESIGN.md** (rule 13) now records the full policy, names the `style-src` gap and why it stays, and
+names Google Fonts as the one third-party origin the policy allows -- self-hosting it instead is open as
+**BODY-FUENTES-PROPIAS-1**, a follow-up, not done here.
+
+**Gate**, run once on the branch's final tree before this entry's own commit:
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -- `Ran 1276 tests in 176.752s ... OK (skipped=1)`
+(1269 before this slice, +7 new guard tests: `InlineScriptGoneTest`, `InlineEventHandlerGoneTest`,
+`StaticUrlScriptsExistTest`, `FormActionOriginTest`'s 3 methods, `HostedResponseCarriesFormActionTest`).
+
+**Merge: AWAITING_APPROVAL, stopped on customer-bytes.** This diff's customer-facing surface is templates and
+static JS a person's browser loads and runs (`body/templates/*.html`, `body/static/*.js`) -- behaviour-
+identical, but still bytes a browser reads, which this spec's own approval-reason requires the orchestrator
+to measure in a browser at 375 px with the console open for CSP violations before any merge. No schema or
+migration change; no cross-repo contract or DTO shape change. So per merge policy A's customer-bytes
+condition, and per the spec's own words ("the worker BUILDS and GATES on the branch and STOPS without
+merging"), this slice stops on `feat/body-seguridad-2`, committed, unmerged, for that browser review.
+
+Commit (pasted from `git rev-parse`, not retyped): `55da3bed99149b610f68386c238c971b030d4826` on branch
+`feat/body-seguridad-2`, base `main` at `7e78b400e964fd4b7f1fb26b1db9c94cd4a8c752`. No password, token,
+session secret or health figure was read, printed or logged by this slice. `git status --porcelain` is empty
+on the branch, before this ledger entry's own commit.
