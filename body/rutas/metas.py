@@ -149,10 +149,14 @@ def _goal_line_svg(t: T, defs: dict, g, checks, today: date, width: int = 320, h
     aria = html.escape(f"{g['title']}: {t('goals.chart_aria', start=comun._short_date(t, start), end=comun._short_date(t, end))}")
     svg = (f'<svg viewBox="0 0 {width} {top + h + 6}" width="100%" height="110" role="img" aria-label="{aria}" '
            f'preserveAspectRatio="none" class="chart-svg">{"".join(out)}</svg>')
+    # BODY-ESTADOS-VACIOS-2-M2: the legend names only what is actually drawn -- `pts` (not
+    # `checks` before the start/end filter above) is the same condition the polyline/circle branch
+    # just used, so zero weekly points in the plotted range means no "Tu promedio semanal" entry.
+    avg_entry = (f'<span><i class="c-{color_cls} legend-line"></i>{t("goals.legend_avg")}</span>' if pts else "")
     legend = (
         '<div class="legend mt-4">'
         f'<span><i class="legend-dash"></i>{t("goals.legend_plan")}</span>'
-        f'<span><i class="c-{color_cls} legend-line"></i>{t("goals.legend_avg")}</span>'
+        f'{avg_entry}'
         f'<span><i class="legend-today"></i>{t("goals.legend_today")}</span>'
         '</div>')
     data_pts = [{"x": max(0.0, min(1.0, (d - start).days / span_days)),

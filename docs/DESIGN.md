@@ -31,7 +31,11 @@ comes from; the Body-specific reading is in *italics*. When a new rule arrives f
    night's sync). A screen whose whole section would be nothing but the same gap repeated shows that gap once, in
    the hero, and drops the empty section entirely (BODY-SHIFTS-REDUNDANT-EMPTY-TABLE-1); a section with at least one
    real figure stays, gaps and all -- a partial gap is still informative. A chart with no data points says so in its
-   caption, never invites a tap or drag over nothing (BODY-GOAL-CHART-NO-CAPTION-1).
+   caption, never invites a tap or drag over nothing (BODY-GOAL-CHART-NO-CAPTION-1). Stale data is a flag, not a
+   footnote (`.aviso`, amber tint and left bar, body-size ink text) -- the clearest "off the normal flow" state the
+   app has gets more than muted `.note` grey under a giant score; amber, never red, and its link never points at a
+   page that does not exist behind it (BODY-ESTADOS-VACIOS-2-M2). A chart's legend names only what it draws: an
+   entry for a series with zero plotted points is omitted, not shown beside an empty line (BODY-ESTADOS-VACIOS-2-M2).
 7. **Shifts are the axis.** *Days are banded by shift kind (bar + tint + word: Día, Noche, Descanso), on every
    time chart.*
 8. **Simple by default, detail on demand** (Sencillo/Detallado). *Hoy shows 4 figures; "Ver todo" opens the rest.

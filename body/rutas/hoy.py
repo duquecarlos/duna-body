@@ -59,18 +59,20 @@ def _stale_ctx(t: T, day: str, today_local: date) -> Markup | None:
     """BODY-HOY-STALE-DATA-1: the readiness card renders the latest day WITH data, however old --
     honest (every figure is that day's own), but a returning person could mistake a stale card for
     today's. dias 0 or 1 is the normal morning state (today, or last night not yet synced) and
-    changes nothing; dias >= 2 says the figures' own age once, plainly, above the score. The link
-    goes to the one place a stale person can act on the sync in their mode: /garmin (hosted) shows
-    the connection and lets them reconnect; in local mode the sync is a per-install Task Scheduler
-    setting this app cannot read or trigger (comun._sync_status_text's own docstring), so /settings
-    -- the app's one settings hub -- is the nearest actionable page, not a sync screen that does not
-    exist locally."""
+    changes nothing; dias >= 2 says the figures' own age once, plainly, above the score.
+
+    BODY-ESTADOS-VACIOS-2-M2: hosted links to /garmin, the one page that actually shows the
+    connection and the last sync error. Local gets NO link at all -- /settings has no sync row
+    (comun._sync_status_text's own docstring: the sync itself is a per-install Task Scheduler
+    setting this app cannot read or trigger), and a link that promises a page that does not exist
+    is worse than the sentence standing alone."""
     dias = (today_local - date.fromisoformat(day)).days
     if dias < 2:
         return None
-    link = "/garmin" if cuenta.hosted() else "/settings"
     text = t("today.stale", date=comun._short_date(t, date.fromisoformat(day)), n=dias)
-    return Markup(html.escape(text) + ' <a class="taplink" href="' + link + '">' +
+    if not cuenta.hosted():
+        return Markup(html.escape(text))
+    return Markup(html.escape(text) + ' <a class="taplink" href="/garmin">' +
                   html.escape(t("today.stale_link")) + "</a>")
 
 

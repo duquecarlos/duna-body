@@ -11,20 +11,37 @@ weekly readings (the chart_hint case the zero-points caption rule must NOT touch
 BODY-ESTADOS-VACIOS-2-M (a follow-up slice) moved the all-empty cost-table case to
 tests/test_turnos_enlaces.py::CostRowNoDataTest, which also owns _seed_D's import now; this
 module's own _seed_turnos_parcial stays here and is reused from there.
+
+BODY-ESTADOS-VACIOS-2-M2 (a second follow-up, from the orchestrator's own 375 px browser
+measurement of this slice's work) restyles the stale line as the `.aviso` flag, drops its link in
+local mode (no local page shows the sync) and relabels it to /garmin in hosted mode, and makes the
+goal chart's legend omit "Tu promedio semanal" when zero weekly points are actually plotted.
 """
+import os
 import tempfile
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
+from unittest import mock
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import config, db, demo, fechas, goals, identity, web
+from body import config, cuenta, db, demo, fechas, garmin_cuenta, goals, identity, web
 from body.i18n import T
 from body.rutas import comun
 from tests.test_estados_vacios import TODAY, _full_day, _mk_person, _reset_db, _seed_B, _seed_E, _seed_F
+
+# Hosted-mode env, the same three variables tests/test_cuenta_rp.py's CuentaRpTestCase patches.
+_HOSTED_ENV = {cuenta.ISSUER_ENV: "https://fake-cuenta.test", cuenta.PUBLIC_URL_ENV: "http://127.0.0.1:8770",
+               cuenta.CLIENT_SECRET_ENV: "s3cr3t-test-only", garmin_cuenta.KEY_ENV: "11" * 32}
+
+
+def _aviso_html(page_text: str) -> str:
+    start = page_text.index('<div class="aviso">')
+    return page_text[start:page_text.index("</div>", start)]
+
 
 client = TestClient(web.app, follow_redirects=False)
 
@@ -89,7 +106,10 @@ def _seed_meta_con_lecturas(conn, lang: str) -> dict:
 
 
 class HoyStaleDataTest(unittest.TestCase):
-    """BODY-HOY-STALE-DATA-1: the stale line and its n, in both languages; nothing for dias 0 or 1."""
+    """BODY-HOY-STALE-DATA-1: the stale line and its n, in both languages; nothing for dias 0 or 1.
+    BODY-ESTADOS-VACIOS-2-M2: the line is the `.aviso` flag, never the old muted footnote, and in
+    local mode (no hosted env patched here) it carries no link at all -- /settings has no sync row
+    for it to point at. The hosted link is covered separately, in StaleDataHostedLinkTest."""
 
     def setUp(self):
         self.conn = _reset_db(self)
@@ -105,22 +125,53 @@ class HoyStaleDataTest(unittest.TestCase):
             expected = t("today.stale", date=expected_date, n=40)
             r = client.get("/")
             self.assertEqual(r.status_code, 200)
+            self.assertIn('class="aviso"', r.text, f"{lang}: stale line must render as the .aviso flag")
             self.assertIn(expected, r.text, f"{lang}: stale line missing or wrong n for a 40-day-old day")
-            self.assertIn(t("today.stale_link"), r.text)
+
+    def test_local_mode_aviso_has_no_link(self):
+        ids = _seed_F(self.conn, "es")
+        _use(self.conn, ids["person_id"])
+        r = client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn("<a", _aviso_html(r.text),
+                         "local mode has no page that shows the sync, so the aviso stands alone")
 
     def test_dias_0_no_stale_line(self):
         ids = _seed_B(self.conn, "es")
         _use(self.conn, ids["person_id"])
         r = client.get("/")
         self.assertEqual(r.status_code, 200)
-        self.assertNotIn(T("es")("today.stale_link"), r.text)
+        self.assertNotIn('class="aviso"', r.text)
 
     def test_dias_1_no_stale_line(self):
         ids = _seed_dias_1(self.conn, "es")
         _use(self.conn, ids["person_id"])
         r = client.get("/")
         self.assertEqual(r.status_code, 200)
-        self.assertNotIn(T("es")("today.stale_link"), r.text)
+        self.assertNotIn('class="aviso"', r.text)
+
+
+class StaleDataHostedLinkTest(unittest.TestCase):
+    """BODY-ESTADOS-VACIOS-2-M2: hosted mode's aviso links /garmin, the page that actually shows
+    the connection, with the relabeled text -- never the old /settings guess."""
+
+    def setUp(self):
+        self.conn = _reset_db(self)
+        _clear(self)
+        patcher = mock.patch.dict(os.environ, _HOSTED_ENV)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.client = TestClient(web.app, follow_redirects=False)
+
+    def test_hosted_aviso_links_garmin_with_new_label(self):
+        ids = _seed_F(self.conn, "es")
+        _use(self.conn, ids["person_id"])
+        t = T("es")
+        r = self.client.get("/")
+        self.assertEqual(r.status_code, 200)
+        aviso = _aviso_html(r.text)
+        self.assertIn('<a class="taplink" href="/garmin">', aviso)
+        self.assertIn(t("today.stale_link"), aviso)
 
 
 class TurnosCostoVacioTest(unittest.TestCase):
@@ -151,7 +202,9 @@ class TurnosCostoVacioTest(unittest.TestCase):
 
 class GoalChartCaptionTest(unittest.TestCase):
     """BODY-GOAL-CHART-NO-CAPTION-1: chart_soon (not chart_hint) when the plan line has zero actual
-    points; chart_hint stays once there is at least one."""
+    points; chart_hint stays once there is at least one.
+    BODY-ESTADOS-VACIOS-2-M2: the legend follows the same rule -- "Tu promedio semanal" (goals.
+    legend_avg) is omitted with zero points, present with at least one."""
 
     def setUp(self):
         self.conn = _reset_db(self)
@@ -166,6 +219,7 @@ class GoalChartCaptionTest(unittest.TestCase):
         t = T("es")
         self.assertIn(t("goals.chart_soon"), r.text)
         self.assertNotIn(t("goals.chart_hint"), r.text)
+        self.assertNotIn(t("goals.legend_avg"), r.text, "no points plotted, so no legend entry for the average line")
 
     def test_con_puntos_usa_chart_hint(self):
         ids = _seed_meta_con_lecturas(self.conn, "es")
@@ -175,6 +229,7 @@ class GoalChartCaptionTest(unittest.TestCase):
         t = T("es")
         self.assertIn(t("goals.chart_hint"), r.text)
         self.assertNotIn(t("goals.chart_soon"), r.text)
+        self.assertIn(t("goals.legend_avg"), r.text, "real weekly points are plotted, so the legend names them")
 
 
 class PersonaCompletaSinCambiosTest(unittest.TestCase):
@@ -198,6 +253,7 @@ class PersonaCompletaSinCambiosTest(unittest.TestCase):
         r_home = client.get("/")
         self.assertEqual(r_home.status_code, 200)
         self.assertNotIn(t("today.stale_link"), r_home.text)
+        self.assertNotIn('class="aviso"', r_home.text)
 
         r_shifts = client.get("/shifts")
         self.assertEqual(r_shifts.status_code, 200)
@@ -209,6 +265,7 @@ class PersonaCompletaSinCambiosTest(unittest.TestCase):
         self.assertIn(t("goals.chart_hint"), r_goal.text,
                      "demo's own weekly checks give this goal real points -- chart_hint, not chart_soon")
         self.assertNotIn(t("goals.chart_soon"), r_goal.text)
+        self.assertIn(t("goals.legend_avg"), r_goal.text, "real points plotted -- the legend keeps naming them")
 
 
 if __name__ == "__main__":
