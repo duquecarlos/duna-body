@@ -6412,4 +6412,5 @@ page, not 1. The test's intent (the hero figure's own «≈» is not duplicated 
 below it) still holds -- the assertion is just scoped to the wrong element now that a second, correct source of
 «≈» exists on the same page by design. The one-line fix (narrow the count to the hero card's own markup, or drop the
 whole-page count and assert on the hero card's html slice instead) is in `tests/test_turnos_costo.py`, which is not
-in this slice's `touches:`, so it is not made here.
+in this slice's `touches:`, so it is not made here. Follow-up: **BODY-PULIDO-3-TURNOS-HERO-COUNT-1** -- rescope that
+one assertion to the hero card's own markup (`touches: tests/test_turnos_costo.py`).
