@@ -8204,3 +8204,82 @@ Commits (pasted from `git rev-parse`, not retyped): fix `73336eecacdf5def45fec93
 measurement of the new customer-facing strings before a separate `-M` slice merges. No password, token, session
 secret or health figure was read, printed or logged by this slice. `git status --porcelain` empty on the
 branch, before this ledger entry's own commit.
+
+## BODY-SEGURIDAD-1-M -- lands BODY-SEGURIDAD-1 after two review fixes (2026-11-08)
+
+The merge slice for BODY-SEGURIDAD-1, held `AWAITING_APPROVAL` above. ORCH-CARLOS-DELEGATES-TIER-1-1 approved
+the merge against BODY-SEGURIDAD-CENSO-1, after the orchestrator's own diff review and a browser measurement,
+on condition of two review fixes made here first.
+
+**Fix 1 -- the refusal page answers in the request's own language.** `body/seguridad.py`'s `_origen_rechazado`
+used to render `T(DEFAULT_LANG)` unconditionally -- always Spanish, even for an English-speaking caller --
+because `SeguridadMiddleware` runs ahead of `identity.current_person_id`, before any person (and their saved
+language) is resolved. A new small helper, `body/i18n/pick(accept_language: str | None) -> str`: the first tag
+in a raw `Accept-Language` header value (everything before the first comma, `;q=...` stripped away by the
+comma split) picks `"en"` when it starts with `"en"` (case-insensitive); anything else -- `es-CO`, a different
+language, a header with no first tag, or no header at all -- picks `DEFAULT` (`"es"`). `_origen_rechazado` now
+reads `scope["headers"]` for `accept-language` itself (the ASGI scope, not a `Request`, since the middleware
+sees raw ASGI) and renders `T(i18n.pick(...))`. `Accept-Language: en-US,en;q=0.9` now answers "This action came
+from another page and was not done."; `es-CO`, no header, and `fr-FR,fr;q=0.9` all answer the Spanish text
+unchanged -- no new i18n keys needed, both strings already existed from BODY-SEGURIDAD-1 itself, just
+unreachable until now.
+
+**Fix 2 -- a refused request now reaches the request log.** `body/web.py` added `SeguridadMiddleware` as the
+LAST `app.add_middleware(...)` call, and Starlette's `add_middleware` inserts each new middleware at index 0
+of its internal list, so the LAST call ends up OUTERMOST. That made `SeguridadMiddleware` the outermost of the
+two, short-circuiting a cross-site 403 before `RequestLogMiddleware` ever saw the request -- an attack attempt
+was invisible in the log, the opposite of Carlos's rule that anything off the normal flow raises a flag.
+Execution order, outermost first, before this fix: `ServerErrorMiddleware`, `SeguridadMiddleware`,
+`RequestLogMiddleware`, `_CaminoActualMiddleware`, `ExceptionMiddleware`, the router. The fix swaps the last two
+`app.add_middleware(...)` lines, so the call order is now `_CaminoActualMiddleware`, `SeguridadMiddleware`,
+`RequestLogMiddleware` -- `RequestLogMiddleware` added last puts it outermost of the two. Execution order,
+outermost first, after: `ServerErrorMiddleware`, `RequestLogMiddleware`, `SeguridadMiddleware`,
+`_CaminoActualMiddleware`, `ExceptionMiddleware`, the router. `_CaminoActualMiddleware` keeps its own position
+relative to the router unchanged -- only the relative order of the two outer layers moved. Every response still
+carries the fixed security-header set (`SeguridadMiddleware` wraps `send` on every request it lets through, and
+`RequestLogMiddleware` does not touch headers), and `RequestLogMiddleware`'s own behaviour for an allowed
+request is unchanged -- it still reads `request.scope["route"]` for the path template after `call_next`
+returns. For a refused request, routing never runs (`SeguridadMiddleware` returns its 403 directly, without
+calling `self.app`), so `_route_template` finds no `"route"` key in scope and logs its existing `"-"` marker,
+not a path template. A refused cross-site `POST` now logs exactly one `body.request` record:
+`"POST - 403 <N>ms"` -- method, the no-route marker, status, duration; never the `Origin` value (`evil.example`
+does not appear), never the query string. New guard,
+`tests/test_request_log.py::RefusedCrossSiteRequestLogsOnceTest`: `POST /settings/language?x=<secret>` with
+`Origin: https://evil.example` logs one record, `fields[0] == "POST"`, `fields[1] == "-"`, `fields[2] == "403"`,
+and asserts neither `"evil.example"` nor the query value appears in the message. New guard,
+`tests/test_seguridad.py::RefusalPageLanguageTest`: English `Accept-Language` gets the English sentence; `es-CO`,
+absent, and `fr-FR` each get the Spanish sentence -- all four cases go through the live middleware stack via
+`TestClient`, exercising `i18n.pick`'s both branches, not called directly. Every existing BODY-SEGURIDAD-1 guard
+in `tests/test_seguridad.py` stayed green through both fixes, unmodified except for the new test class added
+alongside them.
+
+**The orchestrator's browser measurement**, copied from this slice's own approval-reason, unchanged: measured
+in the Browser pane at 375 px on `body-web-demo` (invented data) -- all five headers present on `GET /`; the
+`<meta name="referrer">` tag reads `same-origin`; a real click on a Hoy habit box POSTs and records (the form
+flips to uncheck); a real click on Ajustes English/Español switches the language both ways; a form posted from
+`http://127.0.0.1:8773` to `http://localhost:8773/habits/2/check` gets 403 "Esto no se hizo" at `scrollWidth`
+375 and the habit stays as it was.
+
+**BODY-SEGURIDAD-CADDY-HEADER-DUPE-1, closed as not-a-defect.** The worker's follow-up, opened above, called
+the Caddy-side and app-side headers a duplication. They are not a duplicate on the wire: Caddy's `header`
+directive with a value SETS that response field -- it replaces whatever the upstream (this app) already sent,
+it does not append a second occurrence -- and the two sides agree on the exact value for both headers
+(`X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`). A client sees each header exactly once,
+with the value both layers happen to agree on. Nothing to fix; closed.
+
+**Gate**, run once on the branch's final tree (`5da329d3dd8d250a463209a627fff05e4b438432`, confirmed equal to
+the merge commit's own tree before merging, so not re-run after the merge): `.venv/Scripts/python.exe -m
+unittest discover tests -t .` -- `Ran 1256 tests in 119.740s ... OK (skipped=1)`.
+
+Merge policy A, judged against this slice's own diff (the two fixes only, not BODY-SEGURIDAD-1's diff, already
+judged above): no schema or migration change. No cross-repo contract or DTO shape change -- every touched file
+is `body/seguridad.py`, `body/web.py`, `body/i18n/__init__.py`, `tests/test_seguridad.py`,
+`tests/test_request_log.py`. Customer-facing bytes DID change again -- an English-speaking visitor now sees
+the refusal page's existing English strings instead of always Spanish -- but this spec's own body says in
+words to merge ("Merge `--no-ff` into `main` (this spec is the approval)"), after the orchestrator's own review
+and browser measurement above, so the merge proceeds rather than stopping a second time.
+
+Commits (pasted from `git rev-parse`, not retyped): fix `f9315076081f0aca77588c269303c37dbbb01491` on branch
+`feat/body-seguridad-1`, merged `--no-ff` into `main` as `b595aa725935c4424f1314084eb772714793db2f`. No
+password, token, session secret or health figure was read, printed or logged by this slice. `git status
+--porcelain` empty on `main`, before this ledger entry's own commit.
