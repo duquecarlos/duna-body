@@ -89,11 +89,16 @@ def _stored(conn, person_id: int) -> set[str]:
     return set(db.days_with_data(conn, person_id))
 
 
-def pull_all(conn, person_id: int) -> int:
-    """Walk back day by day until EMPTY_STOP empty days in a row. Returns days saved."""
+def pull_all(conn, person_id: int) -> tuple[int, date | None]:
+    """Walk back day by day until EMPTY_STOP empty days in a row. Returns (days saved, oldest day
+    saved this run or None) -- the oldest feeds `_cerrar_semanas_seguro`'s `desde`
+    (BODY-SEMANAS-TARDIAS-1), so a day restored from further back than last week still re-closes
+    its own goal_check row. `date.today()` here is the PC's own date -- local mode only, this is
+    the person's own machine, not a business-boundary clock (BODY-PULL-RELOJ-1 leaves it)."""
     stored = _stored(conn, person_id)
     d = date.fromisoformat(min(stored)) if stored else date.today()
     empty = saved = 0
+    oldest = None
     while empty < EMPTY_STOP:
         d -= timedelta(1)
         key = d.isoformat()
@@ -108,17 +113,18 @@ def pull_all(conn, person_id: int) -> int:
             data = garmin_adapter.fetch_day(key)
             if len(data.raw.get("_errors", {})) >= 4:
                 print(f"Still no answer. Stopped at {key}; run `python -m body.pull --all` later to resume.")
-                return saved
+                return saved, oldest
         if data.metrics or data.activities:
             db.save_day(conn, data, person_id)
             saved += 1
+            oldest = d
             empty = 0
         else:
             empty += 1
         if saved and saved % 30 == 0 and empty == 0:
             print(f"... back to {key}, {saved} days saved", flush=True)
     print(f"History start reached around {(d + timedelta(EMPTY_STOP)).isoformat()} ({saved} days saved).")
-    return saved
+    return saved, oldest
 
 
 def _pull_one_person(conn, person_id: int, days: list[str]) -> int | None:
@@ -148,38 +154,51 @@ def _pull_one_person(conn, person_id: int, days: list[str]) -> int | None:
     return saved
 
 
-def _cerrar_semanas_seguro(conn, person_id: int) -> None:
+def _cerrar_semanas_seguro(conn, person_id: int, *, desde: date | None = None) -> None:
     """The one writer of goal_check (BODY-SEGURIDAD-3): closes this person's current and previous
-    week. A failure here is never a Garmin failure and never stops the next person -- caught,
-    printed as a counts-only line with the exception TYPE (body/errores.py's texto_seguro),
-    nothing else happens."""
+    week, and -- when `desde` is given (BODY-SEMANAS-TARDIAS-1) -- every older week back to
+    `desde` too. A failure here is never a Garmin failure and never stops the next person --
+    caught, printed as a counts-only line with the exception TYPE (body/errores.py's
+    texto_seguro), nothing else happens."""
     try:
         hoy = fechas.hoy_local(db.person(conn, person_id))
-        n = goals.cerrar_semanas(conn, person_id, hoy=hoy)
+        n = goals.cerrar_semanas(conn, person_id, hoy=hoy, desde=desde)
         print(f"weekly checks: {n} rows", flush=True)
     except Exception as e:
         print(f"weekly checks failed: {errores.texto_seguro(e)}", flush=True)
 
 
-def _cerrar_semanas_todas(conn) -> None:
+def _cerrar_semanas_todas(conn, desde_por_persona: dict[int, date] | None = None) -> None:
     """Closes weeks, once each, for EVERY person who can see an active goal (own or shared
     household milestone, `goals.personas_con_meta_activa`) -- connected to Garmin or not, pulled
     OK or failed today (BODY-SEGURIDAD-3-M). Run once after the Garmin loop in both the daily
     hosted pull and --backfill, replacing the per-connected-person call that used to sit inside
     that loop: the person list comes from the goal table, never from
     `garmin_cuenta.every_person_id`, so a habit goal's own member who has no Garmin connection at
-    all still gets their weekly checks stored."""
+    all still gets their weekly checks stored. `desde_por_persona` (BODY-SEMANAS-TARDIAS-1): the
+    oldest day stored this run for a person who has one, so that person's older weeks re-close
+    too; a person absent from the mapping gets the plain current/previous-week close."""
+    desde_por_persona = desde_por_persona or {}
     for person_id in goals.personas_con_meta_activa(conn):
-        _cerrar_semanas_seguro(conn, person_id)
+        _cerrar_semanas_seguro(conn, person_id, desde=desde_por_persona.get(person_id))
 
 
-def pull_hosted(conn, days: list[str]) -> tuple[int, int, int]:
-    """Loops over every person with a connected Garmin account, then closes weeks for every
-    person who can see an active goal (`_cerrar_semanas_todas`) -- connected or not, pulled OK or
-    failed today (BODY-SEGURIDAD-3-M). Returns (persons ok, persons failed, days stored). Never
-    prints a health figure -- counts only."""
+def pull_hosted(conn, *, fecha: str | None = None, n_days: int = 2) -> tuple[int, int, int]:
+    """Loops over every person with a connected Garmin account, pulling `fecha` alone when given
+    (the same one explicit date for everyone, `--date`), or else today and the `n_days - 1` days
+    before it IN THAT PERSON'S OWN ZONE (`fechas.hoy_local`, BODY-PULL-RELOJ-1) -- the hosted timer
+    fires at a fixed server instant, so a server-date list would ask a person far from the
+    server's zone for the wrong "today". Then closes weeks for every person who can see an active
+    goal (`_cerrar_semanas_todas`) -- connected or not, pulled OK or failed today
+    (BODY-SEGURIDAD-3-M). Returns (persons ok, persons failed, days stored). Never prints a health
+    figure -- counts only."""
     ok = failed = saved = 0
     for person_id in garmin_cuenta.every_person_id(conn):
+        if fecha is not None:
+            days = [fecha]
+        else:
+            hoy = fechas.hoy_local(db.person(conn, person_id))
+            days = [(hoy - timedelta(n)).isoformat() for n in range(n_days)]
         try:
             n = _pull_one_person(conn, person_id, days)
         except Exception as e:
@@ -212,20 +231,22 @@ def _dias_pendientes_backfill(conn, person_id: int, hoy: date) -> list[str]:
     return dias
 
 
-def _backfill_one_person(conn, person_id: int, hoy: date) -> int | None:
+def _backfill_one_person(conn, person_id: int, hoy: date) -> tuple[int, date | None] | None:
     """Fetches this person's next backfill batch (at most BACKFILL_PASO days, newest first),
     advancing their backfill marker after each day so a day already tried -- with or without
-    data -- is never asked again. Returns the number of days fetched, or None when the person has
-    no token to pull with. Raises whatever the adapter or Garmin raise, with the days-fetched-so-
-    far attached as `.saved`, the same contract `_pull_one_person` uses."""
+    data -- is never asked again. Returns (days fetched, oldest day fetched this run or None), or
+    None when the person has no token to pull with. Raises whatever the adapter or Garmin raise,
+    with the days-fetched-so-far attached as `.saved` and the oldest of those as `.oldest`
+    (BODY-SEMANAS-TARDIAS-1), the same `.saved` contract `_pull_one_person` uses."""
     token = garmin_cuenta.leer(conn, person_id)
     if token is None:
         return None
     dias = _dias_pendientes_backfill(conn, person_id, hoy)
     if not dias:
-        return 0
+        return 0, None
     token_before = token
     saved = 0
+    oldest = None
     try:
         for i, d in enumerate(dias):
             if i:
@@ -233,20 +254,24 @@ def _backfill_one_person(conn, person_id: int, hoy: date) -> int | None:
             data, token = garmin_adapter.fetch_day(d, token_str=token)
             db.save_day(conn, data, person_id)
             saved += 1
+            oldest = d
             garmin_cuenta.avanzar_backfill(conn, person_id, d)
     except Exception as e:
         e.saved = saved
+        e.oldest = oldest
         raise
     finally:
         if token != token_before:
             garmin_cuenta.guardar(conn, person_id, token)
-    return saved
+    return saved, oldest
 
 
-def pull_backfill_hosted(conn, hoy: date | None = None) -> tuple[int, int, int]:
+def pull_backfill_hosted(conn, *, hoy: date | None = None) -> tuple[int, int, int]:
     """Loops over every person with a connected Garmin account whose backfill marker has not yet
     reached the 90-day window's start, fetching up to BACKFILL_PASO more days each (newest first).
-    A person already complete, or not connected, costs no Garmin call. A person whose last pull
+    `hoy`, when given, is used for every person alike (tests only); left out, each person's own
+    local today is used (`fechas.hoy_local`, BODY-PULL-RELOJ-1) -- no `date.today()` left here. A
+    person already complete, or not connected, costs no Garmin call. A person whose last pull
     recorded an error (a rejected or expired token, Garmin down, anything) is also skipped, with
     no Garmin call and not counted as failed -- otherwise the backfill timer would retry a
     rejected token every 10 minutes and risk Garmin rate-limiting the account. The daily pull
@@ -254,26 +279,35 @@ def pull_backfill_hosted(conn, hoy: date | None = None) -> tuple[int, int, int]:
     a reconnect (garmin_cuenta.guardar) also clears it. Also closes weeks for every person who can
     see an active goal (`_cerrar_semanas_todas`), same as the daily pull -- cheap next to the
     Garmin calls this loop already makes, and a day backfilled into the current or previous week
-    can change that week's stored verdict (BODY-SEGURIDAD-3-M). Returns (persons ok, persons
-    failed, days stored). Never prints a health figure -- counts only."""
-    hoy = hoy or date.today()
+    can change that week's stored verdict (BODY-SEGURIDAD-3-M); a day backfilled further back than
+    that re-closes that older week too (BODY-SEMANAS-TARDIAS-1), via the oldest day fetched this
+    run for that person (`desde_por_persona`), on success or on a mid-run failure alike. Returns
+    (persons ok, persons failed, days stored). Never prints a health figure -- counts only."""
     ok = failed = saved = 0
+    desde_por_persona: dict[int, date] = {}
     for person_id in garmin_cuenta.every_person_id(conn):
         if garmin_cuenta.ultimo_error(conn, person_id) is not None:
             continue
+        hoy_persona = hoy or fechas.hoy_local(db.person(conn, person_id))
         try:
-            n = _backfill_one_person(conn, person_id, hoy)
+            result = _backfill_one_person(conn, person_id, hoy_persona)
         except Exception as e:
             garmin_cuenta.registrar_error(conn, person_id, type(e).__name__)
             failed += 1
             saved += getattr(e, "saved", 0)
+            oldest = getattr(e, "oldest", None)
+            if oldest is not None:
+                desde_por_persona[person_id] = date.fromisoformat(oldest)
             continue
-        if n is None:
+        if result is None:
             continue
+        n, oldest = result
         garmin_cuenta.limpiar_error(conn, person_id)
         saved += n
         ok += 1
-    _cerrar_semanas_todas(conn)
+        if oldest is not None:
+            desde_por_persona[person_id] = date.fromisoformat(oldest)
+    _cerrar_semanas_todas(conn, desde_por_persona)
     return ok, failed, saved
 
 
@@ -307,8 +341,7 @@ def _run(conn, a) -> int:
                 ok, failed, saved = pull_backfill_hosted(conn)
                 print(f"backfill: {ok} ok, {failed} failed, {saved} days stored", flush=True)
                 return 0
-            days = [a.date] if a.date else [(date.today() - timedelta(n)).isoformat() for n in range(a.days)]
-            ok, failed, saved = pull_hosted(conn, days)
+            ok, failed, saved = pull_hosted(conn, fecha=a.date, n_days=a.days)
             print(f"{ok} ok, {failed} failed, {saved} days stored", flush=True)
             return 0
         finally:
@@ -319,13 +352,17 @@ def _run(conn, a) -> int:
         return 2
 
     person_id = db.local_person_id(conn)
+    desde = None  # BODY-SEMANAS-TARDIAS-1: set below only by --all, which can restore days older
+                  # than last week; --days/--date/--recompute never reach further back than that.
     if a.all:
         try:
-            pull_all(conn, person_id)
+            _, desde = pull_all(conn, person_id)
         except garmin_adapter.NotSignedIn as e:
             print(e)
             return 2
     elif not a.recompute:
+        # Local mode keeps the PC's own date here (it is the person's own machine, not a server
+        # serving several zones) -- BODY-PULL-RELOJ-1 leaves this date.today() as is.
         days = [a.date] if a.date else [(date.today() - timedelta(n)).isoformat() for n in range(a.days)]
         for i, d in enumerate(sorted(days)):
             if i:
@@ -347,7 +384,7 @@ def _run(conn, a) -> int:
     # prints a type-only line and the sync still exits 0, instead of failing the whole run. Runs
     # after every local path that stores or recomputes data -- --all, --recompute, and the
     # default/--days/--date pull all reach this line.
-    _cerrar_semanas_seguro(conn, person_id)
+    _cerrar_semanas_seguro(conn, person_id, desde=desde)
     return 0
 
 

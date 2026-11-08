@@ -469,10 +469,19 @@ async def habit_check(habit_id: int, request: Request, person_id: int = Depends(
     # for themselves; a habit assigned to someone else cannot be checked by this viewer.
     if row["assignee_person_id"] is not None and row["assignee_person_id"] != person_id:
         raise HTTPException(404)
+    today = comun._today_local(person)
     try:
-        goals.check_habit(conn, habit_id, person_id, day, f.get("done") == "1",
-                           hoy=comun._today_local(person))
+        goals.check_habit(conn, habit_id, person_id, day, f.get("done") == "1", hoy=today)
     except ValueError:
         raise HTTPException(404)
+    # BODY-SEMANAS-TARDIAS-1: cerrar_semanas (the daily pull) only ever re-closes the current and
+    # previous week, so a check for a day in an OLDER week would otherwise sit unreflected in
+    # goal_check until a future backfill happens to revisit it. Re-close that one week, now, in
+    # this same request -- a POST, so it may write. A day in this week or last is left to the
+    # daily pull, which already owns both (goals.weekly_check no-ops for a non-active goal).
+    week_start = fechas.lunes_de(date.fromisoformat(day))
+    last_monday = fechas.lunes_de(today) - timedelta(7)
+    if week_start < last_monday:
+        goals.weekly_check(conn, row["goal_id"], person_id, week_start.isoformat())
     back = cuenta.safe_return_to(f.get("back"))
     return RedirectResponse(back, status_code=303)
