@@ -63,7 +63,7 @@ def privacidad_view(request: Request, person_id: int = Depends(identity.current_
     return comun._render("privacidad.html", t=t, tab="settings", version=privacidad.CONSENT_VERSION,
                    accepted_date=accepted_date, delete_word=t("privacidad.borrar_palabra"),
                    error=request.query_params.get("error") == "confirmacion",
-                   es_hosted=es_hosted, reauth_ok=reauth_ok, turnos=comun._turnos_on(conn, person_id))
+                   es_hosted=es_hosted, reauth_ok=reauth_ok, turnos=db.trabaja_turnos_si(conn, person_id))
 
 
 @router.get("/privacidad/exportar")

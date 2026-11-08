@@ -18,6 +18,7 @@ from body import baselines, config, cuenta, db, goals, history, privacidad, prof
     vida_export, web
 from body import identity
 from body.agente import ajustes
+from body.rutas import turnos
 
 PERSON_A = 1   # db.local_person_id's answer in local mode
 PERSON_B = 2
@@ -121,8 +122,8 @@ class WebScopeTest(unittest.TestCase):
 
     def test_shifts_page_shows_only_the_resolved_persons_batch_date(self):
         from body.i18n import T
-        a_date = web._batch_date(T("es"), "2026-11-01T12:00:00-05:00")
-        b_date = web._batch_date(T("es"), "2026-11-10T12:00:00-05:00")
+        a_date = turnos._batch_date(T("es"), "2026-11-01T12:00:00-05:00")
+        b_date = turnos._batch_date(T("es"), "2026-11-10T12:00:00-05:00")
 
         _as(PERSON_A)
         r = client.get("/shifts")

@@ -28,7 +28,7 @@ def settings(person_id: int = Depends(identity.current_person_id)):
     metrics_compartir = [{"key": k, "label": t("metric." + k), "shared": k in compartidas}
                           for k in comun._defs(conn)] if hh else []
     return comun._render("settings.html", t=t, tab="settings", nivel_datos=nivel_datos,
-                   trabaja_turnos=trabaja_turnos, turnos=comun._turnos_on(conn, person_id),
+                   trabaja_turnos=trabaja_turnos, turnos=db.trabaja_turnos_si(conn, person_id),
                    has_household=bool(hh), metrics_compartir=metrics_compartir)
 
 
@@ -94,7 +94,8 @@ def nivel_datos_view(request: Request, person_id: int = Depends(identity.current
         proveedor_actual = agente_cliente.nombre_elegido(configurados, conn, person_id)
     guardado = request.query_params.get("guardado") == "1"
     resp = comun._render("asistente_datos.html", t=t, tab="settings", nivel=nivel, guardado=guardado,
-                   proveedores=proveedores, proveedor_actual=proveedor_actual, turnos=comun._turnos_on(conn, person_id))
+                   proveedores=proveedores, proveedor_actual=proveedor_actual,
+                   turnos=db.trabaja_turnos_si(conn, person_id))
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

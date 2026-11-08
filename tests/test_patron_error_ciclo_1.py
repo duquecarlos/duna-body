@@ -1,5 +1,5 @@
 """BODY-PATRON-ERROR-CICLO-1: `patron_turnos.validar` can raise a whole-cycle error
-(`{"index": None, "code": ...}`), which `web.shifts_patron_save` used to drop silently --
+(`{"index": None, "code": ...}`), which `turnos.shifts_patron_save` used to drop silently --
 the form re-rendered with no message at all. Now a whole-cycle error renders as a
 form-level message, in both languages, and a per-row error still renders on its row.
 Invented demo data only, no real schedules.

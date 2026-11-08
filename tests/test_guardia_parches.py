@@ -360,17 +360,11 @@ class NoShimAliasGuardTest(unittest.TestCase):
 # patch point (ESTRUCTURA-1's decision), rather than left for the guard below to flag as the
 # exact shape it exists to catch.
 #
-# comun._turnos_on is a pre-existing instance of the same shape (`return
-# db.trabaja_turnos_si(conn, person_id)`, BODY-TURNOS-OPCIONAL-3, unrelated to this slice's move),
-# found only once this guard existed to look -- mirroring how _ALLOWED_REIMPORTS above allow-lists
-# a pre-existing re-import rather than refactoring it. It cannot be fixed inside this slice's
-# `touches:`: its callers are body/rutas/ayuda.py, body/rutas/dispositivos.py and
-# body/rutas/privacidad.py, none of them touched by BODY-WEB-ESTRUCTURA-5. Removing it (inlining
-# db.trabaja_turnos_si at each call site) is BODY-WEB-ESTRUCTURA-PLAN-1's to schedule, not this
-# guard's to force by breaking the gate on code this slice has no grant to change.
+# comun._turnos_on (the same shape, over db.trabaja_turnos_si) was removed in BODY-WEB-ESTRUCTURA-6:
+# every caller now reaches db.trabaja_turnos_si directly, so this allow-list holds only the one
+# sanctioned wrapper.
 _ALLOWED_FUNCTION_SHIMS: set[tuple[str, str]] = {
     ("body.rutas.comun", "_today_local"),
-    ("body.rutas.comun", "_turnos_on"),
 }
 
 

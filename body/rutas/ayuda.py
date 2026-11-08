@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Response
 
-from .. import cuenta, identity, tutoriales
+from .. import cuenta, db, identity, tutoriales
 from . import comun
 
 router = APIRouter()
@@ -31,7 +31,7 @@ def _tarea_ayuda_ctx(tarea: dict, hosted: bool) -> dict:
 @comun._cierra_conexion
 def ayuda(person_id: int = Depends(identity.current_person_id)):
     conn, _, t = comun._ctx(person_id)
-    turnos_on = comun._turnos_on(conn, person_id)
+    turnos_on = db.trabaja_turnos_si(conn, person_id)
     hosted = cuenta.hosted()
     capitulos = []
     recorrido = []
