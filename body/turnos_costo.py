@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 from . import db
+from .lector import Lector
 
 VERSION = "turnos-v1"
 MODELO = {
@@ -101,17 +102,18 @@ def _dias_excluidos(conn, person_id: int, hoy: date) -> set[str]:
     return excluidos
 
 
-def referencia(conn, person_id: int, hoy: date | None = None) -> dict[str, Referencia | None]:
+def referencia(conn, person_id: int, hoy: date | None = None, *, lector: Lector | None = None) -> dict[str, Referencia | None]:
     """Per metric: mean and normal band (25th-75th percentile, body/baselines.py's rule) over the
     person's own day-shift days in the REFERENCIA_DIAS days before `hoy`. Fewer than
-    MODELO['min_dias_referencia'] values -> no reference for that metric (honest gap)."""
+    MODELO['min_dias_referencia'] values -> no reference for that metric (honest gap). `lector`,
+    when given, must cover at least [hoy - REFERENCIA_DIAS, hoy - 1] (BODY-RENDIMIENTO-2)."""
     hoy = hoy or date.today()
     start = (hoy - timedelta(REFERENCIA_DIAS)).isoformat()
     end = (hoy - timedelta(1)).isoformat()
     excluidos = _dias_excluidos(conn, person_id, hoy)
     out: dict[str, Referencia | None] = {}
     for metric in MODELO["metricas"]:
-        serie = db.series(conn, metric, start, end, person_id)
+        serie = lector.series(metric, start, end) if lector is not None else db.series(conn, metric, start, end, person_id)
         vals = [v for day, v in serie.items() if day not in excluidos]
         if len(vals) < MODELO["min_dias_referencia"]:
             out[metric] = None
@@ -139,7 +141,8 @@ def diferencia_y_palabra(metric: str, costo: float) -> tuple[float, str]:
     return diff, "peor" if costo > 0 else "mejor"
 
 
-def _costo_bloque(conn, person_id: int, bloque: Bloque, ref: dict[str, Referencia | None]) -> dict[str, float | None]:
+def _costo_bloque(conn, person_id: int, bloque: Bloque, ref: dict[str, Referencia | None],
+                   *, lector: Lector | None = None) -> dict[str, float | None]:
     fin = _parse(bloque.fin)
     end = (fin + timedelta(MODELO["dias_estables"])).isoformat()
     costo: dict[str, float | None] = {}
@@ -148,7 +151,8 @@ def _costo_bloque(conn, person_id: int, bloque: Bloque, ref: dict[str, Referenci
         if r is None:
             costo[metric] = None
             continue
-        serie = db.series(conn, metric, bloque.inicio, end, person_id)
+        serie = lector.series(metric, bloque.inicio, end) if lector is not None \
+            else db.series(conn, metric, bloque.inicio, end, person_id)
         vals = list(serie.values())
         if not vals:
             costo[metric] = None
@@ -157,8 +161,9 @@ def _costo_bloque(conn, person_id: int, bloque: Bloque, ref: dict[str, Referenci
     return costo
 
 
-def _dia_en_banda(conn, person_id: int, day: str, ref: dict[str, Referencia | None]) -> bool:
-    valores = db.day_values(conn, day, person_id)
+def _dia_en_banda(conn, person_id: int, day: str, ref: dict[str, Referencia | None],
+                   *, lector: Lector | None = None) -> bool:
+    valores = lector.day_values(day) if lector is not None else db.day_values(conn, day, person_id)
     en_banda = 0
     for metric in MODELO["metricas"]:
         r = ref.get(metric)
@@ -171,7 +176,7 @@ def _dia_en_banda(conn, person_id: int, day: str, ref: dict[str, Referencia | No
 
 
 def _recuperacion_bloque(conn, person_id: int, bloque: Bloque, ref: dict[str, Referencia | None],
-                          hoy: date) -> int | None:
+                          hoy: date, *, lector: Lector | None = None) -> int | None:
     """The first day d >= 1 after the block's last night such that d and the next
     `dias_estables - 1` days all have at least MIN_BANDA_VALORES metrics back in their reference band.
     Not reached within `ventana_post` days (or a day's data does not exist yet) -> None."""
@@ -180,7 +185,7 @@ def _recuperacion_bloque(conn, person_id: int, bloque: Bloque, ref: dict[str, Re
         ventana = [fin + timedelta(d + i) for i in range(MODELO["dias_estables"])]
         if any(day > hoy for day in ventana):
             return None
-        if all(_dia_en_banda(conn, person_id, day.isoformat(), ref) for day in ventana):
+        if all(_dia_en_banda(conn, person_id, day.isoformat(), ref, lector=lector) for day in ventana):
             return d
     return None
 
@@ -263,18 +268,24 @@ def contexto_dia(conn, person_id: int, dia: date) -> dict | None:
 def resumen(conn, person_id: int, hoy: date | None = None) -> dict:
     """Blocks of the last RESUMEN_DIAS days with their cost and recovery; the hero `dias_recuperacion`
     is the median recovery over blocks that have a figure, only when at least MODELO['min_bloques'] do;
-    otherwise None with a reason code (REASON_CODES)."""
+    otherwise None with a reason code (REASON_CODES). Reads its whole metric window ONCE, through a
+    single `Lector` covering [hoy - RESUMEN_DIAS, hoy + dias_estables] -- wide enough for `referencia`'s
+    own [hoy - REFERENCIA_DIAS, hoy - 1] and for every block's cost and recovery window, since
+    REFERENCIA_DIAS <= RESUMEN_DIAS and no block's window reaches past hoy + dias_estables
+    (BODY-RENDIMIENTO-2)."""
     hoy = hoy or date.today()
-    ref = referencia(conn, person_id, hoy)
     desde = (hoy - timedelta(RESUMEN_DIAS)).isoformat()
+    hasta = (hoy + timedelta(MODELO["dias_estables"])).isoformat()
+    lector = Lector(conn, person_id, desde, hasta, MODELO["metricas"])
+    ref = referencia(conn, person_id, hoy, lector=lector)
     bloques = bloques_noche(conn, person_id, desde, hoy.isoformat())
 
     bloques_out = []
     recuperaciones = []
     costos_por_metrica: dict[str, list[float]] = {m: [] for m in MODELO["metricas"]}
     for b in bloques:
-        costo = _costo_bloque(conn, person_id, b, ref)
-        recup = _recuperacion_bloque(conn, person_id, b, ref, hoy)
+        costo = _costo_bloque(conn, person_id, b, ref, lector=lector)
+        recup = _recuperacion_bloque(conn, person_id, b, ref, hoy, lector=lector)
         if recup is not None:
             recuperaciones.append(recup)
         for metric, v in costo.items():

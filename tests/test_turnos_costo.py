@@ -280,6 +280,61 @@ class ResumenTest(unittest.TestCase):
         self.assertEqual(r["motivo"], "pocos_bloques")
 
 
+class LectorEqualityTest(unittest.TestCase):
+    """body/lector.py's Lector, threaded through referencia/_costo_bloque/_dia_en_banda/
+    _recuperacion_bloque, must give EXACTLY the same answer as the pre-reader, per-call query path
+    (BODY-RENDIMIENTO-2). turnos_costo.Lector is the same class as body.lector.Lector."""
+
+    def test_referencia_matches(self):
+        conn = _mkconn(self)
+        hoy = date(2026, 6, 1)
+        start, end = hoy - timedelta(120), hoy - timedelta(1)
+        _fill_range(conn, 1, start, end, CONST)
+        without = turnos_costo.referencia(conn, 1, hoy)
+        lector = turnos_costo.Lector(conn, 1, start.isoformat(), hoy.isoformat(), METRICS)
+        with_lector = turnos_costo.referencia(conn, 1, hoy, lector=lector)
+        self.assertEqual(without, with_lector)
+
+    def test_costo_bloque_matches(self):
+        conn = _mkconn(self)
+        bloque = turnos_costo.Bloque(inicio="2026-04-01", fin="2026-04-05", dias=5)
+        ref = {"resting_hr": turnos_costo.Referencia(media=60.0, bajo=55.0, alto=65.0, n=20)}
+        d = date(2026, 4, 1)
+        while d <= date(2026, 4, 7):
+            db.set_metric(conn, d.isoformat(), "resting_hr", 50.0, "garmin", 1)
+            d += timedelta(1)
+        lector = turnos_costo.Lector(conn, 1, "2026-04-01", "2026-04-07", METRICS)
+        without = turnos_costo._costo_bloque(conn, 1, bloque, ref)
+        with_lector = turnos_costo._costo_bloque(conn, 1, bloque, ref, lector=lector)
+        self.assertEqual(without, with_lector)
+
+    def test_dia_en_banda_matches(self):
+        conn = _mkconn(self)
+        day = date(2026, 1, 11)
+        ref = {m: turnos_costo.Referencia(media=50.0, bajo=40.0, alto=60.0, n=20) for m in METRICS}
+        for i, m in enumerate(METRICS):
+            db.set_metric(conn, day.isoformat(), m, 50.0 if i < 3 else 100.0, "garmin", 1)
+        lector = turnos_costo.Lector(conn, 1, day.isoformat(), day.isoformat(), METRICS)
+        without = turnos_costo._dia_en_banda(conn, 1, day.isoformat(), ref)
+        with_lector = turnos_costo._dia_en_banda(conn, 1, day.isoformat(), ref, lector=lector)
+        self.assertEqual(without, with_lector)
+
+    def test_recuperacion_bloque_matches(self):
+        conn = _mkconn(self)
+        fin = date(2026, 1, 10)
+        bloque = turnos_costo.Bloque(inicio="2026-01-06", fin=fin.isoformat(), dias=5)
+        ref = {m: turnos_costo.Referencia(media=50.0, bajo=40.0, alto=60.0, n=20) for m in METRICS}
+        for i in range(1, 5):
+            day = fin + timedelta(i)
+            for j, m in enumerate(METRICS):
+                db.set_metric(conn, day.isoformat(), m, 50.0 if j < 3 else 100.0, "garmin", 1)
+        hoy = date(2026, 2, 1)
+        lector = turnos_costo.Lector(conn, 1, bloque.inicio, hoy.isoformat(), METRICS)
+        without = turnos_costo._recuperacion_bloque(conn, 1, bloque, ref, hoy)
+        with_lector = turnos_costo._recuperacion_bloque(conn, 1, bloque, ref, hoy, lector=lector)
+        self.assertEqual(without, with_lector)
+
+
 def _esc(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&#34;").replace("'", "&#39;")
 

@@ -29,10 +29,11 @@ class Baseline:
         return (value - self.mean) / self.sd
 
 
-def baseline(conn, metric: str, day: str, window: int = WINDOW_DAYS, *, person_id: int) -> Baseline | None:
+def baseline(conn, metric: str, day: str, window: int = WINDOW_DAYS, *, person_id: int, lector=None) -> Baseline | None:
     d = date.fromisoformat(day)
     start, end = (d - timedelta(window)).isoformat(), (d - timedelta(1)).isoformat()
-    vals = list(db.series(conn, metric, start, end, person_id).values())
+    serie = lector.series(metric, start, end) if lector is not None else db.series(conn, metric, start, end, person_id)
+    vals = list(serie.values())
     if len(vals) < MIN_DAYS:
         return None
     q = statistics.quantiles(vals, n=4)
