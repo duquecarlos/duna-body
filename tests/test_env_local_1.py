@@ -111,15 +111,34 @@ class ImportarWebTest(unittest.TestCase):
         """A fresh import of body.web must not call entorno.cargar() -- it is only called inside
         main(). Imports into a throwaway module object (popped and restored in sys.modules) rather
         than reloading the real one in place, so this test never disturbs the `body.web` module
-        every other test module already holds a reference to."""
-        original = sys.modules.get("body.web")
-        del sys.modules["body.web"]
+        every other test module already holds a reference to.
+
+        BODY-TESTS-VELOCIDAD-2 root-cause fix: the re-import repoints the `body` package's own
+        `web` attribute (`sys.modules["body"].web`) at the throwaway module too -- a plain
+        `from body import web` / `import body.web as x` resolves through that attribute, not
+        through sys.modules, so it must be saved and restored alongside the sys.modules entry.
+        _AUSENTE distinguishes "was absent before" from "was None before" so the restore never
+        writes a None placeholder into either slot."""
+        _AUSENTE = object()
+        paquete = sys.modules["body"]
+        modulo_original = sys.modules.get("body.web", _AUSENTE)
+        atributo_original = getattr(paquete, "web", _AUSENTE)
+        if modulo_original is not _AUSENTE:
+            del sys.modules["body.web"]
         try:
             with patch("body.entorno.cargar") as cargar_mock:
                 importlib.import_module("body.web")
             cargar_mock.assert_not_called()
         finally:
-            sys.modules["body.web"] = original
+            if modulo_original is _AUSENTE:
+                sys.modules.pop("body.web", None)
+            else:
+                sys.modules["body.web"] = modulo_original
+            if atributo_original is _AUSENTE:
+                if hasattr(paquete, "web"):
+                    del paquete.web
+            else:
+                paquete.web = atributo_original
 
 
 if __name__ == "__main__":

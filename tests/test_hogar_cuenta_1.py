@@ -5,6 +5,8 @@ against BODY-HOGAR-CUENTA-OBS-1). Cuenta is stubbed throughout (`cuenta._get_jso
 tests/test_cuenta_rp.py's FakeIssuer for a full sign-in round trip); invented subs only, never a
 real health figure.
 """
+import contextlib
+import io
 import os
 import tempfile
 import unittest
@@ -166,8 +168,11 @@ class SignInSyncTest(CuentaRpTestCase):
         self.assertEqual((row["hogar_id"], row["fuente"]), ("h-1", "cuenta"))
 
     def test_sign_in_still_succeeds_when_the_sync_raises(self):
-        with mock.patch.object(household, "sincronizar_desde_claim", side_effect=RuntimeError("boom")):
+        salida = io.StringIO()
+        with mock.patch.object(household, "sincronizar_desde_claim", side_effect=RuntimeError("boom")), \
+             contextlib.redirect_stdout(salida):
             r = self._sign_in(return_to="/goals", extra={"duna_hogar": {"id": "h-1", "miembros": [SUB]}})
+        self.assertIn("cuenta: hogar sync failed for 1 person (RuntimeError)", salida.getvalue())
         self.assertEqual(r.status_code, 303)
         self.assertEqual(r.headers["location"], "/goals")
         self.assertIsNotNone(r.cookies.get(cuenta.SESSION_COOKIE))
@@ -226,9 +231,12 @@ class HourlyRefreshTest(unittest.TestCase):
             "INSERT INTO hogar_miembro (person_id, hogar_id, fuente, actualizado_at) VALUES (2, 'h-1', 'cuenta', ?)",
             (old,))
         conn.commit()
+        salida = io.StringIO()
         with mock.patch.dict(os.environ, _HOSTED_ENV), \
-             mock.patch.object(cuenta, "_get_json", side_effect=httpx.ConnectError("boom")):
+             mock.patch.object(cuenta, "_get_json", side_effect=httpx.ConnectError("boom")), \
+             contextlib.redirect_stdout(salida):
             cuenta.resolve_session(conn, token)
+        self.assertIn("refrescar_hogar: network error for 1 person (ConnectError)", salida.getvalue())
         row = conn.execute("SELECT hogar_id FROM hogar_miembro WHERE person_id = 2").fetchone()
         self.assertEqual(row["hogar_id"], "h-1")
 
@@ -255,9 +263,12 @@ class NonDictClaimsTest(unittest.TestCase):
         conn = _conn(self)
         _add_person(conn, 2, "Me", sub="sub-nd-1")
         household.sincronizar_desde_claim(conn, 2, {"duna_hogar": {"id": "h-1", "miembros": ["sub-nd-1"]}})
+        salida = io.StringIO()
         with mock.patch.dict(os.environ, _HOSTED_ENV), \
-             mock.patch.object(cuenta, "_get_json", return_value=["not", "a", "dict"]):
+             mock.patch.object(cuenta, "_get_json", return_value=["not", "a", "dict"]), \
+             contextlib.redirect_stdout(salida):
             cuenta.refrescar_hogar(conn, 2)
+        self.assertIn("refrescar_hogar: non-dict answer for 1 person", salida.getvalue())
         row = conn.execute("SELECT hogar_id FROM hogar_miembro WHERE person_id = 2").fetchone()
         self.assertEqual(row["hogar_id"], "h-1")
 
