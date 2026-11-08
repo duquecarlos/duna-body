@@ -103,6 +103,37 @@ class OriginNullRefusedTest(SeguridadTestCase):
         self.assertEqual(r.status_code, 403)
 
 
+class RefusalPageLanguageTest(SeguridadTestCase):
+    """BODY-SEGURIDAD-1-M: the refusal page runs before any person is resolved, so it must read
+    the request's own Accept-Language instead of always answering in DEFAULT_LANG."""
+
+    def _refuse(self, accept_language: str | None):
+        headers = {"Origin": "https://evil.example"}
+        if accept_language is not None:
+            headers["Accept-Language"] = accept_language
+        return self.client.post("/settings/language", headers=headers)
+
+    def test_english_accept_language_gets_english_text(self):
+        r = self._refuse("en-US,en;q=0.9")
+        self.assertEqual(r.status_code, 403)
+        self.assertIn("This action came from another page and was not done.", r.text)
+
+    def test_spanish_accept_language_gets_spanish_text(self):
+        r = self._refuse("es-CO")
+        self.assertEqual(r.status_code, 403)
+        self.assertIn("Esta acción vino de otra página y no se hizo.", r.text)
+
+    def test_absent_accept_language_gets_spanish_text(self):
+        r = self._refuse(None)
+        self.assertEqual(r.status_code, 403)
+        self.assertIn("Esta acción vino de otra página y no se hizo.", r.text)
+
+    def test_other_accept_language_gets_spanish_text(self):
+        r = self._refuse("fr-FR,fr;q=0.9")
+        self.assertEqual(r.status_code, 403)
+        self.assertIn("Esta acción vino de otra página y no se hizo.", r.text)
+
+
 class SecurityHeadersTest(SeguridadTestCase):
     """Guard (d): the fixed header set on a 200 page, a 404, a 303 redirect, and a /static file."""
 

@@ -15,6 +15,18 @@ DEFAULT = "es"
 _DIR = Path(__file__).parent
 
 
+def pick(accept_language: str | None) -> str:
+    """The language to answer in, read from a raw Accept-Language header value -- for the one
+    place that must pick a language before any person is resolved (SeguridadMiddleware's refusal
+    page runs ahead of login). Only the first tag matters: "en-US,en;q=0.9" picks English;
+    anything else, including no header at all, is DEFAULT."""
+    if accept_language:
+        first = accept_language.split(",", 1)[0].strip()
+        if first.lower().startswith("en"):
+            return "en"
+    return DEFAULT
+
+
 @lru_cache
 def _table(lang: str) -> dict:
     return json.loads((_DIR / f"{lang}.json").read_text(encoding="utf-8"))

@@ -21,8 +21,7 @@ from urllib.parse import urlsplit
 from starlette.responses import HTMLResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from . import cuenta
-from .i18n import DEFAULT as DEFAULT_LANG
+from . import cuenta, i18n
 from .i18n import T
 from .rutas import comun
 
@@ -82,8 +81,11 @@ def same_origin(scope: Scope) -> bool:
     return host is not None and host in _allowed_hosts(headers)
 
 
-def _origen_rechazado() -> HTMLResponse:
-    html = comun.env.get_template("origen_rechazado.html").render(t=T(DEFAULT_LANG))
+def _origen_rechazado(scope: Scope) -> HTMLResponse:
+    headers = dict(scope["headers"])
+    accept_language = headers.get(b"accept-language")
+    lang = i18n.pick(accept_language.decode("latin-1") if accept_language is not None else None)
+    html = comun.env.get_template("origen_rechazado.html").render(t=T(lang))
     return HTMLResponse(html, status_code=403)
 
 
@@ -108,6 +110,6 @@ class SeguridadMiddleware:
             return
         send = _send_with_security_headers(send)
         if scope["method"] in UNSAFE_METHODS and not same_origin(scope):
-            await _origen_rechazado()(scope, receive, send)
+            await _origen_rechazado(scope)(scope, receive, send)
             return
         await self.app(scope, receive, send)

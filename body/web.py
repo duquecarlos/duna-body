@@ -60,8 +60,10 @@ class _CaminoActualMiddleware:
 
 
 app.add_middleware(_CaminoActualMiddleware)
-app.add_middleware(RequestLogMiddleware)
 app.add_middleware(SeguridadMiddleware)
+# Added last, so outermost: a SeguridadMiddleware refusal still reaches the request log
+# (BODY-SEGURIDAD-1-M -- a cross-site attempt is off the normal flow and must be visible).
+app.add_middleware(RequestLogMiddleware)
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 app.include_router(pwa.router)
 app.include_router(ayuda.router)
