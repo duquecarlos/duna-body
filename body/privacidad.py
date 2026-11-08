@@ -21,7 +21,7 @@ CONSENT_VERSION = "consentimiento-v1"
 # neither set fails that test, so it can never slip past export or delete-all unnoticed.
 FULLY_HANDLED_TABLES = {
     "daily_metric", "sleep_session", "activity", "shift", "shift_batch", "shift_pattern",
-    "goal", "habit_check", "goal_check", "plan", "ajuste_agente", "consentimiento", "hogar_local",
+    "goal", "habit_check", "goal_check", "plan", "ajuste_agente", "consentimiento", "hogar_miembro",
     "conversacion_agente", "mensaje_agente", "uso_agente", "tope_agente", "propuesta_agente",
     "figura_compartida",
 }
@@ -104,7 +104,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "SELECT version, accepted_at FROM consentimiento WHERE person_id = ? ORDER BY accepted_at",
         (person_id,))]
     hogar_row = conn.execute(
-        "SELECT hogar_id, member_sub FROM hogar_local WHERE person_id = ?", (person_id,)
+        "SELECT hogar_id, member_sub, fuente FROM hogar_miembro WHERE person_id = ?", (person_id,)
     ).fetchone()
     figuras_compartidas = compartir.export_rows(conn, person_id)
     ajustes = {"nivel_datos": agente_ajustes.nivel_datos(conn, person_id)}
@@ -212,7 +212,7 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         conn.execute("DELETE FROM conversacion_agente WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM uso_agente WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM tope_agente WHERE person_id = ?", (person_id,))
-        conn.execute("DELETE FROM hogar_local WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM hogar_miembro WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM sesion WHERE person_id = ?", (person_id,))
         compartir.delete_rows(conn, person_id)
         conn.execute("DELETE FROM person WHERE id = ?", (person_id,))

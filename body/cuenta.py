@@ -20,11 +20,13 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
 import jwt
 from jwt.algorithms import RSAAlgorithm
+
+from . import household
 
 ISSUER_ENV = "BODY_CUENTA_ISSUER"
 PUBLIC_URL_ENV = "BODY_PUBLIC_URL"
@@ -153,9 +155,9 @@ def _auth_time_iso(valor) -> str | None:
 
 # ---- network seam (patched in tests) -------------------------------------------------------------
 
-def _get_json(url: str) -> dict:
+def _get_json(url: str, auth: tuple[str, str] | None = None) -> dict:
     with httpx.Client(timeout=_HTTP_TIMEOUT) as c:
-        r = c.get(url)
+        r = c.get(url, auth=auth)
         r.raise_for_status()
         return r.json()
 
@@ -403,6 +405,7 @@ def handle_callback(conn, flujo_cookie: str | None, params: dict) -> CallbackRes
     person_id = resolve_person(conn, claims)
     if person_id is None:
         return CallbackResult(kind="sin_acceso", claims=claims)
+    _sincronizar_hogar_sin_fallar(conn, person_id, claims)
     token = create_session(conn, person_id, claims.get("sid"), _auth_time_iso(claims.get("auth_time")))
     return CallbackResult(kind="session", return_to=row["return_to"], session_token=token)
 
@@ -422,6 +425,59 @@ def resolve_person(conn, claims: dict) -> int | None:
     cur = conn.execute("INSERT INTO person (display_name, cuenta_sub) VALUES (?, ?)", (name, sub))
     conn.commit()
     return cur.lastrowid
+
+
+# ---- household mirror (`hogar_miembro`, hogar-v1) -------------------------------------------------
+
+def _sincronizar_hogar_sin_fallar(conn, person_id: int, claims: dict) -> None:
+    """Calls household.sincronizar_desde_claim and swallows any failure -- sign-in must succeed
+    whether or not the household mirror could be updated. Logs a count-only line (no sub, no hogar
+    id)."""
+    try:
+        household.sincronizar_desde_claim(conn, person_id, claims)
+    except Exception as e:
+        print(f"cuenta: hogar sync failed for 1 person ({type(e).__name__})")
+
+
+def refrescar_hogar(conn, person_id: int) -> None:
+    """GET /servicio/cuentas/{sub} (cuenta-duna-v1 section 9, `sub` percent-escaped into the path),
+    client_secret_basic, and re-syncs the household mirror from the fresh claims -- only when the
+    answer parses as a JSON object. Any error -- network, a non-2xx answer, bad JSON, an answer
+    that is not a dict, or a failure inside sincronizar_desde_claim -- leaves the existing mirror
+    untouched and logs a count-only line; nothing here may ever raise into its caller."""
+    row = conn.execute("SELECT cuenta_sub FROM person WHERE id = ?", (person_id,)).fetchone()
+    if not row or not row["cuenta_sub"]:
+        return
+    try:
+        claims = _get_json(
+            f"{issuer()}/servicio/cuentas/{quote(row['cuenta_sub'], safe='')}",
+            auth=(CLIENT_ID, client_secret()),
+        )
+    except (httpx.HTTPError, ValueError) as e:
+        print(f"refrescar_hogar: network error for 1 person ({type(e).__name__})")
+        return
+    if not isinstance(claims, dict):
+        print("refrescar_hogar: non-dict answer for 1 person")
+        return
+    _sincronizar_hogar_sin_fallar(conn, person_id, claims)
+
+
+def _debe_refrescar_hogar(conn, person_id: int) -> bool:
+    """True when this person has no `hogar_miembro` row, or their 'cuenta' row is older than
+    LAST_SEEN_UPDATE_SECONDS (one hour). A 'local' row (demo/tests) is never refreshed from Cuenta.
+    The table-creation statement here is a single `execute()`, never `executescript()`: this is
+    called from inside resolve_session, right after its own last-seen UPDATE, and `executescript`
+    would COMMIT that write early (BODY-HOGAR-CUENTA-1-M)."""
+    conn.execute(household.SCHEMA)
+    row = conn.execute(
+        "SELECT fuente, actualizado_at FROM hogar_miembro WHERE person_id = ?", (person_id,)
+    ).fetchone()
+    if row is None:
+        return True
+    if row["fuente"] != "cuenta":
+        return False
+    actualizado = datetime.fromisoformat(row["actualizado_at"])
+    return (datetime.now(timezone.utc) - actualizado).total_seconds() >= LAST_SEEN_UPDATE_SECONDS
 
 
 # ---- sessions (`sesion`) ---------------------------------------------------------------------------
@@ -461,6 +517,11 @@ def resolve_session(conn, token: str | None, now: datetime | None = None) -> tup
             (now.isoformat(timespec="seconds"), row["id_hash"]),
         )
         conn.commit()
+        if hosted() and _debe_refrescar_hogar(conn, row["person_id"]):
+            try:
+                refrescar_hogar(conn, row["person_id"])
+            except Exception as e:
+                print(f"resolve_session: hogar refresh failed for 1 person ({type(e).__name__})")
     return row["person_id"], True
 
 

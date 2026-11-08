@@ -5594,3 +5594,169 @@ and index from BODY-HOGAR-COMPARTIR-1 are untouched), and while Ajustes' and Hoy
 customer-facing change is exactly what this spec's approval-reason authorizes in words ("Approved with the four
 fixes") on top of an already-approved, reviewed table -- no cross-repo contract or DTO touched. Merged `--no-ff`
 into `main`; `main` left checked out, clean.
+
+## BODY-HOGAR-CUENTA-1 -- household membership comes from Cuenta's `duna_hogar` claim, not a table only tests and the demo wrote (2026-11-07)
+
+Carries out orchestrator ledger BODY-HOGAR-PLAN-1 (cont. 2) against BODY-HOGAR-CUENTA-OBS-1: `hogar_local` was never
+written by production code, only by tests and `body/demo.py`, so two real hosted accounts could never link a
+household, and a person who left one kept seeing shared goals and figures until their session ended (up to 30 days).
+Branch `feat/body-hogar-cuenta-1` from `main`. Tier 1 (`body/cuenta.py`, `body/db.py`); approved to build, not to
+merge -- this slice is a schema change and stops `AWAITING_APPROVAL`.
+
+**Pre-flight.** `git grep -l hogar_local` before editing found every hit inside this spec's `touches`: `DECISIONS.md`,
+`body/db.py`, `body/demo.py`, `body/household.py`, `body/privacidad.py`, and six test files. No widening needed.
+
+**Schema** (`body/db.py`'s migration, `body/household.py`'s `SCHEMA` -- the ONE definition of the table's shape,
+built from `household._COLUMNS` so `body/db.py`'s migration references the same text rather than a second copy):
+
+    CREATE TABLE IF NOT EXISTS hogar_miembro (
+        person_id      INTEGER PRIMARY KEY REFERENCES person(id),
+        hogar_id       TEXT NOT NULL,
+        member_sub     TEXT,
+        fuente         TEXT NOT NULL DEFAULT 'local' CHECK (fuente IN ('local', 'cuenta')),
+        actualizado_at TEXT NOT NULL
+    );
+
+`body/db.py`'s new `_migrate_hogar`, called from `init()` right after `_migrate_precios` and before `SCHEMA` fresh
+installs never see: when `hogar_local` exists it creates `hogar_miembro` (via `household._COLUMNS`, inside the same
+guarded `_rebuild_with_fk_off` transaction every other rebuild in this file uses), copies every row with
+`fuente='local'` and `actualizado_at`=now, checks the copied count against the old table's row count, then drops
+`hogar_local` -- once; a database with no `hogar_local` (fresh, or already migrated) is untouched. A fresh install
+never creates `hogar_miembro` through `init()` at all -- exactly as `hogar_local` never was -- it is created lazily
+wherever `household.SCHEMA` is first applied (`household_of`, `sincronizar_desde_claim`, `privacidad.export_person`/
+`delete_person`, `demo.py`), the same pattern the table already followed.
+
+**`body/household.py`.** The `LocalSource`/`ClaimSource` switch is gone (nothing else needed it); `household_of`
+reads `hogar_miembro` directly, whatever wrote it. New `sincronizar_desde_claim(conn, person_id, claims) -> str`,
+the ONLY writer of `fuente='cuenta'` rows:
+
+* `"duna_hogar"` absent from `claims` -> `'sin_dato'`, nothing changes.
+* `claims["duna_hogar"] is None` -> deletes THIS person's own row only -> `'sin_hogar'`.
+* malformed (`valor` not a dict, `id` not a `str`, `miembros` not a `list[str]`) -> `'sin_dato'`, nothing changes --
+  checked, and nothing written, before any row is touched.
+* a value `{id, miembros}`: first checks THIS person's own `person.cuenta_sub` against `miembros` -- absent is
+  "malformed claim, treated like `None`" per the spec, so only this person's row is deleted and the rest of the
+  household is left alone (deciding this BEFORE touching any other row, so a bad claim about the asker can never
+  wipe a partner's own membership). Otherwise, in one transaction: every Body person whose `cuenta_sub` is in
+  `miembros` is upserted (`hogar_id`, `member_sub`, `fuente='cuenta'`, `actualizado_at`=now, replacing any row they
+  had via `ON CONFLICT(person_id)`); every row under this `hogar_id` whose person's sub is NOT in `miembros` is
+  deleted. A member with no Body person yet is silently skipped (they join when they first sign in) -- confirmed by
+  a test. "Moving hogar" works for free from the same upsert (a person's single `hogar_id` just changes); an old
+  partner's own row in the PREVIOUS `hogar_id` is left alone until their own next sign-in or refresh touches it --
+  hogar-v1's documented v1 gap, not new here.
+
+**`body/cuenta.py`.** (a) `handle_callback` calls `household.sincronizar_desde_claim(conn, person_id, claims)` right
+after `resolve_person`, wrapped in a new `_sincronizar_hogar_sin_fallar` that catches any exception and logs one
+count-only line (`"cuenta: hogar sync failed for 1 person (<ExceptionType>)"`, no sub, no hogar id) -- sign-in always
+proceeds to `create_session` regardless. (b) New `refrescar_hogar(conn, person_id)`: reads the person's
+`cuenta_sub`, calls the new optional `auth` parameter on `_get_json` (mirroring `_post_form`'s existing one) against
+`GET {issuer()}/servicio/cuentas/{sub}` with `client_secret_basic` (`(CLIENT_ID, client_secret())`, the same pair
+`_exchange_code` already uses), then `sincronizar_desde_claim`s the response. A network error, a bad answer, or a
+failure inside the sync is caught and logged as a count-only line; the existing mirror is left untouched -- nothing
+in this function may raise into its caller. Per `cuenta-duna-v1.md` section 9, `GET /servicio/cuentas/{sub}` answers
+"the current claims", the same claim set the ID token carries, so `duna_hogar` arrives in it the same shape. (c) New
+`_debe_refrescar_hogar(conn, person_id)`: `True` when the person has no `hogar_miembro` row, or their row is
+`fuente='cuenta'` and `actualizado_at` is at least `LAST_SEEN_UPDATE_SECONDS` (one hour) old; `False` for a
+`fuente='local'` row regardless of age. Wired into `resolve_session`'s existing hourly last-seen branch, guarded by
+`hosted()` so local mode never calls Cuenta (confirmed by a test calling `resolve_session` directly with
+`BODY_CUENTA_ISSUER` unset).
+
+**`body/privacidad.py`**: `FULLY_HANDLED_TABLES`'s `"hogar_local"` renamed to `"hogar_miembro"`; `export_person`'s
+`hogar` key now also carries `fuente`; `delete_person`'s `DELETE` retargeted to `hogar_miembro`.
+
+**`body/demo.py`**: the demo household insert now targets `hogar_miembro` and supplies `actualizado_at` (the new
+column has no default), `fuente` left at its column default `'local'`.
+
+**Tests.** New `tests/test_hogar_cuenta_1.py` (18): every `sincronizar_desde_claim` outcome including the two
+malformed-claim branches; a partner who left disappears from the hogar whichever member's claim arrives next
+(both directions); a member with no Body person is skipped then joins on their own first sign-in; a person moving
+hogar leaves their old partner's row stale under the old id; sign-in still returns its 303 and sets the session
+cookie when the sync is mocked to raise; the hourly refresh calls `_get_json` with the exact URL and
+`client_secret_basic` auth only when stale or absent, never for a `fuente='local'` row, never when
+`BODY_CUENTA_ISSUER` is unset, and keeps the existing mirror on a mocked `httpx.ConnectError`; the migration from a
+hand-built `hogar_local` database (rows copied with `fuente='local'`, old table gone, a second `db.init()` changes
+nothing further); export and delete-all cover `hogar_miembro`. Six existing test files (`tests/test_household.py`,
+`tests/test_hogar_compartir_1.py`, `tests/test_hogar_miembro_1.py`, `tests/test_goals.py`, `tests/test_goals_web.py`,
+`tests/test_privacidad.py`, `tests/test_vida_export.py`) keep their subjects, every `hogar_local` reference renamed
+to `hogar_miembro` with an explicit `actualizado_at` added (the column has no default).
+
+**Gate, run once, foreground, exact command** `.venv/Scripts/python.exe -m unittest discover tests -t .`:
+
+    Ran 1075 tests in 125.390s
+    OK (skipped=1)
+
+1075 is 1057 (BODY-HOGAR-COMPARTIR-1-M's measured count, `main` unmoved at `e77c575` since this branch was cut) + 18
+new tests above; no test removed; the one skip is pre-existing and unrelated.
+
+**Not merged.** This slice's own spec says to stop `AWAITING_APPROVAL` on the branch regardless of merge policy A, and
+the diff would fail policy A's schema condition on its own merits too (`hogar_local` -> `hogar_miembro`, a real
+migration in `body/db.py`). Left on `feat/body-hogar-cuenta-1`, gate green, nothing further attempted.
+
+## BODY-HOGAR-CUENTA-1-M -- four fixes from the orchestrator's diff review of BODY-HOGAR-CUENTA-1, then merged (2026-11-07)
+
+ORCH-CARLOS-DELEGATES-TIER-1-1, against BODY-HOGAR-CUENTA-OBS-1. Four code fixes against `feat/body-hogar-cuenta-1`
+(tip `137467b`), plus deleting two untracked commit-message scratch files the prior worker left in the repository
+root.
+
+**Fix 1 (the premature-commit bug).** `household.sincronizar_desde_claim`, `cuenta._debe_refrescar_hogar`, and
+`household.household_of` (same request path, found by the grep the spec asked for) each ran
+`conn.executescript(household.SCHEMA)` to lazily create `hogar_miembro`. In Python's `sqlite3` module,
+`executescript` COMMITs any transaction already open on `conn` before it runs -- measured directly (`BEGIN`, an
+`UPDATE`, `executescript('CREATE TABLE ...')`, `rollback()`: the `UPDATE` survives). A sign-in (`handle_callback`) or
+the hourly session-touch (`resolve_session`, right after its own last-seen `UPDATE`) calling into these functions
+could therefore commit the caller's write early. All three call sites now use a plain `conn.execute(SCHEMA)` instead
+-- `SCHEMA` is a single `CREATE TABLE IF NOT EXISTS` statement, and a single `execute()` of DDL does NOT have the
+COMMIT-first behavior (measured the same way: the `UPDATE` is gone after `rollback()`). Two new tests
+(`TransactionSafetyTest`) cover both functions directly: begin a write, call the function with an absent claim,
+roll back, confirm the write is gone.
+
+Deviation from the spec text: it asked to "remove" the call "so nothing needs it", on the premise that `db.init`
+already creates `hogar_miembro` on a fresh database. Measured directly (`db.init` against a fresh in-memory
+connection, then checked `sqlite_master`): it does not -- `body/db.py`'s `SCHEMA` constant has no `hogar_miembro`
+table, and `_migrate_hogar` only creates it when a pre-existing `hogar_local` table is found to migrate from.
+Removing the call outright, with nothing creating the table on a genuinely fresh install before the first sign-in,
+would have broken every one of this file's existing tests and the real first-sign-in path. `body/db.py` is Tier 1
+and outside this slice's `touches`, so instead of widening the diff, the table stays lazily created by
+`household.py`/`cuenta.py`'s own `execute(SCHEMA)` calls -- now safe, since they no longer use `executescript`.
+Recorded here rather than guessed past; a new test (`LazyTableCreationTest`) documents the measured gap directly
+against the repository. `BODY-HOGAR-CUENTA-DB-INIT-1` (open follow-up): have `db.init` create `hogar_miembro`
+unconditionally, so the lazy creation in `household.py`/`cuenta.py` becomes redundant rather than load-bearing.
+
+**Fix 2.** `refrescar_hogar` now percent-escapes the sub with `urllib.parse.quote(sub, safe="")` before building the
+`GET /servicio/cuentas/{sub}` path, instead of interpolating it raw. New test checks the exact URL called for a sub
+containing `/` and a space.
+
+**Fix 3.** A service-API answer that parses as JSON but is not an object (a list, a string, ...) now keeps the
+mirror untouched: `refrescar_hogar` only forwards the answer to the sync when `isinstance(claims, dict)`, logging a
+count-only line otherwise; `sincronizar_desde_claim` itself now also returns `'sin_dato'` for a non-dict `claims`
+argument (previously `"duna_hogar" not in claims` / `claims["duna_hogar"]` could raise `TypeError` for some non-dict
+shapes, e.g. a list containing the string `"duna_hogar"`). New tests cover both: four non-dict `claims` shapes
+against `sincronizar_desde_claim` directly, and a mocked list answer through `refrescar_hogar` that leaves an
+existing `'cuenta'` row untouched.
+
+**Fix 4.** The upsert in `sincronizar_desde_claim` now selects `SELECT id, cuenta_sub FROM person WHERE cuenta_sub IN
+(<miembros>)` instead of reading every person row with any `cuenta_sub` and filtering the match in Python -- a query
+on the claim's own `miembros` is enough; the `DELETE`'s own subquery already did this correctly, only the upsert's
+`SELECT` changes. Logically equivalent to the prior filtering, so existing outcome tests already cover correctness;
+one new test (`UnrelatedPersonTest`) adds an unrelated third person with a `cuenta_sub` not in `miembros` and
+confirms they are never touched.
+
+**Cleanup.** Deleted `.commit_msg_body_hogar_cuenta_1.txt` and `.commit_msg_body_hogar_cuenta_1_ledger.txt`
+(untracked, left by the worker that landed `BODY-HOGAR-CUENTA-1`).
+
+**Tests.** `tests/test_hogar_cuenta_1.py` grew from 17 to 25 (8 new: two `TransactionSafetyTest`, one
+`LazyTableCreationTest`, two `NonDictClaimsTest`, one `UrlEscapingTest`, one `UnrelatedPersonTest`, and the existing
+count already included `MigrationTest`/`ExportDeleteTest` etc.). `main` had not moved (tip still `e77c575` since the
+branch was cut, confirmed with `git merge-base --is-ancestor`), so no merge into the feature branch was needed first.
+
+**Gate, run once, foreground, exact command** `.venv/Scripts/python.exe -m unittest discover tests -t .`:
+
+    Ran 1082 tests in 190.446s
+    OK (skipped=1)
+
+1082 is 1074 (this spec's supplied floor for `BODY-HOGAR-CUENTA-1`'s tip `137467b`) + 8 new tests above; the one skip
+is pre-existing and unrelated.
+
+**Merged.** The diff touches no schema or migration, no customer-facing bytes, and no cross-repo contract or DTO
+shape -- merge policy A holds, and this spec's body says explicitly to merge after the fixes. Fix commit `e890a2c`
+on `feat/body-hogar-cuenta-1`, merged `--no-ff` into `main`.

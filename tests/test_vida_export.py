@@ -87,7 +87,9 @@ class VidaExportTest(unittest.TestCase):
         db.init(conn)
         conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Partner')")
         conn.executescript(household.SCHEMA)
-        conn.executemany("INSERT INTO hogar_local (person_id, hogar_id) VALUES (?, ?)", [(1, "h-1"), (2, "h-1")])
+        conn.executemany(
+            "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
+            [(1, "h-1"), (2, "h-1")])
         conn.commit()
         monday = date(2026, 11, 2)
         gid = goals.propose(conn, 1, "Shared steps goal", "2026-11-02", kind="milestone",
