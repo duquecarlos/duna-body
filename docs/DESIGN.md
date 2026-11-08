@@ -99,6 +99,22 @@ comes from; the Body-specific reading is in *italics*. When a new rule arrives f
     failed that day, still gets theirs (BODY-SEGURIDAD-3-M). Screens compute the current week live, every
     time, with `goals.evaluar_semana` (pure, no write) and show it instead of any stored row for that same
     week.
+    (BODY-RENDIMIENTO-1): a page view never writes, now guarded at the STATEMENT level, not only by content --
+    `tests/_rutas.py`'s `contar_sql` traces every connection a request opens and counts write-verb statements
+    (INSERT/UPDATE/DELETE/REPLACE/CREATE/ALTER/DROP, plus a COMMIT that followed one), so a write that leaves
+    every row unchanged (BODY-SEGURIDAD-3's own `_dump` content-compare cannot see one) is still caught. The
+    schema is made ready once per process per DB file, never on every request: `body/db.py`'s `ensure_ready(conn)`
+    runs the real `init(conn)` (migrations, `CREATE ... IF NOT EXISTS`, the metric/person seed) the first time
+    this process meets a given file -- keyed on the file's resolved path and inode, under a lock -- and is a
+    no-op after that. Per-request code (`body/identity.py`, `body/rutas/comun.py`, `body/rutas/sesion.py`) calls
+    `ensure_ready`, never `init` directly; `init` is unchanged and keeps its CLI callers (precios, demo, pull,
+    shift_import, vida_export, vincular_cuenta), each already calling it once per process. Every GET route also
+    carries a per-route cost ceiling on statements and connections (`tests/test_rendimiento.py`), measured on a
+    populated fixture, so a route's own cost stays visible instead of hiding inside a near-constant per-request
+    schema check. `body/db.py`'s `connect()` also sets `PRAGMA busy_timeout = 5000`, so a reader that collides
+    with a concurrent writer (the daily pull, the assistant) waits up to 5s instead of failing immediately --
+    it changes nothing in the database file, unlike a journal-mode change, which this slice deliberately leaves
+    alone (BODY-RENDIMIENTO-WAL-1, not done).
 14. **Assistant, to agent-ui-v1** (Carlos asked for it like the other apps, 2026-11-06) (one tap, 3 sizes, proposes → you confirm → undo). Built with parity: every
     screen ships with the assistant's read tool.
 

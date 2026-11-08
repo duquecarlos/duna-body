@@ -84,7 +84,7 @@ def _ctx(person_id: int) -> tuple:
     conn = _REQUEST_CONN.get()
     if conn is None:
         conn = db.connect()
-        db.init(conn)
+        db.ensure_ready(conn)
         _REQUEST_CONN.set(conn)
     person = db.person(conn, person_id)
     return conn, person, T(person.get("language", "es"))

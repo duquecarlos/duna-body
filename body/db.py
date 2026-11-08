@@ -4,8 +4,10 @@ The schema is the template for a future multi-person product, so every row carri
 person_id. Nothing personal is seeded; only generic metric definitions are.
 """
 import json
+import os
 import re
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -457,7 +459,15 @@ DEFAULT_PERSON_ID = 1  # the local person's id; nowhere outside this module (loc
 
 
 def local_person_id(conn: sqlite3.Connection) -> int:
-    """The person a local install (no Cuenta sign-in) resolves to -- the row init() ensures exists."""
+    """The person a local install (no Cuenta sign-in) resolves to -- the row init() used to ensure
+    exists on every request. Since ensure_ready() (below) stopped re-running init() on every
+    request (BODY-RENDIMIENTO-1), a local account deletion (privacidad.delete_person) can remove
+    this row and nothing would otherwise recreate it before the next request needs it. SELECT
+    first, INSERT only if absent, so the normal path (the row already exists) writes nothing."""
+    row = conn.execute("SELECT 1 FROM person WHERE id = ?", (DEFAULT_PERSON_ID,)).fetchone()
+    if row is None:
+        with conn:
+            conn.execute("INSERT OR IGNORE INTO person (id, display_name) VALUES (?, 'Me')", (DEFAULT_PERSON_ID,))
     return DEFAULT_PERSON_ID
 
 
@@ -466,6 +476,11 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(path or config.DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # A reader that collides with the pull's or the assistant's write used to fail immediately
+    # (SQLite's default busy behaviour): wait up to 5s for the writer to finish instead
+    # (BODY-RENDIMIENTO-1, BODY-RENDIMIENTO-OBS-1). Stores nothing in the file; not a journal-mode
+    # change.
+    conn.execute("PRAGMA busy_timeout = 5000")
     return conn
 
 
@@ -779,6 +794,36 @@ def init(conn: sqlite3.Connection) -> None:
         "INSERT OR IGNORE INTO person (id, display_name) VALUES (?, 'Me')", (DEFAULT_PERSON_ID,)
     )
     conn.commit()
+
+
+# Per-process memo of which DB files have already been made ready (BODY-RENDIMIENTO-OBS-1 measured
+# init() running on every page view: the five guarded migrations, 48 CREATE ... IF NOT EXISTS
+# statements, a 48-row METRIC_DEFS upsert and a commit -- on two connections, on every request).
+# Keyed on the file's resolved path AND its inode (os.stat().st_ino -- the NTFS file index on
+# Windows), not on the Connection object or the path string alone: a test that points
+# config.DB_PATH at a fresh temp dir, or deletes and recreates the file, gets a new key and is
+# made ready again, even from the same process.
+_READY_LOCK = threading.Lock()
+_READY_FILES: set[tuple[str, int]] = set()
+
+
+def _file_key(conn: sqlite3.Connection) -> tuple[str, int]:
+    path = conn.execute("PRAGMA database_list").fetchone()[2]
+    return (path, os.stat(path).st_ino)
+
+
+def ensure_ready(conn: sqlite3.Connection) -> None:
+    """Runs init(conn) the first time this process meets `conn`'s underlying DB file, and is a
+    no-op after that. Per-request code (body/identity.py, body/rutas/comun.py, body/rutas/
+    sesion.py) calls this, never init() directly -- init() keeps doing the real work and keeps its
+    CLI callers (precios, demo, pull, shift_import, vida_export, vincular_cuenta), each of which
+    calls it once per process already. Guarded by a lock because routes run in a threadpool."""
+    key = _file_key(conn)
+    with _READY_LOCK:
+        if key in _READY_FILES:
+            return
+        init(conn)
+        _READY_FILES.add(key)
 
 
 def save_day(conn: sqlite3.Connection, day_data, person_id: int) -> None:

@@ -43,7 +43,7 @@ def login_start(request: Request):
     max_age = 600 if request.query_params.get("max_age") == "600" else None
     conn = db.connect()
     try:
-        db.init(conn)
+        db.ensure_ready(conn)
         url, flujo_id = cuenta.start_login(conn, return_to, prompt=prompt, max_age=max_age)
     finally:
         conn.close()
@@ -58,7 +58,7 @@ def login_callback(request: Request):
         raise HTTPException(404)
     conn = db.connect()
     try:
-        db.init(conn)
+        db.ensure_ready(conn)
         try:
             result = cuenta.handle_callback(conn, request.cookies.get(cuenta.FLUJO_COOKIE),
                                             dict(request.query_params))
@@ -87,7 +87,7 @@ def logout(request: Request):
         raise HTTPException(404)
     conn = db.connect()
     try:
-        db.init(conn)
+        db.ensure_ready(conn)
         sid = cuenta.end_session(conn, request.cookies.get(cuenta.SESSION_COOKIE))
     finally:
         conn.close()
@@ -113,7 +113,7 @@ async def backchannel_logout(request: Request):
     f = await comun._form(request)
     conn = db.connect()
     try:
-        db.init(conn)
+        db.ensure_ready(conn)
         ok = cuenta.handle_backchannel_logout(conn, f.get("logout_token", ""))
     finally:
         conn.close()
