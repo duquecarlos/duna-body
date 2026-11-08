@@ -14,7 +14,6 @@ import html
 import json
 import logging
 import os
-import re
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -30,9 +29,9 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup
 
-from . import (compartir, cuenta, db, dispositivo, enlaces, entorno, fechas, garmin_adapter, garmin_cuenta, goals,
-               history, household, identity, listen, patron_turnos, privacidad, profile, readiness, shift_import,
-               turnos_costo, tutoriales, vida_export)
+from . import (compartir, cuenta, db, enlaces, entorno, fechas, garmin_adapter, garmin_cuenta, goals,
+               history, household, identity, listen, patron_turnos, profile, readiness, shift_import,
+               turnos_costo, tutoriales)
 from .agente import ajustes as agente_ajustes
 from .agente import bucle as agente_bucle
 from .agente import cliente as agente_cliente
@@ -45,7 +44,7 @@ from .i18n import DEFAULT as DEFAULT_LANG
 from .i18n import LANGS, T
 from .identity import ConsentRequired, DispositivoNoAutorizado, DispositivoSinAlcance, LoginRequired
 from .request_log import RequestLogMiddleware
-from .rutas import ayuda, comun
+from .rutas import ayuda, comun, dispositivos, privacidad as privacidad_rutas
 
 HERE = Path(__file__).parent
 
@@ -83,6 +82,8 @@ app.add_middleware(_CaminoActualMiddleware)
 app.add_middleware(RequestLogMiddleware)
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 app.include_router(ayuda.router)
+app.include_router(privacidad_rutas.router)
+app.include_router(dispositivos.router)
 
 
 # static_url/STATIC_HASH/_static_hash are comun's (BODY-WEB-ESTRUCTURA-1-M): kept here too, as
@@ -1009,9 +1010,9 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
                    desde=desde, dia=desde_dia, back_href=back_href, back_label=back_label, turnos=turnos_on)
 
 
-def _short_date(t: T, d: date) -> str:
-    """19 jun 2024 style: day, abbreviated month, year -- no weekday, unlike t.long_date."""
-    return f"{d.day} {t('date.months')[d.month - 1][:3]} {d.year}"
+# _short_date is comun's (BODY-WEB-ESTRUCTURA-2): kept here too, as a plain alias, since
+# tests/test_turnos_costo.py and tests/test_sin_friccion.py call it straight off this module.
+_short_date = comun._short_date
 
 
 def _dia_relativo(t: T, day: str, today_local: date) -> str:
@@ -2130,217 +2131,6 @@ def garmin_desconectar(person_id: int = Depends(identity.current_person_id)):
     conn, _, _ = comun._ctx(person_id)
     garmin_cuenta.borrar(conn, person_id)
     return RedirectResponse("/garmin", status_code=303)
-
-
-@app.get("/privacidad/consentimiento")
-@comun._cierra_conexion
-def consentimiento_form(request: Request, person_id: int = Depends(identity.current_person_id)):
-    if not cuenta.hosted():
-        raise HTTPException(404)
-    _, _, t = comun._ctx(person_id)
-    return_to = cuenta.safe_return_to(request.query_params.get("return_to"))
-    return comun._render("consentimiento.html", t=t, tab=None, return_to=return_to)
-
-
-@app.post("/privacidad/consentimiento")
-@comun._cierra_conexion_async
-async def consentimiento_decide(request: Request, person_id: int = Depends(identity.current_person_id)):
-    if not cuenta.hosted():
-        raise HTTPException(404)
-    f = await comun._form(request)
-    return_to = cuenta.safe_return_to(f.get("return_to"))
-    if f.get("decision") == "acepto":
-        conn, _, _ = comun._ctx(person_id)
-        privacidad.record_consent(conn, person_id)
-        return RedirectResponse(return_to, status_code=303)
-    conn = db.connect()
-    db.init(conn)
-    sid = cuenta.end_session(conn, request.cookies.get(cuenta.SESSION_COOKIE))
-    conn.close()
-    resp = RedirectResponse(cuenta.logout_url(sid), status_code=303)
-    cuenta.clear_session_cookie(resp)
-    return resp
-
-
-@app.get("/privacidad")
-@comun._cierra_conexion
-def privacidad_view(request: Request, person_id: int = Depends(identity.current_person_id)):
-    conn, person, t = comun._ctx(person_id)
-    row = conn.execute(
-        "SELECT accepted_at FROM consentimiento WHERE person_id = ? AND version = ?",
-        (person_id, privacidad.CONSENT_VERSION),
-    ).fetchone()
-    accepted_date = _short_date(t, datetime.fromisoformat(row["accepted_at"]).date()) if row else None
-    es_hosted = cuenta.hosted()
-    reauth_ok = None
-    if es_hosted and request.query_params.get("reauth") == "1":
-        token = request.cookies.get(cuenta.SESSION_COOKIE)
-        reauth_ok = cuenta.reciente(conn, token)
-    return comun._render("privacidad.html", t=t, tab="settings", version=privacidad.CONSENT_VERSION,
-                   accepted_date=accepted_date, delete_word=t("privacidad.borrar_palabra"),
-                   error=request.query_params.get("error") == "confirmacion",
-                   es_hosted=es_hosted, reauth_ok=reauth_ok, turnos=comun._turnos_on(conn, person_id))
-
-
-@app.get("/privacidad/exportar")
-@comun._cierra_conexion
-def privacidad_exportar(person_id: int = Depends(identity.current_person_id)):
-    conn, _, _ = comun._ctx(person_id)
-    data = privacidad.export_person(conn, person_id)
-    body = json.dumps(data, ensure_ascii=False, indent=2)
-    return Response(body, media_type="application/json",
-                    headers={"Content-Disposition": f'attachment; filename="body-{date.today().isoformat()}.json"'})
-
-
-@app.post("/privacidad/borrar")
-@comun._cierra_conexion_async
-async def privacidad_borrar(request: Request, person_id: int = Depends(identity.current_person_id)):
-    f = await comun._form(request)
-    conn, _, t = comun._ctx(person_id)
-    if cuenta.hosted():
-        token = request.cookies.get(cuenta.SESSION_COOKIE)
-        if not cuenta.reciente(conn, token):
-            conn.close()
-            return_to = quote("/privacidad?reauth=1", safe="")
-            return RedirectResponse(
-                f"/login/cuenta/start?prompt=login&max_age=600&return_to={return_to}", status_code=303
-            )
-    if (f.get("confirmacion") or "").strip() != t("privacidad.borrar_palabra"):
-        conn.close()
-        return RedirectResponse("/privacidad?error=confirmacion", status_code=303)
-    privacidad.delete_person(conn, person_id)
-    conn.close()
-    if cuenta.hosted():
-        return RedirectResponse(cuenta.logout_url(None), status_code=303)
-    return RedirectResponse("/", status_code=303)
-
-
-# ---- Device keys (hosted only): «Conexión del PC» on Ajustes, BODY-DISPOSITIVO-1 -----------------
-
-_ALCANCE_LABELS = {"turnos:subir": "dispositivos.scope.turnos", "vida:leer": "dispositivos.scope.vida"}
-
-
-def _dispositivo_row(t: T, d: dict) -> dict:
-    return {
-        "id": d["id"], "nombre": d["nombre"],
-        "alcances": ", ".join(t(_ALCANCE_LABELS[a]) for a in d["alcances"].split() if a in _ALCANCE_LABELS),
-        "creado": _short_date(t, datetime.fromisoformat(d["creado_en"]).date()),
-        "usado": _short_date(t, date.fromisoformat(d["usado_en"])) if d["usado_en"] else None,
-    }
-
-
-@app.get("/ajustes/dispositivos")
-@comun._cierra_conexion
-def dispositivos_view(person_id: int = Depends(identity.current_person_id)):
-    if not cuenta.hosted():
-        raise HTTPException(404)
-    conn, _, t = comun._ctx(person_id)
-    items = [_dispositivo_row(t, d) for d in dispositivo.listar(conn, person_id)]
-    resp = comun._render("dispositivos.html", t=t, tab="settings", items=items, new_key=None,
-                   turnos=comun._turnos_on(conn, person_id))
-    resp.headers["Cache-Control"] = "no-store"
-    return resp
-
-
-@app.post("/ajustes/dispositivos")
-@comun._cierra_conexion_async
-async def dispositivos_crear(request: Request, person_id: int = Depends(identity.current_person_id)):
-    if not cuenta.hosted():
-        raise HTTPException(404)
-    f = await comun._form(request)
-    conn, _, t = comun._ctx(person_id)
-    nombre = (f.get("nombre") or "").strip()
-    if not nombre:
-        items = [_dispositivo_row(t, d) for d in dispositivo.listar(conn, person_id)]
-        resp = comun._render("dispositivos.html", t=t, tab="settings", items=items, new_key=None,
-                       turnos=comun._turnos_on(conn, person_id))
-        resp.headers["Cache-Control"] = "no-store"
-        return resp
-    alcances = set()
-    if f.get("alcance_turnos") == "1":
-        alcances.add("turnos:subir")
-    if f.get("alcance_vida") == "1":
-        alcances.add("vida:leer")
-    new_key = dispositivo.crear(conn, person_id, nombre, alcances)
-    items = [_dispositivo_row(t, d) for d in dispositivo.listar(conn, person_id)]
-    resp = comun._render("dispositivos.html", t=t, tab="settings", items=items, new_key=new_key,
-                   turnos=comun._turnos_on(conn, person_id))
-    resp.headers["Cache-Control"] = "no-store"
-    return resp
-
-
-@app.post("/ajustes/dispositivos/{dispositivo_id}/revocar")
-@comun._cierra_conexion
-def dispositivos_revocar(dispositivo_id: int, person_id: int = Depends(identity.current_person_id)):
-    if not cuenta.hosted():
-        raise HTTPException(404)
-    conn, _, _ = comun._ctx(person_id)
-    dispositivo.revocar(conn, person_id, dispositivo_id)
-    return RedirectResponse("/ajustes/dispositivos", status_code=303)
-
-
-# ---- Device-key API (hosted only): a PC script sends `Authorization: Bearer <key>` -----------------
-
-_TURNOS_FILENAME_RE = re.compile(r"^turnos-.*\.json$")
-MAX_TURNOS_BODY_BYTES = 256 * 1024
-
-
-@app.post("/api/turnos")
-@comun._cierra_conexion_async
-async def api_turnos(request: Request, person_id: int = Depends(identity.person_from_device("turnos:subir"))):
-    file_name = request.headers.get("x-body-archivo") or ""
-    if not _TURNOS_FILENAME_RE.match(file_name):
-        raise HTTPException(400)
-    content_length = request.headers.get("content-length")
-    if content_length is not None and content_length.isdigit() and int(content_length) > MAX_TURNOS_BODY_BYTES:
-        raise HTTPException(413)
-    chunks = bytearray()
-    async for chunk in request.stream():
-        chunks.extend(chunk)
-        if len(chunks) > MAX_TURNOS_BODY_BYTES:
-            raise HTTPException(413)
-    body = bytes(chunks)
-    try:
-        data = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return JSONResponse({"error": "archivo_rechazado", "motivo": "esquema"}, status_code=422)
-    if not isinstance(data, dict):
-        return JSONResponse({"error": "archivo_rechazado", "motivo": "esquema"}, status_code=422)
-    conn, _, _ = comun._ctx(person_id)
-    before = conn.execute(
-        "SELECT COUNT(*) AS n FROM shift_batch WHERE person_id = ?", (person_id,)
-    ).fetchone()["n"]
-    try:
-        batch_id = shift_import.propose_data(conn, data, file_name, person_id)
-    except shift_import.ImportRefused as e:
-        return JSONResponse(
-            {"error": "archivo_rechazado", "motivo": shift_import.refusal_motivo(e)}, status_code=422
-        )
-    after = conn.execute(
-        "SELECT COUNT(*) AS n FROM shift_batch WHERE person_id = ?", (person_id,)
-    ).fetchone()["n"]
-    turnos = conn.execute(
-        "SELECT COUNT(*) AS n FROM shift_batch_item WHERE batch_id = ?", (batch_id,)
-    ).fetchone()["n"]
-    return {"lote": batch_id, "turnos": turnos, "nuevo": after > before}
-
-
-@app.get("/api/vida/semana")
-@comun._cierra_conexion
-def api_vida_semana(semana: str | None = None,
-                     person_id: int = Depends(identity.person_from_device("vida:leer"))):
-    if semana:
-        try:
-            monday = date.fromisoformat(semana)
-        except ValueError:
-            raise HTTPException(400)
-        if monday.weekday() != 0:
-            raise HTTPException(400)
-    else:
-        monday = vida_export.current_week_monday()
-    conn, _, _ = comun._ctx(person_id)
-    data = vida_export.week_section(conn, monday, person_id)
-    return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
 
 SW_TEMPLATE = """// Body service worker: caches only static files, never health pages.
