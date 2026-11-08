@@ -239,7 +239,11 @@ figure.chart:focus-visible{outline:2px solid var(--focus);outline-offset:4px;bor
    specificity by source order -- later wins -- so a class below always overrides one of those. The one
    exception is a compound selector (`.grid2 .card`, `table.parts td`), which beats a single class by
    specificity regardless of order; DECISIONS.md's BODY-ESTILOS-1 entry lists every such case and how
-   each is handled. ---------- */
+   each is handled. BODY-ESTILOS-1-M: a single-class utility meant to override a component rule that is
+   itself a compound selector (`.plan li`, `.legend i`, `.est .fig`) never wins by order, because the
+   compound is always the more specific one -- so `.plan li.block`, `.legend i.legend-line` and
+   `.est .fig.c-muted` are written as compounds too, each beating the rule it overrides on specificity,
+   not on position. ---------- */
 .m-0{margin:0}
 .mt-0{margin-top:0}
 .mt-2{margin-top:2px}
@@ -268,6 +272,7 @@ table.parts td.p-0{padding:0}
 .minw-140{min-width:140px}
 .w-100{width:100%}
 .block{display:block}
+.plan li.block{display:block}
 .inline-flex{display:inline-flex}
 .hidden{display:none}
 .no-underline{text-decoration:none}
@@ -292,15 +297,18 @@ table.parts td.p-0{padding:0}
 .stroke-muted{stroke:var(--muted)}
 .stroke-line{stroke:var(--line)}
 .chart-svg{display:block;margin-top:8px}
+svg.bar{display:block;width:100%}
+svg.stage{display:block;width:100%}
+.est .fig.c-muted{color:var(--muted)}
 .settings-row{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:44px;color:inherit;text-decoration:none}
 .steps-col{display:flex;flex-direction:column;gap:8px;width:100%}
 .help-link{display:flex;gap:10px;align-items:flex-start;color:inherit;text-decoration:none;width:100%}
 .rail-logout-btn{all:unset;display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:12px;padding:10px 12px;width:100%;cursor:pointer;color:#B9B6AE;font-size:15px;font-family:inherit}
 .foot-logout-btn{all:unset;text-decoration:underline;cursor:pointer;color:inherit;font:inherit}
 .ayuda-img{width:100%;border-radius:8px;background:var(--inset);display:block}
-.legend-line{height:3px;vertical-align:3px}
-.legend-dash{background:none;border-top:1.6px dashed var(--muted);height:0;width:12px}
-.legend-today{background:var(--line);width:1px;height:12px}
+.legend i.legend-line{height:3px;vertical-align:3px}
+.legend i.legend-dash{background:none;border-top:1.6px dashed var(--muted);height:0;width:12px}
+.legend i.legend-today{background:var(--line);width:1px;height:12px}
 
 /* ---------- fixed data-series palette (BODY-ESTILOS-1): the only colours any template or any
    server-built SVG ever needed were var(--night), the 45%-mixed night tint, var(--body), var(--amber),

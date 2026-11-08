@@ -317,9 +317,9 @@ class AjustesTapTargetTest(unittest.TestCase):
     def test_ayuda_privacidad_and_asistente_rows_are_each_one_44px_anchor(self):
         r = client.get("/settings")
         self.assertEqual(r.status_code, 200)
-        self.assertRegex(r.text, r'<a href="/ayuda" class="card" style="[^"]*min-height:44px[^"]*">')
-        self.assertRegex(r.text, r'<a href="/privacidad" class="card" style="[^"]*min-height:44px[^"]*">')
-        self.assertRegex(r.text, r'<a href="/ajustes/asistente" class="card" style="[^"]*min-height:44px[^"]*">')
+        self.assertIn('<a href="/ayuda" class="card settings-row">', r.text)
+        self.assertIn('<a href="/privacidad" class="card settings-row">', r.text)
+        self.assertIn('<a href="/ajustes/asistente" class="card settings-row">', r.text)
         self.assertNotIn('<a href="/ayuda" class="q"', r.text)
 
 

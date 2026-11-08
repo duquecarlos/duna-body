@@ -50,15 +50,32 @@ comes from; the Body-specific reading is in *italics*. When a new rule arrives f
     (`onchange=`, …) any more -- every one moved to `body/static/*.js`, loaded through `static_url(...)`, so
     `script-src 'self'` holds with no `'unsafe-inline'`. The full policy (`body/seguridad.py`'s
     `content_security_policy()`, built from named parts so a test can read each one):
-    `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+    `default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com;
     font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; manifest-src 'self';
     worker-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`, plus
     Cuenta's issuer origin in `form-action` once hosted (a `/logout`, `/privacidad/consentimiento` or
     `/privacidad/borrar` POST can 303-redirect there, via `cuenta.logout_url`, and Chrome applies `form-action`
-    to that redirect, not only to the form's own `action=`). Remaining gap: `style-src` still carries
-    `'unsafe-inline'` -- 22 templates (and server-built SVG) use `style="..."` attributes; untouched by this
-    slice. Google Fonts (`fonts.googleapis.com`, `fonts.gstatic.com`) is the only third-party origin the policy
-    allows, for Hanken Grotesk; self-hosting it instead is open as **BODY-FUENTES-PROPIAS-1**, not done here.
+    to that redirect, not only to the form's own `action=`). `style-src` carries no `'unsafe-inline'`
+    (BODY-ESTILOS-1): no template or server-built markup (Python-built SVG included) ever carries a
+    `style="..."` attribute -- spacing and layout go through the named utility classes in
+    `body/static/body.css` (`.mt-8`, `.gap-10`, `.text-right`, ...), and the only colours any chart or
+    swatch ever needs come from a fixed data-series palette of classes (`.c-body`, `.c-night`, `.stroke-body`,
+    ...), never a `var(...)` string written into markup. A dynamic bar (a goal's progress, a day's sleep
+    stages, a month's training segments) is an inline SVG `<rect>` sized by geometry attributes (`width=`,
+    `height=`), which CSP does not treat as style, never by a `style="width:...%"` on a `<div>` or `<span>`.
+    **The trap this guards against (BODY-ESTILOS-1-M):** an inline `style=` always won the cascade, however
+    specific the class it was replacing was. A plain utility class does not -- CSS breaks a tie between two
+    selectors of EQUAL specificity by source order (later wins), but a component rule written as a compound
+    selector (`.plan li`, `.legend i`, `.est .fig`, two classes or a class+element) is MORE specific than a
+    single-class utility REGARDLESS of order, so the utility loses even placed last in the file. A utility
+    or modifier class meant to override such a rule must be written as a compound selector after it too
+    (`.plan li.block`, `.legend i.legend-line`, `.est .fig.c-muted`) -- on specificity, not on position -- and
+    an inline `<svg>` that replaces a block `<div>` needs its own `display:block; width:100%` (`svg.bar`,
+    `svg.stage`), since an `<svg>` with no CSS width renders at its `viewBox` width instead of its container's.
+    `tests/test_seguridad.py` guards the no-`style=` rule (templates, Python-built markup, static scripts) and
+    that `style-src` carries no `'unsafe-inline'`. Google Fonts (`fonts.googleapis.com`, `fonts.gstatic.com`)
+    is the only third-party origin the policy allows, for Hanken Grotesk; self-hosting it instead is open as
+    **BODY-FUENTES-PROPIAS-1**, not done here.
     (BODY-SEGURIDAD-4): any attempt that reaches a third party (Garmin) on a person's behalf is limited per
     person; the limit refuses before the third party is called, so Body's own server can never be used as a
     relay to try many credentials against it.

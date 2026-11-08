@@ -91,7 +91,7 @@ class TrendsPageWithExtrasTest(unittest.TestCase):
     def test_default_cards_outside_details_extra_cards_inside_grouped_with_correct_count(self):
         _as(1)
         page = self.client.get("/trends").text
-        details_at = page.index('<details class="files"')
+        details_at = page.index('<details class="files mt-10"')
         for default_id in ('id="resting_hr"', 'id="sleep_minutes"'):
             self.assertIn(default_id, page)
             self.assertLess(page.index(default_id), details_at, f"{default_id} should be outside the details")
@@ -119,7 +119,7 @@ class TrendsPageWithExtrasTest(unittest.TestCase):
         page = self.client.get("/trends").text
         for key in ("sleep_light_min", "active_kcal"):
             start = page.index(f'id="{key}"')
-            end = page.index("</div>", page.index('class="legend"', start))
+            end = page.index("</div>", page.index('class="legend mt-4"', start))
             chunk = page[start:end]
             self.assertIn("delta flat", chunk)
             self.assertNotIn("delta good", chunk)
@@ -151,14 +151,14 @@ class TrendsPageWithExtrasTest(unittest.TestCase):
     def test_todas_1_renders_open_and_range_links_carry_the_flag(self):
         _as(1)
         page = self.client.get("/trends?todas=1").text
-        self.assertIn('<details class="files" style="margin-top:10px" open>', page)
+        self.assertIn('<details class="files mt-10" open>', page)
         self.assertIn('href="/trends?todas=1"', page)          # the "all" range button
         self.assertIn('href="/trends?r=7&amp;todas=1"', page)  # the "7 days" range button
 
     def test_todas_absent_renders_closed(self):
         _as(1)
         page = self.client.get("/trends").text
-        self.assertIn('<details class="files" style="margin-top:10px">', page)
+        self.assertIn('<details class="files mt-10">', page)
 
     def test_en_renders(self):
         conn = db.connect()
