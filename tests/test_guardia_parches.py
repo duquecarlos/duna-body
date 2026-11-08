@@ -546,5 +546,46 @@ class RouteModuleAttrReadGuardTest(unittest.TestCase):
         self.assertEqual(offenders, [], f"stale attribute read(s):\n" + "\n".join(offenders))
 
 
+def _is_week_monday_subtraction(node: ast.BinOp) -> bool:
+    """True for `<x> - timedelta(<x>.weekday())` -- the open-coded "Monday of x's week" shape
+    body/fechas.py's lunes_de() now owns (BODY-CALIDAD-1). Matches on the right operand's shape
+    alone (a bare `timedelta(EXPR.weekday())` call, one positional arg, no keywords), not on the
+    left operand matching EXPR -- the only site that would miss by requiring that equality is
+    body/demo.py's `all_days[0] - timedelta(all_days[0].weekday())`, which this is written to
+    catch too."""
+    if not isinstance(node.op, ast.Sub):
+        return False
+    right = node.right
+    if not (isinstance(right, ast.Call) and isinstance(right.func, ast.Name) and right.func.id == "timedelta"):
+        return False
+    if len(right.args) != 1 or right.keywords:
+        return False
+    arg = right.args[0]
+    return (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute) and arg.func.attr == "weekday"
+            and not arg.args and not arg.keywords)
+
+
+# body/vida_export.py is Tier 1 (the export that hands health data to another app) and out of
+# reach for a Tier 2 slice -- BODY-CALIDAD-1 names it here for a later Tier 1 slice rather than
+# editing it.
+_ALLOWED_WEEK_MONDAY_FILES = {"vida_export.py"}
+
+
+class NoOpenCodedWeekMondayGuardTest(unittest.TestCase):
+    """BODY-CALIDAD-1: body/fechas.py's lunes_de(d) is the one place "Monday of d's week" is
+    computed; no other body/ module re-derives it with `d - timedelta(d.weekday())`."""
+
+    def test_no_module_open_codes_week_monday_outside_fechas(self):
+        offenders = []
+        for path in _iter_body_files():
+            if path.name in ("fechas.py", *_ALLOWED_WEEK_MONDAY_FILES):
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.BinOp) and _is_week_monday_subtraction(node):
+                    offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}")
+        self.assertEqual(offenders, [], f"open-coded week-Monday subtraction(s) outside fechas.py: {offenders}")
+
+
 if __name__ == "__main__":
     unittest.main()

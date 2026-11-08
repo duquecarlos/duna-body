@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+from . import fechas
+
 SEED = 20261105
 DIAS_DEFAULT = 90
 MARKER_NAME = "DEMO"
@@ -123,7 +125,7 @@ def _forbidden_home(target: Path) -> str | None:
 
 
 def _week_index(d: date) -> int:
-    monday = d - timedelta(d.weekday())
+    monday = fechas.lunes_de(d)
     return (monday - _CYCLE_ANCHOR_MONDAY).days // 7
 
 
@@ -184,59 +186,77 @@ def _avg_metric(conn, db, key: str, days: list[date], person_id: int) -> float |
     return round(statistics.fmean(vals), 1) if vals else None
 
 
-def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
-    from . import compartir, db, enlaces, goals, shift_import, turnos_costo
-
+def _seed_person(conn, db, idioma: str) -> int:
     person_id = db.local_person_id(conn)
     conn.execute("UPDATE person SET display_name = 'Demo', timezone = 'America/Bogota' WHERE id = ?", (person_id,))
     db.set_language(conn, idioma, person_id)
+    return person_id
 
-    rng = random.Random(SEED)
-    anchor = date.today()
-    all_days = [anchor - timedelta(dias - 1 - i) for i in range(dias)]
 
+def _day_metrics(rng: random.Random, d: date, factor: float) -> tuple[dict, str | None, str | None]:
+    """One day's readings (CORE_DENSE, SECONDARY, the twice-monthly CARDIO_SPARSE batch) and, when
+    sleep_minutes landed, that night's sleep window -- in the same draw order _seed_days always
+    used, since the two-run determinism test depends on the order, not just the final values."""
+    metrics = {}
+    for key in CORE_DENSE:
+        if rng.random() < 0.92:
+            metrics[key] = _value(rng, key, factor)
+    for key in SECONDARY:
+        if rng.random() < 0.75:
+            metrics[key] = _value(rng, key, factor)
+    if d.day % 14 == 0:
+        for key in CARDIO_SPARSE:
+            metrics[key] = _value(rng, key, 0.0)
+
+    sleep_start = sleep_end = None
+    if "sleep_minutes" in metrics:
+        minutes = metrics["sleep_minutes"]
+        if _shift_kind_for(d - timedelta(1)) == "night":
+            start_dt = datetime.combine(d, datetime.min.time()) + timedelta(hours=8, minutes=rng.randint(0, 59))
+        else:
+            start_dt = (datetime.combine(d - timedelta(1), datetime.min.time())
+                        + timedelta(hours=22, minutes=rng.randint(0, 59)))
+        end_dt = start_dt + timedelta(minutes=minutes)
+        sleep_start, sleep_end = start_dt.isoformat(), end_dt.isoformat()
+
+    return metrics, sleep_start, sleep_end
+
+
+def _day_activity(rng: random.Random, d: date) -> dict | None:
+    """One invented activity on D, 30% of the time, never on a night-shift day."""
+    if _shift_kind_for(d) == "night":
+        return None
+    if rng.random() >= 0.3:
+        return None
+    act = rng.choice(ACTIVITY_TYPES)
+    dist = rng.uniform(*act["dist"]) * 1000 if act["dist"] else None
+    return {
+        "source_id": f"demo-{d.isoformat()}-1", "start_local": f"{d.isoformat()}T18:{rng.randint(0, 59):02d}:00",
+        "type": act["type"], "name": act["name"], "duration_s": round(rng.uniform(*act["dur"]) * 60),
+        "distance_m": round(dist) if dist else None, "avg_hr": round(rng.uniform(*act["hr"])),
+        "max_hr": round(rng.uniform(*act["hr"]) + 15), "calories": round(rng.uniform(*act["kcal"])),
+    }
+
+
+def _seed_days(conn, db, rng: random.Random, all_days: list[date], person_id: int) -> tuple[int, int]:
+    """Every day's save_day call, in order -- metrics then that day's activity, matching the draw
+    order a single rng.Random(SEED) has always produced them in."""
     metric_rows = activity_rows = 0
     for d in all_days:
         factor = _recovery_factor(d)
-        metrics = {}
-        for key in CORE_DENSE:
-            if rng.random() < 0.92:
-                metrics[key] = _value(rng, key, factor)
-        for key in SECONDARY:
-            if rng.random() < 0.75:
-                metrics[key] = _value(rng, key, factor)
-        if d.day % 14 == 0:
-            for key in CARDIO_SPARSE:
-                metrics[key] = _value(rng, key, 0.0)
+        metrics, sleep_start, sleep_end = _day_metrics(rng, d, factor)
         metric_rows += len(metrics)
-
-        sleep_start = sleep_end = None
-        if "sleep_minutes" in metrics:
-            minutes = metrics["sleep_minutes"]
-            if _shift_kind_for(d - timedelta(1)) == "night":
-                start_dt = datetime.combine(d, datetime.min.time()) + timedelta(hours=8, minutes=rng.randint(0, 59))
-            else:
-                start_dt = (datetime.combine(d - timedelta(1), datetime.min.time())
-                            + timedelta(hours=22, minutes=rng.randint(0, 59)))
-            end_dt = start_dt + timedelta(minutes=minutes)
-            sleep_start, sleep_end = start_dt.isoformat(), end_dt.isoformat()
-
-        activities = []
-        if _shift_kind_for(d) != "night" and rng.random() < 0.3:
-            act = rng.choice(ACTIVITY_TYPES)
-            dist = rng.uniform(*act["dist"]) * 1000 if act["dist"] else None
-            activities.append({
-                "source_id": f"demo-{d.isoformat()}-1", "start_local": f"{d.isoformat()}T18:{rng.randint(0, 59):02d}:00",
-                "type": act["type"], "name": act["name"], "duration_s": round(rng.uniform(*act["dur"]) * 60),
-                "distance_m": round(dist) if dist else None, "avg_hr": round(rng.uniform(*act["hr"])),
-                "max_hr": round(rng.uniform(*act["hr"]) + 15), "calories": round(rng.uniform(*act["kcal"])),
-            })
+        activity = _day_activity(rng, d)
+        if activity:
             activity_rows += 1
-
         db.save_day(conn, _DayData(day=d.isoformat(), metrics=metrics, sleep_start=sleep_start, sleep_end=sleep_end,
-                                    activities=activities), person_id)
+                                    activities=[activity] if activity else []), person_id)
     conn.commit()
+    return metric_rows, activity_rows
 
+
+def _seed_shifts(conn, shift_import, turnos_costo, person_id: int,
+                  all_days: list[date]) -> tuple[int | None, int | None, int, int]:
     confirmed_days, proposed_days = all_days[:-7], all_days[-7:]
     confirmed_id = _import_shifts(conn, shift_import, person_id, confirmed_days, "turnos-demo-confirmados.json",
                                    received=confirmed_days[0].isoformat())
@@ -246,7 +266,14 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
                                   received=proposed_days[0].isoformat())
     night_weeks = len({_week_index(d) for d in all_days if _shift_kind_for(d) == "night"})
     night_blocks = len(turnos_costo.bloques_noche(conn, person_id, all_days[0].isoformat(), all_days[-1].isoformat()))
+    return confirmed_id, proposed_id, night_weeks, night_blocks
 
+
+def _seed_goals_and_habits(conn, db, goals, rng: random.Random, all_days: list[date], anchor: date,
+                            first_monday: date, anchor_monday: date, person_id: int,
+                            idioma: str) -> tuple[int, int]:
+    """The demo person's three metric goals, one habit, their weekly checks and the habit's
+    checks -- returns (goal weekly checks, habit checks)."""
     window = all_days[:14]
     base_sleep = _avg_metric(conn, db, "sleep_minutes", window, person_id) or 420.0
     base_rhr = _avg_metric(conn, db, "resting_hr", window, person_id) or 58.0
@@ -270,8 +297,6 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     habit_id = goals.add_habit(conn, gid_sleep, _HABIT_TITLE[idioma],
                                 {"per": "week", "times": 3, "context": "before_night"})
 
-    first_monday = all_days[0] - timedelta(all_days[0].weekday())
-    anchor_monday = anchor - timedelta(anchor.weekday())
     checks = 0
     monday = first_monday
     while monday <= anchor_monday:
@@ -290,7 +315,15 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
                 habit_checks += 1
         monday += timedelta(7)
 
-    # A second demo person, one household with the demo person, and a shared goal Ana creates.
+    return checks, habit_checks
+
+
+def _seed_household(conn, db, goals, enlaces, compartir, rng: random.Random, all_days: list[date], anchor: date,
+                     first_monday: date, anchor_monday: date, person_id: int,
+                     idioma: str) -> tuple[int, int, int]:
+    """A second demo person (Ana), one household with the demo person, her shared figure, and a
+    household goal she creates -- returns (her seeded metric rows, goal weekly checks, habit checks)."""
+    start_day = all_days[0].isoformat()
     ana_cur = conn.execute(
         "INSERT INTO person (display_name, timezone, language) VALUES (?, 'America/Bogota', ?)",
         (_ANA_NAME, idioma),
@@ -309,7 +342,6 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     for d in ana_days:
         db.set_metric(conn, d.isoformat(), "resting_hr", _value(rng, "resting_hr", 0.0), "garmin", ana_id)
     conn.commit()
-    metric_rows += len(ana_days)
     compartir.compartir(conn, ana_id, "resting_hr")
 
     hogar_deadline = (anchor + timedelta(days=84)).isoformat()
@@ -335,6 +367,31 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
         if goals.weekly_check(conn, gid_hogar, ana_id, monday.isoformat()):
             hogar_checks += 1
         monday += timedelta(7)
+
+    return len(ana_days), hogar_checks, hogar_habit_checks
+
+
+def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
+    from . import compartir, db, enlaces, goals, shift_import, turnos_costo
+
+    person_id = _seed_person(conn, db, idioma)
+
+    rng = random.Random(SEED)
+    anchor = date.today()
+    all_days = [anchor - timedelta(dias - 1 - i) for i in range(dias)]
+    first_monday, anchor_monday = fechas.lunes_de(all_days[0]), fechas.lunes_de(anchor)
+
+    metric_rows, activity_rows = _seed_days(conn, db, rng, all_days, person_id)
+
+    confirmed_id, proposed_id, night_weeks, night_blocks = _seed_shifts(
+        conn, shift_import, turnos_costo, person_id, all_days)
+
+    checks, habit_checks = _seed_goals_and_habits(
+        conn, db, goals, rng, all_days, anchor, first_monday, anchor_monday, person_id, idioma)
+
+    ana_metric_rows, hogar_checks, hogar_habit_checks = _seed_household(
+        conn, db, goals, enlaces, compartir, rng, all_days, anchor, first_monday, anchor_monday, person_id, idioma)
+    metric_rows += ana_metric_rows
 
     return {
         "personas": 2, "dias_sembrados": dias, "valores_diarios": metric_rows, "actividades": activity_rows,

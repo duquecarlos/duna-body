@@ -54,6 +54,14 @@ def metric_profile(conn, key: str, today: str | None = None, *, person_id: int) 
     )
 
 
+def _y_scale(lo: float, hi: float, top: float, h: float) -> Callable[[float], float]:
+    """A value-to-SVG-y closure over a chart's own vertical scale (lo..hi mapped to the band
+    top..top+h, y growing downward as SVG expects)."""
+    def y(v: float) -> float:
+        return top + h - (v - lo) / (hi - lo) * h
+    return y
+
+
 def _points_attr(points: list[dict]) -> str:
     """One JSON array, html-escaped for a data-points="..." attribute (BODY-PULIDO-2): never a raw figure
     anywhere this does not already appear (titles already carry it), nothing in it but what the reader sees."""
@@ -95,9 +103,7 @@ def month_svg(p: MetricProfile, width: int = 320, height: int = 120, color: str 
     pad = (hi - lo) * 0.12 or 1
     lo, hi = lo - pad, hi + pad
     top, h = 6, height - 26
-
-    def y(v: float) -> float:
-        return top + h - (v - lo) / (hi - lo) * h
+    y = _y_scale(lo, hi, top, h)
 
     step = width / (len(pts) - 1)
     line = " ".join(f"{i * step:.1f},{y(v):.1f}" for i, v in enumerate(pts))
@@ -166,9 +172,7 @@ def window_svg(w: Window, low: float, high: float, nights: set[str] = frozenset(
     lo, hi = lo - pad, hi + pad
     top, h = 6, height - 26
     full = top + h + 6
-
-    def y(v: float) -> float:
-        return top + h - (v - lo) / (hi - lo) * h
+    y = _y_scale(lo, hi, top, h)
 
     step = width / max(1, len(days) - 1)
     out = [f'<rect x="0" y="{y(high):.1f}" width="{width}" height="{max(1, y(low) - y(high)):.1f}" '

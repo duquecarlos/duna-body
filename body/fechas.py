@@ -22,3 +22,9 @@ def hoy_local(person: dict) -> date:
 
 def fecha_real_valida(day: date, hoy: date) -> bool:
     return day <= hoy + timedelta(days=TOLERANCIA_DIAS)
+
+
+def lunes_de(d: date) -> date:
+    """Monday of d's ISO week (weeks start on Monday). No timezone: the caller passes a date
+    already local to whoever's week this is."""
+    return d - timedelta(days=d.weekday())
