@@ -3,6 +3,7 @@ first a Lugares trip -- instead of copying it (DESIGN rule 17; orchestrator ledg
 ruling 5 and (cont. 4)). Invented demo ids only, never a real figure.
 """
 import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +16,8 @@ from fastapi.testclient import TestClient
 from body import config, db, enlaces, goals, household, identity, privacidad, web
 
 client = TestClient(web.app, follow_redirects=False)
+
+TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "body" / "templates" / "goal.html"
 
 
 def _reset_db(tc: unittest.TestCase):
@@ -133,7 +136,7 @@ class CreatorAddReplaceRemoveTest(unittest.TestCase):
         _as(self, 1)
         r = client.post(f"/goals/{gid}/enlaces", data={"app": "lugares", "entrada": "4821"})
         self.assertEqual(r.status_code, 303)
-        self.assertEqual(r.headers["location"], f"/goals/{gid}")
+        self.assertEqual(r.headers["location"], f"/goals/{gid}#enlaces")
         row = conn.execute("SELECT app, ref FROM goal_enlace WHERE goal_id = ?", (gid,)).fetchone()
         self.assertEqual((row["app"], row["ref"]), ("lugares", "4821"))
 
@@ -155,6 +158,7 @@ class CreatorAddReplaceRemoveTest(unittest.TestCase):
         _as(self, 1)
         r = client.post(f"/goals/{gid}/enlaces/lugares/quitar")
         self.assertEqual(r.status_code, 303)
+        self.assertEqual(r.headers["location"], f"/goals/{gid}#enlaces")
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM goal_enlace WHERE goal_id = ?", (gid,)).fetchone()[0], 0)
 
     def test_invalid_entrada_redirects_with_error_flag_and_writes_nothing(self):
@@ -164,8 +168,79 @@ class CreatorAddReplaceRemoveTest(unittest.TestCase):
         _as(self, 1)
         r = client.post(f"/goals/{gid}/enlaces", data={"app": "lugares", "entrada": "not-a-trip"})
         self.assertEqual(r.status_code, 303)
-        self.assertEqual(r.headers["location"], f"/goals/{gid}?enlace=invalido")
+        self.assertEqual(r.headers["location"], f"/goals/{gid}?enlace=invalido&app=lugares#enlaces")
+        self.assertNotIn("not-a-trip", r.headers["location"])
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM goal_enlace WHERE goal_id = ?", (gid,)).fetchone()[0], 0)
+
+    def test_invalid_entrada_render_opens_the_fold_with_the_error_above_the_field(self):
+        conn = _reset_db(self)
+        gid = _goal(conn, 1, kind="milestone", deadline="2027-01-01")
+
+        _as(self, 1)
+        client.post(f"/goals/{gid}/enlaces", data={"app": "lugares", "entrada": "not-a-trip"})
+        r = client.get(f"/goals/{gid}?enlace=invalido&app=lugares")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('id="enlaces"', r.text)
+        match = re.search(
+            r"<details[^>]*\bopen\b[^>]*>.*?No pudimos leer ese enlace de Lugares\..*?Pega el enlace del viaje",
+            r.text, re.DOTALL,
+        )
+        self.assertIsNotNone(match, r.text)
+
+    def test_unknown_app_query_param_is_ignored(self):
+        conn = _reset_db(self)
+        gid = _goal(conn, 1, kind="milestone", deadline="2027-01-01")
+
+        _as(self, 1)
+        r = client.get(f"/goals/{gid}?enlace=invalido&app=bogus")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotRegex(r.text, r"<details[^>]*\bopen\b")
+
+
+class RegistryIsTheAuthorityTest(unittest.TestCase):
+    """The template carries no literal app key or app-specific wording -- it loops over
+    enlaces.apps_por_enlazar, built from the APPS registry (fix 3)."""
+
+    def test_template_has_no_hardcoded_lugares_value(self):
+        self.assertNotIn('value="lugares"', TEMPLATE_PATH.read_text(encoding="utf-8"))
+
+    def test_both_unlinked_apps_fold_then_only_the_unlinked_one_after_linking(self):
+        conn = _reset_db(self)
+        gid = _goal(conn, 1, kind="milestone", deadline="2027-01-01")
+        fake_app = {
+            "label_key": "goals.enlace.app.lugares",
+            "origin_env": "DUNA_FAKE_ORIGEN",
+            "origin_default": "https://fake.duna.solutions",
+            "path": "/cosas/{ref}",
+            "ref_pattern": enlaces.APPS["lugares"]["ref_pattern"],
+            "add_summary_key": "test.fake.add_summary",
+            "field_key": "test.fake.field_entrada",
+            "error_key": "test.fake.error",
+        }
+        with mock.patch.dict(enlaces.APPS, {"fake": fake_app}):
+            _as(self, 1)
+            r1 = client.get(f"/goals/{gid}")
+            self.assertEqual(r1.status_code, 200)
+            self.assertIn("Enlazar un viaje de Lugares", r1.text)
+            self.assertIn("test.fake.add_summary", r1.text)
+            self.assertIn('value="fake"', r1.text)
+
+            enlaces.enlazar(conn, gid, "fake", "123")
+            r2 = client.get(f"/goals/{gid}")
+            self.assertEqual(r2.status_code, 200)
+            self.assertIn("Enlazar un viaje de Lugares", r2.text)
+            self.assertNotIn("test.fake.add_summary", r2.text)
+
+    def test_linked_goal_shows_no_fold_for_that_app(self):
+        conn = _reset_db(self)
+        gid = _goal(conn, 1, kind="milestone", deadline="2027-01-01")
+        enlaces.enlazar(conn, gid, "lugares", "4821")
+
+        _as(self, 1)
+        r = client.get(f"/goals/{gid}")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn("Enlazar un viaje de Lugares", r.text)
+        self.assertIn("Se abre en Lugares", r.text)
 
 
 class MemberAndStrangerAccessTest(unittest.TestCase):
@@ -221,29 +296,37 @@ class LanguageTest(unittest.TestCase):
     def test_spanish_strings(self):
         conn = _reset_db(self)
         gid = _goal(conn, 1, kind="milestone", deadline="2027-01-01")
-        enlaces.enlazar(conn, gid, "lugares", "4821")
 
         _as(self, 1)
-        r = client.get(f"/goals/{gid}")
-        self.assertIn("Enlaces", r.text)
-        self.assertIn("Viaje en Lugares", r.text)
-        self.assertIn("Quitar", r.text)
-        self.assertIn("Enlazar un viaje de Lugares", r.text)
-        self.assertIn("Se abre en Lugares", r.text)
+        r1 = client.get(f"/goals/{gid}")
+        self.assertIn("Enlaces", r1.text)
+        self.assertIn("Enlazar un viaje de Lugares", r1.text)
+        self.assertIn("Pega el enlace del viaje o su número", r1.text)
+
+        enlaces.enlazar(conn, gid, "lugares", "4821")
+        r2 = client.get(f"/goals/{gid}")
+        self.assertIn("Viaje en Lugares", r2.text)
+        self.assertIn("Quitar", r2.text)
+        self.assertIn("Se abre en Lugares", r2.text)
+        self.assertNotIn("Enlazar un viaje de Lugares", r2.text)
 
     def test_english_strings(self):
         conn = _reset_db(self)
         db.set_language(conn, "en", 1)
         gid = _goal(conn, 1, kind="milestone", deadline="2027-01-01")
-        enlaces.enlazar(conn, gid, "lugares", "4821")
 
         _as(self, 1)
-        r = client.get(f"/goals/{gid}")
-        self.assertIn("Links", r.text)
-        self.assertIn("Lugares trip", r.text)
-        self.assertIn("Remove", r.text)
-        self.assertIn("Link a Lugares trip", r.text)
-        self.assertIn("Opens in Lugares", r.text)
+        r1 = client.get(f"/goals/{gid}")
+        self.assertIn("Links", r1.text)
+        self.assertIn("Link a Lugares trip", r1.text)
+        self.assertIn("Paste the trip link or its number", r1.text)
+
+        enlaces.enlazar(conn, gid, "lugares", "4821")
+        r2 = client.get(f"/goals/{gid}")
+        self.assertIn("Lugares trip", r2.text)
+        self.assertIn("Remove", r2.text)
+        self.assertIn("Opens in Lugares", r2.text)
+        self.assertNotIn("Link a Lugares trip", r2.text)
 
 
 class ExportDeleteTest(unittest.TestCase):
@@ -276,6 +359,24 @@ class ExportDeleteTest(unittest.TestCase):
         privacidad.delete_person(conn, 1)
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM goal_enlace").fetchone()[0], 0)
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM goal WHERE id = ?", (gid,)).fetchone()[0], 0)
+
+    def test_delete_all_still_deletes_everything_with_no_executescript_commit_to_lean_on(self):
+        """privacidad.delete_person no longer runs conn.executescript(household.SCHEMA) (fix 4,
+        now redundant since BODY-HOGAR-CUENTA-DB-INIT-1 made db.init create hogar_miembro
+        unconditionally) -- confirms delete-all still deletes everything through its own
+        `with conn:` transaction, not through that executescript's implicit commit."""
+        conn = _reset_db(self)
+        gid = _goal(conn, 1, kind="milestone", deadline="2027-01-01")
+        enlaces.enlazar(conn, gid, "lugares", "4821")
+        conn.execute(
+            "INSERT INTO ajuste_agente (person_id, nivel_datos, updated_at) VALUES "
+            "(1, 'completo', '2026-11-01T00:00:00+00:00')")
+
+        privacidad.delete_person(conn, 1)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM goal_enlace").fetchone()[0], 0)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM goal WHERE id = ?", (gid,)).fetchone()[0], 0)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM ajuste_agente WHERE person_id = 1").fetchone()[0], 0)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM person WHERE id = 1").fetchone()[0], 0)
 
 
 if __name__ == "__main__":

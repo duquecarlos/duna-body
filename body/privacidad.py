@@ -173,7 +173,6 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
     created -- a shared household goal they made disappears for every member too, as the privacy
     page says. One transaction, foreign keys ON (set by db.connect already): on any error nothing
     is left half-deleted."""
-    conn.executescript(household.SCHEMA)
     with conn:
         conn.execute("UPDATE habit SET assignee_person_id = NULL WHERE assignee_person_id = ?", (person_id,))
         enlaces.delete_rows_for_person(conn, person_id)

@@ -28,6 +28,9 @@ APPS = {
         "origin_default": "https://lugares.duna.solutions",
         "path": "/viajes/{ref}",
         "ref_pattern": re.compile(r"^[1-9][0-9]{0,11}$"),
+        "add_summary_key": "goals.enlace.add_summary",
+        "field_key": "goals.enlace.field_entrada",
+        "error_key": "goals.enlace.error",
     },
 }
 
@@ -85,6 +88,18 @@ def enlazar(conn: sqlite3.Connection, goal_id: int, app: str, ref: str) -> None:
 def quitar(conn: sqlite3.Connection, goal_id: int, app: str) -> None:
     with conn:
         conn.execute("DELETE FROM goal_enlace WHERE goal_id = ? AND app = ?", (goal_id, app))
+
+
+def apps_por_enlazar(conn: sqlite3.Connection, goal_id: int) -> list[dict]:
+    """Registry apps this goal has no link for yet, in registry order -- what the template offers
+    as an "add" fold. A goal has at most one link per app (`UNIQUE (goal_id, app)`), so an app
+    already linked is left out here instead of being offered to silently replace it."""
+    linked = {r["app"] for r in conn.execute("SELECT app FROM goal_enlace WHERE goal_id = ?", (goal_id,))}
+    return [
+        {"app": app, "add_summary_key": spec["add_summary_key"], "field_key": spec["field_key"],
+         "error_key": spec["error_key"]}
+        for app, spec in APPS.items() if app not in linked
+    ]
 
 
 def enlaces_de(conn: sqlite3.Connection, goal_id: int) -> list[dict]:
