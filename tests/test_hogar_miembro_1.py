@@ -171,12 +171,13 @@ class HabitCheckTest(unittest.TestCase):
 
         _as(self, 2)
         day = _WEEK_DAYS[1]
-        self.assertEqual(client.post(f"/habits/{hid_both}/check",
-                                     data={"day": day, "done": "1", "back": "/"}).status_code, 303)
-        self.assertEqual(client.post(f"/habits/{hid_partner}/check",
-                                     data={"day": day, "done": "1", "back": "/"}).status_code, 303)
-        self.assertEqual(client.post(f"/habits/{hid_creator}/check",
-                                     data={"day": day, "done": "1", "back": "/"}).status_code, 404)
+        with mock.patch.object(web, "_today_local", return_value=_TODAY):
+            self.assertEqual(client.post(f"/habits/{hid_both}/check",
+                                         data={"day": day, "done": "1", "back": "/"}).status_code, 303)
+            self.assertEqual(client.post(f"/habits/{hid_partner}/check",
+                                         data={"day": day, "done": "1", "back": "/"}).status_code, 303)
+            self.assertEqual(client.post(f"/habits/{hid_creator}/check",
+                                         data={"day": day, "done": "1", "back": "/"}).status_code, 404)
 
         self.assertIsNotNone(conn.execute(
             "SELECT 1 FROM habit_check WHERE habit_id = ? AND person_id = 2 AND day = ?",
@@ -242,9 +243,9 @@ class OwnWeeklyCheckTest(unittest.TestCase):
         goals.activate(conn, gid)
         hid = goals.add_habit(conn, gid, "Caminar", {"per": "week", "times": 1})
         for day in _WEEK_DAYS[:4]:
-            goals.check_habit(conn, hid, 1, day, True)
+            goals.check_habit(conn, hid, 1, day, True, hoy=date.fromisoformat(_WEEK_DAYS[3]))
         for day in _WEEK_DAYS:
-            goals.check_habit(conn, hid, 2, day, True)
+            goals.check_habit(conn, hid, 2, day, True, hoy=date.fromisoformat(_WEEK_DAYS[6]))
         conn.commit()
 
         with mock.patch.object(web, "_today_local", return_value=_TODAY):

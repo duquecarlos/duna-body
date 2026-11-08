@@ -67,9 +67,9 @@ class HoyLocalTimezoneTest(unittest.TestCase):
 
 
 class CheckHabitRefusesTheFutureTest(unittest.TestCase):
-    """goals.check_habit, given the checking person's real local today via `hoy`, refuses a day
-    beyond tolerance and writes nothing; a plain call with no `hoy` (every pre-existing caller --
-    demo seeding, the rest of the test suite) stays the pure function it always was."""
+    """goals.check_habit, given the checking person's real local today via the required `hoy`
+    keyword, refuses a day beyond tolerance and writes nothing; omitting `hoy` is a TypeError --
+    the rule cannot be bypassed by a caller forgetting to pass it."""
 
     def setUp(self):
         self.conn = _conn(self)
@@ -102,10 +102,11 @@ class CheckHabitRefusesTheFutureTest(unittest.TestCase):
         goals.check_habit(self.conn, self.hid, 1, monday.isoformat(), True, hoy=self.hoy)
         self.assertEqual(self._count(), 1)
 
-    def test_no_hoy_passed_keeps_the_old_behaviour(self):
+    def test_no_hoy_passed_is_a_type_error(self):
         future = (self.hoy + timedelta(30)).isoformat()
-        goals.check_habit(self.conn, self.hid, 1, future, True)
-        self.assertEqual(self._count(), 1)
+        with self.assertRaises(TypeError):
+            goals.check_habit(self.conn, self.hid, 1, future, True)
+        self.assertEqual(self._count(), 0)
 
 
 def _as(person_id: int) -> None:

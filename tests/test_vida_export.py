@@ -96,7 +96,8 @@ class VidaExportTest(unittest.TestCase):
         goals.activate(conn, gid)
         hid = goals.add_habit(conn, gid, "walk", {"per": "day", "times": 1})
         for i in range(7):
-            goals.check_habit(conn, hid, 1, (monday + timedelta(i)).isoformat(), True)
+            goals.check_habit(conn, hid, 1, (monday + timedelta(i)).isoformat(), True,
+                               hoy=monday + timedelta(6))
         goals.weekly_check(conn, gid, 1, "2026-11-02")
 
         s = vida_export.week_section(conn, monday, 1)
