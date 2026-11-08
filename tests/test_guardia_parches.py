@@ -17,10 +17,13 @@ import ast
 import importlib
 import importlib.util
 import inspect
+import re
 import unittest
 from pathlib import Path
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
+
+from tests._rutas import modulos_con_rutas
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TESTS_DIR = REPO_ROOT / "tests"
@@ -147,9 +150,22 @@ def _resolve_patch_string(value: str):
     return None, None
 
 
-def _defined_at_top_level(module, name: str) -> bool:
+def _is_shim_alias_assign(node: ast.Assign) -> bool:
+    """True for a top-level `X = comun.Y` / `X = fechas.Z` -- a bare re-binding of another
+    module's attribute under a second name. Ruling BODY-WEB-ESTRUCTURA-PLAN-1 rule 3 forbids this
+    shape (BODY-WEB-ESTRUCTURA-3): the next mover re-binds again, and a patch on one binding
+    misses the other."""
+    return (len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Attribute) and isinstance(node.value.value, ast.Name))
+
+
+def _defined_at_top_level(module, name: str, strict: bool = False) -> bool:
     """def, class, assignment or import binding at the module's own top level -- read from its
-    source (not runtime getattr, which would also find a name only inherited or re-exported)."""
+    source (not runtime getattr, which would also find a name only inherited or re-exported).
+
+    strict=True (BODY-WEB-ESTRUCTURA-3) additionally rejects a shim-alias assignment
+    (`_is_shim_alias_assign`): a name only ever bound that way is not really defined at this
+    module's own top level, it is borrowed from whatever module the alias's value names."""
     try:
         src = Path(module.__file__).read_text(encoding="utf-8")
     except (TypeError, OSError):
@@ -159,6 +175,8 @@ def _defined_at_top_level(module, name: str) -> bool:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == name:
             return True
         if isinstance(node, ast.Assign):
+            if strict and _is_shim_alias_assign(node):
+                continue
             if any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
                 return True
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == name:
@@ -315,6 +333,76 @@ class PatchTargetGuardTest(unittest.TestCase):
                     elif resolved == "body" and any(a.name == "web" for a in node.names):
                         offenders.append(mod_name)
         self.assertEqual(offenders, [], f"body/rutas/ module(s) importing body.web: {offenders}")
+
+
+class NoShimAliasGuardTest(unittest.TestCase):
+    """BODY-WEB-ESTRUCTURA-3: no top-level assignment in body/web.py or body/rutas/*.py re-binds
+    another body module's attribute under a new name. Four such shims survived in body/web.py
+    until this slice -- `_static_hash`, `STATIC_HASH`, `static_url` (ESTRUCTURA-1-M) and
+    `_short_date` (ESTRUCTURA-2), each `X = comun.Y` -- because the guard that should have caught
+    them did not exist."""
+
+    def test_no_top_level_name_aliases_another_body_modules_attribute(self):
+        offenders = []
+        for path, tree in modulos_con_rutas():
+            for node in tree.body:
+                if isinstance(node, ast.Assign) and _is_shim_alias_assign(node):
+                    target = node.targets[0].id
+                    owner = node.value.value.id
+                    offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno} "
+                                      f"{target} = {owner}.{node.value.attr}")
+        self.assertEqual(offenders, [], f"shim alias assignment(s): {offenders}")
+
+
+_DUNDER_RE = re.compile(r"^__.+__$")
+
+
+def _is_route_module_owner(owner_name: str) -> bool:
+    return owner_name == "body.web" or owner_name.startswith("body.rutas")
+
+
+class RouteModuleAttrReadGuardTest(unittest.TestCase):
+    """Extends guard (a) beyond patch targets (BODY-WEB-ESTRUCTURA-3): every `name.ATTR` read
+    anywhere in tests/, where `name` resolves to body.web or a body.rutas module, must name an
+    attribute truly defined at that module's own top level -- not a module dunder such as
+    `__file__`, and not a shim alias (_defined_at_top_level with strict=True). A test reading
+    `web.STATIC_HASH` after the shim moved to comun.py would otherwise read a stale module-level
+    name that import machinery no longer sets, with no guard to say why."""
+
+    def test_every_route_module_attribute_read_is_truly_defined(self):
+        targets = []
+        for path in _iter_test_files():
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            bindings = _import_bindings(tree)
+            rel = str(path.relative_to(REPO_ROOT))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Attribute):
+                    continue
+                base = node.value
+                if not isinstance(base, ast.Name):
+                    continue
+                dotted = bindings.get(base.id)
+                if dotted is None:
+                    continue
+                try:
+                    owner = _resolve_dotted(dotted)
+                except (ImportError, AttributeError):
+                    continue
+                if not inspect.ismodule(owner):
+                    continue
+                if not _is_route_module_owner(owner.__name__):
+                    continue
+                if _DUNDER_RE.match(node.attr):
+                    continue
+                targets.append((rel, node.lineno, owner.__name__, node.attr))
+
+        self.assertGreater(len(targets), 0, "no body.web/body.rutas attribute read found -- the scan is broken")
+        offenders = []
+        for rel, lineno, owner_name, attr in targets:
+            owner_mod = importlib.import_module(owner_name)
+            if not _defined_at_top_level(owner_mod, attr, strict=True):
+                offenders.append(f"{rel}:{lineno} reads {owner_name}.{attr}, not defined at its own top level")
+        self.assertEqual(offenders, [], f"stale attribute read(s):\n" + "\n".join(offenders))
 
 
 if __name__ == "__main__":

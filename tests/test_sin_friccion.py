@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from body import config, db, web
 from body.i18n import T
+from body.rutas import comun
 
 client = TestClient(web.app, follow_redirects=False)
 
@@ -63,7 +64,7 @@ class HoyEmptyCensusTest(unittest.TestCase):
             "VALUES (1, '2026-11-01', 'user_summary', 'garmin', '2026-11-01T12:00:00+00:00', '{}')"
         )
         conn.commit()
-        last = web._short_date(T("es"), date(2026, 11, 1))
+        last = comun._short_date(T("es"), date(2026, 11, 1))
         r = client.get("/")
         self.assertIn(_t("es", "sync.last", date=last), r.text)
         self.assertNotIn(_t("es", "sync.none_yet"), r.text)
