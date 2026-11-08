@@ -42,7 +42,7 @@ class Household:
 
 
 def household_of(conn, person_id: int) -> Household | None:
-    conn.executescript(SCHEMA)
+    conn.execute(SCHEMA)
     row = conn.execute("SELECT hogar_id FROM hogar_miembro WHERE person_id = ?", (person_id,)).fetchone()
     if not row:
         return None
@@ -68,12 +68,12 @@ def _parse_claim(valor) -> tuple[str, list[str]] | None:
     return hogar_id, miembros
 
 
-def sincronizar_desde_claim(conn, person_id: int, claims: dict) -> str:
+def sincronizar_desde_claim(conn, person_id: int, claims) -> str:
     """Mirrors `claims["duna_hogar"]` into `hogar_miembro` -- the ONLY writer of fuente='cuenta'
     rows. Returns:
 
-    * 'sin_dato': `duna_hogar` is not a key of `claims`, or its value is malformed -- nothing
-      changes.
+    * 'sin_dato': `claims` is not a dict, `duna_hogar` is not one of its keys, or its value is
+      malformed -- nothing changes.
     * 'sin_hogar': the claim is `None`, or this person's own `cuenta_sub` is absent from
       `miembros` -- this person's row (if any) is removed.
     * 'actualizado': every Body person whose `person.cuenta_sub` is in `miembros` now has a row
@@ -82,9 +82,12 @@ def sincronizar_desde_claim(conn, person_id: int, claims: dict) -> str:
       Body person yet is skipped -- they join when they first sign in.
 
     One transaction; a member with no linked Body user is simply absent from it, never an error.
+    The table-creation statement here is a single `execute()`, never `executescript()`: the latter
+    COMMITs any transaction already open on `conn` before running, which would end a caller's
+    transaction early (BODY-HOGAR-CUENTA-1-M).
     """
-    conn.executescript(SCHEMA)
-    if "duna_hogar" not in claims:
+    conn.execute(SCHEMA)
+    if not isinstance(claims, dict) or "duna_hogar" not in claims:
         return "sin_dato"
     valor = claims["duna_hogar"]
     if valor is None:
@@ -104,21 +107,20 @@ def sincronizar_desde_claim(conn, person_id: int, claims: dict) -> str:
             conn.execute("DELETE FROM hogar_miembro WHERE person_id = ?", (person_id,))
         return "sin_hogar"
     now = _now_iso()
+    # miembros is never empty here: this_sub (not None) is in it, checked above.
+    placeholders = ",".join("?" * len(miembros))
     with conn:
         personas = conn.execute(
-            "SELECT id, cuenta_sub FROM person WHERE cuenta_sub IS NOT NULL"
+            f"SELECT id, cuenta_sub FROM person WHERE cuenta_sub IN ({placeholders})", miembros
         ).fetchall()
         for p in personas:
-            if p["cuenta_sub"] in miembros:
-                conn.execute(
-                    "INSERT INTO hogar_miembro (person_id, hogar_id, member_sub, fuente, actualizado_at) "
-                    "VALUES (?, ?, ?, 'cuenta', ?) "
-                    "ON CONFLICT(person_id) DO UPDATE SET hogar_id = excluded.hogar_id, "
-                    "member_sub = excluded.member_sub, fuente = 'cuenta', actualizado_at = excluded.actualizado_at",
-                    (p["id"], hogar_id, p["cuenta_sub"], now),
-                )
-        # miembros is never empty here: this_sub (not None) is in it, checked above.
-        placeholders = ",".join("?" * len(miembros))
+            conn.execute(
+                "INSERT INTO hogar_miembro (person_id, hogar_id, member_sub, fuente, actualizado_at) "
+                "VALUES (?, ?, ?, 'cuenta', ?) "
+                "ON CONFLICT(person_id) DO UPDATE SET hogar_id = excluded.hogar_id, "
+                "member_sub = excluded.member_sub, fuente = 'cuenta', actualizado_at = excluded.actualizado_at",
+                (p["id"], hogar_id, p["cuenta_sub"], now),
+            )
         conn.execute(
             f"DELETE FROM hogar_miembro WHERE hogar_id = ? AND person_id NOT IN "
             f"(SELECT id FROM person WHERE cuenta_sub IN ({placeholders}))",

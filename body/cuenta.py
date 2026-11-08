@@ -20,7 +20,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
 import jwt
@@ -440,25 +440,35 @@ def _sincronizar_hogar_sin_fallar(conn, person_id: int, claims: dict) -> None:
 
 
 def refrescar_hogar(conn, person_id: int) -> None:
-    """GET /servicio/cuentas/{sub} (cuenta-duna-v1 section 9), client_secret_basic, and re-syncs the
-    household mirror from the fresh claims. Any error -- network, a non-2xx answer, bad JSON, or a
-    failure inside sincronizar_desde_claim -- leaves the existing mirror untouched and logs a
-    count-only line; nothing here may ever raise into its caller."""
+    """GET /servicio/cuentas/{sub} (cuenta-duna-v1 section 9, `sub` percent-escaped into the path),
+    client_secret_basic, and re-syncs the household mirror from the fresh claims -- only when the
+    answer parses as a JSON object. Any error -- network, a non-2xx answer, bad JSON, an answer
+    that is not a dict, or a failure inside sincronizar_desde_claim -- leaves the existing mirror
+    untouched and logs a count-only line; nothing here may ever raise into its caller."""
     row = conn.execute("SELECT cuenta_sub FROM person WHERE id = ?", (person_id,)).fetchone()
     if not row or not row["cuenta_sub"]:
         return
     try:
-        claims = _get_json(f"{issuer()}/servicio/cuentas/{row['cuenta_sub']}", auth=(CLIENT_ID, client_secret()))
+        claims = _get_json(
+            f"{issuer()}/servicio/cuentas/{quote(row['cuenta_sub'], safe='')}",
+            auth=(CLIENT_ID, client_secret()),
+        )
     except (httpx.HTTPError, ValueError) as e:
         print(f"refrescar_hogar: network error for 1 person ({type(e).__name__})")
+        return
+    if not isinstance(claims, dict):
+        print("refrescar_hogar: non-dict answer for 1 person")
         return
     _sincronizar_hogar_sin_fallar(conn, person_id, claims)
 
 
 def _debe_refrescar_hogar(conn, person_id: int) -> bool:
     """True when this person has no `hogar_miembro` row, or their 'cuenta' row is older than
-    LAST_SEEN_UPDATE_SECONDS (one hour). A 'local' row (demo/tests) is never refreshed from Cuenta."""
-    conn.executescript(household.SCHEMA)
+    LAST_SEEN_UPDATE_SECONDS (one hour). A 'local' row (demo/tests) is never refreshed from Cuenta.
+    The table-creation statement here is a single `execute()`, never `executescript()`: this is
+    called from inside resolve_session, right after its own last-seen UPDATE, and `executescript`
+    would COMMIT that write early (BODY-HOGAR-CUENTA-1-M)."""
+    conn.execute(household.SCHEMA)
     row = conn.execute(
         "SELECT fuente, actualizado_at FROM hogar_miembro WHERE person_id = ?", (person_id,)
     ).fetchone()

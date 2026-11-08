@@ -243,6 +243,101 @@ class HourlyRefreshTest(unittest.TestCase):
         m.assert_not_called()
 
 
+class NonDictClaimsTest(unittest.TestCase):
+    """Fix 3: an answer that parses as JSON but is not an object reaches sincronizar_desde_claim
+    as `claims` (e.g. a service-API answer that is a list or a string)."""
+
+    def test_sincronizar_desde_claim_treats_non_dict_claims_as_sin_dato(self):
+        conn = _conn(self)
+        for bad in (["duna_hogar"], "duna_hogar", 42, None):
+            with self.subTest(bad=bad):
+                self.assertEqual(household.sincronizar_desde_claim(conn, 1, bad), "sin_dato")
+                self.assertIsNone(household.household_of(conn, 1))
+
+    def test_refrescar_hogar_keeps_the_mirror_when_the_answer_is_not_a_dict(self):
+        conn = _conn(self)
+        _add_person(conn, 2, "Me", sub="sub-nd-1")
+        household.sincronizar_desde_claim(conn, 2, {"duna_hogar": {"id": "h-1", "miembros": ["sub-nd-1"]}})
+        with mock.patch.dict(os.environ, _HOSTED_ENV), \
+             mock.patch.object(cuenta, "_get_json", return_value=["not", "a", "dict"]):
+            cuenta.refrescar_hogar(conn, 2)
+        row = conn.execute("SELECT hogar_id FROM hogar_miembro WHERE person_id = 2").fetchone()
+        self.assertEqual(row["hogar_id"], "h-1")
+
+
+class UrlEscapingTest(unittest.TestCase):
+    """Fix 2: refrescar_hogar must not put a raw `sub` unescaped into the URL path."""
+
+    def test_refrescar_hogar_escapes_the_sub_in_the_url(self):
+        conn = _conn(self)
+        _add_person(conn, 2, "Me", sub="sub/weird 1")
+        with mock.patch.dict(os.environ, _HOSTED_ENV), \
+             mock.patch.object(cuenta, "_get_json", return_value={"duna_hogar": None}) as m:
+            cuenta.refrescar_hogar(conn, 2)
+        self.assertEqual(m.call_args.args[0], "https://fake-cuenta.test/servicio/cuentas/sub%2Fweird%201")
+
+
+class UnrelatedPersonTest(unittest.TestCase):
+    """Fix 4: the upsert selects only person rows whose cuenta_sub is in the claim's miembros,
+    not every person with a cuenta_sub."""
+
+    def test_upsert_does_not_touch_a_person_not_listed_in_miembros(self):
+        conn = _conn(self)
+        conn.execute("UPDATE person SET cuenta_sub = 'sub-1' WHERE id = 1")
+        _add_person(conn, 2, "Partner", sub="sub-2")
+        _add_person(conn, 3, "Unrelated", sub="sub-999")
+        outcome = household.sincronizar_desde_claim(
+            conn, 1, {"duna_hogar": {"id": "h-1", "miembros": ["sub-1", "sub-2"]}})
+        self.assertEqual(outcome, "actualizado")
+        self.assertIsNone(household.household_of(conn, 3))
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM hogar_miembro WHERE person_id = 3").fetchone()[0], 0
+        )
+
+
+class TransactionSafetyTest(unittest.TestCase):
+    """Fix 1: sqlite3's `executescript` COMMITs any transaction already open on `conn` before it
+    runs. sincronizar_desde_claim and _debe_refrescar_hogar now create the table with a plain
+    `execute()` instead, so a caller's open transaction survives a rollback."""
+
+    def test_sincronizar_desde_claim_does_not_commit_an_open_transaction(self):
+        conn = _conn(self)
+        conn.execute("BEGIN")
+        conn.execute("UPDATE person SET display_name = 'Changed' WHERE id = 1")
+        self.assertEqual(household.sincronizar_desde_claim(conn, 1, {}), "sin_dato")
+        conn.rollback()
+        name = conn.execute("SELECT display_name FROM person WHERE id = 1").fetchone()["display_name"]
+        self.assertNotEqual(name, "Changed")
+
+    def test_debe_refrescar_hogar_does_not_commit_an_open_transaction(self):
+        conn = _conn(self)
+        _add_person(conn, 2, "Me", sub="sub-tx-1")
+        conn.execute("BEGIN")
+        conn.execute("UPDATE person SET display_name = 'Changed' WHERE id = 2")
+        cuenta._debe_refrescar_hogar(conn, 2)
+        conn.rollback()
+        name = conn.execute("SELECT display_name FROM person WHERE id = 2").fetchone()["display_name"]
+        self.assertNotEqual(name, "Changed")
+
+
+class LazyTableCreationTest(unittest.TestCase):
+    """`db.init` itself does not create `hogar_miembro` on a database that never had `hogar_local`
+    (measured against the repository, BODY-HOGAR-CUENTA-1-M -- db.py is outside this slice's
+    `touches`, so the table stays lazily created here, via a single `execute()` that cannot commit
+    a caller's open transaction, rather than `db.init`'s job)."""
+
+    def test_household_module_creates_hogar_miembro_lazily_on_a_fresh_db(self):
+        path = Path(tempfile.mkdtemp(dir=TMP)) / "lazy.db"
+        conn = db.connect(path)
+        self.addCleanup(conn.close)
+        db.init(conn)
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        self.assertNotIn("hogar_miembro", tables)
+        household.sincronizar_desde_claim(conn, 1, {})
+        tables2 = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        self.assertIn("hogar_miembro", tables2)
+
+
 class MigrationTest(unittest.TestCase):
     def test_hogar_local_migrates_to_hogar_miembro_and_is_idempotent(self):
         path = Path(tempfile.mkdtemp(dir=TMP)) / "mig.db"
