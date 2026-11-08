@@ -7578,3 +7578,70 @@ the branch tip's own tree -- the merge carried the branch forward with no confli
 token, session secret or health figure was read, printed or logged by this slice.
 
 **BODY-WEB-ESTRUCTURA-PLAN-1 is complete -- body/web.py is the app assembler only.**
+
+## BODY-SESION-CONEXION-1 -- close sesion.py's connections in a finally (2026-11-08)
+
+Found while reviewing BODY-WEB-ESTRUCTURA-8 (a pure move -- this bug predates it, it was already in
+`body/web.py`): `body/rutas/sesion.py`'s four Cuenta session routes each open their own `db.connect()` (there
+is no `person_id` to scope `comun._ctx` by before sign-in) and closed it by hand. `login_start` closed in a
+`finally` but called `db.init(conn)` before the `try`. `login_callback` called `conn.close()` on five separate
+return paths and caught only `cuenta.FlowRefused`/`cuenta.CuentaUnavailable` -- any OTHER exception from
+`cuenta.handle_callback` or `db.init` left the connection open. `logout` and `backchannel_logout` had no
+`try` at all.
+
+**The four routes, before/after:** each now opens `conn = db.connect()` immediately followed by a `try:`
+with `db.init(conn)` as its first statement and the ONE `conn.close()` in its `finally`. `login_start`:
+`db.init` moved inside the existing `try`. `logout` and `backchannel_logout`: wrapped in a new `try/finally`,
+the hand-close deleted. `login_callback`: the whole body (the inner `try/except cuenta.FlowRefused /
+cuenta.CuentaUnavailable`, both `result.kind` branches, the final redirect) now sits inside one outer
+`try/finally`; the five scattered `conn.close()` calls deleted, replaced by the one in `finally`. Every
+response object, status code, redirect target and cookie is built exactly as before -- `tests/test_cuenta_rp.py`
+and `tests/test_borrar_reauth.py` (unedited) stayed green throughout.
+
+**Guard**, `tests/test_conexiones_cerradas.py::DirectConnectClosesInFinallyTest`: an AST scan of every
+route-decorated function in `tests/_rutas.py`'s `modulos_con_rutas()` for a `var = db.connect(...)` assignment
+whose very next statement is not a `Try` that closes `var` in its `finalbody` (or a `with
+contextlib.closing(var)`). **Proof it bites**: a scratchpad script (not committed) fed the guard's own
+`_stmt_lists`/`_connect_assigns`/`_closes_right_after` helpers (imported unmodified from the test module) a
+tree parsed from `git show main:body/rutas/sesion.py` (the pre-fix text) -- `checked: 4`, `offenders:
+['sesion.py:login_start', 'sesion.py:login_callback', 'sesion.py:logout', 'sesion.py:backchannel_logout']`.
+Re-run against the fixed tree: 0 offenders.
+
+**Other `db.connect()` with the same shape, found while building the guard:** `body/rutas/privacidad.py:40`,
+inside `consentimiento_decide` (the "decline consent" branch of `POST /privacidad/consentimiento`) --
+`conn = db.connect()` / `db.init(conn)` / work / `conn.close()`, no `try` at all. This is a route-decorated
+function (`@router.post` + `@comun._cierra_conexion_async`), so the new guard -- which scans every router
+module, not only `sesion.py` -- catches it too; it is listed in `_KNOWN_DIRECT_CONNECT_OFFENDERS` and left
+unfixed, outside this slice's `touches:`, for a later slice. **Deviation from the spec**: the spec's own
+wording expected other same-shape sites to be "outside route modules" (naming `body/pull.py`,
+`body/vida_export.py`, `body/shift_import.py`, `body/vincular_cuenta.py`, `body/demo.py`,
+`body/identity.py`, `body/agente/precios.py` by the shape of their `db.connect(` call sites, none of which
+are route-decorated) -- measured against the actual grep of `db.connect(`/`connect(` under `body/rutas/`,
+`privacidad.py:40` is inside a route module and the guard (scoped the same way the spec asked, "every route
+module") does flag it. The guard was written to catch it rather than silently excluded, and it is named here
+instead of fixed, since `body/rutas/privacidad.py` is not in this slice's `touches:`.
+
+**Tests**, `tests/test_sesion_conexion_1.py` (hosted mode, `CuentaRpTestCase` fixtures from
+`tests/test_cuenta_rp.py`): wraps `db.connect` to record every connection it returns and asserts each is
+closed after (a) a successful callback, (b) `FlowRefused`, (c) `CuentaUnavailable`, (d) an unexpected
+`RuntimeError` from `cuenta.handle_callback` (via `TestClient(..., raise_server_exceptions=False)`, response
+500), (e) logout, (f) backchannel logout from `127.0.0.1`. Responses for (a), (b), (c), (e), (f) are asserted
+unchanged (status, Location, cookies) against what `tests/test_cuenta_rp.py` already expects for the same
+calls. 6 tests, all green.
+
+**Gate**, run once on the final branch tree: `.venv/Scripts/python.exe -m unittest discover tests -t .` --
+`Ran 1209 tests in 113.317s ... OK (skipped=1)` (1202 + 6 new in `test_sesion_conexion_1.py` + 1 new guard
+test in `test_conexiones_cerradas.py` = 1209).
+
+Merge policy A: no schema or migration change, no customer-facing bytes, no cross-repo contract change in the
+actual diff (`body/rutas/sesion.py`, `tests/test_conexiones_cerradas.py`, `tests/test_sesion_conexion_1.py`)
+-- resource handling only, every response byte-identical on every path. This spec's own approval-reason
+approves the merge outright.
+
+Commits (pasted from `git rev-parse`/`git log`, not retyped): fix `2e4982785f7210a257455b2d658577f09b783f97`
+on branch `feat/body-sesion-conexion-1`, branched from `main` `4e92981a6af7ee975e0a2fd445c46a53b1c6fb09`.
+Merged into `main` with `--no-ff`: merge commit `da794823eb6b99e08d627e98cdb093795d9ff05f`, merge tree
+`01ee53b702dcc77583a6424f6ecb08e2dfa57cf6`, identical to the branch tip's own tree (`git diff` between them
+empty) -- no conflict, no extra change. `git status --porcelain` empty on `main` after the merge, before this
+ledger entry's own commit. No password, token, session secret or health figure was read, printed or logged by
+this slice.
