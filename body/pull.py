@@ -311,6 +311,24 @@ def pull_backfill_hosted(conn, *, hoy: date | None = None) -> tuple[int, int, in
     return ok, failed, saved
 
 
+def traer_series(conn, person_id: int, activity_source_id: str, token_str: str | None = None):
+    """Pulls one activity's per-set detail through the adapter (`garmin_adapter.fetch_exercise_
+    sets` -- the only Garmin access here) and stores it (`db.save_exercise_sets`). Returns the
+    number of sets saved, or `(sets saved, token_after)` when `token_str` is given (hosted,
+    per-person token path -- the same dual-return shape `garmin_adapter.fetch_exercise_sets`
+    itself uses). NOT called by `pull_all`, `pull_hosted`, `pull_backfill_hosted` or `main` --
+    this runs only on demand, when a person logs or corrects a session (the assistant tools,
+    BODY-ENTRENO-1-INV slice 4)."""
+    if token_str is not None:
+        data, token_after = garmin_adapter.fetch_exercise_sets(activity_source_id, token_str=token_str)
+    else:
+        data = garmin_adapter.fetch_exercise_sets(activity_source_id)
+    db.save_exercise_sets(conn, person_id, garmin_adapter.SOURCE, str(activity_source_id), data.sets)
+    if token_str is not None:
+        return len(data.sets), token_after
+    return len(data.sets)
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="python -m body.pull")
     p.add_argument("--date", help="one day, YYYY-MM-DD")
