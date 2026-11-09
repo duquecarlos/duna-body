@@ -40,7 +40,9 @@
 </div>
 {% endmacro %}
 
+<div class="cols-tendencias">
 {% for c in cards %}{{ render_card(c) }}{% endfor %}
+</div>
 <p class="note">{{ t('trends.tap_month') if r == 'all' else t('trends.tap_day') }}</p>
 
 {% if extra_groups %}
@@ -48,7 +50,9 @@
   <summary class="k">{{ t('trends.ver_todas', n=extra_count) }}</summary>
   {% for g in extra_groups %}
   <h2>{{ g.title }}</h2>
+  <div class="cols-tendencias">
   {% for c in g.cards %}{{ render_card(c) }}{% endfor %}
+  </div>
   {% endfor %}
 </details>
 {% endif %}

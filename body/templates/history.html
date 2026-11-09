@@ -24,11 +24,15 @@
   <div class="legend mt-10">
     {% for ty in training.types %}<span><i class="{{ ty.cls }}"></i>{{ ty.label }} · {{ ty.minutes }}{% if ty.km %} · {{ ty.km }}{% endif %}</span>{% endfor %}
   </div>
+  <div class="cols-historia">
   {% for m in training.months %}{{ month_row(m) }}{% endfor %}
+  </div>
   {% if training.months_older %}
   <details class="files mt-10">
     <summary class="k">{{ t('history.training_see_all') }}</summary>
+    <div class="cols-historia">
     {% for m in training.months_older %}{{ month_row(m) }}{% endfor %}
+    </div>
   </details>
   {% endif %}
   <p class="note mt-8">{{ t('trends.tap_month') }}</p>

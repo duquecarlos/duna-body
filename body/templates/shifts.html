@@ -73,6 +73,7 @@
 <p class="k mt-n4 mb-10"><a class="taplink" href="/shifts/patron">{{ t('patron.door_change') if tiene_patron else t('patron.door_new') }}</a></p>
 {% endif %}
 
+<div class="cols-turnos">
 <a class="card est" href="/shifts/como">
   <div class="q">{{ t('shifts.hero_q') }}</div>
   {% if hero_dias is not none %}
@@ -108,6 +109,7 @@
   </table>
 </div>
 {% endif %}
+</div>
 
 <h2>{{ t('shifts.strip_title') }}</h2>
 <p class="k mt-n4">{{ t('shifts.strip_hint') }}</p>

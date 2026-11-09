@@ -81,5 +81,13 @@
     <button class="btn" type="button" data-v="auto">{{ t('theme.auto') }}</button>
   </div>
 </div>
+<div class="card">
+  <div class="q">{{ t('settings.ancho') }}</div>
+  <div class="seg" id="ancho">
+    <button class="btn" type="button" data-v="completo">{{ t('ancho.completo') }}</button>
+    <button class="btn" type="button" data-v="lectura">{{ t('ancho.lectura') }}</button>
+  </div>
+  <p class="note mt-8">{{ t('ancho.nota') }}</p>
+</div>
 <script src="{{ static_url('ajustes_tema.js') }}" defer></script>
 {% endblock %}
