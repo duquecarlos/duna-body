@@ -4,6 +4,8 @@ Builds throwaway git repos in a temp directory -- never touches this repository'
 """
 import contextlib
 import io
+import json
+import os
 import shutil
 import subprocess
 import sys
@@ -117,6 +119,64 @@ class RefrescarTest(_RepoFixture):
         self.assertEqual(_git_ok(self.repo, "rev-parse", "main"), _git_ok(self.repo, "rev-parse", "HEAD"))
         self.assertFalse(_head_is_detached(self.repo))
         self.assertNotEqual(antes, _git_ok(self.repo, "rev-parse", "HEAD"))
+
+
+class ProcesoFrescoTest(unittest.TestCase):
+    """Runs `python -m body.vivo` in an actual fresh interpreter, on its own throwaway worktree
+    that carries a real copy of the `body` package. This is the case the fake-module regression
+    in MainTest cannot reach: inside the shared unittest process, `body.vivo` had already
+    imported `body.errores` long before any test ran, so a guard keyed on `sys.modules` minus a
+    hardcoded exception list never saw itself trip -- only a fresh process does.
+
+    `subir_turnos --help` is the task: argparse intercepts `--help` and exits before `main()`
+    reaches the shifts folder, the device link or the network, so it touches no data."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.base = Path(tempfile.mkdtemp(prefix="body-vivo-proc-test-"))
+        cls.repo = cls.base / "repo"
+        paquete_origen = Path(vivo.__file__).resolve().parent
+        shutil.copytree(
+            paquete_origen, cls.repo / "body", ignore=shutil.ignore_patterns("__pycache__")
+        )
+        _git_ok(cls.repo, "init", "-b", "main")
+        _git_ok(cls.repo, "config", "user.email", "test@example.com")
+        _git_ok(cls.repo, "config", "user.name", "Test")
+        _git_ok(cls.repo, "add", "-A")
+        _git_ok(cls.repo, "commit", "-m", "primero")
+        cls.sha_primero = _git_ok(cls.repo, "rev-parse", "main")
+        (cls.repo / "body" / "marca.txt").write_text("segundo", encoding="utf-8")
+        _git_ok(cls.repo, "add", "-A")
+        _git_ok(cls.repo, "commit", "-m", "segundo")
+        cls.sha_segundo = _git_ok(cls.repo, "rev-parse", "main")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.base, ignore_errors=True)
+
+    def setUp(self):
+        self.live = self.base / f"live-{self._testMethodName}"
+        self.home = self.base / f"home-{self._testMethodName}"
+        _git_ok(self.repo, "worktree", "add", "--detach", str(self.live), self.sha_primero)
+        self.addCleanup(shutil.rmtree, self.live, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
+
+    def test_un_proceso_fresco_se_actualiza_a_la_nueva_main(self):
+        env = {**os.environ, "BODY_HOME": str(self.home)}
+        resultado = subprocess.run(
+            [sys.executable, "-m", "body.vivo", "subir_turnos", "--help"],
+            cwd=str(self.live), env=env, capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(resultado.returncode, 0, resultado.stderr)
+        self.assertIn("actualizado", resultado.stdout)
+        self.assertEqual(_git_ok(self.live, "rev-parse", "HEAD"), self.sha_segundo)
+
+        estado = json.loads((self.home / vivo.ESTADO_NOMBRE).read_text(encoding="utf-8"))
+        self.assertEqual(estado["resultado"], "actualizado")
+        self.assertEqual(estado["tarea"], "subir_turnos")
+        self.assertEqual(estado["sha"], _git_ok(self.live, "rev-parse", "--short", "HEAD"))
+        self.assertEqual(estado["sha_main"], _git_ok(self.repo, "rev-parse", "--short", "main"))
+        self.assertIn("marca_tiempo_utc", estado)
 
 
 class RepoPrincipalTest(_RepoFixture):
@@ -251,6 +311,38 @@ class MainTest(_RepoFixture):
         mock_refrescar.assert_not_called()
         mock_run_module.assert_called_once()
         self.assertIn("sin_cambio:modulos_previos", "".join(buf))
+
+    def test_el_archivo_de_estado_tiene_exactamente_los_campos_esperados(self):
+        for resultado_esperado in ("actualizado", "sin_cambio:algo"):
+            with patch.object(vivo, "arbol_vivo", return_value=self.live), \
+                 patch.object(vivo, "refrescar", return_value=resultado_esperado), \
+                 patch.object(vivo.os, "chdir"), \
+                 patch.object(vivo.runpy, "run_module"), \
+                 patch.dict(vivo.os.environ, {}, clear=False), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                vivo.main(["pull"])
+
+            estado = json.loads(
+                (vivo.config.BODY_HOME / vivo.ESTADO_NOMBRE).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                set(estado.keys()), {"resultado", "tarea", "sha", "sha_main", "marca_tiempo_utc"}
+            )
+            self.assertEqual(estado["resultado"], resultado_esperado)
+            self.assertEqual(estado["tarea"], "pull")
+
+    def test_estado_no_escribible_no_impide_la_tarea(self):
+        with patch.object(vivo, "arbol_vivo", return_value=self.live), \
+             patch.object(vivo, "refrescar", return_value="ya_al_dia"), \
+             patch.object(vivo.config, "ensure_home", side_effect=OSError("sin disco")), \
+             patch.object(vivo.os, "chdir"), \
+             patch.object(vivo.runpy, "run_module") as mock_run_module, \
+             patch.dict(vivo.os.environ, {}, clear=False), \
+             contextlib.redirect_stdout(io.StringIO()):
+            codigo = vivo.main(["pull"])
+
+        self.assertEqual(codigo, 0)
+        mock_run_module.assert_called_once()
 
     def test_no_falla_sin_stdout_como_bajo_pythonw(self):
         with patch.object(vivo, "arbol_vivo", return_value=self.live), \

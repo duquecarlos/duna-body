@@ -26,13 +26,15 @@ process or console is ever created -- a `pythonw`-launched task stays consoleles
 """
 from __future__ import annotations
 
+import json
 import os
 import runpy
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
-from . import errores
+from . import config, errores
 
 TAREAS = {
     "web": "body.web",
@@ -45,6 +47,19 @@ TAREAS = {
 
 _TIMEOUT_GIT = 10
 _TIMEOUT_CHECKOUT = 30
+
+ESTADO_NOMBRE = "vivo-estado.json"
+
+
+def _modulos_body_actuales() -> set[str]:
+    """Every `body*` entry in `sys.modules` right now."""
+    return {nombre for nombre in sys.modules if nombre == "body" or nombre.startswith("body.")}
+
+
+# Captured once this module has finished importing (vivo itself, plus whatever it pulled in
+# above -- today `body.config` and `body.errores`). Anything beyond this baseline, found later
+# in the same process, is a module a PREVIOUS task left cached (BODY-VIVO-REFRESCO-1).
+_MODULOS_AL_CARGAR = frozenset(_modulos_body_actuales())
 
 
 def arbol_vivo() -> Path:
@@ -121,13 +136,33 @@ def refrescar(vivo: Path) -> str:
 
 
 def _modulos_body_inesperados() -> list[str]:
-    """`body*` entries in `sys.modules` other than `body` and `body.vivo` -- modules a previous
-    task in this same process could have left cached, surviving the refresh with stale code."""
-    return sorted(
-        nombre
-        for nombre in sys.modules
-        if (nombre == "body" or nombre.startswith("body.")) and nombre not in ("body", "body.vivo")
-    )
+    """`body*` entries in `sys.modules` beyond the baseline this module recorded for itself when
+    IT finished importing -- modules a previous task in this same process could have left cached,
+    surviving the refresh with stale code."""
+    return sorted(_modulos_body_actuales() - _MODULOS_AL_CARGAR)
+
+
+def _escribir_estado(vivo: Path, resultado: str, tarea: str, sha: str) -> None:
+    """A small JSON status file in BODY_HOME recording this run's outcome -- never a figure. A
+    failure to write it must not stop the task (fail-safe, like `refrescar` itself)."""
+    try:
+        sha_main = _rev_parse(vivo, "--short", "main")
+    except (RuntimeError, OSError, subprocess.TimeoutExpired):
+        sha_main = "?"
+    estado = {
+        "resultado": resultado,
+        "tarea": tarea,
+        "sha": sha,
+        "sha_main": sha_main,
+        "marca_tiempo_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    try:
+        config.ensure_home()
+        (config.BODY_HOME / ESTADO_NOMBRE).write_text(
+            json.dumps(estado, sort_keys=True), encoding="utf-8"
+        )
+    except OSError:
+        pass
 
 
 def _uso() -> None:
@@ -153,6 +188,7 @@ def main(argv: list[str] | None = None) -> int:
         sha = "?"
     if sys.stdout is not None:
         print(f"{resultado} {vivo.name} {sha}")
+    _escribir_estado(vivo, resultado, tarea, sha)
 
     principal = repo_principal(vivo)
     os.environ.setdefault("BODY_ENV_FILE", str(principal / ".env"))
