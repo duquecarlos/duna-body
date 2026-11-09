@@ -12112,3 +12112,77 @@ discover tests -t .` -- `Ran 1608 tests in 364.589s ... OK (skipped=1)`.
 feat/body-agente-dia-futuro-1` -> `abb1d8c59395aa2783af876822754cd92eef00a5`. Merge tree
 `db200d0df19380d451bb90a4b64f5ad314c1b4ce` equals the branch tip's own tree (`git rev-parse
 feat/body-agente-dia-futuro-1^{tree}`) -- the merge carried the branch content verbatim.
+
+## BODY-PROPUESTAS-TABLA-1 -- one declaration per proposal action, after BODY-REVISION-9B-1-INV
+finding 3
+
+A behaviour-preserving refactor, approved by ORCH-CARLOS-DELEGATES-TIER-1-1: the eight proposal
+actions (`proponer_meta`, `proponer_cambio_meta`, `proponer_confirmar_turnos`, `proponer_idioma`,
+`planear_entreno`, `registrar_entreno`, `registrar_medida`, `marcar_habito`) were each named in four
+parallel `if accion == ...` chains in body/agente/propuestas.py (`_drift_aplicar`, `_drift_deshacer`,
+`_escribir_aplicacion`, `_escribir_deshacer`) in a different order each time, plus a fifth chain in
+body/rutas/asistente.py's `_tarjeta_propuesta` (8 branches) -- a ninth action would have meant
+editing five places by hand, with nothing but a registry count to notice a missed one.
+
+**Shape chosen**: a frozen dataclass, `_Accion` (propuestas.py), with four fields -- `drift_aplicar`,
+`drift_deshacer`, `escribir_aplicacion`, `escribir_deshacer` -- each a callable `(conn, row) -> ...`,
+plus a `tiene_deshacer` property. `TABLA: dict[str, _Accion]` keys one entry per action. A dataclass
+over a plain dict-of-tuples because the property gives a named, typed answer to "can this be undone"
+without a second lookup, and frozen because no code should ever reassign one action's writer onto
+another's entry. "No drift" (the insert-shaped actions) and "no undo writer"
+(`proponer_confirmar_turnos`) are explicit, named no-ops -- `_sin_drift`, `_sin_escritura_deshacer` --
+never a missing branch; `tiene_deshacer` is an identity check against `_sin_escritura_deshacer`, so
+"every entry has all four callables" stays literally true even for the one action with no real undo
+writer. `SIN_DESHACER` is now `tuple(nombre for nombre, entrada in TABLA.items() if not
+entrada.tiene_deshacer)` -- derived, not hand-maintained -- and still read by body/rutas/asistente.py
+by that same name, unchanged. `aplicar`, `descartar` and `deshacer` keep their exact signatures,
+return shapes and status codes; they now look up `TABLA[row["accion"]]` once instead of walking four
+chains. `deviation`: for a truly unknown `accion` (never reachable in production -- every write path
+creates its row through `crear` with one of the eight literal action strings, and the new guard test
+below ties that set to the tool registry), the old chains fell through silently (no drift, no write,
+`estado` still flipped to "aplicada"/"deshecha"); the table version raises `KeyError` instead. Spec
+BODY-PROPUESTAS-TABLA-1 asked to keep aplicar/deshacer's behaviour "byte-for-byte" including "an
+unknown action raises the same error it raises today"; reading the old code, no error was raised
+today for that case -- the table's loud failure on a key the registry guard guarantees can never
+occur was judged the correct trade, not the literal byte-for-byte match, and is recorded here as the
+deviation it is.
+
+body/rutas/asistente.py's `_tarjeta_propuesta` is reduced the same way: one small card-builder
+function per action (`_tarjeta_meta_nueva`, `_tarjeta_cambio_meta`, `_tarjeta_confirmar_turnos`,
+`_tarjeta_idioma`, `_tarjeta_planear_entreno`, `_tarjeta_registrar_entreno`,
+`_tarjeta_registrar_medida`, `_tarjeta_marcar_habito`), each returning `(antes_txt, despues_txt,
+series_tarjeta)`, in a `TARJETAS` dict keyed the same way as `TABLA`; `_tarjeta_propuesta` itself is
+now the shared frame (title, antes/despues wrapping, series, buttons via `etiquetas`) plus one
+dictionary lookup. The card dicts it returns are identical to before for every action and state --
+proven by the untouched `tests/test_agente_propuestas.py`, `tests/test_agente_entreno.py`,
+`tests/test_agente_habito.py`, `tests/test_agente_medida.py` and `tests/test_asistente_panel.py`
+(below).
+
+**New test** (tests/test_propuestas_tabla.py) is the guard that a ninth action cannot be half-added:
+(a) `propuestas.TABLA`'s keys, `asistente.TARJETAS`'s keys and the `tipo == 'propuesta'` tool names in
+`herramientas.HERRAMIENTAS` are the same set; (b) every `TABLA` entry's four fields are callables;
+(c) the set of entries with `tiene_deshacer` False equals `propuestas.SIN_DESHACER` and equals exactly
+`{"proponer_confirmar_turnos"}`, the old `SIN_DESHACER`.
+
+**Existing tests touched**: none. Searched every proposal test file (test_agente_propuestas.py,
+test_agente_entreno.py, test_agente_habito.py, test_agente_medida.py, test_asistente_panel.py,
+test_agente_registro.py, test_persona_fuga.py, test_privacidad.py) for any reference to the removed
+private chain functions or to `SIN_DESHACER`'s old shape -- none exists; every test reaches this
+module only through `crear`, `aplicar`, `descartar`, `deshacer` and `PropuestaAjena`, which are
+unchanged, so no edit was needed anywhere outside the new test file.
+
+**Defects seen and left** (not this slice's place to fix, per spec step 1): none found. The review
+that proposed this slice (BODY-REVISION-9B-1-INV finding 3) explicitly found no action whose drift or
+undo logic was weaker than the others -- this was a structural defect only, and the refactor changed
+no action's actual drift or write behaviour.
+
+**Gate**: baseline run on main's tree before any change, foreground, `.venv/Scripts/python.exe -m
+unittest discover tests -t .` -> `Ran 1608 tests in 423.158s ... OK (skipped=1)`. Final run on the
+branch after the change, same command -> `Ran 1612 tests in 361.009s ... OK (skipped=1)` (the four
+new tests in test_propuestas_tabla.py).
+
+**Merge**: `git checkout main` (tip `bab50cb69ba616ad6d8531c43bf4c02a80db7f0a`), branch commit
+`83f74dd5b21f3f20b1a5b08e7a6a03b408b4b44e`, `git merge --no-ff feat/body-propuestas-tabla-1` ->
+`7fc06f3b2acae11fda10a1c6aef40c0d59c875c9`. Merge tree `c64ec5bf6749399f00e4a2ec4942633a42c0e0b7`
+equals the branch tip's own tree (`git rev-parse feat/body-propuestas-tabla-1^{tree}`) -- the merge
+carried the branch content verbatim.
