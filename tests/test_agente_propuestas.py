@@ -128,7 +128,7 @@ class NoProponibleTest(unittest.TestCase):
     def test_privacy_and_account_tools_are_never_proposals(self):
         nombres = {h["nombre"] for h in herramientas.HERRAMIENTAS if h["tipo"] == "propuesta"}
         self.assertEqual(nombres, {"proponer_meta", "proponer_cambio_meta", "proponer_confirmar_turnos",
-                                    "proponer_idioma"})
+                                    "proponer_idioma", "planear_entreno", "registrar_entreno"})
 
 
 class UnaPropuestaPorRondaTest(unittest.TestCase):
@@ -344,6 +344,47 @@ class EstadoYEventosTest(unittest.TestCase):
         self.assertEqual(datos["accion"], "proponer_meta")
         self.assertIsNone(datos["antes"])
         self.assertTrue(datos["despues"].startswith("Propuesta: "))
+
+    def test_planear_entreno_carries_a_propuesta_label_with_the_exercises(self):
+        guion = [
+            Respuesta(bloques=[LlamadaHerramienta("l1", "planear_entreno", {
+                "day": "2026-11-10", "titulo": "Espalda y bíceps",
+                "ejercicios": [{"ejercicio": "remo con barra", "series": 4, "reps": "8-10"}],
+            })], motivo_fin="tool_use", uso=Uso()),
+            Respuesta(bloques=[BloqueTexto("listo")], motivo_fin="end_turn", uso=Uso()),
+        ]
+        proveedor = FakeProveedor(guion)
+        with patch.object(agente_cliente, "proveedor_configurado", return_value=proveedor):
+            r = self.client.post("/asistente/preguntar",
+                                 json={"pregunta": "plan de espalda", "conversacion_id": None})
+        self.assertEqual(r.status_code, 200)
+        datos = _evento_data(r.text, "propuesta")
+        self.assertEqual(datos["accion"], "planear_entreno")
+        self.assertIsNone(datos["antes"])
+        self.assertTrue(datos["despues"].startswith("Propuesta: "))
+        self.assertIn("remo con barra", datos["despues"])
+        self.assertIsNone(datos["series"])
+
+    def test_registrar_entreno_manual_carries_a_per_set_watch_vs_you_table(self):
+        guion = [
+            Respuesta(bloques=[LlamadaHerramienta("l1", "registrar_entreno", {
+                "day": "2026-11-10", "titulo": "Pierna en casa",
+                "series": [{"ejercicio": "sentadilla", "reps": 10, "peso_kg": 40.0}],
+            })], motivo_fin="tool_use", uso=Uso()),
+            Respuesta(bloques=[BloqueTexto("listo")], motivo_fin="end_turn", uso=Uso()),
+        ]
+        proveedor = FakeProveedor(guion)
+        with patch.object(agente_cliente, "proveedor_configurado", return_value=proveedor):
+            r = self.client.post("/asistente/preguntar",
+                                 json={"pregunta": "hice pierna", "conversacion_id": None})
+        self.assertEqual(r.status_code, 200)
+        datos = _evento_data(r.text, "propuesta")
+        self.assertEqual(datos["accion"], "registrar_entreno")
+        self.assertEqual(len(datos["series"]), 1)
+        self.assertIsNone(datos["series"][0]["reloj"])  # no watch activity that day
+        self.assertIn("sentadilla", datos["series"][0]["tu"])
+        self.assertEqual(datos["etiquetas"]["entreno_reloj"], "Reloj")
+        self.assertEqual(datos["etiquetas"]["entreno_tu"], "Tú")
 
     def test_status_block_appears_in_the_next_turns_system_prompt(self):
         guion = [

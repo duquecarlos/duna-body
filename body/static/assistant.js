@@ -410,6 +410,32 @@
       .catch(function () {});
   }
 
+  function crearTablaSeries(series, etiquetas) {
+    var tabla = document.createElement("table");
+    tabla.className = "asis-propuesta-series";
+    var thead = document.createElement("thead");
+    var trh = document.createElement("tr");
+    ["", etiquetas.entreno_reloj || "", etiquetas.entreno_tu || ""].forEach(function (texto) {
+      var th = document.createElement("th");
+      th.textContent = texto;
+      trh.appendChild(th);
+    });
+    thead.appendChild(trh);
+    tabla.appendChild(thead);
+    var tbody = document.createElement("tbody");
+    series.forEach(function (fila) {
+      var tr = document.createElement("tr");
+      [fila.orden, fila.reloj || "—", fila.tu || "—"].forEach(function (valor) {
+        var td = document.createElement("td");
+        td.textContent = valor;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    tabla.appendChild(tbody);
+    return tabla;
+  }
+
   function crearTarjetaPropuesta(datos) {
     var etiquetas = datos.etiquetas || {};
     var wrap = document.createElement("div");
@@ -427,6 +453,9 @@
     despues.className = "asis-propuesta-despues";
     despues.textContent = datos.despues;
     wrap.appendChild(despues);
+    if (datos.series && datos.series.length) {
+      wrap.appendChild(crearTablaSeries(datos.series, etiquetas));
+    }
     var acciones = document.createElement("div");
     acciones.className = "asis-propuesta-acciones";
     var resultado = document.createElement("p");

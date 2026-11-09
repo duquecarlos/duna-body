@@ -11,10 +11,18 @@ could use to show the current week's verdict live, the way body/rutas/metas.py's
 unused here because an active goal with no data yet would then read as a computed "no verdict" dict
 instead of "sin verificación aún" -- the shape every other read tool and existing test depends on.
 
-The four `proponer_*` tools below are `tipo: propuesta` (BODY-ASISTENTE-PROPUESTAS-1): they create a
-server-side proposal record through `body/agente/propuestas.py` and never write the target
-themselves. `propuestas.py` is the one module a `propuesta` tool may import -- the static guard in
-tests/test_agente_registro.py checks that a `lectura` tool's call graph never reaches it.
+The `proponer_*` tools below, plus `planear_entreno` and `registrar_entreno` (BODY-ENTRENO-TOOLS-1),
+are `tipo: propuesta` (BODY-ASISTENTE-PROPUESTAS-1): they create a server-side proposal record
+through `body/agente/propuestas.py` and never write the PERSON's correction themselves -- nothing
+the person said is stored until they tap Aplicar. `registrar_entreno` is the one exception, and a
+narrow one: when it is BUILT (not applied) it may call `pull.traer_series` to fetch and cache the
+watch's own sets for that day, if they are not stored yet, so the card can show both versions at
+once (BODY-ENTRENO-1-INV slice 4 design). That call only ever fills `workout_set`'s `garmin_*`
+columns -- a mirror of what the watch already recorded -- and never touches a `person_*` column or
+sends anything to Garmin.
+
+`propuestas.py` is the one module a `propuesta` tool may import to create its record -- the static
+guard in tests/test_agente_registro.py checks that a `lectura` tool's call graph never reaches it.
 """
 from __future__ import annotations
 
@@ -23,8 +31,8 @@ import json
 import sqlite3
 from datetime import date, timedelta
 
-from .. import db, enlaces, fechas, goals, history, household, profile, readiness, shift_import, turnos_costo, \
-    tutoriales
+from .. import db, enlaces, fechas, goals, history, household, profile, pull, readiness, shift_import, \
+    turnos_costo, tutoriales
 from ..i18n import LANGS
 from . import ajustes, propuestas
 
@@ -107,6 +115,63 @@ _PARAM_LEER_TUTORIALES = {
     "additionalProperties": False,
 }
 _LEER_TUTORIALES_MAX = 5
+
+_PARAM_LEER_ENTRENO = {
+    "type": "object",
+    "properties": {
+        "day": {"type": "string", "format": "date"},
+        "desde": {"type": "string", "format": "date"},
+        "hasta": {"type": "string", "format": "date"},
+    },
+    "additionalProperties": False,
+}
+_PARAM_PLANEAR_ENTRENO = {
+    "type": "object",
+    "properties": {
+        "day": {"type": "string", "format": "date"},
+        "titulo": {"type": "string"},
+        "time": {"type": "string"},
+        "goal_id": {"type": "integer"},
+        "ejercicios": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "ejercicio": {"type": "string"},
+                    "series": {"type": "integer"},
+                    "reps": {},
+                },
+                "required": ["ejercicio", "series"],
+            },
+        },
+    },
+    "required": ["day", "titulo", "ejercicios"],
+    "additionalProperties": False,
+}
+_PARAM_REGISTRAR_ENTRENO = {
+    "type": "object",
+    "properties": {
+        "day": {"type": "string", "format": "date"},
+        "titulo": {"type": "string"},
+        "time": {"type": "string"},
+        "series": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "ejercicio": {"type": "string"},
+                    "categoria": {"type": "string"},
+                    "reps": {},
+                    "peso_kg": {},
+                    "nota": {"type": "string"},
+                },
+                "required": ["ejercicio"],
+            },
+        },
+    },
+    "required": ["day", "series"],
+    "additionalProperties": False,
+}
 
 
 def _readiness_dict(r: readiness.Readiness) -> dict:
@@ -266,6 +331,130 @@ def _hoy_local(conn: sqlite3.Connection, person_id: int) -> str:
     return fechas.hoy_local(db.person(conn, person_id)).isoformat()
 
 
+def _leer_entreno(conn: sqlite3.Connection, person_id: int, day: str | None = None, desde: str | None = None,
+                   hasta: str | None = None) -> dict:
+    """A day's or a range's training sessions (with their sets, display values plus whether each
+    was corrected) and the planned session for that day, if any (BODY-ENTRENO-TOOLS-1). Reads only
+    -- `db.exercise_sets` and plain SELECTs, never a writer."""
+    if day is not None:
+        ini, fin = day, day
+    elif desde is not None and hasta is not None:
+        ini, fin = desde, hasta
+    else:
+        raise ToolError("se necesita 'day', o 'desde' y 'hasta'")
+    actividades = conn.execute(
+        "SELECT * FROM activity WHERE person_id = ? AND day BETWEEN ? AND ? "
+        "AND (type = 'strength_training' OR source = 'manual') ORDER BY day, start_local",
+        (person_id, ini, fin),
+    ).fetchall()
+    sesiones = []
+    for a in actividades:
+        sets = db.exercise_sets(conn, person_id, a["source"], a["source_id"])
+        sesiones.append({
+            "dia": a["day"], "titulo": a["name"], "fuente": a["source"], "hora_inicio": a["start_local"],
+            "series": [{"orden": s["set_order"], "tipo": s["set_type"], "ejercicio": s["exercise"],
+                        "categoria": s["category"], "repeticiones": s["reps"], "peso_kg": s["weight_value"],
+                        "corregido": s["corrected_by_person"]} for s in sets],
+        })
+    planes = conn.execute(
+        "SELECT * FROM plan WHERE person_id = ? AND day BETWEEN ? AND ? AND ejercicios_json IS NOT NULL "
+        "ORDER BY day",
+        (person_id, ini, fin),
+    ).fetchall()
+    planeado = [{"dia": p["day"], "titulo": p["title"], "hora": p["time"],
+                 "ejercicios": json.loads(p["ejercicios_json"])} for p in planes]
+    return {"sesiones": sesiones, "planeado": planeado}
+
+
+def _planear_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id: int, day: str, titulo: str,
+                      ejercicios: list, time: str | None = None, goal_id: int | None = None) -> dict:
+    """Proposes one `plan` row for a day: a title, an optional time and a list of planned
+    exercises `{ejercicio, series, reps?}` (BODY-ENTRENO-TOOLS-1, Q3). Insert-shaped, like
+    `proponer_meta`: there is no 'before'."""
+    try:
+        date.fromisoformat(day)
+    except ValueError:
+        raise ToolError("day debe ser una fecha ISO (AAAA-MM-DD)")
+    titulo = (titulo or "").strip()
+    if not titulo:
+        raise ToolError("falta el título del plan")
+    if not ejercicios:
+        raise ToolError("se necesita al menos un ejercicio")
+    for e in ejercicios:
+        if not (e.get("ejercicio") or "").strip():
+            raise ToolError("cada ejercicio necesita 'ejercicio'")
+        if not isinstance(e.get("series"), int) or e["series"] < 1:
+            raise ToolError("cada ejercicio necesita 'series' (entero >= 1)")
+    if goal_id is not None:
+        g = conn.execute("SELECT 1 FROM goal WHERE id = ? AND person_id = ?", (goal_id, person_id)).fetchone()
+        if g is None:
+            raise ToolError(f"meta desconocida: {goal_id!r}")
+    despues = {"day": day, "time": time, "titulo": titulo, "goal_id": goal_id, "ejercicios": ejercicios}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "planear_entreno", despues)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
+def _registrar_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id: int, day: str, series: list,
+                        titulo: str | None = None, time: str | None = None) -> dict:
+    """Proposes "here is what I did" for a day (BODY-ENTRENO-TOOLS-1, Q3). When that day has a
+    Garmin strength activity, maps the spoken `series` onto the watch's sets by order -- fetching
+    them with `pull.traer_series` first if they are not stored yet, so the card can show both the
+    watch's value and the spoken correction per set. With no activity, stages a manual session
+    instead. `antes` carries, per set, enough of the pre-existing state (`sets_antes`) for
+    `propuestas.deshacer` to restore it exactly, or nothing for the manual (insert-shaped) case."""
+    try:
+        date.fromisoformat(day)
+    except ValueError:
+        raise ToolError("day debe ser una fecha ISO (AAAA-MM-DD)")
+    if not series:
+        raise ToolError("se necesita al menos una serie")
+    for s in series:
+        if not (s.get("ejercicio") or "").strip():
+            raise ToolError("cada serie necesita 'ejercicio'")
+    actividad = conn.execute(
+        "SELECT source, source_id FROM activity WHERE person_id = ? AND day = ? AND type = 'strength_training' "
+        "ORDER BY start_local LIMIT 1", (person_id, day),
+    ).fetchone()
+    if actividad is not None:
+        source, source_id = actividad["source"], actividad["source_id"]
+        existentes = db.exercise_sets(conn, person_id, source, source_id)
+        if not existentes:
+            pull.traer_series(conn, person_id, source_id)
+            existentes = db.exercise_sets(conn, person_id, source, source_id)
+        reloj_por_orden = {s["set_order"]: s for s in existentes}
+        mapeo, sets_antes = [], []
+        for i, hablado in enumerate(series, start=1):
+            watch = reloj_por_orden.get(i)
+            mapeo.append({
+                "set_order": i,
+                "reloj": ({"ejercicio": watch["exercise"], "reps": watch["reps"],
+                           "peso_kg": watch["weight_value"]} if watch else None),
+                "tu": hablado,
+            })
+            sets_antes.append({
+                "set_order": i, "existia": watch is not None,
+                "person_category": watch["person"]["category"] if watch else None,
+                "person_exercise": watch["person"]["exercise"] if watch else None,
+                "person_reps": watch["person"]["reps"] if watch else None,
+                "person_weight_kg": watch["person"]["weight_kg"] if watch else None,
+                "person_note": watch["person"]["note"] if watch else None,
+                "corrected_by_person": bool(watch["corrected_by_person"]) if watch else False,
+                "garmin_exercise": watch["garmin"]["exercise"] if watch else None,
+                "garmin_reps": watch["garmin"]["reps"] if watch else None,
+                "garmin_weight_value": watch["garmin"]["weight_value"] if watch else None,
+                "garmin_category": watch["garmin"]["category"] if watch else None,
+            })
+        despues = {"manual": False, "day": day, "source": source, "source_id": source_id, "series": series,
+                   "mapeo": mapeo}
+        antes = {"manual": False, "sets_antes": sets_antes}
+    else:
+        despues = {"manual": True, "day": day, "time": time, "titulo": (titulo or "Entrenamiento"),
+                   "series": series}
+        antes = {"manual": True}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "registrar_entreno", despues, antes=antes)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
 def _proponer_meta(conn: sqlite3.Connection, person_id: int, conversacion_id: int, metric_key: str,
                     direction: str, target_value, deadline: str, titulo: str) -> dict:
     titulo = (titulo or "").strip()
@@ -365,6 +554,10 @@ HERRAMIENTAS = [
      "descripcion": "Los tutoriales del catálogo de Body: su capítulo, su pantalla, si el asistente ya lo hace "
                      "y si ya existe un video. Úsala para responder cómo se hace algo en la app.",
      "parametros": _PARAM_LEER_TUTORIALES, "funcion": _leer_tutoriales},
+    {"nombre": "leer_entreno", "tipo": "lectura", "nivel": "completo",
+     "descripcion": "Las sesiones de entrenamiento de un día o un rango de días, con sus series, y el "
+                     "plan de entrenamiento de ese día si existe.",
+     "parametros": _PARAM_LEER_ENTRENO, "funcion": _leer_entreno},
     {"nombre": "proponer_meta", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone crear una meta nueva de tipo métrica. No la crea: registra la propuesta "
                      "para que la persona la apruebe en el chat.",
@@ -381,6 +574,17 @@ HERRAMIENTAS = [
      "descripcion": "Propone cambiar el idioma de la aplicación. No lo cambia: registra la propuesta "
                      "para que la persona la apruebe en el chat.",
      "parametros": _PARAM_PROPONER_IDIOMA, "funcion": _proponer_idioma},
+    {"nombre": "planear_entreno", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone un plan de entrenamiento para un día: título, hora opcional y una lista de "
+                     "ejercicios con sus series y repeticiones. No lo crea: registra la propuesta para "
+                     "que la persona la apruebe en el chat.",
+     "parametros": _PARAM_PLANEAR_ENTRENO, "funcion": _planear_entreno},
+    {"nombre": "registrar_entreno", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone registrar lo que la persona hizo en un entrenamiento de un día: si el reloj "
+                     "ya tiene una actividad de fuerza ese día, compara serie por serie; si no, crea una "
+                     "sesión manual. No lo guarda: registra la propuesta para que la persona la apruebe "
+                     "en el chat.",
+     "parametros": _PARAM_REGISTRAR_ENTRENO, "funcion": _registrar_entreno},
 ]
 
 _BY_NAME = {h["nombre"]: h for h in HERRAMIENTAS}

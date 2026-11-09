@@ -37,6 +37,7 @@ _ETIQUETA_KEYS = {
     "descartada": "asistente.propuesta.descartada", "deshecha": "asistente.propuesta.deshecha",
     "no_vigente": "asistente.propuesta.no_vigente", "desactualizada": "asistente.propuesta.desactualizada",
     "sin_deshacer": "asistente.propuesta.sin_deshacer",
+    "entreno_reloj": "asistente.propuesta.entreno_reloj", "entreno_tu": "asistente.propuesta.entreno_tu",
 }
 
 
@@ -53,6 +54,33 @@ def _objetivo_txt(t: T, defs: dict, metric_key: str | None, target_value, deadli
     if metric_key is None or target_value is None:
         return t("goals.card.milestone_date", date=fecha)
     return t("asistente.propuesta.meta_objetivo", valor=comun._fig_unit(t, metric_key, target_value, defs), fecha=fecha)
+
+
+def _ejercicio_plan_txt(t: T, e: dict) -> str:
+    if e.get("reps") is not None:
+        return t("asistente.propuesta.entreno_ejercicio_reps", ejercicio=e["ejercicio"],
+                 series=t.num(e["series"]), reps=e["reps"])
+    return t("asistente.propuesta.entreno_ejercicio", ejercicio=e["ejercicio"], series=t.num(e["series"]))
+
+
+def _serie_txt(t: T, s: dict | None) -> str | None:
+    """One set's short display text for the watch-vs-you table: "<ejercicio> · <reps/weight>",
+    or None for an empty cell (no watch set at that order)."""
+    if s is None:
+        return None
+    ejercicio = (s.get("ejercicio") or "").strip()
+    reps, peso = s.get("reps"), s.get("peso_kg")
+    if reps is not None and peso is not None:
+        detalle = t("asistente.propuesta.entreno_reps_peso", reps=t.num(reps), peso=t.num(peso))
+    elif reps is not None:
+        detalle = t("asistente.propuesta.entreno_reps", reps=t.num(reps))
+    elif peso is not None:
+        detalle = t("asistente.propuesta.entreno_peso", peso=t.num(peso))
+    else:
+        detalle = None
+    if ejercicio and detalle:
+        return f"{ejercicio} · {detalle}"
+    return ejercicio or detalle or t("asistente.propuesta.entreno_sin_dato")
 
 
 def _tarjeta_propuesta(t: T, defs: dict, registro: dict) -> dict:
@@ -81,8 +109,23 @@ def _tarjeta_propuesta(t: T, defs: dict, registro: dict) -> dict:
     elif accion == "proponer_idioma":
         antes_txt = IDIOMA_LABEL.get(antes_json["lang"], antes_json["lang"])
         despues_txt = IDIOMA_LABEL.get(despues["lang"], despues["lang"])
+    elif accion == "planear_entreno":
+        ejercicios_txt = ", ".join(_ejercicio_plan_txt(t, e) for e in despues["ejercicios"])
+        despues_txt = t("asistente.propuesta.entreno_plan", titulo=despues["titulo"],
+                        fecha=comun._short_date(t, date.fromisoformat(despues["day"])), ejercicios=ejercicios_txt)
+    elif accion == "registrar_entreno":
+        despues_txt = t("asistente.propuesta.entreno_registrado",
+                        fecha=comun._short_date(t, date.fromisoformat(despues["day"])))
     else:
         despues_txt = ""
+    series_tarjeta = None
+    if accion == "registrar_entreno":
+        if despues["manual"]:
+            series_tarjeta = [{"orden": i, "reloj": None, "tu": _serie_txt(t, s)}
+                               for i, s in enumerate(despues["series"], start=1)]
+        else:
+            series_tarjeta = [{"orden": m["set_order"], "reloj": _serie_txt(t, m["reloj"]),
+                                "tu": _serie_txt(t, m["tu"])} for m in despues["mapeo"]]
     if antes_txt is not None:
         antes_txt = t("asistente.propuesta.antes", valor=antes_txt)
         despues_txt = t("asistente.propuesta.despues", valor=despues_txt)
@@ -90,7 +133,7 @@ def _tarjeta_propuesta(t: T, defs: dict, registro: dict) -> dict:
         despues_txt = t("asistente.propuesta.solo_propuesta", valor=despues_txt)
     return {
         "id": registro["id"], "accion": accion, "titulo": t("asistente.propuesta.titulo." + accion),
-        "antes": antes_txt, "despues": despues_txt, "expira_en": registro["expira_en"],
+        "antes": antes_txt, "despues": despues_txt, "series": series_tarjeta, "expira_en": registro["expira_en"],
         "deshacer": accion not in agente_propuestas.SIN_DESHACER, "estado": registro["estado"],
         "etiquetas": _etiquetas(t),
     }
