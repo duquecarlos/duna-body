@@ -12356,3 +12356,44 @@ for the weekly one), for whenever Body serves more than one hosted person.
 `2fb4abe22896be8f8a123c77aa13f1194cd4d3e9`. Merge tree `05d7de8967533d49ecb9015e18c0adcd284d70ee`
 equals the branch tip's own tree (`git rev-parse feat/body-vida-dia-1^{tree}`) -- the merge carried
 the branch content verbatim.
+
+## BODY-EXPERIMENTOS-ESQUEMA-1-M -- finishes BODY-EXPERIMENTOS-ESQUEMA-1 (`f61b842`), which had
+stopped GATE_RED with the `experimento` / `experimento_registro` / `moment` tables, validator and
+privacy census built but two things unfinished.
+
+**The tables land as built**: `experimento` (optionally linked to a habit, never the other way),
+`experimento_registro` (one row per `(experimento_id, day)`, upserted) and `moment` (a timestamped
+thing the person did, open-text `kind`), all in `body/privacidad.py`'s `FULLY_HANDLED_TABLES`.
+Nothing about the schema itself changed in this slice.
+
+**Leak sweep widened, not exempted**: `tests/test_persona_fuga.py`'s `_seed_person` now seeds one
+`experimento`, one `experimento_registro` (via `db.registrar_dia_experimento`) and one `moment`
+(via `db.crear_momento`) for each invented person, titled/noted `ZZ<tag>-EXPERIMENTO` /
+`ZZ<tag>-REGISTRO` / `ZZ<tag>-MOMENTO`. All three carry their own literal `person_id` column, so
+none needed a household and none is "reached through" another id -- they join the plain
+person-keyed set `TableCensusTest` already checks, not `_REACHED_THROUGH_TABLES` or
+`_HOUSEHOLD_ONLY_TABLES`. Their markers stay out of `_markers_of`'s active list: no route, API,
+export or assistant tool reads any of the three yet, so searching for them would make the "appears
+for its own owner" half of that guard check nothing, the same reasoning the file already applies to
+`shift_batch_item.code`.
+
+**One shift-kind vocabulary**: `body/db.py` gains `SHIFT_KINDS = ("morning", "afternoon", "night",
+"day", "off", "other")`, a module-level tuple. The `shift` and `shift_batch_item` CHECK constraints
+in `SCHEMA` now interpolate `{SHIFT_KINDS!r}` instead of spelling the list out twice;
+`db.validar_experimento` reads `SHIFT_KINDS` directly (the lazy `from . import shift_import`
+workaround is gone, since `db.py` no longer needs anything from `shift_import`); and
+`shift_import.VALID_KINDS` is now `set(db.SHIFT_KINDS)` (the name stays, since `body/patron_turnos.py`
+still reads `shift_import.VALID_KINDS`). `tests/test_experimentos_esquema.py` gains
+`ShiftKindsVocabularyTest`, which parses the `kind IN (...)` CHECK clause back out of
+`sqlite_master` for both tables and asserts it equals `db.SHIFT_KINDS`, so a fourth spelling cannot
+drift unnoticed.
+
+**Gate**: `.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 1668 tests in
+236.711s ... OK (skipped=1)`, run once on the branch tip (fix commit `2e49e52`).
+
+**Merge**: `git checkout main` (tip `9e947dbb1358ff02ef8f2023bf5e36cfa19af405`), branch commits
+`f61b8426f5501465b85f9a3226d83e97ff9f4494` (schema) and `2e49e52cb4a99a613c6bbadb29ec3e2ae0882fc3`
+(this fix), `git merge --no-ff feat/body-experimentos-esquema-1` ->
+`d54a4da9fc089a1aa10efdb5eb9aeca570050a8a`. Merge tree `877730197a7771a9af467b8ea0e4a4f3b7a1a07e`
+equals the branch tip's own tree (`git rev-parse feat/body-experimentos-esquema-1^{tree}`) -- the
+merge carried the branch content verbatim, no re-run needed.
