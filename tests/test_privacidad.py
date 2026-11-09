@@ -88,6 +88,39 @@ class HostedConsentGateTest(CuentaRpTestCase):
         r4 = self.client.get("/goals")
         self.assertEqual(r4.status_code, 200)
 
+    def test_v1_only_acceptance_is_sent_to_consent_and_accepting_adds_v2_keeping_v1(self):
+        """BODY-ENTRENO-PRIVACIDAD-1: CONSENT_VERSION moved to v2 -- a person whose only accepted
+        row is the old v1 is not considered consented, and accepting the new text keeps the v1
+        row as history rather than replacing it."""
+        self._sign_in(return_to="/")
+        conn = db.connect()
+        person_id = conn.execute("SELECT id FROM person WHERE cuenta_sub = ?", (SUB,)).fetchone()["id"]
+        privacidad.record_consent(conn, person_id, "consentimiento-v1")
+        conn.close()
+
+        r1 = self.client.get("/")
+        self.assertEqual(r1.status_code, 303)
+        location = r1.headers["location"]
+        self.assertTrue(location.startswith("/privacidad/consentimiento?return_to="))
+        return_to = parse_qs(urlparse(location).query)["return_to"][0]
+
+        r2 = self.client.post("/privacidad/consentimiento", data={"decision": "acepto", "return_to": return_to})
+        self.assertEqual(r2.status_code, 303)
+        self.assertEqual(r2.headers["location"], return_to)
+
+        self.assertEqual(
+            self._db_count(
+                "SELECT COUNT(*) FROM consentimiento WHERE version = ?", privacidad.CONSENT_VERSION
+            ),
+            1,
+        )
+        self.assertEqual(
+            self._db_count("SELECT COUNT(*) FROM consentimiento WHERE version = ?", "consentimiento-v1"), 1
+        )
+
+        r3 = self.client.get("/")
+        self.assertEqual(r3.status_code, 200)
+
     def test_declining_signs_out_and_keeps_nothing_new(self):
         self._sign_in(return_to="/")
         location = self.client.get("/").headers["location"]

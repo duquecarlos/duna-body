@@ -11351,3 +11351,56 @@ of `3ea7d43628b2c8d39fcaacb80c4902562e2a2bae`); merge `ce3300baa5310c004f84efae3
 identity: branch tree `b5de135e376cd3b360dc3c59c2768a4d90ee0e98` equals the merge commit's own tree
 (`git rev-parse HEAD^{tree}` on `main` after the merge), and `git diff
 feat/body-entreno-tools-1 main` is empty.
+
+## BODY-ENTRENO-PRIVACIDAD-1 -- the consent widens to v2: training detail, night blood oxygen and
+## breathing, and self-measured figures, named before the person is asked to trust them
+
+BODY-ENTRENO-1-INV's Q7: since `consentimiento-v1` (BODY-PRIVACIDAD-1) was written, Body started
+keeping more without widening what the consent names -- night blood oxygen and breathing
+(BODY-ENTRENO-SUENO-STORE-1, stored on every pull already), the per-set detail of training
+sessions (BODY-ENTRENO-PULL-1 / TOOLS-1), and the numbers a person records themself
+(BODY-ENTRENO-MEDIDA-1: flexibility, snoring and the rest). `ORCH-CARLOS-DELEGATES-TIER-1-1`
+carries out Q7 with wording approved verbatim.
+
+**What changed.** `body/privacidad.py`'s `CONSENT_VERSION` moves from `"consentimiento-v1"` to
+`"consentimiento-v2"`. Nothing else reads the literal `"consentimiento-v1"` in code (the two
+earlier ledger entries that name it stand as history, untouched -- the ledger is append-only).
+`has_consented`/`record_consent` already take `version` as a parameter, defaulting to
+`CONSENT_VERSION`, so no other line in that module changed. `body/identity.py`'s gate (raises
+`ConsentRequired`/403 for a person with no accepted row for the *current* `CONSENT_VERSION`) was
+read, not changed -- it already re-asks on any version bump, including this one, with no code of
+its own naming a version.
+
+**Text, verbatim, both catalogs** (`body/i18n/es.json`, `body/i18n/en.json`):
+`privacidad.consentimiento.que` now names sleep's night blood oxygen and breathing, the training
+detail (sets, reps, weight) as always-kept, and -- "if you add them" -- shift calendar, goals,
+habits and self-recorded measures (flexibility, snoring as examples). `privacidad.resumen` now
+lists watch figures, training, goals, habits, shifts and self-recorded measures. Intraday figures
+are named nowhere: nothing stores them yet (BODY-INTRADIA-ESQUEMA-1, not built, bumps the version
+again when it does). Neither string tripped `tests/test_registro_tu.py`'s register guard (no
+usted marker, no new `su/sus/tiene/puede` hit), so its allow-list needed no change.
+
+**Tests** (`tests/test_privacidad.py`, one new method on `HostedConsentGateTest`): a person
+carrying only a `consentimiento-v1` row (inserted directly via `privacidad.record_consent(conn,
+person_id, "consentimiento-v1")`) is sent to `/privacidad/consentimiento` on the next request same
+as a person with no row at all; accepting inserts a `consentimiento-v2` row and leaves the v1 row
+in place (both counted at 1 afterward) -- the version bump's history guarantee, not just its gate.
+The four existing accept/decline/language tests keep passing unchanged: none asserted the literal
+version string except through `privacidad.CONSENT_VERSION` itself, which now reads v2 everywhere
+they use it.
+
+**Gate**, once, foreground, on the branch tip: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -- `Ran 1533 tests in 407.767s ... OK (skipped=1)`. 1 more than the prior recorded
+floor (1532, `BODY-ENTRENO-TOOLS-1-M`): the one new test method above; `skipped=1` carries over
+unchanged.
+
+**Not merged -- stops AWAITING_APPROVAL on the branch**, per the spec's own approval-reason:
+reversible as bytes, but the orchestrator reads the consent page in a browser before the merge.
+The diff is customer-facing bytes (the consent and summary text a person reads) with no schema
+change and no cross-repo/DTO change -- `stopped_on: customer-bytes` -- and the spec's body says to
+stop here rather than authorizing the merge in words, so Merge Policy A's green-on-all-three path
+does not apply.
+
+**Commit**: `0ac0a7c` on `feat/body-entreno-privacidad-1`, on top of `b1b3cba` (tip of `main` at
+dispatch). 4 files changed (`body/i18n/en.json`, `body/i18n/es.json`, `body/privacidad.py`,
+`tests/test_privacidad.py`), 38 insertions, 5 deletions.
