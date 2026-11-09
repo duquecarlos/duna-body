@@ -11671,3 +11671,55 @@ above.
 **Merge**: `git checkout main`; `git merge --no-ff feat/body-entreno-habito-auto-1`, merge commit
 `020815eabd16632d4032fdc69c6ff1e5a44932f4` (parents `e983f6560b2af191b9915bf19c53248ae9283a2a` on
 `main` and `45f2ee7bfa5d55d879136e30c9c44fa57701c725` on the feature branch).
+
+## BODY-CUENTA-ERRORES-1 -- map callback error codes per cuenta-duna-v1 section 10
+
+`BODY-CUENTA-1-INV` (2026-11-09) observed that `handle_callback` special-cased only
+`login_required` and sent every other `error=` Cuenta's authorize redirect can return --
+`access_denied`, `invalid_request`, `unauthorized_client`, `server_error`,
+`temporarily_unavailable` -- into one generic `FlowRefused("error")`, rendering
+`acceso_rechazado.html`'s "link expired / already used" text. That hid the real cause on
+2026-11-09: a person with no `body` grant got the wrong page. `docs/contracts/cuenta-duna-v1.md`
+section 10 already names what each code must show, and both pages and texts already existed, so
+this slice adds no new customer-facing text.
+
+**The mapping**, in `body/cuenta.py`'s `handle_callback`: `login_required` unchanged (still
+bypasses the state check, as before -- a deliberate pre-existing special case, not touched);
+`access_denied` now returns `CallbackResult(kind="sin_acceso")`, the same page and 200 status a
+signed-in person with no `body` in `duna_productos` already reaches (`body/rutas/sesion.py`'s
+existing `sin_acceso` branch needed no change, since it renders from `t`/`switcher_url`/
+`logout_url` only, never from `claims`); `invalid_request`, `unauthorized_client`, `server_error`,
+`temporarily_unavailable` now raise `CuentaUnavailable()`, so the existing `except
+cuenta.CuentaUnavailable` branch in `login_callback` renders the `cuenta.down` outage sentence
+(no route change needed there either); any other or unknown code still raises
+`FlowRefused("error")`, keeping today's `acceso_rechazado` behaviour, with a code comment naming
+this contract section. The raw `error` value is never placed in a page or a log line.
+
+**Order**: the `state` check was moved to run before the new error-code branch (it previously ran
+after the generic `"error" in params` check), so a forged callback carrying `error=access_denied`
+and a wrong `state` is still refused as a state mismatch (400, `acceso_rechazado`), not shown
+«Sin acceso» -- confirmed by
+`test_forged_access_denied_with_bad_state_is_still_refused_as_state_mismatch`. `login_required`
+keeps bypassing the state check exactly as before this slice.
+
+**Tests added** (`tests/test_cuenta_rp.py`, `CallbackRefusalTest`): one case per code
+(`test_login_required_starts_a_visible_sign_in`, `test_access_denied_shows_sin_acceso`,
+`test_outage_codes_show_cuenta_down_sentence` for the four outage codes,
+`test_unknown_error_code_keeps_acceso_rechazado`,
+`test_forged_access_denied_with_bad_state_is_still_refused_as_state_mismatch`), each also
+asserting the raw code string never appears in the rendered page.
+
+**Merge policy A**: no schema/migration change, no customer-facing bytes (no new template, no new
+i18n key, no reworded string -- only routing logic and tests), no cross-repo contract or DTO
+change. All three conditions pass; this spec's approval reason also authorises merging on green.
+
+**Gate**, once, foreground, on the branch before merging: `.venv/Scripts/python.exe -m unittest
+discover tests -t .` -- `Ran 1572 tests in 350.148s ... OK (skipped=1)`.
+
+**Commit**: on `feat/body-cuenta-errores-1`, on top of `178a63a` (tip of `main` at dispatch),
+`ee5da527cb2c9cddab9a61e4eb00780052568a76`. 2 files changed (`body/cuenta.py`,
+`tests/test_cuenta_rp.py`).
+
+**Merge**: `git checkout main`; `git merge --no-ff feat/body-cuenta-errores-1`, merge commit
+`d03953f10a47e21f0f63966228f3824eae0ce18f`. The merge tree (`df847b9c20b8a525722982a22a3aa8586582f768`)
+is identical to the branch tree, so the gate above stands for the merged tree without a re-run.
