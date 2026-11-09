@@ -16,6 +16,11 @@ from . import config
 
 _CADENCE_N_PER_WEEK = re.compile(r"^\s*(\d+)\s*x\s*/\s*week\s*$", re.IGNORECASE)
 
+# The shift-kind vocabulary: shared by the shift and shift_batch_item CHECK constraints in SCHEMA
+# below, by validar_experimento's filtro_dias check, and by shift_import.VALID_KINDS (which reads
+# it from here) -- one spelling, not three.
+SHIFT_KINDS = ("morning", "afternoon", "night", "day", "off", "other")
+
 # Shared between SCHEMA (fresh installs) and the rebuild functions below (existing installs),
 # so the two paths can never drift apart.
 _GOAL_COLUMNS = """
@@ -124,6 +129,50 @@ _INICIO_SESION_COLUMNS = """
     created_at    TEXT NOT NULL
 """
 
+# Wave 9 (BODY-EXPERIMENTOS-ESQUEMA-1, BODY-EXPERIMENTOS-1-INV slice 3): an experiment is its own
+# concept, only optionally linked to a habit (habito_id) -- zero change to goal/habit. ventana and
+# filtro_dias are JSON (the day filter as data, generalising turnos_costo._dias_excluidos),
+# validated once by db.validar_experimento before a row is ever written.
+_EXPERIMENTO_COLUMNS = """
+    id                   INTEGER PRIMARY KEY,
+    person_id            INTEGER NOT NULL REFERENCES person(id),
+    titulo               TEXT NOT NULL,
+    habito_id            INTEGER REFERENCES habit(id),
+    metricas             TEXT NOT NULL CHECK (json_valid(metricas)),
+    ventana              TEXT NOT NULL CHECK (json_valid(ventana)),
+    filtro_dias          TEXT NOT NULL CHECK (json_valid(filtro_dias)),
+    dias_prueba_objetivo INTEGER,
+    fecha_inicio         TEXT NOT NULL,
+    fecha_fin            TEXT,
+    estado               TEXT NOT NULL CHECK (estado IN ('activo', 'cerrado')),
+    creado_en            TEXT NOT NULL
+"""
+
+# The "it happened" log for an experiment with no habito_id -- with one, habit_check is the log
+# instead. One row per (experimento_id, day): registrar_dia_experimento upserts on that pair.
+_EXPERIMENTO_REGISTRO_COLUMNS = """
+    id             INTEGER PRIMARY KEY,
+    experimento_id INTEGER NOT NULL REFERENCES experimento(id),
+    person_id      INTEGER NOT NULL REFERENCES person(id),
+    day            TEXT NOT NULL,
+    ocurrio        INTEGER NOT NULL CHECK (ocurrio IN (0, 1)),
+    nota           TEXT,
+    momento_id     INTEGER REFERENCES moment(id),
+    creado_en      TEXT NOT NULL,
+    UNIQUE (experimento_id, day)
+"""
+
+# A timestamped thing the person did. `kind` is open text on purpose (no CHECK) -- a code-level
+# known set comes later, once more than the two hand-run experiments exist to generalise from.
+_MOMENT_COLUMNS = """
+    id         INTEGER PRIMARY KEY,
+    person_id  INTEGER NOT NULL REFERENCES person(id),
+    ts_local   TEXT NOT NULL,
+    kind       TEXT NOT NULL,
+    note       TEXT,
+    created_at TEXT NOT NULL
+"""
+
 SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS person (
     id          INTEGER PRIMARY KEY,
@@ -206,7 +255,7 @@ CREATE TABLE IF NOT EXISTS workout_set (
 CREATE TABLE IF NOT EXISTS shift (
     person_id   INTEGER NOT NULL REFERENCES person(id),
     day         TEXT NOT NULL,             -- the day the shift starts
-    kind        TEXT NOT NULL CHECK (kind IN ('morning', 'afternoon', 'night', 'day', 'off', 'other')),
+    kind        TEXT NOT NULL CHECK (kind IN {SHIFT_KINDS!r}),
     code        TEXT,                      -- original code from the schedule, e.g. 'N'
     start_local TEXT,                      -- ISO local time; a night shift ends the next day
     end_local   TEXT,
@@ -238,7 +287,7 @@ CREATE TABLE IF NOT EXISTS shift_batch_item (
     id          INTEGER PRIMARY KEY,
     batch_id    INTEGER NOT NULL REFERENCES shift_batch(id),
     day         TEXT NOT NULL,
-    kind        TEXT NOT NULL CHECK (kind IN ('morning', 'afternoon', 'night', 'day', 'off', 'other')),
+    kind        TEXT NOT NULL CHECK (kind IN {SHIFT_KINDS!r}),
     code        TEXT,
     start_local TEXT,
     end_local   TEXT,
@@ -254,7 +303,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_shift_batch_item_slot
 -- shift_batch rows, the same propose-then-confirm flow as a file import). `cycle` is a JSON array
 -- of {"kind", "start", "end"} entries, one per day of the cycle; `kind` is from the
 -- same vocabulary as shift.kind -- 'morning', 'afternoon', 'night', 'day', 'off', 'other'
--- (body/shift_import.py's VALID_KINDS); `start`/`end` are "HH:MM" strings, null on an `off` day.
+-- (SHIFT_KINDS above); `start`/`end` are "HH:MM" strings, null on an `off` day.
 -- Validated and expanded by body/patron_turnos.py.
 CREATE TABLE IF NOT EXISTS shift_pattern (
     person_id     INTEGER PRIMARY KEY REFERENCES person(id),
@@ -474,6 +523,23 @@ CREATE TABLE IF NOT EXISTS figura_compartida (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_figura_compartida_activa
     ON figura_compartida (person_id, metric_key, hogar_id) WHERE withdrawn_at IS NULL;
+
+-- Wave 9 (BODY-EXPERIMENTOS-ESQUEMA-1): experimento, moment and experimento_registro. See the
+-- _EXPERIMENTO_COLUMNS/_MOMENT_COLUMNS/_EXPERIMENTO_REGISTRO_COLUMNS comments above for why.
+CREATE TABLE IF NOT EXISTS moment (
+{_MOMENT_COLUMNS}
+);
+CREATE INDEX IF NOT EXISTS idx_moment_person ON moment(person_id);
+
+CREATE TABLE IF NOT EXISTS experimento (
+{_EXPERIMENTO_COLUMNS}
+);
+CREATE INDEX IF NOT EXISTS idx_experimento_person ON experimento(person_id);
+
+CREATE TABLE IF NOT EXISTS experimento_registro (
+{_EXPERIMENTO_REGISTRO_COLUMNS}
+);
+CREATE INDEX IF NOT EXISTS idx_experimento_registro_person ON experimento_registro(person_id);
 """
 
 # (key, label, unit, better, kind). 'estimated' = computed by Body, shown with «≈» and "how I calculate it".
@@ -1260,3 +1326,135 @@ def exercise_sets(conn: sqlite3.Connection, person_id: int, source: str, source_
             },
         })
     return out
+
+
+# ---- experimentos (wave 9, BODY-EXPERIMENTOS-ESQUEMA-1) --------------------------------------------
+
+# intradia's own metric vocabulary -- unlike tipo 'dia', never checked against metric_def, since an
+# intraday window reads the clock's own series (body/lector.py), not a daily aggregate.
+METRICAS_INTRADIA = ("heart_rate", "stress")
+
+
+def _campo_invalido(campo: str, detalle: str) -> None:
+    raise ValueError(f"{campo}: {detalle}")
+
+
+def validar_experimento(metricas, ventana, filtro_dias) -> None:
+    """The one place crear_experimento's three JSON shapes are checked. Pure (no connection), so a
+    caller can validate before ever touching the database. Raises ValueError naming the invalid
+    field first -- ventana, filtro_dias or metricas.
+
+    ventana: {"tipo": "dia"} or {"tipo": "intradia", "ancla": "despertar" | "momento",
+    "antes_min": int >= 0 | null, "despues_min": int > 0}.
+    filtro_dias: {"turno_en": [kinds] | null, "turno_fuera": [kinds] | null,
+    "excluir_tras_noche": bool} -- kinds from SHIFT_KINDS (this module's own vocabulary;
+    shift_import.VALID_KINDS reads it from here, not the other way round).
+    metricas: a non-empty list; for tipo 'dia' every key must be a known metric_def key, for
+    'intradia' a key from METRICAS_INTRADIA.
+    """
+    if not isinstance(ventana, dict) or ventana.get("tipo") not in ("dia", "intradia"):
+        _campo_invalido("ventana", "tipo must be 'dia' or 'intradia'")
+    tipo = ventana["tipo"]
+    if tipo == "dia":
+        if set(ventana) != {"tipo"}:
+            _campo_invalido("ventana", "tipo 'dia' takes no other key")
+    else:
+        if set(ventana) != {"tipo", "ancla", "antes_min", "despues_min"}:
+            _campo_invalido("ventana", "tipo 'intradia' needs ancla, antes_min and despues_min")
+        if ventana["ancla"] not in ("despertar", "momento"):
+            _campo_invalido("ventana", "ancla must be 'despertar' or 'momento'")
+        antes = ventana["antes_min"]
+        if antes is not None and (isinstance(antes, bool) or not isinstance(antes, int) or antes < 0):
+            _campo_invalido("ventana", "antes_min must be a non-negative int or null")
+        despues = ventana["despues_min"]
+        if isinstance(despues, bool) or not isinstance(despues, int) or despues <= 0:
+            _campo_invalido("ventana", "despues_min must be a positive int")
+
+    if not isinstance(filtro_dias, dict) or set(filtro_dias) != {"turno_en", "turno_fuera", "excluir_tras_noche"}:
+        _campo_invalido("filtro_dias", "needs exactly turno_en, turno_fuera and excluir_tras_noche")
+    for campo in ("turno_en", "turno_fuera"):
+        valor = filtro_dias[campo]
+        if valor is not None and (
+            not isinstance(valor, list) or not valor or any(k not in SHIFT_KINDS for k in valor)
+        ):
+            _campo_invalido("filtro_dias", f"{campo} must be null or a non-empty list of known shift kinds")
+    if not isinstance(filtro_dias["excluir_tras_noche"], bool):
+        _campo_invalido("filtro_dias", "excluir_tras_noche must be a bool")
+
+    if not isinstance(metricas, list) or not metricas:
+        _campo_invalido("metricas", "must be a non-empty list")
+    if tipo == "dia":
+        conocidas = {d[0] for d in METRIC_DEFS}
+        if any(m not in conocidas for m in metricas):
+            _campo_invalido("metricas", "every key must be a known metric_def key for tipo 'dia'")
+    else:
+        if any(m not in METRICAS_INTRADIA for m in metricas):
+            _campo_invalido("metricas", f"intradia keys must be one of {METRICAS_INTRADIA}")
+
+
+def crear_experimento(conn: sqlite3.Connection, person_id: int, titulo: str, metricas, ventana, filtro_dias,
+                       *, habito_id: int | None = None, dias_prueba_objetivo: int | None = None,
+                       fecha_inicio: str | None = None, estado: str = "activo") -> int:
+    """Validates the three JSON shapes, then inserts. If habito_id is given it must already be this
+    person's own habit (via habit.goal_id -> goal.person_id) -- checked in SQL, scoped by
+    person_id, same as every other read and write in this section."""
+    validar_experimento(metricas, ventana, filtro_dias)
+    if habito_id is not None:
+        propio = conn.execute(
+            "SELECT 1 FROM habit h JOIN goal g ON g.id = h.goal_id WHERE h.id = ? AND g.person_id = ?",
+            (habito_id, person_id),
+        ).fetchone()
+        if propio is None:
+            raise ValueError("habito_id: not this person's own habit")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    fecha_inicio = fecha_inicio or now[:10]
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO experimento (person_id, titulo, habito_id, metricas, ventana, filtro_dias, "
+            "dias_prueba_objetivo, fecha_inicio, estado, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (person_id, titulo, habito_id, json.dumps(metricas), json.dumps(ventana), json.dumps(filtro_dias),
+             dias_prueba_objetivo, fecha_inicio, estado, now),
+        )
+    return cur.lastrowid
+
+
+def experimentos(conn: sqlite3.Connection, person_id: int, estado: str | None = None) -> list[sqlite3.Row]:
+    if estado is None:
+        return conn.execute(
+            "SELECT * FROM experimento WHERE person_id = ? ORDER BY id", (person_id,)
+        ).fetchall()
+    return conn.execute(
+        "SELECT * FROM experimento WHERE person_id = ? AND estado = ? ORDER BY id", (person_id, estado)
+    ).fetchall()
+
+
+def registrar_dia_experimento(conn: sqlite3.Connection, experimento_id: int, person_id: int, day: str,
+                               ocurrio: bool, nota: str | None = None, momento_id: int | None = None) -> None:
+    """Upserts on (experimento_id, day) -- used only when the experiment has no habito_id; with one,
+    habit_check is the log instead. Refuses an experimento_id that is not this person's own,
+    checked in SQL scoped by person_id, before anything is written."""
+    propio = conn.execute(
+        "SELECT 1 FROM experimento WHERE id = ? AND person_id = ?", (experimento_id, person_id)
+    ).fetchone()
+    if propio is None:
+        raise ValueError("experimento_id: not this person's own experiment")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        conn.execute(
+            "INSERT INTO experimento_registro (experimento_id, person_id, day, ocurrio, nota, momento_id, "
+            "creado_en) VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(experimento_id, day) DO UPDATE SET "
+            "ocurrio = excluded.ocurrio, nota = excluded.nota, momento_id = excluded.momento_id",
+            (experimento_id, person_id, day, 1 if ocurrio else 0, nota, momento_id, now),
+        )
+
+
+def crear_momento(conn: sqlite3.Connection, person_id: int, ts_local: str, kind: str,
+                   note: str | None = None) -> int:
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO moment (person_id, ts_local, kind, note, created_at) VALUES (?, ?, ?, ?, ?)",
+            (person_id, ts_local, kind, note, now),
+        )
+    return cur.lastrowid

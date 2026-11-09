@@ -23,7 +23,7 @@ from pathlib import Path
 
 from . import db, errores
 
-VALID_KINDS = {"morning", "afternoon", "night", "day", "off", "other"}
+VALID_KINDS = set(db.SHIFT_KINDS)
 SLOT_INDEX_NAME = "idx_shift_slot"
 
 
