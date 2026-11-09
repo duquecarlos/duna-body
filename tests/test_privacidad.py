@@ -121,6 +121,49 @@ class HostedConsentGateTest(CuentaRpTestCase):
         r3 = self.client.get("/")
         self.assertEqual(r3.status_code, 200)
 
+    def test_v2_only_acceptance_is_sent_to_consent_and_accepting_adds_v3_keeping_v2(self):
+        """BODY-EXPERIMENTOS-CONSENTIMIENTO-1: CONSENT_VERSION moved to v3 -- a person whose only
+        accepted row is the prior v2 is not considered consented, and accepting the new text keeps
+        the v2 row as history rather than replacing it."""
+        self._sign_in(return_to="/")
+        conn = db.connect()
+        person_id = conn.execute("SELECT id FROM person WHERE cuenta_sub = ?", (SUB,)).fetchone()["id"]
+        privacidad.record_consent(conn, person_id, "consentimiento-v2")
+        conn.close()
+
+        r1 = self.client.get("/")
+        self.assertEqual(r1.status_code, 303)
+        location = r1.headers["location"]
+        self.assertTrue(location.startswith("/privacidad/consentimiento?return_to="))
+        return_to = parse_qs(urlparse(location).query)["return_to"][0]
+
+        r2 = self.client.post("/privacidad/consentimiento", data={"decision": "acepto", "return_to": return_to})
+        self.assertEqual(r2.status_code, 303)
+        self.assertEqual(r2.headers["location"], return_to)
+
+        self.assertEqual(
+            self._db_count(
+                "SELECT COUNT(*) FROM consentimiento WHERE version = ?", privacidad.CONSENT_VERSION
+            ),
+            1,
+        )
+        self.assertEqual(
+            self._db_count("SELECT COUNT(*) FROM consentimiento WHERE version = ?", "consentimiento-v2"), 1
+        )
+
+        r3 = self.client.get("/")
+        self.assertEqual(r3.status_code, 200)
+
+    def test_v3_acceptance_is_not_sent_to_consent_again(self):
+        self._sign_in(return_to="/")
+        conn = db.connect()
+        person_id = conn.execute("SELECT id FROM person WHERE cuenta_sub = ?", (SUB,)).fetchone()["id"]
+        privacidad.record_consent(conn, person_id, privacidad.CONSENT_VERSION)
+        conn.close()
+
+        r = self.client.get("/")
+        self.assertEqual(r.status_code, 200)
+
     def test_declining_signs_out_and_keeps_nothing_new(self):
         self._sign_in(return_to="/")
         location = self.client.get("/").headers["location"]
@@ -168,6 +211,27 @@ class ConsentTextLanguageTest(CuentaRpTestCase):
         self.assertEqual(r_en.status_code, 200)
         self.assertIn("Before we start", r_en.text)
         conn.close()
+
+
+class ConsentTextNamesTheNewDataTest(unittest.TestCase):
+    """BODY-EXPERIMENTOS-CONSENTIMIENTO-1: consentimiento.que names the minute-by-minute figures,
+    experiments and logged moments, in both catalogs."""
+
+    def _que(self, lang: str) -> str:
+        path = Path(__file__).resolve().parent.parent / "body" / "i18n" / f"{lang}.json"
+        return json.loads(path.read_text(encoding="utf-8"))["privacidad.consentimiento.que"]
+
+    def test_spanish_names_minute_by_minute_experiments_and_moments(self):
+        text = self._que("es")
+        self.assertIn("minuto a minuto", text)
+        self.assertIn("experimento", text)
+        self.assertIn("momentos", text)
+
+    def test_english_names_minute_by_minute_experiments_and_moments(self):
+        text = self._que("en")
+        self.assertIn("minute by minute", text)
+        self.assertIn("experiment", text)
+        self.assertIn("moments", text)
 
 
 class LocalModeNoGateTest(unittest.TestCase):
