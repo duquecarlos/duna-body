@@ -11480,3 +11480,73 @@ dispatch). 7 files changed (`body/agente/herramientas.py`, `body/agente/propuest
 `784b699` (prior tip of `main`) and `f49e955` (tip of the branch). Tree identity: branch tree
 `b530d16` equals the merge commit's own tree (`git rev-parse HEAD^{tree}` on `main` after the
 merge), and `git diff feat/body-entreno-titulo-1 main` is empty.
+
+## BODY-SUENO-RESPIRACION-VISTA-1 -- Día and Tendencias get an honest home for the four night
+figures, each with the snoring caveat
+
+BODY-ENTRENO-SUENO-STORE-1 already pulls four night figures from the sleep payload on every
+pull (sleep_spo2_avg %, higher; sleep_respiration_avg/_low/_high brpm, neutral) but showed them
+nowhere on purpose, since the watch cannot hear snoring and Carlos named snoring and nasal
+breathing at night as a goal (2026-11-09, BODY-ENTRENO-1-INV Q6). Until this slice, Día's generic
+"Todas las medidas" grid (`body/rutas/hoy.py` `day_view`) printed the four as loose cards with no
+caveat, and Tendencias had no card for them at all.
+
+**Día**: the four keys leave the generic grid; `hoy.py`'s new `_sueno_resp_linea` builds one line
+inside the existing sleep card, under the stages legend -- "Oxígeno en sangre {spo2} ·
+respiración {low}–{high} rpm (prom. {avg})" (es) / "Blood oxygen {spo2} · breathing {low}–{high}
+brpm (avg {avg})" (en) -- using `comun._fig_unit` for the SpO2 figure (its own `%` unit, newly
+added to `comun.UNITS`) and `t.num` for the three brpm figures. A missing figure drops its own
+part: SpO2 alone renders only the oxygen phrase; the range and the average are treated as one
+respiration figure (Garmin's sleep DTO gives low/high/avg together or not at all) with two reduced
+wordings (`day.sueno_resp.respiracion_rango` for the range alone, `day.sueno_resp.respiracion_prom`
+for the average alone) for the edge case where only part of that trio arrives. With none of the
+four, no line and no caveat. When `sleep_minutes` is absent (no sleep card), the line and caveat
+render instead as their own small card in the same place in the page.
+
+**Tendencias**: a new `night` group in `comun.TREND_GROUPS`, right after `sleep`, carrying
+`sleep_spo2_avg` and `sleep_respiration_avg` (low/high stay Día-only); the existing `_trend_card`
+path handles the baseline/delta/band the same way as every other extra metric, with the "neutral"
+direction already rendering as arrow + amount + "vs." text with no "better/worse" wording, so no
+change was needed there. Each of the two cards carries the caveat as its own note, exactly like
+`trends.self_note`, via a new `caveat` flag on the card dict (`tendencias.py`'s
+`NIGHT_CAVEAT_KEYS`).
+
+**The caveat**, one key read by both screens (`sueno_respiracion.caveat`): "El reloj no oye el
+ronquido: esto muestra cómo respiraste y tu oxígeno en sangre, no si roncaste. Es información, no
+un diagnóstico." (es) / "The watch can't hear snoring: this shows how you breathed and your blood
+oxygen, not whether you snored. It's information, not a diagnosis." (en) -- verbatim from the spec,
+no wording guard tripped.
+
+**Demo data**: `body/demo.py`'s `NIGHT_BREATH` figures are already seeded for ~80% of nights that
+have `sleep_minutes` (each of the four independently, so some demo nights exercise the
+reduced-line paths too) -- not re-seeded or re-run by this slice, read from the module as it
+stands.
+
+**Tests** (`tests/test_sueno_respiracion_vista.py`, new): Día with all four renders the full line
+and caveat with none of the four as grid cards; Día with only SpO2 renders just that part; Día
+with none of the four renders no line and no caveat; Día with figures but no `sleep_minutes`
+renders the line and caveat as their own small card; Tendencias' `todas=1` lists the `night` group
+with both cards inside the details and the caveat twice; es and en for both screens.
+`tests/test_tendencias_todas.py`'s pinned `test_expected_group_keys` gained one assertion for the
+new `night` group; its subject (the rest of the pinned groups) is unchanged.
+
+**Gate**, once, foreground, on the branch tip before the merge decision: `.venv/Scripts/python.exe
+-m unittest discover tests -t .` -- `Ran 1547 tests in 391.344s ... OK (skipped=1)`. No floor was
+supplied with this dispatch, so this is a fresh measurement, not a reconciliation; 7 more tests
+than the last recorded floor (1540, `BODY-ENTRENO-TITULO-1`), matching the 7 new test methods
+added here (`skipped=1` carries over unchanged).
+
+**Merge policy A**: the diff changes customer-facing bytes (the new line, card and caveat text on
+Día and Tendencias) -- no schema/migration change and no cross-repo/DTO change, but that one
+condition is enough. The spec's own approval reason says this slice "stops AWAITING_APPROVAL for
+the orchestrator's 375 px check on demo data", so this is a stop before merge, not an
+authorization to merge on green. Build only; branch left unmerged.
+
+**Commit**: on `feat/body-sueno-respiracion-vista-1`, on top of `5e9cb17` (tip of `main` at
+dispatch). 9 files changed (`DECISIONS.md`, `body/i18n/en.json`, `body/i18n/es.json`,
+`body/rutas/comun.py`, `body/rutas/hoy.py`, `body/rutas/tendencias.py`, `body/templates/day.html`,
+`body/templates/trends.html`, `tests/test_tendencias_todas.py`), plus the new
+`tests/test_sueno_respiracion_vista.py`.
+
+**Stop**: AWAITING_APPROVAL, on the branch, not merged -- the orchestrator's own 375 px check on
+demo data is still outstanding per the approval reason.

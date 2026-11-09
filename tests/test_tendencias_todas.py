@@ -49,6 +49,7 @@ class GroupsCatalogueTest(unittest.TestCase):
         groups = dict(comun.TREND_GROUPS)
         self.assertEqual(set(groups["sleep"]),
                           {"sleep_score", "sleep_deep_min", "sleep_rem_min", "sleep_light_min", "sleep_awake_min"})
+        self.assertEqual(set(groups["night"]), {"sleep_spo2_avg", "sleep_respiration_avg"})
         self.assertEqual(set(groups["energy"]),
                           {"body_battery_high", "body_battery_low", "body_battery_sleep_charge"})
         self.assertEqual(set(groups["stress"]), {"stress_avg", "high_stress_min"})

@@ -19,6 +19,11 @@ from . import comun
 router = APIRouter()
 
 TODAY_CARDS = ["sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake"]
+# BODY-SUENO-RESPIRACION-VISTA-1: the four night figures BODY-ENTRENO-SUENO-STORE-1 already pulls
+# -- out of the generic "Todas las medidas" grid, into one honest line inside (or beside) the sleep
+# card, with the caveat that this is a proxy, not a snoring or apnea reading (BODY-ENTRENO-1-INV
+# Q6, DESIGN rule 12).
+SUENO_RESP_KEYS = ("sleep_spo2_avg", "sleep_respiration_avg", "sleep_respiration_low", "sleep_respiration_high")
 # Each stage's fixed palette class (body/static/body.css), never a var(...) string in markup (BODY-ESTILOS-1).
 STAGES = [("sleep_deep_min", "metric.sleep_deep_min", "c-night"),
           ("sleep_light_min", "metric.sleep_light_min", "c-night-light"),
@@ -281,6 +286,30 @@ def how(day: str, person_id: int = Depends(identity.current_person_id)):
                    missing=[m[:1].upper() + m[1:] for m in missing], turnos=turnos_on)
 
 
+def _sueno_resp_linea(t: T, vals: dict, defs: dict) -> str | None:
+    """BODY-SUENO-RESPIRACION-VISTA-1: Día's one line for SpO2 and breathing while asleep -- a
+    missing figure drops its own part (never 0, never "—" standing in for it); with none of the
+    four, no line at all. The range (low-high) and the average read as one respiration figure --
+    Garmin's sleep DTO gives both together or neither -- so a lone average still gets its own
+    wording rather than being dropped with the range."""
+    spo2 = vals.get("sleep_spo2_avg")
+    avg = vals.get("sleep_respiration_avg")
+    low = vals.get("sleep_respiration_low")
+    high = vals.get("sleep_respiration_high")
+    if spo2 is None and avg is None and low is None and high is None:
+        return None
+    parts = []
+    if spo2 is not None:
+        parts.append(t("day.sueno_resp.oxigeno", valor=comun._fig_unit(t, "sleep_spo2_avg", spo2, defs)))
+    if low is not None and high is not None and avg is not None:
+        parts.append(t("day.sueno_resp.respiracion", low=t.num(low), high=t.num(high), avg=t.num(avg)))
+    elif low is not None and high is not None:
+        parts.append(t("day.sueno_resp.respiracion_rango", low=t.num(low), high=t.num(high)))
+    elif avg is not None:
+        parts.append(t("day.sueno_resp.respiracion_prom", avg=t.num(avg)))
+    return " · ".join(parts)
+
+
 def _activity_name(t: T, a) -> str:
     """Día's activity list (DESIGN rule 10): an unnamed activity shows its translated kind when
     Garmin's own type code is one this app knows (the i18n map `_kind_label` reads); an unknown
@@ -305,12 +334,15 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
     defs = comun._defs(conn)
     cards = []
     for k, df in defs.items():
+        if k in SUENO_RESP_KEYS:
+            continue
         v = vals.get(k)
         delta, cls = _delta(conn, t, df, key, v, person_id)
         href = _tendencias_href(k, "dia", key, today_local) if v is not None else None
         cards.append({"key": k, "label": t("metric." + k), "value": comun._value(t, k, v), "raw": v,
                       "unit": comun._unit(t, df), "delta": delta, "cls": cls, "est": df["kind"] == "estimated",
                       "href": href})
+    sueno_resp_linea = _sueno_resp_linea(t, vals, defs)
     sleep = None
     if vals.get("sleep_minutes") is not None:
         total_stage = sum(vals.get(s[0]) or 0 for s in STAGES)
@@ -348,6 +380,7 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
         else:
             block_ctx = t("day.shift_ctx_despues", n=ctx["n"])
     return comun._render("day.html", t=t, tab="today", date_long=t.long_date(d), cards=cards, sleep=sleep,
+                   sueno_resp_linea=sueno_resp_linea,
                    activities=acts, shifts=shifts, has_data=has_data, block_ctx=block_ctx,
                    sync_text=None if has_data else comun._sync_status_text(conn, person, t),
                    prev=(d - timedelta(1)).isoformat(), next=(d + timedelta(1)).isoformat(),

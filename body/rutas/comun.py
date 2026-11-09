@@ -132,7 +132,7 @@ def _short_date(t: T, d: date) -> str:
 
 
 UNITS = {"bpm": "unit.bpm", "ms": "unit.ms", "pts": "unit.pts", "steps": "unit.steps", "kcal": "unit.kcal",
-         "brpm": "unit.brpm", "ml/kg/min": "unit.ml_kg_min", "years": "unit.years"}
+         "brpm": "unit.brpm", "ml/kg/min": "unit.ml_kg_min", "years": "unit.years", "%": "unit.percent"}
 OF_100 = {"readiness", "stress_avg", "body_battery_high", "body_battery_low", "body_battery_wake", "sleep_score"}
 
 
@@ -185,6 +185,10 @@ TREND_KEYS = ["readiness", "sleep_minutes", "hrv_last_night", "resting_hr", "bod
 # reads from. sleep_need_min (Garmin's own target) is deliberately never shown here.
 TREND_GROUPS = [
     ("sleep", ["sleep_score", "sleep_deep_min", "sleep_rem_min", "sleep_light_min", "sleep_awake_min"]),
+    # BODY-SUENO-RESPIRACION-VISTA-1: blood oxygen and breathing while asleep, a loose proxy only --
+    # low/high stay Día-only (part of the one line there), the trend is the avg alone, same honest
+    # caveat as Día's (BODY-ENTRENO-1-INV Q6, DESIGN rule 12: never labelled snoring or apnea).
+    ("night", ["sleep_spo2_avg", "sleep_respiration_avg"]),
     ("energy", ["body_battery_high", "body_battery_low", "body_battery_sleep_charge"]),
     ("stress", ["stress_avg", "high_stress_min"]),
     ("activity", ["intensity_minutes", "active_kcal"]),
