@@ -32,7 +32,7 @@ MIN_BANDA_VALORES = 3    # a day qualifies toward recovery when at least this ma
 
 REASON_CODES = ("sin_turnos", "sin_noches", "pocos_bloques", "sin_datos_reloj")
 
-# Below this many units of real difference, a row reads "igual" instead of "peor"/"mejor"
+# Below this many units of real difference, a row reads "igual" instead of "mas"/"menos"
 # (BODY-TURNOS-COSTO-1-M, fix b): roughly a quarter-hour of sleep, a beat of resting HR, a
 # millisecond of HRV, three points of a 0-100 scale -- small enough that a reader's own day-to-day
 # noise would otherwise read as a verdict.
@@ -132,13 +132,16 @@ def _signo(metric: str) -> int:
 def diferencia_y_palabra(metric: str, costo: float) -> tuple[float, str]:
     """From a metric's signed cost (positive = worse, `_costo_bloque`'s convention, kept for the
     recovery rule and the assistant tool), the REAL difference a reader should see -- night-block
-    mean minus reference mean, its own sign -- and a plain direction word: 'peor' | 'mejor' | 'igual'
-    (BODY-TURNOS-COSTO-1-M, fix b). Applying `_signo` a second time undoes the first signing, since
-    it is always +-1."""
+    mean minus reference mean, its own sign -- and a plain DIRECTION word, not a verdict: 'mas' |
+    'menos' | 'igual', from the difference's own sign (BODY-TURNOS-PALABRA-DIRECCION-1). Three of
+    the five metrics are keyed to one sleep session by Garmin's own fields, and on a night-shift day
+    that session is the person's daytime rest, not a night comparable to the reference -- so
+    'better'/'worse' can be an artefact of WHEN the watch measures, not a real verdict. Applying
+    `_signo` a second time undoes the first signing, since it is always +-1."""
     diff = costo * _signo(metric)
     if abs(diff) < UMBRAL_IGUAL.get(_UNIT.get(metric, ""), 0.0):
         return diff, "igual"
-    return diff, "peor" if costo > 0 else "mejor"
+    return diff, "mas" if diff > 0 else "menos"
 
 
 def _costo_bloque(conn, person_id: int, bloque: Bloque, ref: dict[str, Referencia | None],

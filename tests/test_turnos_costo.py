@@ -63,6 +63,20 @@ def _seed_block(conn, person_id: int, inicio: date, dias: int, recovery_target: 
     return fin
 
 
+def _seed_block_off_baseline(conn, person_id: int, inicio: date, dias: int) -> date:
+    """A night block whose OWN nights (not just the recovery tail) carry OFF_DELTA values, on all
+    five metrics -- so every row's real difference is non-zero and well clear of UMBRAL_IGUAL,
+    for a direction word distinct from "igual"."""
+    fin = inicio + timedelta(dias - 1)
+    d = inicio
+    while d <= fin:
+        _insert_shift(conn, person_id, d.isoformat())
+        for m in METRICS:
+            db.set_metric(conn, d.isoformat(), m, CONST[m] + OFF_DELTA[m], "garmin", person_id)
+        d += timedelta(1)
+    return fin
+
+
 class BloquesNocheTest(unittest.TestCase):
     def test_consecutive_nights_form_one_block(self):
         conn = _mkconn(self)
@@ -359,34 +373,47 @@ def _no_day_keyed_values(obj) -> bool:
 
 
 class DireccionYPalabraTest(unittest.TestCase):
-    """BODY-TURNOS-COSTO-1-M fix b: the row shows the REAL difference (its own sign), not the always-
-    positive signed cost, with a plain direction word."""
+    """BODY-TURNOS-PALABRA-DIRECCION-1: the row shows the REAL difference (its own sign), not the
+    always-positive signed cost, with a plain DIRECTION word -- 'mas'/'menos'/'igual' -- never a
+    judgement, whatever the metric's own better-direction is."""
 
-    def test_less_sleep_and_lower_hrv_read_negative_and_worse(self):
+    def test_less_sleep_and_lower_hrv_read_negative_and_menos(self):
         # sleep_minutes and hrv_last_night are both "higher is better" -- a signed cost that is
         # positive (worse) came from a value BELOW the reference, so the real difference is negative.
         diff, palabra = turnos_costo.diferencia_y_palabra("sleep_minutes", 49.0)
         self.assertLess(diff, 0)
-        self.assertEqual(palabra, "peor")
+        self.assertEqual(palabra, "menos")
         diff, palabra = turnos_costo.diferencia_y_palabra("hrv_last_night", 11.4)
         self.assertLess(diff, 0)
-        self.assertEqual(palabra, "peor")
+        self.assertEqual(palabra, "menos")
 
-    def test_higher_resting_hr_reads_positive_and_worse(self):
+    def test_higher_resting_hr_reads_positive_and_mas(self):
         # resting_hr is "lower is better" -- a positive signed cost came from a value ABOVE the
-        # reference, so the real difference stays positive.
+        # reference, so the real difference stays positive. A HIGHER resting HR must read "mas"
+        # (more), never "peor" (worse) -- the word names the direction, not a verdict.
         diff, palabra = turnos_costo.diferencia_y_palabra("resting_hr", 5.0)
         self.assertGreater(diff, 0)
-        self.assertEqual(palabra, "peor")
+        self.assertEqual(palabra, "mas")
 
-    def test_a_negative_cost_reads_mejor(self):
+    def test_a_lower_resting_hr_reads_menos_not_mejor(self):
+        # A LOWER resting HR during nights is medically good (test_a_lower_resting_hr_during_nights_is_not_worse,
+        # above), but the row must still read "menos" (less), never "mejor" (better): the word names
+        # the direction the mean moved, not a verdict on whether that direction is good.
         diff, palabra = turnos_costo.diferencia_y_palabra("resting_hr", -5.0)
         self.assertLess(diff, 0)
-        self.assertEqual(palabra, "mejor")
+        self.assertEqual(palabra, "menos")
 
     def test_under_the_threshold_reads_igual(self):
         diff, palabra = turnos_costo.diferencia_y_palabra("resting_hr", 0.4)  # under UMBRAL_IGUAL["bpm"] (1.0)
         self.assertEqual(palabra, "igual")
+
+    def test_no_metric_ever_reads_a_judgement_word(self):
+        """Every metric, both directions of signed cost: the word is always in {'mas', 'menos',
+        'igual'}, never 'peor'/'mejor' -- whatever the metric's own better-direction (db.METRIC_DEFS)."""
+        for metric in METRICS:
+            for costo in (37.0, -37.0):
+                _, palabra = turnos_costo.diferencia_y_palabra(metric, costo)
+                self.assertIn(palabra, ("mas", "menos", "igual"))
 
 
 class SubtitlesTest(unittest.TestCase):
@@ -569,6 +596,48 @@ class WebAndToolTest(unittest.TestCase):
         out = herramientas.ejecutar(conn, 1, "leer_costo_turnos", {}, "resumen")
         self.assertTrue(_no_day_keyed_values(out), "leer_costo_turnos payload keys a metric value by day")
         json.dumps(out)  # also: JSON-serializable
+
+    def _seed_with_direction_words(self, conn):
+        today = date.today()
+        _fill_range(conn, 1, today - timedelta(140), today - timedelta(1), CONST)
+        _seed_block_off_baseline(conn, 1, today - timedelta(100), 5)
+        _seed_block_off_baseline(conn, 1, today - timedelta(40), 5)
+        conn.commit()
+
+    def test_shifts_word_badges_are_directions_not_verdicts_in_spanish(self):
+        """BODY-TURNOS-PALABRA-DIRECCION-1: the word next to each figure is a direction, never a
+        judgement -- and the figure itself carries no +/- sign now that the word already says which
+        way it moved."""
+        conn = self._reset_db()
+        self._seed_with_direction_words(conn)
+        r = self.client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        rows = re.findall(r'<span class="nw">([^<]*)\s*<strong>([^<]+)</strong>', r.text)
+        self.assertTrue(rows)
+        badges = [palabra for _value, palabra in rows]
+        self.assertEqual(set(badges), {"más", "menos"} | ({"igual"} & set(badges)))
+        for b in badges:
+            self.assertNotIn(b, ("peor", "mejor"))
+        for value, _palabra in rows:
+            self.assertNotIn("+", value)
+            self.assertNotIn("−", value)
+            self.assertNotIn("-", value)
+
+    def test_shifts_word_badges_are_directions_not_verdicts_in_english(self):
+        conn = self._reset_db()
+        self._seed_with_direction_words(conn)
+        self.client.post("/settings/language", data={"lang": "en"})
+        try:
+            r = self.client.get("/shifts")
+            self.assertEqual(r.status_code, 200)
+            rows = re.findall(r'<span class="nw">([^<]*)\s*<strong>([^<]+)</strong>', r.text)
+            self.assertTrue(rows)
+            badges = [palabra for _value, palabra in rows]
+            self.assertEqual(set(badges), {"more", "less"} | ({"about the same"} & set(badges)))
+            for b in badges:
+                self.assertNotIn(b, ("worse", "better"))
+        finally:
+            self.client.post("/settings/language", data={"lang": "es"})
 
 
 if __name__ == "__main__":
