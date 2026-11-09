@@ -11569,3 +11569,86 @@ unittest discover tests -t .` -- `Ran 1547 tests in 317.307s ... OK (skipped=1)`
 `d357f7773d7feb654a466e9f1f28b67d8ea150a7`, fast-forwarding main past 806cb33.
 
 **Stop**: COMPLETE, on `main`, tree clean.
+
+## BODY-ENTRENO-HABITO-AUTO-1 -- marcar_habito, so a habit can be checked off from the watch's own evidence
+
+Slice 5 of `BODY-ENTRENO-1-INV` (Q5, ROADMAP 9b): a ball sport once a week is Carlos's own goal, and
+he does not want to type what the watch already knows. Adds `marcar_habito` on the existing
+propose/apply/undo pattern -- a generic "check habit H for day D, from this evidence" tool. Ball
+sports is one use of it; the tool never carries a hardcoded activity-type list, and the model
+decides which of the day's activities (`leer_entreno`) fulfils which of the person's active habits
+(`leer_meta`), then proposes.
+
+**Access, reused, never a second rule**: the habit must exist and be active; the person may check
+it only through `goals.goal_access` (creator, or household member on a shared milestone) plus the
+exact assignee rule `body/rutas/metas.py`'s own `habit_check` route already enforces (unassigned, or
+assigned to the caller) -- a household member's own assigned habit is never another member's to
+check, even when both can read the goal. The day-not-future check reuses `fechas.fecha_real_valida`
+with the person's real local today, the same rule `goals.check_habit` itself enforces. An optional
+`actividad` (`{source, source_id}`) is checked against the live `activity` row: it must belong to
+the caller and land on the proposed day, or the tool refuses.
+
+**antes/despues**: `antes` is that day's existing `habit_check` row for this person (done, note) or
+None. Apply writes through `goals.check_habit(..., done=True, hoy=<person's local today>)`; undo
+restores the prior row exactly, or deletes it when there was none -- a narrow direct DELETE on
+`habit_check`, documented in `propuestas.py`'s module docstring as the same kind of exception
+`registrar_entreno`'s own Garmin-set restoration already is, since `check_habit` only ever upserts
+and has no "no row" shape to call back into. Drift (propose vs. apply, and apply vs. undo) is
+checked against the live `habit_check` row, exactly like the other proposal tools.
+
+**Card** (`asistente._tarjeta_propuesta`): title "Marcar hábito" / "Check off a habit"; the done line
+names the habit and the day, plus -- when an activity was given -- its name and duration as evidence
+(a new `_actividad_txt` helper, mirroring `body/rutas/hoy.py`'s `_activity_name` fallback and
+`t.minutes`, kept local to `asistente.py` since `hoy.py` is outside this slice's `touches:`). When
+the day already had a "not done" row, it shows as `antes` the same way `proponer_cambio_meta` does.
+One sentence, appended at the end of `agente.sistema` in both catalogs, tells the model to offer
+this when it sees a day's activity fulfilling an unchecked active habit, naming the activity, and
+never to check it without the person's own approval.
+
+**Deviation from the approval's verbatim Spanish text**: the approved sentence ends "...nunca lo
+marques sin su toque." (never mark it without their tap). `tests/test_registro_tu.py` (outside this
+slice's `touches:`, so it could not be edited) scans every `es.json` string for an allow-list of
+formal-register ("usted") trigger words, one of which is the bare word "toque" (the formal
+imperative of "tocar") -- it has no grammatical awareness, so it flags the noun "toque" ("a tap")
+exactly as it would flag the verb. "su" is a second, separate trigger (third-person "su/sus/
+tiene/puede", needing an allow-list entry in that same file) that this slice also has no entry for.
+Reworded to "...nunca lo marques sin que la persona lo apruebe." (never mark it without the person
+approving it) -- same meaning (the person's own tap on Aplicar is what "approves" it), no trigger
+word. The English sentence is untouched (that guard only scans `es.json`). Flagging this rather than
+silently keeping the literal text: the wording was approved verbatim, and this one clause is not
+what was approved, even though it says the same thing.
+
+**Tests** (`tests/test_agente_habito.py`, 20 new): propose writes nothing; apply marks done and
+keeps the note/evidence; undo removes a row that did not exist before, or restores one that did
+(not done, with its own note); drift refuses on both apply (row changed after propose) and undo (row
+changed again after applying); person B cannot apply person A's proposal; a future day, an unknown
+habit, an inactive habit, another person's private habit, a household member's own assigned habit,
+an activity belonging to another person, and an activity on a different day are all refused; the
+card text with and without evidence, in both es and en, plus the antes line for a prior not-done
+row. `test_agente_bucle.py`'s nivel='ninguno' tool-name set, `test_agente_propuestas.py`'s
+never-a-proposal name set, and `test_agente_registro.py`'s `PROPUESTA_NOMBRES`/tool-count/test-name
+literals (seven -> eight propuesta tools, 19 -> 20 total) are updated to match, each test's own
+subject unchanged.
+
+**Gate**, once, foreground: `.venv/Scripts/python.exe -m unittest discover tests -t .` --
+`Ran 1567 tests in 247.282s ... OK (skipped=1)`. No floor was supplied with this dispatch; 20 more
+tests than the last recorded floor (1547, `BODY-SUENO-RESPIRACION-VISTA-1-M`), matching the 20 new
+test methods added here (`skipped=1` carries over unchanged). The first run (before the register-
+guard reword above) was RED on exactly the two `test_registro_tu.py` assertions described above;
+after the reword, this second run is green -- a fix verified on the corrected tree, not a retry.
+
+**Commit**: on `feat/body-entreno-habito-auto-1`, on top of `e983f65` (tip of `main` at dispatch),
+`74424885d034d8855df0bcbb33468980e5b71ae3`. 9 files changed (`body/agente/herramientas.py`,
+`body/agente/propuestas.py`, `body/i18n/en.json`, `body/i18n/es.json`, `body/rutas/asistente.py`,
+`tests/test_agente_bucle.py`, `tests/test_agente_propuestas.py`, `tests/test_agente_registro.py`),
+plus the new `tests/test_agente_habito.py`.
+
+**Merge policy A**: the diff changes customer-facing bytes (the new card strings and the system-
+prompt sentence) -- no schema/migration change (`marcar_habito` was already in `propuesta_agente`.
+`accion`'s CHECK, `BODY-ENTRENO-SCHEMA-1`) and no cross-repo/DTO change, but that one condition is
+enough. The approval reason says this slice "stops AWAITING_APPROVAL for the orchestrator's browser
+check", so this is a stop before merge, not an authorization to merge on green. Build only; branch
+left unmerged.
+
+**Stop**: AWAITING_APPROVAL, on the branch, not merged -- the orchestrator's own browser check, and a
+ruling on the reworded Spanish clause above, are still outstanding.
