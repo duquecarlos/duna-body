@@ -59,6 +59,102 @@ class ShapeParsingTest(unittest.TestCase):
             self.assertNotIn("fitness_age", d.metrics)
 
 
+SLEEP_RESPIRATION_RAW = {
+    "dailySleepDTO": {
+        "sleepTimeSeconds": 25200,
+        "avgSpO2": 95.5,
+        "averageRespirationValue": 14.2,
+        "lowestRespirationValue": 10.0,
+        "highestRespirationValue": 19.0,
+    },
+}
+
+
+class SleepRespirationParsingTest(unittest.TestCase):
+    def test_present_values_parse(self):
+        d = garmin_adapter.parse_day("2026-11-05", {"sleep": SLEEP_RESPIRATION_RAW})
+        self.assertEqual(d.sleep_spo2_avg, 95.5)
+        self.assertEqual(d.sleep_respiration_avg, 14.2)
+        self.assertEqual(d.sleep_respiration_low, 10.0)
+        self.assertEqual(d.sleep_respiration_high, 19.0)
+        self.assertEqual(d.metrics["sleep_minutes"], 420)  # the rest of the day still parses
+
+    def test_missing_sleep_key_stays_absent(self):
+        d = garmin_adapter.parse_day("2026-11-05", {})
+        self.assertIsNone(d.sleep_spo2_avg)
+        self.assertIsNone(d.sleep_respiration_avg)
+        self.assertIsNone(d.sleep_respiration_low)
+        self.assertIsNone(d.sleep_respiration_high)
+
+    def test_null_values_stay_absent(self):
+        raw = {"dailySleepDTO": {
+            "avgSpO2": None, "averageRespirationValue": None,
+            "lowestRespirationValue": None, "highestRespirationValue": None,
+        }}
+        d = garmin_adapter.parse_day("2026-11-05", {"sleep": raw})
+        self.assertIsNone(d.sleep_spo2_avg)
+        self.assertIsNone(d.sleep_respiration_avg)
+        self.assertIsNone(d.sleep_respiration_low)
+        self.assertIsNone(d.sleep_respiration_high)
+
+    def test_zero_stays_absent_not_a_reading(self):
+        raw = {"dailySleepDTO": {
+            "avgSpO2": 0, "averageRespirationValue": 0,
+            "lowestRespirationValue": 0, "highestRespirationValue": 0,
+        }}
+        d = garmin_adapter.parse_day("2026-11-05", {"sleep": raw})
+        self.assertIsNone(d.sleep_spo2_avg)
+        self.assertIsNone(d.sleep_respiration_avg)
+        self.assertIsNone(d.sleep_respiration_low)
+        self.assertIsNone(d.sleep_respiration_high)
+
+    def test_out_of_range_values_stay_absent(self):
+        raw = {"dailySleepDTO": {
+            "avgSpO2": 49,  # below the 50..100 SpO2 window
+            "averageRespirationValue": 61,  # above the 1..60 breaths/min window
+            "lowestRespirationValue": -3,
+            "highestRespirationValue": 200,
+        }}
+        d = garmin_adapter.parse_day("2026-11-05", {"sleep": raw})
+        self.assertIsNone(d.sleep_spo2_avg)
+        self.assertIsNone(d.sleep_respiration_avg)
+        self.assertIsNone(d.sleep_respiration_low)
+        self.assertIsNone(d.sleep_respiration_high)
+
+    def test_in_range_boundaries_parse(self):
+        raw = {"dailySleepDTO": {
+            "avgSpO2": 50, "averageRespirationValue": 1,
+            "lowestRespirationValue": 60, "highestRespirationValue": 100,
+        }}
+        d = garmin_adapter.parse_day("2026-11-05", {"sleep": raw})
+        self.assertEqual(d.sleep_spo2_avg, 50)
+        self.assertEqual(d.sleep_respiration_avg, 1)
+        self.assertEqual(d.sleep_respiration_low, 60)
+        self.assertIsNone(d.sleep_respiration_high)  # 100 is outside the 1..60 breaths/min window
+
+    def test_non_numeric_stays_absent(self):
+        raw = {"dailySleepDTO": {"avgSpO2": "n/a", "averageRespirationValue": "unknown"}}
+        d = garmin_adapter.parse_day("2026-11-05", {"sleep": raw})
+        self.assertIsNone(d.sleep_spo2_avg)
+        self.assertIsNone(d.sleep_respiration_avg)
+
+    def test_older_payload_without_the_keys_still_parses_the_rest_of_the_day(self):
+        raw = {"dailySleepDTO": {"sleepTimeSeconds": 25200, "sleepScores": {"overall": {"value": 80}}}}
+        d = garmin_adapter.parse_day("2026-11-05", {"sleep": raw, "user_summary": {"restingHeartRate": 55}})
+        self.assertIsNone(d.sleep_spo2_avg)
+        self.assertIsNone(d.sleep_respiration_avg)
+        self.assertIsNone(d.sleep_respiration_low)
+        self.assertIsNone(d.sleep_respiration_high)
+        self.assertEqual(d.metrics["sleep_minutes"], 420)
+        self.assertEqual(d.metrics["sleep_score"], 80)
+        self.assertEqual(d.metrics["resting_hr"], 55)
+
+    def test_not_stored_in_metrics_dict_yet(self):
+        d = garmin_adapter.parse_day("2026-11-05", {"sleep": SLEEP_RESPIRATION_RAW})
+        for key in ("sleep_spo2_avg", "sleep_respiration_avg", "sleep_respiration_low", "sleep_respiration_high"):
+            self.assertNotIn(key, d.metrics)
+
+
 class FakeGarminMaxMetricsFails:
     """Replaces garminconnect.Garmin: every call but get_max_metrics succeeds. Invented data only."""
 

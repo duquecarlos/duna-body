@@ -37,6 +37,14 @@ class DayData:
     sleep_start: str | None = None
     sleep_end: str | None = None
     activities: list[dict[str, Any]] = field(default_factory=list)
+    # BODY-ENTRENO-SUENO-PARSE-1: the watch does not measure snoring, but these are a proxy
+    # (low SpO2 / disturbed respiration can accompany it) -- kept off DayData.metrics, not
+    # METRIC_DEFS rows yet, so a future storage slice decides the metric_def shape (keys, units,
+    # direction) rather than inheriting one from here.
+    sleep_spo2_avg: float | None = None
+    sleep_respiration_avg: float | None = None
+    sleep_respiration_low: float | None = None
+    sleep_respiration_high: float | None = None
 
 
 @dataclass
@@ -191,6 +199,15 @@ def _num(v: Any) -> float | None:
         return None
 
 
+def _num_in_range(v: Any, lo: float, hi: float) -> float | None:
+    """Garmin can send 0 or another sentinel when the sensor was off; a value outside the
+    physiologically possible range is treated as absent rather than a real reading."""
+    n = _num(v)
+    if n is None or n < lo or n > hi:
+        return None
+    return n
+
+
 def _get(d: Any, *path: str) -> Any:
     for p in path:
         if not isinstance(d, dict):
@@ -263,6 +280,10 @@ def parse_day(day: str, raw: dict[str, Any]) -> DayData:
     m["body_battery_sleep_charge"] = _num((raw.get("sleep") or {}).get("bodyBatteryChange"))
     out.sleep_start = _local_iso(sl.get("sleepStartTimestampLocal"))
     out.sleep_end = _local_iso(sl.get("sleepEndTimestampLocal"))
+    out.sleep_spo2_avg = _num_in_range(sl.get("avgSpO2"), 50, 100)
+    out.sleep_respiration_avg = _num_in_range(sl.get("averageRespirationValue"), 1, 60)
+    out.sleep_respiration_low = _num_in_range(sl.get("lowestRespirationValue"), 1, 60)
+    out.sleep_respiration_high = _num_in_range(sl.get("highestRespirationValue"), 1, 60)
 
     hrv = _get(raw.get("hrv"), "hrvSummary") or {}
     m["hrv_last_night"] = _num(hrv.get("lastNightAvg"))
