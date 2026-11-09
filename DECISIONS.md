@@ -10357,3 +10357,116 @@ at `5d4d9c8478633a45bdf6e83717aca38ab6037443`), merge `2b2c19236fa07d47eb63a1e8a
 `ort`, no conflicts). Tree identity proven: merge tree `9d7f718950bfa485592269476f3b9e78ce69f595`
 equals the branch tip's own tree exactly. `main` left checked out, `git status --porcelain` empty
 (before this ledger entry's own commit).
+
+## BODY-ANCHO-COMPLETO-1 -- wide screens fill the panel, per device, on the theme's own mechanism
+
+Carlos, 2026-11-08: "for wider screens we should have the option in the app to fill the whole
+panel." Measured on `main` at 1440x900: the rail takes 220px, `main` takes the rest (1205px), but
+`.wrap` was capped at 820px and left-aligned, leaving ~385px empty on every screen. ORCHESTRATOR
+DECISIONS this slice builds to: the preference is per device (like the theme), full width is the
+default at >=1024px, "lectura" is the centred-column alternative, and width becomes columns, never
+wider prose.
+
+**The mechanism, exactly the theme's.** `tema.js` gains one more `try{...}catch(e){}` line: it
+reads `localStorage.getItem('body.ancho')` and sets `document.documentElement.dataset.ancho =
+'lectura'` only when that value is `'lectura'` -- absent, `'completo'`, or anything else leaves the
+attribute unset, so the CSS default (no attribute) IS completo, the same "unset = light" pattern
+the theme itself uses. Still one blocking `<script src>` in `base.html` (no second tag).
+`ajustes_tema.js` was rewritten around a small `seg(key, selector, fallback, apply)` helper shared
+by both button rows, so the theme row and the new row are one small function each, not two copies
+of the same click/paint logic. `settings.html` gets a second `.seg`/`.btn` card, `id="ancho"`,
+shaped exactly like `#theme`'s, with a one-line note (`ancho.nota`: "Se guarda en este
+dispositivo." / "Saved on this device.") and no width-gating of its own -- it renders the same at
+every width, so a phone can set the preference for a tablet or monitor sharing the same browser
+profile. Four new keys in both `body/i18n/es.json` and `body/i18n/en.json`:
+`settings.ancho`/`ancho.completo`/`ancho.lectura`/`ancho.nota`.
+
+**The layout, >=1024px only -- every new declaration lives inside the existing
+`@media (min-width:1024px)` block in `body/static/body.css`, nothing outside it changed:**
+- `[data-ancho="lectura"] .wrap{max-width:820px;margin:0 auto}` -- the only place `820px` still
+  appears for `.wrap`, now centred (`margin:0 auto`), where before it was left-aligned against
+  `main`'s own padding. The unscoped `.wrap{max-width:820px}` is gone: completo's `.wrap` carries
+  no cap, so it fills `main`.
+- `.wrap p:not(.foot),.wrap .read{max-width:70ch}` -- running prose (plain `<p>`, `.read` "why"
+  lines such as a goal's `goal.why`) stays readable in both modes; `.foot`'s short nav line is
+  excluded since centering it under a width cap would misalign it.
+
+**Columns, per screen, in completo (five new auto-fill/auto-fit grid classes, one per screen that
+needed one; a screen not listed gets the base rule and no columns):**
+- **Hoy** (`.cols-hoy`, `today.html`): the readiness hero (`<a class="card est">`) was moved to sit
+  directly beside the day's metric grid (`.grid2`) + "Ver el día" link, both now inside one
+  `.cols-hoy` wrapper; Primeros pasos and the habit-plan card stay above it, full width, since they
+  are onboarding/checklist content, not part of the hero+metrics pairing the spec asked for.
+- **Tendencias** (`.cols-tendencias`, `trends.html`): both the main card loop and each `extra_groups`
+  disclosure's card loop sit in their own `.cols-tendencias` grid (`minmax(340px,1fr)`, wide enough
+  for a card's title + figure + chart + legend). Each chart's SVG keeps its own fixed `height="110"`
+  attribute regardless of column width, so "each chart at least as tall as today" holds with no CSS
+  change needed.
+- **Metas** (`.cols-metas`, `goals.html`): the active-goals loop, the proposed-goals loop and the
+  archived-goals loop (inside its `<details>`) each get their own `.cols-metas` grid
+  (`minmax(280px,1fr)`). `goal.html` (one goal's own detail page) is NOT in this list -- it shows
+  one goal's sections, not a list of goal cards, so it gets the base rule only; its own "why" prose
+  already gets the global 70ch cap with no template change.
+- **Turnos** (`.cols-turnos`, `shifts.html`): the hero (`/shifts/como`) and the cost-table card,
+  already adjacent in the DOM, wrapped in one `.cols-turnos` grid. The 56-day strip and its legend
+  stay outside it, full width, exactly as the spec asked.
+- **Día**: no template change. Its figures grid already carries `class="grid2 grid3"`; `.grid3`
+  itself gets the override `grid-template-columns:repeat(auto-fill,minmax(150px,1fr))` inside the
+  1024 block (the existing `@media(min-width:640px){.grid3{repeat(3,...)}}` rule is untouched, so
+  375/768px are unaffected). `.grid3` is shared with Historia's shift-kind metrics grid
+  (`history.html`), which gets the same auto-fill treatment as a side effect -- not separately
+  listed by the spec, but the same "figures in columns" idea.
+- **Historia** (`.cols-historia`, `history.html`): `training.months` and `training.months_older`
+  (inside its `<details>`) each sit in a `.cols-historia` grid (`minmax(260px,1fr)`). The
+  `.month-row`'s own 44px hit-area pseudo-element (BODY-TAP-44-1, `top:-3px;bottom:-3px`, no
+  horizontal extension) is unaffected by column placement: it insets vertically within its own box
+  only, so side-by-side rows in the same grid row never overlap.
+- **Settings**: not listed in step 3 -- gets the new control (above) and the base rule, no columns.
+
+**Lectura reverts every one of those to a single column** --
+`[data-ancho="lectura"] .cols-hoy,...,.cols-historia{grid-template-columns:1fr}` and
+`[data-ancho="lectura"] .grid3{grid-template-columns:repeat(3,minmax(0,1fr))}` (the pre-1024,
+640px-and-up value), inside the same 1024 block.
+
+**Charts need no JS change, and `charts.js` was not touched (it is not in `touches:`).** Every
+chart in this app is a server-rendered inline `<svg viewBox="..." width="100%">` (or CSS
+`width:100%`): the browser already rescales it to its container's current width on every resize,
+with no JS caching a pixel width at load. `charts.js` itself only adds the tap/drag readout; it
+reads the SVG's live `getBoundingClientRect()`/`offsetWidth` inside its event handlers (click,
+pointermove), never once at script-load time, so it already "redraws" to the new width for free.
+Confirmed by reading `body/profile.py`, `body/rutas/metas.py` and every `viewBox=` template site --
+none caches a width in JS.
+
+**Test** (`tests/test_ancho_completo.py`, 25 methods, 0 skipped): tema.js reads `body.ancho` and
+sets `dataset.ancho` only for `'lectura'`, never `'completo'`, with one blocking script tag;
+settings renders the new control's four i18n keys in both es and en (checked both at the
+source-template level and by actually rendering `/settings` through a `TestClient`); the `.wrap`
+820px cap exists only under `[data-ancho="lectura"]` (regex-scanned over every `.wrap{...}` rule in
+`body.css`, not just a substring check); a line-by-line diff against `main`'s `body.css` (`git show
+main:body/static/body.css`, read as UTF-8 explicitly -- the first run caught a real encoding bug in
+this check itself, a middle-dot mangled by the platform's default locale encoding, before it was
+fixed) asserts every added declaration sits inside the `min-width:1024px` block; each of the five
+listed screens carries its own grid class, Día's `grid3` keeps its class name, and `grid3` carries
+the auto-fill override plus the lectura 3-column fallback; the 70ch prose rule is present; none of
+the nine touched templates gained a `style=` attribute or an inline `<script>` with no `src`
+(CSP); a handful of sanity counts guard against the screen census or the i18n-key list being
+accidentally empty.
+
+**docs/DESIGN.md** rule 19, "Pantallas anchas": full width by default at >=1024px, the extra width
+becomes columns (CSS grid, `minmax()`+`auto-fill`/`auto-fit`, no fixed breakpoint), prose capped at
+70ch in both modes, "lectura" as the per-device alternative on the theme's own mechanism, phone and
+the 768px band unchanged, the assistant panel still sized from the content.
+
+**Gate**, once, foreground, on this slice's own branch tip: `.venv/Scripts/python.exe -m unittest
+discover tests -t .` -- first run RED on one offender inside `tests/test_ancho_completo.py` itself
+(the UTF-8 encoding bug above, fixed within `touches:`); final run `Ran 1409 tests in 237.468s ...
+OK (skipped=1)` (1384 before this slice, +25 new: `tests/test_ancho_completo.py`). The lone skip
+predates this slice.
+
+STOP AWAITING_APPROVAL (not merged): this slice's own approval (`ORCH-CARLOS-DELEGATES-TIER-1-1`)
+says in words to stop before merging, for the orchestrator's own browser measurement at 375, 1024
+and 1440px. A merge slice follows.
+
+**Commits**: slice `ccfe1a2075360fbfc704c8eb93c47e8a1e447c87` on `feat/body-ancho-completo-1`
+(base `main` at `43666001fa45681ce0a1cdb51df82b1ac1a1db30`). Not merged. Branch left checked out,
+`git status --porcelain` empty (before this ledger entry's own commit).

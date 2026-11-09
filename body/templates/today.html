@@ -11,6 +11,7 @@
 
 {% if stale %}<div class="aviso">{{ stale }}</div>{% endif %}
 
+<div class="cols-hoy">
 <a class="card est" href="/how/{{ day }}">
   <div class="q">{{ t('today.ready_q') }}</div>
   {% if r.score is not none %}
@@ -30,7 +31,7 @@
   <span class="how">{{ t('today.how') }}</span>
   <span class="chev">›</span>
 </a>
-
+<div>
 {% if primeros_pasos %}{{ primeros_pasos_card(t, primeros_pasos) }}{% endif %}
 
 {% if plan_habits %}
@@ -64,6 +65,8 @@
 {% endfor %}
 </div>
 <a class="more" href="/day/{{ day }}">{{ t('today.see_day') }}</a>
+</div>
+</div>
 
 {% if hogar_compartido %}
 <div class="card">

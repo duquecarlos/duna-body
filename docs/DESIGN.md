@@ -188,6 +188,16 @@ comes from; the Body-specific reading is in *italics*. When a new rule arrives f
     size (rule 11's 44 px) is a layout measurement made in a real browser, not a structural one this test can see
     in server-rendered HTML -- the orchestrator checks it separately.
 
+19. **Pantallas anchas** (ORCH-CARLOS-DELEGATES-TIER-1-1, Carlos 2026-11-08: "para pantallas más anchas deberíamos
+    tener la opción en la app de llenar todo el panel"). *Full width is the default at ≥1024 px: `.wrap` fills
+    `main` instead of capping at 820 px. The extra width becomes COLUMNS of cards and charts (CSS grid,
+    `minmax()` + `auto-fill`/`auto-fit`, so the column count follows the real width and the assistant panel,
+    open or not, with no fixed breakpoint) -- never longer lines of prose: running text (`p`, "why" lines,
+    explainer paragraphs) keeps `max-width:70ch` in both modes. "Lectura" is a per-device alternative, on the
+    same mechanism as the theme (localStorage `body.ancho`, read before paint by `tema.js`, changed in Ajustes
+    by `ajustes_tema.js`): a centred 820 px reading column, no columns. The phone layout and the 768 px band are
+    unchanged; the assistant panel still takes its width from the content, never the other way round.*
+
 ## Look
 Duna family tokens (`docs/research/03`): paper #F4F2ED, card #FCFBF8, ink #121212, hairlines, Hanken Grotesk with
 tabular numerals, no shadows, light + dark. Duna family look **approved by Carlos 2026-11-06**. Body's own marks:

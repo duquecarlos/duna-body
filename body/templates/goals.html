@@ -13,6 +13,7 @@
 </div>
 {% endif %}
 
+<div class="cols-metas">
 {% for c in cards %}
 <a class="card" href="/goals/{{ c.id }}">
   <div class="row"><div class="q m-0">{{ c.title }}</div><span class="chip {{ c.cls }}">{{ c.verdict }}</span></div>
@@ -26,9 +27,11 @@
   <span class="chev chev-low">›</span>
 </a>
 {% endfor %}
+</div>
 
 {% if proposed %}
 <h2>{{ t('goals.section_proposed') }}</h2>
+<div class="cols-metas">
 {% for p in proposed %}
 <div class="card">
   <div class="q">{{ p.title }}</div>
@@ -40,17 +43,20 @@
   </div>
 </div>
 {% endfor %}
+</div>
 {% endif %}
 
 {% if archived %}
 <details class="files mt-10">
   <summary class="k">{{ t('goals.section_archive') }}</summary>
+  <div class="cols-metas">
   {% for a in archived %}
   <a class="card mt-8" href="/goals/{{ a.id }}">
     <div class="row"><div class="q m-0">{{ a.title }}</div><span class="chip">{{ a.status_text }}</span></div>
     {% if a.shared_line %}<p class="k mt-2 mb-0">{{ a.shared_line }}</p>{% endif %}
   </a>
   {% endfor %}
+  </div>
 </details>
 {% endif %}
 
