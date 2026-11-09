@@ -12242,3 +12242,45 @@ carried the branch content verbatim.
 runs its own on-disk copy of the OLD, buggy `body/vivo.py` -- this fix only reaches it once that
 tree is moved onto this `main` by hand, which needs Carlos's own yes (it runs new migrations
 against his real database) and is explicitly out of scope for this slice.
+
+## BODY-DEMO-TURNOS-1 -- the demo's default seed shows both states of "Tu última semana de noches" honestly
+
+BODY-TURNOS-REFERENCIA-NOCHE-1's new section (merged `a9e6942`) needs
+`turnos_costo.MIN_BLOQUES_PREVIOS` (3) earlier night blocks before the last COMPLETE one to show a
+verdict. `body/demo.py`'s `DIAS_DEFAULT` was 90 days -- about three night weeks of the demo's
+4-week cycle (`_CYCLE`) -- so after the last completed block at most two earlier ones remained, one
+short of the floor: the demo home could only ever render the section's gap state at 375 px,
+whatever day it was run on, as the orchestrator's 2026-11-09 measurement found (it had to seed extra
+blocks with a scratch script to see the other state).
+
+**What changed**: `DIAS_DEFAULT` raised from 90 to **120**. `_seed_shifts` holds the last 7 seeded
+days back as a proposed (unconfirmed) batch, never written into the `shift` table, so the usable
+confirmed window is `dias - 7`, not `dias`. Measured by brute force over one full 28-day cycle of
+anchor dates (the demo's night-week period, so every phase of the cycle is covered regardless of
+which real day the demo is seeded on): 115 confirmed days is the minimum that always leaves
+`MIN_BLOQUES_PREVIOS` earlier blocks before the last complete one; 120 clears it with a small margin
+and stays `<= turnos_costo.RESUMEN_DIAS` (180), so `resumen()` still sees the whole seeded window.
+Every other seeded object (the cycle, `SEED`, the recovery shaping, the goals/habits/household
+seeding) is unchanged. A single seeding run went from ~1.3s to ~1.8s -- not a noticeable cost for the
+tutorial/Growth workflow that calls this CLI.
+
+The short-seed path (`--dias` with a window under the new floor) still shows the gap honestly --
+confirmed by test, not by running the CLI against a real home.
+
+**Tests (`tests/test_demo.py`)**: `UltimaSemanaReachableTest` seeds in-process (not through the CLI
+subprocess the rest of the file uses) so a test can control "today" -- `body.demo`'s own `date` name
+is patched to a fixed value per iteration, with no change to `_seed`'s own logic or signature. For
+every anchor across one full 28-day cycle starting `2026-01-05`: the default seed (`DIAS_DEFAULT`)
+gives `resumen(...)['ultima_semana']` with at least one metric carrying a verdict, and a 40-day seed
+(well under the floor) gives either no completed block or the `pocos_bloques_previos` gap reason.
+All values stay invented; `_forbidden_home` and the demo's other refusals are untouched. The existing
+19 tests in the file (refusals, determinism, seeded content against an explicit `--dias 90`, which
+nothing here depends on the default for) pass unchanged.
+
+**Gate**: `.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 1617 tests in
+333.470s ... OK (skipped=1)`, run once on the branch tip.
+
+**Merge**: `git checkout main` (tip `ec2a685`), branch commit `ea19ad61157f28e1adc38e94a85238ec24826639`,
+`git merge --no-ff feat/body-demo-turnos-1` -> `b99536e5f5cdfa0d05a5de76f934dee74e15cdd2`. Merge tree
+`480ce9c0717090e969ed1fd16ba62742c4a8300b` equals the branch tip's own tree
+(`git rev-parse feat/body-demo-turnos-1^{tree}`) -- the merge carried the branch content verbatim.
