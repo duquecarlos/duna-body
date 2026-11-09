@@ -9,8 +9,9 @@ import re
 import sqlite3
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from . import config, garmin_adapter
 
@@ -1198,6 +1199,14 @@ def days_with_data(conn: sqlite3.Connection, person_id: int) -> list[str]:
 # re-pull.
 INTRADIA_KINDS = ("intradia_fc", "intradia_estres")
 
+# BODY-MOMENTOS-DIA-COMPLETO-1: the watch syncs to the phone in batches, so the last hours of a
+# day can reach Garmin's servers hours after that day's local midnight. A fetch taken inside this
+# margin after the day's close may be missing those last hours, so it does not count as the day
+# being fully stored -- measured from BODY-MOMENTOS-PULL-1 shipping without this margin
+# (BODY-EXPERIMENTOS-1-INV: a day fetched mid-evening, or fetched before the watch had synced the
+# night, was marked stored forever and never completed).
+INTRADIA_MARGEN_CIERRE_H = 6
+
 _INTRADIA_PARSER_NAMES = {
     "intradia_fc": "parse_heart_rate_series",
     "intradia_estres": "parse_stress_series",
@@ -1217,13 +1226,27 @@ def guardar_intradia(conn: sqlite3.Connection, person_id: int, day: str, kind: s
 
 
 def intradia_almacenado(conn: sqlite3.Connection, person_id: int, day: str) -> bool:
-    """Whether this day's intraday payloads are already stored -- including an out-of-retention
-    day's empty marker. Both kinds are always written together by pull.traer_intradia, so
-    checking one (intradia_fc) is enough."""
-    return conn.execute(
-        "SELECT 1 FROM raw_payload WHERE person_id = ? AND day = ? AND kind = 'intradia_fc'",
+    """Whether this day's intraday payloads are stored AND COMPLETE -- fetched at least
+    INTRADIA_MARGEN_CIERRE_H hours after `day`'s end in the person's own zone (the next local
+    midnight, converted to UTC), including an out-of-retention day's empty marker fetched that
+    late. False for a day never fetched, AND for a day fetched too early to be trusted yet --
+    pull.traer_intradia re-fetches that case, overwriting the earlier, partial row. Both kinds are
+    always written together by pull.traer_intradia at the same fetched_at, so checking one
+    (intradia_fc) is enough."""
+    row = conn.execute(
+        "SELECT fetched_at FROM raw_payload WHERE person_id = ? AND day = ? AND kind = 'intradia_fc'",
         (person_id, day),
-    ).fetchone() is not None
+    ).fetchone()
+    if row is None:
+        return False
+    zona = person(conn, person_id)["timezone"]
+    cierre_local = datetime.combine(date.fromisoformat(day) + timedelta(days=1), datetime.min.time(),
+                                     tzinfo=ZoneInfo(zona))
+    umbral_utc = cierre_local.astimezone(timezone.utc) + timedelta(hours=INTRADIA_MARGEN_CIERRE_H)
+    fetched_at = datetime.fromisoformat(row["fetched_at"])
+    if fetched_at.tzinfo is None:
+        fetched_at = fetched_at.replace(tzinfo=timezone.utc)
+    return fetched_at >= umbral_utc
 
 
 def intradia(conn: sqlite3.Connection, person_id: int, day: str, kind: str, zona: str) -> list[tuple[str, float]]:

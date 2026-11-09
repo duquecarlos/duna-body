@@ -339,12 +339,17 @@ def traer_series(conn, person_id: int, activity_source_id: str, token_str: str |
 
 def traer_intradia(conn, person_id: int, day: str, token_str: str | None = None, *, forzar: bool = False):
     """Pulls one day's intraday heart-rate/stress series through the adapter only, and stores
-    both kinds (db.guardar_intradia). Skips the Garmin call entirely when the day is already
-    stored (db.intradia_almacenado), unless `forzar=True`. Returns "already_stored", "empty"
+    both kinds (db.guardar_intradia, INSERT OR REPLACE). Skips the Garmin call entirely when the
+    day is already stored AND COMPLETE (db.intradia_almacenado -- fetched at least
+    db.INTRADIA_MARGEN_CIERRE_H hours after the day's local close), unless `forzar=True`. A day
+    stored before its close is re-fetched and its earlier, partial row is overwritten, exactly
+    like a day never fetched at all -- BODY-MOMENTOS-DIA-COMPLETO-1: before this, the watch's own
+    sync lag could leave a day's last hours missing forever. Returns "already_stored", "empty"
     (fetched, but out of Garmin's retention window -- both an honest gap and the empty marker
-    that keeps it from being re-fetched), or "fetched"; with `token_str` given, returns
-    (that status, token_after), the same dual-return shape fetch_intraday/traer_series use.
-    On demand only -- not called by pull_all, pull_hosted or pull_backfill_hosted."""
+    that keeps it from being re-fetched once it is trusted), or "fetched" -- a re-fetch of a
+    previously partial day counts as "fetched", never "already_stored"; with `token_str` given,
+    returns (that status, token_after), the same dual-return shape fetch_intraday/traer_series
+    use. On demand only -- not called by pull_all, pull_hosted or pull_backfill_hosted."""
     if not forzar and db.intradia_almacenado(conn, person_id, day):
         return ("already_stored", token_str) if token_str is not None else "already_stored"
     zona = db.person(conn, person_id)["timezone"]
@@ -363,8 +368,10 @@ def traer_intradia_rango(conn, person_id: int, desde: date, hasta: date, pausa_s
     polite pause between Garmin calls. Stops cleanly -- returning the counts gathered so far -- on
     a sign-in error; a single day's own empty/error result is counted and the loop continues.
     Local person only (no token_str): the on-demand / explicit-backfill path this slice adds, not
-    the hosted per-person loop. Prints counts and dates only. Returns (days fetched, days already
-    stored, days empty)."""
+    the hosted per-person loop. A day re-fetched because it was stored but not yet complete
+    (BODY-MOMENTOS-DIA-COMPLETO-1) counts as fetched, not already stored -- traer_intradia's own
+    return already makes that distinction. Prints counts and dates only. Returns (days fetched,
+    days already stored, days empty)."""
     limite = date.today() - timedelta(days=INTRADIA_ALCANCE_DIAS)
     if desde < limite:
         raise ValueError(
