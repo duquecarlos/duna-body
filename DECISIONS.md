@@ -11652,3 +11652,22 @@ left unmerged.
 
 **Stop**: AWAITING_APPROVAL, on the branch, not merged -- the orchestrator's own browser check, and a
 ruling on the reworded Spanish clause above, are still outstanding.
+
+## BODY-ENTRENO-HABITO-AUTO-1-M -- merge, after the orchestrator's own browser check
+
+Lands `BODY-ENTRENO-HABITO-AUTO-1` (`7442488` + ledger `45f2ee7` on
+`feat/body-entreno-habito-auto-1`), stopped `AWAITING_APPROVAL` above with the gate green at 1567.
+The orchestrator measured the `marcar_habito` card at 375 px on the demo home: the line with
+evidence ("... hecho el \<fecha\>, según tu actividad: \<nombre\> · \<duración\>") and without it
+both render, and Apply and Undo work. The approval reason (`ORCH-CARLOS-DELEGATES-TIER-1-1`) also
+accepts the worker's one Spanish reword of the prompt sentence ("sin que la persona lo apruebe" for
+"sin su toque", forced by `test_registro_tu.py`'s formal-register trigger list) as the same meaning
+with the guard intact. Merge only; no code touched by this slice.
+
+**Gate**, once, foreground, on the branch before merging: `.venv/Scripts/python.exe -m unittest
+discover tests -t .` -- `Ran 1567 tests in 322.611s ... OK (skipped=1)`, matching the count recorded
+above.
+
+**Merge**: `git checkout main`; `git merge --no-ff feat/body-entreno-habito-auto-1`, merge commit
+`020815eabd16632d4032fdc69c6ff1e5a44932f4` (parents `e983f6560b2af191b9915bf19c53248ae9283a2a` on
+`main` and `45f2ee7bfa5d55d879136e30c9c44fa57701c725` on the feature branch).
