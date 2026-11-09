@@ -502,6 +502,14 @@ METRIC_DEFS = [
     ("vo2max", "VO2 max", "ml/kg/min", "higher"),
     ("vo2max_cycling", "VO2 max (cycling)", "ml/kg/min", "higher"),
     ("fitness_age", "Fitness age", "years", "lower"),
+    # BODY-ENTRENO-SUENO-STORE-1: sleep SpO2/respiration, parsed by BODY-ENTRENO-SUENO-PARSE-1 into
+    # DayData fields of the same name (not DayData.metrics -- save_day reads them separately below).
+    # No single "better" direction for a breathing rate, only a normal band -- "neutral", like
+    # active_kcal. No screen shows these yet.
+    ("sleep_spo2_avg", "Blood oxygen at night (avg)", "%", "higher"),
+    ("sleep_respiration_avg", "Breathing at night (avg)", "brpm", "neutral"),
+    ("sleep_respiration_low", "Breathing at night (low)", "brpm", "neutral"),
+    ("sleep_respiration_high", "Breathing at night (high)", "brpm", "neutral"),
 ]
 METRIC_DEFS = [d if len(d) == 5 else (*d, "measured") for d in METRIC_DEFS]
 METRIC_DEFS = [d if len(d) == 6 else (*d, "garmin") for d in METRIC_DEFS]
@@ -953,6 +961,17 @@ def save_day(conn: sqlite3.Connection, day_data, person_id: int) -> None:
                 "VALUES (?, ?, ?, ?, ?)",
                 (person_id, d, key, value, src),
             )
+        # BODY-ENTRENO-SUENO-STORE-1: these four live on DayData itself, not DayData.metrics (see
+        # BODY-ENTRENO-SUENO-PARSE-1) -- absent (None) stays absent here too, never a 0 row.
+        for key in ("sleep_spo2_avg", "sleep_respiration_avg", "sleep_respiration_low",
+                    "sleep_respiration_high"):
+            value = getattr(day_data, key, None)
+            if value is not None:
+                conn.execute(
+                    "INSERT OR REPLACE INTO daily_metric (person_id, day, metric_key, value, source) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (person_id, d, key, value, src),
+                )
         if day_data.sleep_start or day_data.sleep_end:
             conn.execute(
                 "INSERT OR REPLACE INTO sleep_session (person_id, day, start_local, end_local) "
