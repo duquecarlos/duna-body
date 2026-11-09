@@ -16,7 +16,11 @@ seeding and body/readiness.py's own score already use; no screen writes a self-m
 
 Only a `propuesta`-kind tool function may import this module (the static guard in
 tests/test_agente_registro.py): a `lectura` tool never reaches a writer, and this is the one route
-a proposal tool has to one.
+a proposal tool has to one. `marcar_habito` (BODY-ENTRENO-HABITO-AUTO-1) calls `goals.check_habit`
+directly, the same writer body/rutas/metas.py's own habit-check route uses; its `deshacer`, when
+there was no prior habit_check row, is a narrow exception like `registrar_entreno`'s own:
+restoring "no row at all" is not expressible through `check_habit` (which only ever upserts), so
+that one restoration is a direct DELETE on `habit_check` here.
 
 `aplicar`'s conditional UPDATE and the write it triggers share ONE transaction: the UPDATE opens it
 (sqlite3's implicit-transaction mode) and the write function's own `with conn:` commits it, so a
@@ -32,7 +36,7 @@ import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
-from .. import db, goals, shift_import
+from .. import db, fechas, goals, shift_import
 from ..i18n import T
 
 EXPIRA_MINUTOS = 15
@@ -139,6 +143,15 @@ def _drift_aplicar(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
             (row["person_id"], despues["day"], despues["metric_key"]),
         ).fetchone()
         return (actual["value"] if actual else None) != antes.get("value")
+    if accion == "marcar_habito":
+        despues = json.loads(row["despues_json"])
+        actual = conn.execute(
+            "SELECT done, note FROM habit_check WHERE habit_id = ? AND person_id = ? AND day = ?",
+            (despues["habit_id"], row["person_id"], despues["day"]),
+        ).fetchone()
+        if row["antes_json"] is None:
+            return actual is not None
+        return actual is None or bool(actual["done"]) != antes.get("done") or actual["note"] != antes.get("note")
     return False
 
 
@@ -186,6 +199,12 @@ def _drift_deshacer(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
             (person_id, despues["day"], despues["metric_key"]),
         ).fetchone()
         return (actual["value"] if actual else None) != despues["value"]
+    if accion == "marcar_habito":
+        actual = conn.execute(
+            "SELECT done, note FROM habit_check WHERE habit_id = ? AND person_id = ? AND day = ?",
+            (despues["habit_id"], person_id, despues["day"]),
+        ).fetchone()
+        return actual is None or not actual["done"] or actual["note"] != despues.get("note")
     return False
 
 
@@ -242,6 +261,9 @@ def _escribir_aplicacion(conn: sqlite3.Connection, row: sqlite3.Row) -> dict | N
     elif accion == "registrar_medida":
         with conn:
             db.set_metric(conn, despues["day"], despues["metric_key"], despues["value"], "self", person_id)
+    elif accion == "marcar_habito":
+        hoy = fechas.hoy_local(db.person(conn, person_id))
+        goals.check_habit(conn, despues["habit_id"], person_id, despues["day"], True, despues.get("note"), hoy=hoy)
     return None
 
 
@@ -296,6 +318,15 @@ def _escribir_deshacer(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
     elif accion == "registrar_medida":
         with conn:
             db.set_metric(conn, despues["day"], despues["metric_key"], antes.get("value"), "self", person_id)
+    elif accion == "marcar_habito":
+        with conn:
+            if not antes:
+                conn.execute("DELETE FROM habit_check WHERE habit_id = ? AND person_id = ? AND day = ?",
+                             (despues["habit_id"], person_id, despues["day"]))
+            else:
+                conn.execute(
+                    "UPDATE habit_check SET done = ?, note = ? WHERE habit_id = ? AND person_id = ? AND day = ?",
+                    (1 if antes["done"] else 0, antes.get("note"), despues["habit_id"], person_id, despues["day"]))
 
 
 def aplicar(conn: sqlite3.Connection, person_id: int, propuesta_id: int) -> dict:

@@ -11,8 +11,9 @@ could use to show the current week's verdict live, the way body/rutas/metas.py's
 unused here because an active goal with no data yet would then read as a computed "no verdict" dict
 instead of "sin verificación aún" -- the shape every other read tool and existing test depends on.
 
-The `proponer_*` tools below, plus `planear_entreno`, `registrar_entreno` (BODY-ENTRENO-TOOLS-1) and
-`registrar_medida` (BODY-ENTRENO-MEDIDA-1), are `tipo: propuesta` (BODY-ASISTENTE-PROPUESTAS-1): they
+The `proponer_*` tools below, plus `planear_entreno`, `registrar_entreno` (BODY-ENTRENO-TOOLS-1),
+`registrar_medida` (BODY-ENTRENO-MEDIDA-1) and `marcar_habito` (BODY-ENTRENO-HABITO-AUTO-1), are
+`tipo: propuesta` (BODY-ASISTENTE-PROPUESTAS-1): they
 create a server-side proposal record through `body/agente/propuestas.py` and never write the PERSON's
 correction themselves -- nothing the person said is stored until they tap Aplicar. `registrar_entreno`
 is the one exception, and a narrow one: when it is BUILT (not applied) it may call `pull.traer_series`
@@ -25,6 +26,11 @@ column or sends anything to Garmin.
 the live table at call time, never against a hardcoded pair of keys, so a metric_def row added later
 is accepted the same way (template, not one person). The JSON-schema `enum` offered to the model is
 built from `db.METRIC_DEFS` (the same source metric_def itself is seeded from), not typed out here.
+
+`marcar_habito`'s access check (BODY-ENTRENO-HABITO-AUTO-1) reuses `goals.goal_access` and the same
+assignee rule body/rutas/metas.py's `habit_check` route already enforces -- a habit assigned to
+someone else is never the viewer's to check, even on a household goal they can otherwise read --
+never a second rule invented here.
 
 `propuestas.py` is the one module a `propuesta` tool may import to create its record -- the static
 guard in tests/test_agente_registro.py checks that a `lectura` tool's call graph never reaches it.
@@ -187,6 +193,27 @@ _PARAM_REGISTRAR_MEDIDA = {
         "day": {"type": "string", "format": "date"},
     },
     "required": ["metric_key", "value"],
+    "additionalProperties": False,
+}
+
+_PARAM_ACTIVIDAD_EVIDENCIA = {
+    "type": "object",
+    "properties": {
+        "source": {"type": "string"},
+        "source_id": {"type": "string"},
+    },
+    "required": ["source", "source_id"],
+    "additionalProperties": False,
+}
+_PARAM_MARCAR_HABITO = {
+    "type": "object",
+    "properties": {
+        "habit_id": {"type": "integer"},
+        "day": {"type": "string", "format": "date"},
+        "actividad": _PARAM_ACTIVIDAD_EVIDENCIA,
+        "nota": {"type": "string"},
+    },
+    "required": ["habit_id", "day"],
     "additionalProperties": False,
 }
 
@@ -504,6 +531,51 @@ def _registrar_medida(conn: sqlite3.Connection, person_id: int, conversacion_id:
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
+def _marcar_habito(conn: sqlite3.Connection, person_id: int, conversacion_id: int, habit_id: int, day: str,
+                    actividad: dict | None = None, nota: str | None = None) -> dict:
+    """Proposes checking one habit off for a day, optionally naming the watch activity that is
+    its evidence (BODY-ENTRENO-HABITO-AUTO-1, BODY-ENTRENO-1-INV slice 5): ball sports is one use
+    of this generic tool, never a hardcoded activity-type list. `antes` carries that day's existing
+    habit_check row for this person (done, note) or None, so `propuestas.deshacer` can restore it
+    exactly."""
+    try:
+        date.fromisoformat(day)
+    except ValueError:
+        raise ToolError("day debe ser una fecha ISO (AAAA-MM-DD)")
+    h = conn.execute(
+        "SELECT id, goal_id, title, assignee_person_id, active FROM habit WHERE id = ?", (habit_id,)).fetchone()
+    if h is None:
+        raise ToolError(f"hábito desconocido: {habit_id!r}")
+    if goals.goal_access(conn, h["goal_id"], person_id) is None:
+        raise ToolError(f"hábito desconocido: {habit_id!r}")
+    if not h["active"]:
+        raise ToolError(f"hábito inactivo: {habit_id!r}")
+    if h["assignee_person_id"] is not None and h["assignee_person_id"] != person_id:
+        raise ToolError(f"ese hábito no es tuyo: {habit_id!r}")
+    hoy = fechas.hoy_local(db.person(conn, person_id))
+    if not fechas.fecha_real_valida(date.fromisoformat(day), hoy):
+        raise ToolError(f"day no puede ser futuro: {day!r}")
+    actividad_despues = None
+    if actividad is not None:
+        source, source_id = actividad.get("source"), actividad.get("source_id")
+        a = conn.execute(
+            "SELECT name, type, duration_s, day FROM activity WHERE person_id = ? AND source = ? "
+            "AND source_id = ?", (person_id, source, source_id)).fetchone()
+        if a is None or a["day"] != day:
+            raise ToolError(f"actividad desconocida ese día: {source!r}/{source_id!r}")
+        actividad_despues = {"source": source, "source_id": source_id, "nombre": a["name"], "tipo": a["type"],
+                              "duracion_s": a["duration_s"]}
+    nota = (nota or "").strip() or None
+    anterior = conn.execute(
+        "SELECT done, note FROM habit_check WHERE habit_id = ? AND person_id = ? AND day = ?",
+        (habit_id, person_id, day)).fetchone()
+    antes = {"done": bool(anterior["done"]), "note": anterior["note"]} if anterior is not None else None
+    despues = {"habit_id": habit_id, "day": day, "done": True, "note": nota, "habito_titulo": h["title"],
+               "actividad": actividad_despues}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "marcar_habito", despues, antes=antes)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
 def _proponer_meta(conn: sqlite3.Connection, person_id: int, conversacion_id: int, metric_key: str,
                     direction: str, target_value, deadline: str, titulo: str) -> dict:
     titulo = (titulo or "").strip()
@@ -639,6 +711,12 @@ HERRAMIENTAS = [
                      "(por ejemplo su alcance de flexibilidad o sus minutos de ronquido). No lo "
                      "guarda: registra la propuesta para que la persona la apruebe en el chat.",
      "parametros": _PARAM_REGISTRAR_MEDIDA, "funcion": _registrar_medida},
+    {"nombre": "marcar_habito", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone marcar como hecho, para un día, un hábito activo que la persona puede "
+                     "marcar, opcionalmente citando la actividad del reloj que lo cumple como "
+                     "evidencia. No lo marca: registra la propuesta para que la persona la apruebe "
+                     "en el chat.",
+     "parametros": _PARAM_MARCAR_HABITO, "funcion": _marcar_habito},
 ]
 
 _BY_NAME = {h["nombre"]: h for h in HERRAMIENTAS}

@@ -129,7 +129,7 @@ class NoProponibleTest(unittest.TestCase):
         nombres = {h["nombre"] for h in herramientas.HERRAMIENTAS if h["tipo"] == "propuesta"}
         self.assertEqual(nombres, {"proponer_meta", "proponer_cambio_meta", "proponer_confirmar_turnos",
                                     "proponer_idioma", "planear_entreno", "registrar_entreno",
-                                    "registrar_medida"})
+                                    "registrar_medida", "marcar_habito"})
 
 
 class UnaPropuestaPorRondaTest(unittest.TestCase):
