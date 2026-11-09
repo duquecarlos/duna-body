@@ -17,7 +17,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from .. import db, identity
+from .. import db, history, identity
 from ..agente import bucle as agente_bucle
 from ..agente import cliente as agente_cliente
 from ..agente import conversacion as agente_conversacion
@@ -95,6 +95,18 @@ def _serie_txt(t: T, s: dict | None, nombre: str | None = None) -> str | None:
     return ejercicio or detalle or t("asistente.propuesta.entreno_sin_dato")
 
 
+def _actividad_txt(t: T, actividad: dict) -> str:
+    """The watch activity that is a habit's evidence, by name plus duration -- mirrors body/rutas/
+    hoy.py's `_activity_name` fallback (an unnamed activity shows its translated known type, or a
+    generic label) and `t.minutes`, since that module is outside this slice's touches."""
+    nombre = actividad.get("nombre")
+    if not nombre:
+        tipo = actividad.get("tipo")
+        nombre = t("activity.type." + tipo) if tipo in history.KNOWN_ACTIVITY_TYPES else t("activity.generic")
+    duracion = actividad.get("duracion_s")
+    return f"{nombre} · {t.minutes(duracion / 60)}" if duracion else nombre
+
+
 def _tarjeta_propuesta(t: T, defs: dict, registro: dict) -> dict:
     """The `propuesta` SSE event payload (agent-capabilities-v1 section 2, decision 5): `antes`/
     `despues` are short plain-word strings in the person's language, built here from the record's
@@ -140,6 +152,16 @@ def _tarjeta_propuesta(t: T, defs: dict, registro: dict) -> dict:
                           valor=comun._fig_unit(t, metric_key, antes_json["value"], defs), fecha=fecha)
         despues_txt = t("asistente.propuesta.medida_valor", metric=t("metric." + metric_key),
                         valor=comun._fig_unit(t, metric_key, despues["value"], defs), fecha=fecha)
+    elif accion == "marcar_habito":
+        habito = despues["habito_titulo"]
+        fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
+        if despues.get("actividad"):
+            despues_txt = t("asistente.propuesta.habito_hecho_actividad", habito=habito, fecha=fecha,
+                            actividad=_actividad_txt(t, despues["actividad"]))
+        else:
+            despues_txt = t("asistente.propuesta.habito_hecho", habito=habito, fecha=fecha)
+        if antes_json is not None and antes_json.get("done") is False:
+            antes_txt = t("asistente.propuesta.habito_no_marcado", habito=habito, fecha=fecha)
     else:
         despues_txt = ""
     series_tarjeta = None
