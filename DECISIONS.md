@@ -12024,3 +12024,38 @@ own supplied floor.
 feat/body-turnos-referencia-noche-1` -> `a9e69425b577714351d474fd04417bb524c3b9cd`. Merge tree
 `5e2d59c883267da90d9d186aa61f82f4bb14e2d3` equals the branch tip's own tree (`git rev-parse
 feat/body-turnos-referencia-noche-1^{tree}`) -- the merge carried the branch content verbatim.
+
+## BODY-AGENTE-TENDENCIAS-CATALOGO-1-M -- merge BODY-AGENTE-TENDENCIAS-CATALOGO-1
+
+Lands BODY-AGENTE-TENDENCIAS-CATALOGO-1 (`0ebe1de` on `feat/body-agente-tendencias-catalogo-1`),
+which had stopped GATE_RED. `TREND_KEYS` and `TREND_GROUPS` move out of `body/rutas/comun.py` into
+a new `body/catalogo_tendencias.py` (importing only `body.db`, never a route or agent module);
+`comun.py` re-exports both names so every existing reader (`hoy.py`, `tendencias.py`, five test
+modules) is unchanged. The assistant's `TENDENCIA_METRICAS` (`body/agente/herramientas.py`) becomes
+`catalogo_tendencias.TODAS` -- every `TREND_KEYS` key plus every `TREND_GROUPS` key, in catalogue
+order, without duplicates -- instead of a hand-typed tuple kept separately in step with the Trends
+screen's own list. This gains the assistant read access to five keys it was missing:
+`sleep_spo2_avg`, `sleep_respiration_avg`, `flex_alcance_cm`, `snoring_min` and `vo2max_cycling`,
+all already on `/trends`. `_tendencia_metric` now passes `min_days=1` for a self-measured key
+(`flex_alcance_cm`, `snoring_min`), matching the Trends screen's own `_trend_card`, so a person's own
+number is readable from its first value through the assistant too, as it already is on screen.
+
+The one GATE_RED failure was `tests/test_vo2max.py`'s
+`test_leer_tendencias_rejects_unknown_metric`, which had used `vo2max_cycling` as its example of a
+metric outside the assistant's catalogue -- a premise the catalogue move made false, since
+`vo2max_cycling` is now a valid key. The test's subject (`leer_tendencias` rejects a metric outside
+its catalogue) stays; this slice swaps the example for `'no_es_una_metrica'`, a key that can never
+be a metric, and adds `self.assertNotIn("no_es_una_metrica", herramientas.TENDENCIA_METRICAS)` so
+the example cannot silently become valid again. No other test in `tests/test_vo2max.py` or
+elsewhere treated `vo2max_cycling` as unreadable by the assistant; `tests/test_garmin_parse.py`'s
+uses of `vo2max_cycling` test the Garmin parser's own behaviour and were untouched. Accepted per
+`ORCH-CARLOS-DELEGATES-TIER-1-1`: the catalogue move, the five keys gained, and the self-key
+`min_days=1` follow the Trends screen and are not customer-facing.
+
+**Gate**, once, foreground, on the branch before the merge: `.venv/Scripts/python.exe -m unittest
+discover tests -t .` -- `Ran 1601 tests in 387.484s ... OK (skipped=1)`.
+
+**Merge**: `git checkout main` (tip `93d5a35db7d83619381dcfcdda534851dcdff06f`), `git merge --no-ff
+feat/body-agente-tendencias-catalogo-1` -> `d7254903c2b88319fbadcd9e18280f55b86704d6`. Merge tree
+`0036f89fd15b1a87a8fb0950655d52cba2bb8758` equals the branch tip's own tree (`git rev-parse
+feat/body-agente-tendencias-catalogo-1^{tree}`) -- the merge carried the branch content verbatim.
