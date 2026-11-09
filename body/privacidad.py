@@ -24,6 +24,8 @@ FULLY_HANDLED_TABLES = {
     "goal", "habit_check", "goal_check", "plan", "ajuste_agente", "consentimiento", "hogar_miembro",
     "conversacion_agente", "mensaje_agente", "uso_agente", "tope_agente", "propuesta_agente",
     "figura_compartida", "workout_set",
+    # Wave 9 (BODY-EXPERIMENTOS-ESQUEMA-1): experimento, its "it happened" log and moment.
+    "experimento", "experimento_registro", "moment",
 }
 # raw_payload: kind/date only, never the stored JSON payload. garmin_cuenta: the connected-since
 # date only, never the encrypted token (BODY-GARMIN-HOST-1). dispositivo: name/scopes/dates only,
@@ -95,6 +97,14 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         # joins through goal_id, the only module that reads this table.
         "enlaces": enlaces.export_rows(conn, person_id),
     }
+    experimentos = {
+        "experimentos": [dict(r) for r in conn.execute(
+            "SELECT * FROM experimento WHERE person_id = ? ORDER BY id", (person_id,))],
+        "registros": [dict(r) for r in conn.execute(
+            "SELECT * FROM experimento_registro WHERE person_id = ? ORDER BY day", (person_id,))],
+        "momentos": [dict(r) for r in conn.execute(
+            "SELECT * FROM moment WHERE person_id = ? ORDER BY ts_local", (person_id,))],
+    }
     dias = [dict(r) for r in conn.execute(
         "SELECT day, metric_key, value, source FROM daily_metric WHERE person_id = ? ORDER BY day",
         (person_id,))]
@@ -156,6 +166,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "hogar": dict(hogar_row) if hogar_row else None,
         "figuras_compartidas": figuras_compartidas,
         "vida": vida,
+        "experimentos": experimentos,
         "dias": dias,
         "actividades": actividades,
         "sets_entreno": sets_entreno,
@@ -177,6 +188,11 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
     page says. One transaction, foreign keys ON (set by db.connect already): on any error nothing
     is left half-deleted."""
     with conn:
+        # experimento.habito_id references habit(id) -- removed before habit itself goes, same as
+        # every other table below that references a row this sweep is about to remove.
+        conn.execute("DELETE FROM experimento_registro WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM moment WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM experimento WHERE person_id = ?", (person_id,))
         conn.execute("UPDATE habit SET assignee_person_id = NULL WHERE assignee_person_id = ?", (person_id,))
         enlaces.delete_rows_for_person(conn, person_id)
         conn.execute(
