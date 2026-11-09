@@ -51,6 +51,51 @@ def _turnos_filas(t: T, defs: dict, resumen: dict) -> list[dict]:
     return filas
 
 
+def _turnos_ultima_filas(t: T, defs: dict, metricas: list[dict]) -> list[dict]:
+    filas = []
+    for m in metricas:
+        key = m["metric"]
+        d = defs.get(key, {})
+        amount = t.minutes(m["diff"]) if comun._is_minutes(key) else t.num(m["diff"], 1)
+        unit = comun._unit(t, d)
+        veredicto = None
+        if m["veredicto"] == "mejor":
+            veredicto = t("shifts.ultima.word.mejor")
+        elif m["veredicto"] == "peor":
+            veredicto = t("shifts.ultima.word.peor")
+        filas.append({"label": t("metric." + key),
+                      "valor": f"{amount}" + (f" {unit}" if unit else ""),
+                      "direccion": t("shifts.word." + m["direccion"]),
+                      "veredicto": veredicto})
+    return filas
+
+
+def _turnos_ultima_recuperacion(t: T, u: dict) -> str:
+    if u["recuperacion_dias"] is None:
+        return t("shifts.ultima.recuperacion_sin_dato")
+    if u["recuperacion_mediana"] is None:
+        return t("shifts.ultima.recuperacion_sin_anteriores", d=u["recuperacion_dias"])
+    return t("shifts.ultima.recuperacion", d=u["recuperacion_dias"], m=u["recuperacion_mediana"])
+
+
+def _turnos_ultima_ctx(t: T, defs: dict, resumen: dict) -> dict | None:
+    """BODY-TURNOS-REFERENCIA-NOCHE-1: the last complete night block against the person's own
+    earlier night blocks -- None when there is no completed block at all; a gap card when no metric
+    reached MIN_BLOQUES_PREVIOS; otherwise the metric rows and the recovery line."""
+    u = resumen.get("ultima_semana")
+    if u is None:
+        return None
+    if u["motivo"] is not None:
+        return {"gap": True, "faltan": t("shifts.ultima.faltan", n=turnos_costo.MIN_BLOQUES_PREVIOS)}
+    return {
+        "gap": False,
+        "sub": t("shifts.ultima.sub", inicio=comun._short_date(t, date.fromisoformat(u["inicio"])),
+                  fin=comun._short_date(t, date.fromisoformat(u["fin"])), n=u["n"]),
+        "filas": _turnos_ultima_filas(t, defs, u["metricas"]),
+        "recuperacion": _turnos_ultima_recuperacion(t, u),
+    }
+
+
 def _turnos_strip(conn, person_id: int, today_local: date, t: T) -> tuple[list[dict], list[dict]]:
     start = today_local - timedelta(_STRIP_DAYS - 1)
     rows = conn.execute(
@@ -104,14 +149,17 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
     today_local = comun._today_local(person)
     resumen = turnos_costo.resumen(conn, person_id, hoy=today_local)
     strip, strip_legend = _turnos_strip(conn, person_id, today_local, t)
-    filas = _turnos_filas(t, comun._defs(conn), resumen)
+    defs = comun._defs(conn)
+    filas = _turnos_filas(t, defs, resumen)
     # BODY-SHIFTS-REDUNDANT-EMPTY-TABLE-1: the hero card above already names the one reason there is
     # no estimate (shifts.reason.*) -- five more rows each saying "sin datos del reloj" would only
     # repeat it. Drop the whole card when every row is empty; a partial row (at least one figure) is
     # informative on its own and keeps rendering exactly as before.
     costo_vacio = all(f["href"] is None for f in filas)
+    ultima = _turnos_ultima_ctx(t, defs, resumen)
     costo_ctx = {"hero_dias": resumen["dias_recuperacion"], "motivo": resumen["motivo"],
-                 "filas": filas, "costo_vacio": costo_vacio, "strip": strip, "strip_legend": strip_legend}
+                 "filas": filas, "costo_vacio": costo_vacio, "strip": strip, "strip_legend": strip_legend,
+                 "ultima": ultima}
     tiene_patron = patron_turnos.leer(conn, person_id) is not None
     if len(rows) > 1:
         summary = shift_import.summary_proposed(conn, person_id)

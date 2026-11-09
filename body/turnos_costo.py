@@ -29,8 +29,11 @@ MODELO = {
 RESUMEN_DIAS = 180       # blocks considered for the hero come from this many trailing days
 REFERENCIA_DIAS = 120    # the "tus semanas de día" reference window
 MIN_BANDA_VALORES = 3    # a day qualifies toward recovery when at least this many metrics are in band
+MIN_BLOQUES_PREVIOS = 3  # a metric needs at least this many earlier night blocks to get a verdict
+                         # against them (BODY-TURNOS-REFERENCIA-NOCHE-1) -- like for like, never the
+                         # day-week reference, which is why this is a separate floor from min_bloques.
 
-REASON_CODES = ("sin_turnos", "sin_noches", "pocos_bloques", "sin_datos_reloj")
+REASON_CODES = ("sin_turnos", "sin_noches", "pocos_bloques", "sin_datos_reloj", "pocos_bloques_previos")
 
 # Below this many units of real difference, a row reads "igual" instead of "mas"/"menos"
 # (BODY-TURNOS-COSTO-1-M, fix b): roughly a quarter-hour of sleep, a beat of resting HR, a
@@ -164,6 +167,65 @@ def _costo_bloque(conn, person_id: int, bloque: Bloque, ref: dict[str, Referenci
     return costo
 
 
+def _medias_bloque(conn, person_id: int, bloque: Bloque, *, lector: Lector | None = None) -> dict[str, float | None]:
+    """Raw window mean per metric over the same window `_costo_bloque` uses (inicio..fin+dias_estables),
+    with no reference subtracted -- what BODY-TURNOS-REFERENCIA-NOCHE-1's last-week section compares
+    one night block against another, never against the day-week reference."""
+    fin = _parse(bloque.fin)
+    end = (fin + timedelta(MODELO["dias_estables"])).isoformat()
+    medias: dict[str, float | None] = {}
+    for metric in MODELO["metricas"]:
+        serie = lector.series(metric, bloque.inicio, end) if lector is not None \
+            else db.series(conn, metric, bloque.inicio, end, person_id)
+        vals = list(serie.values())
+        medias[metric] = statistics.fmean(vals) if vals else None
+    return medias
+
+
+def _ultima_semana(bloques: list[Bloque], bloques_out: list[dict], medias: list[dict[str, float | None]],
+                    hoy: date) -> dict | None:
+    """BODY-TURNOS-REFERENCIA-NOCHE-1: the last COMPLETE night block (its cost window fully on or
+    before `hoy`) against the person's own EARLIER night blocks in the same window -- like for like,
+    never the day-week reference three of the five metrics cannot honestly use. Per metric: the last
+    block's window mean vs the mean of the earlier blocks' own window means (one value per block, so a
+    long block never outweighs short ones), only when at least MIN_BLOQUES_PREVIOS earlier blocks have
+    that metric. No block with a complete window at all -> None."""
+    last_idx = None
+    for i, b in enumerate(bloques):
+        if _parse(b.fin) + timedelta(MODELO["dias_estables"]) <= hoy:
+            last_idx = i
+    if last_idx is None:
+        return None
+
+    metricas_out = []
+    max_n = 0
+    for metric in MODELO["metricas"]:
+        last_mean = medias[last_idx].get(metric)
+        valores = [medias[i][metric] for i in range(last_idx) if medias[i].get(metric) is not None]
+        n = len(valores)
+        if last_mean is None or n < MIN_BLOQUES_PREVIOS:
+            continue
+        costo_equiv = (last_mean - statistics.fmean(valores)) * _signo(metric)
+        diff, palabra = diferencia_y_palabra(metric, costo_equiv)
+        veredicto = "igual" if palabra == "igual" else ("peor" if costo_equiv > 0 else "mejor")
+        metricas_out.append({"metric": metric, "diff": round(abs(diff), 1), "direccion": palabra,
+                              "veredicto": veredicto})
+        max_n = max(max_n, n)
+
+    recup_anteriores = [bloques_out[i]["recuperacion_dias"] for i in range(last_idx)
+                         if bloques_out[i]["recuperacion_dias"] is not None]
+
+    return {
+        "inicio": bloques[last_idx].inicio,
+        "fin": bloques[last_idx].fin,
+        "n": max_n,
+        "metricas": metricas_out,
+        "motivo": None if metricas_out else "pocos_bloques_previos",
+        "recuperacion_dias": bloques_out[last_idx]["recuperacion_dias"],
+        "recuperacion_mediana": round(statistics.median(recup_anteriores)) if recup_anteriores else None,
+    }
+
+
 def _dia_en_banda(conn, person_id: int, day: str, ref: dict[str, Referencia | None],
                    *, lector: Lector | None = None) -> bool:
     valores = lector.day_values(day) if lector is not None else db.day_values(conn, day, person_id)
@@ -271,7 +333,9 @@ def contexto_dia(conn, person_id: int, dia: date) -> dict | None:
 def resumen(conn, person_id: int, hoy: date | None = None) -> dict:
     """Blocks of the last RESUMEN_DIAS days with their cost and recovery; the hero `dias_recuperacion`
     is the median recovery over blocks that have a figure, only when at least MODELO['min_bloques'] do;
-    otherwise None with a reason code (REASON_CODES). Reads its whole metric window ONCE, through a
+    otherwise None with a reason code (REASON_CODES). `ultima_semana` (BODY-TURNOS-REFERENCIA-NOCHE-1)
+    is the last complete block against the person's own earlier night blocks -- see `_ultima_semana`.
+    Reads its whole metric window ONCE, through a
     single `Lector` covering [hoy - RESUMEN_DIAS, hoy + dias_estables] -- wide enough for `referencia`'s
     own [hoy - REFERENCIA_DIAS, hoy - 1] and for every block's cost and recovery window, since
     REFERENCIA_DIAS <= RESUMEN_DIAS and no block's window reaches past hoy + dias_estables
@@ -285,10 +349,12 @@ def resumen(conn, person_id: int, hoy: date | None = None) -> dict:
 
     bloques_out = []
     recuperaciones = []
+    medias_out: list[dict[str, float | None]] = []
     costos_por_metrica: dict[str, list[float]] = {m: [] for m in MODELO["metricas"]}
     for b in bloques:
         costo = _costo_bloque(conn, person_id, b, ref, lector=lector)
         recup = _recuperacion_bloque(conn, person_id, b, ref, hoy, lector=lector)
+        medias_out.append(_medias_bloque(conn, person_id, b, lector=lector))
         if recup is not None:
             recuperaciones.append(recup)
         for metric, v in costo.items():
@@ -316,4 +382,5 @@ def resumen(conn, person_id: int, hoy: date | None = None) -> dict:
                                                      "alto": round(r.alto, 1), "n": r.n})
                        for m, r in ref.items()},
         "costo_promedio": costo_promedio,
+        "ultima_semana": _ultima_semana(bloques, bloques_out, medias_out, hoy),
     }

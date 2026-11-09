@@ -111,6 +111,26 @@
 {% endif %}
 </div>
 
+{% if ultima %}
+<div class="card">
+  <div class="k">{{ t('shifts.ultima.title') }}</div>
+  {% if ultima.gap %}
+  <p class="read mt-8">{{ ultima.faltan }}</p>
+  {% else %}
+  <p class="k mt-n4 mb-8">{{ ultima.sub }}</p>
+  <table class="parts">
+    {% for f in ultima.filas %}
+    <tr>
+      <td>{{ f.label }}</td>
+      <td class="nw">{{ f.valor }} <strong>{{ f.direccion }}</strong>{% if f.veredicto %} · {{ f.veredicto }}{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="read mt-8">{{ ultima.recuperacion }}</p>
+  {% endif %}
+</div>
+{% endif %}
+
 <h2>{{ t('shifts.strip_title') }}</h2>
 <p class="k mt-n4">{{ t('shifts.strip_hint') }}</p>
 <div class="strip">
