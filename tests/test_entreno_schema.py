@@ -12,7 +12,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import db
+from body import db, privacidad
 
 
 def _db(case: unittest.TestCase, name: str) -> "db.sqlite3.Connection":
@@ -296,6 +296,30 @@ class MigrationPopulatedTest(unittest.TestCase):
         db.init(self.conn)
         after = self.conn.execute("SELECT COUNT(*) AS n FROM metric_def").fetchone()["n"]
         self.assertEqual(count, after)
+
+
+class PrivacyCensusTest(unittest.TestCase):
+    """workout_set is the person's own health data: BODY-ENTRENO-SCHEMA-1-M's privacidad.py census
+    puts it in FULLY_HANDLED_TABLES, so an invented row is in the person's export and gone after
+    delete-all, same as every other person-owned table."""
+
+    def setUp(self):
+        self.conn = _db(self, "privacidad.db")
+        db.init(self.conn)
+        _insert_activity(self.conn, 1, "a1", "2026-11-09")
+        _insert_workout_set(self.conn, 1, "garmin", "a1", 1, person_exercise="Sentadilla", person_reps=8)
+        self.conn.commit()
+
+    def test_workout_set_row_is_in_the_export(self):
+        data = privacidad.export_person(self.conn, 1)
+        rows = data["sets_entreno"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["person_exercise"], "Sentadilla")
+
+    def test_delete_all_removes_the_workout_set_row(self):
+        privacidad.delete_person(self.conn, 1)
+        count = self.conn.execute("SELECT COUNT(*) FROM workout_set").fetchone()[0]
+        self.assertEqual(count, 0)
 
 
 if __name__ == "__main__":
