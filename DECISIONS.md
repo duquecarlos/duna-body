@@ -11032,3 +11032,88 @@ merged tree, not re-run.
 top of `04cc420429c4c4a32ef56ab09dbc66782eb36042`); `7b5d08a8b54bfa79b5ab4646c596c8eb5711f870`
 (merge `--no-ff` into `main`, parents `04cc420429c4c4a32ef56ab09dbc66782eb36042` and
 `fe35df0b16a978311a9e2427500a97bebd54bb2c`).
+
+## BODY-ENTRENO-SUENO-STORE-1 -- metric_def rows + save_day storage for night-breathing figures
+
+`BODY-ENTRENO-1-INV` slice 8, SUENO-PARSE-1's own named follow-up. Carlos named snoring and nasal
+breathing at night as goals (2026-11-09); the watch does not measure snoring, so these four figures
+are shown later only as a proxy with an honest caveat -- that display slice is separate and still
+customer-facing. This slice is storage only.
+
+**Four `METRIC_DEFS` rows** (`body/db.py`), added through the existing seed/upsert mechanism (no
+`CREATE`/`ALTER`), kind `"measured"`, origen `"garmin"` (the 4-tuple default, matching
+`respiration_awake`): `sleep_spo2_avg` (unit `"%"`, better `"higher"`), `sleep_respiration_avg` /
+`sleep_respiration_low` / `sleep_respiration_high` (unit `"brpm"`, better `"neutral"` -- no single
+"better" direction for a breathing rate, only a normal band, same reasoning as `active_kcal`). Keys
+match exactly what SUENO-PARSE-1's ledger entry proposed.
+
+**`save_day`** gained a loop reading the four `DayData` fields of the same name directly (`getattr`,
+default `None`) -- not `DayData.metrics`, since SUENO-PARSE-1 deliberately kept them off that dict --
+and writes each present one into `daily_metric` the same `INSERT OR REPLACE` way every other metric
+is stored; `None` writes nothing, never a `0` row.
+
+**Labels**, verbatim as approved, added to both `body/i18n/es.json` and `en.json` right after
+`metric.fitness_age`: `sleep_spo2_avg` es "Oxígeno en sangre de noche (prom.)" / en "Blood oxygen at
+night (avg)"; `sleep_respiration_avg` es "Respiración de noche (prom.)" / en "Breathing at night
+(avg)"; `sleep_respiration_low` es "Respiración de noche (mín.)" / en "Breathing at night (low)";
+`sleep_respiration_high` es "Respiración de noche (máx.)" / en "Breathing at night (high)". Fixes
+`tests.test_i18n_paridad` for the four new keys.
+
+**Demo data** (`body/demo.py`): a new `NIGHT_BREATH` group and `RANGES` entries (`sleep_spo2_avg`
+93-98%, `sleep_respiration_avg` 13-17, `sleep_respiration_low` 9-13, `sleep_respiration_high` 17-23
+brpm, invented, plausible), sampled inside `_day_metrics` only on a night `sleep_minutes` landed, each
+key independently present 80% of the time so some nights stay absent -- same mechanism as every other
+sparse metric, via `save_day`'s new four-field read (not folded into `metrics`, matching the real
+adapter's shape). `_DayData`'s local dataclass gained the four fields. Fixes
+`tests.test_demo.SeededContentTest.test_every_catalogue_metric_present_at_least_once` for the new
+keys; `DeterminismTest.test_two_runs_give_identical_rows` still passes (no golden hash, only a
+same-seed two-run comparison, so the rng draw order change is safe).
+
+**Tests** (`tests/test_entreno_sueno.py`, invented fixtures, no real data): the four `metric_def` rows
+exist with the right unit/better/kind/origen; a full night with all four values stores four rows; one
+field absent (`None`) stores no row for it while the others still land; all four absent stores
+nothing; re-saving the same day is idempotent (still exactly 4 rows, same values); an explicit `0.0`
+(impossible in practice -- `garmin_adapter`'s own range check keeps a real `0` out before it reaches
+`DayData` -- but `save_day` itself only treats `None` as absent) is stored as a real value, not
+dropped.
+
+**Observed, not hidden:** the day page's "Todas las medidas" grid (`body/templates/day.html`)
+iterates every `metric_def` row unconditionally, so these four now also render as four new empty
+("—") cards with their new labels on `/day/<date>` for anyone with no reading yet -- verified by
+running `tests.test_pipeline.PipelineTest.test_end_to_end_page` with this slice's changes applied vs.
+reverted to `main`'s tip (via `git checkout --`, no commit lost): the same cards (and the same
+pre-existing, unrelated "No hay turno registrado" failure when that module runs alone, outside the
+full-suite ordering -- see Gate below) appear either way for `flex_alcance_cm`/`snoring_min`, so this
+is the established, already-accepted pattern from `BODY-ENTRENO-SCHEMA-1-M`/`-N` (same kind of
+addition, same ledger classification: "no customer-facing bytes" despite new `metric.*` i18n strings),
+not something new to this slice. No deliberately designed copy, screen or route changed.
+
+**Gate**, once, foreground, on the branch tip before merge: `.venv/Scripts/python.exe -m unittest
+discover tests -t .` -- `Ran 1486 tests in 197.648s ... OK (skipped=1)`. 6 more tests than the prior
+recorded floor (1480, `BODY-ENTRENO-PULL-1`), matching this slice's 6 new test methods exactly;
+`skipped=1` carries over unchanged. (Before reapplying the edits above, `tests.test_pipeline.
+PipelineTest.test_end_to_end_page` was run alone against both trees, with and without this slice's
+changes, specifically to rule out this slice as the cause of that module-alone failure -- not a second
+full-suite gate run.)
+
+**Merged** `feat/body-entreno-sueno-store-1` into `main` with `--no-ff` (approval-reason authorises
+the build: "Carries out ... BODY-ENTRENO-SUENO-STORE-1 ... Labels approved verbatim below"; spec body
+step 6 says in words to merge). Diff from `main`'s prior tip is `body/db.py`, `body/demo.py`,
+`body/i18n/es.json`, `body/i18n/en.json` and `tests/test_entreno_sueno.py` only -- no schema or
+migration change (no `CREATE`/`ALTER` touched), no cross-repo contract change. Customer-facing bytes:
+the four new `metric.*` i18n strings do reach `/day/<date>` as new empty-card labels (see "Observed,
+not hidden" above) -- by the established precedent for this exact kind of change
+(`BODY-ENTRENO-SCHEMA-1-M`/`-N`) this does not trip Merge Policy A's condition, and the spec body's
+own words authorise the merge in any case ("this spec approves it").
+
+Merge was a clean fast-forward-shaped `--no-ff`: merge commit's tree
+(`a706931275b8c2c4c5cee387995e3daf41304e4c`) is byte-identical to the branch tip's tree (same sha),
+confirmed via `git diff HEAD feat/body-entreno-sueno-store-1` (empty) -- the gate above already covers
+the merged tree, not re-run.
+
+`main` now at `0956a85889f41fc6860c6309d31036d05c892de1`. `git status --porcelain` empty on `main`.
+
+**Commits**: `9e37eda56c57075f2f689d498de7b9bbb7e6c8fd` (slice, on
+`feat/body-entreno-sueno-store-1`, on top of `25b9961ba6ab5208b5be430f1be2e772c1b9c1e3`);
+`0956a85889f41fc6860c6309d31036d05c892de1` (merge `--no-ff` into `main`, parents
+`25b9961ba6ab5208b5be430f1be2e772c1b9c1e3` and `9e37eda56c57075f2f689d498de7b9bbb7e6c8fd`).
