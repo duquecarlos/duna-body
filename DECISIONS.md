@@ -10572,3 +10572,64 @@ left checked out, `git status --porcelain` empty (before this ledger entry's own
 **Commits**: fix `1d38e3b73d7b9669b35e74c88dafec1b57ccc151` on `feat/body-deploy-host-1` (on top of
 `27ca4ac1ee74e683cce15f04031d5b5001130e82`); merge `5757dca4ba964dcf48772d6df2b4c0a4b20bde1d` into
 `main`.
+
+## BODY-INTRADIA-ADAPTER-1 -- intraday adapter function (heart rate, stress, Body Battery events)
+
+Carries out BODY-INTRADIA-1-INV's first follow-up unchanged: one new on-demand adapter function,
+its shape and its parsing only -- no schema, no storage, no screen.
+
+**`body/garmin_adapter.py`**: `fetch_intraday(day, token_str=None) -> IntradayData`, following
+`fetch_day`'s session/token pattern exactly (the hosted per-person token path included). Three
+calls for one local day: `get_heart_rates`, `get_stress_data` (not `get_all_day_stress`, which the
+installed garminconnect 0.3.20 hits at the same endpoint), `get_body_battery_events`.
+
+`IntradayData` is a new dataclass beside `DayData`, not a change to it: `day`; `raw` (the payload
+per kind, so a later slice can store them under new `raw_payload` kinds); `heart_rate` and `stress`
+as tuples of `(local time, value)` in payload order; `heart_rate_interval_minutes` /
+`stress_interval_minutes`, read from any key in that payload naming "interval" (case-insensitive)
+and holding a number, else `None` -- never guessed from timestamp deltas; `body_battery_events` as
+a tuple of the event dicts the payload carries, unchanged.
+
+Honest gaps, same rule as `DayData`: a series Garmin returns empty, null, or with null samples
+stays absent -- an empty tuple, never a zero; null samples are dropped before the tuple is built. A
+call that raises does not lose the other two: `raw["_errors"]` records which kind failed, the same
+pattern `fetch_day`/`DayData` already use (no separate `missing` field needed).
+
+Sample timestamps are assumed to be epoch-ms already shifted to local wall time -- the same
+convention this module already uses for Garmin's `...TimestampLocal` scalar fields (`_local_iso`)
+-- unconfirmed for these specific arrays by the installed package, which types `get_heart_rates`
+and `get_stress_data` no further than `dict[str, Any]`. Documented in the new helpers'
+docstrings (`_interval_minutes`, `_intraday_series`), same defensive-and-documented style as the
+existing `_max_metrics_entry`.
+
+**Nothing calls `fetch_intraday` yet**: not `pull.py`, not the backfill loop, not the web app. It
+is reachable only by direct call (and by the new tests), exactly as this spec required.
+
+**Tests, `tests/test_garmin_parse.py`** (all fixtures invented, shaped from the library's call
+signatures -- the installed package itself names no field keys for these three calls beyond their
+type hints, so none of this is real health data): a full day parses in order
+(`IntradayFullDayTest`); a stated interval key is read and an absent one stays `None`
+(`IntradayStatedIntervalTest`); empty, null and missing series stay the empty tuple and null
+samples are dropped rather than becoming `0` (`IntradayHonestGapsTest`); a failing `get_stress_data`
+call leaves heart rate and Body Battery events intact and names `"stress"` in `raw["_errors"]`
+(`FetchIntradayStressFailureTest`, same `FakeGarmin*`-class pattern as the existing VO2max failure
+test). No guard elsewhere in `tests/` enforces "`body/garmin_adapter.py` is the only module that
+may import garminconnect" (checked by grep before writing one), so
+`OnlyGarminAdapterImportsGarminconnectTest` adds it: scans every other `.py` file under `body/` for
+an `import garminconnect` / `from garminconnect` line.
+
+**Gate**, once, foreground: `.venv/Scripts/python.exe -m unittest discover tests -t .` --
+`Ran 1426 tests in 275.721s ... OK (skipped=1)` (+8 over the prior merge's 1418, matching the 8 new
+tests above).
+
+**Merge**: `--no-ff` of `feat/body-intradia-adapter-1` into `main`, authorised by this spec's own
+body ("Carries out BODY-INTRADIA-1-INV's first follow-up unchanged... It is not wired into any
+job, so nothing calls Garmin more often after this merge"). `main` was unchanged at this branch's
+base (`5e340cc7604b65b5a46b769c0814bd4828e1a1da`), so this merge is a fast-forward-equivalent
+`--no-ff`: the merge commit's tree equals the branch tip's tree
+(`100dc42d10c148b737875ba917df902ae75cf73e` both sides). `main` left checked out,
+`git status --porcelain` empty (before this ledger entry's own commit).
+
+**Commits**: slice `ee7447c1cf9361dd81f694d36d34d415aaf9ba5e` on `feat/body-intradia-adapter-1`
+(on top of `5e340cc7604b65b5a46b769c0814bd4828e1a1da`); merge
+`428ad43a8251e1d741b8e257029ed54718763b3f` into `main`.
