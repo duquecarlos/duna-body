@@ -253,6 +253,9 @@ figure.chart:focus-visible{outline:2px solid var(--focus);outline-offset:4px;bor
 .asis-propuesta-acciones{display:flex;gap:8px;flex-wrap:wrap}
 .asis-propuesta-resultado{margin:6px 0 0;color:var(--muted)}
 .asis-propuesta-resultado[hidden]{display:none}
+.asis-propuesta-series{width:100%;border-collapse:collapse;margin:0 0 8px;font-size:12.5px}
+.asis-propuesta-series th,.asis-propuesta-series td{padding:3px 6px;text-align:left;border-bottom:1px solid var(--soft)}
+.asis-propuesta-series th{color:var(--muted);font-weight:500}
 .asis-form{display:flex;align-items:flex-end;gap:8px;padding:10px 14px;border-top:1px solid var(--soft);flex:none}
 .asis-form textarea{resize:none;max-height:120px}
 .asis-nota{font-size:11.5px;color:var(--muted);text-align:center;margin:0 0 10px;padding:0 14px}

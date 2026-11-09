@@ -28,10 +28,15 @@ class MetricProfile:
     first_day: str
 
 
-def metric_profile(conn, key: str, today: str | None = None, *, person_id: int) -> MetricProfile | None:
+def metric_profile(conn, key: str, today: str | None = None, *, person_id: int,
+                    min_days: int = 14) -> MetricProfile | None:
+    """min_days defaults to the watch's own honest-gap threshold (14 days). A self-measured key
+    (BODY-ENTRENO-MEDIDA-1) has no such cadence to wait on -- the caller passes a lower min_days so
+    a card appears from the first value, sparse and honest, rather than hiding behind a Garmin-sized
+    gap it will never fill the same way."""
     rows = conn.execute("SELECT day, value FROM daily_metric WHERE person_id=? AND metric_key=? ORDER BY day",
                         (person_id, key)).fetchall()
-    if len(rows) < 14:
+    if len(rows) < min_days:
         return None
     vals = [r["value"] for r in rows]
     by_month: dict[str, list[float]] = {}
@@ -155,19 +160,22 @@ def window_svg(w: Window, low: float, high: float, nights: set[str] = frozenset(
                etiqueta_dia: Callable[[date], str] = lambda d: d.isoformat(),
                aria_label: str | None = None,
                valor_fmt: Callable[[float], str] | None = None,
-               link_label: str | None = None) -> str:
+               link_label: str | None = None,
+               banda: bool = True) -> str:
     """Daily line over the window with your normal range as a band; night shifts shaded; a missing day breaks the
     line (honest gaps, never a zero). Every day is a tap target that opens that day.
 
     etiqueta_dia turns a day into a reader's-language label (axis ends, tap titles); the default keeps the ISO
     date so older callers are unaffected. aria_label, when given, names the metric and the span in words.
     valor_fmt, when given, formats a day's value for the per-point readout (BODY-PULIDO-2); link_label is the
-    taplink text charts.js shows next to a point's day link (the URL still carries only the day, never a value)."""
+    taplink text charts.js shows next to a point's day link (the URL still carries only the day, never a value).
+    banda, when False (BODY-ENTRENO-TOOLS-1-M, a self-measured key below baselines.MIN_DAYS), skips the normal-
+    range band and scales the chart to the plotted points alone -- low/high are not yet a trustworthy range."""
     days = [w.start + timedelta(i) for i in range((w.end - w.start).days + 1)]
     pts = list(w.values.values())
     if len(pts) < 2:
         return ""
-    lo, hi = min(min(pts), low), max(max(pts), high)
+    lo, hi = (min(min(pts), low), max(max(pts), high)) if banda else (min(pts), max(pts))
     pad = (hi - lo) * 0.12 or 1
     lo, hi = lo - pad, hi + pad
     top, h = 6, height - 26
@@ -175,8 +183,10 @@ def window_svg(w: Window, low: float, high: float, nights: set[str] = frozenset(
     y = _y_scale(lo, hi, top, h)
 
     step = width / max(1, len(days) - 1)
-    out = [f'<rect x="0" y="{y(high):.1f}" width="{width}" height="{max(1, y(low) - y(high)):.1f}" '
-           f'class="c-inset"/>']
+    out = []
+    if banda:
+        out.append(f'<rect x="0" y="{y(high):.1f}" width="{width}" height="{max(1, y(low) - y(high)):.1f}" '
+                   f'class="c-inset"/>')
     for i, d in enumerate(days):
         if d.isoformat() in nights:
             out.append(f'<rect x="{max(0, i * step - step / 2):.1f}" y="0" width="{step:.1f}" height="{full:.1f}" '
