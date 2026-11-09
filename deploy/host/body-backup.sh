@@ -96,7 +96,7 @@ cleanup_plain() {
 }
 trap cleanup_plain EXIT
 
-run runuser -u "$DATA_USER" -- env "BODY_HOME=$BODY_HOME_DIR" \
+run runuser -u "$DATA_USER" -- env -C "$REPO_DIR" "BODY_HOME=$BODY_HOME_DIR" \
   "$REPO_DIR/.venv/bin/python" -m body.backup snapshot --out "$plain_file"
 
 run age -r "$recipient" -o "$enc_file" "$plain_file"

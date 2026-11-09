@@ -18,8 +18,19 @@ UNIT_DST_DIR="/etc/systemd/system"
 CADDY_SRC="$REPO_DIR/deploy/host/Caddyfile.body"
 CADDY_DST="/etc/caddy/sites/body.caddy"
 HEALTH_URL="http://127.0.0.1:8770/healthz"
+DATA_USER="duna-body"
+# /srv/duna itself is duna:duna mode 750 (BODY-DEPLOY-HOST-1-INV), so duna-body cannot even
+# traverse into it -- walked up from REPO_DIR, never a second literal.
+PARENT_DIR="$(dirname "$(dirname "$REPO_DIR")")"
 UNITS=(body-web.service body-pull.service body-pull.timer body-backfill.service body-backfill.timer body-backup.service body-backup.timer)
+TIMERS=(body-pull.timer body-backfill.timer body-backup.timer)
 RETIRED_UNITS=(body-vida.service body-vida.timer)
+
+# duna-deploy-body sources this file to read UNITS/TIMERS as the single list of Body's live
+# units (BODY-DEPLOY-HOST-1); stop here so sourcing it never runs the deploy itself.
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+  return 0
+fi
 
 DRY_RUN=""
 
@@ -107,6 +118,21 @@ install_caddy_site_if_changed() {
   run systemctl reload caddy
 }
 
+ensure_traverse_acl() {
+  if runuser -u "$DATA_USER" -- test -x "$PARENT_DIR"; then
+    return 0
+  fi
+  if ! command -v setfacl >/dev/null 2>&1; then
+    echo "body-deploy.sh: $DATA_USER cannot traverse $PARENT_DIR and setfacl is not installed -- run once on the host: setfacl -m u:$DATA_USER:x $PARENT_DIR" >&2
+    exit 1
+  fi
+  run setfacl -m "u:$DATA_USER:x" "$PARENT_DIR"
+  if ! runuser -u "$DATA_USER" -- test -x "$PARENT_DIR"; then
+    echo "body-deploy.sh: $DATA_USER still cannot traverse $PARENT_DIR -- run by hand: setfacl -m u:$DATA_USER:x $PARENT_DIR" >&2
+    exit 1
+  fi
+}
+
 rollback_and_fail() {
   local step="$1"
   local deps_ok="yes"
@@ -114,10 +140,12 @@ rollback_and_fail() {
   if ! runuser -u "$owner" -- "$REPO_DIR/.venv/bin/pip" install -q -r "$REPO_DIR/requirements.txt"; then
     deps_ok="no"
   fi
+  ensure_traverse_acl
   install_units
   install_caddy_site_if_changed
   run systemctl daemon-reload
   run systemctl restart body-web.service
+  run systemctl restart "${TIMERS[@]}"
   fail_step "$step (rollback dependencies reinstalled: $deps_ok)" "yes"
 }
 
@@ -130,12 +158,15 @@ runuser -u "$owner" -- python3 -m venv "$REPO_DIR/.venv"
 runuser -u "$owner" -- "$REPO_DIR/.venv/bin/pip" install -q -r "$REPO_DIR/requirements.txt" \
   || rollback_and_fail "pip install"
 
+ensure_traverse_acl
+
 install_units
 remove_retired_units
 install_caddy_site_if_changed
 
 run systemctl daemon-reload
-run systemctl enable body-web.service body-pull.timer body-backfill.timer body-backup.timer
+run systemctl enable body-web.service
+run systemctl enable --now "${TIMERS[@]}"
 run systemctl restart body-web.service
 
 health_ok=""

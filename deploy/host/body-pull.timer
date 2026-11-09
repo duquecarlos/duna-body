@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily Garmin pull + shift import (09:30 America/Bogota)
+Description=Daily Garmin pull (09:30 America/Bogota)
 
 [Timer]
 OnCalendar=*-*-* 09:30:00 America/Bogota
