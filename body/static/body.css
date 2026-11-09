@@ -175,6 +175,24 @@ figure.chart:focus-visible{outline:2px solid var(--focus);outline-offset:4px;bor
 .chart-readout{margin-top:6px;font-size:13px;color:var(--ink2)}
 .chart-readout .taplink{margin-left:6px}
 
+/* ---------- tap targets (BODY-TAP-44-1, DESIGN rule 11): grow the hit area, never the drawing.
+   The `.hit` pattern is position:relative on the target plus a borderless, see-through ::before
+   sized by inset to at least 44x44 -- no background, no border, pointer-events left on. `.boxbtn`
+   and `.foot a` already name every element that needs it, so the rule attaches to those selectors
+   directly, no template change; history.html's month rows have no selector of their own, so they
+   carry the one new class `.month-row`. Insets: `.boxbtn` is 28x44, +8px each side = 44x44, free on
+   both sides (the card's own padding to its left, the `.plan li` 10px gap to its right, 2px to
+   spare). `.foot a` varies by its text (Ayuda measured 35x44, Ajustes 40x44); +5px each side reaches
+   44+ either way, using half of the " · " separator's ~10px width (12.5px font: space + middle dot
+   + space, roughly 0.8em) so two adjacent extended links meet at the gap's midpoint and never
+   overlap. `.month-row` is 313x38; +3px top and bottom = 44, using 6 of the 10px `mt-10` gap between
+   rows, 4px to spare. ---------- */
+.hit,.boxbtn,.foot a,.month-row{position:relative}
+.hit::before,.boxbtn::before,.foot a::before,.month-row::before{content:"";position:absolute}
+.boxbtn::before{top:0;bottom:0;left:-8px;right:-8px}
+.foot a::before{top:0;bottom:0;left:-5px;right:-5px}
+.month-row::before{left:0;right:0;top:-3px;bottom:-3px}
+
 /* ---------- assistant (BODY-ASISTENTE-PANEL-1, agent-ui-v1): one shared panel on every screen --------- */
 .asis-btn{position:fixed;right:16px;bottom:calc(16px + env(safe-area-inset-bottom));z-index:30;width:52px;height:52px;border-radius:50%;border:0;background:var(--body);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.22)}
 .asis-btn:active{opacity:.85}
