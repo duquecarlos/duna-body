@@ -13007,3 +13007,84 @@ Merge commit `bc17e3ecccd78cbfc115b25d6bfa259e6e410e34` on `main` (`git merge --
 tests -t .` -> `Ran 1809 tests in 332.826s ... OK (skipped=1)`.
 
 `git status --porcelain` empty after the merge; `main` left checked out.
+
+## BODY-EXPERIMENTOS-INTRADIA-MODELO-1 -- intraday verdict, same whole-day rule on a per-day window
+
+`experimentos.veredicto` for `ventana.tipo == 'intradia'` no longer returns `'aun_no'` for every
+metric (BODY-EXPERIMENTOS-MODELO-1's own stub). It now feeds `_veredicto_metrica`'s same whole-day
+rule (MIN_PRUEBA, MIN_BASE, UMBRAL) a per-day WINDOW mean instead of a whole day's own figure --
+ORCH-CARLOS-DELEGATES-TIER-1-1, carrying out BODY-EXPERIMENTOS-1-INV slice 8 (Carlos's morning-
+grounding experiment, his Personal desk's own `vida/experimento-manana.md`, aimed at Sat
+2026-11-14).
+
+**The window.** Each counting day's window is `[anchor - antes_min, anchor + despues_min]`.
+`ancla: 'despertar'` anchors at that day's own `sleep_session.end_local` -- measured: body/db.py's
+`save_day` files a sleep row under the morning the session ENDED (the schema's own comment: "the
+day Garmin files the sleep under (wake day)"), so a day's own row IS that day's own wake time, no
+`OFFSET_DIA` shift needed (unlike a whole-day metric's own night-after reading). `ancla: 'momento'`
+anchors at `experimento_registro.momento_id` -> `moment.ts_local`. A day with no sleep row, or
+whose registro has no momento_id, has no anchor at all for that day.
+
+**The baseline's own moment, a judgement call.** A baseline day never has a moment of its own --
+nothing was logged on an ordinary day -- so a `'momento'` baseline is anchored at the MEDIAN local
+clock time of the test days' own moments, applied to each baseline day's own date
+(`_anclas_base_momento`). This is the closest honest stand-in for "when this would have happened on
+an ordinary day"; {} (no baseline anchor at all) when no test day has a moment yet to take the
+median from.
+
+**The coverage floor.** A day's value per metric is the mean of `db.intradia`'s samples inside its
+window, using only valid samples (the parser already drops a "no reading" code). A window holding
+fewer than `COBERTURA_MIN` (0.5, named in `body/experimentos.py`) of the samples its OWN observed
+spacing implies -- the median gap between that window's merged samples' own consecutive
+timestamps, never a fixed Garmin constant, since a watch not worn drops samples without changing
+the device's nominal interval -- is a day WITHOUT DATA, same as a day `db.intradia` returns `[]`
+for (never fetched). A window spanning midnight pulls samples from BOTH calendar days `db.intradia`
+stores under their own `day` key, filtered by each sample's own parsed local timestamp, never by
+which day it was filed under.
+
+**The result's shape.** Unchanged (`metricas` -> `resultado`/`n_prueba`/`n_base`/`media_prueba`/
+`media_base`/`diferencia`; `dias_prueba`; `dias_excluidos_no_ocurrio`; `estado`), plus
+`dias_sin_dato` (`{"prueba": [...], "base": [...]}`, test/base days dropped for a missing anchor or
+thin coverage) -- for a later job to find what intraday days an active experiment is still missing.
+The whole-day (`ventana.tipo == 'dia'`) path is untouched and keeps its own shape, without
+`dias_sin_dato`.
+
+**`'aun_no'` stays a valid code -- the screens and the assistant still recognise it -- but nothing
+produces it any more, for either window type.** A day never marked occurred now reads `'pocos_dias'`
+for an intraday experiment too, the same as a whole-day experiment's own unmarked day (both go
+through the same `dias_que_cuentan` / `_ocurrio_por_dia` filter before any window is even built).
+
+**The assistant's `leer_experimentos` description** stops saying an intraday verdict is "not
+available"; it says what the window compares (the minutes around a wake time or a logged moment, on
+test days against the person's own ordinary days).
+
+**Tests.** `tests/test_experimentos_intradia.py` (new): despertar windows from invented
+`sleep_session` rows; momento windows from invented moments, including the median-clock baseline;
+coverage below and above the floor (a watch-not-worn gap inside an otherwise dense day); a day never
+fetched; `mas_bajo`/`mas_alto`/`sin_cambio`/`pocos_dias` each reached; person isolation (another
+person's intraday series never enters this person's verdict); a window crossing midnight, pulling
+real in-window samples from both calendar days' own stored payloads while excluding out-of-window
+junk values stored right next to them. `tests/test_experimentos_modelo.py`'s own
+`test_intradia_window_reads_aun_no_for_every_metric` is replaced, not deleted, by
+`test_intradia_window_with_no_registered_days_reads_pocos_dias`, asserting the real outcome for the
+same fixture.
+
+**Gate**, once, foreground, from the repository root, on branch tip `e3050098cf1076d8795f2b599d4989a8ede01429`:
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 1819 tests in 318.737s ...
+FAILED (failures=1, skipped=1)`.
+
+**Stops GATE_RED, committed on the branch (`e3050098cf1076d8795f2b599d4989a8ede01429`), not
+merged.** The one failure is outside this slice's `touches:`:
+`tests/test_experimentos_pantalla.py::VerdictWordsTest::test_aun_no_for_an_intraday_window`, which
+built a fresh intraday experiment with zero registered days specifically to assert the OLD blanket
+`'aun_no'` text ("todavía sin veredicto"); that fixture now reads `'pocos_dias'` ("muy pocos días
+todavía") instead, by the same rule a whole-day experiment already uses for zero occurred days.
+Fixing it means editing a file this slice was not approved to touch, so it is named here instead,
+for a continuation to pick up: either update that one assertion to the new wording, or decide
+`'aun_no'` should still mean something for this exact case (an intraday experiment with no days
+registered at all) -- which this slice judged against, since it would make `'dia'` and `'intradia'`
+disagree on the identical "zero occurred days" condition that `'pocos_dias'` already covers for
+`'dia'`.
+
+No schema change, no network call, nothing else customer-facing changes shape (the screens already
+render all five codes; this slice only changes which code a given intraday input now produces).
