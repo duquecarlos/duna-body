@@ -8,6 +8,7 @@ import os
 import re
 import sqlite3
 import threading
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1100,3 +1101,143 @@ def days_with_data(conn: sqlite3.Connection, person_id: int) -> list[str]:
         (person_id,)
     ).fetchall()
     return [r["day"] for r in rows]
+
+
+def save_exercise_sets(conn: sqlite3.Connection, person_id: int, source: str, source_id: str, sets) -> None:
+    """Upserts one activity's per-set detail from a Garmin re-read (BODY-ENTRENO-PULL-1): writes
+    only the watch's own columns (`garmin_*`, `set_type`, `updated_at`) on the UNIQUE slot
+    (person_id, activity_source, activity_source_id, set_order) -- a person's correction
+    (`person_*`, `corrected_by_person`) is never touched here, so it survives every later sync
+    (BODY-ENTRENO-1-INV Q2). `sets` is stored 1-indexed in the order given (each item an
+    `ExerciseSet`-shaped object: `.set_type`, `.category`, `.exercise`, `.reps`, `.weight_value`,
+    `.weight_unit`, `.duration_s`, `.start_local`). A slot beyond `len(sets)` -- the watch no
+    longer reports it -- is removed unless the person corrected it. Requires the activity row
+    (person_id, source, source_id) to already exist -- the table's own FK."""
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        for i, s in enumerate(sets, start=1):
+            conn.execute(
+                "INSERT INTO workout_set (person_id, activity_source, activity_source_id, set_order, "
+                "set_type, garmin_category, garmin_exercise, garmin_reps, garmin_weight_value, "
+                "garmin_weight_unit, garmin_duration_s, garmin_start_local, person_category, "
+                "person_exercise, person_reps, person_weight_kg, person_note, corrected_by_person, "
+                "created_at, updated_at) "
+                "VALUES (:person_id, :activity_source, :activity_source_id, :set_order, :set_type, "
+                ":garmin_category, :garmin_exercise, :garmin_reps, :garmin_weight_value, "
+                ":garmin_weight_unit, :garmin_duration_s, :garmin_start_local, NULL, NULL, NULL, "
+                "NULL, NULL, 0, :created_at, :updated_at) "
+                "ON CONFLICT (person_id, activity_source, activity_source_id, set_order) DO UPDATE SET "
+                "set_type = excluded.set_type, garmin_category = excluded.garmin_category, "
+                "garmin_exercise = excluded.garmin_exercise, garmin_reps = excluded.garmin_reps, "
+                "garmin_weight_value = excluded.garmin_weight_value, "
+                "garmin_weight_unit = excluded.garmin_weight_unit, "
+                "garmin_duration_s = excluded.garmin_duration_s, "
+                "garmin_start_local = excluded.garmin_start_local, updated_at = excluded.updated_at",
+                {
+                    "person_id": person_id, "activity_source": source, "activity_source_id": source_id,
+                    "set_order": i, "set_type": s.set_type, "garmin_category": s.category,
+                    "garmin_exercise": s.exercise, "garmin_reps": s.reps,
+                    "garmin_weight_value": s.weight_value, "garmin_weight_unit": s.weight_unit,
+                    "garmin_duration_s": s.duration_s, "garmin_start_local": s.start_local,
+                    "created_at": now, "updated_at": now,
+                },
+            )
+        conn.execute(
+            "DELETE FROM workout_set WHERE person_id = ? AND activity_source = ? AND "
+            "activity_source_id = ? AND set_order > ? AND corrected_by_person = 0",
+            (person_id, source, source_id, len(sets)),
+        )
+
+
+def correct_exercise_set(conn: sqlite3.Connection, person_id: int, source: str, source_id: str,
+                          set_order: int, *, exercise: str | None = None, category: str | None = None,
+                          reps: float | None = None, weight_kg: float | None = None,
+                          note: str | None = None) -> None:
+    """Writes a person's correction to one set slot. Person-scoped by construction: the UNIQUE
+    slot a conflict can land on always includes this `person_id`, so this can never touch another
+    person's row. Creates the slot if the watch never reported it (`set_type` defaults to
+    'active', since a correction describes a worked set) -- a set the watch missed. On an
+    existing slot, only the fields actually given (not None) replace the stored `person_*` value;
+    a field left out keeps whatever correction was already there. Never touches `garmin_*` or
+    `set_type` on an existing slot (BODY-ENTRENO-1-INV Q2)."""
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        conn.execute(
+            "INSERT INTO workout_set (person_id, activity_source, activity_source_id, set_order, "
+            "set_type, person_category, person_exercise, person_reps, person_weight_kg, person_note, "
+            "corrected_by_person, created_at, updated_at) "
+            "VALUES (:person_id, :activity_source, :activity_source_id, :set_order, 'active', "
+            ":category, :exercise, :reps, :weight_kg, :note, 1, :created_at, :updated_at) "
+            "ON CONFLICT (person_id, activity_source, activity_source_id, set_order) DO UPDATE SET "
+            "person_category = COALESCE(:category, workout_set.person_category), "
+            "person_exercise = COALESCE(:exercise, workout_set.person_exercise), "
+            "person_reps = COALESCE(:reps, workout_set.person_reps), "
+            "person_weight_kg = COALESCE(:weight_kg, workout_set.person_weight_kg), "
+            "person_note = COALESCE(:note, workout_set.person_note), "
+            "corrected_by_person = 1, updated_at = :updated_at",
+            {
+                "person_id": person_id, "activity_source": source, "activity_source_id": source_id,
+                "set_order": set_order, "category": category, "exercise": exercise, "reps": reps,
+                "weight_kg": weight_kg, "note": note, "created_at": now, "updated_at": now,
+            },
+        )
+
+
+def create_manual_session(conn: sqlite3.Connection, person_id: int, day: str, start_local: str | None,
+                           title: str, duration_s: float | None = None) -> str:
+    """Creates an `activity` row for a session the watch never recorded (`source = 'manual'`),
+    filling only columns the `activity` table already has -- `title` maps to `name`; there is no
+    manual `type`. Returns the generated `source_id`, for `save_exercise_sets`/
+    `correct_exercise_set` to key that session's sets to."""
+    source_id = f"manual-{uuid.uuid4().hex}"
+    with conn:
+        conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, name, duration_s, "
+            "distance_m, avg_hr, max_hr, calories, source) "
+            "VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, NULL, NULL, NULL, 'manual')",
+            (person_id, source_id, day, start_local, title, duration_s),
+        )
+    return source_id
+
+
+def exercise_sets(conn: sqlite3.Connection, person_id: int, source: str, source_id: str) -> list[dict]:
+    """One activity's sets in order, each with the display value (the person's correction when
+    `corrected_by_person`, else the watch's reading) and both originals -- for the assistant to
+    read. Person-scoped by the WHERE clause: a row can never surface for another person's id."""
+    rows = conn.execute(
+        "SELECT * FROM workout_set WHERE person_id = ? AND activity_source = ? AND "
+        "activity_source_id = ? ORDER BY set_order",
+        (person_id, source, source_id),
+    ).fetchall()
+    out = []
+    for r in rows:
+        corrected = bool(r["corrected_by_person"])
+        if corrected:
+            weight_value = r["person_weight_kg"]
+            weight_unit = "kg" if weight_value is not None else None
+        else:
+            weight_value, weight_unit = r["garmin_weight_value"], r["garmin_weight_unit"]
+        out.append({
+            "set_order": r["set_order"],
+            "set_type": r["set_type"],
+            "corrected_by_person": corrected,
+            "exercise": r["person_exercise"] if corrected else r["garmin_exercise"],
+            "category": r["person_category"] if corrected else r["garmin_category"],
+            "reps": r["person_reps"] if corrected else r["garmin_reps"],
+            "weight_value": weight_value,
+            "weight_unit": weight_unit,
+            "note": r["person_note"],
+            "duration_s": r["garmin_duration_s"],
+            "start_local": r["garmin_start_local"],
+            "garmin": {
+                "category": r["garmin_category"], "exercise": r["garmin_exercise"],
+                "reps": r["garmin_reps"], "weight_value": r["garmin_weight_value"],
+                "weight_unit": r["garmin_weight_unit"], "duration_s": r["garmin_duration_s"],
+                "start_local": r["garmin_start_local"],
+            },
+            "person": {
+                "category": r["person_category"], "exercise": r["person_exercise"],
+                "reps": r["person_reps"], "weight_kg": r["person_weight_kg"], "note": r["person_note"],
+            },
+        })
+    return out
