@@ -12468,3 +12468,69 @@ that gate and this merge.
 
 **Merge**: `git checkout main` (tip `fabbbe9` before the merge), `git merge --no-ff
 feat/body-experimentos-consentimiento-1` (branch tip `8cb6237`) -> `880049b8411ce8d4b916e2cfdb6dafe94890bee8`.
+
+## BODY-MOMENTOS-PULL-1 -- intraday pull, corrected to BODY-INTRADIA-SPOTCHECK-1's measured facts
+
+`ORCH-CARLOS-DELEGATES-TIER-1-1` carries out `BODY-EXPERIMENTOS-1-INV` slice 7 with the
+2026-11-09 spot-check's measured facts (the orchestrator's research/intradia-spotcheck-
+2026-11-09.md, keys and counts only): `get_heart_rates(day)` -> `heartRateValues`
+([epoch_ms, int] every 2 min) with `heartRateValueDescriptors` naming `timestamp`/`heartrate`;
+`get_stress_data(day)` -> `stressValuesArray` ([epoch_ms, int] every 3 min) with
+`stressValueDescriptorsDTOList` naming `timestamp`/`stressLevel`; the epoch_ms is a **UTC
+instant** (the first sample equals `startTimestampGMT`), not local-shifted as the adapter's prior
+guess assumed; stress values -1 and -2 are Garmin's "no reading" codes, never levels;
+out-of-retention days return null/empty arrays; retention is **about 130-140 days**.
+
+`body/garmin_adapter.py`: `parse_intraday`/`fetch_intraday` now take a `zone` (the caller's own
+IANA name -- the adapter never reads the DB) and convert each sample's epoch-ms as a UTC instant
+via `ZoneInfo`, not as already-local. Columns are found by descriptor key name
+(`_descriptor_index`), falling back to positions 0/1 only when no descriptor list is present.
+Stress samples below 0 are dropped (`GARMIN_STRESS_NO_READING_CODES = (-1, -2)`, named, with any
+other negative treated the same way since a stress level can never be negative); heart-rate
+samples of 0 or less are dropped too -- decided and tested: a living pulse is never 0, the same
+honest-gap treatment as the stress sentinels. The sampling interval is read from a stated key
+when present, else derived from the first two samples' own timestamps (no stated key exists
+today, confirmed by test). `parse_heart_rate_series`/`parse_stress_series` expose the same
+parser for storage's read-time re-parse. Body Battery events are unchanged (out of scope).
+
+`body/db.py`: `guardar_intradia`/`intradia_almacenado`/`intradia` store/read two new
+`raw_payload` kinds, `intradia_fc` and `intradia_estres`, on the existing table and primary key
+(no schema change). Parsing happens on read, via the adapter's own parser looked up by name
+(`getattr`, so a later parser fix is picked up with no re-pull and tests can patch it). An
+out-of-retention day is stored as an explicit empty marker (`None`/`{}`, not "nothing at all") so
+`intradia_almacenado` finds it and it is never re-fetched forever.
+
+`body/pull.py`: `traer_intradia` (on demand, through the adapter only, skips an already-stored
+day unless `forzar=True`, dual-returns `(status, token_after)` when `token_str` is given, same
+shape as `traer_series`) and `traer_intradia_rango` (oldest first, paced `time.sleep`, stops
+cleanly and returns the counts gathered so far on a `NotSignedIn`, refuses a `desde` older than
+`INTRADIA_ALCANCE_DIAS = 130` with a clear message, prints counts and dates only). Neither is
+called by `pull_all`, `pull_hosted` or `pull_backfill_hosted` -- asserted by test, stubbing
+`fetch_intraday` with a Mock that must stay unvisited. A new `--intradia`/`--dias N` pair on
+`body.pull`'s own CLI (default and max `dias`: `INTRADIA_ALCANCE_DIAS`) runs the range for the
+local person over the last N days; hosted refuses, like `vida_export`.
+
+`body/vivo.py`: a task `intradia` -> `python -m body.vivo intradia --dias N`, routed through
+`body.pull` (`TAREAS["intradia"] = "body.pull"`) with a `--intradia` flag `PREFIJO_ARGV`
+prepends on the task's behalf, so the person's own command never needs to name it. Nothing
+schedules this task in this slice.
+
+**Backfill command for the orchestrator** (not run here -- Carlos's own yes, per the approval):
+`python -m body.vivo intradia --dias 130` (or, without the live-tree launcher,
+`python -m body.pull --intradia --dias 130`).
+
+**Gate**, once, foreground, on the branch tip before the merge: `.venv/Scripts/python.exe -m
+unittest discover tests -t .` -> `Ran 1710 tests in 331.313s ... OK (skipped=1)`. 38 more than the
+prior recorded floor (1672, `BODY-EXPERIMENTOS-CONSENTIMIENTO-1-M`): 26 new tests in
+`tests/test_momentos_pull.py`, 9 new/changed-count tests in `tests/test_garmin_parse.py`'s
+intraday classes (replacing the 2 pre-slice intraday-interval tests with 3, plus 4 new classes:
+descriptor-order, timezone, sentinel-drop), 3 new tests in `tests/test_vivo.py`'s
+`IntradiaTareaTest`; `skipped=1` carries over unchanged.
+
+**Merge** (no schema change, no customer-facing bytes, no cross-repo/DTO change -- Merge Policy A
+applies, and the spec's own body authorizes it in words): `git checkout main` (tip `7a6f0be`
+before the merge), `git merge --no-ff feat/body-momentos-pull-1` (branch tip
+`3defc959ad315ffa5368ce98947c7907cd3231f5`) -> `562f80655f7f55a82822c27afe935b0fab78ddd2`. The
+merge commit's tree (`4f49a2386f8e7bc43243eb87ebe6bf6c0a20d192`) is identical to the branch tip's
+own tree -- `main` had not moved since the branch was cut, so the merge introduced nothing beyond
+the branch's own content and the gate above was not re-run.
