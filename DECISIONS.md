@@ -12801,3 +12801,21 @@ schema, no customer bytes, no cross-repo contract), but the branch as a whole al
 customer-facing bytes (the proposal cards and their i18n strings, from `bf9f054`), and the
 dispatching spec's approval-reason says that still stops the merge for the orchestrator's own
 375 px check.
+
+## BODY-EXPERIMENTOS-REGISTRO-1-M2 -- lands BODY-EXPERIMENTOS-REGISTRO-1 (`bf9f054`, `7dbc230`) and
+its -M (`0f252f3`, `3a38922`) on `main`, merge only, no code changed by this slice.
+
+**The 375 px check this merge relies on** was run by the orchestrator on 2026-11-09 on the demo
+home, with proposals seeded through `herramientas.ejecutar` after `db.init` (the -M's route), in
+the assistant panel at 375x812, in es and en: no horizontal overflow, every button 44 px tall, the
+full text present for both new cards (`leer_experimentos`'s "Nuevo experimento" card and
+`marcar_experimento`'s "Marcar experimento" card) in both languages. ORCH-CARLOS-DELEGATES-TIER-1-1
+authorizes the merge in these words: "The customer-facing check the parent spec asked for was done
+by the orchestrator at 375 px in es and en and passed. Merge approved."
+
+**Gate**, once, foreground, on the branch tip (commit `3a38922`): `.venv/Scripts/python.exe -m
+unittest discover tests -t .` -> `Ran 1782 tests in 262.507s ... OK (skipped=1)`. Matches the count
+the -M slice measured on the same tip.
+
+**Merge**: `git checkout main` (tip `d6524c2`), `git merge --no-ff
+feat/body-experimentos-registro-1` (branch tip `3a38922`) -> `88eb7f3`.
