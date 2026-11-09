@@ -88,20 +88,37 @@ def bloques_noche(conn, person_id: int, desde: str, hasta: str) -> list[Bloque]:
     return [Bloque(inicio=b[0].isoformat(), fin=b[-1].isoformat(), dias=len(b)) for b in bloques]
 
 
+def _post_noche_de_bloques(bloques: list[Bloque]) -> set[str]:
+    dias: set[str] = set()
+    for b in bloques:
+        fin = _parse(b.fin)
+        for i in range(1, MODELO["ventana_post"] + 1):
+            dias.add((fin + timedelta(i)).isoformat())
+    return dias
+
+
+def dias_post_noche(conn, person_id: int, desde: str, hasta: str) -> set[str]:
+    """The `ventana_post` days right after the last night of each night block whose own nights
+    fall in [desde, hasta] -- the post-night recovery window alone, with no night day in it.
+    Public so body/experimentos.py's `excluir_tras_noche` filter reuses this one definition
+    instead of redefining it (BODY-EXPERIMENTOS-MODELO-1)."""
+    return _post_noche_de_bloques(bloques_noche(conn, person_id, desde, hasta))
+
+
 def _dias_excluidos(conn, person_id: int, hoy: date) -> set[str]:
     """Night days and the `ventana_post` days right after each block's last night -- never counted
     toward "tus semanas de día" (a night-shift week always excludes its own recovery tail)."""
     desde = (hoy - timedelta(REFERENCIA_DIAS + MODELO["ventana_post"])).isoformat()
     hasta = (hoy - timedelta(1)).isoformat()
+    bloques = bloques_noche(conn, person_id, desde, hasta)
     excluidos: set[str] = set()
-    for b in bloques_noche(conn, person_id, desde, hasta):
+    for b in bloques:
         fin = _parse(b.fin)
         d = _parse(b.inicio)
         while d <= fin:
             excluidos.add(d.isoformat())
             d += timedelta(1)
-        for i in range(1, MODELO["ventana_post"] + 1):
-            excluidos.add((fin + timedelta(i)).isoformat())
+    excluidos |= _post_noche_de_bloques(bloques)
     return excluidos
 
 
