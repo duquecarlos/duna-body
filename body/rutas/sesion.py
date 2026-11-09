@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from .. import cuenta, db
 from ..i18n import DEFAULT as DEFAULT_LANG
-from ..i18n import T
+from ..i18n import T, pick as pick_lang
 from . import comun
 
 router = APIRouter()
@@ -61,7 +61,7 @@ def login_callback(request: Request):
         db.ensure_ready(conn)
         try:
             result = cuenta.handle_callback(conn, request.cookies.get(cuenta.FLUJO_COOKIE),
-                                            dict(request.query_params))
+                                            dict(request.query_params), pick_lang(request.headers.get("accept-language")))
         except cuenta.FlowRefused:
             return HTMLResponse(comun.env.get_template("acceso_rechazado.html").render(t=T(DEFAULT_LANG)),
                                 status_code=400)

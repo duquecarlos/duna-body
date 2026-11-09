@@ -136,13 +136,15 @@ class CuentaRpTestCase(unittest.TestCase):
             conn.close()
 
     def _sign_in(self, *, duna_productos=("body",), return_to: str | None = None, sub: str = SUB,
-                sid: str = "sid-demo-1", auth_time=_DEFAULT_AUTH_TIME, extra: dict | None = None):
+                sid: str = "sid-demo-1", auth_time=_DEFAULT_AUTH_TIME, extra: dict | None = None,
+                headers: dict | None = None):
         auth = self._start_login(return_to)
         self.issuer.next_id_token = self.issuer.id_token(nonce=auth["nonce"], sub=sub,
                                                           duna_productos=duna_productos, sid=sid,
                                                           auth_time=auth_time, extra=extra)
         return self.client.get(
-            "/login/cuenta/callback", params={"code": "auth-code-1", "state": auth["state"]}
+            "/login/cuenta/callback", params={"code": "auth-code-1", "state": auth["state"]},
+            headers=headers or {},
         )
 
 
@@ -238,6 +240,63 @@ class FullSignInTest(CuentaRpTestCase):
         self.assertIn(cuenta.SWITCHER_URL, r.text)
         self.assertIsNone(r.cookies.get(cuenta.SESSION_COOKIE))
         self.assertEqual(self._db_count("SELECT COUNT(*) FROM person"), before)
+
+
+class FirstSignInLanguageTest(CuentaRpTestCase):
+    """BODY-IDIOMA-PRIMERA-1: a hosted person's FIRST sign-in seeds `person.language` from the
+    callback request's Accept-Language header, through body/i18n's `pick`; an existing person's
+    language is never changed by a later sign-in, whatever the header says."""
+
+    def _language_of(self, sub: str) -> str:
+        conn = db.connect()
+        try:
+            return conn.execute(
+                "SELECT language FROM person WHERE cuenta_sub = ?", (sub,)
+            ).fetchone()["language"]
+        finally:
+            conn.close()
+
+    def test_first_sign_in_with_english_header_sets_english(self):
+        r = self._sign_in(headers={"Accept-Language": "en-US,en;q=0.9"})
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(self._language_of(SUB), "en")
+
+    def test_first_sign_in_with_spanish_header_sets_spanish(self):
+        r = self._sign_in(headers={"Accept-Language": "es-CO"})
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(self._language_of(SUB), "es")
+
+    def test_first_sign_in_with_unsupported_header_falls_back_to_default(self):
+        r = self._sign_in(headers={"Accept-Language": "fr-FR,fr;q=0.9"})
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(self._language_of(SUB), "es")
+
+    def test_first_sign_in_with_no_header_falls_back_to_default(self):
+        r = self._sign_in()
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(self._language_of(SUB), "es")
+
+    def test_second_sign_in_with_different_header_leaves_language_unchanged(self):
+        self._sign_in(headers={"Accept-Language": "en-US,en;q=0.9"})
+        self.client.cookies.clear()
+        r = self._sign_in(headers={"Accept-Language": "es-CO"})
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(self._language_of(SUB), "en")
+
+    def test_second_sign_in_never_overwrites_a_person_chosen_language(self):
+        self._sign_in(headers={"Accept-Language": "en-US,en;q=0.9"})
+        conn = db.connect()
+        try:
+            person_id = conn.execute(
+                "SELECT id FROM person WHERE cuenta_sub = ?", (SUB,)
+            ).fetchone()["id"]
+            db.set_language(conn, "es", person_id)
+        finally:
+            conn.close()
+        self.client.cookies.clear()
+        r = self._sign_in(headers={"Accept-Language": "en-US,en;q=0.9"})
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(self._language_of(SUB), "es")
 
 
 class CallbackRefusalTest(CuentaRpTestCase):
