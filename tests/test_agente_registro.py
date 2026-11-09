@@ -79,6 +79,10 @@ def _seed(conn) -> int:
                         direction="lower", target_value=50.0, baseline_value=60.0, deadline="2026-12-01")
     goals.activate(conn, gid)
     goals.add_habit(conn, gid, "Dormir temprano antes de turno de noche", {"per": "week", "times": 3})
+    db.crear_experimento(
+        conn, 1, "Ducha fría corta en turno de tarde", ["resting_hr"], {"tipo": "dia"},
+        {"turno_en": None, "turno_fuera": None, "excluir_tras_noche": False}, fecha_inicio="2026-10-01",
+    )
     conn.commit()
     return gid
 
@@ -89,7 +93,7 @@ def _all_tool_calls():
         "leer_hoy": {}, "leer_dia": {"day": "2026-10-05"}, "leer_como_calculo": {"day": "2026-10-05"},
         "leer_tendencias": {}, "leer_historia": {}, "leer_metas": {}, "leer_meta": gid_placeholder,
         "leer_turnos": {}, "leer_costo_turnos": {}, "leer_ajustes": {}, "leer_tutoriales": {},
-        "leer_entreno": {"day": "2026-10-05"},
+        "leer_entreno": {"day": "2026-10-05"}, "leer_experimentos": {},
     }
 
 
@@ -150,7 +154,8 @@ def _walk_for_writers(func, seen: set, depth: int, found: list) -> None:
 
 
 PROPUESTA_NOMBRES = {"proponer_meta", "proponer_cambio_meta", "proponer_confirmar_turnos", "proponer_idioma",
-                     "planear_entreno", "registrar_entreno", "registrar_medida", "marcar_habito"}
+                     "planear_entreno", "registrar_entreno", "registrar_medida", "marcar_habito",
+                     "proponer_experimento", "marcar_experimento"}
 # Privacy and account controls deliberately NEVER become proposal tools (BODY-ASISTENTE-PROPUESTAS-1
 # approval reason): nivel_datos, consent, export, delete-all, device keys, Garmin connection,
 # household membership all stay on their own screens.
@@ -161,18 +166,19 @@ NUNCA_PROPUESTA = {
 
 
 class RegistryShapeTest(unittest.TestCase):
-    def test_twelve_lectura_tools_with_expected_levels(self):
+    def test_thirteen_lectura_tools_with_expected_levels(self):
         expected_levels = {
             "leer_hoy": "completo", "leer_dia": "completo", "leer_como_calculo": "completo",
             "leer_tendencias": "resumen", "leer_historia": "resumen", "leer_metas": "resumen",
             "leer_meta": "resumen", "leer_turnos": "ninguno", "leer_costo_turnos": "resumen",
             "leer_ajustes": "ninguno", "leer_tutoriales": "ninguno", "leer_entreno": "completo",
+            "leer_experimentos": "resumen",
         }
         lectura = [h for h in herramientas.HERRAMIENTAS if h["tipo"] == "lectura"]
-        self.assertEqual(len(lectura), 12)
+        self.assertEqual(len(lectura), 13)
         self.assertEqual({h["nombre"]: h["nivel"] for h in lectura}, expected_levels)
 
-    def test_eight_propuesta_tools_at_nivel_ninguno(self):
+    def test_ten_propuesta_tools_at_nivel_ninguno(self):
         propuesta = [h for h in herramientas.HERRAMIENTAS if h["tipo"] == "propuesta"]
         self.assertEqual({h["nombre"] for h in propuesta}, PROPUESTA_NOMBRES)
         self.assertTrue(all(h["nivel"] == "ninguno" for h in propuesta))
@@ -180,7 +186,7 @@ class RegistryShapeTest(unittest.TestCase):
 
     def test_every_entry_has_a_known_tipo(self):
         self.assertTrue(all(h["tipo"] in ("lectura", "propuesta") for h in herramientas.HERRAMIENTAS))
-        self.assertEqual(len(herramientas.HERRAMIENTAS), 20)
+        self.assertEqual(len(herramientas.HERRAMIENTAS), 23)
 
 
 class RouteMappingTest(unittest.TestCase):
