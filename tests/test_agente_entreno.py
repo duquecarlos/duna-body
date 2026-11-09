@@ -6,6 +6,7 @@ BODY-ENTRENO-SCHEMA-1/BODY-ENTRENO-PULL-1. No network: every Garmin call goes th
 import json
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -93,6 +94,14 @@ class PlanearEntrenoTest(unittest.TestCase):
         self.conn.commit()
         resultado = propuestas.deshacer(self.conn, 1, out["propuesta_id"])
         self.assertEqual(resultado["estado"], "propuesta_desactualizada")
+
+    def test_a_far_future_day_is_accepted(self):
+        # BODY-AGENTE-DIA-FUTURO-1: a plan is for later, on purpose -- unlike registrar_entreno.
+        out = herramientas.ejecutar(self.conn, 1, "planear_entreno", {
+            "day": "2027-06-01", "titulo": "Pierna",
+            "ejercicios": [{"ejercicio": "sentadilla", "series": 4}],
+        }, "ninguno", self.cid)
+        self.assertEqual(out["estado"], "propuesta")
 
     def test_unknown_or_foreign_goal_id_is_refused(self):
         gid = goals.propose(self.conn, 2, "Meta de B", "2026-10-01", metric_key="steps", direction="raise",
@@ -316,6 +325,39 @@ class RegistrarEntrenoManualTest(unittest.TestCase):
         db.correct_exercise_set(self.conn, 1, "manual", source_id, 1, exercise="sentadilla distinta")
         resultado = propuestas.deshacer(self.conn, 1, out["propuesta_id"])
         self.assertEqual(resultado["estado"], "propuesta_desactualizada")
+
+
+class RegistrarEntrenoFutureDayTest(unittest.TestCase):
+    """BODY-AGENTE-DIA-FUTURO-1: `registrar_entreno` is "what I did" -- an actual record -- so it
+    refuses a day its own person has not reached yet, checked in THEIR zone, not the server's.
+    `Pacific/Kiritimati` (UTC+14) and a UTC instant late in its day are picked so the person's local
+    date and the UTC date disagree, proving the check reads the person's own today."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        self.cid = _cid(self.conn)
+        self.conn.execute("UPDATE person SET timezone = 'Pacific/Kiritimati' WHERE id = 1")
+        self.conn.commit()
+        self.series = [{"ejercicio": "sentadilla", "reps": 8}]
+
+    def _patched(self, instant: datetime):
+        return mock.patch("body.fechas.datetime", **{
+            "now.side_effect": lambda tz=None: instant.astimezone(tz) if tz else instant,
+        })
+
+    def test_today_in_the_persons_zone_is_accepted(self):
+        instant = datetime(2026, 11, 9, 23, 0, tzinfo=timezone.utc)  # already Nov 10 in Kiritimati
+        with self._patched(instant):
+            out = herramientas.ejecutar(self.conn, 1, "registrar_entreno",
+                                        {"day": "2026-11-10", "series": self.series}, "ninguno", self.cid)
+        self.assertEqual(out["estado"], "propuesta")
+
+    def test_a_day_beyond_tolerance_in_the_persons_zone_is_refused(self):
+        instant = datetime(2026, 11, 9, 23, 0, tzinfo=timezone.utc)  # local today is Nov 10
+        with self._patched(instant):
+            with self.assertRaises(herramientas.ToolError):
+                herramientas.ejecutar(self.conn, 1, "registrar_entreno",
+                                      {"day": "2026-11-12", "series": self.series}, "ninguno", self.cid)
 
 
 class LeerEntrenoTest(unittest.TestCase):

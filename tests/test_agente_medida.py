@@ -5,8 +5,9 @@ any other (body/goals.py is source-agnostic, BODY-ENTRENO-1-INV Q4). Invented de
 import json
 import tempfile
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
@@ -119,6 +120,41 @@ class RegistrarMedidaProposeApplyUndoTest(unittest.TestCase):
         registro = self.conn.execute("SELECT despues_json FROM propuesta_agente WHERE id = ?",
                                      (out["propuesta_id"],)).fetchone()
         self.assertIn("day", json.loads(registro["despues_json"]))
+
+
+class FutureDayTest(unittest.TestCase):
+    """BODY-AGENTE-DIA-FUTURO-1: `registrar_medida` is a number the person measured themself -- an
+    actual record -- so it refuses a day its own person has not reached yet, checked in THEIR zone,
+    not the server's. `Pacific/Kiritimati` (UTC+14) and a UTC instant late in its day are picked so
+    the person's local date and the UTC date disagree, proving the check reads the person's own
+    today."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        self.cid = _cid(self.conn)
+        self.conn.execute("UPDATE person SET timezone = 'Pacific/Kiritimati' WHERE id = 1")
+        self.conn.commit()
+
+    def _patched(self, instant: datetime):
+        return mock.patch("body.fechas.datetime", **{
+            "now.side_effect": lambda tz=None: instant.astimezone(tz) if tz else instant,
+        })
+
+    def test_today_in_the_persons_zone_is_accepted(self):
+        instant = datetime(2026, 11, 9, 23, 0, tzinfo=timezone.utc)  # already Nov 10 in Kiritimati
+        with self._patched(instant):
+            out = herramientas.ejecutar(self.conn, 1, "registrar_medida",
+                                        {"metric_key": "flex_alcance_cm", "value": 32.0, "day": "2026-11-10"},
+                                        "ninguno", self.cid)
+        self.assertEqual(out["estado"], "propuesta")
+
+    def test_a_day_beyond_tolerance_in_the_persons_zone_is_refused(self):
+        instant = datetime(2026, 11, 9, 23, 0, tzinfo=timezone.utc)  # local today is Nov 10
+        with self._patched(instant):
+            with self.assertRaises(herramientas.ToolError):
+                herramientas.ejecutar(self.conn, 1, "registrar_medida",
+                                      {"metric_key": "flex_alcance_cm", "value": 32.0, "day": "2026-11-12"},
+                                      "ninguno", self.cid)
 
 
 class RefusalsTest(unittest.TestCase):
