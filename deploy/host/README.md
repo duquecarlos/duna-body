@@ -80,6 +80,11 @@ never on the server):
   if `caddy validate` fails
 * the repository owner is read at runtime with `stat -c %U`, never hardcoded
 * `duna-body` is a system user created with its own group (`useradd --system --user-group ...`)
+* `/srv/duna` itself is `duna:duna` mode 750, so `duna-body` cannot traverse into it by default;
+  `body-deploy.sh` checks this before starting any unit and grants traverse-only access itself
+  (`setfacl -m u:duna-body:x /srv/duna`, never recursive, never read or write) if the check fails,
+  then checks again -- idempotent, and it stops naming the exact command if `setfacl` is missing
+  or the grant still doesn't take
 
 Ubuntu ships `python3-venv` separately from `python3`, so if the venv build step refuses with
 "python3-venv is missing", run once, by hand:

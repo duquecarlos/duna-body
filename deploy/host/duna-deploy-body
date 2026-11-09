@@ -68,7 +68,10 @@ case "$cmd" in
       exit 1
     fi
     owner="$(stat -c %U "$REPO_DIR")"
-    for unit in body-web.service body-pull.timer body-vida.timer body-backup.timer; do
+    # body-deploy.sh is the single list of Body's live units (BODY-DEPLOY-HOST-1); sourcing it
+    # stops before it runs any deploy step (its own sourced-vs-executed guard).
+    source "$PRODUCT_SCRIPT"
+    for unit in body-web.service "${TIMERS[@]}"; do
       state="$(run systemctl is-active "$unit" 2>/dev/null || true)"
       echo "$unit: $state"
     done

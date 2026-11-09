@@ -43,8 +43,14 @@ class EntryAllowlistTest(unittest.TestCase):
         self.assertLess(backup_exec_idx, pull_idx)
 
     def test_status_includes_backup_timer_and_last_run(self):
-        self.assertIn("body-backup.timer", self.text)
         self.assertIn("ExecMainExitTimestamp", self.text)
+        status_idx = self.text.index("status)")
+        deploy_idx = self.text.index("deploy)", status_idx)
+        status_body = self.text[status_idx:deploy_idx]
+        self.assertIn("source", status_body)
+        self.assertIn("TIMERS", status_body)
+        deploy_text = _read(DEPLOY)
+        self.assertIn("body-backup.timer", deploy_text)
 
     def test_no_carlos_hardcoded(self):
         self.assertNotIn("carlos", self.text.lower())
@@ -160,6 +166,14 @@ class EnvValueQuoteStrippingTest(unittest.TestCase):
         self.assertNotIn("printf '%s\\n' \"$value\"", body)
 
 
+class SnapshotRunsWithRepoCwdTest(unittest.TestCase):
+    def test_snapshot_call_sets_cwd_to_repo_dir(self):
+        text = _read(BACKUP)
+        snapshot_idx = text.index("-m body.backup snapshot")
+        preceding = text[max(0, snapshot_idx - 200):snapshot_idx]
+        self.assertIn('env -C "$REPO_DIR"', preceding)
+
+
 class DeployInstallsBackupUnitsTest(unittest.TestCase):
     def setUp(self):
         self.text = _read(DEPLOY)
@@ -169,9 +183,9 @@ class DeployInstallsBackupUnitsTest(unittest.TestCase):
         self.assertIn("body-backup.timer", self.text)
 
     def test_enable_line_includes_backup_timer(self):
-        m = re.search(r"systemctl enable[^\n]*", self.text)
-        self.assertIsNotNone(m, "no systemctl enable line found")
-        self.assertIn("body-backup.timer", m.group(0))
+        matches = re.findall(r"systemctl enable[^\n]*", self.text)
+        self.assertTrue(matches, "no systemctl enable line found")
+        self.assertTrue(any("body-backup.timer" in m or "TIMERS" in m for m in matches))
 
 
 class BackupUnitsTest(unittest.TestCase):

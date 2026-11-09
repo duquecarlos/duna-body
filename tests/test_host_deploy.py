@@ -409,17 +409,17 @@ class SystemdUnitTest(unittest.TestCase):
     def test_backfill_unit_installed_and_enabled(self):
         text = _read(PRODUCT)
         units_line = next(l for l in text.splitlines() if l.startswith("UNITS="))
-        enable_line = next(l for l in text.splitlines() if l.startswith("run systemctl enable"))
+        enable_lines = [l for l in text.splitlines() if l.startswith("run systemctl enable")]
         self.assertIn("body-backfill.service", units_line)
         self.assertIn("body-backfill.timer", units_line)
-        self.assertIn("body-backfill.timer", enable_line)
+        self.assertTrue(any("body-backfill.timer" in l or "TIMERS" in l for l in enable_lines))
 
     def test_vida_unit_retired(self):
         text = _read(PRODUCT)
         units_line = next(l for l in text.splitlines() if l.startswith("UNITS="))
-        enable_line = next(l for l in text.splitlines() if l.startswith("run systemctl enable"))
+        enable_lines = [l for l in text.splitlines() if l.startswith("run systemctl enable")]
         self.assertNotIn("body-vida", units_line)
-        self.assertNotIn("body-vida", enable_line)
+        self.assertTrue(all("body-vida" not in l for l in enable_lines))
         self.assertFalse((HOST_DIR / "body-vida.service").exists())
         self.assertFalse((HOST_DIR / "body-vida.timer").exists())
 
@@ -490,6 +490,74 @@ class EnvExampleTest(unittest.TestCase):
                 self.assertEqual(value, self.FIXED[name])
             else:
                 self.assertEqual(value, "", f"{name} has a non-blank value: {value!r}")
+
+
+class TraverseAclTest(unittest.TestCase):
+    def setUp(self):
+        self.text = _read(PRODUCT)
+
+    def test_grant_is_traverse_only_and_guarded(self):
+        func_idx = self.text.index("ensure_traverse_acl() {")
+        end = self.text.index("\n}\n", func_idx)
+        body = self.text[func_idx:end]
+        self.assertIn("setfacl -m", body)
+        self.assertIn('u:$DATA_USER:x', body)
+        self.assertNotIn(":rwx", body)
+        self.assertNotIn("-R", body)
+        self.assertIn("test -x", body)
+        self.assertIn("command -v setfacl", body)
+        self.assertIn("exit 1", body)
+
+    def test_parent_dir_derived_from_repo_dir(self):
+        self.assertIn('PARENT_DIR="$(dirname "$(dirname "$REPO_DIR")")"', self.text)
+
+    def test_grant_called_before_first_unit_action_in_main_flow(self):
+        venv_idx = self.text.index('python3 -m venv "$REPO_DIR/.venv"')
+        acl_call_idx = self.text.index("ensure_traverse_acl", venv_idx)
+        install_call_idx = self.text.index("install_units\n", venv_idx)
+        enable_idx = self.text.index("systemctl enable", venv_idx)
+        self.assertLess(acl_call_idx, install_call_idx)
+        self.assertLess(acl_call_idx, enable_idx)
+
+
+class TimersEnabledNowTest(unittest.TestCase):
+    def test_timers_enabled_with_now_separately_from_web(self):
+        text = _read(PRODUCT)
+        enable_lines = [l for l in text.splitlines() if l.strip().startswith("run systemctl enable")]
+        now_lines = [l for l in enable_lines if "--now" in l]
+        self.assertTrue(now_lines, "no systemctl enable --now line found")
+        for l in now_lines:
+            self.assertNotIn("body-web.service", l)
+        web_lines = [l for l in enable_lines if "body-web.service" in l]
+        self.assertTrue(web_lines)
+        for l in web_lines:
+            self.assertNotIn("--now", l)
+        self.assertTrue(any("body-pull.timer" in l or "TIMERS" in l for l in now_lines))
+        self.assertTrue(any("body-backfill.timer" in l or "TIMERS" in l for l in now_lines))
+        self.assertTrue(any("body-backup.timer" in l or "TIMERS" in l for l in now_lines))
+
+
+class RollbackRestartsTimersTest(unittest.TestCase):
+    def test_rollback_restarts_timers(self):
+        text = _read(PRODUCT)
+        start = text.index("rollback_and_fail() {")
+        end = text.index("\n}\n", start)
+        body = text[start:end]
+        self.assertIn("systemctl restart", body)
+        self.assertIn('"${TIMERS[@]}"', body)
+
+
+class StatusDerivesUnitListTest(unittest.TestCase):
+    def test_status_sources_product_script_and_covers_backfill_not_vida(self):
+        text = _read(ENTRY)
+        status_idx = text.index("status)")
+        deploy_idx = text.index("deploy)", status_idx)
+        body = text[status_idx:deploy_idx]
+        self.assertIn('source "$PRODUCT_SCRIPT"', body)
+        self.assertIn("TIMERS", body)
+        self.assertNotIn("body-vida", body)
+        product_text = _read(PRODUCT)
+        self.assertIn("body-backfill.timer", product_text)
 
 
 class LineEndingTest(unittest.TestCase):
