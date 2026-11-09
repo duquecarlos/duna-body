@@ -3,7 +3,7 @@ step 2: "Demo tenant and catalog"). Growth drives this tenant with Playwright; n
 person's data -- every figure is generated from a fixed random seed, in a plausible range, never read
 from a real database.
 
-    python -m body.demo --home <folder> [--dias 90] [--idioma es|en]
+    python -m body.demo --home <folder> [--dias 120] [--idioma es|en]
 
 REFUSES (non-zero exit, a plain message, nothing written) when `--home` is missing, or resolves to the
 default BODY_HOME (`~/.body-app`), the current `BODY_HOME` environment value, or `/srv/duna/data/body`,
@@ -29,7 +29,13 @@ from pathlib import Path
 from . import fechas
 
 SEED = 20261105
-DIAS_DEFAULT = 90
+# BODY-DEMO-TURNOS-1: long enough that the last COMPLETE night block (confirmed shifts only --
+# _seed_shifts holds the last 7 days back as a 'proposed' batch, never in `shift`) always has
+# turnos_costo.MIN_BLOQUES_PREVIOS earlier night blocks inside turnos_costo.RESUMEN_DIAS, whichever
+# day this seeds on: night weeks repeat every 28 days (the demo's 4-week cycle), so a shorter window
+# can land with only 1-2 earlier blocks depending on where "today" falls in that cycle -- 120 clears
+# it with margin (measured minimum 115 over a full 28-day cycle of anchors).
+DIAS_DEFAULT = 120
 MARKER_NAME = "DEMO"
 _BANNED_HOME = Path("/srv/duna/data/body")
 
