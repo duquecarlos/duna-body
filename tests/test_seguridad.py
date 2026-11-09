@@ -296,14 +296,22 @@ class HostedResponseCarriesFormActionTest(SeguridadTestCase):
 # literal, an f-string with a fixed leading "/x" prefix, a direct cuenta.safe_return_to(...) /
 # cuenta.logout_url(...) call, or a bare variable assigned from cuenta.safe_return_to(...) in the
 # same function) or be added here with a reason.
+#
+# Keyed by (file, enclosing function name, ast.unparse(target)) -- BODY-SEGURIDAD-ALLOWLIST-1: a
+# key on line number moves every time a worker edits a line above the redirect, turning an
+# unrelated edit into a false gate failure (BODY-IDIOMA-PRIMERA-1 had to fold an import and an
+# argument into existing lines for exactly this reason). The enclosing function plus the target
+# expression's source survive any such edit; only moving the redirect itself, or changing its
+# target expression or the function it lives in, changes the key. A module-level redirect (no
+# enclosing function) keys with function name None.
 ALLOWLIST = {
-    ("body/rutas/sesion.py", 50):
+    ("body/rutas/sesion.py", "login_start", "url"):
         "url is cuenta.start_login()'s authorize_url -- built server-side from issuer() and random "
         "state/nonce/PKCE values, external to Body by design; never reflects request data",
-    ("body/rutas/sesion.py", 76):
+    ("body/rutas/sesion.py", "login_callback", "result.return_to or '/'"):
         "result.return_to was already passed through cuenta.safe_return_to in this same module's "
         "login_start, before being stored in the inicio_sesion row handle_callback reads it back from",
-    ("body/rutas/ajustes.py", 72):
+    ("body/rutas/ajustes.py", "set_trabaja_turnos", "volver"):
         "ajustes' own stricter allow-list: volver is narrowed to {'/', '/settings'} two lines above "
         "(body/rutas/ajustes.py's set_trabaja_turnos) -- left as is, per this slice's spec",
 }
@@ -349,6 +357,37 @@ def _enclosing_function(tree: ast.Module, call_node: ast.AST):
     return best
 
 
+def _scan_redirect_targets(tree: ast.Module, rel: str, allowlist: dict) -> tuple[list[str], set]:
+    """Walk one module's AST for RedirectResponse(...) calls, classifying each target as generically
+    safe, allow-listed (by (file, enclosing function name, ast.unparse(target))), or unresolved
+    (reported as "file:line", never as the key, so line numbers stay out of the allowlist while
+    still pinpointing a failure). Shared by the real scan over body/ and the synthetic cases below
+    that prove the key survives an unrelated line shift and nothing else."""
+    unresolved: list[str] = []
+    hits: set = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "RedirectResponse" and node.args):
+            continue
+        target = node.args[0]
+        func = _enclosing_function(tree, node)
+        func_name = func.name if func is not None else None
+        key = (rel, func_name, ast.unparse(target))
+        if isinstance(target, ast.Constant) and isinstance(target.value, str):
+            continue
+        if _fixed_prefix_fstring(target):
+            continue
+        if _is_cuenta_call(target, "safe_return_to") or _is_cuenta_call(target, "logout_url"):
+            continue
+        if isinstance(target, ast.Name) and func is not None and _assigned_from_safe_return_to(func, target.id):
+            continue
+        if key in allowlist:
+            hits.add(key)
+            continue
+        unresolved.append(f"{rel}:{node.lineno}")
+    return unresolved, hits
+
+
 class RedirectTargetsAreSafeTest(unittest.TestCase):
     def test_every_redirect_response_target_is_fixed_or_sanitized(self):
         unresolved = []
@@ -356,32 +395,52 @@ class RedirectTargetsAreSafeTest(unittest.TestCase):
         for path in sorted(BODY_DIR.rglob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             rel = str(path.relative_to(ROOT)).replace("\\", "/")
-            for node in ast.walk(tree):
-                if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                        and node.func.id == "RedirectResponse" and node.args):
-                    continue
-                target = node.args[0]
-                key = (rel, node.lineno)
-                if isinstance(target, ast.Constant) and isinstance(target.value, str):
-                    continue
-                if _fixed_prefix_fstring(target):
-                    continue
-                if _is_cuenta_call(target, "safe_return_to") or _is_cuenta_call(target, "logout_url"):
-                    continue
-                if isinstance(target, ast.Name):
-                    func = _enclosing_function(tree, node)
-                    if func is not None and _assigned_from_safe_return_to(func, target.id):
-                        continue
-                if key in ALLOWLIST:
-                    allowlist_hits.add(key)
-                    continue
-                unresolved.append(f"{rel}:{node.lineno}")
+            u, hits = _scan_redirect_targets(tree, rel, ALLOWLIST)
+            unresolved.extend(u)
+            allowlist_hits |= hits
         self.assertEqual(unresolved, [],
                           f"RedirectResponse target not provably fixed or sanitized -- wrap it in "
                           f"cuenta.safe_return_to(...) or add a named, reasoned ALLOWLIST entry: "
                           f"{unresolved}")
         stale = set(ALLOWLIST) - allowlist_hits
         self.assertEqual(stale, set(), f"ALLOWLIST entry no longer matches any call site: {stale}")
+
+
+class RedirectAllowlistKeyStrictnessTest(unittest.TestCase):
+    """BODY-SEGURIDAD-ALLOWLIST-1: the re-key did not weaken guard (f) -- an allow-listed call site
+    survives an unrelated line shift, but neither a different target in the same function nor the
+    same target text in a different function is let through by accident."""
+
+    def test_listed_call_site_moved_down_by_inserted_lines_still_passes(self):
+        allowlist = {("fake.py", "login_start", "url"): "test fixture reason"}
+        src = ("def login_start():\n"
+               + "    noop = 1\n" * 10
+               + "    url = compute()\n"
+               "    return RedirectResponse(url, status_code=303)\n")
+        tree = ast.parse(src)
+        unresolved, hits = _scan_redirect_targets(tree, "fake.py", allowlist)
+        self.assertEqual(unresolved, [])
+        self.assertEqual(hits, set(allowlist))
+
+    def test_same_function_different_unsanitized_target_fails(self):
+        allowlist = {("fake.py", "login_start", "url"): "test fixture reason"}
+        src = ("def login_start():\n"
+               "    other = compute()\n"
+               "    return RedirectResponse(other, status_code=303)\n")
+        tree = ast.parse(src)
+        unresolved, hits = _scan_redirect_targets(tree, "fake.py", allowlist)
+        self.assertEqual(unresolved, ["fake.py:3"])
+        self.assertEqual(hits, set())
+
+    def test_listed_target_in_a_different_function_fails(self):
+        allowlist = {("fake.py", "login_start", "url"): "test fixture reason"}
+        src = ("def other_function():\n"
+               "    url = compute()\n"
+               "    return RedirectResponse(url, status_code=303)\n")
+        tree = ast.parse(src)
+        unresolved, hits = _scan_redirect_targets(tree, "fake.py", allowlist)
+        self.assertEqual(unresolved, ["fake.py:3"])
+        self.assertEqual(hits, set())
 
 
 # ---- BODY-ESTILOS-1 guards: style-src drops 'unsafe-inline' -----------------------------------
