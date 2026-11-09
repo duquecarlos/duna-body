@@ -12,7 +12,8 @@ unused here because an active goal with no data yet would then read as a compute
 instead of "sin verificación aún" -- the shape every other read tool and existing test depends on.
 
 The `proponer_*` tools below, plus `planear_entreno`, `registrar_entreno` (BODY-ENTRENO-TOOLS-1),
-`registrar_medida` (BODY-ENTRENO-MEDIDA-1) and `marcar_habito` (BODY-ENTRENO-HABITO-AUTO-1), are
+`registrar_medida` (BODY-ENTRENO-MEDIDA-1), `marcar_habito` (BODY-ENTRENO-HABITO-AUTO-1) and
+`proponer_experimento`/`marcar_experimento` (BODY-EXPERIMENTOS-REGISTRO-1), are
 `tipo: propuesta` (BODY-ASISTENTE-PROPUESTAS-1): they
 create a server-side proposal record through `body/agente/propuestas.py` and never write the PERSON's
 correction themselves -- nothing the person said is stored until they tap Aplicar. `registrar_entreno`
@@ -34,6 +35,15 @@ never a second rule invented here.
 
 `propuestas.py` is the one module a `propuesta` tool may import to create its record -- the static
 guard in tests/test_agente_registro.py checks that a `lectura` tool's call graph never reaches it.
+
+`leer_experimentos`, `proponer_experimento` and `marcar_experimento` (BODY-EXPERIMENTOS-REGISTRO-1,
+BODY-EXPERIMENTOS-1-INV slice 5) let the person start, mark and ask about an experiment from the
+chat -- the same propose/apply/undo shape as `marcar_habito`, never a second one invented here.
+`proponer_experimento` validates with `db.validar_experimento` and the same habit-ownership rule
+`db.crear_experimento` itself enforces BEFORE the proposal is ever stored, so a bad proposal is a
+ToolError, never a card the person could tap Aplicar on. `marcar_experimento` refuses an
+experiment that has a `habito_id`: that experiment's log is its linked habit's `habit_check`, kept
+current the usual way, through `marcar_habito`.
 """
 from __future__ import annotations
 
@@ -42,8 +52,8 @@ import json
 import sqlite3
 from datetime import date, timedelta
 
-from .. import catalogo_tendencias, db, enlaces, fechas, goals, history, household, profile, pull, readiness, \
-    shift_import, turnos_costo, tutoriales
+from .. import catalogo_tendencias, db, enlaces, experimentos, fechas, goals, history, household, profile, pull, \
+    readiness, shift_import, turnos_costo, tutoriales
 from ..i18n import LANGS
 from . import ajustes, propuestas
 
@@ -213,6 +223,62 @@ _PARAM_MARCAR_HABITO = {
         "nota": {"type": "string"},
     },
     "required": ["habit_id", "day"],
+    "additionalProperties": False,
+}
+
+_PARAM_LEER_EXPERIMENTOS = {
+    "type": "object",
+    "properties": {"experimento_id": {"type": "integer"}},
+    "additionalProperties": False,
+}
+
+# ventana/filtro_dias are the same two JSON shapes db.validar_experimento checks -- described here
+# only for the model's own guidance; the real enforcement is db.validar_experimento itself, called
+# from _proponer_experimento before anything is stored (_validar_parametros above never recurses
+# into a nested object's own properties/required).
+_PARAM_VENTANA = {
+    "type": "object",
+    "properties": {
+        "tipo": {"type": "string", "enum": ["dia", "intradia"]},
+        "ancla": {"type": "string", "enum": ["despertar", "momento"]},
+        "antes_min": {"type": "integer"},
+        "despues_min": {"type": "integer"},
+    },
+    "required": ["tipo"],
+}
+_PARAM_FILTRO_DIAS = {
+    "type": "object",
+    "properties": {
+        "turno_en": {"type": "array", "items": {"type": "string", "enum": list(db.SHIFT_KINDS)}},
+        "turno_fuera": {"type": "array", "items": {"type": "string", "enum": list(db.SHIFT_KINDS)}},
+        "excluir_tras_noche": {"type": "boolean"},
+    },
+    "required": ["excluir_tras_noche"],
+}
+_PARAM_PROPONER_EXPERIMENTO = {
+    "type": "object",
+    "properties": {
+        "titulo": {"type": "string"},
+        "metricas": {"type": "array", "items": {"type": "string"}},
+        "ventana": _PARAM_VENTANA,
+        "filtro_dias": _PARAM_FILTRO_DIAS,
+        "fecha_inicio": {"type": "string", "format": "date"},
+        "fecha_fin": {"type": "string", "format": "date"},
+        "dias_prueba_objetivo": {"type": "integer"},
+        "habito_id": {"type": "integer"},
+    },
+    "required": ["titulo", "metricas", "ventana", "filtro_dias"],
+    "additionalProperties": False,
+}
+_PARAM_MARCAR_EXPERIMENTO = {
+    "type": "object",
+    "properties": {
+        "experimento_id": {"type": "integer"},
+        "day": {"type": "string", "format": "date"},
+        "ocurrio": {"type": "boolean"},
+        "nota": {"type": "string"},
+    },
+    "required": ["experimento_id", "day", "ocurrio"],
     "additionalProperties": False,
 }
 
@@ -583,6 +649,118 @@ def _marcar_habito(conn: sqlite3.Connection, person_id: int, conversacion_id: in
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
+def _dias_marcados_experimento(conn: sqlite3.Connection, person_id: int, row: sqlite3.Row) -> list[dict]:
+    if row["habito_id"] is not None:
+        rows = conn.execute(
+            "SELECT day, done FROM habit_check WHERE habit_id = ? AND person_id = ? ORDER BY day",
+            (row["habito_id"], person_id)).fetchall()
+        return [{"dia": r["day"], "ocurrio": bool(r["done"])} for r in rows]
+    rows = conn.execute(
+        "SELECT day, ocurrio FROM experimento_registro WHERE experimento_id = ? AND person_id = ? ORDER BY day",
+        (row["id"], person_id)).fetchall()
+    return [{"dia": r["day"], "ocurrio": bool(r["ocurrio"])} for r in rows]
+
+
+def _experimento_dict(conn: sqlite3.Connection, person_id: int, row: sqlite3.Row, hoy: date) -> dict:
+    ver = experimentos.veredicto(conn, person_id, row["id"], hoy=hoy)
+    return {
+        "id": row["id"], "titulo": row["titulo"], "habito_id": row["habito_id"],
+        "metricas": json.loads(row["metricas"]), "ventana": json.loads(row["ventana"]),
+        "filtro_dias": json.loads(row["filtro_dias"]), "dias_prueba_objetivo": row["dias_prueba_objetivo"],
+        "fecha_inicio": row["fecha_inicio"], "fecha_fin": row["fecha_fin"], "estado": row["estado"],
+        "dias_marcados": _dias_marcados_experimento(conn, person_id, row),
+        "veredicto": ver["metricas"],
+    }
+
+
+def _leer_experimentos(conn: sqlite3.Connection, person_id: int, experimento_id: int | None = None) -> dict:
+    """Active experiments first, then closed (BODY-EXPERIMENTOS-REGISTRO-1): each with its own
+    setup, the days marked so far and, per metric, `experimentos.veredicto`'s own figures --
+    `resultado` ('mas_bajo' | 'mas_alto' | 'sin_cambio' | 'pocos_dias' | 'aun_no'), n_prueba,
+    n_base, media_prueba, media_base, diferencia. `nivel: 'resumen'`, by analogy with `leer_meta`:
+    both answer with a figure already compared over many days -- a mean, a target's progress --
+    never a single day's raw reading, which stays behind 'completo'."""
+    hoy = fechas.hoy_local(db.person(conn, person_id))
+    if experimento_id is not None:
+        row = conn.execute(
+            "SELECT * FROM experimento WHERE id = ? AND person_id = ?", (experimento_id, person_id)
+        ).fetchone()
+        if row is None:
+            return {"experimentos": []}
+        return {"experimentos": [_experimento_dict(conn, person_id, row, hoy)]}
+    filas = list(db.experimentos(conn, person_id, "activo")) + list(db.experimentos(conn, person_id, "cerrado"))
+    return {"experimentos": [_experimento_dict(conn, person_id, r, hoy) for r in filas]}
+
+
+def _proponer_experimento(conn: sqlite3.Connection, person_id: int, conversacion_id: int, titulo: str,
+                           metricas: list, ventana: dict, filtro_dias: dict, fecha_inicio: str | None = None,
+                           fecha_fin: str | None = None, dias_prueba_objetivo: int | None = None,
+                           habito_id: int | None = None) -> dict:
+    """Proposes a new experiment (BODY-EXPERIMENTOS-REGISTRO-1): insert-shaped, like
+    `planear_entreno` -- there is no 'before'. Validated with `db.validar_experimento` and the same
+    habit-ownership rule `db.crear_experimento` itself enforces, BEFORE the proposal is stored, so
+    a bad proposal is a ToolError, never a card the person could tap Aplicar on."""
+    titulo = (titulo or "").strip()
+    if not titulo:
+        raise ToolError("falta el título del experimento")
+    try:
+        db.validar_experimento(metricas, ventana, filtro_dias)
+    except ValueError as e:
+        raise ToolError(str(e))
+    if habito_id is not None:
+        propio = conn.execute(
+            "SELECT 1 FROM habit h JOIN goal g ON g.id = h.goal_id WHERE h.id = ? AND g.person_id = ?",
+            (habito_id, person_id)).fetchone()
+        if propio is None:
+            raise ToolError(f"hábito desconocido: {habito_id!r}")
+    fecha_inicio = fecha_inicio or _hoy_local(conn, person_id)
+    _dia_no_futuro(conn, person_id, fecha_inicio)
+    dias = db.days_with_data(conn, person_id)
+    if dias and fecha_inicio < dias[-1]:
+        raise ToolError(f"fecha_inicio no puede ser anterior a tu primer día con datos: {dias[-1]!r}")
+    if fecha_fin is not None:
+        try:
+            date.fromisoformat(fecha_fin)
+        except ValueError:
+            raise ToolError("fecha_fin debe ser una fecha ISO (AAAA-MM-DD)")
+    despues = {"titulo": titulo, "metricas": metricas, "ventana": ventana, "filtro_dias": filtro_dias,
+               "fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin, "dias_prueba_objetivo": dias_prueba_objetivo,
+               "habito_id": habito_id}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "proponer_experimento", despues)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
+def _marcar_experimento(conn: sqlite3.Connection, person_id: int, conversacion_id: int, experimento_id: int,
+                         day: str, ocurrio: bool, nota: str | None = None) -> dict:
+    """Proposes marking, for a day, whether an experiment's own practice happened
+    (BODY-EXPERIMENTOS-REGISTRO-1) -- refused for an experiment that is not the person's own, one
+    that is closed, a day outside [fecha_inicio, fecha_fin], and one linked to a habit (its log is
+    that habit's own `habit_check`, kept current with `marcar_habito` instead). `antes` carries
+    that day's existing registro row (or None), so `propuestas.deshacer` can restore it exactly."""
+    if not isinstance(ocurrio, bool):
+        raise ToolError("ocurrio debe ser verdadero o falso")
+    _dia_no_futuro(conn, person_id, day)
+    row = conn.execute(
+        "SELECT * FROM experimento WHERE id = ? AND person_id = ?", (experimento_id, person_id)).fetchone()
+    if row is None:
+        raise ToolError(f"experimento desconocido: {experimento_id!r}")
+    if row["estado"] == "cerrado":
+        raise ToolError(f"experimento cerrado: {experimento_id!r}")
+    if row["habito_id"] is not None:
+        raise ToolError("ese experimento está ligado a un hábito: márcalo con marcar_habito")
+    if day < row["fecha_inicio"] or (row["fecha_fin"] is not None and day > row["fecha_fin"]):
+        raise ToolError(f"day fuera del rango del experimento: {day!r}")
+    nota = (nota or "").strip() or None
+    anterior = conn.execute(
+        "SELECT ocurrio, nota FROM experimento_registro WHERE experimento_id = ? AND person_id = ? AND day = ?",
+        (experimento_id, person_id, day)).fetchone()
+    antes = {"ocurrio": bool(anterior["ocurrio"]), "nota": anterior["nota"]} if anterior is not None else None
+    despues = {"experimento_id": experimento_id, "day": day, "ocurrio": ocurrio, "nota": nota,
+               "titulo": row["titulo"]}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "marcar_experimento", despues, antes=antes)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
 def _proponer_meta(conn: sqlite3.Connection, person_id: int, conversacion_id: int, metric_key: str,
                     direction: str, target_value, deadline: str, titulo: str) -> dict:
     titulo = (titulo or "").strip()
@@ -724,6 +902,27 @@ HERRAMIENTAS = [
                      "evidencia. No lo marca: registra la propuesta para que la persona la apruebe "
                      "en el chat.",
      "parametros": _PARAM_MARCAR_HABITO, "funcion": _marcar_habito},
+    {"nombre": "leer_experimentos", "tipo": "lectura", "nivel": "resumen",
+     "descripcion": "Los experimentos de la persona, activos primero y luego cerrados: qué miden, qué días "
+                     "cuentan, los días ya marcados y, por métrica, el resultado de comparar los días en que "
+                     "ocurrió con los propios días normales de la persona, nunca con una tabla de otra gente: "
+                     "mas_bajo, mas_alto, sin_cambio (ya hay días suficientes pero no cambió), pocos_dias "
+                     "(todavía no hay suficientes) o aun_no (ventana dentro del día, el cálculo llega en otra "
+                     "versión). Un día que no se marcó no cuenta ni como prueba ni como normal. Las palabras "
+                     "del veredicto las muestra la pantalla; usa estos códigos para explicarlo con tus propias "
+                     "palabras, nunca como consejo médico.",
+     "parametros": _PARAM_LEER_EXPERIMENTOS, "funcion": _leer_experimentos},
+    {"nombre": "proponer_experimento", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone empezar un experimento: compara los días en que la persona hace algo con sus "
+                     "propios días normales, nunca con una tabla de otra gente. Un día que no se marca no "
+                     "cuenta ni como prueba ni como normal. No lo crea: registra la propuesta para que la "
+                     "persona la apruebe en el chat.",
+     "parametros": _PARAM_PROPONER_EXPERIMENTO, "funcion": _proponer_experimento},
+    {"nombre": "marcar_experimento", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone marcar, para un día, si ocurrió o no la práctica de un experimento sin hábito "
+                     "vinculado (uno con hábito se marca con marcar_habito, que es su registro). No lo marca: "
+                     "registra la propuesta para que la persona la apruebe en el chat.",
+     "parametros": _PARAM_MARCAR_EXPERIMENTO, "funcion": _marcar_experimento},
 ]
 
 _BY_NAME = {h["nombre"]: h for h in HERRAMIENTAS}

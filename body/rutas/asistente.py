@@ -178,6 +178,46 @@ def _tarjeta_registrar_medida(t: T, defs: dict, despues: dict, antes_json: dict 
     return antes_txt, despues_txt, None
 
 
+def _filtro_dias_txt(t: T, filtro_dias: dict) -> str:
+    """"which days count" in plain words (BODY-EXPERIMENTOS-REGISTRO-1): the shift kinds a day must
+    or must not have, plus whether a post-night recovery day is excluded -- built from
+    `shift.kind.*`'s own labels, never a second hand-typed name per kind."""
+    partes = []
+    if filtro_dias.get("turno_en"):
+        nombres = ", ".join(t("shift.kind." + k) for k in filtro_dias["turno_en"]).lower()
+        partes.append(t("asistente.propuesta.experimento_turno_en", turnos=nombres))
+    if filtro_dias.get("turno_fuera"):
+        nombres = ", ".join(t("shift.kind." + k) for k in filtro_dias["turno_fuera"]).lower()
+        partes.append(t("asistente.propuesta.experimento_turno_fuera", turnos=nombres))
+    if filtro_dias.get("excluir_tras_noche"):
+        partes.append(t("asistente.propuesta.experimento_sin_tras_noche"))
+    if not partes:
+        return t("asistente.propuesta.experimento_todos_los_dias")
+    return ", ".join(partes)
+
+
+def _tarjeta_proponer_experimento(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+    metricas_txt = ", ".join(t("metric." + m) for m in despues["metricas"])
+    dias_txt = _filtro_dias_txt(t, despues["filtro_dias"])
+    fecha = comun._short_date(t, date.fromisoformat(despues["fecha_inicio"]))
+    despues_txt = t("asistente.propuesta.experimento_nuevo", titulo=despues["titulo"], metricas=metricas_txt,
+                    dias=dias_txt, fecha=fecha)
+    return None, despues_txt, None
+
+
+def _tarjeta_marcar_experimento(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+    titulo = despues["titulo"]
+    fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
+    clave = "asistente.propuesta.experimento_hecho" if despues["ocurrio"] else "asistente.propuesta.experimento_no_hecho"
+    despues_txt = t(clave, experimento=titulo, fecha=fecha)
+    antes_txt = None
+    if antes_json is not None:
+        clave_antes = ("asistente.propuesta.experimento_hecho" if antes_json["ocurrio"]
+                       else "asistente.propuesta.experimento_no_hecho")
+        antes_txt = t(clave_antes, experimento=titulo, fecha=fecha)
+    return antes_txt, despues_txt, None
+
+
 def _tarjeta_marcar_habito(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
     habito = despues["habito_titulo"]
     fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
@@ -205,6 +245,8 @@ TARJETAS = {
     "registrar_entreno": _tarjeta_registrar_entreno,
     "registrar_medida": _tarjeta_registrar_medida,
     "marcar_habito": _tarjeta_marcar_habito,
+    "proponer_experimento": _tarjeta_proponer_experimento,
+    "marcar_experimento": _tarjeta_marcar_experimento,
 }
 
 
