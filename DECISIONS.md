@@ -12059,3 +12059,56 @@ discover tests -t .` -- `Ran 1601 tests in 387.484s ... OK (skipped=1)`.
 feat/body-agente-tendencias-catalogo-1` -> `d7254903c2b88319fbadcd9e18280f55b86704d6`. Merge tree
 `0036f89fd15b1a87a8fb0950655d52cba2bb8758` equals the branch tip's own tree (`git rev-parse
 feat/body-agente-tendencias-catalogo-1^{tree}`) -- the merge carried the branch content verbatim.
+
+## BODY-AGENTE-DIA-FUTURO-1 -- one rule for a future day, across every write tool that records what already happened
+
+Carries out BODY-REVISION-9B-1-INV's findings 4 and 3 (the minor asymmetry), per
+`ORCH-CARLOS-DELEGATES-TIER-1-1`. Day handling was not one rule across the assistant's write
+tools: `_marcar_habito` (body/agente/herramientas.py) refused a future `day` against the person's
+own local today, but `_registrar_entreno` and `_registrar_medida` only checked the ISO format, so
+"what I did" or a number the person measured could be proposed for a day that had not happened
+yet. `_planear_entreno` rightly keeps accepting a future day -- a plan is for later -- and now
+carries a one-line comment saying why, so the next reader does not "fix" it.
+
+The habit tool's check (ISO parse + `fechas.fecha_real_valida` against
+`fechas.hoy_local(db.person(conn, person_id))`, raising the same two `ToolError` texts) is now one
+private helper, `_dia_no_futuro`, called from `_marcar_habito`, `_registrar_entreno` and
+`_registrar_medida` (for the latter, after its default day is filled in). No other write tool in
+the file records something that already happened without this check; `_proponer_meta` and
+`_proponer_cambio_meta` take a `deadline`, and `_planear_entreno` a `day`, both plans that look
+forward on purpose.
+
+Separately, `_drift_aplicar`'s `registrar_entreno` branch (body/agente/propuestas.py) now compares
+the watch set's weight unit (`garmin_weight_unit`, read off `db.exercise_sets`' own `garmin` dict)
+alongside exercise, reps, weight value and category, so a unit-only change on the watch side
+between proposal and apply is caught as drift like every other field. The `sets_antes` snapshot
+built in `_registrar_entreno` now carries `garmin_weight_unit`; a stored proposal from before this
+slice, whose snapshot lacks that key, is treated as "not compared" for that one field, so an
+old-shape snapshot still applies.
+
+Tests (tests/test_agente_entreno.py, tests/test_agente_medida.py, tests/test_agente_propuestas.py):
+`registrar_entreno` and `registrar_medida` each accept the person's own local today and refuse a
+day beyond `fechas.TOLERANCIA_DIAS`'s one-day tolerance, checked with an invented person in
+`Pacific/Kiritimati` (UTC+14) at a mocked UTC instant where the UTC date and that zone's date
+disagree -- proving the check reads the person's own local today, not the server's. `deviation`:
+the spec's own text said "refuse tomorrow"; `fechas.fecha_real_valida`'s existing one-day tolerance
+(shared with the habit tool, and itself covered by `tests/test_fecha_futura_1.py`'s
+`test_tomorrow_accepted`) accepts a day that is literally tomorrow in the person's zone, so the
+refused case tested is the day after tomorrow instead, with today as the accepted case -- changing
+neither `fechas.py` nor the tolerance was in scope. `_planear_entreno` gained a test proposing a
+day over six months out, still accepted. The habit tool's existing tests
+(tests/test_agente_habito.py) are unchanged and stayed green; moving its future check to the top of
+`_marcar_habito` (ahead of the habit lookup, now that both checks live in one helper call) does not
+change any of their outcomes, since none of them combines an unknown/inactive/foreign habit with a
+future day. The drift fix gained two tests: a weight-unit-only change on the watch side between
+propose and apply is refused as drift; an old-shape snapshot with that key deleted still applies,
+even when the watch's unit has since changed, proving the missing key is treated as "not compared"
+rather than "unchanged".
+
+**Gate**, once, foreground, on the branch before the merge: `.venv/Scripts/python.exe -m unittest
+discover tests -t .` -- `Ran 1608 tests in 364.589s ... OK (skipped=1)`.
+
+**Merge**: `git checkout main` (tip `9fea52ac6dd1262357b5ae605e8a78d8d0373851`), `git merge --no-ff
+feat/body-agente-dia-futuro-1` -> `abb1d8c59395aa2783af876822754cd92eef00a5`. Merge tree
+`db200d0df19380d451bb90a4b64f5ad314c1b4ce` equals the branch tip's own tree (`git rev-parse
+feat/body-agente-dia-futuro-1^{tree}`) -- the merge carried the branch content verbatim.
