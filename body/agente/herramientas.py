@@ -52,8 +52,8 @@ import json
 import sqlite3
 from datetime import date, timedelta
 
-from .. import catalogo_tendencias, db, enlaces, experimentos, fechas, goals, history, household, profile, pull, \
-    readiness, shift_import, turnos_costo, tutoriales
+from .. import catalogo_tendencias, db, enlaces, errores, experimentos, fechas, goals, history, household, \
+    profile, pull, readiness, shift_import, turnos_costo, tutoriales
 from ..i18n import LANGS
 from . import ajustes, propuestas
 
@@ -705,8 +705,8 @@ def _proponer_experimento(conn: sqlite3.Connection, person_id: int, conversacion
         raise ToolError("falta el título del experimento")
     try:
         db.validar_experimento(metricas, ventana, filtro_dias)
-    except ValueError as e:
-        raise ToolError(str(e))
+    except db.ExperimentoInvalido as e:
+        raise ToolError(errores.texto_propio(e))
     if habito_id is not None:
         propio = conn.execute(
             "SELECT 1 FROM habit h JOIN goal g ON g.id = h.goal_id WHERE h.id = ? AND g.person_id = ?",

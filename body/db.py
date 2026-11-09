@@ -1426,13 +1426,23 @@ def exercise_sets(conn: sqlite3.Connection, person_id: int, source: str, source_
 METRICAS_INTRADIA = ("heart_rate", "stress")
 
 
+class ExperimentoInvalido(ValueError):
+    """One of `validar_experimento`'s three shapes was wrong -- a ValueError subclass (so existing
+    `except ValueError`/`assertRaises(ValueError)` callers are untouched), but a Body-owned class
+    (body/errores.py's `texto_propio` accepts it) since its message never echoes anything but
+    Body's own field names and fixed phrases, never caller-supplied text (BODY-EXPERIMENTOS-
+    REGISTRO-1: `_proponer_experimento` surfaces it to the person through this, not a bare
+    ValueError, which `tests/test_errores_texto.py`'s AST guard refuses)."""
+
+
 def _campo_invalido(campo: str, detalle: str) -> None:
-    raise ValueError(f"{campo}: {detalle}")
+    raise ExperimentoInvalido(f"{campo}: {detalle}")
 
 
 def validar_experimento(metricas, ventana, filtro_dias) -> None:
     """The one place crear_experimento's three JSON shapes are checked. Pure (no connection), so a
-    caller can validate before ever touching the database. Raises ValueError naming the invalid
+    caller can validate before ever touching the database. Raises ExperimentoInvalido (a
+    ValueError) naming the invalid
     field first -- ventana, filtro_dias or metricas.
 
     ventana: {"tipo": "dia"} or {"tipo": "intradia", "ancla": "despertar" | "momento",
