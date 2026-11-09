@@ -121,6 +121,84 @@ class RefrescarTest(_RepoFixture):
         self.assertNotEqual(antes, _git_ok(self.repo, "rev-parse", "HEAD"))
 
 
+class TareasFlagTest(unittest.TestCase):
+    """`--tareas` is how a parent process asks a child's `body.vivo` which task names it knows,
+    without importing it (BODY-VIVO-TAREA-NUEVA-1)."""
+
+    def test_tareas_imprime_los_nombres_separados_por_coma(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            codigo = vivo.main(["--tareas"])
+
+        self.assertEqual(codigo, 0)
+        nombres = set(buf.getvalue().strip().split(","))
+        self.assertEqual(nombres, set(vivo.TAREAS))
+
+
+class TareaDesconocidaTest(_RepoFixture):
+    """BODY-VIVO-TAREA-NUEVA-1: an unknown task name no longer returns before the refresh. The
+    refresh still runs (same guard, same status file); only what happens AFTER depends on whether
+    the refreshed tree turns out to know the name."""
+
+    def setUp(self):
+        super().setUp()
+        _git_ok(self.repo, "reset", "--hard", _initial_sha)
+        _git_ok(self.live, "checkout", "--force", "--detach", _initial_sha)
+        self._argv_original = list(sys.argv)
+        self._path_original = list(sys.path)
+        self.addCleanup(lambda: setattr(sys, "argv", self._argv_original))
+        self.addCleanup(lambda: setattr(sys, "path", self._path_original))
+
+    def test_tarea_desconocida_pero_el_arbol_refrescado_la_conoce_lanza_un_hijo(self):
+        self._commit_on_main("segundo")
+        with patch.object(vivo, "arbol_vivo", return_value=self.live), \
+             patch.object(
+                 vivo, "_tareas_conocidas_por_el_arbol", return_value={"nueva"}
+             ) as mock_conocidas, \
+             patch.object(vivo, "_relanzar_en_arbol_nuevo", return_value=5) as mock_relanzar, \
+             contextlib.redirect_stdout(io.StringIO()):
+            codigo = vivo.main(["nueva", "--dias", "3"])
+
+        self.assertEqual(codigo, 5)
+        mock_conocidas.assert_called_once_with(self.live)
+        mock_relanzar.assert_called_once_with(self.live, ["nueva", "--dias", "3"])
+
+    def test_tarea_desconocida_y_el_arbol_tampoco_la_conoce_sale_con_2(self):
+        self._commit_on_main("segundo")
+        with patch.object(vivo, "arbol_vivo", return_value=self.live), \
+             patch.object(vivo, "_tareas_conocidas_por_el_arbol", return_value=set()), \
+             patch.object(vivo, "_relanzar_en_arbol_nuevo") as mock_relanzar, \
+             contextlib.redirect_stderr(io.StringIO()), \
+             contextlib.redirect_stdout(io.StringIO()):
+            codigo = vivo.main(["nueva"])
+
+        self.assertEqual(codigo, 2)
+        mock_relanzar.assert_not_called()
+
+    def test_tarea_desconocida_sin_refresco_sale_con_2_sin_hijo(self):
+        (self.live / "a.txt").write_text("sucio", encoding="utf-8")
+        with patch.object(vivo, "arbol_vivo", return_value=self.live), \
+             patch.object(
+                 vivo, "_tareas_conocidas_por_el_arbol", return_value={"nueva"}
+             ) as mock_conocidas, \
+             patch.object(vivo, "_relanzar_en_arbol_nuevo") as mock_relanzar, \
+             contextlib.redirect_stderr(io.StringIO()), \
+             contextlib.redirect_stdout(io.StringIO()):
+            codigo = vivo.main(["nueva"])
+
+        self.assertEqual(codigo, 2)
+        mock_relanzar.assert_not_called()
+        mock_conocidas.assert_not_called()
+
+    def test_argv_vacio_sale_con_2_sin_refresco(self):
+        with patch.object(vivo, "refrescar") as mock_refrescar, \
+             contextlib.redirect_stderr(io.StringIO()):
+            codigo = vivo.main([])
+
+        self.assertEqual(codigo, 2)
+        mock_refrescar.assert_not_called()
+
+
 class ProcesoFrescoTest(unittest.TestCase):
     """Runs `python -m body.vivo` in an actual fresh interpreter, on its own throwaway worktree
     that carries a real copy of the `body` package. This is the case the fake-module regression
@@ -343,6 +421,21 @@ class MainTest(_RepoFixture):
 
         self.assertEqual(codigo, 0)
         mock_run_module.assert_called_once()
+
+    def test_tarea_conocida_no_lanza_un_hijo(self):
+        with patch.object(vivo, "arbol_vivo", return_value=self.live), \
+             patch.object(vivo, "refrescar", return_value="ya_al_dia"), \
+             patch.object(vivo.os, "chdir"), \
+             patch.object(vivo.runpy, "run_module"), \
+             patch.object(vivo, "_relanzar_en_arbol_nuevo") as mock_relanzar, \
+             patch.object(vivo, "_tareas_conocidas_por_el_arbol") as mock_conocidas, \
+             patch.dict(vivo.os.environ, {}, clear=False), \
+             contextlib.redirect_stdout(io.StringIO()):
+            codigo = vivo.main(["pull"])
+
+        self.assertEqual(codigo, 0)
+        mock_relanzar.assert_not_called()
+        mock_conocidas.assert_not_called()
 
     def test_no_falla_sin_stdout_como_bajo_pythonw(self):
         with patch.object(vivo, "arbol_vivo", return_value=self.live), \
