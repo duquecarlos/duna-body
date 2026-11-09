@@ -12677,3 +12677,36 @@ spec's own approval-reason authorizes the merge in words): `git checkout main` (
 merge commit's tree (`09f04ce7e3328ed468136d54309032cfb62b872c`) is identical to the branch tip's
 own tree -- `main` had not moved since the branch was cut, so the merge introduced nothing beyond
 the branch's own content and the gate above was not re-run.
+
+## BODY-ARTE-FUERA-DEL-REPO-1 -- generated anatomy art stays out of the repository until a build slice ships it
+
+Carlos is generating the Today anatomy art in Google AI Studio and his downloads land in
+`design/mocks/`. Each one lands as an untracked file, and the dispatcher refuses every dispatch
+while body-app has one, because a worker cannot tell an untracked image apart from its own writes:
+on 2026-11-09 four images arrived there one by one (01-frente-v2, 02-corazon, 03-nervios, and two
+earlier), each refusing or failing a run until the orchestrator moved it out to
+`C:\Duna\body\arte\hoy\` by hand. `git ls-files design` listed one tracked file, `design/mocks/v1/index.html`
+-- not a raster image, so the pre-flight check (no `.jpg`/`.jpeg`/`.png`/`.webp`/`.heic` tracked
+under `design/`) held and no file needed to be named BLOCKED.
+
+**Rule added to `.gitignore`**: `design/**/*.jpg`, `design/**/*.jpeg`, `design/**/*.png`,
+`design/**/*.webp`, `design/**/*.heic`, with a comment naming this ledger ID. `git config
+core.ignorecase` could not be run (that verb is not in this slice's git grant), so it was read
+directly from `.git/config`: `ignorecase = true`, confirming upper-case patterns are unnecessary on
+this machine. This is generated material whose licence is still to be checked before any of it
+ships; it does not belong in the repository until a build slice converts and commits the chosen
+files on purpose, as optimised WebP under `body/static/`, which this rule does not touch.
+
+**Verified**: `git check-ignore -v design/mocks/x.jpg` -> `.gitignore:11:design/**/*.jpg
+design/mocks/x.jpg` (ignored). `git check-ignore -v body/static/x.png` -> exit 1, no output (not
+ignored).
+
+**Gate**, once, foreground, on the branch tip: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -> `Ran 1732 tests in 522.293s ... OK (skipped=1)`. Unchanged from the prior recorded
+floor (1732, `BODY-VIVO-TAREA-NUEVA-1`) -- a `.gitignore`-only change touches no test.
+
+**Merge** (no schema change, no customer-facing bytes -- a `.gitignore` rule with no screen and no
+string a person reads -- no cross-repo/DTO change -- Merge Policy A applies, and the spec's own
+approval-reason authorizes the merge in words): `git checkout main` (tip `99f51b7`), `git merge
+--no-ff feat/body-arte-fuera-del-repo-1` (branch tip `06651bebee216593b36aca19c8fd1882339cff0e`) ->
+`e5d748dae1b6a6bfbd0c2bfcd3fd32df44c7c8f6`.
