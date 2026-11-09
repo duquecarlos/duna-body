@@ -43,6 +43,19 @@ TAREAS = {
     "vida_export": "body.vida_export",
     "subir_turnos": "body.subir_turnos",
     "traer_semana": "body.traer_semana",
+    "vida_dia": "body.vida_dia",
+    # The scheduled morning run (BODY-VIDA-DIA-1): refresh today's pull first, below, then this
+    # same entry writes the day's vida-v1 file -- from `resto` runs through here unchanged.
+    "manana": "body.vida_dia",
+}
+
+# A module run BEFORE `TAREAS[tarea]`, with its own fixed argv, for tasks that need one. Only
+# `manana` has one today: pull today's figures before vida_dia writes them out. Any failure here
+# (no network, Garmin down, a raised exception or a non-zero exit) is swallowed -- vida_dia still
+# runs and writes the file from whatever is already stored, with its own `missing` list telling
+# the truth, instead of the whole scheduled run failing silently with no file written at all.
+PASOS_PREVIOS: dict[str, tuple[str, list[str]]] = {
+    "manana": ("body.pull", ["--days", "1"]),
 }
 
 _TIMEOUT_GIT = 10
@@ -198,6 +211,18 @@ def main(argv: list[str] | None = None) -> int:
     if vivo_str in sys.path:
         sys.path.remove(vivo_str)
     sys.path.insert(0, vivo_str)
+
+    paso_previo = PASOS_PREVIOS.get(tarea)
+    if paso_previo is not None:
+        modulo_previo, argv_previo = paso_previo
+        sys.argv = [modulo_previo, *argv_previo]
+        try:
+            runpy.run_module(modulo_previo, run_name="__main__", alter_sys=True)
+        except SystemExit:
+            pass
+        except Exception as exc:
+            if sys.stdout is not None:
+                print(f"{modulo_previo} failed before {tarea}: {errores.texto_seguro(exc)}")
 
     sys.argv = [TAREAS[tarea], *resto]
     try:

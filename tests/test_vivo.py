@@ -356,5 +356,123 @@ class MainTest(_RepoFixture):
         self.assertEqual(codigo, 0)
 
 
+class TareasVidaDiaTest(unittest.TestCase):
+    """BODY-VIDA-DIA-1: the two new scheduled-task entries vivo dispatches through."""
+
+    def test_vida_dia_y_manana_estan_en_tareas(self):
+        self.assertIn("vida_dia", vivo.TAREAS)
+        self.assertIn("manana", vivo.TAREAS)
+
+
+class MananaTest(_RepoFixture):
+    """`manana` runs the same pull `pull` uses, then vida_dia -- even when the pull step fails
+    (no network, Garmin down), so a single scheduled run still writes the day's file."""
+
+    def setUp(self):
+        super().setUp()
+        self._argv_original = list(sys.argv)
+        self._path_original = list(sys.path)
+        self.addCleanup(lambda: setattr(sys, "argv", self._argv_original))
+        self.addCleanup(lambda: setattr(sys, "path", self._path_original))
+
+    def test_manana_corre_vida_dia_aunque_el_pull_previo_lance(self):
+        llamadas = []
+
+        def _run_module(nombre, run_name=None, alter_sys=None):
+            llamadas.append(nombre)
+            if nombre == "body.pull":
+                raise RuntimeError("sin red, demo")
+
+        with patch.object(vivo, "arbol_vivo", return_value=self.live), \
+             patch.object(vivo, "refrescar", return_value="ya_al_dia"), \
+             patch.object(vivo.os, "chdir"), \
+             patch.object(vivo.runpy, "run_module", side_effect=_run_module), \
+             patch.dict(vivo.os.environ, {}, clear=False), \
+             contextlib.redirect_stdout(io.StringIO()):
+            codigo = vivo.main(["manana"])
+
+        self.assertEqual(codigo, 0)
+        self.assertEqual(llamadas, ["body.pull", "body.vida_dia"])
+
+    def test_manana_corre_vida_dia_aunque_el_pull_previo_salga_con_systemexit(self):
+        llamadas = []
+
+        def _run_module(nombre, run_name=None, alter_sys=None):
+            llamadas.append(nombre)
+            if nombre == "body.pull":
+                raise SystemExit(2)
+
+        with patch.object(vivo, "arbol_vivo", return_value=self.live), \
+             patch.object(vivo, "refrescar", return_value="ya_al_dia"), \
+             patch.object(vivo.os, "chdir"), \
+             patch.object(vivo.runpy, "run_module", side_effect=_run_module), \
+             patch.dict(vivo.os.environ, {}, clear=False), \
+             contextlib.redirect_stdout(io.StringIO()):
+            codigo = vivo.main(["manana"])
+
+        self.assertEqual(codigo, 0)
+        self.assertEqual(llamadas, ["body.pull", "body.vida_dia"])
+
+    def test_pull_previo_usa_days_1(self):
+        argvs = []
+
+        def _run_module(nombre, run_name=None, alter_sys=None):
+            argvs.append(list(sys.argv))
+
+        with patch.object(vivo, "arbol_vivo", return_value=self.live), \
+             patch.object(vivo, "refrescar", return_value="ya_al_dia"), \
+             patch.object(vivo.os, "chdir"), \
+             patch.object(vivo.runpy, "run_module", side_effect=_run_module), \
+             patch.dict(vivo.os.environ, {}, clear=False), \
+             contextlib.redirect_stdout(io.StringIO()):
+            vivo.main(["manana"])
+
+        self.assertEqual(argvs[0], ["body.pull", "--days", "1"])
+        self.assertEqual(argvs[1], ["body.vida_dia"])
+
+    def test_tarea_pull_sola_no_dispara_el_paso_previo(self):
+        llamadas = []
+
+        def _run_module(nombre, run_name=None, alter_sys=None):
+            llamadas.append(nombre)
+
+        with patch.object(vivo, "arbol_vivo", return_value=self.live), \
+             patch.object(vivo, "refrescar", return_value="ya_al_dia"), \
+             patch.object(vivo.os, "chdir"), \
+             patch.object(vivo.runpy, "run_module", side_effect=_run_module), \
+             patch.dict(vivo.os.environ, {}, clear=False), \
+             contextlib.redirect_stdout(io.StringIO()):
+            vivo.main(["pull"])
+
+        self.assertEqual(llamadas, ["body.pull"])
+
+
+class InstallScriptMorningFileTest(unittest.TestCase):
+    """A PowerShell installer is never executed in tests -- asserted by reading its text
+    (BODY-VIDA-DIA-1)."""
+
+    @classmethod
+    def setUpClass(cls):
+        ruta = Path(vivo.__file__).resolve().parents[1] / "scripts" / "install-daily-sync.ps1"
+        cls.texto = ruta.read_text(encoding="utf-8")
+
+    def test_nueva_tarea_y_parametro_existen(self):
+        self.assertIn('"Body app morning file"', self.texto)
+        self.assertIn("-m body.vivo manana", self.texto)
+        self.assertIn("$MorningAt", self.texto)
+        self.assertIn('@("04:40", "07:40", "12:40")', self.texto)
+
+    def test_otras_tareas_siguen_presentes_sin_cambios(self):
+        for nombre in ("Body app daily sync", "Body app weekly file", "Body app web",
+                       "Body app shift upload", "Body app weekly fetch"):
+            self.assertIn(f'"{nombre}"', self.texto)
+        self.assertIn("-m body.vivo pull --days 2", self.texto)
+        self.assertIn("-m body.vivo vida_export --current", self.texto)
+
+    def test_linea_de_remocion_nombra_la_tarea_nueva(self):
+        linea = next(l for l in self.texto.splitlines() if l.startswith("# Remove with:"))
+        self.assertIn('"Body app morning file"', linea)
+
+
 if __name__ == "__main__":
     unittest.main()
