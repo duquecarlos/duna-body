@@ -11421,3 +11421,62 @@ so no drift to reconcile.
 `b1b3cba` (prior tip of `main`) and `5192907` (tip of the branch). Tree identity: branch tree
 `27fe2e5a` equals the merge commit's own tree (`git rev-parse HEAD^{tree}` on `main` after the
 merge), and `git diff feat/body-entreno-privacidad-1 main` is empty.
+
+## BODY-ENTRENO-TITULO-1 -- absent stays absent; a spoken "Entrenamiento" is not mistaken for silence
+
+Follow-up found in `BODY-ENTRENO-1-INV` slice 4 (TOOLS-1), per `ORCH-CARLOS-DELEGATES-TIER-1-1`:
+`body/agente/herramientas.py` `_registrar_entreno` stored the Spanish literal `"Entrenamiento"` as
+the manual proposal's `titulo` whenever the person gave no title, so an English speaker got a
+Spanish word stored as their session's title, and a person who actually said "Entrenamiento" was
+read as one who said nothing (`body/rutas/asistente.py` `_tarjeta_propuesta` compared the stored
+value against that same literal). Fixed at the source: a missing or blank spoken title now stores
+`titulo: None` -- never a literal -- and the card's `!= "Entrenamiento"` comparison is gone; any
+given title, including the word "Entrenamiento" itself, now gets the titled wording
+(`asistente.propuesta.entreno_registrado_titulo`, "{titulo} · {fecha}"), and only `None` gets the
+untitled, date-only wording (`asistente.propuesta.entreno_registrado`, already approved wording from
+`BODY-ENTRENO-TOOLS-1-M`, unchanged).
+
+**Apply** (`body/agente/propuestas.py` `_escribir_aplicacion`, the manual `registrar_entreno` case):
+`db.create_manual_session` still needs a title to pass, so a `None` titulo resolves to a new
+localized default -- key `entreno.titulo_por_defecto` ("Entrenamiento" / "Training") -- read in the
+person's own language the same way `proponer_idioma`'s drift check already does
+(`db.person(conn, person_id)["language"]`, then `i18n.T(lang)`). This is the one new customer-facing
+string the approval covers; it was not possible to pass `None` through to the `activity.name` column
+instead, because `db.create_manual_session`'s own signature types `title` as a plain `str` (Tier 1,
+out of this slice's `touches:`), not `str | None` -- so a literal default has to be supplied at the
+call site, by design, not by oversight.
+
+**Not migrated**: proposals already stored with the literal `"Entrenamiento"` as of this slice's
+dispatch stay as they are -- there are none on a real account, since the manual `registrar_entreno`
+tool itself only merged into `main` today (`BODY-ENTRENO-TOOLS-1-M`, same day).
+
+**Tests** (`tests/test_agente_entreno.py`, `tests/test_agente_propuestas.py`): propose with an
+absent or a blank-whitespace titulo stores `None`, never a literal; propose with the spoken titulo
+"Entrenamiento" keeps it as given; the card words an absent title as "Entrenamiento del {fecha}" (es)
+/ "Workout from {fecha}" (en) and a given title, including "Entrenamiento" itself, as
+"{titulo} · {fecha}"; apply with no title writes the localized default name ("Entrenamiento" / "Training")
+into `activity.name`; drift (`_drift_aplicar`/`_drift_deshacer`) and undo paths untouched by this
+change and still pass unchanged.
+
+**Gate**, once, foreground, on the branch tip before the merge: `.venv/Scripts/python.exe -m
+unittest discover tests -t .` -- `Ran 1540 tests in 410.023s ... OK (skipped=1)`. 7 more than the
+prior recorded floor (1533, `BODY-ENTRENO-PRIVACIDAD-1-M`): the 7 new test methods above
+(`skipped=1` carries over unchanged). No floor was supplied with this dispatch, so this is a fresh
+measurement, not a reconciliation.
+
+**Merge policy A**: the diff has no schema or migration change and no cross-repo/DTO change, but it
+does change customer-facing bytes (the card's titled-vs-untitled wording and the new default session
+name). The spec's own body authorizes the merge in words despite that -- "Card text already approved
+in BODY-ENTRENO-TOOLS-1-M; the only new string is the default session name, approved verbatim below
+... Merge approved" and step 6, "Gate, commit, merge `--no-ff` into main (this spec approves it)" --
+so this is a merge on an explicit written authorization, not a bare green-on-all-three.
+
+**Commit**: `f49e955` on `feat/body-entreno-titulo-1`, on top of `784b699` (tip of `main` at
+dispatch). 7 files changed (`body/agente/herramientas.py`, `body/agente/propuestas.py`,
+`body/i18n/en.json`, `body/i18n/es.json`, `body/rutas/asistente.py`, `tests/test_agente_entreno.py`,
+`tests/test_agente_propuestas.py`), 95 insertions, 3 deletions.
+
+**Merge**: `git merge --no-ff feat/body-entreno-titulo-1` into `main`, commit `ff71377`, parents
+`784b699` (prior tip of `main`) and `f49e955` (tip of the branch). Tree identity: branch tree
+`b530d16` equals the merge commit's own tree (`git rev-parse HEAD^{tree}` on `main` after the
+merge), and `git diff feat/body-entreno-titulo-1 main` is empty.
