@@ -7,7 +7,7 @@ from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from .. import db, identity, profile
+from .. import baselines, db, identity, profile
 from ..i18n import T
 from . import comun
 
@@ -58,31 +58,42 @@ def _chart_aria(t: T, metric: str, start_label: str, end_label: str, months: boo
     return t(key, metric=metric, desde=start_label, hasta=end_label)
 
 
+def _medidas_count_txt(t: T, n: int) -> str:
+    return t("trends.medidas_count_one") if n == 1 else t("trends.medidas_count_other", n=n)
+
+
 def _trend_card(conn, t: T, defs: dict, k: str, start, end, month, nights, person_id: int):
     """One card -- own baseline, honest gaps, night shading, the month tap -- built the same way for the
     default 9 and every extra metric behind "Ver todas las medidas" (DESIGN rules 3, 6, 7). A
     self-measured key (BODY-ENTRENO-MEDIDA-1) gets a card from its first value instead of waiting
-    for TREND_MIN_DAYS worth of watch-sized history -- there is no cadence to wait on."""
+    for TREND_MIN_DAYS worth of watch-sized history -- there is no cadence to wait on. Below
+    baselines.MIN_DAYS of self-measured values, p.low/p.high are not yet an honest normal range (as
+    few as one point collapses them to a single repeated value) -- the card carries no delta, no
+    normal-range legend and no band, and a count line instead (BODY-ENTRENO-TOOLS-1-M fix 3)."""
     d = defs[k]
     min_days = 1 if d["origen"] == "self" else TREND_MIN_DAYS
     p = profile.metric_profile(conn, k, person_id=person_id, min_days=min_days)
     if not p:
         return None, None
+    pocas = d["origen"] == "self" and p.days < baselines.MIN_DAYS
     spread = p.high - p.low
     metric_label = t("metric." + k)
     valor_fmt = lambda v: comun._fig_unit(t, k, v, defs)
     if start:
         w = profile.window(conn, k, start, end, person_id)
-        if month:
+        if pocas:
+            delta, cls = "", "flat"
+        elif month:
             delta, cls = _compare(t, k, d, w.mean, p.all_mean, spread, "trends.vs_hist")
         else:
             delta, cls = _compare(t, k, d, w.mean, w.prev_mean, spread, "trends.vs_prev")
         etiqueta_dia = lambda day: comun._short_date(t, day)
         aria = _chart_aria(t, metric_label, etiqueta_dia(w.start), etiqueta_dia(w.end))
         fig, svg = w.mean, profile.window_svg(w, p.low, p.high, nights, etiqueta_dia=etiqueta_dia, aria_label=aria,
-                                              valor_fmt=valor_fmt, link_label=t("trends.chart_open_day"))
+                                              valor_fmt=valor_fmt, link_label=t("trends.chart_open_day"),
+                                              banda=not pocas)
     else:
-        delta, cls = _compare(t, k, d, p.last30, p.all_mean, spread, "trends.vs_hist")
+        delta, cls = ("", "flat") if pocas else _compare(t, k, d, p.last30, p.all_mean, spread, "trends.vs_hist")
         etiqueta_mes = lambda m: t.month_year(date.fromisoformat(m + "-01"))
         aria = (_chart_aria(t, metric_label, etiqueta_mes(p.months[0][0]), etiqueta_mes(p.months[-1][0]), months=True)
                 if len(p.months) >= 2 else None)
@@ -91,7 +102,8 @@ def _trend_card(conn, t: T, defs: dict, k: str, start, end, month, nights, perso
     card = {"key": k, "question": t("trends.q." + k), "est": d["kind"] == "estimated",
             "last30": comun._value(t, k, fig), "unit": comun._unit(t, d) if fig is not None else "", "delta": delta,
             "cls": cls, "svg": svg, "low": comun._value(t, k, p.low), "high": comun._value(t, k, p.high),
-            "sparse": k in SPARSE_KEYS, "self": d["origen"] == "self", "subtitle": None}
+            "sparse": k in SPARSE_KEYS, "self": d["origen"] == "self", "subtitle": None,
+            "pocas": pocas, "conteo": _medidas_count_txt(t, p.days) if pocas else None}
     return card, p
 
 

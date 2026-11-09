@@ -14,7 +14,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import config, db, goals, identity, web
+from body import config, db, garmin_adapter, goals, identity, web
 from body.agente import bucle as agente_bucle
 from body.agente import cliente as agente_cliente
 from body.agente import conversacion as agente_conversacion
@@ -386,6 +386,78 @@ class EstadoYEventosTest(unittest.TestCase):
         self.assertIn("sentadilla", datos["series"][0]["tu"])
         self.assertEqual(datos["etiquetas"]["entreno_reloj"], "Reloj")
         self.assertEqual(datos["etiquetas"]["entreno_tu"], "Tú")
+        # BODY-ENTRENO-TOOLS-1-M fix 2: a manual session's titulo carries into the card's own line.
+        self.assertEqual(datos["despues"], "Propuesta: Pierna en casa · 10 nov 2026")
+
+    def test_registrar_entreno_manual_without_a_titulo_keeps_the_dateonly_wording(self):
+        guion = [
+            Respuesta(bloques=[LlamadaHerramienta("l1", "registrar_entreno", {
+                "day": "2026-11-10",
+                "series": [{"ejercicio": "sentadilla", "reps": 10, "peso_kg": 40.0}],
+            })], motivo_fin="tool_use", uso=Uso()),
+            Respuesta(bloques=[BloqueTexto("listo")], motivo_fin="end_turn", uso=Uso()),
+        ]
+        proveedor = FakeProveedor(guion)
+        with patch.object(agente_cliente, "proveedor_configurado", return_value=proveedor):
+            r = self.client.post("/asistente/preguntar",
+                                 json={"pregunta": "hice pierna", "conversacion_id": None})
+        self.assertEqual(r.status_code, 200)
+        datos = _evento_data(r.text, "propuesta")
+        self.assertEqual(datos["despues"], "Propuesta: Entrenamiento del 10 nov 2026")
+
+    def test_registrar_entreno_garmin_shows_a_readable_watch_name(self):
+        # BODY-ENTRENO-TOOLS-1-M fix 1: the watch column reads Garmin's raw code as a readable
+        # name -- underscores as spaces, only the first letter capital -- never the stored value.
+        self.conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, name, source) "
+            "VALUES (1, 'a1', '2026-11-10', '2026-11-10T07:00:00', 'strength_training', NULL, 'garmin')"
+        )
+        self.conn.commit()
+        db.save_exercise_sets(self.conn, 1, "garmin", "a1", [
+            garmin_adapter.ExerciseSet(set_type="active", category="pecho", exercise="BARBELL_ROW", reps=8.0,
+                                       weight_value=40.0, weight_unit="kg", duration_s=30.0,
+                                       start_local="2026-11-10T07:00:00"),
+        ])
+        guion = [
+            Respuesta(bloques=[LlamadaHerramienta("l1", "registrar_entreno", {
+                "day": "2026-11-10",
+                "series": [{"ejercicio": "remo con barra", "reps": 10, "peso_kg": 40.0}],
+            })], motivo_fin="tool_use", uso=Uso()),
+            Respuesta(bloques=[BloqueTexto("listo")], motivo_fin="end_turn", uso=Uso()),
+        ]
+        proveedor = FakeProveedor(guion)
+        with patch.object(agente_cliente, "proveedor_configurado", return_value=proveedor):
+            r = self.client.post("/asistente/preguntar",
+                                 json={"pregunta": "hice remo", "conversacion_id": None})
+        self.assertEqual(r.status_code, 200)
+        datos = _evento_data(r.text, "propuesta")
+        self.assertEqual(datos["series"][0]["reloj"], "Barbell row · 8 rep · 40 kg")
+        self.assertIn("remo con barra", datos["series"][0]["tu"])
+
+    def test_registrar_entreno_garmin_falls_back_to_category_when_exercise_is_missing(self):
+        self.conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, name, source) "
+            "VALUES (1, 'a1', '2026-11-10', '2026-11-10T07:00:00', 'strength_training', NULL, 'garmin')"
+        )
+        self.conn.commit()
+        db.save_exercise_sets(self.conn, 1, "garmin", "a1", [
+            garmin_adapter.ExerciseSet(set_type="active", category="CORE", exercise=None, reps=8.0,
+                                       weight_value=None, weight_unit=None, duration_s=30.0,
+                                       start_local="2026-11-10T07:00:00"),
+        ])
+        guion = [
+            Respuesta(bloques=[LlamadaHerramienta("l1", "registrar_entreno", {
+                "day": "2026-11-10", "series": [{"ejercicio": "plancha", "reps": 10}],
+            })], motivo_fin="tool_use", uso=Uso()),
+            Respuesta(bloques=[BloqueTexto("listo")], motivo_fin="end_turn", uso=Uso()),
+        ]
+        proveedor = FakeProveedor(guion)
+        with patch.object(agente_cliente, "proveedor_configurado", return_value=proveedor):
+            r = self.client.post("/asistente/preguntar",
+                                 json={"pregunta": "hice core", "conversacion_id": None})
+        self.assertEqual(r.status_code, 200)
+        datos = _evento_data(r.text, "propuesta")
+        self.assertEqual(datos["series"][0]["reloj"], "Core · 8 rep")
 
     def test_registrar_medida_carries_a_propuesta_label(self):
         # No prior value for that day/key -- insert-shaped, like proponer_meta: only "Propuesta: …".

@@ -63,12 +63,24 @@ def _ejercicio_plan_txt(t: T, e: dict) -> str:
     return t("asistente.propuesta.entreno_ejercicio", ejercicio=e["ejercicio"], series=t.num(e["series"]))
 
 
-def _serie_txt(t: T, s: dict | None) -> str | None:
+def _nombre_legible(codigo: str | None) -> str | None:
+    """Garmin's own code ("BARBELL_ROW") made readable for display, underscores as spaces and only
+    the first letter capital (BODY-ENTRENO-TOOLS-1-M fix 1) -- never the stored garmin_exercise/
+    garmin_category themselves, which stay the raw code."""
+    if not codigo:
+        return None
+    texto = codigo.replace("_", " ").strip()
+    return f"{texto[:1].upper()}{texto[1:].lower()}" if texto else None
+
+
+def _serie_txt(t: T, s: dict | None, nombre: str | None = None) -> str | None:
     """One set's short display text for the watch-vs-you table: "<ejercicio> · <reps/weight>",
-    or None for an empty cell (no watch set at that order)."""
+    or None for an empty cell (no watch set at that order). nombre, when given, overrides the
+    exercise text (the watch side's readable name, built by _nombre_legible from the raw
+    garmin_exercise/garmin_category -- fix 1)."""
     if s is None:
         return None
-    ejercicio = (s.get("ejercicio") or "").strip()
+    ejercicio = (nombre if nombre is not None else (s.get("ejercicio") or "")).strip()
     reps, peso = s.get("reps"), s.get("peso_kg")
     if reps is not None and peso is not None:
         detalle = t("asistente.propuesta.entreno_reps_peso", reps=t.num(reps), peso=t.num(peso))
@@ -114,8 +126,12 @@ def _tarjeta_propuesta(t: T, defs: dict, registro: dict) -> dict:
         despues_txt = t("asistente.propuesta.entreno_plan", titulo=despues["titulo"],
                         fecha=comun._short_date(t, date.fromisoformat(despues["day"])), ejercicios=ejercicios_txt)
     elif accion == "registrar_entreno":
-        despues_txt = t("asistente.propuesta.entreno_registrado",
-                        fecha=comun._short_date(t, date.fromisoformat(despues["day"])))
+        fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
+        titulo_manual = despues.get("titulo") if despues["manual"] else None
+        if titulo_manual and titulo_manual != "Entrenamiento":
+            despues_txt = t("asistente.propuesta.entreno_registrado_titulo", titulo=titulo_manual, fecha=fecha)
+        else:
+            despues_txt = t("asistente.propuesta.entreno_registrado", fecha=fecha)
     elif accion == "registrar_medida":
         metric_key = despues["metric_key"]
         fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
@@ -132,8 +148,16 @@ def _tarjeta_propuesta(t: T, defs: dict, registro: dict) -> dict:
             series_tarjeta = [{"orden": i, "reloj": None, "tu": _serie_txt(t, s)}
                                for i, s in enumerate(despues["series"], start=1)]
         else:
-            series_tarjeta = [{"orden": m["set_order"], "reloj": _serie_txt(t, m["reloj"]),
-                                "tu": _serie_txt(t, m["tu"])} for m in despues["mapeo"]]
+            # The watch side's readable name comes from the raw garmin_exercise/garmin_category in
+            # antes_json["sets_antes"] -- never from m["reloj"]["ejercicio"], which can already be a
+            # prior person correction (fix 1).
+            crudos = {s["set_order"]: s for s in antes_json["sets_antes"]}
+            series_tarjeta = []
+            for m in despues["mapeo"]:
+                crudo = crudos.get(m["set_order"], {})
+                nombre = _nombre_legible(crudo.get("garmin_exercise")) or _nombre_legible(crudo.get("garmin_category"))
+                series_tarjeta.append({"orden": m["set_order"], "reloj": _serie_txt(t, m["reloj"], nombre=nombre),
+                                        "tu": _serie_txt(t, m["tu"])})
     if antes_txt is not None:
         antes_txt = t("asistente.propuesta.antes", valor=antes_txt)
         despues_txt = t("asistente.propuesta.despues", valor=despues_txt)

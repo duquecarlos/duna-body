@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from tests._db import open_conn
 
-from body import config, db, goals, identity, web
+from body import baselines, config, db, goals, identity, web
 from body.agente import conversacion as agente_conversacion
 from body.agente import herramientas, propuestas
 from body.rutas import comun
@@ -246,6 +246,52 @@ class TrendsSelfMeasuredGroupTest(unittest.TestCase):
         self.assertIn('id="flex_alcance_cm"', page)
         self.assertIn("Medido por ti", page)  # trends.group.self
         self.assertIn("Tú registras este dato", page)  # trends.self_note
+
+
+class TrendsSelfMeasuredThresholdTest(unittest.TestCase):
+    """BODY-ENTRENO-TOOLS-1-M fix 3: below baselines.MIN_DAYS of self-measured values, the card has
+    no delta, no normal-range legend and no band -- a count line instead; from MIN_DAYS on it
+    behaves like any other card."""
+
+    def setUp(self):
+        self.orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig_db_path))
+        self.addCleanup(web.app.dependency_overrides.clear)
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "trends_threshold.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+        d0 = date(2026, 9, 1)
+        for i in range(20):
+            db.set_metric(self.conn, (d0 + timedelta(i)).isoformat(), "resting_hr", 58 - i * 0.1, "garmin", 1)
+        self.conn.commit()
+        web.app.dependency_overrides[identity.current_person_id] = lambda: 1
+        self.client = TestClient(web.app, follow_redirects=False)
+
+    def _card_chunk(self, page: str) -> str:
+        start = page.index('id="flex_alcance_cm"')
+        end = page.index("</div>", page.index('class="legend mt-4"', start))
+        return page[start:end]
+
+    def test_below_min_days_has_a_count_line_and_no_normal_legend(self):
+        self.assertLess(3, baselines.MIN_DAYS)
+        for i in range(3):
+            db.set_metric(self.conn, (date(2026, 10, 1) + timedelta(i)).isoformat(), "flex_alcance_cm",
+                          30.0 - i, "self", 1)
+        self.conn.commit()
+        chunk = self._card_chunk(self.client.get("/trends?todas=1").text)
+        self.assertIn("3 mediciones hasta ahora", chunk)
+        self.assertNotIn("Tu rango normal", chunk)
+        self.assertNotIn("como siempre", chunk)
+
+    def test_at_min_days_behaves_like_any_other_card(self):
+        for i in range(baselines.MIN_DAYS):
+            db.set_metric(self.conn, (date(2026, 10, 1) + timedelta(i)).isoformat(), "flex_alcance_cm",
+                          30.0 - i, "self", 1)
+        self.conn.commit()
+        chunk = self._card_chunk(self.client.get("/trends?todas=1").text)
+        self.assertIn("Tu rango normal", chunk)
+        self.assertNotIn("mediciones hasta ahora", chunk)
 
 
 if __name__ == "__main__":
