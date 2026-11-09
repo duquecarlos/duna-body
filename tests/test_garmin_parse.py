@@ -1,9 +1,13 @@
 """BODY-VO2MAX-1: parsing of Garmin's max-metrics feed (VO2 max estimate, fitness age).
+BODY-INTRADIA-ADAPTER-1: parsing of Garmin's intraday feeds (heart rate, stress, Body Battery
+events) for fetch_intraday/parse_intraday.
 
-The installed garminconnect 0.3.20 package names no confirmed field shape for get_max_metrics
-beyond its dict[str, Any] type hint, so parse_day is defensive: list or dict, missing keys -> None.
-Fixtures below are invented shapes only, never real health figures.
+The installed garminconnect 0.3.20 package names no confirmed field shape for get_max_metrics,
+get_heart_rates, get_stress_data or get_body_battery_events beyond their dict[str, Any] /
+list[dict[str, Any]] type hints, so parsing is defensive throughout. Fixtures below are invented
+shapes only, never real health figures.
 """
+import pathlib
 import unittest
 from unittest import mock
 
@@ -99,6 +103,161 @@ class FetchDayMaxMetricsFailureTest(unittest.TestCase):
         self.assertEqual(data.metrics["resting_hr"], 55)
         self.assertNotIn("vo2max", data.metrics)
         self.assertEqual(data.raw["_errors"]["max_metrics"], "RuntimeError")
+
+
+HEART_RATE_RAW = {
+    "userProfilePK": 1,
+    "calendarDate": "2026-11-05",
+    "heartRateValueDescriptors": [{"key": "timestamp", "index": 0}, {"key": "heartrate", "index": 1}],
+    "heartRateValues": [
+        [1762300800000, 58],
+        [1762300920000, None],  # a null sample -- must be dropped, not kept as 0
+        [1762301040000, 61],
+    ],
+}
+
+STRESS_RAW = {
+    "calendarDate": "2026-11-05",
+    "maxStressLevel": 72,
+    "avgStressLevel": 24,
+    "stressValuesArray": [
+        [1762300800000, 18],
+        [1762300980000, -1],  # Garmin's "no data" sentinel value, not a real reading
+        [1762301160000, 30],
+    ],
+}
+
+STRESS_WITH_STATED_INTERVAL_RAW = {
+    "calendarDate": "2026-11-05",
+    "stressValueIntervalMinutes": 3,
+    "stressValuesArray": [[1762300800000, 20]],
+}
+
+BODY_BATTERY_EVENTS_RAW = [
+    {"eventType": "sleep", "eventStartTimeGmt": "2026-11-04T23:00:00.0", "durationInMs": 7200000,
+     "bodyBatteryImpact": 12},
+    {"eventType": "activity", "eventStartTimeGmt": "2026-11-05T06:00:00.0", "durationInMs": 1800000,
+     "bodyBatteryImpact": -5},
+]
+
+
+def _expect_local(ms):
+    return garmin_adapter._local_iso(ms)
+
+
+class IntradayFullDayTest(unittest.TestCase):
+    def test_full_day_parses_in_order(self):
+        raw = {
+            "heart_rate": HEART_RATE_RAW,
+            "stress": STRESS_RAW,
+            "body_battery_events": BODY_BATTERY_EVENTS_RAW,
+        }
+        d = garmin_adapter.parse_intraday("2026-11-05", raw)
+        self.assertEqual(d.day, "2026-11-05")
+        self.assertEqual(d.heart_rate, (
+            (_expect_local(1762300800000), 58.0),
+            (_expect_local(1762301040000), 61.0),
+        ))
+        self.assertEqual(d.stress, (
+            (_expect_local(1762300800000), 18.0),
+            (_expect_local(1762300980000), -1.0),
+            (_expect_local(1762301160000), 30.0),
+        ))
+        self.assertEqual(d.body_battery_events, tuple(BODY_BATTERY_EVENTS_RAW))
+        self.assertIsNone(d.heart_rate_interval_minutes)
+        self.assertIsNone(d.stress_interval_minutes)
+        self.assertIs(d.raw, raw)
+
+
+class IntradayStatedIntervalTest(unittest.TestCase):
+    def test_interval_minutes_read_when_stated(self):
+        d = garmin_adapter.parse_intraday("2026-11-05", {"stress": STRESS_WITH_STATED_INTERVAL_RAW})
+        self.assertEqual(d.stress_interval_minutes, 3)
+
+    def test_interval_minutes_none_when_not_stated(self):
+        d = garmin_adapter.parse_intraday("2026-11-05", {"heart_rate": HEART_RATE_RAW})
+        self.assertIsNone(d.heart_rate_interval_minutes)
+
+
+class IntradayHonestGapsTest(unittest.TestCase):
+    def test_missing_series_are_absent_not_zero(self):
+        d = garmin_adapter.parse_intraday("2026-11-05", {})
+        self.assertEqual(d.heart_rate, ())
+        self.assertEqual(d.stress, ())
+        self.assertEqual(d.body_battery_events, ())
+
+    def test_empty_and_null_series_stay_absent(self):
+        for raw in ({"heartRateValues": []}, {"heartRateValues": None}, {}, "unexpected-shape", None):
+            d = garmin_adapter.parse_intraday("2026-11-05", {"heart_rate": raw})
+            self.assertEqual(d.heart_rate, ())
+        for raw in ({"stressValuesArray": []}, {"stressValuesArray": None}, {}, None):
+            d = garmin_adapter.parse_intraday("2026-11-05", {"stress": raw})
+            self.assertEqual(d.stress, ())
+        for raw in ([], None, "unexpected-shape"):
+            d = garmin_adapter.parse_intraday("2026-11-05", {"body_battery_events": raw})
+            self.assertEqual(d.body_battery_events, ())
+
+    def test_null_samples_are_dropped_not_zero(self):
+        d = garmin_adapter.parse_intraday("2026-11-05", {"heart_rate": HEART_RATE_RAW})
+        self.assertEqual(len(d.heart_rate), 2)  # the 3rd sample is null -> dropped, not a 0.0
+        for _, value in d.heart_rate:
+            self.assertNotEqual(value, 0)
+
+
+class FakeGarminStressFails:
+    """Replaces garminconnect.Garmin: heart rate and Body Battery events succeed, stress raises.
+    Invented data only."""
+
+    def __init__(self, **kw):
+        self.client = mock.Mock()
+        self.client.dumps.return_value = "tok-demo"
+
+    def login(self, tokenstore=None):
+        return None, None
+
+    def get_heart_rates(self, cdate):
+        return HEART_RATE_RAW
+
+    def get_stress_data(self, cdate):
+        raise RuntimeError("demo stress failure")
+
+    def get_body_battery_events(self, cdate):
+        return BODY_BATTERY_EVENTS_RAW
+
+
+class FetchIntradayStressFailureTest(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch("garminconnect.Garmin", FakeGarminStressFails)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        config.TOKEN_DIR.mkdir(parents=True, exist_ok=True)
+        token_file = config.TOKEN_DIR / "garmin_tokens.json"
+        token_file.write_text('{"demo": true}', encoding="utf-8")
+        self.addCleanup(token_file.unlink, missing_ok=True)  # TOKEN_DIR is shared across this test run
+
+    def test_other_two_series_survive_and_the_missing_kind_is_named(self):
+        data = garmin_adapter.fetch_intraday("2026-11-05")
+        self.assertEqual(len(data.heart_rate), 2)
+        self.assertEqual(data.body_battery_events, tuple(BODY_BATTERY_EVENTS_RAW))
+        self.assertEqual(data.stress, ())
+        self.assertEqual(data.raw["_errors"], {"stress": "RuntimeError"})
+
+
+class OnlyGarminAdapterImportsGarminconnectTest(unittest.TestCase):
+    """No guard for this exists elsewhere in tests/ (checked by grep before writing this one)."""
+
+    def test_no_other_body_module_imports_garminconnect(self):
+        body_dir = pathlib.Path(__file__).resolve().parent.parent / "body"
+        offenders = []
+        for path in body_dir.rglob("*.py"):
+            if path.name == "garmin_adapter.py":
+                continue
+            text = path.read_text(encoding="utf-8")
+            for line in text.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("import garminconnect") or stripped.startswith("from garminconnect"):
+                    offenders.append(str(path.relative_to(body_dir.parent)))
+        self.assertEqual(offenders, [])
 
 
 if __name__ == "__main__":
