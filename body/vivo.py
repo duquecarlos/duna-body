@@ -47,6 +47,16 @@ TAREAS = {
     # The scheduled morning run (BODY-VIDA-DIA-1): refresh today's pull first, below, then this
     # same entry writes the day's vida-v1 file -- from `resto` runs through here unchanged.
     "manana": "body.vida_dia",
+    # BODY-MOMENTOS-PULL-1: runs through body.pull's own --intradia flag -- see PREFIJO_ARGV below,
+    # which is how `python -m body.vivo intradia --dias N` reaches it without a --intradia the
+    # person never typed.
+    "intradia": "body.pull",
+}
+
+# Argv prepended before a task's own arguments, for a task that shares a module with another task
+# and needs its own flag to select the right codepath -- today only `intradia`.
+PREFIJO_ARGV: dict[str, list[str]] = {
+    "intradia": ["--intradia"],
 }
 
 # A module run BEFORE `TAREAS[tarea]`, with its own fixed argv, for tasks that need one. Only
@@ -224,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
             if sys.stdout is not None:
                 print(f"{modulo_previo} failed before {tarea}: {errores.texto_seguro(exc)}")
 
-    sys.argv = [TAREAS[tarea], *resto]
+    sys.argv = [TAREAS[tarea], *PREFIJO_ARGV.get(tarea, []), *resto]
     try:
         runpy.run_module(TAREAS[tarea], run_name="__main__", alter_sys=True)
     except SystemExit as exc:

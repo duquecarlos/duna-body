@@ -8,6 +8,8 @@
     python -m body.pull --backfill      # hosted mode only: up to 15 more days per connected person,
                                         # newest first, toward the 90-day window (BODY-PRIMER-PULL-1)
     python -m body.pull --recompute     # only recompute readiness for every stored day
+    python -m body.pull --intradia --dias N  # intraday heart-rate/stress, last N days (local mode
+                                        # only; default and max N: INTRADIA_ALCANCE_DIAS)
 
 The daily hosted pull and --backfill share a file lock under BODY_HOME (`pull.lock`) so only one
 runs at a time. --backfill takes it non-blocking and exits 0 quietly if the daily pull holds it --
@@ -30,6 +32,12 @@ BACKFILL_DIAS = 90  # --backfill's window: the 90 days before today
 BACKFILL_PASO = 15  # at most this many days fetched per person per --backfill run
 LOCK_ESPERA_S = 1800  # the daily hosted pull's bound while it waits for a backfill holding the lock
 LOCK_SONDEO_S = 5  # how often it retries the non-blocking lock while waiting
+
+# Garmin's intraday retention, measured 2026-11-09 (BODY-INTRADIA-SPOTCHECK-1): about 130-140
+# days -- a day not pulled before it crosses this line is lost for good. Kept conservative (the
+# low end of the measured range) so the range helper's refusal below never lets a day that is
+# actually already gone look like it was simply never asked for.
+INTRADIA_ALCANCE_DIAS = 130
 
 
 def _lock_path() -> Path:
@@ -329,6 +337,64 @@ def traer_series(conn, person_id: int, activity_source_id: str, token_str: str |
     return len(data.sets)
 
 
+def traer_intradia(conn, person_id: int, day: str, token_str: str | None = None, *, forzar: bool = False):
+    """Pulls one day's intraday heart-rate/stress series through the adapter only, and stores
+    both kinds (db.guardar_intradia). Skips the Garmin call entirely when the day is already
+    stored (db.intradia_almacenado), unless `forzar=True`. Returns "already_stored", "empty"
+    (fetched, but out of Garmin's retention window -- both an honest gap and the empty marker
+    that keeps it from being re-fetched), or "fetched"; with `token_str` given, returns
+    (that status, token_after), the same dual-return shape fetch_intraday/traer_series use.
+    On demand only -- not called by pull_all, pull_hosted or pull_backfill_hosted."""
+    if not forzar and db.intradia_almacenado(conn, person_id, day):
+        return ("already_stored", token_str) if token_str is not None else "already_stored"
+    zona = db.person(conn, person_id)["timezone"]
+    if token_str is not None:
+        data, token_after = garmin_adapter.fetch_intraday(day, zona, token_str=token_str)
+    else:
+        data = garmin_adapter.fetch_intraday(day, zona)
+    db.guardar_intradia(conn, person_id, day, "intradia_fc", data.raw.get("heart_rate"))
+    db.guardar_intradia(conn, person_id, day, "intradia_estres", data.raw.get("stress"))
+    estado = "fetched" if (data.heart_rate or data.stress) else "empty"
+    return (estado, token_after) if token_str is not None else estado
+
+
+def traer_intradia_rango(conn, person_id: int, desde: date, hasta: date, pausa_s: float = 1.0) -> tuple[int, int, int]:
+    """Pulls traer_intradia for every day from `desde` to `hasta` (inclusive), oldest first, with a
+    polite pause between Garmin calls. Stops cleanly -- returning the counts gathered so far -- on
+    a sign-in error; a single day's own empty/error result is counted and the loop continues.
+    Local person only (no token_str): the on-demand / explicit-backfill path this slice adds, not
+    the hosted per-person loop. Prints counts and dates only. Returns (days fetched, days already
+    stored, days empty)."""
+    limite = date.today() - timedelta(days=INTRADIA_ALCANCE_DIAS)
+    if desde < limite:
+        raise ValueError(
+            f"desde {desde.isoformat()} is older than Garmin's intraday reach "
+            f"(~{INTRADIA_ALCANCE_DIAS} days back, to {limite.isoformat()}); that data is already gone."
+        )
+    fetched = stored = empty = 0
+    d = desde
+    primero = True
+    while d <= hasta:
+        if not primero:
+            time.sleep(pausa_s)
+        primero = False
+        try:
+            estado = traer_intradia(conn, person_id, d.isoformat())
+        except garmin_adapter.NotSignedIn as e:
+            print(f"intraday stopped at {d.isoformat()}: {type(e).__name__}", flush=True)
+            break
+        if estado == "already_stored":
+            stored += 1
+        elif estado == "empty":
+            empty += 1
+        else:
+            fetched += 1
+        d += timedelta(1)
+    print(f"intraday {desde.isoformat()}..{hasta.isoformat()}: "
+          f"{fetched} fetched, {stored} already stored, {empty} empty", flush=True)
+    return fetched, stored, empty
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="python -m body.pull")
     p.add_argument("--date", help="one day, YYYY-MM-DD")
@@ -338,6 +404,10 @@ def main(argv=None) -> int:
                     help="hosted mode only: up to 15 more days per person, toward the 90-day window")
     p.add_argument("--recompute", action="store_true",
                     help="recompute readiness only, no Garmin calls (local mode only)")
+    p.add_argument("--intradia", action="store_true",
+                    help="pull intraday heart-rate/stress for the last --dias days (local mode only)")
+    p.add_argument("--dias", type=int, default=INTRADIA_ALCANCE_DIAS,
+                    help=f"days back for --intradia (default and max {INTRADIA_ALCANCE_DIAS})")
     a = p.parse_args(argv)
 
     conn = db.connect()
@@ -349,6 +419,16 @@ def main(argv=None) -> int:
 
 
 def _run(conn, a) -> int:
+    if a.intradia:
+        if cuenta.hosted():
+            print("hosted: intraday pull is local-only for now.")
+            return 1
+        dias = min(max(a.dias, 1), INTRADIA_ALCANCE_DIAS)
+        person_id = db.local_person_id(conn)
+        hoy = date.today()
+        traer_intradia_rango(conn, person_id, hoy - timedelta(dias - 1), hoy)
+        return 0
+
     if cuenta.hosted():
         lock = _try_lock() if a.backfill else _esperar_lock(LOCK_ESPERA_S)
         if lock is None:

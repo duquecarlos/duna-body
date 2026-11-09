@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config
+from . import config, garmin_adapter
 
 _CADENCE_N_PER_WEEK = re.compile(r"^\s*(\d+)\s*x\s*/\s*week\s*$", re.IGNORECASE)
 
@@ -1186,6 +1186,60 @@ def days_with_data(conn: sqlite3.Connection, person_id: int) -> list[str]:
         (person_id,)
     ).fetchall()
     return [r["day"] for r in rows]
+
+
+# BODY-MOMENTOS-PULL-1: intraday heart-rate/stress payloads, stored under raw_payload's existing
+# (person_id, day, kind, source) primary key -- no schema change. Garmin's own `heart_rate`/
+# `stress` sub-dicts (garmin_adapter.fetch_intraday's `raw`) are stored exactly as fetched,
+# including None/{} for a day out of Garmin's ~130-140 day retention window: an EXPLICIT empty
+# marker (chosen over storing nothing at all) so that day is never re-fetched -- pull.traer_
+# intradia's "already stored" check reads the same row. Parsing happens on READ
+# (garmin_adapter.parse_heart_rate_series/parse_stress_series), so a parser fix never needs a
+# re-pull.
+INTRADIA_KINDS = ("intradia_fc", "intradia_estres")
+
+_INTRADIA_PARSER_NAMES = {
+    "intradia_fc": "parse_heart_rate_series",
+    "intradia_estres": "parse_stress_series",
+}
+
+
+def guardar_intradia(conn: sqlite3.Connection, person_id: int, day: str, kind: str, payload) -> None:
+    if kind not in INTRADIA_KINDS:
+        raise ValueError(f"unknown intradia kind: {kind!r}")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO raw_payload (person_id, day, kind, source, fetched_at, payload) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (person_id, day, kind, garmin_adapter.SOURCE, now, json.dumps(payload)),
+        )
+
+
+def intradia_almacenado(conn: sqlite3.Connection, person_id: int, day: str) -> bool:
+    """Whether this day's intraday payloads are already stored -- including an out-of-retention
+    day's empty marker. Both kinds are always written together by pull.traer_intradia, so
+    checking one (intradia_fc) is enough."""
+    return conn.execute(
+        "SELECT 1 FROM raw_payload WHERE person_id = ? AND day = ? AND kind = 'intradia_fc'",
+        (person_id, day),
+    ).fetchone() is not None
+
+
+def intradia(conn: sqlite3.Connection, person_id: int, day: str, kind: str, zona: str) -> list[tuple[str, float]]:
+    """The stored (local_iso, value) series for one day and kind, parsed on read with the
+    adapter's own parser. [] for a day never stored, or stored as an empty/null marker."""
+    if kind not in INTRADIA_KINDS:
+        raise ValueError(f"unknown intradia kind: {kind!r}")
+    row = conn.execute(
+        "SELECT payload FROM raw_payload WHERE person_id = ? AND day = ? AND kind = ?",
+        (person_id, day, kind),
+    ).fetchone()
+    if row is None:
+        return []
+    payload = json.loads(row["payload"])
+    parser = getattr(garmin_adapter, _INTRADIA_PARSER_NAMES[kind])
+    return list(parser(payload, zona))
 
 
 def save_exercise_sets(conn: sqlite3.Connection, person_id: int, source: str, source_id: str, sets) -> None:

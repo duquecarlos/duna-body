@@ -9,7 +9,9 @@ shapes only, never real health figures.
 """
 import pathlib
 import unittest
+from datetime import datetime, timezone
 from unittest import mock
+from zoneinfo import ZoneInfo
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
@@ -237,8 +239,11 @@ BODY_BATTERY_EVENTS_RAW = [
 ]
 
 
-def _expect_local(ms):
-    return garmin_adapter._local_iso(ms)
+def _expect_local(ms, zone="America/Bogota"):
+    """Independently computed (not delegating to garmin_adapter._utc_to_local_iso): the sample's
+    timestamp is a UTC instant, converted to `zone`'s own wall time."""
+    return (datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+            .astimezone(ZoneInfo(zone)).replace(tzinfo=None).isoformat(timespec="minutes"))
 
 
 class IntradayFullDayTest(unittest.TestCase):
@@ -248,53 +253,121 @@ class IntradayFullDayTest(unittest.TestCase):
             "stress": STRESS_RAW,
             "body_battery_events": BODY_BATTERY_EVENTS_RAW,
         }
-        d = garmin_adapter.parse_intraday("2026-11-05", raw)
+        d = garmin_adapter.parse_intraday("2026-11-05", raw, "America/Bogota")
         self.assertEqual(d.day, "2026-11-05")
         self.assertEqual(d.heart_rate, (
             (_expect_local(1762300800000), 58.0),
             (_expect_local(1762301040000), 61.0),
         ))
+        # the -1 sample is Garmin's "no reading" sentinel -- dropped, not kept as a real level
         self.assertEqual(d.stress, (
             (_expect_local(1762300800000), 18.0),
-            (_expect_local(1762300980000), -1.0),
             (_expect_local(1762301160000), 30.0),
         ))
         self.assertEqual(d.body_battery_events, tuple(BODY_BATTERY_EVENTS_RAW))
-        self.assertIsNone(d.heart_rate_interval_minutes)
-        self.assertIsNone(d.stress_interval_minutes)
+        self.assertEqual(d.heart_rate_interval_minutes, 2.0)  # derived: no stated key in this fixture
+        self.assertEqual(d.stress_interval_minutes, 3.0)
         self.assertIs(d.raw, raw)
 
 
-class IntradayStatedIntervalTest(unittest.TestCase):
+class IntradayIntervalTest(unittest.TestCase):
     def test_interval_minutes_read_when_stated(self):
-        d = garmin_adapter.parse_intraday("2026-11-05", {"stress": STRESS_WITH_STATED_INTERVAL_RAW})
+        d = garmin_adapter.parse_intraday(
+            "2026-11-05", {"stress": STRESS_WITH_STATED_INTERVAL_RAW}, "America/Bogota")
         self.assertEqual(d.stress_interval_minutes, 3)
 
-    def test_interval_minutes_none_when_not_stated(self):
-        d = garmin_adapter.parse_intraday("2026-11-05", {"heart_rate": HEART_RATE_RAW})
+    def test_interval_minutes_derived_when_not_stated(self):
+        d = garmin_adapter.parse_intraday("2026-11-05", {"heart_rate": HEART_RATE_RAW}, "America/Bogota")
+        self.assertEqual(d.heart_rate_interval_minutes, 2.0)  # 1762300920000 - 1762300800000 = 120000ms
+
+    def test_interval_minutes_none_with_fewer_than_two_samples(self):
+        raw = {"heartRateValues": [[1762300800000, 58]]}
+        d = garmin_adapter.parse_intraday("2026-11-05", {"heart_rate": raw}, "America/Bogota")
         self.assertIsNone(d.heart_rate_interval_minutes)
+
+
+class IntradayTimezoneTest(unittest.TestCase):
+    """BODY-INTRADIA-SPOTCHECK-1 (2026-11-09): the timestamp is a UTC instant (the first sample
+    equals the day's own startTimestampGMT), not already local -- checked against a zone 5h
+    behind UTC and one ahead."""
+
+    def test_zone_five_hours_behind_utc(self):
+        d = garmin_adapter.parse_intraday("2026-11-05", {"heart_rate": HEART_RATE_RAW}, "America/Bogota")
+        self.assertEqual(d.heart_rate[0][0], _expect_local(1762300800000, "America/Bogota"))
+
+    def test_zone_ahead_of_utc(self):
+        d = garmin_adapter.parse_intraday("2026-11-05", {"heart_rate": HEART_RATE_RAW}, "Europe/Madrid")
+        self.assertEqual(d.heart_rate[0][0], _expect_local(1762300800000, "Europe/Madrid"))
+
+    def test_different_zones_land_on_different_local_minutes(self):
+        behind = garmin_adapter.parse_intraday("2026-11-05", {"heart_rate": HEART_RATE_RAW}, "America/Bogota")
+        ahead = garmin_adapter.parse_intraday("2026-11-05", {"heart_rate": HEART_RATE_RAW}, "Europe/Madrid")
+        self.assertNotEqual(behind.heart_rate[0][0], ahead.heart_rate[0][0])
+
+
+HEART_RATE_SWAPPED_COLUMNS_RAW = {
+    # the value column is index 0 and the timestamp column is index 1 -- the REVERSE of the usual
+    # order -- so a parser reading by fixed position rather than by descriptor key would get this
+    # wrong
+    "heartRateValueDescriptors": [{"key": "heartrate", "index": 0}, {"key": "timestamp", "index": 1}],
+    "heartRateValues": [[58, 1762300800000]],
+}
+
+
+class IntradayDescriptorOrderTest(unittest.TestCase):
+    def test_descriptors_in_a_different_order_still_map_correctly(self):
+        d = garmin_adapter.parse_intraday(
+            "2026-11-05", {"heart_rate": HEART_RATE_SWAPPED_COLUMNS_RAW}, "America/Bogota")
+        self.assertEqual(d.heart_rate, ((_expect_local(1762300800000), 58.0),))
+
+    def test_stress_falls_back_to_positions_0_1_when_descriptors_absent(self):
+        # STRESS_RAW carries no stressValueDescriptorsDTOList key at all
+        d = garmin_adapter.parse_intraday("2026-11-05", {"stress": STRESS_RAW}, "America/Bogota")
+        self.assertEqual(d.stress[0], (_expect_local(1762300800000), 18.0))
+
+
+class IntradaySentinelDropTest(unittest.TestCase):
+    def test_stress_minus_one_and_minus_two_dropped(self):
+        self.assertEqual(garmin_adapter.GARMIN_STRESS_NO_READING_CODES, (-1, -2))
+        raw = {"stressValuesArray": [[1762300800000, -1], [1762300980000, -2], [1762301160000, 45]]}
+        d = garmin_adapter.parse_intraday("2026-11-05", {"stress": raw}, "America/Bogota")
+        self.assertEqual(len(d.stress), 1)
+        self.assertEqual(d.stress[0][1], 45.0)
+
+    def test_stress_zero_is_a_real_reading_kept(self):
+        raw = {"stressValuesArray": [[1762300800000, 0]]}
+        d = garmin_adapter.parse_intraday("2026-11-05", {"stress": raw}, "America/Bogota")
+        self.assertEqual(d.stress, ((_expect_local(1762300800000), 0.0),))
+
+    def test_heart_rate_zero_or_negative_dropped_not_a_reading(self):
+        # a living person's pulse is never 0 -- treated the same honest-gap way as a negative
+        # stress sentinel, never kept as a real bpm value
+        raw = {"heartRateValues": [[1762300800000, 0], [1762300920000, -5], [1762301040000, 60]]}
+        d = garmin_adapter.parse_intraday("2026-11-05", {"heart_rate": raw}, "America/Bogota")
+        self.assertEqual(len(d.heart_rate), 1)
+        self.assertEqual(d.heart_rate[0][1], 60.0)
 
 
 class IntradayHonestGapsTest(unittest.TestCase):
     def test_missing_series_are_absent_not_zero(self):
-        d = garmin_adapter.parse_intraday("2026-11-05", {})
+        d = garmin_adapter.parse_intraday("2026-11-05", {}, "America/Bogota")
         self.assertEqual(d.heart_rate, ())
         self.assertEqual(d.stress, ())
         self.assertEqual(d.body_battery_events, ())
 
     def test_empty_and_null_series_stay_absent(self):
         for raw in ({"heartRateValues": []}, {"heartRateValues": None}, {}, "unexpected-shape", None):
-            d = garmin_adapter.parse_intraday("2026-11-05", {"heart_rate": raw})
+            d = garmin_adapter.parse_intraday("2026-11-05", {"heart_rate": raw}, "America/Bogota")
             self.assertEqual(d.heart_rate, ())
         for raw in ({"stressValuesArray": []}, {"stressValuesArray": None}, {}, None):
-            d = garmin_adapter.parse_intraday("2026-11-05", {"stress": raw})
+            d = garmin_adapter.parse_intraday("2026-11-05", {"stress": raw}, "America/Bogota")
             self.assertEqual(d.stress, ())
         for raw in ([], None, "unexpected-shape"):
-            d = garmin_adapter.parse_intraday("2026-11-05", {"body_battery_events": raw})
+            d = garmin_adapter.parse_intraday("2026-11-05", {"body_battery_events": raw}, "America/Bogota")
             self.assertEqual(d.body_battery_events, ())
 
     def test_null_samples_are_dropped_not_zero(self):
-        d = garmin_adapter.parse_intraday("2026-11-05", {"heart_rate": HEART_RATE_RAW})
+        d = garmin_adapter.parse_intraday("2026-11-05", {"heart_rate": HEART_RATE_RAW}, "America/Bogota")
         self.assertEqual(len(d.heart_rate), 2)  # the 3rd sample is null -> dropped, not a 0.0
         for _, value in d.heart_rate:
             self.assertNotEqual(value, 0)
@@ -332,7 +405,7 @@ class FetchIntradayStressFailureTest(unittest.TestCase):
         self.addCleanup(token_file.unlink, missing_ok=True)  # TOKEN_DIR is shared across this test run
 
     def test_other_two_series_survive_and_the_missing_kind_is_named(self):
-        data = garmin_adapter.fetch_intraday("2026-11-05")
+        data = garmin_adapter.fetch_intraday("2026-11-05", "America/Bogota")
         self.assertEqual(len(data.heart_rate), 2)
         self.assertEqual(data.body_battery_events, tuple(BODY_BATTERY_EVENTS_RAW))
         self.assertEqual(data.stress, ())

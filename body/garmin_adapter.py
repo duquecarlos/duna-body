@@ -12,6 +12,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 from . import config
 
@@ -51,10 +52,16 @@ class DayData:
 class IntradayData:
     """One local day's intraday series: heart rate, stress, Body Battery events.
 
-    heart_rate and stress are tuples of (local time, value) in payload order. A series Garmin
-    returns empty, null, or with null samples stays an honest gap: absent () or a shorter tuple,
-    never a zero. *_interval_minutes is the sampling interval ONLY when Garmin's own payload states
-    one (a key naming "interval"); otherwise None -- never guessed from timestamp deltas.
+    heart_rate and stress are tuples of (local time, value) in payload order, local time being the
+    person's own zone (the zone is a parameter to parse_intraday/fetch_intraday -- this module
+    never reads it from the database). A series Garmin returns empty or null, out of its ~130-140
+    day retention window, stays an honest gap: absent (), never a zero. A null sample is dropped.
+    Measured 2026-11-09 (BODY-INTRADIA-SPOTCHECK-1, body-app/research/intradia-spotcheck-
+    2026-11-09.md): a stress sample of -1 or -2 is Garmin's "no reading" code (off wrist / too
+    much motion), never a level, and is dropped the same way; a heart-rate sample of 0 or less is
+    not a reading either (a living person's pulse is never 0) and is dropped too.
+    *_interval_minutes is the sampling interval from a key the payload states directly (none does
+    today, per the same spot-check), or else derived from the first two samples' own timestamps.
     """
     day: str
     source: str = SOURCE
@@ -188,13 +195,21 @@ def fetch_day(day: str, token_str: str | None = None):
     return data, api.client.dumps()
 
 
-def fetch_intraday(day: str, token_str: str | None = None):
-    """Pull one local day's intraday series: heart rate, stress, Body Battery events.
+def fetch_intraday(day: str, zone: str, token_str: str | None = None):
+    """Pull one calendar day's intraday series: heart rate, stress, Body Battery events.
+
+    `zone` is the person's own IANA timezone name, given by the caller -- this module never reads
+    it from the database. It is needed because Garmin's heart-rate/stress arrays carry each
+    sample's timestamp as a UTC INSTANT, not already shifted to local wall time: measured
+    2026-11-09 (BODY-INTRADIA-SPOTCHECK-1), the first sample of a day equals that day's own
+    startTimestampGMT.
 
     One call per kind (get_heart_rates, get_stress_data -- not get_all_day_stress, which hits the
     same endpoint --, get_body_battery_events), same session/token pattern as fetch_day including
-    the hosted per-person token path. Called on demand only: nothing in pull.py, the backfill loop
-    or the web app calls this (BODY-INTRADIA-ADAPTER-1).
+    the hosted per-person token path. Only heart rate and stress are parsed to the measured facts
+    above; Body Battery events are passed through unparsed, as before (out of scope here).
+    Called on demand only: nothing in pull.py's scheduled paths (pull_all, pull_hosted,
+    pull_backfill_hosted) calls this (BODY-INTRADIA-ADAPTER-1, BODY-MOMENTOS-PULL-1).
     """
     api = _client(token_str)
     raw: dict[str, Any] = {}
@@ -211,7 +226,7 @@ def fetch_intraday(day: str, token_str: str | None = None):
             errors[kind] = type(e).__name__
     if errors:
         raw["_errors"] = errors
-    data = parse_intraday(day, raw)
+    data = parse_intraday(day, raw, zone)
     if token_str is None:
         return data
     return data, api.client.dumps()
@@ -389,58 +404,156 @@ def parse_day(day: str, raw: dict[str, Any]) -> DayData:
     return out
 
 
-def _interval_minutes(d: Any) -> float | None:
-    """The sampling interval ONLY when the payload states one directly (any key naming "interval",
-    case-insensitive, holding a number) -- never computed from timestamp deltas. The installed
-    garminconnect 0.3.20 package does not type get_heart_rates/get_stress_data beyond
-    dict[str, Any], so neither the key name nor its presence is confirmed; this is a defensive
-    scan, not a guess at one specific key."""
-    if not isinstance(d, dict):
+# Garmin's stress feed uses these two negative values as "no reading" codes -- off-wrist or too
+# much motion to compute a level -- never a real stress score (measured 2026-11-09,
+# BODY-INTRADIA-SPOTCHECK-1). Kept as a named constant for what they mean; the actual filter below
+# drops any negative value the same way, since a stress level can never be negative and no third
+# code is confirmed.
+GARMIN_STRESS_NO_READING_CODES = (-1, -2)
+
+
+def _utc_to_local_iso(ms: Any, zone: str) -> str | None:
+    """Garmin's intraday arrays (heartRateValues, stressValuesArray) carry each sample's
+    timestamp as a UTC INSTANT -- measured 2026-11-09 (BODY-INTRADIA-SPOTCHECK-1): the first
+    sample of a day equals that day's own startTimestampGMT. This is a DIFFERENT convention from
+    the '...TimestampLocal' scalar fields _local_iso (above) handles, which Garmin already shifts
+    to local wall time itself -- the two must not be confused. `zone` is the caller's IANA
+    timezone name; this module never resolves it itself."""
+    n = _num(ms)
+    if n is None:
         return None
-    for k, v in d.items():
-        if "interval" in k.lower():
-            n = _num(v)
-            if n is not None:
-                return n
+    try:
+        tz = ZoneInfo(zone)
+    except Exception:
+        return None
+    return (datetime.fromtimestamp(n / 1000, tz=timezone.utc)
+            .astimezone(tz).replace(tzinfo=None).isoformat(timespec="minutes"))
+
+
+def _descriptor_index(descriptors: Any, names: tuple[str, ...]) -> int | None:
+    """The column index for a key in `names` (case-insensitive), read from a Garmin descriptor
+    list -- each entry a dict naming its key and its index into the per-sample array, e.g.
+    heartRateValueDescriptors: [{"key": "timestamp", "index": 0}, {"key": "heartrate", "index": 1}]
+    (measured 2026-11-09, BODY-INTRADIA-SPOTCHECK-1). Absent, non-list, or no matching entry ->
+    None, so the caller falls back to a fixed position."""
+    if not isinstance(descriptors, list):
+        return None
+    wanted = {n.lower() for n in names}
+    for entry in descriptors:
+        if not isinstance(entry, dict):
+            continue
+        key = entry.get("key")
+        idx = entry.get("index")
+        if isinstance(key, str) and key.lower() in wanted and isinstance(idx, int):
+            return idx
     return None
 
 
-def _intraday_series(d: Any, values_key: str) -> tuple[tuple[str, float], ...]:
-    """A Garmin intraday series: values_key holding a list of [timestamp, value, ...] samples.
-    Assumes the timestamp is epoch-ms already shifted to local wall time, the same convention this
-    module already uses for Garmin's '...TimestampLocal' scalar fields (_local_iso) -- unconfirmed
-    for these specific arrays by the installed package. A missing/non-list series, or one with no
-    usable samples, is the empty tuple -- an honest gap, never a zero. A sample with a null value is
-    dropped, not kept as 0."""
+def _derived_interval_minutes(values: Any, ts_idx: int) -> float | None:
+    """The sampling interval computed from the first two samples' own timestamps -- used only when
+    the payload states no interval key directly. None does today (the 2026-11-09 spot-check found
+    none), so this derived path is what actually runs."""
+    if not isinstance(values, list):
+        return None
+    times = []
+    for sample in values:
+        if isinstance(sample, list) and len(sample) > ts_idx:
+            t = _num(sample[ts_idx])
+            if t is not None:
+                times.append(t)
+        if len(times) == 2:
+            break
+    if len(times) < 2:
+        return None
+    diff = abs(times[1] - times[0])
+    return diff / 60000 if diff else None
+
+
+def _interval_minutes(d: Any, values: Any, ts_idx: int) -> float | None:
+    """A key the payload states directly (any key naming "interval", case-insensitive, holding a
+    number) takes priority; otherwise the interval is derived from the data (_derived_interval_
+    minutes). The installed garminconnect 0.3.20 package does not type get_heart_rates/
+    get_stress_data beyond dict[str, Any], so neither the stated-key name nor its presence is
+    confirmed -- this is a defensive scan, not a guess at one specific key."""
+    if isinstance(d, dict):
+        for k, v in d.items():
+            if "interval" in k.lower():
+                n = _num(v)
+                if n is not None:
+                    return n
+    return _derived_interval_minutes(values, ts_idx)
+
+
+def _parse_intraday_series(
+    d: Any, values_key: str, descriptors_key: str, value_names: tuple[str, ...],
+    valid: Callable[[float], bool], zone: str,
+) -> tuple[tuple[tuple[str, float], ...], float | None]:
+    """One Garmin intraday series: values_key holding a list of samples, each a list whose
+    timestamp and value columns are found BY NAME in descriptors_key's descriptor list (falling
+    back to positions 0/1 when that list is absent -- measured 2026-11-09, BODY-INTRADIA-
+    SPOTCHECK-1). A missing/non-list series, or one with no usable samples, is the empty tuple --
+    an honest gap, never a zero. A null sample, or one `valid` rejects (Garmin's no-reading codes
+    for stress, a non-positive value for heart rate), is dropped, not kept as 0."""
     if not isinstance(d, dict):
-        return ()
+        return (), None
     values = d.get(values_key)
     if not isinstance(values, list):
-        return ()
+        return (), None
+    descriptors = d.get(descriptors_key)
+    ts_idx = _descriptor_index(descriptors, ("timestamp",))
+    val_idx = _descriptor_index(descriptors, value_names)
+    ts_idx = 0 if ts_idx is None else ts_idx
+    val_idx = 1 if val_idx is None else val_idx
     out = []
     for sample in values:
-        if not isinstance(sample, list) or len(sample) < 2:
+        if not isinstance(sample, list) or len(sample) <= max(ts_idx, val_idx):
             continue
-        value = _num(sample[1])
-        if value is None:
+        value = _num(sample[val_idx])
+        if value is None or not valid(value):
             continue
-        local_time = _local_iso(sample[0])
+        local_time = _utc_to_local_iso(sample[ts_idx], zone)
         if local_time is None:
             continue
         out.append((local_time, value))
-    return tuple(out)
+    interval = _interval_minutes(d, values, ts_idx)
+    return tuple(out), interval
 
 
-def parse_intraday(day: str, raw: dict[str, Any]) -> IntradayData:
+def _heart_rate_valid(v: float) -> bool:
+    return v > 0  # 0 bpm is not a reading either -- a living person's pulse is never 0
+
+
+def _stress_valid(v: float) -> bool:
+    return v >= 0  # drops GARMIN_STRESS_NO_READING_CODES and any other negative sentinel
+
+
+def parse_heart_rate_series(payload: Any, zone: str) -> tuple[tuple[str, float], ...]:
+    """One day's heart-rate series, parsed straight from a stored get_heart_rates(day) payload --
+    the SAME parser parse_intraday uses, exposed so storage can re-parse a raw payload on read
+    (db.intradia, BODY-MOMENTOS-PULL-1) without a network call."""
+    series, _ = _parse_intraday_series(
+        payload, "heartRateValues", "heartRateValueDescriptors", ("heartrate",), _heart_rate_valid, zone)
+    return series
+
+
+def parse_stress_series(payload: Any, zone: str) -> tuple[tuple[str, float], ...]:
+    """One day's stress series, parsed straight from a stored get_stress_data(day) payload -- see
+    parse_heart_rate_series."""
+    series, _ = _parse_intraday_series(
+        payload, "stressValuesArray", "stressValueDescriptorsDTOList", ("stresslevel",), _stress_valid, zone)
+    return series
+
+
+def parse_intraday(day: str, raw: dict[str, Any], zone: str) -> IntradayData:
     out = IntradayData(day=day, raw=raw)
 
     hr = raw.get("heart_rate")
-    out.heart_rate = _intraday_series(hr, "heartRateValues")
-    out.heart_rate_interval_minutes = _interval_minutes(hr)
+    out.heart_rate, out.heart_rate_interval_minutes = _parse_intraday_series(
+        hr, "heartRateValues", "heartRateValueDescriptors", ("heartrate",), _heart_rate_valid, zone)
 
     st = raw.get("stress")
-    out.stress = _intraday_series(st, "stressValuesArray")
-    out.stress_interval_minutes = _interval_minutes(st)
+    out.stress, out.stress_interval_minutes = _parse_intraday_series(
+        st, "stressValuesArray", "stressValueDescriptorsDTOList", ("stresslevel",), _stress_valid, zone)
 
     events = raw.get("body_battery_events")
     out.body_battery_events = tuple(e for e in events if isinstance(e, dict)) if isinstance(events, list) else ()
