@@ -63,7 +63,8 @@ _PROPUESTA_AGENTE_COLUMNS = """
     conversacion_id INTEGER NOT NULL REFERENCES conversacion_agente(id),
     accion          TEXT NOT NULL CHECK (accion IN
                         ('proponer_meta', 'proponer_cambio_meta', 'proponer_confirmar_turnos', 'proponer_idioma',
-                         'planear_entreno', 'registrar_entreno', 'registrar_medida', 'marcar_habito')),
+                         'planear_entreno', 'registrar_entreno', 'registrar_medida', 'marcar_habito',
+                         'proponer_experimento', 'marcar_experimento')),
     objetivo_id     INTEGER REFERENCES goal(id),
     antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
     despues_json    TEXT NOT NULL CHECK (json_valid(despues_json)),
@@ -753,8 +754,21 @@ def _rebuild_propuesta_agente_table(conn: sqlite3.Connection) -> None:
     _rebuild_with_fk_off(conn, step)
 
 
+def _propuesta_agente_needs_experimentos_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'propuesta_agente'"
+    ).fetchone()
+    return row is not None and "marcar_experimento" not in row[0]
+
+
 def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_rebuild(conn):
+        _rebuild_propuesta_agente_table(conn)
+    # BODY-EXPERIMENTOS-REGISTRO-1: a second, later widening of the same CHECK (proponer_experimento,
+    # marcar_experimento) -- reuses _rebuild_propuesta_agente_table unchanged, since that rebuild
+    # already copies column-for-column from the CURRENT _PROPUESTA_AGENTE_COLUMNS rather than a
+    # hardcoded old shape.
+    if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_experimentos_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
 
 
@@ -1412,13 +1426,23 @@ def exercise_sets(conn: sqlite3.Connection, person_id: int, source: str, source_
 METRICAS_INTRADIA = ("heart_rate", "stress")
 
 
+class ExperimentoInvalido(ValueError):
+    """One of `validar_experimento`'s three shapes was wrong -- a ValueError subclass (so existing
+    `except ValueError`/`assertRaises(ValueError)` callers are untouched), but a Body-owned class
+    (body/errores.py's `texto_propio` accepts it) since its message never echoes anything but
+    Body's own field names and fixed phrases, never caller-supplied text (BODY-EXPERIMENTOS-
+    REGISTRO-1: `_proponer_experimento` surfaces it to the person through this, not a bare
+    ValueError, which `tests/test_errores_texto.py`'s AST guard refuses)."""
+
+
 def _campo_invalido(campo: str, detalle: str) -> None:
-    raise ValueError(f"{campo}: {detalle}")
+    raise ExperimentoInvalido(f"{campo}: {detalle}")
 
 
 def validar_experimento(metricas, ventana, filtro_dias) -> None:
     """The one place crear_experimento's three JSON shapes are checked. Pure (no connection), so a
-    caller can validate before ever touching the database. Raises ValueError naming the invalid
+    caller can validate before ever touching the database. Raises ExperimentoInvalido (a
+    ValueError) naming the invalid
     field first -- ventana, filtro_dias or metricas.
 
     ventana: {"tipo": "dia"} or {"tipo": "intradia", "ancla": "despertar" | "momento",
@@ -1471,7 +1495,7 @@ def validar_experimento(metricas, ventana, filtro_dias) -> None:
 
 def crear_experimento(conn: sqlite3.Connection, person_id: int, titulo: str, metricas, ventana, filtro_dias,
                        *, habito_id: int | None = None, dias_prueba_objetivo: int | None = None,
-                       fecha_inicio: str | None = None, estado: str = "activo") -> int:
+                       fecha_inicio: str | None = None, fecha_fin: str | None = None, estado: str = "activo") -> int:
     """Validates the three JSON shapes, then inserts. If habito_id is given it must already be this
     person's own habit (via habit.goal_id -> goal.person_id) -- checked in SQL, scoped by
     person_id, same as every other read and write in this section."""
@@ -1488,9 +1512,10 @@ def crear_experimento(conn: sqlite3.Connection, person_id: int, titulo: str, met
     with conn:
         cur = conn.execute(
             "INSERT INTO experimento (person_id, titulo, habito_id, metricas, ventana, filtro_dias, "
-            "dias_prueba_objetivo, fecha_inicio, estado, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "dias_prueba_objetivo, fecha_inicio, fecha_fin, estado, creado_en) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (person_id, titulo, habito_id, json.dumps(metricas), json.dumps(ventana), json.dumps(filtro_dias),
-             dias_prueba_objetivo, fecha_inicio, estado, now),
+             dias_prueba_objetivo, fecha_inicio, fecha_fin, estado, now),
         )
     return cur.lastrowid
 
@@ -1524,6 +1549,25 @@ def registrar_dia_experimento(conn: sqlite3.Connection, experimento_id: int, per
             "ocurrio = excluded.ocurrio, nota = excluded.nota, momento_id = excluded.momento_id",
             (experimento_id, person_id, day, 1 if ocurrio else 0, nota, momento_id, now),
         )
+
+
+def borrar_experimento(conn: sqlite3.Connection, person_id: int, experimento_id: int) -> None:
+    """Deletes one of this person's own experiments -- refused (ValueError) if it is not theirs, or
+    if a day has already been marked against it (`experimento_registro`, the only row that points
+    back at `experimento.id`). BODY-EXPERIMENTOS-REGISTRO-1: `proponer_experimento`'s undo checks
+    the same condition first as its drift check, so this is defense-in-depth, not the only guard."""
+    propio = conn.execute(
+        "SELECT 1 FROM experimento WHERE id = ? AND person_id = ?", (experimento_id, person_id)
+    ).fetchone()
+    if propio is None:
+        raise ValueError("experimento_id: not this person's own experiment")
+    tiene_registro = conn.execute(
+        "SELECT 1 FROM experimento_registro WHERE experimento_id = ?", (experimento_id,)
+    ).fetchone()
+    if tiene_registro is not None:
+        raise ValueError("experimento_id: has registered days, cannot be deleted")
+    with conn:
+        conn.execute("DELETE FROM experimento WHERE id = ? AND person_id = ?", (experimento_id, person_id))
 
 
 def crear_momento(conn: sqlite3.Connection, person_id: int, ts_local: str, kind: str,

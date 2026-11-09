@@ -122,6 +122,7 @@ class NivelDatosEnforcementTest(unittest.TestCase):
             "leer_turnos", "leer_ajustes", "leer_tutoriales",
             "proponer_meta", "proponer_cambio_meta", "proponer_confirmar_turnos", "proponer_idioma",
             "planear_entreno", "registrar_entreno", "registrar_medida", "marcar_habito",
+            "proponer_experimento", "marcar_experimento",
         })
 
         prov = FakeProveedor([

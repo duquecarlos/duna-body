@@ -30,10 +30,18 @@ remove), which happens in a short follow-up write after that commit -- a narrow,
 undo becomes unavailable for that one proposal if the process crashes in that exact instant, never
 silent data loss.
 
-BODY-PROPUESTAS-TABLA-1: the eight actions are declared once each, in TABLA below, as an `_Accion`
-naming its four callables (drift-on-apply, drift-on-undo, apply writer, undo writer). `aplicar` /
-`descartar` / `deshacer` look an action up in TABLA instead of walking four parallel if-chains, so
-every action's four answers sit together and a missing one cannot compile silently.
+BODY-PROPUESTAS-TABLA-1: each action is declared once, in TABLA below, as an `_Accion` naming its
+four callables (drift-on-apply, drift-on-undo, apply writer, undo writer). `aplicar` / `descartar`
+/ `deshacer` look an action up in TABLA instead of walking four parallel if-chains, so every
+action's four answers sit together and a missing one cannot compile silently.
+
+`proponer_experimento` (BODY-EXPERIMENTOS-REGISTRO-1) is insert-shaped like `planear_entreno`: this
+module is the one writer of `experimento`, through `db.crear_experimento` and, on undo,
+`db.borrar_experimento` -- refused (by both the drift check and the writer itself) once any day
+has been marked against it. `marcar_experimento` calls `db.registrar_dia_experimento` directly,
+the same upsert-only writer shape as `marcar_habito`'s `goals.check_habit`: its undo, when there
+was no prior `experimento_registro` row, is the same "restore no row at all" exception as
+`marcar_habito`'s own undo, a direct DELETE on `experimento_registro`.
 """
 from __future__ import annotations
 
@@ -448,6 +456,94 @@ def _deshacer_marcar_habito(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
                 (1 if antes["done"] else 0, antes.get("note"), despues["habit_id"], person_id, despues["day"]))
 
 
+# -- proponer_experimento (BODY-EXPERIMENTOS-REGISTRO-1: insert-shaped, like planear_entreno -- this
+# module is the one writer of `experimento` through db.crear_experimento/db.borrar_experimento) ---
+
+def _drift_deshacer_proponer_experimento(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    """Drifted if the row no longer matches what was applied, OR if a day has already been marked
+    against it -- the same "no dependent row" condition `db.borrar_experimento` itself refuses on,
+    checked here first so a genuine mismatch reads as the usual 'propuesta_desactualizada', never
+    a raised exception."""
+    despues = json.loads(row["despues_json"])
+    eid = despues.get("experimento_id")
+    e = conn.execute(
+        "SELECT titulo, metricas, ventana, filtro_dias, fecha_inicio FROM experimento "
+        "WHERE id = ? AND person_id = ?", (eid, row["person_id"])).fetchone()
+    if e is None:
+        return True
+    if (e["titulo"] != despues["titulo"] or json.loads(e["metricas"]) != despues["metricas"]
+            or json.loads(e["ventana"]) != despues["ventana"] or json.loads(e["filtro_dias"]) != despues["filtro_dias"]
+            or e["fecha_inicio"] != despues["fecha_inicio"]):
+        return True
+    tiene_registro = conn.execute(
+        "SELECT 1 FROM experimento_registro WHERE experimento_id = ?", (eid,)).fetchone()
+    return tiene_registro is not None
+
+
+def _aplicar_proponer_experimento(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+    despues = json.loads(row["despues_json"])
+    eid = db.crear_experimento(
+        conn, row["person_id"], despues["titulo"], despues["metricas"], despues["ventana"], despues["filtro_dias"],
+        habito_id=despues.get("habito_id"), dias_prueba_objetivo=despues.get("dias_prueba_objetivo"),
+        fecha_inicio=despues["fecha_inicio"],
+    )
+    return {"experimento_id": eid}
+
+
+def _deshacer_proponer_experimento(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    eid = despues.get("experimento_id")
+    if eid is not None:
+        db.borrar_experimento(conn, row["person_id"], eid)
+
+
+# -- marcar_experimento (this module calls db.registrar_dia_experimento directly) ---------------
+
+def _drift_aplicar_marcar_experimento(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    antes = json.loads(row["antes_json"]) if row["antes_json"] is not None else None
+    despues = json.loads(row["despues_json"])
+    actual = conn.execute(
+        "SELECT ocurrio, nota FROM experimento_registro WHERE experimento_id = ? AND person_id = ? AND day = ?",
+        (despues["experimento_id"], row["person_id"], despues["day"])).fetchone()
+    if antes is None:
+        return actual is not None
+    return (actual is None or bool(actual["ocurrio"]) != antes.get("ocurrio") or actual["nota"] != antes.get("nota"))
+
+
+def _drift_deshacer_marcar_experimento(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    actual = conn.execute(
+        "SELECT ocurrio, nota FROM experimento_registro WHERE experimento_id = ? AND person_id = ? AND day = ?",
+        (despues["experimento_id"], row["person_id"], despues["day"])).fetchone()
+    return (actual is None or bool(actual["ocurrio"]) != despues["ocurrio"]
+            or actual["nota"] != despues.get("nota"))
+
+
+def _aplicar_marcar_experimento(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    db.registrar_dia_experimento(conn, despues["experimento_id"], row["person_id"], despues["day"],
+                                  despues["ocurrio"], despues.get("nota"))
+
+
+def _deshacer_marcar_experimento(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    """When there was no prior registro row, restoring "no row at all" is not expressible through
+    `db.registrar_dia_experimento` (which only ever upserts), so this is a direct DELETE -- the
+    same exception `marcar_habito`'s own undo takes on `habit_check`."""
+    antes = json.loads(row["antes_json"]) if row["antes_json"] is not None else None
+    despues = json.loads(row["despues_json"])
+    with conn:
+        if antes is None:
+            conn.execute(
+                "DELETE FROM experimento_registro WHERE experimento_id = ? AND person_id = ? AND day = ?",
+                (despues["experimento_id"], row["person_id"], despues["day"]))
+        else:
+            conn.execute(
+                "UPDATE experimento_registro SET ocurrio = ?, nota = ? "
+                "WHERE experimento_id = ? AND person_id = ? AND day = ?",
+                (1 if antes["ocurrio"] else 0, antes.get("nota"), despues["experimento_id"], row["person_id"],
+                 despues["day"]))
+
+
 TABLA: dict[str, _Accion] = {
     "proponer_meta": _Accion(_sin_drift, _drift_deshacer_meta, _aplicar_meta, _deshacer_meta),
     "proponer_cambio_meta": _Accion(_drift_aplicar_cambio_meta, _drift_deshacer_meta, _aplicar_cambio_meta,
@@ -463,6 +559,10 @@ TABLA: dict[str, _Accion] = {
                                  _aplicar_registrar_medida, _deshacer_registrar_medida),
     "marcar_habito": _Accion(_drift_aplicar_marcar_habito, _drift_deshacer_marcar_habito, _aplicar_marcar_habito,
                               _deshacer_marcar_habito),
+    "proponer_experimento": _Accion(_sin_drift, _drift_deshacer_proponer_experimento,
+                                     _aplicar_proponer_experimento, _deshacer_proponer_experimento),
+    "marcar_experimento": _Accion(_drift_aplicar_marcar_experimento, _drift_deshacer_marcar_experimento,
+                                   _aplicar_marcar_experimento, _deshacer_marcar_experimento),
 }
 
 SIN_DESHACER = tuple(nombre for nombre, entrada in TABLA.items() if not entrada.tiene_deshacer)
