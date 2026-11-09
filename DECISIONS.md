@@ -12284,3 +12284,75 @@ nothing here depends on the default for) pass unchanged.
 `git merge --no-ff feat/body-demo-turnos-1` -> `b99536e5f5cdfa0d05a5de76f934dee74e15cdd2`. Merge tree
 `480ce9c0717090e969ed1fd16ba62742c4a8300b` equals the branch tip's own tree
 (`git rev-parse feat/body-demo-turnos-1^{tree}`) -- the merge carried the branch content verbatim.
+
+## BODY-VIDA-DIA-1 -- a second vida-v1 file: today's wake time, last night's sleep, readiness
+
+Carlos, 2026-11-09, dictated to his Personal desk, relayed: a morning brief that knows
+"approximately at which time I woke up, how was my night sleep, and what are my plans for the
+day." Personal reads Body only through vida-v1 files on his PC (contract rule 2); this slice adds
+a DAILY file beside the existing weekly one, built only from blocks the contract already defines
+(Metric, Event) -- no contract change needed. Approved per ORCH-CARLOS-DELEGATES-TIER-1-1: a second
+vida-v1 file, same rules as the weekly one (stays on the PC, visibility owner, Personal reads the
+file, never the database); no screen changes, so not customer-facing.
+
+**`body/vida_dia.py`** (`python -m body.vida_dia [--day YYYY-MM-DD]`, default today in the
+person's own zone, `fechas.hoy_local`): writes `BODY_HOME/vida/body-day-<day>.json`:
+
+    {"person", "day", "generated_at" (instant with offset),
+     "metrics": [{"person", "day", "key", "value", "source", "visibility", "kind"}, ...],
+     "events": [{"id", "person", "hogar_id", "kind", "starts_at", "ends_at", "all_day",
+                 "timezone", "source", "ref", "data"}, ...],
+     "missing": ["body.<key>", ...]}
+
+`DAY_METRICS` (a module constant): `sleep_minutes`, `sleep_score`, `readiness`,
+`body_battery_wake` -- each read straight from `daily_metric` (namespaced `body.<key>`), `source`
+fixed to `"body"` for readiness and `"garmin"` for the other three (never the row's own stored
+`source` column), `kind` from `metric_def` so readiness's `estimated` kind shows. A key with no
+value yet for that day (the watch has not synced) is never invented and never zero: it goes in
+`missing` instead of a metric row. One `body.sleep` Event is added when `sleep_session` has the
+day's row, `starts_at`/`ends_at` taken verbatim from its `start_local`/`end_local`
+(`body/db.py:161-167`), `id` a stable `uuid.uuid5(uuid.NAMESPACE_URL, "body.vida_dia:<person>:<day>:sleep")`
+so the same day's file always carries the same event id, `timezone` from the person, `all_day:
+false`, `source: "garmin"`. Hosted installs refuse, same as `vida_export`'s refusal (a per-person
+API is a later slice -- open follow-up below). Reuses `vida_export.vida_person`/`PERSON_KEY`
+rather than duplicating that lookup.
+
+**`body/vivo.py`** gains two `TAREAS` entries: `vida_dia` (writes the file alone) and `manana`
+(the scheduled morning run: the same pull `pull` uses, `--days 1`, then `vida_dia`). A new
+`PASOS_PREVIOS` mapping runs that pull step, via `runpy.run_module`, immediately before the
+task's own module; a non-zero exit (`SystemExit`) or a raised exception from it (no network,
+Garmin down) is swallowed -- `vida_dia` always runs next and writes the file from whatever is
+already stored, with its own `missing` telling the truth, instead of the scheduled run losing the
+whole file to a pull failure. The in-process model and the stale-module guard
+(BODY-VIVO-REFRESCO-1) are unchanged; `pull`, run alone, never triggers this pre-step.
+
+**`scripts/install-daily-sync.ps1`** gains a new task **"Body app morning file"**, running
+`-m body.vivo manana` from the live tree, triggered at every time in a new `-MorningAt` parameter
+(`[string[]]`, **default `"04:40", "07:40", "12:40"`** -- one `New-ScheduledTaskTrigger -Daily`
+per time, since `Register-ScheduledTask -Trigger` takes an array). Each run rewrites the same
+day's file. The header's "Remove with:" line and the task list now name it too; no other task's
+registration changed. **Installing this task on Carlos's PC is a separate step needing his own
+yes -- this slice does not run the installer.**
+
+**Tests**: `tests/test_vida_dia.py` (8 tests) -- the full shape (all four metrics, the sleep
+event, exact field names, `kind`/`source` per key), an unsynced day writing `missing` with no
+metric rows (never 0), the same event id for the same person+day, a partial day mixing metrics
+and `missing`, no event when `sleep_session` has no row, the hosted refusal, and the printed line
+being the path only (no figure). `tests/test_vivo.py` gains `TareasVidaDiaTest` (both task names in
+`TAREAS`), `MananaTest` (4 tests: `manana` still runs `vida_dia` after the pull step raises or
+exits non-zero, the pull step's fixed `--days 1` argv, `pull` alone skips the pre-step), and
+`InstallScriptMorningFileTest` (3 tests, reading the `.ps1` text only -- never executed: the new
+task/parameter/default exist, every other task name and action line is unchanged, the removal
+line names the new task).
+
+**Open follow-ups**: a per-person API for the daily section (same gap `vida_export` already has
+for the weekly one), for whenever Body serves more than one hosted person.
+
+**Gate**: `.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 1633 tests in
+402.308s ... OK (skipped=1)`, run once on the branch tip.
+
+**Merge**: `git checkout main` (tip `cf90046570febc237791f8c2b35d1352279d44af`), branch commit
+`77bc2aa73d3ade35e7634c94ff923a8b1dcc0b0e`, `git merge --no-ff feat/body-vida-dia-1` ->
+`2fb4abe22896be8f8a123c77aa13f1194cd4d3e9`. Merge tree `05d7de8967533d49ecb9015e18c0adcd284d70ee`
+equals the branch tip's own tree (`git rev-parse feat/body-vida-dia-1^{tree}`) -- the merge carried
+the branch content verbatim.
