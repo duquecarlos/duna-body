@@ -14,7 +14,7 @@ from datetime import date, datetime, timezone
 from . import compartir, enlaces
 from .agente import ajustes as agente_ajustes
 
-CONSENT_VERSION = "consentimiento-v2"
+CONSENT_VERSION = "consentimiento-v3"
 
 # Every table with a literal `person_id` column, and how this module accounts for its rows.
 # Checked by tests/test_privacidad.py's coverage test: a new person-keyed table that is added to
