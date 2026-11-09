@@ -356,5 +356,168 @@ class OnlyGarminAdapterImportsGarminconnectTest(unittest.TestCase):
         self.assertEqual(offenders, [])
 
 
+EXERCISE_SETS_RAW = {
+    "exerciseSets": [
+        {
+            "setType": "ACTIVE",
+            "exercises": [{"category": "BENCH_PRESS", "name": "BARBELL_BENCH_PRESS"}],
+            "reps": 8,
+            "weight": 60000,  # grams, almost certainly -- but the unit itself is unconfirmed
+            "duration": 42,
+            "startTime": 1762300800000,
+        },
+        {
+            "setType": "REST",
+            "duration": 90,
+            "startTime": 1762300900000,
+        },
+        {
+            "setType": "ACTIVE",
+            "exercises": [{"category": "BENCH_PRESS", "name": "BARBELL_BENCH_PRESS"}],
+            "reps": 6,
+            "duration": 38,
+            "startTime": 1762301000000,
+            # no "weight" key at all -- a bodyweight-style set
+        },
+    ]
+}
+
+
+class ExerciseSetsParsingTest(unittest.TestCase):
+    def test_strength_session_active_and_rest_sets_parse_in_order(self):
+        sets = garmin_adapter.parse_exercise_sets(EXERCISE_SETS_RAW)
+        self.assertEqual(len(sets), 3)
+
+        active1, rest, active2 = sets
+        self.assertEqual(active1.set_type, "active")
+        self.assertEqual(active1.category, "BENCH_PRESS")
+        self.assertEqual(active1.exercise, "BARBELL_BENCH_PRESS")
+        self.assertEqual(active1.display, "Barbell Bench Press")  # read from exercises.py, not renamed
+        self.assertEqual(active1.reps, 8)
+        self.assertEqual(active1.duration_s, 42)
+        self.assertIsNotNone(active1.start_local)
+
+        self.assertEqual(rest.set_type, "rest")
+        self.assertIsNone(rest.category)
+        self.assertIsNone(rest.exercise)
+        self.assertIsNone(rest.reps)
+        self.assertEqual(rest.duration_s, 90)
+
+        self.assertEqual(active2.set_type, "active")
+        self.assertEqual(active2.reps, 6)
+
+    def test_set_without_weight_keeps_weight_and_unit_absent(self):
+        sets = garmin_adapter.parse_exercise_sets(EXERCISE_SETS_RAW)
+        for s in (sets[1], sets[2]):  # rest set, and the bodyweight-style active set
+            self.assertIsNone(s.weight_value)
+            self.assertIsNone(s.weight_unit)
+
+    def test_weight_value_kept_when_unit_is_not_stated(self):
+        sets = garmin_adapter.parse_exercise_sets(EXERCISE_SETS_RAW)
+        active1 = sets[0]
+        self.assertEqual(active1.weight_value, 60000)
+        self.assertIsNone(active1.weight_unit)  # kept, never guessed as grams or kilograms
+
+    def test_weight_unit_passed_through_when_the_payload_states_one(self):
+        payload = {"exerciseSets": [{"setType": "ACTIVE", "weight": 60, "weightUnit": "KILOGRAM"}]}
+        sets = garmin_adapter.parse_exercise_sets(payload)
+        self.assertEqual(sets[0].weight_value, 60)
+        self.assertEqual(sets[0].weight_unit, "KILOGRAM")
+
+    def test_unknown_keys_and_empty_payload_give_empty_result_without_raising(self):
+        for payload in (None, {}, [], "unexpected-shape", {"exerciseSets": None}, {"exerciseSets": "nope"}):
+            self.assertEqual(garmin_adapter.parse_exercise_sets(payload), ())
+
+        sets = garmin_adapter.parse_exercise_sets({"exerciseSets": [{"mystery": 1}, "not-a-dict"]})
+        self.assertEqual(len(sets), 1)  # the non-dict row is skipped, not raised on
+        s = sets[0]
+        self.assertIsNone(s.set_type)
+        self.assertIsNone(s.category)
+        self.assertIsNone(s.exercise)
+        self.assertIsNone(s.display)
+        self.assertIsNone(s.reps)
+        self.assertIsNone(s.weight_value)
+        self.assertIsNone(s.weight_unit)
+        self.assertIsNone(s.duration_s)
+        self.assertIsNone(s.start_local)
+
+    def test_unknown_category_exercise_pair_has_no_display(self):
+        payload = {"exerciseSets": [{"exercises": [{"category": "NOT_A_REAL_CATEGORY", "name": "NOT_A_REAL_EXERCISE"}]}]}
+        sets = garmin_adapter.parse_exercise_sets(payload)
+        self.assertIsNone(sets[0].display)
+
+    def test_payload_given_as_a_bare_list_is_also_accepted(self):
+        sets = garmin_adapter.parse_exercise_sets(EXERCISE_SETS_RAW["exerciseSets"])
+        self.assertEqual(len(sets), 3)
+
+
+class FakeGarminExerciseSetsSucceed:
+    """Replaces garminconnect.Garmin: get_activity_exercise_sets returns a fixture. Invented
+    data only."""
+
+    def __init__(self, **kw):
+        self.client = mock.Mock()
+        self.client.dumps.return_value = "tok-demo"
+
+    def login(self, tokenstore=None):
+        return None, None
+
+    def get_activity_exercise_sets(self, activity_id):
+        return EXERCISE_SETS_RAW
+
+
+class FetchExerciseSetsSuccessTest(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch("garminconnect.Garmin", FakeGarminExerciseSetsSucceed)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        config.TOKEN_DIR.mkdir(parents=True, exist_ok=True)
+        token_file = config.TOKEN_DIR / "garmin_tokens.json"
+        token_file.write_text('{"demo": true}', encoding="utf-8")
+        self.addCleanup(token_file.unlink, missing_ok=True)  # TOKEN_DIR is shared across this test run
+
+    def test_activity_id_kept_as_a_string_and_sets_parse(self):
+        data = garmin_adapter.fetch_exercise_sets(12345)
+        self.assertEqual(data.activity_id, "12345")
+        self.assertEqual(len(data.sets), 3)
+        self.assertNotIn("_errors", data.raw)
+
+    def test_hosted_token_path_returns_the_refreshed_token(self):
+        data, token_after = garmin_adapter.fetch_exercise_sets(12345, token_str="tok-before")
+        self.assertEqual(len(data.sets), 3)
+        self.assertEqual(token_after, "tok-demo")
+
+
+class FakeGarminExerciseSetsFails:
+    """Replaces garminconnect.Garmin: get_activity_exercise_sets raises. Invented data only."""
+
+    def __init__(self, **kw):
+        self.client = mock.Mock()
+        self.client.dumps.return_value = "tok-demo"
+
+    def login(self, tokenstore=None):
+        return None, None
+
+    def get_activity_exercise_sets(self, activity_id):
+        raise RuntimeError("demo exercise-sets failure")
+
+
+class FetchExerciseSetsFailureTest(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch("garminconnect.Garmin", FakeGarminExerciseSetsFails)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        config.TOKEN_DIR.mkdir(parents=True, exist_ok=True)
+        token_file = config.TOKEN_DIR / "garmin_tokens.json"
+        token_file.write_text('{"demo": true}', encoding="utf-8")
+        self.addCleanup(token_file.unlink, missing_ok=True)  # TOKEN_DIR is shared across this test run
+
+    def test_error_kind_is_recorded_and_sets_stay_empty(self):
+        data = garmin_adapter.fetch_exercise_sets("12345")
+        self.assertEqual(data.activity_id, "12345")
+        self.assertEqual(data.sets, ())
+        self.assertEqual(data.raw["_errors"], {"exercise_sets": "RuntimeError"})
+
+
 if __name__ == "__main__":
     unittest.main()

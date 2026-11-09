@@ -66,6 +66,35 @@ class IntradayData:
     body_battery_events: tuple[dict[str, Any], ...] = ()
 
 
+@dataclass
+class ExerciseSet:
+    """One set of a strength activity. BODY-ENTRENO-ADAPTER-1: every field here reads a key
+    the installed garminconnect 0.3.20 package does not confirm for
+    get_activity_exercise_sets -- see parse_exercise_sets for which key is assumed where. A
+    value this module cannot find or cannot make sense of is None, an honest gap, never
+    guessed and never a 0.
+    """
+    set_type: str | None = None  # 'active' | 'rest'
+    category: str | None = None
+    exercise: str | None = None
+    display: str | None = None  # exercises.py catalog name for (category, exercise), when known
+    reps: float | None = None
+    weight_value: float | None = None
+    weight_unit: str | None = None
+    duration_s: float | None = None
+    start_local: str | None = None
+
+
+@dataclass
+class ExerciseSetsData:
+    """Per-set detail for one strength activity: exercise, reps, weight, duration, start, in
+    the order Garmin returned them. BODY-ENTRENO-ADAPTER-1 -- see fetch_exercise_sets."""
+    activity_id: str
+    source: str = SOURCE
+    sets: tuple[ExerciseSet, ...] = ()
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
 class NotSignedIn(RuntimeError):
     pass
 
@@ -183,6 +212,42 @@ def fetch_intraday(day: str, token_str: str | None = None):
     if errors:
         raw["_errors"] = errors
     data = parse_intraday(day, raw)
+    if token_str is None:
+        return data
+    return data, api.client.dumps()
+
+
+def fetch_exercise_sets(activity_id: int | str, token_str: str | None = None):
+    """Pull one strength activity's per-set detail: exercise, reps, weight, duration, start.
+
+    One call -- get_activity_exercise_sets(activity_id) (garminconnect api/activities.py:613)
+    -- same session/token pattern as fetch_day and fetch_intraday, including the hosted
+    per-person token path. BODY-ENTRENO-ADAPTER-1 (an investigation slice, BODY-ENTRENO-1-INV):
+    the installed garminconnect 0.3.20 package types this call's return only as dict[str, Any]
+    and its docstring says only "Return activity exercise sets." -- the response SHAPE IS
+    UNCONFIRMED. The only confirmed facts about this endpoint come from the write call in the
+    same module, set_activity_exercise_sets, whose docstring says its payload is "in the same
+    shape as the response from get_activity_exercise_sets" and names exercises[].category
+    (the parent) and exercises[].name (the sub-category) as validated fields; and from
+    exercises.py's static category/name catalog. parse_exercise_sets below parses defensively
+    from those two facts plus the common per-set keys a FIT-derived strength set would carry,
+    and documents each assumed key where it is read.
+
+    Called on demand only, when a person logs or corrects a session: nothing in pull.py, the
+    backfill loop or the web app calls this yet. The write call set_activity_exercise_sets is
+    NOT used here or anywhere in this module.
+    """
+    api = _client(token_str)
+    raw: dict[str, Any] = {}
+    errors: dict[str, str] = {}
+    try:
+        raw["exercise_sets"] = api.get_activity_exercise_sets(activity_id)
+    except Exception as e:  # one failed call should give an honest gap, never raise out of a fetch
+        errors["exercise_sets"] = type(e).__name__
+    if errors:
+        raw["_errors"] = errors
+    sets = parse_exercise_sets(raw.get("exercise_sets"))
+    data = ExerciseSetsData(activity_id=str(activity_id), sets=sets, raw=raw)
     if token_str is None:
         return data
     return data, api.client.dumps()
@@ -381,3 +446,117 @@ def parse_intraday(day: str, raw: dict[str, Any]) -> IntradayData:
     out.body_battery_events = tuple(e for e in events if isinstance(e, dict)) if isinstance(events, list) else ()
 
     return out
+
+
+def _exercise_set_rows(payload: Any) -> list[Any]:
+    """The installed garminconnect 0.3.20 package names no shape for
+    get_activity_exercise_sets. Assumed, from set_activity_exercise_sets's docstring (same
+    module, same shape per that docstring): a dict holding an "exerciseSets" list. Also
+    accepted: the list directly, in case the GET response is unwrapped relative to the PUT
+    body. Anything else -- a missing key, a null, any other shape -- is the empty list, an
+    honest gap, never a crash."""
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        rows = payload.get("exerciseSets")
+        if isinstance(rows, list):
+            return rows
+    return []
+
+
+_SET_TYPE_ACTIVE = {"active", "working", "work", "set"}
+_SET_TYPE_REST = {"rest", "resting"}
+
+
+def _set_type(d: dict) -> str | None:
+    """Assumed key: "setType" (seen confirmed nowhere; a guess at common Garmin naming, tried
+    alongside the plainer "type"). A value outside the known active/rest wording is an honest
+    gap (None), never guessed toward one or the other."""
+    for k in ("setType", "type"):
+        v = d.get(k)
+        if isinstance(v, str):
+            low = v.strip().lower()
+            if low in _SET_TYPE_ACTIVE:
+                return "active"
+            if low in _SET_TYPE_REST:
+                return "rest"
+    return None
+
+
+def _category_and_exercise(d: dict) -> tuple[str | None, str | None]:
+    """Confirmed by set_activity_exercise_sets's docstring: exercises[].category is the
+    parent, exercises[].name is the sub-category. Only the first entry of "exercises" is
+    read -- nothing confirms a set can name more than one."""
+    exercises = d.get("exercises")
+    if isinstance(exercises, list) and exercises and isinstance(exercises[0], dict):
+        first = exercises[0]
+        category = first.get("category")
+        exercise = first.get("name")
+        return (category if isinstance(category, str) else None,
+                exercise if isinstance(exercise, str) else None)
+    return None, None
+
+
+_CATALOG_BY_PAIR: dict[tuple[str, str], str] | None = None
+
+
+def _catalog_display(category: Any, exercise: Any) -> str | None:
+    """Reads exercises.py's (category, exercise) -> display-name catalog -- never renames
+    category/exercise themselves, only offers a display label when the catalog has one."""
+    global _CATALOG_BY_PAIR
+    if not isinstance(category, str) or not isinstance(exercise, str):
+        return None
+    if _CATALOG_BY_PAIR is None:
+        from garminconnect import exercises as _ex
+        _CATALOG_BY_PAIR = {(e["category"], e["exercise"]): e["name"] for e in _ex.EXERCISES}
+    return _CATALOG_BY_PAIR.get((category, exercise))
+
+
+def _weight(d: dict) -> tuple[float | None, str | None]:
+    """Assumed key: "weight" (unconfirmed). Garmin is known to send body-composition weight in
+    grams elsewhere, but nothing confirmed states this endpoint's unit, so a present value is
+    kept as-is and its unit left absent rather than guessed grams/kilograms. No "weight" key,
+    or an explicit null (a bodyweight set), leaves both value and unit absent together."""
+    v = _num(d.get("weight"))
+    if v is None:
+        return None, None
+    unit = d.get("weightUnit")
+    return v, unit if isinstance(unit, str) else None
+
+
+def _start_local(d: dict) -> str | None:
+    """Assumed key: "startTime" (unconfirmed). Tried first as epoch-ms local -- the convention
+    _local_iso already applies to this package's '...TimestampLocal' fields -- then kept as a
+    plain string if it is one, since nothing confirms which this endpoint sends."""
+    v = d.get("startTime")
+    if v is None:
+        return None
+    iso = _local_iso(v)
+    if iso is not None:
+        return iso
+    return v if isinstance(v, str) else None
+
+
+def parse_exercise_sets(payload: Any) -> tuple[ExerciseSet, ...]:
+    """Parse one get_activity_exercise_sets response (or None/any other shape a failed or
+    unavailable call leaves behind) into an ordered tuple of ExerciseSet. See
+    fetch_exercise_sets for why this shape is unconfirmed, and _exercise_set_rows and the
+    per-field helpers below for exactly which key is assumed where."""
+    sets = []
+    for row in _exercise_set_rows(payload):
+        if not isinstance(row, dict):
+            continue
+        category, exercise = _category_and_exercise(row)
+        weight_value, weight_unit = _weight(row)
+        sets.append(ExerciseSet(
+            set_type=_set_type(row),
+            category=category,
+            exercise=exercise,
+            display=_catalog_display(category, exercise),
+            reps=_first_num(row, "reps", "repetitionCount", "repCount"),
+            weight_value=weight_value,
+            weight_unit=weight_unit,
+            duration_s=_num(row.get("duration")),  # assumed key, unconfirmed; assumed seconds
+            start_local=_start_local(row),
+        ))
+    return tuple(sets)
