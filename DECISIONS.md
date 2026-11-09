@@ -12611,3 +12611,69 @@ feat/body-experimentos-modelo-1` (branch tip `f7c6db1c558ab1234c8aef97b5c7074c93
 (`419b1156d47d835580d18395de5dd76cc6360f14`) is identical to the branch tip's own tree -- `main`
 had not moved since the branch was cut, so the merge introduced nothing beyond the branch's own
 content and the gate above was not re-run.
+
+## BODY-VIVO-TAREA-NUEVA-1 -- refresh before refusing an unknown task
+
+**Defect, as measured by the orchestrator on Carlos's PC, 2026-11-09**: `main()` in
+`body/vivo.py` checked `argv[0] not in TAREAS` against the RUNNING process's own `TAREAS` and
+returned usage + exit 2 BEFORE `refrescar()` ran, so a task name added on `main` could never
+start through the live-tree launcher until some OTHER task happened to refresh the tree first.
+After `BODY-MOMENTOS-PULL-1` merged (adding task `intradia`), `python -m body.vivo intradia
+--dias 130` in the live tree answered `uso: ... tareas: manana, pull, ...` and exit 2 because the
+live tree was still at an older commit; running `vida_dia` first refreshed it, and `intradia` then
+started. The same happened again with `vida_dia` itself, worked around with `vida_export
+--current`. A scheduled task registered for a brand-new name would fail every run this way,
+silently, since a scheduled task's stderr goes nowhere.
+
+**Fix**: an unknown task name now runs the exact same refresh path a known task runs -- the same
+`_modulos_body_inesperados` guard, the same `refrescar(vivo)`, the same status file written with
+the task name as given. What happens next depends on the outcome:
+- if the refresh moved the tree (`"actualizado"`) AND the refreshed tree's own `body.vivo` turns
+  out to know the name, the launcher relaunches itself as ONE child process --
+  `_relanzar_en_arbol_nuevo`, running `sys.executable -m body.vivo <the same argv>` with `cwd` set
+  to the live tree -- and returns that child's exit code. The child refreshes again, finds the
+  tree already current, and runs the task in-process itself.
+- otherwise (not moved, refresh refused, or the refreshed tree doesn't know the name either):
+  usage + exit 2, same as before, with the status file already recording the attempt.
+
+**Why a child only here, and never for a known task**: the PID rule in the module's own
+docstring is about a task Task Scheduler launches under a name the running code ALREADY knows --
+staying in-process keeps the same PID the scheduler is watching for `web`'s restart policy. A
+name the running code does not know cannot have that problem solved by staying in-process: the
+running code literally cannot execute code it never imported, no matter how it is called. The
+child is the only way to run code newer than what this process holds.
+
+**Telling "the new tree knows the task" without importing it here**: `_tareas_conocidas_por_el_arbol`
+spawns `python -m body.vivo --tareas` (a new flag, handled first in `main()`, that just prints
+`",".join(sorted(TAREAS))` and returns 0) in the refreshed tree and parses its stdout. Importing
+the new `body.vivo` into THIS process instead was rejected on purpose: `_modulos_body_inesperados`
+exists precisely because a previous task's stale import surviving in this same process is a
+correctness hazard, and reading the new module's `TAREAS` here would be exactly that hazard,
+deliberately invited.
+
+**Tests** (`tests/test_vivo.py`, all against the existing throwaway-repo/worktree fixtures, no
+real git state touched): `--tareas` prints exactly `TAREAS`'s names; an unknown task on a stale
+tree whose refreshed `main` knows it -> refreshed, child launched with the same argv and the live
+tree as `cwd` (asserted), its exit code returned; an unknown task the refreshed tree does not know
+either -> exit 2 after one refresh, no child; an unknown task when the refresh itself is refused
+(dirty tree) -> exit 2, no child, and `_tareas_conocidas_por_el_arbol` never even called
+(short-circuited); a known task -> unchanged, in-process, no child (asserted); empty argv -> exit
+2 with no refresh. Existing tests stay green unchanged, including the one unknown-task test that
+calls `main()` against the real repository with no mocking -- `refrescar` there still answers
+`"sin_cambio:no_es_arbol_vivo"` (the main working tree is not a linked worktree), so no git
+mutation happens and the path falls through to the same exit 2 it always returned.
+
+**Gate**, once, foreground, on the branch tip: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -> `Ran 1732 tests in 372.350s ... OK (skipped=1)`. 6 more than the prior recorded
+floor (1726, `BODY-EXPERIMENTOS-MODELO-1`): exactly the 6 new tests above (`--tareas`, the three
+unknown-task cases, the known-task no-child assertion, empty-argv); `skipped=1` carries over
+unchanged.
+
+**Merge** (no schema change, no customer-facing bytes -- a scheduled-task launcher with no screen
+and no string a person reads -- no cross-repo/DTO change -- Merge Policy A applies, and the
+spec's own approval-reason authorizes the merge in words): `git checkout main` (tip `d6e45a2`),
+`git merge --no-ff feat/body-vivo-tarea-nueva-1` (branch tip
+`1fd6dadcabf16b3712cbd16870ac7bd60995fb17`) -> `94bb2891d7c074a2f72ab4df9ff1e501c3ba58db`. The
+merge commit's tree (`09f04ce7e3328ed468136d54309032cfb62b872c`) is identical to the branch tip's
+own tree -- `main` had not moved since the branch was cut, so the merge introduced nothing beyond
+the branch's own content and the gate above was not re-run.
