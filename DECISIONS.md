@@ -11723,3 +11723,56 @@ discover tests -t .` -- `Ran 1572 tests in 350.148s ... OK (skipped=1)`.
 **Merge**: `git checkout main`; `git merge --no-ff feat/body-cuenta-errores-1`, merge commit
 `d03953f10a47e21f0f63966228f3824eae0ce18f`. The merge tree (`df847b9c20b8a525722982a22a3aa8586582f768`)
 is identical to the branch tree, so the gate above stands for the merged tree without a re-run.
+
+## BODY-IDIOMA-PRIMERA-1 -- seed a hosted person's language from the browser at first sign-in
+
+Carries out BODY-CUENTA-1-INV part B's body-only recommendation (ORCH-CARLOS-DELEGATES-TIER-1-1):
+Cuenta's ID token and userinfo carry no locale claim and its `person` model has no column for one
+either -- the `language` column lives only on Body's own `person` table (`body/db.py`), so "take
+the first language from Cuenta" (BODY-IDIOMA-CARLOS-1 point 3) cannot be built here. A Cuenta
+locale claim is a Cuenta change, to be asked for through the hub, not built in this slice.
+
+**The rule**: on a hosted person's FIRST sign-in only, `body/cuenta.py`'s `resolve_person` seeds
+the new row's `language` column from a `language` parameter the caller already picked -- never a
+raw header read inside `resolve_person` itself. `login_callback` in `body/rutas/sesion.py` (which
+already holds the request) picks it with `body/i18n`'s existing `pick(accept_language)` --
+reused, not re-implemented -- from the callback request's `Accept-Language` header, and threads it
+through `handle_callback` into `resolve_person`. `pick` already falls back to `i18n.DEFAULT`
+("es") for a missing or unsupported header, so `resolve_person` needed no fallback of its own. An
+existing person (the `SELECT ... WHERE cuenta_sub = ?` row already exists) is returned untouched;
+their `language` is never written by `resolve_person`, whatever the header says on a later
+sign-in -- so a person's own choice through `/settings/language` (`body/db.py`'s `set_language`)
+is never overwritten by a sign-in. No new text, no new template, no new i18n key, no reworded
+string.
+
+**Tests added** (`tests/test_cuenta_rp.py`, `FirstSignInLanguageTest`, via a `headers` param added
+to the existing `_sign_in` helper): first sign-in with `en-US,en;q=0.9` sets `en`; with `es-CO`
+sets `es`; with an unsupported header (`fr-FR,fr;q=0.9`) or no header at all falls back to `es`; a
+second sign-in with a different header leaves the stored language as it was
+(`test_second_sign_in_with_different_header_leaves_language_unchanged`), including one the person
+changed themself through `db.set_language`
+(`test_second_sign_in_never_overwrites_a_person_chosen_language`).
+
+**Line-number note**: `tests/test_seguridad.py`'s `RedirectTargetsAreSafeTest` keys its
+`ALLOWLIST` by exact `file:line`. The new import and the extra `handle_callback` argument were
+folded into existing lines in `body/rutas/sesion.py` (merged `from ..i18n import T, pick as
+pick_lang` into one line; the picked language appended to the existing two-line `handle_callback`
+call) so neither `RedirectResponse` call's line number moved -- that guard test was not in
+`touches:` and needed no change.
+
+**Merge policy A**: no schema/migration change (the `person.language` column and its default
+already existed; only an existing `INSERT` gained one more column value), no customer-facing bytes
+(no new template, no new i18n key, no reworded string -- only routing logic and tests), no
+cross-repo contract or DTO change. All three conditions pass; this spec's approval reason also
+says "Merge approved."
+
+**Gate**, once, foreground, on the branch before merging: `.venv/Scripts/python.exe -m unittest
+discover tests -t .` -- `Ran 1578 tests in 436.203s ... OK (skipped=1)`.
+
+**Commit**: on `feat/body-idioma-primera-1`, cut from `main` at `6ad8feeb5ba0926a320f637d592b0e1be15b6974`
+(tip of `main` at dispatch, after BODY-CUENTA-ERRORES-1's ledger entry), `5402a148a0a806e1e55be806d40e0255bda40cc0`.
+3 files changed (`body/cuenta.py`, `body/rutas/sesion.py`, `tests/test_cuenta_rp.py`).
+
+**Merge**: `git checkout main`; `git merge --no-ff feat/body-idioma-primera-1`, merge commit
+`e901bc8f4c9921b91e81ed16437de43f1525d8c8`. The merge tree (`04fa3767e1eb55829b9bd045e430755e29d70001`)
+is identical to the branch tree, so the gate above stands for the merged tree without a re-run.
