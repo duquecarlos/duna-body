@@ -13127,3 +13127,63 @@ verbatim, no re-run needed.
 No schema change, no network call, no cross-repo contract; the only customer-visible surface
 (the `'aun_no'`/`'pocos_dias'` words on the Experiments screen) was already shipped by the parent
 slice -- this slice only moves which test pins which words.
+
+## BODY-EXPERIMENTOS-INTRADIA-DIAS-FALTANTES-1 -- wires the on-demand intraday fetch into the
+scheduled pull, closing the gap BODY-EXPERIMENTOS-1-INV named: the intraday window verdict reads
+minute data from `raw_payload`, but nothing fetched it after the one-time backfill -- every new
+test morning stayed "sin dato" until someone re-ran the backfill by hand.
+
+**The rule**: `experimentos.dias_intradia_necesarios(conn, person_id, hoy) -> list[str]` (new, pure
+read) -- for every one of this person's ACTIVE experiments with `ventana.tipo == 'intradia'`, the
+counting days (`dias_que_cuentan`) in its test window (`fecha_inicio`..yesterday, the same `fin_
+prueba` bound `_veredicto_intradia` already uses, since today's own window cannot be complete yet)
+and its baseline window (`fecha_inicio - BASE_DIAS`..`fecha_inicio - 1`, same as `veredicto`'s own
+`base_desde`/`base_hasta`), kept only inside Garmin's intraday reach (`pull.INTRADIA_ALCANCE_DIAS`
+back from `hoy`, boundary inclusive -- the same boundary `traer_intradia_rango`'s own refusal
+uses) and not already `db.intradia_almacenado`. Newest first, de-duplicated across experiments. Not
+filtered by whether the habit actually happened that day -- that is decided later by the verdict,
+and this function must not skip fetching a day that might still turn out to count. A whole-day
+experiment (`ventana.tipo == 'dia'`) and a person with no active intraday experiment both
+contribute nothing.
+
+**The wiring and its bound**: `pull._pull_intradia_pendientes(conn, person_id, hoy, token_str=None)`
+(new, `body/pull.py:367`) fetches up to `INTRADIA_MAX_POR_CORRIDA = 14` of those days (newest
+first) through the existing on-demand `traer_intradia` -- a new experiment's test mornings come
+first, its baseline fills in over a few runs. Called only on the implicit "today" sweep (no
+explicit `--date`/`fecha`), from two call sites: the local default/`--days` path in `pull._run`
+(the shape both `manana`'s own `--days 1` and the plain scheduled daily sync use), and
+`pull_hosted`'s per-person loop, once per connected person, re-reading and persisting the token the
+same way `_pull_one_person` does. `--all`, `--recompute`, `--backfill` and `pull_backfill_hosted`
+are untouched -- `tests/test_momentos_pull.py`'s `IntradiaNotCalledByAnyJobTest` still holds (no
+active experiment in its fixtures, so the new call sites make zero Garmin calls there too). A
+failure on one day is logged (`intradia: fetch failed for <day>: <exception type>`, via
+`errores.texto_seguro`) and does not stop the others or fail the run; prints `intradia: N días
+traídos, M pendientes` (counts and dates only) whenever at least one day was needed, `M` counting
+every day still missing after this run (capped-out or errored alike).
+
+**Tests**: `tests/test_pull_intradia_experimentos.py` (new) -- `dias_intradia_necesarios` itself:
+no active experiment -> `[]`; a whole-day experiment contributes nothing; another person's
+experiment never fetches for this person; a closed (`estado='cerrado'`) experiment contributes
+nothing; missing counting days across test and baseline windows, newest first; a day already
+`db.intradia_almacenado` is skipped; a day outside `pull.INTRADIA_ALCANCE_DIAS` (patched small,
+5, for a tractable fixture) is dropped; days shared by two experiments are not repeated.
+`tests/test_pull.py` (new) -- the wiring itself: `_pull_intradia_pendientes` fetches up to the cap
+in the given newest-first order; a fetch error on one day leaves the others fetched and the run
+successful; the hosted token path persists a refreshed token; the local path never touches
+`garmin_cuenta`; the local default pull and `pull_hosted`'s implicit sweep both call it with no
+active experiment costing zero Garmin calls, and an explicit `--date`/`fecha` never triggers it.
+
+**Gate**, once, foreground, from the repository root:
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -> first run caught two bugs in this
+slice's own new tests (an expected-days list that undercounted the baseline window's reach by one
+day, twice, and a token-decryption assertion placed outside the `BODY_TOKEN_KEY` env patch); fixed,
+re-ran once more on the corrected tree -> `Ran 1839 tests in 456.132s ... OK (skipped=1)`.
+
+**Merge**: `git checkout main` (tip `e607d5e524b1f5c295dad464e9e13ab5ebac2736`), branch commit
+`d53febfedb3913834570da179c20defa093d43b6`, `git merge --no-ff
+feat/body-experimentos-intradia-dias-faltantes-1` -> `a0b2b0011d023dc97a2987e811facc51c44ff2a1`.
+
+No schema change (the one-time backfill's own `raw_payload` row shape is unchanged), no
+customer-facing bytes (nothing on any screen changes), no cross-repo contract -- Merge Policy A's
+three conditions all pass; merged on a green gate per the parent approval
+(ORCH-CARLOS-DELEGATES-TIER-1-1).
