@@ -39,6 +39,25 @@ class DayData:
     activities: list[dict[str, Any]] = field(default_factory=list)
 
 
+@dataclass
+class IntradayData:
+    """One local day's intraday series: heart rate, stress, Body Battery events.
+
+    heart_rate and stress are tuples of (local time, value) in payload order. A series Garmin
+    returns empty, null, or with null samples stays an honest gap: absent () or a shorter tuple,
+    never a zero. *_interval_minutes is the sampling interval ONLY when Garmin's own payload states
+    one (a key naming "interval"); otherwise None -- never guessed from timestamp deltas.
+    """
+    day: str
+    source: str = SOURCE
+    raw: dict[str, Any] = field(default_factory=dict)
+    heart_rate: tuple[tuple[str, float], ...] = ()
+    heart_rate_interval_minutes: float | None = None
+    stress: tuple[tuple[str, float], ...] = ()
+    stress_interval_minutes: float | None = None
+    body_battery_events: tuple[dict[str, Any], ...] = ()
+
+
 class NotSignedIn(RuntimeError):
     pass
 
@@ -127,6 +146,35 @@ def fetch_day(day: str, token_str: str | None = None):
     if errors:
         raw["_errors"] = errors
     data = parse_day(day, raw)
+    if token_str is None:
+        return data
+    return data, api.client.dumps()
+
+
+def fetch_intraday(day: str, token_str: str | None = None):
+    """Pull one local day's intraday series: heart rate, stress, Body Battery events.
+
+    One call per kind (get_heart_rates, get_stress_data -- not get_all_day_stress, which hits the
+    same endpoint --, get_body_battery_events), same session/token pattern as fetch_day including
+    the hosted per-person token path. Called on demand only: nothing in pull.py, the backfill loop
+    or the web app calls this (BODY-INTRADIA-ADAPTER-1).
+    """
+    api = _client(token_str)
+    raw: dict[str, Any] = {}
+    calls = {
+        "heart_rate": lambda: api.get_heart_rates(day),
+        "stress": lambda: api.get_stress_data(day),
+        "body_battery_events": lambda: api.get_body_battery_events(day),
+    }
+    errors = {}
+    for kind, call in calls.items():
+        try:
+            raw[kind] = call()
+        except Exception as e:  # one missing series should not lose the other two
+            errors[kind] = type(e).__name__
+    if errors:
+        raw["_errors"] = errors
+    data = parse_intraday(day, raw)
     if token_str is None:
         return data
     return data, api.client.dumps()
@@ -252,4 +300,63 @@ def parse_day(day: str, raw: dict[str, Any]) -> DayData:
             "max_hr": _num(a.get("maxHR")),
             "calories": _num(a.get("calories")),
         })
+    return out
+
+
+def _interval_minutes(d: Any) -> float | None:
+    """The sampling interval ONLY when the payload states one directly (any key naming "interval",
+    case-insensitive, holding a number) -- never computed from timestamp deltas. The installed
+    garminconnect 0.3.20 package does not type get_heart_rates/get_stress_data beyond
+    dict[str, Any], so neither the key name nor its presence is confirmed; this is a defensive
+    scan, not a guess at one specific key."""
+    if not isinstance(d, dict):
+        return None
+    for k, v in d.items():
+        if "interval" in k.lower():
+            n = _num(v)
+            if n is not None:
+                return n
+    return None
+
+
+def _intraday_series(d: Any, values_key: str) -> tuple[tuple[str, float], ...]:
+    """A Garmin intraday series: values_key holding a list of [timestamp, value, ...] samples.
+    Assumes the timestamp is epoch-ms already shifted to local wall time, the same convention this
+    module already uses for Garmin's '...TimestampLocal' scalar fields (_local_iso) -- unconfirmed
+    for these specific arrays by the installed package. A missing/non-list series, or one with no
+    usable samples, is the empty tuple -- an honest gap, never a zero. A sample with a null value is
+    dropped, not kept as 0."""
+    if not isinstance(d, dict):
+        return ()
+    values = d.get(values_key)
+    if not isinstance(values, list):
+        return ()
+    out = []
+    for sample in values:
+        if not isinstance(sample, list) or len(sample) < 2:
+            continue
+        value = _num(sample[1])
+        if value is None:
+            continue
+        local_time = _local_iso(sample[0])
+        if local_time is None:
+            continue
+        out.append((local_time, value))
+    return tuple(out)
+
+
+def parse_intraday(day: str, raw: dict[str, Any]) -> IntradayData:
+    out = IntradayData(day=day, raw=raw)
+
+    hr = raw.get("heart_rate")
+    out.heart_rate = _intraday_series(hr, "heartRateValues")
+    out.heart_rate_interval_minutes = _interval_minutes(hr)
+
+    st = raw.get("stress")
+    out.stress = _intraday_series(st, "stressValuesArray")
+    out.stress_interval_minutes = _interval_minutes(st)
+
+    events = raw.get("body_battery_events")
+    out.body_battery_events = tuple(e for e in events if isinstance(e, dict)) if isinstance(events, list) else ()
+
     return out
