@@ -1,19 +1,23 @@
 """Wave 9's whole-day verdict (BODY-EXPERIMENTOS-MODELO-1): did a WHOLE-DAY experiment
 (`ventana.tipo == "dia"`) move a metric, judged against the person's OWN day-to-day noise, never
 a population table (docs/DESIGN.md rules 4, 5, 12). Pure reads over a connection and a person id,
-the style of body/turnos_costo.py and body/baselines.py. An intraday window (`ventana.tipo ==
-"intradia"`) is a later slice (BODY-EXPERIMENTOS-INTRADIA-MODELO-1) -- every metric reads
-'aun_no' here, honestly, never an error.
+the style of body/turnos_costo.py and body/baselines.py. An INTRADAY window (`ventana.tipo ==
+"intradia"`, BODY-EXPERIMENTOS-INTRADIA-MODELO-1) feeds the SAME rule a per-day WINDOW mean
+instead of a whole day's own figure -- see `_veredicto_intradia`. 'aun_no' is no longer produced
+by either path; the code stays valid (screens and the assistant still know it) for a later day
+the rule genuinely cannot reach yet -- today nothing returns it.
 
 Carlos's cold-shower week (2026-11-09..13, afternoon-shift days not after a night) is the first
-real use; its verdict is due 2026-11-14 (BODY-EXPERIMENTOS-1-INV slice 4).
+real use of the whole-day path; its verdict was due 2026-11-14 (BODY-EXPERIMENTOS-1-INV slice 4).
+Carlos's morning-grounding experiment (vida/experimento-manana.md, his Personal desk's own file)
+is the first intraday use, aimed at Sat 2026-11-14 (BODY-EXPERIMENTOS-1-INV slice 8).
 """
 from __future__ import annotations
 
 import json
 import math
 import statistics
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 
 from . import baselines, db, turnos_costo
 
@@ -62,6 +66,17 @@ OFFSET_DIA = {
     "resting_hr": 1,
     "snoring_min": 1,
 }
+
+# BODY-EXPERIMENTOS-INTRADIA-MODELO-1: an intraday window with fewer than half the samples its
+# OWN observed spacing implies is treated as a day with no data, not as a thin-but-honest mean --
+# a watch not worn, or a sync gap, drops samples without lowering Garmin's nominal interval, so a
+# half-empty window is a coverage problem, not a true physiological average.
+COBERTURA_MIN = 0.5
+
+# db.METRICAS_INTRADIA's own keys -> the raw_payload kind db.intradia reads for each (db.
+# INTRADIA_KINDS). Kept here, not in db.py, since this is the one caller that walks from a
+# metric key to a stored series.
+_KIND_INTRADIA = {"heart_rate": "intradia_fc", "stress": "intradia_estres"}
 
 
 def dias_que_cuentan(conn, person_id: int, filtro_dias: dict, desde: str, hasta: str) -> list[str]:
@@ -189,12 +204,188 @@ def _veredicto_metrica(prueba_vals: list[float], base_vals: list[float]) -> dict
     }
 
 
+def _sin_offset(ts: str) -> datetime:
+    """A local timestamp read back as a naive datetime, dropping any UTC offset a caller
+    attached. `moment.ts_local` is free text that existing fixtures write WITH an offset (e.g.
+    "...T06:30:00-05:00"); this module's own local timestamps -- `sleep_session.end_local`,
+    db.intradia's own (local_iso, value) pairs -- never carry one. The value is already local
+    either way, so comparing it as naive is the honest reading, never a timezone conversion."""
+    dt = datetime.fromisoformat(ts)
+    return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
+
+
+def _ancla_despertar(conn, person_id: int, dia: str) -> str | None:
+    """Day `dia`'s own wake anchor: `sleep_session.end_local` for the row whose `day` IS `dia` --
+    body/db.py's save_day (like Garmin itself) files sleep under the morning the session ENDED, so
+    this is already "that day's wake time", no OFFSET_DIA shift needed (unlike a whole-day
+    metric's own night-after reading). None for a day with no sleep row, or no end_local yet."""
+    row = conn.execute(
+        "SELECT end_local FROM sleep_session WHERE person_id = ? AND day = ?", (person_id, dia)
+    ).fetchone()
+    return row["end_local"] if row is not None else None
+
+
+def _anclas_momento(conn, person_id: int, experimento_id: int, dias: list[str]) -> dict[str, str]:
+    """ts_local of each day's own logged moment, keyed by day (`experimento_registro.momento_id`
+    -> `moment.ts_local`). A day whose registro has no momento_id, or whose moment row is gone, is
+    simply absent -- no anchor."""
+    if not dias:
+        return {}
+    placeholders = ",".join("?" * len(dias))
+    rows = conn.execute(
+        f"SELECT er.day AS day, m.ts_local AS ts_local FROM experimento_registro er "
+        f"JOIN moment m ON m.id = er.momento_id "
+        f"WHERE er.experimento_id = ? AND er.person_id = ? AND er.day IN ({placeholders})",
+        (experimento_id, person_id, *dias),
+    ).fetchall()
+    return {r["day"]: r["ts_local"] for r in rows}
+
+
+def _hora_mediana_local(ts_locales: list[str]) -> time:
+    """The median local clock time of day across several local timestamps -- compared as
+    seconds-since-midnight so the median is well-defined even though the timestamps' own calendar
+    days differ."""
+    segundos = sorted(_sin_offset(ts).hour * 3600 + _sin_offset(ts).minute * 60 + _sin_offset(ts).second
+                       for ts in ts_locales)
+    mediana = statistics.median(segundos)
+    return (datetime.min + timedelta(seconds=mediana)).time()
+
+
+def _anclas_base_momento(dias_base: list[str], anclas_prueba: dict[str, str]) -> dict[str, str]:
+    """BODY-EXPERIMENTOS-INTRADIA-MODELO-1 judgement: a baseline day never has a moment of its own
+    (nothing was logged on an ordinary day), so every baseline day's anchor is the MEDIAN local
+    clock time of the test days' own moments, applied to that baseline day's own date -- the
+    closest honest stand-in for "when this would have happened on an ordinary day". {} (no anchor
+    for any baseline day) when no test day has a moment yet to take the median from."""
+    validos = [ts for ts in anclas_prueba.values() if ts]
+    if not validos:
+        return {}
+    hora = _hora_mediana_local(validos)
+    return {d: datetime.combine(date.fromisoformat(d), hora).isoformat(timespec="minutes") for d in dias_base}
+
+
+def _espaciado_mediana_min(muestras: list[tuple[str, float]]) -> float | None:
+    """The median gap, in minutes, between this set of samples' OWN consecutive timestamps -- the
+    day's own observed spacing (a watch not worn drops samples without changing Garmin's nominal
+    interval), never a fixed constant. None when fewer than two samples exist to compare, or every
+    gap is zero (duplicate timestamps)."""
+    if len(muestras) < 2:
+        return None
+    tiempos = sorted(_sin_offset(ts) for ts, _ in muestras)
+    diffs = [(b - a).total_seconds() / 60 for a, b in zip(tiempos, tiempos[1:]) if b > a]
+    if not diffs:
+        return None
+    return statistics.median(diffs)
+
+
+def _muestras_dias(conn, person_id: int, kind: str, dias: list[str], zona: str) -> list[tuple[str, float]]:
+    todas: list[tuple[str, float]] = []
+    for dia in dias:
+        todas.extend(db.intradia(conn, person_id, dia, kind, zona))
+    return todas
+
+
+def _valor_ventana(conn, person_id: int, metric: str, ancla_local: str | None, zona: str,
+                    antes_min: int, despues_min: int) -> float | None:
+    """This day's window mean for `metric` -- None when the day has no anchor, its intraday series
+    is not stored for either calendar day the window touches, or the window's own coverage falls
+    under COBERTURA_MIN (half the samples its own observed spacing implies)."""
+    if ancla_local is None:
+        return None
+    ancla = _sin_offset(ancla_local)
+    inicio = ancla - timedelta(minutes=antes_min)
+    fin = ancla + timedelta(minutes=despues_min)
+    dias_ventana = sorted({inicio.date().isoformat(), fin.date().isoformat()})
+    muestras = _muestras_dias(conn, person_id, _KIND_INTRADIA[metric], dias_ventana, zona)
+    if not muestras:
+        return None
+    espaciado = _espaciado_mediana_min(muestras)
+    if espaciado is None:
+        return None
+    en_ventana = [v for ts, v in muestras if inicio <= _sin_offset(ts) <= fin]
+    if not en_ventana:
+        return None
+    esperadas = (fin - inicio).total_seconds() / 60 / espaciado
+    if len(en_ventana) < COBERTURA_MIN * esperadas:
+        return None
+    return statistics.fmean(en_ventana)
+
+
+def _veredicto_intradia(conn, person_id: int, experimento_id: int, row, hoy: date) -> dict:
+    """BODY-EXPERIMENTOS-INTRADIA-MODELO-1: `_veredicto_metrica`'s own whole-day rule (MIN_PRUEBA,
+    MIN_BASE, UMBRAL), fed a per-day WINDOW mean instead of a whole day's own figure. Each
+    counting day's window is [anchor - antes_min, anchor + despues_min], anchored at that day's
+    own wake time ('despertar') or its own logged moment ('momento') -- see _ancla_despertar /
+    _anclas_momento. A baseline day has no moment of its own, so a 'momento' baseline is anchored
+    at the median local clock time of the test days' own moments (_anclas_base_momento, a
+    judgement call recorded there and in the ledger)."""
+    ventana = json.loads(row["ventana"])
+    metricas = json.loads(row["metricas"])
+    filtro_dias = json.loads(row["filtro_dias"])
+    estado = row["estado"]
+    ancla_tipo = ventana["ancla"]
+    antes_min = ventana["antes_min"] or 0
+    despues_min = ventana["despues_min"]
+    zona = db.person(conn, person_id)["timezone"]
+
+    hoy_iso = hoy.isoformat()
+    fecha_inicio = row["fecha_inicio"]
+    fin_prueba = min(row["fecha_fin"] or hoy_iso, hoy_iso)
+
+    candidatos_prueba = dias_que_cuentan(conn, person_id, filtro_dias, fecha_inicio, fin_prueba)
+    ocurrio = _ocurrio_por_dia(conn, person_id, experimento_id, row["habito_id"], candidatos_prueba)
+    dias_prueba = [d for d in candidatos_prueba if ocurrio.get(d)]
+    dias_excluidos_no_ocurrio = [d for d in candidatos_prueba if not ocurrio.get(d)]
+
+    base_hasta = (date.fromisoformat(fecha_inicio) - timedelta(1)).isoformat()
+    base_desde = (date.fromisoformat(fecha_inicio) - timedelta(BASE_DIAS)).isoformat()
+    candidatos_base = dias_que_cuentan(conn, person_id, filtro_dias, base_desde, base_hasta)
+    ocupados_por_otros = _dias_de_otros_experimentos(conn, person_id, experimento_id, hoy)
+    dias_base = [d for d in candidatos_base if d not in ocupados_por_otros]
+
+    if ancla_tipo == "despertar":
+        anclas_prueba = {d: _ancla_despertar(conn, person_id, d) for d in dias_prueba}
+        anclas_base = {d: _ancla_despertar(conn, person_id, d) for d in dias_base}
+    else:
+        anclas_prueba = _anclas_momento(conn, person_id, experimento_id, dias_prueba)
+        anclas_base = _anclas_base_momento(dias_base, anclas_prueba)
+
+    metricas_out = {}
+    sin_dato_prueba: set[str] = set()
+    sin_dato_base: set[str] = set()
+    for metric in metricas:
+        prueba_vals = []
+        for d in dias_prueba:
+            v = _valor_ventana(conn, person_id, metric, anclas_prueba.get(d), zona, antes_min, despues_min)
+            if v is None:
+                sin_dato_prueba.add(d)
+            else:
+                prueba_vals.append(v)
+        base_vals = []
+        for d in dias_base:
+            v = _valor_ventana(conn, person_id, metric, anclas_base.get(d), zona, antes_min, despues_min)
+            if v is None:
+                sin_dato_base.add(d)
+            else:
+                base_vals.append(v)
+        metricas_out[metric] = _veredicto_metrica(prueba_vals, base_vals)
+
+    return {
+        "metricas": metricas_out,
+        "dias_prueba": dias_prueba,
+        "dias_excluidos_no_ocurrio": dias_excluidos_no_ocurrio,
+        "dias_sin_dato": {"prueba": sorted(sin_dato_prueba), "base": sorted(sin_dato_base)},
+        "estado": estado,
+    }
+
+
 def veredicto(conn, person_id: int, experimento_id: int, hoy: date | None = None) -> dict:
     """Per metric: resultado ('mas_bajo' | 'mas_alto' | 'sin_cambio' | 'pocos_dias'), n_prueba,
     n_base, media_prueba, media_base, diferencia -- plus dias_prueba (ISO days actually used),
-    dias_excluidos_no_ocurrio and the experiment's own estado. `ventana.tipo == 'intradia'` ->
-    every metric reads 'aun_no', honestly, no error (BODY-EXPERIMENTOS-INTRADIA-MODELO-1 is a later
-    slice)."""
+    dias_excluidos_no_ocurrio and the experiment's own estado. `ventana.tipo == 'intradia'`
+    (BODY-EXPERIMENTOS-INTRADIA-MODELO-1) feeds the same rule a per-day WINDOW mean instead of a
+    whole day's own figure -- see `_veredicto_intradia`, whose result also carries
+    `dias_sin_dato` (test/base days dropped for a missing anchor or thin intraday coverage)."""
     hoy = hoy or date.today()
     row = conn.execute(
         "SELECT * FROM experimento WHERE id = ? AND person_id = ?", (experimento_id, person_id)
@@ -203,17 +394,12 @@ def veredicto(conn, person_id: int, experimento_id: int, hoy: date | None = None
         raise ValueError("experimento_id: not this person's own experiment")
 
     ventana = json.loads(row["ventana"])
+    if ventana["tipo"] == "intradia":
+        return _veredicto_intradia(conn, person_id, experimento_id, row, hoy)
+
     metricas = json.loads(row["metricas"])
     filtro_dias = json.loads(row["filtro_dias"])
     estado = row["estado"]
-
-    if ventana["tipo"] != "dia":
-        return {
-            "metricas": {m: {"resultado": "aun_no"} for m in metricas},
-            "dias_prueba": [],
-            "dias_excluidos_no_ocurrio": [],
-            "estado": estado,
-        }
 
     hoy_iso = hoy.isoformat()
     fecha_inicio = row["fecha_inicio"]

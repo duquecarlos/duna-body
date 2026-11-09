@@ -13,7 +13,9 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from fastapi.testclient import TestClient
 
 from body import config, db, goals, identity, web
+from body.i18n import T
 from body.rutas import comun
+from body.rutas import experimentos as rutas_experimentos
 
 client = TestClient(web.app, follow_redirects=False)
 
@@ -119,14 +121,33 @@ class VerdictWordsTest(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("muy pocos días todavía", r.text)
 
-    def test_aun_no_for_an_intraday_window(self):
+    def test_pocos_dias_for_a_fresh_intraday_window(self):
+        """A fresh intraday experiment with zero test days reads 'pocos_dias' -- the same code a
+        fresh whole-day experiment returns for zero test days (ORCH-CARLOS-DELEGATES-TIER-1-1:
+        both window types agree on "no test days yet")."""
         conn = _reset_db(self)
         db.crear_experimento(conn, 1, "Enraizamiento", ["heart_rate"],
                              {"tipo": "intradia", "ancla": "despertar", "antes_min": None, "despues_min": 60},
                              {"turno_en": None, "turno_fuera": None, "excluir_tras_noche": False})
         r = _get("/goals")
         self.assertEqual(r.status_code, 200)
-        self.assertIn("todavía sin veredicto", r.text)
+        self.assertIn("muy pocos días todavía", r.text)
+
+    def test_aun_no_words_still_valid_vocabulary_on_a_card(self):
+        """'aun_no' is no longer produced by experimentos.veredicto() (body/experimentos.py's own
+        module docstring), but the code stays valid vocabulary with its words on screen -- a card
+        built by the route's own helper from a verdict dict carrying 'aun_no' must still show
+        them."""
+        conn = _reset_db(self)
+        eid, _ = _build_experimento(conn, 1, "Enraizamiento", "stress_avg", [20.0] * 5)
+        row = conn.execute("SELECT * FROM experimento WHERE id = ?", (eid,)).fetchone()
+        ver = {
+            "dias_prueba": [],
+            "dias_excluidos_no_ocurrio": [],
+            "metricas": {"stress_avg": {"resultado": "aun_no"}},
+        }
+        card = rutas_experimentos._tarjeta_desde_veredicto(conn, T("es"), 1, row, ver, HOY)
+        self.assertIn("todavía sin veredicto", card["metrics"][0]["text"])
 
     def test_no_grading_colour_class_in_the_section(self):
         """DESIGN rule 11's own exception for this screen: verdict words, never .good/.bad."""

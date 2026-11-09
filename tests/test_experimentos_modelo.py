@@ -247,16 +247,20 @@ class VeredictoDiaTest(unittest.TestCase):
         self.assertEqual(len(v["dias_prueba"]), 4)
         self.assertEqual(v["dias_excluidos_no_ocurrio"], [dias[4]])
 
-    def test_intradia_window_reads_aun_no_for_every_metric(self):
+    def test_intradia_window_with_no_registered_days_reads_pocos_dias(self):
+        """BODY-EXPERIMENTOS-INTRADIA-MODELO-1: 'aun_no' is no longer produced for an intraday
+        window -- a day never marked occurred falls out the same way a whole-day experiment's own
+        unmarked day does (see test_too_few_test_days_reads_pocos_dias above)."""
         conn = _mkconn(self)
         ventana = {"tipo": "intradia", "ancla": "despertar", "antes_min": None, "despues_min": 60}
         filtro = {"turno_en": None, "turno_fuera": ["night"], "excluir_tras_noche": True}
         eid = db.crear_experimento(conn, 1, titulo="Enraizamiento", metricas=["heart_rate", "stress"],
                                     ventana=ventana, filtro_dias=filtro)
         v = experimentos.veredicto(conn, 1, eid, hoy=BASE_INICIO)
-        self.assertEqual(v["metricas"], {"heart_rate": {"resultado": "aun_no"},
-                                          "stress": {"resultado": "aun_no"}})
+        self.assertEqual(v["metricas"]["heart_rate"]["resultado"], "pocos_dias")
+        self.assertEqual(v["metricas"]["stress"]["resultado"], "pocos_dias")
         self.assertEqual(v["dias_prueba"], [])
+        self.assertEqual(v["dias_sin_dato"]["prueba"], [])  # no anchor at all -> never even tried
 
     def test_person_isolation(self):
         conn = _mkconn(self)

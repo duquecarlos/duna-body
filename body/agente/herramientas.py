@@ -676,7 +676,8 @@ def _experimento_dict(conn: sqlite3.Connection, person_id: int, row: sqlite3.Row
 def _leer_experimentos(conn: sqlite3.Connection, person_id: int, experimento_id: int | None = None) -> dict:
     """Active experiments first, then closed (BODY-EXPERIMENTOS-REGISTRO-1): each with its own
     setup, the days marked so far and, per metric, `experimentos.veredicto`'s own figures --
-    `resultado` ('mas_bajo' | 'mas_alto' | 'sin_cambio' | 'pocos_dias' | 'aun_no'), n_prueba,
+    `resultado` ('mas_bajo' | 'mas_alto' | 'sin_cambio' | 'pocos_dias'; 'aun_no' stays a valid code
+    but nothing produces it today, BODY-EXPERIMENTOS-INTRADIA-MODELO-1), n_prueba,
     n_base, media_prueba, media_base, diferencia. `nivel: 'resumen'`, by analogy with `leer_meta`:
     both answer with a figure already compared over many days -- a mean, a target's progress --
     never a single day's raw reading, which stays behind 'completo'."""
@@ -906,11 +907,13 @@ HERRAMIENTAS = [
      "descripcion": "Los experimentos de la persona, activos primero y luego cerrados: qué miden, qué días "
                      "cuentan, los días ya marcados y, por métrica, el resultado de comparar los días en que "
                      "ocurrió con los propios días normales de la persona, nunca con una tabla de otra gente: "
-                     "mas_bajo, mas_alto, sin_cambio (ya hay días suficientes pero no cambió), pocos_dias "
-                     "(todavía no hay suficientes) o aun_no (ventana dentro del día, el cálculo llega en otra "
-                     "versión). Un día que no se marcó no cuenta ni como prueba ni como normal. Las palabras "
-                     "del veredicto las muestra la pantalla; usa estos códigos para explicarlo con tus propias "
-                     "palabras, nunca como consejo médico.",
+                     "mas_bajo, mas_alto, sin_cambio (ya hay días suficientes pero no cambió) o pocos_dias "
+                     "(todavía no hay suficientes, o falta el dato de ese día). Si la ventana es dentro del "
+                     "día (por ejemplo, los minutos desde que despierta o desde un momento que registró), "
+                     "compara ese mismo tramo de minutos en los días de prueba contra el de sus propios días "
+                     "normales, con la misma regla. Un día que no se marcó no cuenta ni como prueba ni como "
+                     "normal. Las palabras del veredicto las muestra la pantalla; usa estos códigos para "
+                     "explicarlo con tus propias palabras, nunca como consejo médico.",
      "parametros": _PARAM_LEER_EXPERIMENTOS, "funcion": _leer_experimentos},
     {"nombre": "proponer_experimento", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone empezar un experimento: compara los días en que la persona hace algo con sus "
