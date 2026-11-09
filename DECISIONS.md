@@ -10758,3 +10758,44 @@ slice's `touches:` -- not merged.**
 
 **Commits**: `247dce59c86d3bc469310066aef0ac35b45f1ffa` on `feat/body-entreno-schema-1` (on top of
 `56ac821d66a0728b1ce9e6f619c44c1605d7e884`). No merge commit.
+
+## BODY-ENTRENO-SCHEMA-1-N -- the last guard fixed, branch merged (COMPLETE)
+
+Picked up -M's BLOCKED stop above. `touches:` was `tests/test_persona_fuga.py`, `DECISIONS.md`.
+
+**Seed**: `_seed_person` now inserts one `workout_set` row per person, linked to the same `activity`
+row the function already seeds (`activity_source='garmin'`, `activity_source_id='act-1'`, matching
+that `INSERT INTO activity`'s `source`/`source_id`), with `set_order=1`, `set_type='active'`, and
+`person_exercise = 'ZZ{tag}-SERIE'` -- the stronger fix the approval named, not a bare row that only
+satisfies a count. `person_exercise` is a column `privacidad.export_person`'s `sets_entreno` renders
+verbatim (`SELECT * FROM workout_set ...`), and that export is what `/privacidad/exportar` (already
+one of `PLAIN_GET_ROUTES`) returns as its response body, so the marker reaches an existing sweep
+with no new route needed. `ZZ{tag}-SERIE` added to `_markers_of`'s list, so every sweep already in
+this file (routes, tools, `vida_export`, both unlinked and linked-sharing) now also proves person
+A's workout set never appears for person B, the same way `ZZ{tag}-ACTIVIDAD` already does for
+`activity`.
+
+**Gate**, once, foreground, on the fix commit (tree later proven identical to the merge commit's
+tree -- see below): `.venv/Scripts/python.exe -m unittest discover tests -t .` -- `Ran 1443 tests
+in 228.476s ... OK (skipped=1)`. Same count as -M's run (1443); the fix added a row and a marker to
+an existing seed/census, no new test.
+
+**Merged** `feat/body-entreno-schema-1` into `main` with `--no-ff` (approval-reason authorises the
+merge in words: "Then merge the branch."). Diff from `main`'s prior tip is test-only
+(`tests/test_persona_fuga.py`, plus -M's already-committed `body/demo.py`, `body/i18n/*.json`,
+`body/privacidad.py`, `tests/test_entreno_schema.py`, and SCHEMA-1's `body/db.py`) -- no schema
+change in THIS slice's own diff, no customer-facing bytes, no cross-repo contract, so Merge Policy A
+clears without waiting. Merge was a clean fast-forward-shaped `--no-ff`: merge commit's tree
+(`67d3283ff298c7373d9d0e73316fa07f12bd73a0`) is byte-identical to the branch tip's tree (same sha),
+confirmed via `git diff HEAD feat/body-entreno-schema-1` (empty) -- the gate above already covers
+the merged tree, not re-run.
+
+The branch now carries SCHEMA-1 (training-log and self-measured-goal schema) + -M (labels, demo
+data, privacy census for `workout_set`) + -N (this slice's seed/marker fix) as one `main` history.
+
+`main` now at `135486a17d0ab92fe66af290aad06bef93528ccd`. `git status --porcelain` empty on `main`.
+
+**Commits**: `11fab9d7796dfdc5cd2b62180ae88f6452c1c913` (fix, on `feat/body-entreno-schema-1`, on
+top of `247dce59c86d3bc469310066aef0ac35b45f1ffa`); `135486a17d0ab92fe66af290aad06bef93528ccd`
+(merge `--no-ff` into `main`, parents `73325a3b5dc040036bff09f0a1d9a251a372ce89` and
+`11fab9d7796dfdc5cd2b62180ae88f6452c1c913`).
