@@ -12762,3 +12762,42 @@ merge in words): `git checkout main` (tip `cce6a11`), `git merge --no-ff
 feat/body-momentos-dia-completo-1` (branch tip `388aac43c103059ede42e2b4fb6897fcb6d640ca`) ->
 `b95e66d879bb1c1df907af85a75378641b10d7c6`. Tree identity checked (`git diff HEAD
 feat/body-momentos-dia-completo-1 --stat`, empty) instead of re-running the gate on the merge.
+
+## BODY-EXPERIMENTOS-REGISTRO-1-M -- finishes BODY-EXPERIMENTOS-REGISTRO-1 (`bf9f054`, `7dbc230`),
+which stopped BLOCKED with the three tools (`leer_experimentos`, `proponer_experimento`,
+`marcar_experimento`), the `propuesta_agente.accion` CHECK widening, cards and i18n built and
+every touched file green, but the full gate red in two registry-shape guards outside its touches.
+
+**What was red**: `tests/test_agente_registro.py`'s `RegistryShapeTest` and `JsonSerializableTest`,
+and `tests/test_agente_bucle.py`'s `NivelDatosEnforcementTest`, pinned the exact tool set from
+before the three new tools existed (12 lectura, 8 propuesta, 20 in all).
+
+**What now pins the new set**: `leer_experimentos` (nivel `resumen`) joins the lectura set, now 13
+(`test_twelve_lectura_tools_with_expected_levels` -> `test_thirteen_lectura_tools_with_expected_levels`,
+with its own entry in `expected_levels`); `proponer_experimento` and `marcar_experimento` (nivel
+`ninguno`, like every other propuesta tool) join `PROPUESTA_NOMBRES`, now 10
+(`test_eight_propuesta_tools_at_nivel_ninguno` -> `test_ten_propuesta_tools_at_nivel_ninguno`); the
+whole-registry count moves from 20 to 23 (13 lectura + 10 propuesta). `_seed()` now also creates
+one invented experiment (`db.crear_experimento`, `resting_hr`, `ventana` tipo `dia`, no shift
+filter, `fecha_inicio` inside the seeded metric range) and `_all_tool_calls()` gains
+`"leer_experimentos": {}`, so `JsonSerializableTest` exercises `leer_experimentos`'s real output --
+veredicto included -- through `json.dumps`, and the does-not-change-the-database sweep covers it
+too. `test_agente_bucle.py`'s exact-offered-set assertion at `nivel_datos='ninguno'` gains
+`proponer_experimento` and `marcar_experimento`. The subject of every guard is unchanged -- an
+unknown or mis-levelled tool still fails them -- only the set widened, nothing loosened to a
+subset or removed.
+
+**Accepted deviations from BODY-EXPERIMENTOS-REGISTRO-1 itself** (orchestrator-accepted, not
+re-opened by this slice): `db.crear_experimento` gained a `fecha_fin` parameter it was missing;
+`db.validar_experimento`'s messages are surfaced through a new `db.ExperimentoInvalido`
+(`ValueError` subclass) and `errores.texto_propio`, not a bare `ValueError`, so
+`tests/test_errores_texto.py`'s AST guard still passes.
+
+**Gate**, once, foreground, on the branch tip (commit `0f252f3`): `.venv/Scripts/python.exe -m
+unittest discover tests -t .` -> `Ran 1782 tests in 345.592s ... OK (skipped=1)`.
+
+**Stops AWAITING_APPROVAL on the branch, not merged**: this slice's own diff is test-only (no
+schema, no customer bytes, no cross-repo contract), but the branch as a whole already carries
+customer-facing bytes (the proposal cards and their i18n strings, from `bf9f054`), and the
+dispatching spec's approval-reason says that still stops the merge for the orchestrator's own
+375 px check.
