@@ -95,8 +95,9 @@ class AssistantTrendsToolTest(unittest.TestCase):
     def test_leer_tendencias_rejects_unknown_metric(self):
         conn = _conn(self)
         db.init(conn)
+        self.assertNotIn("no_es_una_metrica", herramientas.TENDENCIA_METRICAS)
         with self.assertRaises(herramientas.ToolError):
-            herramientas.ejecutar(conn, 1, "leer_tendencias", {"metric": "vo2max_cycling"}, "completo")
+            herramientas.ejecutar(conn, 1, "leer_tendencias", {"metric": "no_es_una_metrica"}, "completo")
 
 
 if __name__ == "__main__":
