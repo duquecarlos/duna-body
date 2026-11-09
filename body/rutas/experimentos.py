@@ -38,10 +38,25 @@ def _fecha_rango_txt(t, fecha_inicio: str, fecha_fin: str | None) -> str:
     return t("experimentos.dias_rango", desde=_dia_mes(t, d0), hasta=_dia_mes(t, date.fromisoformat(fecha_fin)))
 
 
-def _progreso_txt(t, ver: dict, row) -> str:
+def _progreso_txt(conn, t, person_id: int, row, ver: dict, today: date) -> str:
+    """Counts what the person actually marked, over `ver["dias_prueba"]` (hecho, already right --
+    reused, not re-derived) plus `ver["dias_excluidos_no_ocurrio"]` split by whether `_dias_marcados`
+    (the same registro/habit_check source `experimentos.veredicto`'s own `_ocurrio_por_dia` reads)
+    carries a mark for that day: marked false -> no_hechos, no mark at all -> sin_marcar. TODAY, when
+    unmarked, counts for neither -- the day is not over (ORCH-CARLOS-DELEGATES-TIER-1-1)."""
     hechos = len(ver["dias_prueba"])
-    no_hechos = len(ver["dias_excluidos_no_ocurrio"])
-    txt = t("experimentos.progreso", hechos=hechos, no_hechos=no_hechos)
+    today_iso = today.isoformat()
+    marcas = {d["day"] for d in _dias_marcados(conn, person_id, row)}
+    no_hechos = sum(1 for d in ver["dias_excluidos_no_ocurrio"] if d in marcas)
+    sin_marcar = sum(1 for d in ver["dias_excluidos_no_ocurrio"] if d not in marcas and d != today_iso)
+    partes = []
+    if hechos:
+        partes.append(t("experimentos.progreso_hechos", hechos=hechos))
+    if no_hechos:
+        partes.append(t("experimentos.progreso_no_hechos", no_hechos=no_hechos))
+    if sin_marcar:
+        partes.append(t("experimentos.progreso_sin_marcar", sin_marcar=sin_marcar))
+    txt = " · ".join(partes) if partes else t("experimentos.progreso_vacio")
     objetivo = row["dias_prueba_objetivo"]
     if objetivo:
         txt += " · " + t("experimentos.progreso_objetivo", hechos=hechos, objetivo=objetivo)
@@ -54,14 +69,14 @@ def _metric_line(t, metric_key: str, resultado: str) -> dict:
     return {"label": t("metric." + metric_key), "text": f"{arrow} {txt}".strip()}
 
 
-def _tarjeta_desde_veredicto(t, row, ver: dict) -> dict:
+def _tarjeta_desde_veredicto(conn, t, person_id: int, row, ver: dict, today: date) -> dict:
     filtro_dias = json.loads(row["filtro_dias"])
     metricas = json.loads(row["metricas"])
     card = {
         "id": row["id"], "title": row["titulo"],
         "dias_txt": asistente._filtro_dias_txt(t, filtro_dias),
         "fecha_txt": _fecha_rango_txt(t, row["fecha_inicio"], row["fecha_fin"]),
-        "progreso_txt": _progreso_txt(t, ver, row),
+        "progreso_txt": _progreso_txt(conn, t, person_id, row, ver, today),
         "metrics": [_metric_line(t, m, ver["metricas"][m]["resultado"]) for m in metricas],
         "closed": row["estado"] == "cerrado",
     }
@@ -73,9 +88,9 @@ def _tarjeta_desde_veredicto(t, row, ver: dict) -> dict:
 def resumen_metas(conn, t, person_id: int, today: date) -> tuple[list, list]:
     """Metas' "Experimentos" section data: active cards, then closed cards -- `goals_list` calls
     this and renders both in `goals.html`."""
-    activos = [_tarjeta_desde_veredicto(t, r, experimentos.veredicto(conn, person_id, r["id"], hoy=today))
+    activos = [_tarjeta_desde_veredicto(conn, t, person_id, r, experimentos.veredicto(conn, person_id, r["id"], hoy=today), today)
                for r in db.experimentos(conn, person_id, "activo")]
-    cerrados = [_tarjeta_desde_veredicto(t, r, experimentos.veredicto(conn, person_id, r["id"], hoy=today))
+    cerrados = [_tarjeta_desde_veredicto(conn, t, person_id, r, experimentos.veredicto(conn, person_id, r["id"], hoy=today), today)
                 for r in db.experimentos(conn, person_id, "cerrado")]
     return activos, cerrados
 
@@ -92,18 +107,15 @@ def hoy_contexto(conn, t, person_id: int, today: date) -> list[dict]:
         if not experimentos.dias_que_cuentan(conn, person_id, filtro_dias, today_iso, today_iso):
             continue
         if row["habito_id"] is not None:
-            out.append({"id": row["id"], "habito": True,
+            out.append({"id": row["id"], "habito": True, "marcado": None,
                         "linea": t("today.experimento_linea_habito", titulo=row["titulo"])})
             continue
         reg = conn.execute(
             "SELECT ocurrio FROM experimento_registro WHERE experimento_id = ? AND person_id = ? AND day = ?",
             (row["id"], person_id, today_iso)).fetchone()
-        if reg is None:
-            linea = t("today.experimento_linea", titulo=row["titulo"])
-        else:
-            marca = t("experimentos.marca.hecho" if reg["ocurrio"] else "experimentos.marca.no_hecho")
-            linea = t("today.experimento_linea_marcado", titulo=row["titulo"], marca=marca)
-        out.append({"id": row["id"], "habito": False, "linea": linea})
+        marcado = None if reg is None else ("1" if reg["ocurrio"] else "0")
+        out.append({"id": row["id"], "habito": False, "marcado": marcado,
+                    "linea": t("today.experimento_linea", titulo=row["titulo"])})
     return out
 
 
@@ -155,7 +167,7 @@ def experiment_detail(experiment_id: int, person_id: int = Depends(identity.curr
         raise HTTPException(404)
     today = comun._today_local(person)
     ver = experimentos.veredicto(conn, person_id, experiment_id, hoy=today)
-    card = _tarjeta_desde_veredicto(t, row, ver)
+    card = _tarjeta_desde_veredicto(conn, t, person_id, row, ver, today)
     defs = comun._defs(conn)
     metricas = json.loads(row["metricas"])
     card["metrics_detalle"] = [_metric_detalle(t, defs, m, ver["metricas"][m]) for m in metricas]

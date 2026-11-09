@@ -1,6 +1,7 @@
 """BODY-EXPERIMENTOS-PANTALLA-1: experiments get a place on screen -- a Metas section, a detail
 page, and a short line on Hoy. Invented demo data only, mirrors tests/test_experimentos_modelo.py's
 own fixture shapes (noisy baseline, clear test-day shift) for each verdict code."""
+import re
 import tempfile
 import unittest
 from datetime import date, timedelta
@@ -138,6 +139,67 @@ class VerdictWordsTest(unittest.TestCase):
         self.assertIn("↓", chunk)
 
 
+class ProgresoLineTest(unittest.TestCase):
+    """BODY-EXPERIMENTOS-PANTALLA-1-M2 item 1: the progress line counts what the person actually
+    marked -- hecho, no (explicitly marked false) and sin marcar (not marked, past days only).
+    Today, unmarked, counts for neither."""
+
+    def test_fresh_experiment_shows_the_empty_sentence_es(self):
+        conn = _reset_db(self)
+        _insert_shift(conn, 1, HOY.isoformat())
+        db.crear_experimento(conn, 1, "Recien empezado", ["stress_avg"], {"tipo": "dia"},
+                             dict(FILTRO_TARDE), fecha_inicio=HOY.isoformat())
+        conn.commit()
+        r = _get("/goals")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("todavía ningún día marcado", r.text)
+
+    def test_fresh_experiment_shows_the_empty_sentence_en(self):
+        conn = _reset_db(self)
+        db.set_language(conn, "en", 1)
+        _insert_shift(conn, 1, HOY.isoformat())
+        db.crear_experimento(conn, 1, "Just started", ["stress_avg"], {"tipo": "dia"},
+                             dict(FILTRO_TARDE), fecha_inicio=HOY.isoformat())
+        conn.commit()
+        r = _get("/goals")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("no days marked yet", r.text)
+
+    def test_hecho_no_and_sin_marcar_are_each_counted_separately(self):
+        conn = _reset_db(self)
+        eid, dias = _build_experimento(conn, 1, "Mixto", "stress_avg", [20.0] * 5,
+                                       ocurrio=[True, True, False, False, True])
+        # dias[2]: explicitly marked "not done" -- distinct from dias[3], left unmarked entirely.
+        db.registrar_dia_experimento(conn, eid, 1, dias[2], False)
+        conn.commit()
+        r = _get("/goals")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("3 hechos · 1 no · 1 sin marcar", r.text)
+
+    def test_zero_parts_are_left_out(self):
+        conn = _reset_db(self)
+        _build_experimento(conn, 1, "Todo hecho", "stress_avg", [20.0] * 5)
+        r = _get("/goals")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("5 hechos", r.text)
+        self.assertNotIn("0 no", r.text)
+        self.assertNotIn("0 sin marcar", r.text)
+
+    def test_habit_linked_experiment_counts_from_the_habit_checks(self):
+        conn = _reset_db(self)
+        gid = goals.propose(conn, 1, "Dormir mejor", "2026-01-01", kind="milestone", deadline="2027-01-01")
+        goals.activate(conn, gid)
+        hid = goals.add_habit(conn, gid, "Ducha fria", {"per": "day", "times": 1})
+        eid, dias = _build_experimento(conn, 1, "Ducha fria ligada", "stress_avg", [20.0] * 5,
+                                       habito_id=hid, ocurrio=[True, True, False, False, True])
+        conn.execute("INSERT INTO habit_check (habit_id, person_id, day, done) VALUES (?, ?, ?, 0)",
+                    (hid, 1, dias[2]))
+        conn.commit()
+        r = _get("/goals")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("3 hechos · 1 no · 1 sin marcar", r.text)
+
+
 class EmptyStateTest(unittest.TestCase):
     def test_no_experiment_shows_one_line_no_card(self):
         _reset_db(self)
@@ -163,6 +225,21 @@ class ClosedSectionTest(unittest.TestCase):
         self.assertIn("Cerrado ya", r.text)
         self.assertIn("Cerrados", r.text)  # the <details> summary that folds closed experiments
 
+    def test_closed_card_shows_date_range_and_day_filter_like_the_active_one(self):
+        """BODY-EXPERIMENTOS-PANTALLA-1-M2 item 3: a closed card used to show neither."""
+        conn = _reset_db(self)
+        _build_experimento(conn, 1, "Activo", "stress_avg", [20.0] * 5)
+        eid_closed, _ = _build_experimento(conn, 1, "Cerrado ya", "resting_hr", [20.0] * 5,
+                                           fecha_inicio=BASE_INICIO + timedelta(130))
+        db.cerrar_experimento(conn, 1, eid_closed, fecha_fin=(BASE_INICIO + timedelta(140)).isoformat())
+        conn.commit()
+        r = _get("/goals", hoy=BASE_INICIO + timedelta(150))
+        self.assertEqual(r.status_code, 200)
+        # the day-filter line ("días de turno de tarde") on BOTH the active and the closed card.
+        self.assertEqual(r.text.count("días de turno de tarde"), 2)
+        # the closed card's own date range ("del <day> <month> al <day> <month>").
+        self.assertRegex(r.text, r"del \d+ \w+ al \d+ \w+")
+
 
 class DetailPageTest(unittest.TestCase):
     def test_detail_shows_means_counts_marked_days_and_explanation(self):
@@ -177,6 +254,17 @@ class DetailPageTest(unittest.TestCase):
         self.assertIn("fria de verdad", r.text)
         self.assertIn("No es consejo médico", r.text)
         self.assertIn(f'action="/experiments/{eid}/close"', r.text)
+        # BODY-EXPERIMENTOS-PANTALLA-1-M2 item 3: "(N con dato)" -- N is days WITH A FIGURE, not
+        # test days, on both the test-days and the baseline lines.
+        self.assertIn("con dato", r.text)
+
+    def test_media_linea_says_with_a_reading_in_en(self):
+        conn = _reset_db(self)
+        db.set_language(conn, "en", 1)
+        eid, _ = _build_experimento(conn, 1, "Cold shower", "stress_avg", [20.0] * 5)
+        r = _get(f"/experiments/{eid}")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("with a reading", r.text)
 
     def test_offset_metric_carries_its_own_note(self):
         conn = _reset_db(self)
@@ -280,6 +368,45 @@ class MarkFromHoyTest(unittest.TestCase):
                             (eid, today.isoformat())).fetchall()
         self.assertEqual(len(rows2), 1)
         self.assertEqual(rows2[0]["ocurrio"], 0)
+
+
+class HoyButtonStateTest(unittest.TestCase):
+    """BODY-EXPERIMENTOS-PANTALLA-1-M2 item 4: both buttons side by side, and once today is marked
+    the chosen one carries aria-pressed="true" plus the selected style -- the other stays
+    aria-pressed="false", and posting it still changes the mark."""
+
+    def test_aria_pressed_before_and_after_marking(self):
+        conn = _reset_db(self)
+        eid, _ = _build_experimento(conn, 1, "Ducha fria", "stress_avg", [20.0] * 5,
+                                    ocurrio=[True, True, True, True, False])
+        today = HOY  # the experiment's own last test day, never pre-registered
+
+        r = _get("/", hoy=today)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.text.count('aria-pressed="true"'), 0)
+        self.assertEqual(r.text.count('aria-pressed="false"'), 2)
+        self.assertNotIn('class="btn on"', r.text)
+
+        r2 = _post(f"/experiments/{eid}/day", {"day": today.isoformat(), "ocurrio": "1", "back": "/"}, hoy=today)
+        self.assertEqual(r2.status_code, 303)
+
+        r3 = _get("/", hoy=today)
+        self.assertEqual(r3.status_code, 200)
+        self.assertEqual(r3.text.count('aria-pressed="true"'), 1)
+        self.assertEqual(r3.text.count('aria-pressed="false"'), 1)
+        self.assertIn('class="btn on" aria-pressed="true"', r3.text)
+
+        # posting the OTHER button still changes the mark, and the selection flips.
+        r4 = _post(f"/experiments/{eid}/day", {"day": today.isoformat(), "ocurrio": "0", "back": "/"}, hoy=today)
+        self.assertEqual(r4.status_code, 303)
+        rows = conn.execute("SELECT ocurrio FROM experimento_registro WHERE experimento_id = ? AND day = ?",
+                           (eid, today.isoformat())).fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["ocurrio"], 0)
+
+        r5 = _get("/", hoy=today)
+        self.assertEqual(r5.text.count('aria-pressed="true"'), 1)
+        self.assertRegex(r5.text, r'name="ocurrio" value="0">\s*<button[^>]*class="btn on"')
 
 
 class HabitLinkedExperimentTest(unittest.TestCase):

@@ -51,7 +51,8 @@
   {% for e in experiments_closed %}
   <a class="card mt-8" href="/experiments/{{ e.id }}">
     <div class="row"><div class="q m-0">{{ e.title }}</div><span class="chip">{{ e.status_text }}</span></div>
-    <p class="k mt-2 mb-0">{{ e.progreso_txt }}</p>
+    <p class="k mt-2 mb-0">{{ e.dias_txt }} · {{ e.fecha_txt }}</p>
+    <p class="k mt-4 mb-0">{{ e.progreso_txt }}</p>
     {% for m in e.metrics %}<p class="k mt-2 mb-0">{{ m.label }}: {{ m.text }}</p>{% endfor %}
   </a>
   {% endfor %}

@@ -55,18 +55,18 @@
     <li class="block">
       <div class="k">{{ e.linea }}</div>
       {% if not e.habito %}
-      <div class="row gap-8 mt-6">
+      <div class="row gap-8 justify-start mt-6">
         <form method="post" action="/experiments/{{ e.id }}/day" class="m-0">
           <input type="hidden" name="day" value="{{ today_iso }}">
           <input type="hidden" name="back" value="/">
           <input type="hidden" name="ocurrio" value="1">
-          <button type="submit" class="btn">{{ t('today.experimento_btn_hecho') }}</button>
+          <button type="submit" class="btn{% if e.marcado == '1' %} on{% endif %}" aria-pressed="{{ 'true' if e.marcado == '1' else 'false' }}">{{ t('today.experimento_btn_hecho') }}</button>
         </form>
         <form method="post" action="/experiments/{{ e.id }}/day" class="m-0">
           <input type="hidden" name="day" value="{{ today_iso }}">
           <input type="hidden" name="back" value="/">
           <input type="hidden" name="ocurrio" value="0">
-          <button type="submit" class="btn">{{ t('today.experimento_btn_no') }}</button>
+          <button type="submit" class="btn{% if e.marcado == '0' %} on{% endif %}" aria-pressed="{{ 'true' if e.marcado == '0' else 'false' }}">{{ t('today.experimento_btn_no') }}</button>
         </form>
       </div>
       {% endif %}
