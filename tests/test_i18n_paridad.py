@@ -80,7 +80,7 @@ _FIXED_DYNAMIC = {
     # body/web.py: t("shifts.cost_sub." + key) -- the cost model's own metric list (turnos_costo.MODELO).
     "shifts.cost_sub.+": turnos_costo.MODELO["metricas"],
     # body/turnos_costo.py diferencia_y_palabra(): the only three words it returns.
-    "shifts.word.+": ["peor", "mejor", "igual"],
+    "shifts.word.+": ["mas", "menos", "igual"],
     # body/turnos_costo.py _motivo(): the only four reasons it returns.
     "shifts.reason.~": ["sin_turnos", "sin_noches", "pocos_bloques", "sin_datos_reloj"],
     # body/patron_turnos.py validar(): per-row error codes. Its whole-cycle "largo_invalido" (index
