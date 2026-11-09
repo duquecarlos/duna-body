@@ -381,7 +381,7 @@ def start_login(conn, return_to: str | None, prompt: str | None = None,
     return url, flujo_id
 
 
-def handle_callback(conn, flujo_cookie: str | None, params: dict) -> CallbackResult:
+def handle_callback(conn, flujo_cookie: str | None, params: dict, language: str = "es") -> CallbackResult:
     now = _now_iso()
     _sweep_expired_attempts(conn, now)
     if not flujo_cookie:
@@ -423,7 +423,7 @@ def handle_callback(conn, flujo_cookie: str | None, params: dict) -> CallbackRes
     )
     if codigo:
         raise FlowRefused(codigo)
-    person_id = resolve_person(conn, claims)
+    person_id = resolve_person(conn, claims, language)
     if person_id is None:
         return CallbackResult(kind="sin_acceso", claims=claims)
     _sincronizar_hogar_sin_fallar(conn, person_id, claims)
@@ -433,9 +433,12 @@ def handle_callback(conn, flujo_cookie: str | None, params: dict) -> CallbackRes
 
 # ---- linking (`person.cuenta_sub`) ----------------------------------------------------------------
 
-def resolve_person(conn, claims: dict) -> int | None:
+def resolve_person(conn, claims: dict, language: str = "es") -> int | None:
     """By `sub` ONLY -- never by email. None means «Sin acceso»: `body` is not in `duna_productos`
-    and no person is already linked to this sub."""
+    and no person is already linked to this sub. `language` seeds the new row's `language` column
+    on FIRST sign-in only (picked by the caller from the callback request's Accept-Language header,
+    through body/i18n's `pick` -- Cuenta's ID token and userinfo carry no locale claim,
+    BODY-CUENTA-1-INV part B); an existing person's language is never touched here."""
     sub = claims["sub"]
     row = conn.execute("SELECT id FROM person WHERE cuenta_sub = ?", (sub,)).fetchone()
     if row:
@@ -443,7 +446,9 @@ def resolve_person(conn, claims: dict) -> int | None:
     if "body" not in (claims.get("duna_productos") or []):
         return None
     name = claims.get("name") or "Cuenta"
-    cur = conn.execute("INSERT INTO person (display_name, cuenta_sub) VALUES (?, ?)", (name, sub))
+    cur = conn.execute(
+        "INSERT INTO person (display_name, cuenta_sub, language) VALUES (?, ?, ?)", (name, sub, language)
+    )
     conn.commit()
     return cur.lastrowid
 
