@@ -8,7 +8,8 @@
   <div class="q">{{ t('garmin.mfa_label') }}</div>
   <p class="read">{{ t('garmin.mfa_desc') }}</p>
   <form method="post" action="/garmin/codigo" class="mt-12">
-    <input type="text" name="code" class="field mb-12" autocomplete="one-time-code" inputmode="numeric">
+    <input type="text" name="code" class="field mb-12" autocomplete="one-time-code" inputmode="numeric"
+           aria-label="{{ t('garmin.mfa_label') }}">
     <button class="btn" type="submit">{{ t('garmin.mfa_submit') }}</button>
   </form>
 </div>
@@ -23,9 +24,11 @@
   <p class="read">{{ t('garmin.explain') }}</p>
   <form method="post" action="/garmin/conectar" class="mt-12">
     <div class="q">{{ t('garmin.email_label') }}</div>
-    <input type="email" name="email" class="field mb-12" autocomplete="username">
+    <input type="email" name="email" class="field mb-12" autocomplete="username"
+           aria-label="{{ t('garmin.email_label') }}">
     <div class="q">{{ t('garmin.password_label') }}</div>
-    <input type="password" name="password" class="field mb-12" autocomplete="current-password">
+    <input type="password" name="password" class="field mb-12" autocomplete="current-password"
+           aria-label="{{ t('garmin.password_label') }}">
     <button class="btn" type="submit">{{ t('garmin.connect_btn') }}</button>
   </form>
 </div>
@@ -41,9 +44,11 @@
   <p class="read">{{ t('garmin.first_connect') }}</p>
   <form method="post" action="/garmin/conectar" class="mt-12">
     <div class="q">{{ t('garmin.email_label') }}</div>
-    <input type="email" name="email" class="field mb-12" autocomplete="username">
+    <input type="email" name="email" class="field mb-12" autocomplete="username"
+           aria-label="{{ t('garmin.email_label') }}">
     <div class="q">{{ t('garmin.password_label') }}</div>
-    <input type="password" name="password" class="field mb-12" autocomplete="current-password">
+    <input type="password" name="password" class="field mb-12" autocomplete="current-password"
+           aria-label="{{ t('garmin.password_label') }}">
     <button class="btn" type="submit">{{ t('garmin.connect_btn') }}</button>
   </form>
 </div>

@@ -594,5 +594,8 @@
   "asistente.propuesta.deshecha": "Undone",
   "asistente.propuesta.no_vigente": "No longer valid",
   "asistente.propuesta.desactualizada": "Something changed since I proposed this. Ask me again.",
-  "asistente.propuesta.sin_deshacer": "This can't be undone."
+  "asistente.propuesta.sin_deshacer": "This can't be undone.",
+  "a11y.habit_times": "Number of times",
+  "a11y.habit_per": "How often",
+  "a11y.habit_context": "Habit context"
 }

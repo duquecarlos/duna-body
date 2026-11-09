@@ -11,17 +11,17 @@
 
   <div class="card">
     <div class="q">{{ t('goals.field_title') }}</div>
-    <input type="text" name="title" class="field" required>
+    <input type="text" name="title" class="field" required aria-label="{{ t('goals.field_title') }}">
   </div>
 
   <div class="card">
     <div class="q">{{ t('goals.field_why') }}</div>
-    <textarea name="why" rows="2" class="field"></textarea>
+    <textarea name="why" rows="2" class="field" aria-label="{{ t('goals.field_why') }}"></textarea>
   </div>
 
   <div class="card">
     <div class="q">{{ t('goals.field_area') }}</div>
-    <select name="area" class="field">
+    <select name="area" class="field" aria-label="{{ t('goals.field_area') }}">
       {% for a in areas %}<option value="{{ a }}" {% if a == 'body' %}selected{% endif %}>{{ t('goals.area.' + a) }}</option>{% endfor %}
     </select>
   </div>
@@ -30,17 +30,18 @@
     <div class="card">
       <div class="q">{{ t('goals.field_metric') }}</div>
       {% if metrics %}
-      <select name="metric_key" id="metric-select" class="field">
+      <select name="metric_key" id="metric-select" class="field" aria-label="{{ t('goals.field_metric') }}">
         {% for m in metrics %}<option value="{{ m.key }}" data-direction="{{ m.direction }}" data-baseline="{{ m.baseline if m.baseline is not none else '' }}">{{ m.label }}{% if m.unit %} ({{ m.unit }}){% endif %}</option>{% endfor %}
       </select>
       <div class="q mt-12">{{ t('goals.field_direction') }}</div>
-      <select name="direction" id="direction-select" class="field">
+      <select name="direction" id="direction-select" class="field" aria-label="{{ t('goals.field_direction') }}">
         {% for d in directions %}<option value="{{ d }}">{{ t('goals.direction.' + d) }}</option>{% endfor %}
       </select>
       <div class="q mt-12">{{ t('goals.field_target') }}</div>
-      <input type="number" step="any" name="target_value" class="field">
+      <input type="number" step="any" name="target_value" class="field" aria-label="{{ t('goals.field_target') }}">
       <div class="q mt-12">{{ t('goals.field_baseline') }}</div>
-      <input type="number" step="any" name="baseline_value" id="baseline-input" class="field">
+      <input type="number" step="any" name="baseline_value" id="baseline-input" class="field"
+             aria-label="{{ t('goals.field_baseline') }}">
       <div class="k mt-4">{{ t('goals.from_data') }}</div>
       {% else %}
       <p class="note m-0">{{ t('goals.metric_empty') }}</p>
@@ -51,14 +52,14 @@
   <div class="card">
     <div class="q metric-only">{{ t('goals.field_deadline_metric') }}</div>
     <div class="q milestone-only">{{ t('goals.field_deadline') }}</div>
-    <input type="date" name="deadline" class="field" required>
+    <input type="date" name="deadline" class="field" required aria-label="{{ t('goals.field_deadline_metric') }}">
   </div>
 
   <fieldset class="milestone-only">
   <div class="card">
     <div class="q">{{ t('goals.field_visibility') }}</div>
     {% if has_household %}
-    <select name="visibility" class="field">
+    <select name="visibility" class="field" aria-label="{{ t('goals.field_visibility') }}">
       <option value="private">{{ t('goals.visibility.private') }}</option>
       <option value="household">{{ t('goals.visibility.household') }}</option>
     </select>
@@ -73,16 +74,18 @@
     <details class="files">
       <summary class="k">{{ t('goals.add_habit') }}</summary>
       <div class="mt-8">
-        <input type="text" name="habit_title" class="field" placeholder="{{ t('goals.habit_title_ph') }}">
+        <input type="text" name="habit_title" class="field" placeholder="{{ t('goals.habit_title_ph') }}"
+               aria-label="{{ t('goals.habit_title_ph') }}">
         <div class="row mt-8 gap-8 justify-start">
-          <input type="number" name="habit_times" class="field flex-70" min="1" value="1">
-          <select name="habit_per" class="field flex-1">
+          <input type="number" name="habit_times" class="field flex-70" min="1" value="1"
+                 aria-label="{{ t('a11y.habit_times') }}">
+          <select name="habit_per" class="field flex-1" aria-label="{{ t('a11y.habit_per') }}">
             <option value="day">{{ t('goals.cadence.per.day') }}</option>
             <option value="week" selected>{{ t('goals.cadence.per.week') }}</option>
             <option value="month">{{ t('goals.cadence.per.month') }}</option>
           </select>
         </div>
-        <select name="habit_context" class="field mt-8">
+        <select name="habit_context" class="field mt-8" aria-label="{{ t('a11y.habit_context') }}">
           <option value="">{{ t('goals.habit_no_context') }}</option>
           <option value="before_night">{{ t('habit.context.before_night') }}</option>
           <option value="after_night">{{ t('habit.context.after_night') }}</option>

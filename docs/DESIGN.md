@@ -169,6 +169,19 @@ comes from; the Body-specific reading is in *italics*. When a new rule arrives f
 17. **Connected to the other Duna apps** (Carlos, 2026-11-06). Where another app holds the answer, link to it
     instead of copying it (e.g. a night-shift week → its extra pay in Finanzas Personal). Body exposes a small
     summary other apps can read (readiness, sleep, shift). Same Cuenta identity when hosted.
+18. **Accesibilidad estructural** (BODY-ACCESIBILIDAD-1). *Every page carries the structural basics a screen
+    reader or a keyboard-only visitor needs: (a) `<html lang>` matches the person's language; (b) exactly one
+    `<h1>`; (c) no duplicate `id`; (d) every `<a href>` and `<button>` has an accessible name (text content,
+    `aria-label`, `aria-labelledby` pointing at an id that exists, or `title`; an `<svg>`/`<img>` child alone
+    counts only if it carries its own `aria-label`/`alt`); (e) every `<input>` (except type hidden/submit/button),
+    `<select>` and `<textarea>` is labelled (a `<label for>` matching its id, a wrapping `<label>`, or
+    `aria-label`/`aria-labelledby`); (f) every `<img>` carries `alt` (empty allowed for decoration); (g) every
+    inline `<svg>` carries `role="img"` plus an accessible name, or `aria-hidden="true"`; (h) no positive
+    `tabindex`.* `tests/test_accesibilidad.py` sweeps every page this slice could reach (the populated fixture and
+    the ESTADOS-VACIOS-1 sparse states A/D/E, each in es and en, local mode, plus hosted mode for the hosted-only
+    pages) and guards all eight rules on every one of them, failing once with every offender listed. Tap-target
+    size (rule 11's 44 px) is a layout measurement made in a real browser, not a structural one this test can see
+    in server-rendered HTML -- the orchestrator checks it separately.
 
 ## Look
 Duna family tokens (`docs/research/03`): paper #F4F2ED, card #FCFBF8, ink #121212, hairlines, Hanken Grotesk with

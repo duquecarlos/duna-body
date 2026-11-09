@@ -67,16 +67,18 @@
   <details class="files mt-10">
     <summary class="k">{{ t('goals.add_habit') }}</summary>
     <form method="post" action="/goals/{{ goal.id }}/habits" class="mt-8">
-      <input type="text" name="title" class="field" placeholder="{{ t('goals.habit_title_ph') }}" required>
+      <input type="text" name="title" class="field" placeholder="{{ t('goals.habit_title_ph') }}" required
+             aria-label="{{ t('goals.habit_title_ph') }}">
       <div class="row mt-8 gap-8 justify-start">
-        <input type="number" name="times" class="field flex-70" min="1" value="1">
-        <select name="per" class="field flex-1">
+        <input type="number" name="times" class="field flex-70" min="1" value="1"
+               aria-label="{{ t('a11y.habit_times') }}">
+        <select name="per" class="field flex-1" aria-label="{{ t('a11y.habit_per') }}">
           <option value="day">{{ t('goals.cadence.per.day') }}</option>
           <option value="week" selected>{{ t('goals.cadence.per.week') }}</option>
           <option value="month">{{ t('goals.cadence.per.month') }}</option>
         </select>
       </div>
-      <select name="context" class="field mt-8">
+      <select name="context" class="field mt-8" aria-label="{{ t('a11y.habit_context') }}">
         <option value="">{{ t('goals.habit_no_context') }}</option>
         <option value="before_night">{{ t('habit.context.before_night') }}</option>
         <option value="after_night">{{ t('habit.context.after_night') }}</option>
@@ -114,7 +116,8 @@
     <form method="post" action="/goals/{{ goal.id }}/enlaces" class="mt-8">
       {% if a.app == enlace_error_app %}<p class="read bad mt-0">{{ t(a.error_key) }}</p>{% endif %}
       <input type="hidden" name="app" value="{{ a.app }}">
-      <input type="text" name="entrada" class="field" placeholder="{{ t(a.field_key) }}" required>
+      <input type="text" name="entrada" class="field" placeholder="{{ t(a.field_key) }}" required
+             aria-label="{{ t(a.field_key) }}">
       <button type="submit" class="btn on mt-8 w-100">{{ t('goals.enlace.add_btn') }}</button>
     </form>
   </details>

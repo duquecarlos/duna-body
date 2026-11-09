@@ -594,5 +594,8 @@
   "asistente.propuesta.deshecha": "Deshecho",
   "asistente.propuesta.no_vigente": "Ya no está vigente",
   "asistente.propuesta.desactualizada": "Algo cambió desde que lo propuse. Pregúntame de nuevo.",
-  "asistente.propuesta.sin_deshacer": "Esto no se puede deshacer."
+  "asistente.propuesta.sin_deshacer": "Esto no se puede deshacer.",
+  "a11y.habit_times": "Cantidad de veces",
+  "a11y.habit_per": "Cada cuánto",
+  "a11y.habit_context": "Contexto del hábito"
 }

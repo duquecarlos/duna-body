@@ -14,7 +14,7 @@
 {% macro month_row(m) %}
 <a href="{{ m.href }}" class="block mt-10 no-underline">
   <div class="row k"><span>{{ m.month }}</span><span>{{ m.minutes }} · {{ m.sessions }}</span></div>
-  <svg class="stage" viewBox="0 0 100 10" preserveAspectRatio="none">{% set ns = namespace(x=0) %}{% for s in m.segs %}<rect x="{{ ns.x }}" y="0" width="{{ s.pct }}" height="10" class="{{ s.cls }}"><title>{{ s.label }}</title></rect>{% set ns.x = ns.x + s.pct %}{% endfor %}</svg>
+  <svg class="stage" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true">{% set ns = namespace(x=0) %}{% for s in m.segs %}<rect x="{{ ns.x }}" y="0" width="{{ s.pct }}" height="10" class="{{ s.cls }}"><title>{{ s.label }}</title></rect>{% set ns.x = ns.x + s.pct %}{% endfor %}</svg>
 </a>
 {% endmacro %}
 {% if training %}
