@@ -12886,3 +12886,44 @@ slice's spec named. Widening any of the four is adjacent work for a slice that t
 **Stops GATE_RED**, committed on the branch, not merged. The branch also carries customer-facing
 bytes, which ORCH-CARLOS-DELEGATES-TIER-1-1's approval reason already stops for the orchestrator's
 own 375 px check in es and en, independent of this gate result.
+
+## BODY-EXPERIMENTOS-PANTALLA-1-M -- the four guards widened, not excused
+
+Continues BODY-EXPERIMENTOS-PANTALLA-1 (commit `35704fd`, on `feat/body-experimentos-pantalla-1`),
+which stopped GATE_RED at 1801 tests / 4 failed, all four a hand-kept guard table reacting to the
+new routes and keys, as recorded above. The orchestrator's approval (ORCH-CARLOS-DELEGATES-TIER-1-1)
+decided each in words; this slice carries out that decision, extending every table's own subject
+(an unmapped route, an unlisted dynamic prefix, a third-person string, an unexpected route) rather
+than loosening it.
+
+* `tests/test_agente_registro.py` `ROUTE_TOOL` now pins `"/experiments/{experiment_id}":
+  "leer_experimentos"` -- the only GET the two new routers added; the two POSTs
+  (`/experiments/{experiment_id}/close`, `/experiments/{experiment_id}/day`) are writes and this
+  table only ever carries GETs, so neither belongs in it (goal POSTs are likewise absent here).
+* `tests/test_i18n_paridad.py` `_FIXED_DYNAMIC` now pins `"experimentos.resultado.+": ["mas_bajo",
+  "mas_alto", "sin_cambio", "pocos_dias", "aun_no"]`, matching `_metric_line`'s own
+  `t("experimentos.resultado." + resultado)` in `body/rutas/experimentos.py:53`.
+* `tests/test_web_entry.py` `RouteSetTest.BEFORE` now pins all three new routes: `("/experiments
+  /{experiment_id}", ("GET",))`, `("/experiments/{experiment_id}/close", ("POST",))`,
+  `("/experiments/{experiment_id}/day", ("POST",))`.
+* `experimentos.resultado.aun_no` is REWORDED, not allow-listed, per the approval reason: es
+  "todavía sin veredicto" (was "todavía no se puede medir"), en "no verdict yet" (was "can't be
+  measured yet") -- shorter, and it names what the person sees instead of explaining why it can't
+  be measured, so the impersonal "puede" that tripped `test_registro_tu.py`'s su/sus/tiene/puede
+  sweep is gone along with the old wording, not papered over with an allow-list entry.
+  `tests/test_experimentos_pantalla.py`'s `test_aun_no_for_an_intraday_window` now asserts the new
+  Spanish string. `tests/test_registro_tu.py` itself needed no edit -- the rewording removes the
+  trip rather than adding an entry to its own `_THIRD_PERSON_ALLOW`.
+
+**Gate**, once, foreground, on the branch tip (commit `35704fd`): `.venv/Scripts/python.exe -m
+unittest discover tests -t .` -> `Ran 1801 tests in 383.367s ... OK (skipped=1)`.
+
+**Stops AWAITING_APPROVAL**, committed on the branch, not merged: the diff changes customer-facing
+bytes (`body/i18n/es.json`, `body/i18n/en.json`, the `aun_no` string in both languages), which fails
+merge policy A on its own, and ORCH-CARLOS-DELEGATES-TIER-1-1's approval reason already named this
+stop for the orchestrator's own 375 px check on the experiment screens, independent of the gate
+result. To see the screens on the demo home: seed one experiment with `db.crear_experimento(conn,
+person_id, "<titulo>", ["resting_hr"], {"tipo": "dia"}, {"turno_en": None, "turno_fuera": None,
+"excluir_tras_noche": False}, fecha_inicio="<ISO date>")` against the demo's db, then open `/goals`
+for its card (and closed-card archive) and `/experiments/{id}` for the detail page; `/` carries the
+day's own experiment line when today falls inside the experiment's day filter and date range.
