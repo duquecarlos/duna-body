@@ -60,11 +60,14 @@ def _chart_aria(t: T, metric: str, start_label: str, end_label: str, months: boo
 
 def _trend_card(conn, t: T, defs: dict, k: str, start, end, month, nights, person_id: int):
     """One card -- own baseline, honest gaps, night shading, the month tap -- built the same way for the
-    default 9 and every extra metric behind "Ver todas las medidas" (DESIGN rules 3, 6, 7)."""
-    p = profile.metric_profile(conn, k, person_id=person_id)
+    default 9 and every extra metric behind "Ver todas las medidas" (DESIGN rules 3, 6, 7). A
+    self-measured key (BODY-ENTRENO-MEDIDA-1) gets a card from its first value instead of waiting
+    for TREND_MIN_DAYS worth of watch-sized history -- there is no cadence to wait on."""
+    d = defs[k]
+    min_days = 1 if d["origen"] == "self" else TREND_MIN_DAYS
+    p = profile.metric_profile(conn, k, person_id=person_id, min_days=min_days)
     if not p:
         return None, None
-    d = defs[k]
     spread = p.high - p.low
     metric_label = t("metric." + k)
     valor_fmt = lambda v: comun._fig_unit(t, k, v, defs)
@@ -88,7 +91,7 @@ def _trend_card(conn, t: T, defs: dict, k: str, start, end, month, nights, perso
     card = {"key": k, "question": t("trends.q." + k), "est": d["kind"] == "estimated",
             "last30": comun._value(t, k, fig), "unit": comun._unit(t, d) if fig is not None else "", "delta": delta,
             "cls": cls, "svg": svg, "low": comun._value(t, k, p.low), "high": comun._value(t, k, p.high),
-            "sparse": k in SPARSE_KEYS, "subtitle": None}
+            "sparse": k in SPARSE_KEYS, "self": d["origen"] == "self", "subtitle": None}
     return card, p
 
 

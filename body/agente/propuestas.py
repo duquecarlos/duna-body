@@ -10,7 +10,9 @@ deletes that one row directly. `registrar_entreno`'s `deshacer`, when it correct
 Garmin set, is a second, narrower exception: restoring a set's exact pre-correction state --
 including turning `corrected_by_person` back to 0 -- is not expressible through
 `correct_exercise_set` (which only ever moves a set INTO "corrected"), so that one restoration is a
-direct UPDATE/DELETE on `workout_set` here.
+direct UPDATE/DELETE on `workout_set` here. `registrar_medida` (BODY-ENTRENO-MEDIDA-1) calls
+`db.set_metric` directly, with `source='self'` -- the same writer body/demo.py's self-measured
+seeding and body/readiness.py's own score already use; no screen writes a self-measured figure yet.
 
 Only a `propuesta`-kind tool function may import this module (the static guard in
 tests/test_agente_registro.py): a `lectura` tool never reaches a writer, and this is the one route
@@ -129,6 +131,13 @@ def _drift_aplicar(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
             elif actual is not None:
                 return True
         return False
+    if accion == "registrar_medida":
+        despues = json.loads(row["despues_json"])
+        actual = conn.execute(
+            "SELECT value FROM daily_metric WHERE person_id = ? AND day = ? AND metric_key = ?",
+            (row["person_id"], despues["day"], despues["metric_key"]),
+        ).fetchone()
+        return (actual["value"] if actual else None) != antes.get("value")
     return False
 
 
@@ -170,6 +179,12 @@ def _drift_deshacer(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
                     or actual["exercise"] != s.get("ejercicio") or actual["reps"] != s.get("reps")):
                 return True
         return False
+    if accion == "registrar_medida":
+        actual = conn.execute(
+            "SELECT value FROM daily_metric WHERE person_id = ? AND day = ? AND metric_key = ?",
+            (person_id, despues["day"], despues["metric_key"]),
+        ).fetchone()
+        return (actual["value"] if actual else None) != despues["value"]
     return False
 
 
@@ -219,6 +234,9 @@ def _escribir_aplicacion(conn: sqlite3.Connection, row: sqlite3.Row) -> dict | N
             db.correct_exercise_set(conn, person_id, despues["source"], despues["source_id"], i,
                                      exercise=s.get("ejercicio"), category=s.get("categoria"),
                                      reps=s.get("reps"), weight_kg=s.get("peso_kg"), note=s.get("nota"))
+    elif accion == "registrar_medida":
+        with conn:
+            db.set_metric(conn, despues["day"], despues["metric_key"], despues["value"], "self", person_id)
     return None
 
 
@@ -270,6 +288,9 @@ def _escribir_deshacer(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
                             "activity_source_id = ? AND set_order = ?",
                             (person_id, source, source_id, s["set_order"]),
                         )
+    elif accion == "registrar_medida":
+        with conn:
+            db.set_metric(conn, despues["day"], despues["metric_key"], antes.get("value"), "self", person_id)
 
 
 def aplicar(conn: sqlite3.Connection, person_id: int, propuesta_id: int) -> dict:

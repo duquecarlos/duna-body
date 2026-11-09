@@ -32,6 +32,7 @@
   {{ c.svg|safe }}
   <p class="note mt-4 mb-0">{{ t('trends.chart_hint') }}</p>
   {% if c.sparse %}<p class="note mt-4 mb-0">{{ t('trends.sparse_note') }}</p>{% endif %}
+  {% if c.self %}<p class="note mt-4 mb-0">{{ t('trends.self_note') }}</p>{% endif %}
   <div class="legend mt-4">
     <span><i class="c-body legend-line"></i>{{ t('trends.monthly') if r == 'all' else t('trends.daily') }}</span>
     <span><i class="c-inset"></i>{{ t('trends.normal', low=c.low, high=c.high) }}</span>

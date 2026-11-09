@@ -116,6 +116,14 @@ def _tarjeta_propuesta(t: T, defs: dict, registro: dict) -> dict:
     elif accion == "registrar_entreno":
         despues_txt = t("asistente.propuesta.entreno_registrado",
                         fecha=comun._short_date(t, date.fromisoformat(despues["day"])))
+    elif accion == "registrar_medida":
+        metric_key = despues["metric_key"]
+        fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
+        if antes_json and antes_json.get("value") is not None:
+            antes_txt = t("asistente.propuesta.medida_valor", metric=t("metric." + metric_key),
+                          valor=comun._fig_unit(t, metric_key, antes_json["value"], defs), fecha=fecha)
+        despues_txt = t("asistente.propuesta.medida_valor", metric=t("metric." + metric_key),
+                        valor=comun._fig_unit(t, metric_key, despues["value"], defs), fecha=fecha)
     else:
         despues_txt = ""
     series_tarjeta = None

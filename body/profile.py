@@ -28,10 +28,15 @@ class MetricProfile:
     first_day: str
 
 
-def metric_profile(conn, key: str, today: str | None = None, *, person_id: int) -> MetricProfile | None:
+def metric_profile(conn, key: str, today: str | None = None, *, person_id: int,
+                    min_days: int = 14) -> MetricProfile | None:
+    """min_days defaults to the watch's own honest-gap threshold (14 days). A self-measured key
+    (BODY-ENTRENO-MEDIDA-1) has no such cadence to wait on -- the caller passes a lower min_days so
+    a card appears from the first value, sparse and honest, rather than hiding behind a Garmin-sized
+    gap it will never fill the same way."""
     rows = conn.execute("SELECT day, value FROM daily_metric WHERE person_id=? AND metric_key=? ORDER BY day",
                         (person_id, key)).fetchall()
-    if len(rows) < 14:
+    if len(rows) < min_days:
         return None
     vals = [r["value"] for r in rows]
     by_month: dict[str, list[float]] = {}

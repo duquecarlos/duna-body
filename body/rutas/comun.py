@@ -189,6 +189,11 @@ TREND_GROUPS = [
     ("stress", ["stress_avg", "high_stress_min"]),
     ("activity", ["intensity_minutes", "active_kcal"]),
     ("breathing", ["respiration_awake"]),
+    # Whatever the person measures themself (BODY-ENTRENO-MEDIDA-1): every metric_def row with
+    # origen 'self', read off db.METRIC_DEFS rather than named here, so a future self-measured key
+    # joins this group -- and the picker -- without a second place to list it (template, not one
+    # person).
+    ("self", [d[0] for d in db.METRIC_DEFS if d[5] == "self"]),
 ]
 
 

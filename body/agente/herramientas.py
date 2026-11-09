@@ -11,15 +11,20 @@ could use to show the current week's verdict live, the way body/rutas/metas.py's
 unused here because an active goal with no data yet would then read as a computed "no verdict" dict
 instead of "sin verificación aún" -- the shape every other read tool and existing test depends on.
 
-The `proponer_*` tools below, plus `planear_entreno` and `registrar_entreno` (BODY-ENTRENO-TOOLS-1),
-are `tipo: propuesta` (BODY-ASISTENTE-PROPUESTAS-1): they create a server-side proposal record
-through `body/agente/propuestas.py` and never write the PERSON's correction themselves -- nothing
-the person said is stored until they tap Aplicar. `registrar_entreno` is the one exception, and a
-narrow one: when it is BUILT (not applied) it may call `pull.traer_series` to fetch and cache the
-watch's own sets for that day, if they are not stored yet, so the card can show both versions at
-once (BODY-ENTRENO-1-INV slice 4 design). That call only ever fills `workout_set`'s `garmin_*`
-columns -- a mirror of what the watch already recorded -- and never touches a `person_*` column or
-sends anything to Garmin.
+The `proponer_*` tools below, plus `planear_entreno`, `registrar_entreno` (BODY-ENTRENO-TOOLS-1) and
+`registrar_medida` (BODY-ENTRENO-MEDIDA-1), are `tipo: propuesta` (BODY-ASISTENTE-PROPUESTAS-1): they
+create a server-side proposal record through `body/agente/propuestas.py` and never write the PERSON's
+correction themselves -- nothing the person said is stored until they tap Aplicar. `registrar_entreno`
+is the one exception, and a narrow one: when it is BUILT (not applied) it may call `pull.traer_series`
+to fetch and cache the watch's own sets for that day, if they are not stored yet, so the card can show
+both versions at once (BODY-ENTRENO-1-INV slice 4 design). That call only ever fills `workout_set`'s
+`garmin_*` columns -- a mirror of what the watch already recorded -- and never touches a `person_*`
+column or sends anything to Garmin.
+
+`registrar_medida`'s `metric_key` is any `metric_def` row with `origen = 'self'` -- checked against
+the live table at call time, never against a hardcoded pair of keys, so a metric_def row added later
+is accepted the same way (template, not one person). The JSON-schema `enum` offered to the model is
+built from `db.METRIC_DEFS` (the same source metric_def itself is seeded from), not typed out here.
 
 `propuestas.py` is the one module a `propuesta` tool may import to create its record -- the static
 guard in tests/test_agente_registro.py checks that a `lectura` tool's call graph never reaches it.
@@ -170,6 +175,18 @@ _PARAM_REGISTRAR_ENTRENO = {
         },
     },
     "required": ["day", "series"],
+    "additionalProperties": False,
+}
+
+SELF_METRIC_KEYS = tuple(d[0] for d in db.METRIC_DEFS if d[5] == "self")
+_PARAM_REGISTRAR_MEDIDA = {
+    "type": "object",
+    "properties": {
+        "metric_key": {"type": "string", "enum": list(SELF_METRIC_KEYS)},
+        "value": {"type": "number"},
+        "day": {"type": "string", "format": "date"},
+    },
+    "required": ["metric_key", "value"],
     "additionalProperties": False,
 }
 
@@ -455,6 +472,38 @@ def _registrar_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
+def _registrar_medida(conn: sqlite3.Connection, person_id: int, conversacion_id: int, metric_key: str, value,
+                       day: str | None = None) -> dict:
+    """Proposes a number the person measured themself for a day (BODY-ENTRENO-MEDIDA-1): checked
+    against the live metric_def row, never a hardcoded pair of keys, and refused if that key is
+    'garmin' -- the watch, not the person, owns those. `antes` carries that day's existing value (or
+    None), so `propuestas.deshacer` can restore it exactly; metric_def carries no range column, so
+    the only sanity check (besides the unit/type checks `_validar_parametros` already ran) is
+    rejecting a negative figure."""
+    fila = conn.execute("SELECT 1 FROM metric_def WHERE key = ? AND origen = 'self'", (metric_key,)).fetchone()
+    if fila is None:
+        raise ToolError(f"medida desconocida o no autogestionada: {metric_key!r}")
+    day = day or _hoy_local(conn, person_id)
+    try:
+        date.fromisoformat(day)
+    except ValueError:
+        raise ToolError("day debe ser una fecha ISO (AAAA-MM-DD)")
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        raise ToolError("value debe ser un número")
+    if value < 0:
+        raise ToolError(f"{metric_key!r} no puede ser negativo")
+    anterior = conn.execute(
+        "SELECT value FROM daily_metric WHERE person_id = ? AND day = ? AND metric_key = ?",
+        (person_id, day, metric_key),
+    ).fetchone()
+    antes = {"value": anterior["value"] if anterior else None}
+    despues = {"metric_key": metric_key, "value": value, "day": day}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "registrar_medida", despues, antes=antes)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
 def _proponer_meta(conn: sqlite3.Connection, person_id: int, conversacion_id: int, metric_key: str,
                     direction: str, target_value, deadline: str, titulo: str) -> dict:
     titulo = (titulo or "").strip()
@@ -585,6 +634,11 @@ HERRAMIENTAS = [
                      "sesión manual. No lo guarda: registra la propuesta para que la persona la apruebe "
                      "en el chat.",
      "parametros": _PARAM_REGISTRAR_ENTRENO, "funcion": _registrar_entreno},
+    {"nombre": "registrar_medida", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone registrar un número que la persona mide ella misma para un día "
+                     "(por ejemplo su alcance de flexibilidad o sus minutos de ronquido). No lo "
+                     "guarda: registra la propuesta para que la persona la apruebe en el chat.",
+     "parametros": _PARAM_REGISTRAR_MEDIDA, "funcion": _registrar_medida},
 ]
 
 _BY_NAME = {h["nombre"]: h for h in HERRAMIENTAS}

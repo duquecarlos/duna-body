@@ -128,7 +128,8 @@ class NoProponibleTest(unittest.TestCase):
     def test_privacy_and_account_tools_are_never_proposals(self):
         nombres = {h["nombre"] for h in herramientas.HERRAMIENTAS if h["tipo"] == "propuesta"}
         self.assertEqual(nombres, {"proponer_meta", "proponer_cambio_meta", "proponer_confirmar_turnos",
-                                    "proponer_idioma", "planear_entreno", "registrar_entreno"})
+                                    "proponer_idioma", "planear_entreno", "registrar_entreno",
+                                    "registrar_medida"})
 
 
 class UnaPropuestaPorRondaTest(unittest.TestCase):
@@ -385,6 +386,24 @@ class EstadoYEventosTest(unittest.TestCase):
         self.assertIn("sentadilla", datos["series"][0]["tu"])
         self.assertEqual(datos["etiquetas"]["entreno_reloj"], "Reloj")
         self.assertEqual(datos["etiquetas"]["entreno_tu"], "Tú")
+
+    def test_registrar_medida_carries_a_propuesta_label(self):
+        # No prior value for that day/key -- insert-shaped, like proponer_meta: only "Propuesta: …".
+        guion = [
+            Respuesta(bloques=[LlamadaHerramienta("l1", "registrar_medida", {
+                "metric_key": "flex_alcance_cm", "value": 32.0, "day": "2026-11-10",
+            })], motivo_fin="tool_use", uso=Uso()),
+            Respuesta(bloques=[BloqueTexto("listo")], motivo_fin="end_turn", uso=Uso()),
+        ]
+        proveedor = FakeProveedor(guion)
+        with patch.object(agente_cliente, "proveedor_configurado", return_value=proveedor):
+            r = self.client.post("/asistente/preguntar",
+                                 json={"pregunta": "registra mi flexibilidad", "conversacion_id": None})
+        self.assertEqual(r.status_code, 200)
+        datos = _evento_data(r.text, "propuesta")
+        self.assertEqual(datos["accion"], "registrar_medida")
+        self.assertIsNone(datos["antes"])
+        self.assertTrue(datos["despues"].startswith("Propuesta: "))
 
     def test_status_block_appears_in_the_next_turns_system_prompt(self):
         guion = [
