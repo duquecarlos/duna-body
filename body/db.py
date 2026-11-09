@@ -50,6 +50,53 @@ _HABIT_COLUMNS = """
     active              INTEGER NOT NULL DEFAULT 1
 """
 
+_PROPUESTA_AGENTE_COLUMNS = """
+    id              INTEGER PRIMARY KEY,
+    person_id       INTEGER NOT NULL REFERENCES person(id),
+    conversacion_id INTEGER NOT NULL REFERENCES conversacion_agente(id),
+    accion          TEXT NOT NULL CHECK (accion IN
+                        ('proponer_meta', 'proponer_cambio_meta', 'proponer_confirmar_turnos', 'proponer_idioma',
+                         'planear_entreno', 'registrar_entreno', 'registrar_medida', 'marcar_habito')),
+    objetivo_id     INTEGER REFERENCES goal(id),
+    antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
+    despues_json    TEXT NOT NULL CHECK (json_valid(despues_json)),
+    estado          TEXT NOT NULL DEFAULT 'propuesta'
+                        CHECK (estado IN ('propuesta', 'aplicada', 'descartada', 'expirada', 'deshecha')),
+    creada_en       TEXT NOT NULL,
+    expira_en       TEXT NOT NULL,
+    resuelta_en     TEXT
+"""
+
+# workout_set keys to activity's composite key (person_id, source, source_id): the watch's values
+# and the person's corrections live in separate columns so neither overwrites the other
+# (BODY-ENTRENO-1-INV). Weight value and unit are NULL together, never defaulted to 0.
+_WORKOUT_SET_COLUMNS = """
+    id                  INTEGER PRIMARY KEY,
+    person_id           INTEGER NOT NULL REFERENCES person(id),
+    activity_source     TEXT NOT NULL,
+    activity_source_id  TEXT NOT NULL,
+    set_order           INTEGER NOT NULL,
+    set_type            TEXT NOT NULL CHECK (set_type IN ('active', 'rest')),
+    garmin_category     TEXT,
+    garmin_exercise     TEXT,
+    garmin_reps         INTEGER,
+    garmin_weight_value REAL,
+    garmin_weight_unit  TEXT,
+    garmin_duration_s   REAL,
+    garmin_start_local  TEXT,
+    person_category     TEXT,
+    person_exercise     TEXT,
+    person_reps         INTEGER,
+    person_weight_kg    REAL,
+    person_note         TEXT,
+    corrected_by_person INTEGER NOT NULL DEFAULT 0 CHECK (corrected_by_person IN (0, 1)),
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    CHECK ((garmin_weight_value IS NULL) = (garmin_weight_unit IS NULL)),
+    FOREIGN KEY (person_id, activity_source, activity_source_id)
+        REFERENCES activity(person_id, source, source_id),
+    UNIQUE (person_id, activity_source, activity_source_id, set_order)
+"""
+
 _GOAL_CHECK_COLUMNS = """
     id           INTEGER PRIMARY KEY,
     goal_id      INTEGER NOT NULL REFERENCES goal(id),
@@ -87,13 +134,16 @@ CREATE TABLE IF NOT EXISTS person (
     trabaja_turnos INTEGER CHECK (trabaja_turnos IN (0, 1))
 );
 
--- What can be measured. Generic definitions, shared by every person.
+-- What can be measured. Generic definitions, shared by every person. `origen` (BODY-ENTRENO-
+-- SCHEMA-1) is 'garmin' for anything the watch supplies and 'self' for a figure the person
+-- measures themself (e.g. a flexibility reach, a snoring minutes-per-night from another app).
 CREATE TABLE IF NOT EXISTS metric_def (
     key     TEXT PRIMARY KEY,
     label   TEXT NOT NULL,
     unit    TEXT NOT NULL,
     better  TEXT NOT NULL CHECK (better IN ('higher', 'lower', 'neutral')),
-    kind    TEXT NOT NULL DEFAULT 'measured' CHECK (kind IN ('measured', 'estimated'))
+    kind    TEXT NOT NULL DEFAULT 'measured' CHECK (kind IN ('measured', 'estimated')),
+    origen  TEXT NOT NULL DEFAULT 'garmin' CHECK (origen IN ('garmin', 'self'))
 );
 
 -- One normalised number per person, day and metric.
@@ -140,6 +190,14 @@ CREATE TABLE IF NOT EXISTS activity (
     calories    REAL,
     source      TEXT NOT NULL DEFAULT 'garmin',
     PRIMARY KEY (person_id, source, source_id)
+);
+
+-- One row per strength-training set within an activity (BODY-ENTRENO-1-INV, BODY-ENTRENO-
+-- SCHEMA-1): keyed to `activity`'s composite key, since a set belongs to one recorded or manual
+-- session. A manual session (the watch recorded nothing) is an `activity` row with source =
+-- 'manual' -- allowed, since `activity` has no CHECK on `source`.
+CREATE TABLE IF NOT EXISTS workout_set (
+{_WORKOUT_SET_COLUMNS}
 );
 
 -- Work shifts: a first-class input (the shift-vs-recovery idea).
@@ -253,7 +311,10 @@ CREATE TABLE IF NOT EXISTS plan (
     time      TEXT,
     title     TEXT NOT NULL,
     booking   TEXT CHECK (booking IS NULL OR json_valid(booking)),
-    status    TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'accepted', 'done', 'skipped'))
+    status    TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'accepted', 'done', 'skipped')),
+    -- A planned training session's exercise list (BODY-ENTRENO-SCHEMA-1); JSON, shape owned by
+    -- the tool that writes it -- nothing here yet.
+    ejercicios_json TEXT CHECK (ejercicios_json IS NULL OR json_valid(ejercicios_json))
 );
 
 -- How much health data the assistant's tools may read for this person (wave 7, stage one).
@@ -378,19 +439,7 @@ CREATE TABLE IF NOT EXISTS garmin_cuenta (
 -- A proposal the assistant made: nothing on the target changes until the person taps Aplicar in
 -- the chat (agent-capabilities-v1 section 2 + amendment 1, BODY-ASISTENTE-PROPUESTAS-1).
 CREATE TABLE IF NOT EXISTS propuesta_agente (
-    id              INTEGER PRIMARY KEY,
-    person_id       INTEGER NOT NULL REFERENCES person(id),
-    conversacion_id INTEGER NOT NULL REFERENCES conversacion_agente(id),
-    accion          TEXT NOT NULL CHECK (accion IN
-                        ('proponer_meta', 'proponer_cambio_meta', 'proponer_confirmar_turnos', 'proponer_idioma')),
-    objetivo_id     INTEGER REFERENCES goal(id),
-    antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
-    despues_json    TEXT NOT NULL CHECK (json_valid(despues_json)),
-    estado          TEXT NOT NULL DEFAULT 'propuesta'
-                        CHECK (estado IN ('propuesta', 'aplicada', 'descartada', 'expirada', 'deshecha')),
-    creada_en       TEXT NOT NULL,
-    expira_en       TEXT NOT NULL,
-    resuelta_en     TEXT
+{_PROPUESTA_AGENTE_COLUMNS}
 );
 CREATE INDEX IF NOT EXISTS idx_propuesta_agente_conv ON propuesta_agente(conversacion_id);
 CREATE INDEX IF NOT EXISTS idx_propuesta_agente_person ON propuesta_agente(person_id);
@@ -454,6 +503,15 @@ METRIC_DEFS = [
     ("fitness_age", "Fitness age", "years", "lower"),
 ]
 METRIC_DEFS = [d if len(d) == 5 else (*d, "measured") for d in METRIC_DEFS]
+METRIC_DEFS = [d if len(d) == 6 else (*d, "garmin") for d in METRIC_DEFS]
+
+# Generic self-measured metric_def rows (BODY-ENTRENO-SCHEMA-1): no person's values, just the
+# definitions a future tool slice can write to. Labels are added to body/i18n/*.json by that
+# tool slice -- i18n is not in this slice's touches.
+METRIC_DEFS += [
+    ("flex_alcance_cm", "Flexibility reach", "cm", "lower", "measured", "self"),
+    ("snoring_min", "Snoring", "min", "lower", "measured", "self"),
+]
 
 DEFAULT_PERSON_ID = 1  # the local person's id; nowhere outside this module (local_person_id() is the seam)
 
@@ -488,6 +546,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
     cols = {r[1] for r in conn.execute("PRAGMA table_info(metric_def)")}
     if cols and "kind" not in cols:
         conn.execute("ALTER TABLE metric_def ADD COLUMN kind TEXT NOT NULL DEFAULT 'measured'")
+    if cols and "origen" not in cols:
+        conn.execute(
+            "ALTER TABLE metric_def ADD COLUMN origen TEXT NOT NULL DEFAULT 'garmin' "
+            "CHECK (origen IN ('garmin', 'self'))"
+        )
     pcols = {r[1] for r in conn.execute("PRAGMA table_info(person)")}
     if pcols and "language" not in pcols:
         conn.execute("ALTER TABLE person ADD COLUMN language TEXT NOT NULL DEFAULT 'es'")
@@ -520,6 +583,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     gcols = {r[1] for r in conn.execute("PRAGMA table_info(garmin_cuenta)")}
     if gcols and "backfill_hasta" not in gcols:
         conn.execute("ALTER TABLE garmin_cuenta ADD COLUMN backfill_hasta TEXT")
+    plcols = {r[1] for r in conn.execute("PRAGMA table_info(plan)")}
+    if plcols and "ejercicios_json" not in plcols:
+        conn.execute(
+            "ALTER TABLE plan ADD COLUMN ejercicios_json TEXT "
+            "CHECK (ejercicios_json IS NULL OR json_valid(ejercicios_json))"
+        )
     sbcols = {r[1] for r in conn.execute("PRAGMA table_info(shift_batch)")}
     if sbcols and "kind" not in sbcols:
         conn.execute(
@@ -573,6 +642,44 @@ def _rebuild_precio_modelo_table(conn: sqlite3.Connection) -> None:
         conn.execute("DROP TABLE precio_modelo")
         conn.execute("ALTER TABLE precio_modelo_nuevo RENAME TO precio_modelo")
     _rebuild_with_fk_off(conn, step)
+
+
+def _propuesta_agente_needs_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'propuesta_agente'"
+    ).fetchone()
+    return row is not None and "planear_entreno" not in row[0]
+
+
+def _rebuild_propuesta_agente_table(conn: sqlite3.Connection) -> None:
+    """propuesta_agente's `accion` CHECK gains the training/measure/habit tools' action names
+    (BODY-ENTRENO-SCHEMA-1); every other column is unchanged, so this is a straight column-for-
+    column copy, the same guarded rebuild shape as precio_modelo/goal above. Every existing row
+    survives byte-for-byte."""
+    def step(conn):
+        old_rows = conn.execute("SELECT * FROM propuesta_agente").fetchall()
+        conn.execute(f"CREATE TABLE propuesta_agente_nuevo ({_PROPUESTA_AGENTE_COLUMNS})")
+        for r in old_rows:
+            conn.execute(
+                "INSERT INTO propuesta_agente_nuevo (id, person_id, conversacion_id, accion, objetivo_id, "
+                "antes_json, despues_json, estado, creada_en, expira_en, resuelta_en) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (r["id"], r["person_id"], r["conversacion_id"], r["accion"], r["objetivo_id"], r["antes_json"],
+                 r["despues_json"], r["estado"], r["creada_en"], r["expira_en"], r["resuelta_en"]),
+            )
+        new_count = conn.execute("SELECT COUNT(*) FROM propuesta_agente_nuevo").fetchone()[0]
+        if new_count != len(old_rows):
+            raise RuntimeError(f"propuesta_agente rebuild count mismatch: {len(old_rows)} -> {new_count}")
+        conn.execute("DROP TABLE propuesta_agente")
+        conn.execute("ALTER TABLE propuesta_agente_nuevo RENAME TO propuesta_agente")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_propuesta_agente_conv ON propuesta_agente(conversacion_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_propuesta_agente_person ON propuesta_agente(person_id)")
+    _rebuild_with_fk_off(conn, step)
+
+
+def _migrate_propuestas(conn: sqlite3.Connection) -> None:
+    if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_rebuild(conn):
+        _rebuild_propuesta_agente_table(conn)
 
 
 def _goal_needs_rebuild(conn: sqlite3.Connection) -> bool:
@@ -779,12 +886,13 @@ def init(conn: sqlite3.Connection) -> None:
     _migrate_metas(conn)
     _migrate_cuenta(conn)
     _migrate_precios(conn)
+    _migrate_propuestas(conn)
     _ensure_hogar_miembro(conn)
     _migrate_hogar(conn)
     conn.executescript(SCHEMA)
     _migrate(conn)
     conn.executemany(
-        "INSERT INTO metric_def (key, label, unit, better, kind) VALUES (?, ?, ?, ?, ?) "
+        "INSERT INTO metric_def (key, label, unit, better, kind, origen) VALUES (?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(key) DO UPDATE SET label=excluded.label, unit=excluded.unit, better=excluded.better, "
         "kind=excluded.kind",
         METRIC_DEFS,
