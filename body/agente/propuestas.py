@@ -33,6 +33,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from .. import db, goals, shift_import
+from ..i18n import T
 
 EXPIRA_MINUTOS = 15
 SIN_DESHACER = ("proponer_confirmar_turnos",)
@@ -220,10 +221,14 @@ def _escribir_aplicacion(conn: sqlite3.Connection, row: sqlite3.Row) -> dict | N
         return {"plan_id": cur.lastrowid}
     elif accion == "registrar_entreno":
         if despues["manual"]:
+            titulo = despues.get("titulo")
+            if titulo is None:
+                lang = db.person(conn, person_id)["language"]
+                titulo = T(lang)("entreno.titulo_por_defecto")
             source_id = db.create_manual_session(
                 conn, person_id, despues["day"],
                 f"{despues['day']}T{despues['time']}:00" if despues.get("time") else None,
-                despues["titulo"],
+                titulo,
             )
             for i, s in enumerate(despues["series"], start=1):
                 db.correct_exercise_set(conn, person_id, "manual", source_id, i, exercise=s.get("ejercicio"),

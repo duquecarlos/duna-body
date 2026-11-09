@@ -405,6 +405,42 @@ class EstadoYEventosTest(unittest.TestCase):
         datos = _evento_data(r.text, "propuesta")
         self.assertEqual(datos["despues"], "Propuesta: Entrenamiento del 10 nov 2026")
 
+    def test_registrar_entreno_manual_without_a_titulo_in_english(self):
+        self.conn.execute("UPDATE person SET language = 'en' WHERE id = 1")
+        self.conn.commit()
+        guion = [
+            Respuesta(bloques=[LlamadaHerramienta("l1", "registrar_entreno", {
+                "day": "2026-11-10",
+                "series": [{"ejercicio": "sentadilla", "reps": 10, "peso_kg": 40.0}],
+            })], motivo_fin="tool_use", uso=Uso()),
+            Respuesta(bloques=[BloqueTexto("listo")], motivo_fin="end_turn", uso=Uso()),
+        ]
+        proveedor = FakeProveedor(guion)
+        with patch.object(agente_cliente, "proveedor_configurado", return_value=proveedor):
+            r = self.client.post("/asistente/preguntar",
+                                 json={"pregunta": "did legs", "conversacion_id": None})
+        self.assertEqual(r.status_code, 200)
+        datos = _evento_data(r.text, "propuesta")
+        self.assertEqual(datos["despues"], "Proposal: Workout from 10 Nov 2026")
+
+    def test_registrar_entreno_manual_with_the_titulo_entrenamiento_is_not_mistaken_for_absent(self):
+        # BODY-ENTRENO-TITULO-1: a person who actually says "Entrenamiento" gets the titled
+        # wording, exactly like any other spoken title -- never the untitled date-only wording.
+        guion = [
+            Respuesta(bloques=[LlamadaHerramienta("l1", "registrar_entreno", {
+                "day": "2026-11-10", "titulo": "Entrenamiento",
+                "series": [{"ejercicio": "sentadilla", "reps": 10, "peso_kg": 40.0}],
+            })], motivo_fin="tool_use", uso=Uso()),
+            Respuesta(bloques=[BloqueTexto("listo")], motivo_fin="end_turn", uso=Uso()),
+        ]
+        proveedor = FakeProveedor(guion)
+        with patch.object(agente_cliente, "proveedor_configurado", return_value=proveedor):
+            r = self.client.post("/asistente/preguntar",
+                                 json={"pregunta": "hice pierna", "conversacion_id": None})
+        self.assertEqual(r.status_code, 200)
+        datos = _evento_data(r.text, "propuesta")
+        self.assertEqual(datos["despues"], "Propuesta: Entrenamiento · 10 nov 2026")
+
     def test_registrar_entreno_garmin_shows_a_readable_watch_name(self):
         # BODY-ENTRENO-TOOLS-1-M fix 1: the watch column reads Garmin's raw code as a readable
         # name -- underscores as spaces, only the first letter capital -- never the stored value.
