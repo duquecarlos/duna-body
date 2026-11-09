@@ -11117,3 +11117,83 @@ the merged tree, not re-run.
 `feat/body-entreno-sueno-store-1`, on top of `25b9961ba6ab5208b5be430f1be2e772c1b9c1e3`);
 `0956a85889f41fc6860c6309d31036d05c892de1` (merge `--no-ff` into `main`, parents
 `25b9961ba6ab5208b5be430f1be2e772c1b9c1e3` and `9e37eda56c57075f2f689d498de7b9bbb7e6c8fd`).
+
+## BODY-ENTRENO-TOOLS-1 -- planear_entreno/registrar_entreno/leer_entreno assistant tools
+
+Slice 4 of BODY-ENTRENO-1-INV (ROADMAP 9b): Carlos wants to speak a planned or finished workout to
+the assistant instead of typing each exercise. Adds three tools on the existing propose/apply/undo
+pattern (`body/agente/herramientas.py`, `body/agente/propuestas.py`), over the storage merged in
+BODY-ENTRENO-SCHEMA-1/BODY-ENTRENO-PULL-1.
+
+* `planear_entreno` (propuesta, nivel ninguno): stages one `plan` row -- day, optional time, title,
+  an optional goal link, and a list of planned exercises `{ejercicio, series, reps?}`. Insert-shaped
+  like `proponer_meta`: no "before". No screen writes `plan` yet, so `propuestas.py` inserts and
+  deletes that one row directly (the module's docstring now names this exception) instead of
+  delegating to a writer that does not exist.
+* `registrar_entreno` (propuesta, nivel ninguno): "here is what I did" for a day. When that day has
+  a Garmin strength activity, it maps the spoken sets onto the watch's sets by order, fetching them
+  with `pull.traer_series` at BUILD time (not apply time) if not already stored, so the card can
+  show the watch's value and the spoken correction per set -- that fetch only ever fills
+  `workout_set`'s `garmin_*` columns (a cache of what the watch already recorded), never a `person_*`
+  column, and nothing is ever sent to Garmin. With no activity, it stages a manual session instead.
+  Apply writes through `db.correct_exercise_set`/`db.create_manual_session`, same as the screens
+  would. Undo removes the manual session entirely, or -- for a touched Garmin set -- restores its
+  exact pre-correction state (including `corrected_by_person` back to 0 when it was never corrected)
+  via a direct UPDATE/DELETE on `workout_set` in `propuestas.py`, because that exact restoration
+  cannot be expressed through `correct_exercise_set` (which only ever moves a set INTO "corrected")
+  and `db.py` is outside this slice's `touches`.
+* `leer_entreno` (lectura, nivel completo): a day's or a range's training sessions with their sets
+  (display value plus whether each was corrected) and the planned session for that day, if any.
+  Nivel `completo` was chosen over `resumen` (the spec offered either) because it surfaces per-day,
+  per-set figures -- the same granularity `leer_dia`/`leer_como_calculo` are gated at, and the kind
+  of daily value `ResumenHasNoDailyValuesTest` establishes `resumen` tools must never expose.
+
+Both proposal tools got drift checks: `registrar_entreno`'s Garmin-matched case refuses to apply if
+a later pull changed the watch's own reading for a touched set, and refuses to undo if the session
+was corrected again after applying; `planear_entreno` refuses to undo if its `plan` row was already
+changed or removed. A test proves person B can neither apply person A's proposal nor read person A's
+sessions through `leer_entreno` (`tests/test_agente_entreno.py`), same ownership guard every other
+proposal already carries.
+
+Cards: `body/rutas/asistente.py`'s `_tarjeta_propuesta` gained a `"series"` field -- a per-set
+watch-vs-you table for `registrar_entreno` (`None` for every other action) -- built from new
+`_ejercicio_plan_txt`/`_serie_txt` helpers; `body/static/assistant.js`'s `crearTablaSeries` renders
+it with `textContent` only (no `innerHTML`), styled by three new rules in `body/static/body.css`.
+Twelve new i18n keys in `es.json`/`en.json`: two card titles ("Plan de entrenamiento"/"Training
+plan", "Lo que hiciste"/"What you did"), the plan and registered-workout summary templates, and the
+set-detail/column-header strings ("Reloj"/"Watch", "Tú"/"You").
+
+Registry: lectura tools 11 -> 12, propuesta tools 4 -> 6, total 15 -> 18. Every literal a test
+pinned about the old counts was updated: `tests/test_agente_registro.py` (`expected_levels`,
+`PROPUESTA_NOMBRES`, the two count assertions, `_all_tool_calls()`), `tests/test_agente_bucle.py`
+(`NivelDatosEnforcementTest`'s offered-at-`ninguno` set), `tests/test_agente_propuestas.py`
+(`NoProponibleTest`'s set, plus two new card tests for `planear_entreno`/`registrar_entreno` on the
+SSE route). `tests/test_agente_entreno.py` is new: 21 tests across `planear_entreno`,
+`registrar_entreno` (Garmin-matched and manual) and `leer_entreno`.
+
+**Deviation, noted rather than asked about:** the demo provider (`body/agente/cliente.py`) is
+outside this slice's `touches` and was not extended -- it still only ever calls `leer_ajustes` or
+`proponer_idioma`. The orchestrator cannot see the new cards by typing into the panel with
+`BODY_AGENTE_PROVEEDOR=demo`; seeing them needs either a real configured provider that chooses to
+call `planear_entreno`/`registrar_entreno`, or the scripted `FakeProveedor` route this slice's own
+tests use (`tests/test_agente_propuestas.py`'s `test_planear_entreno_carries_a_propuesta_label_with_
+the_exercises` and `test_registrar_entreno_manual_carries_a_per_set_watch_vs_you_table` each render
+one card end-to-end through `/asistente/preguntar`'s SSE stream -- reading either is the fastest way
+to see the exact antes/despues/series strings without a browser).
+
+`body/agente/bucle.py` and `body/rutas/comun.py` were both in `touches` but needed no change: the
+tool loop already dispatches by name through the registry with no per-tool code, and the card
+helpers were small enough to keep in `asistente.py` rather than add to `comun.py`.
+
+**Gate**, once, foreground, on the branch tip: `.venv/Scripts/python.exe -m unittest discover tests
+-t .` -- `Ran 1509 tests in 198.327s ... OK (skipped=1)`. 23 more tests than the prior recorded floor
+(1486, `BODY-ENTRENO-SUENO-STORE-1`): 21 new in `tests/test_agente_entreno.py` plus 2 new in
+`tests/test_agente_propuestas.py`, matching exactly; `skipped=1` carries over unchanged.
+
+**Not merged.** Card text is customer-facing (new i18n strings reach the assistant panel's proposal
+cards) and the approval reason itself says the merge waits for the orchestrator's browser
+measurement of the cards: AWAITING_APPROVAL, stopped on customer-bytes. Stays on
+`feat/body-entreno-tools-1`.
+
+**Commit**: `ffb401f6cc6c0753e22d3641eda47b306c9e8be6` (slice, on `feat/body-entreno-tools-1`, on top
+of main's tip `7585b54ec35eb45a8515a0d1fc166ed1ceda5c87`).
