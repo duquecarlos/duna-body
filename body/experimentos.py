@@ -126,6 +126,53 @@ def dias_que_cuentan(conn, person_id: int, filtro_dias: dict, desde: str, hasta:
     return out
 
 
+def dias_intradia_necesarios(conn, person_id: int, hoy: date) -> list[str]:
+    """ISO days this person's ACTIVE intraday experiments (`ventana.tipo == 'intradia'`,
+    `estado == 'activo'`) still need, newest first and de-duplicated across experiments --
+    BODY-EXPERIMENTOS-INTRADIA-DIAS-FALTANTES-1: feeds the scheduled pull so a test morning's
+    minute data is fetched without a manual backfill run. For each such experiment: the counting
+    days (`dias_que_cuentan`) in its test window (`fecha_inicio`..yesterday -- the same `fin_
+    prueba` bound `_veredicto_intradia` uses, since today's own window cannot be complete yet) and
+    its baseline window (`fecha_inicio - BASE_DIAS`..`fecha_inicio - 1`, same as `veredicto`'s own
+    `base_desde`/`base_hasta`), kept only inside Garmin's intraday reach (`pull.INTRADIA_ALCANCE_
+    DIAS` back from `hoy`) and not already `db.intradia_almacenado`. Not filtered by whether the
+    habit actually happened that day -- unlike `_veredicto_intradia`'s own `dias_prueba`, that is
+    decided later and this function must not skip fetching a day that might still turn out to
+    count. A whole-day experiment (`ventana.tipo == 'dia'`) and a person with no active intraday
+    experiment both contribute nothing. Pure read; `pull` is imported lazily here, not at module
+    level, since `pull.py` is the one that imports this module."""
+    from . import pull as _pull  # local: avoids a module-level import cycle with body/pull.py
+
+    activas = [
+        r for r in db.experimentos(conn, person_id, estado="activo")
+        if json.loads(r["ventana"])["tipo"] == "intradia"
+    ]
+    if not activas:
+        return []
+
+    alcance_desde = (hoy - timedelta(days=_pull.INTRADIA_ALCANCE_DIAS)).isoformat()
+    ayer = (hoy - timedelta(1)).isoformat()
+    vistos: set[str] = set()
+    dias: list[str] = []
+    for row in activas:
+        filtro_dias = json.loads(row["filtro_dias"])
+        fecha_inicio = row["fecha_inicio"]
+        fin_prueba = min(row["fecha_fin"] or ayer, ayer)
+        base_hasta = (date.fromisoformat(fecha_inicio) - timedelta(1)).isoformat()
+        base_desde = (date.fromisoformat(fecha_inicio) - timedelta(BASE_DIAS)).isoformat()
+        candidatos = (
+            dias_que_cuentan(conn, person_id, filtro_dias, fecha_inicio, fin_prueba)
+            + dias_que_cuentan(conn, person_id, filtro_dias, base_desde, base_hasta)
+        )
+        for d in candidatos:
+            if d < alcance_desde or d in vistos or db.intradia_almacenado(conn, person_id, d):
+                continue
+            vistos.add(d)
+            dias.append(d)
+    dias.sort(reverse=True)
+    return dias
+
+
 def _ocurrio_por_dia(conn, person_id: int, experimento_id: int, habito_id: int | None,
                       dias: list[str]) -> dict[str, bool]:
     if not dias:

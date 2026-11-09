@@ -16,6 +16,12 @@ runs at a time. --backfill takes it non-blocking and exits 0 quietly if the dail
 the backfill timer runs every 10 minutes, so skipping one run is harmless. The daily hosted pull
 runs once a day, so it WAITS for the lock (up to LOCK_ESPERA_S) if a backfill holds it, and only
 after that bound exits 0 with the same skip line.
+
+On the implicit "today" sweep (no explicit --date), both the default/--days local pull and the
+daily hosted pull also fetch any intraday days an active intraday experiment still needs
+(experimentos.dias_intradia_necesarios), capped at INTRADIA_MAX_POR_CORRIDA per person per run --
+BODY-EXPERIMENTOS-INTRADIA-DIAS-FALTANTES-1. A person with no active intraday experiment costs no
+extra Garmin calls.
 """
 import argparse
 import os
@@ -24,7 +30,7 @@ import time
 from datetime import date, timedelta
 from pathlib import Path
 
-from . import config, cuenta, db, errores, fechas, garmin_adapter, garmin_cuenta, goals, readiness
+from . import config, cuenta, db, errores, experimentos, fechas, garmin_adapter, garmin_cuenta, goals, readiness
 
 PAUSE_S = 1.0  # be gentle with Garmin's servers during a backfill
 EMPTY_STOP = 60  # --all stops after this many consecutive days with no watch data
@@ -38,6 +44,12 @@ LOCK_SONDEO_S = 5  # how often it retries the non-blocking lock while waiting
 # low end of the measured range) so the range helper's refusal below never lets a day that is
 # actually already gone look like it was simply never asked for.
 INTRADIA_ALCANCE_DIAS = 130
+
+# BODY-EXPERIMENTOS-INTRADIA-DIAS-FALTANTES-1: at most this many intraday days fetched per
+# person per scheduled-pull run (newest first, from experimentos.dias_intradia_necesarios) -- a
+# new experiment's test mornings come first, and its baseline window fills in over a few runs
+# rather than one big burst of Garmin calls.
+INTRADIA_MAX_POR_CORRIDA = 14
 
 
 def _lock_path() -> Path:
@@ -198,10 +210,14 @@ def pull_hosted(conn, *, fecha: str | None = None, n_days: int = 2) -> tuple[int
     fires at a fixed server instant, so a server-date list would ask a person far from the
     server's zone for the wrong "today". Then closes weeks for every person who can see an active
     goal (`_cerrar_semanas_todas`) -- connected or not, pulled OK or failed today
-    (BODY-SEGURIDAD-3-M). Returns (persons ok, persons failed, days stored). Never prints a health
-    figure -- counts only."""
+    (BODY-SEGURIDAD-3-M). On the implicit "today" sweep (no explicit `fecha`), also fetches any
+    intraday days an active intraday experiment still needs (`_pull_intradia_pendientes`,
+    BODY-EXPERIMENTOS-INTRADIA-DIAS-FALTANTES-1) -- zero extra calls for a person with none.
+    Returns (persons ok, persons failed, days stored). Never prints a health figure -- counts
+    only."""
     ok = failed = saved = 0
     for person_id in garmin_cuenta.every_person_id(conn):
+        hoy = None
         if fecha is not None:
             days = [fecha]
         else:
@@ -219,6 +235,12 @@ def pull_hosted(conn, *, fecha: str | None = None, n_days: int = 2) -> tuple[int
         garmin_cuenta.limpiar_error(conn, person_id)
         saved += n
         ok += 1
+        # BODY-EXPERIMENTOS-INTRADIA-DIAS-FALTANTES-1: only on the implicit "today" sweep (no
+        # explicit --date), the same scheduled-pull shape the daily hosted timer runs.
+        if hoy is not None:
+            token = garmin_cuenta.leer(conn, person_id)
+            if token is not None:
+                _pull_intradia_pendientes(conn, person_id, hoy, token_str=token)
     _cerrar_semanas_todas(conn)
     return ok, failed, saved
 
@@ -363,6 +385,38 @@ def traer_intradia(conn, person_id: int, day: str, token_str: str | None = None,
     return (estado, token_after) if token_str is not None else estado
 
 
+def _pull_intradia_pendientes(conn, person_id: int, hoy: date, token_str: str | None = None) -> int:
+    """BODY-EXPERIMENTOS-INTRADIA-DIAS-FALTANTES-1: fetches up to INTRADIA_MAX_POR_CORRIDA of this
+    person's missing intraday days (experimentos.dias_intradia_necesarios, newest first) through
+    the same on-demand traer_intradia this module already has -- a person with no active intraday
+    experiment makes no Garmin call. A failure on one day is logged (counts and dates only,
+    errores.texto_seguro) and does not stop the others or fail the run. With token_str given
+    (hosted), persists the refreshed token (garmin_cuenta.guardar) if traer_intradia changed it,
+    the same pattern _pull_one_person uses. Returns the number of days actually fetched this run;
+    prints 'intradia: N días traídos, M pendientes' (counts and dates only) when at least one day
+    was needed, M counting every day still missing after this run (capped-out or errored alike)."""
+    pendientes = experimentos.dias_intradia_necesarios(conn, person_id, hoy)
+    if not pendientes:
+        return 0
+    dias = pendientes[:INTRADIA_MAX_POR_CORRIDA]
+    token = token_str
+    token_before = token
+    fetched = 0
+    for d in dias:
+        try:
+            if token is not None:
+                _, token = traer_intradia(conn, person_id, d, token_str=token)
+            else:
+                traer_intradia(conn, person_id, d)
+            fetched += 1
+        except Exception as e:
+            print(f"intradia: fetch failed for {d}: {errores.texto_seguro(e)}", flush=True)
+    if token_str is not None and token != token_before:
+        garmin_cuenta.guardar(conn, person_id, token)
+    print(f"intradia: {fetched} días traídos, {len(pendientes) - fetched} pendientes", flush=True)
+    return fetched
+
+
 def traer_intradia_rango(conn, person_id: int, desde: date, hasta: date, pausa_s: float = 1.0) -> tuple[int, int, int]:
     """Pulls traer_intradia for every day from `desde` to `hasta` (inclusive), oldest first, with a
     polite pause between Garmin calls. Stops cleanly -- returning the counts gathered so far -- on
@@ -482,6 +536,11 @@ def _run(conn, a) -> int:
             # Counts only: health values never go to logs or stdout.
             print(f"{d}: {len(data.metrics)} metrics, {len(data.activities)} activities"
                   + (f", missing feeds: {', '.join(missing)}" if missing else ""), flush=True)
+        if not a.date:
+            # BODY-EXPERIMENTOS-INTRADIA-DIAS-FALTANTES-1: only on the implicit "today" sweep (no
+            # explicit --date), the same shape the morning `manana` run and the plain scheduled
+            # daily pull both use.
+            _pull_intradia_pendientes(conn, person_id, date.today())
     # Baselines depend on earlier days, so recompute every stored day in order (cheap, local).
     n = readiness.recompute_all(conn, person_id)
     print(f"Readiness updated for {n} days.")
