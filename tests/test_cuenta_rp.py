@@ -280,6 +280,51 @@ class CallbackRefusalTest(CuentaRpTestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("Cuenta Duna", r.text)
 
+    def test_login_required_starts_a_visible_sign_in(self):
+        auth = self._start_login(return_to="/goals")
+        r = self.client.get(
+            "/login/cuenta/callback", params={"error": "login_required", "state": auth["state"]}
+        )
+        self.assertEqual(r.status_code, 303)
+        self.assertTrue(r.headers["location"].startswith("/login?"))
+
+    def test_access_denied_shows_sin_acceso(self):
+        before = self._db_count("SELECT COUNT(*) FROM person")
+        auth = self._start_login()
+        r = self.client.get(
+            "/login/cuenta/callback", params={"error": "access_denied", "state": auth["state"]}
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(cuenta.SWITCHER_URL, r.text)
+        self.assertIsNone(r.cookies.get(cuenta.SESSION_COOKIE))
+        self.assertEqual(self._db_count("SELECT COUNT(*) FROM person"), before)
+
+    def test_outage_codes_show_cuenta_down_sentence(self):
+        for codigo in ("invalid_request", "unauthorized_client", "server_error", "temporarily_unavailable"):
+            auth = self._start_login()
+            r = self.client.get(
+                "/login/cuenta/callback", params={"error": codigo, "state": auth["state"]}
+            )
+            self.assertEqual(r.status_code, 200, codigo)
+            self.assertIn("Cuenta Duna", r.text, codigo)
+            self.assertNotIn(codigo, r.text)
+
+    def test_unknown_error_code_keeps_acceso_rechazado(self):
+        auth = self._start_login()
+        r = self.client.get(
+            "/login/cuenta/callback", params={"error": "some_unknown_code", "state": auth["state"]}
+        )
+        self.assertEqual(r.status_code, 400)
+        self.assertNotIn("some_unknown_code", r.text)
+
+    def test_forged_access_denied_with_bad_state_is_still_refused_as_state_mismatch(self):
+        self._start_login()
+        r = self.client.get(
+            "/login/cuenta/callback", params={"error": "access_denied", "state": "wrong-state"}
+        )
+        self.assertEqual(r.status_code, 400)
+        self.assertNotIn(cuenta.SWITCHER_URL, r.text)
+
 
 class LogoutTest(CuentaRpTestCase):
     def test_logout_ends_session_and_redirects_with_sid_and_no_id_token_hint(self):

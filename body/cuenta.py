@@ -399,10 +399,19 @@ def handle_callback(conn, flujo_cookie: str | None, params: dict) -> CallbackRes
         raise FlowRefused("flujo")
     if params.get("error") == "login_required":
         return CallbackResult(kind="reauth", return_to=row["return_to"])
-    if "error" in params:
-        raise FlowRefused("error")
     if params.get("state") != row["state"]:
         raise FlowRefused("state")
+    error = params.get("error")
+    if error == "access_denied":
+        return CallbackResult(kind="sin_acceso")
+    if error in ("invalid_request", "unauthorized_client", "server_error", "temporarily_unavailable"):
+        # cuenta-duna-v1 section 10: these four authorize-redirect codes show the outage
+        # sentence, same as a network failure reaching Cuenta.
+        raise CuentaUnavailable()
+    if error:
+        # cuenta-duna-v1 section 10 lists only the codes above; any other or unknown code
+        # keeps today's acceso_rechazado behaviour.
+        raise FlowRefused("error")
     code = params.get("code")
     if not code:
         raise FlowRefused("code")
