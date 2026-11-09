@@ -42,12 +42,11 @@ def _turnos_filas(t: T, defs: dict, resumen: dict) -> list[dict]:
                          "value": None, "palabra": None, "href": None})
             continue
         diff, palabra = turnos_costo.diferencia_y_palabra(key, v)
-        sign = "+" if diff >= 0 else "−"
         amount = t.minutes(abs(diff)) if comun._is_minutes(key) else t.num(abs(diff), 1)
         unit = comun._unit(t, d)
         href = f"/trends?r=90&desde=turnos{'&todas=1' if comun._es_extra_metric(key) else ''}#{key}"
         filas.append({"label": t("metric." + key), "sub": t("shifts.cost_sub." + key),
-                     "value": f"{sign}{amount}" + (f" {unit}" if unit else ""),
+                     "value": f"{amount}" + (f" {unit}" if unit else ""),
                      "palabra": t("shifts.word." + palabra), "href": href})
     return filas
 
