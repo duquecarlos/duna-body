@@ -12710,3 +12710,55 @@ string a person reads -- no cross-repo/DTO change -- Merge Policy A applies, and
 approval-reason authorizes the merge in words): `git checkout main` (tip `99f51b7`), `git merge
 --no-ff feat/body-arte-fuera-del-repo-1` (branch tip `06651bebee216593b36aca19c8fd1882339cff0e`) ->
 `e5d748dae1b6a6bfbd0c2bfcd3fd32df44c7c8f6`.
+
+## BODY-MOMENTOS-DIA-COMPLETO-1 -- a day's intraday pull is "stored" only once it is complete
+
+**Defect, as measured** (BODY-EXPERIMENTOS-1-INV, continued): BODY-MOMENTOS-PULL-1 (merged
+`562f806`) treated a day as stored once ANY intraday row existed (`db.intradia_almacenado`), and
+`pull.traer_intradia` then skipped it for good unless `forzar=True`. The orchestrator measured this
+on Carlos's PC, 2026-11-09: the first backfill (`body.vivo intradia --dias 130`, counts only -- 130
+fetched, 0 already stored, 0 empty, 2026-07-03..2026-11-09) ran in the evening, so 2026-11-09 was
+stored with only the hours fetched up to that run, and every later run would have skipped it for
+good. The same gap hits a day fetched in the early morning before the watch had synced the night
+to Garmin -- the watch syncs to the phone in batches, so a day's last hours can reach Garmin's
+servers hours after that day's local midnight.
+
+**The rule**: `db.intradia_almacenado` now compares the stored `fetched_at` (UTC, written by
+`guardar_intradia`) against a threshold computed from `day` and the person's own zone -- the next
+local midnight, converted to UTC, plus a new named constant `db.INTRADIA_MARGEN_CIERRE_H = 6`
+(hours). A day fetched before that threshold reads as NOT stored, the same as a day never fetched
+at all, including the out-of-retention empty marker (`payload=None`) fetched too early. The zone
+comes from `db.person(conn, person_id)["timezone"]`, read inside `intradia_almacenado` itself --
+the adapter (`garmin_adapter`) still never reads the DB; this is `db.py` reading its own table.
+
+**Pull side**: `pull.traer_intradia` needed no logic change -- `db.guardar_intradia`'s `INSERT OR
+REPLACE` already overwrites a day's earlier, partial row when `intradia_almacenado` now says no,
+and the function already returns `"fetched"`/`"empty"` (never `"already_stored"`) whenever a
+Garmin call was actually made, so `traer_intradia_rango`'s counts already count a re-fetched
+partial day as fetched. Only the docstrings were corrected to say so. No scheduled path calls
+either function (`pull_all`/`pull_hosted`/`pull_backfill_hosted` are unchanged, and
+`IntradiaNotCalledByAnyJobTest` still asserts it).
+
+**Tests added** (`tests/test_momentos_pull.py`, invented payloads, `fetched_at` set directly by SQL
+instead of patching the wall clock -- the margin rule compares two fixed instants, so the real
+clock at test-run time is irrelevant): `AlmacenadoCierreTest` -- fetched before the day ends, within
+the margin after midnight, and after the margin, for both a real payload and the empty marker (6
+cases), plus a same-UTC-instant case where America/Bogota (UTC-5) reads as not yet complete while
+Europe/Madrid (UTC+1 in November) reads as complete. `TraerIntradiaRefetchTest` -- a day stored
+before its close is re-fetched and returns `"fetched"`; within the margin is re-fetched; after the
+margin is skipped and returns `"already_stored"`; a re-fetched partial day is counted as fetched by
+`traer_intradia_rango`. Existing tests (`forzar=True`, person isolation, the no-scheduled-caller
+guard) were left unchanged and still pass, since every day they exercise is fetched at the real
+`datetime.now()`, always well past its own closing margin.
+
+**Gate**, once, foreground, on the branch tip: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -> `Ran 1743 tests in 458.400s ... OK (skipped=1)`.
+
+**Merge** (no schema change -- `raw_payload`'s columns and the rule for `fetched_at` already there
+are unchanged, only how one value already written is read; no customer-facing bytes -- this is
+`pull.traer_intradia`/`db.intradia_almacenado`, not called from any route or scheduled job yet; no
+cross-repo/DTO change -- Merge Policy A applies, and the spec's own approval-reason authorizes the
+merge in words): `git checkout main` (tip `cce6a11`), `git merge --no-ff
+feat/body-momentos-dia-completo-1` (branch tip `388aac43c103059ede42e2b4fb6897fcb6d640ca`) ->
+`b95e66d879bb1c1df907af85a75378641b10d7c6`. Tree identity checked (`git diff HEAD
+feat/body-momentos-dia-completo-1 --stat`, empty) instead of re-running the gate on the merge.
