@@ -31,7 +31,7 @@
   <div class="q">{{ t('dispositivos.connect_title') }}</div>
   <form method="post" action="/ajustes/dispositivos" class="mt-12">
     <div class="q">{{ t('dispositivos.name_label') }}</div>
-    <input type="text" name="nombre" class="field mb-12" required>
+    <input type="text" name="nombre" class="field mb-12" required aria-label="{{ t('dispositivos.name_label') }}">
     <label class="radio"><input type="checkbox" name="alcance_turnos" value="1" checked> {{ t('dispositivos.scope.turnos') }}</label>
     <label class="radio"><input type="checkbox" name="alcance_vida" value="1" checked> {{ t('dispositivos.scope.vida') }}</label>
     <button class="btn mt-12" type="submit">{{ t('dispositivos.connect_btn') }}</button>

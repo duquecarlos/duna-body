@@ -26,7 +26,8 @@
   {% if error %}<p class="read bad">{{ t('privacidad.borrar_error', palabra=delete_word) }}</p>{% endif %}
   <form method="post" action="/privacidad/borrar" class="mt-12">
     <div class="q">{{ t('privacidad.borrar_label', palabra=delete_word) }}</div>
-    <input type="text" name="confirmacion" class="field mb-12" autocomplete="off">
+    <input type="text" name="confirmacion" class="field mb-12" autocomplete="off"
+           aria-label="{{ t('privacidad.borrar_label', palabra=delete_word) }}">
     <button class="btn" type="submit">{{ t('privacidad.borrar_btn') }}</button>
   </form>
 </div>

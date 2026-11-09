@@ -37,7 +37,7 @@
   <div class="card">
     <div class="q">{{ f.label }}</div>
     {% if f.error %}<p class="k bad mt-4 mb-4">{{ f.error }}</p>{% endif %}
-    <select name="kind_{{ f.idx }}" class="field mt-6">
+    <select name="kind_{{ f.idx }}" class="field mt-6" aria-label="{{ f.label }}">
       {% for k in kinds %}<option value="{{ k }}" {% if k == f.kind %}selected{% endif %}>{{ t('shift.kind.' + k) }}</option>{% endfor %}
     </select>
     <div class="row gap-10 mt-8">

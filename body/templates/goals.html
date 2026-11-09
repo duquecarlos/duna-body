@@ -21,7 +21,7 @@
     <div><span class="fig">{{ c.fig }}</span><span class="u">{{ c.period }}</span></div>
     <div class="k text-right">{{ c.target_text }}</div>
   </div>
-  {% if c.pct is not none %}<svg class="bar" viewBox="0 0 100 6" preserveAspectRatio="none"><rect x="0" y="0" width="{{ c.pct }}" height="6" class="c-body"></rect></svg>{% endif %}
+  {% if c.pct is not none %}<svg class="bar" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"><rect x="0" y="0" width="{{ c.pct }}" height="6" class="c-body"></rect></svg>{% endif %}
   {% if c.started %}<div class="k">{{ c.started }} <span class="chip">{{ t('goals.from_data') }}</span></div>{% endif %}
   <span class="chev chev-low">›</span>
 </a>
