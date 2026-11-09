@@ -10190,3 +10190,98 @@ not withheld.
 into `main` (merge strategy `ort`, no conflicts). Tree identity proven: merge tree
 `9b5b456f5b708b2b29e35cf037ea75558f8e1ede` equals the branch tip's own tree exactly. `main` left
 checked out, `git status --porcelain` empty (before this ledger entry's own commit).
+
+## BODY-ACCESIBILIDAD-1 -- a structural accessibility sweep over every page
+
+A new guard, `tests/test_accesibilidad.py`, parses every HTML GET response with the standard
+library's `html.parser` (no new dependency) and checks eight rules: (a) `<html lang>` matches the
+person's language; (b) exactly one `<h1>`; (c) no duplicate `id`; (d) every `<a href>` and
+`<button>` has an accessible name (text content, `aria-label`, `aria-labelledby` pointing at an id
+that exists, or `title`; an `<svg>`/`<img>` child alone counts only if it carries its own name);
+(e) every `<input>` (except hidden/submit/button), `<select>` and `<textarea>` is labelled (a
+`<label for>`, a wrapping `<label>`, or `aria-label`/`aria-labelledby`); (f) every `<img>` carries
+`alt`; (g) every inline `<svg>` carries `role="img"` plus a name, or `aria-hidden="true"`; (h) no
+positive `tabindex`.
+
+**Scope swept**: the populated (demo) fixture plus ESTADOS-VACIOS-1 sparse states A, D and E (per
+the spec, not every state `tests/test_estados_vacios.py` seeds), each in es and en, local mode --
+106 (page, state, language) renders -- plus hosted mode for the three hosted-only pages that can
+ever answer 200 (`/garmin`, `/ajustes/dispositivos`, `/privacidad/consentimiento`), reached through
+`tests/test_cuenta_rp.py`'s fake-issuer session exactly as `tests/test_estados_vacios_hosted.py`
+does -- 6 more renders. 112 pages checked in total, 0 violations after the fixes below.
+
+**Violations found, before the fixes** (measured by running the new guard against the unfixed
+tree): 500 `g_svg_name` (every inline `<svg>` in this codebase had neither `role="img"` nor
+`aria-hidden`: the 5 bottom-nav icons and the logout icon in `base.html`, the 4 assistant-panel
+icons also in `base.html`, the goal-list progress-bar `<svg class="bar">` in `goals.html`, the
+training-month `<svg class="stage">` in `history.html`, the sleep-stage `<svg class="stage">` in
+`day.html` -- repeated across every page/state/lang combination that renders `base.html`'s nav, so
+one real defect class, 500 occurrences); 164 `e_form_label` (17 real unlabelled controls, each hit
+once per populated/sparse state and per hosted state it appears in: `goal_new.html`'s title, why,
+area, metric_key, direction, target_value, baseline_value, deadline, visibility, habit_title,
+habit_times, habit_per, habit_context; `goal.html`'s own habit_title/habit_times/habit_per/
+habit_context repeat plus its dynamic household-app-link `entrada` input; `shift_pattern.html`'s
+`select name="kind_N"`; `privacidad.html`'s `confirmacion` input; `garmin.html`'s code/email/
+password inputs; `dispositivos.html`'s `nombre` input); 2 `c_duplicate_id` (`/day/{day}`:
+`id="sleep_minutes"` on both the sleep-detail card built by hand and the generic per-metric card
+`hoy.py`'s `day_view` builds from `metric_def`, which also defines a `sleep_minutes` row). 0 for
+(a), (b), (h) (none ever tripped) -- (f) and (h) stay at exactly 0 even after the fix, since no
+template anywhere renders a bare `<img>` or sets `tabindex`; the guard's own non-vacuous assertion
+asserts that measured zero rather than fabricating a dead element to move a counter (recorded as
+this slice's one deviation, below).
+
+**Fixes**:
+- `aria-hidden="true"` added to the 13 decorative svgs named above (base.html x10, goals.html x1,
+  history.html x1, day.html x1) -- each sits beside visible text or inside a labelled button, so it
+  is redundant, never the only name-bearing content.
+- `aria-label` added to the 17 unlabelled controls, reusing the exact text already shown beside each
+  one (its sibling `div.q`, its placeholder, or the row's own dynamic label) -- no new words, an
+  attribute only.
+- Three fields in `goal_new.html`/`goal.html` had no visible label anywhere near them (`habit_times`,
+  `habit_per`, `habit_context`): new i18n keys, `a11y.habit_times` / `a11y.habit_per` /
+  `a11y.habit_context`, added to `es.json` and `en.json`, used only as `aria-label` values (never
+  rendered as visible text).
+- `day.html`'s generic per-metric card loop now omits `id="{{ c.key }}"` when `c.key == 'sleep_minutes'`
+  (the hand-built sleep-detail card above already owns that id, and is the more useful anchor
+  target for `today.html`'s `#sleep_minutes` link); no other metric card's id changed, so every
+  other anchor (`hrv_last_night`, `resting_hr`, `body_battery_wake`) still resolves exactly as
+  before.
+
+**New i18n keys** (es / en, tú register, used only as accessible names):
+- `a11y.habit_times`: "Cantidad de veces" / "Number of times"
+- `a11y.habit_per`: "Cada cuánto" / "How often"
+- `a11y.habit_context`: "Contexto del hábito" / "Habit context"
+
+**docs/DESIGN.md** gains rule 18, "Accesibilidad estructural": states rules (a)-(h) in the same
+words as the guard, says `tests/test_accesibilidad.py` guards them on every page, and says in words
+that tap-target size (rule 11's 44 px) is a layout measurement made in a real browser, not something
+this test can see in server-rendered HTML.
+
+**Deviation**: the spec's own non-vacuous instruction ("assert... each rule was evaluated on more
+than 0 elements") cannot hold literally for rules (f) and (h), measured: this codebase renders zero
+`<img>` tags anywhere (every picture-like thing is a server-built inline `<svg>`) and sets
+`tabindex` nowhere. Rather than plant a dead, invisible `<img>` purely to move a counter above zero
+-- the same shape this protocol's own instructions elsewhere call out as a workaround -- the test
+asserts the measured zero for exactly these two rules (`assertEqual(..., 0)`, with a comment that
+either count moving off zero means the assertion itself needs updating) and keeps the stronger
+`assertGreater(..., 0)` for the six rules that do have real candidates in this codebase today.
+
+**Gate**, once, foreground, on this slice's own branch tip (before the merge; tree identity proven
+below, so not re-run after merging): `.venv/Scripts/python.exe -m unittest discover tests -t .` --
+`Ran 1371 tests in 317.297s ... OK (skipped=1)` (1369 before this slice, +2: the two test methods in
+the new `tests/test_accesibilidad.py`).
+
+**Merge.** The diff adds visible-nowhere `aria-hidden`/`aria-label`/`role` attributes and three new
+i18n keys read only as `aria-label` values -- never rendered as visible text, but still bytes a
+screen-reader user hears, so it trips merge policy A's customer-bytes condition on a literal
+reading. This spec's approval-reason (`ORCH-CARLOS-DELEGATES-TIER-1-1`) says in words: "Fixes add
+attributes (aria-label, aria-hidden, label for/id, role) and, where an accessible name needs words,
+new i18n keys used ONLY as accessible names: they are read by screen readers and are not visible.
+Nothing visible changes, so there is no layout to measure... This spec approves the merge." Merged
+on that authorisation, scoped to exactly the attribute/key additions listed above, not withheld.
+
+**Commits**: slice `9455c10aeab395aea1d675f86541a72b08da1ca4` on `feat/body-accesibilidad-1` (base
+`main` at `720d8279728d7f4bc0d7b8bff0cdd2903b25d73d`), merge `c6bef51b29f1cbcafc842a4fe5ebaf66858ca460`
+into `main` (merge strategy `ort`, no conflicts). Tree identity proven: merge tree
+`4813349562158b01019f63830f4f76633314499f` equals the branch tip's own tree exactly. `main` left
+checked out, `git status --porcelain` empty (before this ledger entry's own commit).
