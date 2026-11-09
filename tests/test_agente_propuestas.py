@@ -217,6 +217,57 @@ class AplicarEscribeTest(unittest.TestCase):
         self.assertEqual(row["estado"], "propuesta")
 
 
+class RegistrarEntrenoWeightUnitDriftTest(unittest.TestCase):
+    """BODY-REVISION-9B-1-INV finding 3 (fixed here): a watch set's weight UNIT is compared too,
+    not just its value -- a unit-only change between proposal and apply must be caught as drift
+    like every other field. An old-shape snapshot (no `garmin_weight_unit` key, from a proposal
+    made before this slice) still applies: a missing field is "not compared", not "changed"."""
+
+    def setUp(self):
+        self.conn, self.orig = _reset_db()
+        self.addCleanup(self.conn.close)
+        self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig))
+        self.conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, name, source) "
+            "VALUES (1, 'a1', '2026-11-10', '2026-11-10T07:00:00', 'strength_training', NULL, 'garmin')"
+        )
+        self.conn.commit()
+        db.save_exercise_sets(self.conn, 1, "garmin", "a1", [garmin_adapter.ExerciseSet(
+            set_type="active", category="pecho", exercise="press banca", reps=8.0,
+            weight_value=50.0, weight_unit="kg", duration_s=30.0, start_local="2026-11-10T07:00:00",
+        )])
+
+    def test_a_weight_unit_only_change_is_detected_as_drift(self):
+        cid = _cid(self.conn)
+        out = herramientas.ejecutar(self.conn, 1, "registrar_entreno", {
+            "day": "2026-11-10", "series": [{"ejercicio": "press banca", "reps": 8, "peso_kg": 50.0}],
+        }, "ninguno", cid)
+        db.save_exercise_sets(self.conn, 1, "garmin", "a1", [garmin_adapter.ExerciseSet(
+            set_type="active", category="pecho", exercise="press banca", reps=8.0,
+            weight_value=50.0, weight_unit="lb", duration_s=30.0, start_local="2026-11-10T07:00:00",
+        )])
+        resultado = propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        self.assertEqual(resultado["estado"], "propuesta_desactualizada")
+
+    def test_an_old_shape_snapshot_without_the_field_still_applies(self):
+        cid = _cid(self.conn)
+        out = herramientas.ejecutar(self.conn, 1, "registrar_entreno", {
+            "day": "2026-11-10", "series": [{"ejercicio": "press banca", "reps": 8, "peso_kg": 50.0}],
+        }, "ninguno", cid)
+        antes = json.loads(self.conn.execute(
+            "SELECT antes_json FROM propuesta_agente WHERE id = ?", (out["propuesta_id"],)).fetchone()[0])
+        del antes["sets_antes"][0]["garmin_weight_unit"]
+        self.conn.execute("UPDATE propuesta_agente SET antes_json = ? WHERE id = ?",
+                          (json.dumps(antes), out["propuesta_id"]))
+        self.conn.commit()
+        db.save_exercise_sets(self.conn, 1, "garmin", "a1", [garmin_adapter.ExerciseSet(
+            set_type="active", category="pecho", exercise="press banca", reps=8.0,
+            weight_value=50.0, weight_unit="lb", duration_s=30.0, start_local="2026-11-10T07:00:00",
+        )])
+        resultado = propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        self.assertEqual(resultado["estado"], "aplicada")
+
+
 class DeshacerTest(unittest.TestCase):
     def setUp(self):
         self.conn, self.orig = _reset_db()

@@ -131,7 +131,9 @@ def _drift_aplicar(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
                 if (actual["garmin"]["exercise"] != snap["garmin_exercise"]
                         or actual["garmin"]["reps"] != snap["garmin_reps"]
                         or actual["garmin"]["weight_value"] != snap["garmin_weight_value"]
-                        or actual["garmin"]["category"] != snap["garmin_category"]):
+                        or actual["garmin"]["category"] != snap["garmin_category"]
+                        or ("garmin_weight_unit" in snap
+                            and actual["garmin"]["weight_unit"] != snap["garmin_weight_unit"])):
                     return True
             elif actual is not None:
                 return True

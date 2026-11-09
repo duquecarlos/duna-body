@@ -379,6 +379,19 @@ def _hoy_local(conn: sqlite3.Connection, person_id: int) -> str:
     return fechas.hoy_local(db.person(conn, person_id)).isoformat()
 
 
+def _dia_no_futuro(conn: sqlite3.Connection, person_id: int, day: str) -> None:
+    """Parses `day` as an ISO date and refuses one later than the person's own local today
+    (BODY-REVISION-9B-1-INV finding 4): for a tool that records something that already happened,
+    never for a plan or a goal deadline, which name the future on purpose."""
+    try:
+        parsed = date.fromisoformat(day)
+    except ValueError:
+        raise ToolError("day debe ser una fecha ISO (AAAA-MM-DD)")
+    hoy = fechas.hoy_local(db.person(conn, person_id))
+    if not fechas.fecha_real_valida(parsed, hoy):
+        raise ToolError(f"day no puede ser futuro: {day!r}")
+
+
 def _leer_entreno(conn: sqlite3.Connection, person_id: int, day: str | None = None, desde: str | None = None,
                    hasta: str | None = None) -> dict:
     """A day's or a range's training sessions (with their sets, display values plus whether each
@@ -418,7 +431,8 @@ def _planear_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id: 
                       ejercicios: list, time: str | None = None, goal_id: int | None = None) -> dict:
     """Proposes one `plan` row for a day: a title, an optional time and a list of planned
     exercises `{ejercicio, series, reps?}` (BODY-ENTRENO-TOOLS-1, Q3). Insert-shaped, like
-    `proponer_meta`: there is no 'before'."""
+    `proponer_meta`: there is no 'before'. Unlike `_registrar_entreno`/`_registrar_medida`, a
+    future `day` is allowed on purpose here: a plan is for later, not for what already happened."""
     try:
         date.fromisoformat(day)
     except ValueError:
@@ -450,10 +464,7 @@ def _registrar_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id
     watch's value and the spoken correction per set. With no activity, stages a manual session
     instead. `antes` carries, per set, enough of the pre-existing state (`sets_antes`) for
     `propuestas.deshacer` to restore it exactly, or nothing for the manual (insert-shaped) case."""
-    try:
-        date.fromisoformat(day)
-    except ValueError:
-        raise ToolError("day debe ser una fecha ISO (AAAA-MM-DD)")
+    _dia_no_futuro(conn, person_id, day)
     if not series:
         raise ToolError("se necesita al menos una serie")
     for s in series:
@@ -490,6 +501,7 @@ def _registrar_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id
                 "garmin_exercise": watch["garmin"]["exercise"] if watch else None,
                 "garmin_reps": watch["garmin"]["reps"] if watch else None,
                 "garmin_weight_value": watch["garmin"]["weight_value"] if watch else None,
+                "garmin_weight_unit": watch["garmin"]["weight_unit"] if watch else None,
                 "garmin_category": watch["garmin"]["category"] if watch else None,
             })
         despues = {"manual": False, "day": day, "source": source, "source_id": source_id, "series": series,
@@ -515,10 +527,7 @@ def _registrar_medida(conn: sqlite3.Connection, person_id: int, conversacion_id:
     if fila is None:
         raise ToolError(f"medida desconocida o no autogestionada: {metric_key!r}")
     day = day or _hoy_local(conn, person_id)
-    try:
-        date.fromisoformat(day)
-    except ValueError:
-        raise ToolError("day debe ser una fecha ISO (AAAA-MM-DD)")
+    _dia_no_futuro(conn, person_id, day)
     try:
         value = float(value)
     except (TypeError, ValueError):
@@ -542,10 +551,7 @@ def _marcar_habito(conn: sqlite3.Connection, person_id: int, conversacion_id: in
     of this generic tool, never a hardcoded activity-type list. `antes` carries that day's existing
     habit_check row for this person (done, note) or None, so `propuestas.deshacer` can restore it
     exactly."""
-    try:
-        date.fromisoformat(day)
-    except ValueError:
-        raise ToolError("day debe ser una fecha ISO (AAAA-MM-DD)")
+    _dia_no_futuro(conn, person_id, day)
     h = conn.execute(
         "SELECT id, goal_id, title, assignee_person_id, active FROM habit WHERE id = ?", (habit_id,)).fetchone()
     if h is None:
@@ -556,9 +562,6 @@ def _marcar_habito(conn: sqlite3.Connection, person_id: int, conversacion_id: in
         raise ToolError(f"hábito inactivo: {habit_id!r}")
     if h["assignee_person_id"] is not None and h["assignee_person_id"] != person_id:
         raise ToolError(f"ese hábito no es tuyo: {habit_id!r}")
-    hoy = fechas.hoy_local(db.person(conn, person_id))
-    if not fechas.fecha_real_valida(date.fromisoformat(day), hoy):
-        raise ToolError(f"day no puede ser futuro: {day!r}")
     actividad_despues = None
     if actividad is not None:
         source, source_id = actividad.get("source"), actividad.get("source_id")
