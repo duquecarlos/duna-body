@@ -11901,3 +11901,35 @@ discover tests -t .` -- `Ran 1584 tests in 364.458s ... OK (skipped=1)`.
 BODY-SEGURIDAD-ALLOWLIST-1's ledger entry), `158d84331ae17b65d0ca76f66142be767fb69401`
 (`body/i18n/en.json`, `body/i18n/es.json`, `body/rutas/turnos.py`, `body/turnos_costo.py`,
 `tests/test_turnos_costo.py`). Not merged -- awaiting the orchestrator's 375 px check.
+
+## BODY-TURNOS-PALABRA-DIRECCION-1-M -- merge BODY-TURNOS-PALABRA-DIRECCION-1, unused-key cleanup
+
+The orchestrator measured `/shifts` in a browser at 375 px on the demo home: the five cost rows
+read `<figure> más|menos` with no sign, no horizontal overflow, every row the same height -- the
+words match BODY-TURNOS-PALABRA-DIRECCION-1's approved verbatim list
+(`ORCH-CARLOS-DELEGATES-TIER-1-1`). Accepted as-is: the rows' subtitles ("más bajo suele ser mejor
+forma") stay, as general metric meaning, not a verdict on measured data; the stronger reference is
+BODY-TURNOS-REFERENCIA-NOCHE-1.
+
+**Cleanup before merge**: `shifts.word.peor`/`shifts.word.mejor` in `body/i18n/es.json` and
+`body/i18n/en.json` were unused -- confirmed by grep across templates, `body/**/*.py` and static
+JS -- because `diferencia_y_palabra()` (`body/turnos_costo.py:132`) only ever returns `'mas'` |
+`'menos'` | `'igual'`. Removed both keys from both catalogs, and changed
+`tests/test_i18n_paridad.py`'s `_FIXED_DYNAMIC["shifts.word.+"]` from `["peor", "mejor", "igual"]`
+to `["mas", "menos", "igual"]` so the registry points at the live codes `body/rutas/turnos.py:50`
+actually builds (`t("shifts.word." + palabra)`), keeping that guard's subject -- every dynamically
+built key resolves in both catalogs.
+
+**Merge policy A**: no schema/migration change, no cross-repo contract change; the two removed
+keys were never rendered, so this diff carries no customer-facing bytes. All three conditions
+clear -- merge authorised by the approval reason's own words ("Merge.").
+
+**Gate**, once, foreground, on the branch (commit `a158f25556f733e39e79ca9e4daef9bdd1a1fbe9`), before
+the merge: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- `Ran 1584 tests in
+349.133s ... OK (skipped=1)`.
+
+**Commits**: fix `a158f25556f733e39e79ca9e4daef9bdd1a1fbe9` on
+`feat/body-turnos-palabra-direccion-1` (3 files changed: `body/i18n/en.json`, `body/i18n/es.json`,
+`tests/test_i18n_paridad.py`); merge `d3e0a2cb606205a8ed3f1ddc2fc845aefcbc992d` into `main`
+(`--no-ff`, second parent `a158f25556f733e39e79ca9e4daef9bdd1a1fbe9`, first parent
+`7a7e9aa21d5f90af36d0f6a797022cb8dd81bdbb`), tree `b2cd38fbb10ee2ef585a402f21d1554e83244838`.
