@@ -180,11 +180,10 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
 
     # Wave 9 (BODY-EXPERIMENTOS-ESQUEMA-1): experimento, experimento_registro and moment are all
     # directly person-keyed (each carries its own person_id column), so they are seeded here like
-    # every other such table -- no household needed, nothing "reached through" another id. No
-    # screen, API, export or assistant tool reads any of the three yet, so their markers go in
-    # _markers_of's docstring list of exclusions alongside shift_batch_item.code, not into the
-    # active marker list: a marker that renders nowhere would make the "appears for its own owner"
-    # half of this guard vacuous.
+    # every other such table -- no household needed, nothing "reached through" another id.
+    # BODY-EXPERIMENTOS-PANTALLA-1 gave this one a screen (Metas' section and /experiments/{id}):
+    # its titulo and its one registro's nota now render there, so both move into _markers_of's
+    # active marker list below. moment stays excluded -- no screen, API or assistant tool reads it.
     eid = db.crear_experimento(
         conn, person_id, f"ZZ{tag}-EXPERIMENTO", ["resting_hr"], {"tipo": "dia"},
         {"turno_en": None, "turno_fuera": None, "excluir_tras_noche": False},
@@ -226,7 +225,7 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
         "gid": gid, "hid": hid, "gid_proposed": gid_proposed, "gid_archived": gid_archived,
         "conv_id": conv_id, "batch_id": batch_id, "device_id": conn.execute(
             "SELECT id FROM dispositivo WHERE person_id = ?", (person_id,)).fetchone()["id"],
-        "device_key": device_key, "propuesta_id": propuesta["id"],
+        "device_key": device_key, "propuesta_id": propuesta["id"], "eid": eid,
     }
 
 
@@ -237,13 +236,16 @@ def _markers_of(tag: str) -> list[str]:
     screen, API or export reads that column today (turnos.py's preview/shifts.html show only
     counts and kept-days; privacidad.export_person's shift_batches is a plain `SELECT * FROM
     shift_batch`, never joined to its items) -- a marker that renders nowhere would make the
-    "appears for its own owner" half of this guard vacuous, not a real check. Same reason excludes
-    wave 9's ZZ<tag>-EXPERIMENTO / ZZ<tag>-REGISTRO / ZZ<tag>-MOMENTO (seeded for the table census
-    below, BODY-EXPERIMENTOS-ESQUEMA-1-M): no route, API or assistant tool reads experimento,
-    experimento_registro or moment yet."""
+    "appears for its own owner" half of this guard vacuous, not a real check. Wave 9's own
+    ZZ<tag>-MOMENTO is excluded for the same reason (no route, API or assistant tool reads
+    `moment` yet); ZZ<tag>-EXPERIMENTO (the experiment's own titulo) and ZZ<tag>-REGISTRO (its one
+    registro's nota) moved INTO this active list with BODY-EXPERIMENTOS-PANTALLA-1, which gave
+    `experimento`/`experimento_registro` their first reader -- Metas' section and
+    /experiments/{id} render both."""
     return [f"ZZ{tag}-{suffix}" for suffix in
             ("ACTIVIDAD", "SERIE", "TURNO", "META-PRIVADA", "HABITO", "NOTA", "META-PROPUESTA",
-             "META-ARCHIVADA", "PLAN", "CONVERSACION", "MENSAJE", "DISPOSITIVO")] + [ENLACE_REF[tag]]
+             "META-ARCHIVADA", "PLAN", "CONVERSACION", "MENSAJE", "DISPOSITIVO", "EXPERIMENTO",
+             "REGISTRO")] + [ENLACE_REF[tag]]
 
 
 def _figures_of(tag: str) -> dict:
@@ -255,6 +257,7 @@ def _figures_of(tag: str) -> dict:
 # going unswept.
 EXPECTED_GET_PATHS = sorted([
     "/", "/how/{day}", "/day/{day}", "/goals", "/goals/new", "/goals/{goal_id}",
+    "/experiments/{experiment_id}",
     "/settings", "/ajustes/asistente", "/ajustes/dispositivos", "/api/vida/semana",
     "/healthz", "/ayuda", "/garmin", "/history",
     "/privacidad/consentimiento", "/privacidad", "/privacidad/exportar",
@@ -333,6 +336,14 @@ class _BaseFugaTest(unittest.TestCase):
         n += 1
         r = client.get(f"/goals/{other_ids['gid']}")
         self.assertEqual(r.status_code, 404, f"{viewer_tag} GET /goals/<{other_tag}'s id> did not 404")
+
+        r = client.get(f"/experiments/{ids['eid']}")
+        n += 1
+        self.assertEqual(r.status_code, 200, f"{viewer_tag} GET /experiments/{{eid}}")
+        texts.append(r.text)
+        n += 1
+        r = client.get(f"/experiments/{other_ids['eid']}")
+        self.assertEqual(r.status_code, 404, f"{viewer_tag} GET /experiments/<{other_tag}'s id> did not 404")
 
         r = client.get(f"/asistente/conversacion/{ids['conv_id']}")
         n += 1
