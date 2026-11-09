@@ -11550,3 +11550,22 @@ dispatch). 9 files changed (`DECISIONS.md`, `body/i18n/en.json`, `body/i18n/es.j
 
 **Stop**: AWAITING_APPROVAL, on the branch, not merged -- the orchestrator's own 375 px check on
 demo data is still outstanding per the approval reason.
+
+## BODY-SUENO-RESPIRACION-VISTA-1-M -- the honest home for the four night figures lands on main
+
+Merge only, no code change. The orchestrator measured BODY-SUENO-RESPIRACION-VISTA-1 (806cb33) at
+375 px on the demo home with invented night figures -- Día's one line inside the sleep card plus
+the caveat (all four figures; SpO2 only; none -> no line), the four keys gone from the generic
+grid, and Tendencias' `night` group with both cards and the caveat -- and recorded in the approval
+reason that the customer-facing text and layout match what BODY-SUENO-RESPIRACION-VISTA-1 approved,
+accepting the worker's partial-breathing wordings (range only, average only) as the smallest
+honest extension (`ORCH-CARLOS-DELEGATES-TIER-1-1`). Merge.
+
+**Gate**, once, foreground, on the branch tip before the merge: `.venv/Scripts/python.exe -m
+unittest discover tests -t .` -- `Ran 1547 tests in 317.307s ... OK (skipped=1)`, matching the
+1547 the orchestrator's spec supplied as the measured floor.
+
+**Merge**: `git checkout main`; `git merge --no-ff feat/body-sueno-respiracion-vista-1` ->
+`d357f7773d7feb654a466e9f1f28b67d8ea150a7`, fast-forwarding main past 806cb33.
+
+**Stop**: COMPLETE, on `main`, tree clean.
