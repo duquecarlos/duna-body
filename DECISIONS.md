@@ -12397,3 +12397,54 @@ drift unnoticed.
 `d54a4da9fc089a1aa10efdb5eb9aeca570050a8a`. Merge tree `877730197a7771a9af467b8ea0e4a4f3b7a1a07e`
 equals the branch tip's own tree (`git rev-parse feat/body-experimentos-esquema-1^{tree}`) -- the
 merge carried the branch content verbatim, no re-run needed.
+
+## BODY-EXPERIMENTOS-CONSENTIMIENTO-1 -- the consent widens to v3: intraday heart rate and stress,
+## experiments and logged moments, named before Wave 9 stores any of them
+
+`BODY-EXPERIMENTOS-1-INV` (OBSERVED 2026-11-09) found two kinds of data Wave 9 will store that
+`privacidad.consentimiento.que` does not name: the watch's heart rate and stress minute by minute
+(on the days an experiment or a study needs them, not every day) and what the person adds
+themself -- experiments and the moments they log. `ORCH-CARLOS-DELEGATES-TIER-1-1` carries out the
+slice with wording approved verbatim, same precedent as `BODY-ENTRENO-PRIVACIDAD-1` (v1 -> v2): this
+must land before any intraday figure is stored, since `BODY-MOMENTOS-PULL-1` depends on it.
+
+**What changed.** `body/privacidad.py`'s `CONSENT_VERSION` moves from `"consentimiento-v2"` to
+`"consentimiento-v3"`. Nothing else in that module changed -- `has_consented`/`record_consent`
+already take `version` as a parameter, and `body/identity.py`'s gate already re-asks on any
+version bump with no code of its own naming one.
+
+**Text, verbatim, both catalogs** (`body/i18n/es.json`, `body/i18n/en.json`):
+`privacidad.consentimiento.que` now names the heart rate and stress figures kept minute by minute
+on the days an experiment or a study needs them, and -- "if you add them" -- experiments and the
+moments logged (a cold shower, a breathing round), alongside the shift calendar, goals, habits and
+self-recorded measures already named since v2. No other consent key changed. Neither string
+tripped `tests/test_registro_tu.py`'s register guard (no usted marker, no new `su/sus/tiene/puede`
+hit) or its link-punctuation guard, so no allow-list needed editing.
+
+**Tests** (`tests/test_privacidad.py`): `test_v2_only_acceptance_is_sent_to_consent_and_accepting_adds_v3_keeping_v2`
+mirrors the v1->v2 precedent -- a person carrying only a `consentimiento-v2` row is sent to
+`/privacidad/consentimiento` on the next request same as a person with no row at all, and
+accepting inserts a `consentimiento-v3` row while leaving the v2 row in place (both counted at 1
+afterward). `test_v3_acceptance_is_not_sent_to_consent_again` checks the other direction: a person
+already carrying the current version's row reaches `/` without a redirect. A new
+`ConsentTextNamesTheNewDataTest` reads both catalogs' `consentimiento.que` string directly and
+asserts "minuto a minuto"/"minute by minute", "experimento"/"experiment" and
+"momentos"/"moments" each appear, in es and en respectively. The existing accept/decline/language
+tests keep passing unchanged: none asserted the literal version string except through
+`privacidad.CONSENT_VERSION` itself, which now reads v3 everywhere they use it.
+
+**Gate**, once, foreground, on the branch tip: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -> `Ran 1672 tests in 304.271s ... OK (skipped=1)`. 4 more than the prior recorded
+floor (1668, `BODY-EXPERIMENTOS-ESQUEMA-1-M`): the four new test methods above; `skipped=1`
+carries over unchanged.
+
+**Not merged -- stops AWAITING_APPROVAL on the branch**, per the spec's own approval-reason: the
+orchestrator reads the consent page in es and en at 375 px on the demo home before the merge. The
+diff is customer-facing bytes (the consent text a person reads) with no schema change and no
+cross-repo/DTO change -- `stopped_on: customer-bytes` -- and the spec's body says to stop here
+rather than authorizing the merge in words, so Merge Policy A's green-on-all-three path does not
+apply.
+
+**Commit**: `7a3047e` on `feat/body-experimentos-consentimiento-1`, on top of `fabbbe9` (tip of
+`main` at dispatch). 4 files changed (`body/i18n/en.json`, `body/i18n/es.json`,
+`body/privacidad.py`, `tests/test_privacidad.py`), 67 insertions, 3 deletions.
