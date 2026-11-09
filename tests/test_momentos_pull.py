@@ -1,9 +1,14 @@
 """BODY-MOMENTOS-PULL-1: intraday heart-rate/stress storage (db.guardar_intradia/intradia_
 almacenado/intradia) and the on-demand pull (pull.traer_intradia/traer_intradia_rango) and CLI
 task (body.vivo's `intradia`, tested in tests/test_vivo.py) built on BODY-EXPERIMENTOS-1-INV slice
-7 with BODY-INTRADIA-SPOTCHECK-1's measured facts. No network: every Garmin call goes through
-garmin_adapter.fetch_intraday, stubbed. Invented demo data only, no real health figures.
+7 with BODY-INTRADIA-SPOTCHECK-1's measured facts. BODY-MOMENTOS-DIA-COMPLETO-1 adds the "stored
+means complete" margin (db.INTRADIA_MARGEN_CIERRE_H): AlmacenadoCierreTest and
+TraerIntradiaRefetchTest set up a day's fetched_at directly by SQL (deterministic, independent of
+the real wall clock) instead of going through guardar_intradia's own `datetime.now()`. No network:
+every Garmin call goes through garmin_adapter.fetch_intraday, stubbed. Invented demo data only, no
+real health figures.
 """
+import json
 import os
 import tempfile
 import unittest
@@ -34,6 +39,19 @@ def _db(case: unittest.TestCase, name: str) -> "db.sqlite3.Connection":
 
 def _intraday_data(day, hr_payload=HR_PAYLOAD, stress_payload=STRESS_PAYLOAD, zone="America/Bogota"):
     return garmin_adapter.parse_intraday(day, {"heart_rate": hr_payload, "stress": stress_payload}, zone)
+
+
+def _insertar_fetched_at(conn, person_id, day, fetched_at_iso, kind="intradia_fc", payload=HR_PAYLOAD):
+    """Writes a raw_payload row with an explicit fetched_at, bypassing guardar_intradia's own
+    `datetime.now()` -- the margin rule compares a stored fetched_at against a fixed instant
+    computed from `day` and the person's zone, so these tests control the input directly instead
+    of patching the wall clock."""
+    conn.execute(
+        "INSERT OR REPLACE INTO raw_payload (person_id, day, kind, source, fetched_at, payload) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (person_id, day, kind, garmin_adapter.SOURCE, fetched_at_iso, json.dumps(payload)),
+    )
+    conn.commit()
 
 
 class StorageRoundTripTest(unittest.TestCase):
@@ -91,6 +109,55 @@ class AlmacenadoTest(unittest.TestCase):
 
     def test_an_empty_marker_counts_as_stored(self):
         db.guardar_intradia(self.conn, self.person_id, "2026-11-05", "intradia_fc", None)
+        self.assertTrue(db.intradia_almacenado(self.conn, self.person_id, "2026-11-05"))
+
+
+class AlmacenadoCierreTest(unittest.TestCase):
+    """BODY-MOMENTOS-DIA-COMPLETO-1: "stored" means fetched_at is at least
+    db.INTRADIA_MARGEN_CIERRE_H hours after day's local close. Day "2026-11-05" in
+    America/Bogota (UTC-5, no DST) closes at 2026-11-06T05:00:00+00:00; the margin pushes the
+    threshold to 2026-11-06T11:00:00+00:00."""
+
+    def setUp(self):
+        self.conn = _db(self, "cierre.db")
+        db.init(self.conn)
+        self.person_id = db.local_person_id(self.conn)
+        self.conn.commit()
+
+    def test_fetched_before_the_day_ends_is_not_stored(self):
+        _insertar_fetched_at(self.conn, self.person_id, "2026-11-05", "2026-11-05T12:00:00+00:00")
+        self.assertFalse(db.intradia_almacenado(self.conn, self.person_id, "2026-11-05"))
+
+    def test_fetched_within_the_margin_after_midnight_is_not_stored(self):
+        _insertar_fetched_at(self.conn, self.person_id, "2026-11-05", "2026-11-06T08:00:00+00:00")
+        self.assertFalse(db.intradia_almacenado(self.conn, self.person_id, "2026-11-05"))
+
+    def test_fetched_after_the_margin_is_stored(self):
+        _insertar_fetched_at(self.conn, self.person_id, "2026-11-05", "2026-11-06T12:00:00+00:00")
+        self.assertTrue(db.intradia_almacenado(self.conn, self.person_id, "2026-11-05"))
+
+    def test_empty_marker_fetched_before_the_day_ends_is_not_final(self):
+        _insertar_fetched_at(self.conn, self.person_id, "2026-11-05", "2026-11-05T12:00:00+00:00", payload=None)
+        self.assertFalse(db.intradia_almacenado(self.conn, self.person_id, "2026-11-05"))
+
+    def test_empty_marker_fetched_within_the_margin_is_not_final(self):
+        _insertar_fetched_at(self.conn, self.person_id, "2026-11-05", "2026-11-06T08:00:00+00:00", payload=None)
+        self.assertFalse(db.intradia_almacenado(self.conn, self.person_id, "2026-11-05"))
+
+    def test_empty_marker_fetched_after_the_margin_is_final(self):
+        _insertar_fetched_at(self.conn, self.person_id, "2026-11-05", "2026-11-06T12:00:00+00:00", payload=None)
+        self.assertTrue(db.intradia_almacenado(self.conn, self.person_id, "2026-11-05"))
+
+    def test_zone_changes_whether_the_same_fetch_instant_is_complete(self):
+        """The same UTC fetch time, 2026-11-06T07:00:00Z: Bogota's threshold (11:00Z) is not yet
+        reached, but Madrid's (05:00Z, one hour ahead of UTC in November) already is."""
+        self.conn.execute("UPDATE person SET timezone = 'America/Bogota' WHERE id = ?", (self.person_id,))
+        self.conn.commit()
+        _insertar_fetched_at(self.conn, self.person_id, "2026-11-05", "2026-11-06T07:00:00+00:00")
+        self.assertFalse(db.intradia_almacenado(self.conn, self.person_id, "2026-11-05"))
+
+        self.conn.execute("UPDATE person SET timezone = 'Europe/Madrid' WHERE id = ?", (self.person_id,))
+        self.conn.commit()
         self.assertTrue(db.intradia_almacenado(self.conn, self.person_id, "2026-11-05"))
 
 
@@ -165,6 +232,51 @@ class TraerIntradiaTest(unittest.TestCase):
         with mock.patch("body.pull.garmin_adapter.fetch_intraday", return_value=data) as m:
             pull.traer_intradia(self.conn, self.person_id, "2026-11-05")
         m.assert_called_once_with("2026-11-05", "Europe/Madrid")
+
+
+class TraerIntradiaRefetchTest(unittest.TestCase):
+    """BODY-MOMENTOS-DIA-COMPLETO-1: traer_intradia re-fetches a day stored before its close,
+    overwriting the partial row, and counts that as "fetched" rather than "already_stored"."""
+
+    def setUp(self):
+        self.conn = _db(self, "refetch.db")
+        db.init(self.conn)
+        self.person_id = db.local_person_id(self.conn)
+        self.conn.commit()
+
+    def test_day_stored_before_its_close_is_refetched(self):
+        _insertar_fetched_at(self.conn, self.person_id, "2026-11-05", "2026-11-05T12:00:00+00:00")
+        data = _intraday_data("2026-11-05")
+        with mock.patch("body.pull.garmin_adapter.fetch_intraday", return_value=data) as m:
+            estado = pull.traer_intradia(self.conn, self.person_id, "2026-11-05")
+        m.assert_called_once()
+        self.assertEqual(estado, "fetched")
+        self.assertEqual(
+            len(db.intradia(self.conn, self.person_id, "2026-11-05", "intradia_fc", "America/Bogota")), 2)
+
+    def test_day_stored_within_the_margin_after_midnight_is_refetched(self):
+        _insertar_fetched_at(self.conn, self.person_id, "2026-11-05", "2026-11-06T08:00:00+00:00")
+        data = _intraday_data("2026-11-05")
+        with mock.patch("body.pull.garmin_adapter.fetch_intraday", return_value=data) as m:
+            estado = pull.traer_intradia(self.conn, self.person_id, "2026-11-05")
+        m.assert_called_once()
+        self.assertEqual(estado, "fetched")
+
+    def test_day_stored_after_the_margin_is_skipped(self):
+        _insertar_fetched_at(self.conn, self.person_id, "2026-11-05", "2026-11-06T12:00:00+00:00")
+        with mock.patch("body.pull.garmin_adapter.fetch_intraday") as m:
+            estado = pull.traer_intradia(self.conn, self.person_id, "2026-11-05")
+        m.assert_not_called()
+        self.assertEqual(estado, "already_stored")
+
+    def test_refetch_of_a_partial_day_is_counted_as_fetched_by_the_range_helper(self):
+        _insertar_fetched_at(self.conn, self.person_id, "2026-11-05", "2026-11-05T12:00:00+00:00")
+        data = _intraday_data("2026-11-05")
+        with mock.patch("body.pull.garmin_adapter.fetch_intraday", return_value=data), \
+             mock.patch("body.pull.time.sleep"):
+            fetched, stored, empty = pull.traer_intradia_rango(
+                self.conn, self.person_id, date(2026, 11, 5), date(2026, 11, 5))
+        self.assertEqual((fetched, stored, empty), (1, 0, 0))
 
 
 class TraerIntradiaRangoTest(unittest.TestCase):
