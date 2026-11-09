@@ -385,6 +385,8 @@
   "metric.vo2max": "VO2 máx.",
   "metric.vo2max_cycling": "VO2 máx. (bici)",
   "metric.fitness_age": "Edad física",
+  "metric.flex_alcance_cm": "Alcance hacia el suelo (cm)",
+  "metric.snoring_min": "Ronquido (min por noche)",
   "metric.resting_hr.sentence": "pulso en reposo",
   "metric.hrv_last_night.sentence": "variabilidad del pulso",
   "metric.stress_avg.sentence": "estrés promedio",

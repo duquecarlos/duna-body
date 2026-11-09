@@ -385,6 +385,8 @@
   "metric.vo2max": "VO2 max",
   "metric.vo2max_cycling": "VO2 max (cycling)",
   "metric.fitness_age": "Fitness age",
+  "metric.flex_alcance_cm": "Reach toward the floor (cm)",
+  "metric.snoring_min": "Snoring (min per night)",
   "metric.resting_hr.sentence": "resting heart rate",
   "metric.hrv_last_night.sentence": "heart rate variability",
   "metric.stress_avg.sentence": "average stress",

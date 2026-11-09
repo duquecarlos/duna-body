@@ -50,6 +50,11 @@ SECONDARY = ["hrv_weekly_avg", "sleep_score", "active_kcal", "intensity_minutes"
              "body_battery_sleep_charge", "respiration_awake", "high_stress_min"]
 CARDIO_SPARSE = ["vo2max", "vo2max_cycling", "fitness_age"]
 
+# Self-measured (BODY-ENTRENO-SCHEMA-1): the person's own figures, never the watch's -- sparser
+# than daily and stored with source='self' (_seed_self_metrics), never mixed into save_day's
+# per-day 'garmin' batch.
+SELF_MEASURED = ["flex_alcance_cm", "snoring_min"]
+
 RANGES = {
     "resting_hr": (48, 62), "hrv_last_night": (40, 90), "hrv_weekly_avg": (45, 85),
     "sleep_minutes": (320, 480), "sleep_score": (40, 95), "stress_avg": (15, 45),
@@ -59,6 +64,7 @@ RANGES = {
     "sleep_rem_min": (40, 100), "sleep_awake_min": (5, 40), "body_battery_sleep_charge": (10, 60),
     "respiration_awake": (12, 18), "high_stress_min": (0, 90),
     "vo2max": (38, 46), "vo2max_cycling": (40, 48), "fitness_age": (28, 42),
+    "flex_alcance_cm": (0, 25), "snoring_min": (0, 70),
 }
 # A night shift (or the recovery day right after) costs sleep and raises stress -- the correlation
 # the "turnos" chapter's tutorial task is built to show. Added to the sampled value, then clamped.
@@ -255,6 +261,24 @@ def _seed_days(conn, db, rng: random.Random, all_days: list[date], person_id: in
     return metric_rows, activity_rows
 
 
+def _seed_self_metrics(conn, db, rng: random.Random, all_days: list[date], person_id: int) -> int:
+    """The two generic self-measured metric_def rows (BODY-ENTRENO-SCHEMA-1), sparser than the
+    watch's daily figures: a flexibility reach about once a week, a snoring minutes-per-night
+    value most nights -- both with source='self', via db.set_metric so they never ride along in
+    save_day's single 'garmin'-sourced batch."""
+    rows = 0
+    for d in all_days:
+        if d.weekday() == 0:
+            db.set_metric(conn, d.isoformat(), "flex_alcance_cm", _value(rng, "flex_alcance_cm", 0.0),
+                           "self", person_id)
+            rows += 1
+        if rng.random() < 0.85:
+            db.set_metric(conn, d.isoformat(), "snoring_min", _value(rng, "snoring_min", 0.0), "self", person_id)
+            rows += 1
+    conn.commit()
+    return rows
+
+
 def _seed_shifts(conn, shift_import, turnos_costo, person_id: int,
                   all_days: list[date]) -> tuple[int | None, int | None, int, int]:
     confirmed_days, proposed_days = all_days[:-7], all_days[-7:]
@@ -382,6 +406,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     first_monday, anchor_monday = fechas.lunes_de(all_days[0]), fechas.lunes_de(anchor)
 
     metric_rows, activity_rows = _seed_days(conn, db, rng, all_days, person_id)
+    metric_rows += _seed_self_metrics(conn, db, rng, all_days, person_id)
 
     confirmed_id, proposed_id, night_weeks, night_blocks = _seed_shifts(
         conn, shift_import, turnos_costo, person_id, all_days)
