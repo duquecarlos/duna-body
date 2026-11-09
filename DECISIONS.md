@@ -12927,3 +12927,63 @@ person_id, "<titulo>", ["resting_hr"], {"tipo": "dia"}, {"turno_en": None, "turn
 "excluir_tras_noche": False}, fecha_inicio="<ISO date>")` against the demo's db, then open `/goals`
 for its card (and closed-card archive) and `/experiments/{id}` for the detail page; `/` carries the
 day's own experiment line when today falls inside the experiment's day filter and date range.
+
+## BODY-EXPERIMENTOS-PANTALLA-1-M2 -- four corrections from the 375 px re-measure
+
+Continues BODY-EXPERIMENTOS-PANTALLA-1 (+ -M, commit `d218828`, on
+`feat/body-experimentos-pantalla-1`). Four things the orchestrator's own 375 px measurement found
+wrong, approved by ORCH-CARLOS-DELEGATES-TIER-1-1; the verdict model (`body/experimentos.py`) is
+untouched, as that approval says -- every count below is read from `experimento_registro` /
+`habit_check`, the verdict itself still from `experimentos.veredicto`.
+
+1. **The progress line now counts what the person marked, not what they didn't.** It used to read
+   `len(dias_excluidos_no_ocurrio)` as "sin hacer" -- a day with no mark at all read exactly like
+   one explicitly marked false, so a just-started experiment showed "0 días hechos, 1 sin hacer" on
+   its first morning. `_progreso_txt` (`body/rutas/experimentos.py`) now takes `hechos` from
+   `ver["dias_prueba"]` (reused from the verdict, not re-derived) and splits
+   `ver["dias_excluidos_no_ocurrio"]` by whether `_dias_marcados` (the same
+   `experimento_registro`/`habit_check` source `veredicto`'s own `_ocurrio_por_dia` reads) carries a
+   mark for that day: marked false -> `no_hechos`, no mark at all -> `sin_marcar`. TODAY, unmarked,
+   counts for neither (the day is not over). Es "{hechos} hechos · {no_hechos} no · {sin_marcar} sin
+   marcar", en "{hechos} done · {no_hechos} not done · {sin_marcar} not marked" -- a zero part is
+   left out, and nothing marked reads es "todavía ningún día marcado" / en "no days marked yet". New
+   keys: `experimentos.progreso_hechos`, `experimentos.progreso_no_hechos`,
+   `experimentos.progreso_sin_marcar`, `experimentos.progreso_vacio`, replacing the old
+   `experimentos.progreso`. Same line on the card and the detail page (`_tarjeta_desde_veredicto` now
+   threads `conn`, `person_id` and `today` through to build it).
+2. **Hoy's two buttons sit side by side on the left.** `body/templates/today.html`'s button row
+   gains the existing `justify-start` utility class alongside `.row gap-8` (`.row` itself untouched,
+   per the approval's own instruction) so the floating assistant button never covers "Hoy no" / "Not
+   today" while scrolling. Once today is marked, the chosen button carries `aria-pressed="true"`
+   plus the `.btn.on` selected style already used elsewhere for a primary/active action (an existing
+   accent token, not a new colour, not a grading one); the other stays `aria-pressed="false"`, and
+   posting it still changes the mark. `hoy_contexto` now returns a `marcado` field ("1" / "0" /
+   `None`) instead of baking the mark into the line text; the "· hecho" suffix is gone -- one signal,
+   not two -- and `aria-pressed` is the screen-reader cue. Removed keys:
+   `today.experimento_linea_marcado`, `experimentos.marca.hecho`, `experimentos.marca.no_hecho`
+   (their only caller was this line).
+3. **A closed card on Metas now shows its date range and day-filter line**, like an active card:
+   `body/templates/goals.html`'s closed-card loop gains the `{{ e.dias_txt }} · {{ e.fecha_txt }}`
+   line the active loop already had -- both fields were already on the card dict, just never
+   rendered for a closed one.
+4. **The detail page's two means say what they count.** `experimentos.media_linea` was "{etiqueta}
+   ({n} días): {valor}" with `n` = days WITH A FIGURE (a night without a reading drops out), which
+   read as test days. Now es "{etiqueta} ({n} con dato): {valor}", en "{etiqueta} ({n} with a
+   reading): {valor}" -- one key, so both the test-days and the baseline lines pick it up.
+
+`tests/test_i18n_paridad.py` and `tests/test_registro_tu.py` needed no table edits: both scan
+generically (literal `t()` keys, `su/sus/tiene/puede`) and passed unchanged against the new/removed
+keys above. `tests/test_accesibilidad.py` and `tests/test_rendimiento.py` likewise passed unchanged.
+`tests/test_experimentos_pantalla.py` gains: a fresh experiment's empty sentence (es, en); hecho/no/
+sin-marcar each counted separately, including a habit-linked experiment reading `habit_check`; zero
+parts left out; `aria-pressed` before and after marking on Hoy, and that posting the other button
+still flips the mark; the closed card's date range and day-filter line; the "con dato" / "with a
+reading" wording (es, en).
+
+**Gate**, once, foreground, on the branch tip (commit `1217ddf`): `.venv/Scripts/python.exe -m
+unittest discover tests -t .` -> `Ran 1809 tests in 524.584s ... OK (skipped=1)`.
+
+**Stops AWAITING_APPROVAL**, committed on the branch, not merged: the diff changes customer-facing
+bytes (`body/i18n/es.json`, `body/i18n/en.json`, `body/templates/today.html`,
+`body/templates/goals.html`), which fails merge policy A on its own, and the approval reason already
+named this stop for the orchestrator's own 375 px re-measure, independent of the gate result.
