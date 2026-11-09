@@ -11776,3 +11776,57 @@ discover tests -t .` -- `Ran 1578 tests in 436.203s ... OK (skipped=1)`.
 **Merge**: `git checkout main`; `git merge --no-ff feat/body-idioma-primera-1`, merge commit
 `e901bc8f4c9921b91e81ed16437de43f1525d8c8`. The merge tree (`04fa3767e1eb55829b9bd045e430755e29d70001`)
 is identical to the branch tree, so the gate above stands for the merged tree without a re-run.
+
+## BODY-SEGURIDAD-ALLOWLIST-1 -- re-key the redirect-target ALLOWLIST off line number (2026-11-09)
+
+`tests/test_seguridad.py`'s `RedirectTargetsAreSafeTest` keyed its `ALLOWLIST` of reasoned
+`RedirectResponse` call sites by exact `(file, line number)` -- the line-number note on
+BODY-IDIOMA-PRIMERA-1 above is the cost of that: a worker had to fold an import and an argument
+into existing lines in `body/rutas/sesion.py` purely to keep two unrelated redirects' line numbers
+still, because any edit above one of them would have moved the line and turned the gate red with
+a false alarm.
+
+**Old key**: `(file, line)`, e.g. `("body/rutas/sesion.py", 50)`.
+
+**New key**: `(file, enclosing function name, ast.unparse(target))`, e.g.
+`("body/rutas/sesion.py", "login_start", "url")`,
+`("body/rutas/sesion.py", "login_callback", "result.return_to or '/'")`,
+`("body/rutas/ajustes.py", "set_trabaja_turnos", "volver")` -- the three current call sites, read
+from the files rather than carried over blind. `_enclosing_function` (already in the module) finds
+the function; a module-level redirect would key with function name `None`. This key survives an
+unrelated edit anywhere else in the file, including one that shifts the redirect's own line number,
+and still changes if the redirect moves to a different function or its target expression changes.
+
+**Why**: the key only needs to survive edits that do not touch the redirect's own meaning. Line
+number fails that; (file, enclosing function, target source) does not, because nothing about an
+unrelated edit elsewhere in the module changes either of those.
+
+Both assertions kept their subject, unchanged in scope: an unlisted unsafe target still fails the
+test, naming `file:line` in the failure message (line numbers stay in the message only, never in
+the key, so a failure is still easy to locate); an `ALLOWLIST` entry that no longer matches any
+call site still fails as stale. The scan itself was factored out of the test method into
+`_scan_redirect_targets(tree, rel, allowlist)`, a module-level helper the real test and three new
+synthetic cases share -- `RedirectAllowlistKeyStrictnessTest`, built from small in-memory sources
+parsed with `ast.parse`, touching nothing under `body/`:
+
+* a listed call site moved down by ten inserted lines still passes (proves the re-key actually
+  stopped tracking line number);
+* the same function redirecting to a different, unsanitized target still fails (proves the key
+  did not become "any redirect in this function is fine");
+* the listed target text appearing in a different function still fails (proves the key did not
+  become "this target string anywhere is fine").
+
+**Merge policy A**: no schema/migration change, no customer-facing bytes (test file only, no
+template, no i18n string), no cross-repo contract or DTO change -- all three pass. This spec's
+approval reason says "Merge approved."
+
+**Gate**, once, foreground, on the branch before merging: `.venv/Scripts/python.exe -m unittest
+discover tests -t .` -- `Ran 1581 tests in 251.600s ... OK (skipped=1)`.
+
+**Commit**: on `feat/body-seguridad-allowlist-1`, cut from `main` at
+`c9605d2caeabc7b6e17f35a080ab8e0e833e25f1` (tip of `main` at dispatch, after BODY-IDIOMA-PRIMERA-1's
+ledger entry), `877af3f1727a492fcf2a3cdb0d08ae38a5b80649` (`tests/test_seguridad.py` only).
+
+**Merge**: `git checkout main`; `git merge --no-ff feat/body-seguridad-allowlist-1`, merge commit
+`9a6291e057f5e990e400341a0bd56358167b40b5`. The merge tree (`df4313fe5a7541e3ebc87629f1f24a04b8f42484`)
+is identical to the branch tree, so the gate above stands for the merged tree without a re-run.
