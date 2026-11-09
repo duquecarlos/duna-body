@@ -10953,3 +10953,82 @@ the merged tree, not re-run.
 on top of `71a610f8fa88f0bcb5521d23952825203344c5c5`); `e40c6f7` (ledger entry, same branch);
 `12325ddc77ddb6aa0b972b2a262b170a1802e835` (merge `--no-ff` into `main`, parents
 `71a610f8fa88f0bcb5521d23952825203344c5c5` and the branch tip after the ledger commit).
+
+## BODY-ENTRENO-PULL-1 -- workout_set write helpers, sticky person correction, no job wired yet (2026-11-09)
+
+`BODY-ENTRENO-1-INV` slice 3. With the `workout_set` table merged (`BODY-ENTRENO-SCHEMA-1`,
+`135486a`) and the on-demand reader `fetch_exercise_sets` (`BODY-ENTRENO-ADAPTER-1`), this slice
+adds the one place that stores a session's sets, next to `save_day`/`set_metric` in `body/db.py`,
+same style, no migration.
+
+`save_exercise_sets(conn, person_id, source, source_id, sets)`: upserts each `ExerciseSet`-shaped
+item onto the UNIQUE slot `(person_id, activity_source, activity_source_id, set_order)`, 1-indexed
+in the order given, writing only `garmin_*`, `set_type` and `updated_at` -- never `person_*`,
+never `corrected_by_person` (the investigation's Q2 rule: a re-read from the watch rewrites the
+watch's own columns and never clears a person's correction). A slot beyond `len(sets)` -- the
+watch no longer reports it -- is deleted unless `corrected_by_person = 1`; a corrected slot in that
+range stays, garmin_* and all, untouched by the trim. Requires the activity row to already exist,
+via the table's own FK (no extra check needed). `correct_exercise_set(conn, person_id, source,
+source_id, set_order, *, exercise=None, category=None, reps=None, weight_kg=None, note=None)`:
+writes the given `person_*` fields and sets `corrected_by_person = 1`, via an upsert whose
+`DO UPDATE` keeps a field's prior value when the matching keyword is left `None` (`COALESCE` against
+the stored column) -- one correction can touch just one field without erasing another correction
+already there. Creates the slot (`set_type = 'active'`, every `garmin_*` column `NULL`) when the
+watch never reported it. Person-scoped by construction: the UNIQUE slot a conflict can land on
+always includes `person_id`, so this can never write another person's row, and a plain `SELECT ...
+WHERE person_id = ?` can never read one either -- no separate ownership check needed anywhere.
+`create_manual_session(conn, person_id, day, start_local, title, duration_s=None) -> source_id`: an
+`activity` row with `source = 'manual'` and a generated `source_id` (`manual-<uuid4 hex>`), filling
+only columns the table already has (`title` -> `name`; no manual `type`). `exercise_sets(conn,
+person_id, source, source_id)`: the sets in order, each with a display value (the person's
+correction when `corrected_by_person`, else the watch's reading -- weight carries its unit:
+`"kg"` for a person's correction, the watch's own stated unit otherwise, `None` with the value when
+absent) plus both originals (`garmin`/`person` sub-dicts), for the assistant to read.
+
+`body/pull.py` gained `traer_series(conn, person_id, activity_source_id, token_str=None)`: the one
+call site to `garmin_adapter.fetch_exercise_sets` (the only Garmin access here), saved with
+`db.save_exercise_sets`. Returns the sets-saved count, or `(count, token_after)` when `token_str` is
+given -- the same dual-return shape `fetch_exercise_sets` itself already uses for the hosted
+per-person token path. **Not called by `pull_all`, `pull_hosted`, `pull_backfill_hosted` or
+`main`** -- Garmin traffic and the jobs' pace are unchanged; this runs only on demand, when a person
+logs or corrects a session (the assistant tools, slice 4).
+
+**Tests** (`tests/test_entreno_sets.py`, invented fixtures, no network -- every Garmin call stubbed
+through `body.pull.garmin_adapter`): a first save stores the watch's sets in order; absent weight
+stays `NULL` with its unit; saving against a non-existent activity raises (the FK); a correction
+survives a second save with different watch values (`garmin_*` updated, `person_*` and
+`corrected_by_person` intact); an uncorrected stale slot is removed while a corrected one stays,
+garmin columns untouched; `correct_exercise_set` creates a missing slot, leaves an unmentioned field
+at its prior correction, and never touches `garmin_*`/`set_type` on an existing slot; a manual
+session with spoken sets (correct_exercise_set against `create_manual_session`'s `source_id`);
+`exercise_sets` displays the watch's values when uncorrected and the person's when corrected, both
+originals always present; person A cannot read or correct person B's sets (two people, same
+`source_id`, scoped rows); `traer_series` saves and returns the count locally and `(count,
+token_after)` hosted; and `pull_all`/`pull_hosted`/`pull_backfill_hosted` each run with
+`garmin_adapter.fetch_exercise_sets` replaced by a `Mock` that must stay uncalled, proving none of
+the three jobs reach it.
+
+**Gate**, once, foreground, on the branch tip before merge: `.venv/Scripts/python.exe -m unittest
+discover tests -t .` -- `Ran 1480 tests in 198.723s ... OK (skipped=1)`. 18 more tests than the
+prior recorded floor (1462, `BODY-ENTRENO-ADAPTER-1`), matching this slice's 18 new test methods
+exactly; `skipped=1` carries over unchanged.
+
+**Merged** `feat/body-entreno-pull-1` into `main` with `--no-ff` (approval-reason authorises the
+build and names the merge: "Carries out BODY-ENTRENO-1-INV slice 3 as designed ... Adds write
+helpers next to save_day and set_metric, no migration."). Diff from `main`'s prior tip is
+`body/db.py`, `body/pull.py` and `tests/test_entreno_sets.py` only -- no schema or migration change
+(no `CREATE`/`ALTER`/`SCHEMA` touched, confirmed by the diff itself), no customer-facing bytes
+(nothing reaches a screen or route), no cross-repo contract change, so Merge Policy A clears
+without waiting.
+
+Merge was a clean fast-forward-shaped `--no-ff`: merge commit's tree
+(`6111903efa434c1725c1d7b569d319f748db1283`) is byte-identical to the branch tip's tree (same sha),
+confirmed via `git diff HEAD feat/body-entreno-pull-1` (empty) -- the gate above already covers the
+merged tree, not re-run.
+
+`main` now at `7b5d08a8b54bfa79b5ab4646c596c8eb5711f870`. `git status --porcelain` empty on `main`.
+
+**Commits**: `fe35df0b16a978311a9e2427500a97bebd54bb2c` (slice, on `feat/body-entreno-pull-1`, on
+top of `04cc420429c4c4a32ef56ab09dbc66782eb36042`); `7b5d08a8b54bfa79b5ab4646c596c8eb5711f870`
+(merge `--no-ff` into `main`, parents `04cc420429c4c4a32ef56ab09dbc66782eb36042` and
+`fe35df0b16a978311a9e2427500a97bebd54bb2c`).
