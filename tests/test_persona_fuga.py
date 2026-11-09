@@ -178,6 +178,20 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
         (person_id, gid, DAYS[-1], f"ZZ{tag}-PLAN"),
     )
 
+    # Wave 9 (BODY-EXPERIMENTOS-ESQUEMA-1): experimento, experimento_registro and moment are all
+    # directly person-keyed (each carries its own person_id column), so they are seeded here like
+    # every other such table -- no household needed, nothing "reached through" another id. No
+    # screen, API, export or assistant tool reads any of the three yet, so their markers go in
+    # _markers_of's docstring list of exclusions alongside shift_batch_item.code, not into the
+    # active marker list: a marker that renders nowhere would make the "appears for its own owner"
+    # half of this guard vacuous.
+    eid = db.crear_experimento(
+        conn, person_id, f"ZZ{tag}-EXPERIMENTO", ["resting_hr"], {"tipo": "dia"},
+        {"turno_en": None, "turno_fuera": None, "excluir_tras_noche": False},
+    )
+    mid = db.crear_momento(conn, person_id, f"{DAYS[-1]}T07:00:00-05:00", "manual", f"ZZ{tag}-MOMENTO")
+    db.registrar_dia_experimento(conn, eid, person_id, DAYS[-1], True, f"ZZ{tag}-REGISTRO", mid)
+
     agente_ajustes.set_nivel_datos(conn, person_id, "completo")
     privacidad.record_consent(conn, person_id)
 
@@ -223,7 +237,10 @@ def _markers_of(tag: str) -> list[str]:
     screen, API or export reads that column today (turnos.py's preview/shifts.html show only
     counts and kept-days; privacidad.export_person's shift_batches is a plain `SELECT * FROM
     shift_batch`, never joined to its items) -- a marker that renders nowhere would make the
-    "appears for its own owner" half of this guard vacuous, not a real check."""
+    "appears for its own owner" half of this guard vacuous, not a real check. Same reason excludes
+    wave 9's ZZ<tag>-EXPERIMENTO / ZZ<tag>-REGISTRO / ZZ<tag>-MOMENTO (seeded for the table census
+    below, BODY-EXPERIMENTOS-ESQUEMA-1-M): no route, API or assistant tool reads experimento,
+    experimento_registro or moment yet."""
     return [f"ZZ{tag}-{suffix}" for suffix in
             ("ACTIVIDAD", "SERIE", "TURNO", "META-PRIVADA", "HABITO", "NOTA", "META-PROPUESTA",
              "META-ARCHIVADA", "PLAN", "CONVERSACION", "MENSAJE", "DISPOSITIVO")] + [ENLACE_REF[tag]]

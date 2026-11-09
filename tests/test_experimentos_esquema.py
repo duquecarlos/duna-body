@@ -4,6 +4,7 @@ concept, only optionally linked to a habit: zero change to goal/habit, their CHE
 goals.evaluar_semana, goal_access or any reader of `goal`. Invented demo data only, no real health
 figures.
 """
+import re
 import unittest
 from pathlib import Path
 
@@ -66,6 +67,25 @@ class FreshDbTest(unittest.TestCase):
         for table in ("experimento", "experimento_registro", "moment"):
             n = self.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             self.assertEqual(n, 0, table)
+
+
+class ShiftKindsVocabularyTest(unittest.TestCase):
+    """BODY-EXPERIMENTOS-ESQUEMA-1-M: one spelling of the shift-kind vocabulary. The shift and
+    shift_batch_item CHECK constraints are parsed back out of the schema SQL and must equal
+    db.SHIFT_KINDS exactly, so a fourth spelling (the two CHECKs, validar_experimento,
+    shift_import.VALID_KINDS) can never drift from the others unnoticed."""
+
+    def test_schema_check_constraints_match_shift_kinds(self):
+        conn = _db(self, "vocabulario.db")
+        db.init(conn)
+        for table in ("shift", "shift_batch_item"):
+            sql = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+            ).fetchone()[0]
+            match = re.search(r"kind\s+TEXT NOT NULL CHECK \(kind IN \(([^)]*)\)\)", sql)
+            self.assertIsNotNone(match, f"{table}: no 'kind IN (...)' CHECK constraint found to parse")
+            kinds = tuple(k.strip().strip("'") for k in match.group(1).split(","))
+            self.assertEqual(kinds, db.SHIFT_KINDS, f"{table}'s CHECK constraint kinds drifted from db.SHIFT_KINDS")
 
 
 class ValidarExperimentoTest(unittest.TestCase):

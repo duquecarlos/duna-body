@@ -16,6 +16,11 @@ from . import config
 
 _CADENCE_N_PER_WEEK = re.compile(r"^\s*(\d+)\s*x\s*/\s*week\s*$", re.IGNORECASE)
 
+# The shift-kind vocabulary: shared by the shift and shift_batch_item CHECK constraints in SCHEMA
+# below, by validar_experimento's filtro_dias check, and by shift_import.VALID_KINDS (which reads
+# it from here) -- one spelling, not three.
+SHIFT_KINDS = ("morning", "afternoon", "night", "day", "off", "other")
+
 # Shared between SCHEMA (fresh installs) and the rebuild functions below (existing installs),
 # so the two paths can never drift apart.
 _GOAL_COLUMNS = """
@@ -250,7 +255,7 @@ CREATE TABLE IF NOT EXISTS workout_set (
 CREATE TABLE IF NOT EXISTS shift (
     person_id   INTEGER NOT NULL REFERENCES person(id),
     day         TEXT NOT NULL,             -- the day the shift starts
-    kind        TEXT NOT NULL CHECK (kind IN ('morning', 'afternoon', 'night', 'day', 'off', 'other')),
+    kind        TEXT NOT NULL CHECK (kind IN {SHIFT_KINDS!r}),
     code        TEXT,                      -- original code from the schedule, e.g. 'N'
     start_local TEXT,                      -- ISO local time; a night shift ends the next day
     end_local   TEXT,
@@ -282,7 +287,7 @@ CREATE TABLE IF NOT EXISTS shift_batch_item (
     id          INTEGER PRIMARY KEY,
     batch_id    INTEGER NOT NULL REFERENCES shift_batch(id),
     day         TEXT NOT NULL,
-    kind        TEXT NOT NULL CHECK (kind IN ('morning', 'afternoon', 'night', 'day', 'off', 'other')),
+    kind        TEXT NOT NULL CHECK (kind IN {SHIFT_KINDS!r}),
     code        TEXT,
     start_local TEXT,
     end_local   TEXT,
@@ -298,7 +303,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_shift_batch_item_slot
 -- shift_batch rows, the same propose-then-confirm flow as a file import). `cycle` is a JSON array
 -- of {"kind", "start", "end"} entries, one per day of the cycle; `kind` is from the
 -- same vocabulary as shift.kind -- 'morning', 'afternoon', 'night', 'day', 'off', 'other'
--- (body/shift_import.py's VALID_KINDS); `start`/`end` are "HH:MM" strings, null on an `off` day.
+-- (SHIFT_KINDS above); `start`/`end` are "HH:MM" strings, null on an `off` day.
 -- Validated and expanded by body/patron_turnos.py.
 CREATE TABLE IF NOT EXISTS shift_pattern (
     person_id     INTEGER PRIMARY KEY REFERENCES person(id),
@@ -1342,8 +1347,8 @@ def validar_experimento(metricas, ventana, filtro_dias) -> None:
     ventana: {"tipo": "dia"} or {"tipo": "intradia", "ancla": "despertar" | "momento",
     "antes_min": int >= 0 | null, "despues_min": int > 0}.
     filtro_dias: {"turno_en": [kinds] | null, "turno_fuera": [kinds] | null,
-    "excluir_tras_noche": bool} -- kinds from shift_import.VALID_KINDS (imported lazily here:
-    shift_import imports this module, so a module-level import would be circular).
+    "excluir_tras_noche": bool} -- kinds from SHIFT_KINDS (this module's own vocabulary;
+    shift_import.VALID_KINDS reads it from here, not the other way round).
     metricas: a non-empty list; for tipo 'dia' every key must be a known metric_def key, for
     'intradia' a key from METRICAS_INTRADIA.
     """
@@ -1367,11 +1372,10 @@ def validar_experimento(metricas, ventana, filtro_dias) -> None:
 
     if not isinstance(filtro_dias, dict) or set(filtro_dias) != {"turno_en", "turno_fuera", "excluir_tras_noche"}:
         _campo_invalido("filtro_dias", "needs exactly turno_en, turno_fuera and excluir_tras_noche")
-    from . import shift_import  # local: shift_import imports this module, so this stays lazy
     for campo in ("turno_en", "turno_fuera"):
         valor = filtro_dias[campo]
         if valor is not None and (
-            not isinstance(valor, list) or not valor or any(k not in shift_import.VALID_KINDS for k in valor)
+            not isinstance(valor, list) or not valor or any(k not in SHIFT_KINDS for k in valor)
         ):
             _campo_invalido("filtro_dias", f"{campo} must be null or a non-empty list of known shift kinds")
     if not isinstance(filtro_dias["excluir_tras_noche"], bool):
