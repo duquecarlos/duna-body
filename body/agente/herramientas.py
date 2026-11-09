@@ -42,8 +42,8 @@ import json
 import sqlite3
 from datetime import date, timedelta
 
-from .. import db, enlaces, fechas, goals, history, household, profile, pull, readiness, shift_import, \
-    turnos_costo, tutoriales
+from .. import catalogo_tendencias, db, enlaces, fechas, goals, history, household, profile, pull, readiness, \
+    shift_import, turnos_costo, tutoriales
 from ..i18n import LANGS
 from . import ajustes, propuestas
 
@@ -61,11 +61,10 @@ TURNOS_HERRAMIENTAS = frozenset({"leer_turnos", "leer_costo_turnos", "proponer_c
 def fijar_turnos_actual(valor: bool) -> None:
     _TURNOS_ACTUAL.set(bool(valor))
 
-TENDENCIA_METRICAS = ("readiness", "sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake", "steps",
-                      "vo2max", "fitness_age",
-                      "sleep_score", "sleep_deep_min", "sleep_rem_min", "sleep_light_min", "sleep_awake_min",
-                      "body_battery_high", "body_battery_low", "body_battery_sleep_charge",
-                      "stress_avg", "high_stress_min", "intensity_minutes", "active_kcal", "respiration_awake")
+# BODY-AGENTE-TENDENCIAS-CATALOGO-1: the same catalogue the Trends screen shows
+# (body/catalogo_tendencias.py), so a metric added there reaches leer_tendencias with no second,
+# hand-typed list to keep in step.
+TENDENCIA_METRICAS = catalogo_tendencias.TODAS
 RANGOS = ("7", "30", "90", "all")
 
 _SIN_PARAMETROS = {"type": "object", "properties": {}, "additionalProperties": False}
@@ -245,7 +244,12 @@ def _leer_como_calculo(conn: sqlite3.Connection, person_id: int, day: str) -> di
 
 
 def _tendencia_metric(conn: sqlite3.Connection, person_id: int, key: str, rango: str, last_day: str | None) -> dict | None:
-    p = profile.metric_profile(conn, key, person_id=person_id)
+    # A self-measured key (origen 'self') has no watch-sized cadence to wait on, so it gets a
+    # figure from its first value, same as the Trends screen's own _trend_card (BODY-AGENTE-
+    # TENDENCIAS-CATALOGO-1) -- the default min_days=14 would otherwise hide flex_alcance_cm and
+    # snoring_min from the assistant for two weeks after the person starts measuring them.
+    min_days = 1 if key in SELF_METRIC_KEYS else 14
+    p = profile.metric_profile(conn, key, person_id=person_id, min_days=min_days)
     if p is None:
         return None
     out = {"dias_con_datos": p.days, "primer_dia": p.first_day, "media_historica": p.all_mean,
