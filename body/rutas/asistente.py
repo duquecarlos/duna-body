@@ -107,6 +107,107 @@ def _actividad_txt(t: T, actividad: dict) -> str:
     return f"{nombre} · {t.minutes(duracion / 60)}" if duracion else nombre
 
 
+def _tarjeta_meta_nueva(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+    despues_txt = t("asistente.propuesta.meta_nueva", metric=t("metric." + despues["metric_key"]),
+                    direccion=t("asistente.propuesta.direccion." + despues["direction"]),
+                    valor=comun._fig_unit(t, despues["metric_key"], despues["target_value"], defs),
+                    fecha=comun._short_date(t, date.fromisoformat(despues["deadline"])))
+    return None, despues_txt, None
+
+
+def _tarjeta_cambio_meta(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+    metric_key = despues.get("metric_key")
+    antes_txt = _objetivo_txt(t, defs, metric_key, antes_json["target_value"], antes_json["deadline"])
+    despues_txt = _objetivo_txt(t, defs, metric_key, despues["target_value"], despues["deadline"])
+    return antes_txt, despues_txt, None
+
+
+def _tarjeta_confirmar_turnos(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+    resumen = antes_json["resumen"]
+    antes_txt = t("asistente.propuesta.turnos_actual", n=t.num(resumen["batch_count"]))
+    despues_txt = t("asistente.propuesta.turnos_nuevo")
+    return antes_txt, despues_txt, None
+
+
+def _tarjeta_idioma(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+    antes_txt = IDIOMA_LABEL.get(antes_json["lang"], antes_json["lang"])
+    despues_txt = IDIOMA_LABEL.get(despues["lang"], despues["lang"])
+    return antes_txt, despues_txt, None
+
+
+def _tarjeta_planear_entreno(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+    ejercicios_txt = ", ".join(_ejercicio_plan_txt(t, e) for e in despues["ejercicios"])
+    despues_txt = t("asistente.propuesta.entreno_plan", titulo=despues["titulo"],
+                    fecha=comun._short_date(t, date.fromisoformat(despues["day"])), ejercicios=ejercicios_txt)
+    return None, despues_txt, None
+
+
+def _tarjeta_registrar_entreno(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+    fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
+    titulo_manual = despues.get("titulo") if despues["manual"] else None
+    if titulo_manual:
+        despues_txt = t("asistente.propuesta.entreno_registrado_titulo", titulo=titulo_manual, fecha=fecha)
+    else:
+        despues_txt = t("asistente.propuesta.entreno_registrado", fecha=fecha)
+    if despues["manual"]:
+        series_tarjeta = [{"orden": i, "reloj": None, "tu": _serie_txt(t, s)}
+                           for i, s in enumerate(despues["series"], start=1)]
+    else:
+        # The watch side's readable name comes from the raw garmin_exercise/garmin_category in
+        # antes_json["sets_antes"] -- never from m["reloj"]["ejercicio"], which can already be a
+        # prior person correction (fix 1).
+        crudos = {s["set_order"]: s for s in antes_json["sets_antes"]}
+        series_tarjeta = []
+        for m in despues["mapeo"]:
+            crudo = crudos.get(m["set_order"], {})
+            nombre = _nombre_legible(crudo.get("garmin_exercise")) or _nombre_legible(crudo.get("garmin_category"))
+            series_tarjeta.append({"orden": m["set_order"], "reloj": _serie_txt(t, m["reloj"], nombre=nombre),
+                                    "tu": _serie_txt(t, m["tu"])})
+    return None, despues_txt, series_tarjeta
+
+
+def _tarjeta_registrar_medida(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+    metric_key = despues["metric_key"]
+    fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
+    antes_txt = None
+    if antes_json and antes_json.get("value") is not None:
+        antes_txt = t("asistente.propuesta.medida_valor", metric=t("metric." + metric_key),
+                      valor=comun._fig_unit(t, metric_key, antes_json["value"], defs), fecha=fecha)
+    despues_txt = t("asistente.propuesta.medida_valor", metric=t("metric." + metric_key),
+                    valor=comun._fig_unit(t, metric_key, despues["value"], defs), fecha=fecha)
+    return antes_txt, despues_txt, None
+
+
+def _tarjeta_marcar_habito(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+    habito = despues["habito_titulo"]
+    fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
+    if despues.get("actividad"):
+        despues_txt = t("asistente.propuesta.habito_hecho_actividad", habito=habito, fecha=fecha,
+                        actividad=_actividad_txt(t, despues["actividad"]))
+    else:
+        despues_txt = t("asistente.propuesta.habito_hecho", habito=habito, fecha=fecha)
+    antes_txt = None
+    if antes_json is not None and antes_json.get("done") is False:
+        antes_txt = t("asistente.propuesta.habito_no_marcado", habito=habito, fecha=fecha)
+    return antes_txt, despues_txt, None
+
+
+# One card builder per action (BODY-PROPUESTAS-TABLA-1), keyed exactly like body/agente/
+# propuestas.py's TABLA and body/agente/herramientas.py's `propuesta`-kind tools
+# (tests/test_propuestas_tabla.py enforces the three sets match). Each builder returns
+# (antes_txt, despues_txt, series_tarjeta); _tarjeta_propuesta below applies the shared frame.
+TARJETAS = {
+    "proponer_meta": _tarjeta_meta_nueva,
+    "proponer_cambio_meta": _tarjeta_cambio_meta,
+    "proponer_confirmar_turnos": _tarjeta_confirmar_turnos,
+    "proponer_idioma": _tarjeta_idioma,
+    "planear_entreno": _tarjeta_planear_entreno,
+    "registrar_entreno": _tarjeta_registrar_entreno,
+    "registrar_medida": _tarjeta_registrar_medida,
+    "marcar_habito": _tarjeta_marcar_habito,
+}
+
+
 def _tarjeta_propuesta(t: T, defs: dict, registro: dict) -> dict:
     """The `propuesta` SSE event payload (agent-capabilities-v1 section 2, decision 5): `antes`/
     `despues` are short plain-word strings in the person's language, built here from the record's
@@ -116,70 +217,7 @@ def _tarjeta_propuesta(t: T, defs: dict, registro: dict) -> dict:
     accion = registro["accion"]
     despues = registro["despues_json"]
     antes_json = registro["antes_json"]
-    antes_txt: str | None = None
-    if accion == "proponer_meta":
-        despues_txt = t("asistente.propuesta.meta_nueva", metric=t("metric." + despues["metric_key"]),
-                        direccion=t("asistente.propuesta.direccion." + despues["direction"]),
-                        valor=comun._fig_unit(t, despues["metric_key"], despues["target_value"], defs),
-                        fecha=comun._short_date(t, date.fromisoformat(despues["deadline"])))
-    elif accion == "proponer_cambio_meta":
-        metric_key = despues.get("metric_key")
-        antes_txt = _objetivo_txt(t, defs, metric_key, antes_json["target_value"], antes_json["deadline"])
-        despues_txt = _objetivo_txt(t, defs, metric_key, despues["target_value"], despues["deadline"])
-    elif accion == "proponer_confirmar_turnos":
-        resumen = antes_json["resumen"]
-        antes_txt = t("asistente.propuesta.turnos_actual", n=t.num(resumen["batch_count"]))
-        despues_txt = t("asistente.propuesta.turnos_nuevo")
-    elif accion == "proponer_idioma":
-        antes_txt = IDIOMA_LABEL.get(antes_json["lang"], antes_json["lang"])
-        despues_txt = IDIOMA_LABEL.get(despues["lang"], despues["lang"])
-    elif accion == "planear_entreno":
-        ejercicios_txt = ", ".join(_ejercicio_plan_txt(t, e) for e in despues["ejercicios"])
-        despues_txt = t("asistente.propuesta.entreno_plan", titulo=despues["titulo"],
-                        fecha=comun._short_date(t, date.fromisoformat(despues["day"])), ejercicios=ejercicios_txt)
-    elif accion == "registrar_entreno":
-        fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
-        titulo_manual = despues.get("titulo") if despues["manual"] else None
-        if titulo_manual:
-            despues_txt = t("asistente.propuesta.entreno_registrado_titulo", titulo=titulo_manual, fecha=fecha)
-        else:
-            despues_txt = t("asistente.propuesta.entreno_registrado", fecha=fecha)
-    elif accion == "registrar_medida":
-        metric_key = despues["metric_key"]
-        fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
-        if antes_json and antes_json.get("value") is not None:
-            antes_txt = t("asistente.propuesta.medida_valor", metric=t("metric." + metric_key),
-                          valor=comun._fig_unit(t, metric_key, antes_json["value"], defs), fecha=fecha)
-        despues_txt = t("asistente.propuesta.medida_valor", metric=t("metric." + metric_key),
-                        valor=comun._fig_unit(t, metric_key, despues["value"], defs), fecha=fecha)
-    elif accion == "marcar_habito":
-        habito = despues["habito_titulo"]
-        fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
-        if despues.get("actividad"):
-            despues_txt = t("asistente.propuesta.habito_hecho_actividad", habito=habito, fecha=fecha,
-                            actividad=_actividad_txt(t, despues["actividad"]))
-        else:
-            despues_txt = t("asistente.propuesta.habito_hecho", habito=habito, fecha=fecha)
-        if antes_json is not None and antes_json.get("done") is False:
-            antes_txt = t("asistente.propuesta.habito_no_marcado", habito=habito, fecha=fecha)
-    else:
-        despues_txt = ""
-    series_tarjeta = None
-    if accion == "registrar_entreno":
-        if despues["manual"]:
-            series_tarjeta = [{"orden": i, "reloj": None, "tu": _serie_txt(t, s)}
-                               for i, s in enumerate(despues["series"], start=1)]
-        else:
-            # The watch side's readable name comes from the raw garmin_exercise/garmin_category in
-            # antes_json["sets_antes"] -- never from m["reloj"]["ejercicio"], which can already be a
-            # prior person correction (fix 1).
-            crudos = {s["set_order"]: s for s in antes_json["sets_antes"]}
-            series_tarjeta = []
-            for m in despues["mapeo"]:
-                crudo = crudos.get(m["set_order"], {})
-                nombre = _nombre_legible(crudo.get("garmin_exercise")) or _nombre_legible(crudo.get("garmin_category"))
-                series_tarjeta.append({"orden": m["set_order"], "reloj": _serie_txt(t, m["reloj"], nombre=nombre),
-                                        "tu": _serie_txt(t, m["tu"])})
+    antes_txt, despues_txt, series_tarjeta = TARJETAS[accion](t, defs, despues, antes_json)
     if antes_txt is not None:
         antes_txt = t("asistente.propuesta.antes", valor=antes_txt)
         despues_txt = t("asistente.propuesta.despues", valor=despues_txt)
