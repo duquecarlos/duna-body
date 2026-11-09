@@ -13088,3 +13088,42 @@ disagree on the identical "zero occurred days" condition that `'pocos_dias'` alr
 
 No schema change, no network call, nothing else customer-facing changes shape (the screens already
 render all five codes; this slice only changes which code a given intraday input now produces).
+
+## BODY-EXPERIMENTOS-INTRADIA-MODELO-1-M -- finishes BODY-EXPERIMENTOS-INTRADIA-MODELO-1
+(`e305009`, `4d0c9c8`), which had stopped GATE_RED on one test outside its own `touches:`.
+
+**Re-pointed, not deleted**: `tests/test_experimentos_pantalla.py`'s
+`VerdictWordsTest.test_aun_no_for_an_intraday_window` built a fresh intraday experiment with zero
+marked days and asserted the old blanket `'aun_no'` text. Renamed to
+`test_pocos_dias_for_a_fresh_intraday_window` and re-pointed to `'pocos_dias'`'s own words ("muy
+pocos días todavía"), the same code a fresh whole-day experiment already returns for zero test days
+-- both window types agree on "no test days yet" (ORCH-CARLOS-DELEGATES-TIER-1-1, as the parent
+spec accepted).
+
+**`'aun_no'` stays pinned, by a different route**: a new case,
+`test_aun_no_words_still_valid_vocabulary_on_a_card`, builds a card through
+`body/rutas/experimentos.py`'s own `_tarjeta_desde_veredicto` helper from a verdict dict carrying
+`{"resultado": "aun_no"}` directly (since `experimentos.veredicto()` itself no longer produces that
+code for either window type) and asserts the card's metric line still carries `'aun_no'`'s own
+words ("todavía sin veredicto") -- the code stays valid vocabulary even though nothing currently
+reaches it.
+
+**Accepted deviation**: the model tests for BODY-EXPERIMENTOS-INTRADIA-MODELO-1 live in
+`tests/test_experimentos_modelo.py`, not the `tests/test_experimentos.py` the parent spec named;
+unaffected by this slice, carried over from the parent's own accepted deviation.
+
+**Gate**, once, foreground, from the repository root, on the merged tree:
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 1820 tests in 241.969s ... OK
+(skipped=1)`.
+
+**Merge**: `git checkout main` (tip `4d0c9c8fc69e3846f3e10eebe32f2d0ecc15e3b0`), branch commit
+`f49c9b83185256d74e0fd6d139c64b2a952d659c` (this fix, on top of `e3050098cf1076d8795f2b599d4989a8ede01429`
+and `4d0c9c8fc69e3846f3e10eebe32f2d0ecc15e3b0`), `git merge --no-ff
+feat/body-experimentos-intradia-modelo-1` -> `777b2f6e366efb805e1f8ffe8e8ed5d680c84885`. Merge tree
+`4d25ecf69aae539037020ed0ef623c25d32af679` equals the branch tip's own tree (`git rev-parse
+feat/body-experimentos-intradia-modelo-1^{tree}`) -- the merge carried the branch content
+verbatim, no re-run needed.
+
+No schema change, no network call, no cross-repo contract; the only customer-visible surface
+(the `'aun_no'`/`'pocos_dias'` words on the Experiments screen) was already shipped by the parent
+slice -- this slice only moves which test pins which words.
