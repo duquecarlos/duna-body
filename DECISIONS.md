@@ -12534,3 +12534,80 @@ before the merge), `git merge --no-ff feat/body-momentos-pull-1` (branch tip
 merge commit's tree (`4f49a2386f8e7bc43243eb87ebe6bf6c0a20d192`) is identical to the branch tip's
 own tree -- `main` had not moved since the branch was cut, so the merge introduced nothing beyond
 the branch's own content and the gate above was not re-run.
+
+## BODY-EXPERIMENTOS-MODELO-1 -- the whole-day verdict for a `ventana.tipo == "dia"` experiment
+
+`BODY-EXPERIMENTOS-1-INV` slice 4, on the tables `BODY-EXPERIMENTOS-ESQUEMA-1-M` merged
+(`d54a4da`). The first real use is Carlos's cold-shower week (2026-11-09..13, afternoon-shift days
+not after a night; verdict due 2026-11-14). An intraday window is a later slice
+(`BODY-EXPERIMENTOS-INTRADIA-MODELO-1`) -- `veredicto` answers it honestly with `'aun_no'` on every
+metric, never an error.
+
+**`body/experimentos.py`** (new), pure reads over a connection and a person id, the style of
+`body/turnos_costo.py` and `body/baselines.py`:
+
+- `dias_que_cuentan(conn, person_id, filtro_dias, desde, hasta)`: a day matches when its shift kind
+  is in `turno_en` (if set) and not in `turno_fuera` (if set), and, with `excluir_tras_noche`, is
+  not in the post-night recovery window. A day with no shift row has no kind: it never matches
+  `turno_en` (which requires a kind), and it never matches `turno_fuera` either (it is not any of
+  the listed kinds) -- the same thing `turnos_costo.bloques_noche` does, since it only ever looks
+  at rows with kind='night'.
+- **The post-night window is reused, not redefined**: `body/turnos_costo.py` gains a public
+  `dias_post_noche(conn, person_id, desde, hasta)`, pulled out of the private `_dias_excluidos`
+  (now `_post_noche_de_bloques` + `dias_post_noche`, called from both) -- same days, same order of
+  computation; `tests/test_turnos_costo.py` passes unchanged. `dias_que_cuentan` buffers its own
+  `desde` backward by `ventana_post` before calling it, the same reason `_dias_excluidos` already
+  buffers its own window: a block whose last night falls just before `desde` can still have its
+  recovery tail bleed into it.
+- **Occurrence**: with `habito_id`, a test day is one with `habit_check.done = 1`; without, one
+  with `experimento_registro.ocurrio = 1`. A matching day in the test period that did not happen is
+  excluded from both sides (`dias_excluidos_no_ocurrio`).
+- **Day offset per metric** (`OFFSET_DIA`, ORCH-CARLOS-DELEGATES-TIER-1-1 decision (b)):
+  `body/garmin_adapter.py`'s `parse_day(day, raw)` reads a calendar day's sleep/hrv/wake fields from
+  Garmin's own sleep/hrv endpoints for that day, and Garmin keys those endpoints by the morning the
+  sleep session ENDED -- so `day`'s sleep/hrv/wake value is really about the night from day-1 into
+  day. A practice meant to affect that night's sleep therefore shows up at day+1:
+
+  | offset +1 (the following night) | offset 0 (default, the practice day's own daytime, or a multi-day figure) |
+  |---|---|
+  | sleep_minutes, sleep_score, sleep_deep_min, sleep_light_min, sleep_rem_min, sleep_awake_min, sleep_need_min, body_battery_sleep_charge, sleep_spo2_avg, sleep_respiration_avg/low/high, hrv_last_night, body_battery_wake, resting_hr (same per-day user_summary call, lowest reading set in that night's small hours), snoring_min (self-measured, same nighttime convention) | readiness, hrv_weekly_avg (7-day rolling, not one night), stress_avg, steps, active_kcal, body_battery_high/low, intensity_minutes, respiration_awake, high_stress_min, vo2max(_cycling), fitness_age, flex_alcance_cm, and any metric_def key not listed here |
+
+- **Baseline**: matched days (same filter) in `BASE_DIAS = 120` days before `fecha_inicio`,
+  excluding days inside any OTHER of the person's experiments' own `[fecha_inicio, fecha_fin or
+  hoy]` span (`_dias_de_otros_experimentos`); one value per day, same offset applied.
+- **Verdict per metric** (`_veredicto_metrica`): `n_prueba >= MIN_PRUEBA = 3` and
+  `n_base >= MIN_BASE = baselines.MIN_DAYS` (imported, not copied) or else `'pocos_dias'`; sd of the
+  baseline 0 (or the n floors unmet) -> `'pocos_dias'`, never a division. Otherwise
+  `diferencia = media_prueba - media_base`, `ee = sd_base * sqrt(1/n_prueba + 1/n_base)`, and
+  `resultado` is `'mas_bajo'` (`diferencia <= -UMBRAL * ee`), `'mas_alto'` (`>= UMBRAL * ee`) or
+  `'sin_cambio'`, with `UMBRAL = 2.0` -- ORCH-CARLOS-DELEGATES-TIER-1-1 decision (a): the noise test
+  is on the standard error of the DIFFERENCE of two means, not a single day's z, because a multi-day
+  test mean is far less noisy than one day. Direction only -- whether lower is better is not this
+  module's call.
+- **`veredicto(conn, person_id, experimento_id, hoy=None)`**: raises `ValueError` for an
+  `experimento_id` that is not this person's own (same style as `db.registrar_dia_experimento`).
+
+**Tests** (`tests/test_experimentos_modelo.py`, 16 new, invented demo data only): the cold-shower
+shape (`'mas_bajo'`) and a change inside the noise (`'sin_cambio'`), both against a 120-day noisy
+baseline with an exact known mean and pstdev; a skipped day excluded from both sides with an
+outlier value that never entered the mean; a night metric (`hrv_last_night`) read from the day
+after, never from the practice day itself; `turno_en`/`turno_fuera`/`excluir_tras_noche` each
+respected, including a day with no shift row; another experiment's test days kept out of the
+baseline (an outlier value on those days that never entered this experiment's mean); habit-linked
+vs. registro-based occurrence; too few test days and too short a baseline both reading
+`'pocos_dias'`; a zero-variance baseline reading `'pocos_dias'` rather than dividing; an intradia
+window reading `'aun_no'` on every metric; person isolation.
+
+**Gate**, once, foreground, on the branch tip: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -> `Ran 1726 tests in 377.959s ... OK (skipped=1)`. 16 more than the prior recorded
+floor (1710, `BODY-MOMENTOS-PULL-1`): exactly the 16 new tests above; `skipped=1` carries over
+unchanged.
+
+**Merge** (no schema change, no customer-facing bytes -- a pure read module plus tests, no screen
+and no string a person sees -- no cross-repo/DTO change -- Merge Policy A applies, and the spec's
+own body authorizes it in words): `git checkout main` (tip `035c2f3`), `git merge --no-ff
+feat/body-experimentos-modelo-1` (branch tip `f7c6db1c558ab1234c8aef97b5c7074c93915d52`) ->
+`ec77584cde037d5bdd44e44f0042fd358832da74`. The merge commit's tree
+(`419b1156d47d835580d18395de5dd76cc6360f14`) is identical to the branch tip's own tree -- `main`
+had not moved since the branch was cut, so the merge introduced nothing beyond the branch's own
+content and the gate above was not re-run.
