@@ -10863,3 +10863,86 @@ covers the merged tree, not re-run.
 on top of `2cab69df991aa574e0447627dc44c1102c67edc2`); `23e34524b9b76550dd0fb89c31446df3bed320eb`
 (merge `--no-ff` into `main`, parents `2cab69df991aa574e0447627dc44c1102c67edc2` and
 `5c0769ccfe8cec97d19d20d5aff4ed00167c5911`).
+
+## BODY-ENTRENO-ADAPTER-1 -- a second Garmin read, for per-set strength detail, called by nobody yet (2026-11-09)
+
+`BODY-ENTRENO-1-INV` (slice 1, an investigation) found that per-set detail for strength sessions
+(exercise, reps, weight, duration, start) needs `get_activity_exercise_sets(activity_id)`
+(`garminconnect` 0.3.20, `api/activities.py:613`) and that its response shape is UNDOCUMENTED in
+the installed package -- the method itself is typed only `dict[str, Any]` with the docstring
+"Return activity exercise sets.", no more. The only two confirmed facts about this endpoint are:
+the write call in the same module, `set_activity_exercise_sets`, whose docstring says its payload
+is "in the same shape as the response from `get_activity_exercise_sets`" and names
+`exercises[].category` (the parent) and `exercises[].name` (the sub-category) as the fields Garmin
+validates; and `exercises.py`'s static catalog of 1527 `(category, exercise)` pairs to a display
+name. This slice added the read function the investigation recommended, mirroring
+`fetch_intraday` (`BODY-INTRADIA-ADAPTER-1`), and nothing else -- the write call
+`set_activity_exercise_sets` is not used, now or ever, by this module.
+
+`body/garmin_adapter.py` gained: `ExerciseSet` and `ExerciseSetsData` dataclasses; `_client`-based
+`fetch_exercise_sets(activity_id, token_str=None)`, one call
+(`api.get_activity_exercise_sets(activity_id)`), same session/token pattern as `fetch_day` and
+`fetch_intraday` including the hosted per-person token path (`token_str` given -> returns
+`(ExerciseSetsData, token_after)`; a failed call records `_errors["exercise_sets"]` and leaves
+`sets` empty rather than raising); and a pure `parse_exercise_sets(payload)` -> `tuple[ExerciseSet,
+...]`, taking the Garmin response directly (not a day/call-keyed wrapper, since there is only one
+call here).
+
+Each `ExerciseSet` carries `set_type` ('active' | 'rest', from an assumed `setType`/`type` key,
+recognised only against a fixed word list -- an unrecognised or missing value is `None`, never
+guessed toward either); `category`/`exercise`, read from the first entry of an assumed `exercises`
+list per the write docstring's confirmed field names; `display`, a read-only lookup of
+`(category, exercise)` against `exercises.py`'s catalog (`None` when the pair is not in it -- the
+catalog is read, never used to rename `category`/`exercise` themselves); `reps` (first of assumed
+`reps`/`repetitionCount`/`repCount`); `weight_value`/`weight_unit` (assumed `weight`/`weightUnit`
+keys -- Garmin is known to send body-composition weight in grams elsewhere, but nothing confirms
+this endpoint's unit, so a present value is kept and its unit left `None` rather than guessed; no
+`weight` key, or an explicit null, leaves both absent together); `duration_s` (assumed `duration`,
+assumed seconds); and `start_local` (assumed `startTime`, tried first as epoch-ms local via the
+existing `_local_iso` convention, then kept as a plain string if it is one). Every assumed key is
+named in a docstring at the point it is read. A row that is not a dict, or any payload shape this
+parser does not recognise (`None`, a bare non-list, an unrelated dict, a list under `exerciseSets`
+holding junk), yields an honest gap -- an empty `sets` tuple, or a set whose unrecognised fields are
+all `None` -- never a crash and never a 0.
+
+**Nothing calls `fetch_exercise_sets` or `parse_exercise_sets` yet.** Not `pull.py`, not the
+backfill loop, not `body/web.py` or any route, not the assistant. This merge adds no new Garmin
+traffic: `fetch_exercise_sets` runs only when a future slice calls it, on demand, when a person
+logs or corrects a session -- the same on-demand contract `BODY-INTRADIA-ADAPTER-1` set for
+`fetch_intraday`.
+
+**Tests** (`tests/test_garmin_parse.py`, invented fixtures only): `ExerciseSetsParsingTest` --
+a 3-set strength fixture (active/rest/active) parses in order with `category`/`exercise`/`display`/
+`reps`/`duration_s`/`start_local` correct on the active sets and absent on the rest set; a set with
+no `weight` key keeps `weight_value`/`weight_unit` both absent; a stated `weightUnit` is passed
+through unchanged; an unconfirmed-unit weight value is kept with `weight_unit` left `None`; an
+unknown `(category, exercise)` pair not in the catalog has `display=None`; `None`/`{}`/`[]`/a bad
+string/`{"exerciseSets": None}`/`{"exerciseSets": "nope"}` all give an empty tuple without raising;
+a row with only unknown keys gives one `ExerciseSet` with every field `None`; a non-dict row inside
+`exerciseSets` is skipped, not raised on; the bare list form (`payload` without the `exerciseSets`
+wrapper) is also accepted. `FetchExerciseSetsSuccessTest`/`FetchExerciseSetsFailureTest` --
+`fetch_exercise_sets` keeps `activity_id` as a string regardless of the caller's type, the hosted
+token path returns `(data, token_after)`, and a raising `get_activity_exercise_sets` is recorded as
+`_errors["exercise_sets"]` with `sets` empty rather than propagating. `OnlyGarminAdapterImportsGarminconnectTest`
+(pre-existing) still passes unchanged -- the new `from garminconnect import exercises` import stays
+inside `garmin_adapter.py`, the one module allowed to hold it.
+
+**Gate**, once, foreground, on the branch tip before merge:
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -- `Ran 1462 tests in 185.942s ...
+OK (skipped=1)`. 10 more tests than the prior recorded floor (1452, BODY-ENTRENO-SUENO-PARSE-1),
+matching the 10 new test methods above (7 in `ExerciseSetsParsingTest`, 2 in
+`FetchExerciseSetsSuccessTest`, 1 in `FetchExerciseSetsFailureTest`); `skipped=1` carries over
+unchanged.
+
+**Merged** `feat/body-entreno-adapter-1` into `main` with `--no-ff` (approval-reason authorises the
+merge: "Carries out BODY-ENTRENO-1-INV slice 2 ... Adds one read function in the adapter"; spec body
+step 6 says to merge). Diff from `main`'s prior tip is `body/garmin_adapter.py` and
+`tests/test_garmin_parse.py` only -- no schema or migration change (the `workout_set` schema from
+`BODY-ENTRENO-SCHEMA-1` is untouched; nothing here writes to it), no customer-facing bytes (nothing
+reaches a screen, nothing calls this function), no cross-repo contract change, so Merge Policy A
+clears without waiting.
+
+`main` now at [merge sha below]. `git status --porcelain` empty on `main`.
+
+**Commits**: `f42f0c4a22ce08b013fa9ab963361e817adc46e8` (slice, on `feat/body-entreno-adapter-1`,
+on top of `71a610f8fa88f0bcb5521d23952825203344c5c5`).
