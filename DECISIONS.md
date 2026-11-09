@@ -12819,3 +12819,70 @@ the -M slice measured on the same tip.
 
 **Merge**: `git checkout main` (tip `d6524c2`), `git merge --no-ff
 feat/body-experimentos-registro-1` (branch tip `3a38922`) -> `88eb7f3`.
+
+## BODY-EXPERIMENTOS-PANTALLA-1 -- experiments get their first screen presence: a Metas section, a
+detail page, a Hoy line (`f23e51f`, branch `feat/body-experimentos-pantalla-1`).
+
+**Metas (`/goals`)** gains an "Experimentos" section between active goals and proposed goals
+(DESIGN rule 11: a section on an existing screen, not a new tab): active experiments as cards
+(title, which days count via `asistente._filtro_dias_txt` reused by attribute access, the date
+range -- "desde el 9 nov" / "del 9 al 13 nov" -- progress, and one line per metric with the
+verdict word from `experimentos.veredicto`'s own `resultado` plus a plain direction arrow, never
+`.good`/`.bad` or a `metric_def.better` lookup); closed ones folded under a `<details>`, matching
+the goal archive's own pattern; one line and no card when there are none.
+
+**`GET /experiments/{id}`** adds everything the card has plus, per metric, the test-day and
+baseline-day means with units and day counts (`.get()` throughout, since an intraday window's
+`veredicto` returns only `{"resultado": "aun_no"}` per metric -- BODY-EXPERIMENTOS-INTRADIA-MODELO-1
+gives that screen its own numbers later), an offset note for the five metrics `OFFSET_DIA` reads
+the next day, the marked days (date, hecho/no hecho, nota), an explanatory sentence ending "No es
+consejo médico" (DESIGN rule 12), and a close button. 404s for another person's id; writes
+nothing (`tests/test_experimentos_pantalla.py`'s `test_get_writes_nothing`).
+
+**Closing**: `db.cerrar_experimento(conn, person_id, experimento_id, fecha_fin=None)` -- no schema
+change, `estado` already allowed `'cerrado'` and `fecha_fin` was already nullable -- sets both,
+defaulting `fecha_fin` to today, and raises `ValueError` for another person's id or one already
+closed. `POST /experiments/{id}/close` turns either into the same 404 an unknown id gets.
+`veredicto` already caps its test window at `fecha_fin`, so a closed experiment keeps the verdict
+it had the moment it closed.
+
+**Hoy (`/`)** gains one line per ACTIVE experiment whose day filter counts today, within
+`[fecha_inicio, fecha_fin]`: "Experimento: <title> -- hoy cuenta". A non-habit-linked experiment
+gets "Lo hice"/"Hoy no" buttons posting `POST /experiments/{id}/day` (refuses a habit-linked
+experiment's id with 404, since the habit's own plan-list entry already marks it); posting again
+changes the mark, read back from `experimento_registro` on the next render.
+
+**Guard suites extended** (all in `touches:`, none loosened): `test_accesibilidad.py`,
+`test_estados_vacios.py`, `test_estados_vacios_hosted.py`, `test_get_sin_escritura.py`,
+`test_persona_fuga.py` and `test_rendimiento.py` now seed one real experiment and carry its id
+into the new routes. `test_persona_fuga.py`'s marker sweep moves EXPERIMENTO's `titulo` and
+REGISTRO's `nota` from the excluded list to the active one, since this slice gives them their
+first reader (MOMENTO stays excluded -- nothing renders it yet). `test_rendimiento.py`'s
+ceilings for `/goals` (40 -> 50) and the new `/experiments/{experiment_id}` (27) are measured on
+this module's own fixture (statements: `/` 59, `/goals` 39, `/experiments/{id}` 20) plus headroom;
+`/` keeps its existing ceiling of 75, comfortably above the measured 59.
+`test_conexiones_cerradas.py` and `test_guardia_parches.py` needed no edit: both auto-discover new
+router modules and routes by AST scan. `body/static/body.css` needed no new class; the section
+reuses `.card`, `.chip`, `.k`, `.plan`, `.row` and the existing goal-archive `<details>` pattern.
+
+**Gate**, once, foreground, on the branch tip (commit `f23e51f`): `.venv/Scripts/python.exe -m
+unittest discover tests -t .` -> `Ran 1801 tests in 353.910s ... FAILED (failures=4, skipped=1)`.
+
+**GATE_RED, all four failures outside `touches:`, none fixed by this slice**: `test_agente_registro
+.py`'s `RouteMappingTest` (its own hand-kept `ROUTE_TOOL` dict has no entry for
+`/experiments/{experiment_id}`); `test_i18n_paridad.py`'s `test_dynamic_prefixes_resolve_in_es`
+(its own `_FIXED_DYNAMIC` dict has no entry for the new dynamic prefix `experimentos.resultado.+`,
+from `t(f"experimentos.resultado.{resultado}")` in `body/rutas/experimentos.py:53`);
+`test_registro_tu.py`'s third-person sweep (its own `_THIRD_PERSON_ALLOW` dict has no entry for
+`experimentos.resultado.aun_no`'s "todavía no se puede medir" -- an impersonal "se puede", not
+"usted puede" addressed to the reader, so this reads as a false positive, not a voice defect);
+`test_web_entry.py`'s `RouteSetTest` (its own hardcoded `BEFORE` route set has no entry for the
+three new routes). Each is a hand-maintained table living in a test file not named in this slice's
+`touches:` list; none of the four is `test_accesibilidad.py`, `test_conexiones_cerradas.py`,
+`test_estados_vacios.py`, `test_estados_vacios_hosted.py`, `test_get_sin_escritura.py`,
+`test_persona_fuga.py`, `test_rendimiento.py` or `test_guardia_parches.py`, the guard suites this
+slice's spec named. Widening any of the four is adjacent work for a slice that touches them.
+
+**Stops GATE_RED**, committed on the branch, not merged. The branch also carries customer-facing
+bytes, which ORCH-CARLOS-DELEGATES-TIER-1-1's approval reason already stops for the orchestrator's
+own 375 px check in es and en, independent of this gate result.
