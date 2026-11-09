@@ -10285,3 +10285,75 @@ on that authorisation, scoped to exactly the attribute/key additions listed abov
 into `main` (merge strategy `ort`, no conflicts). Tree identity proven: merge tree
 `4813349562158b01019f63830f4f76633314499f` equals the branch tip's own tree exactly. `main` left
 checked out, `git status --porcelain` empty (before this ledger entry's own commit).
+
+## BODY-TAP-44-1 -- grow four under-44px tap targets' hit area, not their drawing
+
+**Census** (the orchestrator's, measured on `main` `720d827`, 375x812, demo data, 16 screens:
+`getBoundingClientRect` of every `a[href]`, `button`, `input`, `summary`). Four kinds under 44 px:
+(1) the habit check button `.boxbtn` (`body.css:109`, `width:28px`) -- 28x44 on Hoy (`base.html:39`
+macro) and on a goal's habit list (`goal.html:49`); (2) the footer links "Ayuda" and "Ajustes" in
+`.foot` (`body.css:165-166`; `base.html:79`) -- 35x44 and 40x44, on every screen; (3) Historia's
+month rows (`<a class="block mt-10 no-underline">`, `history.html:15`) -- 313x38. Not a defect:
+Tendencias r=90's per-day chart anchors (4x110, the documented no-JS path, DESIGN rule 9) and the
+20x20 radios on Nueva meta / Ajustes del asistente, each inside a 313x44 `label.radio` that is the
+real target.
+
+**Decision** (`ORCH-CARLOS-DELEGATES-TIER-1-1`): grow the hit area, not the drawing. Widening
+`.boxbtn` to 44 would shift every habit row's text by 16 px; padding the footer would change its
+rhythm.
+
+**The `.hit` pattern**, one reusable rule in `body.css`: `position:relative` on the target plus a
+borderless, see-through `::before` (`content:"";position:absolute`, no background, no border,
+`pointer-events` left on), inset per target to reach 44x44. Verified free before use: `.box.done`
+already owns an `::after`, but on the inner `.box` span, not on `.boxbtn` -- `.boxbtn::before` and
+`.foot a::before` were unclaimed.
+
+**Applications** (insets, and why no overlap):
+- `.boxbtn` (28x44): `left:-8px;right:-8px` -> 44x44. Free on both sides: in `today.html`/`goal.html`
+  it is the lone visible child of an unstyled `<form>`, the first flex item of `.plan li`
+  (`gap:10px`), so the left extension lands in the card's own 14 px padding and the right extension
+  uses 8 of the 10 px gap before the title text, 2 px to spare. In `base.html`'s `primeros_pasos_card`
+  it sits inside the single full-row `<a class="help-link">`, so its extension never leaves that
+  link's own, already-larger hit area. Applied straight to the `.boxbtn` selector -- no template
+  change.
+- `.foot a` (Ayuda 35x44, Ajustes 40x44): `left:-5px;right:-5px` -> 45x44 / 50x44. `.foot` is
+  12.5 px text; the " · " separator between items (space + middle dot + space) is roughly 0.8em,
+  ~10 px, so each of two adjacent extended links claims half of it -- 5 px -- and they meet at the
+  gap's midpoint without overlapping. Applied straight to the `.foot a` selector -- no template
+  change.
+- Historia month rows (313x38): `top:-3px;bottom:-3px` -> 313x44. `mt-10` gives 10 px between rows;
+  3 px top + 3 px bottom per row uses 6 of it, 4 px to spare. These rows had no selector of their
+  own (`class="block mt-10 no-underline"` is three reused utilities), so `history.html`'s
+  `month_row` macro gets the one new class `.month-row`.
+
+**Test** (`tests/test_tap_44.py`, 13 methods): `body.css` carries the `.hit` base rule and each of
+the three `::before` insets, with the exact axes above and none of the others; the original
+`.boxbtn{...}` and `.foot a{...}` rules keep every one of their `width`/`min-height`/`display`/
+`padding`/`margin` declarations unchanged and gain no `position:relative` of their own (that lives
+only in the separate, shared `.hit,.boxbtn,.foot a,.month-row` rule) -- the "nothing visible moves"
+pin; `.box.done::after` is confirmed to be on the inner span, never `.boxbtn::after`; the rule is
+non-vacuous (three extended selectors, each inset on some axis, plus the shared base rule covering
+exactly four selectors). Rendered: Hoy and a goal page each render `class="boxbtn"` for a due habit;
+Historia renders `class="block mt-10 no-underline month-row"`; the footer still wraps `<a
+href="/ayuda">` inside `<p class="foot">`; `history.html`'s own macro source carries the new class.
+
+**docs/DESIGN.md** rule 11 gains: a target smaller than 44 px grows its hit area, never its
+drawing, with the `.hit` pattern -- `position:relative` plus an inset, see-through `::before` -- in
+whatever space already surrounds it; a radio or checkbox counts as its full `label`; Tendencias'
+per-day chart anchors stay exempt (the no-JS path, rule 9).
+
+**Gate**, once, foreground, on this slice's own branch tip (before the merge; tree identity proven
+below, so not re-run after merging): `.venv/Scripts/python.exe -m unittest discover tests -t .` --
+`Ran 1384 tests in 183.264s ... OK (skipped=1)` (1371 before this slice, +13: `tests/test_tap_44.py`).
+
+**Merge.** The diff is CSS plus one new template class that moves no pixel -- pinned by the test
+above -- and the spec's approval-reason (`ORCH-CARLOS-DELEGATES-TIER-1-1`) says in words: "CSS
+only: hit-area extensions that draw nothing, so no visible pixel changes. That is pinned by a test,
+and the orchestrator re-measures in the browser after the merge... This spec approves the merge."
+Merged on that authorisation.
+
+**Commits**: slice `6b84e3af6389d279b644b0ba86480e13d66f6b64` on `feat/body-tap-44-1` (base `main`
+at `5d4d9c8478633a45bdf6e83717aca38ab6037443`), merge `2b2c19236fa07d47eb63a1e8aa1c0b874cf2bd05` into `main` (merge strategy
+`ort`, no conflicts). Tree identity proven: merge tree `9d7f718950bfa485592269476f3b9e78ce69f595`
+equals the branch tip's own tree exactly. `main` left checked out, `git status --porcelain` empty
+(before this ledger entry's own commit).
