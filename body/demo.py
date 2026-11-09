@@ -50,6 +50,10 @@ SECONDARY = ["hrv_weekly_avg", "sleep_score", "active_kcal", "intensity_minutes"
              "body_battery_sleep_charge", "respiration_awake", "high_stress_min"]
 CARDIO_SPARSE = ["vo2max", "vo2max_cycling", "fitness_age"]
 
+# BODY-ENTRENO-SUENO-STORE-1: night-breathing figures, read off DayData's own fields (not
+# DayData.metrics) by save_day -- see _DayData and _day_metrics below.
+NIGHT_BREATH = ["sleep_spo2_avg", "sleep_respiration_avg", "sleep_respiration_low", "sleep_respiration_high"]
+
 # Self-measured (BODY-ENTRENO-SCHEMA-1): the person's own figures, never the watch's -- sparser
 # than daily and stored with source='self' (_seed_self_metrics), never mixed into save_day's
 # per-day 'garmin' batch.
@@ -65,12 +69,14 @@ RANGES = {
     "respiration_awake": (12, 18), "high_stress_min": (0, 90),
     "vo2max": (38, 46), "vo2max_cycling": (40, 48), "fitness_age": (28, 42),
     "flex_alcance_cm": (0, 25), "snoring_min": (0, 70),
+    "sleep_spo2_avg": (93, 98), "sleep_respiration_avg": (13, 17),
+    "sleep_respiration_low": (9, 13), "sleep_respiration_high": (17, 23),
 }
 # A night shift (or the recovery day right after) costs sleep and raises stress -- the correlation
 # the "turnos" chapter's tutorial task is built to show. Added to the sampled value, then clamped.
 NIGHT_EFFECT = {"resting_hr": 6, "hrv_last_night": -12, "sleep_minutes": -70, "stress_avg": 10,
                 "body_battery_wake": -15, "body_battery_low": -10, "body_battery_high": -8}
-_PCT_KEYS = {"body_battery_high", "body_battery_low", "body_battery_wake", "sleep_score"}
+_PCT_KEYS = {"body_battery_high", "body_battery_low", "body_battery_wake", "sleep_score", "sleep_spo2_avg"}
 
 ACTIVITY_TYPES = [
     {"type": "running", "name": "Carrera", "dur": (20, 55), "dist": (3, 10), "hr": (130, 165), "kcal": (250, 550)},
@@ -107,6 +113,10 @@ class _DayData:
     sleep_start: str | None = None
     sleep_end: str | None = None
     activities: list = field(default_factory=list)
+    sleep_spo2_avg: float | None = None
+    sleep_respiration_avg: float | None = None
+    sleep_respiration_low: float | None = None
+    sleep_respiration_high: float | None = None
 
 
 def _refuse(message: str) -> None:
@@ -199,10 +209,11 @@ def _seed_person(conn, db, idioma: str) -> int:
     return person_id
 
 
-def _day_metrics(rng: random.Random, d: date, factor: float) -> tuple[dict, str | None, str | None]:
-    """One day's readings (CORE_DENSE, SECONDARY, the twice-monthly CARDIO_SPARSE batch) and, when
-    sleep_minutes landed, that night's sleep window -- in the same draw order _seed_days always
-    used, since the two-run determinism test depends on the order, not just the final values."""
+def _day_metrics(rng: random.Random, d: date, factor: float) -> tuple[dict, str | None, str | None, dict]:
+    """One day's readings (CORE_DENSE, SECONDARY, the twice-monthly CARDIO_SPARSE batch), when
+    sleep_minutes landed that night's sleep window and night-breathing figures -- in the same draw
+    order _seed_days always used, since the two-run determinism test depends on the order, not
+    just the final values."""
     metrics = {}
     for key in CORE_DENSE:
         if rng.random() < 0.92:
@@ -215,6 +226,7 @@ def _day_metrics(rng: random.Random, d: date, factor: float) -> tuple[dict, str 
             metrics[key] = _value(rng, key, 0.0)
 
     sleep_start = sleep_end = None
+    breath = {}
     if "sleep_minutes" in metrics:
         minutes = metrics["sleep_minutes"]
         if _shift_kind_for(d - timedelta(1)) == "night":
@@ -224,8 +236,12 @@ def _day_metrics(rng: random.Random, d: date, factor: float) -> tuple[dict, str 
                         + timedelta(hours=22, minutes=rng.randint(0, 59)))
         end_dt = start_dt + timedelta(minutes=minutes)
         sleep_start, sleep_end = start_dt.isoformat(), end_dt.isoformat()
+        # Some nights absent -- the watch sensor was off, same as any other reading.
+        for key in NIGHT_BREATH:
+            if rng.random() < 0.8:
+                breath[key] = _value(rng, key, 0.0)
 
-    return metrics, sleep_start, sleep_end
+    return metrics, sleep_start, sleep_end, breath
 
 
 def _day_activity(rng: random.Random, d: date) -> dict | None:
@@ -250,13 +266,13 @@ def _seed_days(conn, db, rng: random.Random, all_days: list[date], person_id: in
     metric_rows = activity_rows = 0
     for d in all_days:
         factor = _recovery_factor(d)
-        metrics, sleep_start, sleep_end = _day_metrics(rng, d, factor)
-        metric_rows += len(metrics)
+        metrics, sleep_start, sleep_end, breath = _day_metrics(rng, d, factor)
+        metric_rows += len(metrics) + len(breath)
         activity = _day_activity(rng, d)
         if activity:
             activity_rows += 1
         db.save_day(conn, _DayData(day=d.isoformat(), metrics=metrics, sleep_start=sleep_start, sleep_end=sleep_end,
-                                    activities=[activity] if activity else []), person_id)
+                                    activities=[activity] if activity else [], **breath), person_id)
     conn.commit()
     return metric_rows, activity_rows
 
