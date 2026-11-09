@@ -7,7 +7,6 @@ from tests import _isolate  # noqa: F401,E402
 import json
 import pathlib
 import re
-import subprocess
 import tempfile
 import unittest
 
@@ -66,6 +65,36 @@ def _media_1024_flags(css_text: str) -> list:
             if stack:
                 stack.pop()
     return flags
+
+
+def _top_level_flags(css_text: str) -> list:
+    """For each line of css_text, whether that line sits at the top level -- outside every
+    `@media` block, phone-level CSS. Same brace-depth tracking as `_media_1024_flags`, generalised
+    to any nesting rather than just the 1024 one."""
+    flags = []
+    depth = 0
+    for line in css_text.splitlines():
+        stripped = line.strip()
+        flags.append(depth == 0 and not stripped.startswith("@media"))
+        opens, closes = line.count("{"), line.count("}")
+        if stripped.startswith("@media") and opens:
+            depth += 1
+            opens -= 1
+        depth = max(0, depth + opens - closes)
+    return flags
+
+
+# BODY-DEPLOY-HOST-1-M: the selectors the wide-layout rules are built from -- a `cols-` class, or
+# the `data-ancho` attribute -- plus the grid3 auto-fill override, identified by body content since
+# `.grid3` also carries two other rules (the 640px three-column default and the lectura-collapsed
+# one) that must NOT be required to sit inside the 1024 block.
+_TRACKED_SELECTOR_RE = re.compile(r"\.cols-[\w-]+|data-ancho")
+
+
+def _is_tracked_rule(selector: str, body: str) -> bool:
+    if _TRACKED_SELECTOR_RE.search(selector):
+        return True
+    return selector.strip() == ".grid3" and "auto-fill" in body
 
 
 class TemaJsAnchoTest(unittest.TestCase):
@@ -180,35 +209,41 @@ class WrapCapOnlyUnderLecturaTest(unittest.TestCase):
         self.assertEqual(offenders, [], f"a .wrap 820px cap outside lectura: {offenders}")
 
 
-class NoDeclarationOutside1024Test(unittest.TestCase):
-    """Every new body.css declaration added by this slice lives inside the min-width:1024px
-    block -- diffed, line by line, against main's body.css."""
+class ColsAndDataAnchoStayInThe1024QueryTest(unittest.TestCase):
+    """BODY-DEPLOY-HOST-1-M: the wide layout never changes the phone. Checked as a property of the
+    file itself -- not a diff against main, which rots the moment main contains this slice family's
+    own CSS (BODY-DEPLOY-HOST-1-INV) and would then refuse any later slice that touches body.css
+    outside the 1024 query. Every rule whose selector names a `cols-` class or the `data-ancho`
+    attribute, or is the grid3 auto-fill override, must sit inside the min-width:1024px block, and
+    no phone-level (outside every @media) rule for those same selectors may exist."""
 
-    def test_every_added_line_is_inside_the_1024_query(self):
-        current_text = _read(STATIC / "body.css")
-        try:
-            main_text = subprocess.run(
-                ["git", "show", "main:body/static/body.css"],
-                cwd=ROOT, capture_output=True, check=True,
-            ).stdout.decode("utf-8")
-        except (subprocess.CalledProcessError, FileNotFoundError) as exc:
-            self.skipTest(f"cannot read main's body.css for the diff: {exc}")
-        main_lines = set(main_text.splitlines())
-        current_lines = current_text.splitlines()
-        flags = _media_1024_flags(current_text)
-        offenders = []
-        for i, line in enumerate(current_lines):
-            stripped = line.strip()
-            if not stripped or stripped in ("{", "}"):
-                continue
-            if stripped.startswith("/*") or stripped.startswith("*") or stripped.endswith("*/"):
-                continue
-            if line in main_lines:
-                continue
-            if not flags[i]:
-                offenders.append((i + 1, stripped))
+    def setUp(self):
+        self.css = _read(STATIC / "body.css")
+        self.in_1024 = _media_1024_flags(self.css)
+        self.top_level = _top_level_flags(self.css)
+
+    def _tracked_rules(self):
+        rules = []
+        for m in re.finditer(r"([^{}]*)\{([^{}]*)\}", self.css):
+            selector, body = m.group(1), m.group(2)
+            if _is_tracked_rule(selector, body):
+                brace_pos = m.start(2) - 1  # the rule's own "{" -- never the gap before it
+                line_idx = self.css.count("\n", 0, brace_pos)
+                rules.append((line_idx, selector.strip()))
+        return rules
+
+    def test_every_tracked_rule_sits_inside_the_1024_query(self):
+        rules = self._tracked_rules()
+        self.assertTrue(rules, "no cols-/data-ancho/grid3-auto-fill rule found at all")
+        offenders = [(ln + 1, sel) for ln, sel in rules if not self.in_1024[ln]]
         self.assertEqual(offenders, [],
-                          f"new body.css declaration(s) outside the min-width:1024px block: {offenders}")
+                          f"rule outside the min-width:1024px block: {offenders}")
+
+    def test_no_phone_level_rule_exists_for_a_tracked_selector(self):
+        rules = self._tracked_rules()
+        offenders = [(ln + 1, sel) for ln, sel in rules if self.top_level[ln]]
+        self.assertEqual(offenders, [],
+                          f"phone-level (outside every @media) rule for a tracked selector: {offenders}")
 
 
 class ScreenColumnClassesTest(unittest.TestCase):
@@ -320,13 +355,20 @@ class SanityCountsTest(unittest.TestCase):
     def test_four_new_i18n_keys(self):
         self.assertEqual(len(_NEW_I18N_KEYS), 4)
 
-    def test_body_css_grew(self):
-        current = _read(STATIC / "body.css")
-        main_text = subprocess.run(
-            ["git", "show", "main:body/static/body.css"],
-            cwd=ROOT, capture_output=True, check=True,
-        ).stdout.decode("utf-8")
-        self.assertGreater(len(current.splitlines()), len(main_text.splitlines()))
+    def test_1024_block_holds_every_cols_rule_and_the_lectura_cap(self):
+        # BODY-DEPLOY-HOST-1-M: non-vacuity, rewritten as a property of the file instead of a diff
+        # against main (which goes false on main itself the moment this slice family merges --
+        # BODY-DEPLOY-HOST-1-INV). The wide layout really added CSS: a min-width:1024px block
+        # exists, and inside it there is a rule for every cols-* class plus the Lectura wrap cap.
+        css = _read(STATIC / "body.css")
+        compact = css.replace(" ", "")
+        self.assertIn("@media(min-width:1024px){", compact)
+        flags = _media_1024_flags(css)
+        lines = css.splitlines()
+        inside_compact = "".join(line for i, line in enumerate(lines) if flags[i]).replace(" ", "")
+        for cls in _COLS_BY_SCREEN.values():
+            self.assertIn(f".{cls}{{", inside_compact, f"no 1024-query rule for .{cls}")
+        self.assertIn('[data-ancho="lectura"].wrap{max-width:820px', inside_compact)
 
 
 if __name__ == "__main__":
