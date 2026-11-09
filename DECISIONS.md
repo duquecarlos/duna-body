@@ -12186,3 +12186,59 @@ new tests in test_propuestas_tabla.py).
 `7fc06f3b2acae11fda10a1c6aef40c0d59c875c9`. Merge tree `c64ec5bf6749399f00e4a2ec4942633a42c0e0b7`
 equals the branch tip's own tree (`git rev-parse feat/body-propuestas-tabla-1^{tree}`) -- the merge
 carried the branch content verbatim.
+
+## BODY-VIVO-REFRESCO-1 -- the live-tree refresh guard was tripping on its own import, since 350ac4e
+
+**Cause, since when**: BODY-ERRORES-CENSO-2 (`350ac4e`) added `from . import errores` to the top of
+`body/vivo.py`. `_modulos_body_inesperados()` flagged every `body*` module in `sys.modules` except
+a hardcoded `("body", "body.vivo")`, so by the time `main()` called it, `body.errores` was already
+loaded by vivo's own import line and the guard ALWAYS returned `['body.errores']`. `main()` then
+always set `resultado = "sin_cambio:modulos_previos"` and never called `refrescar()` -- the
+live-tree refresh has never run since that commit, in any process, on any task. The fail-safe design
+(run the task anyway on whatever commit is checked out) meant this produced no error, only a stdout
+line a scheduled task discards -- which is how 80+ commits of drift on the PC's live tree
+(BODY-LIVE-CHECKOUT-1) went unflagged. `tests/test_vivo.py`'s existing coverage used a fake module
+name inside the shared unittest process, where `body.vivo` had already settled its own imports
+long before that test ran, so it could not see vivo's own import trip the guard -- only a fresh
+process can.
+
+**The fix** (`body/vivo.py`): `_modulos_body_inesperados()` now compares `sys.modules` against
+`_MODULOS_AL_CARGAR`, a baseline captured once, right after vivo.py finishes its own imports
+(itself plus whatever it pulled in -- today `body.config` and `body.errores`), instead of a
+hardcoded exception list. A module a PREVIOUS task left cached in the same process still trips the
+guard and blocks the refresh; the next import vivo adds joins the baseline automatically and cannot
+reopen this bug.
+
+**The status file**: `main()` now writes `BODY_HOME/vivo-estado.json` after every run (besides the
+existing stdout line): `resultado` (`actualizado` | `ya_al_dia` | `sin_cambio:<motivo>`), `tarea`,
+`sha` (the short sha now checked out), `sha_main` (main's short sha), and `marca_tiempo_utc`.
+Nothing else, never a figure. A failure to write it (`OSError`) does not stop the task, matching
+`refrescar()`'s own fail-safe. The expected follow-up reader is the sync-status text in
+`body/rutas/comun.py` (a separate slice, not done here).
+
+**New tests** (`tests/test_vivo.py`): `ProcesoFrescoTest.test_un_proceso_fresco_se_actualiza_a_la_nueva_main`
+runs `python -m body.vivo subir_turnos --help` in an actual fresh interpreter (`sys.executable`,
+which under this gate is `.venv/Scripts/python.exe`), `cwd` a temporary linked worktree one commit
+behind its own throwaway `main`, `BODY_HOME` a temp dir passed via `env=` -- the case the existing
+fake-module test could not reach. `subir_turnos` was picked because `--help` makes argparse exit
+before `main()` reaches the shifts folder, the device link or the network, so it touches no data.
+Asserts `resultado == 0`, stdout contains `actualizado`, HEAD moved to the new commit, and the
+status file's fields match. Also added: `test_el_archivo_de_estado_tiene_exactamente_los_campos_esperados`
+(exactly `resultado`, `tarea`, `sha`, `sha_main`, `marca_tiempo_utc`, for both `actualizado` and
+`sin_cambio:*`) and `test_estado_no_escribible_no_impide_la_tarea` (an `OSError` from
+`config.ensure_home()` still lets the task run). The existing fake-module test
+(`test_modulos_body_previos_se_registran_pero_la_tarea_igual_corre`) is untouched and still passes.
+
+**Gate**: `.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 1615 tests in
+530.426s ... OK (skipped=1)`, run once on the branch tip.
+
+**Merge**: `git checkout main` (tip `04650a0a37be108a28129644e79c0fe7c5ff69b5`), branch commit
+`da926b9bf70abb10492aef796644980545875001`, `git merge --no-ff feat/body-vivo-refresco-1` ->
+`8d9ecc3a660f333946f96678ed4a4d05ed721130`. Merge tree `3f38cfd103a58fedf3783b78d31db1a90f281636`
+equals the branch tip's own tree (`git rev-parse feat/body-vivo-refresco-1^{tree}`) -- the merge
+carried the branch content verbatim.
+
+**Still needed, not done here**: Carlos's live tree on the PC (`C:\Duna\body\body-app-live`) still
+runs its own on-disk copy of the OLD, buggy `body/vivo.py` -- this fix only reaches it once that
+tree is moved onto this `main` by hand, which needs Carlos's own yes (it runs new migrations
+against his real database) and is explicitly out of scope for this slice.
