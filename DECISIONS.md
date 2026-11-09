@@ -10470,3 +10470,42 @@ and 1440px. A merge slice follows.
 **Commits**: slice `ccfe1a2075360fbfc704c8eb93c47e8a1e447c87` on `feat/body-ancho-completo-1`
 (base `main` at `43666001fa45681ce0a1cdb51df82b1ac1a1db30`). Not merged. Branch left checked out,
 `git status --porcelain` empty (before this ledger entry's own commit).
+
+## BODY-ANCHO-COMPLETO-1-M -- Hoy's phone reading order restored; branch merged
+
+The orchestrator measured `feat/body-ancho-completo-1` (tip `773fd974e50701155163627d61eca7ab7471431e`)
+in a real browser against `main` (`43666001fa45681ce0a1cdb51df82b1ac1a1db30`), both on demo data, in
+the same tab, at 375/1024/1440px with the assistant panel open and closed. Every screen passed --
+`.wrap` 1125px at 1440 with no horizontal scroll and 70ch prose, "Lectura" a centred 820px column,
+Ajustes' "Pantallas anchas" control, Tendencias' 2-column/1-column drop at 1024 beside the open
+assistant panel, Metas/Historia/Turnos/Tendencias matching `main` element for element at 375 -- with
+one defect: on Hoy at 375px, `today.html` had moved the readiness hero (`a.card.est`, Hoy's
+headline) *after* Primeros pasos and the habits card, opening `<div class="cols-hoy">` below them
+instead of with the hero first.
+
+**Fix, in `body/templates/today.html` only.** The DOM order is now exactly `main`'s: the readiness
+hero, then Primeros pasos, then the habits card, then the figure cards. `<div class="cols-hoy">`
+now opens with the hero as its first child and a second `<div>` holding Primeros pasos, the habits
+card and the figure cards + "ver el día", in that order -- the same single DOM order satisfies both
+the phone (identical to `main`) and the >=1024px two-column grid, so no CSS changed at all (no
+`grid-template-areas`, no `order`; nothing needed inside or outside the 1024 query).
+
+**Test**, added to `tests/test_ancho_completo.py` (`HoyPhoneOrderHeroFirstTest`): renders `/` with
+demo data carrying one metric row (ticks "conectar-garmin"/"primera-mirada-a-hoy" but leaves
+"trabajas-por-turnos" unanswered, so Primeros pasos renders) and one active goal with a daily habit
+due today (so the habits card renders too), then asserts the hero's `class="card est"` HTML
+position precedes both the Primeros pasos heading and the habits card heading.
+
+**Gate**, once, foreground: `.venv/Scripts/python.exe -m unittest discover tests -t .` --
+`Ran 1410 tests in 165.029s ... OK (skipped=1)` (1409 before this slice, +1 new test method). The
+lone skip predates this slice.
+
+**Merge**: `--no-ff` of `feat/body-ancho-completo-1` into `main`, authorised by this spec's own
+body ("This spec approves merging the branch once that fix and its test are green"). Merge commit
+`38a4f01d4981e5f7bbabb9e170ec73d5d6fcc4cc`; its tree equals the branch tip's tree
+(`d7913b5616fa55afd84cfabec5586a34263ff782` both sides), so nothing else moved in the merge. `main`
+left checked out, `git status --porcelain` empty (before this ledger entry's own commit).
+
+**Commits**: fix `130a56bc0d83412858a9bb6a299105438b8821c6` on `feat/body-ancho-completo-1` (on top
+of `ccfe1a2075360fbfc704c8eb93c47e8a1e447c87`/`773fd974e50701155163627d61eca7ab7471431e`); merge
+`38a4f01d4981e5f7bbabb9e170ec73d5d6fcc4cc` into `main`.
