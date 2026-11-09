@@ -11404,3 +11404,20 @@ does not apply.
 **Commit**: `0ac0a7c` on `feat/body-entreno-privacidad-1`, on top of `b1b3cba` (tip of `main` at
 dispatch). 4 files changed (`body/i18n/en.json`, `body/i18n/es.json`, `body/privacidad.py`,
 `tests/test_privacidad.py`), 38 insertions, 5 deletions.
+
+## BODY-ENTRENO-PRIVACIDAD-1-M -- the widened consent lands on main
+
+Lands `BODY-ENTRENO-PRIVACIDAD-1` (`0ac0a7c` + ledger `5192907`) per `ORCH-CARLOS-DELEGATES-TIER-1-1`:
+the orchestrator read the consent page (rendered from the branch's own templates and catalogs, both
+`es` and `en`) and the Settings privacy summary at 375 px on the demo home, and found the text to be
+the approved wording verbatim with the page structure unchanged. Merge only -- no code in this slice.
+
+**Gate**, once, foreground, on the branch tip before the merge: `.venv/Scripts/python.exe -m
+unittest discover tests -t .` -- `Ran 1533 tests in 319.419s ... OK (skipped=1)`. Same count as the
+floor this entry's own branch recorded (1533, `BODY-ENTRENO-PRIVACIDAD-1`); no code changed since,
+so no drift to reconcile.
+
+**Merge**: `git merge --no-ff feat/body-entreno-privacidad-1` into `main`, commit `d7ca3ec`, parents
+`b1b3cba` (prior tip of `main`) and `5192907` (tip of the branch). Tree identity: branch tree
+`27fe2e5a` equals the merge commit's own tree (`git rev-parse HEAD^{tree}` on `main` after the
+merge), and `git diff feat/body-entreno-privacidad-1 main` is empty.
