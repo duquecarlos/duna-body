@@ -291,8 +291,14 @@ def _seed_populated(conn, idioma: str) -> dict:
     goal_id = conn.execute("SELECT id FROM goal WHERE person_id = 1 ORDER BY id LIMIT 1").fetchone()[0]
     day = conn.execute(
         "SELECT day FROM daily_metric WHERE person_id = 1 ORDER BY day DESC LIMIT 1").fetchone()[0]
+    # One experiment, so the sweep actually renders experiment.html (BODY-EXPERIMENTOS-PANTALLA-1)
+    # instead of only ever seeing the "no experiment" empty state on Metas.
+    experiment_id = db.crear_experimento(
+        conn, 1, "ZZ-ACCESIBILIDAD-EXPERIMENTO", ["resting_hr"], {"tipo": "dia"},
+        {"turno_en": None, "turno_fuera": None, "excluir_tras_noche": False}, fecha_inicio=day)
+    db.registrar_dia_experimento(conn, experiment_id, 1, day, True)
     conn.commit()
-    return {"days": [day], "goal_ids": [goal_id]}
+    return {"days": [day], "goal_ids": [goal_id], "experiment_ids": [experiment_id]}
 
 
 class AccesibilidadLocalTest(unittest.TestCase):

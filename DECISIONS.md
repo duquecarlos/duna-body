@@ -12819,3 +12819,171 @@ the -M slice measured on the same tip.
 
 **Merge**: `git checkout main` (tip `d6524c2`), `git merge --no-ff
 feat/body-experimentos-registro-1` (branch tip `3a38922`) -> `88eb7f3`.
+
+## BODY-EXPERIMENTOS-PANTALLA-1 -- experiments get their first screen presence: a Metas section, a
+detail page, a Hoy line (`f23e51f`, branch `feat/body-experimentos-pantalla-1`).
+
+**Metas (`/goals`)** gains an "Experimentos" section between active goals and proposed goals
+(DESIGN rule 11: a section on an existing screen, not a new tab): active experiments as cards
+(title, which days count via `asistente._filtro_dias_txt` reused by attribute access, the date
+range -- "desde el 9 nov" / "del 9 al 13 nov" -- progress, and one line per metric with the
+verdict word from `experimentos.veredicto`'s own `resultado` plus a plain direction arrow, never
+`.good`/`.bad` or a `metric_def.better` lookup); closed ones folded under a `<details>`, matching
+the goal archive's own pattern; one line and no card when there are none.
+
+**`GET /experiments/{id}`** adds everything the card has plus, per metric, the test-day and
+baseline-day means with units and day counts (`.get()` throughout, since an intraday window's
+`veredicto` returns only `{"resultado": "aun_no"}` per metric -- BODY-EXPERIMENTOS-INTRADIA-MODELO-1
+gives that screen its own numbers later), an offset note for the five metrics `OFFSET_DIA` reads
+the next day, the marked days (date, hecho/no hecho, nota), an explanatory sentence ending "No es
+consejo médico" (DESIGN rule 12), and a close button. 404s for another person's id; writes
+nothing (`tests/test_experimentos_pantalla.py`'s `test_get_writes_nothing`).
+
+**Closing**: `db.cerrar_experimento(conn, person_id, experimento_id, fecha_fin=None)` -- no schema
+change, `estado` already allowed `'cerrado'` and `fecha_fin` was already nullable -- sets both,
+defaulting `fecha_fin` to today, and raises `ValueError` for another person's id or one already
+closed. `POST /experiments/{id}/close` turns either into the same 404 an unknown id gets.
+`veredicto` already caps its test window at `fecha_fin`, so a closed experiment keeps the verdict
+it had the moment it closed.
+
+**Hoy (`/`)** gains one line per ACTIVE experiment whose day filter counts today, within
+`[fecha_inicio, fecha_fin]`: "Experimento: <title> -- hoy cuenta". A non-habit-linked experiment
+gets "Lo hice"/"Hoy no" buttons posting `POST /experiments/{id}/day` (refuses a habit-linked
+experiment's id with 404, since the habit's own plan-list entry already marks it); posting again
+changes the mark, read back from `experimento_registro` on the next render.
+
+**Guard suites extended** (all in `touches:`, none loosened): `test_accesibilidad.py`,
+`test_estados_vacios.py`, `test_estados_vacios_hosted.py`, `test_get_sin_escritura.py`,
+`test_persona_fuga.py` and `test_rendimiento.py` now seed one real experiment and carry its id
+into the new routes. `test_persona_fuga.py`'s marker sweep moves EXPERIMENTO's `titulo` and
+REGISTRO's `nota` from the excluded list to the active one, since this slice gives them their
+first reader (MOMENTO stays excluded -- nothing renders it yet). `test_rendimiento.py`'s
+ceilings for `/goals` (40 -> 50) and the new `/experiments/{experiment_id}` (27) are measured on
+this module's own fixture (statements: `/` 59, `/goals` 39, `/experiments/{id}` 20) plus headroom;
+`/` keeps its existing ceiling of 75, comfortably above the measured 59.
+`test_conexiones_cerradas.py` and `test_guardia_parches.py` needed no edit: both auto-discover new
+router modules and routes by AST scan. `body/static/body.css` needed no new class; the section
+reuses `.card`, `.chip`, `.k`, `.plan`, `.row` and the existing goal-archive `<details>` pattern.
+
+**Gate**, once, foreground, on the branch tip (commit `f23e51f`): `.venv/Scripts/python.exe -m
+unittest discover tests -t .` -> `Ran 1801 tests in 353.910s ... FAILED (failures=4, skipped=1)`.
+
+**GATE_RED, all four failures outside `touches:`, none fixed by this slice**: `test_agente_registro
+.py`'s `RouteMappingTest` (its own hand-kept `ROUTE_TOOL` dict has no entry for
+`/experiments/{experiment_id}`); `test_i18n_paridad.py`'s `test_dynamic_prefixes_resolve_in_es`
+(its own `_FIXED_DYNAMIC` dict has no entry for the new dynamic prefix `experimentos.resultado.+`,
+from `t(f"experimentos.resultado.{resultado}")` in `body/rutas/experimentos.py:53`);
+`test_registro_tu.py`'s third-person sweep (its own `_THIRD_PERSON_ALLOW` dict has no entry for
+`experimentos.resultado.aun_no`'s "todavía no se puede medir" -- an impersonal "se puede", not
+"usted puede" addressed to the reader, so this reads as a false positive, not a voice defect);
+`test_web_entry.py`'s `RouteSetTest` (its own hardcoded `BEFORE` route set has no entry for the
+three new routes). Each is a hand-maintained table living in a test file not named in this slice's
+`touches:` list; none of the four is `test_accesibilidad.py`, `test_conexiones_cerradas.py`,
+`test_estados_vacios.py`, `test_estados_vacios_hosted.py`, `test_get_sin_escritura.py`,
+`test_persona_fuga.py`, `test_rendimiento.py` or `test_guardia_parches.py`, the guard suites this
+slice's spec named. Widening any of the four is adjacent work for a slice that touches them.
+
+**Stops GATE_RED**, committed on the branch, not merged. The branch also carries customer-facing
+bytes, which ORCH-CARLOS-DELEGATES-TIER-1-1's approval reason already stops for the orchestrator's
+own 375 px check in es and en, independent of this gate result.
+
+## BODY-EXPERIMENTOS-PANTALLA-1-M -- the four guards widened, not excused
+
+Continues BODY-EXPERIMENTOS-PANTALLA-1 (commit `35704fd`, on `feat/body-experimentos-pantalla-1`),
+which stopped GATE_RED at 1801 tests / 4 failed, all four a hand-kept guard table reacting to the
+new routes and keys, as recorded above. The orchestrator's approval (ORCH-CARLOS-DELEGATES-TIER-1-1)
+decided each in words; this slice carries out that decision, extending every table's own subject
+(an unmapped route, an unlisted dynamic prefix, a third-person string, an unexpected route) rather
+than loosening it.
+
+* `tests/test_agente_registro.py` `ROUTE_TOOL` now pins `"/experiments/{experiment_id}":
+  "leer_experimentos"` -- the only GET the two new routers added; the two POSTs
+  (`/experiments/{experiment_id}/close`, `/experiments/{experiment_id}/day`) are writes and this
+  table only ever carries GETs, so neither belongs in it (goal POSTs are likewise absent here).
+* `tests/test_i18n_paridad.py` `_FIXED_DYNAMIC` now pins `"experimentos.resultado.+": ["mas_bajo",
+  "mas_alto", "sin_cambio", "pocos_dias", "aun_no"]`, matching `_metric_line`'s own
+  `t("experimentos.resultado." + resultado)` in `body/rutas/experimentos.py:53`.
+* `tests/test_web_entry.py` `RouteSetTest.BEFORE` now pins all three new routes: `("/experiments
+  /{experiment_id}", ("GET",))`, `("/experiments/{experiment_id}/close", ("POST",))`,
+  `("/experiments/{experiment_id}/day", ("POST",))`.
+* `experimentos.resultado.aun_no` is REWORDED, not allow-listed, per the approval reason: es
+  "todavía sin veredicto" (was "todavía no se puede medir"), en "no verdict yet" (was "can't be
+  measured yet") -- shorter, and it names what the person sees instead of explaining why it can't
+  be measured, so the impersonal "puede" that tripped `test_registro_tu.py`'s su/sus/tiene/puede
+  sweep is gone along with the old wording, not papered over with an allow-list entry.
+  `tests/test_experimentos_pantalla.py`'s `test_aun_no_for_an_intraday_window` now asserts the new
+  Spanish string. `tests/test_registro_tu.py` itself needed no edit -- the rewording removes the
+  trip rather than adding an entry to its own `_THIRD_PERSON_ALLOW`.
+
+**Gate**, once, foreground, on the branch tip (commit `35704fd`): `.venv/Scripts/python.exe -m
+unittest discover tests -t .` -> `Ran 1801 tests in 383.367s ... OK (skipped=1)`.
+
+**Stops AWAITING_APPROVAL**, committed on the branch, not merged: the diff changes customer-facing
+bytes (`body/i18n/es.json`, `body/i18n/en.json`, the `aun_no` string in both languages), which fails
+merge policy A on its own, and ORCH-CARLOS-DELEGATES-TIER-1-1's approval reason already named this
+stop for the orchestrator's own 375 px check on the experiment screens, independent of the gate
+result. To see the screens on the demo home: seed one experiment with `db.crear_experimento(conn,
+person_id, "<titulo>", ["resting_hr"], {"tipo": "dia"}, {"turno_en": None, "turno_fuera": None,
+"excluir_tras_noche": False}, fecha_inicio="<ISO date>")` against the demo's db, then open `/goals`
+for its card (and closed-card archive) and `/experiments/{id}` for the detail page; `/` carries the
+day's own experiment line when today falls inside the experiment's day filter and date range.
+
+## BODY-EXPERIMENTOS-PANTALLA-1-M2 -- four corrections from the 375 px re-measure
+
+Continues BODY-EXPERIMENTOS-PANTALLA-1 (+ -M, commit `d218828`, on
+`feat/body-experimentos-pantalla-1`). Four things the orchestrator's own 375 px measurement found
+wrong, approved by ORCH-CARLOS-DELEGATES-TIER-1-1; the verdict model (`body/experimentos.py`) is
+untouched, as that approval says -- every count below is read from `experimento_registro` /
+`habit_check`, the verdict itself still from `experimentos.veredicto`.
+
+1. **The progress line now counts what the person marked, not what they didn't.** It used to read
+   `len(dias_excluidos_no_ocurrio)` as "sin hacer" -- a day with no mark at all read exactly like
+   one explicitly marked false, so a just-started experiment showed "0 días hechos, 1 sin hacer" on
+   its first morning. `_progreso_txt` (`body/rutas/experimentos.py`) now takes `hechos` from
+   `ver["dias_prueba"]` (reused from the verdict, not re-derived) and splits
+   `ver["dias_excluidos_no_ocurrio"]` by whether `_dias_marcados` (the same
+   `experimento_registro`/`habit_check` source `veredicto`'s own `_ocurrio_por_dia` reads) carries a
+   mark for that day: marked false -> `no_hechos`, no mark at all -> `sin_marcar`. TODAY, unmarked,
+   counts for neither (the day is not over). Es "{hechos} hechos · {no_hechos} no · {sin_marcar} sin
+   marcar", en "{hechos} done · {no_hechos} not done · {sin_marcar} not marked" -- a zero part is
+   left out, and nothing marked reads es "todavía ningún día marcado" / en "no days marked yet". New
+   keys: `experimentos.progreso_hechos`, `experimentos.progreso_no_hechos`,
+   `experimentos.progreso_sin_marcar`, `experimentos.progreso_vacio`, replacing the old
+   `experimentos.progreso`. Same line on the card and the detail page (`_tarjeta_desde_veredicto` now
+   threads `conn`, `person_id` and `today` through to build it).
+2. **Hoy's two buttons sit side by side on the left.** `body/templates/today.html`'s button row
+   gains the existing `justify-start` utility class alongside `.row gap-8` (`.row` itself untouched,
+   per the approval's own instruction) so the floating assistant button never covers "Hoy no" / "Not
+   today" while scrolling. Once today is marked, the chosen button carries `aria-pressed="true"`
+   plus the `.btn.on` selected style already used elsewhere for a primary/active action (an existing
+   accent token, not a new colour, not a grading one); the other stays `aria-pressed="false"`, and
+   posting it still changes the mark. `hoy_contexto` now returns a `marcado` field ("1" / "0" /
+   `None`) instead of baking the mark into the line text; the "· hecho" suffix is gone -- one signal,
+   not two -- and `aria-pressed` is the screen-reader cue. Removed keys:
+   `today.experimento_linea_marcado`, `experimentos.marca.hecho`, `experimentos.marca.no_hecho`
+   (their only caller was this line).
+3. **A closed card on Metas now shows its date range and day-filter line**, like an active card:
+   `body/templates/goals.html`'s closed-card loop gains the `{{ e.dias_txt }} · {{ e.fecha_txt }}`
+   line the active loop already had -- both fields were already on the card dict, just never
+   rendered for a closed one.
+4. **The detail page's two means say what they count.** `experimentos.media_linea` was "{etiqueta}
+   ({n} días): {valor}" with `n` = days WITH A FIGURE (a night without a reading drops out), which
+   read as test days. Now es "{etiqueta} ({n} con dato): {valor}", en "{etiqueta} ({n} with a
+   reading): {valor}" -- one key, so both the test-days and the baseline lines pick it up.
+
+`tests/test_i18n_paridad.py` and `tests/test_registro_tu.py` needed no table edits: both scan
+generically (literal `t()` keys, `su/sus/tiene/puede`) and passed unchanged against the new/removed
+keys above. `tests/test_accesibilidad.py` and `tests/test_rendimiento.py` likewise passed unchanged.
+`tests/test_experimentos_pantalla.py` gains: a fresh experiment's empty sentence (es, en); hecho/no/
+sin-marcar each counted separately, including a habit-linked experiment reading `habit_check`; zero
+parts left out; `aria-pressed` before and after marking on Hoy, and that posting the other button
+still flips the mark; the closed card's date range and day-filter line; the "con dato" / "with a
+reading" wording (es, en).
+
+**Gate**, once, foreground, on the branch tip (commit `1217ddf`): `.venv/Scripts/python.exe -m
+unittest discover tests -t .` -> `Ran 1809 tests in 524.584s ... OK (skipped=1)`.
+
+**Stops AWAITING_APPROVAL**, committed on the branch, not merged: the diff changes customer-facing
+bytes (`body/i18n/es.json`, `body/i18n/en.json`, `body/templates/today.html`,
+`body/templates/goals.html`), which fails merge policy A on its own, and the approval reason already
+named this stop for the orchestrator's own 375 px re-measure, independent of the gate result.

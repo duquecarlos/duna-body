@@ -89,6 +89,8 @@ def _paths_for(route_path: str, ids: dict):
         return [route_path.replace("{day}", d) for d in ids["days"]]
     if "{goal_id}" in route_path:
         return [route_path.replace("{goal_id}", str(g)) for g in ids["goal_ids"]]
+    if "{experiment_id}" in route_path:
+        return [route_path.replace("{experiment_id}", str(e)) for e in ids.get("experiment_ids", [])]
     return [route_path]
 
 
@@ -203,7 +205,8 @@ class HostedEstadosVaciosSweepTest(CuentaRpTestCase):
                 conn.commit()
             finally:
                 conn.close()
-            ids = {"person_id": pid, "days": [TODAY.isoformat()], "goal_ids": [], "turnos_on": False}
+            ids = {"person_id": pid, "days": [TODAY.isoformat()], "goal_ids": [], "experiment_ids": [],
+                   "turnos_on": False}
             _sweep_as(client, f"H1/{lang}", ids, signed_in=True, consented=False)
 
         # ---- H2: signed in, consented, Garmin never connected -------------------------------------
@@ -216,12 +219,14 @@ class HostedEstadosVaciosSweepTest(CuentaRpTestCase):
                 conn.commit()
             finally:
                 conn.close()
-            ids = {"person_id": pid, "days": [TODAY.isoformat()], "goal_ids": [], "turnos_on": False}
+            ids = {"person_id": pid, "days": [TODAY.isoformat()], "goal_ids": [], "experiment_ids": [],
+                   "turnos_on": False}
             _sweep_as(client, f"H2/{lang}", ids, signed_in=True, consented=True)
 
         # ---- unsigned: every person route redirects to sign-in or answers its documented status --
         anon = TestClient(web.app, follow_redirects=False)
-        anon_ids = {"person_id": None, "days": [TODAY.isoformat()], "goal_ids": ["1"], "turnos_on": False}
+        anon_ids = {"person_id": None, "days": [TODAY.isoformat()], "goal_ids": ["1"], "experiment_ids": ["1"],
+                    "turnos_on": False}
         _sweep_as(anon, "anon", anon_ids, signed_in=False, consented=False)
 
         self.assertEqual(defects, [], "defect(s) found by the hosted sweep:\n" +

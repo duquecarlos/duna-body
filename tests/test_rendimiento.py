@@ -35,7 +35,9 @@ client = TestClient(web.app, follow_redirects=False)
 # one assistant conversation) right after BODY-RENDIMIENTO-1's fix, with headroom so a small,
 # legitimate change to a route does not make this test flaky. The measured value for each one, and
 # the margin applied, are in BODY-RENDIMIENTO-1's ledger entry -- except /shifts and /shifts/como,
-# remeasured after BODY-RENDIMIENTO-2's reader fix, in that slice's own ledger entry.
+# remeasured after BODY-RENDIMIENTO-2's reader fix, and /goals and /experiments/{experiment_id},
+# remeasured after BODY-EXPERIMENTOS-PANTALLA-1 added the fixture's own experiment and its
+# Metas-section/detail-page reads, each in that slice's own ledger entry.
 _CEILINGS = {
     "/": 75,
     "/ajustes/asistente": 16,
@@ -44,8 +46,9 @@ _CEILINGS = {
     "/asistente/conversacion/{conversacion_id}": 17,
     "/ayuda": 15,
     "/day/{day}": 45,
+    "/experiments/{experiment_id}": 27,
     "/garmin": 9,
-    "/goals": 40,
+    "/goals": 50,
     "/goals/new": 48,
     "/goals/{goal_id}": 33,
     "/healthz": 3,
@@ -88,8 +91,12 @@ def _seed(conn) -> dict:
     day = conn.execute(
         "SELECT day FROM daily_metric WHERE person_id = 1 ORDER BY day DESC LIMIT 1").fetchone()[0]
     conversacion_id = agente_conversacion.crear(conn, 1)
+    experiment_id = db.crear_experimento(
+        conn, 1, "ZZ-EXPERIMENTO", ["resting_hr"], {"tipo": "dia"},
+        {"turno_en": None, "turno_fuera": None, "excluir_tras_noche": False}, fecha_inicio=day)
+    db.registrar_dia_experimento(conn, experiment_id, 1, day, True)
     conn.commit()
-    return {"goal_id": goal_id, "day": day, "conversacion_id": conversacion_id}
+    return {"goal_id": goal_id, "day": day, "conversacion_id": conversacion_id, "experiment_id": experiment_id}
 
 
 def _fill(path: str, ids: dict) -> str:

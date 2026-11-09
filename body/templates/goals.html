@@ -29,6 +29,38 @@
 {% endfor %}
 </div>
 
+<h2>{{ t('goals.section_experiments') }}</h2>
+{% if experiments_empty %}
+<p class="note">{{ t('goals.experiments_empty') }}</p>
+{% else %}
+<div class="cols-metas">
+{% for e in experiments_active %}
+<a class="card" href="/experiments/{{ e.id }}">
+  <div class="q m-0">{{ e.title }}</div>
+  <p class="k mt-2 mb-0">{{ e.dias_txt }} · {{ e.fecha_txt }}</p>
+  <p class="k mt-4 mb-0">{{ e.progreso_txt }}</p>
+  {% for m in e.metrics %}<p class="k mt-2 mb-0">{{ m.label }}: {{ m.text }}</p>{% endfor %}
+  <span class="chev chev-low">›</span>
+</a>
+{% endfor %}
+</div>
+{% if experiments_closed %}
+<details class="files mt-10">
+  <summary class="k">{{ t('goals.experiments_closed') }}</summary>
+  <div class="cols-metas">
+  {% for e in experiments_closed %}
+  <a class="card mt-8" href="/experiments/{{ e.id }}">
+    <div class="row"><div class="q m-0">{{ e.title }}</div><span class="chip">{{ e.status_text }}</span></div>
+    <p class="k mt-2 mb-0">{{ e.dias_txt }} · {{ e.fecha_txt }}</p>
+    <p class="k mt-4 mb-0">{{ e.progreso_txt }}</p>
+    {% for m in e.metrics %}<p class="k mt-2 mb-0">{{ m.label }}: {{ m.text }}</p>{% endfor %}
+  </a>
+  {% endfor %}
+  </div>
+</details>
+{% endif %}
+{% endif %}
+
 {% if proposed %}
 <h2>{{ t('goals.section_proposed') }}</h2>
 <div class="cols-metas">

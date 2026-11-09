@@ -123,7 +123,7 @@ def _full_day(conn, person_id: int, day: str) -> None:
 def _seed_A(conn, lang: str, pid: int | None = None) -> dict:
     pid = _use_or_make(conn, lang, "A", pid)
     conn.commit()
-    return {"person_id": pid, "days": [TODAY.isoformat()], "goal_ids": [], "turnos_on": False}
+    return {"person_id": pid, "days": [TODAY.isoformat()], "goal_ids": [], "experiment_ids": [], "turnos_on": False}
 
 
 # ---- B: one day of data, today, every metric a watch can send -------------------------------
@@ -132,7 +132,7 @@ def _seed_B(conn, lang: str, pid: int | None = None) -> dict:
     day = TODAY.isoformat()
     _full_day(conn, pid, day)
     conn.commit()
-    return {"person_id": pid, "days": [day], "goal_ids": [], "turnos_on": False}
+    return {"person_id": pid, "days": [day], "goal_ids": [], "experiment_ids": [], "turnos_on": False}
 
 
 # ---- C: 20 days with ONLY sleep -- a watch/setting that sends some metrics but not others -------
@@ -142,7 +142,7 @@ def _seed_C(conn, lang: str, pid: int | None = None) -> dict:
     for i, day in enumerate(days):
         db.set_metric(conn, day, "sleep_minutes", 400 + i, "garmin", pid)
     conn.commit()
-    return {"person_id": pid, "days": [days[0], days[-1]], "goal_ids": [], "turnos_on": False}
+    return {"person_id": pid, "days": [days[0], days[-1]], "goal_ids": [], "experiment_ids": [], "turnos_on": False}
 
 
 # ---- D: trabaja_turnos = yes, zero shift rows, zero metrics (the honest "sin_datos_reloj" path) -
@@ -150,7 +150,7 @@ def _seed_D(conn, lang: str, pid: int | None = None) -> dict:
     pid = _use_or_make(conn, lang, "D", pid)
     db.set_trabaja_turnos(conn, True, pid)
     conn.commit()
-    return {"person_id": pid, "days": [TODAY.isoformat()], "goal_ids": [], "turnos_on": True}
+    return {"person_id": pid, "days": [TODAY.isoformat()], "goal_ids": [], "experiment_ids": [], "turnos_on": True}
 
 
 # ---- D2: one night block, trabaja_turnos = yes, no watch data at all (before or after) -----------
@@ -167,7 +167,8 @@ def _seed_D2(conn, lang: str, pid: int | None = None) -> dict:
             (pid, d, f"{d}T22:00:00", f"{nd}T06:00:00"))
     after_day = (start + timedelta(3)).isoformat()
     conn.commit()
-    return {"person_id": pid, "days": [start.isoformat(), after_day], "goal_ids": [], "turnos_on": True}
+    return {"person_id": pid, "days": [start.isoformat(), after_day], "goal_ids": [], "experiment_ids": [],
+            "turnos_on": True}
 
 
 # ---- E: an active metric goal on a metric with no data at all, a habit goal with zero checks ----
@@ -182,7 +183,8 @@ def _seed_E(conn, lang: str, pid: int | None = None) -> dict:
     goals.activate(conn, gid_habit)
     goals.add_habit(conn, gid_habit, "ZZE-HABIT", {"per": "week", "times": 1})
     conn.commit()
-    return {"person_id": pid, "days": [today_iso], "goal_ids": [gid_metric, gid_habit], "turnos_on": False}
+    return {"person_id": pid, "days": [today_iso], "goal_ids": [gid_metric, gid_habit], "experiment_ids": [],
+            "turnos_on": False}
 
 
 # ---- F: data only in the past -- the last day is 40 days ago, the watch stopped syncing ---------
@@ -192,7 +194,8 @@ def _seed_F(conn, lang: str, pid: int | None = None) -> dict:
     for i in range(10):
         _full_day(conn, pid, (last_day - timedelta(9 - i)).isoformat())
     conn.commit()
-    return {"person_id": pid, "days": [last_day.isoformat(), TODAY.isoformat()], "goal_ids": [], "turnos_on": False}
+    return {"person_id": pid, "days": [last_day.isoformat(), TODAY.isoformat()], "goal_ids": [],
+            "experiment_ids": [], "turnos_on": False}
 
 
 STATES = {"A": _seed_A, "B": _seed_B, "C": _seed_C, "D": _seed_D, "D2": _seed_D2, "E": _seed_E, "F": _seed_F}
@@ -214,6 +217,8 @@ def _paths_for(route_path: str, ids: dict):
         return [route_path.replace("{day}", d) for d in ids["days"]]
     if "{goal_id}" in route_path:
         return [route_path.replace("{goal_id}", str(g)) for g in ids["goal_ids"]]
+    if "{experiment_id}" in route_path:
+        return [route_path.replace("{experiment_id}", str(e)) for e in ids.get("experiment_ids", [])]
     return [route_path]
 
 

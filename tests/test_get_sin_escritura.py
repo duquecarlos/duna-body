@@ -56,8 +56,12 @@ def _seed(conn) -> dict:
     day = conn.execute(
         "SELECT day FROM daily_metric WHERE person_id = 1 ORDER BY day DESC LIMIT 1").fetchone()[0]
     conversacion_id = agente_conversacion.crear(conn, 1)
+    experiment_id = db.crear_experimento(
+        conn, 1, "ZZ-EXPERIMENTO", ["resting_hr"], {"tipo": "dia"},
+        {"turno_en": None, "turno_fuera": None, "excluir_tras_noche": False}, fecha_inicio=day)
+    db.registrar_dia_experimento(conn, experiment_id, 1, day, True)
     conn.commit()
-    return {"goal_id": goal_id, "day": day, "conversacion_id": conversacion_id}
+    return {"goal_id": goal_id, "day": day, "conversacion_id": conversacion_id, "experiment_id": experiment_id}
 
 
 def _dump(conn) -> dict:

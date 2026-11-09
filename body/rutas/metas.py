@@ -13,7 +13,7 @@ from fastapi.responses import RedirectResponse
 from .. import cuenta, db, enlaces, fechas, goals, household, identity, profile
 from ..baselines import baseline
 from ..i18n import T
-from . import comun
+from . import comun, experimentos
 
 router = APIRouter()
 
@@ -214,9 +214,12 @@ def goals_list(person_id: int = Depends(identity.current_person_id)):
                        "shared_line": _shared_line(conn, t, g, person_id)} for g in proposed]
     archived_cards = [{"id": g["id"], "title": g["title"], "status_text": t("goals.status." + g["status"]),
                        "shared_line": _shared_line(conn, t, g, person_id)} for g in archived]
+    experiments_active, experiments_closed = experimentos.resumen_metas(conn, t, person_id, today)
 
     return comun._render("goals.html", t=t, tab="goals", cards=cards, proposed=proposed_cards, archived=archived_cards,
-                   empty=not (active or proposed or archived), turnos=db.trabaja_turnos_si(conn, person_id))
+                   empty=not (active or proposed or archived), turnos=db.trabaja_turnos_si(conn, person_id),
+                   experiments_active=experiments_active, experiments_closed=experiments_closed,
+                   experiments_empty=not (experiments_active or experiments_closed))
 
 
 @router.get("/goals/new")

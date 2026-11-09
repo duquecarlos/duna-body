@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}{{ experiment.title }} · {{ t('app.name') }}{% endblock %}
+{% block main %}
+<div class="top">
+  <div><h1>{{ experiment.title }}</h1><p class="sub">{{ experiment.dias_txt }} · {{ experiment.fecha_txt }}</p></div>
+  {% if experiment.closed %}<span class="chip">{{ experiment.status_text }}</span>{% endif %}
+</div>
+
+<div class="card">
+  <div class="q">{{ experiment.progreso_txt }}</div>
+  {% for m in experiment.metrics_detalle %}
+  <div class="mt-10">
+    <div class="k m-0">{{ m.label }}: {{ m.text }}</div>
+    <p class="read mt-2 mb-0">{{ m.media_prueba_txt }}</p>
+    <p class="read mt-2 mb-0">{{ m.media_base_txt }}</p>
+    {% if m.offset_nota %}<p class="note mt-2 mb-0">{{ m.offset_nota }}</p>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+<div class="card">
+  <div class="q">{{ t('experimentos.dias_marcados_title') }}</div>
+  {% if experiment.dias_marcados %}
+  {% for d in experiment.dias_marcados %}
+  <p class="read {{ 'mt-0' if loop.first else 'mt-6' }}">{{ d.fecha }}: {{ t('experimentos.dia_hecho') if d.ocurrio else t('experimentos.dia_no_hecho') }}{% if d.nota %} · {{ d.nota }}{% endif %}</p>
+  {% endfor %}
+  {% else %}
+  <p class="note m-0">{{ t('experimentos.sin_dias_marcados') }}</p>
+  {% endif %}
+</div>
+
+<p class="note">{{ experiment.explicacion }}</p>
+
+{% if not experiment.closed %}
+<div class="confirm-actions">
+  <form method="post" action="/experiments/{{ experiment.id }}/close"><button class="btn" type="submit">{{ t('experimentos.cerrar_btn') }}</button></form>
+</div>
+{% endif %}
+{% endblock %}

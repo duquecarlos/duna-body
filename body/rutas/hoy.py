@@ -14,7 +14,7 @@ from markupsafe import Markup
 from .. import compartir, cuenta, db, goals, history, household, identity, readiness, turnos_costo, tutoriales
 from ..baselines import baseline
 from ..i18n import T
-from . import comun
+from . import comun, experimentos
 
 router = APIRouter()
 
@@ -225,6 +225,7 @@ def today(person_id: int = Depends(identity.current_person_id)):
                    missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_count=proposed_count,
                    turno=turno_ctx, turnos=turnos_on,
                    plan_habits=_today_due_habits(conn, t, person_id, today_local),
+                   plan_experimentos=experimentos.hoy_contexto(conn, t, person_id, today_local),
                    today_iso=today_local.isoformat(),
                    primeros_pasos=primeros_pasos,
                    hogar_compartido=_hogar_compartido_ctx(conn, t, person_id, defs, today_local))

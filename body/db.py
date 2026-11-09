@@ -1551,6 +1551,29 @@ def registrar_dia_experimento(conn: sqlite3.Connection, experimento_id: int, per
         )
 
 
+def cerrar_experimento(conn: sqlite3.Connection, person_id: int, experimento_id: int,
+                        fecha_fin: str | None = None) -> None:
+    """Closes one of this person's own experiments (BODY-EXPERIMENTOS-PANTALLA-1): sets
+    estado='cerrado' and fecha_fin to the given day, or today (UTC date) if none is given. Refuses
+    (ValueError) an experimento_id that is not this person's own, or one already closed -- the
+    screen's /experiments/{id}/close route turns either into the same 404 an unknown id gets.
+    `experimentos.veredicto` already caps its test window at fecha_fin, so a closed experiment
+    keeps the verdict it had the moment it closed."""
+    row = conn.execute(
+        "SELECT estado FROM experimento WHERE id = ? AND person_id = ?", (experimento_id, person_id)
+    ).fetchone()
+    if row is None:
+        raise ValueError("experimento_id: not this person's own experiment")
+    if row["estado"] == "cerrado":
+        raise ValueError("experimento_id: already closed")
+    fecha_fin = fecha_fin or datetime.now(timezone.utc).isoformat(timespec="seconds")[:10]
+    with conn:
+        conn.execute(
+            "UPDATE experimento SET estado = 'cerrado', fecha_fin = ? WHERE id = ? AND person_id = ?",
+            (fecha_fin, experimento_id, person_id),
+        )
+
+
 def borrar_experimento(conn: sqlite3.Connection, person_id: int, experimento_id: int) -> None:
     """Deletes one of this person's own experiments -- refused (ValueError) if it is not theirs, or
     if a day has already been marked against it (`experimento_registro`, the only row that points

@@ -31,6 +31,7 @@ ROUTE_TOOL = {
     "/goals": "leer_metas",
     "/goals/new": None,          # a creation form, not a data screen
     "/goals/{goal_id}": "leer_meta",
+    "/experiments/{experiment_id}": "leer_experimentos",
     "/shifts/patron": None,       # a creation form, not a data screen
     "/settings": "leer_ajustes",
     "/sw.js": None,               # the service worker script, not a data screen
