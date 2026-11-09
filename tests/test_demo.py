@@ -8,11 +8,15 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
+from unittest import mock
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
-from body import turnos_costo
+from tests._db import open_conn
+
+from body import db, demo, turnos_costo
 from body.db import METRIC_DEFS
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -203,6 +207,55 @@ class DeterminismTest(unittest.TestCase):
         finally:
             conn_a.close()
             conn_b.close()
+
+
+class _FakeToday(date):
+    """`date.today()` returns a fixed value -- patched onto body.demo's own `date` name only, so
+    `_seed()`'s `anchor = date.today()` picks a chosen anchor instead of the real clock
+    (BODY-DEMO-TURNOS-1), with no change to demo.py's seeding logic itself."""
+    _valor = date(2024, 1, 1)
+
+    @classmethod
+    def today(cls):
+        return cls._valor
+
+
+def _seed_at(case: unittest.TestCase, hoy: date, dias: int) -> sqlite3.Connection:
+    conn = open_conn(case, Path(tempfile.mkdtemp(dir=TMP)) / "t.db")
+    db.init(conn)
+    _FakeToday._valor = hoy
+    with mock.patch.object(demo, "date", _FakeToday):
+        demo._seed(conn, dias=dias, idioma="es")
+    return conn
+
+
+class UltimaSemanaReachableTest(unittest.TestCase):
+    """BODY-DEMO-TURNOS-1: the default demo seed must show BOTH of REFERENCIA-NOCHE-1's states
+    honestly from its own seed, whatever day it runs on -- a verdict for at least one metric from
+    the default window, the gap reason from a short one. Checked across one full 28-day cycle of
+    anchors (the demo's own 4-week shift pattern repeats every 28 days), not just today's real date,
+    so the seeded default cannot depend on which day of that cycle "today" happens to fall on."""
+
+    ANCHOR0 = date(2026, 1, 5)  # arbitrary; a full cycle of offsets covers every phase regardless
+
+    def test_default_seed_gives_a_verdict_every_day_of_the_cycle(self):
+        for offset in range(28):
+            hoy = self.ANCHOR0 + timedelta(offset)
+            with self.subTest(hoy=hoy.isoformat()):
+                conn = _seed_at(self, hoy, demo.DIAS_DEFAULT)
+                u = turnos_costo.resumen(conn, 1, hoy=hoy)["ultima_semana"]
+                self.assertIsNotNone(u, f"no completed night block seeded for hoy={hoy}")
+                self.assertTrue(u["metricas"], f"no metric reached a verdict for hoy={hoy}")
+
+    def test_short_seed_still_shows_the_gap_every_day_of_the_cycle(self):
+        corto = 40  # well under MIN_BLOQUES_PREVIOS's reach (BODY-TURNOS-REFERENCIA-NOCHE-1)
+        for offset in range(28):
+            hoy = self.ANCHOR0 + timedelta(offset)
+            with self.subTest(hoy=hoy.isoformat()):
+                conn = _seed_at(self, hoy, corto)
+                u = turnos_costo.resumen(conn, 1, hoy=hoy)["ultima_semana"]
+                self.assertTrue(u is None or u["motivo"] == "pocos_bloques_previos",
+                                 f"expected a gap state for hoy={hoy}, got {u}")
 
 
 if __name__ == "__main__":
