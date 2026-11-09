@@ -48,7 +48,12 @@ comes from; the Body-specific reading is in *italics*. When a new rule arrives f
     directly by punctuation -- a chat client can read it as part of the link. Both guarded by
     tests/test_registro_tu.py.*
 11. **Phone first** (375 px, 44 px targets, bottom tabs; left rail ≥ 1024). Hover only under `(hover:hover)`;
-    visible pressed and focus states; reduced motion respected (ui-interaccion-v1).
+    visible pressed and focus states; reduced motion respected (ui-interaccion-v1). *A target smaller than 44 px
+    grows its hit area, never its drawing, with the `.hit` pattern (BODY-TAP-44-1): `position:relative` on the
+    target and a borderless, see-through `::before`, inset to reach 44x44, in whatever space already surrounds
+    it. A radio or checkbox counts as its full `label`, not the input alone. Exception: Tendencias' per-day chart
+    anchors stay under 44 px -- the documented no-JS path (rule 9); with JS the chart's tap/drag readout is the
+    target.*
 12. **Never medical advice.** *The app shows patterns in your own numbers and the plan you chose. It does not
     diagnose. Abnormal readings point to "habla con tu médico", nothing more.*
 13. **Health data stays home** (Body CLAUDE.md). *Local DB; no values in URLs or logs; no third-party analytics;
