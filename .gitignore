@@ -7,3 +7,9 @@ data/
 *.sqlite
 garmin_tokens/
 .env
+# BODY-ARTE-FUERA-DEL-REPO-1: generated anatomy art under design/ stays out of the repo until a build slice ships it
+design/**/*.jpg
+design/**/*.jpeg
+design/**/*.png
+design/**/*.webp
+design/**/*.heic
