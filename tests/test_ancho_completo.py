@@ -13,7 +13,7 @@ import unittest
 
 from fastapi.testclient import TestClient
 
-from body import config, db, web
+from body import config, db, goals, web
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 STATIC = ROOT / "body" / "static"
@@ -235,6 +235,45 @@ class ScreenColumnClassesTest(unittest.TestCase):
                           f"[data-ancho=lectura] does not collapse .{cls}")
         self.assertIn('[data-ancho="lectura"].grid3{grid-template-columns:repeat(3,minmax(0,1fr))}',
                       compact)
+
+
+class HoyPhoneOrderHeroFirstTest(unittest.TestCase):
+    """BODY-ANCHO-COMPLETO-1-M: the wide-screen grid must not change Hoy's phone reading order.
+    main's DOM order is the readiness hero (`a.card.est`), then Primeros pasos, then the habits
+    card, then the figure cards -- with demo data that has both Primeros pasos and habits, the
+    hero's HTML must still come first."""
+
+    def test_hero_comes_before_primeros_pasos_and_habits(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = pathlib.Path(tempfile.mkdtemp(dir=_isolate.TMP)) / "hoy_order.db"
+        conn = db.connect()
+        self.addCleanup(conn.close)
+        db.init(conn)
+
+        # one metric row: ticks "conectar-garmin" / "primera-mirada-a-hoy" but leaves
+        # "trabajas-por-turnos" unanswered, so primeros_pasos is not None.
+        db.set_metric(conn, "2026-11-01", "resting_hr", 55, "garmin", 1)
+        gid = goals.propose(conn, 1, "Dormir mejor", "2026-11-01", metric_key="sleep_minutes",
+                             direction="raise", target_value=420.0, baseline_value=350.0,
+                             deadline="2026-12-31")
+        goals.activate(conn, gid)
+        goals.add_habit(conn, gid, "Dormir temprano", {"per": "day", "times": 1})
+        conn.commit()
+
+        client = TestClient(web.app, follow_redirects=False)
+        r = client.get("/")
+        self.assertEqual(r.status_code, 200)
+
+        es = json.loads(_read(ROOT / "body" / "i18n" / "es.json"))
+        hero_pos = r.text.index('class="card est"')
+        primeros_pos = r.text.index(es["primeros_pasos.titulo"])
+        habits_pos = r.text.index(es["today.plan_title"])
+
+        self.assertLess(hero_pos, primeros_pos,
+                         "the readiness hero must render before Primeros pasos")
+        self.assertLess(hero_pos, habits_pos,
+                         "the readiness hero must render before the habits card")
 
 
 class ProseWidthTest(unittest.TestCase):

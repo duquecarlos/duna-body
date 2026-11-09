@@ -11,6 +11,27 @@
 
 {% if stale %}<div class="aviso">{{ stale }}</div>{% endif %}
 
+<div class="cols-hoy">
+<a class="card est" href="/how/{{ day }}">
+  <div class="q">{{ t('today.ready_q') }}</div>
+  {% if r.score is not none %}
+  <div class="row items-end">
+    <div><span class="approx big">≈</span><span class="big">{{ r.score }}</span><span class="u">{{ t('unit.of100') }}</span></div>
+    <div class="text-right">
+      <span class="chip {{ r.band }}">{{ t('band.' ~ r.band) }}</span>
+      {% if ready_avg is not none %}<div class="delta {{ ready_cls }} mt-6">{{ ready_delta }}</div><div class="k">{{ t('today.vs_avg', avg=ready_avg) }}</div>{% endif %}
+    </div>
+  </div>
+  <div class="k mt-6">{{ t('today.ready_label') }}</div>
+  <p class="read">{{ reading }}</p>
+  {% else %}
+  <div class="fig c-muted">{{ t('today.no_score_short') }}</div>
+  <p class="read">{{ t('today.no_score', missing=missing_txt) }}</p>
+  {% endif %}
+  <span class="how">{{ t('today.how') }}</span>
+  <span class="chev">›</span>
+</a>
+<div>
 {% if primeros_pasos %}{{ primeros_pasos_card(t, primeros_pasos) }}{% endif %}
 
 {% if plan_habits %}
@@ -34,27 +55,6 @@
 </div>
 {% endif %}
 
-<div class="cols-hoy">
-<a class="card est" href="/how/{{ day }}">
-  <div class="q">{{ t('today.ready_q') }}</div>
-  {% if r.score is not none %}
-  <div class="row items-end">
-    <div><span class="approx big">≈</span><span class="big">{{ r.score }}</span><span class="u">{{ t('unit.of100') }}</span></div>
-    <div class="text-right">
-      <span class="chip {{ r.band }}">{{ t('band.' ~ r.band) }}</span>
-      {% if ready_avg is not none %}<div class="delta {{ ready_cls }} mt-6">{{ ready_delta }}</div><div class="k">{{ t('today.vs_avg', avg=ready_avg) }}</div>{% endif %}
-    </div>
-  </div>
-  <div class="k mt-6">{{ t('today.ready_label') }}</div>
-  <p class="read">{{ reading }}</p>
-  {% else %}
-  <div class="fig c-muted">{{ t('today.no_score_short') }}</div>
-  <p class="read">{{ t('today.no_score', missing=missing_txt) }}</p>
-  {% endif %}
-  <span class="how">{{ t('today.how') }}</span>
-  <span class="chev">›</span>
-</a>
-<div>
 <div class="grid2 mb-10">
 {% for c in cards %}
   <a class="card" href="/day/{{ day }}#{{ c.key }}">
