@@ -17,6 +17,9 @@ WEEK_KEYS = ["readiness", "sleep_minutes", "hrv_last_night", "resting_hr"]
 TREND_MIN_DAYS = 14  # body/profile.py's metric_profile() needs this many rows before a metric gets a card
 SPARSE_KEYS = {"vo2max", "vo2max_cycling", "fitness_age"}  # Garmin updates these only after qualifying activities
 RANGES = ["7", "30", "90", "all"]
+# BODY-SUENO-RESPIRACION-VISTA-1: comun.TREND_GROUPS' "night" group -- same honest caveat as
+# Día's (BODY-ENTRENO-1-INV Q6), carried as the card's own note like trends.self_note.
+NIGHT_CAVEAT_KEYS = {"sleep_spo2_avg", "sleep_respiration_avg"}
 
 
 def _trend_days_have(conn, person_id: int) -> int:
@@ -103,7 +106,8 @@ def _trend_card(conn, t: T, defs: dict, k: str, start, end, month, nights, perso
             "last30": comun._value(t, k, fig), "unit": comun._unit(t, d) if fig is not None else "", "delta": delta,
             "cls": cls, "svg": svg, "low": comun._value(t, k, p.low), "high": comun._value(t, k, p.high),
             "sparse": k in SPARSE_KEYS, "self": d["origen"] == "self", "subtitle": None,
-            "pocas": pocas, "conteo": _medidas_count_txt(t, p.days) if pocas else None}
+            "pocas": pocas, "conteo": _medidas_count_txt(t, p.days) if pocas else None,
+            "caveat": k in NIGHT_CAVEAT_KEYS}
     return card, p
 
 

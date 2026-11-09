@@ -12,7 +12,11 @@
   <div class="row"><div class="fig">{{ sleep.total }}</div><div class="k">{{ sleep.window }}</div></div>
   {% if sleep.stages %}<svg class="stage" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true">{% set ns = namespace(x=0) %}{% for s in sleep.stages %}<rect x="{{ ns.x }}" y="0" width="{{ s.pct }}" height="10" class="{{ s.cls }}"><title>{{ s.label }}</title></rect>{% set ns.x = ns.x + s.pct %}{% endfor %}</svg>
   <div class="legend">{% for s in sleep.stages %}<span><i class="{{ s.cls }}"></i>{{ s.label }} {{ s.value }}</span>{% endfor %}</div>{% endif %}
+  {% if sueno_resp_linea %}<p class="mt-6 mb-0">{{ sueno_resp_linea }}</p><p class="note mt-2 mb-0">{{ t('sueno_respiracion.caveat') }}</p>{% endif %}
 </div>
+{% elif sueno_resp_linea %}
+<h2>{{ t('day.sleep') }}</h2>
+<div class="card"><p class="m-0">{{ sueno_resp_linea }}</p><p class="note mt-2 mb-0">{{ t('sueno_respiracion.caveat') }}</p></div>
 {% endif %}
 {% if turnos %}
 <h2>{{ t('day.shift') }}</h2>
