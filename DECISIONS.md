@@ -10799,3 +10799,67 @@ data, privacy census for `workout_set`) + -N (this slice's seed/marker fix) as o
 top of `247dce59c86d3bc469310066aef0ac35b45f1ffa`); `135486a17d0ab92fe66af290aad06bef93528ccd`
 (merge `--no-ff` into `main`, parents `73325a3b5dc040036bff09f0a1d9a251a372ce89` and
 `11fab9d7796dfdc5cd2b62180ae88f6452c1c913`).
+
+## BODY-ENTRENO-SUENO-PARSE-1 -- sleep SpO2 and respiration parsed into DayData, not stored yet
+
+BODY-ENTRENO-1-INV slice 7. Carlos named snoring and nasal breathing at night as goals
+(2026-11-09, per the approved spec). The watch does not measure snoring, but the daily sleep
+payload Body already pulls (`raw["sleep"]`, `dailySleepDTO`) carries `avgSpO2`,
+`averageRespirationValue`, `lowestRespirationValue` and `highestRespirationValue`
+(installed `garminconnect` 0.3.20, `typed.py:214-224`), and `garmin_adapter.parse_day` did not
+extract them. Zero extra Garmin calls -- parsing only, of a payload already fetched and stored.
+
+`DayData` (`body/garmin_adapter.py`) gained four fields -- `sleep_spo2_avg`, `sleep_respiration_avg`,
+`sleep_respiration_low`, `sleep_respiration_high` -- read from `dailySleepDTO` in `parse_day`
+alongside the other sleep fields. A new `_num_in_range(v, lo, hi)` helper treats Garmin's own `None`,
+a non-numeric value, or a value outside the physiologically possible window as absent, never 0:
+50..100 for `avgSpO2` (SpO2 percent), 1..60 for each respiration value (breaths/min) --
+Garmin sends 0 or another sentinel when the sensor was off, and 0 is outside both windows so the
+range check alone covers it. An older payload missing these keys still parses the rest of the day
+(`sleep_minutes`, `sleep_score`, `resting_hr`, etc.) unchanged.
+
+**Not stored yet, by design.** `daily_metric.metric_key` (`body/db.py`) is a foreign key on
+`metric_def(key)`; adding these four values to `DayData.metrics` the way every other metric is
+added would make `store_day`'s insert loop raise an integrity error the first time it ran for real,
+since no `metric_def` row exists for them. `db.py` and `metric_def`/`METRIC_DEFS` are outside this
+slice's `touches:` (Tier 1, approval scoped to `body/garmin_adapter.py`,
+`tests/test_garmin_parse.py`, `DECISIONS.md`), so the four values live only as the new `DayData`
+fields above -- parsed, never written to `daily_metric`. **What a storage slice needs:** four
+`METRIC_DEFS` rows, kind `"measured"`, origen `"garmin"` -- `sleep_spo2_avg` (label e.g.
+"Blood oxygen (sleep avg)", unit `"%"`, direction `"higher"`); `sleep_respiration_avg` /
+`sleep_respiration_low` / `sleep_respiration_high` (label e.g. "Breathing rate (sleep avg/low/high)",
+unit `"brpm"`, direction `"neutral"` -- unlike `resting_hr` or `stress_avg`, there is no single
+"better" direction for a breathing rate, only a normal band) -- plus a `store_day` change to read
+these four `DayData` fields into the metrics insert alongside `.metrics`. Whether and how a screen
+shows these figures, with the honest caveat that they are a proxy and never snoring or a diagnosis,
+stays a later customer-facing slice (ORCH-CARLOS-DELEGATES-TIER-1-1's own scoping).
+
+**Tests** (`tests/test_garmin_parse.py`, `SleepRespirationParsingTest`, invented fixtures): present
+values parse; the sleep key entirely missing stays absent; explicit `None` stays absent; `0` on all
+four stays absent (not a reading); below/above the SpO2 and respiration windows stays absent; the
+two range boundaries (50/1/60 in-range, 100 out-of-range for respiration) are checked explicitly;
+non-numeric values stay absent; an older payload without these keys still parses `sleep_minutes`,
+`sleep_score` and `resting_hr` unchanged; none of the four new values appear in `DayData.metrics`.
+
+**Gate**, once, foreground, on the branch tip before merge:
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -- `Ran 1452 tests in 208.222s ...
+OK (skipped=1)`. 9 more tests than the prior recorded floor (1443, BODY-ENTRENO-SCHEMA-1-N),
+matching `SleepRespirationParsingTest`'s 9 new methods; `skipped=1` carries over unchanged. Not
+re-run on the merge commit -- see tree identity below.
+
+**Merged** `feat/body-entreno-sueno-parse-1` into `main` with `--no-ff` (approval-reason authorises
+the merge: "Carries out ... BODY-ENTRENO-SUENO-PARSE-1"; spec body step 4 says to merge). Diff from
+`main`'s prior tip is `body/garmin_adapter.py` and `tests/test_garmin_parse.py` only -- no schema or
+migration change, no customer-facing bytes (nothing reaches a screen; the honest-caveat screen is
+explicitly deferred), no cross-repo contract change, so Merge Policy A clears without waiting. Merge
+was a clean fast-forward-shaped `--no-ff`: merge commit's tree
+(`fe89e77f4bdb0dd7f19f0ec4422e14d8d7029ae8`) is byte-identical to the branch tip's tree (same sha),
+confirmed via `git diff HEAD feat/body-entreno-sueno-parse-1` (empty) -- the gate above already
+covers the merged tree, not re-run.
+
+`main` now at `23e34524b9b76550dd0fb89c31446df3bed320eb`. `git status --porcelain` empty on `main`.
+
+**Commits**: `5c0769ccfe8cec97d19d20d5aff4ed00167c5911` (slice, on `feat/body-entreno-sueno-parse-1`,
+on top of `2cab69df991aa574e0447627dc44c1102c67edc2`); `23e34524b9b76550dd0fb89c31446df3bed320eb`
+(merge `--no-ff` into `main`, parents `2cab69df991aa574e0447627dc44c1102c67edc2` and
+`5c0769ccfe8cec97d19d20d5aff4ed00167c5911`).
