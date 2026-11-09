@@ -10942,7 +10942,14 @@ step 6 says to merge). Diff from `main`'s prior tip is `body/garmin_adapter.py` 
 reaches a screen, nothing calls this function), no cross-repo contract change, so Merge Policy A
 clears without waiting.
 
-`main` now at [merge sha below]. `git status --porcelain` empty on `main`.
+Merge was a clean fast-forward-shaped `--no-ff`: merge commit's tree
+(`17809297a891aaa958da79b7ee47be1d6e0d8d06`) is byte-identical to the branch tip's tree (same sha),
+confirmed via `git diff HEAD feat/body-entreno-adapter-1` (empty) -- the gate above already covers
+the merged tree, not re-run.
+
+`main` now at `12325ddc77ddb6aa0b972b2a262b170a1802e835`. `git status --porcelain` empty on `main`.
 
 **Commits**: `f42f0c4a22ce08b013fa9ab963361e817adc46e8` (slice, on `feat/body-entreno-adapter-1`,
-on top of `71a610f8fa88f0bcb5521d23952825203344c5c5`).
+on top of `71a610f8fa88f0bcb5521d23952825203344c5c5`); `e40c6f7` (ledger entry, same branch);
+`12325ddc77ddb6aa0b972b2a262b170a1802e835` (merge `--no-ff` into `main`, parents
+`71a610f8fa88f0bcb5521d23952825203344c5c5` and the branch tip after the ledger commit).
