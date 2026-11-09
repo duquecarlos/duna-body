@@ -12448,3 +12448,23 @@ apply.
 **Commit**: `7a3047e` on `feat/body-experimentos-consentimiento-1`, on top of `fabbbe9` (tip of
 `main` at dispatch). 4 files changed (`body/i18n/en.json`, `body/i18n/es.json`,
 `body/privacidad.py`, `tests/test_privacidad.py`), 67 insertions, 3 deletions.
+
+## BODY-EXPERIMENTOS-CONSENTIMIENTO-1-M -- the consent v3 widen lands on main
+
+`ORCH-CARLOS-DELEGATES-TIER-1-1` carries the merge the AWAITING_APPROVAL stop above asked for. The
+customer-facing check it required was done by the orchestrator, not this worker: the consent page
+at 375 px, in es and en, rendered from the branch's own template and strings (`BODY-EXPERIMENTOS-1-INV`),
+no horizontal overflow (`scrollWidth` 375 = viewport), both buttons 44 px tall, the full v3 text in
+each language naming minute-by-minute heart rate and stress, experiments and logged moments.
+Nothing changed as a result; this slice merges the branch as it stood.
+
+`body/privacidad.py`'s `CONSENT_VERSION` is now `"consentimiento-v3"` on `main`, carried over
+unchanged from `7a3047e`.
+
+**Gate**, once, foreground, on the branch tip before the merge: `.venv/Scripts/python.exe -m
+unittest discover tests -t .` -> `Ran 1672 tests in 276.237s ... OK (skipped=1)`. Same count as the
+branch's own recorded floor (1672, `BODY-EXPERIMENTOS-CONSENTIMIENTO-1`); no code changed between
+that gate and this merge.
+
+**Merge**: `git checkout main` (tip `fabbbe9` before the merge), `git merge --no-ff
+feat/body-experimentos-consentimiento-1` (branch tip `8cb6237`) -> `880049b8411ce8d4b916e2cfdb6dafe94890bee8`.
