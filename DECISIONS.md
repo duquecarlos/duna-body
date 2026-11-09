@@ -11830,3 +11830,74 @@ ledger entry), `877af3f1727a492fcf2a3cdb0d08ae38a5b80649` (`tests/test_seguridad
 **Merge**: `git checkout main`; `git merge --no-ff feat/body-seguridad-allowlist-1`, merge commit
 `9a6291e057f5e990e400341a0bd56358167b40b5`. The merge tree (`df4313fe5a7541e3ebc87629f1f24a04b8f42484`)
 is identical to the branch tree, so the gate above stands for the merged tree without a re-run.
+
+## BODY-TURNOS-PALABRA-DIRECCION-1 -- Turnos' cost rows say the direction, not a verdict
+
+Carries out BODY-TURNOS-SUENO-DIURNO-1-INV's first recommendation (OBSERVED 2026-11-09). The Turnos
+cost table ended each of its five rows with a JUDGEMENT word -- es "peor"/"mejor"/"igual", en
+"worse"/"better"/"about the same" -- from `turnos_costo.diferencia_y_palabra()`. Three of the five
+metrics (sleep_minutes, hrv_last_night, body_battery_wake) are keyed to one sleep session by
+Garmin's own fields, and on a night-shift day that session is the person's daytime rest, not a
+night comparable to the reference (the person's own day-shift weeks) -- so "better"/"worse" could
+read as an artefact of WHEN the watch measures, not an honest verdict.
+
+**The fix**: `diferencia_y_palabra` now derives the word purely from the REAL difference's own
+sign -- `'mas'` (diff > 0), `'menos'` (diff < 0), `'igual'` (below `UMBRAL_IGUAL`, unchanged) --
+instead of from the metric's own better-direction. A lower resting HR during a night block (which
+`test_a_lower_resting_hr_during_nights_is_not_worse` already established is NOT medically worse)
+now reads "menos", never "mejor": the word names which way the mean moved, not whether that move is
+good. The signed `costo` (positive = worse, `_signo`'s convention), the recovery rule
+(`_recuperacion_bloque`) and the reference (`referencia`) are byte-for-byte unchanged -- only the
+displayed word's derivation changed. Checked (grep) that nothing besides `body/rutas/turnos.py`
+reads `diferencia_y_palabra`'s word or the `shifts.word.*` keys dynamically; the assistant's
+`leer_costo_turnos` tool and Hoy never touch either.
+
+**Words, verbatim** (approved in the dispatch): `shifts.word.mas` es "más" / en "more";
+`shifts.word.menos` es "menos" / en "less"; `shifts.word.igual` unchanged (es "igual" / en "about
+the same"). `rutas/turnos.py` drops the `+`/`−` sign it used to prefix onto the figure, since the
+word already says which way it moved ("42 min menos", not "-42 min menos") -- `t.num`/`t.minutes`
+never embedded a sign themselves, so this was one `sign = ...` line and its use removed, nothing in
+the number formatters.
+
+**Deviation from the spec's "remove the old keys if nothing else reads them"**: the old
+`shifts.word.peor`/`shifts.word.mejor` keys were kept (unused) in `body/i18n/es.json` and
+`en.json` instead of being removed. `tests/test_i18n_paridad.py` -- outside this slice's
+`touches:` -- hardcodes `"shifts.word.+": ["peor", "mejor", "igual"]` in its own dynamic-prefix
+registry and asserts each resolved key exists in `es.json`; removing the keys would have required
+editing that file, which this slice was not authorised to touch. No live code path calls `t()`
+with either key any more (confirmed by grep), so the orphan keys are translated but never
+rendered.
+
+**No colour or class keyed to the old word**: checked `body/templates/shifts.html` and
+`body/static/body.css` -- the row's only markup is `<span class="nw">{{ f.value }}
+<strong>{{ f.palabra }}</strong>...`, no class branches on the word's value in either file.
+
+**Tests** (`tests/test_turnos_costo.py`, `DireccionYPalabraTest`): each of the five metrics renders
+`'mas'`/`'menos'`/`'igual'` by the sign of the real difference regardless of the metric's own
+better-direction (`test_no_metric_ever_reads_a_judgement_word`, all five metrics, both signs); a
+lower resting HR reads `'menos'` not `'mejor'` (`test_a_lower_resting_hr_reads_menos_not_mejor`); a
+higher resting HR reads `'mas'` not `'peor'`. Two new end-to-end tests render `/shifts` in es and en
+(a block seeded off-baseline on its own nights, not just the recovery tail, so every row clears
+`UMBRAL_IGUAL`) and extract each row's value+word pair: the word is always in
+`{'más','menos','igual'}` / `{'more','less','about the same'}`, never `'peor'/'mejor'`/
+`'worse'/'better'`, and the figure carries no `+`/`-`/`−` now that the word follows it. These checks
+are scoped to the row's own value+word span (`<span class="nw">...<strong>`), not every string on
+the page: `shifts.cost_sub.resting_hr`/`hrv_last_night` (both languages) are pre-existing, unchanged,
+general metric-direction text ("lower usually means better fitness") -- a timeless fact about the
+metric, not a verdict on this measurement -- and were out of this slice's approved-verbatim word
+list, so left as they were. The recovery result is unchanged on the existing fixtures (no test in
+`ResumenTest`/`RecuperacionBloqueTest`/`LectorEqualityTest` needed a change, and all pass unmodified).
+
+**Merge policy A**: customer-facing bytes changed (the `shifts.word.*` translations and the
+dropped sign on the figure are both bytes a person reads on `/shifts`) -- fails the
+customer-bytes condition. Per the dispatch's approval reason ("Customer-facing, so the slice stops
+AWAITING_APPROVAL for the orchestrator's 375 px check"), this slice stops before merge.
+
+**Gate**, once, foreground, on the branch, not merged: `.venv/Scripts/python.exe -m unittest
+discover tests -t .` -- `Ran 1584 tests in 364.458s ... OK (skipped=1)`.
+
+**Commit**: on `feat/body-turnos-palabra-direccion-1`, cut from `main` at
+`7a7e9aa21d5f90af36d0f6a797022cb8dd81bdbb` (tip of `main` at dispatch, after
+BODY-SEGURIDAD-ALLOWLIST-1's ledger entry), `158d84331ae17b65d0ca76f66142be767fb69401`
+(`body/i18n/en.json`, `body/i18n/es.json`, `body/rutas/turnos.py`, `body/turnos_costo.py`,
+`tests/test_turnos_costo.py`). Not merged -- awaiting the orchestrator's 375 px check.
