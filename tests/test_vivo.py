@@ -447,6 +447,54 @@ class MananaTest(_RepoFixture):
         self.assertEqual(llamadas, ["body.pull"])
 
 
+class IntradiaTareaTest(_RepoFixture):
+    """BODY-MOMENTOS-PULL-1: `intradia` shares body.pull's own module, selected by a --intradia
+    flag vivo prepends on the task's behalf (PREFIJO_ARGV) -- the person never types that flag."""
+
+    def setUp(self):
+        super().setUp()
+        self._argv_original = list(sys.argv)
+        self._path_original = list(sys.path)
+        self.addCleanup(lambda: setattr(sys, "argv", self._argv_original))
+        self.addCleanup(lambda: setattr(sys, "path", self._path_original))
+
+    def test_intradia_esta_en_tareas_y_apunta_a_pull(self):
+        self.assertIn("intradia", vivo.TAREAS)
+        self.assertEqual(vivo.TAREAS["intradia"], "body.pull")
+
+    def test_intradia_antepone_la_bandera_y_pasa_dias(self):
+        argvs = []
+
+        def _run_module(nombre, run_name=None, alter_sys=None):
+            argvs.append(list(sys.argv))
+
+        with patch.object(vivo, "arbol_vivo", return_value=self.live), \
+             patch.object(vivo, "refrescar", return_value="ya_al_dia"), \
+             patch.object(vivo.os, "chdir"), \
+             patch.object(vivo.runpy, "run_module", side_effect=_run_module), \
+             patch.dict(vivo.os.environ, {}, clear=False), \
+             contextlib.redirect_stdout(io.StringIO()):
+            vivo.main(["intradia", "--dias", "30"])
+
+        self.assertEqual(argvs[0], ["body.pull", "--intradia", "--dias", "30"])
+
+    def test_otras_tareas_no_llevan_la_bandera_de_intradia(self):
+        argvs = []
+
+        def _run_module(nombre, run_name=None, alter_sys=None):
+            argvs.append(list(sys.argv))
+
+        with patch.object(vivo, "arbol_vivo", return_value=self.live), \
+             patch.object(vivo, "refrescar", return_value="ya_al_dia"), \
+             patch.object(vivo.os, "chdir"), \
+             patch.object(vivo.runpy, "run_module", side_effect=_run_module), \
+             patch.dict(vivo.os.environ, {}, clear=False), \
+             contextlib.redirect_stdout(io.StringIO()):
+            vivo.main(["pull", "--days", "2"])
+
+        self.assertEqual(argvs[0], ["body.pull", "--days", "2"])
+
+
 class InstallScriptMorningFileTest(unittest.TestCase):
     """A PowerShell installer is never executed in tests -- asserted by reading its text
     (BODY-VIDA-DIA-1)."""
