@@ -465,7 +465,7 @@ def _registrar_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id
                    "mapeo": mapeo}
         antes = {"manual": False, "sets_antes": sets_antes}
     else:
-        despues = {"manual": True, "day": day, "time": time, "titulo": (titulo or "Entrenamiento"),
+        despues = {"manual": True, "day": day, "time": time, "titulo": ((titulo or "").strip() or None),
                    "series": series}
         antes = {"manual": True}
     registro = propuestas.crear(conn, person_id, conversacion_id, "registrar_entreno", despues, antes=antes)

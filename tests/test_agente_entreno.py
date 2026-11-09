@@ -230,6 +230,35 @@ class RegistrarEntrenoManualTest(unittest.TestCase):
                               "ninguno", self.cid)
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0], before)
 
+    def test_propose_with_no_titulo_stores_none_not_a_literal(self):
+        # BODY-ENTRENO-TITULO-1: absent titulo must stay absent (None) in the proposal, never a
+        # stored Spanish word -- the screen, not the record, decides how to word "no title".
+        out = herramientas.ejecutar(self.conn, 1, "registrar_entreno",
+                                    {"day": "2026-11-10", "series": self.series}, "ninguno", self.cid)
+        registro = self.conn.execute(
+            "SELECT despues_json FROM propuesta_agente WHERE id = ?", (out["propuesta_id"],)
+        ).fetchone()
+        self.assertIsNone(json.loads(registro["despues_json"])["titulo"])
+
+    def test_propose_with_a_blank_titulo_stores_none(self):
+        out = herramientas.ejecutar(self.conn, 1, "registrar_entreno",
+                                    {"day": "2026-11-10", "titulo": "   ", "series": self.series},
+                                    "ninguno", self.cid)
+        registro = self.conn.execute(
+            "SELECT despues_json FROM propuesta_agente WHERE id = ?", (out["propuesta_id"],)
+        ).fetchone()
+        self.assertIsNone(json.loads(registro["despues_json"])["titulo"])
+
+    def test_propose_with_the_spoken_titulo_entrenamiento_keeps_it_literally(self):
+        # A person who actually says "Entrenamiento" must not be mistaken for one who said nothing.
+        out = herramientas.ejecutar(self.conn, 1, "registrar_entreno",
+                                    {"day": "2026-11-10", "titulo": "Entrenamiento", "series": self.series},
+                                    "ninguno", self.cid)
+        registro = self.conn.execute(
+            "SELECT despues_json FROM propuesta_agente WHERE id = ?", (out["propuesta_id"],)
+        ).fetchone()
+        self.assertEqual(json.loads(registro["despues_json"])["titulo"], "Entrenamiento")
+
     def test_apply_creates_the_manual_session_with_its_sets(self):
         out = herramientas.ejecutar(self.conn, 1, "registrar_entreno",
                                     {"day": "2026-11-10", "titulo": "Pierna en casa", "series": self.series},
@@ -247,6 +276,26 @@ class RegistrarEntrenoManualTest(unittest.TestCase):
                                 ).fetchone()["source_id"])
         self.assertEqual([s["exercise"] for s in sets], ["sentadilla", "zancada"])
         self.assertTrue(all(s["corrected_by_person"] for s in sets))
+
+    def test_apply_with_no_titulo_writes_the_default_session_name_in_spanish(self):
+        out = herramientas.ejecutar(self.conn, 1, "registrar_entreno",
+                                    {"day": "2026-11-10", "series": self.series}, "ninguno", self.cid)
+        propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        actividad = self.conn.execute(
+            "SELECT name FROM activity WHERE person_id = 1 AND day = '2026-11-10'"
+        ).fetchone()
+        self.assertEqual(actividad["name"], "Entrenamiento")
+
+    def test_apply_with_no_titulo_writes_the_default_session_name_in_english(self):
+        self.conn.execute("UPDATE person SET language = 'en' WHERE id = 1")
+        self.conn.commit()
+        out = herramientas.ejecutar(self.conn, 1, "registrar_entreno",
+                                    {"day": "2026-11-10", "series": self.series}, "ninguno", self.cid)
+        propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        actividad = self.conn.execute(
+            "SELECT name FROM activity WHERE person_id = 1 AND day = '2026-11-10'"
+        ).fetchone()
+        self.assertEqual(actividad["name"], "Training")
 
     def test_undo_removes_the_manual_session_entirely(self):
         out = herramientas.ejecutar(self.conn, 1, "registrar_entreno",

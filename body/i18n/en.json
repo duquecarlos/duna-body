@@ -616,6 +616,7 @@
   "asistente.propuesta.entreno_reps": "{reps} rep",
   "asistente.propuesta.entreno_peso": "{peso} kg",
   "asistente.propuesta.entreno_sin_dato": "—",
+  "entreno.titulo_por_defecto": "Training",
   "asistente.propuesta.medida_valor": "{metric}: {valor} on {fecha}",
   "asistente.propuesta.entreno_reloj": "Watch",
   "asistente.propuesta.entreno_tu": "You",

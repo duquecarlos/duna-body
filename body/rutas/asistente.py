@@ -128,7 +128,7 @@ def _tarjeta_propuesta(t: T, defs: dict, registro: dict) -> dict:
     elif accion == "registrar_entreno":
         fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
         titulo_manual = despues.get("titulo") if despues["manual"] else None
-        if titulo_manual and titulo_manual != "Entrenamiento":
+        if titulo_manual:
             despues_txt = t("asistente.propuesta.entreno_registrado_titulo", titulo=titulo_manual, fecha=fecha)
         else:
             despues_txt = t("asistente.propuesta.entreno_registrado", fecha=fecha)
