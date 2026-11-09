@@ -12003,3 +12003,24 @@ BODY-TURNOS-PALABRA-DIRECCION-1-M's ledger entry), `d2fdc30b5ac9d175ef5528702f01
 (`body/i18n/en.json`, `body/i18n/es.json`, `body/rutas/turnos.py`, `body/templates/shifts.html`,
 `body/turnos_costo.py`, `tests/test_turnos_ultima_semana.py`). Not merged -- awaiting the
 orchestrator's 375 px check.
+
+## BODY-TURNOS-REFERENCIA-NOCHE-1-M -- merge BODY-TURNOS-REFERENCIA-NOCHE-1
+
+Landed BODY-TURNOS-REFERENCIA-NOCHE-1 (`d2fdc30` + ledger `f1f8d54` on
+`feat/body-turnos-referencia-noche-1`). The orchestrator measured `/shifts` at 375 px on the demo
+home in both states: with only two earlier night blocks the section shows the gap sentence; after
+adding three invented earlier blocks to the demo database it shows the dates line, five rows
+`<figure> <más|menos> · <mejor|peor>` (or `igual`), and the recovery line against the median -- no
+horizontal overflow -- and that the text matches the approved wording. The worker's extra sentence
+for a last block with a recovery figure and no earlier one
+(`shifts.ultima.recuperacion_sin_anteriores`, "Volviste a tu normal en {d} días.") was accepted as
+honest, not an invented median (`ORCH-CARLOS-DELEGATES-TIER-1-1`).
+
+**Gate**, once, foreground, on the branch before the merge: `.venv/Scripts/python.exe -m unittest
+discover tests -t .` -- `Ran 1594 tests in 246.724s ... OK (skipped=1)`, matching the orchestrator's
+own supplied floor.
+
+**Merge**: `git checkout main` (tip `e1f398fbb58b34a9715904b97163ad8480eac299`), `git merge --no-ff
+feat/body-turnos-referencia-noche-1` -> `a9e69425b577714351d474fd04417bb524c3b9cd`. Merge tree
+`5e2d59c883267da90d9d186aa61f82f4bb14e2d3` equals the branch tip's own tree (`git rev-parse
+feat/body-turnos-referencia-noche-1^{tree}`) -- the merge carried the branch content verbatim.
