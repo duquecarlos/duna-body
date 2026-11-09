@@ -120,6 +120,12 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
         "5000, 130, 150, 300, 'garmin')",
         (person_id, DAYS[-1], f"{DAYS[-1]}T07:00:00", f"ZZ{tag}-ACTIVIDAD"),
     )
+    conn.execute(
+        "INSERT INTO workout_set (person_id, activity_source, activity_source_id, set_order, "
+        "set_type, person_exercise, created_at, updated_at) VALUES (?, 'garmin', 'act-1', 1, "
+        "'active', ?, ?, ?)",
+        (person_id, f"ZZ{tag}-SERIE", f"{DAYS[-1]}T07:05:00+00:00", f"{DAYS[-1]}T07:05:00+00:00"),
+    )
     sleep_start, sleep_end = (("23:01", "06:13") if tag == "A" else ("23:07", "07:19"))
     conn.execute(
         "INSERT INTO sleep_session (person_id, day, start_local, end_local) VALUES (?, ?, ?, ?)",
@@ -219,8 +225,8 @@ def _markers_of(tag: str) -> list[str]:
     shift_batch`, never joined to its items) -- a marker that renders nowhere would make the
     "appears for its own owner" half of this guard vacuous, not a real check."""
     return [f"ZZ{tag}-{suffix}" for suffix in
-            ("ACTIVIDAD", "TURNO", "META-PRIVADA", "HABITO", "NOTA", "META-PROPUESTA", "META-ARCHIVADA",
-             "PLAN", "CONVERSACION", "MENSAJE", "DISPOSITIVO")] + [ENLACE_REF[tag]]
+            ("ACTIVIDAD", "SERIE", "TURNO", "META-PRIVADA", "HABITO", "NOTA", "META-PROPUESTA",
+             "META-ARCHIVADA", "PLAN", "CONVERSACION", "MENSAJE", "DISPOSITIVO")] + [ENLACE_REF[tag]]
 
 
 def _figures_of(tag: str) -> dict:
