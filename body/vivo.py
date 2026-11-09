@@ -23,6 +23,13 @@ Task Scheduler action launched throughout the task's life, so `web`'s restart po
 (`-RestartCount`/`-RestartInterval` on "Body app web") watches the real server, and no second
 process or console is ever created -- a `pythonw`-launched task stays consoleless. The task's own
 `SystemExit` becomes this launcher's exit code; a normal return is 0.
+
+The one exception to the PID rule (BODY-VIVO-TAREA-NUEVA-1): a task name this running module's
+`TAREAS` does not recognize, but the refresh it just ran moved the tree past, goes through a CHILD
+process instead -- see `_relanzar_en_arbol_nuevo`. The PID rule protects a task Task Scheduler
+launches by a name the running code already knows; a name it does not know can only have been
+added by code newer than this process holds, and no amount of staying in-process makes this
+process able to run code it never imported.
 """
 from __future__ import annotations
 
@@ -193,12 +200,47 @@ def _uso() -> None:
     print("tareas: " + ", ".join(sorted(TAREAS)), file=sys.stderr)
 
 
+def _tareas_conocidas_por_el_arbol(vivo: Path) -> set[str]:
+    """Which task names the REFRESHED tree's own `body.vivo` knows, read by running its
+    `--tareas` in a child process -- never by importing it into this one. This process already
+    holds the OLD module (that is the whole defect BODY-VIVO-TAREA-NUEVA-1 fixes: `TAREAS` here
+    can be stale the moment a refresh moves the tree), and `_modulos_body_inesperados` exists
+    precisely to catch a previous task's stale import surviving in this same process -- importing
+    the new code here on purpose would risk the identical mismatch."""
+    try:
+        resultado = subprocess.run(
+            [sys.executable, "-m", "body.vivo", "--tareas"],
+            cwd=str(vivo), capture_output=True, text=True, timeout=_TIMEOUT_CHECKOUT,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return set()
+    if resultado.returncode != 0:
+        return set()
+    return {nombre.strip() for nombre in resultado.stdout.strip().split(",") if nombre.strip()}
+
+
+def _relanzar_en_arbol_nuevo(vivo: Path, argv: list[str]) -> int:
+    """The ONE case that spawns a child process instead of running in-process: a task name this
+    running module's `TAREAS` does not recognize, but the tree the refresh just moved to does. The
+    PID rule in this module's docstring is about tasks Task Scheduler launches by a name the
+    running code already knows -- it has no bearing on a name that can only come from code newer
+    than this process, which this process cannot run no matter how it is called. The child is the
+    new launcher, given the exact same argv; it refreshes again, finds the tree already current,
+    and runs the task in-process itself."""
+    resultado = subprocess.run([sys.executable, "-m", "body.vivo", *argv], cwd=str(vivo))
+    return resultado.returncode
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if not argv or argv[0] not in TAREAS:
+    if not argv:
         _uso()
         return 2
+    if argv == ["--tareas"]:
+        print(",".join(sorted(TAREAS)))
+        return 0
     tarea, *resto = argv
+    conocida = tarea in TAREAS
 
     vivo = arbol_vivo()
     if _modulos_body_inesperados():
@@ -212,6 +254,12 @@ def main(argv: list[str] | None = None) -> int:
     if sys.stdout is not None:
         print(f"{resultado} {vivo.name} {sha}")
     _escribir_estado(vivo, resultado, tarea, sha)
+
+    if not conocida:
+        if resultado == "actualizado" and tarea in _tareas_conocidas_por_el_arbol(vivo):
+            return _relanzar_en_arbol_nuevo(vivo, argv)
+        _uso()
+        return 2
 
     principal = repo_principal(vivo)
     os.environ.setdefault("BODY_ENV_FILE", str(principal / ".env"))
