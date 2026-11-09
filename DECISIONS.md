@@ -11933,3 +11933,73 @@ the merge: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- `Ran 15
 `tests/test_i18n_paridad.py`); merge `d3e0a2cb606205a8ed3f1ddc2fc845aefcbc992d` into `main`
 (`--no-ff`, second parent `a158f25556f733e39e79ca9e4daef9bdd1a1fbe9`, first parent
 `7a7e9aa21d5f90af36d0f6a797022cb8dd81bdbb`), tree `b2cd38fbb10ee2ef585a402f21d1554e83244838`.
+
+## BODY-TURNOS-REFERENCIA-NOCHE-1 -- the last night week, against the person's own earlier ones
+
+Carries out BODY-TURNOS-SUENO-DIURNO-1-INV's second recommendation
+(`ORCH-CARLOS-DELEGATES-TIER-1-1`): the existing Turnos cost rows compare night blocks against the
+person's day-shift weeks, which is not like for like for three of the five metrics (they come from
+the main sleep session, a daytime rest after a night) -- BODY-TURNOS-PALABRA-DIRECCION-1 already
+made those rows say only the direction, not a verdict. A verdict is honest only against the
+person's OWN earlier night blocks.
+
+**Model** (`body/turnos_costo.py`), added to `resumen()`, no second DB read -- from the same
+`Lector`-backed per-block figures it already computes: a new `_medias_bloque()` reads each block's
+raw per-metric window mean (same window as `_costo_bloque`, inicio..fin+dias_estables, no reference
+subtracted); a new `_ultima_semana()` finds the LAST block whose window is fully on or before
+`hoy`, compares its per-metric mean against the mean of the EARLIER blocks' own window means (one
+value per block, so a long block never outweighs short ones), gated on a new `MIN_BLOQUES_PREVIOS =
+3` earlier blocks per metric (added to `REASON_CODES` as `pocos_bloques_previos`), reusing
+`diferencia_y_palabra()` for the direction word and deriving a mejor/peor/igual verdict from the
+same signed-cost convention `_costo_bloque` already uses. Recovery: the last block's
+`recuperacion_dias` against the median of the earlier blocks' (only those with a figure). Returned
+under a new `ultima_semana` key -- `None` with no completed block at all. `MODELO`'s existing keys,
+the day-week `referencia()`, the cost rows' `costo_promedio` and the hero `dias_recuperacion` are
+unchanged; `VERSION` stays `turnos-v1` since no existing formula changed.
+
+**Page** (`body/rutas/turnos.py`, `body/templates/shifts.html`): a new card after the existing cost
+card, same `.card`/`table.parts` styling, no new CSS needed. `_turnos_ultima_ctx()` builds it from
+`resumen()`'s own `ultima_semana`: a gap message (`shifts.ultima.faltan`) when no metric reached the
+minimum; otherwise the sub (`shifts.ultima.sub`), one row per qualifying metric (label, value,
+direction word reusing `shifts.word.*`, and the mejor/peor/igual word via a literal `t(...)` call
+per branch -- never `t("shifts.ultima.word." + veredicto)`, which would be a new, unlisted dynamic
+prefix and trip `tests/test_i18n_paridad.py`'s dynamic-prefix guard, outside this slice's
+`touches:`), and the recovery line. No card at all when `ultima_semana` is `None`.
+
+**Wording** verbatim per the spec, in both `body/i18n/es.json` and `body/i18n/en.json`:
+`shifts.ultima.title`, `shifts.ultima.sub`, `shifts.ultima.word.mejor/peor/igual`,
+`shifts.ultima.recuperacion`, `shifts.ultima.faltan`. One deviation: the spec named only
+`shifts.ultima.recuperacion` for the recovery line and described a second sentence (no figure yet
+for the last block) without naming its key. Added `shifts.ultima.recuperacion_sin_dato` for that
+case, verbatim text as given. A third, unnamed edge the spec did not enumerate -- the last block HAS
+a recovery figure but none of its earlier blocks do (so there is nothing to take a median of) --
+got its own `shifts.ultima.recuperacion_sin_anteriores` ("Volviste a tu normal en {d} días." / "You
+were back to your normal in {d} days."), to stay honest rather than fabricate a comparison; not
+reachable by this slice's own tests, since `MIN_BLOQUES_PREVIOS` already requires 3+ earlier blocks
+before any row shows, and the fixtures that exercise the gap path never also claim a last-block
+recovery figure.
+
+**Tests** (`tests/test_turnos_ultima_semana.py` -- 10 new): `UltimaSemanaTest` calls the pure
+`_ultima_semana()` directly (no conn, same style as `CostoBloqueTest`/`RecuperacionBloqueTest`) --
+worse resting HR against three earlier blocks reads peor/mas, better sleep reads mejor/mas, HRV
+under threshold reads igual, a metric with only two earlier blocks is left out, recovery with and
+without a figure, zero metrics reaching the minimum is the gap, no completed block is `None`.
+`ResumenUltimaSemanaTest` checks the wiring through `resumen()` on seeded blocks.
+`WebUltimaSemanaTest` checks `/shifts` renders the section (and the gap text, and no section) in
+Spanish and English. `tests/test_turnos_costo.py` (existing cost rows and hero) and
+`tests/test_i18n_paridad.py` (the wording guard) stay green, unmodified.
+
+**Merge policy A**: customer-facing bytes changed (the new `/shifts` card and its wording) --
+**stops before merge**, per the approval reason's own words ("the slice stops AWAITING_APPROVAL for
+the orchestrator's 375 px check"). No schema/migration change, no cross-repo contract change.
+
+**Gate**, once, foreground, on the branch, not merged: `.venv/Scripts/python.exe -m unittest
+discover tests -t .` -- `Ran 1594 tests in 265.115s ... OK (skipped=1)` (1584 before this slice,
++10 new).
+
+**Commit**: on `feat/body-turnos-referencia-noche-1`, cut from `main` at
+`e1f398fbb58b34a9715904b97163ad8480eac299` (tip of `main` at dispatch, after
+BODY-TURNOS-PALABRA-DIRECCION-1-M's ledger entry), `d2fdc30b5ac9d175ef5528702f01ad45b5b89790`
+(`body/i18n/en.json`, `body/i18n/es.json`, `body/rutas/turnos.py`, `body/templates/shifts.html`,
+`body/turnos_costo.py`, `tests/test_turnos_ultima_semana.py`). Not merged -- awaiting the
+orchestrator's 375 px check.
