@@ -10509,3 +10509,66 @@ left checked out, `git status --porcelain` empty (before this ledger entry's own
 **Commits**: fix `130a56bc0d83412858a9bb6a299105438b8821c6` on `feat/body-ancho-completo-1` (on top
 of `ccfe1a2075360fbfc704c8eb93c47e8a1e447c87`/`773fd974e50701155163627d61eca7ab7471431e`); merge
 `38a4f01d4981e5f7bbabb9e170ec73d5d6fcc4cc` into `main`.
+
+## BODY-DEPLOY-HOST-1-M -- the two branch-time diffs in test_ancho_completo.py fixed; branch merged
+
+`feat/body-deploy-host-1` (fix `27ca4ac1ee74e683cce15f04031d5b5001130e82`, on top of `main` at
+`b3666d1e451c05383bbaf7eb6b429dd9105f14b1`) was GATE_RED on its own gate. The orchestrator reviewed
+its diff against BODY-DEPLOY-HOST-1-INV (the host-deploy work: a traverse-only ACL ensured before
+any unit starts and on rollback with a plain stop if it cannot be set, web enabled and timers
+`enable --now`, timers restarted on rollback, one `TIMERS` list `status` sources behind a
+sourced-vs-executed guard, the backup snapshot run with `env -C "$REPO_DIR"`) and found the red was
+not in that work. Two deviations from the investigation were accepted: `PARENT_DIR` is two levels
+up (`/srv/duna`, the directory the investigation named); three enable-line tests now scan every
+enable line, subjects kept.
+
+**The red**: both failing tests in `tests/test_ancho_completo.py` compared `body.css` against
+`main`'s content via `git show main:body/static/body.css` -- a branch-time diff that rots the
+moment `main` itself carries this slice family's CSS. `test_body_css_grew` asserted the file is
+longer than `main`'s, false on `main` itself after BODY-ANCHO-COMPLETO-1 merged. `test_every_
+added_line_is_inside_the_1024_query` treated every line not already on `main` as "added by ANCHO",
+so it would refuse ANY later slice that adds a body.css line outside the `min-width:1024px` block --
+including the coming Today redesign.
+
+**Fix, in `tests/test_ancho_completo.py` only**, restoring each test's SUBJECT as a property of the
+file itself, never by deletion or weakening (per this spec's approval reason):
+- `test_body_css_grew` -> `SanityCountsTest.test_1024_block_holds_every_cols_rule_and_the_lectura_
+  cap`: asserts a `min-width:1024px` block exists and, using the existing `_media_1024_flags` line
+  tracker, that the lines inside it contain a rule for every `cols-*` class in `_COLS_BY_SCREEN`
+  plus the Lectura `.wrap` 820px cap.
+- `test_every_added_line_is_inside_the_1024_query` -> `ColsAndDataAnchoStayInThe1024QueryTest`, two
+  tests sharing a `_tracked_rules()` helper (every CSS rule whose selector names a `cols-` class or
+  the `data-ancho` attribute, or whose selector is exactly `.grid3` with `auto-fill` in its body --
+  the auto-fill test is needed because `.grid3` also carries the unrelated 640px three-column
+  default and the lectura-collapsed override, neither of which this slice family added): one test
+  asserts every tracked rule's line sits inside the 1024 block (`_media_1024_flags`), the other
+  asserts no tracked selector has a rule at the top level, outside every `@media` at all (a new
+  `_top_level_flags` helper, same brace-depth technique generalised to any nesting depth).
+  `_tracked_rules()` anchors each rule's line on the position of its own `{` (`m.start(2) - 1`),
+  not the regex match's start, so a rule immediately following a gap that crosses the 1024
+  boundary is not mis-attributed to the wrong line.
+- Durability checked directly (not by the gate, which only sees the current file): a scratch script
+  outside the repository appended a bare `.cols-hoy{display:block}` line to an in-memory copy of
+  `body.css` and confirmed `_is_tracked_rule` + the line-tracking flags catch it as a phone-level
+  offender.
+- `import subprocess` dropped from the file; it was only used by the two replaced `git show` calls.
+
+**Other `git show main:` / main-content comparisons**: grepped `tests/` for `git show`, `main:`,
+`subprocess.run` with a git argv. Only the two spots above compared against `main`'s content.
+`tests/test_fuentes_propias.py` and `tests/test_host_deploy.py`/`test_host_backup.py` run
+`git cat-file`/`git ls-files` against `HEAD`/the index (what's committed), not a diff against
+`main`, so they do not rot the same way at merge and were left untouched (outside `touches:`
+regardless).
+
+**Gate**, once, foreground: `.venv/Scripts/python.exe -m unittest discover tests -t .` --
+`Ran 1418 tests in 191.107s ... OK (skipped=1)`.
+
+**Merge**: `--no-ff` of `feat/body-deploy-host-1` into `main`, authorised by this spec's own body
+("Then merge; the orchestrator redeploys through the NOPASSWD entry script afterwards"). Merge
+commit `5757dca4ba964dcf48772d6df2b4c0a4b20bde1d`; its tree equals the branch tip's tree
+(`fa5978ea22a20df0522aa9490763a19842284db6` both sides), so nothing else moved in the merge. `main`
+left checked out, `git status --porcelain` empty (before this ledger entry's own commit).
+
+**Commits**: fix `1d38e3b73d7b9669b35e74c88dafec1b57ccc151` on `feat/body-deploy-host-1` (on top of
+`27ca4ac1ee74e683cce15f04031d5b5001130e82`); merge `5757dca4ba964dcf48772d6df2b4c0a4b20bde1d` into
+`main`.
