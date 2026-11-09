@@ -115,6 +115,8 @@ _FIXED_DYNAMIC = {
     "band.~": ["high", "medium", "low"],
     # body/templates/trends.html: t('trends.r.' + x) -- the range picker's own values.
     "trends.r.+": tendencias.RANGES,
+    # body/rutas/experimentos.py _metric_line(): t("experimentos.resultado." + resultado).
+    "experimentos.resultado.+": ["mas_bajo", "mas_alto", "sin_cambio", "pocos_dias", "aun_no"],
 }
 
 # body/web.py _finding_text(): key = f"history.find.{axis}_better_{better}", then t(key, ...) -- a

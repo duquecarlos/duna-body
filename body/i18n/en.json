@@ -246,7 +246,7 @@
   "experimentos.resultado.mas_alto": "clearly higher",
   "experimentos.resultado.sin_cambio": "no clear change",
   "experimentos.resultado.pocos_dias": "too few days yet",
-  "experimentos.resultado.aun_no": "can't be measured yet",
+  "experimentos.resultado.aun_no": "no verdict yet",
   "experimentos.estado.cerrado": "Closed",
   "experimentos.marca.hecho": "done",
   "experimentos.marca.no_hecho": "not done",

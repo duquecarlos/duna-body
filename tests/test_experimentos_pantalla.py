@@ -125,7 +125,7 @@ class VerdictWordsTest(unittest.TestCase):
                              {"turno_en": None, "turno_fuera": None, "excluir_tras_noche": False})
         r = _get("/goals")
         self.assertEqual(r.status_code, 200)
-        self.assertIn("todavía no se puede medir", r.text)
+        self.assertIn("todavía sin veredicto", r.text)
 
     def test_no_grading_colour_class_in_the_section(self):
         """DESIGN rule 11's own exception for this screen: verdict words, never .good/.bad."""
