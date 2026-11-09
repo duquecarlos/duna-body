@@ -11272,3 +11272,82 @@ on top of this slice's own commit.
 
 **Commit**: `d6aea9bc900f66da2fe5813ca1b04d5f42001747` (slice, on `feat/body-entreno-tools-1`, on top
 of `ffb401f6cc6c0753e22d3641eda47b306c9e8be6`).
+
+## BODY-ENTRENO-TOOLS-1-M -- the four display-only fixes, then the merge
+
+Continued on `feat/body-entreno-tools-1` (base `main` at `7585b54ec35eb45a8515a0d1fc166ed1ceda5c87`),
+landing both `BODY-ENTRENO-TOOLS-1` (`ffb401f` + ledger `0935ed1`) and `BODY-ENTRENO-MEDIDA-1`
+(`d6aea9b` + ledger `3ea7d43`), each AWAITING_APPROVAL above with a green gate. The orchestrator
+measured the cards in a browser (BODY-ENTRENO-1-INV) and approved these four fixes verbatim, then
+the merge (`ORCH-CARLOS-DELEGATES-TIER-1-1`).
+
+1. **Readable watch exercise name.** The per-set table's watch column showed Garmin's raw code
+   verbatim ("BARBELL_ROW · 10 rep · 40 kg"). `body/rutas/asistente.py`'s `_tarjeta_propuesta` now
+   builds that cell's name from the raw `garmin_exercise`/`garmin_category` already carried in a
+   `registrar_entreno` proposal's `antes_json["sets_antes"]` -- never from `despues["mapeo"][i]
+   ["reloj"]["ejercicio"]`, which can already be a prior person correction -- through a new
+   `_nombre_legible()` (underscores as spaces, only the first letter capital), falling back to the
+   category when the exercise name is absent. Display only: the stored `garmin_exercise` is
+   untouched, and `herramientas.py` (outside this slice's `touches`) needed no change because the
+   raw values it already stores in `antes_json` were sufficient. Tested both the exercise-name and
+   the category-fallback case (`tests/test_agente_propuestas.py`,
+   `test_registrar_entreno_garmin_shows_a_readable_watch_name`,
+   `test_registrar_entreno_garmin_falls_back_to_category_when_exercise_is_missing`).
+2. **Manual session: no empty watch column, titulo in the line.** `body/static/assistant.js`'s
+   `crearTablaSeries` now drops the "Reloj"/"Watch" column entirely when no row in `series` carries
+   a watch value (the manual case), instead of a column full of "—". `_tarjeta_propuesta`'s
+   `registrar_entreno` branch now reads the manual session's own `titulo` into the card's line via a
+   new `asistente.propuesta.entreno_registrado_titulo` key ("{titulo} · {fecha}") when the person
+   gave the tool a real title, and keeps the existing `entreno_registrado` ("Entrenamiento del
+   {fecha}") wording when `titulo` is still the tool's own "Entrenamiento" default -- detected by
+   that literal, the only signal available without widening `touches` into `herramientas.py`. The
+   JS column drop has no Python-test coverage (no JS runner in this gate); the titulo wording is
+   tested on both sides (`test_registrar_entreno_manual_carries_a_per_set_watch_vs_you_table`'s new
+   assertion, `test_registrar_entreno_manual_without_a_titulo_keeps_the_dateonly_wording`).
+3. **Honest self-measured card below baselines.MIN_DAYS.** With fewer self-measured values than
+   `baselines.MIN_DAYS` (7), `statistics.quantiles` on 1-6 points collapses `p.low`/`p.high` toward
+   a single repeated value (measured: one point gave "Tu rango normal (9–9)" and a spurious "= como
+   siempre" delta). `body/rutas/tendencias.py`'s `_trend_card` now computes `pocas = d["origen"] ==
+   "self" and p.days < baselines.MIN_DAYS`: when true, `delta`/`cls` are forced to `("", "flat")`,
+   `profile.window_svg` is called with a new `banda=False` (skips the normal-range rect and scales
+   the chart to the plotted points alone, not to the untrustworthy low/high), and the card carries a
+   new `conteo` string ("{n} mediciones/measurements hasta ahora/so far", singular for n=1) built by
+   a small `_medidas_count_txt` helper -- there is no plural mechanism in `body/i18n/__init__.py` to
+   delegate to. `body/templates/trends.html` hides the normal-range legend span and shows `c.conteo`
+   instead when `c.pocas`. `month_svg` needed no `banda` parameter: a self-measured key below
+   `MIN_DAYS` can never reach 7 same-month points, so `p.months` is always empty and the chart never
+   renders there regardless. From `MIN_DAYS` on, a self-measured card behaves exactly like any other
+   (both sides tested in `tests/test_agente_medida.py`'s new `TrendsSelfMeasuredThresholdTest`).
+4. **flex_alcance_cm wording, verbatim per the spec.** `metric.flex_alcance_cm` ("Dedos al suelo (cm
+   que faltan)" / "Fingertips to floor (cm short)"), `trends.q.flex_alcance_cm` ("¿Se acercan tus
+   dedos al suelo?" / "Are your fingertips getting closer to the floor?") and
+   `trends.plain.flex_alcance_cm` ("cuántos cm te faltan para tocar el suelo con las rodillas
+   rectas, medido por ti" / "how many cm short of the floor you stop, knees straight, measured by
+   you") replaced the backwards "how far you reach" wording for this lower-is-better metric. None of
+   the new or changed strings tripped `tests/test_registro_tu.py`'s register guard, so no allow-list
+   entry was needed.
+
+**New i18n keys** (both `es.json`/`en.json`, placeholders match): `trends.medidas_count_one`,
+`trends.medidas_count_other` ({n}), `asistente.propuesta.entreno_registrado_titulo` ({titulo},
+{fecha}).
+
+**Gate**, once, foreground, on the branch tip before the merge: `.venv/Scripts/python.exe -m
+unittest discover tests -t .` -- `Ran 1532 tests in 378.332s ... OK (skipped=1)`. 5 more than the
+prior recorded floor (1527, `BODY-ENTRENO-MEDIDA-1`): 2 new in `tests/test_agente_propuestas.py`
+(readable-name, category-fallback) plus 1 assertion added to an existing one, 2 new in
+`tests/test_agente_medida.py` (`TrendsSelfMeasuredThresholdTest`'s two threshold-side tests);
+`skipped=1` carries over unchanged. Re-run once more, foreground, on the merge tree after `git
+checkout main` + `git merge --no-ff`: `Ran 1532 tests in 347.266s ... OK (skipped=1)`, same count,
+same single skip -- consistent with tree identity (below), not a second attempt at a red run.
+
+**Merged.** The diff stayed inside this spec's `touches`, added no schema or migration change and no
+cross-repo/DTO change; it does carry customer-facing bytes (every item above is reader-visible), and
+the spec's own approval-reason authorizes the merge past that condition in words ("the four fixes
+and the label wording are approved verbatim. Then merge.") -- `ORCH-CARLOS-DELEGATES-TIER-1-1`.
+
+**Commits**: fix `c728530a0b5a077494bc2451eeec6d3f9466d006` (on `feat/body-entreno-tools-1`, on top
+of `3ea7d43628b2c8d39fcaacb80c4902562e2a2bae`); merge `ce3300baa5310c004f84efae3f81c6173e908bc1`
+(`--no-ff` into `main`, parents `7585b54ec35eb45a8515a0d1fc166ed1ceda5c87` and `c728530`). Tree
+identity: branch tree `b5de135e376cd3b360dc3c59c2768a4d90ee0e98` equals the merge commit's own tree
+(`git rev-parse HEAD^{tree}` on `main` after the merge), and `git diff
+feat/body-entreno-tools-1 main` is empty.
