@@ -10633,3 +10633,64 @@ base (`5e340cc7604b65b5a46b769c0814bd4828e1a1da`), so this merge is a fast-forwa
 **Commits**: slice `ee7447c1cf9361dd81f694d36d34d415aaf9ba5e` on `feat/body-intradia-adapter-1`
 (on top of `5e340cc7604b65b5a46b769c0814bd4828e1a1da`); merge
 `428ad43a8251e1d741b8e257029ed54718763b3f` into `main`.
+
+## BODY-ENTRENO-SCHEMA-1 -- training-log and self-measured-goal schema (GATE_RED, not merged)
+
+Carried out BODY-ENTRENO-1-INV slice 1's contract in `body/db.py`: a `workout_set` table keyed to
+`activity`'s composite key `(person_id, source, source_id)`, with the watch's values
+(`garmin_*`) and the person's corrections (`person_*`) in separate columns, a CHECK that
+`garmin_weight_value`/`garmin_weight_unit` are `NULL` together, and a `UNIQUE (person_id,
+activity_source, activity_source_id, set_order)` slot; `metric_def.origen` (`'garmin'` default |
+`'self'`), added by `ALTER ... ADD COLUMN` with its `CHECK` inline, same pattern as the existing
+`kind` column; `plan.ejercicios_json`, `TEXT CHECK (... OR json_valid(...))`, also additive;
+two generic self-measured `metric_def` rows as data (`flex_alcance_cm`, `snoring_min`), no
+person's values; and `propuesta_agente.accion`'s `CHECK` widened for `planear_entreno`,
+`registrar_entreno`, `registrar_medida`, `marcar_habito`, via a new `_rebuild_propuesta_agente_
+table` using the module's existing `_rebuild_with_fk_off` guarded-rebuild pattern (same shape as
+`_rebuild_precio_modelo_table`/`_rebuild_goal_table`), a straight column-for-column copy since no
+column's meaning changed. `activity` carries no `CHECK` on `source`, so a manual session
+(`source = 'manual'`) is already allowed -- confirmed, not changed.
+
+Nothing in the codebase reads or writes any of these shapes yet.
+
+**Tests**, `tests/test_entreno_schema.py` (`tests/test_db.py` does not exist, so everything for
+this slice lives here, as the spec allowed): a fresh DB gets every shape directly from `SCHEMA`
+(`workout_set`'s columns, `metric_def.origen` defaulting to `'garmin'`, the two new generic
+`metric_def` rows with `origen = 'self'`, `plan.ejercicios_json`, the four new `propuesta_agente`
+actions); the weight-NULL-together `CHECK`; the `UNIQUE` set slot; the FK to `activity` holding
+for both a `'garmin'`-source and a `'manual'`-source activity and rejecting an unknown one; and
+`db.init()` run twice changing nothing. A populated OLD-shape scratch DB (`metric_def` without
+`origen`, `plan` without `ejercicios_json`, `propuesta_agente` with the old four-action `CHECK`,
+each holding an invented row) migrates with every row preserved byte-for-byte and the new defaults
+applied, and the migration is idempotent (`db.init()` run three times, row counts unchanged).
+
+**Gate**, once, foreground, re-run once more after fixing a duplicate-INSERT bug in this slice's
+own new test (`tests/test_entreno_schema.py`, not a touches issue): `.venv/Scripts/python.exe -m
+unittest discover tests -t .` -- `Ran 1441 tests in 277.557s ... FAILED (failures=4, skipped=1)`.
+**RED, and not fixable inside this slice's `touches:`** (`body/db.py`, `tests/test_db.py`,
+`tests/test_entreno_schema.py`, `DECISIONS.md`). All four failures are pre-existing completeness
+guards that correctly detect the new schema and point at files none of this slice's `touches:`
+covers:
+
+  * `tests.test_demo.SeededContentTest.test_every_catalogue_metric_present_at_least_once` --
+    `body/demo.py`'s `MEASURED_METRIC_KEYS` is read straight from `db.METRIC_DEFS`; the two new
+    generic rows (`flex_alcance_cm`, `snoring_min`) need a demo seed in `body/demo.py`.
+  * `tests.test_i18n_paridad.TestI18nParidad.test_dynamic_prefixes_resolve_in_es` -- the two new
+    `metric_def` keys need `metric.flex_alcance_cm`/`metric.snoring_min` in `body/i18n/es.json`
+    (and `en.json`). The spec anticipated this exact gap and said to add the data rows without
+    labels and report it, since i18n is "not in touches" and "the tool slice adds them" -- done.
+  * `tests.test_persona_fuga.TableCensusTest.test_every_person_table_is_seeded_or_explained` and
+    `tests.test_privacidad.ExportTest.test_every_person_table_is_exported_or_excepted` -- both read
+    `body/privacidad.py`'s `person_tables()` / `FULLY_HANDLED_TABLES` / `PARTIAL_EXPORT_TABLES` /
+    `NEVER_EXPORTED_TABLES` census, which the new `workout_set` table (it carries `person_id`) is
+    not yet listed in. This gap was not called out by the spec or BODY-ENTRENO-1-INV.
+
+Per the dispatch's own instruction for this exact situation ("Red you cannot fix inside touches: ->
+stop GATE_RED on the branch (commit first), do not merge"), this slice stops here: committed on
+`feat/body-entreno-schema-1`, **not merged**, `main` untouched at `73325a3b5dc040036bff09f0a1d9a251a372ce89`.
+The next slice into this area needs `body/demo.py` and `body/privacidad.py` added to its
+`touches:` (and should fold in the `body/i18n/*.json` labels at the same time, since the tool
+slice that was going to add them can do so here instead).
+
+**Commit**: `246b506539074bd4bb68205d1a3d9d2dc6f81417` on `feat/body-entreno-schema-1` (on top of
+`73325a3b5dc040036bff09f0a1d9a251a372ce89`). No merge commit.
