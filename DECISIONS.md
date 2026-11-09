@@ -12987,3 +12987,23 @@ unittest discover tests -t .` -> `Ran 1809 tests in 524.584s ... OK (skipped=1)`
 bytes (`body/i18n/es.json`, `body/i18n/en.json`, `body/templates/today.html`,
 `body/templates/goals.html`), which fails merge policy A on its own, and the approval reason already
 named this stop for the orchestrator's own 375 px re-measure, independent of the gate result.
+
+## BODY-EXPERIMENTOS-PANTALLA-1-M3 -- merge, approved after the 375 px re-measure
+
+Merges `feat/body-experimentos-pantalla-1` (f23e51f, 4df7007, 35704fd, d218828, 1217ddf, e6a108a)
+into `main` -- merge-only, no new change, approved by ORCH-CARLOS-DELEGATES-TIER-1-1. The
+orchestrator re-measured at 375 px in es and en on the demo home after -M2: the progress line
+counts what was marked ("6 hechos · 1 no · 1 sin marcar · 6 de 7"; "todavía ningún día marcado" on a
+fresh one; "6 done · 1 not done · 1 not marked"); Hoy's two buttons sit together at the left (x 31
+and 110), 44 px, the chosen one `aria-pressed="true"` with a neutral selected style, and posting the
+other one moves the mark; the closed card shows its filter and "del 1 oct al 14 oct" / "1 Oct to 14
+Oct"; the detail figures say "(4 con dato)" / "(4 with a reading)"; no horizontal overflow
+(scrollWidth 375) on Metas, the detail page and Hoy, in either language.
+
+Merge commit `bc17e3ecccd78cbfc115b25d6bfa259e6e410e34` on `main` (`git merge --no-ff`, strategy
+`ort`, no conflicts).
+
+**Gate**, once, foreground, on `main` post-merge: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -> `Ran 1809 tests in 332.826s ... OK (skipped=1)`.
+
+`git status --porcelain` empty after the merge; `main` left checked out.
