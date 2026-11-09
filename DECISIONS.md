@@ -10694,3 +10694,67 @@ slice that was going to add them can do so here instead).
 
 **Commit**: `246b506539074bd4bb68205d1a3d9d2dc6f81417` on `feat/body-entreno-schema-1` (on top of
 `73325a3b5dc040036bff09f0a1d9a251a372ce89`). No merge commit.
+
+## BODY-ENTRENO-SCHEMA-1-M -- three of the four guards fixed, the fourth needs a file outside this
+## slice's touches: (BLOCKED, not merged)
+
+Picked up BODY-ENTRENO-SCHEMA-1's GATE_RED stop above. `touches:` was `body/i18n/es.json`,
+`body/i18n/en.json`, `body/demo.py`, `body/privacidad.py`, `tests/test_entreno_schema.py`,
+`DECISIONS.md`.
+
+**Labels** (approved verbatim by the orchestrator, ORCH-CARLOS-DELEGATES-TIER-1-1), same position
+as the other `metric.*` keys in both catalogs, right after `metric.fitness_age`: es
+`metric.flex_alcance_cm` = "Alcance hacia el suelo (cm)", en = "Reach toward the floor (cm)";
+es `metric.snoring_min` = "Ronquido (min por noche)", en = "Snoring (min per night)". Fixes
+`tests.test_i18n_paridad.TestI18nParidad.test_dynamic_prefixes_resolve_in_es`.
+
+**Demo data** (`body/demo.py`): a new `_seed_self_metrics` step, called from `_seed()` right after
+`_seed_days`, writes `flex_alcance_cm` about once a week (`d.weekday() == 0`) and `snoring_min` on
+~85% of nights, both via `db.set_metric(..., source='self', ...)` -- never mixed into `save_day`'s
+single-source-per-call batch, since `source` there applies to the whole `DayData`. Both ranges
+added to the existing `RANGES` dict (`flex_alcance_cm`: 0-25 cm, `snoring_min`: 0-70 min), invented,
+plausible, never read from a real device. Fixes
+`tests.test_demo.SeededContentTest.test_every_catalogue_metric_present_at_least_once`.
+
+**Privacy census** (`body/privacidad.py`): `workout_set` added to `FULLY_HANDLED_TABLES` -- it is
+the person's own health data, keyed directly by `person_id`, no secret in it. `export_person` adds
+a `sets_entreno` list (`SELECT * FROM workout_set WHERE person_id = ? ORDER BY activity_source_id,
+set_order`). `delete_person` deletes `workout_set` rows before `activity` rows, since `workout_set`'s
+FK targets `activity`'s composite key -- same ordering rule every other FK-dependent delete in that
+function already follows. Fixes the SET-EQUALITY half of both
+`tests.test_privacidad.ExportTest.test_every_person_table_is_exported_or_excepted` (now fully green)
+and `tests.test_persona_fuga.TableCensusTest.test_every_person_table_is_seeded_or_explained` (still
+red -- see below).
+
+**New test**, `tests/test_entreno_schema.py::PrivacyCensusTest`: an invented `workout_set` row
+(`person_exercise = 'Sentadilla'`) is present in `privacidad.export_person`'s `sets_entreno`, and
+gone from the table after `privacidad.delete_person`. Both pass.
+
+**BLOCKED -- not merged.** `tests.test_persona_fuga.TableCensusTest.test_every_person_table_is_
+seeded_or_explained` reads the same three `privacidad.py` sets, but its OWN test body does more than
+the set-equality check this spec anticipated: once a table is accounted for in
+`FULLY_HANDLED_TABLES | PARTIAL_EXPORT_TABLES | NEVER_EXPORTED_TABLES`, the same test method also
+asserts (line 532) that `_BaseFugaTest.setUp`'s seed (`_seed_person`, line 107) put at least one row
+in it -- `workout_set` has none, since `_seed_person` never inserts into it. Satisfying this needs an
+INSERT INTO workout_set added to `_seed_person` (and, for the guard to mean anything, a `ZZ<tag>-*`
+marker column and a line in `_markers_of`/the census sets `_REACHED_THROUGH_TABLES`/
+`_HOUSEHOLD_ONLY_TABLES` as appropriate) -- all of it in `tests/test_persona_fuga.py`, which this
+slice's `touches:` does not include. Per this dispatch's own rule ("If a file you must change is
+not in `touches:`, STOP BLOCKED and name it"), this slice stops here rather than widening its own
+scope. **The file the next slice needs added to its `touches:`: `tests/test_persona_fuga.py`.**
+
+Confirmed this is the ONLY remaining failure, not a side effect of this slice's own changes: ran
+`tests.test_persona_fuga` alone first (9 tests, 1 failure, exactly this one; every sweep/leak test
+in that file still passes unchanged) before the full gate.
+
+**Gate**, once, foreground, final tree (commit `247dce59c86d3bc469310066aef0ac35b45f1ffa`):
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -- `Ran 1443 tests in 283.776s ...
+FAILED (failures=1, skipped=1)`. The single failure is the one named above. (1443 vs. the prior
+slice's 1441: +2 for `PrivacyCensusTest`'s two new tests.) **RED, and the fix is outside this
+slice's `touches:` -- not merged.**
+
+`main` untouched at `73325a3b5dc040036bff09f0a1d9a251a372ce89`. `git status --porcelain` empty on
+`feat/body-entreno-schema-1` at commit `247dce59c86d3bc469310066aef0ac35b45f1ffa`.
+
+**Commits**: `247dce59c86d3bc469310066aef0ac35b45f1ffa` on `feat/body-entreno-schema-1` (on top of
+`56ac821d66a0728b1ce9e6f619c44c1605d7e884`). No merge commit.
