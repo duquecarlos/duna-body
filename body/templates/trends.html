@@ -30,7 +30,7 @@
     <div class="delta {{ c.cls }} text-right">{{ c.delta }}</div>
   </div>
   {{ c.svg|safe }}
-  <p class="note mt-4 mb-0">{{ t('trends.chart_hint') }}</p>
+  {% if c.svg %}<p class="note mt-4 mb-0">{{ t('trends.chart_hint') }}</p>{% endif %}
   {% if c.sparse %}<p class="note mt-4 mb-0">{{ t('trends.sparse_note') }}</p>{% endif %}
   {% if c.self %}<p class="note mt-4 mb-0">{{ t('trends.self_note') }}</p>{% endif %}
   {% if c.caveat %}<p class="note mt-4 mb-0">{{ t('sueno_respiracion.caveat') }}</p>{% endif %}

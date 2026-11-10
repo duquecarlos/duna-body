@@ -19,7 +19,7 @@ from body import config, db, identity, web
 from body.agente import conversacion as agente_conversacion
 from body.agente import herramientas, propuestas
 from body.i18n import T
-from body.rutas import asistente, comun
+from body.rutas import asistente, comun, tendencias
 
 
 def _conn(case: unittest.TestCase) -> "db.sqlite3.Connection":
@@ -236,6 +236,168 @@ class TrendsNoGradingColourTest(unittest.TestCase):
         page = self.client.get("/trends?todas=1").text
         self.assertIn('id="body_weight_kg"', page)
         self.assertIn('id="waist_cm"', page)
+
+
+class PrecisionAsDataTest(unittest.TestCase):
+    """BODY-MEDIDA-PESO-1-M2 fix 1: weight and waist show one decimal, in the person's own locale
+    (comma in es, point in en), through db.DECIMALES_MEDIDA -- read by comun._value, the one place
+    that formats a metric's own figure. Every other key (resting_hr here) keeps today's whole
+    number: db.DECIMALES_MEDIDA carries no entry for it, so comun._decimales falls back to 0."""
+
+    def setUp(self):
+        self.orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig_db_path))
+        self.addCleanup(web.app.dependency_overrides.clear)
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "precision.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+        d0 = date(2026, 8, 1)
+        for i in range(90):
+            day = (d0 + timedelta(i)).isoformat()
+            db.set_metric(self.conn, day, "resting_hr", 58 - i * 0.01, "garmin", 1)
+            if i % 7 == 0:
+                db.set_metric(self.conn, day, "body_weight_kg", 70.0 + i * 0.01, "self", 1)
+        self.conn.commit()
+        web.app.dependency_overrides[identity.current_person_id] = lambda: 1
+        self.client = TestClient(web.app, follow_redirects=False)
+
+    def _fig(self, page: str, key: str) -> str:
+        start = page.index(f'id="{key}"')
+        i = page.index('class="fig">', start) + len('class="fig">')
+        return page[i:page.index("</span>", i)]
+
+    def test_weight_shows_one_decimal_in_spanish(self):
+        page = self.client.get("/trends?todas=1").text
+        self.assertRegex(self._fig(page, "body_weight_kg"), r"^\d+,\d$")
+
+    def test_weight_shows_one_decimal_in_english(self):
+        db.set_language(self.conn, "en", 1)
+        self.conn.commit()
+        page = self.client.get("/trends?todas=1").text
+        self.assertRegex(self._fig(page, "body_weight_kg"), r"^\d+\.\d$")
+
+    def test_resting_hr_keeps_a_whole_number(self):
+        page = self.client.get("/trends?todas=1").text
+        self.assertRegex(self._fig(page, "resting_hr"), r"^\d+$")
+
+
+class CompareZeroArrowTest(unittest.TestCase):
+    """BODY-MEDIDA-PESO-1-M2 fix 3: body/rutas/tendencias.py's _compare never shows an arrow whose
+    own amount rounds to "0" at the metric's precision -- it reuses "delta.same" instead, the exact
+    wording the spread-based flatness check already uses. A real difference still gets its arrow."""
+
+    def test_diff_rounding_to_zero_at_one_decimal_is_same_as_history_not_an_arrow(self):
+        t = T("es")
+        text, cls = tendencias._compare(t, "body_weight_kg", {"better": "neutral"},
+                                        value=70.04, ref=70.00, spread=0.2, vs_key="trends.vs_hist")
+        self.assertEqual(text, t("delta.same"))
+        self.assertEqual(cls, "flat")
+
+    def test_diff_rounding_to_zero_at_one_decimal_is_same_as_history_in_english(self):
+        t = T("en")
+        text, cls = tendencias._compare(t, "body_weight_kg", {"better": "neutral"},
+                                        value=70.04, ref=70.00, spread=0.2, vs_key="trends.vs_hist")
+        self.assertEqual(text, t("delta.same"))
+
+    def test_diff_rounding_to_zero_at_zero_decimals_is_same_as_history(self):
+        """The same fix for a whole-number metric (resting_hr, 0 decimals): a 0.4 diff used to
+        print "↑ 0 vs. tu historia" whenever it cleared the spread-based flatness check."""
+        t = T("es")
+        text, cls = tendencias._compare(t, "resting_hr", {"better": "lower"},
+                                        value=58.4, ref=58.0, spread=2, vs_key="trends.vs_hist")
+        self.assertEqual(text, t("delta.same"))
+        self.assertEqual(cls, "flat")
+
+    def test_a_real_difference_still_gets_its_arrow(self):
+        t = T("es")
+        text, cls = tendencias._compare(t, "body_weight_kg", {"better": "neutral"},
+                                        value=71.0, ref=70.0, spread=0.2, vs_key="trends.vs_hist")
+        self.assertIn("↑", text)
+        self.assertIn("1,0", text)
+
+
+class SelfKeyMonthlyChartTest(unittest.TestCase):
+    """BODY-MEDIDA-PESO-1-M2 fix 2+4: a weekly self-measured key's monthly chart (the default
+    view's "últimos 30 días" card, body/profile.py's month_svg) draws from 2 points in a month --
+    SELF_MIN_MONTH_POINTS -- not the near-daily-cadence 7 every Garmin metric still needs; the
+    "Toca o desliza..." hint renders only when that chart actually drew. flex_alcance_cm, already
+    on main, gets the same rule."""
+
+    def setUp(self):
+        self.orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig_db_path))
+        self.addCleanup(web.app.dependency_overrides.clear)
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "self_chart.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+        d0 = date(2026, 9, 7)
+        for i in range(6):  # six weekly readings: three land in September, three in October
+            day = (d0 + timedelta(7 * i)).isoformat()
+            db.set_metric(self.conn, day, "body_weight_kg", 75.0 - i * 0.2, "self", 1)
+            db.set_metric(self.conn, day, "flex_alcance_cm", 10.0 - i * 0.2, "self", 1)
+        # resting_hr, one of the default 9: without at least one default card the whole page falls
+        # back to soon.html before the self-group cards this test is about ever render.
+        for i in range(20):
+            db.set_metric(self.conn, (d0 + timedelta(i)).isoformat(), "resting_hr", 58 - i * 0.1, "garmin", 1)
+        self.conn.commit()
+        web.app.dependency_overrides[identity.current_person_id] = lambda: 1
+        self.client = TestClient(web.app, follow_redirects=False)
+
+    def _chunk(self, page: str, key: str) -> str:
+        start = page.index(f'id="{key}"')
+        end = page.index("</div>", page.index('class="legend mt-4"', start))
+        return page[start:end]
+
+    def test_weekly_self_key_draws_a_chart_with_the_hint_on_the_default_view(self):
+        page = self.client.get("/trends?todas=1").text
+        hint = T("es")("trends.chart_hint")
+        for key in ("body_weight_kg", "flex_alcance_cm"):
+            chunk = self._chunk(page, key)
+            self.assertIn("<svg", chunk, f"{key} should draw a chart")
+            self.assertIn(hint, chunk, f"{key} should show the chart hint")
+
+    def test_weekly_self_key_draws_a_chart_with_the_hint_at_30_days(self):
+        page = self.client.get("/trends?r=30&todas=1").text
+        hint = T("es")("trends.chart_hint")
+        chunk = self._chunk(page, "body_weight_kg")
+        self.assertIn("<svg", chunk)
+        self.assertIn(hint, chunk)
+
+
+class SelfKeySinglePointNoChartTest(unittest.TestCase):
+    """fix 4's other half: one point is still too few for a chart at any precision -- no chart,
+    no hint, for either range."""
+
+    def setUp(self):
+        self.orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig_db_path))
+        self.addCleanup(web.app.dependency_overrides.clear)
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "self_one_point.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+        db.set_metric(self.conn, "2026-11-02", "body_weight_kg", 74.0, "self", 1)
+        # resting_hr, one of the default 9, for the same reason as SelfKeyMonthlyChartTest above.
+        d0 = date(2026, 10, 1)
+        for i in range(20):
+            db.set_metric(self.conn, (d0 + timedelta(i)).isoformat(), "resting_hr", 58 - i * 0.1, "garmin", 1)
+        self.conn.commit()
+        web.app.dependency_overrides[identity.current_person_id] = lambda: 1
+        self.client = TestClient(web.app, follow_redirects=False)
+
+    def _chunk(self, page: str, key: str) -> str:
+        start = page.index(f'id="{key}"')
+        end = page.index("</div>", page.index('class="legend mt-4"', start))
+        return page[start:end]
+
+    def test_single_point_draws_neither_chart_nor_hint(self):
+        page = self.client.get("/trends?todas=1").text
+        chunk = self._chunk(page, "body_weight_kg")
+        hint = T("es")("trends.chart_hint")
+        self.assertNotIn("<svg", chunk)
+        self.assertNotIn(hint, chunk)
 
 
 if __name__ == "__main__":

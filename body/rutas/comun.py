@@ -144,10 +144,16 @@ def _is_minutes(key: str) -> bool:
     return key.endswith("_min") or key == "sleep_minutes"
 
 
+def _decimales(key: str) -> int:
+    """BODY-MEDIDA-PESO-1-M2: how many decimals `key`'s own figure shows, read from
+    db.DECIMALES_MEDIDA -- 0 (today's behaviour) for every key not listed there."""
+    return db.DECIMALES_MEDIDA.get(key, 0)
+
+
 def _value(t: T, key: str, v) -> str:
     if v is None:
         return "—"
-    return t.minutes(v) if _is_minutes(key) else t.num(v)
+    return t.minutes(v) if _is_minutes(key) else t.num(v, _decimales(key))
 
 
 def _unit(t: T, d: dict) -> str:

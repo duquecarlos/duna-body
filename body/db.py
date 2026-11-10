@@ -603,6 +603,17 @@ RANGOS_MEDIDA_PERSONAL = {
     "waist_cm": (40, 200),
 }
 
+# BODY-MEDIDA-PESO-1-M2: how many decimals a metric's own figure, its "vs. tu historia"/"vs.
+# anterior" difference and its normal-range legend show -- keyed by metric key, every key not
+# listed keeps 0 (today's behaviour, unchanged). A whole number hides exactly the signal a
+# self-measured key like weight or waist exists to show (muscle gain moves it a few tenths a week),
+# so this is data next to the metric a new key can opt into, never an `if` naming the key in
+# body/rutas/comun.py or body/rutas/tendencias.py.
+DECIMALES_MEDIDA = {
+    "body_weight_kg": 1,
+    "waist_cm": 1,
+}
+
 DEFAULT_PERSON_ID = 1  # the local person's id; nowhere outside this module (local_person_id() is the seam)
 
 

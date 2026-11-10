@@ -13250,3 +13250,63 @@ metrics with real (invented) demo history, and the demo home's assistant can reg
 waist measurement that previously had no seeded baseline to compare against. Per
 ORCH-CARLOS-DELEGATES-TIER-1-1 this stops the merge for the orchestrator's 375 px customer-facing
 check: **AWAITING_APPROVAL**, left on `feat/body-medida-peso-1`, not merged.
+
+## BODY-MEDIDA-PESO-1-M2 -- precision, the zero-arrow and the chart/hint pairing on Tendencias (2026-11-09)
+
+Three corrections from the orchestrator's 375 px measurement of BODY-MEDIDA-PESO-1(-M), inside the
+screens that slice already changed (ORCH-CARLOS-DELEGATES-TIER-1-1).
+
+**Precision as data.** `db.DECIMALES_MEDIDA` (next to `db.RANGOS_MEDIDA_PERSONAL`, same file, same
+shape): a metric key's own decimal count, `1` for `body_weight_kg` and `waist_cm`, every other key
+absent and defaulting to `0` -- today's behaviour, unchanged. `body/rutas/comun.py`'s new
+`_decimales(key)` reads it; `comun._value` (the one place that formats a metric's own figure,
+reached by `_fig_unit`, a card's `last30`/`low`/`high` and the normal-range legend) calls
+`t.num(v, _decimales(key))` instead of the old bare `t.num(v)`. `body/rutas/tendencias.py`'s
+`_compare` (the "vs. tu historia"/"vs. anterior" difference) reads the same `_decimales(k)` for its
+own `t.num` call. Numbers localise through `i18n.T.num`'s existing `decimals` parameter -- no new
+formatting helper needed, es "70,9" / "81,1", en "70.9" / "81.1"; `resting_hr` and every other key
+still read "57", a whole number, unchanged.
+
+**No arrow at zero.** `_compare` already returned `t("delta.same")` ("= como siempre" / "= as
+usual") when a difference was small relative to the metric's own spread (the 15% check). It now
+also returns that same text, cls "flat", whenever the difference rounds to "0" at the metric's own
+precision -- whole minutes for a minutes key, `_decimales(k)` decimals otherwise -- even when that
+difference cleared the spread check (a tight spread let a sub-threshold diff still read as a
+"real" change before this fix). Reuses the existing wording rather than adding a new i18n key, per
+the spec's "or the existing wording for no change if one exists -- reuse it."
+
+**Chart hint only with a chart.** `body/templates/trends.html`'s `trends.chart_hint` paragraph is
+now `{% if c.svg %}`-gated, next to the `{{ c.svg|safe }}` line that was already there -- the hint
+no longer renders for an empty chart. Measured (not as the spec described it): at the literal
+`r=30`/`r=90` window view, a weekly self-measured key already drew a chart under the existing
+`len(pts) < 2` rule in `body/profile.py`'s `window_svg` -- 4-5 points clears 2 easily. The actual
+empty chart was the **default view** (`r` unset, labelled "últimos 30 días"/"last 30 days" via
+`trends.last30`, which is really `body/profile.py`'s monthly `month_svg`): `metric_profile`'s
+`by_month` filter required 7+ raw points in a month before that month joined the line, a near-daily
+Garmin cadence's own floor, which a once-a-week self reading (4-5/month) never reaches. `
+metric_profile` gained a `min_month_points: int = 7` parameter (default unchanged, so every other
+caller -- `WEEK_KEYS`, the assistant's own profile read -- is untouched); `tendencias.py`'s
+`_trend_card` passes `SELF_MIN_MONTH_POINTS = 2` for a self-measured key and
+`GARMIN_MIN_MONTH_POINTS = 7` otherwise, per origin as the spec asked, not per key. `flex_alcance_cm`,
+already on `main` with the same defect, is fixed by the same origin-keyed change -- no separate
+fix needed. A single self-measured point (one month, one point) still draws no chart and now shows
+no hint either, on any view.
+
+**Tests** (`tests/test_medida_peso.py`, extended; 1858 -> 1868 tests, +10): `PrecisionAsDataTest`
+(weight at one decimal in es "70,9" and en "70.9"; `resting_hr` still a bare whole number);
+`CompareZeroArrowTest` (a diff rounding to "0" at 1 decimal returns "delta.same" in es and en, the
+same at 0 decimals for `resting_hr`, and a real difference still gets its arrow -- calls
+`tendencias._compare` directly); `SelfKeyMonthlyChartTest` (a weekly series over two months draws a
+chart with the hint on both the default view and `r=30`, for `body_weight_kg` and `flex_alcance_cm`);
+`SelfKeySinglePointNoChartTest` (one point -> no chart, no hint). `tests/test_tendencias_todas.py`,
+`test_ejes_fechas.py`, `test_history.py`, `test_i18n_paridad.py`, `test_rendimiento.py` run
+unmodified and green -- no new i18n key, route, or SQL statement, so none needed extending.
+
+**Gate**, once, foreground, from the repository root:
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 1868 tests in 312.478s ... OK
+(skipped=1)`.
+
+No schema change, no cross-repo contract. Customer-facing: yes -- the three corrections themselves
+(Tendencias' figures, deltas and chart/hint pairing). Per ORCH-CARLOS-DELEGATES-TIER-1-1 this stops
+the merge for the orchestrator's re-measure: **AWAITING_APPROVAL**, left on
+`feat/body-medida-peso-1`, not merged.
