@@ -539,6 +539,44 @@ def _comidas_dia_ctx(t: T, conn, person_id: int, defs: dict, dia_iso: str) -> li
     return out
 
 
+def _momento_checkin_txt(t: T, momento: str) -> str:
+    """BODY-CHECKIN-1: three literal t() calls, the same choice body/rutas/asistente.py's own copy
+    of this helper makes, for the same reason (_periodo_dia_ctx's neighbour, test_i18n_paridad.py's
+    dynamic-prefix guard needs no new entry). Duplicated rather than shared -- neither module may
+    import the other for one helper."""
+    if momento == "despertar":
+        return t("checkin.momento.despertar")
+    if momento == "post_turno":
+        return t("checkin.momento.post_turno")
+    return t("checkin.momento.otro")
+
+
+def _checkins_dia_ctx(t: T, conn, person_id: int, defs: dict, vals: dict, dia_iso: str) -> dict | None:
+    """Día's own «Cómo te sentiste» section (BODY-CHECKIN-1 ruling 5): absent (None) on a day with
+    no check-in, no nag. The note (ruling 4, private by default) is read only here, through
+    db.checkins_del_dia -- never through db.load_day, which the assistant's leer_dia also reads.
+    The watch-vs-felt stress line is ONE plain line, shown only when both sides exist for this same
+    day (`vals`, already loaded by the caller) -- never a combined score, never a cause."""
+    eventos = db.checkins_del_dia(conn, person_id, dia_iso)
+    if not eventos:
+        return None
+    salida = []
+    for e in eventos:
+        valores = [{"etiqueta": t("metric." + k), "valor": comun._fig_unit(t, k, e[k], defs)}
+                   for k in db.CHECKIN_METRIC_KEYS if e[k] is not None]
+        salida.append({
+            "hora": e["ts_local"][11:16] if e["ts_local"] else None,
+            "momento": _momento_checkin_txt(t, e["momento"]),
+            "valores": valores,
+            "nota": t("asistente.propuesta.checkin_nota", nota=e["nota"]) if e["nota"] else None,
+        })
+    comparacion = None
+    reloj, felt = vals.get("stress_avg"), vals.get("stress_felt")
+    if reloj is not None and felt is not None:
+        comparacion = t("day.checkin.comparacion", reloj=t.num(reloj, 0), felt=t.num(felt, 0))
+    return {"eventos": salida, "comparacion": comparacion}
+
+
 @router.get("/day/{day}")
 @comun._cierra_conexion
 def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
@@ -610,7 +648,8 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
                    sync_text=None if has_data else comun._sync_status_text(conn, person, t),
                    prev=(d - timedelta(1)).isoformat(), next=(d + timedelta(1)).isoformat(),
                    turnos=turnos_on, ventana=_ventana_dia_ctx(t, conn, person_id, d), periodo=periodo_dia,
-                   comidas=_comidas_dia_ctx(t, conn, person_id, defs, d.isoformat()))
+                   comidas=_comidas_dia_ctx(t, conn, person_id, defs, d.isoformat()),
+                   checkin=_checkins_dia_ctx(t, conn, person_id, defs, vals, d.isoformat()))
 
 
 @router.post("/day/{day}/noche-inusual/visto")

@@ -15982,3 +15982,115 @@ Same test count as the surface's own pre-merge floor (2379), reconciled rather t
 as a second baseline.
 
 Open follow-up, named but not acted on: none.
+
+## BODY-CHECKIN-1-B
+
+A 10-second self-report -- mood, energy, stress_felt, each 1-5, plus an optional one-line note --
+set against the watch's own stress on Día. Built under this slice's own six rulings (decided,
+not reopened).
+
+**Rulings 1-2, catalogue and the note's own table**: three new `metric_def` rows (`mood`,
+`energy`, `stress_felt`; unit `"of5"` like `soreness_*`, origin `self`, direction `neutral`,
+`agregado` left `NULL` -- not `suma_ingesta`: several check-ins a day are separate readings,
+never summed). `db.CHECKIN_METRIC_KEYS` is the one catalogue-ordered tuple. Two new tables:
+`checkin` (the per-event anchor -- `day`, `ts_local`, `momento`, the three nullable readings)
+and `checkin_nota` (`id, person_id, day, ts_local, momento, nota NOT NULL, created_at`), sharing
+`checkin`'s own `id` rather than a foreign-key column, so one insert/delete pair touches both by
+the same primary key. `momento` is validated in CODE from a fixed list (`despertar`,
+`post_turno`, `otro`; `herramientas.MOMENTOS_CHECKIN`), never a DB CHECK, per ruling 2. No new
+`metric_def.agregado` value and no `metric_def` CHECK widening were needed -- only
+`propuesta_agente`'s own `accion` CHECK, a sixth guarded rebuild reusing
+`_rebuild_propuesta_agente_table` unchanged.
+
+**"Latest of day", not summed**: `db.crear_checkin`/`db.borrar_checkin` both call a new
+`_recalcular_checkin_dia` (mirroring `_recalcular_ingesta_dia`'s SUM template, here a
+`ORDER BY created_at DESC, id DESC LIMIT 1` instead), so the day's chart value is always the
+most recent reading of that key for that day, self-correcting on an out-of-order backfill or a
+delete, and removing the `daily_metric` row entirely once no check-in for that day carries the
+key.
+
+**Ruling 3, one tool**: `registrar_checkin` (propuesta, `nivel` `ninguno`) --
+`{day, hora?, momento, mood?, energy?, stress_felt?, nota?}`, at least one of the four required
+at the door. Each number is door-validated by a new `_numero_checkin` (the same shape
+`_numero_cantidad_comida` uses: a plain `"4"` coerced, `"4-5"`/`0`/`6`/a bool refused, naming the
+field by its own catalogue label, not the raw key). Apply writes the checkin row and its note in
+ONE transaction through `db.crear_checkin`; Deshacer removes both together through
+`db.borrar_checkin`; one card (`asistente.py`'s `_tarjeta_registrar_checkin`).
+
+**Ruling 4, the note is private by default**: `checkin_nota` is in
+`privacidad.NEVER_EXPORTED_TABLES` (never in vida-v1/export, never shared with household);
+`db.load_day` (the assistant's own `leer_dia`) never touches it -- `db.checkins_del_dia` is a
+separate function only Día's own route (`hoy.py`) calls. `tests/test_checkin.py`'s
+`NotaPrivadaTest` and `tests/test_persona_fuga.py`'s own-marker absence check (added to
+`_sweep_tools_as`, run for every read tool, not only `leer_dia`) cover this by sweeping every
+read tool and every GET route for the person's OWN note text, not only a cross-person leak.
+
+**Ruling 5, Día's new section**: a "Cómo te sentiste" section (`hoy.py`'s `_checkins_dia_ctx`),
+placed next to the existing watch sections, absent entirely on an empty day (no nag). One plain
+comparison line only when BOTH the watch's `stress_avg` and the day's own latest `stress_felt`
+exist: "El reloj midió estrés promedio {n}; tú lo sentiste {m} de 5."
+
+**Ruling 6, which readers needed code -- the census asked for**: `body/catalogo_tendencias.py`
+and `body/vida_export.py` needed ZERO code change (`git diff main -- body/catalogo_tendencias.py
+body/vida_export.py` is empty); `vida_export.py`'s `WEEK_METRICS` whitelist deliberately never
+gains the three new keys, consistent with ruling 7's export boundary. `body/mcp.py` also needed
+no change -- it lists/calls `registrar_checkin` generically like every other propuesta tool.
+Tendencias' own generic `"self"` trend group (`comun.TREND_GROUPS`, built live from
+`db.METRIC_DEFS`) picked up the three new keys with NO production code change at all -- but DID
+need six new i18n label keys (`trends.q.*`/`trends.plain.*` for `mood`/`energy`/`stress_felt`),
+found only by `tests/test_i18n_paridad.py` failing, not anticipated up front. This is the direct,
+measured answer to ruling 6.
+
+**Ruling 7, out of scope, left alone**: no reminder/prompt to check in, no mood-trend verdict, no
+household sharing, no export of the new keys beyond what ruling 6 already covers.
+
+`body/demo.py` seeds a handful of invented check-ins across the demo window, with and without a
+note; `tests/test_demo.py`'s own catalogue-coverage test (unmodified) already required the three
+new keys to appear at least once, satisfied by the seeding's forced-index pattern.
+
+**Deviation from the `touches:` list, same precedent as BODY-COMIDA-1 (`392a4f0`)**: adding a
+new propuesta tool breaks four hardcoded census-style tests outside the listed scope, each
+asserting an exact tool-name set or count that a 19th propuesta tool (or a 3rd `"self"`-group
+metric) necessarily changes:
+- `tests/test_agente_propuestas.py::NoProponibleTest::test_privacy_and_account_tools_are_never_proposals`
+  -- hardcoded propuesta-name set, missing `registrar_checkin`.
+- `tests/test_agente_registro.py::RegistryShapeTest` -- `PROPUESTA_NOMBRES` missing
+  `registrar_checkin`; the eighteen-tool test renamed to `test_nineteen_propuesta_tools_at_nivel_ninguno`;
+  the `HERRAMIENTAS` count `31` -> `32`.
+- `tests/test_agente_bucle.py::NivelDatosEnforcementTest::test_tool_not_offered_at_the_current_nivel_is_still_refused_by_ejecutar`
+  -- same offered-tools set, missing `registrar_checkin`.
+- `tests/test_agente_medida.py::TrendsSelfMeasuredGroupTest::test_trend_groups_has_a_self_group_built_from_metric_def`
+  -- `TREND_GROUPS["self"]` set, missing `mood`/`energy`/`stress_felt` (this one IS ruling 6's own
+  census, caught by the gate rather than planned for).
+All four fixed by adding the new name(s)/count, nothing else; the measurement (a reproducing gate
+failure on the committed tree, in both chunked and full-literal-order runs) is what justified
+touching files outside the listed scope, flagged here rather than silently widened or silently
+left red.
+
+**A fifth, unrelated failure investigated and ruled out**: a chunked partial run showed
+`tests/test_pipeline.py::PipelineTest::test_end_to_end_page` failing (an expected "No hay turno
+registrado" string missing). Traced to `db.trabaja_turnos_si` returning `False` on a vanilla
+fresh database with no shift rows at all (hiding the whole Turno section in `day.html`
+structurally) -- reproducible on `main` with zero code of this slice touched
+(`git diff main -- body/db.py` shows no turno-related line), and absent entirely from the full
+literal-order gate run below (2432 of 2432 tests, that one included, passing). Order-dependent
+and pre-existing; not this slice's to fix.
+
+**Commits**, `main` at `96eda7a` before this slice:
+- `b600f4b` -- "BODY-CHECKIN-1: a 10-second self-report -- mood, energy, stress_felt, each 1-5,
+  plus an optional note -- against the watch's own stress on Día.", on `feat/body-checkin-1`.
+- `2f3455b` -- "BODY-CHECKIN-1: update two census-style tests outside this slice's touches list."
+- `1f75da0` -- "BODY-CHECKIN-1: update two more census-style tests outside this slice's touches
+  list."
+
+**Gate**, run once on this branch's final tree (`feat/body-checkin-1` at `1f75da0`), exactly
+`.venv/Scripts/python.exe -m unittest discover tests -t .`: see this slice's own report for the
+measured result (a second full run, after the fixes above, was in flight when this entry was
+written).
+
+Diff against `main`: schema changed (`checkin`, `checkin_nota`, `propuesta_agente`'s `accion`
+CHECK widened) AND customer-facing bytes changed (Día's new section, new i18n strings) -- two of
+merge policy A's three stop conditions. Expect AWAITING_APPROVAL; this entry records the build,
+not a merge.
+
+Open follow-up, named but not acted on: none.

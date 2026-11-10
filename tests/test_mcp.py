@@ -216,6 +216,27 @@ class ToolsCallTest(_McpTestCase):
         self.assertIn("propuesta_id", salida)
         self.assertEqual(salida["estado"], "propuesta")
 
+    def test_registrar_checkin_is_offered_and_callable(self):
+        """BODY-CHECKIN-1: same generic `tipo: propuesta` path as registrar_comida above -- body.mcp
+        needs no new code to list or call it."""
+        _, listado = self._ejecutar([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
+        nombres = {t["name"] for t in listado[0]["result"]["tools"]}
+        self.assertIn("registrar_checkin", nombres)
+
+        before = self.conn.execute("SELECT COUNT(*) FROM checkin").fetchone()[0]
+        _, respuestas = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "registrar_checkin",
+                        "arguments": {"day": "2026-11-05", "momento": "despertar", "mood": 4, "energy": 3,
+                                      "stress_felt": 2}}},
+        ])
+        r = respuestas[0]["result"]
+        self.assertNotIn("isError", r)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM checkin").fetchone()[0], before)
+        salida = json.loads(r["content"][-1]["text"])
+        self.assertIn("propuesta_id", salida)
+        self.assertEqual(salida["estado"], "propuesta")
+
 
 class VentanaRotanteTest(_McpTestCase):
     """BODY-MCP-LOCAL-1-B: caps bound a RATE, not a per-process total -- a long-lived server

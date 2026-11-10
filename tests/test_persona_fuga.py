@@ -226,6 +226,15 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
     # (the screens that will show it are a separate, later slice).
     db.crear_periodo(conn, person_id, "malestar", DAYS[-1], DAYS[-1], f"ZZ{tag}-PERIODO")
 
+    # BODY-CHECKIN-1: checkin is person-keyed and has Día's own "Cómo te sentiste" section
+    # (ruling 5) as its FIRST reader -- the note's marker belongs in _markers_of's active list,
+    # like COMIDA's descripcion above. Unlike comida, the note must NEVER reach a read tool
+    # (ruling 4, the strictest privacy level) -- checked directly, as an ABSENCE, in
+    # _sweep_tools_as below, never through the generic foreign-marker loop (which only checks
+    # OTHER people's markers, never the viewer's own).
+    db.crear_checkin(conn, person_id, DAYS[-1], "despertar", mood=4, energy=3, stress_felt=2,
+                      nota=f"ZZ{tag}-CHECKIN-NOTA")
+
     agente_ajustes.set_nivel_datos(conn, person_id, "completo")
     privacidad.record_consent(conn, person_id)
 
@@ -287,7 +296,7 @@ def _markers_of(tag: str) -> list[str]:
     return [f"ZZ{tag}-{suffix}" for suffix in
             ("ACTIVIDAD", "SERIE", "TURNO", "META-PRIVADA", "HABITO", "NOTA", "META-PROPUESTA",
              "META-ARCHIVADA", "PLAN", "CONVERSACION", "MENSAJE", "DISPOSITIVO", "EXPERIMENTO",
-             "REGISTRO", "COMIDA")] + [ENLACE_REF[tag]]
+             "REGISTRO", "COMIDA", "CHECKIN-NOTA")] + [ENLACE_REF[tag]]
 
 
 def _figures_of(tag: str) -> dict:
@@ -424,6 +433,11 @@ class _BaseFugaTest(unittest.TestCase):
             text = repr(out)
             for marker in foreign_markers:
                 self.assertNotIn(marker, text, f"{viewer_tag} tool {nombre} leaked {other_tag}'s marker {marker!r}")
+            # BODY-CHECKIN-1 ruling 4: the note is private by default -- never returned by ANY
+            # read tool, not even to its own owner (unlike every other marker here, this is an
+            # absence check on the VIEWER's own marker, not just the foreign one).
+            self.assertNotIn(f"ZZ{viewer_tag}-CHECKIN-NOTA", text,
+                              f"{viewer_tag} tool {nombre} returned their OWN checkin note (ruling 4: private)")
             if nombre == "leer_dia":
                 # BODY-PROTEINA-1: leer_dia's new ingesta list -- checked directly (own marker
                 # renders, the other person's never does) rather than through the active marker

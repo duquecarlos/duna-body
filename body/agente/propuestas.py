@@ -696,6 +696,43 @@ def _deshacer_registrar_comida(conn: sqlite3.Connection, row: sqlite3.Row) -> No
         db.borrar_comida(conn, row["person_id"], cid)
 
 
+# -- registrar_checkin (BODY-CHECKIN-1: insert-shaped, like registrar_comida -- this module is the
+# one writer of `checkin` through db.crear_checkin/db.borrar_checkin, which write/remove the note
+# (`checkin_nota`) in the SAME transaction, ruling 3) -------------------------------------------
+
+def _drift_deshacer_registrar_checkin(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    checkin_id = despues.get("checkin_id")
+    r = conn.execute(
+        "SELECT day, momento, mood, energy, stress_felt FROM checkin WHERE id = ? AND person_id = ?",
+        (checkin_id, row["person_id"])).fetchone()
+    if r is None:
+        return True
+    actual = (r["day"], r["momento"], r["mood"], r["energy"], r["stress_felt"])
+    esperado = (despues["day"], despues["momento"], despues.get("mood"), despues.get("energy"),
+                despues.get("stress_felt"))
+    if actual != esperado:
+        return True
+    nota_row = conn.execute("SELECT nota FROM checkin_nota WHERE id = ?", (checkin_id,)).fetchone()
+    return (nota_row["nota"] if nota_row else None) != despues.get("nota")
+
+
+def _aplicar_registrar_checkin(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+    despues = json.loads(row["despues_json"])
+    checkin_id = db.crear_checkin(conn, row["person_id"], despues["day"], despues["momento"],
+                                   ts_local=despues.get("ts_local"), mood=despues.get("mood"),
+                                   energy=despues.get("energy"), stress_felt=despues.get("stress_felt"),
+                                   nota=despues.get("nota"))
+    return {"checkin_id": checkin_id}
+
+
+def _deshacer_registrar_checkin(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    checkin_id = despues.get("checkin_id")
+    if checkin_id is not None:
+        db.borrar_checkin(conn, row["person_id"], checkin_id)
+
+
 # -- marcar_periodo (BODY-PERIODO-1: insert-shaped, like registrar_ingesta -- this module is the
 # one writer of `period` through db.crear_periodo/db.borrar_periodo) -------------------------------
 
@@ -842,6 +879,8 @@ TABLA: dict[str, _Accion] = {
                                _aplicar_borrar_ingesta, _deshacer_borrar_ingesta),
     "registrar_comida": _Accion(_sin_drift, _drift_deshacer_registrar_comida, _aplicar_registrar_comida,
                                  _deshacer_registrar_comida),
+    "registrar_checkin": _Accion(_sin_drift, _drift_deshacer_registrar_checkin, _aplicar_registrar_checkin,
+                                  _deshacer_registrar_checkin),
     "marcar_periodo": _Accion(_sin_drift, _drift_deshacer_marcar_periodo, _aplicar_marcar_periodo,
                                _deshacer_marcar_periodo),
     "cerrar_periodo": _Accion(_drift_aplicar_cerrar_periodo, _drift_deshacer_cerrar_periodo,

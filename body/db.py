@@ -86,7 +86,7 @@ _PROPUESTA_AGENTE_COLUMNS = """
                          'proponer_experimento', 'marcar_experimento',
                          'registrar_ingesta', 'corregir_ingesta', 'borrar_ingesta',
                          'marcar_periodo', 'cerrar_periodo', 'corregir_periodo', 'borrar_periodo',
-                         'registrar_comida')),
+                         'registrar_comida', 'registrar_checkin')),
     objetivo_id     INTEGER REFERENCES goal(id),
     antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
     despues_json    TEXT NOT NULL CHECK (json_valid(despues_json)),
@@ -707,6 +707,42 @@ CREATE TABLE IF NOT EXISTS turno_fc (
 {_TURNO_FC_COLUMNS}
 );
 CREATE INDEX IF NOT EXISTS idx_turno_fc_person ON turno_fc(person_id);
+
+-- BODY-CHECKIN-1: a 10-second self-report -- mood, energy, stress_felt, each 1-5 -- on waking or
+-- after a shift. One row per check-in (several a day are separate readings, ruling 1, never
+-- summed); the day's own chart/trend value is the LATEST reading of the day, written to
+-- daily_metric through db.crear_checkin/borrar_checkin's own recompute, the same set_metric-based
+-- template db.registrar_ingesta/borrar_ingesta use for a SUM (see _recalcular_checkin_dia below).
+-- momento is a short key validated in CODE (body/agente/herramientas.py's MOMENTOS_CHECKIN), never
+-- a DB CHECK, so a new moment word is a code change, not a migration.
+CREATE TABLE IF NOT EXISTS checkin (
+    id           INTEGER PRIMARY KEY,
+    person_id    INTEGER NOT NULL REFERENCES person(id),
+    day          TEXT NOT NULL,
+    ts_local     TEXT,
+    momento      TEXT NOT NULL,
+    mood         INTEGER,
+    energy       INTEGER,
+    stress_felt  INTEGER,
+    created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_checkin_person_dia ON checkin(person_id, day);
+
+-- Ruling 2's own note table, private by default (BODY-CHECKIN-1 ruling 4, the strictest privacy
+-- level -- see body/privacidad.py): never read by any assistant tool, in-app or MCP, never in
+-- vida-v1 or any export, never shared with a household. id is set EQUAL to its sibling checkin.id
+-- on insert (never autoincrement), so a note is found by its own check-in's id with no foreign-key
+-- column -- ruling 2's column list has none. A check-in with no note given has no row here at all.
+CREATE TABLE IF NOT EXISTS checkin_nota (
+    id         INTEGER PRIMARY KEY,
+    person_id  INTEGER NOT NULL REFERENCES person(id),
+    day        TEXT NOT NULL,
+    ts_local   TEXT,
+    momento    TEXT,
+    nota       TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_checkin_nota_person_dia ON checkin_nota(person_id, day);
 """
 
 # (key, label, unit, better, kind). 'estimated' = computed by Body, shown with «≈» and "how I calculate it".
@@ -791,6 +827,14 @@ METRIC_DEFS += [
     ("soreness_shoulders", "Soreness: shoulders", "of5", "neutral", "measured", "self"),
     ("soreness_arms", "Soreness: arms", "of5", "neutral", "measured", "self"),
     ("soreness_core", "Soreness: core", "of5", "neutral", "measured", "self"),
+    # BODY-CHECKIN-1 ruling 1: mood/energy/stress_felt, each 1-5, same "of5" scale convention as
+    # soreness above -- 'neutral' direction (none of the three is assumed good or bad in itself).
+    # NOT suma_ingesta: several check-ins a day are separate readings, never summed; the day's
+    # chart value is the LATEST one (CHECKIN_METRIC_KEYS below, recomputed by db.crear_checkin/
+    # borrar_checkin), needing no new `agregado` value here.
+    ("mood", "Mood", "of5", "neutral", "measured", "self"),
+    ("energy", "Energy", "of5", "neutral", "measured", "self"),
+    ("stress_felt", "Stress you felt", "of5", "neutral", "measured", "self"),
 ]
 # BODY-PROTEINA-1: a 7th field, `agregado` -- 'suma_ingesta' marks a key whose daily_metric value is
 # the SUM of that day's `ingesta` rows, derived by db.registrar_ingesta/corregir_ingesta/
@@ -802,6 +846,11 @@ METRIC_DEFS = [d if len(d) == 7 else (*d, None) for d in METRIC_DEFS]
 # as RANGOS_MEDIDA_PERSONAL below. body/agente/herramientas.py (the enum offered to the model) and
 # body/rutas/hoy.py (a meal card's own amount order) both read this one constant.
 INGESTA_METRIC_KEYS = tuple(d[0] for d in METRIC_DEFS if d[6] == "suma_ingesta")
+
+# BODY-CHECKIN-1 ruling 1: the three check-in keys, in catalogue order -- excluded from
+# SELF_METRIC_KEYS (body/agente/herramientas.py) since registrar_medida is not their writer;
+# registrar_checkin is their one writer, through db.crear_checkin/borrar_checkin.
+CHECKIN_METRIC_KEYS = ("mood", "energy", "stress_felt")
 
 # BODY-MEDIDA-PESO-1: a plausible-range refusal for a self-measured figure prone to a typo (780
 # instead of 78.0) -- keyed by metric key, not every self key: flex_alcance_cm and snoring_min have
@@ -1091,6 +1140,13 @@ def _propuesta_agente_needs_comida_rebuild(conn: sqlite3.Connection) -> bool:
     return row is not None and "registrar_comida" not in row[0]
 
 
+def _propuesta_agente_needs_checkin_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'propuesta_agente'"
+    ).fetchone()
+    return row is not None and "registrar_checkin" not in row[0]
+
+
 def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
@@ -1110,6 +1166,9 @@ def _migrate_propuestas(conn: sqlite3.Connection) -> None:
         _rebuild_propuesta_agente_table(conn)
     # BODY-COMIDA-1: a fifth widening (registrar_comida), same reusable rebuild.
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_comida_rebuild(conn):
+        _rebuild_propuesta_agente_table(conn)
+    # BODY-CHECKIN-1: a sixth widening (registrar_checkin), same reusable rebuild.
+    if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_checkin_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
     # BODY-MCP-APLICAR-1: a plain nullable column, never a CHECK widening on `accion` -- a plain
     # ALTER TABLE ADD COLUMN, not the rebuild dance above.
@@ -2127,6 +2186,76 @@ def comidas_del_dia(conn: sqlite3.Connection, person_id: int, day: str) -> list[
         grupos[clave]["cantidades"].append(
             {"metric_key": r["metric_key"], "amount": r["amount"], "estimado": bool(r["estimado"])})
     return [grupos[c] for c in orden]
+
+
+# ---- checkin (BODY-CHECKIN-1): crear_checkin/borrar_checkin are the ONE writer of `checkin` --
+# each recomputes every touched key's day value through _recalcular_checkin_dia, the LATEST
+# reading of the day (ruling 1), the same set_metric-based template _recalcular_ingesta_dia uses
+# for a SUM. The note lives in its own table (checkin_nota), written/deleted alongside in the SAME
+# transaction (ruling 3: "Apply writes readings + note in ONE transaction; Deshacer removes them
+# together"), sharing checkin's own id rather than a foreign-key column.
+
+def _recalcular_checkin_dia(conn: sqlite3.Connection, person_id: int, day: str, metric_key: str) -> None:
+    assert metric_key in CHECKIN_METRIC_KEYS
+    fila = conn.execute(
+        f"SELECT {metric_key} AS v FROM checkin WHERE person_id = ? AND day = ? AND {metric_key} IS NOT NULL "
+        "ORDER BY created_at DESC, id DESC LIMIT 1",
+        (person_id, day),
+    ).fetchone()
+    set_metric(conn, day, metric_key, fila["v"] if fila else None, "self", person_id)
+
+
+def crear_checkin(conn: sqlite3.Connection, person_id: int, day: str, momento: str, *, ts_local: str | None = None,
+                   mood: int | None = None, energy: int | None = None, stress_felt: int | None = None,
+                   nota: str | None = None) -> int:
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO checkin (person_id, day, ts_local, momento, mood, energy, stress_felt, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (person_id, day, ts_local, momento, mood, energy, stress_felt, now),
+        )
+        checkin_id = cur.lastrowid
+        if nota is not None:
+            conn.execute(
+                "INSERT INTO checkin_nota (id, person_id, day, ts_local, momento, nota, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (checkin_id, person_id, day, ts_local, momento, nota, now),
+            )
+        for metric_key, valor in (("mood", mood), ("energy", energy), ("stress_felt", stress_felt)):
+            if valor is not None:
+                _recalcular_checkin_dia(conn, person_id, day, metric_key)
+    return checkin_id
+
+
+def borrar_checkin(conn: sqlite3.Connection, person_id: int, checkin_id: int) -> None:
+    fila = conn.execute(
+        "SELECT day, mood, energy, stress_felt FROM checkin WHERE id = ? AND person_id = ?",
+        (checkin_id, person_id),
+    ).fetchone()
+    if fila is None:
+        raise ValueError("checkin_id: not this person's own check-in")
+    day = fila["day"]
+    claves = [k for k in CHECKIN_METRIC_KEYS if fila[k] is not None]
+    with conn:
+        conn.execute("DELETE FROM checkin_nota WHERE id = ?", (checkin_id,))
+        conn.execute("DELETE FROM checkin WHERE id = ?", (checkin_id,))
+        for metric_key in claves:
+            _recalcular_checkin_dia(conn, person_id, day, metric_key)
+
+
+def checkins_del_dia(conn: sqlite3.Connection, person_id: int, day: str) -> list[dict]:
+    """Every check-in of the day (ruling 5), each paired with its own note when it has one --
+    joined by the shared id, ordered by when it was recorded. Only body/rutas/hoy.py's Día route
+    calls this -- never load_day (the assistant's leer_dia reads that), so the note never reaches
+    any read tool by construction (ruling 4)."""
+    rows = conn.execute(
+        "SELECT c.id, c.ts_local, c.momento, c.mood, c.energy, c.stress_felt, n.nota "
+        "FROM checkin c LEFT JOIN checkin_nota n ON n.id = c.id "
+        "WHERE c.person_id = ? AND c.day = ? ORDER BY c.created_at, c.id",
+        (person_id, day),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # ---- periodos (BODY-PERIODO-1): a marked stretch of days (illness, travel, injury) that a
