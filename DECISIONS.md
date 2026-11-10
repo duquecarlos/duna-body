@@ -15453,3 +15453,45 @@ Open follow-ups, outside this slice's own `touches:`:
   now both cover the anchor day).
 - `BODY-NOCHE-INUSUAL-TESTFIX-RUTAS-1`: add `("/day/{day}/noche-inusual/visto", ("POST",))` to
   `tests/test_web_entry.py::RouteSetTest.BEFORE`.
+
+## BODY-NOCHE-INUSUAL-1-M -- merged
+
+Fixed, on `feat/body-noche-inusual-1`, the two census tests BODY-NOCHE-INUSUAL-1 left GATE_RED
+(both outside its own `touches:` and both census tests that slice's required behaviour changes),
+and one copy defect, per `ORCH-CARLOS-DELEGATES-TIER-1-1`:
+
+- `tests/test_web_entry.py::RouteSetTest.BEFORE` now lists
+  `("/day/{day}/noche-inusual/visto", ("POST",))`, with a comment naming BODY-NOCHE-INUSUAL-1.
+- `tests/test_estados_vacios_2.py::PersonaCompletaSinCambiosTest::test_demo_person_unchanged` no
+  longer just raises the aviso count to 2 -- it asserts the demo person's Hoy shows exactly the two
+  avisos the demo is built to show, each identified by its own text key (`today.periodo_enlace` for
+  the open marked period, `today.noche_inusual_link` for the unusual night), so a third unexpected
+  aviso, or either one missing, still fails.
+- `day.noche_inusual` (es): "Esta noche fue distinta a tu normal: {senales}." read as TONIGHT on a
+  Día view that may be weeks old. Changed to "Esa noche fue distinta a tu normal: {senales}."
+  (shorter than "La noche antes de este día...", reads lighter beside the sleep card, and drops the
+  tonight-tilt). en: "This night was different..." -> "That night was different from your normal:
+  {senales}." Updated the two `tests/test_noche_inusual.py` assertions that checked the old wording.
+
+Fix commit `7faf186133c895dc2d5cabf194792000bad3e163` on `feat/body-noche-inusual-1`
+(`tests/test_web_entry.py`, `tests/test_estados_vacios_2.py`, `tests/test_noche_inusual.py`,
+`body/i18n/es.json`, `body/i18n/en.json`). Targeted run first (45 tests, OK):
+`tests/test_web_entry.py`, `tests/test_estados_vacios_2.py`, `tests/test_noche_inusual.py`,
+`tests/test_i18n_paridad.py`.
+
+Diff classified against `main`: no schema or migration change. Customer-facing bytes: YES -- the
+`day.noche_inusual` es/en strings change (the only remaining text change; the census-test fixes
+touch no string a person reads). No cross-repo contract or DTO change. Per Merge Policy A and this
+spec's own approval (`approved: yes`, body says "fix ... then merge"), merged on green without
+waiting.
+
+Merged `feat/body-noche-inusual-1` into `main` with `--no-ff`: merge commit
+`b0be58da6835d65ab5530f05457ff0c52daa1c3b`.
+
+**Gate, once, foreground, on the merged tree**:
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 2306 tests in 1184.254s` ->
+`OK (skipped=1)`. GREEN -- the two failures BODY-NOCHE-INUSUAL-1 stopped on are gone; test count
+unchanged at 2306 (two tests restored, not added).
+
+This closes both open follow-ups left by the GATE_RED entry above:
+`BODY-NOCHE-INUSUAL-TESTFIX-ESTADOS-1` and `BODY-NOCHE-INUSUAL-TESTFIX-RUTAS-1`.
