@@ -13310,3 +13310,17 @@ No schema change, no cross-repo contract. Customer-facing: yes -- the three corr
 (Tendencias' figures, deltas and chart/hint pairing). Per ORCH-CARLOS-DELEGATES-TIER-1-1 this stops
 the merge for the orchestrator's re-measure: **AWAITING_APPROVAL**, left on
 `feat/body-medida-peso-1`, not merged.
+
+## BODY-MEDIDA-PESO-1-M3 -- merged (2026-11-09)
+
+The orchestrator's 375 px re-measure of `feat/body-medida-peso-1` (0b59c0b, -M 8787608, -M2
+912f34b) passed per ORCH-CARLOS-DELEGATES-TIER-1-1, so this slice only merges. `git checkout main`
+then `git merge --no-ff feat/body-medida-peso-1` -- no conflict; merge commit
+`29dc0b396834819ebaad48ee64be0304921e317a`.
+
+**Gate**, once, foreground, from the repository root, on the merged tree:
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 1868 tests in 382.296s ... OK
+(skipped=1)`.
+
+No schema change on this merge-only slice. Main now carries the three Tendencias corrections
+Carlos's re-measure approved.
