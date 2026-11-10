@@ -26,7 +26,11 @@ TREND_GROUPS = [
     # BODY-SUENO-RESPIRACION-VISTA-1: blood oxygen and breathing while asleep, a loose proxy only --
     # low/high stay Día-only (part of the one line there), the trend is the avg alone, same honest
     # caveat as Día's (BODY-ENTRENO-1-INV Q6, DESIGN rule 12: never labelled snoring or apnea).
-    ("night", ["sleep_spo2_avg", "sleep_respiration_avg"]),
+    # BODY-SUENO-FC-1: the sleep-window heart rate itself, same group -- origen stays 'garmin'
+    # (db.METRIC_DEFS), so the per-origin monthly floor (body/rutas/tendencias.py's own
+    # GARMIN_MIN_MONTH_POINTS) applies to these two exactly like every other Garmin-origin key
+    # here, never the looser self-measured floor.
+    ("night", ["sleep_spo2_avg", "sleep_respiration_avg", "sleep_hr_avg", "sleep_hr_min"]),
     ("energy", ["body_battery_high", "body_battery_low", "body_battery_sleep_charge"]),
     ("stress", ["stress_avg", "high_stress_min"]),
     ("activity", ["intensity_minutes", "active_kcal"]),

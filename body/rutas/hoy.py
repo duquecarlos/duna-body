@@ -26,6 +26,9 @@ TODAY_CARDS = ["sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wa
 # card, with the caveat that this is a proxy, not a snoring or apnea reading (BODY-ENTRENO-1-INV
 # Q6, DESIGN rule 12).
 SUENO_RESP_KEYS = ("sleep_spo2_avg", "sleep_respiration_avg", "sleep_respiration_low", "sleep_respiration_high")
+# BODY-SUENO-FC-1: the sleep-window heart rate, out of the generic grid and into its own line
+# inside the sleep card, same reasoning SUENO_RESP_KEYS above already carries.
+SUENO_FC_KEYS = ("sleep_hr_avg", "sleep_hr_min")
 # Each stage's fixed palette class (body/static/body.css), never a var(...) string in markup (BODY-ESTILOS-1).
 STAGES = [("sleep_deep_min", "metric.sleep_deep_min", "c-night"),
           ("sleep_light_min", "metric.sleep_light_min", "c-night-light"),
@@ -392,6 +395,18 @@ def _sueno_resp_linea(t: T, vals: dict, defs: dict) -> str | None:
     return " · ".join(parts)
 
 
+def _sueno_fc_linea(t: T, vals: dict, defs: dict) -> str | None:
+    """BODY-SUENO-FC-1: Dia's one line for the sleep-window heart rate -- avg and low always come
+    from the same `sueno_fc.noche()` call, so either both are present or neither is; nothing when
+    the night has no value (the honest gap). The unit rides on the average alone (comun._fig_unit),
+    never repeated for the low -- same shape the spec's own example uses."""
+    avg = vals.get("sleep_hr_avg")
+    low = vals.get("sleep_hr_min")
+    if avg is None or low is None:
+        return None
+    return t("day.sueno_fc.linea", avg=comun._fig_unit(t, "sleep_hr_avg", avg, defs), low=t.num(low))
+
+
 def _activity_name(t: T, a) -> str:
     """Día's activity list (DESIGN rule 10): an unnamed activity shows its translated kind when
     Garmin's own type code is one this app knows (the i18n map `_kind_label` reads); an unknown
@@ -464,7 +479,7 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
     defs = comun._defs(conn)
     cards = []
     for k, df in defs.items():
-        if k in SUENO_RESP_KEYS:
+        if k in SUENO_RESP_KEYS or k in SUENO_FC_KEYS:
             continue
         v = vals.get(k)
         delta, cls = _delta(conn, t, df, key, v, person_id)
@@ -473,6 +488,7 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
                       "unit": comun._unit(t, df), "delta": delta, "cls": cls, "est": df["kind"] == "estimated",
                       "href": href})
     sueno_resp_linea = _sueno_resp_linea(t, vals, defs)
+    sueno_fc_linea = _sueno_fc_linea(t, vals, defs)
     sleep = None
     if vals.get("sleep_minutes") is not None:
         total_stage = sum(vals.get(s[0]) or 0 for s in STAGES)
@@ -513,7 +529,7 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
         else:
             block_ctx = t("day.shift_ctx_despues", n=ctx["n"])
     return comun._render("day.html", t=t, tab="today", date_long=t.long_date(d), cards=cards, sleep=sleep,
-                   sueno_resp_linea=sueno_resp_linea,
+                   sueno_resp_linea=sueno_resp_linea, sueno_fc_linea=sueno_fc_linea,
                    activities=acts, shifts=shifts, has_data=has_data, block_ctx=block_ctx,
                    sync_text=None if has_data else comun._sync_status_text(conn, person, t),
                    prev=(d - timedelta(1)).isoformat(), next=(d + timedelta(1)).isoformat(),

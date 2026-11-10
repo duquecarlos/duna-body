@@ -640,6 +640,22 @@ class TurnoFcTareaTest(unittest.TestCase):
         self.assertNotIn("turno_fc", vivo.PASOS_PREVIOS)
 
 
+class SuenoFcTareaTest(unittest.TestCase):
+    """BODY-SUENO-FC-1: the first backfill runs through the live tree like every other task, no
+    arguments needed; the daily pull calls body.sueno_fc.recalcular per person after that, so this
+    task is for the one-off catch-up only."""
+
+    def test_sueno_fc_esta_en_tareas(self):
+        self.assertIn("sueno_fc", vivo.TAREAS)
+        self.assertEqual(vivo.TAREAS["sueno_fc"], "body.sueno_fc")
+
+    def test_no_bandera_antepuesta(self):
+        self.assertNotIn("sueno_fc", vivo.PREFIJO_ARGV)
+
+    def test_no_paso_previo(self):
+        self.assertNotIn("sueno_fc", vivo.PASOS_PREVIOS)
+
+
 class InstallScriptWakeCheckTest(unittest.TestCase):
     """A PowerShell installer is never executed in tests -- asserted by reading its text
     (BODY-DESPERTAR-1)."""
