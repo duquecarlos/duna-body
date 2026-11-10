@@ -763,15 +763,18 @@ METRIC_DEFS += [
     # go up or down is the person's own goal (a goal row), never this metric's own direction.
     ("body_weight_kg", "Weight", "kg", "neutral", "measured", "self"),
     ("waist_cm", "Waist", "cm", "neutral", "measured", "self"),
-    # BODY-PROTEINA-1: the first intake metric -- 'neutral' like weight, since whether to raise or
-    # lower protein is the person's own goal, never assumed here. `agregado = 'suma_ingesta'` marks
-    # it as derived from `ingesta` rows, not a single self-reported figure.
-    ("protein_g", "Protein", "g", "neutral", "measured", "self", "suma_ingesta"),
-    # BODY-COMIDA-1 (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2): six more intake keys beside
-    # protein_g, same `suma_ingesta` aggregation and `self` origin, 'neutral' direction (whether to
-    # raise or lower any of these is the person's own goal, never assumed here). alcohol_g is grams
-    # of PURE alcohol, not drinks or "units" -- those differ by country, grams do not.
+    # BODY-COMIDA-1-M fix 1: calories lead the intake catalogue -- this declaration order IS the
+    # display order (db.INGESTA_METRIC_KEYS below reads it off, never a second hand-typed list),
+    # so a reader's meal amounts show calories first, not whatever order the keys were added in.
     ("kcal", "Calories", "kcal", "neutral", "measured", "self", "suma_ingesta"),
+    # BODY-PROTEINA-1: the first intake metric ADDED -- 'neutral' like weight, since whether to
+    # raise or lower protein is the person's own goal, never assumed here. `agregado =
+    # 'suma_ingesta'` marks it as derived from `ingesta` rows, not a single self-reported figure.
+    ("protein_g", "Protein", "g", "neutral", "measured", "self", "suma_ingesta"),
+    # BODY-COMIDA-1 (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2): five more intake keys beside kcal
+    # and protein_g, same `suma_ingesta` aggregation and `self` origin, 'neutral' direction (whether
+    # to raise or lower any of these is the person's own goal, never assumed here). alcohol_g is
+    # grams of PURE alcohol, not drinks or "units" -- those differ by country, grams do not.
     ("carbs_g", "Carbs", "g", "neutral", "measured", "self", "suma_ingesta"),
     ("fat_g", "Fat", "g", "neutral", "measured", "self", "suma_ingesta"),
     ("fiber_g", "Fiber", "g", "neutral", "measured", "self", "suma_ingesta"),

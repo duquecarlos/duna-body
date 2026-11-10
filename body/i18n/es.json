@@ -847,7 +847,6 @@
   "asistente.propuesta.ingesta_momento_almuerzo": "almuerzo",
   "asistente.propuesta.ingesta_momento_merienda": "merienda",
   "asistente.propuesta.ingesta_momento_cena": "cena",
-  "asistente.propuesta.comida_resumen": "«{descripcion}» el {fecha}",
   "asistente.propuesta.comida_cantidad": "{metric}: {valor}",
   "asistente.propuesta.comida_cantidad_estimado": "{metric}: ≈ {valor}",
   "periodo.kind.malestar": "Malestar",

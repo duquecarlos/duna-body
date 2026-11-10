@@ -260,21 +260,23 @@ def _comida_cantidad_txt(t: T, defs: dict, c: dict) -> str:
 
 
 def _tarjeta_registrar_comida(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
-    """BODY-COMIDA-1 ruling 4: one block -- description, time and every amount in a fixed
-    catalogue order, each marked «≈» when estimated. Never raises on a stored amount this card
-    cannot show (_tarjeta_propuesta_segura's own fallback covers any surprise, same as every other
-    card here)."""
+    """BODY-COMIDA-1-M fix 2: three lines, never one long bold paragraph -- the description on its
+    own line, date and meal-word/time beneath it, then every amount (fixed catalogue order, each
+    marked «≈» when estimated) on its own line, mirroring Día's own two-line meal
+    (body/rutas/hoy.py's `_comidas_dia_ctx`, body/templates/day.html). `\\n` joins the lines; the
+    renderer (body/static/assistant.js) splits `despues` on it and keeps only the first line bold.
+    Never raises on a stored amount this card cannot show (_tarjeta_propuesta_segura's own
+    fallback covers any surprise, same as every other card here)."""
     fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
+    momento = _momento_ingesta_txt(t, despues.get("ts_local"))
+    linea_fecha = fecha if not momento else fecha + " · " + momento
     por_clave = {c["metric_key"]: c for c in despues["cantidades"]}
     orden = [k for k in agente_herramientas.INGESTA_METRIC_KEYS if k in por_clave]
-    cantidades_txt = ", ".join(_comida_cantidad_txt(t, defs, por_clave[k]) for k in orden)
-    partes = [t("asistente.propuesta.comida_resumen", descripcion=despues["descripcion"], fecha=fecha)]
-    momento = _momento_ingesta_txt(t, despues.get("ts_local"))
-    if momento:
-        partes.append(momento)
+    cantidades_txt = " · ".join(_comida_cantidad_txt(t, defs, por_clave[k]) for k in orden)
+    lineas = [t("asistente.propuesta.ingesta_descripcion", descripcion=despues["descripcion"]), linea_fecha]
     if cantidades_txt:
-        partes.append(cantidades_txt)
-    return None, " · ".join(partes), None
+        lineas.append(cantidades_txt)
+    return None, "\n".join(lineas), None
 
 
 def _periodo_kind_txt(t: T, kind: str) -> str:

@@ -461,10 +461,15 @@
       antes.textContent = datos.antes;
       wrap.appendChild(antes);
     }
-    var despues = document.createElement("p");
-    despues.className = "asis-propuesta-despues";
-    despues.textContent = datos.despues;
-    wrap.appendChild(despues);
+    // BODY-COMIDA-1-M fix 2: `despues` may carry several "\n"-joined lines (a meal's own card) --
+    // only the first renders bold, the rest in normal weight, so a long meal never becomes one
+    // single bold paragraph. Every other card's `despues` has no "\n" and still renders as one line.
+    String(datos.despues || "").split("\n").forEach(function (linea, i) {
+      var p = document.createElement("p");
+      p.className = i === 0 ? "asis-propuesta-despues" : "asis-propuesta-despues-linea";
+      p.textContent = linea;
+      wrap.appendChild(p);
+    });
     if (datos.series && datos.series.length) {
       wrap.appendChild(crearTablaSeries(datos.series, etiquetas));
     }

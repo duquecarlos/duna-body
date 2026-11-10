@@ -662,6 +662,15 @@ _COMIDA_MINUTOS = [(7 * 60, 8 * 60), (12 * 60, 14 * 60), (16 * 60, 17 * 60), (18
 
 _COMIDA_NUTRIENTES_DEMO = ("protein_g", "kcal", "carbs_g", "fat_g", "fiber_g")
 
+# BODY-COMIDA-1-M fix 4: each forced single-nutrient entry gets its own invented time -- coffee and
+# water stay in the morning slot, but alcohol moves to an evening one (never the morning slot a
+# coffee would plausibly sit in).
+_COMIDA_FORZADA_MINUTOS = {
+    "caffeine_mg": _COMIDA_MINUTOS[0],
+    "water_ml": _COMIDA_MINUTOS[0],
+    "alcohol_g": (20 * 60, 21 * 60),
+}
+
 
 def _seed_ingesta(conn, db, rng: random.Random, all_days: list[date], person_id: int) -> tuple[int, int]:
     """3-4 invented meals most days (BODY-COMIDA-1), each its own `comida` row grouping several
@@ -688,7 +697,7 @@ def _seed_ingesta(conn, db, rng: random.Random, all_days: list[date], person_id:
                 rows += len(cantidades)
         forzada = forzado_indices.get(i)
         if forzada:
-            lo, hi = _COMIDA_MINUTOS[0]
+            lo, hi = _COMIDA_FORZADA_MINUTOS[forzada]
             minuto = rng.randint(lo, hi - 1)
             ts_local = f"{d.isoformat()}T{minuto // 60:02d}:{minuto % 60:02d}:00"
             db.crear_comida(conn, person_id, d.isoformat(),

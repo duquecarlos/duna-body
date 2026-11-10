@@ -847,7 +847,6 @@
   "asistente.propuesta.ingesta_momento_almuerzo": "lunch",
   "asistente.propuesta.ingesta_momento_merienda": "snack",
   "asistente.propuesta.ingesta_momento_cena": "dinner",
-  "asistente.propuesta.comida_resumen": "“{descripcion}” on {fecha}",
   "asistente.propuesta.comida_cantidad": "{metric}: {valor}",
   "asistente.propuesta.comida_cantidad_estimado": "{metric}: ≈ {valor}",
   "periodo.kind.malestar": "Unwell",

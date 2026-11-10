@@ -835,23 +835,25 @@ def _numero_cantidad_comida(t: T, metric_key: str, valor, *, clave_error: str) -
     `_numero_entreno` (BODY-ENTRENO-NUMEROS-1 ruling 2) built for reps/peso_kg -- a bool is refused
     even though Python's `bool` is technically an `int`; an int/float already of the right shape
     passes through; a plain numeric string ("150", "12.5") is coerced, since outside callers
-    (body.mcp included) often send numbers as strings; anything else is refused naming
-    `metric_key`. Zero or negative is refused the same way: `ingesta.amount`'s own CHECK (> 0,
-    BODY-PROTEINA-1) never changed, so a meal's amount is held to the same rule as a standalone
-    intake entry's."""
+    (body.mcp included) often send numbers as strings; anything else is refused naming the
+    metric's own catalogue label (BODY-COMIDA-1-M fix 3: "calories", never the raw key "kcal"),
+    lower-cased since it sits mid-sentence. Zero or negative is refused the same way:
+    `ingesta.amount`'s own CHECK (> 0, BODY-PROTEINA-1) never changed, so a meal's amount is held
+    to the same rule as a standalone intake entry's."""
+    etiqueta = t("metric." + metric_key).lower()
     if isinstance(valor, bool):
-        raise ToolError(t(clave_error, metrica=metric_key))
+        raise ToolError(t(clave_error, metrica=etiqueta))
     if isinstance(valor, (int, float)):
         numero = float(valor)
     elif isinstance(valor, str):
         try:
             numero = float(valor.strip())
         except ValueError:
-            raise ToolError(t(clave_error, metrica=metric_key))
+            raise ToolError(t(clave_error, metrica=etiqueta))
     else:
-        raise ToolError(t(clave_error, metrica=metric_key))
+        raise ToolError(t(clave_error, metrica=etiqueta))
     if numero <= 0:
-        raise ToolError(t(clave_error, metrica=metric_key))
+        raise ToolError(t(clave_error, metrica=etiqueta))
     return numero
 
 
