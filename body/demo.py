@@ -521,6 +521,23 @@ def _seed_turno_fc(conn, db, turno_fc, person_id: int, all_days: list[date]) -> 
     return len(elegidos)
 
 
+# BODY-NOCHE-INUSUAL-1: the most recent day's own hrv_last_night/sleep_score, overridden to a
+# clearly LOW invented value against this person's own 30-day normal -- two of
+# noche_inusual.MODELO's three signals, enough to clear MODELO['minimo_senales'], so the demo's
+# Hoy and Dia both show the "unusual night" line. The third signal, sleep_hr_avg, is left alone:
+# _seed_sueno_fc only ever gives it N_NOCHES_SUENO_FC nights of history, short of
+# baselines.MIN_DAYS, so it can never be judged in this fixture regardless -- an honest gap, not a
+# bug this slice needs to fix.
+NOCHE_INUSUAL_HRV = 18.0
+NOCHE_INUSUAL_SLEEP_SCORE = 12.0
+
+
+def _seed_noche_inusual(conn, db, anchor: date, person_id: int) -> None:
+    db.set_metric(conn, anchor.isoformat(), "hrv_last_night", NOCHE_INUSUAL_HRV, "garmin", person_id)
+    db.set_metric(conn, anchor.isoformat(), "sleep_score", NOCHE_INUSUAL_SLEEP_SCORE, "garmin", person_id)
+    conn.commit()
+
+
 # A handful of the most recent nights, so Dia's own line and the Tendencias "night" card have
 # something to show -- not every night in the history.
 N_NOCHES_SUENO_FC = 5
@@ -816,6 +833,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
         conn, shift_import, turnos_costo, person_id, all_days)
     turno_fc_turnos = _seed_turno_fc(conn, db, turno_fc, person_id, all_days)
     sueno_fc_noches = _seed_sueno_fc(conn, db, sueno_fc, person_id)
+    _seed_noche_inusual(conn, db, anchor, person_id)
 
     checks, habit_checks = _seed_goals_and_habits(
         conn, db, goals, rng, all_days, anchor, first_monday, anchor_monday, person_id, idioma)

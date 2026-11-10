@@ -24,7 +24,7 @@ from fastapi.testclient import TestClient
 
 from body import (
     compartir, config, cuenta, db, dispositivo, enlaces, fechas, garmin_cuenta, goals, household,
-    identity, patron_turnos, privacidad, readiness, recuperacion, shift_import, vida_export, web,
+    identity, noche_inusual, patron_turnos, privacidad, readiness, recuperacion, shift_import, vida_export, web,
 )
 from body.agente import ajustes as agente_ajustes
 from body.agente import conversacion as agente_conversacion
@@ -270,11 +270,13 @@ def _markers_of(tag: str) -> list[str]:
     counts and kept-days; privacidad.export_person's shift_batches is a plain `SELECT * FROM
     shift_batch`, never joined to its items) -- a marker that renders nowhere would make the
     "appears for its own owner" half of this guard vacuous, not a real check. Wave 9's own
-    ZZ<tag>-MOMENTO is excluded for the same reason (no route, API or assistant tool reads
-    `moment` yet); ZZ<tag>-EXPERIMENTO (the experiment's own titulo) and ZZ<tag>-REGISTRO (its one
-    registro's nota) moved INTO this active list with BODY-EXPERIMENTOS-PANTALLA-1, which gave
-    `experimento`/`experimento_registro` their first reader -- Metas' section and
-    /experiments/{id} render both."""
+    ZZ<tag>-MOMENTO is excluded for the same reason: no screen, API or assistant tool renders
+    `moment`'s own stored TEXT. BODY-NOCHE-INUSUAL-1 gave `moment` its first ROUTE reader (the
+    dismiss POST, checked separately below), but that one only checks/writes a fixed `kind` and
+    `ts_local`, never a stored marker, so the exclusion still holds. ZZ<tag>-EXPERIMENTO (the
+    experiment's own titulo) and ZZ<tag>-REGISTRO (its one registro's nota) moved INTO this active
+    list with BODY-EXPERIMENTOS-PANTALLA-1, which gave `experimento`/`experimento_registro` their
+    first reader -- Metas' section and /experiments/{id} render both."""
     return [f"ZZ{tag}-{suffix}" for suffix in
             ("ACTIVIDAD", "SERIE", "TURNO", "META-PRIVADA", "HABITO", "NOTA", "META-PROPUESTA",
              "META-ARCHIVADA", "PLAN", "CONVERSACION", "MENSAJE", "DISPOSITIVO", "EXPERIMENTO",
@@ -487,6 +489,30 @@ class DeviceAndPropuestaCrossIdTest(_BaseFugaTest):
         row = self.conn.execute("SELECT estado FROM propuesta_agente WHERE id = ?",
                                 (self.ids["B"]["propuesta_id"],)).fetchone()
         self.assertEqual(row["estado"], "propuesta", "A's action calls touched B's propuesta")
+
+
+class NocheInusualDismissCrossPersonTest(_BaseFugaTest):
+    """BODY-NOCHE-INUSUAL-1 ruling 5: the dismiss POST (`/day/{day}/noche-inusual/visto`) takes no
+    id at all -- it only ever writes the SIGNED-IN person's own `moment` row -- so A dismissing a
+    calendar night can never mark B's own same-dated night as seen, and vice versa."""
+
+    def test_a_dismissing_a_night_leaves_b_unaffected(self):
+        day = DAYS[-1]
+        _as(PERSON_A)
+        r = client.post(f"/day/{day}/noche-inusual/visto")
+        self.assertEqual(r.status_code, 303)
+        self.assertTrue(noche_inusual.vista(self.conn, PERSON_A, day), "A's own dismissal was not recorded")
+        self.assertFalse(noche_inusual.vista(self.conn, PERSON_B, day), "A's dismissal leaked onto B's own night")
+
+    def test_b_dismissing_the_same_calendar_day_leaves_a_unaffected(self):
+        day = DAYS[-1]
+        _as(PERSON_A)
+        client.post(f"/day/{day}/noche-inusual/visto")
+        _as(PERSON_B)
+        r = client.post(f"/day/{day}/noche-inusual/visto")
+        self.assertEqual(r.status_code, 303)
+        self.assertTrue(noche_inusual.vista(self.conn, PERSON_B, day), "B's own dismissal was not recorded")
+        self.assertTrue(noche_inusual.vista(self.conn, PERSON_A, day), "A's earlier dismissal was undone by B's")
 
 
 class LinkedSharingSweepTest(_BaseFugaTest):
