@@ -247,6 +247,11 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
         "INSERT INTO tope_agente (person_id, diario_micro_usd, conteo_diario) VALUES (?, 100000, 50)",
         (person_id,),
     )
+    # BODY-MCP-LOCAL-1: uso_herramienta_externa is person-owned (its own person_id column, same
+    # census treatment as uso_agente above) -- no marker needed, the census only checks export/
+    # delete-all coverage, and its own columns (tool name, UTC time, caller id) carry nothing a
+    # screen or export could leak between A and B beyond the generic row-count check.
+    db.registrar_uso_herramienta_externa(conn, person_id, "leer_hoy", "mcp-local")
     conn.commit()
 
     return {

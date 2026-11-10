@@ -435,11 +435,15 @@ CREATE TABLE IF NOT EXISTS ajuste_agente (
 );
 
 -- Conversations with Body's assistant (wave 7, stage two: BODY-ASISTENTE-PROVEEDOR-1).
+-- `origen` (BODY-MCP-LOCAL-1): NULL for one started in Body's own chat panel, 'mcp' for one the
+-- local MCP server (body/mcp.py) started -- so the panel can label its proposal cards "from your
+-- personal assistant" (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3).
 CREATE TABLE IF NOT EXISTS conversacion_agente (
     id        INTEGER PRIMARY KEY,
     person_id INTEGER NOT NULL REFERENCES person(id),
     creada_en TEXT NOT NULL,
-    titulo    TEXT
+    titulo    TEXT,
+    origen    TEXT CHECK (origen IS NULL OR origen IN ('mcp'))
 );
 CREATE INDEX IF NOT EXISTS idx_conversacion_agente_person ON conversacion_agente(person_id);
 
@@ -474,6 +478,19 @@ CREATE TABLE IF NOT EXISTS uso_agente (
     superficie      TEXT NOT NULL DEFAULT 'asistente'
 );
 CREATE INDEX IF NOT EXISTS idx_uso_agente_person_dia ON uso_agente(person_id, creado_en);
+
+-- One row per call an OUTSIDE caller (today, only the local MCP server, body/mcp.py) made against
+-- the tool registry (BODY-MCP-LOCAL-1, ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5): the tool NAME, the
+-- UTC time and the caller id only -- never its params or its result, so this row can never carry a
+-- health figure or anything the person typed.
+CREATE TABLE IF NOT EXISTS uso_herramienta_externa (
+    id          INTEGER PRIMARY KEY,
+    person_id   INTEGER NOT NULL REFERENCES person(id),
+    herramienta TEXT NOT NULL,
+    llamada_en  TEXT NOT NULL,
+    caller      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_uso_herramienta_externa_person ON uso_herramienta_externa(person_id);
 
 -- Prices are DATA, seeded empty -- never invented (amendment 5: nothing is costed at 0 because
 -- its price is missing; an unpriced model falls back to the count breaker instead).
@@ -787,6 +804,21 @@ def local_person_id(conn: sqlite3.Connection) -> int:
     return DEFAULT_PERSON_ID
 
 
+def registrar_uso_herramienta_externa(conn: sqlite3.Connection, person_id: int, herramienta: str,
+                                       caller: str) -> None:
+    """One audit row for one call an outside caller made against the tool registry
+    (BODY-MCP-LOCAL-1): the tool's own name, the UTC time, and who called -- never the call's
+    params or its result, so this can never carry a health figure (ORCH-CARLOS-DELEGATES-TIER-1-1
+    ruling 5)."""
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        conn.execute(
+            "INSERT INTO uso_herramienta_externa (person_id, herramienta, llamada_en, caller) "
+            "VALUES (?, ?, ?, ?)",
+            (person_id, herramienta, now, caller),
+        )
+
+
 def connect(path: Path | None = None) -> sqlite3.Connection:
     config.ensure_home()
     conn = sqlite3.connect(path or config.DB_PATH)
@@ -858,6 +890,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "ALTER TABLE plan ADD COLUMN ejercicios_json TEXT "
             "CHECK (ejercicios_json IS NULL OR json_valid(ejercicios_json))"
         )
+    ccols = {r[1] for r in conn.execute("PRAGMA table_info(conversacion_agente)")}
+    if ccols and "origen" not in ccols:
+        conn.execute("ALTER TABLE conversacion_agente ADD COLUMN origen TEXT CHECK (origen IS NULL OR origen IN ('mcp'))")
     sbcols = {r[1] for r in conn.execute("PRAGMA table_info(shift_batch)")}
     if sbcols and "kind" not in sbcols:
         conn.execute(

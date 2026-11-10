@@ -449,6 +449,12 @@
     var titulo = document.createElement("strong");
     titulo.textContent = datos.titulo;
     wrap.appendChild(titulo);
+    if (datos.origen_etiqueta) {
+      var origen = document.createElement("p");
+      origen.className = "asis-propuesta-resultado";
+      origen.textContent = datos.origen_etiqueta;
+      wrap.appendChild(origen);
+    }
     if (datos.antes) {
       var antes = document.createElement("p");
       antes.className = "asis-propuesta-antes";

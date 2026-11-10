@@ -375,12 +375,16 @@ TARJETAS = {
 }
 
 
-def _tarjeta_propuesta(t: T, defs: dict, registro: dict) -> dict:
+def _tarjeta_propuesta(t: T, defs: dict, registro: dict, origen_conversacion: str | None = None) -> dict:
     """The `propuesta` SSE event payload (agent-capabilities-v1 section 2, decision 5): `antes`/
     `despues` are short plain-word strings in the person's language, built here from the record's
     structured JSON -- never stored as text. `etiquetas` carries this card's button and result
     labels pre-rendered, since body/templates/base.html (outside this slice's touches) is the only
-    other place assistant.js could read i18n text from."""
+    other place assistant.js could read i18n text from. `origen_conversacion` (BODY-MCP-LOCAL-1) is
+    this proposal's own conversation's `origen` column (agente_conversacion.origen_de): 'mcp' shows
+    a small plain label on the card, so the person knows it came from their personal assistant
+    (the desk), never from Body's own chat panel -- rendered here, not in JS, like every other
+    string on this card."""
     accion = registro["accion"]
     despues = registro["despues_json"]
     antes_json = registro["antes_json"]
@@ -395,6 +399,7 @@ def _tarjeta_propuesta(t: T, defs: dict, registro: dict) -> dict:
         "antes": antes_txt, "despues": despues_txt, "series": series_tarjeta, "expira_en": registro["expira_en"],
         "deshacer": accion not in agente_propuestas.SIN_DESHACER, "estado": registro["estado"],
         "etiquetas": _etiquetas(t),
+        "origen_etiqueta": t("asistente.propuesta.origen_mcp") if origen_conversacion == "mcp" else None,
     }
 
 
@@ -472,11 +477,12 @@ async def asistente_preguntar(request: Request, person_id: int = Depends(identit
                 return
 
             defs = comun._defs(conn)
+            origen_conversacion = agente_conversacion.origen_de(conn, conversacion_id)
             for ev in resultado.eventos:
                 if isinstance(ev, agente_bucle.EventoHerramienta):
                     yield _evento_sse("herramienta", {"nombre": ev.nombre})
                 elif isinstance(ev, agente_bucle.EventoPropuesta):
-                    yield _evento_sse("propuesta", _tarjeta_propuesta(t, defs, ev.registro))
+                    yield _evento_sse("propuesta", _tarjeta_propuesta(t, defs, ev.registro, origen_conversacion))
                 else:
                     yield _evento_sse("texto", {"delta": ev.texto})
 
@@ -504,7 +510,9 @@ def asistente_conversacion(conversacion_id: int, person_id: int = Depends(identi
         conn.close()
         raise HTTPException(404)
     defs = comun._defs(conn)
-    tarjetas = [_tarjeta_propuesta(t, defs, r) for r in agente_propuestas.listar(conn, person_id, conversacion_id)]
+    origen_conversacion = agente_conversacion.origen_de(conn, conversacion_id)
+    tarjetas = [_tarjeta_propuesta(t, defs, r, origen_conversacion)
+                for r in agente_propuestas.listar(conn, person_id, conversacion_id)]
     conn.close()
     return JSONResponse({"turnos": turnos, "propuestas": tarjetas})
 

@@ -653,6 +653,44 @@ class CompartidoExportDeleteTest(unittest.TestCase):
         )
 
 
+class UsoHerramientaExternaExportDeleteTest(unittest.TestCase):
+    """BODY-MCP-LOCAL-1: one row per call an outside caller (the local MCP server) made against the
+    tool registry -- tool name, UTC time, caller id only -- FULLY exported and deleted."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "uso_externo.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+
+    def test_is_a_fully_handled_table(self):
+        self.assertIn("uso_herramienta_externa", privacidad.FULLY_HANDLED_TABLES)
+
+    def test_export_includes_the_row(self):
+        db.registrar_uso_herramienta_externa(self.conn, 1, "leer_hoy", "mcp-local")
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(len(data["asistente"]["uso_externo"]), 1)
+        row = data["asistente"]["uso_externo"][0]
+        self.assertEqual(row["herramienta"], "leer_hoy")
+        self.assertEqual(row["caller"], "mcp-local")
+
+    def test_export_of_another_person_sees_nothing(self):
+        db.registrar_uso_herramienta_externa(self.conn, 1, "leer_hoy", "mcp-local")
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 2)
+        self.assertEqual(data["asistente"]["uso_externo"], [])
+
+    def test_delete_all_removes_the_row(self):
+        db.registrar_uso_herramienta_externa(self.conn, 1, "leer_hoy", "mcp-local")
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM uso_herramienta_externa").fetchone()[0], 0
+        )
+
+
 class DeleteAllTest(unittest.TestCase):
     def setUp(self):
         orig_db_path = config.DB_PATH

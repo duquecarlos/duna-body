@@ -758,6 +758,7 @@
   "asistente.propuesta.antes": "Before: {valor}",
   "asistente.propuesta.despues": "After: {valor}",
   "asistente.propuesta.solo_propuesta": "Proposal: {valor}",
+  "asistente.propuesta.origen_mcp": "From your personal assistant",
   "asistente.propuesta.turnos_actual": "{n} proposed shifts waiting to confirm",
   "asistente.propuesta.turnos_nuevo": "Confirm every proposed shift",
   "asistente.propuesta.entreno_plan": "{titulo} · {fecha}: {ejercicios}",

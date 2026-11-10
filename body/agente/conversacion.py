@@ -18,13 +18,22 @@ def _ahora() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def crear(conn: sqlite3.Connection, person_id: int, titulo: str | None = None) -> int:
+def crear(conn: sqlite3.Connection, person_id: int, titulo: str | None = None,
+          origen: str | None = None) -> int:
     with conn:
         cur = conn.execute(
-            "INSERT INTO conversacion_agente (person_id, creada_en, titulo) VALUES (?, ?, ?)",
-            (person_id, _ahora(), titulo),
+            "INSERT INTO conversacion_agente (person_id, creada_en, titulo, origen) VALUES (?, ?, ?, ?)",
+            (person_id, _ahora(), titulo, origen),
         )
     return cur.lastrowid
+
+
+def origen_de(conn: sqlite3.Connection, conversacion_id: int) -> str | None:
+    """This conversation's `origen` column (BODY-MCP-LOCAL-1): None for one started in Body's own
+    chat panel, 'mcp' for one the local MCP server started -- so the panel can label its proposal
+    cards. None too for an id that does not exist; the caller already owns the ownership check."""
+    row = conn.execute("SELECT origen FROM conversacion_agente WHERE id = ?", (conversacion_id,)).fetchone()
+    return row["origen"] if row else None
 
 
 def verificar_propiedad(conn: sqlite3.Connection, conversacion_id: int, person_id: int) -> None:
