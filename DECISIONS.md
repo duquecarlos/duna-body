@@ -14205,3 +14205,32 @@ removed, and is stale. Left as an open follow-up rather than widening `touches:`
 Open follow-up: `BODY-PERIODO-PANTALLAS-1-B-FOLLOWUP-STALE-COMMENT` -- update `body/history.py:214`'s own comment
 (and any neighbouring one making the same claim) now that `dias_marcados` no longer re-reads the timezone per
 call; a slice that next touches `body/history.py` should fold this in rather than open a dedicated one.
+
+## BODY-PERIODO-PANTALLAS-1-M -- merged
+
+Merged `feat/body-periodo-pantallas-1` (BODY-PERIODO-PANTALLAS-1, its GATE_RED follow-up, and
+BODY-PERIODO-PANTALLAS-1-B's open-period fix: commits `6af5bad`, `d1d427d`, `c3741bf`, `97e2a93`, `de0bb07`) into
+`main`, after one wording fix and the stale-comment follow-up named above.
+
+The singular: `history.periodo_excluido_one` added to `es.json`/`en.json` ("1 día quedó fuera de estos patrones
+por estar marcado ({kinds})." / "1 day was left out of these patterns because it was marked ({kinds})."),
+`historial.py`'s `_periodo_excluido_ctx` picks it when `n == 1` the same way `tendencias.py`'s
+`_medidas_count_txt` already picks `trends.medidas_count_one`. A new test in `tests/test_periodo_pantallas.py`
+asserts both the Spanish and English singular forms render on `/history` for exactly one marked day.
+
+`BODY-PERIODO-PANTALLAS-1-B-FOLLOWUP-STALE-COMMENT`: `body/history.py`'s `patterns()` docstring (the comment at
+the line named in the follow-up) no longer claims `db.dias_marcados()` re-reads `person()` on every call -- it
+now says BODY-PERIODO-PANTALLAS-1-B folded the zone into `_periodos_de_persona`'s own cached period read (one
+JOIN), and that `patterns()` still takes `marcados` as a page-wide budget so several `PATTERN_KEYS` never
+re-run that query either.
+
+Merge: `git checkout main`, `git merge --no-ff feat/body-periodo-pantallas-1` -- clean, no conflicts. Fix commit
+on the branch before the merge: `5d1e8d8`. Merge commit on `main`: `d8e27c26546e9384570c8d113e53fff279d33272`.
+
+**Gate**, once, foreground, on the merged tree (tree `d132322cb2b93c361c00c80e1cadf5b254f795b3`):
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 2112 tests in 308.183s ... OK (skipped=1)`.
+
+No schema migration. Customer-facing bytes: yes, the singular wording on `/history` for exactly one marked
+day (the plural form, already shipped by BODY-PERIODO-PANTALLAS-1, is unchanged) -- this merge is itself the
+approved action per `ORCH-CARLOS-DELEGATES-TIER-1-1`, which named this exact fix and said "then merge". No
+cross-repo contract.
