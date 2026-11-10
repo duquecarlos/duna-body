@@ -13488,3 +13488,21 @@ this final run; not a re-run into green, each fix addressed a named, reproduced 
 Schema change (`ingesta`, `metric_def.agregado`, `propuesta_agente.accion` widened) AND
 customer-facing bytes (new i18n strings, the assistant card, a Tendencias question). Per
 ORCH-CARLOS-DELEGATES-TIER-1-1, stops **AWAITING_APPROVAL** -- not merged by this slice.
+
+## BODY-PROTEINA-1-M -- merged
+
+The orchestrator measured the customer-facing surface at 375 px on the demo home (the assistant
+card, Aplicar/Deshacer, and the Tendencias protein chart) and approved the merge under
+ORCH-CARLOS-DELEGATES-TIER-1-1; this slice only merged `feat/body-proteina-1`
+(`e3b3284184884c7b20f0ebdb0425525a4e7ad3f9` + ledger `b117b2097e2d9e77ef7ac17d0770810cc5aaaa2c`) into
+`main` with `git merge --no-ff`, merge commit `87bf38606a8f28eb3c15a6c419bdef690170ea77`.
+
+**Gate**, once, foreground, from the repository root: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -> `Ran 1933 tests in 629.294s ... OK (skipped=1)`, matching the orchestrator's
+pre-merge floor.
+
+Recorded, not reworked: BODY-PROTEINA-1's own edits to three test files outside its named touches
+(`tests/test_agente_bucle.py`, `tests/test_agente_propuestas.py` -- enumeration widenings;
+`tests/test_cuenta_schema.py` -- equality narrowed to the pre-existing columns plus an explicit NULL
+check on the new `agregado` column) were reviewed by the orchestrator before approval and judged to
+widen, not loosen, each guard's subject; this merge slice made no further edits.
