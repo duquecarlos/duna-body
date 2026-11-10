@@ -13732,3 +13732,71 @@ scoped to a connection and the web app opens one connection per request
 No schema change, no customer-facing bytes beyond the two string fixes named above (already
 reviewed and approved by the orchestrator per ORCH-CARLOS-DELEGATES-TIER-1-1), no cross-repo
 contract -- merged on this green gate per the approval.
+
+## BODY-AGUJETAS-1 -- next-day muscle soreness as self-measured metric_def rows (2026-11-09)
+
+Carlos (relayed by his Personal desk) uses next-day muscle soreness as his own check that a session
+gave a muscle enough work. Seven new `metric_def` rows, `origen = 'self'`, `direction = 'neutral'`
+(ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1-2): `soreness_legs`, `soreness_glutes`, `soreness_back`,
+`soreness_chest`, `soreness_shoulders`, `soreness_arms`, `soreness_core` -- one key per muscle
+GROUP, never a finer list -- unit `pts`, on the same propose/apply/undo path `registrar_medida`
+already gives `flex_alcance_cm`/`body_weight_kg` (BODY-ENTRENO-MEDIDA-1, BODY-MEDIDA-PESO-1).
+`SELF_METRIC_KEYS` and Tendencias' "self" group pick up all seven with no second list, both derived
+from `db.METRIC_DEFS`.
+
+`db.RANGOS_MEDIDA_PERSONAL` gains a `(0, 5)` inclusive range for each key (ruling 2's 0-5 scale).
+New `db.ENTEROS_MEDIDA_PERSONAL`, a frozenset of the same seven keys: `_registrar_medida` now also
+refuses a non-whole-number figure for a key listed there (ruling 2's "whole numbers"), checked
+after the existing range refusal. `registrar_medida`'s model-facing description (ruling 3) gained a
+clause: when the person says a muscle is sore ("las piernas me quedaron adoloridas, como un 3"),
+propose one soreness reading per group they mention, and the day used is the day the person says
+they feel it, by convention the morning after the session -- never inferred from the day they
+trained.
+
+es/en labels ("Agujetas: piernas" / "Soreness: legs", etc.), a Tendencias question and a plain-word
+line for each key, the plain line stating the 0-5 scale and the morning-after convention explicitly
+("qué tan adoloridas sientes las piernas al día siguiente de entrenar, de 0 (nada) a 5 (mucho),
+registrado por ti" / "how sore your legs feel the morning after training, 0 (none) to 5 (a lot),
+logged by you") -- never a medical word.
+
+`body/readiness.py` reads a fixed tuple of six Garmin-sourced keys (`readiness.METRICS`) and nothing
+else, so a soreness key never reaches readiness or any baseline-as-score without a change there;
+this slice makes none.
+
+**Demo.** New `demo._seed_soreness`: the day after an invented `strength_training` activity
+(already drawn by `_seed_days`' own `_day_activity`), one soreness reading, cycling through the
+seven keys in order so a run with fewer strength sessions than keys still seeds every key at least
+once -- a top-up pass on the last few seeded days covers any key a session never reached. This is
+what keeps `tests/test_demo.py`'s existing `test_every_catalogue_metric_present_at_least_once`
+green without touching that file (outside this slice's `touches:`), the same gap BODY-MEDIDA-PESO-1
+hit and had to close in a follow-up slice.
+
+**Tests** (`tests/test_agujetas.py`, new): all seven rows exist with the rulings' shape (unit,
+direction, range, whole-number set); propose/apply/undo for `soreness_legs` and one proposal for
+each of the seven on the day felt; 0 and 5 accepted at the edges, 6 and a negative value refused,
+3.5 refused as non-whole (3.0 accepted); a soreness value added alongside a normal readiness
+fixture never changes `readiness.compute`'s score and never appears in any `Part`'s key;
+`readiness.METRICS` names none of the seven; the assistant's proposal card and the Tendencias card
+(question + plain line) render in es and en; the "self" group includes all seven.
+`tests/test_agente_medida.py`'s pinned self-group set extended from five keys to the twelve now
+live.
+
+**Gate**, once, foreground, from the repository root: `.venv/Scripts/python.exe -m unittest
+discover tests -t .` -> `Ran 2051 tests in 395.996s ... FAILED (failures=1, skipped=1)`.
+
+The one failure is `tests/test_rendimiento.py`'s `RouteCostCeilingTest`:
+`/goals/new` ran 54 statements against its hardcoded ceiling of 48, `/trends` ran 53 against 51.
+Both routes build their metric picker / self-group cards by looping over every live self-measured
+`metric_def` row -- the same dynamic, per-key-query path `flex_alcance_cm`/`body_weight_kg`/
+`waist_cm`/`protein_g` already use, never a hardcoded pair of keys. Going from 5 to 12 self-measured
+rows is exactly what raises each route's real statement count; nothing in this slice's own diff
+queries per-route differently than the existing pattern already did. `tests/test_rendimiento.py`'s
+`_CEILINGS` table is a hardcoded, measured-plus-margin figure in a file outside this slice's
+`touches:`, so it cannot be widened here.
+
+Commit on `feat/body-agujetas-1`: `6c6fbea10b49a87513452f3dfa4a1e47c164722d`.
+
+No schema migration (new `metric_def` rows and ranges only, the same path BODY-MEDIDA-PESO-1 used),
+no cross-repo contract. Customer-facing: yes -- Tendencias gains seven cards and the assistant can
+propose a soreness reading. The gate is red for a reason outside this slice's touches, so this
+stops **GATE_RED**, left on `feat/body-agujetas-1`, not merged.
