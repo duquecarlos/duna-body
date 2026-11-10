@@ -13187,3 +13187,66 @@ No schema change (the one-time backfill's own `raw_payload` row shape is unchang
 customer-facing bytes (nothing on any screen changes), no cross-repo contract -- Merge Policy A's
 three conditions all pass; merged on a green gate per the parent approval
 (ORCH-CARLOS-DELEGATES-TIER-1-1).
+
+## BODY-MEDIDA-PESO-1 -- body_weight_kg and waist_cm as self-measured metrics (2026-11-09)
+
+Two new `metric_def` rows, `origen='self'`, `direction='neutral'` (whether weight should rise or
+fall is the person's own goal, a `goal` row, never this metric's own direction) -- `body_weight_kg`
+("Weight", unit `kg`) and `waist_cm` ("Waist", unit `cm`) -- on the same propose/apply/undo path
+`flex_alcance_cm`/`snoring_min` already use (BODY-ENTRENO-SCHEMA-1, BODY-ENTRENO-MEDIDA-1):
+`registrar_medida` proposes, applies and undoes them; Tendencias' "self" group and the assistant's
+card pick them up with no second list, since both are derived from `db.METRIC_DEFS`. es/en labels,
+Tendencias question text and a plain-word line for both keys; no unit-name key needed since "kg"/
+"cm" pass through `comun._unit`'s raw-unit fallback unchanged in both languages.
+
+Adds `db.RANGOS_MEDIDA_PERSONAL`, a small inclusive-range map keyed by metric key: `body_weight_kg`
+(20, 300), `waist_cm` (40, 200) -- `body/agente/herramientas.py`'s `_registrar_medida` refuses
+(`ToolError`) a value outside the key's own range, when the key has one. `flex_alcance_cm` and
+`snoring_min` are not in the map and keep only the existing negative-value refusal; a typo-sized
+figure for the two new keys (such as 780 instead of 78.0) is now a refusal, not a stored point.
+
+**Tests**: `tests/test_medida_peso.py` (new) -- both rows exist on a fresh DB and arrive on an
+already-initialised one; propose/apply/undo for each key; range refusal at both ends for each key,
+accepted at the exact edges; `flex_alcance_cm` keeps no range check (only the negative one); the
+assistant's card in es and en for each key; Tendencias renders both with a flat/neutral delta,
+never good or bad. `tests/test_agente_medida.py`'s pinned self-key set extended to include the two
+new keys.
+
+This commit (`0b59c0bebf209e814aa3aa30b9b9d541f0d48826`) stopped GATE_RED at 1856/1857: the demo
+seeder (`body/demo.py`) keeps its own hand-typed self-measured key list and range map, and the two
+new keys never reached them, so `tests/test_demo.py`'s `SeededContentTest.
+test_every_catalogue_metric_present_at_least_once` failed ("metrics never seeded: body_weight_kg,
+waist_cm"). Finished below as BODY-MEDIDA-PESO-1-M.
+
+## BODY-MEDIDA-PESO-1-M -- the demo seeder learns body_weight_kg and waist_cm (2026-11-09)
+
+Closes the gap BODY-MEDIDA-PESO-1 left: `body/demo.py`'s `SELF_MEASURED` list and `RANGES` map are
+hand-typed, independent of `db.METRIC_DEFS`/`db.RANGOS_MEDIDA_PERSONAL`, so a new self-measured key
+does not reach the demo tenant until this module is told about it by hand too. Adds `body_weight_kg`
+and `waist_cm` to both: `RANGES` gets invented demo ranges `(68, 76)` kg and `(78, 88)` cm (approved
+by name in ORCH-CARLOS-DELEGATES-TIER-1-1), narrow enough that a Tendencias chart reads as a smooth
+trend rather than watch-sensor noise, and comfortably inside `db.RANGOS_MEDIDA_PERSONAL`'s own
+refusal bounds so the demo data can never trip the range refusal it is also exercising.
+
+`_seed_self_metrics` gets both keys on `flex_alcance_cm`'s own cadence -- once a week, every Monday
+-- not `snoring_min`'s near-daily one: a weigh-in or a tape measurement is not a daily habit, and
+the spec asked for "a weigh-in a week, a few waist readings" smooth enough to read as a trend. Three
+self-measured rows now land each Monday (`flex_alcance_cm`, `body_weight_kg`, `waist_cm`) instead of
+one.
+
+**Tests**: `tests/test_demo.py` -- `SeededContentTest.test_every_catalogue_metric_present_at_least_
+once` now passes unmodified (the guard was correct; the seeder was the gap). Added
+`test_body_weight_and_waist_are_seeded_weekly_not_daily`, pinning the weekly cadence for all three
+weekly self-measured keys (`flex_alcance_cm`, `body_weight_kg`, `waist_cm`): each is seeded on fewer
+than 20 of the 90 seeded days, and every seeded day for each falls on a Monday.
+
+**Gate**, once, foreground, from the repository root:
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 1858 tests in 385.488s ... OK
+(skipped=1)` (one new test added to the 1857 BODY-MEDIDA-PESO-1 left at GATE_RED).
+
+No schema change (no migration, `metric_def` rows and ranges were already added by BODY-MEDIDA-
+PESO-1), no cross-repo contract. Customer-facing: yes -- Tendencias now charts two more self-group
+metrics with real (invented) demo history, and the demo home's assistant can register a weight or
+waist measurement that previously had no seeded baseline to compare against. Per
+ORCH-CARLOS-DELEGATES-TIER-1-1 this stops the merge for the orchestrator's 375 px customer-facing
+check: **AWAITING_APPROVAL**, left on `feat/body-medida-peso-1`, not merged.

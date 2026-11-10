@@ -63,7 +63,9 @@ NIGHT_BREATH = ["sleep_spo2_avg", "sleep_respiration_avg", "sleep_respiration_lo
 # Self-measured (BODY-ENTRENO-SCHEMA-1): the person's own figures, never the watch's -- sparser
 # than daily and stored with source='self' (_seed_self_metrics), never mixed into save_day's
 # per-day 'garmin' batch.
-SELF_MEASURED = ["flex_alcance_cm", "snoring_min"]
+# BODY-MEDIDA-PESO-1-M: body_weight_kg and waist_cm follow flex_alcance_cm's own once-a-week
+# cadence (a weigh-in or a tape measurement is not a daily habit), not snoring_min's near-daily one.
+SELF_MEASURED = ["flex_alcance_cm", "snoring_min", "body_weight_kg", "waist_cm"]
 
 RANGES = {
     "resting_hr": (48, 62), "hrv_last_night": (40, 90), "hrv_weekly_avg": (45, 85),
@@ -75,6 +77,7 @@ RANGES = {
     "respiration_awake": (12, 18), "high_stress_min": (0, 90),
     "vo2max": (38, 46), "vo2max_cycling": (40, 48), "fitness_age": (28, 42),
     "flex_alcance_cm": (0, 25), "snoring_min": (0, 70),
+    "body_weight_kg": (68, 76), "waist_cm": (78, 88),
     "sleep_spo2_avg": (93, 98), "sleep_respiration_avg": (13, 17),
     "sleep_respiration_low": (9, 13), "sleep_respiration_high": (17, 23),
 }
@@ -284,16 +287,19 @@ def _seed_days(conn, db, rng: random.Random, all_days: list[date], person_id: in
 
 
 def _seed_self_metrics(conn, db, rng: random.Random, all_days: list[date], person_id: int) -> int:
-    """The two generic self-measured metric_def rows (BODY-ENTRENO-SCHEMA-1), sparser than the
-    watch's daily figures: a flexibility reach about once a week, a snoring minutes-per-night
-    value most nights -- both with source='self', via db.set_metric so they never ride along in
-    save_day's single 'garmin'-sourced batch."""
+    """The four generic self-measured metric_def rows (BODY-ENTRENO-SCHEMA-1, BODY-MEDIDA-PESO-1),
+    sparser than the watch's daily figures: a flexibility reach, a weigh-in and a waist reading
+    about once a week each, a snoring minutes-per-night value most nights -- all with source='self',
+    via db.set_metric so they never ride along in save_day's single 'garmin'-sourced batch."""
     rows = 0
     for d in all_days:
         if d.weekday() == 0:
             db.set_metric(conn, d.isoformat(), "flex_alcance_cm", _value(rng, "flex_alcance_cm", 0.0),
                            "self", person_id)
-            rows += 1
+            db.set_metric(conn, d.isoformat(), "body_weight_kg", _value(rng, "body_weight_kg", 0.0),
+                           "self", person_id)
+            db.set_metric(conn, d.isoformat(), "waist_cm", _value(rng, "waist_cm", 0.0), "self", person_id)
+            rows += 3
         if rng.random() < 0.85:
             db.set_metric(conn, d.isoformat(), "snoring_min", _value(rng, "snoring_min", 0.0), "self", person_id)
             rows += 1
