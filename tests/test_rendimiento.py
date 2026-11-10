@@ -20,6 +20,7 @@ checked by comparing the two sets directly, not just their counts.
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
@@ -27,6 +28,8 @@ from fastapi.testclient import TestClient
 
 from body import config, db, demo, web
 from body.agente import conversacion as agente_conversacion
+from body.rutas import comun as web_comun
+from body.rutas import tendencias as web_tendencias
 from tests._rutas import contar_sql, rutas_planas
 
 client = TestClient(web.app, follow_redirects=False)
@@ -35,9 +38,11 @@ client = TestClient(web.app, follow_redirects=False)
 # one assistant conversation) right after BODY-RENDIMIENTO-1's fix, with headroom so a small,
 # legitimate change to a route does not make this test flaky. The measured value for each one, and
 # the margin applied, are in BODY-RENDIMIENTO-1's ledger entry -- except /shifts and /shifts/como,
-# remeasured after BODY-RENDIMIENTO-2's reader fix, and /goals and /experiments/{experiment_id},
+# remeasured after BODY-RENDIMIENTO-2's reader fix, /goals and /experiments/{experiment_id},
 # remeasured after BODY-EXPERIMENTOS-PANTALLA-1 added the fixture's own experiment and its
-# Metas-section/detail-page reads, each in that slice's own ledger entry.
+# Metas-section/detail-page reads, and /goals/new and /trends, remeasured after BODY-AGUJETAS-1-B
+# batched their per-metric-key reads (one query for the whole catalogue instead of one per key) --
+# each in that slice's own ledger entry.
 _CEILINGS = {
     "/": 75,
     "/ajustes/asistente": 16,
@@ -49,7 +54,7 @@ _CEILINGS = {
     "/experiments/{experiment_id}": 27,
     "/garmin": 9,
     "/goals": 50,
-    "/goals/new": 48,
+    "/goals/new": 20,
     "/goals/{goal_id}": 33,
     "/healthz": 3,
     "/history": 29,
@@ -65,7 +70,7 @@ _CEILINGS = {
     "/shifts/como": 25,
     "/shifts/patron": 16,
     "/sw.js": 3,
-    "/trends": 51,
+    "/trends": 19,
 }
 
 # No route may open more than this many connections (BODY-RENDIMIENTO-1's own approval reason):
@@ -127,6 +132,45 @@ class RouteCostCeilingTest(unittest.TestCase):
         self.assertEqual(over_statements, [], f"route(s) over their statement ceiling: {over_statements}")
         self.assertEqual(over_connections, [],
                           f"route(s) opened more than {_MAX_CONNECTIONS} connections: {over_connections}")
+
+
+def _add_metric_def(conn, key: str) -> None:
+    conn.execute(
+        "INSERT INTO metric_def (key, label, unit, better, kind, origen) "
+        "VALUES (?, 'ZZ', 'u', 'higher', 'measured', 'self')", (key,))
+    conn.commit()
+
+
+class RouteCostIndependentOfCatalogSizeTest(unittest.TestCase):
+    """BODY-AGUJETAS-1-B: the fix for GATE_RED was to batch /goals/new's and /trends' per-metric-key
+    reads into one query each (body/baselines.py's baselines(), body/profile.py's metric_profiles()
+    and windows()), not to widen their ceiling -- so a metric_def row added to the catalogue (as
+    BODY-MEDIDA-PESO-1 and BODY-AGUJETAS-1 each did) must cost the route NO extra statement."""
+
+    def test_goal_new_form_unaffected_by_an_extra_self_measured_key(self):
+        conn = _reset_db(self)
+        _seed(conn)
+        with contar_sql() as before:
+            r1 = client.get("/goals/new")
+        _add_metric_def(conn, "zz_extra_self")
+        with contar_sql() as after:
+            r2 = client.get("/goals/new")
+        self.assertEqual((r1.status_code, r2.status_code), (200, 200))
+        self.assertEqual(before["statements"], after["statements"])
+
+    def test_trends_unaffected_by_an_extra_self_measured_key(self):
+        conn = _reset_db(self)
+        _seed(conn)
+        with contar_sql() as before:
+            r1 = client.get("/trends")
+        _add_metric_def(conn, "zz_extra_self")
+        nuevos_groups = [g if g[0] != "self" else (g[0], [*g[1], "zz_extra_self"]) for g in web_comun.TREND_GROUPS]
+        with patch.object(web_comun, "TREND_GROUPS", nuevos_groups), \
+             patch.object(web_tendencias, "TODAS", (*web_tendencias.TODAS, "zz_extra_self")):
+            with contar_sql() as after:
+                r2 = client.get("/trends")
+        self.assertEqual((r1.status_code, r2.status_code), (200, 200))
+        self.assertEqual(before["statements"], after["statements"])
 
 
 if __name__ == "__main__":

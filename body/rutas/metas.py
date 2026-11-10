@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
 from .. import cuenta, db, enlaces, fechas, goals, household, identity, profile
-from ..baselines import baseline
+from ..baselines import baselines
 from ..i18n import T
 from . import comun, experimentos
 
@@ -228,9 +228,10 @@ def goal_new_form(person_id: int = Depends(identity.current_person_id)):
     conn, person, t = comun._ctx(person_id)
     defs = comun._defs(conn)
     today = comun._today_local(person).isoformat()
+    bases = baselines(conn, list(defs), today, person_id=person_id)
     metrics = []
     for k, d in defs.items():
-        b = baseline(conn, k, today, person_id=person_id)
+        b = bases[k]
         metrics.append({"key": k, "label": t("metric." + k), "unit": comun._unit(t, d),
                         "direction": BETTER_TO_DIRECTION[d["better"]], "baseline": b.mean if b else None})
     hh = household.household_of(conn, person_id)

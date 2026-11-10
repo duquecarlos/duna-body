@@ -42,6 +42,12 @@ def metric_profile(conn, key: str, today: str | None = None, *, person_id: int,
     a self-measured key, same as min_days above."""
     rows = conn.execute("SELECT day, value FROM daily_metric WHERE person_id=? AND metric_key=? ORDER BY day",
                         (person_id, key)).fetchall()
+    return _build_profile(key, rows, today, min_days, min_month_points)
+
+
+def _build_profile(key: str, rows, today: str | None, min_days: int, min_month_points: int) -> MetricProfile | None:
+    """The math metric_profile() and metric_profiles() both build on, over rows a caller already
+    read (one SELECT, per key or batched) -- same per-key result either way."""
     if len(rows) < min_days:
         return None
     vals = [r["value"] for r in rows]
@@ -64,6 +70,32 @@ def metric_profile(conn, key: str, today: str | None = None, *, person_id: int,
         weekday=[statistics.fmean(w) if w else None for w in by_wd],
         days=len(vals), first_day=rows[0]["day"],
     )
+
+
+def metric_profiles(conn, keys: list[str], today: str | None = None, *, person_id: int,
+                     min_days_por_clave: dict[str, int] | None = None,
+                     min_month_points_por_clave: dict[str, int] | None = None) -> dict[str, "MetricProfile | None"]:
+    """Batched metric_profile: one SELECT over daily_metric for every key in keys, instead of one
+    per key (BODY-AGUJETAS-1-B) -- a page whose card count tracks the metric catalogue (BODY-MEDIDA-
+    PESO-1 already hit this once) must not cost a query per catalogue row. min_days_por_clave /
+    min_month_points_por_clave give each key its own threshold (a self-measured key's is lower,
+    same reasoning as metric_profile()'s own min_days/min_month_points); a key missing from either
+    dict falls back to metric_profile()'s own defaults (14, 7). Same per-key result as calling
+    metric_profile() for each key alone."""
+    min_days_por_clave = min_days_por_clave or {}
+    min_month_points_por_clave = min_month_points_por_clave or {}
+    if not keys:
+        return {}
+    placeholders = ",".join("?" * len(keys))
+    rows = conn.execute(
+        f"SELECT metric_key, day, value FROM daily_metric WHERE person_id=? AND metric_key IN ({placeholders}) "
+        "ORDER BY metric_key, day",
+        (person_id, *keys)).fetchall()
+    by_key: dict[str, list] = {k: [] for k in keys}
+    for r in rows:
+        by_key[r["metric_key"]].append(r)
+    return {k: _build_profile(k, by_key[k], today, min_days_por_clave.get(k, 14), min_month_points_por_clave.get(k, 7))
+            for k in keys}
 
 
 def _y_scale(lo: float, hi: float, top: float, h: float) -> Callable[[float], float]:
@@ -155,11 +187,34 @@ class Window:
 
 
 def window(conn, key: str, start: date, end: date, person_id: int) -> Window:
-    vals = db.series(conn, key, start.isoformat(), end.isoformat(), person_id)
+    return windows(conn, [key], start, end, person_id=person_id)[key]
+
+
+def windows(conn, keys: list[str], start: date, end: date, *, person_id: int) -> dict[str, Window]:
+    """Batched window: one SELECT spanning every key's current AND previous period, instead of two
+    per key (BODY-AGUJETAS-1-B) -- a page whose card count tracks the metric catalogue must not cost
+    a query per catalogue row. Same per-key result as calling window() for each key alone."""
+    if not keys:
+        return {}
     n = (end - start).days + 1
-    prev = db.series(conn, key, (start - timedelta(n)).isoformat(), (start - timedelta(1)).isoformat(), person_id)
-    return Window(start, end, vals, statistics.fmean(vals.values()) if vals else None,
-                  statistics.fmean(prev.values()) if prev else None)
+    prev_start = start - timedelta(n)
+    start_iso = start.isoformat()
+    placeholders = ",".join("?" * len(keys))
+    rows = conn.execute(
+        f"SELECT metric_key, day, value FROM daily_metric WHERE person_id=? AND metric_key IN ({placeholders}) "
+        "AND day BETWEEN ? AND ?",
+        (person_id, *keys, prev_start.isoformat(), end.isoformat())).fetchall()
+    by_key: dict[str, dict[str, float]] = {k: {} for k in keys}
+    for r in rows:
+        by_key[r["metric_key"]][r["day"]] = r["value"]
+    out: dict[str, Window] = {}
+    for k in keys:
+        vals = by_key[k]
+        cur = {d: v for d, v in vals.items() if d >= start_iso}
+        prev = [v for d, v in vals.items() if d < start_iso]
+        out[k] = Window(start, end, cur, statistics.fmean(cur.values()) if cur else None,
+                        statistics.fmean(prev) if prev else None)
+    return out
 
 
 def window_svg(w: Window, low: float, high: float, nights: set[str] = frozenset(), width: int = 320,
