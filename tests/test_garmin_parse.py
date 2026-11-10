@@ -592,5 +592,117 @@ class FetchExerciseSetsFailureTest(unittest.TestCase):
         self.assertEqual(data.raw["_errors"], {"exercise_sets": "RuntimeError"})
 
 
+SLEEP_RAW_SYNCED = {"dailySleepDTO": {
+    "sleepStartTimestampLocal": 1793833200000, "sleepEndTimestampLocal": 1793859300000,
+}}
+
+
+class ParseSleepEndTest(unittest.TestCase):
+    """BODY-DESPERTAR-1: _parse_sleep_end is the one helper both parse_day and fetch_sleep use --
+    exercised directly so a future change to either caller cannot silently fork the logic."""
+
+    def test_synced_night_parses_the_same_as_parse_day(self):
+        wake = garmin_adapter._parse_sleep_end(SLEEP_RAW_SYNCED)
+        d = garmin_adapter.parse_day("2026-11-05", {"sleep": SLEEP_RAW_SYNCED})
+        self.assertEqual(wake, d.sleep_end)
+        self.assertEqual(wake, "2026-11-05T06:15")
+
+    def test_not_synced_yet_is_none(self):
+        self.assertIsNone(garmin_adapter._parse_sleep_end({}))
+        self.assertIsNone(garmin_adapter._parse_sleep_end({"dailySleepDTO": {}}))
+        self.assertIsNone(garmin_adapter._parse_sleep_end(None))
+
+
+class FakeGarminSleepSucceeds:
+    """Replaces garminconnect.Garmin: get_sleep_data returns a fixture. Invented data only."""
+
+    def __init__(self, **kw):
+        self.client = mock.Mock()
+        self.client.dumps.return_value = "tok-demo"
+
+    def login(self, tokenstore=None):
+        return None, None
+
+    def get_sleep_data(self, day):
+        return SLEEP_RAW_SYNCED
+
+
+class FetchSleepSuccessTest(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch("garminconnect.Garmin", FakeGarminSleepSucceeds)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        config.TOKEN_DIR.mkdir(parents=True, exist_ok=True)
+        token_file = config.TOKEN_DIR / "garmin_tokens.json"
+        token_file.write_text('{"demo": true}', encoding="utf-8")
+        self.addCleanup(token_file.unlink, missing_ok=True)  # TOKEN_DIR is shared across this test run
+
+    def test_wake_time_parses(self):
+        wake = garmin_adapter.fetch_sleep("2026-11-05")
+        self.assertEqual(wake, "2026-11-05T06:15")
+
+    def test_hosted_token_path_returns_the_refreshed_token(self):
+        wake, token_after = garmin_adapter.fetch_sleep("2026-11-05", token_str="tok-before")
+        self.assertEqual(wake, "2026-11-05T06:15")
+        self.assertEqual(token_after, "tok-demo")
+
+
+class FakeGarminSleepNotSyncedYet:
+    """Replaces garminconnect.Garmin: get_sleep_data returns a payload with no sleep end yet."""
+
+    def __init__(self, **kw):
+        self.client = mock.Mock()
+        self.client.dumps.return_value = "tok-demo"
+
+    def login(self, tokenstore=None):
+        return None, None
+
+    def get_sleep_data(self, day):
+        return {"dailySleepDTO": {}}
+
+
+class FetchSleepNotSyncedYetTest(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch("garminconnect.Garmin", FakeGarminSleepNotSyncedYet)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        config.TOKEN_DIR.mkdir(parents=True, exist_ok=True)
+        token_file = config.TOKEN_DIR / "garmin_tokens.json"
+        token_file.write_text('{"demo": true}', encoding="utf-8")
+        self.addCleanup(token_file.unlink, missing_ok=True)
+
+    def test_none_when_not_synced(self):
+        self.assertIsNone(garmin_adapter.fetch_sleep("2026-11-05"))
+
+
+class FakeGarminSleepFails:
+    """Replaces garminconnect.Garmin: get_sleep_data raises. Invented data only."""
+
+    def __init__(self, **kw):
+        self.client = mock.Mock()
+        self.client.dumps.return_value = "tok-demo"
+
+    def login(self, tokenstore=None):
+        return None, None
+
+    def get_sleep_data(self, day):
+        raise RuntimeError("demo sleep failure")
+
+
+class FetchSleepFailureTest(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch("garminconnect.Garmin", FakeGarminSleepFails)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        config.TOKEN_DIR.mkdir(parents=True, exist_ok=True)
+        token_file = config.TOKEN_DIR / "garmin_tokens.json"
+        token_file.write_text('{"demo": true}', encoding="utf-8")
+        self.addCleanup(token_file.unlink, missing_ok=True)
+
+    def test_error_propagates_no_payload_swallowed(self):
+        with self.assertRaises(RuntimeError):
+            garmin_adapter.fetch_sleep("2026-11-05")
+
+
 if __name__ == "__main__":
     unittest.main()

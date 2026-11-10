@@ -4,13 +4,16 @@
 #   "Body app weekly file"   Sundays 18:00: pull, then write this week's file for the Personal Sunday review (19:00)
 #   "Body app morning file"  -MorningAt times (default 04:40, 07:40, 12:40): pull today, then write today's
 #                             vida-v1 daily file for Personal's morning brief -- each run rewrites the same file
+#   "Body app wake check"    04:00, repeating every 20 minutes for 9 hours: a light sleep-only Garmin check
+#                             (BODY-DESPERTAR-1) that writes BODY_HOME/vida/despertar-<day>.json as soon as last
+#                             night's wake time is known, then calls no more Garmin for that day
 #   "Body app web"           at logon: runs the web app (local only by default; add -Lan to also open it on the
 #                             home network) and restarts it if it stops
 # Every task action runs through `python -m body.vivo <task>` from a SIBLING git worktree (-LiveDir,
 # default "$repo-live") detached at `main`, refreshed at the start of every run (BODY-LIVE-CHECKOUT-1) --
 # so "restart the web task" always serves `main`, even while this repo's own working tree sits on a
 # branch mid-slice. The venv stays the one at $repo\.venv; only the code tree differs.
-# Remove with: Unregister-ScheduledTask -TaskName "Body app daily sync"; Unregister-ScheduledTask -TaskName "Body app weekly file"; Unregister-ScheduledTask -TaskName "Body app morning file"; Unregister-ScheduledTask -TaskName "Body app web"; git -C <repo> worktree remove <LiveDir>
+# Remove with: Unregister-ScheduledTask -TaskName "Body app daily sync"; Unregister-ScheduledTask -TaskName "Body app weekly file"; Unregister-ScheduledTask -TaskName "Body app morning file"; Unregister-ScheduledTask -TaskName "Body app wake check"; Unregister-ScheduledTask -TaskName "Body app web"; git -C <repo> worktree remove <LiveDir>
 # Example with shift import on: .\install-daily-sync.ps1 -ShiftsDir "C:\path\to\your\shifts\folder"
 # Example with the web app open to the home network too: .\install-daily-sync.ps1 -Lan
 #
@@ -107,6 +110,10 @@ $morningAction = New-ScheduledTaskAction -Execute $py -Argument "-m body.vivo ma
 $morningTriggers = @($MorningAt | ForEach-Object { New-ScheduledTaskTrigger -Daily -At $_ })
 Register-ScheduledTask -TaskName "Body app morning file" -Action $morningAction -Trigger $morningTriggers -Settings $settings -Description "Pulls today's Garmin data, then writes today's vida-v1 daily file for Personal's morning brief" -Force | Out-Null
 
+$wakeAction = New-ScheduledTaskAction -Execute $py -Argument "-m body.vivo despertar" -WorkingDirectory $LiveDir
+$wakeTrigger = New-ScheduledTaskTrigger -Daily -At "04:00" -RepetitionInterval (New-TimeSpan -Minutes 20) -RepetitionDuration (New-TimeSpan -Hours 9)
+Register-ScheduledTask -TaskName "Body app wake check" -Action $wakeAction -Trigger $wakeTrigger -Settings $settings -Description "Checks last night's Garmin sleep every 20 minutes from 04:00 to 13:00 and writes the wake-time file for Personal's morning brief as soon as it is known" -Force | Out-Null
+
 $webArgs = "-m body.vivo web --port $Port"
 if ($Lan) { $webArgs += " --lan" }
 $webAction = New-ScheduledTaskAction -Execute $webPy -Argument $webArgs -WorkingDirectory $LiveDir
@@ -123,4 +130,4 @@ $webMsg = if ($Lan) {
     "Body app web running at http://127.0.0.1:$Port."
 }
 $morningMsg = $MorningAt -join ', '
-Write-Host "Registered: daily sync at $At (shift import: $shiftMsg), weekly file on Sundays at $SundayAt, morning file at $morningMsg (all run later if the PC was off). $webMsg"
+Write-Host "Registered: daily sync at $At (shift import: $shiftMsg), weekly file on Sundays at $SundayAt, morning file at $morningMsg, wake check every 20 min from 04:00 to 13:00 (all run later if the PC was off). $webMsg"
