@@ -86,6 +86,22 @@
 {% endfor %}
 </div>
 <a class="more" href="/day/{{ day }}">{{ t('today.see_day') }}</a>
+
+<div class="card">
+  <div class="q">{{ t('today.ventana.titulo') }}</div>
+  {% if ventana.estado == 'sin_registro' %}
+  <p class="note m-0">{{ t('today.ventana.sin_registro') }}</p>
+  {% elif ventana.estado == 'sin_hora' %}
+  <p class="note m-0">{{ t('today.ventana.sin_hora') }}</p>
+  {% elif ventana.estado == 'una_comida' %}
+  <p class="note m-0">{{ t('today.ventana.una_comida', hora=ventana.primera) }}</p>
+  {% else %}
+  <div class="fig">{{ ventana.duracion }}</div>
+  <p class="note mt-6 mb-0">{{ t('today.ventana.rango', primera=ventana.primera, ultima=ventana.ultima) }}</p>
+  {% endif %}
+  {% if ventana.ayuno_ahora %}<p class="note mt-6 mb-0">{{ t('today.ventana.ayuno_ahora', horas=ventana.ayuno_ahora) }}</p>{% endif %}
+  {% if ventana.comida_sueno %}<p class="note mt-6 mb-0">{{ t('today.ventana.comida_sueno', horas=ventana.comida_sueno) }}</p>{% endif %}
+</div>
 </div>
 </div>
 

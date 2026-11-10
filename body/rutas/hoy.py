@@ -11,7 +11,8 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException
 from markupsafe import Markup
 
-from .. import compartir, cuenta, db, goals, history, household, identity, readiness, turnos_costo, tutoriales
+from .. import (compartir, cuenta, db, goals, history, household, identity, readiness, turnos_costo, tutoriales,
+                ventana_comida)
 from ..baselines import baseline
 from ..i18n import T
 from . import comun, experimentos
@@ -185,6 +186,50 @@ def _hogar_compartido_ctx(conn, t: T, person_id: int, defs: dict, today_local: d
     return out
 
 
+def _ventana_base(t: T, v: ventana_comida.Ventana | None) -> dict:
+    """The part of the eating-window card shared by Hoy and Día: which state the day is in, and
+    the figures that state needs -- Hoy adds "fasting now"/yesterday's meal-to-sleep gap, Día adds
+    the overnight fast before it (BODY-AYUNO-1)."""
+    if v is None:
+        estado = "sin_registro"
+    elif v.primera is None:
+        estado = "sin_hora"
+    elif v.duracion_min == 0:
+        estado = "una_comida"
+    else:
+        estado = "con_ventana"
+    return {
+        "estado": estado,
+        "duracion": t.minutes(v.duracion_min) if v and v.duracion_min else None,
+        "primera": v.primera[11:16] if v and v.primera else None,
+        "ultima": v.ultima[11:16] if v and v.ultima else None,
+        "entradas": v.entradas if v else None,
+    }
+
+
+def _ventana_ctx(t: T, conn, person: dict, person_id: int, today_local: date) -> dict:
+    """Hoy's eating-window card: today's own window, plus the running "fasting now" count (from
+    the last timed meal, whichever day it fell on) and whether last night's sleep followed
+    yesterday's last meal by a few hours -- the 3-4h check Carlos is watching this week."""
+    day = today_local.isoformat()
+    ctx = _ventana_base(t, ventana_comida.ventana(conn, person_id, day))
+    tz = ZoneInfo(person.get("timezone") or "America/Bogota")
+    ahora_h = ventana_comida.ayuno_ahora(conn, person_id, datetime.now(tz).replace(tzinfo=None))
+    cs = ventana_comida.comida_a_sueno(conn, person_id, (today_local - timedelta(1)).isoformat())
+    ctx["ayuno_ahora"] = t.minutes(round(ahora_h * 60)) if ahora_h is not None else None
+    ctx["comida_sueno"] = t.minutes(round(cs.horas * 60)) if cs is not None else None
+    return ctx
+
+
+def _ventana_dia_ctx(t: T, conn, person_id: int, d: date) -> dict:
+    """Día's eating-window card: that day's own window plus the overnight fast before it."""
+    day = d.isoformat()
+    ctx = _ventana_base(t, ventana_comida.ventana(conn, person_id, day))
+    previo = ventana_comida.ayuno_previo(conn, person_id, day)
+    ctx["ayuno_previo"] = t.minutes(round(previo.horas * 60)) if previo is not None else None
+    return ctx
+
+
 @router.get("/")
 @comun._cierra_conexion
 def today(person_id: int = Depends(identity.current_person_id)):
@@ -228,7 +273,8 @@ def today(person_id: int = Depends(identity.current_person_id)):
                    plan_experimentos=experimentos.hoy_contexto(conn, t, person_id, today_local),
                    today_iso=today_local.isoformat(),
                    primeros_pasos=primeros_pasos,
-                   hogar_compartido=_hogar_compartido_ctx(conn, t, person_id, defs, today_local))
+                   hogar_compartido=_hogar_compartido_ctx(conn, t, person_id, defs, today_local),
+                   ventana=_ventana_ctx(t, conn, person, person_id, today_local))
 
 
 # readiness.Part.key -> the Tendencias metric it reads from (readiness.Part carries no metric key of its
@@ -385,4 +431,4 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
                    activities=acts, shifts=shifts, has_data=has_data, block_ctx=block_ctx,
                    sync_text=None if has_data else comun._sync_status_text(conn, person, t),
                    prev=(d - timedelta(1)).isoformat(), next=(d + timedelta(1)).isoformat(),
-                   turnos=turnos_on)
+                   turnos=turnos_on, ventana=_ventana_dia_ctx(t, conn, person_id, d))
