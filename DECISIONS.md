@@ -13800,3 +13800,74 @@ No schema migration (new `metric_def` rows and ranges only, the same path BODY-M
 no cross-repo contract. Customer-facing: yes -- Tendencias gains seven cards and the assistant can
 propose a soreness reading. The gate is red for a reason outside this slice's touches, so this
 stops **GATE_RED**, left on `feat/body-agujetas-1`, not merged.
+
+## BODY-AGUJETAS-1-B -- the per-key reads batched
+
+Continues BODY-AGUJETAS-1 (commits `6c6fbea`, `3e625da`, GATE_RED), on `feat/body-agujetas-1`.
+ORCH-CARLOS-DELEGATES-TIER-1-1 ruled against raising `/goals/new`'s and `/trends`' ceilings
+(ORCH-A-SUITE-NO-GATE-RUNS-ROTS-TOWARD-YOUR-RULINGS-1: fix a red by restoring the case's subject,
+which is that a page's statement count must not grow with the metric catalogue) -- the fix batches
+the per-metric-key reads instead.
+
+**`body/baselines.py`**: new `baselines(conn, keys, day, window=WINDOW_DAYS, *, person_id)` reads
+every key's 30-day window in one `SELECT ... WHERE metric_key IN (...)`, reads the marked-days
+exclusion (BODY-PERIODO-1 ruling 3) once, and returns `{key: Baseline | None}` -- the same per-key
+answer `baseline()` already gave. `baseline()`'s own conn-backed path now delegates to it for a
+single key; its `lector=`-backed path (`readiness.compute`, `turnos_costo`, from BODY-RENDIMIENTO-2)
+is untouched.
+
+**`body/profile.py`**: the row-to-`MetricProfile` math pulled out of `metric_profile()` into
+`_build_profile(key, rows, today, min_days, min_month_points)`; new `metric_profiles(conn, keys,
+today=None, *, person_id, min_days_por_clave=None, min_month_points_por_clave=None)` reads every
+key's `daily_metric` rows in one query and builds each key's profile from it, a key missing from
+either `_por_clave` dict falling back to `metric_profile()`'s own defaults (14, 7). Likewise `window()`
+now delegates to new `windows(conn, keys, start, end, *, person_id)`, one query spanning every key's
+current AND previous period instead of two per key.
+
+**`body/rutas/metas.py`**: `goal_new_form` calls `baselines(conn, list(defs), today,
+person_id=person_id)` once instead of `baseline()` once per `metric_def` row.
+
+**`body/rutas/tendencias.py`**: `trends()` now prefetches `profile.metric_profiles()` once for
+`catalogo_tendencias.TODAS` (every key the screen can show, the default nine plus every "Ver todas
+las medidas" group) with each key's own `min_days`/`min_month_points` (self vs Garmin, same
+reasoning `_trend_card` used per key before), and `profile.windows()` once when a date range is
+open. `_trend_card` no longer takes `conn`/`person_id` -- it reads its key's profile and window from
+the two prefetched dicts and issues no SQL itself. `WEEK_KEYS`' own table (a subset of `TODAS`, read
+with the same default thresholds) now reuses the same prefetched profiles instead of a second query
+per key -- one redundant query per `WEEK_KEYS` entry removed as a side effect of the same batch.
+
+**Tests.** `tests/test_baselines_lote.py`, `tests/test_profile_lote.py` (new): the batched readers
+equal the per-key readers for every key, with and without a marked period (BODY-PERIODO-1 ruling 3),
+and on an empty key list. `tests/test_rendimiento.py`: `/goals/new` and `/trends` remeasured on this
+file's own fixture (`demo._seed(dias=30, idioma="es")` + one assistant conversation, same fixture
+`_seed` already used) --
+
+| route | before (BODY-AGUJETAS-1) | after | new ceiling |
+|---|---|---|---|
+| `/goals/new` | 54 | 15 | 20 |
+| `/trends` | 53 | 14 | 19 |
+
+-- ceilings lowered to `ceil(measured * 1.3)`, the same ~30% margin rule BODY-RENDIMIENTO-2 used for
+`/shifts`/`/shifts/como`. A new `RouteCostIndependentOfCatalogSizeTest` inserts an extra self-measured
+`metric_def` row mid-test (for `/trends`, also widening the "self" group of `comun.TREND_GROUPS` and
+`tendencias.TODAS` the same way, via `patch.object` on each's owning module per
+`tests/test_guardia_parches.py`'s rule) and asserts both routes' statement count is unchanged --
+`tests/test_guardia_parches.py` and `tests/test_tendencias_todas.py` stay green, confirming the patch
+targets are real owners and the existing catalogue tests are undisturbed.
+
+**Gate**, once, foreground, on the branch tip (commit `316d8a9`): `.venv/Scripts/python.exe -m
+unittest discover tests -t .` -> `Ran 2061 tests in 450.580s ... OK (skipped=1)`.
+
+**Deviation**: the spec names `baselines()`'s day argument `today`; this slice kept `day`, the name
+`baseline()` (the function it delegates to/from) already uses for the same argument, rather than
+have the batched and single-key readers disagree on what to call it.
+
+Commit on `feat/body-agujetas-1`: `316d8a971808964c39d7bd3020093cc7c9434f48`.
+
+No schema migration, no cross-repo contract. Customer-facing bytes: unchanged by this commit (no
+template, i18n or route-output-string edit) -- only `body/baselines.py`, `body/profile.py`,
+`body/rutas/metas.py`, `body/rutas/tendencias.py` and three test files. The branch as a whole
+(`main..HEAD`) still carries BODY-AGUJETAS-1's own customer-facing bytes (`body/i18n/en.json`,
+`body/i18n/es.json`, Tendencias' seven new cards), and the approval reason names the orchestrator's
+own 375 px look as a stop independent of this commit's diff. So this stops **AWAITING_APPROVAL**,
+committed on `feat/body-agujetas-1`, not merged.
