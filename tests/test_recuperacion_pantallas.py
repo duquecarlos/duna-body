@@ -98,6 +98,29 @@ def _insertar_fila(conn, person_id: int, source_id: str, day: str, minutos: floa
     )
 
 
+def _insertar_censurada(conn, person_id: int, source_id: str, day: str) -> None:
+    """A `fuera_de_horizonte` row (right-censored, point 2 of BODY-RECUPERACION-1-C): no minutos,
+    counted by `estudio()` all the same."""
+    conn.execute(
+        "INSERT INTO activity (person_id, source, source_id, day, start_local, duration_s, type, avg_hr) "
+        "VALUES (?, 'garmin', ?, ?, ?, 1800, 'running', 130)",
+        (person_id, source_id, day, f"{day}T18:00:00"),
+    )
+    conn.execute(
+        "INSERT INTO recuperacion_actividad (person_id, activity_source, activity_source_id, modelo_version, "
+        "minutos, motivo, computed_at) VALUES (?, 'garmin', ?, ?, NULL, 'fuera_de_horizonte', "
+        "'2026-11-10T00:00:00+00:00')",
+        (person_id, source_id, recuperacion.MODELO["version"]),
+    )
+
+
+def _insertar_turno(conn, person_id: int, day: str, kind: str) -> None:
+    conn.execute(
+        "INSERT INTO shift (person_id, day, kind, start_local, source) VALUES (?, ?, ?, ?, 'manual')",
+        (person_id, day, kind, f"{day}T06:00:00"),
+    )
+
+
 class HistoryRecoverySectionTest(unittest.TestCase):
     def test_sin_datos_muestra_el_estado_honesto(self):
         conn = _reset_db(self)
@@ -150,6 +173,89 @@ class HistoryRecoverySectionTest(unittest.TestCase):
         r = client.get("/history")
         self.assertEqual(r.status_code, 200)
         self.assertIn("Pocos datos por ahora", r.text)
+
+    def test_hallazgo_nombra_dia_de_descanso_y_ambos_grupos_en_es(self):
+        conn = _reset_db(self)
+        for i in range(5):
+            day = f"2026-08-0{i + 1}"
+            db.set_metric(conn, day, "resting_hr", 55.0, "garmin", 1)  # so /history leaves soon.html
+            _insertar_turno(conn, 1, day, "off")
+            _insertar_fila(conn, 1, f"off-{i}", day, 60.0)
+        for i in range(5):
+            day = f"2026-08-{11 + i}"
+            db.set_metric(conn, day, "resting_hr", 55.0, "garmin", 1)
+            _insertar_turno(conn, 1, day, "morning")
+            _insertar_fila(conn, 1, f"morning-{i}", day, 20.0)
+        conn.commit()
+        r = client.get("/history")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("Después de un día de descanso", r.text)
+        self.assertIn("frente a 20 min después de un turno de mañana", r.text)
+        self.assertNotIn("un turno de descanso", r.text)
+
+    def test_hallazgo_nombra_un_dia_libre_y_ambos_grupos_en_en(self):
+        conn = _reset_db(self)
+        db.set_language(conn, "en", 1)
+        for i in range(5):
+            day = f"2026-08-0{i + 1}"
+            db.set_metric(conn, day, "resting_hr", 55.0, "garmin", 1)  # so /history leaves soon.html
+            _insertar_turno(conn, 1, day, "off")
+            _insertar_fila(conn, 1, f"off-{i}", day, 60.0)
+        for i in range(5):
+            day = f"2026-08-{11 + i}"
+            db.set_metric(conn, day, "resting_hr", 55.0, "garmin", 1)
+            _insertar_turno(conn, 1, day, "morning")
+            _insertar_fila(conn, 1, f"morning-{i}", day, 20.0)
+        conn.commit()
+        r = client.get("/history")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("After a day off", r.text)
+        self.assertIn("against 20 min after a morning shift", r.text)
+        self.assertNotIn("off shift", r.text)
+
+    def test_hrv_no_dice_hrv_en_es(self):
+        conn = _reset_db(self)
+        for i in range(5):
+            day = f"2026-06-0{i + 1}"
+            db.set_metric(conn, day, "hrv_last_night", 20.0, "garmin", 1)
+            _insertar_fila(conn, 1, f"baja-{i}", day, 60.0)
+        for i in range(5):
+            day = f"2026-06-{11 + i}"
+            db.set_metric(conn, day, "hrv_last_night", 70.0, "garmin", 1)
+            _insertar_fila(conn, 1, f"normal-{i}", day, 20.0)
+        conn.commit()
+        r = client.get("/history")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("variabilidad del pulso", r.text)
+        self.assertNotIn("HRV", r.text)
+
+    def test_censurado_singular_en_es(self):
+        conn = _reset_db(self)
+        for i, m in enumerate([20.0, 25.0, 30.0]):
+            day = f"2026-07-0{i + 1}"
+            db.set_metric(conn, day, "resting_hr", 55.0, "garmin", 1)  # so /history leaves soon.html
+            _insertar_fila(conn, 1, f"ok-{i}", day, m)
+        db.set_metric(conn, "2026-07-10", "resting_hr", 55.0, "garmin", 1)
+        _insertar_censurada(conn, 1, "cens-1", "2026-07-10")
+        conn.commit()
+        r = client.get("/history")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("1 no volvió en", r.text)
+        self.assertNotIn("1 no volvieron", r.text)
+
+    def test_censurado_singular_en_en(self):
+        conn = _reset_db(self)
+        db.set_language(conn, "en", 1)
+        for i, m in enumerate([20.0, 25.0, 30.0]):
+            day = f"2026-07-0{i + 1}"
+            db.set_metric(conn, day, "resting_hr", 55.0, "garmin", 1)  # so /history leaves soon.html
+            _insertar_fila(conn, 1, f"ok-{i}", day, m)
+        db.set_metric(conn, "2026-07-10", "resting_hr", 55.0, "garmin", 1)
+        _insertar_censurada(conn, 1, "cens-1", "2026-07-10")
+        conn.commit()
+        r = client.get("/history")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("1 did not return within", r.text)
 
 
 class DayRecoveryLineTest(unittest.TestCase):

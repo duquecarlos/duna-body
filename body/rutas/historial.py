@@ -123,9 +123,14 @@ def _periodo_excluido_ctx(t: T, conn, person_id: int, cov: dict, marcados: set[s
     return t(key, n=t.num(n), kinds=", ".join(kinds))
 
 
-def _recovery_cond_label(t: T, h: dict) -> str:
-    factor, grupo = h["factor"], h["peor"]
+def _recovery_cond_label(t: T, factor: str, grupo: str) -> str:
+    """One group's own condition phrase, worded so it reads naturally both as the sentence's
+    opening ("Después de {label}, ..." / "After {label}, ...") and after its second "después de" /
+    "after" (BODY-RECUPERACION-1-M point 2: the finding now names both the worse AND the better
+    group). Shared between `h["peor"]` and `h["mejor"]` -- neither is special to this function."""
     if factor == "turno":
+        if grupo == "off":
+            return t("history.recovery.cond.turno_descanso")
         return t("history.recovery.cond.turno", kind=t("shift.kind." + grupo).lower())
     if factor == "tipo_sesion":
         info = history._kind_info(grupo) if grupo != "otro" else None
@@ -155,7 +160,8 @@ def _recovery_ctx(t: T, est: dict) -> dict:
         return {"tiene_datos": False}
     horas = recuperacion.MODELO["horizonte_h"]
     hallazgos = [
-        t("history.recovery.hallazgo", peor=_recovery_cond_label(t, h),
+        t("history.recovery.hallazgo", peor=_recovery_cond_label(t, h["factor"], h["peor"]),
+          mejor=_recovery_cond_label(t, h["factor"], h["mejor"]),
           val_peor=_recovery_valor(t, h["min_peor"], horas), val_mejor=_recovery_valor(t, h["min_mejor"], horas),
           n_peor=t.num(h["n_peor"]), n_mejor=t.num(h["n_mejor"]))
         for h in est["hallazgos"]
@@ -165,7 +171,9 @@ def _recovery_ctx(t: T, est: dict) -> dict:
     elif est["n_censurados"] == 0:
         resumen = t("history.recovery.resumen", mediana=t.minutes(est["mediana"]), n=t.num(est["n"]))
     else:
-        resumen = t("history.recovery.resumen_censurado", mediana=t.minutes(est["mediana"]), n=t.num(est["n"]),
+        key = ("history.recovery.resumen_censurado_one" if est["n_censurados"] == 1
+               else "history.recovery.resumen_censurado")
+        resumen = t(key, mediana=t.minutes(est["mediana"]), n=t.num(est["n"]),
                      n_censurados=t.num(est["n_censurados"]), horas=t.num(horas))
     return {
         "tiene_datos": True,

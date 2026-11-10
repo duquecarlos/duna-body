@@ -16,7 +16,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import db, pull, recuperacion
+from body import db, demo, pull, recuperacion
 
 ZONA_OFFSET_H = 5  # America/Bogota is UTC-5 year round (tests/test_momentos_pull.py convention)
 
@@ -469,6 +469,43 @@ class EstudioTest(unittest.TestCase):
         self.assertEqual(h["mas_de_peor"], recuperacion.MODELO["horizonte_h"] * 60)
         self.assertEqual(h["n_peor"], 5)
         self.assertEqual(h["n_mejor"], 5)
+
+
+class DemoSeedOrderTest(unittest.TestCase):
+    """BODY-RECUPERACION-1-M point 6 (BODY-DEMO-RECUPERACION-SEED-ORDEN-1): body/demo.py's
+    `_seed_recuperacion` must run AFTER `_seed_periodo` seeds the marked periods, or
+    `recuperacion.recalcular` scores a marked day's activity from its own invented curve instead
+    of reading it honestly as `marcado` -- db.dias_marcados() finds nothing marked yet at the time
+    it runs."""
+
+    def test_actividad_en_dia_marcado_lleva_marcado(self):
+        class _FakeToday(date):
+            @classmethod
+            def today(cls):
+                return date(2026, 11, 10)
+
+        conn = _mkconn(self, "demo-orden.db")
+        with mock.patch.object(demo, "date", _FakeToday):
+            demo._seed(conn, dias=demo.DIAS_DEFAULT, idioma="es")
+
+        periodos = conn.execute(
+            "SELECT start_day FROM period WHERE person_id = 1 AND kind = 'lesion'"
+        ).fetchall()
+        self.assertTrue(periodos, "the demo's open 'lesion' period was not seeded")
+        inicio = date.fromisoformat(periodos[0]["start_day"])
+
+        rows = conn.execute(
+            "SELECT a.day, ra.motivo FROM activity a "
+            "JOIN recuperacion_actividad ra ON ra.person_id = a.person_id "
+            "AND ra.activity_source = a.source AND ra.activity_source_id = a.source_id "
+            "WHERE a.person_id = 1"
+        ).fetchall()
+        marcados = [r for r in rows if date.fromisoformat(r["day"]) >= inicio]
+        self.assertTrue(marcados, "no seeded activity falls inside the open 'lesion' period "
+                                   "-- this test's own fixed anchor no longer overlaps it")
+        for r in marcados:
+            self.assertEqual(r["motivo"], "marcado", f"activity on {r['day']} (inside the marked "
+                              f"period starting {inicio}) was not scored as 'marcado'")
 
 
 if __name__ == "__main__":

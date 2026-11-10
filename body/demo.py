@@ -669,11 +669,15 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     first_monday, anchor_monday = fechas.lunes_de(all_days[0]), fechas.lunes_de(anchor)
 
     metric_rows, activity_rows = _seed_days(conn, db, rng, all_days, person_id)
-    recuperacion_rows = _seed_recuperacion(conn, db, recuperacion, person_id)
     metric_rows += _seed_self_metrics(conn, db, rng, all_days, person_id)
     metric_rows += _seed_soreness(conn, db, rng, all_days, person_id)
     entradas_ingesta = _seed_ingesta(conn, db, rng, all_days, person_id)
     periodos = _seed_periodo(conn, db, all_days, person_id)
+    # BODY-RECUPERACION-1-M: AFTER _seed_periodo, not before -- recuperacion.recalcular() checks
+    # db.dias_marcados() per activity at computation time, so an activity on a day inside a marked
+    # period must only be recomputed once that period's row already exists, or it is scored by its
+    # invented curve instead of read honestly as "marcado".
+    recuperacion_rows = _seed_recuperacion(conn, db, recuperacion, person_id)
 
     confirmed_id, proposed_id, night_weeks, night_blocks = _seed_shifts(
         conn, shift_import, turnos_costo, person_id, all_days)
