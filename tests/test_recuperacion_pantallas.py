@@ -1,8 +1,8 @@
-"""BODY-RECUPERACION-1: the screens -- «Tu historia»'s "Recuperación después de entrenar" section
-and Día's own line under an activity, in both languages, plus a direct statement-count check on
-/history and /day/{d} (test_rendimiento.py's own ceilings, 29 and 45, are not in this slice's
-touches -- this test pins the same budget independently so a future regression is caught here
-too). Invented demo data only, no real health figures.
+"""BODY-RECUPERACION-1, BODY-RECUPERACION-1-C: the screens -- «Tu historia»'s "Recuperación
+después de entrenar" section and Día's own line under an activity, in both languages, plus a
+direct statement-count check on /history and /day/{d} (test_rendimiento.py's own ceilings, 29 and
+45, are not in this slice's touches -- this test pins the same budget independently so a future
+regression is caught here too). Invented demo data only, no real health figures.
 """
 import tempfile
 import unittest
@@ -53,18 +53,27 @@ def _guardar_fc(conn, person_id: int, day: str, muestras: list[tuple[str, float]
     db.guardar_intradia(conn, person_id, day, "intradia_fc", {"heartRateValues": [[_ms(ts), v] for ts, v in muestras]})
 
 
-def _set_resting(conn, person_id: int, hasta_day: str, dias: int, valor: float) -> None:
-    fin = date.fromisoformat(hasta_day) - timedelta(1)
+def _fondo_dias(conn, person_id: int, antes_de: str, dias: int, valor: float) -> None:
+    """`dias` days of a full, constant-valor background day ending the day BEFORE `antes_de` --
+    `recuperacion._usual_hora`'s own look-back window, so every hour's usual is `valor` and
+    cutoff = valor + MODELO['margen_bpm']."""
+    fin = date.fromisoformat(antes_de) - timedelta(1)
+    paso = timedelta(minutes=2)
     for i in range(dias):
         d = fin - timedelta(i)
-        db.set_metric(conn, d.isoformat(), "resting_hr", valor, "garmin", person_id)
-    conn.commit()
+        t = datetime.combine(d, datetime.min.time())
+        fin_dia = t + timedelta(days=1)
+        muestras = []
+        while t < fin_dia:
+            muestras.append((t.isoformat(), valor))
+            t += paso
+        _guardar_fc(conn, person_id, d.isoformat(), muestras)
 
 
 def _seed_sesion_que_recupera(conn, person_id: int, day: str = "2026-11-10") -> None:
     """One activity on `day` with a clean, fast recovery, through the real pipeline
     (recuperacion.recalcular), so the screens have something real to show."""
-    _set_resting(conn, person_id, day, 10, 55.0)  # cutoff = 55 + 3 = 58
+    _fondo_dias(conn, person_id, day, 15, 55.0)  # usual = 55 every hour, cutoff = 55 + 3 = 58
     conn.execute(
         "INSERT INTO activity (person_id, source, source_id, day, start_local, duration_s, type, avg_hr) "
         "VALUES (?, 'garmin', 'act-ok', ?, ?, 1800, 'running', 130)",
@@ -112,7 +121,7 @@ class HistoryRecoverySectionTest(unittest.TestCase):
         r = client.get("/history")
         self.assertEqual(r.status_code, 200)
         self.assertIn("una noche corta", r.text)
-        self.assertIn("volver a tu reposo", r.text)
+        self.assertIn("volver a lo habitual", r.text)
 
     def test_con_hallazgo_muestra_la_frase_en_en(self):
         conn = _reset_db(self)
@@ -129,7 +138,7 @@ class HistoryRecoverySectionTest(unittest.TestCase):
         r = client.get("/history")
         self.assertEqual(r.status_code, 200)
         self.assertIn("a short night", r.text)
-        self.assertIn("return to resting", r.text)
+        self.assertIn("return to its usual level", r.text)
 
     def test_pocos_datos_muestra_la_frase_de_pocos_datos(self):
         conn = _reset_db(self)
@@ -149,7 +158,7 @@ class DayRecoveryLineTest(unittest.TestCase):
         _seed_sesion_que_recupera(conn, 1)
         r = client.get("/day/2026-11-10")
         self.assertEqual(r.status_code, 200)
-        self.assertIn("Tu pulso volvió a tu reposo en", r.text)
+        self.assertIn("Tu pulso volvió a lo habitual para esa hora en", r.text)
 
     def test_actividad_con_fila_muestra_la_linea_en_en(self):
         conn = _reset_db(self)
@@ -157,7 +166,7 @@ class DayRecoveryLineTest(unittest.TestCase):
         _seed_sesion_que_recupera(conn, 1)
         r = client.get("/day/2026-11-10")
         self.assertEqual(r.status_code, 200)
-        self.assertIn("Your heart rate returned to resting in", r.text)
+        self.assertIn("Your heart rate was back to your usual for that hour in", r.text)
 
     def test_actividad_sin_fila_no_muestra_ninguna_linea(self):
         conn = _reset_db(self)
@@ -168,7 +177,7 @@ class DayRecoveryLineTest(unittest.TestCase):
         conn.commit()
         r = client.get("/day/2026-11-10")
         self.assertEqual(r.status_code, 200)
-        self.assertNotIn("tu reposo", r.text)
+        self.assertNotIn("lo habitual", r.text)
 
     def test_dia_marcado_no_muestra_ninguna_linea(self):
         conn = _reset_db(self)
@@ -184,7 +193,7 @@ class DayRecoveryLineTest(unittest.TestCase):
         conn.commit()
         r = client.get("/day/2026-11-10")
         self.assertEqual(r.status_code, 200)
-        self.assertNotIn("tu reposo", r.text)
+        self.assertNotIn("lo habitual", r.text)
 
 
 class StatementCeilingTest(unittest.TestCase):

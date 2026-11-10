@@ -1,6 +1,8 @@
-"""body/recuperacion.py: back-to-resting after a workout (BODY-RECUPERACION-1) -- the sustained
-threshold crossing, honest reason codes, recalcular's idempotence and version-bump behaviour, and
-estudio()'s factor groups and findings. Invented demo data only, no real health figures.
+"""body/recuperacion.py: back-to-USUAL-for-that-hour after a workout (BODY-RECUPERACION-1,
+BODY-RECUPERACION-1-C) -- the sustained threshold crossing against the person's OWN hourly usual,
+honest reason codes, recalcular's idempotence, version-bump and per-run cache behaviour, and
+estudio()'s censored median and factor groups/findings. Invented demo data only, no real health
+figures.
 """
 import io
 import tempfile
@@ -49,15 +51,29 @@ def _serie(day: str, desde_min: int, hasta_min: int, paso_min: int, valor: float
     return out
 
 
-def _set_resting(conn, person_id: int, hasta_day: str, dias: int, valor: float) -> None:
-    """`dias` days of a constant resting_hr ending the day BEFORE `hasta_day` -- baselines.baseline
-    reads the window strictly before the day given, so this is exactly its own reference window,
-    and a constant value gives a predictable high = valor (pstdev 0, so q1 = q3 = the mean)."""
-    fin = date.fromisoformat(hasta_day) - timedelta(1)
+def _fondo_horas(conn, person_id: int, antes_de: str, dias: int, valores_por_hora: dict[int, float],
+                  default: float = 60.0) -> None:
+    """`dias` days of a full, evenly-spaced (2-min) background day, ending the day BEFORE
+    `antes_de` -- `_usual_hora`'s own look-back window reads strictly before an activity's day,
+    exactly as baselines.baseline does. Hour `h` reads `valores_por_hora.get(h, default)` every
+    day -- a constant per hour, so each hour's `_usual_hora` is predictable in a test."""
+    fin = date.fromisoformat(antes_de) - timedelta(1)
+    paso = timedelta(minutes=2)
     for i in range(dias):
         d = fin - timedelta(i)
-        db.set_metric(conn, d.isoformat(), "resting_hr", valor, "garmin", person_id)
-    conn.commit()
+        t = datetime.combine(d, datetime.min.time())
+        fin_dia = t + timedelta(days=1)
+        muestras = []
+        while t < fin_dia:
+            muestras.append((t.isoformat(), valores_por_hora.get(t.hour, default)))
+            t += paso
+        _guardar_fc(conn, person_id, d.isoformat(), muestras)
+
+
+def _fondo_dias(conn, person_id: int, antes_de: str, dias: int, valor: float) -> None:
+    """Every hour's own usual is the SAME constant `valor` -- the common case in these tests,
+    where cutoff = valor + MODELO['margen_bpm'] regardless of which hour a sample falls in."""
+    _fondo_horas(conn, person_id, antes_de, dias, {}, default=valor)
 
 
 def _actividad(day: str, start_local: str, duration_s: float) -> dict:
@@ -67,7 +83,7 @@ def _actividad(day: str, start_local: str, duration_s: float) -> dict:
 class RecuperacionActividadTest(unittest.TestCase):
     def setUp(self):
         self.conn = _mkconn(self)
-        _set_resting(self.conn, 1, "2026-11-10", 10, 55.0)  # high = 55, cutoff = 55 + 3 = 58
+        _fondo_dias(self.conn, 1, "2026-11-10", 15, 55.0)  # usual = 55 every hour, cutoff = 55 + 3 = 58
 
     def test_recupera_normalmente(self):
         # The activity ends at 18:30 (18:00 start + 30 min) -- the window searched starts exactly
@@ -128,19 +144,69 @@ class RecuperacionActividadTest(unittest.TestCase):
         self.assertEqual(r.minutos, 12)
 
 
-class SinRangoTest(unittest.TestCase):
-    def test_sin_baseline_de_resting_hr_es_sin_rango(self):
+class UsualHoraTest(unittest.TestCase):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2 (replaced, BODY-RECUPERACION-1-C): the cutoff is
+    the person's OWN usual for the CLOCK HOUR a sample falls in, not a single resting-range number
+    for the whole search."""
+
+    def test_tarde_de_escritorio_se_recupera_donde_el_viejo_reposo_nunca_lo_haria(self):
         conn = _mkconn(self)
+        # 15 ordinary days before the activity, desk-level ~70 bpm at 14:00-14:59.
+        _fondo_dias(conn, 1, "2026-11-10", 15, 70.0)
+        # The activity ends at 14:30; heart rate is elevated briefly, then settles at 72 -- well
+        # above any plausible resting-range cutoff (the OLD model's own target, ~55 + margin = 58)
+        # for the WHOLE horizon, but at/under this hour's OWN usual (70) + margin (3) = 73.
+        muestras = _serie("2026-11-10", 14 * 60, 14 * 60 + 28, 2, 130.0) + \
+            _serie("2026-11-10", 14 * 60 + 30, 14 * 60 + 40, 2, 120.0) + \
+            _serie("2026-11-10", 14 * 60 + 42, 18 * 60, 2, 72.0)
+        _guardar_fc(conn, 1, "2026-11-10", muestras)
+        r = recuperacion.recuperacion_actividad(
+            conn, 1, _actividad("2026-11-10", "2026-11-10T14:00:00", 1800))
+        self.assertIsNone(r.motivo)
+        self.assertEqual(r.minutos, 12)
+        old_cutoff = 55.0 + recuperacion.MODELO["margen_bpm"]
+        self.assertGreater(72.0, old_cutoff)  # the OLD resting-range cutoff never reaches 72
+
+    def test_el_corte_usa_la_hora_de_cada_muestra(self):
+        """The search crosses an hour boundary (13 -> 14) with two very different usual levels --
+        the SAME heart rate value counts as "still elevated" at 13:58 and "recovered" one minute
+        later, once the clock hour it falls in changes."""
+        conn = _mkconn(self)
+        _fondo_horas(conn, 1, "2026-11-10", 15, {13: 50.0, 14: 90.0})
+        # Ends at 13:58 (13:30 start + 28 min); heart rate is a constant 60 afterward -- above
+        # hour 13's own cutoff (50 + 3 = 53) but at/under hour 14's (90 + 3 = 93).
+        muestras = _serie("2026-11-10", 13 * 60 + 30, 13 * 60 + 56, 2, 130.0) + \
+            _serie("2026-11-10", 13 * 60 + 58, 17 * 60 + 58, 2, 60.0)
+        _guardar_fc(conn, 1, "2026-11-10", muestras)
+        r = recuperacion.recuperacion_actividad(
+            conn, 1, _actividad("2026-11-10", "2026-11-10T13:30:00", 1680))
+        self.assertIsNone(r.motivo)
+        self.assertEqual(r.minutos, 2)
+
+
+class SinRangoTest(unittest.TestCase):
+    def test_sin_ningun_fondo_es_sin_rango(self):
+        conn = _mkconn(self)
+        muestras = _serie("2026-11-10", 18 * 60 + 30, 22 * 60, 2, 120.0)
+        _guardar_fc(conn, 1, "2026-11-10", muestras)
         r = recuperacion.recuperacion_actividad(
             conn, 1, _actividad("2026-11-10", "2026-11-10T18:00:00", 1800))
         self.assertEqual(r.motivo, "sin_rango")
         self.assertIsNone(r.minutos)
 
+    def test_fondo_bajo_el_minimo_de_dias_sigue_siendo_sin_rango(self):
+        conn = _mkconn(self)
+        _fondo_dias(conn, 1, "2026-11-10", 5, 55.0)  # under MODELO['min_dias_horario'] (10)
+        muestras = _serie("2026-11-10", 18 * 60 + 30, 22 * 60, 2, 120.0)
+        _guardar_fc(conn, 1, "2026-11-10", muestras)
+        r = recuperacion.recuperacion_actividad(
+            conn, 1, _actividad("2026-11-10", "2026-11-10T18:00:00", 1800))
+        self.assertEqual(r.motivo, "sin_rango")
+
 
 class DiaMarcadoTest(unittest.TestCase):
     def test_dia_marcado_nunca_llega_a_calcular(self):
         conn = _mkconn(self)
-        _set_resting(conn, 1, "2026-11-10", 10, 55.0)
         db.crear_periodo(conn, 1, "malestar", "2026-11-10", "2026-11-10")
         conn.commit()
         r = recuperacion.recuperacion_actividad(
@@ -152,7 +218,7 @@ class DiaMarcadoTest(unittest.TestCase):
 class RecalcularTest(unittest.TestCase):
     def setUp(self):
         self.conn = _mkconn(self)
-        _set_resting(self.conn, 1, "2026-11-10", 10, 55.0)
+        _fondo_dias(self.conn, 1, "2026-11-10", 15, 55.0)
         self.conn.execute(
             "INSERT INTO activity (person_id, source, source_id, day, start_local, duration_s) "
             "VALUES (1, 'garmin', 'act-1', '2026-11-10', '2026-11-10T18:00:00', 1800)"
@@ -169,7 +235,7 @@ class RecalcularTest(unittest.TestCase):
             "SELECT minutos, motivo, modelo_version FROM recuperacion_actividad "
             "WHERE person_id = 1 AND activity_source_id = 'act-1'"
         ).fetchone()
-        self.assertEqual((row["minutos"], row["motivo"], row["modelo_version"]), (12, None, "recuperacion-v1"))
+        self.assertEqual((row["minutos"], row["motivo"], row["modelo_version"]), (12, None, "recuperacion-v2"))
 
     def test_es_idempotente(self):
         recuperacion.recalcular(self.conn, 1)
@@ -182,14 +248,14 @@ class RecalcularTest(unittest.TestCase):
 
     def test_un_cambio_de_version_recalcula_sin_borrar_la_version_anterior(self):
         recuperacion.recalcular(self.conn, 1)
-        with mock.patch.dict(recuperacion.MODELO, {"version": "recuperacion-v2"}):
+        with mock.patch.dict(recuperacion.MODELO, {"version": "recuperacion-v3"}):
             resultado = recuperacion.recalcular(self.conn, 1)
             self.assertEqual(resultado["nuevas"], 1)
         rows = self.conn.execute(
             "SELECT modelo_version FROM recuperacion_actividad WHERE person_id = 1 AND activity_source_id = 'act-1' "
             "ORDER BY modelo_version"
         ).fetchall()
-        self.assertEqual([r["modelo_version"] for r in rows], ["recuperacion-v1", "recuperacion-v2"])
+        self.assertEqual([r["modelo_version"] for r in rows], ["recuperacion-v2", "recuperacion-v3"])
 
     def test_motivos_son_solo_conteos_nunca_una_cifra_de_salud(self):
         buf = io.StringIO()
@@ -201,6 +267,41 @@ class RecalcularTest(unittest.TestCase):
             self.assertIsInstance(v, int)
 
 
+class LecturaPorDiaAcotadaTest(unittest.TestCase):
+    """BODY-RECUPERACION-1-C point 1: `recalcular`'s per-run cache (`_leer_dia`) must read a
+    given day's intraday_fc series via db.intradia AT MOST ONCE per run, even though several
+    activities' horizon AND look-back windows all touch it."""
+
+    def test_recalcular_nunca_relee_el_mismo_dia(self):
+        conn = _mkconn(self)
+        dias_actividad = ["2026-11-08", "2026-11-09", "2026-11-10"]
+        for i, day in enumerate(dias_actividad):
+            conn.execute(
+                "INSERT INTO activity (person_id, source, source_id, day, start_local, duration_s) "
+                "VALUES (1, 'garmin', ?, ?, ?, 1800)",
+                (f"act-{i}", day, f"{day}T18:00:00"),
+            )
+        conn.commit()
+        # One shared look-back background, well within every one of the three activities' own
+        # 30-day window (their windows overlap heavily since the activities are 1-2 days apart).
+        _fondo_dias(conn, 1, "2026-11-08", 15, 55.0)
+        for day in dias_actividad:
+            muestras = _serie(day, 18 * 60 + 30, 22 * 60, 2, 50.0)
+            _guardar_fc(conn, 1, day, muestras)
+
+        llamadas: list[str] = []
+        original = db.intradia
+
+        def contador(conn_, person_id_, day_, kind_, zona_):
+            llamadas.append(day_)
+            return original(conn_, person_id_, day_, kind_, zona_)
+
+        with mock.patch.object(db, "intradia", side_effect=contador):
+            recuperacion.recalcular(conn, 1)
+        self.assertEqual(sorted(llamadas), sorted(set(llamadas)))
+        self.assertGreater(len(llamadas), 0)
+
+
 class RecalcularSeguroTest(unittest.TestCase):
     """body/pull.py's `_recalcular_recuperacion_seguro` (BODY-RECUPERACION-1-B): silent when the
     recompute found nothing new, one counts-only line when it wrote a row -- the same rule
@@ -208,7 +309,7 @@ class RecalcularSeguroTest(unittest.TestCase):
 
     def setUp(self):
         self.conn = _mkconn(self)
-        _set_resting(self.conn, 1, "2026-11-10", 10, 55.0)
+        _fondo_dias(self.conn, 1, "2026-11-10", 15, 55.0)
         self.conn.execute(
             "INSERT INTO activity (person_id, source, source_id, day, start_local, duration_s) "
             "VALUES (1, 'garmin', 'act-1', '2026-11-10', '2026-11-10T18:00:00', 1800)"
@@ -233,7 +334,7 @@ class RecalcularSeguroTest(unittest.TestCase):
 
 
 def _insertar_fila(conn, person_id: int, source_id: str, day: str, start_local: str, duration_s: float,
-                    tipo: str, minutos: float | None, avg_hr: float = 130.0) -> None:
+                    tipo: str, minutos: float | None, avg_hr: float = 130.0, motivo: str | None = None) -> None:
     conn.execute(
         "INSERT INTO activity (person_id, source, source_id, day, start_local, duration_s, type, avg_hr) "
         "VALUES (?, 'garmin', ?, ?, ?, ?, ?, ?)",
@@ -241,16 +342,43 @@ def _insertar_fila(conn, person_id: int, source_id: str, day: str, start_local: 
     )
     conn.execute(
         "INSERT INTO recuperacion_actividad (person_id, activity_source, activity_source_id, modelo_version, "
-        "minutos, motivo, computed_at) VALUES (?, 'garmin', ?, ?, ?, NULL, '2026-11-10T00:00:00+00:00')",
-        (person_id, source_id, recuperacion.MODELO["version"], minutos),
+        "minutos, motivo, computed_at) VALUES (?, 'garmin', ?, ?, ?, ?, '2026-11-10T00:00:00+00:00')",
+        (person_id, source_id, recuperacion.MODELO["version"], minutos, motivo),
     )
+
+
+class MedianaCensuradaTest(unittest.TestCase):
+    """BODY-RECUPERACION-1-C point 2: a `fuera_de_horizonte` session counts as right-censored --
+    known only to be more than the horizon -- never simply dropped."""
+
+    def test_bajo_la_mitad_censurado_da_una_mediana(self):
+        valores = [float(x) for x in range(1, 38)]  # 37 finite + 3 censored = 40, 7.5% censored
+        r = recuperacion._mediana_censurada(valores, 3, 240.0)
+        self.assertIsNone(r["mas_de"])
+        self.assertEqual(r["n"], 40)
+        self.assertIsNotNone(r["mediana"])
+
+    def test_la_mitad_exacta_censurado_no_tiene_mediana_honesta(self):
+        valores = [float(x) for x in range(1, 21)]  # 20 finite + 20 censored = 40, exactly half
+        r = recuperacion._mediana_censurada(valores, 20, 240.0)
+        self.assertIsNone(r["mediana"])
+        self.assertEqual(r["mas_de"], 240.0)
+
+    def test_sin_censura_es_la_mediana_de_siempre(self):
+        r = recuperacion._mediana_censurada([10.0, 20.0, 30.0], 0, 240.0)
+        self.assertEqual(r["mediana"], 20.0)
+
+    def test_sin_ninguna_sesion(self):
+        r = recuperacion._mediana_censurada([], 0, 240.0)
+        self.assertEqual(r, {"mediana": None, "mas_de": None, "n": 0})
 
 
 class EstudioTest(unittest.TestCase):
     def test_sin_filas_es_n_cero(self):
         conn = _mkconn(self)
         est = recuperacion.estudio(conn, 1)
-        self.assertEqual(est, {"n": 0, "mediana": None, "bajo": None, "alto": None, "hallazgos": []})
+        self.assertEqual(est, {"n": 0, "n_censurados": 0, "mediana": None, "mas_de": None,
+                                "bajo": None, "alto": None, "hallazgos": []})
 
     def test_pocos_datos_no_produce_hallazgos(self):
         conn = _mkconn(self)
@@ -295,6 +423,52 @@ class EstudioTest(unittest.TestCase):
         conn.commit()
         est = recuperacion.estudio(conn, 1)
         self.assertEqual([h for h in est["hallazgos"] if h["factor"] == "sueno_anoche"], [])
+
+    def test_estudio_cuenta_las_fuera_de_horizonte_en_la_mediana_general(self):
+        conn = _mkconn(self)
+        for i in range(37):
+            day = f"2026-07-{(i % 28) + 1:02d}"
+            _insertar_fila(conn, 1, f"ok-{i}", day, f"{day}T18:00:00", 1800, "running", float(10 + i))
+        for i in range(3):
+            day = f"2026-06-0{i + 1}"
+            _insertar_fila(conn, 1, f"fuera-{i}", day, f"{day}T18:00:00", 1800, "running", None,
+                            motivo="fuera_de_horizonte")
+        conn.commit()
+        est = recuperacion.estudio(conn, 1)
+        self.assertEqual(est["n"], 40)
+        self.assertEqual(est["n_censurados"], 3)
+        self.assertIsNotNone(est["mediana"])
+        self.assertIsNone(est["mas_de"])
+
+    def test_censuradas_cuentan_dentro_de_cada_grupo_del_hallazgo(self):
+        """Point 2 applies inside every factor group too: a group whose finite sessions look as
+        fast as another's, but where most of the rest never came back within the horizon, is the
+        worse group -- not an invisible one."""
+        conn = _mkconn(self)
+        for i in range(5):
+            day = f"2026-05-0{i + 1}"
+            db.set_metric(conn, day, "sleep_minutes", 300.0, "garmin", 1)  # corta
+            _insertar_fila(conn, 1, f"corta-{i}", day, f"{day}T18:00:00", 1800, "running", 20.0)
+        for i in range(2):
+            day = f"2026-05-{11 + i}"
+            db.set_metric(conn, day, "sleep_minutes", 450.0, "garmin", 1)  # normal, finite
+            _insertar_fila(conn, 1, f"normal-{i}", day, f"{day}T18:00:00", 1800, "running", 20.0)
+        for i in range(3):
+            day = f"2026-05-{14 + i}"
+            db.set_metric(conn, day, "sleep_minutes", 450.0, "garmin", 1)  # normal, censored
+            _insertar_fila(conn, 1, f"normalfuera-{i}", day, f"{day}T18:00:00", 1800, "running", None,
+                            motivo="fuera_de_horizonte")
+        conn.commit()
+        est = recuperacion.estudio(conn, 1)
+        sueno = [h for h in est["hallazgos"] if h["factor"] == "sueno_anoche"]
+        self.assertEqual(len(sueno), 1)
+        h = sueno[0]
+        self.assertEqual(h["peor"], "normal")
+        self.assertEqual(h["mejor"], "corta")
+        self.assertIsNone(h["min_peor"])
+        self.assertEqual(h["mas_de_peor"], recuperacion.MODELO["horizonte_h"] * 60)
+        self.assertEqual(h["n_peor"], 5)
+        self.assertEqual(h["n_mejor"], 5)
 
 
 if __name__ == "__main__":

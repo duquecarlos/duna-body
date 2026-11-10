@@ -301,17 +301,48 @@ def _muestra_ms(t: datetime) -> int:
     return int((t + timedelta(hours=5)).replace(tzinfo=timezone.utc).timestamp() * 1000)
 
 
-def _curva_recuperacion(inicio_actividad: datetime, duration_s: float, avg_hr: float,
-                         minutos_recuperacion: float | None, horizonte_min: int) -> list[tuple[datetime, float]]:
-    """BODY-RECUPERACION-1: an invented heart-rate curve for one activity -- elevated through the
-    activity, then decaying to a resting-level plateau over `minutos_recuperacion` minutes after it
-    ends, or staying clearly above any plausible cutoff for the whole horizon when
-    `minutos_recuperacion` is None (the honest "fuera_de_horizonte" case). Every two minutes,
-    matching Garmin's own typical intraday spacing."""
-    fin = inicio_actividad + timedelta(seconds=duration_s)
-    reposo = 56.0
+# BODY-RECUPERACION-1-C: an invented circadian table (demo-only -- NOT the production model's own
+# `_usual_hora` computation, which reads this same data back and medians it per hour) -- low
+# overnight, rising through the morning, a steady desk-level plateau through the day, easing off
+# in the evening. Feeds `_curva_dia_ordinario`, the background every "ordinary" demo day gets so
+# `_usual_hora` has something honest to read for the hours the chosen activities' own recovery
+# windows touch.
+_PULSO_HORA = {h: v for h, v in enumerate(
+    [54, 53, 52, 52, 53, 56, 62, 68, 71, 72, 73, 73, 74, 74, 73, 72, 71, 70, 68, 66, 64, 61, 58, 56]
+)}
+# Comfortably under every hour's own cutoff (_PULSO_HORA[h] + MODELO['margen_bpm']) in the table
+# above, including its lowest overnight trough -- so a "recovered" demo curve always has room to
+# cross the cutoff well before its own nominal recovery minute, whichever hour it lands in.
+_PLATEAU_RECUPERACION = 50.0
+
+
+def _curva_dia_ordinario(dia: date) -> list[tuple[datetime, float]]:
+    """One ordinary day's own invented heart-rate curve, every two minutes (Garmin's own typical
+    intraday spacing) -- the background `_usual_hora` reads its per-hour "usual" from, on days
+    that hold none of this person's activities."""
     paso = timedelta(minutes=2)
-    limite = fin + timedelta(minutes=horizonte_min + 20)
+    t = datetime.combine(dia, datetime.min.time())
+    fin = t + timedelta(days=1)
+    out = []
+    while t < fin:
+        out.append((t, float(_PULSO_HORA[t.hour])))
+        t += paso
+    return out
+
+
+def _curva_recuperacion(inicio_actividad: datetime, duration_s: float, avg_hr: float,
+                         minutos_recuperacion: float | None, horizonte_min: int,
+                         sin_cobertura: bool = False) -> list[tuple[datetime, float]]:
+    """BODY-RECUPERACION-1-C: an invented heart-rate curve for one activity -- elevated through
+    the activity, then decaying to `_PLATEAU_RECUPERACION` over `minutos_recuperacion` minutes
+    after it ends, or staying clearly above any plausible cutoff for the whole horizon when
+    `minutos_recuperacion` is None (the honest "fuera_de_horizonte" case). `sin_cobertura=True`
+    stops the curve strictly before the activity's own end, so the recovery window itself gets no
+    sample at all -- the honest "sin_cobertura" case. Every two minutes, matching Garmin's own
+    typical intraday spacing."""
+    fin = inicio_actividad + timedelta(seconds=duration_s)
+    paso = timedelta(minutes=2)
+    limite = fin - timedelta(seconds=1) if sin_cobertura else fin + timedelta(minutes=horizonte_min + 20)
     out = []
     t = inicio_actividad
     while t <= limite:
@@ -319,40 +350,96 @@ def _curva_recuperacion(inicio_actividad: datetime, duration_s: float, avg_hr: f
             valor = avg_hr
         elif minutos_recuperacion is None:
             frac = min((t - fin).total_seconds() / 60 / (horizonte_min * 2), 0.6)
-            valor = avg_hr - (avg_hr - reposo) * frac
+            valor = avg_hr - (avg_hr - _PLATEAU_RECUPERACION) * frac
         else:
             frac = min((t - fin).total_seconds() / 60 / minutos_recuperacion, 1.0)
-            valor = avg_hr - (avg_hr - reposo) * frac
+            valor = avg_hr - (avg_hr - _PLATEAU_RECUPERACION) * frac
         out.append((t, round(valor)))
         t += paso
     return out
 
 
+# BODY-RECUPERACION-1-C: activity types that recover SLOWLY in this demo (cycling and strength
+# sessions both run the heart rate harder for longer) vs those that recover FAST (an easy run or
+# walk) -- a real, if invented, correlation, deterministic from each activity's own `type`, so
+# «Tu historia»'s "tipo_sesion" factor has a guaranteed finding: two groups of its own `type`
+# (cycling, running are the demo's own two most common) each clear MODELO['min_n_grupo'], and the
+# gap between a "lento" and a "rapido" median is far past MODELO['ruido_min_diferencia_min'].
+_TIPOS_LENTOS = {"cycling", "strength_training"}
+_PATRON_LENTO = [160.0, 170.0, 180.0, 190.0, 200.0, 210.0]
+_PATRON_RAPIDO = [15.0, 20.0, 25.0, 30.0, 35.0]
+# Measured against this module's own fixed SEED (tests/test_demo.py's determinism tests pin it):
+# the most recent N activities hold at least MODELO['min_n_grupo'] of both a "lento" and a
+# "rapido" type. A smaller N occasionally misses that split; this margin is the same kind of
+# measured safety DIAS_DEFAULT's own comment already carries for a different cycle.
+N_ACTIVIDADES_RECUPERACION = 24
+
+
 def _seed_recuperacion(conn, db, recuperacion, person_id: int) -> int:
-    """Invented minute-by-minute heart rate for a few of the activities `_seed_days` already
+    """Invented minute-by-minute heart rate for the most recent activities `_seed_days` already
     created, so «Tu historia»'s recovery section and Día's own line have something to show on the
-    demo server -- never real data, same contract as every other figure in this module. Three
-    outcomes on purpose (fast, slow-but-within-horizon, never-within-horizon) so the honest
-    "fuera_de_horizonte" gap shows too, not only a clean recovery time. Accumulates every
-    activity's samples by calendar day BEFORE writing (db.guardar_intradia replaces a whole day's
-    row), so two chosen activities whose windows touch the same day never erase each other's
-    samples."""
+    demo server -- never real data, same contract as every other figure in this module.
+    BODY-RECUPERACION-1-C's model needs each activity's own look-back days (MODELO
+    ['dias_historia']) to have ordinary background heart rate too, or `_usual_hora` would call
+    every one of them "sin_rango" -- `_curva_dia_ordinario` fills every day in that combined
+    look-back span, once the activity curves are in and their own days are known. Realistic mix on
+    purpose: most recover within the horizon (at a "lento" or "rapido" pace correlated with
+    `type`, _TIPOS_LENTOS's own doc explains why), exactly one never does ("fuera_de_horizonte")
+    and exactly one has no data at all in its own window ("sin_cobertura") -- so «Tu historia»'s
+    own censored count AND at least one tipo_sesion finding both show. Accumulates every day's
+    samples (background AND activity) BEFORE writing (db.guardar_intradia replaces a whole day's
+    row), so two sources that touch the same calendar day never erase each other."""
     rows = conn.execute(
-        "SELECT source_id, start_local, duration_s, avg_hr FROM activity WHERE person_id = ? "
-        "AND start_local IS NOT NULL AND duration_s IS NOT NULL ORDER BY day DESC LIMIT 6",
-        (person_id,),
+        "SELECT source_id, start_local, duration_s, avg_hr, type FROM activity WHERE person_id = ? "
+        "AND start_local IS NOT NULL AND duration_s IS NOT NULL ORDER BY day DESC LIMIT ?",
+        (person_id, N_ACTIVIDADES_RECUPERACION),
     ).fetchall()
     if not rows:
         return 0
     horizonte_min = recuperacion.MODELO["horizonte_h"] * 60
-    patrones = [15.0, 60.0, None]
+    dias_historia = recuperacion.MODELO["dias_historia"]
     por_dia: dict[str, list[tuple[datetime, float]]] = defaultdict(list)
-    for i, r in enumerate(rows):
+
+    dias_necesitan_fondo: list[date] = []
+    fuera_asignado = False
+    gap_asignado = False
+    n_lento = n_rapido = 0
+    for r in rows:
         inicio = datetime.fromisoformat(r["start_local"])
+        lento = r["type"] in _TIPOS_LENTOS
+        if lento and not fuera_asignado:
+            patron, sin_cobertura, fuera_asignado = None, False, True
+        elif not lento and not gap_asignado:
+            patron, sin_cobertura, gap_asignado = None, True, True
+        elif lento:
+            patron, sin_cobertura = _PATRON_LENTO[n_lento % len(_PATRON_LENTO)], False
+            n_lento += 1
+        else:
+            patron, sin_cobertura = _PATRON_RAPIDO[n_rapido % len(_PATRON_RAPIDO)], False
+            n_rapido += 1
+
         curva = _curva_recuperacion(inicio, r["duration_s"], r["avg_hr"] or 130.0,
-                                     patrones[i % len(patrones)], horizonte_min)
+                                     patron, horizonte_min, sin_cobertura)
         for t, v in curva:
             por_dia[t.date().isoformat()].append((t, v))
+        if not sin_cobertura:
+            dias_necesitan_fondo.append(inicio.date())
+
+    # The background curve never goes on a day one of the activity curves above already
+    # touched (its own day, or the next calendar day when its horizon crosses midnight) -- calendar
+    # dates already in `por_dia` at this point are exactly those. On a day being recovered, flat
+    # already-"usual" background samples interleaved into the very post-activity window this
+    # scenario is inventing would read as an almost-instant recovery, never at its own chosen pace.
+    dias_propios = {date.fromisoformat(k) for k in por_dia}
+    if dias_necesitan_fondo:
+        desde = min(dias_necesitan_fondo) - timedelta(dias_historia)
+        hasta = max(dias_necesitan_fondo) - timedelta(1)
+        d = desde
+        while d <= hasta:
+            if d not in dias_propios:
+                por_dia[d.isoformat()].extend(_curva_dia_ordinario(d))
+            d += timedelta(1)
+
     for dia, muestras in por_dia.items():
         db.guardar_intradia(conn, person_id, dia, "intradia_fc",
                              {"heartRateValues": [[_muestra_ms(t), v] for t, v in sorted(muestras)]})

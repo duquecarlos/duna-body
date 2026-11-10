@@ -134,24 +134,42 @@ def _recovery_cond_label(t: T, h: dict) -> str:
     return t(_RECOVERY_COND_KEYS[factor][grupo])
 
 
+def _recovery_valor(t: T, mediana: float | None, horas: int) -> str:
+    """One finding's own group value, worded (BODY-RECUPERACION-1-C point 2 applies inside every
+    group too): an exact minutes figure when that group's own median is defined, else the same
+    honest "more than the horizon" MODELO already gives the overall summary."""
+    if mediana is not None:
+        return t.minutes(mediana)
+    return t("history.recovery.mas_de_valor", horas=t.num(horas))
+
+
 def _recovery_ctx(t: T, est: dict) -> dict:
-    """«Tu historia»'s "Recuperación después de entrenar" section (BODY-RECUPERACION-1): one plain
-    line with the typical minutes and how many sessions it rests on, the two or three largest
-    group differences as plain sentences, "pocos datos" when none qualify, and one line that
-    caffeine, food and what he did after will count once he tells Body -- always, regardless of
-    whether a finding was found. `est["n"] == 0` -- no derived figure yet at all -- is its own,
-    simpler state."""
+    """«Tu historia»'s "Recuperación después de entrenar" section (BODY-RECUPERACION-1,
+    BODY-RECUPERACION-1-C): one plain line with the typical minutes and how many sessions it
+    rests on -- naming how many never came back within the horizon when any did (point 2), the
+    two or three largest group differences as plain sentences, "pocos datos" when none qualify,
+    and one line that caffeine, food and what he did after will count once he tells Body --
+    always, regardless of whether a finding was found. `est["n"] == 0` -- no derived figure yet at
+    all -- is its own, simpler state."""
     if est["n"] == 0:
         return {"tiene_datos": False}
+    horas = recuperacion.MODELO["horizonte_h"]
     hallazgos = [
         t("history.recovery.hallazgo", peor=_recovery_cond_label(t, h),
-          min_peor=t.num(h["min_peor"]), min_mejor=t.num(h["min_mejor"]),
+          val_peor=_recovery_valor(t, h["min_peor"], horas), val_mejor=_recovery_valor(t, h["min_mejor"], horas),
           n_peor=t.num(h["n_peor"]), n_mejor=t.num(h["n_mejor"]))
         for h in est["hallazgos"]
     ]
+    if est["mediana"] is None:
+        resumen = t("history.recovery.resumen_mas_de", horas=t.num(horas), n=t.num(est["n"]))
+    elif est["n_censurados"] == 0:
+        resumen = t("history.recovery.resumen", mediana=t.minutes(est["mediana"]), n=t.num(est["n"]))
+    else:
+        resumen = t("history.recovery.resumen_censurado", mediana=t.minutes(est["mediana"]), n=t.num(est["n"]),
+                     n_censurados=t.num(est["n_censurados"]), horas=t.num(horas))
     return {
         "tiene_datos": True,
-        "resumen": t("history.recovery.resumen", mediana=t.minutes(est["mediana"]), n=t.num(est["n"])),
+        "resumen": resumen,
         "hallazgos": hallazgos,
         "sin_hallazgos": t("history.recovery.sin_hallazgos") if not hallazgos else None,
         "futuro": t("history.recovery.futuro"),
