@@ -13871,3 +13871,36 @@ template, i18n or route-output-string edit) -- only `body/baselines.py`, `body/p
 `body/i18n/es.json`, Tendencias' seven new cards), and the approval reason names the orchestrator's
 own 375 px look as a stop independent of this commit's diff. So this stops **AWAITING_APPROVAL**,
 committed on `feat/body-agujetas-1`, not merged.
+
+## BODY-AGUJETAS-1-M -- merged
+
+Continues BODY-AGUJETAS-1 (`6c6fbea`, `3e625da`) and BODY-AGUJETAS-1-B (`316d8a9`, `5644dea`),
+approved to merge under ORCH-CARLOS-DELEGATES-TIER-1-1 after one unit fix: the orchestrator's
+375 px measurement of the demo home passed except the card's figure reading "3 pts" where a
+0-5 scale should read "3 de 5" (es) / "3 of 5" (en) -- the same way Body Battery reads "26 de
+100".
+
+**The fix**: a unit `of5` added to `comun.UNITS` (`"of5": "unit.of5"`, es "de 5", en "of 5") --
+not a second key list beside `OF_100` -- carried by the seven soreness `metric_def` rows'
+`unit` column in `db.METRIC_DEFS` (was `pts`). `init()`'s `metric_def` seed is an upsert
+(`INSERT ... ON CONFLICT(key) DO UPDATE SET ... unit=excluded.unit`), not `INSERT OR IGNORE`,
+so an existing row -- a database that ran the branch's earlier code, including the demo home --
+already picks up `of5` on its next `init()` with no extra migration code; `tests/test_agujetas.py`
+adds `test_an_existing_row_with_the_old_pts_unit_is_upgraded_to_of5` to hold that upsert behaviour
+to the rulings shape. The same file's card-text and Trends-render tests, which asserted `pts`,
+are updated to assert `3 de 5`/`3 of 5` and `de 5`/`of 5`.
+
+Commit on `feat/body-agujetas-1`: `893ab44` (`body/db.py`, `body/rutas/comun.py`,
+`body/i18n/es.json`, `body/i18n/en.json`, `tests/test_agujetas.py`).
+
+**Merge**: `git checkout main`, `git merge --no-ff feat/body-agujetas-1` -- no conflicts. Merge
+commit `a996ed1f1ef38ff03c15c833af7d40c56649d876` on `main`, tree
+`b45966449175e658747c0d6506359e039d9222f2`.
+
+**Gate**, once, foreground, on the merged tree: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -> `Ran 2062 tests in 625.477s ... OK (skipped=1)`, exit code 0.
+
+No schema migration. Customer-facing bytes: yes, carried in by the merge (Tendencias' seven
+soreness cards, the assistant's soreness proposal card, and this slice's own unit wording) --
+covered by this ledger's own approval, which the spec's body says in words authorises the merge
+("Then merge."). No cross-repo contract. **COMPLETE**, on `main`.
