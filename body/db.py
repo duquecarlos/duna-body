@@ -1838,20 +1838,31 @@ def borrar_ingesta(conn: sqlite3.Connection, person_id: int, ingesta_id: int) ->
 # before this cache could ever be read through the new connection it names (see connect()'s own
 # comment), so a cache hit here can only be this same connection's own earlier read.
 _PERIODOS_LOCK = threading.Lock()
-_PERIODOS_CACHE: dict[tuple[int, int], list[sqlite3.Row]] = {}
+_PERIODOS_CACHE: dict[tuple[int, int], tuple[list[sqlite3.Row], str | None]] = {}
 
 
-def _periodos_de_persona(conn: sqlite3.Connection, person_id: int) -> list[sqlite3.Row]:
+def _periodos_de_persona(conn: sqlite3.Connection, person_id: int) -> tuple[list[sqlite3.Row], str | None]:
+    """This person's own period rows, ORDER BY start_day, paired with their timezone -- read in
+    the SAME statement (a JOIN), not a separate person() call, so dias_marcados (below) no longer
+    re-reads the timezone on every call while an open period overlaps the range (BODY-PERIODO-
+    PANTALLAS-1-B: that per-call read turned /day/{d}'s 38 statements into 55 against a ceiling of
+    45). zona is None when this person has no periods at all -- dias_marcados never needs it then,
+    so a person with no periods still pays no timezone lookup, same as before."""
     key = (id(conn), person_id)
     with _PERIODOS_LOCK:
-        rows = _PERIODOS_CACHE.get(key)
-    if rows is None:
+        cached = _PERIODOS_CACHE.get(key)
+    if cached is None:
         rows = conn.execute(
-            "SELECT * FROM period WHERE person_id = ? ORDER BY start_day", (person_id,)
+            "SELECT period.*, person.timezone AS _zona FROM period "
+            "JOIN person ON person.id = period.person_id "
+            "WHERE period.person_id = ? ORDER BY period.start_day",
+            (person_id,),
         ).fetchall()
+        zona = rows[0]["_zona"] if rows else None
+        cached = (rows, zona)
         with _PERIODOS_LOCK:
-            _PERIODOS_CACHE[key] = rows
-    return rows
+            _PERIODOS_CACHE[key] = cached
+    return cached
 
 
 def invalidar_periodos_cache(conn: sqlite3.Connection, person_id: int) -> None:
@@ -1859,21 +1870,29 @@ def invalidar_periodos_cache(conn: sqlite3.Connection, person_id: int) -> None:
         _PERIODOS_CACHE.pop((id(conn), person_id), None)
 
 
+def _solapan(rows: list[sqlite3.Row], desde: str, hasta: str) -> list[sqlite3.Row]:
+    return [r for r in rows if r["start_day"] <= hasta and (r["end_day"] is None or r["end_day"] >= desde)]
+
+
 def periodos(conn: sqlite3.Connection, person_id: int, desde: str, hasta: str) -> list[sqlite3.Row]:
     """This person's own periods overlapping [desde, hasta] -- an open period (end_day NULL)
     always overlaps anything that is not entirely before its start_day. Filtered in memory from
     _periodos_de_persona's own cached full list, same rows and order a fresh ranged SELECT would
     give (that list is already ORDER BY start_day, and filtering never reorders)."""
-    return [r for r in _periodos_de_persona(conn, person_id)
-            if r["start_day"] <= hasta and (r["end_day"] is None or r["end_day"] >= desde)]
+    rows, _ = _periodos_de_persona(conn, person_id)
+    return _solapan(rows, desde, hasta)
 
 
 def dias_marcados(conn: sqlite3.Connection, person_id: int, desde: str, hasta: str) -> set[str]:
     """ISO days in [desde, hasta] covered by one of this person's own periods -- an open period
-    (end_day IS NULL) counts through TODAY in the person's own timezone, never past it. person()'s
-    own timezone read only runs when an open period actually overlaps the range -- the common case
-    (no periods at all, or only closed ones) costs no timezone lookup."""
-    overlapping = periodos(conn, person_id, desde, hasta)
+    (end_day IS NULL) counts through TODAY in the person's own timezone, never past it. The zone
+    comes from _periodos_de_persona's own cache (one read per connection, at most), never a fresh
+    person() call here -- the common case (no periods at all, or only closed ones) still costs no
+    timezone lookup, since zona is only read above when this person has a period at all. "today"
+    itself is always computed fresh from that cached zone at call time, so a midnight crossing
+    still moves it -- only the ZONE is cached, never the date."""
+    rows, zona = _periodos_de_persona(conn, person_id)
+    overlapping = _solapan(rows, desde, hasta)
     if not overlapping:
         return set()
     hoy: str | None = None
@@ -1882,7 +1901,6 @@ def dias_marcados(conn: sqlite3.Connection, person_id: int, desde: str, hasta: s
         fin_val = r["end_day"]
         if fin_val is None:
             if hoy is None:
-                zona = person(conn, person_id)["timezone"]
                 hoy = datetime.now(ZoneInfo(zona)).date().isoformat()
             fin_val = hoy
         ini = max(r["start_day"], desde)

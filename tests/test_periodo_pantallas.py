@@ -16,8 +16,10 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from fastapi.testclient import TestClient
 
 from tests._db import open_conn
+from tests._rutas import contar_sql
+from tests.test_rendimiento import _CEILINGS
 
-from body import config, db, history, profile, web
+from body import config, db, demo, history, profile, web
 from body.i18n import T
 from body.rutas import comun
 
@@ -280,6 +282,40 @@ class HistoryPeriodoLineTest(unittest.TestCase):
         r = self.client.get("/history")
         self.assertEqual(r.status_code, 200)
         self.assertNotIn(_t("es", "history.periodo_excluido", n="0", kinds=""), r.text)
+
+
+class CeilingConSinPeriodoAbiertoDiasAntesTest(unittest.TestCase):
+    """BODY-PERIODO-PANTALLAS-1-B: BODY-PERIODO-1-INV measured an open period INSIDE a 30-day
+    lookback turning /day/{d}'s 38 statements into 55 against a ceiling of 45, because
+    dias_marcados re-read person() for the timezone on every call. The demo fixture used to start
+    its own open period exactly on today to hide that cost rather than exercise it. Now that
+    db.py's fix removes the per-call read, demo._seed's own period (which starts a few days before
+    today, body/demo.py's _seed_periodo) is exactly the scenario that used to blow the ceiling --
+    so these routes must stay at or under tests/test_rendimiento.py's own ceilings, unchanged."""
+    client = TestClient(web.app, follow_redirects=False)
+
+    def setUp(self):
+        orig = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
+        self.addCleanup(web.app.dependency_overrides.clear)
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "techo_periodo_abierto.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.ensure_ready(self.conn)
+        demo._seed(self.conn, dias=30, idioma="es")
+        self.day = self.conn.execute(
+            "SELECT day FROM daily_metric WHERE person_id = 1 ORDER BY day DESC LIMIT 1").fetchone()[0]
+
+    def test_routes_stay_at_or_under_their_rendimiento_ceiling(self):
+        checks = [("/", "/"), ("/trends", "/trends"), (f"/day/{self.day}", "/day/{day}"), ("/history", "/history")]
+        over = []
+        for filled, key in checks:
+            with contar_sql() as stats:
+                r = self.client.get(filled)
+            self.assertEqual(r.status_code, 200)
+            if stats["statements"] > _CEILINGS[key]:
+                over.append((key, stats["statements"], _CEILINGS[key]))
+        self.assertEqual(over, [], f"route(s) over their rendimiento ceiling: {over}")
 
 
 if __name__ == "__main__":
