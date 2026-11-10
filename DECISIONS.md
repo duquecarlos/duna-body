@@ -16094,3 +16094,54 @@ merge policy A's three stop conditions. Expect AWAITING_APPROVAL; this entry rec
 not a merge.
 
 Open follow-up, named but not acted on: none.
+
+
+## BODY-CHECKIN-1-M -- merged
+
+BODY-CHECKIN-1 stopped AWAITING_APPROVAL (above) with its own ledger entry left uncommitted
+(`a6825bc`, committed here first, as found, before anything else ran). The orchestrator's demo
+look at 375 px on the re-seeded DEMO home (2026-11-10) accepted the surface and the four
+census-style test fixes outside this slice's `touches:` list (same precedent as BODY-COMIDA-1),
+and approved the build to fix two polish defects and merge:
+
+1. **Refusal labels**: the "none of the four fields" refusal (`_registrar_checkin` in
+   `body/agente/herramientas.py`) used to raise a raw developer-key message in English only
+   ("se necesita al menos uno de mood, energy, stress_felt o nota"). It now raises a localized
+   message built from the same labels the card uses, a new i18n key
+   `agente.error.checkin_vacio`:
+   - es: «Dime al menos una cosa: ánimo, energía, estrés que sentiste o una nota.»
+   - en: "Tell me at least one thing: mood, energy, stress you felt, or a note."
+   Covered by `tests/test_checkin.py`'s `test_all_four_empty_refusal_names_the_fields_in_spanish`
+   and `..._in_english`.
+2. **Card time**: `asistente._tarjeta_registrar_checkin` showed the date and moment word but
+   never the check-in's own clock time, although Día's own section already showed it. The card's
+   first line now reads `fecha · hora · momento` when `despues["ts_local"]` carries a time (the
+   same `ts_local[11:16]` slice `hoy.py`'s `_checkins_dia_ctx` already used), e.g.
+   «10 nov 2026 · 16:40 · después del turno» (en: "10 nov 2026 · 16:40 · after the shift").
+   Covered by `tests/test_checkin.py`'s `test_card_shows_the_time_when_the_checkin_has_one_es`/
+   `_en` and `test_card_omits_the_time_when_the_checkin_has_none`.
+
+Both fixes stay inside this slice's `touches:` list (`body/agente/herramientas.py`,
+`body/rutas/asistente.py`, `body/i18n/es.json`, `body/i18n/en.json`, `tests/test_checkin.py`).
+
+**Commits**, `feat/body-checkin-1` branch, on top of `96eda7a`:
+- `a6825bc` -- "BODY-CHECKIN-1: ledger entry (left uncommitted by the first worker)"
+- `8040524` -- "BODY-CHECKIN-1-M: localize the empty-checkin refusal and show the card's time."
+
+Merged to `main` with `--no-ff`: `4cebe5d` ("Merge feat/body-checkin-1: BODY-CHECKIN-1-M").
+
+**Gate**, run on the merged tree (`main` at `4cebe5d`, tree `e7798b1caeb1e2564f6e42d06b34516583358b49`),
+exactly `.venv/Scripts/python.exe -m unittest discover tests -t .`: the first foreground launch
+was moved to the background past the 600 s cap and was killed before printing a `Ran` line; a
+second, identical launch was waited on to completion and printed:
+
+    Ran 2437 tests in 1160.467s
+
+    OK (skipped=1)
+
+Green. Policy-A check on this slice's own diff (the two fixes, not the whole branch): no schema
+or migration change, no cross-repo contract change; customer-facing bytes DID change (two new
+i18n strings, one card's first line) -- but the approval's body explicitly authorized committing,
+fixing and merging on green, so the merge proceeded rather than stopping AWAITING_APPROVAL.
+
+Open follow-up, named but not acted on: none.
