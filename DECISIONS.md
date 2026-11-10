@@ -13506,3 +13506,79 @@ Recorded, not reworked: BODY-PROTEINA-1's own edits to three test files outside 
 `tests/test_cuenta_schema.py` -- equality narrowed to the pre-existing columns plus an explicit NULL
 check on the new `agregado` column) were reviewed by the orchestrator before approval and judged to
 widen, not loosen, each guard's subject; this merge slice made no further edits.
+
+## BODY-GARMIN-IMPORT-1 -- merged
+
+Builds the importer for Carlos's full Garmin account export (BODY-GARMIN-EXPORT-INV step 2):
+874 days of minute heart-rate/stress history Garmin's own API no longer serves, needed for the
+heart-rate-recovery, shift and commute studies. Tested on invented FIT fixtures only, per
+ORCH-CARLOS-DELEGATES-TIER-1-1 -- nothing in this slice reads a real file; running it on Carlos's
+real export stays with him (his yes, a backup first, run by the orchestrator).
+
+**The reader** (`body/fit.py`, no dependency): header (12/14 bytes, `.FIT` signature checked),
+normal and compressed-timestamp record headers, definition messages in both byte orders,
+developer-field definitions read and their data skipped (never decoded). Decodes only the five
+fields this slice needs -- file_id.type (msg 0 field 0), monitoring's heart_rate/timestamp_16/
+timestamp (msg 55 fields 27/26/253) and stress_level's value/time (msg 227 fields 0/1) -- as
+uint8/16/32, plus sint8/16/32 (sint16 needed for stress_level_value's negative "no reading"
+sentinels; the spec's "uint8/16/32" was read as the three widths, not as excluding their signed
+counterparts). Every other field is skipped by its declared byte length from the definition
+message, never decoded, so no other base type is needed at all. CRC is explicitly NOT checked --
+neither the file's own trailing 2 bytes nor an optional 14-byte header's CRC are read; a
+structurally broken stream (bad header, truncated record, a data message for an undefined local
+type) still raises FitError per file, caught by the importer so one bad file never stops the run.
+Timestamps are reconstructed inside the reader: a full field 253 sets the running base; monitoring's
+16-bit field 26 and a compressed header's 5-bit offset each roll forward from it (with rollover),
+and the running timestamp is carried to any later message lacking its own (msg 227's
+stress_level_time, when absent, falls back to it).
+
+**The importer** (`body/importar_garmin.py`, `python -m body.importar_garmin <export.zip>
+[--desde YYYY-MM-DD] [--hasta YYYY-MM-DD] [--seco]`): opens the outer zip and reads ONLY entries
+under `DI_CONNECT/DI-Connect-Uploaded-Files/` ending `.zip`, and inside those only `.fit` entries
+-- the export's profile/consent/customer entries are never opened (`tests/test_importar_garmin.py`
+spies on `zipfile.ZipFile.open` to confirm it). Keeps file_id.type 32 (monitoring_b); from msg 55
+keeps (timestamp, heart_rate) where heart_rate > 0 (0 bpm is not a reading either); from msg 227
+keeps (stress_level_time or the record's own running timestamp, stress_level_value) where
+value >= 0, matching `garmin_adapter.parse_stress_series`'s own "negative = no reading" rule.
+Samples are de-duplicated by exact UTC-ms timestamp across every file (a day spans several
+monitoring files) before being grouped into local calendar days in the person's own timezone.
+Leaves file_id.type 4 (activity) files alone, as the spec asked -- an activity-record import would
+add per-activity detail (laps, HR-in-activity) Body does not have today; left for a later slice.
+
+**Storage and precedence, same reader.** Each day's samples are stored in Garmin's own intraday
+payload shape (`{"heartRateValues": [[ts_ms_utc, value], ...]}` / `stressValuesArray`) under
+`raw_payload` with `source='garmin_export'` (`garmin_adapter.SOURCE_EXPORT`, new) --
+`db.guardar_intradia` now takes an optional `source` (default `garmin_adapter.SOURCE`, the live
+API's own tag) instead of hard-coding it, so the importer never overwrites or deletes an API row:
+raw_payload's existing `(person_id, day, kind, source)` key makes them different rows, no schema
+change. `db.intradia` now orders its read by `source != garmin_adapter.SOURCE` so an API row for
+the same day and kind always wins when both exist -- the SAME parser
+(`parse_heart_rate_series`/`parse_stress_series`) reads either source's payload unchanged, since
+the export's payload is shaped exactly like the API's own, so `db.intradia` returns identical
+pairs for an export day and an API day built from the same samples (tested). `db.intradia_
+almacenado` is now filtered to `source=garmin_adapter.SOURCE` explicitly -- an export-only day
+must keep reading as "not yet pulled through the API" so the missing-days job
+(`pull._pull_intradia_pendientes`, via `experimentos.dias_intradia_necesarios`) still fetches a
+day inside Garmin's API reach and never skips one the API never actually covered (tested in both
+`tests/test_importar_garmin.py` and a new case added to `tests/test_pull_intradia_experimentos.py`).
+The importer itself skips writing (counted as "already covered") any day `db.intradia_almacenado`
+already reports complete, so a backfill run never bothers storing a day the live API already
+owns -- the precedence rule above is what makes that read-side-safe either way. Idempotent (a
+second run writes the same rows again via `INSERT OR REPLACE`, verified by comparing `db.intradia`
+output and the `raw_payload` row count before/after); `--seco` counts without writing.
+
+Registered in `body/vivo.py`'s `TAREAS` as `importar_garmin` (no argv prefix needed, unlike
+`intradia`), so the orchestrator runs it from the live tree: `python -m body.vivo importar_garmin
+<export.zip> --seco` first, then without `--seco` once the orchestrator has Carlos's go-ahead and
+a backup.
+
+**Commits** (`git rev-parse`): slice `b1cd31f17aef50b1421d9e926534d4f70632122a` on
+`feat/body-garmin-import-1`, merge `c269e80872ced35b0f37ea8f19e44eadc521d3e3` into `main`
+(`git merge --no-ff`; tree identical to the branch tip, `fd7ee00b74c09dfd1823354d5191f568893e4409`).
+
+**Gate**, once, foreground, from the repository root: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -> `Ran 1960 tests in 586.690s ... OK (skipped=1)`.
+
+No schema change, no customer-facing bytes (CLI-only, no web route, no UI string), no cross-repo
+contract -- merge policy A's three conditions all pass, merged on this green gate per
+ORCH-CARLOS-DELEGATES-TIER-1-1.
