@@ -111,7 +111,8 @@ $morningTriggers = @($MorningAt | ForEach-Object { New-ScheduledTaskTrigger -Dai
 Register-ScheduledTask -TaskName "Body app morning file" -Action $morningAction -Trigger $morningTriggers -Settings $settings -Description "Pulls today's Garmin data, then writes today's vida-v1 daily file for Personal's morning brief" -Force | Out-Null
 
 $wakeAction = New-ScheduledTaskAction -Execute $py -Argument "-m body.vivo despertar" -WorkingDirectory $LiveDir
-$wakeTrigger = New-ScheduledTaskTrigger -Daily -At "04:00" -RepetitionInterval (New-TimeSpan -Minutes 20) -RepetitionDuration (New-TimeSpan -Hours 9)
+$wakeTrigger = New-ScheduledTaskTrigger -Daily -At "04:00"
+$wakeTrigger.Repetition = (New-ScheduledTaskTrigger -Once -At "04:00" -RepetitionInterval (New-TimeSpan -Minutes 20) -RepetitionDuration (New-TimeSpan -Hours 9)).Repetition
 Register-ScheduledTask -TaskName "Body app wake check" -Action $wakeAction -Trigger $wakeTrigger -Settings $settings -Description "Checks last night's Garmin sleep every 20 minutes from 04:00 to 13:00 and writes the wake-time file for Personal's morning brief as soon as it is known" -Force | Out-Null
 
 $webArgs = "-m body.vivo web --port $Port"
