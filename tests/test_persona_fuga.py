@@ -24,7 +24,7 @@ from fastapi.testclient import TestClient
 
 from body import (
     compartir, config, cuenta, db, dispositivo, enlaces, fechas, garmin_cuenta, goals, household,
-    identity, patron_turnos, privacidad, readiness, shift_import, vida_export, web,
+    identity, patron_turnos, privacidad, readiness, recuperacion, shift_import, vida_export, web,
 )
 from body.agente import ajustes as agente_ajustes
 from body.agente import conversacion as agente_conversacion
@@ -119,6 +119,14 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
         "distance_m, avg_hr, max_hr, calories, source) VALUES (?, 'act-1', ?, ?, NULL, ?, 1800, "
         "5000, 130, 150, 300, 'garmin')",
         (person_id, DAYS[-1], f"{DAYS[-1]}T07:00:00", f"ZZ{tag}-ACTIVIDAD"),
+    )
+    # BODY-RECUPERACION-1-B: recuperacion_actividad is person-owned (FK through the activity row
+    # just inserted) and has its first census row here -- no marker needed, the census only checks
+    # export/delete-all coverage, and motivo is CHECK-constrained to a fixed reason-code set.
+    conn.execute(
+        "INSERT INTO recuperacion_actividad (person_id, activity_source, activity_source_id, "
+        "modelo_version, minutos, motivo, computed_at) VALUES (?, 'garmin', 'act-1', ?, 12, NULL, ?)",
+        (person_id, recuperacion.MODELO["version"], f"{DAYS[-1]}T07:30:00+00:00"),
     )
     conn.execute(
         "INSERT INTO workout_set (person_id, activity_source, activity_source_id, set_order, "

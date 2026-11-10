@@ -608,6 +608,22 @@ class ImportarGarminTareaTest(unittest.TestCase):
         self.assertNotIn("importar_garmin", vivo.PREFIJO_ARGV)
 
 
+class RecuperacionTareaTest(unittest.TestCase):
+    """BODY-RECUPERACION-1: the first backfill runs through the live tree like every other task,
+    no arguments needed; the daily pull calls body.recuperacion.recalcular per person after that,
+    so this task is for the one-off catch-up only."""
+
+    def test_recuperacion_esta_en_tareas(self):
+        self.assertIn("recuperacion", vivo.TAREAS)
+        self.assertEqual(vivo.TAREAS["recuperacion"], "body.recuperacion")
+
+    def test_no_bandera_antepuesta(self):
+        self.assertNotIn("recuperacion", vivo.PREFIJO_ARGV)
+
+    def test_no_paso_previo(self):
+        self.assertNotIn("recuperacion", vivo.PASOS_PREVIOS)
+
+
 class InstallScriptWakeCheckTest(unittest.TestCase):
     """A PowerShell installer is never executed in tests -- asserted by reading its text
     (BODY-DESPERTAR-1)."""

@@ -14234,3 +14234,332 @@ No schema migration. Customer-facing bytes: yes, the singular wording on `/histo
 day (the plural form, already shipped by BODY-PERIODO-PANTALLAS-1, is unchanged) -- this merge is itself the
 approved action per `ORCH-CARLOS-DELEGATES-TIER-1-1`, which named this exact fix and said "then merge". No
 cross-repo contract.
+
+## BODY-RECUPERACION-1 -- GATE_RED, stopped on the branch, not merged
+
+Carlos's study 1 (vida/estudios.md, relayed by the Personal desk, 2026-11-09): how long until his heart rate
+returns to his resting range after a workout, and what changes it. Branch `feat/body-recuperacion-1`, base
+`main` at `919beac`.
+
+**New module `body/recuperacion.py`**: `MODELO` (versioned, `"recuperacion-v1"`) --
+`margen_bpm=3` (a small cushion above the resting-HR band's own `baselines.baseline` high edge, so noise
+right at the edge doesn't count as "still elevated"), `sostenido_min=5` (the crossing must hold for 5
+minutes, not one sample, or a single low reading mid-recovery would falsely end the search --
+`test_un_bajon_que_sube_de_nuevo_no_cuenta_el_sostenido_manda` pins this), `horizonte_h=4` (a session that
+hasn't returned to resting within 4 hours is `fuera_de_horizonte`, not an open-ended search), `cobertura_min
+=0.5` (at least half the expected minute-HR samples in the window, or the honest answer is `sin_cobertura`,
+never a guess from a gappy signal), `min_n_grupo=5` and `ruido_min_diferencia_min=10.0` (a factor split needs
+5+ sessions on both sides and a 10+ minute median gap before `estudio()` calls it a finding -- fewer, or a
+smaller gap, is noise against his own session-to-session spread), `max_hallazgos=3`.
+
+`recuperacion_actividad(conn, person_id, activity_row) -> Resultado` walks the activity's own
+`baselines.baseline(conn, "resting_hr", day, person_id=...)` cutoff forward through minute HR (via
+`experimentos._muestras_dias` / `_espaciado_mediana_min` / `_sin_offset`, imported not duplicated, per
+`ORCH-CARLOS-DELEGATES-TIER-1-1`'s approval reason) and returns either `minutos` or one honest `motivo`:
+`sin_cobertura`, `sin_rango`, `fuera_de_horizonte`, `marcado` (the day is inside `db.dias_marcados`, excluded
+before any HR read). `estudio(conn, person_id)` groups computed rows by sleep (vs. the dataset's own median,
+not a separate baseline read -- cheap, and still never a population number), HRV, shift kind, time of day,
+session type and a duration tercile, and reports up to 3 ranked findings plus the overall median/IQR/n.
+
+**New table** `recuperacion_actividad` (`body/db.py`): person_id, activity_source, activity_source_id,
+modelo_version, minutos (nullable), motivo (nullable, `db.RECUPERACION_MOTIVOS`), computed_at; PK on
+person+activity+version so a model-version bump recomputes rather than mixes (ruling 1). `recalcular(conn,
+person_id)` fills it idempotently (`INSERT OR REPLACE`, skips rows already computed under the current
+version); wired into `pull.py` as a safe post-pull step (`_recalcular_recuperacion_seguro`, same
+catch-and-print shape as `_cerrar_semanas_seguro` -- a failure here is never a Garmin failure) in both the
+hosted per-person pull and the local `_run()`, and exposed as the `recuperacion` vivo task for the
+orchestrator's own first backfill (`python -m body.vivo recuperacion`, once, after this merges).
+
+**Screens**: `/history` gets a "Recuperación después de entrenar" / "Recovery after training" section
+(`historial.py`'s `_recovery_ctx`) between training and patterns -- one summary sentence, up to 3 finding
+sentences, a "pocos datos" / not-enough-data line when thin, and a line that caffeine/food/after-activity
+will count once logged (caffeine, food/hydration, heat and what-he-does-after are NOT computed this slice --
+ruling 2, deferred to "moments" later as the spec itself said). `/day/{day}` gets one line under an activity
+with a row (`hoy.py`'s `_recovery_line`): the minutes figure, or the honest reason -- never a line at all for
+`marcado`, since that activity's day is already explained elsewhere on the page. Strings added to both
+`body/i18n/es.json` and `en.json` (`day.recovery.*`, `history.recovery*`) -- see `git show`'s diff on this
+entry's commit for every string verbatim; new reason/condition keys are looked up through small dict maps
+(`_RECOVERY_REASON_KEY` in `hoy.py`, `_RECOVERY_COND_KEYS` in `historial.py`), never `t("prefix." + var)`, so
+`tests/test_i18n_paridad.py`'s dynamic-prefix scanner (not in this slice's `touches:`) needs no new entry
+(ruling 3).
+
+**Statement-cost ceilings** (`tests/test_rendimiento.py`, not in `touches:` -- this slice must stay inside
+its existing budget, not widen it): `estudio()` costs exactly 3 SQL statements regardless of row count (one
+join query, one shift query, one daily_metric query; 1 statement on the empty-data path), and `/day/{day}`'s
+recovery lookup is 1 statement (an `IN` clause over the day's own activity ids, not one query per activity).
+Measured on this slice's own fixture, final tree: `/history` with a finding = 25 statements (ceiling 29),
+`/day/{day}` with a recovered activity = 23 statements (ceiling 45) -- both pinned independently in
+`tests/test_recuperacion_pantallas.py::StatementCeilingTest` since `test_rendimiento.py` itself is out of
+scope (ruling 4).
+
+**Privacy** (`body/privacidad.py`): `recuperacion_actividad` added to `FULLY_HANDLED_TABLES`, exported under
+`recuperacion_actividades` (activity_source, activity_source_id, modelo_version, minutos, motivo,
+computed_at -- no figure beyond the person's own already-exported minutes), deleted in `delete_person`
+before `activity` (FK ordering, ruling 5). `RecuperacionExportDeleteTest` in `tests/test_privacidad.py` covers
+export presence and full delete.
+
+**Demo**: `body/demo.py` seeds invented minute-by-minute HR after a handful of existing invented activities
+(three recovery curves -- fast, slow, never -- cycled for visual variety, algebraically kept clear of the
+cutoff for every activity type's avg_hr range) and calls `recuperacion.recalcular` so the section and the
+Día line both show real output on the demo server without a live pull (ruling 6).
+
+**Tests**: `tests/test_recuperacion.py` (16: recovers / never-recovers / dip-then-rises-doesn't-count /
+coverage-gap / non-UTC midnight crossing / no-baseline -> `sin_rango` / marked-day -> `marcado` /
+`recalcular` idempotence and version-bump / `estudio()` groups, findings-need-n, "pocos datos"), and
+`tests/test_recuperacion_pantallas.py` (10: both screens in es/en, no-row -> no line, marked-day -> no line,
+the two statement ceilings above). Both import `tests/_isolate.py` first; no real figure anywhere (ruling 7:
+every test's HR/sleep/HRV number is invented, matching the convention already set by `test_turnos_costo.py`
+and `test_experimentos.py`).
+
+**Gate**, once, foreground, on the final tree (working tree at the time of this entry; `git status
+--porcelain` before this entry's own commit showed only this slice's files):
+`.venv/Scripts/python.exe -m unittest discover tests -t .` ->
+`Ran 2145 tests in 459.086s ... FAILED (failures=2, skipped=1)`. Per this slice's own dispatch ("do not
+re-run a gate into green"), this result is reported as-is, not patched and re-run:
+
+1. `tests/test_persona_fuga.py::TableCensusTest::test_every_person_table_is_seeded_or_explained` --
+   `recuperacion_actividad has a person_id column but setUp seeded no row in it`. Adding the table to
+   `privacidad.FULLY_HANDLED_TABLES` (in this slice's own `touches:`) means that test's own census now
+   expects a seeded row for it, but the fixture that seeds one, `_seed_person` in
+   `tests/test_persona_fuga.py`, is **not** in this slice's `touches:` -- fixing this means adding one
+   `INSERT INTO recuperacion_actividad` line to that file's `_seed_person`, which is a one-line, obviously
+   safe change, but out of this slice's granted scope to make unilaterally.
+2. `tests/test_primer_pull_1.py::NoHealthFigureInOutputTest::test_backfill_prints_only_counts` --
+   `_recalcular_recuperacion_seguro`'s own `print(f"recuperacion: {resultado['nuevas']} filas nuevas")` in
+   `pull.py` (in this slice's `touches:`) adds a line to the backfill command's stdout, breaking that test's
+   exact-string assertion. Unlike (1), this one IS fixable inside this slice's own files (drop the print, or
+   only print when `nuevas > 0` and teach that test the new line) -- but it was only discovered by this
+   gate's one allowed run, so per "run the gate once, report honestly, do not re-run it into green" it is
+   reported here rather than patched now.
+
+Open follow-up: `BODY-RECUPERACION-1-FOLLOWUP-GATE-RED` -- seed one `recuperacion_actividad` row in
+`tests/test_persona_fuga.py`'s `_seed_person`, and either drop or gate `pull.py`'s
+`_recalcular_recuperacion_seguro` print so `tests/test_primer_pull_1.py::test_backfill_prints_only_counts`
+passes again, then re-run the full gate once before this branch merges.
+
+No schema migration conflict (the new table is additive, `CREATE TABLE IF NOT EXISTS`). Customer-facing
+bytes: yes -- the `/history` recovery section and the `/day/{day}` recovery line, both languages, strings
+above. Per this slice's own dispatch body ("Customer-facing: stops AWAITING_APPROVAL"), this would stop
+AWAITING_APPROVAL on a green gate; a RED gate stops the same way, on the branch, not merged, and is reported
+as **GATE_RED** instead. No cross-repo contract. Committed on `feat/body-recuperacion-1`, not merged into
+`main`.
+
+Backfill command for the orchestrator, once this merges: `python -m body.vivo recuperacion` (run from the
+live `body-app` tree under `BODY_HOME`, the same convention as every other `vivo` task).
+
+## BODY-RECUPERACION-1-B -- census seed + silent pull step, closing BODY-RECUPERACION-1-FOLLOWUP-GATE-RED
+
+Fixed both test subjects BODY-RECUPERACION-1's follow-up named, on the same branch
+(`feat/body-recuperacion-1`, base `main`, still unmerged):
+
+1. `tests/test_persona_fuga.py`'s `_seed_person` now inserts one `recuperacion_actividad` row per person
+   (`activity_source='garmin'`, `activity_source_id='act-1'`, through the `activity` row `_seed_person`
+   already seeds, `modelo_version=recuperacion.MODELO["version"]`, `minutos=12`, `motivo=NULL`) --
+   `TableCensusTest::test_every_person_table_is_seeded_or_explained` now finds a seeded row for the table
+   `privacidad.FULLY_HANDLED_TABLES` already names, instead of loosening that census. No marker was added
+   for it: `motivo` is CHECK-constrained to `RECUPERACION_MOTIVOS` (or NULL), so no column can carry a
+   distinctive ZZ-tag string, and the seed only needs to prove export/delete-all coverage, not render
+   anywhere.
+2. `body/pull.py`'s `_recalcular_recuperacion_seguro` now prints its `"recuperacion: N filas nuevas"` line
+   only when `resultado["nuevas"]` is truthy -- silent on a re-run that found nothing new, the same rule
+   `_cerrar_semanas_seguro`'s own sweep already follows (there, achieved by never calling it for a person
+   with no active goal; here, by gating the print itself, since `_recalcular_recuperacion_seguro` runs for
+   every person on every pull regardless of whether anything changed). This restores
+   `tests/test_primer_pull_1.py::NoHealthFigureInOutputTest::test_backfill_prints_only_counts` (not in this
+   slice's `touches:`, not edited) to its exact-string pass, without changing the expected string.
+3. `tests/test_recuperacion.py` gained `RecalcularSeguroTest` (2 tests): one counts-only line printed when
+   `_recalcular_recuperacion_seguro` computes a new row, nothing printed on the idempotent re-run.
+4. Swept every other test that asserts exact pull stdout or census person-table sets (grepped for
+   `prints_only_counts`, `getvalue().strip()` near `pull.main`/`pull_hosted`/`pull_backfill_hosted`,
+   `_seed_person`, `FULLY_HANDLED_TABLES`/`PARTIAL_EXPORT_TABLES`/`NEVER_EXPORTED_TABLES`/`person_tables(`):
+   `tests/test_pull.py`, `test_momentos_pull.py`, `test_entreno_sets.py`, `test_garmin_host.py`,
+   `test_conexiones_cerradas.py` use `assertIn`, not an exact-string match, on pull stdout, so an added or
+   suppressed line does not trip them. `tests/test_privacidad.py`'s own census set-equality (line 301-303)
+   and its post-delete per-table zero-count sweep (line 659-661) are unaffected by what `_seed_person`
+   seeds. No other `_seed_person` or table-census fixture exists outside `test_persona_fuga.py` and
+   `test_privacidad.py`. Nothing else needed a fix.
+
+**Gate**, once, foreground, on this slice's final tree (tracked changes limited to `body/pull.py`,
+`tests/test_persona_fuga.py`, `tests/test_recuperacion.py`; `git status --porcelain` empty before this
+commit): `.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 2147 tests in 390.618s ... OK
+(skipped=1)` (2145 before this slice, per BODY-RECUPERACION-1's own GATE_RED run; +2 from the new
+`RecalcularSeguroTest`, and the two failures that run reported are gone).
+
+No schema or migration change. No customer-facing bytes (this slice touches test fixtures and one
+stdout-only print's condition, no template, route response or user-visible string). No cross-repo contract.
+Still, per the dispatch's own approval-reason ("Still a customer-facing branch: stops AWAITING_APPROVAL"),
+this slice stops **AWAITING_APPROVAL** on `feat/body-recuperacion-1`, not merged into `main` -- the branch
+as a whole (BODY-RECUPERACION-1's own recovery screens) remains customer-facing and gated on that same
+approval; this slice only clears its test-suite blocker.
+
+Commit `eb4aa68` on `feat/body-recuperacion-1`, on top of `fbb22e8` (BODY-RECUPERACION-1's own ledger entry
+above). Not merged.
+
+## BODY-RECUPERACION-1-C -- replaces ruling 2: the person's OWN usual for that CLOCK HOUR, never the
+daily resting range; the median counts a session that never came back
+
+ORCH-CARLOS-DELEGATES-TIER-1-1. The orchestrator measured BODY-RECUPERACION-1's v1 model on a COPY of
+Carlos's real database on his own PC (counts only, copy deleted after): of 392 activities, 297 came out
+`fuera_de_horizonte`, 39 `sin_cobertura`, 1 `sin_rango`, 55 recovered -- and 36 of those 55 took 90-240
+min. v1's own "back to resting" target was `baselines.baseline(conn, "resting_hr", day,
+person_id=person_id)` -- Garmin's lowest stretch of the day, mostly asleep. An awake desk hour or a shift
+hour seldom drops that low, so v1 called an ordinary awake afternoon "never recovered"; on the demo too, a
+40-min walk "had not returned to resting 4 hours after". This entry REPLACES ruling 2 of
+BODY-RECUPERACION-1 with the ruling below, and fixes the second defect ruling 4's own median dropping a
+censored session silently.
+
+**New ruling 2 (replaces the old one)**: "back to normal" = the first minute after the activity's end
+from which heart rate stays at or under the person's OWN usual heart rate FOR THAT CLOCK HOUR, plus
+MODELO's margin, for MODELO's sustained span. The usual for an hour = the median of that clock hour's
+samples over MODELO's look-back days, counting only (day, hour) pairs where the day is not marked and
+that hour holds no activity of the person's own, with the same coverage floor the horizon window already
+used; fewer qualifying days than MODELO's minimum -> `sin_rango`. A desk hour, a shift hour and an evening
+hour each have their own usual -- never a population number.
+
+**MODELO, old -> new** (`body/recuperacion.py`): `version` `recuperacion-v1` -> `recuperacion-v2` (a
+version bump recomputes rather than mixes -- ruling 1 from BODY-RECUPERACION-1, unchanged, and
+`test_un_cambio_de_version_recalcula_sin_borrar_la_version_anterior` proves it again against v2 -> v3).
+`margen_bpm` (3), `sostenido_min` (5), `horizonte_h` (4), `cobertura_min` (0.5), `min_n_grupo` (5),
+`ruido_min_diferencia_min` (10.0) and `max_hallazgos` (3) are unchanged, now read against the hourly
+usual instead of the daily resting range. The old target (`baselines.baseline('resting_hr', ...)`, no
+MODELO key of its own, just a function call in `recuperacion_actividad`) is GONE. Two new keys: `
+dias_historia` = 30 (how many days before the activity's own day `_usual_hora` looks back -- the natural
+default the orchestrator asked for, the same idea as `baselines.WINDOW_DAYS`) and `min_dias_horario` = 10
+(fewer qualifying days for a given hour and there is no honest usual yet -- a little higher than
+`baselines.MIN_DAYS` (7), since an hour's own history is thinner than a whole day's: many ordinary days
+still get excluded by the activity-hour and marked-day filters). `recuperacion.py`'s own docstring and
+every MODELO comment were rewritten to explain the new target; `baselines` is no longer imported by this
+module at all.
+
+**The cache (point 1)**: `recuperacion_actividad` takes an optional `cache: dict | None` (a bare call
+without one still works, scoped to that one call -- every existing test keeps calling it with no
+cache). `recalcular` opens ONE cache dict and shares it across every activity in its run. `_leer_dia`
+reads a given day's `intradia_fc` series via `db.intradia` AT MOST ONCE per cache, bucketing it by clock
+hour and computing its own observed spacing right there, for BOTH the horizon search and `_usual_hora` to
+read back -- neither a day touched by several activities' overlapping look-back windows, nor the SAME
+day read for the horizon search and for another activity's look-back, is ever read twice.
+`_horas_actividad_por_dia` loads every one of this person's own activities in ONE query per cache (not
+once per activity per look-back day) to know which (day, hour) pairs an activity of the person's own
+already occupies. `_usual_hora` itself memoizes its own result per (activity day, hour) in the cache, so
+two activities sharing a day and hour, or one activity touching several hours, never re-walk the 30-day
+window. `tests/test_recuperacion.py::LecturaPorDiaAcotadaTest` proves `db.intradia` is called at most
+once per distinct day across three activities whose look-back windows overlap heavily.
+
+Day-read count for a backfill (figure, not re-measured on real data -- counts only, per this repository's
+own privacy rule): measured on this slice's own widened demo seed (33 activities, three of them under
+other activities' own marked days, over a 120-day history), a FRESH `recalcular` from zero intraday-reads
+costs exactly 141 calls to `db.intradia`, every one a DISTINCT day (zero repeats) -- nowhere near the
+naive worst case of activities × look-back-days (33 × 30 = 990). The bound is the UNION of every
+activity's own horizon days and look-back days, not their product: for a dataset spanning D calendar
+days of history, that union is at most roughly D + `dias_historia` (30), regardless of how many
+activities populate those days. By that same bound, the orchestrator's own 400-activity, ~900-day
+backfill would cost on the order of 900 + 30 ≈ 930 day-reads, not 400 × 30 = 12,000.
+
+**The median counts every session that has an answer (point 2)**: `_mediana_censurada(valores,
+censurados, horizonte_min)` treats a `fuera_de_horizonte` session as right-censored -- its true minute is
+unknown, but it IS more than the horizon, so it sorts above every finite value. Combined n = len(valores)
++ censurados; the median is still honestly defined while UNDER half of n is censored (sorted position(s)
+fall inside the finite list), else there is no single honest number and the result carries `mas_de` (the
+horizon, in minutes) instead of `mediana`. `estudio()`'s own SQL now reads `ra.minutos IS NOT NULL OR
+ra.motivo = 'fuera_de_horizonte'` (previously `minutos IS NOT NULL` only) -- still the same three
+statements regardless of row count. The SAME rule applies inside every factor group: each group now
+holds its own finite `valores` list AND its own `censurados` count (a `fuera_de_horizonte` session still
+has a day/start_local/duration_s/type, so it still belongs to a sleep bucket, a shift, an hour-of-day and
+so on), `MODELO['min_n_grupo']` is checked against the group's TOTAL (finite + censored), and the
+worst/best group comparison ranks by `_valor_orden` (the group's own median, or its own `mas_de` lower
+bound when the group has no honest median) -- `tests/test_recuperacion.py::EstudioTest::
+test_censuradas_cuentan_dentro_de_cada_grupo_del_hallazgo` proves a group whose finite sessions look as
+fast as another's, but where most of the rest never came back, ranks as the worse one, not an invisible
+one.
+
+**Strings (verbatim, both languages complete)** -- `body/i18n/es.json` / `en.json`:
+
+- `day.recovery.ok`: es "Tu pulso volvió a lo habitual para esa hora en {min} min" / en "Your heart rate
+  was back to your usual for that hour in {min} min" (was "...a tu reposo..." / "...to resting...").
+- `day.recovery.reason.sin_cobertura`: es "No hay suficientes datos de pulso para saber cuánto tardaste
+  en volver a lo habitual para esa hora." / en "Not enough heart-rate data to tell how long you took to
+  return to your usual for that hour."
+- `day.recovery.reason.sin_rango`: es "Aún no tenemos suficientes días normales para saber tu pulso
+  habitual a esa hora." / en "Not enough ordinary days yet to know your usual for that hour."
+- `day.recovery.reason.fuera_de_horizonte`: es "Tu pulso no había vuelto a lo habitual para esa hora
+  {horas} horas después de esta sesión." / en "Your heart rate had not returned to your usual for that
+  hour {horas} hours after this session."
+- `history.recovery.resumen` (no session censored): es "Normalmente tu pulso vuelve a lo habitual en
+  {mediana} ({n} sesiones)." / en "Your heart rate typically returns to its usual level in {mediana}
+  ({n} sessions)."
+- `history.recovery.resumen_censurado` (new key, some but under half censored): es "Normalmente tu pulso
+  vuelve a lo habitual en {mediana} ({n} sesiones; {n_censurados} no volvieron en {horas} h)." / en "Your
+  heart rate typically returns to its usual level in {mediana} ({n} sessions; {n_censurados} did not
+  return within {horas} h)."
+- `history.recovery.resumen_mas_de` (new key, at least half censored): es "Más de la mitad de tus
+  sesiones no habían vuelto a lo habitual {horas} horas después ({n} sesiones)." / en "More than half of
+  your sessions had not returned to their usual level {horas} hours later ({n} sessions)."
+- `history.recovery.mas_de_valor` (new key, a group's own censored value inside a finding): es "más de
+  {horas} h" / en "more than {horas} h".
+- `history.recovery.hallazgo`: es "Después de {peor}, tu pulso tardó más en volver a lo habitual:
+  {val_peor} frente a {val_mejor} ({n_peor} y {n_mejor} sesiones)." / en "After {peor}, your heart rate
+  took longer to return to its usual level: {val_peor} vs {val_mejor} ({n_peor} and {n_mejor}
+  sessions)." (`val_peor`/`val_mejor` replace the old `min_peor`/`min_mejor` numeric placeholders -- each
+  is a pre-formatted string, either an exact minutes figure or `mas_de_valor`'s own phrase, built in
+  `historial.py`'s `_recovery_valor`, never two mutually-exclusive numeric slots in one template.)
+
+Every other `history.recovery.cond.*` key (the per-factor group label: a short night, a shift, a session
+type and so on) is unchanged -- only the recovery TARGET's own wording changed, never the factor
+descriptions.
+
+**Demo** (`body/demo.py`, BODY-RECUPERACION-1's six-activity seed could never reach `MODELO
+['min_n_grupo']` twice over -- 6 activities can produce at most 6 qualifying sessions, short of the 10 a
+two-group finding needs): now seeds the `N_ACTIVIDADES_RECUPERACION` (24) MOST RECENT activities instead
+of 6. Each one's recovery pace is correlated with its own `type` -- `_TIPOS_LENTOS` (cycling,
+strength_training) recover slowly (`_PATRON_LENTO`, 160-210 min), everything else recovers fast
+(`_PATRON_RAPIDO`, 15-35 min) -- a real, if invented, correlation that gives «Tu historia»'s `tipo_sesion`
+factor a guaranteed finding once at least `min_n_grupo` of each exist among the 24 (measured on this
+slice's own demo run: 10 cycling-bucket, 9 running-bucket, producing exactly that finding, plus `turno`
+and `duracion_tercil` findings riding the same correlation). Exactly one of the 24 is forced
+`fuera_de_horizonte` and exactly one `sin_cobertura` (a literal gap: `_curva_recuperacion`'s new
+`sin_cobertura` flag stops the curve before the activity's own end, so its search window gets no sample
+at all) -- the rest recover, matching this spec's "most back within the horizon, one not, one with a
+gap". New `_curva_dia_ordinario` (a fixed invented circadian table, `_PULSO_HORA`, 52-74 bpm) seeds every
+"ordinary" day in the combined look-back span `_usual_hora` needs, EXCLUDING every day one of the chosen
+activities' own curves already touches (its own day, or the next day when its horizon crosses midnight)
+-- without that exclusion, flat already-"usual" background samples interleaved into the very
+post-activity window being invented would read as an almost-instant recovery, never at the chosen pace.
+Measured on a fresh demo seed (120 days, `--idioma es`): `estudio()` returns n=27 (26 recovered + 1
+fuera_de_horizonte), `n_censurados`=1, 3 findings (the `max_hallazgos` cap), including `tipo_sesion`
+(peor=cycling, mejor=running) -- «Tu historia»'s own summary line reads "Normalmente tu pulso vuelve a lo
+habitual en 30 min (27 sesiones; 1 no volvieron en 4 h)." on the demo server today.
+
+**Tests**: `tests/test_recuperacion.py` grew from 18 to 28 (+10: `UsualHoraTest` (2, the hour-aware cutoff
+itself -- a desk-level afternoon reached within the horizon where v1's resting-range cutoff never would,
+and the cutoff switching mid-search when a sample crosses an hour boundary), `SinRangoTest` gained a
+second case (fewer than `min_dias_horario` qualifying days still `sin_rango`), `LecturaPorDiaAcotadaTest`
+(1, the bounded read count), `MedianaCensuradaTest` (4, under/at-exactly-half censored, no censoring,
+empty), `EstudioTest` gained two cases (the overall censored median counting fuera_de_horizonte sessions,
+and the same rule inside a factor group)). `tests/test_recuperacion_pantallas.py` stayed at 10 tests,
+rewritten for the new wording and a `_fondo_dias`/`_fondo_horas`-seeded hourly usual in place of
+`_set_resting`'s daily baseline. Both import `tests/_isolate.py` first; every HR/sleep value in both
+files is invented.
+
+**Gate**, once, foreground, on this slice's final tree (tracked changes limited to `body/demo.py`,
+`body/i18n/en.json`, `body/i18n/es.json`, `body/recuperacion.py`, `body/rutas/historial.py`,
+`tests/test_recuperacion.py`, `tests/test_recuperacion_pantallas.py`; `git status --porcelain` empty
+before the commit below): `.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 2157 tests
+in 604.925s ... OK (skipped=1)` (2147 before this slice, this surface's own measured floor; +10, all of
+them this slice's own new `test_recuperacion.py` cases -- `test_recuperacion_pantallas.py`'s own count
+is unchanged).
+
+No schema or migration change (`recuperacion_actividad`'s own CHECK constraint already allowed
+`sin_rango`; no new column, no new table). Customer-facing bytes: YES -- every string quoted above, on
+both `/history` and `/day/{day}`, in both languages. Per this slice's own dispatch body ("Customer-facing
+strings change: stops AWAITING_APPROVAL"), this slice stops **AWAITING_APPROVAL** on
+`feat/body-recuperacion-1`, not merged into `main`. No cross-repo contract.
+
+Re-measurement command for the orchestrator, on a COPY of the real database (counts only, copy deleted
+after -- the same convention BODY-RECUPERACION-1's own first measurement used): `python -c "from body
+import db, recuperacion; conn = db.connect(); person_id = db.local_person_id(conn); print(recuperacion
+.recalcular(conn, person_id))"` run from the live `body-app` tree with `BODY_HOME` pointed at the copy --
+it imports `body.recuperacion.recalcular` exactly as this spec asked, recomputes every activity under the
+new `recuperacion-v2` version (the old `recuperacion-v1` rows stay, per ruling 1), and prints counts only.
+
+Commit `1762571` on `feat/body-recuperacion-1`, on top of `9599fa5` (BODY-RECUPERACION-1-B's own ledger
+entry above). Not merged.

@@ -56,6 +56,23 @@
 </div>
 {% endif %}
 
+<h2>{{ t('history.recovery_title') }}</h2>
+{% if recovery.tiene_datos %}
+<div class="card">
+  <p class="read mt-0 mb-0">{{ recovery.resumen }}</p>
+</div>
+{% if recovery.hallazgos %}
+<div class="card">
+  {% for h in recovery.hallazgos %}<p class="read {{ 'mt-0' if loop.first else 'mt-6' }}">{{ h }}</p>{% endfor %}
+</div>
+{% elif recovery.sin_hallazgos %}
+<div class="card empty">{{ recovery.sin_hallazgos }}</div>
+{% endif %}
+<p class="note mt-6">{{ recovery.futuro }}</p>
+{% else %}
+<div class="card empty">{{ t('history.recovery_sin_datos') }}</div>
+{% endif %}
+
 <h2>{{ t('history.patterns_title') }}</h2>
 {% if patterns %}
 <div class="card">

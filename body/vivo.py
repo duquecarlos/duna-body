@@ -64,6 +64,10 @@ TAREAS = {
     # BODY-GARMIN-IMPORT-1: `python -m body.vivo importar_garmin <path-to-export.zip> [...]` --
     # arguments passed straight through to body.importar_garmin.
     "importar_garmin": "body.importar_garmin",
+    # BODY-RECUPERACION-1: fills recuperacion_actividad for the first backfill (safe to re-run --
+    # body.recuperacion.recalcular is idempotent); the daily pull also calls it per person after
+    # that, so this task is for the one-off catch-up, not a schedule.
+    "recuperacion": "body.recuperacion",
 }
 
 # Argv prepended before a task's own arguments, for a task that shares a module with another task

@@ -11,8 +11,8 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException
 from markupsafe import Markup
 
-from .. import (compartir, cuenta, db, goals, history, household, identity, readiness, turnos_costo, tutoriales,
-                ventana_comida)
+from .. import (compartir, cuenta, db, goals, history, household, identity, readiness, recuperacion, turnos_costo,
+                tutoriales, ventana_comida)
 from ..baselines import baseline
 from ..i18n import T
 from . import comun, experimentos
@@ -392,6 +392,43 @@ def _activity_name(t: T, a) -> str:
     return t("activity.generic")
 
 
+def _recovery_lookup(conn, person_id: int, activities: list[dict]) -> dict[tuple[str, str], object]:
+    """BODY-RECUPERACION-1: one SQL statement for every one of this day's activities' own
+    recovery row (current model version), keyed by (source, source_id) -- never one query per
+    activity."""
+    if not activities:
+        return {}
+    ids = [a["source_id"] for a in activities]
+    placeholders = ",".join("?" * len(ids))
+    rows = conn.execute(
+        f"SELECT activity_source, activity_source_id, minutos, motivo FROM recuperacion_actividad "
+        f"WHERE person_id = ? AND modelo_version = ? AND activity_source_id IN ({placeholders})",
+        (person_id, recuperacion.MODELO["version"], *ids),
+    ).fetchall()
+    return {(r["activity_source"], r["activity_source_id"]): r for r in rows}
+
+
+_RECOVERY_REASON_KEY = {
+    "sin_cobertura": "day.recovery.reason.sin_cobertura",
+    "sin_rango": "day.recovery.reason.sin_rango",
+    "fuera_de_horizonte": "day.recovery.reason.fuera_de_horizonte",
+}
+
+
+def _recovery_line(t: T, row) -> str | None:
+    """BODY-RECUPERACION-1: the Día line under an activity -- None (no line at all) when there is
+    no row yet, or when the day itself is marked (the marked-day line elsewhere already says so).
+    The reason -> key map is explicit, never a concatenated "day.recovery.reason." + motivo, so a
+    new reason code is a one-line addition here, never an unreviewed dynamic key."""
+    if row is None or row["motivo"] == "marcado":
+        return None
+    if row["motivo"] == "fuera_de_horizonte":
+        return t(_RECOVERY_REASON_KEY["fuera_de_horizonte"], horas=t.num(recuperacion.MODELO["horizonte_h"]))
+    if row["motivo"] is not None:
+        return t(_RECOVERY_REASON_KEY[row["motivo"]])
+    return t("day.recovery.ok", min=t.num(round(row["minutos"])))
+
+
 def _periodo_dia_ctx(t: T, conn, person_id: int, dia_iso: str) -> str | None:
     """BODY-PERIODO-PANTALLAS-1: Día's own line, in words, naming every kind that covers this one
     day -- never the person's own note text (DESIGN: stays inside the assistant panel's own card)."""
@@ -434,6 +471,7 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
         win = data["sleep"] or {}
         window = " → ".join(x[11:16] for x in (win.get("start_local"), win.get("end_local")) if x)
         sleep = {"total": t.minutes(vals["sleep_minutes"]), "window": window, "stages": stages}
+    recuperaciones = _recovery_lookup(conn, person_id, data["activities"])
     acts = []
     for a in data["activities"]:
         bits = []
@@ -443,7 +481,9 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
             bits.append(f"{t.num(a['distance_m'] / 1000, 1)} km")
         if a["avg_hr"]:
             bits.append(f"{t.num(a['avg_hr'])} {t('unit.bpm')}")
-        acts.append({"name": _activity_name(t, a), "detail": " · ".join(bits)})
+        recovery_row = recuperaciones.get((a["source"], a["source_id"]))
+        acts.append({"name": _activity_name(t, a), "detail": " · ".join(bits),
+                     "recovery": _recovery_line(t, recovery_row)})
     shifts = []
     for s in data["shifts"]:
         kind = s["kind"]

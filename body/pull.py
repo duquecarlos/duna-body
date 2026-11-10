@@ -30,7 +30,8 @@ import time
 from datetime import date, timedelta
 from pathlib import Path
 
-from . import config, cuenta, db, errores, experimentos, fechas, garmin_adapter, garmin_cuenta, goals, readiness
+from . import (config, cuenta, db, errores, experimentos, fechas, garmin_adapter, garmin_cuenta, goals, readiness,
+               recuperacion)
 
 PAUSE_S = 1.0  # be gentle with Garmin's servers during a backfill
 EMPTY_STOP = 60  # --all stops after this many consecutive days with no watch data
@@ -188,6 +189,21 @@ def _cerrar_semanas_seguro(conn, person_id: int, *, desde: date | None = None) -
         print(f"weekly checks failed: {errores.texto_seguro(e)}", flush=True)
 
 
+def _recalcular_recuperacion_seguro(conn, person_id: int) -> None:
+    """BODY-RECUPERACION-1's post-pull step: fills `recuperacion_actividad` for this person's own
+    activities not yet computed under the current model version -- idempotent, cheap on a re-run.
+    A failure here is never a Garmin failure and never stops the pull for this or the next person
+    (same safe-wrapper shape as `_cerrar_semanas_seguro`): caught, printed as a counts-only line
+    with the exception TYPE, nothing else happens. Silent when there was nothing new, the same
+    rule the weekly-check sweep follows (BODY-RECUPERACION-1-B)."""
+    try:
+        resultado = recuperacion.recalcular(conn, person_id)
+        if resultado["nuevas"]:
+            print(f"recuperacion: {resultado['nuevas']} filas nuevas", flush=True)
+    except Exception as e:
+        print(f"recuperacion failed: {errores.texto_seguro(e)}", flush=True)
+
+
 def _cerrar_semanas_todas(conn, desde_por_persona: dict[int, date] | None = None) -> None:
     """Closes weeks, once each, for EVERY person who can see an active goal (own or shared
     household milestone, `goals.personas_con_meta_activa`) -- connected to Garmin or not, pulled
@@ -235,6 +251,7 @@ def pull_hosted(conn, *, fecha: str | None = None, n_days: int = 2) -> tuple[int
         garmin_cuenta.limpiar_error(conn, person_id)
         saved += n
         ok += 1
+        _recalcular_recuperacion_seguro(conn, person_id)
         # BODY-EXPERIMENTOS-INTRADIA-DIAS-FALTANTES-1: only on the implicit "today" sweep (no
         # explicit --date), the same scheduled-pull shape the daily hosted timer runs.
         if hoy is not None:
@@ -335,6 +352,7 @@ def pull_backfill_hosted(conn, *, hoy: date | None = None) -> tuple[int, int, in
         garmin_cuenta.limpiar_error(conn, person_id)
         saved += n
         ok += 1
+        _recalcular_recuperacion_seguro(conn, person_id)
         if oldest is not None:
             desde_por_persona[person_id] = date.fromisoformat(oldest)
     _cerrar_semanas_todas(conn, desde_por_persona)
@@ -549,6 +567,7 @@ def _run(conn, a) -> int:
     # after every local path that stores or recomputes data -- --all, --recompute, and the
     # default/--days/--date pull all reach this line.
     _cerrar_semanas_seguro(conn, person_id, desde=desde)
+    _recalcular_recuperacion_seguro(conn, person_id)
     return 0
 
 
