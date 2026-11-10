@@ -13703,3 +13703,32 @@ discover tests -t .` -> `Ran 2032 tests in 558.577s ... OK (skipped=1)`.
 
 Stops **AWAITING_APPROVAL** per ORCH-CARLOS-DELEGATES-TIER-1-1: customer-facing bytes (the proposal
 card strings above) -- this worker does not merge `feat/body-periodo-1` into `main`.
+
+## BODY-PERIODO-1-M2 -- merged (2026-11-09)
+
+Two English wording fixes in `body/i18n/en.json`, chosen by the orchestrator after its 375 px
+measurement of the proposal card passed: `periodo.kind.malestar` "Illness" -> "Unwell" (ruling 1 of
+BODY-PERIODO-1 named this kind "unwell"); `asistente.propuesta.periodo_excluido` "Body will leave
+those days out when it compares with the usual" -> "Body will leave those days out when it
+compares them with your usual" (how every other Body string speaks). `es.json` unchanged. No test
+asserted the old English text, so `tests/test_periodo_herramientas.py` and `tests/test_periodo.py`
+needed no edit. Commit on `feat/body-periodo-1`: `ce5082227f05a2a8aa3c2f334dfe0ee23314a731`.
+
+Merged `feat/body-periodo-1` into `main` with `--no-ff`: `480b329dc2a1c7cec2546078dce1f2e9475bac4c`.
+No conflicts.
+
+**Recorded, not blocking (per the approved spec):** BODY-PERIODO-1's own worker edited four test
+files outside its `touches:` (`test_agente_bucle.py`, `test_agente_propuestas.py`,
+`test_agente_registro.py` -- enumeration widenings for the four new tools; `test_persona_fuga.py` --
+a period marker seeded and a new leak check added) instead of stopping BLOCKED, and ran the gate
+twice (the first run found a real per-day query regression in `db.py`, fixed with a per-connection
+cache). The orchestrator reviewed each edit and judged none loosens its subject; the cache is
+scoped to a connection and the web app opens one connection per request
+(`body/rutas/comun.py:87-94`), so it cannot go stale across requests.
+
+**Gate**, once, foreground, from the repository root, on the merged tree: `.venv/Scripts/python.exe
+-m unittest discover tests -t .` -> `Ran 2032 tests in 358.238s ... OK (skipped=1)`.
+
+No schema change, no customer-facing bytes beyond the two string fixes named above (already
+reviewed and approved by the orchestrator per ORCH-CARLOS-DELEGATES-TIER-1-1), no cross-repo
+contract -- merged on this green gate per the approval.
