@@ -13904,3 +13904,100 @@ No schema migration. Customer-facing bytes: yes, carried in by the merge (Tenden
 soreness cards, the assistant's soreness proposal card, and this slice's own unit wording) --
 covered by this ledger's own approval, which the spec's body says in words authorises the merge
 ("Then merge."). No cross-repo contract. **COMPLETE**, on `main`.
+
+## BODY-AYUNO-1 -- an eating-window card on Hoy and Día
+
+Carlos asked (via Personal, 2026-11-09): "we can keep track of fasting windows also", and this
+week he aims to go to sleep "at least 3-4 hours after eating". BODY-INFERENCIA-FC-1-INV found the
+eating window is a pure read of `ingesta.ts_local` (BODY-PROTEINA-1): no inference, no schema
+change.
+
+**`body/ventana_comida.py`**, pure reads, no write, no new table:
+- `ventana(conn, person_id, day)` -- the day's first and last TIMED `ingesta.ts_local`, its
+  length, the total entry count and how many carried no time. `None` with no `ingesta` row that
+  day; a day with only untimed rows still returns a `Ventana` (so the caller can say "you logged
+  food, but no time"), just with `primera`/`ultima`/`duracion_min` all `None`. One timed entry is
+  a window of one meal (`duracion_min = 0.0`), never a missing value -- a gap is never invented
+  from nothing, and never collapsed into one either.
+- `ayuno_previo(conn, person_id, day)` -- the overnight gap from the PREVIOUS day's last timed
+  meal to THIS day's first, only when both exist.
+- `comida_a_sueno(conn, person_id, day)` -- the gap from `day`'s last timed meal to the START of
+  that night's sleep, the "3-4h after eating" check, a read never a verdict. `sleep_session`
+  files a night under its WAKE day (`body/db.py`'s `save_day`, same reading `body/despertar.py`
+  already relies on), so this reads `sleep_session` at `day + 1`, only when both exist.
+- `ayuno_ahora(conn, person_id, now_local)` -- hours since the person's own last timed meal,
+  whichever day it fell on, for Hoy's "fasting now"; `None` with no timed meal at or before
+  `now_local`.
+
+**Hoy** (`body/rutas/hoy.py` `_ventana_ctx`, `today.html`): a card under the day's metric cards,
+always present. With at least one timed entry: the window's length, first/last meal times,
+"fasting now" (from `ayuno_ahora`, independent of today's own data) and, when known, yesterday's
+last meal to sleep (`comida_a_sueno` on yesterday -- last night's sleep has already happened, so
+this is the one concrete 3-4h reading Hoy can show). With entries but none timed: one line saying
+so. With no entry at all: one plain line inviting the person to tell Body when they eat -- no
+empty chart, no target, no "good"/"bad" word (DESIGN rule 6, rule 12).
+
+**Día** (`_ventana_dia_ctx`, `day.html`): the same window figures for that specific day, plus the
+overnight fast before it (`ayuno_previo`), in a new "Ventana de comida" section between Turno and
+"Todas las medidas".
+
+Both screens share `_ventana_base` (the state -- `sin_registro` / `sin_hora` / `una_comida` /
+`con_ventana` -- and the figures each needs); Hoy adds `ayuno_ahora`/`comida_sueno`, Día adds
+`ayuno_previo`. Every hour/minute figure is formatted through the existing `T.minutes()`, the
+same convention sleep and shift durations already use, rather than a new formatter.
+
+**Strings**, new keys only, es/en (es default, Cuenta register, tú; both verified by
+`tests/test_i18n_paridad.py`):
+- `today.ventana.titulo` "Ventana de comida" / "Eating window"
+- `today.ventana.sin_registro` "Cuéntale a Body cuándo comes para ver tu ventana de comida." /
+  "Tell Body when you eat to see your eating window."
+- `today.ventana.sin_hora` "Hoy registraste comida, pero sin hora — agrégala para ver tu
+  ventana." / "You logged food today, but with no time — add it to see your window."
+- `today.ventana.una_comida` "Una comida registrada hoy, a las {hora}." / "One meal logged today,
+  at {hora}."
+- `today.ventana.rango` "primera comida {primera} · última {ultima}" / "first meal {primera} ·
+  last {ultima}"
+- `today.ventana.ayuno_ahora` "En ayuno hace {horas}" / "Fasting for {horas}"
+- `today.ventana.comida_sueno` "Ayer dormiste {horas} después de tu última comida" / "Yesterday
+  you slept {horas} after your last meal"
+- `day.ventana.titulo` "Ventana de comida" / "Eating window"
+- `day.ventana.sin_registro` "Sin comidas registradas este día." / "No meals logged this day."
+- `day.ventana.sin_hora` "Comida registrada este día, pero sin hora." / "Food logged this day,
+  but with no time."
+- `day.ventana.una_comida` "Una comida registrada, a las {hora}." / "One meal logged, at {hora}."
+- `day.ventana.rango` same shape as Hoy's.
+- `day.ventana.ayuno_previo` "Ayuno nocturno antes de este día: {horas}" / "Overnight fast before
+  this day: {horas}"
+
+**Demo**: `body/demo.py`'s `_seed_ingesta` now gives each invented meal a time -- one per slot in
+a fixed `_COMIDA_MINUTOS` list (breakfast/lunch/snack/dinner windows), always in order -- so the
+demo server's card has a real window to show, never an invented one. No CSS change was needed:
+the card reuses `.card`/`.q`/`.fig`/`.note` and the existing `.mt-6`/`.mb-0`/`.m-0` utilities.
+
+**What the spec got slightly wrong**: it describes the card as sitting "under the protein card",
+but Hoy has no protein card today -- BODY-PROTEINA-1 only ever logs protein through the
+assistant's chat tools and `ingesta`'s own total shows up in Tendencias and in Día's "Todas las
+medidas" grid, never as a Hoy card of its own. This card is placed as its own last card in Hoy's
+metrics column instead. It also does not reach `soon.html` (no Garmin data at all): that template
+is outside this slice's `touches:`, so a person with zero Garmin history never sees the eating
+window on Hoy, only on Día, until a later slice touches `soon.html`.
+
+**Tests**: `tests/test_ventana_comida.py` (20 tests) -- the window across several timed entries,
+across a NULL `ts_local`, with only NULL entries, with exactly one timed entry, with none at all;
+cross-person isolation; the overnight fast across midnight (including under a non-UTC person
+timezone, to show the module's own math never depends on it); the meal-to-sleep gap with and
+without a sleep session, and reading the WAKE day correctly; `ayuno_ahora` across days and
+ignoring untimed entries; a redirect-stdout check that none of the four functions prints
+anything. `tests/test_hoy_ventana_comida.py` (10 tests) -- Hoy's and Día's card in each of the
+four states, in es and en, plus the same stdout check across both routes.
+
+Commit on `feat/body-ayuno-1`: `3063851` (`body/ventana_comida.py`, `body/rutas/hoy.py`,
+`body/templates/today.html`, `body/templates/day.html`, `body/i18n/es.json`, `body/i18n/en.json`,
+`body/demo.py`, `tests/test_ventana_comida.py`, `tests/test_hoy_ventana_comida.py`).
+
+**Gate**, once, foreground, on this commit: `.venv/Scripts/python.exe -m unittest discover tests
+-t .` -> `Ran 2092 tests in 380.610s ... OK (skipped=1)`, exit code 0.
+
+No schema migration. Customer-facing bytes: yes (two new template sections, new i18n strings) --
+the spec's body says to stop for review before merge, not to merge. No cross-repo contract. Stops
+**AWAITING_APPROVAL**, committed on `feat/body-ayuno-1`, not merged.

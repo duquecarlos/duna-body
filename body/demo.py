@@ -344,16 +344,26 @@ def _seed_soreness(conn, db, rng: random.Random, all_days: list[date], person_id
     return rows
 
 
+# BODY-AYUNO-1: one "HH:MM"-ish window per meal slot (breakfast, lunch, afternoon snack, dinner),
+# in minutes-of-day, so the demo's 3rd/4th entries always land after the 1st/2nd -- a real window,
+# never an invented one -- and the eating-window card has something to show on the demo server.
+_COMIDA_MINUTOS = [(7 * 60, 8 * 60), (12 * 60, 14 * 60), (16 * 60, 17 * 60), (18 * 60, 20 * 60)]
+
+
 def _seed_ingesta(conn, db, rng: random.Random, all_days: list[date], person_id: int) -> int:
-    """3-4 invented protein entries most days (BODY-PROTEINA-1), each its own `ingesta` row -- one
-    writer (db.registrar_ingesta) sums them into that day's protein_g total, so Tendencias shows
-    it. Invented amounts only, never a real figure; no descripcion, since the demo seeds no words."""
+    """3-4 invented protein entries most days (BODY-PROTEINA-1), each its own `ingesta` row WITH a
+    time (BODY-AYUNO-1), one per slot in `_COMIDA_MINUTOS` -- one writer (db.registrar_ingesta)
+    sums them into that day's protein_g total, so Tendencias shows it, and the times give Hoy's
+    and Día's eating-window card a real window. Invented amounts and times only, never a real
+    figure; no descripcion, since the demo seeds no words."""
     rows = 0
     for d in all_days:
         if rng.random() < 0.9:
-            for _ in range(rng.randint(3, 4)):
+            for lo, hi in _COMIDA_MINUTOS[:rng.randint(3, 4)]:
+                minuto = rng.randint(lo, hi - 1)
+                ts_local = f"{d.isoformat()}T{minuto // 60:02d}:{minuto % 60:02d}:00"
                 db.registrar_ingesta(conn, person_id, d.isoformat(), "protein_g",
-                                      _value(rng, "protein_g", 0.0), False)
+                                      _value(rng, "protein_g", 0.0), False, ts_local=ts_local)
                 rows += 1
     conn.commit()
     return rows
