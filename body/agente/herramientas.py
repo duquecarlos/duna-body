@@ -586,9 +586,10 @@ def _registrar_medida(conn: sqlite3.Connection, person_id: int, conversacion_id:
     """Proposes a number the person measured themself for a day (BODY-ENTRENO-MEDIDA-1): checked
     against the live metric_def row, never a hardcoded pair of keys, and refused if that key is
     'garmin' -- the watch, not the person, owns those. `antes` carries that day's existing value (or
-    None), so `propuestas.deshacer` can restore it exactly; metric_def carries no range column, so
-    the only sanity check (besides the unit/type checks `_validar_parametros` already ran) is
-    rejecting a negative figure."""
+    None), so `propuestas.deshacer` can restore it exactly. Besides the unit/type checks
+    `_validar_parametros` already ran, the only sanity checks are rejecting a negative figure and,
+    for a key listed in `db.RANGOS_MEDIDA_PERSONAL` (BODY-MEDIDA-PESO-1), a typo-sized figure
+    outside that key's plausible range."""
     fila = conn.execute("SELECT 1 FROM metric_def WHERE key = ? AND origen = 'self'", (metric_key,)).fetchone()
     if fila is None:
         raise ToolError(f"medida desconocida o no autogestionada: {metric_key!r}")
@@ -600,6 +601,9 @@ def _registrar_medida(conn: sqlite3.Connection, person_id: int, conversacion_id:
         raise ToolError("value debe ser un número")
     if value < 0:
         raise ToolError(f"{metric_key!r} no puede ser negativo")
+    rango = db.RANGOS_MEDIDA_PERSONAL.get(metric_key)
+    if rango is not None and not (rango[0] <= value <= rango[1]):
+        raise ToolError(f"{metric_key!r} fuera de rango plausible ({rango[0]}-{rango[1]}): {value!r}")
     anterior = conn.execute(
         "SELECT value FROM daily_metric WHERE person_id = ? AND day = ? AND metric_key = ?",
         (person_id, day, metric_key),
