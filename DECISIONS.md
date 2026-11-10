@@ -14001,3 +14001,24 @@ Commit on `feat/body-ayuno-1`: `3063851` (`body/ventana_comida.py`, `body/rutas/
 No schema migration. Customer-facing bytes: yes (two new template sections, new i18n strings) --
 the spec's body says to stop for review before merge, not to merge. No cross-repo contract. Stops
 **AWAITING_APPROVAL**, committed on `feat/body-ayuno-1`, not merged.
+
+## BODY-AYUNO-1-M -- merged
+
+Reviewed and approved `feat/body-ayuno-1` (`3063851` the eating-window card, `68339e7` its ledger
+entry) on the re-seeded demo home: Hoy showed "Ventana de comida · 9 h 14 · primera comida 07:20 ·
+última 16:34 · En ayuno hace 5 h 23 · Ayer dormiste 2 h 42 después de tu última comida" below "Ver
+todo el día", no colour grading, scrollWidth 375; Día (9 nov) showed "Ventana de comida · primera
+comida 07:57 · última 19:30 · Ayuno nocturno antes de este día: 12 h 20", scrollWidth 375.
+
+Merged `feat/body-ayuno-1` into `main` with `--no-ff`: merge commit `11072a7b4e9a9a92d27e6da8fc58b728b84dd034`.
+No conflicts.
+
+**Gate**, once, foreground, on the merged tree: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -> `Ran 2092 tests in 407.096s ... OK (skipped=1)`, exit code 0.
+
+Recorded, not blocking: there is no protein card on Hoy (the card is correctly placed last in the
+metrics column, not under a protein card that does not exist there); a person with no Garmin data
+at all sees the card only on Día, since `soon.html` was out of scope for BODY-AYUNO-1; the demo
+seeds today's meals for the whole day, so the demo's "fasting now" can read from an earlier day
+while today's window shows later meals -- a demo artifact only, real entries are never in the
+future.
