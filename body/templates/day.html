@@ -15,12 +15,18 @@
   <div class="legend">{% for s in sleep.stages %}<span><i class="{{ s.cls }}"></i>{{ s.label }} {{ s.value }}</span>{% endfor %}</div>{% endif %}
   {% if sueno_fc_linea %}<p class="mt-6 mb-0">{{ sueno_fc_linea }}</p>{% endif %}
   {% if sueno_resp_linea %}<p class="mt-6 mb-0">{{ sueno_resp_linea }}</p><p class="note mt-2 mb-0">{{ t('sueno_respiracion.caveat') }}</p>{% endif %}
+  {% if noche_inusual %}<p class="mt-6 mb-0">{{ noche_inusual.texto }}</p>
+  <form method="post" action="/day/{{ day }}/noche-inusual/visto" class="mt-6"><button class="btn" type="submit">{{ t('day.noche_inusual_vista') }}</button></form>
+  {% endif %}
 </div>
-{% elif sueno_fc_linea or sueno_resp_linea %}
+{% elif sueno_fc_linea or sueno_resp_linea or noche_inusual %}
 <h2>{{ t('day.sleep') }}</h2>
 <div class="card">
   {% if sueno_fc_linea %}<p class="m-0">{{ sueno_fc_linea }}</p>{% endif %}
   {% if sueno_resp_linea %}<p class="{{ 'mt-2 mb-0' if sueno_fc_linea else 'm-0' }}">{{ sueno_resp_linea }}</p><p class="note mt-2 mb-0">{{ t('sueno_respiracion.caveat') }}</p>{% endif %}
+  {% if noche_inusual %}<p class="{{ 'mt-2 mb-0' if (sueno_fc_linea or sueno_resp_linea) else 'm-0' }}">{{ noche_inusual.texto }}</p>
+  <form method="post" action="/day/{{ day }}/noche-inusual/visto" class="mt-6"><button class="btn" type="submit">{{ t('day.noche_inusual_vista') }}</button></form>
+  {% endif %}
 </div>
 {% endif %}
 {% if turnos %}

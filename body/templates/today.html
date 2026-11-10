@@ -14,6 +14,7 @@
 {% if mcp_pendientes %}
 <div class="aviso"><a class="taplink" href="/?asis_conversacion={{ mcp_pendientes.conversacion_id }}#asis-btn">{{ t('today.mcp_propuestas') if mcp_pendientes.n == 1 else t('today.mcp_propuestas_many', n=mcp_pendientes.n) }}</a></div>
 {% endif %}
+{% if noche_inusual %}<div class="aviso">{{ noche_inusual.texto }} <a class="taplink" href="/day/{{ noche_inusual.day }}">{{ noche_inusual.enlace }}</a></div>{% endif %}
 
 <div class="cols-hoy">
 <a class="card est" href="/how/{{ day }}">

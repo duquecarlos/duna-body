@@ -15340,3 +15340,116 @@ Gate on the merged tree, once: `.venv/Scripts/python.exe -m unittest discover te
 
 The first fill on the person's real database is left to the scheduled pull's post-pull step, per the approval's
 own words, with a backup taken first by the orchestrator.
+
+## BODY-NOCHE-INUSUAL-1 -- GATE_RED, not merged
+
+`body/noche_inusual.py` (new): MODELO (version `noche-inusual-v1`) -- three signals, each the
+person's own `baselines.Baseline.z` for that wake day: `sleep_hr_avg` (higher = unusual),
+`hrv_last_night` (lower), `sleep_score` (lower). `umbral_z = 2.0`, reusing `experimentos.UMBRAL`'s
+own number rather than inventing a second magic constant (it is a different statistical unit there
+-- a standard-error-of-a-difference-of-means bar, not a single-night z -- but 2.0 also reads as a
+sensible "two standard deviations from your own normal" bar for one night). `minimo_senales = 2`:
+one signal alone never flags (ruling 2). `evaluar(conn, person_id, wake_day, vals=None) -> Noche |
+None` drops any signal missing a value or a baseline rather than failing the whole night, so a
+night with fewer than two judge-able signals reads the same as a normal one -- no line, no
+"normal" claim either (ruling 3), and the caller cannot tell the two apart (by design). Never
+names or guesses a cause (ruling 4) -- returns which metric keys were off and their fixed
+direction, nothing else. Computed on read, no derived table (ruling 6).
+
+Dismissal ("Ya lo vi" / "Got it", ruling 5): reuses `body/db.py`'s existing `moment` table
+(`kind='noche_inusual_vista'`, `ts_local` = the wake day) instead of a new table -- `moment` is
+already a `privacidad.FULLY_HANDLED_TABLES` entry (export + delete-all), so no new census row was
+needed; `tests/test_privacidad.py`'s new `NocheInusualVistaExportDeleteTest` proves that export and
+delete-all already reach it. `vista()`/`marcar_vista()` are scoped by `person_id` like every other
+read/write in this app; `tests/test_persona_fuga.py`'s new `NocheInusualDismissCrossPersonTest`
+proves A dismissing a night never touches B's own same-dated night.
+
+`body/rutas/hoy.py`: `_lista_natural` joins 2-3 signal phrases the way each language actually
+reads a short list ("A y B" / "A, B y C" es; "A and B" / "A, B, and C" en). `today()` adds one
+`aviso` line (same element `periodo`/`mcp_pendientes` already use) when last night (today's own
+wake day) is unusual and not dismissed, linking to `/day/{day}`. `day_view()` adds the same finding
+inside the sleep card plus a "Ya lo vi" form (`POST /day/{day}/noche-inusual/visto`, plain HTML
+form, no inline JS per DESIGN rule 13) -- that route takes no id, only the signed-in person's own
+`person_id`, so there is no other person's id to check against. Readiness is untouched (ruling 7)
+-- `tests/test_noche_inusual.py`'s `ReadinessSinCambiosTest` checks `body/readiness.py`'s own
+source never references this module, and that the score is identical before/after a dismissal.
+
+Strings (`body/i18n/es.json`/`en.json`), verbatim:
+- `today.noche_inusual` es: "Anoche dormiste distinto a tu normal: {senales}." / en: "Last night
+  was different from your normal: {senales}."; `today.noche_inusual_link` es: "Ver la noche" / en:
+  "See the night".
+- `day.noche_inusual` es: "Esta noche fue distinta a tu normal: {senales}." / en: "This night was
+  different from your normal: {senales}."; `day.noche_inusual_vista` es: "Ya lo vi" / en: "Got it".
+- `noche.senal.sleep_hr_avg` es: "pulso durmiendo más alto" / en: "higher sleeping heart rate";
+  `noche.senal.hrv_last_night` es: "variabilidad del pulso más baja" / en: "lower heart rate
+  variability"; `noche.senal.sleep_score` es: "puntaje de sueño más bajo" / en: "lower sleep
+  score" -- "variabilidad del pulso", never "HRV", in Spanish copy (Body CLAUDE.md).
+`tests/test_i18n_paridad.py` gained the `"noche.senal.+"` dynamic-prefix entry for `hoy.py`'s
+`t("noche.senal." + key)` calls.
+
+`body/demo.py`: `_seed_noche_inusual` overrides the anchor day's `hrv_last_night`/`sleep_score` to
+clearly-low invented values (18.0/12.0) against the fixture's own 30-day history, so the demo's
+Hoy and Dia both show the line -- the third signal, `sleep_hr_avg`, is left alone: `_seed_sueno_fc`
+only ever gives it `N_NOCHES_SUENO_FC` (5) nights of history, short of `baselines.MIN_DAYS` (7), an
+honest gap in the fixture, not a bug.
+
+`tests/test_noche_inusual.py` (new, 26 tests): two and three signals off flag (with the right
+words, both languages, natural list join); one signal, a normal night, a fixed-direction check, a
+missing signal, and no baseline at all each stay unflagged; dismissal is per-person and per-night
+and persists across requests; Hoy's line disappears after a Dia dismissal (same person, same
+night); neither language's strings ever contain a cause word (checked against a list: alcohol,
+illness/enferm-, stress/estrés, shift/turno, travel/viaje, injury/lesión, sick, medical); readiness
+is untouched.
+
+**Gate, once, foreground, on this slice's own final tree**:
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 2306 tests in 530.644s ...
+FAILED (failures=2, skipped=1)`. Every test this slice added or touched is green on its own (run
+separately first, per the slice's own pre-gate static-guard step): `tests/test_noche_inusual.py`
+(26), `tests/test_i18n_paridad.py` (6), `tests/test_persona_fuga.py` (11), `tests/test_privacidad.py`
+(53), `tests/test_demo.py` + `tests/test_sueno_fc.py` (42), `tests/test_conexiones_cerradas.py` +
+`tests/test_rendimiento.py` + `tests/test_primer_pull_1.py` (34) -- all OK, including
+`test_rendimiento.py`'s own statement-ceiling guard (`/` and `/day/{day}` both stayed under their
+existing ceiling, 75 and 45; directly measured on a `demo._seed(dias=30)` fixture: 64 and 40
+statements respectively, so neither ceiling needed to rise, per ruling 6).
+
+The two gate failures are both OUTSIDE `touches:` and are a DIRECT, unavoidable consequence of this
+slice's own required behaviour, not a defect in this slice's own code:
+- `tests/test_estados_vacios_2.py::PersonaCompletaSinCambiosTest::test_demo_person_unchanged`
+  asserts a fully-seeded demo person's Hoy page shows exactly one `class="aviso"` div (the existing
+  open "lesión" period covering today, BODY-PERIODO-PANTALLAS-1-B). This slice's own spec item 4
+  ("Demo: an invented unusual night so the line shows on the demo's Hoy and Día") requires the new
+  aviso to land on the SAME anchor day Hoy shows -- the only day Hoy's own `_noche_inusual_hoy_ctx`
+  ever reads (last night = today's own wake day) -- and that anchor day already sits inside the
+  demo's pre-existing open period (`hoy - 3` .. open-ended, so it always contains `hoy`). The count
+  is now 2, not 1, by design: this is not something the new aviso's own wording or placement can
+  avoid while still satisfying "shows on Hoy".
+- `tests/test_web_entry.py::RouteSetTest::test_route_set_is_unchanged_by_the_ayuda_move` hard-codes
+  the app's WHOLE route set and fails on any new route at all -- this slice's dismiss action
+  (`POST /day/{day}/noche-inusual/visto`) is a new route, required by ruling 5 ("Ya lo vi").
+
+Both fixes are one-line additions to files this slice was never granted (`tests/test_estados_vacios_2.py`
+needs its aviso count raised to 2 with a one-line reason; `tests/test_web_entry.py` needs the new
+route added to its `BEFORE` set) -- outside `touches:`, so this slice does not make them itself.
+
+Not committed as green, not merged. Commit `ecf2cde` (`body/noche_inusual.py`, `body/rutas/hoy.py`,
+`body/templates/today.html`, `body/templates/day.html`, `body/i18n/es.json`, `body/i18n/en.json`,
+`body/demo.py`, `tests/test_noche_inusual.py`, `tests/test_i18n_paridad.py`,
+`tests/test_persona_fuga.py`, `tests/test_privacidad.py`), on `feat/body-noche-inusual-1`, directly
+on top of `main` at `5a51b9c` (tree clean before this slice's first edit). `body/db.py` and
+`body/privacidad.py` were read but needed no change: the dismissal reuses `moment` as-is.
+
+Diff classified against `main`: no schema or migration change (reuses the existing `moment` table
+and `daily_metric`/`metric_def` paths, no `ALTER TABLE`/`CREATE TABLE`). Customer-facing bytes: YES
+-- the new Hoy/Dia lines, the "Ya lo vi"/"Got it" button and their `es`/`en` strings are all new
+text a person reads, in both languages. No cross-repo contract or DTO change.
+
+Stops **GATE_RED** on `feat/body-noche-inusual-1`, per the dispatch's own rule ("Red you cannot fix
+inside `touches:` -> stop GATE_RED on the branch"). Not merged.
+
+Open follow-ups, outside this slice's own `touches:`:
+- `BODY-NOCHE-INUSUAL-TESTFIX-ESTADOS-1`: raise `tests/test_estados_vacios_2.py`'s
+  `PersonaCompletaSinCambiosTest.test_demo_person_unchanged` aviso count from 1 to 2, with a
+  one-line reason (the demo's own open "lesión" period and this slice's own invented unusual night
+  now both cover the anchor day).
+- `BODY-NOCHE-INUSUAL-TESTFIX-RUTAS-1`: add `("/day/{day}/noche-inusual/visto", ("POST",))` to
+  `tests/test_web_entry.py::RouteSetTest.BEFORE`.

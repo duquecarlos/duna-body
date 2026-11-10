@@ -253,11 +253,16 @@ class PersonaCompletaSinCambiosTest(unittest.TestCase):
         r_home = client.get("/")
         self.assertEqual(r_home.status_code, 200)
         self.assertNotIn(t("today.stale_link"), r_home.text)
-        self.assertEqual(r_home.text.count('class="aviso"'), 1,
-                         "a fully populated person sees no warning except the one real thing "
-                         "covering today: demo's own open period (BODY-PERIODO-PANTALLAS-1-B)")
+        # BODY-ESTADOS-VACIOS-2 / BODY-NOCHE-INUSUAL-1: a fully populated demo person sees exactly
+        # the two avisos its own fixture is built to produce -- the open marked period and the
+        # invented unusual night -- each named by its own text key, so a third unexpected aviso,
+        # or either one missing, still fails this test.
+        self.assertEqual(r_home.text.count('class="aviso"'), 2,
+                         "exactly two avisos: the open period and the unusual night")
         self.assertIn(t("today.periodo_enlace"), r_home.text,
-                     "the one aviso present is the period line, not a stale-data warning")
+                     "the open-period aviso is present")
+        self.assertIn(t("today.noche_inusual_link"), r_home.text,
+                     "the unusual-night aviso is present")
 
         r_shifts = client.get("/shifts")
         self.assertEqual(r_shifts.status_code, 200)

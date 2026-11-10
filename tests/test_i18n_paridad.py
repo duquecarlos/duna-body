@@ -8,7 +8,7 @@ import re
 import string
 import unittest
 
-from body import db, history
+from body import db, history, noche_inusual
 from body import turnos_costo
 from body.rutas import comun, metas, tendencias, turnos
 
@@ -124,6 +124,8 @@ _FIXED_DYNAMIC = {
     # body/rutas/turnos.py _turno_fc_sueno_lineas(): the fixed corta/normal sleep split (the same
     # one body/turno_fc.py's own estudio() uses).
     "shifts.pulso.sueno_+": ["corta", "normal"],
+    # body/rutas/hoy.py _noche_inusual_senales(): body/noche_inusual.py MODELO's own three signals.
+    "noche.senal.+": list(noche_inusual.MODELO["senales"]),
 }
 
 # body/web.py _finding_text(): key = f"history.find.{axis}_better_{better}", then t(key, ...) -- a

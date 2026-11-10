@@ -9,10 +9,11 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import RedirectResponse
 from markupsafe import Markup
 
-from .. import (compartir, cuenta, db, goals, history, household, identity, readiness, recuperacion, turnos_costo,
-                tutoriales, ventana_comida)
+from .. import (compartir, cuenta, db, goals, history, household, identity, noche_inusual, readiness, recuperacion,
+                turnos_costo, tutoriales, ventana_comida)
 from ..agente import conversacion as agente_conversacion
 from ..baselines import baseline
 from ..i18n import T
@@ -157,6 +158,51 @@ def _mcp_pendientes_ctx(conn, person_id: int) -> dict | None:
     line's own link to open the panel on."""
     n, conversacion_id = agente_conversacion.pendientes_mcp(conn, person_id)
     return {"n": n, "conversacion_id": conversacion_id} if n else None
+
+
+def _lista_natural(t: T, items: list[str]) -> str:
+    """Joins 2+ phrases the way each language actually reads a short list -- "A y B" / "A, B y C"
+    (es), "A and B" / "A, B, and C" (en) -- never a bare comma list (BODY-NOCHE-INUSUAL-1: the
+    unusual-night line's own signals, always 2 or 3 of them, ruling 2's "one signal alone never
+    flags")."""
+    if len(items) == 1:
+        return items[0]
+    if t.lang == "en":
+        if len(items) == 2:
+            return f"{items[0]} and {items[1]}"
+        return ", ".join(items[:-1]) + f", and {items[-1]}"
+    if len(items) == 2:
+        return f"{items[0]} y {items[1]}"
+    return ", ".join(items[:-1]) + f" y {items[-1]}"
+
+
+def _noche_inusual_senales(t: T, noche: noche_inusual.Noche) -> str:
+    return _lista_natural(t, [t("noche.senal." + key) for key, _ in noche.senales])
+
+
+def _noche_inusual_hoy_ctx(t: T, conn, person_id: int, day: str, vals: dict) -> dict | None:
+    """BODY-NOCHE-INUSUAL-1 ruling 1: Hoy's own plain `aviso` line, the morning after a night that
+    read as unusual against the person's own normal -- None once the person dismissed it (ruling
+    5) or the night was normal/unjudgeable (body/noche_inusual.py's own `evaluar`, ruling 3): in
+    both cases, no line and no "normal" claim either."""
+    if noche_inusual.vista(conn, person_id, day):
+        return None
+    noche = noche_inusual.evaluar(conn, person_id, day, vals)
+    if noche is None:
+        return None
+    return {"texto": t("today.noche_inusual", senales=_noche_inusual_senales(t, noche)),
+            "enlace": t("today.noche_inusual_link"), "day": day}
+
+
+def _noche_inusual_dia_ctx(t: T, conn, person_id: int, day: str, vals: dict) -> dict | None:
+    """BODY-NOCHE-INUSUAL-1 ruling 1: Día's own line inside that night's sleep card, with the "Ya lo
+    vi" dismiss -- same "None means no line, no normal claim" rule as Hoy's own line above."""
+    if noche_inusual.vista(conn, person_id, day):
+        return None
+    noche = noche_inusual.evaluar(conn, person_id, day, vals)
+    if noche is None:
+        return None
+    return {"texto": t("day.noche_inusual", senales=_noche_inusual_senales(t, noche))}
 
 
 def _hoy_turno_ctx(t: T, conn, person_id: int, today_local: date) -> dict:
@@ -312,7 +358,8 @@ def today(person_id: int = Depends(identity.current_person_id)):
                    primeros_pasos=primeros_pasos,
                    hogar_compartido=_hogar_compartido_ctx(conn, t, person_id, defs, today_local),
                    ventana=_ventana_ctx(t, conn, person, person_id, today_local),
-                   periodo=_periodo_hoy_ctx(t, conn, person_id, today_local))
+                   periodo=_periodo_hoy_ctx(t, conn, person_id, today_local),
+                   noche_inusual=_noche_inusual_hoy_ctx(t, conn, person_id, day, vals))
 
 
 # readiness.Part.key -> the Tendencias metric it reads from (readiness.Part carries no metric key of its
@@ -489,6 +536,7 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
                       "href": href})
     sueno_resp_linea = _sueno_resp_linea(t, vals, defs)
     sueno_fc_linea = _sueno_fc_linea(t, vals, defs)
+    noche_inusual_ctx = _noche_inusual_dia_ctx(t, conn, person_id, key, vals)
     sleep = None
     if vals.get("sleep_minutes") is not None:
         total_stage = sum(vals.get(s[0]) or 0 for s in STAGES)
@@ -528,9 +576,22 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
             block_ctx = t("day.shift_ctx_noche", n=ctx["n"], de=ctx["de"])
         else:
             block_ctx = t("day.shift_ctx_despues", n=ctx["n"])
-    return comun._render("day.html", t=t, tab="today", date_long=t.long_date(d), cards=cards, sleep=sleep,
-                   sueno_resp_linea=sueno_resp_linea, sueno_fc_linea=sueno_fc_linea,
+    return comun._render("day.html", t=t, tab="today", day=d.isoformat(), date_long=t.long_date(d), cards=cards,
+                   sleep=sleep, sueno_resp_linea=sueno_resp_linea, sueno_fc_linea=sueno_fc_linea,
+                   noche_inusual=noche_inusual_ctx,
                    activities=acts, shifts=shifts, has_data=has_data, block_ctx=block_ctx,
                    sync_text=None if has_data else comun._sync_status_text(conn, person, t),
                    prev=(d - timedelta(1)).isoformat(), next=(d + timedelta(1)).isoformat(),
                    turnos=turnos_on, ventana=_ventana_dia_ctx(t, conn, person_id, d), periodo=periodo_dia)
+
+
+@router.post("/day/{day}/noche-inusual/visto")
+@comun._cierra_conexion
+def noche_inusual_visto(day: str, person_id: int = Depends(identity.current_person_id)):
+    """BODY-NOCHE-INUSUAL-1 ruling 5: "Ya lo vi" -- only ever acts on the signed-in person's OWN
+    dismissal (noche_inusual.marcar_vista is scoped by person_id like every write in this app), so
+    there is no other person's id to check against here."""
+    d = _parse_day(day)
+    conn, _, _ = comun._ctx(person_id)
+    noche_inusual.marcar_vista(conn, person_id, d.isoformat())
+    return RedirectResponse(f"/day/{day}", status_code=303)
