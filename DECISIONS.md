@@ -14022,3 +14022,100 @@ at all sees the card only on Día, since `soon.html` was out of scope for BODY-A
 seeds today's meals for the whole day, so the demo's "fasting now" can read from an earlier day
 while today's window shows later meals -- a demo artifact only, real entries are never in the
 future.
+
+## BODY-PERIODO-PANTALLAS-1 -- GATE_RED
+
+Made BODY-PERIODO-1's marked periods (illness, travel, injury) visible on the four screens that
+already read `db.dias_marcados`/`db.periodos` without saying so (BODY-PERIODO-1-INV's own census):
+
+* **Hoy** (`body/rutas/hoy.py` `_periodo_hoy_ctx`, `templates/today.html`): while a period covers
+  today (open, or closed after today), a plain `.aviso` line naming the kind and start date
+  ("Lesión desde el 10 nov · Body deja esos días fuera de tu rango habitual"), with a link whose
+  `href="#asis-btn"` focuses the page's own assistant button -- `body/static/assistant.js` and
+  `templates/base.html` are both outside this slice's `touches:`, and BODY-SEGURIDAD-2 forbids an
+  inline `onclick`, so there is no way to also pre-fill the assistant's input without touching one
+  of them; the link's own text carries the call to action instead. Nothing when no period covers
+  today. Never the person's own note text (stays inside the assistant panel's own card, per the
+  orchestrator's ruling).
+* **Día** (`hoy.py` `_periodo_dia_ctx`, `templates/day.html`): a marked day says so at the top, in
+  words, with every kind that covers it.
+* **Tendencias** (`body/profile.py` `window_svg`'s new `marcas` param, `rutas/tendencias.py`
+  `_marcas`, `templates/trends.html`): marked days shaded on every daily chart (`c-amber op-35`,
+  distinct from night's `c-night op-18`; both can draw on the same day), with a legend entry only
+  when the window has one. No figure changes -- same as `nights`, a marked day is shaded, not
+  excluded, from this chart's own mean/band; a month-level "counted days reduced" caveat for the
+  long-run monthly line (month_svg) was **dropped**: that line never excludes a marked day either
+  (nothing in `profile.py`'s own aggregates does, matching the orchestrator's ruling that this
+  slice changes no figure but readiness, generalised to every figure Tendencias shows), so a
+  caveat claiming a reduction would have been dishonest. Read once per page, like `nights`, costing
+  no extra statement when `r=all` (the ceiling-tested default has no window at all).
+* **Tu historia** (`body/history.py` `patterns`/`by_shift`, `rutas/historial.py`
+  `_periodo_excluido_ctx`, `templates/history.html`): a marked day is now left out of both
+  functions' own buckets and counts, the same rule `baselines.baseline()` already applies -- and
+  the page says how many days and which kinds, in one line.
+
+**A real finding, not a style choice**: `db.dias_marcados()` re-reads `person()` for "today" on
+*every call* while an open period overlaps the queried range (the `hoy: str | None = None` guard
+is local to the function, not cached across calls) -- latent since BODY-PERIODO-1 because the demo
+never had an open period before. Seeding one (below) surfaced it as a real N+1: `/day/{day}`'s own
+`_delta` calls `baseline()` once per metric key (17 of them), so one open period inside that day's
+30-day lookback turned 38 statements into 55 against a ceiling of 45. Fixed within this slice's own
+`touches:`, not in `db.py` (outside it): `history.patterns()`/`by_shift()` now take an optional
+precomputed `marcados` set (`historial.py` reads it once and passes it to both, the same way
+`tendencias.py` already reads `nights` once for every card) instead of each re-deriving it per
+`PATTERN_KEYS` entry; and the demo's own new open period (below) starts exactly on "today", which
+keeps it outside every baseline window (always ending the day *before* the day it is computed for),
+so `/`, `/day/{day}` and `/how/{day}` see no extra statement at all. `/history` still costs +2 (one
+for `SELECT * FROM period`, one for the single remaining `person()` re-read), `/trends` costs +1
+only on a range that actually has a window (never on the ceiling-tested `r=all` default). Measured
+before/after on `demo._seed(dias=30)`: `/` 61→61, `/day/{day}` 38→38 (ceiling 45), `/trends` 14→14
+(ceiling 19), `/history` 22→24 (ceiling 29) -- no ceiling raised, none of them needed to be.
+
+**Demo** (`body/demo.py` `_seed_periodo`): the existing closed `malestar` period (BODY-PERIODO-1)
+is unchanged and still shows on Tendencias and Día; added an open `lesion` period starting on the
+demo's own today (not NULL-ended two days earlier, as first tried -- see the N+1 finding above) so
+Hoy's own line shows on the demo server too. `periodos` count in `_seed`'s own return dict: 1 → 2.
+
+**Strings**, es / en (both complete, `tests/test_i18n_paridad.py`'s shape/placeholder checks pass):
+`today.periodo` "{kind} desde el {fecha} · Body deja esos días fuera de tu rango habitual." /
+"{kind} since {fecha} · Body leaves those days out of your usual range."; `today.periodo_enlace`
+"Cuéntale al asistente si ya terminó" / "Tell the assistant if it's over"; `day.periodo` "Día
+marcado: {kind}" / "Marked day: {kind}"; `trends.periodos` "Día marcado" / "Marked day";
+`history.periodo_excluido` "{n} días quedaron fuera de estos patrones por estar marcados
+({kinds})." / "{n} days were left out of these patterns because they were marked ({kinds})."
+
+**Tests** (`tests/test_periodo_pantallas.py`, 14, all green): Hoy's line with an open period, a
+period closed before today (none), no period at all (none); `profile.window_svg`'s `marcas` rect
+present and distinct from `nights`' own class, absent without a mark; Tendencias' legend shown only
+with a marked day in the window; Día's line, present and absent; `history.patterns()` excluding an
+outlier value on a marked day from its own weekday bucket; `history.by_shift()` excluding a marked
+shift day from its own count; Tu historia's count line, its wording and its absence without a
+mark; es and en; the period's own `note` text never appears on any of these pages.
+
+**Gate**, once, foreground, on commit `6af5bad94e42f67a8796a7aaa487cdf317cba032`:
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 2106 tests in 412.116s ...
+FAILED (failures=2, skipped=1)`, exit code 1. Both failures are pre-existing test files **outside
+this slice's own `touches:`**, broken by exactly the behaviour the spec asked for, not by a defect
+in the new code:
+
+* `tests/test_estados_vacios_2.py::PersonaCompletaSinCambiosTest.test_demo_person_unchanged`
+  asserts the fully-populated demo person's Hoy page carries no `class="aviso"` at all -- true
+  before this slice (that guard predates any open period in the demo), false now that Hoy
+  correctly shows the new period line in exactly that `.aviso` block (spec item 5's own ask).
+* `tests/test_i18n_paridad.py::TestI18nParidad.test_dynamic_prefixes_resolve_in_es` maintains a
+  fixed list of every dynamic `t("prefix." + variable)` call's possible values, read from the
+  source each one actually comes from -- a living registry the test's own docstring says to
+  extend. This slice's three new `t("periodo.kind." + kind)` sites (two in `hoy.py`, one in
+  `historial.py`) are the first DYNAMIC uses of that prefix (BODY-PERIODO-1's own `asistente.py`
+  uses a hardcoded `if/elif` per kind instead, which is why it never tripped this guard) and have
+  no entry yet.
+
+Neither file is in `touches:`; a one-line fix exists for each (drop the stale `assertNotIn` in the
+first, add `"periodo.kind.+": [k for k, _ in db.PERIOD_KINDS]` to `_FIXED_DYNAMIC` in the second)
+but this slice does not make it, per the dispatch's own instruction to stop rather than widen
+`touches:` unilaterally. 2103 of 2106 tests pass; no other file, including every one this slice
+changed, shows a regression.
+
+No schema migration. Customer-facing bytes: yes (two new template sections per screen, new i18n
+strings, a new chart shading colour) -- committed on the branch, not merged, per GATE_RED. No
+cross-repo contract.
