@@ -193,7 +193,9 @@ _PARAM_REGISTRAR_ENTRENO = {
     "additionalProperties": False,
 }
 
-SELF_METRIC_KEYS = tuple(d[0] for d in db.METRIC_DEFS if d[5] == "self")
+# BODY-PROTEINA-1: an intake key (agregado = 'suma_ingesta') is excluded from registrar_medida's own
+# enum -- it has exactly one writer, registrar_ingesta, below.
+SELF_METRIC_KEYS = tuple(d[0] for d in db.METRIC_DEFS if d[5] == "self" and d[6] != "suma_ingesta")
 _PARAM_REGISTRAR_MEDIDA = {
     "type": "object",
     "properties": {
@@ -202,6 +204,36 @@ _PARAM_REGISTRAR_MEDIDA = {
         "day": {"type": "string", "format": "date"},
     },
     "required": ["metric_key", "value"],
+    "additionalProperties": False,
+}
+
+# BODY-PROTEINA-1: metric_def rows whose daily total is derived from `ingesta` entries (protein_g
+# today) -- read off the live table, never a hardcoded pair of keys, same template pattern as
+# SELF_METRIC_KEYS above.
+INGESTA_METRIC_KEYS = tuple(d[0] for d in db.METRIC_DEFS if d[6] == "suma_ingesta")
+_PARAM_REGISTRAR_INGESTA = {
+    "type": "object",
+    "properties": {
+        "metric_key": {"type": "string", "enum": list(INGESTA_METRIC_KEYS)},
+        "amount": {"type": "number"},
+        "estimado": {"type": "boolean"},
+        "descripcion": {"type": "string"},
+        "day": {"type": "string", "format": "date"},
+        "hora": {"type": "string"},
+    },
+    "required": ["metric_key", "amount", "estimado"],
+    "additionalProperties": False,
+}
+_PARAM_CORREGIR_INGESTA = {
+    "type": "object",
+    "properties": {"ingesta_id": {"type": "integer"}, "amount": {"type": "number"}},
+    "required": ["ingesta_id", "amount"],
+    "additionalProperties": False,
+}
+_PARAM_BORRAR_INGESTA = {
+    "type": "object",
+    "properties": {"ingesta_id": {"type": "integer"}},
+    "required": ["ingesta_id"],
     "additionalProperties": False,
 }
 
@@ -589,10 +621,15 @@ def _registrar_medida(conn: sqlite3.Connection, person_id: int, conversacion_id:
     None), so `propuestas.deshacer` can restore it exactly. Besides the unit/type checks
     `_validar_parametros` already ran, the only sanity checks are rejecting a negative figure and,
     for a key listed in `db.RANGOS_MEDIDA_PERSONAL` (BODY-MEDIDA-PESO-1), a typo-sized figure
-    outside that key's plausible range."""
-    fila = conn.execute("SELECT 1 FROM metric_def WHERE key = ? AND origen = 'self'", (metric_key,)).fetchone()
+    outside that key's plausible range. BODY-PROTEINA-1: an intake key (agregado = 'suma_ingesta')
+    is refused here too -- checked against the live row, defense-in-depth past the enum -- pointing
+    at registrar_ingesta, its one writer."""
+    fila = conn.execute("SELECT agregado FROM metric_def WHERE key = ? AND origen = 'self'",
+                        (metric_key,)).fetchone()
     if fila is None:
         raise ToolError(f"medida desconocida o no autogestionada: {metric_key!r}")
+    if fila["agregado"] == "suma_ingesta":
+        raise ToolError(f"{metric_key!r} se registra con registrar_ingesta, no con registrar_medida")
     day = day or _hoy_local(conn, person_id)
     _dia_no_futuro(conn, person_id, day)
     try:
@@ -611,6 +648,78 @@ def _registrar_medida(conn: sqlite3.Connection, person_id: int, conversacion_id:
     antes = {"value": anterior["value"] if anterior else None}
     despues = {"metric_key": metric_key, "value": value, "day": day}
     registro = propuestas.crear(conn, person_id, conversacion_id, "registrar_medida", despues, antes=antes)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
+def _hora_a_ts_local(day: str, hora: str | None) -> str | None:
+    return f"{day}T{hora}:00" if hora else None
+
+
+def _registrar_ingesta(conn: sqlite3.Connection, person_id: int, conversacion_id: int, metric_key: str,
+                        amount, estimado: bool, descripcion: str | None = None, day: str | None = None,
+                        hora: str | None = None) -> dict:
+    """Proposes one thing the person ate or drank, for a day (BODY-PROTEINA-1): estimate grams from
+    the person's own words when they give no exact number, say it is an estimate and what was
+    assumed, one entry per meal, and ask only when the food is too vague to estimate. Checked
+    against the live metric_def row (agregado = 'suma_ingesta'), never a hardcoded key -- the same
+    template pattern `_registrar_medida` uses for 'self'. Insert-shaped, like `planear_entreno`:
+    there is no 'before'."""
+    fila = conn.execute("SELECT 1 FROM metric_def WHERE key = ? AND agregado = 'suma_ingesta'",
+                        (metric_key,)).fetchone()
+    if fila is None:
+        raise ToolError(f"ingesta desconocida o no acumulable: {metric_key!r}")
+    day = day or _hoy_local(conn, person_id)
+    _dia_no_futuro(conn, person_id, day)
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
+        raise ToolError("amount debe ser un número")
+    if amount <= 0:
+        raise ToolError(f"{metric_key!r} debe ser mayor que cero")
+    if not isinstance(estimado, bool):
+        raise ToolError("estimado debe ser verdadero o falso")
+    descripcion = (descripcion or "").strip() or None
+    despues = {"metric_key": metric_key, "amount": amount, "estimado": estimado, "descripcion": descripcion,
+               "day": day, "ts_local": _hora_a_ts_local(day, hora)}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "registrar_ingesta", despues)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
+def _corregir_ingesta(conn: sqlite3.Connection, person_id: int, conversacion_id: int, ingesta_id: int,
+                       amount) -> dict:
+    """Proposes correcting the amount of one of the person's own intake entries (BODY-PROTEINA-1).
+    `antes` carries that entry's existing amount, so `propuestas.deshacer` can restore it exactly."""
+    fila = conn.execute(
+        "SELECT metric_key, day, amount, estimado FROM ingesta WHERE id = ? AND person_id = ?",
+        (ingesta_id, person_id)).fetchone()
+    if fila is None:
+        raise ToolError(f"registro de ingesta desconocido: {ingesta_id!r}")
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
+        raise ToolError("amount debe ser un número")
+    if amount <= 0:
+        raise ToolError("amount debe ser mayor que cero")
+    antes = {"amount": fila["amount"]}
+    despues = {"ingesta_id": ingesta_id, "amount": amount, "metric_key": fila["metric_key"], "day": fila["day"],
+               "estimado": bool(fila["estimado"])}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "corregir_ingesta", despues, antes=antes)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
+def _borrar_ingesta(conn: sqlite3.Connection, person_id: int, conversacion_id: int, ingesta_id: int) -> dict:
+    """Proposes deleting one of the person's own intake entries (BODY-PROTEINA-1). `antes` carries
+    the whole entry, so `propuestas.deshacer` can restore it (as a new row with the same values,
+    the same "functionally equivalent" restoration `proponer_experimento`'s own undo uses)."""
+    fila = conn.execute(
+        "SELECT metric_key, day, ts_local, amount, estimado, descripcion FROM ingesta "
+        "WHERE id = ? AND person_id = ?", (ingesta_id, person_id)).fetchone()
+    if fila is None:
+        raise ToolError(f"registro de ingesta desconocido: {ingesta_id!r}")
+    antes = {"metric_key": fila["metric_key"], "day": fila["day"], "ts_local": fila["ts_local"],
+             "amount": fila["amount"], "estimado": bool(fila["estimado"]), "descripcion": fila["descripcion"]}
+    despues = {"ingesta_id": ingesta_id}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "borrar_ingesta", despues, antes=antes)
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
@@ -901,6 +1010,20 @@ HERRAMIENTAS = [
                      "(por ejemplo su alcance de flexibilidad o sus minutos de ronquido). No lo "
                      "guarda: registra la propuesta para que la persona la apruebe en el chat.",
      "parametros": _PARAM_REGISTRAR_MEDIDA, "funcion": _registrar_medida},
+    {"nombre": "registrar_ingesta", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone registrar algo que la persona comió o bebió, para un día: estima los gramos a "
+                     "partir de sus palabras cuando no da un número exacto, dice que es una estimación y qué "
+                     "asumió, un registro por comida, y solo pregunta si la comida es demasiado vaga para "
+                     "estimarla. No lo guarda: registra la propuesta para que la persona la apruebe en el chat.",
+     "parametros": _PARAM_REGISTRAR_INGESTA, "funcion": _registrar_ingesta},
+    {"nombre": "corregir_ingesta", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone corregir la cantidad de un registro de consumo que ya existe. No lo corrige: "
+                     "registra la propuesta para que la persona la apruebe en el chat.",
+     "parametros": _PARAM_CORREGIR_INGESTA, "funcion": _corregir_ingesta},
+    {"nombre": "borrar_ingesta", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone eliminar un registro de consumo que ya existe. No lo elimina: registra la "
+                     "propuesta para que la persona la apruebe en el chat.",
+     "parametros": _PARAM_BORRAR_INGESTA, "funcion": _borrar_ingesta},
     {"nombre": "marcar_habito", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone marcar como hecho, para un día, un hábito activo que la persona puede "
                      "marcar, opcionalmente citando la actividad del reloj que lo cumple como "

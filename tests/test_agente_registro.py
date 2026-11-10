@@ -156,7 +156,8 @@ def _walk_for_writers(func, seen: set, depth: int, found: list) -> None:
 
 PROPUESTA_NOMBRES = {"proponer_meta", "proponer_cambio_meta", "proponer_confirmar_turnos", "proponer_idioma",
                      "planear_entreno", "registrar_entreno", "registrar_medida", "marcar_habito",
-                     "proponer_experimento", "marcar_experimento"}
+                     "proponer_experimento", "marcar_experimento",
+                     "registrar_ingesta", "corregir_ingesta", "borrar_ingesta"}
 # Privacy and account controls deliberately NEVER become proposal tools (BODY-ASISTENTE-PROPUESTAS-1
 # approval reason): nivel_datos, consent, export, delete-all, device keys, Garmin connection,
 # household membership all stay on their own screens.
@@ -179,7 +180,7 @@ class RegistryShapeTest(unittest.TestCase):
         self.assertEqual(len(lectura), 13)
         self.assertEqual({h["nombre"]: h["nivel"] for h in lectura}, expected_levels)
 
-    def test_ten_propuesta_tools_at_nivel_ninguno(self):
+    def test_thirteen_propuesta_tools_at_nivel_ninguno(self):
         propuesta = [h for h in herramientas.HERRAMIENTAS if h["tipo"] == "propuesta"]
         self.assertEqual({h["nombre"] for h in propuesta}, PROPUESTA_NOMBRES)
         self.assertTrue(all(h["nivel"] == "ninguno" for h in propuesta))
@@ -187,7 +188,7 @@ class RegistryShapeTest(unittest.TestCase):
 
     def test_every_entry_has_a_known_tipo(self):
         self.assertTrue(all(h["tipo"] in ("lectura", "propuesta") for h in herramientas.HERRAMIENTAS))
-        self.assertEqual(len(herramientas.HERRAMIENTAS), 23)
+        self.assertEqual(len(herramientas.HERRAMIENTAS), 26)
 
 
 class RouteMappingTest(unittest.TestCase):

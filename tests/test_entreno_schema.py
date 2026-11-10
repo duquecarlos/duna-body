@@ -229,6 +229,27 @@ CREATE TABLE propuesta_agente (
 """
 
 
+_OLD_PROPUESTA_AGENTE_SQL_EXPERIMENTOS = """
+CREATE TABLE propuesta_agente (
+    id              INTEGER PRIMARY KEY,
+    person_id       INTEGER NOT NULL REFERENCES person(id),
+    conversacion_id INTEGER NOT NULL REFERENCES conversacion_agente(id),
+    accion          TEXT NOT NULL CHECK (accion IN
+                        ('proponer_meta', 'proponer_cambio_meta', 'proponer_confirmar_turnos', 'proponer_idioma',
+                         'planear_entreno', 'registrar_entreno', 'registrar_medida', 'marcar_habito',
+                         'proponer_experimento', 'marcar_experimento')),
+    objetivo_id     INTEGER REFERENCES goal(id),
+    antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
+    despues_json    TEXT NOT NULL CHECK (json_valid(despues_json)),
+    estado          TEXT NOT NULL DEFAULT 'propuesta'
+                        CHECK (estado IN ('propuesta', 'aplicada', 'descartada', 'expirada', 'deshecha')),
+    creada_en       TEXT NOT NULL,
+    expira_en       TEXT NOT NULL,
+    resuelta_en     TEXT
+);
+"""
+
+
 def _old_db(case: unittest.TestCase, name: str) -> "db.sqlite3.Connection":
     """A DB built from the current SCHEMA (so every other table is already right), with metric_def,
     plan and propuesta_agente dropped and recreated in their pre-slice shape -- the same technique
@@ -361,6 +382,64 @@ class ExperimentosAccionMigrationTest(unittest.TestCase):
             "SELECT COUNT(*) FROM propuesta_agente WHERE accion IN ('proponer_experimento', 'marcar_experimento')"
         ).fetchone()[0]
         self.assertEqual(count, 2)
+
+    def test_migration_preserves_the_old_row_and_accepts_the_new_actions(self):
+        db.init(self.conn)
+        self._assert_migrated_state()
+
+    def test_migration_is_idempotent(self):
+        db.init(self.conn)
+        db.init(self.conn)
+        self._assert_migrated_state()
+        count = self.conn.execute("SELECT COUNT(*) AS n FROM propuesta_agente").fetchone()["n"]
+        self.conn.commit()
+        db.init(self.conn)
+        after = self.conn.execute("SELECT COUNT(*) AS n FROM propuesta_agente").fetchone()["n"]
+        self.assertEqual(count, after)
+
+
+class IngestaAccionMigrationTest(unittest.TestCase):
+    """BODY-PROTEINA-1: a third widening of the same CHECK (registrar_ingesta, corregir_ingesta,
+    borrar_ingesta) on top of a DB that already has the EXPERIMENTOS-era ten-action shape -- every
+    existing proposal row survives byte-for-byte, and the migration is idempotent."""
+
+    def setUp(self):
+        self.conn = _db(self, "ingesta_migra.db")
+        self.conn.executescript(db.SCHEMA)
+        self.conn.execute("PRAGMA foreign_keys = OFF")
+        self.conn.execute("DROP TABLE propuesta_agente")
+        self.conn.execute(_OLD_PROPUESTA_AGENTE_SQL_EXPERIMENTOS)
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (1, 'Me')")
+        self.cid = self.conn.execute(
+            "INSERT INTO conversacion_agente (person_id, creada_en) VALUES (1, '2026-11-09T00:00:00+00:00')"
+        ).lastrowid
+        self.conn.execute(
+            "INSERT INTO propuesta_agente (person_id, conversacion_id, accion, despues_json, "
+            "creada_en, expira_en) VALUES (1, ?, 'marcar_experimento', '{}', '2026-11-09T00:00:00+00:00', "
+            "'2026-11-09T00:10:00+00:00')",
+            (self.cid,),
+        )
+        self.conn.commit()
+
+    def _assert_migrated_state(self):
+        old_proposal = self.conn.execute(
+            "SELECT accion FROM propuesta_agente WHERE conversacion_id = ?", (self.cid,)
+        ).fetchone()
+        self.assertEqual(old_proposal["accion"], "marcar_experimento")
+        for accion in ("registrar_ingesta", "corregir_ingesta", "borrar_ingesta"):
+            self.conn.execute(
+                "INSERT INTO propuesta_agente (person_id, conversacion_id, accion, despues_json, "
+                "creada_en, expira_en) VALUES (1, ?, ?, '{}', '2026-11-09T00:00:00+00:00', "
+                "'2026-11-09T00:10:00+00:00')",
+                (self.cid, accion),
+            )
+        self.conn.commit()
+        count = self.conn.execute(
+            "SELECT COUNT(*) FROM propuesta_agente WHERE accion IN "
+            "('registrar_ingesta', 'corregir_ingesta', 'borrar_ingesta')"
+        ).fetchone()[0]
+        self.assertEqual(count, 3)
 
     def test_migration_preserves_the_old_row_and_accepts_the_new_actions(self):
         db.init(self.conn)

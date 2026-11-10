@@ -41,8 +41,9 @@ def _row_checksum(conn: sqlite3.Connection) -> str:
     the same seed can be compared without their wall-clock-dependent columns disagreeing."""
     h = hashlib.sha256()
     tables = ["person", "daily_metric", "sleep_session", "activity", "shift", "shift_batch",
-              "shift_batch_item", "goal", "habit", "habit_check", "goal_check", "goal_enlace"]
-    excluded = {"creado_en", "created_at", "creado_at", "decided_at", "extracted_at", "received"}
+              "shift_batch_item", "goal", "habit", "habit_check", "goal_check", "goal_enlace", "ingesta"]
+    excluded = {"creado_en", "created_at", "creado_at", "decided_at", "extracted_at", "received",
+                "updated_at"}
     for name in tables:
         cols = [r[1] for r in conn.execute(f"PRAGMA table_info({name})") if r[1] not in excluded]
         order = ", ".join(cols)

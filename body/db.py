@@ -64,7 +64,8 @@ _PROPUESTA_AGENTE_COLUMNS = """
     accion          TEXT NOT NULL CHECK (accion IN
                         ('proponer_meta', 'proponer_cambio_meta', 'proponer_confirmar_turnos', 'proponer_idioma',
                          'planear_entreno', 'registrar_entreno', 'registrar_medida', 'marcar_habito',
-                         'proponer_experimento', 'marcar_experimento')),
+                         'proponer_experimento', 'marcar_experimento',
+                         'registrar_ingesta', 'corregir_ingesta', 'borrar_ingesta')),
     objetivo_id     INTEGER REFERENCES goal(id),
     antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
     despues_json    TEXT NOT NULL CHECK (json_valid(despues_json)),
@@ -533,6 +534,26 @@ CREATE TABLE IF NOT EXISTS moment (
 );
 CREATE INDEX IF NOT EXISTS idx_moment_person ON moment(person_id);
 
+-- BODY-PROTEINA-1: one row per thing eaten or drunk, keyed by a metric_def key marked `agregado =
+-- 'suma_ingesta'` (protein_g today; calories or water later are rows here too, never new tables).
+-- The day's total is DERIVED by the one writer (db.registrar_ingesta/corregir_ingesta/
+-- borrar_ingesta) into daily_metric, source 'self' -- never written directly by anything else.
+-- ts_local is the moment eaten, or NULL for "sometime that day"; descripcion is the person's own
+-- words, kept like moment.note, never printed or logged.
+CREATE TABLE IF NOT EXISTS ingesta (
+    id          INTEGER PRIMARY KEY,
+    person_id   INTEGER NOT NULL REFERENCES person(id),
+    day         TEXT NOT NULL,
+    ts_local    TEXT,
+    metric_key  TEXT NOT NULL REFERENCES metric_def(key),
+    amount      REAL NOT NULL CHECK (amount > 0),
+    estimado    INTEGER NOT NULL DEFAULT 0 CHECK (estimado IN (0, 1)),
+    descripcion TEXT,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ingesta_person_dia ON ingesta(person_id, day);
+
 CREATE TABLE IF NOT EXISTS experimento (
 {_EXPERIMENTO_COLUMNS}
 );
@@ -592,7 +613,15 @@ METRIC_DEFS += [
     # go up or down is the person's own goal (a goal row), never this metric's own direction.
     ("body_weight_kg", "Weight", "kg", "neutral", "measured", "self"),
     ("waist_cm", "Waist", "cm", "neutral", "measured", "self"),
+    # BODY-PROTEINA-1: the first intake metric -- 'neutral' like weight, since whether to raise or
+    # lower protein is the person's own goal, never assumed here. `agregado = 'suma_ingesta'` marks
+    # it as derived from `ingesta` rows, not a single self-reported figure.
+    ("protein_g", "Protein", "g", "neutral", "measured", "self", "suma_ingesta"),
 ]
+# BODY-PROTEINA-1: a 7th field, `agregado` -- 'suma_ingesta' marks a key whose daily_metric value is
+# the SUM of that day's `ingesta` rows, derived by db.registrar_ingesta/corregir_ingesta/
+# borrar_ingesta, never set directly; None (padded here) for every other key, today's behaviour.
+METRIC_DEFS = [d if len(d) == 7 else (*d, None) for d in METRIC_DEFS]
 
 # BODY-MEDIDA-PESO-1: a plausible-range refusal for a self-measured figure prone to a typo (780
 # instead of 78.0) -- keyed by metric key, not every self key: flex_alcance_cm and snoring_min have
@@ -651,6 +680,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE metric_def ADD COLUMN origen TEXT NOT NULL DEFAULT 'garmin' "
             "CHECK (origen IN ('garmin', 'self'))"
+        )
+    if cols and "agregado" not in cols:
+        conn.execute(
+            "ALTER TABLE metric_def ADD COLUMN agregado TEXT CHECK (agregado IN ('suma_ingesta') OR agregado IS NULL)"
         )
     pcols = {r[1] for r in conn.execute("PRAGMA table_info(person)")}
     if pcols and "language" not in pcols:
@@ -785,6 +818,13 @@ def _propuesta_agente_needs_experimentos_rebuild(conn: sqlite3.Connection) -> bo
     return row is not None and "marcar_experimento" not in row[0]
 
 
+def _propuesta_agente_needs_ingesta_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'propuesta_agente'"
+    ).fetchone()
+    return row is not None and "registrar_ingesta" not in row[0]
+
+
 def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
@@ -793,6 +833,10 @@ def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     # already copies column-for-column from the CURRENT _PROPUESTA_AGENTE_COLUMNS rather than a
     # hardcoded old shape.
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_experimentos_rebuild(conn):
+        _rebuild_propuesta_agente_table(conn)
+    # BODY-PROTEINA-1: a third widening (registrar_ingesta, corregir_ingesta, borrar_ingesta), same
+    # reusable rebuild.
+    if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_ingesta_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
 
 
@@ -1006,9 +1050,9 @@ def init(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
     _migrate(conn)
     conn.executemany(
-        "INSERT INTO metric_def (key, label, unit, better, kind, origen) VALUES (?, ?, ?, ?, ?, ?) "
+        "INSERT INTO metric_def (key, label, unit, better, kind, origen, agregado) VALUES (?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(key) DO UPDATE SET label=excluded.label, unit=excluded.unit, better=excluded.better, "
-        "kind=excluded.kind",
+        "kind=excluded.kind, agregado=excluded.agregado",
         METRIC_DEFS,
     )
     # One owner row so a single-person install works; no personal details.
@@ -1112,12 +1156,18 @@ def load_day(conn: sqlite3.Connection, day: str, person_id: int) -> dict:
         "SELECT * FROM shift WHERE person_id = ? AND day = ? ORDER BY start_local",
         (person_id, day),
     ).fetchall()
+    ingesta = conn.execute(
+        "SELECT id, ts_local, metric_key, amount, estimado, descripcion FROM ingesta "
+        "WHERE person_id = ? AND day = ? ORDER BY COALESCE(ts_local, ''), id",
+        (person_id, day),
+    ).fetchall()
     return {
         "day": day,
         "metrics": [dict(r) for r in metrics],
         "sleep": dict(sleep) if sleep else None,
         "activities": [dict(r) for r in activities],
         "shifts": [dict(r) for r in shifts],
+        "ingesta": [dict(r) for r in ingesta],
     }
 
 
@@ -1626,3 +1676,52 @@ def crear_momento(conn: sqlite3.Connection, person_id: int, ts_local: str, kind:
             (person_id, ts_local, kind, note, now),
         )
     return cur.lastrowid
+
+
+# ---- ingesta (BODY-PROTEINA-1): registrar_ingesta/corregir_ingesta/borrar_ingesta are the ONE
+# writer of a (person, day, metric_key) day total -- each recomputes the sum of that day's rows and
+# writes it to daily_metric with source='self' through set_metric, removing the row entirely once
+# the day has no entries left (set_metric(value=None) already does that).
+
+def _recalcular_ingesta_dia(conn: sqlite3.Connection, person_id: int, day: str, metric_key: str) -> None:
+    total = conn.execute(
+        "SELECT SUM(amount) FROM ingesta WHERE person_id = ? AND day = ? AND metric_key = ?",
+        (person_id, day, metric_key),
+    ).fetchone()[0]
+    set_metric(conn, day, metric_key, total, "self", person_id)
+
+
+def registrar_ingesta(conn: sqlite3.Connection, person_id: int, day: str, metric_key: str, amount: float,
+                       estimado: bool, descripcion: str | None = None, ts_local: str | None = None) -> int:
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO ingesta (person_id, day, ts_local, metric_key, amount, estimado, descripcion, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (person_id, day, ts_local, metric_key, amount, int(bool(estimado)), descripcion, now, now),
+        )
+        _recalcular_ingesta_dia(conn, person_id, day, metric_key)
+    return cur.lastrowid
+
+
+def corregir_ingesta(conn: sqlite3.Connection, person_id: int, ingesta_id: int, amount: float) -> None:
+    fila = conn.execute(
+        "SELECT person_id, day, metric_key FROM ingesta WHERE id = ?", (ingesta_id,)
+    ).fetchone()
+    if fila is None or fila["person_id"] != person_id:
+        raise ValueError("ingesta_id: not this person's own entry")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        conn.execute("UPDATE ingesta SET amount = ?, updated_at = ? WHERE id = ?", (amount, now, ingesta_id))
+        _recalcular_ingesta_dia(conn, person_id, fila["day"], fila["metric_key"])
+
+
+def borrar_ingesta(conn: sqlite3.Connection, person_id: int, ingesta_id: int) -> None:
+    fila = conn.execute(
+        "SELECT person_id, day, metric_key FROM ingesta WHERE id = ?", (ingesta_id,)
+    ).fetchone()
+    if fila is None or fila["person_id"] != person_id:
+        raise ValueError("ingesta_id: not this person's own entry")
+    with conn:
+        conn.execute("DELETE FROM ingesta WHERE id = ?", (ingesta_id,))
+        _recalcular_ingesta_dia(conn, person_id, fila["day"], fila["metric_key"])
