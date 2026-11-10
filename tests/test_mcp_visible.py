@@ -6,6 +6,7 @@ Invented demo data only, no real health figures, no network.
 """
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
@@ -15,6 +16,7 @@ from fastapi.testclient import TestClient
 from body import config, db, demo, identity, web
 from body.agente import conversacion as agente_conversacion
 from body.agente import propuestas as agente_propuestas
+from body.rutas import hoy as web_hoy
 from tests._rutas import contar_sql
 from tests.test_rendimiento import _CEILINGS
 
@@ -37,6 +39,22 @@ def _crear_propuesta_mcp(conn, person_id: int, start_day: str = "2020-01-01") ->
     registro = agente_propuestas.crear(conn, person_id, conversacion_id, "marcar_periodo",
                                         {"kind": "viaje", "start_day": start_day, "end_day": None, "note": None})
     return conversacion_id, registro["id"]
+
+
+def _crear_aplicada_mcp(conn, person_id: int, resuelta_en: str, start_day: str = "2020-01-01") -> int:
+    """A proposal as if body/mcp.py's own `aplicar_propuesta` tool had already applied it
+    (BODY-MCP-APLICAR-1): an mcp-origin conversation holding one `propuesta_agente` row in state
+    'aplicada', with a controllable `resuelta_en` so a test can place it inside or outside Hoy's
+    24h window without sleeping. Returns the conversation id."""
+    conversacion_id = agente_conversacion.crear(conn, person_id, origen="mcp")
+    registro = agente_propuestas.crear(conn, person_id, conversacion_id, "marcar_periodo",
+                                        {"kind": "viaje", "start_day": start_day, "end_day": None, "note": None})
+    conn.execute(
+        "UPDATE propuesta_agente SET estado = 'aplicada', resuelta_en = ?, aplicada_via = 'mcp' WHERE id = ?",
+        (resuelta_en, registro["id"]),
+    )
+    conn.commit()
+    return conversacion_id
 
 
 class _BaseTest(unittest.TestCase):
@@ -96,6 +114,55 @@ class HoyLineaTest(_BaseTest):
             r = self.client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertLessEqual(stats["statements"], _CEILINGS["/"])
+
+
+class HoyAplicadoLineaTest(_BaseTest):
+    """BODY-MCP-APLICAR-1 ruling 5: Hoy's own aviso line for 24h after an outside apply, in both
+    languages, gone once every such apply has aged past the window -- an injectable clock so the
+    edge case needs no sleeping."""
+
+    def test_no_line_when_there_is_no_recent_apply(self):
+        r = self.client.get("/")
+        self.assertNotIn("Tu asistente personal aplicó", r.text)
+
+    def test_one_recent_apply_singular_wording_and_link(self):
+        ahora = datetime.now(timezone.utc)
+        cid = _crear_aplicada_mcp(self.conn, self.person_id, ahora.isoformat(timespec="seconds"))
+        r = self.client.get("/")
+        self.assertIn("Tu asistente personal aplicó 1 cambio · Ver", r.text)
+        self.assertIn(f"/?asis_conversacion={cid}#asis-btn", r.text)
+
+    def test_two_recent_applies_plural_wording_and_newest_link(self):
+        ahora = datetime.now(timezone.utc)
+        _crear_aplicada_mcp(self.conn, self.person_id, ahora.isoformat(timespec="seconds"), start_day="2020-01-01")
+        cid2 = _crear_aplicada_mcp(self.conn, self.person_id, ahora.isoformat(timespec="seconds"),
+                                   start_day="2020-02-01")
+        r = self.client.get("/")
+        self.assertIn("Tu asistente personal aplicó 2 cambios · Ver", r.text)
+        self.assertIn(f"/?asis_conversacion={cid2}#asis-btn", r.text)
+
+    def test_english_wording(self):
+        db.set_language(self.conn, "en", self.person_id)
+        self.conn.commit()
+        ahora = datetime.now(timezone.utc)
+        _crear_aplicada_mcp(self.conn, self.person_id, ahora.isoformat(timespec="seconds"))
+        r = self.client.get("/")
+        self.assertIn("Your personal assistant applied 1 change · View", r.text)
+
+    def test_line_is_gone_past_the_24h_window(self):
+        viejo = datetime.now(timezone.utc) - timedelta(hours=25)
+        _crear_aplicada_mcp(self.conn, self.person_id, viejo.isoformat(timespec="seconds"))
+        r = self.client.get("/")
+        self.assertNotIn("Tu asistente personal aplicó", r.text)
+
+    def test_injectable_clock_crosses_the_edge_with_no_sleeping(self):
+        ahora = datetime(2026, 1, 2, tzinfo=timezone.utc)
+        resuelta = (ahora - timedelta(hours=23)).isoformat(timespec="seconds")
+        _crear_aplicada_mcp(self.conn, self.person_id, resuelta)
+        dentro = web_hoy._mcp_aplicado_ctx(self.conn, self.person_id, ahora=ahora)
+        self.assertEqual(dentro["n"], 1)
+        fuera = web_hoy._mcp_aplicado_ctx(self.conn, self.person_id, ahora=ahora + timedelta(hours=2))
+        self.assertIsNone(fuera)
 
 
 class PanelDefaultTest(_BaseTest):

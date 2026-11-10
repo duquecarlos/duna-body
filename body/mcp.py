@@ -9,13 +9,22 @@ anywhere (ruling 7).
 
 Every tool call goes through the SAME `herramientas.ejecutar` the in-app assistant's own loop
 (body/agente/bucle.py) calls -- never a shortcut around it, so this server can never read or
-propose more than that level already allows. There is no apply/undo/delete tool anywhere in
-`herramientas.HERRAMIENTAS`, so none is ever listed or callable here either (ruling 3): a
+propose more than that level already allows. There is still no apply/undo/delete tool anywhere in
+`herramientas.HERRAMIENTAS`, so none of THOSE is ever listed or callable here either: a
 `propuesta` tool only ever creates a card in Body's own assistant panel -- in ONE conversation per
 MCP session, created lazily on the session's first proposal and tagged `origen='mcp'`
-(body/agente/conversacion.py) -- for the person to tap Aplicar there themselves. Whether this desk
-may later apply on the person's spoken yes is a separate, later decision; nothing here forecloses
-or enables it.
+(body/agente/conversacion.py) -- for the person to tap Aplicar there themselves, or (BODY-MCP-
+APLICAR-1) to say yes out loud and have this same caller tap it for them.
+
+`aplicar_propuesta` (BODY-MCP-APLICAR-1, ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2) is the one
+exception, and it lives OUTSIDE `herramientas.HERRAMIENTAS` on purpose -- never callable by the
+in-app assistant, only by this outside caller. It is listed, and callable, only while the person's
+own `aplicar_mcp` setting (body/db.py, changed only through Body's own /settings POST) is ON; it
+applies only a proposal THIS caller made (its conversation's `origen` is 'mcp') that is still
+`propuesta`, through the SAME `agente_propuestas.aplicar` the web route uses -- never undo, never
+delete, never another person's or the in-app assistant's own proposal. Turning the setting back
+OFF takes effect on this same long-lived process's very next `tools/list` or `tools/call`, since
+both read it fresh (ruling 2).
 
 Caps (ruling 4, BODY-MCP-LOCAL-1-B) bound a RATE, not a session: a rolling window of
 `LIMITES["ventana_min"]` minutes holds at most `LIMITES["lecturas"]` reads and `LIMITES["propuestas"]`
@@ -45,12 +54,34 @@ from . import db, errores
 from .agente import ajustes, bucle
 from .agente import conversacion as agente_conversacion
 from .agente import herramientas
+from .agente import propuestas as agente_propuestas
 from .i18n import T
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_INFO = {"name": "body-local", "version": "1"}
 CALLER = "mcp-local"
 ORIGEN = "mcp"
+
+# BODY-MCP-APLICAR-1 (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2): the one apply tool, listed only
+# while the person's own `aplicar_mcp` setting is ON (checked per tools/list AND per call, so
+# turning it off takes effect without restarting this process) -- never part of
+# herramientas.HERRAMIENTAS, since the in-app assistant may never call it (ruling 2: "never a
+# proposal the in-app assistant made" cuts both ways).
+NOMBRE_APLICAR = "aplicar_propuesta"
+_PARAM_APLICAR_PROPUESTA = {
+    "type": "object",
+    "properties": {"propuesta_id": {"type": "integer"}},
+    "required": ["propuesta_id"],
+    "additionalProperties": False,
+}
+_DESCRIPCION_APLICAR_PROPUESTA = (
+    "Aplica, directamente y sin que la persona tenga que tocar Aplicar en Body, una propuesta que "
+    "TÚ (este mismo asistente externo) ya creaste con otra herramienta y que sigue pendiente. "
+    "Llama esta herramienta SOLO después de que la persona haya dicho que sí, en palabras "
+    "explícitas, en ESTA MISMA conversación -- un 'sí' que te cuenten de otra conversación no "
+    "cuenta. La persona lo verá en la pantalla Hoy de Body y lo puede deshacer ahí en cualquier "
+    "momento."
+)
 
 # A rolling window, not a per-process total (BODY-MCP-LOCAL-1-B): "ventana_min" mirrors
 # body/agente/propuestas.py's own EXPIRA_MINUTOS (a proposal this server creates lives exactly that
@@ -59,7 +90,12 @@ ORIGEN = "mcp"
 # body/agente/bucle.py's own per-question caps (MAX_LECTURAS, MAX_RONDAS) -- the same ceiling the
 # in-app assistant holds itself to for one question, now the ceiling for one window instead of one
 # session.
-LIMITES = {"ventana_min": 15, "lecturas": bucle.MAX_LECTURAS, "propuestas": bucle.MAX_RONDAS}
+#
+# "aplicaciones" (BODY-MCP-APLICAR-1, ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 6): an apply is a real
+# write, not a mere proposal, so it gets bucle.MAX_LECTURAS -- the same tighter ceiling a read
+# already carries, instead of the looser MAX_RONDAS "propuestas" reuses.
+LIMITES = {"ventana_min": 15, "lecturas": bucle.MAX_LECTURAS, "propuestas": bucle.MAX_RONDAS,
+           "aplicaciones": bucle.MAX_LECTURAS}
 
 _PARSE_ERROR = {"code": -32700, "message": "Parse error"}
 _METHOD_NOT_FOUND = {"code": -32601, "message": "Method not found"}
@@ -108,8 +144,10 @@ class _Sesion:
         reloj = reloj or (lambda: datetime.now(timezone.utc))
         self.tope_lecturas = _Tope(LIMITES["ventana_min"], LIMITES["lecturas"], reloj)
         self.tope_propuestas = _Tope(LIMITES["ventana_min"], LIMITES["propuestas"], reloj)
+        self.tope_aplicaciones = _Tope(LIMITES["ventana_min"], LIMITES["aplicaciones"], reloj)
         self.total_lecturas = 0
         self.total_propuestas = 0
+        self.total_aplicaciones = 0
 
     def conversacion(self) -> int:
         if self.conversacion_id is None:
@@ -127,9 +165,17 @@ def _nivel(sesion: _Sesion) -> str:
     return ajustes.nivel_datos(sesion.conn, sesion.person_id)
 
 
+def _herramienta_aplicar() -> dict:
+    return {"name": NOMBRE_APLICAR, "description": _DESCRIPCION_APLICAR_PROPUESTA,
+            "inputSchema": _PARAM_APLICAR_PROPUESTA}
+
+
 def _lista_herramientas(sesion: _Sesion) -> list[dict]:
     nivel = _nivel(sesion)
-    return [_herramienta_mcp(e) for e in bucle._tool_specs(nivel)]
+    tools = [_herramienta_mcp(e) for e in bucle._tool_specs(nivel)]
+    if db.get_aplicar_mcp(sesion.conn, sesion.person_id):
+        tools.append(_herramienta_aplicar())
+    return tools
 
 
 def _idioma(sesion: _Sesion) -> str:
@@ -146,15 +192,66 @@ def _mensaje_tope_propuestas(sesion: _Sesion) -> str:
     return t("asistente.mcp.limite_propuestas", minutos=sesion.tope_propuestas.minutos_para_reintentar())
 
 
+def _mensaje_tope_aplicaciones(sesion: _Sesion) -> str:
+    t = T(_idioma(sesion))
+    return t("asistente.mcp.limite_aplicaciones", minutos=sesion.tope_aplicaciones.minutos_para_reintentar())
+
+
+def _mensaje_aplicar_apagado(sesion: _Sesion) -> str:
+    return T(_idioma(sesion))("asistente.mcp.aplicar_apagado")
+
+
+def _mensaje_aplicar_no_propia(sesion: _Sesion) -> str:
+    return T(_idioma(sesion))("asistente.mcp.aplicar_no_propia")
+
+
+def _mensaje_aplicar_no_vigente(sesion: _Sesion) -> str:
+    return T(_idioma(sesion))("asistente.mcp.aplicar_no_vigente")
+
+
+def _aplicar_propuesta_mcp(sesion: _Sesion, argumentos: dict) -> dict:
+    """`aplicar_propuesta` (BODY-MCP-APLICAR-1, ORCH-CARLOS-DELEGATES-TIER-1-1 rulings 2, 3, 6):
+    refuses with a plain tool error when the setting is OFF, when `propuesta_id` is not an int,
+    when the row does not exist, is not this person's, was not made by this same outside caller
+    (its conversation's `origen` must be 'mcp' -- never a proposal the in-app assistant made), or
+    is no longer in state 'propuesta' (already applied, discarded, expired, or drifted). Applies
+    through the SAME `agente_propuestas.aplicar` the web route uses, then ties the row to this
+    outside apply (db.marcar_aplicada_via_mcp) for the panel's own label."""
+    if not db.get_aplicar_mcp(sesion.conn, sesion.person_id):
+        raise herramientas.ToolError(_mensaje_aplicar_apagado(sesion))
+    if not sesion.tope_aplicaciones.permite():
+        raise herramientas.ToolError(_mensaje_tope_aplicaciones(sesion))
+    propuesta_id = argumentos.get("propuesta_id")
+    if not isinstance(propuesta_id, int):
+        raise herramientas.ToolError("propuesta_id debe ser un entero")
+    fila = sesion.conn.execute(
+        "SELECT conversacion_id FROM propuesta_agente WHERE id = ? AND person_id = ?",
+        (propuesta_id, sesion.person_id),
+    ).fetchone()
+    if fila is None or agente_conversacion.origen_de(sesion.conn, fila["conversacion_id"]) != ORIGEN:
+        raise herramientas.ToolError(_mensaje_aplicar_no_propia(sesion))
+    resultado = agente_propuestas.aplicar(sesion.conn, sesion.person_id, propuesta_id)
+    if resultado["estado"] != "aplicada":
+        raise herramientas.ToolError(_mensaje_aplicar_no_vigente(sesion))
+    db.marcar_aplicada_via_mcp(sesion.conn, propuesta_id)
+    sesion.tope_aplicaciones.registrar()
+    sesion.total_aplicaciones += 1
+    return {"propuesta_id": propuesta_id, "estado": resultado["estado"]}
+
+
 def _llamar_herramienta(sesion: _Sesion, nombre, argumentos: dict) -> tuple[str, dict]:
     """Dispatches one `tools/call` -- every attempt, successful or refused, is audited first
     (ruling 5). A read goes straight to `herramientas.ejecutar`; a proposal gets this session's one
-    lazily-created, 'mcp'-tagged conversation. Raises `herramientas.ToolError` (caught by the
-    caller) for an unknown name, a cap reached (its message naming when to try again, BODY-MCP-
-    LOCAL-1-B), or anything `herramientas.ejecutar` itself refuses. Returns (tipo, salida) -- the
-    caller needs `tipo` to decide whether the result also gets the "you'll see this on Hoy" line."""
+    lazily-created, 'mcp'-tagged conversation; `aplicar_propuesta` (BODY-MCP-APLICAR-1) goes to
+    `_aplicar_propuesta_mcp`, which carries its own refusals. Raises `herramientas.ToolError`
+    (caught by the caller) for an unknown name, a cap reached (its message naming when to try
+    again, BODY-MCP-LOCAL-1-B), or anything `herramientas.ejecutar` itself refuses. Returns (tipo,
+    salida) -- the caller needs `tipo` to decide whether the result also gets the "you'll see this
+    on Hoy" line (a plain proposal) or the "applied, undo it in Body" line (an apply)."""
     nombre_str = nombre if isinstance(nombre, str) else str(nombre)
     db.registrar_uso_herramienta_externa(sesion.conn, sesion.person_id, nombre_str, CALLER)
+    if nombre_str == NOMBRE_APLICAR:
+        return "aplicacion", _aplicar_propuesta_mcp(sesion, argumentos)
     nivel = _nivel(sesion)
     tipo = herramientas.tipo_de(nombre) if isinstance(nombre, str) else None
     if tipo is None:
@@ -217,6 +314,12 @@ def _procesar_mensaje(sesion: _Sesion, msg: dict) -> dict | None:
             t = T(_idioma(sesion))
             contenido.insert(0, {"type": "text",
                                   "text": t("asistente.mcp.resultado_ubicacion", pantalla=t("nav.today"))})
+        elif tipo == "aplicacion":
+            # BODY-MCP-APLICAR-1: says what was applied and that it can be undone in Body (THE
+            # WORK step 2) -- never "tap Aplicar", since this call already did that.
+            t = T(_idioma(sesion))
+            contenido.insert(0, {"type": "text",
+                                  "text": t("asistente.mcp.aplicar_resultado", pantalla=t("nav.today"))})
         return _responder(id_, resultado={"content": contenido})
     if es_notificacion:
         return None
@@ -264,8 +367,8 @@ def main() -> None:
         db.ensure_ready(conn)
         person_id = db.local_person_id(conn)
         sesion = ejecutar(sys.stdin, sys.stdout, conn, person_id)
-        print(f"body.mcp: {sesion.total_lecturas} lecturas, {sesion.total_propuestas} propuestas",
-              file=sys.stderr)
+        print(f"body.mcp: {sesion.total_lecturas} lecturas, {sesion.total_propuestas} propuestas, "
+              f"{sesion.total_aplicaciones} aplicaciones", file=sys.stderr)
 
 
 if __name__ == "__main__":

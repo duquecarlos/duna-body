@@ -5,7 +5,7 @@ body/web.py before this slice. Pure move: path, method, templates and bodies ide
 from __future__ import annotations
 
 import html
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -157,6 +157,17 @@ def _mcp_pendientes_ctx(conn, person_id: int) -> dict | None:
     the line never shows an empty count. `conversacion_id` is the newest such conversation, for the
     line's own link to open the panel on."""
     n, conversacion_id = agente_conversacion.pendientes_mcp(conn, person_id)
+    return {"n": n, "conversacion_id": conversacion_id} if n else None
+
+
+def _mcp_aplicado_ctx(conn, person_id: int, ahora: datetime | None = None) -> dict | None:
+    """BODY-MCP-APLICAR-1 ruling 5: Hoy's own aviso line for 24 h after the person's personal
+    assistant applied a change on its own (through body/mcp.py's `aplicar_propuesta`), so nothing
+    lands silently -- None once every such apply has aged past the window, same "no line, no empty
+    count" shape _mcp_pendientes_ctx above already uses. `ahora`: an injectable clock for tests
+    that must cross the 24h edge without sleeping; real UTC now in production."""
+    ahora = ahora or datetime.now(timezone.utc)
+    n, conversacion_id = agente_conversacion.aplicados_mcp_recientes(conn, person_id, ahora)
     return {"n": n, "conversacion_id": conversacion_id} if n else None
 
 
@@ -327,6 +338,7 @@ def today(person_id: int = Depends(identity.current_person_id)):
     today_local = comun._today_local(person)
     turno_ctx = _hoy_turno_ctx(t, conn, person_id, today_local)
     mcp_pendientes = _mcp_pendientes_ctx(conn, person_id)
+    mcp_aplicado = _mcp_aplicado_ctx(conn, person_id)
     if not day:
         return comun._render("soon.html", t=t, tab="today", title=t("today.title"),
                        text=comun._sync_status_text(conn, person, t), primeros_pasos=primeros_pasos,
@@ -351,7 +363,7 @@ def today(person_id: int = Depends(identity.current_person_id)):
                    r=r, reading=_reading(t, r), ready_avg=ready_avg,
                    ready_delta=ready_delta, ready_cls=ready_cls, cards=cards,
                    missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_count=proposed_count,
-                   turno=turno_ctx, turnos=turnos_on, mcp_pendientes=mcp_pendientes,
+                   turno=turno_ctx, turnos=turnos_on, mcp_pendientes=mcp_pendientes, mcp_aplicado=mcp_aplicado,
                    plan_habits=_today_due_habits(conn, t, person_id, today_local),
                    plan_experimentos=experimentos.hoy_contexto(conn, t, person_id, today_local),
                    today_iso=today_local.isoformat(),

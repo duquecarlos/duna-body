@@ -29,7 +29,8 @@ def settings(person_id: int = Depends(identity.current_person_id)):
                           for k in comun._defs(conn)] if hh else []
     return comun._render("settings.html", t=t, tab="settings", nivel_datos=nivel_datos,
                    trabaja_turnos=trabaja_turnos, turnos=db.trabaja_turnos_si(conn, person_id),
-                   has_household=bool(hh), metrics_compartir=metrics_compartir)
+                   has_household=bool(hh), metrics_compartir=metrics_compartir,
+                   aplicar_mcp=db.get_aplicar_mcp(conn, person_id))
 
 
 @router.post("/settings/compartir")
@@ -70,6 +71,21 @@ async def set_trabaja_turnos(request: Request, person_id: int = Depends(identity
     if volver not in ("/", "/settings"):
         volver = "/settings"
     return RedirectResponse(volver, status_code=303)
+
+
+@router.post("/settings/aplicar_mcp")
+@comun._cierra_conexion_async
+async def set_aplicar_mcp(request: Request, person_id: int = Depends(identity.current_person_id)):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: the ONLY way this setting ever changes -- a POST
+    from the person's own session, behind the same identity.current_person_id every other Ajustes
+    route uses. Neither body/mcp.py nor the in-app assistant's tool registry imports
+    db.set_aplicar_mcp."""
+    f = parse_qs((await request.body()).decode())
+    valor = f.get("valor", [""])[0]
+    if valor in ("si", "no"):
+        conn, _, _ = comun._ctx(person_id)
+        db.set_aplicar_mcp(conn, person_id, valor == "si")
+    return RedirectResponse("/settings", status_code=303)
 
 
 # ---- «Lo que ve el asistente» (BODY-NIVEL-DATOS-UI-1): the screen the consent text promises -------

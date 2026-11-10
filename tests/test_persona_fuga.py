@@ -490,6 +490,21 @@ class DeviceAndPropuestaCrossIdTest(_BaseFugaTest):
                                 (self.ids["B"]["propuesta_id"],)).fetchone()
         self.assertEqual(row["estado"], "propuesta", "A's action calls touched B's propuesta")
 
+    def test_mcp_aplicar_propuesta_refuses_the_other_persons_id_too(self):
+        """BODY-MCP-APLICAR-1: body/mcp.py's own `aplicar_propuesta` tool is the local MCP
+        server's equivalent of the web route above -- A, with the setting ON, naming B's own
+        propuesta_id, is refused the same way, and B's row is untouched."""
+        from body import mcp
+
+        db.set_aplicar_mcp(self.conn, PERSON_A, True)
+        self.conn.commit()
+        sesion = mcp._Sesion(self.conn, PERSON_A)
+        with self.assertRaises(agente_herramientas.ToolError):
+            mcp._aplicar_propuesta_mcp(sesion, {"propuesta_id": self.ids["B"]["propuesta_id"]})
+        row = self.conn.execute("SELECT estado FROM propuesta_agente WHERE id = ?",
+                                (self.ids["B"]["propuesta_id"],)).fetchone()
+        self.assertEqual(row["estado"], "propuesta", "A's mcp apply call touched B's propuesta")
+
 
 class NocheInusualDismissCrossPersonTest(_BaseFugaTest):
     """BODY-NOCHE-INUSUAL-1 ruling 5: the dismiss POST (`/day/{day}/noche-inusual/visto`) takes no

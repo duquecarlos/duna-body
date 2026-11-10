@@ -18,6 +18,14 @@
   </form>
   <p class="note mt-8">{{ t('settings.turnos.desc') }}</p>
 </div>
+<div class="card">
+  <div class="q">{{ t('settings.aplicar_mcp.pregunta') }}</div>
+  <form method="post" action="/settings/aplicar_mcp" class="seg">
+    <button class="btn {{ 'on' if aplicar_mcp==True }}" name="valor" value="si">{{ t('settings.turnos.si') }}</button>
+    <button class="btn {{ 'on' if aplicar_mcp==False }}" name="valor" value="no">{{ t('settings.turnos.no') }}</button>
+  </form>
+  <p class="note mt-8">{{ t('settings.aplicar_mcp.desc') }}</p>
+</div>
 {% if has_household %}
 <div class="card">
   <div class="q">{{ t('settings.compartir.titulo') }}</div>
