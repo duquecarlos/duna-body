@@ -96,6 +96,19 @@ def _pattern_rows(t: T, defs: dict, pat: dict) -> dict | None:
             "month": [row("month", i, t("date.months")[i][:3].capitalize()) for i in range(12)]}
 
 
+def _periodo_excluido_ctx(t: T, conn, person_id: int, cov: dict, marcados: set[str]) -> str | None:
+    """BODY-PERIODO-PANTALLAS-1: one honest line for the whole page -- how many days across the
+    person's own watch history were marked (illness, travel, injury) and so left out of patterns()
+    and by_shift() above (history.py's own exclusion, not re-derived here), and which kinds. None
+    of this is the person's own note text (DESIGN: never rendered outside the assistant panel).
+    `marcados` is read once by the route (patterns()'s own docstring says why), not re-read here."""
+    if not marcados:
+        return None
+    periodos_rows = db.periodos(conn, person_id, cov["first_day"], cov["last_day"])
+    kinds = sorted({t("periodo.kind." + p["kind"]) for p in periodos_rows})
+    return t("history.periodo_excluido", n=t.num(len(marcados)), kinds=", ".join(kinds))
+
+
 def _shift_ctx(t: T, defs: dict, shift_data: dict) -> dict:
     if not shift_data["has_shifts"]:
         return {"has_shifts": False}
@@ -120,8 +133,11 @@ def history_view(person_id: int = Depends(identity.current_person_id)):
                        text=comun._sync_status_text(conn, person, t), turnos=turnos_on)
     defs = comun._defs(conn)
     train = history.training(conn, person_id)
-    pat = history.patterns(conn, person_id)
-    shift_data = history.by_shift(conn, person_id)
+    # BODY-PERIODO-PANTALLAS-1: marked days, read once for the whole page (patterns()'s own
+    # docstring says why) and reused by patterns(), by_shift() and the count line below.
+    marcados = db.dias_marcados(conn, person_id, cov["first_day"], cov["last_day"])
+    pat = history.patterns(conn, person_id, marcados)
+    shift_data = history.by_shift(conn, person_id, marcados)
 
     since = comun._short_date(t, date.fromisoformat(cov["first_day"]))
     coverage_line = t("history.coverage", since=since, days=t.num(cov["days_present"]))
@@ -130,9 +146,10 @@ def history_view(person_id: int = Depends(identity.current_person_id)):
                   end=comun._short_date(t, date.fromisoformat(cov["longest_gap_end"])))
                 if cov["longest_gap_days"] > 0 else t("history.coverage_no_gap"))
     hero_finding = _finding_text(t, defs, pat["findings"][0]) if pat["findings"] else None
+    periodo_line = _periodo_excluido_ctx(t, conn, person_id, cov, marcados)
 
     return comun._render("history.html", t=t, tab="trends", coverage_line=coverage_line, gap_line=gap_line,
-                   activity_count=t.num(cov["activity_count"]), hero_finding=hero_finding,
+                   activity_count=t.num(cov["activity_count"]), hero_finding=hero_finding, periodo_line=periodo_line,
                    training=_training_ctx(t, train) if train else None,
                    patterns=_pattern_rows(t, defs, pat),
                    findings=[_finding_text(t, defs, f) for f in pat["findings"][1:]],

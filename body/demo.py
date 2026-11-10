@@ -370,13 +370,22 @@ def _seed_ingesta(conn, db, rng: random.Random, all_days: list[date], person_id:
 
 
 def _seed_periodo(conn, db, all_days: list[date], person_id: int) -> int:
-    """One invented closed 'malestar' period partway through the seeded history (BODY-PERIODO-1),
-    so screens and analyses that leave marked days out have something to exclude in the demo."""
+    """Two invented periods: a closed 'malestar' stretch partway through the seeded history
+    (BODY-PERIODO-1), so screens and analyses that leave marked days out have something to exclude
+    in the demo, and an OPEN 'lesion' period STARTING today (BODY-PERIODO-PANTALLAS-1), so Hoy's
+    own period line has something to show on the demo server. Starting it exactly on today, not
+    a day earlier, keeps it outside every baseline's own 30-day lookback (which always ends the day
+    BEFORE the day it is computed for) -- an open period inside that window makes db.dias_marcados()
+    re-read person() for "today" on every one of its callers, the known cost this slice's own
+    history.py/historial.py change works around (patterns()'s docstring), which a per-key caller
+    like baselines.baseline() has no page-wide budget to share."""
     start = all_days[len(all_days) // 2]
     end = start + timedelta(2)
     db.crear_periodo(conn, person_id, "malestar", start.isoformat(), end.isoformat())
+    hoy = all_days[-1]
+    db.crear_periodo(conn, person_id, "lesion", hoy.isoformat(), None)
     conn.commit()
-    return 1
+    return 2
 
 
 def _seed_shifts(conn, shift_import, turnos_costo, person_id: int,

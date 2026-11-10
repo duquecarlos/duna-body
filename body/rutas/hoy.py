@@ -123,6 +123,29 @@ def _short_weekday_date(t: T, d: date) -> str:
     return f"{t('date.days')[d.weekday()][:3]} {d.day} {t('date.months')[d.month - 1][:3]}"
 
 
+def _dia_mes(t: T, d: date) -> str:
+    """"5 nov" style: day, abbreviated month, no year -- same shape as experimentos.py's own
+    _dia_mes, not reused directly since neither module imports the other."""
+    return f"{d.day} {t('date.months')[d.month - 1][:3]}"
+
+
+def _periodo_hoy_ctx(t: T, conn, person_id: int, today_local: date) -> dict | None:
+    """BODY-PERIODO-PANTALLAS-1: one plain line on the readiness card while a period (illness,
+    travel, injury) covers today -- open, or closed after today -- naming the kind and when it
+    started, plus a real link to the assistant (the only place a period is closed, BODY-PERIODO-1),
+    never the person's own note text (DESIGN: that stays inside the assistant panel's own card).
+    None when no period covers today. db.periodos' own per-connection cache means this costs no
+    extra SQL on a page that already calls baseline() for the readiness card and TODAY_CARDS."""
+    hoy_iso = today_local.isoformat()
+    cubren = db.periodos(conn, person_id, hoy_iso, hoy_iso)
+    if not cubren:
+        return None
+    p = cubren[-1]
+    fecha = _dia_mes(t, date.fromisoformat(p["start_day"]))
+    return {"texto": t("today.periodo", kind=t("periodo.kind." + p["kind"]), fecha=fecha),
+            "enlace": t("today.periodo_enlace")}
+
+
 def _hoy_turno_ctx(t: T, conn, person_id: int, today_local: date) -> dict:
     """Hoy's second promise (BODY-HOY-TURNO-1): today's shift, the next one, and a recovery line --
     one vocabulary with Turnos' strip (shift.kind.*, the same band classes)."""
@@ -274,7 +297,8 @@ def today(person_id: int = Depends(identity.current_person_id)):
                    today_iso=today_local.isoformat(),
                    primeros_pasos=primeros_pasos,
                    hogar_compartido=_hogar_compartido_ctx(conn, t, person_id, defs, today_local),
-                   ventana=_ventana_ctx(t, conn, person, person_id, today_local))
+                   ventana=_ventana_ctx(t, conn, person, person_id, today_local),
+                   periodo=_periodo_hoy_ctx(t, conn, person_id, today_local))
 
 
 # readiness.Part.key -> the Tendencias metric it reads from (readiness.Part carries no metric key of its
@@ -368,6 +392,16 @@ def _activity_name(t: T, a) -> str:
     return t("activity.generic")
 
 
+def _periodo_dia_ctx(t: T, conn, person_id: int, dia_iso: str) -> str | None:
+    """BODY-PERIODO-PANTALLAS-1: Día's own line, in words, naming every kind that covers this one
+    day -- never the person's own note text (DESIGN: stays inside the assistant panel's own card)."""
+    cubren = db.periodos(conn, person_id, dia_iso, dia_iso)
+    if not cubren:
+        return None
+    kinds = ", ".join(t("periodo.kind." + p["kind"]) for p in cubren)
+    return t("day.periodo", kind=kinds)
+
+
 @router.get("/day/{day}")
 @comun._cierra_conexion
 def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
@@ -376,6 +410,7 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
     turnos_on = db.trabaja_turnos_si(conn, person_id)
     today_local = comun._today_local(person)
     key = d.isoformat()
+    periodo_dia = _periodo_dia_ctx(t, conn, person_id, key)
     data = db.load_day(conn, key, person_id)
     vals = {m["key"]: m["value"] for m in data["metrics"]}
     defs = comun._defs(conn)
@@ -431,4 +466,4 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
                    activities=acts, shifts=shifts, has_data=has_data, block_ctx=block_ctx,
                    sync_text=None if has_data else comun._sync_status_text(conn, person, t),
                    prev=(d - timedelta(1)).isoformat(), next=(d + timedelta(1)).isoformat(),
-                   turnos=turnos_on, ventana=_ventana_dia_ctx(t, conn, person_id, d))
+                   turnos=turnos_on, ventana=_ventana_dia_ctx(t, conn, person_id, d), periodo=periodo_dia)

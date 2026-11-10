@@ -9,6 +9,7 @@
 <div class="card">
   <div class="q">{{ hero_finding or t('history.no_findings') }}</div>
   <p class="note mt-6 mb-0">{{ gap_line }} · {{ t('history.activities_count', n=activity_count) }}</p>
+  {% if periodo_line %}<p class="note mt-6 mb-0">{{ periodo_line }}</p>{% endif %}
 </div>
 
 {% macro month_row(m) %}

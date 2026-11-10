@@ -203,10 +203,17 @@ def _candidate(metric: str, axis: str, buckets: list[dict | None], better: str, 
             "impact": spread / sd if sd else spread}
 
 
-def patterns(conn, person_id: int) -> dict:
+def patterns(conn, person_id: int, marcados: set[str] | None = None) -> dict:
     """Weekday and month/season profiles (your own p25-p75 band) for sleep, resting HR, HRV, stress and
     Body Battery, plus up to three plain-language findings picked by spread / your own spread, filtered by
-    a noise floor so a flat week or month never produces a finding."""
+    a noise floor so a flat week or month never produces a finding.
+
+    BODY-PERIODO-PANTALLAS-1: a marked day (illness, travel, injury) is left OUT of every bucket, the
+    same rule baselines.baseline() already applies -- a sick week should never read as your normal
+    Monday. `marcados`, when given (historial.py passes its own, read once for the whole page), is
+    used as is -- an OPEN period makes db.dias_marcados() re-read person() for "today" on every call
+    it is not given to, so a caller with its own page-wide budget (one route, several PATTERN_KEYS)
+    reads it once and passes it in, the same way tendencias.py reads `nights` once for every card."""
     better_by_key = {r["key"]: r["better"] for r in conn.execute("SELECT key, better FROM metric_def")}
     metrics: dict[str, dict | None] = {}
     candidates: list[dict] = []
@@ -214,6 +221,10 @@ def patterns(conn, person_id: int) -> dict:
         rows = conn.execute(
             "SELECT day, value FROM daily_metric WHERE person_id = ? AND metric_key = ?", (person_id, key)
         ).fetchall()
+        if rows:
+            propios = (marcados if marcados is not None else
+                       db.dias_marcados(conn, person_id, min(r["day"] for r in rows), max(r["day"] for r in rows)))
+            rows = [r for r in rows if r["day"] not in propios]
         if len(rows) < PATTERN_MIN_N:
             metrics[key] = None
             continue
@@ -239,9 +250,14 @@ def patterns(conn, person_id: int) -> dict:
     return {"metrics": metrics, "findings": candidates[:MAX_FINDINGS]}
 
 
-def by_shift(conn, person_id: int) -> dict:
+def by_shift(conn, person_id: int, marcados: set[str] | None = None) -> dict:
     """The same metrics as patterns(), grouped by shift kind, for the days that have a shift row. An
-    explicit no-shifts-yet state when there are none, for an honest empty card pointing to Turnos."""
+    explicit no-shifts-yet state when there are none, for an honest empty card pointing to Turnos.
+
+    BODY-PERIODO-PANTALLAS-1: a marked day (illness, travel, injury) is left out of every kind's own
+    figures AND its own day count, the same rule patterns() and baselines.baseline() already apply --
+    a shift kind's "usual" should never be pulled toward a day the person marked as off the normal
+    flow. `marcados`, when given, is used as is -- see patterns()'s own docstring for why."""
     shift_rows = conn.execute(
         "SELECT DISTINCT day, kind FROM shift WHERE person_id = ?", (person_id,)
     ).fetchall()
@@ -250,6 +266,7 @@ def by_shift(conn, person_id: int) -> dict:
     day_kind: dict[str, str] = {}
     for r in shift_rows:
         day_kind.setdefault(r["day"], r["kind"])  # one kind per day; first one wins if a day has several
+    marcados = marcados if marcados is not None else db.dias_marcados(conn, person_id, min(day_kind), max(day_kind))
 
     placeholders = ",".join("?" for _ in PATTERN_KEYS)
     metric_rows = conn.execute(
@@ -259,12 +276,15 @@ def by_shift(conn, person_id: int) -> dict:
     values_by_kind: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
     days_by_kind: dict[str, set[str]] = defaultdict(set)
     for r in metric_rows:
+        if r["day"] in marcados:
+            continue
         kind = day_kind.get(r["day"])
         if kind:
             values_by_kind[kind][r["metric_key"]].append(r["value"])
             days_by_kind[kind].add(r["day"])
     for day, kind in day_kind.items():
-        days_by_kind[kind].add(day)  # count every shift day, even one with no metric at all (honest gap)
+        if day not in marcados:
+            days_by_kind[kind].add(day)  # count every shift day, even one with no metric at all (honest gap)
 
     kinds = [
         {"kind": kind, "days": len(days_by_kind[kind]),
