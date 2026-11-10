@@ -13582,3 +13582,41 @@ tests -t .` -> `Ran 1960 tests in 586.690s ... OK (skipped=1)`.
 No schema change, no customer-facing bytes (CLI-only, no web route, no UI string), no cross-repo
 contract -- merge policy A's three conditions all pass, merged on this green gate per
 ORCH-CARLOS-DELEGATES-TIER-1-1.
+
+## BODY-DESPERTAR-INSTALADOR-1 -- fix the wake check trigger's parameter set (2026-11-09)
+
+BODY-DESPERTAR-1 (merged `cc624dc`) added the wake check to `scripts/install-daily-sync.ps1` as a
+single `New-ScheduledTaskTrigger -Daily -At "04:00" -RepetitionInterval (New-TimeSpan -Minutes 20)
+-RepetitionDuration (New-TimeSpan -Hours 9)` call. On this machine's Windows PowerShell 5.1 that
+call fails: "Parameter set cannot be resolved using the specified named parameters" --
+`-RepetitionInterval`/`-RepetitionDuration` belong to the `-Once` parameter set, not `-Daily`, so a
+re-run of the installer would silently stop registering the wake check (`Register-ScheduledTask`
+then gets a null trigger). The orchestrator had already registered the task by hand in the form
+proven to work and verified it (StartBoundary 04:00, Interval PT20M, Duration PT9H, next run
+2026-11-10 04:00); this slice puts that same form into the installer script: `$wakeTrigger =
+New-ScheduledTaskTrigger -Daily -At "04:00"` followed by `$wakeTrigger.Repetition = (New-
+ScheduledTaskTrigger -Once -At "04:00" -RepetitionInterval (New-TimeSpan -Minutes 20)
+-RepetitionDuration (New-TimeSpan -Hours 9)).Repetition` -- the `-Daily` trigger's `Repetition`
+property is copied from a `-Once` trigger carrying the 20-minute/9-hour repetition, rather than
+built in one combined call. Nothing else in the script changed.
+
+`tests/test_installer.py`'s `InstallerWakeCheckTaskTest` now pins the split form (`$wakeTrigger`
+is `-Daily -At "04:00"` with neither repetition flag; `$wakeTrigger.Repetition` is assigned from a
+`-Once` trigger carrying both) and adds a guard,
+`test_no_recurring_trigger_combines_repetition_params_in_the_same_call`, that scans every
+`New-ScheduledTaskTrigger` call in the script and fails if any one call combines `-Daily` or
+`-Weekly` with `-RepetitionInterval`/`-RepetitionDuration` -- the exact parameter-set rule that
+broke BODY-DESPERTAR-1 -- so it cannot come back in this or any other trigger the script builds
+later. No existing assertion was loosened.
+
+**Commits** (`git rev-parse`): slice `afa7dfe7e524196a6fbf1734e5bbc89e52b406a8` on
+`feat/body-despertar-instalador-1`, merge `adf736ab519d8936df4670ccaddb3cbab4c4ba83` into `main`
+(`git merge --no-ff`; tree identical to the branch tip,
+`37b65a3dce117cb5c3389749025adf9c0613f02c`).
+
+**Gate**, once, foreground, from the repository root: `.venv/Scripts/python.exe -m unittest
+discover tests -t .` -> `Ran 1962 tests in 345.980s ... OK (skipped=1)`.
+
+No schema change, no customer-facing bytes (PowerShell installer script and its own test, no web
+route, no UI string), no cross-repo contract -- merge policy A's three conditions all pass, merged
+on this green gate per ORCH-CARLOS-DELEGATES-TIER-1-1.
