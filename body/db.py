@@ -36,6 +36,11 @@ RECUPERACION_MOTIVOS = ("sin_cobertura", "sin_rango", "fuera_de_horizonte", "mar
 # the window touches; 'marcado' = the shift's own day is inside a marked period.
 TURNO_FC_MOTIVOS = ("sin_cobertura", "sin_rango", "marcado")
 
+# BODY-SUENO-FC-1: the honest-gap reason codes body/sueno_fc.py's `noche()` returns when a night
+# gets no figure. 'sin_sesion' = no sleep_session row (or no start_local/end_local) for that wake
+# day; 'sin_cobertura' = too little minute-HR coverage inside the sleep window.
+SUENO_FC_MOTIVOS = ("sin_sesion", "sin_cobertura")
+
 # Shared between SCHEMA (fresh installs) and the rebuild functions below (existing installs),
 # so the two paths can never drift apart.
 _GOAL_COLUMNS = """
@@ -710,6 +715,12 @@ METRIC_DEFS = [
     ("sleep_respiration_avg", "Breathing at night (avg)", "brpm", "neutral"),
     ("sleep_respiration_low", "Breathing at night (low)", "brpm", "neutral"),
     ("sleep_respiration_high", "Breathing at night (high)", "brpm", "neutral"),
+    # BODY-SUENO-FC-1 (ORCH-CARLOS-DELEGATES-TIER-1-1 rulings 1, 6): the sleep-window heart rate
+    # itself, derived from minute data -- 'estimated' like readiness, since Body computes both,
+    # Garmin's API writes neither. 'lower' for both: a lower sleeping heart rate reads as more
+    # rested, the same word this app already uses for resting_hr.
+    ("sleep_hr_avg", "Sleeping heart rate", "bpm", "lower", "estimated"),
+    ("sleep_hr_min", "Lowest sleeping heart rate", "bpm", "lower", "estimated"),
 ]
 METRIC_DEFS = [d if len(d) == 5 else (*d, "measured") for d in METRIC_DEFS]
 METRIC_DEFS = [d if len(d) == 6 else (*d, "garmin") for d in METRIC_DEFS]

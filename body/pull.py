@@ -31,7 +31,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from . import (config, cuenta, db, errores, experimentos, fechas, garmin_adapter, garmin_cuenta, goals, readiness,
-               recuperacion, turno_fc)
+               recuperacion, sueno_fc, turno_fc)
 
 PAUSE_S = 1.0  # be gentle with Garmin's servers during a backfill
 EMPTY_STOP = 60  # --all stops after this many consecutive days with no watch data
@@ -219,6 +219,20 @@ def _recalcular_turno_fc_seguro(conn, person_id: int) -> None:
         print(f"turno_fc failed: {errores.texto_seguro(e)}", flush=True)
 
 
+def _recalcular_sueno_fc_seguro(conn, person_id: int) -> None:
+    """BODY-SUENO-FC-1's post-pull step: fills `sleep_hr_avg`/`sleep_hr_min` for this person's own
+    nights not yet computed under the current model version -- idempotent, cheap on a re-run (same
+    safe-wrapper shape as `_recalcular_turno_fc_seguro`): caught, printed as a counts-only line with
+    the exception TYPE, nothing else happens. Silent when there was nothing new, the same rule the
+    other two recalc sweeps follow."""
+    try:
+        resultado = sueno_fc.recalcular(conn, person_id)
+        if resultado["nuevas"]:
+            print(f"sueno_fc: {resultado['nuevas']} filas nuevas", flush=True)
+    except Exception as e:
+        print(f"sueno_fc failed: {errores.texto_seguro(e)}", flush=True)
+
+
 def _cerrar_semanas_todas(conn, desde_por_persona: dict[int, date] | None = None) -> None:
     """Closes weeks, once each, for EVERY person who can see an active goal (own or shared
     household milestone, `goals.personas_con_meta_activa`) -- connected to Garmin or not, pulled
@@ -268,6 +282,7 @@ def pull_hosted(conn, *, fecha: str | None = None, n_days: int = 2) -> tuple[int
         ok += 1
         _recalcular_recuperacion_seguro(conn, person_id)
         _recalcular_turno_fc_seguro(conn, person_id)
+        _recalcular_sueno_fc_seguro(conn, person_id)
         # BODY-EXPERIMENTOS-INTRADIA-DIAS-FALTANTES-1: only on the implicit "today" sweep (no
         # explicit --date), the same scheduled-pull shape the daily hosted timer runs.
         if hoy is not None:
@@ -370,6 +385,7 @@ def pull_backfill_hosted(conn, *, hoy: date | None = None) -> tuple[int, int, in
         ok += 1
         _recalcular_recuperacion_seguro(conn, person_id)
         _recalcular_turno_fc_seguro(conn, person_id)
+        _recalcular_sueno_fc_seguro(conn, person_id)
         if oldest is not None:
             desde_por_persona[person_id] = date.fromisoformat(oldest)
     _cerrar_semanas_todas(conn, desde_por_persona)
@@ -586,6 +602,7 @@ def _run(conn, a) -> int:
     _cerrar_semanas_seguro(conn, person_id, desde=desde)
     _recalcular_recuperacion_seguro(conn, person_id)
     _recalcular_turno_fc_seguro(conn, person_id)
+    _recalcular_sueno_fc_seguro(conn, person_id)
     return 0
 
 

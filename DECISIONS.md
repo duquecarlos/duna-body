@@ -15175,3 +15175,154 @@ Config snippet for the record (not wired to any desk by this slice -- CONNECTING
 and waits for Carlos's own yes): a Claude Code MCP server entry running `.venv/Scripts/python.exe` with args
 `["-m", "body.mcp"]`, cwd `C:/Duna/body/body-app-live`, `BODY_HOME` left unset so the server reads the
 person's own real home directory.
+
+## BODY-SUENO-FC-1 -- sleep-window heart rate, derived from minute data (2026-11-10)
+
+BODY-INFERENCIA-FC-1-INV (OBSERVED, `logs/worker-body-inferencia-fc-1-inv-body-app-20261109T220951.json`)
+ordered four slices; its slice 1 asked for exactly this: derive sleep-window heart rate (not just the daily
+`resting_hr` aggregate) by reading `db.intradia('intradia_fc', ...)` filtered to
+`[sleep_session.start_local, sleep_session.end_local]`, with the same honest-gap/coverage-floor treatment
+BODY-RECUPERACION-1 and BODY-TURNO-FC-1 already use. Its own slice 2 (NOCHE-INUSUAL-1, "this night looked
+unusual") needs this series and a baseline of it.
+
+**MODELO** (`body/sueno_fc.py`), version `sueno-fc-v1`:
+- `cobertura_min` 0.5 -- the same coverage floor `recuperacion.MODELO`/`turno_fc.MODELO` already use: below
+  half the window's own observed spacing implies, it is a gap, not a thin-but-honest reading.
+- `percentil_bajo` 10 -- the low is the window's own 10th percentile, not its single lowest sample (ruling
+  3): a sleep window typically holds a couple hundred per-minute readings, so one stray low sample (a strap
+  slip, a missed beat) cannot reach this rank; it still reads as a real sustained low.
+
+**Rulings implemented** (ORCH-CARLOS-DELEGATES-TIER-1-1):
+1. The two series are DAILY METRICS -- `sleep_hr_avg` / `sleep_hr_min` -- filed under the WAKE day exactly
+   as `sleep_session` is, in `daily_metric` (no side table): baselines, Tendencias, Dia and the assistant's
+   day read all reach them through the paths that already exist.
+2. `daily_metric.source` names the derivation and its version (`body-sueno-fc-v1`) -- a version bump
+   recomputes and REPLACES that night's figure (`daily_metric` carries no model-version column of its own,
+   unlike `recuperacion_actividad`/`turno_fc`'s own tables); the Garmin API writes neither key, so there is
+   nothing of its to overwrite (proven directly: `tests/test_sueno_fc.py`'s
+   `test_un_valor_de_api_en_otra_clave_nunca_se_toca` seeds a `resting_hr` row with `source='garmin'` and
+   confirms `recalcular` never touches it).
+3. The minimum is `percentil_bajo` (above), never a single sample --
+   `test_bajo_percentil_ignora_un_solo_pico_hacia_abajo` plants one 10.0 bpm sample inside an otherwise flat
+   55.0 window and the low stays at 55.0.
+4. Honest gaps: no `sleep_session` row (`"sin_sesion"`), or coverage under the floor inside the window
+   (`"sin_cobertura"`) -> no value that night -- the existing "--" on screens. `db.SUENO_FC_MOTIVOS =
+   ("sin_sesion", "sin_cobertura")`, the same shared-reason-tuple convention `RECUPERACION_MOTIVOS` /
+   `TURNO_FC_MOTIVOS` already use.
+5. `readiness.METRICS` / `readiness.WEIGHTS` never read either key (asserted directly,
+   `ReadinessNuncaLasLeeTest`) -- this slice touches nothing in `body/readiness.py`.
+6. `better = 'lower'` for both (a lower sleeping heart rate reads as more rested, the same word this app
+   already uses for `resting_hr`); questions and plain-word subtitles stay in the app's existing careful
+   register, never medical.
+
+**metric_def** (`body/db.py` `METRIC_DEFS`): `sleep_hr_avg` ("Sleeping heart rate" / "Pulso durmiendo") and
+`sleep_hr_min` ("Lowest sleeping heart rate" / "Pulso mínimo durmiendo"), unit `bpm` (renders as "lpm" in es
+via the existing `unit.bpm` key), `kind='estimated'` (like `readiness` -- Body computes both, Garmin's API
+writes neither), `origen` left at its 'garmin' default -- never 'self', so `_registrar_medida`'s own `WHERE
+origen = 'self'` filter can never offer these two keys to be self-registered (asserted directly,
+`MetricDefTest`). No `RANGOS_MEDIDA_PERSONAL` entry: these are derived, never person-typed.
+
+**Tendencias** (`body/catalogo_tendencias.py`): both keys added to the existing "night" `TREND_GROUPS` entry
+(alongside `sleep_spo2_avg`/`sleep_respiration_avg`) -- `origen` stays 'garmin', so the per-origin monthly
+floor (`GARMIN_MIN_MONTH_POINTS`, `TREND_MIN_DAYS`) applies exactly like every other Garmin-origin key there,
+never the looser self-measured floor. No `NIGHT_CAVEAT_KEYS` entry (`body/rutas/tendencias.py`): that caveat
+is specifically about the breathing/SpO2 proxy's own accuracy, not applicable to heart rate.
+
+**Dia** (`body/rutas/hoy.py`, `body/templates/day.html`): both keys excluded from the generic per-metric
+card grid (`SUENO_FC_KEYS`, same exclusion `SUENO_RESP_KEYS` already gets) and folded into one line inside
+the sleep card instead -- `day.sueno_fc.linea`: "Pulso durmiendo {avg} · mínimo {low}" / "Sleeping heart
+rate {avg} · lowest {low}", with the unit riding on the average alone (`comun._fig_unit`), never repeated
+for the low. Nothing when either value is missing -- `avg`/`low` always come from the same `noche()` call,
+so they are either both present or neither is. The line also shows on its own (no `sleep_minutes` card) the
+same way `sueno_resp_linea` already can.
+
+**i18n**, `body/i18n/{es,en}.json`, nine new keys, placeholders matching both languages: `metric.sleep_hr_avg`
+/ `metric.sleep_hr_min`, `trends.q.sleep_hr_avg` / `trends.q.sleep_hr_min`, `trends.plain.sleep_hr_avg` /
+`trends.plain.sleep_hr_min`, `day.sueno_fc.linea` -- plus the pre-existing `trends.group.night` and
+`unit.bpm` keys, reused as-is. es question: «¿Qué tan bajo late tu corazón mientras duermes?» (avg) /
+«¿Qué tan bajo llega tu pulso en la noche?» (low).
+
+**Demo** (`body/demo.py`): `_seed_sueno_fc`, called after `_seed_recuperacion`/`_seed_turno_fc` (both of
+which already write `intradia_fc` background for most of the history) -- reads each of the person's most
+recent `N_NOCHES_SUENO_FC` (5) sleep windows, overlays a two-level invented curve (`_curva_sueno`, a settling
+evening-to-overnight trough, never flat) inside each window, merges it with whatever `intradia_fc` the day
+already holds (read back via `db.intradia`, never erasing it), then calls `sueno_fc.recalcular`. Measured on
+a scratch `--dias 30` seed (counts only): `sueno_fc_noches: 5` printed, and 25 nights ended up with a
+`sleep_hr_avg`/`sleep_hr_min` value (the explicit 5 plus others that already had full-day background
+coverage from the other two seed steps) -- comfortably past `TREND_MIN_DAYS` (14) for the Tendencias card.
+
+**Post-pull / backfill**: `body/pull.py`'s `_recalcular_sueno_fc_seguro` (same safe-wrapper shape as
+`_recalcular_turno_fc_seguro`: caught, a counts-only line only when something was new) at the same three call
+sites `_recalcular_recuperacion_seguro`/`_recalcular_turno_fc_seguro` already run from. `body/vivo.py`'s
+`TAREAS["sueno_fc"] = "body.sueno_fc"`, for the one-off backfill the orchestrator runs later (not this
+slice) via `python -m body.vivo sueno_fc` on the live tree.
+
+**Tests** (`tests/test_sueno_fc.py`, 20 cases): a night crossing midnight in a non-UTC zone;
+`sin_sesion`/`sin_cobertura` gaps including zero-sample and low-sample windows; the robust low ignoring a
+single downward spike; `recalcular`'s idempotence, its version-bump replace-not-append behaviour, and that it
+never touches another key's own row; `REASON_CODES` motivo bookkeeping; `pull._recalcular_sueno_fc_seguro`'s
+silent/counts-only behaviour; the two `metric_def` rows' shape (`lower`/`estimated`/`garmin`/`bpm`);
+`readiness` never reading either key; Dia's line present/absent in es and en (`TestClient`, routed through
+`config.DB_PATH`, the same pattern `tests/test_tendencias_todas.py`'s own `_conn` uses); the Tendencias
+"night" card present in es and en. Also touched: `tests/test_vivo.py` (`SuenoFcTareaTest`, 3 cases, same
+shape as `RecuperacionTareaTest`/`TurnoFcTareaTest`) and `tests/test_tendencias_todas.py` (the "night" group's
+expected-keys assertion widened to the two new keys). `tests/test_i18n_paridad.py` and
+`tests/test_agente_tendencias_catalogo.py` needed no edit: both derive their expectations live from
+`db.METRIC_DEFS`/`comun.TREND_GROUPS`, so the new keys flow through automatically (confirmed by running
+both green).
+
+**Statement ceilings, `/trends` and `/day/{d}`**: unchanged, by construction -- this diff adds zero new
+`conn.execute` call sites to either route. `/day/{d}`'s `db.load_day` already reads every `metric_def` row
+through one join; `_sueno_fc_linea` reads from the `vals` dict that call already populated, no new query.
+`/trends`'s `profile.metric_profiles`/`profile.windows` already batch the whole catalogue into one query
+each (BODY-AGUJETAS-1-B); two more keys in `TODAS` add rows to those same queries, not new queries -- the
+exact property `tests/test_rendimiento.py`'s own `RouteCostIndependentOfCatalogSizeTest` proves for an added
+self-measured key. `tests/test_rendimiento.py` (3 cases, including
+`test_every_get_route_stays_within_its_ceiling`) ran green on this slice's final tree, confirming both routes
+stayed at or under their existing ceilings (45 for `/day/{day}`, 19 for `/trends`) -- no before/after
+instrumented count was taken separately, since no query was added for one to differ against.
+
+**Targeted tests + static guards green before the gate** (loaded module-by-module,
+`unittest.TestLoader().loadTestsFromName(...).countTestCases()`): `tests.test_sueno_fc` (20),
+`tests.test_vivo` (48), `tests.test_tendencias_todas` (13), `tests.test_i18n_paridad` (6),
+`tests.test_agente_tendencias_catalogo` (7), `tests.test_turno_fc` (23), `tests.test_recuperacion` (29),
+`tests.test_conexiones_cerradas` (9), `tests.test_rendimiento` (3), `tests.test_persona_fuga` (9),
+`tests.test_primer_pull_1` (22), `tests.test_demo` (22), `tests.test_guardia_parches` (8) -- 219 total, all
+green (run once in alphabetical/`discover` order, since `test_vivo.py`'s own leftover-module detection is
+order-sensitive across a combined process; run alone or in `discover`'s own order it is unaffected by this
+diff).
+
+**Gate**, once, foreground, on this slice's own final tree:
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 2276 tests in 450.007s ... OK
+(skipped=1)` (2276 = 2253 + 23 new: 20 in the new `tests/test_sueno_fc.py`, 3 in `tests/test_vivo.py`'s
+`SuenoFcTareaTest` -- `tests/test_tendencias_todas.py`'s own edit widened an existing assertion, no new
+case).
+
+Commit: `fb542b7` (`body/sueno_fc.py`, `body/db.py`, `body/pull.py`, `body/vivo.py`,
+`body/catalogo_tendencias.py`, `body/rutas/hoy.py`, `body/templates/day.html`, both `i18n` files,
+`body/demo.py`, `tests/test_sueno_fc.py`, `tests/test_vivo.py`, `tests/test_tendencias_todas.py`), on
+`feat/body-sueno-fc-1`, directly on top of `main` at `bde066a` (`git merge-base HEAD main` ==
+`git rev-parse main` == `bde066a`, tree clean before this slice's first edit).
+
+Diff classified against `main`: no schema or migration change (the two new `metric_def` rows and the new
+`db.SUENO_FC_MOTIVOS` tuple go through the same upsert path BODY-AGUJETAS-1/BODY-MEDIDA-PESO-1 already used,
+not an `ALTER TABLE`/`CREATE TABLE`). Customer-facing bytes: YES -- the new Dia line, the new Tendencias
+card (both its question and its plain-word subtitle), and their i18n strings in `es`/`en` are all new text a
+person reads, in both languages. No cross-repo contract or DTO change.
+
+Not merged. Stops **AWAITING_APPROVAL** on `feat/body-sueno-fc-1`, per the approval's own words: "Customer-
+facing (Tendencias card, Dia line): stops AWAITING_APPROVAL."
+
+**For the orchestrator, once approved** (neither run by this slice, per its own constraints):
+- Measure `sueno_fc.recalcular` on a COPY of the real database (counts only, copy deleted after, same
+  convention BODY-RECUPERACION-1-C's own measurement used):
+  `.venv/Scripts/python.exe -c "import shutil, pathlib; from body import config, db, sueno_fc; src =
+  pathlib.Path.home() / '.body-app' / 'body.db'; dst = pathlib.Path('C:/Users/carlo/AppData/Local/Temp') /
+  'sueno_fc_copia.db'; shutil.copy(src, dst); config.DB_PATH = dst; conn = db.connect();
+  pid = db.local_person_id(conn); print(sueno_fc.recalcular(conn, pid)); conn.close();
+  dst.unlink()"`
+- Backfill for real, on the live tree: `python -m body.vivo sueno_fc` (idempotent, safe to re-run).
+- See the card on `body-web-demo` (port 8773): re-seed its demo home (this slice's own `_seed_sueno_fc`
+  fills five recent nights plus whatever other nights already had background minute data -- 25 of them on
+  a `--dias 30` scratch measurement), then open `/day/<a recent date with data>` for the sleep card's new
+  line, and `/trends?todas=1#sleep_hr_avg` for the "De noche" / "At night" group's two new cards.

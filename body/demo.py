@@ -521,6 +521,66 @@ def _seed_turno_fc(conn, db, turno_fc, person_id: int, all_days: list[date]) -> 
     return len(elegidos)
 
 
+# A handful of the most recent nights, so Dia's own line and the Tendencias "night" card have
+# something to show -- not every night in the history.
+N_NOCHES_SUENO_FC = 5
+
+
+def _curva_sueno(inicio: datetime, fin: datetime) -> list[tuple[datetime, float]]:
+    """BODY-SUENO-FC-1: one sleep window's own invented heart-rate curve, every two minutes
+    (Garmin's own typical intraday spacing) -- settling from _PULSO_HORA's own evening level down
+    to a believable overnight low in the first half of the window, then holding there, so the
+    robust low (sueno_fc.MODELO['percentil_bajo']) reads a real sustained trough, never a single
+    sample."""
+    paso = timedelta(minutes=2)
+    total_min = (fin - inicio).total_seconds() / 60
+    out = []
+    t = inicio
+    while t <= fin:
+        frac = min((t - inicio).total_seconds() / 60 / (total_min / 2 or 1), 1.0) if total_min else 1.0
+        valor = 62.0 - 12.0 * frac
+        out.append((t, round(valor, 1)))
+        t += paso
+    return out
+
+
+def _seed_sueno_fc(conn, db, sueno_fc, person_id: int) -> int:
+    """Invented minute-by-minute heart rate across a handful of this person's most recent sleep
+    windows, so Dia's own line (BODY-SUENO-FC-1) and the Tendencias "night" card have something to
+    show on the demo server -- merged with whatever intradia_fc background the day already holds
+    (read back via db.intradia and kept, same accumulate-before-write rule `_seed_recuperacion`'s
+    own docstring explains), never erasing it. Called AFTER `_seed_recuperacion` and
+    `_seed_turno_fc`, since both of those already wrote intradia_fc for most of the history."""
+    rows = conn.execute(
+        "SELECT day, start_local, end_local FROM sleep_session WHERE person_id = ? "
+        "AND start_local IS NOT NULL AND end_local IS NOT NULL ORDER BY day DESC LIMIT ?",
+        (person_id, N_NOCHES_SUENO_FC),
+    ).fetchall()
+    if not rows:
+        return 0
+    zona = db.person(conn, person_id)["timezone"]
+    ventanas = [(datetime.fromisoformat(r["start_local"]), datetime.fromisoformat(r["end_local"]))
+                for r in rows]
+    dias_tocados = {dt.date().isoformat() for inicio, fin in ventanas for dt in (inicio, fin)}
+
+    por_dia: dict[str, list[tuple[datetime, float]]] = defaultdict(list)
+    for dia in dias_tocados:
+        for ts, v in db.intradia(conn, person_id, dia, "intradia_fc", zona):
+            t = datetime.fromisoformat(ts)
+            if not any(inicio <= t <= fin for inicio, fin in ventanas):
+                por_dia[dia].append((t, v))
+    for inicio, fin in ventanas:
+        for t, v in _curva_sueno(inicio, fin):
+            por_dia[t.date().isoformat()].append((t, v))
+
+    for dia, muestras in por_dia.items():
+        db.guardar_intradia(conn, person_id, dia, "intradia_fc",
+                             {"heartRateValues": [[_muestra_ms(t), v] for t, v in sorted(muestras)]})
+    conn.commit()
+    sueno_fc.recalcular(conn, person_id)
+    return len(rows)
+
+
 def _seed_self_metrics(conn, db, rng: random.Random, all_days: list[date], person_id: int) -> int:
     """The four generic self-measured metric_def rows (BODY-ENTRENO-SCHEMA-1, BODY-MEDIDA-PESO-1),
     sparser than the watch's daily figures: a flexibility reach, a weigh-in and a waist reading
@@ -732,7 +792,7 @@ def _seed_household(conn, db, goals, enlaces, compartir, rng: random.Random, all
 
 
 def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
-    from . import compartir, db, enlaces, goals, recuperacion, shift_import, turno_fc, turnos_costo
+    from . import compartir, db, enlaces, goals, recuperacion, shift_import, sueno_fc, turno_fc, turnos_costo
 
     person_id = _seed_person(conn, db, idioma)
 
@@ -755,6 +815,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     confirmed_id, proposed_id, night_weeks, night_blocks = _seed_shifts(
         conn, shift_import, turnos_costo, person_id, all_days)
     turno_fc_turnos = _seed_turno_fc(conn, db, turno_fc, person_id, all_days)
+    sueno_fc_noches = _seed_sueno_fc(conn, db, sueno_fc, person_id)
 
     checks, habit_checks = _seed_goals_and_habits(
         conn, db, goals, rng, all_days, anchor, first_monday, anchor_monday, person_id, idioma)
@@ -770,7 +831,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
         "semanas_nocturnas": night_weeks, "bloques_turno_noche": night_blocks, "metas_activas": 4, "habitos": 3,
         "verificaciones_semanales": checks + hogar_checks, "chequeos_habito": habit_checks + hogar_habit_checks,
         "entradas_ingesta": entradas_ingesta, "periodos": periodos, "recuperacion_actividades": recuperacion_rows,
-        "turno_fc_turnos": turno_fc_turnos,
+        "turno_fc_turnos": turno_fc_turnos, "sueno_fc_noches": sueno_fc_noches,
     }
 
 

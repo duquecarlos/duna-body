@@ -72,6 +72,10 @@ TAREAS = {
     # body.turno_fc.recalcular is idempotent by its own MODELO version); the daily pull also
     # calls it per person after that, so this task is for the one-off catch-up, not a schedule.
     "turno_fc": "body.turno_fc",
+    # BODY-SUENO-FC-1: fills sleep_hr_avg/sleep_hr_min for the first backfill (safe to re-run --
+    # body.sueno_fc.recalcular is idempotent by its own MODELO version); the daily pull also calls
+    # it per person after that, so this task is for the one-off catch-up, not a schedule.
+    "sueno_fc": "body.sueno_fc",
 }
 
 # Argv prepended before a task's own arguments, for a task that shares a module with another task
