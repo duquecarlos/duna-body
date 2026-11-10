@@ -107,7 +107,7 @@
   "day.sueno_resp.respiracion": "respiración {low}–{high} rpm (prom. {avg})",
   "day.sueno_resp.respiracion_rango": "respiración {low}–{high} rpm",
   "day.sueno_resp.respiracion_prom": "respiración prom. {avg} rpm",
-  "day.noche_inusual": "Esta noche fue distinta a tu normal: {senales}.",
+  "day.noche_inusual": "Esa noche fue distinta a tu normal: {senales}.",
   "day.noche_inusual_vista": "Ya lo vi",
   "noche.senal.sleep_hr_avg": "pulso durmiendo más alto",
   "noche.senal.hrv_last_night": "variabilidad del pulso más baja",

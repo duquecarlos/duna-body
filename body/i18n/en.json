@@ -107,7 +107,7 @@
   "day.sueno_resp.respiracion": "breathing {low}–{high} brpm (avg {avg})",
   "day.sueno_resp.respiracion_rango": "breathing {low}–{high} brpm",
   "day.sueno_resp.respiracion_prom": "breathing avg {avg} brpm",
-  "day.noche_inusual": "This night was different from your normal: {senales}.",
+  "day.noche_inusual": "That night was different from your normal: {senales}.",
   "day.noche_inusual_vista": "Got it",
   "noche.senal.sleep_hr_avg": "higher sleeping heart rate",
   "noche.senal.hrv_last_night": "lower heart rate variability",

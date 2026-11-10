@@ -234,7 +234,7 @@ class DiaLineaTest(unittest.TestCase):
         conn = _web_conn(self, "dia_es.db")
         _seed_two_signal_night(conn)
         page = TestClient(web.app, follow_redirects=False).get(f"/day/{DAY}").text
-        self.assertIn(f"Esta noche fue distinta a tu normal: variabilidad del pulso más baja "
+        self.assertIn(f"Esa noche fue distinta a tu normal: variabilidad del pulso más baja "
                       f"y puntaje de sueño más bajo.", page)
         self.assertIn("Ya lo vi", page)
         self.assertIn(f'action="/day/{DAY}/noche-inusual/visto"', page)
@@ -244,7 +244,7 @@ class DiaLineaTest(unittest.TestCase):
         db.set_language(conn, "en", 1)
         _seed_two_signal_night(conn)
         page = TestClient(web.app, follow_redirects=False).get(f"/day/{DAY}").text
-        self.assertIn("This night was different from your normal: lower heart rate variability "
+        self.assertIn("That night was different from your normal: lower heart rate variability "
                       "and lower sleep score.", page)
         self.assertIn("Got it", page)
 
@@ -268,7 +268,7 @@ class DiaLineaTest(unittest.TestCase):
 
         page2 = client.get(f"/day/{DAY}").text
         self.assertNotIn("Ya lo vi", page2)
-        self.assertNotIn("Esta noche fue distinta a tu normal", page2)
+        self.assertNotIn("Esa noche fue distinta a tu normal", page2)
         # Hoy's own line is gone too, from the SAME dismissal (ruling 5: per night, per person).
         self.assertNotIn("Ver la noche", client.get("/").text)
         self.assertTrue(noche_inusual.vista(conn, 1, DAY))
