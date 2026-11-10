@@ -1301,7 +1301,12 @@ _INTRADIA_PARSER_NAMES = {
 }
 
 
-def guardar_intradia(conn: sqlite3.Connection, person_id: int, day: str, kind: str, payload) -> None:
+def guardar_intradia(conn: sqlite3.Connection, person_id: int, day: str, kind: str, payload,
+                      source: str = garmin_adapter.SOURCE) -> None:
+    """INSERT OR REPLACE under raw_payload's (person_id, day, kind, source) key -- a different
+    `source` is a different row, never a replacement of another source's row for the same day and
+    kind. `source` defaults to the live API's own tag; body.importar_garmin passes garmin_adapter.
+    SOURCE_EXPORT (BODY-GARMIN-IMPORT-1) so an import can never overwrite or delete an API row."""
     if kind not in INTRADIA_KINDS:
         raise ValueError(f"unknown intradia kind: {kind!r}")
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -1309,21 +1314,25 @@ def guardar_intradia(conn: sqlite3.Connection, person_id: int, day: str, kind: s
         conn.execute(
             "INSERT OR REPLACE INTO raw_payload (person_id, day, kind, source, fetched_at, payload) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (person_id, day, kind, garmin_adapter.SOURCE, now, json.dumps(payload)),
+            (person_id, day, kind, source, now, json.dumps(payload)),
         )
 
 
 def intradia_almacenado(conn: sqlite3.Connection, person_id: int, day: str) -> bool:
-    """Whether this day's intraday payloads are stored AND COMPLETE -- fetched at least
-    INTRADIA_MARGEN_CIERRE_H hours after `day`'s end in the person's own zone (the next local
-    midnight, converted to UTC), including an out-of-retention day's empty marker fetched that
-    late. False for a day never fetched, AND for a day fetched too early to be trusted yet --
-    pull.traer_intradia re-fetches that case, overwriting the earlier, partial row. Both kinds are
-    always written together by pull.traer_intradia at the same fetched_at, so checking one
-    (intradia_fc) is enough."""
+    """Whether this day's intraday payloads are stored AND COMPLETE through the live API --
+    fetched at least INTRADIA_MARGEN_CIERRE_H hours after `day`'s end in the person's own zone
+    (the next local midnight, converted to UTC), including an out-of-retention day's empty marker
+    fetched that late. False for a day never fetched, AND for a day fetched too early to be
+    trusted yet -- pull.traer_intradia re-fetches that case, overwriting the earlier, partial row.
+    Both kinds are always written together by pull.traer_intradia at the same fetched_at, so
+    checking one (intradia_fc) is enough. Filtered to source=garmin_adapter.SOURCE on purpose
+    (BODY-GARMIN-IMPORT-1): an export-only day must read as "not yet pulled through the API" so
+    the missing-days job (pull._pull_intradia_pendientes) still fetches it when it is inside
+    Garmin's API reach, and never skips a day the API has not actually covered."""
     row = conn.execute(
-        "SELECT fetched_at FROM raw_payload WHERE person_id = ? AND day = ? AND kind = 'intradia_fc'",
-        (person_id, day),
+        "SELECT fetched_at FROM raw_payload WHERE person_id = ? AND day = ? AND kind = 'intradia_fc' "
+        "AND source = ?",
+        (person_id, day, garmin_adapter.SOURCE),
     ).fetchone()
     if row is None:
         return False
@@ -1339,12 +1348,16 @@ def intradia_almacenado(conn: sqlite3.Connection, person_id: int, day: str) -> b
 
 def intradia(conn: sqlite3.Connection, person_id: int, day: str, kind: str, zona: str) -> list[tuple[str, float]]:
     """The stored (local_iso, value) series for one day and kind, parsed on read with the
-    adapter's own parser. [] for a day never stored, or stored as an empty/null marker."""
+    adapter's own parser. [] for a day never stored, or stored as an empty/null marker.
+    Precedence (BODY-GARMIN-IMPORT-1): when both the live API and an import
+    (garmin_adapter.SOURCE_EXPORT) hold a row for the same day and kind, the API's own row always
+    wins -- ORDER BY picks it first when both exist, without needing a second query."""
     if kind not in INTRADIA_KINDS:
         raise ValueError(f"unknown intradia kind: {kind!r}")
     row = conn.execute(
-        "SELECT payload FROM raw_payload WHERE person_id = ? AND day = ? AND kind = ?",
-        (person_id, day, kind),
+        "SELECT payload FROM raw_payload WHERE person_id = ? AND day = ? AND kind = ? "
+        "ORDER BY (source != ?) LIMIT 1",
+        (person_id, day, kind, garmin_adapter.SOURCE),
     ).fetchone()
     if row is None:
         return []

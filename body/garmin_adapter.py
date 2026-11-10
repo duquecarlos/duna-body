@@ -18,6 +18,12 @@ from . import config
 
 SOURCE = "garmin"
 
+# BODY-GARMIN-IMPORT-1: the source tag for a day's intraday heart-rate/stress rows written by
+# body.importar_garmin from Carlos's full account export, instead of fetched live through this
+# adapter. Kept here (not in importar_garmin.py) so db.py's precedence checks (SOURCE vs this)
+# live beside the one API source tag they are compared against.
+SOURCE_EXPORT = "garmin_export"
+
 # BODY-LOGIN-MENSAJES-1: garminconnect's own logger calls (api/_common.py, api/base.py and the
 # five client/*.py modules, all getLogger(__name__) under "garminconnect") have no handler
 # anywhere in Body's logging config, so Python's logging.lastResort would otherwise write their
