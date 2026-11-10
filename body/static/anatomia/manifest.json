@@ -1,0 +1,262 @@
+[
+ {
+  "id": "frente",
+  "tema": "claro",
+  "archivo": "frente-claro.webp",
+  "fuente": "01-frente-2k-v3.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 83222,
+  "sha256": "f93eb10dae4c0f73c9f4cb9d3b5febf2691680dd198b38f6983bc8f42b1df5fe"
+ },
+ {
+  "id": "frente",
+  "tema": "oscuro",
+  "archivo": "frente-oscuro.webp",
+  "fuente": "01-frente-2k-v3-osc.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 71410,
+  "sha256": "564c49783351229a31859809119d18545c2e9d7073ceb696664052c37529a65d"
+ },
+ {
+  "id": "corazon",
+  "tema": "claro",
+  "archivo": "corazon-claro.webp",
+  "fuente": "02-corazon.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 85682,
+  "sha256": "cb06a7a6ccf694454c293948422802b37466a81c31ae0907ab6ca17c6b9fae74"
+ },
+ {
+  "id": "corazon",
+  "tema": "oscuro",
+  "archivo": "corazon-oscuro.webp",
+  "fuente": "02-corazon-oscuro.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 65532,
+  "sha256": "8265e709835e58d196f406c9dc03922c5114feb4456086267c622401780f129a"
+ },
+ {
+  "id": "nervios",
+  "tema": "claro",
+  "archivo": "nervios-claro.webp",
+  "fuente": "03-nervios.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 75878,
+  "sha256": "1265c834b70bf34d172ef8581ed8ac9d730323be5d21101bd5c1873ce8d96fd5"
+ },
+ {
+  "id": "nervios",
+  "tema": "oscuro",
+  "archivo": "nervios-oscuro.webp",
+  "fuente": "03-nervios-OSCURO.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 66250,
+  "sha256": "4ab669490f2a7a8d70a16ef2d6962f2dd540689fcbc0fa326c62dc840de44130"
+ },
+ {
+  "id": "cerebro",
+  "tema": "claro",
+  "archivo": "cerebro-claro.webp",
+  "fuente": "04-cerebro-v3.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 39272,
+  "sha256": "ba177c536410a58825b735d6095ae0832982e0b8597300e8a0c5fdcd2ae2bffb"
+ },
+ {
+  "id": "cerebro",
+  "tema": "oscuro",
+  "archivo": "cerebro-oscuro.webp",
+  "fuente": "04-cerebro-v3-oscuro.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 36900,
+  "sha256": "4cee446cc194eef55d85897dec33220ce11374acd26e55841c9c875d92aaea78"
+ },
+ {
+  "id": "pulmones",
+  "tema": "claro",
+  "archivo": "pulmones-claro.webp",
+  "fuente": "05-pulmones.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 53900,
+  "sha256": "58a7fb05677becd666b0c79b03157d699596f9a361b9b3fd5d1747d49f09fe1c"
+ },
+ {
+  "id": "pulmones",
+  "tema": "oscuro",
+  "archivo": "pulmones-oscuro.webp",
+  "fuente": "05-pulmones-osc.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 40580,
+  "sha256": "a8ae3beb5f989cd2caf9aaaa90178b3854debc55f13d2a5bc75d1243839c8825"
+ },
+ {
+  "id": "musculos",
+  "tema": "claro",
+  "archivo": "musculos-claro.webp",
+  "fuente": "06-musculos-V2.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 70684,
+  "sha256": "e3314dfb3370640ed9a28c3e85b94be00d207d1906a1378e86ade7f853a2cb56"
+ },
+ {
+  "id": "musculos",
+  "tema": "oscuro",
+  "archivo": "musculos-oscuro.webp",
+  "fuente": "06-musculos-V2-osc.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 70922,
+  "sha256": "234a26620ec605f3f5b6d87a5f63f2fa32cc8e989a060129f8ea8468dfa396e5"
+ },
+ {
+  "id": "esqueleto",
+  "tema": "claro",
+  "archivo": "esqueleto-claro.webp",
+  "fuente": "07-esqueleto.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 80282,
+  "sha256": "eedb3441f039af754cddfe87dd50640757797a818520787da1ff2661704cee9e"
+ },
+ {
+  "id": "esqueleto",
+  "tema": "oscuro",
+  "archivo": "esqueleto-oscuro.webp",
+  "fuente": "07-esqueleto-oscuro.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 74032,
+  "sha256": "d668a5b70f2618e3dfa16e173e26cc238f5970666e214331a0cf55215eb61710"
+ },
+ {
+  "id": "espalda",
+  "tema": "claro",
+  "archivo": "espalda-claro.webp",
+  "fuente": "10-espalda.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 72458,
+  "sha256": "2c3bf16d0babaafd8f69072e64995c081f8634766502b4edc7d2b9323d69dd59"
+ },
+ {
+  "id": "espalda",
+  "tema": "oscuro",
+  "archivo": "espalda-oscuro.webp",
+  "fuente": "10-espalda-osc.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 92376,
+  "sha256": "9a2555f5956fbda8ba0f1cc277ccd02fd50b327fb544b5f67378f2a30f571a58"
+ },
+ {
+  "id": "espalda-musculos",
+  "tema": "claro",
+  "archivo": "espalda-musculos-claro.webp",
+  "fuente": "11-espalda-musculos.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 51408,
+  "sha256": "80d2ed96a7e14d3502d036a863f328a3bae1976c39c5cb38a6923d781ec9203d"
+ },
+ {
+  "id": "espalda-musculos",
+  "tema": "oscuro",
+  "archivo": "espalda-musculos-oscuro.webp",
+  "fuente": "11-espalda-musculos-osc.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 50378,
+  "sha256": "46535b3b392736aa1b7e2a324e898139e32c0d5a09ca17f3c5abc1c646e1c68d"
+ },
+ {
+  "id": "espalda-columna",
+  "tema": "claro",
+  "archivo": "espalda-columna-claro.webp",
+  "fuente": "12-espalda-columna.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 57530,
+  "sha256": "e90bcae133776730d5daa0c2e89431b2430d3e5d15a5a6cb9df7fb864eaae0f6"
+ },
+ {
+  "id": "espalda-columna",
+  "tema": "oscuro",
+  "archivo": "espalda-columna-oscuro.webp",
+  "fuente": "12-espalda-columna-osc.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 53726,
+  "sha256": "b698fdf111ec7e9a7f9f388002fe0e8d4a3d59649ca9e6ebbf3456712d96b582"
+ },
+ {
+  "id": "perfil",
+  "tema": "claro",
+  "archivo": "perfil-claro.webp",
+  "fuente": "20-perfil.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 54546,
+  "sha256": "75cefbd5f6d05179ebff624fb9542cf686fbcf152f4d4dd6fb85433a8766c3e0"
+ },
+ {
+  "id": "perfil",
+  "tema": "oscuro",
+  "archivo": "perfil-oscuro.webp",
+  "fuente": "20-perfil-oscuro.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 54262,
+  "sha256": "a9c3a10e94f62bc236fd429fbd942535e09a4351b70369bbbc8329ba83b849e9"
+ },
+ {
+  "id": "perfil-columna",
+  "tema": "claro",
+  "archivo": "perfil-columna-claro.webp",
+  "fuente": "21-perfil-columna.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 44078,
+  "sha256": "4eadebec35c685c84df0d3434d91f063f07d62a85f40d4fa3eb647b823e2171e"
+ },
+ {
+  "id": "perfil-columna",
+  "tema": "oscuro",
+  "archivo": "perfil-columna-oscuro.webp",
+  "fuente": "21-perfil-columna-oscuro.jpg",
+  "ancho": 1080,
+  "alto": 1935,
+  "bytes": 33952,
+  "sha256": "313c085027ff686f517d6304d70b8e8e97f1a80735379cd108cedc54526dbca9"
+ },
+ {
+  "id": "vias-aereas",
+  "tema": "claro",
+  "archivo": "vias-aereas-claro.webp",
+  "fuente": "30-vias-aereas.jpg",
+  "ancho": 1080,
+  "alto": 1080,
+  "bytes": 65282,
+  "sha256": "4bfd1105bf68b9326ad54961b84682753669e13ec01f2940cc6a1daa23bb4540"
+ },
+ {
+  "id": "vias-aereas",
+  "tema": "oscuro",
+  "archivo": "vias-aereas-oscuro.webp",
+  "fuente": "30-vias-aereas-OSC.jpg",
+  "ancho": 1080,
+  "alto": 1080,
+  "bytes": 59912,
+  "sha256": "fcd833becedb7e6037449e078ee9227d2176a90fd23cdc3b2444cd80688915cb"
+ }
+]
