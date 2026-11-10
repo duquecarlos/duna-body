@@ -588,6 +588,37 @@ class IntradiaTareaTest(_RepoFixture):
         self.assertEqual(argvs[0], ["body.pull", "--days", "2"])
 
 
+class DespertarTareaTest(unittest.TestCase):
+    """BODY-DESPERTAR-1: the wake check task is wired to body.despertar."""
+
+    def test_despertar_esta_en_tareas(self):
+        self.assertIn("despertar", vivo.TAREAS)
+        self.assertEqual(vivo.TAREAS["despertar"], "body.despertar")
+
+
+class InstallScriptWakeCheckTest(unittest.TestCase):
+    """A PowerShell installer is never executed in tests -- asserted by reading its text
+    (BODY-DESPERTAR-1)."""
+
+    @classmethod
+    def setUpClass(cls):
+        ruta = Path(vivo.__file__).resolve().parents[1] / "scripts" / "install-daily-sync.ps1"
+        cls.texto = ruta.read_text(encoding="utf-8")
+
+    def test_nueva_tarea_existe(self):
+        self.assertIn('"Body app wake check"', self.texto)
+        self.assertIn("-m body.vivo despertar", self.texto)
+
+    def test_otras_tareas_siguen_presentes_sin_cambios(self):
+        for nombre in ("Body app daily sync", "Body app weekly file", "Body app morning file",
+                       "Body app web", "Body app shift upload", "Body app weekly fetch"):
+            self.assertIn(f'"{nombre}"', self.texto)
+
+    def test_linea_de_remocion_nombra_la_tarea_nueva(self):
+        linea = next(l for l in self.texto.splitlines() if l.startswith("# Remove with:"))
+        self.assertIn('"Body app wake check"', linea)
+
+
 class InstallScriptMorningFileTest(unittest.TestCase):
     """A PowerShell installer is never executed in tests -- asserted by reading its text
     (BODY-VIDA-DIA-1)."""

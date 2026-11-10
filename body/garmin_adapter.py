@@ -195,6 +195,25 @@ def fetch_day(day: str, token_str: str | None = None):
     return data, api.client.dumps()
 
 
+def fetch_sleep(day: str, token_str: str | None = None):
+    """Pull ONLY the sleep endpoint (get_sleep_data) for one calendar day -- the single call
+    fetch_day already makes for "sleep", used alone here because a wake check running every ~20
+    minutes between 04:00 and 13:00 (BODY-DESPERTAR-1) cannot afford fetch_day's other five
+    endpoints. Returns the local ISO wake time (sleep end, no offset -- see _local_iso), or None
+    while last night has not synced yet. Parsed by _parse_sleep_end, the same helper parse_day
+    uses for its own "sleep" raw, so the two can never drift apart.
+
+    Same token_str convention as fetch_day: None uses the local TOKEN_DIR flow and returns just
+    the wake time; given (hosted, person-scoped), returns (wake_time, token_after).
+    """
+    api = _client(token_str)
+    raw = api.get_sleep_data(day)
+    wake = _parse_sleep_end(raw)
+    if token_str is None:
+        return wake
+    return wake, api.client.dumps()
+
+
 def fetch_intraday(day: str, zone: str, token_str: str | None = None):
     """Pull one calendar day's intraday series: heart rate, stress, Body Battery events.
 
@@ -327,6 +346,15 @@ def _local_iso(ms: Any) -> str | None:
     return datetime.fromtimestamp(n / 1000, tz=timezone.utc).replace(tzinfo=None).isoformat(timespec="minutes")
 
 
+def _parse_sleep_end(raw: Any) -> str | None:
+    """The sleepEndTimestampLocal extraction parse_day applies to its own "sleep" raw -- shared
+    so fetch_sleep's one-call wake check (BODY-DESPERTAR-1) and the full-day parse never drift
+    apart. `raw` is one get_sleep_data(day) response (the same shape fetch_day stores under
+    raw["sleep"])."""
+    sl = _get(raw, "dailySleepDTO") or {}
+    return _local_iso(sl.get("sleepEndTimestampLocal"))
+
+
 def parse_day(day: str, raw: dict[str, Any]) -> DayData:
     out = DayData(day=day, raw=raw)
     m: dict[str, float | None] = {}
@@ -359,7 +387,7 @@ def parse_day(day: str, raw: dict[str, Any]) -> DayData:
     m["sleep_need_min"] = _num(_get(sl, "sleepNeed", "actual"))
     m["body_battery_sleep_charge"] = _num((raw.get("sleep") or {}).get("bodyBatteryChange"))
     out.sleep_start = _local_iso(sl.get("sleepStartTimestampLocal"))
-    out.sleep_end = _local_iso(sl.get("sleepEndTimestampLocal"))
+    out.sleep_end = _parse_sleep_end(raw.get("sleep"))
     out.sleep_spo2_avg = _num_in_range(sl.get("avgSpO2"), 50, 100)
     out.sleep_respiration_avg = _num_in_range(sl.get("averageRespirationValue"), 1, 60)
     out.sleep_respiration_low = _num_in_range(sl.get("lowestRespirationValue"), 1, 60)

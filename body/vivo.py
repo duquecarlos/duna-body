@@ -58,6 +58,9 @@ TAREAS = {
     # which is how `python -m body.vivo intradia --dias N` reaches it without a --intradia the
     # person never typed.
     "intradia": "body.pull",
+    # BODY-DESPERTAR-1: the wake check -- every ~20 minutes, 04:00-13:00, writes
+    # BODY_HOME/vida/despertar-<day>.json as soon as last night's sleep end is known.
+    "despertar": "body.despertar",
 }
 
 # Argv prepended before a task's own arguments, for a task that shares a module with another task

@@ -49,6 +49,36 @@ class InstallerWebTaskTest(unittest.TestCase):
         self.assertIn("Body app web", line)
 
 
+class InstallerWakeCheckTaskTest(unittest.TestCase):
+    """BODY-DESPERTAR-1: the wake check task -- 04:00, repeating every 20 minutes for 9 hours."""
+
+    def setUp(self):
+        self.text = SCRIPT.read_text(encoding="utf-8")
+
+    def test_task_registered(self):
+        self.assertIn('Register-ScheduledTask -TaskName "Body app wake check"', self.text)
+
+    def test_trigger_repeats_every_20_minutes_for_9_hours_from_0400(self):
+        m = re.search(r'\$wakeTrigger\s*=\s*(.+)', self.text)
+        self.assertIsNotNone(m, "no $wakeTrigger assignment found")
+        trigger = m.group(1)
+        self.assertIn("-Daily", trigger)
+        self.assertIn('-At "04:00"', trigger)
+        self.assertIn("-RepetitionInterval", trigger)
+        self.assertIn("New-TimeSpan -Minutes 20", trigger)
+        self.assertIn("-RepetitionDuration", trigger)
+        self.assertIn("New-TimeSpan -Hours 9", trigger)
+
+    def test_action_runs_the_despertar_task(self):
+        m = re.search(r'\$wakeAction\s*=\s*(.+)', self.text)
+        self.assertIsNotNone(m, "no $wakeAction assignment found")
+        self.assertIn("-m body.vivo despertar", m.group(1))
+
+    def test_remove_line_names_the_wake_check(self):
+        linea = next(l for l in self.text.splitlines() if l.startswith("# Remove with:"))
+        self.assertIn("Body app wake check", linea)
+
+
 class InstallerLiveCheckoutTest(unittest.TestCase):
     """BODY-LIVE-CHECKOUT-1: every task action runs through body.vivo from -LiveDir."""
 
