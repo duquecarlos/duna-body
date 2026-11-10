@@ -14119,3 +14119,10 @@ changed, shows a regression.
 No schema migration. Customer-facing bytes: yes (two new template sections per screen, new i18n
 strings, a new chart shading colour) -- committed on the branch, not merged, per GATE_RED. No
 cross-repo contract.
+
+Open follow-ups, each a one-line fix outside this slice's own `touches:`:
+`BODY-PERIODO-PANTALLAS-1-FOLLOWUP-AVISO-TEST` (drop/update the stale `assertNotIn('class="aviso"'
+...)` in `tests/test_estados_vacios_2.py::PersonaCompletaSinCambiosTest.test_demo_person_unchanged`
+now that a fully-populated demo person correctly carries one) and
+`BODY-PERIODO-PANTALLAS-1-FOLLOWUP-I18N-GUARD` (add `"periodo.kind.+": [k for k, _ in
+db.PERIOD_KINDS]` to `tests/test_i18n_paridad.py`'s `_FIXED_DYNAMIC`).
