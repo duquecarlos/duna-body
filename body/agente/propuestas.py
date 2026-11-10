@@ -267,11 +267,30 @@ def _deshacer_planear_entreno(conn: sqlite3.Connection, row: sqlite3.Row) -> Non
 
 # -- registrar_entreno (manual session, or a correction of an existing Garmin-matched one) ------
 
+def _entreno_series_invalida(despues: dict) -> bool:
+    """True when `despues['series']` holds a `reps`/`peso_kg` the door validation added by
+    BODY-ENTRENO-NUMEROS-1 (ruling 2, `herramientas._numero_entreno`) would now refuse -- only
+    possible on a row stored before this slice, since `_registrar_entreno` itself coerces or
+    refuses every value before a proposal is ever created. Treated as drift so `aplicar` refuses
+    it the same way it refuses any other out-of-date proposal: state stays `propuesta`, no write,
+    no 500 (ruling 3)."""
+    for s in despues["series"]:
+        reps, peso = s.get("reps"), s.get("peso_kg")
+        if reps is not None and (isinstance(reps, bool) or not isinstance(reps, int)):
+            return True
+        if peso is not None and (isinstance(peso, bool) or not isinstance(peso, (int, float))):
+            return True
+    return False
+
+
 def _drift_aplicar_registrar_entreno(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
     """The manual case is insert-shaped and never drifts. The Garmin-matched case drifts when a
-    later `pull`/`traer_series` changed the watch's own reading for a touched set."""
+    later `pull`/`traer_series` changed the watch's own reading for a touched set. Either case
+    drifts first when the stored series itself is no longer valid (`_entreno_series_invalida`)."""
     antes = json.loads(row["antes_json"]) if row["antes_json"] is not None else {}
     despues = json.loads(row["despues_json"])
+    if _entreno_series_invalida(despues):
+        return True
     if despues["manual"]:
         return False
     source, source_id = despues["source"], despues["source_id"]

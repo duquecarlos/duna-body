@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -56,11 +57,21 @@ def _objetivo_txt(t: T, defs: dict, metric_key: str | None, target_value, deadli
     return t("asistente.propuesta.meta_objetivo", valor=comun._fig_unit(t, metric_key, target_value, defs), fecha=fecha)
 
 
+def _numero_o_texto(t: T, valor) -> str:
+    """BODY-ENTRENO-NUMEROS-1 ruling 3: a legacy proposal row stored before this slice can hold a
+    `reps`/`peso_kg`/`series` that is not a number (e.g. "12-15") -- `t.num` would crash on it
+    (ValueError: "Unknown format code"). Shown as its own raw text instead, unformatted."""
+    if isinstance(valor, (int, float)) and not isinstance(valor, bool):
+        return t.num(valor)
+    return str(valor)
+
+
 def _ejercicio_plan_txt(t: T, e: dict) -> str:
     if e.get("reps") is not None:
         return t("asistente.propuesta.entreno_ejercicio_reps", ejercicio=e["ejercicio"],
-                 series=t.num(e["series"]), reps=e["reps"])
-    return t("asistente.propuesta.entreno_ejercicio", ejercicio=e["ejercicio"], series=t.num(e["series"]))
+                 series=_numero_o_texto(t, e["series"]), reps=e["reps"])
+    return t("asistente.propuesta.entreno_ejercicio", ejercicio=e["ejercicio"],
+             series=_numero_o_texto(t, e["series"]))
 
 
 def _nombre_legible(codigo: str | None) -> str | None:
@@ -83,11 +94,12 @@ def _serie_txt(t: T, s: dict | None, nombre: str | None = None) -> str | None:
     ejercicio = (nombre if nombre is not None else (s.get("ejercicio") or "")).strip()
     reps, peso = s.get("reps"), s.get("peso_kg")
     if reps is not None and peso is not None:
-        detalle = t("asistente.propuesta.entreno_reps_peso", reps=t.num(reps), peso=t.num(peso))
+        detalle = t("asistente.propuesta.entreno_reps_peso", reps=_numero_o_texto(t, reps),
+                   peso=_numero_o_texto(t, peso))
     elif reps is not None:
-        detalle = t("asistente.propuesta.entreno_reps", reps=t.num(reps))
+        detalle = t("asistente.propuesta.entreno_reps", reps=_numero_o_texto(t, reps))
     elif peso is not None:
-        detalle = t("asistente.propuesta.entreno_peso", peso=t.num(peso))
+        detalle = t("asistente.propuesta.entreno_peso", peso=_numero_o_texto(t, peso))
     else:
         detalle = None
     if ejercicio and detalle:
@@ -413,6 +425,27 @@ def _tarjeta_propuesta(t: T, defs: dict, registro: dict, origen_conversacion: st
     }
 
 
+def _tarjeta_propuesta_segura(t: T, defs: dict, registro: dict, origen_conversacion: str | None = None) -> dict:
+    """BODY-ENTRENO-NUMEROS-1 ruling 3: one bad stored card (e.g. a legacy `reps` that is not a
+    number in a shape `_numero_o_texto` does not cover) must never take the whole conversation's
+    card list down. Catches anything `_tarjeta_propuesta` still raises and shows that one card as a
+    plain fallback line instead, so the conversation's other cards and the panel still render. Logs
+    only the exception class and the propuesta id to stderr -- never the payload (health data never
+    leaves the PC through a log)."""
+    try:
+        return _tarjeta_propuesta(t, defs, registro, origen_conversacion)
+    except Exception as exc:
+        print(f"asistente: propuesta {registro['id']} no se pudo mostrar ({type(exc).__name__})",
+              file=sys.stderr)
+        return {
+            "id": registro["id"], "accion": registro["accion"],
+            "titulo": t("asistente.propuesta.titulo." + registro["accion"]),
+            "antes": None, "despues": t("asistente.propuesta.error_render"), "series": None,
+            "expira_en": registro["expira_en"], "deshacer": False, "estado": registro["estado"],
+            "etiquetas": _etiquetas(t), "origen_etiqueta": None,
+        }
+
+
 @router.post("/asistente/preguntar")
 async def asistente_preguntar(request: Request, person_id: int = Depends(identity.current_person_id)):
     try:
@@ -542,7 +575,7 @@ def asistente_conversacion(conversacion_id: str, person_id: int = Depends(identi
         raise HTTPException(404)
     defs = comun._defs(conn)
     origen_conversacion = agente_conversacion.origen_de(conn, resuelto)
-    tarjetas = [_tarjeta_propuesta(t, defs, r, origen_conversacion)
+    tarjetas = [_tarjeta_propuesta_segura(t, defs, r, origen_conversacion)
                 for r in agente_propuestas.listar(conn, person_id, resuelto)]
     conn.close()
     return JSONResponse({"conversacion_id": resuelto, "turnos": turnos, "propuestas": tarjetas})

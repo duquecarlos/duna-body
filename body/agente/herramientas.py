@@ -62,7 +62,7 @@ from datetime import date, timedelta
 
 from .. import catalogo_tendencias, db, enlaces, errores, experimentos, fechas, goals, history, household, \
     profile, pull, readiness, shift_import, turnos_costo, tutoriales
-from ..i18n import LANGS
+from ..i18n import LANGS, T
 from . import ajustes, propuestas
 
 # BODY-TURNOS-OPCIONAL-3: whether the CURRENT request's person has said they work shifts, set once by
@@ -189,8 +189,8 @@ _PARAM_REGISTRAR_ENTRENO = {
                 "properties": {
                     "ejercicio": {"type": "string"},
                     "categoria": {"type": "string"},
-                    "reps": {},
-                    "peso_kg": {},
+                    "reps": {"type": ["integer", "null"], "minimum": 0},
+                    "peso_kg": {"type": ["number", "null"], "minimum": 0},
                     "nota": {"type": "string"},
                 },
                 "required": ["ejercicio"],
@@ -572,6 +572,32 @@ def _leer_entreno(conn: sqlite3.Connection, person_id: int, day: str | None = No
     return {"sesiones": sesiones, "planeado": planeado}
 
 
+def _numero_entreno(t: T, ejercicio: str, valor, *, entero: bool, clave_error: str):
+    """Validates/coerces one series item's `reps` or `peso_kg` at the door (BODY-ENTRENO-NUMEROS-1
+    ruling 2): None passes through; a bool is refused even though Python's `bool` is technically an
+    `int`; an int/float already of the right shape passes through; a string that is EXACTLY a plain
+    number ("12", "17.5") is coerced, since outside callers (body.mcp included) often send numbers
+    as strings -- anything else ("12-15", "12 reps", "") is refused with `clave_error`, naming
+    `ejercicio`, in the person's own language."""
+    if valor is None:
+        return None
+    if isinstance(valor, bool):
+        raise ToolError(t(clave_error, ejercicio=ejercicio))
+    if isinstance(valor, int):
+        return valor
+    if isinstance(valor, float):
+        if entero:
+            raise ToolError(t(clave_error, ejercicio=ejercicio))
+        return valor
+    if isinstance(valor, str):
+        texto = valor.strip()
+        try:
+            return int(texto) if entero else float(texto)
+        except ValueError:
+            raise ToolError(t(clave_error, ejercicio=ejercicio))
+    raise ToolError(t(clave_error, ejercicio=ejercicio))
+
+
 def _planear_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id: int, day: str, titulo: str,
                       ejercicios: list, time: str | None = None, goal_id: int | None = None) -> dict:
     """Proposes one `plan` row for a day: a title, an optional time and a list of planned
@@ -612,9 +638,15 @@ def _registrar_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id
     _dia_no_futuro(conn, person_id, day)
     if not series:
         raise ToolError("se necesita al menos una serie")
+    t = T(db.person(conn, person_id)["language"])
     for s in series:
-        if not (s.get("ejercicio") or "").strip():
+        ejercicio = (s.get("ejercicio") or "").strip()
+        if not ejercicio:
             raise ToolError("cada serie necesita 'ejercicio'")
+        s["reps"] = _numero_entreno(t, ejercicio, s.get("reps"), entero=True,
+                                     clave_error="agente.error.entreno_reps_invalidas")
+        s["peso_kg"] = _numero_entreno(t, ejercicio, s.get("peso_kg"), entero=False,
+                                        clave_error="agente.error.entreno_peso_invalido")
     actividad = conn.execute(
         "SELECT source, source_id FROM activity WHERE person_id = ? AND day = ? AND type = 'strength_training' "
         "ORDER BY start_local LIMIT 1", (person_id, day),

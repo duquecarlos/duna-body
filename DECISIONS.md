@@ -15675,3 +15675,89 @@ The orchestrator's own 375 px look and MCP drive against the re-seeded DEMO home
 BODY-MCP-APLICAR-1-B's entry above for the surface); no figures repeated here. The "¿Tu asistente
 personal puede aplicar cambios cuando le digas que sí?" switch stays **off by default**; only the
 person turns it on, from Body's own Ajustes.
+
+## BODY-ENTRENO-NUMEROS-1-B
+
+Continues BODY-ENTRENO-NUMEROS-1, which stopped **BLOCKED** on `feat/body-entreno-numeros-1`
+without committing (`logs/worker-body-entreno-numeros-1-body-app-20261110T122140.json`): its
+enforce directive fired while its own full gate ran in the background past the 600s cap, the gate
+later notified exit 0, but its counts were never read. This slice committed that tree as found,
+then ran the gate itself.
+
+**Both halves**, both already on the branch as found:
+- **Door validation** (ruling 1, narrowed to `registrar_entreno`): `herramientas._numero_entreno`
+  (`body/agente/herramientas.py:575-598`), called from `_registrar_entreno` (`body/agente/
+  herramientas.py:641-647`) for each series item's `reps` (int) and `peso_kg` (float) -- `None`
+  passes, a `bool` is refused (Python's `bool` is an `int`), a plain numeric string ("12", "17.5")
+  is coerced since outside callers including `body.mcp` often send numbers as strings, anything
+  else ("12-15", "12 reps", "") is refused with the person's own error sentence naming the
+  exercise. `_PARAM_REGISTRAR_ENTRENO`'s JSON Schema for `reps`/`peso_kg` was typed to match
+  (`body/agente/herramientas.py:192-193`).
+- **Render safety for rows stored before this slice** (ruling 3): `asistente._numero_o_texto`
+  (`body/rutas/asistente.py:60-66`) shows a non-numeric stored `reps`/`peso_kg`/`series` as its own
+  raw text instead of crashing `t.num` on it; `asistente._tarjeta_propuesta_segura` (`body/rutas/
+  asistente.py:428-445`) catches anything `_tarjeta_propuesta` still raises on one bad stored card
+  and renders that one card as a plain fallback line (`asistente.propuesta.error_render`) so a
+  conversation's other cards and the panel still render -- logs only the exception class and the
+  propuesta id to stderr, never the payload. `propuestas._entreno_series_invalida` (`body/agente/
+  propuestas.py:270-283`) treats a stored series the new door validation would now refuse as drift,
+  so `aplicar` on a legacy proposal refuses it the same way it refuses any other out-of-date
+  proposal (no write, no 500), rather than crashing.
+
+**`planear_entreno` narrowing, and why**: ruling 1 read as typing reps/peso_kg wherever training
+numbers are entered, but `planear_entreno`'s `reps` stayed untyped (string) -- a rep RANGE is
+legitimate in a PLAN, not a logged set: `tests/test_agente_entreno.py::PlanearEntrenoTest::
+test_propose_writes_nothing_to_plan` sends `"8-10"` and that is correct, not a value to refuse.
+The render half already covers this case too: a plan's stored range reaches `_ejercicio_plan_txt`
+(`body/rutas/asistente.py:68-73`), which now calls `_numero_o_texto` on `series` rather than
+`t.num`, so a stored range renders as its own text there as well, safely, without needing
+`planear_entreno` itself to refuse it.
+
+**Ruling 4 answer** (does a manually-logged session double-count against the watch's own activity
+for the same day): **Día and weekly figures DO double-count; Hoy and habit evidence do not.**
+- Día: `db.load_day`'s activities query (`body/db.py:1377-1380`, `SELECT * FROM activity WHERE
+  person_id = ? AND day = ?` with no `source` filter), reached from Día's `day_view`
+  (`body/rutas/hoy.py:529`) -- a manual `registrar_entreno` row (`source = 'manual'`) and the
+  watch's own `strength_training` row for that day are two separate `activity` rows and both are
+  returned and both render.
+- Weekly figures: `history.training`'s session counter (`body/history.py:112-175`, the query at
+  line 117 is also an unfiltered `SELECT ... FROM activity`, and line 132's `bucket["sessions"] +=
+  1` increments once per row) -- the same two rows count as two sessions, feeding both the by-type/
+  by-month totals and `usual_week_sessions` (line 175).
+- Hoy: `hoy.today` (`body/rutas/hoy.py:328`) never queries the `activity` table for a training
+  count at all -- its only training-adjacent read is due-habit evidence, so there is nothing in
+  Hoy's own figures for a duplicate row to inflate.
+- Habit evidence: both the weekly habit-progress count inside `goals.habit_progress`
+  (`body/goals.py:172-188`, `COUNT(*) FROM habit_check WHERE ... done = 1 AND day ...`) and the
+  due-today card's own check, `comun._habit_checked` (`body/rutas/comun.py:254-257`, called from
+  `hoy.py:121`), read rows in `habit_check` -- one row per habit per day -- not rows in `activity`,
+  so a second `activity` row for the same day has nothing to double there either.
+
+**Targeted run** (65 tests, OK): `tests.test_entreno_numeros` (11), `tests.test_mcp` (19),
+`tests.test_i18n_paridad` (6), `tests.test_agente_entreno` (29).
+
+**Gate**, once, foreground (backgrounded past the harness's 600s cap, read back from its own
+artifact once it finished): `.venv/Scripts/python.exe -m unittest discover tests -t .` ->
+`Ran 2340 tests in 934.450s ... OK (skipped=1)`.
+
+The two new error sentences, verbatim:
+- es: "Las repeticiones de {ejercicio} deben ser un número: envía las que hiciste (por ejemplo 12),
+  no un rango." / "El peso de {ejercicio} debe ser un número: envía los kilos que usaste (por
+  ejemplo 20), no un texto."
+- en: "Reps for {ejercicio} must be a number: send what you actually did (for example 12), not a
+  range." / "Weight for {ejercicio} must be a number: send the kilos you used (for example 20),
+  not text."
+
+**Commits** on `feat/body-entreno-numeros-1`, on top of `main` at `027d40e`:
+- `82b0b39` -- "BODY-ENTRENO-NUMEROS-1: work as left by the first worker (uncommitted, gate result
+  unread)" (the six `continues-dirty` paths, committed as found, no further edit).
+
+Diff classified against `main`: no schema or migration change. Customer-facing bytes: **YES** --
+the two new assistant error sentences above and the new "This proposal couldn't be shown." /
+"No se pudo mostrar esta propuesta." fallback line are new text a person reads, in both languages.
+No cross-repo contract or DTO change. The approval's own words ("stop AWAITING_APPROVAL for the
+orchestrator's look at the panel on the demo") say stop before any merge regardless.
+
+Not merged. Stops **AWAITING_APPROVAL** on `feat/body-entreno-numeros-1`, for the orchestrator's
+own look at the panel on the demo: the three new sentences above, and the legacy-row fallback card
+rendering in place of a crash.
