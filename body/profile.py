@@ -29,11 +29,17 @@ class MetricProfile:
 
 
 def metric_profile(conn, key: str, today: str | None = None, *, person_id: int,
-                    min_days: int = 14) -> MetricProfile | None:
+                    min_days: int = 14, min_month_points: int = 7) -> MetricProfile | None:
     """min_days defaults to the watch's own honest-gap threshold (14 days). A self-measured key
     (BODY-ENTRENO-MEDIDA-1) has no such cadence to wait on -- the caller passes a lower min_days so
     a card appears from the first value, sparse and honest, rather than hiding behind a Garmin-sized
-    gap it will never fill the same way."""
+    gap it will never fill the same way.
+
+    min_month_points gates which months are complete enough to join the monthly line (`months`
+    below): 7 by default, a near-daily Garmin cadence's own honest-gap size. A weekly self-measured
+    key (BODY-MEDIDA-PESO-1-M2) never reaches 7 points in a month, so every month would be dropped
+    and the monthly chart would never draw at all -- the caller passes a lower min_month_points for
+    a self-measured key, same as min_days above."""
     rows = conn.execute("SELECT day, value FROM daily_metric WHERE person_id=? AND metric_key=? ORDER BY day",
                         (person_id, key)).fetchall()
     if len(rows) < min_days:
@@ -50,7 +56,8 @@ def metric_profile(conn, key: str, today: str | None = None, *, person_id: int,
     q = statistics.quantiles(vals, n=4)
     return MetricProfile(
         key=key,
-        months=[(m, statistics.fmean(v), len(v)) for m, v in sorted(by_month.items()) if len(v) >= 7],
+        months=[(m, statistics.fmean(v), len(v)) for m, v in sorted(by_month.items())
+                if len(v) >= min_month_points],
         all_mean=statistics.fmean(vals), low=q[0], high=q[2],
         last30=statistics.fmean(last) if last else None,
         prev30=statistics.fmean(prev) if prev else None,

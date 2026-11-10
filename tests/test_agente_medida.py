@@ -275,7 +275,8 @@ class TrendsSelfMeasuredGroupTest(unittest.TestCase):
     def test_trend_groups_has_a_self_group_built_from_metric_def(self):
         groups = dict(comun.TREND_GROUPS)
         self.assertIn("self", groups)
-        self.assertEqual(set(groups["self"]), {"flex_alcance_cm", "snoring_min"})
+        self.assertEqual(set(groups["self"]),
+                         {"flex_alcance_cm", "snoring_min", "body_weight_kg", "waist_cm"})
 
     def test_trends_page_shows_the_self_measured_card_from_a_single_point(self):
         page = self.client.get("/trends?todas=1").text

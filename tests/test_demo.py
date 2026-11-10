@@ -186,6 +186,18 @@ class SeededContentTest(unittest.TestCase):
         self.assertEqual(row[0], "lugares")
         self.assertRegex(row[1], r"^[1-9][0-9]{0,11}$")
 
+    def test_body_weight_and_waist_are_seeded_weekly_not_daily(self):
+        """BODY-MEDIDA-PESO-1-M: body_weight_kg and waist_cm follow flex_alcance_cm's once-a-week
+        cadence, every reading on a Monday, never one per day like snoring_min."""
+        for key in ("body_weight_kg", "waist_cm", "flex_alcance_cm"):
+            with self.subTest(key=key):
+                days = [r["day"] for r in self.conn.execute(
+                    "SELECT DISTINCT day FROM daily_metric WHERE metric_key = ?", (key,))]
+                self.assertGreater(len(days), 0)
+                self.assertLess(len(days), 20, f"{key} looks daily, not weekly: {len(days)} days seeded")
+                for day in days:
+                    self.assertEqual(date.fromisoformat(day).weekday(), 0, f"{key} on {day} is not a Monday")
+
     def test_demo_marker_written(self):
         marker = Path(self.folder) / "DEMO"
         self.assertTrue(marker.exists())

@@ -17,6 +17,8 @@ WEEK_KEYS = ["readiness", "sleep_minutes", "hrv_last_night", "resting_hr"]
 TREND_MIN_DAYS = 14  # body/profile.py's metric_profile() needs this many rows before a metric gets a card
 SPARSE_KEYS = {"vo2max", "vo2max_cycling", "fitness_age"}  # Garmin updates these only after qualifying activities
 RANGES = ["7", "30", "90", "all"]
+GARMIN_MIN_MONTH_POINTS = 7  # body/profile.py's metric_profile() default -- a near-daily watch cadence
+SELF_MIN_MONTH_POINTS = 2  # a weekly self-measured key's own floor (BODY-MEDIDA-PESO-1-M2), per origin
 # BODY-SUENO-RESPIRACION-VISTA-1: comun.TREND_GROUPS' "night" group -- same honest caveat as
 # Día's (BODY-ENTRENO-1-INV Q6), carried as the card's own note like trends.self_note.
 NIGHT_CAVEAT_KEYS = {"sleep_spo2_avg", "sleep_respiration_avg"}
@@ -40,7 +42,15 @@ def _compare(t: T, k: str, d: dict, value, ref, spread: float, vs_key: str) -> t
     diff = value - ref
     if abs(diff) < (spread or 1) * 0.15:
         return t("delta.same"), "flat"
-    amount = t.minutes(abs(diff)) if comun._is_minutes(k) else t.num(abs(diff))
+    is_min = comun._is_minutes(k)
+    dec = comun._decimales(k)
+    # BODY-MEDIDA-PESO-1-M2: an arrow is only honest when the amount next to it is not "0" -- a
+    # diff that rounds to zero AT THE METRIC'S OWN PRECISION (whole minutes for a minutes key,
+    # `dec` decimals otherwise) gets the same "no real change" wording as the spread check above,
+    # never an arrow pointing at nothing.
+    if (round(abs(diff)) if is_min else round(abs(diff), dec)) == 0:
+        return t("delta.same"), "flat"
+    amount = t.minutes(abs(diff)) if is_min else t.num(abs(diff), dec)
     cls = "flat" if d["better"] == "neutral" else ("good" if (diff > 0) == (d["better"] == "higher") else "bad")
     return f"{'↑' if diff > 0 else '↓'} {amount} {t(vs_key)}", cls
 
@@ -74,8 +84,14 @@ def _trend_card(conn, t: T, defs: dict, k: str, start, end, month, nights, perso
     few as one point collapses them to a single repeated value) -- the card carries no delta, no
     normal-range legend and no band, and a count line instead (BODY-ENTRENO-TOOLS-1-M fix 3)."""
     d = defs[k]
-    min_days = 1 if d["origen"] == "self" else TREND_MIN_DAYS
-    p = profile.metric_profile(conn, k, person_id=person_id, min_days=min_days)
+    es_self = d["origen"] == "self"
+    min_days = 1 if es_self else TREND_MIN_DAYS
+    # BODY-MEDIDA-PESO-1-M2: a weekly self-measured key never reaches the 7-points-a-month floor a
+    # near-daily Garmin metric clears easily -- SELF_MIN_MONTH_POINTS lets its monthly line draw
+    # too, a few points joined being a fine chart for a weekly measure.
+    min_month_points = SELF_MIN_MONTH_POINTS if es_self else GARMIN_MIN_MONTH_POINTS
+    p = profile.metric_profile(conn, k, person_id=person_id, min_days=min_days,
+                               min_month_points=min_month_points)
     if not p:
         return None, None
     pocas = d["origen"] == "self" and p.days < baselines.MIN_DAYS
