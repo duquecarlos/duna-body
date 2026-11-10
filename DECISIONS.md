@@ -14920,3 +14920,123 @@ fixes themselves are customer copy -- but the approval's own body names the merg
 
 The real first fill on Carlos's own database happens through the scheduled pull's post-pull step
 (`_recalcular_turno_fc_seguro`, already wired in `995042c`) -- not run from any slice.
+
+## BODY-MCP-LOCAL-1 -- a local MCP server over the tool registry, plus its own audit table (2026-11-10)
+
+Carries out BODY-INTERFAZ-ESCRITORIO-1-INV's two carried-forward follow-ups together (BODY-MCP-LOCAL-1,
+BODY-MCP-AUDIT-1): the local stdio MCP server, and the per-call audit it needs the moment an outside caller
+exists at all. BODY-MCP-SCOPE-1 and BODY-MCP-HOSTED-1 stay queued, unbuilt.
+
+Tier 1, approved under ORCH-CARLOS-DELEGATES-TIER-1-1. Its own rulings, as built:
+
+1. **Local, stdio only.** `body/mcp.py`, run as `python -m body.mcp`. No socket, no port, no network --
+   `main()` reads `sys.stdin` and writes `sys.stdout`, both newline-delimited JSON-RPC 2.0. The person is
+   resolved exactly as the local web app resolves it: `db.local_person_id(conn)`, the same call
+   `body/identity.py`'s own local-mode path makes (hosted mode, `cuenta.hosted()`, is never consulted here --
+   this module exists for the local single-person PC only).
+2. **Same tools, same level, never more.** `tools/list` and `tools/call` go through `body/agente/bucle.py`'s
+   own `_tool_specs(nivel)` (imported, not copied) and `body/agente/herramientas.py`'s own `ejecutar`/`tipo_de`
+   -- the identical registry and privacy-level gate the in-app assistant uses for this person. No change was
+   needed in `bucle.py` to reuse `_tool_specs`.
+3. **Read or propose; never apply, undo or delete.** There is no apply/undo/delete tool anywhere in
+   `herramientas.HERRAMIENTAS` -- applying a proposal is a separate HTTP route
+   (`/asistente/propuestas/{id}/aplicar`), not a tool -- so none is ever listed or callable here, with no
+   extra filtering needed. A `propuesta` call creates its card in ONE conversation per MCP session, created
+   lazily on the session's first proposal (`agente_conversacion.crear(conn, person_id, origen='mcp')`) and
+   never reused across sessions. `conversacion_agente.origen` is a new column (`CREATE TABLE`'s own default
+   for a fresh install, an `ALTER TABLE ... ADD COLUMN` migration for an existing one): `NULL` for a
+   conversation Body's own chat panel started, `'mcp'` for one this server started. The panel labels every
+   card on an `origen='mcp'` conversation with a small plain line -- `asistente.propuesta.origen_mcp`,
+   "Desde tu asistente personal" (es) / "From your personal assistant" (en) -- rendered server-side in
+   `body/rutas/asistente.py`'s `_tarjeta_propuesta` (both the SSE stream and the conversation GET pass the
+   conversation's own `origen_de(conn, conversacion_id)` in), and shown by `body/static/assistant.js` reusing
+   the existing muted `.asis-propuesta-resultado` style -- no new CSS, so `body/static/body.css` (outside
+   `touches:`) needed no change and `body/templates/base.html` needed none either (every string on this card
+   is already rendered server-side, same as every other field `_tarjeta_propuesta` builds). Whether this desk
+   may later apply on the person's own spoken yes is Carlos's call, for later -- nothing here forecloses or
+   enables it.
+4. **Caps mirror `bucle.py`'s, per MCP session.** `LIMITES_SESION = {"lecturas": bucle.MAX_LECTURAS,
+   "propuestas": bucle.MAX_RONDAS}` -- 5 reads and 8 proposals per session (bucle.py allows at most one
+   proposal per round across up to `MAX_RONDAS` rounds, so `MAX_RONDAS` is the matching ceiling here). Past
+   either, the next call of that kind answers a tool error in plain words rather than silently refusing.
+5. **One audit row per call, never its params or result.** A new table, `uso_herramienta_externa`
+   (`person_id`, `herramienta`, `llamada_en`, `caller`) -- `db.registrar_uso_herramienta_externa` writes one
+   row on every `tools/call`, success or refusal alike, BEFORE the cap/level checks run, so a refused call is
+   audited too. In `body/privacidad.py`: added to `FULLY_HANDLED_TABLES`, exported under
+   `asistente.uso_externo` (tool name, time, caller only), and removed by `delete_person`. Seeded in
+   `tests/test_persona_fuga.py`'s per-person census (no marker needed -- its own columns carry nothing a
+   screen could leak between two people beyond the generic row-count check already in place for
+   `uso_agente`).
+6. **Nothing to stdout but protocol frames.** Every response is one JSON-RPC line; the one thing this module
+   ever writes elsewhere is a single stderr line at shutdown, counts only (`"body.mcp: N lecturas, M
+   propuestas"`), never a tool's params or result.
+7. **Building this sends nothing anywhere.** No code here calls this server, registers it with anything, or
+   edits any desk's own MCP config -- that is CONNECTING it, a separate step the plan itself says waits for
+   Carlos's own yes.
+
+**Protocol surface, as built:** `initialize` (returns `protocolVersion`, `serverInfo`, `capabilities.tools`),
+the `notifications/initialized` notification (no reply, per JSON-RPC: a notification never gets one),
+`tools/list`, `tools/call` (result `content: [{type: "text", text: ...}]`, `isError: true` on a tool error,
+the tool's own output JSON-encoded as that text). An unknown method on a message that carries an `id` answers
+`-32601`; malformed JSON (or valid JSON that is not an object) answers `-32700` with `id: null`, without
+crashing the loop -- the next line is read and answered normally. A request with no recognised method and no
+`id` (a notification-shaped message this server does not know) gets no reply either, per the same
+notification rule.
+
+**`body/db.py`**, Tier 1: the `conversacion_agente.origen` column (SCHEMA + `_migrate`'s own
+`ALTER TABLE ... ADD COLUMN` guard, same pattern every other late column in this file uses), the new
+`uso_herramienta_externa` table, and `registrar_uso_herramienta_externa(conn, person_id, herramienta,
+caller)`. `body/agente/conversacion.py`: `crear(..., origen=None)` and the new `origen_de(conn,
+conversacion_id)` reader -- every existing call site (production and tests) keeps working unchanged, `origen`
+being an optional, defaulted-`None` keyword.
+
+**First BLOCKED-avoided decision:** `body/mcp.py`'s `main()` had to be written as `conn = db.connect()`
+immediately followed by `with contextlib.closing(conn):` (not a `db.ensure_ready(conn)` / `person_id =
+db.local_person_id(conn)` pair before a `try/finally`) -- `tests/test_conexiones_cerradas.py`'s
+`DirectConnectClosesInFinallyTest` requires the closing construct to be the VERY NEXT statement after the
+`connect()` assignment. Caught by the full gate's one failure before the fix, not by the 14 targeted
+`tests/test_mcp.py` cases (which drive `mcp.ejecutar` directly, past `main()` entirely) -- fixed in the same
+commit, gate re-run clean.
+
+**Tests**, `tests/test_mcp.py` (14 cases, driving `mcp.ejecutar` in-process over `io.StringIO` fakes for
+stdin/stdout, a real temp sqlite db, no subprocess, no network): `initialize`'s own fields;
+`notifications/initialized` gets no reply; `tools/list` matches `herramientas.disponibles(nivel)` exactly and
+carries no apply/undo/delete-shaped name; a `lectura` call; a `propuesta` call followed by a second `propuesta`
+call in the same session, proving both proposals land in the SAME conversation and that conversation's own
+`origen_de` reads `'mcp'`; that proposal applied through the existing `/asistente/propuestas/{id}/aplicar`
+route; the same proposal's card, read back through `/asistente/conversacion/{id}`, carrying the exact label
+"Desde tu asistente personal"; an unknown tool name answering `isError`; the read cap (5) answering clean for
+the first 5 calls and a tool error on the 6th; an unknown method answering `-32601`; malformed JSON answering
+`-32700` without stopping the loop (the next line still answers normally); every call -- including the
+refused unknown-tool one -- writing exactly one `uso_herramienta_externa` row, whose columns are exactly
+`{id, person_id, herramienta, llamada_en, caller}`; every stdout line parsing as JSON-RPC; `main()`'s own
+stderr summary line naming counts while a seeded health figure (an invented `171717.0`) never appears in it.
+Plus three new tests in `tests/test_privacidad.py` (the table is fully handled, exported, deleted) and one
+new seed line in `tests/test_persona_fuga.py`. 163 targeted tests green before the full gate: 140 across
+`tests.test_privacidad`, `tests.test_persona_fuga`, `tests.test_i18n_paridad`, `tests.test_asistente_panel`,
+`tests.test_agente_propuestas` and `tests.test_agente_bucle` (the touched and the adjacent modules this
+diff could plausibly affect), 9 in `tests.test_conexiones_cerradas` (re-run after the `contextlib.closing`
+fix below), and the 14 in `tests/test_mcp.py` itself.
+
+**Gate**, once, foreground, on this slice's own final tree:
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 2233 tests in 380.985s ... OK
+(skipped=1)` (2233 - 18 new = 2215 before this slice, matching BODY-TURNO-FC-1-M's own last-recorded count
+above).
+
+Commit: `77d691c` (`body/mcp.py`, `body/db.py`, `body/privacidad.py`, `body/agente/conversacion.py`,
+`body/rutas/asistente.py`, `body/static/assistant.js`, both `i18n` files, and the three touched test files),
+on `feat/body-mcp-local-1`, on top of `main` at `83a2792` (no divergence: `main` had not moved).
+
+Diff classified against `main`: **schema change** -- `uso_herramienta_externa` is a new table and
+`conversacion_agente` gains a column -- so this stops before any merge under merge policy A regardless of the
+other two conditions. Customer-facing bytes: YES too (the two new i18n strings, the origin label, the es/en
+wording in this entry's own ruling 3) -- but the approval's own body already says, in words, to stop:
+"it stops AWAITING_APPROVAL for the orchestrator's look at that label and the protocol transcript." No
+cross-repo contract or DTO change.
+
+Not merged. Stops **AWAITING_APPROVAL** on `feat/body-mcp-local-1`, for the orchestrator's own look at the
+label strings and the protocol transcript, and -- per ruling 7 -- the MCP config snippet is handed to the
+desk only after Carlos says yes to CONNECTING it; nothing in this slice did that connecting itself. The exact
+command for that config, once approved: `.venv/Scripts/python.exe` with args `["-m", "body.mcp"]`, cwd
+`C:/Duna/body/body-app-live`, and `BODY_HOME` left UNSET in that config so the server reads the person's own
+real home directory, never a test or demo one.
