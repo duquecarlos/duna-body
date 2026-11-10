@@ -274,6 +274,29 @@ class HistoryPeriodoLineTest(unittest.TestCase):
         self.assertIn(_t("es", "history.periodo_excluido", n="3", kinds=_t("es", "periodo.kind.malestar")), r.text)
         self.assertNotIn(NOTE_SECRETO, r.text)
 
+    def test_count_line_is_singular_for_one_marked_day(self):
+        conn = self._reset_db("historia_un_dia.db")
+        start = date(2026, 1, 1)
+        self._seed_days(conn, start, 20)
+        db.crear_periodo(conn, PERSON_A, "lesion", (start + timedelta(3)).isoformat(),
+                          (start + timedelta(3)).isoformat())
+        conn.commit()
+        r = self.client.get("/history")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(_t("es", "history.periodo_excluido_one", kinds=_t("es", "periodo.kind.lesion")), r.text)
+
+    def test_count_line_is_singular_for_one_marked_day_in_english(self):
+        conn = self._reset_db("historia_un_dia_en.db")
+        start = date(2026, 1, 1)
+        self._seed_days(conn, start, 20)
+        db.crear_periodo(conn, PERSON_A, "lesion", (start + timedelta(3)).isoformat(),
+                          (start + timedelta(3)).isoformat())
+        db.set_language(conn, "en", PERSON_A)
+        conn.commit()
+        r = self.client.get("/history")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(_t("en", "history.periodo_excluido_one", kinds=_t("en", "periodo.kind.lesion")), r.text)
+
     def test_no_line_without_a_marked_day(self):
         conn = self._reset_db("historia_sin_marca.db")
         start = date(2026, 1, 1)

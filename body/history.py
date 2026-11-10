@@ -211,9 +211,11 @@ def patterns(conn, person_id: int, marcados: set[str] | None = None) -> dict:
     BODY-PERIODO-PANTALLAS-1: a marked day (illness, travel, injury) is left OUT of every bucket, the
     same rule baselines.baseline() already applies -- a sick week should never read as your normal
     Monday. `marcados`, when given (historial.py passes its own, read once for the whole page), is
-    used as is -- an OPEN period makes db.dias_marcados() re-read person() for "today" on every call
-    it is not given to, so a caller with its own page-wide budget (one route, several PATTERN_KEYS)
-    reads it once and passes it in, the same way tendencias.py reads `nights` once for every card."""
+    used as is -- db.dias_marcados() itself no longer re-reads person() for "today" on every call
+    (BODY-PERIODO-PANTALLAS-1-B folded the zone into _periodos_de_persona's own cached period read,
+    one JOIN), but a caller with its own page-wide budget (one route, several PATTERN_KEYS) still
+    reads it once and passes it in rather than re-running that query per key, the same way
+    tendencias.py reads `nights` once for every card."""
     better_by_key = {r["key"]: r["better"] for r in conn.execute("SELECT key, better FROM metric_def")}
     metrics: dict[str, dict | None] = {}
     candidates: list[dict] = []

@@ -106,7 +106,9 @@ def _periodo_excluido_ctx(t: T, conn, person_id: int, cov: dict, marcados: set[s
         return None
     periodos_rows = db.periodos(conn, person_id, cov["first_day"], cov["last_day"])
     kinds = sorted({t("periodo.kind." + p["kind"]) for p in periodos_rows})
-    return t("history.periodo_excluido", n=t.num(len(marcados)), kinds=", ".join(kinds))
+    n = len(marcados)
+    key = "history.periodo_excluido_one" if n == 1 else "history.periodo_excluido"
+    return t(key, n=t.num(n), kinds=", ".join(kinds))
 
 
 def _shift_ctx(t: T, defs: dict, shift_data: dict) -> dict:

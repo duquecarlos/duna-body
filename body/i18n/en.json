@@ -610,6 +610,7 @@
   "history.coverage": "Since {since} · {days} days of watch data",
   "history.coverage_gap": "Your longest gap: {days} days ({start} – {end}).",
   "history.coverage_no_gap": "No large gaps in your data.",
+  "history.periodo_excluido_one": "1 day was left out of these patterns because it was marked ({kinds}).",
   "history.periodo_excluido": "{n} days were left out of these patterns because they were marked ({kinds}).",
   "history.activities_count": "{n} activities logged",
   "history.no_findings": "Not enough history yet for a clear pattern; still gathering days.",

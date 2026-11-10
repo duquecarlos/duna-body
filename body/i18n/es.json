@@ -610,6 +610,7 @@
   "history.coverage": "Desde el {since} · {days} días con datos del reloj",
   "history.coverage_gap": "Tu hueco más largo: {days} días ({start} – {end}).",
   "history.coverage_no_gap": "Sin huecos grandes en tus datos.",
+  "history.periodo_excluido_one": "1 día quedó fuera de estos patrones por estar marcado ({kinds}).",
   "history.periodo_excluido": "{n} días quedaron fuera de estos patrones por estar marcados ({kinds}).",
   "history.activities_count": "{n} actividades registradas",
   "history.no_findings": "Aún no hay suficiente historia para un patrón claro; seguimos juntando días.",
