@@ -968,7 +968,7 @@ def _registrar_checkin(conn: sqlite3.Connection, person_id: int, conversacion_id
     stress_felt = _numero_checkin(t, "stress_felt", stress_felt, clave_error="agente.error.checkin_valor_invalido")
     nota = (nota or "").strip() or None
     if mood is None and energy is None and stress_felt is None and nota is None:
-        raise ToolError("se necesita al menos uno de mood, energy, stress_felt o nota")
+        raise ToolError(t("agente.error.checkin_vacio"))
     day = day or _hoy_local(conn, person_id)
     _dia_no_futuro(conn, person_id, day)
     despues = {"day": day, "ts_local": _hora_a_ts_local(day, hora), "momento": momento,

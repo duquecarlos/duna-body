@@ -766,6 +766,7 @@
   "agente.error.entreno_peso_invalido": "Weight for {ejercicio} must be a number: send the kilos you used (for example 20), not text.",
   "agente.error.comida_cantidad_invalida": "The amount of {metrica} must be a number greater than zero: send how much you ate or drank (for example 150), not text.",
   "agente.error.checkin_valor_invalido": "{metrica} must be a number from 1 to 5: send how you felt (for example 4), not a range or text.",
+  "agente.error.checkin_vacio": "Tell me at least one thing: mood, energy, stress you felt, or a note.",
   "agente.pensando": "Thinking…",
   "agente.herramienta.leer_hoy": "Looking at your day…",
   "agente.herramienta.leer_dia": "Checking that day…",

@@ -297,11 +297,17 @@ def _checkin_valor_txt(t: T, defs: dict, metric_key: str, valor: int) -> str:
 
 
 def _tarjeta_registrar_checkin(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
-    """BODY-CHECKIN-1 ruling 3: one card -- the date and moment word, then every given reading as
-    «4 de 5» (comun._fig_unit, the same "of5" rendering soreness already uses), then the note in
-    quotes. Insert-shaped, like registrar_comida: there is no 'before'."""
+    """BODY-CHECKIN-1 ruling 3: one card -- the date, the clock time when the check-in has one
+    (BODY-CHECKIN-1-M fix: Día shows it, so the card must too) and the moment word, then every
+    given reading as «4 de 5» (comun._fig_unit, the same "of5" rendering soreness already uses),
+    then the note in quotes. Insert-shaped, like registrar_comida: there is no 'before'."""
     fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
-    lineas = [fecha + " · " + _momento_checkin_txt(t, despues["momento"])]
+    partes = [fecha]
+    ts_local = despues.get("ts_local")
+    if ts_local:
+        partes.append(ts_local[11:16])
+    partes.append(_momento_checkin_txt(t, despues["momento"]))
+    lineas = [" · ".join(partes)]
     valores_txt = " · ".join(
         _checkin_valor_txt(t, defs, k, despues[k]) for k in db.CHECKIN_METRIC_KEYS if despues.get(k) is not None
     )

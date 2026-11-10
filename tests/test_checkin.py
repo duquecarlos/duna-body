@@ -295,6 +295,19 @@ class RegistrarCheckinProposeApplyUndoTest(unittest.TestCase):
         with self.assertRaises(herramientas.ToolError):
             self._proponer(mood=None, energy=None, stress_felt=None, nota=None)
 
+    def test_all_four_empty_refusal_names_the_fields_in_spanish(self):
+        with self.assertRaises(herramientas.ToolError) as ctx:
+            self._proponer(mood=None, energy=None, stress_felt=None, nota=None)
+        self.assertEqual(str(ctx.exception),
+                          "Dime al menos una cosa: ánimo, energía, estrés que sentiste o una nota.")
+
+    def test_all_four_empty_refusal_names_the_fields_in_english(self):
+        self.conn.execute("UPDATE person SET language = 'en' WHERE id = 1")
+        with self.assertRaises(herramientas.ToolError) as ctx:
+            self._proponer(mood=None, energy=None, stress_felt=None, nota=None)
+        self.assertEqual(str(ctx.exception),
+                          "Tell me at least one thing: mood, energy, stress you felt, or a note.")
+
     def test_only_a_note_is_enough(self):
         out = self._proponer(mood=None, energy=None, stress_felt=None, nota="solo una nota")
         resultado = propuestas.aplicar(self.conn, 1, out["propuesta_id"])
@@ -352,6 +365,19 @@ class CardTextTest(unittest.TestCase):
     def test_card_with_no_note_has_no_quotes(self):
         t = self._tarjeta("es", nota=None)
         self.assertNotIn("«", t["despues"])
+
+    def test_card_shows_the_time_when_the_checkin_has_one_es(self):
+        t = self._tarjeta("es", momento="post_turno", hora="16:40")
+        self.assertIn("16:40 · después del turno", t["despues"])
+
+    def test_card_shows_the_time_when_the_checkin_has_one_en(self):
+        t = self._tarjeta("en", momento="post_turno", hora="16:40")
+        self.assertIn("16:40 · after the shift", t["despues"])
+
+    def test_card_omits_the_time_when_the_checkin_has_none(self):
+        t = self._tarjeta("es", momento="despertar")
+        primera_linea = t["despues"].split("\n")[0]
+        self.assertEqual(primera_linea, "Propuesta: 5 nov 2026 · al despertar")
 
     def test_card_render_never_raises_on_a_malformed_despues(self):
         tarjeta = asistente._tarjeta_propuesta_segura(T("es"), self.defs, {
