@@ -13324,3 +13324,54 @@ then `git merge --no-ff feat/body-medida-peso-1` -- no conflict; merge commit
 
 No schema change on this merge-only slice. Main now carries the three Tendencias corrections
 Carlos's re-measure approved.
+
+## BODY-DESPERTAR-1-M -- the wake check, finished and merged (2026-11-09)
+
+BODY-DESPERTAR-1 (1c478fb on `feat/body-despertar-1`) never wrote its own ledger entry, so this
+entry carries both: what that slice built, and the test-isolation fix this one made to finish it.
+
+**What BODY-DESPERTAR-1 built.** `garmin_adapter.fetch_sleep(day, token_str=None)` pulls ONLY the
+sleep endpoint (`get_sleep_data`) for one day, sharing a new `_parse_sleep_end` helper with
+`parse_day` so the two never drift apart. `body/despertar.py` (`python -m body.despertar [--day
+YYYY-MM-DD]`), local person only: zero Garmin calls once `BODY_HOME/vida/despertar-<day>.json`
+already exists or `sleep_session` already holds that day's `end_local` -- otherwise exactly ONE
+`fetch_sleep` call per check. It respects `pull.py`'s lock: if a pull already holds it, despertar
+skips that check entirely (no wait, no retry) rather than contending for it. The file it writes is
+exactly `{"woke_at": "<local ISO with offset>", "source": "garmin", "written_at": "<local ISO with
+offset>"}` -- no other key -- written atomically (temp file + `os.replace`, the same pattern as
+`body/traer_semana.py`) so Personal's watcher never reads a half-written file. Every path always
+returns exit 0: a missing token, an empty result, or a fetch error each print a kind
+(`type(e).__name__`), never a payload or a traceback, so the scheduled task stays calm.
+`body/vivo.py` learned the `despertar` task. `scripts/install-daily-sync.ps1` registers a fifth
+scheduled task, "Body app wake check": daily at 04:00, repeating every 20 minutes for 9 hours
+(through ~13:00), running `python -m body.vivo despertar` from the live worktree, same as the
+installer's other tasks -- the installer itself was not re-run by either slice. The exact line
+Carlos re-runs, from `scripts/`, is `.\install-daily-sync.ps1` (plus whatever `-ShiftsDir`/`-Lan`/
+`-Hosted` flags he already runs it with); it is idempotent (`-Force` on every `Register-
+ScheduledTask`) and safe to re-run to pick up this fifth task.
+
+**What this slice fixed (BODY-DESPERTAR-1-M).** `tests/_isolate.py` sets one `BODY_HOME` for the
+whole test process; `tests/test_despertar.py` sorts before `tests/test_dispositivo.py`, and its
+tests wrote into that shared `BODY_HOME/vida/`, which `test_dispositivo.py`'s
+`VidaExportHostedRefusalTest.test_main_refuses_and_writes_nothing` asserts is absent -- GATE_RED at
+1888/1890 on the first run. Rather than keep the cleanup-by-deletion 1c478fb had committed (unlink
+the file, `rmdir` the shared dir if now empty -- fragile, and liable to race any other module that
+legitimately uses that directory), this slice gave `test_despertar.py` its own isolation:
+`despertar.py` already reads `config.BODY_HOME` fresh on every call (`_path_for`, `_write`), so a
+new `_AisladoTestCase` base class patches `config.BODY_HOME` to a fresh `tempfile.mkdtemp(dir=TMP)`
+per test in `setUp`, and every test class that touches the wake-check file now inherits it. No
+change to `body/despertar.py` was needed, and `tests/test_dispositivo.py` was not touched, keeping
+its guard test's subject intact.
+
+**Commits** (`git rev-parse`): fix `547c0e5a1991bf3208ab1352a75a9438478257bb` on
+`feat/body-despertar-1`; merge into `main`, `--no-ff`,
+`cc624dcb6549261328a5b637fbea7c0c4359aa0b` (tree `1b23009721ca881a8c7cae95ad1a19fb4f04954e`,
+identical to the branch tree -- no conflict, nothing else changed by the merge).
+
+**Gate**, once, foreground, from the repository root, on the fix commit's tree (proven identical to
+the merge tree above, so not re-run on `main`): `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -> `Ran 1890 tests in 288.758s ... OK (skipped=1)`.
+
+No schema change, no customer-facing bytes (a scheduled background check and its test isolation,
+nothing rendered), no cross-repo contract. Per ORCH-CARLOS-DELEGATES-TIER-1-1, approved to merge on
+a green gate.
