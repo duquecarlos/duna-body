@@ -13375,3 +13375,116 @@ tests -t .` -> `Ran 1890 tests in 288.758s ... OK (skipped=1)`.
 No schema change, no customer-facing bytes (a scheduled background check and its test isolation,
 nothing rendered), no cross-repo contract. Per ORCH-CARLOS-DELEGATES-TIER-1-1, approved to merge on
 a green gate.
+
+## BODY-PROTEINA-1 -- a protein intake tracker, logged by talking
+
+Carlos asked for "constant interaction with my assistant" and a protein tracker ("that's important
+for me"). An INV had already found that `daily_metric` holds one value per (person, day, key) via
+INSERT OR REPLACE, so a bare `protein_g` self-metric cannot hold several meals a day. The
+orchestrator's binding rulings (ORCH-CARLOS-DELEGATES-TIER-1-1) that bound this build: a GENERIC
+intake entry table, one row per thing eaten or drunk, keyed by a metric_def key, with the day total
+DERIVED into `daily_metric` by one writer -- future metrics like calories or water are rows, never
+new tables (Q1); several entries a day, the model estimates grams from the person's words and says
+so, the person confirms with one tap through the existing propose/apply/undo pattern, corrections
+and deletions go through the same path, the person's own words stay on the entry -- their data, on
+their PC, never in a log or print (Q2); per-kg goals and screens are explicitly later slices (Q3/Q4);
+the external interface is Carlos's own choice, not touched here (Q5). Customer-facing bytes (the
+assistant card text and the new metric's words) stop this slice AWAITING_APPROVAL for the
+orchestrator's 375px check -- not merged by this slice.
+
+**Schema.** `ingesta` (id, person_id, day, ts_local nullable, metric_key FK -> metric_def, amount
+REAL CHECK > 0, estimado INTEGER 0/1, descripcion TEXT nullable, created_at, updated_at), indexed by
+(person_id, day); created by `db.init` on an existing DB too. `metric_def.agregado` (new column,
+ALTER-added like `kind`/`origen` before it): `'suma_ingesta'` marks a key whose day total is derived
+from `ingesta` rows, NULL for every other key. The first intake row: `protein_g` ("Proteína"/
+"Protein", unit g, origen 'self', better 'neutral' like weight). `propuesta_agente.accion`'s CHECK
+widened for `registrar_ingesta`, `corregir_ingesta`, `borrar_ingesta` (SQLite can't ALTER a CHECK,
+so the guarded rebuild pattern already used for the `experimento` actions rebuilds the whole table
+again).
+
+**One writer of the day total.** `db.registrar_ingesta`/`corregir_ingesta`/`borrar_ingesta` each
+recompute `SUM(amount)` for that (person, day, metric_key) and write it via `set_metric(...,
+source='self', ...)`, which removes the `daily_metric` row once no entries remain (via `set_metric`'s
+existing NULL-deletes-the-row behavior). All three are person-scoped: another person's entry id
+raises `ValueError`, never revealing whose it is. `registrar_medida` now REFUSES an intake key (a
+live `metric_def.agregado` check, defense-in-depth past its own JSON-schema enum), pointing the
+caller at `registrar_ingesta`.
+
+**Assistant tools**, the same propose/apply/undo shape every other write tool here uses:
+`registrar_ingesta(metric_key, amount, estimado, descripcion?, day?, hora?)` -- insert-shaped, no
+"before"; `corregir_ingesta(ingesta_id, amount)` and `borrar_ingesta(ingesta_id)` -- both carry
+`antes` so undo restores exactly (borrar's undo re-inserts a new row with the same values, the same
+"functionally equivalent" restoration `proponer_experimento`'s own undo already uses, never an
+id-preserving trick). Each tool's description tells the model to estimate grams from the person's
+words, say it is an estimate and what was assumed, one entry per meal, and ask only when the food is
+too vague. `leer_dia` (via `db.load_day`) now carries that day's `ingesta` list and its derived total
+in `metrics`, so the model can see what is already logged before proposing another entry. The meal
+label on the card (desayuno/almuerzo/merienda/cena) is read off `ts_local`'s hour through four fixed
+time bands, never its own stored column, and omitted when `ts_local` is null -- four literal `t()`
+calls, not a concatenated key, so `test_i18n_paridad.py`'s dynamic-prefix guard needs no new entry.
+
+**Privacy.** `ingesta` joined `FULLY_HANDLED_TABLES`; `export_person` includes every entry;
+`delete_person` removes them. `descripcion` never appears in a ToolError or ValueError message on
+any refusal path (tested directly with a planted marker).
+
+**Demo.** `body/demo.py` seeds 3-4 invented protein entries on ~90% of days (invented grams, no
+descripcion) via `db.registrar_ingesta` directly, so Tendencias' self-measured group shows protein
+for the demo person; `tests/test_demo.py`'s determinism checksum now covers `ingesta`.
+
+**The demo assistant provider never calls the new tool.** `body/agente/cliente.py`'s `Demo` provider
+(Tier 1, read-only, not touched) is a fixed two-round script: round one calls `proponer_idioma` only
+when the question contains "idioma", else `leer_ajustes`; round two always answers with the same
+canned Spanish text. It has no branch for food or protein, so typing into the demo panel's chat can
+never produce a `registrar_ingesta` card. To see the card for the 375px check, open the panel once
+(any message creates a conversation), then run, against that same demo BODY_HOME:
+
+    from body import db
+    from body.agente import herramientas
+    conn = db.connect()
+    cid = conn.execute("SELECT id FROM conversacion ORDER BY id DESC LIMIT 1").fetchone()[0]
+    out = herramientas.ejecutar(conn, 1, "registrar_ingesta",
+        {"metric_key": "protein_g", "amount": 35.0, "estimado": True,
+         "descripcion": "2 huevos y una pechuga", "hora": "13:00"}, "ninguno", cid)
+    conn.commit()
+    print(out["propuesta_id"])
+
+then reload that conversation (`GET /asistente/conversacion/<cid>`, or reopen the panel) to see the
+pending card -- "Proteína: unos 35 g (estimado) el <fecha> · almuerzo · «2 huevos y una pechuga»" in
+es, "Protein: about 35 g (estimate) on <fecha> · lunch · "2 eggs and a chicken breast"" in en -- with
+its own Aplicar/Descartar buttons, same as any other proposal. This script was not run against the
+live demo instance from this session; it is instructions for the orchestrator to run.
+
+**A bug this slice found in its own first draft.** `METRIC_DEFS`'s 7th-field (`agregado`) padding
+line ran BEFORE the self-measured rows (`flex_alcance_cm`, `snoring_min`, `body_weight_kg`,
+`waist_cm`, `protein_g`) were appended, so those four older rows stayed 6-tuples and `db.init`'s
+`executemany` crashed on "incorrect number of bindings" -- breaking EVERY test that calls `db.init`,
+not just this slice's own. Fixed by moving the padding step to run after the append, so it covers
+every row regardless of when it was added.
+
+**Deviations from the spec's own assumption.** Extending the tool/propuesta static guard tables (as
+item 4 called for) touched two test files beyond the ones the spec named by name --
+`tests/test_agente_bucle.py`'s `nivel_datos='ninguno'` offered-tools set and
+`tests/test_agente_propuestas.py`'s never-a-proposal set -- both straightforward enumeration widenings
+of exactly the kind the spec anticipated, never a loosened guard. `tests/test_cuenta_schema.py`'s
+migration-preserves-rows test asserted `SELECT *` equality on a `metric_def` row across `db.init`;
+the new `agregado` column (ALTER-added, like `cuenta_sub` before it) now appears in the "after" row,
+so that test now selects the columns common to both sides and checks the new column is `NULL`
+separately -- the same pattern `person.cuenta_sub` already used in the same test, not invented here.
+`tests/test_i18n_paridad.py`'s dynamic-prefix guard caught two i18n keys this slice's own
+`protein_g` row needed and the spec never named: `trends.q.protein_g`/`trends.plain.protein_g` (the
+Tendencias question and its plain-language explainer), added in both es.json and en.json alongside
+the other self-measured keys' own entries. `tests/test_demo.py`'s determinism checksum excluded
+`created_at` already; `ingesta.updated_at` is the same wall-clock figure on insert and was not yet
+excluded, so two demo runs disagreed on it -- added to the excluded-columns set.
+
+**Commits** (`git rev-parse`): `e3b3284184884c7b20f0ebdb0425525a4e7ad3f9` on
+`feat/body-proteina-1`. Not merged.
+
+**Gate**, once, foreground, from the repository root: `.venv/Scripts/python.exe -m unittest discover
+tests -t .` -> `Ran 1933 tests in 595.497s ... OK (skipped=1)`. (An earlier run on this slice's first
+draft caught the `METRIC_DEFS` padding bug above and five static-guard/i18n gaps, all fixed before
+this final run; not a re-run into green, each fix addressed a named, reproduced defect.)
+
+Schema change (`ingesta`, `metric_def.agregado`, `propuesta_agente.accion` widened) AND
+customer-facing bytes (new i18n strings, the assistant card, a Tendencias question). Per
+ORCH-CARLOS-DELEGATES-TIER-1-1, stops **AWAITING_APPROVAL** -- not merged by this slice.
