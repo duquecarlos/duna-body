@@ -61,6 +61,9 @@ TAREAS = {
     # BODY-DESPERTAR-1: the wake check -- every ~20 minutes, 04:00-13:00, writes
     # BODY_HOME/vida/despertar-<day>.json as soon as last night's sleep end is known.
     "despertar": "body.despertar",
+    # BODY-GARMIN-IMPORT-1: `python -m body.vivo importar_garmin <path-to-export.zip> [...]` --
+    # arguments passed straight through to body.importar_garmin.
+    "importar_garmin": "body.importar_garmin",
 }
 
 # Argv prepended before a task's own arguments, for a task that shares a module with another task

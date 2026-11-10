@@ -596,6 +596,18 @@ class DespertarTareaTest(unittest.TestCase):
         self.assertEqual(vivo.TAREAS["despertar"], "body.despertar")
 
 
+class ImportarGarminTareaTest(unittest.TestCase):
+    """BODY-GARMIN-IMPORT-1: the export importer runs through the live tree like every other
+    task, arguments passed straight through."""
+
+    def test_importar_garmin_esta_en_tareas(self):
+        self.assertIn("importar_garmin", vivo.TAREAS)
+        self.assertEqual(vivo.TAREAS["importar_garmin"], "body.importar_garmin")
+
+    def test_no_bandera_antepuesta(self):
+        self.assertNotIn("importar_garmin", vivo.PREFIJO_ARGV)
+
+
 class InstallScriptWakeCheckTest(unittest.TestCase):
     """A PowerShell installer is never executed in tests -- asserted by reading its text
     (BODY-DESPERTAR-1)."""

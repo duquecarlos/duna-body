@@ -108,6 +108,16 @@ class DiasFaltantesTest(unittest.TestCase):
         dias = experimentos.dias_intradia_necesarios(self.conn, self.person_id, date(2026, 11, 12))
         self.assertEqual(dias, ["2026-11-11", "2026-11-09", "2026-11-08", "2026-11-07"])
 
+    def test_an_export_only_day_is_not_skipped(self):
+        """BODY-GARMIN-IMPORT-1: a day backfilled from the account export (source=garmin_export)
+        must still read as missing through the API -- the missing-days job keeps fetching it,
+        same as a day never touched at all."""
+        _crear_intradia(self.conn, self.person_id, "2026-11-09")
+        db.guardar_intradia(self.conn, self.person_id, "2026-11-10", "intradia_fc", {"heartRateValues": []},
+                             source=garmin_adapter.SOURCE_EXPORT)
+        dias = experimentos.dias_intradia_necesarios(self.conn, self.person_id, date(2026, 11, 12))
+        self.assertIn("2026-11-10", dias)
+
     def test_a_day_out_of_garmins_reach_is_dropped(self):
         _crear_intradia(self.conn, self.person_id, "2026-11-01")
         dias = experimentos.dias_intradia_necesarios(self.conn, self.person_id, date(2026, 11, 12))
