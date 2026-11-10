@@ -39,6 +39,7 @@
     <span><i class="c-body legend-line"></i>{{ t('trends.monthly') if r == 'all' else t('trends.daily') }}</span>
     {% if not c.pocas %}<span><i class="c-inset"></i>{{ t('trends.normal', low=c.low, high=c.high) }}</span>{% endif %}
     {% if nights %}<span><i class="c-night op-35"></i>{{ t('trends.nights') }}</span>{% endif %}
+    {% if marcas %}<span><i class="c-amber op-35"></i>{{ t('trends.periodos') }}</span>{% endif %}
   </div>
 </div>
 {% endmacro %}

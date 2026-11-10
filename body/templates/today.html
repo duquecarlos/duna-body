@@ -10,6 +10,7 @@
 {% if turnos %}{{ hoy_turno_card(t, turno, proposed_count) }}{% endif %}
 
 {% if stale %}<div class="aviso">{{ stale }}</div>{% endif %}
+{% if periodo %}<div class="aviso">{{ periodo.texto }} <a class="taplink" href="#asis-btn">{{ periodo.enlace }}</a></div>{% endif %}
 
 <div class="cols-hoy">
 <a class="card est" href="/how/{{ day }}">

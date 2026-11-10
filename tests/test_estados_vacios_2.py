@@ -253,7 +253,11 @@ class PersonaCompletaSinCambiosTest(unittest.TestCase):
         r_home = client.get("/")
         self.assertEqual(r_home.status_code, 200)
         self.assertNotIn(t("today.stale_link"), r_home.text)
-        self.assertNotIn('class="aviso"', r_home.text)
+        self.assertEqual(r_home.text.count('class="aviso"'), 1,
+                         "a fully populated person sees no warning except the one real thing "
+                         "covering today: demo's own open period (BODY-PERIODO-PANTALLAS-1-B)")
+        self.assertIn(t("today.periodo_enlace"), r_home.text,
+                     "the one aviso present is the period line, not a stale-data warning")
 
         r_shifts = client.get("/shifts")
         self.assertEqual(r_shifts.status_code, 200)

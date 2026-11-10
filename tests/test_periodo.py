@@ -239,5 +239,71 @@ class PeriodosReadTest(unittest.TestCase):
         self.assertNotIn("2026-11-11", marcados)
 
 
+# ---- BODY-PERIODO-PANTALLAS-1-B: the zone is read once per connection, not once per call --------
+
+class DiasMarcadosNoPerCallReadTest(unittest.TestCase):
+    """BODY-PERIODO-1-INV measured dias_marcados re-reading person() for the timezone on EVERY
+    call while an open period overlapped the range -- a real per-call SELECT, not just a function
+    call. Fixed by folding the zone into the SAME cached statement as the period rows
+    (db.py _periodos_de_persona), so it costs at most one read per connection."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+
+    def test_n_calls_on_one_connection_issue_no_more_than_one_statement(self):
+        db.crear_periodo(self.conn, 1, "malestar", "2026-11-05")
+        statements = []
+        self.conn.set_trace_callback(statements.append)
+        try:
+            for _ in range(5):
+                db.dias_marcados(self.conn, 1, "2026-11-01", "2026-11-20")
+        finally:
+            self.conn.set_trace_callback(None)
+        self.assertLessEqual(len(statements), 1,
+                             f"warming the cache should cost at most one statement; got {statements}")
+
+    def test_midnight_crossing_still_moves_today_even_once_the_zone_is_cached(self):
+        """The cache holds the ZONE, never the DATE -- two calls on the same connection, straddling
+        local midnight, must disagree about whether the new day is marked."""
+        self.conn.execute("UPDATE person SET timezone = 'America/Bogota' WHERE id = 1")  # UTC-5
+        self.conn.commit()
+        db.crear_periodo(self.conn, 1, "malestar", "2026-11-05")
+        import datetime as real_datetime
+        antes = real_datetime.datetime(2026, 11, 9, 23, 0, tzinfo=ZoneInfo("UTC"))  # 18:00 Bogota, still the 9th
+        despues = real_datetime.datetime(2026, 11, 10, 6, 0, tzinfo=ZoneInfo("UTC"))  # 01:00 Bogota, now the 10th
+        with mock.patch("body.db.datetime") as fake_dt:
+            fake_dt.now.side_effect = lambda tz=None: antes.astimezone(tz) if tz is not None else antes
+            marcados_antes = db.dias_marcados(self.conn, 1, "2026-11-01", "2026-11-15")
+        with mock.patch("body.db.datetime") as fake_dt:
+            fake_dt.now.side_effect = lambda tz=None: despues.astimezone(tz) if tz is not None else despues
+            marcados_despues = db.dias_marcados(self.conn, 1, "2026-11-01", "2026-11-15")
+        self.assertNotIn("2026-11-10", marcados_antes)
+        self.assertIn("2026-11-10", marcados_despues)
+
+    def test_a_timezone_change_is_seen_once_the_cache_is_invalidated(self):
+        """No product write path changes a person's timezone today, but the mechanism that would
+        have to see it already exists: any period write invalidates the SAME cache entry that now
+        holds the zone (not a separate one), so the next read after one picks up the current
+        timezone rather than the one in effect when the cache was first warmed."""
+        self.conn.execute("UPDATE person SET timezone = 'America/Bogota' WHERE id = 1")  # UTC-5
+        self.conn.commit()
+        pid = db.crear_periodo(self.conn, 1, "malestar", "2026-11-05")
+        import datetime as real_datetime
+        instante = real_datetime.datetime(2026, 11, 9, 23, 0, tzinfo=ZoneInfo("UTC"))
+        with mock.patch("body.db.datetime") as fake_dt:
+            fake_dt.now.side_effect = lambda tz=None: instante.astimezone(tz) if tz is not None else instante
+            antes = db.dias_marcados(self.conn, 1, "2026-11-01", "2026-11-15")
+        self.assertNotIn("2026-11-10", antes, "still the 9th in Bogota (UTC-5) at 23:00 UTC")
+
+        self.conn.execute("UPDATE person SET timezone = 'Pacific/Auckland' WHERE id = 1")  # UTC+13
+        self.conn.commit()
+        db.actualizar_periodo(self.conn, 1, pid, note="revisado")  # any period write invalidates the cache
+
+        with mock.patch("body.db.datetime") as fake_dt:
+            fake_dt.now.side_effect = lambda tz=None: instante.astimezone(tz) if tz is not None else instante
+            despues = db.dias_marcados(self.conn, 1, "2026-11-01", "2026-11-15")
+        self.assertIn("2026-11-10", despues, "already the 10th in Auckland (UTC+13) at 23:00 UTC")
+
+
 if __name__ == "__main__":
     unittest.main()
