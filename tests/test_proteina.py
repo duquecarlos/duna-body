@@ -55,8 +55,9 @@ class FreshDbTest(unittest.TestCase):
 
     def test_ingesta_table_exists_with_the_contract_columns(self):
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(ingesta)")}
+        # comida_id (BODY-COMIDA-1 ruling 1): nullable, added beside the original contract columns.
         expected = {"id", "person_id", "day", "ts_local", "metric_key", "amount", "estimado",
-                    "descripcion", "created_at", "updated_at"}
+                    "descripcion", "comida_id", "created_at", "updated_at"}
         self.assertEqual(cols, expected)
 
     def test_metric_def_has_agregado_column(self):

@@ -49,6 +49,9 @@
   {% endif %}
   {% if ventana.ayuno_previo %}<p class="note mt-6 mb-0">{{ t('day.ventana.ayuno_previo', horas=ventana.ayuno_previo) }}</p>{% endif %}
 </div>
+<h2>{{ t('day.comidas.titulo') }}</h2>
+{% if comidas %}<ul class="list">{% for m in comidas %}<li>{% if m.hora %}<span class="note">{{ m.hora }}</span> {% endif %}{% if m.descripcion %}<strong>{{ m.descripcion }}</strong><br>{% endif %}<span class="note">{% for c in m.cantidades %}{{ c.label }}: {% if c.estimado %}<span class="approx">≈</span>{% endif %}{{ c.valor }}{% if not loop.last %} · {% endif %}{% endfor %}</span></li>{% endfor %}</ul>
+{% else %}<p class="note">{{ t('day.comidas.vacio') }}</p>{% endif %}
 <h2>{{ t('day.all') }}</h2>
 <div class="grid2 grid3">
 {% for c in cards %}{% if c.href %}<a class="card"{% if c.key != 'sleep_minutes' %} id="{{ c.key }}"{% endif %} href="{{ c.href }}">{% else %}<div class="card{% if c.raw is none %} empty{% endif %}"{% if c.key != 'sleep_minutes' %} id="{{ c.key }}"{% endif %}>{% endif %}<div class="k">{{ c.label }}</div><div class="fig">{% if c.est and c.raw is not none %}<span class="approx">≈</span>{% endif %}{{ c.value }}{% if c.unit and c.raw is not none %}<span class="u">{{ c.unit }}</span>{% endif %}</div>{% if c.delta %}<div class="delta {{ c.cls }}">{{ c.delta }}</div>{% endif %}{% if c.href %}</a>{% else %}</div>{% endif %}{% endfor %}

@@ -30,7 +30,9 @@ FULLY_HANDLED_TABLES = {
     # Wave 9 (BODY-EXPERIMENTOS-ESQUEMA-1): experimento, its "it happened" log and moment.
     "experimento", "experimento_registro", "moment",
     # BODY-PROTEINA-1: one row per thing eaten or drunk -- the person's own words, like moment.note.
-    "ingesta",
+    # BODY-COMIDA-1: comida groups a meal's own ingesta rows under one description/time -- the
+    # same person's own words, exported and deleted alongside ingesta.
+    "ingesta", "comida",
     # BODY-PERIODO-1: one row per marked stretch of days -- the note is the person's own words,
     # like moment.note and ingesta.descripcion.
     "period",
@@ -121,8 +123,11 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
             "SELECT * FROM moment WHERE person_id = ? ORDER BY ts_local", (person_id,))],
     }
     ingesta = [dict(r) for r in conn.execute(
-        "SELECT id, day, ts_local, metric_key, amount, estimado, descripcion, created_at, updated_at "
-        "FROM ingesta WHERE person_id = ? ORDER BY day, id", (person_id,))]
+        "SELECT id, day, ts_local, metric_key, amount, estimado, descripcion, comida_id, created_at, "
+        "updated_at FROM ingesta WHERE person_id = ? ORDER BY day, id", (person_id,))]
+    comidas = [dict(r) for r in conn.execute(
+        "SELECT id, day, ts_local, descripcion, created_at, updated_at "
+        "FROM comida WHERE person_id = ? ORDER BY day, id", (person_id,))]
     periodos = [dict(r) for r in conn.execute(
         "SELECT id, kind, start_day, end_day, note, created_at, updated_at "
         "FROM period WHERE person_id = ? ORDER BY start_day, id", (person_id,))]
@@ -205,6 +210,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "vida": vida,
         "experimentos": experimentos,
         "ingesta": ingesta,
+        "comidas": comidas,
         "periodos": periodos,
         "dias": dias,
         "actividades": actividades,
@@ -235,6 +241,7 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         conn.execute("DELETE FROM moment WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM experimento WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM ingesta WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM comida WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM period WHERE person_id = ?", (person_id,))
         db.invalidar_periodos_cache(conn, person_id)
         conn.execute("UPDATE habit SET assignee_person_id = NULL WHERE assignee_person_id = ?", (person_id,))

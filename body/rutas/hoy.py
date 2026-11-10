@@ -524,6 +524,21 @@ def _periodo_dia_ctx(t: T, conn, person_id: int, dia_iso: str) -> str | None:
     return t("day.periodo", kind=kinds)
 
 
+def _comidas_dia_ctx(t: T, conn, person_id: int, defs: dict, dia_iso: str) -> list[dict]:
+    """Día's own meals (BODY-COMIDA-1): one line per meal -- a `registrar_comida` group or a
+    legacy single-amount `ingesta` row, `db.comidas_del_dia` groups both the same way -- each
+    amount in the catalog's own order (db.INGESTA_METRIC_KEYS), marked «≈» when estimated."""
+    out = []
+    for m in db.comidas_del_dia(conn, person_id, dia_iso):
+        por_clave = {c["metric_key"]: c for c in m["cantidades"]}
+        cantidades = [{"label": t("metric." + k), "valor": comun._fig_unit(t, k, por_clave[k]["amount"], defs),
+                       "estimado": por_clave[k]["estimado"]}
+                      for k in db.INGESTA_METRIC_KEYS if k in por_clave]
+        out.append({"hora": m["ts_local"][11:16] if m["ts_local"] else None,
+                     "descripcion": m["descripcion"], "cantidades": cantidades})
+    return out
+
+
 @router.get("/day/{day}")
 @comun._cierra_conexion
 def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
@@ -594,7 +609,8 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
                    activities=acts, shifts=shifts, has_data=has_data, block_ctx=block_ctx,
                    sync_text=None if has_data else comun._sync_status_text(conn, person, t),
                    prev=(d - timedelta(1)).isoformat(), next=(d + timedelta(1)).isoformat(),
-                   turnos=turnos_on, ventana=_ventana_dia_ctx(t, conn, person_id, d), periodo=periodo_dia)
+                   turnos=turnos_on, ventana=_ventana_dia_ctx(t, conn, person_id, d), periodo=periodo_dia,
+                   comidas=_comidas_dia_ctx(t, conn, person_id, defs, d.isoformat()))
 
 
 @router.post("/day/{day}/noche-inusual/visto")

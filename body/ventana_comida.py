@@ -21,7 +21,9 @@ class Ventana:
     primera: str | None          # ts_local of the day's first TIMED entry, or None if none had a time
     ultima: str | None           # ts_local of the day's last TIMED entry, or None if none had a time
     duracion_min: float | None   # ultima - primera in minutes; 0.0 for a single timed entry; None with no timed entry
-    entradas: int                # every `ingesta` row that day, timed or not
+    entradas: int                # every MEAL that day, timed or not (BODY-COMIDA-1: one `comida_id`
+                                  # counts once no matter how many `ingesta` rows it groups; a legacy
+                                  # row with no `comida_id` counts as its own meal, same as before)
     sin_hora: int                # how many of `entradas` carry no ts_local ("sometime that day")
 
 
@@ -44,23 +46,43 @@ def _sin_offset(ts: str) -> datetime:
 
 def ventana(conn, person_id: int, day: str) -> Ventana | None:
     """The day's own eating window: the first and last TIMED `ingesta.ts_local`, its length, the
-    total entry count and how many of those carried no time at all. None when the day has no
-    `ingesta` row whatsoever -- never a window invented from nothing."""
+    total MEAL count and how many of those carried no time at all. None when the day has no
+    `ingesta` row whatsoever -- never a window invented from nothing.
+
+    BODY-COMIDA-1: a meal (`registrar_comida`) writes one row per nutrient, all sharing one
+    `comida_id` -- counted here as ONE entry, not N, or the window would inflate for every meal
+    logged with more than one amount. A row with no `comida_id` (every row from before this slice,
+    and still every single-amount `registrar_ingesta` correction) counts as its own meal, same as
+    before."""
     rows = conn.execute(
-        "SELECT ts_local FROM ingesta WHERE person_id = ? AND day = ? ORDER BY ts_local",
+        "SELECT ts_local, comida_id FROM ingesta WHERE person_id = ? AND day = ? ORDER BY ts_local",
         (person_id, day),
     ).fetchall()
     if not rows:
         return None
     timed = sorted(r["ts_local"] for r in rows if r["ts_local"] is not None)
-    sin_hora = sum(1 for r in rows if r["ts_local"] is None)
+    vistas: set = set()
+    entradas = 0
+    sin_hora = 0
+    suelta = 0
+    for r in rows:
+        if r["comida_id"] is not None:
+            clave = ("comida", r["comida_id"])
+            if clave in vistas:
+                continue
+            vistas.add(clave)
+        else:
+            suelta += 1
+        entradas += 1
+        if r["ts_local"] is None:
+            sin_hora += 1
     if not timed:
         return Ventana(day=day, primera=None, ultima=None, duracion_min=None,
-                        entradas=len(rows), sin_hora=sin_hora)
+                        entradas=entradas, sin_hora=sin_hora)
     primera, ultima = timed[0], timed[-1]
     duracion_min = (_sin_offset(ultima) - _sin_offset(primera)).total_seconds() / 60
     return Ventana(day=day, primera=primera, ultima=ultima, duracion_min=duracion_min,
-                   entradas=len(rows), sin_hora=sin_hora)
+                   entradas=entradas, sin_hora=sin_hora)
 
 
 def ayuno_previo(conn, person_id: int, day: str) -> Ayuno | None:

@@ -215,10 +215,10 @@ _PARAM_REGISTRAR_MEDIDA = {
     "additionalProperties": False,
 }
 
-# BODY-PROTEINA-1: metric_def rows whose daily total is derived from `ingesta` entries (protein_g
-# today) -- read off the live table, never a hardcoded pair of keys, same template pattern as
-# SELF_METRIC_KEYS above.
-INGESTA_METRIC_KEYS = tuple(d[0] for d in db.METRIC_DEFS if d[6] == "suma_ingesta")
+# BODY-PROTEINA-1: metric_def rows whose daily total is derived from `ingesta` entries, in
+# catalogue order -- db.INGESTA_METRIC_KEYS (BODY-COMIDA-1), read off the live table rather than a
+# second hand-typed list, same template pattern as SELF_METRIC_KEYS above.
+INGESTA_METRIC_KEYS = db.INGESTA_METRIC_KEYS
 _PARAM_REGISTRAR_INGESTA = {
     "type": "object",
     "properties": {
@@ -242,6 +242,31 @@ _PARAM_BORRAR_INGESTA = {
     "type": "object",
     "properties": {"ingesta_id": {"type": "integer"}},
     "required": ["ingesta_id"],
+    "additionalProperties": False,
+}
+
+# BODY-COMIDA-1 ruling 3: one spoken meal, several nutrients at once -- `cantidades` is described
+# here only for the model's own guidance (the real enforcement, one amount per key and a door-
+# validated number, is `_registrar_comida` itself, since `_validar_parametros` never recurses into
+# an array item's own properties).
+_PARAM_CANTIDAD_COMIDA = {
+    "type": "object",
+    "properties": {
+        "metric_key": {"type": "string", "enum": list(INGESTA_METRIC_KEYS)},
+        "amount": {"type": "number"},
+        "estimado": {"type": "boolean"},
+    },
+    "required": ["metric_key", "amount"],
+}
+_PARAM_REGISTRAR_COMIDA = {
+    "type": "object",
+    "properties": {
+        "day": {"type": "string", "format": "date"},
+        "hora": {"type": "string"},
+        "descripcion": {"type": "string"},
+        "cantidades": {"type": "array", "items": _PARAM_CANTIDAD_COMIDA, "minItems": 1},
+    },
+    "required": ["descripcion", "cantidades"],
     "additionalProperties": False,
 }
 
@@ -805,6 +830,71 @@ def _borrar_ingesta(conn: sqlite3.Connection, person_id: int, conversacion_id: i
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
+def _numero_cantidad_comida(t: T, metric_key: str, valor, *, clave_error: str) -> float:
+    """BODY-COMIDA-1 ruling 3: door validation for one cantidad's `amount`, the same shape
+    `_numero_entreno` (BODY-ENTRENO-NUMEROS-1 ruling 2) built for reps/peso_kg -- a bool is refused
+    even though Python's `bool` is technically an `int`; an int/float already of the right shape
+    passes through; a plain numeric string ("150", "12.5") is coerced, since outside callers
+    (body.mcp included) often send numbers as strings; anything else is refused naming
+    `metric_key`. Zero or negative is refused the same way: `ingesta.amount`'s own CHECK (> 0,
+    BODY-PROTEINA-1) never changed, so a meal's amount is held to the same rule as a standalone
+    intake entry's."""
+    if isinstance(valor, bool):
+        raise ToolError(t(clave_error, metrica=metric_key))
+    if isinstance(valor, (int, float)):
+        numero = float(valor)
+    elif isinstance(valor, str):
+        try:
+            numero = float(valor.strip())
+        except ValueError:
+            raise ToolError(t(clave_error, metrica=metric_key))
+    else:
+        raise ToolError(t(clave_error, metrica=metric_key))
+    if numero <= 0:
+        raise ToolError(t(clave_error, metrica=metric_key))
+    return numero
+
+
+def _registrar_comida(conn: sqlite3.Connection, person_id: int, conversacion_id: int, descripcion: str,
+                       cantidades: list, day: str | None = None, hora: str | None = None) -> dict:
+    """Proposes one spoken meal as a single call (BODY-COMIDA-1 ruling 3): estimate every nutrient
+    you can from the person's own words -- never ask them to weigh food -- say which amounts are
+    estimates, and name caffeine/alcohol with the time when the person gives one. Insert-shaped,
+    like `registrar_ingesta`: there is no 'before'. Every number is validated at the door
+    (`_numero_cantidad_comida`) before anything is stored: one bad amount refuses the WHOLE call,
+    no row written, naming the field -- never a partial meal."""
+    descripcion = (descripcion or "").strip()
+    if not descripcion:
+        raise ToolError("falta la descripción de la comida")
+    if not cantidades:
+        raise ToolError("se necesita al menos una cantidad")
+    t = T(db.person(conn, person_id)["language"])
+    catalogo = set(db.INGESTA_METRIC_KEYS)
+    vistas = set()
+    limpias = []
+    for c in cantidades:
+        if not isinstance(c, dict):
+            raise ToolError("cada cantidad debe ser un objeto con metric_key y amount")
+        metric_key = c.get("metric_key")
+        if metric_key not in catalogo:
+            raise ToolError(f"ingesta desconocida o no acumulable: {metric_key!r}")
+        if metric_key in vistas:
+            raise ToolError(f"cada cantidad debe ser de una métrica distinta: {metric_key!r} repetida")
+        vistas.add(metric_key)
+        amount = _numero_cantidad_comida(t, metric_key, c.get("amount"),
+                                          clave_error="agente.error.comida_cantidad_invalida")
+        estimado = c.get("estimado", True)
+        if not isinstance(estimado, bool):
+            raise ToolError("estimado debe ser verdadero o falso")
+        limpias.append({"metric_key": metric_key, "amount": amount, "estimado": estimado})
+    day = day or _hoy_local(conn, person_id)
+    _dia_no_futuro(conn, person_id, day)
+    despues = {"descripcion": descripcion, "cantidades": limpias, "day": day,
+               "ts_local": _hora_a_ts_local(day, hora)}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "registrar_comida", despues)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
 def _marcar_periodo(conn: sqlite3.Connection, person_id: int, conversacion_id: int, kind: str, start_day: str,
                      end_day: str | None = None, note: str | None = None) -> dict:
     """Proposes marking a stretch of days as a period (BODY-PERIODO-1): illness, travel or injury,
@@ -1197,6 +1287,15 @@ HERRAMIENTAS = [
      "descripcion": "Propone eliminar un registro de consumo que ya existe. No lo elimina: registra la "
                      "propuesta para que la persona la apruebe en el chat.",
      "parametros": _PARAM_BORRAR_INGESTA, "funcion": _borrar_ingesta},
+    {"nombre": "registrar_comida", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone registrar una comida completa en una sola llamada: una descripción y una lista "
+                     "de cantidades, una por nutriente (proteína, calorías, carbohidratos, grasa, fibra, agua, "
+                     "cafeína, alcohol). Estima cada nutriente que puedas a partir de las palabras de la "
+                     "persona -- nunca le pidas que pese la comida -- incluye todos los que puedas estimar, "
+                     "marca como estimado cada cantidad que no sea un número exacto, y nombra la hora para "
+                     "cafeína y alcohol cuando la persona la dé. No lo guarda: registra la propuesta para "
+                     "que la persona la apruebe en el chat.",
+     "parametros": _PARAM_REGISTRAR_COMIDA, "funcion": _registrar_comida},
     {"nombre": "marcar_periodo", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone marcar unos días como un período especial (malestar, viaje o lesión) para que "
                      "Body los deje fuera cuando compare con lo habitual, sin leerlos como efecto de un "
