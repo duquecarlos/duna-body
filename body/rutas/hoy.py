@@ -13,6 +13,7 @@ from markupsafe import Markup
 
 from .. import (compartir, cuenta, db, goals, history, household, identity, readiness, recuperacion, turnos_costo,
                 tutoriales, ventana_comida)
+from ..agente import conversacion as agente_conversacion
 from ..baselines import baseline
 from ..i18n import T
 from . import comun, experimentos
@@ -146,6 +147,15 @@ def _periodo_hoy_ctx(t: T, conn, person_id: int, today_local: date) -> dict | No
             "enlace": t("today.periodo_enlace")}
 
 
+def _mcp_pendientes_ctx(conn, person_id: int) -> dict | None:
+    """BODY-MCP-LOCAL-1-B: Hoy's own line while the person's personal assistant (the local MCP
+    server) has proposed something still waiting in the chat panel -- None while there is none, so
+    the line never shows an empty count. `conversacion_id` is the newest such conversation, for the
+    line's own link to open the panel on."""
+    n, conversacion_id = agente_conversacion.pendientes_mcp(conn, person_id)
+    return {"n": n, "conversacion_id": conversacion_id} if n else None
+
+
 def _hoy_turno_ctx(t: T, conn, person_id: int, today_local: date) -> dict:
     """Hoy's second promise (BODY-HOY-TURNO-1): today's shift, the next one, and a recovery line --
     one vocabulary with Turnos' strip (shift.kind.*, the same band classes)."""
@@ -267,6 +277,7 @@ def today(person_id: int = Depends(identity.current_person_id)):
     primeros_pasos = primeros if any(not p["hecho"] for p in primeros) else None
     today_local = comun._today_local(person)
     turno_ctx = _hoy_turno_ctx(t, conn, person_id, today_local)
+    mcp_pendientes = _mcp_pendientes_ctx(conn, person_id)
     if not day:
         return comun._render("soon.html", t=t, tab="today", title=t("today.title"),
                        text=comun._sync_status_text(conn, person, t), primeros_pasos=primeros_pasos,
@@ -291,7 +302,7 @@ def today(person_id: int = Depends(identity.current_person_id)):
                    r=r, reading=_reading(t, r), ready_avg=ready_avg,
                    ready_delta=ready_delta, ready_cls=ready_cls, cards=cards,
                    missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_count=proposed_count,
-                   turno=turno_ctx, turnos=turnos_on,
+                   turno=turno_ctx, turnos=turnos_on, mcp_pendientes=mcp_pendientes,
                    plan_habits=_today_due_habits(conn, t, person_id, today_local),
                    plan_experimentos=experimentos.hoy_contexto(conn, t, person_id, today_local),
                    today_iso=today_local.isoformat(),

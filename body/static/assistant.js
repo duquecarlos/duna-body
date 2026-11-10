@@ -652,6 +652,9 @@
       return resp.ok ? resp.json() : null;
     }).then(function (datos) {
       if (!datos) return;
+      // The id named in the URL or stored already might be "pendiente" (BODY-MCP-LOCAL-1-B's own
+      // sentinel) -- the response's own conversacion_id is the real one, to remember from here on.
+      if (datos.conversacion_id) guardarConversacionId(datos.conversacion_id);
       mensajesEl.textContent = "";
       var turnoActual = null;
       (datos.turnos || []).forEach(function (t) {
@@ -679,6 +682,24 @@
     }).catch(function () {});
   }
 
-  var idAlCargar = leerConversacionId();
-  if (idAlCargar) cargarConversacion(idAlCargar);
+  // A Hoy line's own link names a conversation in the URL (BODY-MCP-LOCAL-1-B): that one wins, is
+  // opened right away, and is remembered from here on. With no conversation named at all --
+  // neither the URL nor sessionStorage -- the panel's own default is the newest conversation still
+  // holding a pending outside proposal, if any, loaded (not forced open) before falling back to
+  // today's behaviour (nothing).
+  function idDesdeUrl() {
+    try {
+      var valor = new URLSearchParams(location.search).get("asis_conversacion");
+      return valor ? Number(valor) : null;
+    } catch (e) { return null; }
+  }
+
+  var idUrl = idDesdeUrl();
+  if (idUrl) {
+    cargarConversacion(idUrl);
+    abrir();
+  } else {
+    var idAlCargar = leerConversacionId();
+    cargarConversacion(idAlCargar || "pendiente");
+  }
 })();

@@ -500,21 +500,42 @@ async def asistente_preguntar(request: Request, person_id: int = Depends(identit
     return StreamingResponse(generar(), media_type="text/event-stream")
 
 
+_PENDIENTE_MCP = "pendiente"
+
+
 @router.get("/asistente/conversacion/{conversacion_id}")
 @comun._cierra_conexion
-def asistente_conversacion(conversacion_id: int, person_id: int = Depends(identity.current_person_id)):
+def asistente_conversacion(conversacion_id: str, person_id: int = Depends(identity.current_person_id)):
+    """`conversacion_id` carries one sentinel besides a real id (BODY-MCP-LOCAL-1-B): `_PENDIENTE_MCP`
+    ("pendiente") resolves to the newest conversation that still holds an outside-caller proposal
+    in state `propuesta`, if any -- the assistant panel's own default when it opens with no
+    conversation named. 404, same as an unknown real id, when there is none: the panel's existing
+    404 handling (assistant.js's `cargarConversacion`) already does nothing further, which is
+    exactly "fall back to today's behaviour." The response's own `conversacion_id` field (added by
+    this slice) lets the panel learn which real id it just loaded, to remember for later turns."""
     conn, _, t = comun._ctx(person_id)
+    if conversacion_id == _PENDIENTE_MCP:
+        resuelto = agente_conversacion.pendientes_mcp(conn, person_id)[1]
+        if resuelto is None:
+            conn.close()
+            raise HTTPException(404)
+    else:
+        try:
+            resuelto = int(conversacion_id)
+        except ValueError:
+            conn.close()
+            raise HTTPException(404)
     try:
-        turnos = agente_conversacion.turnos_visibles(conn, conversacion_id, person_id)
+        turnos = agente_conversacion.turnos_visibles(conn, resuelto, person_id)
     except agente_conversacion.ConversacionAjena:
         conn.close()
         raise HTTPException(404)
     defs = comun._defs(conn)
-    origen_conversacion = agente_conversacion.origen_de(conn, conversacion_id)
+    origen_conversacion = agente_conversacion.origen_de(conn, resuelto)
     tarjetas = [_tarjeta_propuesta(t, defs, r, origen_conversacion)
-                for r in agente_propuestas.listar(conn, person_id, conversacion_id)]
+                for r in agente_propuestas.listar(conn, person_id, resuelto)]
     conn.close()
-    return JSONResponse({"turnos": turnos, "propuestas": tarjetas})
+    return JSONResponse({"conversacion_id": resuelto, "turnos": turnos, "propuestas": tarjetas})
 
 
 def _propuesta_respuesta(conn, person_id: int, propuesta_id: int, accion) -> JSONResponse:

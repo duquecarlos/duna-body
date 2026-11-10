@@ -36,6 +36,22 @@ def origen_de(conn: sqlite3.Connection, conversacion_id: int) -> str | None:
     return row["origen"] if row else None
 
 
+def pendientes_mcp(conn: sqlite3.Connection, person_id: int) -> tuple[int, int | None]:
+    """(count, newest conversation id) of proposals still in state 'propuesta' sitting in a
+    conversation whose `origen` is the outside caller ('mcp') -- BODY-MCP-LOCAL-1-B, the person's
+    own visibility into what their personal assistant proposed through the local MCP server. Hoy's
+    own line and the assistant panel's default both read this, one statement, so the route cost
+    the same person-level fact reaches two screens from costs only once. (0, None) when there is
+    none."""
+    row = conn.execute(
+        "SELECT COUNT(*) AS n, MAX(p.conversacion_id) AS id FROM propuesta_agente p "
+        "JOIN conversacion_agente c ON c.id = p.conversacion_id "
+        "WHERE p.person_id = ? AND p.estado = 'propuesta' AND c.origen = 'mcp'",
+        (person_id,),
+    ).fetchone()
+    return row["n"], row["id"]
+
+
 def verificar_propiedad(conn: sqlite3.Connection, conversacion_id: int, person_id: int) -> None:
     row = conn.execute(
         "SELECT person_id FROM conversacion_agente WHERE id = ?", (conversacion_id,)

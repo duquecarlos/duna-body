@@ -6,6 +6,7 @@ import json
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -104,8 +105,8 @@ class ToolsCallTest(_McpTestCase):
         ])
         self.assertNotIn("isError", respuestas[0]["result"])
         self.assertNotIn("isError", respuestas[1]["result"])
-        salida1 = json.loads(respuestas[0]["result"]["content"][0]["text"])
-        salida2 = json.loads(respuestas[1]["result"]["content"][0]["text"])
+        salida1 = json.loads(respuestas[0]["result"]["content"][-1]["text"])
+        salida2 = json.loads(respuestas[1]["result"]["content"][-1]["text"])
 
         c1 = self.conn.execute("SELECT conversacion_id FROM propuesta_agente WHERE id = ?",
                                (salida1["propuesta_id"],)).fetchone()["conversacion_id"]
@@ -124,7 +125,7 @@ class ToolsCallTest(_McpTestCase):
             {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
              "params": {"name": "proponer_idioma", "arguments": {"lang": "en"}}},
         ])
-        salida = json.loads(respuestas[0]["result"]["content"][0]["text"])
+        salida = json.loads(respuestas[0]["result"]["content"][-1]["text"])
         self.addCleanup(web.app.dependency_overrides.clear)
         web.app.dependency_overrides[identity.current_person_id] = lambda: self.person_id
         client = TestClient(web.app, follow_redirects=False)
@@ -137,7 +138,7 @@ class ToolsCallTest(_McpTestCase):
             {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
              "params": {"name": "proponer_idioma", "arguments": {"lang": "en"}}},
         ])
-        salida = json.loads(respuestas[0]["result"]["content"][0]["text"])
+        salida = json.loads(respuestas[0]["result"]["content"][-1]["text"])
         cid = self.conn.execute("SELECT conversacion_id FROM propuesta_agente WHERE id = ?",
                                 (salida["propuesta_id"],)).fetchone()["conversacion_id"]
         self.addCleanup(web.app.dependency_overrides.clear)
@@ -159,7 +160,7 @@ class ToolsCallTest(_McpTestCase):
         self.assertIn("text", r["content"][0])
 
     def test_caps_reached_is_a_tool_error(self):
-        tope = mcp.LIMITES_SESION["lecturas"]
+        tope = mcp.LIMITES["lecturas"]
         mensajes = [
             {"jsonrpc": "2.0", "id": i, "method": "tools/call",
              "params": {"name": "leer_ajustes", "arguments": {}}}
@@ -169,6 +170,94 @@ class ToolsCallTest(_McpTestCase):
         for i in range(tope):
             self.assertNotIn("isError", respuestas[i]["result"], f"call {i} should not have errored yet")
         self.assertTrue(respuestas[tope]["result"]["isError"])
+        self.assertIn("min", respuestas[tope]["result"]["content"][0]["text"])
+
+    def test_result_of_a_proposal_says_where_the_person_will_see_it(self):
+        _, respuestas = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "marcar_periodo",
+                        "arguments": {"kind": "viaje", "start_day": "2020-01-01"}}},
+        ])
+        contenido = respuestas[0]["result"]["content"]
+        self.assertEqual(len(contenido), 2)
+        self.assertIn("Hoy", contenido[0]["text"])
+        self.assertIn("Aplicar", contenido[0]["text"])
+        salida = json.loads(contenido[-1]["text"])
+        self.assertIn("propuesta_id", salida)
+        self.assertIn("estado", salida)
+
+    def test_result_of_a_lectura_carries_no_extra_sentence(self):
+        _, respuestas = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "leer_ajustes", "arguments": {}}},
+        ])
+        self.assertEqual(len(respuestas[0]["result"]["content"]), 1)
+
+
+class VentanaRotanteTest(_McpTestCase):
+    """BODY-MCP-LOCAL-1-B: caps bound a RATE, not a per-process total -- a long-lived server
+    process must be able to read again once the window has rolled past its first calls, with no
+    sleeping in the test (an injectable clock)."""
+
+    def test_calls_past_the_limit_are_refused_then_allowed_again_after_the_window(self):
+        ahora = {"t": datetime(2026, 1, 1, tzinfo=timezone.utc)}
+
+        def reloj():
+            return ahora["t"]
+
+        tope = mcp.LIMITES["lecturas"]
+        entrada = io.StringIO("".join(
+            _linea({"jsonrpc": "2.0", "id": i, "method": "tools/call",
+                    "params": {"name": "leer_ajustes", "arguments": {}}})
+            for i in range(tope + 1)
+        ))
+        salida = io.StringIO()
+        sesion = mcp.ejecutar(entrada, salida, self.conn, self.person_id, reloj=reloj)
+        respuestas = _respuestas(salida)
+        for i in range(tope):
+            self.assertNotIn("isError", respuestas[i]["result"])
+        self.assertTrue(respuestas[tope]["result"]["isError"])
+
+        # Past the window, on the SAME session (the same process's own state, never a fresh one):
+        # allowed again.
+        ahora["t"] += timedelta(minutes=mcp.LIMITES["ventana_min"] + 1)
+        respuesta = mcp._procesar_mensaje(sesion, {"jsonrpc": "2.0", "id": 999, "method": "tools/call",
+                                                     "params": {"name": "leer_ajustes", "arguments": {}}})
+        self.assertNotIn("isError", respuesta["result"])
+
+    def test_error_names_minutes_to_wait_in_the_persons_language(self):
+        ahora = {"t": datetime(2026, 1, 1, tzinfo=timezone.utc)}
+
+        def reloj():
+            return ahora["t"]
+
+        tope = mcp.LIMITES["propuestas"]
+        entrada = io.StringIO("".join(
+            _linea({"jsonrpc": "2.0", "id": i, "method": "tools/call",
+                    "params": {"name": "marcar_periodo",
+                               "arguments": {"kind": "viaje", "start_day": "2020-01-01"}}})
+            for i in range(tope + 1)
+        ))
+        salida = io.StringIO()
+        mcp.ejecutar(entrada, salida, self.conn, self.person_id, reloj=reloj)
+        respuestas = _respuestas(salida)
+        texto = respuestas[tope]["result"]["content"][0]["text"]
+        self.assertIn(str(mcp.LIMITES["ventana_min"]), texto)
+
+        db.set_language(self.conn, "en", self.person_id)
+        self.conn.commit()
+        entrada_en = io.StringIO("".join(
+            _linea({"jsonrpc": "2.0", "id": i, "method": "tools/call",
+                    "params": {"name": "marcar_periodo",
+                               "arguments": {"kind": "viaje", "start_day": "2020-01-01"}}})
+            for i in range(tope + 1)
+        ))
+        salida_en = io.StringIO()
+        mcp.ejecutar(entrada_en, salida_en, self.conn, self.person_id, reloj=reloj)
+        respuestas_en = _respuestas(salida_en)
+        texto_en = respuestas_en[tope]["result"]["content"][0]["text"]
+        self.assertIn("min", texto_en)
+        self.assertIn(str(mcp.LIMITES["ventana_min"]), texto_en)
 
 
 class ProtocolErrorsTest(_McpTestCase):
@@ -231,6 +320,45 @@ class MainStderrTest(_McpTestCase):
                 json.loads(linea)
         self.assertNotIn("171717", stderr.getvalue())
         self.assertIn("lecturas", stderr.getvalue())
+
+
+class Utf8WireTest(_McpTestCase):
+    """BODY-MCP-LOCAL-1-B: MCP stdio is UTF-8, never the console's own code page. Driven with real
+    byte-backed streams whose encoding main() must override -- on the old code (no reconfigure),
+    writing "é" through a cp1252-encoded stdout is the single byte 0xE9, which utf-8.decode()
+    below raises on; reading "ñ" through a cp1252-decoded stdin turns it into mojibake before it
+    ever reaches json.loads. Both fail this test on the code before this slice."""
+
+    def test_round_trips_accented_text_regardless_of_console_encoding(self):
+        peticion_lista = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                                     ensure_ascii=False).encode("utf-8") + b"\n"
+        peticion_marcar = json.dumps({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {"name": "marcar_periodo",
+                       "arguments": {"kind": "viaje", "start_day": "2020-01-01", "note": "mañana"}},
+        }, ensure_ascii=False).encode("utf-8") + b"\n"
+        entrada = io.TextIOWrapper(io.BytesIO(peticion_lista + peticion_marcar), encoding="cp1252", newline="")
+        salida_bytes = io.BytesIO()
+        salida = io.TextIOWrapper(salida_bytes, encoding="cp1252", newline="")
+        with mock.patch.object(sys, "stdin", entrada), mock.patch.object(sys, "stdout", salida), \
+             mock.patch.object(sys, "stderr", io.StringIO()), \
+             mock.patch.object(db, "connect", return_value=self.conn):
+            mcp.main()
+
+        crudo = salida_bytes.getvalue()
+        texto = crudo.decode("utf-8")  # raises UnicodeDecodeError on the pre-slice code
+        lineas = [json.loads(l) for l in texto.splitlines() if l.strip()]
+        descripciones = " ".join(h["description"] for h in lineas[0]["result"]["tools"])
+        self.assertIn("métrica", descripciones)
+
+        salida_marcar = json.loads(lineas[1]["result"]["content"][-1]["text"])
+        # main() closes the connection it was given (mocked to self.conn) on its own way out, so
+        # the row is read back through a fresh one, same db file.
+        verificacion = db.connect()
+        self.addCleanup(verificacion.close)
+        fila = verificacion.execute("SELECT despues_json FROM propuesta_agente WHERE id = ?",
+                                     (salida_marcar["propuesta_id"],)).fetchone()
+        self.assertEqual(json.loads(fila["despues_json"])["note"], "mañana")
 
 
 if __name__ == "__main__":

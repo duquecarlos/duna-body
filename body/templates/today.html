@@ -11,6 +11,9 @@
 
 {% if stale %}<div class="aviso">{{ stale }}</div>{% endif %}
 {% if periodo %}<div class="aviso">{{ periodo.texto }} <a class="taplink" href="#asis-btn">{{ periodo.enlace }}</a></div>{% endif %}
+{% if mcp_pendientes %}
+<div class="aviso"><a class="taplink" href="/?asis_conversacion={{ mcp_pendientes.conversacion_id }}#asis-btn">{{ t('today.mcp_propuestas') if mcp_pendientes.n == 1 else t('today.mcp_propuestas_many', n=mcp_pendientes.n) }}</a></div>
+{% endif %}
 
 <div class="cols-hoy">
 <a class="card est" href="/how/{{ day }}">
