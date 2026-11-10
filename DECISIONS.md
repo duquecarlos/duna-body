@@ -14563,3 +14563,87 @@ new `recuperacion-v2` version (the old `recuperacion-v1` rows stay, per ruling 1
 
 Commit `1762571` on `feat/body-recuperacion-1`, on top of `9599fa5` (BODY-RECUPERACION-1-B's own ledger
 entry above). Not merged.
+
+## BODY-RECUPERACION-1-M -- merged: wording/order fixes on top of -C's AWAITING_APPROVAL, then merge
+
+ORCH-CARLOS-DELEGATES-TIER-1-1: the orchestrator re-measured model `recuperacion-v2` on a COPY of
+Carlos's real database (counts only, copy deleted after): 392 activities -> 324 with a figure, 27
+`fuera_de_horizonte`, 39 `sin_cobertura`, 2 `sin_rango`; the backfill ran in about 3 s. At 375 px on
+the re-seeded demo, that measurement passed except five wording/order defects, fixed here, then
+merged on green (no stop before merge -- the dispatch's own approval reason authorised it once the
+fixes landed). The first backfill on Carlos's own real database stays with him (his yes, a backup
+first, run by the orchestrator) -- not in this slice.
+
+**Fix 1 -- a finding now names BOTH groups, not only the slower one.** `history.recovery.hallazgo`:
+es "Después de {peor}, tu pulso tardó más en volver a lo habitual: {val_peor}, frente a {val_mejor}
+después de {mejor} ({n_peor} y {n_mejor} sesiones)." / en "After {peor}, your heart rate took longer
+to return to its usual level: {val_peor}, against {val_mejor} after {mejor} ({n_peor} and {n_mejor}
+sessions)." (was missing "después de {mejor}" / "after {mejor}" -- "frente a 20 min" never said after
+WHAT). `historial.py`'s `_recovery_cond_label` (BODY-RECUPERACION-1's own per-factor label builder) is
+generalized from `_recovery_cond_label(t, h)` (always `h["peor"]`) to `_recovery_cond_label(t, factor,
+grupo)`, called once for `h["peor"]` and once for `h["mejor"]` -- the same function words either group,
+since neither is special to it. Checked every `history.recovery.cond.*` label reads naturally after a
+second "después de" / "after" too (point 2 of this slice's own spec): all of them already did, except
+the shift condition, fixed below.
+
+**Fix 2 -- a day off is not a shift.** The shift condition for kind `off` now reads its own key,
+`history.recovery.cond.turno_descanso`: es "un día de descanso" / en "a day off" -- never "un turno de
+descanso" / "a off shift". Every other kind is unchanged: `history.recovery.cond.turno` still reads
+"un turno de {kind}" / "a {kind} shift" with that kind's own `shift.kind.*` label.
+
+**Fix 3 -- singular.** One censored session now reads its own key, `history.recovery.
+resumen_censurado_one`: es "Normalmente tu pulso vuelve a lo habitual en {mediana} ({n} sesiones; 1 no
+volvió en {horas} h)." / en "...; 1 did not return within {horas} h." (English's "did not return" does
+not itself change by number, but the repo's own `_one` convention -- `trends.medidas_count_one`,
+`history.periodo_excluido_one` -- keys both languages the same way, so en carries the key too, for
+parity). `historial.py`'s `_recovery_ctx` chooses `resumen_censurado_one` when `est["n_censurados"] ==
+1`, `resumen_censurado` otherwise.
+
+**Fix 4 -- es wording.** `history.recovery.cond.hrv_baja` / `hrv_normal`: es "una noche con poca
+variabilidad del pulso" / "una noche con variabilidad del pulso normal" (was "...poca HRV" / "...HRV
+normal" -- the app's own Spanish word for the metric, used everywhere else on screen, e.g.
+`metric.hrv_last_night`). en unchanged ("HRV" is already the English term). No "HRV" string remains
+anywhere in `body/i18n/es.json`.
+
+**Fix 5 -- demo seed order (BODY-DEMO-RECUPERACION-SEED-ORDEN-1).** `body/demo.py`'s `_seed` called
+`_seed_recuperacion` (which runs `recuperacion.recalcular`, checking `db.dias_marcados()` per activity
+AT COMPUTATION TIME) BEFORE `_seed_periodo` ever created a marked period row -- so no demo activity
+could ever be scored `marcado`, even one that fell inside the seeded open `lesion` period. Moved
+`_seed_recuperacion` to run AFTER `_seed_periodo` in `_seed`'s own call order; no other seeding step
+depends on the order between them. `tests/test_recuperacion.py::DemoSeedOrderTest::
+test_actividad_en_dia_marcado_lleva_marcado` seeds the real default demo (dias=120, a fixed anchor)
+and asserts every activity whose day falls on or after the open `lesion` period's own `start_day`
+carries `motivo == 'marcado'` -- failed before this fix (reproduced: with anchor 2026-11-10, the
+activities on 2026-11-07 and 2026-11-10 came back `sin_cobertura` / `fuera_de_horizonte` instead),
+passes after it.
+
+**Tests** (both new wording fixes and the demo-order fix, es and en where the string differs):
+`tests/test_recuperacion_pantallas.py` gained 5 cases in `HistoryRecoverySectionTest` --
+`test_hallazgo_nombra_dia_de_descanso_y_ambos_grupos_en_es`/`..._en_en` (fix 1 + fix 2 together, with
+a new `_insertar_turno` helper), `test_hrv_no_dice_hrv_en_es` (fix 4), `test_censurado_singular_en_es`/
+`..._en_en` (fix 3, with a new `_insertar_censurada` helper). `tests/test_recuperacion.py` gained
+`DemoSeedOrderTest` (1 case, fix 5), importing `body.demo` for the first time in this module.
+`tests/test_i18n_paridad.py`'s dynamic-prefix list needed no new entry: every key this slice added or
+changed (`history.recovery.cond.turno_descanso`, `history.recovery.resumen_censurado_one`) is a plain
+literal `t(...)` call, not a dynamically-built prefix.
+
+**Gate**, once, foreground, on the merged tree (tree `3b5e73bb8cdfa8b376aa39c72feddce9042aa443`):
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 2163 tests in 386.349s ... OK
+(skipped=1)` (2157 before this slice per BODY-RECUPERACION-1-C's own ledger entry above; +6, all of
+them this slice's own new cases listed above).
+
+Diff classified against the ACTUAL merge: no schema or migration change (no new column, no new table).
+Customer-facing bytes: YES -- the strings in fixes 1-4, on `/history`, in both languages; this is
+exactly what ORCH-CARLOS-DELEGATES-TIER-1-1's approval reason authorised merging on, once fixed, so
+this slice does not stop AWAITING_APPROVAL. No cross-repo contract.
+
+Commits on `feat/body-recuperacion-1`: `e2eca14` (this slice's own five fixes + tests), on top of
+`d3accf8` (BODY-RECUPERACION-1-C's own ledger entry). Merged into `main` with `--no-ff` as `05f9c0e`
+(parents `919beac` and `e2eca14`); merge tree `3b5e73bb8cdfa8b376aa39c72feddce9042aa443`.
+
+**Backfill command for the orchestrator**, to run against Carlos's real `BODY_HOME` once he says yes
+and a backup is taken (never run from inside a slice): `python -c "from body import db, recuperacion;
+conn = db.connect(); person_id = db.local_person_id(conn); print(recuperacion.recalcular(conn,
+person_id))"` -- imports `body.recuperacion.recalcular` exactly as BODY-RECUPERACION-1-C's spec asked,
+recomputes every activity under `recuperacion-v2` (old `recuperacion-v1` rows stay, ruling 1), prints
+counts only.
