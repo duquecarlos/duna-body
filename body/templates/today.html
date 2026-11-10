@@ -1,11 +1,14 @@
 {% extends "base.html" %}
 {% from "base.html" import primeros_pasos_card, hoy_turno_card with context %}
+{% from "_cuerpo_vista.html" import cuerpo_vista with context %}
 {% block title %}{{ t('today.title') }} · {{ t('app.name') }}{% endblock %}
 {% block main %}
 <div class="top">
   <div><h1>{{ t('today.title') }}</h1><p class="sub">{{ date_long }}</p></div>
   <div class="meta">{% if synced %}{{ t('today.synced') }}<br>{{ synced }}{% else %}{{ t('today.no_sync') }}{% endif %}</div>
 </div>
+
+{{ cuerpo_vista(t, cuerpo) }}
 
 {% if turnos %}{{ hoy_turno_card(t, turno, proposed_count) }}{% endif %}
 
@@ -131,4 +134,5 @@
   </ul>
 </div>
 {% endif %}
+<script src="{{ static_url('cuerpo-vista.js') }}" defer></script>
 {% endblock %}

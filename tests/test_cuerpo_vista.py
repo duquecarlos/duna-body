@@ -33,6 +33,7 @@ def _reset_db(tc: unittest.TestCase):
 def _mk_person(conn, lang: str = "es") -> int:
     cur = conn.execute(
         "INSERT INTO person (display_name, timezone, language) VALUES (?, 'America/Bogota', ?)", ("P", lang))
+    conn.commit()
     return cur.lastrowid
 
 
@@ -113,16 +114,24 @@ class CuerpoVistaHoyTest(unittest.TestCase):
     def setUp(self):
         self.conn = _reset_db(self)
 
+    def _hoy_iso(self, pid: int) -> str:
+        return fechas.hoy_local(db.person(self.conn, pid)).isoformat()
+
+    def _algun_dato_hoy(self, pid: int) -> None:
+        """So /'s own `_latest_day` gate finds a day at all -- otherwise it renders soon.html, a
+        different template this slice does not touch."""
+        db.set_metric(self.conn, self._hoy_iso(pid), "resting_hr", 55.0, "garmin", pid)
+        self.conn.commit()
+
     def _plan_hoy(self, pid: int, ejercicios: list) -> None:
-        person = db.person(self.conn, pid)
-        today = fechas.hoy_local(person).isoformat()
         self.conn.execute(
             "INSERT INTO plan (person_id, day, title, status, ejercicios_json) VALUES (?, ?, 'Upper B', "
-            "'accepted', ?)", (pid, today, json.dumps(ejercicios, ensure_ascii=False)))
+            "'accepted', ?)", (pid, self._hoy_iso(pid), json.dumps(ejercicios, ensure_ascii=False)))
         self.conn.commit()
 
     def test_no_plan_shows_no_session_caption_and_no_glow(self):
         pid = _mk_person(self.conn)
+        self._algun_dato_hoy(pid)
         _use(pid)
         r = client.get("/")
         self.assertEqual(r.status_code, 200)
@@ -130,18 +139,20 @@ class CuerpoVistaHoyTest(unittest.TestCase):
 
     def test_planned_session_lights_its_categories(self):
         pid = _mk_person(self.conn)
+        self._algun_dato_hoy(pid)
         self._plan_hoy(pid, [{"ejercicio": "remo con barra", "series": 4, "categoria": "espalda"},
                               {"ejercicio": "press militar", "series": 3, "categoria": "hombro"}])
         _use(pid)
         r = client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertIn("Iluminado: lo que entrena tu sesión de hoy", r.text)
-        self.assertIn("Hombros", r.text)
-        self.assertIn("Dorsales", r.text)
+        self.assertIn("hombros", r.text)
+        self.assertIn("dorsales", r.text)
         self.assertNotIn("Hoy no hay sesión planeada.", r.text)
 
     def test_planned_session_with_no_recognised_category_reads_as_no_session(self):
         pid = _mk_person(self.conn)
+        self._algun_dato_hoy(pid)
         self._plan_hoy(pid, [{"ejercicio": "algo raro", "series": 4, "categoria": "misterio"}])
         _use(pid)
         r = client.get("/")
@@ -150,6 +161,7 @@ class CuerpoVistaHoyTest(unittest.TestCase):
 
     def test_view_buttons_are_aria_pressed_and_first_is_on(self):
         pid = _mk_person(self.conn)
+        self._algun_dato_hoy(pid)
         _use(pid)
         r = client.get("/")
         self.assertIn('aria-pressed="true"', r.text)
@@ -159,6 +171,7 @@ class CuerpoVistaHoyTest(unittest.TestCase):
 
     def test_english_shows_english_strings(self):
         pid = _mk_person(self.conn, lang="en")
+        self._algun_dato_hoy(pid)
         _use(pid)
         r = client.get("/")
         self.assertIn("Muscles", r.text)
@@ -166,6 +179,7 @@ class CuerpoVistaHoyTest(unittest.TestCase):
 
     def test_swipe_to_turn_label_present(self):
         pid = _mk_person(self.conn)
+        self._algun_dato_hoy(pid)
         _use(pid)
         r = client.get("/")
         self.assertIn("Desliza para girar", r.text)

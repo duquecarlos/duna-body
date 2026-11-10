@@ -7,7 +7,7 @@ from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from .. import baselines, db, identity, profile
+from .. import anatomia, baselines, db, identity, profile
 from ..catalogo_tendencias import TODAS
 from ..i18n import T
 from . import comun
@@ -242,9 +242,12 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
         fig_label = t("trends.avg_n", n=r)
     else:
         fig_label = t("trends.last30")
+    cuerpo_ctx = {"vistas": anatomia.contexto(t, "tendencias", frozenset({"corazon"})),
+                  "caption": t("cuerpo.caption.tendencias"), "recorte": "torso"}
     return comun._render("trends.html", t=t, tab="trends", cards=cards, week=week if r == "all" else None,
                    since=t.long_date(date.fromisoformat(since)) if since else "", days=t.num(days),
                    r=r, ranges=RANGES, fig_label=fig_label, nights=bool(nights), marcas=bool(marcas),
                    month_title=t.month_year(month) if month else None,
                    extra_groups=extra_groups, extra_count=extra_count, todas=todas == "1",
-                   desde=desde, dia=desde_dia, back_href=back_href, back_label=back_label, turnos=turnos_on)
+                   desde=desde, dia=desde_dia, back_href=back_href, back_label=back_label, turnos=turnos_on,
+                   cuerpo=cuerpo_ctx)

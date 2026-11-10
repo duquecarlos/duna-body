@@ -9,7 +9,7 @@ from urllib.parse import parse_qs
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import baselines, db, identity, patron_turnos, readiness, shift_import, turno_fc, turnos_costo
+from .. import anatomia, baselines, db, identity, patron_turnos, readiness, shift_import, turno_fc, turnos_costo
 from ..i18n import T
 from ..lector import Lector
 from . import comun
@@ -233,9 +233,11 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
     # BODY-TURNO-FC-1: pure reads over the already-derived `turno_fc` table (two cheap SELECTs,
     # body/turno_fc.py's own estudio()) -- never a live recompute on this page render.
     pulso = _turno_fc_ctx(t, turno_fc.estudio(conn, person_id))
+    cuerpo_ctx = {"vistas": anatomia.contexto(t, "turnos", frozenset({"cerebro"})),
+                  "caption": t("cuerpo.caption.turnos"), "recorte": "cabeza"}
     costo_ctx = {"hero_dias": resumen["dias_recuperacion"], "motivo": resumen["motivo"],
                  "filas": filas, "costo_vacio": costo_vacio, "strip": strip, "strip_legend": strip_legend,
-                 "ultima": ultima, "pulso": pulso}
+                 "ultima": ultima, "pulso": pulso, "cuerpo": cuerpo_ctx}
     tiene_patron = patron_turnos.leer(conn, person_id) is not None
     if len(rows) > 1:
         summary = shift_import.summary_proposed(conn, person_id)
