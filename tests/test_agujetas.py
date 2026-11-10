@@ -46,7 +46,7 @@ class RowsExistTest(unittest.TestCase):
         }
         self.assertEqual(set(rows), set(SORENESS_KEYS))
         for key, shape in rows.items():
-            self.assertEqual(shape, ("pts", "neutral", "measured", "self"), key)
+            self.assertEqual(shape, ("of5", "neutral", "measured", "self"), key)
 
     def test_rows_arrive_on_an_existing_database(self):
         conn = _conn(self)
@@ -59,6 +59,21 @@ class RowsExistTest(unittest.TestCase):
             "SELECT key FROM metric_def WHERE key IN (%s)" % ",".join("?" * len(SORENESS_KEYS)),
             SORENESS_KEYS)}
         self.assertEqual(still_there, set(SORENESS_KEYS))
+
+    def test_an_existing_row_with_the_old_pts_unit_is_upgraded_to_of5(self):
+        """BODY-AGUJETAS-1-M (ORCH-CARLOS-DELEGATES-TIER-1-1): a database that ran the branch's
+        earlier code already has these seven rows with unit 'pts' -- init()'s upsert must still
+        move them to 'of5', not just seed a fresh row."""
+        conn = _conn(self)
+        db.init(conn)
+        conn.executemany("UPDATE metric_def SET unit = 'pts' WHERE key = ?",
+                          [(k,) for k in SORENESS_KEYS])
+        conn.commit()
+        db.init(conn)
+        units = {r["key"]: r["unit"] for r in conn.execute(
+            "SELECT key, unit FROM metric_def WHERE key IN (%s)" % ",".join("?" * len(SORENESS_KEYS)),
+            SORENESS_KEYS)}
+        self.assertEqual(units, {k: "of5" for k in SORENESS_KEYS})
 
     def test_each_key_has_a_zero_to_five_inclusive_range(self):
         for key in SORENESS_KEYS:
@@ -188,12 +203,12 @@ class CardTextTest(unittest.TestCase):
     def test_soreness_legs_card_in_spanish(self):
         tarjeta = asistente._tarjeta_propuesta(T("es"), self.defs, self._registro("soreness_legs", 3))
         self.assertIn("Agujetas: piernas", tarjeta["despues"])
-        self.assertIn("3", tarjeta["despues"])
+        self.assertIn("3 de 5", tarjeta["despues"])
 
     def test_soreness_legs_card_in_english(self):
         tarjeta = asistente._tarjeta_propuesta(T("en"), self.defs, self._registro("soreness_legs", 3))
         self.assertIn("Soreness: legs", tarjeta["despues"])
-        self.assertIn("3", tarjeta["despues"])
+        self.assertIn("3 of 5", tarjeta["despues"])
 
 
 class TrendsRenderTest(unittest.TestCase):
@@ -226,7 +241,7 @@ class TrendsRenderTest(unittest.TestCase):
         chunk = self._chunk(page, "soreness_legs")
         self.assertIn(T("es")("trends.q.soreness_legs"), chunk)
         self.assertIn(T("es")("trends.plain.soreness_legs"), chunk)
-        self.assertIn("pts", chunk)
+        self.assertIn("de 5", chunk)
 
     def test_renders_in_english(self):
         db.set_language(self.conn, "en", 1)
@@ -236,7 +251,7 @@ class TrendsRenderTest(unittest.TestCase):
         chunk = self._chunk(page, "soreness_legs")
         self.assertIn(T("en")("trends.q.soreness_legs"), chunk)
         self.assertIn(T("en")("trends.plain.soreness_legs"), chunk)
-        self.assertIn("pts", chunk)
+        self.assertIn("of 5", chunk)
 
     def test_self_group_includes_every_soreness_key(self):
         groups = dict(comun.TREND_GROUPS)

@@ -647,13 +647,13 @@ METRIC_DEFS += [
     # BODY-AGUJETAS-1 (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1): next-day muscle soreness, one key
     # per muscle GROUP, not a finer list -- 'neutral' (ruling 2): soreness is neither good nor bad,
     # it is the person's own read of the work a session gave that muscle.
-    ("soreness_legs", "Soreness: legs", "pts", "neutral", "measured", "self"),
-    ("soreness_glutes", "Soreness: glutes", "pts", "neutral", "measured", "self"),
-    ("soreness_back", "Soreness: back", "pts", "neutral", "measured", "self"),
-    ("soreness_chest", "Soreness: chest", "pts", "neutral", "measured", "self"),
-    ("soreness_shoulders", "Soreness: shoulders", "pts", "neutral", "measured", "self"),
-    ("soreness_arms", "Soreness: arms", "pts", "neutral", "measured", "self"),
-    ("soreness_core", "Soreness: core", "pts", "neutral", "measured", "self"),
+    ("soreness_legs", "Soreness: legs", "of5", "neutral", "measured", "self"),
+    ("soreness_glutes", "Soreness: glutes", "of5", "neutral", "measured", "self"),
+    ("soreness_back", "Soreness: back", "of5", "neutral", "measured", "self"),
+    ("soreness_chest", "Soreness: chest", "of5", "neutral", "measured", "self"),
+    ("soreness_shoulders", "Soreness: shoulders", "of5", "neutral", "measured", "self"),
+    ("soreness_arms", "Soreness: arms", "of5", "neutral", "measured", "self"),
+    ("soreness_core", "Soreness: core", "of5", "neutral", "measured", "self"),
 ]
 # BODY-PROTEINA-1: a 7th field, `agregado` -- 'suma_ingesta' marks a key whose daily_metric value is
 # the SUM of that day's `ingesta` rows, derived by db.registrar_ingesta/corregir_ingesta/

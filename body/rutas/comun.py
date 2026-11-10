@@ -136,7 +136,8 @@ def _short_date(t: T, d: date) -> str:
 
 
 UNITS = {"bpm": "unit.bpm", "ms": "unit.ms", "pts": "unit.pts", "steps": "unit.steps", "kcal": "unit.kcal",
-         "brpm": "unit.brpm", "ml/kg/min": "unit.ml_kg_min", "years": "unit.years", "%": "unit.percent"}
+         "brpm": "unit.brpm", "ml/kg/min": "unit.ml_kg_min", "years": "unit.years", "%": "unit.percent",
+         "of5": "unit.of5"}
 OF_100 = {"readiness", "stress_avg", "body_battery_high", "body_battery_low", "body_battery_wake", "sleep_score"}
 
 
