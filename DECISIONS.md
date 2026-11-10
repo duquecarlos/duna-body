@@ -15770,3 +15770,156 @@ the orchestrator's own demo look at the panel passed. Merged `feat/body-entreno-
 
 **Gate**, once, on the merged tree: `.venv/Scripts/python.exe -m unittest discover tests -t .` ->
 `Ran 2340 tests in 544.205s ... OK (skipped=1)`.
+
+## BODY-COMIDA-1-B
+
+Carlos wants to track the whole person, starting with food (CLAUDE.md): today the assistant can
+only log a meal as protein via `registrar_ingesta`. Built under ORCH-CARLOS-DELEGATES-TIER-1-1's
+six rulings, following BODY-PERSONA-COMPLETA-1-INV's recommendation.
+
+**Ruling 1, additive schema**: a new `comida` table (`id`, `person_id`, `day`, `ts_local`
+nullable, `descripcion` nullable, `created_at`, `updated_at`, index on `person_id, day`).
+`ingesta` gains a nullable `comida_id INTEGER REFERENCES comida(id)`, no backfill -- every
+existing `ingesta` row keeps `comida_id` NULL and stays valid on its own. One real
+migration-ordering bug this slice's own `OldDbMigrationTest` fixture caught: SCHEMA's own
+`CREATE INDEX idx_ingesta_comida ON ingesta(comida_id)` ran inside the same `executescript`
+call as the pre-migration `ingesta` table's own no-op `CREATE TABLE IF NOT EXISTS`, BEFORE
+`_migrate()`'s `ALTER TABLE ADD COLUMN` -- against any database migrated from before this slice
+it would have raised `sqlite3.OperationalError: no such column: comida_id` on every single
+`init()` call. Fixed by moving that one `CREATE INDEX` statement into `_migrate()`, right after
+the `ALTER TABLE`, unconditional (idempotent either way, since by that point the column exists
+whether SCHEMA just created it fresh or the ALTER just added it).
+
+**Ruling 2, catalogue rows not columns**: seeded six more `metric_def` rows beside `protein_g`,
+same `suma_ingesta` aggregation, `self` origin, `neutral` direction: `kcal`, `carbs_g`, `fat_g`,
+`fiber_g`, `water_ml`, `caffeine_mg`, `alcohol_g` (grams of PURE alcohol, never drinks or
+"units" -- those differ by country, grams do not). `db.INGESTA_METRIC_KEYS` is the one
+catalogue-ordered tuple of every `suma_ingesta` key, read by `body/agente/herramientas.py` (the
+enum offered to the model) and `body/rutas/hoy.py` (a meal card's own amount order) alike, never
+a second hand-typed list.
+
+**Ruling 3, one spoken meal = one call**: a new assistant tool, `registrar_comida` (propuesta
+type, `nivel: ninguno`): `{day, hora?, descripcion, cantidades: [{metric_key (enum from the
+catalogue), amount, estimado (default true)}], minItems 1, one per key}`. Numbers validated at
+the door exactly as BODY-ENTRENO-NUMEROS-1 does (`_numero_cantidad_comida`): a bool is refused,
+int/float passes through, a plain numeric string is coerced, anything else -- or zero/negative
+-- is refused naming the field, no row written. One deviation from the spec text: it said
+`amount (number >= 0)`, but `ingesta.amount`'s own `CHECK (amount > 0)` (BODY-PROTEINA-1) was
+never widened by ruling 1's additive-only schema, so the door refuses exactly 0 too, rather than
+ever risking a raw `sqlite3.IntegrityError`. `db.crear_comida`/`db.borrar_comida` write/remove
+the `comida` row and every child `ingesta` row together, one transaction, each recalculating its
+own touched metric's day total through the same `_recalcular_ingesta_dia` `registrar_ingesta`
+already uses. `registrar_ingesta` stays for single-amount corrections, its own enum now reads
+off the same `db.INGESTA_METRIC_KEYS`.
+
+**Ruling 4, one card**: `asistente._tarjeta_registrar_comida` shows the meal as one block --
+description, time (the same `_momento_ingesta_txt` lunch/dinner wording ingesta cards use), and
+every amount in fixed catalogue order, each marked "≈" when estimated. `_tarjeta_propuesta_segura`
+(BODY-ENTRENO-NUMEROS-1's own fallback) already catches anything this card could still raise.
+
+**Ruling 5, readers**: `body/ventana_comida.py`'s `ventana()` now counts MEALS, not rows -- one
+`comida_id` counts once no matter how many nutrients it groups, and a legacy `comida_id`-NULL
+row still counts as its own meal, exactly as before. Día gained a new "Comidas" section
+(`body/rutas/hoy.py`'s `_comidas_dia_ctx`, reading `db.comidas_del_dia`), one line per meal,
+catalogue-ordered amounts, "≈" on estimates, descriptions free text and never exported anywhere
+new. Three readers needed NO code change, all genuine free riders: Tendencias (`catalogo_
+tendencias.TREND_GROUPS`' `"self"` bucket auto-includes every `origen='self'` metric_def row --
+the new keys showed up the moment the catalogue rows existed), `body/mcp.py` (fully generic, reads
+the tool registry dynamically), and `body/vida_export.py` (its `WEEK_METRICS` list never
+exported `protein_g` either, so the new keys follow the same absence). `body/privacidad.py`
+gained `comida` in `FULLY_HANDLED_TABLES`, an export block, and a `DELETE FROM comida` (after
+`ingesta`'s own delete, so the FK never fires). `body/demo.py` seeds 3-4 invented multi-nutrient
+meals most days via `db.crear_comida` (protein_g/kcal/carbs_g/fat_g/fiber_g together) plus three
+single-nutrient forced meals on fixed day indices (first/middle/last of the run) guaranteeing
+caffeine_mg/water_ml/alcohol_g each appear at least once regardless of the day's own 90% coin
+flip, for `tests/test_demo.py`'s catalogue-coverage guard.
+
+**Eight census-style tests outside this slice's own touches list** hardcoded an exact
+tool-name set, a catalogue-key set, a tool count, or a route's statement ceiling that the new
+`registrar_comida` tool / 7 new `metric_def` rows / 2 new reads (`comidas_del_dia` on `/day/
+{day}`, the `comidas` export block on `/privacidad/exportar`) broke -- caught only by the full
+gate, not by any targeted run, since none of them are reachable from this slice's own touched
+files. Each got the minimal fix, flagged here rather than silently widened: WORK step 5's own
+words ("update census tests the new tool/route/demo content touches so they NAME the new
+truth") anticipate exactly this category, even though the dispatch's own `touches:` list did
+not name these particular files.
+- `tests/test_agente_bucle.py::NivelDatosEnforcementTest` and `tests/test_agente_propuestas.py::
+  NoProponibleTest`: added `registrar_comida` to each hardcoded propuesta-tool-name set.
+- `tests/test_agente_registro.py::RegistryShapeTest`: `len(herramientas.HERRAMIENTAS)` 30 -> 31;
+  `PROPUESTA_NOMBRES` gained `registrar_comida`; renamed `test_seventeen_propuesta_tools_at_
+  nivel_ninguno` to `test_eighteen_propuesta_tools_at_nivel_ninguno`.
+- `tests/test_agente_medida.py::TrendsSelfMeasuredGroupTest`: the hardcoded `"self"` group set
+  gained the six new keys (proof, not just a free-rider claim, that Trends needed no code).
+- `tests/test_rendimiento.py`'s shared `_CEILINGS` table (also used by `tests/
+  test_periodo_pantallas.py::CeilingConSinPeriodoAbiertoDiasAntesTest`, which imports it):
+  `/day/{day}` measured 47 statements against a ceiling of 45 (one new `comidas_del_dia` read);
+  `/privacidad/exportar` measured 44 against 43 (one new `comidas` export read). Both raised to
+  `ceil(measured * 1.3)` -- the same ~30% margin rule BODY-RENDIMIENTO-2 established -- to 62 and
+  58.
+- `tests/test_persona_fuga.py`'s `TableCensusTest`: `comida` is person-keyed and had no seeded
+  row. Seeded one via `db.crear_comida` in `_seed_person` with its own `ZZ<tag>-COMIDA` marker,
+  and added `"COMIDA"` to `_markers_of`'s ACTIVE list (not the tool-only list `ingesta` used
+  before it had a screen) -- Día's new "Comidas" section is `comida.descripcion`'s first
+  reader, same treatment BODY-EXPERIMENTOS-PANTALLA-1 gave `experimento`/`experimento_registro`.
+  `UnlinkedSweepTest`'s own non-vacuous check (every active marker must actually render
+  somewhere) proves this wiring real, not assumed.
+- `tests/test_proteina.py::FreshDbTest`: `test_ingesta_table_exists_with_the_contract_columns`
+  asserted an exact column set for `ingesta`; added `comida_id`.
+
+**Targeted run first**, every module this slice added or touched, each green before the full
+gate (139 tests across the two batches below, plus `tests/test_comida.py`'s own 36):
+`tests.test_comida` (36), `tests.test_ventana_comida` (22), `tests.test_proteina` (41),
+`tests.test_mcp` (20), `tests.test_i18n_paridad` (6), `tests.test_web_entry` (4),
+`tests.test_estados_vacios_2` (9), `tests.test_demo` (22), `tests.test_privacidad` (56, run
+alongside `test_proteina`/`test_ventana_comida`/`test_propuestas_tabla`), `tests.
+test_vida_export` (15), `tests.test_tendencias_todas` (13), `tests.test_hoy_ventana_comida`
+(10), then the eight census fixes: `tests.test_agente_bucle` + `test_agente_medida` +
+`test_agente_propuestas` + `test_agente_registro` (96 together), `tests.test_periodo_pantallas`
++ `test_persona_fuga` + `test_rendimiento` (32 together).
+
+**Gate**, once, foreground (backgrounded past the harness's 600s cap twice -- the first full run
+caught the eight census failures above, the second confirmed the fix on the whole suite --
+read back from its own artifact both times, never inferred from exit code alone):
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 2379 tests in 998.687s ...
+OK (skipped=1)`.
+
+The new strings, verbatim (es / en):
+- `agente.error.comida_cantidad_invalida`: "La cantidad de {metrica} debe ser un número mayor
+  que cero: envía cuánto comiste o tomaste (por ejemplo 150), no un texto." / "The amount of
+  {metrica} must be a number greater than zero: send how much you ate or drank (for example
+  150), not text."
+- `metric.kcal`/`carbs_g`/`fat_g`/`fiber_g`/`water_ml`/`caffeine_mg`/`alcohol_g`: "Calorías" /
+  "Calories", "Carbohidratos" / "Carbs", "Grasa" / "Fat", "Fibra" / "Fiber", "Agua" / "Water",
+  "Cafeína" / "Caffeine", "Alcohol" / "Alcohol".
+- `asistente.propuesta.titulo.registrar_comida`: "Registrar comida" / "Log meal".
+- `asistente.propuesta.comida_resumen`: "«{descripcion}» el {fecha}" / "“{descripcion}”
+  on {fecha}".
+- `asistente.propuesta.comida_cantidad` / `comida_cantidad_estimado`: "{metric}: {valor}" /
+  "{metric}: ≈ {valor}" (same shape both languages).
+- `day.comidas.titulo`/`vacio`: "Comidas" / "Meals", "Sin comidas registradas este día." / "No
+  meals logged this day."
+- `trends.q.<key>`/`trends.plain.<key>`, one pair per new metric key (14 strings total, both
+  languages) -- required because `comun.TREND_GROUPS`' `"self"` bucket, though it needed no code
+  change, still needs each of its keys' own Tendencias question/plain-word text.
+
+**Commits** on `feat/body-comida-1`, on top of `main` at `1d7b2e1`:
+- `392a4f0` -- "BODY-COMIDA-1: a meal is one call, grouping several nutrients under one comida
+  row" (all six rulings, 21 files, including the eight census fixes above).
+
+Diff classified against `main`: **schema change** -- the new `comida` table and `ingesta`'s new
+`comida_id` column (both additive, ruling 1), plus `propuesta_agente`'s `accion` CHECK widened
+to accept `registrar_comida` (the same reusable `_rebuild_propuesta_agente_table` four earlier
+widenings already used). **Customer-facing bytes: YES** -- every string listed above, plus the
+new "Comidas" section rendered on Día, is new text or UI a person reads, in both languages. No
+cross-repo contract or DTO change. Both conditions, and the spec's own approval-reason text
+("Customer-facing: stops AWAITING_APPROVAL for the orchestrator's 375 px look and an MCP drive
+on the demo"), say stop before any merge regardless of the gate's own result.
+
+Not merged. Stops **AWAITING_APPROVAL** on `feat/body-comida-1`, for the orchestrator's own
+375 px look at the new "Comidas" section on Día and the registrar_comida card, and an MCP drive
+on the demo: `tools/call registrar_comida` with several `cantidades` against the demo home,
+then look at the resulting card and, once applied, at Día's new section for that day.
+
+Open follow-up, named but not acted on: none. Out of scope per ruling 6 (calorie/macro targets,
+any score, medical wording, check-ins, backfilling existing protein entries) -- untouched, as
+ruled.
