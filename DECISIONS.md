@@ -14346,3 +14346,51 @@ as **GATE_RED** instead. No cross-repo contract. Committed on `feat/body-recuper
 
 Backfill command for the orchestrator, once this merges: `python -m body.vivo recuperacion` (run from the
 live `body-app` tree under `BODY_HOME`, the same convention as every other `vivo` task).
+
+## BODY-RECUPERACION-1-B -- census seed + silent pull step, closing BODY-RECUPERACION-1-FOLLOWUP-GATE-RED
+
+Fixed both test subjects BODY-RECUPERACION-1's follow-up named, on the same branch
+(`feat/body-recuperacion-1`, base `main`, still unmerged):
+
+1. `tests/test_persona_fuga.py`'s `_seed_person` now inserts one `recuperacion_actividad` row per person
+   (`activity_source='garmin'`, `activity_source_id='act-1'`, through the `activity` row `_seed_person`
+   already seeds, `modelo_version=recuperacion.MODELO["version"]`, `minutos=12`, `motivo=NULL`) --
+   `TableCensusTest::test_every_person_table_is_seeded_or_explained` now finds a seeded row for the table
+   `privacidad.FULLY_HANDLED_TABLES` already names, instead of loosening that census. No marker was added
+   for it: `motivo` is CHECK-constrained to `RECUPERACION_MOTIVOS` (or NULL), so no column can carry a
+   distinctive ZZ-tag string, and the seed only needs to prove export/delete-all coverage, not render
+   anywhere.
+2. `body/pull.py`'s `_recalcular_recuperacion_seguro` now prints its `"recuperacion: N filas nuevas"` line
+   only when `resultado["nuevas"]` is truthy -- silent on a re-run that found nothing new, the same rule
+   `_cerrar_semanas_seguro`'s own sweep already follows (there, achieved by never calling it for a person
+   with no active goal; here, by gating the print itself, since `_recalcular_recuperacion_seguro` runs for
+   every person on every pull regardless of whether anything changed). This restores
+   `tests/test_primer_pull_1.py::NoHealthFigureInOutputTest::test_backfill_prints_only_counts` (not in this
+   slice's `touches:`, not edited) to its exact-string pass, without changing the expected string.
+3. `tests/test_recuperacion.py` gained `RecalcularSeguroTest` (2 tests): one counts-only line printed when
+   `_recalcular_recuperacion_seguro` computes a new row, nothing printed on the idempotent re-run.
+4. Swept every other test that asserts exact pull stdout or census person-table sets (grepped for
+   `prints_only_counts`, `getvalue().strip()` near `pull.main`/`pull_hosted`/`pull_backfill_hosted`,
+   `_seed_person`, `FULLY_HANDLED_TABLES`/`PARTIAL_EXPORT_TABLES`/`NEVER_EXPORTED_TABLES`/`person_tables(`):
+   `tests/test_pull.py`, `test_momentos_pull.py`, `test_entreno_sets.py`, `test_garmin_host.py`,
+   `test_conexiones_cerradas.py` use `assertIn`, not an exact-string match, on pull stdout, so an added or
+   suppressed line does not trip them. `tests/test_privacidad.py`'s own census set-equality (line 301-303)
+   and its post-delete per-table zero-count sweep (line 659-661) are unaffected by what `_seed_person`
+   seeds. No other `_seed_person` or table-census fixture exists outside `test_persona_fuga.py` and
+   `test_privacidad.py`. Nothing else needed a fix.
+
+**Gate**, once, foreground, on this slice's final tree (tracked changes limited to `body/pull.py`,
+`tests/test_persona_fuga.py`, `tests/test_recuperacion.py`; `git status --porcelain` empty before this
+commit): `.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 2147 tests in 390.618s ... OK
+(skipped=1)` (2145 before this slice, per BODY-RECUPERACION-1's own GATE_RED run; +2 from the new
+`RecalcularSeguroTest`, and the two failures that run reported are gone).
+
+No schema or migration change. No customer-facing bytes (this slice touches test fixtures and one
+stdout-only print's condition, no template, route response or user-visible string). No cross-repo contract.
+Still, per the dispatch's own approval-reason ("Still a customer-facing branch: stops AWAITING_APPROVAL"),
+this slice stops **AWAITING_APPROVAL** on `feat/body-recuperacion-1`, not merged into `main` -- the branch
+as a whole (BODY-RECUPERACION-1's own recovery screens) remains customer-facing and gated on that same
+approval; this slice only clears its test-suite blocker.
+
+Commit `eb4aa68` on `feat/body-recuperacion-1`, on top of `fbb22e8` (BODY-RECUPERACION-1's own ledger entry
+above). Not merged.
