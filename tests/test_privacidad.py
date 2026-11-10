@@ -691,6 +691,36 @@ class UsoHerramientaExternaExportDeleteTest(unittest.TestCase):
         )
 
 
+class AplicarMcpExportDeleteTest(unittest.TestCase):
+    """BODY-MCP-APLICAR-1, ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 7: the person's own `aplicar_mcp`
+    setting is in their export, and delete-all removes it with the rest of ajuste_agente (already
+    a FULLY_HANDLED_TABLES member -- this only proves that stays true for this one new column)."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "aplicar_mcp.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+
+    def test_export_shows_off_by_default(self):
+        data = privacidad.export_person(self.conn, 1)
+        self.assertFalse(data["ajustes"]["aplicar_mcp"])
+
+    def test_export_shows_on_once_set(self):
+        db.set_aplicar_mcp(self.conn, 1, True)
+        data = privacidad.export_person(self.conn, 1)
+        self.assertTrue(data["ajustes"]["aplicar_mcp"])
+
+    def test_delete_all_removes_the_setting_row(self):
+        db.set_aplicar_mcp(self.conn, 1, True)
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM ajuste_agente WHERE person_id = 1").fetchone()[0], 0
+        )
+
+
 class NocheInusualVistaExportDeleteTest(unittest.TestCase):
     """BODY-NOCHE-INUSUAL-1 ruling 6: the "Ya lo vi" dismissal reuses `moment` -- already a fully
     exported/deleted table -- instead of a new one, so export and delete-all already cover it with

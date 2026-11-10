@@ -93,7 +93,12 @@ _PROPUESTA_AGENTE_COLUMNS = """
                         CHECK (estado IN ('propuesta', 'aplicada', 'descartada', 'expirada', 'deshecha')),
     creada_en       TEXT NOT NULL,
     expira_en       TEXT NOT NULL,
-    resuelta_en     TEXT
+    resuelta_en     TEXT,
+    -- Set to 'mcp' only when body/mcp.py's own `aplicar_propuesta` tool applied this row
+    -- (BODY-MCP-APLICAR-1, ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4): the panel's own "applied by
+    -- your personal assistant" label, never set for an apply through Body's own web route, even
+    -- for a proposal this same outside caller made.
+    aplicada_via    TEXT CHECK (aplicada_via IS NULL OR aplicada_via IN ('mcp'))
 """
 
 # workout_set keys to activity's composite key (person_id, source, source_id): the watch's values
@@ -432,10 +437,14 @@ CREATE TABLE IF NOT EXISTS plan (
 );
 
 -- How much health data the assistant's tools may read for this person (wave 7, stage one).
+-- `aplicar_mcp` (BODY-MCP-APLICAR-1, ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1): OFF (0) by default,
+-- changed only through Body's own /settings/aplicar_mcp POST -- never by an MCP tool, never by the
+-- in-app assistant.
 CREATE TABLE IF NOT EXISTS ajuste_agente (
     person_id  INTEGER PRIMARY KEY REFERENCES person(id),
     nivel_datos TEXT NOT NULL DEFAULT 'completo' CHECK (nivel_datos IN ('completo', 'resumen', 'ninguno')),
     proveedor  TEXT,
+    aplicar_mcp INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL
 );
 
@@ -830,6 +839,15 @@ def registrar_uso_herramienta_externa(conn: sqlite3.Connection, person_id: int, 
         )
 
 
+def marcar_aplicada_via_mcp(conn: sqlite3.Connection, propuesta_id: int) -> None:
+    """Ties a proposal's row to its own outside apply, called ONLY after `agente_propuestas.aplicar`
+    has already marked it 'aplicada' (BODY-MCP-APLICAR-1, ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4):
+    the panel's own "applied by your personal assistant" label. Never set for an apply through
+    Body's own web route."""
+    with conn:
+        conn.execute("UPDATE propuesta_agente SET aplicada_via = 'mcp' WHERE id = ?", (propuesta_id,))
+
+
 def connect(path: Path | None = None) -> sqlite3.Connection:
     config.ensure_home()
     conn = sqlite3.connect(path or config.DB_PATH)
@@ -892,6 +910,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     acols = {r[1] for r in conn.execute("PRAGMA table_info(ajuste_agente)")}
     if acols and "proveedor" not in acols:
         conn.execute("ALTER TABLE ajuste_agente ADD COLUMN proveedor TEXT")
+    if acols and "aplicar_mcp" not in acols:
+        conn.execute("ALTER TABLE ajuste_agente ADD COLUMN aplicar_mcp INTEGER NOT NULL DEFAULT 0")
     gcols = {r[1] for r in conn.execute("PRAGMA table_info(garmin_cuenta)")}
     if gcols and "backfill_hasta" not in gcols:
         conn.execute("ALTER TABLE garmin_cuenta ADD COLUMN backfill_hasta TEXT")
@@ -1030,6 +1050,15 @@ def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     # borrar_periodo), same reusable rebuild.
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_periodo_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
+    # BODY-MCP-APLICAR-1: a plain nullable column, never a CHECK widening on `accion` -- a plain
+    # ALTER TABLE ADD COLUMN, not the rebuild dance above.
+    ppcols = {r[1] for r in conn.execute("PRAGMA table_info(propuesta_agente)")} if _table_exists(
+        conn, "propuesta_agente") else set()
+    if ppcols and "aplicada_via" not in ppcols:
+        conn.execute(
+            "ALTER TABLE propuesta_agente ADD COLUMN aplicada_via TEXT "
+            "CHECK (aplicada_via IS NULL OR aplicada_via IN ('mcp'))"
+        )
 
 
 def _goal_needs_rebuild(conn: sqlite3.Connection) -> bool:
@@ -1410,6 +1439,29 @@ def set_trabaja_turnos(conn, value: bool, person_id: int) -> None:
         raise TypeError(f"trabaja_turnos must be a bool, got {type(value).__name__}")
     with conn:
         conn.execute("UPDATE person SET trabaja_turnos = ? WHERE id = ?", (int(value), person_id))
+
+
+def get_aplicar_mcp(conn, person_id: int) -> bool:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: OFF (False) by default, for a person with no
+    ajuste_agente row yet, same as every other column of that table."""
+    row = conn.execute("SELECT aplicar_mcp FROM ajuste_agente WHERE person_id = ?", (person_id,)).fetchone()
+    return bool(row["aplicar_mcp"]) if row else False
+
+
+def set_aplicar_mcp(conn, person_id: int, value: bool) -> None:
+    """Changed only by body/rutas/ajustes.py's own /settings/aplicar_mcp POST, from the person's
+    own session (ruling 1) -- never by body/mcp.py, never by an in-app assistant tool, neither of
+    which imports this function."""
+    if not isinstance(value, bool):
+        raise TypeError(f"aplicar_mcp must be a bool, got {type(value).__name__}")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        conn.execute(
+            "INSERT INTO ajuste_agente (person_id, aplicar_mcp, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(person_id) DO UPDATE SET aplicar_mcp = excluded.aplicar_mcp, "
+            "updated_at = excluded.updated_at",
+            (person_id, int(value), now),
+        )
 
 
 def trabaja_turnos_si(conn, person_id: int) -> bool:

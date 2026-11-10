@@ -15495,3 +15495,166 @@ unchanged at 2306 (two tests restored, not added).
 
 This closes both open follow-ups left by the GATE_RED entry above:
 `BODY-NOCHE-INUSUAL-TESTFIX-ESTADOS-1` and `BODY-NOCHE-INUSUAL-TESTFIX-RUTAS-1`.
+
+## BODY-MCP-APLICAR-1-B -- commits the first worker's tree, restores three guards to the new truth (2026-11-10)
+
+`BODY-MCP-APLICAR-1` (the first worker, on `feat/body-mcp-aplicar-1`) built the reversible apply
+path this entry describes below, ran its one gate, got 4 failures outside its own `touches:`, and
+STOPPED GATE_RED WITHOUT COMMITTING -- a breach of its own spec's own rule ("Red you cannot fix
+inside touches -> stop GATE_RED on the branch (commit first)"). 14 modified files and the new
+`tests/test_mcp_aplicar.py` sat uncommitted on the branch. Recorded here plainly, not glossed over.
+
+Under `ORCH-CARLOS-DELEGATES-TIER-1-1`, this slice (1) committed that tree exactly as found, in its
+own commit, before touching anything, then (2) restored the three guards the first worker's own
+required behaviour collided with, without weakening what any of them protects.
+
+**What BODY-MCP-APLICAR-1 built** -- `BODY-MCP-APLICAR-1`'s own rulings 1-7, as built:
+
+1. **Off by default, changed only through the person's own Ajustes.** `ajuste_agente.aplicar_mcp`
+   (new `INTEGER NOT NULL DEFAULT 0` column, `_migrate`'s own `ALTER TABLE ... ADD COLUMN` guard) --
+   `db.get_aplicar_mcp`/`set_aplicar_mcp`. The ONLY writer is the new `POST /settings/aplicar_mcp`
+   (`body/rutas/ajustes.py`), behind the same `identity.current_person_id` every other Ajustes route
+   uses; neither `body/mcp.py` nor the in-app assistant's tool registry imports `set_aplicar_mcp`.
+2. **One exception tool, outside the in-app registry.** `aplicar_propuesta` (`body/mcp.py`) lives
+   OUTSIDE `herramientas.HERRAMIENTAS` on purpose -- never callable by the in-app assistant, only by
+   this outside caller -- and is listed, and callable, only while `aplicar_mcp` is ON, checked fresh
+   on every `tools/list` and `tools/call` (so turning it off takes effect on this same long-lived
+   process's very next call, no restart needed).
+3. **Only this caller's own, still-pending proposal.** `_aplicar_propuesta_mcp` refuses with a plain
+   tool error when the setting is off, when `propuesta_id` is not an int, when the row does not
+   exist, is not this person's, was not made by this same outside caller (its conversation's
+   `origen` must be `'mcp'` -- never a proposal the in-app assistant made), or is no longer
+   `'propuesta'` (already applied, discarded, expired, drifted). Applies through the SAME
+   `agente_propuestas.aplicar` the web route uses -- never a shortcut, never undo, never delete.
+4. **The card says who applied it.** `propuesta_agente.aplicada_via` (new nullable `TEXT CHECK
+   (aplicada_via IS NULL OR aplicada_via IN ('mcp'))` column, plain `ALTER TABLE ADD COLUMN`, not the
+   CHECK-widening rebuild dance `accion` needed) -- set only by `db.marcar_aplicada_via_mcp`, called
+   only after `agente_propuestas.aplicar` already marked the row `'aplicada'`. `body/rutas/
+   asistente.py`'s `_tarjeta_propuesta` shows `asistente.propuesta.aplicado_mcp` ("Aplicado por tu
+   asistente personal" / "Applied by your personal assistant") instead of the generic
+   `origen_etiqueta` on such a card -- rendered server-side, same as every other field on that card.
+5. **Hoy says so too, for 24h.** `agente_conversacion.aplicados_mcp_recientes` (count, newest
+   conversation id of `aplicada_via='mcp'` rows resolved in the last 24h, an injectable clock for
+   tests) backs `body/rutas/hoy.py`'s new `_mcp_aplicado_ctx`, rendered as its own `aviso` line on
+   Hoy (`today.mcp_aplicado`/`_many`, "Tu asistente personal aplicó 1 cambio · Ver" / "...{n}
+   cambios..."), linking to the panel the same way the existing `mcp_pendientes` line already does.
+   Deliberately NOT "any mcp-origin proposal now aplicada" -- the person tapping Aplicar themselves
+   in Body, on a proposal their assistant merely proposed, must never raise this line, and does not.
+6. **The apply cap is a RATE, the tighter one.** `LIMITES["aplicaciones"] = bucle.MAX_LECTURAS` --
+   an apply is a real write, so it gets the tighter read ceiling, not the looser `propuestas` one --
+   backed by its own rolling `_Tope`, same rolling-window shape `lecturas`/`propuestas` already use
+   (BODY-MCP-LOCAL-1-B).
+7. **In the person's own export.** `privacidad.export_person`'s `ajustes` dict gained
+   `aplicar_mcp`; `propuesta_agente`'s export query gained the `aplicada_via` column. Delete-all
+   needed no new code: both tables were already `FULLY_HANDLED_TABLES` members.
+
+**Strings, verbatim** (`body/i18n/{es,en}.json`, re-read once as the person would in step 5 below --
+nothing needed changing):
+- `settings.aplicar_mcp.pregunta` es: "¿Tu asistente personal puede aplicar cambios cuando le digas
+  que sí?" / en: "Can your personal assistant apply changes when you say yes?"
+- `settings.aplicar_mcp.desc` es: "Cuando digas que sí, el asistente con el que hablas fuera de Body
+  puede aplicar directamente la propuesta que ya hizo, sin que tengas que entrar a tocar Aplicar.
+  Cada cambio sigue apareciendo en Hoy y lo puedes deshacer en Body." / en: "When you say yes, the
+  assistant you talk to outside Body can apply the proposal it already made directly, without you
+  opening Body to tap Apply. Every change still shows up on Today and you can undo it in Body."
+- `today.mcp_aplicado` es: "Tu asistente personal aplicó 1 cambio · Ver" / en: "Your personal
+  assistant applied 1 change · View"; `today.mcp_aplicado_many` (`{n}`) the plural of each.
+- `asistente.propuesta.aplicado_mcp` es: "Aplicado por tu asistente personal" / en: "Applied by your
+  personal assistant".
+- `asistente.mcp.resultado_ubicacion` (unchanged, BODY-MCP-LOCAL-1-B) now also fires after an
+  `aplicar_propuesta` call reads as a plain proposal's own text; the apply itself gets its own,
+  new `asistente.mcp.aplicar_resultado` es: "Aplicado. Lo verás en la pantalla {pantalla} de Body,
+  donde lo puedes deshacer." / en: "Applied. You'll see it on Body's {pantalla} screen, where you
+  can undo it."
+- `asistente.mcp.limite_aplicaciones` (`{minutos}`) es: "Límite de aplicaciones de tu asistente
+  personal alcanzado. Intenta de nuevo en {minutos} min." / en: "Your personal assistant's apply
+  limit is reached. Try again in {minutos} min."
+- `asistente.mcp.aplicar_apagado` es: "Tu asistente personal no puede aplicar cambios: esa opción
+  está apagada en Ajustes de Body." / en: "Your personal assistant can't apply changes: that setting
+  is off in Body's Settings."
+- `asistente.mcp.aplicar_no_propia` es: "Esa propuesta no existe o no es una propuesta de tu
+  asistente personal." / en: "That proposal doesn't exist, or it isn't one your personal assistant
+  made."
+- `asistente.mcp.aplicar_no_vigente` es: "Esa propuesta ya no está pendiente." / en: "That proposal
+  is no longer pending."
+
+**Tests** `tests/test_mcp_aplicar.py` (new, 12 cases: off-by-default absent-from-list and refused-
+anyway; on -- listed, applies its own mcp-origin proposal, writes the existing audit row, Deshacer
+still works on it in Body, refuses an in-app proposal, a non-pending one, another person's, the
+card label, the apply cap, turning the setting off mid-session hides the tool on the very next
+`tools/list`, the rolling-window cap allows again past the window); `tests/test_mcp_visible.py`
+gained `HoyAplicadoLineaTest` (6 cases: no line / singular+link / plural+newest-link / English /
+gone past 24h / the injectable-clock edge); `tests/test_persona_fuga.py` gained one cross-person
+case for `aplicar_propuesta` itself (the web route's own cross-id test already existed; this is its
+MCP-tool equivalent); `tests/test_privacidad.py` gained `AplicarMcpExportDeleteTest` (3 cases: off
+by default in the export, on once set, delete-all removes the row).
+
+**This slice's own fix, to the three guards BODY-MCP-APLICAR-1's required behaviour collided with --
+restored to the new truth, nothing weakened:**
+
+- `tests/test_registro_tu.py::TestRegistroTuEsJson.test_su_sus_tiene_puede_are_all_allow_listed_third_person`:
+  the guard exists so third person in Spanish copy is deliberate, not an usted slip. Allow-listed
+  `settings.aplicar_mcp.pregunta`, `settings.aplicar_mcp.desc` and `asistente.mcp.aplicar_apagado`,
+  each with its own one-line reason -- in every one, "puede"'s subject is the assistant ("tu
+  asistente personal" / "el asistente"), never the reader, so none needed rewording to tú.
+- `tests/test_turnos_opcional_2.py::AjustesCardTest.test_null_neither_button_on` and
+  `.test_si_marks_on`: both did an UNSCOPED substring search for the trabaja_turnos card's own
+  Sí/No buttons, and the new `aplicar_mcp` card renders the identical `btn on" name="valor"`
+  markup (same `seg` form shape, same field name) -- `aplicar_mcp`'s own default-off "No" button
+  was satisfying `test_si_marks_on`'s "no button is NOT on" check by accident, and failing
+  `test_null_neither_button_on`'s "neither button is on" check for the same reason. Added
+  `_trabaja_turnos_card(html)`, which slices the page from the trabaja_turnos form's own `action=`
+  attribute to the next `<div class="card">`, and scoped both tests' assertions to that slice --
+  they now test only the card they always meant to, and no sibling card's markup can satisfy or
+  break them. What each assertion checks is unchanged.
+- `tests/test_web_entry.py::RouteSetTest.BEFORE`: added `("/settings/aplicar_mcp", ("POST",))`,
+  with a comment naming this slice.
+
+Step 5 (reading every new string once as the person would, es-CO tú, plain, no "--"): no change
+needed -- all nine strings above already read naturally in both languages, every "puede"/"tiene"
+there is the assistant's own, and none contains "--".
+
+**Targeted run first** (201 tests, OK; counted with `unittest.TestLoader().loadTestsFromName(...)
+.countTestCases()`, not by hand): `tests.test_mcp` (19), `tests.test_mcp_visible` (21, the 15
+BODY-MCP-LOCAL-1-B already had plus the new `HoyAplicadoLineaTest`'s 6), `tests.test_persona_fuga`
+(12), `tests.test_privacidad` (56), `tests.test_mcp_aplicar` (13, new), `tests.test_i18n_paridad`
+(6), `tests.test_registro_tu` (9), `tests.test_turnos_opcional_2` (27), `tests.test_web_entry` (4),
+`tests.test_conexiones_cerradas` (9), `tests.test_rendimiento` (3), `tests.test_primer_pull_1` (22).
+
+**Gate**, once, foreground, on this slice's own final tree (backgrounded past the harness's 600s
+foreground cap, read back from its own artifact once it finished):
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 2329 tests in 730.139s ... OK
+(skipped=1)` -- the exact 4 failures the first worker's own gate hit are gone; the same 2329 count
+that gate already reported (this slice added no test module, only cases inside existing ones).
+
+`GET /`'s own statement count on the final tree (measured with `tests/_rutas.py`'s `contar_sql`
+against a `demo._seed(dias=30)` fixture, the same method `tests/test_mcp_visible.py`'s own ceiling
+test uses): 61, under the existing, unraised ceiling of 75 (`tests/test_rendimiento.py`).
+
+**Commits** on `feat/body-mcp-aplicar-1`, on top of `main` at `7ee1be1` (`git log main..HEAD` was
+empty, tree held the 15 `continues-dirty` paths uncommitted, before this slice's first edit):
+- `4798be0` -- "BODY-MCP-APLICAR-1: work as left by the first worker (uncommitted, gate red on 4
+  out-of-touches guards)" (the 15 paths, committed as found, no further edit).
+- `6264b09` -- "BODY-MCP-APLICAR-1-B: restore the three out-of-touches guards to the new truth"
+  (`tests/test_registro_tu.py`, `tests/test_turnos_opcional_2.py`, `tests/test_web_entry.py`).
+
+Diff classified against `main`: **schema change** -- `ajuste_agente.aplicar_mcp` and
+`propuesta_agente.aplicada_via` are both new columns (`ALTER TABLE ... ADD COLUMN`), carried from
+BODY-MCP-APLICAR-1's own build. Customer-facing bytes: YES -- the Ajustes question and its
+description, the two Hoy lines (pending and applied), the card label and the five new assistant-
+facing sentences are all new text a person reads, in both languages. No cross-repo contract or DTO
+change. Both conditions, and the approval's own words ("Customer-facing: stops AWAITING_APPROVAL
+for the orchestrator's 375 px look and an MCP drive on the demo"), say stop before any merge.
+
+Not merged. Stops **AWAITING_APPROVAL** on `feat/body-mcp-aplicar-1`, for the orchestrator's own
+375 px look at the Ajustes card and the two Hoy lines, and an MCP drive on the demo: turn the
+setting on from the demo web app (port 8773) at `/settings` (the new "¿Tu asistente personal puede
+aplicar cambios cuando le digas que sí?" card, "Sí"), then drive `python -m body.mcp` as a
+subprocess against the demo home (`BODY_HOME` pointed at the demo's own data directory, never the
+real one) -- `tools/call` a proposing tool first, then `aplicar_propuesta` with that proposal's own
+`propuesta_id`; the result's first text block should read "Aplicado. Lo verás en la pantalla Hoy de
+Body, donde lo puedes deshacer." and Hoy should show "Tu asistente personal aplicó 1 cambio · Ver".
+
+Open follow-up, named but not acted on: the breach itself (a Tier 1 slice stopping GATE_RED without
+committing) is recorded here as this entry's own context, not filed as a separate follow-up ID --
+there is nothing left to fix; the tree this slice found is now fully committed.

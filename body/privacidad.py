@@ -153,7 +153,10 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "SELECT hogar_id, member_sub, fuente FROM hogar_miembro WHERE person_id = ?", (person_id,)
     ).fetchone()
     figuras_compartidas = compartir.export_rows(conn, person_id)
-    ajustes = {"nivel_datos": agente_ajustes.nivel_datos(conn, person_id)}
+    # aplicar_mcp (BODY-MCP-APLICAR-1, ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 7): the person's own
+    # setting that lets their personal assistant apply a change it proposed, in their own export.
+    ajustes = {"nivel_datos": agente_ajustes.nivel_datos(conn, person_id),
+               "aplicar_mcp": db.get_aplicar_mcp(conn, person_id)}
     # garmin_cuenta is a partial-export table: the connected-since date only, never the encrypted
     # token or anything that could rebuild it.
     garmin_row = conn.execute(
@@ -179,7 +182,8 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
     ).fetchone()
     propuestas_agente = [dict(r) for r in conn.execute(
         "SELECT id, conversacion_id, accion, objetivo_id, antes_json, despues_json, estado, creada_en, "
-        "expira_en, resuelta_en FROM propuesta_agente WHERE person_id = ? ORDER BY id", (person_id,))]
+        "expira_en, resuelta_en, aplicada_via FROM propuesta_agente WHERE person_id = ? ORDER BY id",
+        (person_id,))]
     # BODY-MCP-LOCAL-1: every call the local MCP server made against the tool registry -- the tool
     # name, the UTC time, the caller id, never a param or a result.
     uso_externo_rows = [dict(r) for r in conn.execute(

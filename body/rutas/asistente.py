@@ -384,7 +384,9 @@ def _tarjeta_propuesta(t: T, defs: dict, registro: dict, origen_conversacion: st
     this proposal's own conversation's `origen` column (agente_conversacion.origen_de): 'mcp' shows
     a small plain label on the card, so the person knows it came from their personal assistant
     (the desk), never from Body's own chat panel -- rendered here, not in JS, like every other
-    string on this card."""
+    string on this card. `registro["aplicada_via"]` (BODY-MCP-APLICAR-1) overrides that label with
+    a more specific one when this same outside caller also APPLIED it itself, through its own
+    `aplicar_propuesta` tool, rather than the person tapping Aplicar in Body."""
     accion = registro["accion"]
     despues = registro["despues_json"]
     antes_json = registro["antes_json"]
@@ -394,12 +396,20 @@ def _tarjeta_propuesta(t: T, defs: dict, registro: dict, origen_conversacion: st
         despues_txt = t("asistente.propuesta.despues", valor=despues_txt)
     elif despues_txt:
         despues_txt = t("asistente.propuesta.solo_propuesta", valor=despues_txt)
+    # BODY-MCP-APLICAR-1 ruling 4: an apply THIS caller made itself (aplicada_via == 'mcp') gets
+    # its own, more specific label -- never the generic "from your personal assistant" one, since
+    # that applies regardless of who tapped Aplicar.
+    if registro["aplicada_via"] == "mcp":
+        origen_etiqueta = t("asistente.propuesta.aplicado_mcp")
+    elif origen_conversacion == "mcp":
+        origen_etiqueta = t("asistente.propuesta.origen_mcp")
+    else:
+        origen_etiqueta = None
     return {
         "id": registro["id"], "accion": accion, "titulo": t("asistente.propuesta.titulo." + accion),
         "antes": antes_txt, "despues": despues_txt, "series": series_tarjeta, "expira_en": registro["expira_en"],
         "deshacer": accion not in agente_propuestas.SIN_DESHACER, "estado": registro["estado"],
-        "etiquetas": _etiquetas(t),
-        "origen_etiqueta": t("asistente.propuesta.origen_mcp") if origen_conversacion == "mcp" else None,
+        "etiquetas": _etiquetas(t), "origen_etiqueta": origen_etiqueta,
     }
 
 

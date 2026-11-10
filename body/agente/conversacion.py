@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 class ConversacionAjena(Exception):
@@ -48,6 +48,28 @@ def pendientes_mcp(conn: sqlite3.Connection, person_id: int) -> tuple[int, int |
         "JOIN conversacion_agente c ON c.id = p.conversacion_id "
         "WHERE p.person_id = ? AND p.estado = 'propuesta' AND c.origen = 'mcp'",
         (person_id,),
+    ).fetchone()
+    return row["n"], row["id"]
+
+
+def aplicados_mcp_recientes(conn: sqlite3.Connection, person_id: int, ahora: datetime,
+                             horas: int = 24) -> tuple[int, int | None]:
+    """(count, newest conversation id) of proposals this OUTSIDE caller applied itself in the last
+    `horas` hours, through its own `aplicar_propuesta` tool (`aplicada_via = 'mcp'`, set only by
+    body/mcp.py, never by Body's own /asistente/propuestas/{id}/aplicar route) -- BODY-MCP-
+    APLICAR-1, ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5: Hoy's own 24h-wide aviso line after an
+    outside apply, so nothing lands silently. Deliberately NOT "any mcp-origin proposal now in
+    state aplicada" -- the person tapping Aplicar themselves, in Body, on a proposal their
+    assistant merely proposed, is not an outside apply and must never raise this line (a case
+    tests/test_mcp_visible.py's own HoyLineaTest already exercises). `ahora` is the caller's own
+    clock (real time in production, an injectable fake in tests, so a test can cross the 24h edge
+    without sleeping). (0, None) when there is none, or once every such apply has aged past the
+    window."""
+    corte = (ahora - timedelta(hours=horas)).isoformat(timespec="seconds")
+    row = conn.execute(
+        "SELECT COUNT(*) AS n, MAX(conversacion_id) AS id FROM propuesta_agente "
+        "WHERE person_id = ? AND estado = 'aplicada' AND aplicada_via = 'mcp' AND resuelta_en >= ?",
+        (person_id, corte),
     ).fetchone()
     return row["n"], row["id"]
 
