@@ -15445,3 +15445,11 @@ text a person reads, in both languages. No cross-repo contract or DTO change.
 
 Stops **GATE_RED** on `feat/body-noche-inusual-1`, per the dispatch's own rule ("Red you cannot fix
 inside `touches:` -> stop GATE_RED on the branch"). Not merged.
+
+Open follow-ups, outside this slice's own `touches:`:
+- `BODY-NOCHE-INUSUAL-TESTFIX-ESTADOS-1`: raise `tests/test_estados_vacios_2.py`'s
+  `PersonaCompletaSinCambiosTest.test_demo_person_unchanged` aviso count from 1 to 2, with a
+  one-line reason (the demo's own open "lesión" period and this slice's own invented unusual night
+  now both cover the anchor day).
+- `BODY-NOCHE-INUSUAL-TESTFIX-RUTAS-1`: add `("/day/{day}/noche-inusual/visto", ("POST",))` to
+  `tests/test_web_entry.py::RouteSetTest.BEFORE`.
