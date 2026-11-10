@@ -14647,3 +14647,205 @@ conn = db.connect(); person_id = db.local_person_id(conn); print(recuperacion.re
 person_id))"` -- imports `body.recuperacion.recalcular` exactly as BODY-RECUPERACION-1-C's spec asked,
 recomputes every activity under `recuperacion-v2` (old `recuperacion-v1` rows stay, ruling 1), prints
 counts only.
+
+## BODY-TURNO-FC-1 -- shift-hour heart rate vs the same hours on days off (AWAITING_APPROVAL)
+
+Carlos's study 2 (vida/estudios.md, relayed by the Personal desk, 2026-11-09): "on morning shifts his
+HR stays low most of the shift" -- compared by shift kind and by the previous night's sleep.
+ORCH-CARLOS-DELEGATES-TIER-1-1's approval reason for this slice gave 7 rulings; every one of them
+shaped `body/turno_fc.py`'s own docstring and this entry follows them in order.
+
+**Ruling 1 (the unit is one shift, not a calendar day) and ruling 2 (the reference is the SAME CLOCK
+HOURS on the person's own days off).** `turno_fc.turno_fc(conn, person_id, shift_row, cache)` reads
+every heart-rate sample inside the shift's own `start_local..end_local` window (a night shift crossing
+midnight just means its two calendar days are both read -- the existing timezone-naive local-timestamp
+convention, `experimentos._sin_offset`, needs no zone math for this). The reference comes from
+`body/intradia_horario.py`'s generalized `usual_hora(..., solo_descanso=True)`: the person's own
+median for that clock hour, over `MODELO['dias_historia']` days of history, counting ONLY a day whose
+`shift.kind` is confirmed `'off'` (a day with no shift row at all is never counted as off).
+
+**Shared helpers moved out of `body/recuperacion.py` into `body/intradia_horario.py`, no behaviour
+change.** The per-day intraday cache (`leer_dia`), the activity-hours exclusion
+(`horas_actividad_por_dia`) and the hourly-usual computation (`usual_hora`) now live in the new shared
+module; `recuperacion.py`'s own `_leer_dia`/`_horas_actividad_por_dia`/`_usual_hora` are thin
+one-line wrappers over it, passing its own `MODELO` figures in as keyword arguments (the shared module
+reads no MODELO of its own -- `recuperacion.py` and `turno_fc.py` each keep their own versioned one).
+No test reached into those private helpers directly before this move (checked by grep), so
+`tests/test_recuperacion.py` needed no change at all beyond what the gate already confirms green.
+`usual_hora` gained one new parameter, `solo_descanso` (default `False`, so `recuperacion.py`'s own
+calls are unaffected): when `True`, a cached day -> `shift.kind` map
+(`_dias_descanso_por_persona`, built once per `cache`) additionally requires that day's own confirmed
+kind to be `'off'`.
+
+**`body/turno_fc.py`'s `MODELO` (version `"turno-fc-v1"`), each default justified:**
+- `dias_historia = 90` -- off days are roughly 2 of every 7, so a 30-day window (recuperacion's own
+  figure, drawn from EVERY day) would leave an hour's own "usual" with too few off days to qualify;
+  90 days gives about three times the raw days to draw an off-day sample from.
+- `cobertura_min = 0.5` -- the same convention `experimentos.COBERTURA_MIN` and `recuperacion.MODELO`
+  already use, reused here for BOTH the shift window's own coverage check and each (day, hour) pair's
+  coverage check inside `usual_hora`.
+- `min_dias_horario = 8` -- lower than `recuperacion.MODELO`'s own 10, since the 'off'-only filter here
+  already leaves far fewer candidate days per hour than recuperacion's unrestricted one.
+- `min_n_grupo = 5` -- the same floor `recuperacion.MODELO['min_n_grupo']` uses (ruling 4).
+- `ruido_min_diferencia_bpm = 2.0` -- double `turnos_costo.UMBRAL_IGUAL`'s own bpm floor (1.0, one
+  metric's day-to-day noise), since this compares a MEDIAN of per-shift medians against a MEDIAN of
+  per-hour usuals -- one extra layer of averaging on either side.
+- `max_hallazgos = 3` -- the same cap `recuperacion.MODELO['max_hallazgos']` uses.
+
+**Ruling 3 (per-shift figures, honest gaps) and ruling 5 (exclusions).** `turno_fc()` returns the
+window's own median heart rate, median stress (no coverage floor of its own -- a reading when there is
+one, nothing when there is not), the share of heart-rate samples at or below each touched hour's own
+usual (`bajo_usual_pct`, the "stays low" observation), the days-off reference itself
+(`referencia_fc`), and the window's own coverage -- or one of `db.TURNO_FC_MOTIVOS` (`"marcado"`,
+`"sin_cobertura"`, `"sin_rango"`) when any of that cannot be said. A marked day (the shift's own day)
+never reaches a figure; an hour touched by one of the person's own activities is excluded from the
+window before the median or the coverage check ever sees it (`_muestras_ventana`).
+
+**Why `referencia_fc` is a persisted column, not a live join -- the performance redesign.** The first
+draft of `estudio()` called `usual_hora(solo_descanso=True)` LIVE for every touched hour of every
+shift on every page render, joined back to `shift` for each row's own window. Measured against
+`tests/test_rendimiento.py`'s own hard-coded, un-touchable ceiling for `/shifts` (50 statements,
+measured baseline 39 before any of this slice's changes) and `/shifts/como` (25, baseline 19), that
+design would have blown the budget on any history of size. Redesigned: `turno_fc()` computes the
+days-off reference ONCE, at `recalcular()` time, as `round(statistics.fmean(cutoffs.values()), 1)` --
+reusing the `cutoffs` dict already built for `bajo_usual_pct`, so this costs nothing extra -- and
+persists it as `turno_fc.referencia_fc`. `estudio()` is now two cheap `SELECT`s and no join, no live
+`usual_hora` call. Measured on the full demo (120 days, `demo._seed`, the regular `/shifts` fixture
+`tests/test_rendimiento.py` itself uses): `/shifts` stayed at **39 statements** with the new section
+wired in and a real finding showing (same as the pre-slice baseline -- the two extra `turno_fc.estudio`
+`SELECT`s fit inside statements the route already spent elsewhere); `/shifts/como` stayed at **17**
+(baseline 19, this route reads nothing from `turno_fc` at all). Both pinned independently in
+`tests/test_turno_fc_pantallas.py::StatementCeilingTest` at the full ceiling (50/25), since
+`test_rendimiento.py` itself is not in this slice's touches.
+
+**Derived table** `turno_fc` (`person_id, day, kind, modelo_version, fc_mediana, estres_mediana,
+bajo_usual_pct, referencia_fc, cobertura, motivo, computed_at`; `PRIMARY KEY (person_id, day,
+modelo_version)`; `motivo` CHECK-constrained to `db.TURNO_FC_MOTIVOS` or `NULL`). `recalcular(conn,
+person_id)` fills every working shift (`kind != 'off'`, the earliest `start_local` on the rare day with
+more than one row) with no row yet under the current version -- idempotent, and a version bump leaves
+the old version's rows in place (ruling 1's own convention, same as recuperacion). Shares ONE `cache`
+dict across the whole run, so a day touched by several shifts' own windows or look-backs is read via
+`db.intradia` at most once per (day, kind) --
+`tests/test_turno_fc.py::CacheUnaSolaLecturaTest` asserts this directly, mocking `db.intradia`.
+
+**Ruling 4 (groups with counts).** `estudio(conn, person_id)` groups the derived rows by shift kind,
+and inside each kind by the previous night's sleep (short vs usual, the SAME split
+`recuperacion.estudio()` already uses -- below/at-or-above that history's own median
+`sleep_minutes`). A group under `MODELO['min_n_grupo']` reads `{"motivo": "pocos_datos", "n": n}`
+instead of a figure. The top `MODELO['max_hallazgos']` kind-level differences from the days-off
+reference, sorted by magnitude, come back as ready-to-word findings; a difference under
+`MODELO['ruido_min_diferencia_bpm']` is never one.
+
+**Ruling 6 (the schedule is the published one).** The screen says so once, plainly, after the
+findings: `shifts.pulso.horario_publicado`.
+
+**Ruling 7 (nothing enters `vida_export`).** `body/vida_export.py` is not in this slice's touches and
+was not opened; `turno_fc` was never added to anything it reads.
+
+**Privacy.** `turno_fc` joins `FULLY_HANDLED_TABLES` in `body/privacidad.py`: `export_person()` returns
+every column except `person_id` under a new `"turno_fc"` key, and `delete_person()` deletes the
+person's own rows in one transaction, before its parent `shift` rows would be removed by anything
+upstream. `tests/test_privacidad.py::TurnoFcExportDeleteTest` (4 cases) and
+`tests/test_persona_fuga.py`'s `TableCensusTest` (one new seeded row in `_seed_person`, no marker
+needed -- the census only checks export/delete-all coverage, same note `recuperacion_actividad`'s own
+seeding carries) both pass.
+
+**Screen.** Turnos gained one card, "Tu pulso durante el turno" / "Your heart rate during shifts",
+between the "última semana" card and the 8-week strip -- hidden entirely when the person has no
+`turno_fc` rows yet (same convention as `turnos_costo`'s own `costo_vacio`). Per kind, one line (the
+kind's own `shift.kind.*` label leads it, as a plain "`Label: sentence`" clause, since those labels
+read as Proper-Case tags, not lowercase prepositional words -- deliberately NOT the dispatch's own
+illustrative "en turnos de mañana..." phrasing, which would have read as "en turnos de Mañana..." with
+the label it actually resolves to; recorded here as a wording judgment call, not tested verbatim
+anywhere against the dispatch's own example), then its sleep-split sub-lines where a group clears the
+floor, then up to 3 findings, then the published-schedule note. Exact strings (es / en):
+
+    shifts.pulso.title: "Tu pulso durante el turno" / "Your heart rate during shifts"
+    shifts.pulso.linea: "{kind}: tu pulso estuvo en {fc} lpm, {diff} {direccion} las mismas horas en un
+      día de descanso ({n} turnos)." / "{kind}: your heart rate was {fc} bpm, {diff} {direccion} the
+      same hours on a day off ({n} shifts)."
+    shifts.pulso.linea_igual: "{kind}: tu pulso estuvo en {fc} lpm, muy similar a las mismas horas en un
+      día de descanso ({n} turnos)." / "{kind}: your heart rate was {fc} bpm, about the same as the
+      same hours on a day off ({n} shifts)."
+    shifts.pulso.sin_referencia: "{kind}: tu pulso estuvo en {fc} lpm ({n} turnos). Aún no hay
+      suficientes días de descanso para comparar." / "{kind}: your heart rate was {fc} bpm ({n}
+      shifts). There aren't enough days off yet to compare."
+    shifts.pulso.pocos_datos: "{kind}: todavía pocos turnos con datos del reloj para esto ({n})." /
+      "{kind}: still too few shifts with watch data for this ({n})."
+    shifts.pulso.bajo / .alto: "por debajo de" / "por encima de" -- "below" / "above"
+    shifts.pulso.sueno_corta: "Después de una noche corta: {fc} lpm ({n} turnos)." / "After a short
+      night: {fc} bpm ({n} shifts)."
+    shifts.pulso.sueno_normal: "Después de una noche normal: {fc} lpm ({n} turnos)." / "After a normal
+      night: {fc} bpm ({n} shifts)."
+    shifts.pulso.hallazgos_title: "Lo que más resalta" / "What stands out most"
+    shifts.pulso.hallazgo: "{kind}: tu pulso está {diff} {direccion} tus días de descanso -- la mayor
+      diferencia entre tus turnos." / "{kind}: your heart rate is {diff} {direccion} your days off --
+      the biggest difference among your shifts."
+    shifts.pulso.horario_publicado: "Esto compara el horario publicado, no los cambios de última hora."
+      / "This compares the published schedule, not last-minute swaps."
+
+No colour grading, no medical language anywhere in the above. `tests/test_i18n_paridad.py` gained two
+`_FIXED_DYNAMIC` entries for the two new dynamic prefixes (`"shifts.pulso.+"` ->
+`turnos._PULSO_DIRECCION_WORDS`, `"shifts.pulso.sueno_+"` -> the fixed `["corta", "normal"]` split);
+`t("shift.kind." + kind)` inside the new helpers resolves under the EXISTING `"shift.kind.+"` entry, no
+change needed there.
+
+**Post-pull and the one-off backfill.** `body/pull.py` gained `_recalcular_turno_fc_seguro(conn,
+person_id)`, mirroring `_recalcular_recuperacion_seguro` exactly (silent when nothing is new, one
+counts-only line -- `"turno_fc: N filas nuevas"` -- otherwise, every exception caught and printed by
+TYPE only), called after the existing recuperacion step in every pull path (`pull_hosted`,
+`pull_backfill_hosted`, local `_run`). `body/vivo.py` gained `"turno_fc": "body.turno_fc"` in `TAREAS`,
+for the one-off first backfill the orchestrator runs later (not this slice).
+
+**Demo.** `body/demo.py` gained `_seed_turno_fc`, called after `_seed_recuperacion` and `_seed_shifts`.
+It reads back which calendar days already hold `intradia_fc` data (`raw_payload`, since
+`db.guardar_intradia` replaces a whole day's row) and fills every day-off day still missing one with
+the same flat per-hour background `_seed_recuperacion`'s own fill already uses, so the days-off
+reference has enough qualifying days; then it picks up to 8 confirmed `'morning'` shift days OUTSIDE
+`_seed_recuperacion`'s own most-recent-24-activities reserved set (`_dias_actividades_recuperacion` --
+the only days that must never be touched again, since recuperacion's own derived rows are already
+computed and stored by this point) and lowers their own window by a flat 10 bpm, clearly past the
+noise floor. Measured on the default seed (dias=120): 8 shifts seeded, `estudio()` returns one finding
+("morning", `fc_mediana=63`, `referencia=71`, `diff=8`), and the section renders with it in both
+languages (checked by hand against the actual `/shifts` response body in a throwaway script, not
+committed).
+
+**Tests.** `tests/test_turno_fc.py` (23 cases): the shift window including a night crossing midnight in
+a non-UTC zone, the days-off reference, activity-hour exclusion, marked-day exclusion, the coverage
+floor (window and missing-reference), `recalcular`'s idempotence and version-bump behaviour, the
+per-run single-read cache, `estudio()`'s kind and sleep groups with `pocos_datos` and the noise floor,
+and `_recalcular_turno_fc_seguro`'s silent/counts-only behaviour. `tests/test_turno_fc_pantallas.py`
+(8 cases): the section absent/present, a real finding in es and en, the `pocos_datos` and
+`sin_referencia` honest phrasings, the noise-floor "muy similar" phrasing, and the `/shifts` (50) /
+`/shifts/como` (25) statement ceilings. No figure appears in any printed line anywhere in either file
+or in `pull.py`'s own step -- only counts, reasons and ids.
+
+**Gate**, once, foreground, on the branch tip (`995042c`): `.venv/Scripts/python.exe -m unittest
+discover tests -t .` -> `Ran 2201 tests in 497.439s ... OK (skipped=1)` (2163 before this slice per
+BODY-RECUPERACION-1-M's own ledger entry above; +38, exactly this slice's own 23+8 new cases plus 4 in
+`tests/test_privacidad.py` and 3 in `tests/test_vivo.py`).
+
+Diff classified against the branch: no schema change beyond the one new table (`turno_fc` -- not a
+modification of any existing table or column, but a derived-data table is still a schema change under
+merge policy A). Customer-facing bytes: YES -- the whole "Tu pulso durante el turno" section, new in
+both languages. Either condition alone is enough to stop before merge, so this slice stops
+**AWAITING_APPROVAL** and does **NOT** merge into `main`.
+
+Commits on `feat/body-turno-fc-1`: `995042c` (this slice's whole diff: the shared-helper extraction,
+the new module and table, privacy, pull, vivo, the screen, the demo seeding, and every test above), on
+top of `beee300` (`main`'s tip when this slice branched, BODY-RECUPERACION-1-M's own ledger entry).
+
+**Measurement command for the orchestrator**, to run against a COPY of Carlos's real `BODY_HOME`
+(never from inside a slice, never printing a figure): `python -c "from body import db, turno_fc; conn =
+db.connect(); person_id = db.local_person_id(conn); print(turno_fc.recalcular(conn, person_id))"` --
+imports `body.turno_fc.recalcular` exactly as this slice built it, fills `turno_fc` for every shift
+under `turno-fc-v1`, prints `{"nuevas": N, "motivos": {...}}` (counts only). The real first backfill
+(the orchestrator's own `TAREAS["turno_fc"]` vivo task) stays with Carlos's yes and a backup first --
+not in this slice, and not run here.
+
+**How the section shows on the demo server (port 8773, once started by the orchestrator).** `/shifts`,
+signed in as the demo person (es or en): a card titled "Tu pulso durante el turno" / "Your heart rate
+during shifts" appears between the "última semana" card and the 8-week strip, with one line per shift
+kind present in the demo's own history (morning, afternoon, night, day), a "Lo que más resalta" / "What
+stands out most" block naming the morning shift as the biggest difference (8 bpm below the days-off
+reference), and the published-schedule note at the end.
