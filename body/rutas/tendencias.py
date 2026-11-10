@@ -8,6 +8,7 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 
 from .. import baselines, db, identity, profile
+from ..catalogo_tendencias import TODAS
 from ..i18n import T
 from . import comun
 
@@ -75,23 +76,19 @@ def _medidas_count_txt(t: T, n: int) -> str:
     return t("trends.medidas_count_one") if n == 1 else t("trends.medidas_count_other", n=n)
 
 
-def _trend_card(conn, t: T, defs: dict, k: str, start, end, month, nights, person_id: int):
+def _trend_card(t: T, defs: dict, k: str, start, end, month, nights, profiles: dict, windows_by_key: dict):
     """One card -- own baseline, honest gaps, night shading, the month tap -- built the same way for the
     default 9 and every extra metric behind "Ver todas las medidas" (DESIGN rules 3, 6, 7). A
     self-measured key (BODY-ENTRENO-MEDIDA-1) gets a card from its first value instead of waiting
     for TREND_MIN_DAYS worth of watch-sized history -- there is no cadence to wait on. Below
     baselines.MIN_DAYS of self-measured values, p.low/p.high are not yet an honest normal range (as
     few as one point collapses them to a single repeated value) -- the card carries no delta, no
-    normal-range legend and no band, and a count line instead (BODY-ENTRENO-TOOLS-1-M fix 3)."""
+    normal-range legend and no band, and a count line instead (BODY-ENTRENO-TOOLS-1-M fix 3).
+
+    profiles and windows_by_key are read once for every key the whole route needs (BODY-AGUJETAS-1-B)
+    -- this card never queries the database itself, so its own cost does not grow with the catalogue."""
     d = defs[k]
-    es_self = d["origen"] == "self"
-    min_days = 1 if es_self else TREND_MIN_DAYS
-    # BODY-MEDIDA-PESO-1-M2: a weekly self-measured key never reaches the 7-points-a-month floor a
-    # near-daily Garmin metric clears easily -- SELF_MIN_MONTH_POINTS lets its monthly line draw
-    # too, a few points joined being a fine chart for a weekly measure.
-    min_month_points = SELF_MIN_MONTH_POINTS if es_self else GARMIN_MIN_MONTH_POINTS
-    p = profile.metric_profile(conn, k, person_id=person_id, min_days=min_days,
-                               min_month_points=min_month_points)
+    p = profiles.get(k)
     if not p:
         return None, None
     pocas = d["origen"] == "self" and p.days < baselines.MIN_DAYS
@@ -99,7 +96,7 @@ def _trend_card(conn, t: T, defs: dict, k: str, start, end, month, nights, perso
     metric_label = t("metric." + k)
     valor_fmt = lambda v: comun._fig_unit(t, k, v, defs)
     if start:
-        w = profile.window(conn, k, start, end, person_id)
+        w = windows_by_key[k]
         if pocas:
             delta, cls = "", "flat"
         elif month:
@@ -140,6 +137,15 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
     conn, person, t = comun._ctx(person_id)
     turnos_on = db.trabaja_turnos_si(conn, person_id)
     defs = comun._defs(conn)
+    todas_keys = list(TODAS)
+    # BODY-MEDIDA-PESO-1-M2 / BODY-ENTRENO-MEDIDA-1: a self-measured key's own lower thresholds,
+    # same reasoning _trend_card used per key before BODY-AGUJETAS-1-B batched this read.
+    min_days_por_clave = {k: (1 if defs[k]["origen"] == "self" else TREND_MIN_DAYS) for k in todas_keys}
+    min_month_points_por_clave = {k: (SELF_MIN_MONTH_POINTS if defs[k]["origen"] == "self"
+                                       else GARMIN_MIN_MONTH_POINTS) for k in todas_keys}
+    profiles = profile.metric_profiles(conn, todas_keys, person_id=person_id,
+                                       min_days_por_clave=min_days_por_clave,
+                                       min_month_points_por_clave=min_month_points_por_clave)
     last = comun._latest_day(conn, person_id)
     desde_dia = None
     if desde in ("dia", "como") and dia:
@@ -173,9 +179,10 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
         end = date.fromisoformat(last)
         start = end - timedelta(int(r) - 1)
     nights = _nights(conn, start, end, person_id) if start and turnos_on else set()
+    windows_by_key = profile.windows(conn, todas_keys, start, end, person_id=person_id) if start else {}
     cards, since, days = [], None, 0
     for k in comun.TREND_KEYS:
-        card, p = _trend_card(conn, t, defs, k, start, end, month, nights, person_id)
+        card, p = _trend_card(t, defs, k, start, end, month, nights, profiles, windows_by_key)
         if not card:
             continue
         since = since or p.first_day
@@ -194,7 +201,7 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
     for group_key, keys in comun.TREND_GROUPS:
         group_cards = []
         for k in keys:
-            card, p = _trend_card(conn, t, defs, k, start, end, month, nights, person_id)
+            card, p = _trend_card(t, defs, k, start, end, month, nights, profiles, windows_by_key)
             if not card:
                 continue
             since = since or p.first_day
@@ -205,7 +212,9 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
         if group_cards:
             extra_groups.append({"title": t("trends.group." + group_key), "cards": group_cards})
     week = None
-    profs = [profile.metric_profile(conn, k, person_id=person_id) for k in WEEK_KEYS]
+    # WEEK_KEYS is a subset of TODAS, read with the same (default) thresholds above -- reusing the
+    # prefetched profiles here, instead of a second query per key, is what BODY-AGUJETAS-1-B batched.
+    profs = [profiles.get(k) for k in WEEK_KEYS]
     if all(profs):
         cols = []
         for k, p in zip(WEEK_KEYS, profs):

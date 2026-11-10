@@ -644,6 +644,16 @@ METRIC_DEFS += [
     # lower protein is the person's own goal, never assumed here. `agregado = 'suma_ingesta'` marks
     # it as derived from `ingesta` rows, not a single self-reported figure.
     ("protein_g", "Protein", "g", "neutral", "measured", "self", "suma_ingesta"),
+    # BODY-AGUJETAS-1 (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1): next-day muscle soreness, one key
+    # per muscle GROUP, not a finer list -- 'neutral' (ruling 2): soreness is neither good nor bad,
+    # it is the person's own read of the work a session gave that muscle.
+    ("soreness_legs", "Soreness: legs", "of5", "neutral", "measured", "self"),
+    ("soreness_glutes", "Soreness: glutes", "of5", "neutral", "measured", "self"),
+    ("soreness_back", "Soreness: back", "of5", "neutral", "measured", "self"),
+    ("soreness_chest", "Soreness: chest", "of5", "neutral", "measured", "self"),
+    ("soreness_shoulders", "Soreness: shoulders", "of5", "neutral", "measured", "self"),
+    ("soreness_arms", "Soreness: arms", "of5", "neutral", "measured", "self"),
+    ("soreness_core", "Soreness: core", "of5", "neutral", "measured", "self"),
 ]
 # BODY-PROTEINA-1: a 7th field, `agregado` -- 'suma_ingesta' marks a key whose daily_metric value is
 # the SUM of that day's `ingesta` rows, derived by db.registrar_ingesta/corregir_ingesta/
@@ -657,7 +667,23 @@ METRIC_DEFS = [d if len(d) == 7 else (*d, None) for d in METRIC_DEFS]
 RANGOS_MEDIDA_PERSONAL = {
     "body_weight_kg": (20, 300),
     "waist_cm": (40, 200),
+    # BODY-AGUJETAS-1 ruling 2: 0-5 inclusive for every soreness key.
+    "soreness_legs": (0, 5),
+    "soreness_glutes": (0, 5),
+    "soreness_back": (0, 5),
+    "soreness_chest": (0, 5),
+    "soreness_shoulders": (0, 5),
+    "soreness_arms": (0, 5),
+    "soreness_core": (0, 5),
 }
+
+# BODY-AGUJETAS-1 ruling 2: a soreness reading is whole numbers only (0, 1, 2, 3, 4 or 5) -- keyed
+# set, not every self key with a range: body_weight_kg/waist_cm keep a decimal.
+# body/agente/herramientas.py's _registrar_medida reads this instead of naming the seven keys itself.
+ENTEROS_MEDIDA_PERSONAL = frozenset({
+    "soreness_legs", "soreness_glutes", "soreness_back", "soreness_chest",
+    "soreness_shoulders", "soreness_arms", "soreness_core",
+})
 
 # BODY-PERIODO-1 ruling 1: kinds are DATA in period_kind, never code -- a kind added later is just
 # a new row (and an i18n "periodo.kind.<key>" entry for its label), (key, sort_order) in that order.

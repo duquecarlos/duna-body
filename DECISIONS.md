@@ -13732,3 +13732,142 @@ scoped to a connection and the web app opens one connection per request
 No schema change, no customer-facing bytes beyond the two string fixes named above (already
 reviewed and approved by the orchestrator per ORCH-CARLOS-DELEGATES-TIER-1-1), no cross-repo
 contract -- merged on this green gate per the approval.
+
+## BODY-AGUJETAS-1 -- next-day muscle soreness as self-measured metric_def rows (2026-11-09)
+
+Carlos (relayed by his Personal desk) uses next-day muscle soreness as his own check that a session
+gave a muscle enough work. Seven new `metric_def` rows, `origen = 'self'`, `direction = 'neutral'`
+(ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1-2): `soreness_legs`, `soreness_glutes`, `soreness_back`,
+`soreness_chest`, `soreness_shoulders`, `soreness_arms`, `soreness_core` -- one key per muscle
+GROUP, never a finer list -- unit `pts`, on the same propose/apply/undo path `registrar_medida`
+already gives `flex_alcance_cm`/`body_weight_kg` (BODY-ENTRENO-MEDIDA-1, BODY-MEDIDA-PESO-1).
+`SELF_METRIC_KEYS` and Tendencias' "self" group pick up all seven with no second list, both derived
+from `db.METRIC_DEFS`.
+
+`db.RANGOS_MEDIDA_PERSONAL` gains a `(0, 5)` inclusive range for each key (ruling 2's 0-5 scale).
+New `db.ENTEROS_MEDIDA_PERSONAL`, a frozenset of the same seven keys: `_registrar_medida` now also
+refuses a non-whole-number figure for a key listed there (ruling 2's "whole numbers"), checked
+after the existing range refusal. `registrar_medida`'s model-facing description (ruling 3) gained a
+clause: when the person says a muscle is sore ("las piernas me quedaron adoloridas, como un 3"),
+propose one soreness reading per group they mention, and the day used is the day the person says
+they feel it, by convention the morning after the session -- never inferred from the day they
+trained.
+
+es/en labels ("Agujetas: piernas" / "Soreness: legs", etc.), a Tendencias question and a plain-word
+line for each key, the plain line stating the 0-5 scale and the morning-after convention explicitly
+("qué tan adoloridas sientes las piernas al día siguiente de entrenar, de 0 (nada) a 5 (mucho),
+registrado por ti" / "how sore your legs feel the morning after training, 0 (none) to 5 (a lot),
+logged by you") -- never a medical word.
+
+`body/readiness.py` reads a fixed tuple of six Garmin-sourced keys (`readiness.METRICS`) and nothing
+else, so a soreness key never reaches readiness or any baseline-as-score without a change there;
+this slice makes none.
+
+**Demo.** New `demo._seed_soreness`: the day after an invented `strength_training` activity
+(already drawn by `_seed_days`' own `_day_activity`), one soreness reading, cycling through the
+seven keys in order so a run with fewer strength sessions than keys still seeds every key at least
+once -- a top-up pass on the last few seeded days covers any key a session never reached. This is
+what keeps `tests/test_demo.py`'s existing `test_every_catalogue_metric_present_at_least_once`
+green without touching that file (outside this slice's `touches:`), the same gap BODY-MEDIDA-PESO-1
+hit and had to close in a follow-up slice.
+
+**Tests** (`tests/test_agujetas.py`, new): all seven rows exist with the rulings' shape (unit,
+direction, range, whole-number set); propose/apply/undo for `soreness_legs` and one proposal for
+each of the seven on the day felt; 0 and 5 accepted at the edges, 6 and a negative value refused,
+3.5 refused as non-whole (3.0 accepted); a soreness value added alongside a normal readiness
+fixture never changes `readiness.compute`'s score and never appears in any `Part`'s key;
+`readiness.METRICS` names none of the seven; the assistant's proposal card and the Tendencias card
+(question + plain line) render in es and en; the "self" group includes all seven.
+`tests/test_agente_medida.py`'s pinned self-group set extended from five keys to the twelve now
+live.
+
+**Gate**, once, foreground, from the repository root: `.venv/Scripts/python.exe -m unittest
+discover tests -t .` -> `Ran 2051 tests in 395.996s ... FAILED (failures=1, skipped=1)`.
+
+The one failure is `tests/test_rendimiento.py`'s `RouteCostCeilingTest`:
+`/goals/new` ran 54 statements against its hardcoded ceiling of 48, `/trends` ran 53 against 51.
+Both routes build their metric picker / self-group cards by looping over every live self-measured
+`metric_def` row -- the same dynamic, per-key-query path `flex_alcance_cm`/`body_weight_kg`/
+`waist_cm`/`protein_g` already use, never a hardcoded pair of keys. Going from 5 to 12 self-measured
+rows is exactly what raises each route's real statement count; nothing in this slice's own diff
+queries per-route differently than the existing pattern already did. `tests/test_rendimiento.py`'s
+`_CEILINGS` table is a hardcoded, measured-plus-margin figure in a file outside this slice's
+`touches:`, so it cannot be widened here.
+
+Commit on `feat/body-agujetas-1`: `6c6fbea10b49a87513452f3dfa4a1e47c164722d`.
+
+No schema migration (new `metric_def` rows and ranges only, the same path BODY-MEDIDA-PESO-1 used),
+no cross-repo contract. Customer-facing: yes -- Tendencias gains seven cards and the assistant can
+propose a soreness reading. The gate is red for a reason outside this slice's touches, so this
+stops **GATE_RED**, left on `feat/body-agujetas-1`, not merged.
+
+## BODY-AGUJETAS-1-B -- the per-key reads batched
+
+Continues BODY-AGUJETAS-1 (commits `6c6fbea`, `3e625da`, GATE_RED), on `feat/body-agujetas-1`.
+ORCH-CARLOS-DELEGATES-TIER-1-1 ruled against raising `/goals/new`'s and `/trends`' ceilings
+(ORCH-A-SUITE-NO-GATE-RUNS-ROTS-TOWARD-YOUR-RULINGS-1: fix a red by restoring the case's subject,
+which is that a page's statement count must not grow with the metric catalogue) -- the fix batches
+the per-metric-key reads instead.
+
+**`body/baselines.py`**: new `baselines(conn, keys, day, window=WINDOW_DAYS, *, person_id)` reads
+every key's 30-day window in one `SELECT ... WHERE metric_key IN (...)`, reads the marked-days
+exclusion (BODY-PERIODO-1 ruling 3) once, and returns `{key: Baseline | None}` -- the same per-key
+answer `baseline()` already gave. `baseline()`'s own conn-backed path now delegates to it for a
+single key; its `lector=`-backed path (`readiness.compute`, `turnos_costo`, from BODY-RENDIMIENTO-2)
+is untouched.
+
+**`body/profile.py`**: the row-to-`MetricProfile` math pulled out of `metric_profile()` into
+`_build_profile(key, rows, today, min_days, min_month_points)`; new `metric_profiles(conn, keys,
+today=None, *, person_id, min_days_por_clave=None, min_month_points_por_clave=None)` reads every
+key's `daily_metric` rows in one query and builds each key's profile from it, a key missing from
+either `_por_clave` dict falling back to `metric_profile()`'s own defaults (14, 7). Likewise `window()`
+now delegates to new `windows(conn, keys, start, end, *, person_id)`, one query spanning every key's
+current AND previous period instead of two per key.
+
+**`body/rutas/metas.py`**: `goal_new_form` calls `baselines(conn, list(defs), today,
+person_id=person_id)` once instead of `baseline()` once per `metric_def` row.
+
+**`body/rutas/tendencias.py`**: `trends()` now prefetches `profile.metric_profiles()` once for
+`catalogo_tendencias.TODAS` (every key the screen can show, the default nine plus every "Ver todas
+las medidas" group) with each key's own `min_days`/`min_month_points` (self vs Garmin, same
+reasoning `_trend_card` used per key before), and `profile.windows()` once when a date range is
+open. `_trend_card` no longer takes `conn`/`person_id` -- it reads its key's profile and window from
+the two prefetched dicts and issues no SQL itself. `WEEK_KEYS`' own table (a subset of `TODAS`, read
+with the same default thresholds) now reuses the same prefetched profiles instead of a second query
+per key -- one redundant query per `WEEK_KEYS` entry removed as a side effect of the same batch.
+
+**Tests.** `tests/test_baselines_lote.py`, `tests/test_profile_lote.py` (new): the batched readers
+equal the per-key readers for every key, with and without a marked period (BODY-PERIODO-1 ruling 3),
+and on an empty key list. `tests/test_rendimiento.py`: `/goals/new` and `/trends` remeasured on this
+file's own fixture (`demo._seed(dias=30, idioma="es")` + one assistant conversation, same fixture
+`_seed` already used) --
+
+| route | before (BODY-AGUJETAS-1) | after | new ceiling |
+|---|---|---|---|
+| `/goals/new` | 54 | 15 | 20 |
+| `/trends` | 53 | 14 | 19 |
+
+-- ceilings lowered to `ceil(measured * 1.3)`, the same ~30% margin rule BODY-RENDIMIENTO-2 used for
+`/shifts`/`/shifts/como`. A new `RouteCostIndependentOfCatalogSizeTest` inserts an extra self-measured
+`metric_def` row mid-test (for `/trends`, also widening the "self" group of `comun.TREND_GROUPS` and
+`tendencias.TODAS` the same way, via `patch.object` on each's owning module per
+`tests/test_guardia_parches.py`'s rule) and asserts both routes' statement count is unchanged --
+`tests/test_guardia_parches.py` and `tests/test_tendencias_todas.py` stay green, confirming the patch
+targets are real owners and the existing catalogue tests are undisturbed.
+
+**Gate**, once, foreground, on the branch tip (commit `316d8a9`): `.venv/Scripts/python.exe -m
+unittest discover tests -t .` -> `Ran 2061 tests in 450.580s ... OK (skipped=1)`.
+
+**Deviation**: the spec names `baselines()`'s day argument `today`; this slice kept `day`, the name
+`baseline()` (the function it delegates to/from) already uses for the same argument, rather than
+have the batched and single-key readers disagree on what to call it.
+
+Commit on `feat/body-agujetas-1`: `316d8a971808964c39d7bd3020093cc7c9434f48`.
+
+No schema migration, no cross-repo contract. Customer-facing bytes: unchanged by this commit (no
+template, i18n or route-output-string edit) -- only `body/baselines.py`, `body/profile.py`,
+`body/rutas/metas.py`, `body/rutas/tendencias.py` and three test files. The branch as a whole
+(`main..HEAD`) still carries BODY-AGUJETAS-1's own customer-facing bytes (`body/i18n/en.json`,
+`body/i18n/es.json`, Tendencias' seven new cards), and the approval reason names the orchestrator's
+own 375 px look as a stop independent of this commit's diff. So this stops **AWAITING_APPROVAL**,
+committed on `feat/body-agujetas-1`, not merged.

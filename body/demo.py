@@ -67,6 +67,12 @@ NIGHT_BREATH = ["sleep_spo2_avg", "sleep_respiration_avg", "sleep_respiration_lo
 # cadence (a weigh-in or a tape measurement is not a daily habit), not snoring_min's near-daily one.
 SELF_MEASURED = ["flex_alcance_cm", "snoring_min", "body_weight_kg", "waist_cm"]
 
+# BODY-AGUJETAS-1: next-day muscle soreness, one key per muscle group (ORCH-CARLOS-DELEGATES-
+# TIER-1-1 ruling 1) -- seeded by _seed_soreness below, on its own cadence (the day after an
+# invented strength_training session), not this module's weekly/near-daily ones.
+SORENESS_KEYS = ["soreness_legs", "soreness_glutes", "soreness_back", "soreness_chest",
+                 "soreness_shoulders", "soreness_arms", "soreness_core"]
+
 RANGES = {
     "resting_hr": (48, 62), "hrv_last_night": (40, 90), "hrv_weekly_avg": (45, 85),
     "sleep_minutes": (320, 480), "sleep_score": (40, 95), "stress_avg": (15, 45),
@@ -308,6 +314,36 @@ def _seed_self_metrics(conn, db, rng: random.Random, all_days: list[date], perso
     return rows
 
 
+def _seed_soreness(conn, db, rng: random.Random, all_days: list[date], person_id: int) -> int:
+    """A few invented soreness readings (BODY-AGUJETAS-1), the day after an invented strength
+    session already seeded by `_seed_days` (`_day_activity`'s own 'strength_training' draw) --
+    one muscle group's reading per session, cycling through SORENESS_KEYS in order. A run that
+    draws fewer strength sessions than there are keys still seeds every key at least once (the
+    catalogue-coverage guard in tests/test_demo.py), by topping up any key a session never
+    reached on the last few seeded days. Values are whole numbers (db.ENTEROS_MEDIDA_PERSONAL),
+    never the rounded-to-one-decimal `_value` helper the other self-measured keys use."""
+    last_day = all_days[-1]
+    strength_days = [date.fromisoformat(r["day"]) for r in conn.execute(
+        "SELECT day FROM activity WHERE person_id = ? AND type = 'strength_training' ORDER BY day",
+        (person_id,)).fetchall()]
+    rows = 0
+    seeded = set()
+    for i, day in enumerate(strength_days):
+        next_day = day + timedelta(1)
+        if next_day > last_day:
+            continue
+        key = SORENESS_KEYS[i % len(SORENESS_KEYS)]
+        db.set_metric(conn, next_day.isoformat(), key, float(rng.randint(1, 4)), "self", person_id)
+        seeded.add(key)
+        rows += 1
+    for j, key in enumerate(k for k in SORENESS_KEYS if k not in seeded):
+        db.set_metric(conn, (last_day - timedelta(j)).isoformat(), key, float(rng.randint(1, 4)),
+                       "self", person_id)
+        rows += 1
+    conn.commit()
+    return rows
+
+
 def _seed_ingesta(conn, db, rng: random.Random, all_days: list[date], person_id: int) -> int:
     """3-4 invented protein entries most days (BODY-PROTEINA-1), each its own `ingesta` row -- one
     writer (db.registrar_ingesta) sums them into that day's protein_g total, so Tendencias shows
@@ -461,6 +497,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
 
     metric_rows, activity_rows = _seed_days(conn, db, rng, all_days, person_id)
     metric_rows += _seed_self_metrics(conn, db, rng, all_days, person_id)
+    metric_rows += _seed_soreness(conn, db, rng, all_days, person_id)
     entradas_ingesta = _seed_ingesta(conn, db, rng, all_days, person_id)
     periodos = _seed_periodo(conn, db, all_days, person_id)
 
