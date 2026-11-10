@@ -668,9 +668,10 @@ def _registrar_medida(conn: sqlite3.Connection, person_id: int, conversacion_id:
     None), so `propuestas.deshacer` can restore it exactly. Besides the unit/type checks
     `_validar_parametros` already ran, the only sanity checks are rejecting a negative figure and,
     for a key listed in `db.RANGOS_MEDIDA_PERSONAL` (BODY-MEDIDA-PESO-1), a typo-sized figure
-    outside that key's plausible range. BODY-PROTEINA-1: an intake key (agregado = 'suma_ingesta')
-    is refused here too -- checked against the live row, defense-in-depth past the enum -- pointing
-    at registrar_ingesta, its one writer."""
+    outside that key's plausible range -- plus, for a key listed in `db.ENTEROS_MEDIDA_PERSONAL`
+    (BODY-AGUJETAS-1 ruling 2), a non-whole-number figure. BODY-PROTEINA-1: an intake key
+    (agregado = 'suma_ingesta') is refused here too -- checked against the live row,
+    defense-in-depth past the enum -- pointing at registrar_ingesta, its one writer."""
     fila = conn.execute("SELECT agregado FROM metric_def WHERE key = ? AND origen = 'self'",
                         (metric_key,)).fetchone()
     if fila is None:
@@ -688,6 +689,8 @@ def _registrar_medida(conn: sqlite3.Connection, person_id: int, conversacion_id:
     rango = db.RANGOS_MEDIDA_PERSONAL.get(metric_key)
     if rango is not None and not (rango[0] <= value <= rango[1]):
         raise ToolError(f"{metric_key!r} fuera de rango plausible ({rango[0]}-{rango[1]}): {value!r}")
+    if metric_key in db.ENTEROS_MEDIDA_PERSONAL and not value.is_integer():
+        raise ToolError(f"{metric_key!r} debe ser un número entero: {value!r}")
     anterior = conn.execute(
         "SELECT value FROM daily_metric WHERE person_id = ? AND day = ? AND metric_key = ?",
         (person_id, day, metric_key),
@@ -1139,7 +1142,13 @@ HERRAMIENTAS = [
      "parametros": _PARAM_REGISTRAR_ENTRENO, "funcion": _registrar_entreno},
     {"nombre": "registrar_medida", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone registrar un número que la persona mide ella misma para un día "
-                     "(por ejemplo su alcance de flexibilidad o sus minutos de ronquido). No lo "
+                     "(por ejemplo su alcance de flexibilidad, sus minutos de ronquido o qué tan "
+                     "adolorido siente un grupo muscular). Si la persona dice que un músculo quedó "
+                     "adolorido (por ejemplo \"las piernas me quedaron adoloridas, como un 3\"), "
+                     "propone una lectura de agujetas de 0 a 5 para ese grupo -- una propuesta por "
+                     "cada grupo que mencione. Por convención esa lectura es cómo se siente al día "
+                     "siguiente de la sesión, nunca el día del entrenamiento: usa el día en que la "
+                     "persona dice sentir el dolor, nunca lo infiere del día en que entrenó. No lo "
                      "guarda: registra la propuesta para que la persona la apruebe en el chat.",
      "parametros": _PARAM_REGISTRAR_MEDIDA, "funcion": _registrar_medida},
     {"nombre": "registrar_ingesta", "tipo": "propuesta", "nivel": "ninguno",
