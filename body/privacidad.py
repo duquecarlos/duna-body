@@ -26,6 +26,8 @@ FULLY_HANDLED_TABLES = {
     "figura_compartida", "workout_set",
     # Wave 9 (BODY-EXPERIMENTOS-ESQUEMA-1): experimento, its "it happened" log and moment.
     "experimento", "experimento_registro", "moment",
+    # BODY-PROTEINA-1: one row per thing eaten or drunk -- the person's own words, like moment.note.
+    "ingesta",
 }
 # raw_payload: kind/date only, never the stored JSON payload. garmin_cuenta: the connected-since
 # date only, never the encrypted token (BODY-GARMIN-HOST-1). dispositivo: name/scopes/dates only,
@@ -105,6 +107,9 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "momentos": [dict(r) for r in conn.execute(
             "SELECT * FROM moment WHERE person_id = ? ORDER BY ts_local", (person_id,))],
     }
+    ingesta = [dict(r) for r in conn.execute(
+        "SELECT id, day, ts_local, metric_key, amount, estimado, descripcion, created_at, updated_at "
+        "FROM ingesta WHERE person_id = ? ORDER BY day, id", (person_id,))]
     dias = [dict(r) for r in conn.execute(
         "SELECT day, metric_key, value, source FROM daily_metric WHERE person_id = ? ORDER BY day",
         (person_id,))]
@@ -167,6 +172,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "figuras_compartidas": figuras_compartidas,
         "vida": vida,
         "experimentos": experimentos,
+        "ingesta": ingesta,
         "dias": dias,
         "actividades": actividades,
         "sets_entreno": sets_entreno,
@@ -193,6 +199,7 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         conn.execute("DELETE FROM experimento_registro WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM moment WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM experimento WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM ingesta WHERE person_id = ?", (person_id,))
         conn.execute("UPDATE habit SET assignee_person_id = NULL WHERE assignee_person_id = ?", (person_id,))
         enlaces.delete_rows_for_person(conn, person_id)
         conn.execute(

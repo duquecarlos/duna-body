@@ -191,6 +191,11 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
     mid = db.crear_momento(conn, person_id, f"{DAYS[-1]}T07:00:00-05:00", "manual", f"ZZ{tag}-MOMENTO")
     db.registrar_dia_experimento(conn, eid, person_id, DAYS[-1], True, f"ZZ{tag}-REGISTRO", mid)
 
+    # BODY-PROTEINA-1: ingesta is person-keyed and, through leer_dia, has its FIRST reader this
+    # slice -- so, unlike moment (no reader yet), its marker belongs in the tool sweep below, not in
+    # the route-only active list (no screen renders it yet).
+    db.registrar_ingesta(conn, person_id, DAYS[-1], "protein_g", 30.0, False, f"ZZ{tag}-INGESTA")
+
     agente_ajustes.set_nivel_datos(conn, person_id, "completo")
     privacidad.record_consent(conn, person_id)
 
@@ -382,6 +387,14 @@ class _BaseFugaTest(unittest.TestCase):
             text = repr(out)
             for marker in foreign_markers:
                 self.assertNotIn(marker, text, f"{viewer_tag} tool {nombre} leaked {other_tag}'s marker {marker!r}")
+            if nombre == "leer_dia":
+                # BODY-PROTEINA-1: leer_dia's new ingesta list -- checked directly (own marker
+                # renders, the other person's never does) rather than through the active marker
+                # list, since no screen reads it yet (see _seed_person's own comment).
+                self.assertIn(f"ZZ{viewer_tag}-INGESTA", text,
+                              f"{viewer_tag}'s own ingesta marker never rendered by leer_dia")
+                self.assertNotIn(f"ZZ{other_tag}-INGESTA", text,
+                                 f"{viewer_tag} tool leer_dia leaked {other_tag}'s ingesta marker")
         out_own_meta = agente_herramientas.ejecutar(self.conn, viewer_id, "leer_meta", {"goal_id": ids["gid"]},
                                                     "completo")
         self.assertTrue(out_own_meta["encontrada"])

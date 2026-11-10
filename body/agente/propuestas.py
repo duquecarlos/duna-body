@@ -544,6 +544,100 @@ def _deshacer_marcar_experimento(conn: sqlite3.Connection, row: sqlite3.Row) -> 
                  despues["day"]))
 
 
+# -- registrar_ingesta (BODY-PROTEINA-1: insert-shaped, like planear_entreno/proponer_experimento --
+# this module is the one writer of `ingesta` through db.registrar_ingesta/db.borrar_ingesta) ------
+
+def _drift_deshacer_registrar_ingesta(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    iid = despues.get("ingesta_id")
+    r = conn.execute(
+        "SELECT amount, metric_key, day FROM ingesta WHERE id = ? AND person_id = ?",
+        (iid, row["person_id"])).fetchone()
+    return (r is None or r["amount"] != despues["amount"] or r["metric_key"] != despues["metric_key"]
+            or r["day"] != despues["day"])
+
+
+def _aplicar_registrar_ingesta(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+    despues = json.loads(row["despues_json"])
+    iid = db.registrar_ingesta(conn, row["person_id"], despues["day"], despues["metric_key"], despues["amount"],
+                                despues["estimado"], despues.get("descripcion"), despues.get("ts_local"))
+    return {"ingesta_id": iid}
+
+
+def _deshacer_registrar_ingesta(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    iid = despues.get("ingesta_id")
+    if iid is not None:
+        db.borrar_ingesta(conn, row["person_id"], iid)
+
+
+# -- corregir_ingesta (this module calls db.corregir_ingesta directly, update-shaped like
+# registrar_medida) -------------------------------------------------------------------------------
+
+def _drift_aplicar_corregir_ingesta(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    antes = json.loads(row["antes_json"])
+    despues = json.loads(row["despues_json"])
+    actual = conn.execute(
+        "SELECT amount FROM ingesta WHERE id = ? AND person_id = ?",
+        (despues["ingesta_id"], row["person_id"])).fetchone()
+    return actual is None or actual["amount"] != antes["amount"]
+
+
+def _drift_deshacer_corregir_ingesta(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    actual = conn.execute(
+        "SELECT amount FROM ingesta WHERE id = ? AND person_id = ?",
+        (despues["ingesta_id"], row["person_id"])).fetchone()
+    return actual is None or actual["amount"] != despues["amount"]
+
+
+def _aplicar_corregir_ingesta(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    db.corregir_ingesta(conn, row["person_id"], despues["ingesta_id"], despues["amount"])
+
+
+def _deshacer_corregir_ingesta(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    antes = json.loads(row["antes_json"])
+    despues = json.loads(row["despues_json"])
+    db.corregir_ingesta(conn, row["person_id"], despues["ingesta_id"], antes["amount"])
+
+
+# -- borrar_ingesta (this module calls db.borrar_ingesta directly; undo re-inserts through
+# db.registrar_ingesta -- a new row with the same values, not the same id, the same "functionally
+# equivalent" restoration proponer_experimento's own undo uses) -----------------------------------
+
+def _drift_aplicar_borrar_ingesta(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    antes = json.loads(row["antes_json"])
+    despues = json.loads(row["despues_json"])
+    actual = conn.execute(
+        "SELECT amount, metric_key, day FROM ingesta WHERE id = ? AND person_id = ?",
+        (despues["ingesta_id"], row["person_id"])).fetchone()
+    if actual is None:
+        return True
+    return (actual["amount"] != antes["amount"] or actual["metric_key"] != antes["metric_key"]
+            or actual["day"] != antes["day"])
+
+
+def _drift_deshacer_borrar_ingesta(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    """Drifted if the row is no longer gone -- something else re-created it since apply deleted it."""
+    despues = json.loads(row["despues_json"])
+    actual = conn.execute(
+        "SELECT 1 FROM ingesta WHERE id = ? AND person_id = ?",
+        (despues["ingesta_id"], row["person_id"])).fetchone()
+    return actual is not None
+
+
+def _aplicar_borrar_ingesta(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    db.borrar_ingesta(conn, row["person_id"], despues["ingesta_id"])
+
+
+def _deshacer_borrar_ingesta(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    antes = json.loads(row["antes_json"])
+    db.registrar_ingesta(conn, row["person_id"], antes["day"], antes["metric_key"], antes["amount"],
+                          antes["estimado"], antes.get("descripcion"), antes.get("ts_local"))
+
+
 TABLA: dict[str, _Accion] = {
     "proponer_meta": _Accion(_sin_drift, _drift_deshacer_meta, _aplicar_meta, _deshacer_meta),
     "proponer_cambio_meta": _Accion(_drift_aplicar_cambio_meta, _drift_deshacer_meta, _aplicar_cambio_meta,
@@ -563,6 +657,12 @@ TABLA: dict[str, _Accion] = {
                                      _aplicar_proponer_experimento, _deshacer_proponer_experimento),
     "marcar_experimento": _Accion(_drift_aplicar_marcar_experimento, _drift_deshacer_marcar_experimento,
                                    _aplicar_marcar_experimento, _deshacer_marcar_experimento),
+    "registrar_ingesta": _Accion(_sin_drift, _drift_deshacer_registrar_ingesta, _aplicar_registrar_ingesta,
+                                  _deshacer_registrar_ingesta),
+    "corregir_ingesta": _Accion(_drift_aplicar_corregir_ingesta, _drift_deshacer_corregir_ingesta,
+                                 _aplicar_corregir_ingesta, _deshacer_corregir_ingesta),
+    "borrar_ingesta": _Accion(_drift_aplicar_borrar_ingesta, _drift_deshacer_borrar_ingesta,
+                               _aplicar_borrar_ingesta, _deshacer_borrar_ingesta),
 }
 
 SIN_DESHACER = tuple(nombre for nombre, entrada in TABLA.items() if not entrada.tiene_deshacer)

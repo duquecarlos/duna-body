@@ -78,6 +78,7 @@ RANGES = {
     "vo2max": (38, 46), "vo2max_cycling": (40, 48), "fitness_age": (28, 42),
     "flex_alcance_cm": (0, 25), "snoring_min": (0, 70),
     "body_weight_kg": (68, 76), "waist_cm": (78, 88),
+    "protein_g": (15, 45),  # one meal's worth; several a day sum into the day's total
     "sleep_spo2_avg": (93, 98), "sleep_respiration_avg": (13, 17),
     "sleep_respiration_low": (9, 13), "sleep_respiration_high": (17, 23),
 }
@@ -307,6 +308,21 @@ def _seed_self_metrics(conn, db, rng: random.Random, all_days: list[date], perso
     return rows
 
 
+def _seed_ingesta(conn, db, rng: random.Random, all_days: list[date], person_id: int) -> int:
+    """3-4 invented protein entries most days (BODY-PROTEINA-1), each its own `ingesta` row -- one
+    writer (db.registrar_ingesta) sums them into that day's protein_g total, so Tendencias shows
+    it. Invented amounts only, never a real figure; no descripcion, since the demo seeds no words."""
+    rows = 0
+    for d in all_days:
+        if rng.random() < 0.9:
+            for _ in range(rng.randint(3, 4)):
+                db.registrar_ingesta(conn, person_id, d.isoformat(), "protein_g",
+                                      _value(rng, "protein_g", 0.0), False)
+                rows += 1
+    conn.commit()
+    return rows
+
+
 def _seed_shifts(conn, shift_import, turnos_costo, person_id: int,
                   all_days: list[date]) -> tuple[int | None, int | None, int, int]:
     confirmed_days, proposed_days = all_days[:-7], all_days[-7:]
@@ -435,6 +451,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
 
     metric_rows, activity_rows = _seed_days(conn, db, rng, all_days, person_id)
     metric_rows += _seed_self_metrics(conn, db, rng, all_days, person_id)
+    entradas_ingesta = _seed_ingesta(conn, db, rng, all_days, person_id)
 
     confirmed_id, proposed_id, night_weeks, night_blocks = _seed_shifts(
         conn, shift_import, turnos_costo, person_id, all_days)
@@ -452,6 +469,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
         "lotes_turnos_propuestos": 1 if proposed_id is not None else 0,
         "semanas_nocturnas": night_weeks, "bloques_turno_noche": night_blocks, "metas_activas": 4, "habitos": 3,
         "verificaciones_semanales": checks + hogar_checks, "chequeos_habito": habit_checks + hogar_habit_checks,
+        "entradas_ingesta": entradas_ingesta,
     }
 
 

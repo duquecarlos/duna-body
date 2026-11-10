@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -178,6 +178,65 @@ def _tarjeta_registrar_medida(t: T, defs: dict, despues: dict, antes_json: dict 
     return antes_txt, despues_txt, None
 
 
+def _momento_ingesta_txt(t: T, ts_local: str | None) -> str | None:
+    """BODY-PROTEINA-1: a plain-word time-of-day label from `ts_local`'s own hour -- "lunch" style,
+    never shown when there is no `ts_local` (the entry is "sometime that day" only)."""
+    if not ts_local:
+        return None
+    try:
+        hora = datetime.fromisoformat(ts_local).hour
+    except ValueError:
+        return None
+    if 5 <= hora < 11:
+        return t("asistente.propuesta.ingesta_momento_desayuno")
+    if 11 <= hora < 16:
+        return t("asistente.propuesta.ingesta_momento_almuerzo")
+    if 16 <= hora < 19:
+        return t("asistente.propuesta.ingesta_momento_merienda")
+    if 19 <= hora < 23:
+        return t("asistente.propuesta.ingesta_momento_cena")
+    return None
+
+
+def _ingesta_valor_txt(t: T, defs: dict, metric_key: str, amount: float, estimado: bool, fecha: str) -> str:
+    valor = comun._fig_unit(t, metric_key, amount, defs)
+    if estimado:
+        valor = t("asistente.propuesta.ingesta_valor_estimado", valor=valor)
+    return t("asistente.propuesta.ingesta_valor", metric=t("metric." + metric_key), valor=valor, fecha=fecha)
+
+
+def _tarjeta_registrar_ingesta(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+    fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
+    partes = [_ingesta_valor_txt(t, defs, despues["metric_key"], despues["amount"], despues["estimado"], fecha)]
+    momento = _momento_ingesta_txt(t, despues.get("ts_local"))
+    if momento:
+        partes.append(momento)
+    if despues.get("descripcion"):
+        partes.append(t("asistente.propuesta.ingesta_descripcion", descripcion=despues["descripcion"]))
+    return None, " · ".join(partes), None
+
+
+def _tarjeta_corregir_ingesta(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+    fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
+    antes_txt = _ingesta_valor_txt(t, defs, despues["metric_key"], antes_json["amount"], despues["estimado"], fecha)
+    despues_txt = _ingesta_valor_txt(t, defs, despues["metric_key"], despues["amount"], despues["estimado"], fecha)
+    return antes_txt, despues_txt, None
+
+
+def _tarjeta_borrar_ingesta(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+    fecha = comun._short_date(t, date.fromisoformat(antes_json["day"]))
+    partes = [_ingesta_valor_txt(t, defs, antes_json["metric_key"], antes_json["amount"], antes_json["estimado"],
+                                 fecha)]
+    momento = _momento_ingesta_txt(t, antes_json.get("ts_local"))
+    if momento:
+        partes.append(momento)
+    if antes_json.get("descripcion"):
+        partes.append(t("asistente.propuesta.ingesta_descripcion", descripcion=antes_json["descripcion"]))
+    antes_txt = " · ".join(partes)
+    despues_txt = t("asistente.propuesta.ingesta_eliminado")
+    return antes_txt, despues_txt, None
+
+
 def _filtro_dias_txt(t: T, filtro_dias: dict) -> str:
     """"which days count" in plain words (BODY-EXPERIMENTOS-REGISTRO-1): the shift kinds a day must
     or must not have, plus whether a post-night recovery day is excluded -- built from
@@ -247,6 +306,9 @@ TARJETAS = {
     "marcar_habito": _tarjeta_marcar_habito,
     "proponer_experimento": _tarjeta_proponer_experimento,
     "marcar_experimento": _tarjeta_marcar_experimento,
+    "registrar_ingesta": _tarjeta_registrar_ingesta,
+    "corregir_ingesta": _tarjeta_corregir_ingesta,
+    "borrar_ingesta": _tarjeta_borrar_ingesta,
 }
 
 

@@ -79,7 +79,8 @@ class MigrationPreservesRowsTest(unittest.TestCase):
         conn.commit()
 
         before_person = [dict(r) for r in conn.execute("SELECT * FROM person ORDER BY id")]
-        before_metric = [dict(r) for r in conn.execute("SELECT * FROM metric_def WHERE key='custom_metric_test'")]
+        before_metric = [dict(r) for r in conn.execute(
+            "SELECT key, label, unit, better, kind, origen FROM metric_def WHERE key='custom_metric_test'")]
         before_goal = [dict(r) for r in conn.execute("SELECT * FROM goal ORDER BY id")]
 
         db.init(conn)
@@ -101,8 +102,12 @@ class MigrationPreservesRowsTest(unittest.TestCase):
             self.assertEqual(before["language"], after["language"])
             self.assertIsNone(after["cuenta_sub"])
 
-        after_metric = [dict(r) for r in conn.execute("SELECT * FROM metric_def WHERE key='custom_metric_test'")]
+        after_metric = [dict(r) for r in conn.execute(
+            "SELECT key, label, unit, better, kind, origen FROM metric_def WHERE key='custom_metric_test'")]
         self.assertEqual(before_metric, after_metric)
+        after_agregado = conn.execute(
+            "SELECT agregado FROM metric_def WHERE key='custom_metric_test'").fetchone()["agregado"]
+        self.assertIsNone(after_agregado)
         after_goal = [dict(r) for r in conn.execute("SELECT * FROM goal ORDER BY id")]
         self.assertEqual(before_goal, after_goal)
 

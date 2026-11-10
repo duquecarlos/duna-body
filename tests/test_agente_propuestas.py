@@ -130,7 +130,8 @@ class NoProponibleTest(unittest.TestCase):
         self.assertEqual(nombres, {"proponer_meta", "proponer_cambio_meta", "proponer_confirmar_turnos",
                                     "proponer_idioma", "planear_entreno", "registrar_entreno",
                                     "registrar_medida", "marcar_habito", "proponer_experimento",
-                                    "marcar_experimento"})
+                                    "marcar_experimento", "registrar_ingesta", "corregir_ingesta",
+                                    "borrar_ingesta"})
 
 
 class UnaPropuestaPorRondaTest(unittest.TestCase):
