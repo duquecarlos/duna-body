@@ -323,6 +323,16 @@ def _seed_ingesta(conn, db, rng: random.Random, all_days: list[date], person_id:
     return rows
 
 
+def _seed_periodo(conn, db, all_days: list[date], person_id: int) -> int:
+    """One invented closed 'malestar' period partway through the seeded history (BODY-PERIODO-1),
+    so screens and analyses that leave marked days out have something to exclude in the demo."""
+    start = all_days[len(all_days) // 2]
+    end = start + timedelta(2)
+    db.crear_periodo(conn, person_id, "malestar", start.isoformat(), end.isoformat())
+    conn.commit()
+    return 1
+
+
 def _seed_shifts(conn, shift_import, turnos_costo, person_id: int,
                   all_days: list[date]) -> tuple[int | None, int | None, int, int]:
     confirmed_days, proposed_days = all_days[:-7], all_days[-7:]
@@ -452,6 +462,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     metric_rows, activity_rows = _seed_days(conn, db, rng, all_days, person_id)
     metric_rows += _seed_self_metrics(conn, db, rng, all_days, person_id)
     entradas_ingesta = _seed_ingesta(conn, db, rng, all_days, person_id)
+    periodos = _seed_periodo(conn, db, all_days, person_id)
 
     confirmed_id, proposed_id, night_weeks, night_blocks = _seed_shifts(
         conn, shift_import, turnos_costo, person_id, all_days)
@@ -469,7 +480,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
         "lotes_turnos_propuestos": 1 if proposed_id is not None else 0,
         "semanas_nocturnas": night_weeks, "bloques_turno_noche": night_blocks, "metas_activas": 4, "habitos": 3,
         "verificaciones_semanales": checks + hogar_checks, "chequeos_habito": habit_checks + hogar_habit_checks,
-        "entradas_ingesta": entradas_ingesta,
+        "entradas_ingesta": entradas_ingesta, "periodos": periodos,
     }
 
 

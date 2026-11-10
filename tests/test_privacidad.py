@@ -487,6 +487,44 @@ class PropuestaExportDeleteTest(unittest.TestCase):
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM goal WHERE id = ?", (gid,)).fetchone()[0], 0)
 
 
+class PeriodExportDeleteTest(unittest.TestCase):
+    """BODY-PERIODO-1: a marked period (illness, travel, injury) is FULLY exported, with its own
+    note, and fully deleted -- invented demo content only, no real figures."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "periodo.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+
+    def test_period_is_a_fully_handled_table(self):
+        self.assertIn("period", privacidad.FULLY_HANDLED_TABLES)
+
+    def test_export_includes_the_period_and_its_note(self):
+        db.crear_periodo(self.conn, 1, "malestar", "2026-11-01", "2026-11-03", "gripe")
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(len(data["periodos"]), 1)
+        row = data["periodos"][0]
+        self.assertEqual((row["kind"], row["start_day"], row["end_day"], row["note"]),
+                         ("malestar", "2026-11-01", "2026-11-03", "gripe"))
+
+    def test_export_of_another_person_sees_nothing(self):
+        db.crear_periodo(self.conn, 1, "malestar", "2026-11-01", "2026-11-03", "gripe")
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 2)
+        self.assertEqual(data["periodos"], [])
+
+    def test_delete_all_removes_the_period(self):
+        db.crear_periodo(self.conn, 1, "viaje", "2026-11-01", note="secreto")
+        self.conn.commit()
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM period").fetchone()[0], 0)
+
+
 class CompartidoExportDeleteTest(unittest.TestCase):
     """BODY-HOGAR-COMPARTIR-1: a person's own shares (including withdrawn ones) are FULLY exported
     and deleted -- the metric key and the share's own dates only, never a health figure."""

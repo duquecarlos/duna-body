@@ -13620,3 +13620,86 @@ discover tests -t .` -> `Ran 1962 tests in 345.980s ... OK (skipped=1)`.
 No schema change, no customer-facing bytes (PowerShell installer script and its own test, no web
 route, no UI string), no cross-repo contract -- merge policy A's three conditions all pass, merged
 on this green gate per ORCH-CARLOS-DELEGATES-TIER-1-1.
+
+## BODY-PERIODO-1 -- mark unwell/travel/injury days, excluded from baselines and experiments (2026-11-09)
+
+A `period_kind` catalog (`malestar`, `viaje`, `lesion` -- rows, seeded by `db.PERIOD_KINDS`, never
+code: a fourth kind is a row and an i18n entry, not a release) and a `period` table (`person_id`,
+`kind`, `start_day`, `end_day` NULL = open, `note`, CHECK `end_day >= start_day`), plus four
+propose/apply/undo assistant tools -- `marcar_periodo`, `cerrar_periodo` ("I'm better since
+Thursday"), `corregir_periodo`, `borrar_periodo` -- that OFFER a period when the person says
+they're ill, travelling or injured, never create one silently. The five ORCH-CARLOS-DELEGATES-
+TIER-1-1 rulings, followed exactly: (1) kinds are data; (2) the note is kept like `moment.note`/
+`ingesta.descripcion`, never printed, logged or exported off the PC; (3) a marked day is left OUT
+of a baseline's usual range and of an experiment's counted days, before and test alike,
+unconditionally, never re-weighted -- no fourth `filtro_dias` key, since every caller of
+`baselines.baseline`/`experimentos.dias_que_cuentan` gets this for free from the one place each
+calls `db.dias_marcados`; a verdict with too few clean days reads through the EXISTING
+`pocos_dias` path, nothing new; (4) readiness's own score is untouched -- the screens that state a
+period in words are BODY-PERIODO-PANTALLAS-1, a separate, later slice; (5) periods do not enter
+the vida-v1 weekly export this slice (reversible later, Carlos's call). `db.load_day`'s own
+`leer_dia` tool now carries a day's covering periods too, so the assistant can discover a
+period's id without a fifth, newly-counted read tool. `body/privacidad.py`'s export and delete-all
+now cover `period` (the note in the person's own export only); `body/demo.py` seeds one invented
+closed `malestar` period.
+
+**Performance (BODY-RENDIMIENTO-1/2 invariant, found by this slice's own gate run, fixed before
+the gate counted as passing):** the first gate run was RED -- `/goals/new`, `/shifts`, `/`,
+`/how/{day}` and `/day/{day}` all went over `tests/test_rendimiento.py`'s own statement ceiling,
+because `readiness.compute` calls `baselines.baseline` up to five times per day and `/shifts`
+calls it across its own 56-strip-day loop through ONE `Lector`-backed connection (BODY-RENDIMIENTO-
+2) -- a fresh `db.dias_marcados` query per `baseline()` call reintroduced exactly the per-day query
+cost that `Lector` exists to avoid (286 extra statements on `/shifts` alone). Fixed inside
+`body/db.py` only (no change to `body/lector.py`, `body/readiness.py` or any route, so this stayed
+inside `touches:`): `periodos()`/`dias_marcados()` now read from `_periodos_de_persona`, a
+per-connection cache of a person's own period rows (periods are rare, so one real query per
+connection beats one per call), invalidated on every write (`crear_periodo`/`actualizar_periodo`/
+`borrar_periodo`, and `privacidad.delete_person` via the new public `db.invalidar_periodos_cache`).
+Keyed by `id(conn)`, never the Connection object itself (not weak-referenceable, accepts no extra
+attribute -- checked directly against this interpreter); `db.connect()` purges any cache entry
+left under a reused id before a new connection could ever read through it, the same "a stale key
+must never survive past the file/connection it named" discipline `ensure_ready`'s own
+`_READY_FILES` already uses, so a cache hit can only ever be this same live connection's own
+earlier read. `dias_marcados` also defers its `person()` timezone lookup until an OPEN period
+actually overlaps the range, so the common case (no periods, or only closed ones) costs zero extra
+queries beyond the one cached periods read. Re-measured after the fix: the same five routes back
+at or under their existing ceiling, no ceiling number changed.
+
+**Deviation -- four files outside `touches:`, the same shape BODY-PROTEINA-1 recorded, not
+reworked:** adding four new `tipo='propuesta'` tools forces mechanical widenings wherever an
+existing guard hardcodes the tool-name set or its count, and this slice's own gate run surfaced a
+fifth such guard (`tests/test_persona_fuga.py`'s table census) that BODY-PROTEINA-1's own ledger
+entry did not have to touch for a different reason (ingesta already needed it there too, for the
+same census, and did touch it -- this slice is the second table to need it, not the first).
+Touched, each a mechanical widening with no logic change: `tests/test_agente_bucle.py` (the
+`nivel='ninguno'` tool-name set gains the four names), `tests/test_agente_propuestas.py` (the
+`tipo='propuesta'` name set, same four), `tests/test_agente_registro.py` (`PROPUESTA_NOMBRES` gains
+the four, the tool count 26 -> 30, and the test's own name corrected from "thirteen" to
+"seventeen" since it would otherwise assert a number contradicted by its own docstring),
+`tests/test_persona_fuga.py` (`_seed_person` seeds one `malestar` period per person with a
+`ZZ<tag>-PERIODO` marker, `_sweep_tools_as` checks `leer_dia`'s new `periodos` list the same direct
+way BODY-PROTEINA-1 checked `ingesta` -- own marker renders, the other person's never does; the
+marker stays OUT of the route-sweep active list, same reasoning as `moment`: no screen reads it
+yet, that is BODY-PERIODO-PANTALLAS-1's own job). `tests/test_experimentos_esquema.py` stayed in
+`touches:` but needed no edit -- `experimento`'s own CHECK did not change, only
+`propuesta_agente.accion`'s did.
+
+**Customer-facing bytes -- STOPS here, this worker does not merge:** the four tools' card text
+(`asistente.propuesta.titulo.marcar_periodo` etc., `periodo.kind.malestar/viaje/lesion`,
+`asistente.propuesta.periodo_resumen/periodo_abierto/periodo_un_dia/periodo_rango/periodo_excluido/
+periodo_nota/periodo_eliminado`) in both `body/i18n/es.json` and `body/i18n/en.json` -- new strings
+a person reads, per merge policy A. Exact es/en pairs: `periodo.kind.*` "Malestar"/"Illness",
+"Viaje"/"Travel", "Lesión"/"Injury"; `periodo_abierto` "desde el {fecha}"/"since {fecha}";
+`periodo_un_dia` "el {fecha}"/"on {fecha}"; `periodo_rango` "del {desde} al {hasta}"/"from {desde}
+to {hasta}"; `periodo_excluido` "Body dejará esos días fuera cuando compare con lo habitual"/"Body
+will leave those days out when it compares with the usual"; `periodo_nota` "«{nota}»"/"“{nota}”";
+`periodo_eliminado` "eliminado"/"deleted".
+
+**Commit** (`git rev-parse`): `69dd3583a0574440dab4407f866cdb5b4d6f5ef4` on
+`feat/body-periodo-1` (not merged -- AWAITING_APPROVAL).
+
+**Gate**, once, foreground, from the repository root: `.venv/Scripts/python.exe -m unittest
+discover tests -t .` -> `Ran 2032 tests in 558.577s ... OK (skipped=1)`.
+
+Stops **AWAITING_APPROVAL** per ORCH-CARLOS-DELEGATES-TIER-1-1: customer-facing bytes (the proposal
+card strings above) -- this worker does not merge `feat/body-periodo-1` into `main`.

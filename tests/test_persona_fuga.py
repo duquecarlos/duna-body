@@ -196,6 +196,11 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
     # the route-only active list (no screen renders it yet).
     db.registrar_ingesta(conn, person_id, DAYS[-1], "protein_g", 30.0, False, f"ZZ{tag}-INGESTA")
 
+    # BODY-PERIODO-1: period is person-keyed and, through leer_dia's new `periodos` list, has its
+    # FIRST reader this slice -- same treatment as ingesta above, not the route-only active list
+    # (the screens that will show it are a separate, later slice).
+    db.crear_periodo(conn, person_id, "malestar", DAYS[-1], DAYS[-1], f"ZZ{tag}-PERIODO")
+
     agente_ajustes.set_nivel_datos(conn, person_id, "completo")
     privacidad.record_consent(conn, person_id)
 
@@ -395,6 +400,11 @@ class _BaseFugaTest(unittest.TestCase):
                               f"{viewer_tag}'s own ingesta marker never rendered by leer_dia")
                 self.assertNotIn(f"ZZ{other_tag}-INGESTA", text,
                                  f"{viewer_tag} tool leer_dia leaked {other_tag}'s ingesta marker")
+                # BODY-PERIODO-1: same direct check for leer_dia's new `periodos` list.
+                self.assertIn(f"ZZ{viewer_tag}-PERIODO", text,
+                              f"{viewer_tag}'s own period marker never rendered by leer_dia")
+                self.assertNotIn(f"ZZ{other_tag}-PERIODO", text,
+                                 f"{viewer_tag} tool leer_dia leaked {other_tag}'s period marker")
         out_own_meta = agente_herramientas.ejecutar(self.conn, viewer_id, "leer_meta", {"goal_id": ids["gid"]},
                                                     "completo")
         self.assertTrue(out_own_meta["encontrada"])

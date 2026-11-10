@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import date, datetime, timezone
 
-from . import compartir, enlaces
+from . import compartir, db, enlaces
 from .agente import ajustes as agente_ajustes
 
 CONSENT_VERSION = "consentimiento-v3"
@@ -28,6 +28,9 @@ FULLY_HANDLED_TABLES = {
     "experimento", "experimento_registro", "moment",
     # BODY-PROTEINA-1: one row per thing eaten or drunk -- the person's own words, like moment.note.
     "ingesta",
+    # BODY-PERIODO-1: one row per marked stretch of days -- the note is the person's own words,
+    # like moment.note and ingesta.descripcion.
+    "period",
 }
 # raw_payload: kind/date only, never the stored JSON payload. garmin_cuenta: the connected-since
 # date only, never the encrypted token (BODY-GARMIN-HOST-1). dispositivo: name/scopes/dates only,
@@ -110,6 +113,9 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
     ingesta = [dict(r) for r in conn.execute(
         "SELECT id, day, ts_local, metric_key, amount, estimado, descripcion, created_at, updated_at "
         "FROM ingesta WHERE person_id = ? ORDER BY day, id", (person_id,))]
+    periodos = [dict(r) for r in conn.execute(
+        "SELECT id, kind, start_day, end_day, note, created_at, updated_at "
+        "FROM period WHERE person_id = ? ORDER BY start_day, id", (person_id,))]
     dias = [dict(r) for r in conn.execute(
         "SELECT day, metric_key, value, source FROM daily_metric WHERE person_id = ? ORDER BY day",
         (person_id,))]
@@ -173,6 +179,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "vida": vida,
         "experimentos": experimentos,
         "ingesta": ingesta,
+        "periodos": periodos,
         "dias": dias,
         "actividades": actividades,
         "sets_entreno": sets_entreno,
@@ -200,6 +207,8 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         conn.execute("DELETE FROM moment WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM experimento WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM ingesta WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM period WHERE person_id = ?", (person_id,))
+        db.invalidar_periodos_cache(conn, person_id)
         conn.execute("UPDATE habit SET assignee_person_id = NULL WHERE assignee_person_id = ?", (person_id,))
         enlaces.delete_rows_for_person(conn, person_id)
         conn.execute(

@@ -237,6 +237,65 @@ def _tarjeta_borrar_ingesta(t: T, defs: dict, despues: dict, antes_json: dict | 
     return antes_txt, despues_txt, None
 
 
+def _periodo_kind_txt(t: T, kind: str) -> str:
+    """BODY-PERIODO-1: three literal t() calls, not a concatenated key, so test_i18n_paridad.py's
+    dynamic-prefix guard needs no new entry (the same choice BODY-PROTEINA-1 made for
+    _momento_ingesta_txt)."""
+    if kind == "viaje":
+        return t("periodo.kind.viaje")
+    if kind == "lesion":
+        return t("periodo.kind.lesion")
+    return t("periodo.kind.malestar")
+
+
+def _periodo_dias_txt(t: T, start_day: str, end_day: str | None) -> str:
+    inicio = comun._short_date(t, date.fromisoformat(start_day))
+    if end_day is None:
+        return t("asistente.propuesta.periodo_abierto", fecha=inicio)
+    fin = comun._short_date(t, date.fromisoformat(end_day))
+    if end_day == start_day:
+        return t("asistente.propuesta.periodo_un_dia", fecha=inicio)
+    return t("asistente.propuesta.periodo_rango", desde=inicio, hasta=fin)
+
+
+def _periodo_txt(t: T, kind: str, start_day: str, end_day: str | None, note: str | None) -> str:
+    """BODY-PERIODO-1 ruling 2: the card says the kind, the days, and that Body will leave those
+    days out when it compares with the usual -- every period card builder below reuses this."""
+    partes = [t("asistente.propuesta.periodo_resumen", kind=_periodo_kind_txt(t, kind),
+                dias=_periodo_dias_txt(t, start_day, end_day))]
+    if note:
+        partes.append(t("asistente.propuesta.periodo_nota", nota=note))
+    partes.append(t("asistente.propuesta.periodo_excluido"))
+    return " · ".join(partes)
+
+
+def _tarjeta_marcar_periodo(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+    despues_txt = _periodo_txt(t, despues["kind"], despues["start_day"], despues.get("end_day"),
+                                despues.get("note"))
+    return None, despues_txt, None
+
+
+def _tarjeta_cerrar_periodo(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+    antes_txt = _periodo_txt(t, despues["kind"], despues["start_day"], None, despues.get("note"))
+    despues_txt = _periodo_txt(t, despues["kind"], despues["start_day"], despues["end_day"], despues.get("note"))
+    return antes_txt, despues_txt, None
+
+
+def _tarjeta_corregir_periodo(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+    antes_txt = _periodo_txt(t, antes_json["kind"], antes_json["start_day"], antes_json.get("end_day"),
+                              antes_json.get("note"))
+    despues_txt = _periodo_txt(t, despues["kind"], despues["start_day"], despues.get("end_day"),
+                                despues.get("note"))
+    return antes_txt, despues_txt, None
+
+
+def _tarjeta_borrar_periodo(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+    antes_txt = _periodo_txt(t, antes_json["kind"], antes_json["start_day"], antes_json.get("end_day"),
+                              antes_json.get("note"))
+    despues_txt = t("asistente.propuesta.periodo_eliminado")
+    return antes_txt, despues_txt, None
+
+
 def _filtro_dias_txt(t: T, filtro_dias: dict) -> str:
     """"which days count" in plain words (BODY-EXPERIMENTOS-REGISTRO-1): the shift kinds a day must
     or must not have, plus whether a post-night recovery day is excluded -- built from
@@ -309,6 +368,10 @@ TARJETAS = {
     "registrar_ingesta": _tarjeta_registrar_ingesta,
     "corregir_ingesta": _tarjeta_corregir_ingesta,
     "borrar_ingesta": _tarjeta_borrar_ingesta,
+    "marcar_periodo": _tarjeta_marcar_periodo,
+    "cerrar_periodo": _tarjeta_cerrar_periodo,
+    "corregir_periodo": _tarjeta_corregir_periodo,
+    "borrar_periodo": _tarjeta_borrar_periodo,
 }
 
 

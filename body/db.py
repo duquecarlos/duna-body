@@ -65,7 +65,8 @@ _PROPUESTA_AGENTE_COLUMNS = """
                         ('proponer_meta', 'proponer_cambio_meta', 'proponer_confirmar_turnos', 'proponer_idioma',
                          'planear_entreno', 'registrar_entreno', 'registrar_medida', 'marcar_habito',
                          'proponer_experimento', 'marcar_experimento',
-                         'registrar_ingesta', 'corregir_ingesta', 'borrar_ingesta')),
+                         'registrar_ingesta', 'corregir_ingesta', 'borrar_ingesta',
+                         'marcar_periodo', 'cerrar_periodo', 'corregir_periodo', 'borrar_periodo')),
     objetivo_id     INTEGER REFERENCES goal(id),
     antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
     despues_json    TEXT NOT NULL CHECK (json_valid(despues_json)),
@@ -563,6 +564,32 @@ CREATE TABLE IF NOT EXISTS experimento_registro (
 {_EXPERIMENTO_REGISTRO_COLUMNS}
 );
 CREATE INDEX IF NOT EXISTS idx_experimento_registro_person ON experimento_registro(person_id);
+
+-- BODY-PERIODO-1: a kind the person can mark across days (illness, travel, injury) so a baseline's
+-- usual range and an experiment's counted days leave those days out, never re-weight them. Seeded
+-- with 'malestar', 'viaje', 'lesion' below -- a kind added later is a row here, never a code
+-- change; its label is shown through "periodo.kind." + key in body/i18n/*.json, the same
+-- convention metric_def's own key already uses for "metric." + key.
+CREATE TABLE IF NOT EXISTS period_kind (
+    key        TEXT PRIMARY KEY,
+    sort_order INTEGER NOT NULL
+);
+
+-- One row per marked stretch of days. end_day NULL = still open -- an open period counts through
+-- today in the person's own zone (db.dias_marcados). note is the person's own words, kept like
+-- moment.note and ingesta.descripcion -- never printed, logged or exported off the PC.
+CREATE TABLE IF NOT EXISTS period (
+    id         INTEGER PRIMARY KEY,
+    person_id  INTEGER NOT NULL REFERENCES person(id),
+    kind       TEXT NOT NULL REFERENCES period_kind(key),
+    start_day  TEXT NOT NULL,
+    end_day    TEXT,
+    note       TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK (end_day IS NULL OR end_day >= start_day)
+);
+CREATE INDEX IF NOT EXISTS idx_period_person ON period(person_id);
 """
 
 # (key, label, unit, better, kind). 'estimated' = computed by Body, shown with «≈» and "how I calculate it".
@@ -632,6 +659,14 @@ RANGOS_MEDIDA_PERSONAL = {
     "waist_cm": (40, 200),
 }
 
+# BODY-PERIODO-1 ruling 1: kinds are DATA in period_kind, never code -- a kind added later is just
+# a new row (and an i18n "periodo.kind.<key>" entry for its label), (key, sort_order) in that order.
+PERIOD_KINDS = [
+    ("malestar", 0),
+    ("viaje", 1),
+    ("lesion", 2),
+]
+
 # BODY-MEDIDA-PESO-1-M2: how many decimals a metric's own figure, its "vs. tu historia"/"vs.
 # anterior" difference and its normal-range legend show -- keyed by metric key, every key not
 # listed keeps 0 (today's behaviour, unchanged). A whole number hides exactly the signal a
@@ -669,6 +704,13 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     # (BODY-RENDIMIENTO-1, BODY-RENDIMIENTO-OBS-1). Stores nothing in the file; not a journal-mode
     # change.
     conn.execute("PRAGMA busy_timeout = 5000")
+    # BODY-PERIODO-1: id(conn) is only ever reused once the earlier Connection it named has been
+    # closed and garbage-collected, so purging _PERIODOS_CACHE's entries for this (possibly
+    # reused) id here, before anything can read through this brand-new connection, means a cache
+    # hit can only ever be this same connection's own earlier read -- never a ghost from one that
+    # died. No SQL runs for this -- a plain dict scan.
+    for k in [k for k in _PERIODOS_CACHE if k[0] == id(conn)]:
+        del _PERIODOS_CACHE[k]
     return conn
 
 
@@ -825,6 +867,13 @@ def _propuesta_agente_needs_ingesta_rebuild(conn: sqlite3.Connection) -> bool:
     return row is not None and "registrar_ingesta" not in row[0]
 
 
+def _propuesta_agente_needs_periodo_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'propuesta_agente'"
+    ).fetchone()
+    return row is not None and "marcar_periodo" not in row[0]
+
+
 def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
@@ -837,6 +886,10 @@ def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     # BODY-PROTEINA-1: a third widening (registrar_ingesta, corregir_ingesta, borrar_ingesta), same
     # reusable rebuild.
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_ingesta_rebuild(conn):
+        _rebuild_propuesta_agente_table(conn)
+    # BODY-PERIODO-1: a fourth widening (marcar_periodo, cerrar_periodo, corregir_periodo,
+    # borrar_periodo), same reusable rebuild.
+    if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_periodo_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
 
 
@@ -1055,6 +1108,11 @@ def init(conn: sqlite3.Connection) -> None:
         "kind=excluded.kind, agregado=excluded.agregado",
         METRIC_DEFS,
     )
+    conn.executemany(
+        "INSERT INTO period_kind (key, sort_order) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET sort_order=excluded.sort_order",
+        PERIOD_KINDS,
+    )
     # One owner row so a single-person install works; no personal details.
     conn.execute(
         "INSERT OR IGNORE INTO person (id, display_name) VALUES (?, 'Me')", (DEFAULT_PERSON_ID,)
@@ -1161,6 +1219,7 @@ def load_day(conn: sqlite3.Connection, day: str, person_id: int) -> dict:
         "WHERE person_id = ? AND day = ? ORDER BY COALESCE(ts_local, ''), id",
         (person_id, day),
     ).fetchall()
+    periodos_dia = periodos(conn, person_id, day, day)
     return {
         "day": day,
         "metrics": [dict(r) for r in metrics],
@@ -1168,6 +1227,7 @@ def load_day(conn: sqlite3.Connection, day: str, person_id: int) -> dict:
         "activities": [dict(r) for r in activities],
         "shifts": [dict(r) for r in shifts],
         "ingesta": [dict(r) for r in ingesta],
+        "periodos": [dict(r) for r in periodos_dia],
     }
 
 
@@ -1738,3 +1798,135 @@ def borrar_ingesta(conn: sqlite3.Connection, person_id: int, ingesta_id: int) ->
     with conn:
         conn.execute("DELETE FROM ingesta WHERE id = ?", (ingesta_id,))
         _recalcular_ingesta_dia(conn, person_id, fila["day"], fila["metric_key"])
+
+
+# ---- periodos (BODY-PERIODO-1): a marked stretch of days (illness, travel, injury) that a
+# baseline's usual range and an experiment's counted days leave out -- never re-weighted. The
+# person's own note is kept like moment.note and ingesta.descripcion, never printed or logged.
+
+# A baseline/experiment sweep calls periodos()/dias_marcados() once per day THROUGH THE SAME
+# CONNECTION (readiness.compute's own 56-strip-day loop behind /shifts, BODY-RENDIMIENTO-1/2) --
+# periods are rare (an illness, a trip), so one real query per connection beats one per call.
+# Keyed by id(conn), never by the Connection object itself (sqlite3.Connection accepts no extra
+# attribute and is not weak-referenceable); connect() purges any entry left under a reused id
+# before this cache could ever be read through the new connection it names (see connect()'s own
+# comment), so a cache hit here can only be this same connection's own earlier read.
+_PERIODOS_LOCK = threading.Lock()
+_PERIODOS_CACHE: dict[tuple[int, int], list[sqlite3.Row]] = {}
+
+
+def _periodos_de_persona(conn: sqlite3.Connection, person_id: int) -> list[sqlite3.Row]:
+    key = (id(conn), person_id)
+    with _PERIODOS_LOCK:
+        rows = _PERIODOS_CACHE.get(key)
+    if rows is None:
+        rows = conn.execute(
+            "SELECT * FROM period WHERE person_id = ? ORDER BY start_day", (person_id,)
+        ).fetchall()
+        with _PERIODOS_LOCK:
+            _PERIODOS_CACHE[key] = rows
+    return rows
+
+
+def invalidar_periodos_cache(conn: sqlite3.Connection, person_id: int) -> None:
+    with _PERIODOS_LOCK:
+        _PERIODOS_CACHE.pop((id(conn), person_id), None)
+
+
+def periodos(conn: sqlite3.Connection, person_id: int, desde: str, hasta: str) -> list[sqlite3.Row]:
+    """This person's own periods overlapping [desde, hasta] -- an open period (end_day NULL)
+    always overlaps anything that is not entirely before its start_day. Filtered in memory from
+    _periodos_de_persona's own cached full list, same rows and order a fresh ranged SELECT would
+    give (that list is already ORDER BY start_day, and filtering never reorders)."""
+    return [r for r in _periodos_de_persona(conn, person_id)
+            if r["start_day"] <= hasta and (r["end_day"] is None or r["end_day"] >= desde)]
+
+
+def dias_marcados(conn: sqlite3.Connection, person_id: int, desde: str, hasta: str) -> set[str]:
+    """ISO days in [desde, hasta] covered by one of this person's own periods -- an open period
+    (end_day IS NULL) counts through TODAY in the person's own timezone, never past it. person()'s
+    own timezone read only runs when an open period actually overlaps the range -- the common case
+    (no periods at all, or only closed ones) costs no timezone lookup."""
+    overlapping = periodos(conn, person_id, desde, hasta)
+    if not overlapping:
+        return set()
+    hoy: str | None = None
+    out: set[str] = set()
+    for r in overlapping:
+        fin_val = r["end_day"]
+        if fin_val is None:
+            if hoy is None:
+                zona = person(conn, person_id)["timezone"]
+                hoy = datetime.now(ZoneInfo(zona)).date().isoformat()
+            fin_val = hoy
+        ini = max(r["start_day"], desde)
+        fin = min(fin_val, hasta)
+        if fin < ini:
+            continue
+        d, limite = date.fromisoformat(ini), date.fromisoformat(fin)
+        while d <= limite:
+            out.add(d.isoformat())
+            d += timedelta(1)
+    return out
+
+
+def crear_periodo(conn: sqlite3.Connection, person_id: int, kind: str, start_day: str,
+                   end_day: str | None = None, note: str | None = None) -> int:
+    if conn.execute("SELECT 1 FROM period_kind WHERE key = ?", (kind,)).fetchone() is None:
+        raise ValueError(f"unknown period kind: {kind!r}")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO period (person_id, kind, start_day, end_day, note, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (person_id, kind, start_day, end_day, note, now, now),
+        )
+    invalidar_periodos_cache(conn, person_id)
+    return cur.lastrowid
+
+
+_SIN_DAR = object()  # sentinel: "this field was not given", distinct from an intentional None
+
+
+def actualizar_periodo(conn: sqlite3.Connection, person_id: int, period_id: int, *, kind: str | None = None,
+                        start_day: str | None = None, end_day=_SIN_DAR, note=_SIN_DAR) -> None:
+    """Updates one of this person's own periods -- only the fields actually given change. end_day
+    and note each use the _SIN_DAR sentinel rather than a None default, since both are legitimately
+    settable to None (end_day -> reopened, note -> cleared), unlike kind/start_day, which never
+    are. Refuses a period_id that is not this person's own."""
+    propio = conn.execute("SELECT 1 FROM period WHERE id = ? AND person_id = ?", (period_id, person_id)).fetchone()
+    if propio is None:
+        raise ValueError("period_id: not this person's own period")
+    if kind is not None and conn.execute("SELECT 1 FROM period_kind WHERE key = ?", (kind,)).fetchone() is None:
+        raise ValueError(f"unknown period kind: {kind!r}")
+    sets, vals = [], []
+    if kind is not None:
+        sets.append("kind = ?")
+        vals.append(kind)
+    if start_day is not None:
+        sets.append("start_day = ?")
+        vals.append(start_day)
+    if end_day is not _SIN_DAR:
+        sets.append("end_day = ?")
+        vals.append(end_day)
+    if note is not _SIN_DAR:
+        sets.append("note = ?")
+        vals.append(note)
+    if not sets:
+        return
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    sets.append("updated_at = ?")
+    vals.append(now)
+    vals += [period_id, person_id]
+    with conn:
+        conn.execute(f"UPDATE period SET {', '.join(sets)} WHERE id = ? AND person_id = ?", vals)
+    invalidar_periodos_cache(conn, person_id)
+
+
+def borrar_periodo(conn: sqlite3.Connection, person_id: int, period_id: int) -> None:
+    fila = conn.execute("SELECT 1 FROM period WHERE id = ? AND person_id = ?", (period_id, person_id)).fetchone()
+    if fila is None:
+        raise ValueError("period_id: not this person's own period")
+    with conn:
+        conn.execute("DELETE FROM period WHERE id = ? AND person_id = ?", (period_id, person_id))
+    invalidar_periodos_cache(conn, person_id)
