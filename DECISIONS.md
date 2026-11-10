@@ -15761,3 +15761,12 @@ orchestrator's look at the panel on the demo") say stop before any merge regardl
 Not merged. Stops **AWAITING_APPROVAL** on `feat/body-entreno-numeros-1`, for the orchestrator's
 own look at the panel on the demo: the three new sentences above, and the legacy-row fallback card
 rendering in place of a crash.
+
+## BODY-ENTRENO-NUMEROS-1-M -- merged
+
+Approved per ORCH-CARLOS-DELEGATES-TIER-1-1 (ruling 1 narrowed to `registrar_entreno`, accepted):
+the orchestrator's own demo look at the panel passed. Merged `feat/body-entreno-numeros-1`
+(`82b0b39`, `c5c210c`) into `main` with `--no-ff` at merge commit `a669d48a49b97434494973a4e9b873c5c3f55949`.
+
+**Gate**, once, on the merged tree: `.venv/Scripts/python.exe -m unittest discover tests -t .` ->
+`Ran 2340 tests in 544.205s ... OK (skipped=1)`.
