@@ -727,6 +727,30 @@ def _seed_periodo(conn, db, all_days: list[date], person_id: int) -> int:
     return 2
 
 
+_MOMENTOS_CHECKIN_DEMO = ("despertar", "post_turno", "otro")
+_NOTA_CHECKIN_DEMO = "turno largo, dormí poco"
+
+
+def _seed_checkins(conn, db, rng: random.Random, all_days: list[date], person_id: int) -> int:
+    """A handful of invented check-ins (BODY-CHECKIN-1): roughly three days out of five, a quick
+    self-report -- mood, energy, stress_felt, each 1-5. The FIRST seeded day always gives all three
+    numbers AND a note, and the SECOND gives numbers with no note (tests/test_demo.py's catalogue-
+    coverage guard, plus the slice's own "with and without a note"), so even a short --dias run
+    shows both shapes on Día."""
+    rows = 0
+    for i, d in enumerate(all_days):
+        if i > 1 and rng.random() >= 0.6:
+            continue
+        momento = _MOMENTOS_CHECKIN_DEMO[i % len(_MOMENTOS_CHECKIN_DEMO)]
+        nota = _NOTA_CHECKIN_DEMO if (i == 0 or (i > 1 and rng.random() < 0.3)) else None
+        db.crear_checkin(conn, person_id, d.isoformat(), momento, ts_local=f"{d.isoformat()}T07:00:00",
+                          mood=rng.randint(2, 5), energy=rng.randint(2, 5), stress_felt=rng.randint(1, 4),
+                          nota=nota)
+        rows += 1
+    conn.commit()
+    return rows
+
+
 def _seed_shifts(conn, shift_import, turnos_costo, person_id: int,
                   all_days: list[date]) -> tuple[int | None, int | None, int, int]:
     confirmed_days, proposed_days = all_days[:-7], all_days[-7:]
@@ -858,6 +882,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     metric_rows += _seed_soreness(conn, db, rng, all_days, person_id)
     entradas_ingesta, comidas_ingesta = _seed_ingesta(conn, db, rng, all_days, person_id)
     periodos = _seed_periodo(conn, db, all_days, person_id)
+    checkins = _seed_checkins(conn, db, rng, all_days, person_id)
     # BODY-RECUPERACION-1-M: AFTER _seed_periodo, not before -- recuperacion.recalcular() checks
     # db.dias_marcados() per activity at computation time, so an activity on a day inside a marked
     # period must only be recomputed once that period's row already exists, or it is scored by its
@@ -884,6 +909,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
         "semanas_nocturnas": night_weeks, "bloques_turno_noche": night_blocks, "metas_activas": 4, "habitos": 3,
         "verificaciones_semanales": checks + hogar_checks, "chequeos_habito": habit_checks + hogar_habit_checks,
         "entradas_ingesta": entradas_ingesta, "comidas": comidas_ingesta, "periodos": periodos,
+        "checkins": checkins,
         "recuperacion_actividades": recuperacion_rows,
         "turno_fc_turnos": turno_fc_turnos, "sueno_fc_noches": sueno_fc_noches,
     }

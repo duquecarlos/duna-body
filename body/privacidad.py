@@ -43,6 +43,9 @@ FULLY_HANDLED_TABLES = {
     # own minute-by-minute reading, never typed by the person. Not exported to body/vida_export.py
     # (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 7) -- only to this module's own full personal export.
     "turno_fc",
+    # BODY-CHECKIN-1: the three 1-5 readings only, never the note -- its own sibling table
+    # checkin_nota is in NEVER_EXPORTED_TABLES below (ruling 4, the strictest privacy level).
+    "checkin",
 }
 # raw_payload: kind/date only, never the stored JSON payload. garmin_cuenta: the connected-since
 # date only, never the encrypted token (BODY-GARMIN-HOST-1). dispositivo: name/scopes/dates only,
@@ -52,7 +55,10 @@ FULLY_HANDLED_TABLES = {
 # them) -- both are owned through goal_id instead, and both are still fully exported and deleted,
 # via a join on goal.person_id (habit above, goal_enlace through body/enlaces.py).
 PARTIAL_EXPORT_TABLES = {"raw_payload", "garmin_cuenta", "dispositivo"}
-NEVER_EXPORTED_TABLES = {"sesion"}  # session plumbing, not data about the person's body or life
+# BODY-CHECKIN-1 ruling 4: checkin_nota is the strictest privacy level -- never in this module's own
+# export, never in body/vida_export.py, never shared with a household. sesion is session plumbing,
+# not data about the person's body or life.
+NEVER_EXPORTED_TABLES = {"sesion", "checkin_nota"}
 
 
 def person_tables(conn: sqlite3.Connection) -> set[str]:
@@ -131,6 +137,11 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
     periodos = [dict(r) for r in conn.execute(
         "SELECT id, kind, start_day, end_day, note, created_at, updated_at "
         "FROM period WHERE person_id = ? ORDER BY start_day, id", (person_id,))]
+    # BODY-CHECKIN-1 ruling 4: never the note (checkin_nota) -- not even here, this person's own
+    # full export.
+    checkins = [dict(r) for r in conn.execute(
+        "SELECT id, day, ts_local, momento, mood, energy, stress_felt, created_at "
+        "FROM checkin WHERE person_id = ? ORDER BY day, id", (person_id,))]
     dias = [dict(r) for r in conn.execute(
         "SELECT day, metric_key, value, source FROM daily_metric WHERE person_id = ? ORDER BY day",
         (person_id,))]
@@ -212,6 +223,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "ingesta": ingesta,
         "comidas": comidas,
         "periodos": periodos,
+        "checkins": checkins,
         "dias": dias,
         "actividades": actividades,
         "sets_entreno": sets_entreno,
@@ -244,6 +256,8 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         conn.execute("DELETE FROM comida WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM period WHERE person_id = ?", (person_id,))
         db.invalidar_periodos_cache(conn, person_id)
+        conn.execute("DELETE FROM checkin_nota WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM checkin WHERE person_id = ?", (person_id,))
         conn.execute("UPDATE habit SET assignee_person_id = NULL WHERE assignee_person_id = ?", (person_id,))
         enlaces.delete_rows_for_person(conn, person_id)
         conn.execute(

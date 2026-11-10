@@ -202,8 +202,10 @@ _PARAM_REGISTRAR_ENTRENO = {
 }
 
 # BODY-PROTEINA-1: an intake key (agregado = 'suma_ingesta') is excluded from registrar_medida's own
-# enum -- it has exactly one writer, registrar_ingesta, below.
-SELF_METRIC_KEYS = tuple(d[0] for d in db.METRIC_DEFS if d[5] == "self" and d[6] != "suma_ingesta")
+# enum -- it has exactly one writer, registrar_ingesta, below. BODY-CHECKIN-1: the three check-in
+# keys are excluded the same way -- registrar_checkin is their one writer.
+SELF_METRIC_KEYS = tuple(d[0] for d in db.METRIC_DEFS if d[5] == "self" and d[6] != "suma_ingesta"
+                          and d[0] not in db.CHECKIN_METRIC_KEYS)
 _PARAM_REGISTRAR_MEDIDA = {
     "type": "object",
     "properties": {
@@ -267,6 +269,27 @@ _PARAM_REGISTRAR_COMIDA = {
         "cantidades": {"type": "array", "items": _PARAM_CANTIDAD_COMIDA, "minItems": 1},
     },
     "required": ["descripcion", "cantidades"],
+    "additionalProperties": False,
+}
+
+# BODY-CHECKIN-1 ruling 3: momento is a short key validated in CODE, never a DB CHECK -- a new
+# moment word is a code change here, not a migration. mood/energy/stress_felt are typed as a LIST
+# (["integer", "string", "null"]), not the bare string "integer": _validar_parametros only enforces
+# the bare-string shapes, so a plain numeric string ("4") reaches _numero_checkin below to coerce,
+# the same choice _PARAM_REGISTRAR_ENTRENO's reps/peso_kg already made (BODY-ENTRENO-NUMEROS-1).
+MOMENTOS_CHECKIN = ("despertar", "post_turno", "otro")
+_PARAM_REGISTRAR_CHECKIN = {
+    "type": "object",
+    "properties": {
+        "day": {"type": "string", "format": "date"},
+        "hora": {"type": "string"},
+        "momento": {"type": "string", "enum": list(MOMENTOS_CHECKIN)},
+        "mood": {"type": ["integer", "string", "null"], "minimum": 1, "maximum": 5},
+        "energy": {"type": ["integer", "string", "null"], "minimum": 1, "maximum": 5},
+        "stress_felt": {"type": ["integer", "string", "null"], "minimum": 1, "maximum": 5},
+        "nota": {"type": "string"},
+    },
+    "required": ["momento"],
     "additionalProperties": False,
 }
 
@@ -735,6 +758,8 @@ def _registrar_medida(conn: sqlite3.Connection, person_id: int, conversacion_id:
         raise ToolError(f"medida desconocida o no autogestionada: {metric_key!r}")
     if fila["agregado"] == "suma_ingesta":
         raise ToolError(f"{metric_key!r} se registra con registrar_ingesta, no con registrar_medida")
+    if metric_key in db.CHECKIN_METRIC_KEYS:
+        raise ToolError(f"{metric_key!r} se registra con registrar_checkin, no con registrar_medida")
     day = day or _hoy_local(conn, person_id)
     _dia_no_futuro(conn, person_id, day)
     try:
@@ -894,6 +919,61 @@ def _registrar_comida(conn: sqlite3.Connection, person_id: int, conversacion_id:
     despues = {"descripcion": descripcion, "cantidades": limpias, "day": day,
                "ts_local": _hora_a_ts_local(day, hora)}
     registro = propuestas.crear(conn, person_id, conversacion_id, "registrar_comida", despues)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
+def _numero_checkin(t: T, metric_key: str, valor, *, clave_error: str) -> int | None:
+    """BODY-CHECKIN-1 ruling 3: door validation for mood/energy/stress_felt, the same shape
+    `_numero_cantidad_comida` built for a meal's amount -- None passes through (the field is
+    optional); a bool is refused; an int/float already a whole number passes through; a plain
+    numeric string ("4") is coerced; anything else ("4-5", "4.5", "") is refused naming the
+    field's own catalogue label. 1-5 inclusive, refused the same way outside that range."""
+    if valor is None:
+        return None
+    etiqueta = t("metric." + metric_key).lower()
+    if isinstance(valor, bool):
+        raise ToolError(t(clave_error, metrica=etiqueta))
+    if isinstance(valor, int):
+        numero = valor
+    elif isinstance(valor, float):
+        if not valor.is_integer():
+            raise ToolError(t(clave_error, metrica=etiqueta))
+        numero = int(valor)
+    elif isinstance(valor, str):
+        try:
+            numero = int(valor.strip())
+        except ValueError:
+            raise ToolError(t(clave_error, metrica=etiqueta))
+    else:
+        raise ToolError(t(clave_error, metrica=etiqueta))
+    if not (1 <= numero <= 5):
+        raise ToolError(t(clave_error, metrica=etiqueta))
+    return numero
+
+
+def _registrar_checkin(conn: sqlite3.Connection, person_id: int, conversacion_id: int, momento: str,
+                        day: str | None = None, hora: str | None = None, mood=None, energy=None,
+                        stress_felt=None, nota: str | None = None) -> dict:
+    """Proposes a 10-second self-report for a day (BODY-CHECKIN-1): mood, energy and stress_felt,
+    each 1-5, plus an optional one-line note -- at least one of the four must be given. Every
+    number is validated at the door (`_numero_checkin`) before anything is proposed, naming the
+    field, so one bad value refuses the whole call. Insert-shaped, like `registrar_comida`: there
+    is no 'before'. The note is private by default (ruling 4) -- carried in `despues` only so
+    `propuestas.aplicar` can write it, never read back by any tool afterwards."""
+    if momento not in MOMENTOS_CHECKIN:
+        raise ToolError(f"momento desconocido: {momento!r}")
+    t = T(db.person(conn, person_id)["language"])
+    mood = _numero_checkin(t, "mood", mood, clave_error="agente.error.checkin_valor_invalido")
+    energy = _numero_checkin(t, "energy", energy, clave_error="agente.error.checkin_valor_invalido")
+    stress_felt = _numero_checkin(t, "stress_felt", stress_felt, clave_error="agente.error.checkin_valor_invalido")
+    nota = (nota or "").strip() or None
+    if mood is None and energy is None and stress_felt is None and nota is None:
+        raise ToolError("se necesita al menos uno de mood, energy, stress_felt o nota")
+    day = day or _hoy_local(conn, person_id)
+    _dia_no_futuro(conn, person_id, day)
+    despues = {"day": day, "ts_local": _hora_a_ts_local(day, hora), "momento": momento,
+               "mood": mood, "energy": energy, "stress_felt": stress_felt, "nota": nota}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "registrar_checkin", despues)
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
@@ -1298,6 +1378,12 @@ HERRAMIENTAS = [
                      "cafeína y alcohol cuando la persona la dé. No lo guarda: registra la propuesta para "
                      "que la persona la apruebe en el chat.",
      "parametros": _PARAM_REGISTRAR_COMIDA, "funcion": _registrar_comida},
+    {"nombre": "registrar_checkin", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone un chequeo de 10 segundos: ánimo, energía y estrés sentido, cada uno del 1 al 5, "
+                     "más una nota opcional de una línea. Pregunta solo esos tres números y esa línea -- nunca "
+                     "más -- y usa únicamente lo que la persona te dé, sin inventar un valor que no dijo. No lo "
+                     "guarda: registra la propuesta para que la persona la apruebe en el chat.",
+     "parametros": _PARAM_REGISTRAR_CHECKIN, "funcion": _registrar_checkin},
     {"nombre": "marcar_periodo", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone marcar unos días como un período especial (malestar, viaje o lesión) para que "
                      "Body los deje fuera cuando compare con lo habitual, sin leerlos como efecto de un "

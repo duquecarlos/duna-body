@@ -279,6 +279,39 @@ def _tarjeta_registrar_comida(t: T, defs: dict, despues: dict, antes_json: dict 
     return None, "\n".join(lineas), None
 
 
+def _momento_checkin_txt(t: T, momento: str) -> str:
+    """BODY-CHECKIN-1: three literal t() calls, not a concatenated key, the same choice
+    `_periodo_kind_txt` above made -- so test_i18n_paridad.py's dynamic-prefix guard needs no new
+    entry. Duplicated in body/rutas/hoy.py (its own Día section), since neither module may import
+    the other for one helper."""
+    if momento == "despertar":
+        return t("checkin.momento.despertar")
+    if momento == "post_turno":
+        return t("checkin.momento.post_turno")
+    return t("checkin.momento.otro")
+
+
+def _checkin_valor_txt(t: T, defs: dict, metric_key: str, valor: int) -> str:
+    return t("asistente.propuesta.checkin_valor", metric=t("metric." + metric_key),
+              valor=comun._fig_unit(t, metric_key, valor, defs))
+
+
+def _tarjeta_registrar_checkin(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+    """BODY-CHECKIN-1 ruling 3: one card -- the date and moment word, then every given reading as
+    «4 de 5» (comun._fig_unit, the same "of5" rendering soreness already uses), then the note in
+    quotes. Insert-shaped, like registrar_comida: there is no 'before'."""
+    fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
+    lineas = [fecha + " · " + _momento_checkin_txt(t, despues["momento"])]
+    valores_txt = " · ".join(
+        _checkin_valor_txt(t, defs, k, despues[k]) for k in db.CHECKIN_METRIC_KEYS if despues.get(k) is not None
+    )
+    if valores_txt:
+        lineas.append(valores_txt)
+    if despues.get("nota"):
+        lineas.append(t("asistente.propuesta.checkin_nota", nota=despues["nota"]))
+    return None, "\n".join(lineas), None
+
+
 def _periodo_kind_txt(t: T, kind: str) -> str:
     """BODY-PERIODO-1: three literal t() calls, not a concatenated key, so test_i18n_paridad.py's
     dynamic-prefix guard needs no new entry (the same choice BODY-PROTEINA-1 made for
@@ -411,6 +444,7 @@ TARJETAS = {
     "corregir_ingesta": _tarjeta_corregir_ingesta,
     "borrar_ingesta": _tarjeta_borrar_ingesta,
     "registrar_comida": _tarjeta_registrar_comida,
+    "registrar_checkin": _tarjeta_registrar_checkin,
     "marcar_periodo": _tarjeta_marcar_periodo,
     "cerrar_periodo": _tarjeta_cerrar_periodo,
     "corregir_periodo": _tarjeta_corregir_periodo,
