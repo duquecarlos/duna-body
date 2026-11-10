@@ -15658,3 +15658,20 @@ Body, donde lo puedes deshacer." and Hoy should show "Tu asistente personal apli
 Open follow-up, named but not acted on: the breach itself (a Tier 1 slice stopping GATE_RED without
 committing) is recorded here as this entry's own context, not filed as a separate follow-up ID --
 there is nothing left to fix; the tree this slice found is now fully committed.
+
+## BODY-MCP-APLICAR-1-M -- merged
+
+Merge only, approved under `ORCH-CARLOS-DELEGATES-TIER-1-1` / BODY-MCP-APLICAR-1's rulings 1-7: no
+code change in this slice. `git merge --no-ff feat/body-mcp-aplicar-1` into `main`, no conflicts,
+merge commit `3889c57db7cc0613ff8442ce57f94529215cbf74` (branch tip `494eee9a55ccb900587fecc0abcbe23bde4c96e8`,
+onto `main` at `7ee1be1d707ea63ac67d84ec4594e4b96dabc4ea`).
+
+**Gate**, once, foreground (backgrounded past the harness's 600s cap, read back from its own
+artifact once it finished), on the merged tree:
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 2329 tests in 865.888s ... OK
+(skipped=1)` -- the same 2329-test floor the orchestrator measured on the demo drive.
+
+The orchestrator's own 375 px look and MCP drive against the re-seeded DEMO home passed (see
+BODY-MCP-APLICAR-1-B's entry above for the surface); no figures repeated here. The "¿Tu asistente
+personal puede aplicar cambios cuando le digas que sí?" switch stays **off by default**; only the
+person turns it on, from Body's own Ajustes.
