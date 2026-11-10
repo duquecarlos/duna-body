@@ -448,6 +448,79 @@ def _seed_recuperacion(conn, db, recuperacion, person_id: int) -> int:
     return len(rows)
 
 
+_TURNO_FC_OFFSET_BPM = 10.0
+N_TURNOS_FC = 8
+
+
+def _dias_con_intradia_fc(conn, person_id: int) -> set[str]:
+    return {r["day"] for r in conn.execute(
+        "SELECT DISTINCT day FROM raw_payload WHERE person_id = ? AND kind = 'intradia_fc'",
+        (person_id,)).fetchall()}
+
+
+def _dias_actividades_recuperacion(conn, person_id: int, limite: int) -> set[str]:
+    """The exact calendar days (and the one after, for a recovery window that crosses midnight)
+    `_seed_recuperacion`'s own most-recent-`limite` activities fill with a DELIBERATE, non-flat
+    curve -- the only days `_seed_turno_fc` must never touch again. Every other day, even one
+    `_seed_recuperacion`'s own background fill already reached, is safe to adjust further: that
+    fill is the SAME flat curve either way, and `recuperacion_actividad`'s own rows are already
+    computed and stored (`recuperacion.recalcular` ran inside `_seed_recuperacion`, before this
+    function is ever called) -- overwriting the raw intraday data afterwards changes nothing it
+    already read."""
+    rows = conn.execute(
+        "SELECT day FROM activity WHERE person_id = ? AND start_local IS NOT NULL "
+        "AND duration_s IS NOT NULL ORDER BY day DESC LIMIT ?",
+        (person_id, limite),
+    ).fetchall()
+    out: set[str] = set()
+    for r in rows:
+        d = date.fromisoformat(r["day"])
+        out.add(d.isoformat())
+        out.add((d + timedelta(1)).isoformat())
+    return out
+
+
+def _seed_turno_fc(conn, db, turno_fc, person_id: int, all_days: list[date]) -> int:
+    """Invented minute-by-minute heart rate so «Tu pulso durante el turno» (BODY-TURNO-FC-1) has
+    something to show on the demo server: the person's own flat per-hour background
+    (`_curva_dia_ordinario`, the SAME curve `_seed_recuperacion`'s own background fill already
+    uses) on every 'off' day with no intraday data yet, so turno_fc's own days-off reference
+    (`intradia_horario.usual_hora(solo_descanso=True)`) has enough qualifying days -- and a handful
+    of confirmed 'morning' shifts, clearly BELOW that reference for the same hours (Carlos's own
+    study 2 hypothesis), on days outside `_dias_actividades_recuperacion`'s reserved set, so at
+    least one finding shows regardless of how much of the history `_seed_recuperacion`'s own
+    background fill already covers. Called AFTER `_seed_recuperacion` and `_seed_shifts`."""
+    ya_con_datos = _dias_con_intradia_fc(conn, person_id)
+    reservados = _dias_actividades_recuperacion(conn, person_id, N_ACTIVIDADES_RECUPERACION)
+
+    for d in all_days:
+        if d.isoformat() in ya_con_datos or _shift_kind_for(d) != "off":
+            continue
+        muestras = _curva_dia_ordinario(d)
+        db.guardar_intradia(conn, person_id, d.isoformat(), "intradia_fc",
+                             {"heartRateValues": [[_muestra_ms(t), v] for t, v in muestras]})
+        ya_con_datos.add(d.isoformat())
+
+    start_h, end_h, _crosses = _SHIFT_HOURS["morning"]
+    inicio_h, inicio_m = int(start_h[:2]), int(start_h[3:])
+    fin_h, fin_m = int(end_h[:2]), int(end_h[3:])
+    confirmados = all_days[:-7]
+    candidatos = [d for d in confirmados if _shift_kind_for(d) == "morning"
+                  and d.isoformat() not in reservados]
+    elegidos = candidatos[-N_TURNOS_FC:]
+    for d in elegidos:
+        inicio = datetime.combine(d, datetime.min.time()) + timedelta(hours=inicio_h, minutes=inicio_m)
+        fin = datetime.combine(d, datetime.min.time()) + timedelta(hours=fin_h, minutes=fin_m)
+        muestras = [(t, round(max(30.0, v - _TURNO_FC_OFFSET_BPM)) if inicio <= t <= fin else v)
+                    for t, v in _curva_dia_ordinario(d)]
+        db.guardar_intradia(conn, person_id, d.isoformat(), "intradia_fc",
+                             {"heartRateValues": [[_muestra_ms(t), v] for t, v in muestras]})
+        ya_con_datos.add(d.isoformat())
+    conn.commit()
+    turno_fc.recalcular(conn, person_id)
+    return len(elegidos)
+
+
 def _seed_self_metrics(conn, db, rng: random.Random, all_days: list[date], person_id: int) -> int:
     """The four generic self-measured metric_def rows (BODY-ENTRENO-SCHEMA-1, BODY-MEDIDA-PESO-1),
     sparser than the watch's daily figures: a flexibility reach, a weigh-in and a waist reading
@@ -659,7 +732,7 @@ def _seed_household(conn, db, goals, enlaces, compartir, rng: random.Random, all
 
 
 def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
-    from . import compartir, db, enlaces, goals, recuperacion, shift_import, turnos_costo
+    from . import compartir, db, enlaces, goals, recuperacion, shift_import, turno_fc, turnos_costo
 
     person_id = _seed_person(conn, db, idioma)
 
@@ -681,6 +754,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
 
     confirmed_id, proposed_id, night_weeks, night_blocks = _seed_shifts(
         conn, shift_import, turnos_costo, person_id, all_days)
+    turno_fc_turnos = _seed_turno_fc(conn, db, turno_fc, person_id, all_days)
 
     checks, habit_checks = _seed_goals_and_habits(
         conn, db, goals, rng, all_days, anchor, first_monday, anchor_monday, person_id, idioma)
@@ -696,6 +770,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
         "semanas_nocturnas": night_weeks, "bloques_turno_noche": night_blocks, "metas_activas": 4, "habitos": 3,
         "verificaciones_semanales": checks + hogar_checks, "chequeos_habito": habit_checks + hogar_habit_checks,
         "entradas_ingesta": entradas_ingesta, "periodos": periodos, "recuperacion_actividades": recuperacion_rows,
+        "turno_fc_turnos": turno_fc_turnos,
     }
 
 

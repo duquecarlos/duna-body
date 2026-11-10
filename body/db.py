@@ -30,6 +30,12 @@ SHIFT_KINDS = ("morning", "afternoon", "night", "day", "off", "other")
 # horizon; 'marcado' = the activity's own day is inside a marked period (db.dias_marcados).
 RECUPERACION_MOTIVOS = ("sin_cobertura", "sin_rango", "fuera_de_horizonte", "marcado")
 
+# BODY-TURNO-FC-1: the honest-gap reason codes body/turno_fc.py's Resultado carries when a shift
+# gets no figure -- same reasoning as RECUPERACION_MOTIVOS above. 'sin_cobertura' = too little
+# minute-HR coverage inside the shift's own window; 'sin_rango' = no days-off usual yet for an hour
+# the window touches; 'marcado' = the shift's own day is inside a marked period.
+TURNO_FC_MOTIVOS = ("sin_cobertura", "sin_rango", "marcado")
+
 # Shared between SCHEMA (fresh installs) and the rebuild functions below (existing installs),
 # so the two paths can never drift apart.
 _GOAL_COLUMNS = """
@@ -200,6 +206,30 @@ _RECUPERACION_ACTIVIDAD_COLUMNS = f"""
     PRIMARY KEY (person_id, activity_source, activity_source_id, modelo_version),
     FOREIGN KEY (person_id, activity_source, activity_source_id)
         REFERENCES activity(person_id, source, source_id)
+"""
+
+# BODY-TURNO-FC-1: one row per (person, shift day, model version) -- a version bump recomputes
+# rather than mixes (same convention as _RECUPERACION_ACTIVIDAD_COLUMNS above). `kind` is a plain
+# copy of the shift's own kind at the time this was computed, so body/turno_fc.py's estudio() never
+# needs a join back to `shift` just to group by it. `fc_mediana`/`estres_mediana`/`bajo_usual_pct`/
+# `cobertura` are all NULL together when `motivo` is set -- never a mix of some figures and a
+# reason.
+_TURNO_FC_COLUMNS = f"""
+    person_id      INTEGER NOT NULL REFERENCES person(id),
+    day            TEXT NOT NULL,
+    kind           TEXT NOT NULL CHECK (kind IN {SHIFT_KINDS!r}),
+    modelo_version TEXT NOT NULL,
+    fc_mediana     REAL,
+    estres_mediana REAL,
+    bajo_usual_pct REAL,
+    -- The days-off reference (ruling 2): the mean of this shift's own touched hours' own usual,
+    -- computed once here at recalcular() time and read back as-is by estudio()'s kind grouping --
+    -- never recomputed live on a page render (BODY-RENDIMIENTO-1's own ceiling on /shifts).
+    referencia_fc  REAL,
+    cobertura      REAL,
+    motivo         TEXT CHECK (motivo IN {TURNO_FC_MOTIVOS!r} OR motivo IS NULL),
+    computed_at    TEXT NOT NULL,
+    PRIMARY KEY (person_id, day, modelo_version)
 """
 
 SCHEMA = f"""
@@ -621,6 +651,12 @@ CREATE TABLE IF NOT EXISTS recuperacion_actividad (
 {_RECUPERACION_ACTIVIDAD_COLUMNS}
 );
 CREATE INDEX IF NOT EXISTS idx_recuperacion_actividad_person ON recuperacion_actividad(person_id);
+
+-- BODY-TURNO-FC-1: see _TURNO_FC_COLUMNS above for why.
+CREATE TABLE IF NOT EXISTS turno_fc (
+{_TURNO_FC_COLUMNS}
+);
+CREATE INDEX IF NOT EXISTS idx_turno_fc_person ON turno_fc(person_id);
 """
 
 # (key, label, unit, better, kind). 'estimated' = computed by Body, shown with «≈» and "how I calculate it".

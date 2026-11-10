@@ -68,6 +68,10 @@ TAREAS = {
     # body.recuperacion.recalcular is idempotent); the daily pull also calls it per person after
     # that, so this task is for the one-off catch-up, not a schedule.
     "recuperacion": "body.recuperacion",
+    # BODY-TURNO-FC-1: fills turno_fc for the first backfill (safe to re-run --
+    # body.turno_fc.recalcular is idempotent by its own MODELO version); the daily pull also
+    # calls it per person after that, so this task is for the one-off catch-up, not a schedule.
+    "turno_fc": "body.turno_fc",
 }
 
 # Argv prepended before a task's own arguments, for a task that shares a module with another task

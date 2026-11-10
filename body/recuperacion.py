@@ -6,7 +6,10 @@ body/turnos_costo.py and body/baselines.py. Every number here is an ESTIMATE, ve
 (`MODELO["version"]`), against the person's OWN history, never a population table (docs/DESIGN.md
 rules 4, 5, 12). The intraday spacing/offset helpers (`_espaciado_mediana_min`, `_sin_offset`) are
 IMPORTED from body/experimentos.py, not duplicated (ORCH-CARLOS-DELEGATES-TIER-1-1's approval
-reason requires this).
+reason requires this). The day cache, activity-hours and hourly-usual helpers (`_leer_dia`,
+`_horas_actividad_por_dia`, `_usual_hora`) are thin wrappers over body/intradia_horario.py
+(BODY-TURNO-FC-1 moved their bodies there so body/turno_fc.py can share them) -- same names, same
+behaviour, so every test below is unchanged except imports.
 
 BODY-RECUPERACION-1-C replaces ruling 2 of BODY-RECUPERACION-1: the orchestrator measured v1 on a
 copy of the real database (counts only, copy deleted after) -- of 392 activities, 297 came out
@@ -24,9 +27,9 @@ import statistics
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
-from . import cuenta, db
+from . import cuenta, db, intradia_horario
 from .experimentos import _espaciado_mediana_min, _sin_offset
 
 VERSION = "recuperacion-v2"
@@ -83,89 +86,24 @@ def _fin_actividad(activity_row) -> datetime | None:
 
 
 def _leer_dia(conn, person_id: int, dia: str, zona: str, cache: dict) -> dict:
-    """This one day's intraday_fc series, read via db.intradia AT MOST ONCE per `cache` (a per-run
-    dict passed in by the caller) -- the bucket-by-clock-hour view and the day's own observed
-    spacing are derived from that single read and cached alongside it, so neither the horizon
-    search nor `_usual_hora` ever re-reads a day already in `cache`."""
-    dias_cache = cache.setdefault("dias", {})
-    if dia in dias_cache:
-        return dias_cache[dia]
-    muestras = db.intradia(conn, person_id, dia, "intradia_fc", zona)
-    por_hora: dict[int, list[float]] = defaultdict(list)
-    for ts, v in muestras:
-        por_hora[_sin_offset(ts).hour].append(v)
-    entry = {"muestras": muestras, "por_hora": por_hora, "espaciado": _espaciado_mediana_min(muestras)}
-    dias_cache[dia] = entry
-    return entry
+    """Thin wrapper over body/intradia_horario.py's `leer_dia` (BODY-TURNO-FC-1) -- see this
+    module's own docstring."""
+    return intradia_horario.leer_dia(conn, person_id, dia, zona, cache)
 
 
 def _horas_actividad_por_dia(conn, person_id: int, cache: dict) -> dict[str, set[int]]:
-    """Every clock hour, on every day, touched by one of this person's OWN activities -- read in
-    ONE query per `cache` (every activity this person has, regardless of model version), not once
-    per activity per look-back day. `_usual_hora` excludes a (day, hour) pair from "ordinary" when
-    it is here, per ruling 2: a desk hour's usual must never include the activity itself."""
-    if "horas_actividad" in cache:
-        return cache["horas_actividad"]
-    rows = conn.execute(
-        "SELECT start_local, duration_s FROM activity WHERE person_id = ? "
-        "AND start_local IS NOT NULL AND duration_s IS NOT NULL",
-        (person_id,),
-    ).fetchall()
-    out: dict[str, set[int]] = defaultdict(set)
-    for r in rows:
-        inicio = _sin_offset(r["start_local"])
-        fin = inicio + timedelta(seconds=r["duration_s"])
-        t = inicio.replace(minute=0, second=0, microsecond=0)
-        while t <= fin:
-            out[t.date().isoformat()].add(t.hour)
-            t += timedelta(hours=1)
-    cache["horas_actividad"] = out
-    return out
+    """Thin wrapper over body/intradia_horario.py's `horas_actividad_por_dia` (BODY-TURNO-FC-1)."""
+    return intradia_horario.horas_actividad_por_dia(conn, person_id, cache)
 
 
 def _usual_hora(conn, person_id: int, zona: str, dia_actividad: str, hora: int, cache: dict) -> tuple[float | None, int]:
-    """The person's OWN usual heart rate for clock hour `hora`, as the median of every sample
-    recorded during that hour over MODELO['dias_historia'] days strictly before `dia_actividad`
-    (that day excluded, same convention as baselines.baseline) -- counting only (day, hour) pairs
-    where the day is not marked, that hour holds no activity of the person's own
-    (`_horas_actividad_por_dia`), and that hour's own sample count meets MODELO['cobertura_min']
-    against the day's own observed spacing. Returns (usual, n_dias_calificados); usual is None
-    (honest "sin_rango") when n_dias_calificados < MODELO['min_dias_horario']. Memoized per
-    (dia_actividad, hora) in `cache` -- several activities on the same day sharing an hour, or the
-    same activity touching several hours, never repeat this walk."""
-    memo = cache.setdefault("usual", {})
-    clave = (dia_actividad, hora)
-    if clave in memo:
-        return memo[clave]
-
-    d = date.fromisoformat(dia_actividad)
-    desde = d - timedelta(days=MODELO["dias_historia"])
-    hasta = d - timedelta(days=1)
-    marcados = db.dias_marcados(conn, person_id, desde.isoformat(), hasta.isoformat())
-    horas_actividad = _horas_actividad_por_dia(conn, person_id, cache)
-
-    valores: list[float] = []
-    dias_calificados = 0
-    dia_iter = desde
-    while dia_iter <= hasta:
-        dia_iso = dia_iter.isoformat()
-        dia_iter += timedelta(days=1)
-        if dia_iso in marcados or hora in horas_actividad.get(dia_iso, ()):
-            continue
-        entry = _leer_dia(conn, person_id, dia_iso, zona, cache)
-        if entry["espaciado"] is None:
-            continue
-        muestras_hora = entry["por_hora"].get(hora, [])
-        esperadas = 60 / entry["espaciado"]
-        if len(muestras_hora) < MODELO["cobertura_min"] * esperadas:
-            continue
-        valores.extend(muestras_hora)
-        dias_calificados += 1
-
-    resultado = ((statistics.median(valores), dias_calificados) if dias_calificados >= MODELO["min_dias_horario"]
-                 else (None, dias_calificados))
-    memo[clave] = resultado
-    return resultado
+    """Thin wrapper over body/intradia_horario.py's `usual_hora` (BODY-TURNO-FC-1), fed this
+    module's own MODELO figures -- several activities on the same day sharing an hour, or the same
+    activity touching several hours, never repeat the look-back walk (memoized there)."""
+    return intradia_horario.usual_hora(
+        conn, person_id, zona, dia_actividad, hora, cache,
+        dias_historia=MODELO["dias_historia"], min_dias_horario=MODELO["min_dias_horario"],
+        cobertura_min=MODELO["cobertura_min"])
 
 
 def recuperacion_actividad(conn, person_id: int, activity_row, cache: dict | None = None) -> Resultado:

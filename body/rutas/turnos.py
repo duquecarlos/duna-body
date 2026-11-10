@@ -9,7 +9,7 @@ from urllib.parse import parse_qs
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import baselines, db, identity, patron_turnos, readiness, shift_import, turnos_costo
+from .. import baselines, db, identity, patron_turnos, readiness, shift_import, turno_fc, turnos_costo
 from ..i18n import T
 from ..lector import Lector
 from . import comun
@@ -96,6 +96,69 @@ def _turnos_ultima_ctx(t: T, defs: dict, resumen: dict) -> dict | None:
     }
 
 
+# BODY-TURNO-FC-1: the two words `t("shifts.pulso." + direccion)` resolves to -- read by
+# tests/test_i18n_paridad.py's own dynamic-prefix coverage, not hand-typed there.
+_PULSO_DIRECCION_WORDS = ("bajo", "alto")
+_PULSO_KIND_ORDER = ["morning", "afternoon", "night", "day", "other"]
+
+
+def _turno_fc_direccion(diff: float) -> str | None:
+    """None (read as "about the same") below MODELO's own noise floor; otherwise which side of the
+    days-off reference this kind's own median falls on."""
+    if abs(diff) < turno_fc.MODELO["ruido_min_diferencia_bpm"]:
+        return None
+    return "bajo" if diff > 0 else "alto"
+
+
+def _turno_fc_kind_linea(t: T, kind: str, data: dict) -> str:
+    etiqueta = t("shift.kind." + kind)
+    if data.get("motivo") == "pocos_datos":
+        return t("shifts.pulso.pocos_datos", kind=etiqueta, n=data["n"])
+    fc, n = t.num(data["fc_mediana"]), data["n"]
+    if data["referencia"] is None:
+        return t("shifts.pulso.sin_referencia", kind=etiqueta, fc=fc, n=n)
+    direccion = _turno_fc_direccion(data["diff"])
+    if direccion is None:
+        return t("shifts.pulso.linea_igual", kind=etiqueta, fc=fc, n=n)
+    return t("shifts.pulso.linea", kind=etiqueta, fc=fc, diff=t.num(abs(data["diff"])),
+             direccion=t("shifts.pulso." + direccion), n=n)
+
+
+def _turno_fc_sueno_lineas(t: T, data: dict) -> list[str]:
+    out = []
+    for bucket in ("corta", "normal"):
+        info = data.get("sleep", {}).get(bucket)
+        if info is None or info.get("motivo") == "pocos_datos":
+            continue  # a thin sleep split says nothing new beyond the kind's own line above
+        out.append(t("shifts.pulso.sueno_" + bucket, fc=t.num(info["fc_mediana"]), n=info["n"]))
+    return out
+
+
+def _turno_fc_hallazgo_linea(t: T, h: dict) -> str:
+    direccion = _turno_fc_direccion(h["diff"])
+    return t("shifts.pulso.hallazgo", kind=t("shift.kind." + h["kind"]), diff=t.num(abs(h["diff"])),
+             direccion=t("shifts.pulso." + direccion))
+
+
+def _turno_fc_ctx(t: T, est: dict) -> dict | None:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 rulings 3-6: one line per shift kind with data, the
+    previous-night's-sleep split inside it, the top findings, and the published-schedule note --
+    None (section hidden, same convention as turnos_costo's own costo_vacio) when this person has
+    no turno_fc rows at all yet."""
+    kinds = est["kinds"]
+    if not kinds:
+        return None
+    filas = []
+    for kind in _PULSO_KIND_ORDER:
+        if kind not in kinds:
+            continue
+        data = kinds[kind]
+        filas.append({"linea": _turno_fc_kind_linea(t, kind, data),
+                      "sueno": _turno_fc_sueno_lineas(t, data) if "motivo" not in data else []})
+    hallazgos = [_turno_fc_hallazgo_linea(t, h) for h in est["hallazgos"]]
+    return {"filas": filas, "hallazgos": hallazgos, "nota": t("shifts.pulso.horario_publicado")}
+
+
 def _turnos_strip(conn, person_id: int, today_local: date, t: T) -> tuple[list[dict], list[dict]]:
     start = today_local - timedelta(_STRIP_DAYS - 1)
     rows = conn.execute(
@@ -157,9 +220,12 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
     # informative on its own and keeps rendering exactly as before.
     costo_vacio = all(f["href"] is None for f in filas)
     ultima = _turnos_ultima_ctx(t, defs, resumen)
+    # BODY-TURNO-FC-1: pure reads over the already-derived `turno_fc` table (two cheap SELECTs,
+    # body/turno_fc.py's own estudio()) -- never a live recompute on this page render.
+    pulso = _turno_fc_ctx(t, turno_fc.estudio(conn, person_id))
     costo_ctx = {"hero_dias": resumen["dias_recuperacion"], "motivo": resumen["motivo"],
                  "filas": filas, "costo_vacio": costo_vacio, "strip": strip, "strip_legend": strip_legend,
-                 "ultima": ultima}
+                 "ultima": ultima, "pulso": pulso}
     tiene_patron = patron_turnos.leer(conn, person_id) is not None
     if len(rows) > 1:
         summary = shift_import.summary_proposed(conn, person_id)
