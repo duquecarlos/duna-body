@@ -131,6 +131,27 @@
 </div>
 {% endif %}
 
+{% if pulso %}
+<div class="card">
+  <div class="k">{{ t('shifts.pulso.title') }}</div>
+  <ul class="list mt-8">
+    {% for f in pulso.filas %}
+    <li>
+      <p class="read mt-0">{{ f.linea }}</p>
+      {% for s in f.sueno %}<p class="k mt-4">{{ s }}</p>{% endfor %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% if pulso.hallazgos %}
+  <p class="k mt-8">{{ t('shifts.pulso.hallazgos_title') }}</p>
+  <ul class="list">
+    {% for h in pulso.hallazgos %}<li><p class="read mt-0">{{ h }}</p></li>{% endfor %}
+  </ul>
+  {% endif %}
+  <p class="k mt-8">{{ pulso.nota }}</p>
+</div>
+{% endif %}
+
 <h2>{{ t('shifts.strip_title') }}</h2>
 <p class="k mt-n4">{{ t('shifts.strip_hint') }}</p>
 <div class="strip">

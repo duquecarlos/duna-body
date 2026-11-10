@@ -119,6 +119,11 @@ _FIXED_DYNAMIC = {
     "experimentos.resultado.+": ["mas_bajo", "mas_alto", "sin_cambio", "pocos_dias", "aun_no"],
     # body/rutas/historial.py, body/rutas/hoy.py: t("periodo.kind." + p["kind"]) (body/db.py PERIOD_KINDS).
     "periodo.kind.+": [k for k, _ in db.PERIOD_KINDS],
+    # body/rutas/turnos.py _turno_fc_direccion(): the only two words it returns.
+    "shifts.pulso.+": list(turnos._PULSO_DIRECCION_WORDS),
+    # body/rutas/turnos.py _turno_fc_sueno_lineas(): the fixed corta/normal sleep split (the same
+    # one body/turno_fc.py's own estudio() uses).
+    "shifts.pulso.sueno_+": ["corta", "normal"],
 }
 
 # body/web.py _finding_text(): key = f"history.find.{axis}_better_{better}", then t(key, ...) -- a

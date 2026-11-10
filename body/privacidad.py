@@ -34,6 +34,10 @@ FULLY_HANDLED_TABLES = {
     # BODY-RECUPERACION-1: one row per (activity, model version) -- a figure derived from the
     # watch's own minute-by-minute reading, never typed by the person.
     "recuperacion_actividad",
+    # BODY-TURNO-FC-1: one row per (shift day, model version) -- a figure derived from the watch's
+    # own minute-by-minute reading, never typed by the person. Not exported to body/vida_export.py
+    # (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 7) -- only to this module's own full personal export.
+    "turno_fc",
 }
 # raw_payload: kind/date only, never the stored JSON payload. garmin_cuenta: the connected-since
 # date only, never the encrypted token (BODY-GARMIN-HOST-1). dispositivo: name/scopes/dates only,
@@ -132,6 +136,9 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
     recuperacion_actividades = [dict(r) for r in conn.execute(
         "SELECT activity_source, activity_source_id, modelo_version, minutos, motivo, computed_at "
         "FROM recuperacion_actividad WHERE person_id = ? ORDER BY computed_at", (person_id,))]
+    turno_fc_filas = [dict(r) for r in conn.execute(
+        "SELECT day, kind, modelo_version, fc_mediana, estres_mediana, bajo_usual_pct, referencia_fc, "
+        "cobertura, motivo, computed_at FROM turno_fc WHERE person_id = ? ORDER BY day", (person_id,))]
     # raw_payload is a partial-export table: its kind and date only, never the stored JSON blob.
     sincronizaciones = [dict(r) for r in conn.execute(
         "SELECT day, kind, source, fetched_at FROM raw_payload WHERE person_id = ? ORDER BY day",
@@ -191,6 +198,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "sets_entreno": sets_entreno,
         "sueno": sueno,
         "recuperacion_actividades": recuperacion_actividades,
+        "turno_fc": turno_fc_filas,
         "sincronizaciones": sincronizaciones,
         "consentimientos": consentimientos,
         "ajustes": ajustes,
@@ -249,6 +257,7 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         # table that references a row this sweep is about to remove.
         conn.execute("DELETE FROM workout_set WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM recuperacion_actividad WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM turno_fc WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM activity WHERE person_id = ?", (person_id,))
         conn.execute(
             "DELETE FROM shift_batch_item WHERE batch_id IN (SELECT id FROM shift_batch WHERE person_id = ?)",

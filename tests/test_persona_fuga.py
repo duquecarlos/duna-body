@@ -128,6 +128,16 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
         "modelo_version, minutos, motivo, computed_at) VALUES (?, 'garmin', 'act-1', ?, 12, NULL, ?)",
         (person_id, recuperacion.MODELO["version"], f"{DAYS[-1]}T07:30:00+00:00"),
     )
+    # BODY-TURNO-FC-1: turno_fc is person-owned (its own person_id column, same shape as
+    # recuperacion_actividad above) and has its first census row here -- no marker needed, the
+    # census only checks export/delete-all coverage, and motivo is CHECK-constrained to a fixed
+    # reason-code set.
+    conn.execute(
+        "INSERT INTO turno_fc (person_id, day, kind, modelo_version, fc_mediana, estres_mediana, "
+        "bajo_usual_pct, referencia_fc, cobertura, motivo, computed_at) VALUES "
+        "(?, ?, 'night', ?, 60.0, 20.0, 70, 65.0, 0.9, NULL, ?)",
+        (person_id, DAYS[-2], "turno-fc-v1", f"{DAYS[-1]}T07:30:00+00:00"),
+    )
     conn.execute(
         "INSERT INTO workout_set (person_id, activity_source, activity_source_id, set_order, "
         "set_type, person_exercise, created_at, updated_at) VALUES (?, 'garmin', 'act-1', 1, "
