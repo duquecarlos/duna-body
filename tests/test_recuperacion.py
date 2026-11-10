@@ -14,7 +14,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import db, recuperacion
+from body import db, pull, recuperacion
 
 ZONA_OFFSET_H = 5  # America/Bogota is UTC-5 year round (tests/test_momentos_pull.py convention)
 
@@ -199,6 +199,37 @@ class RecalcularTest(unittest.TestCase):
         for k, v in resultado["motivos"].items():
             self.assertIn(k, recuperacion.REASON_CODES)
             self.assertIsInstance(v, int)
+
+
+class RecalcularSeguroTest(unittest.TestCase):
+    """body/pull.py's `_recalcular_recuperacion_seguro` (BODY-RECUPERACION-1-B): silent when the
+    recompute found nothing new, one counts-only line when it wrote a row -- the same rule
+    `_cerrar_semanas_seguro`'s own sweep already follows."""
+
+    def setUp(self):
+        self.conn = _mkconn(self)
+        _set_resting(self.conn, 1, "2026-11-10", 10, 55.0)
+        self.conn.execute(
+            "INSERT INTO activity (person_id, source, source_id, day, start_local, duration_s) "
+            "VALUES (1, 'garmin', 'act-1', '2026-11-10', '2026-11-10T18:00:00', 1800)"
+        )
+        self.conn.commit()
+        muestras = _serie("2026-11-10", 18 * 60 + 30, 18 * 60 + 40, 2, 120.0) + \
+            _serie("2026-11-10", 18 * 60 + 42, 22 * 60, 2, 50.0)
+        _guardar_fc(self.conn, 1, "2026-11-10", muestras)
+
+    def test_prints_a_counts_only_line_when_a_row_is_new(self):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            pull._recalcular_recuperacion_seguro(self.conn, 1)
+        self.assertEqual(buf.getvalue().strip(), "recuperacion: 1 filas nuevas")
+
+    def test_stays_silent_on_a_re_run_with_nothing_new(self):
+        pull._recalcular_recuperacion_seguro(self.conn, 1)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            pull._recalcular_recuperacion_seguro(self.conn, 1)
+        self.assertEqual(buf.getvalue(), "")
 
 
 def _insertar_fila(conn, person_id: int, source_id: str, day: str, start_local: str, duration_s: float,

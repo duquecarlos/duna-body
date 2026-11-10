@@ -194,10 +194,12 @@ def _recalcular_recuperacion_seguro(conn, person_id: int) -> None:
     activities not yet computed under the current model version -- idempotent, cheap on a re-run.
     A failure here is never a Garmin failure and never stops the pull for this or the next person
     (same safe-wrapper shape as `_cerrar_semanas_seguro`): caught, printed as a counts-only line
-    with the exception TYPE, nothing else happens."""
+    with the exception TYPE, nothing else happens. Silent when there was nothing new, the same
+    rule the weekly-check sweep follows (BODY-RECUPERACION-1-B)."""
     try:
         resultado = recuperacion.recalcular(conn, person_id)
-        print(f"recuperacion: {resultado['nuevas']} filas nuevas", flush=True)
+        if resultado["nuevas"]:
+            print(f"recuperacion: {resultado['nuevas']} filas nuevas", flush=True)
     except Exception as e:
         print(f"recuperacion failed: {errores.texto_seguro(e)}", flush=True)
 
