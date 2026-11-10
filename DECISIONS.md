@@ -15923,3 +15923,62 @@ then look at the resulting card and, once applied, at Día's new section for tha
 Open follow-up, named but not acted on: none. Out of scope per ruling 6 (calorie/macro targets,
 any score, medical wording, check-ins, backfilling existing protein entries) -- untouched, as
 ruled.
+
+## BODY-COMIDA-1-M -- merged
+
+ORCH-CARLOS-DELEGATES-TIER-1-1, under BODY-COMIDA-1's rulings, the amount `> 0` deviation
+accepted again here. The orchestrator's 375 px demo look (observed-report
+BODY-PERSONA-COMPLETA-1-INV) passed the whole flow -- `registrar_comida` through `body.mcp`,
+the refusal on a non-numeric amount, Hoy's propuesta banner, Aplicar/Deshacer, and Día's new
+"Comidas" section -- apart from four copy/layout polish defects, named in the spec's own
+`surface` field and fixed on `feat/body-comida-1` before this merge, never after it:
+
+1. **Display order led with protein, not calories.** `db.METRIC_DEFS` (body/db.py) now declares
+   `kcal` before `protein_g` -- the one place the order lives, since `db.INGESTA_METRIC_KEYS`
+   reads it straight off that declaration order (no second hand-typed list). The card
+   (`asistente._tarjeta_registrar_comida`) and Día (`hoy.py`'s `_comidas_dia_ctx`) both already
+   read `INGESTA_METRIC_KEYS`, so this one change moved both readers.
+2. **The card was one long bold paragraph.** `_tarjeta_registrar_comida` now returns three
+   `"\n"`-joined lines -- the description, then date and meal-word (or just date), then every
+   amount joined by " · " (never ", ") -- mirroring Día's own two-line meal. `assistant.js` splits
+   `despues` on `"\n"` and bolds only the first line (`asis-propuesta-despues`); the rest render
+   in a new normal-weight class, `asis-propuesta-despues-linea` (body.css). Every other card's
+   `despues` carries no `"\n"` and renders exactly as before.
+3. **The refusal named the raw key.** `_numero_cantidad_comida` (body/agente/herramientas.py) now
+   substitutes the person's own catalogue label (`t("metric." + metric_key)`, lower-cased for
+   mid-sentence) into `agente.error.comida_cantidad_invalida`, instead of the bare key: "La
+   cantidad de kcal ..." became "La cantidad de calorías ...".
+4. **The demo's invented alcohol entry sat at a morning time.** body/demo.py's forced
+   single-nutrient seeds (`forzado_indices`) shared one morning minute window
+   (`_COMIDA_MINUTOS[0]`, ~07:00-08:00) for caffeine, water AND alcohol. A new
+   `_COMIDA_FORZADA_MINUTOS` map keeps caffeine and water in that morning window and moves
+   alcohol to an evening one (20:00-21:00). Invented data only, no real figure.
+
+No new i18n key: fix 2 reuses the existing `asistente.propuesta.ingesta_descripcion` key for the
+card's description line, and the now-unused `asistente.propuesta.comida_resumen` key (its
+description+date phrase, superseded by the two-line split) was removed from both `es.json` and
+`en.json`. The amount refusal string's own text is unchanged; only the substituted word changed
+(the raw key -> the catalogue label).
+
+Diff against `main` re-classified on the actual fix diff (`392a4f0`/`da311d8` already landed on
+`feat/body-comida-1`; this slice's own fix commit is `c785db7`): customer-facing bytes changed
+again (the card's line layout, the refusal wording, the removed i18n key) and no schema or
+cross-repo change. The spec's own approval-reason says "fixed here; then merge" in words, which
+is what authorises the merge despite that condition (ORCH-APPROVED-IS-BUILD-NOT-MERGE-1's "spec
+body says stop, or says nothing" clause does not apply here -- this body says to proceed).
+
+**Commits**, `main` at `1d7b2e1` before this slice:
+- `c785db7` -- "BODY-COMIDA-1-M: four polish fixes before the merge", on `feat/body-comida-1`.
+- `e0609e7` -- `Merge feat/body-comida-1: BODY-COMIDA-1-M` (`--no-ff` into `main`).
+
+**Gate**, run once on the merged tree (`main` at `e0609e7`), exactly
+`.venv/Scripts/python.exe -m unittest discover tests -t .`:
+
+    Ran 2379 tests in 1128.900s
+
+    OK (skipped=1)
+
+Same test count as the surface's own pre-merge floor (2379), reconciled rather than re-measured
+as a second baseline.
+
+Open follow-up, named but not acted on: none.
