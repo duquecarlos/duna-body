@@ -15040,3 +15040,108 @@ desk only after Carlos says yes to CONNECTING it; nothing in this slice did that
 command for that config, once approved: `.venv/Scripts/python.exe` with args `["-m", "body.mcp"]`, cwd
 `C:/Duna/body/body-app-live`, and `BODY_HOME` left UNSET in that config so the server reads the person's own
 real home directory, never a test or demo one.
+
+## BODY-MCP-LOCAL-1-B -- UTF-8 stdio, a rolling-window cap, a visible Hoy line and a result that says where (2026-11-10)
+
+ORCH-CARLOS-DELEGATES-TIER-1-1's approval of BODY-MCP-LOCAL-1 named four gaps a desk would hit in practice
+(BODY-INTERFAZ-ESCRITORIO-1-INV): a non-UTF-8 wire, an invisible proposal, a cap that could lock a long-lived
+process out of reading forever, and a bare `{propuesta_id, estado}` naming nowhere to look. This slice closes
+all four, inside the same approval, on the same branch.
+
+1. **The wire is UTF-8, never the console's own code page.** `body/mcp.py`'s `main()` now opens with
+   `sys.stdin.reconfigure(encoding="utf-8", newline="\n")` / the same for `sys.stdout`, each guarded by
+   `hasattr(..., "reconfigure")` so a test double with no `reconfigure` of its own (an `io.StringIO`, as
+   `tests/test_mcp.py`'s `MainStderrTest` already used) is left alone. Measured on the pre-slice code: a
+   cp1252-encoded stdout writes "é" as the single byte `0xE9`, which is not valid standalone UTF-8 and makes a
+   UTF-8 client fail to decode the whole frame; a cp1252-decoded stdin turns a caller's own UTF-8 "ñ" into two
+   mojibake characters before `json.loads` ever sees it. `tests/test_mcp.py`'s new `Utf8WireTest` drives
+   `main()` over real `io.TextIOWrapper(io.BytesIO(...), encoding="cp1252", newline="")` streams -- both
+   directions fail on the code before this commit, both pass after.
+2. **Caps bound a RATE, not a per-process total.** The old `LIMITES_SESION` counters only ever grew; a
+   Claude Code session keeps one MCP server process alive for hours or days, so the fifth read in that
+   process's whole lifetime would have been its last, ever. `LIMITES` (`ventana_min`: 15 -- the same number
+   `body/agente/propuestas.py`'s own `EXPIRA_MINUTOS` already uses for a proposal's own lifetime, since a
+   caller still proposing past that point was never going to get an "aplicar" anyway; `lecturas`/`propuestas`:
+   `bucle.MAX_LECTURAS`/`bucle.MAX_RONDAS`, the SAME ceiling the in-app assistant already holds itself to for
+   one question) backs a new `_Tope` class: a `deque` of call timestamps, purged against an injectable
+   `reloj` (real time in production, a fake in tests -- `_Sesion`/`ejecutar()` both take an optional `reloj`
+   now). A capped call's `ToolError` names when to try again (`asistente.mcp.limite_lecturas` /
+   `..._propuestas`, `{minutos}`), read in the person's own language, never hardcoded Spanish as the old
+   message was. `tests/test_mcp.py`'s `VentanaRotanteTest` proves both halves with no sleeping: calls past the
+   cap refused, the SAME session (via `_procesar_mensaje`, not a fresh one) allowed again once the injected
+   clock crosses the window.
+3. **The person can see it, two doors.** `body/agente/conversacion.py`'s new `pendientes_mcp(conn,
+   person_id)` -- one statement, `(count, newest conversacion_id)` of proposals still `propuesta` in a
+   conversation whose `origen` is `'mcp'` -- backs both:
+   - **Hoy**: `body/rutas/hoy.py`'s `today()` calls it once (measured on this slice's own final tree, with
+     `demo._seed(dias=30)`: 58 statements, 1 connection for "/", identical with and without a pending MCP
+     proposal since the same query runs either way -- `tests/test_rendimiento.py`'s ceiling of 75 unchanged
+     and unraised, reconciled by `tests/test_mcp_visible.py`'s own
+     `test_statement_ceiling_for_slash_is_unchanged_by_the_new_line` against that same ceiling). `body/templates/today.html` renders «Tu asistente personal te propone 1
+     cambio · Revisar» / «... N cambios ...» (en: "Your personal assistant suggests 1 change · Review" / "...
+     N changes ..."), the WHOLE sentence one `<a>` to `/?asis_conversacion={id}#asis-btn` -- a plain link, no
+     inline JS, the id never a figure (DESIGN rule 13). The line is computed fresh on every GET, so applying
+     or dismissing the last pending card makes it disappear on the very next load with no extra code.
+   - **Panel**: `body/rutas/asistente.py`'s `GET /asistente/conversacion/{conversacion_id}` now takes `str`
+     (not `int`) and accepts one sentinel, `"pendiente"`, resolving to `pendientes_mcp`'s own newest id (404,
+     same as an unknown real id, when there is none -- the existing `cargarConversacion` 404 handling already
+     does nothing further, which IS "fall back to today's behaviour"). Its JSON gained a `conversacion_id`
+     field naming the real id it resolved to. `body/static/assistant.js`: a conversation named in the URL
+     (`?asis_conversacion=`) is loaded AND the panel opens right away (the Hoy line's own case); with nothing
+     named at all -- neither the URL nor sessionStorage -- it loads `"pendiente"` instead of staying empty,
+     preloaded (not force-opened), matching the existing unconditional-preload shape the stored-id path
+     already had. Both paths persist the server's own resolved `conversacion_id` back into sessionStorage, so
+     a later turn posts to the right conversation. No route path changed (`test_rendimiento.py`'s route-path
+     ceiling table needed no new entry) and no existing `content[0]`/i18n/CSS assertion in
+     `tests/test_asistente_panel.py` broke.
+4. **The result says where.** `_procesar_mensaje`'s `tools/call` branch now returns `content` as TWO text
+   blocks for a successful `propuesta` call: a leading plain sentence (`asistente.mcp.resultado_ubicacion`,
+   "You'll see it on Body's {pantalla} screen. Tap Apply there.", `{pantalla}` = `t('nav.today')` so it stays
+   localized) followed by the unchanged `{propuesta_id, estado}` JSON block. A `lectura` call's `content`
+   stays exactly one block. `tests/test_mcp.py`'s three existing propuesta-shaped tests
+   (`test_propuesta_call_creates_the_conversation_second_proposal_reuses_it`,
+   `test_proposal_can_then_be_applied_through_the_existing_route`, `test_card_from_mcp_carries_the_origin_label`)
+   moved their `json.loads(...)` from `content[0]` to `content[-1]`; two new tests
+   (`test_result_of_a_proposal_says_where_the_person_will_see_it`,
+   `test_result_of_a_lectura_carries_no_extra_sentence`) pin the new shape on both sides.
+
+**i18n**, `body/i18n/{es,en}.json`, five new keys, placeholders matching, both languages:
+`today.mcp_propuestas` / `today.mcp_propuestas_many` (`{n}`), `asistente.mcp.resultado_ubicacion` (`{pantalla}`),
+`asistente.mcp.limite_lecturas` / `asistente.mcp.limite_propuestas` (`{minutos}`). The two `limite_*` sentences
+are called through a `t = T(lang)` local (never `T(lang)(key, ...)` chained) so
+`tests/test_i18n_paridad.py`'s literal-key scan actually sees them.
+
+**Tests**: `tests/test_mcp.py` grew from 14 to 19 cases (the `Utf8WireTest` and `VentanaRotanteTest` classes,
+plus the two new `ToolsCallTest` result-shape cases, minus the three index changes above). New
+`tests/test_mcp_visible.py`, 15 cases across four classes: `HoyLineaTest` (no line / singular / plural /
+English / gone-after-apply / gone-after-dismiss / the statement ceiling), `PanelDefaultTest` (`"pendiente"`
+resolves to the newest, 404 with none, ignores an already-resolved proposal, a real numeric id and an unknown
+one both still work), `AssistantJsReadsTheNamedConversationTest` (three source checks, same style
+`tests/test_asistente_panel.py` already uses). 277 targeted tests green before the full gate (counted with
+`unittest.TestLoader().loadTestsFromName(...).countTestCases()`, not by hand): `tests.test_mcp` (19) and
+`tests.test_mcp_visible` (15) themselves, plus `tests.test_i18n_paridad` (6), `tests.test_rendimiento` (3),
+`tests.test_asistente_panel` (23), `tests.test_agente_propuestas` (32), `tests.test_persona_fuga` (9),
+`tests.test_privacidad` (51), `tests.test_agente_registro` (24), `tests.test_guardia_parches` (8),
+`tests.test_conexiones_cerradas` (9), `tests.test_web_entry` (4), `tests.test_estados_vacios` (1),
+`tests.test_estados_vacios_hosted` (1), `tests.test_errores_texto` (9), `tests.test_get_sin_escritura` (1),
+`tests.test_agente_bucle` (19), `tests.test_agente_precios` (9), `tests.test_seguridad` (32),
+`tests.test_accesibilidad` (2) -- the touched modules and every adjacent one this diff could plausibly affect.
+
+**Gate**, once, foreground, on this slice's own final tree:
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 2253 tests in 508.817s ... OK
+(skipped=1)` (2253 = 2233 + 20 new: 5 in `tests/test_mcp.py`, 15 in the new `tests/test_mcp_visible.py`).
+
+Commit: `0ba69f9` (`body/mcp.py`, `body/agente/conversacion.py`, `body/rutas/asistente.py`,
+`body/rutas/hoy.py`, `body/templates/today.html`, `body/static/assistant.js`, both `i18n` files,
+`tests/test_mcp.py`, and the new `tests/test_mcp_visible.py`), on `feat/body-mcp-local-1`, directly on top of
+BODY-MCP-LOCAL-1's own `18050b1` (`git log main..HEAD` showed `77d691c` and `18050b1`, tree clean, before any
+edit here).
+
+Diff classified against `main`: no schema or migration change (no edit to `body/db.py`). Customer-facing
+bytes: YES -- the Hoy line, its two i18n keys, the two rate-limit sentences and the "you'll see it on Hoy"
+sentence are all new strings a person reads -- and the approval's own body says, in words, to stop:
+"Customer-facing (a Hoy line): stops AWAITING_APPROVAL." No cross-repo contract or DTO change.
+
+Not merged. Stops **AWAITING_APPROVAL** on `feat/body-mcp-local-1`, for the orchestrator's own look at the
+Hoy line's wording and the panel's new default-conversation behaviour, same as BODY-MCP-LOCAL-1's own stop.
+Ruling 7 still holds: nothing in this slice connects anything to the desk.
