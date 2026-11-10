@@ -44,6 +44,6 @@
 {% for c in cards %}{% if c.href %}<a class="card"{% if c.key != 'sleep_minutes' %} id="{{ c.key }}"{% endif %} href="{{ c.href }}">{% else %}<div class="card{% if c.raw is none %} empty{% endif %}"{% if c.key != 'sleep_minutes' %} id="{{ c.key }}"{% endif %}>{% endif %}<div class="k">{{ c.label }}</div><div class="fig">{% if c.est and c.raw is not none %}<span class="approx">≈</span>{% endif %}{{ c.value }}{% if c.unit and c.raw is not none %}<span class="u">{{ c.unit }}</span>{% endif %}</div>{% if c.delta %}<div class="delta {{ c.cls }}">{{ c.delta }}</div>{% endif %}{% if c.href %}</a>{% else %}</div>{% endif %}{% endfor %}
 </div>
 <h2>{{ t('day.activities') }}</h2>
-{% if activities %}<ul class="list">{% for a in activities %}<li><strong>{{ a.name }}</strong><br><span class="note">{{ a.detail }}</span></li>{% endfor %}</ul>
+{% if activities %}<ul class="list">{% for a in activities %}<li><strong>{{ a.name }}</strong><br><span class="note">{{ a.detail }}</span>{% if a.recovery %}<br><span class="note">{{ a.recovery }}</span>{% endif %}</li>{% endfor %}</ul>
 {% else %}<p class="note">{{ t('day.no_activities') }}</p>{% endif %}
 {% endblock %}

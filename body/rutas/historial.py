@@ -7,11 +7,23 @@ from datetime import date
 
 from fastapi import APIRouter, Depends
 
-from .. import db, history, identity
+from .. import db, history, identity, recuperacion
 from ..i18n import T
 from . import comun
 
 router = APIRouter()
+
+# BODY-RECUPERACION-1: each factor's "peor" group label, read through its own i18n key -- 'turno'
+# and 'tipo_sesion' are handled separately below (their group key is data: a shift kind or a
+# Garmin activity type, each with its own existing label lookup, not a fixed phrase per key).
+_RECOVERY_COND_KEYS = {
+    "sueno_anoche": {"corta": "history.recovery.cond.sueno_corta", "normal": "history.recovery.cond.sueno_normal"},
+    "hrv_anoche": {"baja": "history.recovery.cond.hrv_baja", "normal": "history.recovery.cond.hrv_normal"},
+    "hora_dia": {"manana": "history.recovery.cond.hora_manana", "tarde": "history.recovery.cond.hora_tarde",
+                 "noche": "history.recovery.cond.hora_noche", "desconocida": "history.recovery.cond.hora_desconocida"},
+    "duracion_tercil": {"corta": "history.recovery.cond.duracion_corta", "media": "history.recovery.cond.duracion_media",
+                         "larga": "history.recovery.cond.duracion_larga"},
+}
 
 # Fixed palette classes (body/static/body.css), never a var(...) string in markup (BODY-ESTILOS-1).
 TRAINING_COLOR_CLASSES = ["c-body", "c-night", "c-amber", "c-info", "c-est"]
@@ -111,6 +123,41 @@ def _periodo_excluido_ctx(t: T, conn, person_id: int, cov: dict, marcados: set[s
     return t(key, n=t.num(n), kinds=", ".join(kinds))
 
 
+def _recovery_cond_label(t: T, h: dict) -> str:
+    factor, grupo = h["factor"], h["peor"]
+    if factor == "turno":
+        return t("history.recovery.cond.turno", kind=t("shift.kind." + grupo).lower())
+    if factor == "tipo_sesion":
+        info = history._kind_info(grupo) if grupo != "otro" else None
+        kind_label = (_kind_label(t, info) if info else t("activity.generic")).lower()
+        return t("history.recovery.cond.tipo_sesion", kind=kind_label)
+    return t(_RECOVERY_COND_KEYS[factor][grupo])
+
+
+def _recovery_ctx(t: T, est: dict) -> dict:
+    """«Tu historia»'s "Recuperación después de entrenar" section (BODY-RECUPERACION-1): one plain
+    line with the typical minutes and how many sessions it rests on, the two or three largest
+    group differences as plain sentences, "pocos datos" when none qualify, and one line that
+    caffeine, food and what he did after will count once he tells Body -- always, regardless of
+    whether a finding was found. `est["n"] == 0` -- no derived figure yet at all -- is its own,
+    simpler state."""
+    if est["n"] == 0:
+        return {"tiene_datos": False}
+    hallazgos = [
+        t("history.recovery.hallazgo", peor=_recovery_cond_label(t, h),
+          min_peor=t.num(h["min_peor"]), min_mejor=t.num(h["min_mejor"]),
+          n_peor=t.num(h["n_peor"]), n_mejor=t.num(h["n_mejor"]))
+        for h in est["hallazgos"]
+    ]
+    return {
+        "tiene_datos": True,
+        "resumen": t("history.recovery.resumen", mediana=t.minutes(est["mediana"]), n=t.num(est["n"])),
+        "hallazgos": hallazgos,
+        "sin_hallazgos": t("history.recovery.sin_hallazgos") if not hallazgos else None,
+        "futuro": t("history.recovery.futuro"),
+    }
+
+
 def _shift_ctx(t: T, defs: dict, shift_data: dict) -> dict:
     if not shift_data["has_shifts"]:
         return {"has_shifts": False}
@@ -140,6 +187,7 @@ def history_view(person_id: int = Depends(identity.current_person_id)):
     marcados = db.dias_marcados(conn, person_id, cov["first_day"], cov["last_day"])
     pat = history.patterns(conn, person_id, marcados)
     shift_data = history.by_shift(conn, person_id, marcados)
+    recovery = _recovery_ctx(t, recuperacion.estudio(conn, person_id))
 
     since = comun._short_date(t, date.fromisoformat(cov["first_day"]))
     coverage_line = t("history.coverage", since=since, days=t.num(cov["days_present"]))
@@ -155,4 +203,4 @@ def history_view(person_id: int = Depends(identity.current_person_id)):
                    training=_training_ctx(t, train) if train else None,
                    patterns=_pattern_rows(t, defs, pat),
                    findings=[_finding_text(t, defs, f) for f in pat["findings"][1:]],
-                   shift=_shift_ctx(t, defs, shift_data), turnos=turnos_on)
+                   shift=_shift_ctx(t, defs, shift_data), turnos=turnos_on, recovery=recovery)

@@ -22,6 +22,14 @@ _CADENCE_N_PER_WEEK = re.compile(r"^\s*(\d+)\s*x\s*/\s*week\s*$", re.IGNORECASE)
 # it from here) -- one spelling, not three.
 SHIFT_KINDS = ("morning", "afternoon", "night", "day", "off", "other")
 
+# BODY-RECUPERACION-1: the honest-gap reason codes recuperacion.py's Resultado carries when it has
+# no minutes figure -- shared here (not defined in recuperacion.py) the same way SHIFT_KINDS above
+# is, since recuperacion.py imports db but db must not import recuperacion.py (it would be
+# circular). 'sin_cobertura' = too little minute-HR coverage after the activity's end; 'sin_rango'
+# = no resting_hr baseline yet; 'fuera_de_horizonte' = never back to resting within MODELO's
+# horizon; 'marcado' = the activity's own day is inside a marked period (db.dias_marcados).
+RECUPERACION_MOTIVOS = ("sin_cobertura", "sin_rango", "fuera_de_horizonte", "marcado")
+
 # Shared between SCHEMA (fresh installs) and the rebuild functions below (existing installs),
 # so the two paths can never drift apart.
 _GOAL_COLUMNS = """
@@ -175,6 +183,23 @@ _MOMENT_COLUMNS = """
     kind       TEXT NOT NULL,
     note       TEXT,
     created_at TEXT NOT NULL
+"""
+
+# BODY-RECUPERACION-1: one row per (person, activity, model version) -- a version bump recomputes
+# rather than mixes (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1), the same idea goal_check's own
+# rule_version carries. `minutos`/`motivo` are mutually exclusive honest-gap pairs, like
+# experimento_registro's own shape -- never both set, never both NULL.
+_RECUPERACION_ACTIVIDAD_COLUMNS = f"""
+    person_id          INTEGER NOT NULL REFERENCES person(id),
+    activity_source    TEXT NOT NULL,
+    activity_source_id TEXT NOT NULL,
+    modelo_version     TEXT NOT NULL,
+    minutos            REAL,
+    motivo             TEXT CHECK (motivo IN {RECUPERACION_MOTIVOS!r} OR motivo IS NULL),
+    computed_at        TEXT NOT NULL,
+    PRIMARY KEY (person_id, activity_source, activity_source_id, modelo_version),
+    FOREIGN KEY (person_id, activity_source, activity_source_id)
+        REFERENCES activity(person_id, source, source_id)
 """
 
 SCHEMA = f"""
@@ -590,6 +615,12 @@ CREATE TABLE IF NOT EXISTS period (
     CHECK (end_day IS NULL OR end_day >= start_day)
 );
 CREATE INDEX IF NOT EXISTS idx_period_person ON period(person_id);
+
+-- BODY-RECUPERACION-1: see _RECUPERACION_ACTIVIDAD_COLUMNS above for why.
+CREATE TABLE IF NOT EXISTS recuperacion_actividad (
+{_RECUPERACION_ACTIVIDAD_COLUMNS}
+);
+CREATE INDEX IF NOT EXISTS idx_recuperacion_actividad_person ON recuperacion_actividad(person_id);
 """
 
 # (key, label, unit, better, kind). 'estimated' = computed by Body, shown with «≈» and "how I calculate it".

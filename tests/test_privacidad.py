@@ -525,6 +525,51 @@ class PeriodExportDeleteTest(unittest.TestCase):
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM period").fetchone()[0], 0)
 
 
+class RecuperacionExportDeleteTest(unittest.TestCase):
+    """BODY-RECUPERACION-1: a derived recovery-after-training row is FULLY exported and deleted --
+    invented demo content only, no real figures."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "recuperacion.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+        self.conn.execute(
+            "INSERT INTO activity (person_id, source, source_id, day, start_local, duration_s, avg_hr) "
+            "VALUES (1, 'garmin', 'act-1', '2026-11-01', '2026-11-01T18:00:00', 1800, 130)"
+        )
+        self.conn.execute(
+            "INSERT INTO recuperacion_actividad (person_id, activity_source, activity_source_id, "
+            "modelo_version, minutos, motivo, computed_at) VALUES "
+            "(1, 'garmin', 'act-1', 'recuperacion-v1', 22, NULL, '2026-11-02T00:00:00+00:00')"
+        )
+        self.conn.commit()
+
+    def test_recuperacion_actividad_is_a_fully_handled_table(self):
+        self.assertIn("recuperacion_actividad", privacidad.FULLY_HANDLED_TABLES)
+
+    def test_export_includes_the_row(self):
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(len(data["recuperacion_actividades"]), 1)
+        row = data["recuperacion_actividades"][0]
+        self.assertEqual((row["activity_source_id"], row["modelo_version"], row["minutos"]),
+                         ("act-1", "recuperacion-v1", 22))
+
+    def test_export_of_another_person_sees_nothing(self):
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 2)
+        self.assertEqual(data["recuperacion_actividades"], [])
+
+    def test_delete_all_removes_the_row(self):
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM recuperacion_actividad").fetchone()[0], 0
+        )
+
+
 class CompartidoExportDeleteTest(unittest.TestCase):
     """BODY-HOGAR-COMPARTIR-1: a person's own shares (including withdrawn ones) are FULLY exported
     and deleted -- the metric key and the share's own dates only, never a health figure."""

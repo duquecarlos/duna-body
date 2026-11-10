@@ -22,6 +22,7 @@ import os
 import random
 import statistics
 import sys
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -293,6 +294,73 @@ def _seed_days(conn, db, rng: random.Random, all_days: list[date], person_id: in
     return metric_rows, activity_rows
 
 
+def _muestra_ms(t: datetime) -> int:
+    """A naive LOCAL datetime (America/Bogota, UTC-5 year round -- this module's own fixed person
+    timezone) to the UTC-instant millisecond epoch Garmin's own intraday arrays carry, the same
+    convention body/garmin_adapter.py's `_utc_to_local_iso` reads back."""
+    return int((t + timedelta(hours=5)).replace(tzinfo=timezone.utc).timestamp() * 1000)
+
+
+def _curva_recuperacion(inicio_actividad: datetime, duration_s: float, avg_hr: float,
+                         minutos_recuperacion: float | None, horizonte_min: int) -> list[tuple[datetime, float]]:
+    """BODY-RECUPERACION-1: an invented heart-rate curve for one activity -- elevated through the
+    activity, then decaying to a resting-level plateau over `minutos_recuperacion` minutes after it
+    ends, or staying clearly above any plausible cutoff for the whole horizon when
+    `minutos_recuperacion` is None (the honest "fuera_de_horizonte" case). Every two minutes,
+    matching Garmin's own typical intraday spacing."""
+    fin = inicio_actividad + timedelta(seconds=duration_s)
+    reposo = 56.0
+    paso = timedelta(minutes=2)
+    limite = fin + timedelta(minutes=horizonte_min + 20)
+    out = []
+    t = inicio_actividad
+    while t <= limite:
+        if t <= fin:
+            valor = avg_hr
+        elif minutos_recuperacion is None:
+            frac = min((t - fin).total_seconds() / 60 / (horizonte_min * 2), 0.6)
+            valor = avg_hr - (avg_hr - reposo) * frac
+        else:
+            frac = min((t - fin).total_seconds() / 60 / minutos_recuperacion, 1.0)
+            valor = avg_hr - (avg_hr - reposo) * frac
+        out.append((t, round(valor)))
+        t += paso
+    return out
+
+
+def _seed_recuperacion(conn, db, recuperacion, person_id: int) -> int:
+    """Invented minute-by-minute heart rate for a few of the activities `_seed_days` already
+    created, so «Tu historia»'s recovery section and Día's own line have something to show on the
+    demo server -- never real data, same contract as every other figure in this module. Three
+    outcomes on purpose (fast, slow-but-within-horizon, never-within-horizon) so the honest
+    "fuera_de_horizonte" gap shows too, not only a clean recovery time. Accumulates every
+    activity's samples by calendar day BEFORE writing (db.guardar_intradia replaces a whole day's
+    row), so two chosen activities whose windows touch the same day never erase each other's
+    samples."""
+    rows = conn.execute(
+        "SELECT source_id, start_local, duration_s, avg_hr FROM activity WHERE person_id = ? "
+        "AND start_local IS NOT NULL AND duration_s IS NOT NULL ORDER BY day DESC LIMIT 6",
+        (person_id,),
+    ).fetchall()
+    if not rows:
+        return 0
+    horizonte_min = recuperacion.MODELO["horizonte_h"] * 60
+    patrones = [15.0, 60.0, None]
+    por_dia: dict[str, list[tuple[datetime, float]]] = defaultdict(list)
+    for i, r in enumerate(rows):
+        inicio = datetime.fromisoformat(r["start_local"])
+        curva = _curva_recuperacion(inicio, r["duration_s"], r["avg_hr"] or 130.0,
+                                     patrones[i % len(patrones)], horizonte_min)
+        for t, v in curva:
+            por_dia[t.date().isoformat()].append((t, v))
+    for dia, muestras in por_dia.items():
+        db.guardar_intradia(conn, person_id, dia, "intradia_fc",
+                             {"heartRateValues": [[_muestra_ms(t), v] for t, v in sorted(muestras)]})
+    conn.commit()
+    recuperacion.recalcular(conn, person_id)
+    return len(rows)
+
+
 def _seed_self_metrics(conn, db, rng: random.Random, all_days: list[date], person_id: int) -> int:
     """The four generic self-measured metric_def rows (BODY-ENTRENO-SCHEMA-1, BODY-MEDIDA-PESO-1),
     sparser than the watch's daily figures: a flexibility reach, a weigh-in and a waist reading
@@ -504,7 +572,7 @@ def _seed_household(conn, db, goals, enlaces, compartir, rng: random.Random, all
 
 
 def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
-    from . import compartir, db, enlaces, goals, shift_import, turnos_costo
+    from . import compartir, db, enlaces, goals, recuperacion, shift_import, turnos_costo
 
     person_id = _seed_person(conn, db, idioma)
 
@@ -514,6 +582,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     first_monday, anchor_monday = fechas.lunes_de(all_days[0]), fechas.lunes_de(anchor)
 
     metric_rows, activity_rows = _seed_days(conn, db, rng, all_days, person_id)
+    recuperacion_rows = _seed_recuperacion(conn, db, recuperacion, person_id)
     metric_rows += _seed_self_metrics(conn, db, rng, all_days, person_id)
     metric_rows += _seed_soreness(conn, db, rng, all_days, person_id)
     entradas_ingesta = _seed_ingesta(conn, db, rng, all_days, person_id)
@@ -535,7 +604,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
         "lotes_turnos_propuestos": 1 if proposed_id is not None else 0,
         "semanas_nocturnas": night_weeks, "bloques_turno_noche": night_blocks, "metas_activas": 4, "habitos": 3,
         "verificaciones_semanales": checks + hogar_checks, "chequeos_habito": habit_checks + hogar_habit_checks,
-        "entradas_ingesta": entradas_ingesta, "periodos": periodos,
+        "entradas_ingesta": entradas_ingesta, "periodos": periodos, "recuperacion_actividades": recuperacion_rows,
     }
 
 
