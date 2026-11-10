@@ -18,13 +18,38 @@ def _ahora() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def crear(conn: sqlite3.Connection, person_id: int, titulo: str | None = None) -> int:
+def crear(conn: sqlite3.Connection, person_id: int, titulo: str | None = None,
+          origen: str | None = None) -> int:
     with conn:
         cur = conn.execute(
-            "INSERT INTO conversacion_agente (person_id, creada_en, titulo) VALUES (?, ?, ?)",
-            (person_id, _ahora(), titulo),
+            "INSERT INTO conversacion_agente (person_id, creada_en, titulo, origen) VALUES (?, ?, ?, ?)",
+            (person_id, _ahora(), titulo, origen),
         )
     return cur.lastrowid
+
+
+def origen_de(conn: sqlite3.Connection, conversacion_id: int) -> str | None:
+    """This conversation's `origen` column (BODY-MCP-LOCAL-1): None for one started in Body's own
+    chat panel, 'mcp' for one the local MCP server started -- so the panel can label its proposal
+    cards. None too for an id that does not exist; the caller already owns the ownership check."""
+    row = conn.execute("SELECT origen FROM conversacion_agente WHERE id = ?", (conversacion_id,)).fetchone()
+    return row["origen"] if row else None
+
+
+def pendientes_mcp(conn: sqlite3.Connection, person_id: int) -> tuple[int, int | None]:
+    """(count, newest conversation id) of proposals still in state 'propuesta' sitting in a
+    conversation whose `origen` is the outside caller ('mcp') -- BODY-MCP-LOCAL-1-B, the person's
+    own visibility into what their personal assistant proposed through the local MCP server. Hoy's
+    own line and the assistant panel's default both read this, one statement, so the route cost
+    the same person-level fact reaches two screens from costs only once. (0, None) when there is
+    none."""
+    row = conn.execute(
+        "SELECT COUNT(*) AS n, MAX(p.conversacion_id) AS id FROM propuesta_agente p "
+        "JOIN conversacion_agente c ON c.id = p.conversacion_id "
+        "WHERE p.person_id = ? AND p.estado = 'propuesta' AND c.origen = 'mcp'",
+        (person_id,),
+    ).fetchone()
+    return row["n"], row["id"]
 
 
 def verificar_propiedad(conn: sqlite3.Connection, conversacion_id: int, person_id: int) -> None:

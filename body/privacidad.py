@@ -23,6 +23,9 @@ FULLY_HANDLED_TABLES = {
     "daily_metric", "sleep_session", "activity", "shift", "shift_batch", "shift_pattern",
     "goal", "habit_check", "goal_check", "plan", "ajuste_agente", "consentimiento", "hogar_miembro",
     "conversacion_agente", "mensaje_agente", "uso_agente", "tope_agente", "propuesta_agente",
+    # BODY-MCP-LOCAL-1: one row per call the local MCP server made against the tool registry --
+    # tool name, UTC time, caller id only.
+    "uso_herramienta_externa",
     "figura_compartida", "workout_set",
     # Wave 9 (BODY-EXPERIMENTOS-ESQUEMA-1): experimento, its "it happened" log and moment.
     "experimento", "experimento_registro", "moment",
@@ -162,7 +165,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "SELECT nombre, alcances, creado_en, usado_en FROM dispositivo WHERE person_id = ? ORDER BY creado_en",
         (person_id,))]
     conversaciones = [dict(r) for r in conn.execute(
-        "SELECT id, creada_en, titulo FROM conversacion_agente WHERE person_id = ? ORDER BY id",
+        "SELECT id, creada_en, titulo, origen FROM conversacion_agente WHERE person_id = ? ORDER BY id",
         (person_id,))]
     mensajes_agente = [dict(r) for r in conn.execute(
         "SELECT id, conversacion_id, rol, contenido_json, creado_en FROM mensaje_agente "
@@ -177,9 +180,15 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
     propuestas_agente = [dict(r) for r in conn.execute(
         "SELECT id, conversacion_id, accion, objetivo_id, antes_json, despues_json, estado, creada_en, "
         "expira_en, resuelta_en FROM propuesta_agente WHERE person_id = ? ORDER BY id", (person_id,))]
+    # BODY-MCP-LOCAL-1: every call the local MCP server made against the tool registry -- the tool
+    # name, the UTC time, the caller id, never a param or a result.
+    uso_externo_rows = [dict(r) for r in conn.execute(
+        "SELECT herramienta, llamada_en, caller FROM uso_herramienta_externa WHERE person_id = ? ORDER BY id",
+        (person_id,))]
     asistente = {
         "conversaciones": conversaciones, "mensajes": mensajes_agente, "uso": uso_agente_rows,
         "tope": dict(tope_agente_row) if tope_agente_row else None, "propuestas": propuestas_agente,
+        "uso_externo": uso_externo_rows,
     }
 
     return {
@@ -273,6 +282,7 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         conn.execute("DELETE FROM mensaje_agente WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM conversacion_agente WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM uso_agente WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM uso_herramienta_externa WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM tope_agente WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM hogar_miembro WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM sesion WHERE person_id = ?", (person_id,))
