@@ -88,6 +88,7 @@ class RouteSetTest(unittest.TestCase):
         ("/privacidad/consentimiento", ("POST",)),
         ("/privacidad/exportar", ("GET",)),
         ("/settings", ("GET",)),
+        ("/settings/aplicar_mcp", ("POST",)),  # BODY-MCP-APLICAR-1-B
         ("/settings/compartir", ("POST",)),
         ("/settings/language", ("POST",)),
         ("/settings/trabaja_turnos", ("POST",)),

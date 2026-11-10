@@ -85,18 +85,29 @@ class SetTrabajaTurnosRouteTest(_LocalModeTestCase):
 
 # ---- Ajustes: Sí / No like the language card --------------------------------------------------------
 
+def _trabaja_turnos_card(html: str) -> str:
+    """Slices the page between the trabaja_turnos card's own form action and the next card, so a
+    sibling Sí/No card (BODY-MCP-APLICAR-1's `aplicar_mcp` card uses the identical `btn on"
+    name="valor"` markup) can never satisfy or break what this test asserts about THIS card."""
+    inicio = html.index('action="/settings/trabaja_turnos"')
+    fin = html.index('<div class="card">', inicio)
+    return html[inicio:fin]
+
+
 class AjustesCardTest(_LocalModeTestCase):
     def test_null_neither_button_on(self):
         r = self.client.get("/settings")
         self.assertEqual(r.status_code, 200)
-        self.assertNotIn('btn on" name="valor" value="si"', r.text)
-        self.assertNotIn('btn on" name="valor" value="no"', r.text)
+        card = _trabaja_turnos_card(r.text)
+        self.assertNotIn('btn on" name="valor" value="si"', card)
+        self.assertNotIn('btn on" name="valor" value="no"', card)
 
     def test_si_marks_on(self):
         db.set_trabaja_turnos(self.conn, True, 1)
         r = self.client.get("/settings")
-        self.assertIn('btn on" name="valor" value="si"', r.text)
-        self.assertNotIn('btn on" name="valor" value="no"', r.text)
+        card = _trabaja_turnos_card(r.text)
+        self.assertIn('btn on" name="valor" value="si"', card)
+        self.assertNotIn('btn on" name="valor" value="no"', card)
 
     def test_no_marks_on(self):
         db.set_trabaja_turnos(self.conn, False, 1)

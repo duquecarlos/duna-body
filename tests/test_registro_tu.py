@@ -68,6 +68,9 @@ _THIRD_PERSON_ALLOW = {
     "ajustes.asistente.opcion.completo.desc": "'puede' subject is 'el asistente', not the reader",
     "dispositivos.new_key_intro": "'puede' subject is 'Body', not the reader",
     "asistente.propuesta.sin_deshacer": "'se puede' is an impersonal construction, not usted",
+    "settings.aplicar_mcp.pregunta": "'puede' subject is 'tu asistente personal', not the reader",
+    "settings.aplicar_mcp.desc": "'puede' subject is 'el asistente', not the reader",
+    "asistente.mcp.aplicar_apagado": "'puede' subject is 'tu asistente personal', not the reader",
 }
 
 
