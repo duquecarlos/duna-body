@@ -14849,3 +14849,74 @@ during shifts" appears between the "última semana" card and the 8-week strip, w
 kind present in the demo's own history (morning, afternoon, night, day), a "Lo que más resalta" / "What
 stands out most" block naming the morning shift as the biggest difference (8 bpm below the days-off
 reference), and the published-schedule note at the end.
+
+## BODY-TURNO-FC-1-M -- merged
+
+Follow-up to BODY-TURNO-FC-1's own AWAITING_APPROVAL above. The orchestrator measured the real diff
+on a COPY of Carlos's database (counts only, copy deleted after): 650 shifts -> 533 with a figure
+(morning 215, afternoon 164, night 92, day 62), 115 without coverage, 2 without a days-off reference;
+8 s; `estudio()` returns all four kinds and 3 findings. At 375 px on the re-seeded demo (`/shifts`,
+`scrollWidth` 375; statement count unchanged at 39), four defects: a difference with no unit, a sleep
+split showing only one side under some kinds, "--" in customer copy on the finding line, and (pre-
+existing, same screen) no Spanish/English singular on the night-week recovery line. The approval
+(`ORCH-CARLOS-DELEGATES-TIER-1-1`) authorised this slice to fix the wording **and then merge**
+("passed except the wording above, fixed here; then merge") -- the only spec body on this ledger so
+far that names the merge explicitly rather than leaving a customer-bytes stop standing.
+
+**Fixes, all in `body/rutas/turnos.py` and `body/i18n/{es,en}.json`** (`body/turno_fc.py` needed no
+change -- every defect was in the rendering/wording layer, not the model):
+
+1. **Unit on every difference.** `shifts.pulso.linea` and `shifts.pulso.hallazgo` both gained the
+   unit (`lpm`/`bpm`) right after `{diff}` -- "8 lpm por debajo de las mismas horas en un día de
+   descanso" / "8 bpm below the same hours on a day off", and the same unit in the finding line.
+2. **Sleep split as one line, only when both sides qualify.** `_turno_fc_sueno_lineas` now returns
+   a line only when BOTH `sleep["corta"]` and `sleep["normal"]` are present and neither carries
+   `motivo == "pocos_datos"` -- one combined line via a new key `shifts.pulso.sueno_split`
+   ("Después de una noche corta: {fc_corta} lpm ({n_corta} turnos) · después de una noche normal:
+   {fc_normal} lpm ({n_normal} turnos)."), replacing the old per-bucket `sueno_corta`/`sueno_normal`
+   keys (removed from both `es.json` and `en.json` -- nothing else referenced them;
+   `tests/test_i18n_paridad.py`'s own `_FIXED_DYNAMIC["shifts.pulso.sueno_+"]` entry degrades
+   gracefully, by its own design, when the source no longer builds that prefix dynamically).
+3. **No "--" in customer copy.** `shifts.pulso.hallazgo` now reads "{kind}: tu pulso está {diff} lpm
+   {direccion} tus días de descanso, la mayor diferencia entre tus turnos." (comma, not em-dash-as-
+   double-hyphen), and the English twin likewise.
+4. **Singular on the night-week recovery line**, both `shifts.ultima.recuperacion` and
+   `_sin_anteriores`, plus the median-days-or-fewer part -- each via its own `_one` key (repo
+   convention, `trends.medidas_count_one`), chosen independently for the recovery-days count and the
+   median-days count since they can differ (e.g. "Volviste a tu normal en 1 día (antes, la mitad de
+   las veces: 3 días o menos)"). `shifts.ultima.recuperacion`'s old single string with both `{d}` and
+   `{m}` inline was split into the base sentence plus a `shifts.ultima.recuperacion_mediana`
+   fragment (and its own `_one`), composed in `_turnos_ultima_recuperacion` -- the only way to
+   singularize two independent counts in one sentence without a 4-way key cross-product.
+
+**Tests**, all in `tests/test_turno_fc_pantallas.py` (no `tests/test_turnos_ultima.py` in this repo,
+so the singular tests went here per the spec's own fallback): the existing hallazgo/linea assertions
+updated for the unit and the absence of "--"; a new `SuenoSplitTest` (6 cases: both sides qualifying
+renders one combined line, one side `pocos_datos` or absent renders nothing, no sleep data at all
+renders nothing, plus two end-to-end `/shifts` checks in es and en through `estudio()` itself, not
+just the helper); a new `RecuperacionSingularTest` (8 cases, unit-level against
+`_turnos_ultima_recuperacion` directly: singular/plural on `d` and on `m` independently, in both
+languages). 51 targeted tests green before the full gate.
+
+**Gate**, once, foreground, on the fix commit's tree (`f1eb66a`, which the merge below carried into
+`main` unchanged -- see tree identity): `.venv/Scripts/python.exe -m unittest discover tests -t .` ->
+`Ran 2215 tests in 377.590s ... OK (skipped=1)` (2201 before this slice's own 14 new cases: 6 in
+`SuenoSplitTest` + 8 in `RecuperacionSingularTest`).
+
+**Merge.** `git checkout main` (clean, `main` at `5d91b2f` going in); `git merge --no-ff
+feat/body-turno-fc-1`, no conflicts. Tree identity: the merge commit's tree
+(`a24c650b9d79232c93138eb3cc14073f74cf9525`) is byte-identical to `feat/body-turno-fc-1`'s own tree at
+the fix commit -- the gate run above, taken on that same tree before the merge, stands for the merged
+tree too; it was not re-run.
+
+Commits: `f1eb66a` (the four fixes and their tests, on `feat/body-turno-fc-1`, on top of `995042c` +
+`5d91b2f`), merged into `main` as `85bed250` (`--no-ff`, `main` -> `85bed250`).
+
+Diff classified against `main`: no schema or migration change (the `turno_fc` table itself was
+BODY-TURNO-FC-1's own stop condition, already covered by this approval; this slice's own diff touches
+no table), no cross-repo contract or DTO change. Customer-facing bytes: YES, again -- the wording
+fixes themselves are customer copy -- but the approval's own body names the merge explicitly
+("fixed here; then merge"), so this is not a fresh stop.
+
+The real first fill on Carlos's own database happens through the scheduled pull's post-pull step
+(`_recalcular_turno_fc_seguro`, already wired in `995042c`) -- not run from any slice.
