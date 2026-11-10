@@ -58,16 +58,39 @@ class InstallerWakeCheckTaskTest(unittest.TestCase):
     def test_task_registered(self):
         self.assertIn('Register-ScheduledTask -TaskName "Body app wake check"', self.text)
 
-    def test_trigger_repeats_every_20_minutes_for_9_hours_from_0400(self):
+    def test_trigger_is_daily_at_0400(self):
         m = re.search(r'\$wakeTrigger\s*=\s*(.+)', self.text)
         self.assertIsNotNone(m, "no $wakeTrigger assignment found")
         trigger = m.group(1)
         self.assertIn("-Daily", trigger)
         self.assertIn('-At "04:00"', trigger)
-        self.assertIn("-RepetitionInterval", trigger)
-        self.assertIn("New-TimeSpan -Minutes 20", trigger)
-        self.assertIn("-RepetitionDuration", trigger)
-        self.assertIn("New-TimeSpan -Hours 9", trigger)
+        self.assertNotIn("-RepetitionInterval", trigger)
+        self.assertNotIn("-RepetitionDuration", trigger)
+
+    def test_repetition_copied_from_a_once_trigger_every_20_minutes_for_9_hours(self):
+        m = re.search(r'\$wakeTrigger\.Repetition\s*=\s*(.+)', self.text)
+        self.assertIsNotNone(m, "no $wakeTrigger.Repetition assignment found")
+        repetition = m.group(1)
+        self.assertIn("-Once", repetition)
+        self.assertIn('-At "04:00"', repetition)
+        self.assertIn("-RepetitionInterval", repetition)
+        self.assertIn("New-TimeSpan -Minutes 20", repetition)
+        self.assertIn("-RepetitionDuration", repetition)
+        self.assertIn("New-TimeSpan -Hours 9", repetition)
+
+    def test_no_recurring_trigger_combines_repetition_params_in_the_same_call(self):
+        """The parameter-set rule that broke BODY-DESPERTAR-1: -Daily/-Weekly belong to a
+        different parameter set than -RepetitionInterval/-RepetitionDuration, so no single
+        New-ScheduledTaskTrigger call may carry both."""
+        calls = re.findall(r"New-ScheduledTaskTrigger[^\n]*", self.text)
+        self.assertTrue(calls, "no New-ScheduledTaskTrigger calls found")
+        for call in calls:
+            is_recurring = "-Daily" in call or "-Weekly" in call
+            has_repetition = "-RepetitionInterval" in call or "-RepetitionDuration" in call
+            self.assertFalse(
+                is_recurring and has_repetition,
+                f"-Daily/-Weekly combined with repetition params in the same call: {call}",
+            )
 
     def test_action_runs_the_despertar_task(self):
         m = re.search(r'\$wakeAction\s*=\s*(.+)', self.text)
