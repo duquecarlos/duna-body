@@ -193,6 +193,29 @@ class ToolsCallTest(_McpTestCase):
         ])
         self.assertEqual(len(respuestas[0]["result"]["content"]), 1)
 
+    def test_registrar_comida_is_offered_and_callable(self):
+        """BODY-COMIDA-1: body.mcp lists registrar_comida (it is a `tipo: propuesta` tool like
+        marcar_periodo, so the generic tools/list and tools/call paths need no new code), and a
+        call with several amounts proposes one meal, never writing a row on the call itself."""
+        _, listado = self._ejecutar([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
+        nombres = {t["name"] for t in listado[0]["result"]["tools"]}
+        self.assertIn("registrar_comida", nombres)
+
+        before = self.conn.execute("SELECT COUNT(*) FROM comida").fetchone()[0]
+        _, respuestas = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "registrar_comida",
+                        "arguments": {"day": "2026-11-05", "hora": "13:00", "descripcion": "arroz con pollo",
+                                      "cantidades": [{"metric_key": "protein_g", "amount": 35.0},
+                                                     {"metric_key": "kcal", "amount": 600.0}]}}},
+        ])
+        r = respuestas[0]["result"]
+        self.assertNotIn("isError", r)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM comida").fetchone()[0], before)
+        salida = json.loads(r["content"][-1]["text"])
+        self.assertIn("propuesta_id", salida)
+        self.assertEqual(salida["estado"], "propuesta")
+
 
 class VentanaRotanteTest(_McpTestCase):
     """BODY-MCP-LOCAL-1-B: caps bound a RATE, not a per-process total -- a long-lived server

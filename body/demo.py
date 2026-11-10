@@ -88,6 +88,11 @@ RANGES = {
     "protein_g": (15, 45),  # one meal's worth; several a day sum into the day's total
     "sleep_spo2_avg": (93, 98), "sleep_respiration_avg": (13, 17),
     "sleep_respiration_low": (9, 13), "sleep_respiration_high": (17, 23),
+    # BODY-COMIDA-1: the rest of a meal's own worth, same "one meal, several a day sum" reading
+    # as protein_g above. alcohol_g is grams of pure alcohol (ORCH-CARLOS-DELEGATES-TIER-1-1
+    # ruling 2), not a drink count.
+    "kcal": (250, 750), "carbs_g": (20, 90), "fat_g": (8, 35), "fiber_g": (2, 12),
+    "water_ml": (150, 400), "caffeine_mg": (30, 120), "alcohol_g": (8, 20),
 }
 # A night shift (or the recovery day right after) costs sleep and raises stress -- the correlation
 # the "turnos" chapter's tutorial task is built to show. Added to the sampled value, then clamped.
@@ -655,23 +660,53 @@ def _seed_soreness(conn, db, rng: random.Random, all_days: list[date], person_id
 _COMIDA_MINUTOS = [(7 * 60, 8 * 60), (12 * 60, 14 * 60), (16 * 60, 17 * 60), (18 * 60, 20 * 60)]
 
 
-def _seed_ingesta(conn, db, rng: random.Random, all_days: list[date], person_id: int) -> int:
-    """3-4 invented protein entries most days (BODY-PROTEINA-1), each its own `ingesta` row WITH a
-    time (BODY-AYUNO-1), one per slot in `_COMIDA_MINUTOS` -- one writer (db.registrar_ingesta)
-    sums them into that day's protein_g total, so Tendencias shows it, and the times give Hoy's
-    and Día's eating-window card a real window. Invented amounts and times only, never a real
-    figure; no descripcion, since the demo seeds no words."""
+_COMIDA_NUTRIENTES_DEMO = ("protein_g", "kcal", "carbs_g", "fat_g", "fiber_g")
+
+# BODY-COMIDA-1-M fix 4: each forced single-nutrient entry gets its own invented time -- coffee and
+# water stay in the morning slot, but alcohol moves to an evening one (never the morning slot a
+# coffee would plausibly sit in).
+_COMIDA_FORZADA_MINUTOS = {
+    "caffeine_mg": _COMIDA_MINUTOS[0],
+    "water_ml": _COMIDA_MINUTOS[0],
+    "alcohol_g": (20 * 60, 21 * 60),
+}
+
+
+def _seed_ingesta(conn, db, rng: random.Random, all_days: list[date], person_id: int) -> tuple[int, int]:
+    """3-4 invented meals most days (BODY-COMIDA-1), each its own `comida` row grouping several
+    invented nutrient amounts WITH a time (BODY-AYUNO-1), one slot per `_COMIDA_MINUTOS` entry --
+    one writer (db.crear_comida) sums every nutrient into that day's own total, so Tendencias
+    shows it and Hoy/Día's eating-window card and meal list have real meals to show. Three more
+    single-nutrient meals, each on a FIXED day index (first/middle/last of the run), guarantee
+    caffeine_mg, water_ml and alcohol_g each appear at least once regardless of the per-day 0.9
+    coin flip below (tests/test_demo.py's catalogue-coverage guard), even on a short --dias run.
+    Invented amounts and times only, never a real figure; no descripcion, since the demo seeds no
+    words."""
     rows = 0
-    for d in all_days:
+    comidas = 0
+    forzado_indices = {0: "caffeine_mg", len(all_days) // 2: "water_ml", len(all_days) - 1: "alcohol_g"}
+    for i, d in enumerate(all_days):
         if rng.random() < 0.9:
             for lo, hi in _COMIDA_MINUTOS[:rng.randint(3, 4)]:
                 minuto = rng.randint(lo, hi - 1)
                 ts_local = f"{d.isoformat()}T{minuto // 60:02d}:{minuto % 60:02d}:00"
-                db.registrar_ingesta(conn, person_id, d.isoformat(), "protein_g",
-                                      _value(rng, "protein_g", 0.0), False, ts_local=ts_local)
-                rows += 1
+                cantidades = [{"metric_key": k, "amount": _value(rng, k, 0.0), "estimado": True}
+                              for k in _COMIDA_NUTRIENTES_DEMO]
+                db.crear_comida(conn, person_id, d.isoformat(), cantidades, ts_local=ts_local)
+                comidas += 1
+                rows += len(cantidades)
+        forzada = forzado_indices.get(i)
+        if forzada:
+            lo, hi = _COMIDA_FORZADA_MINUTOS[forzada]
+            minuto = rng.randint(lo, hi - 1)
+            ts_local = f"{d.isoformat()}T{minuto // 60:02d}:{minuto % 60:02d}:00"
+            db.crear_comida(conn, person_id, d.isoformat(),
+                             [{"metric_key": forzada, "amount": _value(rng, forzada, 0.0), "estimado": True}],
+                             ts_local=ts_local)
+            comidas += 1
+            rows += 1
     conn.commit()
-    return rows
+    return rows, comidas
 
 
 def _seed_periodo(conn, db, all_days: list[date], person_id: int) -> int:
@@ -821,7 +856,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     metric_rows, activity_rows = _seed_days(conn, db, rng, all_days, person_id)
     metric_rows += _seed_self_metrics(conn, db, rng, all_days, person_id)
     metric_rows += _seed_soreness(conn, db, rng, all_days, person_id)
-    entradas_ingesta = _seed_ingesta(conn, db, rng, all_days, person_id)
+    entradas_ingesta, comidas_ingesta = _seed_ingesta(conn, db, rng, all_days, person_id)
     periodos = _seed_periodo(conn, db, all_days, person_id)
     # BODY-RECUPERACION-1-M: AFTER _seed_periodo, not before -- recuperacion.recalcular() checks
     # db.dias_marcados() per activity at computation time, so an activity on a day inside a marked
@@ -848,7 +883,8 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
         "lotes_turnos_propuestos": 1 if proposed_id is not None else 0,
         "semanas_nocturnas": night_weeks, "bloques_turno_noche": night_blocks, "metas_activas": 4, "habitos": 3,
         "verificaciones_semanales": checks + hogar_checks, "chequeos_habito": habit_checks + hogar_habit_checks,
-        "entradas_ingesta": entradas_ingesta, "periodos": periodos, "recuperacion_actividades": recuperacion_rows,
+        "entradas_ingesta": entradas_ingesta, "comidas": comidas_ingesta, "periodos": periodos,
+        "recuperacion_actividades": recuperacion_rows,
         "turno_fc_turnos": turno_fc_turnos, "sueno_fc_noches": sueno_fc_noches,
     }
 

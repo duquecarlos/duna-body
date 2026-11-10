@@ -85,7 +85,8 @@ _PROPUESTA_AGENTE_COLUMNS = """
                          'planear_entreno', 'registrar_entreno', 'registrar_medida', 'marcar_habito',
                          'proponer_experimento', 'marcar_experimento',
                          'registrar_ingesta', 'corregir_ingesta', 'borrar_ingesta',
-                         'marcar_periodo', 'cerrar_periodo', 'corregir_periodo', 'borrar_periodo')),
+                         'marcar_periodo', 'cerrar_periodo', 'corregir_periodo', 'borrar_periodo',
+                         'registrar_comida')),
     objetivo_id     INTEGER REFERENCES goal(id),
     antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
     despues_json    TEXT NOT NULL CHECK (json_valid(despues_json)),
@@ -621,12 +622,29 @@ CREATE TABLE IF NOT EXISTS moment (
 );
 CREATE INDEX IF NOT EXISTS idx_moment_person ON moment(person_id);
 
+-- BODY-COMIDA-1: one meal, grouping its own `ingesta` rows (one per nutrient) under one
+-- description and time. Additive, reversible (ruling 1): ts_local/descripcion are nullable --
+-- "sometime that day", or no words at all -- and nothing here is backfilled from existing
+-- `ingesta` rows, which keep comida_id NULL and stay valid on their own.
+CREATE TABLE IF NOT EXISTS comida (
+    id          INTEGER PRIMARY KEY,
+    person_id   INTEGER NOT NULL REFERENCES person(id),
+    day         TEXT NOT NULL,
+    ts_local    TEXT,
+    descripcion TEXT,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_comida_person_dia ON comida(person_id, day);
+
 -- BODY-PROTEINA-1: one row per thing eaten or drunk, keyed by a metric_def key marked `agregado =
 -- 'suma_ingesta'` (protein_g today; calories or water later are rows here too, never new tables).
 -- The day's total is DERIVED by the one writer (db.registrar_ingesta/corregir_ingesta/
 -- borrar_ingesta) into daily_metric, source 'self' -- never written directly by anything else.
 -- ts_local is the moment eaten, or NULL for "sometime that day"; descripcion is the person's own
--- words, kept like moment.note, never printed or logged.
+-- words, kept like moment.note, never printed or logged. comida_id (BODY-COMIDA-1, nullable, no
+-- CASCADE -- db.borrar_comida deletes its children itself) links one of several amounts of the
+-- SAME meal together; a row with comida_id NULL is a standalone entry, its own one-item "meal".
 CREATE TABLE IF NOT EXISTS ingesta (
     id          INTEGER PRIMARY KEY,
     person_id   INTEGER NOT NULL REFERENCES person(id),
@@ -636,6 +654,7 @@ CREATE TABLE IF NOT EXISTS ingesta (
     amount      REAL NOT NULL CHECK (amount > 0),
     estimado    INTEGER NOT NULL DEFAULT 0 CHECK (estimado IN (0, 1)),
     descripcion TEXT,
+    comida_id   INTEGER REFERENCES comida(id),
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
@@ -744,10 +763,24 @@ METRIC_DEFS += [
     # go up or down is the person's own goal (a goal row), never this metric's own direction.
     ("body_weight_kg", "Weight", "kg", "neutral", "measured", "self"),
     ("waist_cm", "Waist", "cm", "neutral", "measured", "self"),
-    # BODY-PROTEINA-1: the first intake metric -- 'neutral' like weight, since whether to raise or
-    # lower protein is the person's own goal, never assumed here. `agregado = 'suma_ingesta'` marks
-    # it as derived from `ingesta` rows, not a single self-reported figure.
+    # BODY-COMIDA-1-M fix 1: calories lead the intake catalogue -- this declaration order IS the
+    # display order (db.INGESTA_METRIC_KEYS below reads it off, never a second hand-typed list),
+    # so a reader's meal amounts show calories first, not whatever order the keys were added in.
+    ("kcal", "Calories", "kcal", "neutral", "measured", "self", "suma_ingesta"),
+    # BODY-PROTEINA-1: the first intake metric ADDED -- 'neutral' like weight, since whether to
+    # raise or lower protein is the person's own goal, never assumed here. `agregado =
+    # 'suma_ingesta'` marks it as derived from `ingesta` rows, not a single self-reported figure.
     ("protein_g", "Protein", "g", "neutral", "measured", "self", "suma_ingesta"),
+    # BODY-COMIDA-1 (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2): five more intake keys beside kcal
+    # and protein_g, same `suma_ingesta` aggregation and `self` origin, 'neutral' direction (whether
+    # to raise or lower any of these is the person's own goal, never assumed here). alcohol_g is
+    # grams of PURE alcohol, not drinks or "units" -- those differ by country, grams do not.
+    ("carbs_g", "Carbs", "g", "neutral", "measured", "self", "suma_ingesta"),
+    ("fat_g", "Fat", "g", "neutral", "measured", "self", "suma_ingesta"),
+    ("fiber_g", "Fiber", "g", "neutral", "measured", "self", "suma_ingesta"),
+    ("water_ml", "Water", "ml", "neutral", "measured", "self", "suma_ingesta"),
+    ("caffeine_mg", "Caffeine", "mg", "neutral", "measured", "self", "suma_ingesta"),
+    ("alcohol_g", "Alcohol", "g", "neutral", "measured", "self", "suma_ingesta"),
     # BODY-AGUJETAS-1 (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1): next-day muscle soreness, one key
     # per muscle GROUP, not a finer list -- 'neutral' (ruling 2): soreness is neither good nor bad,
     # it is the person's own read of the work a session gave that muscle.
@@ -763,6 +796,12 @@ METRIC_DEFS += [
 # the SUM of that day's `ingesta` rows, derived by db.registrar_ingesta/corregir_ingesta/
 # borrar_ingesta, never set directly; None (padded here) for every other key, today's behaviour.
 METRIC_DEFS = [d if len(d) == 7 else (*d, None) for d in METRIC_DEFS]
+
+# BODY-COMIDA-1 ruling 2: every intake key, in catalogue order (the order METRIC_DEFS declares
+# them) -- read off the live table instead of a second hand-typed list, the same template pattern
+# as RANGOS_MEDIDA_PERSONAL below. body/agente/herramientas.py (the enum offered to the model) and
+# body/rutas/hoy.py (a meal card's own amount order) both read this one constant.
+INGESTA_METRIC_KEYS = tuple(d[0] for d in METRIC_DEFS if d[6] == "suma_ingesta")
 
 # BODY-MEDIDA-PESO-1: a plausible-range refusal for a self-measured figure prone to a typo (780
 # instead of 78.0) -- keyed by metric key, not every self key: flex_alcance_cm and snoring_min have
@@ -930,6 +969,18 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "ALTER TABLE shift_batch ADD COLUMN kind TEXT NOT NULL DEFAULT 'import' "
             "CHECK (kind IN ('import', 'pattern'))"
         )
+    # BODY-COMIDA-1 ruling 1: a plain nullable ADD COLUMN, run after SCHEMA has already created
+    # `comida` (the column's own REFERENCES target) on this same init() call -- never backfilled,
+    # so every existing ingesta row keeps comida_id NULL and stays valid.
+    icols = {r[1] for r in conn.execute("PRAGMA table_info(ingesta)")}
+    if icols and "comida_id" not in icols:
+        conn.execute("ALTER TABLE ingesta ADD COLUMN comida_id INTEGER REFERENCES comida(id)")
+    # Never inside SCHEMA's own executescript (BODY-COMIDA-1): that script runs BEFORE this
+    # function on every init() call, so an index on a column only THIS migration might still be
+    # about to add would fail against an old `ingesta` table that has not been migrated yet.
+    # Unconditional and idempotent: by this point the column exists either way (fresh SCHEMA or
+    # the ALTER right above).
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ingesta_comida ON ingesta(comida_id)")
     # Closes the gap the PK leaves open: SQLite treats each NULL start_local as distinct, so two off-day
     # rows for the same person and day do not collide on the primary key alone (BODY-TURNOS-IMPORT-OBS-1).
     # Never a DELETE here: on IntegrityError the table is left untouched and the missing index is reported
@@ -1033,6 +1084,13 @@ def _propuesta_agente_needs_periodo_rebuild(conn: sqlite3.Connection) -> bool:
     return row is not None and "marcar_periodo" not in row[0]
 
 
+def _propuesta_agente_needs_comida_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'propuesta_agente'"
+    ).fetchone()
+    return row is not None and "registrar_comida" not in row[0]
+
+
 def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
@@ -1049,6 +1107,9 @@ def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     # BODY-PERIODO-1: a fourth widening (marcar_periodo, cerrar_periodo, corregir_periodo,
     # borrar_periodo), same reusable rebuild.
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_periodo_rebuild(conn):
+        _rebuild_propuesta_agente_table(conn)
+    # BODY-COMIDA-1: a fifth widening (registrar_comida), same reusable rebuild.
+    if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_comida_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
     # BODY-MCP-APLICAR-1: a plain nullable column, never a CHECK widening on `accion` -- a plain
     # ALTER TABLE ADD COLUMN, not the rebuild dance above.
@@ -1989,6 +2050,83 @@ def borrar_ingesta(conn: sqlite3.Connection, person_id: int, ingesta_id: int) ->
     with conn:
         conn.execute("DELETE FROM ingesta WHERE id = ?", (ingesta_id,))
         _recalcular_ingesta_dia(conn, person_id, fila["day"], fila["metric_key"])
+
+
+# ---- comida (BODY-COMIDA-1): one spoken meal = one `comida` row + N `ingesta` children, one per
+# nutrient (ruling 3). crear_comida/borrar_comida are the ONE writer of `comida` -- each recomputes
+# every touched metric_key's daily total through _recalcular_ingesta_dia, the same writer
+# registrar_ingesta/corregir_ingesta/borrar_ingesta already use, so a meal's amounts sum into
+# daily_metric exactly like a standalone intake entry does.
+
+def crear_comida(conn: sqlite3.Connection, person_id: int, day: str, cantidades: list[dict],
+                  descripcion: str | None = None, ts_local: str | None = None) -> int:
+    """`cantidades`: a list of {metric_key, amount, estimado}, already validated by the caller
+    (herramientas._registrar_comida) -- one per key, amount > 0. Writes the `comida` row and every
+    child `ingesta` row in one transaction, recalculating each touched key's day total."""
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO comida (person_id, day, ts_local, descripcion, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (person_id, day, ts_local, descripcion, now, now),
+        )
+        comida_id = cur.lastrowid
+        for c in cantidades:
+            conn.execute(
+                "INSERT INTO ingesta (person_id, day, ts_local, metric_key, amount, estimado, comida_id, "
+                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (person_id, day, ts_local, c["metric_key"], c["amount"], int(bool(c.get("estimado", True))),
+                 comida_id, now, now),
+            )
+            _recalcular_ingesta_dia(conn, person_id, day, c["metric_key"])
+    return comida_id
+
+
+def borrar_comida(conn: sqlite3.Connection, person_id: int, comida_id: int) -> None:
+    """Deletes a meal and every one of its own `ingesta` children together (ruling 3's "Deshacer
+    removes them together"), recalculating each touched key's day total afterwards."""
+    fila = conn.execute(
+        "SELECT day FROM comida WHERE id = ? AND person_id = ?", (comida_id, person_id)
+    ).fetchone()
+    if fila is None:
+        raise ValueError("comida_id: not this person's own meal")
+    day = fila["day"]
+    claves = [r["metric_key"] for r in conn.execute(
+        "SELECT DISTINCT metric_key FROM ingesta WHERE comida_id = ?", (comida_id,))]
+    with conn:
+        conn.execute("DELETE FROM ingesta WHERE comida_id = ?", (comida_id,))
+        conn.execute("DELETE FROM comida WHERE id = ?", (comida_id,))
+        for metric_key in claves:
+            _recalcular_ingesta_dia(conn, person_id, day, metric_key)
+
+
+def comidas_del_dia(conn: sqlite3.Connection, person_id: int, day: str) -> list[dict]:
+    """One entry per MEAL that day (ruling 5): a `comida` row's own children grouped under its own
+    description/time, and each legacy comida_id-NULL `ingesta` row standing alone as its own
+    one-item meal, keeping its own descripcion/ts_local exactly as before -- ordered the same way
+    `load_day`'s own ingesta list is (COALESCE(ts_local, ''), id), so an untimed meal sorts last."""
+    rows = conn.execute(
+        "SELECT i.id, i.ts_local, i.descripcion AS ingesta_descripcion, i.metric_key, i.amount, "
+        "i.estimado, i.comida_id, c.descripcion AS comida_descripcion, c.ts_local AS comida_ts_local "
+        "FROM ingesta i LEFT JOIN comida c ON c.id = i.comida_id "
+        "WHERE i.person_id = ? AND i.day = ? ORDER BY COALESCE(i.ts_local, ''), i.id",
+        (person_id, day),
+    ).fetchall()
+    grupos: dict = {}
+    orden: list = []
+    for r in rows:
+        es_comida = r["comida_id"] is not None
+        clave = ("comida", r["comida_id"]) if es_comida else ("ingesta", r["id"])
+        if clave not in grupos:
+            grupos[clave] = {
+                "ts_local": r["comida_ts_local"] if es_comida else r["ts_local"],
+                "descripcion": r["comida_descripcion"] if es_comida else r["ingesta_descripcion"],
+                "cantidades": [],
+            }
+            orden.append(clave)
+        grupos[clave]["cantidades"].append(
+            {"metric_key": r["metric_key"], "amount": r["amount"], "estimado": bool(r["estimado"])})
+    return [grupos[c] for c in orden]
 
 
 # ---- periodos (BODY-PERIODO-1): a marked stretch of days (illness, travel, injury) that a

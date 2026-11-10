@@ -131,7 +131,7 @@ class NoProponibleTest(unittest.TestCase):
                                     "proponer_idioma", "planear_entreno", "registrar_entreno",
                                     "registrar_medida", "marcar_habito", "proponer_experimento",
                                     "marcar_experimento", "registrar_ingesta", "corregir_ingesta",
-                                    "borrar_ingesta", "marcar_periodo", "cerrar_periodo",
+                                    "borrar_ingesta", "registrar_comida", "marcar_periodo", "cerrar_periodo",
                                     "corregir_periodo", "borrar_periodo"})
 
 

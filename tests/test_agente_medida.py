@@ -278,7 +278,9 @@ class TrendsSelfMeasuredGroupTest(unittest.TestCase):
         self.assertEqual(set(groups["self"]),
                          {"flex_alcance_cm", "snoring_min", "body_weight_kg", "waist_cm", "protein_g",
                           "soreness_legs", "soreness_glutes", "soreness_back", "soreness_chest",
-                          "soreness_shoulders", "soreness_arms", "soreness_core"})
+                          "soreness_shoulders", "soreness_arms", "soreness_core",
+                          # BODY-COMIDA-1: six more suma_ingesta keys beside protein_g.
+                          "kcal", "carbs_g", "fat_g", "fiber_g", "water_ml", "caffeine_mg", "alcohol_g"})
 
     def test_trends_page_shows_the_self_measured_card_from_a_single_point(self):
         page = self.client.get("/trends?todas=1").text

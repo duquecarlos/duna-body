@@ -214,6 +214,13 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
     # the route-only active list (no screen renders it yet).
     db.registrar_ingesta(conn, person_id, DAYS[-1], "protein_g", 30.0, False, f"ZZ{tag}-INGESTA")
 
+    # BODY-COMIDA-1: comida is person-keyed and has its FIRST reader this slice -- Día's own
+    # "Comidas" section (body/rutas/hoy.py's _comidas_dia_ctx) renders its descripcion directly, so
+    # its marker belongs in _markers_of's active list below, not the tool-only list ingesta used
+    # when it had no screen yet.
+    db.crear_comida(conn, person_id, DAYS[-1], [{"metric_key": "kcal", "amount": 500.0, "estimado": True}],
+                     descripcion=f"ZZ{tag}-COMIDA")
+
     # BODY-PERIODO-1: period is person-keyed and, through leer_dia's new `periodos` list, has its
     # FIRST reader this slice -- same treatment as ingesta above, not the route-only active list
     # (the screens that will show it are a separate, later slice).
@@ -280,7 +287,7 @@ def _markers_of(tag: str) -> list[str]:
     return [f"ZZ{tag}-{suffix}" for suffix in
             ("ACTIVIDAD", "SERIE", "TURNO", "META-PRIVADA", "HABITO", "NOTA", "META-PROPUESTA",
              "META-ARCHIVADA", "PLAN", "CONVERSACION", "MENSAJE", "DISPOSITIVO", "EXPERIMENTO",
-             "REGISTRO")] + [ENLACE_REF[tag]]
+             "REGISTRO", "COMIDA")] + [ENLACE_REF[tag]]
 
 
 def _figures_of(tag: str) -> dict:

@@ -41,7 +41,9 @@ client = TestClient(web.app, follow_redirects=False)
 # remeasured after BODY-RENDIMIENTO-2's reader fix, /goals and /experiments/{experiment_id},
 # remeasured after BODY-EXPERIMENTOS-PANTALLA-1 added the fixture's own experiment and its
 # Metas-section/detail-page reads, and /goals/new and /trends, remeasured after BODY-AGUJETAS-1-B
-# batched their per-metric-key reads (one query for the whole catalogue instead of one per key) --
+# batched their per-metric-key reads (one query for the whole catalogue instead of one per key), and
+# /day/{day} and /privacidad/exportar, remeasured after BODY-COMIDA-1 added one meal-list read and
+# one meal-export read respectively (ceil(measured * 1.3), the same ~30% margin rule) --
 # each in that slice's own ledger entry.
 _CEILINGS = {
     "/": 75,
@@ -50,7 +52,7 @@ _CEILINGS = {
     "/api/vida/semana": 3,
     "/asistente/conversacion/{conversacion_id}": 17,
     "/ayuda": 15,
-    "/day/{day}": 45,
+    "/day/{day}": 62,
     "/experiments/{experiment_id}": 27,
     "/garmin": 9,
     "/goals": 50,
@@ -64,7 +66,7 @@ _CEILINGS = {
     "/login/cuenta/start": 3,
     "/privacidad": 16,
     "/privacidad/consentimiento": 9,
-    "/privacidad/exportar": 43,
+    "/privacidad/exportar": 58,
     "/settings": 24,
     "/shifts": 50,
     "/shifts/como": 25,

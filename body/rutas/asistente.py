@@ -249,6 +249,36 @@ def _tarjeta_borrar_ingesta(t: T, defs: dict, despues: dict, antes_json: dict | 
     return antes_txt, despues_txt, None
 
 
+def _comida_cantidad_txt(t: T, defs: dict, c: dict) -> str:
+    """BODY-COMIDA-1 ruling 4: one nutrient's own line, marked «≈» when estimated -- the catalogue
+    order for the whole list comes from the caller (herramientas.INGESTA_METRIC_KEYS), never from
+    `cantidades`' own stored order."""
+    valor = comun._fig_unit(t, c["metric_key"], c["amount"], defs)
+    clave = "asistente.propuesta.comida_cantidad_estimado" if c.get("estimado", True) \
+        else "asistente.propuesta.comida_cantidad"
+    return t(clave, metric=t("metric." + c["metric_key"]), valor=valor)
+
+
+def _tarjeta_registrar_comida(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+    """BODY-COMIDA-1-M fix 2: three lines, never one long bold paragraph -- the description on its
+    own line, date and meal-word/time beneath it, then every amount (fixed catalogue order, each
+    marked «≈» when estimated) on its own line, mirroring Día's own two-line meal
+    (body/rutas/hoy.py's `_comidas_dia_ctx`, body/templates/day.html). `\\n` joins the lines; the
+    renderer (body/static/assistant.js) splits `despues` on it and keeps only the first line bold.
+    Never raises on a stored amount this card cannot show (_tarjeta_propuesta_segura's own
+    fallback covers any surprise, same as every other card here)."""
+    fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
+    momento = _momento_ingesta_txt(t, despues.get("ts_local"))
+    linea_fecha = fecha if not momento else fecha + " · " + momento
+    por_clave = {c["metric_key"]: c for c in despues["cantidades"]}
+    orden = [k for k in agente_herramientas.INGESTA_METRIC_KEYS if k in por_clave]
+    cantidades_txt = " · ".join(_comida_cantidad_txt(t, defs, por_clave[k]) for k in orden)
+    lineas = [t("asistente.propuesta.ingesta_descripcion", descripcion=despues["descripcion"]), linea_fecha]
+    if cantidades_txt:
+        lineas.append(cantidades_txt)
+    return None, "\n".join(lineas), None
+
+
 def _periodo_kind_txt(t: T, kind: str) -> str:
     """BODY-PERIODO-1: three literal t() calls, not a concatenated key, so test_i18n_paridad.py's
     dynamic-prefix guard needs no new entry (the same choice BODY-PROTEINA-1 made for
@@ -380,6 +410,7 @@ TARJETAS = {
     "registrar_ingesta": _tarjeta_registrar_ingesta,
     "corregir_ingesta": _tarjeta_corregir_ingesta,
     "borrar_ingesta": _tarjeta_borrar_ingesta,
+    "registrar_comida": _tarjeta_registrar_comida,
     "marcar_periodo": _tarjeta_marcar_periodo,
     "cerrar_periodo": _tarjeta_cerrar_periodo,
     "corregir_periodo": _tarjeta_corregir_periodo,

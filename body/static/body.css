@@ -249,7 +249,9 @@ figure.chart:focus-visible{outline:2px solid var(--focus);outline-offset:4px;bor
 .asis-propuesta{margin-top:8px;padding:10px 12px;border:1px solid var(--soft);border-radius:10px;background:var(--wash);font-size:13.5px}
 .asis-propuesta strong{display:block;font-size:14px;margin-bottom:4px}
 .asis-propuesta-antes{color:var(--muted);margin:0 0 2px;text-decoration:line-through}
-.asis-propuesta-despues{margin:0 0 8px;font-weight:600}
+.asis-propuesta-despues{margin:0 0 2px;font-weight:600}
+.asis-propuesta-despues-linea{margin:0 0 2px;font-weight:400;color:var(--ink2)}
+.asis-propuesta-despues:last-child,.asis-propuesta-despues-linea:last-child{margin-bottom:8px}
 .asis-propuesta-acciones{display:flex;gap:8px;flex-wrap:wrap}
 .asis-propuesta-resultado{margin:6px 0 0;color:var(--muted)}
 .asis-propuesta-resultado[hidden]{display:none}

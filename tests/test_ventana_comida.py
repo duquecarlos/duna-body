@@ -89,6 +89,33 @@ class VentanaTest(unittest.TestCase):
         self.assertEqual(v.duracion_min, 0.0)
         self.assertEqual(v.entradas, 1)
 
+    def test_a_multi_row_meal_counts_as_one_entry_not_one_per_nutrient(self):
+        """BODY-COMIDA-1 ruling 5: a `registrar_comida` meal writes one `ingesta` row per
+        nutrient, all sharing one `comida_id` -- the window must count the MEAL, never inflate to
+        one per row."""
+        conn = _mkconn(self)
+        db.crear_comida(conn, PERSON_A, "2026-03-10",
+                        [{"metric_key": "protein_g", "amount": 30.0, "estimado": True},
+                         {"metric_key": "kcal", "amount": 500.0, "estimado": True},
+                         {"metric_key": "carbs_g", "amount": 40.0, "estimado": True}],
+                        ts_local="2026-03-10T13:00:00")
+        conn.commit()
+        v = ventana_comida.ventana(conn, PERSON_A, "2026-03-10")
+        self.assertEqual(v.entradas, 1)
+        self.assertEqual(v.primera, "2026-03-10T13:00:00")
+        self.assertEqual(v.ultima, "2026-03-10T13:00:00")
+
+    def test_a_multi_row_meal_plus_a_legacy_single_row_count_two(self):
+        conn = _mkconn(self)
+        db.crear_comida(conn, PERSON_A, "2026-03-10",
+                        [{"metric_key": "protein_g", "amount": 30.0, "estimado": True},
+                         {"metric_key": "fat_g", "amount": 10.0, "estimado": True}],
+                        ts_local="2026-03-10T08:00:00")
+        _meal(conn, PERSON_A, "2026-03-10", "2026-03-10T19:00:00")
+        conn.commit()
+        v = ventana_comida.ventana(conn, PERSON_A, "2026-03-10")
+        self.assertEqual(v.entradas, 2)
+
     def test_another_person_never_leaks_in(self):
         conn = _mkconn(self)
         conn.execute("INSERT INTO person (id, display_name) VALUES (?, 'B')", (PERSON_B,))

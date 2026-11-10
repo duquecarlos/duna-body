@@ -664,6 +664,38 @@ def _deshacer_borrar_ingesta(conn: sqlite3.Connection, row: sqlite3.Row) -> None
                           antes["estimado"], antes.get("descripcion"), antes.get("ts_local"))
 
 
+# -- registrar_comida (BODY-COMIDA-1: insert-shaped, like registrar_ingesta -- this module is the
+# one writer of `comida` through db.crear_comida/db.borrar_comida; apply writes the `comida` row
+# plus every one of its own `ingesta` children in one transaction, undo removes them together) ----
+
+def _drift_deshacer_registrar_comida(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    cid = despues.get("comida_id")
+    r = conn.execute(
+        "SELECT descripcion, day FROM comida WHERE id = ? AND person_id = ?",
+        (cid, row["person_id"])).fetchone()
+    if r is None or r["descripcion"] != despues["descripcion"] or r["day"] != despues["day"]:
+        return True
+    cantidades_actuales = {c["metric_key"]: c["amount"] for c in conn.execute(
+        "SELECT metric_key, amount FROM ingesta WHERE comida_id = ?", (cid,))}
+    cantidades_despues = {c["metric_key"]: c["amount"] for c in despues["cantidades"]}
+    return cantidades_actuales != cantidades_despues
+
+
+def _aplicar_registrar_comida(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+    despues = json.loads(row["despues_json"])
+    cid = db.crear_comida(conn, row["person_id"], despues["day"], despues["cantidades"],
+                           despues.get("descripcion"), despues.get("ts_local"))
+    return {"comida_id": cid}
+
+
+def _deshacer_registrar_comida(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    cid = despues.get("comida_id")
+    if cid is not None:
+        db.borrar_comida(conn, row["person_id"], cid)
+
+
 # -- marcar_periodo (BODY-PERIODO-1: insert-shaped, like registrar_ingesta -- this module is the
 # one writer of `period` through db.crear_periodo/db.borrar_periodo) -------------------------------
 
@@ -808,6 +840,8 @@ TABLA: dict[str, _Accion] = {
                                  _aplicar_corregir_ingesta, _deshacer_corregir_ingesta),
     "borrar_ingesta": _Accion(_drift_aplicar_borrar_ingesta, _drift_deshacer_borrar_ingesta,
                                _aplicar_borrar_ingesta, _deshacer_borrar_ingesta),
+    "registrar_comida": _Accion(_sin_drift, _drift_deshacer_registrar_comida, _aplicar_registrar_comida,
+                                 _deshacer_registrar_comida),
     "marcar_periodo": _Accion(_sin_drift, _drift_deshacer_marcar_periodo, _aplicar_marcar_periodo,
                                _deshacer_marcar_periodo),
     "cerrar_periodo": _Accion(_drift_aplicar_cerrar_periodo, _drift_deshacer_cerrar_periodo,
