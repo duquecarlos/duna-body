@@ -106,6 +106,11 @@ def dias_que_cuentan(conn, person_id: int, filtro_dias: dict, desde: str, hasta:
         # recovery tail bleed into [desde, hasta].
         buffer_desde = (date.fromisoformat(desde) - timedelta(turnos_costo.MODELO["ventana_post"])).isoformat()
         excluidos_noche = turnos_costo.dias_post_noche(conn, person_id, buffer_desde, hasta)
+    # BODY-PERIODO-1 ruling 3: a marked day (illness, travel, injury) is left out of BOTH the
+    # before and test counts, unconditionally -- no fourth filtro_dias key, since every caller of
+    # dias_que_cuentan (the test window and the baseline window, whole-day and intraday alike)
+    # gets this for free from this one place.
+    marcados = db.dias_marcados(conn, person_id, desde, hasta)
 
     out: list[str] = []
     d, fin = date.fromisoformat(desde), date.fromisoformat(hasta)
@@ -119,6 +124,9 @@ def dias_que_cuentan(conn, person_id: int, filtro_dias: dict, desde: str, hasta:
             d += timedelta(1)
             continue
         if day in excluidos_noche:
+            d += timedelta(1)
+            continue
+        if day in marcados:
             d += timedelta(1)
             continue
         out.append(day)

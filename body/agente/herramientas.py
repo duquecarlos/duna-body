@@ -44,6 +44,14 @@ chat -- the same propose/apply/undo shape as `marcar_habito`, never a second one
 ToolError, never a card the person could tap Aplicar on. `marcar_experimento` refuses an
 experiment that has a `habito_id`: that experiment's log is its linked habit's `habit_check`, kept
 current the usual way, through `marcar_habito`.
+
+`marcar_periodo`/`cerrar_periodo`/`corregir_periodo`/`borrar_periodo` (BODY-PERIODO-1) let the
+assistant OFFER -- never silently create -- a stretch of days marked illness, travel or injury, so
+`baselines.baseline` and `experimentos.dias_que_cuentan` leave those days out when they compare
+with the usual. `kind` is any live `period_kind` row, never a hardcoded pair of keys, the same
+template pattern `registrar_medida`/`registrar_ingesta` use for their own enums. The person's own
+note is kept like `moment.note` and `ingesta.descripcion` -- never printed, logged or exported off
+the PC.
 """
 from __future__ import annotations
 
@@ -234,6 +242,45 @@ _PARAM_BORRAR_INGESTA = {
     "type": "object",
     "properties": {"ingesta_id": {"type": "integer"}},
     "required": ["ingesta_id"],
+    "additionalProperties": False,
+}
+
+# BODY-PERIODO-1: the seeded period_kind rows, read off the live table's own seed list rather than
+# typed out here a second time -- the same template pattern INGESTA_METRIC_KEYS above uses.
+PERIODO_KIND_KEYS = tuple(k for k, _ in db.PERIOD_KINDS)
+_PARAM_MARCAR_PERIODO = {
+    "type": "object",
+    "properties": {
+        "kind": {"type": "string", "enum": list(PERIODO_KIND_KEYS)},
+        "start_day": {"type": "string", "format": "date"},
+        "end_day": {"type": "string", "format": "date"},
+        "note": {"type": "string"},
+    },
+    "required": ["kind", "start_day"],
+    "additionalProperties": False,
+}
+_PARAM_CERRAR_PERIODO = {
+    "type": "object",
+    "properties": {"period_id": {"type": "integer"}, "end_day": {"type": "string", "format": "date"}},
+    "required": ["period_id", "end_day"],
+    "additionalProperties": False,
+}
+_PARAM_CORREGIR_PERIODO = {
+    "type": "object",
+    "properties": {
+        "period_id": {"type": "integer"},
+        "kind": {"type": "string", "enum": list(PERIODO_KIND_KEYS)},
+        "start_day": {"type": "string", "format": "date"},
+        "end_day": {"type": "string", "format": "date"},
+        "note": {"type": "string"},
+    },
+    "required": ["period_id"],
+    "additionalProperties": False,
+}
+_PARAM_BORRAR_PERIODO = {
+    "type": "object",
+    "properties": {"period_id": {"type": "integer"}},
+    "required": ["period_id"],
     "additionalProperties": False,
 }
 
@@ -723,6 +770,91 @@ def _borrar_ingesta(conn: sqlite3.Connection, person_id: int, conversacion_id: i
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
+def _marcar_periodo(conn: sqlite3.Connection, person_id: int, conversacion_id: int, kind: str, start_day: str,
+                     end_day: str | None = None, note: str | None = None) -> dict:
+    """Proposes marking a stretch of days as a period (BODY-PERIODO-1): illness, travel or injury,
+    so Body leaves those days out when it compares with the usual, never reading them as a habit
+    or experiment effect. OFFER this when the person says they are ill, travelling or injured --
+    never create it silently. Insert-shaped, like registrar_ingesta: there is no 'before'.
+    start_day may be in the past, bounded like _proponer_experimento's own fecha_inicio check: not
+    before the person's first data day, not in the future."""
+    _dia_no_futuro(conn, person_id, start_day)
+    dias = db.days_with_data(conn, person_id)
+    if dias and start_day < dias[-1]:
+        raise ToolError(f"start_day no puede ser anterior a tu primer día con datos: {dias[-1]!r}")
+    if end_day is not None:
+        _dia_no_futuro(conn, person_id, end_day)
+        if end_day < start_day:
+            raise ToolError("end_day no puede ser anterior a start_day")
+    note = (note or "").strip() or None
+    despues = {"kind": kind, "start_day": start_day, "end_day": end_day, "note": note}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "marcar_periodo", despues)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
+def _cerrar_periodo(conn: sqlite3.Connection, person_id: int, conversacion_id: int, period_id: int,
+                     end_day: str) -> dict:
+    """Proposes closing an open period, saying since when the person got better (BODY-PERIODO-1):
+    "I'm better since Thursday". despues carries the period's own kind/start_day/note too, so the
+    card and propuestas.TABLA's writer never need a second read."""
+    fila = conn.execute("SELECT kind, start_day, end_day, note FROM period WHERE id = ? AND person_id = ?",
+                        (period_id, person_id)).fetchone()
+    if fila is None:
+        raise ToolError(f"período desconocido: {period_id!r}")
+    if fila["end_day"] is not None:
+        raise ToolError(f"ese período ya está cerrado: {period_id!r}")
+    _dia_no_futuro(conn, person_id, end_day)
+    if end_day < fila["start_day"]:
+        raise ToolError("end_day no puede ser anterior al inicio del período")
+    despues = {"period_id": period_id, "kind": fila["kind"], "start_day": fila["start_day"], "end_day": end_day,
+               "note": fila["note"]}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "cerrar_periodo", despues)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
+def _corregir_periodo(conn: sqlite3.Connection, person_id: int, conversacion_id: int, period_id: int,
+                       kind: str | None = None, start_day: str | None = None, end_day: str | None = None,
+                       note: str | None = None) -> dict:
+    """Proposes correcting the kind, the dates or the note of one of the person's own periods
+    (BODY-PERIODO-1). A field left out keeps its current value, the same convention
+    `_proponer_cambio_meta` already uses. `antes` carries the full prior row, so
+    `propuestas.deshacer` can restore it exactly."""
+    if kind is None and start_day is None and end_day is None and note is None:
+        raise ToolError("se necesita al menos un campo para corregir")
+    fila = conn.execute("SELECT kind, start_day, end_day, note FROM period WHERE id = ? AND person_id = ?",
+                        (period_id, person_id)).fetchone()
+    if fila is None:
+        raise ToolError(f"período desconocido: {period_id!r}")
+    nuevo_kind = kind if kind is not None else fila["kind"]
+    nuevo_inicio = start_day if start_day is not None else fila["start_day"]
+    nuevo_fin = end_day if end_day is not None else fila["end_day"]
+    _dia_no_futuro(conn, person_id, nuevo_inicio)
+    if nuevo_fin is not None:
+        _dia_no_futuro(conn, person_id, nuevo_fin)
+        if nuevo_fin < nuevo_inicio:
+            raise ToolError("end_day no puede ser anterior a start_day")
+    nueva_nota = (note.strip() or None) if note is not None else fila["note"]
+    antes = {"kind": fila["kind"], "start_day": fila["start_day"], "end_day": fila["end_day"], "note": fila["note"]}
+    despues = {"period_id": period_id, "kind": nuevo_kind, "start_day": nuevo_inicio, "end_day": nuevo_fin,
+               "note": nueva_nota}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "corregir_periodo", despues, antes=antes)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
+def _borrar_periodo(conn: sqlite3.Connection, person_id: int, conversacion_id: int, period_id: int) -> dict:
+    """Proposes deleting one of the person's own periods (BODY-PERIODO-1). `antes` carries the
+    whole entry, so `propuestas.deshacer` can restore it (as a new row with the same values, the
+    same "functionally equivalent" restoration `borrar_ingesta`'s own undo uses)."""
+    fila = conn.execute("SELECT kind, start_day, end_day, note FROM period WHERE id = ? AND person_id = ?",
+                        (period_id, person_id)).fetchone()
+    if fila is None:
+        raise ToolError(f"período desconocido: {period_id!r}")
+    antes = {"kind": fila["kind"], "start_day": fila["start_day"], "end_day": fila["end_day"], "note": fila["note"]}
+    despues = {"period_id": period_id}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "borrar_periodo", despues, antes=antes)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
 def _marcar_habito(conn: sqlite3.Connection, person_id: int, conversacion_id: int, habit_id: int, day: str,
                     actividad: dict | None = None, nota: str | None = None) -> dict:
     """Proposes checking one habit off for a day, optionally naming the watch activity that is
@@ -1024,6 +1156,25 @@ HERRAMIENTAS = [
      "descripcion": "Propone eliminar un registro de consumo que ya existe. No lo elimina: registra la "
                      "propuesta para que la persona la apruebe en el chat.",
      "parametros": _PARAM_BORRAR_INGESTA, "funcion": _borrar_ingesta},
+    {"nombre": "marcar_periodo", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone marcar unos días como un período especial (malestar, viaje o lesión) para que "
+                     "Body los deje fuera cuando compare con lo habitual, sin leerlos como efecto de un "
+                     "hábito o experimento. Ofrécelo cuando la persona diga que está enferma, de viaje o "
+                     "lesionada -- nunca lo crees en silencio. No lo marca: registra la propuesta para que "
+                     "la persona la apruebe en el chat.",
+     "parametros": _PARAM_MARCAR_PERIODO, "funcion": _marcar_periodo},
+    {"nombre": "cerrar_periodo", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone cerrar un período abierto, diciendo desde cuándo mejoró la persona. No lo "
+                     "cierra: registra la propuesta para que la persona la apruebe en el chat.",
+     "parametros": _PARAM_CERRAR_PERIODO, "funcion": _cerrar_periodo},
+    {"nombre": "corregir_periodo", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone corregir el tipo, las fechas o la nota de un período que ya existe. No lo "
+                     "corrige: registra la propuesta para que la persona la apruebe en el chat.",
+     "parametros": _PARAM_CORREGIR_PERIODO, "funcion": _corregir_periodo},
+    {"nombre": "borrar_periodo", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone eliminar un período que ya existe. No lo elimina: registra la propuesta "
+                     "para que la persona la apruebe en el chat.",
+     "parametros": _PARAM_BORRAR_PERIODO, "funcion": _borrar_periodo},
     {"nombre": "marcar_habito", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone marcar como hecho, para un día, un hábito activo que la persona puede "
                      "marcar, opcionalmente citando la actividad del reloj que lo cumple como "

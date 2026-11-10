@@ -42,6 +42,13 @@ has been marked against it. `marcar_experimento` calls `db.registrar_dia_experim
 the same upsert-only writer shape as `marcar_habito`'s `goals.check_habit`: its undo, when there
 was no prior `experimento_registro` row, is the same "restore no row at all" exception as
 `marcar_habito`'s own undo, a direct DELETE on `experimento_registro`.
+
+`marcar_periodo` (BODY-PERIODO-1) is insert-shaped like `registrar_ingesta`: this module is the
+one writer of `period`, through `db.crear_periodo`/`db.borrar_periodo`. `cerrar_periodo` and
+`corregir_periodo` call `db.actualizar_periodo` directly, the same update-only writer shape
+`registrar_medida` uses on `daily_metric`. `borrar_periodo`'s undo re-inserts through
+`db.crear_periodo` -- a new row with the same values, not the same id, the same "functionally
+equivalent" restoration `borrar_ingesta`'s own undo uses.
 """
 from __future__ import annotations
 
@@ -638,6 +645,125 @@ def _deshacer_borrar_ingesta(conn: sqlite3.Connection, row: sqlite3.Row) -> None
                           antes["estimado"], antes.get("descripcion"), antes.get("ts_local"))
 
 
+# -- marcar_periodo (BODY-PERIODO-1: insert-shaped, like registrar_ingesta -- this module is the
+# one writer of `period` through db.crear_periodo/db.borrar_periodo) -------------------------------
+
+def _drift_deshacer_marcar_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    pid = despues.get("period_id")
+    r = conn.execute(
+        "SELECT kind, start_day, end_day FROM period WHERE id = ? AND person_id = ?",
+        (pid, row["person_id"])).fetchone()
+    return (r is None or r["kind"] != despues["kind"] or r["start_day"] != despues["start_day"]
+            or r["end_day"] != despues.get("end_day"))
+
+
+def _aplicar_marcar_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+    despues = json.loads(row["despues_json"])
+    pid = db.crear_periodo(conn, row["person_id"], despues["kind"], despues["start_day"],
+                            despues.get("end_day"), despues.get("note"))
+    return {"period_id": pid}
+
+
+def _deshacer_marcar_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    pid = despues.get("period_id")
+    if pid is not None:
+        db.borrar_periodo(conn, row["person_id"], pid)
+
+
+# -- cerrar_periodo (this module calls db.actualizar_periodo directly, update-shaped like
+# registrar_medida) -----------------------------------------------------------------------------
+
+def _drift_aplicar_cerrar_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    actual = conn.execute("SELECT end_day FROM period WHERE id = ? AND person_id = ?",
+                          (despues["period_id"], row["person_id"])).fetchone()
+    return actual is None or actual["end_day"] is not None
+
+
+def _drift_deshacer_cerrar_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    actual = conn.execute("SELECT end_day FROM period WHERE id = ? AND person_id = ?",
+                          (despues["period_id"], row["person_id"])).fetchone()
+    return actual is None or actual["end_day"] != despues["end_day"]
+
+
+def _aplicar_cerrar_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    db.actualizar_periodo(conn, row["person_id"], despues["period_id"], end_day=despues["end_day"])
+
+
+def _deshacer_cerrar_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    db.actualizar_periodo(conn, row["person_id"], despues["period_id"], end_day=None)
+
+
+# -- corregir_periodo (this module calls db.actualizar_periodo directly) ------------------------
+
+def _drift_aplicar_corregir_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    antes = json.loads(row["antes_json"])
+    despues = json.loads(row["despues_json"])
+    actual = conn.execute("SELECT kind, start_day, end_day, note FROM period WHERE id = ? AND person_id = ?",
+                          (despues["period_id"], row["person_id"])).fetchone()
+    return (actual is None or actual["kind"] != antes["kind"] or actual["start_day"] != antes["start_day"]
+            or actual["end_day"] != antes["end_day"] or actual["note"] != antes["note"])
+
+
+def _drift_deshacer_corregir_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    actual = conn.execute("SELECT kind, start_day, end_day, note FROM period WHERE id = ? AND person_id = ?",
+                          (despues["period_id"], row["person_id"])).fetchone()
+    return (actual is None or actual["kind"] != despues["kind"] or actual["start_day"] != despues["start_day"]
+            or actual["end_day"] != despues["end_day"] or actual["note"] != despues["note"])
+
+
+def _aplicar_corregir_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    db.actualizar_periodo(conn, row["person_id"], despues["period_id"], kind=despues["kind"],
+                          start_day=despues["start_day"], end_day=despues["end_day"], note=despues["note"])
+
+
+def _deshacer_corregir_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    antes = json.loads(row["antes_json"])
+    despues = json.loads(row["despues_json"])
+    db.actualizar_periodo(conn, row["person_id"], despues["period_id"], kind=antes["kind"],
+                          start_day=antes["start_day"], end_day=antes["end_day"], note=antes["note"])
+
+
+# -- borrar_periodo (this module calls db.borrar_periodo directly; undo re-inserts through
+# db.crear_periodo -- a new row with the same values, not the same id, the same "functionally
+# equivalent" restoration borrar_ingesta's own undo uses) -------------------------------------------
+
+def _drift_aplicar_borrar_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    antes = json.loads(row["antes_json"])
+    despues = json.loads(row["despues_json"])
+    actual = conn.execute("SELECT kind, start_day, end_day, note FROM period WHERE id = ? AND person_id = ?",
+                          (despues["period_id"], row["person_id"])).fetchone()
+    if actual is None:
+        return True
+    return (actual["kind"] != antes["kind"] or actual["start_day"] != antes["start_day"]
+            or actual["end_day"] != antes["end_day"] or actual["note"] != antes["note"])
+
+
+def _drift_deshacer_borrar_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    """Drifted if the row is no longer gone -- something else re-created it since apply deleted it."""
+    despues = json.loads(row["despues_json"])
+    actual = conn.execute("SELECT 1 FROM period WHERE id = ? AND person_id = ?",
+                          (despues["period_id"], row["person_id"])).fetchone()
+    return actual is not None
+
+
+def _aplicar_borrar_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    db.borrar_periodo(conn, row["person_id"], despues["period_id"])
+
+
+def _deshacer_borrar_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    antes = json.loads(row["antes_json"])
+    db.crear_periodo(conn, row["person_id"], antes["kind"], antes["start_day"], antes["end_day"], antes["note"])
+
+
 TABLA: dict[str, _Accion] = {
     "proponer_meta": _Accion(_sin_drift, _drift_deshacer_meta, _aplicar_meta, _deshacer_meta),
     "proponer_cambio_meta": _Accion(_drift_aplicar_cambio_meta, _drift_deshacer_meta, _aplicar_cambio_meta,
@@ -663,6 +789,14 @@ TABLA: dict[str, _Accion] = {
                                  _aplicar_corregir_ingesta, _deshacer_corregir_ingesta),
     "borrar_ingesta": _Accion(_drift_aplicar_borrar_ingesta, _drift_deshacer_borrar_ingesta,
                                _aplicar_borrar_ingesta, _deshacer_borrar_ingesta),
+    "marcar_periodo": _Accion(_sin_drift, _drift_deshacer_marcar_periodo, _aplicar_marcar_periodo,
+                               _deshacer_marcar_periodo),
+    "cerrar_periodo": _Accion(_drift_aplicar_cerrar_periodo, _drift_deshacer_cerrar_periodo,
+                               _aplicar_cerrar_periodo, _deshacer_cerrar_periodo),
+    "corregir_periodo": _Accion(_drift_aplicar_corregir_periodo, _drift_deshacer_corregir_periodo,
+                                 _aplicar_corregir_periodo, _deshacer_corregir_periodo),
+    "borrar_periodo": _Accion(_drift_aplicar_borrar_periodo, _drift_deshacer_borrar_periodo,
+                               _aplicar_borrar_periodo, _deshacer_borrar_periodo),
 }
 
 SIN_DESHACER = tuple(nombre for nombre, entrada in TABLA.items() if not entrada.tiene_deshacer)

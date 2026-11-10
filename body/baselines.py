@@ -33,7 +33,10 @@ def baseline(conn, metric: str, day: str, window: int = WINDOW_DAYS, *, person_i
     d = date.fromisoformat(day)
     start, end = (d - timedelta(window)).isoformat(), (d - timedelta(1)).isoformat()
     serie = lector.series(metric, start, end) if lector is not None else db.series(conn, metric, start, end, person_id)
-    vals = list(serie.values())
+    # BODY-PERIODO-1 ruling 3: a marked day (illness, travel, injury) is left OUT of the usual
+    # range, never re-weighted -- the one place every caller of baseline() gets this for free.
+    marcados = db.dias_marcados(conn, person_id, start, end)
+    vals = [v for dia, v in serie.items() if dia not in marcados]
     if len(vals) < MIN_DAYS:
         return None
     q = statistics.quantiles(vals, n=4)
