@@ -3,6 +3,11 @@ languages, plus a direct statement-count check on /shifts and /shifts/como (test
 own ceilings, 50 and 25, are not in this slice's touches -- this test pins the same budget
 independently so a future regression is caught here too). Invented demo data only, no real health
 figures.
+
+BODY-TURNO-FC-1-M wording fixes: the unit on every bpm/lpm difference, the sleep split shown only
+when BOTH buckets reach MODELO's min_n_grupo (as one line naming both, never a split with one
+side), no "--" in customer copy, and the singular for the night-week recovery line (both
+`shifts.ultima.recuperacion` and its `_sin_anteriores` and `_mediana` parts).
 """
 import tempfile
 import unittest
@@ -16,6 +21,8 @@ from fastapi.testclient import TestClient
 from tests._rutas import contar_sql
 
 from body import config, db, identity, turno_fc, web
+from body.i18n import T
+from body.rutas.turnos import _turno_fc_sueno_lineas, _turnos_ultima_recuperacion
 
 client = TestClient(web.app, follow_redirects=False)
 
@@ -99,8 +106,10 @@ class PulsoSeccionTest(unittest.TestCase):
         r = client.get("/shifts")
         self.assertEqual(r.status_code, 200)
         self.assertIn("Tu pulso durante el turno", r.text)
-        self.assertIn("Mañana: tu pulso estuvo en 60 lpm, 10 por debajo", r.text)
-        self.assertIn("la mayor diferencia entre tus turnos", r.text)
+        self.assertIn("Mañana: tu pulso estuvo en 60 lpm, 10 lpm por debajo", r.text)
+        self.assertIn("tu pulso está 10 lpm por debajo de tus días de descanso, la mayor diferencia "
+                      "entre tus turnos", r.text)
+        self.assertNotIn("días de descanso -- la mayor diferencia", r.text)
         self.assertIn("Esto compara el horario publicado", r.text)
 
     def test_con_hallazgo_muestra_la_seccion_en_en(self):
@@ -110,8 +119,10 @@ class PulsoSeccionTest(unittest.TestCase):
         r = client.get("/shifts")
         self.assertEqual(r.status_code, 200)
         self.assertIn("Your heart rate during shifts", r.text)
-        self.assertIn("Morning: your heart rate was 60 bpm, 10 below", r.text)
-        self.assertIn("the biggest difference among your shifts", r.text)
+        self.assertIn("Morning: your heart rate was 60 bpm, 10 bpm below", r.text)
+        self.assertIn("your heart rate is 10 bpm below your days off, the biggest difference "
+                      "among your shifts", r.text)
+        self.assertNotIn("days off -- the biggest difference", r.text)
         self.assertIn("This compares the published schedule", r.text)
 
     def test_grupo_pocos_datos_dice_la_frase_honesta_en_es(self):
@@ -149,6 +160,112 @@ class PulsoSeccionTest(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("muy similar a las mismas horas en un día de descanso", r.text)
         self.assertNotIn("Lo que más resalta", r.text)  # no finding clears the noise floor
+
+
+class SuenoSplitTest(unittest.TestCase):
+    """BODY-TURNO-FC-1-M: the sleep split under a kind renders as ONE line naming both buckets, and
+    only once BOTH reach MODELO's own min_n_grupo -- a split with one side is not a comparison."""
+
+    def test_ambos_grupos_alcanzan_el_minimo_una_sola_linea(self):
+        t = T("es")
+        data = {"sleep": {"corta": {"fc_mediana": 69.0, "n": 11}, "normal": {"fc_mediana": 63.0, "n": 24}}}
+        self.assertEqual(
+            _turno_fc_sueno_lineas(t, data),
+            ["Después de una noche corta: 69 lpm (11 turnos) · después de una noche normal: "
+             "63 lpm (24 turnos)."])
+
+    def test_un_lado_pocos_datos_no_muestra_nada(self):
+        t = T("es")
+        data = {"sleep": {"corta": {"fc_mediana": 69.0, "n": 11}, "normal": {"motivo": "pocos_datos", "n": 2}}}
+        self.assertEqual(_turno_fc_sueno_lineas(t, data), [])
+
+    def test_un_lado_ausente_no_muestra_nada(self):
+        t = T("es")
+        data = {"sleep": {"corta": {"fc_mediana": 69.0, "n": 11}}}
+        self.assertEqual(_turno_fc_sueno_lineas(t, data), [])
+
+    def test_sin_datos_de_sueno_no_muestra_nada(self):
+        t = T("es")
+        self.assertEqual(_turno_fc_sueno_lineas(t, {"sleep": {}}), [])
+
+    def test_ambos_grupos_en_la_pagina_real_en_es(self):
+        """Through estudio() and /shifts, not just the helper -- the demo's own 5/5 split shows
+        at least one kind with the sleep split (10 shifts, half short nights, half normal)."""
+        conn = _reset_db(self)
+        _activar_turnos(conn)
+        for i in range(10):
+            day = f"2026-09-{i + 1:02d}"
+            _insertar_fila(conn, 1, day, "morning", 60.0, 70.0)
+            db.set_metric(conn, day, "sleep_minutes", 250.0 if i < 5 else 420.0, "garmin", 1)
+        conn.commit()
+        r = client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("Después de una noche corta: 60 lpm (5 turnos) · después de una noche "
+                      "normal: 60 lpm (5 turnos).", r.text)
+
+    def test_ambos_grupos_en_la_pagina_real_en_en(self):
+        conn = _reset_db(self)
+        db.set_language(conn, "en", 1)
+        _activar_turnos(conn)
+        for i in range(10):
+            day = f"2026-09-{i + 1:02d}"
+            _insertar_fila(conn, 1, day, "morning", 60.0, 70.0)
+            db.set_metric(conn, day, "sleep_minutes", 250.0 if i < 5 else 420.0, "garmin", 1)
+        conn.commit()
+        r = client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("After a short night: 60 bpm (5 shifts) · after a normal night: 60 bpm "
+                      "(5 shifts).", r.text)
+
+
+class RecuperacionSingularTest(unittest.TestCase):
+    """BODY-TURNO-FC-1-M: «Volviste a tu normal en 1 día» (not «1 días»), for both the recovery
+    days and the median-days-or-fewer part, independently, in both languages."""
+
+    def test_un_dia_de_recuperacion_sin_mediana_es(self):
+        t = T("es")
+        u = {"recuperacion_dias": 1, "recuperacion_mediana": None}
+        self.assertEqual(_turnos_ultima_recuperacion(t, u), "Volviste a tu normal en 1 día.")
+
+    def test_varios_dias_de_recuperacion_sin_mediana_es(self):
+        t = T("es")
+        u = {"recuperacion_dias": 3, "recuperacion_mediana": None}
+        self.assertEqual(_turnos_ultima_recuperacion(t, u), "Volviste a tu normal en 3 días.")
+
+    def test_un_dia_de_recuperacion_y_mediana_de_un_dia_es(self):
+        t = T("es")
+        u = {"recuperacion_dias": 1, "recuperacion_mediana": 1}
+        self.assertEqual(_turnos_ultima_recuperacion(t, u),
+                          "Volviste a tu normal en 1 día (antes, la mitad de las veces: 1 día o menos)")
+
+    def test_varios_dias_de_recuperacion_y_mediana_de_un_dia_es(self):
+        t = T("es")
+        u = {"recuperacion_dias": 5, "recuperacion_mediana": 1}
+        self.assertEqual(_turnos_ultima_recuperacion(t, u),
+                          "Volviste a tu normal en 5 días (antes, la mitad de las veces: 1 día o menos)")
+
+    def test_un_dia_de_recuperacion_y_mediana_de_varios_es(self):
+        t = T("es")
+        u = {"recuperacion_dias": 1, "recuperacion_mediana": 3}
+        self.assertEqual(_turnos_ultima_recuperacion(t, u),
+                          "Volviste a tu normal en 1 día (antes, la mitad de las veces: 3 días o menos)")
+
+    def test_un_dia_de_recuperacion_sin_mediana_en(self):
+        t = T("en")
+        u = {"recuperacion_dias": 1, "recuperacion_mediana": None}
+        self.assertEqual(_turnos_ultima_recuperacion(t, u), "You were back to your normal in 1 day.")
+
+    def test_un_dia_de_recuperacion_y_mediana_de_un_dia_en(self):
+        t = T("en")
+        u = {"recuperacion_dias": 1, "recuperacion_mediana": 1}
+        self.assertEqual(_turnos_ultima_recuperacion(t, u),
+                          "You were back to your normal in 1 day (before, half the time: 1 day or fewer)")
+
+    def test_varios_dias_sin_singular_en(self):
+        t = T("en")
+        u = {"recuperacion_dias": 4, "recuperacion_mediana": 2}
+        self.assertEqual(_turnos_ultima_recuperacion(t, u),
+                          "You were back to your normal in 4 days (before, half the time: 2 days or fewer)")
 
 
 class StatementCeilingTest(unittest.TestCase):

@@ -70,12 +70,19 @@ def _turnos_ultima_filas(t: T, defs: dict, metricas: list[dict]) -> list[dict]:
     return filas
 
 
+def _singular_key(base: str, n: int) -> str:
+    return f"{base}_one" if n == 1 else base
+
+
 def _turnos_ultima_recuperacion(t: T, u: dict) -> str:
     if u["recuperacion_dias"] is None:
         return t("shifts.ultima.recuperacion_sin_dato")
+    d = u["recuperacion_dias"]
     if u["recuperacion_mediana"] is None:
-        return t("shifts.ultima.recuperacion_sin_anteriores", d=u["recuperacion_dias"])
-    return t("shifts.ultima.recuperacion", d=u["recuperacion_dias"], m=u["recuperacion_mediana"])
+        return t(_singular_key("shifts.ultima.recuperacion_sin_anteriores", d), d=d)
+    m = u["recuperacion_mediana"]
+    mediana = t(_singular_key("shifts.ultima.recuperacion_mediana", m), m=m)
+    return t(_singular_key("shifts.ultima.recuperacion", d), d=d, mediana=mediana)
 
 
 def _turnos_ultima_ctx(t: T, defs: dict, resumen: dict) -> dict | None:
@@ -125,13 +132,16 @@ def _turno_fc_kind_linea(t: T, kind: str, data: dict) -> str:
 
 
 def _turno_fc_sueno_lineas(t: T, data: dict) -> list[str]:
-    out = []
-    for bucket in ("corta", "normal"):
-        info = data.get("sleep", {}).get(bucket)
-        if info is None or info.get("motivo") == "pocos_datos":
-            continue  # a thin sleep split says nothing new beyond the kind's own line above
-        out.append(t("shifts.pulso.sueno_" + bucket, fc=t.num(info["fc_mediana"]), n=info["n"]))
-    return out
+    """Only when BOTH the short-night and normal-night groups reach MODELO's own min_n_grupo --
+    a split with one side is not a comparison -- as one line naming both."""
+    sleep = data.get("sleep", {})
+    corta, normal = sleep.get("corta"), sleep.get("normal")
+    if corta is None or normal is None:
+        return []
+    if corta.get("motivo") == "pocos_datos" or normal.get("motivo") == "pocos_datos":
+        return []
+    return [t("shifts.pulso.sueno_split", fc_corta=t.num(corta["fc_mediana"]), n_corta=corta["n"],
+              fc_normal=t.num(normal["fc_mediana"]), n_normal=normal["n"])]
 
 
 def _turno_fc_hallazgo_linea(t: T, h: dict) -> str:
