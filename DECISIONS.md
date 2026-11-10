@@ -15145,3 +15145,33 @@ sentence are all new strings a person reads -- and the approval's own body says,
 Not merged. Stops **AWAITING_APPROVAL** on `feat/body-mcp-local-1`, for the orchestrator's own look at the
 Hoy line's wording and the panel's new default-conversation behaviour, same as BODY-MCP-LOCAL-1's own stop.
 Ruling 7 still holds: nothing in this slice connects anything to the desk.
+
+## BODY-MCP-LOCAL-1-M -- merged (2026-11-10)
+
+The orchestrator re-drove the whole protocol surface over a real subprocess pipe against the re-seeded demo
+home (`python -m body.mcp`, strict UTF-8 decode throughout: `initialize`, 30 tools listed, a `proponer_idioma`
+call answering «Lo verás en la pantalla Hoy de Body. Ahí debes tocar Aplicar.» plus the JSON block), and at
+375 px on the demo app, fresh visit with empty `sessionStorage`: Hoy showed «Tu asistente personal te propone
+1 cambio · Revisar» linking `/?asis_conversacion=1#asis-btn`, the link opened the panel on the card «Cambiar
+idioma · Desde tu asistente personal · Aplicar / Descartar», and after Descartar the Hoy line was gone on the
+next load. Nothing to fix; this slice is the merge. Recorded under BODY-INTERFAZ-ESCRITORIO-1-INV.
+
+**Merge.** `git checkout main` (clean, `main` at `83a2792` going in, matching BODY-TURNO-FC-1-M's own
+last-recorded head); `git merge --no-ff feat/body-mcp-local-1`, no conflicts. Commits carried: `77d691c`
+(BODY-MCP-LOCAL-1), `18050b1` (its ledger entry), `0ba69f9` (BODY-MCP-LOCAL-1-B), `7e10e94` (its ledger
+entry). Merge commit `5b56c484` on `main`.
+
+**Gate**, once, foreground, on the merged tree (tree `3007d4e6`):
+`.venv/Scripts/python.exe -m unittest discover tests -t .` -> `Ran 2253 tests in 517.470s ... OK
+(skipped=1)` -- same count BODY-MCP-LOCAL-1-B's own last gate recorded (2253), re-run clean on `main`.
+
+Diff classified against `main` (pre-merge, `83a2792`): schema change (the `uso_herramienta_externa` table
+and the `conversacion_agente.origen` column, from BODY-MCP-LOCAL-1) and customer-facing bytes (the Hoy line,
+the panel label, the i18n strings, from both slices) -- both conditions already covered by this approval's
+own words, which authorise the merge once the orchestrator's own re-drive passes: "Merge only." No
+cross-repo contract or DTO change.
+
+Config snippet for the record (not wired to any desk by this slice -- CONNECTING stays out, per ruling 7,
+and waits for Carlos's own yes): a Claude Code MCP server entry running `.venv/Scripts/python.exe` with args
+`["-m", "body.mcp"]`, cwd `C:/Duna/body/body-app-live`, `BODY_HOME` left unset so the server reads the
+person's own real home directory.
