@@ -15326,3 +15326,17 @@ facing (Tendencias card, Dia line): stops AWAITING_APPROVAL."
   fills five recent nights plus whatever other nights already had background minute data -- 25 of them on
   a `--dias 30` scratch measurement), then open `/day/<a recent date with data>` for the sleep card's new
   line, and `/trends?todas=1#sleep_hr_avg` for the "De noche" / "At night" group's two new cards.
+
+## BODY-SUENO-FC-1-M -- merged
+
+Merged `feat/body-sueno-fc-1` (`fb542b7` + ledger `3ae96a9`) into `main` with `git merge --no-ff`, approved per
+`ORCH-CARLOS-DELEGATES-TIER-1-1`: the orchestrator's own measurement on a copy of the real database (853 nights
+valued for both keys from 2024-06-20, 854 sleep sessions, all under source `body-sueno-fc-v1`, low never above
+average, 3 s) and on the re-seeded demo's screens at 375 px passed, with nothing to fix. Merge commit
+`bce3dc46972620a165381370001d306ed01daa01` (tree `8d2a247e677eb9328d37a2ac124a3bf65e081d8e`), no conflicts.
+
+Gate on the merged tree, once: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 2276 tests, OK
+(skipped=1), matching the floor the spec supplied for `feat/body-sueno-fc-1`.
+
+The first fill on the person's real database is left to the scheduled pull's post-pull step, per the approval's
+own words, with a backup taken first by the orchestrator.
