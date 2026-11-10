@@ -6,7 +6,9 @@ already stored it. Every Garmin call is mocked at the adapter boundary -- NO NET
 import contextlib
 import io
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
@@ -18,18 +20,17 @@ def _vida_path(day: str):
     return config.BODY_HOME / "vida" / f"despertar-{day}.json"
 
 
-def _cleanup(path):
-    """Removes the file and, if the shared "vida" dir is now empty, the dir too -- this test
-    module sorts before tests/test_dispositivo.py, which asserts that dir is absent, so leaving
-    it behind here would break an unrelated test."""
-    path.unlink(missing_ok=True)
-    try:
-        path.parent.rmdir()
-    except OSError:
-        pass
+class _AisladoTestCase(unittest.TestCase):
+    """Points despertar at its OWN temporary BODY_HOME (despertar.py reads config.BODY_HOME fresh on
+    every call, so patching the attribute here is enough) -- never the shared one tests/test_dispositivo.py
+    asserts is absent."""
+    def setUp(self):
+        patcher = mock.patch.object(config, "BODY_HOME", Path(tempfile.mkdtemp(dir=TMP)))
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
 
-class FileAlreadyExistsTest(unittest.TestCase):
+class FileAlreadyExistsTest(_AisladoTestCase):
     def test_zero_calls_when_file_exists(self):
         day = "2026-01-10"
         path = _vida_path(day)
@@ -37,7 +38,6 @@ class FileAlreadyExistsTest(unittest.TestCase):
         path.write_text(
             json.dumps({"woke_at": "x", "source": "garmin", "written_at": "y"}), encoding="utf-8",
         )
-        self.addCleanup(_cleanup, path)
 
         with mock.patch.object(garmin_adapter, "fetch_sleep") as fetch, \
                 mock.patch.object(garmin_adapter, "has_token") as has_token, \
@@ -50,11 +50,10 @@ class FileAlreadyExistsTest(unittest.TestCase):
         has_token.assert_not_called()
 
 
-class SleepAlreadyStoredTest(unittest.TestCase):
+class SleepAlreadyStoredTest(_AisladoTestCase):
     def test_zero_calls_and_file_written_from_the_database(self):
         day = "2026-01-11"
         path = _vida_path(day)
-        self.addCleanup(_cleanup, path)
 
         conn = db.connect()
         try:
@@ -85,11 +84,10 @@ class SleepAlreadyStoredTest(unittest.TestCase):
         self.assertTrue(data["written_at"].endswith("-05:00"))
 
 
-class NoTokenTest(unittest.TestCase):
+class NoTokenTest(_AisladoTestCase):
     def test_exit_0_no_file_no_call_when_no_garmin_session(self):
         day = "2026-01-12"
         path = _vida_path(day)
-        self.addCleanup(_cleanup, path)
 
         with mock.patch.object(garmin_adapter, "has_token", return_value=False), \
                 mock.patch.object(garmin_adapter, "fetch_sleep") as fetch, \
@@ -102,11 +100,10 @@ class NoTokenTest(unittest.TestCase):
         self.assertFalse(path.exists())
 
 
-class LockHeldTest(unittest.TestCase):
+class LockHeldTest(_AisladoTestCase):
     def test_skips_the_check_when_a_pull_holds_the_lock(self):
         day = "2026-01-13"
         path = _vida_path(day)
-        self.addCleanup(_cleanup, path)
 
         with mock.patch.object(garmin_adapter, "has_token", return_value=True), \
                 mock.patch.object(despertar.pull, "_try_lock", return_value=None), \
@@ -120,11 +117,10 @@ class LockHeldTest(unittest.TestCase):
         self.assertFalse(path.exists())
 
 
-class FetchReturnsWakeTest(unittest.TestCase):
+class FetchReturnsWakeTest(_AisladoTestCase):
     def test_file_written_with_exactly_three_keys(self):
         day = "2026-01-14"
         path = _vida_path(day)
-        self.addCleanup(_cleanup, path)
 
         with mock.patch.object(garmin_adapter, "has_token", return_value=True), \
                 mock.patch.object(despertar.pull, "_try_lock", return_value=object()), \
@@ -145,11 +141,10 @@ class FetchReturnsWakeTest(unittest.TestCase):
         self.assertTrue(data["written_at"].endswith("-05:00"))
 
 
-class FetchReturnsNoneYetTest(unittest.TestCase):
+class FetchReturnsNoneYetTest(_AisladoTestCase):
     def test_no_file_when_last_night_has_not_synced_yet(self):
         day = "2026-01-15"
         path = _vida_path(day)
-        self.addCleanup(_cleanup, path)
 
         with mock.patch.object(garmin_adapter, "has_token", return_value=True), \
                 mock.patch.object(despertar.pull, "_try_lock", return_value=object()), \
@@ -163,11 +158,10 @@ class FetchReturnsNoneYetTest(unittest.TestCase):
         self.assertFalse(path.exists())
 
 
-class FetchFailsTest(unittest.TestCase):
+class FetchFailsTest(_AisladoTestCase):
     def test_error_kind_only_no_payload_exit_0(self):
         day = "2026-01-16"
         path = _vida_path(day)
-        self.addCleanup(_cleanup, path)
 
         with mock.patch.object(garmin_adapter, "has_token", return_value=True), \
                 mock.patch.object(despertar.pull, "_try_lock", return_value=object()), \
