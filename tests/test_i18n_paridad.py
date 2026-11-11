@@ -140,6 +140,9 @@ _FIXED_DYNAMIC = {
     # body/rutas/hoy.py _cuerpo_hoy_ctx(): body/anatomia.py GRUPOS_ORDEN -- every glow group a
     # training category can light.
     "cuerpo.grupo.+": anatomia.GRUPOS_ORDEN,
+    # body/anatomia.py texto_liviano_a_proposito() (BODY-LESION-ZONA-1): every categoria word, the
+    # same CATEGORIA_ENUM a training exercise's own categoria already speaks.
+    "entreno.categoria.+": list(anatomia.CATEGORIA_ENUM),
 }
 
 # body/web.py _finding_text(): key = f"history.find.{axis}_better_{better}", then t(key, ...) -- a

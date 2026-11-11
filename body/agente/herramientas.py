@@ -313,6 +313,10 @@ _PARAM_MARCAR_PERIODO = {
         "start_day": {"type": "string", "format": "date"},
         "end_day": {"type": "string", "format": "date"},
         "note": {"type": "string"},
+        # BODY-LESION-ZONA-1 ruling 1: set this when the person names a limited body part (today,
+        # that is always kind 'lesion') -- Body then reads a lighter training set in that zona as
+        # deliberate, never a drop (ruling 2), and the next plans respect it (ruling 3).
+        "zonas": {"type": "array", "items": {"type": "string", "enum": list(anatomia.CATEGORIA_ENUM)}},
     },
     "required": ["kind", "start_day"],
     "additionalProperties": False,
@@ -331,6 +335,8 @@ _PARAM_CORREGIR_PERIODO = {
         "start_day": {"type": "string", "format": "date"},
         "end_day": {"type": "string", "format": "date"},
         "note": {"type": "string"},
+        # BODY-LESION-ZONA-1 ruling 1: left out keeps the current zonas; an empty list clears it.
+        "zonas": {"type": "array", "items": {"type": "string", "enum": list(anatomia.CATEGORIA_ENUM)}},
     },
     "required": ["period_id"],
     "additionalProperties": False,
@@ -429,17 +435,31 @@ def _readiness_dict(r: readiness.Readiness) -> dict:
     }
 
 
+def _limitaciones_abiertas(conn: sqlite3.Connection, person_id: int, day: str) -> list[dict]:
+    """BODY-LESION-ZONA-1 ruling 3: this person's own open ('lesion', end_day IS NULL) periods as
+    of `day`, as {tipo, desde, zonas} -- never the note (the same privacy ruling 2 already keeps).
+    Read by leer_hoy and used as the context planear_entreno's own description leans on."""
+    return [{"tipo": r["kind"], "desde": r["start_day"], "zonas": json.loads(r["zonas"]) if r["zonas"] else []}
+            for r in db.periodos(conn, person_id, day, day) if r["kind"] == "lesion" and r["end_day"] is None]
+
+
 def _leer_hoy(conn: sqlite3.Connection, person_id: int) -> dict:
     dias = db.days_with_data(conn, person_id)
     if not dias:
         return {"dia": None, "mensaje": "sin datos aún"}
     dia = dias[0]
     return {"dia": dia, "listo": _readiness_dict(readiness.compute(conn, dia, person_id)),
-            "valores": db.day_values(conn, dia, person_id)}
+            "valores": db.day_values(conn, dia, person_id),
+            "limitaciones": _limitaciones_abiertas(conn, person_id, dia)}
 
 
 def _leer_dia(conn: sqlite3.Connection, person_id: int, day: str) -> dict:
-    return db.load_day(conn, day, person_id)
+    data = db.load_day(conn, day, person_id)
+    t = T(db.person(conn, person_id)["language"])
+    for a in data["activities"]:
+        zonas = a.pop("zonas_limitadas", [])
+        a["liviano_a_proposito"] = anatomia.texto_liviano_a_proposito(t, zonas) if zonas else None
+    return data
 
 
 def _leer_como_calculo(conn: sqlite3.Connection, person_id: int, day: str) -> dict:
@@ -611,9 +631,11 @@ def _leer_entreno(conn: sqlite3.Connection, person_id: int, day: str | None = No
         "AND (type = 'strength_training' OR source = 'manual') ORDER BY day, start_local",
         (person_id, ini, fin),
     ).fetchall()
+    t = T(db.person(conn, person_id)["language"])
     sesiones = []
     for a in actividades:
         sets = db.exercise_sets(conn, person_id, a["source"], a["source_id"])
+        zonas_dia = db.zonas_en_recuperacion(conn, person_id, a["day"])
         sesiones.append({
             "dia": a["day"], "titulo": a["name"], "fuente": a["source"], "hora_inicio": a["start_local"],
             # BODY-SERIES-ORDEN-1 rulings 1, 3, 5: a rest slot is never a set, and a slot the
@@ -622,7 +644,12 @@ def _leer_entreno(conn: sqlite3.Connection, person_id: int, day: str | None = No
             # active/rest said.
             "series": [{"orden": s["set_order"], "tipo": s["set_type"], "ejercicio": s["exercise"],
                         "categoria": s["category"], "repeticiones": s["reps"], "peso_kg": s["weight_value"],
-                        "corregido": s["corrected_by_person"]} for s in sets
+                        "corregido": s["corrected_by_person"],
+                        # BODY-LESION-ZONA-1 ruling 2: the one shared plain line, or None when this
+                        # set's own categoria is not among today's open-lesion zonas.
+                        "liviano_a_proposito": anatomia.texto_liviano_a_proposito(
+                            t, {s["category"]} if s["category"] in zonas_dia else set())}
+                       for s in sets
                        if s["set_type"] == "active" and not s["excluded_by_person"]],
         })
     planes = conn.execute(
@@ -673,6 +700,21 @@ def _categoria_entreno(t: T, ejercicio: str, valor):
         raise ToolError(t("agente.error.entreno_categoria_invalida", ejercicio=ejercicio,
                            categorias=", ".join(anatomia.CATEGORIA_ENUM)))
     return normalizado
+
+
+def _zonas_periodo(t: T, valor: list) -> list[str] | None:
+    """Validates/normalises marcar_periodo/corregir_periodo's optional `zonas` at the door
+    (BODY-LESION-ZONA-1 ruling 1), the same _categoria_entreno pattern for a list instead of one
+    value: each entry must be one of `anatomia.CATEGORIA_ENUM` (case/whitespace folded), refused
+    naming the allowed words, in the person's own language. An empty list means the same as no
+    zonas at all."""
+    out = []
+    for z in valor:
+        normalizado = z.strip().lower() if isinstance(z, str) else None
+        if normalizado not in anatomia.CATEGORIA_ENUM:
+            raise ToolError(t("agente.error.periodo_zona_invalida", categorias=", ".join(anatomia.CATEGORIA_ENUM)))
+        out.append(normalizado)
+    return out or None
 
 
 def _planear_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id: int, day: str, titulo: str,
@@ -1085,13 +1127,14 @@ def _registrar_checkin(conn: sqlite3.Connection, person_id: int, conversacion_id
 
 
 def _marcar_periodo(conn: sqlite3.Connection, person_id: int, conversacion_id: int, kind: str, start_day: str,
-                     end_day: str | None = None, note: str | None = None) -> dict:
+                     end_day: str | None = None, note: str | None = None, zonas: list | None = None) -> dict:
     """Proposes marking a stretch of days as a period (BODY-PERIODO-1): illness, travel or injury,
     so Body leaves those days out when it compares with the usual, never reading them as a habit
     or experiment effect. OFFER this when the person says they are ill, travelling or injured --
     never create it silently. Insert-shaped, like registrar_ingesta: there is no 'before'.
     start_day may be in the past, bounded like _proponer_experimento's own fecha_inicio check: not
-    before the person's first data day, not in the future."""
+    before the person's first data day, not in the future. `zonas` (BODY-LESION-ZONA-1 ruling 1):
+    set it when the person names a limited body part."""
     _dia_no_futuro(conn, person_id, start_day)
     dias = db.days_with_data(conn, person_id)
     if dias and start_day < dias[-1]:
@@ -1101,7 +1144,9 @@ def _marcar_periodo(conn: sqlite3.Connection, person_id: int, conversacion_id: i
         if end_day < start_day:
             raise ToolError("end_day no puede ser anterior a start_day")
     note = (note or "").strip() or None
-    despues = {"kind": kind, "start_day": start_day, "end_day": end_day, "note": note}
+    t = T(db.person(conn, person_id)["language"])
+    zonas = _zonas_periodo(t, zonas) if zonas is not None else None
+    despues = {"kind": kind, "start_day": start_day, "end_day": end_day, "note": note, "zonas": zonas}
     registro = propuestas.crear(conn, person_id, conversacion_id, "marcar_periodo", despues)
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
@@ -1109,9 +1154,9 @@ def _marcar_periodo(conn: sqlite3.Connection, person_id: int, conversacion_id: i
 def _cerrar_periodo(conn: sqlite3.Connection, person_id: int, conversacion_id: int, period_id: int,
                      end_day: str) -> dict:
     """Proposes closing an open period, saying since when the person got better (BODY-PERIODO-1):
-    "I'm better since Thursday". despues carries the period's own kind/start_day/note too, so the
-    card and propuestas.TABLA's writer never need a second read."""
-    fila = conn.execute("SELECT kind, start_day, end_day, note FROM period WHERE id = ? AND person_id = ?",
+    "I'm better since Thursday". despues carries the period's own kind/start_day/note/zonas too, so
+    the card and propuestas.TABLA's writer never need a second read."""
+    fila = conn.execute("SELECT kind, start_day, end_day, note, zonas FROM period WHERE id = ? AND person_id = ?",
                         (period_id, person_id)).fetchone()
     if fila is None:
         raise ToolError(f"período desconocido: {period_id!r}")
@@ -1121,21 +1166,22 @@ def _cerrar_periodo(conn: sqlite3.Connection, person_id: int, conversacion_id: i
     if end_day < fila["start_day"]:
         raise ToolError("end_day no puede ser anterior al inicio del período")
     despues = {"period_id": period_id, "kind": fila["kind"], "start_day": fila["start_day"], "end_day": end_day,
-               "note": fila["note"]}
+               "note": fila["note"], "zonas": json.loads(fila["zonas"]) if fila["zonas"] else None}
     registro = propuestas.crear(conn, person_id, conversacion_id, "cerrar_periodo", despues)
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
 def _corregir_periodo(conn: sqlite3.Connection, person_id: int, conversacion_id: int, period_id: int,
                        kind: str | None = None, start_day: str | None = None, end_day: str | None = None,
-                       note: str | None = None) -> dict:
-    """Proposes correcting the kind, the dates or the note of one of the person's own periods
-    (BODY-PERIODO-1). A field left out keeps its current value, the same convention
-    `_proponer_cambio_meta` already uses. `antes` carries the full prior row, so
-    `propuestas.deshacer` can restore it exactly."""
-    if kind is None and start_day is None and end_day is None and note is None:
+                       note: str | None = None, zonas: list | None = None) -> dict:
+    """Proposes correcting the kind, the dates, the note or the zonas of one of the person's own
+    periods (BODY-PERIODO-1; zonas added by BODY-LESION-ZONA-1 ruling 1). A field left out keeps
+    its current value, the same convention `_proponer_cambio_meta` already uses -- for zonas, an
+    empty list clears it instead (the same "" convention `note` already uses). `antes` carries the
+    full prior row, so `propuestas.deshacer` can restore it exactly."""
+    if kind is None and start_day is None and end_day is None and note is None and zonas is None:
         raise ToolError("se necesita al menos un campo para corregir")
-    fila = conn.execute("SELECT kind, start_day, end_day, note FROM period WHERE id = ? AND person_id = ?",
+    fila = conn.execute("SELECT kind, start_day, end_day, note, zonas FROM period WHERE id = ? AND person_id = ?",
                         (period_id, person_id)).fetchone()
     if fila is None:
         raise ToolError(f"período desconocido: {period_id!r}")
@@ -1147,10 +1193,14 @@ def _corregir_periodo(conn: sqlite3.Connection, person_id: int, conversacion_id:
         _dia_no_futuro(conn, person_id, nuevo_fin)
         if nuevo_fin < nuevo_inicio:
             raise ToolError("end_day no puede ser anterior a start_day")
+    t = T(db.person(conn, person_id)["language"])
+    zonas_antes = json.loads(fila["zonas"]) if fila["zonas"] else None
+    nuevas_zonas = _zonas_periodo(t, zonas) if zonas is not None else zonas_antes
     nueva_nota = (note.strip() or None) if note is not None else fila["note"]
-    antes = {"kind": fila["kind"], "start_day": fila["start_day"], "end_day": fila["end_day"], "note": fila["note"]}
+    antes = {"kind": fila["kind"], "start_day": fila["start_day"], "end_day": fila["end_day"], "note": fila["note"],
+             "zonas": zonas_antes}
     despues = {"period_id": period_id, "kind": nuevo_kind, "start_day": nuevo_inicio, "end_day": nuevo_fin,
-               "note": nueva_nota}
+               "note": nueva_nota, "zonas": nuevas_zonas}
     registro = propuestas.crear(conn, person_id, conversacion_id, "corregir_periodo", despues, antes=antes)
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
@@ -1159,11 +1209,12 @@ def _borrar_periodo(conn: sqlite3.Connection, person_id: int, conversacion_id: i
     """Proposes deleting one of the person's own periods (BODY-PERIODO-1). `antes` carries the
     whole entry, so `propuestas.deshacer` can restore it (as a new row with the same values, the
     same "functionally equivalent" restoration `borrar_ingesta`'s own undo uses)."""
-    fila = conn.execute("SELECT kind, start_day, end_day, note FROM period WHERE id = ? AND person_id = ?",
+    fila = conn.execute("SELECT kind, start_day, end_day, note, zonas FROM period WHERE id = ? AND person_id = ?",
                         (period_id, person_id)).fetchone()
     if fila is None:
         raise ToolError(f"período desconocido: {period_id!r}")
-    antes = {"kind": fila["kind"], "start_day": fila["start_day"], "end_day": fila["end_day"], "note": fila["note"]}
+    antes = {"kind": fila["kind"], "start_day": fila["start_day"], "end_day": fila["end_day"], "note": fila["note"],
+             "zonas": json.loads(fila["zonas"]) if fila["zonas"] else None}
     despues = {"period_id": period_id}
     registro = propuestas.crear(conn, person_id, conversacion_id, "borrar_periodo", despues, antes=antes)
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
@@ -1385,7 +1436,8 @@ def _proponer_idioma(conn: sqlite3.Connection, person_id: int, conversacion_id: 
 
 HERRAMIENTAS = [
     {"nombre": "leer_hoy", "tipo": "lectura", "nivel": "completo",
-     "descripcion": "Qué tan listo estás hoy: el puntaje de preparación y los valores del día más reciente.",
+     "descripcion": "Qué tan listo estás hoy: el puntaje de preparación, los valores del día más reciente y "
+                     "las limitaciones abiertas (una lesión en recuperación, con la zona si se nombró).",
      "parametros": _SIN_PARAMETROS, "funcion": _leer_hoy},
     {"nombre": "leer_dia", "tipo": "lectura", "nivel": "completo",
      "descripcion": "Las métricas, el sueño, las actividades y los turnos de un día concreto.",
@@ -1444,8 +1496,11 @@ HERRAMIENTAS = [
      "descripcion": "Propone un plan de entrenamiento para un día: título, hora opcional y una lista de "
                      "ejercicios con sus series y repeticiones. Pon siempre la categoría muscular de cada "
                      "ejercicio (pierna, gluteo, espalda, pecho, hombro, brazo, core, cardio, movilidad u "
-                     "otro): es lo que ilumina el cuerpo de la persona en la pantalla Hoy. No lo crea: "
-                     "registra la propuesta para que la persona la apruebe en el chat.",
+                     "otro): es lo que ilumina el cuerpo de la persona en la pantalla Hoy. Revisa primero las "
+                     "'limitaciones' de leer_hoy: si una zona está en recuperación, mantén la carga de esa "
+                     "zona por debajo de lo normal y dilo en el plan -- tú nunca inventas una carga concreta, "
+                     "solo dices el límite. No lo crea: registra la propuesta para que la persona la apruebe "
+                     "en el chat.",
      "parametros": _PARAM_PLANEAR_ENTRENO, "funcion": _planear_entreno},
     {"nombre": "registrar_entreno", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone registrar lo que la persona hizo en un entrenamiento de un día: si el reloj "
@@ -1504,16 +1559,20 @@ HERRAMIENTAS = [
      "descripcion": "Propone marcar unos días como un período especial (malestar, viaje o lesión) para que "
                      "Body los deje fuera cuando compare con lo habitual, sin leerlos como efecto de un "
                      "hábito o experimento. Ofrécelo cuando la persona diga que está enferma, de viaje o "
-                     "lesionada -- nunca lo crees en silencio. No lo marca: registra la propuesta para que "
-                     "la persona la apruebe en el chat.",
+                     "lesionada -- nunca lo crees en silencio. Si la persona nombra una parte del cuerpo "
+                     "limitada (por ejemplo, un hombro en recuperación), pon esa zona en 'zonas': así Body "
+                     "lee un entrenamiento más liviano ahí como algo a propósito, nunca como una caída. No "
+                     "lo marca: registra la propuesta para que la persona la apruebe en el chat.",
      "parametros": _PARAM_MARCAR_PERIODO, "funcion": _marcar_periodo},
     {"nombre": "cerrar_periodo", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone cerrar un período abierto, diciendo desde cuándo mejoró la persona. No lo "
                      "cierra: registra la propuesta para que la persona la apruebe en el chat.",
      "parametros": _PARAM_CERRAR_PERIODO, "funcion": _cerrar_periodo},
     {"nombre": "corregir_periodo", "tipo": "propuesta", "nivel": "ninguno",
-     "descripcion": "Propone corregir el tipo, las fechas o la nota de un período que ya existe. No lo "
-                     "corrige: registra la propuesta para que la persona la apruebe en el chat.",
+     "descripcion": "Propone corregir el tipo, las fechas, la nota o las zonas de un período que ya existe. "
+                     "Pon 'zonas' cuando la persona nombre o corrija la parte del cuerpo limitada; una lista "
+                     "vacía la quita. No lo corrige: registra la propuesta para que la persona la apruebe "
+                     "en el chat.",
      "parametros": _PARAM_CORREGIR_PERIODO, "funcion": _corregir_periodo},
     {"nombre": "borrar_periodo", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone eliminar un período que ya existe. No lo elimina: registra la propuesta "

@@ -4,6 +4,7 @@ and its manifest (ruling 1), the categoria -> glow-group map and the per-screen 
 """
 import hashlib
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -134,6 +135,26 @@ class AnatomiaDataTest(unittest.TestCase):
         for v in ctx:
             self.assertEqual(v["glow"], [])
 
+    def test_grupos_limitados_fills_the_limitada_list_not_glow(self):
+        # BODY-LESION-ZONA-1 ruling 4: the hatch is its own list, never the training glow's.
+        grupos = anatomia.CATEGORIA_GRUPOS["hombro"]
+        ctx = anatomia.contexto(_T(), "hoy", frozenset(), grupos)
+        musculos = next(v for v in ctx if v["id"] == "musculos")
+        self.assertEqual(musculos["glow"], [])
+        self.assertEqual(len(musculos["limitada"]), 2)  # hombros: two ellipses (left/right)
+
+    def test_texto_liviano_a_proposito_is_none_for_no_zonas(self):
+        self.assertIsNone(anatomia.texto_liviano_a_proposito(_T(), set()))
+
+    def test_texto_liviano_a_proposito_names_the_zona(self):
+        txt = anatomia.texto_liviano_a_proposito(_T(), {"hombro"})
+        self.assertEqual(txt, "Más liviano a propósito: hombro en recuperación")
+
+    def test_texto_liviano_a_proposito_orders_several_zonas_by_the_enum(self):
+        # Given out of order, always read back in CATEGORIA_ENUM's own order.
+        txt = anatomia.texto_liviano_a_proposito(_T(), {"hombro", "pierna"})
+        self.assertIn("pierna, hombro", txt)
+
 
 def _T():
     from body.i18n import T
@@ -231,6 +252,39 @@ class CuerpoVistaHoyTest(unittest.TestCase):
         r = client.get("/")
         self.assertIn("Desliza para girar", r.text)
 
+    def test_open_lesion_with_zonas_shows_the_recovering_caption_and_hatch(self):
+        # BODY-LESION-ZONA-1 ruling 4.
+        pid = _mk_person(self.conn)
+        self._algun_dato_hoy(pid)
+        hoy = self._hoy_iso(pid)
+        db.crear_periodo(self.conn, pid, "lesion", hoy, zonas=["hombro"])
+        self.conn.commit()
+        _use(pid)
+        r = client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("En recuperación: hombro", r.text)
+        self.assertIn('cuerpo-vista-glow limitada', r.text)
+
+    def test_no_open_lesion_shows_no_recovering_caption(self):
+        pid = _mk_person(self.conn)
+        self._algun_dato_hoy(pid)
+        _use(pid)
+        r = client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn("En recuperación", r.text)
+        self.assertNotIn('cuerpo-vista-glow limitada', r.text)
+
+    def test_closed_lesion_shows_no_recovering_caption(self):
+        pid = _mk_person(self.conn)
+        self._algun_dato_hoy(pid)
+        hoy = self._hoy_iso(pid)
+        db.crear_periodo(self.conn, pid, "lesion", "2026-01-01", "2026-01-05", zonas=["hombro"])
+        self.conn.commit()
+        _use(pid)
+        r = client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn("En recuperación", r.text)
+
 
 class CuerpoVistaTendenciasTest(unittest.TestCase):
     """Ruling 4: Tendencias always lights the heart, on a day with enough history for a card."""
@@ -270,6 +324,33 @@ class CuerpoVistaTurnosTest(unittest.TestCase):
         self.assertIn("Turnos gira el cuerpo hacia el cerebro y los nervios", r.text)
         self.assertIn("Cerebro y sueño", r.text)
         self.assertIn("Nervios", r.text)
+
+
+class LimitadaStyleInBodyCssTest(unittest.TestCase):
+    """BODY-LESION-ZONA-1-M: the hatch's look lives in body/static/body.css, not in an inline
+    <style> block the page's style-src 'self' CSP would drop."""
+
+    def setUp(self):
+        self.css = (Path(__file__).resolve().parent.parent / "body" / "static" / "body.css").read_text(
+            encoding="utf-8")
+        self.template = (Path(__file__).resolve().parent.parent / "body" / "templates"
+                          / "_cuerpo_vista.html").read_text(encoding="utf-8")
+
+    def test_body_css_carries_the_limitada_rule(self):
+        self.assertIn(".cuerpo-vista-glow.limitada{", self.css)
+        self.assertIn("repeating-linear-gradient", self.css)
+
+    def test_template_holds_no_style_element(self):
+        self.assertNotIn("<style", self.template.lower())
+
+    def test_hatch_draws_above_the_training_glow(self):
+        compact = self.css.replace(" ", "").replace("\n", "")
+        self.assertIn(".cuerpo-vista-glow{", self.css)
+        glow_z = re.search(r"\.cuerpo-vista-glow\{[^}]*z-index:(\d+)", compact)
+        limitada_z = re.search(r"\.cuerpo-vista-glow\.limitada\{[^}]*z-index:(\d+)", compact)
+        self.assertIsNotNone(glow_z)
+        self.assertIsNotNone(limitada_z)
+        self.assertGreater(int(limitada_z.group(1)), int(glow_z.group(1)))
 
 
 if __name__ == "__main__":

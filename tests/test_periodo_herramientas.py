@@ -5,6 +5,7 @@ real health figures.
 """
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -99,6 +100,32 @@ class MarcarPeriodoProposeApplyUndoTest(unittest.TestCase):
         with self.assertRaises(herramientas.ToolError):
             herramientas.ejecutar(
                 self.conn, 1, "marcar_periodo", {"kind": "gripe", "start_day": DAY}, "ninguno", self.cid,
+            )
+
+    def test_apply_creates_the_period_with_zonas(self):
+        out = herramientas.ejecutar(
+            self.conn, 1, "marcar_periodo", {"kind": "lesion", "start_day": DAY, "zonas": ["hombro"]},
+            "ninguno", self.cid,
+        )
+        propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        row = self.conn.execute("SELECT zonas FROM period WHERE person_id = 1").fetchone()
+        self.assertEqual(json.loads(row["zonas"]), ["hombro"])
+
+    def test_undo_removes_a_period_created_with_zonas(self):
+        out = herramientas.ejecutar(
+            self.conn, 1, "marcar_periodo", {"kind": "lesion", "start_day": DAY, "zonas": ["hombro"]},
+            "ninguno", self.cid,
+        )
+        propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        resultado = propuestas.deshacer(self.conn, 1, out["propuesta_id"])
+        self.assertEqual(resultado["estado"], "deshecha")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM period").fetchone()[0], 0)
+
+    def test_unknown_zona_is_refused(self):
+        with self.assertRaises(herramientas.ToolError):
+            herramientas.ejecutar(
+                self.conn, 1, "marcar_periodo", {"kind": "lesion", "start_day": DAY, "zonas": ["cuello"]},
+                "ninguno", self.cid,
             )
 
 
@@ -205,6 +232,40 @@ class CorregirPeriodoProposeApplyUndoTest(unittest.TestCase):
                 _cid(self.conn, 2),
             )
 
+    def test_apply_sets_zonas(self):
+        out = herramientas.ejecutar(
+            self.conn, 1, "corregir_periodo", {"period_id": self.pid, "zonas": ["hombro"]}, "ninguno", self.cid,
+        )
+        propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        row = self.conn.execute("SELECT zonas FROM period WHERE id = ?", (self.pid,)).fetchone()
+        self.assertEqual(json.loads(row["zonas"]), ["hombro"])
+
+    def test_empty_zonas_list_clears_it(self):
+        db.actualizar_periodo(self.conn, 1, self.pid, zonas=["hombro"])
+        out = herramientas.ejecutar(
+            self.conn, 1, "corregir_periodo", {"period_id": self.pid, "zonas": []}, "ninguno", self.cid,
+        )
+        propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        row = self.conn.execute("SELECT zonas FROM period WHERE id = ?", (self.pid,)).fetchone()
+        self.assertIsNone(row["zonas"])
+
+    def test_undo_restores_prior_zonas(self):
+        db.actualizar_periodo(self.conn, 1, self.pid, zonas=["pierna"])
+        out = herramientas.ejecutar(
+            self.conn, 1, "corregir_periodo", {"period_id": self.pid, "zonas": ["hombro"]}, "ninguno", self.cid,
+        )
+        propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        resultado = propuestas.deshacer(self.conn, 1, out["propuesta_id"])
+        self.assertEqual(resultado["estado"], "deshecha")
+        row = self.conn.execute("SELECT zonas FROM period WHERE id = ?", (self.pid,)).fetchone()
+        self.assertEqual(json.loads(row["zonas"]), ["pierna"])
+
+    def test_unknown_zona_is_refused(self):
+        with self.assertRaises(herramientas.ToolError):
+            herramientas.ejecutar(
+                self.conn, 1, "corregir_periodo", {"period_id": self.pid, "zonas": ["cuello"]}, "ninguno", self.cid,
+            )
+
 
 # ---- borrar_periodo: propose -> apply -> undo ---------------------------------------------------
 
@@ -212,8 +273,16 @@ class BorrarPeriodoProposeApplyUndoTest(unittest.TestCase):
     def setUp(self):
         self.conn = _conn(self)
         self.cid = _cid(self.conn)
-        self.pid = db.crear_periodo(self.conn, 1, "lesion", DAY, "2026-11-07", "rodilla")
+        self.pid = db.crear_periodo(self.conn, 1, "lesion", DAY, "2026-11-07", "rodilla", zonas=["pierna"])
         self.conn.commit()
+
+    def test_undo_restores_the_zonas(self):
+        out = herramientas.ejecutar(self.conn, 1, "borrar_periodo", {"period_id": self.pid}, "ninguno", self.cid)
+        propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        resultado = propuestas.deshacer(self.conn, 1, out["propuesta_id"])
+        self.assertEqual(resultado["estado"], "deshecha")
+        row = self.conn.execute("SELECT zonas FROM period WHERE person_id = 1").fetchone()
+        self.assertEqual(json.loads(row["zonas"]), ["pierna"])
 
     def test_apply_deletes_the_period(self):
         out = herramientas.ejecutar(self.conn, 1, "borrar_periodo", {"period_id": self.pid}, "ninguno", self.cid)

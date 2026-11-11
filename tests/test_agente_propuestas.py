@@ -524,6 +524,44 @@ class EstadoYEventosTest(unittest.TestCase):
         self.assertEqual(datos["series"][0]["reloj"], "Barbell row · 8 rep · 40 kg")
         self.assertIn("remo con barra", datos["series"][0]["tu"])
 
+    def test_registrar_entreno_manual_shows_the_lighter_line_for_a_set_in_an_open_lesion_zona(self):
+        # BODY-LESION-ZONA-1 ruling 2: the card appends the one shared line when a series' own
+        # categoria falls inside today's open-lesion zonas.
+        db.crear_periodo(self.conn, 1, "lesion", "2026-11-05", None, zonas=["hombro"])
+        self.conn.commit()
+        guion = [
+            Respuesta(bloques=[LlamadaHerramienta("l1", "registrar_entreno", {
+                "day": "2026-11-10",
+                "series": [{"ejercicio": "press militar", "reps": 8, "peso_kg": 20.0, "categoria": "hombro"}],
+            })], motivo_fin="tool_use", uso=Uso()),
+            Respuesta(bloques=[BloqueTexto("listo")], motivo_fin="end_turn", uso=Uso()),
+        ]
+        proveedor = FakeProveedor(guion)
+        with patch.object(agente_cliente, "proveedor_configurado", return_value=proveedor):
+            r = self.client.post("/asistente/preguntar",
+                                 json={"pregunta": "hice hombro", "conversacion_id": None})
+        self.assertEqual(r.status_code, 200)
+        datos = _evento_data(r.text, "propuesta")
+        self.assertIn("Más liviano a propósito: hombro en recuperación", datos["despues"])
+
+    def test_registrar_entreno_manual_shows_no_lighter_line_once_the_period_closes(self):
+        db.crear_periodo(self.conn, 1, "lesion", "2026-10-01", "2026-10-05", zonas=["hombro"])
+        self.conn.commit()
+        guion = [
+            Respuesta(bloques=[LlamadaHerramienta("l1", "registrar_entreno", {
+                "day": "2026-11-10",
+                "series": [{"ejercicio": "press militar", "reps": 8, "peso_kg": 20.0, "categoria": "hombro"}],
+            })], motivo_fin="tool_use", uso=Uso()),
+            Respuesta(bloques=[BloqueTexto("listo")], motivo_fin="end_turn", uso=Uso()),
+        ]
+        proveedor = FakeProveedor(guion)
+        with patch.object(agente_cliente, "proveedor_configurado", return_value=proveedor):
+            r = self.client.post("/asistente/preguntar",
+                                 json={"pregunta": "hice hombro", "conversacion_id": None})
+        self.assertEqual(r.status_code, 200)
+        datos = _evento_data(r.text, "propuesta")
+        self.assertNotIn("recuperación", datos["despues"])
+
     def test_registrar_entreno_garmin_falls_back_to_category_when_exercise_is_missing(self):
         self.conn.execute(
             "INSERT INTO activity (person_id, source_id, day, start_local, type, name, source) "

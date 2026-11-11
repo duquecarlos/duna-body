@@ -135,7 +135,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "SELECT id, day, ts_local, descripcion, created_at, updated_at "
         "FROM comida WHERE person_id = ? ORDER BY day, id", (person_id,))]
     periodos = [dict(r) for r in conn.execute(
-        "SELECT id, kind, start_day, end_day, note, created_at, updated_at "
+        "SELECT id, kind, start_day, end_day, note, zonas, created_at, updated_at "
         "FROM period WHERE person_id = ? ORDER BY start_day, id", (person_id,))]
     # BODY-CHECKIN-1 ruling 4: never the note (checkin_nota) -- not even here, this person's own
     # full export.

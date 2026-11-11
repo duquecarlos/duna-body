@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import config, garmin_adapter
+from . import anatomia, config, garmin_adapter
 
 _CADENCE_N_PER_WEEK = re.compile(r"^\s*(\d+)\s*x\s*/\s*week\s*$", re.IGNORECASE)
 
@@ -696,6 +696,11 @@ CREATE TABLE IF NOT EXISTS period (
     note       TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
+    -- BODY-LESION-ZONA-1 ruling 1: the body part(s) this period limits, a JSON list of
+    -- anatomia.CATEGORIA_ENUM words -- NULL for "no part named" (every period before this slice,
+    -- and a malestar/viaje period that never needs one). Validated in Python (_validar_zonas
+    -- below), the same division of labour kind's own period_kind FK already draws.
+    zonas      TEXT CHECK (zonas IS NULL OR json_valid(zonas)),
     CHECK (end_day IS NULL OR end_day >= start_day)
 );
 CREATE INDEX IF NOT EXISTS idx_period_person ON period(person_id);
@@ -1040,6 +1045,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
     icols = {r[1] for r in conn.execute("PRAGMA table_info(ingesta)")}
     if icols and "comida_id" not in icols:
         conn.execute("ALTER TABLE ingesta ADD COLUMN comida_id INTEGER REFERENCES comida(id)")
+    # BODY-LESION-ZONA-1 ruling 1: a plain nullable ADD COLUMN, like comida_id above -- every
+    # existing period reads as zonas IS NULL ("no part named"), no data step.
+    pecols = {r[1] for r in conn.execute("PRAGMA table_info(period)")}
+    if pecols and "zonas" not in pecols:
+        conn.execute("ALTER TABLE period ADD COLUMN zonas TEXT CHECK (zonas IS NULL OR json_valid(zonas))")
     # Never inside SCHEMA's own executescript (BODY-COMIDA-1): that script runs BEFORE this
     # function on every init() call, so an index on a column only THIS migration might still be
     # about to add would fail against an old `ingesta` table that has not been migrated yet.
@@ -1534,11 +1544,26 @@ def load_day(conn: sqlite3.Connection, day: str, person_id: int) -> dict:
         (person_id, day),
     ).fetchall()
     periodos_dia = periodos(conn, person_id, day, day)
+    zonas_dia = zonas_en_recuperacion(conn, person_id, day)
+    activities_out = []
+    for a in activities:
+        d = dict(a)
+        # BODY-LESION-ZONA-1 ruling 2: raw zona codes only (never rendered text -- that stays the
+        # caller's job, since this module carries no i18n), the active, non-excluded sets' own
+        # categoria intersected with today's own open-lesion zonas. Empty, never None, so every
+        # caller can test it the same way whether or not any period is open.
+        if zonas_dia:
+            categorias = {s["category"] for s in exercise_sets(conn, person_id, a["source"], a["source_id"])
+                          if s["set_type"] == "active" and not s["excluded_by_person"] and s["category"]}
+            d["zonas_limitadas"] = sorted(categorias & zonas_dia)
+        else:
+            d["zonas_limitadas"] = []
+        activities_out.append(d)
     return {
         "day": day,
         "metrics": [dict(r) for r in metrics],
         "sleep": dict(sleep) if sleep else None,
-        "activities": [dict(r) for r in activities],
+        "activities": activities_out,
         "shifts": [dict(r) for r in shifts],
         "ingesta": [dict(r) for r in ingesta],
         "periodos": [dict(r) for r in periodos_dia],
@@ -2381,6 +2406,21 @@ def periodos(conn: sqlite3.Connection, person_id: int, desde: str, hasta: str) -
     return _solapan(rows, desde, hasta)
 
 
+def zonas_en_recuperacion(conn: sqlite3.Connection, person_id: int, day: str) -> frozenset[str]:
+    """BODY-LESION-ZONA-1 ruling 2: the union of zonas from this person's own OPEN ('lesion',
+    end_day IS NULL) periods covering `day` -- a closed period's zonas, a non-lesion period, or a
+    period with no zonas named, never contribute. Used by every training read (leer_entreno,
+    leer_dia, Día's training section, the registrar_entreno card, Hoy's own body view) to mark a
+    lighter set as deliberate, never a drop. Never the period's own note (ruling 2's own privacy
+    promise)."""
+    rows = periodos(conn, person_id, day, day)
+    out: set[str] = set()
+    for r in rows:
+        if r["kind"] == "lesion" and r["end_day"] is None and r["zonas"]:
+            out |= set(json.loads(r["zonas"]))
+    return frozenset(out)
+
+
 def dias_marcados(conn: sqlite3.Connection, person_id: int, desde: str, hasta: str) -> set[str]:
     """ISO days in [desde, hasta] covered by one of this person's own periods -- an open period
     (end_day IS NULL) counts through TODAY in the person's own timezone, never past it. The zone
@@ -2412,16 +2452,30 @@ def dias_marcados(conn: sqlite3.Connection, person_id: int, desde: str, hasta: s
     return out
 
 
+def _validar_zonas(zonas: list[str] | None) -> str | None:
+    """BODY-LESION-ZONA-1 ruling 1: a period's own zonas, as JSON for storage -- values from
+    `anatomia.CATEGORIA_ENUM` only, the same vocabulary a training exercise's own categoria already
+    speaks. An empty list means the same as None ("no part named"), never an empty-array row."""
+    if not zonas:
+        return None
+    invalidas = [z for z in zonas if z not in anatomia.CATEGORIA_ENUM]
+    if invalidas:
+        raise ValueError(f"unknown zona(s): {invalidas!r}; allowed: {anatomia.CATEGORIA_ENUM!r}")
+    return json.dumps(list(zonas))
+
+
 def crear_periodo(conn: sqlite3.Connection, person_id: int, kind: str, start_day: str,
-                   end_day: str | None = None, note: str | None = None) -> int:
+                   end_day: str | None = None, note: str | None = None,
+                   zonas: list[str] | None = None) -> int:
     if conn.execute("SELECT 1 FROM period_kind WHERE key = ?", (kind,)).fetchone() is None:
         raise ValueError(f"unknown period kind: {kind!r}")
+    zonas_json = _validar_zonas(zonas)
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with conn:
         cur = conn.execute(
-            "INSERT INTO period (person_id, kind, start_day, end_day, note, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (person_id, kind, start_day, end_day, note, now, now),
+            "INSERT INTO period (person_id, kind, start_day, end_day, note, created_at, updated_at, zonas) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (person_id, kind, start_day, end_day, note, now, now, zonas_json),
         )
     invalidar_periodos_cache(conn, person_id)
     return cur.lastrowid
@@ -2431,11 +2485,13 @@ _SIN_DAR = object()  # sentinel: "this field was not given", distinct from an in
 
 
 def actualizar_periodo(conn: sqlite3.Connection, person_id: int, period_id: int, *, kind: str | None = None,
-                        start_day: str | None = None, end_day=_SIN_DAR, note=_SIN_DAR) -> None:
-    """Updates one of this person's own periods -- only the fields actually given change. end_day
-    and note each use the _SIN_DAR sentinel rather than a None default, since both are legitimately
-    settable to None (end_day -> reopened, note -> cleared), unlike kind/start_day, which never
-    are. Refuses a period_id that is not this person's own."""
+                        start_day: str | None = None, end_day=_SIN_DAR, note=_SIN_DAR,
+                        zonas=_SIN_DAR) -> None:
+    """Updates one of this person's own periods -- only the fields actually given change. end_day,
+    note and zonas each use the _SIN_DAR sentinel rather than a None default, since all three are
+    legitimately settable to None (end_day -> reopened, note -> cleared, zonas -> no part named
+    any more), unlike kind/start_day, which never are. Refuses a period_id that is not this
+    person's own."""
     propio = conn.execute("SELECT 1 FROM period WHERE id = ? AND person_id = ?", (period_id, person_id)).fetchone()
     if propio is None:
         raise ValueError("period_id: not this person's own period")
@@ -2454,6 +2510,9 @@ def actualizar_periodo(conn: sqlite3.Connection, person_id: int, period_id: int,
     if note is not _SIN_DAR:
         sets.append("note = ?")
         vals.append(note)
+    if zonas is not _SIN_DAR:
+        sets.append("zonas = ?")
+        vals.append(_validar_zonas(zonas))
     if not sets:
         return
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")

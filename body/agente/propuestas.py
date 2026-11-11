@@ -820,7 +820,7 @@ def _drift_deshacer_marcar_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -
 def _aplicar_marcar_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     despues = json.loads(row["despues_json"])
     pid = db.crear_periodo(conn, row["person_id"], despues["kind"], despues["start_day"],
-                            despues.get("end_day"), despues.get("note"))
+                            despues.get("end_day"), despues.get("note"), despues.get("zonas"))
     return {"period_id": pid}
 
 
@@ -860,34 +860,44 @@ def _deshacer_cerrar_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> None
 
 # -- corregir_periodo (this module calls db.actualizar_periodo directly) ------------------------
 
+def _zonas_de(fila: sqlite3.Row) -> list | None:
+    """BODY-LESION-ZONA-1: a `period` row's own zonas, parsed from its stored JSON text, so a
+    drift check can compare it against the plain list antes_json/despues_json already carries."""
+    return json.loads(fila["zonas"]) if fila["zonas"] else None
+
+
 def _drift_aplicar_corregir_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
     antes = json.loads(row["antes_json"])
     despues = json.loads(row["despues_json"])
-    actual = conn.execute("SELECT kind, start_day, end_day, note FROM period WHERE id = ? AND person_id = ?",
+    actual = conn.execute("SELECT kind, start_day, end_day, note, zonas FROM period WHERE id = ? AND person_id = ?",
                           (despues["period_id"], row["person_id"])).fetchone()
     return (actual is None or actual["kind"] != antes["kind"] or actual["start_day"] != antes["start_day"]
-            or actual["end_day"] != antes["end_day"] or actual["note"] != antes["note"])
+            or actual["end_day"] != antes["end_day"] or actual["note"] != antes["note"]
+            or _zonas_de(actual) != antes.get("zonas"))
 
 
 def _drift_deshacer_corregir_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
     despues = json.loads(row["despues_json"])
-    actual = conn.execute("SELECT kind, start_day, end_day, note FROM period WHERE id = ? AND person_id = ?",
+    actual = conn.execute("SELECT kind, start_day, end_day, note, zonas FROM period WHERE id = ? AND person_id = ?",
                           (despues["period_id"], row["person_id"])).fetchone()
     return (actual is None or actual["kind"] != despues["kind"] or actual["start_day"] != despues["start_day"]
-            or actual["end_day"] != despues["end_day"] or actual["note"] != despues["note"])
+            or actual["end_day"] != despues["end_day"] or actual["note"] != despues["note"]
+            or _zonas_de(actual) != despues.get("zonas"))
 
 
 def _aplicar_corregir_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
     despues = json.loads(row["despues_json"])
     db.actualizar_periodo(conn, row["person_id"], despues["period_id"], kind=despues["kind"],
-                          start_day=despues["start_day"], end_day=despues["end_day"], note=despues["note"])
+                          start_day=despues["start_day"], end_day=despues["end_day"], note=despues["note"],
+                          zonas=despues.get("zonas"))
 
 
 def _deshacer_corregir_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
     antes = json.loads(row["antes_json"])
     despues = json.loads(row["despues_json"])
     db.actualizar_periodo(conn, row["person_id"], despues["period_id"], kind=antes["kind"],
-                          start_day=antes["start_day"], end_day=antes["end_day"], note=antes["note"])
+                          start_day=antes["start_day"], end_day=antes["end_day"], note=antes["note"],
+                          zonas=antes.get("zonas"))
 
 
 # -- borrar_periodo (this module calls db.borrar_periodo directly; undo re-inserts through
@@ -897,12 +907,13 @@ def _deshacer_corregir_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> No
 def _drift_aplicar_borrar_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
     antes = json.loads(row["antes_json"])
     despues = json.loads(row["despues_json"])
-    actual = conn.execute("SELECT kind, start_day, end_day, note FROM period WHERE id = ? AND person_id = ?",
+    actual = conn.execute("SELECT kind, start_day, end_day, note, zonas FROM period WHERE id = ? AND person_id = ?",
                           (despues["period_id"], row["person_id"])).fetchone()
     if actual is None:
         return True
     return (actual["kind"] != antes["kind"] or actual["start_day"] != antes["start_day"]
-            or actual["end_day"] != antes["end_day"] or actual["note"] != antes["note"])
+            or actual["end_day"] != antes["end_day"] or actual["note"] != antes["note"]
+            or _zonas_de(actual) != antes.get("zonas"))
 
 
 def _drift_deshacer_borrar_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
@@ -920,7 +931,8 @@ def _aplicar_borrar_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
 
 def _deshacer_borrar_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
     antes = json.loads(row["antes_json"])
-    db.crear_periodo(conn, row["person_id"], antes["kind"], antes["start_day"], antes["end_day"], antes["note"])
+    db.crear_periodo(conn, row["person_id"], antes["kind"], antes["start_day"], antes["end_day"], antes["note"],
+                     antes.get("zonas"))
 
 
 TABLA: dict[str, _Accion] = {

@@ -4,6 +4,7 @@ only, no real health figures.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -46,7 +47,7 @@ class FreshDbTest(unittest.TestCase):
 
     def test_period_table_has_the_contract_columns(self):
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(period)")}
-        expected = {"id", "person_id", "kind", "start_day", "end_day", "note", "created_at", "updated_at"}
+        expected = {"id", "person_id", "kind", "start_day", "end_day", "note", "created_at", "updated_at", "zonas"}
         self.assertEqual(cols, expected)
 
     def test_end_day_must_not_be_before_start_day(self):
@@ -123,6 +124,25 @@ class CrearPeriodoTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             db.crear_periodo(self.conn, 1, "gripe", DAY)
 
+    def test_creates_a_period_with_zonas(self):
+        pid = db.crear_periodo(self.conn, 1, "lesion", DAY, zonas=["hombro"])
+        row = self.conn.execute("SELECT zonas FROM period WHERE id = ?", (pid,)).fetchone()
+        self.assertEqual(json.loads(row["zonas"]), ["hombro"])
+
+    def test_zonas_defaults_to_null(self):
+        pid = db.crear_periodo(self.conn, 1, "lesion", DAY)
+        row = self.conn.execute("SELECT zonas FROM period WHERE id = ?", (pid,)).fetchone()
+        self.assertIsNone(row["zonas"])
+
+    def test_empty_zonas_list_stores_as_null(self):
+        pid = db.crear_periodo(self.conn, 1, "lesion", DAY, zonas=[])
+        row = self.conn.execute("SELECT zonas FROM period WHERE id = ?", (pid,)).fetchone()
+        self.assertIsNone(row["zonas"])
+
+    def test_unknown_zona_is_refused(self):
+        with self.assertRaises(ValueError):
+            db.crear_periodo(self.conn, 1, "lesion", DAY, zonas=["cuello"])
+
 
 class ActualizarPeriodoTest(unittest.TestCase):
     def setUp(self):
@@ -144,6 +164,27 @@ class ActualizarPeriodoTest(unittest.TestCase):
         db.actualizar_periodo(self.conn, 1, self.pid, note=None)
         row = self.conn.execute("SELECT note FROM period WHERE id = ?", (self.pid,)).fetchone()
         self.assertIsNone(row["note"])
+
+    def test_setting_zonas(self):
+        db.actualizar_periodo(self.conn, 1, self.pid, zonas=["pierna", "espalda"])
+        row = self.conn.execute("SELECT zonas FROM period WHERE id = ?", (self.pid,)).fetchone()
+        self.assertEqual(json.loads(row["zonas"]), ["pierna", "espalda"])
+
+    def test_clearing_zonas(self):
+        db.actualizar_periodo(self.conn, 1, self.pid, zonas=["pierna"])
+        db.actualizar_periodo(self.conn, 1, self.pid, zonas=None)
+        row = self.conn.execute("SELECT zonas FROM period WHERE id = ?", (self.pid,)).fetchone()
+        self.assertIsNone(row["zonas"])
+
+    def test_not_giving_zonas_keeps_it_unchanged(self):
+        db.actualizar_periodo(self.conn, 1, self.pid, zonas=["pierna"])
+        db.actualizar_periodo(self.conn, 1, self.pid, note="revisado")
+        row = self.conn.execute("SELECT zonas FROM period WHERE id = ?", (self.pid,)).fetchone()
+        self.assertEqual(json.loads(row["zonas"]), ["pierna"])
+
+    def test_unknown_zona_is_refused(self):
+        with self.assertRaises(ValueError):
+            db.actualizar_periodo(self.conn, 1, self.pid, zonas=["cuello"])
 
     def test_changing_kind_and_start_day(self):
         db.actualizar_periodo(self.conn, 1, self.pid, kind="viaje", start_day="2026-11-01")

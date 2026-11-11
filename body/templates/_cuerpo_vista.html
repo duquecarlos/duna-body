@@ -11,6 +11,10 @@
         <span class="cuerpo-vista-glow" aria-hidden="true"
               data-left="{{ e[0] }}" data-top="{{ e[1] }}" data-w="{{ e[2] }}" data-h="{{ e[3] }}"></span>
         {% endfor %}
+        {% for e in v.limitada %}
+        <span class="cuerpo-vista-glow limitada" aria-hidden="true"
+              data-left="{{ e[0] }}" data-top="{{ e[1] }}" data-w="{{ e[2] }}" data-h="{{ e[3] }}"></span>
+        {% endfor %}
       </div>
       {% endfor %}
     </div>
@@ -23,5 +27,6 @@
     </div>
   </div>
   <p class="cuerpo-caption">{{ cuerpo.caption }}</p>
+  {% if cuerpo.caption_limitada %}<p class="cuerpo-caption">{{ cuerpo.caption_limitada }}</p>{% endif %}
 </div>
 {% endmacro %}

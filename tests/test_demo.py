@@ -199,6 +199,20 @@ class SeededContentTest(unittest.TestCase):
                 for day in days:
                     self.assertEqual(date.fromisoformat(day).weekday(), 0, f"{key} on {day} is not a Monday")
 
+    def test_lesion_period_names_a_zona(self):
+        # BODY-LESION-ZONA-1 ruling 6.
+        row = self.conn.execute(
+            "SELECT zonas FROM period WHERE kind = 'lesion' AND person_id = 1").fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(json.loads(row["zonas"]), [demo._LESION_ZONA_DEMO])
+
+    def test_a_past_strength_set_is_corrected_to_the_lesion_zona(self):
+        row = self.conn.execute(
+            "SELECT person_category FROM workout_set WHERE person_id = 1 AND corrected_by_person = 1"
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["person_category"], demo._LESION_ZONA_DEMO)
+
     def test_demo_marker_written(self):
         marker = Path(self.folder) / "DEMO"
         self.assertTrue(marker.exists())

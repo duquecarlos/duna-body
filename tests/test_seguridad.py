@@ -546,6 +546,42 @@ class StyleSrcHasNoUnsafeInlineTest(unittest.TestCase):
         self.assertIn("style-src 'self'", directives)
 
 
+_TEMPLATE_STYLE_TAG_RE = re.compile(r"<style\b", re.IGNORECASE)
+
+# BODY-LESION-ZONA-1-M: templates allowed to keep a <style> element despite the guard below --
+# empty today. A template found to need one goes here, named, with why; the guard below stays
+# strict for every template not named here.
+_STYLE_TAG_ALLOWLIST: frozenset[str] = frozenset()
+
+
+def _template_style_tag_offenders() -> list[str]:
+    """Every `<style` element left in a template's source text, outside `_STYLE_TAG_ALLOWLIST`.
+    Guards (a)-(d) above only ever looked for a `style=` attribute or 'unsafe-inline' in the
+    policy; none of them catches an inline `<style>` BLOCK, which is exactly what
+    body/templates/_cuerpo_vista.html carried -- and which the page's own style-src 'self' CSP
+    silently dropped in the browser (BODY-LESION-ZONA-1's one defect, fixed by this slice moving
+    that block's rules into body/static/body.css)."""
+    offenders = []
+    for path in sorted(TEMPLATES_DIR.glob("*.html")):
+        rel = str(path.relative_to(ROOT)).replace("\\", "/")
+        if rel in _STYLE_TAG_ALLOWLIST:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for m in _TEMPLATE_STYLE_TAG_RE.finditer(text):
+            line = text.count("\n", 0, m.start()) + 1
+            offenders.append(f"{rel}:{line}")
+    return offenders
+
+
+class NoStyleElementInTemplatesTest(unittest.TestCase):
+    """Guard (e): no template under body/templates holds a <style> element the CSP's style-src
+    'self' would block any more -- the guard the inline-script check (a) never covered, since it
+    checks `<script>` only."""
+
+    def test_no_style_element_in_any_template(self):
+        self.assertEqual(_template_style_tag_offenders(), [])
+
+
 class SafeReturnToTest(unittest.TestCase):
     """cuenta.safe_return_to's own refusal cases (BODY-SEGURIDAD-1 item 4)."""
 

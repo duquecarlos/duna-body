@@ -130,6 +130,77 @@ class DiaPeriodoTest(unittest.TestCase):
         self.assertNotIn(_t("es", "day.periodo", kind=_t("es", "periodo.kind.viaje")), r.text)
 
 
+class DiaLesionZonaTest(unittest.TestCase):
+    """BODY-LESION-ZONA-1 ruling 2: Día's own training section marks a set in an open lesion
+    period's own zonas as deliberate, never the period's note."""
+
+    client = TestClient(web.app, follow_redirects=False)
+
+    def _reset_db(self, name: str):
+        orig = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
+        self.addCleanup(web.app.dependency_overrides.clear)
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / name
+        conn = db.connect()
+        self.addCleanup(conn.close)
+        db.init(conn)
+        return conn
+
+    def _set(self, category, exercise="press militar"):
+        from body import garmin_adapter
+        return garmin_adapter.ExerciseSet(
+            set_type="active", category=category, exercise=exercise, reps=8.0, weight_value=20.0,
+            weight_unit="kg", duration_s=30.0, start_local="2026-06-10T07:00:00",
+        )
+
+    def test_a_set_in_the_zona_shows_the_lighter_line(self):
+        conn = self._reset_db("dia_lesion_zona_1.db")
+        dia = date(2026, 6, 10)
+        conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, name, source) "
+            "VALUES (?, 'a1', ?, ?, 'strength_training', NULL, 'garmin')",
+            (PERSON_A, dia.isoformat(), f"{dia.isoformat()}T07:00:00"),
+        )
+        db.save_exercise_sets(conn, PERSON_A, "garmin", "a1", [self._set("hombro")])
+        db.crear_periodo(conn, PERSON_A, "lesion", dia.isoformat(), None, note=NOTE_SECRETO, zonas=["hombro"])
+        conn.commit()
+        r = self.client.get(f"/day/{dia.isoformat()}")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(_t("es", "entreno.liviano_proposito", zona=_t("es", "entreno.categoria.hombro")), r.text)
+        self.assertNotIn(NOTE_SECRETO, r.text)
+
+    def test_a_set_outside_the_zona_shows_no_line(self):
+        conn = self._reset_db("dia_lesion_zona_2.db")
+        dia = date(2026, 6, 10)
+        conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, name, source) "
+            "VALUES (?, 'a1', ?, ?, 'strength_training', NULL, 'garmin')",
+            (PERSON_A, dia.isoformat(), f"{dia.isoformat()}T07:00:00"),
+        )
+        db.save_exercise_sets(conn, PERSON_A, "garmin", "a1", [self._set("pecho")])
+        db.crear_periodo(conn, PERSON_A, "lesion", dia.isoformat(), None, zonas=["hombro"])
+        conn.commit()
+        r = self.client.get(f"/day/{dia.isoformat()}")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn(_t("es", "entreno.liviano_proposito", zona=_t("es", "entreno.categoria.hombro")), r.text)
+
+    def test_no_line_once_the_period_closes(self):
+        conn = self._reset_db("dia_lesion_zona_3.db")
+        dia = date(2026, 6, 10)
+        conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, name, source) "
+            "VALUES (?, 'a1', ?, ?, 'strength_training', NULL, 'garmin')",
+            (PERSON_A, dia.isoformat(), f"{dia.isoformat()}T07:00:00"),
+        )
+        db.save_exercise_sets(conn, PERSON_A, "garmin", "a1", [self._set("hombro")])
+        db.crear_periodo(conn, PERSON_A, "lesion", (dia - timedelta(10)).isoformat(),
+                          (dia - timedelta(1)).isoformat(), zonas=["hombro"])
+        conn.commit()
+        r = self.client.get(f"/day/{dia.isoformat()}")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn(_t("es", "entreno.liviano_proposito", zona=_t("es", "entreno.categoria.hombro")), r.text)
+
+
 class WindowSvgMarcasTest(unittest.TestCase):
     """profile.window_svg's own shading: a marked day draws a rect distinct from a night's."""
 
