@@ -16745,3 +16745,97 @@ authorization.
 Merged `feat/body-series-gramos-1` into `main` with `--no-ff` -- merged `f2369233268e06fe77f6d9625a27a5526a0f43dd`.
 No conflicts. Tree identity: merge tree and branch tree both `285eab36c8cf01ef0b9a1ca46af368a7795d01a9`,
 diff empty.
+
+## BODY-SERIES-ORDEN-1
+
+Reported by the Personal desk 2026-11-11 after logging Carlos's 9 Nov session through body.mcp
+(the proposal applied; 12 sets in kg matched to the watch's strength activity). In `leer_entreno`
+for that day: every second row was labelled "rest" although each was a set he dictated, and a
+leftover watch row 13 (an exercise he did not do, weight null) still showed. The orchestrator's own
+read of the code found the cause: Garmin's `exerciseSets` ALTERNATE active and rest slots
+(`workout_set.set_type IN ('active', 'rest')`), and `_registrar_entreno` mapped spoken set i onto
+watch slot `set_order == i` -- a sequential position, not the i-th ACTIVE slot -- so spoken sets
+landed on rest slots half the time; and nothing let the person say a watch set did not happen.
+Observed under BODY-ENTRENO-1-INV; approved by ORCH-CARLOS-DELEGATES-TIER-1-1.
+
+**Ruling 1 -- a slot the person filled is a set.** `db.exercise_sets` (`body/db.py`) now reads a
+`corrected_by_person` slot's own `set_type` as `'active'`, whatever the watch's alternating
+active/rest said. This is the ONE place every reader (`leer_entreno`, `registrar_entreno`,
+`descartar_series`) sees that translation, since they all read sets through this function -- it
+alone fixes the 9 Nov rows already stored, no data step.
+
+**Ruling 2 -- spoken sets map onto the watch's ACTIVE slots, in order.** `_registrar_entreno`
+(`body/agente/herramientas.py`) now filters the watch's own sets (via `db.exercise_sets`, so a
+corrected rest slot already reads active per ruling 1) to `set_type == 'active'`, in `set_order`,
+and pairs spoken set k with the k-th one. Extra spoken sets past the active count get new slots
+numbered right after the last existing `set_order` (the pre-existing "slot the watch never
+reported" path), never colliding with a rest slot's own order. `propuestas.py`'s drift-on-apply,
+drift-on-undo, apply and undo for `registrar_entreno` all switched from the spoken index `i` to
+the mapped `set_order` the proposal itself carries in `despues['mapeo']`.
+
+**Rulings 3, 4 -- "did not happen" is the person's to say, stored, undoable.** Additive column
+`workout_set.excluded_by_person INTEGER NOT NULL DEFAULT 0 CHECK (excluded_by_person IN (0, 1))`
+(the existing ALTER pattern in `db._migrate`; `_WORKOUT_SET_COLUMNS` carries it for a fresh
+install). An excluded slot is hidden from `leer_entreno`'s own `series` list (the one existing
+reader -- Día and a weekly figures reader do not exist yet in this repository, same finding
+BODY-SERIES-GRAMOS-1 made), and surfaced on a proposal card as one plain line (new i18n key
+`asistente.propuesta.entreno_series_descartadas`, "{n} serie del reloj marcada como no hecha" /
+"{n} watch set marked as not done"). `registrar_entreno`'s own apply, when the spoken series left
+some of the watch's active slots unmatched, now excludes those slots too (`despues['no_emparejadas']`,
+written through the new `db.set_series_excluida`); its undo restores each one's own prior
+`excluded_by_person` value. New proposal tool `descartar_series {day, series: [set_order, ...]}`
+(`body/agente/herramientas.py`, registered in `propuestas.TABLA` and `asistente.TARJETAS`) proposes
+excluding named watch slots of that day's strength activity -- refusing an unknown order, a rest
+slot, or a slot the person already filled, each named in the person's own language (new i18n keys
+`agente.error.entreno_sin_actividad_fuerza`, `entreno_orden_desconocido`, `entreno_orden_tuya`,
+`entreno_orden_descanso`); its card shows each slot's own watch exercise/reps; Aplicar excludes,
+Deshacer restores. This is how the desk would clear row 13 on Carlos's 9 Nov session. Nothing in
+`body/mudanza.py` or `body/privacidad.py` names `workout_set`'s columns explicitly (both read
+`SELECT *` / copy by row-key) -- read, confirmed, left unchanged. `propuesta_agente.accion`'s CHECK
+widened to include `'descartar_series'` (an eighth such widening, same `_rebuild_propuesta_agente_table`
+reused unchanged).
+
+**Ruling 5 -- rest slots are not sets.** `_leer_entreno`'s own `series` list comprehension now
+keeps only `set_type == 'active'` rows (ruling 1's translation already applies), so a rest slot --
+corrected or not -- never reaches a reader as a set.
+
+**Tests.** New `tests/test_series_orden.py` (27 tests): an invented 12-slot watch session
+alternating active/rest -- 6 spoken sets land on the 6 active slots (`set_order` 1,3,5,7,9,11),
+never a rest slot; a 7th spoken set gets a new slot (13) past the last stored one; a previously
+stored corrected rest slot reads active in both `db.exercise_sets` and `leer_entreno`; fewer spoken
+sets than active watch slots proposes excluding the leftover active ones, applied/undone, with a
+drift check that refuses apply if one changed first; `descartar_series` refuses an unknown order, a
+rest slot and an already-corrected slot, dedupes a repeated order in one call, and its own
+apply/undo/drift-refuse round-trip; two migration tests (an old `workout_set` without
+`excluded_by_person`, an old `propuesta_agente` CHECK without `'descartar_series'`), both
+idempotent. All invented demo data.
+
+Extended three pre-existing census tests outside this slice's `touches:` to the new truth, never
+loosened (found by the full gate, not by inspection first): `tests/test_agente_propuestas.py`'s
+`NoProponibleTest` (proposal tool name set), `tests/test_agente_registro.py`'s `RegistryShapeTest`
+(19->20 proposal tools at `nivel='ninguno'`, 32->33 tools total), `tests/test_entreno_schema.py`'s
+`FreshDbTest` (workout_set's column list), `tests/test_agente_bucle.py`'s
+`NivelDatosEnforcementTest` (same tool-name set, a second place it is pinned), and
+`tests/test_registro_tu.py`'s third-person allow-list (`entreno_orden_tuya`'s "no se puede marcar"
+is the same impersonal "se puede" construction already allow-listed elsewhere, not a usted
+address).
+
+Commits on `feat/body-series-orden-1`: `340cc7a6e9da63d55a1b65e572ec51ee1e465cf5` (rulings 1-5 and
+their tests), `94bebf3a48d6cc8c94742882b9690efe8d4f9d17` (the two census tests the full gate found).
+
+**Gate**, run once on the branch tip, exactly `.venv/Scripts/python.exe -m unittest discover tests
+-t .`, backgrounded past the harness's 600s foreground cap and read back from its own output file
+once finished:
+
+    Ran 2567 tests in 911.769s
+
+    OK (skipped=1)
+
+Green (2567 = BODY-SERIES-GRAMOS-1's own 2540 plus this slice's 27 new tests, exactly).
+Merge-policy-A check on this slice's own diff: a schema change (the additive `excluded_by_person`
+column, the `propuesta_agente.accion` CHECK widening) and new customer-facing bytes (the i18n keys
+above) -- both merge-policy-A conditions this diff actually trips. The spec's own body says, in
+words, "APPROVED to merge on a green gate" with no qualifier naming either condition, and its
+header already names the schema step as approved (`approved: yes`, "plus one additive
+nullable-default column"), so the merge proceeds on the green gate above rather than stopping
+`AWAITING_APPROVAL`.
