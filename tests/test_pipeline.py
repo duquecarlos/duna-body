@@ -43,6 +43,7 @@ class PipelineTest(unittest.TestCase):
         conn = db.connect()
         self.addCleanup(conn.close)
         db.init(conn)
+        db.set_trabaja_turnos(conn, True, 1)  # state its own precondition: show the shift line whatever ran before it
         db.save_day(conn, garmin_adapter.parse_day("2026-11-05", FAKE_RAW), 1)
         client = TestClient(web.app)
         home = client.get("/").text  # Hoy, Spanish by default
