@@ -16605,3 +16605,79 @@ harness cap and read back from its own artifact once finished):
 Green, and reconciles with the floor the spec supplied for the pre-merge branch tip
 (`Ran 2517 tests`, `OK (skipped=1)`) -- same count, same outcome, longer wall-clock, which the
 larger merged tree and machine load explain.
+
+## BODY-SERIES-UNIDAD-1
+
+Bug, reported by the Personal desk 2026-11-10: logging the 9 Nov strength session through
+`body.mcp` `registrar_entreno` killed the stdio server. Cause (measured in the code):
+`garmin_adapter._weight` returned a weight value with unit `None` when Garmin sent a "weight"
+number but no "weightUnit" key -- exactly the pair `body/db.py`'s CHECK
+`(garmin_weight_value IS NULL) = (garmin_weight_unit IS NULL)` refuses -- and `body/mcp.py`'s
+`tools/call` caught only `herramientas.ToolError`, so the resulting `sqlite3.IntegrityError` ended
+the process (`ORCH-CARLOS-DELEGATES-TIER-1-1`, approved via the BODY-ENTRENO-1-INV observed
+report).
+
+Four rulings, all with tests:
+
+1. `garmin_adapter._weight` always returns value and unit as a pair: no key, an explicit null, or
+   0 is `(None, None)`; a positive value with a stated `weightUnit` is kept as sent; a positive
+   value with NO unit is given unit `"g"` (Garmin's activity exerciseSets send weight in grams
+   with no unit key -- a 25 lb dumbbell arrives as about 11340). Never a value without a unit,
+   never a unit without a value.
+2. `pull.traer_series` drops, before saving, any set the adapter still returns with a mismatched
+   pair, counts them, and logs the count only (`series descartadas: <n>`) to stderr.
+   `db.save_exercise_sets` and its CHECK are untouched.
+3. `herramientas._registrar_entreno`: the watch's sets are a help, not a precondition. Any
+   exception `pull.traer_series` raises (Garmin unreachable, a bad payload, a DB error) still lets
+   the proposal build from the person's own spoken sets, mapped onto no watch set (`reloj: null`
+   for every one), flagged `despues["reloj_fallo"]`.
+4. `body/mcp.py`'s `tools/call` now catches every exception besides `herramientas.ToolError`:
+   answers that one request with `isError: true` and a localized plain sentence, rolls back the
+   connection, logs only the exception's TYPE and the tool's own name to stderr (never its message,
+   never arguments), and keeps reading the next line.
+
+New strings, verbatim (`body/i18n/es.json`, `body/i18n/en.json`):
+- `asistente.mcp.entreno_reloj_fallo`
+  - es: "No pude leer las series del reloj; guardé las que me contaste."
+  - en: "I couldn't read the watch's sets; I saved the ones you told me."
+- `asistente.mcp.error_interno`
+  - es: "Body tuvo un error interno con esta herramienta; no se guardó nada. Intenta de nuevo o
+    avísale al equipo."
+  - en: "Body had an internal error with this tool; nothing was saved. Try again or let the team
+    know."
+
+Deviations from `touches:`, measured rather than assumed: (1) `tests/test_garmin_parse.py`'s
+`test_weight_value_kept_when_unit_is_not_stated` encoded the OLD, crashing contract (a positive
+weight with no unit kept `weight_unit` as `None`); ruling 1 requires it become `"g"`, so that one
+assertion was updated to match -- the alternative was shipping a gate the approved rulings
+themselves make red. (2) Ruling 3's "the card says so in one line" is the Hoy-screen proposal
+card, rendered by `body/rutas/asistente.py`'s `_tarjeta_registrar_entreno` -- a file outside this
+slice's `touches:`. The note is surfaced instead (a) as `despues["reloj_fallo"]`, data already in
+the persisted proposal and ready for a card to read, and (b) directly in the MCP tool response
+content (`body/mcp.py`, in touches) -- the one place the Personal desk, which cannot see the Hoy
+card, is told tonight. Showing the same note on the Hoy card itself is open follow-up
+`BODY-ENTRENO-TARJETA-RELOJ-FALLO-1` (touches `body/rutas/asistente.py`).
+
+Commits on `feat/body-series-unidad-1`: `2c8a4cc7c6040fd0eecda665db50115f039da503` (rulings 1-2),
+`27f8530c1c0cdaee0604fbe0543b61117cb74e00` (rulings 3-4).
+
+**Gate**, run once on the branch tip, exactly `.venv/Scripts/python.exe -m unittest discover tests
+-t .`, foreground (backgrounded past the 600s harness cap and read back from its own artifact once
+finished):
+
+    Ran 2533 tests in 1168.524s
+
+    OK (skipped=1)
+
+Green. Policy-A check on this slice's own diff (`body/garmin_adapter.py`, `body/pull.py`,
+`body/mcp.py`, `body/agente/herramientas.py`, `body/i18n/es.json`, `body/i18n/en.json`,
+`tests/test_garmin_adapter.py` new, `tests/test_series_unidad.py` new,
+`tests/test_garmin_parse.py`, `tests/test_agente_entreno.py`, `tests/test_mcp.py`): no schema or
+migration change (`body/db.py` untouched, ruling 2); no cross-repo contract change; but the two new
+i18n strings ARE customer-facing bytes by the letter of the policy (someone reads them, through the
+MCP caller) -- not a Body screen itself, but not host-admin text either, so this slice does not
+claim the diff cleanly passes all three Merge Policy A conditions. It merges anyway on this one
+explicit authorization in THE WORK's own words: "APPROVED to merge on a green gate, because a crash
+is blocking his logging tonight; a conflict -> git merge --abort, STOP BLOCKED" -- the spec body
+saying in words that this worker may merge, exactly what a merge past a Merge-Policy-A condition
+requires.
