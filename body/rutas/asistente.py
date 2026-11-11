@@ -668,8 +668,12 @@ def asistente_conversacion(conversacion_id: str, person_id: int = Depends(identi
     if conversacion_id == _PENDIENTE_MCP:
         resuelto = agente_conversacion.pendientes_mcp(conn, person_id)[1]
         if resuelto is None:
+            # Ruling 3 (BODY-TUTORIALES-EN-1): "no pending conversation" is the normal case for this
+            # sentinel, not an error -- 200 with empty turns/propuestas, never the 404 an unknown or
+            # someone else's REAL id still gets below. A browser console logging an error on every
+            # ordinary Today load (the surface report) hides real errors there.
             conn.close()
-            raise HTTPException(404)
+            return JSONResponse({"conversacion_id": None, "turnos": [], "propuestas": []})
     else:
         try:
             resuelto = int(conversacion_id)

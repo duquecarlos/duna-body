@@ -8,7 +8,7 @@ import re
 import string
 import unittest
 
-from body import anatomia, db, history, noche_inusual
+from body import anatomia, db, history, noche_inusual, tutoriales
 from body import turnos_costo
 from body.rutas import comun, metas, tendencias, turnos
 
@@ -143,6 +143,11 @@ _FIXED_DYNAMIC = {
     # body/anatomia.py texto_liviano_a_proposito() (BODY-LESION-ZONA-1): every categoria word, the
     # same CATEGORIA_ENUM a training exercise's own categoria already speaks.
     "entreno.categoria.+": list(anatomia.CATEGORIA_ENUM),
+    # body/tutoriales.py _titulo_capitulo()/_titulo_tarea() (BODY-TUTORIALES-EN-1, ruling 1): every
+    # chapter and task id in the catalog itself, so a new catalog entry with no English title fails
+    # here rather than showing half-translated on screen.
+    "tutoriales.capitulo.+": [c["id"] for c in tutoriales.catalogo()["capitulos"]],
+    "tutoriales.tarea.+": [t["id"] for t in tutoriales.catalogo()["tareas"]],
 }
 
 # body/web.py _finding_text(): key = f"history.find.{axis}_better_{better}", then t(key, ...) -- a

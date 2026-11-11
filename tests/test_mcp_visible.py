@@ -173,15 +173,20 @@ class PanelDefaultTest(_BaseTest):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()["conversacion_id"], cid2)
 
-    def test_pendiente_is_404_when_there_is_none(self):
+    def test_pendiente_is_200_empty_when_there_is_none(self):
+        """BODY-TUTORIALES-EN-1 ruling 3: no pending conversation is the normal case for this
+        sentinel, not an error -- 200 with empty turns/propuestas, never a 404 (reserved for an
+        unknown or another person's REAL id, unchanged below)."""
         r = self.client.get("/asistente/conversacion/pendiente")
-        self.assertEqual(r.status_code, 404)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json(), {"conversacion_id": None, "turnos": [], "propuestas": []})
 
     def test_pendiente_ignores_an_already_resolved_proposal(self):
         _, pid = _crear_propuesta_mcp(self.conn, self.person_id)
         agente_propuestas.aplicar(self.conn, self.person_id, pid)
         r = self.client.get("/asistente/conversacion/pendiente")
-        self.assertEqual(r.status_code, 404)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json(), {"conversacion_id": None, "turnos": [], "propuestas": []})
 
     def test_a_real_numeric_id_still_resolves_as_before(self):
         cid, _ = _crear_propuesta_mcp(self.conn, self.person_id)
@@ -213,6 +218,12 @@ class AssistantJsReadsTheNamedConversationTest(unittest.TestCase):
 
     def test_remembers_the_conversation_id_the_server_resolves(self):
         self.assertIn("if (datos.conversacion_id) guardarConversacionId(datos.conversacion_id);", self.text)
+
+    def test_a_null_conversacion_id_clears_and_renders_nothing(self):
+        """BODY-TUTORIALES-EN-1 ruling 3: the sentinel's own empty-state body (conversacion_id:
+        null) is treated exactly like the 404 above it -- cleared, not rendered."""
+        self.assertIn("if (datos.conversacion_id === null) {\n        limpiarConversacionId();\n        return;\n      }",
+                      self.text)
 
 
 if __name__ == "__main__":

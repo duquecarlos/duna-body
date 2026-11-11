@@ -20,6 +20,7 @@ from pathlib import Path
 import httpx
 
 from . import db, dispositivo, privacidad
+from .i18n import T
 
 ROOT = Path(__file__).resolve().parent.parent
 CATALOGO_PATH = ROOT / "tutoriales" / "catalogo.json"
@@ -82,20 +83,48 @@ def video(task_id: str) -> dict | None:
     return manifest().get("tareas", {}).get(task_id)
 
 
-def capitulos_con_tareas(incluir_turnos: bool = True) -> list[dict]:
+def _titulo_capitulo(t: T | None, capitulo: dict) -> str:
+    """Ruling 1 (BODY-TUTORIALES-EN-1): the person's own language's `tutoriales.capitulo.<id>` key,
+    falling back to the catalog's own `titulo` -- never the raw key -- when that key is missing in
+    both es.json and en.json (body/i18n/__init__.py's own T.__call__ already falls Spanish-ward for
+    a key missing only in English; this catches the one case it cannot, a key missing everywhere;
+    tests/test_i18n_paridad.py's own dynamic-prefix census makes that case unreachable in practice).
+    `t` defaults to None for callers that predate this slice and never named a language; those keep
+    reading the catalog's own (Spanish) `titulo`, unchanged."""
+    if t is None:
+        return capitulo["titulo"]
+    valor = t("tutoriales.capitulo." + capitulo["id"])
+    clave = "tutoriales.capitulo." + capitulo["id"]
+    return capitulo["titulo"] if valor == clave else valor
+
+
+def _titulo_tarea(t: T | None, tarea: dict) -> str:
+    """Same as `_titulo_capitulo`, for a task's own `tutoriales.tarea.<id>` key."""
+    if t is None:
+        return tarea["titulo"]
+    valor = t("tutoriales.tarea." + tarea["id"])
+    clave = "tutoriales.tarea." + tarea["id"]
+    return tarea["titulo"] if valor == clave else valor
+
+
+def capitulos_con_tareas(t: T | None = None, incluir_turnos: bool = True) -> list[dict]:
     """Chapters in order, each with its tasks in order (tutoriales-v1 section 5.1, Ayuda).
     `incluir_turnos=False` (BODY-TURNOS-OPCIONAL-3) leaves out the `turnos` chapter entirely, for a
-    person who has not said they work shifts -- no empty heading left in its place."""
+    person who has not said they work shifts -- no empty heading left in its place. `t` (BODY-
+    TUTORIALES-EN-1) picks each title's language -- see ruling 1 above."""
     data = catalogo()
     tareas_por_capitulo: dict[str, list[dict]] = {}
-    for t in data["tareas"]:
-        tareas_por_capitulo.setdefault(t["capitulo"], []).append(t)
+    for tarea in data["tareas"]:
+        tareas_por_capitulo.setdefault(tarea["capitulo"], []).append(tarea)
     out = []
     for c in sorted(data["capitulos"], key=lambda c: c["orden"]):
         if c["id"] == "turnos" and not incluir_turnos:
             continue
-        tareas = sorted(tareas_por_capitulo.get(c["id"], []), key=lambda t: t["orden"])
-        out.append({"id": c["id"], "titulo": c["titulo"], "tareas": tareas})
+        tareas = sorted(tareas_por_capitulo.get(c["id"], []), key=lambda tarea: tarea["orden"])
+        out.append({
+            "id": c["id"], "titulo": _titulo_capitulo(t, c),
+            "tareas": [{**tarea, "titulo": _titulo_tarea(t, tarea)} for tarea in tareas],
+        })
     return out
 
 
@@ -127,7 +156,7 @@ def tarea_en_ruta(path: str) -> dict | None:
     return None
 
 
-def primeros_pasos(conn: sqlite3.Connection, person_id: int, hosted: bool) -> list[dict]:
+def primeros_pasos(conn: sqlite3.Connection, person_id: int, hosted: bool, t: T | None = None) -> list[dict]:
     """The Primeros pasos checklist (tutoriales-v1 section 5.3, 7b, decision 4): each item's tick is
     read, at call time, from data Body already has -- never a stored flag. `primera-mirada-a-hoy` is
     done when the person has signed in/consented and has data (BODY-PRIMER-DIA-1): those are the two
@@ -137,7 +166,8 @@ def primeros_pasos(conn: sqlite3.Connection, person_id: int, hosted: bool) -> li
     BODY-TURNOS-OPCIONAL-1: the PC-link step applies only to a person who has a file source) --
     someone who works shifts (`db.trabaja_turnos_si`) may bring files from a PC, and someone who
     already linked one (`dispositivo.listar` non-empty) keeps seeing the step they completed; nobody
-    else is asked to run a script (BODY-TURNOS-OPCIONAL-4)."""
+    else is asked to run a script (BODY-TURNOS-OPCIONAL-4). `t` (BODY-TUTORIALES-EN-1) picks each
+    item's title language -- see ruling 1 at `_titulo_tarea`."""
     tareas = {t["id"]: t for t in catalogo()["tareas"] if t.get("onboarding")}
     inicio = privacidad.has_consented(conn, person_id) if hosted else True
     tiene_datos = conn.execute(
@@ -157,5 +187,5 @@ def primeros_pasos(conn: sqlite3.Connection, person_id: int, hosted: bool) -> li
     for tid in ONBOARDING_ORDEN:
         if tid == "vincular-este-pc" and not aplica_pc:
             continue
-        out.append({"id": tid, "titulo": tareas[tid]["titulo"], "hecho": hecho[tid]})
+        out.append({"id": tid, "titulo": _titulo_tarea(t, tareas[tid]), "hecho": hecho[tid]})
     return out

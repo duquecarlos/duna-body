@@ -502,7 +502,7 @@ def today(person_id: int = Depends(identity.current_person_id)):
         "SELECT COUNT(*) AS n FROM shift_batch WHERE person_id = ? AND status = 'proposed'",
         (person_id,),
     ).fetchone()["n"]
-    primeros = tutoriales.primeros_pasos(conn, person_id, cuenta.hosted())
+    primeros = tutoriales.primeros_pasos(conn, person_id, cuenta.hosted(), t)
     primeros_pasos = primeros if any(not p["hecho"] for p in primeros) else None
     today_local = comun._today_local(person)
     turno_de_hoy = turnos_costo.turno_de_hoy(conn, person_id, today_local)

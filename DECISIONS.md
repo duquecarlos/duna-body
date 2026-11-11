@@ -17319,3 +17319,76 @@ allow-list fix), `ff65397b3eaf5b5ef16e3fc1403d38dcd7d3a10b` (this entry). Merged
 `--no-ff`: merge commit `345808ab2be8cb5dc38589f2c993f88a1146bf30`, merge tree
 `e71f310899d4eea7d1e44ddf40fd0b879fb09d43`, identical to the branch tip's own tree (`git diff`
 between them empty) -- no conflict, no extra change.
+
+## BODY-TUTORIALES-EN-1
+
+The English demo (2026-11-11, the BODY-MOCK-R2-HOY-1 and BODY-LESION-ZONA-1 looks) surfaced two
+things at 375 px: Today's "First steps" showed Spanish chapter/task titles on an English-speaking
+person's own screen, and every Today load logged a 404 as a console error for the normal case of
+no pending outside proposal. Two rulings.
+
+**Ruling 1 -- tutorial titles follow the person's language.** `tutoriales/catalogo.json` keeps its
+tutoriales-v1 shape and its Spanish `titulo` untouched -- Main owns that contract. New i18n keys
+`tutoriales.capitulo.<id>` and `tutoriales.tarea.<id>` (one per chapter and task id in the catalog)
+carry the title instead: the Spanish keys are the catalog's own current words, the English keys are
+natural English in `DESIGN.md`'s voice ("Sign in and accept", "Connect your Garmin", "A first look
+at Today", and so on for every chapter and task). `body/tutoriales.py` gained `_titulo_capitulo` /
+`_titulo_tarea`, each reading the person's own `T` (the same translator every route already builds
+via `comun._ctx`) and falling back to the catalog's own `titulo` -- never the raw key -- when a key
+is missing in both languages (body/i18n/__init__.py's own `T.__call__` already falls Spanish-ward
+for a key missing only in English; this is the one rung it cannot provide on its own).
+`capitulos_con_tareas()` and `primeros_pasos()` both take a new `t: T | None = None` parameter
+(appended, defaulting to the old catalog-titulo behaviour) so every pre-existing caller outside this
+slice's `touches:` keeps working unchanged; `body/rutas/ayuda.py` and `body/rutas/hoy.py`, the two
+real callers, now pass their own `t`.
+
+**Ruling 2 -- a census pins the coverage.** `tests/test_i18n_paridad.py`'s own dynamic-prefix
+mechanism gained `"tutoriales.capitulo.+"` / `"tutoriales.tarea.+"`, their value lists read live from
+`tutoriales.catalogo()` rather than retyped by hand, so a future catalog entry with no English title
+fails there. `tests/test_tutoriales.py` (new) pins the same truth directly from the catalog and
+es/en tables, independent of that scanning mechanism, plus unit coverage of the fallback-to-titulo
+rung and of `capitulos_con_tareas()`/`primeros_pasos()` resolving each language.
+`tests/test_tutoriales_en.py` (new) hits `/ayuda` and `/` (Today, soon.html's own First steps card)
+as a local-mode person and checks the rendered titles switch with `db.set_language`.
+
+**Ruling 3 -- "no pending conversation" is not an error.** `GET /asistente/conversacion/pendiente`
+(`body/rutas/asistente.py::asistente_conversacion`) now answers 200 with `{"conversacion_id": null,
+"turnos": [], "propuestas": []}` when `agente_conversacion.pendientes_mcp` resolves to nothing,
+instead of 404 -- the sentinel's own normal case on every ordinary Today load. An unknown or another
+person's real conversation id is untouched and still 404 (the `else` branch below the sentinel
+check). `body/static/assistant.js`'s `cargarConversacion()` treats `conversacion_id: null` exactly
+like the 404 branch above it: clears the remembered id (`limpiarConversacionId()`) and renders
+nothing, so a stale id is never confused with a cleared one.
+
+**Deviation**: the spec's `touches:` named `tests/test_mcp_local.py`, which does not exist in this
+repository; the pendiente-sentinel tests (`PanelDefaultTest`) and the assistant.js text checks
+(`AssistantJsReadsTheNamedConversationTest`) that ruling 3 touches actually live in
+`tests/test_mcp_visible.py` (BODY-MCP-LOCAL-1-B's own test file, under its old working title) --
+edited that file instead, since the gate cannot turn green otherwise: `test_pendiente_is_404_when_
+there_is_none` and `test_pendiente_ignores_an_already_resolved_proposal` directly contradicted the
+new ruling and had to become 200 assertions, and one new test
+(`test_a_null_conversacion_id_clears_and_renders_nothing`) pins the new JS branch.
+
+**Tests**: `tests/test_tutoriales.py` (new, 9), `tests/test_tutoriales_en.py` (new, 4),
+`tests/test_mcp_visible.py` (1 new, 2 rewritten to the new 200 shape), `tests/test_i18n_paridad.py`
+(dynamic-prefix coverage extended, no new test method). Every pre-existing test outside `touches:`
+that calls `capitulos_con_tareas()` / `primeros_pasos()` positionally (`test_turnos_opcional_2.py`,
+`test_turnos_opcional_4.py`, `test_primer_dia_1.py`, `test_tutoriales_puertas.py`) was read and left
+unchanged -- the new `t` parameter's default keeps their Spanish-catalog assertions true.
+
+**New i18n strings** (`body/i18n/es.json`/`en.json`, 29 keys each): `tutoriales.capitulo.<id>` for
+all 8 chapter ids, `tutoriales.tarea.<id>` for 21 task ids, carrying the catalog's current Spanish
+words and the English titles named in ruling 1 above.
+
+**Gate**, run once on this branch's final tree, exactly
+`.venv/Scripts/python.exe -m unittest discover tests -t .`, foreground (backgrounded past 600s by
+the harness, read from its own output file once finished):
+
+    Ran 2710 tests in 649.646s
+
+    OK (skipped=1)
+
+Green -- 2696 (the prior floor, BODY-PROPUESTA-VIGENCIA-1's own count) + 14 new tests (9 + 4 + 1,
+per the Tests line above). `git status --porcelain` empty before this entry. Approved to merge on a
+green gate (copy and an empty-state response shape only; the orchestrator looks at 375 px after).
+No open follow-up.
