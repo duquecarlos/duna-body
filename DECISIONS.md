@@ -17021,3 +17021,56 @@ looks at 375 px before merging"). Not merged to `main`.
 
 Open follow-up, named but not acted on: none -- every ruling's own data need was already satisfiable
 without a schema change, so nothing was skipped for a later slice.
+
+## BODY-MOCK-R2-HOY-1-M -- merged (two attempts, -M then -M2) (2026-11-11)
+
+BODY-MOCK-R2-HOY-1-M fixed defects 2 and 3 of the three the orchestrator's 375px look found on the
+`AWAITING_APPROVAL` board above (commit `3588801a56b3edfb2d05e5ed824dd5f40495c1f4`) and stopped
+`BLOCKED` on defect 1, correctly: the CSP is `script-src 'self'` with no `unsafe-inline`/nonce
+(`body/seguridad.py:42`) and `tests/test_seguridad.py` forbids an inline `<script>`, so opening the
+assistant panel from the "Tell Body" row needed a change to `body/static/assistant.js`, which was
+outside that slice's own `touches:`.
+
+**Defect 2** -- the habit row in "The day ahead" was laid out differently from every other row
+there: its time sat inline before the title, with the checkbox leading the row. It now matches the
+other rows' shape (time on its own line, title, one short line) and keeps the check control, moved
+to the row's end.
+
+**Defect 3** -- the shift row's title was the bare kind word ("Day"/"Día"). It now reads as a shift
+("Day shift"/"Turno de día"), via new `shift.kind.title.*` i18n keys (one per existing
+`shift.kind.*`), with the new dynamic prefix registered in `test_i18n_paridad.py`.
+
+**BODY-MOCK-R2-HOY-1-M2 fixed defect 1** (commit `b519cadcb4c08a7fa0e6c7921ebb6222044021a0`): the
+"Tell Body what you ate, how you feel..." row stayed the same plain `<a class="tellbody taplink"
+href="#asis-btn">` (so a no-JS visit still reaches the floating button by the fragment alone), and
+`body/static/assistant.js` gained a delegated `click` listener on `.tellbody` that calls
+`preventDefault()` and then the panel's own existing `abrir()` path -- the same function the
+floating button's own click handler calls -- which also focuses the panel's text input. No inline
+script, no new file; the fix is entirely inside the already-loaded, same-origin `assistant.js`.
+Covered by three new tests in `tests/test_mock_r2_hoy.py` (`TellBodyOpensPanelJsTest`): the
+delegated selector is present, the listener both prevents the default navigation and calls `abrir()`,
+and no `<script>` tag was added to `today.html`.
+
+**Accepted deviations** (both carried from the original surface, re-confirmed unchanged by this
+merge): `body/static/body.css` is the real stylesheet (the original spec said `app.css`);
+`tests/test_web_entry.py`'s route set was extended (never loosened) by the new POST
+`/day/{day}/noche-inusual/nota`.
+
+**Merge**: `feat/body-mock-r2-hoy-1` merged into `main` with `--no-ff`, merge commit
+`62d317a32523cb0725f2ec40afdf5604ddb0ed49`. Merge-policy-A check on the full branch diff since it
+left `main`: no schema or migration change, no cross-repo contract change. Customer-facing bytes did
+change overall (the restructured board, new cards and strings from the original surface) -- that is
+why BODY-MOCK-R2-HOY-1 stopped `AWAITING_APPROVAL` above and waited for Carlos's own 375px look
+(ORCH-CARLOS-DELEGATES-TIER-1-1) before any of this merged; both `-M` and this `-M2` slice's own
+diffs on top of that approved look added no new customer-facing bytes (defects 2 and 3 are layout
+and an i18n title fix inside the already-approved board; defect 1 is same-origin JS behaviour only),
+so the approval already in hand covered the merge.
+
+**Gate**, run once on the merged tree on `main` (merge commit `62d317a32523cb0725f2ec40afdf5604ddb0ed49`),
+exactly `.venv/Scripts/python.exe -m unittest discover tests -t .`, foreground:
+
+    Ran 2622 tests in 493.545s
+
+    OK (skipped=1)
+
+Green. Open follow-up: none.
