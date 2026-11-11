@@ -404,10 +404,14 @@ def traer_series(conn, person_id: int, activity_source_id: str, token_str: str |
         data, token_after = garmin_adapter.fetch_exercise_sets(activity_source_id, token_str=token_str)
     else:
         data = garmin_adapter.fetch_exercise_sets(activity_source_id)
-    db.save_exercise_sets(conn, person_id, garmin_adapter.SOURCE, str(activity_source_id), data.sets)
+    sets = tuple(s for s in data.sets if (s.weight_value is None) == (s.weight_unit is None))
+    descartadas = len(data.sets) - len(sets)
+    if descartadas:
+        print(f"series descartadas: {descartadas}", file=sys.stderr)
+    db.save_exercise_sets(conn, person_id, garmin_adapter.SOURCE, str(activity_source_id), sets)
     if token_str is not None:
-        return len(data.sets), token_after
-    return len(data.sets)
+        return len(sets), token_after
+    return len(sets)
 
 
 def traer_intradia(conn, person_id: int, day: str, token_str: str | None = None, *, forzar: bool = False):

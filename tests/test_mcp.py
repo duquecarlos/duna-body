@@ -238,6 +238,98 @@ class ToolsCallTest(_McpTestCase):
         self.assertEqual(salida["estado"], "propuesta")
 
 
+class RegistrarEntrenoRelojFalloTest(_McpTestCase):
+    """BODY-SERIES-UNIDAD-1 ruling 3: when the watch's own sets can't be read, this is the one
+    place the caller (which never sees the Hoy card directly) is told the proposal still saved on
+    the person's own spoken sets."""
+
+    def setUp(self):
+        super().setUp()
+        self.conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, name, source) "
+            "VALUES (?, 'a1', '2026-11-09', '2026-11-09T07:00:00', 'strength_training', NULL, 'garmin')",
+            (self.person_id,),
+        )
+        self.conn.commit()
+
+    def test_a_raising_adapter_still_gets_an_answer_with_the_reloj_note(self):
+        with mock.patch("body.pull.traer_series", side_effect=RuntimeError("Garmin unreachable")):
+            _, respuestas = self._ejecutar([
+                {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                 "params": {"name": "registrar_entreno",
+                            "arguments": {"day": "2026-11-09",
+                                          "series": [{"ejercicio": "press banca", "reps": 10,
+                                                      "peso_kg": 55.0}]}}},
+            ])
+        r = respuestas[0]["result"]
+        self.assertNotIn("isError", r)
+        contenido = r["content"]
+        self.assertEqual(len(contenido), 3)
+        self.assertEqual(contenido[0]["text"], "No pude leer las series del reloj; guardé las que me contaste.")
+        self.assertIn("Hoy", contenido[1]["text"])
+        salida = json.loads(contenido[-1]["text"])
+        self.assertEqual(salida["estado"], "propuesta")
+
+    def test_a_successful_adapter_carries_no_reloj_note(self):
+        with mock.patch("body.pull.traer_series", return_value=0):
+            _, respuestas = self._ejecutar([
+                {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                 "params": {"name": "registrar_entreno",
+                            "arguments": {"day": "2026-11-09",
+                                          "series": [{"ejercicio": "press banca", "reps": 10,
+                                                      "peso_kg": 55.0}]}}},
+            ])
+        contenido = respuestas[0]["result"]["content"]
+        self.assertEqual(len(contenido), 2)
+
+
+class ToolCallInternalErrorTest(_McpTestCase):
+    """BODY-SERIES-UNIDAD-1 ruling 4: the MCP server never dies on a tool call."""
+
+    def test_an_unexpected_exception_answers_iserror_and_the_next_request_still_gets_its_answer(self):
+        real_ejecutar = herramientas.ejecutar
+        llamadas = {"n": 0}
+
+        def falla_la_primera(*args, **kwargs):
+            llamadas["n"] += 1
+            if llamadas["n"] == 1:
+                raise db.sqlite3.IntegrityError("CHECK constraint failed")
+            return real_ejecutar(*args, **kwargs)
+
+        buf = io.StringIO()
+        with mock.patch("body.mcp.herramientas.ejecutar", side_effect=falla_la_primera), \
+             mock.patch("sys.stderr", buf):
+            _, respuestas = self._ejecutar([
+                {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                 "params": {"name": "marcar_periodo",
+                            "arguments": {"kind": "viaje", "start_day": "2020-01-01"}}},
+                {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                 "params": {"name": "leer_ajustes", "arguments": {}}},
+            ])
+        self.assertEqual(len(respuestas), 2)
+        primera = respuestas[0]["result"]
+        self.assertTrue(primera["isError"])
+        self.assertEqual(
+            primera["content"][0]["text"],
+            "Body tuvo un error interno con esta herramienta; no se guardó nada. Intenta de nuevo o avísale al equipo.",
+        )
+        segunda = respuestas[1]["result"]
+        self.assertNotIn("isError", segunda)
+        self.assertIn("nivel_datos", json.loads(segunda["content"][0]["text"]))
+
+        # the exception's TYPE and the tool's own name reached stderr -- never its message
+        self.assertIn("IntegrityError", buf.getvalue())
+        self.assertIn("marcar_periodo", buf.getvalue())
+        self.assertNotIn("CHECK constraint failed", buf.getvalue())
+
+        # ruling 5: both attempts -- the one that errored and the one that didn't -- were audited
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM uso_herramienta_externa WHERE person_id = ?",
+                              (self.person_id,)).fetchone()[0],
+            2,
+        )
+
+
 class VentanaRotanteTest(_McpTestCase):
     """BODY-MCP-LOCAL-1-B: caps bound a RATE, not a per-process total -- a long-lived server
     process must be able to read again once the window has rolled past its first calls, with no

@@ -660,15 +660,17 @@ def _catalog_display(category: Any, exercise: Any) -> str | None:
 
 
 def _weight(d: dict) -> tuple[float | None, str | None]:
-    """Assumed key: "weight" (unconfirmed). Garmin is known to send body-composition weight in
-    grams elsewhere, but nothing confirmed states this endpoint's unit, so a present value is
-    kept as-is and its unit left absent rather than guessed grams/kilograms. No "weight" key,
-    or an explicit null (a bodyweight set), leaves both value and unit absent together."""
+    """Assumed key: "weight" (unconfirmed). Always returns value and unit as a pair: no
+    "weight" key, an explicit null, or a value of 0 (a bodyweight set) returns (None, None). A
+    positive value with a string "weightUnit" is kept as sent. A positive value with NO unit
+    is given unit "g": Garmin's activity exerciseSets send weight in grams with no unit key
+    (a 25 lb dumbbell arrives as about 11340), and a value with no unit is otherwise
+    unstorable. Never a value without a unit, never a unit without a value."""
     v = _num(d.get("weight"))
-    if v is None:
+    if v is None or v == 0:
         return None, None
     unit = d.get("weightUnit")
-    return v, unit if isinstance(unit, str) else None
+    return v, unit if isinstance(unit, str) else "g"
 
 
 def _start_local(d: dict) -> str | None:

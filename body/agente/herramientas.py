@@ -724,9 +724,18 @@ def _registrar_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id
     if actividad is not None:
         source, source_id = actividad["source"], actividad["source_id"]
         existentes = db.exercise_sets(conn, person_id, source, source_id)
+        reloj_fallo = False
         if not existentes:
-            pull.traer_series(conn, person_id, source_id)
-            existentes = db.exercise_sets(conn, person_id, source, source_id)
+            try:
+                pull.traer_series(conn, person_id, source_id)
+                existentes = db.exercise_sets(conn, person_id, source, source_id)
+            except Exception:
+                # Ruling 3 (BODY-SERIES-UNIDAD-1): the watch's sets are a help, not a
+                # precondition -- any failure here (Garmin unreachable, a bad payload, a DB
+                # error) still lets the person's own spoken sets be saved, mapped onto no
+                # watch set (reloj: null for every one), rather than losing the proposal.
+                existentes = []
+                reloj_fallo = True
         reloj_por_orden = {s["set_order"]: s for s in existentes}
         mapeo, sets_antes = [], []
         for i, hablado in enumerate(series, start=1):
@@ -752,7 +761,7 @@ def _registrar_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id
                 "garmin_category": watch["garmin"]["category"] if watch else None,
             })
         despues = {"manual": False, "day": day, "source": source, "source_id": source_id, "series": series,
-                   "mapeo": mapeo}
+                   "mapeo": mapeo, "reloj_fallo": reloj_fallo}
         antes = {"manual": False, "sets_antes": sets_antes}
     else:
         despues = {"manual": True, "day": day, "time": time, "titulo": ((titulo or "").strip() or None),

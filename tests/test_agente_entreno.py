@@ -225,6 +225,56 @@ class RegistrarEntrenoGarminTest(unittest.TestCase):
             propuestas.aplicar(self.conn, 2, out["propuesta_id"])
 
 
+class RegistrarEntrenoRelojFalloTest(unittest.TestCase):
+    """BODY-SERIES-UNIDAD-1 ruling 3: the watch's sets are a help, not a precondition. When
+    pull.traer_series raises -- Garmin unreachable, a bad payload, a DB error -- the proposal is
+    still built from the person's own spoken sets, mapped onto no watch set."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        self.cid = _cid(self.conn)
+        _insert_activity(self.conn, 1, "a1", "2026-11-10")
+        self.conn.commit()
+        self.series = [{"ejercicio": "press banca", "reps": 10, "peso_kg": 55.0},
+                       {"ejercicio": "remo", "reps": 12}]
+
+    def _registrar(self, side_effect):
+        with mock.patch("body.pull.traer_series", side_effect=side_effect):
+            return herramientas.ejecutar(self.conn, 1, "registrar_entreno",
+                                        {"day": "2026-11-10", "series": self.series}, "ninguno", self.cid)
+
+    def _despues(self, out):
+        registro = self.conn.execute(
+            "SELECT despues_json FROM propuesta_agente WHERE id = ?", (out["propuesta_id"],)
+        ).fetchone()
+        return json.loads(registro["despues_json"])
+
+    def test_adapter_that_raises_still_proposes_from_the_spoken_sets(self):
+        out = self._registrar(RuntimeError("Garmin unreachable"))
+        despues = self._despues(out)
+        self.assertFalse(despues["manual"])
+        self.assertTrue(despues["reloj_fallo"])
+        self.assertEqual(len(despues["mapeo"]), 2)
+        for m in despues["mapeo"]:
+            self.assertIsNone(m["reloj"])
+        self.assertEqual(despues["mapeo"][0]["tu"]["ejercicio"], "press banca")
+
+    def test_a_db_error_from_traer_series_is_also_caught(self):
+        out = self._registrar(db.sqlite3.IntegrityError("CHECK constraint failed"))
+        despues = self._despues(out)
+        self.assertTrue(despues["reloj_fallo"])
+        for m in despues["mapeo"]:
+            self.assertIsNone(m["reloj"])
+
+    def test_the_proposal_can_still_be_applied(self):
+        out = self._registrar(RuntimeError("Garmin unreachable"))
+        resultado = propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        self.assertEqual(resultado["estado"], "aplicada")
+        sets = db.exercise_sets(self.conn, 1, "garmin", "a1")
+        self.assertEqual(sets[0]["exercise"], "press banca")
+        self.assertIsNone(sets[0]["garmin"]["exercise"])  # the watch never answered
+
+
 class RegistrarEntrenoManualTest(unittest.TestCase):
     def setUp(self):
         self.conn = _conn(self)

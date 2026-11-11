@@ -486,10 +486,13 @@ class ExerciseSetsParsingTest(unittest.TestCase):
             self.assertIsNone(s.weight_unit)
 
     def test_weight_value_kept_when_unit_is_not_stated(self):
+        # BODY-SERIES-UNIDAD-1 ruling 1: a positive weight with no weightUnit key is given unit
+        # "g" (Garmin's activity exerciseSets send weight in grams with no unit key) -- never a
+        # value without a unit, since that pair is otherwise unstorable (body/db.py's CHECK).
         sets = garmin_adapter.parse_exercise_sets(EXERCISE_SETS_RAW)
         active1 = sets[0]
         self.assertEqual(active1.weight_value, 60000)
-        self.assertIsNone(active1.weight_unit)  # kept, never guessed as grams or kilograms
+        self.assertEqual(active1.weight_unit, "g")
 
     def test_weight_unit_passed_through_when_the_payload_states_one(self):
         payload = {"exerciseSets": [{"setType": "ACTIVE", "weight": 60, "weightUnit": "KILOGRAM"}]}

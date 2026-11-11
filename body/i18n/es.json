@@ -828,6 +828,8 @@
   "asistente.mcp.aplicar_no_propia": "Esa propuesta no existe o no es una propuesta de tu asistente personal.",
   "asistente.mcp.aplicar_no_vigente": "Esa propuesta ya no está pendiente.",
   "asistente.mcp.aplicar_resultado": "Aplicado. Lo verás en la pantalla {pantalla} de Body, donde lo puedes deshacer.",
+  "asistente.mcp.entreno_reloj_fallo": "No pude leer las series del reloj; guardé las que me contaste.",
+  "asistente.mcp.error_interno": "Body tuvo un error interno con esta herramienta; no se guardó nada. Intenta de nuevo o avísale al equipo.",
   "asistente.propuesta.turnos_actual": "{n} turnos propuestos por confirmar",
   "asistente.propuesta.turnos_nuevo": "Confirmar todos los turnos propuestos",
   "asistente.propuesta.entreno_plan": "{titulo} · {fecha}: {ejercicios}",
