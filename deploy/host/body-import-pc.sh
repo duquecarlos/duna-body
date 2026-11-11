@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# body-import-pc.sh -- moves one person's Body data from their own PC into this host
+# (BODY-MUDANZA-HOST-VERBO-1, following BODY-MUDANZA-SERVIDOR-1-INV's design and
+# BODY-MUDANZA-HERRAMIENTA-1's tool). Called by duna-deploy-body importar-pc/personas; runs as
+# root, the rollback snapshot and the import itself as duna-body via runuser, exactly as
+# body-backup.sh runs its own snapshot step.
+set -Eeuo pipefail
+
+if [[ "${EUID}" -ne 0 ]]; then
+  echo "body-import-pc.sh: refused -- must run as root (EUID 0)" >&2
+  exit 1
+fi
+
+PATH="/usr/sbin:/usr/bin:/sbin:/bin"
+export PATH
+
+REPO_DIR="/srv/duna/repos/duna-body"
+DATA_USER="duna-body"
+DATA_DIR="/srv/duna/data/body"
+
+if [[ $# -lt 1 ]]; then
+  echo "body-import-pc.sh: usage: body-import-pc.sh <importar-pc|personas> [options]" >&2
+  exit 2
+fi
+
+action="$1"
+shift
+
+case "$action" in
+  personas)
+    if [[ $# -ne 0 ]]; then
+      echo "body-import-pc.sh: personas takes no arguments" >&2
+      exit 2
+    fi
+    exec runuser -u "$DATA_USER" -- env -C "$REPO_DIR" "BODY_HOME=$DATA_DIR" \
+      "$REPO_DIR/.venv/bin/python" -m body.mudanza personas
+    ;;
+  importar-pc)
+    ;;
+  *)
+    echo "body-import-pc.sh: unknown action: $action" >&2
+    exit 2
+    ;;
+esac
+
+SUB=""
+ARCHIVO=""
+APPLY=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --cuenta-sub)
+      SUB="$2"
+      shift 2
+      ;;
+    --archivo)
+      ARCHIVO="$2"
+      shift 2
+      ;;
+    --apply)
+      APPLY="1"
+      shift
+      ;;
+    *)
+      echo "body-import-pc.sh: unknown argument: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ -z "$SUB" || -z "$ARCHIVO" ]]; then
+  echo "body-import-pc.sh: --cuenta-sub and --archivo are required" >&2
+  exit 2
+fi
+
+if [[ ! -f "$ARCHIVO" ]]; then
+  echo "body-import-pc.sh: file not found: $ARCHIVO" >&2
+  exit 1
+fi
+
+if [[ -z "$APPLY" ]]; then
+  # Dry run: the tool's own dry run. No integrity check, no host backup, no timers touched, and
+  # the uploaded file is never deleted here -- the file may still be worth looking at.
+  exec runuser -u "$DATA_USER" -- env -C "$REPO_DIR" "BODY_HOME=$DATA_DIR" \
+    "$REPO_DIR/.venv/bin/python" -m body.mudanza importar --origen "$ARCHIVO" --cuenta-sub "$SUB"
+fi
+
+# --apply from here, in this order (BODY-MUDANZA-HOST-VERBO-1 ruling 2):
+#   (a) integrity_check on the uploaded file -- refuse before touching anything else
+#   (b) a host backup, with the EXISTING snapshot step, kept locally as the rollback point --
+#       never uploaded by this verb, and never deleted: it is the rollback path printed on failure
+#   (c) stop body-pull.timer and body-backfill.timer for the window, restarted in a trap on every
+#       exit path, exactly as body-backup.sh deletes its plaintext in a trap on every exit path
+#   (d) run the import itself as the duna-body data user
+#   (e) its own report, already on stdout
+#   (f) delete the uploaded file -- also in the trap, so a failure never leaves it behind
+
+integrity="$(python3 -c '
+import sqlite3, sys
+conn = sqlite3.connect(sys.argv[1])
+print(conn.execute("PRAGMA integrity_check").fetchone()[0])
+' "$ARCHIVO")"
+if [[ "$integrity" != "ok" ]]; then
+  echo "body-import-pc.sh: refused -- integrity_check on the uploaded file: $integrity" >&2
+  exit 1
+fi
+
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+rollback_file="$DATA_DIR/rollback-$timestamp.sqlite"
+
+runuser -u "$DATA_USER" -- env -C "$REPO_DIR" "BODY_HOME=$DATA_DIR" \
+  "$REPO_DIR/.venv/bin/python" -m body.backup snapshot --out "$rollback_file"
+echo "rollback snapshot: $rollback_file"
+
+cleanup_uploaded() {
+  systemctl restart body-pull.timer body-backfill.timer
+  rm -f "$ARCHIVO"
+}
+trap cleanup_uploaded EXIT
+
+systemctl stop body-pull.timer body-backfill.timer
+
+chown "$DATA_USER:$DATA_USER" "$ARCHIVO"
+
+runuser -u "$DATA_USER" -- env -C "$REPO_DIR" "BODY_HOME=$DATA_DIR" \
+  "$REPO_DIR/.venv/bin/python" -m body.mudanza importar --origen "$ARCHIVO" --cuenta-sub "$SUB" --apply

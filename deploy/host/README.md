@@ -71,6 +71,52 @@ never on the server):
     # expect: ok, a table count, and per-table row counts -- never a value from any row
     del restore.sqlite
 
+## Importar desde el PC (una vez) (BODY-MUDANZA-HOST-VERBO-1)
+
+Moves one person's Body data from the PC's own `body.db` into this host, using the tool
+BODY-MUDANZA-HERRAMIENTA-1 built (`python -m body.mudanza importar`). The snapshot travels by
+`scp` over the same SSH access used for every other admin task here -- never `age`: its private
+half lives on the PC, not on this host, so the host could never decrypt it. Carlos runs each step
+himself, in order:
+
+1. Install the updated `duna-deploy-body` (same line as the one-time install above):
+
+       sudo install -o root -g root -m 755 deploy/host/duna-deploy-body /usr/local/sbin/duna-deploy-body
+
+2. On the PC, take a consistent snapshot (never the live file itself), then copy it to the host:
+
+       .venv\Scripts\python.exe -m body.backup snapshot --out pc-snapshot.sqlite
+       scp pc-snapshot.sqlite <host-user>@<host>:<staging-path>
+
+3. Find the destination `sub` -- `personas` prints only a `cuenta_sub`, a display name and a
+   first-consent date, never a health figure:
+
+       sudo -n /usr/local/sbin/duna-deploy-body personas
+
+4. Dry run -- prints the tool's per-table counts, writes nothing:
+
+       sudo -n /usr/local/sbin/duna-deploy-body importar-pc --cuenta-sub <sub> --archivo <staging-path>
+
+5. Apply -- takes a host backup first (the rollback point, printed, never uploaded), stops
+   `body-pull.timer` and `body-backfill.timer` for the window, runs the import as `duna-body`,
+   then restarts the timers and deletes the uploaded file, whether it succeeds or fails:
+
+       sudo -n /usr/local/sbin/duna-deploy-body importar-pc --cuenta-sub <sub> --archivo <staging-path> --apply
+
+6. Check the hosted app is healthy:
+
+       curl -fsS https://body.duna.solutions/healthz
+
+7. Reconnect Garmin on the hosted page -- the Garmin token never travels with the import
+   (BODY-GARMIN-HOST-1): sign in again at `https://body.duna.solutions/garmin/conectar`.
+
+**Rollback**: if step 5 fails, the timers are already restarted and the failure names the rollback
+snapshot's path, printed just before the import ran. There is no restore command yet -- that is a
+followup this slice did not build, not an oversight to paper over. Until one exists, restoring it
+is a hand procedure: stop `body-web.service`, `body-pull.timer` and `body-backfill.timer`, copy
+the rollback snapshot over `/srv/duna/data/body/body.db` as root, fix its ownership
+(`duna-body:duna-body`) and mode (`0600`), then start the services again.
+
 ## Host facts, confirmed by Main (2026-11-06)
 
 * the host is Ubuntu 24.04.4, so `python3` is 3.12

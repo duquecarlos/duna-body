@@ -15,6 +15,7 @@ export PATH
 REPO_DIR="/srv/duna/repos/duna-body"
 PRODUCT_SCRIPT="$REPO_DIR/deploy/host/body-deploy.sh"
 PRODUCT_BACKUP_SCRIPT="$REPO_DIR/deploy/host/body-backup.sh"
+PRODUCT_IMPORT_SCRIPT="$REPO_DIR/deploy/host/body-import-pc.sh"
 DATA_DIR="/srv/duna/data/body"
 DATA_USER="duna-body"
 
@@ -24,6 +25,9 @@ usage: duna-deploy-body <command>
   status              show unit status, deployed sha, data dir mode
   deploy [--dry-run]  pull the repo and redeploy (--dry-run: print the plan, run nothing)
   backup [--dry-run]  snapshot, encrypt and upload to R2, delete the plaintext (--dry-run: print the plan, run nothing)
+  importar-pc --cuenta-sub <sub> --archivo <path> [--apply]
+                      import one person's PC snapshot into this host (dry run by default)
+  personas            list hosted persons by cuenta_sub, display name and first consent
 USAGE
 }
 
@@ -112,6 +116,15 @@ case "$cmd" in
       DRY_RUN="1"
     fi
     ;;
+  importar-pc)
+    # body-import-pc.sh itself validates --cuenta-sub, --archivo and --apply.
+    ;;
+  personas)
+    if [[ $# -ne 0 ]]; then
+      usage
+      exit 2
+    fi
+    ;;
   *)
     usage
     exit 2
@@ -128,6 +141,14 @@ if [[ "$cmd" == "backup" ]]; then
     exec /bin/bash "$PRODUCT_BACKUP_SCRIPT" --dry-run
   fi
   exec /bin/bash "$PRODUCT_BACKUP_SCRIPT"
+fi
+
+if [[ "$cmd" == "importar-pc" ]]; then
+  exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" importar-pc "$@"
+fi
+
+if [[ "$cmd" == "personas" ]]; then
+  exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" personas
 fi
 
 owner="$(stat -c %U "$REPO_DIR")"
