@@ -16839,3 +16839,35 @@ words, "APPROVED to merge on a green gate" with no qualifier naming either condi
 header already names the schema step as approved (`approved: yes`, "plus one additive
 nullable-default column"), so the merge proceeds on the green gate above rather than stopping
 `AWAITING_APPROVAL`.
+
+## BODY-SERIES-ORDEN-1-M -- merged (2026-11-11)
+
+`BODY-SERIES-ORDEN-1-M` (the first `-M` dispatch) ran the gate on `feat/body-series-orden-1-m`
+(HEAD at the clean merge `5c166f862598e66872b92a216f36224794337853` of `feat/body-series-orden-1`)
+and got `Ran 2567 tests` / `FAILED (failures=4, skipped=1)`. Its own spec had misread the three
+"drifted" test files as carried-over committed content and told the worker to discard them;
+discarding left exactly four failures, all in census tests the first `BODY-SERIES-ORDEN-1` worker
+had extended in its working tree but never committed, so its own green gate ran with those
+uncommitted extensions in place and the dispatcher never saw them missing until `-M` reverted them.
+That is why there are two `-M` attempts: the first stopped `GATE_RED` on a tree the orchestrator had
+itself just made red by discarding real, uncommitted work.
+
+`BODY-SERIES-ORDEN-1-M2` committed those same three extensions instead of discarding them --
+`"descartar_series"` added to the proposal-tool set in `tests/test_agente_propuestas.py` and to the
+tool set in `tests/test_agente_registro.py`, the registry count there raised from 32 to 33, and
+`"excluded_by_person"` added after `"corrected_by_person"` in `tests/test_entreno_schema.py`'s
+column list -- on commit `5c8d29b1d30a5fc9de4e10f54880726260ca382e`.
+
+**Gate**, run once on that commit's tree, exactly `.venv/Scripts/python.exe -m unittest discover
+tests -t .`:
+
+    Ran 2567 tests in 475.881s
+
+    OK (skipped=1)
+
+Green, 2567 tests matching the count the orchestrator's own pre-dispatch floor named. Merge-policy-A
+check on this slice's own diff: no schema or migration change, no customer-facing bytes, no
+cross-repo contract change -- the diff only widens three test-file assertion sets to match code
+already on the branch. Merge commit `c7efb825889a0f18d9bd27be7c6d00c96efd4cfd` on `main`
+(`--no-ff`); its tree `e0e07387001ff6a2f2efe8d660528e4270ccb096` equals the gated commit's tree
+exactly, so the merge adds nothing the gate did not already cover and the gate was not re-run.
