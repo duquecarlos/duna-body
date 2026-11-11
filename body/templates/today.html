@@ -5,7 +5,6 @@
 {% block main %}
 <div class="top">
   <div><h1>{{ t('today.title') }}</h1><p class="sub">{{ date_long }}</p></div>
-  <div class="meta">{% if synced %}{{ t('today.synced') }}<br>{{ synced }}{% else %}{{ t('today.no_sync') }}{% endif %}</div>
 </div>
 
 {{ cuerpo_vista(t, cuerpo) }}
@@ -20,7 +19,6 @@
 {% if mcp_aplicado %}
 <div class="aviso"><a class="taplink" href="/?asis_conversacion={{ mcp_aplicado.conversacion_id }}#asis-btn">{{ t('today.mcp_aplicado') if mcp_aplicado.n == 1 else t('today.mcp_aplicado_many', n=mcp_aplicado.n) }}</a></div>
 {% endif %}
-{% if noche_inusual %}<div class="aviso">{{ noche_inusual.texto }} <a class="taplink" href="/day/{{ noche_inusual.day }}">{{ noche_inusual.enlace }}</a></div>{% endif %}
 
 <div class="cols-hoy">
 <a class="card est" href="/how/{{ day }}">
@@ -35,6 +33,7 @@
   </div>
   <div class="k mt-6">{{ t('today.ready_label') }}</div>
   <p class="read">{{ reading }}</p>
+  <div class="k mt-6">{% if synced %}{{ t('today.synced') }} {{ synced }}{% else %}{{ t('today.no_sync') }}{% endif %}</div>
   {% else %}
   <div class="fig c-muted">{{ t('today.no_score_short') }}</div>
   <p class="read">{{ t('today.no_score', missing=missing_txt) }}</p>
@@ -45,45 +44,80 @@
 <div>
 {% if primeros_pasos %}{{ primeros_pasos_card(t, primeros_pasos) }}{% endif %}
 
-{% if plan_habits or plan_experimentos %}
 <div class="card">
   <div class="q">{{ t('today.plan_title') }}</div>
+  {% if dia_por_delante %}
   <ul class="plan mt-6">
-  {% for h in plan_habits %}
+  {% for item in dia_por_delante %}
+    {% if item.tipo == 'habito' %}
     <li>
-      <form method="post" action="/habits/{{ h.id }}/check" class="m-0">
+      <form method="post" action="/habits/{{ item.id }}/check" class="m-0">
         <input type="hidden" name="day" value="{{ today_iso }}">
         <input type="hidden" name="back" value="/">
-        <input type="hidden" name="done" value="{{ '0' if h.checked else '1' }}">
-        <button type="submit" class="boxbtn" aria-label="{{ h.title }}"><span class="box{% if h.checked %} done{% endif %}"></span></button>
+        <input type="hidden" name="done" value="{{ '0' if item.checked else '1' }}">
+        <button type="submit" class="boxbtn" aria-label="{{ item.titulo }}"><span class="box{% if item.checked %} done{% endif %}"></span></button>
       </form>
-      <div>{{ h.title }}{% if h.context %} <span class="chip {{ h.context_cls }}">{{ h.context }}</span>{% endif %}
-        <div class="k">{{ h.goal_title }}</div>
+      <div>{% if item.hora %}<span class="k">{{ item.hora }}</span> {% endif %}{{ item.titulo }}{% if item.context %} <span class="chip {{ item.context_cls }}">{{ item.context }}</span>{% endif %}
+        <div class="k">{{ item.linea }}</div>
       </div>
     </li>
-  {% endfor %}
-  {% for e in plan_experimentos %}
+    {% elif item.tipo == 'experimento' %}
     <li class="block">
-      <div class="k">{{ e.linea }}</div>
-      {% if not e.habito %}
+      <div class="k">{{ item.titulo }}</div>
+      {% if not item.habito %}
       <div class="row gap-8 justify-start mt-6">
-        <form method="post" action="/experiments/{{ e.id }}/day" class="m-0">
+        <form method="post" action="/experiments/{{ item.id }}/day" class="m-0">
           <input type="hidden" name="day" value="{{ today_iso }}">
           <input type="hidden" name="back" value="/">
           <input type="hidden" name="ocurrio" value="1">
-          <button type="submit" class="btn{% if e.marcado == '1' %} on{% endif %}" aria-pressed="{{ 'true' if e.marcado == '1' else 'false' }}">{{ t('today.experimento_btn_hecho') }}</button>
+          <button type="submit" class="btn{% if item.marcado == '1' %} on{% endif %}" aria-pressed="{{ 'true' if item.marcado == '1' else 'false' }}">{{ t('today.experimento_btn_hecho') }}</button>
         </form>
-        <form method="post" action="/experiments/{{ e.id }}/day" class="m-0">
+        <form method="post" action="/experiments/{{ item.id }}/day" class="m-0">
           <input type="hidden" name="day" value="{{ today_iso }}">
           <input type="hidden" name="back" value="/">
           <input type="hidden" name="ocurrio" value="0">
-          <button type="submit" class="btn{% if e.marcado == '0' %} on{% endif %}" aria-pressed="{{ 'true' if e.marcado == '0' else 'false' }}">{{ t('today.experimento_btn_no') }}</button>
+          <button type="submit" class="btn{% if item.marcado == '0' %} on{% endif %}" aria-pressed="{{ 'true' if item.marcado == '0' else 'false' }}">{{ t('today.experimento_btn_no') }}</button>
         </form>
       </div>
       {% endif %}
     </li>
+    {% else %}
+    <li class="block">
+      {% if item.hora %}<div class="k">{{ item.hora }}</div>{% endif %}
+      <div>{{ item.titulo }}</div>
+      {% if item.linea %}<div class="k">{{ item.linea }}</div>{% endif %}
+    </li>
+    {% endif %}
   {% endfor %}
   </ul>
+  {% else %}
+  <p class="note mt-6 m-0">{{ t('today.dia.vacio') }}</p>
+  {% endif %}
+</div>
+
+<a class="tellbody taplink" href="#asis-btn">{{ t('today.tell_body') }}</a>
+
+{% if noche_inusual %}
+<div class="card">
+  <div class="q">{{ t('today.noche_inusual_titulo') }} <span class="chip night">{{ t('today.noche_inusual_chip') }}</span></div>
+  <p class="note mt-6 m-0">{{ noche_inusual.texto }}</p>
+  <a class="taplink" href="/day/{{ noche_inusual.day }}">{{ noche_inusual.enlace }}</a>
+  {% if noche_inusual.nota %}
+  <p class="note mt-6 mb-0">{{ t('today.noche_inusual.nota_guardada', nota=noche_inusual.nota) }}</p>
+  {% else %}
+  <p class="note mt-6 mb-0">{{ t('today.noche_inusual.ayuda') }}</p>
+  <form method="post" action="/day/{{ noche_inusual.day }}/noche-inusual/nota" class="mt-6 m-0">
+    <input type="hidden" name="back" value="/">
+    <textarea class="field" name="nota" rows="2" maxlength="500"
+              aria-label="{{ t('today.noche_inusual.nota_placeholder') }}"
+              placeholder="{{ t('today.noche_inusual.nota_placeholder') }}"></textarea>
+    <button type="submit" class="btn mt-6">{{ t('today.noche_inusual.nota_btn') }}</button>
+  </form>
+  {% endif %}
+  <form method="post" action="/day/{{ noche_inusual.day }}/noche-inusual/visto" class="mt-6 m-0">
+    <input type="hidden" name="back" value="/">
+    <button type="submit" class="btn">{{ t('today.noche_inusual.descartar_btn') }}</button>
+  </form>
 </div>
 {% endif %}
 
@@ -93,6 +127,8 @@
     <div class="k">{{ c.label }}</div>
     <div class="fig">{{ c.value }}{% if c.unit %}<span class="u">{{ c.unit }}</span>{% endif %}</div>
     <div class="delta {{ c.cls }}">{{ c.delta }}</div>
+    {% if c.banda %}<div class="k">{{ c.banda }}</div>{% endif %}
+    {% if c.caption %}<div class="k">{{ c.caption }}</div>{% endif %}
   </a>
 {% endfor %}
 </div>
@@ -113,6 +149,15 @@
   {% if ventana.ayuno_ahora %}<p class="note mt-6 mb-0">{{ t('today.ventana.ayuno_ahora', horas=ventana.ayuno_ahora) }}</p>{% endif %}
   {% if ventana.comida_sueno %}<p class="note mt-6 mb-0">{{ t('today.ventana.comida_sueno', horas=ventana.comida_sueno) }}</p>{% endif %}
 </div>
+
+{% if semana_nocturna %}
+<div class="card">
+  <div class="q">{{ t('today.semana_nocturna.titulo') }}</div>
+  <div class="fig">{{ semana_nocturna.fechas }}</div>
+  <p class="note mt-6 mb-0">{{ semana_nocturna.recuperacion }}</p>
+  <a class="taplink" href="/shifts">{{ t('today.semana_nocturna.enlace') }}</a>
+</div>
+{% endif %}
 </div>
 </div>
 
