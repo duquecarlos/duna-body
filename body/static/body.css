@@ -398,8 +398,22 @@ svg.stage{display:block;width:100%}
 .cuerpo-vista-img{width:100%;height:100%;object-fit:cover;object-position:50% 0%;display:block}
 .cuerpo-vista[data-recorte="torso"] .cuerpo-vista-img{object-position:50% 30%}
 .cuerpo-vista[data-recorte="cabeza"] .cuerpo-vista-img{object-position:50% 8%}
-.cuerpo-vista-glow{position:absolute;transform:translate(-50%,-50%);border-radius:50%;pointer-events:none;background:radial-gradient(closest-side,color-mix(in srgb,var(--body) 85%,transparent),transparent);mix-blend-mode:multiply}
+.cuerpo-vista-glow{position:absolute;transform:translate(-50%,-50%);border-radius:50%;pointer-events:none;background:radial-gradient(closest-side,color-mix(in srgb,var(--body) 85%,transparent),transparent);mix-blend-mode:multiply;z-index:1}
 :root[data-theme="dark"] .cuerpo-vista-glow{mix-blend-mode:screen}
+/* BODY-LESION-ZONA-1-M: moved out of body/templates/_cuerpo_vista.html's own <style> block, which
+   the page's style-src 'self' CSP silently dropped (BODY-LESION-ZONA-1's one defect). A quiet
+   hatch for a zona an open lesion period names -- never the training glow's own color/blend,
+   legible in both themes through the same --muted token the rest of the page already uses.
+   z-index:2 draws it above a same-spot training glow (z-index:1) so a group that is both trained
+   today and recovering still reads as recovering. */
+.cuerpo-vista-glow.limitada{
+  z-index:2;
+  background: repeating-linear-gradient(45deg,
+    color-mix(in srgb, var(--muted) 55%, transparent) 0 3px, transparent 3px 7px);
+  border: 1.5px dashed color-mix(in srgb, var(--muted) 70%, transparent);
+  border-radius: 40%;
+  mix-blend-mode: normal;
+}
 .cuerpo-vista-btns{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:12px}
 .cuerpo-vista-btn{min-height:44px;padding:0 14px;border-radius:18px;border:1px solid var(--line);background:transparent;color:var(--ink);font:500 13px inherit;cursor:pointer}
 .cuerpo-vista-btn.on{border:2px solid var(--body);background:color-mix(in srgb,var(--body) 14%,transparent);font-weight:600}

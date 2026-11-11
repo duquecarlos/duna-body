@@ -4,6 +4,7 @@ and its manifest (ruling 1), the categoria -> glow-group map and the per-screen 
 """
 import hashlib
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -323,6 +324,33 @@ class CuerpoVistaTurnosTest(unittest.TestCase):
         self.assertIn("Turnos gira el cuerpo hacia el cerebro y los nervios", r.text)
         self.assertIn("Cerebro y sueño", r.text)
         self.assertIn("Nervios", r.text)
+
+
+class LimitadaStyleInBodyCssTest(unittest.TestCase):
+    """BODY-LESION-ZONA-1-M: the hatch's look lives in body/static/body.css, not in an inline
+    <style> block the page's style-src 'self' CSP would drop."""
+
+    def setUp(self):
+        self.css = (Path(__file__).resolve().parent.parent / "body" / "static" / "body.css").read_text(
+            encoding="utf-8")
+        self.template = (Path(__file__).resolve().parent.parent / "body" / "templates"
+                          / "_cuerpo_vista.html").read_text(encoding="utf-8")
+
+    def test_body_css_carries_the_limitada_rule(self):
+        self.assertIn(".cuerpo-vista-glow.limitada{", self.css)
+        self.assertIn("repeating-linear-gradient", self.css)
+
+    def test_template_holds_no_style_element(self):
+        self.assertNotIn("<style", self.template.lower())
+
+    def test_hatch_draws_above_the_training_glow(self):
+        compact = self.css.replace(" ", "").replace("\n", "")
+        self.assertIn(".cuerpo-vista-glow{", self.css)
+        glow_z = re.search(r"\.cuerpo-vista-glow\{[^}]*z-index:(\d+)", compact)
+        limitada_z = re.search(r"\.cuerpo-vista-glow\.limitada\{[^}]*z-index:(\d+)", compact)
+        self.assertIsNotNone(glow_z)
+        self.assertIsNotNone(limitada_z)
+        self.assertGreater(int(limitada_z.group(1)), int(glow_z.group(1)))
 
 
 if __name__ == "__main__":
