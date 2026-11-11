@@ -72,8 +72,14 @@ def coverage(conn, person_id: int) -> dict | None:
             longest_gap = gap
             gap_start, gap_end = prev + timedelta(1), d - timedelta(1)
         prev = d
+    # BODY-ENTRENO-VINCULO-1 ruling 3: a linked pair counts as ONE session -- the manual half of
+    # a linked pair is left out (the watch half it was folded into is still counted), the same
+    # drop `db.merge_linked_training` makes everywhere else.
     activity_count = conn.execute(
-        "SELECT COUNT(*) AS n FROM activity WHERE person_id = ?", (person_id,)
+        "SELECT COUNT(*) AS n FROM activity WHERE person_id = ? AND NOT (source = 'manual' AND "
+        "source_id IN (SELECT vinculo_manual FROM activity WHERE person_id = ? AND "
+        "vinculo_manual IS NOT NULL))",
+        (person_id, person_id),
     ).fetchone()["n"]
     return {
         "first_day": days[0],
@@ -113,9 +119,14 @@ def training(conn, person_id: int) -> dict | None:
     """Activities grouped by type, by month (with a by-type minute breakdown for a stacked bar), your
     usual week, and a year-over-year compare of the last 90 days (None when there is no data from a year
     ago, never a 0)."""
+    # BODY-ENTRENO-VINCULO-1 ruling 3: same drop as coverage()'s activity_count -- the watch row of
+    # a linked pair already carries the duration/distance this is grouping by, so dropping its
+    # linked manual row keeps each pair at one session instead of two.
     rows = conn.execute(
-        "SELECT day, type, duration_s, distance_m FROM activity WHERE person_id = ? ORDER BY day",
-        (person_id,),
+        "SELECT day, type, duration_s, distance_m FROM activity WHERE person_id = ? AND NOT "
+        "(source = 'manual' AND source_id IN (SELECT vinculo_manual FROM activity WHERE "
+        "person_id = ? AND vinculo_manual IS NOT NULL)) ORDER BY day",
+        (person_id, person_id),
     ).fetchall()
     if not rows:
         return None

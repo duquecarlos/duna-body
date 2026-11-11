@@ -86,7 +86,8 @@ _PROPUESTA_AGENTE_COLUMNS = """
                          'proponer_experimento', 'marcar_experimento',
                          'registrar_ingesta', 'corregir_ingesta', 'borrar_ingesta',
                          'marcar_periodo', 'cerrar_periodo', 'corregir_periodo', 'borrar_periodo',
-                         'registrar_comida', 'registrar_checkin', 'descartar_series')),
+                         'registrar_comida', 'registrar_checkin', 'descartar_series',
+                         'separar_sesion', 'unir_sesiones')),
     objetivo_id     INTEGER REFERENCES goal(id),
     antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
     despues_json    TEXT NOT NULL CHECK (json_valid(despues_json)),
@@ -313,6 +314,12 @@ CREATE TABLE IF NOT EXISTS activity (
     max_hr      REAL,
     calories    REAL,
     source      TEXT NOT NULL DEFAULT 'garmin',
+    -- BODY-ENTRENO-VINCULO-1 ruling 1: set only on a WATCH row -- the `source_id` of the manual
+    -- session (source = 'manual') it is the same session as. NULL means unlinked.
+    vinculo_manual   TEXT,
+    -- The person's own "never re-link this pair automatically" (ruling 1): set on a watch row by
+    -- separar_sesion's apply, so a later sync never re-guesses the same match.
+    vinculo_separado INTEGER NOT NULL DEFAULT 0 CHECK (vinculo_separado IN (0, 1)),
     PRIMARY KEY (person_id, source, source_id)
 );
 
@@ -1050,6 +1057,16 @@ def _migrate(conn: sqlite3.Connection) -> None:
     pecols = {r[1] for r in conn.execute("PRAGMA table_info(period)")}
     if pecols and "zonas" not in pecols:
         conn.execute("ALTER TABLE period ADD COLUMN zonas TEXT CHECK (zonas IS NULL OR json_valid(zonas))")
+    # BODY-ENTRENO-VINCULO-1 ruling 1: two additive columns on an old database -- every existing row
+    # reads as unlinked (vinculo_manual NULL) and not-split (vinculo_separado 0), never backfilled.
+    actcols = {r[1] for r in conn.execute("PRAGMA table_info(activity)")}
+    if actcols and "vinculo_manual" not in actcols:
+        conn.execute("ALTER TABLE activity ADD COLUMN vinculo_manual TEXT")
+    if actcols and "vinculo_separado" not in actcols:
+        conn.execute(
+            "ALTER TABLE activity ADD COLUMN vinculo_separado INTEGER NOT NULL DEFAULT 0 "
+            "CHECK (vinculo_separado IN (0, 1))"
+        )
     # Never inside SCHEMA's own executescript (BODY-COMIDA-1): that script runs BEFORE this
     # function on every init() call, so an index on a column only THIS migration might still be
     # about to add would fail against an old `ingesta` table that has not been migrated yet.
@@ -1180,6 +1197,13 @@ def _propuesta_agente_needs_series_orden_rebuild(conn: sqlite3.Connection) -> bo
     return row is not None and "descartar_series" not in row[0]
 
 
+def _propuesta_agente_needs_entreno_vinculo_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'propuesta_agente'"
+    ).fetchone()
+    return row is not None and "separar_sesion" not in row[0]
+
+
 def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
@@ -1205,6 +1229,9 @@ def _migrate_propuestas(conn: sqlite3.Connection) -> None:
         _rebuild_propuesta_agente_table(conn)
     # BODY-SERIES-ORDEN-1: a seventh widening (descartar_series), same reusable rebuild.
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_series_orden_rebuild(conn):
+        _rebuild_propuesta_agente_table(conn)
+    # BODY-ENTRENO-VINCULO-1: an eighth widening (separar_sesion, unir_sesiones), same reusable rebuild.
+    if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_entreno_vinculo_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
     # BODY-MCP-APLICAR-1: a plain nullable column, never a CHECK widening on `accion` -- a plain
     # ALTER TABLE ADD COLUMN, not the rebuild dance above.
@@ -1474,6 +1501,88 @@ def ensure_ready(conn: sqlite3.Connection) -> None:
         _READY_FILES.add(key)
 
 
+def _enlazar_sesion_manual_unica(conn: sqlite3.Connection, person_id: int, day: str, source: str,
+                                  source_id: str) -> None:
+    """BODY-ENTRENO-VINCULO-1 ruling 2: called right after a watch strength-training row is synced
+    (and only when that row is not already linked or marked split). Links it to that same day's one
+    manual session, but ONLY when there is EXACTLY one manual session that day no other watch row
+    already links -- two candidates, or zero, leave it unlinked rather than guess."""
+    candidatas = conn.execute(
+        "SELECT source_id FROM activity WHERE person_id = ? AND day = ? AND source = 'manual' AND "
+        "source_id NOT IN (SELECT vinculo_manual FROM activity WHERE person_id = ? AND "
+        "vinculo_manual IS NOT NULL)",
+        (person_id, day, person_id),
+    ).fetchall()
+    if len(candidatas) == 1:
+        conn.execute(
+            "UPDATE activity SET vinculo_manual = ? WHERE person_id = ? AND source = ? AND source_id = ?",
+            (candidatas[0]["source_id"], person_id, source, source_id),
+        )
+
+
+def set_vinculo_manual(conn: sqlite3.Connection, person_id: int, source: str, source_id: str,
+                        manual_source_id: str | None, separado: bool) -> None:
+    """The one writer of a watch row's own link columns (BODY-ENTRENO-VINCULO-1): used by
+    `separar_sesion`'s apply/undo and `unir_sesiones`'s apply/undo, through body/agente/
+    propuestas.py -- never a direct UPDATE anywhere else."""
+    with conn:
+        conn.execute(
+            "UPDATE activity SET vinculo_manual = ?, vinculo_separado = ? WHERE person_id = ? AND "
+            "source = ? AND source_id = ?",
+            (manual_source_id, int(separado), person_id, source, source_id),
+        )
+
+
+def merge_linked_training(rows) -> list[dict]:
+    """BODY-ENTRENO-VINCULO-1 ruling 3: given a flat set of `activity` rows (any WHERE clause that
+    includes both halves of a linked pair -- always true for a single day, and for a range query
+    that matches every manual row and every strength_training row), folds each linked watch/manual
+    pair into ONE dict: the manual row's own `name` (the person's words win) and the watch row's own
+    `start_local`/`duration_s`/`avg_hr`/`max_hr`/`calories`/`distance_m` (every other field, and the
+    row's own `source`/`source_id`, stay the watch row's -- so a caller keyed to that identity, e.g.
+    hoy.py's recovery lookup, is never disturbed). The manual row itself is dropped from the output;
+    `sets_source`/`sets_source_id` name which identity a caller's own `exercise_sets` lookup should
+    read instead -- the manual row's, so the person's own entered sets show, never the watch's own
+    (unlisted) slots. `vinculado` and `vinculo_manual_source_id` carry what Día's own card and the
+    `separar_sesion` tool need. An unlinked row, or one whose named manual row is not in `rows` (a
+    caller that queried a narrower range than the link spans -- never expected, since a link is
+    always same-day), passes through unchanged."""
+    por_manual_id = {r["source_id"]: r for r in rows if r["source"] == "manual"}
+    vinculadas = {r["vinculo_manual"] for r in rows if r["vinculo_manual"] in por_manual_id}
+    out = []
+    for r in rows:
+        if r["source"] == "manual" and r["source_id"] in vinculadas:
+            continue
+        d = dict(r)
+        manual = por_manual_id.get(r["vinculo_manual"]) if r["vinculo_manual"] else None
+        if manual is not None:
+            d["name"] = manual["name"]
+            d["vinculado"] = True
+            d["vinculo_manual_source_id"] = manual["source_id"]
+            d["sets_source"], d["sets_source_id"] = "manual", manual["source_id"]
+        else:
+            d["vinculado"] = False
+            d["sets_source"], d["sets_source_id"] = d["source"], d["source_id"]
+        out.append(d)
+    return out
+
+
+def candidatos_union_entreno(conn: sqlite3.Connection, person_id: int, day: str) -> dict | None:
+    """BODY-ENTRENO-VINCULO-1 ruling 5: this day's one unlinked manual session and one unlinked
+    watch strength session, if there is exactly one of each -- what `unir_sesiones` is allowed to
+    propose, and what Día's own "Unir" offer is shown from. None otherwise (zero or two-plus of
+    either side), the same refuse-rather-than-guess rule `_enlazar_sesion_manual_unica` follows at
+    sync time."""
+    filas = conn.execute("SELECT * FROM activity WHERE person_id = ? AND day = ?", (person_id, day)).fetchall()
+    vinculadas = {r["vinculo_manual"] for r in filas if r["vinculo_manual"]}
+    manuales = [r for r in filas if r["source"] == "manual" and r["source_id"] not in vinculadas]
+    relojes = [r for r in filas if r["type"] == "strength_training" and r["source"] != "manual"
+               and r["vinculo_manual"] is None]
+    if len(manuales) != 1 or len(relojes) != 1:
+        return None
+    return {"manual": manuales[0], "reloj": relojes[0]}
+
+
 def save_day(conn: sqlite3.Connection, day_data, person_id: int) -> None:
     """Store one DayData from an adapter (raw payloads, metrics, sleep, activities)."""
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -1510,13 +1619,27 @@ def save_day(conn: sqlite3.Connection, day_data, person_id: int) -> None:
                 (person_id, d, day_data.sleep_start, day_data.sleep_end),
             )
         for a in day_data.activities:
+            # BODY-ENTRENO-VINCULO-1 ruling 2: INSERT OR REPLACE, on a PK conflict, would otherwise
+            # reset vinculo_manual/vinculo_separado to their column defaults -- read whatever this
+            # same row already carries first, and carry it through unchanged.
+            previa = conn.execute(
+                "SELECT vinculo_manual, vinculo_separado FROM activity WHERE person_id = ? AND "
+                "source = ? AND source_id = ?",
+                (person_id, src, a["source_id"]),
+            ).fetchone()
+            vinculo_manual = previa["vinculo_manual"] if previa else None
+            vinculo_separado = previa["vinculo_separado"] if previa else 0
             conn.execute(
                 "INSERT OR REPLACE INTO activity (person_id, source_id, day, start_local, type, name, "
-                "duration_s, distance_m, avg_hr, max_hr, calories, source) "
+                "duration_s, distance_m, avg_hr, max_hr, calories, source, vinculo_manual, "
+                "vinculo_separado) "
                 "VALUES (:person_id, :source_id, :day, :start_local, :type, :name, :duration_s, "
-                ":distance_m, :avg_hr, :max_hr, :calories, :source)",
-                {**a, "person_id": person_id, "day": d, "source": src},
+                ":distance_m, :avg_hr, :max_hr, :calories, :source, :vinculo_manual, :vinculo_separado)",
+                {**a, "person_id": person_id, "day": d, "source": src,
+                 "vinculo_manual": vinculo_manual, "vinculo_separado": vinculo_separado},
             )
+            if a.get("type") == "strength_training" and vinculo_manual is None and not vinculo_separado:
+                _enlazar_sesion_manual_unica(conn, person_id, d, src, a["source_id"])
 
 
 def load_day(conn: sqlite3.Connection, day: str, person_id: int) -> dict:
@@ -1530,10 +1653,10 @@ def load_day(conn: sqlite3.Connection, day: str, person_id: int) -> dict:
         "SELECT start_local, end_local FROM sleep_session WHERE person_id = ? AND day = ?",
         (person_id, day),
     ).fetchone()
-    activities = conn.execute(
+    activities = merge_linked_training(conn.execute(
         "SELECT * FROM activity WHERE person_id = ? AND day = ? ORDER BY start_local",
         (person_id, day),
-    ).fetchall()
+    ).fetchall())
     shifts = conn.execute(
         "SELECT * FROM shift WHERE person_id = ? AND day = ? ORDER BY start_local",
         (person_id, day),
@@ -1551,9 +1674,11 @@ def load_day(conn: sqlite3.Connection, day: str, person_id: int) -> dict:
         # BODY-LESION-ZONA-1 ruling 2: raw zona codes only (never rendered text -- that stays the
         # caller's job, since this module carries no i18n), the active, non-excluded sets' own
         # categoria intersected with today's own open-lesion zonas. Empty, never None, so every
-        # caller can test it the same way whether or not any period is open.
+        # caller can test it the same way whether or not any period is open. BODY-ENTRENO-VINCULO-1
+        # ruling 3: for a linked pair, that is the PERSON's own sets (`sets_source`/`sets_source_id`
+        # -- the manual row's), never the watch's own unlisted slots.
         if zonas_dia:
-            categorias = {s["category"] for s in exercise_sets(conn, person_id, a["source"], a["source_id"])
+            categorias = {s["category"] for s in exercise_sets(conn, person_id, a["sets_source"], a["sets_source_id"])
                           if s["set_type"] == "active" and not s["excluded_by_person"] and s["category"]}
             d["zonas_limitadas"] = sorted(categorias & zonas_dia)
         else:

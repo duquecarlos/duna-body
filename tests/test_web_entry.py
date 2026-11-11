@@ -56,6 +56,11 @@ class RouteSetTest(unittest.TestCase):
         ("/day/{day}", ("GET",)),
         ("/day/{day}/noche-inusual/visto", ("POST",)),  # BODY-NOCHE-INUSUAL-1
         ("/day/{day}/noche-inusual/nota", ("POST",)),  # BODY-MOCK-R2-HOY-1
+        ("/day/{day}/entreno/{source_id}/separar", ("POST",)),  # BODY-ENTRENO-VINCULO-1
+        ("/day/{day}/entreno/unir", ("POST",)),  # BODY-ENTRENO-VINCULO-1
+        ("/day/{day}/entreno/propuestas/{propuesta_id}/aplicar", ("POST",)),  # BODY-ENTRENO-VINCULO-1
+        ("/day/{day}/entreno/propuestas/{propuesta_id}/descartar", ("POST",)),  # BODY-ENTRENO-VINCULO-1
+        ("/day/{day}/entreno/propuestas/{propuesta_id}/deshacer", ("POST",)),  # BODY-ENTRENO-VINCULO-1
         ("/experiments/{experiment_id}", ("GET",)),
         ("/experiments/{experiment_id}/close", ("POST",)),
         ("/experiments/{experiment_id}/day", ("POST",)),

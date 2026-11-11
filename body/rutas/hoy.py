@@ -16,6 +16,8 @@ from markupsafe import Markup
 from .. import (anatomia, compartir, cuenta, db, goals, history, household, identity, noche_inusual, readiness,
                 recuperacion, turnos_costo, tutoriales, ventana_comida)
 from ..agente import conversacion as agente_conversacion
+from ..agente import herramientas as agente_herramientas
+from ..agente import propuestas as agente_propuestas
 from ..baselines import baseline
 from ..i18n import T
 from . import comun, experimentos
@@ -290,10 +292,14 @@ def _actividades_hoy(conn, person_id: int, today_local: date) -> list[dict]:
     """BODY-HOY-DIA-POR-DELANTE-1 (ruling 2): today's own already-logged activities, each with its
     own start time -- a future activity cannot appear here before the watch has synced it, the same
     honest-gap rule every other figure in this app follows."""
-    rows = conn.execute(
-        "SELECT name, type, start_local, duration_s FROM activity WHERE person_id = ? AND day = ? "
-        "ORDER BY start_local", (person_id, today_local.isoformat())).fetchall()
-    return [dict(r) for r in rows]
+    # BODY-ENTRENO-VINCULO-1 ruling 3: a linked pair is one row here too -- `db.merge_linked_training`
+    # needs every column (the link itself, both halves' own name/day) to fold the pair, so this
+    # reads `SELECT *` rather than naming the four columns the caller actually wants.
+    rows = db.merge_linked_training(conn.execute(
+        "SELECT * FROM activity WHERE person_id = ? AND day = ? ORDER BY start_local",
+        (person_id, today_local.isoformat())).fetchall())
+    return [{"name": r["name"], "type": r["type"], "start_local": r["start_local"],
+             "duration_s": r["duration_s"]} for r in rows]
 
 
 def _dia_por_delante_ctx(t: T, conn, person_id: int, today_local: date, turno_hoy: dict | None) -> list[dict]:
@@ -758,6 +764,43 @@ def _checkins_dia_ctx(t: T, conn, person_id: int, defs: dict, vals: dict, dia_is
     return {"eventos": salida, "comparacion": comparacion}
 
 
+def _sesion_con_hora_txt(titulo: str, hora_local: str | None) -> str:
+    hora = hora_local[11:16] if hora_local else None
+    return f"{titulo} ({hora})" if hora else titulo
+
+
+def _entreno_vinculo_txt(t: T, accion: str, despues: dict) -> str:
+    """BODY-ENTRENO-VINCULO-1 rulings 4, 5: the same two plain-word card texts body/rutas/
+    asistente.py's own `_tarjeta_separar_sesion`/`_tarjeta_unir_sesiones` build, duplicated rather
+    than shared -- neither module may import the other for one helper (the same choice
+    `_momento_checkin_txt` above already makes)."""
+    if accion == "separar_sesion":
+        reloj = _sesion_con_hora_txt(despues["reloj_titulo"], despues.get("reloj_hora"))
+        manual = _sesion_con_hora_txt(despues["manual_titulo"], despues.get("manual_hora"))
+        return t("asistente.propuesta.entreno_separar", reloj=reloj, manual=manual)
+    return t("asistente.propuesta.entreno_unir", reloj=despues["reloj_titulo"], manual=despues["manual_titulo"])
+
+
+def _propuestas_vinculo_dia_ctx(conn, t: T, person_id: int, day: str) -> list[dict]:
+    """Día's own inline cards for a pending or applied `separar_sesion`/`unir_sesiones` proposal on
+    this day (BODY-ENTRENO-VINCULO-1 rulings 4, 5): plain text plus which buttons apply, built here
+    rather than reusing the chat panel's own card machinery (DESIGN: a Día-raised proposal has no
+    conversation the person would otherwise open)."""
+    filas = conn.execute(
+        "SELECT * FROM propuesta_agente WHERE person_id = ? AND accion IN ('separar_sesion', "
+        "'unir_sesiones') AND estado IN ('propuesta', 'aplicada') ORDER BY creada_en DESC",
+        (person_id,),
+    ).fetchall()
+    out = []
+    for f in filas:
+        despues = json.loads(f["despues_json"])
+        if despues.get("day") != day:
+            continue
+        out.append({"id": f["id"], "aplicada": f["estado"] == "aplicada",
+                     "texto": _entreno_vinculo_txt(t, f["accion"], despues)})
+    return out
+
+
 @router.get("/day/{day}")
 @comun._cierra_conexion
 def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
@@ -807,7 +850,11 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
                      "recovery": _recovery_line(t, recovery_row),
                      # BODY-LESION-ZONA-1 ruling 2: the one shared plain line, from db.load_day's
                      # own zonas_limitadas (raw zona codes -- never the period's own note).
-                     "lesion": anatomia.texto_liviano_a_proposito(t, a["zonas_limitadas"])})
+                     "lesion": anatomia.texto_liviano_a_proposito(t, a["zonas_limitadas"]),
+                     # BODY-ENTRENO-VINCULO-1 ruling 3: the "joined" line and the Separar control
+                     # -- source_id always names the watch half (db.merge_linked_training's own
+                     # identity), which `_separar_sesion` resolves either way.
+                     "vinculado": a["vinculado"], "source_id": a["source_id"]})
     shifts = []
     for s in data["shifts"]:
         kind = s["kind"]
@@ -825,6 +872,10 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
             block_ctx = t("day.shift_ctx_noche", n=ctx["n"], de=ctx["de"])
         else:
             block_ctx = t("day.shift_ctx_despues", n=ctx["n"])
+    # BODY-ENTRENO-VINCULO-1 ruling 5: shown only when this day has exactly one unlinked manual
+    # session and one unlinked watch strength session -- never a guess.
+    union_oferta = db.candidatos_union_entreno(conn, person_id, d.isoformat()) is not None
+    vinculo_tarjetas = _propuestas_vinculo_dia_ctx(conn, t, person_id, d.isoformat())
     return comun._render("day.html", t=t, tab="today", day=d.isoformat(), date_long=t.long_date(d), cards=cards,
                    sleep=sleep, sueno_resp_linea=sueno_resp_linea, sueno_fc_linea=sueno_fc_linea,
                    noche_inusual=noche_inusual_ctx,
@@ -833,7 +884,8 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
                    prev=(d - timedelta(1)).isoformat(), next=(d + timedelta(1)).isoformat(),
                    turnos=turnos_on, ventana=_ventana_dia_ctx(t, conn, person_id, d), periodo=periodo_dia,
                    comidas=_comidas_dia_ctx(t, conn, person_id, defs, d.isoformat()),
-                   checkin=_checkins_dia_ctx(t, conn, person_id, defs, vals, d.isoformat()))
+                   checkin=_checkins_dia_ctx(t, conn, person_id, defs, vals, d.isoformat()),
+                   union_oferta=union_oferta, vinculo_tarjetas=vinculo_tarjetas)
 
 
 @router.post("/day/{day}/noche-inusual/visto")
@@ -870,3 +922,81 @@ async def noche_inusual_nota(day: str, request: Request, person_id: int = Depend
         noche_inusual.guardar_nota(conn, person_id, d.isoformat(), texto)
     back = cuenta.safe_return_to(f.get("back") or f"/day/{day}")
     return RedirectResponse(back, status_code=303)
+
+
+@router.post("/day/{day}/entreno/{source_id}/separar")
+@comun._cierra_conexion_async
+async def entreno_separar(day: str, source_id: str, request: Request,
+                           person_id: int = Depends(identity.current_person_id)):
+    """BODY-ENTRENO-VINCULO-1 ruling 4: Día's own "Separar" control -- raises the SAME
+    `separar_sesion` proposal a chat/MCP call would, through `herramientas._separar_sesion` and
+    `agente_propuestas.crear`, in a fresh conversation this one control owns. A day/source_id with
+    no linked pair left (already separated, a stale link) is a no-op redirect, never a 500 -- the
+    control is only ever shown next to a currently-linked activity, so this is purely defensive."""
+    d = _parse_day(day)
+    conn, _, _ = comun._ctx(person_id)
+    conversacion_id = agente_conversacion.crear(conn, person_id)
+    try:
+        agente_herramientas._separar_sesion(conn, person_id, conversacion_id, d.isoformat(), source_id)
+    except agente_herramientas.ToolError:
+        pass
+    f = await comun._form(request)
+    back = cuenta.safe_return_to(f.get("back") or f"/day/{day}")
+    return RedirectResponse(back, status_code=303)
+
+
+@router.post("/day/{day}/entreno/unir")
+@comun._cierra_conexion_async
+async def entreno_unir(day: str, request: Request, person_id: int = Depends(identity.current_person_id)):
+    """BODY-ENTRENO-VINCULO-1 ruling 5: Día's own "Unir" control -- same shape as `entreno_separar`
+    above, for `unir_sesiones`. A day with no exact one-manual-one-watch pair left is a no-op
+    redirect -- the control is only shown while `db.candidatos_union_entreno` finds one."""
+    d = _parse_day(day)
+    conn, _, _ = comun._ctx(person_id)
+    conversacion_id = agente_conversacion.crear(conn, person_id)
+    try:
+        agente_herramientas._unir_sesiones(conn, person_id, conversacion_id, d.isoformat())
+    except agente_herramientas.ToolError:
+        pass
+    f = await comun._form(request)
+    back = cuenta.safe_return_to(f.get("back") or f"/day/{day}")
+    return RedirectResponse(back, status_code=303)
+
+
+@comun._cierra_conexion_async
+async def _entreno_propuesta_resolver(day: str, propuesta_id: int, request: Request, person_id: int,
+                                       accion) -> RedirectResponse:
+    """BODY-ENTRENO-VINCULO-1 ruling 4: the one place Día's own Aplicar/Descartar/Deshacer controls
+    call into -- the SAME `agente_propuestas` functions body/rutas/asistente.py's own generic JSON
+    routes call (no second apply path), redirecting back to Día instead of returning JSON. A stale
+    or someone-else's id is a no-op redirect, same as a drifted/expired one already resolves to a
+    plain estado string rather than raising."""
+    conn, _, _ = comun._ctx(person_id)
+    try:
+        accion(conn, person_id, propuesta_id)
+    except agente_propuestas.PropuestaAjena:
+        pass
+    f = await comun._form(request)
+    back = cuenta.safe_return_to(f.get("back") or f"/day/{day}")
+    return RedirectResponse(back, status_code=303)
+
+
+@router.post("/day/{day}/entreno/propuestas/{propuesta_id}/aplicar")
+@comun._cierra_conexion_async
+async def entreno_propuesta_aplicar(day: str, propuesta_id: int, request: Request,
+                                     person_id: int = Depends(identity.current_person_id)):
+    return await _entreno_propuesta_resolver(day, propuesta_id, request, person_id, agente_propuestas.aplicar)
+
+
+@router.post("/day/{day}/entreno/propuestas/{propuesta_id}/descartar")
+@comun._cierra_conexion_async
+async def entreno_propuesta_descartar(day: str, propuesta_id: int, request: Request,
+                                       person_id: int = Depends(identity.current_person_id)):
+    return await _entreno_propuesta_resolver(day, propuesta_id, request, person_id, agente_propuestas.descartar)
+
+
+@router.post("/day/{day}/entreno/propuestas/{propuesta_id}/deshacer")
+@comun._cierra_conexion_async
+async def entreno_propuesta_deshacer(day: str, propuesta_id: int, request: Request,
+                                      person_id: int = Depends(identity.current_person_id)):
+    return await _entreno_propuesta_resolver(day, propuesta_id, request, person_id, agente_propuestas.deshacer)

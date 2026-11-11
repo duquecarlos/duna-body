@@ -147,6 +147,11 @@ _PLAN_HOY_EJERCICIOS = {
 _LESION_ZONA_DEMO = "hombro"
 _LESION_SET_EJERCICIO = {"es": "press militar", "en": "overhead press"}
 
+# BODY-ENTRENO-VINCULO-1 ruling 8: the manual session's own title on the one demo day seeded
+# already linked to its watch session, so Día shows ruling 3's "joined" line without the person
+# needing to do anything.
+_ENTRENO_VINCULADO_TITULO = {"es": "Fuerza (registrada a mano)", "en": "Strength (logged by hand)"}
+
 
 @dataclass
 class _DayData:
@@ -321,6 +326,32 @@ def _seed_days(conn, db, rng: random.Random, all_days: list[date], person_id: in
                                     activities=[activity] if activity else [], **breath), person_id)
     conn.commit()
     return metric_rows, activity_rows
+
+
+def _seed_entreno_vinculado(conn, db, person_id: int, idioma: str) -> None:
+    """BODY-ENTRENO-VINCULO-1 ruling 8: one manual-first day already linked, so Día shows ruling
+    3's own "joined with your watch's session" line on the demo server without the person needing
+    to do anything. The EARLIEST strength_training day `_seed_days` already made, never a random
+    draw (test_demo.py's own two-runs-identical guard needs this deterministic). The link is set
+    directly through `db.set_vinculo_manual` -- seeding is invented fixture data, not a real sync,
+    so there is no watch activity to insert a second time through `db.save_day`'s own auto-link."""
+    fila = conn.execute(
+        "SELECT source, source_id, day FROM activity WHERE person_id = ? AND type = 'strength_training' "
+        "ORDER BY day LIMIT 1", (person_id,),
+    ).fetchone()
+    if fila is None:
+        return
+    # A fixed id, never db.create_manual_session's own uuid4 -- this row's id must be the same on
+    # every run for the same seed (test_demo.py's own two-runs-identical guard).
+    manual_id = f"demo-manual-{fila['day']}"
+    conn.execute(
+        "INSERT INTO activity (person_id, source_id, day, start_local, type, name, duration_s, "
+        "distance_m, avg_hr, max_hr, calories, source) "
+        "VALUES (?, ?, ?, NULL, NULL, ?, NULL, NULL, NULL, NULL, NULL, 'manual')",
+        (person_id, manual_id, fila["day"], _ENTRENO_VINCULADO_TITULO[idioma]),
+    )
+    db.set_vinculo_manual(conn, person_id, fila["source"], fila["source_id"], manual_id, False)
+    conn.commit()
 
 
 def _muestra_ms(t: datetime) -> int:
@@ -983,6 +1014,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     first_monday, anchor_monday = fechas.lunes_de(all_days[0]), fechas.lunes_de(anchor)
 
     metric_rows, activity_rows = _seed_days(conn, db, rng, all_days, person_id)
+    _seed_entreno_vinculado(conn, db, person_id, idioma)
     metric_rows += _seed_self_metrics(conn, db, rng, all_days, person_id)
     metric_rows += _seed_soreness(conn, db, rng, all_days, person_id)
     entradas_ingesta, comidas_ingesta = _seed_ingesta(conn, db, rng, all_days, person_id)

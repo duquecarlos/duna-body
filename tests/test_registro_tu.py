@@ -73,6 +73,8 @@ _THIRD_PERSON_ALLOW = {
     "asistente.mcp.aplicar_apagado": "'puede' subject is 'tu asistente personal', not the reader",
     "asistente.mcp.descartar_apagado": "'puede' subject is 'tu asistente personal', not the reader",
     "agente.error.entreno_orden_tuya": "'se puede' is an impersonal construction, not usted",
+    "agente.error.entreno_no_unida": "'tiene' subject is 'ese dia' (the day), not the reader",
+    "agente.error.entreno_unir_ambiguo": "'tiene' subject is 'ese dia' (the day), not the reader",
 }
 
 

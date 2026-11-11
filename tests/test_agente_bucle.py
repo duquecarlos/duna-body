@@ -126,7 +126,7 @@ class NivelDatosEnforcementTest(unittest.TestCase):
             "registrar_ingesta", "corregir_ingesta", "borrar_ingesta", "registrar_comida",
             "registrar_checkin",
             "marcar_periodo", "cerrar_periodo", "corregir_periodo", "borrar_periodo",
-            "descartar_series",
+            "descartar_series", "separar_sesion", "unir_sesiones",
         })
 
         prov = FakeProveedor([

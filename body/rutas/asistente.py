@@ -403,6 +403,27 @@ def _tarjeta_descartar_series(t: T, defs: dict, despues: dict, antes_json: dict 
     return None, despues_txt, series_tarjeta
 
 
+def _sesion_con_hora_txt(titulo: str, hora_local: str | None) -> str:
+    hora = hora_local[11:16] if hora_local else None
+    return f"{titulo} ({hora})" if hora else titulo
+
+
+def _tarjeta_separar_sesion(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
+    """BODY-ENTRENO-VINCULO-1 ruling 4: both sessions' own title and time, plain words -- the undo
+    of an automatic or a chat-raised link."""
+    reloj_txt = _sesion_con_hora_txt(despues["reloj_titulo"], despues.get("reloj_hora"))
+    manual_txt = _sesion_con_hora_txt(despues["manual_titulo"], despues.get("manual_hora"))
+    despues_txt = t("asistente.propuesta.entreno_separar", reloj=reloj_txt, manual=manual_txt)
+    return None, despues_txt, None
+
+
+def _tarjeta_unir_sesiones(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
+    """BODY-ENTRENO-VINCULO-1 ruling 5: the batch fix for a day stored before this slice, or one
+    `separar_sesion` already split."""
+    despues_txt = t("asistente.propuesta.entreno_unir", reloj=despues["reloj_titulo"], manual=despues["manual_titulo"])
+    return None, despues_txt, None
+
+
 def _filtro_dias_txt(t: T, filtro_dias: dict) -> str:
     """"which days count" in plain words (BODY-EXPERIMENTOS-REGISTRO-1): the shift kinds a day must
     or must not have, plus whether a post-night recovery day is excluded -- built from
@@ -482,6 +503,8 @@ TARJETAS = {
     "corregir_periodo": _tarjeta_corregir_periodo,
     "borrar_periodo": _tarjeta_borrar_periodo,
     "descartar_series": _tarjeta_descartar_series,
+    "separar_sesion": _tarjeta_separar_sesion,
+    "unir_sesiones": _tarjeta_unir_sesiones,
 }
 
 
