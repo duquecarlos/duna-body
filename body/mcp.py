@@ -26,6 +26,14 @@ delete, never another person's or the in-app assistant's own proposal. Turning t
 OFF takes effect on this same long-lived process's very next `tools/list` or `tools/call`, since
 both read it fresh (ruling 2).
 
+`descartar_propuesta` (ruling 3) sits beside `aplicar_propuesta`, gated by the same setting: it
+retires one of THIS caller's own still-pending proposals (a correction that left an older same-day
+proposal obsolete, for instance) through the SAME `agente_propuestas.descartar` the web route's
+own Descartar button uses. It writes no health data, so it needs none of `aplicar_propuesta`'s
+"the person already said yes" precondition. A proposal this server creates now lives through the
+end of the person's own NEXT local day, not 15 minutes (ruling 1, body/agente/propuestas.py's
+EXPIRA_MCP_DIAS_SIGUIENTES) -- long enough for a relayed, asynchronous yes to still land.
+
 Caps (ruling 4, BODY-MCP-LOCAL-1-B) bound a RATE, not a session: a rolling window of
 `LIMITES["ventana_min"]` minutes holds at most `LIMITES["lecturas"]` reads and `LIMITES["propuestas"]`
 proposals, the same ceilings body/agente/bucle.py's own per-question caps (MAX_LECTURAS, MAX_RONDAS)
@@ -49,6 +57,7 @@ import sys
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import IO
+from zoneinfo import ZoneInfo
 
 from . import db, errores
 from .agente import ajustes, bucle
@@ -83,19 +92,39 @@ _DESCRIPCION_APLICAR_PROPUESTA = (
     "momento."
 )
 
-# A rolling window, not a per-process total (BODY-MCP-LOCAL-1-B): "ventana_min" mirrors
-# body/agente/propuestas.py's own EXPIRA_MINUTOS (a proposal this server creates lives exactly that
-# long before the person can no longer act on it, so a caller that could still be proposing past
-# that point was never going to get an "aplicar" anyway); "lecturas"/"propuestas" mirror
-# body/agente/bucle.py's own per-question caps (MAX_LECTURAS, MAX_RONDAS) -- the same ceiling the
-# in-app assistant holds itself to for one question, now the ceiling for one window instead of one
-# session.
+# ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3: a sibling tool, listed and gated by the exact same
+# `aplicar_mcp` setting as NOMBRE_APLICAR above -- but it writes no health data itself (it only
+# moves a proposal OF THIS SAME CALLER's own making from 'propuesta' to the existing 'descartada'
+# state, through the same agente_propuestas.descartar the web route's own Descartar button uses),
+# so it needs no "the person already said yes" precondition the way aplicar_propuesta does.
+NOMBRE_DESCARTAR = "descartar_propuesta"
+_PARAM_DESCARTAR_PROPUESTA = {
+    "type": "object",
+    "properties": {"propuesta_id": {"type": "integer"}},
+    "required": ["propuesta_id"],
+    "additionalProperties": False,
+}
+_DESCRIPCION_DESCARTAR_PROPUESTA = (
+    "Descarta una propuesta que TÚ (este mismo asistente externo) ya creaste con otra herramienta "
+    "y que sigue pendiente -- por ejemplo, una propuesta vieja que una corrección tuya volvió "
+    "obsoleta. No necesitas que la persona diga que sí primero: esto no guarda ningún dato de "
+    "salud, solo retira la propuesta vieja para que no la vean dos veces."
+)
+
+# A rolling window, not a per-process total (BODY-MCP-LOCAL-1-B): "ventana_min" bounds how often
+# this caller may call in AT ALL -- a short while, unrelated to how long any ONE proposal stays
+# valid now that ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1 gave an mcp-made proposal its own, much
+# longer life. It reuses body/agente/propuestas.py's own EXPIRA_MINUTOS constant only because both
+# happen to want "a short while" -- read here rather than restated as a bare number; "lecturas"/
+# "propuestas" mirror body/agente/bucle.py's own per-question caps (MAX_LECTURAS, MAX_RONDAS) --
+# the same ceiling the in-app assistant holds itself to for one question, now the ceiling for one
+# window instead of one session.
 #
 # "aplicaciones" (BODY-MCP-APLICAR-1, ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 6): an apply is a real
 # write, not a mere proposal, so it gets bucle.MAX_LECTURAS -- the same tighter ceiling a read
 # already carries, instead of the looser MAX_RONDAS "propuestas" reuses.
-LIMITES = {"ventana_min": 15, "lecturas": bucle.MAX_LECTURAS, "propuestas": bucle.MAX_RONDAS,
-           "aplicaciones": bucle.MAX_LECTURAS}
+LIMITES = {"ventana_min": agente_propuestas.EXPIRA_MINUTOS, "lecturas": bucle.MAX_LECTURAS,
+           "propuestas": bucle.MAX_RONDAS, "aplicaciones": bucle.MAX_LECTURAS}
 
 _PARSE_ERROR = {"code": -32700, "message": "Parse error"}
 _METHOD_NOT_FOUND = {"code": -32601, "message": "Method not found"}
@@ -170,11 +199,17 @@ def _herramienta_aplicar() -> dict:
             "inputSchema": _PARAM_APLICAR_PROPUESTA}
 
 
+def _herramienta_descartar() -> dict:
+    return {"name": NOMBRE_DESCARTAR, "description": _DESCRIPCION_DESCARTAR_PROPUESTA,
+            "inputSchema": _PARAM_DESCARTAR_PROPUESTA}
+
+
 def _lista_herramientas(sesion: _Sesion) -> list[dict]:
     nivel = _nivel(sesion)
     tools = [_herramienta_mcp(e) for e in bucle._tool_specs(nivel)]
     if db.get_aplicar_mcp(sesion.conn, sesion.person_id):
         tools.append(_herramienta_aplicar())
+        tools.append(_herramienta_descartar())
     return tools
 
 
@@ -209,6 +244,22 @@ def _mensaje_aplicar_no_vigente(sesion: _Sesion) -> str:
     return T(_idioma(sesion))("asistente.mcp.aplicar_no_vigente")
 
 
+def _mensaje_aplicar_expirada(sesion: _Sesion, expira_en: str) -> str:
+    """Ruling 4: when `aplicar_propuesta` meets a proposal that turned out to be expired, the
+    message names WHEN it expired -- in the person's own language and local time -- and says to
+    propose again, never just the generic "no longer pending" every other non-apply outcome still
+    gets from `_mensaje_aplicar_no_vigente`."""
+    t = T(_idioma(sesion))
+    tz = ZoneInfo(db.person(sesion.conn, sesion.person_id).get("timezone") or "America/Bogota")
+    local = datetime.fromisoformat(expira_en).astimezone(tz)
+    return t("asistente.mcp.aplicar_expirada", fecha=t.long_date(local.date()),
+             hora=f"{local.hour:02d}:{local.minute:02d}")
+
+
+def _mensaje_descartar_apagado(sesion: _Sesion) -> str:
+    return T(_idioma(sesion))("asistente.mcp.descartar_apagado")
+
+
 def _aplicar_propuesta_mcp(sesion: _Sesion, argumentos: dict) -> dict:
     """`aplicar_propuesta` (BODY-MCP-APLICAR-1, ORCH-CARLOS-DELEGATES-TIER-1-1 rulings 2, 3, 6):
     refuses with a plain tool error when the setting is OFF, when `propuesta_id` is not an int,
@@ -231,11 +282,40 @@ def _aplicar_propuesta_mcp(sesion: _Sesion, argumentos: dict) -> dict:
     if fila is None or agente_conversacion.origen_de(sesion.conn, fila["conversacion_id"]) != ORIGEN:
         raise herramientas.ToolError(_mensaje_aplicar_no_propia(sesion))
     resultado = agente_propuestas.aplicar(sesion.conn, sesion.person_id, propuesta_id)
+    if resultado["estado"] == "expirada":
+        raise herramientas.ToolError(_mensaje_aplicar_expirada(sesion, resultado["expira_en"]))
     if resultado["estado"] != "aplicada":
         raise herramientas.ToolError(_mensaje_aplicar_no_vigente(sesion))
     db.marcar_aplicada_via_mcp(sesion.conn, propuesta_id)
     sesion.tope_aplicaciones.registrar()
     sesion.total_aplicaciones += 1
+    return {"propuesta_id": propuesta_id, "estado": resultado["estado"]}
+
+
+def _descartar_propuesta_mcp(sesion: _Sesion, argumentos: dict) -> dict:
+    """`descartar_propuesta` (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3): refuses with a plain tool
+    error when the setting is OFF, when `propuesta_id` is not an int, when the row does not exist,
+    is not this person's, or was not made by this same outside caller (its conversation's `origen`
+    must be 'mcp'), or is no longer in state 'propuesta' (already applied, discarded, expired, or
+    drifted) -- naming why in each case, in the person's own language, the same two refusal
+    messages `aplicar_propuesta` above already carries. Discards through the SAME
+    `agente_propuestas.descartar` the web route's own Descartar button uses; writes no health
+    data itself, so it carries no drift check and needs no "the person already said yes"
+    precondition."""
+    if not db.get_aplicar_mcp(sesion.conn, sesion.person_id):
+        raise herramientas.ToolError(_mensaje_descartar_apagado(sesion))
+    propuesta_id = argumentos.get("propuesta_id")
+    if not isinstance(propuesta_id, int):
+        raise herramientas.ToolError("propuesta_id debe ser un entero")
+    fila = sesion.conn.execute(
+        "SELECT conversacion_id FROM propuesta_agente WHERE id = ? AND person_id = ?",
+        (propuesta_id, sesion.person_id),
+    ).fetchone()
+    if fila is None or agente_conversacion.origen_de(sesion.conn, fila["conversacion_id"]) != ORIGEN:
+        raise herramientas.ToolError(_mensaje_aplicar_no_propia(sesion))
+    resultado = agente_propuestas.descartar(sesion.conn, sesion.person_id, propuesta_id)
+    if resultado["estado"] != "descartada":
+        raise herramientas.ToolError(_mensaje_aplicar_no_vigente(sesion))
     return {"propuesta_id": propuesta_id, "estado": resultado["estado"]}
 
 
@@ -255,6 +335,8 @@ def _llamar_herramienta(sesion: _Sesion, nombre, argumentos: dict) -> tuple[str,
     db.registrar_uso_herramienta_externa(sesion.conn, sesion.person_id, nombre_str, CALLER)
     if nombre_str == NOMBRE_APLICAR:
         return "aplicacion", _aplicar_propuesta_mcp(sesion, argumentos), False
+    if nombre_str == NOMBRE_DESCARTAR:
+        return "descarte", _descartar_propuesta_mcp(sesion, argumentos), False
     nivel = _nivel(sesion)
     tipo = herramientas.tipo_de(nombre) if isinstance(nombre, str) else None
     if tipo is None:
@@ -342,6 +424,11 @@ def _procesar_mensaje(sesion: _Sesion, msg: dict) -> dict | None:
             t = T(_idioma(sesion))
             contenido.insert(0, {"type": "text",
                                   "text": t("asistente.mcp.aplicar_resultado", pantalla=t("nav.today"))})
+        elif tipo == "descarte":
+            # Ruling 3: this caller never sees the Hoy card directly, so this is the one place it
+            # is told the old proposal is gone.
+            t = T(_idioma(sesion))
+            contenido.insert(0, {"type": "text", "text": t("asistente.mcp.descartar_resultado")})
         return _responder(id_, resultado={"content": contenido})
     if es_notificacion:
         return None

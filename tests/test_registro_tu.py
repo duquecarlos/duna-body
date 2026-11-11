@@ -71,6 +71,7 @@ _THIRD_PERSON_ALLOW = {
     "settings.aplicar_mcp.pregunta": "'puede' subject is 'tu asistente personal', not the reader",
     "settings.aplicar_mcp.desc": "'puede' subject is 'el asistente', not the reader",
     "asistente.mcp.aplicar_apagado": "'puede' subject is 'tu asistente personal', not the reader",
+    "asistente.mcp.descartar_apagado": "'puede' subject is 'tu asistente personal', not the reader",
     "agente.error.entreno_orden_tuya": "'se puede' is an impersonal construction, not usted",
 }
 
