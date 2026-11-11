@@ -16333,3 +16333,136 @@ approval's own body said in words to fix the gap here and then merge, so the mer
 green rather than stopping AWAITING_APPROVAL.
 
 Open follow-up, named but not acted on: none.
+
+## BODY-MUDANZA-HERRAMIENTA-1
+
+Carlos approved moving his Body data to the server (relayed, exact words, 2026-11-10: "move my Body
+data to the server and redeploy Body"; BODY-CARLOS-RELAYED-WORDS-APPROVE-1). This slice builds and
+tests the PC-to-host import tool on invented data only -- `python -m body.mudanza importar
+--origen <pc.sqlite> --cuenta-sub <sub> [--apply]` -- following BODY-MUDANZA-SERVIDOR-1-INV's
+recommendation; it moves nothing of Carlos's own.
+
+**Ruling 1.** The source is opened READ-ONLY, the same way `body.backup snapshot` opens its own
+source: `backup.open_readonly` is now a shared helper, used by both. The destination is whatever
+`db.connect()` resolves to. The destination person is found by `cuenta_sub`, or created exactly as
+a first Cuenta sign-in would, through `cuenta.resolve_person` -- never a hand-written INSERT. The
+source person is the PC install's one person row, found through the new `db.default_person_id()`
+seam (never `db.local_person_id`, which INSERTs when absent, and never the literal
+`DEFAULT_PERSON_ID` outside db.py -- `tests/test_person_scope.py`'s own static guard enforces that).
+
+**Ruling 2 -- the registry.** `body/mudanza.py`'s `REGISTRY` (34 entries) plus `SKIPPED_TABLES` (9)
+cover every live table except `person` itself; two tests check this against the live schema on
+every run, so a table added later and left out fails the gate rather than silently going unmoved.
+Table -> kind (`person_keyed` = matched by a natural key, PC's value wins on conflict;
+`surrogate_id` = no natural key, matched by full content, a fresh id assigned and, where another
+table's FK depends on it, tracked and rewritten; `skipped` = never copied), in FK-safe order:
+
+    goal                     surrogate_id (id tracked; hogar_id set -> other-person)
+    habit                    surrogate_id (id tracked; via goal_id, no own person_id column;
+                              assignee_person_id naming someone else -> other-person)
+    habit_check               person_keyed (habit_id, person_id, day)
+    goal_check                 person_keyed (goal_id, person_id, week_start)
+    goal_enlace                person_keyed (goal_id, app; via goal_id, no own person_id column)
+    plan                      surrogate_id (goal_id nullable; hogar_id set -> other-person)
+    conversacion_agente      surrogate_id (id tracked)
+    mensaje_agente           surrogate_id (conversacion_id)
+    propuesta_agente         surrogate_id (conversacion_id, objetivo_id nullable)
+    uso_agente               surrogate_id
+    uso_herramienta_externa  surrogate_id
+    daily_metric               person_keyed (person_id, day, metric_key)
+    sleep_session               person_keyed (person_id, day)
+    raw_payload                 person_keyed (person_id, day, kind, source)
+    activity                    person_keyed (person_id, source, source_id)
+    workout_set                 person_keyed (person_id, activity_source, activity_source_id, set_order)
+    shift_batch                 person_keyed (id tracked; person_id, file_name, received, extracted_at)
+    shift_batch_item            person_keyed (batch_id, day, start_local; via batch_id, no own person_id column)
+    shift                       person_keyed (person_id, day, start_local; batch_id nullable)
+    shift_pattern                person_keyed (person_id)
+    ajuste_agente                person_keyed (person_id)
+    tope_agente                  person_keyed (person_id)
+    consentimiento               person_keyed (person_id, version)
+    moment                   surrogate_id (id tracked)
+    experimento              surrogate_id (id tracked; habito_id nullable)
+    experimento_registro       person_keyed (experimento_id, day; momento_id nullable)
+    comida                   surrogate_id (id tracked)
+    ingesta                  surrogate_id (comida_id nullable)
+    period                   surrogate_id
+    recuperacion_actividad      person_keyed (person_id, activity_source, activity_source_id, modelo_version)
+    turno_fc                     person_keyed (person_id, day, modelo_version)
+    checkin                  surrogate_id (id tracked)
+    checkin_nota                 person_keyed (its own id IS checkin's new id, never autoincrement)
+    figura_compartida        surrogate_id (every row names a household -> always other-person)
+
+    metric_def, period_kind, precio_modelo   skipped (catalog)
+    sesion, inicio_sesion, logout_jti          skipped (session)
+    dispositivo                                skipped (device)
+    garmin_cuenta                              skipped (token -- the host pulls Garmin itself,
+                                                BODY-GARMIN-HOST-1; no token moves)
+    hogar_miembro                              skipped (re-derived from Cuenta at the next sign-in)
+
+**Ruling 3 -- dry run / apply.** Dry run (default) and `--apply` share one engine (`_process_table`):
+for each table, source rows for this person are read, remapped (each tracked FK substituted via
+that table's own old-id -> new-id map; a row whose parent was never migrated, or is still only
+"pending" in a dry run, is handled without a false match), filtered for another person, then
+matched against the destination by the table's key (or full content). `--apply` runs each table in
+its own SAVEPOINT (rolled back on that table's own failure) and finishes with `PRAGMA
+integrity_check` + `PRAGMA foreign_key_check` across the whole database. Printed and reported:
+table name, source count, already-present count, insert/update/skip counts, other-person count --
+COUNTS ONLY, never a value. Dry run on `tests/test_mudanza.py`'s own invented fixture (one person,
+every category populated, including a household-shared goal, a habit assigned to someone else, and
+a figura_compartida row):
+
+    goal: source=2 already_present=0 would_insert=1 would_update=0 would_skip=0 other_person=1
+    habit: source=3 already_present=0 would_insert=1 would_update=0 would_skip=0 other_person=2
+    plan: source=2 already_present=0 would_insert=1 would_update=0 would_skip=0 other_person=1
+    goal_enlace: source=2 already_present=0 would_insert=1 would_update=0 would_skip=0 other_person=1
+    figura_compartida: source=1 already_present=0 would_insert=0 would_update=0 would_skip=0 other_person=1
+    daily_metric: source=1 already_present=0 would_insert=1 would_update=0 would_skip=0 other_person=0
+    (every other populated table: source=1, would_insert=1, the rest 0)
+    metric_def / period_kind / precio_modelo / sesion / inicio_sesion / logout_jti / dispositivo /
+      garmin_cuenta / hogar_miembro: skipped (…)
+
+**Ruling 4 -- idempotent.** `tests/test_mudanza.py`'s `test_second_apply_is_a_no_op` runs `--apply`
+twice: the second run's every table reports `insert=0 update=0`, and the destination's own row
+counts are unchanged.
+
+**Ruling 5 -- household and other people.** A habit assigned to someone else, and any goal or plan
+visible to a household (`hogar_id` set), are never copied -- counted under `other_person`, cascading
+to anything that depends on them (a habit under a skipped household goal is itself skipped, same
+reported bucket). `figura_compartida` -- an explicit share with a household -- is always
+other-person, no row ever copied. Covered by `DryRunTest` and `ApplyTest.
+test_apply_resolves_remapped_fks_and_counts_match_source`.
+
+**Ruling 6, out of scope here:** the host verb, transport/encryption, the desk reader, retiring the
+PC writer -- all later slices; the move itself is a runbook step on Carlos's own approval.
+
+**Two repo-wide static guards, found by the gate, not by review**: `body/mudanza.py`'s own
+`except ValueError as exc: print(f"refused: {exc}")` tripped `tests/test_errores_texto.py`'s AST
+guard (no exception text reaches an f-string except through `errores.texto_seguro`) -- fixed to
+`errores.texto_seguro(exc)`, the same pattern `body/backup.py`'s own `check()` already uses. And the
+literal name `DEFAULT_PERSON_ID` outside `db.py` tripped `tests/test_person_scope.py`'s own guard --
+fixed by adding `db.default_person_id()`, the one new seam allowed to still carry that name.
+
+**Commits**, `feat/body-mudanza-herramienta-1` branch, on top of `dd09c7d8c9ec63f20beb81702e638c425dfdf800`:
+- `4c307b59cc4600d41c0c1468289c06d841787c4d` -- "BODY-MUDANZA-HERRAMIENTA-1: the PC-to-host import
+  tool, dry run and --apply."
+- `930af0db0c2c48a166dc730ab863686f9d84195f` -- "BODY-MUDANZA-HERRAMIENTA-1: satisfy the two
+  repo-wide static guards."
+
+**Gate**, run on this branch's own tip (`930af0db0c2c48a166dc730ab863686f9d84195f`), exactly
+`.venv/Scripts/python.exe -m unittest discover tests -t .`, foreground, once:
+
+    Ran 2481 tests in 669.495s
+
+    OK (skipped=1)
+
+Green. Policy-A check on this slice's own diff: no schema or migration change (the new
+`db.default_person_id()` function reads an existing constant; no table, column or CHECK changed),
+no cross-repo contract change -- but this is a Tier 1 slice whose spec's own body says to stop
+before merge regardless (`approved: yes` authorised the build, not the merge). Stops
+AWAITING_APPROVAL; not merged to `main`.
+
+Open follow-up, named but not acted on: BODY-MUDANZA-HERRAMIENTA-2 (`--apply` was built here,
+together with the dry run, rather than as a separate follow-up slice -- the spec's own "THE WORK"
+asked for rulings 3-5 with `--apply` as step 4 of this same slice); the host verb, transport,
+encryption, the desk reader and retiring the PC writer (ruling 6) remain later slices.
