@@ -311,12 +311,12 @@ def _dia_por_delante_ctx(t: T, conn, person_id: int, today_local: date, turno_ho
         if turno_hoy["start_local"] and turno_hoy["end_local"]:
             items.append({
                 "tipo": "turno", "hora": turno_hoy["start_local"][11:16],
-                "titulo": t("shift.kind." + turno_hoy["kind"]),
+                "titulo": t("shift.kind.title." + turno_hoy["kind"]),
                 "linea": t("today.dia.turno_hasta", fin=turno_hoy["end_local"][11:16]),
             })
         else:
             items.append({"tipo": "turno", "hora": None,
-                          "titulo": t("shift.kind." + turno_hoy["kind"]), "linea": None})
+                          "titulo": t("shift.kind.title." + turno_hoy["kind"]), "linea": None})
 
     sesion = _plan_hoy_item(t, conn, person_id, today_local)
     if sesion is not None:

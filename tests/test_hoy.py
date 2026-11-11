@@ -89,7 +89,7 @@ class DiaPorDelanteTest(unittest.TestCase):
         self.assertEqual(len(items), 2)
         self.assertEqual(items[0]["tipo"], "turno")
         self.assertEqual(items[0]["hora"], "06:00")
-        self.assertEqual(items[0]["titulo"], ES("shift.kind.morning"))
+        self.assertEqual(items[0]["titulo"], ES("shift.kind.title.morning"))
         self.assertEqual(items[0]["linea"], ES("today.dia.turno_hasta", fin="14:00"))
         self.assertEqual(items[1]["tipo"], "sesion")
         self.assertEqual(items[1]["hora"], "15:30")
@@ -102,7 +102,7 @@ class DiaPorDelanteTest(unittest.TestCase):
         items = hoy._dia_por_delante_ctx(ES, conn, 1, date(2026, 11, 11), turno_hoy)
         self.assertEqual(len(items), 1)
         self.assertIsNone(items[0]["hora"])
-        self.assertEqual(items[0]["titulo"], ES("shift.kind.off"))
+        self.assertEqual(items[0]["titulo"], ES("shift.kind.title.off"))
 
     def test_activity_logged_today_is_included_with_its_own_time(self):
         conn = _mkconn(self)

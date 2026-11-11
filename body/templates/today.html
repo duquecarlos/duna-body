@@ -50,15 +50,19 @@
   <ul class="plan mt-6">
   {% for item in dia_por_delante %}
     {% if item.tipo == 'habito' %}
-    <li>
-      <form method="post" action="/habits/{{ item.id }}/check" class="m-0">
-        <input type="hidden" name="day" value="{{ today_iso }}">
-        <input type="hidden" name="back" value="/">
-        <input type="hidden" name="done" value="{{ '0' if item.checked else '1' }}">
-        <button type="submit" class="boxbtn" aria-label="{{ item.titulo }}"><span class="box{% if item.checked %} done{% endif %}"></span></button>
-      </form>
-      <div>{% if item.hora %}<span class="k">{{ item.hora }}</span> {% endif %}{{ item.titulo }}{% if item.context %} <span class="chip {{ item.context_cls }}">{{ item.context }}</span>{% endif %}
-        <div class="k">{{ item.linea }}</div>
+    <li class="block">
+      <div class="row">
+        <div>
+          {% if item.hora %}<div class="k">{{ item.hora }}</div>{% endif %}
+          <div>{{ item.titulo }}{% if item.context %} <span class="chip {{ item.context_cls }}">{{ item.context }}</span>{% endif %}</div>
+          {% if item.linea %}<div class="k">{{ item.linea }}</div>{% endif %}
+        </div>
+        <form method="post" action="/habits/{{ item.id }}/check" class="m-0">
+          <input type="hidden" name="day" value="{{ today_iso }}">
+          <input type="hidden" name="back" value="/">
+          <input type="hidden" name="done" value="{{ '0' if item.checked else '1' }}">
+          <button type="submit" class="boxbtn" aria-label="{{ item.titulo }}"><span class="box{% if item.checked %} done{% endif %}"></span></button>
+        </form>
       </div>
     </li>
     {% elif item.tipo == 'experimento' %}

@@ -114,6 +114,39 @@ class DiaPorDelanteRenderTest(unittest.TestCase):
         for prohibido in ("body movió", "body cambió tu plan", "body movió tu plan"):
             self.assertNotIn(prohibido, page)
 
+    def test_shift_row_title_reads_as_a_shift_not_the_bare_kind_es(self):
+        """BODY-MOCK-R2-HOY-1-M fix 3: the shift row's title reads «Turno de día», never the
+        bare kind word «Día» the earlier mock used."""
+        _seed_demo(self, "dia_turno_titulo_es.db", "es")
+        page = TestClient(web.app, follow_redirects=False).get("/").text
+        start = page.index('<div class="q">El día por delante</div>')
+        end = page.index('class="tellbody', start)
+        section = page[start:end]
+        self.assertIn(_ES["shift.kind.title.day"], section)
+
+    def test_shift_row_title_reads_as_a_shift_not_the_bare_kind_en(self):
+        _seed_demo(self, "dia_turno_titulo_en.db", "en")
+        page = TestClient(web.app, follow_redirects=False).get("/").text
+        start = page.index('<div class="q">The day ahead</div>')
+        end = page.index('class="tellbody', start)
+        section = page[start:end]
+        self.assertIn(_EN["shift.kind.title.day"], section)
+
+    def test_habit_row_same_shape_as_other_rows(self):
+        """BODY-MOCK-R2-HOY-1-M fix 2: the habit's own time sits on its own line like every other
+        row (never inline before the title), and its check control comes after the title, at the
+        row's end (never leading the row)."""
+        _seed_demo(self, "dia_habito_forma.db", "es")
+        page = TestClient(web.app, follow_redirects=False).get("/").text
+        start = page.index('<div class="q">El día por delante</div>')
+        end = page.index('class="tellbody', start)
+        section = page[start:end]
+        self.assertNotIn('<span class="k">18:00</span> Entrenar piernas', section)
+        self.assertIn('<div class="k">18:00</div>', section)
+        titulo_pos = section.index("Entrenar piernas")
+        boxbtn_pos = section.index("boxbtn", titulo_pos)
+        self.assertGreater(boxbtn_pos, titulo_pos, "the check control must come after the title")
+
 
 class TellBodyRowTest(unittest.TestCase):
     """Ruling 3: an inline row that opens the EXISTING assistant panel, focused -- no second chat
