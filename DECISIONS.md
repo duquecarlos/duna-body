@@ -17221,3 +17221,94 @@ One implementation commit, `f9278c9`, on `feat/body-lesion-zona-1`. Merged into 
 Green -- 2676 (this surface's own floor) + 4 new tests (3 in `LimitadaStyleInBodyCssTest`, 1 in
 `NoStyleElementInTemplatesTest`). `git status --porcelain` empty before this entry. No deviation,
 no open follow-up.
+
+## BODY-PROPUESTA-VIGENCIA-1
+
+The Personal desk proposes through `body.mcp`, relays the proposal to Carlos, and applies it only
+after he says yes -- often an hour or more later. Every proposal expired 15 minutes after creation
+regardless of channel, so a morning proposal he answered after the gym read as "no longer pending"
+and was silently lost. Four rulings.
+
+**Ruling 1 -- lifetime by channel.** `body/agente/propuestas.py` keeps the in-app chat lifetime at
+the existing `EXPIRA_MINUTOS = 15`, unchanged. A proposal created over an `origen = 'mcp'`
+conversation (`agente_conversacion.origen_de`) now lives until the start of the local day AFTER the
+person's own next local day -- a new `EXPIRA_MCP_DIAS_SIGUIENTES = 1` constant and
+`_fin_siguiente_dia_local(ahora, person)`, resolving the person's timezone the same
+`ZoneInfo(person.get("timezone") or "America/Bogota")` way every other module in this repo already
+does. `body/mcp.py` reads `agente_propuestas.EXPIRA_MINUTOS` for its own rolling rate-limit window
+(`LIMITES["ventana_min"]`) instead of restating `15` -- that number is now explicitly a RATE
+concept, decoupled from how long a proposal itself stays valid. Every apply still runs its drift
+check first, unchanged; only the vigencia window moved.
+
+**Ruling 2 -- same-day replacement.** `estado` has no `rechazada` value and `propuesta_agente` has
+no reason column (`body/db.py`'s CHECK constraints and column list, read, not changed) -- reusing
+the existing `descartada` state needed no schema change, so that is what this ruling uses. When an
+`aplicar()` call applies a `registrar_entreno`/`registrar_comida`/`registrar_ingesta`/
+`registrar_checkin` proposal (`ACCIONES_REEMPLAZABLES`), every other still-`propuesta` row for the
+same person, same `accion`, same `despues_json["day"]` is marked `descartada` and gets a
+`"reemplazada": true` key added to its own `despues_json` -- a free-form, only
+`json_valid(...)`-checked TEXT column, so adding a key is not a schema change either.
+`body/rutas/asistente.py`'s `_tarjeta_propuesta` reads that key and, when set, replaces the whole
+card body with one line instead of calling that `accion`'s own `TARJETAS` builder on stale content;
+`registro["estado"]` itself is left as the real `descartada` value, so neither `assistant.js`'s
+`etiquetaEstado` map nor its card renderer needed any change.
+
+**Ruling 3 -- `descartar_propuesta`.** New MCP tool, listed in `body/mcp.py` beside
+`aplicar_propuesta` under the same `db.get_aplicar_mcp` gate, checked fresh on every call. Takes
+`{propuesta_id: integer}`, writes no health data (so needs no confirm step), and calls the
+already-existing `propuestas.descartar()` (`propuesta -> descartada`, unchanged). Refuses, naming
+why in the person's own language: a proposal that is not this person's or not from this same `mcp`
+conversation origin (reuses the existing `aplicar_no_propia` message), one that is not still
+`propuesta` (reuses `aplicar_no_vigente`), or the gate itself being off
+(`asistente.mcp.descartar_apagado`, new).
+
+**Ruling 4 -- honest expiry.** `propuestas.aplicar()`'s expired branch now returns
+`{"estado": "expirada", "expira_en": row["expira_en"]}` instead of folding into the generic
+not-pending case. `body/mcp.py`'s `_mensaje_aplicar_expirada` turns that timestamp into the
+person's own local date and time and names both in the refusal, asking the caller to propose again,
+instead of the old undifferentiated "no longer pending" wording.
+
+**New i18n strings** (`body/i18n/es.json`/`en.json`):
+- `asistente.mcp.aplicar_no_vigente`: "Esa propuesta ya no está pendiente." / "That proposal is no
+  longer pending."
+- `asistente.mcp.aplicar_expirada`: "Esa propuesta expiró el {fecha} a las {hora}. Proponla de
+  nuevo." / "That proposal expired on {fecha} at {hora}. Propose it again."
+- `asistente.mcp.descartar_apagado`: "Tu asistente personal no puede descartar propuestas: esa
+  opción está apagada en Ajustes de Body." / "Your personal assistant can't discard proposals: that
+  setting is off in Body's Settings."
+- `asistente.mcp.descartar_resultado`: "Descartada. Ya no se podrá aplicar." / "Discarded. It can no
+  longer be applied."
+- `asistente.propuesta.descartada`: "Descartado" / "Discarded".
+- `asistente.propuesta.reemplazada`: "Reemplazada por la versión aplicada" / "Replaced by the
+  applied version".
+
+`tests/test_registro_tu.py`'s `_THIRD_PERSON_ALLOW` census (BODY-REGISTRO-TU-1, outside this
+slice's own `touches:` but a census test allowed to extend, never loosen) gained
+`asistente.mcp.descartar_apagado`, same reason as its sibling `aplicar_apagado`: "puede" names "tu
+asistente personal" as its subject, never the reader.
+
+**Tests**: `tests/test_propuesta_vigencia.py` (new -- `_fin_siguiente_dia_local`'s own boundary,
+`crear()`'s lifetime split by `origen`, same-day replacement firing only for a matching `accion`
+and `day` and leaving a different tool's sibling alone), `tests/test_mcp.py`
+(`AplicarExpiradaTest`, `DescartarPropuestaTest` -- the gate, the three refusal paths, the success
+path), `tests/test_agente_propuestas.py` (one assertion added to the existing expired-proposal test
+for the new `expira_en` field).
+
+**Deviation**: the dispatch asked for two commits (rulings 1+4, then 2+3); all four rulings' source
+edits landed in the same functions across the same files in one continuous pass, so splitting them
+after the fact would have meant hunk-level `git add -p` surgery with no real safety benefit --
+committed as one implementation commit, `a45aa7c`, instead. A second commit,
+`f187a4a`, holds only the `test_registro_tu.py` allow-list line above (outside `touches:`, needed to
+turn the gate green).
+
+**Gate**, run once on this branch's final tree, exactly
+`.venv/Scripts/python.exe -m unittest discover tests -t .`, foreground:
+
+    Ran 2696 tests in 905.127s
+
+    OK (skipped=1)
+
+Green -- 2680 (the prior floor) + 16 new tests (9 in `test_propuesta_vigencia.py`, 7 in
+`test_mcp.py`'s two new classes). `git status --porcelain` empty before this entry. Approved to
+merge on a green gate per the dispatch's own words ("the desk loses proposals every day without
+it"). No open follow-up.
