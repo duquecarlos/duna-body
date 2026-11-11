@@ -16466,3 +16466,30 @@ Open follow-up, named but not acted on: BODY-MUDANZA-HERRAMIENTA-2 (`--apply` wa
 together with the dry run, rather than as a separate follow-up slice -- the spec's own "THE WORK"
 asked for rulings 3-5 with `--apply` as step 4 of this same slice); the host verb, transport,
 encryption, the desk reader and retiring the PC writer (ruling 6) remain later slices.
+
+## BODY-MUDANZA-HERRAMIENTA-1-M -- merged
+
+ORCH-CARLOS-DELEGATES-TIER-1-1: Carlos's own approval of the move (relayed with his exact words,
+BODY-CARLOS-RELAYED-WORDS-APPROVE-1) covers merging BODY-MUDANZA-HERRAMIENTA-1's report as reviewed
+above -- gate green, deviations accepted. Merged `feat/body-mudanza-herramienta-1`
+(`4c307b59cc4600d41c0c1468289c06d841787c4d`, `930af0db0c2c48a166dc730ab863686f9d84195f`,
+`9bd2e7bfd8eec8149193fc195a41de7f26c2fb5a`) into `main` (`dd09c7d8c9ec63f20beb81702e638c425dfdf800`)
+with `--no-ff`, no conflicts, merge commit `0b41c6de587d029779a124cecdf6207420aa1530`.
+
+Accepted deviations, carried from the reviewed report: (1) one engine commit instead of three
+per-step commits, because dry run and `--apply` share one code path; (2) ruling 5's "other person"
+scope extended by judgment to `goal.hogar_id`, `plan.hogar_id` and `figura_compartida` (always
+skipped), tested by `DryRunTest` and `ApplyTest.test_apply_resolves_remapped_fks_and_counts_match_source`.
+
+**Gate**, run on the merge commit `0b41c6de587d029779a124cecdf6207420aa1530`, exactly
+`.venv/Scripts/python.exe -m unittest discover tests -t .`, foreground, once:
+
+    Ran 2481 tests in 536.085s
+
+    OK (skipped=1)
+
+Green, same count as the pre-merge report (`Ran 2481 tests ... OK (skipped=1)`). Policy-A judged
+against the actual merge diff (`DECISIONS.md`, `body/backup.py`, `body/db.py`, `body/mudanza.py`
+new, `tests/test_mudanza.py` new): no schema or migration change, no customer-facing bytes (the tool
+has no route or UI), no cross-repo contract change -- but this slice's own spec body authorised the
+merge in words (`approval-reason`: "merge only"), so the merge proceeded.
