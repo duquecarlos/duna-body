@@ -175,6 +175,11 @@ def _tarjeta_registrar_entreno(t: T, defs: dict, despues: dict, antes_json: dict
             nombre = _nombre_legible(crudo.get("garmin_exercise")) or _nombre_legible(crudo.get("garmin_category"))
             series_tarjeta.append({"orden": m["set_order"], "reloj": _serie_txt(t, m["reloj"], nombre=nombre),
                                     "tu": _serie_txt(t, m["tu"])})
+        # BODY-SERIES-ORDEN-1 rulings 3, 4: the watch's own active slots this call leaves unmatched
+        # get excluded on apply -- said in one plain line, never silently dropped from the card.
+        no_emparejadas = despues.get("no_emparejadas") or []
+        if no_emparejadas:
+            despues_txt += "\n" + t("asistente.propuesta.entreno_series_descartadas", n=len(no_emparejadas))
     return None, despues_txt, series_tarjeta
 
 
@@ -377,6 +382,18 @@ def _tarjeta_borrar_periodo(t: T, defs: dict, despues: dict, antes_json: dict | 
     return antes_txt, despues_txt, None
 
 
+def _tarjeta_descartar_series(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+    """BODY-SERIES-ORDEN-1 ruling 4: the plain count line first, then each slot's own watch
+    exercise/reps -- the `tu` column stays empty, since nothing the person said is being shown
+    here, only which watch sets are proposed as not done."""
+    despues_txt = t("asistente.propuesta.entreno_series_descartadas", n=len(despues["series"]))
+    series_tarjeta = []
+    for s in despues["series"]:
+        nombre = _nombre_legible(s.get("ejercicio")) or _nombre_legible(s.get("categoria"))
+        series_tarjeta.append({"orden": s["set_order"], "reloj": _serie_txt(t, s, nombre=nombre), "tu": None})
+    return None, despues_txt, series_tarjeta
+
+
 def _filtro_dias_txt(t: T, filtro_dias: dict) -> str:
     """"which days count" in plain words (BODY-EXPERIMENTOS-REGISTRO-1): the shift kinds a day must
     or must not have, plus whether a post-night recovery day is excluded -- built from
@@ -455,6 +472,7 @@ TARJETAS = {
     "cerrar_periodo": _tarjeta_cerrar_periodo,
     "corregir_periodo": _tarjeta_corregir_periodo,
     "borrar_periodo": _tarjeta_borrar_periodo,
+    "descartar_series": _tarjeta_descartar_series,
 }
 
 

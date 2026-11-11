@@ -201,6 +201,15 @@ _PARAM_REGISTRAR_ENTRENO = {
     "required": ["day", "series"],
     "additionalProperties": False,
 }
+_PARAM_DESCARTAR_SERIES = {
+    "type": "object",
+    "properties": {
+        "day": {"type": "string", "format": "date"},
+        "series": {"type": "array", "items": {"type": "integer"}, "minItems": 1},
+    },
+    "required": ["day", "series"],
+    "additionalProperties": False,
+}
 
 # BODY-PROTEINA-1: an intake key (agregado = 'suma_ingesta') is excluded from registrar_medida's own
 # enum -- it has exactly one writer, registrar_ingesta, below. BODY-CHECKIN-1: the three check-in
@@ -607,9 +616,14 @@ def _leer_entreno(conn: sqlite3.Connection, person_id: int, day: str | None = No
         sets = db.exercise_sets(conn, person_id, a["source"], a["source_id"])
         sesiones.append({
             "dia": a["day"], "titulo": a["name"], "fuente": a["source"], "hora_inicio": a["start_local"],
+            # BODY-SERIES-ORDEN-1 rulings 1, 3, 5: a rest slot is never a set, and a slot the
+            # person marked as not done is left out too -- `db.exercise_sets` already reads a
+            # corrected slot's own `set_type` as 'active', whatever the watch's alternating
+            # active/rest said.
             "series": [{"orden": s["set_order"], "tipo": s["set_type"], "ejercicio": s["exercise"],
                         "categoria": s["category"], "repeticiones": s["reps"], "peso_kg": s["weight_value"],
-                        "corregido": s["corrected_by_person"]} for s in sets],
+                        "corregido": s["corrected_by_person"]} for s in sets
+                       if s["set_type"] == "active" and not s["excluded_by_person"]],
         })
     planes = conn.execute(
         "SELECT * FROM plan WHERE person_id = ? AND day BETWEEN ? AND ? AND ejercicios_json IS NOT NULL "
@@ -736,18 +750,31 @@ def _registrar_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id
                 # watch set (reloj: null for every one), rather than losing the proposal.
                 existentes = []
                 reloj_fallo = True
-        reloj_por_orden = {s["set_order"]: s for s in existentes}
+        # BODY-SERIES-ORDEN-1 ruling 2: a spoken set maps onto the watch's own ACTIVE slots, in
+        # order -- never onto a rest slot, which Garmin's exerciseSets alternates in between every
+        # active one. `existentes` is already ordered by set_order, so this is a plain filter.
+        activos = [s for s in existentes if s["set_type"] == "active"]
+        ultimo_orden = existentes[-1]["set_order"] if existentes else 0
+        siguiente_orden = ultimo_orden + 1
         mapeo, sets_antes = [], []
-        for i, hablado in enumerate(series, start=1):
-            watch = reloj_por_orden.get(i)
+        for hablado in series:
+            if activos:
+                watch = activos.pop(0)
+                destino = watch["set_order"]
+            else:
+                # The spoken series ran longer than the watch's own active slots: a slot the
+                # watch never reported, numbered right after the last one it did.
+                watch = None
+                destino = siguiente_orden
+                siguiente_orden += 1
             mapeo.append({
-                "set_order": i,
+                "set_order": destino,
                 "reloj": ({"ejercicio": watch["exercise"], "reps": watch["reps"],
                            "peso_kg": watch["weight_value"]} if watch else None),
                 "tu": hablado,
             })
             sets_antes.append({
-                "set_order": i, "existia": watch is not None,
+                "set_order": destino, "existia": watch is not None,
                 "person_category": watch["person"]["category"] if watch else None,
                 "person_exercise": watch["person"]["exercise"] if watch else None,
                 "person_reps": watch["person"]["reps"] if watch else None,
@@ -760,14 +787,63 @@ def _registrar_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id
                 "garmin_weight_unit": watch["garmin"]["weight_unit"] if watch else None,
                 "garmin_category": watch["garmin"]["category"] if watch else None,
             })
+        # BODY-SERIES-ORDEN-1 rulings 3, 4: the watch's own active slots the spoken series never
+        # reached (fewer spoken sets than active watch slots) are proposed for exclusion -- applied
+        # alongside the correction, undone alongside it too.
+        no_emparejadas = [{"set_order": s["set_order"], "excluded_antes": s["excluded_by_person"],
+                            "ejercicio": s["exercise"], "reps": s["reps"], "peso_kg": s["weight_value"]}
+                           for s in activos]
         despues = {"manual": False, "day": day, "source": source, "source_id": source_id, "series": series,
-                   "mapeo": mapeo, "reloj_fallo": reloj_fallo}
+                   "mapeo": mapeo, "reloj_fallo": reloj_fallo, "no_emparejadas": no_emparejadas}
         antes = {"manual": False, "sets_antes": sets_antes}
     else:
         despues = {"manual": True, "day": day, "time": time, "titulo": ((titulo or "").strip() or None),
                    "series": series}
         antes = {"manual": True}
     registro = propuestas.crear(conn, person_id, conversacion_id, "registrar_entreno", despues, antes=antes)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
+def _descartar_series(conn: sqlite3.Connection, person_id: int, conversacion_id: int, day: str,
+                       series: list) -> dict:
+    """Proposes marking existing watch slots of an already-logged day's strength activity as not
+    done (BODY-SERIES-ORDEN-1 ruling 4): refuses a slot the person already filled, a rest slot, or
+    an unknown order, naming the reason in the person's own language. This is the tool for a day
+    whose watch slots were already read -- `registrar_entreno` handles the unmatched leftovers of
+    its own, fresh call on its own."""
+    _dia_no_futuro(conn, person_id, day)
+    if not series:
+        raise ToolError("se necesita al menos una serie")
+    t = T(db.person(conn, person_id)["language"])
+    actividad = conn.execute(
+        "SELECT source, source_id FROM activity WHERE person_id = ? AND day = ? AND type = 'strength_training' "
+        "ORDER BY start_local LIMIT 1", (person_id, day),
+    ).fetchone()
+    if actividad is None:
+        raise ToolError(t("agente.error.entreno_sin_actividad_fuerza", day=day))
+    source, source_id = actividad["source"], actividad["source_id"]
+    existentes = {s["set_order"]: s for s in db.exercise_sets(conn, person_id, source, source_id)}
+    vistos, entradas = set(), []
+    for orden in series:
+        if isinstance(orden, bool) or not isinstance(orden, int):
+            raise ToolError(t("agente.error.entreno_orden_desconocido", orden=orden))
+        if orden in vistos:
+            continue
+        vistos.add(orden)
+        slot = existentes.get(orden)
+        if slot is None:
+            raise ToolError(t("agente.error.entreno_orden_desconocido", orden=orden))
+        if slot["corrected_by_person"]:
+            raise ToolError(t("agente.error.entreno_orden_tuya", orden=orden))
+        if slot["set_type"] != "active":
+            raise ToolError(t("agente.error.entreno_orden_descanso", orden=orden))
+        entradas.append({
+            "set_order": orden, "excluded_antes": slot["excluded_by_person"],
+            "ejercicio": slot["garmin"]["exercise"], "categoria": slot["garmin"]["category"],
+            "reps": slot["garmin"]["reps"], "peso_kg": slot["weight_value"],
+        })
+    despues = {"day": day, "source": source, "source_id": source_id, "series": entradas}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "descartar_series", despues)
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
@@ -1377,6 +1453,13 @@ HERRAMIENTAS = [
                      "sesión manual. No lo guarda: registra la propuesta para que la persona la apruebe "
                      "en el chat.",
      "parametros": _PARAM_REGISTRAR_ENTRENO, "funcion": _registrar_entreno},
+    {"nombre": "descartar_series", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone marcar como no hechas una o más series del reloj de un día ya "
+                     "registrado (por ejemplo una serie que quedó de un ejercicio que la persona "
+                     "no hizo). Rechaza una serie que la persona ya registró, un descanso del "
+                     "reloj o un número de serie que no existe. No las marca: registra la "
+                     "propuesta para que la persona la apruebe en el chat.",
+     "parametros": _PARAM_DESCARTAR_SERIES, "funcion": _descartar_series},
     {"nombre": "registrar_medida", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone registrar un número que la persona mide ella misma para un día "
                      "(por ejemplo su alcance de flexibilidad, sus minutos de ronquido o qué tan "

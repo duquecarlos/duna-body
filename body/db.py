@@ -86,7 +86,7 @@ _PROPUESTA_AGENTE_COLUMNS = """
                          'proponer_experimento', 'marcar_experimento',
                          'registrar_ingesta', 'corregir_ingesta', 'borrar_ingesta',
                          'marcar_periodo', 'cerrar_periodo', 'corregir_periodo', 'borrar_periodo',
-                         'registrar_comida', 'registrar_checkin')),
+                         'registrar_comida', 'registrar_checkin', 'descartar_series')),
     objetivo_id     INTEGER REFERENCES goal(id),
     antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
     despues_json    TEXT NOT NULL CHECK (json_valid(despues_json)),
@@ -125,6 +125,10 @@ _WORKOUT_SET_COLUMNS = """
     person_weight_kg    REAL,
     person_note         TEXT,
     corrected_by_person INTEGER NOT NULL DEFAULT 0 CHECK (corrected_by_person IN (0, 1)),
+    -- BODY-SERIES-ORDEN-1 ruling 3: the person's own "this watch slot did not happen" -- additive,
+    -- nullable-default, undoable. A slot the person corrected (corrected_by_person) is never the
+    -- one excluded; descartar_series refuses that case at the door.
+    excluded_by_person  INTEGER NOT NULL DEFAULT 0 CHECK (excluded_by_person IN (0, 1)),
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
     CHECK ((garmin_weight_value IS NULL) = (garmin_weight_unit IS NULL)),
     FOREIGN KEY (person_id, activity_source, activity_source_id)
@@ -1011,6 +1015,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
     gcols = {r[1] for r in conn.execute("PRAGMA table_info(garmin_cuenta)")}
     if gcols and "backfill_hasta" not in gcols:
         conn.execute("ALTER TABLE garmin_cuenta ADD COLUMN backfill_hasta TEXT")
+    wscols = {r[1] for r in conn.execute("PRAGMA table_info(workout_set)")}
+    if wscols and "excluded_by_person" not in wscols:
+        conn.execute("ALTER TABLE workout_set ADD COLUMN excluded_by_person INTEGER NOT NULL DEFAULT 0 "
+                     "CHECK (excluded_by_person IN (0, 1))")
     plcols = {r[1] for r in conn.execute("PRAGMA table_info(plan)")}
     if plcols and "ejercicios_json" not in plcols:
         conn.execute(
@@ -1155,6 +1163,13 @@ def _propuesta_agente_needs_checkin_rebuild(conn: sqlite3.Connection) -> bool:
     return row is not None and "registrar_checkin" not in row[0]
 
 
+def _propuesta_agente_needs_series_orden_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'propuesta_agente'"
+    ).fetchone()
+    return row is not None and "descartar_series" not in row[0]
+
+
 def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
@@ -1177,6 +1192,9 @@ def _migrate_propuestas(conn: sqlite3.Connection) -> None:
         _rebuild_propuesta_agente_table(conn)
     # BODY-CHECKIN-1: a sixth widening (registrar_checkin), same reusable rebuild.
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_checkin_rebuild(conn):
+        _rebuild_propuesta_agente_table(conn)
+    # BODY-SERIES-ORDEN-1: a seventh widening (descartar_series), same reusable rebuild.
+    if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_series_orden_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
     # BODY-MCP-APLICAR-1: a plain nullable column, never a CHECK widening on `accion` -- a plain
     # ALTER TABLE ADD COLUMN, not the rebuild dance above.
@@ -1862,7 +1880,14 @@ def exercise_sets(conn: sqlite3.Connection, person_id: int, source: str, source_
     """One activity's sets in order, each with the display value (the person's correction when
     `corrected_by_person`, else the watch's reading, converted to kilograms -- ruling 1) and both
     originals -- for the assistant to read. Person-scoped by the WHERE clause: a row can never
-    surface for another person's id."""
+    surface for another person's id.
+
+    BODY-SERIES-ORDEN-1 ruling 1: a slot the person corrected reads as `set_type` 'active' here,
+    whatever the watch's own alternating active/rest slot said -- this is the ONE place every
+    reader (leer_entreno, the registrar_entreno/descartar_series tools) sees that translation,
+    since they all read sets through this function. `excluded_by_person` (ruling 3) is carried
+    through as its own field, never folded into `set_type`, so a caller can tell "a rest slot" from
+    "a watch set the person marked as not done"."""
     rows = conn.execute(
         "SELECT * FROM workout_set WHERE person_id = ? AND activity_source = ? AND "
         "activity_source_id = ? ORDER BY set_order",
@@ -1871,6 +1896,7 @@ def exercise_sets(conn: sqlite3.Connection, person_id: int, source: str, source_
     out = []
     for r in rows:
         corrected = bool(r["corrected_by_person"])
+        set_type = "active" if corrected else r["set_type"]
         if corrected:
             weight_value = r["person_weight_kg"]
             weight_unit = "kg" if weight_value is not None else None
@@ -1878,8 +1904,9 @@ def exercise_sets(conn: sqlite3.Connection, person_id: int, source: str, source_
             weight_value, weight_unit = _peso_kg_de_reloj(r["garmin_weight_value"], r["garmin_weight_unit"])
         out.append({
             "set_order": r["set_order"],
-            "set_type": r["set_type"],
+            "set_type": set_type,
             "corrected_by_person": corrected,
+            "excluded_by_person": bool(r["excluded_by_person"]),
             "exercise": r["person_exercise"] if corrected else r["garmin_exercise"],
             "category": r["person_category"] if corrected else r["garmin_category"],
             "reps": r["person_reps"] if corrected else r["garmin_reps"],
@@ -1900,6 +1927,20 @@ def exercise_sets(conn: sqlite3.Connection, person_id: int, source: str, source_
             },
         })
     return out
+
+
+def set_series_excluida(conn: sqlite3.Connection, person_id: int, source: str, source_id: str,
+                         set_order: int, excluded: bool) -> None:
+    """Toggles one watch slot's `excluded_by_person` (BODY-SERIES-ORDEN-1 ruling 3): the person's
+    own "this did not happen", undoable back to 0. A direct UPDATE on the slot's own unique key --
+    the caller's drift check already confirms the slot exists, so this never creates one."""
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        conn.execute(
+            "UPDATE workout_set SET excluded_by_person = ?, updated_at = ? WHERE person_id = ? AND "
+            "activity_source = ? AND activity_source_id = ? AND set_order = ?",
+            (int(excluded), now, person_id, source, source_id, set_order),
+        )
 
 
 # ---- experimentos (wave 9, BODY-EXPERIMENTOS-ESQUEMA-1) --------------------------------------------
