@@ -364,7 +364,9 @@ def _semana_nocturna_ctx(t: T, conn, person_id: int, today_local: date) -> dict 
 def _cuerpo_hoy_ctx(t: T, conn, person_id: int, today_local: date) -> dict:
     """Hoy's own body view (BODY-CUERPO-VISTA-1, ruling 4): Músculos/Espalda/Corazón y vasos, lit
     for today's planned session's own muscle groups -- the empty, "no session" caption with no
-    plan, or with a plan whose categories none are recognised (never an empty parenthesis)."""
+    plan, or with a plan whose categories none are recognised (never an empty parenthesis).
+    BODY-LESION-ZONA-1 ruling 4: a second, quiet layer for any zona an open lesion period names for
+    today -- drawn as a hatch, never the training glow, with its own caption below."""
     categorias = _plan_categorias_hoy(conn, person_id, today_local)
     grupos = anatomia.grupos_de_categorias(categorias) if categorias is not None else frozenset()
     if not grupos:
@@ -372,7 +374,14 @@ def _cuerpo_hoy_ctx(t: T, conn, person_id: int, today_local: date) -> dict:
     else:
         nombres = [t("cuerpo.grupo." + g) for g in anatomia.grupos_ordenados(grupos)]
         caption = t("cuerpo.caption.hoy_con_sesion", grupos=_lista_natural(t, nombres))
-    return {"vistas": anatomia.contexto(t, "hoy", grupos), "caption": caption, "recorte": "completo"}
+    zonas = db.zonas_en_recuperacion(conn, person_id, today_local.isoformat())
+    grupos_limitados = anatomia.grupos_de_categorias(zonas)
+    caption_limitada = None
+    if grupos_limitados:
+        nombres_zonas = [t("entreno.categoria." + z) for z in anatomia.CATEGORIA_ENUM if z in zonas]
+        caption_limitada = t("cuerpo.caption.en_recuperacion", zonas=_lista_natural(t, nombres_zonas))
+    return {"vistas": anatomia.contexto(t, "hoy", grupos, grupos_limitados), "caption": caption,
+            "caption_limitada": caption_limitada, "recorte": "completo"}
 
 
 def _hoy_turno_ctx(t: T, turno: dict) -> dict:
@@ -795,7 +804,10 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
             bits.append(f"{t.num(a['avg_hr'])} {t('unit.bpm')}")
         recovery_row = recuperaciones.get((a["source"], a["source_id"]))
         acts.append({"name": _activity_name(t, a), "detail": " · ".join(bits),
-                     "recovery": _recovery_line(t, recovery_row)})
+                     "recovery": _recovery_line(t, recovery_row),
+                     # BODY-LESION-ZONA-1 ruling 2: the one shared plain line, from db.load_day's
+                     # own zonas_limitadas (raw zona codes -- never the period's own note).
+                     "lesion": anatomia.texto_liviano_a_proposito(t, a["zonas_limitadas"])})
     shifts = []
     for s in data["shifts"]:
         kind = s["kind"]

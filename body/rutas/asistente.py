@@ -18,7 +18,7 @@ from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from .. import db, history, identity
+from .. import anatomia, db, history, identity
 from ..agente import bucle as agente_bucle
 from ..agente import cliente as agente_cliente
 from ..agente import conversacion as agente_conversacion
@@ -119,7 +119,7 @@ def _actividad_txt(t: T, actividad: dict) -> str:
     return f"{nombre} · {t.minutes(duracion / 60)}" if duracion else nombre
 
 
-def _tarjeta_meta_nueva(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+def _tarjeta_meta_nueva(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     despues_txt = t("asistente.propuesta.meta_nueva", metric=t("metric." + despues["metric_key"]),
                     direccion=t("asistente.propuesta.direccion." + despues["direction"]),
                     valor=comun._fig_unit(t, despues["metric_key"], despues["target_value"], defs),
@@ -127,34 +127,34 @@ def _tarjeta_meta_nueva(t: T, defs: dict, despues: dict, antes_json: dict | None
     return None, despues_txt, None
 
 
-def _tarjeta_cambio_meta(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+def _tarjeta_cambio_meta(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     metric_key = despues.get("metric_key")
     antes_txt = _objetivo_txt(t, defs, metric_key, antes_json["target_value"], antes_json["deadline"])
     despues_txt = _objetivo_txt(t, defs, metric_key, despues["target_value"], despues["deadline"])
     return antes_txt, despues_txt, None
 
 
-def _tarjeta_confirmar_turnos(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+def _tarjeta_confirmar_turnos(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     resumen = antes_json["resumen"]
     antes_txt = t("asistente.propuesta.turnos_actual", n=t.num(resumen["batch_count"]))
     despues_txt = t("asistente.propuesta.turnos_nuevo")
     return antes_txt, despues_txt, None
 
 
-def _tarjeta_idioma(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+def _tarjeta_idioma(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     antes_txt = IDIOMA_LABEL.get(antes_json["lang"], antes_json["lang"])
     despues_txt = IDIOMA_LABEL.get(despues["lang"], despues["lang"])
     return antes_txt, despues_txt, None
 
 
-def _tarjeta_planear_entreno(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+def _tarjeta_planear_entreno(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     ejercicios_txt = ", ".join(_ejercicio_plan_txt(t, e) for e in despues["ejercicios"])
     despues_txt = t("asistente.propuesta.entreno_plan", titulo=despues["titulo"],
                     fecha=comun._short_date(t, date.fromisoformat(despues["day"])), ejercicios=ejercicios_txt)
     return None, despues_txt, None
 
 
-def _tarjeta_registrar_entreno(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+def _tarjeta_registrar_entreno(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
     titulo_manual = despues.get("titulo") if despues["manual"] else None
     if titulo_manual:
@@ -164,6 +164,7 @@ def _tarjeta_registrar_entreno(t: T, defs: dict, despues: dict, antes_json: dict
     if despues["manual"]:
         series_tarjeta = [{"orden": i, "reloj": None, "tu": _serie_txt(t, s)}
                            for i, s in enumerate(despues["series"], start=1)]
+        categorias = {s.get("categoria") for s in despues["series"]}
     else:
         # The watch side's readable name comes from the raw garmin_exercise/garmin_category in
         # antes_json["sets_antes"] -- never from m["reloj"]["ejercicio"], which can already be a
@@ -180,10 +181,18 @@ def _tarjeta_registrar_entreno(t: T, defs: dict, despues: dict, antes_json: dict
         no_emparejadas = despues.get("no_emparejadas") or []
         if no_emparejadas:
             despues_txt += "\n" + t("asistente.propuesta.entreno_series_descartadas", n=len(no_emparejadas))
+        categorias = {m["tu"].get("categoria") for m in despues["mapeo"]}
+    # BODY-LESION-ZONA-1 ruling 2: the one shared plain line, appended once for the whole card, when
+    # any of this session's own categories falls inside today's open-lesion zonas.
+    if conn is not None:
+        zonas_dia = db.zonas_en_recuperacion(conn, person_id, despues["day"])
+        liviano = anatomia.texto_liviano_a_proposito(t, categorias & zonas_dia)
+        if liviano:
+            despues_txt += "\n" + liviano
     return None, despues_txt, series_tarjeta
 
 
-def _tarjeta_registrar_medida(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+def _tarjeta_registrar_medida(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     metric_key = despues["metric_key"]
     fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
     antes_txt = None
@@ -222,7 +231,7 @@ def _ingesta_valor_txt(t: T, defs: dict, metric_key: str, amount: float, estimad
     return t("asistente.propuesta.ingesta_valor", metric=t("metric." + metric_key), valor=valor, fecha=fecha)
 
 
-def _tarjeta_registrar_ingesta(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+def _tarjeta_registrar_ingesta(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
     partes = [_ingesta_valor_txt(t, defs, despues["metric_key"], despues["amount"], despues["estimado"], fecha)]
     momento = _momento_ingesta_txt(t, despues.get("ts_local"))
@@ -233,14 +242,14 @@ def _tarjeta_registrar_ingesta(t: T, defs: dict, despues: dict, antes_json: dict
     return None, " · ".join(partes), None
 
 
-def _tarjeta_corregir_ingesta(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+def _tarjeta_corregir_ingesta(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
     antes_txt = _ingesta_valor_txt(t, defs, despues["metric_key"], antes_json["amount"], despues["estimado"], fecha)
     despues_txt = _ingesta_valor_txt(t, defs, despues["metric_key"], despues["amount"], despues["estimado"], fecha)
     return antes_txt, despues_txt, None
 
 
-def _tarjeta_borrar_ingesta(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+def _tarjeta_borrar_ingesta(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     fecha = comun._short_date(t, date.fromisoformat(antes_json["day"]))
     partes = [_ingesta_valor_txt(t, defs, antes_json["metric_key"], antes_json["amount"], antes_json["estimado"],
                                  fecha)]
@@ -264,7 +273,7 @@ def _comida_cantidad_txt(t: T, defs: dict, c: dict) -> str:
     return t(clave, metric=t("metric." + c["metric_key"]), valor=valor)
 
 
-def _tarjeta_registrar_comida(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+def _tarjeta_registrar_comida(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     """BODY-COMIDA-1-M fix 2: three lines, never one long bold paragraph -- the description on its
     own line, date and meal-word/time beneath it, then every amount (fixed catalogue order, each
     marked «≈» when estimated) on its own line, mirroring Día's own two-line meal
@@ -301,7 +310,7 @@ def _checkin_valor_txt(t: T, defs: dict, metric_key: str, valor: int) -> str:
               valor=comun._fig_unit(t, metric_key, valor, defs))
 
 
-def _tarjeta_registrar_checkin(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+def _tarjeta_registrar_checkin(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     """BODY-CHECKIN-1 ruling 3: one card -- the date, the clock time when the check-in has one
     (BODY-CHECKIN-1-M fix: Día shows it, so the card must too) and the moment word, then every
     given reading as «4 de 5» (comun._fig_unit, the same "of5" rendering soreness already uses),
@@ -355,19 +364,19 @@ def _periodo_txt(t: T, kind: str, start_day: str, end_day: str | None, note: str
     return " · ".join(partes)
 
 
-def _tarjeta_marcar_periodo(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+def _tarjeta_marcar_periodo(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     despues_txt = _periodo_txt(t, despues["kind"], despues["start_day"], despues.get("end_day"),
                                 despues.get("note"))
     return None, despues_txt, None
 
 
-def _tarjeta_cerrar_periodo(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+def _tarjeta_cerrar_periodo(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     antes_txt = _periodo_txt(t, despues["kind"], despues["start_day"], None, despues.get("note"))
     despues_txt = _periodo_txt(t, despues["kind"], despues["start_day"], despues["end_day"], despues.get("note"))
     return antes_txt, despues_txt, None
 
 
-def _tarjeta_corregir_periodo(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+def _tarjeta_corregir_periodo(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     antes_txt = _periodo_txt(t, antes_json["kind"], antes_json["start_day"], antes_json.get("end_day"),
                               antes_json.get("note"))
     despues_txt = _periodo_txt(t, despues["kind"], despues["start_day"], despues.get("end_day"),
@@ -375,14 +384,14 @@ def _tarjeta_corregir_periodo(t: T, defs: dict, despues: dict, antes_json: dict 
     return antes_txt, despues_txt, None
 
 
-def _tarjeta_borrar_periodo(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+def _tarjeta_borrar_periodo(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     antes_txt = _periodo_txt(t, antes_json["kind"], antes_json["start_day"], antes_json.get("end_day"),
                               antes_json.get("note"))
     despues_txt = t("asistente.propuesta.periodo_eliminado")
     return antes_txt, despues_txt, None
 
 
-def _tarjeta_descartar_series(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+def _tarjeta_descartar_series(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     """BODY-SERIES-ORDEN-1 ruling 4: the plain count line first, then each slot's own watch
     exercise/reps -- the `tu` column stays empty, since nothing the person said is being shown
     here, only which watch sets are proposed as not done."""
@@ -412,7 +421,7 @@ def _filtro_dias_txt(t: T, filtro_dias: dict) -> str:
     return ", ".join(partes)
 
 
-def _tarjeta_proponer_experimento(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+def _tarjeta_proponer_experimento(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     metricas_txt = ", ".join(t("metric." + m) for m in despues["metricas"])
     dias_txt = _filtro_dias_txt(t, despues["filtro_dias"])
     fecha = comun._short_date(t, date.fromisoformat(despues["fecha_inicio"]))
@@ -421,7 +430,7 @@ def _tarjeta_proponer_experimento(t: T, defs: dict, despues: dict, antes_json: d
     return None, despues_txt, None
 
 
-def _tarjeta_marcar_experimento(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+def _tarjeta_marcar_experimento(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     titulo = despues["titulo"]
     fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
     clave = "asistente.propuesta.experimento_hecho" if despues["ocurrio"] else "asistente.propuesta.experimento_no_hecho"
@@ -434,7 +443,7 @@ def _tarjeta_marcar_experimento(t: T, defs: dict, despues: dict, antes_json: dic
     return antes_txt, despues_txt, None
 
 
-def _tarjeta_marcar_habito(t: T, defs: dict, despues: dict, antes_json: dict | None) -> tuple:
+def _tarjeta_marcar_habito(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     habito = despues["habito_titulo"]
     fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
     if despues.get("actividad"):
@@ -476,7 +485,8 @@ TARJETAS = {
 }
 
 
-def _tarjeta_propuesta(t: T, defs: dict, registro: dict, origen_conversacion: str | None = None) -> dict:
+def _tarjeta_propuesta(t: T, defs: dict, registro: dict, origen_conversacion: str | None = None, *,
+                        conn=None, person_id: int | None = None) -> dict:
     """The `propuesta` SSE event payload (agent-capabilities-v1 section 2, decision 5): `antes`/
     `despues` are short plain-word strings in the person's language, built here from the record's
     structured JSON -- never stored as text. `etiquetas` carries this card's button and result
@@ -491,7 +501,7 @@ def _tarjeta_propuesta(t: T, defs: dict, registro: dict, origen_conversacion: st
     accion = registro["accion"]
     despues = registro["despues_json"]
     antes_json = registro["antes_json"]
-    antes_txt, despues_txt, series_tarjeta = TARJETAS[accion](t, defs, despues, antes_json)
+    antes_txt, despues_txt, series_tarjeta = TARJETAS[accion](t, defs, despues, antes_json, conn, person_id)
     if antes_txt is not None:
         antes_txt = t("asistente.propuesta.antes", valor=antes_txt)
         despues_txt = t("asistente.propuesta.despues", valor=despues_txt)
@@ -514,7 +524,8 @@ def _tarjeta_propuesta(t: T, defs: dict, registro: dict, origen_conversacion: st
     }
 
 
-def _tarjeta_propuesta_segura(t: T, defs: dict, registro: dict, origen_conversacion: str | None = None) -> dict:
+def _tarjeta_propuesta_segura(t: T, defs: dict, registro: dict, origen_conversacion: str | None = None, *,
+                               conn=None, person_id: int | None = None) -> dict:
     """BODY-ENTRENO-NUMEROS-1 ruling 3: one bad stored card (e.g. a legacy `reps` that is not a
     number in a shape `_numero_o_texto` does not cover) must never take the whole conversation's
     card list down. Catches anything `_tarjeta_propuesta` still raises and shows that one card as a
@@ -522,7 +533,7 @@ def _tarjeta_propuesta_segura(t: T, defs: dict, registro: dict, origen_conversac
     only the exception class and the propuesta id to stderr -- never the payload (health data never
     leaves the PC through a log)."""
     try:
-        return _tarjeta_propuesta(t, defs, registro, origen_conversacion)
+        return _tarjeta_propuesta(t, defs, registro, origen_conversacion, conn=conn, person_id=person_id)
     except Exception as exc:
         print(f"asistente: propuesta {registro['id']} no se pudo mostrar ({type(exc).__name__})",
               file=sys.stderr)
@@ -614,7 +625,8 @@ async def asistente_preguntar(request: Request, person_id: int = Depends(identit
                 if isinstance(ev, agente_bucle.EventoHerramienta):
                     yield _evento_sse("herramienta", {"nombre": ev.nombre})
                 elif isinstance(ev, agente_bucle.EventoPropuesta):
-                    yield _evento_sse("propuesta", _tarjeta_propuesta(t, defs, ev.registro, origen_conversacion))
+                    yield _evento_sse("propuesta", _tarjeta_propuesta(t, defs, ev.registro, origen_conversacion,
+                                                                       conn=conn, person_id=person_id))
                 else:
                     yield _evento_sse("texto", {"delta": ev.texto})
 
@@ -664,7 +676,7 @@ def asistente_conversacion(conversacion_id: str, person_id: int = Depends(identi
         raise HTTPException(404)
     defs = comun._defs(conn)
     origen_conversacion = agente_conversacion.origen_de(conn, resuelto)
-    tarjetas = [_tarjeta_propuesta_segura(t, defs, r, origen_conversacion)
+    tarjetas = [_tarjeta_propuesta_segura(t, defs, r, origen_conversacion, conn=conn, person_id=person_id)
                 for r in agente_propuestas.listar(conn, person_id, resuelto)]
     conn.close()
     return JSONResponse({"conversacion_id": resuelto, "turnos": turnos, "propuestas": tarjetas})

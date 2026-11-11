@@ -134,6 +134,26 @@ class AnatomiaDataTest(unittest.TestCase):
         for v in ctx:
             self.assertEqual(v["glow"], [])
 
+    def test_grupos_limitados_fills_the_limitada_list_not_glow(self):
+        # BODY-LESION-ZONA-1 ruling 4: the hatch is its own list, never the training glow's.
+        grupos = anatomia.CATEGORIA_GRUPOS["hombro"]
+        ctx = anatomia.contexto(_T(), "hoy", frozenset(), grupos)
+        musculos = next(v for v in ctx if v["id"] == "musculos")
+        self.assertEqual(musculos["glow"], [])
+        self.assertEqual(len(musculos["limitada"]), 2)  # hombros: two ellipses (left/right)
+
+    def test_texto_liviano_a_proposito_is_none_for_no_zonas(self):
+        self.assertIsNone(anatomia.texto_liviano_a_proposito(_T(), set()))
+
+    def test_texto_liviano_a_proposito_names_the_zona(self):
+        txt = anatomia.texto_liviano_a_proposito(_T(), {"hombro"})
+        self.assertEqual(txt, "Más liviano a propósito: hombro en recuperación")
+
+    def test_texto_liviano_a_proposito_orders_several_zonas_by_the_enum(self):
+        # Given out of order, always read back in CATEGORIA_ENUM's own order.
+        txt = anatomia.texto_liviano_a_proposito(_T(), {"hombro", "pierna"})
+        self.assertIn("pierna, hombro", txt)
+
 
 def _T():
     from body.i18n import T
@@ -230,6 +250,39 @@ class CuerpoVistaHoyTest(unittest.TestCase):
         _use(pid)
         r = client.get("/")
         self.assertIn("Desliza para girar", r.text)
+
+    def test_open_lesion_with_zonas_shows_the_recovering_caption_and_hatch(self):
+        # BODY-LESION-ZONA-1 ruling 4.
+        pid = _mk_person(self.conn)
+        self._algun_dato_hoy(pid)
+        hoy = self._hoy_iso(pid)
+        db.crear_periodo(self.conn, pid, "lesion", hoy, zonas=["hombro"])
+        self.conn.commit()
+        _use(pid)
+        r = client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("En recuperación: hombro", r.text)
+        self.assertIn('cuerpo-vista-glow limitada', r.text)
+
+    def test_no_open_lesion_shows_no_recovering_caption(self):
+        pid = _mk_person(self.conn)
+        self._algun_dato_hoy(pid)
+        _use(pid)
+        r = client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn("En recuperación", r.text)
+        self.assertNotIn('cuerpo-vista-glow limitada', r.text)
+
+    def test_closed_lesion_shows_no_recovering_caption(self):
+        pid = _mk_person(self.conn)
+        self._algun_dato_hoy(pid)
+        hoy = self._hoy_iso(pid)
+        db.crear_periodo(self.conn, pid, "lesion", "2026-01-01", "2026-01-05", zonas=["hombro"])
+        self.conn.commit()
+        _use(pid)
+        r = client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn("En recuperación", r.text)
 
 
 class CuerpoVistaTendenciasTest(unittest.TestCase):

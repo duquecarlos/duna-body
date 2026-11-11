@@ -96,11 +96,14 @@ def _alt(t: T, pantalla: str, vista_id: str) -> str:
     return t("cuerpo.alt.turnos." + vista_id)
 
 
-def contexto(t: T, pantalla: str, grupos_lit: frozenset[str] = frozenset()) -> list[dict]:
+def contexto(t: T, pantalla: str, grupos_lit: frozenset[str] = frozenset(),
+             grupos_limitados: frozenset[str] = frozenset()) -> list[dict]:
     """This screen's own views (anclajes.json's order), each with its glow ellipses for
     `grupos_lit` -- filtered to whichever pose (front or back) that view's own image actually
     carries them for, so a leg category lights cuádriceps on a front view and glúteos +
-    isquiotibiales on a back view of the SAME session, never both on either."""
+    isquiotibiales on a back view of the SAME session, never both on either. `grupos_limitados`
+    (BODY-LESION-ZONA-1 ruling 4) is the same per-view filtering, for an open lesion period's own
+    zonas, in its own `limitada` list -- drawn as a quiet hatch, never the training glow."""
     out = []
     for v in VISTAS_POR_PANTALLA[pantalla]:
         imagen = v["imagen"]
@@ -108,6 +111,20 @@ def contexto(t: T, pantalla: str, grupos_lit: frozenset[str] = frozenset()) -> l
         disponibles = BRILLOS.get(pose, {}) if pose else {}
         permitidos = VISTA_GRUPOS.get((pantalla, v["id"]), frozenset())
         glow = [elipse for g in (grupos_lit & permitidos) for elipse in disponibles.get(g, [])]
-        out.append({"id": v["id"], "imagen": imagen, "glow": glow,
+        limitada = [elipse for g in (grupos_limitados & permitidos) for elipse in disponibles.get(g, [])]
+        out.append({"id": v["id"], "imagen": imagen, "glow": glow, "limitada": limitada,
                     "label": t("cuerpo.vista." + v["id"]), "alt": _alt(t, pantalla, v["id"])})
     return out
+
+
+def texto_liviano_a_proposito(t: T, zonas) -> str | None:
+    """BODY-LESION-ZONA-1 ruling 2: the one shared plain line every training read shows for a set
+    (or session) whose categoria falls inside an open lesion period's own zonas -- so leer_entreno,
+    leer_dia, Día's training section and the registrar_entreno card all say exactly the same
+    words. None for no zonas at all; CATEGORIA_ENUM's own order keeps several zonas in a stable,
+    readable order, never set-iteration order."""
+    ordenadas = [z for z in CATEGORIA_ENUM if z in set(zonas)]
+    if not ordenadas:
+        return None
+    nombres = ", ".join(t("entreno.categoria." + z) for z in ordenadas)
+    return t("entreno.liviano_proposito", zona=nombres)

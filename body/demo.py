@@ -140,6 +140,13 @@ _PLAN_HOY_EJERCICIOS = {
     ],
 }
 
+# BODY-LESION-ZONA-1 ruling 6: the invented group the demo's open 'lesion' period names -- the
+# same "hombro" the plan above already trains, so Hoy lights AND hatches it at once, and one of
+# this person's own past strength_training sets (found by _seed_periodo, below) gets corrected to
+# this same categoria and exercise so a registered read shows ruling 2's line too.
+_LESION_ZONA_DEMO = "hombro"
+_LESION_SET_EJERCICIO = {"es": "press militar", "en": "overhead press"}
+
 
 @dataclass
 class _DayData:
@@ -726,7 +733,7 @@ def _seed_ingesta(conn, db, rng: random.Random, all_days: list[date], person_id:
     return rows, comidas
 
 
-def _seed_periodo(conn, db, all_days: list[date], person_id: int) -> int:
+def _seed_periodo(conn, db, all_days: list[date], person_id: int, idioma: str) -> int:
     """Two invented periods: a closed 'malestar' stretch partway through the seeded history
     (BODY-PERIODO-1), so screens and analyses that leave marked days out have something to exclude
     in the demo, and an OPEN 'lesion' period STARTING a few days before today (BODY-PERIODO-
@@ -734,12 +741,31 @@ def _seed_periodo(conn, db, all_days: list[date], person_id: int) -> int:
     exactly as of this instant". dias_marcados() no longer re-reads the timezone per call while an
     open period overlaps a lookback (that cost is gone, not hidden -- db.py's own
     _periodos_de_persona), so starting it inside every baseline's 30-day lookback costs nothing
-    extra here."""
+    extra here.
+
+    BODY-LESION-ZONA-1 ruling 6: the 'lesion' period names _LESION_ZONA_DEMO. Its start reaches
+    back far enough to cover the most recent strength_training activity _seed_days already made
+    (widening past the usual 3 days when that activity is older), and that one activity's first
+    set is corrected to the same categoria -- so a registered training read shows ruling 2's
+    "lighter on purpose" line, not only the future plan and Hoy's hatch."""
     start = all_days[len(all_days) // 2]
     end = start + timedelta(2)
     db.crear_periodo(conn, person_id, "malestar", start.isoformat(), end.isoformat())
     hoy = all_days[-1]
-    db.crear_periodo(conn, person_id, "lesion", (hoy - timedelta(3)).isoformat(), None)
+    inicio_lesion = hoy - timedelta(3)
+    fuerza = conn.execute(
+        "SELECT source, source_id, day FROM activity WHERE person_id = ? AND type = 'strength_training' "
+        "AND day < ? ORDER BY day DESC LIMIT 1",
+        (person_id, hoy.isoformat()),
+    ).fetchone()
+    if fuerza is not None:
+        dia_fuerza = date.fromisoformat(fuerza["day"])
+        if dia_fuerza < inicio_lesion:
+            inicio_lesion = dia_fuerza
+        db.correct_exercise_set(conn, person_id, fuerza["source"], fuerza["source_id"], 1,
+                                 category=_LESION_ZONA_DEMO, exercise=_LESION_SET_EJERCICIO[idioma],
+                                 reps=8, weight_kg=20.0)
+    db.crear_periodo(conn, person_id, "lesion", inicio_lesion.isoformat(), None, zonas=[_LESION_ZONA_DEMO])
     conn.commit()
     return 2
 
@@ -960,7 +986,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     metric_rows += _seed_self_metrics(conn, db, rng, all_days, person_id)
     metric_rows += _seed_soreness(conn, db, rng, all_days, person_id)
     entradas_ingesta, comidas_ingesta = _seed_ingesta(conn, db, rng, all_days, person_id)
-    periodos = _seed_periodo(conn, db, all_days, person_id)
+    periodos = _seed_periodo(conn, db, all_days, person_id, idioma)
     checkins = _seed_checkins(conn, db, rng, all_days, person_id)
     # BODY-RECUPERACION-1-M: AFTER _seed_periodo, not before -- recuperacion.recalcular() checks
     # db.dias_marcados() per activity at computation time, so an activity on a day inside a marked

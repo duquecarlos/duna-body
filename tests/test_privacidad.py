@@ -518,6 +518,19 @@ class PeriodExportDeleteTest(unittest.TestCase):
         data = privacidad.export_person(self.conn, 2)
         self.assertEqual(data["periodos"], [])
 
+    def test_export_includes_zonas(self):
+        # BODY-LESION-ZONA-1 ruling 5.
+        db.crear_periodo(self.conn, 1, "lesion", "2026-11-01", None, zonas=["hombro"])
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(json.loads(data["periodos"][0]["zonas"]), ["hombro"])
+
+    def test_export_shows_no_zonas_as_null(self):
+        db.crear_periodo(self.conn, 1, "malestar", "2026-11-01", "2026-11-03")
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 1)
+        self.assertIsNone(data["periodos"][0]["zonas"])
+
     def test_delete_all_removes_the_period(self):
         db.crear_periodo(self.conn, 1, "viaje", "2026-11-01", note="secreto")
         self.conn.commit()

@@ -1,4 +1,18 @@
 {% macro cuerpo_vista(t, cuerpo) %}
+<style>
+/* BODY-LESION-ZONA-1 ruling 4: a quiet hatch for a zona an open lesion period names -- never the
+   training glow's own color/blend, legible in both themes through the same --muted token the rest
+   of the page already uses. Reuses .cuerpo-vista-glow's own positioning (left/top/w/h, set by
+   body/static/cuerpo-vista.js), only its look is overridden here. */
+.cuerpo-vista-glow.limitada{
+  background: repeating-linear-gradient(45deg,
+    color-mix(in srgb, var(--muted) 55%, transparent) 0 3px, transparent 3px 7px);
+  border: 1.5px dashed color-mix(in srgb, var(--muted) 70%, transparent);
+  border-radius: 40%;
+  mix-blend-mode: normal;
+}
+:root[data-theme="dark"] .cuerpo-vista-glow.limitada{ mix-blend-mode: normal; }
+</style>
 <div class="card cuerpo-card">
   <div class="cuerpo-vista" data-recorte="{{ cuerpo.recorte }}">
     <div class="cuerpo-vista-track">
@@ -9,6 +23,10 @@
              data-oscuro="{{ static_url('anatomia/' + v.imagen + '-oscuro.webp') }}">
         {% for e in v.glow %}
         <span class="cuerpo-vista-glow" aria-hidden="true"
+              data-left="{{ e[0] }}" data-top="{{ e[1] }}" data-w="{{ e[2] }}" data-h="{{ e[3] }}"></span>
+        {% endfor %}
+        {% for e in v.limitada %}
+        <span class="cuerpo-vista-glow limitada" aria-hidden="true"
               data-left="{{ e[0] }}" data-top="{{ e[1] }}" data-w="{{ e[2] }}" data-h="{{ e[3] }}"></span>
         {% endfor %}
       </div>
@@ -23,5 +41,6 @@
     </div>
   </div>
   <p class="cuerpo-caption">{{ cuerpo.caption }}</p>
+  {% if cuerpo.caption_limitada %}<p class="cuerpo-caption">{{ cuerpo.caption_limitada }}</p>{% endif %}
 </div>
 {% endmacro %}

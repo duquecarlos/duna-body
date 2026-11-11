@@ -1,5 +1,6 @@
 """body/mudanza.py: move one person's data from a PC database into this process's own database
 (BODY-MUDANZA-HERRAMIENTA-1). Invented demo data only -- never a real health figure."""
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -513,6 +514,23 @@ class ApplyTest(MudanzaTestCase):
         mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
         after = self.source_path.read_bytes()
         self.assertEqual(before, after)
+
+
+class PeriodZonasMudanzaTest(MudanzaTestCase):
+    """BODY-LESION-ZONA-1 ruling 5: period.zonas survives a move -- mudanza.py never lists period's
+    columns explicitly (match_cols=None copies a row's own columns), so this is purely additive."""
+
+    def test_zonas_survives_a_move(self):
+        source = self._new_source()
+        db.crear_periodo(source, db.DEFAULT_PERSON_ID, "lesion", "2026-10-01", None, zonas=["hombro"])
+        source.close()
+
+        _, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok)
+
+        dest = db.connect()
+        row = dest.execute("SELECT zonas FROM period").fetchone()
+        self.assertEqual(json.loads(row["zonas"]), ["hombro"])
 
 
 class PersonasTest(MudanzaTestCase):
