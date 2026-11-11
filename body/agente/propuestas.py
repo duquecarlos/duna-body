@@ -49,6 +49,11 @@ one writer of `period`, through `db.crear_periodo`/`db.borrar_periodo`. `cerrar_
 `registrar_medida` uses on `daily_metric`. `borrar_periodo`'s undo re-inserts through
 `db.crear_periodo` -- a new row with the same values, not the same id, the same "functionally
 equivalent" restoration `borrar_ingesta`'s own undo uses.
+
+`descartar_series` (BODY-SERIES-ORDEN-1) calls `db.set_series_excluida` directly, toggling
+`workout_set.excluded_by_person` -- `correct_exercise_set` has no equivalent, since it only ever
+moves a slot INTO "corrected". `registrar_entreno`'s own apply/undo (ruling 3) call the same
+writer, for the watch's own active slots its spoken series left unmatched.
 """
 from __future__ import annotations
 
@@ -309,6 +314,14 @@ def _drift_aplicar_registrar_entreno(conn: sqlite3.Connection, row: sqlite3.Row)
                 return True
         elif actual is not None:
             return True
+    # BODY-SERIES-ORDEN-1 rulings 3, 4: the watch's own active slots left unmatched at propose
+    # time must still be active, still uncorrected and still carry the excluded_by_person value
+    # this proposal captured, or something changed them since.
+    for ne in despues.get("no_emparejadas", ()):
+        actual = actuales.get(ne["set_order"])
+        if (actual is None or actual["corrected_by_person"] or actual["set_type"] != "active"
+                or actual["excluded_by_person"] != ne["excluded_antes"]):
+            return True
     return False
 
 
@@ -329,10 +342,15 @@ def _drift_deshacer_registrar_entreno(conn: sqlite3.Connection, row: sqlite3.Row
         return False
     source, source_id = despues["source"], despues["source_id"]
     actuales = db.exercise_sets(conn, person_id, source, source_id)
-    for i, s in enumerate(despues["series"], start=1):
-        actual = next((a for a in actuales if a["set_order"] == i), None)
+    for m in despues["mapeo"]:
+        actual = next((a for a in actuales if a["set_order"] == m["set_order"]), None)
+        s = m["tu"]
         if (actual is None or not actual["corrected_by_person"]
                 or actual["exercise"] != s.get("ejercicio") or actual["reps"] != s.get("reps")):
+            return True
+    for ne in despues.get("no_emparejadas", ()):
+        actual = next((a for a in actuales if a["set_order"] == ne["set_order"]), None)
+        if actual is None or not actual["excluded_by_person"]:
             return True
     return False
 
@@ -355,10 +373,15 @@ def _aplicar_registrar_entreno(conn: sqlite3.Connection, row: sqlite3.Row) -> di
                                      category=s.get("categoria"), reps=s.get("reps"),
                                      weight_kg=s.get("peso_kg"), note=s.get("nota"))
         return {"source_id": source_id}
-    for i, s in enumerate(despues["series"], start=1):
-        db.correct_exercise_set(conn, person_id, despues["source"], despues["source_id"], i,
+    for m in despues["mapeo"]:
+        s = m["tu"]
+        db.correct_exercise_set(conn, person_id, despues["source"], despues["source_id"], m["set_order"],
                                  exercise=s.get("ejercicio"), category=s.get("categoria"),
                                  reps=s.get("reps"), weight_kg=s.get("peso_kg"), note=s.get("nota"))
+    # BODY-SERIES-ORDEN-1 rulings 3, 4: the watch's own active slots this call never reached are
+    # excluded alongside the correction -- never left to look like a missed set forever.
+    for ne in despues.get("no_emparejadas", ()):
+        db.set_series_excluida(conn, person_id, despues["source"], despues["source_id"], ne["set_order"], True)
     return None
 
 
@@ -366,7 +389,8 @@ def _deshacer_registrar_entreno(conn: sqlite3.Connection, row: sqlite3.Row) -> N
     """The manual case deletes the session it created. The Garmin-matched case restores each
     touched set's exact pre-correction state -- including turning `corrected_by_person` back to
     0 -- which `correct_exercise_set` cannot express (it only ever moves a set INTO "corrected"),
-    so this is a direct UPDATE/DELETE on `workout_set`."""
+    so this is a direct UPDATE/DELETE on `workout_set`. The unmatched active slots `aplicar`
+    excluded are restored to their own pre-propose `excluded_by_person` value the same way."""
     antes = json.loads(row["antes_json"]) if row["antes_json"] is not None else {}
     despues = json.loads(row["despues_json"])
     person_id = row["person_id"]
@@ -400,6 +424,53 @@ def _deshacer_registrar_entreno(conn: sqlite3.Connection, row: sqlite3.Row) -> N
                     "activity_source_id = ? AND set_order = ?",
                     (person_id, source, source_id, s["set_order"]),
                 )
+        for ne in despues.get("no_emparejadas", ()):
+            conn.execute(
+                "UPDATE workout_set SET excluded_by_person = ? WHERE person_id = ? AND activity_source = ? "
+                "AND activity_source_id = ? AND set_order = ?",
+                (int(ne["excluded_antes"]), person_id, source, source_id, ne["set_order"]),
+            )
+
+
+# -- descartar_series (BODY-SERIES-ORDEN-1 ruling 4: this module writes workout_set.excluded_by_person
+# directly, through db.set_series_excluida -- correct_exercise_set has no equivalent toggle) --------
+
+def _drift_aplicar_descartar_series(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    actuales = {s["set_order"]: s for s in db.exercise_sets(conn, row["person_id"], despues["source"],
+                                                             despues["source_id"])}
+    for entrada in despues["series"]:
+        actual = actuales.get(entrada["set_order"])
+        if (actual is None or actual["corrected_by_person"] or actual["set_type"] != "active"
+                or actual["excluded_by_person"] != entrada["excluded_antes"]):
+            return True
+    return False
+
+
+def _drift_deshacer_descartar_series(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    """Drifted if a slot `aplicar` excluded is no longer excluded -- something else changed it."""
+    despues = json.loads(row["despues_json"])
+    actuales = {s["set_order"]: s for s in db.exercise_sets(conn, row["person_id"], despues["source"],
+                                                             despues["source_id"])}
+    for entrada in despues["series"]:
+        actual = actuales.get(entrada["set_order"])
+        if actual is None or not actual["excluded_by_person"]:
+            return True
+    return False
+
+
+def _aplicar_descartar_series(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    for entrada in despues["series"]:
+        db.set_series_excluida(conn, row["person_id"], despues["source"], despues["source_id"],
+                                entrada["set_order"], True)
+
+
+def _deshacer_descartar_series(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    for entrada in despues["series"]:
+        db.set_series_excluida(conn, row["person_id"], despues["source"], despues["source_id"],
+                                entrada["set_order"], bool(entrada["excluded_antes"]))
 
 
 # -- registrar_medida (BODY-ENTRENO-MEDIDA-1: this module calls db.set_metric with source='self') -
@@ -889,6 +960,8 @@ TABLA: dict[str, _Accion] = {
                                  _aplicar_corregir_periodo, _deshacer_corregir_periodo),
     "borrar_periodo": _Accion(_drift_aplicar_borrar_periodo, _drift_deshacer_borrar_periodo,
                                _aplicar_borrar_periodo, _deshacer_borrar_periodo),
+    "descartar_series": _Accion(_drift_aplicar_descartar_series, _drift_deshacer_descartar_series,
+                                 _aplicar_descartar_series, _deshacer_descartar_series),
 }
 
 SIN_DESHACER = tuple(nombre for nombre, entrada in TABLA.items() if not entrada.tiene_deshacer)
