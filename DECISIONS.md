@@ -16493,3 +16493,84 @@ against the actual merge diff (`DECISIONS.md`, `body/backup.py`, `body/db.py`, `
 new, `tests/test_mudanza.py` new): no schema or migration change, no customer-facing bytes (the tool
 has no route or UI), no cross-repo contract change -- but this slice's own spec body authorised the
 merge in words (`approval-reason`: "merge only"), so the merge proceeded.
+
+## BODY-MUDANZA-HOST-VERBO-1 -- the host-side import verb (2026-11-10)
+
+ORCH-CARLOS-DELEGATES-TIER-1-1, under Carlos's own approval of the move (relayed with his exact
+words, BODY-CARLOS-RELAYED-WORDS-APPROVE-1). BODY-MUDANZA-SERVIDOR-1-INV designed the move and
+BODY-MUDANZA-HERRAMIENTA-1 built `python -m body.mudanza importar`; this slice is the
+investigation's followup: the host-side verb that runs that tool safely under sudo, shaped like the
+existing `backup` verb in `deploy/host/duna-deploy-body`. It builds and tests the verb; it moves
+nothing and touches no server -- the actual move stays a runbook step Carlos runs himself.
+
+**Ruling 3, `personas`:** `python -m body.mudanza personas` and `duna-deploy-body personas` print,
+per hosted person, only `cuenta_sub`, `display_name` and a `creado` date -- nothing else, never a
+health figure (`PersonasTest.test_prints_only_the_three_named_fields` asserts the dict has exactly
+those three keys). **Deviation from the ruling's own wording:** `person` carries no creation
+timestamp of its own, and adding one is a schema change outside this slice's declared `touches`, so
+`creado` is the person's earliest accepted `consentimiento.accepted_at` instead -- consent gates
+every other screen (`body/identity.py`), so it is the closest existing date to "this account started
+here". `None` when a person has signed in but never consented.
+
+**Ruling 1, transport:** the investigation proposed `age`-encrypting the PC snapshot to the backup
+recipient, but that key's private half lives on Carlos's PC, not the host, so the host could never
+decrypt it. Transport is SSH alone (`scp`), the same encrypted channel the rest of this runbook
+already uses -- recorded here as the deviation the ruling itself called for recording.
+
+**Ruling 2, `importar-pc`:** `duna-deploy-body importar-pc --cuenta-sub <sub> --archivo <path>
+[--apply]`, dispatching to a new `deploy/host/body-import-pc.sh`, exactly as `backup` dispatches to
+`body-backup.sh`. Without `--apply` it runs the tool's own dry run only -- no integrity check, no
+host backup, no timer touched, the file never deleted. With `--apply`, in order: (a)
+`PRAGMA integrity_check` on the uploaded file, refused if not `ok`; (b) a host backup with the
+existing `python -m body.backup snapshot` step, kept locally under `/srv/duna/data/body/` as the
+rollback point, never uploaded by this verb; (c) `systemctl stop body-pull.timer
+body-backfill.timer` for the window; (d) the import itself, as `duna-body` via `runuser`; a `trap`
+restores both timers and deletes the uploaded file on every exit path, success or failure, exactly
+as `body-backup.sh`'s own `trap` deletes its plaintext. Tested only by static text assertions on
+the shell files (`tests/test_host_import.py`, `tests/test_deploy_host.py`) -- nothing here executes
+a `.sh` file or touches a real host, following `tests/test_host_backup.py`'s own style.
+
+**Ruling 4, sudoers and README:** `duna-deploy-body.sudoers` allows the script as a whole
+(`carlos ALL=(root) NOPASSWD: /usr/local/sbin/duna-deploy-body`), not per verb, so it is left
+unchanged -- the ruling's other branch. `deploy/host/README.md` gained an "Importar desde el PC
+(una vez)" section with the exact steps in order: install the updated `duna-deploy-body`, `scp` the
+snapshot, `personas`, the dry run, `--apply`, check `/healthz`, reconnect Garmin on the hosted page
+-- placeholders throughout, never a real value.
+
+**Ruling 5, rollback:** no restore command exists for the rollback snapshot today. Per the ruling's
+own allowance, the README says so plainly rather than inventing one, and gives the hand procedure
+(stop the services, copy the snapshot over `/srv/duna/data/body/body.db`, fix ownership and mode,
+start the services again). Open followup: BODY-HOST-RESTORE-1, a `restore` verb/command, not built
+by this slice.
+
+**Known limitation, not a ruling:** `deploy/host/body-import-pc.sh` is committed at git mode 100644,
+not 100755 like its siblings (`body-backup.sh`, `duna-deploy-body`) -- this session's granted git
+verbs did not include `update-index`, and neither `chmod` nor any other non-git command was granted
+either, so the mode could not be set. This has no functional effect: `duna-deploy-body` invokes it
+as `/bin/bash "$PRODUCT_IMPORT_SCRIPT" ...`, the same way it invokes `body-backup.sh`, never by its
+own exec bit. Open followup: BODY-HOST-IMPORT-EXEC-BIT-1, set the mode to 100755 in a later slice
+that holds `git update-index` or an equivalent grant.
+
+**Commits**, `feat/body-mudanza-host-verbo-1` branch, on top of `d7cfd92739c74fe2216eaa143561f41a3ea6e2ee`:
+- `e5a973225e9a486e4574a9a226a77b6883abea1f` -- "BODY-MUDANZA-HOST-VERBO-1: personas verb, by
+  sub/display name/first consent."
+- `bf2938030782cb102fc897272730a4241e127bc9` -- "BODY-MUDANZA-HOST-VERBO-1: the importar-pc and
+  personas host verbs."
+
+**Gate**, run on this branch's own tip (`bf2938030782cb102fc897272730a4241e127bc9`), exactly
+`.venv/Scripts/python.exe -m unittest discover tests -t .`, foreground, once (the first attempt was
+killed by the harness's own background time limit before printing its result and was relaunched the
+same way, per protocol):
+
+    Ran 2517 tests in 735.983s
+
+    OK (skipped=1)
+
+Green. Policy-A check on this slice's own diff (`deploy/host/body-import-pc.sh` new,
+`deploy/host/duna-deploy-body`, `deploy/host/README.md`, `body/mudanza.py`,
+`tests/test_mudanza.py`, `tests/test_host_import.py` new, `tests/test_deploy_host.py` new,
+`DECISIONS.md`): no schema or migration change, no cross-repo contract change, and no
+customer-facing bytes -- every byte here is host-admin shell/README text Carlos reads as root, not
+a customer, operator or owner screen. But this is a Tier 1 slice whose spec's own body says to stop
+before merge regardless (`approved: yes` authorised the build, not the merge). Stops
+AWAITING_APPROVAL; not merged to `main`.
