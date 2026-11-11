@@ -17312,3 +17312,10 @@ Green -- 2680 (the prior floor) + 16 new tests (9 in `test_propuesta_vigencia.py
 `test_mcp.py`'s two new classes). `git status --porcelain` empty before this entry. Approved to
 merge on a green gate per the dispatch's own words ("the desk loses proposals every day without
 it"). No open follow-up.
+
+Commits on `feat/body-propuesta-vigencia-1`: `a45aa7c542fe40fdd86183eb091888efd92c5b25` (rulings
+1-4 and their tests), `f187a4ac72835c5b38ae6c88c540cfec43e9ef8e` (the `test_registro_tu.py`
+allow-list fix), `ff65397b3eaf5b5ef16e3fc1403d38dcd7d3a10b` (this entry). Merged into `main` with
+`--no-ff`: merge commit `345808ab2be8cb5dc38589f2c993f88a1146bf30`, merge tree
+`e71f310899d4eea7d1e44ddf40fd0b879fb09d43`, identical to the branch tip's own tree (`git diff`
+between them empty) -- no conflict, no extra change.
