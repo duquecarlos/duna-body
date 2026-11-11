@@ -203,6 +203,7 @@ class AplicarEscribeTest(unittest.TestCase):
         self.conn.commit()
         resultado = propuestas.aplicar(self.conn, 1, out["propuesta_id"])
         self.assertEqual(resultado["estado"], "expirada")
+        self.assertEqual(resultado["expira_en"], vencido)  # ruling 4: so the caller can say WHEN
         row = self.conn.execute("SELECT estado FROM propuesta_agente WHERE id = ?", (out["propuesta_id"],)).fetchone()
         self.assertEqual(row["estado"], "expirada")
         self.assertEqual(self.conn.execute("SELECT language FROM person WHERE id = 1").fetchone()[0], "es")

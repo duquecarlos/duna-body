@@ -61,12 +61,20 @@ import json
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from .. import db, fechas, goals, shift_import
 from ..i18n import T
+from . import conversacion as agente_conversacion
 
 EXPIRA_MINUTOS = 15
+# ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: a body.mcp proposal is relayed by the person's own
+# personal assistant and often answered an hour or more later -- the 15-minute window that fits an
+# in-app chat turn would silently lose it. It survives through the END of the person's own NEXT
+# local day (the day it was made, plus the following one), never a fixed span of minutes.
+# body/mcp.py reads this name instead of restating its own number.
+EXPIRA_MCP_DIAS_SIGUIENTES = 1
 
 _DriftFn = Callable[[sqlite3.Connection, sqlite3.Row], bool]
 _AplicarFn = Callable[[sqlite3.Connection, sqlite3.Row], dict | None]
@@ -85,6 +93,17 @@ def _iso(dt: datetime) -> str:
     return dt.isoformat(timespec="seconds")
 
 
+def _fin_siguiente_dia_local(ahora: datetime, person: dict) -> datetime:
+    """The UTC instant of local midnight at the START of the local day AFTER the one
+    EXPIRA_MCP_DIAS_SIGUIENTES names (ruling 1): the end of the person's own NEXT local day,
+    counted from `ahora`'s own local date in their timezone -- so a proposal made at any local
+    time on day D stays applicable through all of day D+1, expiring only at the start of D+2."""
+    tz = ZoneInfo(person.get("timezone") or "America/Bogota")
+    hoy = ahora.astimezone(tz).date()
+    limite_local = datetime.combine(hoy + timedelta(days=EXPIRA_MCP_DIAS_SIGUIENTES + 1), time.min, tzinfo=tz)
+    return limite_local.astimezone(timezone.utc)
+
+
 def _row_a_dict(row: sqlite3.Row) -> dict:
     d = dict(row)
     d["antes_json"] = json.loads(d["antes_json"]) if d["antes_json"] is not None else None
@@ -95,7 +114,10 @@ def _row_a_dict(row: sqlite3.Row) -> dict:
 def crear(conn: sqlite3.Connection, person_id: int, conversacion_id: int, accion: str, despues: dict, *,
           objetivo_id: int | None = None, antes: dict | None = None) -> dict:
     ahora = _ahora()
-    expira = ahora + timedelta(minutes=EXPIRA_MINUTOS)
+    if agente_conversacion.origen_de(conn, conversacion_id) == "mcp":
+        expira = _fin_siguiente_dia_local(ahora, db.person(conn, person_id))
+    else:
+        expira = ahora + timedelta(minutes=EXPIRA_MINUTOS)
     with conn:
         cur = conn.execute(
             "INSERT INTO propuesta_agente (person_id, conversacion_id, accion, objetivo_id, antes_json, "
@@ -979,6 +1001,33 @@ TABLA: dict[str, _Accion] = {
 SIN_DESHACER = tuple(nombre for nombre, entrada in TABLA.items() if not entrada.tiene_deshacer)
 
 
+# ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2: when one of these four is applied, every other
+# still-pending proposal of the SAME tool for the SAME day is replaced by it. Reuses the existing
+# 'descartada' terminal state rather than widening the `estado` CHECK (a new value there is a
+# schema change) -- the replaced row's own despues_json (free-form, only CHECKed for json_valid)
+# gains a 'reemplazada' marker so the card (body/rutas/asistente.py) can tell a replacement apart
+# from a plain discard.
+ACCIONES_REEMPLAZABLES = frozenset({"registrar_entreno", "registrar_comida", "registrar_ingesta",
+                                     "registrar_checkin"})
+
+
+def _reemplazar_pendientes_mismo_dia(conn: sqlite3.Connection, person_id: int, accion: str, day: str,
+                                      propuesta_id_aplicada: int, ahora_iso: str) -> None:
+    pendientes = conn.execute(
+        "SELECT id, despues_json FROM propuesta_agente WHERE person_id = ? AND accion = ? "
+        "AND estado = 'propuesta' AND id != ?", (person_id, accion, propuesta_id_aplicada),
+    ).fetchall()
+    for p in pendientes:
+        despues = json.loads(p["despues_json"])
+        if despues.get("day") != day:
+            continue
+        if _marcar(conn, p["id"], person_id, "propuesta", "descartada", ahora_iso):
+            despues["reemplazada"] = True
+            with conn:
+                conn.execute("UPDATE propuesta_agente SET despues_json = ? WHERE id = ?",
+                             (json.dumps(despues, ensure_ascii=False), p["id"]))
+
+
 def aplicar(conn: sqlite3.Connection, person_id: int, propuesta_id: int) -> dict:
     row = _fila_o_ajena(conn, person_id, propuesta_id)
     if row["estado"] != "propuesta":
@@ -987,7 +1036,10 @@ def aplicar(conn: sqlite3.Connection, person_id: int, propuesta_id: int) -> dict
     if _vencida(row, ahora_iso):
         if _marcar(conn, propuesta_id, person_id, "propuesta", "expirada", ahora_iso):
             conn.commit()
-            return {"estado": "expirada"}
+            # Ruling 4: the honest "it expired, and when" message (body/mcp.py's own
+            # aplicar_propuesta) needs the stamp that was already on this row -- never a second
+            # lookup after the state has moved on.
+            return {"estado": "expirada", "expira_en": row["expira_en"]}
         conn.rollback()
         return {"estado": "ya_resuelta"}
     entrada = TABLA[row["accion"]]
@@ -1009,6 +1061,9 @@ def aplicar(conn: sqlite3.Connection, person_id: int, propuesta_id: int) -> dict
             with conn:
                 conn.execute("UPDATE propuesta_agente SET despues_json = ? WHERE id = ?",
                              (json.dumps(nuevo_despues, ensure_ascii=False), propuesta_id))
+    if row["accion"] in ACCIONES_REEMPLAZABLES:
+        _reemplazar_pendientes_mismo_dia(conn, person_id, row["accion"], json.loads(row["despues_json"])["day"],
+                                          propuesta_id, ahora_iso)
     return {"estado": "aplicada"}
 
 

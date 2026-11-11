@@ -501,12 +501,19 @@ def _tarjeta_propuesta(t: T, defs: dict, registro: dict, origen_conversacion: st
     accion = registro["accion"]
     despues = registro["despues_json"]
     antes_json = registro["antes_json"]
-    antes_txt, despues_txt, series_tarjeta = TARJETAS[accion](t, defs, despues, antes_json, conn, person_id)
-    if antes_txt is not None:
-        antes_txt = t("asistente.propuesta.antes", valor=antes_txt)
-        despues_txt = t("asistente.propuesta.despues", valor=despues_txt)
-    elif despues_txt:
-        despues_txt = t("asistente.propuesta.solo_propuesta", valor=despues_txt)
+    # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2: a same-day sibling the apply replaced still carries
+    # the real 'descartada' estado (no schema change), but its own despues_json gained a
+    # 'reemplazada' marker -- shown here as the whole card's text, in place of the stale proposal
+    # content its own TARJETAS builder would otherwise still render.
+    if despues.get("reemplazada"):
+        antes_txt, despues_txt, series_tarjeta = None, t("asistente.propuesta.reemplazada"), None
+    else:
+        antes_txt, despues_txt, series_tarjeta = TARJETAS[accion](t, defs, despues, antes_json, conn, person_id)
+        if antes_txt is not None:
+            antes_txt = t("asistente.propuesta.antes", valor=antes_txt)
+            despues_txt = t("asistente.propuesta.despues", valor=despues_txt)
+        elif despues_txt:
+            despues_txt = t("asistente.propuesta.solo_propuesta", valor=despues_txt)
     # BODY-MCP-APLICAR-1 ruling 4: an apply THIS caller made itself (aplicada_via == 'mcp') gets
     # its own, more specific label -- never the generic "from your personal assistant" one, since
     # that applies regardless of who tapped Aplicar.

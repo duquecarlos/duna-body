@@ -18,6 +18,7 @@ from body import config, db, identity, mcp, web
 from body.agente import ajustes as agente_ajustes
 from body.agente import conversacion as agente_conversacion
 from body.agente import herramientas
+from body.agente import propuestas as agente_propuestas
 
 
 def _reset_db():
@@ -495,6 +496,111 @@ class Utf8WireTest(_McpTestCase):
         fila = verificacion.execute("SELECT despues_json FROM propuesta_agente WHERE id = ?",
                                      (salida_marcar["propuesta_id"],)).fetchone()
         self.assertEqual(json.loads(fila["despues_json"])["note"], "mañana")
+
+
+class AplicarExpiradaTest(_McpTestCase):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4: an honest answer, never just "no longer pending"."""
+
+    def test_message_names_when_it_expired_and_says_to_propose_again(self):
+        db.set_aplicar_mcp(self.conn, self.person_id, True)
+        _, respuestas = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "marcar_periodo", "arguments": {"kind": "viaje", "start_day": "2020-01-01"}}},
+        ])
+        pid = json.loads(respuestas[0]["result"]["content"][-1]["text"])["propuesta_id"]
+        vencido = "2026-11-10T08:30:00+00:00"
+        self.conn.execute("UPDATE propuesta_agente SET expira_en = ? WHERE id = ?", (vencido, pid))
+        self.conn.commit()
+
+        _, respuestas2 = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": mcp.NOMBRE_APLICAR, "arguments": {"propuesta_id": pid}}},
+        ])
+        r = respuestas2[0]["result"]
+        self.assertTrue(r["isError"])
+        texto = r["content"][0]["text"]
+        self.assertIn("03:30", texto)  # 08:30 UTC -> 03:30 local (America/Bogota, UTC-5)
+        self.assertIn("noviembre", texto)
+        self.assertNotEqual(texto, "Esa propuesta ya no está pendiente.")
+        row = self.conn.execute("SELECT estado FROM propuesta_agente WHERE id = ?", (pid,)).fetchone()
+        self.assertEqual(row["estado"], "expirada")
+
+
+class DescartarPropuestaTest(_McpTestCase):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3: descartar_propuesta, gated by the same setting as
+    aplicar_propuesta, writes no health data and needs no confirm."""
+
+    def _crear_propuesta_mcp(self, start_day: str = "2020-01-01") -> int:
+        _, respuestas = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "marcar_periodo", "arguments": {"kind": "viaje", "start_day": start_day}}},
+        ])
+        return json.loads(respuestas[0]["result"]["content"][-1]["text"])["propuesta_id"]
+
+    def test_tool_is_absent_from_tools_list_by_default(self):
+        _, respuestas = self._ejecutar([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
+        nombres = {t["name"] for t in respuestas[0]["result"]["tools"]}
+        self.assertNotIn(mcp.NOMBRE_DESCARTAR, nombres)
+
+    def test_calling_it_while_off_is_refused_and_writes_nothing(self):
+        pid = self._crear_propuesta_mcp()
+        _, respuestas = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": mcp.NOMBRE_DESCARTAR, "arguments": {"propuesta_id": pid}}},
+        ])
+        self.assertTrue(respuestas[0]["result"]["isError"])
+        row = self.conn.execute("SELECT estado FROM propuesta_agente WHERE id = ?", (pid,)).fetchone()
+        self.assertEqual(row["estado"], "propuesta")
+
+    def test_tool_is_listed_once_the_setting_is_on(self):
+        db.set_aplicar_mcp(self.conn, self.person_id, True)
+        _, respuestas = self._ejecutar([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
+        nombres = {t["name"] for t in respuestas[0]["result"]["tools"]}
+        self.assertIn(mcp.NOMBRE_DESCARTAR, nombres)
+        self.assertIn(mcp.NOMBRE_APLICAR, nombres)
+
+    def test_discards_its_own_pending_proposal_and_writes_no_health_data(self):
+        db.set_aplicar_mcp(self.conn, self.person_id, True)
+        before = self.conn.execute("SELECT COUNT(*) FROM period").fetchone()[0]
+        pid = self._crear_propuesta_mcp()
+        _, respuestas = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": mcp.NOMBRE_DESCARTAR, "arguments": {"propuesta_id": pid}}},
+        ])
+        r = respuestas[0]["result"]
+        self.assertNotIn("isError", r)
+        salida = json.loads(r["content"][-1]["text"])
+        self.assertEqual(salida["estado"], "descartada")
+        row = self.conn.execute("SELECT estado FROM propuesta_agente WHERE id = ?", (pid,)).fetchone()
+        self.assertEqual(row["estado"], "descartada")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM period").fetchone()[0], before)
+
+    def test_refuses_an_in_app_proposal_naming_why(self):
+        db.set_aplicar_mcp(self.conn, self.person_id, True)
+        cid = agente_conversacion.crear(self.conn, self.person_id)
+        registro = agente_propuestas.crear(self.conn, self.person_id, cid, "proponer_idioma", {"lang": "en"})
+        _, respuestas = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": mcp.NOMBRE_DESCARTAR, "arguments": {"propuesta_id": registro["id"]}}},
+        ])
+        r = respuestas[0]["result"]
+        self.assertTrue(r["isError"])
+        self.assertTrue(r["content"][0]["text"])
+        row = self.conn.execute("SELECT estado FROM propuesta_agente WHERE id = ?",
+                                (registro["id"],)).fetchone()
+        self.assertEqual(row["estado"], "propuesta")
+
+    def test_refuses_an_already_applied_proposal(self):
+        db.set_aplicar_mcp(self.conn, self.person_id, True)
+        pid = self._crear_propuesta_mcp()
+        agente_propuestas.aplicar(self.conn, self.person_id, pid)
+        _, respuestas = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": mcp.NOMBRE_DESCARTAR, "arguments": {"propuesta_id": pid}}},
+        ])
+        self.assertTrue(respuestas[0]["result"]["isError"])
+        row = self.conn.execute("SELECT estado FROM propuesta_agente WHERE id = ?", (pid,)).fetchone()
+        self.assertEqual(row["estado"], "aplicada")
 
 
 if __name__ == "__main__":
