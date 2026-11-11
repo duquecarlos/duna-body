@@ -912,6 +912,14 @@ def local_person_id(conn: sqlite3.Connection) -> int:
     return DEFAULT_PERSON_ID
 
 
+def default_person_id() -> int:
+    """The literal id a single-person install's one person row carries. The only seam that may
+    name `DEFAULT_PERSON_ID` itself (tests/test_person_scope.py enforces it) -- a caller that needs
+    it without writing (unlike local_person_id, which INSERTs when the row is absent; a read-only
+    source connection, body/mudanza.py's own case, can never do that) goes through this instead."""
+    return DEFAULT_PERSON_ID
+
+
 def registrar_uso_herramienta_externa(conn: sqlite3.Connection, person_id: int, herramienta: str,
                                        caller: str) -> None:
     """One audit row for one call an outside caller made against the tool registry
