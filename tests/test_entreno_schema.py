@@ -66,7 +66,7 @@ class FreshDbTest(unittest.TestCase):
             "garmin_category", "garmin_exercise", "garmin_reps", "garmin_weight_value",
             "garmin_weight_unit", "garmin_duration_s", "garmin_start_local", "person_category",
             "person_exercise", "person_reps", "person_weight_kg", "person_note",
-            "corrected_by_person", "created_at", "updated_at",
+            "corrected_by_person", "excluded_by_person", "created_at", "updated_at",
         }
         self.assertEqual(cols, expected)
 
