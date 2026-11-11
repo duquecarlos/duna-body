@@ -16741,3 +16741,7 @@ an MCP caller -- the figures already flowed through `weight_value`, now simply c
 wrong, and no new i18n key); no cross-repo contract change. All three Merge Policy A conditions
 pass cleanly, so this merges on the green gate without needing the spec's own explicit
 authorization.
+
+Merged `feat/body-series-gramos-1` into `main` with `--no-ff` -- merged `f2369233268e06fe77f6d9625a27a5526a0f43dd`.
+No conflicts. Tree identity: merge tree and branch tree both `285eab36c8cf01ef0b9a1ca46af368a7795d01a9`,
+diff empty.
