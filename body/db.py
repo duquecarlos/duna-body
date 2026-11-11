@@ -1842,10 +1842,27 @@ def create_manual_session(conn: sqlite3.Connection, person_id: int, day: str, st
     return source_id
 
 
+_FACTOR_UNIDAD_RELOJ = {"g": 0.001, "kg": 1.0, "lb": 0.45359237, "lbs": 0.45359237}
+
+
+def _peso_kg_de_reloj(value: float | None, unit: str | None) -> tuple[float | None, str | None]:
+    """A watch set's raw weight pair converted to kilograms for display (BODY-SERIES-GRAMOS-1
+    ruling 1): grams and pounds are Garmin's own send-shapes (BODY-SERIES-UNIDAD-1); kilograms
+    pass through. Rounded to 0.1 kg. An unknown unit, or no value, shows no weight rather than a
+    guessed number -- the raw pair stays available under the row's `garmin` sub-dict."""
+    if value is None or unit is None:
+        return None, None
+    factor = _FACTOR_UNIDAD_RELOJ.get(unit)
+    if factor is None:
+        return None, None
+    return round(value * factor, 1), "kg"
+
+
 def exercise_sets(conn: sqlite3.Connection, person_id: int, source: str, source_id: str) -> list[dict]:
     """One activity's sets in order, each with the display value (the person's correction when
-    `corrected_by_person`, else the watch's reading) and both originals -- for the assistant to
-    read. Person-scoped by the WHERE clause: a row can never surface for another person's id."""
+    `corrected_by_person`, else the watch's reading, converted to kilograms -- ruling 1) and both
+    originals -- for the assistant to read. Person-scoped by the WHERE clause: a row can never
+    surface for another person's id."""
     rows = conn.execute(
         "SELECT * FROM workout_set WHERE person_id = ? AND activity_source = ? AND "
         "activity_source_id = ? ORDER BY set_order",
@@ -1858,7 +1875,7 @@ def exercise_sets(conn: sqlite3.Connection, person_id: int, source: str, source_
             weight_value = r["person_weight_kg"]
             weight_unit = "kg" if weight_value is not None else None
         else:
-            weight_value, weight_unit = r["garmin_weight_value"], r["garmin_weight_unit"]
+            weight_value, weight_unit = _peso_kg_de_reloj(r["garmin_weight_value"], r["garmin_weight_unit"])
         out.append({
             "set_order": r["set_order"],
             "set_type": r["set_type"],

@@ -16685,3 +16685,59 @@ requires.
 Merged `feat/body-series-unidad-1` into `main` with `--no-ff` -- merged `52dc4eaf0a59351f4e986b70b56e9222afc68543`.
 No conflicts. Tree identity: merge tree and branch tree both `9c8f3d93fa2a11f17d58c0d2a1b428bc55d529e2`,
 diff empty.
+
+## BODY-SERIES-GRAMOS-1
+
+BODY-SERIES-UNIDAD-1 (merged `52dc4eaf0a59351f4e986b70b56e9222afc68543`) made an unlabeled watch
+set weight storable as unit `"g"` (Garmin's `exerciseSets` send grams), but the orchestrator's
+read of the readers afterwards found none of them converted it: a watch set stored as 11340 g
+would have shown as "11340 kg" on the `_registrar_entreno` logging card and everywhere else
+`db.exercise_sets` is read.
+
+**The conversion (ruling 1).** `db.exercise_sets` (`body/db.py`) now converts a watch set's raw
+weight to kilograms through a new `_peso_kg_de_reloj(value, unit)` helper: unit `"g"` -> value /
+1000, `"lb"`/`"lbs"` -> value x 0.45359237, `"kg"` as is -- rounded to 0.1 kg in every case. An
+unknown unit string, or no value at all (a bodyweight set), returns `(None, None)` -- no weight
+shown, never a guessed number. The raw stored pair (`garmin_weight_value`, `garmin_weight_unit`)
+is untouched by this slice and stays available, exactly as stored, under the row's own `"garmin"`
+sub-dict. No schema change; no stored value rewritten.
+
+**Every reader, checked (ruling 2).** Grepped every reader of a set's weight across the
+repository. `body/agente/herramientas.py`'s `_leer_entreno` (the day/range read tool) and
+`_registrar_entreno`'s card-building `mapeo` (`reloj.peso_kg`) both read `db.exercise_sets`'s
+top-level `weight_value`/`weight_unit`, so the conversion reaches them with no code change there.
+`body/agente/propuestas.py`'s drift checks (`_drift_aplicar_registrar_entreno`) and
+`_registrar_entreno`'s `sets_antes` undo snapshot read the row's `"garmin"` sub-dict on purpose --
+undo must restore the exact raw stored pair -- and are correctly untouched; same reasoning for
+`body/privacidad.py`'s data export, which selects `workout_set` directly. `body/mcp.py` holds no
+weight-reading code of its own; it calls into `herramientas.py`. Día's set list and a weekly
+volume/figures reader do not exist yet in this repository (`body/history.py` and
+`body/rutas/historial.py` have no training-set code), so there was nothing further to change
+there; `body/entreno.py` named in the spec's `touches:` does not exist.
+
+**Tests.** New `tests/test_series_gramos.py`: a watch set stored as `(11340.0, "g")` reads
+11.3 kg; `(25.0, "lb")` and `(25.0, "lbs")` both read 11.3 kg; `(20.0, "kg")` reads 20.0 kg; a
+bodyweight set `(None, None)` reads no weight; an unknown unit (written directly to the row,
+since `garmin_adapter._weight` can no longer produce one) reads no weight while the raw pair
+stays under `"garmin"`; a person-corrected set reads the person's kilograms, untouched by the
+conversion. All invented demo data. `tests/test_series_unidad.py`, `tests/test_agente_entreno.py`
+and `tests/test_entreno_numeros.py` needed no change -- re-run and still green, confirmed below.
+
+Commit on `feat/body-series-gramos-1`: `c561b393b5a898c58ab05cce43a9c21ea2bcb252`.
+
+**Gate**, run once on the branch tip, exactly `.venv/Scripts/python.exe -m unittest discover tests
+-t .`, foreground (backgrounded twice past the 600s harness cap -- the first background run was
+killed by the harness's own 10-minute background limit before printing `Ran`, so the gate was
+launched a second time and read back from its own artifact once finished):
+
+    Ran 2540 tests in 1156.170s
+
+    OK (skipped=1)
+
+Green. Policy-A check on this slice's own diff (`body/db.py`, `tests/test_series_gramos.py` new):
+no schema or migration change (no `CREATE`/`ALTER`, no column touched -- only a read-side
+computation inside `exercise_sets`); no customer-facing bytes (no new string shown to a person or
+an MCP caller -- the figures already flowed through `weight_value`, now simply correct instead of
+wrong, and no new i18n key); no cross-repo contract change. All three Merge Policy A conditions
+pass cleanly, so this merges on the green gate without needing the spec's own explicit
+authorization.
