@@ -1,7 +1,10 @@
 {% extends "base.html" %}
+{% from "_cuerpo_vista.html" import cuerpo_vista with context %}
 {% block title %}{{ t('nav.shifts') }} · {{ t('app.name') }}{% endblock %}
 {% block main %}
 <div class="top"><div><h1>{{ t('nav.shifts') }}</h1></div></div>
+
+{{ cuerpo_vista(t, cuerpo) }}
 
 {% if many %}
 <div class="card">
@@ -168,4 +171,5 @@
 {% if result_msg %}
 <p class="k mt-8">{{ result_msg }}</p>
 {% endif %}
+<script src="{{ static_url('cuerpo-vista.js') }}" defer></script>
 {% endblock %}

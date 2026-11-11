@@ -276,6 +276,21 @@ class PersonaCompletaSinCambiosTest(unittest.TestCase):
         self.assertNotIn(t("goals.chart_soon"), r_goal.text)
         self.assertIn(t("goals.legend_avg"), r_goal.text, "real points plotted -- the legend keeps naming them")
 
+    def test_demo_home_body_view_is_lit_by_todays_plan(self):
+        # BODY-CUERPO-VISTA-1-M ruling 4: the gap BODY-CUERPO-VISTA-1 stopped on -- the demo person's
+        # Today session is categorised, so Hoy's body view is actually lit, never "no session".
+        demo._seed(self.conn, dias=30, idioma="es")
+        person_id = 1
+        self.conn.commit()
+        _use(self.conn, person_id)
+        t = T("es")
+        r = client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn(t("cuerpo.caption.hoy_sin_sesion"), r.text)
+        self.assertIn("Iluminado: lo que entrena tu sesión de hoy", r.text)
+        self.assertIn(t("cuerpo.grupo.hombros"), r.text)
+        self.assertIn(t("cuerpo.grupo.dorsales"), r.text)
+
 
 if __name__ == "__main__":
     unittest.main()

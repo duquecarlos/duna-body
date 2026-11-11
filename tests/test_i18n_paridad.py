@@ -8,7 +8,7 @@ import re
 import string
 import unittest
 
-from body import db, history, noche_inusual
+from body import anatomia, db, history, noche_inusual
 from body import turnos_costo
 from body.rutas import comun, metas, tendencias, turnos
 
@@ -126,6 +126,16 @@ _FIXED_DYNAMIC = {
     "shifts.pulso.sueno_+": ["corta", "normal"],
     # body/rutas/hoy.py _noche_inusual_senales(): body/noche_inusual.py MODELO's own three signals.
     "noche.senal.+": list(noche_inusual.MODELO["senales"]),
+    # body/anatomia.py contexto(): every view id, across the three screens (anclajes.json's own
+    # vistas_por_pantalla).
+    "cuerpo.vista.+": sorted({v["id"] for vs in anatomia.VISTAS_POR_PANTALLA.values() for v in vs}),
+    # body/anatomia.py _alt(): each screen's own view ids, one literal prefix per screen.
+    "cuerpo.alt.hoy.+": [v["id"] for v in anatomia.VISTAS_POR_PANTALLA["hoy"]],
+    "cuerpo.alt.tendencias.+": [v["id"] for v in anatomia.VISTAS_POR_PANTALLA["tendencias"]],
+    "cuerpo.alt.turnos.+": [v["id"] for v in anatomia.VISTAS_POR_PANTALLA["turnos"]],
+    # body/rutas/hoy.py _cuerpo_hoy_ctx(): body/anatomia.py GRUPOS_ORDEN -- every glow group a
+    # training category can light.
+    "cuerpo.grupo.+": anatomia.GRUPOS_ORDEN,
 }
 
 # body/web.py _finding_text(): key = f"history.find.{axis}_better_{better}", then t(key, ...) -- a

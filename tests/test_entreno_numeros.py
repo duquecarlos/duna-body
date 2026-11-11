@@ -13,7 +13,7 @@ from tests._db import open_conn
 
 from fastapi.testclient import TestClient
 
-from body import config, db, identity, web
+from body import anatomia, config, db, identity, web
 from body.agente import conversacion as agente_conversacion
 from body.agente import herramientas, propuestas as agente_propuestas
 
@@ -35,6 +35,18 @@ class SchemaTypesTest(unittest.TestCase):
         props = herramientas._PARAM_REGISTRAR_ENTRENO["properties"]["series"]["items"]["properties"]
         self.assertEqual(props["reps"], {"type": ["integer", "null"], "minimum": 0})
         self.assertEqual(props["peso_kg"], {"type": ["number", "null"], "minimum": 0})
+
+
+class CategoriaEnumSchemaTest(unittest.TestCase):
+    """BODY-CUERPO-VISTA-1-M ruling 2: both tools speak anatomia.CATEGORIA_ENUM for 'categoria'."""
+
+    def test_planear_entreno_ejercicios_categoria_carries_the_enum(self):
+        props = herramientas._PARAM_PLANEAR_ENTRENO["properties"]["ejercicios"]["items"]["properties"]
+        self.assertEqual(props["categoria"], {"type": "string", "enum": list(anatomia.CATEGORIA_ENUM)})
+
+    def test_registrar_entreno_series_categoria_carries_the_enum(self):
+        props = herramientas._PARAM_REGISTRAR_ENTRENO["properties"]["series"]["items"]["properties"]
+        self.assertEqual(props["categoria"], {"type": "string", "enum": list(anatomia.CATEGORIA_ENUM)})
 
 
 class DoorValidationTest(unittest.TestCase):
@@ -121,6 +133,60 @@ class DoorValidationTest(unittest.TestCase):
         peso = _json.loads(row["despues_json"])["series"][0]["peso_kg"]
         self.assertEqual(peso, 17.5)
         self.assertIsInstance(peso, float)
+
+    def test_registrar_entreno_rejects_an_out_of_enum_categoria_and_writes_no_row(self):
+        before = self._count_propuestas()
+        with self.assertRaises(herramientas.ToolError) as ctx:
+            herramientas.ejecutar(self.conn, 1, "registrar_entreno", {
+                "day": "2026-11-10",
+                "series": [{"ejercicio": "Sentadilla", "categoria": "piernas"}],
+            }, "ninguno", self.cid)
+        self.assertIn("Sentadilla", str(ctx.exception))
+        self.assertIn("pierna", str(ctx.exception))
+        self.assertEqual(self._count_propuestas(), before)
+
+    def test_registrar_entreno_accepts_and_normalises_a_recognised_categoria(self):
+        out = herramientas.ejecutar(self.conn, 1, "registrar_entreno", {
+            "day": "2026-11-10",
+            "series": [{"ejercicio": "Sentadilla", "categoria": "  PIERNA  "}],
+        }, "ninguno", self.cid)
+        row = self.conn.execute(
+            "SELECT despues_json FROM propuesta_agente WHERE id = ?", (out["propuesta_id"],)
+        ).fetchone()
+        import json as _json
+        self.assertEqual(_json.loads(row["despues_json"])["series"][0]["categoria"], "pierna")
+
+
+class PlanearEntrenoCategoriaTest(unittest.TestCase):
+    """BODY-CUERPO-VISTA-1-M ruling 2: the same door validation, on planear_entreno's exercises."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        self.cid = _cid(self.conn)
+
+    def _count_propuestas(self) -> int:
+        return self.conn.execute("SELECT COUNT(*) FROM propuesta_agente").fetchone()[0]
+
+    def test_an_out_of_enum_categoria_is_refused_with_no_row(self):
+        before = self._count_propuestas()
+        with self.assertRaises(herramientas.ToolError) as ctx:
+            herramientas.ejecutar(self.conn, 1, "planear_entreno", {
+                "day": "2026-11-10", "titulo": "Pierna",
+                "ejercicios": [{"ejercicio": "Sentadilla", "series": 4, "categoria": "misterio"}],
+            }, "ninguno", self.cid)
+        self.assertIn("Sentadilla", str(ctx.exception))
+        self.assertEqual(self._count_propuestas(), before)
+
+    def test_a_recognised_categoria_is_stored_normalised(self):
+        import json as _json
+        out = herramientas.ejecutar(self.conn, 1, "planear_entreno", {
+            "day": "2026-11-10", "titulo": "Pierna",
+            "ejercicios": [{"ejercicio": "Sentadilla", "series": 4, "categoria": "Pierna"}],
+        }, "ninguno", self.cid)
+        row = self.conn.execute(
+            "SELECT despues_json FROM propuesta_agente WHERE id = ?", (out["propuesta_id"],)
+        ).fetchone()
+        self.assertEqual(_json.loads(row["despues_json"])["ejercicios"][0]["categoria"], "pierna")
 
 
 _PROVIDER_ENV_VARS = ("BODY_AGENTE_PROVEEDOR", "BODY_AGENTE_MODELO", "BODY_AGENTE_ANTHROPIC_API_KEY",

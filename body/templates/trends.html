@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_cuerpo_vista.html" import cuerpo_vista with context %}
 {% block title %}{{ t('nav.trends') }} · {{ t('app.name') }}{% endblock %}
 {% block main %}
 <div class="top"><div>
@@ -20,6 +21,8 @@
   {% endfor %}
 </div>
 {% if month_title %}<p class="mt-0 mb-12"><a class="taplink" href="/trends">{{ t('trends.back_hist') }}</a></p>{% endif %}
+
+{{ cuerpo_vista(t, cuerpo) }}
 
 {% macro render_card(c) %}
 <div class="card" id="{{ c.key }}">
@@ -72,4 +75,5 @@
 </div>
 {% endif %}
 <a class="more" href="/history">{{ t('trends.history_link') }}</a>
+<script src="{{ static_url('cuerpo-vista.js') }}" defer></script>
 {% endblock %}

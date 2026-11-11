@@ -1,0 +1,27 @@
+{% macro cuerpo_vista(t, cuerpo) %}
+<div class="card cuerpo-card">
+  <div class="cuerpo-vista" data-recorte="{{ cuerpo.recorte }}">
+    <div class="cuerpo-vista-track">
+      {% for v in cuerpo.vistas %}
+      <div class="cuerpo-vista-capa{% if loop.first %} on{% endif %}">
+        <img class="cuerpo-vista-img" alt="{{ v.alt }}"
+             data-claro="{{ static_url('anatomia/' + v.imagen + '-claro.webp') }}"
+             data-oscuro="{{ static_url('anatomia/' + v.imagen + '-oscuro.webp') }}">
+        {% for e in v.glow %}
+        <span class="cuerpo-vista-glow" aria-hidden="true"
+              data-left="{{ e[0] }}" data-top="{{ e[1] }}" data-w="{{ e[2] }}" data-h="{{ e[3] }}"></span>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+    <div class="cuerpo-vista-btns">
+      {% for v in cuerpo.vistas %}
+      <button type="button" class="cuerpo-vista-btn{% if loop.first %} on{% endif %}"
+              aria-pressed="{{ 'true' if loop.first else 'false' }}">{{ v.label }}</button>
+      {% endfor %}
+      <span class="cuerpo-vista-swipe">{{ t('cuerpo.desliza') }}</span>
+    </div>
+  </div>
+  <p class="cuerpo-caption">{{ cuerpo.caption }}</p>
+</div>
+{% endmacro %}

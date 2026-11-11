@@ -5,6 +5,7 @@ body/web.py before this slice. Pure move: path, method, templates and bodies ide
 from __future__ import annotations
 
 import html
+import json
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -12,8 +13,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from markupsafe import Markup
 
-from .. import (compartir, cuenta, db, goals, history, household, identity, noche_inusual, readiness, recuperacion,
-                turnos_costo, tutoriales, ventana_comida)
+from .. import (anatomia, compartir, cuenta, db, goals, history, household, identity, noche_inusual, readiness,
+                recuperacion, turnos_costo, tutoriales, ventana_comida)
 from ..agente import conversacion as agente_conversacion
 from ..baselines import baseline
 from ..i18n import T
@@ -216,6 +217,38 @@ def _noche_inusual_dia_ctx(t: T, conn, person_id: int, day: str, vals: dict) -> 
     return {"texto": t("day.noche_inusual", senales=_noche_inusual_senales(t, noche))}
 
 
+def _plan_categorias_hoy(conn, person_id: int, today_local: date) -> list | None:
+    """BODY-CUERPO-VISTA-1: today's own training plan, if any -- `plan.ejercicios_json` is "shape
+    owned by the tool that writes it" (body/db.py), so an exercise's own `categoria` key is read
+    only if present, never guessed from its name. `planear_entreno` (BODY-CUERPO-VISTA-1-M ruling 2)
+    validates that key against `anatomia.CATEGORIA_ENUM` before it is ever stored; a row stored
+    before that validation existed, under the old free-text vocabulary, just reads as unrecognised
+    (body/anatomia.py's own CATEGORIA_GRUPOS lights nothing for it). None when no plan with
+    exercises covers today at all, so the caption can tell "no session" from "session, no
+    recognised category" (both read as "no session" today, but only the first one really is)."""
+    row = conn.execute(
+        "SELECT ejercicios_json FROM plan WHERE person_id = ? AND day = ? AND status != 'skipped' "
+        "AND ejercicios_json IS NOT NULL ORDER BY id LIMIT 1",
+        (person_id, today_local.isoformat())).fetchone()
+    if row is None:
+        return None
+    return [e.get("categoria") for e in json.loads(row["ejercicios_json"])]
+
+
+def _cuerpo_hoy_ctx(t: T, conn, person_id: int, today_local: date) -> dict:
+    """Hoy's own body view (BODY-CUERPO-VISTA-1, ruling 4): Músculos/Espalda/Corazón y vasos, lit
+    for today's planned session's own muscle groups -- the empty, "no session" caption with no
+    plan, or with a plan whose categories none are recognised (never an empty parenthesis)."""
+    categorias = _plan_categorias_hoy(conn, person_id, today_local)
+    grupos = anatomia.grupos_de_categorias(categorias) if categorias is not None else frozenset()
+    if not grupos:
+        caption = t("cuerpo.caption.hoy_sin_sesion")
+    else:
+        nombres = [t("cuerpo.grupo." + g) for g in anatomia.grupos_ordenados(grupos)]
+        caption = t("cuerpo.caption.hoy_con_sesion", grupos=_lista_natural(t, nombres))
+    return {"vistas": anatomia.contexto(t, "hoy", grupos), "caption": caption, "recorte": "completo"}
+
+
 def _hoy_turno_ctx(t: T, conn, person_id: int, today_local: date) -> dict:
     """Hoy's second promise (BODY-HOY-TURNO-1): today's shift, the next one, and a recovery line --
     one vocabulary with Turnos' strip (shift.kind.*, the same band classes)."""
@@ -337,6 +370,7 @@ def today(person_id: int = Depends(identity.current_person_id)):
     primeros_pasos = primeros if any(not p["hecho"] for p in primeros) else None
     today_local = comun._today_local(person)
     turno_ctx = _hoy_turno_ctx(t, conn, person_id, today_local)
+    cuerpo_ctx = _cuerpo_hoy_ctx(t, conn, person_id, today_local)
     mcp_pendientes = _mcp_pendientes_ctx(conn, person_id)
     mcp_aplicado = _mcp_aplicado_ctx(conn, person_id)
     if not day:
@@ -359,7 +393,7 @@ def today(person_id: int = Depends(identity.current_person_id)):
         cards.append({"key": k, "label": t("metric." + k), "value": comun._value(t, k, v),
                       "unit": comun._unit(t, defs[k]) if v is not None else "", "delta": delta, "cls": cls})
     return comun._render("today.html", t=t, tab="today", day=day, date_long=t.long_date(date.fromisoformat(day)),
-                   synced=_synced(conn, person), stale=_stale_ctx(t, day, today_local),
+                   synced=_synced(conn, person), stale=_stale_ctx(t, day, today_local), cuerpo=cuerpo_ctx,
                    r=r, reading=_reading(t, r), ready_avg=ready_avg,
                    ready_delta=ready_delta, ready_cls=ready_cls, cards=cards,
                    missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_count=proposed_count,

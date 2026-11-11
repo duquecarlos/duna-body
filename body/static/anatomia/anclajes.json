@@ -1,0 +1,26 @@
+{
+ "_nota": "Body view data for mock round 2 (approved by Carlos 2026-11-10). Glow regions are ellipses as PERCENT of the image (centre x, centre y, width, height), taken from the mock generator (genmock.py G table) that drew them over these same images; the front (musculos/corazon/cerebro) and back (espalda-musculos) sets share their framing. Same for claro and oscuro.",
+ "vistas_por_pantalla": {
+  "hoy":       [{"id": "musculos", "imagen": "musculos"}, {"id": "espalda", "imagen": "espalda-musculos"}, {"id": "corazon", "imagen": "corazon"}],
+  "tendencias":[{"id": "corazon", "imagen": "corazon"}, {"id": "pulmones", "imagen": "pulmones"}, {"id": "cuerpo", "imagen": "frente"}],
+  "turnos":    [{"id": "cerebro", "imagen": "cerebro"}, {"id": "nervios", "imagen": "nervios"}, {"id": "cuerpo", "imagen": "frente"}]
+ },
+ "brillos": {
+  "frente": {
+   "pecho":     [[43, 25, 17, 8], [57, 25, 17, 8]],
+   "hombros":   [[31, 23.5, 11, 7], [69, 23.5, 11, 7]],
+   "biceps":    [[27.5, 32, 8, 9], [72.5, 32, 8, 9]],
+   "cuadriceps":[[41, 58, 12, 17], [59, 58, 12, 17]],
+   "abdomen":   [[50, 36, 16, 12]],
+   "corazon":   [[54, 30, 22, 12]],
+   "cerebro":   [[50, 13.5, 24, 15]]
+  },
+  "espalda": {
+   "dorsales":      [[40.5, 34, 12, 14], [59.5, 34, 12, 14]],
+   "espalda_alta":  [[50, 24, 30, 8]],
+   "deltoides_post":[[31, 23.5, 11, 7], [69, 23.5, 11, 7]],
+   "gluteos":       [[50, 50.5, 26, 9]],
+   "isquios":       [[44, 62, 9, 13], [56, 62, 9, 13]]
+  }
+ }
+}

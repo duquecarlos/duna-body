@@ -381,3 +381,27 @@ svg.stage{display:block;width:100%}
    override (an SVG presentation attribute loses to any CSS rule) -- so a stroked line gets its
    colour from here instead, never from a .c-* class. */
 .stroke-body{stroke:var(--body)}
+
+/* ---------- cuerpo-vista (BODY-CUERPO-VISTA-1): one body view per main screen, mock round 2.
+   `data-recorte` on the root picks the crop (Hoy shows the whole figure; Tendencias/Turnos crop to
+   a third of it, same proportions the mock itself used) -- never a cropped file, body/anatomia.py
+   ships one full image per view/theme. The cross-fade transition is covered by the existing
+   `@media (prefers-reduced-motion: reduce){*{transition:none!important}}` rule above, no separate
+   rule needed here. ---------- */
+.cuerpo-card{padding:16px}
+.cuerpo-vista-track{position:relative;border-radius:12px;overflow:hidden;background:var(--wash);aspect-ratio:1080/1935;touch-action:pan-y}
+.cuerpo-vista[data-recorte="torso"] .cuerpo-vista-track{aspect-ratio:343/260}
+.cuerpo-vista[data-recorte="cabeza"] .cuerpo-vista-track{aspect-ratio:343/240}
+.cuerpo-vista-capa{position:absolute;inset:0;opacity:0;transition:opacity .25s}
+.cuerpo-vista-capa.on{opacity:1}
+.cuerpo-vista-img{width:100%;height:100%;object-fit:cover;object-position:50% 0%;display:block}
+.cuerpo-vista[data-recorte="torso"] .cuerpo-vista-img{object-position:50% 30%}
+.cuerpo-vista[data-recorte="cabeza"] .cuerpo-vista-img{object-position:50% 8%}
+.cuerpo-vista-glow{position:absolute;transform:translate(-50%,-50%);border-radius:50%;pointer-events:none;background:radial-gradient(closest-side,color-mix(in srgb,var(--body) 85%,transparent),transparent);mix-blend-mode:multiply}
+:root[data-theme="dark"] .cuerpo-vista-glow{mix-blend-mode:screen}
+.cuerpo-vista-btns{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:12px}
+.cuerpo-vista-btn{min-height:44px;padding:0 14px;border-radius:18px;border:1px solid var(--line);background:transparent;color:var(--ink);font:500 13px inherit;cursor:pointer}
+.cuerpo-vista-btn.on{border:2px solid var(--body);background:color-mix(in srgb,var(--body) 14%,transparent);font-weight:600}
+@media (hover:hover){.cuerpo-vista-btn:not(.on):hover{background:var(--wash)}}
+.cuerpo-vista-swipe{margin-left:auto;font-size:12px;color:var(--muted)}
+.cuerpo-caption{color:var(--muted);font-size:13px;line-height:1.45;margin:10px 0 0}

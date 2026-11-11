@@ -60,8 +60,8 @@ import json
 import sqlite3
 from datetime import date, timedelta
 
-from .. import catalogo_tendencias, db, enlaces, errores, experimentos, fechas, goals, history, household, \
-    profile, pull, readiness, shift_import, turnos_costo, tutoriales
+from .. import anatomia, catalogo_tendencias, db, enlaces, errores, experimentos, fechas, goals, history, \
+    household, profile, pull, readiness, shift_import, turnos_costo, tutoriales
 from ..i18n import LANGS, T
 from . import ajustes, propuestas
 
@@ -168,6 +168,7 @@ _PARAM_PLANEAR_ENTRENO = {
                     "ejercicio": {"type": "string"},
                     "series": {"type": "integer"},
                     "reps": {},
+                    "categoria": {"type": "string", "enum": list(anatomia.CATEGORIA_ENUM)},
                 },
                 "required": ["ejercicio", "series"],
             },
@@ -188,7 +189,7 @@ _PARAM_REGISTRAR_ENTRENO = {
                 "type": "object",
                 "properties": {
                     "ejercicio": {"type": "string"},
-                    "categoria": {"type": "string"},
+                    "categoria": {"type": "string", "enum": list(anatomia.CATEGORIA_ENUM)},
                     "reps": {"type": ["integer", "null"], "minimum": 0},
                     "peso_kg": {"type": ["number", "null"], "minimum": 0},
                     "nota": {"type": "string"},
@@ -646,12 +647,29 @@ def _numero_entreno(t: T, ejercicio: str, valor, *, entero: bool, clave_error: s
     raise ToolError(t(clave_error, ejercicio=ejercicio))
 
 
+def _categoria_entreno(t: T, ejercicio: str, valor):
+    """Validates/normalises one exercise or series item's optional `categoria` at the door
+    (BODY-CUERPO-VISTA-1-M ruling 2, the BODY-ENTRENO-NUMEROS-1 pattern): None/missing passes
+    through; anything not in `anatomia.CATEGORIA_ENUM` (case/whitespace folded) is refused, naming
+    the allowed words, in the person's own language -- never stored."""
+    if valor is None:
+        return None
+    normalizado = valor.strip().lower() if isinstance(valor, str) else None
+    if normalizado not in anatomia.CATEGORIA_ENUM:
+        raise ToolError(t("agente.error.entreno_categoria_invalida", ejercicio=ejercicio,
+                           categorias=", ".join(anatomia.CATEGORIA_ENUM)))
+    return normalizado
+
+
 def _planear_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id: int, day: str, titulo: str,
                       ejercicios: list, time: str | None = None, goal_id: int | None = None) -> dict:
     """Proposes one `plan` row for a day: a title, an optional time and a list of planned
-    exercises `{ejercicio, series, reps?}` (BODY-ENTRENO-TOOLS-1, Q3). Insert-shaped, like
-    `proponer_meta`: there is no 'before'. Unlike `_registrar_entreno`/`_registrar_medida`, a
-    future `day` is allowed on purpose here: a plan is for later, not for what already happened."""
+    exercises `{ejercicio, series, reps?, categoria?}` (BODY-ENTRENO-TOOLS-1, Q3; categoria added
+    BODY-CUERPO-VISTA-1-M ruling 2, validated at the door against `anatomia.CATEGORIA_ENUM`). Hoy's
+    own body view lights its glow groups from this categoria (BODY-CUERPO-VISTA-1 ruling 3).
+    Insert-shaped, like `proponer_meta`: there is no 'before'. Unlike `_registrar_entreno`/
+    `_registrar_medida`, a future `day` is allowed on purpose here: a plan is for later, not for
+    what already happened."""
     try:
         date.fromisoformat(day)
     except ValueError:
@@ -661,11 +679,14 @@ def _planear_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id: 
         raise ToolError("falta el título del plan")
     if not ejercicios:
         raise ToolError("se necesita al menos un ejercicio")
+    t = T(db.person(conn, person_id)["language"])
     for e in ejercicios:
-        if not (e.get("ejercicio") or "").strip():
+        ejercicio = (e.get("ejercicio") or "").strip()
+        if not ejercicio:
             raise ToolError("cada ejercicio necesita 'ejercicio'")
         if not isinstance(e.get("series"), int) or e["series"] < 1:
             raise ToolError("cada ejercicio necesita 'series' (entero >= 1)")
+        e["categoria"] = _categoria_entreno(t, ejercicio, e.get("categoria"))
     if goal_id is not None:
         g = conn.execute("SELECT 1 FROM goal WHERE id = ? AND person_id = ?", (goal_id, person_id)).fetchone()
         if g is None:
@@ -695,6 +716,7 @@ def _registrar_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id
                                      clave_error="agente.error.entreno_reps_invalidas")
         s["peso_kg"] = _numero_entreno(t, ejercicio, s.get("peso_kg"), entero=False,
                                         clave_error="agente.error.entreno_peso_invalido")
+        s["categoria"] = _categoria_entreno(t, ejercicio, s.get("categoria"))
     actividad = conn.execute(
         "SELECT source, source_id FROM activity WHERE person_id = ? AND day = ? AND type = 'strength_training' "
         "ORDER BY start_local LIMIT 1", (person_id, day),
@@ -1335,8 +1357,10 @@ HERRAMIENTAS = [
      "parametros": _PARAM_PROPONER_IDIOMA, "funcion": _proponer_idioma},
     {"nombre": "planear_entreno", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone un plan de entrenamiento para un día: título, hora opcional y una lista de "
-                     "ejercicios con sus series y repeticiones. No lo crea: registra la propuesta para "
-                     "que la persona la apruebe en el chat.",
+                     "ejercicios con sus series y repeticiones. Pon siempre la categoría muscular de cada "
+                     "ejercicio (pierna, gluteo, espalda, pecho, hombro, brazo, core, cardio, movilidad u "
+                     "otro): es lo que ilumina el cuerpo de la persona en la pantalla Hoy. No lo crea: "
+                     "registra la propuesta para que la persona la apruebe en el chat.",
      "parametros": _PARAM_PLANEAR_ENTRENO, "funcion": _planear_entreno},
     {"nombre": "registrar_entreno", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone registrar lo que la persona hizo en un entrenamiento de un día: si el reloj "

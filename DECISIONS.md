@@ -16145,3 +16145,126 @@ i18n strings, one card's first line) -- but the approval's body explicitly autho
 fixing and merging on green, so the merge proceeded rather than stopping AWAITING_APPROVAL.
 
 Open follow-up, named but not acted on: none.
+
+## BODY-CUERPO-VISTA-1
+
+Carlos approved mock round 2 as drawn (relayed by the Personal desk, his exact words, 2026-11-10:
+"Please go with the app design as shown. Later after build, I make some comments. Don't worry
+about it. For now, it's good enough." -- BODY-CARLOS-RELAYED-WORDS-APPROVE-1). Every main screen now
+opens with ONE body view -- the anatomy art Carlos generated -- turned to what the screen is about,
+with a row of view buttons and a one-line caption: Today = Músculos / Espalda / Corazón y vasos;
+Trends = Corazón / Pulmones / Cuerpo entero; Shifts = Cerebro y sueño / Nervios / Cuerpo entero. "Drag
+to turn" became a horizontal swipe between the 2D views (3D stays a later investigation); no figure
+is drawn on the body itself.
+
+**Ruling 1 -- the art, copied once, verified.** The 26 `*.webp` files, `manifest.json` and
+`anclajes.json` the orchestrator staged at `C:/Duna/body/arte/hoy/web/` were copied verbatim into
+`body/static/anatomia/` with one `shutil.copyfile` loop, never re-encoded or resized. Every file's
+sha256 was checked against the manifest: **26/26 match**, and `tests/test_cuerpo_vista.py`'s
+`ManifestTest` keeps checking it.
+
+**Ruling 2 -- `body/anatomia.py`, the one owner of this data.** It loads `anclajes.json`'s own
+`vistas_por_pantalla` (views per screen) and `brillos` (glow ellipses, percentages, keyed by body
+POSE -- "frente"/"espalda" -- not by individual view, since several views of the same pose share one
+framing). On top of that:
+
+- `IMAGEN_POSE`: which pose each of the 10 image ids belongs to (front: frente, corazon, nervios,
+  cerebro, pulmones, musculos, esqueleto; back: espalda, espalda-musculos, espalda-columna).
+- `CATEGORIA_GRUPOS`, the training-category -> glow-group map, exactly as the spec's own ruling
+  gave it: `pierna`/`piernas` -> cuadriceps+gluteos+isquios, `espalda` -> dorsales+espalda_alta+
+  deltoides_post, `pecho` -> pecho, `hombro`/`hombros` -> hombros, `brazo`/`brazos` -> biceps,
+  `core` -> abdomen. Case-insensitive; an unrecognised categoria lights nothing.
+- **Deviation, measured, not guessed**: `registrar_entreno`'s own `categoria` parameter
+  (`body/agente/herramientas.py` `_PARAM_REGISTRAR_ENTRENO`) is free text with no enum in the code,
+  and `planear_entreno`'s own planned-exercise shape (`_PARAM_PLANEAR_ENTRENO`, `plan.ejercicios_json`)
+  carries NO `categoria` field at all today -- confirmed by reading both schemas and every test
+  fixture that builds one (`tests/test_agente_entreno.py`, `tests/test_entreno_schema.py`). So Hoy's
+  own glow reads an exercise's `categoria` key from `plan.ejercicios_json` only when it is present
+  (that column's own comment: "shape owned by the tool that writes it -- nothing here yet", so a new
+  key is forward-compatible, never a schema change) -- never guessed from the exercise's name. No
+  tool writes that key today, so a REAL plan with no recognised category reads exactly like "no
+  session" (ruling 2's "a category with no glow group lights nothing" extended the same way to "a
+  plan with no glow group reads as no session", so the caption never shows an empty parenthesis).
+  This is a judgment call, not a reopened ruling: it keeps today's behaviour honest without a schema
+  change, and leaves room for a later slice to have `planear_entreno`/`registrar_entreno` actually
+  write a `categoria`.
+- `VISTA_GRUPOS`: which of BRILLOS' own groups each (screen, view id) may ever light -- needed
+  because BRILLOS is keyed by POSE, not by view: Hoy's "corazon" view shares its coordinates with
+  "musculos" (both front-posed), so without this a leg category's glow would also appear on the
+  heart view. "corazon"/"cerebro" are reserved to Tendencias'/Turnos' own static glow and never lit
+  by a training category.
+
+**Rulings 3-4 -- one component, built as drawn.** `_cuerpo_vista.html` (a macro) + `cuerpo-vista.js`
++ new classes in `body.css` render: the active view's image for the active theme (only that file
+loads eagerly; the other two views' images load on first switch to them, and the OTHER theme's file
+is never loaded in this session at all), its glow ellipses, a row of `aria-pressed` view buttons
+(44 px tall -- the mock's own inline mock used 36 px, the ruling's 44 px floor wins), the «Desliza
+para girar» / "Swipe to turn" label, and the caption below. Switching cross-fades (250 ms via a CSS
+class, covered by the existing global `prefers-reduced-motion` rule -- no new rule needed); a
+horizontal swipe (touch) moves to the next/previous view. Alt text comes from i18n per (screen,
+view), never from the image. On Tendencias/Turnos the image is cropped to the mock's own proportions
+via `object-fit: cover` + `object-position` (never a cropped file) -- the exact height/position the
+mock's own preview boards used (Trends: 260px tall, 50% 30%; Shifts: 240px tall, 50% 8%), translated
+to a responsive `aspect-ratio` + `object-position` pair.
+
+Hoy: Músculos/Espalda/Corazón y vasos, caption «Iluminado: lo que entrena tu sesión de hoy
+({grupos})» when a plan with at least one recognised category covers today, else «Hoy no hay sesión
+planeada.» and no glow; Espalda lights the SAME session's back groups (a leg category lights
+cuádriceps on Músculos and glúteos+isquiotibiales on Espalda). Tendencias: Corazón/Pulmones/Cuerpo
+entero, heart always lit, caption «Tendencias gira el cuerpo hacia el corazón y los pulmones: los
+sistemas que describen estas líneas.» (English verbatim from the mock). Turnos: Cerebro y
+sueño/Nervios/Cuerpo entero, brain always lit, caption «Turnos gira el cuerpo hacia el cerebro y los
+nervios: el sueño y la recuperación son lo que cuesta una noche.» (English verbatim from the mock).
+The demo person (this slice's own test fixtures, `tests/test_cuerpo_vista.py`) carries a planned
+session today so Hoy's own glow is exercised; no change to `body/demo.py` (out of this slice's
+`touches:`).
+
+**Fix found by the gate, not by review**: the glow ellipses were first rendered with a `style="..."`
+attribute -- `style-src` drops `'unsafe-inline'` (BODY-ESTILOS-1), so a browser would have silently
+dropped every one of them. `tests/test_seguridad.py`'s existing `NoInlineStyleInTemplatesTest` caught
+it; the fix moves the four numbers to `data-*` attributes and positions them in `cuerpo-vista.js`
+through the CSSOM (`element.style.left = ...`), the same pattern `charts.js`'s own marker already
+uses -- never an HTML `style=` attribute.
+
+**Three existing census tests, outside this slice's `touches:`, updated to name the new truth**
+(never loosened -- the "existing census test" exception the dispatch names):
+`tests/test_seguridad.py` (the fix above, no assertion change needed once the markup was fixed),
+`tests/test_accesibilidad.py` (rule (f), "every `<img>` has `alt`", stopped being structurally
+vacuous now that the body view renders real `<img>` elements -- its own "stays at zero" assertion
+moved into the sweep's ordinary non-vacuous loop; the real check, that 0 violations were recorded,
+already passed unchanged) and `tests/test_experimentos_pantalla.py`'s `HoyButtonStateTest` (its
+exact `aria-pressed` counts on Hoy now include the body view's own three view buttons alongside the
+experiment's two).
+
+**Licence note** (ruling 6): the art's source and model is Google AI Studio's Gemini image model,
+generated by Carlos on his own account on 2026-11-09. Google's generative-AI terms need checking
+before a hosted Duna product uses this art; the fallback the orchestrator named is a licensed
+library such as Servier Medical Art (CC BY 4.0).
+
+**Out of scope here** (ruling 7, other slices): every other card of the mock boards (day-ahead
+timeline, protein vs target, Trends' "closing the gap", Shifts' night-week plan and calendar, the
+Plans board), dashed "still to come" glows, the women's set, 3D.
+
+**Commits**, `feat/body-cuerpo-vista-1` branch, on top of `f1c7a877b37313272f3776e009d4a0abb71fc9e9`:
+- `5e175b49f763b87ab7aff219a359054dea0efbc3` -- "BODY-CUERPO-VISTA-1: copy the mock round 2 anatomy
+  art and its own categoria->glow-group map."
+- `fac8445f543163d2ac9dd3d36af5dce4b66b5434` -- "BODY-CUERPO-VISTA-1: render the body view on Hoy,
+  Tendencias and Turnos."
+- `5ea734404e1243dccf95b588af391c530fcdc9a3` -- "BODY-CUERPO-VISTA-1: glow ellipses position
+  themselves in JS, never a style= attribute."
+
+**Gate**, run on this branch's own tip (`5ea734404e1243dccf95b588af391c530fcdc9a3`, tree
+`6e5a23edb7b5a601b35f040b33d7cb98d75bb82e`), exactly
+`.venv/Scripts/python.exe -m unittest discover tests -t .`, foreground, once:
+
+    Ran 2454 tests in 570.616s
+
+    OK (skipped=1)
+
+Green. Policy-A check on this slice's own diff: no schema or migration change, no cross-repo
+contract change -- but customer-facing bytes plainly changed (a new visible component on three
+screens, new strings, new images), and the spec's own approval-reason says in words to stop
+AWAITING_APPROVAL for the orchestrator's 375 px look (light and dark) on the demo before any merge.
+Stops there; not merged to `main`.
+
+Open follow-up, named but not acted on: none.
