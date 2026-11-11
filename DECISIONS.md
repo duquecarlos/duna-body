@@ -17189,3 +17189,35 @@ Green. `git status --porcelain` empty before this entry. Stops `AWAITING_APPROVA
 bytes changed (new i18n strings, Día's and Hoy's own templates) and the schema gained an additive
 column -- the orchestrator wants to look at Hoy's own hatch at 375px before this merges. Open
 follow-up: none.
+
+## BODY-LESION-ZONA-1-M -- merged
+
+BODY-LESION-ZONA-1's one defect: the hatch's rule for a recovering zona lived in an inline
+`<style>` block inside `body/templates/_cuerpo_vista.html`, and the page's own
+`style-src 'self'` CSP silently dropped it in the browser -- `.cuerpo-vista-glow.limitada`
+computed its position but painted as an ordinary training glow, the opposite of ruling 4.
+
+**Fix**: moved the `.cuerpo-vista-glow.limitada` rule into `body/static/body.css` and deleted the
+template's `<style>` block; gave the ordinary glow `z-index:1` and the hatch `z-index:2` so a
+group that is both trained today and recovering still reads as recovering, legible in both themes
+through the same `--muted` token the rest of the page already uses. Added guard (e) to
+`tests/test_seguridad.py` (`NoStyleElementInTemplatesTest`), beside the existing inline-script and
+`style=`-attribute guards, which checked `<script>` and `style=` but never an inline `<style>`
+element -- the exact gap that let this ship. No other template under `body/templates` held one, so
+the guard's allow-list stays empty. `tests/test_cuerpo_vista.py` gained
+`LimitadaStyleInBodyCssTest`: body.css carries the limitada rule, the template holds no `<style>`
+element, and the hatch's z-index is above the training glow's own.
+
+One implementation commit, `f9278c9`, on `feat/body-lesion-zona-1`. Merged into `main` with
+`--no-ff`, merge commit `9f04fcb`.
+
+**Gate**, run once on the merged tree, exactly
+`.venv/Scripts/python.exe -m unittest discover tests -t .`, foreground:
+
+    Ran 2680 tests in 1175.495s
+
+    OK (skipped=1)
+
+Green -- 2676 (this surface's own floor) + 4 new tests (3 in `LimitadaStyleInBodyCssTest`, 1 in
+`NoStyleElementInTemplatesTest`). `git status --porcelain` empty before this entry. No deviation,
+no open follow-up.
