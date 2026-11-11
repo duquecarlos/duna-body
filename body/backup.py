@@ -23,6 +23,14 @@ def _table_names(conn: sqlite3.Connection) -> list[str]:
     ).fetchall()]
 
 
+def open_readonly(path: Path) -> sqlite3.Connection:
+    """Opens `path` read-only, so nothing that reads a database this way -- a backup snapshot, the
+    PC-to-host import (BODY-MUDANZA-HERRAMIENTA-1) -- can ever write to its source."""
+    conn = sqlite3.connect(f"file:{Path(path).as_posix()}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 def snapshot(out_path: Path) -> int:
     """Write a consistent copy of config.DB_PATH to out_path using SQLite's own backup API --
     never a plain file copy, which could catch the live database mid-write. Returns the table
@@ -30,7 +38,7 @@ def snapshot(out_path: Path) -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if out_path.exists():
         out_path.unlink()
-    src = sqlite3.connect(f"file:{config.DB_PATH.as_posix()}?mode=ro", uri=True)
+    src = open_readonly(config.DB_PATH)
     try:
         dest = sqlite3.connect(out_path)
         try:
