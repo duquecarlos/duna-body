@@ -357,6 +357,28 @@ def resolve_dest_person(dest_conn: sqlite3.Connection, cuenta_sub: str) -> int:
     return person_id
 
 
+def personas(conn: sqlite3.Connection) -> list[dict]:
+    """Every hosted person, for Carlos to find the right `--cuenta-sub` before running `importar`
+    (BODY-MUDANZA-HOST-VERBO-1, ruling 3). Only `cuenta_sub`, the display name Cuenta sign-in
+    stored, and a creation date -- nothing else, and never a health figure. `person` carries no
+    creation timestamp of its own (adding one is a schema change, outside this slice's `touches`),
+    so `creado` is the person's earliest accepted consent instead -- consent is required before any
+    other screen reaches them (body/privacidad.py), so it is the closest existing date to "this
+    account started here". None when they have signed in but never consented yet."""
+    rows = conn.execute(
+        "SELECT p.cuenta_sub AS cuenta_sub, p.display_name AS display_name, "
+        "(SELECT MIN(c.accepted_at) FROM consentimiento c WHERE c.person_id = p.id) AS creado "
+        "FROM person p WHERE p.cuenta_sub IS NOT NULL ORDER BY p.id"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _print_personas(rows: list[dict]) -> None:
+    for row in rows:
+        print(f"cuenta_sub={row['cuenta_sub']} display_name={row['display_name']} "
+              f"creado={row['creado'] or '(sin consentir)'}")
+
+
 def _print_report(reports: list[TableReport], apply: bool) -> None:
     label = "done" if apply else "would"
     for r in reports:
@@ -401,7 +423,17 @@ def main(argv: list[str] | None = None) -> int:
     imp.add_argument("--origen", required=True, help="path to the PC's body.db (opened read-only)")
     imp.add_argument("--cuenta-sub", required=True, help="the destination person's Cuenta sub")
     imp.add_argument("--apply", action="store_true", help="write the changes (default: dry run)")
+    sub.add_parser("personas", help="list hosted persons by cuenta_sub, display name and first consent")
     a = p.parse_args(argv)
+
+    if a.action == "personas":
+        conn = db.connect()
+        try:
+            db.ensure_ready(conn)
+            _print_personas(personas(conn))
+        finally:
+            conn.close()
+        return 0
 
     try:
         reports, integrity_ok = importar(Path(a.origen), a.cuenta_sub, apply=a.apply)

@@ -515,5 +515,68 @@ class ApplyTest(MudanzaTestCase):
         self.assertEqual(before, after)
 
 
+class PersonasTest(MudanzaTestCase):
+    def test_lists_only_persons_with_a_cuenta_sub(self):
+        dest = self._dest_conn()
+        cuenta.resolve_person(dest, {"sub": CUENTA_SUB, "duna_productos": ["body"]})
+        with dest:
+            dest.execute("INSERT INTO person (id, display_name) VALUES (999, 'No sub')")
+        rows = mudanza.personas(dest)
+        subs = [r["cuenta_sub"] for r in rows]
+        self.assertIn(CUENTA_SUB, subs)
+        self.assertNotIn(None, subs)
+        self.assertEqual(len(rows), 1)
+
+    def test_creado_is_the_earliest_consent_or_none(self):
+        dest = self._dest_conn()
+        person_id = cuenta.resolve_person(dest, {"sub": CUENTA_SUB, "duna_productos": ["body"]})
+        rows = mudanza.personas(dest)
+        self.assertEqual(rows[0]["creado"], None)
+        with dest:
+            dest.execute(
+                "INSERT INTO consentimiento (person_id, version, accepted_at) VALUES (?, 'v1', ?)",
+                (person_id, NOW),
+            )
+        rows = mudanza.personas(dest)
+        self.assertEqual(rows[0]["creado"], NOW)
+
+    def test_prints_only_the_three_named_fields(self):
+        dest = self._dest_conn()
+        person_id = cuenta.resolve_person(dest, {"sub": CUENTA_SUB, "duna_productos": ["body"]})
+        with dest:
+            dest.execute(
+                "INSERT INTO consentimiento (person_id, version, accepted_at) VALUES (?, 'v1', ?)",
+                (person_id, NOW),
+            )
+            dest.execute(
+                "INSERT INTO daily_metric (person_id, day, metric_key, value, source) "
+                "VALUES (?, '2026-10-05', 'resting_hr', 999.0, 'garmin')",
+                (person_id,),
+            )
+        rows = mudanza.personas(dest)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(set(rows[0]), {"cuenta_sub", "display_name", "creado"})
+        for value in rows[0].values():
+            self.assertNotEqual(value, 999.0)
+
+    def test_cli_personas_prints_the_three_fields_and_no_other(self):
+        import io
+        import contextlib
+
+        dest = self._dest_conn()
+        cuenta.resolve_person(dest, {"sub": CUENTA_SUB, "duna_productos": ["body"]})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = mudanza.main(["personas"])
+        self.assertEqual(rc, 0)
+        printed = out.getvalue()
+        self.assertIn(CUENTA_SUB, printed)
+        self.assertIn("cuenta_sub=", printed)
+        self.assertIn("display_name=", printed)
+        self.assertIn("creado=", printed)
+        self.assertNotIn("trabaja_turnos", printed)
+        self.assertNotIn("language", printed)
+
+
 if __name__ == "__main__":
     unittest.main()
