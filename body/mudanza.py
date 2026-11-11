@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import backup, cuenta, db
+from . import backup, cuenta, db, errores
 
 _MISSING = object()
 
@@ -339,13 +339,12 @@ def _run(source_conn: sqlite3.Connection, dest_conn: sqlite3.Connection, source_
 
 def resolve_source_person(source_conn: sqlite3.Connection) -> int:
     """The source PC install is single-person (BODY-MUDANZA-SERVIDOR-1-INV): its one person row,
-    `db.DEFAULT_PERSON_ID`. Never `db.local_person_id` -- that function INSERTs when the row is
+    `db.default_person_id()`. Never `db.local_person_id` -- that function INSERTs when the row is
     missing, and the source connection is read-only."""
-    row = source_conn.execute(
-        "SELECT id FROM person WHERE id = ?", (db.DEFAULT_PERSON_ID,)
-    ).fetchone()
+    expected_id = db.default_person_id()
+    row = source_conn.execute("SELECT id FROM person WHERE id = ?", (expected_id,)).fetchone()
     if row is None:
-        raise ValueError("source database has no person row at id = db.DEFAULT_PERSON_ID")
+        raise ValueError("source database has no person row at its single-install default id")
     return row["id"]
 
 
@@ -407,7 +406,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         reports, integrity_ok = importar(Path(a.origen), a.cuenta_sub, apply=a.apply)
     except ValueError as exc:
-        print(f"refused: {exc}")
+        print(f"refused: {errores.texto_seguro(exc)}")
         return 1
 
     _print_report(reports, apply=a.apply)
