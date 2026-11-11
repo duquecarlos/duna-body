@@ -668,6 +668,13 @@
       return resp.ok ? resp.json() : null;
     }).then(function (datos) {
       if (!datos) return;
+      // BODY-TUTORIALES-EN-1 ruling 3: the "pendiente" sentinel with nothing pending answers 200
+      // with conversacion_id: null, not 404 -- treated exactly like the 404 above (clear the
+      // remembered id, render nothing), so a real id never collides with a cleared one.
+      if (datos.conversacion_id === null) {
+        limpiarConversacionId();
+        return;
+      }
       // The id named in the URL or stored already might be "pendiente" (BODY-MCP-LOCAL-1-B's own
       // sentinel) -- the response's own conversacion_id is the real one, to remember from here on.
       if (datos.conversacion_id) guardarConversacionId(datos.conversacion_id);
