@@ -14,6 +14,12 @@ function cargar(capa){
 }
 document.querySelectorAll('.cuerpo-vista').forEach(function(root){
   var capas=root.querySelectorAll('.cuerpo-vista-capa')
+  root.querySelectorAll('.cuerpo-vista-glow').forEach(function(g){
+    g.style.left=g.dataset.left+'%'
+    g.style.top=g.dataset.top+'%'
+    g.style.width=g.dataset.w+'%'
+    g.style.height=g.dataset.h+'%'
+  })
   var btns=root.querySelectorAll('.cuerpo-vista-btn')
   var activo=0
   cargar(capas[0])

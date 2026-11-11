@@ -24,12 +24,14 @@ tests/test_estados_vacios_hosted.py already build. A candidate path is only run 
 rules when it actually answers 200 with an HTML body -- a 404 or a redirect is not a page anyone
 reads, and every one of those statuses is already covered by the existing sweeps.
 
-Rules (f) and (h) are structurally vacuous in this codebase today: no template anywhere renders a
-bare `<img>` tag (every picture-like thing is an inline, server-built `<svg>`) and no template sets
-`tabindex` at all. The check functions below still run and would catch a violation the moment either
-ever appears; the non-vacuous assertion for those two rules asserts the measured zero instead of a
-fabricated nonzero, rather than planting a dead `<img>` purely to make a counter move. See this
-slice's ledger entry for the measured count behind that call."""
+Rule (h) is structurally vacuous in this codebase today: no template sets `tabindex` at all. The
+check function below still runs and would catch a violation the moment one ever appears; the
+non-vacuous assertion for it asserts the measured zero instead of a fabricated nonzero, rather than
+planting a dead `tabindex` purely to make a counter move. Rule (f) stopped being vacuous once
+BODY-CUERPO-VISTA-1 gave Hoy, Tendencias and Turnos a real `<img>` each (the body-view component);
+every one carries a real `alt` read from i18n, never from the image itself, so it is swept like
+every other non-vacuous rule now. See this slice's ledger entry for the measured count behind that
+call."""
 from __future__ import annotations
 
 import tempfile
@@ -337,12 +339,10 @@ class AccesibilidadLocalTest(unittest.TestCase):
         self.assertGreater(sweep.pages_checked, 60,
                             "the local sweep rendered too few (page, state, language) combinations")
         for rule in ("a_html_lang", "b_single_h1", "c_duplicate_id", "d_link_button_name",
-                     "e_form_label", "g_svg_name"):
+                     "e_form_label", "f_img_alt", "g_svg_name"):
             self.assertGreater(sweep.counts[rule], 0, f"rule {rule} was never evaluated on any element")
-        # Measured, not assumed (see module docstring): no template anywhere renders a bare <img> or
-        # sets tabindex, so these two stay at exactly 0 today rather than a fabricated nonzero.
-        self.assertEqual(sweep.counts["f_img_alt"], 0,
-                          "an <img> appeared -- rule (f) is no longer vacuous, update this assertion")
+        # Measured, not assumed (see module docstring): no template sets tabindex, so this stays at
+        # exactly 0 today rather than a fabricated nonzero.
         self.assertEqual(sweep.counts["h_positive_tabindex"], 0,
                           "a tabindex appeared -- rule (h) is no longer vacuous, update this assertion")
 

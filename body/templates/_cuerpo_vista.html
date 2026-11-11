@@ -9,7 +9,7 @@
              data-oscuro="{{ static_url('anatomia/' + v.imagen + '-oscuro.webp') }}">
         {% for e in v.glow %}
         <span class="cuerpo-vista-glow" aria-hidden="true"
-              style="left:{{ e[0] }}%;top:{{ e[1] }}%;width:{{ e[2] }}%;height:{{ e[3] }}%"></span>
+              data-left="{{ e[0] }}" data-top="{{ e[1] }}" data-w="{{ e[2] }}" data-h="{{ e[3] }}"></span>
         {% endfor %}
       </div>
       {% endfor %}

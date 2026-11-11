@@ -394,7 +394,11 @@ class MarkFromHoyTest(unittest.TestCase):
 class HoyButtonStateTest(unittest.TestCase):
     """BODY-EXPERIMENTOS-PANTALLA-1-M2 item 4: both buttons side by side, and once today is marked
     the chosen one carries aria-pressed="true" plus the selected style -- the other stays
-    aria-pressed="false", and posting it still changes the mark."""
+    aria-pressed="false", and posting it still changes the mark.
+
+    BODY-CUERPO-VISTA-1: Hoy's own body-view component adds its own three view buttons (one
+    aria-pressed="true", two "false") on every render of this page, counted into every expectation
+    below alongside the experiment's own two."""
 
     def test_aria_pressed_before_and_after_marking(self):
         conn = _reset_db(self)
@@ -404,8 +408,8 @@ class HoyButtonStateTest(unittest.TestCase):
 
         r = _get("/", hoy=today)
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.text.count('aria-pressed="true"'), 0)
-        self.assertEqual(r.text.count('aria-pressed="false"'), 2)
+        self.assertEqual(r.text.count('aria-pressed="true"'), 1)
+        self.assertEqual(r.text.count('aria-pressed="false"'), 4)
         self.assertNotIn('class="btn on"', r.text)
 
         r2 = _post(f"/experiments/{eid}/day", {"day": today.isoformat(), "ocurrio": "1", "back": "/"}, hoy=today)
@@ -413,8 +417,8 @@ class HoyButtonStateTest(unittest.TestCase):
 
         r3 = _get("/", hoy=today)
         self.assertEqual(r3.status_code, 200)
-        self.assertEqual(r3.text.count('aria-pressed="true"'), 1)
-        self.assertEqual(r3.text.count('aria-pressed="false"'), 1)
+        self.assertEqual(r3.text.count('aria-pressed="true"'), 2)
+        self.assertEqual(r3.text.count('aria-pressed="false"'), 3)
         self.assertIn('class="btn on" aria-pressed="true"', r3.text)
 
         # posting the OTHER button still changes the mark, and the selection flips.
@@ -426,7 +430,7 @@ class HoyButtonStateTest(unittest.TestCase):
         self.assertEqual(rows[0]["ocurrio"], 0)
 
         r5 = _get("/", hoy=today)
-        self.assertEqual(r5.text.count('aria-pressed="true"'), 1)
+        self.assertEqual(r5.text.count('aria-pressed="true"'), 2)
         self.assertRegex(r5.text, r'name="ocurrio" value="0">\s*<button[^>]*class="btn on"')
 
 
