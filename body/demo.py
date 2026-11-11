@@ -123,6 +123,23 @@ _HOGAR_GOAL_TITLE = {"es": "Preparar el ascenso", "en": "Prepare for the climb"}
 _HOGAR_HABIT_BOTH = {"es": "Entrenar piernas", "en": "Train legs"}
 _HOGAR_HABIT_ANA = {"es": "Revisar el equipo", "en": "Check the gear"}
 
+# BODY-CUERPO-VISTA-1-M ruling 4: the demo person's own training session for today, invented,
+# categorised with anatomia.CATEGORIA_ENUM's own words -- "Upper B", the same session mock round 2
+# showed, so Hoy's body view lights front (hombro) and back (espalda) at once.
+_PLAN_HOY_TITLE = {"es": "Upper B", "en": "Upper B"}
+_PLAN_HOY_EJERCICIOS = {
+    "es": [
+        {"ejercicio": "press militar", "series": 3, "reps": 8, "categoria": "hombro"},
+        {"ejercicio": "curl de bíceps", "series": 3, "reps": 10, "categoria": "brazo"},
+        {"ejercicio": "remo con barra", "series": 4, "reps": 8, "categoria": "espalda"},
+    ],
+    "en": [
+        {"ejercicio": "overhead press", "series": 3, "reps": 8, "categoria": "hombro"},
+        {"ejercicio": "biceps curl", "series": 3, "reps": 10, "categoria": "brazo"},
+        {"ejercicio": "barbell row", "series": 4, "reps": 8, "categoria": "espalda"},
+    ],
+}
+
 
 @dataclass
 class _DayData:
@@ -814,6 +831,18 @@ def _seed_goals_and_habits(conn, db, goals, rng: random.Random, all_days: list[d
     return checks, habit_checks
 
 
+def _seed_plan_hoy(conn, anchor: date, person_id: int, idioma: str) -> int:
+    """BODY-CUERPO-VISTA-1-M ruling 4: today's own accepted plan, categorised, so the demo Hoy is
+    lit rather than reading "no session planned" (BODY-CUERPO-VISTA-1's own gap)."""
+    conn.execute(
+        "INSERT INTO plan (person_id, day, title, status, ejercicios_json) VALUES (?, ?, ?, 'accepted', ?)",
+        (person_id, anchor.isoformat(), _PLAN_HOY_TITLE[idioma],
+         json.dumps(_PLAN_HOY_EJERCICIOS[idioma], ensure_ascii=False)),
+    )
+    conn.commit()
+    return 1
+
+
 def _seed_household(conn, db, goals, enlaces, compartir, rng: random.Random, all_days: list[date], anchor: date,
                      first_monday: date, anchor_monday: date, person_id: int,
                      idioma: str) -> tuple[int, int, int]:
@@ -894,6 +923,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     turno_fc_turnos = _seed_turno_fc(conn, db, turno_fc, person_id, all_days)
     sueno_fc_noches = _seed_sueno_fc(conn, db, sueno_fc, person_id)
     _seed_noche_inusual(conn, db, anchor, person_id)
+    planes_hoy = _seed_plan_hoy(conn, anchor, person_id, idioma)
 
     checks, habit_checks = _seed_goals_and_habits(
         conn, db, goals, rng, all_days, anchor, first_monday, anchor_monday, person_id, idioma)
@@ -912,6 +942,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
         "checkins": checkins,
         "recuperacion_actividades": recuperacion_rows,
         "turno_fc_turnos": turno_fc_turnos, "sueno_fc_noches": sueno_fc_noches,
+        "planes_hoy": planes_hoy,
     }
 
 

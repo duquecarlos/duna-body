@@ -220,10 +220,12 @@ def _noche_inusual_dia_ctx(t: T, conn, person_id: int, day: str, vals: dict) -> 
 def _plan_categorias_hoy(conn, person_id: int, today_local: date) -> list | None:
     """BODY-CUERPO-VISTA-1: today's own training plan, if any -- `plan.ejercicios_json` is "shape
     owned by the tool that writes it" (body/db.py), so an exercise's own `categoria` key is read
-    only if present, never guessed from its name (no tool writes one yet; forward-compatible).
-    None when no plan with exercises covers today at all, so the caption can tell "no session"
-    from "session, no recognised category" (both read as "no session" today, but only the first
-    one really is)."""
+    only if present, never guessed from its name. `planear_entreno` (BODY-CUERPO-VISTA-1-M ruling 2)
+    validates that key against `anatomia.CATEGORIA_ENUM` before it is ever stored; a row stored
+    before that validation existed, under the old free-text vocabulary, just reads as unrecognised
+    (body/anatomia.py's own CATEGORIA_GRUPOS lights nothing for it). None when no plan with
+    exercises covers today at all, so the caption can tell "no session" from "session, no
+    recognised category" (both read as "no session" today, but only the first one really is)."""
     row = conn.execute(
         "SELECT ejercicios_json FROM plan WHERE person_id = ? AND day = ? AND status != 'skipped' "
         "AND ejercicios_json IS NOT NULL ORDER BY id LIMIT 1",

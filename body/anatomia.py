@@ -28,21 +28,26 @@ IMAGEN_POSE: dict[str, str] = {
     "espalda": "espalda", "espalda-musculos": "espalda", "espalda-columna": "espalda",
 }
 
-# Ruling 2: a training exercise's categoria -> the glow groups it lights (BRILLOS' own group
-# keys -- a leg category lights front quads AND the back's own glutes/hamstrings, same session).
-# A categoria with no entry here lights nothing -- never guessed. registrar_entreno's own
-# `categoria` parameter is free text (body/agente/herramientas.py _PARAM_REGISTRAR_ENTRENO, no
-# enum); these are the Spanish muscle-group words it's seen in practice (tests/test_entreno_sets.py,
-# tests/test_agente_propuestas.py), singular and plural.
+# BODY-CUERPO-VISTA-1-M ruling 1: the one categoria vocabulary both training tools speak --
+# `planear_entreno`'s exercise items and `registrar_entreno`'s series items alike
+# (body/agente/herramientas.py). A value outside this tuple is refused at the door, never stored.
+CATEGORIA_ENUM: tuple[str, ...] = (
+    "pierna", "gluteo", "espalda", "pecho", "hombro", "brazo", "core", "cardio", "movilidad", "otro",
+)
+
+# Ruling 1: a training exercise's categoria -> the glow groups it lights (BRILLOS' own group keys --
+# pierna lights front quads AND the back's own hamstrings, same session; gluteo is its own category,
+# back-only). A categoria with no entry here lights nothing -- never guessed, by design for
+# cardio/movilidad/otro. Rows stored before this slice under the old free-text vocabulary (e.g. the
+# plural "piernas", which used to mean quads+glutes+hamstrings together) are not rewritten: an
+# unrecognised stored value simply lights nothing (no data migration).
 CATEGORIA_GRUPOS: dict[str, frozenset[str]] = {
-    "pierna": frozenset({"cuadriceps", "gluteos", "isquios"}),
-    "piernas": frozenset({"cuadriceps", "gluteos", "isquios"}),
+    "pierna": frozenset({"cuadriceps", "isquios"}),
+    "gluteo": frozenset({"gluteos"}),
     "espalda": frozenset({"dorsales", "espalda_alta", "deltoides_post"}),
     "pecho": frozenset({"pecho"}),
     "hombro": frozenset({"hombros"}),
-    "hombros": frozenset({"hombros"}),
     "brazo": frozenset({"biceps"}),
-    "brazos": frozenset({"biceps"}),
     "core": frozenset({"abdomen"}),
 }
 

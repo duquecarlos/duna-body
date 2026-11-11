@@ -67,14 +67,23 @@ class AnatomiaDataTest(unittest.TestCase):
                     path = ART_DIR / f"{v['imagen']}-{tema}.webp"
                     self.assertTrue(path.exists(), f"{pantalla}/{v['id']}: missing {path.name}")
 
+    def test_categoria_enum_is_the_one_vocabulary(self):
+        # BODY-CUERPO-VISTA-1-M ruling 1: both tools' schemas read this same tuple.
+        self.assertEqual(anatomia.CATEGORIA_ENUM,
+                          ("pierna", "gluteo", "espalda", "pecho", "hombro", "brazo", "core",
+                           "cardio", "movilidad", "otro"))
+
     def test_categoria_grupos_is_data(self):
-        self.assertEqual(anatomia.CATEGORIA_GRUPOS["pierna"], frozenset({"cuadriceps", "gluteos", "isquios"}))
+        self.assertEqual(anatomia.CATEGORIA_GRUPOS["pierna"], frozenset({"cuadriceps", "isquios"}))
+        self.assertEqual(anatomia.CATEGORIA_GRUPOS["gluteo"], frozenset({"gluteos"}))
         self.assertEqual(anatomia.CATEGORIA_GRUPOS["espalda"],
                           frozenset({"dorsales", "espalda_alta", "deltoides_post"}))
         self.assertEqual(anatomia.CATEGORIA_GRUPOS["pecho"], frozenset({"pecho"}))
         self.assertEqual(anatomia.CATEGORIA_GRUPOS["hombro"], frozenset({"hombros"}))
         self.assertEqual(anatomia.CATEGORIA_GRUPOS["brazo"], frozenset({"biceps"}))
         self.assertEqual(anatomia.CATEGORIA_GRUPOS["core"], frozenset({"abdomen"}))
+        for sin_grupo in ("cardio", "movilidad", "otro"):
+            self.assertNotIn(sin_grupo, anatomia.CATEGORIA_GRUPOS, f"{sin_grupo!r} lights nothing by design")
 
     def test_grupos_de_categorias_unions_and_normalises_case(self):
         got = anatomia.grupos_de_categorias(["PECHO", "hombro"])
@@ -83,19 +92,42 @@ class AnatomiaDataTest(unittest.TestCase):
     def test_unknown_category_lights_nothing(self):
         self.assertEqual(anatomia.grupos_de_categorias(["day off", None, ""]), frozenset())
 
+    def test_legacy_free_text_category_reads_and_lights_nothing(self):
+        # BODY-CUERPO-VISTA-1-M ruling 2: "piernas" (plural) was a real pre-this-slice stored
+        # value under the old free-text vocabulary -- it is never rewritten, and it now reads as
+        # unrecognised rather than crashing or being guessed back into a group.
+        self.assertEqual(anatomia.grupos_de_categorias(["piernas", "hombros", "brazos"]), frozenset())
+
     def test_grupos_ordenados_is_stable(self):
         got = anatomia.grupos_ordenados(frozenset({"isquios", "pecho", "gluteos"}))
         self.assertEqual(got, ["pecho", "gluteos", "isquios"])
 
-    def test_pierna_lights_front_quads_and_back_glutes_hamstrings(self):
+    def test_pierna_lights_front_quads_and_back_hamstrings_only(self):
+        # BODY-CUERPO-VISTA-1-M ruling 1: pierna no longer includes gluteos -- that is gluteo's own.
         grupos = anatomia.CATEGORIA_GRUPOS["pierna"]
         ctx = anatomia.contexto(_T(), "hoy", grupos)
         musculos = next(v for v in ctx if v["id"] == "musculos")
         espalda = next(v for v in ctx if v["id"] == "espalda")
         self.assertEqual(len(musculos["glow"]), 2)  # cuadriceps: two ellipses
-        self.assertEqual(len(espalda["glow"]), 2 + 1)  # gluteos (1) + isquios (2)
+        self.assertEqual(len(espalda["glow"]), 2)  # isquios only
         corazon = next(v for v in ctx if v["id"] == "corazon")
         self.assertEqual(corazon["glow"], [])
+
+    def test_gluteo_lights_back_glutes_only(self):
+        grupos = anatomia.CATEGORIA_GRUPOS["gluteo"]
+        ctx = anatomia.contexto(_T(), "hoy", grupos)
+        musculos = next(v for v in ctx if v["id"] == "musculos")
+        espalda = next(v for v in ctx if v["id"] == "espalda")
+        self.assertEqual(musculos["glow"], [])
+        self.assertEqual(len(espalda["glow"]), 1)  # gluteos: one ellipse
+
+    def test_pierna_and_gluteo_together_lights_front_and_back_like_the_old_combined_category(self):
+        grupos = anatomia.grupos_de_categorias(["pierna", "gluteo"])
+        ctx = anatomia.contexto(_T(), "hoy", grupos)
+        musculos = next(v for v in ctx if v["id"] == "musculos")
+        espalda = next(v for v in ctx if v["id"] == "espalda")
+        self.assertEqual(len(musculos["glow"]), 2)  # cuadriceps
+        self.assertEqual(len(espalda["glow"]), 2 + 1)  # isquios (2) + gluteos (1)
 
     def test_unrecognised_category_lights_no_view(self):
         ctx = anatomia.contexto(_T(), "hoy", frozenset())
@@ -149,6 +181,21 @@ class CuerpoVistaHoyTest(unittest.TestCase):
         self.assertIn("hombros", r.text)
         self.assertIn("dorsales", r.text)
         self.assertNotIn("Hoy no hay sesión planeada.", r.text)
+
+    def test_planned_session_with_pierna_and_gluteo_lights_front_and_back_ellipses(self):
+        # BODY-CUERPO-VISTA-1-M ruling 3: a categorised plan for today lights the right ellipses on
+        # both Músculos (front) and Espalda (back) from the same session.
+        pid = _mk_person(self.conn)
+        self._algun_dato_hoy(pid)
+        self._plan_hoy(pid, [{"ejercicio": "sentadilla", "series": 4, "categoria": "pierna"},
+                              {"ejercicio": "hip thrust", "series": 3, "categoria": "gluteo"}])
+        _use(pid)
+        r = client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("Iluminado: lo que entrena tu sesión de hoy", r.text)
+        self.assertIn("cuádriceps", r.text)
+        self.assertIn("glúteos", r.text)
+        self.assertIn("isquiotibiales", r.text)
 
     def test_planned_session_with_no_recognised_category_reads_as_no_session(self):
         pid = _mk_person(self.conn)

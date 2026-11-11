@@ -764,6 +764,7 @@
   "agente.error.red": "No pudimos conectar con el asistente. Revisa tu conexión e intenta de nuevo.",
   "agente.error.entreno_reps_invalidas": "Las repeticiones de {ejercicio} deben ser un número: envía las que hiciste (por ejemplo 12), no un rango.",
   "agente.error.entreno_peso_invalido": "El peso de {ejercicio} debe ser un número: envía los kilos que usaste (por ejemplo 20), no un texto.",
+  "agente.error.entreno_categoria_invalida": "La categoría de {ejercicio} debe ser una de estas: {categorias}.",
   "agente.error.comida_cantidad_invalida": "La cantidad de {metrica} debe ser un número mayor que cero: envía cuánto comiste o tomaste (por ejemplo 150), no un texto.",
   "agente.error.checkin_valor_invalido": "{metrica} debe ser un número del 1 al 5: envía cómo te sentiste (por ejemplo 4), no un rango ni un texto.",
   "agente.error.checkin_vacio": "Dime al menos una cosa: ánimo, energía, estrés que sentiste o una nota.",
