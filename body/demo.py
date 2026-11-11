@@ -923,7 +923,11 @@ def _seed_household(conn, db, goals, enlaces, compartir, rng: random.Random, all
     # DESIGN rule 17 (BODY-HOGAR-ENLACE-1): the adventure goal links to its trip in Lugares -- an
     # invented demo id, never a real one.
     enlaces.enlazar(conn, gid_hogar, "lugares", "4821")
-    habit_both_id = goals.add_habit(conn, gid_hogar, _HOGAR_HABIT_BOTH[idioma], {"per": "week", "times": 2})
+    # "hora" (BODY-MOCK-R2-HOY-1 ruling 8, "a timed habit"): this household habit is the one that
+    # actually falls due on the demo's own anchor day (sleep_sid's "before_night" habit is not, on
+    # most anchor days) -- additive inside the cadence JSON blob, same as sleep_sid's own habit.
+    habit_both_id = goals.add_habit(conn, gid_hogar, _HOGAR_HABIT_BOTH[idioma],
+                                    {"per": "week", "times": 2, "hora": "18:00"})
     goals.add_habit(conn, gid_hogar, _HOGAR_HABIT_ANA[idioma], {"per": "week", "times": 1},
                      assignee_person_id=ana_id)
 
