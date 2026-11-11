@@ -9,7 +9,7 @@ import json
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from markupsafe import Markup
 
@@ -22,7 +22,11 @@ from . import comun, experimentos
 
 router = APIRouter()
 
-TODAY_CARDS = ["sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake"]
+TODAY_CARDS = ["sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake", "stress_avg", "steps"]
+# BODY-HOY-FICHAS-EXTRA-1 (ruling 4): these two tiles get a band word against the person's own
+# 25th-75th-percentile range (never a generic table) and, on today's own row only, a partial-day
+# caption -- the other four tiles are fixed-at-wake figures with neither.
+PARTIAL_TODAY_KEYS = frozenset({"stress_avg", "steps"})
 # BODY-SUENO-RESPIRACION-VISTA-1: the four night figures BODY-ENTRENO-SUENO-STORE-1 already pulls
 # -- out of the generic "Todas las medidas" grid, into one honest line inside (or beside) the sleep
 # card, with the caveat that this is a proxy, not a snoring or apnea reading (BODY-ENTRENO-1-INV
@@ -54,6 +58,29 @@ def _delta(conn, t: T, d: dict, day: str, v, person_id: int) -> tuple[str, str]:
     better = d["better"]
     cls = "flat" if better == "neutral" else ("good" if (diff > 0) == (better == "higher") else "bad")
     return f"{arrow} {amount} {t('delta.vs')}", cls
+
+
+def _nivel_tile(b, v) -> str | None:
+    """BODY-HOY-FICHAS-EXTRA-1 (ruling 4): low/usual/high against the person's OWN 25th-75th-
+    percentile range (baselines.Baseline.low/high) -- never a generic table. None with no baseline
+    or no value yet (the honest gap)."""
+    if b is None or v is None:
+        return None
+    if v < b.low:
+        return "low"
+    if v > b.high:
+        return "high"
+    return "usual"
+
+
+def _nivel_label(t: T, nivel: str | None) -> str | None:
+    if nivel == "low":
+        return t("today.tile.banda.low")
+    if nivel == "high":
+        return t("today.tile.banda.high")
+    if nivel == "usual":
+        return t("today.tile.banda.usual")
+    return None
 
 
 def _reading(t: T, r: readiness.Readiness) -> str:
@@ -116,10 +143,15 @@ def _today_due_habits(conn, t: T, person_id: int, today: date) -> list[dict]:
     for h in rows:
         if not goals.habit_due_today(conn, h, person_id, today):
             continue
-        context = comun._habit_cadence(h).get("context")
+        cadence = comun._habit_cadence(h)
+        context = cadence.get("context")
         out.append({"id": h["id"], "title": h["title"], "goal_title": h["goal_title"],
                     "context": comun._context_label(t, context), "context_cls": comun._context_chip_cls(context),
-                    "checked": comun._habit_checked(conn, h["id"], person_id, today.isoformat())})
+                    "checked": comun._habit_checked(conn, h["id"], person_id, today.isoformat()),
+                    # BODY-HOY-DIA-POR-DELANTE-1 (ruling 2): an optional clock time, additive inside
+                    # the existing cadence JSON blob -- never read by habit_due_today/habit_progress,
+                    # so a habit with no "hora" behaves exactly as before.
+                    "hora": cadence.get("hora")})
     return out
 
 
@@ -203,7 +235,8 @@ def _noche_inusual_hoy_ctx(t: T, conn, person_id: int, day: str, vals: dict) -> 
     if noche is None:
         return None
     return {"texto": t("today.noche_inusual", senales=_noche_inusual_senales(t, noche)),
-            "enlace": t("today.noche_inusual_link"), "day": day}
+            "enlace": t("today.noche_inusual_link"), "day": day,
+            "nota": noche_inusual.nota(conn, person_id, day)}
 
 
 def _noche_inusual_dia_ctx(t: T, conn, person_id: int, day: str, vals: dict) -> dict | None:
@@ -226,13 +259,106 @@ def _plan_categorias_hoy(conn, person_id: int, today_local: date) -> list | None
     (body/anatomia.py's own CATEGORIA_GRUPOS lights nothing for it). None when no plan with
     exercises covers today at all, so the caption can tell "no session" from "session, no
     recognised category" (both read as "no session" today, but only the first one really is)."""
-    row = conn.execute(
-        "SELECT ejercicios_json FROM plan WHERE person_id = ? AND day = ? AND status != 'skipped' "
-        "AND ejercicios_json IS NOT NULL ORDER BY id LIMIT 1",
-        (person_id, today_local.isoformat())).fetchone()
+    row = _plan_hoy_row(conn, person_id, today_local)
     if row is None:
         return None
     return [e.get("categoria") for e in json.loads(row["ejercicios_json"])]
+
+
+def _plan_hoy_row(conn, person_id: int, today_local: date):
+    """The one `plan` row BODY-CUERPO-VISTA-1's body view and BODY-HOY-DIA-POR-DELANTE-1's "day
+    ahead" session row both read -- one query, shared, never two (same row either way)."""
+    return conn.execute(
+        "SELECT title, time, ejercicios_json FROM plan WHERE person_id = ? AND day = ? AND status != 'skipped' "
+        "AND ejercicios_json IS NOT NULL ORDER BY id LIMIT 1",
+        (person_id, today_local.isoformat())).fetchone()
+
+
+def _plan_hoy_item(t: T, conn, person_id: int, today_local: date) -> dict | None:
+    """BODY-HOY-DIA-POR-DELANTE-1 (ruling 2): today's own planned session as one "day ahead" row --
+    an honest exercise count, never an invented duration the plan row does not carry. None with no
+    session planned for today."""
+    row = _plan_hoy_row(conn, person_id, today_local)
+    if row is None:
+        return None
+    ejercicios = json.loads(row["ejercicios_json"])
+    return {"tipo": "sesion", "hora": row["time"], "titulo": row["title"],
+            "linea": t("today.dia.sesion_n", n=len(ejercicios))}
+
+
+def _actividades_hoy(conn, person_id: int, today_local: date) -> list[dict]:
+    """BODY-HOY-DIA-POR-DELANTE-1 (ruling 2): today's own already-logged activities, each with its
+    own start time -- a future activity cannot appear here before the watch has synced it, the same
+    honest-gap rule every other figure in this app follows."""
+    rows = conn.execute(
+        "SELECT name, type, start_local, duration_s FROM activity WHERE person_id = ? AND day = ? "
+        "ORDER BY start_local", (person_id, today_local.isoformat())).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _dia_por_delante_ctx(t: T, conn, person_id: int, today_local: date, turno_hoy: dict | None) -> list[dict]:
+    """BODY-HOY-DIA-POR-DELANTE-1 (rulings 1, 2): one time-ordered list for today, merging today's
+    shift, today's planned session, today's logged activities, and today's due habits/experiments
+    -- each row carries its own time when a source gives one; an item with no time keeps the
+    SOURCE order below (shift, session, activities, habits, experiments), stable-sorted after every
+    timed row (never invents a time or a duration no source gives -- DESIGN rule 6). Never the
+    autonomous-sounding copy the mock's own "Body moved Lower B to Saturday" implies (DESIGN rule
+    14; BODY-MOCK-R2-CENSO-1-INV conflict #3) -- Body proposes, the person confirms; this is a read.
+    """
+    items: list[dict] = []
+
+    if turno_hoy is not None:
+        if turno_hoy["start_local"] and turno_hoy["end_local"]:
+            items.append({
+                "tipo": "turno", "hora": turno_hoy["start_local"][11:16],
+                "titulo": t("shift.kind.title." + turno_hoy["kind"]),
+                "linea": t("today.dia.turno_hasta", fin=turno_hoy["end_local"][11:16]),
+            })
+        else:
+            items.append({"tipo": "turno", "hora": None,
+                          "titulo": t("shift.kind.title." + turno_hoy["kind"]), "linea": None})
+
+    sesion = _plan_hoy_item(t, conn, person_id, today_local)
+    if sesion is not None:
+        items.append(sesion)
+
+    for a in _actividades_hoy(conn, person_id, today_local):
+        items.append({
+            "tipo": "actividad", "hora": a["start_local"][11:16] if a["start_local"] else None,
+            "titulo": _activity_name(t, a),
+            "linea": t.minutes(a["duration_s"] / 60) if a["duration_s"] else None,
+        })
+
+    for h in _today_due_habits(conn, t, person_id, today_local):
+        items.append({"tipo": "habito", "hora": h["hora"], "titulo": h["title"], "linea": h["goal_title"],
+                      "id": h["id"], "checked": h["checked"],
+                      "context": h["context"], "context_cls": h["context_cls"]})
+
+    for e in experimentos.hoy_contexto(conn, t, person_id, today_local):
+        items.append({"tipo": "experimento", "hora": None, "titulo": e["linea"], "linea": None,
+                      "id": e["id"], "marcado": e["marcado"], "habito": e["habito"]})
+
+    items.sort(key=lambda it: (it["hora"] is None, it["hora"] or ""))
+    return items
+
+
+def _semana_nocturna_ctx(t: T, conn, person_id: int, today_local: date) -> dict | None:
+    """BODY-HOY-SEMANA-NOCTURNA-1 (ruling 6): Hoy's own forward-looking card for the next night
+    block within 7 days -- the block's own dates and the person's own historical recovery estimate
+    (turnos_costo.resumen's `dias_recuperacion`), never a claim Body will remind or already acted
+    (DESIGN rule 14; BODY-MOCK-R2-CENSO-1-INV conflict #1/#3). None when no night block starts that
+    soon."""
+    bloque = turnos_costo.siguiente_bloque_noche(conn, person_id, today_local)
+    if bloque is None:
+        return None
+    inicio, fin = date.fromisoformat(bloque["inicio"]), date.fromisoformat(bloque["fin"])
+    fechas = (_short_weekday_date(t, inicio) if inicio == fin
+              else t("today.semana_nocturna.rango", desde=_short_weekday_date(t, inicio),
+                     hasta=_short_weekday_date(t, fin)))
+    dias_recuperacion = turnos_costo.resumen(conn, person_id, today_local)["dias_recuperacion"]
+    recuperacion = (t("today.semana_nocturna.recuperacion", dias=dias_recuperacion)
+                    if dias_recuperacion is not None else t("today.semana_nocturna.sin_dato"))
+    return {"fechas": fechas, "recuperacion": recuperacion}
 
 
 def _cuerpo_hoy_ctx(t: T, conn, person_id: int, today_local: date) -> dict:
@@ -249,10 +375,11 @@ def _cuerpo_hoy_ctx(t: T, conn, person_id: int, today_local: date) -> dict:
     return {"vistas": anatomia.contexto(t, "hoy", grupos), "caption": caption, "recorte": "completo"}
 
 
-def _hoy_turno_ctx(t: T, conn, person_id: int, today_local: date) -> dict:
+def _hoy_turno_ctx(t: T, turno: dict) -> dict:
     """Hoy's second promise (BODY-HOY-TURNO-1): today's shift, the next one, and a recovery line --
-    one vocabulary with Turnos' strip (shift.kind.*, the same band classes)."""
-    turno = turnos_costo.turno_de_hoy(conn, person_id, today_local)
+    one vocabulary with Turnos' strip (shift.kind.*, the same band classes). `turno` is the caller's
+    own single `turnos_costo.turno_de_hoy` read (BODY-HOY-DIA-POR-DELANTE-1 shares it with "The day
+    ahead" list, rather than reading it twice)."""
     hoy, siguiente, recuperacion = turno["hoy"], turno["siguiente"], turno["recuperacion"]
 
     hoy_texto = None
@@ -369,7 +496,8 @@ def today(person_id: int = Depends(identity.current_person_id)):
     primeros = tutoriales.primeros_pasos(conn, person_id, cuenta.hosted())
     primeros_pasos = primeros if any(not p["hecho"] for p in primeros) else None
     today_local = comun._today_local(person)
-    turno_ctx = _hoy_turno_ctx(t, conn, person_id, today_local)
+    turno_de_hoy = turnos_costo.turno_de_hoy(conn, person_id, today_local)
+    turno_ctx = _hoy_turno_ctx(t, turno_de_hoy)
     cuerpo_ctx = _cuerpo_hoy_ctx(t, conn, person_id, today_local)
     mcp_pendientes = _mcp_pendientes_ctx(conn, person_id)
     mcp_aplicado = _mcp_aplicado_ctx(conn, person_id)
@@ -386,20 +514,30 @@ def today(person_id: int = Depends(identity.current_person_id)):
     if r.score is not None and rb:
         ready_avg = round(rb.mean)
         ready_delta, ready_cls = _delta(conn, t, defs["readiness"], day, r.score, person_id)
+    synced = _synced(conn, person)
+    es_hoy = day == today_local.isoformat()
     cards = []
     for k in TODAY_CARDS:
         v = vals.get(k)
         delta, cls = _delta(conn, t, defs[k], day, v, person_id)
-        cards.append({"key": k, "label": t("metric." + k), "value": comun._value(t, k, v),
-                      "unit": comun._unit(t, defs[k]) if v is not None else "", "delta": delta, "cls": cls})
+        label = t("today.tile.stress_so_far") if k == "stress_avg" else t("metric." + k)
+        banda = caption = None
+        if k in PARTIAL_TODAY_KEYS:
+            b = baseline(conn, k, day, person_id=person_id)
+            banda = _nivel_label(t, _nivel_tile(b, v))
+            if es_hoy and synced:
+                caption = t("today.tile.hasta", hora=synced)
+        cards.append({"key": k, "label": label, "value": comun._value(t, k, v),
+                      "unit": comun._unit(t, defs[k]) if v is not None else "", "delta": delta, "cls": cls,
+                      "banda": banda, "caption": caption})
     return comun._render("today.html", t=t, tab="today", day=day, date_long=t.long_date(date.fromisoformat(day)),
-                   synced=_synced(conn, person), stale=_stale_ctx(t, day, today_local), cuerpo=cuerpo_ctx,
+                   synced=synced, stale=_stale_ctx(t, day, today_local), cuerpo=cuerpo_ctx,
                    r=r, reading=_reading(t, r), ready_avg=ready_avg,
                    ready_delta=ready_delta, ready_cls=ready_cls, cards=cards,
                    missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_count=proposed_count,
                    turno=turno_ctx, turnos=turnos_on, mcp_pendientes=mcp_pendientes, mcp_aplicado=mcp_aplicado,
-                   plan_habits=_today_due_habits(conn, t, person_id, today_local),
-                   plan_experimentos=experimentos.hoy_contexto(conn, t, person_id, today_local),
+                   dia_por_delante=_dia_por_delante_ctx(t, conn, person_id, today_local, turno_de_hoy["hoy"]),
+                   semana_nocturna=_semana_nocturna_ctx(t, conn, person_id, today_local),
                    today_iso=today_local.isoformat(),
                    primeros_pasos=primeros_pasos,
                    hogar_compartido=_hogar_compartido_ctx(conn, t, person_id, defs, today_local),
@@ -687,12 +825,36 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
 
 
 @router.post("/day/{day}/noche-inusual/visto")
-@comun._cierra_conexion
-def noche_inusual_visto(day: str, person_id: int = Depends(identity.current_person_id)):
+@comun._cierra_conexion_async
+async def noche_inusual_visto(day: str, request: Request, person_id: int = Depends(identity.current_person_id)):
     """BODY-NOCHE-INUSUAL-1 ruling 5: "Ya lo vi" -- only ever acts on the signed-in person's OWN
     dismissal (noche_inusual.marcar_vista is scoped by person_id like every write in this app), so
-    there is no other person's id to check against here."""
+    there is no other person's id to check against here. BODY-HOY-NOCHE-NOTA-1: an optional `back`
+    field, read the same way metas.py's habit_check already does (cuenta.safe_return_to), so Hoy's
+    own "Body noticed" card can dismiss without leaving Hoy -- a bare POST (Día's own button, no
+    `back` field) keeps returning to the day page exactly as before. The fallback is passed THROUGH
+    safe_return_to too (never used unwrapped), so tests/test_seguridad.py's static scan -- which
+    only recognises a bare `cuenta.safe_return_to(...)` call, not a branch around it -- can still
+    prove this call site safe without a named ALLOWLIST entry."""
     d = _parse_day(day)
     conn, _, _ = comun._ctx(person_id)
     noche_inusual.marcar_vista(conn, person_id, d.isoformat())
-    return RedirectResponse(f"/day/{day}", status_code=303)
+    f = await comun._form(request)
+    back = cuenta.safe_return_to(f.get("back") or f"/day/{day}")
+    return RedirectResponse(back, status_code=303)
+
+
+@router.post("/day/{day}/noche-inusual/nota")
+@comun._cierra_conexion_async
+async def noche_inusual_nota(day: str, request: Request, person_id: int = Depends(identity.current_person_id)):
+    """BODY-HOY-NOCHE-NOTA-1 (ruling 5): the person's own note on this one unusual night -- typed
+    by hand, the same explicit exception DESIGN rule 1 already carries for checkin_nota, since only
+    the person can say why. An empty or whitespace-only note is never stored."""
+    d = _parse_day(day)
+    conn, _, _ = comun._ctx(person_id)
+    f = await comun._form(request)
+    texto = (f.get("nota") or "").strip()
+    if texto:
+        noche_inusual.guardar_nota(conn, person_id, d.isoformat(), texto)
+    back = cuenta.safe_return_to(f.get("back") or f"/day/{day}")
+    return RedirectResponse(back, status_code=303)

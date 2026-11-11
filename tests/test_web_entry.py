@@ -55,6 +55,7 @@ class RouteSetTest(unittest.TestCase):
         ("/ayuda", ("GET",)),
         ("/day/{day}", ("GET",)),
         ("/day/{day}/noche-inusual/visto", ("POST",)),  # BODY-NOCHE-INUSUAL-1
+        ("/day/{day}/noche-inusual/nota", ("POST",)),  # BODY-MOCK-R2-HOY-1
         ("/experiments/{experiment_id}", ("GET",)),
         ("/experiments/{experiment_id}/close", ("POST",)),
         ("/experiments/{experiment_id}/day", ("POST",)),

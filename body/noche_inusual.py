@@ -50,6 +50,12 @@ MODELO = {
 # anchor kinds).
 DISMISS_KIND = "noche_inusual_vista"
 
+# BODY-HOY-NOCHE-NOTA-1 (ruling 5): the person's own note on this one unusual night -- a second,
+# separate `moment` row (own `kind`, same `ts_local` convention), private exactly like
+# checkin_nota's note (body/db.py) and already covered by the SAME privacidad.py export/delete
+# sweep that already walks every `moment` row for this person, so no new census entry there either.
+NOTA_KIND = "noche_inusual_nota"
+
 
 @dataclass
 class Noche:
@@ -102,3 +108,26 @@ def marcar_vista(conn, person_id: int, wake_day: str) -> None:
     if vista(conn, person_id, wake_day):
         return
     db.crear_momento(conn, person_id, wake_day, DISMISS_KIND)
+
+
+def nota(conn, person_id: int, wake_day: str) -> str | None:
+    """This person's own note on this one night, or None -- never guessed, never shared."""
+    row = conn.execute(
+        "SELECT note FROM moment WHERE person_id = ? AND kind = ? AND ts_local = ?",
+        (person_id, NOTA_KIND, wake_day),
+    ).fetchone()
+    return row["note"] if row is not None else None
+
+
+def guardar_nota(conn, person_id: int, wake_day: str, texto: str) -> None:
+    """One note per (person, night) -- a second save for the same night REPLACES the first rather
+    than adding a second row, the same "idempotent in effect" shape `marcar_vista` already keeps."""
+    existing = conn.execute(
+        "SELECT id FROM moment WHERE person_id = ? AND kind = ? AND ts_local = ?",
+        (person_id, NOTA_KIND, wake_day),
+    ).fetchone()
+    if existing is not None:
+        with conn:
+            conn.execute("UPDATE moment SET note = ? WHERE id = ?", (texto, existing["id"]))
+    else:
+        db.crear_momento(conn, person_id, wake_day, NOTA_KIND, note=texto)

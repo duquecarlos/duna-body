@@ -807,8 +807,11 @@ def _seed_goals_and_habits(conn, db, goals, rng: random.Random, all_days: list[d
     for gid in (gid_sleep, gid_rhr, gid_steps):
         goals.activate(conn, gid)
 
+    # "hora" (BODY-MOCK-R2-HOY-1 ruling 8, "a timed habit"): additive inside the cadence JSON blob,
+    # never read by goals.habit_due_today/habit_progress -- a habit with no "hora" at all behaves
+    # exactly as before.
     habit_id = goals.add_habit(conn, gid_sleep, _HABIT_TITLE[idioma],
-                                {"per": "week", "times": 3, "context": "before_night"})
+                                {"per": "week", "times": 3, "context": "before_night", "hora": "21:30"})
 
     checks = 0
     monday = first_monday
@@ -831,16 +834,59 @@ def _seed_goals_and_habits(conn, db, goals, rng: random.Random, all_days: list[d
     return checks, habit_checks
 
 
+_PLAN_HOY_HORA = "15:30"  # BODY-MOCK-R2-HOY-1 ruling 8: "a planned session with a time".
+
+
 def _seed_plan_hoy(conn, anchor: date, person_id: int, idioma: str) -> int:
     """BODY-CUERPO-VISTA-1-M ruling 4: today's own accepted plan, categorised, so the demo Hoy is
-    lit rather than reading "no session planned" (BODY-CUERPO-VISTA-1's own gap)."""
+    lit rather than reading "no session planned" (BODY-CUERPO-VISTA-1's own gap). BODY-MOCK-R2-
+    HOY-1 ruling 8 adds a time, so "The day ahead" shows a real timed session, not an untimed one."""
     conn.execute(
-        "INSERT INTO plan (person_id, day, title, status, ejercicios_json) VALUES (?, ?, ?, 'accepted', ?)",
-        (person_id, anchor.isoformat(), _PLAN_HOY_TITLE[idioma],
+        "INSERT INTO plan (person_id, day, time, title, status, ejercicios_json) "
+        "VALUES (?, ?, ?, ?, 'accepted', ?)",
+        (person_id, anchor.isoformat(), _PLAN_HOY_HORA, _PLAN_HOY_TITLE[idioma],
          json.dumps(_PLAN_HOY_EJERCICIOS[idioma], ensure_ascii=False)),
     )
     conn.commit()
     return 1
+
+
+# BODY-MOCK-R2-HOY-1 ruling 8: "a shift today" -- BODY-DEMO-TURNOS-1 always leaves the last 7 days
+# (today included) in a PROPOSED batch, never confirmed, so without this Hoy's "day ahead" card
+# would have no shift to show on any given run. A confirmed 'day' shift, regardless of where the
+# historical cycle would otherwise land today, so the demo is lit the same way every run.
+_TURNO_HOY_KIND = "day"
+
+
+def _seed_turno_hoy_confirmado(conn, anchor: date, person_id: int) -> None:
+    start_h, end_h, _crosses = _SHIFT_HOURS[_TURNO_HOY_KIND]
+    conn.execute(
+        "INSERT INTO shift (person_id, day, kind, code, start_local, end_local, source) "
+        "VALUES (?, ?, ?, ?, ?, ?, 'manual')",
+        (person_id, anchor.isoformat(), _TURNO_HOY_KIND, _SHIFT_CODE[_TURNO_HOY_KIND],
+         f"{anchor.isoformat()}T{start_h}:00", f"{anchor.isoformat()}T{end_h}:00"),
+    )
+    conn.commit()
+
+
+# BODY-MOCK-R2-HOY-1 ruling 8: "a night block starting in 3 days" -- a FUTURE confirmed night
+# block, inserted directly (never through the past-only `_shift_kind_for` cycle, which has no
+# future days at all), so Hoy's own "Night week ahead" card always has one to show, whichever real
+# calendar date `python -m body.demo` is actually run on.
+NOCHE_FUTURA_INICIO_DIAS = 3
+NOCHE_FUTURA_LARGO = 2
+
+
+def _seed_bloque_noche_futuro(conn, anchor: date, person_id: int) -> None:
+    inicio = anchor + timedelta(NOCHE_FUTURA_INICIO_DIAS)
+    for i in range(NOCHE_FUTURA_LARGO):
+        d = inicio + timedelta(i)
+        conn.execute(
+            "INSERT INTO shift (person_id, day, kind, code, start_local, end_local, source) "
+            "VALUES (?, ?, 'night', 'N', ?, ?, 'manual')",
+            (person_id, d.isoformat(), f"{d.isoformat()}T22:00:00", f"{(d + timedelta(1)).isoformat()}T06:00:00"),
+        )
+    conn.commit()
 
 
 def _seed_household(conn, db, goals, enlaces, compartir, rng: random.Random, all_days: list[date], anchor: date,
@@ -877,7 +923,11 @@ def _seed_household(conn, db, goals, enlaces, compartir, rng: random.Random, all
     # DESIGN rule 17 (BODY-HOGAR-ENLACE-1): the adventure goal links to its trip in Lugares -- an
     # invented demo id, never a real one.
     enlaces.enlazar(conn, gid_hogar, "lugares", "4821")
-    habit_both_id = goals.add_habit(conn, gid_hogar, _HOGAR_HABIT_BOTH[idioma], {"per": "week", "times": 2})
+    # "hora" (BODY-MOCK-R2-HOY-1 ruling 8, "a timed habit"): this household habit is the one that
+    # actually falls due on the demo's own anchor day (sleep_sid's "before_night" habit is not, on
+    # most anchor days) -- additive inside the cadence JSON blob, same as sleep_sid's own habit.
+    habit_both_id = goals.add_habit(conn, gid_hogar, _HOGAR_HABIT_BOTH[idioma],
+                                    {"per": "week", "times": 2, "hora": "18:00"})
     goals.add_habit(conn, gid_hogar, _HOGAR_HABIT_ANA[idioma], {"per": "week", "times": 1},
                      assignee_person_id=ana_id)
 
@@ -920,6 +970,8 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
 
     confirmed_id, proposed_id, night_weeks, night_blocks = _seed_shifts(
         conn, shift_import, turnos_costo, person_id, all_days)
+    _seed_turno_hoy_confirmado(conn, anchor, person_id)
+    _seed_bloque_noche_futuro(conn, anchor, person_id)
     turno_fc_turnos = _seed_turno_fc(conn, db, turno_fc, person_id, all_days)
     sueno_fc_noches = _seed_sueno_fc(conn, db, sueno_fc, person_id)
     _seed_noche_inusual(conn, db, anchor, person_id)

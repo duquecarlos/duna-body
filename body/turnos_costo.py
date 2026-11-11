@@ -347,6 +347,23 @@ def contexto_dia(conn, person_id: int, dia: date) -> dict | None:
     return None
 
 
+def siguiente_bloque_noche(conn, person_id: int, hoy: date, dias: int = 7) -> dict | None:
+    """BODY-HOY-SEMANA-NOCTURNA-1 (ruling 6): the next night block whose first night has not yet
+    started and falls within `dias` days of `hoy` -- its own dates only, no autonomous-plan wording
+    (DESIGN rule 14; BODY-MOCK-R2-CENSO-1-INV conflict #3). A block already under way (its own
+    `inicio` on or before `hoy`, including one `hoy` itself sits inside) never qualifies -- this is
+    for what is still AHEAD. `desde = hoy - 1` is enough to tell a block that started yesterday or
+    earlier (so it is excluded) from one that genuinely starts tomorrow, without reading further
+    back than that one extra day."""
+    desde = (hoy - timedelta(1)).isoformat()
+    hasta = (hoy + timedelta(dias)).isoformat()
+    for b in bloques_noche(conn, person_id, desde, hasta):
+        inicio = _parse(b.inicio)
+        if hoy < inicio <= hoy + timedelta(dias):
+            return {"inicio": b.inicio, "fin": b.fin}
+    return None
+
+
 def resumen(conn, person_id: int, hoy: date | None = None) -> dict:
     """Blocks of the last RESUMEN_DIAS days with their cost and recovery; the hero `dias_recuperacion`
     is the median recovery over blocks that have a figure, only when at least MODELO['min_bloques'] do;

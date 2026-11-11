@@ -77,6 +77,10 @@ _FIXED_DYNAMIC = {
     # body/web.py, body/templates/shift_pattern.html: t("shift.kind." + k) / t('shift.kind.' + k) --
     # _STRIP_KIND_ORDER is the superset (it also covers the strip's "no shift" legend entry).
     "shift.kind.+": turnos._STRIP_KIND_ORDER,
+    # body/rutas/hoy.py _dia_por_delante_ctx(): t("shift.kind.title." + k) -- the day-ahead row's
+    # own shift title, reading as a shift ("Day shift"/"Turno de día") rather than the bare kind
+    # (BODY-MOCK-R2-HOY-1-M fix 3). Same kind set as shift.kind.+ above.
+    "shift.kind.title.+": turnos._STRIP_KIND_ORDER,
     # body/web.py: t("shifts.cost_sub." + key) -- the cost model's own metric list (turnos_costo.MODELO).
     "shifts.cost_sub.+": turnos_costo.MODELO["metricas"],
     # body/turnos_costo.py diferencia_y_palabra(): the only three words it returns.

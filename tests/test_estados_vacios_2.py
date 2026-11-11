@@ -254,15 +254,18 @@ class PersonaCompletaSinCambiosTest(unittest.TestCase):
         self.assertEqual(r_home.status_code, 200)
         self.assertNotIn(t("today.stale_link"), r_home.text)
         # BODY-ESTADOS-VACIOS-2 / BODY-NOCHE-INUSUAL-1: a fully populated demo person sees exactly
-        # the two avisos its own fixture is built to produce -- the open marked period and the
-        # invented unusual night -- each named by its own text key, so a third unexpected aviso,
-        # or either one missing, still fails this test.
-        self.assertEqual(r_home.text.count('class="aviso"'), 2,
-                         "exactly two avisos: the open period and the unusual night")
+        # one aviso -- the open marked period -- each named by its own text key, so a third
+        # unexpected aviso, or it going missing, still fails this test. BODY-MOCK-R2-HOY-1 moved the
+        # unusual-night line from a one-line `.aviso` into its own "Body noticed" CARD (ruling 1),
+        # so it no longer counts here; its own presence is checked by its card title instead.
+        self.assertEqual(r_home.text.count('class="aviso"'), 1,
+                         "exactly one aviso: the open period")
         self.assertIn(t("today.periodo_enlace"), r_home.text,
                      "the open-period aviso is present")
+        self.assertIn(t("today.noche_inusual_titulo"), r_home.text,
+                     "the unusual-night card is present")
         self.assertIn(t("today.noche_inusual_link"), r_home.text,
-                     "the unusual-night aviso is present")
+                     "the unusual-night card's own link is present")
 
         r_shifts = client.get("/shifts")
         self.assertEqual(r_shifts.status_code, 200)

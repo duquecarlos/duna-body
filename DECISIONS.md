@@ -16871,3 +16871,153 @@ cross-repo contract change -- the diff only widens three test-file assertion set
 already on the branch. Merge commit `c7efb825889a0f18d9bd27be7c6d00c96efd4cfd` on `main`
 (`--no-ff`); its tree `e0e07387001ff6a2f2efe8d660528e4270ccb096` equals the gated commit's tree
 exactly, so the merge adds nothing the gate did not already cover and the gate was not re-run.
+
+## BODY-MOCK-R2-HOY-1
+
+Carlos approved mock round 2 as drawn (his own words, relayed 2026-11-10: "Please go with the app
+design as shown. Later after build, I make some comments. Don't worry about it. For now, it's good
+enough."). This slice builds the Today board's remaining gaps -- the ones that need NO new data --
+under eight binding rulings from the orchestrator.
+
+**Ruling 1 -- board order.** Reordered Hoy's own markup to: body view -> score hero (the "Reloj
+sincronizado"/"Watch synced" line moved OFF the old top `.meta` block and INSIDE the score hero
+`<a class="card est">`, right after the reading paragraph) -> The day ahead -> inline "Tell Body..."
+row -> Body noticed (a card now, not a one-line `.aviso`) -> metric tiles -> eating window -> Night
+week ahead (when one is coming). The old top `.meta` block is gone entirely.
+
+**Ruling 2 -- "The day ahead."** `body/rutas/hoy.py`'s new `_dia_por_delante_ctx` merges, into ONE
+time-ordered list: today's own confirmed shift (`turnos_costo.turno_de_hoy`), today's planned
+session (`_plan_hoy_item`, reusing the same `plan` row `_cuerpo_hoy_ctx`'s body view already reads --
+one query, never two), today's logged activities (`_actividades_hoy`), and today's due
+habits/experiments (reusing the existing `_today_due_habits`/`experimentos.hoy_contexto`). Each row
+carries its own time only when a source gives one (a habit's cadence JSON gained an additive,
+optional `"hora"` key -- `goals.habit_due_today`/`habit_progress` never read it, so a habit with no
+`"hora"` behaves exactly as before); items with no time are stable-sorted after every timed one,
+keeping their source order (shift, session, activities, habits, experiments). An honest empty line
+(`today.dia.vacio`) when nothing is planned. Never an autonomous-sounding claim -- the mock's own
+"Body moved Lower B to Saturday" is never rendered; this is a read, Body proposes and the person
+still confirms elsewhere (DESIGN rule 14; BODY-MOCK-R2-CENSO-1-INV conflict #3).
+
+**Ruling 3 -- the inline "Tell Body..." row.** `<a class="tellbody taplink" href="#asis-btn">` opens
+the EXISTING assistant panel (`body/templates/base.html`'s own `#asis-btn` toggle) -- the same
+`#asis-btn` fragment the period/injury aviso's own assistant link already uses elsewhere on this
+same page, so it is one more pointer at the one panel base.html defines, never a second chat
+implementation.
+
+**Ruling 4 -- two new tiles.** "Stress so far" (`stress_avg`, label overridden via
+`today.tile.stress_so_far` since the existing `metric.stress_avg` label reads "Stress" without the
+"so far") and "Steps" (`steps`, the existing `metric.steps` label needs no override) join
+`TODAY_CARDS`. Each gets a qualitative band word -- low/usual/high (`_nivel_tile`/`_nivel_label`)
+against the person's OWN 25th-75th-percentile range (`baselines.Baseline.low/high`), never a generic
+table, and None (the honest gap) with fewer than `baselines.MIN_DAYS` of history or no value yet --
+plus a "by HH:MM" partial-day caption (`today.tile.hasta`) from the watch's own last sync
+(`comun`'s existing `_synced`), shown only on today's own card, only when today has actually
+synced.
+
+**Ruling 5 -- "Body noticed" -> "Add a note."** The one-line `.aviso` became its own card (title +
+chip, same text as before), with an "Add a note" form writing to the EXISTING generic `moment`
+table under a new, private kind (`body/noche_inusual.py`'s `NOTA_KIND = "noche_inusual_nota"`,
+`nota()`/`guardar_nota()` -- one note per (person, night), a second save REPLACES the first, the
+same idempotent shape `marcar_vista` already keeps) -- never a new table, and already covered by
+`privacidad.py`'s existing per-person `moment` export/delete sweep (its own export/delete code reads
+the whole `moment` table generically, confirmed by inspection, not by guess). Checkin's own
+`checkin_nota` was considered and rejected: checkin rows are optional per day and tied to a different
+flow, so `moment` (already shared with this same module's own dismissal) fit without a schema
+change. An inline "Descartar" button stays (the existing dismiss route gained an optional `back`
+form field, read the same way `metas.py`'s `habit_check` already does, so Hoy's own card can
+dismiss without leaving Hoy; a bare POST with no `back` field -- Día's own button -- keeps returning
+to the day page exactly as before). A blank/whitespace-only note is never stored.
+
+**Ruling 6 -- "Night week ahead."** New `turnos_costo.siguiente_bloque_noche(conn, person_id, hoy,
+dias=7)`: the next night block whose own first night has not yet started and falls within `dias`
+days of `hoy` (a block already under way never qualifies -- this is for what is still AHEAD). The
+new card (`_semana_nocturna_ctx`) shows that block's own dates and the person's own historical
+recovery estimate (`turnos_costo.resumen(...)["dias_recuperacion"]`, the existing median-recovery
+figure), falling back to an honest gap (`today.semana_nocturna.sin_dato`) with too little recovery
+history yet, and linking to Turnos -- never a claim that Body will remind or has already acted
+(DESIGN rule 14; BODY-MOCK-R2-CENSO-1-INV conflicts #1/#3).
+
+**Ruling 7 -- phone-first statics.** The new `.tellbody` CSS rule (`body/static/body.css` --
+`touches:` named `app.css`, which does not exist in this repo; the real stylesheet is `body.css`,
+named as a deviation) is `width:100%`, `min-height:44px`, no fixed pixel width -- `.cols-hoy` stays
+a plain single-column block below 1024px (source order = visual order), becoming a 2-column grid
+only >=1024px, so every new card reads correctly at 375px. The global `:focus-visible` outline rule
+already covers every new focusable control for free; no new per-control CSS was needed. Light/dark
+both render through the existing CSS variables, no new color literal.
+
+**Ruling 8 -- the demo.** `body/demo.py` now seeds, on top of its existing fixture: a confirmed
+shift for TODAY (`_seed_turno_hoy_confirmado` -- `_seed_shifts` otherwise leaves the last 7 days,
+today included, as a PROPOSED `shift_batch`, never written to the confirmed `shift` table, which a
+smoke render caught as a real gap, not a guess), a timed planned session (`plan.time = "15:30"`,
+already an existing, unused column), a timed habit (the household "Entrenar piernas" habit's
+cadence gained `"hora": "18:00"` -- NOT the sleep-before-night-shift habit the first pass tried,
+which turned out not to be due on the anchor day at all; moving it to the habit the smoke render
+actually showed due was a fix, not a first attempt, committed separately), and a future night block
+3 days out, 2 nights long (`_seed_bloque_noche_futuro`). A render of the demo person's own "/" was
+used throughout to verify every new card actually appears, in both languages, rather than trusting
+the code alone.
+
+**New i18n keys** (es / en, literal `t()` calls only -- no new dynamic-key prefix was needed):
+`today.plan_title` ("El día por delante" / "The day ahead", VALUE changed, key reused since
+`tests/test_ancho_completo.py` reads its value dynamically rather than hardcoding the old string),
+`today.dia.vacio`, `today.dia.turno_hasta`, `today.dia.sesion_n`, `today.tell_body`,
+`today.tile.stress_so_far`, `today.tile.banda.low/usual/high`, `today.tile.hasta`,
+`today.noche_inusual.ayuda`, `today.noche_inusual.nota_placeholder`, `today.noche_inusual.nota_btn`,
+`today.noche_inusual.nota_guardada`, `today.noche_inusual.descartar_btn`,
+`today.semana_nocturna.titulo`, `today.semana_nocturna.rango`, `today.semana_nocturna.recuperacion`,
+`today.semana_nocturna.sin_dato`, `today.semana_nocturna.enlace`. `tests/test_i18n_paridad.py`
+verified both catalogs still have identical key sets and placeholders (933 keys each).
+
+**Fix found by the gate, not by review**: `tests/test_seguridad.py`'s static redirect-target scan
+walks each route's AST and only recognises a bare `cuenta.safe_return_to(...)` call (direct, or
+assigned unwrapped to a variable) as provably safe -- the two new noche-inusual routes' first draft
+branched around it (`cuenta.safe_return_to(back_raw) if back_raw else f"/day/{day}"`), which the
+scanner cannot see through and which was not in its named ALLOWLIST. Fixed by passing the fallback
+THROUGH `safe_return_to` instead of branching around it
+(`cuenta.safe_return_to(f.get("back") or f"/day/{day}")`) -- `f"/day/{day}"` passes `safe_return_to`'s
+own same-origin checks unchanged (day already validated by `_parse_day`), so behaviour is identical
+and the scan now proves it directly, no ALLOWLIST entry needed.
+
+**One existing test, outside this slice's `touches:`, updated to name the new truth** (never
+loosened -- the "existing census test" exception the dispatch names): `tests/test_web_entry.py`'s
+`RouteSetTest` locks the exact route set captured before the ayuda move; it needed this slice's own
+new route (`/day/{day}/noche-inusual/nota`, POST) added to its `BEFORE` set, the same way the
+sibling `visto` route's own addition was recorded there by an earlier slice. A one-line, mechanical
+addition -- the full gate goes RED without it, since the route genuinely did not exist before this
+slice.
+
+**Tests**: `tests/test_hoy.py` (new -- pure-function coverage of `_nivel_tile`/`_nivel_label`,
+`_dia_por_delante_ctx`'s merge and sort, `turnos_costo.siguiente_bloque_noche`,
+`_semana_nocturna_ctx`, 20 tests) and `tests/test_mock_r2_hoy.py` (new -- route-level coverage of
+all eight rulings against both real rendering and the demo person, 29 tests), plus
+`tests/test_estados_vacios_2.py`'s `PersonaCompletaSinCambiosTest` updated from "exactly two avisos"
+to "exactly one aviso plus the noticed card's own title" (ruling 1 moved the unusual-night line out
+of the `.aviso` count) and `tests/test_web_entry.py` above.
+
+**Commits**, `feat/body-mock-r2-hoy-1` branch, on top of `main`:
+- `588b10540542324556c413b2ad0554a5c449e3cd` -- "BODY-MOCK-R2-HOY-1: Today board matches mock round
+  2 (rulings 1-6, 8)."
+- `72959499178ea73abfc899c57af750f07a8f8a3e` -- "BODY-MOCK-R2-HOY-1: unit tests for the new Today
+  helpers."
+- `9dbfb6b08b4d588fe23dab369f056ce8b3b2deb0` -- "BODY-MOCK-R2-HOY-1: fix the demo's timed habit so
+  it actually shows today."
+- `a22e4d91431fbbd75af748476e39ac78b82b6bbf` -- "BODY-MOCK-R2-HOY-1: route-level tests for the new
+  Today board."
+- `97541870f237254cdb10a4956f4d19d92a112201` -- "BODY-MOCK-R2-HOY-1: fix the full gate's two real
+  regressions."
+
+**Gate**, run once on this branch's own tip (`97541870f237254cdb10a4956f4d19d92a112201`), exactly
+`.venv/Scripts/python.exe -m unittest discover tests -t .`, foreground:
+
+    Ran 2616 tests in 519.953s
+
+    OK (skipped=1)
+
+Green. Merge-policy-A check on this slice's own diff: no schema or migration change, no cross-repo
+contract change -- but customer-facing bytes plainly changed (a restructured board, new cards, new
+strings in both languages), so this stops `AWAITING_APPROVAL` for the orchestrator's own 375px look
+(light and dark) on the demo before any merge, per the dispatch's own instruction ("the orchestrator
+looks at 375 px before merging"). Not merged to `main`.
+
+Open follow-up, named but not acted on: none -- every ruling's own data need was already satisfiable
+without a schema change, so nothing was skipped for a later slice.
