@@ -832,13 +832,15 @@ async def noche_inusual_visto(day: str, request: Request, person_id: int = Depen
     there is no other person's id to check against here. BODY-HOY-NOCHE-NOTA-1: an optional `back`
     field, read the same way metas.py's habit_check already does (cuenta.safe_return_to), so Hoy's
     own "Body noticed" card can dismiss without leaving Hoy -- a bare POST (Día's own button, no
-    `back` field) keeps returning to the day page exactly as before."""
+    `back` field) keeps returning to the day page exactly as before. The fallback is passed THROUGH
+    safe_return_to too (never used unwrapped), so tests/test_seguridad.py's static scan -- which
+    only recognises a bare `cuenta.safe_return_to(...)` call, not a branch around it -- can still
+    prove this call site safe without a named ALLOWLIST entry."""
     d = _parse_day(day)
     conn, _, _ = comun._ctx(person_id)
     noche_inusual.marcar_vista(conn, person_id, d.isoformat())
     f = await comun._form(request)
-    back_raw = f.get("back")
-    back = cuenta.safe_return_to(back_raw) if back_raw else f"/day/{day}"
+    back = cuenta.safe_return_to(f.get("back") or f"/day/{day}")
     return RedirectResponse(back, status_code=303)
 
 
@@ -854,6 +856,5 @@ async def noche_inusual_nota(day: str, request: Request, person_id: int = Depend
     texto = (f.get("nota") or "").strip()
     if texto:
         noche_inusual.guardar_nota(conn, person_id, d.isoformat(), texto)
-    back_raw = f.get("back")
-    back = cuenta.safe_return_to(back_raw) if back_raw else f"/day/{day}"
+    back = cuenta.safe_return_to(f.get("back") or f"/day/{day}")
     return RedirectResponse(back, status_code=303)
