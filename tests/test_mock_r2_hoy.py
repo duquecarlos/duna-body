@@ -175,6 +175,31 @@ class TellBodyRowTest(unittest.TestCase):
         self.assertEqual(page.count('href="#asis-btn"'), 2, "the aviso's own link plus the new row")
 
 
+class TellBodyOpensPanelJsTest(unittest.TestCase):
+    """BODY-MOCK-R2-HOY-1-M2 fix 1: the row opens the EXISTING assistant panel through its own
+    abrir() path (no second chat implementation, no inline script -- the CSP forbids one)."""
+
+    @classmethod
+    def setUpClass(cls):
+        js = ROOT / "body" / "static" / "assistant.js"
+        cls.text = js.read_text(encoding="utf-8")
+
+    def test_delegated_listener_targets_the_tellbody_row(self):
+        self.assertIn('e.target.closest(".tellbody")', self.text)
+
+    def test_it_prevents_the_default_navigation_and_opens_through_abrir(self):
+        listener_start = self.text.index('document.addEventListener("click"')
+        listener_end = self.text.index("});", listener_start)
+        block = self.text[listener_start:listener_end]
+        self.assertIn("e.preventDefault()", block)
+        self.assertIn("abrir()", block)
+
+    def test_no_inline_script_was_added_for_this(self):
+        html = (ROOT / "body" / "templates" / "today.html").read_text(encoding="utf-8")
+        self.assertIn('<a class="tellbody taplink" href="#asis-btn">', html)
+        self.assertNotIn("<script>", html)
+
+
 class TileBandTest(unittest.TestCase):
     """Ruling 4: Stress-so-far and Steps tiles, each with a low/usual/high band word against the
     person's own range (never a generic table) and a "by HH:MM" caption when today is partial."""

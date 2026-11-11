@@ -128,6 +128,17 @@
 
   btnEl.addEventListener("click", function () { panelAbierto ? cerrar() : abrir(); });
   if (cerrarBtn) cerrarBtn.addEventListener("click", cerrar);
+
+  // The "Tell Body ..." row in Today is a plain <a href="#asis-btn"> (works with no JS: the
+  // fragment scrolls to the floating button). Delegated so it also covers a row rendered after
+  // this script runs -- same pattern other panel controls above do not need, since they are
+  // already in the DOM when this file loads.
+  document.addEventListener("click", function (e) {
+    var fila = e.target && e.target.closest ? e.target.closest(".tellbody") : null;
+    if (!fila) return;
+    e.preventDefault();
+    abrir();
+  });
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape" && panelAbierto) cerrar();
   });
