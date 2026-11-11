@@ -17392,3 +17392,10 @@ Green -- 2696 (the prior floor, BODY-PROPUESTA-VIGENCIA-1's own count) + 14 new 
 per the Tests line above). `git status --porcelain` empty before this entry. Approved to merge on a
 green gate (copy and an empty-state response shape only; the orchestrator looks at 375 px after).
 No open follow-up.
+
+Commits on `feat/body-tutoriales-en-1`: `e587262b7c49a78ca9f10dc6c099f8d59bbdb8e9` (rulings 1-2 and
+their tests), `1cba8adc938d2a381aa7c8dd25040a5af45ccd5c` (ruling 3 and its tests),
+`9ffaf39ecf6633a7689c989eb847174f2ebf43c1` (this entry). Merged into `main` with `--no-ff`: merge commit
+`c5eee0f8e5a4ebb5b2117a035ae3a7e03a09ca58`, merge tree `28841f9c496f64330a53b62a1ffc84d5c4d54f42`,
+identical to the branch tip's own tree (`git diff` between them empty) -- no conflict, no extra
+change. -- merged c5eee0f8e5a4ebb5b2117a035ae3a7e03a09ca58
