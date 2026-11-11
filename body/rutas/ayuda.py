@@ -35,7 +35,7 @@ def ayuda(person_id: int = Depends(identity.current_person_id)):
     hosted = cuenta.hosted()
     capitulos = []
     recorrido = []
-    for c in tutoriales.capitulos_con_tareas(incluir_turnos=turnos_on):
+    for c in tutoriales.capitulos_con_tareas(t, incluir_turnos=turnos_on):
         tareas = [_tarea_ayuda_ctx(tarea, hosted) for tarea in c["tareas"]]
         capitulos.append({"id": c["id"], "titulo": c["titulo"], "tareas": tareas})
         recorrido.extend(tarea for tarea in tareas if tarea["video"])
