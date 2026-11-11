@@ -17074,3 +17074,118 @@ exactly `.venv/Scripts/python.exe -m unittest discover tests -t .`, foreground:
     OK (skipped=1)
 
 Green. Open follow-up: none.
+
+## BODY-LESION-ZONA-1 -- a period can name its limited zonas (2026-11-11)
+
+Carlos told Personal (2026-11-11) that one body part is recovering, so he is training it below
+full load on purpose; he wants Body to read those sessions as deliberately lighter, never a
+regression, and the next plans to respect it. `marcar_periodo` already supported kind `lesion`, but
+a period named no body part. Six rulings, all implemented on `feat/body-lesion-zona-1`.
+
+**Ruling 1 -- a period can name its zonas.** Additive `period.zonas TEXT CHECK (zonas IS NULL OR
+json_valid(zonas))` (`body/db.py`), a JSON list, NULL meaning none, guarded by the same
+`ALTER TABLE ... ADD COLUMN` idiom this table's own prior columns use. Values come from
+`anatomia.CATEGORIA_ENUM` only -- `db._validar_zonas` refuses anything else, naming the allowed
+words; an empty list means the same as no zonas. `db.crear_periodo`/`db.actualizar_periodo` gained
+`zonas` (the existing `_SIN_DAR` sentinel convention: left out keeps it unchanged, `None` clears
+it). The tools `marcar_periodo` and `corregir_periodo` gained an optional `zonas` parameter
+(`body/agente/herramientas.py`'s `_zonas_periodo`, the same door-validation pattern as
+`_categoria_entreno`), and their registry descriptions now ask the caller to set it when the person
+names a limited body part. `cerrar_periodo`/`corregir_periodo`/`borrar_periodo` carry zonas through
+`antes`/`despues`, and `body/agente/propuestas.py`'s apply/undo/drift functions for all three
+preserve it (a proposal stored before this slice has no `"zonas"` key at all -- every read uses
+`.get("zonas")`, never `["zonas"]`). Existing periods read as NULL; no data migration.
+
+**Ruling 2 -- training reads say "on purpose".** While an open `lesion` period's zonas cover a day,
+every training read of that day marks each set whose category falls in those zonas with one shared
+line, built once in `anatomia.texto_liviano_a_proposito(t, zonas)` so all four surfaces say
+identical words:
+- es: "Más liviano a propósito: {zona} en recuperación"
+- en: "Lighter on purpose: {zona} recovering"
+
+`db.load_day` computes the day's own `zonas_en_recuperacion` once and, per activity, intersects it
+with that activity's own active, non-excluded sets' categories into a raw `zonas_limitadas` list
+(never rendered text -- `db.py` stays i18n-free). The four surfaces: `leer_entreno` (per set),
+`leer_dia` (per activity, via `load_day`'s own field), Día's own training section
+(`body/templates/day.html`'s new `a.lesion` line), and the `registrar_entreno` proposal card
+(`body/rutas/asistente.py`'s `_tarjeta_registrar_entreno`, now given `conn`/`person_id` -- every one
+of the 20 card-builder functions in the `TARJETAS` dispatch table shares that signature now, most
+leaving the two new parameters unused). The period's own private note is never shown in any of
+these reads. A closed period, a non-`lesion` kind, or a set outside the named zonas contributes no
+line and is never treated as a drop by any load comparison.
+
+**Ruling 3 -- plans know the limit.** `leer_hoy` gained `"limitaciones"`: this person's own open
+`lesion` periods as of today, as `{tipo, desde, zonas}` (no note) --
+`herramientas._limitaciones_abiertas`. `planear_entreno`'s own description now asks the caller to
+check `leer_hoy`'s limitaciones first, keep load on those zonas below full, and say so in the plan;
+Body itself never invents a load, it only states the limit.
+
+**Ruling 4 -- the body view shows it.** `anatomia.contexto` gained a `grupos_limitados` parameter
+and a parallel `limitada` ellipse list per view (the same per-view, per-pose filtering `glow`
+already does). `body/templates/_cuerpo_vista.html` renders it with its own `.cuerpo-vista-glow.limitada`
+class -- a quiet hatch (`repeating-linear-gradient` + dashed border, the page's own `--muted` token,
+light and dark, `mix-blend-mode: normal` so it never reads as the training glow's own screen/multiply
+blend), reusing the existing JS's class-based positioning with no change to
+`body/static/cuerpo-vista.js`. `body/rutas/hoy.py`'s `_cuerpo_hoy_ctx` computes today's own
+`zonas_en_recuperacion`, maps them to glow groups via the existing `anatomia.grupos_de_categorias`,
+and sets a caption:
+- es: "En recuperación: {zonas}"
+- en: "Recovering: {zonas}"
+
+**Ruling 5 -- the move tool and privacy.** `body/privacidad.py`'s own period export SELECT gained
+`zonas` (raw JSON text, the same convention every other JSON column in that export already follows
+-- never parsed, never a figure). `body/mudanza.py` needed no change: `period`'s `TableSpec` already
+has `match_cols=None`, so a row's columns are read dynamically (`PRAGMA`), not from a hardcoded list
+-- confirmed by a new round-trip test (`tests/test_mudanza.py`'s `PeriodZonasMudanzaTest`) rather
+than by reading alone.
+
+**Ruling 6 -- demo.** The demo's open `lesion` period now names `"hombro"` -- the same zona its
+already-seeded "Upper B" plan trains today, so Hoy lights (the plan) and hatches (the limitation)
+the same group at once. `demo._seed_periodo` also finds the most recent `strength_training`
+activity `_seed_days` already created and corrects one of its sets
+(`db.correct_exercise_set`, never `garmin_adapter.ExerciseSet` -- this module still never imports
+Tier 1's `body/garmin_adapter.py`) to that same categoria, so a registered training read
+(`leer_entreno`/`leer_dia`/Día) shows ruling 2's line too, not only the future plan.
+
+**New i18n strings** (`body/i18n/es.json`/`en.json`):
+- `agente.error.periodo_zona_invalida`: "La zona debe ser una de estas: {categorias}." /
+  "The zone must be one of: {categorias}."
+- `entreno.categoria.{pierna,gluteo,espalda,pecho,hombro,brazo,core,cardio,movilidad,otro}`: one key
+  per `anatomia.CATEGORIA_ENUM` value (es identical to the enum word except `gluteo` → "glúteo"; en:
+  leg/glute/back/chest/shoulder/arm/core/cardio/mobility/other).
+- `entreno.liviano_proposito`: "Más liviano a propósito: {zona} en recuperación" / "Lighter on
+  purpose: {zona} recovering".
+- `cuerpo.caption.en_recuperacion`: "En recuperación: {zonas}" / "Recovering: {zonas}".
+
+`tests/test_i18n_paridad.py`'s dynamic-prefix guard registered `entreno.categoria.+` against
+`anatomia.CATEGORIA_ENUM`.
+
+**Tests**: `tests/test_periodo.py` (zonas on `crear_periodo`/`actualizar_periodo`, the enum refusal,
+the census column list), `tests/test_periodo_herramientas.py` (marcar/corregir_periodo zonas
+propose→apply→undo, the enum refusal), `tests/test_lesion_zona.py` (new -- the migration from a
+pre-this-slice `period` table, `db.zonas_en_recuperacion`'s own open/closed/kind/coverage/ownership
+rules, `leer_entreno`/`leer_dia` marking including the note never leaking, `leer_hoy`'s own
+limitaciones), `tests/test_agente_propuestas.py` (the `registrar_entreno` card's own line, present
+and absent), `tests/test_cuerpo_vista.py` (`anatomia.contexto`'s `limitada` list,
+`texto_liviano_a_proposito`'s ordering, Hoy's own hatch and caption over HTTP),
+`tests/test_periodo_pantallas.py` (Día's own `lesion` line over HTTP, including the note never
+leaking), `tests/test_privacidad.py` (the export carries zonas), `tests/test_mudanza.py` (the
+round trip), `tests/test_demo.py` (the seeded period and the corrected set).
+
+**Deviation**: ruling 6 was read as "the demo shows ruling 2's own marking on a real, registered
+session, not only on the future plan" -- `demo.py` seeded no `workout_set` rows for any past
+session before this slice (only the future plan carries exercise/categoria data), so showing
+ruling 2 at all needed one new, small, invented correction on an existing seeded activity, not
+only the zona naming the spec's own wording suggested by itself.
+
+**Gate**, run once on this branch's final tree, exactly
+`.venv/Scripts/python.exe -m unittest discover tests -t .`, foreground:
+
+    Ran 2676 tests in 627.675s
+
+    OK (skipped=1)
+
+Green. `git status --porcelain` empty before this entry. Stops `AWAITING_APPROVAL`: customer-facing
+bytes changed (new i18n strings, Día's and Hoy's own templates) and the schema gained an additive
+column -- the orchestrator wants to look at Hoy's own hatch at 375px before this merges. Open
+follow-up: none.
