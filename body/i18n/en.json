@@ -828,6 +828,8 @@
   "asistente.mcp.aplicar_no_propia": "That proposal doesn't exist, or it isn't one your personal assistant made.",
   "asistente.mcp.aplicar_no_vigente": "That proposal is no longer pending.",
   "asistente.mcp.aplicar_resultado": "Applied. You'll see it on Body's {pantalla} screen, where you can undo it.",
+  "asistente.mcp.entreno_reloj_fallo": "I couldn't read the watch's sets; I saved the ones you told me.",
+  "asistente.mcp.error_interno": "Body had an internal error with this tool; nothing was saved. Try again or let the team know.",
   "asistente.propuesta.turnos_actual": "{n} proposed shifts waiting to confirm",
   "asistente.propuesta.turnos_nuevo": "Confirm every proposed shift",
   "asistente.propuesta.entreno_plan": "{titulo} · {fecha}: {ejercicios}",

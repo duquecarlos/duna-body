@@ -239,19 +239,22 @@ def _aplicar_propuesta_mcp(sesion: _Sesion, argumentos: dict) -> dict:
     return {"propuesta_id": propuesta_id, "estado": resultado["estado"]}
 
 
-def _llamar_herramienta(sesion: _Sesion, nombre, argumentos: dict) -> tuple[str, dict]:
+def _llamar_herramienta(sesion: _Sesion, nombre, argumentos: dict) -> tuple[str, dict, bool]:
     """Dispatches one `tools/call` -- every attempt, successful or refused, is audited first
     (ruling 5). A read goes straight to `herramientas.ejecutar`; a proposal gets this session's one
     lazily-created, 'mcp'-tagged conversation; `aplicar_propuesta` (BODY-MCP-APLICAR-1) goes to
     `_aplicar_propuesta_mcp`, which carries its own refusals. Raises `herramientas.ToolError`
     (caught by the caller) for an unknown name, a cap reached (its message naming when to try
     again, BODY-MCP-LOCAL-1-B), or anything `herramientas.ejecutar` itself refuses. Returns (tipo,
-    salida) -- the caller needs `tipo` to decide whether the result also gets the "you'll see this
-    on Hoy" line (a plain proposal) or the "applied, undo it in Body" line (an apply)."""
+    salida, aviso_reloj) -- the caller needs `tipo` to decide whether the result also gets the
+    "you'll see this on Hoy" line (a plain proposal) or the "applied, undo it in Body" line (an
+    apply); `aviso_reloj` (BODY-SERIES-UNIDAD-1 ruling 3) is True only for a `registrar_entreno`
+    proposal whose own watch-sets read failed, so the caller can add the one extra line telling
+    the person's sets were saved without the watch's."""
     nombre_str = nombre if isinstance(nombre, str) else str(nombre)
     db.registrar_uso_herramienta_externa(sesion.conn, sesion.person_id, nombre_str, CALLER)
     if nombre_str == NOMBRE_APLICAR:
-        return "aplicacion", _aplicar_propuesta_mcp(sesion, argumentos)
+        return "aplicacion", _aplicar_propuesta_mcp(sesion, argumentos), False
     nivel = _nivel(sesion)
     tipo = herramientas.tipo_de(nombre) if isinstance(nombre, str) else None
     if tipo is None:
@@ -262,15 +265,16 @@ def _llamar_herramienta(sesion: _Sesion, nombre, argumentos: dict) -> tuple[str,
         salida = herramientas.ejecutar(sesion.conn, sesion.person_id, nombre, argumentos, nivel)
         sesion.tope_lecturas.registrar()
         sesion.total_lecturas += 1
-        return tipo, salida
+        return tipo, salida, False
     if not sesion.tope_propuestas.permite():
         raise herramientas.ToolError(_mensaje_tope_propuestas(sesion))
     conversacion_id = sesion.conversacion()
     salida = herramientas.ejecutar(sesion.conn, sesion.person_id, nombre, argumentos, nivel, conversacion_id)
-    salida.pop("_registro", None)
+    registro = salida.pop("_registro", None)
+    aviso_reloj = bool(registro and registro.get("despues_json", {}).get("reloj_fallo"))
     sesion.tope_propuestas.registrar()
     sesion.total_propuestas += 1
-    return tipo, salida
+    return tipo, salida, aviso_reloj
 
 
 def _responder(id_, *, resultado=None, error=None) -> dict:
@@ -302,10 +306,23 @@ def _procesar_mensaje(sesion: _Sesion, msg: dict) -> dict | None:
         argumentos = params.get("arguments")
         argumentos = argumentos if isinstance(argumentos, dict) else {}
         try:
-            tipo, salida = _llamar_herramienta(sesion, nombre, argumentos)
+            tipo, salida, aviso_reloj = _llamar_herramienta(sesion, nombre, argumentos)
         except herramientas.ToolError as e:
             texto = errores.texto_propio(e)
             return _responder(id_, resultado={"content": [{"type": "text", "text": texto}], "isError": True})
+        except Exception as e:
+            # Ruling 4 (BODY-SERIES-UNIDAD-1): the server never dies on a tool call -- anything
+            # else `_llamar_herramienta` raises (a bad Garmin payload, a DB error, ...) answers
+            # THIS request only, rolls back whatever it left half-done, and the next line is still
+            # read. Only the exception's TYPE and the tool's own name reach stderr (ruling 6
+            # already in force above); never its message, never the call's arguments.
+            sesion.conn.rollback()
+            nombre_str = nombre if isinstance(nombre, str) else str(nombre)
+            print(f"mcp tools/call error: {errores.texto_seguro(e)} herramienta={nombre_str!r}", file=sys.stderr)
+            t = T(_idioma(sesion))
+            return _responder(id_, resultado={
+                "content": [{"type": "text", "text": t("asistente.mcp.error_interno")}], "isError": True,
+            })
         contenido = [{"type": "text", "text": json.dumps(salida, ensure_ascii=False)}]
         if tipo == "propuesta":
             # BODY-MCP-LOCAL-1-B: a proposal only ever creates a card on Body's own Hoy screen --
@@ -314,6 +331,11 @@ def _procesar_mensaje(sesion: _Sesion, msg: dict) -> dict | None:
             t = T(_idioma(sesion))
             contenido.insert(0, {"type": "text",
                                   "text": t("asistente.mcp.resultado_ubicacion", pantalla=t("nav.today"))})
+            if aviso_reloj:
+                # Ruling 3 (BODY-SERIES-UNIDAD-1): the watch's sets were a help, not a
+                # precondition -- this is the one place the caller (who cannot see the Hoy card
+                # directly) is told the proposal still saved on the person's own spoken sets.
+                contenido.insert(0, {"type": "text", "text": t("asistente.mcp.entreno_reloj_fallo")})
         elif tipo == "aplicacion":
             # BODY-MCP-APLICAR-1: says what was applied and that it can be undone in Body (THE
             # WORK step 2) -- never "tap Aplicar", since this call already did that.
