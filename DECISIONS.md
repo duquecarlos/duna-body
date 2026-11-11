@@ -16268,3 +16268,68 @@ AWAITING_APPROVAL for the orchestrator's 375 px look (light and dark) on the dem
 Stops there; not merged to `main`.
 
 Open follow-up, named but not acted on: none.
+
+## BODY-CUERPO-VISTA-1-M -- merged
+
+BODY-CUERPO-VISTA-1 stopped AWAITING_APPROVAL (above) on its own one gap: Hoy's glow reads an
+optional `categoria` per exercise from the plan, but `planear_entreno`'s exercise schema had no
+`categoria` field at all and `registrar_entreno`'s own `categoria` was free text -- so on real data
+Today never lit, and the demo showed «Hoy no hay sesión planeada.» ORCH-CARLOS-DELEGATES-TIER-1-1,
+carrying Carlos's relayed approval of mock round 2 (BODY-CARLOS-RELAYED-WORDS-APPROVE-1) and the
+orchestrator's own 375 px look (passed apart from this gap), authorized fixing it here, then
+merging.
+
+1. **One vocabulary, owned by `body/anatomia.py`**: `CATEGORIA_ENUM` -- `pierna, gluteo, espalda,
+   pecho, hombro, brazo, core, cardio, movilidad, otro`. `CATEGORIA_GRUPOS` now covers the first
+   seven and splits the old combined `pierna` mapping: `pierna` -> cuádriceps + isquiotibiales only;
+   the new `gluteo` -> glúteos on its own (used to be folded into `pierna`). `cardio`, `movilidad`
+   and `otro` light nothing, by design -- absent from the map, never guessed.
+2. **Both tools speak it.** `planear_entreno`'s exercise items and `registrar_entreno`'s series
+   items both gained a `categoria` enum in their JSON schema (`body/agente/herramientas.py`
+   `_PARAM_PLANEAR_ENTRENO`/`_PARAM_REGISTRAR_ENTRENO`). A new door validator, `_categoria_entreno`
+   (the `_numero_entreno`/BODY-ENTRENO-NUMEROS-1 pattern), refuses a value outside the enum --
+   naming the allowed words, in the person's own language, via a new i18n key
+   `agente.error.entreno_categoria_invalida`:
+   - es: «La categoría de {ejercicio} debe ser una de estas: {categorias}.»
+   - en: "The category for {ejercicio} must be one of: {categorias}."
+   Nothing is stored on refusal. A recognised value is normalised (trimmed, lowercased) before it
+   reaches the proposal. `planear_entreno`'s own tool description now asks the caller to set a
+   category on every exercise, naming the enum. Rows stored before this slice, under the old
+   free-text vocabulary (e.g. plural "piernas"), are never rewritten -- they just read as
+   unrecognised now (`anatomia.grupos_de_categorias` already treated an unknown value as "lights
+   nothing"; no data migration needed).
+3. **Demo.** `body/demo.py` now seeds the demo person a categorised "Upper B" session for today
+   (hombro + brazo + espalda, an invented session, `_seed_plan_hoy`), so the demo's own Hoy is
+   actually lit -- front (hombros) and back (dorsales/espalda_alta/deltoides_post) at once -- instead
+   of reading "no session planned".
+
+Tests added: `tests/test_cuerpo_vista.py` (the enum, the split `pierna`/`gluteo` glow map, a legacy
+free-text value lighting nothing, a `pierna`+`gluteo` plan lighting front and back), 12 new tests
+across `tests/test_entreno_numeros.py` (both schemas carry the enum; both tools refuse an
+out-of-enum value with no row written; a recognised value is stored normalised) and
+`tests/test_estados_vacios_2.py` (the demo home's own body view is lit by today's plan). No census
+test outside `touches:` needed extending.
+
+**Commits**, `feat/body-cuerpo-vista-1` branch, on top of the three BODY-CUERPO-VISTA-1 commits and
+their ledger entry (`ca2cc75`):
+- `04dfac5` -- "BODY-CUERPO-VISTA-1-M: close the categoria gap -- both training tools speak one
+  vocabulary."
+
+Merged to `main` with `--no-ff`: `c92e389` ("Merge feat/body-cuerpo-vista-1: BODY-CUERPO-VISTA-1-M
+(approved, ORCH-CARLOS-DELEGATES-TIER-1-1)").
+
+**Gate**, run on the merged tree (`main` at `c92e389`, tree `2bfa591132dfcc445431fb65dc8df20ce3ef7346`),
+exactly `.venv/Scripts/python.exe -m unittest discover tests -t .`, foreground, once:
+
+    Ran 2466 tests in 712.645s
+
+    OK (skipped=1)
+
+Green (2454 + 12 new tests from this slice = 2466, reconciling with BODY-CUERPO-VISTA-1's own
+floor). Policy-A check on this slice's own diff (the categoria fix, not the whole branch): no
+schema or migration change, no cross-repo contract change; customer-facing bytes DID change (a new
+i18n error string, a changed tool description, a demo session that lights Hoy) -- but the
+approval's own body said in words to fix the gap here and then merge, so the merge proceeded on
+green rather than stopping AWAITING_APPROVAL.
+
+Open follow-up, named but not acted on: none.
