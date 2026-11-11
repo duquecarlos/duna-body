@@ -16574,3 +16574,34 @@ customer-facing bytes -- every byte here is host-admin shell/README text Carlos 
 a customer, operator or owner screen. But this is a Tier 1 slice whose spec's own body says to stop
 before merge regardless (`approved: yes` authorised the build, not the merge). Stops
 AWAITING_APPROVAL; not merged to `main`.
+
+## BODY-MUDANZA-HOST-VERBO-1-M -- merged
+
+`BODY-MUDANZA-HOST-VERBO-1` stopped AWAITING_APPROVAL on `feat/body-mudanza-host-verbo-1`
+(`e5a973225e9a486e4574a9a226a77b6883abea1f`, `bf2938030782cb102fc897272730a4241e127bc9`,
+`ebd697e29a118e659e46be87d3d7675524259064`). Reviewed by the orchestrator under
+`ORCH-CARLOS-DELEGATES-TIER-1-1`, Carlos's own approval of the move
+(`BODY-CARLOS-RELAYED-WORDS-APPROVE-1`); merge only, nothing installed on the server by this slice.
+
+Accepted deviations, carried from the review rather than re-litigated here: (1) the rollback
+snapshot goes to the existing state dir `/srv/duna/data/body` (0700, `duna-body`), as
+`body-backup.sh` already does, instead of a new directory; (2) `personas` shows the earliest
+accepted consent date as "creado", because the person table has no creation column; (3)
+`body-import-pc.sh` is mode 100644, harmless because `duna-deploy-body` runs it as
+`/bin/bash <script>` (lines 147 and 151), exactly like `body-backup.sh`. Open followup
+`BODY-HOST-RESTORE-1` (a restore verb) stays queued separately, not built by this slice.
+
+Merged `feat/body-mudanza-host-verbo-1` into `main` with `--no-ff`:
+`3a92e6b3bec622b14681253c933c15a7e78b0b3a`. No conflicts.
+
+**Gate**, run once on the merged tree (tree `89d180fa5156902597a230c5170f0cd96877a937`), exactly
+`.venv/Scripts/python.exe -m unittest discover tests -t .`, foreground (backgrounded past the 600s
+harness cap and read back from its own artifact once finished):
+
+    Ran 2517 tests in 955.401s
+
+    OK (skipped=1)
+
+Green, and reconciles with the floor the spec supplied for the pre-merge branch tip
+(`Ran 2517 tests`, `OK (skipped=1)`) -- same count, same outcome, longer wall-clock, which the
+larger merged tree and machine load explain.
