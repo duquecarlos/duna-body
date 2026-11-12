@@ -77,6 +77,9 @@ class DispositivoModuleTest(unittest.TestCase):
         dispositivo.revocar(self.conn, 1, row1["id"])
         self.assertEqual([i["nombre"] for i in dispositivo.listar(self.conn, 1)], ["PC2"])
 
+    def test_alcances_includes_desplazamiento_subir(self):
+        self.assertIn("desplazamiento:subir", dispositivo.ALCANCES)
+
     def test_revocar_on_another_persons_id_changes_nothing(self):
         dispositivo.crear(self.conn, 2, "B's PC", {"turnos:subir"})
         row = self.conn.execute("SELECT id FROM dispositivo WHERE person_id = 2").fetchone()
@@ -127,6 +130,9 @@ class LocalModeDeviceRoutesTest(unittest.TestCase):
     def test_api_vida_semana_404(self):
         self.assertEqual(self.client.get("/api/vida/semana").status_code, 404)
 
+    def test_api_desplazamiento_404(self):
+        self.assertEqual(self.client.post("/api/desplazamiento", content=b"a,b\n").status_code, 404)
+
 
 class AjustesPageTest(DispositivoHostedTestCase):
     def test_key_renders_once_then_not_on_a_later_get(self):
@@ -144,6 +150,22 @@ class AjustesPageTest(DispositivoHostedTestCase):
         r2 = self.client.get("/ajustes/dispositivos")
         self.assertEqual(r2.status_code, 200)
         self.assertNotIn(key, r2.text)
+
+    def test_desplazamiento_scope_can_be_granted_at_creation(self):
+        web.app.dependency_overrides[identity.current_person_id] = lambda: 1
+        r = self.client.post(
+            "/ajustes/dispositivos",
+            data={"nombre": "Mi PC", "alcance_desplazamiento": "1"},
+        )
+        self.assertEqual(r.status_code, 200)
+        key = re.search(r"bdy_[A-Za-z0-9_-]+", r.text).group(0)
+        self.assertEqual(dispositivo.resolver(self.conn, key), (1, {"desplazamiento:subir"}))
+
+    def test_desplazamiento_scope_checkbox_and_fixed_note_are_offered(self):
+        web.app.dependency_overrides[identity.current_person_id] = lambda: 1
+        r = self.client.get("/ajustes/dispositivos")
+        self.assertIn('name="alcance_desplazamiento"', r.text)
+        self.assertIn("Subir desplazamiento", r.text)
 
     def test_revocar_only_affects_the_callers_own_row(self):
         web.app.dependency_overrides[identity.current_person_id] = lambda: 2
@@ -264,6 +286,62 @@ class ApiTurnosTest(DispositivoHostedTestCase):
         self.assertEqual(out["error"], "archivo_rechazado")
         self.assertIn(out["motivo"], {"dia_malformado", "turno_duplicado", "esquema"})
         self.assertIsNone(re.search(r"\d{4}-\d{2}-\d{2}", r.text))
+
+
+# ---- POST /api/desplazamiento --------------------------------------------------------------------
+
+def _commute_csv(day="2026-01-01", vm=30, vt=2, wm=10, cm=0, computed_at="2026-11-01T06:00:00+00:00"):
+    return (
+        "day,vehicle_minutes,vehicle_trips,walking_minutes,cycling_minutes,computed_at\n"
+        f"{day},{vm},{vt},{wm},{cm},{computed_at}\n"
+    ).encode("utf-8")
+
+
+class ApiDesplazamientoTest(DispositivoHostedTestCase):
+    def setUp(self):
+        super().setUp()
+        self.key = dispositivo.crear(self.conn, 1, "PC de Carlos", {"desplazamiento:subir"})
+
+    def _post(self, body: bytes, *, auth: str | None = None):
+        headers = {}
+        if auth is not None:
+            headers["Authorization"] = auth
+        return self.client.post("/api/desplazamiento", content=body, headers=headers)
+
+    def test_no_header_401(self):
+        r = self._post(_commute_csv())
+        self.assertEqual(r.status_code, 401)
+
+    def test_key_without_scope_403(self):
+        key_sin_alcance = dispositivo.crear(self.conn, 1, "sin alcance", {"turnos:subir"})
+        r = self._post(_commute_csv(), auth=f"Bearer {key_sin_alcance}")
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(r.json(), {"error": "alcance"})
+
+    def test_over_1mb_413(self):
+        r = self._post(b"x" * (1024 * 1024 + 1), auth=f"Bearer {self.key}")
+        self.assertEqual(r.status_code, 413)
+
+    def test_valid_file_writes_the_persons_values_and_returns_counts(self):
+        r = self._post(_commute_csv(day="2026-01-01", vm=30), auth=f"Bearer {self.key}")
+        self.assertEqual(r.status_code, 200)
+        out = r.json()
+        self.assertEqual(out["dias"], 1)
+        self.assertEqual(out["primer_dia"], "2026-01-01")
+        self.assertEqual(out["ultimo_dia"], "2026-01-01")
+        self.assertFalse(out["sin_cambios"])
+        row = self.conn.execute(
+            "SELECT value FROM daily_metric WHERE person_id = 1 AND day = '2026-01-01' "
+            "AND metric_key = 'vehicle_minutes'"
+        ).fetchone()
+        self.assertEqual(row["value"], 30.0)
+
+    def test_malformed_file_422_with_a_reason_class(self):
+        r = self._post(b"not,the,right,header\n1,2,3,4\n", auth=f"Bearer {self.key}")
+        self.assertEqual(r.status_code, 422)
+        out = r.json()
+        self.assertEqual(out["error"], "archivo_rechazado")
+        self.assertEqual(out["motivo"], "esquema")
 
 
 # ---- GET /api/vida/semana -------------------------------------------------------------------------

@@ -49,6 +49,9 @@ FULLY_HANDLED_TABLES = {
     # BODY-NUTRIENTE-OBJETIVO-1: one row per (metric, start_day) -- the person's own chosen target,
     # no free text.
     "nutrient_target",
+    # ORCH-CARLOS-DELEGATES-TIER-1-1: one row per import source -- dates, counts and a reason CLASS
+    # only (never a figure), so the whole row is exported and deleted like any other.
+    "fuente_importacion",
 }
 # raw_payload: kind/date only, never the stored JSON payload. garmin_cuenta: the connected-since
 # date only, never the encrypted token (BODY-GARMIN-HOST-1). dispositivo: name/scopes/dates only,
@@ -143,6 +146,9 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
     objetivos_nutriente = [dict(r) for r in conn.execute(
         "SELECT metric_key, start_day, kind, amount, sentido, created_at FROM nutrient_target "
         "WHERE person_id = ? ORDER BY metric_key, start_day", (person_id,))]
+    fuentes_importacion = [dict(r) for r in conn.execute(
+        "SELECT fuente, primer_dia, ultimo_dia, computed_at, dias, importado_at, ultimo_error, "
+        "ultimo_error_at FROM fuente_importacion WHERE person_id = ? ORDER BY fuente", (person_id,))]
     # BODY-CHECKIN-1 ruling 4: never the note (checkin_nota) -- not even here, this person's own
     # full export.
     checkins = [dict(r) for r in conn.execute(
@@ -230,6 +236,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "comidas": comidas,
         "periodos": periodos,
         "objetivos_nutriente": objetivos_nutriente,
+        "fuentes_importacion": fuentes_importacion,
         "checkins": checkins,
         "dias": dias,
         "actividades": actividades,
@@ -264,6 +271,7 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         conn.execute("DELETE FROM period WHERE person_id = ?", (person_id,))
         db.invalidar_periodos_cache(conn, person_id)
         conn.execute("DELETE FROM nutrient_target WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM fuente_importacion WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM checkin_nota WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM checkin WHERE person_id = ?", (person_id,))
         conn.execute("UPDATE habit SET assignee_person_id = NULL WHERE assignee_person_id = ?", (person_id,))

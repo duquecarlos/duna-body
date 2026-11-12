@@ -75,6 +75,7 @@ _THIRD_PERSON_ALLOW = {
     "agente.error.entreno_orden_tuya": "'se puede' is an impersonal construction, not usted",
     "agente.error.entreno_no_unida": "'tiene' subject is 'ese dia' (the day), not the reader",
     "agente.error.entreno_unir_ambiguo": "'tiene' subject is 'ese dia' (the day), not the reader",
+    "dispositivos.scope_fixed_note": "'tiene' subject is 'un PC' (the device), not the reader",
 }
 
 

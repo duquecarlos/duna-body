@@ -267,15 +267,19 @@ CREATE TABLE IF NOT EXISTS person (
 );
 
 -- What can be measured. Generic definitions, shared by every person. `origen` (BODY-ENTRENO-
--- SCHEMA-1) is 'garmin' for anything the watch supplies and 'self' for a figure the person
--- measures themself (e.g. a flexibility reach, a snoring minutes-per-night from another app).
+-- SCHEMA-1) is 'garmin' for anything the watch supplies, 'self' for a figure the person measures
+-- themself (e.g. a flexibility reach, a snoring minutes-per-night from another app), and 'vida'
+-- (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1) for a figure another Duna app computes and hands over
+-- under vida-v1 -- neither measured by the watch nor typed by the person, so every place code
+-- branches on origen gives 'vida' the same MEASURED treatment 'garmin' gets, never the lenient
+-- self-typed one.
 CREATE TABLE IF NOT EXISTS metric_def (
     key     TEXT PRIMARY KEY,
     label   TEXT NOT NULL,
     unit    TEXT NOT NULL,
     better  TEXT NOT NULL CHECK (better IN ('higher', 'lower', 'neutral')),
     kind    TEXT NOT NULL DEFAULT 'measured' CHECK (kind IN ('measured', 'estimated')),
-    origen  TEXT NOT NULL DEFAULT 'garmin' CHECK (origen IN ('garmin', 'self'))
+    origen  TEXT NOT NULL DEFAULT 'garmin' CHECK (origen IN ('garmin', 'self', 'vida'))
 );
 
 -- One normalised number per person, day and metric.
@@ -617,6 +621,24 @@ CREATE TABLE IF NOT EXISTS dispositivo (
 );
 CREATE INDEX IF NOT EXISTS idx_dispositivo_person ON dispositivo(person_id);
 
+-- One row per source per person: a generic import-status table (ORCH-CARLOS-DELEGATES-TIER-1-1
+-- ruling 3), written by body/desplazamiento_import.py for its one source today
+-- ('personal:commute-diario.csv') -- read later by the Tendencias freshness line and a
+-- per-source delete (BODY-DESPLAZAMIENTO-3), and reusable by a future shift-import flag.
+-- `ultimo_error` holds a reason CLASS only, never a figure or a date.
+CREATE TABLE IF NOT EXISTS fuente_importacion (
+    person_id       INTEGER NOT NULL REFERENCES person(id),
+    fuente          TEXT NOT NULL,
+    primer_dia      TEXT,
+    ultimo_dia      TEXT,
+    computed_at     TEXT,
+    dias            INTEGER,
+    importado_at    TEXT,
+    ultimo_error    TEXT,
+    ultimo_error_at TEXT,
+    PRIMARY KEY (person_id, fuente)
+);
+
 -- One figure a person has chosen to share with one household, with its own history (hogar-v1:
 -- "sharing is per figure, chosen by its owner, and can be withdrawn"; BODY-HOGAR-COMPARTIR-1).
 -- Withdrawing sets withdrawn_at rather than deleting the row, so the person can see what they
@@ -878,6 +900,17 @@ METRIC_DEFS += [
     ("energy", "Energy", "of5", "neutral", "measured", "self"),
     ("stress_felt", "Stress you felt", "of5", "neutral", "measured", "self"),
 ]
+# ORCH-CARLOS-DELEGATES-TIER-1-1 rulings 1-2: the Personal desk's own daily commute summary
+# (body/desplazamiento_import.py), origen 'vida' -- neither measured by the watch nor typed by the
+# person. Direction neutral for all four: whether more or less of any of these is good is the
+# person's own read, never assumed here. `vehicle_trips`' unit follows `steps`' own convention (a
+# bare plural noun, the metric's own word) for a count with no further unit to show.
+METRIC_DEFS += [
+    ("vehicle_minutes", "Time in a vehicle", "min", "neutral", "measured", "vida"),
+    ("vehicle_trips", "Vehicle trips", "trips", "neutral", "measured", "vida"),
+    ("walking_minutes", "Walking minutes", "min", "neutral", "measured", "vida"),
+    ("cycling_minutes", "Cycling minutes", "min", "neutral", "measured", "vida"),
+]
 # BODY-PROTEINA-1: a 7th field, `agregado` -- 'suma_ingesta' marks a key whose daily_metric value is
 # the SUM of that day's `ingesta` rows, derived by db.registrar_ingesta/corregir_ingesta/
 # borrar_ingesta, never set directly; None (padded here) for every other key, today's behaviour.
@@ -1013,12 +1046,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if cols and "origen" not in cols:
         conn.execute(
             "ALTER TABLE metric_def ADD COLUMN origen TEXT NOT NULL DEFAULT 'garmin' "
-            "CHECK (origen IN ('garmin', 'self'))"
+            "CHECK (origen IN ('garmin', 'self', 'vida'))"
         )
     if cols and "agregado" not in cols:
         conn.execute(
             "ALTER TABLE metric_def ADD COLUMN agregado TEXT CHECK (agregado IN ('suma_ingesta') OR agregado IS NULL)"
         )
+    if _table_exists(conn, "metric_def") and _metric_def_needs_vida_rebuild(conn):
+        _rebuild_metric_def_table(conn)
     pcols = {r[1] for r in conn.execute("PRAGMA table_info(person)")}
     if pcols and "language" not in pcols:
         conn.execute("ALTER TABLE person ADD COLUMN language TEXT NOT NULL DEFAULT 'es'")
@@ -1113,6 +1148,44 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
     return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)).fetchone() is not None
+
+
+def _metric_def_needs_vida_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'metric_def'"
+    ).fetchone()
+    return row is not None and "'vida'" not in row[0]
+
+
+def _rebuild_metric_def_table(conn: sqlite3.Connection) -> None:
+    """metric_def.origen gains a third value 'vida' (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1).
+    SQLite cannot ALTER an existing CHECK, so this rebuilds the table in one transaction, the same
+    guarded shape as propuesta_agente's own CHECK widenings above -- a straight column-for-column
+    copy, called only once the `kind`/`origen`/`agregado` ALTERs above have already run, so every
+    column this copy reads is guaranteed to exist. Every existing row, including its own origen
+    value, survives byte-for-byte."""
+    def step(conn):
+        old_rows = conn.execute("SELECT * FROM metric_def").fetchall()
+        conn.execute(
+            "CREATE TABLE metric_def_nuevo ("
+            "key TEXT PRIMARY KEY, label TEXT NOT NULL, unit TEXT NOT NULL, "
+            "better TEXT NOT NULL CHECK (better IN ('higher', 'lower', 'neutral')), "
+            "kind TEXT NOT NULL DEFAULT 'measured' CHECK (kind IN ('measured', 'estimated')), "
+            "origen TEXT NOT NULL DEFAULT 'garmin' CHECK (origen IN ('garmin', 'self', 'vida')), "
+            "agregado TEXT CHECK (agregado IN ('suma_ingesta') OR agregado IS NULL))"
+        )
+        for r in old_rows:
+            conn.execute(
+                "INSERT INTO metric_def_nuevo (key, label, unit, better, kind, origen, agregado) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (r["key"], r["label"], r["unit"], r["better"], r["kind"], r["origen"], r["agregado"]),
+            )
+        new_count = conn.execute("SELECT COUNT(*) FROM metric_def_nuevo").fetchone()[0]
+        if new_count != len(old_rows):
+            raise RuntimeError(f"metric_def rebuild count mismatch: {len(old_rows)} -> {new_count}")
+        conn.execute("DROP TABLE metric_def")
+        conn.execute("ALTER TABLE metric_def_nuevo RENAME TO metric_def")
+    _rebuild_with_fk_off(conn, step)
 
 
 def _precio_modelo_needs_desde(conn: sqlite3.Connection) -> bool:

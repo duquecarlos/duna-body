@@ -49,6 +49,11 @@ TAREAS = {
     "shift_import": "body.shift_import",
     "vida_export": "body.vida_export",
     "subir_turnos": "body.subir_turnos",
+    # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5: the two ways in for Personal's commute CSV -- the
+    # local import (`--file <path>`) and the hosted upload, same `--file` flag as subir_turnos'
+    # own `--dir`.
+    "importar_desplazamiento": "body.desplazamiento_import",
+    "subir_desplazamiento": "body.subir_desplazamiento",
     "traer_semana": "body.traer_semana",
     "vida_dia": "body.vida_dia",
     # The scheduled morning run (BODY-VIDA-DIA-1): refresh today's pull first, below, then this

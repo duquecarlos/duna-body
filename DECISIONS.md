@@ -17873,3 +17873,103 @@ slice's own work.
 **Merge policy.** The diff touches one test file only (`tests/test_mock_r2_hoy.py`) plus this
 ledger entry -- no schema or migration change, no customer-facing bytes, no cross-repo contract.
 Merges cleanly on this green gate, per `ORCH-CARLOS-DELEGATES-TIER-1-1`. -- merged f328d84
+
+## BODY-DESPLAZAMIENTO-2 -- the commute data path: a fourth `metric_def.origen`, a generic import-status table, one importer, and the two ways in (2026-11-12)
+
+Carlos said yes to Body showing his commute time and whatever else it needs. The Personal desk
+writes a daily commute summary CSV (`day,vehicle_minutes,vehicle_trips,walking_minutes,
+cycling_minutes,computed_at`, no coordinates or place names) computed from his Timeline export.
+This slice builds the data path end to end -- not the screens: Tendencias grouping, freshness
+wording and per-source delete are BODY-DESPLAZAMIENTO-3's job.
+
+**Ruling 1 -- `origen` widened.** `metric_def.origen`'s CHECK constraint gains `'vida'` alongside
+`'garmin'` and `'self'`, via the repo's existing rebuild-without-ALTER pattern (new
+`_metric_def_needs_vida_rebuild`/`_rebuild_metric_def_table` in `body/db.py`, guarded by
+`_rebuild_with_fk_off`, old-row count verified before the swap). Every place the code branches on
+`origen` compares explicitly to `== "self"` (`body/rutas/tendencias.py`,
+`body/catalogo_tendencias.py`, `body/agente/herramientas.py`), so `'vida'` inherits the same
+measured/garmin treatment with no code change in any of the three -- pinned by
+`OrigenBranchTreatsVidaAsMeasuredTest` in `tests/test_desplazamiento_import.py`.
+
+**Ruling 2 -- four metric rows.** `vehicle_minutes` (min), `vehicle_trips` (unit `trips`, an
+unmapped literal like the repo's existing `kg`/`cm`/`g`/`ml`/`mg`, since `body/rutas/comun.py`'s
+`UNITS` map is outside this slice's `touches`), `walking_minutes` (min), `cycling_minutes` (min) --
+all `better="neutral"`, `kind="measured"`, `origen="vida"`, `agregado=NULL`. i18n labels
+`metric.vehicle_minutes`/`metric.vehicle_trips`/`metric.walking_minutes`/`metric.cycling_minutes` in
+both languages. `body/desplazamiento_import.py`'s `VIDA_KEYS` maps each Body key to its vida-v1
+shared key (`vida.vehicle_minutes`, `vida.vehicle_trips`, `vida.walking_minutes`,
+`vida.cycling_minutes`).
+
+**Ruling 3 -- `fuente_importacion`.** A new generic table (`person_id`, `fuente`, `primer_dia`,
+`ultimo_dia`, `computed_at`, `dias`, `importado_at`, `ultimo_error`, `ultimo_error_at`, PK
+`(person_id, fuente)`) tracks any file-based import's status, no figure stored. `fuente` for this
+file is `personal:commute-diario.csv`.
+
+**Ruling 4 -- the importer.** `body/desplazamiento_import.py`: `validar(texto)` refuses the whole
+file on any defect (wrong header, bad date, duplicate day, non-integer/negative count, mixed
+`computed_at`, future day, over 1 MB) -- all-or-nothing, same rule as `shift_import._validate`.
+`importar(conn, person_id, texto)` writes via the existing `db.set_metric` writer on success and
+updates `fuente_importacion`; on refusal it records only `ultimo_error`/`ultimo_error_at`, changing
+nothing else; the same `computed_at` twice is a no-op; a day absent from a later file is never
+deleted or zeroed. Prints counts and a date range only, never a value.
+
+**Ruling 5 -- two ways in, one function.** (a) the local vivo task
+`importar_desplazamiento --file <path>`; (b) a new device-key scope `desplazamiento:subir`, route
+`POST /api/desplazamiento` mirroring `/api/turnos`'s auth/size-cap/JSON-answer shape (1 MB cap,
+422 on refusal, `{dias, primer_dia, ultimo_dia, sin_cambios}` on success), and the PC uploader
+`body/subir_desplazamiento.py` as vivo task `subir_desplazamiento --file <path>`. The file path
+comes from `--file`, else `BODY_COMMUTE_FILE` read through the new `body/config.py::commute_file()`,
+else a clear "no file configured" exit -- no default path names any person's folder. Ajustes'
+Dispositivos page offers `desplazamiento:subir` as a checkbox like `turnos:subir`; since scopes are
+fixed at key creation (no update function exists), the page also says in plain words
+(`dispositivos.scope_fixed_note`) that a new key is needed to add a scope to an already-connected PC.
+
+**Ruling 6 -- the installer.** `scripts/install-daily-sync.ps1` gains an optional `-CommuteFile
+<path>`: when given, it registers one more daily scheduled task right after the shift upload
+(`-m body.vivo subir_desplazamiento --file "<path>"`); when absent, no task is registered and the
+installer says so in one line. Person-run command (placeholder paths):
+`.\install-daily-sync.ps1 -Hosted -ShiftsDir "C:\path\to\your\shifts\folder" -CommuteFile
+"C:\path\to\commute-diario.csv"`.
+
+**New/changed strings** (es / en): `dispositivos.scope.desplazamiento` "Subir desplazamiento" /
+"Upload commute"; `dispositivos.scope_fixed_note` "Un PC que ya conectaste solo tiene los permisos
+que marcaste en ese momento. Para añadir uno nuevo, conéctalo otra vez con una clave nueva." / "A PC
+you already connected only has the permissions you checked at the time. To add a new one, connect it
+again with a new key."; `metric.vehicle_minutes` "Tiempo en vehículo" / "Time in a vehicle";
+`metric.vehicle_trips` "Viajes en vehículo" / "Vehicle trips"; `metric.walking_minutes` "Minutos
+caminando" / "Walking minutes"; `metric.cycling_minutes` "Minutos en bicicleta" / "Cycling minutes".
+
+**Census tests outside `touches` extended to the new truth** (never loosened), per the slice's own
+carve-out, each a structural census firing on any new table/route/scope added anywhere -- see
+commit `08422f9` for the full file-by-file rationale: `body/privacidad.py` (`fuente_importacion`
+joins `FULLY_HANDLED_TABLES`, exported by date/count/reason-class only, deleted with the person),
+`body/mudanza.py` (`fuente_importacion` registered in `REGISTRY`, matched on `(person_id, fuente)`),
+`tests/test_persona_fuga.py` (seeds one `fuente_importacion` row per test person),
+`tests/test_web_entry.py` (`POST /api/desplazamiento` added to the pinned route set),
+`tests/test_registro_tu.py` (`dispositivos.scope_fixed_note`'s "tiene" allow-listed: third person,
+subject is "un PC"), `tests/test_demo.py` (the four commute keys excluded from the demo-seeded
+census with a dated comment -- they arrive from Personal's importer, not `body/demo.py`'s own
+curated lists, consistent with ruling 7: no screen work this slice).
+
+Commits: `5750962` (rulings 1-3), `1ed0551` (ruling 4), `1d83289` (rulings 5-6), `08422f9` (the six
+census extensions).
+
+**Gate**, on this branch's final tree (HEAD `08422f9`, `git status --porcelain` clean before this
+entry), the exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, run twice: the
+first run (before the census fixes) was RED on exactly the eight structural census assertions named
+above, confirming each was a genuine, correctly-firing guard; the second, on this final tree, one
+foreground run (moved to the background past the 600 s cap, waited on to completion, exit code 0):
+
+    Ran 2867 tests in 819.767s
+
+    OK (skipped=1)
+
+No password, token, session secret, device key or health/location figure was read, printed, or
+written anywhere in this slice's own work.
+
+**Merge policy.** The diff changes a schema (the `origen` CHECK widening and the new
+`fuente_importacion` table) and customer-facing bytes (every new i18n string above, rendered on
+Ajustes' Dispositivos page and anywhere Día lists a metric by its label) -- two of merge policy A's
+three conditions. The slice's own dispatch explicitly pre-authorized the merge on a green gate ("no
+screen beyond Día's generic rows changes"), so this merges rather than stopping
+AWAITING_APPROVAL.

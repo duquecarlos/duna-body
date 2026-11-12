@@ -20,7 +20,12 @@ from body import db, demo, turnos_costo
 from body.db import METRIC_DEFS
 
 ROOT = Path(__file__).resolve().parent.parent
-MEASURED_METRIC_KEYS = [k for (k, *_rest) in METRIC_DEFS if k != "readiness"]
+# ORCH-CARLOS-DELEGATES-TIER-1-1: the four commute keys (origen 'vida') arrive from Personal's
+# importer, not from any of body/demo.py's own curated per-key lists (body/demo.py is outside
+# BODY-DESPLAZAMIENTO-2's touches) -- excluded here the same way 'readiness' is, pending a later
+# slice's screen work and demo coverage (ruling 7: "not in this slice").
+_NOT_YET_DEMO_SEEDED = {"vehicle_minutes", "vehicle_trips", "walking_minutes", "cycling_minutes"}
+MEASURED_METRIC_KEYS = [k for (k, *_rest) in METRIC_DEFS if k != "readiness" and k not in _NOT_YET_DEMO_SEEDED]
 
 
 def _run(args: list[str], env: dict | None = None, timeout: int = 120) -> "subprocess.CompletedProcess":

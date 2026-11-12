@@ -706,5 +706,25 @@ class InstallScriptMorningFileTest(unittest.TestCase):
         self.assertIn('"Body app morning file"', linea)
 
 
+class DesplazamientoTareasTest(unittest.TestCase):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5: the two ways in for Personal's commute CSV."""
+
+    def test_importar_desplazamiento_esta_en_tareas(self):
+        self.assertIn("importar_desplazamiento", vivo.TAREAS)
+        self.assertEqual(vivo.TAREAS["importar_desplazamiento"], "body.desplazamiento_import")
+
+    def test_subir_desplazamiento_esta_en_tareas(self):
+        self.assertIn("subir_desplazamiento", vivo.TAREAS)
+        self.assertEqual(vivo.TAREAS["subir_desplazamiento"], "body.subir_desplazamiento")
+
+    def test_no_bandera_antepuesta(self):
+        self.assertNotIn("importar_desplazamiento", vivo.PREFIJO_ARGV)
+        self.assertNotIn("subir_desplazamiento", vivo.PREFIJO_ARGV)
+
+    def test_no_paso_previo(self):
+        self.assertNotIn("importar_desplazamiento", vivo.PASOS_PREVIOS)
+        self.assertNotIn("subir_desplazamiento", vivo.PASOS_PREVIOS)
+
+
 if __name__ == "__main__":
     unittest.main()

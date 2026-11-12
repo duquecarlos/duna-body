@@ -12,7 +12,7 @@ import secrets
 import sqlite3
 from datetime import date, datetime, timezone
 
-ALCANCES = {"turnos:subir", "vida:leer"}
+ALCANCES = {"turnos:subir", "vida:leer", "desplazamiento:subir"}
 KEY_PREFIX = "bdy_"
 
 
