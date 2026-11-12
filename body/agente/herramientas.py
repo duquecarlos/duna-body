@@ -61,7 +61,7 @@ import sqlite3
 from datetime import date, timedelta
 
 from .. import anatomia, catalogo_tendencias, db, enlaces, errores, experimentos, fechas, goals, history, \
-    household, profile, pull, readiness, shift_import, turnos_costo, tutoriales
+    household, nutriente_objetivo, profile, pull, readiness, shift_import, turnos_costo, tutoriales
 from ..i18n import LANGS, T
 from . import ajustes, propuestas
 
@@ -322,6 +322,22 @@ _PARAM_REGISTRAR_CHECKIN = {
     "additionalProperties": False,
 }
 
+# BODY-NUTRIENTE-OBJETIVO-1: a daily target for one of the eight intake keys -- generic over all
+# of them, the same INGESTA_METRIC_KEYS template pattern above. `amount` is nullable in the schema
+# (kind 'off' carries none); `_proponer_objetivo_nutriente` itself enforces it otherwise.
+_PARAM_PROPONER_OBJETIVO_NUTRIENTE = {
+    "type": "object",
+    "properties": {
+        "metric_key": {"type": "string", "enum": list(INGESTA_METRIC_KEYS)},
+        "kind": {"type": "string", "enum": list(db.NUTRIENT_TARGET_KINDS)},
+        "amount": {"type": ["number", "null"]},
+        "sentido": {"type": "string", "enum": list(db.NUTRIENT_TARGET_SENTIDOS)},
+        "start_day": {"type": "string", "format": "date"},
+    },
+    "required": ["metric_key", "kind", "sentido"],
+    "additionalProperties": False,
+}
+
 # BODY-PERIODO-1: the seeded period_kind rows, read off the live table's own seed list rather than
 # typed out here a second time -- the same template pattern INGESTA_METRIC_KEYS above uses.
 PERIODO_KIND_KEYS = tuple(k for k, _ in db.PERIOD_KINDS)
@@ -469,7 +485,8 @@ def _leer_hoy(conn: sqlite3.Connection, person_id: int) -> dict:
     dia = dias[0]
     return {"dia": dia, "listo": _readiness_dict(readiness.compute(conn, dia, person_id)),
             "valores": db.day_values(conn, dia, person_id),
-            "limitaciones": _limitaciones_abiertas(conn, person_id, dia)}
+            "limitaciones": _limitaciones_abiertas(conn, person_id, dia),
+            "objetivos_nutriente": nutriente_objetivo.estado_del_dia(conn, person_id, dia)}
 
 
 def _leer_dia(conn: sqlite3.Connection, person_id: int, day: str) -> dict:
@@ -478,6 +495,7 @@ def _leer_dia(conn: sqlite3.Connection, person_id: int, day: str) -> dict:
     for a in data["activities"]:
         zonas = a.pop("zonas_limitadas", [])
         a["liviano_a_proposito"] = anatomia.texto_liviano_a_proposito(t, zonas) if zonas else None
+    data["objetivos_nutriente"] = nutriente_objetivo.estado_del_dia(conn, person_id, day)
     return data
 
 
@@ -1090,6 +1108,51 @@ def _borrar_ingesta(conn: sqlite3.Connection, person_id: int, conversacion_id: i
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
+# -- proponer_objetivo_nutriente (BODY-NUTRIENTE-OBJETIVO-1: update-shaped like registrar_medida --
+# this module calls db.set_nutrient_target/db.borrar_nutrient_target directly) --------------------
+
+def _proponer_objetivo_nutriente(conn: sqlite3.Connection, person_id: int, conversacion_id: int, metric_key: str,
+                                  kind: str, sentido: str, amount=None, start_day: str | None = None) -> dict:
+    """Proposes a daily target for one of the eight intake keys (BODY-NUTRIENTE-OBJETIVO-1): a
+    fixed amount or a per-kg-of-body-weight ratio, to reach or as a limit. The person sets every
+    value; this tool never invents one. `antes` carries that exact day's existing row (or None), so
+    `propuestas.deshacer` can restore it exactly -- the same update-shaped pattern
+    `_registrar_medida` uses on `daily_metric`."""
+    fila = conn.execute("SELECT unit FROM metric_def WHERE key = ? AND agregado = 'suma_ingesta'",
+                        (metric_key,)).fetchone()
+    if fila is None:
+        raise ToolError(f"ingesta desconocida o no acumulable: {metric_key!r}")
+    if kind not in db.NUTRIENT_TARGET_KINDS:
+        raise ToolError(f"kind inválido: {kind!r}; debe ser uno de {db.NUTRIENT_TARGET_KINDS}")
+    if sentido not in db.NUTRIENT_TARGET_SENTIDOS:
+        raise ToolError(f"sentido inválido: {sentido!r}; debe ser uno de {db.NUTRIENT_TARGET_SENTIDOS}")
+    if kind == "per_kg" and fila["unit"] != "g":
+        raise ToolError(f"{metric_key!r} no se mide en gramos: per_kg no aplica")
+    if kind == "off":
+        amount = None
+    else:
+        try:
+            amount = float(amount)
+        except (TypeError, ValueError):
+            raise ToolError("amount debe ser un número")
+        if amount <= 0:
+            raise ToolError("amount debe ser mayor que cero")
+    start_day = start_day or _hoy_local(conn, person_id)
+    try:
+        date.fromisoformat(start_day)
+    except ValueError:
+        raise ToolError("start_day debe ser una fecha ISO (AAAA-MM-DD)")
+    antes_fila = conn.execute(
+        "SELECT kind, amount, sentido FROM nutrient_target WHERE person_id = ? AND metric_key = ? "
+        "AND start_day = ?", (person_id, metric_key, start_day)).fetchone()
+    antes = dict(antes_fila) if antes_fila is not None else None
+    despues = {"metric_key": metric_key, "kind": kind, "amount": amount, "sentido": sentido,
+               "start_day": start_day}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "proponer_objetivo_nutriente", despues,
+                                 antes=antes)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
 def _numero_cantidad_comida(t: T, metric_key: str, valor, *, clave_error: str) -> float:
     """BODY-COMIDA-1 ruling 3: door validation for one cantidad's `amount`, the same shape
     `_numero_entreno` (BODY-ENTRENO-NUMEROS-1 ruling 2) built for reps/peso_kg -- a bool is refused
@@ -1641,6 +1704,15 @@ HERRAMIENTAS = [
      "descripcion": "Propone eliminar un registro de consumo que ya existe. No lo elimina: registra la "
                      "propuesta para que la persona la apruebe en el chat.",
      "parametros": _PARAM_BORRAR_INGESTA, "funcion": _borrar_ingesta},
+    {"nombre": "proponer_objetivo_nutriente", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone una meta diaria para un nutriente (calorías, proteína, carbohidratos, grasa, "
+                     "fibra, agua, cafeína o alcohol): una cantidad fija o una proporción por kg de peso "
+                     "corporal (solo para un nutriente medido en gramos), y si es una cantidad a alcanzar "
+                     "(al_menos) o un límite a no superar (como_maximo). Para cafeína y alcohol lo normal "
+                     "es un límite; para el resto, alcanzar la cantidad. 'off' quita la meta diaria de ese "
+                     "nutriente desde ese día. No la crea: registra la propuesta para que la persona la "
+                     "apruebe en el chat.",
+     "parametros": _PARAM_PROPONER_OBJETIVO_NUTRIENTE, "funcion": _proponer_objetivo_nutriente},
     {"nombre": "registrar_comida", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone registrar una comida completa en una sola llamada: una descripción y una lista "
                      "de cantidades, una por nutriente (proteína, calorías, carbohidratos, grasa, fibra, agua, "

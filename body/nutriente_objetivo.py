@@ -13,6 +13,10 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import date, timedelta
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .i18n import T
 
 # How many days back `ultimo_valor` looks for a metric's latest value -- used here for the
 # per_kg resolution's own body_weight_kg lookup (ruling 2).
@@ -26,6 +30,24 @@ SENTIDO_DEFAULT = {"caffeine_mg": "como_maximo", "alcohol_g": "como_maximo"}
 
 def sentido_por_defecto(metric_key: str) -> str:
     return SENTIDO_DEFAULT.get(metric_key, "al_menos")
+
+
+def _fmt_cantidad(t: "T", amount: float) -> str:
+    """Whole numbers show no decimals (130 g, 400 mg); a per_kg ratio (1.6) keeps one."""
+    decimales = 0 if float(amount).is_integer() else 1
+    return t.num(amount, decimales)
+
+
+def texto_objetivo(t: "T", kind: str, amount: float | None, sentido: str, unidad: str) -> str:
+    """The target in words (ruling 3's card, ruling 6's Ajustes listing): "at least 130 g a day",
+    "at most 200 mg a day", "1.6 g per kg of body weight", "no daily target". `sentido` is ignored
+    for `kind = 'per_kg'` -- the ratio alone is the words, the same way the mock shows it."""
+    if kind == "off":
+        return t("nutriente.objetivo.off")
+    if kind == "per_kg":
+        return t("nutriente.objetivo.per_kg", cantidad=_fmt_cantidad(t, amount), unidad=unidad)
+    clave = "nutriente.objetivo.al_menos" if sentido == "al_menos" else "nutriente.objetivo.como_maximo"
+    return t(clave, cantidad=_fmt_cantidad(t, amount), unidad=unidad)
 
 
 def ultimo_valor(conn: sqlite3.Connection, person_id: int, metric_key: str, day: str, dias: int) -> float | None:

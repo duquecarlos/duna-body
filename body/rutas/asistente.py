@@ -18,7 +18,7 @@ from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from .. import anatomia, db, history, identity
+from .. import anatomia, db, history, identity, nutriente_objetivo
 from ..agente import bucle as agente_bucle
 from ..agente import cliente as agente_cliente
 from ..agente import conversacion as agente_conversacion
@@ -364,6 +364,23 @@ def _periodo_txt(t: T, kind: str, start_day: str, end_day: str | None, note: str
     return " · ".join(partes)
 
 
+def _tarjeta_proponer_objetivo_nutriente(t: T, defs: dict, despues: dict, antes_json: dict | None, conn,
+                                          person_id: int) -> tuple:
+    """BODY-NUTRIENTE-OBJETIVO-1 ruling 3: the metric's name, the target in words (reused from
+    body/nutriente_objetivo.py -- the same words Ajustes' own listing shows, ruling 6) and the
+    start day. ORCH-PROPUESTAS-TABLA-NUTRIENTE-1: this function and its TARJETAS entry below are
+    this slice's one necessary file outside its declared `touches` -- BODY-PROPUESTAS-TABLA-1's
+    own static census (tests/test_propuestas_tabla.py, outside touches, pins the tool list across
+    this dict, propuestas.TABLA and herramientas.HERRAMIENTAS) fails without it, and the standing
+    dispatch rule for a census test that pins a tool list is to extend it to the new truth."""
+    metric = t("metric." + despues["metric_key"])
+    palabras = nutriente_objetivo.texto_objetivo(t, despues["kind"], despues["amount"], despues["sentido"],
+                                                  comun._unit(t, defs[despues["metric_key"]]))
+    fecha = comun._short_date(t, date.fromisoformat(despues["start_day"]))
+    despues_txt = t("nutriente.objetivo.resumen", metric=metric, palabras=palabras, fecha=fecha)
+    return None, despues_txt, None
+
+
 def _tarjeta_marcar_periodo(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     despues_txt = _periodo_txt(t, despues["kind"], despues["start_day"], despues.get("end_day"),
                                 despues.get("note"))
@@ -505,6 +522,7 @@ TARJETAS = {
     "descartar_series": _tarjeta_descartar_series,
     "separar_sesion": _tarjeta_separar_sesion,
     "unir_sesiones": _tarjeta_unir_sesiones,
+    "proponer_objetivo_nutriente": _tarjeta_proponer_objetivo_nutriente,
 }
 
 

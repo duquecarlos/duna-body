@@ -20,7 +20,7 @@ from body import config, db, nutriente_objetivo, privacidad, web
 from body.agente import conversacion as agente_conversacion
 from body.agente import herramientas, propuestas
 from body.i18n import T
-from body.rutas import comun
+from body.rutas import asistente, comun
 
 DAY = "2026-11-05"
 
@@ -279,6 +279,207 @@ class NonIntakeKeyTest(unittest.TestCase):
     def test_objetivo_del_dia_on_a_non_intake_key_simply_finds_no_target(self):
         out = nutriente_objetivo.objetivo_del_dia(self.conn, 1, "resting_hr", DAY)
         self.assertIsNone(out)
+
+
+# ---- proponer_objetivo_nutriente: propose -> apply -> undo -----------------------------------------
+
+class ProponerObjetivoProposeApplyUndoTest(unittest.TestCase):
+    def setUp(self):
+        self.conn = _conn(self)
+        self.cid = _cid(self.conn)
+
+    def test_propose_writes_nothing(self):
+        before = self.conn.execute("SELECT COUNT(*) FROM nutrient_target").fetchone()[0]
+        out = herramientas.ejecutar(
+            self.conn, 1, "proponer_objetivo_nutriente",
+            {"metric_key": "protein_g", "kind": "per_kg", "amount": 1.6, "sentido": "al_menos", "start_day": DAY},
+            "ninguno", self.cid,
+        )
+        self.assertEqual(out["estado"], "propuesta")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM nutrient_target").fetchone()[0], before)
+
+    def test_apply_writes_the_row(self):
+        out = herramientas.ejecutar(
+            self.conn, 1, "proponer_objetivo_nutriente",
+            {"metric_key": "protein_g", "kind": "absolute", "amount": 130.0, "sentido": "al_menos",
+             "start_day": DAY},
+            "ninguno", self.cid,
+        )
+        resultado = propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        self.assertEqual(resultado["estado"], "aplicada")
+        row = self.conn.execute(
+            "SELECT kind, amount, sentido FROM nutrient_target WHERE person_id = 1 AND metric_key = 'protein_g' "
+            "AND start_day = ?", (DAY,),
+        ).fetchone()
+        self.assertEqual((row["kind"], row["amount"], row["sentido"]), ("absolute", 130.0, "al_menos"))
+
+    def test_undo_with_no_prior_target_removes_the_row(self):
+        out = herramientas.ejecutar(
+            self.conn, 1, "proponer_objetivo_nutriente",
+            {"metric_key": "protein_g", "kind": "absolute", "amount": 130.0, "sentido": "al_menos",
+             "start_day": DAY},
+            "ninguno", self.cid,
+        )
+        propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        resultado = propuestas.deshacer(self.conn, 1, out["propuesta_id"])
+        self.assertEqual(resultado["estado"], "deshecha")
+        row = self.conn.execute(
+            "SELECT 1 FROM nutrient_target WHERE person_id = 1 AND metric_key = 'protein_g' AND start_day = ?",
+            (DAY,),
+        ).fetchone()
+        self.assertIsNone(row)
+
+    def test_undo_with_a_prior_target_on_the_same_day_restores_it(self):
+        db.set_nutrient_target(self.conn, 1, "protein_g", DAY, "absolute", 100.0, "al_menos")
+        self.conn.commit()
+        out = herramientas.ejecutar(
+            self.conn, 1, "proponer_objetivo_nutriente",
+            {"metric_key": "protein_g", "kind": "absolute", "amount": 130.0, "sentido": "al_menos",
+             "start_day": DAY},
+            "ninguno", self.cid,
+        )
+        propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        propuestas.deshacer(self.conn, 1, out["propuesta_id"])
+        row = self.conn.execute(
+            "SELECT kind, amount, sentido FROM nutrient_target WHERE person_id = 1 AND metric_key = 'protein_g' "
+            "AND start_day = ?", (DAY,),
+        ).fetchone()
+        self.assertEqual((row["kind"], row["amount"], row["sentido"]), ("absolute", 100.0, "al_menos"))
+
+    def test_apply_refuses_on_drift_when_the_row_changed_after_proposing(self):
+        out = herramientas.ejecutar(
+            self.conn, 1, "proponer_objetivo_nutriente",
+            {"metric_key": "protein_g", "kind": "absolute", "amount": 130.0, "sentido": "al_menos",
+             "start_day": DAY},
+            "ninguno", self.cid,
+        )
+        db.set_nutrient_target(self.conn, 1, "protein_g", DAY, "absolute", 999.0, "al_menos")
+        self.conn.commit()
+        resultado = propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        self.assertEqual(resultado["estado"], "propuesta_desactualizada")
+        row = self.conn.execute(
+            "SELECT amount FROM nutrient_target WHERE person_id = 1 AND metric_key = 'protein_g' AND start_day = ?",
+            (DAY,),
+        ).fetchone()
+        self.assertEqual(row["amount"], 999.0)
+
+    def test_undo_refuses_on_drift_when_the_row_changed_after_applying(self):
+        out = herramientas.ejecutar(
+            self.conn, 1, "proponer_objetivo_nutriente",
+            {"metric_key": "protein_g", "kind": "absolute", "amount": 130.0, "sentido": "al_menos",
+             "start_day": DAY},
+            "ninguno", self.cid,
+        )
+        propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        db.set_nutrient_target(self.conn, 1, "protein_g", DAY, "absolute", 999.0, "al_menos")
+        self.conn.commit()
+        resultado = propuestas.deshacer(self.conn, 1, out["propuesta_id"])
+        self.assertEqual(resultado["estado"], "propuesta_desactualizada")
+        row = self.conn.execute(
+            "SELECT amount FROM nutrient_target WHERE person_id = 1 AND metric_key = 'protein_g' AND start_day = ?",
+            (DAY,),
+        ).fetchone()
+        self.assertEqual(row["amount"], 999.0)
+
+    def test_non_accumulable_metric_key_is_refused(self):
+        with self.assertRaises(herramientas.ToolError):
+            herramientas.ejecutar(
+                self.conn, 1, "proponer_objetivo_nutriente",
+                {"metric_key": "resting_hr", "kind": "absolute", "amount": 50.0, "sentido": "al_menos"},
+                "ninguno", self.cid,
+            )
+
+    def test_per_kg_on_a_non_gram_metric_is_refused(self):
+        with self.assertRaises(herramientas.ToolError):
+            herramientas.ejecutar(
+                self.conn, 1, "proponer_objetivo_nutriente",
+                {"metric_key": "caffeine_mg", "kind": "per_kg", "amount": 0.1, "sentido": "al_menos"},
+                "ninguno", self.cid,
+            )
+
+    def test_non_positive_amount_is_refused(self):
+        with self.assertRaises(herramientas.ToolError):
+            herramientas.ejecutar(
+                self.conn, 1, "proponer_objetivo_nutriente",
+                {"metric_key": "protein_g", "kind": "absolute", "amount": 0.0, "sentido": "al_menos"},
+                "ninguno", self.cid,
+            )
+
+    def test_invalid_kind_is_refused(self):
+        with self.assertRaises(herramientas.ToolError):
+            herramientas.ejecutar(
+                self.conn, 1, "proponer_objetivo_nutriente",
+                {"metric_key": "protein_g", "kind": "bogus", "amount": 100.0, "sentido": "al_menos"},
+                "ninguno", self.cid,
+            )
+
+    def test_invalid_sentido_is_refused(self):
+        with self.assertRaises(herramientas.ToolError):
+            herramientas.ejecutar(
+                self.conn, 1, "proponer_objetivo_nutriente",
+                {"metric_key": "protein_g", "kind": "absolute", "amount": 100.0, "sentido": "bogus"},
+                "ninguno", self.cid,
+            )
+
+    def test_malformed_start_day_is_refused(self):
+        with self.assertRaises(herramientas.ToolError):
+            herramientas.ejecutar(
+                self.conn, 1, "proponer_objetivo_nutriente",
+                {"metric_key": "protein_g", "kind": "absolute", "amount": 100.0, "sentido": "al_menos",
+                 "start_day": "not-a-date"},
+                "ninguno", self.cid,
+            )
+
+    def test_off_ignores_any_amount_given(self):
+        out = herramientas.ejecutar(
+            self.conn, 1, "proponer_objetivo_nutriente",
+            {"metric_key": "protein_g", "kind": "off", "amount": 999.0, "sentido": "al_menos", "start_day": DAY},
+            "ninguno", self.cid,
+        )
+        propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        row = self.conn.execute(
+            "SELECT amount FROM nutrient_target WHERE person_id = 1 AND metric_key = 'protein_g' AND start_day = ?",
+            (DAY,),
+        ).fetchone()
+        self.assertIsNone(row["amount"])
+
+
+# ---- the assistant card: words in the person's language ---------------------------------------------
+
+class CardTextTest(unittest.TestCase):
+    def setUp(self):
+        self.conn = _conn(self)
+        self.cid = _cid(self.conn)
+        self.defs = comun._defs(self.conn)
+
+    def _tarjeta(self, lang: str, **params):
+        out = herramientas.ejecutar(self.conn, 1, "proponer_objetivo_nutriente", params, "ninguno", self.cid)
+        return asistente._tarjeta_propuesta(T(lang), self.defs, out["_registro"])
+
+    def test_absolute_al_menos_card_es(self):
+        t = self._tarjeta("es", metric_key="protein_g", kind="absolute", amount=130.0, sentido="al_menos",
+                          start_day=DAY)
+        self.assertIn("Proteína", t["despues"])
+        self.assertIn("al menos", t["despues"])
+        self.assertIn("130", t["despues"])
+        self.assertIn("g", t["despues"])
+
+    def test_como_maximo_card_en(self):
+        t = self._tarjeta("en", metric_key="caffeine_mg", kind="absolute", amount=400.0, sentido="como_maximo",
+                          start_day=DAY)
+        self.assertIn("Caffeine", t["despues"])
+        self.assertIn("at most", t["despues"])
+        self.assertIn("400", t["despues"])
+
+    def test_per_kg_card_en(self):
+        t = self._tarjeta("en", metric_key="protein_g", kind="per_kg", amount=1.6, sentido="al_menos",
+                          start_day=DAY)
+        self.assertIn("per kg", t["despues"])
+        self.assertIn("1.6", t["despues"])
+
+    def test_off_card_es(self):
+        t = self._tarjeta("es", metric_key="protein_g", kind="off", sentido="al_menos", start_day=DAY)
+        self.assertIn("sin meta diaria", t["despues"])
 
 
 if __name__ == "__main__":

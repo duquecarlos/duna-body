@@ -533,6 +533,37 @@ class PeriodZonasMudanzaTest(MudanzaTestCase):
         self.assertEqual(json.loads(row["zonas"]), ["hombro"])
 
 
+class NutrientTargetMudanzaTest(MudanzaTestCase):
+    """BODY-NUTRIENTE-OBJETIVO-1: a daily nutrient target moves with the rest of the person's data,
+    matched by its own natural key (person_id, metric_key, start_day) -- a second import of the
+    same source never duplicates it."""
+
+    def test_target_moves_and_a_second_import_does_not_duplicate_it(self):
+        source = self._new_source()
+        with source:
+            db.set_nutrient_target(source, db.DEFAULT_PERSON_ID, "protein_g", "2026-10-01", "per_kg", 1.6,
+                                    "al_menos")
+        source.close()
+
+        reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok)
+        by_name = self._reports_by_name(reports)
+        self.assertEqual(by_name["nutrient_target"].counts.insert, 1)
+
+        dest = db.connect()
+        row = dest.execute("SELECT metric_key, start_day, kind, amount, sentido FROM nutrient_target").fetchone()
+        self.assertEqual((row["metric_key"], row["start_day"], row["kind"], row["amount"], row["sentido"]),
+                         ("protein_g", "2026-10-01", "per_kg", 1.6, "al_menos"))
+        dest.close()
+
+        reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok)
+        by_name = self._reports_by_name(reports)
+        self.assertEqual(by_name["nutrient_target"].counts.insert, 0)
+        dest = db.connect()
+        self.assertEqual(dest.execute("SELECT COUNT(*) FROM nutrient_target").fetchone()[0], 1)
+
+
 class PersonasTest(MudanzaTestCase):
     def test_lists_only_persons_with_a_cuenta_sub(self):
         dest = self._dest_conn()

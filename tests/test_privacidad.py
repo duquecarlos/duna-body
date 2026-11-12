@@ -538,6 +538,44 @@ class PeriodExportDeleteTest(unittest.TestCase):
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM period").fetchone()[0], 0)
 
 
+class NutrientTargetExportDeleteTest(unittest.TestCase):
+    """BODY-NUTRIENTE-OBJETIVO-1: a daily nutrient target is FULLY exported and fully deleted --
+    invented demo amounts only, no real figures."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "nutriente.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+
+    def test_nutrient_target_is_a_fully_handled_table(self):
+        self.assertIn("nutrient_target", privacidad.FULLY_HANDLED_TABLES)
+
+    def test_export_includes_the_target(self):
+        db.set_nutrient_target(self.conn, 1, "protein_g", "2026-11-01", "per_kg", 1.6, "al_menos")
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(len(data["objetivos_nutriente"]), 1)
+        row = data["objetivos_nutriente"][0]
+        self.assertEqual((row["metric_key"], row["start_day"], row["kind"], row["amount"], row["sentido"]),
+                         ("protein_g", "2026-11-01", "per_kg", 1.6, "al_menos"))
+
+    def test_export_of_another_person_sees_nothing(self):
+        db.set_nutrient_target(self.conn, 1, "protein_g", "2026-11-01", "per_kg", 1.6, "al_menos")
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 2)
+        self.assertEqual(data["objetivos_nutriente"], [])
+
+    def test_delete_all_removes_the_target(self):
+        db.set_nutrient_target(self.conn, 1, "caffeine_mg", "2026-11-01", "absolute", 400.0, "como_maximo")
+        self.conn.commit()
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM nutrient_target").fetchone()[0], 0)
+
+
 class RecuperacionExportDeleteTest(unittest.TestCase):
     """BODY-RECUPERACION-1: a derived recovery-after-training row is FULLY exported and deleted --
     invented demo content only, no real figures."""
