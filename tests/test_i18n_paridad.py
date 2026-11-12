@@ -7,9 +7,11 @@ import pathlib
 import re
 import string
 import unittest
+from unittest import mock
 
 from body import anatomia, db, history, noche_inusual, tutoriales
 from body import turnos_costo
+from body.agente import propuestas
 from body.rutas import comun, metas, tendencias, turnos
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -112,9 +114,11 @@ _FIXED_DYNAMIC = {
     "goals.status.+": ["paused", "done", "dropped"],
     # body/db.py CHECK (ajuste_agente.nivel_datos).
     "ajustes.asistente.opcion.+": ["completo", "resumen", "ninguno"],
-    # body/web.py _propuesta_ctx(): the only four proposal kinds the assistant can raise.
-    "asistente.propuesta.titulo.+": ["proponer_meta", "proponer_cambio_meta",
-                                      "proponer_confirmar_turnos", "proponer_idioma"],
+    # body/rutas/asistente.py: t("asistente.propuesta.titulo." + accion) -- every proposal kind
+    # the agent can raise, read from body/agente/propuestas.py's own TABLA (BODY-PROPUESTAS-TABLA-1,
+    # the same source tests/test_propuestas_tabla.py compares with HERRAMIENTAS and asistente.
+    # TARJETAS), never a hand-typed list (BODY-I18N-TITULO-PROPUESTA-CENSO-1).
+    "asistente.propuesta.titulo.+": sorted(propuestas.TABLA),
     # body/templates/today.html, how.html: t('band.' ~ r.band) -- readiness.py Readiness.band().
     "band.~": ["high", "medium", "low"],
     # body/templates/trends.html: t('trends.r.' + x) -- the range picker's own values.
@@ -245,6 +249,18 @@ class TestI18nParidad(unittest.TestCase):
                     missing.append(key)
         self.assertEqual(missing, [],
                           f"a dynamic prefix can resolve to a key missing from es.json: {sorted(missing)}")
+
+    def test_titulo_de_propuesta_detecta_un_kind_fabricado_sin_clave(self):
+        """BODY-I18N-TITULO-PROPUESTA-CENSO-1: the derived list (sorted(propuestas.TABLA)) must
+        actually catch a proposal kind with no asistente.propuesta.titulo.<kind> key -- proven by
+        monkeypatching TABLA with a fabricated kind, never a real one, and re-deriving the list
+        the same way _FIXED_DYNAMIC does, inside the patch."""
+        kind = "kind_fabricado_sin_titulo_1"
+        with mock.patch.dict(propuestas.TABLA, {kind: propuestas.TABLA["proponer_meta"]}):
+            kinds = sorted(propuestas.TABLA)
+            missing = [f"asistente.propuesta.titulo.{k}" for k in kinds
+                       if f"asistente.propuesta.titulo.{k}" not in self.es]
+        self.assertEqual(missing, [f"asistente.propuesta.titulo.{kind}"])
 
     def test_history_find_keys_exist(self):
         missing = sorted(k for k in _HISTORY_FIND_KEYS if k not in self.es)

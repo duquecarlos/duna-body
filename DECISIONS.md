@@ -19097,3 +19097,59 @@ clears it, not an absence of new strings. No cross-repo contract changed. **Merg
 gate, per that explicit authorization.**
 
 -- merged cbe1e9bc3d5a10358f0e70e7918937ef4486ae14
+
+## BODY-I18N-TITULO-PROPUESTA-CENSO-1
+
+Follow-up `BODY-COMIDA-CORREGIR-1-F-TITULO-STALE-LIST` from BODY-COMIDA-CORREGIR-1 (merged
+`cbe1e9b`, ledger entry above): `tests/test_i18n_paridad.py`'s `_FIXED_DYNAMIC['asistente.
+propuesta.titulo.+']` still named only the original four proposal kinds, though
+`body/agente/propuestas.py`'s `TABLA` now holds 24. The list resolved against `es.json` only, so a
+25th proposal kind added with no `asistente.propuesta.titulo.<kind>` key anywhere would have passed
+this guard silently.
+
+**Ruling (given with the spec, applied as written).** The hand-typed four-item list is replaced
+with `sorted(propuestas.TABLA)` -- the same source `tests/test_propuestas_tabla.py` already
+compares against `herramientas.HERRAMIENTAS` and `asistente.TARJETAS` -- so the dynamic-prefix
+check resolves every current proposal kind's title key against `es.json`, and (via the existing,
+unchanged `test_same_key_set`) transitively against `en.json` too: a key missing from either file,
+for any kind, now fails somewhere in this test module. A dedicated test,
+`test_titulo_de_propuesta_detecta_un_kind_fabricado_sin_clave`, monkeypatches `propuestas.TABLA`
+(`unittest.mock.patch.dict`) with one fabricated kind (`kind_fabricado_sin_titulo_1`, never a real
+action), re-derives the list the same way `_FIXED_DYNAMIC` does inside the patch, and asserts the
+missing-key list names exactly that fabricated key -- proving the derived check actually catches an
+unkeyed kind rather than merely looking like it would.
+
+**Census result: all 24 current `TABLA` kinds already carry an `asistente.propuesta.titulo.<kind>`
+key in both `body/i18n/es.json` and `body/i18n/en.json`** (`proponer_meta`, `proponer_cambio_meta`,
+`proponer_confirmar_turnos`, `proponer_idioma`, `planear_entreno`, `registrar_entreno`,
+`registrar_medida`, `marcar_habito`, `proponer_experimento`, `marcar_experimento`,
+`registrar_ingesta`, `corregir_ingesta`, `borrar_ingesta`, `registrar_comida`, `corregir_comida`,
+`marcar_periodo`, `cerrar_periodo`, `corregir_periodo`, `borrar_periodo`, `registrar_checkin`,
+`descartar_series`, `separar_sesion`, `unir_sesiones`, `proponer_objetivo_nutriente`) -- confirmed by
+grepping both files before editing the test. No key was missing, so **no customer-facing string was
+added or changed**: this slice is test-only.
+
+`tests/test_propuestas_tabla.py` needed no edit: it already names `TABLA` as its own census source
+and this slice only pointed a second test file at the same source, without changing what either
+file asserts about proposal-tool identity.
+
+No password, token, session secret, device key or health figure of a real person was read, printed
+or written anywhere in this slice's own work; every fabricated-kind value used in the new test is
+an invented string that names no real action.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry), the exact
+command is `.venv/Scripts/python.exe -m unittest discover tests -t .`, run ONCE in the foreground;
+the harness moved it to the background past its own 600 s cap, and this session blocked on the
+output file until its `Ran ` line appeared rather than polling turn-by-turn:
+
+    Ran 3060 tests in 878.917s
+
+    OK (skipped=1)
+
+3060 - 3059 (the prior entry's own count) = 1 new test, `tests/test_i18n_paridad.py`'s
+`test_titulo_de_propuesta_detecta_un_kind_fabricado_sin_clave`.
+
+**Merge policy, this slice.** The diff touches only `tests/test_i18n_paridad.py` -- no schema or
+migration change, no customer-facing bytes (no translation string was added, changed or removed;
+the census above found nothing missing), no cross-repo contract or DTO change. All three of merge
+policy A's conditions pass. **Merges on this green gate.**
