@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import anatomia, baselines, db, entreno_racha, fuentes, goals, household, identity, profile, turnos_costo
+from .. import anatomia, baselines, db, entreno_racha, fuentes, identity, profile, turnos_costo
 from ..catalogo_tendencias import TODAS
 from ..desplazamiento_import import FUENTE as _FUENTE_COMMUTE
 from ..i18n import T
@@ -191,41 +191,29 @@ def _racha_semanas_txt(t: T, n: int) -> str:
     return t("trends.racha.semanas_one") if n == 1 else t("trends.racha.semanas_other", n=t.num(n))
 
 
-def _piso_actual(conn, person_id: int) -> tuple[int | None, str | None, int | None]:
-    """Ruling 1: the resolved weekly floor for this person's own chosen habit (body/db.py's
-    racha_piso table) -- None unless that habit is still active, cadence per='week', and readable
-    by this person (goals.goal_access plus the same assignee rule body/rutas/metas.py's own
-    habit_check route checks). Always returns the raw stored habit_id too (even one that no longer
-    resolves), so the picker can still show it was picked and simply yields no floor."""
-    habit_id = db.racha_piso_habit_id(conn, person_id)
-    if habit_id is None:
-        return None, None, None
-    h = conn.execute(
-        "SELECT id, title, cadence, active, goal_id, assignee_person_id FROM habit WHERE id = ?", (habit_id,)
-    ).fetchone()
-    if h is None or not h["active"]:
-        return None, None, habit_id
-    if h["assignee_person_id"] is not None and h["assignee_person_id"] != person_id:
-        return None, None, habit_id
-    if goals.goal_access(conn, h["goal_id"], person_id) is None:
-        return None, None, habit_id
-    cadence = comun._habit_cadence(h)
-    if cadence.get("per") != "week":
-        return None, None, habit_id
-    return cadence.get("times"), h["title"], habit_id
-
-
-def _opciones_piso(conn, t: T, person_id: int) -> list[dict]:
-    """Ruling 2's picker: every active, weekly habit this person may read (goal_access, plus the
-    same assignee rule above) -- the only habit ids a POST to /trends/racha-piso may name."""
-    hh = household.household_of(conn, person_id)
-    scope_sql, scope_params = goals.goal_scope_sql(person_id, hh)
+def _piso_y_opciones(conn, t: T, person_id: int) -> tuple[int | None, str | None, int | None, list[dict]]:
+    """Rulings 1-2, resolved and read together in ONE SELECT (BODY-TENDENCIAS-RACHA-GRAFICO-1-M,
+    statement ceiling): every active habit this person may read under the same scope
+    `goals.goal_access`/`goal_scope_sql` apply (their own goals, or a household milestone goal's),
+    joined with its own goal here instead of a separate `household.household_of` round trip -- the
+    household check becomes one correlated subquery on `hogar_miembro` in this same statement. The
+    person's own stored pick (body/db.py's racha_piso table) rides along as a scalar subquery on
+    every row, rather than `db.racha_piso_habit_id`'s own separate read. Filtered in Python to the
+    weekly, correctly-assigned habits (ruling 2's picker, and the only ids a POST to
+    /trends/racha-piso may name). The floor (ruling 1) is whichever of those, if any, matches the
+    pick. Zero rows (no weekly habit this person may read at all) means no pick can resolve to a
+    floor either way, so the raw stored id is not worth a second statement to recover then."""
     rows = conn.execute(
-        f"SELECT h.id, h.title, h.cadence, h.assignee_person_id FROM habit h "
-        f"JOIN goal ON goal.id = h.goal_id WHERE h.active = 1 AND ({scope_sql})",
-        scope_params,
+        "SELECT h.id, h.title, h.cadence, h.assignee_person_id, "
+        "(SELECT habit_id FROM racha_piso WHERE person_id = ?) AS elegido FROM habit h "
+        "JOIN goal g ON g.id = h.goal_id WHERE h.active = 1 AND (g.person_id = ? OR "
+        "(g.visibility = 'household' AND g.kind = 'milestone' AND "
+        "g.hogar_id = (SELECT hogar_id FROM hogar_miembro WHERE person_id = ?)))",
+        (person_id, person_id, person_id),
     ).fetchall()
-    out = []
+    habit_id_elegido = rows[0]["elegido"] if rows else None
+    opciones = []
+    piso = piso_titulo = None
     for h in rows:
         if h["assignee_person_id"] is not None and h["assignee_person_id"] != person_id:
             continue
@@ -233,14 +221,16 @@ def _opciones_piso(conn, t: T, person_id: int) -> list[dict]:
         if cadence.get("per") != "week":
             continue
         texto = f"{h['title']} · {t('trends.racha.piso_opcion', n=t.num(cadence.get('times')))}"
-        out.append({"id": h["id"], "texto": texto})
-    return out
+        opciones.append({"id": h["id"], "texto": texto})
+        if h["id"] == habit_id_elegido:
+            piso, piso_titulo = cadence.get("times"), h["title"]
+    return piso, piso_titulo, habit_id_elegido, opciones
 
 
 def _racha_ctx(t: T, conn, person_id: int, turnos_on: bool, hoy: date) -> dict | None:
     """The study card's whole context (ruling 3), or None when racha_semanal has nothing to show
     (no strength session ever) -- the card, including its picker, is absent then."""
-    piso, _piso_titulo, piso_habit_id = _piso_actual(conn, person_id)
+    piso, _piso_titulo, piso_habit_id, opciones = _piso_y_opciones(conn, t, person_id)
     result = entreno_racha.racha_semanal(conn, person_id, piso=piso, hoy=hoy)
     if result is None:
         return None
@@ -270,7 +260,7 @@ def _racha_ctx(t: T, conn, person_id: int, turnos_on: bool, hoy: date) -> dict |
             figuras.append({"valor": _racha_semanas_txt(t, actual["semanas"]), "texto": t("trends.racha.actual_txt")})
     return {
         "titulo": titulo, "sub": sub, "piso_nota": piso_nota, "noche_nota": noche_nota, "svg": svg,
-        "figuras": figuras, "opciones": _opciones_piso(conn, t, person_id), "piso_habit_id": piso_habit_id,
+        "figuras": figuras, "opciones": opciones, "piso_habit_id": piso_habit_id,
     }
 
 
@@ -467,7 +457,7 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
 async def trends_racha_piso(request: Request, person_id: int = Depends(identity.current_person_id)):
     """Ruling 2: sets or clears (habit_id empty = "Sin piso"/"No floor") this person's own chosen
     floor habit -- never a figure in the redirect, and the only habit ids accepted are exactly the
-    ones _opciones_piso would have offered this person (active, weekly, readable)."""
+    ones _piso_y_opciones would have offered this person (active, weekly, readable)."""
     conn, person, t = comun._ctx(person_id)
     f = await comun._form(request)
     raw = (f.get("habit_id") or "").strip()
@@ -477,7 +467,8 @@ async def trends_racha_piso(request: Request, person_id: int = Depends(identity.
             habit_id = int(raw)
         except ValueError:
             raise HTTPException(404)
-        validos = {o["id"] for o in _opciones_piso(conn, t, person_id)}
+        _, _, _, opciones = _piso_y_opciones(conn, t, person_id)
+        validos = {o["id"] for o in opciones}
         if habit_id not in validos:
             raise HTTPException(404)
     db.set_racha_piso(conn, person_id, habit_id)

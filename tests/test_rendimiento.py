@@ -44,9 +44,7 @@ client = TestClient(web.app, follow_redirects=False)
 # /experiments/{experiment_id}, remeasured after BODY-EXPERIMENTOS-PANTALLA-1 added the fixture's
 # own experiment and its Metas-section/detail-page reads, and /goals/new and /trends, remeasured
 # after BODY-AGUJETAS-1-B batched their per-metric-key reads (one query for the whole catalogue
-# instead of one per key), /trends again after BODY-TENDENCIAS-RACHA-GRAFICO-1 added the
-# strength-session study card and its habit picker (28 measured here, ceil(28 * 1.3) = 37), and
-# /day/{day} and /privacidad/exportar, remeasured after BODY-COMIDA-1
+# instead of one per key), and /day/{day} and /privacidad/exportar, remeasured after BODY-COMIDA-1
 # added one meal-list read and one meal-export read respectively (ceil(measured * 1.3), the same
 # ~30% margin rule), and /, remeasured after BODY-NUTRIENTE-OBJETIVO-1 added the "Metas de
 # nutrientes" card's own read (one vigentes-targets query, plus -- only once a per_kg target is
@@ -79,7 +77,7 @@ _CEILINGS = {
     "/shifts/como": 20,
     "/shifts/patron": 16,
     "/sw.js": 3,
-    "/trends": 37,
+    "/trends": 19,
 }
 
 # No route may open more than this many connections (BODY-RENDIMIENTO-1's own approval reason):
