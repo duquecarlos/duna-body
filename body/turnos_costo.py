@@ -285,8 +285,14 @@ def perfil_por_dia(conn, person_id: int, metric: str, hoy: date | None = None, *
     `motivo` is None and the dict carries `offsets` (one {"offset", "media", "n"} per OFFSET that has
     at least one contributing day), `centro`, `banda` ({"bajo", "alto"}, centred the same way),
     `mas_bajo` or `mas_alto` (whichever direction db.METRIC_DEFS calls worse for this metric) naming
-    the offset furthest from usual, `vuelta` (the first post_* offset back inside the band, or None),
-    `noches_tipicas` (the median block length) and `n_bloques`."""
+    the offset furthest from usual, `vuelta` (BODY-TENDENCIAS-LEYENDA-PATRON-1-M fix 1: a return
+    that HOLDS, not merely the first post_* offset that happens to land inside the band -- the
+    first post_* offset after the LAST offset anywhere in OFFSETS that lies outside the band in
+    this metric's own worse direction, itself inside the band; None when no offset lies outside
+    the band in the worse direction at all (nothing to return from), when no post_* offset is
+    measured after that last excursion, or when what is measured there is still outside the band
+    -- so a dip that returns, leaves again and bottoms out later never reports the earlier return
+    that did not hold), `noches_tipicas` (the median block length) and `n_bloques`."""
     hoy = hoy or date.today()
     desde = (hoy - timedelta(RESUMEN_DIAS)).isoformat()
     if lector is None:
@@ -319,8 +325,19 @@ def perfil_por_dia(conn, person_id: int, metric: str, hoy: date | None = None, *
     peor_es_bajo = _BETTER.get(metric) == "higher"
     extremo = (min if peor_es_bajo else max)(offsets_out, key=lambda o: o["media"])
     banda_bajo, banda_alto = round(r.bajo - r.media, 1), round(r.alto - r.media, 1)
-    vuelta = next((o["offset"] for o in offsets_out
-                   if o["offset"].startswith("post_") and banda_bajo <= o["media"] <= banda_alto), None)
+    # BODY-TENDENCIAS-LEYENDA-PATRON-1-M fix 1: the anchor is the LAST offset outside the band in
+    # the worse direction (never just the single most extreme one) -- any offset still outside
+    # the band after it would mean the metric left the band again, so `vuelta` only ever looks
+    # past this point. `extremo` is itself always in this list whenever it lies outside the band
+    # (the global extreme can never be less extreme than a value already past the band threshold),
+    # so the anchor is always at or after `extremo`'s own position in OFFSETS.
+    fuera_peor = [o for o in offsets_out
+                  if ((o["media"] < banda_bajo) if peor_es_bajo else (o["media"] > banda_alto))]
+    vuelta = None
+    if fuera_peor:
+        ancla = offsets_out.index(fuera_peor[-1])
+        vuelta = next((o["offset"] for o in offsets_out[ancla + 1:]
+                       if o["offset"].startswith("post_") and banda_bajo <= o["media"] <= banda_alto), None)
 
     return {
         "metric": metric,
@@ -333,6 +350,56 @@ def perfil_por_dia(conn, person_id: int, metric: str, hoy: date | None = None, *
         "noches_tipicas": round(statistics.median(b.dias for b in bloques)),
         "n_bloques": len(bloques),
     }
+
+
+def frase_patron(perfil: dict, metric: str) -> dict | None:
+    """BODY-TENDENCIAS-LEYENDA-PATRON-1 ruling 1: turns a successful `perfil_por_dia` result into a
+    sentence SPEC -- a kind plus its own parameters, never prose -- so Trends (body/rutas/
+    tendencias.py) and the assistant's leer_tendencias (body/agente/herramientas.py) can share it
+    and render or report it their own way. `perfil["motivo"]` set (no profile) -> None. Otherwise,
+    in precedence order: the worst offset's mean inside the band -> {"kind": "estable"} (nights do
+    not move this metric beyond usual); outside the band and `vuelta` set -> {"kind": "vuelve",
+    "peor", "vuelta", "direccion"}; outside the band and no `vuelta` -> {"kind": "no_vuelve",
+    "peor", "direccion"}. `direccion` ("baja"/"sube") is the side the worst offset's mean sits on
+    relative to centre (0 once `perfil_por_dia` re-expresses it that way), never the metric's own
+    better/worse word, so a lower-is-better metric whose nights run high still reads "sube". No
+    figure from the person's data is in the spec -- `peor`/`vuelta` are OFFSET NAMES, `direccion`
+    is a word -- so a caption built from this can never leak a number into a log."""
+    if perfil.get("motivo") is not None:
+        return None
+    peor_es_bajo = _BETTER.get(metric) == "higher"
+    peor_offset = perfil["mas_bajo" if peor_es_bajo else "mas_alto"]
+    extremo = next(o for o in perfil["offsets"] if o["offset"] == peor_offset)
+    banda = perfil["banda"]
+    if banda["bajo"] <= extremo["media"] <= banda["alto"]:
+        return {"kind": "estable"}
+    direccion = "baja" if extremo["media"] < 0 else "sube"
+    vuelta = perfil.get("vuelta")
+    if vuelta is not None:
+        # BODY-TENDENCIAS-LEYENDA-PATRON-1-M fix 1: a spec never says "back by" an offset earlier
+        # than or equal to the worst one -- perfil_por_dia's own vuelta definition guarantees this,
+        # checked here since this is the one place that reads both offsets together.
+        assert OFFSETS.index(vuelta) > OFFSETS.index(peor_offset), \
+            f"vuelta {vuelta!r} must be later than peor {peor_offset!r}"
+        return {"kind": "vuelve", "peor": peor_offset, "vuelta": vuelta, "direccion": direccion}
+    return {"kind": "no_vuelve", "peor": peor_offset, "direccion": direccion}
+
+
+def perfiles_patron(conn, person_id: int, hoy: date | None = None) -> dict[str, dict]:
+    """BODY-TENDENCIAS-LEYENDA-PATRON-1: `perfil_por_dia` for every metric in MODELO['metricas'],
+    sharing one `Lector`, one `bloques_noche` call and one `referencia()` call across all five --
+    the one caller (Trends, and the assistant's leer_tendencias) that needs a pattern per metric,
+    never a statement per metric (`Lector` itself loads every metric with one combined SELECT,
+    BODY-TENDENCIAS-LEYENDA-PATRON-1-M fix 2)."""
+    hoy = hoy or date.today()
+    desde = (hoy - timedelta(RESUMEN_DIAS)).isoformat()
+    desde_lector = (hoy - timedelta(RESUMEN_DIAS + 1)).isoformat()
+    hasta_lector = (hoy + timedelta(MODELO["ventana_post"])).isoformat()
+    lector = Lector(conn, person_id, desde_lector, hasta_lector, MODELO["metricas"])
+    ref = referencia(conn, person_id, hoy, lector=lector)
+    bloques = bloques_noche(conn, person_id, desde, hoy.isoformat())
+    return {m: perfil_por_dia(conn, person_id, m, hoy, lector=lector, bloques=bloques, ref=ref)
+            for m in MODELO["metricas"]}
 
 
 def _dia_en_banda(conn, person_id: int, day: str, ref: dict[str, Referencia | None],

@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from .. import anatomia, baselines, db, fuentes, identity, profile
+from .. import anatomia, baselines, db, fuentes, identity, profile, turnos_costo
 from ..catalogo_tendencias import TODAS
 from ..desplazamiento_import import FUENTE as _FUENTE_COMMUTE
 from ..i18n import T
@@ -117,7 +117,29 @@ def _medidas_count_txt(t: T, n: int) -> str:
     return t("trends.medidas_count_one") if n == 1 else t("trends.medidas_count_other", n=n)
 
 
-def _trend_card(t: T, defs: dict, k: str, start, end, month, nights, marcas, profiles: dict, windows_by_key: dict):
+_N_POST_OFFSETS = sum(1 for o in turnos_costo.OFFSETS if o.startswith("post_"))
+
+
+def _frase_patron_texto(t: T, frase: dict | None) -> str | None:
+    """BODY-TENDENCIAS-LEYENDA-PATRON-1 ruling 2: renders turnos_costo.frase_patron's data-only
+    spec into the one sentence a card shows -- the only place its words are built, so the
+    assistant's leer_tendencias (ruling 3) can share the same spec without ever sharing this
+    rendered text. The 'cuando'/'vuelta' time phrases are per-offset i18n keys (trends.patron.
+    cuando.<offset>, trends.patron.vuelta.<offset>), never built from a figure; the post-offset
+    count in the no_vuelve wording is read off OFFSETS, never typed as a literal "4"."""
+    if frase is None:
+        return None
+    if frase["kind"] == "estable":
+        return t("trends.patron.estable")
+    peor = t("trends.patron.cuando." + frase["peor"])
+    if frase["kind"] == "vuelve":
+        vuelta = t("trends.patron.vuelta." + frase["vuelta"])
+        return t("trends.patron.vuelve." + frase["direccion"], peor=peor, vuelta=vuelta)
+    return t("trends.patron.no_vuelve." + frase["direccion"], peor=peor, n=_N_POST_OFFSETS)
+
+
+def _trend_card(t: T, defs: dict, k: str, start, end, month, nights, marcas, profiles: dict, windows_by_key: dict,
+                 patrones: dict):
     """One card -- own baseline, honest gaps, night shading, the month tap -- built the same way for the
     default 9 and every extra metric behind "Ver todas las medidas" (DESIGN rules 3, 6, 7). A
     self-measured key (BODY-ENTRENO-MEDIDA-1) gets a card from its first value instead of waiting
@@ -161,7 +183,7 @@ def _trend_card(t: T, defs: dict, k: str, start, end, month, nights, marcas, pro
             "cls": cls, "svg": svg, "low": comun._value(t, k, p.low), "high": comun._value(t, k, p.high),
             "sparse": k in SPARSE_KEYS, "self": d["origen"] == "self", "subtitle": None,
             "pocas": pocas, "conteo": _medidas_count_txt(t, p.days) if pocas else None,
-            "caveat": k in NIGHT_CAVEAT_KEYS}
+            "caveat": k in NIGHT_CAVEAT_KEYS, "patron": patrones.get(k)}
     return card, p
 
 
@@ -177,6 +199,18 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
     a value."""
     conn, person, t = comun._ctx(person_id)
     turnos_on = db.trabaja_turnos_si(conn, person_id)
+    today_local = comun._today_local(person)
+    # BODY-TENDENCIAS-LEYENDA-PATRON-1 rulings 2, 4: one caption per metric the shift-cost model
+    # has a reference for, read over that model's own RESUMEN_DIAS window regardless of the range
+    # `r` picks -- shared once (turnos_costo.perfiles_patron) rather than per card, so this costs
+    # /trends' own statement ceiling (tests/test_rendimiento.py) a fixed few statements, never one
+    # per metric. Skipped outright when the person does not track night shifts at all: every
+    # profile would read "pocos_bloques_previos" anyway, and no card would show a caption.
+    patrones = {}
+    if turnos_on:
+        perfiles = turnos_costo.perfiles_patron(conn, person_id, today_local)
+        patrones = {m: texto for m, p in perfiles.items()
+                    if (texto := _frase_patron_texto(t, turnos_costo.frase_patron(p, m))) is not None}
     defs = comun._defs(conn)
     todas_keys = list(TODAS)
     # BODY-MEDIDA-PESO-1-M2 / BODY-ENTRENO-MEDIDA-1: a self-measured key's own lower thresholds,
@@ -224,7 +258,7 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
     windows_by_key = profile.windows(conn, todas_keys, start, end, person_id=person_id) if start else {}
     cards, since, days = [], None, 0
     for k in comun.TREND_KEYS:
-        card, p = _trend_card(t, defs, k, start, end, month, nights, marcas, profiles, windows_by_key)
+        card, p = _trend_card(t, defs, k, start, end, month, nights, marcas, profiles, windows_by_key, patrones)
         if not card:
             continue
         since = since or p.first_day
@@ -239,12 +273,11 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
         return comun._render("soon.html", t=t, tab="trends", title=t("nav.trends"),
                        text=comun._sync_status_text(conn, person, t),
                        back_href=back_href, back_label=back_label, turnos=turnos_on)
-    today_local = comun._today_local(person)
     extra_groups, extra_count = [], 0
     for group_key, keys in comun.TREND_GROUPS:
         group_cards = []
         for k in keys:
-            card, p = _trend_card(t, defs, k, start, end, month, nights, marcas, profiles, windows_by_key)
+            card, p = _trend_card(t, defs, k, start, end, month, nights, marcas, profiles, windows_by_key, patrones)
             if not card:
                 continue
             since = since or p.first_day

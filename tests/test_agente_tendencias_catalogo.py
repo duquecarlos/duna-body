@@ -15,7 +15,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import catalogo_tendencias, db
+from body import catalogo_tendencias, db, turnos_costo
 from body.agente import herramientas
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -90,6 +90,58 @@ class LeerTendenciasReadsSelfAndNightKeysTest(unittest.TestCase):
                                 statistics.fmean(self.flex_1))
         self.assertAlmostEqual(out["metricas"]["sleep_spo2_avg"]["media_historica"],
                                 statistics.fmean(self.spo2_1))
+
+
+class LeerTendenciasCarriesPatronTurnosTest(unittest.TestCase):
+    """BODY-TENDENCIAS-LEYENDA-PATRON-1 ruling 3: leer_tendencias's own patron_turnos equals the
+    same spec turnos_costo.frase_patron would build from turnos_costo.perfiles_patron -- the
+    Trends screen's own source, read directly here rather than through the web route."""
+
+    def _place_blocks(self, hoy: date, lengths: list[int], gap: int = 10) -> list[date]:
+        end_limit = hoy - timedelta(turnos_costo.REFERENCIA_DIAS + 6)
+        total = sum(lengths) + gap * (len(lengths) - 1)
+        start = end_limit - timedelta(total - 1)
+        inicios, cur = [], start
+        for n in lengths:
+            inicios.append(cur)
+            cur += timedelta(n + gap)
+        return inicios
+
+    def test_patron_turnos_matches_frase_patron(self):
+        conn = _conn(self)
+        from body import fechas
+        hoy = fechas.hoy_local(db.person(conn, 1))
+        start_ref, end_ref = hoy - timedelta(turnos_costo.REFERENCIA_DIAS), hoy - timedelta(1)
+        cycle = [50.0, 55.0, 60.0, 65.0, 70.0]
+        d, i = start_ref, 0
+        while d <= end_ref:
+            db.set_metric(conn, d.isoformat(), "hrv_last_night", cycle[i % len(cycle)], "garmin", 1)
+            d, i = d + timedelta(1), i + 1
+        for inicio in self._place_blocks(hoy, [2, 2, 2]):
+            fin = inicio + timedelta(1)
+            dia = inicio
+            while dia <= fin:
+                conn.execute("INSERT INTO shift (person_id, day, kind, source) VALUES "
+                             "(?, ?, 'night', 'manual')", (1, dia.isoformat()))
+                dia += timedelta(1)
+            bloque = turnos_costo.Bloque(inicio=inicio.isoformat(), fin=fin.isoformat(), dias=2)
+            for offset, v in {"noche_1": 40.0, "post_1": 60.0}.items():
+                day = turnos_costo._offset_day(bloque, offset)
+                db.set_metric(conn, day.isoformat(), "hrv_last_night", v, "garmin", 1)
+        conn.commit()
+
+        out = herramientas.ejecutar(conn, 1, "leer_tendencias", {"metric": "hrv_last_night"}, "resumen")
+        perfiles = turnos_costo.perfiles_patron(conn, 1, hoy)
+        esperado = turnos_costo.frase_patron(perfiles["hrv_last_night"], "hrv_last_night")
+        self.assertIsNotNone(esperado)
+        self.assertEqual(out["metricas"]["hrv_last_night"]["patron_turnos"], esperado)
+
+    def test_metric_outside_the_shift_cost_model_never_carries_patron_turnos(self):
+        conn = _conn(self)
+        _seed_days(conn, 1, "sleep_rem_min", date(2026, 10, 1), 14, 85, "garmin")
+        conn.commit()
+        out = herramientas.ejecutar(conn, 1, "leer_tendencias", {"metric": "sleep_rem_min"}, "resumen")
+        self.assertNotIn("patron_turnos", out["metricas"]["sleep_rem_min"])
 
 
 class CatalogueModuleImportsNoRouteOrAgentModuleTest(unittest.TestCase):

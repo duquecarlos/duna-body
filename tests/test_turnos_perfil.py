@@ -11,6 +11,8 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from tests._db import open_conn
 
 from body import db, turnos_costo
+from body.i18n import T
+from body.rutas import turnos as turnos_ruta
 
 HOY = date(2026, 6, 1)
 # Spread enough (not a single constant) for referencia()'s own 25th-75th band to be real, not
@@ -162,6 +164,52 @@ class PerfilPorDiaTest(unittest.TestCase):
         p = turnos_costo.perfil_por_dia(self.conn, 1, "hrv_last_night", HOY)
         self.assertEqual(p["vuelta"], "post_3")
 
+    def test_vuelta_waits_for_the_last_excursion_not_the_first_return(self):
+        """BODY-TENDENCIAS-LEYENDA-PATRON-1-M fix 1: the defect report's sleep-shaped case -- out
+        at post_1, back in band at post_2, out again and worst at post_3, back in band at post_4.
+        The old reader picked post_2 (a return that did not hold, since the metric left the band
+        again right after); vuelta must be post_4, the first return AFTER the last excursion."""
+        fuera = self.banda_bajo_diff - 8
+        peor = self.banda_bajo_diff - 15
+        valores = {"noche_1": self.hrv_media - 5, "post_1": self.hrv_media + fuera,
+                   "post_2": self.hrv_media, "post_3": self.hrv_media + peor,
+                   "post_4": self.hrv_media}
+        self._seed([2, 2, 2], valores)
+        p = turnos_costo.perfil_por_dia(self.conn, 1, "hrv_last_night", HOY)
+        self.assertEqual(p["mas_bajo"], "post_3")
+        self.assertEqual(p["vuelta"], "post_4")
+
+    def test_vuelta_is_none_when_the_last_measured_post_offset_is_still_outside_the_band(self):
+        fuera = self.banda_bajo_diff - 8
+        valores = {"noche_1": self.hrv_media - 5, "post_1": self.hrv_media,
+                   "post_2": self.hrv_media, "post_3": self.hrv_media,
+                   "post_4": self.hrv_media + fuera}
+        self._seed([2, 2, 2], valores)
+        p = turnos_costo.perfil_por_dia(self.conn, 1, "hrv_last_night", HOY)
+        self.assertEqual(p["mas_bajo"], "post_4")
+        self.assertIsNone(p["vuelta"])
+        frase = turnos_costo.frase_patron(p, "hrv_last_night")
+        self.assertEqual(frase["kind"], "no_vuelve")
+
+    def test_shifts_hero_caption_reads_the_held_return_not_the_earlier_one(self):
+        """BODY-TENDENCIAS-LEYENDA-PATRON-1 defect (1): the Shifts hero caption
+        (body/rutas/turnos.py's `_perfil_caption`) reads `perfil_por_dia`'s own `vuelta` field, so
+        the same sleep-shaped excursion (out, back, out and worst, back) must read "by day +4
+        after", never "by day +2 after" -- the return that did not hold."""
+        fuera = self.banda_bajo_diff - 8
+        peor = self.banda_bajo_diff - 15
+        valores = {"noche_1": self.hrv_media - 5, "post_1": self.hrv_media + fuera,
+                   "post_2": self.hrv_media, "post_3": self.hrv_media + peor,
+                   "post_4": self.hrv_media}
+        self._seed([2, 2, 2], valores)
+        p = turnos_costo.perfil_por_dia(self.conn, 1, "hrv_last_night", HOY)
+        caption_es = turnos_ruta._perfil_caption(T("es"), p)
+        caption_en = turnos_ruta._perfil_caption(T("en"), p)
+        self.assertIn("día +4 después", caption_es)
+        self.assertNotIn("día +2 después", caption_es)
+        self.assertIn("day +4 after", caption_en)
+        self.assertNotIn("day +2 after", caption_en)
+
     def test_fewer_than_min_bloques_previos_is_a_reason_code(self):
         valores = {"noche_1": self.hrv_media - 10}
         self._seed([2, 2], valores)  # fewer than MIN_BLOQUES_PREVIOS (3)
@@ -175,6 +223,56 @@ class PerfilPorDiaTest(unittest.TestCase):
         p = turnos_costo.perfil_por_dia(conn, 1, "hrv_last_night", HOY)
         self.assertEqual(p["motivo"], "pocos_bloques_previos")
         self.assertNotIn("offsets", p)
+
+
+class PerfilesPatronTest(unittest.TestCase):
+    """BODY-TENDENCIAS-LEYENDA-PATRON-1: perfiles_patron shares one combined reader, one
+    bloques_noche call and one referencia() call across every metric in MODELO['metricas'] --
+    its own result for each metric must equal calling perfil_por_dia for that metric alone."""
+
+    def test_matches_perfil_por_dia_called_separately_for_every_metric(self):
+        conn = _mkconn(self)
+        for metric in turnos_costo.MODELO["metricas"]:
+            _fill_reference(conn, 1, metric, HOY)
+        for inicio, dias in zip(_place_blocks(HOY, [2, 2, 2]), [2, 2, 2]):
+            fin = inicio + timedelta(dias - 1)  # once per block, never once per metric
+            d = inicio
+            while d <= fin:
+                _insert_shift(conn, 1, d.isoformat())
+                d += timedelta(1)
+            bloque = turnos_costo.Bloque(inicio=inicio.isoformat(), fin=fin.isoformat(), dias=dias)
+            for metric in turnos_costo.MODELO["metricas"]:
+                for offset, v in {"noche_1": 40.0, "post_1": 60.0}.items():
+                    dia = turnos_costo._offset_day(bloque, offset)
+                    if dia is not None:
+                        db.set_metric(conn, dia.isoformat(), metric, v, "garmin", 1)
+        perfiles = turnos_costo.perfiles_patron(conn, 1, HOY)
+        self.assertEqual(set(perfiles), set(turnos_costo.MODELO["metricas"]))
+        for metric in turnos_costo.MODELO["metricas"]:
+            self.assertEqual(perfiles[metric], turnos_costo.perfil_por_dia(conn, 1, metric, HOY))
+
+    def test_one_statement_per_metric_never_happens(self):
+        """The combined reader costs ONE statement for every metric in MODELO['metricas']
+        together, not one per metric -- the whole reason perfiles_patron exists instead of
+        perfil_por_dia in a loop (BODY-RENDIMIENTO-1's own ceiling on /trends). Measured on a
+        freshly opened connection, the only kind tests/_rutas.py's contar_sql can trace."""
+        from tests._rutas import contar_sql
+        path = Path(tempfile.mkdtemp(dir=TMP)) / "t.db"
+        conn = open_conn(self, path)
+        db.init(conn)
+        for metric in turnos_costo.MODELO["metricas"]:
+            _fill_reference(conn, 1, metric, HOY)
+        conn.commit()
+        with contar_sql() as stats:
+            medido = db.connect(path)
+            try:
+                turnos_costo.perfiles_patron(medido, 1, HOY)
+            finally:
+                medido.close()
+        # db.connect()'s own two PRAGMAs (foreign_keys, busy_timeout) + one combined metric read +
+        # one bloques_noche (exclusion window, inside referencia) + one bloques_noche (this call's
+        # own RESUMEN_DIAS window) = 5, regardless of how many of the five metrics succeed or fail.
+        self.assertEqual(stats["statements"], 5)
 
 
 class ResumenCarriesPerfilTest(unittest.TestCase):
