@@ -1034,6 +1034,8 @@
   "settings.nutriente.vacio": "You have no daily target yet.",
   "settings.nutriente.form_titulo": "New daily target",
   "settings.nutriente.metric": "Nutrient",
+  "settings.nutriente.kind": "Target type",
+  "settings.nutriente.sentido": "Direction",
   "settings.nutriente.kind.absolute": "Fixed amount",
   "settings.nutriente.kind.per_kg": "Per kg of body weight",
   "settings.nutriente.kind.off": "Remove the target",

@@ -1034,6 +1034,8 @@
   "settings.nutriente.vacio": "Todavía no tienes ninguna meta diaria.",
   "settings.nutriente.form_titulo": "Nueva meta diaria",
   "settings.nutriente.metric": "Nutriente",
+  "settings.nutriente.kind": "Tipo de meta",
+  "settings.nutriente.sentido": "Sentido",
   "settings.nutriente.kind.absolute": "Cantidad fija",
   "settings.nutriente.kind.per_kg": "Por kg de peso corporal",
   "settings.nutriente.kind.off": "Quitar la meta",

@@ -26,56 +26,6 @@
   </form>
   <p class="note mt-8">{{ t('settings.aplicar_mcp.desc') }}</p>
 </div>
-<div class="card">
-  <div class="q">{{ t('settings.nutriente.titulo') }}</div>
-  {% if nutriente_vigentes %}
-  <ul class="plan mt-6">
-  {% for o in nutriente_vigentes %}
-    <li><div class="flex-1">{{ o.label }}</div><div class="k">{{ o.texto }}</div></li>
-  {% endfor %}
-  </ul>
-  {% else %}
-  <p class="note m-0">{{ t('settings.nutriente.vacio') }}</p>
-  {% endif %}
-  {% if nutriente_pendientes %}
-  <ul class="plan mt-6">
-  {% for p in nutriente_pendientes %}
-    <li>
-      <div class="flex-1">{{ p.metric_label }}: {{ p.texto }}</div>
-      <form method="post" action="/settings/nutriente/propuestas/{{ p.id }}/aplicar" class="m-0">
-        <input type="hidden" name="back" value="/settings">
-        <button type="submit" class="btn on">{{ t('asistente.propuesta.aplicar') }}</button>
-      </form>
-      <form method="post" action="/settings/nutriente/propuestas/{{ p.id }}/descartar" class="m-0">
-        <input type="hidden" name="back" value="/settings">
-        <button type="submit" class="taplink">{{ t('asistente.propuesta.descartar') }}</button>
-      </form>
-    </li>
-  {% endfor %}
-  </ul>
-  {% endif %}
-  <details class="files mt-6">
-    <summary class="k">{{ t('settings.nutriente.form_titulo') }}</summary>
-    <form method="post" action="/settings/nutriente/proponer" class="mt-6">
-      <input type="hidden" name="back" value="/settings">
-      <select class="field" name="metric_key" aria-label="{{ t('settings.nutriente.metric') }}">
-      {% for m in nutriente_metric_keys %}<option value="{{ m.key }}">{{ m.label }}</option>{% endfor %}
-      </select>
-      <select class="field mt-6" name="kind">
-        <option value="absolute">{{ t('settings.nutriente.kind.absolute') }}</option>
-        <option value="per_kg">{{ t('settings.nutriente.kind.per_kg') }}</option>
-        <option value="off">{{ t('settings.nutriente.kind.off') }}</option>
-      </select>
-      <input class="field mt-6" type="number" step="0.1" min="0.1" name="amount"
-             aria-label="{{ t('settings.nutriente.amount') }}" placeholder="{{ t('settings.nutriente.amount') }}">
-      <select class="field mt-6" name="sentido">
-        <option value="al_menos">{{ t('settings.nutriente.sentido.al_menos') }}</option>
-        <option value="como_maximo">{{ t('settings.nutriente.sentido.como_maximo') }}</option>
-      </select>
-      <button type="submit" class="btn mt-6">{{ t('settings.nutriente.guardar') }}</button>
-    </form>
-  </details>
-</div>
 {% if has_household %}
 <div class="card">
   <div class="q">{{ t('settings.compartir.titulo') }}</div>
@@ -113,6 +63,56 @@
   <p class="note">{{ t('settings.compartir.sin_hogar') }}</p>
 </div>
 {% endif %}
+<div class="card">
+  <div class="q">{{ t('settings.nutriente.titulo') }}</div>
+  {% if nutriente_vigentes %}
+  <ul class="plan mt-6">
+  {% for o in nutriente_vigentes %}
+    <li><div class="flex-1">{{ o.label }}</div><div class="k">{{ o.texto }}</div></li>
+  {% endfor %}
+  </ul>
+  {% else %}
+  <p class="note m-0">{{ t('settings.nutriente.vacio') }}</p>
+  {% endif %}
+  {% if nutriente_pendientes %}
+  <ul class="plan mt-6">
+  {% for p in nutriente_pendientes %}
+    <li>
+      <div class="flex-1">{{ p.metric_label }}: {{ p.texto }}</div>
+      <form method="post" action="/settings/nutriente/propuestas/{{ p.id }}/aplicar" class="m-0">
+        <input type="hidden" name="back" value="/settings">
+        <button type="submit" class="btn on">{{ t('asistente.propuesta.aplicar') }}</button>
+      </form>
+      <form method="post" action="/settings/nutriente/propuestas/{{ p.id }}/descartar" class="m-0">
+        <input type="hidden" name="back" value="/settings">
+        <button type="submit" class="taplink">{{ t('asistente.propuesta.descartar') }}</button>
+      </form>
+    </li>
+  {% endfor %}
+  </ul>
+  {% endif %}
+  <details class="files mt-6">
+    <summary class="k">{{ t('settings.nutriente.form_titulo') }}</summary>
+    <form method="post" action="/settings/nutriente/proponer" class="mt-6">
+      <input type="hidden" name="back" value="/settings">
+      <select class="field" name="metric_key" aria-label="{{ t('settings.nutriente.metric') }}">
+      {% for m in nutriente_metric_keys %}<option value="{{ m.key }}">{{ m.label }}</option>{% endfor %}
+      </select>
+      <select class="field mt-6" name="kind" aria-label="{{ t('settings.nutriente.kind') }}">
+        <option value="absolute">{{ t('settings.nutriente.kind.absolute') }}</option>
+        <option value="per_kg">{{ t('settings.nutriente.kind.per_kg') }}</option>
+        <option value="off">{{ t('settings.nutriente.kind.off') }}</option>
+      </select>
+      <input class="field mt-6" type="number" step="0.1" min="0.1" name="amount"
+             aria-label="{{ t('settings.nutriente.amount') }}" placeholder="{{ t('settings.nutriente.amount') }}">
+      <select class="field mt-6" name="sentido" aria-label="{{ t('settings.nutriente.sentido') }}">
+        <option value="al_menos">{{ t('settings.nutriente.sentido.al_menos') }}</option>
+        <option value="como_maximo">{{ t('settings.nutriente.sentido.como_maximo') }}</option>
+      </select>
+      <button type="submit" class="btn mt-6">{{ t('settings.nutriente.guardar') }}</button>
+    </form>
+  </details>
+</div>
 <a href="/ayuda" class="card settings-row">
   <span class="q m-0">{{ t('settings.ayuda') }}</span><span class="k">→</span>
 </a>
