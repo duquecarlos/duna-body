@@ -19468,3 +19468,87 @@ label-crowding defect were fixed -- an explicit merge authorization, not a stop.
 green gate.**
 
 -- merged 82bcce208da8bc1cd749b643b9f4bc9b8e6098cc
+
+## BODY-AGENTE-LEER-SERIE-1 -- leer_serie, one bounded range read of day-by-day figures
+
+Report from the Personal desk, 2026-11-12: a desk helper building the person's body history across
+the whole watch history called body.mcp's `leer_dia` once per day from a script, hit the
+5-reads-per-15-minutes cap (`body/mcp.py`'s `LIMITES["lecturas"] = bucle.MAX_LECTURAS`) and logged
+~870 refused calls, then fell back to reading the database file directly. The cap stays; this
+slice adds the tool that should have existed instead: `leer_serie`, a new `tipo: lectura` entry in
+`body/agente/herramientas.py`'s `HERRAMIENTAS`.
+
+**Rulings, as built.**
+
+1. Input `{metricas: [metric_key, ...] (1..12, each a key `catalogo_tendencias.TODAS` already
+   lists for leer_tendencias), desde: YYYY-MM-DD, hasta: YYYY-MM-DD, paso: 'dia'|'semana'|'mes'}`.
+   Output `{paso, desde, hasta, metricas: {key: {unidad, puntos: [{fecha, valor, n_dias}]}}}`.
+   `fecha` is the day itself at paso 'dia', the week's Monday (`fechas.lunes_de`) at 'semana', the
+   month's first day at 'mes'. A period with no data is ABSENT from `puntos` (never 0); a metric
+   with no data at all in the range is present with an empty list. 'semana'/'mes' average with
+   `statistics.fmean` -- the exact function `body/profile.py`'s own `_build_profile` uses for
+   Trends' monthly line -- grouped the same way, never a second averaging rule; `n_dias` carries
+   the point's own count.
+2. Bounds: paso 'dia' <= 366 days, 'semana' <= 260 weeks (`(lunes_de(hasta) - lunes_de(desde)).days
+   // 7 + 1`), 'mes' unbounded. Crossing one, `desde` after `hasta`, `hasta` after the person's
+   local today (`fechas.hoy_local`), or an unknown metric key, all refuse with a `ToolError` before
+   any SQL runs (proven in tests by a `set_trace_callback` count of 0). The one query over
+   `daily_metric` is ONE statement regardless of range length or metric count: `SELECT metric_key,
+   day, value ... WHERE person_id = ? AND metric_key IN (...) AND day BETWEEN ? AND ?`.
+3. Data level follows leer_tendencias' own: the registry entry's `nivel` is `"resumen"` (so
+   `disponibles()` offers it at resumen/completo, hides it at ninguno, exactly where
+   `ajustes.py`'s own docstring says "resumen = only aggregates ... never one day's value" already
+   draws the line) -- and `paso='dia'` is refused ADDITIONALLY inside `_leer_serie` itself when
+   `nivel == 'resumen'`, since that paso IS one day's value. `ejecutar()` gained one small, generic
+   hook for this: a registry entry may carry `"necesita_nivel": True`, and only then does
+   `ejecutar()` pass `nivel` as `_leer_serie`'s third positional argument -- every other tool's own
+   call shape (`funcion(conn, person_id, **params)`) is unchanged.
+4. Through `body.mcp` it is listed and callable with NO new code in `body/mcp.py`: `tools/list`
+   reads `bucle._tool_specs(nivel)` -> `herramientas.disponibles(nivel)` generically, and
+   `tools/call`'s `_llamar_herramienta` already counts any `tipo == "lectura"` call once against
+   `sesion.tope_lecturas` regardless of which tool or how big its result is. Proven directly: one
+   `leer_serie` call over a 28-day range, through `body.mcp`, costs exactly one of the 5-read
+   window (`tests/test_mcp.py::ToolsCallTest::test_one_leer_serie_call_counts_as_one_lectura_not_
+   one_per_day`), and the same through the in-app loop
+   (`tests/test_agente_bucle.py::LecturasCapTest::test_one_leer_serie_call_over_many_days_still_
+   counts_as_one_lectura`). `body/agente/bucle.py` needed no change at all -- left untouched, as
+   the spec allowed.
+
+`tests/test_agente_registro.py`'s two census tests that pin the registry's exact shape were
+extended to the new truth, never loosened: the lectura count 13 -> 14 (renamed
+`test_fourteen_lectura_tools_with_expected_levels`, `leer_serie: "resumen"` added to
+`expected_levels`), and `HERRAMIENTAS`'s own length 37 -> 38. `_all_tool_calls()` gained a
+`leer_serie` case so the existing no-writer static guard, the "running every lectura tool changes
+nothing" behavioural guard, and the "every lectura tool's output survives json.dumps" test all
+cover it automatically, with no new test logic of their own.
+
+`tests/test_agente_leer_serie.py` (new, 20 tests): day/week/month shapes; a gap absent, never 0; an
+empty-data metric present with `[]`; the 'mes' figure checked equal, value and `n_dias` both, to
+`profile.metric_profile(...).months` for the same key and month; the 'dia'/'semana' bounds refused
+with a traced statement count of 0; a future `hasta` refused; an unknown metric refused; 'dia'
+refused at nivel 'resumen' while 'semana'/'mes' are allowed there; the tool absent from
+`disponibles('ninguno')` and refused by `ejecutar()` there; another person's `daily_metric` rows
+(person_id=2) never appearing in person 1's own result; and the statement count held at exactly 1
+across a 10-day vs. a 366-day range, and across 1 vs. 3 metrics.
+
+No password, token, session secret or health figure of a real person was read, printed or written
+anywhere in this slice; every test fixture is invented demo data (seeded `resting_hr`/`steps`/
+`hrv_last_night` values, invented person ids), no real watch history, no network.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry), the exact
+command is `.venv/Scripts/python.exe -m unittest discover tests -t .`, run ONCE in the foreground;
+the harness moved it to the background past its own 600 s cap, and this session blocked on the
+output file until its `Ran ` line appeared:
+
+    Ran 3175 tests in 848.595s
+
+    OK (skipped=1)
+
+**Merge policy, this slice.** The diff touches `body/agente/herramientas.py`,
+`tests/test_agente_leer_serie.py`, `tests/test_agente_registro.py`, `tests/test_agente_bucle.py`,
+`tests/test_mcp.py` and this ledger. No schema or migration change (`body/db.py` untouched, no
+migration added). No customer-facing bytes: `leer_serie` is a tool call's own JSON shape, read only
+by a model or an external MCP caller -- no template, no route, no string a person reads on a
+screen changed. No cross-repo contract or DTO change: nothing here is a shape another repository
+mirrors. All three of merge policy A's conditions pass, and the spec's own body says so too ("a
+read tool, no screen, no schema, caps unchanged"). **Merges on this green gate.**
