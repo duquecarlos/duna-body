@@ -445,5 +445,44 @@ class LeerEntrenoTest(unittest.TestCase):
         self.assertEqual(out["planeado"], [])
 
 
+class LeerEntrenoUltimaVezTest(unittest.TestCase):
+    """BODY-ENTRENO-ULTIMA-VEZ-1 ruling 3: leer_entreno's own `ultima_vez` key, additive -- the
+    existing session/series/plan output is untouched."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        _insert_activity(self.conn, 1, "a1", "2026-11-01")
+        db.save_exercise_sets(self.conn, 1, "garmin", "a1", [_watch_set(reps=8, weight_value=40)])
+        _insert_activity(self.conn, 1, "a2", "2026-11-10")
+        db.save_exercise_sets(self.conn, 1, "garmin", "a2", [_watch_set(reps=10, weight_value=45)])
+        self.conn.commit()
+
+    def test_each_session_carries_its_own_ultima_vez(self):
+        out = herramientas.ejecutar(self.conn, 1, "leer_entreno", {"day": "2026-11-10"}, "completo")
+        sesion = out["sesiones"][0]
+        self.assertEqual(
+            sesion["ultima_vez"]["press banca"],
+            {"source": "garmin", "source_id": "a1", "day": "2026-11-01",
+             "sets": [{"reps": 8, "weight_kg": 40.0, "corrected": False}],
+             "mejor": {"reps": 8, "weight_kg": 40.0, "corrected": False}},
+        )
+
+    def test_nothing_else_in_the_output_changes(self):
+        out = herramientas.ejecutar(self.conn, 1, "leer_entreno", {"day": "2026-11-10"}, "completo")
+        sesion = out["sesiones"][0]
+        self.assertEqual(set(sesion), {"dia", "titulo", "fuente", "hora_inicio", "series", "ultima_vez"})
+        self.assertEqual(sesion["dia"], "2026-11-10")
+        self.assertEqual(sesion["series"][0]["ejercicio"], "press banca")
+        self.assertEqual(sesion["series"][0]["repeticiones"], 10)
+        self.assertEqual(sesion["series"][0]["peso_kg"], 45.0)
+
+    def test_an_exercise_never_done_before_reads_none(self):
+        _insert_activity(self.conn, 1, "a3", "2026-11-12")
+        db.save_exercise_sets(self.conn, 1, "garmin", "a3", [_watch_set(exercise="curl de bíceps")])
+        self.conn.commit()
+        out = herramientas.ejecutar(self.conn, 1, "leer_entreno", {"day": "2026-11-12"}, "completo")
+        self.assertIsNone(out["sesiones"][0]["ultima_vez"]["curl de bíceps"])
+
+
 if __name__ == "__main__":
     unittest.main()

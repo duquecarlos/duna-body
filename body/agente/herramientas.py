@@ -60,8 +60,9 @@ import json
 import sqlite3
 from datetime import date, timedelta
 
-from .. import anatomia, catalogo_tendencias, compartir, db, enlaces, errores, experimentos, fechas, goals, \
-    history, household, nutriente_objetivo, profile, pull, readiness, shift_import, turnos_costo, tutoriales
+from .. import anatomia, catalogo_tendencias, compartir, db, enlaces, entreno_historial, errores, experimentos, \
+    fechas, goals, history, household, nutriente_objetivo, profile, pull, readiness, shift_import, \
+    turnos_costo, tutoriales
 from ..i18n import LANGS, T
 from . import ajustes, propuestas
 
@@ -735,6 +736,10 @@ def _leer_entreno(conn: sqlite3.Connection, person_id: int, day: str | None = No
                             t, {s["category"]} if s["category"] in zonas_dia else set())}
                        for s in sets
                        if s["set_type"] == "active" and not s["excluded_by_person"]],
+            # BODY-ENTRENO-ULTIMA-VEZ-1 ruling 3: additive -- what the person did last time this
+            # same exercise came up, by its effective name, so the assistant can say "last time
+            # 3x8 at 40 kg" from data, never from memory.
+            "ultima_vez": entreno_historial.ultimas_veces(conn, person_id, a["sets_source"], a["sets_source_id"]),
         })
     planes = conn.execute(
         "SELECT * FROM plan WHERE person_id = ? AND day BETWEEN ? AND ? AND ejercicios_json IS NOT NULL "
