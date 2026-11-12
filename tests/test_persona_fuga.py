@@ -144,6 +144,14 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
         "'active', ?, ?, ?)",
         (person_id, f"ZZ{tag}-SERIE", f"{DAYS[-1]}T07:05:00+00:00", f"{DAYS[-1]}T07:05:00+00:00"),
     )
+    # ORCH-CARLOS-DELEGATES-TIER-1-1: fuente_importacion is person-owned (its own person_id column)
+    # and has its first census row here -- no marker needed, the census only checks export/
+    # delete-all coverage, and ultimo_error/ultimo_error_at are both NULL on a successful import.
+    conn.execute(
+        "INSERT INTO fuente_importacion (person_id, fuente, primer_dia, ultimo_dia, computed_at, "
+        "dias, importado_at) VALUES (?, 'personal:commute-diario.csv', ?, ?, ?, 1, ?)",
+        (person_id, DAYS[-1], DAYS[-1], f"{DAYS[-1]}T06:00:00+00:00", f"{DAYS[-1]}T07:30:00+00:00"),
+    )
     sleep_start, sleep_end = (("23:01", "06:13") if tag == "A" else ("23:07", "07:19"))
     conn.execute(
         "INSERT INTO sleep_session (person_id, day, start_local, end_local) VALUES (?, ?, ?, ?)",

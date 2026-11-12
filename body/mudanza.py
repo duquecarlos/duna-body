@@ -111,6 +111,7 @@ REGISTRY: tuple[TableSpec, ...] = (
     TableSpec("ingesta", match_cols=None, fk_remap=("comida_id",), fk_table={"comida_id": "comida"}),
     TableSpec("period", match_cols=None),
     TableSpec("nutrient_target", match_cols=("person_id", "metric_key", "start_day")),
+    TableSpec("fuente_importacion", match_cols=("person_id", "fuente")),
     TableSpec("recuperacion_actividad",
               match_cols=("person_id", "activity_source", "activity_source_id", "modelo_version")),
     TableSpec("turno_fc", match_cols=("person_id", "day", "modelo_version")),
