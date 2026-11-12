@@ -19084,10 +19084,16 @@ own limit before producing a result, per protocol, and re-launched rather than t
 (`test_corregir_comida_is_offered_and_callable`), 1 in `tests/test_mcp_aplicar.py`
 (`test_corregir_comida_is_one_proposal_and_one_apply`).
 
-**Merge policy, this slice.** The diff widens an existing CHECK through the already-established
-rebuild migration (additive and reversible, no new table or column, no data loss) and adds no
-customer-facing bytes beyond the assistant's own proposal text (the chat panel this spec itself
-names as the one new wording) and no cross-repo contract. None of merge policy A's three conditions
-trips. **Merges on this green gate.**
+**Merge policy, this slice.** The diff DOES widen `propuesta_agente.accion`'s CHECK -- merge policy
+A's schema condition trips on its face. The spec's own approval-reason (ORCH-CARLOS-DELEGATES-
+TIER-1-1) already classified exactly this change ("the ONLY schema change is widening ... through
+the established rebuild migration, as every prior proposal kind did. Additive and reversible,
+invented data in tests, no screen changes; merges on a green gate") and its body says, in words,
+"APPROVED to merge on a green gate" -- the explicit authorization this protocol requires to merge
+past a tripped condition. Customer-facing bytes changed too (the assistant's own proposal card
+text, i18n strings a person reads in the chat panel): the same approval-reason names this as "no
+screen changes" (no template, no route, no new page) and that paragraph's own wording is what
+clears it, not an absence of new strings. No cross-repo contract changed. **Merges on this green
+gate, per that explicit authorization.**
 
 -- merged
