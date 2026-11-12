@@ -18741,3 +18741,74 @@ sentence and its `.read` paragraph) -- merge policy A's customer-bytes condition
 body says to stop before merge ("stop AWAITING_APPROVAL on the branch, tree EMPTY (the orchestrator
 looks at Trends at 375 px before merging)"), so this entry is written and committed on the branch; no
 merge.
+
+### -M -- two defects from the orchestrator's own review: a vuelta that did not hold, and a second reader (2026-11-12)
+
+Dispatched after the orchestrator looked at `/trends` on the demo at 375 px (gate `Ran 2965 OK,
+skipped=1`, worker report `logs/worker-body-tendencias-leyenda-patron-1-body-app-*.json`, newest):
+captions rendered under four cards with no horizontal scroll, but sleep's own read -- "Lowest on
+day +3 after; back in your range by day +2 after." -- had the return land BEFORE the low point.
+
+**Defect 1, a logic bug in `vuelta` itself.** `perfil_por_dia`'s `vuelta` used to be "the first
+post_* offset back inside the band", picked without regard to where the worst offset fell -- a dip
+that returns, leaves again and bottoms out later reported the earlier, non-holding return. The
+Shifts hero caption (`body/rutas/turnos.py`'s `_perfil_caption`, BODY-TURNOS-PERFIL-DIA-1) reads the
+same `vuelta` field and could say the same false thing; fixing the reader fixed both captions with
+no change to `turnos.py` itself.
+
+**`vuelta`, as built.** The first post_* offset after the LAST offset anywhere in `OFFSETS` that
+lies outside the band in the metric's own worse direction, itself inside the band; `None` when no
+offset lies outside the band at all (nothing to return from -- `frase_patron`'s kind stays
+`estable`), when no post_* offset is measured after that last excursion, or when what is measured
+there is still outside the band. The global extreme (`mas_bajo`/`mas_alto`) is always itself one of
+the offsets outside the band whenever any are (it cannot be less extreme than a value already past
+the band threshold), so the anchor -- the LAST such offset -- is always at or after it, and `vuelta`,
+one step further still, is always strictly later. `frase_patron` asserts exactly that
+(`OFFSETS.index(vuelta) > OFFSETS.index(peor_offset)`) at the one place both offsets are read
+together, since a spec never says "back by" an offset earlier than or equal to the worst.
+
+**Defect 2, two readers of the same rows.** `turnos_costo.py` carried a private `_LectorVarias`
+beside `body/lector.py`'s `Lector`, differing only in spending one combined `metric_key IN (...)`
+statement instead of one statement per metric -- added so `/trends`' own statement ceiling would
+not have to pay once per metric for `perfiles_patron`. `Lector` itself now loads every metric that
+way; `_LectorVarias` is deleted and `perfiles_patron` builds a `Lector` like every other caller.
+
+**Statement counts, this module's own fixture** (`demo._seed(dias=30)` + one assistant
+conversation, the same fixture `tests/test_rendimiento.py` already uses): `/trends` unchanged at 18
+(it already used the combined reader via `_LectorVarias`); `/shifts` 41 -> 32 (`resumen()`'s own
+5-metric `Lector` and `_turnos_strip`'s own 6-metric `Lector`, each now 1 statement instead of 5/6);
+`/shifts/como` 19 -> 15 (`resumen()`'s same `Lector`). `tests/test_rendimiento.py`'s `_CEILINGS`
+drop from 50/25 to 42/20 (`ceil(measured * 1.3)`, the same ~30% margin rule the table already uses);
+no ceiling raised.
+
+New tests: `tests/test_turnos_perfil.py` gained 3 -- the sleep-shaped case (out at post_1, in at
+post_2, out and worst at post_3, in at post_4) giving `vuelta` `post_4`, not `post_2`; out at
+post_4 alone giving `vuelta` `None` and `frase_patron`'s kind `no_vuelve`; and the Shifts hero
+caption (`turnos._perfil_caption`) on the same sleep-shaped data reading "day +4 after" in both
+languages, never "day +2 after". Every existing `vuelta`-bearing test in
+`tests/test_turnos_perfil.py` and `tests/test_tendencias_patron.py` already placed its worst offset
+at or after its first out-of-band offset, so each keeps its original answer under the new
+definition -- checked by running them, not assumed. 3 new tests total (2965 -> 2968).
+
+Commits: `a921c8f630524ce538b1d56a3e7c9dcbaa325d9e` (defect 1, `vuelta`'s new definition and the
+`frase_patron` assert, with tests), `d6e02b0c0b7f344f3466cd3280d594932ead6c91` (defect 2, the
+`Lector` fold and the ceiling table's remeasured figures).
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry), the exact
+command `.venv/Scripts/python.exe -m unittest discover tests -t .`, one foreground run (moved to
+the background past the 600 s cap, waited on to completion, exit code 0):
+
+    Ran 2968 tests in 1104.180s
+
+    OK (skipped=1)
+
+2968 = the prior 2965 plus exactly this slice's own 3 new tests; no other count moved.
+
+No password, token, session secret, device key or health figure was read, printed, or written
+anywhere in this slice's own work.
+
+**Merge policy, this slice.** The diff touches `body/lector.py`, `body/turnos_costo.py` and their
+tests only -- no schema or migration, no cross-repo contract or DTO, and no i18n key or rendered
+string changed (both defects are fixed entirely inside the reader a caption already reads from;
+every existing `trends.patron.*`/`shifts.perfil.*` string is unchanged). Merge policy A's three
+conditions all pass, so this merges on the green gate above without waiting for approval.
