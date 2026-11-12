@@ -52,6 +52,16 @@
 <h2>{{ t('day.comidas.titulo') }}</h2>
 {% if comidas %}<ul class="list">{% for m in comidas %}<li>{% if m.hora %}<span class="note">{{ m.hora }}</span> {% endif %}{% if m.descripcion %}<strong>{{ m.descripcion }}</strong><br>{% endif %}<span class="note">{% for c in m.cantidades %}{{ c.label }}: {% if c.estimado %}<span class="approx">≈</span>{% endif %}{{ c.valor }}{% if not loop.last %} · {% endif %}{% endfor %}</span></li>{% endfor %}</ul>
 {% else %}<p class="note">{{ t('day.comidas.vacio') }}</p>{% endif %}
+{% if objetivos_nutriente %}
+<h2>{{ t('nutriente.hoy.titulo') }}</h2>
+<ul class="list">
+{% for o in objetivos_nutriente %}
+  <li><strong>{{ o.label }}</strong><br><span class="note">{{ o.texto }}</span>
+  {% if o.pct is not none %}<svg class="barra" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"><rect width="100" height="6" rx="3" class="c-inset"/><rect width="{{ o.pct }}" height="6" rx="3" class="c-body"/></svg>{% endif %}
+  </li>
+{% endfor %}
+</ul>
+{% endif %}
 {% if checkin %}
 <h2>{{ t('day.checkin.titulo') }}</h2>
 <div class="card">

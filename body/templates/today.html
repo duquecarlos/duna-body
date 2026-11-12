@@ -154,6 +154,23 @@
   {% if ventana.comida_sueno %}<p class="note mt-6 mb-0">{{ t('today.ventana.comida_sueno', horas=ventana.comida_sueno) }}</p>{% endif %}
 </div>
 
+{% if objetivos_nutriente %}
+<div class="card">
+  <div class="q">{{ t('nutriente.hoy.titulo') }}</div>
+  <ul class="plan mt-6">
+  {% for o in objetivos_nutriente %}
+    <li class="block">
+      <div class="k">{{ o.label }}</div>
+      <div class="note">{{ o.texto }}</div>
+      {% if o.pct is not none %}
+      <svg class="barra" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"><rect width="100" height="6" rx="3" class="c-inset"/><rect width="{{ o.pct }}" height="6" rx="3" class="c-body"/></svg>
+      {% endif %}
+    </li>
+  {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 {% if semana_nocturna %}
 <div class="card">
   <div class="q">{{ t('today.semana_nocturna.titulo') }}</div>

@@ -7,6 +7,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest import mock
 
@@ -480,6 +481,127 @@ class CardTextTest(unittest.TestCase):
     def test_off_card_es(self):
         t = self._tarjeta("es", metric_key="protein_g", kind="off", sentido="al_menos", start_day=DAY)
         self.assertIn("sin meta diaria", t["despues"])
+
+
+# ---- Today / Día / Ajustes screens -------------------------------------------------------------------
+
+def _esc(s: str) -> str:
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&#34;").replace("'", "&#39;")
+
+
+def _t(lang: str, key: str, **kw) -> str:
+    return _esc(T(lang)(key, **kw))
+
+
+class PantallasTest(unittest.TestCase):
+    client = TestClient(web.app, follow_redirects=False)
+
+    def _reset_db(self, name: str):
+        orig = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
+        self.addCleanup(web.app.dependency_overrides.clear)
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / name
+        conn = db.connect()
+        self.addCleanup(conn.close)
+        db.init(conn)
+        return conn
+
+    def _seed_dos_metas(self, conn, hoy):
+        """A below-target per_kg line (protein_g) and a within-limit absolute line (caffeine_mg),
+        the same two shapes ruling 8's demo data shows -- invented amounts only."""
+        db.set_metric(conn, hoy.isoformat(), "resting_hr", 55.0, "garmin", 1)
+        db.set_metric(conn, hoy.isoformat(), "body_weight_kg", 75.0, "self", 1)
+        db.registrar_ingesta(conn, 1, hoy.isoformat(), "protein_g", 60.0, False)
+        db.registrar_ingesta(conn, 1, hoy.isoformat(), "caffeine_mg", 100.0, False)
+        with conn:
+            db.set_nutrient_target(conn, 1, "protein_g", hoy.isoformat(), "per_kg", 1.6, "al_menos")
+            db.set_nutrient_target(conn, 1, "caffeine_mg", hoy.isoformat(), "absolute", 400.0, "como_maximo")
+
+    def test_today_shows_both_lines(self):
+        conn = self._reset_db("hoy_nutriente.db")
+        hoy = date(2026, 6, 10)
+        self._seed_dos_metas(conn, hoy)
+        with mock.patch.object(comun, "_today_local", return_value=hoy):
+            r = self.client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(_t("es", "metric.protein_g"), r.text)
+        self.assertIn(_t("es", "metric.caffeine_mg"), r.text)
+        self.assertIn(_t("es", "nutriente.hoy.progreso", total="60", objetivo="120", unidad="g", n=1,
+                          restante="60"), r.text)
+        self.assertIn(_t("es", "nutriente.hoy.limite_quedan", restante="300", unidad="mg"), r.text)
+
+    def test_day_shows_both_lines_for_a_past_day(self):
+        conn = self._reset_db("dia_nutriente.db")
+        hoy = date(2026, 6, 10)
+        self._seed_dos_metas(conn, hoy)
+        r = self.client.get(f"/day/{hoy.isoformat()}")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(_t("es", "metric.protein_g"), r.text)
+        self.assertIn(_t("es", "metric.caffeine_mg"), r.text)
+        self.assertIn(_t("es", "nutriente.hoy.progreso", total="60", objetivo="120", unidad="g", n=1,
+                          restante="60"), r.text)
+        self.assertIn(_t("es", "nutriente.hoy.limite_quedan", restante="300", unidad="mg"), r.text)
+
+    def test_falta_peso_shows_its_own_line_with_no_number_guessed(self):
+        conn = self._reset_db("falta_peso.db")
+        hoy = date(2026, 6, 10)
+        db.set_metric(conn, hoy.isoformat(), "resting_hr", 55.0, "garmin", 1)
+        db.registrar_ingesta(conn, 1, hoy.isoformat(), "protein_g", 60.0, False)
+        with conn:
+            db.set_nutrient_target(conn, 1, "protein_g", hoy.isoformat(), "per_kg", 1.6, "al_menos")
+        with mock.patch.object(comun, "_today_local", return_value=hoy):
+            r = self.client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(_t("es", "nutriente.hoy.falta_peso"), r.text)
+
+    def test_settings_lists_the_live_target(self):
+        conn = self._reset_db("settings_nutriente.db")
+        hoy = date(2026, 6, 10)
+        with conn:
+            db.set_nutrient_target(conn, 1, "protein_g", hoy.isoformat(), "per_kg", 1.6, "al_menos")
+        r = self.client.get("/settings")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(_t("es", "metric.protein_g"), r.text)
+        self.assertIn(_t("es", "nutriente.objetivo.per_kg", cantidad="1,6", unidad="g"), r.text)
+
+    def test_proposing_then_applying_through_settings_writes_the_row(self):
+        self._reset_db("settings_nutriente_form.db")
+        r = self.client.post("/settings/nutriente/proponer",
+                              data={"metric_key": "protein_g", "kind": "absolute", "amount": "130",
+                                    "sentido": "al_menos", "back": "/settings"})
+        self.assertEqual(r.status_code, 303)
+        conn = db.connect()
+        self.addCleanup(conn.close)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM nutrient_target").fetchone()[0], 0)
+        propuesta_id = conn.execute(
+            "SELECT id FROM propuesta_agente WHERE accion = 'proponer_objetivo_nutriente'").fetchone()[0]
+
+        r = self.client.get("/settings")
+        self.assertIn("130", r.text)
+
+        r = self.client.post(f"/settings/nutriente/propuestas/{propuesta_id}/aplicar",
+                              data={"back": "/settings"})
+        self.assertEqual(r.status_code, 303)
+        row = conn.execute("SELECT kind, amount FROM nutrient_target WHERE metric_key = 'protein_g'").fetchone()
+        self.assertEqual((row["kind"], row["amount"]), ("absolute", 130.0))
+
+    def test_discarding_through_settings_writes_nothing(self):
+        self._reset_db("settings_nutriente_descartar.db")
+        self.client.post("/settings/nutriente/proponer",
+                          data={"metric_key": "protein_g", "kind": "absolute", "amount": "130",
+                                "sentido": "al_menos", "back": "/settings"})
+        conn = db.connect()
+        self.addCleanup(conn.close)
+        propuesta_id = conn.execute(
+            "SELECT id FROM propuesta_agente WHERE accion = 'proponer_objetivo_nutriente'").fetchone()[0]
+
+        r = self.client.post(f"/settings/nutriente/propuestas/{propuesta_id}/descartar",
+                              data={"back": "/settings"})
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM nutrient_target").fetchone()[0], 0)
+        estado = conn.execute(
+            "SELECT estado FROM propuesta_agente WHERE id = ?", (propuesta_id,)).fetchone()[0]
+        self.assertEqual(estado, "descartada")
 
 
 if __name__ == "__main__":
