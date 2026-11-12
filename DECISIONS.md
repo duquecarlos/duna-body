@@ -17872,4 +17872,4 @@ slice's own work.
 
 **Merge policy.** The diff touches one test file only (`tests/test_mock_r2_hoy.py`) plus this
 ledger entry -- no schema or migration change, no customer-facing bytes, no cross-repo contract.
-Merges cleanly on this green gate, per `ORCH-CARLOS-DELEGATES-TIER-1-1`.
+Merges cleanly on this green gate, per `ORCH-CARLOS-DELEGATES-TIER-1-1`. -- merged f328d84
