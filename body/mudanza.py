@@ -61,6 +61,13 @@ SKIPPED_TABLES = {
     "dispositivo": "device",
     "garmin_cuenta": "token (the host pulls Garmin itself, BODY-GARMIN-HOST-1 -- no token moves)",
     "hogar_miembro": "re-derived from Cuenta at the next sign-in, never hand-copied",
+    # BODY-COMIDA-COMPARTIDA-1: a shared-meal link names another household member, who this
+    # single-person source install never has a row for -- the same choice as figura_compartida and
+    # hogar_miembro, never hand-copied. No nutrition is lost: an already-applied portion's own
+    # comida/ingesta rows are this person's own data and migrate normally through the comida table.
+    "comida_compartida": "names another household member as cook or eater, never hand-copied",
+    "comida_compartida_porcion": "the shared-meal link's own per-eater row, never hand-copied",
+    "consentimiento_comida_compartida": "re-settable in Settings after the move, never hand-copied",
 }
 
 # The person-scoped tables, in FK-safe order: every table a row above depends on appears earlier.
