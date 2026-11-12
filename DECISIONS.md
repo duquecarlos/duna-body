@@ -18982,4 +18982,4 @@ horizontal scroll. No defect found. `main` had not moved since the branch (`merg
 equals `rev-parse main` equals `05ff48094c8b6648c1dc2182cad9dbfb57331a26`), so the branch's own gate
 (3031 tests, OK, recorded above) stands as the merge's gate. **APPROVED to merge**
 (orchestrator, ORCH-CARLOS-DELEGATES-TIER-1-1, on the person's consent "A" named in the parent
-spec).
+spec) -- merged b7ef5980fe787ab72be17471776591dccbb65c06.
