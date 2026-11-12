@@ -18215,4 +18215,4 @@ summary line and its header usage comment, both gaining the new commute phrase/e
 merge policy A's three conditions. The spec's own step 4 says in words to merge on a green gate
 ("Green -> ledger ... commit; `git checkout main`; `git merge --no-ff
 feat/body-desplazamiento-local-1` -- APPROVED to merge on a green gate"), authorising the merge past
-this condition.
+this condition. -- merged 92a4e93
