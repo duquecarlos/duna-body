@@ -76,6 +76,15 @@ def _singular_key(base: str, n: int) -> str:
     return f"{base}_one" if n == 1 else base
 
 
+def _frag(t: T, base: str, count: int, **kw) -> str:
+    """One count's own singular-aware fragment -- `base`/`base_one` through `_singular_key` --
+    meant to be plugged into an outer sentence that joins two or more of these (BODY-TURNOS-
+    PERFIL-LEGIBLE-1 ruling 3), rather than a sentence carrying a bare `{n}` of its own.
+    `count` is a separate positional argument, never a `**kw` name, so a fragment whose own
+    placeholder happens to be called `n` (as every one of them here is) can still be passed."""
+    return t(_singular_key(base, count), **kw)
+
+
 def _turnos_ultima_recuperacion(t: T, u: dict) -> str:
     if u["recuperacion_dias"] is None:
         return t("shifts.ultima.recuperacion_sin_dato")
@@ -105,18 +114,39 @@ def _turnos_ultima_ctx(t: T, defs: dict, resumen: dict) -> dict | None:
     }
 
 
-_PERFIL_WIDTH, _PERFIL_HEIGHT = 320, 128
+# BODY-TURNOS-PERFIL-LEGIBLE-1 ruling 1: FIXED near the real width the card draws this chart at on
+# a 375px phone -- 375 (phone) - 2*16 (main's own page gutter, body.css) - 2*14 (.card's own
+# padding, body.css) - 2*1 (.card's border, body.css) = 313. One viewBox unit is then about one CSS
+# pixel there (the defect this slice fixes: the -M's width grew past the card's drawn width, so
+# every unit scaled down and its axis text rendered under the app's own text-size floor). This
+# width never grows with a label's length again -- a label that doesn't fit its slot wraps instead
+# (ruling 2).
+# Two single-name assignments, not one tuple-unpacked line -- tests/test_guardia_parches.py's
+# RouteModuleAttrReadGuardTest only recognises a plain `NAME = value` as "defined at this
+# module's own top level", so a test reading either constant needs it written this way.
+_PERFIL_WIDTH = 313
+_PERFIL_HEIGHT = 128
 _PERFIL_TOP = 10
 _PERFIL_LABEL_DY = 13      # baseline offset below the plot area for the x-axis labels
 _PERFIL_BOTTOM_PAD = 6
-_PERFIL_CHAR_W = 6.0       # approx glyph width (px) at this chart's axis font-size (10px, class
-                           # "tick") -- an approximation from character count, since real glyph
-                           # metrics are not available server-side; generous enough that two labels'
-                           # approximate boxes never touch
+_PERFIL_WRAP_LINE_HEIGHT = 13  # px a wrapped label's second line sits below its first, and how much
+                               # the chart's own height grows -- only when at least one label wraps
+# BODY-TURNOS-PERFIL-LEGIBLE-1 ruling 1: the app's own small-text floor, read from body.css --
+# .fs-12 (12px) is the smallest of the general small-text classes (.k is 13px), and the axis text
+# (CSS class "tick") is set to this size, never below the ruling's own 11px floor.
+_PERFIL_TICK_FONT = 12.0
+_PERFIL_CHAR_W = 0.6 * _PERFIL_TICK_FONT  # approx glyph width (px) at the tick font-size -- an
+                           # approximation from character count, since real glyph metrics are not
+                           # available server-side; generous enough that two labels' approximate
+                           # boxes never touch (restated from BODY-TURNOS-PERFIL-DIA-1-M's own 0.6em
+                           # estimate, now against the floor font-size instead of the old 10px one)
 _PERFIL_LABEL_GAP = 4.0    # minimum clear gap kept between two adjacent x-axis label boxes
 _PERFIL_GUTTER_PAD = 6.0   # clearance between the widest y-tick text and the plot area
 _PERFIL_EDGE_PAD = 2.0     # inside the viewBox's own left/right edge
 _PERFIL_TICK_DIVISIONS = 4  # target divisions for the nice-number y-tick step
+_PERFIL_POINT_R = 3.0      # the offset points' own radius (also the <circle> r attribute below) --
+                           # part of the first/last point's own edge inset (BODY-TURNOS-PERFIL-
+                           # LEGIBLE-1-M), since a circle has no neighbour on its outer side
 
 
 def _perfil_offset_palabra(t: T, offset: str) -> str:
@@ -185,6 +215,18 @@ def _label_px(s: str) -> float:
     return len(s) * _PERFIL_CHAR_W
 
 
+def _perfil_wrap(label: str, slot: float) -> list[str]:
+    """One line unless `label`'s approximate width (`_label_px`, the same character-count
+    estimate BODY-TURNOS-PERFIL-DIA-1-M used) exceeds its own slot -- the point pitch minus the
+    label gap -- in which case it breaks at its (single) space into two lines, each centred on the
+    point (BODY-TURNOS-PERFIL-LEGIBLE-1 ruling 2): "day / before", "noche / 1". A label with no
+    space to break at (the "+1".."+4" post-offsets) always stays one line."""
+    if _label_px(label) <= slot or " " not in label:
+        return [label]
+    i = label.index(" ")
+    return [label[:i], label[i + 1:]]
+
+
 def _perfil_svg(t: T, perfil: dict, caption: str, unit: str, *, color_cls: str = "body") -> str:
     """Server-rendered SVG (Body's CSP forbids inline style/script): the band as a light rect, the
     night offsets shaded, a line through each offset's own mean with a point per offset, an x-axis
@@ -194,15 +236,22 @@ def _perfil_svg(t: T, perfil: dict, caption: str, unit: str, *, color_cls: str =
     enter: whole numbers, on one shared nice step (`_perfil_ticks`), the unit carried once on
     whichever tick is not zero.
 
-    The chart's own width grows past _PERFIL_WIDTH (never shrinks below it) only as far as the
-    widest adjacent pair of x-axis labels needs, so two labels' approximate boxes -- `_label_px`, an
-    approximation from character count -- never overlap, whatever language or offsets are in play;
-    the same gutter/inset arithmetic keeps the first and last points and their labels fully inside
-    the viewBox (fix 3)."""
+    The viewBox width is FIXED at _PERFIL_WIDTH (ruling 1) -- it never grows with a label's length.
+    The point pitch is therefore fixed too; a label wider than its own slot (the pitch minus
+    _PERFIL_LABEL_GAP) wraps into two lines instead (`_perfil_wrap`, ruling 2), so two labels'
+    approximate boxes -- `_label_px`, a character-count estimate -- still never overlap, whatever
+    language or offsets are in play. The chart's own height grows by _PERFIL_WRAP_LINE_HEIGHT only
+    when at least one label actually wrapped.
+
+    The first and last point sit INSET from the viewBox's own left/right edge (BODY-TURNOS-PERFIL-
+    LEGIBLE-1-M): unlike an interior point, neither has a neighbour on its outer side for the
+    slot/gap rule to keep its label (or its own circle) off the edge, so each gets its own margin --
+    half its widest wrapped line, or the point's radius, whichever is larger, plus the edge's small
+    pad -- and the point pitch shrinks to fit."""
     offsets = perfil["offsets"]
     if len(offsets) < 2:
         return ""
-    height = _PERFIL_HEIGHT
+    width = _PERFIL_WIDTH
     banda = perfil["banda"]
     vals = [o["media"] for o in offsets]
     rango_bajo = min(min(vals), banda["bajo"], 0.0)
@@ -210,7 +259,7 @@ def _perfil_svg(t: T, perfil: dict, caption: str, unit: str, *, color_cls: str =
     pad = (rango_alto - rango_bajo) * 0.15 or 1.0
     lo, hi = rango_bajo - pad, rango_alto + pad
     top = _PERFIL_TOP
-    h = height - top - _PERFIL_LABEL_DY - _PERFIL_BOTTOM_PAD
+    h = _PERFIL_HEIGHT - top - _PERFIL_LABEL_DY - _PERFIL_BOTTOM_PAD
     label_y = top + h + _PERFIL_LABEL_DY
 
     def y(v: float) -> float:
@@ -224,17 +273,29 @@ def _perfil_svg(t: T, perfil: dict, caption: str, unit: str, *, color_cls: str =
     texto_cero = _perfil_tick(t, 0.0, unit if tick_alto == 0 and tick_bajo == 0 else "")
     gutter = _PERFIL_EDGE_PAD + max(_label_px(s) for s in (texto_alto, texto_cero, texto_bajo)) + _PERFIL_GUTTER_PAD
 
-    left_half, right_half = _label_px(labels[0]) / 2, _label_px(labels[-1]) / 2
-    plot_left = gutter + left_half + _PERFIL_EDGE_PAD
-    pitch = max((_label_px(a) / 2 + _label_px(b) / 2 + _PERFIL_LABEL_GAP
-                 for a, b in zip(labels, labels[1:])), default=0.0)
-    min_width = plot_left + pitch * (len(offsets) - 1) + right_half + _PERFIL_EDGE_PAD
-    width = max(_PERFIL_WIDTH, min_width)
-    plot_right = width - right_half - _PERFIL_EDGE_PAD
+    plot_left = gutter + _PERFIL_EDGE_PAD
+    plot_right = width - _PERFIL_EDGE_PAD
     step = (plot_right - plot_left) / (len(offsets) - 1)
+    slot = step - _PERFIL_LABEL_GAP
+    lineas = [_perfil_wrap(label, slot) for label in labels]
+
+    # First pass's slot is the widest the pitch will ever be, so the wrap it produced is a safe
+    # upper bound on the first/last label's final width -- wrapping only ever narrows a label, so
+    # sizing the edge inset from this pass is never an underestimate once the pitch shrinks below.
+    def _borde(lineas_label: list[str]) -> float:
+        ancho = max(_label_px(linea) for linea in lineas_label)
+        return max(ancho / 2, _PERFIL_POINT_R) + _PERFIL_EDGE_PAD
+
+    plot_right = width - _borde(lineas[-1])
+    plot_left = max(plot_left, _borde(lineas[0]))
+    step = (plot_right - plot_left) / (len(offsets) - 1)
+    slot = step - _PERFIL_LABEL_GAP
 
     def cx(i: int) -> float:
         return plot_left + i * step
+
+    lineas = [_perfil_wrap(label, slot) for label in labels]
+    height = _PERFIL_HEIGHT + (_PERFIL_WRAP_LINE_HEIGHT if any(len(ls) > 1 for ls in lineas) else 0.0)
 
     out = [f'<rect x="0" y="{y(banda["alto"]):.1f}" width="{width:.1f}" '
            f'height="{max(1.0, y(banda["bajo"]) - y(banda["alto"])):.1f}" class="c-inset"/>']
@@ -248,17 +309,25 @@ def _perfil_svg(t: T, perfil: dict, caption: str, unit: str, *, color_cls: str =
     out.append(f'<polyline fill="none" class="stroke-{color_cls}" stroke-width="2.2" '
                f'vector-effect="non-scaling-stroke" stroke-linejoin="round" points="{line_pts}"/>')
     for i, o in enumerate(offsets):
-        out.append(f'<circle cx="{cx(i):.1f}" cy="{y(o["media"]):.1f}" r="3" class="c-{color_cls}"/>')
-    for i, label in enumerate(labels):
-        out.append(f'<text x="{cx(i):.1f}" y="{label_y:.1f}" text-anchor="middle" '
-                   f'class="tick">{html.escape(label)}</text>')
+        out.append(f'<circle cx="{cx(i):.1f}" cy="{y(o["media"]):.1f}" r="{_PERFIL_POINT_R:.1f}" '
+                   f'class="c-{color_cls}"/>')
+    for i, lineas_label in enumerate(lineas):
+        x = cx(i)
+        if len(lineas_label) == 1:
+            out.append(f'<text x="{x:.1f}" y="{label_y:.1f}" text-anchor="middle" '
+                       f'class="tick">{html.escape(lineas_label[0])}</text>')
+        else:
+            spans = "".join(
+                f'<tspan x="{x:.1f}" dy="{0 if j == 0 else _PERFIL_WRAP_LINE_HEIGHT:.1f}">'
+                f'{html.escape(line)}</tspan>' for j, line in enumerate(lineas_label))
+            out.append(f'<text x="{x:.1f}" y="{label_y:.1f}" text-anchor="middle" class="tick">{spans}</text>')
     if tick_bajo != 0:
         out.append(f'<text x="{_PERFIL_EDGE_PAD:.1f}" y="{y(tick_bajo) - 3:.1f}" class="tick">{texto_bajo}</text>')
     out.append(f'<text x="{_PERFIL_EDGE_PAD:.1f}" y="{y(0) - 3:.1f}" class="tick">{texto_cero}</text>')
     if tick_alto != 0:
         out.append(f'<text x="{_PERFIL_EDGE_PAD:.1f}" y="{y(tick_alto) + 9:.1f}" class="tick">{texto_alto}</text>')
     aria = html.escape(caption)
-    return (f'<svg viewBox="0 0 {width:.1f} {height}" width="100%" height="120" role="img" aria-label="{aria}" '
+    return (f'<svg viewBox="0 0 {width:.1f} {height:.1f}" width="100%" height="120" role="img" aria-label="{aria}" '
             f'preserveAspectRatio="none" class="chart-svg">{"".join(out)}</svg>')
 
 
@@ -391,7 +460,10 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
     qp = request.query_params
     if qp.get("done") == "1":
         kept = int(qp.get("kept_manual", 0)) + int(qp.get("kept_newer", 0))
-        result_msg = t("shifts.confirm_all_result", batches=qp.get("batches", "0"), applied=qp.get("applied", "0"))
+        batches_n, applied_n = int(qp.get("batches", 0)), int(qp.get("applied", 0))
+        result_msg = t("shifts.confirm_all_result",
+                       batches_frag=_frag(t, "shifts.confirm_all_batches", batches_n, batches=batches_n),
+                       applied_frag=_frag(t, "shifts.confirm_all_applied", applied_n, applied=applied_n))
         if kept:
             result_msg += " " + t(_singular_key("shifts.confirm_all_kept", kept), n=kept)
     today_local = comun._today_local(person)
@@ -427,7 +499,12 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
                        many_mixed=many_mixed,
                        summary_from=t.month_year(date.fromisoformat(summary["first_day"])),
                        summary_to=t.month_year(date.fromisoformat(summary["last_day"])),
-                       summary_days=summary["day_count"], summary_nights=summary["night_count"],
+                       files_frag=_frag(t, "shifts.confirm_files", len(rows), n=len(rows)),
+                       proposals_frag=_frag(t, "shifts.confirm_proposals", len(rows), n=len(rows)),
+                       summary_days_frag=_frag(t, "shifts.confirm_days", summary["day_count"],
+                                               days=summary["day_count"]),
+                       summary_nights_frag=_frag(t, "shifts.confirm_nights", summary["night_count"],
+                                                 nights=summary["night_count"]),
                        result_msg=result_msg, turnos=turnos_on, tiene_patron=tiene_patron, **costo_ctx)
     if rows:
         proposed = rows[0]
@@ -445,12 +522,17 @@ def _patron_preview_ctx(t: T, prev: dict) -> dict:
     """Adds the short from/to dates a pattern batch's card reads ("del X al Y") to shift_import.preview()'s
     own dict, without changing its existing keys. `kept_note` (BODY-TURNOS-PERFIL-DIA-1-M fix 4) is
     the singular/plural sentence for `prev['kept_days']`'s own count, through the same `_singular_key`
-    mechanism `shifts.perfil.caption` already uses -- None when there is nothing kept to report."""
+    mechanism `shifts.perfil.caption` already uses -- None when there is nothing kept to report.
+    `days_frag`/`nights_frag` (BODY-TURNOS-PERFIL-LEGIBLE-1 ruling 3) are the two counts'
+    singular-aware fragments shifts.confirm_summary/_patron plug in, each taking its own day/night
+    count rather than carrying a bare {days}/{nights} of its own."""
     kept_n = len(prev["kept_days"])
     return {**prev,
             "from_date": comun._short_date(t, date.fromisoformat(prev["first_day"])) if prev["first_day"] else None,
             "to_date": comun._short_date(t, date.fromisoformat(prev["last_day"])) if prev["last_day"] else None,
-            "kept_note": t(_singular_key("shifts.kept_note", kept_n), n=kept_n) if kept_n else None}
+            "kept_note": t(_singular_key("shifts.kept_note", kept_n), n=kept_n) if kept_n else None,
+            "days_frag": _frag(t, "shifts.confirm_days", prev["day_count"], days=prev["day_count"]),
+            "nights_frag": _frag(t, "shifts.confirm_nights", prev["night_count"], nights=prev["night_count"])}
 
 
 def _turnos_bloque_linea(t: T, b: dict, hoy: date) -> str:
@@ -476,8 +558,14 @@ def shifts_como(person_id: int = Depends(identity.current_person_id)):
     today_local = comun._today_local(person)
     resumen = turnos_costo.resumen(conn, person_id, hoy=today_local)
     bloques = [_turnos_bloque_linea(t, b, today_local) for b in resumen["bloques"]]
+    n_bloques, n_con_recuperacion = len(resumen["bloques"]), resumen["bloques_con_recuperacion"]
+    # BODY-TURNOS-PERFIL-LEGIBLE-1 ruling 3: each count's own singular-aware fragment, joined by
+    # shifts.como_bloques -- never a sentence carrying both {n} and {con} bare.
+    como_bloques_txt = t("shifts.como_bloques",
+                         n_frag=_frag(t, "shifts.como_bloques_n", n_bloques, n=n_bloques),
+                         con_frag=_frag(t, "shifts.como_bloques_con", n_con_recuperacion, con=n_con_recuperacion))
     return comun._render("how.html", t=t, tab="shifts", modo="turnos", version=resumen["version"],
-                   n_bloques=len(resumen["bloques"]), n_con_recuperacion=resumen["bloques_con_recuperacion"],
+                   como_bloques_txt=como_bloques_txt,
                    n_estables=turnos_costo.MODELO["dias_estables"], n_referencia=turnos_costo.REFERENCIA_DIAS,
                    bloques=bloques, turnos=True)
 
