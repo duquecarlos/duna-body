@@ -17582,3 +17582,79 @@ No password, token, session secret or health figure was read, printed, or writte
 slice's own work.
 
 BODY-ENTRENO-VINCULO-1-M2 -- merged 84ad52946e828ecc7b82a709b12e32944e64a8c5
+
+## BODY-HOST-BACKUP-ESTADO-1 -- status tells the backup/pull/backfill outcome, upload failure names R2's reason (2026-11-11)
+
+Main relayed that the R2 bucket `duna-respaldo` held 0 objects on 11 Nov while `duna-deploy-body
+status` showed `body-backup.timer: active` and a last run at the timer's own schedule
+(03:30 Bogota). `body-backup.sh` fails loudly on its own (`set -Eeuo pipefail`, exits 1 on a
+missing `BODY_BACKUP_AGE_RECIPIENT`/`BODY_R2_*`, `curl -sS --fail` on an HTTP error), so
+`body-backup.service` does end `failed`. The blind spot was `status` itself
+(`deploy/host/duna-deploy-body`): it printed `systemctl is-active` for the TIMERS, which stay
+active whatever the service did, and `ExecMainExitTimestamp`, which is WHEN the last run ended,
+never WHETHER it worked -- a failing backup read exactly like a healthy one.
+
+**Ruling 1/2 -- `duna-deploy-body status` tells the outcome.** For `body-backup.service`,
+`body-pull.service` and `body-backfill.service`, `status` now reads
+`systemctl show -p Result,ExecMainStatus --value <unit>` and prints `<unit> last result: success`
+or `<unit> last result: FAILED (<Result>, exit <N>)`, right after the existing `<unit> last run:
+<timestamp or never>` line; a job that has never run still prints only the `last run: never` line,
+unchanged. `status` itself now exits 3 when the last *backup* run failed (scoped to
+`body-backup.service` only, per the ruling's own words), so a failing backup cannot read as
+healthy; every other status line still prints before that exit. `usage` and the README document
+the new exit code.
+
+**Ruling 5 -- the upload failure names R2's reason.** Main ran `duna-deploy-body backup` on the
+host and the upload ended `curl: (22) The requested URL returned error: 400`, with R2's error XML
+swallowed by `--fail`. `body-backup.sh`'s upload `curl -sS --fail` becomes `curl -sS
+--fail-with-body` in both the real call and the dry-run echo, so R2's `<Code>`/`<Message>` reaches
+the journal. curl's exit status is captured with `|| upload_rc=$?` (never breaking `set -e`); on
+failure the script prints one line to stderr, `body-backup.sh: upload failed (curl exit <N>); R2's
+reply is above`, plus `curl --version`'s first line, then exits with curl's own status. The secret
+still never becomes argv (`-K -` fed by `printf`); R2's reply body is never the secret.
+
+**Ruling 3 -- where to look.** README's backup section gains `journalctl -u body-backup.service -n
+50 --no-pager`, names the success log line's shape (`body/body-<stamp>.sqlite.age size=<bytes>` --
+a run with no such line did not upload), documents `--fail-with-body`, and explains the common R2
+error codes (`InvalidArgument`, `SignatureDoesNotMatch`, `AccessDenied`, `NoSuchBucket`) against the
+`BODY_R2_*`/`BODY_BACKUP_AGE_RECIPIENT` env values -- `InvalidArgument` on the credential usually
+means an API token was pasted where the R2 access key ID belongs. No secret value is ever printed
+(unchanged).
+
+**No other change** to `body-backup.sh`'s env reading, its units or its timer.
+
+**Tests.** `deploy/host/duna-deploy-body`, `body-deploy.sh`'s systemd units and the real
+`body-backup.sh`/`duna-deploy-body status` logic cannot run `systemctl`/`runuser`/as root on this
+Windows worker (the existing `tests/test_host_deploy.py`/`tests/test_host_backup.py` files are
+text-level checks for the same reason, not execution tests) -- this slice follows that pattern
+rather than the spec's literal "stubbed systemctl" phrasing: new text-level tests in
+`tests/test_host_backup.py` assert the exact loop over the three job units, the exact
+`last run`/`last result: success`/`last result: FAILED (...)` strings, that `status_exit=3` is
+scoped inside the `body-backup.service` branch only, that a never-run job prints no `last result`
+line, and that the data-dir line still prints before the final `exit "$status_exit"`; for the
+upload, that both curl invocations carry `--fail-with-body`, that the exit status is captured with
+`|| upload_rc=$?`, that the failure line and `curl --version` both go to `>&2`, that the script
+exits with `$upload_rc`, that the secret never reaches curl's argv, and that this handling exists
+only in the real (non-dry-run) branch. One new test in `tests/test_host_deploy.py` cross-checks the
+three unit names status reports against the real `body-pull.service`/`body-backfill.service` unit
+files. README gets four new assertions for the journalctl command, the `size=` log shape, the R2
+error codes, and the documented exit code. This is a deviation from the spec's test description,
+recorded here rather than guessed past.
+
+**Merge policy.** The diff has no schema or migration change and no cross-repo contract/DTO change,
+but it does change bytes Carlos reads as the deploy's own operator (`status`'s new output lines,
+`usage`, and README's backup section), the same customer-bytes condition that stopped
+BODY-HOST-BACKUP-1 `AWAITING_APPROVAL`. Unlike that slice, this spec's body says in words that this
+merges on a green gate ("Green -> ... APPROVED to merge on a green gate"), under
+`ORCH-CARLOS-DELEGATES-TIER-1-1`: a read-only status verb gaining truthful lines plus the upload's
+`--fail-with-body`, no secret handling, env reading, units or timer change. So this merges rather
+than stopping `AWAITING_APPROVAL`.
+
+Gate: `.venv/Scripts/python.exe -m unittest discover tests -t .` -- 2756 tests, `OK (skipped=1)`,
+run once on the final committed tree (commit `19d66cc7b0349d27633784592c52cde5bbc36375`).
+
+No password, token, session secret or health figure was read, printed, or written anywhere in this
+slice's own work.
+
+Commit on `feat/body-host-backup-estado-1`: implementation and tests
+(`19d66cc7b0349d27633784592c52cde5bbc36375`).
