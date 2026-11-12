@@ -732,6 +732,40 @@ class AjustesUndoTest(unittest.TestCase):
         self.assertEqual(estado, "aplicada")
 
 
+class SentidoDefaultAttributeTest(unittest.TestCase):
+    """Fix 5: the form's own data-sentido-defecto attribute, read from
+    body/nutriente_objetivo.py's SENTIDO_DEFAULT, drives the static script -- never a mapping
+    duplicated in JS."""
+
+    client = TestClient(web.app, follow_redirects=False)
+
+    def _reset_db(self, name: str):
+        orig = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
+        self.addCleanup(web.app.dependency_overrides.clear)
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / name
+        conn = db.connect()
+        self.addCleanup(conn.close)
+        db.init(conn)
+        return conn
+
+    def test_caffeine_and_alcohol_options_default_to_como_maximo(self):
+        self._reset_db("sentido_defecto.db")
+        r = self.client.get("/settings")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('value="caffeine_mg" data-sentido-defecto="como_maximo"', r.text)
+        self.assertIn('value="alcohol_g" data-sentido-defecto="como_maximo"', r.text)
+        self.assertIn('value="protein_g" data-sentido-defecto="al_menos"', r.text)
+
+    def test_the_script_file_is_served_and_no_inline_script_appears(self):
+        self._reset_db("sentido_defecto_js.db")
+        r = self.client.get("/settings")
+        self.assertIn("nutriente_form.js", r.text)
+        self.assertNotIn("<script>", r.text)
+        r2 = self.client.get("/static/nutriente_form.js")
+        self.assertEqual(r2.status_code, 200)
+
+
 class CumplidaWordingTest(unittest.TestCase):
     """Fix 6: Today keeps "Today's target reached" / "Meta del día cumplida"; Día on a day other
     than today never says "today" in English."""

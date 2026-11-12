@@ -88,7 +88,8 @@ def settings(person_id: int = Depends(identity.current_person_id)):
                    trabaja_turnos=trabaja_turnos, turnos=db.trabaja_turnos_si(conn, person_id),
                    has_household=bool(hh), metrics_compartir=metrics_compartir,
                    aplicar_mcp=db.get_aplicar_mcp(conn, person_id),
-                   nutriente_metric_keys=[{"key": k, "label": t("metric." + k)}
+                   nutriente_metric_keys=[{"key": k, "label": t("metric." + k),
+                                            "sentido_defecto": nutriente_objetivo.sentido_por_defecto(k)}
                                            for k in db.INGESTA_METRIC_KEYS],
                    nutriente_vigentes=_nutriente_vigentes_ctx(t, conn, defs, person_id,
                                                                comun._today_local(person)),
