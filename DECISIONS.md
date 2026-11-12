@@ -18157,4 +18157,4 @@ change customer-facing bytes (every string in fixes 1-2, plus the bpm/minute for
 corrects) -- one of merge policy A's three conditions, same as the round it fixes. The spec's own
 approval reason (ORCH-CARLOS-DELEGATES-TIER-1-1) says in words this slice merges on a green gate:
 "then merges on a green gate" -- authorising the merge past this condition, unlike the `-R` round it
-continues.
+continues. -- merged 15d2304
