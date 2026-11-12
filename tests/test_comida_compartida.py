@@ -1,7 +1,9 @@
 """BODY-COMIDA-COMPARTIDA-1: one cooks, several eat, each eater's own log gets their own portion.
-Rulings 1-3 (consent, schema, the caller-agnostic service) -- rulings 4-7 (the assistant's own
-flow, the Hoy card, privacidad and demo) are covered by their own test modules. Invented demo data
-only, no real health figures.
+Rulings 1-3 (consent, schema, the caller-agnostic service), rulings 4-5 (the assistant's own tool
+flow and the Hoy card -- no dedicated route test file is in this slice's own touches, so the
+route-level checks live here too) -- rulings 6-7 (privacidad and demo) are covered by their own
+test modules (tests/test_privacidad.py, tests/test_demo.py). Invented demo data only, no real
+health figures.
 """
 from __future__ import annotations
 
@@ -11,13 +13,18 @@ from pathlib import Path
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
+from fastapi.testclient import TestClient
+
 from tests._db import open_conn
 
 from body import comida_compartida as cc
-from body import compartir, db, household
+from body import compartir, config, db, household, identity, web
+from body.agente import conversacion as agente_conversacion
+from body.agente import herramientas, propuestas
 
 DAY = "2026-11-10"
 HOGAR_ID = "hogar-test-1"
+client = TestClient(web.app, follow_redirects=False)
 
 
 def _conn(case: unittest.TestCase) -> "db.sqlite3.Connection":
@@ -367,6 +374,209 @@ class DeshacerAutorTest(unittest.TestCase):
     def test_is_a_no_op_once_already_undone(self):
         cc.deshacer_autor(self.conn, 1, self.resultado["comida_compartida_id"])
         cc.deshacer_autor(self.conn, 1, self.resultado["comida_compartida_id"])  # must not raise
+
+
+# ---- ruling 4: the assistant's own tool, end to end -----------------------------------------------
+
+_CANTIDADES_AUTOR = [{"metric_key": "protein_g", "amount": 30.0, "estimado": True}]
+_COMPARTIDA_CON_ANA = [{"nombre": "Ana", "nutrientes": {"protein_g": 15.0}}]
+
+
+class RegistrarComidaCompartidaToolTest(unittest.TestCase):
+    def setUp(self):
+        self.conn = _conn(self)
+        _en_hogar(self.conn, 1, 2)
+        self.cid = agente_conversacion.crear(self.conn, 1)
+
+    def _proponer(self, **extra):
+        params = {"day": DAY, "descripcion": "pollo con arroz", "cantidades": _CANTIDADES_AUTOR,
+                  "compartida_con": _COMPARTIDA_CON_ANA}
+        params.update(extra)
+        return herramientas.ejecutar(self.conn, 1, "registrar_comida", params, "ninguno", self.cid)
+
+    def test_no_consent_is_refused_by_name_before_proposing(self):
+        with self.assertRaises(herramientas.ToolError) as ctx:
+            self._proponer()
+        self.assertIn("Ana", str(ctx.exception))
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM propuesta_agente").fetchone()[0], 0)
+
+    def test_unknown_name_is_refused(self):
+        compartir.activar_recibir_comidas(self.conn, 2)
+        with self.assertRaises(herramientas.ToolError):
+            self._proponer(compartida_con=[{"nombre": "Nadie", "nutrientes": {"protein_g": 10.0}}])
+
+    def test_apply_applies_authors_own_leaves_anas_pending(self):
+        compartir.activar_recibir_comidas(self.conn, 2)
+        out = self._proponer()
+        resultado = propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        self.assertEqual(resultado["estado"], "aplicada")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM comida WHERE person_id = 1").fetchone()[0], 1)
+        porcion = self.conn.execute(
+            "SELECT estado, comida_id FROM comida_compartida_porcion WHERE person_id = 2"
+        ).fetchone()
+        self.assertEqual(porcion["estado"], "pendiente")
+        self.assertIsNone(porcion["comida_id"])
+
+    def test_ana_can_then_apply_her_own_portion(self):
+        compartir.activar_recibir_comidas(self.conn, 2)
+        out = self._proponer()
+        propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        porcion_id = self.conn.execute(
+            "SELECT id FROM comida_compartida_porcion WHERE person_id = 2"
+        ).fetchone()["id"]
+        resultado = cc.aplicar_porcion(self.conn, 2, porcion_id)
+        self.assertEqual(resultado["estado"], "aplicada")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM comida WHERE person_id = 2").fetchone()[0], 1)
+
+    def test_undo_removes_only_the_authors_meal_discards_the_pending_portion(self):
+        compartir.activar_recibir_comidas(self.conn, 2)
+        out = self._proponer()
+        propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        resultado = propuestas.deshacer(self.conn, 1, out["propuesta_id"])
+        self.assertEqual(resultado["estado"], "deshecha")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM comida WHERE person_id = 1").fetchone()[0], 0)
+        porcion = self.conn.execute(
+            "SELECT estado FROM comida_compartida_porcion WHERE person_id = 2"
+        ).fetchone()
+        self.assertEqual(porcion["estado"], "descartada")
+
+    def test_undo_leaves_an_already_applied_portion_of_anas_alone(self):
+        compartir.activar_recibir_comidas(self.conn, 2)
+        out = self._proponer()
+        propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        porcion_id = self.conn.execute(
+            "SELECT id FROM comida_compartida_porcion WHERE person_id = 2"
+        ).fetchone()["id"]
+        cc.aplicar_porcion(self.conn, 2, porcion_id)
+        propuestas.deshacer(self.conn, 1, out["propuesta_id"])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM comida WHERE person_id = 2").fetchone()[0], 1)
+
+    def test_apply_drifts_cleanly_when_consent_was_withdrawn_after_propose(self):
+        compartir.activar_recibir_comidas(self.conn, 2)
+        out = self._proponer()
+        compartir.desactivar_recibir_comidas(self.conn, 2)
+        resultado = propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        self.assertEqual(resultado["estado"], "propuesta_desactualizada")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM comida").fetchone()[0], 0)
+
+
+# ---- ruling 5: the Hoy card, route level -----------------------------------------------------------
+
+def _reset_db(tc: unittest.TestCase):
+    orig = config.DB_PATH
+    tc.addCleanup(lambda: setattr(config, "DB_PATH", orig))
+    tc.addCleanup(web.app.dependency_overrides.clear)
+    config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "cc-web.db"
+    conn = db.connect()
+    tc.addCleanup(conn.close)
+    db.init(conn)
+    conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Ana')")
+    conn.commit()
+    return conn
+
+
+def _as(person_id: int) -> None:
+    web.app.dependency_overrides[identity.current_person_id] = lambda: person_id
+
+
+class HoyCardTest(unittest.TestCase):
+    def setUp(self):
+        self.conn = _reset_db(self)
+        _en_hogar(self.conn, 1, 2)
+        compartir.activar_recibir_comidas(self.conn, 2)
+        db.set_metric(self.conn, DAY, "resting_hr", 60.0, "garmin", 2)
+        self.conn.commit()
+        cid = agente_conversacion.crear(self.conn, 1)
+        out = herramientas.ejecutar(
+            self.conn, 1, "registrar_comida",
+            {"day": DAY, "descripcion": "pollo con arroz", "cantidades": _CANTIDADES_AUTOR,
+             "compartida_con": _COMPARTIDA_CON_ANA},
+            "ninguno", cid)
+        propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        self.porcion_id = self.conn.execute(
+            "SELECT id FROM comida_compartida_porcion WHERE person_id = 2"
+        ).fetchone()["id"]
+
+    def test_card_renders_for_ana_es(self):
+        _as(2)
+        r = client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("registró una comida compartida", r.text)
+        self.assertIn("pollo con arroz", r.text)
+
+    def test_card_renders_en(self):
+        self.conn.execute("UPDATE person SET language = 'en' WHERE id = 2")
+        self.conn.commit()
+        _as(2)
+        r = client.get("/")
+        self.assertIn("logged a shared meal", r.text)
+
+    def test_no_card_for_the_author(self):
+        _as(1)
+        r = client.get("/")
+        self.assertNotIn("registró una comida compartida", r.text)
+
+    def test_apply_and_discard_are_plain_post_forms_no_js(self):
+        _as(2)
+        r = client.get("/")
+        self.assertIn(f'action="/comida-compartida/{self.porcion_id}/aplicar"', r.text)
+        self.assertIn(f'action="/comida-compartida/{self.porcion_id}/descartar"', r.text)
+
+    def test_apply_via_post_writes_the_log_and_removes_the_card(self):
+        _as(2)
+        r = client.post(f"/comida-compartida/{self.porcion_id}/aplicar", data={})
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM comida WHERE person_id = 2").fetchone()[0], 1)
+        r2 = client.get("/")
+        self.assertNotIn("registró una comida compartida", r2.text)
+
+    def test_discard_via_post_removes_the_card_without_writing_a_comida(self):
+        _as(2)
+        r = client.post(f"/comida-compartida/{self.porcion_id}/descartar", data={})
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM comida WHERE person_id = 2").fetchone()[0], 0)
+        r2 = client.get("/")
+        self.assertNotIn("registró una comida compartida", r2.text)
+
+    def test_another_person_cannot_apply_through_the_route(self):
+        _as(1)
+        client.post(f"/comida-compartida/{self.porcion_id}/aplicar", data={})
+        estado = self.conn.execute(
+            "SELECT estado FROM comida_compartida_porcion WHERE id = ?", (self.porcion_id,)
+        ).fetchone()["estado"]
+        self.assertEqual(estado, "pendiente")
+
+
+class SettingsToggleTest(unittest.TestCase):
+    def setUp(self):
+        self.conn = _reset_db(self)
+        _en_hogar(self.conn, 1, 2)
+        _as(1)
+
+    def test_off_by_default_and_asks_in_plain_words(self):
+        r = client.get("/settings")
+        self.assertIn("Recibir comidas compartidas de mi hogar", r.text)
+        self.assertIn("Nada entra a tu registro sin que toques Aplicar.", r.text)
+
+    def test_turning_it_on_persists(self):
+        client.post("/settings/comidas_compartidas", data={"valor": "si"})
+        self.assertTrue(compartir.recibe_comidas(self.conn, 1))
+
+    def test_turning_it_off_discards_pending_portions_only(self):
+        compartir.activar_recibir_comidas(self.conn, 1)
+        cid = agente_conversacion.crear(self.conn, 2)
+        out = herramientas.ejecutar(
+            self.conn, 2, "registrar_comida",
+            {"day": DAY, "descripcion": "pollo", "cantidades": _CANTIDADES_AUTOR,
+             "compartida_con": [{"nombre": "Me", "nutrientes": {"protein_g": 10.0}}]},
+            "ninguno", cid)
+        propuestas.aplicar(self.conn, 2, out["propuesta_id"])
+        client.post("/settings/comidas_compartidas", data={"valor": "no"})
+        estado = self.conn.execute(
+            "SELECT estado FROM comida_compartida_porcion WHERE person_id = 1"
+        ).fetchone()["estado"]
+        self.assertEqual(estado, "descartada")
+        self.assertFalse(compartir.recibe_comidas(self.conn, 1))
 
 
 if __name__ == "__main__":

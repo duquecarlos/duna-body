@@ -10,7 +10,7 @@ from urllib.parse import parse_qs
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import compartir, cuenta, db, household, identity, nutriente_objetivo
+from .. import comida_compartida, compartir, cuenta, db, household, identity, nutriente_objetivo
 from ..agente import ajustes as agente_ajustes
 from ..agente import cliente as agente_cliente
 from ..agente import conversacion as agente_conversacion
@@ -88,6 +88,7 @@ def settings(person_id: int = Depends(identity.current_person_id)):
                    trabaja_turnos=trabaja_turnos, turnos=db.trabaja_turnos_si(conn, person_id),
                    has_household=bool(hh), metrics_compartir=metrics_compartir,
                    aplicar_mcp=db.get_aplicar_mcp(conn, person_id),
+                   recibir_comidas_compartidas=compartir.recibe_comidas(conn, person_id),
                    nutriente_metric_keys=[{"key": k, "label": t("metric." + k),
                                             "sentido_defecto": nutriente_objetivo.sentido_por_defecto(k)}
                                            for k in db.INGESTA_METRIC_KEYS],
@@ -109,6 +110,29 @@ async def post_compartir(request: Request, person_id: int = Depends(identity.cur
             pass
     elif accion == "retirar":
         compartir.retirar(conn, person_id, metric_key)
+    return RedirectResponse("/settings", status_code=303)
+
+
+@router.post("/settings/comidas_compartidas")
+@comun._cierra_conexion_async
+async def set_recibir_comidas_compartidas(request: Request,
+                                           person_id: int = Depends(identity.current_person_id)):
+    """BODY-COMIDA-COMPARTIDA-1 ruling 1: the ONLY way this consent ever changes -- a POST from
+    the person's own session, same shape as `set_aplicar_mcp` above. Turning it off also discards
+    every portion still pending for this person (ruling 1's own words), never touches an applied
+    one."""
+    f = parse_qs((await request.body()).decode())
+    valor = f.get("valor", [""])[0]
+    if valor == "si":
+        conn, _, _ = comun._ctx(person_id)
+        try:
+            compartir.activar_recibir_comidas(conn, person_id)
+        except ValueError:
+            pass
+    elif valor == "no":
+        conn, _, _ = comun._ctx(person_id)
+        compartir.desactivar_recibir_comidas(conn, person_id)
+        comida_compartida.descartar_pendientes_de(conn, person_id)
     return RedirectResponse("/settings", status_code=303)
 
 
