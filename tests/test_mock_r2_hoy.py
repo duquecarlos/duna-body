@@ -18,6 +18,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from fastapi.testclient import TestClient
 
 from body import config, db, demo, identity, noche_inusual, web
+from body.rutas import hoy
 from body.i18n import T
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -459,7 +460,7 @@ class DemoCoverageTest(unittest.TestCase):
     time, a timed habit, a night block starting in 3 days, and partial-day stress/steps."""
 
     def test_every_new_card_present_es(self):
-        _seed_demo(self, "demo_completo_es.db", "es")
+        conn = _seed_demo(self, "demo_completo_es.db", "es")
         page = TestClient(web.app, follow_redirects=False).get("/").text
         self.assertIn("08:00", page)
         self.assertIn("hasta las 16:00", page)
@@ -468,7 +469,8 @@ class DemoCoverageTest(unittest.TestCase):
         self.assertIn("18:00", page)
         self.assertIn("Entrenar piernas", page)
         self.assertIn(_ES["today.semana_nocturna.titulo"], page)
-        self.assertIn("sáb 14 nov", page)
+        fechas_esperadas = hoy._semana_nocturna_ctx(T("es"), conn, 1, date.today())["fechas"]
+        self.assertIn(fechas_esperadas, page)
         stress_tile = page[page.index("#stress_avg"):page.index("</a>", page.index("#stress_avg"))]
         self.assertIn(_ES["today.tile.banda.usual"], stress_tile)
         self.assertIn("hasta las", stress_tile)
