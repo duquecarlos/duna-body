@@ -114,6 +114,11 @@ _GOAL_TITLES = {
 }
 _HABIT_TITLE = {"es": "Dormir antes de un turno nocturno", "en": "Sleep before a night shift"}
 
+# BODY-TENDENCIAS-RACHA-GRAFICO-1 ruling 4: the demo person's own pick for the strength-session
+# study on /trends -- a dedicated habit under the resting-heart-rate goal, since no existing habit
+# is weekly-strength-shaped.
+_HABIT_FUERZA_TITLE = {"es": "Entrenar fuerza", "en": "Strength training"}
+
 # BODY-HOGAR-MIEMBRO-1: a second, invented demo person ("Ana") in one household with the demo
 # person, and a shared goal SHE creates, so the demo person -- browsing as themselves -- sees the
 # member view (BODY-HOGAR-PLAN-1 rulings 1-2).
@@ -896,9 +901,9 @@ def _seed_shifts(conn, shift_import, turnos_costo, person_id: int,
 
 def _seed_goals_and_habits(conn, db, goals, rng: random.Random, all_days: list[date], anchor: date,
                             first_monday: date, anchor_monday: date, person_id: int,
-                            idioma: str) -> tuple[int, int]:
-    """The demo person's three metric goals, one habit, their weekly checks and the habit's
-    checks -- returns (goal weekly checks, habit checks)."""
+                            idioma: str) -> tuple[int, int, int]:
+    """The demo person's three metric goals, two habits, their weekly checks and the habits'
+    checks -- returns (goal weekly checks, habit checks, invented strength sessions)."""
     window = all_days[:14]
     base_sleep = _avg_metric(conn, db, "sleep_minutes", window, person_id) or 420.0
     base_rhr = _avg_metric(conn, db, "resting_hr", window, person_id) or 58.0
@@ -925,6 +930,27 @@ def _seed_goals_and_habits(conn, db, goals, rng: random.Random, all_days: list[d
     habit_id = goals.add_habit(conn, gid_sleep, _HABIT_TITLE[idioma],
                                 {"per": "week", "times": 3, "context": "before_night", "hora": "21:30"})
 
+    # BODY-TENDENCIAS-RACHA-GRAFICO-1 ruling 4: the demo person's own floor pick for the
+    # strength-session study -- 3 clean weeks of 3 sessions each, ending two weeks before the
+    # current one, so the study shows a real "longest run" but no still-open "current run"
+    # (racha_semanal treats the current and the immediately-previous week as still open).
+    habit_fuerza_id = goals.add_habit(conn, gid_rhr, _HABIT_FUERZA_TITLE[idioma], {"per": "week", "times": 3})
+    db.set_racha_piso(conn, person_id, habit_fuerza_id)
+    racha_sesiones = 0
+    for semanas_atras in (2, 3, 4):
+        lunes = anchor_monday - timedelta(7 * semanas_atras)
+        for offset in (0, 2, 4):
+            dia = lunes + timedelta(offset)
+            conn.execute(
+                "INSERT INTO activity (person_id, source_id, day, start_local, type, name, duration_s, "
+                "distance_m, avg_hr, max_hr, calories, source) VALUES (?, ?, ?, ?, 'strength_training', "
+                "?, 2400, NULL, 115, 140, 240, 'garmin')",
+                (person_id, f"demo-racha-{dia.isoformat()}-1", dia.isoformat(),
+                 f"{dia.isoformat()}T18:00:00", _ENTRENO_WATCH_TITULO[idioma]),
+            )
+            racha_sesiones += 1
+    conn.commit()
+
     checks = 0
     monday = first_monday
     while monday <= anchor_monday:
@@ -943,7 +969,7 @@ def _seed_goals_and_habits(conn, db, goals, rng: random.Random, all_days: list[d
                 habit_checks += 1
         monday += timedelta(7)
 
-    return checks, habit_checks
+    return checks, habit_checks, racha_sesiones
 
 
 _PLAN_HOY_HORA = "15:30"  # BODY-MOCK-R2-HOY-1 ruling 8: "a planned session with a time".
@@ -1113,7 +1139,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     _seed_noche_inusual(conn, db, anchor, person_id)
     planes_hoy = _seed_plan_hoy(conn, anchor, person_id, idioma)
 
-    checks, habit_checks = _seed_goals_and_habits(
+    checks, habit_checks, racha_sesiones = _seed_goals_and_habits(
         conn, db, goals, rng, all_days, anchor, first_monday, anchor_monday, person_id, idioma)
 
     ana_metric_rows, hogar_checks, hogar_habit_checks, comidas_compartidas_pendientes = _seed_household(
@@ -1125,8 +1151,9 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
         "personas": 2, "dias_sembrados": dias, "valores_diarios": metric_rows, "actividades": activity_rows,
         "lotes_turnos_confirmados": 1 if confirmed_id is not None else 0,
         "lotes_turnos_propuestos": 1 if proposed_id is not None else 0,
-        "semanas_nocturnas": night_weeks, "bloques_turno_noche": night_blocks, "metas_activas": 4, "habitos": 3,
+        "semanas_nocturnas": night_weeks, "bloques_turno_noche": night_blocks, "metas_activas": 4, "habitos": 4,
         "verificaciones_semanales": checks + hogar_checks, "chequeos_habito": habit_checks + hogar_habit_checks,
+        "racha_fuerza_sesiones": racha_sesiones,
         "entradas_ingesta": entradas_ingesta, "comidas": comidas_ingesta,
         "metas_nutriente": objetivos_nutriente, "periodos": periodos,
         "checkins": checkins,
