@@ -93,7 +93,7 @@ _PROPUESTA_AGENTE_COLUMNS = """
                          'proponer_experimento', 'marcar_experimento',
                          'registrar_ingesta', 'corregir_ingesta', 'borrar_ingesta',
                          'marcar_periodo', 'cerrar_periodo', 'corregir_periodo', 'borrar_periodo',
-                         'registrar_comida', 'registrar_checkin', 'descartar_series',
+                         'registrar_comida', 'corregir_comida', 'registrar_checkin', 'descartar_series',
                          'separar_sesion', 'unir_sesiones', 'proponer_objetivo_nutriente')),
     objetivo_id     INTEGER REFERENCES goal(id),
     antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
@@ -1372,6 +1372,13 @@ def _propuesta_agente_needs_nutriente_rebuild(conn: sqlite3.Connection) -> bool:
     return row is not None and "proponer_objetivo_nutriente" not in row[0]
 
 
+def _propuesta_agente_needs_corregir_comida_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'propuesta_agente'"
+    ).fetchone()
+    return row is not None and "corregir_comida" not in row[0]
+
+
 def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
@@ -1403,6 +1410,9 @@ def _migrate_propuestas(conn: sqlite3.Connection) -> None:
         _rebuild_propuesta_agente_table(conn)
     # BODY-NUTRIENTE-OBJETIVO-1: a ninth widening (proponer_objetivo_nutriente), same reusable rebuild.
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_nutriente_rebuild(conn):
+        _rebuild_propuesta_agente_table(conn)
+    # BODY-COMIDA-CORREGIR-1: a tenth widening (corregir_comida), same reusable rebuild.
+    if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_corregir_comida_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
     # BODY-MCP-APLICAR-1: a plain nullable column, never a CHECK widening on `accion` -- a plain
     # ALTER TABLE ADD COLUMN, not the rebuild dance above.
@@ -2580,6 +2590,55 @@ def borrar_comida(conn: sqlite3.Connection, person_id: int, comida_id: int) -> N
     removes them together"), recalculating each touched key's day total afterwards."""
     with conn:
         _borrar_comida_tx(conn, person_id, comida_id)
+
+
+def corregir_comida(conn: sqlite3.Connection, person_id: int, comida_id: int, *, ts_local: str | None = None,
+                     day: str | None = None, descripcion: str | None = None,
+                     cantidades: list[dict] | None = None) -> None:
+    """Corrects a meal AS A UNIT (BODY-COMIDA-CORREGIR-1 ruling 1): the one writer of a `comida`
+    row's own day/ts_local/descripcion, unconditionally set to whatever the caller passes --
+    the caller (body/agente/propuestas.py) always carries a meal's FULL resolved state in
+    `despues`/`antes`, so there is no partial-update case to support here, unlike
+    `actualizar_periodo`'s `_SIN_DAR` sentinel. `cantidades`, when given, REPLACES the meal's
+    whole set of `ingesta` children -- never merged with what was there, the same all-or-nothing
+    shape `crear_comida` itself writes with; left out (None), the existing rows just follow the
+    meal's own new day/ts_local. Refuses a comida_id that is not this person's own. Re-derives
+    every touched metric_key's daily total in the SAME transaction, for both the old day and the
+    new one when the day moves."""
+    fila = conn.execute("SELECT day FROM comida WHERE id = ? AND person_id = ?", (comida_id, person_id)).fetchone()
+    if fila is None:
+        raise ValueError("comida_id: not this person's own meal")
+    dia_anterior = fila["day"]
+    nuevo_day = day if day is not None else dia_anterior
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        conn.execute(
+            "UPDATE comida SET day = ?, ts_local = ?, descripcion = ?, updated_at = ? "
+            "WHERE id = ? AND person_id = ?",
+            (nuevo_day, ts_local, descripcion, now, comida_id, person_id),
+        )
+        if cantidades is not None:
+            claves = {r["metric_key"] for r in conn.execute(
+                "SELECT DISTINCT metric_key FROM ingesta WHERE comida_id = ?", (comida_id,))}
+            conn.execute("DELETE FROM ingesta WHERE comida_id = ?", (comida_id,))
+            for c in cantidades:
+                conn.execute(
+                    "INSERT INTO ingesta (person_id, day, ts_local, metric_key, amount, estimado, comida_id, "
+                    "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (person_id, nuevo_day, ts_local, c["metric_key"], c["amount"],
+                     int(bool(c.get("estimado", True))), comida_id, now, now),
+                )
+            claves |= {c["metric_key"] for c in cantidades}
+        else:
+            conn.execute("UPDATE ingesta SET day = ?, ts_local = ? WHERE comida_id = ?",
+                        (nuevo_day, ts_local, comida_id))
+            claves = {r["metric_key"] for r in conn.execute(
+                "SELECT DISTINCT metric_key FROM ingesta WHERE comida_id = ?", (comida_id,))}
+        for metric_key in claves:
+            _recalcular_ingesta_dia(conn, person_id, nuevo_day, metric_key)
+        if dia_anterior != nuevo_day:
+            for metric_key in claves:
+                _recalcular_ingesta_dia(conn, person_id, dia_anterior, metric_key)
 
 
 def comidas_del_dia(conn: sqlite3.Connection, person_id: int, day: str) -> list[dict]:

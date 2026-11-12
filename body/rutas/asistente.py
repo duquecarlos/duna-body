@@ -293,6 +293,53 @@ def _tarjeta_registrar_comida(t: T, defs: dict, despues: dict, antes_json: dict 
     return None, "\n".join(lineas), None
 
 
+def _hora_o_fecha_corta(t: T, day: str, ts_local: str | None) -> str:
+    """BODY-COMIDA-CORREGIR-1: the meal's own clock time (HH:MM) when it has one, or its short
+    date otherwise -- the same fallback `comidas_del_dia`'s own ordering already treats an untimed
+    meal with (sorts last, never crashes)."""
+    if ts_local:
+        return ts_local[11:16]
+    return comun._short_date(t, date.fromisoformat(day))
+
+
+def _comida_cambios_lista(t: T, defs: dict, antes: dict, despues: dict) -> list[str]:
+    """Ruling 2: {cambios} built from what differs between the meal's prior and new state -- new
+    time, new description, amounts changed/added/removed -- one i18n key per kind, in the
+    catalogue order (herramientas.INGESTA_METRIC_KEYS) for every amount line."""
+    cambios = []
+    if despues.get("ts_local") != antes.get("ts_local") and despues.get("ts_local"):
+        cambios.append(t("asistente.propuesta.comida_cambio_hora", hora=despues["ts_local"][11:16]))
+    if despues.get("descripcion") != antes.get("descripcion"):
+        cambios.append(t("asistente.propuesta.comida_cambio_descripcion", descripcion=despues["descripcion"]))
+    antes_por_clave = {c["metric_key"]: c for c in antes.get("cantidades", [])}
+    despues_por_clave = {c["metric_key"]: c for c in despues.get("cantidades", [])}
+    orden = [k for k in agente_herramientas.INGESTA_METRIC_KEYS
+             if k in antes_por_clave or k in despues_por_clave]
+    for k in orden:
+        a, d = antes_por_clave.get(k), despues_por_clave.get(k)
+        metric = t("metric." + k)
+        if a is None and d is not None:
+            cambios.append(t("asistente.propuesta.comida_cambio_cantidad_nueva", metric=metric,
+                             valor=comun._fig_unit(t, k, d["amount"], defs)))
+        elif a is not None and d is None:
+            cambios.append(t("asistente.propuesta.comida_cambio_cantidad_quitada", metric=metric))
+        elif a is not None and d is not None and a["amount"] != d["amount"]:
+            cambios.append(t("asistente.propuesta.comida_cambio_cantidad_valor", metric=metric,
+                             valor=comun._fig_unit(t, k, d["amount"], defs)))
+    return cambios
+
+
+def _tarjeta_corregir_comida(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
+    """BODY-COMIDA-CORREGIR-1 ruling 2: one summary line naming the meal by its OLD time (or date,
+    when it had none) and listing what changes -- never a full antes/despues pair of blocks, since
+    a correction can touch time, wording and several amounts together."""
+    hora_antes = _hora_o_fecha_corta(t, antes_json["day"], antes_json.get("ts_local"))
+    cambios = _comida_cambios_lista(t, defs, antes_json, despues)
+    despues_txt = t("asistente.propuesta.corregir_comida_resumen", hora_antes=hora_antes,
+                     cambios=" · ".join(cambios))
+    return None, despues_txt, None
+
+
 def _momento_checkin_txt(t: T, momento: str) -> str:
     """BODY-CHECKIN-1: three literal t() calls, not a concatenated key, the same choice
     `_periodo_kind_txt` above made -- so test_i18n_paridad.py's dynamic-prefix guard needs no new
@@ -514,6 +561,7 @@ TARJETAS = {
     "corregir_ingesta": _tarjeta_corregir_ingesta,
     "borrar_ingesta": _tarjeta_borrar_ingesta,
     "registrar_comida": _tarjeta_registrar_comida,
+    "corregir_comida": _tarjeta_corregir_comida,
     "registrar_checkin": _tarjeta_registrar_checkin,
     "marcar_periodo": _tarjeta_marcar_periodo,
     "cerrar_periodo": _tarjeta_cerrar_periodo,

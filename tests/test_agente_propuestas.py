@@ -131,9 +131,10 @@ class NoProponibleTest(unittest.TestCase):
                                     "proponer_idioma", "planear_entreno", "registrar_entreno",
                                     "registrar_medida", "marcar_habito", "proponer_experimento",
                                     "marcar_experimento", "registrar_ingesta", "corregir_ingesta",
-                                    "borrar_ingesta", "registrar_comida", "registrar_checkin", "marcar_periodo",
-                                    "cerrar_periodo", "corregir_periodo", "borrar_periodo", "descartar_series",
-                                    "separar_sesion", "unir_sesiones", "proponer_objetivo_nutriente"})
+                                    "borrar_ingesta", "registrar_comida", "corregir_comida", "registrar_checkin",
+                                    "marcar_periodo", "cerrar_periodo", "corregir_periodo", "borrar_periodo",
+                                    "descartar_series", "separar_sesion", "unir_sesiones",
+                                    "proponer_objetivo_nutriente"})
 
 
 class UnaPropuestaPorRondaTest(unittest.TestCase):

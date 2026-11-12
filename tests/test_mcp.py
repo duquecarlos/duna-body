@@ -217,6 +217,33 @@ class ToolsCallTest(_McpTestCase):
         self.assertIn("propuesta_id", salida)
         self.assertEqual(salida["estado"], "propuesta")
 
+    def test_corregir_comida_is_offered_and_callable(self):
+        """BODY-COMIDA-CORREGIR-1: same generic `tipo: propuesta` path as registrar_comida above --
+        body.mcp needs no new code to list or call it, and ONE call proposes the whole correction
+        (the desk's 7-apply fix becomes 1)."""
+        comida_id = db.crear_comida(self.conn, self.person_id,
+                                    "2026-11-05", [{"metric_key": "protein_g", "amount": 35.0}],
+                                    "arroz con pollo", "2026-11-05T13:00:00")
+        self.conn.commit()
+        _, listado = self._ejecutar([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
+        nombres = {t["name"] for t in listado[0]["result"]["tools"]}
+        self.assertIn("corregir_comida", nombres)
+
+        _, respuestas = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "corregir_comida",
+                        "arguments": {"comida_id": comida_id, "hora": "08:00",
+                                      "cantidades": [{"metric_key": "protein_g", "amount": 40.0},
+                                                     {"metric_key": "fiber_g", "amount": 6.0}]}}},
+        ])
+        r = respuestas[0]["result"]
+        self.assertNotIn("isError", r)
+        fila = self.conn.execute("SELECT ts_local FROM comida WHERE id = ?", (comida_id,)).fetchone()
+        self.assertEqual(fila["ts_local"], "2026-11-05T13:00:00")  # still unapplied: a propose writes nothing
+        salida = json.loads(r["content"][-1]["text"])
+        self.assertIn("propuesta_id", salida)
+        self.assertEqual(salida["estado"], "propuesta")
+
     def test_proponer_objetivo_nutriente_is_offered_and_callable(self):
         """BODY-NUTRIENTE-OBJETIVO-1: same generic `tipo: propuesta` path -- body.mcp needs no new
         code to list or call it."""
