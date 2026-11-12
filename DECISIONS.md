@@ -19552,3 +19552,5 @@ by a model or an external MCP caller -- no template, no route, no string a perso
 screen changed. No cross-repo contract or DTO change: nothing here is a shape another repository
 mirrors. All three of merge policy A's conditions pass, and the spec's own body says so too ("a
 read tool, no screen, no schema, caps unchanged"). **Merges on this green gate.**
+
+-- merged 0d4b50547224eecf01581e98d002a5ddfa713156
