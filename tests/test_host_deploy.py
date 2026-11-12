@@ -560,6 +560,20 @@ class StatusDerivesUnitListTest(unittest.TestCase):
         self.assertIn("body-backfill.timer", product_text)
 
 
+class StatusJobUnitsMatchRealUnitFilesTest(unittest.TestCase):
+    """BODY-HOST-BACKUP-ESTADO-1: the three unit names status reports a result for are the same
+    three oneshot job units body-deploy.sh actually installs."""
+
+    def test_status_job_units_are_real_oneshot_services(self):
+        text = _read(ENTRY)
+        status_idx = text.index("status)")
+        deploy_idx = text.index("deploy)", status_idx)
+        body = text[status_idx:deploy_idx]
+        for unit_file in (PULL_UNIT, BACKFILL_UNIT):
+            self.assertTrue(unit_file.exists(), f"{unit_file.name} missing")
+        self.assertIn("body-backup.service body-pull.service body-backfill.service", body)
+
+
 class LineEndingTest(unittest.TestCase):
     def test_every_file_under_deploy_host_is_lf(self):
         for path in HOST_DIR.iterdir():

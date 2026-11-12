@@ -217,6 +217,127 @@ class ExecBitAndLineEndingTest(unittest.TestCase):
             self.assertNotIn(b"\r\n", raw, f"{path.name} has CRLF line endings")
 
 
+class StatusReportsJobOutcomeTest(unittest.TestCase):
+    """BODY-HOST-BACKUP-ESTADO-1 ruling 1/2: status names each job's own result and exits 3
+    only when the last backup run failed."""
+
+    def setUp(self):
+        self.text = _read(ENTRY)
+        status_idx = self.text.index("status)")
+        deploy_idx = self.text.index("deploy)", status_idx)
+        self.body = self.text[status_idx:deploy_idx]
+
+    def test_loops_over_backup_pull_and_backfill(self):
+        self.assertIn(
+            "for job_unit in body-backup.service body-pull.service body-backfill.service",
+            self.body,
+        )
+
+    def test_prints_last_run_line_for_every_job(self):
+        self.assertIn('echo "$job_unit last run: ${job_last_run:-never}"', self.body)
+
+    def test_prints_success_and_failed_lines(self):
+        self.assertIn('echo "$job_unit last result: success"', self.body)
+        self.assertIn(
+            'echo "$job_unit last result: FAILED (${job_result}, exit ${job_exit_status})"',
+            self.body,
+        )
+
+    def test_reads_result_and_exec_main_status(self):
+        self.assertIn('systemctl show -p Result --value "$job_unit"', self.body)
+        self.assertIn('systemctl show -p ExecMainStatus --value "$job_unit"', self.body)
+
+    def test_exit_code_three_scoped_to_backup_only(self):
+        status_exit_idx = self.body.index("status_exit=3")
+        preceding = self.body[:status_exit_idx]
+        guard_idx = preceding.rindex("if [[")
+        self.assertIn('"$job_unit" == "body-backup.service"', preceding[guard_idx:])
+
+    def test_never_run_job_prints_no_result_line(self):
+        never_guard_idx = self.body.index('if [[ -n "$job_last_run" ]]; then')
+        before_guard = self.body[:never_guard_idx]
+        self.assertIn('echo "$job_unit last run: ${job_last_run:-never}"', before_guard)
+        self.assertNotIn("last result", before_guard)
+
+    def test_exits_with_status_exit_variable(self):
+        self.assertIn("status_exit=0", self.body)
+        self.assertIn('exit "$status_exit"', self.body)
+
+    def test_data_dir_line_still_prints_before_exit(self):
+        data_dir_idx = self.body.index('echo "data dir:')
+        exit_idx = self.body.rindex('exit "$status_exit"')
+        self.assertLess(data_dir_idx, exit_idx)
+
+
+class UsageDocumentsStatusExitCodeTest(unittest.TestCase):
+    def test_usage_mentions_exit_3(self):
+        text = _read(ENTRY)
+        usage_idx = text.index("usage: duna-deploy-body")
+        usage_end = text.index("USAGE", usage_idx)
+        usage_body = text[usage_idx:usage_end]
+        self.assertIn("exits 3", usage_body)
+
+
+class UploadFailureNamesR2ReasonTest(unittest.TestCase):
+    """BODY-HOST-BACKUP-ESTADO-1 ruling 5: --fail-with-body surfaces R2's own error reply."""
+
+    def setUp(self):
+        self.text = _read(BACKUP)
+
+    def test_fail_with_body_used_in_both_curl_invocations(self):
+        curl_lines = [line for line in self.text.splitlines() if "--aws-sigv4" in line]
+        self.assertEqual(len(curl_lines), 2, "expected the real and dry-run curl lines")
+        for line in curl_lines:
+            self.assertIn("--fail-with-body", line)
+
+    def test_exit_status_captured_without_breaking_set_e(self):
+        self.assertIn("|| upload_rc=$?", self.text)
+
+    def test_failure_message_and_curl_version_printed_to_stderr(self):
+        fail_idx = self.text.index("upload failed (curl exit $upload_rc)")
+        line_start = self.text.rindex("\n", 0, fail_idx) + 1
+        line_end = self.text.index("\n", fail_idx)
+        self.assertIn(">&2", self.text[line_start:line_end])
+        self.assertIn("R2's reply is above", self.text[line_start:line_end])
+        version_idx = self.text.index("curl --version", fail_idx)
+        version_line_end = self.text.index("\n", version_idx)
+        self.assertIn(">&2", self.text[version_idx:version_line_end])
+
+    def test_exits_with_uploads_own_status(self):
+        self.assertIn('exit "$upload_rc"', self.text)
+
+    def test_secret_still_never_in_curl_argv(self):
+        for lineno, line in enumerate(self.text.splitlines(), start=1):
+            if "curl" in line and "--fail-with-body" in line:
+                self.assertNotIn("$access_key", line, f"line {lineno}: secret in curl argv: {line}")
+                self.assertNotIn("$secret_key", line, f"line {lineno}: secret in curl argv: {line}")
+
+    def test_failure_handling_only_in_real_path_not_dry_run(self):
+        dry_run_idx = self.text.index('if [[ -n "$DRY_RUN" ]]; then')
+        else_idx = self.text.index("\nelse\n", dry_run_idx)
+        dry_run_body = self.text[dry_run_idx:else_idx]
+        self.assertNotIn("upload_rc", dry_run_body)
+
+
+class ReadmeDocumentsStatusAndUploadFailureTest(unittest.TestCase):
+    def setUp(self):
+        self.text = _read(README)
+
+    def test_journalctl_command_documented(self):
+        self.assertIn("journalctl -u body-backup.service -n 50 --no-pager", self.text)
+
+    def test_success_log_line_shape_documented(self):
+        self.assertIn("size=", self.text)
+
+    def test_fail_with_body_and_r2_error_codes_documented(self):
+        self.assertIn("--fail-with-body", self.text)
+        for code in ("InvalidArgument", "SignatureDoesNotMatch", "AccessDenied", "NoSuchBucket"):
+            self.assertIn(code, self.text)
+
+    def test_status_exit_three_documented(self):
+        self.assertIn("exits 3", self.text)
+
+
 class ReadmeMentionsBackupTest(unittest.TestCase):
     def setUp(self):
         self.text = _read(README)
