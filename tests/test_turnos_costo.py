@@ -798,20 +798,96 @@ class PerfilChartGeometryTest(unittest.TestCase):
 
     def test_adjacent_x_axis_labels_never_overlap_in_either_language(self):
         """Approximation from character count: `turnos._PERFIL_CHAR_W` px per character at the
-        chart's own 10px axis font-size (CSS class "tick") -- real glyph metrics are not available
-        server-side, so the layout keeps every adjacent pair at least this far apart."""
+        chart's own floor axis font-size (CSS class "tick") -- real glyph metrics are not available
+        server-side, so the layout keeps every adjacent pair at least this far apart. A label that
+        does not fit its own slot wraps into two <tspan> lines (BODY-TURNOS-PERFIL-LEGIBLE-1 ruling
+        2); the box used here is the wider of a wrapped label's two lines, rather than its full
+        unwrapped width -- updated markup, same promise (never loosened)."""
+        label_block_re = re.compile(
+            r'<text x="([\d.]+)" y="[\d.]+" text-anchor="middle" class="tick">(.*?)</text>')
+        tspan_re = re.compile(r'<tspan[^>]*>([^<]*)</tspan>')
         for lang in ("es", "en"):
             svg, _ = self._render(lang)
-            cxs = [float(x) for x in re.findall(r'<circle cx="([\d.]+)"', svg)]
-            labels = re.findall(
-                r'<text x="[\d.]+" y="[\d.]+" text-anchor="middle" class="tick">([^<]*)</text>', svg)
-            self.assertEqual(len(cxs), len(labels))
-            widths = [len(html.unescape(lbl)) * turnos._PERFIL_CHAR_W for lbl in labels]
+            blocks = label_block_re.findall(svg)
+            self.assertTrue(blocks)
+            cxs = [float(x) for x, _ in blocks]
+            widths = []
+            for _, body in blocks:
+                lines = tspan_re.findall(body) if "<tspan" in body else [body]
+                widths.append(max(len(html.unescape(line)) * turnos._PERFIL_CHAR_W for line in lines))
             for i in range(len(cxs) - 1):
                 gap = cxs[i + 1] - cxs[i]
                 needed = widths[i] / 2 + widths[i + 1] / 2
-                self.assertGreaterEqual(gap, needed,
-                                         f"{lang}: {labels[i]!r}/{labels[i + 1]!r} boxes would overlap")
+                self.assertGreaterEqual(gap, needed, f"{lang}: label {i} and {i + 1} boxes would overlap")
+
+    def test_viewbox_width_is_the_fixed_constant_for_every_label_set(self):
+        """BODY-TURNOS-PERFIL-LEGIBLE-1 ruling 1: the viewBox width never grows with a label's
+        length -- true with the full seven-offset set (which wraps) and a short two-offset set
+        (which does not), in either language."""
+        for lang in ("es", "en"):
+            svg7, _ = self._render(lang)
+            width7 = float(re.search(r'viewBox="0 0 ([\d.]+) [\d.]+"', svg7).group(1))
+            self.assertEqual(width7, turnos._PERFIL_WIDTH)
+
+            t = T(lang)
+            perfil_corto = {**self._perfil(), "offsets": [
+                {"offset": "post_1", "media": -16.0, "n": 3},
+                {"offset": "post_2", "media": -10.0, "n": 3},
+            ]}
+            caption = turnos._perfil_caption(t, perfil_corto)
+            svg2 = turnos._perfil_svg(t, perfil_corto, caption, "ms")
+            width2 = float(re.search(r'viewBox="0 0 ([\d.]+) [\d.]+"', svg2).group(1))
+            self.assertEqual(width2, turnos._PERFIL_WIDTH)
+
+    def test_axis_font_size_meets_the_small_text_floor(self):
+        """BODY-TURNOS-PERFIL-LEGIBLE-1 ruling 1: the axis text (.tick) is at least the app's own
+        small-text floor -- .fs-12 (12px), the smallest of body.css's general small-text classes --
+        and never below 11px regardless."""
+        css = (Path(__file__).resolve().parent.parent / "body" / "static" / "body.css").read_text(encoding="utf-8")
+        m = re.search(r'\.tick\{[^}]*font-size:(\d+(?:\.\d+)?)px', css)
+        self.assertIsNotNone(m, "no .tick font-size rule found in body.css")
+        size = float(m.group(1))
+        self.assertGreaterEqual(size, 11.0)
+        self.assertEqual(size, turnos._PERFIL_TICK_FONT)
+
+    def test_labels_wrap_only_when_they_do_not_fit_their_own_slot(self):
+        """Unit-level check of the wrap rule itself (BODY-TURNOS-PERFIL-LEGIBLE-1 ruling 2, restating
+        BODY-TURNOS-PERFIL-DIA-1-M's own character-count approximation)."""
+        self.assertEqual(turnos._perfil_wrap("+1", 5.0), ["+1"])  # no space to break at -- never wraps
+        label = "noche 1"
+        wide_slot, narrow_slot = turnos._label_px(label) + 1, turnos._label_px(label) - 1
+        self.assertEqual(turnos._perfil_wrap(label, wide_slot), [label])
+        self.assertEqual(turnos._perfil_wrap(label, narrow_slot), ["noche", "1"])
+
+    def test_chart_height_grows_by_one_line_only_when_a_label_wraps(self):
+        svg7, _ = self._render()  # seven long labels -- at least one wraps
+        height7 = float(re.search(r'viewBox="0 0 [\d.]+ ([\d.]+)"', svg7).group(1))
+        self.assertEqual(height7, turnos._PERFIL_HEIGHT + turnos._PERFIL_WRAP_LINE_HEIGHT)
+
+        t = T("es")
+        perfil_corto = {**self._perfil(), "offsets": [
+            {"offset": "post_1", "media": -16.0, "n": 3},
+            {"offset": "post_2", "media": -10.0, "n": 3},
+        ]}
+        caption = turnos._perfil_caption(t, perfil_corto)
+        svg2 = turnos._perfil_svg(t, perfil_corto, caption, "ms")  # short labels -- never wrap
+        height2 = float(re.search(r'viewBox="0 0 [\d.]+ ([\d.]+)"', svg2).group(1))
+        self.assertEqual(height2, turnos._PERFIL_HEIGHT)
+
+    def test_every_label_lines_anchor_x_equals_its_points_cx(self):
+        """BODY-TURNOS-PERFIL-LEGIBLE-1 ruling 2: a wrapped label's own <tspan> lines share its
+        <text>'s x, which is also its point's cx (restates the single-line case above for the
+        wrapped markup)."""
+        for lang in ("es", "en"):
+            svg, _ = self._render(lang)
+            cxs = [float(x) for x in re.findall(r'<circle cx="([\d.]+)"', svg)]
+            label_blocks = re.findall(
+                r'<text x="([\d.]+)" y="[\d.]+" text-anchor="middle" class="tick">(.*?)</text>', svg)
+            self.assertEqual(len(cxs), len(label_blocks))
+            for (x, body), cx in zip(label_blocks, cxs):
+                self.assertEqual(float(x), cx)
+                for tspan_x in re.findall(r'<tspan x="([\d.]+)"', body):
+                    self.assertEqual(float(tspan_x), cx)
 
     def test_visible_caption_equals_the_aria_label_in_both_languages(self):
         for lang in ("es", "en"):
