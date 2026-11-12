@@ -863,9 +863,16 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
     data = db.load_day(conn, key, person_id)
     vals = {m["key"]: m["value"] for m in data["metrics"]}
     defs = comun._defs(conn)
+    # BODY-DESPLAZAMIENTO-3-M fix 1 (ruling 3): a registered source with no value at all for THIS
+    # day shows none of its rows here -- never a row of bare "—"s. A source with at least one value
+    # keeps showing all of its keys, same as today (a missing one of them may still read "—").
+    fuentes_sin_datos_hoy = {f for f, datos in fuentes.FUENTES.items()
+                             if not any(vals.get(k) is not None for k in datos["metric_keys"])}
     cards = []
     for k, df in defs.items():
         if k in SUENO_RESP_KEYS or k in SUENO_FC_KEYS:
+            continue
+        if fuentes.fuente_de_metrica(k) in fuentes_sin_datos_hoy:
             continue
         v = vals.get(k)
         delta, cls = _delta(conn, t, df, key, v, person_id)

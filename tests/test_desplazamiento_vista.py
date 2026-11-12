@@ -204,6 +204,59 @@ class DiaFuenteLineTest(_PageTestCase):
         self.assertNotIn("De tu historial de ubicaciones", page_sin_dato)
 
 
+# ---- BODY-DESPLAZAMIENTO-3-M fix 1 (ruling 3): no row of bare "--"s on a day a vida source --------
+# ------------------------------------------- never covered -----------------------------------------
+
+class DiaCommuteCardsTest(_PageTestCase):
+    """body/rutas/hoy.py's day_view(): the four commute cards (vehicle_minutes, vehicle_trips,
+    walking_minutes, cycling_minutes) show only on a day the commute source actually covers --
+    never a row of bare "--"s past its own ultimo_dia, and never at all for a person who has
+    never imported it."""
+
+    COMMUTE_LABELS_ES = ("Tiempo en vehículo", "Viajes en vehículo",
+                         "Minutos caminando", "Minutos en bicicleta")
+
+    def test_no_commute_cards_the_day_after_ultimo_dia(self):
+        dia1, dia2 = (HOY - timedelta(5)).isoformat(), (HOY - timedelta(4)).isoformat()
+        di.importar(self.conn, 1, _csv([(dia1, 30, 2, 10, 0), (dia2, 25, 1, 5, 0)]))
+        self.conn.commit()
+        db.set_language(self.conn, "es", 1)
+        self.conn.commit()
+
+        page_con_dato = self.client.get(f"/day/{dia2}").text
+        for label in self.COMMUTE_LABELS_ES:
+            self.assertIn(label, page_con_dato)
+        self.assertIn('id="vehicle_minutes"', page_con_dato)
+
+        dia_sin_dato = (HOY - timedelta(3)).isoformat()
+        page_sin_dato = self.client.get(f"/day/{dia_sin_dato}").text
+        for label in self.COMMUTE_LABELS_ES:
+            self.assertNotIn(label, page_sin_dato)
+        self.assertNotIn('id="vehicle_minutes"', page_sin_dato)
+        self.assertNotIn('id="vehicle_trips"', page_sin_dato)
+        self.assertNotIn('id="walking_minutes"', page_sin_dato)
+        self.assertNotIn('id="cycling_minutes"', page_sin_dato)
+
+    def test_never_imported_person_sees_no_commute_cards_on_any_day(self):
+        db.set_language(self.conn, "es", 1)
+        self.conn.commit()
+        page = self.client.get(f"/day/{HOY.isoformat()}").text
+        for label in self.COMMUTE_LABELS_ES:
+            self.assertNotIn(label, page)
+        self.assertNotIn('id="vehicle_minutes"', page)
+
+    def test_a_day_with_data_still_shows_all_four_and_the_source_line(self):
+        dia = (HOY - timedelta(5)).isoformat()
+        di.importar(self.conn, 1, _csv([(dia, 30, 2, 10, 0)]))
+        self.conn.commit()
+        db.set_language(self.conn, "es", 1)
+        self.conn.commit()
+        page = self.client.get(f"/day/{dia}").text
+        for label in self.COMMUTE_LABELS_ES:
+            self.assertIn(label, page)
+        self.assertIn("De tu historial de ubicaciones", page)
+
+
 # ---- ruling 4: the per-source delete ---------------------------------------------------------------
 
 class DeleteFuenteTest(unittest.TestCase):
