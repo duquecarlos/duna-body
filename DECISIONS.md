@@ -17810,3 +17810,66 @@ than merging. Committed on `feat/body-nutriente-objetivo-1`, not merged into `ma
 `a73a75b` (schema, reader), `46b205c` (tool, export/delete/move, the forced asistente.py card),
 `4bfa5d8` (Today/Día/Ajustes UI, demo seed), `852fe42` (two census fixes), `ecf9d7a` (a11y labels,
 layout fix), `34598a5` (persona_fuga census fix), `b9f3646` (route-set census fix).
+
+## BODY-NUTRIENTE-OBJETIVO-1-M -- the six AWAITING_APPROVAL defects fixed, and the calendar-drift test that blocked the merge made date-independent (2026-11-12)
+
+Carlos reviewed BODY-NUTRIENTE-OBJETIVO-1 at 375 px and sent back six defects. Fixed on
+`feat/body-nutriente-objetivo-1`:
+
+1. `svg.barra`'s progress bar now carries a fixed `height:6px` -- the `viewBox` stayed `100 6`, but
+   with no explicit height it rendered roughly 19 px tall at 375 px width (`body/static/body.css`).
+2. Ajustes' "Metas diarias" listing names each target's start day: `settings.nutriente.desde`
+   ("desde {fecha}" / "since {fecha}", `body/rutas/ajustes.py`, `body/templates/settings.html`).
+3. The pending-proposal card gains its own start day, `settings.nutriente.propuesta_desde`
+   ("desde {fecha}" / "from {fecha}").
+4. Ajustes shows the most recently applied target proposal per metric with its own "Undo", posting
+   to the new `POST /settings/nutriente/propuestas/{id}/deshacer` -- it calls the same
+   `agente_propuestas.deshacer` the assistant and Día's own entreno Undo already use, no second
+   undo path; once undone the row moves to `deshecha` and drops off the listing on its own.
+   `tests/test_web_entry.py`'s route census extended with the new route.
+5. The "New daily target" form's `sentido` select now switches to each metric's own
+   `como_maximo`/`al_menos` default (ruling 6) on a `metric_key` change: each `<option>` carries a
+   `data-sentido-defecto` read straight from `nutriente_objetivo.sentido_por_defecto()`, and the new
+   static `body/static/nutriente_form.js` (loaded the way `ajustes_tema.js`/`meta_nueva.js` already
+   are) applies it client-side; the server still renders the right default `selected` option with
+   JS off.
+6. Día's "target reached" string no longer says "today" off today: a new en-only variant,
+   `nutriente.hoy.cumplida_dia` ("Target reached that day"), renders on any day that is not the
+   viewer's own local today; es keeps "Meta del día cumplida" either way.
+   `_objetivos_nutriente_ctx` now takes an explicit `es_hoy` flag from both `today()` and
+   `day_view()`.
+
+**New/changed strings** (es / en): `settings.nutriente.desde` "desde {fecha}" / "since {fecha}";
+`settings.nutriente.propuesta_desde` "desde {fecha}" / "from {fecha}"; `nutriente.hoy.cumplida_dia`
+(en only) "Target reached that day".
+
+Commits: `7f52cc6` (defects 1, 2, 3, 4, 6) and `5b0f68c` (defect 5).
+
+**The calendar-drift test** (BODY-NUTRIENTE-OBJETIVO-1-M2, 2026-11-12). The gate on that tree
+(HEAD `5b0f68c`) was GATE_RED on exactly one test, and only that one: `tests.test_mock_r2_hoy.
+DemoCoverageTest.test_every_new_card_present_es` asserted the literal string `"sáb 14 nov"` --
+`body/demo.py`'s own `anchor = date.today()`, so the demo's night block (`_seed_bloque_noche_
+futuro`, starting `anchor + 3` days, `NOCHE_FUTURA_LARGO = 2` days long) drifts a day forward every
+day that passes, and the literal stopped matching once the block's dates moved past 2026-11-14.
+Confirmed: the test failed alone, unconditionally, on `main` too, and neither the test nor
+`body/demo.py` had changed between `d94d99d` and `5b0f68c` -- a pre-existing calendar-drift defect
+in the test, not a regression this branch introduced.
+
+Fixed in the test only, no product code touched: the assertion now reads the expected text off
+`body/rutas/hoy.py::_semana_nocturna_ctx` itself -- the same function Today's own route calls --
+on the seeded connection and person, instead of a literal date (`tests/test_mock_r2_hoy.py`,
+commit `660a306`). It holds on any day the gate runs.
+
+**Gate**, on this branch's final tree (HEAD `660a306`, `git status --porcelain` clean before this
+entry), the exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, one
+foreground run (moved to the background past the 600 s cap, waited on to completion, exit code 0):
+
+    Ran 2817 tests in 726.966s
+    OK (skipped=1)
+
+No password, token, session secret or health figure was read, printed, or written anywhere in this
+slice's own work.
+
+**Merge policy.** The diff touches one test file only (`tests/test_mock_r2_hoy.py`) plus this
+ledger entry -- no schema or migration change, no customer-facing bytes, no cross-repo contract.
+Merges cleanly on this green gate, per `ORCH-CARLOS-DELEGATES-TIER-1-1`.
