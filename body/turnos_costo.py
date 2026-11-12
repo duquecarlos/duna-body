@@ -261,7 +261,9 @@ def _offset_day(bloque: Bloque, offset: str) -> date | None:
     return fin + timedelta(int(offset.split("_")[1]))
 
 
-def perfil_por_dia(conn, person_id: int, metric: str, hoy: date | None = None) -> dict:
+def perfil_por_dia(conn, person_id: int, metric: str, hoy: date | None = None, *,
+                    lector: Lector | None = None, bloques: list[Bloque] | None = None,
+                    ref: dict[str, Referencia | None] | None = None) -> dict:
     """BODY-TURNOS-PERFIL-DIA-1: for `metric`, how far each day OFFSET around a night block sits from
     the person's own day-week reference -- the same `referencia()` the hero's cost rows use, so the
     centre is that reference's mean and the band is its 25th-75th percentile, just re-expressed as an
@@ -269,6 +271,13 @@ def perfil_por_dia(conn, person_id: int, metric: str, hoy: date | None = None) -
     night block in the same RESUMEN_DIAS window `resumen()` uses -- a day with no value is skipped,
     never zeroed, and an offset no block in the window actually reaches (`noche_ultima` on an
     all-one-night history) is left out of `offsets` rather than reported as zero.
+
+    `lector`, `bloques` and `ref`, when given, must be `resumen()`'s own -- its single Lector already
+    covers [hoy - RESUMEN_DIAS - 1, hoy + ventana_post] (wide enough for every offset here, including
+    `antes` and `post_4`), and its own `bloques_noche()`/`referencia()` calls are this function's
+    exactly, so `resumen()` passes them through instead of this function repeating those statements
+    (BODY-RENDIMIENTO-2's own rule). Standalone callers (tests, or any future second consumer) omit
+    them and this function reads them itself, exactly as before.
 
     Always returns a dict, never a bare None (resumen()'s and `_ultima_semana`'s own convention):
     `motivo` is one of REASON_CODES, and every other key is absent, when there are fewer than
@@ -280,12 +289,15 @@ def perfil_por_dia(conn, person_id: int, metric: str, hoy: date | None = None) -
     `noches_tipicas` (the median block length) and `n_bloques`."""
     hoy = hoy or date.today()
     desde = (hoy - timedelta(RESUMEN_DIAS)).isoformat()
-    desde_lector = (hoy - timedelta(RESUMEN_DIAS + 1)).isoformat()
-    hasta_lector = (hoy + timedelta(MODELO["ventana_post"])).isoformat()
-    lector = Lector(conn, person_id, desde_lector, hasta_lector, MODELO["metricas"])
-    ref = referencia(conn, person_id, hoy, lector=lector)
+    if lector is None:
+        desde_lector = (hoy - timedelta(RESUMEN_DIAS + 1)).isoformat()
+        hasta_lector = (hoy + timedelta(MODELO["ventana_post"])).isoformat()
+        lector = Lector(conn, person_id, desde_lector, hasta_lector, MODELO["metricas"])
+    if ref is None:
+        ref = referencia(conn, person_id, hoy, lector=lector)
     r = ref.get(metric)
-    bloques = bloques_noche(conn, person_id, desde, hoy.isoformat())
+    if bloques is None:
+        bloques = bloques_noche(conn, person_id, desde, hoy.isoformat())
     if r is None or len(bloques) < MIN_BLOQUES_PREVIOS:
         return {"metric": metric, "motivo": "pocos_bloques_previos"}
 
@@ -450,14 +462,16 @@ def resumen(conn, person_id: int, hoy: date | None = None) -> dict:
     otherwise None with a reason code (REASON_CODES). `ultima_semana` (BODY-TURNOS-REFERENCIA-NOCHE-1)
     is the last complete block against the person's own earlier night blocks -- see `_ultima_semana`.
     Reads its whole metric window ONCE, through a
-    single `Lector` covering [hoy - RESUMEN_DIAS, hoy + dias_estables] -- wide enough for `referencia`'s
-    own [hoy - REFERENCIA_DIAS, hoy - 1] and for every block's cost and recovery window, since
-    REFERENCIA_DIAS <= RESUMEN_DIAS and no block's window reaches past hoy + dias_estables
-    (BODY-RENDIMIENTO-2)."""
+    single `Lector` covering [hoy - RESUMEN_DIAS - 1, hoy + ventana_post] -- wide enough for
+    `referencia`'s own [hoy - REFERENCIA_DIAS, hoy - 1], for every block's cost and recovery window
+    (REFERENCIA_DIAS <= RESUMEN_DIAS, no block's window reaches past hoy + dias_estables), and for
+    `perfil_por_dia`'s own `antes`..`post_4` offsets (ventana_post >= dias_estables), so `perfil_hrv`
+    below costs this call no extra statement (BODY-TURNOS-PERFIL-DIA-1, BODY-RENDIMIENTO-2)."""
     hoy = hoy or date.today()
     desde = (hoy - timedelta(RESUMEN_DIAS)).isoformat()
-    hasta = (hoy + timedelta(MODELO["dias_estables"])).isoformat()
-    lector = Lector(conn, person_id, desde, hasta, MODELO["metricas"])
+    desde_lector = (hoy - timedelta(RESUMEN_DIAS + 1)).isoformat()
+    hasta_lector = (hoy + timedelta(max(MODELO["dias_estables"], MODELO["ventana_post"]))).isoformat()
+    lector = Lector(conn, person_id, desde_lector, hasta_lector, MODELO["metricas"])
     ref = referencia(conn, person_id, hoy, lector=lector)
     bloques = bloques_noche(conn, person_id, desde, hoy.isoformat())
 
@@ -498,6 +512,8 @@ def resumen(conn, person_id: int, hoy: date | None = None) -> dict:
         "costo_promedio": costo_promedio,
         "ultima_semana": _ultima_semana(bloques, bloques_out, medias_out, hoy),
         # BODY-TURNOS-PERFIL-DIA-1: additive -- VERSION stays "turnos-v1" since this changes no
-        # figure resumen() already reported, only adds a new one.
-        "perfil_hrv": perfil_por_dia(conn, person_id, "hrv_last_night", hoy),
+        # figure resumen() already reported, only adds a new one. lector/bloques/ref are this
+        # call's own, reused rather than recomputed (no extra statement, BODY-RENDIMIENTO-2).
+        "perfil_hrv": perfil_por_dia(conn, person_id, "hrv_last_night", hoy,
+                                      lector=lector, bloques=bloques, ref=ref),
     }
