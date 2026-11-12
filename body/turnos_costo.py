@@ -285,8 +285,14 @@ def perfil_por_dia(conn, person_id: int, metric: str, hoy: date | None = None, *
     `motivo` is None and the dict carries `offsets` (one {"offset", "media", "n"} per OFFSET that has
     at least one contributing day), `centro`, `banda` ({"bajo", "alto"}, centred the same way),
     `mas_bajo` or `mas_alto` (whichever direction db.METRIC_DEFS calls worse for this metric) naming
-    the offset furthest from usual, `vuelta` (the first post_* offset back inside the band, or None),
-    `noches_tipicas` (the median block length) and `n_bloques`."""
+    the offset furthest from usual, `vuelta` (BODY-TENDENCIAS-LEYENDA-PATRON-1-M fix 1: a return
+    that HOLDS, not merely the first post_* offset that happens to land inside the band -- the
+    first post_* offset after the LAST offset anywhere in OFFSETS that lies outside the band in
+    this metric's own worse direction, itself inside the band; None when no offset lies outside
+    the band in the worse direction at all (nothing to return from), when no post_* offset is
+    measured after that last excursion, or when what is measured there is still outside the band
+    -- so a dip that returns, leaves again and bottoms out later never reports the earlier return
+    that did not hold), `noches_tipicas` (the median block length) and `n_bloques`."""
     hoy = hoy or date.today()
     desde = (hoy - timedelta(RESUMEN_DIAS)).isoformat()
     if lector is None:
@@ -319,8 +325,19 @@ def perfil_por_dia(conn, person_id: int, metric: str, hoy: date | None = None, *
     peor_es_bajo = _BETTER.get(metric) == "higher"
     extremo = (min if peor_es_bajo else max)(offsets_out, key=lambda o: o["media"])
     banda_bajo, banda_alto = round(r.bajo - r.media, 1), round(r.alto - r.media, 1)
-    vuelta = next((o["offset"] for o in offsets_out
-                   if o["offset"].startswith("post_") and banda_bajo <= o["media"] <= banda_alto), None)
+    # BODY-TENDENCIAS-LEYENDA-PATRON-1-M fix 1: the anchor is the LAST offset outside the band in
+    # the worse direction (never just the single most extreme one) -- any offset still outside
+    # the band after it would mean the metric left the band again, so `vuelta` only ever looks
+    # past this point. `extremo` is itself always in this list whenever it lies outside the band
+    # (the global extreme can never be less extreme than a value already past the band threshold),
+    # so the anchor is always at or after `extremo`'s own position in OFFSETS.
+    fuera_peor = [o for o in offsets_out
+                  if ((o["media"] < banda_bajo) if peor_es_bajo else (o["media"] > banda_alto))]
+    vuelta = None
+    if fuera_peor:
+        ancla = offsets_out.index(fuera_peor[-1])
+        vuelta = next((o["offset"] for o in offsets_out[ancla + 1:]
+                       if o["offset"].startswith("post_") and banda_bajo <= o["media"] <= banda_alto), None)
 
     return {
         "metric": metric,
@@ -359,6 +376,11 @@ def frase_patron(perfil: dict, metric: str) -> dict | None:
     direccion = "baja" if extremo["media"] < 0 else "sube"
     vuelta = perfil.get("vuelta")
     if vuelta is not None:
+        # BODY-TENDENCIAS-LEYENDA-PATRON-1-M fix 1: a spec never says "back by" an offset earlier
+        # than or equal to the worst one -- perfil_por_dia's own vuelta definition guarantees this,
+        # checked here since this is the one place that reads both offsets together.
+        assert OFFSETS.index(vuelta) > OFFSETS.index(peor_offset), \
+            f"vuelta {vuelta!r} must be later than peor {peor_offset!r}"
         return {"kind": "vuelve", "peor": peor_offset, "vuelta": vuelta, "direccion": direccion}
     return {"kind": "no_vuelve", "peor": peor_offset, "direccion": direccion}
 

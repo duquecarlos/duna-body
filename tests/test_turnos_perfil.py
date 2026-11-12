@@ -11,6 +11,8 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from tests._db import open_conn
 
 from body import db, turnos_costo
+from body.i18n import T
+from body.rutas import turnos as turnos_ruta
 
 HOY = date(2026, 6, 1)
 # Spread enough (not a single constant) for referencia()'s own 25th-75th band to be real, not
@@ -161,6 +163,52 @@ class PerfilPorDiaTest(unittest.TestCase):
         self._seed([2, 2, 2], valores)
         p = turnos_costo.perfil_por_dia(self.conn, 1, "hrv_last_night", HOY)
         self.assertEqual(p["vuelta"], "post_3")
+
+    def test_vuelta_waits_for_the_last_excursion_not_the_first_return(self):
+        """BODY-TENDENCIAS-LEYENDA-PATRON-1-M fix 1: the defect report's sleep-shaped case -- out
+        at post_1, back in band at post_2, out again and worst at post_3, back in band at post_4.
+        The old reader picked post_2 (a return that did not hold, since the metric left the band
+        again right after); vuelta must be post_4, the first return AFTER the last excursion."""
+        fuera = self.banda_bajo_diff - 8
+        peor = self.banda_bajo_diff - 15
+        valores = {"noche_1": self.hrv_media - 5, "post_1": self.hrv_media + fuera,
+                   "post_2": self.hrv_media, "post_3": self.hrv_media + peor,
+                   "post_4": self.hrv_media}
+        self._seed([2, 2, 2], valores)
+        p = turnos_costo.perfil_por_dia(self.conn, 1, "hrv_last_night", HOY)
+        self.assertEqual(p["mas_bajo"], "post_3")
+        self.assertEqual(p["vuelta"], "post_4")
+
+    def test_vuelta_is_none_when_the_last_measured_post_offset_is_still_outside_the_band(self):
+        fuera = self.banda_bajo_diff - 8
+        valores = {"noche_1": self.hrv_media - 5, "post_1": self.hrv_media,
+                   "post_2": self.hrv_media, "post_3": self.hrv_media,
+                   "post_4": self.hrv_media + fuera}
+        self._seed([2, 2, 2], valores)
+        p = turnos_costo.perfil_por_dia(self.conn, 1, "hrv_last_night", HOY)
+        self.assertEqual(p["mas_bajo"], "post_4")
+        self.assertIsNone(p["vuelta"])
+        frase = turnos_costo.frase_patron(p, "hrv_last_night")
+        self.assertEqual(frase["kind"], "no_vuelve")
+
+    def test_shifts_hero_caption_reads_the_held_return_not_the_earlier_one(self):
+        """BODY-TENDENCIAS-LEYENDA-PATRON-1 defect (1): the Shifts hero caption
+        (body/rutas/turnos.py's `_perfil_caption`) reads `perfil_por_dia`'s own `vuelta` field, so
+        the same sleep-shaped excursion (out, back, out and worst, back) must read "by day +4
+        after", never "by day +2 after" -- the return that did not hold."""
+        fuera = self.banda_bajo_diff - 8
+        peor = self.banda_bajo_diff - 15
+        valores = {"noche_1": self.hrv_media - 5, "post_1": self.hrv_media + fuera,
+                   "post_2": self.hrv_media, "post_3": self.hrv_media + peor,
+                   "post_4": self.hrv_media}
+        self._seed([2, 2, 2], valores)
+        p = turnos_costo.perfil_por_dia(self.conn, 1, "hrv_last_night", HOY)
+        caption_es = turnos_ruta._perfil_caption(T("es"), p)
+        caption_en = turnos_ruta._perfil_caption(T("en"), p)
+        self.assertIn("día +4 después", caption_es)
+        self.assertNotIn("día +2 después", caption_es)
+        self.assertIn("day +4 after", caption_en)
+        self.assertNotIn("day +2 after", caption_en)
 
     def test_fewer_than_min_bloques_previos_is_a_reason_code(self):
         valores = {"noche_1": self.hrv_media - 10}
