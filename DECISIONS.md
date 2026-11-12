@@ -17973,3 +17973,104 @@ Ajustes' Dispositivos page and anywhere Día lists a metric by its label) -- two
 three conditions. The slice's own dispatch explicitly pre-authorized the merge on a green gate ("no
 screen beyond Día's generic rows changes"), so this merges rather than stopping
 AWAITING_APPROVAL. -- merged 0ed81c4
+
+## BODY-DESPLAZAMIENTO-3 -- the commute group on Tendencias, Día's provenance line, and the per-source delete (2026-11-12)
+
+BODY-DESPLAZAMIENTO-3-R recovered this slice's work: a first worker (BODY-DESPLAZAMIENTO-3) had
+implemented all five rulings below and its targeted tests were green, but its session ended before
+any commit, leaving 13 modified files and 2 new ones uncommitted on `feat/body-desplazamiento-3`
+(HEAD still `0d2caa9`). This continuation committed that work as found (`3dc06d7`), read the diff
+against each ruling, found every ruling already satisfied, and only had to extend one census test
+outside `touches` (below) before the gate went green.
+
+**Ruling 1 -- one registry of imported sources.** New `body/fuentes.py`: `FUENTES` keyed by
+`desplazamiento_import.FUENTE`, its `metric_keys` read from `desplazamiento_import.VIDA_KEYS` (never
+re-listed), `umbral_dias=45`. `fuente_de_metrica(key)` and `estado_fuente(conn, person_id, fuente,
+hoy)` -> None (never imported, or only ever a refusal) or `{primer_dia, ultimo_dia, dias,
+importado_at, desactualizada, error}`, `error` only when `ultimo_error_at` is newer than
+`importado_at`.
+
+**Ruling 2 -- Tendencias.** `body/catalogo_tendencias.py`'s `TREND_GROUPS` gains a `commute` group,
+its keys read from `fuentes.FUENTES[...]["metric_keys"]` (one source, not a second hand-typed list);
+it is the one extra group `body/rutas/tendencias.py`'s route still shows with zero cards, carrying
+its own freshness line (`_fuente_texto`): never-imported, fresh, stale (appended), or the last
+refusal's reason class (through `_FUENTE_MOTIVO_KEY`, an explicit dict mapping every
+`desplazamiento_import.validar` reason to its own i18n key) replacing the freshness line outright.
+`TODAS` (read by `leer_tendencias`) picks the group up with no second list.
+
+**Ruling 3 -- Día.** `body/rutas/hoy.py::_desplazamiento_dia_ctx` shows one plain provenance line
+(`day.desplazamiento.fuente`) once, whenever any of the four commute keys has a value that day;
+absent past `ultimo_dia` already reads as the generic grid's own "—" (an absent `daily_metric` row),
+never a zero -- no extra code needed for that half.
+
+**Ruling 4 -- per-source delete.** Privacidad's new "Datos importados" card
+(`body/rutas/privacidad.py::_fuentes_ctx` + `privacidad.html`) lists every source this person has
+successfully imported from, in words (`privacidad.fuente.resumen`), each with "Borrar estos datos"
+-> a GET-rendered inline confirmation (`?confirmar=<fuente>`, no JS) -> `POST
+/privacidad/fuente/borrar` (new route). `body/privacidad.py::delete_fuente` removes exactly that
+person's `daily_metric` rows for that source's own registered keys plus its `fuente_importacion`
+row, in one transaction; refuses (404 at the route) an unknown fuente or one this person never
+imported; a re-upload afterwards imports again (the `computed_at` memory is gone with the row).
+`fuente_importacion` was already in `privacidad.py::FULLY_HANDLED_TABLES` from BODY-DESPLAZAMIENTO-2.
+
+**Ruling 5 -- demo (BODY-DEMO-COMMUTE-SEED-1).** `body/demo.py::_seed_desplazamiento` writes
+invented commute figures for the seeded window through the real importer
+(`desplazamiento_import.importar`), `ultimo_dia` fixed at `DESPLAZAMIENTO_DIAS_ATRAS=3` days before
+the seed's anchor (never today itself, so the freshness line has a real date to show) with some days
+randomly absent; `tests/test_demo.py`'s dated exclusion of the four commute keys is removed, so
+`MEASURED_METRIC_KEYS`'s catalogue-coverage census covers them again.
+
+**New strings** (es / en), verbatim: `fuente.personal_commute.label` "Resumen diario de
+desplazamiento" / "Daily commute summary"; `fuente.nunca` "Aún no hay datos de desplazamiento. Se
+importan desde tu escritorio personal." / "No commute data yet. It comes from your personal desk.";
+`fuente.frescura` "Datos hasta {fecha} · importados el {fecha_imp}" / "Data up to {fecha} · imported
+{fecha_imp}"; `fuente.desactualizada` "Hace más de {dias} días sin datos nuevos: exporta Timeline de
+nuevo" / "No new data for over {dias} days: export Timeline again"; `fuente.rechazada` "La última
+subida se rechazó ({motivo})" / "The last upload was refused ({motivo})"; `fuente.motivo.esquema` "el
+formato del archivo no era el esperado" / "the file's format wasn't what was expected";
+`fuente.motivo.dia_malformado` "una fecha no era válida" / "a date wasn't valid";
+`fuente.motivo.dia_duplicado` "un día estaba repetido" / "a day was repeated";
+`fuente.motivo.dia_futuro` "una fecha estaba en el futuro" / "a date was in the future";
+`fuente.motivo.conteo_invalido` "un valor no era un número válido" / "a value wasn't a valid number";
+`fuente.motivo.computed_at_malformado` "la marca de tiempo no era válida" / "the timestamp wasn't
+valid"; `fuente.motivo.computed_at_mixto` "el archivo mezclaba más de una marca de tiempo" / "the
+file mixed more than one timestamp"; `fuente.motivo.demasiado_grande` "el archivo era demasiado
+grande" / "the file was too big"; `trends.group.commute` "Desplazamiento" / "Getting around";
+`day.desplazamiento.fuente` "De tu historial de ubicaciones (resumen diario)." / "From your location
+history (daily summary)."; `privacidad.fuente.titulo` "Datos importados" / "Imported data";
+`privacidad.fuente.resumen` "{n} días, del {primer} al {ultimo}" / "{n} days, {primer} to {ultimo}";
+`privacidad.fuente.confirmar` "¿Borrar los datos de {fuente}? Una nueva subida los vuelve a traer." /
+"Delete {fuente}'s data? A new upload brings it back."; `privacidad.fuente.borrar_boton` "Borrar
+estos datos" / "Delete this data"; `privacidad.fuente.borrar_si` "Sí, borrar" / "Yes, delete";
+`privacidad.fuente.cancelar` "Cancelar" / "Cancel"; `privacidad.fuente.borrada` "Se borraron los
+datos de {fuente}. Una nueva subida los vuelve a traer." / "{fuente} data deleted. A new upload
+brings it back."
+
+**Census test outside `touches` extended to the new truth** (never loosened), per the slice's own
+carve-out: `tests/test_web_entry.py::RouteSetTest.BEFORE` gained `("/privacidad/fuente/borrar",
+("POST",))` -- the new delete route, pinned there since BODY-WEB-ESTRUCTURA-1. First gate run was
+RED on exactly this one assertion (`76 != 75`), confirming it was a genuine, correctly-firing guard;
+the second run, after the fix, was green.
+
+Commits: `3dc06d7` (rulings 1-5 as found, committed as left by the first worker), `42f50d5` (the
+route-census extension).
+
+**Gate**, on this branch's final tree (HEAD `42f50d5`, `git status --porcelain` clean before this
+entry), the exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, run twice: the
+first run (before the census fix) was RED on exactly `test_route_set_is_unchanged_by_the_ayuda_move`;
+the second, on this final tree, one foreground run (moved to the background past the 600 s cap,
+waited on to completion, exit code 0):
+
+    Ran 2889 tests in 616.127s
+
+    OK (skipped=1)
+
+No password, token, session secret, device key or health/location figure was read, printed, or
+written anywhere in this slice's own work.
+
+**Merge policy.** The diff touches no schema or migration (BODY-DESPLAZAMIENTO-2 already added
+`fuente_importacion`; this slice only reads and deletes from it) but does change customer-facing
+bytes (every new i18n string above, rendered on Tendencias, Día and Privacidad) -- one of merge
+policy A's three conditions. Per the spec's own dispatch and its approval reason
+(ORCH-CARLOS-DELEGATES-TIER-1-1), this stops AWAITING_APPROVAL on the branch for the orchestrator to
+look at Tendencias, Día and Privacidad at 375 px before merging.
