@@ -22,6 +22,13 @@ _CADENCE_N_PER_WEEK = re.compile(r"^\s*(\d+)\s*x\s*/\s*week\s*$", re.IGNORECASE)
 # it from here) -- one spelling, not three.
 SHIFT_KINDS = ("morning", "afternoon", "night", "day", "off", "other")
 
+# BODY-NUTRIENTE-OBJETIVO-1 ruling 1: nutrient_target's own vocabulary -- shared by its CHECK
+# constraints in SCHEMA below and by body/agente/herramientas.py's proponer_objetivo_nutriente,
+# the same template pattern SHIFT_KINDS above already uses. 'off' ends a target from that day on;
+# caffeine_mg and alcohol_g are LIMITS (sentido 'como_maximo'), never amounts to reach.
+NUTRIENT_TARGET_KINDS = ("absolute", "per_kg", "off")
+NUTRIENT_TARGET_SENTIDOS = ("al_menos", "como_maximo")
+
 # BODY-RECUPERACION-1: the honest-gap reason codes recuperacion.py's Resultado carries when it has
 # no minutes figure -- shared here (not defined in recuperacion.py) the same way SHIFT_KINDS above
 # is, since recuperacion.py imports db but db must not import recuperacion.py (it would be
@@ -87,7 +94,7 @@ _PROPUESTA_AGENTE_COLUMNS = """
                          'registrar_ingesta', 'corregir_ingesta', 'borrar_ingesta',
                          'marcar_periodo', 'cerrar_periodo', 'corregir_periodo', 'borrar_periodo',
                          'registrar_comida', 'registrar_checkin', 'descartar_series',
-                         'separar_sesion', 'unir_sesiones')),
+                         'separar_sesion', 'unir_sesiones', 'proponer_objetivo_nutriente')),
     objetivo_id     INTEGER REFERENCES goal(id),
     antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
     despues_json    TEXT NOT NULL CHECK (json_valid(despues_json)),
@@ -671,6 +678,25 @@ CREATE TABLE IF NOT EXISTS ingesta (
 );
 CREATE INDEX IF NOT EXISTS idx_ingesta_person_dia ON ingesta(person_id, day);
 
+-- BODY-NUTRIENTE-OBJETIVO-1: a daily target for one of the eight `suma_ingesta` keys, additive and
+-- generic over all of them (never one hardcoded to protein). A changed target is a NEW row, so
+-- history stays: the target for a day is the row with the latest start_day <= day; a same-day
+-- change replaces that day's row (the primary key covers it). 'off' ends a target from that day
+-- on. kind 'per_kg' resolves against the person's own latest body_weight_kg (never guessed);
+-- caffeine_mg/alcohol_g are LIMITS (sentido 'como_maximo'), never amounts to reach -- the person
+-- sets every value, Body never invents one (ORCH-CARLOS-DELEGATES-TIER-1-1).
+CREATE TABLE IF NOT EXISTS nutrient_target (
+    person_id  INTEGER NOT NULL REFERENCES person(id),
+    metric_key TEXT NOT NULL REFERENCES metric_def(key),
+    start_day  TEXT NOT NULL,
+    kind       TEXT NOT NULL CHECK (kind IN ('absolute', 'per_kg', 'off')),
+    amount     REAL CHECK (amount IS NULL OR amount > 0),
+    sentido    TEXT NOT NULL CHECK (sentido IN ('al_menos', 'como_maximo')),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (person_id, metric_key, start_day),
+    CHECK ((kind = 'off' AND amount IS NULL) OR (kind != 'off' AND amount IS NOT NULL))
+);
+
 CREATE TABLE IF NOT EXISTS experimento (
 {_EXPERIMENTO_COLUMNS}
 );
@@ -1204,6 +1230,13 @@ def _propuesta_agente_needs_entreno_vinculo_rebuild(conn: sqlite3.Connection) ->
     return row is not None and "separar_sesion" not in row[0]
 
 
+def _propuesta_agente_needs_nutriente_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'propuesta_agente'"
+    ).fetchone()
+    return row is not None and "proponer_objetivo_nutriente" not in row[0]
+
+
 def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
@@ -1232,6 +1265,9 @@ def _migrate_propuestas(conn: sqlite3.Connection) -> None:
         _rebuild_propuesta_agente_table(conn)
     # BODY-ENTRENO-VINCULO-1: an eighth widening (separar_sesion, unir_sesiones), same reusable rebuild.
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_entreno_vinculo_rebuild(conn):
+        _rebuild_propuesta_agente_table(conn)
+    # BODY-NUTRIENTE-OBJETIVO-1: a ninth widening (proponer_objetivo_nutriente), same reusable rebuild.
+    if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_nutriente_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
     # BODY-MCP-APLICAR-1: a plain nullable column, never a CHECK widening on `accion` -- a plain
     # ALTER TABLE ADD COLUMN, not the rebuild dance above.
@@ -2325,6 +2361,29 @@ def borrar_ingesta(conn: sqlite3.Connection, person_id: int, ingesta_id: int) ->
     with conn:
         conn.execute("DELETE FROM ingesta WHERE id = ?", (ingesta_id,))
         _recalcular_ingesta_dia(conn, person_id, fila["day"], fila["metric_key"])
+
+
+# ---- nutrient_target (BODY-NUTRIENTE-OBJETIVO-1): set_nutrient_target/borrar_nutrient_target are
+# the ONE writer -- body/agente/propuestas.py's proponer_objetivo_nutriente apply/undo call these
+# directly, the same template body/agente/propuestas.py's own registrar_medida apply/undo use on
+# db.set_metric. Neither wraps its own `with conn:` -- the caller does, the same convention
+# set_metric itself follows, so apply/undo can share one transaction with their own bookkeeping.
+
+def set_nutrient_target(conn: sqlite3.Connection, person_id: int, metric_key: str, start_day: str, kind: str,
+                         amount: float | None, sentido: str) -> None:
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    conn.execute(
+        "INSERT OR REPLACE INTO nutrient_target (person_id, metric_key, start_day, kind, amount, sentido, "
+        "created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (person_id, metric_key, start_day, kind, amount, sentido, now),
+    )
+
+
+def borrar_nutrient_target(conn: sqlite3.Connection, person_id: int, metric_key: str, start_day: str) -> None:
+    conn.execute(
+        "DELETE FROM nutrient_target WHERE person_id = ? AND metric_key = ? AND start_day = ?",
+        (person_id, metric_key, start_day),
+    )
 
 
 # ---- comida (BODY-COMIDA-1): one spoken meal = one `comida` row + N `ingesta` children, one per
