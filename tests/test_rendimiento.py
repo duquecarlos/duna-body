@@ -50,6 +50,11 @@ client = TestClient(web.app, follow_redirects=False)
 # nutrientes" card's own read (one vigentes-targets query, plus -- only once a per_kg target is
 # live -- a weight lookup and two batched totals/counts queries) --
 # each in that slice's own ledger entry.
+# BODY-TENDENCIAS-RACHA-GRAFICO-1-M2: /trends' own ceiling, raised for the strength-session study
+# card (BODY-TENDENCIAS-RACHA-GRAFICO-1-M's 3 statements, a fixed cost independent of history
+# length -- tests/test_tendencias_racha.py's own guard). Measured 18 statements without the card
+# present (this file's own fixture, which seeds no strength session) and 21 with it,
+# ceil(21 * 1.3) = 28.
 _CEILINGS = {
     "/": 101,
     "/ajustes/asistente": 16,
@@ -77,7 +82,7 @@ _CEILINGS = {
     "/shifts/como": 20,
     "/shifts/patron": 16,
     "/sw.js": 3,
-    "/trends": 19,
+    "/trends": 28,
 }
 
 # No route may open more than this many connections (BODY-RENDIMIENTO-1's own approval reason):

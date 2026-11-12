@@ -817,7 +817,7 @@
   "trends.racha.noche_nota": "Marcas azules: semanas con turno de noche.",
   "trends.racha.semanas_one": "1 semana",
   "trends.racha.semanas_other": "{n} semanas",
-  "trends.racha.mas_larga_txt": "tu racha más larga en {piso} o más ({desde}–{hasta})",
+  "trends.racha.mas_larga_txt": "tu racha más larga en {piso} o más ({rango})",
   "trends.racha.terminadas_valor": "{n} de {de}",
   "trends.racha.terminadas_txt": "rachas terminaron en una semana de turno de noche",
   "trends.racha.actual_txt": "tu racha actual",

@@ -147,20 +147,81 @@ _RACHA_WIDTH = 313
 _RACHA_TOP = 4
 _RACHA_PLOT_H = 84
 _RACHA_TICK_H = 6  # the night-shift tick strip under the bars
+# BODY-TENDENCIAS-RACHA-GRAFICO-1-M2 (step 3): the month axis, drawn as <text> inside the svg
+# itself instead of an HTML row under it, at the app's own small-text floor (body.css's ".tick"
+# class, the same one body/rutas/turnos.py's axis labels use).
+_RACHA_LABEL_FONT = 12.0
+_RACHA_CHAR_W = 0.6 * _RACHA_LABEL_FONT  # same character-count approximation as turnos.py's own
+                                          # _PERFIL_CHAR_W, since real glyph metrics are not
+                                          # available server-side
+_RACHA_LABEL_GAP_X = 4.0   # minimum clear gap kept between two adjacent month labels' own boxes
+_RACHA_EDGE_PAD = 2.0      # inside the viewBox's own left/right edge
+_RACHA_LABEL_H = 16        # height reserved below the tick strip for the month-label row
+_RACHA_LABEL_BASELINE = 12  # the label text's own baseline, within that reserved row
 
 
-def _racha_tick_indices(n: int) -> list[int]:
-    """Up to 4 evenly spaced week indices (ruling 3's "3-4 tick month axis"), including the first
-    and last week; fewer than 4 when there are fewer than 4 weeks."""
-    if n <= 1:
-        return [0]
-    k = min(4, n)
-    return sorted({round(i * (n - 1) / (k - 1)) for i in range(k)})
+def _racha_label_px(s: str) -> float:
+    return len(s) * _RACHA_CHAR_W
+
+
+def _racha_eje(t: T, semanas: list[dict], bw: float) -> list[dict]:
+    """Up to 4 month-axis labels (ruling 3), each centred at the x of the first week of that
+    month -- evenly chosen among every month-start week when there are more than 4. The first
+    label (chronologically earliest) and every January carry the year (BODY-TENDENCIAS-RACHA-
+    GRAFICO-1-M2 step 3); every other label is the short month name alone. A label too close to
+    the viewBox's own edge anchors start/end instead of middle so it is never clipped, and a
+    greedy left-to-right scan drops any label whose own box (the character-count estimate above)
+    would overlap the one already kept, so two labels never collide."""
+    n = len(semanas)
+    arranques: list[int] = []
+    mes_anterior = None
+    for i in range(n):
+        d = date.fromisoformat(semanas[i]["lunes"])
+        clave = (d.year, d.month)
+        if clave != mes_anterior:
+            arranques.append(i)
+            mes_anterior = clave
+    if len(arranques) > 4:
+        k = 4
+        arranques = sorted({arranques[round(j * (len(arranques) - 1) / (k - 1))] for j in range(k)})
+
+    candidatos = []
+    for pos, i in enumerate(arranques):
+        d = date.fromisoformat(semanas[i]["lunes"])
+        mes = t("date.months")[d.month - 1][:3]
+        texto = f"{mes} {d.year}" if pos == 0 or d.month == 1 else mes
+        candidatos.append((i * bw + bw / 2, texto))
+
+    elegidos: list[tuple[float, str]] = []
+    for x, texto in candidatos:
+        mitad = _racha_label_px(texto) / 2
+        if elegidos:
+            x_prev, texto_prev = elegidos[-1]
+            if x - mitad < x_prev + _racha_label_px(texto_prev) / 2 + _RACHA_LABEL_GAP_X:
+                continue
+        elegidos.append((x, texto))
+
+    out = []
+    for x, texto in elegidos:
+        mitad = _racha_label_px(texto) / 2
+        if x - mitad < _RACHA_EDGE_PAD:
+            anchor, tx = "start", _RACHA_EDGE_PAD
+        elif x + mitad > _RACHA_WIDTH - _RACHA_EDGE_PAD:
+            anchor, tx = "end", _RACHA_WIDTH - _RACHA_EDGE_PAD
+        else:
+            anchor, tx = "middle", x
+        out.append({"x": tx, "anchor": anchor, "texto": texto})
+    return out
 
 
 def _racha_svg(t: T, semanas: list[dict], piso: int | None, turnos_on: bool, aria: str) -> str:
     n = len(semanas)
-    tope = max(max(s["sesiones"] for s in semanas), piso or 0, 1)
+    max_sesiones = max(s["sesiones"] for s in semanas)
+    # Ruling 4 (BODY-TENDENCIAS-RACHA-GRAFICO-1-M2 step 4): with a floor, the scale's own top sits
+    # one session ABOVE the taller of the tallest week and the floor, so the dashed floor line
+    # never sits flush with the viewBox's own top edge, and a week that reaches the floor visibly
+    # touches or passes the line instead of looking capped by it.
+    tope = max(max_sesiones, piso) + 1 if piso is not None else max(max_sesiones, 1)
     top, h = _RACHA_TOP, _RACHA_PLOT_H
     base_y = top + h
     bw = _RACHA_WIDTH / n
@@ -179,16 +240,35 @@ def _racha_svg(t: T, semanas: list[dict], piso: int | None, turnos_on: bool, ari
         y_piso = base_y - (piso / tope) * h
         out.append(f'<line x1="0" y1="{y_piso:.1f}" x2="{_RACHA_WIDTH}" y2="{y_piso:.1f}" class="stroke-muted" '
                    f'stroke-width="1.2" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>')
-    full_h = base_y + _RACHA_TICK_H
-    svg = (f'<svg viewBox="0 0 {_RACHA_WIDTH} {full_h}" width="100%" height="110" role="img" '
-           f'aria-label="{html.escape(aria)}" preserveAspectRatio="none" class="chart-svg">{"".join(out)}</svg>')
-    etiquetas = "".join(f"<span>{html.escape(t.month_year(date.fromisoformat(semanas[i]['lunes'])))}</span>"
-                        for i in _racha_tick_indices(n))
-    return svg + f'<div class="row k fs-12">{etiquetas}</div>'
+    label_top = base_y + _RACHA_TICK_H
+    label_y = label_top + _RACHA_LABEL_BASELINE
+    for e in _racha_eje(t, semanas, bw):
+        out.append(f'<text x="{e["x"]:.1f}" y="{label_y:.1f}" text-anchor="{e["anchor"]}" '
+                   f'class="tick">{html.escape(e["texto"])}</text>')
+    full_h = label_top + _RACHA_LABEL_H
+    # BODY-TENDENCIAS-RACHA-GRAFICO-1-M2 step 3: the viewBox width already equals the card's own
+    # drawn content width (_RACHA_WIDTH, same derivation as turnos.py's _PERFIL_WIDTH); the height
+    # attribute is computed to equal the viewBox height too, so both axes scale 1:1 and the axis
+    # text renders at its own declared size -- preserveAspectRatio="none" (which let x and y scale
+    # independently and stretch the glyphs) is dropped rather than kept now that nothing needs it.
+    return (f'<svg viewBox="0 0 {_RACHA_WIDTH} {full_h:.1f}" width="100%" height="{full_h:.1f}" role="img" '
+            f'aria-label="{html.escape(aria)}" class="chart-svg">{"".join(out)}</svg>')
 
 
 def _racha_semanas_txt(t: T, n: int) -> str:
     return t("trends.racha.semanas_one") if n == 1 else t("trends.racha.semanas_other", n=t.num(n))
+
+
+def _racha_rango_meses(t: T, desde: date, hasta: date) -> str:
+    """BODY-TENDENCIAS-RACHA-GRAFICO-1-M2 step 5: a figure's own month range, in short month names
+    -- one month named once ("oct 2026"), two months sharing a year with the year once at the end
+    ("oct–nov 2026"), two months across years with the year on both ("dic 2025–feb 2026")."""
+    md, mh = t("date.months")[desde.month - 1][:3], t("date.months")[hasta.month - 1][:3]
+    if (desde.year, desde.month) == (hasta.year, hasta.month):
+        return f"{md} {desde.year}"
+    if desde.year == hasta.year:
+        return f"{md}–{mh} {hasta.year}"
+    return f"{md} {desde.year}–{mh} {hasta.year}"
 
 
 def _piso_y_opciones(conn, t: T, person_id: int) -> tuple[int | None, str | None, int | None, list[dict]]:
@@ -247,10 +327,10 @@ def _racha_ctx(t: T, conn, person_id: int, turnos_on: bool, hoy: date) -> dict |
     if piso is not None:
         mas_larga = result.get("mas_larga")
         if mas_larga:
-            desde = comun._short_date(t, date.fromisoformat(mas_larga["inicio"]))
-            hasta = comun._short_date(t, date.fromisoformat(mas_larga["fin"]) + timedelta(6))
+            rango = _racha_rango_meses(t, date.fromisoformat(mas_larga["inicio"]),
+                                       date.fromisoformat(mas_larga["fin"]) + timedelta(6))
             figuras.append({"valor": _racha_semanas_txt(t, mas_larga["semanas"]),
-                           "texto": t("trends.racha.mas_larga_txt", piso=t.num(piso), desde=desde, hasta=hasta)})
+                           "texto": t("trends.racha.mas_larga_txt", piso=t.num(piso), rango=rango)})
         term = result.get("terminadas_en_noche")
         if turnos_on and term and term["de"]:
             figuras.append({"valor": t("trends.racha.terminadas_valor", n=t.num(term["n"]), de=t.num(term["de"])),

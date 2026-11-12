@@ -15,6 +15,8 @@ from fastapi.testclient import TestClient
 
 from body import config, db, entreno_racha, fechas, goals, identity, web
 from body.rutas import comun
+from body.rutas import tendencias
+from tests._rutas import contar_sql
 
 PERSON_A = 1
 PERSON_B = 2
@@ -55,6 +57,19 @@ def _sesion_fuerza(conn, person_id: int, day: date, idx: int = 1) -> None:
         "'Fuerza', 2400, NULL, 115, 140, 240, 'garmin')",
         (person_id, f"racha-test-{day.isoformat()}-{idx}", day.isoformat(), f"{day.isoformat()}T18:00:00"),
     )
+
+
+def _semanas_atras(conn, person_id: int, hasta_lunes: date, desde: int, hasta: int) -> None:
+    """One strength session a week, for every week from `desde` to `hasta` weeks before
+    hasta_lunes (exclusive of `hasta`) -- a night block every 8th week, so the history this
+    builds carries night-shift weeks too (BODY-TENDENCIAS-RACHA-GRAFICO-1-M2 step 2's own guard)."""
+    for i in range(desde, hasta):
+        lunes = hasta_lunes - timedelta(7 * i)
+        _sesion_fuerza(conn, person_id, lunes)
+        if i % 8 == 0:
+            conn.execute(
+                "INSERT INTO shift (person_id, day, kind, source) VALUES (?, ?, 'night', 'manual')",
+                (person_id, (lunes + timedelta(2)).isoformat()))
 
 
 def _racha_de_tres_semanas(conn, person_id: int, hasta_lunes: date) -> None:
@@ -307,6 +322,126 @@ class PostRachaPisoTest(_PageTestCase):
         self.conn.commit()
         self.client.post("/trends/racha-piso", data={"habit_id": str(self.inactive_weekly)})
         self.assertEqual(db.racha_piso_habit_id(self.conn, PERSON_A), self.active_weekly)
+
+
+class TrendsStatementCountIndependentOfHistoryLengthTest(_PageTestCase):
+    """BODY-TENDENCIAS-RACHA-GRAFICO-1-M2 step 2: the whole /trends route, including the card's
+    reads (entreno_racha.racha_semanal and _piso_y_opciones), must cost the same number of
+    statements whether the watch history behind it is a few weeks or two years -- the regression
+    the route's own ceiling (tests/test_rendimiento.py) exists to catch."""
+
+    def test_trends_statements_equal_for_a_short_and_a_long_history(self):
+        db.ensure_ready(self.conn)  # made ready BEFORE either request is measured, as
+                                    # tests/test_rendimiento.py's own _reset_db does
+        _fill_metrics(self.conn, PERSON_A, self.hoy)
+        habit_id = _habit(self.conn, PERSON_A, "Entrenar fuerza")
+        db.set_racha_piso(self.conn, PERSON_A, habit_id)
+        # An explicit "no" (db.trabaja_turnos_si's own NULL-infers-True rule otherwise flips on
+        # once a shift row exists) keeps Turnos' own, unrelated extra reads out of this
+        # comparison -- this guard is about racha_semanal's and _piso_y_opciones' own cost, not
+        # turnos_costo.perfiles_patron's.
+        db.set_trabaja_turnos(self.conn, False, PERSON_A)
+        hasta_lunes = fechas.lunes_de(self.hoy)
+        _semanas_atras(self.conn, PERSON_A, hasta_lunes, 1, 4)
+        self.conn.commit()
+        with contar_sql() as corta:
+            r1 = self.client.get("/trends")
+        self.assertEqual(r1.status_code, 200)
+
+        _semanas_atras(self.conn, PERSON_A, hasta_lunes, 4, 105)  # two more years of weekly history
+        self.conn.commit()
+        with contar_sql() as larga:
+            r2 = self.client.get("/trends")
+        self.assertEqual(r2.status_code, 200)
+
+        self.assertEqual(corta["statements"], larga["statements"],
+                         f"statement count grew with history length: {corta['statements']} -> "
+                         f"{larga['statements']}")
+
+
+class RachaRangoMesesTest(unittest.TestCase):
+    """BODY-TENDENCIAS-RACHA-GRAFICO-1-M2 step 5: the three range shapes a figure's own month
+    range can take, es and en."""
+
+    def test_same_month_names_it_once_es(self):
+        self.assertEqual(tendencias._racha_rango_meses(comun.T("es"), date(2026, 10, 5), date(2026, 10, 25)),
+                         "oct 2026")
+
+    def test_same_month_names_it_once_en(self):
+        self.assertEqual(tendencias._racha_rango_meses(comun.T("en"), date(2026, 10, 5), date(2026, 10, 25)),
+                         "Oct 2026")
+
+    def test_same_year_different_months_year_once_at_the_end_es(self):
+        self.assertEqual(tendencias._racha_rango_meses(comun.T("es"), date(2026, 10, 12), date(2026, 11, 1)),
+                         "oct–nov 2026")
+
+    def test_same_year_different_months_year_once_at_the_end_en(self):
+        self.assertEqual(tendencias._racha_rango_meses(comun.T("en"), date(2026, 10, 12), date(2026, 11, 1)),
+                         "Oct–Nov 2026")
+
+    def test_different_years_year_on_both_es(self):
+        self.assertEqual(tendencias._racha_rango_meses(comun.T("es"), date(2025, 12, 1), date(2026, 2, 5)),
+                         "dic 2025–feb 2026")
+
+    def test_different_years_year_on_both_en(self):
+        self.assertEqual(tendencias._racha_rango_meses(comun.T("en"), date(2025, 12, 1), date(2026, 2, 5)),
+                         "Dec 2025–Feb 2026")
+
+
+class RachaEjeTest(unittest.TestCase):
+    """BODY-TENDENCIAS-RACHA-GRAFICO-1-M2 step 5's own axis tests: at most 4 labels, every label
+    inside the viewBox by the character-width approximation, none overlapping, and the year rule
+    (the first label and every January carry it; every other label is the bare month name)."""
+
+    def _semanas(self, desde: date, n: int) -> list[dict]:
+        return [{"lunes": (desde + timedelta(7 * i)).isoformat(), "sesiones": 0, "noche": False,
+                 "alcanza": None} for i in range(n)]
+
+    def _revisar(self, etiquetas: list[dict]):
+        self.assertLessEqual(len(etiquetas), 4)
+        for e in etiquetas:
+            mitad = tendencias._racha_label_px(e["texto"]) / 2
+            izq = e["x"] - mitad if e["anchor"] == "middle" else (
+                e["x"] if e["anchor"] == "start" else e["x"] - 2 * mitad)
+            der = izq + 2 * mitad
+            self.assertGreaterEqual(izq, -0.01, e)
+            self.assertLessEqual(der, tendencias._RACHA_WIDTH + 0.01, e)
+        for a, b in zip(etiquetas, etiquetas[1:]):
+            mitad_a = tendencias._racha_label_px(a["texto"]) / 2
+            mitad_b = tendencias._racha_label_px(b["texto"]) / 2
+            self.assertLessEqual(a["x"] + mitad_a, b["x"] - mitad_b + 0.01,
+                                 f"{a['texto']!r} overlaps {b['texto']!r}")
+
+    def test_few_weeks_one_label_with_year(self):
+        semanas = self._semanas(date(2026, 10, 5), 3)
+        etiquetas = tendencias._racha_eje(comun.T("es"), semanas, tendencias._RACHA_WIDTH / len(semanas))
+        self.assertEqual([e["texto"] for e in etiquetas], ["oct 2026"])
+        self._revisar(etiquetas)
+
+    def test_two_years_weekly_at_most_four_labels_no_overlap(self):
+        semanas = self._semanas(date(2024, 11, 4), 104)
+        etiquetas = tendencias._racha_eje(comun.T("es"), semanas, tendencias._RACHA_WIDTH / len(semanas))
+        self.assertLessEqual(len(etiquetas), 4)
+        self.assertGreaterEqual(len(etiquetas), 2)
+        self._revisar(etiquetas)
+
+    def test_first_label_and_every_january_carry_the_year(self):
+        # Month starts: 2024-11-04 (Nov, the first label), 2024-12-02 (Dec, not first nor
+        # January -- bare month name), 2025-01-06 (Jan -- carries the year even though it is
+        # neither the first label). Three month-starts, all shown (<= 4).
+        semanas = self._semanas(date(2024, 11, 4), 13)
+        etiquetas = tendencias._racha_eje(comun.T("es"), semanas, tendencias._RACHA_WIDTH / len(semanas))
+        textos = [e["texto"] for e in etiquetas]
+        self.assertEqual(textos, ["nov 2024", "dic", "ene 2025"])
+        self._revisar(etiquetas)
+
+    def test_edge_labels_anchor_away_from_the_edge(self):
+        # Many weeks packs the first week's own x close enough to the viewBox's left edge that a
+        # middle-anchored label would run off it, so the first label anchors "start" instead.
+        semanas = self._semanas(date(2024, 11, 4), 104)
+        etiquetas = tendencias._racha_eje(comun.T("es"), semanas, tendencias._RACHA_WIDTH / len(semanas))
+        self.assertEqual(etiquetas[0]["anchor"], "start")
+        self._revisar(etiquetas)
 
 
 if __name__ == "__main__":

@@ -817,7 +817,7 @@
   "trends.racha.noche_nota": "Blue ticks: night-shift weeks.",
   "trends.racha.semanas_one": "1 week",
   "trends.racha.semanas_other": "{n} weeks",
-  "trends.racha.mas_larga_txt": "your longest run at {piso} or more ({desde}–{hasta})",
+  "trends.racha.mas_larga_txt": "your longest run at {piso} or more ({rango})",
   "trends.racha.terminadas_valor": "{n} of {de}",
   "trends.racha.terminadas_txt": "runs ended in a night-shift week",
   "trends.racha.actual_txt": "your current run",
