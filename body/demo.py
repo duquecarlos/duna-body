@@ -683,6 +683,40 @@ def _seed_self_metrics(conn, db, rng: random.Random, all_days: list[date], perso
     return rows
 
 
+# BODY-DESPLAZAMIENTO-3 ruling 5: ultimo_dia lands this many days before "today" (anchor), never
+# today itself, so the Tendencias freshness line has a real "datos hasta" date to show rather than
+# always reading as perfectly current.
+DESPLAZAMIENTO_DIAS_ATRAS = 3
+_DESPLAZAMIENTO_RANGOS = {
+    "vehicle_minutes": (0, 45), "vehicle_trips": (0, 4), "walking_minutes": (0, 40), "cycling_minutes": (0, 30),
+}
+
+
+def _seed_desplazamiento(conn, desplazamiento_import, rng: random.Random, all_days: list[date],
+                          anchor: date, person_id: int) -> int:
+    """BODY-DESPLAZAMIENTO-3 ruling 5: invented commute figures for the seeded window, some days
+    absent, through the REAL importer (body/desplazamiento_import.py) -- so the Tendencias
+    commute group, its freshness line and the per-source delete all have something to show on the
+    demo server. The LAST day in the window is always present, so `ultimo_dia` is deterministic
+    across two runs regardless of which other days the same rng draw happens to skip."""
+    ultimo_dia = anchor - timedelta(DESPLAZAMIENTO_DIAS_ATRAS)
+    dias_commute = [d for d in all_days if d <= ultimo_dia]
+    if not dias_commute:
+        return 0
+    computed_at = datetime.combine(ultimo_dia, datetime.min.time(), tzinfo=timezone.utc).isoformat()
+    filas = [desplazamiento_import.HEADER]
+    for d in dias_commute:
+        if d != ultimo_dia and rng.random() < 0.25:
+            continue
+        valores = [round(rng.uniform(*_DESPLAZAMIENTO_RANGOS[k]))
+                   for k in ("vehicle_minutes", "vehicle_trips", "walking_minutes", "cycling_minutes")]
+        filas.append([d.isoformat(), *valores, computed_at])
+    texto = "\n".join(",".join(str(x) for x in fila) for fila in filas) + "\n"
+    resultado = desplazamiento_import.importar(conn, person_id, texto)
+    conn.commit()
+    return resultado["dias"] if resultado["ok"] else 0
+
+
 def _seed_soreness(conn, db, rng: random.Random, all_days: list[date], person_id: int) -> int:
     """A few invented soreness readings (BODY-AGUJETAS-1), the day after an invented strength
     session already seeded by `_seed_days` (`_day_activity`'s own 'strength_training' draw) --
@@ -1020,7 +1054,8 @@ def _seed_household(conn, db, goals, enlaces, compartir, rng: random.Random, all
 
 
 def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
-    from . import compartir, db, enlaces, goals, recuperacion, shift_import, sueno_fc, turno_fc, turnos_costo
+    from . import (compartir, db, desplazamiento_import, enlaces, goals, recuperacion, shift_import, sueno_fc,
+                   turno_fc, turnos_costo)
 
     person_id = _seed_person(conn, db, idioma)
 
@@ -1033,6 +1068,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     _seed_entreno_vinculado(conn, db, person_id, idioma)
     metric_rows += _seed_self_metrics(conn, db, rng, all_days, person_id)
     metric_rows += _seed_soreness(conn, db, rng, all_days, person_id)
+    desplazamiento_dias = _seed_desplazamiento(conn, desplazamiento_import, rng, all_days, anchor, person_id)
     entradas_ingesta, comidas_ingesta = _seed_ingesta(conn, db, rng, all_days, person_id)
     objetivos_nutriente = _seed_nutriente_objetivo(conn, db, all_days, person_id)
     periodos = _seed_periodo(conn, db, all_days, person_id, idioma)
@@ -1070,7 +1106,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
         "checkins": checkins,
         "recuperacion_actividades": recuperacion_rows,
         "turno_fc_turnos": turno_fc_turnos, "sueno_fc_noches": sueno_fc_noches,
-        "planes_hoy": planes_hoy,
+        "planes_hoy": planes_hoy, "desplazamiento_dias": desplazamiento_dias,
     }
 
 

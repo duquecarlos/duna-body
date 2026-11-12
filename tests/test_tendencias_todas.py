@@ -56,6 +56,8 @@ class GroupsCatalogueTest(unittest.TestCase):
         self.assertEqual(set(groups["stress"]), {"stress_avg", "high_stress_min"})
         self.assertEqual(set(groups["activity"]), {"intensity_minutes", "active_kcal"})
         self.assertEqual(set(groups["breathing"]), {"respiration_awake"})
+        self.assertEqual(set(groups["commute"]),
+                          {"vehicle_minutes", "vehicle_trips", "walking_minutes", "cycling_minutes"})
 
 
 class TrendsPageWithExtrasTest(unittest.TestCase):
@@ -138,7 +140,9 @@ class TrendsPageWithExtrasTest(unittest.TestCase):
         for extra_id in ('id="sleep_score"', 'id="sleep_deep_min"', 'id="sleep_rem_min"', 'id="body_battery_high"',
                          'id="stress_avg"', 'id="intensity_minutes"', 'id="active_kcal"'):
             self.assertNotIn(extra_id, page_b)
-        self.assertNotIn("Ver todas las medidas", page_b)
+        # BODY-DESPLAZAMIENTO-3: the commute group's own "never imported" freshness line is the
+        # one extra thing every person sees, even with zero measured extras otherwise.
+        self.assertIn("Ver todas las medidas", page_b)
 
     def test_no_control_when_no_extra_metric_has_data(self):
         conn = db.connect()
@@ -148,7 +152,11 @@ class TrendsPageWithExtrasTest(unittest.TestCase):
         _seed_days(conn, PERSON_B, "sleep_minutes", "2026-09-01", 20, 400, 1)
         conn.commit()
         page_b = self.client.get("/trends").text
-        self.assertNotIn('<details class="files"', page_b)
+        # BODY-DESPLAZAMIENTO-3: the details control itself now appears for the commute group's
+        # own freshness line, but with nothing else inside it.
+        self.assertIn('<details class="files mt-10">', page_b)
+        self.assertIn("Aún no hay datos de desplazamiento", page_b)
+        self.assertNotIn('id="sleep_score"', page_b)
 
     def test_todas_1_renders_open_and_range_links_carry_the_flag(self):
         _as(1)

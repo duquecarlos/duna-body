@@ -6,7 +6,8 @@ body.db; never a route module or an agent module, so neither reader creates an i
 """
 from __future__ import annotations
 
-from . import db
+from . import db, fuentes
+from .desplazamiento_import import FUENTE as _FUENTE_COMMUTE
 
 # BODY-WEB-ESTRUCTURA-7: TREND_KEYS and TREND_GROUPS live here, not in Tendencias (body/rutas/
 # tendencias.py), because Día (body/rutas/hoy.py's _tendencias_href) and Turnos (body/rutas/
@@ -40,6 +41,11 @@ TREND_GROUPS = [
     # joins this group -- and the picker -- without a second place to list it (template, not one
     # person).
     ("self", [d[0] for d in db.METRIC_DEFS if d[5] == "self"]),
+    # BODY-DESPLAZAMIENTO-3 ruling 2: Personal's daily commute summary -- keys read from the
+    # registry (body/fuentes.py), itself read from desplazamiento_import's own mapping, never a
+    # third hand-typed list. Unlike every group above, this one is read by the Tendencias route
+    # even with zero cards: estado_fuente's own "never imported" message still has to show.
+    ("commute", list(fuentes.FUENTES[_FUENTE_COMMUTE]["metric_keys"])),
 ]
 
 # BODY-AGENTE-TENDENCIAS-CATALOGO-1: every metric the Trends screen can show, in catalogue order

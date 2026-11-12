@@ -57,6 +57,7 @@
   <summary class="k">{{ t('trends.ver_todas', n=extra_count) }}</summary>
   {% for g in extra_groups %}
   <h2>{{ g.title }}</h2>
+  {% if g.freshness %}<p class="note mb-8">{{ g.freshness }}</p>{% endif %}
   <div class="cols-tendencias">
   {% for c in g.cards %}{{ render_card(c) }}{% endfor %}
   </div>

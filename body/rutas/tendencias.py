@@ -3,16 +3,50 @@ month view and "Ver todas las medidas". Pure move: path, method, templates and b
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from .. import anatomia, baselines, db, identity, profile
+from .. import anatomia, baselines, db, fuentes, identity, profile
 from ..catalogo_tendencias import TODAS
+from ..desplazamiento_import import FUENTE as _FUENTE_COMMUTE
 from ..i18n import T
 from . import comun
 
 router = APIRouter()
+
+# BODY-DESPLAZAMIENTO-3 ruling 2: every reason class desplazamiento_import.validar can raise,
+# mapped to its own i18n key -- an explicit dict, never a dynamic prefix built from the class name,
+# the same choice body/rutas/hoy.py's own _RECOVERY_REASON_KEY already makes for the same reason
+# (a new reason code is a one-line addition here, never an unreviewed dynamic key).
+_FUENTE_MOTIVO_KEY = {
+    "esquema": "fuente.motivo.esquema",
+    "dia_malformado": "fuente.motivo.dia_malformado",
+    "dia_duplicado": "fuente.motivo.dia_duplicado",
+    "dia_futuro": "fuente.motivo.dia_futuro",
+    "conteo_invalido": "fuente.motivo.conteo_invalido",
+    "computed_at_malformado": "fuente.motivo.computed_at_malformado",
+    "computed_at_mixto": "fuente.motivo.computed_at_mixto",
+    "demasiado_grande": "fuente.motivo.demasiado_grande",
+}
+
+
+def _fuente_texto(t: T, conn, person_id: int, hoy: date) -> str:
+    """BODY-DESPLAZAMIENTO-3 ruling 2: the commute group's one freshness line -- never imported,
+    fresh, stale (appended), or the last upload's own refusal reason, in that priority: an error
+    is the newest fact about this source, so it replaces the "datos hasta" line rather than
+    standing beside it."""
+    estado = fuentes.estado_fuente(conn, person_id, _FUENTE_COMMUTE, hoy)
+    if estado is None:
+        return t("fuente.nunca")
+    if estado["error"]:
+        return t("fuente.rechazada", motivo=t(_FUENTE_MOTIVO_KEY[estado["error"]]))
+    texto = t("fuente.frescura", fecha=comun._short_date(t, date.fromisoformat(estado["ultimo_dia"])),
+              fecha_imp=comun._short_date(t, datetime.fromisoformat(estado["importado_at"]).date()))
+    if estado["desactualizada"]:
+        texto += " " + t("fuente.desactualizada", dias=fuentes.FUENTES[_FUENTE_COMMUTE]["umbral_dias"])
+    return texto
+
 
 WEEK_KEYS = ["readiness", "sleep_minutes", "hrv_last_night", "resting_hr"]
 TREND_MIN_DAYS = 14  # body/profile.py's metric_profile() needs this many rows before a metric gets a card
@@ -205,6 +239,7 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
         return comun._render("soon.html", t=t, tab="trends", title=t("nav.trends"),
                        text=comun._sync_status_text(conn, person, t),
                        back_href=back_href, back_label=back_label, turnos=turnos_on)
+    today_local = comun._today_local(person)
     extra_groups, extra_count = [], 0
     for group_key, keys in comun.TREND_GROUPS:
         group_cards = []
@@ -217,8 +252,12 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
             card["subtitle"] = t("trends.plain." + k)
             group_cards.append(card)
             extra_count += 1
-        if group_cards:
-            extra_groups.append({"title": t("trends.group." + group_key), "cards": group_cards})
+        # BODY-DESPLAZAMIENTO-3 ruling 2: the commute group shows even with zero cards -- its own
+        # freshness line is the point when there is nothing yet to chart.
+        freshness = _fuente_texto(t, conn, person_id, today_local) if group_key == "commute" else None
+        if group_cards or freshness:
+            extra_groups.append({"title": t("trends.group." + group_key), "cards": group_cards,
+                                 "freshness": freshness})
     week = None
     # WEEK_KEYS is a subset of TODAS, read with the same (default) thresholds above -- reusing the
     # prefetched profiles here, instead of a second query per key, is what BODY-AGUJETAS-1-B batched.
