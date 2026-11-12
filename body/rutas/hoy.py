@@ -13,12 +13,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from markupsafe import Markup
 
-from .. import (anatomia, compartir, cuenta, db, goals, history, household, identity, noche_inusual,
+from .. import (anatomia, compartir, cuenta, db, fuentes, goals, history, household, identity, noche_inusual,
                 nutriente_objetivo, readiness, recuperacion, turnos_costo, tutoriales, ventana_comida)
 from ..agente import conversacion as agente_conversacion
 from ..agente import herramientas as agente_herramientas
 from ..agente import propuestas as agente_propuestas
 from ..baselines import baseline
+from ..desplazamiento_import import FUENTE as _FUENTE_COMMUTE
 from ..i18n import T
 from . import comun, experimentos
 
@@ -712,6 +713,17 @@ def _periodo_dia_ctx(t: T, conn, person_id: int, dia_iso: str) -> str | None:
     return t("day.periodo", kind=kinds)
 
 
+def _desplazamiento_dia_ctx(t: T, vals: dict) -> str | None:
+    """BODY-DESPLAZAMIENTO-3 ruling 3: Día's own one-line provenance note, shown once regardless of
+    how many of the four commute keys this day carries a value for -- never a zero past
+    ultimo_dia (an absent daily_metric row already reads as "—" in the generic card grid; a gap
+    stays a gap, no code needed for that half)."""
+    keys = fuentes.FUENTES[_FUENTE_COMMUTE]["metric_keys"]
+    if any(vals.get(k) is not None for k in keys):
+        return t("day.desplazamiento.fuente")
+    return None
+
+
 def _comidas_dia_ctx(t: T, conn, person_id: int, defs: dict, dia_iso: str) -> list[dict]:
     """Día's own meals (BODY-COMIDA-1): one line per meal -- a `registrar_comida` group or a
     legacy single-amount `ingesta` row, `db.comidas_del_dia` groups both the same way -- each
@@ -851,9 +863,16 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
     data = db.load_day(conn, key, person_id)
     vals = {m["key"]: m["value"] for m in data["metrics"]}
     defs = comun._defs(conn)
+    # BODY-DESPLAZAMIENTO-3-M fix 1 (ruling 3): a registered source with no value at all for THIS
+    # day shows none of its rows here -- never a row of bare "—"s. A source with at least one value
+    # keeps showing all of its keys, same as today (a missing one of them may still read "—").
+    fuentes_sin_datos_hoy = {f for f, datos in fuentes.FUENTES.items()
+                             if not any(vals.get(k) is not None for k in datos["metric_keys"])}
     cards = []
     for k, df in defs.items():
         if k in SUENO_RESP_KEYS or k in SUENO_FC_KEYS:
+            continue
+        if fuentes.fuente_de_metrica(k) in fuentes_sin_datos_hoy:
             continue
         v = vals.get(k)
         delta, cls = _delta(conn, t, df, key, v, person_id)
@@ -925,7 +944,8 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
                    checkin=_checkins_dia_ctx(t, conn, person_id, defs, vals, d.isoformat()),
                    objetivos_nutriente=_objetivos_nutriente_ctx(t, conn, defs, person_id, d.isoformat(),
                                                                  d.isoformat() == today_local.isoformat()),
-                   union_oferta=union_oferta, vinculo_tarjetas=vinculo_tarjetas)
+                   union_oferta=union_oferta, vinculo_tarjetas=vinculo_tarjetas,
+                   desplazamiento_fuente=_desplazamiento_dia_ctx(t, vals))
 
 
 @router.post("/day/{day}/noche-inusual/visto")

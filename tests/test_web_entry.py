@@ -94,6 +94,7 @@ class RouteSetTest(unittest.TestCase):
         ("/privacidad/consentimiento", ("GET",)),
         ("/privacidad/consentimiento", ("POST",)),
         ("/privacidad/exportar", ("GET",)),
+        ("/privacidad/fuente/borrar", ("POST",)),  # BODY-DESPLAZAMIENTO-3 ruling 4
         ("/settings", ("GET",)),
         ("/settings/aplicar_mcp", ("POST",)),  # BODY-MCP-APLICAR-1-B
         ("/settings/compartir", ("POST",)),

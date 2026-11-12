@@ -36,7 +36,7 @@ from fastapi.responses import HTMLResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup
 
-from .. import cuenta, db, fechas, garmin_cuenta, tutoriales
+from .. import cuenta, db, fechas, garmin_cuenta, history, tutoriales
 from ..agente import cliente as agente_cliente
 from ..catalogo_tendencias import TREND_GROUPS, TREND_KEYS
 from ..i18n import T
@@ -142,7 +142,13 @@ OF_100 = {"readiness", "stress_avg", "body_battery_high", "body_battery_low", "b
 
 
 def _is_minutes(key: str) -> bool:
-    return key.endswith("_min") or key == "sleep_minutes"
+    """BODY-DESPLAZAMIENTO-3-M fix 3: reads the SAME dict history.es_minutos is built from
+    (history._UNIT_BY_KEY, itself read off db.METRIC_DEFS' declared unit once at import time) --
+    never a second, independent key-spelling heuristic. Not written as `return
+    history.es_minutos(key)`: tests/test_guardia_parches.py's NoShimFunctionGuardTest refuses a
+    top-level route-module function that only forwards to another module's function by name, the
+    same failure mode as a patch on the real owner missing a route written through a wrapper."""
+    return history._UNIT_BY_KEY.get(key) == "min"
 
 
 def _decimales(key: str) -> int:

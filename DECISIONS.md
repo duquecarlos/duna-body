@@ -17973,3 +17973,188 @@ Ajustes' Dispositivos page and anywhere Día lists a metric by its label) -- two
 three conditions. The slice's own dispatch explicitly pre-authorized the merge on a green gate ("no
 screen beyond Día's generic rows changes"), so this merges rather than stopping
 AWAITING_APPROVAL. -- merged 0ed81c4
+
+## BODY-DESPLAZAMIENTO-3 -- the commute group on Tendencias, Día's provenance line, and the per-source delete (2026-11-12)
+
+BODY-DESPLAZAMIENTO-3-R recovered this slice's work: a first worker (BODY-DESPLAZAMIENTO-3) had
+implemented all five rulings below and its targeted tests were green, but its session ended before
+any commit, leaving 13 modified files and 2 new ones uncommitted on `feat/body-desplazamiento-3`
+(HEAD still `0d2caa9`). This continuation committed that work as found (`3dc06d7`), read the diff
+against each ruling, found every ruling already satisfied, and only had to extend one census test
+outside `touches` (below) before the gate went green.
+
+**Ruling 1 -- one registry of imported sources.** New `body/fuentes.py`: `FUENTES` keyed by
+`desplazamiento_import.FUENTE`, its `metric_keys` read from `desplazamiento_import.VIDA_KEYS` (never
+re-listed), `umbral_dias=45`. `fuente_de_metrica(key)` and `estado_fuente(conn, person_id, fuente,
+hoy)` -> None (never imported, or only ever a refusal) or `{primer_dia, ultimo_dia, dias,
+importado_at, desactualizada, error}`, `error` only when `ultimo_error_at` is newer than
+`importado_at`.
+
+**Ruling 2 -- Tendencias.** `body/catalogo_tendencias.py`'s `TREND_GROUPS` gains a `commute` group,
+its keys read from `fuentes.FUENTES[...]["metric_keys"]` (one source, not a second hand-typed list);
+it is the one extra group `body/rutas/tendencias.py`'s route still shows with zero cards, carrying
+its own freshness line (`_fuente_texto`): never-imported, fresh, stale (appended), or the last
+refusal's reason class (through `_FUENTE_MOTIVO_KEY`, an explicit dict mapping every
+`desplazamiento_import.validar` reason to its own i18n key) replacing the freshness line outright.
+`TODAS` (read by `leer_tendencias`) picks the group up with no second list.
+
+**Ruling 3 -- Día.** `body/rutas/hoy.py::_desplazamiento_dia_ctx` shows one plain provenance line
+(`day.desplazamiento.fuente`) once, whenever any of the four commute keys has a value that day;
+absent past `ultimo_dia` already reads as the generic grid's own "—" (an absent `daily_metric` row),
+never a zero -- no extra code needed for that half.
+
+**Ruling 4 -- per-source delete.** Privacidad's new "Datos importados" card
+(`body/rutas/privacidad.py::_fuentes_ctx` + `privacidad.html`) lists every source this person has
+successfully imported from, in words (`privacidad.fuente.resumen`), each with "Borrar estos datos"
+-> a GET-rendered inline confirmation (`?confirmar=<fuente>`, no JS) -> `POST
+/privacidad/fuente/borrar` (new route). `body/privacidad.py::delete_fuente` removes exactly that
+person's `daily_metric` rows for that source's own registered keys plus its `fuente_importacion`
+row, in one transaction; refuses (404 at the route) an unknown fuente or one this person never
+imported; a re-upload afterwards imports again (the `computed_at` memory is gone with the row).
+`fuente_importacion` was already in `privacidad.py::FULLY_HANDLED_TABLES` from BODY-DESPLAZAMIENTO-2.
+
+**Ruling 5 -- demo (BODY-DEMO-COMMUTE-SEED-1).** `body/demo.py::_seed_desplazamiento` writes
+invented commute figures for the seeded window through the real importer
+(`desplazamiento_import.importar`), `ultimo_dia` fixed at `DESPLAZAMIENTO_DIAS_ATRAS=3` days before
+the seed's anchor (never today itself, so the freshness line has a real date to show) with some days
+randomly absent; `tests/test_demo.py`'s dated exclusion of the four commute keys is removed, so
+`MEASURED_METRIC_KEYS`'s catalogue-coverage census covers them again.
+
+**New strings** (es / en), verbatim: `fuente.personal_commute.label` "Resumen diario de
+desplazamiento" / "Daily commute summary"; `fuente.nunca` "Aún no hay datos de desplazamiento. Se
+importan desde tu escritorio personal." / "No commute data yet. It comes from your personal desk.";
+`fuente.frescura` "Datos hasta {fecha} · importados el {fecha_imp}" / "Data up to {fecha} · imported
+{fecha_imp}"; `fuente.desactualizada` "Hace más de {dias} días sin datos nuevos: exporta Timeline de
+nuevo" / "No new data for over {dias} days: export Timeline again"; `fuente.rechazada` "La última
+subida se rechazó ({motivo})" / "The last upload was refused ({motivo})"; `fuente.motivo.esquema` "el
+formato del archivo no era el esperado" / "the file's format wasn't what was expected";
+`fuente.motivo.dia_malformado` "una fecha no era válida" / "a date wasn't valid";
+`fuente.motivo.dia_duplicado` "un día estaba repetido" / "a day was repeated";
+`fuente.motivo.dia_futuro` "una fecha estaba en el futuro" / "a date was in the future";
+`fuente.motivo.conteo_invalido` "un valor no era un número válido" / "a value wasn't a valid number";
+`fuente.motivo.computed_at_malformado` "la marca de tiempo no era válida" / "the timestamp wasn't
+valid"; `fuente.motivo.computed_at_mixto` "el archivo mezclaba más de una marca de tiempo" / "the
+file mixed more than one timestamp"; `fuente.motivo.demasiado_grande` "el archivo era demasiado
+grande" / "the file was too big"; `trends.group.commute` "Desplazamiento" / "Getting around";
+`day.desplazamiento.fuente` "De tu historial de ubicaciones (resumen diario)." / "From your location
+history (daily summary)."; `privacidad.fuente.titulo` "Datos importados" / "Imported data";
+`privacidad.fuente.resumen` "{n} días, del {primer} al {ultimo}" / "{n} days, {primer} to {ultimo}";
+`privacidad.fuente.confirmar` "¿Borrar los datos de {fuente}? Una nueva subida los vuelve a traer." /
+"Delete {fuente}'s data? A new upload brings it back."; `privacidad.fuente.borrar_boton` "Borrar
+estos datos" / "Delete this data"; `privacidad.fuente.borrar_si` "Sí, borrar" / "Yes, delete";
+`privacidad.fuente.cancelar` "Cancelar" / "Cancel"; `privacidad.fuente.borrada` "Se borraron los
+datos de {fuente}. Una nueva subida los vuelve a traer." / "{fuente} data deleted. A new upload
+brings it back."
+
+**Census test outside `touches` extended to the new truth** (never loosened), per the slice's own
+carve-out: `tests/test_web_entry.py::RouteSetTest.BEFORE` gained `("/privacidad/fuente/borrar",
+("POST",))` -- the new delete route, pinned there since BODY-WEB-ESTRUCTURA-1. First gate run was
+RED on exactly this one assertion (`76 != 75`), confirming it was a genuine, correctly-firing guard;
+the second run, after the fix, was green.
+
+Commits: `3dc06d7` (rulings 1-5 as found, committed as left by the first worker), `42f50d5` (the
+route-census extension).
+
+**Gate**, on this branch's final tree (HEAD `42f50d5`, `git status --porcelain` clean before this
+entry), the exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, run twice: the
+first run (before the census fix) was RED on exactly `test_route_set_is_unchanged_by_the_ayuda_move`;
+the second, on this final tree, one foreground run (moved to the background past the 600 s cap,
+waited on to completion, exit code 0):
+
+    Ran 2889 tests in 616.127s
+
+    OK (skipped=1)
+
+No password, token, session secret, device key or health/location figure was read, printed, or
+written anywhere in this slice's own work.
+
+**Merge policy.** The diff touches no schema or migration (BODY-DESPLAZAMIENTO-2 already added
+`fuente_importacion`; this slice only reads and deletes from it) but does change customer-facing
+bytes (every new i18n string above, rendered on Tendencias, Día and Privacidad) -- one of merge
+policy A's three conditions. Per the spec's own dispatch and its approval reason
+(ORCH-CARLOS-DELEGATES-TIER-1-1), this stops AWAITING_APPROVAL on the branch for the orchestrator to
+look at Tendencias, Día and Privacidad at 375 px before merging.
+
+### BODY-DESPLAZAMIENTO-3-M -- three defects from the 375 px review, one of them pre-existing (2026-11-12)
+
+The orchestrator's AWAITING_APPROVAL review at 375 px found the round working as specced, and three
+defects, named in ORCH-CARLOS-DELEGATES-TIER-1-1's own approval reason: two presentation defects in
+this round, plus one unit bug that decided a metric's formatting from its KEY's spelling instead of
+its declared unit -- pre-existing in both `body/rutas/comun.py` and `body/history.py` before this
+round touched either, but exposed by the three new commute minute keys.
+
+**Fix 3 -- minutes by declared unit.** `_is_minutes(key)` in both files decided "this is minutes"
+from `key.endswith("_min") or key == "sleep_minutes"` -- a false positive for `sleep_hr_min` (unit
+`bpm`, `db.py:851`: rendered on Trends as "≈ 55 min" with no unit) and a false negative for the new
+`vehicle_minutes`/`walking_minutes`/`cycling_minutes` (unit `min`, but the KEY ends `_minutes`, not
+`_min`: rendered with no minute formatting and no unit at all). `body/history.py` now holds the one
+real decision, `es_minutos(key)`, reading `_UNIT_BY_KEY` -- `{d[0]: d[2] for d in db.METRIC_DEFS}`,
+built once at import time -- never the key's spelling; `sleep_minutes` needed no special case, its
+own declared unit already being `"min"`. `body/rutas/comun.py::_is_minutes` reads the SAME dict
+directly (`history._UNIT_BY_KEY.get(key) == "min"`) rather than calling `history.es_minutos(key)`:
+`tests/test_guardia_parches.py::NoShimFunctionGuardTest` refuses a route-module top-level function
+whose body is only `return other_module.fn(same_args)` (caught live on the first gate run, below),
+and `comun._is_minutes` could not simply be deleted -- `body/rutas/turnos.py`, outside this slice's
+`touches`, still calls it by name. Grepped for every other `key.endswith("_min")` heuristic in
+`body/`: none found outside these two now-fixed definitions. Census test (`tests/test_history.py`):
+every `db.METRIC_DEFS` key is minutes iff its own unit is `"min"`, no other key is; `sleep_hr_min`
+renders in bpm on Trends (not minutes) and keeps `NOISE_FLOOR_DEFAULT`; `vehicle_minutes` renders its
+delta and normal range exactly as `sleep_awake_min` does.
+
+**Fix 1 -- Día without commute data.** `day_view()`'s generic card grid listed all four commute keys
+on every day, each reading a bare "—" past `ultimo_dia` or for a person who never imported the source
+at all -- ruling 3's own "no row, no code needed for that half" turned out wrong for the generic grid
+(only `_desplazamiento_dia_ctx`'s one-line provenance note already read it correctly). Fixed with one
+check before the grid loop: a key whose own registered source (`fuentes.fuente_de_metrica`) has no
+value at all for this day, across every key that source owns, is skipped entirely; a day with at
+least one of a source's keys present still shows all of that source's cards, a missing one still
+reading "—", unchanged. Self-typed and Garmin-origin rows are untouched (`fuente_de_metrica` returns
+`None` for them). Tests (`tests/test_desplazamiento_vista.py`): no commute card the day after
+`ultimo_dia`; none at all for a never-imported person, on any day; a day with data still shows all
+four plus the source line.
+
+**Fix 2 -- confirmation wording.** Both the confirmation and the done string used a possessive on
+the source's own label ("Delete {fuente}'s data?" / "¿Borrar los datos de {fuente}?"), awkward in
+both languages. Both now quote the label instead, the same «»/“” convention this app already uses
+for a quoted value elsewhere (e.g. `today.noche_inusual.nota_guardada`), with a singular "it" in
+place of the now-dropped plural "los/the data of":
+
+    es confirm: ¿Borrar «{fuente}»? Una nueva subida lo vuelve a traer.
+    en confirm: Delete "{fuente}"? A new upload brings it back.
+    es done:    Se borró «{fuente}». Una nueva subida lo vuelve a traer.
+    en done:    "{fuente}" deleted. A new upload brings it back.
+
+(replacing `privacidad.fuente.confirmar` "¿Borrar los datos de {fuente}? Una nueva subida los vuelve
+a traer." / "Delete {fuente}'s data? A new upload brings it back." and `privacidad.fuente.borrada`
+"Se borraron los datos de {fuente}. Una nueva subida los vuelve a traer." / "{fuente} data deleted. A
+new upload brings it back.") Tests: both strings, both languages, with the real label substituted
+in; `tests/test_i18n_paridad.py` (placeholder and key-set parity) stays green with no change needed.
+A pre-existing golden assertion in `tests/test_desplazamiento_vista.py` that pinned the old done
+string (`"Se borraron los datos de"`) was updated to the new, correct text, never loosened.
+
+Commits: `b04c7f4` (fix 3, minutes by declared unit), `8bb5d97` (fix 1, no commute row with no
+data), `5de1d7e` (fix 2, confirmation wording).
+
+**Gate**, on this branch's final tree (HEAD `5de1d7e`, `git status --porcelain` clean before this
+entry), the exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, one foreground
+run (moved to the background past the 600 s cap, waited on to completion, exit code 0):
+
+    Ran 2903 tests in 713.033s
+
+    OK (skipped=1)
+
+2903 is the `-R` round's own 2889 plus the 14 tests this continuation added (7 in
+`tests/test_history.py`, 3 in `tests/test_tendencias_todas.py`, 4 in
+`tests/test_desplazamiento_vista.py`) -- no other count moved. The one earlier failure seen this
+session (`NoShimFunctionGuardTest`, caught before any commit, fixed by reading `_UNIT_BY_KEY`
+directly instead of forwarding to `history.es_minutos`) never reached a committed tree.
+
+No password, token, session secret, device key or health/location figure was read, printed, or
+written anywhere in this slice's own work.
+
+**Merge policy.** The diff touches no schema or migration, and no cross-repo contract or DTO. It does
+change customer-facing bytes (every string in fixes 1-2, plus the bpm/minute formatting fix 3
+corrects) -- one of merge policy A's three conditions, same as the round it fixes. The spec's own
+approval reason (ORCH-CARLOS-DELEGATES-TIER-1-1) says in words this slice merges on a green gate:
+"then merges on a green gate" -- authorising the merge past this condition, unlike the `-R` round it
+continues.

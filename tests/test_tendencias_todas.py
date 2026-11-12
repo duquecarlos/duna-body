@@ -56,6 +56,8 @@ class GroupsCatalogueTest(unittest.TestCase):
         self.assertEqual(set(groups["stress"]), {"stress_avg", "high_stress_min"})
         self.assertEqual(set(groups["activity"]), {"intensity_minutes", "active_kcal"})
         self.assertEqual(set(groups["breathing"]), {"respiration_awake"})
+        self.assertEqual(set(groups["commute"]),
+                          {"vehicle_minutes", "vehicle_trips", "walking_minutes", "cycling_minutes"})
 
 
 class TrendsPageWithExtrasTest(unittest.TestCase):
@@ -138,7 +140,9 @@ class TrendsPageWithExtrasTest(unittest.TestCase):
         for extra_id in ('id="sleep_score"', 'id="sleep_deep_min"', 'id="sleep_rem_min"', 'id="body_battery_high"',
                          'id="stress_avg"', 'id="intensity_minutes"', 'id="active_kcal"'):
             self.assertNotIn(extra_id, page_b)
-        self.assertNotIn("Ver todas las medidas", page_b)
+        # BODY-DESPLAZAMIENTO-3: the commute group's own "never imported" freshness line is the
+        # one extra thing every person sees, even with zero measured extras otherwise.
+        self.assertIn("Ver todas las medidas", page_b)
 
     def test_no_control_when_no_extra_metric_has_data(self):
         conn = db.connect()
@@ -148,7 +152,11 @@ class TrendsPageWithExtrasTest(unittest.TestCase):
         _seed_days(conn, PERSON_B, "sleep_minutes", "2026-09-01", 20, 400, 1)
         conn.commit()
         page_b = self.client.get("/trends").text
-        self.assertNotIn('<details class="files"', page_b)
+        # BODY-DESPLAZAMIENTO-3: the details control itself now appears for the commute group's
+        # own freshness line, but with nothing else inside it.
+        self.assertIn('<details class="files mt-10">', page_b)
+        self.assertIn("Aún no hay datos de desplazamiento", page_b)
+        self.assertNotIn('id="sleep_score"', page_b)
 
     def test_todas_1_renders_open_and_range_links_carry_the_flag(self):
         _as(1)
@@ -183,6 +191,55 @@ class AssistantTrendsToolTest(unittest.TestCase):
         out = herramientas.ejecutar(conn, 1, "leer_tendencias", {"metric": "sleep_rem_min"}, "completo")
         self.assertIn("sleep_rem_min", out["metricas"])
         self.assertEqual(out["metricas"]["sleep_rem_min"]["dias_con_datos"], 14)
+
+
+class MinutesByUnitTest(unittest.TestCase):
+    """BODY-DESPLAZAMIENTO-3-M fix 3: a card's unit/minute formatting is read from the metric's
+    own declared unit (db.METRIC_DEFS), never from the key's spelling -- sleep_hr_min is bpm
+    (the key ends in "_min" but is not minutes); vehicle_minutes/walking_minutes/cycling_minutes
+    are minutes (the key ends in "_minutes", not "_min", but the unit is "min")."""
+
+    def setUp(self):
+        self.orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig_db_path))
+        self.addCleanup(web.app.dependency_overrides.clear)
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "minutos.db"
+        conn = db.connect()
+        self.addCleanup(conn.close)
+        db.init(conn)
+        _seed_days(conn, 1, "resting_hr", "2026-09-01", 20, 58, -0.2)
+        _seed_days(conn, 1, "sleep_minutes", "2026-09-01", 20, 410, 1)
+        _seed_days(conn, 1, "sleep_hr_min", "2026-09-01", 20, 50, 0.1)
+        _seed_days(conn, 1, "sleep_awake_min", "2026-09-01", 20, 15, 0.2)
+        _seed_days(conn, 1, "vehicle_minutes", "2026-09-01", 20, 18, 0.3)
+        db.set_language(conn, "en", 1)
+        conn.commit()
+        _as(1)
+        self.client = TestClient(web.app, follow_redirects=False)
+
+    @staticmethod
+    def _chunk(page: str, key: str) -> str:
+        start = page.index(f'id="{key}"')
+        return page[start:page.index("</div>", page.index('class="legend mt-4"', start))]
+
+    def test_sleep_hr_min_renders_bpm_not_minutes(self):
+        page = self.client.get("/trends").text
+        chunk = self._chunk(page, "sleep_hr_min")
+        self.assertIn("bpm", chunk)
+        self.assertNotRegex(chunk, r"\d+\s*min\b")
+
+    def test_vehicle_minutes_normal_range_matches_sleep_awake_min_s_minute_formatting(self):
+        page = self.client.get("/trends").text
+        chunk_v = self._chunk(page, "vehicle_minutes")
+        chunk_s = self._chunk(page, "sleep_awake_min")
+        self.assertRegex(chunk_v, r"\d+ min–\d+ min")
+        self.assertRegex(chunk_s, r"\d+ min–\d+ min")
+
+    def test_vehicle_minutes_delta_shows_minutes_not_a_bare_number(self):
+        page = self.client.get("/trends").text
+        chunk = self._chunk(page, "vehicle_minutes")
+        if "delta good" in chunk or "delta bad" in chunk:
+            self.assertRegex(chunk, r"[↑↓] \d+ min ")
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import date, datetime, timezone
 
-from . import compartir, db, enlaces
+from . import compartir, db, enlaces, fuentes
 from .agente import ajustes as agente_ajustes
 
 CONSENT_VERSION = "consentimiento-v3"
@@ -330,6 +330,42 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         compartir.delete_rows(conn, person_id)
         conn.execute("DELETE FROM person WHERE id = ?", (person_id,))
     _borrar_fuera_de_bd(person_id)
+
+
+# ---- per-source delete (BODY-DESPLAZAMIENTO-3 ruling 4) -------------------------------------------
+
+def fuentes_importadas(conn: sqlite3.Connection, person_id: int) -> list[dict]:
+    """Every source this person has ever SUCCESSFULLY imported from (importado_at not null) --
+    an error-only row (never a real import) has nothing to list or delete."""
+    return [dict(r) for r in conn.execute(
+        "SELECT fuente, primer_dia, ultimo_dia, dias FROM fuente_importacion "
+        "WHERE person_id = ? AND importado_at IS NOT NULL ORDER BY fuente", (person_id,)
+    )]
+
+
+def delete_fuente(conn: sqlite3.Connection, person_id: int, fuente: str) -> bool:
+    """Removes exactly this person's daily_metric rows written by `fuente` (its own registered
+    metric keys only) and its fuente_importacion row, in one transaction. False (nothing touched)
+    for an unknown fuente or one this person has never imported -- Garmin, self-typed and every
+    other source's rows are untouched, since the delete is scoped to this one source's own keys."""
+    datos = fuentes.FUENTES.get(fuente)
+    if datos is None:
+        return False
+    existe = conn.execute(
+        "SELECT 1 FROM fuente_importacion WHERE person_id = ? AND fuente = ? AND importado_at IS NOT NULL",
+        (person_id, fuente),
+    ).fetchone()
+    if existe is None:
+        return False
+    keys = datos["metric_keys"]
+    placeholders = ",".join("?" * len(keys))
+    with conn:
+        conn.execute(
+            f"DELETE FROM daily_metric WHERE person_id = ? AND source = ? AND metric_key IN ({placeholders})",
+            (person_id, fuente, *keys),
+        )
+        conn.execute("DELETE FROM fuente_importacion WHERE person_id = ? AND fuente = ?", (person_id, fuente))
+    return True
 
 
 def _borrar_fuera_de_bd(person_id: int) -> None:

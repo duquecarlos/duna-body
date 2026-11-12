@@ -291,5 +291,39 @@ class HistoryRouteTest(unittest.TestCase):
         self.assertEqual(r.text.count(hero_text), 1)
 
 
+class EsMinutosTest(unittest.TestCase):
+    """BODY-DESPLAZAMIENTO-3-M fix 3: minutes is decided by the metric's DECLARED unit in
+    db.METRIC_DEFS, never by the key's own spelling."""
+
+    def test_census_over_metric_defs(self):
+        for key, _label, unit, *_rest in db.METRIC_DEFS:
+            self.assertEqual(history.es_minutos(key), unit == "min", key)
+
+    def test_sleep_hr_min_is_bpm_not_minutes(self):
+        self.assertFalse(history.es_minutos("sleep_hr_min"))
+        self.assertFalse(comun._is_minutes("sleep_hr_min"))
+
+    def test_sleep_hr_min_keeps_the_default_noise_floor(self):
+        self.assertEqual(history._noise_floor("sleep_hr_min"), history.NOISE_FLOOR_DEFAULT)
+
+    def test_commute_minutes_keys_are_minutes(self):
+        for key in ("vehicle_minutes", "walking_minutes", "cycling_minutes"):
+            self.assertTrue(history.es_minutos(key))
+            self.assertTrue(comun._is_minutes(key))
+
+    def test_vehicle_trips_is_not_minutes(self):
+        self.assertFalse(history.es_minutos("vehicle_trips"))
+
+    def test_comun_value_renders_sleep_hr_min_as_a_plain_number_not_minutes(self):
+        t = T("en")
+        self.assertEqual(comun._value(t, "sleep_hr_min", 55), "55")
+        self.assertNotIn("min", comun._value(t, "sleep_hr_min", 55))
+
+    def test_comun_value_renders_vehicle_minutes_the_same_way_sleep_awake_min_does(self):
+        t = T("en")
+        self.assertEqual(comun._value(t, "vehicle_minutes", 18), comun._value(t, "sleep_awake_min", 18))
+        self.assertEqual(comun._value(t, "vehicle_minutes", 18), "18 min")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -17,10 +17,17 @@ from . import db
 PATTERN_KEYS = ["sleep_minutes", "resting_hr", "hrv_last_night", "stress_avg", "body_battery_wake"]
 
 # Reused from body/web.py's trends week-highlight rule (`trends()`'s week table: a weekday is only marked
-# the "worst" one when `spread >= 1 if not _is_minutes(k) else 5`). Below this, a weekday/month spread is
+# the "worst" one when `spread >= 1 if not es_minutos(k) else 5`). Below this, a weekday/month spread is
 # noise, not a pattern worth a finding.
 NOISE_FLOOR_MINUTES = 5.0
 NOISE_FLOOR_DEFAULT = 1.0
+
+# BODY-DESPLAZAMIENTO-3-M fix 3: key -> declared unit, read off db.METRIC_DEFS once at import time --
+# never the key's own spelling. The old `key.endswith("_min")` heuristic mis-read sleep_hr_min (unit
+# "bpm") as minutes and missed vehicle_minutes/walking_minutes/cycling_minutes (unit "min", but the
+# KEY ends in "_minutes", not "_min"). sleep_minutes' own unit is already "min", so it needs no
+# special case here.
+_UNIT_BY_KEY = {d[0]: d[2] for d in db.METRIC_DEFS}
 
 PATTERN_MIN_N = 4        # fewer values than this in a weekday/month bucket: no band, no finding from it
 MAX_FINDINGS = 3
@@ -36,12 +43,15 @@ KNOWN_ACTIVITY_TYPES = {
 }
 
 
-def _is_minutes(key: str) -> bool:
-    return key.endswith("_min") or key == "sleep_minutes"
+def es_minutos(key: str) -> bool:
+    """Whether `key`'s own figure is minutes -- decided by its DECLARED unit in db.METRIC_DEFS, not
+    by the key's spelling. body/rutas/comun.py imports this same function (comun._is_minutes
+    delegates to it): there is only one such decision in the app."""
+    return _UNIT_BY_KEY.get(key) == "min"
 
 
 def _noise_floor(key: str) -> float:
-    return NOISE_FLOOR_MINUTES if _is_minutes(key) else NOISE_FLOOR_DEFAULT
+    return NOISE_FLOOR_MINUTES if es_minutos(key) else NOISE_FLOOR_DEFAULT
 
 
 def _prettify(raw: str | None) -> str:

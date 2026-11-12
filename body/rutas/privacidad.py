@@ -10,10 +10,30 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
 
-from .. import cuenta, db, identity, privacidad
+from .. import cuenta, db, fuentes, identity, privacidad
 from . import comun
 
 router = APIRouter()
+
+
+def _fuentes_ctx(t, conn, person_id: int, confirmar: str | None) -> list[dict]:
+    """BODY-DESPLAZAMIENTO-3 ruling 4: each imported source, in words -- `confirmando` marks the
+    one row (if any) whose "Borrar estos datos" the person just tapped, for the template's own
+    inline confirmation step."""
+    out = []
+    for row in privacidad.fuentes_importadas(conn, person_id):
+        datos = fuentes.FUENTES.get(row["fuente"])
+        if datos is None:
+            continue
+        label = t(datos["label_key"])
+        out.append({
+            "fuente": row["fuente"], "label": label,
+            "resumen": t("privacidad.fuente.resumen", n=row["dias"],
+                         primer=comun._short_date(t, date.fromisoformat(row["primer_dia"])),
+                         ultimo=comun._short_date(t, date.fromisoformat(row["ultimo_dia"]))),
+            "confirmando": row["fuente"] == confirmar,
+        })
+    return out
 
 
 @router.get("/privacidad/consentimiento")
@@ -58,10 +78,15 @@ def privacidad_view(request: Request, person_id: int = Depends(identity.current_
     if es_hosted and request.query_params.get("reauth") == "1":
         token = request.cookies.get(cuenta.SESSION_COOKIE)
         reauth_ok = cuenta.reciente(conn, token)
+    confirmar = request.query_params.get("confirmar")
+    fuente_borrada = request.query_params.get("fuente_borrada")
+    datos_borrada = fuentes.FUENTES.get(fuente_borrada) if fuente_borrada else None
+    borrada_texto = t("privacidad.fuente.borrada", fuente=t(datos_borrada["label_key"])) if datos_borrada else None
     return comun._render("privacidad.html", t=t, tab="settings", version=privacidad.CONSENT_VERSION,
                    accepted_date=accepted_date, delete_word=t("privacidad.borrar_palabra"),
                    error=request.query_params.get("error") == "confirmacion",
-                   es_hosted=es_hosted, reauth_ok=reauth_ok, turnos=db.trabaja_turnos_si(conn, person_id))
+                   es_hosted=es_hosted, reauth_ok=reauth_ok, turnos=db.trabaja_turnos_si(conn, person_id),
+                   fuentes=_fuentes_ctx(t, conn, person_id, confirmar), borrada_texto=borrada_texto)
 
 
 @router.get("/privacidad/exportar")
@@ -95,3 +120,18 @@ async def privacidad_borrar(request: Request, person_id: int = Depends(identity.
     if cuenta.hosted():
         return RedirectResponse(cuenta.logout_url(None), status_code=303)
     return RedirectResponse("/", status_code=303)
+
+
+@router.post("/privacidad/fuente/borrar")
+@comun._cierra_conexion_async
+async def privacidad_fuente_borrar(request: Request, person_id: int = Depends(identity.current_person_id)):
+    """BODY-DESPLAZAMIENTO-3 ruling 4: deletes exactly this person's rows from one imported source
+    -- an unknown fuente, or one this person never imported, is refused (404), never a silent
+    no-op that would mislead the confirmation screen."""
+    f = await comun._form(request)
+    fuente = (f.get("fuente") or "").strip()
+    conn, _, _ = comun._ctx(person_id)
+    ok = privacidad.delete_fuente(conn, person_id, fuente)
+    if not ok:
+        raise HTTPException(404)
+    return RedirectResponse(f"/privacidad?fuente_borrada={quote(fuente, safe='')}", status_code=303)

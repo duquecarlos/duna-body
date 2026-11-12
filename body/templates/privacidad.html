@@ -11,6 +11,32 @@
   <p class="read">{{ t('privacidad.exportar_desc') }}</p>
   <p class="mt-12"><a class="btn" href="/privacidad/exportar">{{ t('privacidad.exportar_btn') }}</a></p>
 </div>
+{% if fuentes or borrada_texto %}
+<div class="card" id="fuentes">
+  <div class="q">{{ t('privacidad.fuente.titulo') }}</div>
+  {% if borrada_texto %}<p class="read">{{ borrada_texto }}</p>{% endif %}
+  {% if fuentes %}
+  <ul class="list">
+  {% for f in fuentes %}
+    <li>
+      <strong>{{ f.label }}</strong><br>
+      <span class="note">{{ f.resumen }}</span>
+      {% if f.confirmando %}
+      <p class="read bad mt-6">{{ t('privacidad.fuente.confirmar', fuente=f.label) }}</p>
+      <form method="post" action="/privacidad/fuente/borrar" class="mt-6">
+        <input type="hidden" name="fuente" value="{{ f.fuente }}">
+        <button class="btn" type="submit">{{ t('privacidad.fuente.borrar_si') }}</button>
+      </form>
+      <p class="mt-6"><a class="taplink" href="/privacidad#fuentes">{{ t('privacidad.fuente.cancelar') }}</a></p>
+      {% else %}
+      <p class="mt-6"><a class="taplink" href="/privacidad?confirmar={{ f.fuente }}#fuentes">{{ t('privacidad.fuente.borrar_boton') }}</a></p>
+      {% endif %}
+    </li>
+  {% endfor %}
+  </ul>
+  {% endif %}
+</div>
+{% endif %}
 <div class="card">
   <div class="q">{{ t('privacidad.borrar_title') }}</div>
   <p class="read">{{ t('privacidad.borrar_desc') }}</p>
