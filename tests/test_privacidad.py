@@ -14,6 +14,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
+from body import comida_compartida as cc
 from body import compartir, config, cuenta, db, dispositivo, goals, identity, noche_inusual, privacidad, web
 from body.agente import conversacion as agente_conversacion
 from body.agente import propuestas as agente_propuestas
@@ -702,6 +703,93 @@ class CompartidoExportDeleteTest(unittest.TestCase):
         self.assertEqual(
             self.conn.execute("SELECT COUNT(*) FROM figura_compartida WHERE person_id = 1").fetchone()[0], 0
         )
+
+
+class ComidaCompartidaExportDeleteTest(unittest.TestCase):
+    """BODY-COMIDA-COMPARTIDA-1 ruling 6: a shared meal's parent link, this person's own portion
+    rows and their consent are FULLY exported and deleted; an applied portion that belongs to
+    someone else keeps its own comida and only loses the link back to the parent."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "comida_compartida.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.executemany(
+            "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
+            [(1, "h-1"), (2, "h-1")])
+        self.conn.commit()
+        compartir.activar_recibir_comidas(self.conn, 2)
+
+    def _compartir(self):
+        return cc.compartir_comida(
+            self.conn, 1, day="2026-11-10", descripcion="pollo con arroz",
+            comensales=[{"person_id": 1, "nutrientes": {"protein_g": 30.0}},
+                        {"person_id": 2, "nutrientes": {"protein_g": 15.0}}],
+            origen="body")
+
+    def test_consent_is_a_fully_handled_table(self):
+        self.assertIn("consentimiento_comida_compartida", privacidad.FULLY_HANDLED_TABLES)
+        self.assertIn("comida_compartida_porcion", privacidad.FULLY_HANDLED_TABLES)
+
+    def test_export_includes_the_authors_parent_link(self):
+        self._compartir()
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(len(data["comidas_compartidas_mias"]), 1)
+        self.assertEqual(data["comidas_compartidas_mias"][0]["day"], "2026-11-10")
+
+    def test_export_includes_this_persons_own_portion_never_someone_elses(self):
+        self._compartir()
+        data = privacidad.export_person(self.conn, 2)
+        self.assertEqual(len(data["comidas_compartidas_porciones"]), 1)
+        self.assertEqual(json.loads(data["comidas_compartidas_porciones"][0]["nutrientes"]),
+                          {"protein_g": 15.0})
+        self.assertEqual(data["comidas_compartidas_mias"], [])
+
+    def test_export_includes_the_consent(self):
+        data = privacidad.export_person(self.conn, 2)
+        self.assertTrue(any(
+            row["withdrawn_at"] is None for row in data["consentimiento_comidas_compartidas"]))
+
+    def test_delete_all_removes_the_authors_own_rows(self):
+        self._compartir()
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT COUNT(*) FROM comida_compartida WHERE autor_person_id = 1").fetchone()[0], 0)
+
+    def test_delete_all_of_the_author_keeps_the_other_eaters_already_applied_comida(self):
+        self._compartir()
+        porcion_id = self.conn.execute(
+            "SELECT id FROM comida_compartida_porcion WHERE person_id = 2").fetchone()["id"]
+        cc.aplicar_porcion(self.conn, 2, porcion_id)
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM comida WHERE person_id = 2").fetchone()[0], 1)
+        row = self.conn.execute(
+            "SELECT comida_compartida_id FROM comida_compartida_porcion WHERE person_id = 2").fetchone()
+        self.assertIsNone(row["comida_compartida_id"])
+
+    def test_delete_all_of_the_author_drops_the_other_eaters_still_pending_portion(self):
+        self._compartir()
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM comida_compartida_porcion WHERE person_id = 2").fetchone()[0], 0)
+
+    def test_delete_all_removes_this_persons_own_portion_rows(self):
+        self._compartir()
+        privacidad.delete_person(self.conn, 2)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM comida_compartida_porcion WHERE person_id = 2").fetchone()[0], 0)
+
+    def test_delete_all_removes_the_consent(self):
+        privacidad.delete_person(self.conn, 2)
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT COUNT(*) FROM consentimiento_comida_compartida WHERE person_id = 2").fetchone()[0], 0)
 
 
 class UsoHerramientaExternaExportDeleteTest(unittest.TestCase):

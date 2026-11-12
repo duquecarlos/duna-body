@@ -123,6 +123,11 @@ _HOGAR_GOAL_TITLE = {"es": "Preparar el ascenso", "en": "Prepare for the climb"}
 _HOGAR_HABIT_BOTH = {"es": "Entrenar piernas", "en": "Train legs"}
 _HOGAR_HABIT_ANA = {"es": "Revisar el equipo", "en": "Check the gear"}
 
+# BODY-COMIDA-COMPARTIDA-1 ruling 7: one pending shared meal each direction, so the demo person's
+# own Hoy shows the card and Ana's settings show consent already on.
+_COMIDA_DEMO_PERSON = {"es": "Pollo con arroz", "en": "Chicken with rice"}
+_COMIDA_DEMO_ANA = {"es": "Ensalada con atún", "en": "Tuna salad"}
+
 # BODY-CUERPO-VISTA-1-M ruling 4: the demo person's own training session for today, invented,
 # categorised with anatomia.CATEGORIA_ENUM's own words -- "Upper B", the same session mock round 2
 # showed, so Hoy's body view lights front (hombro) and back (espalda) at once.
@@ -996,9 +1001,10 @@ def _seed_bloque_noche_futuro(conn, anchor: date, person_id: int) -> None:
     conn.commit()
 
 
-def _seed_household(conn, db, goals, enlaces, compartir, rng: random.Random, all_days: list[date], anchor: date,
+def _seed_household(conn, db, goals, enlaces, compartir, comida_compartida, rng: random.Random,
+                     all_days: list[date], anchor: date,
                      first_monday: date, anchor_monday: date, person_id: int,
-                     idioma: str) -> tuple[int, int, int]:
+                     idioma: str) -> tuple[int, int, int, int]:
     """A second demo person (Ana), one household with the demo person, her shared figure, and a
     household goal she creates -- returns (her seeded metric rows, goal weekly checks, habit checks)."""
     start_day = all_days[0].isoformat()
@@ -1021,6 +1027,23 @@ def _seed_household(conn, db, goals, enlaces, compartir, rng: random.Random, all
         db.set_metric(conn, d.isoformat(), "resting_hr", _value(rng, "resting_hr", 0.0), "garmin", ana_id)
     conn.commit()
     compartir.compartir(conn, ana_id, "resting_hr")
+
+    # BODY-COMIDA-COMPARTIDA-1 ruling 7: both have opted in, and one meal each cooked for the other
+    # sits pending -- never applied, so the demo shows the card an eater taps, not an already-done
+    # action.
+    compartir.activar_recibir_comidas(conn, ana_id)
+    compartir.activar_recibir_comidas(conn, person_id)
+    meal_day = anchor.isoformat()
+    comida_compartida.compartir_comida(
+        conn, person_id, day=meal_day, descripcion=_COMIDA_DEMO_PERSON[idioma],
+        comensales=[{"person_id": person_id, "nutrientes": {"protein_g": 35.0, "kcal": 520.0}},
+                    {"person_id": ana_id, "nutrientes": {"protein_g": 18.0, "kcal": 260.0}}],
+        origen="demo", origen_ref="demo-persona-ana")
+    comida_compartida.compartir_comida(
+        conn, ana_id, day=meal_day, descripcion=_COMIDA_DEMO_ANA[idioma],
+        comensales=[{"person_id": ana_id, "nutrientes": {"protein_g": 22.0, "kcal": 310.0}},
+                    {"person_id": person_id, "nutrientes": {"protein_g": 14.0, "kcal": 190.0}}],
+        origen="demo", origen_ref="demo-ana-persona")
 
     hogar_deadline = (anchor + timedelta(days=84)).isoformat()
     gid_hogar = goals.propose(conn, ana_id, _HOGAR_GOAL_TITLE[idioma], start_day, area="adventure",
@@ -1050,12 +1073,14 @@ def _seed_household(conn, db, goals, enlaces, compartir, rng: random.Random, all
             hogar_checks += 1
         monday += timedelta(7)
 
-    return len(ana_days), hogar_checks, hogar_habit_checks
+    comidas_compartidas_pendientes = (len(comida_compartida.pendientes(conn, person_id))
+                                       + len(comida_compartida.pendientes(conn, ana_id)))
+    return len(ana_days), hogar_checks, hogar_habit_checks, comidas_compartidas_pendientes
 
 
 def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
-    from . import (compartir, db, desplazamiento_import, enlaces, goals, recuperacion, shift_import, sueno_fc,
-                   turno_fc, turnos_costo)
+    from . import (comida_compartida, compartir, db, desplazamiento_import, enlaces, goals, recuperacion,
+                   shift_import, sueno_fc, turno_fc, turnos_costo)
 
     person_id = _seed_person(conn, db, idioma)
 
@@ -1091,8 +1116,9 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     checks, habit_checks = _seed_goals_and_habits(
         conn, db, goals, rng, all_days, anchor, first_monday, anchor_monday, person_id, idioma)
 
-    ana_metric_rows, hogar_checks, hogar_habit_checks = _seed_household(
-        conn, db, goals, enlaces, compartir, rng, all_days, anchor, first_monday, anchor_monday, person_id, idioma)
+    ana_metric_rows, hogar_checks, hogar_habit_checks, comidas_compartidas_pendientes = _seed_household(
+        conn, db, goals, enlaces, compartir, comida_compartida, rng, all_days, anchor, first_monday,
+        anchor_monday, person_id, idioma)
     metric_rows += ana_metric_rows
 
     return {
@@ -1107,6 +1133,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
         "recuperacion_actividades": recuperacion_rows,
         "turno_fc_turnos": turno_fc_turnos, "sueno_fc_noches": sueno_fc_noches,
         "planes_hoy": planes_hoy, "desplazamiento_dias": desplazamiento_dias,
+        "comidas_compartidas_pendientes": comidas_compartidas_pendientes,
     }
 
 
