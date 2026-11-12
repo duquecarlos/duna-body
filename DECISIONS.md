@@ -18456,3 +18456,115 @@ spec's body explicitly authorises the merge in words ("Green -> append to the le
 green gate"), which is the one thing that overrides a tripped merge-policy-A condition -- so this
 entry is committed on the branch and then merged into `main` on this green gate, not left
 AWAITING_APPROVAL -- merged d5e48c8.
+
+## BODY-TURNOS-PERFIL-LEGIBLE-1 -- the hero's HRV profile chart, fixed width and a real axis font (2026-11-12)
+
+The orchestrator opened `/shifts` at 375 px on the demo after BODY-TURNOS-PERFIL-DIA-1-M's own
+merge (main `9ead43d`, gate green). Everything that round fixed held; one new defect, caused by
+that fix: so seven x-axis labels would not overlap, the chart's viewBox width grew with label
+length (measured `0 0 414.0 128`), but the `<svg>` is drawn at the card's own width (measured
+313 px). Everything inside scaled down by 313/414, so the 10-unit `.tick` text rendered at about
+7.6 px -- below the size the app uses for any small text.
+
+**Ruling 1, the fixed width and the font floor.** `_PERFIL_WIDTH` is now a FIXED constant, 313,
+read from body.css rather than grown to fit a label: on a 375 px phone, `main`'s own page gutter
+(`padding:16px 16px`) and `.card`'s own padding (`padding:12px 14px`) and border
+(`border:1px solid`) leave `375 - 2*16 - 2*14 - 2*1 = 313` px of content width, and the `<svg
+width="100%">` is drawn at exactly that -- so one viewBox unit is now about one real CSS pixel
+there, matching the orchestrator's own measurement. The width never grows with a label's length
+again, in either language or offset count
+(`PerfilChartGeometryTest.test_viewbox_width_is_the_fixed_constant_for_every_label_set`). The axis
+text (CSS class `.tick`) moves from 10px to 12px -- `.fs-12` is the smallest of body.css's general
+small-text classes (`.k` is 13px), and 12 is also above the ruling's own 11px floor
+(`.test_axis_font_size_meets_the_small_text_floor`). `_PERFIL_CHAR_W`, the character-count
+approximation BODY-TURNOS-PERFIL-DIA-1-M used for label-width, is restated against the new font
+size (`0.6em` at 12px = 7.2 px/char, was 6.0 px/char at 10px) rather than redefined from scratch.
+
+**Ruling 2, wrap instead of widen.** The point pitch is fixed too, now that the width is; a label
+wider than its own slot (the pitch minus `_PERFIL_LABEL_GAP`, the same character-count
+approximation) breaks at its one space into two `<tspan>` lines centred on the point
+(`_perfil_wrap`): es «día / antes», «noche / 1»; en "day / before", "night / 1". A label that
+fits -- "+1".."+4", and any label with no space to break at -- stays one line. The chart's own
+height grows by `_PERFIL_WRAP_LINE_HEIGHT` (13 px) only when at least one label actually wrapped;
+a short two-offset chart never grows
+(`.test_chart_height_grows_by_one_line_only_when_a_label_wraps`). No string changed -- the same
+`shifts.perfil.eje.*` values BODY-TURNOS-PERFIL-DIA-1 wrote, now wrapped by markup rather than
+widened by layout.
+`PerfilChartGeometryTest.test_adjacent_x_axis_labels_never_overlap_in_either_language` is rewritten
+for the wrapped markup (the box checked is the wider of a wrapped label's two lines, read from its
+`<tspan>`s, never its full unwrapped width) -- the promise itself (no two label boxes overlap) is
+unchanged, never loosened; `.test_every_label_lines_anchor_x_equals_its_points_cx` is new, checking
+every `<tspan>`'s own `x` equals its `<text>`'s (which already equals its point's `cx`).
+
+**Ruling 3, the two-count sentences say one correctly.** `shifts.confirm_summary`,
+`shifts.confirm_summary_patron`, `shifts.confirm_summary_many`,
+`shifts.confirm_summary_many_mixed`, `shifts.confirm_all_result` and `shifts.como_bloques` (on
+`/shifts/como`) each carried a bare `{days}`/`{nights}`/`{n}`/`{con}`/`{batches}`/`{applied}` of
+their own, so a count of exactly one always read as plural ("1 nights", "1 días"). Each sentence
+is now built from one singular-aware FRAGMENT per count (`turnos._frag(t, base, count, **kw)`,
+`t(_singular_key(base, count), **kw)` -- the same `_singular_key` mechanism
+`shifts.kept_note`/`shifts.perfil.caption` already use), computed once where the route already
+has the count and passed into the outer sentence key, which now takes the fragments instead of
+the raw numbers. The outer key itself never needs its own `_one` variant -- it joins pre-rendered
+text, not a bare number.
+
+**New fragment strings**, es / en (each with its own `_one` variant for exactly one):
+
+    shifts.confirm_days: "{days} días" / "{days} days" -- _one: "1 día" / "1 day"
+    shifts.confirm_nights: "{nights} noches" / "{nights} nights" -- _one: "1 noche" / "1 night"
+    shifts.confirm_files: "{n} archivos de turnos" / "{n} shift files" -- _one: "1 archivo de turnos" / "1 shift file"
+    shifts.confirm_proposals: "{n} propuestas de turnos" / "{n} shift proposals" -- _one: "1 propuesta de turnos" / "1 shift proposal"
+    shifts.confirm_all_batches: "{batches} archivos" / "{batches} files" -- _one: "1 archivo" / "1 file"
+    shifts.confirm_all_applied: "{applied} días aplicados" / "{applied} days applied" -- _one: "1 día aplicado" / "1 day applied"
+    shifts.como_bloques_n: "Se contaron {n} bloques de noches en los últimos 180 días" / "{n} night blocks counted in the last 180 days" -- _one: "Se contó 1 bloque de noches en los últimos 180 días" / "1 night block counted in the last 180 days"
+    shifts.como_bloques_con: "{con} con un día de recuperación calculado" / "{con} with a recovery day calculated" -- _one (literal, no noun to decline): "1 con un día de recuperación calculado" / "1 with a recovery day calculated"
+
+**Edited outer-sentence strings**, es / en (same key, now joining the fragments above instead of
+carrying bare counts; the rendered text for any count other than one is unchanged):
+
+    shifts.confirm_summary: "Llegaron tus turnos del {date}: {days_frag}, {nights_frag}." / "Your shifts from {date} arrived: {days_frag}, {nights_frag}."
+    shifts.confirm_summary_patron: "Tu patrón: {days_frag}, {nights_frag}, del {from} al {to}." / "Your pattern: {days_frag}, {nights_frag}, from {from} to {to}."
+    shifts.confirm_summary_many: "Llegaron {files_frag} · {from} → {to} · {days_frag}, {nights_frag}." / "{files_frag} arrived · {from} → {to} · {days_frag}, {nights_frag}."
+    shifts.confirm_summary_many_mixed: "Tienes {proposals_frag} · {from} → {to} · {days_frag}, {nights_frag}." / "{proposals_frag} waiting · {from} → {to} · {days_frag}, {nights_frag}."
+    shifts.confirm_all_result: "Confirmaste {batches_frag}: {applied_frag}." / "You confirmed {batches_frag}: {applied_frag}."
+    shifts.como_bloques: "{n_frag}; {con_frag}." / "{n_frag}; {con_frag}." (unchanged shape, now joining fragments)
+
+`body/templates/how.html`'s `shifts.como_bloques` call moved into Python (`shifts_como()` builds
+`como_bloques_txt` once, same `t(...)` literal call so `test_i18n_paridad.py`'s scanner still
+covers the key) since the fragment-join needs `_frag`, not available to Jinja. No other string's
+value changed.
+
+New tests: `tests/test_turnos_costo.py` gained 5 `PerfilChartGeometryTest` cases (rulings 1-2: the
+fixed width across label sets, the font floor read from body.css, the wrap rule itself, the
+height growth, every wrapped line's anchor) and a new `FragSingularTest` (ruling 3: every
+fragment at 0/1/2 in both languages, plus the `como_bloques`/`confirm_all_result` join);
+`tests/test_shift_import.py` gained 2 end-to-end cases (one day/one night; one batch/one day
+applied, both singular). 10 new tests total; the one existing geometry test that pinned the old
+single-line markup (`test_adjacent_x_axis_labels_never_overlap_in_either_language`) is rewritten
+for the wrapped markup, never loosened -- named here per the spec's own instruction.
+
+Commits: `35bf18d` (rulings 1-2, chart geometry and its tests), `5524ff3` (ruling 3, the i18n
+fragment mechanism and its tests), `d657682` (a guard-test fix found by the gate itself:
+`tests/test_guardia_parches.py`'s `RouteModuleAttrReadGuardTest` only recognises a plain `NAME =
+value` as defined at a route module's own top level, not a tuple-unpacked
+`_PERFIL_WIDTH, _PERFIL_HEIGHT = 313, 128` -- split into two single-name assignments, no
+behaviour change).
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry), the
+exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, one foreground run
+(moved to the background past the 600 s cap, waited on to completion, exit code 0):
+
+    Ran 2944 tests in 948.145s
+
+    OK (skipped=1)
+
+2944 = the prior 2934 plus exactly this slice's own 10 new tests; no other count moved.
+
+No password, token, session secret, device key or health figure was read, printed, or written
+anywhere in this slice's own work.
+
+**Merge policy, this slice.** The diff changes bytes Carlos reads on `/shifts` and `/shifts/como`
+(the chart's own geometry and axis text size, and six confirm/como sentences) -- merge policy A's
+customer-bytes condition trips. This spec's body says to stop before merge every time ("stop
+AWAITING_APPROVAL on the branch, tree EMPTY (the orchestrator looks at 375 px before merging)"),
+so this entry is written and committed on the branch; no merge.
