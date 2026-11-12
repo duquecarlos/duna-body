@@ -9,7 +9,7 @@
 {% if many %}
 <div class="card">
   <div class="badge">{{ t('shifts.confirm_badge') }}</div>
-  <p class="read mt-6">{{ t('shifts.confirm_summary_many_mixed' if many_mixed else 'shifts.confirm_summary_many', n=batches|length, from=summary_from, to=summary_to, days=summary_days, nights=summary_nights) }}</p>
+  <p class="read mt-6">{{ t('shifts.confirm_summary_many_mixed' if many_mixed else 'shifts.confirm_summary_many', files_frag=files_frag, proposals_frag=proposals_frag, from=summary_from, to=summary_to, days_frag=summary_days_frag, nights_frag=summary_nights_frag) }}</p>
   <div class="confirm-actions">
     <form method="post" action="/shifts/confirm-all">
       <button type="submit" class="btn on">{{ t('shifts.confirm_all_btn') }}</button>
@@ -20,9 +20,9 @@
     {% for b in batches %}
     <div class="card mt-8">
       {% if b.batch.kind == 'pattern' %}
-      <p class="read mt-0">{{ t('shifts.confirm_summary_patron', days=b.preview.day_count, nights=b.preview.night_count, from=b.preview.from_date, to=b.preview.to_date) }}</p>
+      <p class="read mt-0">{{ t('shifts.confirm_summary_patron', days_frag=b.preview.days_frag, nights_frag=b.preview.nights_frag, from=b.preview.from_date, to=b.preview.to_date) }}</p>
       {% else %}
-      <p class="read mt-0">{{ t('shifts.confirm_summary', date=b.received_date, days=b.preview.day_count, nights=b.preview.night_count) }}</p>
+      <p class="read mt-0">{{ t('shifts.confirm_summary', date=b.received_date, days_frag=b.preview.days_frag, nights_frag=b.preview.nights_frag) }}</p>
       {% endif %}
       {% if b.preview.kept_days %}
       <p class="k mt-6">{{ b.preview.kept_note }}</p>
@@ -45,9 +45,9 @@
 <div class="card">
   <div class="badge">{{ t('shifts.confirm_badge') }}</div>
   {% if batch.kind == 'pattern' %}
-  <p class="read mt-6">{{ t('shifts.confirm_summary_patron', days=preview.day_count, nights=preview.night_count, from=preview.from_date, to=preview.to_date) }}</p>
+  <p class="read mt-6">{{ t('shifts.confirm_summary_patron', days_frag=preview.days_frag, nights_frag=preview.nights_frag, from=preview.from_date, to=preview.to_date) }}</p>
   {% else %}
-  <p class="read mt-6">{{ t('shifts.confirm_summary', date=received_date, days=preview.day_count, nights=preview.night_count) }}</p>
+  <p class="read mt-6">{{ t('shifts.confirm_summary', date=received_date, days_frag=preview.days_frag, nights_frag=preview.nights_frag) }}</p>
   {% endif %}
   {% if preview.kept_days %}
   <p class="k mt-8">{{ preview.kept_note }}</p>

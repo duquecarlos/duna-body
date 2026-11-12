@@ -896,5 +896,68 @@ class PerfilChartGeometryTest(unittest.TestCase):
             self.assertEqual(aria, html.escape(caption))
 
 
+class FragSingularTest(unittest.TestCase):
+    """BODY-TURNOS-PERFIL-LEGIBLE-1 ruling 3: every two-count sentence (shifts.confirm_summary*,
+    shifts.confirm_summary_patron, shifts.confirm_summary_many(_mixed), shifts.confirm_all_result,
+    shifts.como_bloques) is built from one fragment per count, each taking its own singular for
+    one through turnos._frag -- checked here at 0, 1 and 2 for every fragment, in both languages."""
+
+    # (fragment base, the kwarg name its own placeholder uses, {lang: (text at 0, at 1, at 2)})
+    CASES = [
+        ("shifts.confirm_days", "days",
+         {"es": ("0 días", "1 día", "2 días"), "en": ("0 days", "1 day", "2 days")}),
+        ("shifts.confirm_nights", "nights",
+         {"es": ("0 noches", "1 noche", "2 noches"), "en": ("0 nights", "1 night", "2 nights")}),
+        ("shifts.confirm_files", "n",
+         {"es": ("0 archivos de turnos", "1 archivo de turnos", "2 archivos de turnos"),
+          "en": ("0 shift files", "1 shift file", "2 shift files")}),
+        ("shifts.confirm_proposals", "n",
+         {"es": ("0 propuestas de turnos", "1 propuesta de turnos", "2 propuestas de turnos"),
+          "en": ("0 shift proposals", "1 shift proposal", "2 shift proposals")}),
+        ("shifts.confirm_all_batches", "batches",
+         {"es": ("0 archivos", "1 archivo", "2 archivos"), "en": ("0 files", "1 file", "2 files")}),
+        ("shifts.confirm_all_applied", "applied",
+         {"es": ("0 días aplicados", "1 día aplicado", "2 días aplicados"),
+          "en": ("0 days applied", "1 day applied", "2 days applied")}),
+        ("shifts.como_bloques_n", "n",
+         {"es": ("Se contaron 0 bloques de noches en los últimos 180 días",
+                 "Se contó 1 bloque de noches en los últimos 180 días",
+                 "Se contaron 2 bloques de noches en los últimos 180 días"),
+          "en": ("0 night blocks counted in the last 180 days",
+                 "1 night block counted in the last 180 days",
+                 "2 night blocks counted in the last 180 days")}),
+        ("shifts.como_bloques_con", "con",
+         {"es": ("0 con un día de recuperación calculado", "1 con un día de recuperación calculado",
+                 "2 con un día de recuperación calculado"),
+          "en": ("0 with a recovery day calculated", "1 with a recovery day calculated",
+                 "2 with a recovery day calculated")}),
+    ]
+
+    def test_each_fragment_at_zero_one_and_two(self):
+        for base, kwname, by_lang in self.CASES:
+            for lang, (zero, one, two) in by_lang.items():
+                t = T(lang)
+                for n, expected in ((0, zero), (1, one), (2, two)):
+                    self.assertEqual(turnos._frag(t, base, n, **{kwname: n}), expected,
+                                      f"{base}/{lang}/{n}")
+
+    def test_como_bloques_joins_both_fragments(self):
+        for lang in ("es", "en"):
+            t = T(lang)
+            n_frag = turnos._frag(t, "shifts.como_bloques_n", 1, n=1)
+            con_frag = turnos._frag(t, "shifts.como_bloques_con", 0, con=0)
+            self.assertEqual(t("shifts.como_bloques", n_frag=n_frag, con_frag=con_frag),
+                              f"{n_frag}; {con_frag}.")
+
+    def test_confirm_all_result_joins_both_fragments(self):
+        for lang in ("es", "en"):
+            t = T(lang)
+            batches_frag = turnos._frag(t, "shifts.confirm_all_batches", 1, batches=1)
+            applied_frag = turnos._frag(t, "shifts.confirm_all_applied", 1, applied=1)
+            self.assertEqual(t("shifts.confirm_all_result", batches_frag=batches_frag, applied_frag=applied_frag),
+                              f"Confirmaste {batches_frag}: {applied_frag}." if lang == "es"
+                              else f"You confirmed {batches_frag}: {applied_frag}.")
+
+
 if __name__ == "__main__":
     unittest.main()

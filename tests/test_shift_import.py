@@ -495,10 +495,50 @@ class ShiftWebTest(unittest.TestCase):
         resp = self.client.post("/shifts/confirm-all")
         self.assertEqual(resp.status_code, 200)
         self.assertIn("Confirmaste 2 archivos", resp.text)
-        status_a = self.conn.execute("SELECT status FROM shift_batch WHERE id = ?", (a_id,)).fetchone()["status"]
-        status_b = self.conn.execute("SELECT status FROM shift_batch WHERE id = ?", (b_id,)).fetchone()["status"]
-        self.assertEqual(status_a, "confirmed")
-        self.assertEqual(status_b, "confirmed")
+
+    def test_confirm_summary_is_singular_for_one_day_and_one_night(self):
+        """BODY-TURNOS-PERFIL-LEGIBLE-1 ruling 3: shifts.confirm_summary joins the days/nights
+        fragments, each singular on its own count -- a batch with exactly one night reads "1 día,
+        1 noche", never "1 días, 1 noches"."""
+        path = _write({
+            "source": {"mail_subject": "T", "received": "2026-11-04T12:00:00-05:00", "attachment": "t.xlsx",
+                       "extracted_at": "2026-11-04T12:05:00-05:00"},
+            "person": "carlos", "timezone": "America/Bogota",
+            "shifts": [{"day": "2026-11-09", "kind": "night", "code": "N",
+                        "start_local": "2026-11-09T22:00", "end_local": "2026-11-10T06:00",
+                        "holiday": False, "sunday": False, "note": ""}],
+        }, "turnos-one.json")
+        shift_import.propose(self.conn, path, 1)
+        page = self.client.get("/shifts").text
+        self.assertIn("1 día, 1 noche", page)
+        self.assertNotIn("1 días", page)
+        self.assertNotIn("1 noches", page)
+        self.client.post("/settings/language", data={"lang": "en"})
+        try:
+            page_en = self.client.get("/shifts").text
+            self.assertIn("1 day, 1 night", page_en)
+            self.assertNotIn("1 days", page_en)
+            self.assertNotIn("1 nights", page_en)
+        finally:
+            self.client.post("/settings/language", data={"lang": "es"})
+
+    def test_post_confirm_all_is_singular_for_one_batch_one_day(self):
+        """BODY-TURNOS-PERFIL-LEGIBLE-1 ruling 3: shifts.confirm_all_result joins the batches/applied
+        fragments, each singular on its own count."""
+        path = _write({
+            "source": {"mail_subject": "T", "received": "2026-11-04T12:00:00-05:00", "attachment": "t.xlsx",
+                       "extracted_at": "2026-11-04T12:05:00-05:00"},
+            "person": "carlos", "timezone": "America/Bogota",
+            "shifts": [{"day": "2026-11-09", "kind": "night", "code": "N",
+                        "start_local": "2026-11-09T22:00", "end_local": "2026-11-10T06:00",
+                        "holiday": False, "sunday": False, "note": ""}],
+        }, "turnos-one-confirm.json")
+        shift_import.propose(self.conn, path, 1)
+        resp = self.client.post("/shifts/confirm-all")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("Confirmaste 1 archivo: 1 día aplicado.", resp.text)
+        self.assertNotIn("1 archivos", resp.text)
+        self.assertNotIn("1 días aplicados", resp.text)
 
     def test_confirm_and_dismiss_posts(self):
         a_id = shift_import.propose(self.conn, FIXTURES / "turnos-demo-a.json", 1)

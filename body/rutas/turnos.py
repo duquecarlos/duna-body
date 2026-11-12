@@ -76,6 +76,15 @@ def _singular_key(base: str, n: int) -> str:
     return f"{base}_one" if n == 1 else base
 
 
+def _frag(t: T, base: str, count: int, **kw) -> str:
+    """One count's own singular-aware fragment -- `base`/`base_one` through `_singular_key` --
+    meant to be plugged into an outer sentence that joins two or more of these (BODY-TURNOS-
+    PERFIL-LEGIBLE-1 ruling 3), rather than a sentence carrying a bare `{n}` of its own.
+    `count` is a separate positional argument, never a `**kw` name, so a fragment whose own
+    placeholder happens to be called `n` (as every one of them here is) can still be passed."""
+    return t(_singular_key(base, count), **kw)
+
+
 def _turnos_ultima_recuperacion(t: T, u: dict) -> str:
     if u["recuperacion_dias"] is None:
         return t("shifts.ultima.recuperacion_sin_dato")
@@ -424,7 +433,10 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
     qp = request.query_params
     if qp.get("done") == "1":
         kept = int(qp.get("kept_manual", 0)) + int(qp.get("kept_newer", 0))
-        result_msg = t("shifts.confirm_all_result", batches=qp.get("batches", "0"), applied=qp.get("applied", "0"))
+        batches_n, applied_n = int(qp.get("batches", 0)), int(qp.get("applied", 0))
+        result_msg = t("shifts.confirm_all_result",
+                       batches_frag=_frag(t, "shifts.confirm_all_batches", batches_n, batches=batches_n),
+                       applied_frag=_frag(t, "shifts.confirm_all_applied", applied_n, applied=applied_n))
         if kept:
             result_msg += " " + t(_singular_key("shifts.confirm_all_kept", kept), n=kept)
     today_local = comun._today_local(person)
@@ -460,7 +472,12 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
                        many_mixed=many_mixed,
                        summary_from=t.month_year(date.fromisoformat(summary["first_day"])),
                        summary_to=t.month_year(date.fromisoformat(summary["last_day"])),
-                       summary_days=summary["day_count"], summary_nights=summary["night_count"],
+                       files_frag=_frag(t, "shifts.confirm_files", len(rows), n=len(rows)),
+                       proposals_frag=_frag(t, "shifts.confirm_proposals", len(rows), n=len(rows)),
+                       summary_days_frag=_frag(t, "shifts.confirm_days", summary["day_count"],
+                                               days=summary["day_count"]),
+                       summary_nights_frag=_frag(t, "shifts.confirm_nights", summary["night_count"],
+                                                 nights=summary["night_count"]),
                        result_msg=result_msg, turnos=turnos_on, tiene_patron=tiene_patron, **costo_ctx)
     if rows:
         proposed = rows[0]
@@ -478,12 +495,17 @@ def _patron_preview_ctx(t: T, prev: dict) -> dict:
     """Adds the short from/to dates a pattern batch's card reads ("del X al Y") to shift_import.preview()'s
     own dict, without changing its existing keys. `kept_note` (BODY-TURNOS-PERFIL-DIA-1-M fix 4) is
     the singular/plural sentence for `prev['kept_days']`'s own count, through the same `_singular_key`
-    mechanism `shifts.perfil.caption` already uses -- None when there is nothing kept to report."""
+    mechanism `shifts.perfil.caption` already uses -- None when there is nothing kept to report.
+    `days_frag`/`nights_frag` (BODY-TURNOS-PERFIL-LEGIBLE-1 ruling 3) are the two counts'
+    singular-aware fragments shifts.confirm_summary/_patron plug in, each taking its own day/night
+    count rather than carrying a bare {days}/{nights} of its own."""
     kept_n = len(prev["kept_days"])
     return {**prev,
             "from_date": comun._short_date(t, date.fromisoformat(prev["first_day"])) if prev["first_day"] else None,
             "to_date": comun._short_date(t, date.fromisoformat(prev["last_day"])) if prev["last_day"] else None,
-            "kept_note": t(_singular_key("shifts.kept_note", kept_n), n=kept_n) if kept_n else None}
+            "kept_note": t(_singular_key("shifts.kept_note", kept_n), n=kept_n) if kept_n else None,
+            "days_frag": _frag(t, "shifts.confirm_days", prev["day_count"], days=prev["day_count"]),
+            "nights_frag": _frag(t, "shifts.confirm_nights", prev["night_count"], nights=prev["night_count"])}
 
 
 def _turnos_bloque_linea(t: T, b: dict, hoy: date) -> str:
@@ -509,8 +531,14 @@ def shifts_como(person_id: int = Depends(identity.current_person_id)):
     today_local = comun._today_local(person)
     resumen = turnos_costo.resumen(conn, person_id, hoy=today_local)
     bloques = [_turnos_bloque_linea(t, b, today_local) for b in resumen["bloques"]]
+    n_bloques, n_con_recuperacion = len(resumen["bloques"]), resumen["bloques_con_recuperacion"]
+    # BODY-TURNOS-PERFIL-LEGIBLE-1 ruling 3: each count's own singular-aware fragment, joined by
+    # shifts.como_bloques -- never a sentence carrying both {n} and {con} bare.
+    como_bloques_txt = t("shifts.como_bloques",
+                         n_frag=_frag(t, "shifts.como_bloques_n", n_bloques, n=n_bloques),
+                         con_frag=_frag(t, "shifts.como_bloques_con", n_con_recuperacion, con=n_con_recuperacion))
     return comun._render("how.html", t=t, tab="shifts", modo="turnos", version=resumen["version"],
-                   n_bloques=len(resumen["bloques"]), n_con_recuperacion=resumen["bloques_con_recuperacion"],
+                   como_bloques_txt=como_bloques_txt,
                    n_estables=turnos_costo.MODELO["dias_estables"], n_referencia=turnos_costo.REFERENCIA_DIAS,
                    bloques=bloques, turnos=True)
 
