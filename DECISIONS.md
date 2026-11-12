@@ -18074,3 +18074,87 @@ bytes (every new i18n string above, rendered on Tendencias, Día and Privacidad)
 policy A's three conditions. Per the spec's own dispatch and its approval reason
 (ORCH-CARLOS-DELEGATES-TIER-1-1), this stops AWAITING_APPROVAL on the branch for the orchestrator to
 look at Tendencias, Día and Privacidad at 375 px before merging.
+
+### BODY-DESPLAZAMIENTO-3-M -- three defects from the 375 px review, one of them pre-existing (2026-11-12)
+
+The orchestrator's AWAITING_APPROVAL review at 375 px found the round working as specced, and three
+defects, named in ORCH-CARLOS-DELEGATES-TIER-1-1's own approval reason: two presentation defects in
+this round, plus one unit bug that decided a metric's formatting from its KEY's spelling instead of
+its declared unit -- pre-existing in both `body/rutas/comun.py` and `body/history.py` before this
+round touched either, but exposed by the three new commute minute keys.
+
+**Fix 3 -- minutes by declared unit.** `_is_minutes(key)` in both files decided "this is minutes"
+from `key.endswith("_min") or key == "sleep_minutes"` -- a false positive for `sleep_hr_min` (unit
+`bpm`, `db.py:851`: rendered on Trends as "≈ 55 min" with no unit) and a false negative for the new
+`vehicle_minutes`/`walking_minutes`/`cycling_minutes` (unit `min`, but the KEY ends `_minutes`, not
+`_min`: rendered with no minute formatting and no unit at all). `body/history.py` now holds the one
+real decision, `es_minutos(key)`, reading `_UNIT_BY_KEY` -- `{d[0]: d[2] for d in db.METRIC_DEFS}`,
+built once at import time -- never the key's spelling; `sleep_minutes` needed no special case, its
+own declared unit already being `"min"`. `body/rutas/comun.py::_is_minutes` reads the SAME dict
+directly (`history._UNIT_BY_KEY.get(key) == "min"`) rather than calling `history.es_minutos(key)`:
+`tests/test_guardia_parches.py::NoShimFunctionGuardTest` refuses a route-module top-level function
+whose body is only `return other_module.fn(same_args)` (caught live on the first gate run, below),
+and `comun._is_minutes` could not simply be deleted -- `body/rutas/turnos.py`, outside this slice's
+`touches`, still calls it by name. Grepped for every other `key.endswith("_min")` heuristic in
+`body/`: none found outside these two now-fixed definitions. Census test (`tests/test_history.py`):
+every `db.METRIC_DEFS` key is minutes iff its own unit is `"min"`, no other key is; `sleep_hr_min`
+renders in bpm on Trends (not minutes) and keeps `NOISE_FLOOR_DEFAULT`; `vehicle_minutes` renders its
+delta and normal range exactly as `sleep_awake_min` does.
+
+**Fix 1 -- Día without commute data.** `day_view()`'s generic card grid listed all four commute keys
+on every day, each reading a bare "—" past `ultimo_dia` or for a person who never imported the source
+at all -- ruling 3's own "no row, no code needed for that half" turned out wrong for the generic grid
+(only `_desplazamiento_dia_ctx`'s one-line provenance note already read it correctly). Fixed with one
+check before the grid loop: a key whose own registered source (`fuentes.fuente_de_metrica`) has no
+value at all for this day, across every key that source owns, is skipped entirely; a day with at
+least one of a source's keys present still shows all of that source's cards, a missing one still
+reading "—", unchanged. Self-typed and Garmin-origin rows are untouched (`fuente_de_metrica` returns
+`None` for them). Tests (`tests/test_desplazamiento_vista.py`): no commute card the day after
+`ultimo_dia`; none at all for a never-imported person, on any day; a day with data still shows all
+four plus the source line.
+
+**Fix 2 -- confirmation wording.** Both the confirmation and the done string used a possessive on
+the source's own label ("Delete {fuente}'s data?" / "¿Borrar los datos de {fuente}?"), awkward in
+both languages. Both now quote the label instead, the same «»/“” convention this app already uses
+for a quoted value elsewhere (e.g. `today.noche_inusual.nota_guardada`), with a singular "it" in
+place of the now-dropped plural "los/the data of":
+
+    es confirm: ¿Borrar «{fuente}»? Una nueva subida lo vuelve a traer.
+    en confirm: Delete "{fuente}"? A new upload brings it back.
+    es done:    Se borró «{fuente}». Una nueva subida lo vuelve a traer.
+    en done:    "{fuente}" deleted. A new upload brings it back.
+
+(replacing `privacidad.fuente.confirmar` "¿Borrar los datos de {fuente}? Una nueva subida los vuelve
+a traer." / "Delete {fuente}'s data? A new upload brings it back." and `privacidad.fuente.borrada`
+"Se borraron los datos de {fuente}. Una nueva subida los vuelve a traer." / "{fuente} data deleted. A
+new upload brings it back.") Tests: both strings, both languages, with the real label substituted
+in; `tests/test_i18n_paridad.py` (placeholder and key-set parity) stays green with no change needed.
+A pre-existing golden assertion in `tests/test_desplazamiento_vista.py` that pinned the old done
+string (`"Se borraron los datos de"`) was updated to the new, correct text, never loosened.
+
+Commits: `b04c7f4` (fix 3, minutes by declared unit), `8bb5d97` (fix 1, no commute row with no
+data), `5de1d7e` (fix 2, confirmation wording).
+
+**Gate**, on this branch's final tree (HEAD `5de1d7e`, `git status --porcelain` clean before this
+entry), the exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, one foreground
+run (moved to the background past the 600 s cap, waited on to completion, exit code 0):
+
+    Ran 2903 tests in 713.033s
+
+    OK (skipped=1)
+
+2903 is the `-R` round's own 2889 plus the 14 tests this continuation added (7 in
+`tests/test_history.py`, 3 in `tests/test_tendencias_todas.py`, 4 in
+`tests/test_desplazamiento_vista.py`) -- no other count moved. The one earlier failure seen this
+session (`NoShimFunctionGuardTest`, caught before any commit, fixed by reading `_UNIT_BY_KEY`
+directly instead of forwarding to `history.es_minutos`) never reached a committed tree.
+
+No password, token, session secret, device key or health/location figure was read, printed, or
+written anywhere in this slice's own work.
+
+**Merge policy.** The diff touches no schema or migration, and no cross-repo contract or DTO. It does
+change customer-facing bytes (every string in fixes 1-2, plus the bpm/minute formatting fix 3
+corrects) -- one of merge policy A's three conditions, same as the round it fixes. The spec's own
+approval reason (ORCH-CARLOS-DELEGATES-TIER-1-1) says in words this slice merges on a green gate:
+"then merges on a green gate" -- authorising the merge past this condition, unlike the `-R` round it
+continues.
