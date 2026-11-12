@@ -409,8 +409,8 @@ class RachaEjeTest(unittest.TestCase):
         for a, b in zip(etiquetas, etiquetas[1:]):
             mitad_a = tendencias._racha_label_px(a["texto"]) / 2
             mitad_b = tendencias._racha_label_px(b["texto"]) / 2
-            self.assertLessEqual(a["x"] + mitad_a, b["x"] - mitad_b + 0.01,
-                                 f"{a['texto']!r} overlaps {b['texto']!r}")
+            self.assertLessEqual(a["x"] + mitad_a + tendencias._RACHA_LABEL_GAP_X, b["x"] - mitad_b + 0.01,
+                                 f"{a['texto']!r} and {b['texto']!r} are closer than the minimum gap")
 
     def test_few_weeks_one_label_with_year(self):
         semanas = self._semanas(date(2026, 10, 5), 3)
@@ -441,6 +441,29 @@ class RachaEjeTest(unittest.TestCase):
         semanas = self._semanas(date(2024, 11, 4), 104)
         etiquetas = tendencias._racha_eje(comun.T("es"), semanas, tendencias._RACHA_WIDTH / len(semanas))
         self.assertEqual(etiquetas[0]["anchor"], "start")
+        self._revisar(etiquetas)
+
+    def test_last_label_survives_even_when_the_gap_cannot_be_met(self):
+        # Only two month-starts, one week apart (BODY-TENDENCIAS-RACHA-GRAFICO-1-M3): the naive
+        # greedy scan would drop the second as too close to the first, but the last label is never
+        # the one dropped -- both are kept even though their boxes end up closer than the 8-unit
+        # floor, because there is no middle label left to drop instead.
+        semanas = self._semanas(date(2025, 12, 29), 5)
+        etiquetas = tendencias._racha_eje(comun.T("es"), semanas, tendencias._RACHA_WIDTH / len(semanas))
+        self.assertEqual([e["texto"] for e in etiquetas], ["dic 2025", "ene 2026"])
+
+    def test_a_conflicting_last_label_pops_the_middle_one_instead(self):
+        # Three month-starts: Nov (first, 25 weeks), a single Dec week (middle), then Jan (last,
+        # 24 weeks) -- built directly rather than via _semanas so the middle month is just one
+        # index wide. Jan's box lands too close to Dec's, so Dec -- the middle label -- is the one
+        # dropped, and Nov and Jan (first and last) both survive with the full gap between them.
+        semanas = (
+            [{"lunes": date(2025, 11, 3).isoformat(), "sesiones": 0, "noche": False, "alcanza": None}] * 25
+            + [{"lunes": date(2025, 12, 29).isoformat(), "sesiones": 0, "noche": False, "alcanza": None}]
+            + [{"lunes": date(2026, 1, 5).isoformat(), "sesiones": 0, "noche": False, "alcanza": None}] * 24
+        )
+        etiquetas = tendencias._racha_eje(comun.T("es"), semanas, tendencias._RACHA_WIDTH / len(semanas))
+        self.assertEqual([e["texto"] for e in etiquetas], ["nov 2025", "ene 2026"])
         self._revisar(etiquetas)
 
 

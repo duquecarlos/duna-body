@@ -154,7 +154,7 @@ _RACHA_LABEL_FONT = 12.0
 _RACHA_CHAR_W = 0.6 * _RACHA_LABEL_FONT  # same character-count approximation as turnos.py's own
                                           # _PERFIL_CHAR_W, since real glyph metrics are not
                                           # available server-side
-_RACHA_LABEL_GAP_X = 4.0   # minimum clear gap kept between two adjacent month labels' own boxes
+_RACHA_LABEL_GAP_X = 8.0   # minimum clear gap kept between two adjacent month labels' own boxes
 _RACHA_EDGE_PAD = 2.0      # inside the viewBox's own left/right edge
 _RACHA_LABEL_H = 16        # height reserved below the tick strip for the month-label row
 _RACHA_LABEL_BASELINE = 12  # the label text's own baseline, within that reserved row
@@ -171,7 +171,10 @@ def _racha_eje(t: T, semanas: list[dict], bw: float) -> list[dict]:
     GRAFICO-1-M2 step 3); every other label is the short month name alone. A label too close to
     the viewBox's own edge anchors start/end instead of middle so it is never clipped, and a
     greedy left-to-right scan drops any label whose own box (the character-count estimate above)
-    would overlap the one already kept, so two labels never collide."""
+    would come within _RACHA_LABEL_GAP_X of the one already kept, so no two labels ever sit less
+    than that gap apart (BODY-TENDENCIAS-RACHA-GRAFICO-1-M3). The first label and the last are
+    never the ones dropped -- a conflicting last candidate instead pops middle labels already kept
+    until it clears or none are left to pop."""
     n = len(semanas)
     arranques: list[int] = []
     mes_anterior = None
@@ -192,14 +195,22 @@ def _racha_eje(t: T, semanas: list[dict], bw: float) -> list[dict]:
         texto = f"{mes} {d.year}" if pos == 0 or d.month == 1 else mes
         candidatos.append((i * bw + bw / 2, texto))
 
-    elegidos: list[tuple[float, str]] = []
-    for x, texto in candidatos:
+    elegidos: list[tuple[float, str]] = [candidatos[0]]
+    for idx in range(1, len(candidatos)):
+        x, texto = candidatos[idx]
         mitad = _racha_label_px(texto) / 2
-        if elegidos:
+        es_ultimo = idx == len(candidatos) - 1
+        if es_ultimo:
+            while len(elegidos) > 1:
+                x_prev, texto_prev = elegidos[-1]
+                if x - mitad >= x_prev + _racha_label_px(texto_prev) / 2 + _RACHA_LABEL_GAP_X:
+                    break
+                elegidos.pop()
+            elegidos.append((x, texto))
+        else:
             x_prev, texto_prev = elegidos[-1]
-            if x - mitad < x_prev + _racha_label_px(texto_prev) / 2 + _RACHA_LABEL_GAP_X:
-                continue
-        elegidos.append((x, texto))
+            if x - mitad >= x_prev + _racha_label_px(texto_prev) / 2 + _RACHA_LABEL_GAP_X:
+                elegidos.append((x, texto))
 
     out = []
     for x, texto in elegidos:
