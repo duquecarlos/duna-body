@@ -7,6 +7,13 @@ A shared figure is visible only while the share is active AND viewer and owner a
 ACTIVE household (membership read through body/household.py's `household_of`, the one place that
 is read): leaving the household or withdrawing hides it at once. What `visibles_para` exposes is
 the owner's LATEST `daily_metric` row for that key -- never a series, a baseline or a history.
+
+BODY-COMIDA-COMPARTIDA-1 ruling 1: `consentimiento_comida_compartida` is a second table this
+module owns, the same reading applies to -- the only module that reads or writes it. It could not
+reuse `figura_compartida` itself: that table's `metric_key` column is a FK into `metric_def`, and
+"may a household member's shared meal reach me" is a feature flag, not a metric -- forcing it
+through that FK would mean inventing a fake metric_def row for a non-metric. A sibling table, same
+withdrawable per-person-per-household shape, is the honest fit.
 """
 from __future__ import annotations
 
@@ -109,7 +116,58 @@ def visibles_para(conn: sqlite3.Connection, viewer_id: int) -> list[dict]:
     return out
 
 
-# ---- for body/privacidad.py's export and delete-all, so it never queries the table itself -------
+# ---- consentimiento_comida_compartida (BODY-COMIDA-COMPARTIDA-1 ruling 1) -------------------------
+
+def recibe_comidas(conn: sqlite3.Connection, person_id: int) -> bool:
+    """Whether this person currently consents to receive a shared meal from their CURRENT ACTIVE
+    household -- a consent granted in a household they have since left never silently carries into
+    a new one, the same reasoning `mis_compartidas` above already states. False with no active
+    household."""
+    hh = household.household_of(conn, person_id)
+    if hh is None:
+        return False
+    return conn.execute(
+        "SELECT 1 FROM consentimiento_comida_compartida WHERE person_id = ? AND hogar_id = ? "
+        "AND withdrawn_at IS NULL",
+        (person_id, hh.id),
+    ).fetchone() is not None
+
+
+def activar_recibir_comidas(conn: sqlite3.Connection, person_id: int) -> None:
+    """Grants consent to receive shared meals from the person's active household. Refuses
+    (ValueError, nothing written) with no active household. A no-op (the existing granted_at is
+    kept) when already active."""
+    hh = household.household_of(conn, person_id)
+    if hh is None:
+        raise ValueError("no active household")
+    existing = conn.execute(
+        "SELECT 1 FROM consentimiento_comida_compartida WHERE person_id = ? AND hogar_id = ? "
+        "AND withdrawn_at IS NULL",
+        (person_id, hh.id),
+    ).fetchone()
+    if existing is not None:
+        return
+    with conn:
+        conn.execute(
+            "INSERT INTO consentimiento_comida_compartida (person_id, hogar_id, granted_at) VALUES (?, ?, ?)",
+            (person_id, hh.id, _now()),
+        )
+
+
+def desactivar_recibir_comidas(conn: sqlite3.Connection, person_id: int) -> None:
+    """Withdraws every active grant of this person's, in any household (the safe direction, same
+    as `retirar` above) -- a no-op when nothing is active. Discarding this person's own still-
+    pending portions (ruling 1) is body/comida_compartida.py's own job, called alongside this from
+    body/rutas/ajustes.py."""
+    with conn:
+        conn.execute(
+            "UPDATE consentimiento_comida_compartida SET withdrawn_at = ? WHERE person_id = ? "
+            "AND withdrawn_at IS NULL",
+            (_now(), person_id),
+        )
+
+
+# ---- for body/privacidad.py's export and delete-all, so it never queries either table itself ----
 
 def export_rows(conn: sqlite3.Connection, person_id: int) -> list[dict]:
     """Every row this person owns, including withdrawn ones (their own history of what they
@@ -122,8 +180,20 @@ def export_rows(conn: sqlite3.Connection, person_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def export_rows_consentimiento_comidas(conn: sqlite3.Connection, person_id: int) -> list[dict]:
+    """Every row this person owns, including withdrawn ones -- the same "own history" shape
+    `export_rows` above gives figura_compartida."""
+    rows = conn.execute(
+        "SELECT hogar_id, granted_at, withdrawn_at FROM consentimiento_comida_compartida "
+        "WHERE person_id = ? ORDER BY id",
+        (person_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def delete_rows(conn: sqlite3.Connection, person_id: int) -> None:
     """Plain DELETE, no transaction of its own: body/privacidad.py's delete-all calls this from
     inside its own single `with conn:` block, and nesting a second one here would commit that
-    transaction early."""
+    transaction early. Both tables this module owns, together."""
     conn.execute("DELETE FROM figura_compartida WHERE person_id = ?", (person_id,))
+    conn.execute("DELETE FROM consentimiento_comida_compartida WHERE person_id = ?", (person_id,))

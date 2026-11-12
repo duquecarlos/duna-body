@@ -700,6 +700,68 @@ CREATE TABLE IF NOT EXISTS ingesta (
 );
 CREATE INDEX IF NOT EXISTS idx_ingesta_person_dia ON ingesta(person_id, day);
 
+-- BODY-COMIDA-COMPARTIDA-1: a shared meal is a LINK only -- comida_compartida names who cooked it,
+-- for which household and when; the actual words and amounts live on each eater's own
+-- comida_compartida_porcion row below (ruling 2). hogar_id matches figura_compartida.hogar_id and
+-- hogar_miembro.hogar_id (TEXT, body/household.py's Household.id). origen/origen_ref let a caller
+-- outside Body (the future Hogar product, through body/comida_compartida.py's one entry point)
+-- retry safely: the same (origen, origen_ref) always resolves to the SAME row, never a second one.
+CREATE TABLE IF NOT EXISTS comida_compartida (
+    id              INTEGER PRIMARY KEY,
+    hogar_id        TEXT NOT NULL,
+    autor_person_id INTEGER NOT NULL REFERENCES person(id),
+    day             TEXT NOT NULL,
+    ts_local        TEXT,
+    origen          TEXT NOT NULL,
+    origen_ref      TEXT,
+    created_at      TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_comida_compartida_origen
+    ON comida_compartida (origen, origen_ref) WHERE origen_ref IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_comida_compartida_autor ON comida_compartida(autor_person_id);
+
+-- BODY-COMIDA-COMPARTIDA-1: one row per EATER of a shared meal, including the author's own (ruling
+-- 3: applied at once, estado='aplicada'). descripcion is prefilled from the author's own words but
+-- is this eater's own from then on (ruling 6: "each eater's applied row is their own"). nutrientes
+-- is a JSON object, metric_key -> amount, for THIS eater's own portion -- never the whole meal's
+-- total. comida_id links to that eater's own `comida` row only once they have applied it (NULL
+-- while pendiente, and NULL again if that comida is later removed -- ruling 6's "orphan-safe", so
+-- this row is never left pointing at a comida that no longer exists).
+CREATE TABLE IF NOT EXISTS comida_compartida_porcion (
+    id                   INTEGER PRIMARY KEY,
+    -- Nullable, not NOT NULL: BODY-COMIDA-COMPARTIDA-1 ruling 6 orphan-safes an applied portion to
+    -- NULL when its author's account (and so the parent) is deleted -- this eater's own comida_id
+    -- stays, only the link goes.
+    comida_compartida_id INTEGER REFERENCES comida_compartida(id),
+    person_id            INTEGER NOT NULL REFERENCES person(id),
+    descripcion          TEXT,
+    porcion_texto        TEXT,
+    nutrientes           TEXT NOT NULL,
+    estado               TEXT NOT NULL DEFAULT 'pendiente'
+                         CHECK (estado IN ('pendiente', 'aplicada', 'descartada')),
+    comida_id            INTEGER REFERENCES comida(id),
+    decided_at           TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_comida_compartida_porcion_unica
+    ON comida_compartida_porcion (comida_compartida_id, person_id);
+CREATE INDEX IF NOT EXISTS idx_comida_compartida_porcion_person
+    ON comida_compartida_porcion (person_id, estado);
+
+-- BODY-COMIDA-COMPARTIDA-1 ruling 1: whether this person currently wants a household member's
+-- shared meal to reach them -- OFF by default, the same per-person, per-household, withdrawable
+-- shape figura_compartida above already uses (a sibling table, since a feature consent has no
+-- metric_key to hang off figura_compartida's own CHECK/FK). The only module that reads or writes
+-- this table is body/compartir.py, the same ownership rule figura_compartida's own comment states.
+CREATE TABLE IF NOT EXISTS consentimiento_comida_compartida (
+    id           INTEGER PRIMARY KEY,
+    person_id    INTEGER NOT NULL REFERENCES person(id),
+    hogar_id     TEXT NOT NULL,
+    granted_at   TEXT NOT NULL,
+    withdrawn_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_consentimiento_comida_compartida_activa
+    ON consentimiento_comida_compartida (person_id, hogar_id) WHERE withdrawn_at IS NULL;
+
 -- BODY-NUTRIENTE-OBJETIVO-1: a daily target for one of the eight `suma_ingesta` keys, additive and
 -- generic over all of them (never one hardcoded to protein). A changed target is a NEW row, so
 -- history stays: the target for a day is the row with the latest start_day <= day; a same-day
@@ -2465,33 +2527,40 @@ def borrar_nutrient_target(conn: sqlite3.Connection, person_id: int, metric_key:
 # registrar_ingesta/corregir_ingesta/borrar_ingesta already use, so a meal's amounts sum into
 # daily_metric exactly like a standalone intake entry does.
 
+def _crear_comida_tx(conn: sqlite3.Connection, person_id: int, day: str, cantidades: list[dict],
+                      descripcion: str | None = None, ts_local: str | None = None) -> int:
+    """`crear_comida`'s own body, without its own `with conn:` -- for a caller (body/comida_compartida.py)
+    that must write several rows of its own alongside this one, in ONE transaction."""
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    cur = conn.execute(
+        "INSERT INTO comida (person_id, day, ts_local, descripcion, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (person_id, day, ts_local, descripcion, now, now),
+    )
+    comida_id = cur.lastrowid
+    for c in cantidades:
+        conn.execute(
+            "INSERT INTO ingesta (person_id, day, ts_local, metric_key, amount, estimado, comida_id, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (person_id, day, ts_local, c["metric_key"], c["amount"], int(bool(c.get("estimado", True))),
+             comida_id, now, now),
+        )
+        _recalcular_ingesta_dia(conn, person_id, day, c["metric_key"])
+    return comida_id
+
+
 def crear_comida(conn: sqlite3.Connection, person_id: int, day: str, cantidades: list[dict],
                   descripcion: str | None = None, ts_local: str | None = None) -> int:
     """`cantidades`: a list of {metric_key, amount, estimado}, already validated by the caller
     (herramientas._registrar_comida) -- one per key, amount > 0. Writes the `comida` row and every
     child `ingesta` row in one transaction, recalculating each touched key's day total."""
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with conn:
-        cur = conn.execute(
-            "INSERT INTO comida (person_id, day, ts_local, descripcion, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (person_id, day, ts_local, descripcion, now, now),
-        )
-        comida_id = cur.lastrowid
-        for c in cantidades:
-            conn.execute(
-                "INSERT INTO ingesta (person_id, day, ts_local, metric_key, amount, estimado, comida_id, "
-                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (person_id, day, ts_local, c["metric_key"], c["amount"], int(bool(c.get("estimado", True))),
-                 comida_id, now, now),
-            )
-            _recalcular_ingesta_dia(conn, person_id, day, c["metric_key"])
-    return comida_id
+        return _crear_comida_tx(conn, person_id, day, cantidades, descripcion, ts_local)
 
 
-def borrar_comida(conn: sqlite3.Connection, person_id: int, comida_id: int) -> None:
-    """Deletes a meal and every one of its own `ingesta` children together (ruling 3's "Deshacer
-    removes them together"), recalculating each touched key's day total afterwards."""
+def _borrar_comida_tx(conn: sqlite3.Connection, person_id: int, comida_id: int) -> None:
+    """`borrar_comida`'s own body, without its own `with conn:` -- same reason as `_crear_comida_tx`
+    above (body/comida_compartida.py's own undo, which removes a comida alongside its own rows)."""
     fila = conn.execute(
         "SELECT day FROM comida WHERE id = ? AND person_id = ?", (comida_id, person_id)
     ).fetchone()
@@ -2500,11 +2569,17 @@ def borrar_comida(conn: sqlite3.Connection, person_id: int, comida_id: int) -> N
     day = fila["day"]
     claves = [r["metric_key"] for r in conn.execute(
         "SELECT DISTINCT metric_key FROM ingesta WHERE comida_id = ?", (comida_id,))]
+    conn.execute("DELETE FROM ingesta WHERE comida_id = ?", (comida_id,))
+    conn.execute("DELETE FROM comida WHERE id = ?", (comida_id,))
+    for metric_key in claves:
+        _recalcular_ingesta_dia(conn, person_id, day, metric_key)
+
+
+def borrar_comida(conn: sqlite3.Connection, person_id: int, comida_id: int) -> None:
+    """Deletes a meal and every one of its own `ingesta` children together (ruling 3's "Deshacer
+    removes them together"), recalculating each touched key's day total afterwards."""
     with conn:
-        conn.execute("DELETE FROM ingesta WHERE comida_id = ?", (comida_id,))
-        conn.execute("DELETE FROM comida WHERE id = ?", (comida_id,))
-        for metric_key in claves:
-            _recalcular_ingesta_dia(conn, person_id, day, metric_key)
+        _borrar_comida_tx(conn, person_id, comida_id)
 
 
 def comidas_del_dia(conn: sqlite3.Connection, person_id: int, day: str) -> list[dict]:
