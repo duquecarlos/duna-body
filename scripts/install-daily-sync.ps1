@@ -15,6 +15,7 @@
 # branch mid-slice. The venv stays the one at $repo\.venv; only the code tree differs.
 # Remove with: Unregister-ScheduledTask -TaskName "Body app daily sync"; Unregister-ScheduledTask -TaskName "Body app weekly file"; Unregister-ScheduledTask -TaskName "Body app morning file"; Unregister-ScheduledTask -TaskName "Body app wake check"; Unregister-ScheduledTask -TaskName "Body app web"; git -C <repo> worktree remove <LiveDir>
 # Example with shift import on: .\install-daily-sync.ps1 -ShiftsDir "C:\path\to\your\shifts\folder"
+# Example with commute import on: .\install-daily-sync.ps1 -CommuteFile "C:\path\to\your\commute-diario.csv"
 # Example with the web app open to the home network too: .\install-daily-sync.ps1 -Lan
 #
 # -Hosted: the host (body.duna.solutions) does the pull and runs the web app instead of this PC.
@@ -110,6 +111,9 @@ $dailyActions = @(New-ScheduledTaskAction -Execute $py -Argument "-m body.vivo p
 if ($ShiftsDir) {
     $dailyActions += New-ScheduledTaskAction -Execute $py -Argument "-m body.vivo shift_import --dir `"$ShiftsDir`"" -WorkingDirectory $LiveDir
 }
+if ($CommuteFile) {
+    $dailyActions += New-ScheduledTaskAction -Execute $py -Argument "-m body.vivo importar_desplazamiento --file `"$CommuteFile`"" -WorkingDirectory $LiveDir
+}
 Register-ScheduledTask -TaskName "Body app daily sync" -Action $dailyActions -Trigger (New-ScheduledTaskTrigger -Daily -At $At) -Settings $settings -Description "Pulls Garmin data into the local Body app database" -Force | Out-Null
 
 $pull = New-ScheduledTaskAction -Execute $py -Argument "-m body.vivo pull --days 2" -WorkingDirectory $LiveDir
@@ -135,10 +139,11 @@ Stop-ScheduledTask -TaskName "Body app web" -ErrorAction SilentlyContinue
 Start-ScheduledTask -TaskName "Body app web"
 
 $shiftMsg = if ($ShiftsDir) { "on, from $ShiftsDir" } else { "off" }
+$commuteMsg = if ($CommuteFile) { "on, from $CommuteFile" } else { "off (pass -CommuteFile to turn it on)" }
 $webMsg = if ($Lan) {
     "Body app web running at http://127.0.0.1:$Port -- and open to every device on this home network."
 } else {
     "Body app web running at http://127.0.0.1:$Port."
 }
 $morningMsg = $MorningAt -join ', '
-Write-Host "Registered: daily sync at $At (shift import: $shiftMsg), weekly file on Sundays at $SundayAt, morning file at $morningMsg, wake check every 20 min from 04:00 to 13:00 (all run later if the PC was off). $webMsg"
+Write-Host "Registered: daily sync at $At (shift import: $shiftMsg, commute import: $commuteMsg), weekly file on Sundays at $SundayAt, morning file at $morningMsg, wake check every 20 min from 04:00 to 13:00 (all run later if the PC was off). $webMsg"

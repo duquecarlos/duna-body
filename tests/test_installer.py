@@ -198,5 +198,64 @@ class InstallerCommuteUploadTaskTest(unittest.TestCase):
         self.assertIn("Sin subida de desplazamiento", self.text)
 
 
+class InstallerLocalCommuteImportTest(unittest.TestCase):
+    """BODY-DESPLAZAMIENTO-LOCAL-1: -CommuteFile on the local (non -Hosted) branch adds a
+    commute import action to "Body app daily sync", right after the shift_import action."""
+
+    def setUp(self):
+        self.text = SCRIPT.read_text(encoding="utf-8")
+
+    def _daily_actions_block(self):
+        start = self.text.index('$dailyActions = @(New-ScheduledTaskAction')
+        close = self.text.index(
+            'Register-ScheduledTask -TaskName "Body app daily sync"', start
+        )
+        return self.text[start:close]
+
+    def test_commute_action_present_when_commutefile_given(self):
+        block = self._daily_actions_block()
+        self.assertIn("if ($CommuteFile) {", block)
+        self.assertIn("-m body.vivo importar_desplazamiento", block)
+        self.assertIn('--file `"$CommuteFile`"', block)
+        self.assertIn("-WorkingDirectory $LiveDir", block)
+
+    def test_commute_action_comes_after_shift_import_action(self):
+        block = self._daily_actions_block()
+        shift_at = block.index("if ($ShiftsDir) {")
+        commute_at = block.index("if ($CommuteFile) {")
+        self.assertLess(shift_at, commute_at)
+
+    def test_commute_action_absent_without_commutefile_guard(self):
+        """The action line itself only ever runs inside the if ($CommuteFile) guard."""
+        block = self._daily_actions_block()
+        guard_start = block.index("if ($CommuteFile) {")
+        guard_close = block.index("\n}", guard_start)
+        guard_body = block[guard_start:guard_close]
+        outside = block[:guard_start] + block[guard_close:]
+        self.assertIn("importar_desplazamiento", guard_body)
+        self.assertNotIn("importar_desplazamiento", outside)
+
+    def _local_commute_msg_assignment(self):
+        matches = re.findall(r'\$commuteMsg\s*=\s*(.+)', self.text)
+        self.assertEqual(len(matches), 2, "expected one hosted and one local $commuteMsg assignment")
+        return matches[1]
+
+    def test_local_summary_reports_commute_on_with_path(self):
+        self.assertIn("on, from $CommuteFile", self._local_commute_msg_assignment())
+
+    def test_local_summary_reports_commute_off_with_how_to_turn_it_on(self):
+        self.assertIn("pass -CommuteFile to turn it on", self._local_commute_msg_assignment())
+
+    def test_write_host_includes_commute_message(self):
+        write_host_line = next(
+            l for l in self.text.splitlines() if l.strip().startswith('Write-Host "Registered:')
+        )
+        self.assertIn("$commuteMsg", write_host_line)
+
+    def test_header_has_a_local_commute_example(self):
+        self.assertIn("Example with commute import on:", self.text)
+        self.assertIn("-CommuteFile", self.text.split("-Hosted:")[0])
+
+
 if __name__ == "__main__":
     unittest.main()

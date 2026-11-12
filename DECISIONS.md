@@ -18158,3 +18158,61 @@ corrects) -- one of merge policy A's three conditions, same as the round it fixe
 approval reason (ORCH-CARLOS-DELEGATES-TIER-1-1) says in words this slice merges on a green gate:
 "then merges on a green gate" -- authorising the merge past this condition, unlike the `-R` round it
 continues. -- merged 15d2304
+
+## BODY-DESPLAZAMIENTO-LOCAL-1 -- the local daily sync imports the commute file too (2026-11-12)
+
+BODY-DESPLAZAMIENTO-2 (merged `0ed81c4`) gave `scripts/install-daily-sync.ps1` an optional
+`-CommuteFile`, but only its `-Hosted` branch read it; the local branch (built when `-Hosted` is not
+given) never mentioned it, so on a PC still running in LOCAL mode -- which is where Carlos's PC is
+today, since the move to the host has not happened -- the commute file would never reach the
+database. This slice wires it into the local branch, reusing the `importar_desplazamiento` vivo task
+`-Hosted` already has as `subir_desplazamiento`'s local-path twin (from BODY-DESPLAZAMIENTO-2).
+
+**The change.** When `-CommuteFile` is given, `"Body app daily sync"`'s `$dailyActions` gains one
+more action right after `shift_import` (same `-WorkingDirectory $LiveDir`):
+
+    -m body.vivo importar_desplazamiento --file "<path>"
+
+so the task now pulls, imports shifts (if `-ShiftsDir`), then imports the commute file (if
+`-CommuteFile`) -- each guarded independently, in that order. The local summary line's new
+`$commuteMsg` matches how it already reports shifts: `"on, from $CommuteFile"` when given, `"off
+(pass -CommuteFile to turn it on)"` when not, folded into the one `Write-Host "Registered: ..."` line
+next to the existing `shift import:` phrase. The header usage comment gains a local example
+(`Example with commute import on: .\install-daily-sync.ps1 -CommuteFile
+"C:\path\to\your\commute-diario.csv"`), placed next to the existing `-ShiftsDir` example and before
+the `-Hosted:` section. The `-Hosted` branch (commute upload task, `subir_desplazamiento`) is
+unchanged.
+
+`tests/test_installer.py` gained `InstallerLocalCommuteImportTest` (6 cases): the commute action is
+present in `$dailyActions` and reads `-m body.vivo importar_desplazamiento` with `--file
+"$CommuteFile"` and `-WorkingDirectory $LiveDir`; it comes after the `shift_import` guard; it exists
+only inside its own `if ($CommuteFile)` guard (absent outside it); the local `$commuteMsg` assignment
+(the second of two in the file, the hosted one being the first) reads `"on, from $CommuteFile"` and
+`"pass -CommuteFile to turn it on"`; the `Write-Host "Registered: ..."` line references `$commuteMsg`;
+the header carries the new local example before the `-Hosted:` marker. All prior hosted-commute and
+local-shift-import cases are unchanged and still pass.
+
+Commit: `845e23a`.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry), the exact
+command `.venv/Scripts/python.exe -m unittest discover tests -t .`, one foreground run (moved to the
+background past the 600 s cap, waited on to completion, exit code 0):
+
+    Ran 2910 tests in 759.404s
+
+    OK (skipped=1)
+
+No password, token, session secret, device key or health/location figure was read, printed, or
+written anywhere in this slice's own work.
+
+**Local install command, exactly as Carlos runs it** (placeholder paths):
+
+    .\install-daily-sync.ps1 -ShiftsDir "C:\path\to\your\shifts\folder" -CommuteFile "C:\path\to\your\commute-diario.csv"
+
+**Merge policy.** The diff touches no schema or migration and no cross-repo contract or DTO. It does
+change a byte the operator (Carlos) reads: the installer's own `Write-Host "Registered: ..."`
+summary line and its header usage comment, both gaining the new commute phrase/example -- one of
+merge policy A's three conditions. The spec's own step 4 says in words to merge on a green gate
+("Green -> ledger ... commit; `git checkout main`; `git merge --no-ff
+feat/body-desplazamiento-local-1` -- APPROVED to merge on a green gate"), authorising the merge past
+this condition.
