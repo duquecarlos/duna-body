@@ -22,6 +22,8 @@ from datetime import datetime, timezone
 
 from . import household
 
+_MISSING = object()
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -118,12 +120,15 @@ def visibles_para(conn: sqlite3.Connection, viewer_id: int) -> list[dict]:
 
 # ---- consentimiento_comida_compartida (BODY-COMIDA-COMPARTIDA-1 ruling 1) -------------------------
 
-def recibe_comidas(conn: sqlite3.Connection, person_id: int) -> bool:
+def recibe_comidas(conn: sqlite3.Connection, person_id: int, hh=_MISSING) -> bool:
     """Whether this person currently consents to receive a shared meal from their CURRENT ACTIVE
     household -- a consent granted in a household they have since left never silently carries into
     a new one, the same reasoning `mis_compartidas` above already states. False with no active
-    household."""
-    hh = household.household_of(conn, person_id)
+    household. `hh` lets a caller that already resolved `household.household_of` (ajustes.py's
+    own settings() route, which also needs it for `metrics_compartir`) pass it straight through
+    instead of paying for that lookup twice."""
+    if hh is _MISSING:
+        hh = household.household_of(conn, person_id)
     if hh is None:
         return False
     return conn.execute(
