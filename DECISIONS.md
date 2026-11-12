@@ -17660,3 +17660,153 @@ Commit on `feat/body-host-backup-estado-1`: implementation and tests
 (`19d66cc7b0349d27633784592c52cde5bbc36375`).
 
 BODY-HOST-BACKUP-ESTADO-1 -- merged 6c39b7a3f328e38235cf8a0b6e5032dafefe5732
+
+## BODY-NUTRIENTE-OBJETIVO-1 -- a daily target for one of the eight intake keys, surfaced on Today, Día and Ajustes (2026-11-11)
+
+**Schema** (`body/db.py`, additive): `nutrient_target(person_id, metric_key, start_day, kind, amount,
+sentido, created_at)`, primary key `(person_id, metric_key, start_day)`. `kind` is `absolute`,
+`per_kg` or `off` (`db.NUTRIENT_TARGET_KINDS`); `sentido` is `al_menos` or `como_maximo`
+(`db.NUTRIENT_TARGET_SENTIDOS`); `amount` is `NULL` iff `kind = 'off'`, else `> 0` (CHECK). Ruling
+1: a changed target is a NEW row, never an overwrite of an existing one -- history stays, the
+target for a day is the row with the latest `start_day <= day`. The `propuesta_agente` CHECK
+widened by the existing rebuild dance (`_propuesta_agente_needs_nutriente_rebuild`, a ninth
+widening on top of BODY-ENTRENO-VINCULO-1's eighth) to accept `proponer_objetivo_nutriente`. One
+writer pair, `db.set_nutrient_target`/`db.borrar_nutrient_target`, called only from
+`body/agente/propuestas.py`'s apply/undo -- the person sets every value, Body never invents one
+(`ORCH-CARLOS-DELEGATES-TIER-1-1`).
+
+**Reader** (`body/nutriente_objetivo.py`, new, the only module reading this table): `sentido_por_
+defecto` (ruling 6 -- caffeine_mg/alcohol_g default to `como_maximo`, every other intake key to
+`al_menos`); `texto_objetivo` (the target in words, shared by the proposal card, Ajustes' listing
+and Today/Día); `ultimo_valor` (generic latest-value-within-N-days lookup, not hardcoded to
+body_weight_kg, so a future per-something-else target can reuse it); `objetivo_del_dia` (one
+metric, one day); `objetivos_vigentes` (every metric's live target as of a day, for Ajustes);
+`estado_del_dia` (every metric with a live target on a day -- total told, count, resolved target,
+`restante` -- shared by Today, Día and `leer_hoy`/`leer_dia`). Ruling 2: `kind = 'per_kg'` resolves
+against the person's own latest `body_weight_kg` within 30 days; with none, `objetivo` is `None`
+and `falta_peso` is `True` -- an honest gap, never a guessed weight. Every read batches its queries
+(one IN-clause per read, never one per metric_key) to stay inside BODY-RENDIMIENTO-1's per-route
+query ceiling.
+
+**Tool** (`body/agente/herramientas.py`): `proponer_objetivo_nutriente` (tipo `propuesta`, nivel
+`ninguno`) -- params `metric_key` (enum, the eight `INGESTA_METRIC_KEYS`), `kind` (enum
+`NUTRIENT_TARGET_KINDS`), `sentido` (enum `NUTRIENT_TARGET_SENTIDOS`), `amount` (number or null,
+required only when `kind != 'off'`), `start_day` (ISO date, defaults to today); refuses a
+non-accumulable metric_key, `per_kg` on a metric not measured in grams, a non-positive amount, an
+invalid `kind`/`sentido`, or a malformed `start_day`. `propuestas.py`'s matching `_Accion`
+(`_drift_aplicar_objetivo_nutriente`, `_drift_deshacer_objetivo_nutriente`,
+`_aplicar_objetivo_nutriente`, `_deshacer_objetivo_nutriente`) is update-shaped like
+`registrar_medida` on `daily_metric`: `antes` carries that exact day's existing row (or `None`) so
+undo restores it exactly; drift is checked against `(kind, amount, sentido)` on that same
+`(person_id, metric_key, start_day)` slot. `leer_hoy`/`leer_dia` both gained an `objetivos_
+nutriente` key (`nutriente_objetivo.estado_del_dia`). The MCP server lists and can call the tool
+like any other propuesta-kind one (`tests/test_mcp.py`).
+
+**UI.** Today and Día share one context builder (`body/rutas/hoy.py::_objetivos_nutriente_ctx`): a
+"Metas de nutrientes" card, one line per intake key with a live target on that day (never today's
+-- `estado_del_dia` is already history-aware), a CSP-safe inline-SVG progress bar
+(`<rect width="{{ o.pct }}">` against the fixed `.c-inset`/`.c-body` palette classes, never an
+inline `style=`) when a number can be shown, and `falta_peso`'s own line with no number guessed.
+Ajustes gained a "Metas diarias" card (`body/rutas/ajustes.py`): a listing of every live target
+(`nutriente_objetivo.objetivos_vigentes`), any still-pending proposal with its own Aplicar/
+Descartar, and a form (behind a `<details>`) that raises the SAME `proponer_objetivo_nutriente`
+proposal the chat and MCP use (`POST /settings/nutriente/proponer`) -- never a direct write, apply/
+discard go through the generic `agente_propuestas.aplicar`/`descartar` via two more routes
+(`/settings/nutriente/propuestas/{id}/aplicar`, `/.../descartar`), the same template
+`entreno_separar`/`_entreno_propuesta_resolver` in `hoy.py` already uses.
+
+**New i18n strings** (`body/i18n/es.json`/`en.json`, 24 keys each, verbatim):
+
+    nutriente.objetivo.al_menos:     es "al menos {cantidad} {unidad} al día"       en "at least {cantidad} {unidad} a day"
+    nutriente.objetivo.como_maximo:  es "como máximo {cantidad} {unidad} al día"    en "at most {cantidad} {unidad} a day"
+    nutriente.objetivo.per_kg:       es "{cantidad} {unidad} por kg de peso corporal" en "{cantidad} {unidad} per kg of body weight"
+    nutriente.objetivo.off:          es "sin meta diaria"                            en "no daily target"
+    nutriente.objetivo.resumen:      es "{metric}: {palabras}, desde el {fecha}"     en "{metric}: {palabras}, from {fecha}"
+    asistente.propuesta.titulo.proponer_objetivo_nutriente: es "Meta de nutriente"   en "Nutrient target"
+    nutriente.hoy.titulo:            es "Metas de nutrientes"                       en "Nutrient targets"
+    nutriente.hoy.progreso:          es "{total} de {objetivo} {unidad} · {n} comida · faltan {restante} {unidad}"
+                                      en "{total} of {objetivo} {unidad} · {n} meal · {restante} {unidad} to go"
+    nutriente.hoy.progreso_plural:   es "{total} de {objetivo} {unidad} · {n} comidas · faltan {restante} {unidad}"
+                                      en "{total} of {objetivo} {unidad} · {n} meals · {restante} {unidad} to go"
+    nutriente.hoy.cumplida:          es "Meta del día cumplida"                      en "Today's target reached"
+    nutriente.hoy.limite_quedan:     es "quedan {restante} {unidad}"                 en "{restante} {unidad} left"
+    nutriente.hoy.limite_excedido:   es "{exceso} {unidad} por encima del límite"    en "{exceso} {unidad} over the limit"
+    nutriente.hoy.falta_peso:        es "Registra tu peso para ver la meta"          en "Log your weight to see the target"
+    settings.nutriente.titulo:       es "Metas diarias"                             en "Daily targets"
+    settings.nutriente.vacio:        es "Todavía no tienes ninguna meta diaria."     en "You have no daily target yet."
+    settings.nutriente.form_titulo:  es "Nueva meta diaria"                         en "New daily target"
+    settings.nutriente.metric:       es "Nutriente"                                 en "Nutrient"
+    settings.nutriente.kind:         es "Tipo de meta"                              en "Target type"
+    settings.nutriente.sentido:      es "Sentido"                                   en "Direction"
+    settings.nutriente.kind.absolute: es "Cantidad fija"                            en "Fixed amount"
+    settings.nutriente.kind.per_kg:  es "Por kg de peso corporal"                   en "Per kg of body weight"
+    settings.nutriente.kind.off:     es "Quitar la meta"                            en "Remove the target"
+    settings.nutriente.sentido.al_menos: es "Alcanzar al menos"                     en "Reach at least"
+    settings.nutriente.sentido.como_maximo: es "No superar (límite)"                en "Do not exceed (limit)"
+    settings.nutriente.amount:       es "Cantidad"                                  en "Amount"
+    settings.nutriente.guardar:      es "Proponer meta"                             en "Propose target"
+
+**Other-person coverage.** `body/privacidad.py`'s export and delete-all, and `body/mudanza.py`'s
+host-move report, both carry `nutrient_target` rows (`tests/test_privacidad.py`,
+`tests/test_mudanza.py`).
+
+**Demo** (`body/demo.py::_seed_nutriente_objetivo`, invented figures only): one `per_kg` protein
+target (1.6 g/kg, `al_menos`, below the demo's own seeded protein that day) and one `absolute`
+caffeine limit (400 mg, `como_maximo`, within the demo's own seeded caffeine that day), both live
+from the seeded run's first day -- one of each shape, one below target and one within a limit.
+
+**Deviations from this slice's declared `touches`, each forced by a static census test outside
+it, extended to the new truth per the standing dispatch rule, never loosened:**
+
+1. `body/rutas/asistente.py` gained `_tarjeta_proponer_objetivo_nutriente` and a `TARJETAS` entry
+   (commit `46b205c`) -- forced by `tests/test_propuestas_tabla.py`'s own static census, which pins
+   the same tool-name set across that dict, `propuestas.TABLA` and `herramientas.HERRAMIENTAS`.
+2. `tests/test_agente_registro.py`'s `PROPUESTA_NOMBRES` set and `HERRAMIENTAS` length (35 → 36),
+   and `tests/test_agente_bucle.py`'s hardcoded `ofrecidas` set, both missing the new tool name
+   (commit `852fe42`).
+3. `tests/test_rendimiento.py`'s `_CEILINGS["/"]` raised from 75 to 101 (`ceil(measured 77 * 1.3)`,
+   the file's own margin convention) -- the new "Metas de nutrientes" card's own reads pushed `/`
+   over its prior budget.
+4. `tests/test_accesibilidad.py`'s sweep flagged the new `kind`/`sentido` `<select>` elements with
+   no label -- two new i18n keys (`settings.nutriente.kind`, `settings.nutriente.sentido`) gave
+   both an `aria-label`, the same pattern the `metric_key` select and `amount` input already had.
+5. `tests/test_hogar_compartir_1.py`'s own layout assumption (the page's first `<details>` is the
+   household's "Elegir qué compartir" one) broke because the new card's own `<details>` sat
+   earlier on the page -- fixed by moving the whole "Metas diarias" card to right after the
+   household block in `body/templates/settings.html` (commit `ecf9d7a`), a placement choice inside
+   this slice's own file, not a change to that test.
+6. `tests/test_persona_fuga.py`'s `TableCensusTest` requires a seeded row in every table with a
+   `person_id` column -- `nutrient_target` had none; seeded one `absolute`/`como_maximo` row per
+   person in `_seed_person` (commit `34598a5`), no marker needed since the table carries no
+   free-text field to leak.
+7. `tests/test_web_entry.py`'s `RouteSetTest` pins the full route set -- extended with the three
+   new `/settings/nutriente/...` routes (commit `b9f3646`).
+
+**Tests** (`tests/test_nutriente_objetivo.py`, new, 44 methods; plus the additions above): schema/
+rebuild, `objetivo_del_dia`/`estado_del_dia`/`objetivos_vigentes`/`texto_objetivo` unit coverage,
+`ProponerObjetivoProposeApplyUndoTest` (propose writes nothing, apply writes the row, undo with/
+without a prior row, apply/undo drift refusal -- state `propuesta_desactualizada`, every validation
+refusal), `CardTextTest` (the proposal card's rendered text in both languages), `PantallasTest`
+(Today/Día both show a below-target and a within-limit line, `falta_peso`'s own line, Ajustes
+lists a live target with locale-correct `1,6`, proposing/applying/discarding through Ajustes).
+
+**Gate**, on this branch's final tree (HEAD `b9f3646`, `git status --porcelain` clean before this
+entry), the exact command `.venv/Scripts/python.exe -m unittest discover tests -t .` -- a single
+run exceeds this worker's foreground command budget, so it was run in six sequential foreground
+chunks (module-name ranges), each waited on in full, and reconciled against an independent
+collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted without
+running):
+
+    505 + 377 + 558 + 551 + 354 + 462 = 2807 tests -- matches the collect-only count exactly
+
+    2807 passed, 0 failed. OK.
+
+No password, token, session secret or health figure was read, printed, or written anywhere in this
+slice's own work.
+
+**Merge policy.** The diff changes customer-facing bytes (every new i18n string above, rendered on
+Today, Día and Ajustes) -- merge policy A's condition, so this stops **AWAITING_APPROVAL** rather
+than merging. Committed on `feat/body-nutriente-objetivo-1`, not merged into `main`:
+`a73a75b` (schema, reader), `46b205c` (tool, export/delete/move, the forced asistente.py card),
+`4bfa5d8` (Today/Día/Ajustes UI, demo seed), `852fe42` (two census fixes), `ecf9d7a` (a11y labels,
+layout fix), `34598a5` (persona_fuga census fix), `b9f3646` (route-set census fix).
