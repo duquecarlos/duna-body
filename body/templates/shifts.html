@@ -25,7 +25,7 @@
       <p class="read mt-0">{{ t('shifts.confirm_summary', date=b.received_date, days=b.preview.day_count, nights=b.preview.night_count) }}</p>
       {% endif %}
       {% if b.preview.kept_days %}
-      <p class="k mt-6">{{ t('shifts.kept_note', n=b.preview.kept_days|length) }}</p>
+      <p class="k mt-6">{{ b.preview.kept_note }}</p>
       {% endif %}
       <div class="confirm-actions">
         <form method="post" action="/shifts/confirm">
@@ -50,7 +50,7 @@
   <p class="read mt-6">{{ t('shifts.confirm_summary', date=received_date, days=preview.day_count, nights=preview.night_count) }}</p>
   {% endif %}
   {% if preview.kept_days %}
-  <p class="k mt-8">{{ t('shifts.kept_note', n=preview.kept_days|length) }}</p>
+  <p class="k mt-8">{{ preview.kept_note }}</p>
   {% endif %}
   <div class="confirm-actions">
     <form method="post" action="/shifts/confirm">
@@ -84,10 +84,10 @@
   <p class="read">{{ t('shifts.hero_sub') }}</p>
   {% if perfil_hrv %}
   {{ perfil_hrv.svg|safe }}
-  <div class="row k fs-12">{% for et in perfil_hrv.ejes %}<span>{{ et }}</span>{% endfor %}</div>
+  <p class="read mt-6">{{ perfil_hrv.caption }}</p>
   <div class="legend mt-4">
     <span><i class="c-inset"></i>{{ t('shifts.perfil.banda') }}</span>
-    <span><i class="c-night op-18"></i>{{ t('shift.kind.night') }}</span>
+    <span><i class="c-night op-18"></i>{{ t('shifts.perfil.noche') }}</span>
   </div>
   <p class="k mt-4">{{ perfil_hrv.n_bloques }}</p>
   {% endif %}

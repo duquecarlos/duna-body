@@ -426,6 +426,32 @@ class ShiftWebTest(unittest.TestCase):
         page = self.client.get("/shifts").text
         self.assertIn("se mantiene lo que tú cambiaste", page)
 
+    def test_shifts_page_kept_note_is_singular_for_one_day(self):
+        """BODY-TURNOS-PERFIL-DIA-1-M fix 4: exactly one kept day reads "1 día", not "1 días"."""
+        self.conn.execute(
+            "INSERT INTO shift (person_id, day, kind, start_local, end_local, source) "
+            "VALUES (1, '2026-11-09', 'night', '2026-11-09T23:00', '2026-11-10T07:00', 'manual')"
+        )
+        self.conn.commit()
+        shift_import.propose(self.conn, FIXTURES / "turnos-demo-a.json", 1)
+        page = self.client.get("/shifts").text
+        self.assertIn("1 día donde se mantiene lo que tú cambiaste.", page)
+        self.assertNotIn("1 días donde", page)
+
+    def test_confirm_all_kept_note_is_singular_for_one_day(self):
+        """BODY-TURNOS-PERFIL-DIA-1-M fix 4: the confirm-all step's own kept-count sentence takes
+        the same singular treatment as shifts.kept_note, through the same _singular_key mechanism."""
+        self.conn.execute(
+            "INSERT INTO shift (person_id, day, kind, start_local, end_local, source) "
+            "VALUES (1, '2026-11-09', 'night', '2026-11-09T23:00', '2026-11-10T07:00', 'manual')"
+        )
+        self.conn.commit()
+        shift_import.propose(self.conn, FIXTURES / "turnos-demo-a.json", 1)
+        resp = self.client.post("/shifts/confirm-all")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("1 día se mantuvo como estaba.", resp.text)
+        self.assertNotIn("1 días se mantuvieron", resp.text)
+
     def test_today_page_links_to_shifts_when_batch_proposed(self):
         from body import garmin_adapter
         self.conn.execute(
