@@ -121,7 +121,11 @@ def _turnos_ultima_ctx(t: T, defs: dict, resumen: dict) -> dict | None:
 # every unit scaled down and its axis text rendered under the app's own text-size floor). This
 # width never grows with a label's length again -- a label that doesn't fit its slot wraps instead
 # (ruling 2).
-_PERFIL_WIDTH, _PERFIL_HEIGHT = 313, 128
+# Two single-name assignments, not one tuple-unpacked line -- tests/test_guardia_parches.py's
+# RouteModuleAttrReadGuardTest only recognises a plain `NAME = value` as "defined at this
+# module's own top level", so a test reading either constant needs it written this way.
+_PERFIL_WIDTH = 313
+_PERFIL_HEIGHT = 128
 _PERFIL_TOP = 10
 _PERFIL_LABEL_DY = 13      # baseline offset below the plot area for the x-axis labels
 _PERFIL_BOTTOM_PAD = 6
