@@ -95,6 +95,7 @@ def _all_tool_calls():
         "leer_tendencias": {}, "leer_historia": {}, "leer_metas": {}, "leer_meta": gid_placeholder,
         "leer_turnos": {}, "leer_costo_turnos": {}, "leer_ajustes": {}, "leer_tutoriales": {},
         "leer_entreno": {"day": "2026-10-05"}, "leer_experimentos": {},
+        "leer_serie": {"metricas": ["resting_hr"], "desde": "2026-10-01", "hasta": "2026-10-05", "paso": "dia"},
     }
 
 
@@ -172,16 +173,18 @@ NUNCA_PROPUESTA = {
 
 
 class RegistryShapeTest(unittest.TestCase):
-    def test_thirteen_lectura_tools_with_expected_levels(self):
+    def test_fourteen_lectura_tools_with_expected_levels(self):
+        # BODY-AGENTE-LEER-SERIE-1: extended from thirteen -- leer_serie joined the registry, at
+        # the same nivel leer_tendencias holds (ruling 3), never a loosened count.
         expected_levels = {
             "leer_hoy": "completo", "leer_dia": "completo", "leer_como_calculo": "completo",
             "leer_tendencias": "resumen", "leer_historia": "resumen", "leer_metas": "resumen",
             "leer_meta": "resumen", "leer_turnos": "ninguno", "leer_costo_turnos": "resumen",
             "leer_ajustes": "ninguno", "leer_tutoriales": "ninguno", "leer_entreno": "completo",
-            "leer_experimentos": "resumen",
+            "leer_experimentos": "resumen", "leer_serie": "resumen",
         }
         lectura = [h for h in herramientas.HERRAMIENTAS if h["tipo"] == "lectura"]
-        self.assertEqual(len(lectura), 13)
+        self.assertEqual(len(lectura), 14)
         self.assertEqual({h["nombre"]: h["nivel"] for h in lectura}, expected_levels)
 
     def test_twentyfour_propuesta_tools_at_nivel_ninguno(self):
@@ -192,7 +195,8 @@ class RegistryShapeTest(unittest.TestCase):
 
     def test_every_entry_has_a_known_tipo(self):
         self.assertTrue(all(h["tipo"] in ("lectura", "propuesta") for h in herramientas.HERRAMIENTAS))
-        self.assertEqual(len(herramientas.HERRAMIENTAS), 37)
+        # BODY-AGENTE-LEER-SERIE-1: extended from 37 -- leer_serie is the one new entry.
+        self.assertEqual(len(herramientas.HERRAMIENTAS), 38)
 
 
 class RouteMappingTest(unittest.TestCase):
