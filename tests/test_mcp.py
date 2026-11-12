@@ -286,6 +286,52 @@ class ToolsCallTest(_McpTestCase):
         self.assertIn("propuesta_id", salida)
         self.assertEqual(salida["estado"], "propuesta")
 
+    def test_leer_serie_is_offered_and_callable(self):
+        """BODY-AGENTE-LEER-SERIE-1 ruling 4: body.mcp lists leer_serie like any other catalogue
+        tool -- the generic tools/list and tools/call paths need no new code for it either."""
+        _, listado = self._ejecutar([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
+        nombres = {t["name"] for t in listado[0]["result"]["tools"]}
+        self.assertIn("leer_serie", nombres)
+
+        db.set_metric(self.conn, "2026-10-01", "resting_hr", 58, "garmin", self.person_id)
+        self.conn.commit()
+        _, respuestas = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "leer_serie",
+                        "arguments": {"metricas": ["resting_hr"], "desde": "2026-10-01",
+                                      "hasta": "2026-10-01", "paso": "dia"}}},
+        ])
+        r = respuestas[0]["result"]
+        self.assertNotIn("isError", r)
+        salida = json.loads(r["content"][0]["text"])
+        self.assertIn("resting_hr", salida["metricas"])
+
+    def test_one_leer_serie_call_counts_as_one_lectura_not_one_per_day(self):
+        """BODY-AGENTE-LEER-SERIE-1: the bug report this tool answers -- a desk helper calling
+        leer_dia once per day hit this same 5-reads-per-15-minutes cap on a long history. ONE
+        leer_serie call over many days and metrics costs exactly ONE lectura, the same as any
+        other lectura tool (ruling 4: no special-casing) -- so four more calls still fit inside
+        the cap, and it is hit only on the sixth call overall, never sooner because of the range
+        leer_serie itself covered."""
+        for i in range(28):
+            db.set_metric(self.conn, f"2026-10-{i + 1:02d}", "resting_hr", 58, "garmin", self.person_id)
+        self.conn.commit()
+        tope = mcp.LIMITES["lecturas"]
+        mensajes = [
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "leer_serie",
+                        "arguments": {"metricas": ["resting_hr"], "desde": "2026-10-01",
+                                      "hasta": "2026-10-28", "paso": "dia"}}},
+        ] + [
+            {"jsonrpc": "2.0", "id": i + 2, "method": "tools/call",
+             "params": {"name": "leer_ajustes", "arguments": {}}}
+            for i in range(tope)
+        ]
+        _, respuestas = self._ejecutar(mensajes)
+        for i in range(tope):
+            self.assertNotIn("isError", respuestas[i]["result"], f"call {i} should not have errored yet")
+        self.assertTrue(respuestas[tope]["result"]["isError"])
+
 
 class RegistrarEntrenoRelojFalloTest(_McpTestCase):
     """BODY-SERIES-UNIDAD-1 ruling 3: when the watch's own sets can't be read, this is the one

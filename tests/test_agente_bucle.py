@@ -103,6 +103,21 @@ class LecturasCapTest(unittest.TestCase):
                            [{"rol": "usuario", "bloques": [{"tipo": "texto", "texto": "x"}]}])
         self.assertEqual(ctx.exception.lecturas, bucle.MAX_LECTURAS)
 
+    def test_one_leer_serie_call_over_many_days_still_counts_as_one_lectura(self):
+        """BODY-AGENTE-LEER-SERIE-1 ruling 4: no special-casing -- a single leer_serie call
+        covering the whole seeded history spends exactly ONE of MAX_LECTURAS, the same as any
+        other lectura tool, whatever range or metric count it asked for."""
+        conn = _conn(self)
+        _seed(conn)
+        prov = FakeProveedor([
+            _llamada("leer_serie", {"metricas": ["resting_hr"], "desde": "2026-10-01", "hasta": "2026-10-20",
+                                     "paso": "dia"}, uso=cliente.Uso(entrada=10, salida=5)),
+            _texto("vale"),
+        ])
+        resultado = bucle.ejecutar(conn, 1, prov, "sis",
+                                   [{"rol": "usuario", "bloques": [{"tipo": "texto", "texto": "x"}]}])
+        self.assertEqual(resultado.lecturas, 1)
+
 
 class NivelDatosEnforcementTest(unittest.TestCase):
     def test_tool_not_offered_at_the_current_nivel_is_still_refused_by_ejecutar(self):
