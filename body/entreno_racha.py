@@ -1,8 +1,10 @@
 """Weekly strength-session count across the whole watch history, against the plan's floor, tagged
 by night-shift week (BODY-ENTRENO-RACHA-SEMANAL-1). Feeds BODY-TENDENCIAS-RACHA-GRAFICO-1's chart.
 
-Pure reads: a bounded number of statements independent of the number of weeks -- the min activity
-day, every activity row, every counting workout_set's own session, and one `bloques_noche` call.
+Pure reads: a bounded number of statements independent of the number of weeks -- one `activity`
+read (BODY-TENDENCIAS-RACHA-GRAFICO-1-M: each row carries its own `con_set` flag via a correlated
+EXISTS against `workout_set`, folding the old separate MIN(day) and DISTINCT workout_set reads into
+this one) and one `bloques_noche` call.
 
 Ruling 1: a strength session is an `activity` row of the person whose `type` is in `TIPOS_FUERZA`,
 OR one that has at least one active, non-excluded `workout_set` row -- checked on EITHER half of a
@@ -29,11 +31,11 @@ def _parse(d: str) -> date:
     return date.fromisoformat(d)
 
 
-def _es_fuerza(row, pareja, con_sets: set[tuple[str, str]]) -> bool:
-    if row["type"] in TIPOS_FUERZA or (row["source"], row["source_id"]) in con_sets:
+def _es_fuerza(row, pareja) -> bool:
+    if row["type"] in TIPOS_FUERZA or row["con_set"]:
         return True
     if pareja is not None:
-        if pareja["type"] in TIPOS_FUERZA or (pareja["source"], pareja["source_id"]) in con_sets:
+        if pareja["type"] in TIPOS_FUERZA or pareja["con_set"]:
             return True
     return False
 
@@ -42,22 +44,16 @@ def racha_semanal(conn: sqlite3.Connection, person_id: int, *, piso: int | None 
                    hoy: date | None = None) -> dict | None:
     hoy = hoy or date.today()
 
-    primera = conn.execute(
-        "SELECT MIN(day) AS d FROM activity WHERE person_id = ?", (person_id,)
-    ).fetchone()["d"]
-    if primera is None:
-        return None
-
     filas = conn.execute(
-        "SELECT source, source_id, day, type, vinculo_manual FROM activity WHERE person_id = ?",
+        "SELECT a.source, a.source_id, a.day, a.type, a.vinculo_manual, EXISTS ("
+        "  SELECT 1 FROM workout_set ws WHERE ws.person_id = a.person_id AND "
+        "  ws.activity_source = a.source AND ws.activity_source_id = a.source_id AND "
+        "  ws.set_type = 'active' AND ws.excluded_by_person = 0"
+        ") AS con_set FROM activity a WHERE a.person_id = ?",
         (person_id,),
     ).fetchall()
-    con_sets_rows = conn.execute(
-        "SELECT DISTINCT activity_source AS source, activity_source_id AS source_id FROM workout_set "
-        "WHERE person_id = ? AND set_type = 'active' AND excluded_by_person = 0",
-        (person_id,),
-    ).fetchall()
-    con_sets = {(r["source"], r["source_id"]) for r in con_sets_rows}
+    if not filas:
+        return None
 
     por_clave = {(r["source"], r["source_id"]): r for r in filas}
     vinculadas = {r["vinculo_manual"] for r in filas if r["vinculo_manual"]}
@@ -68,7 +64,7 @@ def racha_semanal(conn: sqlite3.Connection, person_id: int, *, piso: int | None 
         if r["source"] == "manual" and r["source_id"] in vinculadas:
             continue  # counted once via the watch row it is linked to, below
         pareja = por_clave.get(("manual", r["vinculo_manual"])) if r["vinculo_manual"] else None
-        if not _es_fuerza(r, pareja, con_sets):
+        if not _es_fuerza(r, pareja):
             continue
         alguna_fuerza = True
         semana = lunes_de(_parse(r["day"]))
@@ -77,6 +73,7 @@ def racha_semanal(conn: sqlite3.Connection, person_id: int, *, piso: int | None 
     if not alguna_fuerza:
         return None
 
+    primera = min(r["day"] for r in filas)
     desde = lunes_de(_parse(primera))
     hasta = lunes_de(hoy)
 

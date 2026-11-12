@@ -44,7 +44,8 @@ def _row_checksum(conn: sqlite3.Connection) -> str:
     h = hashlib.sha256()
     tables = ["person", "daily_metric", "sleep_session", "activity", "shift", "shift_batch",
               "shift_batch_item", "goal", "habit", "habit_check", "goal_check", "goal_enlace", "ingesta",
-              "comida_compartida", "comida_compartida_porcion", "consentimiento_comida_compartida"]
+              "comida_compartida", "comida_compartida_porcion", "consentimiento_comida_compartida",
+              "racha_piso"]
     excluded = {"creado_en", "created_at", "creado_at", "decided_at", "extracted_at", "received",
                 "updated_at", "granted_at"}
     for name in tables:
@@ -153,9 +154,18 @@ class SeededContentTest(unittest.TestCase):
         checks = self.conn.execute("SELECT COUNT(*) FROM goal_check").fetchone()[0]
         self.assertGreater(checks, 0)
 
-    def test_has_three_habits(self):
+    def test_has_four_habits(self):
         habits = self.conn.execute("SELECT COUNT(*) FROM habit").fetchone()[0]
-        self.assertEqual(habits, 3)
+        self.assertEqual(habits, 4)
+
+    def test_the_demo_person_has_their_own_strength_floor_pick(self):
+        # BODY-TENDENCIAS-RACHA-GRAFICO-1 ruling 4.
+        row = self.conn.execute("SELECT habit_id FROM racha_piso WHERE person_id = 1").fetchone()
+        self.assertIsNotNone(row)
+        habit = self.conn.execute(
+            "SELECT title, cadence FROM habit WHERE id = ?", (row["habit_id"],)).fetchone()
+        self.assertEqual(habit["title"], demo._HABIT_FUERZA_TITLE["es"])
+        self.assertEqual(json.loads(habit["cadence"]), {"per": "week", "times": 3})
 
     def test_has_one_household_goal_created_by_ana(self):
         row = self.conn.execute(

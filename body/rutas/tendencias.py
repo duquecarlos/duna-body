@@ -3,11 +3,13 @@ month view and "Ver todas las medidas". Pure move: path, method, templates and b
 """
 from __future__ import annotations
 
+import html
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
 
-from .. import anatomia, baselines, db, fuentes, identity, profile, turnos_costo
+from .. import anatomia, baselines, db, entreno_racha, fuentes, identity, profile, turnos_costo
 from ..catalogo_tendencias import TODAS
 from ..desplazamiento_import import FUENTE as _FUENTE_COMMUTE
 from ..i18n import T
@@ -136,6 +138,221 @@ def _frase_patron_texto(t: T, frase: dict | None) -> str | None:
         vuelta = t("trends.patron.vuelta." + frase["vuelta"])
         return t("trends.patron.vuelve." + frase["direccion"], peor=peor, vuelta=vuelta)
     return t("trends.patron.no_vuelve." + frase["direccion"], peor=peor, n=_N_POST_OFFSETS)
+
+
+# BODY-TENDENCIAS-RACHA-GRAFICO-1 ruling 3: the study card's own SVG bar chart -- one bar per week,
+# a fixed viewBox at the real 375px card width (same derivation as body/rutas/turnos.py's own
+# _PERFIL_WIDTH), thin enough to fit the whole watch history with no aggregation.
+_RACHA_WIDTH = 313
+_RACHA_TOP = 4
+_RACHA_PLOT_H = 84
+_RACHA_TICK_H = 6  # the night-shift tick strip under the bars
+# BODY-TENDENCIAS-RACHA-GRAFICO-1-M2 (step 3): the month axis, drawn as <text> inside the svg
+# itself instead of an HTML row under it, at the app's own small-text floor (body.css's ".tick"
+# class, the same one body/rutas/turnos.py's axis labels use).
+_RACHA_LABEL_FONT = 12.0
+_RACHA_CHAR_W = 0.6 * _RACHA_LABEL_FONT  # same character-count approximation as turnos.py's own
+                                          # _PERFIL_CHAR_W, since real glyph metrics are not
+                                          # available server-side
+_RACHA_LABEL_GAP_X = 8.0   # minimum clear gap kept between two adjacent month labels' own boxes
+_RACHA_EDGE_PAD = 2.0      # inside the viewBox's own left/right edge
+_RACHA_LABEL_H = 16        # height reserved below the tick strip for the month-label row
+_RACHA_LABEL_BASELINE = 12  # the label text's own baseline, within that reserved row
+
+
+def _racha_label_px(s: str) -> float:
+    return len(s) * _RACHA_CHAR_W
+
+
+def _racha_eje(t: T, semanas: list[dict], bw: float) -> list[dict]:
+    """Up to 4 month-axis labels (ruling 3), each centred at the x of the first week of that
+    month -- evenly chosen among every month-start week when there are more than 4. The first
+    label (chronologically earliest) and every January carry the year (BODY-TENDENCIAS-RACHA-
+    GRAFICO-1-M2 step 3); every other label is the short month name alone. A label too close to
+    the viewBox's own edge anchors start/end instead of middle so it is never clipped, and a
+    greedy left-to-right scan drops any label whose own box (the character-count estimate above)
+    would come within _RACHA_LABEL_GAP_X of the one already kept, so no two labels ever sit less
+    than that gap apart (BODY-TENDENCIAS-RACHA-GRAFICO-1-M3). The first label and the last are
+    never the ones dropped -- a conflicting last candidate instead pops middle labels already kept
+    until it clears or none are left to pop."""
+    n = len(semanas)
+    arranques: list[int] = []
+    mes_anterior = None
+    for i in range(n):
+        d = date.fromisoformat(semanas[i]["lunes"])
+        clave = (d.year, d.month)
+        if clave != mes_anterior:
+            arranques.append(i)
+            mes_anterior = clave
+    if len(arranques) > 4:
+        k = 4
+        arranques = sorted({arranques[round(j * (len(arranques) - 1) / (k - 1))] for j in range(k)})
+
+    candidatos = []
+    for pos, i in enumerate(arranques):
+        d = date.fromisoformat(semanas[i]["lunes"])
+        mes = t("date.months")[d.month - 1][:3]
+        texto = f"{mes} {d.year}" if pos == 0 or d.month == 1 else mes
+        candidatos.append((i * bw + bw / 2, texto))
+
+    elegidos: list[tuple[float, str]] = [candidatos[0]]
+    for idx in range(1, len(candidatos)):
+        x, texto = candidatos[idx]
+        mitad = _racha_label_px(texto) / 2
+        es_ultimo = idx == len(candidatos) - 1
+        if es_ultimo:
+            while len(elegidos) > 1:
+                x_prev, texto_prev = elegidos[-1]
+                if x - mitad >= x_prev + _racha_label_px(texto_prev) / 2 + _RACHA_LABEL_GAP_X:
+                    break
+                elegidos.pop()
+            elegidos.append((x, texto))
+        else:
+            x_prev, texto_prev = elegidos[-1]
+            if x - mitad >= x_prev + _racha_label_px(texto_prev) / 2 + _RACHA_LABEL_GAP_X:
+                elegidos.append((x, texto))
+
+    out = []
+    for x, texto in elegidos:
+        mitad = _racha_label_px(texto) / 2
+        if x - mitad < _RACHA_EDGE_PAD:
+            anchor, tx = "start", _RACHA_EDGE_PAD
+        elif x + mitad > _RACHA_WIDTH - _RACHA_EDGE_PAD:
+            anchor, tx = "end", _RACHA_WIDTH - _RACHA_EDGE_PAD
+        else:
+            anchor, tx = "middle", x
+        out.append({"x": tx, "anchor": anchor, "texto": texto})
+    return out
+
+
+def _racha_svg(t: T, semanas: list[dict], piso: int | None, turnos_on: bool, aria: str) -> str:
+    n = len(semanas)
+    max_sesiones = max(s["sesiones"] for s in semanas)
+    # Ruling 4 (BODY-TENDENCIAS-RACHA-GRAFICO-1-M2 step 4): with a floor, the scale's own top sits
+    # one session ABOVE the taller of the tallest week and the floor, so the dashed floor line
+    # never sits flush with the viewBox's own top edge, and a week that reaches the floor visibly
+    # touches or passes the line instead of looking capped by it.
+    tope = max(max_sesiones, piso) + 1 if piso is not None else max(max_sesiones, 1)
+    top, h = _RACHA_TOP, _RACHA_PLOT_H
+    base_y = top + h
+    bw = _RACHA_WIDTH / n
+    bar_w = max(bw - 0.4, 0.4)
+    out = []
+    for i, s in enumerate(semanas):
+        x0 = i * bw
+        alto = (s["sesiones"] / tope) * h
+        if alto > 0:
+            cls = "c-body" if s["alcanza"] else "c-other"
+            out.append(f'<rect x="{x0:.1f}" y="{base_y - alto:.1f}" width="{bar_w:.1f}" height="{alto:.1f}" '
+                       f'class="{cls}"/>')
+        if turnos_on and s["noche"]:
+            out.append(f'<rect x="{x0:.1f}" y="{base_y + 2:.1f}" width="{bar_w:.1f}" height="3" class="c-night"/>')
+    if piso is not None:
+        y_piso = base_y - (piso / tope) * h
+        out.append(f'<line x1="0" y1="{y_piso:.1f}" x2="{_RACHA_WIDTH}" y2="{y_piso:.1f}" class="stroke-muted" '
+                   f'stroke-width="1.2" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>')
+    label_top = base_y + _RACHA_TICK_H
+    label_y = label_top + _RACHA_LABEL_BASELINE
+    for e in _racha_eje(t, semanas, bw):
+        out.append(f'<text x="{e["x"]:.1f}" y="{label_y:.1f}" text-anchor="{e["anchor"]}" '
+                   f'class="tick">{html.escape(e["texto"])}</text>')
+    full_h = label_top + _RACHA_LABEL_H
+    # BODY-TENDENCIAS-RACHA-GRAFICO-1-M2 step 3: the viewBox width already equals the card's own
+    # drawn content width (_RACHA_WIDTH, same derivation as turnos.py's _PERFIL_WIDTH); the height
+    # attribute is computed to equal the viewBox height too, so both axes scale 1:1 and the axis
+    # text renders at its own declared size -- preserveAspectRatio="none" (which let x and y scale
+    # independently and stretch the glyphs) is dropped rather than kept now that nothing needs it.
+    return (f'<svg viewBox="0 0 {_RACHA_WIDTH} {full_h:.1f}" width="100%" height="{full_h:.1f}" role="img" '
+            f'aria-label="{html.escape(aria)}" class="chart-svg">{"".join(out)}</svg>')
+
+
+def _racha_semanas_txt(t: T, n: int) -> str:
+    return t("trends.racha.semanas_one") if n == 1 else t("trends.racha.semanas_other", n=t.num(n))
+
+
+def _racha_rango_meses(t: T, desde: date, hasta: date) -> str:
+    """BODY-TENDENCIAS-RACHA-GRAFICO-1-M2 step 5: a figure's own month range, in short month names
+    -- one month named once ("oct 2026"), two months sharing a year with the year once at the end
+    ("oct–nov 2026"), two months across years with the year on both ("dic 2025–feb 2026")."""
+    md, mh = t("date.months")[desde.month - 1][:3], t("date.months")[hasta.month - 1][:3]
+    if (desde.year, desde.month) == (hasta.year, hasta.month):
+        return f"{md} {desde.year}"
+    if desde.year == hasta.year:
+        return f"{md}–{mh} {hasta.year}"
+    return f"{md} {desde.year}–{mh} {hasta.year}"
+
+
+def _piso_y_opciones(conn, t: T, person_id: int) -> tuple[int | None, str | None, int | None, list[dict]]:
+    """Rulings 1-2, resolved and read together in ONE SELECT (BODY-TENDENCIAS-RACHA-GRAFICO-1-M,
+    statement ceiling): every active habit this person may read under the same scope
+    `goals.goal_access`/`goal_scope_sql` apply (their own goals, or a household milestone goal's),
+    joined with its own goal here instead of a separate `household.household_of` round trip -- the
+    household check becomes one correlated subquery on `hogar_miembro` in this same statement. The
+    person's own stored pick (body/db.py's racha_piso table) rides along as a scalar subquery on
+    every row, rather than `db.racha_piso_habit_id`'s own separate read. Filtered in Python to the
+    weekly, correctly-assigned habits (ruling 2's picker, and the only ids a POST to
+    /trends/racha-piso may name). The floor (ruling 1) is whichever of those, if any, matches the
+    pick. Zero rows (no weekly habit this person may read at all) means no pick can resolve to a
+    floor either way, so the raw stored id is not worth a second statement to recover then."""
+    rows = conn.execute(
+        "SELECT h.id, h.title, h.cadence, h.assignee_person_id, "
+        "(SELECT habit_id FROM racha_piso WHERE person_id = ?) AS elegido FROM habit h "
+        "JOIN goal g ON g.id = h.goal_id WHERE h.active = 1 AND (g.person_id = ? OR "
+        "(g.visibility = 'household' AND g.kind = 'milestone' AND "
+        "g.hogar_id = (SELECT hogar_id FROM hogar_miembro WHERE person_id = ?)))",
+        (person_id, person_id, person_id),
+    ).fetchall()
+    habit_id_elegido = rows[0]["elegido"] if rows else None
+    opciones = []
+    piso = piso_titulo = None
+    for h in rows:
+        if h["assignee_person_id"] is not None and h["assignee_person_id"] != person_id:
+            continue
+        cadence = comun._habit_cadence(h)
+        if cadence.get("per") != "week":
+            continue
+        texto = f"{h['title']} · {t('trends.racha.piso_opcion', n=t.num(cadence.get('times')))}"
+        opciones.append({"id": h["id"], "texto": texto})
+        if h["id"] == habit_id_elegido:
+            piso, piso_titulo = cadence.get("times"), h["title"]
+    return piso, piso_titulo, habit_id_elegido, opciones
+
+
+def _racha_ctx(t: T, conn, person_id: int, turnos_on: bool, hoy: date) -> dict | None:
+    """The study card's whole context (ruling 3), or None when racha_semanal has nothing to show
+    (no strength session ever) -- the card, including its picker, is absent then."""
+    piso, _piso_titulo, piso_habit_id, opciones = _piso_y_opciones(conn, t, person_id)
+    result = entreno_racha.racha_semanal(conn, person_id, piso=piso, hoy=hoy)
+    if result is None:
+        return None
+    semanas = result["semanas"]
+    titulo = t("trends.racha.titulo", mes=t.month_year(date.fromisoformat(result["desde"])))
+    sub = t("trends.racha.sub", dias=t.num(result["dias_historia"]))
+    piso_nota = t("trends.racha.piso_nota", piso=t.num(piso)) if piso is not None else None
+    noche_nota = t("trends.racha.noche_nota") if turnos_on else None
+    primera = date.fromisoformat(semanas[0]["lunes"])
+    ultima = date.fromisoformat(semanas[-1]["lunes"]) + timedelta(6)
+    aria = t("trends.racha.aria", desde=comun._short_date(t, primera), hasta=comun._short_date(t, ultima))
+    svg = _racha_svg(t, semanas, piso, turnos_on, aria)
+    figuras = []
+    if piso is not None:
+        mas_larga = result.get("mas_larga")
+        if mas_larga:
+            rango = _racha_rango_meses(t, date.fromisoformat(mas_larga["inicio"]),
+                                       date.fromisoformat(mas_larga["fin"]) + timedelta(6))
+            figuras.append({"valor": _racha_semanas_txt(t, mas_larga["semanas"]),
+                           "texto": t("trends.racha.mas_larga_txt", piso=t.num(piso), rango=rango)})
+        term = result.get("terminadas_en_noche")
+        if turnos_on and term and term["de"]:
+            figuras.append({"valor": t("trends.racha.terminadas_valor", n=t.num(term["n"]), de=t.num(term["de"])),
+                           "texto": t("trends.racha.terminadas_txt")})
+        actual = result.get("actual")
+        if actual:
+            figuras.append({"valor": _racha_semanas_txt(t, actual["semanas"]), "texto": t("trends.racha.actual_txt")})
+    return {
+        "titulo": titulo, "sub": sub, "piso_nota": piso_nota, "noche_nota": noche_nota, "svg": svg,
+        "figuras": figuras, "opciones": opciones, "piso_habit_id": piso_habit_id,
+    }
 
 
 def _trend_card(t: T, defs: dict, k: str, start, end, month, nights, marcas, profiles: dict, windows_by_key: dict,
@@ -316,10 +533,36 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
         fig_label = t("trends.last30")
     cuerpo_ctx = {"vistas": anatomia.contexto(t, "tendencias", frozenset({"corazon"})),
                   "caption": t("cuerpo.caption.tendencias"), "recorte": "torso"}
+    racha = _racha_ctx(t, conn, person_id, turnos_on, today_local)
     return comun._render("trends.html", t=t, tab="trends", cards=cards, week=week if r == "all" else None,
                    since=t.long_date(date.fromisoformat(since)) if since else "", days=t.num(days),
                    r=r, ranges=RANGES, fig_label=fig_label, nights=bool(nights), marcas=bool(marcas),
-                   month_title=t.month_year(month) if month else None,
+                   month_title=t.month_year(month) if month else None, racha=racha,
                    extra_groups=extra_groups, extra_count=extra_count, todas=todas == "1",
                    desde=desde, dia=desde_dia, back_href=back_href, back_label=back_label, turnos=turnos_on,
                    cuerpo=cuerpo_ctx)
+
+
+@router.post("/trends/racha-piso")
+@comun._cierra_conexion_async
+async def trends_racha_piso(request: Request, person_id: int = Depends(identity.current_person_id)):
+    """Ruling 2: sets or clears (habit_id empty = "Sin piso"/"No floor") this person's own chosen
+    floor habit -- never a figure in the redirect, and the only habit ids accepted are exactly the
+    ones _piso_y_opciones would have offered this person (active, weekly, readable)."""
+    conn, person, t = comun._ctx(person_id)
+    f = await comun._form(request)
+    raw = (f.get("habit_id") or "").strip()
+    habit_id = None
+    if raw:
+        try:
+            habit_id = int(raw)
+        except ValueError:
+            raise HTTPException(404)
+        _, _, _, opciones = _piso_y_opciones(conn, t, person_id)
+        validos = {o["id"] for o in opciones}
+        if habit_id not in validos:
+            raise HTTPException(404)
+    db.set_racha_piso(conn, person_id, habit_id)
+    r = f.get("r")
+    qs = f"?r={r}" if r in RANGES and r != "all" else ""
+    return RedirectResponse(f"/trends{qs}", status_code=303)

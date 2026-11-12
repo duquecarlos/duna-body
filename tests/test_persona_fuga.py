@@ -192,6 +192,12 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
     goals.activate(conn, gid)
     hid = goals.add_habit(conn, gid, f"ZZ{tag}-HABITO", {"per": "day", "times": 1})
     goals.check_habit(conn, hid, person_id, DAYS[-1], True, f"ZZ{tag}-NOTA", hoy=TODAY)
+    # BODY-TENDENCIAS-RACHA-GRAFICO-1: racha_piso is person-owned (its own person_id column, same
+    # census treatment as turno_fc/recuperacion_actividad above) -- no marker needed, it only
+    # stores a habit id, and this one is a DAILY habit so it never resolves to a floor or appears
+    # in the picker (both require cadence per='week'); the census only checks export/delete-all
+    # coverage.
+    db.set_racha_piso(conn, person_id, hid)
     monday = fechas.lunes_de(TODAY - timedelta(7))
     goals.weekly_check(conn, gid, person_id, monday.isoformat())
     enlaces.enlazar(conn, gid, "lugares", ENLACE_REF[tag])

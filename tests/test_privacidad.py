@@ -1001,5 +1001,57 @@ class HostedDeleteRedirectTest(CuentaRpTestCase):
         self.assertEqual(self._db_count("SELECT COUNT(*) FROM sesion"), 0)
 
 
+class RachaPisoExportDeleteTest(unittest.TestCase):
+    """BODY-TENDENCIAS-RACHA-GRAFICO-1 ruling 1: the person's own chosen floor habit -- a habit id
+    and nothing else -- FULLY exported and deleted."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "racha_piso.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+        gid = goals.propose(self.conn, 1, "Lower resting HR", "2026-10-01", kind="metric",
+                             metric_key="resting_hr", direction="lower", target_value=55.0, baseline_value=60.0)
+        self.habit_id = goals.add_habit(self.conn, gid, "Strength training", {"per": "week", "times": 3})
+        db.set_racha_piso(self.conn, 1, self.habit_id)
+        self.conn.commit()
+
+    def test_is_a_fully_handled_table(self):
+        self.assertIn("racha_piso", privacidad.FULLY_HANDLED_TABLES)
+
+    def test_export_includes_the_row(self):
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(data["vida"]["racha_piso"]["habit_id"], self.habit_id)
+
+    def test_export_with_no_pick_is_none(self):
+        self.conn.execute("DELETE FROM racha_piso")
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 1)
+        self.assertIsNone(data["vida"]["racha_piso"])
+
+    def test_export_of_another_person_sees_nothing(self):
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 2)
+        self.assertIsNone(data["vida"]["racha_piso"])
+
+    def test_delete_all_removes_the_row(self):
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM racha_piso").fetchone()[0], 0)
+
+    def test_delete_all_nulls_another_persons_pick_of_this_persons_habit_instead_of_failing(self):
+        """A household member's own racha_piso may name a shared milestone's habit this person
+        created -- deleting this person must clear that OTHER row's habit_id, never fail with an
+        IntegrityError against the about-to-be-deleted habit."""
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        db.set_racha_piso(self.conn, 2, self.habit_id)
+        self.conn.commit()
+        privacidad.delete_person(self.conn, 1)
+        row = self.conn.execute("SELECT habit_id FROM racha_piso WHERE person_id = 2").fetchone()
+        self.assertIsNone(row["habit_id"])
+
+
 if __name__ == "__main__":
     unittest.main()

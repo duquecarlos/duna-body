@@ -1206,6 +1206,17 @@ def _migrate(conn: sqlite3.Connection) -> None:
         )
     except sqlite3.IntegrityError:
         pass
+    # BODY-TENDENCIAS-RACHA-GRAFICO-1 ruling 1: the person's own chosen habit to compare the
+    # strength-session study against -- one row per person, additive, no schema_version (the same
+    # guarded-CREATE convention as every other step in this function). habit_id stays NULL for "no
+    # floor" (an explicit pick, never the absence of a row); nothing ever deletes this row, so an
+    # inactive or unreadable habit_id simply resolves to no floor at read time instead.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS racha_piso ("
+        "person_id INTEGER PRIMARY KEY REFERENCES person(id), "
+        "habit_id INTEGER REFERENCES habit(id), "
+        "updated_at TEXT NOT NULL)"
+    )
 
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
@@ -1939,6 +1950,29 @@ def set_aplicar_mcp(conn, person_id: int, value: bool) -> None:
             "updated_at = excluded.updated_at",
             (person_id, int(value), now),
         )
+
+
+def set_racha_piso(conn, person_id: int, habit_id: int | None) -> None:
+    """The person's own pick of which habit the strength-session study (BODY-TENDENCIAS-RACHA-
+    GRAFICO-1) compares against -- habit_id=None records an explicit "no floor" (ruling 1), kept as
+    a row rather than no row, the same shape set_aplicar_mcp above already uses for one setting per
+    person. Never validates habit_id against anything -- body/rutas/tendencias.py checks it is this
+    person's own active, weekly, readable habit before calling this."""
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        conn.execute(
+            "INSERT INTO racha_piso (person_id, habit_id, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(person_id) DO UPDATE SET habit_id = excluded.habit_id, "
+            "updated_at = excluded.updated_at",
+            (person_id, habit_id, now),
+        )
+
+
+def racha_piso_habit_id(conn, person_id: int) -> int | None:
+    """The raw stored pick, with no check that it still resolves to a floor -- body/rutas/
+    tendencias.py re-checks the habit itself (active, weekly, readable) every time it reads this."""
+    row = conn.execute("SELECT habit_id FROM racha_piso WHERE person_id = ?", (person_id,)).fetchone()
+    return row["habit_id"] if row else None
 
 
 def trabaja_turnos_si(conn, person_id: int) -> bool:
