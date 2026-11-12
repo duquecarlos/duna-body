@@ -84,7 +84,11 @@ client = TestClient(web.app, follow_redirects=False)
 # three tables owned through another id (habit via goal_id, goal_enlace via goal_id,
 # shift_batch_item via batch_id) -- the full inventory BODY-SEGURIDAD-CENSO-1 named.
 _REACHED_THROUGH_TABLES = {"habit", "goal_enlace", "shift_batch_item"}
-_HOUSEHOLD_ONLY_TABLES = {"hogar_miembro", "figura_compartida"}  # need an active household to exist at all
+# need an active household to exist at all (BODY-COMIDA-COMPARTIDA-1: consentimiento_comida_compartida
+# and comida_compartida_porcion are both reached only through one -- compartir.activar_recibir_comidas
+# and comida_compartida.compartir_comida both raise ValueError with none, same as compartir.compartir).
+_HOUSEHOLD_ONLY_TABLES = {"hogar_miembro", "figura_compartida", "consentimiento_comida_compartida",
+                          "comida_compartida_porcion"}
 
 
 def _reset_db(tc: unittest.TestCase):

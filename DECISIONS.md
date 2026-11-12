@@ -18814,3 +18814,172 @@ every existing `trends.patron.*`/`shifts.perfil.*` string is unchanged). Merge p
 conditions all pass, so this merges on the green gate above without waiting for approval.
 
 -- merged fad572645b691a94541f31ec689a055fde9b71ae
+
+## BODY-COMIDA-COMPARTIDA-1 -- one cooks, several eat, each eater's own log gets their own portion (2026-11-12)
+
+One person logs a meal they cooked for the household; each other eater gets a card in their own
+Body and taps Apply or Discard before a single gram reaches their log. Three rulings came with
+this spec: (a) **consent** -- a household member opts in once, revocably, before any shared meal
+can reach them, the same shape `body/compartir.py`'s `figura_compartida` already uses for sharing a
+figure; (b) **editing** -- once applied, each eater's row is their own `comida`/`ingesta`, their own
+words, their own correction, their own delete; the shared parent only links; (c) **pantry home** --
+a future Duna product ("Hogar") will one day write a cooked meal once per eater through this same
+split, so the split had to be a CALLER-AGNOSTIC entry point, not a screen's own code. The cross-
+product wire itself is not built here.
+
+**Schema**, additive, three new tables (`body/db.py`): `comida_compartida` (the parent link --
+`id`, `hogar_id`, `autor_person_id`, `day`, `ts_local`, `origen`, `origen_ref`, `created_at`, with a
+unique index on `(origen, origen_ref)` so a caller's own idempotency key is enough to never double-
+write); `comida_compartida_porcion` (one row per eater -- `id`, `comida_compartida_id` (nullable),
+`person_id`, `descripcion`, `porcion_texto`, `nutrientes` (JSON, metric_key -> amount), `estado`
+(`pendiente`/`aplicada`/`descartada`), `comida_id`, `decided_at`, unique on
+`(comida_compartida_id, person_id)`); `consentimiento_comida_compartida` (`body/compartir.py`'s own
+second table -- `id`, `person_id`, `hogar_id`, `granted_at`, `withdrawn_at`, unique on
+`(person_id, hogar_id)` while active). **Deviation**: the spec's column list said `household_id`;
+built as `hogar_id` to match every sibling table's own column name (`figura_compartida.hogar_id`,
+`hogar_miembro.hogar_id`) -- the measured convention won over the spec's literal word.
+`consentimiento_comida_compartida` is its own table, not a reuse of `figura_compartida`: that
+table's `metric_key` is a FK into `metric_def`, and "may a shared meal reach me" is a feature flag,
+not a metric.
+
+**The service**, `body/comida_compartida.py`, new, the one module that reads or writes these three
+tables: `compartir_comida(conn, autor_person_id, *, day, ts_local=None, descripcion=None,
+comensales, origen, origen_ref=None)` writes the parent, the author's own `comida`/`ingesta` (via a
+new transaction-less `db._crear_comida_tx`, so the whole write is one atomic transaction) and every
+other eater's `pendiente` portion, in one call keyed by `(origen, origen_ref)` for idempotency --
+`origen` is the caller's own name ("body" today; "hogar" tomorrow, unbuilt). Refuses
+(`ComensalFueraDeHogar`, `ComensalSinConsentimiento`, `ValueError`) before writing anything on an
+eater outside the household, one without consent, a repeated person, invalid nutrient amounts, or a
+`comensales` list missing the author's own portion -- **deviation**: the spec's "the author appears
+at most once" could be read as allowing the author to be left out of the list entirely; built as
+REQUIRED instead, since nothing else in the call carries the author's own amounts and ruling (b)
+calls the author's own portion applied "at once," unconditionally. `aplicar_porcion`/
+`descartar_porcion(conn, person_id, porcion_id)` are owner-only, idempotent, and never delete a row
+-- discarding just marks `estado`. `pendientes(conn, person_id)` lists every portion still waiting
+for this person, author's name attached. `deshacer_autor` undoes the author's own meal and discards
+every still-pending portion, leaving an already-applied portion of another eater's untouched (their
+own `comida` row is now theirs, same as ruling (b) says).
+
+**The tool**, `body/agente/herramientas.py`'s `registrar_comida` gains an optional `compartida_con`
+(name, nutrientes, optional porcion_texto): every name is resolved to a household member WITH
+consent on before any proposal is created (`ToolError`, nothing written, otherwise), and applying
+calls `compartir_comida`; undoing calls `deshacer_autor`. `body/agente/propuestas.py` gained a new
+pre-apply drift check (`_drift_aplicar_registrar_comida`) specifically for this path, since the
+plain TABLA entry used `_sin_drift` -- consent withdrawn or membership lost between propose and
+apply now drifts cleanly instead of writing into a household that said no in the meantime.
+
+**The Hoy card**, `body/rutas/hoy.py`: every pending portion addressed to the signed-in person, who
+cooked it, their own description and nutrients, with two plain-POST forms (`/comida-compartida/
+{porcion_id}/aplicar`, `/comida-compartida/{porcion_id}/descartar`) -- no JS, same shape every other
+propose/apply card in this app already uses. `body/rutas/ajustes.py` gained the consent toggle,
+OFF by default, beside the existing per-figure sharing card; turning it off also discards this
+person's own still-pending portions (`compartir.desactivar_recibir_comidas` +
+`comida_compartida.descartar_pendientes_de`).
+
+**i18n**, six new keys, es/en, verbatim from the spec: `agente.error.comensal_no_encontrado`
+("No encuentro a {nombre} en tu hogar." / "I can't find {nombre} in your household."),
+`agente.error.comida_sin_consentimiento` ("{nombre} no tiene activado recibir comidas compartidas."
+/ "{nombre} has not turned on receiving shared meals."), `today.comida_compartida.titulo`
+("Comidas compartidas" / "Shared meals"), `today.comida_compartida.aviso` ("{autor} registró una
+comida compartida" / "{autor} logged a shared meal"), `settings.comidas_compartidas.pregunta`
+("Recibir comidas compartidas de mi hogar" / "Receive shared meals from my household"),
+`settings.comidas_compartidas.desc` ("Cuando alguien de tu hogar registra una comida que comieron
+juntos, te llega tu porción para que la apliques o la descartes. Nada entra a tu registro sin que
+toques Aplicar." / "When someone in your household logs a meal you ate together, your portion
+reaches you to apply or discard. Nothing enters your log until you tap Apply."). The Hoy card's two
+buttons reuse the existing `asistente.propuesta.aplicar`/`descartar` keys -- no new button text.
+
+**Privacy** (`body/privacidad.py`, ruling 6): export carries this person's own authored parent
+links and their own portion rows, never another eater's (`comida_compartida_porcion`'s own
+`person_id` already scopes it); delete-all removes this person's own portion rows and, when they
+were the cook, their authored parents -- an already-applied OTHER eater's portion keeps its own
+`comida`/`ingesta` and only loses the link back to the deleted parent (`comida_compartida_id` set
+NULL), never the nutrition itself; a still-pending other eater's portion is discarded outright, same
+as withdrawing consent does.
+
+**Demo** (`body/demo.py`, ruling 7): both the demo person's and Ana's consent are turned on, and one
+pending shared meal sits in each direction (the demo person cooked one for Ana, Ana cooked one for
+the demo person) -- invented demo text only (`_COMIDA_DEMO_PERSON`/`_COMIDA_DEMO_ANA`), no real
+figure. `tests/test_demo.py`'s row checksum (`_row_checksum`, the two-runs-identical guard) now also
+covers the three new tables; `granted_at` joins its excluded wall-clock columns, the same reasoning
+already there for `created_at`/`decided_at`.
+
+**Deviations found running the full suite, outside this slice's own touches, each a census or guard
+that failed on the new tables/routes/strings rather than on anything this slice got wrong on its own
+terms:**
+
+- `tests/test_persona_fuga.py`'s `_HOUSEHOLD_ONLY_TABLES` gained `consentimiento_comida_compartida`
+  and `comida_compartida_porcion` (its own seeding-completeness census, extended, never loosened).
+- `body/mudanza.py` (BODY-MUDANZA-HERRAMIENTA-1, the PC-to-host move tool) keeps its own table
+  registry, checked by `tests/test_mudanza.py`'s `RegistryTest`. All three new tables joined
+  `SKIPPED_TABLES`, never hand-copied on a move -- the same choice already made for
+  `figura_compartida` and `hogar_miembro`: a shared-meal link and its consent name another
+  household member, who a single-person source install never has a row for, and no nutrition is
+  lost by skipping them (an already-applied portion's own `comida`/`ingesta` rows migrate normally
+  through the existing `comida` table regardless).
+- `tests/test_registro_tu.py`'s register guard flagged `agente.error.comida_sin_consentimiento`'s
+  "tiene" as an usted address; allow-listed with its reason ('tiene' subject is the named household
+  member, not the reader), the same pattern every other third-person entry there already uses.
+- `/settings`' statement ceiling (`tests/test_rendimiento.py`) went from 24 to 25: the new consent
+  lookup re-resolved `household.household_of`, which `settings()` already had. `compartir.
+  recibe_comidas` now takes that already-resolved household as an optional argument; ceiling left
+  at 24, per that file's own rule ("the fix ... was to batch ... not to widen the ceiling").
+- `tests/test_web_entry.py`'s frozen route-set snapshot gained the three new routes, each tagged
+  with this slice's id, the same way every earlier slice's own addition is tagged there.
+
+No password, token, session secret, device key or health figure of a real person was read, printed,
+or written anywhere in this slice's own work; every number in the demo and in every test is
+invented.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry), the exact
+command is `.venv/Scripts/python.exe -m unittest discover tests -t .`. **Deviation**: run as ONE
+command it did not finish inside this environment's own ~20-minute cap on a single process
+(foreground timeout, then killed partway through the background grace period that follows) --
+measured twice, the second attempt still mid-suite (module 87 of 154) at the kill. Run instead as 10
+sequential chunks of whole test modules, in the exact alphabetical order `unittest discover` itself
+uses, together covering every module `discover` would; reconciled against an independent collect-
+only count (`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()` = 3031)
+before trusting the sum:
+
+    chunk  0 (20 modules):  350 tests, OK (1 skipped)
+    chunk  1 (20 modules):  478 tests, OK
+    chunk  2 (20 modules):  355 tests, OK
+    chunk  3 (20 modules):  435 tests, OK
+    chunk  4 (20 modules):  497 tests, OK
+    chunk  5 (20 modules):  266 tests, OK
+    chunk  6 (20 modules):  426 tests, OK
+    chunk  7 (12 modules):  188 tests, OK
+    chunk  8 (test_demo):    28 tests, OK
+    chunk  9 (test_guardia_parches): 8 tests, OK
+
+    sum: 3031 tests -- matches the collect-only count exactly. OK, 0 failures, 0 errors.
+
+3031 - 2968 (the prior entry's own count) = 63 new tests, all added by this slice (schema/
+consent/service: 35 in `tests/test_comida_compartida.py`'s first commit; the tool/Hoy-card flow: 17
+more in the same file's second commit; `tests/test_privacidad.py`'s `ComidaCompartidaExportDeleteTest`:
+9; `tests/test_demo.py`'s two new `SeededContentTest` cases: 2). Three chunk failures were found and
+fixed on the first pass through chunks 5 and 7 (the register allow-list, the `/settings` ceiling,
+and the frozen route set, each listed above) -- the sums and the OK verdicts above are from the
+re-run on the tree that already carries those fixes.
+
+**Merge policy, this slice.** The diff adds three tables (`body/db.py`) -- merge policy A's schema
+condition trips -- and changes customer-facing bytes end to end (the Hoy card, the Settings toggle,
+six new i18n strings a person reads) -- the customer-bytes condition trips too. Per this spec's own
+approval reason ("stop AWAITING_APPROVAL ... the orchestrator looks at Hoy/Settings/apply at 375 px
+before merging"), this stops here, on `feat/body-comida-compartida-1`, clean, as `AWAITING_APPROVAL`
+rather than merging.
+
+### -M -- the orchestrator's 375 px look, approved to merge (2026-11-12)
+
+The orchestrator opened the demo seeded from this branch (`--idioma en`) at 375 px and looked at
+exactly the three surfaces the prior entry's `AWAITING_APPROVAL` named. Hoy showed a "Shared meals"
+card reading "Ana logged a shared meal", with the meal's description and its nutrients in words, an
+Apply button and a Discard taplink; the card measured 343 px wide, both controls 44 px tall, and the
+page's `scrollWidth` stayed at 375 (no horizontal scroll). Applying made the card disappear and the
+meal appear on `/day` for today. Settings showed "Receive shared meals from my household" with its
+Yes/No choice and explanation line, placed next to "Share with your household", again with no
+horizontal scroll. No defect found. `main` had not moved since the branch (`merge-base main HEAD`
+equals `rev-parse main` equals `05ff48094c8b6648c1dc2182cad9dbfb57331a26`), so the branch's own gate
+(3031 tests, OK, recorded above) stands as the merge's gate. **APPROVED to merge**
+(orchestrator, ORCH-CARLOS-DELEGATES-TIER-1-1, on the person's consent "A" named in the parent
+spec).

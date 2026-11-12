@@ -60,8 +60,8 @@ import json
 import sqlite3
 from datetime import date, timedelta
 
-from .. import anatomia, catalogo_tendencias, db, enlaces, errores, experimentos, fechas, goals, history, \
-    household, nutriente_objetivo, profile, pull, readiness, shift_import, turnos_costo, tutoriales
+from .. import anatomia, catalogo_tendencias, compartir, db, enlaces, errores, experimentos, fechas, goals, \
+    history, household, nutriente_objetivo, profile, pull, readiness, shift_import, turnos_costo, tutoriales
 from ..i18n import LANGS, T
 from . import ajustes, propuestas
 
@@ -289,6 +289,21 @@ _PARAM_CANTIDAD_COMIDA = {
     },
     "required": ["metric_key", "amount"],
 }
+# BODY-COMIDA-COMPARTIDA-1 ruling 4: who else ate this meal -- `nombre` is resolved against the
+# author's own household (body/household.py's household_of + each member's display_name), never a
+# person_id from outside; `nutrientes` is THAT eater's own portion (metric_key -> amount), the same
+# shape body/comida_compartida.py's own porcion row carries. Described here only for the model's
+# own guidance, same reason _PARAM_CANTIDAD_COMIDA above is.
+_PARAM_COMENSAL_COMPARTIDO = {
+    "type": "object",
+    "properties": {
+        "nombre": {"type": "string"},
+        "porcion_texto": {"type": "string"},
+        "nutrientes": {"type": "object"},
+    },
+    "required": ["nombre", "nutrientes"],
+    "additionalProperties": False,
+}
 _PARAM_REGISTRAR_COMIDA = {
     "type": "object",
     "properties": {
@@ -296,6 +311,7 @@ _PARAM_REGISTRAR_COMIDA = {
         "hora": {"type": "string"},
         "descripcion": {"type": "string"},
         "cantidades": {"type": "array", "items": _PARAM_CANTIDAD_COMIDA, "minItems": 1},
+        "compartida_con": {"type": "array", "items": _PARAM_COMENSAL_COMPARTIDO},
     },
     "required": ["descripcion", "cantidades"],
     "additionalProperties": False,
@@ -1192,14 +1208,54 @@ def _numero_cantidad_comida(t: T, metric_key: str, valor, *, clave_error: str) -
     return numero
 
 
+def _resolver_comensal_nombre(conn: sqlite3.Connection, t: T, autor_person_id: int, nombre: str) -> int:
+    """BODY-COMIDA-COMPARTIDA-1 ruling 4: `nombre` resolved against the author's own active
+    household, by display_name (case-insensitive) -- never a person_id the model could invent or
+    copy from elsewhere. No match, or more than one (two members sharing a display_name), is the
+    same plain refusal: the assistant names what the person said, never an internal id."""
+    hh = household.household_of(conn, autor_person_id)
+    candidatos = []
+    if hh is not None:
+        for pid in hh.member_ids:
+            if pid == autor_person_id:
+                continue
+            if db.person(conn, pid)["display_name"].strip().casefold() == nombre.strip().casefold():
+                candidatos.append(pid)
+    if len(candidatos) != 1:
+        raise ToolError(t("agente.error.comensal_no_encontrado", nombre=nombre))
+    return candidatos[0]
+
+
+def _validar_comensal_nutrientes(t: T, nutrientes) -> dict:
+    """One shared-meal eater's own portion (metric_key -> amount), validated through the SAME door
+    `_numero_cantidad_comida` already guards the author's own `cantidades` with."""
+    if not isinstance(nutrientes, dict) or not nutrientes:
+        raise ToolError("se necesita al menos una cantidad para cada comensal")
+    catalogo = set(db.INGESTA_METRIC_KEYS)
+    limpio = {}
+    for metric_key, valor in nutrientes.items():
+        if metric_key not in catalogo:
+            raise ToolError(f"ingesta desconocida o no acumulable: {metric_key!r}")
+        limpio[metric_key] = _numero_cantidad_comida(t, metric_key, valor,
+                                                       clave_error="agente.error.comida_cantidad_invalida")
+    return limpio
+
+
 def _registrar_comida(conn: sqlite3.Connection, person_id: int, conversacion_id: int, descripcion: str,
-                       cantidades: list, day: str | None = None, hora: str | None = None) -> dict:
+                       cantidades: list, day: str | None = None, hora: str | None = None,
+                       compartida_con: list | None = None) -> dict:
     """Proposes one spoken meal as a single call (BODY-COMIDA-1 ruling 3): estimate every nutrient
     you can from the person's own words -- never ask them to weigh food -- say which amounts are
     estimates, and name caffeine/alcohol with the time when the person gives one. Insert-shaped,
     like `registrar_ingesta`: there is no 'before'. Every number is validated at the door
     (`_numero_cantidad_comida`) before anything is stored: one bad amount refuses the WHOLE call,
-    no row written, naming the field -- never a partial meal."""
+    no row written, naming the field -- never a partial meal.
+
+    BODY-COMIDA-COMPARTIDA-1 ruling 4: `compartida_con` names who else ate it -- resolved against
+    the household, refused BY NAME (`agente.error.comida_sin_consentimiento`) before the proposal
+    is even created when one of them has not turned on receiving shared meals, the same "say so
+    plainly" rule as every other door here. The proposal is still addressed to the author alone;
+    applying it is what actually shares the meal (body/agente/propuestas.py)."""
     descripcion = (descripcion or "").strip()
     if not descripcion:
         raise ToolError("falta la descripción de la comida")
@@ -1228,6 +1284,23 @@ def _registrar_comida(conn: sqlite3.Connection, person_id: int, conversacion_id:
     _dia_no_futuro(conn, person_id, day)
     despues = {"descripcion": descripcion, "cantidades": limpias, "day": day,
                "ts_local": _hora_a_ts_local(day, hora)}
+    if compartida_con:
+        comensales_limpios = []
+        vistos_pid = set()
+        for c in compartida_con:
+            if not isinstance(c, dict):
+                raise ToolError("cada comensal debe ser un objeto con nombre y nutrientes")
+            pid = _resolver_comensal_nombre(conn, t, person_id, c.get("nombre", ""))
+            if pid in vistos_pid:
+                raise ToolError(f"cada comensal debe aparecer una vez: {c.get('nombre')!r} repetido")
+            vistos_pid.add(pid)
+            if not compartir.recibe_comidas(conn, pid):
+                nombre_mostrado = db.person(conn, pid)["display_name"]
+                raise ToolError(t("agente.error.comida_sin_consentimiento", nombre=nombre_mostrado))
+            nutrientes_limpios = _validar_comensal_nutrientes(t, c.get("nutrientes"))
+            comensales_limpios.append({"person_id": pid, "nutrientes": nutrientes_limpios,
+                                        "porcion_texto": c.get("porcion_texto")})
+        despues["compartida_con"] = comensales_limpios
     registro = propuestas.crear(conn, person_id, conversacion_id, "registrar_comida", despues)
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
@@ -1734,8 +1807,11 @@ HERRAMIENTAS = [
                      "cafeína, alcohol). Estima cada nutriente que puedas a partir de las palabras de la "
                      "persona -- nunca le pidas que pese la comida -- incluye todos los que puedas estimar, "
                      "marca como estimado cada cantidad que no sea un número exacto, y nombra la hora para "
-                     "cafeína y alcohol cuando la persona la dé. No lo guarda: registra la propuesta para "
-                     "que la persona la apruebe en el chat.",
+                     "cafeína y alcohol cuando la persona la dé. Si la persona dice que comió con alguien de "
+                     "su hogar, agrega 'compartida_con': una entrada por esa persona (su nombre, su propia "
+                     "porción en nutrientes, y el texto de la porción si lo dio, por ejemplo 'la mitad'); esa "
+                     "persona recibe su porción para aplicarla ella misma, nunca entra a su registro sola. No "
+                     "lo guarda: registra la propuesta para que la persona la apruebe en el chat.",
      "parametros": _PARAM_REGISTRAR_COMIDA, "funcion": _registrar_comida},
     {"nombre": "registrar_checkin", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone un chequeo de 10 segundos: ánimo, energía y estrés sentido, cada uno del 1 al 5, "

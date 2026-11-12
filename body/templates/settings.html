@@ -28,6 +28,14 @@
 </div>
 {% if has_household %}
 <div class="card">
+  <div class="q">{{ t('settings.comidas_compartidas.pregunta') }}</div>
+  <form method="post" action="/settings/comidas_compartidas" class="seg">
+    <button class="btn {{ 'on' if recibir_comidas_compartidas==True }}" name="valor" value="si">{{ t('settings.turnos.si') }}</button>
+    <button class="btn {{ 'on' if recibir_comidas_compartidas==False }}" name="valor" value="no">{{ t('settings.turnos.no') }}</button>
+  </form>
+  <p class="note mt-8">{{ t('settings.comidas_compartidas.desc') }}</p>
+</div>
+<div class="card">
   <div class="q">{{ t('settings.compartir.titulo') }}</div>
   <ul class="plan mt-6">
   {% for m in metrics_compartir if m.shared %}

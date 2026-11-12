@@ -13,8 +13,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from markupsafe import Markup
 
-from .. import (anatomia, compartir, cuenta, db, fuentes, goals, history, household, identity, noche_inusual,
-                nutriente_objetivo, readiness, recuperacion, turnos_costo, tutoriales, ventana_comida)
+from .. import (anatomia, comida_compartida, compartir, cuenta, db, fuentes, goals, history, household,
+                identity, noche_inusual, nutriente_objetivo, readiness, recuperacion, turnos_costo, tutoriales,
+                ventana_comida)
 from ..agente import conversacion as agente_conversacion
 from ..agente import herramientas as agente_herramientas
 from ..agente import propuestas as agente_propuestas
@@ -455,6 +456,25 @@ def _hogar_compartido_ctx(conn, t: T, person_id: int, defs: dict, today_local: d
     return out
 
 
+def _comida_compartida_pendientes_ctx(t: T, conn, defs: dict, person_id: int) -> list[dict]:
+    """Hoy's own card (BODY-COMIDA-COMPARTIDA-1 ruling 5): every shared-meal portion still
+    waiting for THIS person's own tap, with the author's plain display_name, the words, the
+    portion text if any, and the nutrients in the app's existing figure+unit formatting. Empty
+    once nothing is pending -- no card at all, the same "None/empty means no line" rule every
+    other Hoy card here follows."""
+    out = []
+    for p in comida_compartida.pendientes(conn, person_id):
+        nutrientes_texto = " · ".join(
+            f"{t('metric.' + k)}: {comun._fig_unit(t, k, v, defs)}" for k, v in p["nutrientes"].items()
+        )
+        out.append({
+            "porcion_id": p["porcion_id"], "autor_nombre": p["autor_nombre"],
+            "descripcion": p["descripcion"], "porcion_texto": p["porcion_texto"],
+            "nutrientes_texto": nutrientes_texto,
+        })
+    return out
+
+
 def _ventana_base(t: T, v: ventana_comida.Ventana | None) -> dict:
     """The part of the eating-window card shared by Hoy and Día: which state the day is in, and
     the figures that state needs -- Hoy adds "fasting now"/yesterday's meal-to-sleep gap, Día adds
@@ -560,7 +580,8 @@ def today(person_id: int = Depends(identity.current_person_id)):
                    ventana=_ventana_ctx(t, conn, person, person_id, today_local),
                    periodo=_periodo_hoy_ctx(t, conn, person_id, today_local),
                    noche_inusual=_noche_inusual_hoy_ctx(t, conn, person_id, day, vals),
-                   objetivos_nutriente=_objetivos_nutriente_ctx(t, conn, defs, person_id, day, es_hoy))
+                   objetivos_nutriente=_objetivos_nutriente_ctx(t, conn, defs, person_id, day, es_hoy),
+                   comida_compartida_pendientes=_comida_compartida_pendientes_ctx(t, conn, defs, person_id))
 
 
 # readiness.Part.key -> the Tendencias metric it reads from (readiness.Part carries no metric key of its
@@ -1060,3 +1081,35 @@ async def entreno_propuesta_descartar(day: str, propuesta_id: int, request: Requ
 async def entreno_propuesta_deshacer(day: str, propuesta_id: int, request: Request,
                                       person_id: int = Depends(identity.current_person_id)):
     return await _entreno_propuesta_resolver(day, propuesta_id, request, person_id, agente_propuestas.deshacer)
+
+
+@router.post("/comida-compartida/{porcion_id}/aplicar")
+@comun._cierra_conexion_async
+async def comida_compartida_aplicar(porcion_id: int, request: Request,
+                                     person_id: int = Depends(identity.current_person_id)):
+    """BODY-COMIDA-COMPARTIDA-1 ruling 5: Hoy's own "Aplicar" -- the owner only
+    (comida_compartida.PorcionAjena, same guard shape as PropuestaAjena above); a stale or
+    someone-else's id is a no-op redirect, never a 500."""
+    conn, _, _ = comun._ctx(person_id)
+    try:
+        comida_compartida.aplicar_porcion(conn, person_id, porcion_id)
+    except comida_compartida.PorcionAjena:
+        pass
+    f = await comun._form(request)
+    back = cuenta.safe_return_to(f.get("back") or "/")
+    return RedirectResponse(back, status_code=303)
+
+
+@router.post("/comida-compartida/{porcion_id}/descartar")
+@comun._cierra_conexion_async
+async def comida_compartida_descartar(porcion_id: int, request: Request,
+                                       person_id: int = Depends(identity.current_person_id)):
+    """Hoy's own "Descartar" -- same owner-only guard as `comida_compartida_aplicar` above."""
+    conn, _, _ = comun._ctx(person_id)
+    try:
+        comida_compartida.descartar_porcion(conn, person_id, porcion_id)
+    except comida_compartida.PorcionAjena:
+        pass
+    f = await comun._form(request)
+    back = cuenta.safe_return_to(f.get("back") or "/")
+    return RedirectResponse(back, status_code=303)

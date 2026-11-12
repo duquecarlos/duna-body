@@ -52,6 +52,15 @@ FULLY_HANDLED_TABLES = {
     # ORCH-CARLOS-DELEGATES-TIER-1-1: one row per import source -- dates, counts and a reason CLASS
     # only (never a figure), so the whole row is exported and deleted like any other.
     "fuente_importacion",
+    # BODY-COMIDA-COMPARTIDA-1 ruling 1: whether this person receives a household member's shared
+    # meal -- a feature flag, the same per-person treatment figura_compartida already gets.
+    "consentimiento_comida_compartida",
+    # BODY-COMIDA-COMPARTIDA-1 ruling 2: one row per EATER of a shared meal -- this eater's own
+    # words/portion/nutrients, exported and deleted like any other of this person's own rows.
+    # comida_compartida itself (the parent link) carries autor_person_id, not a literal person_id,
+    # so person_tables() never finds it -- handled by hand in export_person/delete_person below,
+    # the same way habit/goal_enlace are (comment further down).
+    "comida_compartida_porcion",
 }
 # raw_payload: kind/date only, never the stored JSON payload. garmin_cuenta: the connected-since
 # date only, never the encrypted token (BODY-GARMIN-HOST-1). dispositivo: name/scopes/dates only,
@@ -181,6 +190,16 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "SELECT hogar_id, member_sub, fuente FROM hogar_miembro WHERE person_id = ?", (person_id,)
     ).fetchone()
     figuras_compartidas = compartir.export_rows(conn, person_id)
+    consentimiento_comidas_compartidas = compartir.export_rows_consentimiento_comidas(conn, person_id)
+    # BODY-COMIDA-COMPARTIDA-1 ruling 6: this person's own meals shared with others -- authored by
+    # them (comida_compartida has no literal person_id, only autor_person_id) -- and every portion
+    # addressed to THEM, in any meal, including one someone else authored.
+    comidas_compartidas_mias = [dict(r) for r in conn.execute(
+        "SELECT id, hogar_id, day, ts_local, origen, origen_ref, created_at FROM comida_compartida "
+        "WHERE autor_person_id = ? ORDER BY id", (person_id,))]
+    comidas_compartidas_porciones = [dict(r) for r in conn.execute(
+        "SELECT id, comida_compartida_id, descripcion, porcion_texto, nutrientes, estado, comida_id, "
+        "decided_at FROM comida_compartida_porcion WHERE person_id = ? ORDER BY id", (person_id,))]
     # aplicar_mcp (BODY-MCP-APLICAR-1, ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 7): the person's own
     # setting that lets their personal assistant apply a change it proposed, in their own export.
     ajustes = {"nivel_datos": agente_ajustes.nivel_datos(conn, person_id),
@@ -230,6 +249,9 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
                     "language": person["language"], "trabaja_turnos": person["trabaja_turnos"]},
         "hogar": dict(hogar_row) if hogar_row else None,
         "figuras_compartidas": figuras_compartidas,
+        "consentimiento_comidas_compartidas": consentimiento_comidas_compartidas,
+        "comidas_compartidas_mias": comidas_compartidas_mias,
+        "comidas_compartidas_porciones": comidas_compartidas_porciones,
         "vida": vida,
         "experimentos": experimentos,
         "ingesta": ingesta,
@@ -266,6 +288,26 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         conn.execute("DELETE FROM experimento_registro WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM moment WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM experimento WHERE person_id = ?", (person_id,))
+        # BODY-COMIDA-COMPARTIDA-1 ruling 6: every OTHER eater's portion of a meal THIS person
+        # authored keeps their own comida (comida_id stays) but loses the link to a parent that is
+        # about to disappear -- an applied one is orphan-safed (comida_compartida_id -> NULL); a
+        # portion with no comida of its own (pendiente/descartada) has nothing left to preserve and
+        # goes with the parent. Must run BEFORE this person's own comida/ingesta rows are deleted
+        # below (their own portion rows, deleted next, reference those same comida rows) and before
+        # the parent rows themselves are deleted (their children must be clear first, same FK-order
+        # reasoning habit/goal_check/plan already follow against goal below).
+        conn.execute(
+            "UPDATE comida_compartida_porcion SET comida_compartida_id = NULL WHERE estado = 'aplicada' "
+            "AND person_id != ? AND comida_compartida_id IN "
+            "(SELECT id FROM comida_compartida WHERE autor_person_id = ?)", (person_id, person_id),
+        )
+        conn.execute(
+            "DELETE FROM comida_compartida_porcion WHERE estado != 'aplicada' AND person_id != ? "
+            "AND comida_compartida_id IN (SELECT id FROM comida_compartida WHERE autor_person_id = ?)",
+            (person_id, person_id),
+        )
+        conn.execute("DELETE FROM comida_compartida_porcion WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM comida_compartida WHERE autor_person_id = ?", (person_id,))
         conn.execute("DELETE FROM ingesta WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM comida WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM period WHERE person_id = ?", (person_id,))

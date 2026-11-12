@@ -54,6 +54,8 @@ class RouteSetTest(unittest.TestCase):
         ("/asistente/propuestas/{propuesta_id}/descartar", ("POST",)),
         ("/asistente/propuestas/{propuesta_id}/deshacer", ("POST",)),
         ("/ayuda", ("GET",)),
+        ("/comida-compartida/{porcion_id}/aplicar", ("POST",)),  # BODY-COMIDA-COMPARTIDA-1
+        ("/comida-compartida/{porcion_id}/descartar", ("POST",)),  # BODY-COMIDA-COMPARTIDA-1
         ("/day/{day}", ("GET",)),
         ("/day/{day}/noche-inusual/visto", ("POST",)),  # BODY-NOCHE-INUSUAL-1
         ("/day/{day}/noche-inusual/nota", ("POST",)),  # BODY-MOCK-R2-HOY-1
@@ -97,6 +99,7 @@ class RouteSetTest(unittest.TestCase):
         ("/privacidad/fuente/borrar", ("POST",)),  # BODY-DESPLAZAMIENTO-3 ruling 4
         ("/settings", ("GET",)),
         ("/settings/aplicar_mcp", ("POST",)),  # BODY-MCP-APLICAR-1-B
+        ("/settings/comidas_compartidas", ("POST",)),  # BODY-COMIDA-COMPARTIDA-1
         ("/settings/compartir", ("POST",)),
         ("/settings/language", ("POST",)),
         ("/settings/nutriente/proponer", ("POST",)),  # BODY-NUTRIENTE-OBJETIVO-1

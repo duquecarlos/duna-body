@@ -200,5 +200,27 @@
   </ul>
 </div>
 {% endif %}
+
+{% if comida_compartida_pendientes %}
+<div class="card">
+  <div class="q">{{ t('today.comida_compartida.titulo') }}</div>
+  <ul class="plan mt-6">
+  {% for p in comida_compartida_pendientes %}
+    <li class="block">
+      <div class="k">{{ t('today.comida_compartida.aviso', autor=p.autor_nombre) }}</div>
+      {% if p.descripcion %}<div class="fig">{{ p.descripcion }}</div>{% endif %}
+      {% if p.porcion_texto %}<div class="note">{{ p.porcion_texto }}</div>{% endif %}
+      <div class="note">{{ p.nutrientes_texto }}</div>
+      <form method="post" action="/comida-compartida/{{ p.porcion_id }}/aplicar" class="mt-6 m-0">
+        <button class="btn" type="submit">{{ t('asistente.propuesta.aplicar') }}</button>
+      </form>
+      <form method="post" action="/comida-compartida/{{ p.porcion_id }}/descartar" class="m-0">
+        <button class="taplink" type="submit">{{ t('asistente.propuesta.descartar') }}</button>
+      </form>
+    </li>
+  {% endfor %}
+  </ul>
+</div>
+{% endif %}
 <script src="{{ static_url('cuerpo-vista.js') }}" defer></script>
 {% endblock %}

@@ -43,9 +43,10 @@ def _row_checksum(conn: sqlite3.Connection) -> str:
     the same seed can be compared without their wall-clock-dependent columns disagreeing."""
     h = hashlib.sha256()
     tables = ["person", "daily_metric", "sleep_session", "activity", "shift", "shift_batch",
-              "shift_batch_item", "goal", "habit", "habit_check", "goal_check", "goal_enlace", "ingesta"]
+              "shift_batch_item", "goal", "habit", "habit_check", "goal_check", "goal_enlace", "ingesta",
+              "comida_compartida", "comida_compartida_porcion", "consentimiento_comida_compartida"]
     excluded = {"creado_en", "created_at", "creado_at", "decided_at", "extracted_at", "received",
-                "updated_at"}
+                "updated_at", "granted_at"}
     for name in tables:
         cols = [r[1] for r in conn.execute(f"PRAGMA table_info({name})") if r[1] not in excluded]
         order = ", ".join(cols)
@@ -180,6 +181,22 @@ class SeededContentTest(unittest.TestCase):
         self.assertGreaterEqual(len(rows), 1)
         for _day, value in rows:
             self.assertIsNotNone(value)
+
+    def test_ana_and_the_demo_person_have_consent_on(self):
+        rows = self.conn.execute(
+            "SELECT person_id FROM consentimiento_comida_compartida WHERE withdrawn_at IS NULL "
+            "ORDER BY person_id").fetchall()
+        self.assertEqual([r[0] for r in rows], [1, 2])
+
+    def test_one_pending_shared_meal_each_direction(self):
+        ana_id = self.conn.execute("SELECT id FROM person WHERE display_name = 'Ana'").fetchone()[0]
+        for recipient, author in ((1, ana_id), (ana_id, 1)):
+            row = self.conn.execute(
+                "SELECT ccp.estado FROM comida_compartida_porcion ccp "
+                "JOIN comida_compartida cc ON cc.id = ccp.comida_compartida_id "
+                "WHERE ccp.person_id = ? AND cc.autor_person_id = ?", (recipient, author)).fetchone()
+            self.assertIsNotNone(row, f"no pending portion for {recipient} from {author}")
+            self.assertEqual(row["estado"], "pendiente")
 
     def test_ana_s_household_goal_has_a_lugares_link(self):
         row = self.conn.execute(

@@ -72,7 +72,7 @@ from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from .. import db, fechas, goals, shift_import
+from .. import comida_compartida, compartir, db, fechas, goals, household, shift_import
 from ..i18n import T
 from . import conversacion as agente_conversacion
 
@@ -845,8 +845,40 @@ def _drift_deshacer_registrar_comida(conn: sqlite3.Connection, row: sqlite3.Row)
     return cantidades_actuales != cantidades_despues
 
 
+def _drift_aplicar_registrar_comida(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    """BODY-COMIDA-COMPARTIDA-1: the one case `registrar_comida` CAN drift before apply -- a
+    `compartida_con` eater who left the household, or turned consent off, since the proposal was
+    made. `_sin_drift`'s own reasoning ("insert-shaped, no value before") still holds for a plain
+    meal (no `compartida_con`), so this is the only extra check."""
+    despues = json.loads(row["despues_json"])
+    compartida_con = despues.get("compartida_con")
+    if not compartida_con:
+        return False
+    hh = household.household_of(conn, row["person_id"])
+    if hh is None:
+        return True
+    miembros = set(hh.member_ids)
+    return any(c["person_id"] not in miembros or not compartir.recibe_comidas(conn, c["person_id"])
+               for c in compartida_con)
+
+
 def _aplicar_registrar_comida(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     despues = json.loads(row["despues_json"])
+    compartida_con = despues.get("compartida_con")
+    if compartida_con:
+        comensales = [{"person_id": row["person_id"],
+                       "nutrientes": {c["metric_key"]: c["amount"] for c in despues["cantidades"]}}]
+        comensales += [{"person_id": c["person_id"], "nutrientes": c["nutrientes"],
+                         "porcion_texto": c.get("porcion_texto")} for c in compartida_con]
+        resultado = comida_compartida.compartir_comida(
+            conn, row["person_id"], day=despues["day"], ts_local=despues.get("ts_local"),
+            descripcion=despues.get("descripcion"), comensales=comensales, origen="body",
+            origen_ref=str(row["id"]))
+        autor_porcion = conn.execute(
+            "SELECT comida_id FROM comida_compartida_porcion WHERE comida_compartida_id = ? AND person_id = ?",
+            (resultado["comida_compartida_id"], row["person_id"]),
+        ).fetchone()
+        return {"comida_id": autor_porcion["comida_id"], "comida_compartida_id": resultado["comida_compartida_id"]}
     cid = db.crear_comida(conn, row["person_id"], despues["day"], despues["cantidades"],
                            despues.get("descripcion"), despues.get("ts_local"))
     return {"comida_id": cid}
@@ -854,6 +886,13 @@ def _aplicar_registrar_comida(conn: sqlite3.Connection, row: sqlite3.Row) -> dic
 
 def _deshacer_registrar_comida(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
     despues = json.loads(row["despues_json"])
+    ccid = despues.get("comida_compartida_id")
+    if ccid is not None:
+        # BODY-COMIDA-COMPARTIDA-1 ruling 4: removes the author's own comida and discards every
+        # still-pending portion of this same meal -- an already-applied portion of another eater is
+        # theirs and is left exactly as it is.
+        comida_compartida.deshacer_autor(conn, row["person_id"], ccid)
+        return
     cid = despues.get("comida_id")
     if cid is not None:
         db.borrar_comida(conn, row["person_id"], cid)
@@ -1097,8 +1136,8 @@ TABLA: dict[str, _Accion] = {
                                  _aplicar_corregir_ingesta, _deshacer_corregir_ingesta),
     "borrar_ingesta": _Accion(_drift_aplicar_borrar_ingesta, _drift_deshacer_borrar_ingesta,
                                _aplicar_borrar_ingesta, _deshacer_borrar_ingesta),
-    "registrar_comida": _Accion(_sin_drift, _drift_deshacer_registrar_comida, _aplicar_registrar_comida,
-                                 _deshacer_registrar_comida),
+    "registrar_comida": _Accion(_drift_aplicar_registrar_comida, _drift_deshacer_registrar_comida,
+                                 _aplicar_registrar_comida, _deshacer_registrar_comida),
     "registrar_checkin": _Accion(_sin_drift, _drift_deshacer_registrar_checkin, _aplicar_registrar_checkin,
                                   _deshacer_registrar_checkin),
     "marcar_periodo": _Accion(_sin_drift, _drift_deshacer_marcar_periodo, _aplicar_marcar_periodo,
