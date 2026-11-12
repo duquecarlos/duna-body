@@ -9,7 +9,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import db, entreno_racha, garmin_adapter
+from body import db, entreno_racha, garmin_adapter, goals
 
 
 def _conn(case: unittest.TestCase) -> "db.sqlite3.Connection":
@@ -231,6 +231,63 @@ class RachaSemanalTest(unittest.TestCase):
             conteos.append(contador.llamadas)
         self.assertEqual(conteos, [conteos[0]] * len(conteos),
                           f"statement count grew with history length: {conteos}")
+
+
+class RachaPisoTableTest(unittest.TestCase):
+    """BODY-TENDENCIAS-RACHA-GRAFICO-1 ruling 1: body/db.py's racha_piso table and its set/get
+    functions -- created on a fresh db and on a db built before this slice."""
+
+    def test_fresh_db_has_the_contract_columns(self):
+        conn = _conn(self)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(racha_piso)")}
+        self.assertEqual(cols, {"person_id", "habit_id", "updated_at"})
+
+    def test_migration_creates_the_table_on_a_db_built_before_this_slice(self):
+        # racha_piso has never been part of db.SCHEMA's own executescript, only added by
+        # _migrate() -- executing SCHEMA alone already simulates a database built before this
+        # slice, with no table to drop first (unlike a column added to an existing table).
+        conn = open_conn(self, Path(tempfile.mkdtemp(dir=TMP)) / "vieja.db")
+        conn.executescript(db.SCHEMA)
+        conn.execute("INSERT INTO person (id, display_name) VALUES (1, 'Me')")
+        conn.commit()
+        self.assertEqual(
+            conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'racha_piso'").fetchall(),
+            [])
+        db.init(conn)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(racha_piso)")}
+        self.assertEqual(cols, {"person_id", "habit_id", "updated_at"})
+
+    def test_migration_is_idempotent(self):
+        conn = open_conn(self, Path(tempfile.mkdtemp(dir=TMP)) / "vieja.db")
+        conn.executescript(db.SCHEMA)
+        conn.execute("INSERT INTO person (id, display_name) VALUES (1, 'Me')")
+        conn.commit()
+        db.init(conn)
+        db.set_racha_piso(conn, 1, None)
+        db.init(conn)
+        row = conn.execute("SELECT person_id FROM racha_piso WHERE person_id = 1").fetchone()
+        self.assertIsNotNone(row)
+
+    def test_set_and_get_round_trip(self):
+        conn = _conn(self)
+        self.assertIsNone(db.racha_piso_habit_id(conn, 1))
+        gid = goals.propose(conn, 1, "G", "2026-10-01", kind="metric", metric_key="resting_hr",
+                            direction="lower", target_value=55.0, baseline_value=60.0)
+        habit_id = goals.add_habit(conn, gid, "Fuerza", {"per": "week", "times": 3})
+        conn.commit()
+        db.set_racha_piso(conn, 1, habit_id)
+        self.assertEqual(db.racha_piso_habit_id(conn, 1), habit_id)
+        db.set_racha_piso(conn, 1, None)
+        self.assertIsNone(db.racha_piso_habit_id(conn, 1))
+
+    def test_set_is_scoped_to_one_person(self):
+        conn = _conn(self)
+        gid = goals.propose(conn, 1, "G", "2026-10-01", kind="metric", metric_key="resting_hr",
+                            direction="lower", target_value=55.0, baseline_value=60.0)
+        habit_id = goals.add_habit(conn, gid, "Fuerza", {"per": "week", "times": 3})
+        conn.commit()
+        db.set_racha_piso(conn, 1, habit_id)
+        self.assertIsNone(db.racha_piso_habit_id(conn, 2))
 
 
 if __name__ == "__main__":

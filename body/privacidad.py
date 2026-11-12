@@ -61,6 +61,9 @@ FULLY_HANDLED_TABLES = {
     # so person_tables() never finds it -- handled by hand in export_person/delete_person below,
     # the same way habit/goal_enlace are (comment further down).
     "comida_compartida_porcion",
+    # BODY-TENDENCIAS-RACHA-GRAFICO-1 ruling 1: the person's own pick of which habit the strength-
+    # session study compares against -- one row, a habit id and nothing else.
+    "racha_piso",
 }
 # raw_payload: kind/date only, never the stored JSON payload. garmin_cuenta: the connected-since
 # date only, never the encrypted token (BODY-GARMIN-HOST-1). dispositivo: name/scopes/dates only,
@@ -134,6 +137,9 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         # goal_enlace carries no person_id of its own (like habit above) -- enlaces.export_rows
         # joins through goal_id, the only module that reads this table.
         "enlaces": enlaces.export_rows(conn, person_id),
+        # BODY-TENDENCIAS-RACHA-GRAFICO-1 ruling 1: the person's own chosen floor habit, if any.
+        "racha_piso": (lambda r: dict(r) if r else None)(conn.execute(
+            "SELECT habit_id, updated_at FROM racha_piso WHERE person_id = ?", (person_id,)).fetchone()),
     }
     experimentos = {
         "experimentos": [dict(r) for r in conn.execute(
@@ -317,6 +323,17 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         conn.execute("DELETE FROM checkin_nota WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM checkin WHERE person_id = ?", (person_id,))
         conn.execute("UPDATE habit SET assignee_person_id = NULL WHERE assignee_person_id = ?", (person_id,))
+        # BODY-TENDENCIAS-RACHA-GRAFICO-1 ruling 1: another household member's own racha_piso pick
+        # may name one of THIS person's habits (a shared milestone's habit is readable, so pickable,
+        # by every member) -- cleared to NULL before this person's own habits go, same FK-order
+        # reasoning as assignee_person_id just above. This person's OWN racha_piso row is simply
+        # deleted, below, with every other person-owned table.
+        conn.execute(
+            "UPDATE racha_piso SET habit_id = NULL WHERE habit_id IN "
+            "(SELECT id FROM habit WHERE goal_id IN (SELECT id FROM goal WHERE person_id = ?))",
+            (person_id,),
+        )
+        conn.execute("DELETE FROM racha_piso WHERE person_id = ?", (person_id,))
         enlaces.delete_rows_for_person(conn, person_id)
         conn.execute(
             "DELETE FROM habit_check WHERE person_id = ? OR habit_id IN ("

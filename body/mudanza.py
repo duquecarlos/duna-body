@@ -68,6 +68,11 @@ SKIPPED_TABLES = {
     "comida_compartida": "names another household member as cook or eater, never hand-copied",
     "comida_compartida_porcion": "the shared-meal link's own per-eater row, never hand-copied",
     "consentimiento_comida_compartida": "re-settable in Settings after the move, never hand-copied",
+    # BODY-TENDENCIAS-RACHA-GRAFICO-1: the person's own pick of which habit the strength-session
+    # study compares against -- re-settable from Tendencias after the move, never hand-copied
+    # (the same choice as consentimiento_comida_compartida above; its habit_id would need the same
+    # id remap habit itself gets, for one setting that costs nothing to re-pick).
+    "racha_piso": "re-settable from Tendencias after the move, never hand-copied",
 }
 
 # The person-scoped tables, in FK-safe order: every table a row above depends on appears earlier.
