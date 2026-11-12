@@ -18216,3 +18216,130 @@ merge policy A's three conditions. The spec's own step 4 says in words to merge 
 ("Green -> ledger ... commit; `git checkout main`; `git merge --no-ff
 feat/body-desplazamiento-local-1` -- APPROVED to merge on a green gate"), authorising the merge past
 this condition. -- merged 92a4e93
+
+## BODY-TURNOS-PERFIL-DIA-1 -- the hero's day-offset chart, and the reader it is built on (2026-11-12)
+
+BODY-MOCK-R2-CENSO-1-INV named two followups from mock round 2's `PhoneShiftsLight` board: this
+slice (a reusable day-offset profile around a night block, reused as its own first consumer so it
+never sits unused) and BODY-TURNOS-MINIGRAFICO-1 (the mini chart on Shifts' hero) -- the second is
+resolved here too, by the same chart.
+
+**Ruling 1, the reader.** `turnos_costo.perfil_por_dia(conn, person_id, metric, hoy=None)`: for each
+fixed `OFFSETS` entry (`antes`, `noche_1`, `noche_ultima`, `post_1`..`post_4`, relative to a night
+block's own first/last night), the mean of that day's value minus the person's own day-week
+reference centre, averaged over every night block in `resumen()`'s own RESUMEN_DIAS window. The
+centre and band are `referencia()`'s own mean and 25th-75th percentile -- the same one the hero's
+cost rows already use -- re-expressed around a centre of 0 (`banda.bajo`/`banda.alto` = `r.bajo -
+r.media` / `r.alto - r.media`). A day with no value is skipped, never zeroed; an offset no block
+actually reaches (`noche_ultima` on an all-one-night history) is left out of `offsets` rather than
+reported as a zero. The function never returns a bare `None` -- `resumen()`'s and
+`_ultima_semana`'s own convention -- it always returns a dict: `{"metric", "motivo":
+"pocos_bloques_previos"}` and nothing else when there are fewer than MIN_BLOQUES_PREVIOS night
+blocks in the window or the metric has no reference at all (both conditions reuse that one existing
+REASON_CODES entry, no new code added); otherwise `motivo` is `None` and the dict carries `offsets`
+(`[{"offset", "media", "n"}, ...]`), `centro`, `banda`, `mas_bajo` **or** `mas_alto` (whichever
+`db.METRIC_DEFS`' own direction calls worse for this metric -- the key name itself switches) naming
+the offset furthest from usual, `vuelta` (the first `post_*` offset back inside the band, or `None`
+if none ever is), `noches_tipicas` (the median block length) and `n_bloques`.
+
+**Ruling 2, one version.** `turnos_costo.VERSION` stays `"turnos-v1"`: `perfil_hrv` is additive on
+`resumen()`'s own return dict, and no existing figure `resumen()` already reported changed -- the
+full pre-existing `tests/test_turnos_costo.py` suite (41 tests) stayed green unmodified, which is
+this slice's own proof.
+
+**Ruling 3, the chart.** Under "What a night week costs you" (the hero), for `hrv_last_night`, an
+inline server-rendered SVG (Body's CSP forbids inline `style`/`<style>`/script; the chart's one new
+rule, `.tick`, lives in `body/static/body.css`): the usual-range band as a light rect, the night
+offsets (`noche_1`, `noche_ultima`) shaded, a line with a point through each offset's own mean, and
+three y ticks read off the data's own range (top, zero, bottom) -- never a population figure. x-axis
+labels: es "día antes" / en "day before"; "noche 1" / "night 1"; "noche {n}" / "night {n}" (n =
+`noches_tipicas`, present only when some block actually reached `noche_ultima`); "+1".."+4" for the
+`post_*` offsets, identical in both languages, never translated. An `aria-label` carries the
+caption, built from the data every time: es «Variabilidad de la frecuencia cardiaca, en ms frente a
+lo usual, alrededor de {n} noches. El punto {punto} es {offset}; {vuelta}.» / en "Heart-rate
+variability, in ms against your usual, around {n} nights. The {punto} point is {offset}; {vuelta}.",
+with a singular `_one` variant for one night, `punto` = "más bajo"/"lowest" or "más alto"/"highest"
+(whichever `mas_bajo`/`mas_alto` the reader returned), `offset` from a per-offset wording key
+(`shifts.perfil.offset.*`, e.g. «la última noche» / "the last night"), and `vuelta` either «el
+{offset} vuelves a tu rango» / "by {offset} you are back in your range" or the fixed «en 4 días aún
+no vuelves a tu rango» / "4 days after, you are not back in your range yet". A small line under the
+chart: «de {k} bloques de turno nocturno» / "from {k} night blocks". With no profile (`perfil_hrv`'s
+own `motivo` set), no chart and no empty frame -- the hero's existing honest-gap text stands
+unchanged.
+
+**Ruling 4, the assistant.** `_leer_costo_turnos` already just returns `turnos_costo.resumen(...)`,
+so `perfil_hrv` reaches the `leer_costo_turnos` tool output for free; its catalogue description now
+names what the field answers ("cuándo está más bajo y cuándo vuelve a su rango").
+
+**Ruling 5, the demo.** No `demo.py` change was needed: `NIGHT_EFFECT["hrv_last_night"]` (-12) and
+`_recovery_factor`'s own taper (1.0/0.7/0.4/0.15/0 over the nights and the four days after) already
+give a real dip and, on 24 of the 28 possible shift-cycle anchor days, an actual return into band --
+confirmed by a new regression test (`PerfilHrvReachableTest`) across the full cycle, rather than
+assumed.
+
+**A cost finding, caught by the gate itself.** Computing `perfil_hrv` unconditionally inside
+`resumen()` first pushed `/shifts/como` one statement over `tests/test_rendimiento.py`'s pinned
+ceiling (26 vs 25) -- `perfil_por_dia` was opening its own second `Lector` (one SELECT per metric)
+and recomputing `referencia()` (which recomputes `bloques_noche()` again for its own exclusion
+window) on top of what `resumen()` had already read, even on a route that never reads `perfil_hrv`
+at all. Fixed by giving `perfil_por_dia` optional `lector`/`bloques`/`ref` parameters -- the same
+shared-reader pattern `referencia`/`_costo_bloque`/`_medias_bloque`/`_recuperacion_bloque` already
+use -- and widening `resumen()`'s own single Lector to `[hoy - RESUMEN_DIAS - 1, hoy +
+ventana_post]` (a wider date range costs no extra statement, only more rows per statement already
+read). `tests/test_rendimiento.py` needed no change at all; its existing ceilings stood.
+
+**New strings**, es / en:
+
+    shifts.perfil.banda: "tu rango habitual" / "your usual range"
+    shifts.perfil.n_bloques: "de {k} bloques de turno nocturno" / "from {k} night blocks"
+    shifts.perfil.eje.antes: "día antes" / "day before"
+    shifts.perfil.eje.noche_1: "noche 1" / "night 1"
+    shifts.perfil.eje.noche_ultima: "noche {n}" / "night {n}"
+    shifts.perfil.offset.antes: "el día antes" / "the day before"
+    shifts.perfil.offset.noche_1: "la noche 1" / "night 1"
+    shifts.perfil.offset.noche_ultima: "la última noche" / "the last night"
+    shifts.perfil.offset.post_1: "el día +1 después" / "day +1 after"
+    shifts.perfil.offset.post_2: "el día +2 después" / "day +2 after"
+    shifts.perfil.offset.post_3: "el día +3 después" / "day +3 after"
+    shifts.perfil.offset.post_4: "el día +4 después" / "day +4 after"
+    shifts.perfil.punto.bajo: "más bajo" / "lowest"
+    shifts.perfil.punto.alto: "más alto" / "highest"
+    shifts.perfil.vuelta: "el {offset} vuelves a tu rango" / "by {offset} you are back in your range"
+    shifts.perfil.vuelta_ausente: "en 4 días aún no vuelves a tu rango" / "4 days after, you are not back in your range yet"
+    shifts.perfil.caption: "Variabilidad de la frecuencia cardiaca, en ms frente a lo usual, alrededor de {n} noches. El punto {punto} es {offset}; {vuelta}." / "Heart-rate variability, in ms against your usual, around {n} nights. The {punto} point is {offset}; {vuelta}."
+    shifts.perfil.caption_one: "Variabilidad de la frecuencia cardiaca, en ms frente a lo usual, alrededor de una noche. El punto {punto} es {offset}; {vuelta}." / "Heart-rate variability, in ms against your usual, around one night. The {punto} point is {offset}; {vuelta}."
+
+`tests/test_i18n_paridad.py`'s own fixed dynamic-prefix census gained `"shifts.perfil.offset.+"`
+(every `turnos_costo.OFFSETS` value) and `"shifts.perfil.eje.+"` (the three OFFSETS that reach a
+translated axis label; `post_1`..`post_4` are the literal, untranslated "+1".."+4") -- extended to
+the new truth, nothing loosened.
+
+New tests: `tests/test_turnos_perfil.py` (9 cases) on `perfil_por_dia` itself (2- and 3-night
+blocks averaging distinct per-block values, a missing day skipped not zeroed, `mas_bajo`/`mas_alto`
+honouring each direction, `vuelta` present and absent, both reason-code paths, and `resumen()`
+carrying `perfil_hrv` additively); `tests/test_turnos_costo.py` gained 6 web/tool-level cases (the
+chart in es/en, no chart without a profile, the singular caption/axis for one-night blocks, the
+assistant tool carrying `perfil_hrv`); `tests/test_demo.py` gained `PerfilHrvReachableTest` (ruling
+5's own regression guard). `tests/test_seguridad.py`'s existing repo-wide CSP guards (no `style=`
+attribute, no `<style>` element, in any template or Python source) and
+`tests/test_rendimiento.py`'s route ceilings both ran unmodified and green against the new markup.
+
+Commits: `50272c1` (the reader, rulings 1-2), `b1d1ba7` (the chart/i18n/demo/tool, rulings 3-5),
+`e767d5f` (the Lector/bloques/ref sharing fix the gate's own cost ceiling caught).
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry), the exact
+command `.venv/Scripts/python.exe -m unittest discover tests -t .`, one foreground run (moved to the
+background past the 600 s cap, waited on to completion, exit code 0):
+
+    Ran 2925 tests in 1031.811s
+
+    OK (skipped=1)
+
+No password, token, session secret, device key or health figure was read, printed, or written
+anywhere in this slice's own work -- the demo's invented HRV figures are never a real person's.
+
+**Merge policy.** The diff changes bytes Carlos reads on `/shifts` (the new chart, its legend, its
+axis labels and caption, the "from k night blocks" line) -- merge policy A's customer-bytes
+condition. The spec's own body says to stop before merge every time ("stop AWAITING_APPROVAL on the
+branch (the orchestrator looks at Shifts at 375 px before merging)"), so this entry is written and
+committed on the branch; no merge.
