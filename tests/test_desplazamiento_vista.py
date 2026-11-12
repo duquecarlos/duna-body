@@ -330,6 +330,9 @@ class BorrarFuenteRouteTest(_PageTestCase):
         self.assertIn('action="/privacidad/fuente/borrar"', confirmar)
         self.assertIn(f'value="{di.FUENTE}"', confirmar)
         self.assertIn("Sí, borrar", confirmar)
+        # BODY-DESPLAZAMIENTO-3-M fix 2: the label is quoted, never possessive ("el/los datos de X").
+        self.assertIn("¿Borrar «Resumen diario de desplazamiento»? Una nueva subida lo vuelve a traer.",
+                      confirmar)
 
         r = self.client.post("/privacidad/fuente/borrar", data={"fuente": di.FUENTE})
         self.assertEqual(r.status_code, 303)
@@ -337,7 +340,19 @@ class BorrarFuenteRouteTest(_PageTestCase):
             "SELECT 1 FROM fuente_importacion WHERE person_id = 1 AND fuente = ?", (di.FUENTE,)).fetchone())
 
         despues = self.client.get(r.headers["location"]).text
-        self.assertIn("Se borraron los datos de", despues)
+        self.assertIn("Se borró «Resumen diario de desplazamiento». Una nueva subida lo vuelve a traer.", despues)
+
+    def test_confirmation_and_done_wording_in_english(self):
+        di.importar(self.conn, 1, _csv([((HOY - timedelta(5)).isoformat(), 30, 2, 10, 0)]))
+        db.set_language(self.conn, "en", 1)
+        self.conn.commit()
+
+        confirmar = self.client.get("/privacidad", params={"confirmar": di.FUENTE}).text
+        self.assertIn("Delete “Daily commute summary”? A new upload brings it back.", confirmar)
+
+        r = self.client.post("/privacidad/fuente/borrar", data={"fuente": di.FUENTE})
+        despues = self.client.get(r.headers["location"]).text
+        self.assertIn("“Daily commute summary” deleted. A new upload brings it back.", despues)
 
     def test_unknown_fuente_posted_is_404(self):
         r = self.client.post("/privacidad/fuente/borrar", data={"fuente": "no-such-fuente"})
