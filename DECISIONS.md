@@ -17658,3 +17658,5 @@ slice's own work.
 
 Commit on `feat/body-host-backup-estado-1`: implementation and tests
 (`19d66cc7b0349d27633784592c52cde5bbc36375`).
+
+BODY-HOST-BACKUP-ESTADO-1 -- merged 6c39b7a3f328e38235cf8a0b6e5032dafefe5732
