@@ -316,6 +316,21 @@ _PARAM_REGISTRAR_COMIDA = {
     "required": ["descripcion", "cantidades"],
     "additionalProperties": False,
 }
+# BODY-COMIDA-CORREGIR-1: a field left out keeps its current value, the same convention
+# _PARAM_CORREGIR_PERIODO already uses; 'cantidades', when given, REPLACES the whole set (never
+# merged with the existing one) -- the same shape _PARAM_REGISTRAR_COMIDA's own field uses.
+_PARAM_CORREGIR_COMIDA = {
+    "type": "object",
+    "properties": {
+        "comida_id": {"type": "integer"},
+        "hora": {"type": "string"},
+        "day": {"type": "string", "format": "date"},
+        "descripcion": {"type": "string"},
+        "cantidades": {"type": "array", "items": _PARAM_CANTIDAD_COMIDA, "minItems": 1},
+    },
+    "required": ["comida_id"],
+    "additionalProperties": False,
+}
 
 # BODY-CHECKIN-1 ruling 3: momento is a short key validated in CODE, never a DB CHECK -- a new
 # moment word is a code change here, not a migration. mood/energy/stress_felt are typed as a LIST
@@ -1305,6 +1320,80 @@ def _registrar_comida(conn: sqlite3.Connection, person_id: int, conversacion_id:
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
+def _corregir_comida(conn: sqlite3.Connection, person_id: int, conversacion_id: int, comida_id: int,
+                      hora: str | None = None, day: str | None = None, descripcion: str | None = None,
+                      cantidades: list | None = None) -> dict:
+    """Proposes correcting a MEAL as a unit (ORCH-CARLOS-DELEGATES-TIER-1-1, BODY-COMIDA-CORREGIR-1:
+    one correction the person means as one change is ONE proposal, never one per nutrient row).
+    A field left out keeps its current value, the same convention `_corregir_periodo` already
+    uses; `cantidades`, when given, REPLACES the meal's whole set of amounts, never merged with
+    what it already had -- the same door-validated, all-or-nothing shape `_registrar_comida`
+    itself writes with, so one bad amount refuses the WHOLE call, nothing proposed. `antes`/
+    `despues` each carry the meal's FULL state (day, ts_local, descripcion, every amount), so
+    `propuestas.deshacer` can restore it exactly through the same writer (`db.corregir_comida`).
+    For a single standalone intake row that is not part of a meal, `corregir_ingesta`/
+    `borrar_ingesta` stay the way to change it."""
+    if hora is None and day is None and descripcion is None and cantidades is None:
+        raise ToolError("se necesita al menos un campo para corregir")
+    fila = conn.execute(
+        "SELECT day, ts_local, descripcion FROM comida WHERE id = ? AND person_id = ?",
+        (comida_id, person_id)).fetchone()
+    if fila is None:
+        raise ToolError(f"comida desconocida: {comida_id!r}")
+    cantidades_actuales = [
+        {"metric_key": r["metric_key"], "amount": r["amount"], "estimado": bool(r["estimado"])}
+        for r in conn.execute(
+            "SELECT metric_key, amount, estimado FROM ingesta WHERE comida_id = ? ORDER BY id", (comida_id,))
+    ]
+    nuevo_day = day if day is not None else fila["day"]
+    _dia_no_futuro(conn, person_id, nuevo_day)
+    if hora is not None:
+        nuevo_ts_local = _hora_a_ts_local(nuevo_day, hora)
+    elif day is not None and fila["ts_local"]:
+        nuevo_ts_local = f"{nuevo_day}T{fila['ts_local'][11:]}"
+    elif day is not None:
+        nuevo_ts_local = None
+    else:
+        nuevo_ts_local = fila["ts_local"]
+    if descripcion is not None:
+        descripcion = descripcion.strip()
+        if not descripcion:
+            raise ToolError("falta la descripción de la comida")
+        nueva_descripcion = descripcion
+    else:
+        nueva_descripcion = fila["descripcion"]
+    if cantidades is not None:
+        if not cantidades:
+            raise ToolError("se necesita al menos una cantidad")
+        t = T(db.person(conn, person_id)["language"])
+        catalogo = set(db.INGESTA_METRIC_KEYS)
+        vistas = set()
+        nuevas_cantidades = []
+        for c in cantidades:
+            if not isinstance(c, dict):
+                raise ToolError("cada cantidad debe ser un objeto con metric_key y amount")
+            metric_key = c.get("metric_key")
+            if metric_key not in catalogo:
+                raise ToolError(f"ingesta desconocida o no acumulable: {metric_key!r}")
+            if metric_key in vistas:
+                raise ToolError(f"cada cantidad debe ser de una métrica distinta: {metric_key!r} repetida")
+            vistas.add(metric_key)
+            amount = _numero_cantidad_comida(t, metric_key, c.get("amount"),
+                                              clave_error="agente.error.comida_cantidad_invalida")
+            estimado = c.get("estimado", True)
+            if not isinstance(estimado, bool):
+                raise ToolError("estimado debe ser verdadero o falso")
+            nuevas_cantidades.append({"metric_key": metric_key, "amount": amount, "estimado": estimado})
+    else:
+        nuevas_cantidades = cantidades_actuales
+    antes = {"day": fila["day"], "ts_local": fila["ts_local"], "descripcion": fila["descripcion"],
+             "cantidades": cantidades_actuales}
+    despues = {"comida_id": comida_id, "day": nuevo_day, "ts_local": nuevo_ts_local,
+               "descripcion": nueva_descripcion, "cantidades": nuevas_cantidades}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "corregir_comida", despues, antes=antes)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
 def _numero_checkin(t: T, metric_key: str, valor, *, clave_error: str) -> int | None:
     """BODY-CHECKIN-1 ruling 3: door validation for mood/energy/stress_felt, the same shape
     `_numero_cantidad_comida` built for a meal's amount -- None passes through (the field is
@@ -1813,6 +1902,15 @@ HERRAMIENTAS = [
                      "persona recibe su porción para aplicarla ella misma, nunca entra a su registro sola. No "
                      "lo guarda: registra la propuesta para que la persona la apruebe en el chat.",
      "parametros": _PARAM_REGISTRAR_COMIDA, "funcion": _registrar_comida},
+    {"nombre": "corregir_comida", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone corregir la hora, el día, la descripción o las cantidades de una comida que ya "
+                     "existe -- toda la comida como una sola propuesta, nunca una por cada nutriente. Usa esta "
+                     "herramienta para cambiar la hora, la redacción o las cantidades de una comida; para "
+                     "corregir o eliminar un solo registro de consumo que no forma parte de una comida sigue "
+                     "usando corregir_ingesta/borrar_ingesta. 'cantidades', cuando se da, reemplaza por "
+                     "completo el conjunto de cantidades de la comida -- nunca se combina con lo que ya "
+                     "tenía. No la corrige: registra la propuesta para que la persona la apruebe en el chat.",
+     "parametros": _PARAM_CORREGIR_COMIDA, "funcion": _corregir_comida},
     {"nombre": "registrar_checkin", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone un chequeo de 10 segundos: ánimo, energía y estrés sentido, cada uno del 1 al 5, "
                      "más una nota opcional de una línea. Pregunta solo esos tres números y esa línea -- nunca "

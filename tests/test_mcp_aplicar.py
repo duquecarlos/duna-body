@@ -198,6 +198,35 @@ class OnTest(_McpAplicarTestCase):
         tarjetas = r.json()["propuestas"]
         self.assertEqual(tarjetas[0]["origen_etiqueta"], "Aplicado por tu asistente personal")
 
+    def test_corregir_comida_is_one_proposal_and_one_apply(self):
+        """BODY-COMIDA-CORREGIR-1, ORCH-CARLOS-DELEGATES-TIER-1-1: the friction report's 7-apply
+        correction (one borrar_ingesta per row plus a fresh registrar_comida) becomes ONE
+        tools/call proposal and ONE aplicar_propuesta apply, for a meal's time and half its
+        amounts corrected together."""
+        comida_id = db.crear_comida(self.conn, self.person_id,
+                                    "2026-11-05", [{"metric_key": "protein_g", "amount": 35.0},
+                                                   {"metric_key": "kcal", "amount": 600.0}],
+                                    "arroz con pollo", "2026-11-05T13:00:00")
+        self.conn.commit()
+        _, propone = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "corregir_comida",
+                        "arguments": {"comida_id": comida_id, "hora": "08:00",
+                                      "cantidades": [{"metric_key": "protein_g", "amount": 40.0}]}}},
+        ])
+        pid = json.loads(propone[0]["result"]["content"][-1]["text"])["propuesta_id"]
+
+        _, aplica = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": mcp.NOMBRE_APLICAR, "arguments": {"propuesta_id": pid}}},
+        ])
+        self.assertNotIn("isError", aplica[0]["result"])
+        fila = self.conn.execute("SELECT ts_local FROM comida WHERE id = ?", (comida_id,)).fetchone()
+        self.assertEqual(fila["ts_local"], "2026-11-05T08:00:00")
+        rows = {r["metric_key"]: r["amount"] for r in self.conn.execute(
+            "SELECT metric_key, amount FROM ingesta WHERE comida_id = ?", (comida_id,))}
+        self.assertEqual(rows, {"protein_g": 40.0})
+
     def test_cap_reached_is_a_tool_error(self):
         tope = mcp.LIMITES["aplicaciones"]
         ids = [self._crear_propuesta_mcp(start_day=f"2020-01-{i + 1:02d}")[1] for i in range(tope + 1)]

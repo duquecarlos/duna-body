@@ -18983,3 +18983,117 @@ equals `rev-parse main` equals `05ff48094c8b6648c1dc2182cad9dbfb57331a26`), so t
 (3031 tests, OK, recorded above) stands as the merge's gate. **APPROVED to merge**
 (orchestrator, ORCH-CARLOS-DELEGATES-TIER-1-1, on the person's consent "A" named in the parent
 spec) -- merged b7ef5980fe787ab72be17471776591dccbb65c06.
+
+## BODY-COMIDA-CORREGIR-1 -- correct a whole meal as one proposal, one apply (2026-11-12)
+
+The Personal desk's friction report: correcting one logged meal's time and half of one food took 6
+`borrar_ingesta` (one per nutrient row) + 1 `registrar_comida` = 7 applies, hitting body.mcp's
+per-15-minute apply cap. The orchestrator's ruling, ahead of this slice: one correction the person
+means as one change is ONE proposal, and the cap (`body/mcp.py` LIMITES, untouched) is not loosened
+-- a meal's rows are not specially counted.
+
+**Ruling 1 -- one writer for a meal as a unit.** `db.py` gains `corregir_comida(conn, person_id,
+comida_id, *, ts_local=None, day=None, descripcion=None, cantidades=None)`: owner-scoped (refuses a
+comida_id that is not this person's own, `ValueError`), unconditionally sets the `comida` row's
+day/ts_local/descripcion to whatever is passed, and when `cantidades` is given REPLACES the meal's
+whole set of `ingesta` children wholesale -- never merged with what was there, the same all-or-
+nothing shape `crear_comida` itself writes with. Left out, the existing rows just follow the meal's
+own new day/ts_local (needed so `comidas_del_dia`'s own day filter, which reads each `ingesta` row's
+OWN `day` column, keeps finding the meal under its new day). One transaction; every touched
+metric_key's daily total is re-derived for both the old day and the new one when the day moves.
+Unlike `actualizar_periodo`'s `_SIN_DAR` sentinel, plain `None` defaults are enough here: the one
+caller (`body/agente/propuestas.py`) always carries the meal's FULL resolved state in `antes`/
+`despues`, so there is no "clear this field" case distinct from "not given" to support.
+
+**Ruling 2 -- one proposal.** The assistant tool `corregir_comida` (`body/agente/herramientas.py`)
+takes `comida_id` and any of `hora`/`day`/`descripcion`/`cantidades`; a field left out keeps its
+current value (the same convention `corregir_periodo` already uses), refusing when none is given.
+`cantidades`, when given, is door-validated exactly like `registrar_comida`'s own (one amount per
+metric key, `_numero_cantidad_comida`, no partial result on a bad one) and REPLACES the whole set.
+`antes`/`despues` each carry the meal's full state (day, ts_local, descripcion, every amount), so
+`propuestas.deshacer` restores it exactly through the same writer. Apply/undo/drift
+(`_aplicar_corregir_comida`, `_deshacer_corregir_comida`, `_drift_aplicar_corregir_comida`,
+`_drift_deshacer_corregir_comida`) compare the meal's day/ts_local/descripcion and its ingesta
+amounts against the recorded state; a changed or deleted meal since the proposal refuses apply/undo
+as `propuesta_desactualizada`, the same as every other drift-checked proposal. Not added to
+`ACCIONES_REEMPLAZABLES`: two corrections of two different meals on the same day are both real,
+never a same-day replacement. The catalogue description says this is the way to change a meal's
+time, wording or amounts, and that per-row `corregir_ingesta`/`borrar_ingesta` stay for a single
+standalone intake row that is not part of a meal.
+
+The card (`body/rutas/asistente.py`) is one summary line naming the meal by its OLD time (its prior
+ts_local's HH:MM, or its short date when it had none) and listing only what differs -- new time, new
+description, each amount changed/added/removed, one i18n key per kind, in catalogue order
+(`herramientas.INGESTA_METRIC_KEYS`): es «Corregir la comida de las {hora_antes}: {cambios}», en
+"Correct the {hora_antes} meal: {cambios}". New i18n keys, es/en:
+`asistente.propuesta.corregir_comida_resumen` ("Corregir la comida de las {hora_antes}: {cambios}" /
+"Correct the {hora_antes} meal: {cambios}"), `asistente.propuesta.comida_cambio_hora` ("nueva hora
+{hora}" / "new time {hora}"), `asistente.propuesta.comida_cambio_descripcion` ("nueva descripción
+«{descripcion}»" / new description, curly-quoted, in en.json), `asistente.propuesta.comida_cambio_
+cantidad_nueva` ("+ {metric}: {valor}" / "+ {metric}: {valor}"), `asistente.propuesta.comida_cambio_
+cantidad_quitada` ("- {metric}" / "- {metric}"), `asistente.propuesta.comida_cambio_cantidad_valor`
+("{metric}: {valor}" / "{metric}: {valor}"), plus `asistente.propuesta.titulo.corregir_comida`
+("Corregir comida" / "Correct meal") alongside every other action's own title key.
+
+**Ruling 3 -- body.mcp.** `corregir_comida` is a `tipo: propuesta`, `nivel: ninguno` tool like every
+other proposal tool, so `body/mcp.py` needed no new code to list or call it (`bucle._tool_specs`
+already derives its listing from `herramientas.HERRAMIENTAS`) -- it counts as one proposal through
+`tools/call` and, once applied through the existing `aplicar_propuesta`, one apply against
+`LIMITES["aplicaciones"]`, exactly as the friction report's own "7 applies -> 1" asks for
+(`tests/test_mcp_aplicar.py`'s `test_corregir_comida_is_one_proposal_and_one_apply`).
+
+**Schema.** `propuesta_agente.accion`'s CHECK widens through the existing rebuild migration
+(`_rebuild_propuesta_agente_table`, unchanged) -- a new `_propuesta_agente_needs_corregir_comida_
+rebuild` check and one more call in `_migrate_propuestas`, the tenth such widening, column-for-
+column, every existing proposal row preserved byte-for-byte (`tests/test_comida_corregir.py`'s
+`AccionMigrationTest`, built from a DB at the prior 23-action CHECK shape).
+
+**Deviations found running the full gate, each a census test that pins an exact tool-name set and
+needed extending to the new truth, never loosened:**
+
+- `tests/test_agente_registro.py`'s `HERRAMIENTAS` count (36 -> 37) and its `PROPUESTA_NOMBRES` set
+  (its own measured count was 23 proposal names already, not the 22 its test method's own name
+  still said -- that name was already stale before this slice and is left as found; the set itself
+  gained `corregir_comida`, now 24).
+- `tests/test_agente_propuestas.py`'s `NoProponibleTest` pins the exact propuesta-tool-name set;
+  gained `corregir_comida`.
+- `tests/test_agente_bucle.py`'s `NivelDatosEnforcementTest` (outside this slice's declared
+  `touches`) pins the exact tool set offered at `nivel_datos='ninguno'`; found red by the full gate,
+  not by any targeted run, since no test file in `touches` exercises it. Gained `corregir_comida`,
+  committed separately (`810103f`).
+- `tests/test_propuestas_tabla.py`, `tests/test_mcp.py`'s `tools/list` set and `tests/test_i18n_
+  paridad.py` needed no edits: the first two are derived from `herramientas.HERRAMIENTAS` rather
+  than hand-typed, and the i18n parity guard scans source for `t(...)` calls rather than enumerating
+  actions, so each one extended itself the moment the tool and its strings existed.
+
+No password, token, session secret, device key or health figure of a real person was read, printed
+or written anywhere in this slice's own work; every figure in every test is invented.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry), the exact
+command is `.venv/Scripts/python.exe -m unittest discover tests -t .`, run ONCE as a single
+foreground call that the harness moved to the background past its own 600 s cap and was then waited
+on to completion (a second full run; the first attempt was killed at the background grace period's
+own limit before producing a result, per protocol, and re-launched rather than trusted):
+
+    Ran 3059 tests in 822.112s
+
+    OK (skipped=1)
+
+3059 - 3031 (the prior entry's own count) = 28 new tests, all added by this slice: 26 in
+`tests/test_comida_corregir.py`, 1 in `tests/test_mcp.py`
+(`test_corregir_comida_is_offered_and_callable`), 1 in `tests/test_mcp_aplicar.py`
+(`test_corregir_comida_is_one_proposal_and_one_apply`).
+
+**Merge policy, this slice.** The diff DOES widen `propuesta_agente.accion`'s CHECK -- merge policy
+A's schema condition trips on its face. The spec's own approval-reason (ORCH-CARLOS-DELEGATES-
+TIER-1-1) already classified exactly this change ("the ONLY schema change is widening ... through
+the established rebuild migration, as every prior proposal kind did. Additive and reversible,
+invented data in tests, no screen changes; merges on a green gate") and its body says, in words,
+"APPROVED to merge on a green gate" -- the explicit authorization this protocol requires to merge
+past a tripped condition. Customer-facing bytes changed too (the assistant's own proposal card
+text, i18n strings a person reads in the chat panel): the same approval-reason names this as "no
+screen changes" (no template, no route, no new page) and that paragraph's own wording is what
+clears it, not an absence of new strings. No cross-repo contract changed. **Merges on this green
+gate, per that explicit authorization.**
+
+-- merged

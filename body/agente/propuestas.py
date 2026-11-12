@@ -898,6 +898,50 @@ def _deshacer_registrar_comida(conn: sqlite3.Connection, row: sqlite3.Row) -> No
         db.borrar_comida(conn, row["person_id"], cid)
 
 
+# -- corregir_comida (BODY-COMIDA-CORREGIR-1: this module calls db.corregir_comida directly,
+# update-shaped like corregir_periodo -- `antes`/`despues` each carry the meal's FULL state (day,
+# ts_local, descripcion, every amount), so apply writes `despues` and undo restores `antes`,
+# through the SAME writer, symmetrically. Not in ACCIONES_REEMPLAZABLES: two corrections of two
+# different meals on the same day are both real, never a same-day replacement.) -------------------
+
+def _comida_estado_coincide(conn: sqlite3.Connection, person_id: int, comida_id: int, estado: dict) -> bool:
+    fila = conn.execute("SELECT day, ts_local, descripcion FROM comida WHERE id = ? AND person_id = ?",
+                        (comida_id, person_id)).fetchone()
+    if fila is None:
+        return False
+    if (fila["day"] != estado["day"] or fila["ts_local"] != estado.get("ts_local")
+            or fila["descripcion"] != estado.get("descripcion")):
+        return False
+    cantidades_actuales = {r["metric_key"]: r["amount"] for r in conn.execute(
+        "SELECT metric_key, amount FROM ingesta WHERE comida_id = ?", (comida_id,))}
+    cantidades_esperadas = {c["metric_key"]: c["amount"] for c in estado.get("cantidades", [])}
+    return cantidades_actuales == cantidades_esperadas
+
+
+def _drift_aplicar_corregir_comida(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    antes = json.loads(row["antes_json"])
+    despues = json.loads(row["despues_json"])
+    return not _comida_estado_coincide(conn, row["person_id"], despues["comida_id"], antes)
+
+
+def _drift_deshacer_corregir_comida(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    return not _comida_estado_coincide(conn, row["person_id"], despues["comida_id"], despues)
+
+
+def _aplicar_corregir_comida(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    db.corregir_comida(conn, row["person_id"], despues["comida_id"], ts_local=despues.get("ts_local"),
+                       day=despues["day"], descripcion=despues["descripcion"], cantidades=despues["cantidades"])
+
+
+def _deshacer_corregir_comida(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    antes = json.loads(row["antes_json"])
+    despues = json.loads(row["despues_json"])
+    db.corregir_comida(conn, row["person_id"], despues["comida_id"], ts_local=antes.get("ts_local"),
+                       day=antes["day"], descripcion=antes["descripcion"], cantidades=antes["cantidades"])
+
+
 # -- registrar_checkin (BODY-CHECKIN-1: insert-shaped, like registrar_comida -- this module is the
 # one writer of `checkin` through db.crear_checkin/db.borrar_checkin, which write/remove the note
 # (`checkin_nota`) in the SAME transaction, ruling 3) -------------------------------------------
@@ -1138,6 +1182,8 @@ TABLA: dict[str, _Accion] = {
                                _aplicar_borrar_ingesta, _deshacer_borrar_ingesta),
     "registrar_comida": _Accion(_drift_aplicar_registrar_comida, _drift_deshacer_registrar_comida,
                                  _aplicar_registrar_comida, _deshacer_registrar_comida),
+    "corregir_comida": _Accion(_drift_aplicar_corregir_comida, _drift_deshacer_corregir_comida,
+                                _aplicar_corregir_comida, _deshacer_corregir_comida),
     "registrar_checkin": _Accion(_sin_drift, _drift_deshacer_registrar_checkin, _aplicar_registrar_checkin,
                                   _deshacer_registrar_checkin),
     "marcar_periodo": _Accion(_sin_drift, _drift_deshacer_marcar_periodo, _aplicar_marcar_periodo,
