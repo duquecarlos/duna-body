@@ -58,6 +58,7 @@ from __future__ import annotations
 import contextvars
 import json
 import sqlite3
+import statistics
 from datetime import date, timedelta
 
 from .. import anatomia, catalogo_tendencias, compartir, db, enlaces, entreno_historial, errores, experimentos, \
@@ -107,6 +108,28 @@ _PARAM_TENDENCIAS = {
     },
     "additionalProperties": False,
 }
+
+# BODY-AGENTE-LEER-SERIE-1 ruling 2: bounds so one call stays a read, never a dump. 'mes' is
+# deliberately unbounded -- a whole watch history at that paso is already a handful of months'
+# rows, never worth refusing.
+LEER_SERIE_PASOS = ("dia", "semana", "mes")
+_LEER_SERIE_MAX_METRICAS = 12
+_LEER_SERIE_MAX_DIAS_PASO_DIA = 366
+_LEER_SERIE_MAX_SEMANAS_PASO_SEMANA = 260
+_PARAM_LEER_SERIE = {
+    "type": "object",
+    "properties": {
+        "metricas": {"type": "array", "items": {"type": "string", "enum": list(TENDENCIA_METRICAS)},
+                     "minItems": 1, "maxItems": _LEER_SERIE_MAX_METRICAS},
+        "desde": {"type": "string", "format": "date"},
+        "hasta": {"type": "string", "format": "date"},
+        "paso": {"type": "string", "enum": list(LEER_SERIE_PASOS)},
+    },
+    "required": ["metricas", "desde", "hasta", "paso"],
+    "additionalProperties": False,
+}
+# key -> unit, off db.METRIC_DEFS itself (template, not a second hand-typed table).
+_UNIDADES_METRICA = {d[0]: d[2] for d in db.METRIC_DEFS}
 
 DIRECTIONS = ("raise", "lower", "keep")
 
@@ -572,6 +595,79 @@ def _leer_tendencias(conn: sqlite3.Connection, person_id: int, rango: str = "30"
             if frase is not None:
                 metricas[k]["patron_turnos"] = frase
     return {"rango": rango, "metricas": metricas}
+
+
+def _agrupar_serie(filas: list, paso: str) -> list[dict]:
+    """BODY-AGENTE-LEER-SERIE-1 ruling 1: 'dia' is one point per row read, already honest about
+    gaps (a missing day is simply a row that was never there). 'semana'/'mes' group the SAME rows
+    by the week's Monday (`fechas.lunes_de`) or the month's first day, averaging with
+    `statistics.fmean` -- the exact function `body/profile.py`'s own `_build_profile` uses for
+    Trends' monthly line, never a second averaging rule -- so a point here for a given month
+    matches that screen's figure for the same key and month. A group with zero rows never exists
+    in the first place (dict.setdefault only ever runs for a day that IS in `filas`), so a gap
+    stays absent rather than becoming a 0."""
+    if paso == "dia":
+        return [{"fecha": r["day"], "valor": r["value"], "n_dias": 1} for r in filas]
+    grupos: dict[str, list[float]] = {}
+    for r in filas:
+        if paso == "semana":
+            clave = fechas.lunes_de(date.fromisoformat(r["day"])).isoformat()
+        else:
+            clave = r["day"][:7] + "-01"
+        grupos.setdefault(clave, []).append(r["value"])
+    return [{"fecha": clave, "valor": statistics.fmean(vals), "n_dias": len(vals)}
+            for clave, vals in sorted(grupos.items())]
+
+
+def _leer_serie(conn: sqlite3.Connection, person_id: int, nivel: str, metricas: list, desde: str, hasta: str,
+                 paso: str) -> dict:
+    """BODY-AGENTE-LEER-SERIE-1: one bounded range read of day-by-day figures over up to
+    `_LEER_SERIE_MAX_METRICAS` metrics at once, so a whole watch history is a handful of calls
+    inside bucle.MAX_LECTURAS instead of one leer_dia per day. Ruling 3: 'dia' needs
+    nivel_datos='completo' (the SAME rule leer_dia itself enforces at the registry, reapplied here
+    because this one tool's OWN registry nivel ('resumen') has to admit 'semana'/'mes' too); the
+    caller is given `nivel` for exactly this reason -- `ejecutar()` passes it only to a tool whose
+    registry entry asks for it (`necesita_nivel`), everybody else is unchanged. Ruling 2: refuses
+    before touching the database whenever a bound is crossed, and reads `daily_metric` with
+    exactly ONE statement, whatever `desde`..`hasta` spans."""
+    if desconocidas := [m for m in metricas if m not in TENDENCIA_METRICAS]:
+        raise ToolError(f"métrica(s) desconocida(s): {desconocidas}")
+    try:
+        desde_d, hasta_d = date.fromisoformat(desde), date.fromisoformat(hasta)
+    except ValueError:
+        raise ToolError("'desde'/'hasta' deben ser fechas ISO (AAAA-MM-DD)")
+    if desde_d > hasta_d:
+        raise ToolError(f"'desde' ({desde}) no puede ser posterior a 'hasta' ({hasta})")
+    hoy = fechas.hoy_local(db.person(conn, person_id))
+    if hasta_d > hoy:
+        raise ToolError(f"'hasta' no puede ser una fecha futura: {hasta!r}")
+    if paso == "dia":
+        if nivel == "resumen":
+            raise ToolError("leer_serie con paso='dia' necesita nivel_datos='completo'; con 'resumen' "
+                             "usa paso='semana' o paso='mes'")
+        dias_pedidos = (hasta_d - desde_d).days + 1
+        if dias_pedidos > _LEER_SERIE_MAX_DIAS_PASO_DIA:
+            raise ToolError(f"paso='dia' admite hasta {_LEER_SERIE_MAX_DIAS_PASO_DIA} días por llamada "
+                             f"({dias_pedidos} pedidos); usa paso='semana'/'mes' o divide el rango")
+    elif paso == "semana":
+        semanas_pedidas = (fechas.lunes_de(hasta_d) - fechas.lunes_de(desde_d)).days // 7 + 1
+        if semanas_pedidas > _LEER_SERIE_MAX_SEMANAS_PASO_SEMANA:
+            raise ToolError(f"paso='semana' admite hasta {_LEER_SERIE_MAX_SEMANAS_PASO_SEMANA} semanas por "
+                             f"llamada ({semanas_pedidas} pedidas); usa paso='mes' o divide el rango")
+    placeholders = ",".join("?" * len(metricas))
+    filas = conn.execute(
+        f"SELECT metric_key, day, value FROM daily_metric WHERE person_id = ? "
+        f"AND metric_key IN ({placeholders}) AND day BETWEEN ? AND ? ORDER BY metric_key, day",
+        (person_id, *metricas, desde, hasta),
+    ).fetchall()
+    por_metrica: dict[str, list] = {m: [] for m in metricas}
+    for r in filas:
+        por_metrica[r["metric_key"]].append(r)
+    return {
+        "paso": paso, "desde": desde, "hasta": hasta,
+        "metricas": {m: {"unidad": _UNIDADES_METRICA.get(m), "puntos": _agrupar_serie(por_metrica[m], paso)}
+                     for m in metricas},
+    }
 
 
 def _leer_historia(conn: sqlite3.Connection, person_id: int) -> dict:
@@ -1807,6 +1903,17 @@ HERRAMIENTAS = [
      "descripcion": "Las sesiones de entrenamiento de un día o un rango de días, con sus series, y el "
                      "plan de entrenamiento de ese día si existe.",
      "parametros": _PARAM_LEER_ENTRENO, "funcion": _leer_entreno},
+    {"nombre": "leer_serie", "tipo": "lectura", "nivel": "resumen",
+     "descripcion": "Una o más métricas, día por día (o por semana/mes) a lo largo de un rango de fechas -- "
+                     "úsala para cualquier rango de días; leer_dia es para el detalle completo de un solo "
+                     "día. Un día o período sin dato simplemente no aparece (nunca un 0), y una métrica sin "
+                     "ningún dato en el rango aparece con una lista vacía. paso='dia' admite hasta "
+                     f"{_LEER_SERIE_MAX_DIAS_PASO_DIA} días por llamada y necesita nivel_datos='completo'; "
+                     f"paso='semana' admite hasta {_LEER_SERIE_MAX_SEMANAS_PASO_SEMANA} semanas; paso='mes' "
+                     "no tiene límite -- una historia completa del reloj a paso='mes' es una sola llamada. "
+                     "Pasado el límite, o con una fecha futura en 'hasta', se rechaza sin leer nada: usa un "
+                     "paso más grueso o divide el rango.",
+     "parametros": _PARAM_LEER_SERIE, "funcion": _leer_serie, "necesita_nivel": True},
     {"nombre": "proponer_meta", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone crear una meta nueva de tipo métrica. No la crea: registra la propuesta "
                      "para que la persona la apruebe en el chat.",
@@ -2039,4 +2146,9 @@ def ejecutar(conn: sqlite3.Connection, person_id: int, nombre: str, params: dict
         if conversacion_id is None:
             raise ToolError(f"{nombre!r} requiere una conversación")
         return entrada["funcion"](conn, person_id, conversacion_id, **params)
+    # BODY-AGENTE-LEER-SERIE-1: a lectura tool whose registry entry asks for `nivel` (leer_serie's
+    # own 'dia' vs 'resumen' split) gets it as its third positional argument -- everybody else's
+    # call shape is unchanged.
+    if entrada.get("necesita_nivel"):
+        return entrada["funcion"](conn, person_id, nivel, **params)
     return entrada["funcion"](conn, person_id, **params)
