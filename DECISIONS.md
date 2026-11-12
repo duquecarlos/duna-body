@@ -19466,3 +19466,5 @@ would stop merge policy A's third condition, but the spec's own body says in wor
 is "APPROVED to merge after the fixes below on a green gate" once the route-set gap and the 1 px
 label-crowding defect were fixed -- an explicit merge authorization, not a stop. **Merges on this
 green gate.**
+
+-- merged 82bcce208da8bc1cd749b643b9f4bc9b8e6098cc
