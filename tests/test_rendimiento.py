@@ -43,10 +43,13 @@ client = TestClient(web.app, follow_redirects=False)
 # Metas-section/detail-page reads, and /goals/new and /trends, remeasured after BODY-AGUJETAS-1-B
 # batched their per-metric-key reads (one query for the whole catalogue instead of one per key), and
 # /day/{day} and /privacidad/exportar, remeasured after BODY-COMIDA-1 added one meal-list read and
-# one meal-export read respectively (ceil(measured * 1.3), the same ~30% margin rule) --
+# one meal-export read respectively (ceil(measured * 1.3), the same ~30% margin rule), and /,
+# remeasured after BODY-NUTRIENTE-OBJETIVO-1 added the "Metas de nutrientes" card's own read (one
+# vigentes-targets query, plus -- only once a per_kg target is live -- a weight lookup and two
+# batched totals/counts queries) --
 # each in that slice's own ledger entry.
 _CEILINGS = {
-    "/": 75,
+    "/": 101,
     "/ajustes/asistente": 16,
     "/ajustes/dispositivos": 9,
     "/api/vida/semana": 3,

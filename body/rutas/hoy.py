@@ -13,8 +13,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from markupsafe import Markup
 
-from .. import (anatomia, compartir, cuenta, db, goals, history, household, identity, noche_inusual, readiness,
-                recuperacion, turnos_costo, tutoriales, ventana_comida)
+from .. import (anatomia, compartir, cuenta, db, goals, history, household, identity, noche_inusual,
+                nutriente_objetivo, readiness, recuperacion, turnos_costo, tutoriales, ventana_comida)
 from ..agente import conversacion as agente_conversacion
 from ..agente import herramientas as agente_herramientas
 from ..agente import propuestas as agente_propuestas
@@ -558,7 +558,8 @@ def today(person_id: int = Depends(identity.current_person_id)):
                    hogar_compartido=_hogar_compartido_ctx(conn, t, person_id, defs, today_local),
                    ventana=_ventana_ctx(t, conn, person, person_id, today_local),
                    periodo=_periodo_hoy_ctx(t, conn, person_id, today_local),
-                   noche_inusual=_noche_inusual_hoy_ctx(t, conn, person_id, day, vals))
+                   noche_inusual=_noche_inusual_hoy_ctx(t, conn, person_id, day, vals),
+                   objetivos_nutriente=_objetivos_nutriente_ctx(t, conn, defs, person_id, day, es_hoy))
 
 
 # readiness.Part.key -> the Tendencias metric it reads from (readiness.Part carries no metric key of its
@@ -726,6 +727,43 @@ def _comidas_dia_ctx(t: T, conn, person_id: int, defs: dict, dia_iso: str) -> li
     return out
 
 
+def _objetivos_nutriente_ctx(t: T, conn, defs: dict, person_id: int, dia_iso: str, es_hoy: bool) -> list[dict]:
+    """Today's and Día's own "Metas de nutrientes" lines (BODY-NUTRIENTE-OBJETIVO-1): one per
+    intake key with a live target on this day, generic over all eight -- shared by `today()` and
+    `day_view()` below, since `nutriente_objetivo.estado_del_dia` is already honest about history
+    (ruling 1: the target in force on THIS day, never today's). `falta_peso` (ruling 2) shows its
+    own line, no number guessed. Never a progress bar in markup colour -- `pct` is a plain number,
+    body/static/body.css picks the fixed class. BODY-NUTRIENTE-OBJETIVO-1-M fix 6: `es_hoy` picks
+    the "reached" wording -- Día showing a PAST day must never say "today"."""
+    estado = nutriente_objetivo.estado_del_dia(conn, person_id, dia_iso)
+    out = []
+    for k in db.INGESTA_METRIC_KEYS:
+        e = estado.get(k)
+        if e is None:
+            continue
+        obj = e["objetivo"]
+        if obj["falta_peso"]:
+            out.append({"key": k, "label": t("metric." + k), "texto": t("nutriente.hoy.falta_peso"), "pct": None})
+            continue
+        unidad = comun._unit(t, defs[k])
+        total_txt = comun._value(t, k, e["total"])
+        objetivo_txt = comun._value(t, k, obj["objetivo"])
+        pct = round(min(e["total"] / obj["objetivo"], 1.0) * 100) if obj["objetivo"] else 0
+        if obj["sentido"] == "al_menos":
+            if e["restante"] == 0.0:
+                texto = t("nutriente.hoy.cumplida") if es_hoy else t("nutriente.hoy.cumplida_dia")
+            else:
+                clave = "nutriente.hoy.progreso" if e["n"] == 1 else "nutriente.hoy.progreso_plural"
+                texto = t(clave, total=total_txt, objetivo=objetivo_txt, unidad=unidad, n=e["n"],
+                          restante=comun._value(t, k, e["restante"]))
+        elif e["restante"] >= 0:
+            texto = t("nutriente.hoy.limite_quedan", restante=comun._value(t, k, e["restante"]), unidad=unidad)
+        else:
+            texto = t("nutriente.hoy.limite_excedido", exceso=comun._value(t, k, -e["restante"]), unidad=unidad)
+        out.append({"key": k, "label": t("metric." + k), "texto": texto, "pct": pct})
+    return out
+
+
 def _momento_checkin_txt(t: T, momento: str) -> str:
     """BODY-CHECKIN-1: three literal t() calls, the same choice body/rutas/asistente.py's own copy
     of this helper makes, for the same reason (_periodo_dia_ctx's neighbour, test_i18n_paridad.py's
@@ -885,6 +923,8 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
                    turnos=turnos_on, ventana=_ventana_dia_ctx(t, conn, person_id, d), periodo=periodo_dia,
                    comidas=_comidas_dia_ctx(t, conn, person_id, defs, d.isoformat()),
                    checkin=_checkins_dia_ctx(t, conn, person_id, defs, vals, d.isoformat()),
+                   objetivos_nutriente=_objetivos_nutriente_ctx(t, conn, defs, person_id, d.isoformat(),
+                                                                 d.isoformat() == today_local.isoformat()),
                    union_oferta=union_oferta, vinculo_tarjetas=vinculo_tarjetas)
 
 

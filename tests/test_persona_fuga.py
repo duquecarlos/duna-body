@@ -214,6 +214,13 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
     # the route-only active list (no screen renders it yet).
     db.registrar_ingesta(conn, person_id, DAYS[-1], "protein_g", 30.0, False, f"ZZ{tag}-INGESTA")
 
+    # BODY-NUTRIENTE-OBJETIVO-1: nutrient_target is person-owned (its own person_id column, same
+    # census treatment as turno_fc/recuperacion_actividad above) -- no marker needed, it carries no
+    # free-text field (metric_key/kind/sentido are fixed vocabularies, amount a plain number), so the
+    # census only checks export/delete-all coverage.
+    db.set_nutrient_target(conn, person_id, "caffeine_mg", DAYS[0], "absolute",
+                            200.0 if tag == "A" else 300.0, "como_maximo")
+
     # BODY-COMIDA-1: comida is person-keyed and has its FIRST reader this slice -- Día's own
     # "Comidas" section (body/rutas/hoy.py's _comidas_dia_ctx) renders its descripcion directly, so
     # its marker belongs in _markers_of's active list below, not the tool-only list ingesta used

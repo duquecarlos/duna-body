@@ -1027,6 +1027,51 @@ def _deshacer_borrar_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> None
                      antes.get("zonas"))
 
 
+# -- proponer_objetivo_nutriente (BODY-NUTRIENTE-OBJETIVO-1: this module calls
+# db.set_nutrient_target/db.borrar_nutrient_target directly, update-shaped like registrar_medida on
+# daily_metric -- a target's own primary key (person_id, metric_key, start_day) is the slot being
+# set, never a new id) --------------------------------------------------------------------------
+
+def _fila_nutriente(conn: sqlite3.Connection, row: sqlite3.Row, despues: dict) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT kind, amount, sentido FROM nutrient_target WHERE person_id = ? AND metric_key = ? "
+        "AND start_day = ?", (row["person_id"], despues["metric_key"], despues["start_day"])).fetchone()
+
+
+def _drift_aplicar_objetivo_nutriente(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    antes = json.loads(row["antes_json"]) if row["antes_json"] is not None else None
+    despues = json.loads(row["despues_json"])
+    actual = _fila_nutriente(conn, row, despues)
+    actual_tup = (actual["kind"], actual["amount"], actual["sentido"]) if actual is not None else None
+    antes_tup = (antes["kind"], antes["amount"], antes["sentido"]) if antes is not None else None
+    return actual_tup != antes_tup
+
+
+def _drift_deshacer_objetivo_nutriente(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    actual = _fila_nutriente(conn, row, despues)
+    actual_tup = (actual["kind"], actual["amount"], actual["sentido"]) if actual is not None else None
+    return actual_tup != (despues["kind"], despues["amount"], despues["sentido"])
+
+
+def _aplicar_objetivo_nutriente(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    with conn:
+        db.set_nutrient_target(conn, row["person_id"], despues["metric_key"], despues["start_day"],
+                                despues["kind"], despues["amount"], despues["sentido"])
+
+
+def _deshacer_objetivo_nutriente(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    antes = json.loads(row["antes_json"]) if row["antes_json"] is not None else None
+    despues = json.loads(row["despues_json"])
+    with conn:
+        if antes is None:
+            db.borrar_nutrient_target(conn, row["person_id"], despues["metric_key"], despues["start_day"])
+        else:
+            db.set_nutrient_target(conn, row["person_id"], despues["metric_key"], despues["start_day"],
+                                    antes["kind"], antes["amount"], antes["sentido"])
+
+
 TABLA: dict[str, _Accion] = {
     "proponer_meta": _Accion(_sin_drift, _drift_deshacer_meta, _aplicar_meta, _deshacer_meta),
     "proponer_cambio_meta": _Accion(_drift_aplicar_cambio_meta, _drift_deshacer_meta, _aplicar_cambio_meta,
@@ -1070,6 +1115,8 @@ TABLA: dict[str, _Accion] = {
                                _aplicar_separar_sesion, _deshacer_separar_sesion),
     "unir_sesiones": _Accion(_drift_aplicar_unir_sesiones, _drift_deshacer_unir_sesiones,
                               _aplicar_unir_sesiones, _deshacer_unir_sesiones),
+    "proponer_objetivo_nutriente": _Accion(_drift_aplicar_objetivo_nutriente, _drift_deshacer_objetivo_nutriente,
+                                            _aplicar_objetivo_nutriente, _deshacer_objetivo_nutriente),
 }
 
 SIN_DESHACER = tuple(nombre for nombre, entrada in TABLA.items() if not entrada.tiene_deshacer)

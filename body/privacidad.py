@@ -46,6 +46,9 @@ FULLY_HANDLED_TABLES = {
     # BODY-CHECKIN-1: the three 1-5 readings only, never the note -- its own sibling table
     # checkin_nota is in NEVER_EXPORTED_TABLES below (ruling 4, the strictest privacy level).
     "checkin",
+    # BODY-NUTRIENTE-OBJETIVO-1: one row per (metric, start_day) -- the person's own chosen target,
+    # no free text.
+    "nutrient_target",
 }
 # raw_payload: kind/date only, never the stored JSON payload. garmin_cuenta: the connected-since
 # date only, never the encrypted token (BODY-GARMIN-HOST-1). dispositivo: name/scopes/dates only,
@@ -137,6 +140,9 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
     periodos = [dict(r) for r in conn.execute(
         "SELECT id, kind, start_day, end_day, note, zonas, created_at, updated_at "
         "FROM period WHERE person_id = ? ORDER BY start_day, id", (person_id,))]
+    objetivos_nutriente = [dict(r) for r in conn.execute(
+        "SELECT metric_key, start_day, kind, amount, sentido, created_at FROM nutrient_target "
+        "WHERE person_id = ? ORDER BY metric_key, start_day", (person_id,))]
     # BODY-CHECKIN-1 ruling 4: never the note (checkin_nota) -- not even here, this person's own
     # full export.
     checkins = [dict(r) for r in conn.execute(
@@ -223,6 +229,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "ingesta": ingesta,
         "comidas": comidas,
         "periodos": periodos,
+        "objetivos_nutriente": objetivos_nutriente,
         "checkins": checkins,
         "dias": dias,
         "actividades": actividades,
@@ -256,6 +263,7 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         conn.execute("DELETE FROM comida WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM period WHERE person_id = ?", (person_id,))
         db.invalidar_periodos_cache(conn, person_id)
+        conn.execute("DELETE FROM nutrient_target WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM checkin_nota WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM checkin WHERE person_id = ?", (person_id,))
         conn.execute("UPDATE habit SET assignee_person_id = NULL WHERE assignee_person_id = ?", (person_id,))

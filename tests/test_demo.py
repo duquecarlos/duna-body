@@ -206,6 +206,15 @@ class SeededContentTest(unittest.TestCase):
         self.assertIsNotNone(row)
         self.assertEqual(json.loads(row["zonas"]), [demo._LESION_ZONA_DEMO])
 
+    def test_seeds_a_per_kg_protein_target_and_an_absolute_caffeine_limit(self):
+        # BODY-NUTRIENTE-OBJETIVO-1 ruling 8.
+        rows = {r["metric_key"]: r for r in self.conn.execute(
+            "SELECT metric_key, kind, amount, sentido FROM nutrient_target WHERE person_id = 1")}
+        self.assertEqual((rows["protein_g"]["kind"], rows["protein_g"]["amount"], rows["protein_g"]["sentido"]),
+                         ("per_kg", 1.6, "al_menos"))
+        self.assertEqual((rows["caffeine_mg"]["kind"], rows["caffeine_mg"]["amount"],
+                          rows["caffeine_mg"]["sentido"]), ("absolute", 400.0, "como_maximo"))
+
     def test_a_past_strength_set_is_corrected_to_the_lesion_zona(self):
         row = self.conn.execute(
             "SELECT person_category FROM workout_set WHERE person_id = 1 AND corrected_by_person = 1"

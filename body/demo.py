@@ -768,6 +768,18 @@ def _seed_ingesta(conn, db, rng: random.Random, all_days: list[date], person_id:
     return rows, comidas
 
 
+def _seed_nutriente_objetivo(conn, db, all_days: list[date], person_id: int) -> int:
+    """Two invented daily targets (BODY-NUTRIENTE-OBJETIVO-1 ruling 8), live for the whole seeded
+    run: protein_g per_kg 1.6 al_menos (a below-target line against this demo's own seeded protein
+    and weight) and caffeine_mg absolute 400 como_maximo (a within-limit line). Invented amounts
+    only, never a real figure."""
+    start_day = all_days[0].isoformat()
+    with conn:
+        db.set_nutrient_target(conn, person_id, "protein_g", start_day, "per_kg", 1.6, "al_menos")
+        db.set_nutrient_target(conn, person_id, "caffeine_mg", start_day, "absolute", 400.0, "como_maximo")
+    return 2
+
+
 def _seed_periodo(conn, db, all_days: list[date], person_id: int, idioma: str) -> int:
     """Two invented periods: a closed 'malestar' stretch partway through the seeded history
     (BODY-PERIODO-1), so screens and analyses that leave marked days out have something to exclude
@@ -1022,6 +1034,7 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     metric_rows += _seed_self_metrics(conn, db, rng, all_days, person_id)
     metric_rows += _seed_soreness(conn, db, rng, all_days, person_id)
     entradas_ingesta, comidas_ingesta = _seed_ingesta(conn, db, rng, all_days, person_id)
+    objetivos_nutriente = _seed_nutriente_objetivo(conn, db, all_days, person_id)
     periodos = _seed_periodo(conn, db, all_days, person_id, idioma)
     checkins = _seed_checkins(conn, db, rng, all_days, person_id)
     # BODY-RECUPERACION-1-M: AFTER _seed_periodo, not before -- recuperacion.recalcular() checks
@@ -1052,7 +1065,8 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
         "lotes_turnos_propuestos": 1 if proposed_id is not None else 0,
         "semanas_nocturnas": night_weeks, "bloques_turno_noche": night_blocks, "metas_activas": 4, "habitos": 3,
         "verificaciones_semanales": checks + hogar_checks, "chequeos_habito": habit_checks + hogar_habit_checks,
-        "entradas_ingesta": entradas_ingesta, "comidas": comidas_ingesta, "periodos": periodos,
+        "entradas_ingesta": entradas_ingesta, "comidas": comidas_ingesta,
+        "metas_nutriente": objetivos_nutriente, "periodos": periodos,
         "checkins": checkins,
         "recuperacion_actividades": recuperacion_rows,
         "turno_fc_turnos": turno_fc_turnos, "sueno_fc_noches": sueno_fc_noches,
