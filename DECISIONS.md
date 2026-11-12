@@ -17972,4 +17972,4 @@ written anywhere in this slice's own work.
 Ajustes' Dispositivos page and anywhere Día lists a metric by its label) -- two of merge policy A's
 three conditions. The slice's own dispatch explicitly pre-authorized the merge on a green gate ("no
 screen beyond Día's generic rows changes"), so this merges rather than stopping
-AWAITING_APPROVAL.
+AWAITING_APPROVAL. -- merged 0ed81c4
