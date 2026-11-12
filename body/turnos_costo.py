@@ -335,6 +335,77 @@ def perfil_por_dia(conn, person_id: int, metric: str, hoy: date | None = None, *
     }
 
 
+def frase_patron(perfil: dict, metric: str) -> dict | None:
+    """BODY-TENDENCIAS-LEYENDA-PATRON-1 ruling 1: turns a successful `perfil_por_dia` result into a
+    sentence SPEC -- a kind plus its own parameters, never prose -- so Trends (body/rutas/
+    tendencias.py) and the assistant's leer_tendencias (body/agente/herramientas.py) can share it
+    and render or report it their own way. `perfil["motivo"]` set (no profile) -> None. Otherwise,
+    in precedence order: the worst offset's mean inside the band -> {"kind": "estable"} (nights do
+    not move this metric beyond usual); outside the band and `vuelta` set -> {"kind": "vuelve",
+    "peor", "vuelta", "direccion"}; outside the band and no `vuelta` -> {"kind": "no_vuelve",
+    "peor", "direccion"}. `direccion` ("baja"/"sube") is the side the worst offset's mean sits on
+    relative to centre (0 once `perfil_por_dia` re-expresses it that way), never the metric's own
+    better/worse word, so a lower-is-better metric whose nights run high still reads "sube". No
+    figure from the person's data is in the spec -- `peor`/`vuelta` are OFFSET NAMES, `direccion`
+    is a word -- so a caption built from this can never leak a number into a log."""
+    if perfil.get("motivo") is not None:
+        return None
+    peor_es_bajo = _BETTER.get(metric) == "higher"
+    peor_offset = perfil["mas_bajo" if peor_es_bajo else "mas_alto"]
+    extremo = next(o for o in perfil["offsets"] if o["offset"] == peor_offset)
+    banda = perfil["banda"]
+    if banda["bajo"] <= extremo["media"] <= banda["alto"]:
+        return {"kind": "estable"}
+    direccion = "baja" if extremo["media"] < 0 else "sube"
+    vuelta = perfil.get("vuelta")
+    if vuelta is not None:
+        return {"kind": "vuelve", "peor": peor_offset, "vuelta": vuelta, "direccion": direccion}
+    return {"kind": "no_vuelve", "peor": peor_offset, "direccion": direccion}
+
+
+class _LectorVarias:
+    """Same `.series()`/`.day_values()` contract as body/lector.py's `Lector`, but loads every
+    metric named with ONE SQL statement (`metric_key IN (...)`) instead of Lector's one query per
+    metric. `perfiles_patron` below needs all of MODELO['metricas'] (five metrics) at once, every
+    time Trends renders -- five separate Lector queries would cost /trends' own statement ceiling
+    (tests/test_rendimiento.py) five statements just for this, where one combined read costs it
+    one (BODY-TENDENCIAS-LEYENDA-PATRON-1). Used only here, so it stays private rather than moving
+    into body/lector.py."""
+
+    def __init__(self, conn, person_id: int, desde: str, hasta: str, metrics) -> None:
+        self._series: dict[str, dict[str, float]] = {m: {} for m in metrics}
+        placeholders = ",".join("?" * len(metrics))
+        rows = conn.execute(
+            f"SELECT metric_key, day, value FROM daily_metric WHERE person_id = ? "
+            f"AND metric_key IN ({placeholders}) AND day BETWEEN ? AND ?",
+            (person_id, *metrics, desde, hasta),
+        ).fetchall()
+        for r in rows:
+            self._series[r["metric_key"]][r["day"]] = r["value"]
+
+    def series(self, metric: str, start: str, end: str) -> dict[str, float]:
+        return {day: value for day, value in self._series.get(metric, {}).items() if start <= day <= end}
+
+    def day_values(self, day: str) -> dict[str, float]:
+        return {metric: serie[day] for metric, serie in self._series.items() if day in serie}
+
+
+def perfiles_patron(conn, person_id: int, hoy: date | None = None) -> dict[str, dict]:
+    """BODY-TENDENCIAS-LEYENDA-PATRON-1: `perfil_por_dia` for every metric in MODELO['metricas'],
+    sharing one `_LectorVarias`, one `bloques_noche` call and one `referencia()` call across all
+    five -- the one caller (Trends, and the assistant's leer_tendencias) that needs a pattern per
+    metric, never a statement per metric."""
+    hoy = hoy or date.today()
+    desde = (hoy - timedelta(RESUMEN_DIAS)).isoformat()
+    desde_lector = (hoy - timedelta(RESUMEN_DIAS + 1)).isoformat()
+    hasta_lector = (hoy + timedelta(MODELO["ventana_post"])).isoformat()
+    lector = _LectorVarias(conn, person_id, desde_lector, hasta_lector, MODELO["metricas"])
+    ref = referencia(conn, person_id, hoy, lector=lector)
+    bloques = bloques_noche(conn, person_id, desde, hoy.isoformat())
+    return {m: perfil_por_dia(conn, person_id, m, hoy, lector=lector, bloques=bloques, ref=ref)
+            for m in MODELO["metricas"]}
+
+
 def _dia_en_banda(conn, person_id: int, day: str, ref: dict[str, Referencia | None],
                    *, lector: Lector | None = None) -> bool:
     valores = lector.day_values(day) if lector is not None else db.day_values(conn, day, person_id)
