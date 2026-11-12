@@ -38,15 +38,17 @@ client = TestClient(web.app, follow_redirects=False)
 # one assistant conversation) right after BODY-RENDIMIENTO-1's fix, with headroom so a small,
 # legitimate change to a route does not make this test flaky. The measured value for each one, and
 # the margin applied, are in BODY-RENDIMIENTO-1's ledger entry -- except /shifts and /shifts/como,
-# remeasured after BODY-RENDIMIENTO-2's reader fix, /goals and /experiments/{experiment_id},
-# remeasured after BODY-EXPERIMENTOS-PANTALLA-1 added the fixture's own experiment and its
-# Metas-section/detail-page reads, and /goals/new and /trends, remeasured after BODY-AGUJETAS-1-B
-# batched their per-metric-key reads (one query for the whole catalogue instead of one per key), and
-# /day/{day} and /privacidad/exportar, remeasured after BODY-COMIDA-1 added one meal-list read and
-# one meal-export read respectively (ceil(measured * 1.3), the same ~30% margin rule), and /,
-# remeasured after BODY-NUTRIENTE-OBJETIVO-1 added the "Metas de nutrientes" card's own read (one
-# vigentes-targets query, plus -- only once a per_kg target is live -- a weight lookup and two
-# batched totals/counts queries) --
+# remeasured after BODY-RENDIMIENTO-2's reader fix and again after BODY-TENDENCIAS-LEYENDA-
+# PATRON-1-M folded body/lector.py's Lector down to one combined SELECT regardless of metric count
+# (32 and 15 measured here, ceil(measured * 1.3) = 42 and 20), /goals and
+# /experiments/{experiment_id}, remeasured after BODY-EXPERIMENTOS-PANTALLA-1 added the fixture's
+# own experiment and its Metas-section/detail-page reads, and /goals/new and /trends, remeasured
+# after BODY-AGUJETAS-1-B batched their per-metric-key reads (one query for the whole catalogue
+# instead of one per key), and /day/{day} and /privacidad/exportar, remeasured after BODY-COMIDA-1
+# added one meal-list read and one meal-export read respectively (ceil(measured * 1.3), the same
+# ~30% margin rule), and /, remeasured after BODY-NUTRIENTE-OBJETIVO-1 added the "Metas de
+# nutrientes" card's own read (one vigentes-targets query, plus -- only once a per_kg target is
+# live -- a weight lookup and two batched totals/counts queries) --
 # each in that slice's own ledger entry.
 _CEILINGS = {
     "/": 101,
@@ -71,8 +73,8 @@ _CEILINGS = {
     "/privacidad/consentimiento": 9,
     "/privacidad/exportar": 58,
     "/settings": 24,
-    "/shifts": 50,
-    "/shifts/como": 25,
+    "/shifts": 42,
+    "/shifts/como": 20,
     "/shifts/patron": 16,
     "/sw.js": 3,
     "/trends": 19,

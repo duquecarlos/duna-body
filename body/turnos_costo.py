@@ -385,43 +385,17 @@ def frase_patron(perfil: dict, metric: str) -> dict | None:
     return {"kind": "no_vuelve", "peor": peor_offset, "direccion": direccion}
 
 
-class _LectorVarias:
-    """Same `.series()`/`.day_values()` contract as body/lector.py's `Lector`, but loads every
-    metric named with ONE SQL statement (`metric_key IN (...)`) instead of Lector's one query per
-    metric. `perfiles_patron` below needs all of MODELO['metricas'] (five metrics) at once, every
-    time Trends renders -- five separate Lector queries would cost /trends' own statement ceiling
-    (tests/test_rendimiento.py) five statements just for this, where one combined read costs it
-    one (BODY-TENDENCIAS-LEYENDA-PATRON-1). Used only here, so it stays private rather than moving
-    into body/lector.py."""
-
-    def __init__(self, conn, person_id: int, desde: str, hasta: str, metrics) -> None:
-        self._series: dict[str, dict[str, float]] = {m: {} for m in metrics}
-        placeholders = ",".join("?" * len(metrics))
-        rows = conn.execute(
-            f"SELECT metric_key, day, value FROM daily_metric WHERE person_id = ? "
-            f"AND metric_key IN ({placeholders}) AND day BETWEEN ? AND ?",
-            (person_id, *metrics, desde, hasta),
-        ).fetchall()
-        for r in rows:
-            self._series[r["metric_key"]][r["day"]] = r["value"]
-
-    def series(self, metric: str, start: str, end: str) -> dict[str, float]:
-        return {day: value for day, value in self._series.get(metric, {}).items() if start <= day <= end}
-
-    def day_values(self, day: str) -> dict[str, float]:
-        return {metric: serie[day] for metric, serie in self._series.items() if day in serie}
-
-
 def perfiles_patron(conn, person_id: int, hoy: date | None = None) -> dict[str, dict]:
     """BODY-TENDENCIAS-LEYENDA-PATRON-1: `perfil_por_dia` for every metric in MODELO['metricas'],
-    sharing one `_LectorVarias`, one `bloques_noche` call and one `referencia()` call across all
-    five -- the one caller (Trends, and the assistant's leer_tendencias) that needs a pattern per
-    metric, never a statement per metric."""
+    sharing one `Lector`, one `bloques_noche` call and one `referencia()` call across all five --
+    the one caller (Trends, and the assistant's leer_tendencias) that needs a pattern per metric,
+    never a statement per metric (`Lector` itself loads every metric with one combined SELECT,
+    BODY-TENDENCIAS-LEYENDA-PATRON-1-M fix 2)."""
     hoy = hoy or date.today()
     desde = (hoy - timedelta(RESUMEN_DIAS)).isoformat()
     desde_lector = (hoy - timedelta(RESUMEN_DIAS + 1)).isoformat()
     hasta_lector = (hoy + timedelta(MODELO["ventana_post"])).isoformat()
-    lector = _LectorVarias(conn, person_id, desde_lector, hasta_lector, MODELO["metricas"])
+    lector = Lector(conn, person_id, desde_lector, hasta_lector, MODELO["metricas"])
     ref = referencia(conn, person_id, hoy, lector=lector)
     bloques = bloques_noche(conn, person_id, desde, hoy.isoformat())
     return {m: perfil_por_dia(conn, person_id, m, hoy, lector=lector, bloques=bloques, ref=ref)
