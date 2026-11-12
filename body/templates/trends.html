@@ -53,6 +53,34 @@
 </div>
 <p class="note">{{ t('trends.tap_month') if r == 'all' else t('trends.tap_day') }}</p>
 
+{% if racha %}
+<div class="card">
+  <div class="q">{{ racha.titulo }}</div>
+  <p class="sub mt-2 mb-8">{{ racha.sub }}</p>
+  {% if racha.piso_nota %}<p class="note mt-4 mb-0">{{ racha.piso_nota }}</p>{% endif %}
+  {% if racha.noche_nota %}<p class="note mt-4 mb-0">{{ racha.noche_nota }}</p>{% endif %}
+  {{ racha.svg|safe }}
+  {% if racha.figuras %}
+  <div class="grid2 grid3 mt-8">
+    {% for f in racha.figuras %}
+    <div class="card"><div class="k">{{ f.texto }}</div><div class="fig">{{ f.valor }}</div></div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <form method="post" action="/trends/racha-piso" class="mt-8">
+    {% if r != 'all' %}<input type="hidden" name="r" value="{{ r }}">{% endif %}
+    <label class="k" for="racha-piso-select">{{ t('trends.racha.piso_label') }}</label>
+    <select class="field mt-4" name="habit_id" id="racha-piso-select">
+      <option value=""{% if not racha.piso_habit_id %} selected{% endif %}>{{ t('trends.racha.sin_piso') }}</option>
+      {% for o in racha.opciones %}
+      <option value="{{ o.id }}"{% if o.id == racha.piso_habit_id %} selected{% endif %}>{{ o.texto }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="btn on w-100 mt-8">{{ t('ajustes.asistente.guardar') }}</button>
+  </form>
+</div>
+{% endif %}
+
 {% if extra_groups %}
 <details class="files mt-10"{% if todas %} open{% endif %}>
   <summary class="k">{{ t('trends.ver_todas', n=extra_count) }}</summary>

@@ -3,11 +3,13 @@ month view and "Ver todas las medidas". Pure move: path, method, templates and b
 """
 from __future__ import annotations
 
+import html
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
 
-from .. import anatomia, baselines, db, fuentes, identity, profile, turnos_costo
+from .. import anatomia, baselines, db, entreno_racha, fuentes, goals, household, identity, profile, turnos_costo
 from ..catalogo_tendencias import TODAS
 from ..desplazamiento_import import FUENTE as _FUENTE_COMMUTE
 from ..i18n import T
@@ -136,6 +138,140 @@ def _frase_patron_texto(t: T, frase: dict | None) -> str | None:
         vuelta = t("trends.patron.vuelta." + frase["vuelta"])
         return t("trends.patron.vuelve." + frase["direccion"], peor=peor, vuelta=vuelta)
     return t("trends.patron.no_vuelve." + frase["direccion"], peor=peor, n=_N_POST_OFFSETS)
+
+
+# BODY-TENDENCIAS-RACHA-GRAFICO-1 ruling 3: the study card's own SVG bar chart -- one bar per week,
+# a fixed viewBox at the real 375px card width (same derivation as body/rutas/turnos.py's own
+# _PERFIL_WIDTH), thin enough to fit the whole watch history with no aggregation.
+_RACHA_WIDTH = 313
+_RACHA_TOP = 4
+_RACHA_PLOT_H = 84
+_RACHA_TICK_H = 6  # the night-shift tick strip under the bars
+
+
+def _racha_tick_indices(n: int) -> list[int]:
+    """Up to 4 evenly spaced week indices (ruling 3's "3-4 tick month axis"), including the first
+    and last week; fewer than 4 when there are fewer than 4 weeks."""
+    if n <= 1:
+        return [0]
+    k = min(4, n)
+    return sorted({round(i * (n - 1) / (k - 1)) for i in range(k)})
+
+
+def _racha_svg(t: T, semanas: list[dict], piso: int | None, turnos_on: bool, aria: str) -> str:
+    n = len(semanas)
+    tope = max(max(s["sesiones"] for s in semanas), piso or 0, 1)
+    top, h = _RACHA_TOP, _RACHA_PLOT_H
+    base_y = top + h
+    bw = _RACHA_WIDTH / n
+    bar_w = max(bw - 0.4, 0.4)
+    out = []
+    for i, s in enumerate(semanas):
+        x0 = i * bw
+        alto = (s["sesiones"] / tope) * h
+        if alto > 0:
+            cls = "c-body" if s["alcanza"] else "c-other"
+            out.append(f'<rect x="{x0:.1f}" y="{base_y - alto:.1f}" width="{bar_w:.1f}" height="{alto:.1f}" '
+                       f'class="{cls}"/>')
+        if turnos_on and s["noche"]:
+            out.append(f'<rect x="{x0:.1f}" y="{base_y + 2:.1f}" width="{bar_w:.1f}" height="3" class="c-night"/>')
+    if piso is not None:
+        y_piso = base_y - (piso / tope) * h
+        out.append(f'<line x1="0" y1="{y_piso:.1f}" x2="{_RACHA_WIDTH}" y2="{y_piso:.1f}" class="stroke-muted" '
+                   f'stroke-width="1.2" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>')
+    full_h = base_y + _RACHA_TICK_H
+    svg = (f'<svg viewBox="0 0 {_RACHA_WIDTH} {full_h}" width="100%" height="110" role="img" '
+           f'aria-label="{html.escape(aria)}" preserveAspectRatio="none" class="chart-svg">{"".join(out)}</svg>')
+    etiquetas = "".join(f"<span>{html.escape(t.month_year(date.fromisoformat(semanas[i]['lunes'])))}</span>"
+                        for i in _racha_tick_indices(n))
+    return svg + f'<div class="row k fs-12">{etiquetas}</div>'
+
+
+def _racha_semanas_txt(t: T, n: int) -> str:
+    return t("trends.racha.semanas_one") if n == 1 else t("trends.racha.semanas_other", n=t.num(n))
+
+
+def _piso_actual(conn, person_id: int) -> tuple[int | None, str | None, int | None]:
+    """Ruling 1: the resolved weekly floor for this person's own chosen habit (body/db.py's
+    racha_piso table) -- None unless that habit is still active, cadence per='week', and readable
+    by this person (goals.goal_access plus the same assignee rule body/rutas/metas.py's own
+    habit_check route checks). Always returns the raw stored habit_id too (even one that no longer
+    resolves), so the picker can still show it was picked and simply yields no floor."""
+    habit_id = db.racha_piso_habit_id(conn, person_id)
+    if habit_id is None:
+        return None, None, None
+    h = conn.execute(
+        "SELECT id, title, cadence, active, goal_id, assignee_person_id FROM habit WHERE id = ?", (habit_id,)
+    ).fetchone()
+    if h is None or not h["active"]:
+        return None, None, habit_id
+    if h["assignee_person_id"] is not None and h["assignee_person_id"] != person_id:
+        return None, None, habit_id
+    if goals.goal_access(conn, h["goal_id"], person_id) is None:
+        return None, None, habit_id
+    cadence = comun._habit_cadence(h)
+    if cadence.get("per") != "week":
+        return None, None, habit_id
+    return cadence.get("times"), h["title"], habit_id
+
+
+def _opciones_piso(conn, t: T, person_id: int) -> list[dict]:
+    """Ruling 2's picker: every active, weekly habit this person may read (goal_access, plus the
+    same assignee rule above) -- the only habit ids a POST to /trends/racha-piso may name."""
+    hh = household.household_of(conn, person_id)
+    scope_sql, scope_params = goals.goal_scope_sql(person_id, hh)
+    rows = conn.execute(
+        f"SELECT h.id, h.title, h.cadence, h.assignee_person_id FROM habit h "
+        f"JOIN goal ON goal.id = h.goal_id WHERE h.active = 1 AND ({scope_sql})",
+        scope_params,
+    ).fetchall()
+    out = []
+    for h in rows:
+        if h["assignee_person_id"] is not None and h["assignee_person_id"] != person_id:
+            continue
+        cadence = comun._habit_cadence(h)
+        if cadence.get("per") != "week":
+            continue
+        texto = f"{h['title']} · {t('trends.racha.piso_opcion', n=t.num(cadence.get('times')))}"
+        out.append({"id": h["id"], "texto": texto})
+    return out
+
+
+def _racha_ctx(t: T, conn, person_id: int, turnos_on: bool, hoy: date) -> dict | None:
+    """The study card's whole context (ruling 3), or None when racha_semanal has nothing to show
+    (no strength session ever) -- the card, including its picker, is absent then."""
+    piso, _piso_titulo, piso_habit_id = _piso_actual(conn, person_id)
+    result = entreno_racha.racha_semanal(conn, person_id, piso=piso, hoy=hoy)
+    if result is None:
+        return None
+    semanas = result["semanas"]
+    titulo = t("trends.racha.titulo", mes=t.month_year(date.fromisoformat(result["desde"])))
+    sub = t("trends.racha.sub", dias=t.num(result["dias_historia"]))
+    piso_nota = t("trends.racha.piso_nota", piso=t.num(piso)) if piso is not None else None
+    noche_nota = t("trends.racha.noche_nota") if turnos_on else None
+    primera = date.fromisoformat(semanas[0]["lunes"])
+    ultima = date.fromisoformat(semanas[-1]["lunes"]) + timedelta(6)
+    aria = t("trends.racha.aria", desde=comun._short_date(t, primera), hasta=comun._short_date(t, ultima))
+    svg = _racha_svg(t, semanas, piso, turnos_on, aria)
+    figuras = []
+    if piso is not None:
+        mas_larga = result.get("mas_larga")
+        if mas_larga:
+            desde = comun._short_date(t, date.fromisoformat(mas_larga["inicio"]))
+            hasta = comun._short_date(t, date.fromisoformat(mas_larga["fin"]) + timedelta(6))
+            figuras.append({"valor": _racha_semanas_txt(t, mas_larga["semanas"]),
+                           "texto": t("trends.racha.mas_larga_txt", piso=t.num(piso), desde=desde, hasta=hasta)})
+        term = result.get("terminadas_en_noche")
+        if turnos_on and term and term["de"]:
+            figuras.append({"valor": t("trends.racha.terminadas_valor", n=t.num(term["n"]), de=t.num(term["de"])),
+                           "texto": t("trends.racha.terminadas_txt")})
+        actual = result.get("actual")
+        if actual:
+            figuras.append({"valor": _racha_semanas_txt(t, actual["semanas"]), "texto": t("trends.racha.actual_txt")})
+    return {
+        "titulo": titulo, "sub": sub, "piso_nota": piso_nota, "noche_nota": noche_nota, "svg": svg,
+        "figuras": figuras, "opciones": _opciones_piso(conn, t, person_id), "piso_habit_id": piso_habit_id,
+    }
 
 
 def _trend_card(t: T, defs: dict, k: str, start, end, month, nights, marcas, profiles: dict, windows_by_key: dict,
@@ -316,10 +452,35 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
         fig_label = t("trends.last30")
     cuerpo_ctx = {"vistas": anatomia.contexto(t, "tendencias", frozenset({"corazon"})),
                   "caption": t("cuerpo.caption.tendencias"), "recorte": "torso"}
+    racha = _racha_ctx(t, conn, person_id, turnos_on, today_local)
     return comun._render("trends.html", t=t, tab="trends", cards=cards, week=week if r == "all" else None,
                    since=t.long_date(date.fromisoformat(since)) if since else "", days=t.num(days),
                    r=r, ranges=RANGES, fig_label=fig_label, nights=bool(nights), marcas=bool(marcas),
-                   month_title=t.month_year(month) if month else None,
+                   month_title=t.month_year(month) if month else None, racha=racha,
                    extra_groups=extra_groups, extra_count=extra_count, todas=todas == "1",
                    desde=desde, dia=desde_dia, back_href=back_href, back_label=back_label, turnos=turnos_on,
                    cuerpo=cuerpo_ctx)
+
+
+@router.post("/trends/racha-piso")
+@comun._cierra_conexion_async
+async def trends_racha_piso(request: Request, person_id: int = Depends(identity.current_person_id)):
+    """Ruling 2: sets or clears (habit_id empty = "Sin piso"/"No floor") this person's own chosen
+    floor habit -- never a figure in the redirect, and the only habit ids accepted are exactly the
+    ones _opciones_piso would have offered this person (active, weekly, readable)."""
+    conn, person, t = comun._ctx(person_id)
+    f = await comun._form(request)
+    raw = (f.get("habit_id") or "").strip()
+    habit_id = None
+    if raw:
+        try:
+            habit_id = int(raw)
+        except ValueError:
+            raise HTTPException(404)
+        validos = {o["id"] for o in _opciones_piso(conn, t, person_id)}
+        if habit_id not in validos:
+            raise HTTPException(404)
+    db.set_racha_piso(conn, person_id, habit_id)
+    r = f.get("r")
+    qs = f"?r={r}" if r in RANGES and r != "all" else ""
+    return RedirectResponse(f"/trends{qs}", status_code=303)
