@@ -19236,3 +19236,5 @@ output file until its `Ran ` line appeared rather than polling turn-by-turn:
 customer-facing bytes (a read, and one additive assistant-tool-output key -- no screen, no
 translation string), no cross-repo contract or DTO change. All three of merge policy A's conditions
 pass. **Merges on this green gate.**
+
+-- merged fa13024ac6bd213f7519e8a261d5d717940d7683
