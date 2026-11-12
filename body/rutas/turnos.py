@@ -3,6 +3,7 @@ it's calculated, and the typed-pattern form -- the last domain moved out of body
 """
 from __future__ import annotations
 
+import html
 from datetime import date, datetime, timedelta
 from urllib.parse import parse_qs
 
@@ -100,6 +101,103 @@ def _turnos_ultima_ctx(t: T, defs: dict, resumen: dict) -> dict | None:
                   fin=comun._short_date(t, date.fromisoformat(u["fin"])), n=u["n"]),
         "filas": _turnos_ultima_filas(t, defs, u["metricas"]),
         "recuperacion": _turnos_ultima_recuperacion(t, u),
+    }
+
+
+_PERFIL_WIDTH, _PERFIL_HEIGHT = 320, 128
+
+
+def _perfil_offset_palabra(t: T, offset: str) -> str:
+    return t("shifts.perfil.offset." + offset)
+
+
+def _perfil_vuelta_frase(t: T, perfil: dict) -> str:
+    if perfil["vuelta"] is None:
+        return t("shifts.perfil.vuelta_ausente")
+    return t("shifts.perfil.vuelta", offset=_perfil_offset_palabra(t, perfil["vuelta"]))
+
+
+def _perfil_caption(t: T, perfil: dict) -> str:
+    """BODY-TURNOS-PERFIL-DIA-1 ruling 3: built from the data every time, never a fixed sentence --
+    `punto` and the extreme offset follow whichever direction turnos_costo.perfil_por_dia found
+    worse for this metric (mas_bajo/mas_alto), and the closing clause follows whether (and when) the
+    metric came back inside the band."""
+    if "mas_bajo" in perfil:
+        punto, extremo = t("shifts.perfil.punto.bajo"), perfil["mas_bajo"]
+    else:
+        punto, extremo = t("shifts.perfil.punto.alto"), perfil["mas_alto"]
+    key = _singular_key("shifts.perfil.caption", perfil["noches_tipicas"])
+    return t(key, n=perfil["noches_tipicas"], punto=punto, offset=_perfil_offset_palabra(t, extremo),
+              vuelta=_perfil_vuelta_frase(t, perfil))
+
+
+def _perfil_eje_label(t: T, offset: str, n: int) -> str:
+    if offset.startswith("post_"):
+        return "+" + offset.split("_")[1]
+    return t("shifts.perfil.eje." + offset, n=n)
+
+
+def _perfil_tick(t: T, v: float) -> str:
+    r = round(v, 1)
+    if r == 0:
+        return "0"
+    return ("+" if r > 0 else "-") + t.num(abs(r), 1)
+
+
+def _perfil_svg(t: T, perfil: dict, *, color_cls: str = "body") -> str:
+    """Server-rendered SVG (Body's CSP forbids inline style/script): the band as a light rect, the
+    night offsets shaded, a line through each offset's own mean with a point per offset, and three y
+    ticks read off the data's own range (top, zero, bottom) -- never a population figure."""
+    offsets = perfil["offsets"]
+    if len(offsets) < 2:
+        return ""
+    width, height = _PERFIL_WIDTH, _PERFIL_HEIGHT
+    banda = perfil["banda"]
+    vals = [o["media"] for o in offsets]
+    rango_bajo = min(min(vals), banda["bajo"], 0.0)
+    rango_alto = max(max(vals), banda["alto"], 0.0)
+    pad = (rango_alto - rango_bajo) * 0.15 or 1.0
+    lo, hi = rango_bajo - pad, rango_alto + pad
+    top, h = 10, height - 28
+    full = top + h + 6
+
+    def y(v: float) -> float:
+        return top + h - (v - lo) / (hi - lo) * h
+
+    step = width / (len(offsets) - 1)
+    out = [f'<rect x="0" y="{y(banda["alto"]):.1f}" width="{width}" '
+           f'height="{max(1.0, y(banda["bajo"]) - y(banda["alto"])):.1f}" class="c-inset"/>']
+    for i, o in enumerate(offsets):
+        if o["offset"] in ("noche_1", "noche_ultima"):
+            out.append(f'<rect x="{max(0.0, i * step - step / 2):.1f}" y="0" width="{step:.1f}" '
+                       f'height="{full:.1f}" class="c-night op-18"/>')
+    out.append(f'<line x1="0" y1="{y(0):.1f}" x2="{width}" y2="{y(0):.1f}" class="stroke-line" '
+               f'stroke-width="1" stroke-dasharray="2 3"/>')
+    line_pts = " ".join(f"{i * step:.1f},{y(o['media']):.1f}" for i, o in enumerate(offsets))
+    out.append(f'<polyline fill="none" class="stroke-{color_cls}" stroke-width="2.2" '
+               f'vector-effect="non-scaling-stroke" stroke-linejoin="round" points="{line_pts}"/>')
+    for i, o in enumerate(offsets):
+        out.append(f'<circle cx="{i * step:.1f}" cy="{y(o["media"]):.1f}" r="3" class="c-{color_cls}"/>')
+    out.append(f'<text x="2" y="{y(rango_alto) + 9:.1f}" class="tick">{_perfil_tick(t, rango_alto)}</text>')
+    out.append(f'<text x="2" y="{y(0) - 3:.1f}" class="tick">0</text>')
+    out.append(f'<text x="2" y="{y(rango_bajo) - 3:.1f}" class="tick">{_perfil_tick(t, rango_bajo)}</text>')
+    aria = html.escape(_perfil_caption(t, perfil))
+    return (f'<svg viewBox="0 0 {width} {full}" width="100%" height="120" role="img" aria-label="{aria}" '
+            f'preserveAspectRatio="none" class="chart-svg">{"".join(out)}</svg>')
+
+
+def _perfil_hrv_ctx(t: T, perfil: dict | None) -> dict | None:
+    """BODY-TURNOS-PERFIL-DIA-1 ruling 3: no chart, no empty frame, when there is no profile yet."""
+    if perfil is None or perfil.get("motivo") is not None:
+        return None
+    svg = _perfil_svg(t, perfil)
+    if not svg:
+        return None
+    n = perfil["noches_tipicas"]
+    return {
+        "svg": svg,
+        "ejes": [_perfil_eje_label(t, o["offset"], n) for o in perfil["offsets"]],
+        "n_bloques": t("shifts.perfil.n_bloques", k=perfil["n_bloques"]),
     }
 
 
@@ -233,11 +331,12 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
     # BODY-TURNO-FC-1: pure reads over the already-derived `turno_fc` table (two cheap SELECTs,
     # body/turno_fc.py's own estudio()) -- never a live recompute on this page render.
     pulso = _turno_fc_ctx(t, turno_fc.estudio(conn, person_id))
+    perfil_hrv = _perfil_hrv_ctx(t, resumen.get("perfil_hrv"))
     cuerpo_ctx = {"vistas": anatomia.contexto(t, "turnos", frozenset({"cerebro"})),
                   "caption": t("cuerpo.caption.turnos"), "recorte": "cabeza"}
     costo_ctx = {"hero_dias": resumen["dias_recuperacion"], "motivo": resumen["motivo"],
                  "filas": filas, "costo_vacio": costo_vacio, "strip": strip, "strip_legend": strip_legend,
-                 "ultima": ultima, "pulso": pulso, "cuerpo": cuerpo_ctx}
+                 "ultima": ultima, "pulso": pulso, "perfil_hrv": perfil_hrv, "cuerpo": cuerpo_ctx}
     tiene_patron = patron_turnos.leer(conn, person_id) is not None
     if len(rows) > 1:
         summary = shift_import.summary_proposed(conn, person_id)

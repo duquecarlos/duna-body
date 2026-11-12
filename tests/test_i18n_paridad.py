@@ -128,6 +128,12 @@ _FIXED_DYNAMIC = {
     # body/rutas/turnos.py _turno_fc_sueno_lineas(): the fixed corta/normal sleep split (the same
     # one body/turno_fc.py's own estudio() uses).
     "shifts.pulso.sueno_+": ["corta", "normal"],
+    # body/rutas/turnos.py _perfil_offset_palabra(): every OFFSET turnos_costo.perfil_por_dia can
+    # return (BODY-TURNOS-PERFIL-DIA-1).
+    "shifts.perfil.offset.+": list(turnos_costo.OFFSETS),
+    # body/rutas/turnos.py _perfil_eje_label(): the three OFFSETS that get a translated x-axis label
+    # -- post_1..post_4 are rendered as a literal "+1".."+4", the same in both languages, never t().
+    "shifts.perfil.eje.+": ["antes", "noche_1", "noche_ultima"],
     # body/rutas/hoy.py _noche_inusual_senales(): body/noche_inusual.py MODELO's own three signals.
     "noche.senal.+": list(noche_inusual.MODELO["senales"]),
     # body/anatomia.py contexto(): every view id, across the three screens (anclajes.json's own

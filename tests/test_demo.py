@@ -296,5 +296,27 @@ class UltimaSemanaReachableTest(unittest.TestCase):
                                  f"expected a gap state for hoy={hoy}, got {u}")
 
 
+class PerfilHrvReachableTest(unittest.TestCase):
+    """BODY-TURNOS-PERFIL-DIA-1 ruling 5: the default demo seed gives a real perfil_hrv (the hero's
+    chart renders) for every day of the shift cycle, with a visible dip at the nights and most days
+    showing an actual return into band -- NIGHT_EFFECT's hrv_last_night dip plus _recovery_factor's
+    own taper already produce this; this test is the regression guard on it."""
+
+    ANCHOR0 = date(2026, 1, 5)
+
+    def test_default_seed_gives_a_profile_every_day_of_the_cycle(self):
+        vueltas_vistas = 0
+        for offset in range(28):
+            hoy = self.ANCHOR0 + timedelta(offset)
+            with self.subTest(hoy=hoy.isoformat()):
+                conn = _seed_at(self, hoy, demo.DIAS_DEFAULT)
+                p = turnos_costo.resumen(conn, 1, hoy=hoy)["perfil_hrv"]
+                self.assertIsNone(p["motivo"], f"no perfil_hrv for hoy={hoy}: {p}")
+                self.assertIn("noche_1", {o["offset"] for o in p["offsets"]})
+                if p["vuelta"] is not None:
+                    vueltas_vistas += 1
+        self.assertGreater(vueltas_vistas, 20)  # a return is the common case, not a rare one
+
+
 if __name__ == "__main__":
     unittest.main()

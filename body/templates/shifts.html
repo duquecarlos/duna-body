@@ -82,6 +82,15 @@
   {% if hero_dias is not none %}
   <div><span class="approx big">≈</span><span class="big">{{ hero_dias }}</span></div>
   <p class="read">{{ t('shifts.hero_sub') }}</p>
+  {% if perfil_hrv %}
+  {{ perfil_hrv.svg|safe }}
+  <div class="row k fs-12">{% for et in perfil_hrv.ejes %}<span>{{ et }}</span>{% endfor %}</div>
+  <div class="legend mt-4">
+    <span><i class="c-inset"></i>{{ t('shifts.perfil.banda') }}</span>
+    <span><i class="c-night op-18"></i>{{ t('shift.kind.night') }}</span>
+  </div>
+  <p class="k mt-4">{{ perfil_hrv.n_bloques }}</p>
+  {% endif %}
   {% else %}
   <div class="fig c-muted">{{ t('shifts.no_hero_short') }}</div>
   <p class="read">{{ t('shifts.reason.' ~ motivo) }}</p>

@@ -639,6 +639,76 @@ class WebAndToolTest(unittest.TestCase):
         finally:
             self.client.post("/settings/language", data={"lang": "es"})
 
+    def _seed_three_blocks_anchored(self, conn):
+        """Three 2-night blocks with a real HRV dip (BODY-TURNOS-PERFIL-DIA-1) -- enough blocks for
+        turnos_costo.perfil_por_dia's own MIN_BLOQUES_PREVIOS floor, anchored to date.today() so a
+        route-level /shifts request (which reads comun._today_local, never a fixed test date) sees
+        them."""
+        today = date.today()
+        _fill_range(conn, 1, today - timedelta(140), today - timedelta(1), CONST)
+        _seed_block_off_baseline(conn, 1, today - timedelta(100), 2)
+        _seed_block_off_baseline(conn, 1, today - timedelta(60), 2)
+        _seed_block_off_baseline(conn, 1, today - timedelta(20), 2)
+        conn.commit()
+        return today
+
+    def test_shifts_renders_the_hrv_profile_chart_in_spanish(self):
+        conn = self._reset_db()
+        self._seed_three_blocks_anchored(conn)
+        r = self.client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('class="chart-svg"', r.text)
+        self.assertIn(_t("es", "shifts.perfil.eje.noche_1"), r.text)
+        self.assertIn(_t("es", "shifts.perfil.banda"), r.text)
+        self.assertIn("+1", r.text)
+        self.assertNotIn('style="', r.text)
+
+    def test_shifts_renders_the_hrv_profile_chart_in_english(self):
+        conn = self._reset_db()
+        self._seed_three_blocks_anchored(conn)
+        self.client.post("/settings/language", data={"lang": "en"})
+        try:
+            r = self.client.get("/shifts")
+            self.assertEqual(r.status_code, 200)
+            self.assertIn('class="chart-svg"', r.text)
+            self.assertIn(_t("en", "shifts.perfil.eje.noche_1"), r.text)
+            self.assertIn(_t("en", "shifts.perfil.banda"), r.text)
+        finally:
+            self.client.post("/settings/language", data={"lang": "es"})
+
+    def test_no_chart_without_a_profile(self):
+        """BODY-TURNOS-PERFIL-DIA-1 ruling 3: no chart, no empty frame -- only 2 blocks here, under
+        perfil_por_dia's own MIN_BLOQUES_PREVIOS floor (the hero's own dias_recuperacion still shows,
+        since its floor is lower)."""
+        conn = self._reset_db()
+        self._seed_today_anchored(conn)
+        r = self.client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn('class="chart-svg"', r.text)
+
+    def test_singular_caption_and_axis_for_one_night_blocks(self):
+        conn = self._reset_db()
+        today = date.today()
+        _fill_range(conn, 1, today - timedelta(140), today - timedelta(1), CONST)
+        _seed_block_off_baseline(conn, 1, today - timedelta(100), 1)
+        _seed_block_off_baseline(conn, 1, today - timedelta(60), 1)
+        _seed_block_off_baseline(conn, 1, today - timedelta(20), 1)
+        conn.commit()
+        r = self.client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("alrededor de una noche", r.text)  # the singular caption, not "{n} noches"
+        # no separate "last night" column when every block seen is a single night
+        self.assertNotIn(_t("es", "shifts.perfil.offset.noche_ultima"), r.text)
+
+    def test_assistant_tool_carries_perfil_hrv(self):
+        conn = self._reset_db()
+        self._seed_three_blocks_anchored(conn)
+        out = herramientas.ejecutar(conn, 1, "leer_costo_turnos", {}, "resumen")
+        self.assertIn("perfil_hrv", out)
+        self.assertIsNone(out["perfil_hrv"]["motivo"])
+        self.assertTrue(out["perfil_hrv"]["offsets"])
+        json.dumps(out)  # JSON-serializable
+
 
 if __name__ == "__main__":
     unittest.main()
