@@ -118,6 +118,7 @@ class RouteSetTest(unittest.TestCase):
         ("/static", ()),
         ("/sw.js", ("GET",)),
         ("/trends", ("GET",)),
+        ("/trends/racha-piso", ("POST",)),  # BODY-TENDENCIAS-RACHA-GRAFICO-1
     }
 
     def test_route_set_is_unchanged_by_the_ayuda_move(self):
