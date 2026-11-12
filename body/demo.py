@@ -147,6 +147,14 @@ _PLAN_HOY_EJERCICIOS = {
 _LESION_ZONA_DEMO = "hombro"
 _LESION_SET_EJERCICIO = {"es": "press militar", "en": "overhead press"}
 
+# BODY-ENTRENO-VINCULO-1 ruling 8: the manual session's own title on the one demo day seeded
+# already linked to its watch session, so Día shows ruling 3's "joined" line without the person
+# needing to do anything.
+_ENTRENO_VINCULADO_TITULO = {"es": "Fuerza (registrada a mano)", "en": "Strength (logged by hand)"}
+# BODY-ENTRENO-VINCULO-1-M: the invented watch strength activity's own name follows the demo
+# language the same way, so the linked card's watch side reads "Strength" in English too.
+_ENTRENO_WATCH_TITULO = {"es": "Fuerza", "en": "Strength"}
+
 
 @dataclass
 class _DayData:
@@ -290,7 +298,7 @@ def _day_metrics(rng: random.Random, d: date, factor: float) -> tuple[dict, str 
     return metrics, sleep_start, sleep_end, breath
 
 
-def _day_activity(rng: random.Random, d: date) -> dict | None:
+def _day_activity(rng: random.Random, d: date, idioma: str) -> dict | None:
     """One invented activity on D, 30% of the time, never on a night-shift day."""
     if _shift_kind_for(d) == "night":
         return None
@@ -298,15 +306,16 @@ def _day_activity(rng: random.Random, d: date) -> dict | None:
         return None
     act = rng.choice(ACTIVITY_TYPES)
     dist = rng.uniform(*act["dist"]) * 1000 if act["dist"] else None
+    name = _ENTRENO_WATCH_TITULO[idioma] if act["type"] == "strength_training" else act["name"]
     return {
         "source_id": f"demo-{d.isoformat()}-1", "start_local": f"{d.isoformat()}T18:{rng.randint(0, 59):02d}:00",
-        "type": act["type"], "name": act["name"], "duration_s": round(rng.uniform(*act["dur"]) * 60),
+        "type": act["type"], "name": name, "duration_s": round(rng.uniform(*act["dur"]) * 60),
         "distance_m": round(dist) if dist else None, "avg_hr": round(rng.uniform(*act["hr"])),
         "max_hr": round(rng.uniform(*act["hr"]) + 15), "calories": round(rng.uniform(*act["kcal"])),
     }
 
 
-def _seed_days(conn, db, rng: random.Random, all_days: list[date], person_id: int) -> tuple[int, int]:
+def _seed_days(conn, db, rng: random.Random, all_days: list[date], person_id: int, idioma: str) -> tuple[int, int]:
     """Every day's save_day call, in order -- metrics then that day's activity, matching the draw
     order a single rng.Random(SEED) has always produced them in."""
     metric_rows = activity_rows = 0
@@ -314,13 +323,39 @@ def _seed_days(conn, db, rng: random.Random, all_days: list[date], person_id: in
         factor = _recovery_factor(d)
         metrics, sleep_start, sleep_end, breath = _day_metrics(rng, d, factor)
         metric_rows += len(metrics) + len(breath)
-        activity = _day_activity(rng, d)
+        activity = _day_activity(rng, d, idioma)
         if activity:
             activity_rows += 1
         db.save_day(conn, _DayData(day=d.isoformat(), metrics=metrics, sleep_start=sleep_start, sleep_end=sleep_end,
                                     activities=[activity] if activity else [], **breath), person_id)
     conn.commit()
     return metric_rows, activity_rows
+
+
+def _seed_entreno_vinculado(conn, db, person_id: int, idioma: str) -> None:
+    """BODY-ENTRENO-VINCULO-1 ruling 8: one manual-first day already linked, so Día shows ruling
+    3's own "joined with your watch's session" line on the demo server without the person needing
+    to do anything. The EARLIEST strength_training day `_seed_days` already made, never a random
+    draw (test_demo.py's own two-runs-identical guard needs this deterministic). The link is set
+    directly through `db.set_vinculo_manual` -- seeding is invented fixture data, not a real sync,
+    so there is no watch activity to insert a second time through `db.save_day`'s own auto-link."""
+    fila = conn.execute(
+        "SELECT source, source_id, day FROM activity WHERE person_id = ? AND type = 'strength_training' "
+        "ORDER BY day LIMIT 1", (person_id,),
+    ).fetchone()
+    if fila is None:
+        return
+    # A fixed id, never db.create_manual_session's own uuid4 -- this row's id must be the same on
+    # every run for the same seed (test_demo.py's own two-runs-identical guard).
+    manual_id = f"demo-manual-{fila['day']}"
+    conn.execute(
+        "INSERT INTO activity (person_id, source_id, day, start_local, type, name, duration_s, "
+        "distance_m, avg_hr, max_hr, calories, source) "
+        "VALUES (?, ?, ?, NULL, NULL, ?, NULL, NULL, NULL, NULL, NULL, 'manual')",
+        (person_id, manual_id, fila["day"], _ENTRENO_VINCULADO_TITULO[idioma]),
+    )
+    db.set_vinculo_manual(conn, person_id, fila["source"], fila["source_id"], manual_id, False)
+    conn.commit()
 
 
 def _muestra_ms(t: datetime) -> int:
@@ -982,7 +1017,8 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     all_days = [anchor - timedelta(dias - 1 - i) for i in range(dias)]
     first_monday, anchor_monday = fechas.lunes_de(all_days[0]), fechas.lunes_de(anchor)
 
-    metric_rows, activity_rows = _seed_days(conn, db, rng, all_days, person_id)
+    metric_rows, activity_rows = _seed_days(conn, db, rng, all_days, person_id, idioma)
+    _seed_entreno_vinculado(conn, db, person_id, idioma)
     metric_rows += _seed_self_metrics(conn, db, rng, all_days, person_id)
     metric_rows += _seed_soreness(conn, db, rng, all_days, person_id)
     entradas_ingesta, comidas_ingesta = _seed_ingesta(conn, db, rng, all_days, person_id)

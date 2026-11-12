@@ -54,6 +54,14 @@ equivalent" restoration `borrar_ingesta`'s own undo uses.
 `workout_set.excluded_by_person` -- `correct_exercise_set` has no equivalent, since it only ever
 moves a slot INTO "corrected". `registrar_entreno`'s own apply/undo (ruling 3) call the same
 writer, for the watch's own active slots its spoken series left unmatched.
+
+`separar_sesion` and `unir_sesiones` (BODY-ENTRENO-VINCULO-1 rulings 4, 5) call `db.set_vinculo_manual`
+directly, the one writer of `activity`'s own `vinculo_manual`/`vinculo_separado` columns -- the pair
+the automatic sync-time link (`db.save_day`) also writes through a narrower helper of its own.
+`separar_sesion`'s apply clears the link and sets `vinculo_separado`, so a later sync never re-guesses
+the same match; its undo restores the link and clears that flag. `unir_sesiones`'s apply sets the
+link (clearing `vinculo_separado`, overriding any earlier split); its undo clears it back to plain
+unlinked -- never `vinculo_separado`, since joining was never the same as a person-made split.
 """
 from __future__ import annotations
 
@@ -493,6 +501,68 @@ def _deshacer_descartar_series(conn: sqlite3.Connection, row: sqlite3.Row) -> No
     for entrada in despues["series"]:
         db.set_series_excluida(conn, row["person_id"], despues["source"], despues["source_id"],
                                 entrada["set_order"], bool(entrada["excluded_antes"]))
+
+
+# -- separar_sesion / unir_sesiones (BODY-ENTRENO-VINCULO-1 rulings 4, 5: this module calls
+# db.set_vinculo_manual directly -- the one writer of activity's own link columns) ------------------
+
+def _fila_reloj(conn: sqlite3.Connection, row: sqlite3.Row, despues: dict) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT vinculo_manual, vinculo_separado FROM activity WHERE person_id = ? AND source = ? "
+        "AND source_id = ?", (row["person_id"], despues["source"], despues["source_id"]),
+    ).fetchone()
+
+
+def _drift_aplicar_separar_sesion(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    reloj = _fila_reloj(conn, row, despues)
+    return reloj is None or reloj["vinculo_manual"] != despues["manual_source_id"]
+
+
+def _drift_deshacer_separar_sesion(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    reloj = _fila_reloj(conn, row, despues)
+    return reloj is None or reloj["vinculo_manual"] is not None or not reloj["vinculo_separado"]
+
+
+def _aplicar_separar_sesion(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    db.set_vinculo_manual(conn, row["person_id"], despues["source"], despues["source_id"], None, True)
+
+
+def _deshacer_separar_sesion(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    db.set_vinculo_manual(conn, row["person_id"], despues["source"], despues["source_id"],
+                           despues["manual_source_id"], False)
+
+
+def _drift_aplicar_unir_sesiones(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    reloj = _fila_reloj(conn, row, despues)
+    if reloj is None or reloj["vinculo_manual"] is not None:
+        return True
+    otro = conn.execute(
+        "SELECT 1 FROM activity WHERE person_id = ? AND vinculo_manual = ?",
+        (row["person_id"], despues["manual_source_id"]),
+    ).fetchone()
+    return otro is not None
+
+
+def _drift_deshacer_unir_sesiones(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    reloj = _fila_reloj(conn, row, despues)
+    return reloj is None or reloj["vinculo_manual"] != despues["manual_source_id"]
+
+
+def _aplicar_unir_sesiones(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    db.set_vinculo_manual(conn, row["person_id"], despues["source"], despues["source_id"],
+                           despues["manual_source_id"], False)
+
+
+def _deshacer_unir_sesiones(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    db.set_vinculo_manual(conn, row["person_id"], despues["source"], despues["source_id"], None, False)
 
 
 # -- registrar_medida (BODY-ENTRENO-MEDIDA-1: this module calls db.set_metric with source='self') -
@@ -996,6 +1066,10 @@ TABLA: dict[str, _Accion] = {
                                _aplicar_borrar_periodo, _deshacer_borrar_periodo),
     "descartar_series": _Accion(_drift_aplicar_descartar_series, _drift_deshacer_descartar_series,
                                  _aplicar_descartar_series, _deshacer_descartar_series),
+    "separar_sesion": _Accion(_drift_aplicar_separar_sesion, _drift_deshacer_separar_sesion,
+                               _aplicar_separar_sesion, _deshacer_separar_sesion),
+    "unir_sesiones": _Accion(_drift_aplicar_unir_sesiones, _drift_deshacer_unir_sesiones,
+                              _aplicar_unir_sesiones, _deshacer_unir_sesiones),
 }
 
 SIN_DESHACER = tuple(nombre for nombre, entrada in TABLA.items() if not entrada.tiene_deshacer)

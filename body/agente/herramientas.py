@@ -210,6 +210,25 @@ _PARAM_DESCARTAR_SERIES = {
     "required": ["day", "series"],
     "additionalProperties": False,
 }
+# BODY-ENTRENO-VINCULO-1 ruling 4: source_id names either half of the linked pair --
+# _resolver_par_vinculado finds the other one.
+_PARAM_SEPARAR_SESION = {
+    "type": "object",
+    "properties": {
+        "day": {"type": "string", "format": "date"},
+        "source_id": {"type": "string"},
+    },
+    "required": ["day", "source_id"],
+    "additionalProperties": False,
+}
+_PARAM_UNIR_SESIONES = {
+    "type": "object",
+    "properties": {
+        "day": {"type": "string", "format": "date"},
+    },
+    "required": ["day"],
+    "additionalProperties": False,
+}
 
 # BODY-PROTEINA-1: an intake key (agregado = 'suma_ingesta') is excluded from registrar_medida's own
 # enum -- it has exactly one writer, registrar_ingesta, below. BODY-CHECKIN-1: the three check-in
@@ -626,15 +645,19 @@ def _leer_entreno(conn: sqlite3.Connection, person_id: int, day: str | None = No
         ini, fin = desde, hasta
     else:
         raise ToolError("se necesita 'day', o 'desde' y 'hasta'")
-    actividades = conn.execute(
+    # BODY-ENTRENO-VINCULO-1 ruling 3: both halves of any linked pair in range are fetched by this
+    # same WHERE (the watch half matches type = 'strength_training', the manual half matches
+    # source = 'manual'), so `db.merge_linked_training` always sees the pair whole and folds it to
+    # one session, same as `db.load_day`.
+    actividades = db.merge_linked_training(conn.execute(
         "SELECT * FROM activity WHERE person_id = ? AND day BETWEEN ? AND ? "
         "AND (type = 'strength_training' OR source = 'manual') ORDER BY day, start_local",
         (person_id, ini, fin),
-    ).fetchall()
+    ).fetchall())
     t = T(db.person(conn, person_id)["language"])
     sesiones = []
     for a in actividades:
-        sets = db.exercise_sets(conn, person_id, a["source"], a["source_id"])
+        sets = db.exercise_sets(conn, person_id, a["sets_source"], a["sets_source_id"])
         zonas_dia = db.zonas_en_recuperacion(conn, person_id, a["day"])
         sesiones.append({
             "dia": a["day"], "titulo": a["name"], "fuente": a["source"], "hora_inicio": a["start_local"],
@@ -886,6 +909,69 @@ def _descartar_series(conn: sqlite3.Connection, person_id: int, conversacion_id:
         })
     despues = {"day": day, "source": source, "source_id": source_id, "series": entradas}
     registro = propuestas.crear(conn, person_id, conversacion_id, "descartar_series", despues)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
+def _resolver_par_vinculado(conn: sqlite3.Connection, t: T, person_id: int, day: str,
+                             source_id: str) -> tuple[sqlite3.Row, sqlite3.Row]:
+    """`separar_sesion`'s own `source_id` resolves either half of a linked pair (ruling 4) --
+    returns (reloj, manual) for whichever one that day actually links. Refuses a day/source_id with
+    no linked pair at all, naming why in the person's own language."""
+    fila = conn.execute(
+        "SELECT * FROM activity WHERE person_id = ? AND day = ? AND source_id = ?",
+        (person_id, day, source_id),
+    ).fetchone()
+    if fila is None:
+        raise ToolError(t("agente.error.entreno_sesion_desconocida", source_id=source_id))
+    if fila["source"] == "manual":
+        reloj = conn.execute(
+            "SELECT * FROM activity WHERE person_id = ? AND day = ? AND source != 'manual' AND "
+            "vinculo_manual = ?", (person_id, day, fila["source_id"]),
+        ).fetchone()
+        manual = fila
+    else:
+        reloj = fila
+        manual = (conn.execute(
+            "SELECT * FROM activity WHERE person_id = ? AND source = 'manual' AND source_id = ?",
+            (person_id, fila["vinculo_manual"]),
+        ).fetchone() if fila["vinculo_manual"] else None)
+    if reloj is None or manual is None:
+        raise ToolError(t("agente.error.entreno_no_unida", day=day))
+    return reloj, manual
+
+
+def _separar_sesion(conn: sqlite3.Connection, person_id: int, conversacion_id: int, day: str,
+                     source_id: str) -> dict:
+    """Proposes splitting a day's linked watch/manual pair back into two sessions (BODY-ENTRENO-
+    VINCULO-1 ruling 4): the person's own undo of an automatic or a chat-raised link. `source_id`
+    may name either half -- `_resolver_par_vinculado` finds the other one."""
+    _dia_no_futuro(conn, person_id, day)
+    t = T(db.person(conn, person_id)["language"])
+    reloj, manual = _resolver_par_vinculado(conn, t, person_id, day, source_id)
+    despues = {"day": day, "source": reloj["source"], "source_id": reloj["source_id"],
+               "manual_source_id": manual["source_id"], "reloj_titulo": reloj["name"],
+               "reloj_hora": reloj["start_local"], "manual_titulo": manual["name"],
+               "manual_hora": manual["start_local"]}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "separar_sesion", despues)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
+def _unir_sesiones(conn: sqlite3.Connection, person_id: int, conversacion_id: int, day: str) -> dict:
+    """Proposes joining a day that already holds a watch strength session and a manual session as
+    two separate rows (BODY-ENTRENO-VINCULO-1 ruling 5) -- how a day stored before this slice, or
+    one `separar_sesion` already split, gets the same match the auto-link makes at sync time.
+    Refuses when that day does not hold exactly one of each, naming why in the person's own
+    language."""
+    _dia_no_futuro(conn, person_id, day)
+    t = T(db.person(conn, person_id)["language"])
+    candidatos = db.candidatos_union_entreno(conn, person_id, day)
+    if candidatos is None:
+        raise ToolError(t("agente.error.entreno_unir_ambiguo", day=day))
+    reloj, manual = candidatos["reloj"], candidatos["manual"]
+    despues = {"day": day, "source": reloj["source"], "source_id": reloj["source_id"],
+               "manual_source_id": manual["source_id"], "reloj_titulo": reloj["name"],
+               "manual_titulo": manual["name"]}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "unir_sesiones", despues)
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
@@ -1515,6 +1601,21 @@ HERRAMIENTAS = [
                      "reloj o un número de serie que no existe. No las marca: registra la "
                      "propuesta para que la persona la apruebe en el chat.",
      "parametros": _PARAM_DESCARTAR_SERIES, "funcion": _descartar_series},
+    {"nombre": "separar_sesion", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone separar de nuevo un día cuya sesión de fuerza del reloj y una sesión "
+                     "manual quedaron unidas como una sola -- por ejemplo si en realidad fueron dos "
+                     "entrenamientos distintos ese día. 'source_id' puede nombrar cualquiera de las "
+                     "dos sesiones. No las separa: registra la propuesta para que la persona la "
+                     "apruebe en el chat.",
+     "parametros": _PARAM_SEPARAR_SESION, "funcion": _separar_sesion},
+    {"nombre": "unir_sesiones", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone unir, para un día, la sesión de fuerza del reloj y la sesión manual que "
+                     "quedaron registradas por separado -- por ejemplo un día guardado antes de que "
+                     "Body empezara a unirlas solas, o un día que la persona ya separó y quiere "
+                     "volver a unir. Solo funciona cuando ese día tiene exactamente una sesión de "
+                     "fuerza del reloj y una sesión manual, ninguna ya unida a otra. No las une: "
+                     "registra la propuesta para que la persona la apruebe en el chat.",
+     "parametros": _PARAM_UNIR_SESIONES, "funcion": _unir_sesiones},
     {"nombre": "registrar_medida", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone registrar un número que la persona mide ella misma para un día "
                      "(por ejemplo su alcance de flexibilidad, sus minutos de ronquido o qué tan "

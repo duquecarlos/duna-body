@@ -17399,3 +17399,184 @@ their tests), `1cba8adc938d2a381aa7c8dd25040a5af45ccd5c` (ruling 3 and its tests
 `c5eee0f8e5a4ebb5b2117a035ae3a7e03a09ca58`, merge tree `28841f9c496f64330a53b62a1ffc84d5c4d54f42`,
 identical to the branch tip's own tree (`git diff` between them empty) -- no conflict, no extra
 change. -- merged c5eee0f8e5a4ebb5b2117a035ae3a7e03a09ca58
+
+## BODY-ENTRENO-VINCULO-1 -- a late-syncing watch session joins its manual twin instead of doubling it
+
+A strength session logged by hand right after training, then the watch's own sync of the same
+session arriving hours later, used to read as two activities. ORCH-CARLOS-DELEGATES-TIER-1-1
+approved this Tier 1 build in words: "One additive nullable column on activity, a link set at sync
+and read everywhere, undoable through a proposal; no row deleted or rewritten; asked for through
+the desk in the person's own use." Eight rulings.
+
+**Ruling 1 -- additive columns.** `activity.vinculo_manual TEXT NULL` (the other half's own
+`source_id`, or NULL) and `activity.vinculo_separado INTEGER NOT NULL DEFAULT 0 CHECK (...IN (0,
+1))` (the person said no to a link db.save_day offered, or undid one -- never offered again for
+that pair), both in `SCHEMA` for a fresh database and behind the usual `PRAGMA table_info` guard in
+`_migrate` for an existing one.
+
+**Ruling 2 -- save_day links exactly one pair.** `db._enlazar_sesion_manual_unica` runs once per
+newly-synced `strength_training` row with `vinculo_manual IS NULL` and `vinculo_separado = 0`: it
+links only when the day has exactly one unlinked manual session that day, never on zero (nothing to
+join) or two-or-more (ambiguous -- `unir_sesiones`, ruling 5, is the person's own batch fix for
+that). `save_day`'s `INSERT OR REPLACE` reads the row's own prior `vinculo_manual`/`vinculo_separado`
+before replacing it, so a re-sync of the same watch activity never drops an existing link or a
+separated flag.
+
+**Ruling 3 -- a linked pair reads as one session everywhere.** `db.merge_linked_training(rows)` is
+the one fold: the manual half's `name` (title) and its `exercise_set` rows win; the watch half's
+`start_local`, `duration_s`, `avg_hr`/`max_hr`, `calories` win; the merged row keeps the WATCH row's
+own `source`/`source_id` (every existing keyed lookup -- recovery, lesion zonas -- stays correct
+unchanged) plus new `sets_source`/`sets_source_id` fields pointing at whichever half's sets are the
+real ones, and a `vinculado` flag. `db.load_day`, `herramientas._leer_entreno`, and
+`hoy._actividades_hoy` all wrap their activities query in it; each exercise-set lookup downstream
+reads `sets_source`/`sets_source_id`, never the merged row's own `source`/`source_id`.
+`history.coverage`'s `activity_count` and `history.training`'s rows both exclude the manual half of
+a linked pair with a `NOT (source = 'manual' AND source_id IN (SELECT vinculo_manual ...))` filter,
+so a linked pair counts once without needing the full dict-merge. Día's card for a linked activity
+shows `day.entreno.unida` ("Unida con la sesión de tu reloj" / "Joined with your watch's session")
+with a "Separar" control.
+
+**Ruling 4 -- `separar_sesion` undoes a link.** A new `tipo: "propuesta"` tool,
+`herramientas._separar_sesion(conn, person_id, conversacion_id, day, source_id)` (either half's
+`source_id` names the pair), resolves the pair via `_resolver_par_vinculado`, and raises a proposal
+through `agente_propuestas.crear` the ordinary way; applying it calls `db.set_vinculo_manual(...,
+separado=True)` so the pair is never auto-relinked by a later sync. Día's own "Separar" form posts to
+`/day/{day}/entreno/{source_id}/separar` (`hoy.entreno_separar`), which raises and immediately
+applies the SAME proposal through `herramientas._separar_sesion` and `agente_propuestas.aplicar` a
+chat/MCP call would use -- no second apply path. Listed in `herramientas.HERRAMIENTAS` at
+`nivel: "ninguno"` (a proposal tool never reads health data), so `body/mcp.py`'s dynamic tool list
+carries it with no change there.
+
+**Ruling 5 -- `unir_sesiones` is the batch fix for an already-doubled day.** A second new
+`tipo: "propuesta"` tool, `herramientas._unir_sesiones(conn, person_id, conversacion_id, day)`, calls
+`db.candidatos_union_entreno(conn, person_id, day)` -- which returns the day's one unlinked manual
+and one unlinked watch `strength_training` row only when there is exactly one of each, else `None`
+-- and refuses (`agente.error.entreno_unir_ambiguo`) otherwise. Applying it is the same
+`db.set_vinculo_manual` write ruling 2's auto-link makes. Día's own "Unir" card (shown only when
+`db.candidatos_union_entreno` finds a pair) posts to `/day/{day}/entreno/unir`
+(`hoy.entreno_unir`), through the same tool and `agente_propuestas` functions.
+
+**Ruling 6 -- the watch-first path is unchanged.** `_registrar_entreno`'s own path (the watch's own
+activity already exists; the person corrects or adds sets onto its own active slots) never touches
+`vinculo_manual`/`vinculo_separado` and was not edited.
+
+**Ruling 7 -- mudanza/privacidad.** `body/mudanza.py` and `body/privacidad.py` both read/write
+`activity` through `SELECT *` and dict construction, never an explicit column list, so neither
+needed a change for the two new columns to travel with every other one -- read, not edited.
+
+**Ruling 8 -- demo.** `body/demo.py`'s `_seed_entreno_vinculado` links the demo person's EARLIEST
+`strength_training` activity to a new manual session on the same day (`_ENTRENO_VINCULADO_TITULO`,
+"Fuerza (registrada a mano)" / "Strength (logged by hand)"), so Día shows ruling 3's "Unida" line
+without the orchestrator needing a real two-sync day. Inserted directly by SQL with a deterministic
+id (`f"demo-manual-{day}"`) rather than through `db.create_manual_session`, which stamps a random
+`uuid.uuid4()` into `source_id` -- `tests/test_demo.py::DeterminismTest` hashes every seeded row, and
+a random id broke it on the first attempt (two seed runs, two different checksums); fixed by writing
+the row with a fixed id instead of changing the determinism test.
+
+**Deviation 1 -- no cross-import for a text helper.** `body/rutas/asistente.py` carries its own rule
+("Duplicated in body/rutas/hoy.py ... since neither module may import the other for one helper"), so
+Día's own `_sesion_con_hora_txt`/`_entreno_vinculo_txt` are duplicated in `hoy.py` rather than
+imported, matching the existing `_momento_checkin_txt` precedent -- `hoy.py` keeps its
+`from . import comun, experimentos` import line unchanged.
+
+**Deviation 2 -- four stale censuses, outside this slice's own touches, needed to turn the gate
+green**, the same "needed to turn the gate green" reason BODY-PROPUESTA-VIGENCIA-1 and
+BODY-TUTORIALES-EN-1 above record for the same kind of fix: adding `separar_sesion`/`unir_sesiones`
+to `herramientas.HERRAMIENTAS` is exactly the sort of change these four tests exist to catch.
+`tests/test_agente_bucle.py::NivelDatosEnforcementTest` and
+`tests/test_agente_registro.py::RegistryShapeTest` (two assertions: a 33-tool count, now 35; a
+hardcoded `PROPUESTA_NOMBRES` set -- that test method renamed from `test_nineteen_...` to
+`test_twentyone_propuesta_tools_at_nivel_ninguno` to keep its own name honest) each keep an
+independent hardcoded census of every `tipo: "propuesta"` tool name, both now including the two new
+ones. `tests/test_registro_tu.py`'s third-person-register guard flagged
+`agente.error.entreno_no_unida`/`agente.error.entreno_unir_ambiguo` ("tiene" -- its subject is "ese
+día", not the reader) and needed two new allow-list lines. `tests/test_web_entry.py::RouteSetTest`
+pins the FastAPI route set as of the `/ayuda` move; the five new routes (`entreno_separar`,
+`entreno_unir`, and the three `entreno_propuesta_*` resolver routes) are added to its `BEFORE` set.
+
+**Not this slice's to fix -- a pre-existing, unrelated gate failure.**
+`tests/test_pipeline.py::PipelineTest::test_end_to_end_page` expects "No hay turno registrado" /
+"No shift recorded" on a fresh person's `/day/{day}` page, but `db.trabaja_turnos_si` returns False
+(hiding the whole Turnos section, the no-shift line included) for a brand-new `person` row -- its
+`trabaja_turnos` column has no default, only a CHECK, and a fresh person has no `shift`/`shift_batch`
+row either, so the read-time NULL-with-no-data inference (`BODY-TURNOS-INFERIR-1`) resolves to
+False. Confirmed unrelated to this slice before leaving it alone: `git diff body/db.py` touches
+no `trabaja_turnos`/`person`-table line, and the test fails the same way run alone, in complete
+isolation, with no other test module loaded. Per BODY-RECUPERACION-1's own rule above ("run the gate
+once, report honestly, do not re-run it into green") for a failure whose fix sits outside this
+slice's own files and substance, this is reported, not patched. Open follow-up:
+`BODY-ENTRENO-VINCULO-1-FOLLOWUP-GATE-RED` -- either give `person.trabaja_turnos` a real default (and
+work out what that implies for `BODY-TURNOS-INFERIR-1`'s own NULL-means-ask-first contract) or teach
+`test_pipeline.py` to set `trabaja_turnos` explicitly before asserting on the shift section; either
+way, re-run the full gate once before any branch carrying it merges.
+
+**Tests**: `tests/test_entreno_vinculo.py` (new, 26): schema/migration (2), `propuesta_agente` CHECK
+widening (1), `save_day` auto-link on exactly-one-candidate and never on zero/many (plus
+`INSERT OR REPLACE` preserving an existing link/separation across re-sync) (6), the watch-first path
+untouched (1), merged reads from `load_day`/`leer_entreno`/`history.coverage`/`history.training` (6),
+`separar_sesion` propose/apply/undo and ownership (5), `unir_sesiones` propose/apply and its
+exactly-one-of-each refusal (5). Plus the four census/style fixes above (no new test methods; counts
+and allow-lists only).
+
+**New i18n strings** (`body/i18n/es.json`/`en.json`, 11 keys each): `agente.error.entreno_sesion_
+desconocida`, `agente.error.entreno_no_unida`, `agente.error.entreno_unir_ambiguo`,
+`asistente.propuesta.titulo.separar_sesion`, `asistente.propuesta.titulo.unir_sesiones`,
+`asistente.propuesta.entreno_separar`, `asistente.propuesta.entreno_unir`, `day.entreno.unida`,
+`day.entreno.separar_boton`, `day.entreno.unir_oferta`, `day.entreno.unir_boton`.
+
+**Gate**, on this branch's final tree (`git status --porcelain` empty before this entry), the exact
+command `.venv/Scripts/python.exe -m unittest discover tests -t .` -- a single run of it exceeds both
+this session's 600s foreground window and its one 10-minute background grace window (2736 tests
+total), so it was run in five filename-range chunks (`test_[a-f]*.py`, `test_[g-m]*.py`,
+`test_[n-r]*.py`, `test_[s]*.py`, `test_[t-z]*.py`), each waited on in the foreground, and reconciled
+against an independent collect-only count (`unittest.TestLoader().discover(...)`, counted without
+running):
+
+    881 + 733 + 530 + 157 + 435 = 2736 tests -- matches the collect-only count exactly
+
+    2735 passed, 1 failed (tests.test_pipeline.PipelineTest.test_end_to_end_page, the pre-existing
+    failure above)
+
+**RED.** Per BODY-RECUPERACION-1's own precedent above, a RED gate is reported as **GATE_RED**
+regardless of the customer-facing-bytes stop this diff would otherwise trip under merge policy A (new
+`activity` columns = schema change; `day.html`/i18n strings = customer-facing bytes -- both still
+true and still apply once the follow-up above turns the gate green). Committed on
+`feat/body-entreno-vinculo-1`, not merged into `main`. No password, token, session secret or health
+figure was read, printed, or written anywhere in this slice's own work.
+
+## BODY-ENTRENO-VINCULO-1-M
+
+Fixed the one pre-existing, unrelated gate failure the surface above reported rather than patched
+(`BODY-ENTRENO-VINCULO-1-FOLLOWUP-GATE-RED`), plus one demo-data cleanup noticed alongside it.
+
+**Order-dependence cause.** `tests.test_pipeline.PipelineTest.test_end_to_end_page` asserted "No hay
+turno registrado" on a fresh person's `/day/{day}` page without ever setting `trabaja_turnos` on that
+person. The assertion only held when some earlier test in the full-suite run happened to leave that
+column set from a previous person row; run alone, or in a different module order, the fresh person's
+`trabaja_turnos` is NULL, `db.trabaja_turnos_si` correctly infers False, the Turnos section (the
+no-shift line included) is correctly hidden, and the test failed -- its own precondition was
+unstated, not the product's behaviour.
+
+**Fix** (`acd9650`): set `trabaja_turnos` through the existing `db.set_trabaja_turnos` setter before
+asserting on the shift line, so the test states what it needs and passes whatever ran before it.
+
+**Second fix** (`a5a4c2f`), noticed while re-running this test: the demo's invented watch session name
+("Fuerza") was hardcoded in `ACTIVITY_TYPES` regardless of the demo's language, so the English card on
+the one seeded day already linked to its watch session read "Fuerza (18:07)" instead of "Strength".
+Gave the `strength_training` entry a language-aware name, the same way `_ENTRENO_VINCULADO_TITULO`
+already does for the manual side of the same card.
+
+**Gate**, verbatim from the surface (BODY-ENTRENO-VINCULO-1-M committed both fixes; HEAD `a5a4c2f`):
+this worker's own six single-command gate runs were each moved to the background past 600s and killed
+at the harness's background time limit before printing `Ran`, with no F or E in any partial output.
+The orchestrator then ran the exact gate itself, once, on `git archive a5a4c2f` exported to its
+scratchpad with body-app's own venv, where nothing kills it: `Ran 2736 tests in 1573.978s` /
+`FAILED (errors=2, skipped=2)`, and both errors are the export's, not the code's:
+`tests.test_host_deploy`'s two exec-bit tests run `git ls-files -s` and an archive has no `.git` (exit
+128). Measured in the real repository instead, `git ls-tree feat/body-entreno-vinculo-1` shows
+`deploy/host/body-backup.sh`, `body-deploy.sh` and `duna-deploy-body` all `100755`, which is what
+those two tests assert. Every other test passed, with no failure. That is the measured gate for this
+tree.
+
+No password, token, session secret or health figure was read, printed, or written anywhere in this
+slice's own work.
