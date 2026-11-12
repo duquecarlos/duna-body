@@ -18628,3 +18628,116 @@ the parent slice; but this spec's own body says, in words, "APPROVED to merge on
 this continuation, so the merge proceeds on the green gate above.
 
 -- merged 922ad14daeb466a23e1f1b4f09d389f9266ba347
+
+## BODY-TENDENCIAS-LEYENDA-PATRON-1 -- one plain sentence under every Trends card the shift-cost model has a reference for (2026-11-12)
+
+Mock round 2's `PhoneTrendsLight` board (Carlos's approved mock), deferred by BODY-MOCK-R2-CENSO-1-INV
+until BODY-TURNOS-PERFIL-DIA-1 made the day-offset claims truthful (it has, on main since `9ead43d`).
+
+**Ruling 1, one phrase builder, data-driven.** `turnos_costo.frase_patron(perfil, metric) -> dict |
+None` turns a successful `perfil_por_dia` result into a sentence SPEC -- a kind plus its own
+parameters, never prose -- so the screen and the assistant can share it. `perfil["motivo"]` set ->
+`None`. Otherwise, in precedence order: the worst offset's mean inside the band -> `{"kind":
+"estable"}`; outside the band with `vuelta` set -> `{"kind": "vuelve", "peor", "vuelta",
+"direccion"}`; outside the band with no `vuelta` -> `{"kind": "no_vuelve", "peor", "direccion"}`.
+`direccion` ("baja"/"sube") is the side the worst offset's mean sits on relative to centre (0, once
+`perfil_por_dia` re-expresses it that way) -- never the metric's own better/worse word, so a
+lower-is-better metric whose nights run high still reads "sube". `peor`/`vuelta` are OFFSET NAMES
+and `direccion` is a word: no mean, no ms, nothing from the person's own data that a log could read
+as a health figure.
+
+Reusing `perfil_por_dia` for all five of `MODELO['metricas']` (sleep_minutes, resting_hr,
+hrv_last_night, stress_avg, body_battery_wake) every time Trends renders would cost one `Lector`
+(one SELECT per metric) plus `referencia()`'s own exclusion-window `bloques_noche` plus a second
+`bloques_noche` for the profile itself -- 7 statements, previously paid only once for `hrv_last_night`
+inside `/shifts`' own `resumen()`. Measured against `/trends`' own ceiling (19, headroom only 4 over
+the pre-slice baseline of 15), that would have blown it. `turnos_costo.perfiles_patron(conn,
+person_id, hoy)` shares one `_LectorVarias` (private, loads every metric in `MODELO['metricas']` with
+ONE combined `metric_key IN (...)` SELECT instead of `Lector`'s one-per-metric loop), one
+`bloques_noche` and one `referencia()` call across all five -- 3 statements total, regardless of how
+many of the five succeed. Measured `/trends` statement count: 15 before this slice, 18 after
+(`PerfilesPatronTest.test_one_statement_per_metric_never_happens` pins the 3, plus `db.connect()`'s
+own 2 PRAGMAs on a freshly opened connection = 5 traced there). No ceiling in
+`tests/test_rendimiento.py` changed.
+
+**Ruling 2, the caption on Trends.** Every Trends card for a metric in `MODELO['metricas']` with a
+successful profile shows one sentence in the card's existing `.read` reading style, under the chart
+and above the legend: es «Estable alrededor de tus noches.» / en "Steady around your night shifts."
+(estable); «Baja/Sube más {peor}; vuelve a tu rango {vuelta}.» / "Lowest/Highest {peor}; back in your
+range {vuelta}." (vuelve); «Baja/Sube más {peor}; 4 días después aún no vuelve a tu rango.» /
+"Lowest/Highest {peor}; 4 days after, not back in your range yet." (no_vuelve, with the post-offset
+count read off `turnos_costo.OFFSETS`, never typed as a literal "4"). `{peor}`/`{vuelta}` are
+per-offset time-phrase i18n keys. `body/rutas/tendencias.py`'s `_frase_patron_texto(t, frase)` is the
+one place these words are built; it returns `None` for `frase is None` (no profile, or a metric
+outside the model), and the template's `{% if c.patron %}` then renders no caption and no empty line.
+
+**Ruling 3, the assistant.** `leer_tendencias` (`body/agente/herramientas.py`) carries
+`patron_turnos` -- the same `frase_patron` spec, additive -- for every metric in its result that is
+also in `MODELO['metricas']`, sharing one `perfiles_patron` call across however many of them the
+request asks for, never a read per metric.
+
+**Ruling 4, the window.** The profile reads over `turnos_costo.RESUMEN_DIAS`, the shift-cost model's
+own window, regardless of the range (`r`) Trends shows -- no new note was added, since no existing
+card carries one for this reason (the ruling's own fallback).
+
+**New i18n keys**, es / en (16 keys, both languages; placeholders match on both sides):
+
+    trends.patron.estable: "Estable alrededor de tus noches." / "Steady around your night shifts."
+    trends.patron.vuelve.baja: "Baja más {peor}; vuelve a tu rango {vuelta}." / "Lowest {peor}; back in your range {vuelta}."
+    trends.patron.vuelve.sube: "Sube más {peor}; vuelve a tu rango {vuelta}." / "Highest {peor}; back in your range {vuelta}."
+    trends.patron.no_vuelve.baja: "Baja más {peor}; {n} días después aún no vuelve a tu rango." / "Lowest {peor}; {n} days after, not back in your range yet."
+    trends.patron.no_vuelve.sube: "Sube más {peor}; {n} días después aún no vuelve a tu rango." / "Highest {peor}; {n} days after, not back in your range yet."
+    trends.patron.cuando.antes: "el día antes" / "the day before"
+    trends.patron.cuando.noche_1: "la primera noche" / "on the first night"
+    trends.patron.cuando.noche_ultima: "la última noche" / "on the last night"
+    trends.patron.cuando.post_1..post_4: "el día +1 después".."el día +4 después" / "on day +1 after".."on day +4 after"
+    trends.patron.vuelta.post_1..post_4: "el día +1 después".."el día +4 después" / "by day +1 after".."by day +4 after"
+
+**Which metrics carry a caption, and why.** All five of `MODELO['metricas']` have a Trends card
+(sleep_minutes, hrv_last_night, resting_hr, body_battery_wake are default cards via `TREND_KEYS`;
+stress_avg is an extra card via `TREND_GROUPS`' "stress" group) -- every one of them can carry a
+caption once its own profile succeeds. No other metric can: `frase_patron` is only ever called for a
+key in `MODELO['metricas']`, so a self-measured, commute or any other catalogue key never carries one,
+by construction rather than a per-screen exclusion list. Gated on `turnos_on`
+(`db.trabaja_turnos_si`) at the route level too: a person who does not track night shifts gets no
+`perfiles_patron` call at all, not just no caption.
+
+**`frase_patron`'s return shape, as built**: `{"kind": "estable"}` |
+`{"kind": "vuelve", "peor": <offset>, "vuelta": <offset>, "direccion": "baja"|"sube"}` |
+`{"kind": "no_vuelve", "peor": <offset>, "direccion": "baja"|"sube"}` | `None`.
+
+New tests: `tests/test_tendencias_patron.py` (new file, 16 tests -- `FrasePatronTest` on invented
+perfil-shaped dicts: estable, vuelve/baja for a higher-is-better metric, vuelve/sube for a
+lower-is-better metric, no_vuelve, motivo -> None, no number in the spec; `FrasePatronTextoTest`:
+every kind's es/en sentence, no database; `TrendsCaptionRenderedTest`: a real `/trends` render with
+deterministic night blocks -- es and en captions on the HRV card, no caption on `steps` (outside the
+model), no caption when fewer than `MIN_BLOQUES_PREVIOS` blocks exist). `tests/test_turnos_perfil.py`
+gained `PerfilesPatronTest` (2 tests: `perfiles_patron` matches `perfil_por_dia` called separately per
+metric; its own statement count). `tests/test_agente_tendencias_catalogo.py` gained
+`LeerTendenciasCarriesPatronTurnosTest` (2 tests: `patron_turnos` equals `frase_patron`'s own spec; a
+metric outside the model never carries the key). `tests/test_i18n_paridad.py`'s `_FIXED_DYNAMIC`
+gained four entries for the new dynamic prefixes (`trends.patron.cuando.+`, `trends.patron.vuelta.+`,
+`trends.patron.vuelve.+`, `trends.patron.no_vuelve.+`) -- extended to the new truth, nothing loosened.
+20 new tests total (2945 -> 2965).
+
+Commits: `34ff078` (ruling 1, `frase_patron` and `perfiles_patron`/`_LectorVarias`, with tests),
+`c569e73` (rulings 2-4, the rendered caption, `leer_tendencias`'s `patron_turnos`, and their tests).
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry), the exact
+command `.venv/Scripts/python.exe -m unittest discover tests -t .`, one foreground run (moved to the
+background past the 600 s cap, waited on to completion, exit code 0):
+
+    Ran 2965 tests in 895.675s
+
+    OK (skipped=1)
+
+2965 = the prior 2945 plus exactly this slice's own 20 new tests; no other count moved.
+
+No password, token, session secret, device key or health figure was read, printed, or written
+anywhere in this slice's own work.
+
+**Merge policy, this slice.** The diff adds a byte Carlos reads on `/trends` (the new caption
+sentence and its `.read` paragraph) -- merge policy A's customer-bytes condition trips. This spec's
+body says to stop before merge ("stop AWAITING_APPROVAL on the branch, tree EMPTY (the orchestrator
+looks at Trends at 375 px before merging)"), so this entry is written and committed on the branch; no
+merge.
