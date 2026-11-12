@@ -18568,3 +18568,61 @@ anywhere in this slice's own work.
 customer-bytes condition trips. This spec's body says to stop before merge every time ("stop
 AWAITING_APPROVAL on the branch, tree EMPTY (the orchestrator looks at 375 px before merging)"),
 so this entry is written and committed on the branch; no merge.
+
+### -M -- the right edge had no inset (2026-11-12)
+
+Dispatched after the orchestrator looked at `/shifts` on the demo at 375 px (gate `Ran 2944 OK`,
+worker report `logs/worker-body-turnos-perfil-legible-1-body-app-20261112T062418.json`); the -1
+deviation (width 313 from the arithmetic, not 320) was accepted, and this was the only open
+defect: the plot's right side had no inset of its own. The `<svg>` spans x 30.6-344.9 on screen
+with `overflow` hidden; the last point was drawn at 340-346 and its "+4" label at 335-350, so both
+were cut at the right edge (the label read as "+" and a fragment). The left side already had the
+y-tick gutter; the right side had none.
+
+**The inset rule.** Unlike an interior point, the first and last point have no neighbour on their
+outer side for the slot/gap rule (ruling 2, above) to keep off the viewBox's own edge, so each now
+gets its own margin: half its widest wrapped line (the same `_label_px` character-count
+approximation) or the point's own radius (`_PERFIL_POINT_R`, 3.0 -- also now the `<circle>`'s own
+`r`, read from one constant instead of a bare `"3"`), whichever is larger, plus `_PERFIL_EDGE_PAD`
+(the same small clearance the left gutter already adds). The point pitch (`step`) is computed
+twice: once at the old (wider) bounds to size each label's wrap, then again at the new, narrower
+`plot_left`/`plot_right` -- re-wrapping against the smaller pitch, since a label can only need
+*more* wrapping as the pitch shrinks, never less, so the first pass is always a safe upper bound
+for sizing the inset. The left bound is raised past the existing gutter only if the first label's
+own half-width needs more room than the gutter already gives it; in every case measured here the
+gutter already covered it.
+
+**Resulting pitch**, the seven-offset case (`PerfilChartGeometryTest._perfil()`, es, floats from
+the rendered SVG): `cx` = 53.2, 95.0, 136.7, 178.5, 220.3, 262.0, 303.8 -- pitch 41.8, down from
+42.97 before this fix. `plot_left` (53.2) is unchanged -- the gutter already covers the first
+label's own half-width; `plot_right` moves from 311.0 to 303.8, a new 9.2 px right margin: the
+last point's own label, "+4" at 2 characters, `_label_px` 14.4, half 7.2, against the point's own
+radius 3.0 (whichever is larger), plus the 2.0 px edge pad already used on the left. New constant
+`_PERFIL_POINT_R = 3.0`, the point radius, also now the `<circle>`'s own `r` instead of a bare
+`"3"`.
+
+New test `PerfilChartGeometryTest.test_right_inset_keeps_the_last_point_and_label_inside_the_viewbox`:
+for es/en and both the 1-night (no `noche_ultima`) and 5-night (`noche_ultima` present) label sets,
+every circle's `cx +/- r` and every label LINE's own anchor `x +/- half its approximate width`
+(read from its `<tspan>`s when wrapped) lie within `[0, viewBox width]`, and no two label boxes
+overlap. Every existing geometry test in this file still passes unchanged.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry), the
+exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, one foreground run
+(moved to the background past the 600 s cap, waited on to completion, exit code 0):
+
+    Ran 2945 tests in 725.710s
+
+    OK (skipped=1)
+
+2945 = the prior 2944 plus exactly this slice's own 1 new test; no other count moved.
+
+No password, token, session secret, device key or health figure was read, printed, or written
+anywhere in this slice's own work.
+
+**Merge policy, this slice.** The diff is confined to `body/rutas/turnos.py` (the chart's own
+geometry: an inset, re-derived pitch, and one renamed-to-a-constant radius) and its tests -- no
+schema or migration, no cross-repo contract or DTO. The rendered chart's layout is a byte Carlos
+reads on `/shifts`, so merge policy A's customer-bytes condition still trips on the diff, same as
+the parent slice; but this spec's own body says, in words, "APPROVED to merge on a green gate" for
+this continuation, so the merge proceeds on the green gate above.
