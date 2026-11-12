@@ -19238,3 +19238,93 @@ translation string), no cross-repo contract or DTO change. All three of merge po
 pass. **Merges on this green gate.**
 
 -- merged fa13024ac6bd213f7519e8a261d5d717940d7683
+
+## BODY-ENTRENO-RACHA-SEMANAL-1
+
+Open follow-up from `BODY-MOCK-R2-CENSO-1-INV`: a pure read of the weekly strength-session count
+across the whole watch history against the plan's floor, tagged by night-shift week -- what feeds
+`BODY-TENDENCIAS-RACHA-GRAFICO-1`'s Trends chart (mock round 2's "Since June 2024 -- closing the
+gap" study). New module only, nothing calls it yet; no schema change (`body/db.py` untouched).
+
+**Ruling 1, what counts as a strength session.** An `activity` row of the person whose own `type`
+is in a module constant `TIPOS_FUERZA` (`{'strength_training'}` to start), OR one that has at least
+one active, non-excluded `workout_set` row -- checked on EITHER half of a linked watch/manual pair
+(`activity.vinculo_manual`), since the pair is one session and either half may carry the type or the
+sets. A linked pair counts once, keyed to the watch row's own day. Week = the ISO week starting
+Monday (`fechas.lunes_de` of the session's day).
+
+**Ruling 2, the floor is data.** `racha_semanal`'s `piso: int | None` is never defaulted to 3 or any
+other number inside this module. With `piso=None` the reader still returns every week's own session
+count and night flag, just no run analysis. Which plan or habit should supply the floor is left to
+`BODY-TENDENCIAS-RACHA-GRAFICO-1` to decide -- the `habit` table (`goal_id, title, cadence, assignee_
+person_id, active`) has no link to an activity type, so this slice does not guess one (open
+follow-up below).
+
+**Ruling 3, `body/entreno_racha.py` (new, reads only).**
+
+    racha_semanal(conn, person_id, *, piso=None, hoy=None) -> dict | None
+
+`None` when the person has no strength session at all (including no activity at all). Otherwise:
+
+- `semanas`: every week from the Monday of the person's FIRST activity of any kind (the start of
+  the watch history, not the first strength session) to the Monday of `hoy`, in order, each
+  `{lunes, sesiones, noche, alcanza}` -- `noche` true when the week contains at least one night
+  from `turnos_costo.bloques_noche`; `alcanza` is `sesiones >= piso`, or `None` when `piso` is
+  `None`. Weeks with zero sessions are present with `sesiones: 0` -- an honest gap, never a missing
+  week.
+- `desde`: the first Monday (ISO). `dias_historia`: days from the first activity's own day to `hoy`.
+- With `piso` given, four more keys: `rachas`, every maximal run of consecutive weeks with `alcanza`
+  true, each `{inicio, fin, semanas, termina_en_noche}` (`termina_en_noche` is the FIRST week after
+  the run's own end being a night week; always `False` for a run with no week after it, i.e. the
+  current run); `mas_larga`, the longest run (ties broken toward the more recent one, by scanning
+  `rachas` in reverse and taking the first match); `actual`, the run that includes the current week
+  OR the week right before it -- so a current week still in progress, with too few sessions so far
+  to show `alcanza`, never breaks a run that was still intact through last week; `None` when neither
+  the current nor the previous week belongs to any run. `terminadas_en_noche`: `{n, de}` over every
+  run that is NOT `actual` (identity check, since a run dict is never duplicated) -- a run still in
+  progress has no "week after" yet and is never counted toward this.
+
+**Statement count.** Four statements total, independent of the number of weeks: one `MIN(day)` over
+`activity`, one flat `SELECT` of every `activity` row, one `SELECT DISTINCT` of counting
+`workout_set` identities, and `bloques_noche`'s own one query. Pinned by
+`tests/test_entreno_racha.py::RachaSemanalTest::test_statement_count_is_bounded_independent_of_
+history_length` (a connection-wrapping counter, identical count across 2/6/12 weeks of history).
+
+Person-scoped throughout by `WHERE person_id = ?` on every statement -- another person's activities
+are never candidates (`test_another_persons_activities_are_invisible`).
+
+21 new tests in `tests/test_entreno_racha.py`, covering: type-based and set-based sessions; rest and
+excluded sets never making a session; a linked watch/manual pair counted once; weeks starting at the
+first activity of any kind, not the first strength session; zero-session weeks present; `dias_
+historia`; the `noche` flag with and without a night block; `piso=None` carrying no `rachas`/`mas_
+larga`/`actual`/`terminadas_en_noche` keys at all; `alcanza` against the floor; the longest run with
+its tie-break to the more recent one; the current run tolerating an in-progress current week;
+`actual` being `None` when neither the current nor the previous week reaches; `termina_en_noche` and
+the `{n, de}` count, excluding the run still in progress; another person's activities invisible;
+`None` with no strength session and with no activity at all; the bounded statement count.
+
+No password, token, session secret or health figure of a real person was read, printed or written
+anywhere in this slice; every fixture in the new test module is invented demo data (dates in
+2026-10/11, 3-4 sets per session, invented night shifts).
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry), the exact
+command is `.venv/Scripts/python.exe -m unittest discover tests -t .`, run ONCE in the foreground;
+the harness moved it to the background past its own 600 s cap, and this session blocked on the
+output file until its `Ran ` line appeared rather than polling turn-by-turn:
+
+    Ran 3095 tests in 762.012s
+
+    OK (skipped=1)
+
+3095 - 3074 (`BODY-ENTRENO-ULTIMA-VEZ-1`'s own count, entry above) = 21 new tests, all in
+`tests/test_entreno_racha.py`.
+
+**Open follow-up.** `BODY-TENDENCIAS-RACHA-GRAFICO-1` (the chart that reads this module) still needs
+to decide which plan/habit supplies `piso` -- the `habit` table has no activity-type link today, so
+resolving that is this follow-up's own work, not guessed here.
+
+**Merge policy, this slice.** The diff touches `body/entreno_racha.py` (new),
+`tests/test_entreno_racha.py` (new) and this ledger -- no schema or migration change (`body/db.py`
+untouched), no customer-facing bytes (a pure read with nothing calling it yet -- no screen, no
+assistant change, no translation string), no cross-repo contract or DTO change. All three of merge
+policy A's conditions pass. **Merges on this green gate.**
