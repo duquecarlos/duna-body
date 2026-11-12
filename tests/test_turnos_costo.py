@@ -2,6 +2,7 @@
 día" reference and its normal band (body/baselines.py's rule, reused), the signed cost of a night
 block, when recovery is reached, and the median hero figure with its honest reason codes. Also the
 /shifts and /shifts/como screens and the assistant's leer_costo_turnos tool, on invented demo data."""
+import html
 import json
 import re
 import tempfile
@@ -18,7 +19,7 @@ from tests._db import open_conn
 from body import config, db, turnos_costo, web
 from body.agente import herramientas
 from body.i18n import T
-from body.rutas import comun
+from body.rutas import comun, turnos
 
 METRICS = turnos_costo.MODELO["metricas"]
 CONST = {"sleep_minutes": 420.0, "resting_hr": 55.0, "hrv_last_night": 60.0, "stress_avg": 25.0,
@@ -638,6 +639,185 @@ class WebAndToolTest(unittest.TestCase):
                 self.assertNotIn(b, ("worse", "better"))
         finally:
             self.client.post("/settings/language", data={"lang": "es"})
+
+    def _seed_three_blocks_anchored(self, conn):
+        """Three 2-night blocks with a real HRV dip (BODY-TURNOS-PERFIL-DIA-1) -- enough blocks for
+        turnos_costo.perfil_por_dia's own MIN_BLOQUES_PREVIOS floor, anchored to date.today() so a
+        route-level /shifts request (which reads comun._today_local, never a fixed test date) sees
+        them."""
+        today = date.today()
+        _fill_range(conn, 1, today - timedelta(140), today - timedelta(1), CONST)
+        _seed_block_off_baseline(conn, 1, today - timedelta(100), 2)
+        _seed_block_off_baseline(conn, 1, today - timedelta(60), 2)
+        _seed_block_off_baseline(conn, 1, today - timedelta(20), 2)
+        conn.commit()
+        return today
+
+    def test_shifts_renders_the_hrv_profile_chart_in_spanish(self):
+        conn = self._reset_db()
+        self._seed_three_blocks_anchored(conn)
+        r = self.client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('class="chart-svg"', r.text)
+        self.assertIn(_t("es", "shifts.perfil.eje.noche_1"), r.text)
+        self.assertIn(_t("es", "shifts.perfil.banda"), r.text)
+        self.assertIn("+1", r.text)
+        self.assertNotIn('style="', r.text)
+
+    def test_shifts_renders_the_hrv_profile_chart_in_english(self):
+        conn = self._reset_db()
+        self._seed_three_blocks_anchored(conn)
+        self.client.post("/settings/language", data={"lang": "en"})
+        try:
+            r = self.client.get("/shifts")
+            self.assertEqual(r.status_code, 200)
+            self.assertIn('class="chart-svg"', r.text)
+            self.assertIn(_t("en", "shifts.perfil.eje.noche_1"), r.text)
+            self.assertIn(_t("en", "shifts.perfil.banda"), r.text)
+        finally:
+            self.client.post("/settings/language", data={"lang": "es"})
+
+    def test_no_chart_without_a_profile(self):
+        """BODY-TURNOS-PERFIL-DIA-1 ruling 3: no chart, no empty frame -- only 2 blocks here, under
+        perfil_por_dia's own MIN_BLOQUES_PREVIOS floor (the hero's own dias_recuperacion still shows,
+        since its floor is lower)."""
+        conn = self._reset_db()
+        self._seed_today_anchored(conn)
+        r = self.client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn('class="chart-svg"', r.text)
+
+    def test_singular_caption_and_axis_for_one_night_blocks(self):
+        conn = self._reset_db()
+        today = date.today()
+        _fill_range(conn, 1, today - timedelta(140), today - timedelta(1), CONST)
+        _seed_block_off_baseline(conn, 1, today - timedelta(100), 1)
+        _seed_block_off_baseline(conn, 1, today - timedelta(60), 1)
+        _seed_block_off_baseline(conn, 1, today - timedelta(20), 1)
+        conn.commit()
+        r = self.client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("alrededor de una noche", r.text)  # the singular caption, not "{n} noches"
+        # no separate "last night" column when every block seen is a single night
+        self.assertNotIn(_t("es", "shifts.perfil.offset.noche_ultima"), r.text)
+
+    def test_assistant_tool_carries_perfil_hrv(self):
+        conn = self._reset_db()
+        self._seed_three_blocks_anchored(conn)
+        out = herramientas.ejecutar(conn, 1, "leer_costo_turnos", {}, "resumen")
+        self.assertIn("perfil_hrv", out)
+        self.assertIsNone(out["perfil_hrv"]["motivo"])
+        self.assertTrue(out["perfil_hrv"]["offsets"])
+        json.dumps(out)  # JSON-serializable
+
+    def test_shifts_page_shows_a_visible_caption_matching_the_aria_label(self):
+        """BODY-TURNOS-PERFIL-DIA-1-M fix 1: the sentence the aria-label carries is also a visible
+        <p>, built by the same _perfil_caption call, never a second copy."""
+        conn = self._reset_db()
+        self._seed_three_blocks_anchored(conn)
+        r = self.client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        svg = re.search(r'<svg[^>]*class="chart-svg"[^>]*>', r.text).group(0)
+        aria = re.search(r'aria-label="([^"]*)"', svg).group(1)
+        caption_p = re.search(r'<p class="read mt-6">([^<]*)</p>', r.text)
+        self.assertIsNotNone(caption_p, "no visible caption <p> found under the chart")
+        self.assertEqual(html.escape(caption_p.group(1)), aria)
+
+    def test_legend_calls_the_night_swatch_night_shift_not_bare_night(self):
+        """BODY-TURNOS-PERFIL-DIA-1-M fix 4 (minor): the swatch gets its own key, distinct from the
+        generic shift.kind.night the strip legend still uses."""
+        conn = self._reset_db()
+        self._seed_three_blocks_anchored(conn)
+        r = self.client.get("/shifts")
+        self.assertIn(_t("es", "shifts.perfil.noche"), r.text)
+        self.client.post("/settings/language", data={"lang": "en"})
+        try:
+            r_en = self.client.get("/shifts")
+            self.assertIn(_t("en", "shifts.perfil.noche"), r_en.text)
+        finally:
+            self.client.post("/settings/language", data={"lang": "es"})
+
+
+class PerfilChartGeometryTest(unittest.TestCase):
+    """BODY-TURNOS-PERFIL-DIA-1-M fixes 2/3: the chart's own geometry -- on a constructed profile,
+    so the test is independent of any particular seeding helper's data shape, and exercises the
+    seven-offset case (antes..post_4) every time."""
+
+    def _perfil(self) -> dict:
+        return {
+            "metric": "hrv_last_night", "motivo": None, "centro": 60.0,
+            "banda": {"bajo": -14.2, "alto": 12.3},
+            "offsets": [
+                {"offset": "antes", "media": 2.0, "n": 3},
+                {"offset": "noche_1", "media": -18.0, "n": 3},
+                {"offset": "noche_ultima", "media": -24.0, "n": 3},
+                {"offset": "post_1", "media": -16.0, "n": 3},
+                {"offset": "post_2", "media": -10.0, "n": 3},
+                {"offset": "post_3", "media": -4.0, "n": 3},
+                {"offset": "post_4", "media": -1.0, "n": 3},
+            ],
+            "mas_bajo": "noche_ultima", "vuelta": "post_4", "noches_tipicas": 2, "n_bloques": 3,
+        }
+
+    def _render(self, lang: str = "es") -> tuple[str, str]:
+        t = T(lang)
+        perfil = self._perfil()
+        caption = turnos._perfil_caption(t, perfil)
+        return turnos._perfil_svg(t, perfil, caption, "ms"), caption
+
+    def test_every_circle_and_label_sits_inside_the_viewbox(self):
+        svg, _ = self._render()
+        width = float(re.search(r'viewBox="0 0 ([\d.]+) [\d.]+"', svg).group(1))
+        cxs = [float(x) for x in re.findall(r'<circle cx="([\d.]+)"', svg)]
+        text_xs = [float(x) for x in re.findall(r'<text x="([\d.]+)"', svg)]
+        self.assertTrue(cxs and text_xs)
+        for x in cxs + text_xs:
+            self.assertGreaterEqual(x, 0.0)
+            self.assertLessEqual(x, width)
+
+    def test_each_x_axis_label_x_equals_its_points_cx(self):
+        svg, _ = self._render()
+        cxs = [float(x) for x in re.findall(r'<circle cx="([\d.]+)"', svg)]
+        label_xs = [float(x) for x in
+                    re.findall(r'<text x="([\d.]+)" y="[\d.]+" text-anchor="middle" class="tick">', svg)]
+        self.assertEqual(cxs, label_xs)
+
+    def test_y_ticks_are_whole_numbers_include_zero_and_sit_left_of_the_plot(self):
+        svg, _ = self._render()
+        plot_left = min(float(x) for x in re.findall(r'<circle cx="([\d.]+)"', svg))
+        yticks = re.findall(r'<text x="([\d.]+)" y="[\d.]+" class="tick">([^<]*)</text>', svg)
+        self.assertTrue(yticks)
+        values = []
+        for x, text in yticks:
+            self.assertLess(float(x), plot_left, "a y-tick is drawn inside the plot area")
+            num = text.split(" ")[0]
+            self.assertNotIn(".", num, f"tick {text!r} is not a whole number")
+            values.append(int(num))
+        self.assertIn(0, values)
+        self.assertIn("ms", " ".join(text for _, text in yticks))  # the unit, carried once
+
+    def test_adjacent_x_axis_labels_never_overlap_in_either_language(self):
+        """Approximation from character count: `turnos._PERFIL_CHAR_W` px per character at the
+        chart's own 10px axis font-size (CSS class "tick") -- real glyph metrics are not available
+        server-side, so the layout keeps every adjacent pair at least this far apart."""
+        for lang in ("es", "en"):
+            svg, _ = self._render(lang)
+            cxs = [float(x) for x in re.findall(r'<circle cx="([\d.]+)"', svg)]
+            labels = re.findall(
+                r'<text x="[\d.]+" y="[\d.]+" text-anchor="middle" class="tick">([^<]*)</text>', svg)
+            self.assertEqual(len(cxs), len(labels))
+            widths = [len(html.unescape(lbl)) * turnos._PERFIL_CHAR_W for lbl in labels]
+            for i in range(len(cxs) - 1):
+                gap = cxs[i + 1] - cxs[i]
+                needed = widths[i] / 2 + widths[i + 1] / 2
+                self.assertGreaterEqual(gap, needed,
+                                         f"{lang}: {labels[i]!r}/{labels[i + 1]!r} boxes would overlap")
+
+    def test_visible_caption_equals_the_aria_label_in_both_languages(self):
+        for lang in ("es", "en"):
+            svg, caption = self._render(lang)
+            aria = re.search(r'aria-label="([^"]*)"', svg).group(1)
+            self.assertEqual(aria, html.escape(caption))
 
 
 if __name__ == "__main__":

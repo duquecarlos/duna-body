@@ -350,6 +350,7 @@ table.parts td.p-0{padding:0}
 .stroke-muted{stroke:var(--muted)}
 .stroke-line{stroke:var(--line)}
 .chart-svg{display:block;margin-top:8px}
+.tick{fill:var(--muted);font-size:10px}
 svg.bar{display:block;width:100%}
 svg.stage{display:block;width:100%}
 svg.barra{display:block;width:100%;height:6px;margin-top:4px}

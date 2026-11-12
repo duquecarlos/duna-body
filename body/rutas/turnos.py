@@ -3,6 +3,8 @@ it's calculated, and the typed-pattern form -- the last domain moved out of body
 """
 from __future__ import annotations
 
+import html
+import math
 from datetime import date, datetime, timedelta
 from urllib.parse import parse_qs
 
@@ -100,6 +102,179 @@ def _turnos_ultima_ctx(t: T, defs: dict, resumen: dict) -> dict | None:
                   fin=comun._short_date(t, date.fromisoformat(u["fin"])), n=u["n"]),
         "filas": _turnos_ultima_filas(t, defs, u["metricas"]),
         "recuperacion": _turnos_ultima_recuperacion(t, u),
+    }
+
+
+_PERFIL_WIDTH, _PERFIL_HEIGHT = 320, 128
+_PERFIL_TOP = 10
+_PERFIL_LABEL_DY = 13      # baseline offset below the plot area for the x-axis labels
+_PERFIL_BOTTOM_PAD = 6
+_PERFIL_CHAR_W = 6.0       # approx glyph width (px) at this chart's axis font-size (10px, class
+                           # "tick") -- an approximation from character count, since real glyph
+                           # metrics are not available server-side; generous enough that two labels'
+                           # approximate boxes never touch
+_PERFIL_LABEL_GAP = 4.0    # minimum clear gap kept between two adjacent x-axis label boxes
+_PERFIL_GUTTER_PAD = 6.0   # clearance between the widest y-tick text and the plot area
+_PERFIL_EDGE_PAD = 2.0     # inside the viewBox's own left/right edge
+_PERFIL_TICK_DIVISIONS = 4  # target divisions for the nice-number y-tick step
+
+
+def _perfil_offset_palabra(t: T, offset: str) -> str:
+    return t("shifts.perfil.offset." + offset)
+
+
+def _perfil_vuelta_frase(t: T, perfil: dict) -> str:
+    if perfil["vuelta"] is None:
+        return t("shifts.perfil.vuelta_ausente")
+    return t("shifts.perfil.vuelta", offset=_perfil_offset_palabra(t, perfil["vuelta"]))
+
+
+def _perfil_caption(t: T, perfil: dict) -> str:
+    """BODY-TURNOS-PERFIL-DIA-1 ruling 3: built from the data every time, never a fixed sentence --
+    `punto` and the extreme offset follow whichever direction turnos_costo.perfil_por_dia found
+    worse for this metric (mas_bajo/mas_alto), and the closing clause follows whether (and when) the
+    metric came back inside the band. BODY-TURNOS-PERFIL-DIA-1-M fix 1: the ONLY builder -- both the
+    <svg>'s aria-label and the visible <p> under the chart call this, never a second copy."""
+    if "mas_bajo" in perfil:
+        punto, extremo = t("shifts.perfil.punto.bajo"), perfil["mas_bajo"]
+    else:
+        punto, extremo = t("shifts.perfil.punto.alto"), perfil["mas_alto"]
+    key = _singular_key("shifts.perfil.caption", perfil["noches_tipicas"])
+    return t(key, n=perfil["noches_tipicas"], punto=punto, offset=_perfil_offset_palabra(t, extremo),
+              vuelta=_perfil_vuelta_frase(t, perfil))
+
+
+def _perfil_eje_label(t: T, offset: str, n: int) -> str:
+    if offset.startswith("post_"):
+        return "+" + offset.split("_")[1]
+    return t("shifts.perfil.eje." + offset, n=n)
+
+
+def _perfil_tick(t: T, v: float, unit: str = "") -> str:
+    v = int(round(v))
+    texto = "0" if v == 0 else ("+" if v > 0 else "-") + t.num(abs(v), 0)
+    return f"{texto} {unit}" if unit else texto
+
+
+def _nice_step(raw: float) -> float:
+    """The smallest 'nice' step (1, 2, 5 or 10 times a power of ten) at least as large as `raw` --
+    the usual axis-tick step, so a y-tick value rounds to a whole number a reader expects, instead
+    of carrying a decimal ("+10.8") nobody asked for."""
+    if raw <= 0:
+        return 1.0
+    exp = math.floor(math.log10(raw))
+    base = 10 ** exp
+    for m in (1, 2, 5, 10):
+        step = m * base
+        if raw <= step:
+            return step
+    return 10 * base
+
+
+def _perfil_ticks(rango_bajo: float, rango_alto: float) -> tuple[float, float]:
+    """The bottom and top y-tick VALUES, both rounded to the nearest multiple of one shared nice
+    step (BODY-TURNOS-PERFIL-DIA-1-M fix 2). 0 is always the middle tick (rango_bajo <= 0 <=
+    rango_alto by construction) and is never rounded away."""
+    step = _nice_step((rango_alto - rango_bajo) / _PERFIL_TICK_DIVISIONS) or 1.0
+    bajo = round(rango_bajo / step) * step if rango_bajo else 0.0
+    alto = round(rango_alto / step) * step if rango_alto else 0.0
+    return bajo, alto
+
+
+def _label_px(s: str) -> float:
+    return len(s) * _PERFIL_CHAR_W
+
+
+def _perfil_svg(t: T, perfil: dict, caption: str, unit: str, *, color_cls: str = "body") -> str:
+    """Server-rendered SVG (Body's CSP forbids inline style/script): the band as a light rect, the
+    night offsets shaded, a line through each offset's own mean with a point per offset, an x-axis
+    label under each point -- drawn INSIDE the svg, centred on that point's own x by construction
+    (BODY-TURNOS-PERFIL-DIA-1-M fix 2, replacing the independent HTML label row that never lined up
+    with it) -- and at most three y ticks in a left gutter the plotted line and its points never
+    enter: whole numbers, on one shared nice step (`_perfil_ticks`), the unit carried once on
+    whichever tick is not zero.
+
+    The chart's own width grows past _PERFIL_WIDTH (never shrinks below it) only as far as the
+    widest adjacent pair of x-axis labels needs, so two labels' approximate boxes -- `_label_px`, an
+    approximation from character count -- never overlap, whatever language or offsets are in play;
+    the same gutter/inset arithmetic keeps the first and last points and their labels fully inside
+    the viewBox (fix 3)."""
+    offsets = perfil["offsets"]
+    if len(offsets) < 2:
+        return ""
+    height = _PERFIL_HEIGHT
+    banda = perfil["banda"]
+    vals = [o["media"] for o in offsets]
+    rango_bajo = min(min(vals), banda["bajo"], 0.0)
+    rango_alto = max(max(vals), banda["alto"], 0.0)
+    pad = (rango_alto - rango_bajo) * 0.15 or 1.0
+    lo, hi = rango_bajo - pad, rango_alto + pad
+    top = _PERFIL_TOP
+    h = height - top - _PERFIL_LABEL_DY - _PERFIL_BOTTOM_PAD
+    label_y = top + h + _PERFIL_LABEL_DY
+
+    def y(v: float) -> float:
+        return top + h - (v - lo) / (hi - lo) * h
+
+    n = perfil["noches_tipicas"]
+    labels = [_perfil_eje_label(t, o["offset"], n) for o in offsets]
+    tick_bajo, tick_alto = _perfil_ticks(rango_bajo, rango_alto)
+    texto_alto = _perfil_tick(t, tick_alto, unit if tick_alto != 0 else "")
+    texto_bajo = _perfil_tick(t, tick_bajo, unit if tick_alto == 0 and tick_bajo != 0 else "")
+    texto_cero = _perfil_tick(t, 0.0, unit if tick_alto == 0 and tick_bajo == 0 else "")
+    gutter = _PERFIL_EDGE_PAD + max(_label_px(s) for s in (texto_alto, texto_cero, texto_bajo)) + _PERFIL_GUTTER_PAD
+
+    left_half, right_half = _label_px(labels[0]) / 2, _label_px(labels[-1]) / 2
+    plot_left = gutter + left_half + _PERFIL_EDGE_PAD
+    pitch = max((_label_px(a) / 2 + _label_px(b) / 2 + _PERFIL_LABEL_GAP
+                 for a, b in zip(labels, labels[1:])), default=0.0)
+    min_width = plot_left + pitch * (len(offsets) - 1) + right_half + _PERFIL_EDGE_PAD
+    width = max(_PERFIL_WIDTH, min_width)
+    plot_right = width - right_half - _PERFIL_EDGE_PAD
+    step = (plot_right - plot_left) / (len(offsets) - 1)
+
+    def cx(i: int) -> float:
+        return plot_left + i * step
+
+    out = [f'<rect x="0" y="{y(banda["alto"]):.1f}" width="{width:.1f}" '
+           f'height="{max(1.0, y(banda["bajo"]) - y(banda["alto"])):.1f}" class="c-inset"/>']
+    for i, o in enumerate(offsets):
+        if o["offset"] in ("noche_1", "noche_ultima"):
+            out.append(f'<rect x="{max(0.0, cx(i) - step / 2):.1f}" y="0" width="{step:.1f}" '
+                       f'height="{height:.1f}" class="c-night op-18"/>')
+    out.append(f'<line x1="0" y1="{y(0):.1f}" x2="{width:.1f}" y2="{y(0):.1f}" class="stroke-line" '
+               f'stroke-width="1" stroke-dasharray="2 3"/>')
+    line_pts = " ".join(f"{cx(i):.1f},{y(o['media']):.1f}" for i, o in enumerate(offsets))
+    out.append(f'<polyline fill="none" class="stroke-{color_cls}" stroke-width="2.2" '
+               f'vector-effect="non-scaling-stroke" stroke-linejoin="round" points="{line_pts}"/>')
+    for i, o in enumerate(offsets):
+        out.append(f'<circle cx="{cx(i):.1f}" cy="{y(o["media"]):.1f}" r="3" class="c-{color_cls}"/>')
+    for i, label in enumerate(labels):
+        out.append(f'<text x="{cx(i):.1f}" y="{label_y:.1f}" text-anchor="middle" '
+                   f'class="tick">{html.escape(label)}</text>')
+    if tick_bajo != 0:
+        out.append(f'<text x="{_PERFIL_EDGE_PAD:.1f}" y="{y(tick_bajo) - 3:.1f}" class="tick">{texto_bajo}</text>')
+    out.append(f'<text x="{_PERFIL_EDGE_PAD:.1f}" y="{y(0) - 3:.1f}" class="tick">{texto_cero}</text>')
+    if tick_alto != 0:
+        out.append(f'<text x="{_PERFIL_EDGE_PAD:.1f}" y="{y(tick_alto) + 9:.1f}" class="tick">{texto_alto}</text>')
+    aria = html.escape(caption)
+    return (f'<svg viewBox="0 0 {width:.1f} {height}" width="100%" height="120" role="img" aria-label="{aria}" '
+            f'preserveAspectRatio="none" class="chart-svg">{"".join(out)}</svg>')
+
+
+def _perfil_hrv_ctx(t: T, perfil: dict | None, defs: dict) -> dict | None:
+    """BODY-TURNOS-PERFIL-DIA-1 ruling 3: no chart, no empty frame, when there is no profile yet."""
+    if perfil is None or perfil.get("motivo") is not None:
+        return None
+    caption = _perfil_caption(t, perfil)
+    unit = comun._unit(t, defs[perfil["metric"]])
+    svg = _perfil_svg(t, perfil, caption, unit)
+    if not svg:
+        return None
+    return {
+        "svg": svg,
+        "caption": caption,
+        "n_bloques": t("shifts.perfil.n_bloques", k=perfil["n_bloques"]),
     }
 
 
@@ -218,7 +393,7 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
         kept = int(qp.get("kept_manual", 0)) + int(qp.get("kept_newer", 0))
         result_msg = t("shifts.confirm_all_result", batches=qp.get("batches", "0"), applied=qp.get("applied", "0"))
         if kept:
-            result_msg += " " + t("shifts.confirm_all_kept", n=kept)
+            result_msg += " " + t(_singular_key("shifts.confirm_all_kept", kept), n=kept)
     today_local = comun._today_local(person)
     resumen = turnos_costo.resumen(conn, person_id, hoy=today_local)
     strip, strip_legend = _turnos_strip(conn, person_id, today_local, t)
@@ -233,11 +408,12 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
     # BODY-TURNO-FC-1: pure reads over the already-derived `turno_fc` table (two cheap SELECTs,
     # body/turno_fc.py's own estudio()) -- never a live recompute on this page render.
     pulso = _turno_fc_ctx(t, turno_fc.estudio(conn, person_id))
+    perfil_hrv = _perfil_hrv_ctx(t, resumen.get("perfil_hrv"), defs)
     cuerpo_ctx = {"vistas": anatomia.contexto(t, "turnos", frozenset({"cerebro"})),
                   "caption": t("cuerpo.caption.turnos"), "recorte": "cabeza"}
     costo_ctx = {"hero_dias": resumen["dias_recuperacion"], "motivo": resumen["motivo"],
                  "filas": filas, "costo_vacio": costo_vacio, "strip": strip, "strip_legend": strip_legend,
-                 "ultima": ultima, "pulso": pulso, "cuerpo": cuerpo_ctx}
+                 "ultima": ultima, "pulso": pulso, "perfil_hrv": perfil_hrv, "cuerpo": cuerpo_ctx}
     tiene_patron = patron_turnos.leer(conn, person_id) is not None
     if len(rows) > 1:
         summary = shift_import.summary_proposed(conn, person_id)
@@ -267,10 +443,14 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
 
 def _patron_preview_ctx(t: T, prev: dict) -> dict:
     """Adds the short from/to dates a pattern batch's card reads ("del X al Y") to shift_import.preview()'s
-    own dict, without changing its existing keys."""
+    own dict, without changing its existing keys. `kept_note` (BODY-TURNOS-PERFIL-DIA-1-M fix 4) is
+    the singular/plural sentence for `prev['kept_days']`'s own count, through the same `_singular_key`
+    mechanism `shifts.perfil.caption` already uses -- None when there is nothing kept to report."""
+    kept_n = len(prev["kept_days"])
     return {**prev,
             "from_date": comun._short_date(t, date.fromisoformat(prev["first_day"])) if prev["first_day"] else None,
-            "to_date": comun._short_date(t, date.fromisoformat(prev["last_day"])) if prev["last_day"] else None}
+            "to_date": comun._short_date(t, date.fromisoformat(prev["last_day"])) if prev["last_day"] else None,
+            "kept_note": t(_singular_key("shifts.kept_note", kept_n), n=kept_n) if kept_n else None}
 
 
 def _turnos_bloque_linea(t: T, b: dict, hoy: date) -> str:

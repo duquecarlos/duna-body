@@ -1612,7 +1612,10 @@ HERRAMIENTAS = [
     {"nombre": "leer_costo_turnos", "tipo": "lectura", "nivel": "resumen",
      "descripcion": "Cuánto cuesta una semana de turnos nocturnos y cuántos días tarda en recuperarse, "
                      "comparado con sus semanas de día: bloques de noches, su costo por medida y su "
-                     "recuperación, nunca el valor de un día.",
+                     "recuperación, nunca el valor de un día. Incluye perfil_hrv (BODY-TURNOS-PERFIL-DIA-1): "
+                     "cómo se ve su HRV día por día alrededor de un bloque de noches (el día antes, cada "
+                     "noche, y hasta 4 días después), para responder cuándo está más bajo y cuándo vuelve "
+                     "a su rango.",
      "parametros": _SIN_PARAMETROS, "funcion": _leer_costo_turnos},
     {"nombre": "leer_ajustes", "tipo": "lectura", "nivel": "ninguno",
      "descripcion": "Tus datos de perfil (nombre, zona horaria, idioma) y tu nivel de datos del asistente.",
