@@ -18626,3 +18626,5 @@ schema or migration, no cross-repo contract or DTO. The rendered chart's layout 
 reads on `/shifts`, so merge policy A's customer-bytes condition still trips on the diff, same as
 the parent slice; but this spec's own body says, in words, "APPROVED to merge on a green gate" for
 this continuation, so the merge proceeds on the green gate above.
+
+-- merged 922ad14daeb466a23e1f1b4f09d389f9266ba347
