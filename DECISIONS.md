@@ -18968,3 +18968,18 @@ six new i18n strings a person reads) -- the customer-bytes condition trips too. 
 approval reason ("stop AWAITING_APPROVAL ... the orchestrator looks at Hoy/Settings/apply at 375 px
 before merging"), this stops here, on `feat/body-comida-compartida-1`, clean, as `AWAITING_APPROVAL`
 rather than merging.
+
+### -M -- the orchestrator's 375 px look, approved to merge (2026-11-12)
+
+The orchestrator opened the demo seeded from this branch (`--idioma en`) at 375 px and looked at
+exactly the three surfaces the prior entry's `AWAITING_APPROVAL` named. Hoy showed a "Shared meals"
+card reading "Ana logged a shared meal", with the meal's description and its nutrients in words, an
+Apply button and a Discard taplink; the card measured 343 px wide, both controls 44 px tall, and the
+page's `scrollWidth` stayed at 375 (no horizontal scroll). Applying made the card disappear and the
+meal appear on `/day` for today. Settings showed "Receive shared meals from my household" with its
+Yes/No choice and explanation line, placed next to "Share with your household", again with no
+horizontal scroll. No defect found. `main` had not moved since the branch (`merge-base main HEAD`
+equals `rev-parse main` equals `05ff48094c8b6648c1dc2182cad9dbfb57331a26`), so the branch's own gate
+(3031 tests, OK, recorded above) stands as the merge's gate. **APPROVED to merge**
+(orchestrator, ORCH-CARLOS-DELEGATES-TIER-1-1, on the person's consent "A" named in the parent
+spec).
