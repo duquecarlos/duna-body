@@ -18343,3 +18343,116 @@ axis labels and caption, the "from k night blocks" line) -- merge policy A's cus
 condition. The spec's own body says to stop before merge every time ("stop AWAITING_APPROVAL on the
 branch (the orchestrator looks at Shifts at 375 px before merging)"), so this entry is written and
 committed on the branch; no merge.
+
+### BODY-TURNOS-PERFIL-DIA-1-M -- five defects the orchestrator measured on the live chart at 375 px (2026-11-12)
+
+The orchestrator opened `/shifts` at 375 px on the demo and measured the SVG in the DOM (viewBox
+"0 0 320 116", rendered 314 px wide from x=30.6). Five defects, all against ruling 3 above:
+
+1. **No visible caption.** The data-built sentence lived only in the `aria-label`; ruling 3 and the
+   mock (`PhoneShiftsLight.dc.html`) show it as text under the chart. Fixed: `_perfil_caption(t,
+   perfil)` is now the ONLY builder -- `_perfil_hrv_ctx` calls it once, hands the result to
+   `_perfil_svg` for the `aria-label` and to the context as `caption`, and `shifts.html` renders
+   `<p class="read mt-6">{{ perfil_hrv.caption }}</p>` under the chart, above "from k night blocks".
+   Tests (`PerfilChartGeometryTest.test_visible_caption_equals_the_aria_label_in_both_languages`,
+   `WebAndToolTest.test_shifts_page_shows_a_visible_caption_matching_the_aria_label`): the paragraph
+   equals the aria-label byte for byte (`html.escape`d), in both languages; the existing
+   `test_no_chart_without_a_profile` already covers the no-profile case (no chart, so no caption
+   either -- the `{% if perfil_hrv %}` guard covers both).
+2. **Y-tick labels sat inside the plot** (x=33, "+10.8" over the first point's own circle at
+   x=28), carried no unit, and showed a decimal. Fixed: a left gutter, sized from the actual tick
+   text width (`_label_px`), that the plotted line and its points never enter; at most three ticks
+   (top/zero/bottom), each a whole number on one shared **nice-number step** -- `_nice_step(raw)`
+   picks the smallest of {1, 2, 5, 10} x a power of ten at least as large as `raw`, applied to
+   `(rango_alto - rango_bajo) / 4` (`_PERFIL_TICK_DIVISIONS`), then both the top and bottom raw
+   values round to the nearest multiple of that one step (`_perfil_ticks`) -- "+10.8"/"-20.0"
+   become "+10"/"-20". The unit (from the metric's own declared unit, `comun._unit(t,
+   defs[perfil["metric"]])` -- "ms" for hrv, never hardcoded) rides whichever of the two non-zero
+   ticks is drawn (alto preferred; bajo if alto rounds to 0; the "0" tick itself only as a last
+   resort if both round to 0). A tick whose value rounds to 0 is not drawn at all (it would
+   duplicate "0"), so "at most three" is sometimes fewer.
+3. **The first point (x=28) was left of the svg's own rendered left edge**, clipped. Fixed: the
+   same gutter/inset arithmetic that places the y ticks also places the plot's own left/right
+   edges (`plot_left`/`plot_right`) far enough in that the first and last point AND their x-axis
+   labels (half their approximate width, `_label_px(label) / 2`) sit fully inside `[0, width]`,
+   with a 2 px margin (`_PERFIL_EDGE_PAD`) kept at each edge.
+4. **The x labels were an independent HTML flex row**, laid out at a fixed 52 px pitch from a
+   fixed-width svg, never aligned to the points' own (now variable) pitch. Fixed: the row is
+   deleted; each label is a `<text text-anchor="middle">` drawn inside the svg at the same `cx` its
+   point uses, so `label.x == point.cx` by construction, never by two separate layouts agreeing.
+   The chart's own width (`_PERFIL_WIDTH` = 320, never shrunk) grows exactly as far as the widest
+   ADJACENT label pair needs -- `pitch = max(label[i]/2 + label[i+1]/2 + gap)` over every
+   consecutive pair, width grows to fit `pitch * (n-1)` when the default 320 would make labels
+   touch. Label width is an approximation from character count (`_PERFIL_CHAR_W = 6` px/char, at
+   the chart's existing 10 px axis font-size, CSS class `.tick` -- reused for the x-axis labels
+   too, rather than adding a second font-size rule) -- generous on purpose, since real glyph
+   metrics are not available server-side. Verified on the full seven-offset case (`antes`,
+   `noche_1`, `noche_ultima`, `post_1..4`) in both languages: es grows the viewBox to 393 (pitch 52,
+   "día antes" against "noche 1"), en to 414 (pitch 55, "day before" against "night 1") --
+   `PerfilChartGeometryTest.test_adjacent_x_axis_labels_never_overlap_in_either_language`,
+   `.test_each_x_axis_label_x_equals_its_points_cx`,
+   `.test_every_circle_and_label_sits_inside_the_viewbox`,
+   `.test_y_ticks_are_whole_numbers_include_zero_and_sit_left_of_the_plot`.
+5. **Minor, same pass.** The night legend swatch reused `shift.kind.night` ("Noche"/"Night"); the
+   mock calls it "night shift". Given its own key, `shifts.perfil.noche`: es «turno de noche» / en
+   "night shift". `shifts.kept_note` read "1 days where..." for exactly one kept day -- it now
+   takes the same `_singular_key` mechanism `shifts.perfil.caption` already uses (`base + "_one"`
+   when n == 1), computed once in `_patron_preview_ctx` as `kept_note` rather than called inline
+   from the template. Grepped `/shifts` and its confirm step for every other `{n} ... día(s)`-shaped
+   key: `shifts.confirm_all_kept` ("{n} días se mantuvieron como estaban.", rendered on `/shifts`
+   after `/shifts/confirm-all`) is the same shape and got the same `_one` treatment. Left alone,
+   named here rather than silently skipped: `shifts.confirm_summary` /
+   `shifts.confirm_summary_patron` / `shifts.confirm_summary_many` /
+   `shifts.confirm_summary_many_mixed` (each names TWO counts, `{days}` days AND `{nights}` nights,
+   in one sentence -- singularising correctly would need a second axis of keys, a materially larger
+   change than this minor pass) and `shifts.confirm_all_result` (`{batches}`/`{applied}`, same
+   two-count shape); `shifts.como_bloques` is on `/shifts/como`, outside this fix's stated scope
+   ("/shifts and its confirm step").
+
+**New strings**, es / en:
+
+    shifts.kept_note_one: "1 día donde se mantiene lo que tú cambiaste." / "1 day where what you changed is kept."
+    shifts.confirm_all_kept_one: "1 día se mantuvo como estaba." / "1 day was kept as it was."
+    shifts.perfil.noche: "turno de noche" / "night shift"
+
+No other string's VALUE changed; `shifts.perfil.eje.*`, `shifts.perfil.offset.*`,
+`shifts.perfil.caption*`, `shifts.perfil.banda` and `shifts.perfil.n_bloques` are exactly as
+BODY-TURNOS-PERFIL-DIA-1 left them -- only where/how the axis labels and caption render changed,
+not their wording. `tests/test_i18n_paridad.py` needed no change: the `_singular_key(...)` calls
+build the key from a variable, invisible to both its scanner regexes (the same pre-existing pattern
+`shifts.perfil.caption`/`history.periodo_excluido` already use), and `t('shifts.perfil.noche')` is a
+literal the scanner already covers generically (`test_literal_code_keys_exist_in_es`) -- both new
+keys exist symmetrically in es.json/en.json with matching `{n}` placeholders, which
+`test_same_key_set`/`test_placeholders_and_shapes_match` already check unmodified.
+
+New tests: `tests/test_turnos_costo.py` gained `PerfilChartGeometryTest` (5 cases, on a constructed
+7-offset profile, independent of any seeding helper) plus 2 `WebAndToolTest` cases (visible
+caption, legend wording); `tests/test_shift_import.py` gained 2 cases (`shifts.kept_note` and
+`shifts.confirm_all_kept` both read the singular sentence for exactly one kept day). 9 new tests
+total; no existing test's assertion needed loosening.
+
+Commit: `3d66032` (all five fixes, i18n, tests, in one commit -- the geometry/caption/unit threading
+through `_perfil_svg`/`_perfil_hrv_ctx` made splitting fix 1 from fix 2/3 artificial, and the plural
+fix touches the same files).
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry), the exact
+command `.venv/Scripts/python.exe -m unittest discover tests -t .`, one foreground run (moved to
+the background past the 600 s cap, waited on to completion, exit code 0):
+
+    Ran 2934 tests in 811.643s
+
+    OK (skipped=1)
+
+2934 = the prior 2925 plus exactly this slice's own 9 new tests; no other count moved.
+
+No password, token, session secret, device key or health figure was read, printed, or written
+anywhere in this slice's own work.
+
+**Merge policy, this slice.** The diff again changes bytes Carlos reads on `/shifts` (the visible
+caption, the legend word, the kept-day sentence, the chart's own geometry) -- merge policy A's
+customer-bytes condition trips again. Unlike BODY-TURNOS-PERFIL-DIA-1's own entry above, THIS
+spec's body explicitly authorises the merge in words ("Green -> append to the ledger ... commit;
+`git checkout main`; `git merge --no-ff feat/body-turnos-perfil-dia-1` -- APPROVED to merge on a
+green gate"), which is the one thing that overrides a tripped merge-policy-A condition -- so this
+entry is committed on the branch and then merged into `main` on this green gate, not left
+AWAITING_APPROVAL.
