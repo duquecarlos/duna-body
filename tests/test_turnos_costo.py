@@ -775,6 +775,62 @@ class PerfilChartGeometryTest(unittest.TestCase):
             self.assertGreaterEqual(x, 0.0)
             self.assertLessEqual(x, width)
 
+    def _perfil_n_noches(self, n_noches: int, con_ultima: bool) -> dict:
+        """A 1-night block has no distinct last night (`_offset_day` returns None for noche_ultima
+        when fin == inicio, body/turnos_costo.py), so that offset never appears -- a 5-night block
+        has one. BODY-TURNOS-PERFIL-LEGIBLE-1-M: the two label sets the -M's own defect report
+        measured against (the right-edge label cut at "+4", the viewBox at 313)."""
+        offsets = [{"offset": "antes", "media": 2.0, "n": 3}, {"offset": "noche_1", "media": -18.0, "n": 3}]
+        if con_ultima:
+            offsets.append({"offset": "noche_ultima", "media": -24.0, "n": 3})
+        offsets += [{"offset": "post_1", "media": -16.0, "n": 3}, {"offset": "post_2", "media": -10.0, "n": 3},
+                    {"offset": "post_3", "media": -4.0, "n": 3}, {"offset": "post_4", "media": -1.0, "n": 3}]
+        return {"metric": "hrv_last_night", "motivo": None, "centro": 60.0,
+                "banda": {"bajo": -14.2, "alto": 12.3}, "offsets": offsets,
+                "mas_bajo": "noche_ultima" if con_ultima else "noche_1",
+                "vuelta": "post_4", "noches_tipicas": n_noches, "n_bloques": 3}
+
+    def test_right_inset_keeps_the_last_point_and_label_inside_the_viewbox(self):
+        """BODY-TURNOS-PERFIL-LEGIBLE-1-M: the defect this fixes -- the last point and its "+4"
+        label were drawn past the viewBox's own right edge and clipped by the card's overflow
+        hidden. Checked for both label sets (1-night: no noche_ultima; 5-night: with it) in both
+        languages, against every label LINE's own approximate box (`_label_px`'s character-count
+        estimate), not just its anchor point."""
+        tspan_re = re.compile(r'<tspan[^>]*>([^<]*)</tspan>')
+        label_block_re = re.compile(
+            r'<text x="([\d.]+)" y="[\d.]+" text-anchor="middle" class="tick">(.*?)</text>')
+        for lang in ("es", "en"):
+            t = T(lang)
+            for n_noches, con_ultima in ((1, False), (5, True)):
+                perfil = self._perfil_n_noches(n_noches, con_ultima)
+                caption = turnos._perfil_caption(t, perfil)
+                svg = turnos._perfil_svg(t, perfil, caption, "ms")
+                width = float(re.search(r'viewBox="0 0 ([\d.]+) [\d.]+"', svg).group(1))
+
+                cxs = [float(x) for x in re.findall(r'<circle cx="([\d.]+)"', svg)]
+                self.assertTrue(cxs)
+                for cx in cxs:
+                    self.assertGreaterEqual(cx - turnos._PERFIL_POINT_R, -0.01,
+                                             f"{lang} n={n_noches}: a point's circle sits left of the viewBox")
+                    self.assertLessEqual(cx + turnos._PERFIL_POINT_R, width + 0.01,
+                                          f"{lang} n={n_noches}: a point's circle sits past the right edge")
+
+                boxes = []
+                for x, body in label_block_re.findall(svg):
+                    x = float(x)
+                    lines = tspan_re.findall(body) if "<tspan" in body else [body]
+                    widest = max(len(html.unescape(line)) * turnos._PERFIL_CHAR_W for line in lines)
+                    boxes.append((x - widest / 2, x + widest / 2))
+                self.assertTrue(boxes)
+                for lo, hi in boxes:
+                    self.assertGreaterEqual(lo, -0.01,
+                                             f"{lang} n={n_noches}: a label box sits left of the viewBox")
+                    self.assertLessEqual(hi, width + 0.01,
+                                          f"{lang} n={n_noches}: a label box sits past the right edge")
+                for (lo_a, hi_a), (lo_b, hi_b) in zip(boxes, boxes[1:]):
+                    self.assertLessEqual(hi_a, lo_b + 0.01,
+                                          f"{lang} n={n_noches}: two label boxes overlap")
+
     def test_each_x_axis_label_x_equals_its_points_cx(self):
         svg, _ = self._render()
         cxs = [float(x) for x in re.findall(r'<circle cx="([\d.]+)"', svg)]

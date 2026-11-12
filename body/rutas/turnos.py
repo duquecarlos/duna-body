@@ -144,6 +144,9 @@ _PERFIL_LABEL_GAP = 4.0    # minimum clear gap kept between two adjacent x-axis 
 _PERFIL_GUTTER_PAD = 6.0   # clearance between the widest y-tick text and the plot area
 _PERFIL_EDGE_PAD = 2.0     # inside the viewBox's own left/right edge
 _PERFIL_TICK_DIVISIONS = 4  # target divisions for the nice-number y-tick step
+_PERFIL_POINT_R = 3.0      # the offset points' own radius (also the <circle> r attribute below) --
+                           # part of the first/last point's own edge inset (BODY-TURNOS-PERFIL-
+                           # LEGIBLE-1-M), since a circle has no neighbour on its outer side
 
 
 def _perfil_offset_palabra(t: T, offset: str) -> str:
@@ -238,7 +241,13 @@ def _perfil_svg(t: T, perfil: dict, caption: str, unit: str, *, color_cls: str =
     _PERFIL_LABEL_GAP) wraps into two lines instead (`_perfil_wrap`, ruling 2), so two labels'
     approximate boxes -- `_label_px`, a character-count estimate -- still never overlap, whatever
     language or offsets are in play. The chart's own height grows by _PERFIL_WRAP_LINE_HEIGHT only
-    when at least one label actually wrapped."""
+    when at least one label actually wrapped.
+
+    The first and last point sit INSET from the viewBox's own left/right edge (BODY-TURNOS-PERFIL-
+    LEGIBLE-1-M): unlike an interior point, neither has a neighbour on its outer side for the
+    slot/gap rule to keep its label (or its own circle) off the edge, so each gets its own margin --
+    half its widest wrapped line, or the point's radius, whichever is larger, plus the edge's small
+    pad -- and the point pitch shrinks to fit."""
     offsets = perfil["offsets"]
     if len(offsets) < 2:
         return ""
@@ -268,6 +277,19 @@ def _perfil_svg(t: T, perfil: dict, caption: str, unit: str, *, color_cls: str =
     plot_right = width - _PERFIL_EDGE_PAD
     step = (plot_right - plot_left) / (len(offsets) - 1)
     slot = step - _PERFIL_LABEL_GAP
+    lineas = [_perfil_wrap(label, slot) for label in labels]
+
+    # First pass's slot is the widest the pitch will ever be, so the wrap it produced is a safe
+    # upper bound on the first/last label's final width -- wrapping only ever narrows a label, so
+    # sizing the edge inset from this pass is never an underestimate once the pitch shrinks below.
+    def _borde(lineas_label: list[str]) -> float:
+        ancho = max(_label_px(linea) for linea in lineas_label)
+        return max(ancho / 2, _PERFIL_POINT_R) + _PERFIL_EDGE_PAD
+
+    plot_right = width - _borde(lineas[-1])
+    plot_left = max(plot_left, _borde(lineas[0]))
+    step = (plot_right - plot_left) / (len(offsets) - 1)
+    slot = step - _PERFIL_LABEL_GAP
 
     def cx(i: int) -> float:
         return plot_left + i * step
@@ -287,7 +309,8 @@ def _perfil_svg(t: T, perfil: dict, caption: str, unit: str, *, color_cls: str =
     out.append(f'<polyline fill="none" class="stroke-{color_cls}" stroke-width="2.2" '
                f'vector-effect="non-scaling-stroke" stroke-linejoin="round" points="{line_pts}"/>')
     for i, o in enumerate(offsets):
-        out.append(f'<circle cx="{cx(i):.1f}" cy="{y(o["media"]):.1f}" r="3" class="c-{color_cls}"/>')
+        out.append(f'<circle cx="{cx(i):.1f}" cy="{y(o["media"]):.1f}" r="{_PERFIL_POINT_R:.1f}" '
+                   f'class="c-{color_cls}"/>')
     for i, lineas_label in enumerate(lineas):
         x = cx(i)
         if len(lineas_label) == 1:
