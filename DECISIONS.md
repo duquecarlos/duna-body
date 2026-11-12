@@ -18812,3 +18812,5 @@ tests only -- no schema or migration, no cross-repo contract or DTO, and no i18n
 string changed (both defects are fixed entirely inside the reader a caption already reads from;
 every existing `trends.patron.*`/`shifts.perfil.*` string is unchanged). Merge policy A's three
 conditions all pass, so this merges on the green gate above without waiting for approval.
+
+-- merged fad572645b691a94541f31ec689a055fde9b71ae
