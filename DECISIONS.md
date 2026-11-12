@@ -19330,3 +19330,139 @@ assistant change, no translation string), no cross-repo contract or DTO change. 
 policy A's conditions pass. **Merges on this green gate.**
 
 -- merged bbe8db592d1325663abffeb058394d6019e45fa9
+
+## BODY-TENDENCIAS-RACHA-GRAFICO-1 -- the strength-session study card on /trends, built in three
+slices (this entry, never written by the first two, covers all of it)
+
+**Ruling 1 -- `racha_piso`, the person's own floor pick** (`0242bb6`). An additive table, `person_id
+INTEGER PRIMARY KEY REFERENCES person(id)`, `habit_id INTEGER REFERENCES habit(id)` (nullable), `
+updated_at TEXT NOT NULL`, with `db.set_racha_piso`/`db.racha_piso_habit_id`. `habit_id = NULL`
+records an explicit "no floor" pick, never the absence of a row. The floor names one of the
+person's own habits rather than a fixed habit-type taxonomy, the same shape `BODY-ENTRENO-HABITO-
+AUTO-1`'s `marcar_habito` already settled for matching an activity to a habit -- that tool "never
+carries a hardcoded activity-type list", letting the model decide which activity fulfils which of
+the person's active habits instead of enumerating types in code; `racha_piso` follows the same
+rule, so any weekly, active habit the person creates is automatically comparable with no code
+change. Exported under "vida" and deleted by `privacidad.export_person`/`delete_person`: a
+household member's own `racha_piso` naming one of THIS person's habits is nulled (not failed)
+before that person's habits go, and the person's own row is deleted outright. `mudanza.py`'s
+`SKIPPED_TABLES` and `tests/test_persona_fuga.py`'s `_seed_person` gained the narrow, explicit
+census exception every new person-scoped table needs.
+
+**Rulings 2-3 -- the card, its chart and the picker** (`ea3235d`). A card on `/trends`, built from
+`entreno_racha.racha_semanal`: a bar chart of weekly strength-session counts against the chosen
+floor (green bars at or above it, blue ticks under night-shift weeks, a dashed floor line), up to
+three figures -- longest run, night-ending-run ratio, current run, each *absent* rather than zero
+when there is none -- and a plain POST form picker, `/trends/racha-piso`, of the person's own
+active weekly habits plus "No floor". The picker 404s an inactive, non-weekly, unread or another
+person's habit, and keeps the range query on redirect. The card appears only when `racha_semanal`
+returns a result. No inline `<script>`, `style` attribute or `<style>` tag -- bar geometry is plain
+SVG attributes throughout, unchanged by every later slice.
+
+**Ruling 4 -- the demo person's own pick** (`0936dbc`). A new "Entrenar fuerza"/"Strength
+training" habit under the resting-heart-rate goal (weekly, 3x), set as the demo person's own
+`racha_piso`, with three clean weeks of three invented strength sessions each, ending two weeks
+before the current one -- a real longest run, with no still-open current run. `test_demo.py`'s
+habit count moved from 3 to 4 and its determinism checksum now covers `racha_piso`.
+
+**Strings, es/en, exact key and placeholder parity** (as they stand after `-M2`'s one wording
+fix below): `trends.racha.titulo` ("Desde {mes} · cerrando la brecha" / "Since {mes} · closing the
+gap"), `.sub` ("{dias} días de todo el historial de tu reloj..." / "{dias} days from your watch's
+full history..."), `.piso_nota` ("Verde cuando llegó a {piso}..." / "Green when it reached
+{piso}..."), `.noche_nota` ("Marcas azules: semanas con turno de noche." / "Blue ticks: night-shift
+weeks."), `.semanas_one`/`.semanas_other` ("1 semana"/"{n} semanas" / "1 week"/"{n} weeks"),
+`.mas_larga_txt` ("tu racha más larga en {piso} o más ({rango})" / "your longest run at {piso} or
+more ({rango})"), `.terminadas_valor` ("{n} de {de}" / "{n} of {de}"), `.terminadas_txt` ("rachas
+terminaron en una semana de turno de noche" / "runs ended in a night-shift week"), `.actual_txt`
+("tu racha actual" / "your current run"), `.piso_label` ("Comparar con" / "Compare with"),
+`.sin_piso` ("Sin piso" / "No floor"), `.piso_opcion` ("{n} por semana" / "{n} a week"), `.aria`
+("Semanas de sesiones de fuerza, de {desde} a {hasta}" / "Weeks of strength sessions, from {desde}
+to {hasta}").
+
+**`/trends`'s statement count**, measured on `tests/test_rendimiento.py`'s fixture
+(`RouteCostCeilingTest`): 18 without the card (`BODY-AGUJETAS-1-B`'s own baseline, unchanged by this
+whole feature); 28 with the card's first implementation (`1dd4a4c`, which raised the ceiling to
+`ceil(28 * 1.3) = 37`); folded to 21 (`-M`, `7feb44d`) by merging `racha_semanal`'s MIN(day) and
+DISTINCT `workout_set` reads into one correlated-EXISTS read, and `tendencias.py`'s habit-row,
+goal-access and two household-lookup reads into one join with inline correlated subqueries --
+`7feb44d` restored the ceiling to 19 by hand (`git revert` is not a granted verb) and stopped
+BLOCKED there, since 21 still exceeded it by 2. `-M2` (`3d3c5c2`) is the orchestrator's own ruling
+closing that gap: the ceiling becomes 28 (`ceil(21 * 1.3)`), with
+`TrendsStatementCountIndependentOfHistoryLengthTest` added as a permanent guard that the route's
+own statement count never grows between a short and a two-year weekly history (proving the fold
+holds regardless of data size, not just at the fixture's one size).
+
+### -M -- fold the study card's reads from 10 to 3, still over the ceiling (`7feb44d`)
+
+Folded `racha_semanal`'s own reads (`body/entreno_racha.py`) and `tendencias.py`'s `_piso_actual`/
+`_opciones_piso` (merged into one `_piso_y_opciones`) as described above; the night-shift read
+(`bloques_noche`) was already a single statement and stayed one. Stopped **BLOCKED** at step 2: 21
+statements still exceeded the then-current ceiling of 19 by 2, and reducing further would need a
+`UNION ALL` mixing activity/shift rows with habit/goal rows under a type-discriminator column -- "a
+hack with no precedent in this codebase... built solely to defeat a statement counter" -- so the
+slice stopped rather than raising the ceiling itself or taking that shortcut.
+
+### -M2 -- raise /trends' ceiling, redraw the racha axis in-svg (`3d3c5c2`)
+
+The orchestrator's own ruling on `-M`'s stop: the ceiling becomes 28 as above (step 2). Step 3
+moved the month axis from an HTML row under the chart into `<text>` drawn inside the SVG itself, at
+the app's own small-text floor (the `"tick"` CSS class); `preserveAspectRatio="none"` was dropped
+and the svg's `height` attribute computed to equal its own viewBox height, so neither axis scales
+the glyphs. Labels sit at the x of each month's first week, up to 4 evenly chosen among month
+starts, anchored start/end at the viewBox's own edges, with a first version of the overlap guard
+(a greedy left-to-right scan, 4-unit minimum gap) -- the version `-M3` below found insufficient.
+Step 4: with a floor, the chart's scale top became one session above the taller of the tallest week
+and the floor, so the dashed line never sits flush with the top edge. Step 5: the "longest run"
+figure's range moved from two full dates to short month names in Python (`_racha_rango_meses`: one
+month named once, two months sharing a year with the year once at the end, two months across years
+with the year on both), and the figures row in `trends.html` now renders the number before the
+label, matching the app's other figures. Stopped **GATE_RED**: `test_web_entry.py`'s frozen route
+set lacked `("/trends/racha-piso", ("POST",))`, the route `ea3235d` added -- the parent slice's own
+census omission, not a gap this slice introduced.
+
+The orchestrator looked at `/trends` on the demo (en, 375 px) and found one cosmetic defect: "Jul
+2026" and "Aug" sat 1 px apart -- inside the 4-unit gap's own approximation error -- and approved
+merging once that and the route-set gap were fixed on a green gate.
+
+### -M3 -- freeze the new route, widen the axis gap to 8, never drop an end label (this slice,
+merges the whole feature)
+
+Two fixes, each committed on its own:
+
+1. `tests/test_web_entry.py`'s frozen route set gained `("/trends/racha-piso", ("POST",))`, with a
+   comment naming this ledger id, closing `-M2`'s `GATE_RED`.
+2. `_RACHA_LABEL_GAP_X` raised from 4.0 to 8.0 viewBox units -- the margin the demo showed was not
+   enough. `_racha_eje`'s selection loop changed from a single greedy left-to-right scan (which
+   could drop the chronologically last label if it conflicted with the one already kept) to one
+   that always keeps the first candidate and always keeps the last: a conflicting last candidate
+   instead pops already-kept *middle* labels, one at a time, until it clears the gap or none are
+   left to pop. Three new cases in `tests/test_tendencias_racha.py::RachaEjeTest`: a conflicting
+   last label popping a middle one (`test_a_conflicting_last_label_pops_the_middle_one_instead`);
+   both ends kept even when, with only two candidates and no middle one to sacrifice, the 8-unit
+   gap plainly cannot be met (`test_last_label_survives_even_when_the_gap_cannot_be_met`); and the
+   existing `_revisar` helper's pairwise check now asserts the full 8-unit gap between neighbouring
+   label boxes, not mere non-overlap.
+
+No password, token, session secret or health figure of a real person was read, printed or written
+anywhere in this slice; the two new axis-gap test fixtures use invented dates (2025-11/2025-12/
+2026-01), no real watch history.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry), the exact
+command is `.venv/Scripts/python.exe -m unittest discover tests -t .`, run ONCE in the foreground;
+the harness moved it to the background past its own 600 s cap, and this session blocked on the
+output file (two consecutive ~9-minute waits) until its `Ran ` line appeared rather than polling
+turn-by-turn:
+
+    Ran 3152 tests in 1194.828s
+
+    OK (skipped=1)
+
+**Merge policy, this slice.** The diff touches `tests/test_web_entry.py`, `body/rutas/tendencias.py`,
+`tests/test_tendencias_racha.py` and this ledger -- no schema or migration change (`body/db.py`
+untouched), no cross-repo contract or DTO change. It does change customer-facing bytes: the axis
+labels' rendered positions move (wider minimum gap, and an end label that could previously vanish
+now never does) -- no string changed, but the pixels a person sees on `/trends` do. That alone
+would stop merge policy A's third condition, but the spec's own body says in words that this slice
+is "APPROVED to merge after the fixes below on a green gate" once the route-set gap and the 1 px
+label-crowding defect were fixed -- an explicit merge authorization, not a stop. **Merges on this
+green gate.**
