@@ -4,6 +4,7 @@ Invented demo data only, no real health figures.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -22,6 +23,9 @@ from body.agente import conversacion as agente_conversacion
 from body.agente import herramientas, propuestas
 from body.i18n import T
 from body.rutas import asistente, comun
+
+ROOT = Path(__file__).resolve().parent.parent
+STATIC_DIR = ROOT / "body" / "static"
 
 DAY = "2026-11-05"
 
@@ -602,6 +606,174 @@ class PantallasTest(unittest.TestCase):
         estado = conn.execute(
             "SELECT estado FROM propuesta_agente WHERE id = ?", (propuesta_id,)).fetchone()[0]
         self.assertEqual(estado, "descartada")
+
+
+# ---- BODY-NUTRIENTE-OBJETIVO-1-M: six presentation/flow fixes from the AWAITING_APPROVAL review ---
+
+class SvgBarraHeightTest(unittest.TestCase):
+    """Fix 1: svg.barra's viewBox stays 100x6, but a fixed CSS height keeps the rendered bar thin
+    at every width -- without it the bar follows the viewBox over the full width (~19px at 375px)."""
+
+    def test_svg_barra_has_a_fixed_thin_height(self):
+        css = (STATIC_DIR / "body.css").read_text(encoding="utf-8")
+        self.assertRegex(css, r"svg\.barra\{[^}]*height:6px")
+
+
+class AjustesStartDayTest(unittest.TestCase):
+    """Fixes 2 and 3: Ajustes' own "Metas diarias" listing and its pending-proposal card both name
+    the target's start day -- rulings 6 and 3 respectively."""
+
+    client = TestClient(web.app, follow_redirects=False)
+
+    def _reset_db(self, name: str):
+        orig = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
+        self.addCleanup(web.app.dependency_overrides.clear)
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / name
+        conn = db.connect()
+        self.addCleanup(conn.close)
+        db.init(conn)
+        return conn
+
+    def test_vigentes_listing_names_its_start_day(self):
+        conn = self._reset_db("vigentes_desde.db")
+        with conn:
+            db.set_nutrient_target(conn, 1, "protein_g", "2026-10-01", "absolute", 130.0, "al_menos")
+        r = self.client.get("/settings")
+        self.assertEqual(r.status_code, 200)
+        fecha = comun._short_date(T("es"), date(2026, 10, 1))
+        self.assertIn(_t("es", "settings.nutriente.desde", fecha=fecha), r.text)
+
+    def test_pending_proposal_card_names_its_start_day(self):
+        conn = self._reset_db("pendiente_desde.db")
+        cid = _cid(conn)
+        despues = json.dumps({"metric_key": "protein_g", "kind": "absolute", "amount": 130.0,
+                               "sentido": "al_menos", "start_day": "2026-10-05"})
+        conn.execute(
+            "INSERT INTO propuesta_agente (person_id, conversacion_id, accion, despues_json, estado, "
+            "creada_en, expira_en) VALUES (1, ?, 'proponer_objetivo_nutriente', ?, 'propuesta', "
+            "'2026-11-09T00:00:00+00:00', '2026-11-09T00:10:00+00:00')",
+            (cid, despues),
+        )
+        conn.commit()
+        r = self.client.get("/settings")
+        self.assertEqual(r.status_code, 200)
+        fecha = comun._short_date(T("es"), date(2026, 10, 5))
+        self.assertIn(_t("es", "settings.nutriente.propuesta_desde", fecha=fecha), r.text)
+
+
+class AjustesUndoTest(unittest.TestCase):
+    """Fix 4: Ajustes shows Deshacer on an applied target proposal, posting to the SAME
+    `agente_propuestas.deshacer` the assistant uses -- no second undo path."""
+
+    client = TestClient(web.app, follow_redirects=False)
+
+    def _reset_db(self, name: str):
+        orig = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
+        self.addCleanup(web.app.dependency_overrides.clear)
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / name
+        conn = db.connect()
+        self.addCleanup(conn.close)
+        db.init(conn)
+        return conn
+
+    def _proponer(self, conn, person_id: int) -> int:
+        cid = _cid(conn, person_id)
+        out = herramientas.ejecutar(
+            conn, person_id, "proponer_objetivo_nutriente",
+            {"metric_key": "protein_g", "kind": "absolute", "amount": 130.0, "sentido": "al_menos",
+             "start_day": DAY},
+            "ninguno", cid,
+        )
+        conn.commit()
+        return out["propuesta_id"]
+
+    def test_apply_then_undo_through_settings_restores_the_prior_row(self):
+        conn = self._reset_db("ajustes_deshacer.db")
+        with conn:
+            db.set_nutrient_target(conn, 1, "protein_g", DAY, "absolute", 100.0, "al_menos")
+        propuesta_id = self._proponer(conn, 1)
+
+        r = self.client.post(f"/settings/nutriente/propuestas/{propuesta_id}/aplicar", data={"back": "/settings"})
+        self.assertEqual(r.status_code, 303)
+        row = conn.execute("SELECT amount FROM nutrient_target WHERE metric_key = 'protein_g'").fetchone()
+        self.assertEqual(row["amount"], 130.0)
+
+        r = self.client.get("/settings")
+        self.assertIn(_t("es", "asistente.propuesta.deshacer"), r.text)
+
+        r = self.client.post(f"/settings/nutriente/propuestas/{propuesta_id}/deshacer", data={"back": "/settings"})
+        self.assertEqual(r.status_code, 303)
+        row = conn.execute("SELECT amount FROM nutrient_target WHERE metric_key = 'protein_g'").fetchone()
+        self.assertEqual(row["amount"], 100.0)
+
+    def test_undo_with_no_prior_target_removes_the_row_through_settings(self):
+        conn = self._reset_db("ajustes_deshacer_vacio.db")
+        propuesta_id = self._proponer(conn, 1)
+        self.client.post(f"/settings/nutriente/propuestas/{propuesta_id}/aplicar", data={"back": "/settings"})
+
+        r = self.client.post(f"/settings/nutriente/propuestas/{propuesta_id}/deshacer", data={"back": "/settings"})
+        self.assertEqual(r.status_code, 303)
+        row = conn.execute("SELECT 1 FROM nutrient_target WHERE metric_key = 'protein_g'").fetchone()
+        self.assertIsNone(row)
+
+    def test_a_strangers_proposal_id_is_refused(self):
+        conn = self._reset_db("ajustes_deshacer_ajena.db")
+        conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        conn.commit()
+        propuesta_id = self._proponer(conn, 2)
+        propuestas.aplicar(conn, 2, propuesta_id)
+        conn.commit()
+
+        r = self.client.post(f"/settings/nutriente/propuestas/{propuesta_id}/deshacer", data={"back": "/settings"})
+        self.assertEqual(r.status_code, 303)
+        estado = conn.execute("SELECT estado FROM propuesta_agente WHERE id = ?", (propuesta_id,)).fetchone()[0]
+        self.assertEqual(estado, "aplicada")
+
+
+class CumplidaWordingTest(unittest.TestCase):
+    """Fix 6: Today keeps "Today's target reached" / "Meta del día cumplida"; Día on a day other
+    than today never says "today" in English."""
+
+    client = TestClient(web.app, follow_redirects=False)
+
+    def _reset_db(self, name: str):
+        orig = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
+        self.addCleanup(web.app.dependency_overrides.clear)
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / name
+        conn = db.connect()
+        self.addCleanup(conn.close)
+        db.init(conn)
+        return conn
+
+    def test_today_screen_keeps_todays_wording(self):
+        conn = self._reset_db("cumplida_hoy.db")
+        hoy = date(2026, 6, 10)
+        db.set_metric(conn, hoy.isoformat(), "resting_hr", 55.0, "garmin", 1)
+        db.registrar_ingesta(conn, 1, hoy.isoformat(), "protein_g", 130.0, False)
+        with conn:
+            db.set_nutrient_target(conn, 1, "protein_g", hoy.isoformat(), "absolute", 100.0, "al_menos")
+        with mock.patch.object(comun, "_today_local", return_value=hoy):
+            r = self.client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(_t("es", "nutriente.hoy.cumplida"), r.text)
+
+    def test_day_screen_on_a_past_day_never_says_today_in_english(self):
+        conn = self._reset_db("cumplida_pasado.db")
+        hoy = date(2026, 6, 10)
+        pasado = date(2026, 6, 5)
+        db.set_metric(conn, pasado.isoformat(), "resting_hr", 55.0, "garmin", 1)
+        db.registrar_ingesta(conn, 1, pasado.isoformat(), "protein_g", 130.0, False)
+        with conn:
+            db.set_nutrient_target(conn, 1, "protein_g", pasado.isoformat(), "absolute", 100.0, "al_menos")
+        self.client.post("/settings/language", data={"lang": "en"})
+        with mock.patch.object(comun, "_today_local", return_value=hoy):
+            r = self.client.get(f"/day/{pasado.isoformat()}")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(_t("en", "nutriente.hoy.cumplida_dia"), r.text)
+        self.assertNotIn(_t("en", "nutriente.hoy.cumplida"), r.text)
 
 
 if __name__ == "__main__":

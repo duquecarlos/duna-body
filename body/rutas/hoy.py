@@ -559,7 +559,7 @@ def today(person_id: int = Depends(identity.current_person_id)):
                    ventana=_ventana_ctx(t, conn, person, person_id, today_local),
                    periodo=_periodo_hoy_ctx(t, conn, person_id, today_local),
                    noche_inusual=_noche_inusual_hoy_ctx(t, conn, person_id, day, vals),
-                   objetivos_nutriente=_objetivos_nutriente_ctx(t, conn, defs, person_id, day))
+                   objetivos_nutriente=_objetivos_nutriente_ctx(t, conn, defs, person_id, day, es_hoy))
 
 
 # readiness.Part.key -> the Tendencias metric it reads from (readiness.Part carries no metric key of its
@@ -727,13 +727,14 @@ def _comidas_dia_ctx(t: T, conn, person_id: int, defs: dict, dia_iso: str) -> li
     return out
 
 
-def _objetivos_nutriente_ctx(t: T, conn, defs: dict, person_id: int, dia_iso: str) -> list[dict]:
+def _objetivos_nutriente_ctx(t: T, conn, defs: dict, person_id: int, dia_iso: str, es_hoy: bool) -> list[dict]:
     """Today's and Día's own "Metas de nutrientes" lines (BODY-NUTRIENTE-OBJETIVO-1): one per
     intake key with a live target on this day, generic over all eight -- shared by `today()` and
     `day_view()` below, since `nutriente_objetivo.estado_del_dia` is already honest about history
     (ruling 1: the target in force on THIS day, never today's). `falta_peso` (ruling 2) shows its
     own line, no number guessed. Never a progress bar in markup colour -- `pct` is a plain number,
-    body/static/body.css picks the fixed class."""
+    body/static/body.css picks the fixed class. BODY-NUTRIENTE-OBJETIVO-1-M fix 6: `es_hoy` picks
+    the "reached" wording -- Día showing a PAST day must never say "today"."""
     estado = nutriente_objetivo.estado_del_dia(conn, person_id, dia_iso)
     out = []
     for k in db.INGESTA_METRIC_KEYS:
@@ -750,7 +751,7 @@ def _objetivos_nutriente_ctx(t: T, conn, defs: dict, person_id: int, dia_iso: st
         pct = round(min(e["total"] / obj["objetivo"], 1.0) * 100) if obj["objetivo"] else 0
         if obj["sentido"] == "al_menos":
             if e["restante"] == 0.0:
-                texto = t("nutriente.hoy.cumplida")
+                texto = t("nutriente.hoy.cumplida") if es_hoy else t("nutriente.hoy.cumplida_dia")
             else:
                 clave = "nutriente.hoy.progreso" if e["n"] == 1 else "nutriente.hoy.progreso_plural"
                 texto = t(clave, total=total_txt, objetivo=objetivo_txt, unidad=unidad, n=e["n"],
@@ -922,7 +923,8 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
                    turnos=turnos_on, ventana=_ventana_dia_ctx(t, conn, person_id, d), periodo=periodo_dia,
                    comidas=_comidas_dia_ctx(t, conn, person_id, defs, d.isoformat()),
                    checkin=_checkins_dia_ctx(t, conn, person_id, defs, vals, d.isoformat()),
-                   objetivos_nutriente=_objetivos_nutriente_ctx(t, conn, defs, person_id, d.isoformat()),
+                   objetivos_nutriente=_objetivos_nutriente_ctx(t, conn, defs, person_id, d.isoformat(),
+                                                                 d.isoformat() == today_local.isoformat()),
                    union_oferta=union_oferta, vinculo_tarjetas=vinculo_tarjetas)
 
 

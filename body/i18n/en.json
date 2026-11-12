@@ -1027,6 +1027,7 @@
   "nutriente.hoy.progreso": "{total} of {objetivo} {unidad} · {n} meal · {restante} {unidad} to go",
   "nutriente.hoy.progreso_plural": "{total} of {objetivo} {unidad} · {n} meals · {restante} {unidad} to go",
   "nutriente.hoy.cumplida": "Today's target reached",
+  "nutriente.hoy.cumplida_dia": "Target reached that day",
   "nutriente.hoy.limite_quedan": "{restante} {unidad} left",
   "nutriente.hoy.limite_excedido": "{exceso} {unidad} over the limit",
   "nutriente.hoy.falta_peso": "Log your weight to see the target",
@@ -1042,5 +1043,7 @@
   "settings.nutriente.sentido.al_menos": "Reach at least",
   "settings.nutriente.sentido.como_maximo": "Do not exceed (limit)",
   "settings.nutriente.amount": "Amount",
-  "settings.nutriente.guardar": "Propose target"
+  "settings.nutriente.guardar": "Propose target",
+  "settings.nutriente.desde": "since {fecha}",
+  "settings.nutriente.propuesta_desde": "from {fecha}"
 }

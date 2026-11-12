@@ -1027,6 +1027,7 @@
   "nutriente.hoy.progreso": "{total} de {objetivo} {unidad} · {n} comida · faltan {restante} {unidad}",
   "nutriente.hoy.progreso_plural": "{total} de {objetivo} {unidad} · {n} comidas · faltan {restante} {unidad}",
   "nutriente.hoy.cumplida": "Meta del día cumplida",
+  "nutriente.hoy.cumplida_dia": "Meta del día cumplida",
   "nutriente.hoy.limite_quedan": "quedan {restante} {unidad}",
   "nutriente.hoy.limite_excedido": "{exceso} {unidad} por encima del límite",
   "nutriente.hoy.falta_peso": "Registra tu peso para ver la meta",
@@ -1042,5 +1043,7 @@
   "settings.nutriente.sentido.al_menos": "Alcanzar al menos",
   "settings.nutriente.sentido.como_maximo": "No superar (límite)",
   "settings.nutriente.amount": "Cantidad",
-  "settings.nutriente.guardar": "Proponer meta"
+  "settings.nutriente.guardar": "Proponer meta",
+  "settings.nutriente.desde": "desde {fecha}",
+  "settings.nutriente.propuesta_desde": "desde {fecha}"
 }

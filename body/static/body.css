@@ -352,7 +352,7 @@ table.parts td.p-0{padding:0}
 .chart-svg{display:block;margin-top:8px}
 svg.bar{display:block;width:100%}
 svg.stage{display:block;width:100%}
-svg.barra{display:block;width:100%;margin-top:4px}
+svg.barra{display:block;width:100%;height:6px;margin-top:4px}
 .est .fig.c-muted{color:var(--muted)}
 .settings-row{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:44px;color:inherit;text-decoration:none}
 .steps-col{display:flex;flex-direction:column;gap:8px;width:100%}

@@ -29,28 +29,47 @@ def _nutriente_objetivo_txt(t, defs: dict, metric_key: str, kind: str, amount: f
 
 def _nutriente_vigentes_ctx(t, conn, defs: dict, person_id: int, today_local: date) -> list[dict]:
     """Ajustes' own "Metas diarias" listing (BODY-NUTRIENTE-OBJETIVO-1 ruling 6): one row per
-    intake key with a live target as of today, in the catalog's own order."""
+    intake key with a live target as of today, in the catalog's own order. BODY-NUTRIENTE-
+    OBJETIVO-1-M fix 2: each row names the start day the target has been in force since."""
     vigentes = nutriente_objetivo.objetivos_vigentes(conn, person_id, today_local.isoformat())
-    return [{"key": k, "label": t("metric." + k),
-              "texto": _nutriente_objetivo_txt(t, defs, k, v["kind"], v["amount"], v["sentido"])}
-             for k, v in vigentes.items()]
+    out = []
+    for k, v in vigentes.items():
+        texto = _nutriente_objetivo_txt(t, defs, k, v["kind"], v["amount"], v["sentido"])
+        desde = t("settings.nutriente.desde", fecha=comun._short_date(t, date.fromisoformat(v["start_day"])))
+        out.append({"key": k, "label": t("metric." + k), "texto": f"{texto} · {desde}"})
+    return out
 
 
 def _nutriente_pendientes_ctx(t, conn, defs: dict, person_id: int) -> list[dict]:
-    """Every still-pending `proponer_objetivo_nutriente` proposal (BODY-NUTRIENTE-OBJETIVO-1
-    ruling 6): the SAME proposal the form below raises, shown here with Aplicar/Descartar --
-    once applied it drops off this list and shows up in `_nutriente_vigentes_ctx` instead."""
+    """Every still-pending `proponer_objetivo_nutriente` proposal, plus the most recently applied
+    one per metric (BODY-NUTRIENTE-OBJETIVO-1-M fix 4) -- the SAME list shape body/rutas/hoy.py's
+    own `_propuestas_vinculo_dia_ctx` uses for separar_sesion/unir_sesiones: `aplicada` decides
+    whether a row's form below posts to Aplicar/Descartar or to Deshacer, and Deshacer calls the
+    SAME `agente_propuestas.deshacer` the assistant uses -- no second undo path. Once a metric's
+    proposal is undone its state moves to 'deshecha' and it drops off this query on its own.
+    BODY-NUTRIENTE-OBJETIVO-1 ruling 3 (fix 3): each row also names the start day."""
     filas = conn.execute(
-        "SELECT id, despues_json FROM propuesta_agente WHERE person_id = ? "
-        "AND accion = 'proponer_objetivo_nutriente' AND estado = 'propuesta' ORDER BY creada_en DESC",
+        "SELECT id, despues_json, estado FROM propuesta_agente WHERE person_id = ? "
+        "AND accion = 'proponer_objetivo_nutriente' AND estado IN ('propuesta', 'aplicada') "
+        "ORDER BY creada_en DESC",
         (person_id,),
     ).fetchall()
     out = []
+    vistos_aplicados: set[str] = set()
     for f in filas:
         despues = json.loads(f["despues_json"])
-        texto = _nutriente_objetivo_txt(t, defs, despues["metric_key"], despues["kind"], despues["amount"],
+        metric_key = despues["metric_key"]
+        aplicada = f["estado"] == "aplicada"
+        if aplicada:
+            if metric_key in vistos_aplicados:
+                continue
+            vistos_aplicados.add(metric_key)
+        texto = _nutriente_objetivo_txt(t, defs, metric_key, despues["kind"], despues["amount"],
                                          despues["sentido"])
-        out.append({"id": f["id"], "metric_label": t("metric." + despues["metric_key"]), "texto": texto})
+        desde = t("settings.nutriente.propuesta_desde",
+                  fecha=comun._short_date(t, date.fromisoformat(despues["start_day"])))
+        out.append({"id": f["id"], "metric_label": t("metric." + metric_key), "texto": f"{texto} · {desde}",
+                     "aplicada": aplicada})
     return out
 
 
@@ -218,3 +237,11 @@ async def nutriente_propuesta_aplicar(propuesta_id: int, request: Request,
 async def nutriente_propuesta_descartar(propuesta_id: int, request: Request,
                                          person_id: int = Depends(identity.current_person_id)):
     return await _nutriente_propuesta_resolver(request, propuesta_id, person_id, agente_propuestas.descartar)
+
+
+@router.post("/settings/nutriente/propuestas/{propuesta_id}/deshacer")
+async def nutriente_propuesta_deshacer(propuesta_id: int, request: Request,
+                                        person_id: int = Depends(identity.current_person_id)):
+    """BODY-NUTRIENTE-OBJETIVO-1-M fix 4: the SAME `agente_propuestas.deshacer` body/rutas/hoy.py's
+    own `entreno_propuesta_deshacer` calls -- no second undo path."""
+    return await _nutriente_propuesta_resolver(request, propuesta_id, person_id, agente_propuestas.deshacer)

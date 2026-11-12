@@ -100,6 +100,7 @@ class RouteSetTest(unittest.TestCase):
         ("/settings/nutriente/proponer", ("POST",)),  # BODY-NUTRIENTE-OBJETIVO-1
         ("/settings/nutriente/propuestas/{propuesta_id}/aplicar", ("POST",)),  # BODY-NUTRIENTE-OBJETIVO-1
         ("/settings/nutriente/propuestas/{propuesta_id}/descartar", ("POST",)),  # BODY-NUTRIENTE-OBJETIVO-1
+        ("/settings/nutriente/propuestas/{propuesta_id}/deshacer", ("POST",)),  # BODY-NUTRIENTE-OBJETIVO-1-M
         ("/settings/trabaja_turnos", ("POST",)),
         ("/shifts", ("GET",)),
         ("/shifts/como", ("GET",)),

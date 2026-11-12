@@ -79,6 +79,12 @@
   {% for p in nutriente_pendientes %}
     <li>
       <div class="flex-1">{{ p.metric_label }}: {{ p.texto }}</div>
+      {% if p.aplicada %}
+      <form method="post" action="/settings/nutriente/propuestas/{{ p.id }}/deshacer" class="m-0">
+        <input type="hidden" name="back" value="/settings">
+        <button type="submit" class="btn">{{ t('asistente.propuesta.deshacer') }}</button>
+      </form>
+      {% else %}
       <form method="post" action="/settings/nutriente/propuestas/{{ p.id }}/aplicar" class="m-0">
         <input type="hidden" name="back" value="/settings">
         <button type="submit" class="btn on">{{ t('asistente.propuesta.aplicar') }}</button>
@@ -87,6 +93,7 @@
         <input type="hidden" name="back" value="/settings">
         <button type="submit" class="taplink">{{ t('asistente.propuesta.descartar') }}</button>
       </form>
+      {% endif %}
     </li>
   {% endfor %}
   </ul>
