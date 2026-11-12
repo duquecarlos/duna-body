@@ -3,6 +3,8 @@
 fuente_importacion table, the importer itself, and the two ways in (local vivo task, hosted device-
 key route). Invented demo data only, no real health or location figures.
 """
+import contextlib
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,7 +13,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import db
+from body import db, desplazamiento_import as di
 
 
 def _db(case: unittest.TestCase, name: str) -> "db.sqlite3.Connection":
@@ -170,6 +172,193 @@ class OrigenBranchTreatsVidaAsMeasuredTest(unittest.TestCase):
             "SELECT agregado FROM metric_def WHERE key = 'vehicle_minutes' AND origen = 'self'"
         ).fetchone()
         self.assertIsNone(fila)
+
+
+def _csv(rows, computed_at="2026-11-01T06:00:00+00:00", header=True):
+    lines = [",".join(di.HEADER)] if header else []
+    for day, vm, vt, wm, cm in rows:
+        lines.append(f"{day},{vm},{vt},{wm},{cm},{computed_at}")
+    return "\n".join(lines) + "\n"
+
+
+# ---- ruling 4: validar() -- one validation, all-or-nothing ----------------------------------------
+
+class ValidarTest(unittest.TestCase):
+    def test_valid_file_parses_every_row(self):
+        texto = _csv([("2026-01-01", 30, 2, 10, 0), ("2026-01-02", 45, 3, 0, 20)])
+        rows = di.validar(texto)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["day"], "2026-01-01")
+        self.assertEqual(rows[0]["vehicle_minutes"], 30)
+        self.assertEqual(rows[1]["cycling_minutes"], 20)
+
+    def test_wrong_header_is_refused(self):
+        texto = "day,vehicle_minutes\n2026-01-01,30\n"
+        with self.assertRaises(di.ImportRefused) as cm:
+            di.validar(texto)
+        self.assertEqual(cm.exception.motivo, "esquema")
+
+    def test_bad_date_is_refused(self):
+        texto = _csv([("not-a-date", 30, 2, 10, 0)])
+        with self.assertRaises(di.ImportRefused) as cm:
+            di.validar(texto)
+        self.assertEqual(cm.exception.motivo, "dia_malformado")
+
+    def test_duplicate_day_is_refused(self):
+        texto = _csv([("2026-01-01", 30, 2, 10, 0), ("2026-01-01", 10, 1, 5, 0)])
+        with self.assertRaises(di.ImportRefused) as cm:
+            di.validar(texto)
+        self.assertEqual(cm.exception.motivo, "dia_duplicado")
+
+    def test_negative_count_is_refused(self):
+        texto = _csv([("2026-01-01", -5, 2, 10, 0)])
+        with self.assertRaises(di.ImportRefused) as cm:
+            di.validar(texto)
+        self.assertEqual(cm.exception.motivo, "conteo_invalido")
+
+    def test_non_integer_count_is_refused(self):
+        texto = _csv([("2026-01-01", "30.5", 2, 10, 0)])
+        with self.assertRaises(di.ImportRefused) as cm:
+            di.validar(texto)
+        self.assertEqual(cm.exception.motivo, "conteo_invalido")
+
+    def test_mixed_computed_at_is_refused(self):
+        texto = (",".join(di.HEADER) + "\n"
+                 "2026-01-01,30,2,10,0,2026-11-01T06:00:00+00:00\n"
+                 "2026-01-02,45,3,0,20,2026-11-02T06:00:00+00:00\n")
+        with self.assertRaises(di.ImportRefused) as cm:
+            di.validar(texto)
+        self.assertEqual(cm.exception.motivo, "computed_at_mixto")
+
+    def test_future_day_is_refused(self):
+        texto = _csv([("2099-01-01", 30, 2, 10, 0)])
+        with self.assertRaises(di.ImportRefused) as cm:
+            di.validar(texto)
+        self.assertEqual(cm.exception.motivo, "dia_futuro")
+
+    def test_over_1mb_is_refused(self):
+        texto = "x" * (di.MAX_BYTES + 1)
+        with self.assertRaises(di.ImportRefused) as cm:
+            di.validar(texto)
+        self.assertEqual(cm.exception.motivo, "demasiado_grande")
+
+    def test_computed_at_without_offset_is_refused(self):
+        texto = _csv([("2026-01-01", 30, 2, 10, 0)], computed_at="2026-11-01T06:00:00")
+        with self.assertRaises(di.ImportRefused) as cm:
+            di.validar(texto)
+        self.assertEqual(cm.exception.motivo, "computed_at_malformado")
+
+
+# ---- ruling 4: importar() -- writes through the existing daily_metric writer ----------------------
+
+class ImportarTest(unittest.TestCase):
+    def setUp(self):
+        self.conn = _db(self, "importar.db")
+        db.init(self.conn)
+
+    def test_valid_file_writes_4_times_n_values_with_the_source(self):
+        texto = _csv([("2026-01-01", 30, 2, 10, 0), ("2026-01-02", 45, 3, 0, 20)])
+        resultado = di.importar(self.conn, 1, texto)
+        self.assertTrue(resultado["ok"])
+        self.assertFalse(resultado["sin_cambios"])
+        self.assertEqual(resultado["dias"], 2)
+        self.assertEqual(resultado["primer_dia"], "2026-01-01")
+        self.assertEqual(resultado["ultimo_dia"], "2026-01-02")
+        rows = self.conn.execute(
+            "SELECT day, metric_key, value, source FROM daily_metric WHERE metric_key IN "
+            "('vehicle_minutes', 'vehicle_trips', 'walking_minutes', 'cycling_minutes') "
+            "ORDER BY day, metric_key"
+        ).fetchall()
+        self.assertEqual(len(rows), 8)
+        for r in rows:
+            self.assertEqual(r["source"], di.FUENTE)
+
+    def test_each_refusal_class_writes_nothing_and_records_ultimo_error(self):
+        casos = [
+            ("day,vehicle_minutes\n2026-01-01,30\n", "esquema"),
+            (_csv([("not-a-date", 30, 2, 10, 0)]), "dia_malformado"),
+            (_csv([("2026-01-01", -5, 2, 10, 0)]), "conteo_invalido"),
+            (_csv([("2099-01-01", 30, 2, 10, 0)]), "dia_futuro"),
+        ]
+        for texto, motivo in casos:
+            conn = _db(self, f"refusal-{motivo}.db")
+            db.init(conn)
+            resultado = di.importar(conn, 1, texto)
+            self.assertFalse(resultado["ok"])
+            self.assertEqual(resultado["motivo"], motivo)
+            count = conn.execute("SELECT COUNT(*) FROM daily_metric").fetchone()[0]
+            self.assertEqual(count, 0, motivo)
+            fila = conn.execute(
+                "SELECT ultimo_error, ultimo_error_at FROM fuente_importacion WHERE person_id = 1 AND fuente = ?",
+                (di.FUENTE,),
+            ).fetchone()
+            self.assertEqual(fila["ultimo_error"], motivo)
+            self.assertIsNotNone(fila["ultimo_error_at"])
+
+    def test_same_computed_at_is_a_no_op(self):
+        texto = _csv([("2026-01-01", 30, 2, 10, 0)])
+        di.importar(self.conn, 1, texto)
+        resultado = di.importar(self.conn, 1, texto)
+        self.assertTrue(resultado["ok"])
+        self.assertTrue(resultado["sin_cambios"])
+        count = self.conn.execute(
+            "SELECT COUNT(*) FROM daily_metric WHERE metric_key = 'vehicle_minutes'"
+        ).fetchone()[0]
+        self.assertEqual(count, 1)
+
+    def test_a_later_file_dropping_an_old_day_leaves_its_values_in_place(self):
+        texto1 = _csv([("2026-01-01", 30, 2, 10, 0), ("2026-01-02", 45, 3, 0, 20)],
+                       computed_at="2026-11-01T06:00:00+00:00")
+        di.importar(self.conn, 1, texto1)
+        texto2 = _csv([("2026-01-02", 50, 4, 0, 25)], computed_at="2026-12-01T06:00:00+00:00")
+        resultado = di.importar(self.conn, 1, texto2)
+        self.assertTrue(resultado["ok"])
+        self.assertFalse(resultado["sin_cambios"])
+        row = self.conn.execute(
+            "SELECT value FROM daily_metric WHERE day = '2026-01-01' AND metric_key = 'vehicle_minutes'"
+        ).fetchone()
+        self.assertEqual(row["value"], 30.0)
+
+    def test_refusal_after_a_success_does_not_touch_previously_imported_values(self):
+        texto1 = _csv([("2026-01-01", 30, 2, 10, 0)], computed_at="2026-11-01T06:00:00+00:00")
+        di.importar(self.conn, 1, texto1)
+        di.importar(self.conn, 1, "esquema malo\n")
+        row = self.conn.execute(
+            "SELECT value FROM daily_metric WHERE day = '2026-01-01' AND metric_key = 'vehicle_minutes'"
+        ).fetchone()
+        self.assertEqual(row["value"], 30.0)
+
+
+# ---- ruling 5(a): the local vivo task / CLI ---------------------------------------------------------
+
+class MainCliTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(dir=TMP))
+
+    def test_output_carries_no_value(self):
+        texto = _csv([("2026-01-01", 487, 2, 10, 0)], computed_at="2026-11-01T06:00:00+00:00")
+        path = self.tmp / "commute.csv"
+        path.write_text(texto, encoding="utf-8")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = di.main(["--file", str(path)])
+        self.assertEqual(rc, 0)
+        self.assertNotIn("487", buf.getvalue())
+        self.assertIn("2026-01-01", buf.getvalue())
+
+    def test_no_file_configured_message(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = di.main([])
+        self.assertEqual(rc, 1)
+        self.assertIn("no commute file configured", buf.getvalue())
+
+    def test_file_not_found_message(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = di.main(["--file", str(self.tmp / "missing.csv")])
+        self.assertEqual(rc, 1)
+        self.assertIn("not found", buf.getvalue())
 
 
 if __name__ == "__main__":
