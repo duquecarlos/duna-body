@@ -19328,3 +19328,5 @@ resolving that is this follow-up's own work, not guessed here.
 untouched), no customer-facing bytes (a pure read with nothing calling it yet -- no screen, no
 assistant change, no translation string), no cross-repo contract or DTO change. All three of merge
 policy A's conditions pass. **Merges on this green gate.**
+
+-- merged bbe8db592d1325663abffeb058394d6019e45fa9
