@@ -19155,3 +19155,84 @@ the census above found nothing missing), no cross-repo contract or DTO change. A
 policy A's conditions pass. **Merges on this green gate.**
 
 -- merged 205538270b631b830fc679b34e4ea67652151bea
+
+## BODY-ENTRENO-ULTIMA-VEZ-1
+
+Open follow-up from `BODY-MOCK-R2-CENSO-1-INV`: no reader answered "the previous session's same
+exercise's reps/weight", needed before the Session screen's "last time -> today" comparisons
+(`BODY-METAS-SESION-PANTALLA-1`). This slice adds the one reader module and wires its answer,
+additively, into the assistant's existing `leer_entreno` tool. No schema change -- `body/db.py` was
+not touched; the new module reads `workout_set`/`activity` with plain SELECTs plus `db.exercise_sets`
+for display values, never a second copy of the correction/kg-conversion logic.
+
+**Ruling 1, the exercise identity.** The effective exercise of a set is `person_exercise` when the
+person corrected the slot, else `garmin_exercise` -- exactly the `exercise` field `db.exercise_sets`
+(`db.py:2210`) already computes, so `body/entreno_historial.py` reads that field rather than
+re-deriving the corrected-or-watch rule a second time; `_cuenta(s)` (`entreno_historial.py`) is the
+one place "only 'active', non-excluded sets count" is checked. Matching is on the stored string,
+case and watch's own code untouched, never translated.
+
+**Ruling 2, `body/entreno_historial.py` (new, reads only).**
+
+    ultima_vez(conn, person_id, ejercicio, *, antes_de=None) -> dict | None
+    ultimas_veces(conn, person_id, source, source_id) -> dict[str, dict | None]
+
+`ultima_vez` finds the most recent session, by `COALESCE(activity.start_local, activity.day)`,
+strictly before `antes_de` (a local ISO datetime or date string) when given, with at least one
+counting set whose effective exercise equals `ejercicio` -- found with one SQL query whose own
+`CASE WHEN corrected_by_person THEN person_exercise ELSE garmin_exercise END` mirrors
+`db.exercise_sets`'s rule, so the search and the display value can never disagree; then one
+`db.exercise_sets` call on the session it finds. Two statements. Returns
+`{source, source_id, day, sets: [{reps, weight_kg, corrected}, ...], mejor}` in set order, or `None`
+when the exercise was never done. `mejor` is the heaviest set, ties broken by more reps; a
+bodyweight exercise (every `weight_kg` is `None`) falls through to the same sort key (`(weight_kg is
+not None, weight_kg or 0, reps or 0)`), which compares by reps alone once every candidate's first key
+component ties at `False` -- no separate bodyweight branch.
+
+`ultimas_veces` answers it for every exercise one session has, bounded independent of the number of
+exercises: one statement for that session's own sets (`db.exercise_sets`), one for its own
+`day`/`start_local`, one for the candidate earlier sessions (each already known, by the join, to hold
+at least one counting set, ordered newest-first) -- then `db.exercise_sets` only for the earlier
+sessions actually opened, stopping the moment every exercise is resolved. **Measured**: 5 exercises
+in the current session, all answered by one earlier session that has all 5 -> **4 statements**,
+regardless of whether the current session names 2, 3 or 5 of them
+(`tests/test_entreno_historial.py::UltimasVecesTest::test_statement_count_does_not_grow_with_the_
+number_of_exercises`, a connection-wrapping counter asserting the count is identical across 2/3/5).
+
+Person-scoped throughout by the SQL `WHERE`/`JOIN` on `person_id` -- another person's sets, even for
+the same exercise name, are never candidates.
+
+**Ruling 3, the assistant.** `_leer_entreno` (`body/agente/herramientas.py`) now adds one additive
+key per session it returns: `"ultima_vez": entreno_historial.ultimas_veces(conn, person_id,
+a["sets_source"], a["sets_source_id"])` -- the same `sets_source`/`sets_source_id` pair the session's
+own `series` already reads through, so a linked watch/manual pair's "last time" reads the person's
+own sets too, never the watch's unlisted slots. Nothing else in `leer_entreno`'s output changed:
+`tests/test_agente_entreno.py::LeerEntrenoUltimaVezTest::test_nothing_else_in_the_output_changes`
+pins the session dict's full key set to `{dia, titulo, fuente, hora_inicio, series, ultima_vez}`. No
+new tool, no screen (the Session screen is `BODY-METAS-SESION-PANTALLA-1`, separate).
+
+No census test outside `touches` pinning `leer_entreno`'s own output key list was found to extend;
+the key-set assertion above is new, inside `touches`.
+
+No password, token, session secret or health figure of a real person was read, printed or written
+anywhere in this slice; every fixture in both new/changed test modules is invented demo data.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry), the exact
+command is `.venv/Scripts/python.exe -m unittest discover tests -t .`, run ONCE in the foreground;
+the harness moved it to the background past its own 600 s cap, and this session blocked on the
+output file until its `Ran ` line appeared rather than polling turn-by-turn:
+
+    Ran 3074 tests in 784.792s
+
+    OK (skipped=1)
+
+3074 - 3060 (`BODY-I18N-TITULO-PROPUESTA-CENSO-1`'s own count, entry above) = 14 new tests: 11 in
+`tests/test_entreno_historial.py` (new module) and 3 in `tests/test_agente_entreno.py`'s new
+`LeerEntrenoUltimaVezTest`.
+
+**Merge policy, this slice.** The diff touches `body/entreno_historial.py` (new),
+`body/agente/herramientas.py`, `tests/test_entreno_historial.py` (new) and
+`tests/test_agente_entreno.py` -- no schema or migration change (`body/db.py` untouched), no
+customer-facing bytes (a read, and one additive assistant-tool-output key -- no screen, no
+translation string), no cross-repo contract or DTO change. All three of merge policy A's conditions
+pass. **Merges on this green gate.**
