@@ -105,11 +105,17 @@ run rm -f "$plain_file"
 # The secret never becomes an argv string: curl reads it from stdin via -K -, fed by a bash
 # builtin (printf), so it never appears in this or any other process's command line.
 if [[ -n "$DRY_RUN" ]]; then
-  echo "printf 'user = \"<access-key>:<secret-key>\"\\n' | curl -sS --fail --aws-sigv4 \"aws:amz:auto:s3\" -K - -T \"$enc_file\" \"$url\""
+  echo "printf 'user = \"<access-key>:<secret-key>\"\\n' | curl -sS --fail-with-body --aws-sigv4 \"aws:amz:auto:s3\" -K - -T \"$enc_file\" \"$url\""
   object_size="<dry-run>"
 else
+  upload_rc=0
   printf 'user = "%s:%s"\n' "$access_key" "$secret_key" \
-    | curl -sS --fail --aws-sigv4 "aws:amz:auto:s3" -K - -T "$enc_file" "$url"
+    | curl -sS --fail-with-body --aws-sigv4 "aws:amz:auto:s3" -K - -T "$enc_file" "$url" || upload_rc=$?
+  if [[ "$upload_rc" -ne 0 ]]; then
+    echo "body-backup.sh: upload failed (curl exit $upload_rc); R2's reply is above" >&2
+    curl --version | head -n1 >&2
+    exit "$upload_rc"
+  fi
   object_size="$(stat -c %s "$enc_file")"
 fi
 

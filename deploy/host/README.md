@@ -58,6 +58,18 @@ credentials reach `curl` only through its `-K -` stdin config, never as a comman
 If the host is missing the `age` CLI, `backup` refuses and names the exact command to run once:
 `sudo apt install age` (same for `curl`, which Ubuntu 24.04 ships at 8.x with `--aws-sigv4` built in).
 
+`status` reports each backup/pull/backfill job's own outcome, not just whether its timer is
+active: `<unit> last run: <timestamp or never>`, and, once a job has run at least once, `<unit>
+last result: success` or `<unit> last result: FAILED (<Result>, exit <N>)`. If the last backup run
+failed, `status` itself exits 3, so a failing backup cannot read as healthy. To see why a backup
+failed, read its journal: `journalctl -u body-backup.service -n 50 --no-pager`. The script prints
+the object key and size on success (`body/body-<stamp>.sqlite.age size=<bytes>`); a run with no such
+line in the journal did not upload. A failed upload now shows R2's own error reply (curl
+`--fail-with-body`), including its `<Code>`/`<Message>`, e.g. `InvalidArgument`,
+`SignatureDoesNotMatch`, `AccessDenied` or `NoSuchBucket` -- usually one of the `BODY_R2_*` env
+values: `InvalidArgument` on the credential often means an API token was pasted where the R2 access
+key ID belongs (a Cloudflare API token is a different length and shape than an R2 access key ID).
+
 **Retention is a hand step, not code**: in the Cloudflare R2 dashboard, add a lifecycle rule on
 bucket `duna-respaldo`, prefix `body/`, that deletes objects after 30 days.
 

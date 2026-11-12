@@ -22,7 +22,8 @@ DATA_USER="duna-body"
 usage() {
   cat >&2 <<'USAGE'
 usage: duna-deploy-body <command>
-  status              show unit status, deployed sha, data dir mode
+  status              show unit status, deployed sha, data dir mode;
+                      exits 3 if the last backup run failed
   deploy [--dry-run]  pull the repo and redeploy (--dry-run: print the plan, run nothing)
   backup [--dry-run]  snapshot, encrypt and upload to R2, delete the plaintext (--dry-run: print the plan, run nothing)
   importar-pc --cuenta-sub <sub> --archivo <path> [--apply]
@@ -81,14 +82,29 @@ case "$cmd" in
     done
     sha="$(runuser -u "$owner" -- git -C "$REPO_DIR" rev-parse HEAD)"
     echo "deployed sha: $sha"
-    backup_last_run="$(run systemctl show -p ExecMainExitTimestamp --value body-backup.service 2>/dev/null || true)"
-    echo "body-backup.service last run: ${backup_last_run:-never}"
+    status_exit=0
+    for job_unit in body-backup.service body-pull.service body-backfill.service; do
+      job_last_run="$(run systemctl show -p ExecMainExitTimestamp --value "$job_unit" 2>/dev/null || true)"
+      echo "$job_unit last run: ${job_last_run:-never}"
+      if [[ -n "$job_last_run" ]]; then
+        job_result="$(run systemctl show -p Result --value "$job_unit" 2>/dev/null || true)"
+        job_exit_status="$(run systemctl show -p ExecMainStatus --value "$job_unit" 2>/dev/null || true)"
+        if [[ "$job_result" == "success" ]]; then
+          echo "$job_unit last result: success"
+        else
+          echo "$job_unit last result: FAILED (${job_result}, exit ${job_exit_status})"
+          if [[ "$job_unit" == "body-backup.service" ]]; then
+            status_exit=3
+          fi
+        fi
+      fi
+    done
     if [[ -d "$DATA_DIR" ]]; then
       echo "data dir: $DATA_DIR mode $(stat -c %a "$DATA_DIR") owner $(stat -c %U "$DATA_DIR")"
     else
       echo "data dir: $DATA_DIR (not yet created)"
     fi
-    exit 0
+    exit "$status_exit"
     ;;
   deploy)
     if [[ $# -gt 1 ]]; then
