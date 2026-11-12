@@ -35,6 +35,10 @@ MIN_BLOQUES_PREVIOS = 3  # a metric needs at least this many earlier night block
 
 REASON_CODES = ("sin_turnos", "sin_noches", "pocos_bloques", "sin_datos_reloj", "pocos_bloques_previos")
 
+# BODY-TURNOS-PERFIL-DIA-1: the fixed day-offsets `perfil_por_dia` reports, relative to a block's own
+# first/last night -- in this order, since it is also the x-axis order the hero's chart draws.
+OFFSETS = ("antes", "noche_1", "noche_ultima", "post_1", "post_2", "post_3", "post_4")
+
 # Below this many units of real difference, a row reads "igual" instead of "mas"/"menos"
 # (BODY-TURNOS-COSTO-1-M, fix b): roughly a quarter-hour of sleep, a beat of resting HR, a
 # millisecond of HRV, three points of a 0-100 scale -- small enough that a reader's own day-to-day
@@ -243,6 +247,82 @@ def _ultima_semana(bloques: list[Bloque], bloques_out: list[dict], medias: list[
     }
 
 
+def _offset_day(bloque: Bloque, offset: str) -> date | None:
+    """The calendar day `offset` names for this block, or None when the offset does not apply to
+    it -- `noche_ultima` on a one-night block would be the same day as `noche_1`, so it is skipped
+    rather than double-counting that night."""
+    inicio, fin = _parse(bloque.inicio), _parse(bloque.fin)
+    if offset == "antes":
+        return inicio - timedelta(1)
+    if offset == "noche_1":
+        return inicio
+    if offset == "noche_ultima":
+        return fin if fin != inicio else None
+    return fin + timedelta(int(offset.split("_")[1]))
+
+
+def perfil_por_dia(conn, person_id: int, metric: str, hoy: date | None = None) -> dict:
+    """BODY-TURNOS-PERFIL-DIA-1: for `metric`, how far each day OFFSET around a night block sits from
+    the person's own day-week reference -- the same `referencia()` the hero's cost rows use, so the
+    centre is that reference's mean and the band is its 25th-75th percentile, just re-expressed as an
+    offset from that centre (centre reads as 0) instead of an absolute figure. Averaged over every
+    night block in the same RESUMEN_DIAS window `resumen()` uses -- a day with no value is skipped,
+    never zeroed, and an offset no block in the window actually reaches (`noche_ultima` on an
+    all-one-night history) is left out of `offsets` rather than reported as zero.
+
+    Always returns a dict, never a bare None (resumen()'s and `_ultima_semana`'s own convention):
+    `motivo` is one of REASON_CODES, and every other key is absent, when there are fewer than
+    MIN_BLOQUES_PREVIOS night blocks in the window or `metric` has no reference at all; otherwise
+    `motivo` is None and the dict carries `offsets` (one {"offset", "media", "n"} per OFFSET that has
+    at least one contributing day), `centro`, `banda` ({"bajo", "alto"}, centred the same way),
+    `mas_bajo` or `mas_alto` (whichever direction db.METRIC_DEFS calls worse for this metric) naming
+    the offset furthest from usual, `vuelta` (the first post_* offset back inside the band, or None),
+    `noches_tipicas` (the median block length) and `n_bloques`."""
+    hoy = hoy or date.today()
+    desde = (hoy - timedelta(RESUMEN_DIAS)).isoformat()
+    desde_lector = (hoy - timedelta(RESUMEN_DIAS + 1)).isoformat()
+    hasta_lector = (hoy + timedelta(MODELO["ventana_post"])).isoformat()
+    lector = Lector(conn, person_id, desde_lector, hasta_lector, MODELO["metricas"])
+    ref = referencia(conn, person_id, hoy, lector=lector)
+    r = ref.get(metric)
+    bloques = bloques_noche(conn, person_id, desde, hoy.isoformat())
+    if r is None or len(bloques) < MIN_BLOQUES_PREVIOS:
+        return {"metric": metric, "motivo": "pocos_bloques_previos"}
+
+    por_offset: dict[str, list[float]] = {o: [] for o in OFFSETS}
+    for b in bloques:
+        for offset in OFFSETS:
+            dia = _offset_day(b, offset)
+            if dia is None or dia > hoy:
+                continue
+            v = lector.day_values(dia.isoformat()).get(metric)
+            if v is not None:
+                por_offset[offset].append(v - r.media)
+
+    offsets_out = [{"offset": o, "media": round(statistics.fmean(vs), 1), "n": len(vs)}
+                   for o in OFFSETS if (vs := por_offset[o])]
+    if not offsets_out:
+        return {"metric": metric, "motivo": "pocos_bloques_previos"}
+
+    peor_es_bajo = _BETTER.get(metric) == "higher"
+    extremo = (min if peor_es_bajo else max)(offsets_out, key=lambda o: o["media"])
+    banda_bajo, banda_alto = round(r.bajo - r.media, 1), round(r.alto - r.media, 1)
+    vuelta = next((o["offset"] for o in offsets_out
+                   if o["offset"].startswith("post_") and banda_bajo <= o["media"] <= banda_alto), None)
+
+    return {
+        "metric": metric,
+        "motivo": None,
+        "centro": round(r.media, 1),
+        "banda": {"bajo": banda_bajo, "alto": banda_alto},
+        "offsets": offsets_out,
+        ("mas_bajo" if peor_es_bajo else "mas_alto"): extremo["offset"],
+        "vuelta": vuelta,
+        "noches_tipicas": round(statistics.median(b.dias for b in bloques)),
+        "n_bloques": len(bloques),
+    }
+
+
 def _dia_en_banda(conn, person_id: int, day: str, ref: dict[str, Referencia | None],
                    *, lector: Lector | None = None) -> bool:
     valores = lector.day_values(day) if lector is not None else db.day_values(conn, day, person_id)
@@ -417,4 +497,7 @@ def resumen(conn, person_id: int, hoy: date | None = None) -> dict:
                        for m, r in ref.items()},
         "costo_promedio": costo_promedio,
         "ultima_semana": _ultima_semana(bloques, bloques_out, medias_out, hoy),
+        # BODY-TURNOS-PERFIL-DIA-1: additive -- VERSION stays "turnos-v1" since this changes no
+        # figure resumen() already reported, only adds a new one.
+        "perfil_hrv": perfil_por_dia(conn, person_id, "hrv_last_night", hoy),
     }
