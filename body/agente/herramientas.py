@@ -527,6 +527,18 @@ def _leer_tendencias(conn: sqlite3.Connection, person_id: int, rango: str = "30"
     last_day = dias[0] if dias else None
     claves = (metric,) if metric else TENDENCIA_METRICAS
     metricas = {k: v for k in claves if (v := _tendencia_metric(conn, person_id, k, rango, last_day)) is not None}
+    # BODY-TENDENCIAS-LEYENDA-PATRON-1 ruling 3: patron_turnos carries the same sentence SPEC
+    # (kind + offsets + direction) Trends' own cards show, additive and only for a metric that is
+    # both in the result above and has a reference in the shift-cost model -- shared once across
+    # all of them (turnos_costo.perfiles_patron), never a read per metric.
+    con_patron = [k for k in metricas if k in turnos_costo.MODELO["metricas"]]
+    if con_patron:
+        hoy = fechas.hoy_local(db.person(conn, person_id))
+        perfiles = turnos_costo.perfiles_patron(conn, person_id, hoy)
+        for k in con_patron:
+            frase = turnos_costo.frase_patron(perfiles[k], k)
+            if frase is not None:
+                metricas[k]["patron_turnos"] = frase
     return {"rango": rango, "metricas": metricas}
 
 

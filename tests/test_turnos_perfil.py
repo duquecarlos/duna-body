@@ -177,6 +177,56 @@ class PerfilPorDiaTest(unittest.TestCase):
         self.assertNotIn("offsets", p)
 
 
+class PerfilesPatronTest(unittest.TestCase):
+    """BODY-TENDENCIAS-LEYENDA-PATRON-1: perfiles_patron shares one combined reader, one
+    bloques_noche call and one referencia() call across every metric in MODELO['metricas'] --
+    its own result for each metric must equal calling perfil_por_dia for that metric alone."""
+
+    def test_matches_perfil_por_dia_called_separately_for_every_metric(self):
+        conn = _mkconn(self)
+        for metric in turnos_costo.MODELO["metricas"]:
+            _fill_reference(conn, 1, metric, HOY)
+        for inicio, dias in zip(_place_blocks(HOY, [2, 2, 2]), [2, 2, 2]):
+            fin = inicio + timedelta(dias - 1)  # once per block, never once per metric
+            d = inicio
+            while d <= fin:
+                _insert_shift(conn, 1, d.isoformat())
+                d += timedelta(1)
+            bloque = turnos_costo.Bloque(inicio=inicio.isoformat(), fin=fin.isoformat(), dias=dias)
+            for metric in turnos_costo.MODELO["metricas"]:
+                for offset, v in {"noche_1": 40.0, "post_1": 60.0}.items():
+                    dia = turnos_costo._offset_day(bloque, offset)
+                    if dia is not None:
+                        db.set_metric(conn, dia.isoformat(), metric, v, "garmin", 1)
+        perfiles = turnos_costo.perfiles_patron(conn, 1, HOY)
+        self.assertEqual(set(perfiles), set(turnos_costo.MODELO["metricas"]))
+        for metric in turnos_costo.MODELO["metricas"]:
+            self.assertEqual(perfiles[metric], turnos_costo.perfil_por_dia(conn, 1, metric, HOY))
+
+    def test_one_statement_per_metric_never_happens(self):
+        """The combined reader costs ONE statement for every metric in MODELO['metricas']
+        together, not one per metric -- the whole reason perfiles_patron exists instead of
+        perfil_por_dia in a loop (BODY-RENDIMIENTO-1's own ceiling on /trends). Measured on a
+        freshly opened connection, the only kind tests/_rutas.py's contar_sql can trace."""
+        from tests._rutas import contar_sql
+        path = Path(tempfile.mkdtemp(dir=TMP)) / "t.db"
+        conn = open_conn(self, path)
+        db.init(conn)
+        for metric in turnos_costo.MODELO["metricas"]:
+            _fill_reference(conn, 1, metric, HOY)
+        conn.commit()
+        with contar_sql() as stats:
+            medido = db.connect(path)
+            try:
+                turnos_costo.perfiles_patron(medido, 1, HOY)
+            finally:
+                medido.close()
+        # db.connect()'s own two PRAGMAs (foreign_keys, busy_timeout) + one combined metric read +
+        # one bloques_noche (exclusion window, inside referencia) + one bloques_noche (this call's
+        # own RESUMEN_DIAS window) = 5, regardless of how many of the five metrics succeed or fail.
+        self.assertEqual(stats["statements"], 5)
+
+
 class ResumenCarriesPerfilTest(unittest.TestCase):
     """BODY-TURNOS-PERFIL-DIA-1 ruling 2: additive -- the hero's own figures (VERSION, every
     existing key) stay exactly as resumen() already reported them, with perfil_hrv added alongside."""

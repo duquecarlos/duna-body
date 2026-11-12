@@ -131,6 +131,15 @@ _FIXED_DYNAMIC = {
     # body/rutas/turnos.py _perfil_offset_palabra(): every OFFSET turnos_costo.perfil_por_dia can
     # return (BODY-TURNOS-PERFIL-DIA-1).
     "shifts.perfil.offset.+": list(turnos_costo.OFFSETS),
+    # body/rutas/tendencias.py _frase_patron_texto(): every OFFSET perfil_por_dia can name as the
+    # worst point, used as the "cuando" time phrase (BODY-TENDENCIAS-LEYENDA-PATRON-1).
+    "trends.patron.cuando.+": list(turnos_costo.OFFSETS),
+    # body/rutas/tendencias.py _frase_patron_texto(): `vuelta` is always a post_* offset
+    # (turnos_costo.perfil_por_dia only ever looks at post_* offsets for it).
+    "trends.patron.vuelta.+": [o for o in turnos_costo.OFFSETS if o.startswith("post_")],
+    # body/rutas/tendencias.py _frase_patron_texto(): turnos_costo.frase_patron's own two directions.
+    "trends.patron.vuelve.+": ["baja", "sube"],
+    "trends.patron.no_vuelve.+": ["baja", "sube"],
     # body/rutas/turnos.py _perfil_eje_label(): the three OFFSETS that get a translated x-axis label
     # -- post_1..post_4 are rendered as a literal "+1".."+4", the same in both languages, never t().
     "shifts.perfil.eje.+": ["antes", "noche_1", "noche_ultima"],
