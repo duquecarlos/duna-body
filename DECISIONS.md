@@ -18455,4 +18455,4 @@ spec's body explicitly authorises the merge in words ("Green -> append to the le
 `git checkout main`; `git merge --no-ff feat/body-turnos-perfil-dia-1` -- APPROVED to merge on a
 green gate"), which is the one thing that overrides a tripped merge-policy-A condition -- so this
 entry is committed on the branch and then merged into `main` on this green gate, not left
-AWAITING_APPROVAL.
+AWAITING_APPROVAL -- merged d5e48c8.
