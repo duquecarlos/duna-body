@@ -164,5 +164,39 @@ class InstallerWorktreeReuseTest(unittest.TestCase):
         self.assertIn("worktree add", self.text[close:])
 
 
+class InstallerCommuteUploadTaskTest(unittest.TestCase):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 6: -CommuteFile registers one more hosted daily task,
+    right after the shift upload; absent, no such task is registered and the installer says so."""
+
+    def setUp(self):
+        self.text = SCRIPT.read_text(encoding="utf-8")
+
+    def test_commute_file_param_exists(self):
+        self.assertIn("[string]$CommuteFile", self.text)
+
+    def test_commute_action_runs_subir_desplazamiento_with_the_file(self):
+        m = re.search(r'\$commuteAction\s*=\s*(.+)', self.text)
+        self.assertIsNotNone(m, "no $commuteAction assignment found")
+        self.assertIn("-m body.vivo subir_desplazamiento", m.group(1))
+        self.assertIn('--file `"$CommuteFile`"', m.group(1))
+
+    def test_commute_task_registered_inside_an_if_commutefile_guard(self):
+        self.assertIn("if ($CommuteFile) {", self.text)
+        start = self.text.index("if ($CommuteFile) {")
+        close = self.text.index("\n    }", start)
+        block = self.text[start:close]
+        self.assertIn('Register-ScheduledTask -TaskName "Body app commute upload"', block)
+
+    def test_commute_task_registered_right_after_the_shift_upload(self):
+        upload_at = self.text.index('Register-ScheduledTask -TaskName "Body app shift upload"')
+        commute_at = self.text.index('Register-ScheduledTask -TaskName "Body app commute upload"')
+        fetch_at = self.text.index('Register-ScheduledTask -TaskName "Body app weekly fetch"')
+        self.assertLess(upload_at, commute_at)
+        self.assertLess(commute_at, fetch_at)
+
+    def test_installer_says_in_one_line_when_commutefile_is_absent(self):
+        self.assertIn("Sin subida de desplazamiento", self.text)
+
+
 if __name__ == "__main__":
     unittest.main()

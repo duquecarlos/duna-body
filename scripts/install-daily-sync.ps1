@@ -19,11 +19,15 @@
 #
 # -Hosted: the host (body.duna.solutions) does the pull and runs the web app instead of this PC.
 # Link this PC first with `python -m body.conectar_pc`, then run with -Hosted (-ShiftsDir required):
-#   "Body app shift upload"  daily: uploads new shift files to the hosted Body
-#   "Body app weekly fetch"  Sundays: fetches this week's Body section for the Personal Sunday review
+#   "Body app shift upload"      daily: uploads new shift files to the hosted Body
+#   "Body app commute upload"    daily, only when -CommuteFile is given: uploads Personal's daily
+#                                 commute summary (ORCH-CARLOS-DELEGATES-TIER-1-1) to the hosted Body
+#   "Body app weekly fetch"      Sundays: fetches this week's Body section for the Personal Sunday review
 # -Hosted also removes "Body app daily sync", "Body app weekly file" and "Body app web" if present.
 # Example, hosted: .\install-daily-sync.ps1 -Hosted -ShiftsDir "C:\path\to\your\shifts\folder"
-param([string]$At, [string]$SundayAt = "18:00", [string[]]$MorningAt = @("04:40", "07:40", "12:40"), [string]$ShiftsDir, [int]$Port = 8770, [switch]$Lan, [switch]$Hosted, [string]$LiveDir)
+# Example, hosted with the commute upload too:
+#   .\install-daily-sync.ps1 -Hosted -ShiftsDir "C:\path\to\your\shifts\folder" -CommuteFile "C:\path\to\commute-diario.csv"
+param([string]$At, [string]$SundayAt = "18:00", [string[]]$MorningAt = @("04:40", "07:40", "12:40"), [string]$ShiftsDir, [string]$CommuteFile, [int]$Port = 8770, [switch]$Lan, [switch]$Hosted, [string]$LiveDir)
 $repo = Split-Path $PSScriptRoot -Parent
 if (-not $LiveDir) { $LiveDir = "$repo-live" }
 $py = "$repo\.venv\Scripts\python.exe"
@@ -86,11 +90,17 @@ if ($Hosted) {
     $uploadAction = New-ScheduledTaskAction -Execute $py -Argument "-m body.vivo subir_turnos --dir `"$ShiftsDir`"" -WorkingDirectory $LiveDir
     Register-ScheduledTask -TaskName "Body app shift upload" -Action $uploadAction -Trigger (New-ScheduledTaskTrigger -Daily -At $At) -Settings $settings -Description "Uploads new shift files to the hosted Body" -Force | Out-Null
 
+    if ($CommuteFile) {
+        $commuteAction = New-ScheduledTaskAction -Execute $py -Argument "-m body.vivo subir_desplazamiento --file `"$CommuteFile`"" -WorkingDirectory $LiveDir
+        Register-ScheduledTask -TaskName "Body app commute upload" -Action $commuteAction -Trigger (New-ScheduledTaskTrigger -Daily -At $At) -Settings $settings -Description "Uploads Personal's daily commute summary to the hosted Body" -Force | Out-Null
+    }
+
     $fetchAction = New-ScheduledTaskAction -Execute $py -Argument "-m body.vivo traer_semana" -WorkingDirectory $LiveDir
     Register-ScheduledTask -TaskName "Body app weekly fetch" -Action $fetchAction -Trigger (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At $SundayAt) -Settings $settings -Description "Fetches this week's Body section from the hosted server for the Personal Sunday review" -Force | Out-Null
 
     $removedMsg = if ($removed.Count) { "Quitadas: $($removed -join ', ')." } else { "No habia tareas locales que quitar." }
-    Write-Host "Registradas: Body app shift upload a las $At (desde $ShiftsDir), Body app weekly fetch los domingos a las $SundayAt. $removedMsg"
+    $commuteMsg = if ($CommuteFile) { "Body app commute upload a las $At (desde $CommuteFile)." } else { "Sin subida de desplazamiento (pasa -CommuteFile para activarla)." }
+    Write-Host "Registradas: Body app shift upload a las $At (desde $ShiftsDir), Body app weekly fetch los domingos a las $SundayAt. $commuteMsg $removedMsg"
     exit 0
 }
 

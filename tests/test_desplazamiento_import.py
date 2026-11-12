@@ -5,15 +5,20 @@ key route). Invented demo data only, no real health or location figures.
 """
 import contextlib
 import io
+import json
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
+from unittest import mock
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import db, desplazamiento_import as di
+from body import config, db, desplazamiento_import as di, pc_cliente, subir_desplazamiento
+
+TEST_KEY = "bdy_test-key-0123456789"
 
 
 def _db(case: unittest.TestCase, name: str) -> "db.sqlite3.Connection":
@@ -359,6 +364,95 @@ class MainCliTest(unittest.TestCase):
             rc = di.main(["--file", str(self.tmp / "missing.csv")])
         self.assertEqual(rc, 1)
         self.assertIn("not found", buf.getvalue())
+
+
+# ---- ruling 5(b): the PC uploader (stubbed HTTP, no network) ---------------------------------------
+
+class _FakeResponse:
+    def __init__(self, status: int, body: bytes = b""):
+        self.status = status
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def _http_error(code: int, payload: dict | None = None) -> urllib.error.HTTPError:
+    body = json.dumps(payload).encode() if payload is not None else b""
+    return urllib.error.HTTPError("https://fake.test/x", code, "", None, io.BytesIO(body))
+
+
+class SubirDesplazamientoTest(unittest.TestCase):
+    def setUp(self):
+        orig_home = config.BODY_HOME
+        self.addCleanup(lambda: setattr(config, "BODY_HOME", orig_home))
+        config.BODY_HOME = Path(tempfile.mkdtemp(dir=TMP))
+        pc_cliente.escribir_enlace("https://fake.test", TEST_KEY)
+        self.path = Path(tempfile.mkdtemp(dir=TMP)) / "commute.csv"
+        self.path.write_text(_csv([("2026-01-01", 487, 2, 10, 0)]), encoding="utf-8")
+
+    def _patch_abrir(self, fn):
+        patcher = mock.patch.object(pc_cliente, "_abrir", fn)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _run(self, abrir):
+        self._patch_abrir(abrir)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = subir_desplazamiento.main(["--file", str(self.path)])
+        return rc, buf.getvalue()
+
+    def test_200_prints_counts_only(self):
+        def abrir(req):
+            return _FakeResponse(200, json.dumps(
+                {"dias": 1, "primer_dia": "2026-01-01", "ultimo_dia": "2026-01-01", "sin_cambios": False}
+            ).encode())
+
+        rc, out = self._run(abrir)
+        self.assertEqual(rc, 0)
+        self.assertIn("1 dias", out)
+        self.assertNotIn("487", out)
+
+    def test_422_is_reported_with_the_reason_class(self):
+        def abrir(req):
+            raise _http_error(422, {"error": "archivo_rechazado", "motivo": "esquema"})
+
+        rc, out = self._run(abrir)
+        self.assertEqual(rc, 1)
+        self.assertIn("esquema", out)
+
+    def test_401_says_to_reconnect(self):
+        def abrir(req):
+            raise _http_error(401, {"error": "no_autorizado"})
+
+        rc, out = self._run(abrir)
+        self.assertEqual(rc, 1)
+        self.assertIn("conectar_pc", out)
+
+    def test_missing_link_file_stops_before_any_call(self):
+        pc_cliente.borrar_enlace()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = subir_desplazamiento.main(["--file", str(self.path)])
+        self.assertEqual(rc, 1)
+        self.assertIn("conectar_pc", buf.getvalue())
+
+    def test_no_file_configured_message(self):
+        import os
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("BODY_COMMUTE_FILE", None)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = subir_desplazamiento.main([])
+        self.assertEqual(rc, 1)
+        self.assertIn("no commute file configured", buf.getvalue())
 
 
 if __name__ == "__main__":

@@ -34,7 +34,9 @@
     <input type="text" name="nombre" class="field mb-12" required aria-label="{{ t('dispositivos.name_label') }}">
     <label class="radio"><input type="checkbox" name="alcance_turnos" value="1" checked> {{ t('dispositivos.scope.turnos') }}</label>
     <label class="radio"><input type="checkbox" name="alcance_vida" value="1" checked> {{ t('dispositivos.scope.vida') }}</label>
+    <label class="radio"><input type="checkbox" name="alcance_desplazamiento" value="1" checked> {{ t('dispositivos.scope.desplazamiento') }}</label>
     <button class="btn mt-12" type="submit">{{ t('dispositivos.connect_btn') }}</button>
   </form>
+  <p class="read mt-12">{{ t('dispositivos.scope_fixed_note') }}</p>
 </div>
 {% endblock %}

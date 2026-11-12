@@ -11,7 +11,7 @@ from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from .. import cuenta, db, dispositivo, identity, shift_import, vida_export
+from .. import cuenta, db, desplazamiento_import, dispositivo, identity, shift_import, vida_export
 from ..i18n import T
 from . import comun
 
@@ -19,7 +19,8 @@ router = APIRouter()
 
 # ---- Device keys (hosted only): «Conexión del PC» on Ajustes, BODY-DISPOSITIVO-1 -----------------
 
-_ALCANCE_LABELS = {"turnos:subir": "dispositivos.scope.turnos", "vida:leer": "dispositivos.scope.vida"}
+_ALCANCE_LABELS = {"turnos:subir": "dispositivos.scope.turnos", "vida:leer": "dispositivos.scope.vida",
+                    "desplazamiento:subir": "dispositivos.scope.desplazamiento"}
 
 
 def _dispositivo_row(t: T, d: dict) -> dict:
@@ -63,6 +64,8 @@ async def dispositivos_crear(request: Request, person_id: int = Depends(identity
         alcances.add("turnos:subir")
     if f.get("alcance_vida") == "1":
         alcances.add("vida:leer")
+    if f.get("alcance_desplazamiento") == "1":
+        alcances.add("desplazamiento:subir")
     new_key = dispositivo.crear(conn, person_id, nombre, alcances)
     items = [_dispositivo_row(t, d) for d in dispositivo.listar(conn, person_id)]
     resp = comun._render("dispositivos.html", t=t, tab="settings", items=items, new_key=new_key,
@@ -125,6 +128,36 @@ async def api_turnos(request: Request, person_id: int = Depends(identity.person_
         "SELECT COUNT(*) AS n FROM shift_batch_item WHERE batch_id = ?", (batch_id,)
     ).fetchone()["n"]
     return {"lote": batch_id, "turnos": turnos, "nuevo": after > before}
+
+
+MAX_DESPLAZAMIENTO_BODY_BYTES = 1024 * 1024
+
+
+@router.post("/api/desplazamiento")
+@comun._cierra_conexion_async
+async def api_desplazamiento(
+    request: Request, person_id: int = Depends(identity.person_from_device("desplazamiento:subir"))
+):
+    content_length = request.headers.get("content-length")
+    if content_length is not None and content_length.isdigit() and int(content_length) > MAX_DESPLAZAMIENTO_BODY_BYTES:
+        raise HTTPException(413)
+    chunks = bytearray()
+    async for chunk in request.stream():
+        chunks.extend(chunk)
+        if len(chunks) > MAX_DESPLAZAMIENTO_BODY_BYTES:
+            raise HTTPException(413)
+    try:
+        texto = bytes(chunks).decode("utf-8")
+    except UnicodeDecodeError:
+        return JSONResponse({"error": "archivo_rechazado", "motivo": "esquema"}, status_code=422)
+    conn, _, _ = comun._ctx(person_id)
+    resultado = desplazamiento_import.importar(conn, person_id, texto)
+    if not resultado["ok"]:
+        return JSONResponse(
+            {"error": "archivo_rechazado", "motivo": resultado["motivo"]}, status_code=422
+        )
+    return {"dias": resultado["dias"], "primer_dia": resultado["primer_dia"],
+            "ultimo_dia": resultado["ultimo_dia"], "sin_cambios": resultado["sin_cambios"]}
 
 
 @router.get("/api/vida/semana")
