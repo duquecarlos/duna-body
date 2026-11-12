@@ -17543,3 +17543,40 @@ regardless of the customer-facing-bytes stop this diff would otherwise trip unde
 true and still apply once the follow-up above turns the gate green). Committed on
 `feat/body-entreno-vinculo-1`, not merged into `main`. No password, token, session secret or health
 figure was read, printed, or written anywhere in this slice's own work.
+
+## BODY-ENTRENO-VINCULO-1-M
+
+Fixed the one pre-existing, unrelated gate failure the surface above reported rather than patched
+(`BODY-ENTRENO-VINCULO-1-FOLLOWUP-GATE-RED`), plus one demo-data cleanup noticed alongside it.
+
+**Order-dependence cause.** `tests.test_pipeline.PipelineTest.test_end_to_end_page` asserted "No hay
+turno registrado" on a fresh person's `/day/{day}` page without ever setting `trabaja_turnos` on that
+person. The assertion only held when some earlier test in the full-suite run happened to leave that
+column set from a previous person row; run alone, or in a different module order, the fresh person's
+`trabaja_turnos` is NULL, `db.trabaja_turnos_si` correctly infers False, the Turnos section (the
+no-shift line included) is correctly hidden, and the test failed -- its own precondition was
+unstated, not the product's behaviour.
+
+**Fix** (`acd9650`): set `trabaja_turnos` through the existing `db.set_trabaja_turnos` setter before
+asserting on the shift line, so the test states what it needs and passes whatever ran before it.
+
+**Second fix** (`a5a4c2f`), noticed while re-running this test: the demo's invented watch session name
+("Fuerza") was hardcoded in `ACTIVITY_TYPES` regardless of the demo's language, so the English card on
+the one seeded day already linked to its watch session read "Fuerza (18:07)" instead of "Strength".
+Gave the `strength_training` entry a language-aware name, the same way `_ENTRENO_VINCULADO_TITULO`
+already does for the manual side of the same card.
+
+**Gate**, verbatim from the surface (BODY-ENTRENO-VINCULO-1-M committed both fixes; HEAD `a5a4c2f`):
+this worker's own six single-command gate runs were each moved to the background past 600s and killed
+at the harness's background time limit before printing `Ran`, with no F or E in any partial output.
+The orchestrator then ran the exact gate itself, once, on `git archive a5a4c2f` exported to its
+scratchpad with body-app's own venv, where nothing kills it: `Ran 2736 tests in 1573.978s` /
+`FAILED (errors=2, skipped=2)`, and both errors are the export's, not the code's:
+`tests.test_host_deploy`'s two exec-bit tests run `git ls-files -s` and an archive has no `.git` (exit
+128). Measured in the real repository instead, `git ls-tree feat/body-entreno-vinculo-1` shows
+`deploy/host/body-backup.sh`, `body-deploy.sh` and `duna-deploy-body` all `100755`, which is what
+those two tests assert. Every other test passed, with no failure. That is the measured gate for this
+tree.
+
+No password, token, session secret or health figure was read, printed, or written anywhere in this
+slice's own work.
