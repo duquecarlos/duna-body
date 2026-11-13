@@ -156,6 +156,14 @@ _PLAN_HOY_EJERCICIOS = {
 # this same categoria and exercise so a registered read shows ruling 2's line too.
 _LESION_ZONA_DEMO = "hombro"
 _LESION_SET_EJERCICIO = {"es": "press militar", "en": "overhead press"}
+# BODY-PLAN-MODULO-1-R: how far _seed_periodo's open 'lesion' period may widen to reach the most
+# recent strength_training day -- an unbounded widen can mark most of stress_avg's own 30-day
+# baseline window (baselines.WINDOW_DAYS) on a date whose nearest strength session happens to be
+# old, starving it below baselines.MIN_DAYS (7) and turning the Hoy tile's partial-day band into a
+# false "not enough data yet" instead of the usual band it should show every day the demo runs on.
+# 15 leaves baselines.WINDOW_DAYS - 15 = 15 unmarked days in that window -- comfortably over
+# MIN_DAYS even allowing for the ~8% chance any one of them rolled stress_avg absent.
+_LESION_MAX_DIAS_ATRAS = 15
 
 # BODY-ENTRENO-VINCULO-1 ruling 8: the manual session's own title on the one demo day seeded
 # already linked to its watch session, so Día shows ruling 3's "joined" line without the person
@@ -836,9 +844,11 @@ def _seed_periodo(conn, db, all_days: list[date], person_id: int, idioma: str) -
 
     BODY-LESION-ZONA-1 ruling 6: the 'lesion' period names _LESION_ZONA_DEMO. Its start reaches
     back far enough to cover the most recent strength_training activity _seed_days already made
-    (widening past the usual 3 days when that activity is older), and that one activity's first
-    set is corrected to the same categoria -- so a registered training read shows ruling 2's
-    "lighter on purpose" line, not only the future plan and Hoy's hatch."""
+    (widening past the usual 3 days when that activity is older, capped at _LESION_MAX_DIAS_ATRAS
+    so the period itself never outgrows what stress_avg's own baseline window can afford to lose),
+    and that one activity's first set is corrected to the same categoria -- so a registered
+    training read shows ruling 2's "lighter on purpose" line, not only the future plan and Hoy's
+    hatch."""
     start = all_days[len(all_days) // 2]
     end = start + timedelta(2)
     db.crear_periodo(conn, person_id, "malestar", start.isoformat(), end.isoformat())
@@ -852,7 +862,7 @@ def _seed_periodo(conn, db, all_days: list[date], person_id: int, idioma: str) -
     if fuerza is not None:
         dia_fuerza = date.fromisoformat(fuerza["day"])
         if dia_fuerza < inicio_lesion:
-            inicio_lesion = dia_fuerza
+            inicio_lesion = max(dia_fuerza, hoy - timedelta(_LESION_MAX_DIAS_ATRAS))
         db.correct_exercise_set(conn, person_id, fuerza["source"], fuerza["source_id"], 1,
                                  category=_LESION_ZONA_DEMO, exercise=_LESION_SET_EJERCICIO[idioma],
                                  reps=8, weight_kg=20.0)
@@ -1104,14 +1114,31 @@ def _seed_household(conn, db, goals, enlaces, compartir, comida_compartida, rng:
     return len(ana_days), hogar_checks, hogar_habit_checks, comidas_compartidas_pendientes
 
 
-def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
-    from . import (comida_compartida, compartir, db, desplazamiento_import, enlaces, goals, recuperacion,
-                   shift_import, sueno_fc, turno_fc, turnos_costo)
+def _seed_today_stress(conn, db, baselines, anchor: date, person_id: int) -> int:
+    """BODY-PLAN-MODULO-1-R: `_seed_days` samples `anchor`'s stress_avg the same way as any other
+    day, so whether it lands inside the person's own 25th-75th-percentile baseline depends on which
+    real date `anchor` happens to be -- the Hoy tile's partial-day stress tile must read the usual
+    band whichever day the demo runs on (the demo is the reviewer's own surface). Overwritten here
+    to the midpoint of the SAME baseline body/rutas/hoy.py's `_nivel_tile` compares against (the
+    30 days before `anchor`, excluding `anchor` itself) -- never a hardcoded figure. Returns 1 when
+    this added a reading that `_seed_days` had rolled absent, else 0, so the printed count stays
+    honest."""
+    b = baselines.baseline(conn, "stress_avg", anchor.isoformat(), person_id=person_id)
+    if b is None:
+        return 0
+    tenia = db.day_values(conn, anchor.isoformat(), person_id).get("stress_avg") is not None
+    db.set_metric(conn, anchor.isoformat(), "stress_avg", round((b.low + b.high) / 2, 1), "garmin", person_id)
+    return 0 if tenia else 1
+
+
+def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[str, int]:
+    from . import (baselines, comida_compartida, compartir, db, desplazamiento_import, enlaces, goals,
+                   recuperacion, shift_import, sueno_fc, turno_fc, turnos_costo)
 
     person_id = _seed_person(conn, db, idioma)
 
     rng = random.Random(SEED)
-    anchor = date.today()
+    anchor = today if today is not None else date.today()
     all_days = [anchor - timedelta(dias - 1 - i) for i in range(dias)]
     first_monday, anchor_monday = fechas.lunes_de(all_days[0]), fechas.lunes_de(anchor)
 
@@ -1123,6 +1150,11 @@ def _seed(conn, *, dias: int, idioma: str) -> dict[str, int]:
     entradas_ingesta, comidas_ingesta = _seed_ingesta(conn, db, rng, all_days, person_id)
     objetivos_nutriente = _seed_nutriente_objetivo(conn, db, all_days, person_id)
     periodos = _seed_periodo(conn, db, all_days, person_id, idioma)
+    # BODY-PLAN-MODULO-1-R: AFTER _seed_periodo, not before -- baselines.baseline() excludes
+    # marked days (BODY-PERIODO-1 ruling 3), so the band this picks `anchor`'s own stress_avg to
+    # fall inside must be read once every period that can exclude a day is already seeded, or it
+    # can land inside a band the live route recomputes differently once those periods are in.
+    metric_rows += _seed_today_stress(conn, db, baselines, anchor, person_id)
     checkins = _seed_checkins(conn, db, rng, all_days, person_id)
     # BODY-RECUPERACION-1-M: AFTER _seed_periodo, not before -- recuperacion.recalcular() checks
     # db.dias_marcados() per activity at computation time, so an activity on a day inside a marked
