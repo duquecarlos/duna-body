@@ -19797,3 +19797,114 @@ household goal the other member's weekly habit has no row either -- only the per
 gets one. The page's `scrollWidth` is 375, so nothing overflows. The demo fixture has no done
 check for this week, so the `hecho` state was not on screen to look at; the slice's own test suite
 asserts that state directly. No defect found. **APPROVED to merge** -- merged 08638057b663c8f2f5c11552551ddb0450e0a863.
+
+## BODY-PLAN-ESQUEMA-1 -- the plan's schema: four horizon tables, two additive columns, mudanza's self-ref pass (2026-11-12)
+
+Ruling (ORCH-CARLOS-DELEGATES-TIER-1-1, taking BODY-PLAN-PERSONAL-1-INV's recommendation): the
+plan's HORIZON is a milestone `goal` -- its deadline is the end date, its sharing is the
+household's, its detail screen is goal detail -- never a second, parallel container that would
+need its own sharing, deadline and screen. A person's plan is that person's own data and MOVES
+WITH THEM: the four horizon tables join `body/mudanza.py`'s REGISTRY with real id remapping;
+listing them in SKIPPED_TABLES ("nothing reads them yet") was rejected as a half-built shape that
+would silently lose a plan the day the plan screens ship.
+
+**Rulings, as built (both runs).**
+
+1. **Schema** (`body/db.py`): `goal.horizonte_goal_id` and `experimento.goal_id` (additive,
+   nullable, placed last in their column list so a fresh install's `PRAGMA table_info` order
+   matches `_migrate()`'s `ALTER TABLE ADD COLUMN` on an existing database) point a goal or
+   experiment at the horizon goal. `horizonte_regla`, `horizonte_semana`, `horizonte_meta_semanal`
+   and `horizonte_checkpoint` are the plan's own parts, each a child row under
+   `horizonte_goal_id`. `horizonte_meta_semanal` is append-only (`vigente`/`reemplaza_id`), with a
+   partial UNIQUE index refusing two vigente rows for one `(horizonte_goal_id, week_start,
+   medida)`; `db.corregir_meta_semanal` is its one correction path -- never an UPDATE of `valor`.
+   `db.validar_regla_horizonte` checks `contexto_valor` against `SHIFT_KINDS` or the `period_kind`
+   table, since a CHECK cannot express either. Both the new columns and the new tables are created
+   the guarded way: SCHEMA (idempotent `CREATE TABLE IF NOT EXISTS`) covers every fresh install,
+   `_migrate()` ALTERs the two existing tables for a database built before this slice. Plain
+   writers only (`crear_regla_horizonte`, `crear_semana_horizonte`, `crear_meta_semanal`,
+   `corregir_meta_semanal`, `crear_checkpoint_horizonte`) -- no route reads or writes them yet; the
+   plan module, proposals, screen and Hoy hook are later slices.
+2. **Privacy** (`body/privacidad.py`): all four horizon tables are in `FULLY_HANDLED_TABLES`.
+   `export_person`'s own horizonte block reads this person's own rows, scoped by their own
+   `person_id` column (a household member's own rows on a shared horizon goal stay theirs to
+   export from their own account). `delete_person` removes them before the goal they reference,
+   the same FK-order delete already follows for habit/habit_check/goal_check/plan, and clears the
+   two new cross-goal references (`experimento.goal_id`, `goal.horizonte_goal_id`) before the
+   referenced goal goes -- the only other place in the repository that deletes a goal.
+3. **mudanza's self-ref pass** (`body/mudanza.py`): `TableSpec` gained `self_ref_cols` -- columns
+   naming an id of the SAME table (`goal.horizonte_goal_id`, `horizonte_meta_semanal.reemplaza_id`).
+   Such a column is excluded from the full-content match and from `_needs_update`'s comparison,
+   inserted NULL, then resolved in a second pass, same transaction, from the table's own id map
+   once every row of that table is migrated. A self-ref naming a row that was never migrated
+   (another person's, or absent) stays NULL and is counted (`TableCounts.self_ref_unresolved`),
+   printed in the dry-run/apply report, never silently. `goal` carries `self_ref_cols=
+   ("horizonte_goal_id",)`; `experimento.fk_remap` adds `goal_id -> goal`; the four horizon tables
+   each `fk_remap` `horizonte_goal_id -> goal` (so a horizon goal filtered out as another
+   household member's leaves its children "missing", counted as `other_person`, same as any other
+   `fk_remap`); `horizonte_semana` is matched on its own UNIQUE key `(horizonte_goal_id,
+   week_start)`, remapped; `horizonte_meta_semanal` carries `self_ref_cols=("reemplaza_id",)` for
+   its append-only correction chain. `_source_rows` now orders by id ascending when the table has
+   an id column, so the second pass is exercised independent of source id order rather than
+   relying on it.
+4. **The census fixes** (outside the schema's own `touches`, widened into this slice -- see the
+   `-R` paragraph below): `tests/test_experimentos_esquema.py`'s hardcoded `experimento` column set
+   gained `goal_id`; `tests/test_mudanza.py`'s registry census tests needed no edit to their
+   assertions once the four tables were registered, and gained `SelfRefRoundTripTest` /
+   `SelfRefUnresolvedTest`, invented data, proving the round trip and the unresolved-count path;
+   `tests/test_persona_fuga.py`'s `_seed_person` now plants one row in each horizon table, tagged,
+   under `gid_proposed` (a milestone goal already in the fixture) as the horizon, satisfying the
+   seeded-or-explained census -- their markers stay OUT of `_markers_of`'s active list, like
+   `moment`'s own text, since no route, API or assistant tool reads `horizonte_*` yet. Not added to
+   `_HOUSEHOLD_ONLY_TABLES`: they are personal rows.
+
+No password, token, session secret or health figure of a real person was read, printed or written
+anywhere in either run; every test fixture is invented demo data.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry). The exact
+command is `.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 9 sequential chunks
+of the same `tests/test_*.py` modules in alphabetical order (the same set `discover` would walk),
+each in the foreground:
+
+    chunk 1 (test_accesibilidad..test_backup):              Ran 346 tests, OK (skipped=1)
+    chunk 2 (test_baselines..test_dispositivo):              Ran 447 tests, OK
+    chunk 3 (test_ejes_fechas..test_fecha_futura_1):          Ran 278 tests, OK
+    chunk 4 (test_fechas_semana..test_host_deploy):           Ran 463 tests, OK
+    chunk 5 (test_host_import..test_modelos_estandar_1):      Ran 287 tests, OK
+    chunk 6 (test_momentos_pull..test_privacidad):            Ran 499 tests, OK
+    chunk 7 (test_profile..test_request_log):                 Ran 226 tests, OK
+    chunk 8 (test_seguridad..test_turnos_costo):               Ran 392 tests, OK
+    chunk 9 (test_turnos_enlaces..test_web_entry):            Ran 341 tests, OK
+
+Sum: 3279 run, 0 failures, 0 errors, 1 skipped. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`): 3279 -- matching
+exactly (3275 from the first run's own gate + this run's 4 new `SelfRefRoundTripTest`/
+`SelfRefUnresolvedTest` tests). **GREEN.**
+
+**Merge policy, this slice.** The diff touches `body/db.py`, `body/privacidad.py`,
+`body/mudanza.py`, `tests/test_plan_esquema.py`, `tests/test_privacidad.py`, `tests/test_mudanza.py`,
+`tests/test_persona_fuga.py`, `tests/test_experimentos_esquema.py` and this ledger. A schema change
+(two additive columns, four new tables) -- merge policy A's schema condition trips on the first
+run's own diff. No customer-facing bytes: no route, template, static asset or i18n string changed;
+every new shape is read and written only by tests and `mudanza.py`'s own plain writers, with no
+screen or API surface yet. No cross-repo contract or DTO change. The schema condition trips, but
+the spec body for this run (BODY-PLAN-ESQUEMA-1-R) names the exact merge in words -- "No
+customer-facing bytes change in this slice: merge to main" -- so the merge below is authorised
+despite it, not a stop.
+
+### BODY-PLAN-ESQUEMA-1-R
+
+The first run (logs/worker-body-plan-esquema-1-body-app-20261112T220901.json) built the schema,
+the privacy coverage and the migration identity tests, then ran the gate on its final tree and
+stopped **GATE_RED**, correctly: 4 of 3275 tests failed, all caused by its own new columns/tables,
+all in census tests OUTSIDE its `touches` -- `tests/test_experimentos_esquema.py`'s hardcoded
+column set (missing `goal_id`), `tests/test_mudanza.py`'s registry census (the four horizon tables
+unregistered), `tests/test_persona_fuga.py`'s table census (no seeded row). The orchestrator also
+measured, on the first run's own branch, that `body/mudanza.py`'s `_remap_row` would silently drop
+or mis-link a SELF-reference (`goal.horizonte_goal_id -> goal`, `horizonte_meta_semanal.
+reemplaza_id -> itself`) had it simply been added to `fk_remap` the way every other foreign key is.
+This run (BODY-PLAN-ESQUEMA-1-R), same approval and observed report, was dispatched with its
+`touches` widened to the three census files plus `body/mudanza.py`, and built the self-ref pass
+(ruling 3 above) and the four census fixes (ruling 4 above) that the schema's own shape demanded.
+Merged to `main` on green, no schema change in THIS diff's own touches (the schema already merged
+with the first run's commits on this branch) -- see merge below.

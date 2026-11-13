@@ -41,6 +41,9 @@ class TableSpec:
     other_person_filter: Callable[[dict], bool] | None = None
     id_exported: bool = False      # True when another table's fk_remap points at this one
     own_id_from: str | None = None  # checkin_nota: its own id IS checkin's id, not autoincrement
+    self_ref_cols: tuple[str, ...] = ()  # columns holding an id of THIS SAME table (goal.horizonte_goal_id,
+    # horizonte_meta_semanal.reemplaza_id): excluded from matching, inserted NULL, then resolved in a
+    # second pass from the table's own id map once every row is migrated.
 
 
 def _hogar_filter(row: dict) -> bool:
@@ -77,7 +80,8 @@ SKIPPED_TABLES = {
 
 # The person-scoped tables, in FK-safe order: every table a row above depends on appears earlier.
 REGISTRY: tuple[TableSpec, ...] = (
-    TableSpec("goal", match_cols=None, id_exported=True, other_person_filter=_hogar_filter),
+    TableSpec("goal", match_cols=None, id_exported=True, other_person_filter=_hogar_filter,
+              self_ref_cols=("horizonte_goal_id",)),
     TableSpec("habit", scope="parent", parent_fk="goal_id", parent_table="goal",
               match_cols=None, fk_remap=("goal_id",), fk_table={"goal_id": "goal"},
               person_ref_cols=("assignee_person_id",), id_exported=True),
@@ -114,8 +118,21 @@ REGISTRY: tuple[TableSpec, ...] = (
     TableSpec("tope_agente", match_cols=("person_id",)),
     TableSpec("consentimiento", match_cols=("person_id", "version")),
     TableSpec("moment", match_cols=None, id_exported=True),
-    TableSpec("experimento", match_cols=None, fk_remap=("habito_id",), fk_table={"habito_id": "habit"},
-              id_exported=True),
+    TableSpec("experimento", match_cols=None, fk_remap=("habito_id", "goal_id"),
+              fk_table={"habito_id": "habit", "goal_id": "goal"}, id_exported=True),
+    # BODY-PLAN-ESQUEMA-1-R (ORCH-CARLOS-DELEGATES-TIER-1-1): the plan's own parts move with the
+    # person, like goal itself -- a half-built shape (SKIPPED_TABLES) would silently lose a plan
+    # the day the plan screens ship. Each child's horizonte_goal_id follows goal's own
+    # other_person_filter through fk_remap -- a horizon goal filtered out as another person's
+    # leaves its children "missing", counted as other_person, same as any other fk_remap.
+    TableSpec("horizonte_regla", match_cols=None, fk_remap=("horizonte_goal_id",),
+              fk_table={"horizonte_goal_id": "goal"}),
+    TableSpec("horizonte_semana", match_cols=("horizonte_goal_id", "week_start"),
+              fk_remap=("horizonte_goal_id",), fk_table={"horizonte_goal_id": "goal"}),
+    TableSpec("horizonte_meta_semanal", match_cols=None, fk_remap=("horizonte_goal_id",),
+              fk_table={"horizonte_goal_id": "goal"}, self_ref_cols=("reemplaza_id",)),
+    TableSpec("horizonte_checkpoint", match_cols=None, fk_remap=("horizonte_goal_id",),
+              fk_table={"horizonte_goal_id": "goal"}),
     TableSpec("experimento_registro", match_cols=("experimento_id", "day"),
               fk_remap=("experimento_id", "momento_id"),
               fk_table={"experimento_id": "experimento", "momento_id": "moment"}),
@@ -150,6 +167,7 @@ class TableCounts:
     insert: int = 0
     update: int = 0
     skip: int = 0
+    self_ref_unresolved: int = 0
 
 
 @dataclass
@@ -177,7 +195,7 @@ def _match_cols_for(spec: TableSpec, row: dict) -> tuple[str, ...]:
         return ("id",)
     if spec.match_cols is not None:
         return spec.match_cols
-    return tuple(c for c in row if c != "id")
+    return tuple(c for c in row if c != "id" and c not in spec.self_ref_cols)
 
 
 def _find_existing(dest_conn: sqlite3.Connection, spec: TableSpec, row: dict) -> sqlite3.Row | None:
@@ -189,7 +207,7 @@ def _find_existing(dest_conn: sqlite3.Connection, spec: TableSpec, row: dict) ->
 def _needs_update(spec: TableSpec, existing: sqlite3.Row, row: dict) -> bool:
     if spec.own_id_from or spec.match_cols is None:
         return False
-    other_cols = [c for c in row if c not in spec.match_cols and c != "id"]
+    other_cols = [c for c in row if c not in spec.match_cols and c != "id" and c not in spec.self_ref_cols]
     return any(existing[c] != row.get(c) for c in other_cols)
 
 
@@ -224,6 +242,8 @@ def _remap_row(row: sqlite3.Row, spec: TableSpec, id_maps: dict, source_person_i
     out = dict(row)
     if spec.scope == "person" and "person_id" in out:
         out["person_id"] = dest_person_id
+    for col in spec.self_ref_cols:
+        out[col] = None
     pending = False
     for col in spec.fk_remap:
         orig = out.get(col)
@@ -252,17 +272,22 @@ def _remap_row(row: sqlite3.Row, spec: TableSpec, id_maps: dict, source_person_i
 
 def _source_rows(source_conn: sqlite3.Connection, spec: TableSpec, source_person_id: int,
                   parent_source_ids: dict) -> list[sqlite3.Row]:
+    order = " ORDER BY id" if _has_id_column(source_conn, spec.name) else ""
     if spec.scope == "person":
         return source_conn.execute(
-            f'SELECT * FROM "{spec.name}" WHERE person_id = ?', (source_person_id,)
+            f'SELECT * FROM "{spec.name}" WHERE person_id = ?{order}', (source_person_id,)
         ).fetchall()
     ids = parent_source_ids.get(spec.parent_table, set())
     if not ids:
         return []
     placeholders = ", ".join("?" * len(ids))
     return source_conn.execute(
-        f'SELECT * FROM "{spec.name}" WHERE {spec.parent_fk} IN ({placeholders})', tuple(ids)
+        f'SELECT * FROM "{spec.name}" WHERE {spec.parent_fk} IN ({placeholders}){order}', tuple(ids)
     ).fetchall()
+
+
+def _has_id_column(conn: sqlite3.Connection, table_name: str) -> bool:
+    return any(r[1] == "id" for r in conn.execute(f'PRAGMA table_info("{table_name}")'))
 
 
 def _dest_already_present(dest_conn: sqlite3.Connection, spec: TableSpec, dest_person_id: int,
@@ -286,6 +311,32 @@ def _build_parent_ids(conn: sqlite3.Connection, person_id: int) -> dict:
         "shift_batch": {r[0] for r in conn.execute(
             "SELECT id FROM shift_batch WHERE person_id = ?", (person_id,))},
     }
+
+
+def _resolve_self_refs(cur: sqlite3.Cursor, spec: TableSpec, rows: list[sqlite3.Row], own_map: dict,
+                        apply: bool) -> int:
+    """Second pass, same transaction as the rows just inserted/matched above: for each self-ref
+    column, the OLD id it named is looked up in this table's OWN id map. Present (even if its value
+    is still None, a dry run's to-be-inserted row) -> resolvable, written in apply mode. Absent --
+    the referenced row was never migrated (another person's, or genuinely absent) -- counted, stays
+    NULL, never silently."""
+    unresolved = 0
+    for row in rows:
+        if row["id"] not in own_map:
+            continue
+        this_new_id = own_map[row["id"]]
+        for col in spec.self_ref_cols:
+            orig = row[col]
+            if orig is None:
+                continue
+            if orig not in own_map:
+                unresolved += 1
+                continue
+            if apply and this_new_id is not None:
+                target_new_id = own_map[orig]
+                cur.execute(f'UPDATE "{spec.name}" SET "{col}" = ? WHERE id = ?',
+                            (target_new_id, this_new_id))
+    return unresolved
 
 
 def _process_table(source_conn: sqlite3.Connection, dest_conn: sqlite3.Connection, spec: TableSpec,
@@ -318,8 +369,10 @@ def _process_table(source_conn: sqlite3.Connection, dest_conn: sqlite3.Connectio
         else:
             counts.skip += 1
             new_id = existing["id"] if "id" in existing.keys() else None
-        if spec.id_exported:
+        if spec.id_exported or spec.self_ref_cols:
             id_maps[spec.name][row["id"]] = new_id
+    if spec.self_ref_cols:
+        counts.self_ref_unresolved = _resolve_self_refs(cur, spec, rows, id_maps[spec.name], apply)
     return TableReport(spec.name, counts=counts)
 
 
@@ -403,7 +456,7 @@ def _print_report(reports: list[TableReport], apply: bool) -> None:
         print(
             f"{r.name}: source={c.rows_source} already_present={c.already_present} "
             f"{label}_insert={c.insert} {label}_update={c.update} {label}_skip={c.skip} "
-            f"other_person={c.other_person}"
+            f"other_person={c.other_person} self_ref_unresolved={c.self_ref_unresolved}"
         )
 
 

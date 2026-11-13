@@ -46,7 +46,7 @@ class FreshDbTest(unittest.TestCase):
     def test_experimento_table_has_the_contract_columns(self):
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(experimento)")}
         expected = {
-            "id", "person_id", "titulo", "habito_id", "metricas", "ventana", "filtro_dias",
+            "id", "person_id", "titulo", "habito_id", "goal_id", "metricas", "ventana", "filtro_dias",
             "dias_prueba_objetivo", "fecha_inicio", "fecha_fin", "estado", "creado_en",
         }
         self.assertEqual(cols, expected)

@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import anatomia, config, garmin_adapter
+from . import anatomia, config, fechas, garmin_adapter
 
 _CADENCE_N_PER_WEEK = re.compile(r"^\s*(\d+)\s*x\s*/\s*week\s*$", re.IGNORECASE)
 
@@ -66,6 +66,9 @@ _GOAL_COLUMNS = """
     deadline       TEXT,
     status         TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('proposed', 'active', 'paused', 'done', 'dropped')),
     visibility     TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'household')),
+    -- BODY-PLAN-ESQUEMA-1: when this goal belongs to a plan, the plan's own horizon goal (an
+    -- end-date metric target, or a sub-milestone) -- additive, nullable.
+    horizonte_goal_id INTEGER REFERENCES goal(id),
     CHECK (
         (kind = 'metric' AND metric_key IS NOT NULL AND direction IS NOT NULL)
         OR
@@ -186,7 +189,12 @@ _EXPERIMENTO_COLUMNS = """
     fecha_inicio         TEXT NOT NULL,
     fecha_fin            TEXT,
     estado               TEXT NOT NULL CHECK (estado IN ('activo', 'cerrado')),
-    creado_en            TEXT NOT NULL
+    creado_en            TEXT NOT NULL,
+    -- BODY-PLAN-ESQUEMA-1: when this experiment is part of a plan, its horizon goal -- additive,
+    -- nullable, placed last so a fresh install's column order matches _migrate()'s ALTER ADD
+    -- COLUMN on an existing database (PRAGMA table_info order, same convention
+    -- activity.vinculo_manual/vinculo_separado already follow).
+    goal_id              INTEGER REFERENCES goal(id)
 """
 
 # The "it happened" log for an experiment with no habito_id -- with one, habit_check is the log
@@ -201,6 +209,77 @@ _EXPERIMENTO_REGISTRO_COLUMNS = """
     momento_id     INTEGER REFERENCES moment(id),
     creado_en      TEXT NOT NULL,
     UNIQUE (experimento_id, day)
+"""
+
+# BODY-PLAN-ESQUEMA-1 (ORCH-CARLOS-DELEGATES-TIER-1-1, taking BODY-PLAN-PERSONAL-1-INV's
+# recommendation): the plan's HORIZON is a milestone `goal` -- its deadline is the end date, its
+# sharing is the household's, its detail screen is goal detail. These four tables are the plan's
+# own parts, each a child row under horizonte_goal_id -- never a second, parallel container that
+# would need its own sharing, deadline and screen.
+_HORIZONTE_REGLA_COLUMNS = """
+    id                INTEGER PRIMARY KEY,
+    horizonte_goal_id INTEGER NOT NULL REFERENCES goal(id),
+    person_id         INTEGER NOT NULL REFERENCES person(id),
+    contexto          TEXT NOT NULL CHECK (contexto IN ('siempre', 'turno', 'tras_noche', 'periodo', 'descanso')),
+    -- A SHIFT_KINDS value for 'turno', a period_kind key for 'periodo', a day count as text for
+    -- 'tras_noche', NULL for 'siempre'/'descanso' -- validated in Python by validar_regla_horizonte
+    -- below, not by a CHECK (the period vocabulary is a table).
+    contexto_valor    TEXT,
+    texto             TEXT NOT NULL,
+    -- An optional measurable form whose shape the plan module (a later slice) owns; stored and
+    -- validated only for well-formed JSON here.
+    chequeo           TEXT CHECK (chequeo IS NULL OR json_valid(chequeo)),
+    orden             INTEGER NOT NULL DEFAULT 0,
+    activa            INTEGER NOT NULL DEFAULT 1 CHECK (activa IN (0, 1)),
+    creado_en         TEXT NOT NULL
+"""
+
+_HORIZONTE_SEMANA_COLUMNS = """
+    id                INTEGER PRIMARY KEY,
+    horizonte_goal_id INTEGER NOT NULL REFERENCES goal(id),
+    person_id         INTEGER NOT NULL REFERENCES person(id),
+    -- A Monday, validated in Python against fechas.lunes_de. Planned sessions stay in `plan` with
+    -- goal_id = this same horizon goal -- no second session table.
+    week_start        TEXT NOT NULL,
+    titulo            TEXT,
+    nota              TEXT,
+    creado_en         TEXT NOT NULL,
+    UNIQUE (horizonte_goal_id, week_start)
+"""
+
+_HORIZONTE_META_SEMANAL_COLUMNS = """
+    id                INTEGER PRIMARY KEY,
+    horizonte_goal_id INTEGER NOT NULL REFERENCES goal(id),
+    person_id         INTEGER NOT NULL REFERENCES person(id),
+    week_start        TEXT NOT NULL,
+    -- Either a metric_def key or a key of a plan-measure vocabulary the plan module will own;
+    -- validated here only as non-empty.
+    medida            TEXT NOT NULL,
+    sentido           TEXT NOT NULL CHECK (sentido IN ('al_menos', 'como_maximo', 'antes_de', 'despues_de')),
+    -- For sentido 'antes_de'/'despues_de', valor is a clock time as minutes after 12:00 noon, so
+    -- 23:30 = 690 and 00:45 = 765 -- ordering correctly across midnight.
+    valor             REAL NOT NULL,
+    nota              TEXT,
+    -- Append-only, like Finanzas' presupuesto revision: a correction inserts a new row
+    -- (reemplaza_id set) and flips the old row's vigente to 0, in one transaction
+    -- (corregir_meta_semanal below) -- nothing ever UPDATEs valor.
+    vigente           INTEGER NOT NULL DEFAULT 1 CHECK (vigente IN (0, 1)),
+    reemplaza_id      INTEGER REFERENCES horizonte_meta_semanal(id),
+    origen            TEXT NOT NULL CHECK (origen IN ('persona', 'asistente')),
+    creado_en         TEXT NOT NULL
+"""
+
+_HORIZONTE_CHECKPOINT_COLUMNS = """
+    id                INTEGER PRIMARY KEY,
+    horizonte_goal_id INTEGER NOT NULL REFERENCES goal(id),
+    person_id         INTEGER NOT NULL REFERENCES person(id),
+    day               TEXT NOT NULL,
+    titulo            TEXT NOT NULL,
+    -- A JSON list whose item shape the plan module owns. No stored verdict here -- whether a
+    -- checkpoint is met is computed; a later slice decides whether to snapshot it.
+    criterios         TEXT NOT NULL CHECK (json_valid(criterios)),
+    nota              TEXT,
+    creado_en         TEXT NOT NULL
 """
 
 # A timestamped thing the person did. `kind` is open text on purpose (no CHECK) -- a code-level
@@ -791,6 +870,34 @@ CREATE TABLE IF NOT EXISTS experimento_registro (
 );
 CREATE INDEX IF NOT EXISTS idx_experimento_registro_person ON experimento_registro(person_id);
 
+-- BODY-PLAN-ESQUEMA-1: the plan's own parts, each a child row under horizonte_goal_id (a
+-- milestone goal, never a second container of its own) -- see the column constants above.
+CREATE TABLE IF NOT EXISTS horizonte_regla (
+{_HORIZONTE_REGLA_COLUMNS}
+);
+CREATE INDEX IF NOT EXISTS idx_horizonte_regla_goal ON horizonte_regla(horizonte_goal_id);
+CREATE INDEX IF NOT EXISTS idx_horizonte_regla_person ON horizonte_regla(person_id);
+
+CREATE TABLE IF NOT EXISTS horizonte_semana (
+{_HORIZONTE_SEMANA_COLUMNS}
+);
+CREATE INDEX IF NOT EXISTS idx_horizonte_semana_goal ON horizonte_semana(horizonte_goal_id);
+CREATE INDEX IF NOT EXISTS idx_horizonte_semana_person ON horizonte_semana(person_id);
+
+CREATE TABLE IF NOT EXISTS horizonte_meta_semanal (
+{_HORIZONTE_META_SEMANAL_COLUMNS}
+);
+CREATE INDEX IF NOT EXISTS idx_horizonte_meta_semanal_goal ON horizonte_meta_semanal(horizonte_goal_id);
+CREATE INDEX IF NOT EXISTS idx_horizonte_meta_semanal_person ON horizonte_meta_semanal(person_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_horizonte_meta_semanal_vigente
+    ON horizonte_meta_semanal(horizonte_goal_id, week_start, medida) WHERE vigente = 1;
+
+CREATE TABLE IF NOT EXISTS horizonte_checkpoint (
+{_HORIZONTE_CHECKPOINT_COLUMNS}
+);
+CREATE INDEX IF NOT EXISTS idx_horizonte_checkpoint_goal ON horizonte_checkpoint(horizonte_goal_id);
+CREATE INDEX IF NOT EXISTS idx_horizonte_checkpoint_person ON horizonte_checkpoint(person_id);
+
 -- BODY-PERIODO-1: a kind the person can mark across days (illness, travel, injury) so a baseline's
 -- usual range and an experiment's counted days leave those days out, never re-weight them. Seeded
 -- with 'malestar', 'viaje', 'lesion' below -- a kind added later is a row here, never a code
@@ -1160,6 +1267,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "ALTER TABLE plan ADD COLUMN ejercicios_json TEXT "
             "CHECK (ejercicios_json IS NULL OR json_valid(ejercicios_json))"
         )
+    # BODY-PLAN-ESQUEMA-1: two additive, nullable columns on old databases -- every existing goal
+    # and experimento row reads as not-part-of-a-plan (NULL), never backfilled.
+    goalcols = {r[1] for r in conn.execute("PRAGMA table_info(goal)")}
+    if goalcols and "horizonte_goal_id" not in goalcols:
+        conn.execute("ALTER TABLE goal ADD COLUMN horizonte_goal_id INTEGER REFERENCES goal(id)")
+    expcols = {r[1] for r in conn.execute("PRAGMA table_info(experimento)")}
+    if expcols and "goal_id" not in expcols:
+        conn.execute("ALTER TABLE experimento ADD COLUMN goal_id INTEGER REFERENCES goal(id)")
     ccols = {r[1] for r in conn.execute("PRAGMA table_info(conversacion_agente)")}
     if ccols and "origen" not in ccols:
         conn.execute("ALTER TABLE conversacion_agente ADD COLUMN origen TEXT CHECK (origen IS NULL OR origen IN ('mcp'))")
@@ -2489,6 +2604,137 @@ def crear_momento(conn: sqlite3.Connection, person_id: int, ts_local: str, kind:
         cur = conn.execute(
             "INSERT INTO moment (person_id, ts_local, kind, note, created_at) VALUES (?, ?, ?, ?, ?)",
             (person_id, ts_local, kind, note, now),
+        )
+    return cur.lastrowid
+
+
+# ---- horizonte (BODY-PLAN-ESQUEMA-1): the plan's own parts, each a child row under a milestone
+# goal (horizonte_goal_id) -- schema and these plain writers only; no route reads or writes them
+# yet (the plan module, proposals, screen and Hoy hook are later slices).
+
+def validar_regla_horizonte(conn: sqlite3.Connection, contexto: str, contexto_valor: str | None) -> None:
+    """Checks `horizonte_regla.contexto_valor` against `contexto`'s own vocabulary -- the part a
+    CHECK cannot express, since the period vocabulary (period_kind) is a table, not a fixed list.
+    Raises ValueError naming the invalid field first."""
+    if contexto in ("siempre", "descanso"):
+        if contexto_valor is not None:
+            raise ValueError(f"contexto_valor: must be null for contexto {contexto!r}")
+    elif contexto == "turno":
+        if contexto_valor not in SHIFT_KINDS:
+            raise ValueError(f"contexto_valor: unknown shift kind {contexto_valor!r}")
+    elif contexto == "tras_noche":
+        if not isinstance(contexto_valor, str) or not contexto_valor.isdigit():
+            raise ValueError("contexto_valor: must be a non-negative day count (as text) for contexto 'tras_noche'")
+    elif contexto == "periodo":
+        if conn.execute("SELECT 1 FROM period_kind WHERE key = ?", (contexto_valor,)).fetchone() is None:
+            raise ValueError(f"contexto_valor: unknown period kind {contexto_valor!r}")
+    else:
+        raise ValueError(f"contexto: unknown {contexto!r}")
+
+
+def crear_regla_horizonte(conn: sqlite3.Connection, person_id: int, horizonte_goal_id: int, contexto: str,
+                           contexto_valor: str | None, texto: str, *, chequeo=None, orden: int = 0,
+                           activa: bool = True) -> int:
+    validar_regla_horizonte(conn, contexto, contexto_valor)
+    if not texto:
+        raise ValueError("texto: must not be empty")
+    chequeo_json = json.dumps(chequeo) if chequeo is not None else None
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO horizonte_regla (horizonte_goal_id, person_id, contexto, contexto_valor, texto, "
+            "chequeo, orden, activa, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (horizonte_goal_id, person_id, contexto, contexto_valor, texto, chequeo_json, orden,
+             1 if activa else 0, now),
+        )
+    return cur.lastrowid
+
+
+def crear_semana_horizonte(conn: sqlite3.Connection, person_id: int, horizonte_goal_id: int, week_start: str,
+                            *, titulo: str | None = None, nota: str | None = None) -> int:
+    """week_start must be a Monday (fechas.lunes_de) -- the app's own Monday helper, so a week never
+    starts on any other day here, the same rule the habit week-strip already follows."""
+    d = date.fromisoformat(week_start)
+    if d != fechas.lunes_de(d):
+        raise ValueError(f"week_start: {week_start!r} is not a Monday")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO horizonte_semana (horizonte_goal_id, person_id, week_start, titulo, nota, creado_en) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (horizonte_goal_id, person_id, week_start, titulo, nota, now),
+        )
+    return cur.lastrowid
+
+
+def crear_meta_semanal(conn: sqlite3.Connection, person_id: int, horizonte_goal_id: int, week_start: str,
+                        medida: str, sentido: str, valor: float, *, nota: str | None = None,
+                        origen: str = "persona") -> int:
+    """The FIRST weekly target line for (horizonte_goal_id, week_start, medida) -- a later change
+    goes through corregir_meta_semanal below, never a second INSERT for the same triple (the
+    partial unique index on vigente = 1 refuses it)."""
+    if not medida:
+        raise ValueError("medida: must not be empty")
+    if sentido not in ("al_menos", "como_maximo", "antes_de", "despues_de"):
+        raise ValueError(f"sentido: unknown {sentido!r}")
+    if origen not in ("persona", "asistente"):
+        raise ValueError(f"origen: must be 'persona' or 'asistente', got {origen!r}")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO horizonte_meta_semanal (horizonte_goal_id, person_id, week_start, medida, sentido, "
+            "valor, nota, vigente, reemplaza_id, origen, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?)",
+            (horizonte_goal_id, person_id, week_start, medida, sentido, valor, nota, origen, now),
+        )
+    return cur.lastrowid
+
+
+def corregir_meta_semanal(conn: sqlite3.Connection, person_id: int, meta_id: int, valor: float, *,
+                           sentido: str | None = None, nota: str | None = None, origen: str = "persona") -> int:
+    """Replaces one of this person's own horizonte_meta_semanal rows: inserts a new vigente row
+    (same horizonte_goal_id/week_start/medida, reemplaza_id = meta_id) and flips the old row's
+    vigente to 0 -- in one transaction, so a correction never leaves two vigente rows, or a half-
+    applied one, for the same (goal, week, medida). Nothing here ever UPDATEs valor. Refuses a
+    meta_id that is not this person's own, or one already replaced."""
+    old = conn.execute(
+        "SELECT horizonte_goal_id, week_start, medida, sentido, vigente FROM horizonte_meta_semanal "
+        "WHERE id = ? AND person_id = ?", (meta_id, person_id),
+    ).fetchone()
+    if old is None:
+        raise ValueError("meta_id: not this person's own weekly target")
+    if not old["vigente"]:
+        raise ValueError("meta_id: already replaced")
+    sentido = sentido if sentido is not None else old["sentido"]
+    if sentido not in ("al_menos", "como_maximo", "antes_de", "despues_de"):
+        raise ValueError(f"sentido: unknown {sentido!r}")
+    if origen not in ("persona", "asistente"):
+        raise ValueError(f"origen: must be 'persona' or 'asistente', got {origen!r}")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        conn.execute("UPDATE horizonte_meta_semanal SET vigente = 0 WHERE id = ?", (meta_id,))
+        cur = conn.execute(
+            "INSERT INTO horizonte_meta_semanal (horizonte_goal_id, person_id, week_start, medida, sentido, "
+            "valor, nota, vigente, reemplaza_id, origen, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
+            (old["horizonte_goal_id"], person_id, old["week_start"], old["medida"], sentido, valor, nota,
+             meta_id, origen, now),
+        )
+    return cur.lastrowid
+
+
+def crear_checkpoint_horizonte(conn: sqlite3.Connection, person_id: int, horizonte_goal_id: int, day: str,
+                                titulo: str, criterios: list, *, nota: str | None = None) -> int:
+    """criterios is a JSON list whose item shape the plan module owns -- validated here only as a
+    non-empty list, never a stored verdict (whether it is met is computed, not kept)."""
+    if not titulo:
+        raise ValueError("titulo: must not be empty")
+    if not isinstance(criterios, list) or not criterios:
+        raise ValueError("criterios: must be a non-empty list")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO horizonte_checkpoint (horizonte_goal_id, person_id, day, titulo, criterios, nota, "
+            "creado_en) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (horizonte_goal_id, person_id, day, titulo, json.dumps(criterios), nota, now),
         )
     return cur.lastrowid
 

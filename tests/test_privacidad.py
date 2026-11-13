@@ -1053,5 +1053,94 @@ class RachaPisoExportDeleteTest(unittest.TestCase):
         self.assertIsNone(row["habit_id"])
 
 
+class HorizonteExportDeleteTest(unittest.TestCase):
+    """BODY-PLAN-ESQUEMA-1: the plan's own parts (horizonte_regla, horizonte_semana,
+    horizonte_meta_semanal, horizonte_checkpoint) are FULLY exported and deleted -- invented demo
+    content only, no real figures."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "horizonte.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+        self.gid = goals.propose(self.conn, 1, "Lower resting HR before night shifts", "2026-10-01",
+                                 kind="milestone", deadline="2027-03-01")
+        goals.activate(self.conn, self.gid)
+        self.conn.commit()
+
+    def _seed(self):
+        db.crear_regla_horizonte(self.conn, 1, self.gid, "turno", "night", "Dormir 20 min antes de un turno de noche")
+        db.crear_semana_horizonte(self.conn, 1, self.gid, "2026-11-09", titulo="Semana 1")
+        mid = db.crear_meta_semanal(self.conn, 1, self.gid, "2026-11-09", "resting_hr", "al_menos", 50.0)
+        db.crear_checkpoint_horizonte(self.conn, 1, self.gid, "2026-11-15", "Chequeo semana 1", ["a"])
+        return mid
+
+    def test_is_a_fully_handled_table(self):
+        for t in ("horizonte_regla", "horizonte_semana", "horizonte_meta_semanal", "horizonte_checkpoint"):
+            self.assertIn(t, privacidad.FULLY_HANDLED_TABLES)
+
+    def test_export_includes_this_persons_own_rows(self):
+        self._seed()
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(len(data["horizonte"]["reglas"]), 1)
+        self.assertEqual(data["horizonte"]["reglas"][0]["texto"], "Dormir 20 min antes de un turno de noche")
+        self.assertEqual(len(data["horizonte"]["semanas"]), 1)
+        self.assertEqual(data["horizonte"]["semanas"][0]["titulo"], "Semana 1")
+        self.assertEqual(len(data["horizonte"]["metas_semanales"]), 1)
+        self.assertEqual(data["horizonte"]["metas_semanales"][0]["valor"], 50.0)
+        self.assertEqual(len(data["horizonte"]["checkpoints"]), 1)
+        self.assertEqual(data["horizonte"]["checkpoints"][0]["titulo"], "Chequeo semana 1")
+
+    def test_export_of_another_person_sees_nothing(self):
+        self._seed()
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 2)
+        self.assertEqual(data["horizonte"], {"reglas": [], "semanas": [], "metas_semanales": [], "checkpoints": []})
+
+    def test_delete_all_removes_the_rows(self):
+        self._seed()
+        privacidad.delete_person(self.conn, 1)
+        for t in ("horizonte_regla", "horizonte_semana", "horizonte_meta_semanal", "horizonte_checkpoint"):
+            self.assertEqual(self.conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0], 0, t)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM goal WHERE id = ?", (self.gid,)).fetchone()[0], 0)
+
+    def test_delete_all_removes_a_household_members_rows_on_this_shared_horizon_goal(self):
+        """The horizon goal's own deletion follows the household goal rule (DeleteAllTest above):
+        when it goes, a member's own rows under it must go too, never fail with an
+        IntegrityError against the about-to-be-deleted goal."""
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        db.crear_regla_horizonte(self.conn, 2, self.gid, "siempre", None, "regla de B sobre la meta de A")
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM horizonte_regla").fetchone()[0], 0)
+
+    def test_delete_all_clears_a_cross_person_reference_instead_of_failing(self):
+        """experimento.goal_id and goal.horizonte_goal_id can point at a goal this person created
+        from ANOTHER person's own row -- cleared to NULL before the referenced goal goes."""
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        sub_gid = goals.propose(self.conn, 2, "B's own plan goal", "2026-11-01", metric_key="resting_hr",
+                                direction="lower", target_value=50.0, baseline_value=60.0)
+        self.conn.execute("UPDATE goal SET horizonte_goal_id = ? WHERE id = ?", (self.gid, sub_gid))
+        eid = db.crear_experimento(
+            self.conn, 2, titulo="Experimento de B bajo la meta de A",
+            metricas=["resting_hr"], ventana={"tipo": "dia"},
+            filtro_dias={"turno_en": None, "turno_fuera": None, "excluir_tras_noche": False},
+        )
+        self.conn.execute("UPDATE experimento SET goal_id = ? WHERE id = ?", (self.gid, eid))
+        self.conn.commit()
+        privacidad.delete_person(self.conn, 1)
+        self.assertIsNone(
+            self.conn.execute("SELECT horizonte_goal_id FROM goal WHERE id = ?", (sub_gid,)).fetchone()[0]
+        )
+        self.assertIsNone(
+            self.conn.execute("SELECT goal_id FROM experimento WHERE id = ?", (eid,)).fetchone()[0]
+        )
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM goal WHERE id = ?", (sub_gid,)).fetchone()[0], 1)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM experimento WHERE id = ?", (eid,)).fetchone()[0], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

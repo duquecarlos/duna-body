@@ -214,6 +214,20 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
         (person_id, gid, DAYS[-1], f"ZZ{tag}-PLAN"),
     )
 
+    # BODY-PLAN-ESQUEMA-1-R (ORCH-CARLOS-DELEGATES-TIER-1-1): the plan's own parts, one row each,
+    # under gid_proposed as the horizon (a milestone goal from this fixture's own goals, never a
+    # second container of its own) -- so the table census below covers all four and a future
+    # reader's leak sweep has real cross-person rows to find. No marker here moves into
+    # _markers_of's active list: like `moment`'s own text, no route, API or assistant tool reads
+    # horizonte_* yet (the plan module, proposals, screen and Hoy hook are later slices).
+    horizonte_week = fechas.lunes_de(TODAY).isoformat()
+    db.crear_regla_horizonte(conn, person_id, gid_proposed, "siempre", None, f"ZZ{tag}-REGLA")
+    db.crear_semana_horizonte(conn, person_id, gid_proposed, horizonte_week, titulo=f"ZZ{tag}-SEMANA")
+    db.crear_meta_semanal(conn, person_id, gid_proposed, horizonte_week, "resting_hr", "al_menos",
+                           50.0, nota=f"ZZ{tag}-META-SEMANAL")
+    db.crear_checkpoint_horizonte(conn, person_id, gid_proposed, DAYS[-1], f"ZZ{tag}-CHECKPOINT",
+                                   [f"ZZ{tag}-CRITERIO"])
+
     # Wave 9 (BODY-EXPERIMENTOS-ESQUEMA-1): experimento, experimento_registro and moment are all
     # directly person-keyed (each carries its own person_id column), so they are seeded here like
     # every other such table -- no household needed, nothing "reached through" another id.
