@@ -53,6 +53,55 @@ def _habits_for_goal(conn, goal_id: int):
     return conn.execute("SELECT * FROM habit WHERE goal_id = ? AND active = 1 ORDER BY id", (goal_id,)).fetchall()
 
 
+def _week_checks(conn, habit_ids: list[int], person_id: int, monday: date, sunday: date) -> dict[int, set[str]]:
+    """One SELECT for every weekly habit of this goal that is this person's own (BODY-METAS-HABITO-
+    SEMANA-TIRA-1 ruling 2), instead of one comun._habit_checked call per habit -- {habit_id: {day
+    iso, ...}} of this week's done=1 checks, reused below for both the week strip and
+    `checked_today`. No habit ids -> no statement at all, so a goal with zero weekly own habits
+    costs nothing extra."""
+    if not habit_ids:
+        return {}
+    placeholders = ",".join("?" * len(habit_ids))
+    rows = conn.execute(
+        f"SELECT habit_id, day FROM habit_check WHERE habit_id IN ({placeholders}) AND person_id = ? "
+        f"AND day BETWEEN ? AND ? AND done = 1",
+        (*habit_ids, person_id, monday.isoformat(), sunday.isoformat())).fetchall()
+    out: dict[int, set[str]] = {hid: set() for hid in habit_ids}
+    for r in rows:
+        out[r["habit_id"]].add(r["day"])
+    return out
+
+
+def _week_strip(t: T, monday: date, today: date, done_days: set[str]) -> list[dict]:
+    """Ruling 1: Monday..Sunday day cells for a weekly habit's own progress line. The visible
+    letter reuses t('date.days') -- en 'M T W T F S S', es whatever that same list's own initials
+    give -- never a second, hand-typed letter list. A done=1 check always wins the cell's state,
+    even on today or (inside the one-day tolerance) a near-future day; otherwise today/future/past
+    decide it. The accessible text names the day and the state in words, never just the letter."""
+    names = t("date.days")
+    state_words = {
+        "hecho": t("goals.week_strip.done"),
+        "hoy": t("goals.week_strip.today"),
+        "futuro": t("goals.week_strip.upcoming"),
+        "pasado": t("goals.week_strip.unchecked"),
+    }
+    cells = []
+    for i in range(7):
+        d = monday + timedelta(i)
+        name = names[i]
+        if d.isoformat() in done_days:
+            state = "hecho"
+        elif d == today:
+            state = "hoy"
+        elif d > today:
+            state = "futuro"
+        else:
+            state = "pasado"
+        cells.append({"letter": name[:1].upper(), "state": state,
+                      "aria": t("goals.week_strip.cell_aria", day=name, state=state_words[state])})
+    return cells
+
+
 def _shared_line(conn, t: T, g, person_id: int) -> str | None:
     """The quiet line a household goal carries wherever it's shown -- Metas' list card (rule 1 asked
     for it there too, BODY-HOGAR-MIEMBRO-1-M) and the goal page: creator's own line, or who created it
@@ -327,8 +376,15 @@ def goal_detail(goal_id: int, request: Request, person_id: int = Depends(identit
     history_list = [{"week": t("goals.week_of", date=comun._short_date(t, date.fromisoformat(r["week_start"]))),
                      "text": _verdict_sentence(t, defs, g, r)} for r in history_rows]
 
+    habits = _habits_for_goal(conn, goal_id)
+    sunday = monday + timedelta(6)
+    weekly_mine_ids = [h["id"] for h in habits
+                       if (h["assignee_person_id"] is None or h["assignee_person_id"] == person_id)
+                       and comun._habit_cadence(h).get("per", "week") == "week"]
+    week_checks = _week_checks(conn, weekly_mine_ids, person_id, monday, sunday)
+
     habit_rows = []
-    for h in _habits_for_goal(conn, goal_id):
+    for h in habits:
         cadence = comun._habit_cadence(h)
         is_mine = h["assignee_person_id"] is None or h["assignee_person_id"] == person_id
         row = {"id": h["id"], "title": h["title"], "cadence": _cadence_text(t, cadence),
@@ -342,10 +398,18 @@ def goal_detail(goal_id: int, request: Request, person_id: int = Depends(identit
                 progress = t("goals.habit.progress", done=done, due=due)
             else:
                 progress = t("goals.habit.not_due")
+            if cadence.get("per", "week") == "week":
+                done_days = week_checks.get(h["id"], set())
+                checked_today = today.isoformat() in done_days
+                week_strip = _week_strip(t, monday, today, done_days)
+            else:
+                checked_today = comun._habit_checked(conn, h["id"], person_id, today.isoformat())
+                week_strip = None
             row.update({
                 "progress": progress,
                 "due_today": goals.habit_due_today(conn, h, person_id, today),
-                "checked_today": comun._habit_checked(conn, h["id"], person_id, today.isoformat()),
+                "checked_today": checked_today,
+                "week_strip": week_strip,
             })
         else:
             other = conn.execute("SELECT display_name FROM person WHERE id = ?",
