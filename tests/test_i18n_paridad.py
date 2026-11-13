@@ -9,7 +9,7 @@ import string
 import unittest
 from unittest import mock
 
-from body import anatomia, db, history, noche_inusual, tutoriales
+from body import anatomia, db, history, horizonte, noche_inusual, tutoriales
 from body import turnos_costo
 from body.agente import propuestas
 from body.rutas import comun, metas, tendencias, turnos
@@ -167,6 +167,11 @@ _FIXED_DYNAMIC = {
     # here rather than showing half-translated on screen.
     "tutoriales.capitulo.+": [c["id"] for c in tutoriales.catalogo()["capitulos"]],
     "tutoriales.tarea.+": [t["id"] for t in tutoriales.catalogo()["tareas"]],
+    # body/rutas/asistente.py _medida_label()/_medida_valor_corto() (BODY-PLAN-PROPUESTAS-1 ruling
+    # 8): horizonte.py's own weekly-target vocabulary and its three sentido/two-unit words.
+    "asistente.propuesta.plan_medida.+": sorted(horizonte.MEDIDAS),
+    "asistente.propuesta.plan_sentido.+": ["al_menos", "como_maximo", "antes_de", "despues_de"],
+    "asistente.propuesta.plan_unidad.+": ["min", "sesiones"],
 }
 
 # body/web.py _finding_text(): key = f"history.find.{axis}_better_{better}", then t(key, ...) -- a

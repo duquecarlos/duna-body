@@ -333,6 +333,79 @@ class ToolsCallTest(_McpTestCase):
         self.assertTrue(respuestas[tope]["result"]["isError"])
 
 
+class PlanToolsTest(_McpTestCase):
+    """BODY-PLAN-PROPUESTAS-1: the plan tools are `tipo: lectura`/`propuesta` like any other
+    catalogue entry -- body.mcp needs no new code to list or call them."""
+
+    def test_leer_planes_and_leer_plan_are_offered_and_callable(self):
+        _, listado = self._ejecutar([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
+        nombres = {t["name"] for t in listado[0]["result"]["tools"]}
+        self.assertIn("leer_planes", nombres)
+        self.assertIn("leer_plan", nombres)
+
+        _, respuestas = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "leer_planes", "arguments": {}}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": "leer_plan", "arguments": {"goal_id": 999999}}},
+        ])
+        self.assertNotIn("isError", respuestas[0]["result"])
+        self.assertEqual(json.loads(respuestas[0]["result"]["content"][0]["text"]), {"planes": []})
+        self.assertNotIn("isError", respuestas[1]["result"])
+        self.assertEqual(json.loads(respuestas[1]["result"]["content"][0]["text"]), {"encontrada": False})
+
+    def test_proponer_plan_is_offered_and_callable(self):
+        _, listado = self._ejecutar([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
+        nombres = {t["name"] for t in listado[0]["result"]["tools"]}
+        self.assertIn("proponer_plan", nombres)
+        self.assertIn("ampliar_plan", nombres)
+        self.assertIn("corregir_meta_plan", nombres)
+
+        before = self.conn.execute("SELECT COUNT(*) FROM goal").fetchone()[0]
+        _, respuestas = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "proponer_plan",
+                        "arguments": {"titulo": "Prueba de carrera 10K", "start_day": "2026-11-05",
+                                      "deadline": "2027-02-01"}}},
+        ])
+        r = respuestas[0]["result"]
+        self.assertNotIn("isError", r)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM goal").fetchone()[0], before)
+        salida = json.loads(r["content"][-1]["text"])
+        self.assertIn("propuesta_id", salida)
+        self.assertEqual(salida["estado"], "propuesta")
+
+    def test_aplicar_propuesta_applies_a_proponer_plan_only_when_aplicar_mcp_is_on(self):
+        _, respuestas = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "proponer_plan",
+                        "arguments": {"titulo": "Prueba de carrera 10K", "start_day": "2026-11-05",
+                                      "deadline": "2027-02-01"}}},
+        ])
+        pid = json.loads(respuestas[0]["result"]["content"][-1]["text"])["propuesta_id"]
+
+        _, respuestas_off = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": mcp.NOMBRE_APLICAR, "arguments": {"propuesta_id": pid}}},
+        ])
+        self.assertTrue(respuestas_off[0]["result"]["isError"])
+        self.assertEqual(self.conn.execute("SELECT estado FROM propuesta_agente WHERE id = ?", (pid,)).fetchone()
+                          ["estado"], "propuesta")
+
+        db.set_aplicar_mcp(self.conn, self.person_id, True)
+        _, respuestas_on = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+             "params": {"name": mcp.NOMBRE_APLICAR, "arguments": {"propuesta_id": pid}}},
+        ])
+        r = respuestas_on[0]["result"]
+        self.assertNotIn("isError", r)
+        salida = json.loads(r["content"][-1]["text"])
+        self.assertEqual(salida["estado"], "aplicada")
+        row = self.conn.execute(
+            "SELECT id FROM goal WHERE person_id = ? AND title = ?", (self.person_id, "Prueba de carrera 10K")
+        ).fetchone()
+        self.assertIsNotNone(row)
+
+
 class RegistrarEntrenoRelojFalloTest(_McpTestCase):
     """BODY-SERIES-UNIDAD-1 ruling 3: when the watch's own sets can't be read, this is the one
     place the caller (which never sees the Hoy card directly) is told the proposal still saved on

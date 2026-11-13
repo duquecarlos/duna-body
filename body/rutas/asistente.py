@@ -18,7 +18,7 @@ from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from .. import anatomia, db, history, identity, nutriente_objetivo
+from .. import anatomia, db, history, horizonte, identity, nutriente_objetivo
 from ..agente import bucle as agente_bucle
 from ..agente import cliente as agente_cliente
 from ..agente import conversacion as agente_conversacion
@@ -119,11 +119,63 @@ def _actividad_txt(t: T, actividad: dict) -> str:
     return f"{nombre} · {t.minutes(duracion / 60)}" if duracion else nombre
 
 
+def _cadencia_txt(t: T, cadencia: dict) -> str:
+    """Duplicated from body/rutas/metas.py's `_cadence_text` (BODY-PLAN-PROPUESTAS-1): that module
+    is outside this slice's touches, same reasoning `_momento_checkin_txt` above already used."""
+    per = t("goals.cadence.per." + cadencia.get("per", "week"))
+    return t("goals.cadence", n=cadencia.get("times", 1), per=per)
+
+
+def _medida_label(t: T, medida: str) -> str:
+    if medida in horizonte.MEDIDAS:
+        return t("asistente.propuesta.plan_medida." + medida)
+    return t("metric." + medida)
+
+
+def _hora_desde_minutos(total: float) -> str:
+    """The inverse of horizonte._minutos_despues_mediodia's own convention (minutes after 12:00
+    noon, wrapping across midnight): 690 -> 23:30, 765 -> 00:45."""
+    total = int(round(total))
+    hh = ((total // 60) + 12) % 24
+    mm = total % 60
+    return f"{hh:02d}:{mm:02d}"
+
+
+def _medida_valor_corto(t: T, defs: dict, medida: str, valor: float) -> str:
+    info = horizonte.MEDIDAS.get(medida)
+    if info is None:
+        return comun._fig_unit(t, medida, valor, defs)
+    if info["unit"] == "hora":
+        return _hora_desde_minutos(valor)
+    if info["unit"] == "min":
+        return t("asistente.propuesta.plan_unidad.min", n=t.num(valor))
+    return t("asistente.propuesta.plan_unidad.sesiones", n=t.num(valor))
+
+
+def _semana_targets_txt(t: T, defs: dict, metas_semana: list) -> str:
+    return ", ".join(
+        t("asistente.propuesta.plan_meta_semanal", medida=_medida_label(t, m["medida"]),
+          sentido=t("asistente.propuesta.plan_sentido." + m["sentido"]),
+          valor=_medida_valor_corto(t, defs, m["medida"], m["valor"]),
+          semana=comun._short_date(t, date.fromisoformat(m["week_start"])))
+        for m in metas_semana
+    )
+
+
 def _tarjeta_meta_nueva(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
-    despues_txt = t("asistente.propuesta.meta_nueva", metric=t("metric." + despues["metric_key"]),
-                    direccion=t("asistente.propuesta.direccion." + despues["direction"]),
-                    valor=comun._fig_unit(t, despues["metric_key"], despues["target_value"], defs),
-                    fecha=comun._short_date(t, date.fromisoformat(despues["deadline"])))
+    if despues.get("tipo") == "milestone":
+        despues_txt = t("asistente.propuesta.meta_milestone", titulo=despues["titulo"],
+                        fecha=comun._short_date(t, date.fromisoformat(despues["deadline"])))
+    else:
+        despues_txt = t("asistente.propuesta.meta_nueva", metric=t("metric." + despues["metric_key"]),
+                        direccion=t("asistente.propuesta.direccion." + despues["direction"]),
+                        valor=comun._fig_unit(t, despues["metric_key"], despues["target_value"], defs),
+                        fecha=comun._short_date(t, date.fromisoformat(despues["deadline"])))
+    habitos = despues.get("habitos") or []
+    if habitos:
+        habitos_txt = ", ".join(t("asistente.propuesta.meta_habito_linea", titulo=h["titulo"],
+                                   cadencia=_cadencia_txt(t, h["cadencia"])) for h in habitos)
+        despues_txt += "\n" + t("asistente.propuesta.plan_habitos", habitos=habitos_txt)
     return None, despues_txt, None
 
 
@@ -542,6 +594,69 @@ def _tarjeta_marcar_habito(t: T, defs: dict, despues: dict, antes_json: dict | N
     return antes_txt, despues_txt, None
 
 
+def _tarjeta_proponer_plan(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
+    """Ruling 8: a whole plan is one card -- plain-word lines, each only shown when that part of
+    the plan is non-empty, never a JSON dump."""
+    lineas = [t("asistente.propuesta.plan_nuevo", titulo=despues["titulo"],
+                desde=comun._short_date(t, date.fromisoformat(despues["start_day"])),
+                hasta=comun._short_date(t, date.fromisoformat(despues["deadline"])))]
+    if despues.get("why"):
+        lineas.append(t("asistente.propuesta.plan_porque", why=despues["why"]))
+    metas = despues.get("metas_finales") or []
+    if metas:
+        metas_txt = ", ".join(
+            t("asistente.propuesta.plan_meta_final_linea", titulo=m["titulo"],
+              valor=comun._fig_unit(t, m["metric_key"], m["target_value"], defs))
+            for m in metas)
+        lineas.append(t("asistente.propuesta.plan_metas_finales", metas=metas_txt))
+    habitos = despues.get("habitos") or []
+    if habitos:
+        habitos_txt = ", ".join(t("asistente.propuesta.plan_habito_linea", titulo=h["titulo"],
+                                   cadencia=_cadencia_txt(t, h["cadencia"])) for h in habitos)
+        lineas.append(t("asistente.propuesta.plan_habitos", habitos=habitos_txt))
+    n_semanas = len(despues.get("semanas") or [])
+    n_metas_semanales = len(despues.get("metas_semanales") or [])
+    n_checkpoints = len(despues.get("checkpoints") or [])
+    if n_semanas or n_metas_semanales or n_checkpoints:
+        lineas.append(t("asistente.propuesta.plan_resumen_partes", semanas=t.num(n_semanas),
+                        metas_semanales=t.num(n_metas_semanales), checkpoints=t.num(n_checkpoints)))
+    return None, "\n".join(lineas), None
+
+
+def _tarjeta_ampliar_plan(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
+    """Ruling 4: insert-only additions to an existing plan -- one plain line per kind of addition,
+    only when that list is non-empty."""
+    partes = []
+    n_reglas = len(despues.get("reglas") or [])
+    n_semanas = len(despues.get("semanas") or [])
+    n_checkpoints = len(despues.get("checkpoints") or [])
+    metas_semanales = despues.get("metas_semanales") or []
+    if n_reglas:
+        partes.append(t("asistente.propuesta.plan_ampliar_reglas", n=t.num(n_reglas)))
+    if n_semanas:
+        partes.append(t("asistente.propuesta.plan_ampliar_semanas", n=t.num(n_semanas)))
+    if metas_semanales:
+        partes.append(t("asistente.propuesta.plan_ampliar_metas_semanales",
+                        metas=_semana_targets_txt(t, defs, metas_semanales)))
+    if n_checkpoints:
+        partes.append(t("asistente.propuesta.plan_ampliar_checkpoints", n=t.num(n_checkpoints)))
+    despues_txt = "\n".join(partes) if partes else t("asistente.propuesta.plan_ampliar_vacio")
+    return None, despues_txt, None
+
+
+def _tarjeta_corregir_meta_plan(t: T, defs: dict, despues: dict, antes_json: dict | None, conn,
+                                 person_id: int) -> tuple:
+    """Ruling 3: before -> after, with the measure's own unit -- never a bare number."""
+    medida_txt = _medida_label(t, despues["medida"])
+    sentido_txt = t("asistente.propuesta.plan_sentido." + despues["sentido"])
+    semana_txt = comun._short_date(t, date.fromisoformat(despues["week_start"]))
+    antes_txt = t("asistente.propuesta.plan_meta_semanal", medida=medida_txt, sentido=sentido_txt,
+                  valor=_medida_valor_corto(t, defs, despues["medida"], antes_json["valor"]), semana=semana_txt)
+    despues_txt = t("asistente.propuesta.plan_meta_semanal", medida=medida_txt, sentido=sentido_txt,
+                    valor=_medida_valor_corto(t, defs, despues["medida"], despues["valor"]), semana=semana_txt)
+    return antes_txt, despues_txt, None
+
+
 # One card builder per action (BODY-PROPUESTAS-TABLA-1), keyed exactly like body/agente/
 # propuestas.py's TABLA and body/agente/herramientas.py's `propuesta`-kind tools
 # (tests/test_propuestas_tabla.py enforces the three sets match). Each builder returns
@@ -571,6 +686,9 @@ TARJETAS = {
     "separar_sesion": _tarjeta_separar_sesion,
     "unir_sesiones": _tarjeta_unir_sesiones,
     "proponer_objetivo_nutriente": _tarjeta_proponer_objetivo_nutriente,
+    "proponer_plan": _tarjeta_proponer_plan,
+    "ampliar_plan": _tarjeta_ampliar_plan,
+    "corregir_meta_plan": _tarjeta_corregir_meta_plan,
 }
 
 
