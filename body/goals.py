@@ -124,6 +124,19 @@ def check_habit(conn, habit_id, person_id, day, done: bool, note: str | None = N
         )
 
 
+def estado_cuota(hechas: int, meta: int, dias_restantes: int) -> str:
+    """THE reachability rule for an 'at least N this week' count (BODY-PLAN-MODULO-1 ruling 4,
+    taking it out of body/rutas/tendencias.py's `_fuerza_mini`, its only caller before this):
+    'cumplida' once `hechas` already reaches `meta`; 'en_curso' while there are still at least as
+    many days left (`dias_restantes`, Sunday inclusive -- callers pass `8 - today.isoweekday()`)
+    as the remaining gap; 'no_alcanzable' once the gap is bigger than the days left to close it."""
+    if hechas >= meta:
+        return "cumplida"
+    if dias_restantes >= meta - hechas:
+        return "en_curso"
+    return "no_alcanzable"
+
+
 def _week_days(monday: date) -> list[str]:
     return [(monday + timedelta(i)).isoformat() for i in range(7)]
 

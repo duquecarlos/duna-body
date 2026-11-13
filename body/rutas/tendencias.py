@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import anatomia, baselines, db, entreno_racha, fuentes, identity, profile, turnos_costo
+from .. import anatomia, baselines, db, entreno_racha, fuentes, goals, identity, profile, turnos_costo
 from ..catalogo_tendencias import TODAS
 from ..desplazamiento_import import FUENTE as _FUENTE_COMMUTE
 from ..i18n import T
@@ -172,13 +172,16 @@ def _kpi_fuerza_faltan_txt(t: T, k: int) -> str:
 def _fuerza_mini(t: T, piso: int | None, n: int, hoy: date) -> dict | None:
     """BODY-TENDENCIAS-KPI-MINI-1 ruling 2: the strip's fifth tile, built from the strength
     study's own already-loaded racha_semanal and floor -- no floor, no tile. "days left in the
-    week" counts today (ISO weekday 1=Monday..7=Sunday, so 8 - isoweekday is Sunday-inclusive)."""
+    week" counts today (ISO weekday 1=Monday..7=Sunday, so 8 - isoweekday is Sunday-inclusive).
+    The reachability test itself is goals.estado_cuota (BODY-PLAN-MODULO-1 ruling 4): this is now
+    its only caller outside the plan module, and this tile's rendered output is unchanged."""
     if piso is None:
         return None
     dias_restantes = 8 - hoy.isoweekday()
-    if n >= piso:
+    estado_cuota = goals.estado_cuota(n, piso, dias_restantes)
+    if estado_cuota == "cumplida":
         estado, cls = t("trends.kpi.fuerza.cumplida"), "good"
-    elif dias_restantes >= piso - n:
+    elif estado_cuota == "en_curso":
         estado, cls = t("trends.kpi.fuerza.vas_bien"), "good"
     else:
         estado, cls = _kpi_fuerza_faltan_txt(t, piso - n), "flat"
