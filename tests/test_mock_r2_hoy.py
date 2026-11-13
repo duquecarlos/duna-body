@@ -499,13 +499,13 @@ class DemoStressBandAcrossDatesTest(unittest.TestCase):
 
     def test_usual_band_every_day_of_the_sweep(self):
         for offset in range(21):
-            hoy = self.ANCHOR0 + timedelta(offset)
-            with self.subTest(hoy=hoy.isoformat()):
-                _seed_demo(self, f"banda_barrido_{offset}.db", "es", today=hoy)
+            anchor = self.ANCHOR0 + timedelta(offset)
+            with self.subTest(anchor=anchor.isoformat()):
+                _seed_demo(self, f"banda_barrido_{offset}.db", "es", today=anchor)
                 page = TestClient(web.app, follow_redirects=False).get("/").text
                 stress_tile = page[page.index("#stress_avg"):page.index("</a>", page.index("#stress_avg"))]
                 self.assertIn(_ES["today.tile.banda.usual"], stress_tile,
-                              f"stress band not usual for hoy={hoy.isoformat()}: {stress_tile}")
+                              f"stress band not usual for anchor={anchor.isoformat()}: {stress_tile}")
 
 
 if __name__ == "__main__":
