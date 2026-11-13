@@ -39,9 +39,9 @@ def _web_conn(case: unittest.TestCase, name: str) -> "db.sqlite3.Connection":
     return conn
 
 
-def _seed_demo(case: unittest.TestCase, name: str, idioma: str = "es"):
+def _seed_demo(case: unittest.TestCase, name: str, idioma: str = "es", today: date | None = None):
     conn = _web_conn(case, name)
-    demo._seed(conn, dias=30, idioma=idioma)
+    demo._seed(conn, dias=30, idioma=idioma, today=today)
     conn.commit()
     return conn
 
@@ -486,6 +486,26 @@ class DemoCoverageTest(unittest.TestCase):
         self.assertIn(_EN["today.semana_nocturna.titulo"], page)
         stress_tile = page[page.index("#stress_avg"):page.index("</a>", page.index("#stress_avg"))]
         self.assertIn("by ", stress_tile)
+
+
+class DemoStressBandAcrossDatesTest(unittest.TestCase):
+    """BODY-PLAN-MODULO-1-R: the partial-day stress tile's band must read "usual" whichever real
+    date the demo happens to run on -- 21 consecutive anchors starting the Monday before a night
+    week (body/demo.py's own 4-week cycle, confirmed by _week_index), so the sweep covers every
+    weekday at least three times and a night block before, on (the week's five night days) and
+    after (the taper _recovery_factor gives the days right after it) `today`."""
+
+    ANCHOR0 = date(2024, 1, 8)  # a Monday; 2024-01-15 is that cycle's own night week (BODY-DEMO-TURNOS-1)
+
+    def test_usual_band_every_day_of_the_sweep(self):
+        for offset in range(21):
+            anchor = self.ANCHOR0 + timedelta(offset)
+            with self.subTest(anchor=anchor.isoformat()):
+                _seed_demo(self, f"banda_barrido_{offset}.db", "es", today=anchor)
+                page = TestClient(web.app, follow_redirects=False).get("/").text
+                stress_tile = page[page.index("#stress_avg"):page.index("</a>", page.index("#stress_avg"))]
+                self.assertIn(_ES["today.tile.banda.usual"], stress_tile,
+                              f"stress band not usual for anchor={anchor.isoformat()}: {stress_tile}")
 
 
 if __name__ == "__main__":
