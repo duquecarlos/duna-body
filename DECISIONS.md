@@ -19780,3 +19780,20 @@ looks at. No cross-repo contract or DTO change. Merge policy A's customer-bytes 
 the spec's own body says to stop before merge either way ("stop AWAITING_APPROVAL on the branch,
 tree EMPTY -- the orchestrator looks at goal detail at 375 px before merging"). **Stops here,
 unmerged, for that look.**
+
+### BODY-METAS-HABITO-SEMANA-TIRA-1-M
+
+The worker above wrote this entry and then died on an API error before committing it (gate had
+already gone GREEN). This run committed the entry unchanged and carried out the look it was
+waiting on.
+
+The orchestrator opened `/goals/1`, `/goals/2` and `/goals/4` on the demo (body-web-demo, en) at
+375 px, on a Thursday. Each own weekly habit shows exactly one row of seven day letters, "M T W T
+F S S", Monday first, the cells 32 px wide with a 4 px gap, spanning from 69 px to 317 px -- well
+inside the 375 px viewport. Monday through Wednesday read as `pasado` ("Monday: not checked" and
+so on), Thursday is `hoy`, outlined, "Thursday: today", and Friday through Sunday are `futuro`,
+dimmed, "Friday: coming up". The goal with no weekly own habit has no row at all, and on the
+household goal the other member's weekly habit has no row either -- only the person's own habit
+gets one. The page's `scrollWidth` is 375, so nothing overflows. The demo fixture has no done
+check for this week, so the `hecho` state was not on screen to look at; the slice's own test suite
+asserts that state directly. No defect found. **APPROVED to merge** -- merged <sha>.
