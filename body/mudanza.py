@@ -80,7 +80,8 @@ SKIPPED_TABLES = {
 
 # The person-scoped tables, in FK-safe order: every table a row above depends on appears earlier.
 REGISTRY: tuple[TableSpec, ...] = (
-    TableSpec("goal", match_cols=None, id_exported=True, other_person_filter=_hogar_filter),
+    TableSpec("goal", match_cols=None, id_exported=True, other_person_filter=_hogar_filter,
+              self_ref_cols=("horizonte_goal_id",)),
     TableSpec("habit", scope="parent", parent_fk="goal_id", parent_table="goal",
               match_cols=None, fk_remap=("goal_id",), fk_table={"goal_id": "goal"},
               person_ref_cols=("assignee_person_id",), id_exported=True),
@@ -117,8 +118,21 @@ REGISTRY: tuple[TableSpec, ...] = (
     TableSpec("tope_agente", match_cols=("person_id",)),
     TableSpec("consentimiento", match_cols=("person_id", "version")),
     TableSpec("moment", match_cols=None, id_exported=True),
-    TableSpec("experimento", match_cols=None, fk_remap=("habito_id",), fk_table={"habito_id": "habit"},
-              id_exported=True),
+    TableSpec("experimento", match_cols=None, fk_remap=("habito_id", "goal_id"),
+              fk_table={"habito_id": "habit", "goal_id": "goal"}, id_exported=True),
+    # BODY-PLAN-ESQUEMA-1-R (ORCH-CARLOS-DELEGATES-TIER-1-1): the plan's own parts move with the
+    # person, like goal itself -- a half-built shape (SKIPPED_TABLES) would silently lose a plan
+    # the day the plan screens ship. Each child's horizonte_goal_id follows goal's own
+    # other_person_filter through fk_remap -- a horizon goal filtered out as another person's
+    # leaves its children "missing", counted as other_person, same as any other fk_remap.
+    TableSpec("horizonte_regla", match_cols=None, fk_remap=("horizonte_goal_id",),
+              fk_table={"horizonte_goal_id": "goal"}),
+    TableSpec("horizonte_semana", match_cols=("horizonte_goal_id", "week_start"),
+              fk_remap=("horizonte_goal_id",), fk_table={"horizonte_goal_id": "goal"}),
+    TableSpec("horizonte_meta_semanal", match_cols=None, fk_remap=("horizonte_goal_id",),
+              fk_table={"horizonte_goal_id": "goal"}, self_ref_cols=("reemplaza_id",)),
+    TableSpec("horizonte_checkpoint", match_cols=None, fk_remap=("horizonte_goal_id",),
+              fk_table={"horizonte_goal_id": "goal"}),
     TableSpec("experimento_registro", match_cols=("experimento_id", "day"),
               fk_remap=("experimento_id", "momento_id"),
               fk_table={"experimento_id": "experimento", "momento_id": "moment"}),
