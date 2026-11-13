@@ -19908,3 +19908,122 @@ This run (BODY-PLAN-ESQUEMA-1-R), same approval and observed report, was dispatc
 (ruling 3 above) and the four census fixes (ruling 4 above) that the schema's own shape demanded.
 Merged to `main` on green, no schema change in THIS diff's own touches (the schema already merged
 with the first run's commits on this branch) -- merged 05271bc5ce2006cc6cb92412c78e771dfd751c44.
+
+## BODY-PLAN-MODULO-1 -- the plan's own plan-vs-real module (2026-11-13)
+
+Built on BODY-PLAN-ESQUEMA-1-R's schema and BODY-PLAN-PERSONAL-1's idea ("Carlos's own plan in
+Body as plan vs real, just as we are doing with the money plan in Finanzas"). Three rulings,
+read from the branch's own code and commits:
+
+1. **The reachability rule and the strength classifier, shared out, not duplicated.**
+   `goals.estado_cuota` is now THE "can this weekly count still be met" rule, taken out of
+   `rutas/tendencias.py`'s `_fuerza_mini`, which calls it instead of carrying its own copy --
+   same rendered tiles, `tests/test_tendencias_kpi.py` unedited and green.
+   `entreno_racha.sesiones_fuerza` exposes the per-session strength classification (`_es_fuerza`
+   plus the watch/manual pairing) as a public, range-filterable function that `body/horizonte.py`
+   calls -- `racha_semanal` itself unchanged in output.
+2. **`body/horizonte.py`, pure reads over a connection, never stores, never renders.** `semana`
+   and `plan_vs_real` fetch every data source they need ONCE per call (daily_metric,
+   sleep_session, the strength and cardio classifiers, the horizon's own rule/target/plan rows,
+   shifts, periods and night blocks) and group it in Python per week, so the statement count
+   stays BOUNDED -- independent of how many weeks, target lines, rules or checkpoints a horizon
+   carries (proven flat at 10 statements across 1 vs 12 weeks and 1 vs 8 lines).
+   `MEDIDAS` (the weekly-target vocabulary): `sueno_minutos`, `hora_acostarse`,
+   `hora_levantarse`, `sesiones_fuerza`, `sesiones_cardio`, `minutos_intensidad` -- each with its
+   unit, its `metodo` (media/mediana/cuenta/suma) and its allowed `sentidos`
+   (al_menos/como_maximo or antes_de/despues_de). `TIPOS_CARDIO` is the 15 Garmin typeKeys from
+   `body/history.py`'s own `KNOWN_ACTIVITY_TYPES` (18 keys) minus `strength_training` (its own
+   measure, `entreno_racha.TIPOS_FUERZA`, never widened here), `yoga` and `other` (neither cardio
+   nor strength). The orchestrator's spec named a few typeKeys this app has never actually seen
+   (stair_climbing, rowing, soccer); left out until a pull actually produces one, rather than
+   invented here (open follow-up, not this slice's to add). Contexts a rule can run under:
+   `siempre`, `turno`, `tras_noche` (capped at `ventana_post` days past a night block), `periodo`,
+   `descanso` (a no-shift day counts as `sin_dato`, never assumed rest). Chequeo shapes:
+   `acostarse_antes`, `levantarse_antes`, `sueno_minimo`, `sin_sesion`, `sesion_antes_de`, plus
+   `solo_texto`. Checkpoints resolve to `pendiente`/`cumple`/`no_cumple`/`sin_dato` over either
+   `semana` or `desde_inicio` windows. `resumen` reads a household child goal only through
+   `goals.goal_access`, never a raw query.
+3. **`tests/test_horizonte.py`, invented data only**: 54 tests covering every `MEDIDAS` key's real
+   figure (including a bedtime week crossing midnight), `sin_dato` vs a real zero, `en_curso` vs
+   `no_cumple` through `estado_cuota` on a Thursday, a corrected weekly target line plus its
+   `historial_meta` audit trail, planned sessions done/not done, every rule context (including
+   `tras_noche` past the 10-day `ventana_post` cap, and a no-shift day as `sin_dato` for
+   `descanso`), every chequeo shape plus `solo_texto`, checkpoints across both windows, `resumen`
+   reading a household child goal, the three validators refusing bad input, `zona_medida`, and the
+   statement-count test.
+
+No route reads `body/horizonte.py` yet -- the proposal cards, goal-detail section and Hoy hook are
+later slices. No password, token, session secret or health figure of a real person was read,
+printed or written anywhere in any of the three runs below; every test fixture is invented demo
+data.
+
+**Gate**, on this branch's final tree after BODY-PLAN-MODULO-1-R2 (`git status --porcelain` clean
+before this entry). The exact command is
+`.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 9 sequential chunks of
+`tests/test_*.py` modules in alphabetical order (the same set `discover` would walk), each in the
+foreground:
+
+    chunk 1 (test_accesibilidad..test_baselines_lote):        Ran 351 tests, OK (skipped=1)
+    chunk 2 (test_borrar_reauth..test_entreno_racha):          Ran 510 tests, OK
+    chunk 3 (test_entreno_schema..test_garmin_parse):          Ran 342 tests, OK
+    chunk 4 (test_get_sin_escritura..test_importar_garmin):    Ran 466 tests, OK
+    chunk 5 (test_installer..test_periodo_analisis):           Ran 447 tests, OK
+    chunk 6 (test_periodo_herramientas..test_readiness):       Ran 410 tests, OK
+    chunk 7 (test_recuperacion..test_tendencias_patron):       Ran 299 tests, OK
+    chunk 8 (test_tendencias_racha..test_vida_export):         Ran 448 tests, OK
+    chunk 9 (test_vivo, test_vo2max, test_web_entry):          Ran 61 tests, OK
+
+Sum: 3334 run, 0 failures, 0 errors, 1 skipped. Reconciled against an independent collect-only
+count (`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`): 3334 --
+matching exactly. **GREEN.**
+
+**Merge policy, this slice's own diff** (BODY-PLAN-MODULO-1-R2's `tests/test_vivo.py` edit plus
+this ledger entry; the schema, horizonte.py and the -R demo fixes already merged with the first
+two runs' commits on this branch): no schema or migration change, no customer-facing bytes (a test
+file and a ledger entry only), no cross-repo contract or DTO change. Merge policy A's three
+conditions all pass -- merged below on green, without waiting for approval.
+
+### -R
+
+The first run (logs/worker-body-plan-modulo-1-r-body-app-20261113T005850.json, superseding an
+earlier report for the same family) fixed two independent, date-dependent defects in `body/demo.py`
+found while proving the Hoy tile's stress band reads "usual" across a 21-date sweep:
+`_seed()`'s anchor was always `date.today()`, so the partial "today" reading had no guarantee of
+landing inside the person's own baseline band -- `_seed_today_stress` now overwrites it to the
+midpoint of `baselines.baseline()`'s own low/high, reading the SAME baseline the live Hoy tile
+reads, right after `_seed_periodo` seeds every day-excluding period. Second: `_seed_periodo`'s open
+`lesion` period widened to the most recent `strength_training` day before "today" with no limit,
+and on dates whose nearest such session was more than ~15 days back, the widen starved
+`stress_avg`'s own 30-day baseline window below `baselines.MIN_DAYS`, turning "usual" into a false
+"not enough data" -- `_LESION_MAX_DIAS_ATRAS = 15` now caps the widen, leaving 15 unmarked days
+regardless. `_seed()` also takes an optional `today` parameter so a test can pin it without
+monkeypatching the module's own `date` name. `tests/test_mock_r2_hoy.py` gained
+`DemoStressBandAcrossDatesTest`, a 21-consecutive-date sweep (the Monday before a night week
+through the week after it) asserting "usual" on every date. The orchestrator reviewed the
+`demo.py` diff -- invented demo data only, `_seed_today_stress` reads the same baseline the tile
+uses, `_LESION_MAX_DIAS_ATRAS = 15` -- and APPROVED it. This run also stopped **GATE_RED** on its
+final chunk: `tests/test_vivo.py`'s `MainTest.test_el_archivo_de_estado_tiene_exactamente_los_
+campos_esperados` and `TareaDesconocidaTest.test_tarea_desconocida_pero_el_arbol_refrescado_la_
+conoce_lanza_un_hijo` failed whenever `test_vivo` shared a process with modules that imported
+`body.*` submodules first (reproduced on `main` 0dc18d9 with `test_vo2max` + `test_web_entry`
+alongside) -- measured as TEST ISOLATION, not a product defect: `body/vivo.py`'s stale-module
+guard (`_MODULOS_AL_CARGAR`, captured at vivo's own import) is correct for a fresh process, where
+vivo imports first; in a shared test process, another test module importing `body.*` afterward
+makes the guard see a false "previous task leftover". Handed to BODY-PLAN-MODULO-1-R2.
+
+### -R2
+
+`test_vivo`'s order dependence (named above) was fixed by re-taking the guard's own baseline at
+each affected test's own start rather than touching `body/vivo.py`: a new
+`_refrescar_baseline_modulos` helper in `tests/test_vivo.py` patches `vivo._MODULOS_AL_CARGAR` to
+`frozenset(vivo._modulos_body_actuales())`, with `addCleanup` restoring the prior value, called
+from `setUp` in the four test classes that run `vivo.main()` in-process with a real task
+(`MainTest`, `TareaDesconocidaTest`, `MananaTest`, `IntradiaTareaTest`) -- so "unexpected" means
+"imported during THIS test" again, the production meaning. The guard's own test
+(`MainTest.test_modulos_body_previos_se_registran_pero_la_tarea_igual_corre`) keeps its fake
+`body.*` module and keeps asserting the guard fires, now against this same freshly-taken baseline.
+No change to `body/vivo.py`; every assertion kept its subject. Proof, each read from the process:
+`tests.test_vivo` alone -- Ran 52 tests, OK; the reported reproduction order (`tests.test_vo2max
+tests.test_web_entry tests.test_vivo`) -- Ran 61 tests, OK; the reverse order (`tests.test_vivo
+tests.test_vo2max tests.test_web_entry`) -- Ran 61 tests, OK. No schema change, no
+customer-facing bytes, no cross-repo contract change -- merged to `main` on green.
