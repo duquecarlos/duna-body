@@ -19678,4 +19678,4 @@ the body figure and before the first card, two columns (tiles 16-183 and 193-359
 reading "Heart-rate variability 63 ms · in your range", "Resting pulse 55 bpm", "Sleep 6 h 31",
 "Stress 32 of 100", each "in your range", and "Strength this week 0 of 3 · on track" (a Thursday
 with four days left -- correct by ruling 2 above). Every tile's anchor resolves to its own card;
-page `scrollWidth` 375. **No defect. APPROVED to merge.**
+page `scrollWidth` 375. **No defect. APPROVED to merge.** -- merged 46364c4cf84633e67e9ed446b8614679d6508ed7
