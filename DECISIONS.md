@@ -19554,3 +19554,119 @@ mirrors. All three of merge policy A's conditions pass, and the spec's own body 
 read tool, no screen, no schema, caps unchanged"). **Merges on this green gate.**
 
 -- merged 0d4b50547224eecf01581e98d002a5ddfa713156
+
+## BODY-TENDENCIAS-KPI-MINI-1 -- a compact KPI strip above /trends' cards
+
+Mock round 2, approved by the person as drawn (research/mock-r2/TEXTOS.md's "## PhoneTrendsLight.dc.html"):
+four tiles "Heart-rate variability 58 ms · in your range", "Resting pulse 53 bpm · in your range",
+"Sleep 7 h 05 · in your range", "Stress 24 · in your range", then "Strength this week 2 of 4 · on
+track" -- a strip above Trends' full cards, reusing data the route already computed.
+
+**Rulings, as built.**
+
+1. The strip sits at the top of /trends' content, right above the metric cards (after the range
+   picker and the body-silhouette graphic). One row of `.grid2` tiles (two columns at 375 px),
+   each an `<a class="card" href="#<key>">` linking to its card's own anchor -- every card already
+   carries `id="{{ c.key }}"` (`render_card`'s own macro); only the strength study card needed a
+   new `id="racha"`, added to `trends.html`. Tiles, in this fixed order, each only when its
+   metric's card exists on the page (built once into `card_by_key`, read by both the primary-9 and
+   the "Ver todas las medidas" loop, so no card is computed twice): `hrv_last_night`, `resting_hr`,
+   `sleep_minutes`, `stress_avg` (the last lives only behind "Ver todas las medidas", in the
+   `stress` group -- still rendered into the DOM even collapsed, so its tile and its card always
+   agree). Each tile shows the metric's own short label (new keys, since the mock wants the full
+   word, not the week table's abbreviation already in `trends.short.*`), the SAME figure and unit
+   its card shows (`card["last30"]`/`card["unit"]`, never recomputed), and a status word against
+   the card's own band (`p.low`/`p.high`, the same quantiles `_trend_card` already read for the
+   normal-range legend) -- `_kpi_banda(fig, low, high)` returns `"abajo"`/`"arriba"`/`"dentro"`/
+   `None` (no figure in the picked range). `_kpi_estado` turns that into text: "dentro" may use the
+   app's own positive token (`good`, i.e. `var(--ok)`); "arriba"/"abajo" stay neutral text
+   (`flat`, `var(--muted)`) -- never an alarm colour. A card with no band (`pocas`) gets no status
+   word; none of the four KPI keys is ever self-measured, so this branch is defensive rather than
+   reachable today.
+2. The strength tile (fifth), built from the already-loaded `racha_semanal` result and the
+   person's own floor (`_racha_ctx` now also returns `piso` and `semana_actual_sesiones` --
+   `semanas[-1]`, the week containing `hoy`, already computed) -- absent with no floor. `_fuerza_mini`:
+   `n >= piso` -> "cumplida"/"reached" (`good`); else if the days left in the week, today included
+   (`8 - hoy.isoweekday()`, so Monday=7 down to Sunday=1) `>= piso - n` -> "vas bien"/"on track"
+   (`good`, still achievable this week); else "faltan {k}"/"{k} to go" (`flat`), singular-aware
+   ("falta 1" vs "faltan {k}", `_kpi_fuerza_faltan_txt`). The figure is "{n} de {piso}"/"{n} of
+   {piso}". Because today always counts as at least one day left, a deficit of exactly 1 always
+   resolves to "vas bien" through the real weekday clock -- the singular "falta 1"/"1 to go" wording
+   is proven directly against `_kpi_fuerza_faltan_txt(t, 1)` rather than coaxed out of a live
+   Monday-to-Sunday walk.
+3. The assistant is unchanged: `leer_tendencias` already carries the same figures and bands this
+   strip only re-displays; no tool touched.
+
+**Every new string, es / en** (`body/i18n/es.json` / `en.json`):
+
+    trends.kpi.hrv_last_night      "Variabilidad"                    "Heart-rate variability"
+    trends.kpi.resting_hr          "Pulso en reposo"                 "Resting pulse"
+    trends.kpi.sleep_minutes       "Sueño"                           "Sleep"
+    trends.kpi.stress_avg          "Estrés"                          "Stress"
+    trends.kpi.estado.dentro       "en tu rango"                     "in your range"
+    trends.kpi.estado.arriba       "por encima de tu rango"          "above your range"
+    trends.kpi.estado.abajo        "por debajo de tu rango"          "below your range"
+    trends.kpi.fuerza.titulo       "Fuerza esta semana"              "Strength this week"
+    trends.kpi.fuerza.figura       "{n} de {piso}"                   "{n} of {piso}"
+    trends.kpi.fuerza.cumplida     "cumplida"                        "reached"
+    trends.kpi.fuerza.vas_bien     "vas bien"                        "on track"
+    trends.kpi.fuerza.faltan_one   "falta 1"                         "1 to go"
+    trends.kpi.fuerza.faltan_other "faltan {k}"                      "{k} to go"
+
+**ZERO new SQL statements**, as the spec required: `card_by_key`, the band/status computation and
+the strength tile are pure Python over `cards`/`extra_groups`/`racha` -- data `trends()` already
+read. `tests/test_rendimiento.py`'s own `/trends` ceiling (28, measured at 21) is untouched and
+stayed green unchanged; this slice's own `tests/test_tendencias_kpi.py::StripAddsNoSqlStatementTest`
+measures the SAME populated fixture (`demo._seed(dias=30)`) twice, with and without the strength
+tile (clearing `racha_piso` between the two `GET /trends` calls), and asserts the statement counts
+equal.
+
+`tests/test_tendencias_kpi.py` (new, 34 tests): `_kpi_banda` below/above/inside/boundary/no-figure;
+`_kpi_estado`'s status text and colour class in both languages, including the no-band case;
+`_kpi_fuerza_faltan_txt`'s singular/plural in both languages; `_fuerza_mini`'s no-floor/reached/
+on-track/boundary/to-go states directly, in both languages; the full strip end to end (the mock's
+own numbers -- 58 ms, 53 bpm, 7 h 05, 24, 2 of 4 -- all five anchors present and in order, each
+anchor resolving to an `id` on the page, each tile's figure equal to its card's own figure, all
+four "en tu rango"/"in your range", the strength tile "vas bien"/"on track"); a tile absent when
+its own card is absent (no `stress_avg` data seeded); the strength tile absent with the study but
+no floor, and absent with no study at all; the "faltan 3" wording on a Sunday with a 3-session
+deficit; and the statement-count guard above. `tests/test_tendencias_racha.py` was not touched --
+its existing tests (the new `id="racha"` is additive, no existing assertion matches against a bare
+`<div class="card">` for that element) all stayed green unchanged, confirmed by running the file.
+`tests/test_i18n_paridad.py` needed no change: every new key is a literal `t("trends.kpi...")` /
+`t("trends.kpi.fuerza...")` call (an explicit `if`/`elif` chain over the four KPI keys and the
+three band words, never a dynamic `t(prefix + k)`), so the existing literal-key scan covers it with
+no new dynamic-prefix registration.
+
+No password, token, session secret or health figure of a real person was read, printed or written
+anywhere in this slice; every test fixture is invented demo data.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry). The exact
+command is `.venv/Scripts/python.exe -m unittest discover tests -t .`; run once in the foreground,
+it was moved to the background past its own 600 s cap and produced no output before the harness's
+own background limit stopped it (no `Ran ` line ever appeared), so per the spec it was not retried
+whole. It instead ran as 8 sequential chunks of the same `tests/test_*.py` modules in alphabetical
+order (the same set `discover` would walk), each in the foreground, each well under the time
+ceiling:
+
+    chunk 0 (test_accesibilidad..test_baselines_lote):       Ran 351 tests, OK (skipped=1)
+    chunk 1 (test_borrar_reauth..test_entreno_racha):         Ran 510 tests, OK
+    chunk 2 (test_entreno_schema..test_garmin_parse):         Ran 342 tests, OK
+    chunk 3 (test_get_sin_escritura..test_installer):         Ran 444 tests, OK
+    chunk 4 (test_lesion_zona..test_periodo_pantallas):       Ran 464 tests, OK
+    chunk 5 (test_person_scope..test_registro_tu):            Ran 343 tests, OK
+    chunk 6 (test_rendimiento..test_turno_fc):                Ran 330 tests, OK
+    chunk 7 (test_turno_fc_pantallas..test_web_entry):        Ran 425 tests, OK
+
+Sum: 3209 run, 0 failures, 0 errors, 1 skipped. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.')`, walked and counted without running
+any test body): 3209 tests, 0 import errors -- the two figures match exactly. **GREEN.**
+
+**Merge policy, this slice.** The diff touches `body/rutas/tendencias.py`, `body/templates/
+trends.html`, `body/i18n/es.json`, `body/i18n/en.json`, `tests/test_tendencias_kpi.py` and this
+ledger. No schema or migration change. **Customer-facing bytes changed**: thirteen new strings a
+person reads on /trends, and new markup (the strip itself, plus the `id="racha"` anchor) on a
+screen Carlos looks at. No cross-repo contract or DTO change. Merge policy A's customer-bytes
+condition trips, and the spec's own body says to stop before merge either way ("stop
+AWAITING_APPROVAL on the branch, tree EMPTY -- the orchestrator looks at /trends at 375 px before
+merging"). **Stops here, unmerged, for that look.**
