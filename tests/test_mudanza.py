@@ -564,6 +564,203 @@ class NutrientTargetMudanzaTest(MudanzaTestCase):
         self.assertEqual(dest.execute("SELECT COUNT(*) FROM nutrient_target").fetchone()[0], 1)
 
 
+class SelfRefRoundTripTest(MudanzaTestCase):
+    """BODY-PLAN-ESQUEMA-1-R: the plan's own parts move with the person -- goal's self-reference
+    (horizonte_goal_id) and horizonte_meta_semanal's append-only correction chain (reemplaza_id)
+    both resolve to DESTINATION ids, in a second pass, regardless of source id order."""
+
+    def setUp(self):
+        super().setUp()
+        source = self._new_source()
+        pid = db.DEFAULT_PERSON_ID
+
+        # The child metric goal is created FIRST (lower id); its horizon parent is created AFTER
+        # (higher id) -- proving the second pass, not id order, resolves the self-reference.
+        source.execute(
+            "INSERT INTO goal (person_id, hogar_id, area, title, kind, metric_key, direction, "
+            "target_value, baseline_value, start_day, status, visibility) VALUES "
+            "(?, NULL, 'body', 'Lower resting HR', 'metric', 'resting_hr', 'lower', 55, 60, "
+            "'2026-10-01', 'active', 'private')",
+            (pid,),
+        )
+        self.child_goal_id = source.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+        source.execute(
+            "INSERT INTO goal (person_id, hogar_id, area, title, kind, metric_key, direction, "
+            "target_value, baseline_value, start_day, deadline, status, visibility) VALUES "
+            "(?, NULL, 'body', 'The plan horizon', 'milestone', NULL, NULL, NULL, NULL, "
+            "'2026-10-01', '2027-01-01', 'active', 'private')",
+            (pid,),
+        )
+        self.horizon_goal_id = source.execute("SELECT last_insert_rowid()").fetchone()[0]
+        self.assertGreater(self.horizon_goal_id, self.child_goal_id)
+
+        source.execute(
+            "UPDATE goal SET horizonte_goal_id = ? WHERE id = ?",
+            (self.horizon_goal_id, self.child_goal_id),
+        )
+
+        source.execute(
+            "INSERT INTO experimento (person_id, titulo, goal_id, metricas, ventana, filtro_dias, "
+            "fecha_inicio, estado, creado_en) VALUES (?, 'Prueba de plan', ?, '[]', '{}', '{}', "
+            "'2026-10-01', 'activo', ?)",
+            (pid, self.horizon_goal_id, NOW),
+        )
+
+        db.crear_regla_horizonte(source, pid, self.horizon_goal_id, "siempre", None, "Dormir 8 horas")
+        db.crear_semana_horizonte(source, pid, self.horizon_goal_id, "2026-11-02", titulo="Semana 1")
+        self.old_meta_id = db.crear_meta_semanal(source, pid, self.horizon_goal_id, "2026-11-02",
+                                                   "resting_hr", "al_menos", 55.0)
+        self.new_meta_id = db.corregir_meta_semanal(source, pid, self.old_meta_id, 53.0)
+        db.crear_checkpoint_horizonte(source, pid, self.horizon_goal_id, "2026-11-02",
+                                        "Primer checkpoint", ["durmio_8_horas"])
+
+        source.commit()
+        source.close()
+
+    def test_apply_resolves_self_refs_and_remaps_to_destination_ids(self):
+        # A decoy goal for an unrelated person already on the host, so the destination's own
+        # autoincrement id diverges from the source id -- proving the self-ref was really REMAPPED,
+        # not merely copied through by coincidence (the same technique ApplyTest uses above).
+        decoy = self._dest_conn()
+        with decoy:
+            decoy.execute("INSERT INTO person (id, display_name) VALUES (777, 'Other host person')")
+            decoy.execute(
+                "INSERT INTO goal (person_id, hogar_id, area, title, kind, metric_key, direction, "
+                "target_value, baseline_value, start_day, status, visibility) VALUES "
+                "(777, NULL, 'body', 'Decoy', 'metric', 'resting_hr', 'lower', 50, 70, "
+                "'2026-09-01', 'active', 'private')"
+            )
+        decoy.close()
+
+        reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok)
+        by_name = self._reports_by_name(reports)
+
+        self.assertEqual(by_name["goal"].counts.self_ref_unresolved, 0)
+        self.assertEqual(by_name["horizonte_meta_semanal"].counts.self_ref_unresolved, 0)
+        self.assertEqual(by_name["goal"].counts.insert, 2)
+        self.assertEqual(by_name["experimento"].counts.insert, 1)
+        self.assertEqual(by_name["horizonte_regla"].counts.insert, 1)
+        self.assertEqual(by_name["horizonte_semana"].counts.insert, 1)
+        self.assertEqual(by_name["horizonte_meta_semanal"].counts.insert, 2)
+        self.assertEqual(by_name["horizonte_checkpoint"].counts.insert, 1)
+
+        dest = db.connect()
+        person_id = dest.execute(
+            "SELECT id FROM person WHERE cuenta_sub = ?", (CUENTA_SUB,)
+        ).fetchone()[0]
+
+        dest_horizon = dest.execute(
+            "SELECT id FROM goal WHERE person_id = ? AND kind = 'milestone'", (person_id,)
+        ).fetchone()["id"]
+        self.assertNotEqual(dest_horizon, self.horizon_goal_id)  # re-keyed, not copied verbatim
+
+        dest_child = dest.execute(
+            "SELECT horizonte_goal_id FROM goal WHERE person_id = ? AND kind = 'metric'", (person_id,)
+        ).fetchone()
+        self.assertEqual(dest_child["horizonte_goal_id"], dest_horizon)
+
+        dest_exp = dest.execute(
+            "SELECT goal_id FROM experimento WHERE person_id = ?", (person_id,)
+        ).fetchone()
+        self.assertEqual(dest_exp["goal_id"], dest_horizon)
+
+        for table in ("horizonte_regla", "horizonte_semana", "horizonte_checkpoint"):
+            row = dest.execute(
+                f"SELECT horizonte_goal_id FROM {table} WHERE person_id = ?", (person_id,)
+            ).fetchone()
+            self.assertEqual(row["horizonte_goal_id"], dest_horizon, table)
+
+        meta_rows = dest.execute(
+            "SELECT id, vigente, reemplaza_id, valor FROM horizonte_meta_semanal "
+            "WHERE person_id = ? ORDER BY id", (person_id,),
+        ).fetchall()
+        self.assertEqual(len(meta_rows), 2)
+        old_row = next(r for r in meta_rows if r["vigente"] == 0)
+        new_row = next(r for r in meta_rows if r["vigente"] == 1)
+        self.assertIsNone(old_row["reemplaza_id"])
+        self.assertEqual(new_row["reemplaza_id"], old_row["id"])  # resolved to the DESTINATION id
+        self.assertEqual(old_row["valor"], 55.0)
+        self.assertEqual(new_row["valor"], 53.0)
+
+        vigente_count = dest.execute(
+            "SELECT COUNT(*) FROM horizonte_meta_semanal WHERE horizonte_goal_id = ? AND "
+            "week_start = '2026-11-02' AND medida = 'resting_hr' AND vigente = 1", (dest_horizon,),
+        ).fetchone()[0]
+        self.assertEqual(vigente_count, 1)
+
+    def test_dry_run_reports_the_same_insert_counts_and_writes_nothing(self):
+        dry_reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=False)
+        self.assertTrue(ok)
+        apply_reports, ok2 = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok2)
+        dry_by_name = self._reports_by_name(dry_reports)
+        apply_by_name = self._reports_by_name(apply_reports)
+        for name in ("goal", "experimento", "horizonte_regla", "horizonte_semana",
+                     "horizonte_meta_semanal", "horizonte_checkpoint"):
+            self.assertEqual(dry_by_name[name].counts.insert, apply_by_name[name].counts.insert, name)
+            self.assertEqual(dry_by_name[name].counts.self_ref_unresolved,
+                              apply_by_name[name].counts.self_ref_unresolved, name)
+
+        # The dry run above wrote nothing: the apply call right after it still saw an empty
+        # destination and inserted everything fresh.
+        dest = db.connect()
+        self.assertEqual(dest.execute("SELECT COUNT(*) FROM horizonte_meta_semanal").fetchone()[0], 2)
+
+    def test_second_apply_is_a_no_op(self):
+        mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        reports2, ok2 = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok2)
+        for name in ("goal", "experimento", "horizonte_regla", "horizonte_semana",
+                     "horizonte_meta_semanal", "horizonte_checkpoint"):
+            counts = self._reports_by_name(reports2)[name].counts
+            self.assertEqual(counts.insert, 0, name)
+            self.assertEqual(counts.update, 0, name)
+
+        dest = db.connect()
+        self.assertEqual(dest.execute("SELECT COUNT(*) FROM horizonte_meta_semanal").fetchone()[0], 2)
+
+
+class SelfRefUnresolvedTest(MudanzaTestCase):
+    """A self-reference naming a row that was never migrated (another person's) stays NULL in the
+    destination and is counted, never silently dropped or mis-linked."""
+
+    def test_self_ref_to_a_non_migrated_goal_stays_null_and_is_counted(self):
+        source = self._new_source()
+        pid = db.DEFAULT_PERSON_ID
+        source.execute("INSERT INTO person (id, display_name) VALUES (2, 'Someone else')")
+        source.execute(
+            "INSERT INTO goal (person_id, hogar_id, area, title, kind, metric_key, direction, "
+            "target_value, baseline_value, start_day, deadline, status, visibility) VALUES "
+            "(2, NULL, 'body', 'Someone elses horizon', 'milestone', NULL, NULL, NULL, NULL, "
+            "'2026-10-01', '2027-01-01', 'active', 'private')"
+        )
+        other_horizon_id = source.execute("SELECT last_insert_rowid()").fetchone()[0]
+        source.execute(
+            "INSERT INTO goal (person_id, hogar_id, area, title, kind, metric_key, direction, "
+            "target_value, baseline_value, start_day, horizonte_goal_id, status, visibility) VALUES "
+            "(?, NULL, 'body', 'Dangling horizon ref', 'metric', 'resting_hr', 'lower', 55, 60, "
+            "'2026-10-01', ?, 'active', 'private')",
+            (pid, other_horizon_id),
+        )
+        source.commit()
+        source.close()
+
+        reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok)
+        by_name = self._reports_by_name(reports)
+        self.assertEqual(by_name["goal"].counts.self_ref_unresolved, 1)
+        self.assertEqual(by_name["goal"].counts.insert, 1)  # the dangling goal, pid's only own row
+
+        dest = db.connect()
+        row = dest.execute(
+            "SELECT horizonte_goal_id FROM goal WHERE person_id = "
+            "(SELECT id FROM person WHERE cuenta_sub = ?)", (CUENTA_SUB,),
+        ).fetchone()
+        self.assertIsNone(row["horizonte_goal_id"])
+
+
 class PersonasTest(MudanzaTestCase):
     def test_lists_only_persons_with_a_cuenta_sub(self):
         dest = self._dest_conn()
