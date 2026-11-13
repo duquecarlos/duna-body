@@ -64,6 +64,9 @@ FULLY_HANDLED_TABLES = {
     # BODY-TENDENCIAS-RACHA-GRAFICO-1 ruling 1: the person's own pick of which habit the strength-
     # session study compares against -- one row, a habit id and nothing else.
     "racha_piso",
+    # BODY-PLAN-ESQUEMA-1: the plan's own parts, each a child row under a horizon goal -- the
+    # person's own wording (horizonte_regla.texto), weekly targets and checkpoints.
+    "horizonte_regla", "horizonte_semana", "horizonte_meta_semanal", "horizonte_checkpoint",
 }
 # raw_payload: kind/date only, never the stored JSON payload. garmin_cuenta: the connected-since
 # date only, never the encrypted token (BODY-GARMIN-HOST-1). dispositivo: name/scopes/dates only,
@@ -148,6 +151,23 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
             "SELECT * FROM experimento_registro WHERE person_id = ? ORDER BY day", (person_id,))],
         "momentos": [dict(r) for r in conn.execute(
             "SELECT * FROM moment WHERE person_id = ? ORDER BY ts_local", (person_id,))],
+    }
+    # BODY-PLAN-ESQUEMA-1: the plan's own parts this person wrote -- scoped by this module's own
+    # person_id column on each of the four tables, not by the horizon goal's ownership (a household
+    # member's own rows on a shared horizon goal are theirs to export from their own account).
+    horizonte = {
+        "reglas": [dict(r) for r in conn.execute(
+            "SELECT * FROM horizonte_regla WHERE person_id = ? ORDER BY horizonte_goal_id, orden, id",
+            (person_id,))],
+        "semanas": [dict(r) for r in conn.execute(
+            "SELECT * FROM horizonte_semana WHERE person_id = ? ORDER BY horizonte_goal_id, week_start",
+            (person_id,))],
+        "metas_semanales": [dict(r) for r in conn.execute(
+            "SELECT * FROM horizonte_meta_semanal WHERE person_id = ? ORDER BY horizonte_goal_id, week_start, id",
+            (person_id,))],
+        "checkpoints": [dict(r) for r in conn.execute(
+            "SELECT * FROM horizonte_checkpoint WHERE person_id = ? ORDER BY horizonte_goal_id, day",
+            (person_id,))],
     }
     ingesta = [dict(r) for r in conn.execute(
         "SELECT id, day, ts_local, metric_key, amount, estimado, descripcion, comida_id, created_at, "
@@ -260,6 +280,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "comidas_compartidas_porciones": comidas_compartidas_porciones,
         "vida": vida,
         "experimentos": experimentos,
+        "horizonte": horizonte,
         "ingesta": ingesta,
         "comidas": comidas,
         "periodos": periodos,
@@ -357,6 +378,39 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         conn.execute(
             "DELETE FROM propuesta_agente WHERE person_id = ? OR objetivo_id IN "
             "(SELECT id FROM goal WHERE person_id = ?)", (person_id, person_id),
+        )
+        # BODY-PLAN-ESQUEMA-1: the plan's own parts under a horizon goal this person created --
+        # deleted before the goal itself goes, same FK-order reasoning as habit/habit_check/
+        # goal_check/plan above. Scoped by person_id OR by horizonte_goal_id, so a household
+        # member's own rows on a shared horizon goal that is about to disappear go too, same
+        # cascade habit_check/goal_check already follow.
+        conn.execute(
+            "DELETE FROM horizonte_checkpoint WHERE person_id = ? OR horizonte_goal_id IN "
+            "(SELECT id FROM goal WHERE person_id = ?)", (person_id, person_id),
+        )
+        conn.execute(
+            "DELETE FROM horizonte_meta_semanal WHERE person_id = ? OR horizonte_goal_id IN "
+            "(SELECT id FROM goal WHERE person_id = ?)", (person_id, person_id),
+        )
+        conn.execute(
+            "DELETE FROM horizonte_semana WHERE person_id = ? OR horizonte_goal_id IN "
+            "(SELECT id FROM goal WHERE person_id = ?)", (person_id, person_id),
+        )
+        conn.execute(
+            "DELETE FROM horizonte_regla WHERE person_id = ? OR horizonte_goal_id IN "
+            "(SELECT id FROM goal WHERE person_id = ?)", (person_id, person_id),
+        )
+        # experimento.goal_id and goal.horizonte_goal_id can point at a goal this person created
+        # (their own horizon, shared with the household) from ANOTHER person's row -- cleared to
+        # NULL before the goal itself goes, same reasoning as racha_piso.habit_id/
+        # habit.assignee_person_id above.
+        conn.execute(
+            "UPDATE experimento SET goal_id = NULL WHERE goal_id IN (SELECT id FROM goal WHERE person_id = ?)",
+            (person_id,),
+        )
+        conn.execute(
+            "UPDATE goal SET horizonte_goal_id = NULL WHERE horizonte_goal_id IN "
+            "(SELECT id FROM goal WHERE person_id = ?)", (person_id,),
         )
         conn.execute("DELETE FROM goal WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM daily_metric WHERE person_id = ?", (person_id,))
