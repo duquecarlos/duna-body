@@ -19796,4 +19796,4 @@ dimmed, "Friday: coming up". The goal with no weekly own habit has no row at all
 household goal the other member's weekly habit has no row either -- only the person's own habit
 gets one. The page's `scrollWidth` is 375, so nothing overflows. The demo fixture has no done
 check for this week, so the `hecho` state was not on screen to look at; the slice's own test suite
-asserts that state directly. No defect found. **APPROVED to merge** -- merged <sha>.
+asserts that state directly. No defect found. **APPROVED to merge** -- merged 08638057b663c8f2f5c11552551ddb0450e0a863.
