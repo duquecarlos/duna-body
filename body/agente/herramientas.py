@@ -1094,7 +1094,7 @@ def _validar_habitos_plan(habitos) -> list[dict]:
         try:
             cadencia = _validar_cadencia_habito(h.get("cadencia") if isinstance(h, dict) else None)
         except ToolError as e:
-            raise ToolError(f"habitos[{i}].{e}")
+            raise ToolError(f"habitos[{i}].{e.args[0]}")
         out.append({"titulo": titulo, "cadencia": cadencia})
     return out
 
@@ -1138,7 +1138,7 @@ def _validar_reglas_plan(conn: sqlite3.Connection, reglas) -> list[dict]:
         try:
             db.validar_regla_horizonte(conn, contexto, contexto_valor)
         except ValueError as e:
-            raise ToolError(f"reglas[{i}].{e}")
+            raise ToolError(f"reglas[{i}].{e.args[0]}")
         texto = (r.get("texto") or "").strip()
         if not texto:
             raise ToolError(f"reglas[{i}].texto: obligatorio")
@@ -1146,7 +1146,7 @@ def _validar_reglas_plan(conn: sqlite3.Connection, reglas) -> list[dict]:
         try:
             horizonte.validar_chequeo(chequeo)
         except ValueError as e:
-            raise ToolError(f"reglas[{i}].{e}")
+            raise ToolError(f"reglas[{i}].{e.args[0]}")
         out.append({"contexto": contexto, "contexto_valor": contexto_valor, "texto": texto, "chequeo": chequeo})
     return out
 
@@ -1187,7 +1187,7 @@ def _validar_semanas_plan(semanas, start_day: str, deadline: str) -> list[dict]:
         try:
             _validar_semana_en_horizonte(s.get("week_start"), start_day, deadline)
         except ToolError as e:
-            raise ToolError(f"semanas[{i}].{e}")
+            raise ToolError(f"semanas[{i}].{e.args[0]}")
         out.append({"week_start": s["week_start"], "titulo": s.get("titulo"), "nota": s.get("nota")})
     return out
 
@@ -1211,12 +1211,12 @@ def _validar_metas_semanales_plan(conn: sqlite3.Connection, metas_semanales, sta
         try:
             _validar_semana_en_horizonte(m.get("week_start"), start_day, deadline)
         except ToolError as e:
-            raise ToolError(f"metas_semanales[{i}].{e}")
+            raise ToolError(f"metas_semanales[{i}].{e.args[0]}")
         medida, sentido = m.get("medida"), m.get("sentido")
         try:
             horizonte.validar_medida(conn, medida, sentido)
         except ValueError as e:
-            raise ToolError(f"metas_semanales[{i}].{e}")
+            raise ToolError(f"metas_semanales[{i}].{e.args[0]}")
         valor = m.get("valor")
         if not isinstance(valor, (int, float)) or isinstance(valor, bool):
             raise ToolError(f"metas_semanales[{i}].valor debe ser un número")
@@ -1245,7 +1245,7 @@ def _validar_checkpoints_plan(conn: sqlite3.Connection, checkpoints, start_day: 
         try:
             _validar_dia_en_horizonte(c.get("day"), start_day, deadline)
         except ToolError as e:
-            raise ToolError(f"checkpoints[{i}].{e}")
+            raise ToolError(f"checkpoints[{i}].{e.args[0]}")
         titulo = (c.get("titulo") or "").strip()
         if not titulo:
             raise ToolError(f"checkpoints[{i}].titulo: obligatorio")
@@ -1253,7 +1253,7 @@ def _validar_checkpoints_plan(conn: sqlite3.Connection, checkpoints, start_day: 
         try:
             horizonte.validar_criterios(conn, criterios)
         except ValueError as e:
-            raise ToolError(f"checkpoints[{i}].{e}")
+            raise ToolError(f"checkpoints[{i}].{e.args[0]}")
         out.append({"day": c["day"], "titulo": titulo, "criterios": criterios, "nota": c.get("nota")})
     return out
 
