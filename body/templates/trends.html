@@ -24,6 +24,22 @@
 
 {{ cuerpo_vista(t, cuerpo) }}
 
+{% macro kpi_tile(x) %}
+<a class="card" href="#{{ x.anchor }}">
+  <div class="k mb-4">{{ x.label }}</div>
+  <div class="row items-end">
+    <div>{% if x.est and x.valor != '—' %}<span class="approx fig">≈</span>{% endif %}<span class="fig">{{ x.valor }}</span>{% if x.unidad %}<span class="u">{{ x.unidad }}</span>{% endif %}</div>
+  </div>
+  {% if x.estado %}<p class="k {{ x.cls }} mt-4 mb-0">{{ x.estado }}</p>{% endif %}
+</a>
+{% endmacro %}
+
+{% if kpi_tiles %}
+<div class="grid2 mb-10">
+{% for x in kpi_tiles %}{{ kpi_tile(x) }}{% endfor %}
+</div>
+{% endif %}
+
 {% macro render_card(c) %}
 <div class="card" id="{{ c.key }}">
   <div class="q">{{ c.question }}</div>
@@ -54,7 +70,7 @@
 <p class="note">{{ t('trends.tap_month') if r == 'all' else t('trends.tap_day') }}</p>
 
 {% if racha %}
-<div class="card">
+<div class="card" id="racha">
   <div class="q">{{ racha.titulo }}</div>
   <p class="sub mt-2 mb-8">{{ racha.sub }}</p>
   {% if racha.piso_nota %}<p class="note mt-4 mb-0">{{ racha.piso_nota }}</p>{% endif %}
