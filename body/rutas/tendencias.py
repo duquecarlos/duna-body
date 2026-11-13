@@ -51,6 +51,11 @@ def _fuente_texto(t: T, conn, person_id: int, hoy: date) -> str:
 
 
 WEEK_KEYS = ["readiness", "sleep_minutes", "hrv_last_night", "resting_hr"]
+# BODY-TENDENCIAS-KPI-MINI-1 ruling 1: the compact strip's own four tiles, in this fixed order --
+# a subset of TODAS (hrv_last_night, resting_hr live in TREND_KEYS' own primary 9; stress_avg lives
+# behind "Ver todas las medidas", TREND_GROUPS' "stress" group), each shown only when its card
+# exists (card_by_key below, built the same way for both groups).
+KPI_KEYS = ["hrv_last_night", "resting_hr", "sleep_minutes", "stress_avg"]
 TREND_MIN_DAYS = 14  # body/profile.py's metric_profile() needs this many rows before a metric gets a card
 SPARSE_KEYS = {"vo2max", "vo2max_cycling", "fitness_age"}  # Garmin updates these only after qualifying activities
 RANGES = ["7", "30", "90", "all"]
@@ -117,6 +122,69 @@ def _chart_aria(t: T, metric: str, start_label: str, end_label: str, months: boo
 
 def _medidas_count_txt(t: T, n: int) -> str:
     return t("trends.medidas_count_one") if n == 1 else t("trends.medidas_count_other", n=n)
+
+
+def _kpi_banda(fig: float | None, low: float, high: float) -> str | None:
+    """BODY-TENDENCIAS-KPI-MINI-1 ruling 1: a tile's status word against its OWN card's usual
+    band -- the same p.low/p.high _trend_card already read, never a second read. None when the
+    card carries no figure at all (no data in the picked range)."""
+    if fig is None:
+        return None
+    if fig < low:
+        return "abajo"
+    if fig > high:
+        return "arriba"
+    return "dentro"
+
+
+def _kpi_label(t: T, key: str) -> str:
+    if key == "hrv_last_night":
+        return t("trends.kpi.hrv_last_night")
+    if key == "resting_hr":
+        return t("trends.kpi.resting_hr")
+    if key == "sleep_minutes":
+        return t("trends.kpi.sleep_minutes")
+    return t("trends.kpi.stress_avg")  # the only other KPI_KEYS member
+
+
+def _kpi_estado(t: T, banda: str | None) -> tuple[str | None, str]:
+    """The tile's status text and its colour class -- "en tu rango"/"in your range" may use the
+    app's own positive token (ruling 1); above/below stay neutral text, never an alarm colour."""
+    if banda == "dentro":
+        return t("trends.kpi.estado.dentro"), "good"
+    if banda == "arriba":
+        return t("trends.kpi.estado.arriba"), "flat"
+    if banda == "abajo":
+        return t("trends.kpi.estado.abajo"), "flat"
+    return None, ""
+
+
+def _kpi_tile(t: T, key: str, card: dict) -> dict:
+    estado, cls = _kpi_estado(t, card["banda"])
+    return {"anchor": key, "label": _kpi_label(t, key), "est": card["est"],
+            "valor": card["last30"], "unidad": card["unit"], "estado": estado, "cls": cls}
+
+
+def _kpi_fuerza_faltan_txt(t: T, k: int) -> str:
+    return t("trends.kpi.fuerza.faltan_one") if k == 1 else t("trends.kpi.fuerza.faltan_other", k=t.num(k))
+
+
+def _fuerza_mini(t: T, piso: int | None, n: int, hoy: date) -> dict | None:
+    """BODY-TENDENCIAS-KPI-MINI-1 ruling 2: the strip's fifth tile, built from the strength
+    study's own already-loaded racha_semanal and floor -- no floor, no tile. "days left in the
+    week" counts today (ISO weekday 1=Monday..7=Sunday, so 8 - isoweekday is Sunday-inclusive)."""
+    if piso is None:
+        return None
+    dias_restantes = 8 - hoy.isoweekday()
+    if n >= piso:
+        estado, cls = t("trends.kpi.fuerza.cumplida"), "good"
+    elif dias_restantes >= piso - n:
+        estado, cls = t("trends.kpi.fuerza.vas_bien"), "good"
+    else:
+        estado, cls = _kpi_fuerza_faltan_txt(t, piso - n), "flat"
+    return {"anchor": "racha", "label": t("trends.kpi.fuerza.titulo"), "est": False,
+            "valor": t("trends.kpi.fuerza.figura", n=t.num(n), piso=t.num(piso)), "unidad": "",
+            "estado": estado, "cls": cls}
 
 
 _N_POST_OFFSETS = sum(1 for o in turnos_costo.OFFSETS if o.startswith("post_"))
@@ -352,6 +420,9 @@ def _racha_ctx(t: T, conn, person_id: int, turnos_on: bool, hoy: date) -> dict |
     return {
         "titulo": titulo, "sub": sub, "piso_nota": piso_nota, "noche_nota": noche_nota, "svg": svg,
         "figuras": figuras, "opciones": opciones, "piso_habit_id": piso_habit_id,
+        # BODY-TENDENCIAS-KPI-MINI-1 ruling 2: the strip's own strength tile reads these two raw
+        # numbers -- the floor and the already-computed current week's row -- never a second read.
+        "piso": piso, "semana_actual_sesiones": semanas[-1]["sesiones"],
     }
 
 
@@ -400,7 +471,8 @@ def _trend_card(t: T, defs: dict, k: str, start, end, month, nights, marcas, pro
             "cls": cls, "svg": svg, "low": comun._value(t, k, p.low), "high": comun._value(t, k, p.high),
             "sparse": k in SPARSE_KEYS, "self": d["origen"] == "self", "subtitle": None,
             "pocas": pocas, "conteo": _medidas_count_txt(t, p.days) if pocas else None,
-            "caveat": k in NIGHT_CAVEAT_KEYS, "patron": patrones.get(k)}
+            "caveat": k in NIGHT_CAVEAT_KEYS, "patron": patrones.get(k),
+            "banda": None if pocas else _kpi_banda(fig, p.low, p.high)}
     return card, p
 
 
@@ -474,6 +546,10 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
     marcas = _marcas(conn, start, end, person_id) if start else set()
     windows_by_key = profile.windows(conn, todas_keys, start, end, person_id=person_id) if start else {}
     cards, since, days = [], None, 0
+    # BODY-TENDENCIAS-KPI-MINI-1 ruling 1: every card this route builds, by key -- the strip reads
+    # a card's own already-computed figure/unit/band off here, whichever of the two loops below
+    # built it, rather than a third call to _trend_card.
+    card_by_key: dict[str, dict] = {}
     for k in comun.TREND_KEYS:
         card, p = _trend_card(t, defs, k, start, end, month, nights, marcas, profiles, windows_by_key, patrones)
         if not card:
@@ -481,6 +557,7 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
         since = since or p.first_day
         days = max(days, p.days)
         cards.append(card)
+        card_by_key[k] = card
     if not cards:
         have = _trend_days_have(conn, person_id)
         if have:
@@ -501,6 +578,7 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
             days = max(days, p.days)
             card["subtitle"] = t("trends.plain." + k)
             group_cards.append(card)
+            card_by_key[k] = card
             extra_count += 1
         # BODY-DESPLAZAMIENTO-3 ruling 2: the commute group shows even with zero cards -- its own
         # freshness line is the point when there is nothing yet to chart.
@@ -534,10 +612,19 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
     cuerpo_ctx = {"vistas": anatomia.contexto(t, "tendencias", frozenset({"corazon"})),
                   "caption": t("cuerpo.caption.tendencias"), "recorte": "torso"}
     racha = _racha_ctx(t, conn, person_id, turnos_on, today_local)
+    # BODY-TENDENCIAS-KPI-MINI-1: the strip -- four KPI tiles (each only when its card exists on
+    # this page, whichever range or month is showing) plus a fifth strength tile (only with a
+    # strength study AND a floor). Pure Python over data this route already computed -- zero new
+    # SQL statements.
+    kpi_tiles = [_kpi_tile(t, k, card_by_key[k]) for k in KPI_KEYS if k in card_by_key]
+    if racha:
+        fuerza_mini = _fuerza_mini(t, racha["piso"], racha["semana_actual_sesiones"], today_local)
+        if fuerza_mini:
+            kpi_tiles.append(fuerza_mini)
     return comun._render("trends.html", t=t, tab="trends", cards=cards, week=week if r == "all" else None,
                    since=t.long_date(date.fromisoformat(since)) if since else "", days=t.num(days),
                    r=r, ranges=RANGES, fig_label=fig_label, nights=bool(nights), marcas=bool(marcas),
-                   month_title=t.month_year(month) if month else None, racha=racha,
+                   month_title=t.month_year(month) if month else None, racha=racha, kpi_tiles=kpi_tiles,
                    extra_groups=extra_groups, extra_count=extra_count, todas=todas == "1",
                    desde=desde, dia=desde_dia, back_href=back_href, back_label=back_label, turnos=turnos_on,
                    cuerpo=cuerpo_ctx)
