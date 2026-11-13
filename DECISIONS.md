@@ -19907,4 +19907,4 @@ This run (BODY-PLAN-ESQUEMA-1-R), same approval and observed report, was dispatc
 `touches` widened to the three census files plus `body/mudanza.py`, and built the self-ref pass
 (ruling 3 above) and the four census fixes (ruling 4 above) that the schema's own shape demanded.
 Merged to `main` on green, no schema change in THIS diff's own touches (the schema already merged
-with the first run's commits on this branch) -- see merge below.
+with the first run's commits on this branch) -- merged 05271bc5ce2006cc6cb92412c78e771dfd751c44.
