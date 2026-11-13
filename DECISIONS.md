@@ -19670,3 +19670,12 @@ screen Carlos looks at. No cross-repo contract or DTO change. Merge policy A's c
 condition trips, and the spec's own body says to stop before merge either way ("stop
 AWAITING_APPROVAL on the branch, tree EMPTY -- the orchestrator looks at /trends at 375 px before
 merging"). **Stops here, unmerged, for that look.**
+
+### -M
+
+The orchestrator's look, at 375 px on the demo seeded from this branch (en): the strip sits after
+the body figure and before the first card, two columns (tiles 16-183 and 193-359 px, 100 px tall),
+reading "Heart-rate variability 63 ms · in your range", "Resting pulse 55 bpm", "Sleep 6 h 31",
+"Stress 32 of 100", each "in your range", and "Strength this week 0 of 3 · on track" (a Thursday
+with four days left -- correct by ruling 2 above). Every tile's anchor resolves to its own card;
+page `scrollWidth` 375. **No defect. APPROVED to merge.**
