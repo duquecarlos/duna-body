@@ -64,6 +64,17 @@ def tearDownModule():
     shutil.rmtree(_base, ignore_errors=True)
 
 
+def _refrescar_baseline_modulos(caso: unittest.TestCase) -> None:
+    """Re-takes vivo's stale-module baseline at THIS test's own start, so "unexpected" means
+    "imported during this test" -- the production meaning, where vivo loads first in a fresh
+    process. Without this, a module imported by some OTHER test file sharing this process (loaded
+    after vivo's own first import) looks like a previous task's leftover here too
+    (BODY-PLAN-MODULO-1-R2)."""
+    anterior = vivo._MODULOS_AL_CARGAR
+    vivo._MODULOS_AL_CARGAR = frozenset(vivo._modulos_body_actuales())
+    caso.addCleanup(setattr, vivo, "_MODULOS_AL_CARGAR", anterior)
+
+
 class _RepoFixture(unittest.TestCase):
     def setUp(self):
         self.repo = _repo
@@ -148,6 +159,7 @@ class TareaDesconocidaTest(_RepoFixture):
         self._path_original = list(sys.path)
         self.addCleanup(lambda: setattr(sys, "argv", self._argv_original))
         self.addCleanup(lambda: setattr(sys, "path", self._path_original))
+        _refrescar_baseline_modulos(self)
 
     def test_tarea_desconocida_pero_el_arbol_refrescado_la_conoce_lanza_un_hijo(self):
         self._commit_on_main("segundo")
@@ -273,6 +285,7 @@ class MainTest(_RepoFixture):
         self._path_original = list(sys.path)
         self.addCleanup(lambda: setattr(sys, "argv", self._argv_original))
         self.addCleanup(lambda: setattr(sys, "path", self._path_original))
+        _refrescar_baseline_modulos(self)
 
     def test_tarea_fuera_del_allowlist_sale_con_2(self):
         with contextlib.redirect_stderr(io.StringIO()):
@@ -467,6 +480,7 @@ class MananaTest(_RepoFixture):
         self._path_original = list(sys.path)
         self.addCleanup(lambda: setattr(sys, "argv", self._argv_original))
         self.addCleanup(lambda: setattr(sys, "path", self._path_original))
+        _refrescar_baseline_modulos(self)
 
     def test_manana_corre_vida_dia_aunque_el_pull_previo_lance(self):
         llamadas = []
@@ -550,6 +564,7 @@ class IntradiaTareaTest(_RepoFixture):
         self._path_original = list(sys.path)
         self.addCleanup(lambda: setattr(sys, "argv", self._argv_original))
         self.addCleanup(lambda: setattr(sys, "path", self._path_original))
+        _refrescar_baseline_modulos(self)
 
     def test_intradia_esta_en_tareas_y_apunta_a_pull(self):
         self.assertIn("intradia", vivo.TAREAS)
