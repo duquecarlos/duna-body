@@ -182,9 +182,6 @@ _EXPERIMENTO_COLUMNS = """
     person_id            INTEGER NOT NULL REFERENCES person(id),
     titulo               TEXT NOT NULL,
     habito_id            INTEGER REFERENCES habit(id),
-    -- BODY-PLAN-ESQUEMA-1: when this experiment is part of a plan, its horizon goal -- additive,
-    -- nullable.
-    goal_id              INTEGER REFERENCES goal(id),
     metricas             TEXT NOT NULL CHECK (json_valid(metricas)),
     ventana              TEXT NOT NULL CHECK (json_valid(ventana)),
     filtro_dias          TEXT NOT NULL CHECK (json_valid(filtro_dias)),
@@ -192,7 +189,12 @@ _EXPERIMENTO_COLUMNS = """
     fecha_inicio         TEXT NOT NULL,
     fecha_fin            TEXT,
     estado               TEXT NOT NULL CHECK (estado IN ('activo', 'cerrado')),
-    creado_en            TEXT NOT NULL
+    creado_en            TEXT NOT NULL,
+    -- BODY-PLAN-ESQUEMA-1: when this experiment is part of a plan, its horizon goal -- additive,
+    -- nullable, placed last so a fresh install's column order matches _migrate()'s ALTER ADD
+    -- COLUMN on an existing database (PRAGMA table_info order, same convention
+    -- activity.vinculo_manual/vinculo_separado already follow).
+    goal_id              INTEGER REFERENCES goal(id)
 """
 
 # The "it happened" log for an experiment with no habito_id -- with one, habit_check is the log
