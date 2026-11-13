@@ -20026,4 +20026,5 @@ No change to `body/vivo.py`; every assertion kept its subject. Proof, each read 
 `tests.test_vivo` alone -- Ran 52 tests, OK; the reported reproduction order (`tests.test_vo2max
 tests.test_web_entry tests.test_vivo`) -- Ran 61 tests, OK; the reverse order (`tests.test_vivo
 tests.test_vo2max tests.test_web_entry`) -- Ran 61 tests, OK. No schema change, no
-customer-facing bytes, no cross-repo contract change -- merged to `main` on green.
+customer-facing bytes, no cross-repo contract change -- merged to `main` on green --
+merged 304a80c15458f329a5dd3757ecb91f50c68a9640.
