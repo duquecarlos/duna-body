@@ -54,6 +54,11 @@
       <div>{{ h.title }}{% if h.context %} <span class="chip {{ h.context_cls }}">{{ h.context }}</span>{% endif %}
         {% if h.mine %}
         <div class="k">{{ h.cadence }} · {{ h.progress }}</div>
+        {% if h.week_strip %}
+        <div class="habit-week">
+          {% for c in h.week_strip %}<span class="habit-week-cell {{ c.state }}" aria-label="{{ c.aria }}">{{ c.letter }}</span>{% endfor %}
+        </div>
+        {% endif %}
         {% else %}
         <div class="k">{{ h.cadence }} · <span class="chip">{{ h.assignee_name }}</span></div>
         {% endif %}

@@ -19679,3 +19679,121 @@ reading "Heart-rate variability 63 ms · in your range", "Resting pulse 55 bpm",
 "Stress 32 of 100", each "in your range", and "Strength this week 0 of 3 · on track" (a Thursday
 with four days left -- correct by ruling 2 above). Every tile's anchor resolves to its own card;
 page `scrollWidth` 375. **No defect. APPROVED to merge.** -- merged 46364c4cf84633e67e9ed446b8614679d6508ed7
+
+## BODY-METAS-HABITO-SEMANA-TIRA-1 -- the M T W T F S S week strip under each weekly habit
+
+Mock round 2, approved by the person as drawn (dev-protocol/research/mock-r2/TEXTOS.md's
+"## PhonePlanLight.dc.html"): under "Strength · 4 a week / on track / 2 of 4 done", a row of seven
+day letters "M T W T F S S". Open follow-up from BODY-MOCK-R2-CENSO-1-INV, no new data (habit_check
+is per-day already) -- the shift-aware "moved to Saturday" annotation explicitly waits.
+
+**Rulings, as built.**
+
+1. For each of the person's own WEEKLY habits on goal detail (cadence per 'week'; day/month-cadence
+   habits and another member's habit are untouched), a row of seven day cells, Monday first. The
+   visible letter reuses the app's own `t('date.days')` initials (`name[:1].upper()`) rather than a
+   second, hand-typed list: en "M T W T F S S" exactly; es "L M M J V S D" (martes and miércoles
+   both start with 'm' -- the spec's own example, "L M X J V S D", was a hedge ("or whatever that
+   formatter yields"), not a second list to hand-type). State: `hecho` (a habit_check done=1 that
+   day -- wins over every other condition, even on today or a near-future tolerance day), `hoy`
+   (today, not done), `futuro` (after today), `pasado` (before today, not done -- plain, the base
+   `.habit-week-cell` style, never a `.pasado` rule of its own since it is identical to the
+   default). Each cell's accessible text is `t("goals.week_strip.cell_aria", day=<full day name>,
+   state=<state word>)` -- "lunes: sin marcar" / "Monday: not checked", "martes: hecho" /
+   "Tuesday: done", "miércoles: hoy" / "Wednesday: today", "jueves: por venir" /
+   "Thursday: coming up" -- never just the letter.
+2. `metas._week_checks(conn, habit_ids, person_id, monday, sunday)`: one SELECT
+   (`habit_id IN (...)`) over `habit_check` for every weekly own habit of the goal, built once
+   before the habit loop and reused inside it for both the week strip and `checked_today` --
+   `comun._habit_checked` is no longer called for a weekly habit (day/month-cadence own habits are
+   unchanged). No weekly own habit at all -> no statement (`if not habit_ids: return {}`).
+3. The row sits under the habit's own progress line ("{{ h.cadence }} · {{ h.progress }}") in
+   `goal.html`, each cell a plain `<span class="habit-week-cell {state}" aria-label="...">{letter}
+   </span>` -- no new form, no JS; the existing check button/form is untouched. `.habit-week`
+   (`body/static/body.css`) is a 7-column grid, `minmax(32px, 1fr)` per cell, gap 4px, so it never
+   grows past the card's own width and each cell stays >= 32 px at 375 px. `.hecho` reuses the same
+   `--ok` family `.chip.ok` already uses; `.hoy` is outlined (`border-color: var(--ink2)`, no
+   fill); `.futuro` is faint (`opacity: .45`); no CSP exception needed -- class and aria-label
+   only, no `style=` attribute, no `<style>` block.
+
+**Every new string, es / en** (`body/i18n/es.json` / `en.json`):
+
+    goals.week_strip.done              "hecho"            "done"
+    goals.week_strip.today             "hoy"              "today"
+    goals.week_strip.upcoming          "por venir"        "coming up"
+    goals.week_strip.unchecked         "sin marcar"       "not checked"
+    goals.week_strip.cell_aria         "{day}: {state}"   "{day}: {state}"
+
+**Statement counts, measured** (`tests/test_metas_semana_tira.py::WeekChecksOneStatementTest`, a
+raw `sqlite3.connect` opened INSIDE `contar_sql()`'s own `with` block -- a connection opened before
+it, like the ambient test fixture's, is never traced, so `_week_checks` is measured on its own
+fresh connection): zero weekly habit ids costs 0 statements; one id costs 1 statement; three ids
+(for the same goal) still cost 1 statement -- the `IN (...)` list grows, the statement count does
+not. End to end, on `tests/test_rendimiento.py`'s own unmodified, untouched fixture (one weekly
+"mine" habit, `gid_sleep`, is the first goal created for person 1 -- the exact goal `/goals/
+{goal_id}`'s pinned ceiling (33) measures): before this slice, that habit cost one
+`comun._habit_checked` SELECT; after, it costs one `_week_checks` SELECT -- a straight swap, net
+zero, and the ceiling test (not in `touches`, run unmodified by the gate below) stayed green at the
+same 33 unchanged. For a goal with N > 1 weekly own habits the new code is strictly cheaper than
+the old one it replaces (N `_habit_checked` calls -> 1 `_week_checks` call), never more.
+
+**`tests/test_metas_semana_tira.py`** (new, 6 tests): Monday-first order and all four states (a
+done Tuesday, an undone today, three undone-then-future days, one done-vs-undone past day) with
+their exact accessible text, in both es and en; today done shows `hecho` not `hoy`; a household
+goal's day-cadence own habit and another member's weekly habit both get no row, while the one
+weekly own habit on the same goal gets exactly one seven-cell row (`r.text.count("habit-week-cell")
+== 7`); `_week_checks`'s own one-statement-regardless-of-count property, 0/1/3 ids. `tests/
+test_goals_web.py`, `tests/test_rendimiento.py` (ceiling table unchanged, still 33) and `tests/
+test_seguridad.py`'s CSP guards (no `style=`, no `<style>`, `style-src` unchanged) all ran unmodified
+and stayed green.
+
+No password, token, session secret or health figure of a real person was read, printed or written
+anywhere in this slice; every test fixture is invented demo data.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry). The exact
+command is `.venv/Scripts/python.exe -m unittest discover tests -t .`; run once in the foreground,
+it was moved to the background past its own 600 s cap and produced no `Ran ` line before the
+harness's own 10-minute background limit killed it (no failures seen in its partial output
+either). Per the spec it was not retried whole -- it instead ran as 8 sequential chunks of the same
+`tests/test_*.py` modules in alphabetical order (the same set `discover` would walk), each in the
+foreground, each well under the time ceiling:
+
+    chunk 0 (test_accesibilidad..test_baselines_lote):         Ran 351 tests, OK (skipped=1)
+    chunk 1 (test_borrar_reauth..test_entreno_racha):          Ran 510 tests, OK
+    chunk 2 (test_entreno_schema..test_garmin_parse):          Ran 342 tests, OK
+    chunk 3 (test_get_sin_escritura..test_installer):          Ran 444 tests, OK
+    chunk 4 (test_lesion_zona..test_periodo_pantallas):        Ran 470 tests, OK
+    chunk 5 (test_person_scope..test_registro_tu):             Ran 343 tests, OK
+    chunk 6 (test_rendimiento..test_turno_fc):                 Ran 330 tests, OK
+    chunk 7 (test_turno_fc_pantallas..test_web_entry):         Ran 425 tests, OK
+
+Sum: 3215 run, 0 failures, 0 errors, 1 skipped. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.')`, walked and counted without running
+any test body): 3215 tests -- matching exactly (3209 on the prior slice's own gate + this slice's 6
+new tests). **GREEN.**
+
+**Merge policy, this slice.** The diff touches `body/rutas/metas.py`, `body/templates/goal.html`,
+`body/static/body.css`, `body/i18n/es.json`, `body/i18n/en.json`, `tests/test_metas_semana_tira.py`
+and this ledger. No schema or migration change. **Customer-facing bytes changed**: five new strings
+a person reads on `/goals/{goal_id}`, and new markup (the week-strip row itself) on a screen Carlos
+looks at. No cross-repo contract or DTO change. Merge policy A's customer-bytes condition trips, and
+the spec's own body says to stop before merge either way ("stop AWAITING_APPROVAL on the branch,
+tree EMPTY -- the orchestrator looks at goal detail at 375 px before merging"). **Stops here,
+unmerged, for that look.**
+
+### BODY-METAS-HABITO-SEMANA-TIRA-1-M
+
+The worker above wrote this entry and then died on an API error before committing it (gate had
+already gone GREEN). This run committed the entry unchanged and carried out the look it was
+waiting on.
+
+The orchestrator opened `/goals/1`, `/goals/2` and `/goals/4` on the demo (body-web-demo, en) at
+375 px, on a Thursday. Each own weekly habit shows exactly one row of seven day letters, "M T W T
+F S S", Monday first, the cells 32 px wide with a 4 px gap, spanning from 69 px to 317 px -- well
+inside the 375 px viewport. Monday through Wednesday read as `pasado` ("Monday: not checked" and
+so on), Thursday is `hoy`, outlined, "Thursday: today", and Friday through Sunday are `futuro`,
+dimmed, "Friday: coming up". The goal with no weekly own habit has no row at all, and on the
+household goal the other member's weekly habit has no row either -- only the person's own habit
+gets one. The page's `scrollWidth` is 375, so nothing overflows. The demo fixture has no done
+check for this week, so the `hecho` state was not on screen to look at; the slice's own test suite
+asserts that state directly. No defect found. **APPROVED to merge** -- merged <sha>.
