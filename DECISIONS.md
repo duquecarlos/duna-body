@@ -20262,3 +20262,5 @@ ruling 1's own wording, so this entry proceeds to merge rather than stopping AWA
 **Open follow-ups, not this slice's to do:**
 - BODY-PLAN-PROPUESTAS-1's own follow-ups above (the goal-detail screen section, the Hoy hook, and
   "any milestone goal counts as a horizon") are unchanged by this slice.
+
+-- merged f9eea49f6b39771cdbc4c0aed75d1b01d1da4c2a
