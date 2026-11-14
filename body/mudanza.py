@@ -499,7 +499,7 @@ def _migrated_source(origen: Path):
             tmp_path.chmod(0o600)
         src = backup.open_readonly(origen)
         try:
-            copy_conn = sqlite3.connect(tmp_path)
+            copy_conn = db.connect(tmp_path)
             try:
                 src.backup(copy_conn)
                 before = _table_names(copy_conn)
