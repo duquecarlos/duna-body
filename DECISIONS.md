@@ -20713,3 +20713,117 @@ stopping.
 **Open follow-ups, not this slice's to do:** none found.
 
 -- merged 7de9a3de2f4bb2f7436acae4312ea0e7d920d94a
+
+## BODY-MUDANZA-ORIGEN-ANTIGUO-1-R -- the migrated copy is read through db.connect, not a bare sqlite3.connect (2026-11-14)
+
+Measured live by the orchestrator while running the real dry run against the host, after BODY-MUDANZA-ORIGEN-ANTIGUO-1
+had already shipped (merged 7de9a3d, ledger ca14027, deployed ca14027 to body.duna.solutions under Carlos's "Go, you
+run them"): `TypeError: tuple indices must be integers or slices, not str` at `body/db.py:1437`
+(`_rebuild_propuesta_agente_table`'s `step`, reading `r["id"]`), raised before writing anything, via `db.init` ->
+`_migrate_propuestas` -> `_rebuild_propuesta_agente_table`, reached from `body/mudanza.py`'s `_migrated_source`.
+Cause: `_migrated_source` opened its temporary copy with a bare `sqlite3.connect(tmp_path)` -- no `row_factory =
+sqlite3.Row`, no `PRAGMA foreign_keys`, no `busy_timeout` -- while every migration in `body/db.py` is written for a
+connection made by `db.connect`, including the rebuilds that run `SELECT * FROM "<table>"` and then read each row
+back by column name (`r["id"]`, `r["person_id"]`, ...), which raises a `TypeError` on a plain tuple row. The slice
+that shipped this code never caught it because its own fixture (BODY-MUDANZA-ORIGEN-ANTIGUO-1's
+`OrigenAntiguoMudanzaTest`) is a hand-trimmed copy of today's schema that never held a row in a table a current
+migration REBUILDS -- only tables and columns were removed, no row was ever at risk of being read back as a tuple.
+
+**Tables a migration in `body/db.py` rebuilds** (found by reading every `_rebuild_*`/`_migrate_*` function): the
+person-scoped ones in `mudanza.REGISTRY` -- `propuesta_agente` (`_rebuild_propuesta_agente_table`, eleven separate
+CHECK widenings, each reusing the same rebuild), `goal` (`_rebuild_goal_table`, from a legacy `goal` shape),
+`habit` (`_rebuild_habit_table`, from the legacy `plan_item`), `goal_check` (`_rebuild_goal_check_table`, from the
+legacy `weekly_check`) -- and two catalog/session tables `mudanza.SKIPPED_TABLES` never migrates at all (`metric_def`
+via `_rebuild_metric_def_table`, `precio_modelo` via `_rebuild_precio_modelo_table`, `inicio_sesion` via
+`_rebuild_inicio_sesion_table`), so they carry no risk for this importer regardless.
+
+**Ruling 1, as built.** `_migrated_source` now opens its temporary copy with `db.connect(tmp_path)` -- the same
+function every other reader of a Body database goes through -- in place of the bare `sqlite3.connect(tmp_path)`.
+`db.connect` sets `row_factory = sqlite3.Row`, `PRAGMA foreign_keys = ON` and `PRAGMA busy_timeout = 5000`, exactly
+what every migration in `body/db.py` is written to expect. The backup into it is unchanged: still sqlite's own backup
+API (`src.backup(copy_conn)`), still a byte-for-byte copy of the uploaded source, never written to. Nothing else in
+`_migrated_source` or the rest of the importer changed -- one identifier, one line (`body/mudanza.py`). The new
+connection's open-then-`try`/`finally`-close shape already matches `tests/test_conexiones_cerradas.py`'s
+`DirectConnectClosesInFinallyTest` guard (every `db.connect(...)` call under `body/` must close in the very next
+statement's `finally`), which stayed green unchanged.
+
+**Ruling 2, as built -- a GENUINELY older source, not a hand-trimmed one.** `tests/test_mudanza.py` gains
+`OrigenGenuinamenteAntiguoMudanzaTest`. Its fixture is `body/db.py` exactly as it was at commit `3ef9e8e` (the build
+the host ran until 2026-11-14) -- read from git history at test time (`git show 3ef9e8e:body/db.py`, via
+`subprocess.run`, never retyped), written to a temp file under `tempfile.mkdtemp()`, and loaded with
+`importlib.util.spec_from_file_location` under the private name `body._old_db_3ef9e8e` with `__package__` forced to
+`"body"` so its own `from . import config, garmin_adapter` resolves against the real package. That module's own
+`init()` runs on a fresh temp sqlite file -- never today's `db.init` -- producing the schema an older install
+genuinely had: no `horizonte_regla`/`horizonte_semana`/`horizonte_meta_semanal`/`horizonte_checkpoint`, no
+`goal.horizonte_goal_id`, no `experimento.goal_id`, a `propuesta_agente.accion` CHECK missing a dozen later action
+names and no `aplicada_via` column, no `comida`/`ingesta`/`period`/`period_kind`/`nutrient_target`/
+`fuente_importacion`/`recuperacion_actividad`/`turno_fc`/`checkin`/`checkin_nota`/`uso_herramienta_externa` tables at
+all (diffed against `HEAD` to confirm -- every difference between 3ef9e8e and today's schema is additive: new tables
+or new nullable/defaulted columns, never a rename or a removal). `_populate_old_schema` seeds invented demo rows in
+every person-scoped table that schema actually has: `goal` (a private one and a household one, the latter always
+"other person"), `habit` (one own, one assigned to another person, one under the household goal), `habit_check`,
+`goal_check`, `goal_enlace` (x2), `plan` (x2), `conversacion_agente`, `mensaje_agente`, `propuesta_agente` -- one row
+for EVERY `accion` that old CHECK allowed, read back from the seeded source's own live `sqlite_master.sql` by regex
+(`_old_propuesta_actions`, never retyped from the source file) rather than hand-copied, so the test cannot drift from
+what that commit's CHECK actually said -- `uso_agente`, `daily_metric`, `sleep_session`, `raw_payload`, `activity`,
+`workout_set`, `shift_batch`, `shift_batch_item`, `shift`, `shift_pattern`, `ajuste_agente`, `tope_agente`,
+`consentimiento`, `moment`, `experimento`, `experimento_registro`, `figura_compartida`. The tables that schema does
+not have at all (listed above) are not seeded, since they do not exist to hold a row.
+
+**Proof, red then green.** With `tests/mudanza.py`'s fix reverted to the bare `sqlite3.connect(tmp_path)` (this
+branch's own prior commit, main's code), running
+`OrigenGenuinamenteAntiguoMudanzaTest.test_dry_run_and_apply_complete_without_the_tuple_index_crash` raised:
+
+    TypeError: tuple indices must be integers or slices, not str
+
+at the exact same `body/db.py:1437` (`_rebuild_propuesta_agente_table`'s `step`), via the exact same call chain
+(`mudanza.importar` -> `_migrated_source` -> `db.init` -> `_migrate_propuestas` -> `_rebuild_propuesta_agente_table`
+-> `_rebuild_with_fk_off` -> `step`) -- the live crash, reproduced byte-for-byte in a test. With the fix restored
+(`db.connect(tmp_path)`), the same test passes: `Ran 1 test in 0.900s / OK`. The widening rebuild DOES fire against
+this seeded source -- `propuesta_agente`'s old CHECK already names `planear_entreno`/`marcar_experimento` (so those
+two widening checks are already satisfied), but not `registrar_ingesta` (added by BODY-PROTEINA-1), so
+`_rebuild_propuesta_agente_table` runs at least once against the ten seeded rows, exercising the exact code path
+that crashed live.
+
+`test_every_old_propuesta_action_arrives` confirms every one of the ten seeded `accion` values (the old CHECK's full
+vocabulary: `proponer_meta`, `proponer_cambio_meta`, `proponer_confirmar_turnos`, `proponer_idioma`,
+`planear_entreno`, `registrar_entreno`, `registrar_medida`, `marcar_habito`, `proponer_experimento`,
+`marcar_experimento`) survives the rebuild and arrives at the destination.
+`test_the_tables_a_current_migration_rebuilds_survive_with_integrity_ok` confirms `goal`/`habit`/`goal_check`'s own
+insert/other-person counts match the fixture and `PRAGMA integrity_check`/`PRAGMA foreign_key_check` both pass clean
+after the apply. `test_uploaded_file_bytes_are_unchanged_after_apply` and `test_no_temp_copy_is_left_behind_after_apply`
+repeat BODY-MUDANZA-ORIGEN-ANTIGUO-1's own two guarantees (the upload is read-only, the temporary copy is always
+deleted) against this genuinely-older fixture.
+
+No password, token, session secret or health figure of a real person was read, printed or written anywhere in this
+run; every fixture is invented demo data, and the live crash is described by class and location only, never by a row
+value.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry). The exact command is
+`.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 9 sequential chunks of the same `tests/test_*.py`
+modules in alphabetical order (the same set `discover` would walk), each in the foreground:
+
+    chunk 1 (test_accesibilidad..test_baselines_lote):                   Ran 351 tests, OK (skipped=1)
+    chunk 2 (test_borrar_reauth..test_entreno_racha):                    Ran 512 tests, OK
+    chunk 3 (test_entreno_schema..test_garmin_parse):                    Ran 342 tests, OK
+    chunk 4 (test_get_sin_escritura..test_importar_garmin):              Ran 466 tests, OK
+    chunk 5 (test_installer..test_periodo_analisis):                    Ran 465 tests, OK
+    chunk 6 (test_periodo_herramientas..test_pull):                     Ran 475 tests, OK
+    chunk 7 (test_pull_intradia_experimentos..test_tap_44):             Ran 267 tests, OK
+    chunk 8 (test_tendencias_kpi..test_ventana_comida):                 Ran 475 tests, OK
+    chunk 9 (test_vida_dia..test_web_entry):                           Ran 84 tests, OK
+
+Sum: 3437 run, 0 failures, 0 errors, 1 skipped. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`): 3437 -- matching exactly (3432
+before this slice + this slice's own 5 new tests in `OrigenGenuinamenteAntiguoMudanzaTest`). **GREEN.**
+
+**Merge policy, this slice.** The diff touches `body/mudanza.py` (one identifier on one line) and
+`tests/test_mudanza.py` (plus this ledger). Checked against the actual diff: no schema or migration change (`body/
+db.py` is untouched; this slice only changes WHICH connection the importer's own copy-migration step reads and
+writes through). No customer-facing bytes: no route, template, static asset or i18n string changed; the only
+observable difference is that a dry run or apply against a genuinely older source now completes instead of crashing.
+No cross-repo contract or DTO change. All three of merge policy A's conditions are clear, so this entry proceeds to
+merge without stopping.
+
+**Open follow-ups, not this slice's to do:** none found.
+
