@@ -20264,3 +20264,105 @@ ruling 1's own wording, so this entry proceeds to merge rather than stopping AWA
   "any milestone goal counts as a horizon") are unchanged by this slice.
 
 -- merged f9eea49f6b39771cdbc4c0aed75d1b01d1da4c2a
+
+## BODY-PLAN-HORA-ENTRADA-1 -- a clock measure's valor crosses the tool boundary as "HH:MM" (2026-11-14)
+
+**The trap.** `body/horizonte.py:77-79 _minutos_despues_mediodia` stores every clock measure
+(`hora_acostarse`, `hora_levantarse`) as minutes after 12:00 noon, wrapping across midnight (23:30 =
+690, 00:45 = 765) -- the card already renders this correctly (`body/rutas/asistente.py`'s
+`_hora_desde_minutos` is its inverse). But nothing in `body/agente/herramientas.py` ever told the
+model that convention (`grep -n "mediod\|noon"` was empty there), so the in-app assistant and the
+desk, through `body/mcp.py` (which lists `HERRAMIENTAS` automatically), had to guess a raw integer
+for a clock time. The natural guess -- minutes since midnight -- is silently wrong by 12 hours: a
+demo plan's `{"medida": "hora_acostarse", "sentido": "antes_de", "valor": 1380}` (meant as 23:00)
+rendered as "acostarse antes de las 11:00". The same raw integers flowed OUT through `leer_plan` for
+the model to put into words.
+
+**Ruling 1 -- the tool boundary speaks "HH:MM", in both directions; storage is untouched.**
+`body/horizonte.py` was not edited. New in `body/agente/herramientas.py`:
+- `_MEDIDAS_HORA`, read off `horizonte.MEDIDAS` itself (`{k for k, v in horizonte.MEDIDAS.items()
+  if v["unit"] == "hora"}`), never a hardcoded pair -- a future clock measure is covered for free.
+- `_valor_reloj(campo, valor)`: a clock measure's `valor` must be a string matching
+  `horizonte._parse_hhmm`'s own "HH:MM" regex, converted with `horizonte._minutos_despues_mediodia`
+  (called directly, both private, per the dispatch's own instruction not to edit horizonte.py).
+  Anything else -- a raw number, "24:00", "7pm", "" -- is refused: `ToolError(f'{campo}: una hora se
+  escribe "HH:MM", p. ej. "23:00"')`.
+- `_hora_desde_minutos(total)`: the inverse, duplicated from `asistente.py`'s own helper of the same
+  name (the same duplication choice every other small helper in this module already makes, per its
+  own module docstring).
+- `_convertir_criterios_reloj(campo, criterios)`: converts a checkpoint criterio's clock `valor`
+  to minutes BEFORE `horizonte.validar_criterios` sees it, since that validator requires a number
+  for every medida and is outside this slice's touches.
+- `_convertir_lineas_reloj`/`_convertir_plan_salida`: the out direction -- every clock-measure
+  `valor`/`real` pair in a `horizonte.resumen`/`plan_vs_real` dict (the current week's `lineas`, the
+  next checkpoint's `criterios`, and `leer_plan`'s own `plan_vs_real` weeks) converted to "HH:MM"
+  before the tool returns it. `horizonte.resumen`/`plan_vs_real` themselves are unchanged.
+
+Wired into `_validar_metas_semanales_plan` (`proponer_plan`/`ampliar_plan`'s `metas_semanales`),
+`_validar_checkpoints_plan` (their `checkpoints[].criterios`), `_corregir_meta_plan` (its `valor`,
+branching on the target line's own `medida`), and `_leer_planes`/`_leer_plan` (the out direction). A
+non-clock medida keeps taking a plain number, exactly as before. The JSON-schema `valor` type for
+`_PARAM_META_SEMANAL_PLAN` and `_PARAM_CORREGIR_META_PLAN` widened to `["number", "string"]`
+(`_PARAM_CHECKPOINT_PLAN.criterios` was already a bare untyped array -- `_validar_parametros` never
+recurses into an array item's own properties, confirmed at `herramientas.py`'s own line 138-140
+comment, so no schema change was needed there, only the runtime conversion above).
+
+**Ruling 2 -- the model is told.** One sentence appended to each of `proponer_plan`'s,
+`ampliar_plan`'s and `corregir_meta_plan`'s `descripcion` in `HERRAMIENTAS`, naming the two clock
+measures and the "HH:MM" (24h) convention, e.g. for `proponer_plan`: `"En metas_semanales y en los
+criterios de un checkpoint, el valor de una medida de reloj (hora_acostarse, hora_levantarse) se
+escribe \"HH:MM\" en formato 24 horas, por ejemplo \"23:00\"; el valor de cualquier otra medida es
+un número."` `body/mcp.py:188-189` passes `descripcion` straight through as the MCP tool's
+`description`, so the door picks this up automatically; `tests/test_mcp.py`'s new
+`test_proponer_plan_description_tells_the_hhmm_convention` asserts `"HH:MM"` reaches
+`tools/list`'s `proponer_plan` entry.
+
+**Ruling 3 -- nothing already stored changes, no card string changes.** Confirmed by the full
+existing `tests/test_plan_propuestas.py` suite passing unmodified (the fixture-rendering tests there
+feed already-converted, stored numeric `valor`s straight to `asistente.TARJETAS`, bypassing the
+tool layer entirely, so they were never touching this slice's change).
+
+**New tests**, invented demo data only, never a real figure:
+- `tests/test_plan_propuestas.py::HoraEntradaToolTest` (11 tests): "23:00" in a weekly line stores
+  as 660, "00:45" stores as 765 (the midnight-wrap case); the `proponer_plan` card still renders
+  "acostarse antes de las 23:00" (es) / "in bed before 23:00" (en) from that stored value; a number
+  for a clock measure is refused naming the item in `metas_semanales`, `ampliar_plan`, a checkpoint
+  criterio, and `corregir_meta_plan` (which also accepts and converts "HH:MM"); a number for a
+  non-clock measure is still accepted unchanged; "24:00"/"7pm"/"" are refused; `leer_plan` returns
+  "23:00" for that line's target via `plan_vs_real`.
+- `tests/test_mcp.py::PlanToolsTest::test_proponer_plan_description_tells_the_hhmm_convention` (1
+  test): the description reaching the MCP door for `proponer_plan` carries "HH:MM".
+
+**`touches` held exactly**: `body/agente/herramientas.py`, `tests/test_plan_propuestas.py`,
+`tests/test_mcp.py`, `DECISIONS.md`. `body/horizonte.py`, `body/rutas/asistente.py` and
+`body/mcp.py` were read but not edited.
+
+No password, token, session secret or health figure of a real person was read, printed or written
+anywhere; every fixture is invented demo data; no network call was made.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry, after this
+entry's own commit). The exact command is
+`.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 9 sequential chunks of
+`tests/test_*.py` modules in alphabetical order (the same set `discover` would walk), each in the
+foreground:
+
+    chunk 1 (test_accesibilidad..test_baselines_lote):                   Ran 351 tests, OK (skipped=1)
+    chunk 2 (test_borrar_reauth..test_entreno_racha):                    Ran 510 tests, OK
+    chunk 3 (test_entreno_schema..test_garmin_parse):                    Ran 342 tests, OK
+    chunk 4 (test_get_sin_escritura..test_importar_garmin):              Ran 466 tests, OK
+    chunk 5 (test_installer..test_periodo_analisis):                     Ran 451 tests, OK
+    chunk 6 (test_periodo_herramientas..test_pull_intradia_experimentos): Ran 453 tests, OK
+    chunk 7 (test_readiness..test_tendencias_kpi):                       Ran 290 tests, OK
+    chunk 8 (test_tendencias_patron..test_vida_dia):                     Ran 449 tests, OK
+    chunk 9 (test_vida_export..test_web_entry):                          Ran 76 tests, OK
+
+Sum: 3388 run, 0 failures, 0 errors, 1 skipped. Reconciled against an independent collect-only
+count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted by walking its
+`TestSuite`): 3388 -- matching exactly. **GREEN.**
+
+**Merge policy, this slice's own diff**: no schema or migration change, no cross-repo contract, no
+customer-facing bytes -- the tool descriptions in `HERRAMIENTAS` are read by the model, not the
+person, and no i18n key or template string changed. Merge policy A's three conditions all pass, so
+this entry proceeds to merge without waiting for approval.
+
+**Open follow-ups, not this slice's to do:** none found.
