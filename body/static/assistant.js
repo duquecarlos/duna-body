@@ -394,6 +394,7 @@
       aplicada: etiquetas.aplicada, descartada: etiquetas.descartada, deshecha: etiquetas.deshecha,
       expirada: etiquetas.no_vigente, ya_resuelta: etiquetas.no_vigente,
       propuesta_desactualizada: etiquetas.desactualizada, sin_deshacer: etiquetas.sin_deshacer,
+      deshacer_desactualizado: etiquetas.deshacer_desactualizado,
     };
     return mapa[estado] || estado;
   }
@@ -408,17 +409,30 @@
       btnDeshacer.className = "btn";
       btnDeshacer.textContent = etiquetas.deshacer;
       btnDeshacer.addEventListener("click", function () {
-        llamarPropuesta(card, card.id, "deshacer", etiquetas, false);
+        llamarPropuesta(card, card.id, "deshacer", etiquetas, false, btnDeshacer);
       });
       card.acciones.appendChild(btnDeshacer);
     }
   }
 
-  function llamarPropuesta(card, id, ruta, etiquetas, puedeDeshacer) {
+  // BODY-DESHACER-DERIVADOS-1 ruling 3: a non-OK response, a body that is not JSON, or a network
+  // failure never falls through silently -- the card shows a plain message and the tapped button
+  // (when one was passed) is re-enabled rather than left looking like the tap never registered.
+  function llamarPropuesta(card, id, ruta, etiquetas, puedeDeshacer, boton) {
+    if (boton) { boton.disabled = true; }
+    function fallo() {
+      if (boton) { boton.disabled = false; }
+      card.resultado.textContent = etiquetas.fallo;
+      card.resultado.hidden = false;
+    }
     fetch("/asistente/propuestas/" + id + "/" + ruta, { method: "POST", credentials: "same-origin" })
-      .then(function (resp) { return resp.json(); })
-      .then(function (datos) { actualizarTarjeta(card, datos.estado, etiquetas, puedeDeshacer); })
-      .catch(function () {});
+      .then(function (resp) {
+        if (!resp.ok) { fallo(); return; }
+        return resp.json().then(function (datos) {
+          actualizarTarjeta(card, datos.estado, etiquetas, puedeDeshacer);
+        }, fallo);
+      })
+      .catch(fallo);
   }
 
   function crearTablaSeries(series, etiquetas) {
@@ -496,14 +510,14 @@
       btnAplicar.className = "btn";
       btnAplicar.textContent = etiquetas.aplicar;
       btnAplicar.addEventListener("click", function () {
-        llamarPropuesta(card, datos.id, "aplicar", etiquetas, datos.deshacer);
+        llamarPropuesta(card, datos.id, "aplicar", etiquetas, datos.deshacer, btnAplicar);
       });
       var btnDescartar = document.createElement("button");
       btnDescartar.type = "button";
       btnDescartar.className = "btn";
       btnDescartar.textContent = etiquetas.descartar;
       btnDescartar.addEventListener("click", function () {
-        llamarPropuesta(card, datos.id, "descartar", etiquetas, datos.deshacer);
+        llamarPropuesta(card, datos.id, "descartar", etiquetas, datos.deshacer, btnDescartar);
       });
       acciones.appendChild(btnAplicar);
       acciones.appendChild(btnDescartar);
@@ -516,7 +530,7 @@
         btnDeshacer2.className = "btn";
         btnDeshacer2.textContent = etiquetas.deshacer;
         btnDeshacer2.addEventListener("click", function () {
-          llamarPropuesta(card, datos.id, "deshacer", etiquetas, false);
+          llamarPropuesta(card, datos.id, "deshacer", etiquetas, false, btnDeshacer2);
         });
         acciones.appendChild(btnDeshacer2);
       }

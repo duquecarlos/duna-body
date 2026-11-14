@@ -272,6 +272,13 @@ class TestI18nParidad(unittest.TestCase):
                        if f"asistente.propuesta.titulo.{k}" not in self.es]
         self.assertEqual(missing, [f"asistente.propuesta.titulo.{kind}"])
 
+    def test_deshacer_derivados_failure_labels_exist_in_both_languages(self):
+        """BODY-DESHACER-DERIVADOS-1 rulings 3, 4: these two keys are read off a dict (never a
+        literal t("...") call), so the generic scan above cannot see them -- named here instead."""
+        for key in ("asistente.propuesta.fallo", "asistente.propuesta.deshacer_desactualizado"):
+            self.assertIn(key, self.es, f"{key} missing from es.json")
+            self.assertIn(key, self.en, f"{key} missing from en.json")
+
     def test_history_find_keys_exist(self):
         missing = sorted(k for k in _HISTORY_FIND_KEYS if k not in self.es)
         self.assertEqual(missing, [], f"body/web.py _finding_text() can build a key missing from es.json: "
