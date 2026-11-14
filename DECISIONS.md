@@ -20163,3 +20163,102 @@ customer-facing bytes. Merge policy A's "no customer-facing bytes" condition fai
   widened `proponer_meta` -- both are simply `kind='milestone'`. If the product wants a narrower
   meaning of "plan" later (e.g. requiring at least one plan part), that is the orchestrator's call,
   not a defect here.
+
+### BODY-PLAN-PROPUESTAS-1-R -- the plan cards read as plain sentences, in both languages (2026-11-14)
+
+The orchestrator's 375 px look at `body-web-demo` (invented demo plan, one card of each action,
+panel opened from Today's "te propone N cambios" link) approved the LAYOUT above -- cards fit at
+375 px, Aplicar/Descartar/Deshacer and the applied state render correctly -- but held the TEXT back:
+`proponer_plan`'s last line read `1 semanas · 12 metas semanales · 1 checkpoints`, no "weeks with
+targets", no first-week targets in words, singular/plural disagreed, and the English word
+"checkpoint" leaked into Spanish; `ampliar_plan` used the "(s)" form; `corregir_meta_plan` put the
+measure noun twice (`sesiones de cardio al menos 3 sesiones`). This slice removed the four scratch
+commit-message files the prior worker left (`.commit_msg_1.txt`..`.commit_msg_4.txt`, untracked,
+nothing to commit for that step) and rebuilt the text per the orchestrator's five rulings, each
+read from the branch's own code and tests (`tests/test_plan_propuestas.py`'s new
+`PlanTextRulingsTest`):
+
+1. **Ruling 1a -- one natural phrase per measure, the noun said once.** New
+   `_medida_target_txt`/`_medida_target_con_semana_txt` in `body/rutas/asistente.py` branch on
+   `horizonte.MEDIDAS[medida]["unit"]`: session measures (`_sesion_txt`) compose
+   `"{sentido} {n} {medida}"` where `{medida}` is a singular-aware noun (`plan_sesion_fuerza`/
+   `plan_sesion_cardio`, each with a `_one` sibling) -- "al menos 3 sesiones de cardio" / "at least
+   3 cardio sessions", "como máximo 1 sesión de fuerza" / "at most 1 strength session"; clock
+   measures (`_reloj_txt`) are four literal keys (two medidas × two sentidos, never a concatenated
+   key) -- "acostarse antes de las 23:00" / "in bed before 23:00", "levantarse después de las
+   06:30" / "up after 06:30"; minute measures and any metric_def key outside `MEDIDAS`
+   (`validar_medida`'s else branch) share one `plan_medida_valor` template, `"{medida}: {sentido}
+   {valor}"` -- "sueño: al menos 420 min" / "sleep: at least 420 min", "Pulso en reposo: como
+   máximo 55 lpm" / "Resting heart rate: at most 55 bpm" (the card's own `comun._fig_unit`, never an
+   invented unit). The week reference is `plan_meta_semanal`, now `"{target} (semana del {semana})"`
+   / `"{target} (week of {semana})"`, wrapping the phrase above -- used by `corregir_meta_plan`'s
+   before/after and `ampliar_plan`'s new weekly lines.
+2. **Ruling 1b -- counts agree in number and stay in the card's language.** New local
+   `_singular_key`/`_frag` (mirroring `body/rutas/turnos.py`'s own `_frag`, outside this slice's
+   touches) pick a `_one` sibling key at `n == 1`. Spanish says `chequeo`/`chequeos`, never
+   "checkpoint". No "(s)" form anywhere.
+3. **Ruling 1c -- `proponer_plan`'s card.** New `_plan_resumen_linea`: one count line, only the
+   parts that exist, in order reglas / semanas con metas (distinct `week_start` values among
+   `metas_semanales`, not the `semanas` notes list, which is dropped from the card) / chequeos. New
+   `_primera_semana_txt`: one line for the first week that has targets, its own targets in the
+   plan's own order -- no line at all when the plan has none. New `_dia_mes_corto` (duplicated from
+   `body/rutas/experimentos.py`'s own `_dia_mes`, outside touches) gives the first-week date no
+   year, flipped per language ("9 nov" / "Nov 9"), unlike `comun._short_date`'s day-first-always.
+   For the fixture `tests/test_plan_propuestas.py` built (2 reglas, 12 `metas_semanales` across 4
+   weeks, 1 checkpoint), the exact lines:
+   - es: `2 reglas · 4 semanas con metas · 1 chequeo` and `Primera semana (9 nov): al menos 2
+     sesiones de fuerza · al menos 3 sesiones de cardio · acostarse antes de las 23:00`
+   - en: `2 rules · 4 weeks with targets · 1 checkpoint` and `First week (Nov 9): at least 2
+     strength sessions · at least 3 cardio sessions · in bed before 23:00`
+4. **Ruling 1d -- `ampliar_plan`'s card.** `plan_ampliar_reglas`/`plan_ampliar_checkpoints` (the old
+   "(s)" keys) replaced by `plan_regla_nueva`/`plan_chequeo_nuevo`, each with a `_one` sibling --
+   "1 regla nueva" / "2 reglas nuevas", "1 chequeo nuevo" / "2 chequeos nuevos" (and their English
+   equivalents). The bare "semana(s) nueva(s)" line (`plan_ampliar_semanas`) is dropped from the
+   card entirely, same reasoning as ruling 1c's notes. The weekly-target line keeps its
+   `plan_ampliar_metas_semanales` prefix, its `{metas}` now ruling-1a phrases joined by " · ".
+5. **Ruling 1e -- unused keys removed from both `es.json`/`en.json`.** `plan_resumen_partes`,
+   `plan_ampliar_reglas`, `plan_ampliar_semanas`, `plan_ampliar_checkpoints`,
+   `plan_unidad.sesiones` (replaced by the noun-bearing `plan_sesion_fuerza`/`plan_sesion_cardio`
+   pair). `plan_medida.*`/`plan_sentido.*` keep all their existing entries -- `sueno_minutos` and
+   `minutos_intensidad` still read `plan_medida.*` for the minute-measure template, and
+   `test_i18n_paridad.py`'s `_FIXED_DYNAMIC` checks every `horizonte.MEDIDAS` key resolves
+   regardless of which ones the code currently reaches. `_FIXED_DYNAMIC["asistente.propuesta.
+   plan_unidad.+"]` narrowed to `["min"]`.
+
+**`touches` held exactly**: `body/rutas/asistente.py`, `body/i18n/es.json`, `body/i18n/en.json`,
+`tests/test_plan_propuestas.py`, `tests/test_i18n_paridad.py`, `DECISIONS.md`.
+
+No password, token, session secret or health figure of a real person was read, printed or written
+anywhere; every fixture is invented demo data; no network call was made.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry, after this
+entry's own commit). The exact command is
+`.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 9 sequential chunks of
+`tests/test_*.py` modules in alphabetical order (the same set `discover` would walk), each in the
+foreground:
+
+    chunk 1 (test_accesibilidad..test_baselines_lote):        Ran 351 tests, OK (skipped=1)
+    chunk 2 (test_borrar_reauth..test_entreno_racha):         Ran 510 tests, OK
+    chunk 3 (test_entreno_schema..test_garmin_parse):         Ran 342 tests, OK
+    chunk 4 (test_get_sin_escritura..test_importar_garmin):   Ran 466 tests, OK
+    chunk 5 (test_installer..test_periodo_analisis):          Ran 450 tests, OK
+    chunk 6 (test_periodo_herramientas..test_pull_intradia_experimentos): Ran 442 tests, OK
+    chunk 7 (test_readiness..test_tendencias_kpi):            Ran 290 tests, OK
+    chunk 8 (test_tendencias_patron..test_vida_dia):          Ran 449 tests, OK
+    chunk 9 (test_vida_export..test_web_entry):               Ran 76 tests, OK
+
+Sum: 3376 run, 0 failures, 0 errors, 1 skipped. Reconciled against an independent collect-only
+count (`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`): 3376 --
+matching exactly (3367 before this slice + 9 new `PlanTextRulingsTest` methods). **GREEN.**
+
+**Merge policy, this slice's own diff**: no schema or migration change, no cross-repo contract. This
+diff DOES change customer-facing bytes (every string in `body/rutas/asistente.py`'s plan cards and
+the i18n strings above) -- Merge policy A's condition fails on that alone, as it did for the parent
+slice. But the orchestrator's dispatch explicitly authorised exactly this merge in advance
+(ORCH-CARLOS-DELEGATES-TIER-1-1: layout approved at 375 px, text approved for exactly the sentences
+named in ruling 1, asserted EXACTLY by `PlanTextRulingsTest`) -- no string built here departs from
+ruling 1's own wording, so this entry proceeds to merge rather than stopping AWAITING_APPROVAL.
+
+**Open follow-ups, not this slice's to do:**
+- BODY-PLAN-PROPUESTAS-1's own follow-ups above (the goal-detail screen section, the Hoy hook, and
+  "any milestone goal counts as a horizon") are unchanged by this slice.
