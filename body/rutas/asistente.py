@@ -132,6 +132,19 @@ def _medida_label(t: T, medida: str) -> str:
     return t("metric." + medida)
 
 
+def _singular_key(base: str, n) -> str:
+    return f"{base}_one" if n == 1 else base
+
+
+def _frag(t: T, base: str, count, **kw) -> str:
+    """One count's own singular-aware fragment -- `base`/`base_one` through `_singular_key`,
+    mirroring body/rutas/turnos.py's own `_frag` (that module is outside this slice's touches, same
+    reasoning as every other duplicated helper in this file). `count` is a separate positional
+    argument, never a `**kw` name, so a fragment whose own placeholder is called `n` (as every one
+    of them here is) can still be passed."""
+    return t(_singular_key(base, count), **kw)
+
+
 def _hora_desde_minutos(total: float) -> str:
     """The inverse of horizonte._minutos_despues_mediodia's own convention (minutes after 12:00
     noon, wrapping across midnight): 690 -> 23:30, 765 -> 00:45."""
@@ -141,23 +154,65 @@ def _hora_desde_minutos(total: float) -> str:
     return f"{hh:02d}:{mm:02d}"
 
 
-def _medida_valor_corto(t: T, defs: dict, medida: str, valor: float) -> str:
+def _sesion_nombre_txt(t: T, medida: str, n) -> str:
+    """BODY-PLAN-PROPUESTAS-1-R ruling 1a: the session noun, singular at n == 1, never the bare
+    "sesiones" unit -- "sesión de fuerza"/"sesiones de fuerza", "sesión de cardio"/"sesiones de
+    cardio" (and their English equivalents)."""
+    uno = n == 1
+    if medida == "sesiones_fuerza":
+        return t("asistente.propuesta.plan_sesion_fuerza_one") if uno else t("asistente.propuesta.plan_sesion_fuerza")
+    return t("asistente.propuesta.plan_sesion_cardio_one") if uno else t("asistente.propuesta.plan_sesion_cardio")
+
+
+def _sesion_txt(t: T, medida: str, sentido: str, valor) -> str:
+    """Ruling 1a: "al menos 3 sesiones de cardio" / "at least 3 cardio sessions" -- one phrase, the
+    noun said once."""
+    sentido_txt = t("asistente.propuesta.plan_sentido." + sentido)
+    nombre = _sesion_nombre_txt(t, medida, valor)
+    return t("asistente.propuesta.plan_sesion_valor", sentido=sentido_txt, n=t.num(valor), medida=nombre)
+
+
+def _reloj_txt(t: T, medida: str, sentido: str, hora: str) -> str:
+    """Ruling 1a: "acostarse antes de las 23:00" / "in bed before 23:00" -- four literal keys (two
+    medidas × two sentidos), never a concatenated key (no new test_i18n_paridad.py dynamic-prefix
+    entry needed, the same choice `_momento_checkin_txt` above already made)."""
+    if medida == "hora_acostarse":
+        clave = ("asistente.propuesta.plan_reloj_acostarse_antes" if sentido == "antes_de"
+                 else "asistente.propuesta.plan_reloj_acostarse_despues")
+    else:
+        clave = ("asistente.propuesta.plan_reloj_levantarse_antes" if sentido == "antes_de"
+                 else "asistente.propuesta.plan_reloj_levantarse_despues")
+    return t(clave, hora=hora)
+
+
+def _medida_target_txt(t: T, defs: dict, medida: str, sentido: str, valor) -> str:
+    """BODY-PLAN-PROPUESTAS-1-R ruling 1a: one natural phrase, the measure's noun said once and the
+    unit never repeating it -- session/clock/minute shapes for horizonte.MEDIDAS, the card's own
+    metric-value helper for anything else (validar_medida's else branch). No week reference; see
+    `_medida_target_con_semana_txt` for the variant that carries one."""
     info = horizonte.MEDIDAS.get(medida)
-    if info is None:
-        return comun._fig_unit(t, medida, valor, defs)
-    if info["unit"] == "hora":
-        return _hora_desde_minutos(valor)
-    if info["unit"] == "min":
-        return t("asistente.propuesta.plan_unidad.min", n=t.num(valor))
-    return t("asistente.propuesta.plan_unidad.sesiones", n=t.num(valor))
+    if info is not None and info["unit"] == "hora":
+        return _reloj_txt(t, medida, sentido, _hora_desde_minutos(valor))
+    if info is not None and info["unit"] == "sesiones":
+        return _sesion_txt(t, medida, sentido, valor)
+    sentido_txt = t("asistente.propuesta.plan_sentido." + sentido)
+    valor_txt = (t("asistente.propuesta.plan_unidad.min", n=t.num(valor)) if info is not None
+                 else comun._fig_unit(t, medida, valor, defs))
+    return t("asistente.propuesta.plan_medida_valor", medida=_medida_label(t, medida), sentido=sentido_txt,
+              valor=valor_txt)
+
+
+def _medida_target_con_semana_txt(t: T, defs: dict, medida: str, sentido: str, valor, week_start: str) -> str:
+    """Ruling 1a: the week reference stays "(semana del 9 nov 2026)" -- used by corregir_meta_plan's
+    before/after and ampliar_plan's new weekly lines."""
+    target = _medida_target_txt(t, defs, medida, sentido, valor)
+    semana = comun._short_date(t, date.fromisoformat(week_start))
+    return t("asistente.propuesta.plan_meta_semanal", target=target, semana=semana)
 
 
 def _semana_targets_txt(t: T, defs: dict, metas_semana: list) -> str:
-    return ", ".join(
-        t("asistente.propuesta.plan_meta_semanal", medida=_medida_label(t, m["medida"]),
-          sentido=t("asistente.propuesta.plan_sentido." + m["sentido"]),
-          valor=_medida_valor_corto(t, defs, m["medida"], m["valor"]),
-          semana=comun._short_date(t, date.fromisoformat(m["week_start"])))
+    return " · ".join(
+        _medida_target_con_semana_txt(t, defs, m["medida"], m["sentido"], m["valor"], m["week_start"])
         for m in metas_semana
     )
 
@@ -594,9 +649,51 @@ def _tarjeta_marcar_habito(t: T, defs: dict, despues: dict, antes_json: dict | N
     return antes_txt, despues_txt, None
 
 
+def _dia_mes_corto(t: T, d: date) -> str:
+    """Day + abbreviated month, no year, in the order each language reads it naturally -- "9 nov" /
+    "Nov 9" (BODY-PLAN-PROPUESTAS-1-R ruling 1c). Duplicated from body/rutas/experimentos.py's own
+    `_dia_mes` (that module is outside this slice's touches, same reasoning as every other
+    duplicated helper in this file) and widened to flip word order per language, since this
+    phrase's own worked example does (unlike comun._short_date, which keeps day-first in both)."""
+    mes = t("date.months")[d.month - 1][:3]
+    return t("asistente.propuesta.plan_fecha_corta", dia=d.day, mes=mes)
+
+
+def _plan_resumen_linea(t: T, despues: dict) -> str | None:
+    """Ruling 1c: reglas, semanas con metas (distinct week_start values among metas_semanales, not
+    the "semanas" notes list), chequeos -- only the parts that exist, in that order. None when the
+    plan has none of the three (the old unconditional "0 semanas · 0 metas · 0 checkpoints" line is
+    gone)."""
+    n_reglas = len(despues.get("reglas") or [])
+    n_semanas_con_metas = len({m["week_start"] for m in (despues.get("metas_semanales") or [])})
+    n_checkpoints = len(despues.get("checkpoints") or [])
+    partes = []
+    if n_reglas:
+        partes.append(_frag(t, "asistente.propuesta.plan_reglas_n", n_reglas, n=t.num(n_reglas)))
+    if n_semanas_con_metas:
+        partes.append(_frag(t, "asistente.propuesta.plan_semanas_con_metas_n", n_semanas_con_metas,
+                            n=t.num(n_semanas_con_metas)))
+    if n_checkpoints:
+        partes.append(_frag(t, "asistente.propuesta.plan_chequeos_n", n_checkpoints, n=t.num(n_checkpoints)))
+    return " · ".join(partes) if partes else None
+
+
+def _primera_semana_txt(t: T, defs: dict, metas_semanales: list) -> str | None:
+    """Ruling 1c: the first week that has targets, its own targets in the order the plan lists
+    them -- no line at all for a plan with no weekly targets."""
+    if not metas_semanales:
+        return None
+    primera = min(m["week_start"] for m in metas_semanales)
+    targets = " · ".join(_medida_target_txt(t, defs, m["medida"], m["sentido"], m["valor"])
+                         for m in metas_semanales if m["week_start"] == primera)
+    fecha = _dia_mes_corto(t, date.fromisoformat(primera))
+    return t("asistente.propuesta.plan_primera_semana", fecha=fecha, targets=targets)
+
+
 def _tarjeta_proponer_plan(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     """Ruling 8: a whole plan is one card -- plain-word lines, each only shown when that part of
-    the plan is non-empty, never a JSON dump."""
+    the plan is non-empty, never a JSON dump. Text rulings 1a-1e (BODY-PLAN-PROPUESTAS-1-R): the
+    parts count line and the first-week line, below."""
     lineas = [t("asistente.propuesta.plan_nuevo", titulo=despues["titulo"],
                 desde=comun._short_date(t, date.fromisoformat(despues["start_day"])),
                 hasta=comun._short_date(t, date.fromisoformat(despues["deadline"])))]
@@ -614,46 +711,44 @@ def _tarjeta_proponer_plan(t: T, defs: dict, despues: dict, antes_json: dict | N
         habitos_txt = ", ".join(t("asistente.propuesta.plan_habito_linea", titulo=h["titulo"],
                                    cadencia=_cadencia_txt(t, h["cadencia"])) for h in habitos)
         lineas.append(t("asistente.propuesta.plan_habitos", habitos=habitos_txt))
-    n_semanas = len(despues.get("semanas") or [])
-    n_metas_semanales = len(despues.get("metas_semanales") or [])
-    n_checkpoints = len(despues.get("checkpoints") or [])
-    if n_semanas or n_metas_semanales or n_checkpoints:
-        lineas.append(t("asistente.propuesta.plan_resumen_partes", semanas=t.num(n_semanas),
-                        metas_semanales=t.num(n_metas_semanales), checkpoints=t.num(n_checkpoints)))
+    resumen = _plan_resumen_linea(t, despues)
+    if resumen:
+        lineas.append(resumen)
+    primera_semana = _primera_semana_txt(t, defs, despues.get("metas_semanales") or [])
+    if primera_semana:
+        lineas.append(primera_semana)
     return None, "\n".join(lineas), None
 
 
 def _tarjeta_ampliar_plan(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     """Ruling 4: insert-only additions to an existing plan -- one plain line per kind of addition,
-    only when that list is non-empty."""
+    only when that list is non-empty. Text ruling 1d (BODY-PLAN-PROPUESTAS-1-R): agreed-number
+    counts and the new weekly lines through ruling 1a; the plain "semanas" notes list is never
+    shown, same reasoning as 1c."""
     partes = []
     n_reglas = len(despues.get("reglas") or [])
-    n_semanas = len(despues.get("semanas") or [])
     n_checkpoints = len(despues.get("checkpoints") or [])
     metas_semanales = despues.get("metas_semanales") or []
     if n_reglas:
-        partes.append(t("asistente.propuesta.plan_ampliar_reglas", n=t.num(n_reglas)))
-    if n_semanas:
-        partes.append(t("asistente.propuesta.plan_ampliar_semanas", n=t.num(n_semanas)))
+        partes.append(_frag(t, "asistente.propuesta.plan_regla_nueva", n_reglas, n=t.num(n_reglas)))
     if metas_semanales:
         partes.append(t("asistente.propuesta.plan_ampliar_metas_semanales",
                         metas=_semana_targets_txt(t, defs, metas_semanales)))
     if n_checkpoints:
-        partes.append(t("asistente.propuesta.plan_ampliar_checkpoints", n=t.num(n_checkpoints)))
+        partes.append(_frag(t, "asistente.propuesta.plan_chequeo_nuevo", n_checkpoints, n=t.num(n_checkpoints)))
     despues_txt = "\n".join(partes) if partes else t("asistente.propuesta.plan_ampliar_vacio")
     return None, despues_txt, None
 
 
 def _tarjeta_corregir_meta_plan(t: T, defs: dict, despues: dict, antes_json: dict | None, conn,
                                  person_id: int) -> tuple:
-    """Ruling 3: before -> after, with the measure's own unit -- never a bare number."""
-    medida_txt = _medida_label(t, despues["medida"])
-    sentido_txt = t("asistente.propuesta.plan_sentido." + despues["sentido"])
-    semana_txt = comun._short_date(t, date.fromisoformat(despues["week_start"]))
-    antes_txt = t("asistente.propuesta.plan_meta_semanal", medida=medida_txt, sentido=sentido_txt,
-                  valor=_medida_valor_corto(t, defs, despues["medida"], antes_json["valor"]), semana=semana_txt)
-    despues_txt = t("asistente.propuesta.plan_meta_semanal", medida=medida_txt, sentido=sentido_txt,
-                    valor=_medida_valor_corto(t, defs, despues["medida"], despues["valor"]), semana=semana_txt)
+    """Ruling 3: before -> after, with the measure's own unit -- never a bare number. Text ruling
+    1a (BODY-PLAN-PROPUESTAS-1-R): the before/after phrases are the same natural-sentence shapes
+    `_semana_targets_txt` uses."""
+    antes_txt = _medida_target_con_semana_txt(t, defs, despues["medida"], despues["sentido"],
+                                              antes_json["valor"], despues["week_start"])
+    despues_txt = _medida_target_con_semana_txt(t, defs, despues["medida"], despues["sentido"],
+                                                despues["valor"], despues["week_start"])
     return antes_txt, despues_txt, None
 
 

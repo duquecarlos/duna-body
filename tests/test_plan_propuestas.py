@@ -484,5 +484,198 @@ class CardsTest(PlanPropuestasTestCase):
         self.assertNotIn("{", despues_txt)
 
 
+# BODY-PLAN-PROPUESTAS-1-R: one invented plan fixture -- 2 reglas, 12 metas_semanales across 4
+# weeks, 1 checkpoint -- the exact count line and first-week line the orchestrator's 375 px look
+# approved the LAYOUT for, the TEXT rulings 1a-1e built here. Every date below is invented demo
+# data, never a real figure.
+PLAN_FIXTURE_DESPUES = {
+    "titulo": "Preparar la media maratón", "why": None,
+    "start_day": "2026-11-02", "deadline": "2027-02-01",
+    "metas_finales": [], "habitos": [],
+    "reglas": [
+        {"contexto": "siempre", "texto": "Hidratarse bien"},
+        {"contexto": "turno", "contexto_valor": "noche", "texto": "Dormir una siesta corta"},
+    ],
+    "semanas": [{"week_start": "2026-11-09", "nota": "Semana de arranque"}],
+    "metas_semanales": [
+        {"week_start": "2026-11-09", "medida": "sesiones_fuerza", "sentido": "al_menos", "valor": 2},
+        {"week_start": "2026-11-09", "medida": "sesiones_cardio", "sentido": "al_menos", "valor": 3},
+        {"week_start": "2026-11-09", "medida": "hora_acostarse", "sentido": "antes_de", "valor": 660},
+        {"week_start": "2026-11-16", "medida": "sesiones_fuerza", "sentido": "como_maximo", "valor": 1},
+        {"week_start": "2026-11-16", "medida": "sueno_minutos", "sentido": "al_menos", "valor": 420},
+        {"week_start": "2026-11-16", "medida": "hora_levantarse", "sentido": "despues_de", "valor": 1110},
+        {"week_start": "2026-11-23", "medida": "minutos_intensidad", "sentido": "al_menos", "valor": 30},
+        {"week_start": "2026-11-23", "medida": "sesiones_cardio", "sentido": "como_maximo", "valor": 1},
+        {"week_start": "2026-11-23", "medida": "resting_hr", "sentido": "como_maximo", "valor": 55},
+        {"week_start": "2026-11-30", "medida": "sesiones_fuerza", "sentido": "al_menos", "valor": 3},
+        {"week_start": "2026-11-30", "medida": "sesiones_cardio", "sentido": "al_menos", "valor": 2},
+        {"week_start": "2026-11-30", "medida": "sueno_minutos", "sentido": "al_menos", "valor": 400},
+    ],
+    "checkpoints": [{"day": "2026-12-01", "titulo": "Primer chequeo", "criterios": []}],
+}
+
+_PROHIBIDO_POR_IDIOMA = {
+    "es": ("(s)", "checkpoint", "sesiones de cardio al menos 3 sesiones"),
+    "en": ("(s)",),
+}
+
+
+class PlanTextRulingsTest(PlanPropuestasTestCase):
+    """BODY-PLAN-PROPUESTAS-1-R rulings 1a-1e: the cards read as plain sentences, in both
+    languages -- the measure's noun said once, counts agreeing in number, no "(s)" form and no
+    English "checkpoint" leaking into the Spanish card."""
+
+    def _render(self, accion: str, despues: dict, antes_json: dict | None, lang: str) -> tuple:
+        t = T(lang)
+        defs = comun._defs(self.conn)
+        return asistente.TARJETAS[accion](t, defs, despues, antes_json, self.conn, 1)
+
+    def test_proponer_plan_count_line_and_first_week_line_exact(self):
+        esperado = {
+            "es": {
+                "resumen": "2 reglas · 4 semanas con metas · 1 chequeo",
+                "primera_semana": "Primera semana (9 nov): al menos 2 sesiones de fuerza · "
+                                   "al menos 3 sesiones de cardio · acostarse antes de las 23:00",
+            },
+            "en": {
+                "resumen": "2 rules · 4 weeks with targets · 1 checkpoint",
+                "primera_semana": "First week (Nov 9): at least 2 strength sessions · "
+                                   "at least 3 cardio sessions · in bed before 23:00",
+            },
+        }
+        for lang in ("es", "en"):
+            _, despues_txt, _ = self._render("proponer_plan", PLAN_FIXTURE_DESPUES, None, lang)
+            lineas = despues_txt.split("\n")
+            self.assertIn(esperado[lang]["resumen"], lineas, f"[{lang}] count line")
+            self.assertIn(esperado[lang]["primera_semana"], lineas, f"[{lang}] first-week line")
+
+    def test_proponer_plan_count_line_uses_singular_at_one(self):
+        despues = dict(PLAN_FIXTURE_DESPUES, reglas=[{"contexto": "siempre", "texto": "x"}],
+                       metas_semanales=[{"week_start": "2026-11-09", "medida": "sueno_minutos",
+                                        "sentido": "al_menos", "valor": 420}],
+                       checkpoints=[{"day": "2026-12-01", "titulo": "c", "criterios": []}])
+        esperado = {"es": "1 regla · 1 semana con metas · 1 chequeo",
+                   "en": "1 rule · 1 week with targets · 1 checkpoint"}
+        for lang in ("es", "en"):
+            _, despues_txt, _ = self._render("proponer_plan", despues, None, lang)
+            self.assertIn(esperado[lang], despues_txt.split("\n"), f"[{lang}]")
+
+    def test_proponer_plan_drops_a_plan_with_no_weekly_targets_first_week_line(self):
+        despues = dict(PLAN_FIXTURE_DESPUES, metas_semanales=[])
+        for lang in ("es", "en"):
+            _, despues_txt, _ = self._render("proponer_plan", despues, None, lang)
+            self.assertNotIn("Primera semana", despues_txt)
+            self.assertNotIn("First week", despues_txt)
+
+    def test_ampliar_plan_lines_exact(self):
+        despues = {
+            "goal_id": 1, "reglas": [{"contexto": "siempre", "texto": "x"}], "semanas": [],
+            "metas_semanales": [
+                {"week_start": "2026-11-09", "medida": "sesiones_fuerza", "sentido": "al_menos", "valor": 2},
+                {"week_start": "2026-11-16", "medida": "hora_acostarse", "sentido": "antes_de", "valor": 660},
+            ],
+            "checkpoints": [{"day": "2026-12-01", "titulo": "c1", "criterios": []},
+                            {"day": "2026-12-08", "titulo": "c2", "criterios": []}],
+        }
+        esperado = {
+            "es": ["1 regla nueva",
+                  "Metas semanales nuevas: al menos 2 sesiones de fuerza (semana del 9 nov 2026) · "
+                  "acostarse antes de las 23:00 (semana del 16 nov 2026)",
+                  "2 chequeos nuevos"],
+            "en": ["1 new rule",
+                  "New weekly targets: at least 2 strength sessions (week of 9 Nov 2026) · "
+                  "in bed before 23:00 (week of 16 Nov 2026)",
+                  "2 new checkpoints"],
+        }
+        for lang in ("es", "en"):
+            _, despues_txt, _ = self._render("ampliar_plan", despues, None, lang)
+            self.assertEqual(despues_txt.split("\n"), esperado[lang], f"[{lang}]")
+
+    def test_corregir_meta_plan_minuto_measure_exact(self):
+        despues = {"meta_id": 1, "valor": 400.0, "nota": None, "medida": "sueno_minutos",
+                   "sentido": "al_menos", "week_start": "2026-11-02", "horizonte_goal_id": 1}
+        antes_json = dict(despues, valor=420.0)
+        esperado = {
+            "es": ("sueño: al menos 420 min (semana del 2 nov 2026)",
+                  "sueño: al menos 400 min (semana del 2 nov 2026)"),
+            "en": ("sleep: at least 420 min (week of 2 Nov 2026)",
+                  "sleep: at least 400 min (week of 2 Nov 2026)"),
+        }
+        for lang in ("es", "en"):
+            antes_txt, despues_txt, _ = self._render("corregir_meta_plan", despues, antes_json, lang)
+            self.assertEqual((antes_txt, despues_txt), esperado[lang], f"[{lang}]")
+
+    def test_corregir_meta_plan_sesion_measure_exact_with_singular(self):
+        despues = {"meta_id": 1, "valor": 1.0, "nota": None, "medida": "sesiones_cardio",
+                   "sentido": "al_menos", "week_start": "2026-11-02", "horizonte_goal_id": 1}
+        antes_json = dict(despues, valor=2.0)
+        esperado = {
+            "es": ("al menos 2 sesiones de cardio (semana del 2 nov 2026)",
+                  "al menos 1 sesión de cardio (semana del 2 nov 2026)"),
+            "en": ("at least 2 cardio sessions (week of 2 Nov 2026)",
+                  "at least 1 cardio session (week of 2 Nov 2026)"),
+        }
+        for lang in ("es", "en"):
+            antes_txt, despues_txt, _ = self._render("corregir_meta_plan", despues, antes_json, lang)
+            self.assertEqual((antes_txt, despues_txt), esperado[lang], f"[{lang}]")
+
+    def test_corregir_meta_plan_reloj_measure_exact(self):
+        despues = {"meta_id": 1, "valor": 630.0, "nota": None, "medida": "hora_acostarse",
+                   "sentido": "antes_de", "week_start": "2026-11-02", "horizonte_goal_id": 1}
+        antes_json = dict(despues, valor=660.0)
+        esperado = {
+            "es": ("acostarse antes de las 23:00 (semana del 2 nov 2026)",
+                  "acostarse antes de las 22:30 (semana del 2 nov 2026)"),
+            "en": ("in bed before 23:00 (week of 2 Nov 2026)",
+                  "in bed before 22:30 (week of 2 Nov 2026)"),
+        }
+        for lang in ("es", "en"):
+            antes_txt, despues_txt, _ = self._render("corregir_meta_plan", despues, antes_json, lang)
+            self.assertEqual((antes_txt, despues_txt), esperado[lang], f"[{lang}]")
+
+    def test_corregir_meta_plan_metric_def_fuera_de_medidas_exact(self):
+        """validar_medida's else branch -- a metric_def key outside horizonte.MEDIDAS, the card's
+        own metric-value helper, never an invented unit."""
+        despues = {"meta_id": 1, "valor": 50.0, "nota": None, "medida": "resting_hr",
+                   "sentido": "como_maximo", "week_start": "2026-11-02", "horizonte_goal_id": 1}
+        antes_json = dict(despues, valor=55.0)
+        esperado = {
+            "es": ("Pulso en reposo: como máximo 55 lpm (semana del 2 nov 2026)",
+                  "Pulso en reposo: como máximo 50 lpm (semana del 2 nov 2026)"),
+            "en": ("Resting heart rate: at most 55 bpm (week of 2 Nov 2026)",
+                  "Resting heart rate: at most 50 bpm (week of 2 Nov 2026)"),
+        }
+        for lang in ("es", "en"):
+            antes_txt, despues_txt, _ = self._render("corregir_meta_plan", despues, antes_json, lang)
+            self.assertEqual((antes_txt, despues_txt), esperado[lang], f"[{lang}]")
+
+    def test_no_forbidden_text_across_the_four_plan_actions(self):
+        """No "(s)" form anywhere, no English "checkpoint" leaking into the Spanish card, no measure
+        noun said twice (BODY-PLAN-PROPUESTAS-1-R ruling 1b)."""
+        meta_nueva_despues = {"tipo": "milestone", "titulo": "Terminar la 10K", "deadline": "2027-02-01",
+                              "habitos": [{"titulo": "Correr", "cadencia": {"per": "week", "times": 3}}]}
+        corregir_despues = {"meta_id": 1, "valor": 1.0, "nota": None, "medida": "sesiones_cardio",
+                            "sentido": "al_menos", "week_start": "2026-11-02", "horizonte_goal_id": 1}
+        corregir_antes = dict(corregir_despues, valor=2.0)
+        ampliar_despues = {
+            "goal_id": 1, "reglas": [{"contexto": "siempre", "texto": "x"}], "semanas": [],
+            "metas_semanales": [{"week_start": "2026-11-09", "medida": "sesiones_cardio",
+                                 "sentido": "al_menos", "valor": 3}],
+            "checkpoints": [{"day": "2026-12-01", "titulo": "c1", "criterios": []},
+                            {"day": "2026-12-08", "titulo": "c2", "criterios": []}],
+        }
+        for lang in ("es", "en"):
+            textos = [
+                self._render("proponer_plan", PLAN_FIXTURE_DESPUES, None, lang)[1],
+                self._render("ampliar_plan", ampliar_despues, None, lang)[1],
+                self._render("corregir_meta_plan", corregir_despues, corregir_antes, lang)[0],
+                self._render("corregir_meta_plan", corregir_despues, corregir_antes, lang)[1],
+                self._render("proponer_meta", meta_nueva_despues, None, lang)[1],
+            ]
+            for prohibido in _PROHIBIDO_POR_IDIOMA[lang]:
+                for texto in textos:
+                    self.assertNotIn(prohibido, texto, f"[{lang}] {prohibido!r} found in {texto!r}")
+
+
 if __name__ == "__main__":
     unittest.main()
