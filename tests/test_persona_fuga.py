@@ -217,14 +217,14 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
     # BODY-PLAN-ESQUEMA-1-R (ORCH-CARLOS-DELEGATES-TIER-1-1): the plan's own parts, one row each,
     # under gid_proposed as the horizon (a milestone goal from this fixture's own goals, never a
     # second container of its own) -- so the table census below covers all four and a future
-    # reader's leak sweep has real cross-person rows to find. No marker here moves into
-    # _markers_of's active list yet: BODY-PLAN-PANTALLA-1 gave goal detail a plan section that
-    # now reads horizonte_regla.texto, horizonte_semana.titulo, horizonte_meta_semanal.nota and
-    # horizonte_checkpoint.titulo for its own viewer, but promoting them to active cross-person
-    # leak markers is its own small slice, not folded into that one (BODY-PLAN-PANTALLA-FUGA-1,
-    # open follow-up). The checkpoint's own criterios DOES need the real shape
-    # (horizonte.checkpoints, not this fixture, owns it) now that something reads it: a bare
-    # string crashed that read with a TypeError, where a plain criterion dict does not.
+    # reader's leak sweep has real cross-person rows to find. BODY-PLAN-PANTALLA-1 gave goal detail
+    # a plan section that reads horizonte_regla.texto, horizonte_semana.titulo,
+    # horizonte_meta_semanal.nota and horizonte_checkpoint.titulo for its own viewer; their markers
+    # (REGLA, SEMANA, META-SEMANAL, CHECKPOINT) are now promoted into _markers_of's active list
+    # below (BODY-PLAN-PANTALLA-1-R, closing the BODY-PLAN-PANTALLA-FUGA-1 follow-up). The
+    # checkpoint's own criterios DOES need the real shape (horizonte.checkpoints, not this fixture,
+    # owns it) now that something reads it: a bare string crashed that read with a TypeError, where
+    # a plain criterion dict does not.
     horizonte_week = fechas.lunes_de(TODAY).isoformat()
     db.crear_regla_horizonte(conn, person_id, gid_proposed, "siempre", None, f"ZZ{tag}-REGLA")
     db.crear_semana_horizonte(conn, person_id, gid_proposed, horizonte_week, titulo=f"ZZ{tag}-SEMANA")
@@ -337,11 +337,15 @@ def _markers_of(tag: str) -> list[str]:
     `ts_local`, never a stored marker, so the exclusion still holds. ZZ<tag>-EXPERIMENTO (the
     experiment's own titulo) and ZZ<tag>-REGISTRO (its one registro's nota) moved INTO this active
     list with BODY-EXPERIMENTOS-PANTALLA-1, which gave `experimento`/`experimento_registro` their
-    first reader -- Metas' section and /experiments/{id} render both."""
+    first reader -- Metas' section and /experiments/{id} render both. REGLA (horizonte_regla.texto),
+    SEMANA (horizonte_semana.titulo), META-SEMANAL (horizonte_meta_semanal.nota) and CHECKPOINT
+    (horizonte_checkpoint.titulo) move in with BODY-PLAN-PANTALLA-1-R, which gave goal detail's own
+    plan section its first reader for all four (closing BODY-PLAN-PANTALLA-FUGA-1)."""
     return [f"ZZ{tag}-{suffix}" for suffix in
             ("ACTIVIDAD", "SERIE", "TURNO", "META-PRIVADA", "HABITO", "NOTA", "META-PROPUESTA",
              "META-ARCHIVADA", "PLAN", "CONVERSACION", "MENSAJE", "DISPOSITIVO", "EXPERIMENTO",
-             "REGISTRO", "COMIDA", "CHECKIN-NOTA")] + [ENLACE_REF[tag]]
+             "REGISTRO", "COMIDA", "CHECKIN-NOTA", "REGLA", "SEMANA", "META-SEMANAL",
+             "CHECKPOINT")] + [ENLACE_REF[tag]]
 
 
 def _figures_of(tag: str) -> dict:
