@@ -13,8 +13,7 @@
 </div>
 {% endif %}
 
-<div class="cols-metas">
-{% for c in cards %}
+{% macro active_card(c) %}
 <a class="card" href="/goals/{{ c.id }}">
   <div class="row"><div class="q m-0">{{ c.title }}</div><span class="chip {{ c.cls }}">{{ c.verdict }}</span></div>
   {% if c.shared_line %}<p class="k mt-2 mb-0">{{ c.shared_line }}</p>{% endif %}
@@ -26,6 +25,18 @@
   {% if c.started %}<div class="k">{{ c.started }} <span class="chip">{{ t('goals.from_data') }}</span></div>{% endif %}
   <span class="chev chev-low">›</span>
 </a>
+{% endmacro %}
+
+<div class="cols-metas">
+{% for c in cards %}
+<div class="card-group">
+  {{ active_card(c) }}
+  {% if c.children %}
+  <div class="plan-children">
+    {% for ch in c.children %}{{ active_card(ch) }}{% endfor %}
+  </div>
+  {% endif %}
+</div>
 {% endfor %}
 </div>
 
@@ -61,10 +72,7 @@
 {% endif %}
 {% endif %}
 
-{% if proposed %}
-<h2>{{ t('goals.section_proposed') }}</h2>
-<div class="cols-metas">
-{% for p in proposed %}
+{% macro proposed_card(p) %}
 <div class="card">
   <div class="q">{{ p.title }}</div>
   {% if p.shared_line %}<p class="k mt-2 mb-0">{{ p.shared_line }}</p>{% endif %}
@@ -74,19 +82,44 @@
     <form method="post" action="/goals/{{ p.id }}/drop"><button class="btn" type="submit">{{ t('goals.discard_btn') }}</button></form>
   </div>
 </div>
+{% endmacro %}
+
+{% if proposed %}
+<h2>{{ t('goals.section_proposed') }}</h2>
+<div class="cols-metas">
+{% for p in proposed %}
+<div class="card-group">
+  {{ proposed_card(p) }}
+  {% if p.children %}
+  <div class="plan-children">
+    {% for ch in p.children %}{{ proposed_card(ch) }}{% endfor %}
+  </div>
+  {% endif %}
+</div>
 {% endfor %}
 </div>
 {% endif %}
+
+{% macro archived_card(a) %}
+<a class="card mt-8" href="/goals/{{ a.id }}">
+  <div class="row"><div class="q m-0">{{ a.title }}</div><span class="chip">{{ a.status_text }}</span></div>
+  {% if a.shared_line %}<p class="k mt-2 mb-0">{{ a.shared_line }}</p>{% endif %}
+</a>
+{% endmacro %}
 
 {% if archived %}
 <details class="files mt-10">
   <summary class="k">{{ t('goals.section_archive') }}</summary>
   <div class="cols-metas">
   {% for a in archived %}
-  <a class="card mt-8" href="/goals/{{ a.id }}">
-    <div class="row"><div class="q m-0">{{ a.title }}</div><span class="chip">{{ a.status_text }}</span></div>
-    {% if a.shared_line %}<p class="k mt-2 mb-0">{{ a.shared_line }}</p>{% endif %}
-  </a>
+  <div class="card-group">
+    {{ archived_card(a) }}
+    {% if a.children %}
+    <div class="plan-children">
+      {% for ch in a.children %}{{ archived_card(ch) }}{% endfor %}
+    </div>
+    {% endif %}
+  </div>
   {% endfor %}
   </div>
 </details>

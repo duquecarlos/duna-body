@@ -465,8 +465,8 @@ class CardsTest(PlanPropuestasTestCase):
             self.assertIsNotNone(antes_txt)
             self.assertNotIn("{", antes_txt)
             self.assertNotIn("{", despues_txt)
-            self.assertIn("420", antes_txt)
-            self.assertIn("400", despues_txt)
+            self.assertIn("7 h", antes_txt)
+            self.assertIn("6 h 40", despues_txt)
 
     def test_meta_nueva_card_renders_a_milestone_with_habits(self):
         despues = {"tipo": "milestone", "titulo": "Terminar la 10K", "deadline": "2027-02-01",
@@ -596,10 +596,10 @@ class PlanTextRulingsTest(PlanPropuestasTestCase):
                    "sentido": "al_menos", "week_start": "2026-11-02", "horizonte_goal_id": 1}
         antes_json = dict(despues, valor=420.0)
         esperado = {
-            "es": ("sueño: al menos 420 min (semana del 2 nov 2026)",
-                  "sueño: al menos 400 min (semana del 2 nov 2026)"),
-            "en": ("sleep: at least 420 min (week of 2 Nov 2026)",
-                  "sleep: at least 400 min (week of 2 Nov 2026)"),
+            "es": ("sueño: al menos 7 h (semana del 2 nov 2026)",
+                  "sueño: al menos 6 h 40 (semana del 2 nov 2026)"),
+            "en": ("sleep: at least 7 h (week of 2 Nov 2026)",
+                  "sleep: at least 6 h 40 (week of 2 Nov 2026)"),
         }
         for lang in ("es", "en"):
             antes_txt, despues_txt, _ = self._render("corregir_meta_plan", despues, antes_json, lang)

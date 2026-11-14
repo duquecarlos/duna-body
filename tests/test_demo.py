@@ -148,15 +148,19 @@ class SeededContentTest(unittest.TestCase):
         bloques = turnos_costo.bloques_noche(self.conn, 1, row[0], row[1])
         self.assertGreaterEqual(len(bloques), 3)
 
-    def test_has_four_active_goals_with_checks(self):
+    def test_has_seven_active_goals_with_checks(self):
+        # BODY-PLAN-PANTALLA-1 ruling 6: the four goals this test used to count, plus the horizon
+        # and its two child goals.
         goals = self.conn.execute("SELECT id FROM goal WHERE status = 'active'").fetchall()
-        self.assertEqual(len(goals), 4)
+        self.assertEqual(len(goals), 7)
         checks = self.conn.execute("SELECT COUNT(*) FROM goal_check").fetchone()[0]
         self.assertGreater(checks, 0)
 
-    def test_has_four_habits(self):
+    def test_has_six_habits(self):
+        # BODY-PLAN-PANTALLA-1 ruling 6: the four habits this test used to count, plus the
+        # horizon's own two habits.
         habits = self.conn.execute("SELECT COUNT(*) FROM habit").fetchone()[0]
-        self.assertEqual(habits, 4)
+        self.assertEqual(habits, 6)
 
     def test_the_demo_person_has_their_own_strength_floor_pick(self):
         # BODY-TENDENCIAS-RACHA-GRAFICO-1 ruling 4.
@@ -256,6 +260,61 @@ class SeededContentTest(unittest.TestCase):
         self.assertTrue(marker.exists())
         meta = json.loads(marker.read_text(encoding="utf-8"))
         self.assertIn("seed", meta)
+
+
+class PlanHorizonteSeedTest(unittest.TestCase):
+    """BODY-PLAN-PANTALLA-1 ruling 6: the demo's own invented plan exists, in both languages."""
+
+    def _check(self, folder: str, idioma: str):
+        conn = sqlite3.connect(str(Path(folder) / "body.db"))
+        conn.row_factory = sqlite3.Row
+        try:
+            titulo = demo._PLAN_TEXTOS[idioma]["horizonte"]
+            horizonte = conn.execute("SELECT id FROM goal WHERE title = ? AND kind = 'milestone'",
+                                      (titulo,)).fetchone()
+            self.assertIsNotNone(horizonte, f"no seeded horizon goal titled {titulo!r}")
+            hid = horizonte["id"]
+            self.assertEqual(
+                conn.execute("SELECT status FROM goal WHERE id = ?", (hid,)).fetchone()["status"], "active")
+            hijos = conn.execute("SELECT id, status FROM goal WHERE horizonte_goal_id = ?", (hid,)).fetchall()
+            self.assertEqual(len(hijos), 2)
+            self.assertTrue(all(h["status"] == "active" for h in hijos))
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM habit WHERE goal_id = ?", (hid,)).fetchone()[0], 2)
+            reglas = conn.execute("SELECT contexto FROM horizonte_regla WHERE horizonte_goal_id = ?",
+                                   (hid,)).fetchall()
+            self.assertEqual(sorted(r["contexto"] for r in reglas), ["periodo", "siempre", "tras_noche", "turno"])
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM horizonte_semana WHERE horizonte_goal_id = ?",
+                             (hid,)).fetchone()[0], 1)
+            vigentes = conn.execute(
+                "SELECT COUNT(*) FROM horizonte_meta_semanal WHERE horizonte_goal_id = ? AND vigente = 1",
+                (hid,)).fetchone()[0]
+            self.assertGreater(vigentes, 0)
+            corregidas = conn.execute(
+                "SELECT COUNT(*) FROM horizonte_meta_semanal WHERE horizonte_goal_id = ? AND vigente = 0",
+                (hid,)).fetchone()[0]
+            self.assertEqual(corregidas, 1, "expected exactly one corrected (replaced) weekly line")
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM horizonte_checkpoint WHERE horizonte_goal_id = ?",
+                             (hid,)).fetchone()[0], 2)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM plan WHERE goal_id = ?", (hid,)).fetchone()[0], 2)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM experimento WHERE goal_id = ?", (hid,)).fetchone()[0], 1)
+        finally:
+            conn.close()
+
+    def test_plan_exists_in_spanish(self):
+        folder = _fresh_dir()
+        result = _run(["--home", folder, "--dias", "90"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self._check(folder, "es")
+
+    def test_plan_exists_in_english(self):
+        folder = _fresh_dir()
+        result = _run(["--home", folder, "--dias", "90", "--idioma", "en"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self._check(folder, "en")
 
 
 class DeterminismTest(unittest.TestCase):

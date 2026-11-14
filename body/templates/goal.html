@@ -7,15 +7,126 @@
 </div>
 
 {% if shared_line %}<p class="k mt-0">{{ shared_line }}</p>{% endif %}
+{% if part_of %}<p class="k mt-0">{{ t('goals.plan.part_of') }} <a class="taplink" href="/goals/{{ part_of.id }}">{{ part_of.title }}</a></p>{% endif %}
 {% if goal.why %}<p class="read mt-0">{{ goal.why }}</p>{% endif %}
 
 <div class="card">
   <div class="q">{{ target_text }}</div>
+  {% if plan and plan.days_left_text %}<p class="k mt-2 mb-0">{{ plan.days_left_text }}</p>{% endif %}
   {% if goal.kind == 'metric' %}
     {% if chart %}{{ chart|safe }}<p class="note mt-4 mb-0">{{ t('goals.chart_soon') if chart_sin_puntos else t('goals.chart_hint') }}</p>
     {% else %}<p class="note m-0">{{ t('goals.chart_soon') }}</p>{% endif %}
   {% endif %}
 </div>
+
+{% if plan %}
+<div class="card">
+  <div class="q">{{ t('goals.plan.week_title') }}</div>
+  <p class="k mt-2 mb-0">{{ plan.week.label }}{% if plan.week.titulo %} · {{ plan.week.titulo }}{% endif %}</p>
+  {% if plan.week.nota %}<p class="read mt-4 mb-0">{{ plan.week.nota }}</p>{% endif %}
+
+  {% if plan.week.lineas %}
+  <ul class="plan mt-8">
+    {% for l in plan.week.lineas %}
+    <li class="block">
+      <div class="row"><div>{{ l.target }}</div><span class="chip {{ l.cls }}">{{ l.chip }}</span></div>
+      <div class="k mt-2">{{ l.real }}</div>
+      {% if l.zona_nota %}<div class="k">{{ l.zona_nota }}</div>{% endif %}
+      {% if l.nota %}<div class="k">{{ l.nota }}</div>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="note mt-8 mb-0">{{ t('goals.plan.no_lineas') }}</p>
+  {% endif %}
+
+  {% if plan.week.dias %}
+  <div class="q mt-10 mb-0">{{ t('goals.plan.sessions_title') }}</div>
+  <ul class="plan">
+    {% for d in plan.week.dias %}
+    <li class="block">
+      <div class="k">{{ d.label }}</div>
+      {% for it in d.sesiones %}
+      <div class="row py-2">
+        <div>{{ it.title }}{% if it.time %} · {{ it.time }}{% endif %}</div>
+        <span class="chip {{ 'ok' if it.done else 'off' }}">
+          {{ t('goals.plan.session_done') if it.done else t('goals.plan.session_pending') }}</span>
+      </div>
+      {% endfor %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if plan.week.reglas %}
+  <div class="q mt-10 mb-0">{{ t('goals.plan.rules_title') }}</div>
+  <ul class="plan">
+    {% for r in plan.week.reglas %}
+    <li class="block">{{ r.texto }}{% if r.progreso %} · {{ r.progreso }}{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  <div class="row mt-10">
+    {% if plan.week.prev %}
+    <a class="btn" href="/goals/{{ goal.id }}?semana={{ plan.week.prev }}" aria-label="{{ t('goals.plan.week_prev_aria') }}">‹</a>
+    {% else %}<span></span>{% endif %}
+    {% if plan.week.next %}
+    <a class="btn" href="/goals/{{ goal.id }}?semana={{ plan.week.next }}" aria-label="{{ t('goals.plan.week_next_aria') }}">›</a>
+    {% else %}<span></span>{% endif %}
+  </div>
+</div>
+
+{% if plan.targets %}
+<div class="card">
+  <div class="q">{{ t('goals.plan.targets_title') }}</div>
+  {% for ta in plan.targets %}
+  <a class="row k py-4" href="/goals/{{ ta.id }}">{{ ta.title }}<span class="chip {{ ta.cls }}">{{ ta.verdict }}</span></a>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if plan.checkpoint_next or plan.checkpoints_past %}
+<div class="card">
+  <div class="q">{{ t('goals.plan.checkpoint_title') }}</div>
+  {% if plan.checkpoint_next %}
+  {% set cp = plan.checkpoint_next %}
+  <div class="row"><div>{{ cp.date }} · {{ cp.titulo }}</div><span class="chip {{ cp.cls }}">{{ cp.chip }}</span></div>
+  {% if cp.nota %}<p class="read mt-4 mb-0">{{ cp.nota }}</p>{% endif %}
+  <ul class="plan mt-6">
+    {% for cr in cp.criterios %}
+    <li><div class="row"><div>{{ cr.target }}</div><span class="chip {{ cr.cls }}">{{ cr.chip }}</span></div></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="note m-0">{{ t('goals.plan.checkpoint_none') }}</p>
+  {% endif %}
+  {% if plan.checkpoints_past %}
+  <details class="files mt-10">
+    <summary class="k">{{ t('goals.plan.checkpoints_past_title') }}</summary>
+    {% for cp in plan.checkpoints_past %}
+    <div class="row mt-6"><div>{{ cp.date }} · {{ cp.titulo }}</div><span class="chip {{ cp.cls }}">{{ cp.chip }}</span></div>
+    <ul class="plan">
+      {% for cr in cp.criterios %}
+      <li><div class="row"><div>{{ cr.target }}{% if cr.real %} · {{ cr.real }}{% endif %}</div>
+        <span class="chip {{ cr.cls }}">{{ cr.chip }}</span></div></li>
+      {% endfor %}
+    </ul>
+    {% endfor %}
+  </details>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if plan.experiments %}
+<div class="card">
+  <div class="q">{{ t('goals.plan.experiments_title') }}</div>
+  {% for e in plan.experiments %}
+  <a class="row k py-4" href="/experiments/{{ e.id }}">{{ e.titulo }}</a>
+  {% endfor %}
+</div>
+{% endif %}
+{% endif %}
 
 {% if members %}
 <div class="card">

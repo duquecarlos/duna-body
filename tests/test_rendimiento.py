@@ -19,6 +19,7 @@ checked by comparing the two sets directly, not just their counts.
 """
 import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -26,7 +27,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import config, db, demo, web
+from body import config, db, demo, fechas, goals, web
 from body.agente import conversacion as agente_conversacion
 from body.rutas import comun as web_comun
 from body.rutas import tendencias as web_tendencias
@@ -55,6 +56,13 @@ client = TestClient(web.app, follow_redirects=False)
 # length -- tests/test_tendencias_racha.py's own guard). Measured 18 statements without the card
 # present (this file's own fixture, which seeds no strength session) and 21 with it,
 # ceil(21 * 1.3) = 28.
+# BODY-PLAN-PANTALLA-1: /goals' own ceiling, raised after the demo fixture's horizon and its two
+# child goals gave person 1 three more active goals to render (and /goals now nests a horizon's
+# children under its own card). Measured 57 statements, ceil(57 * 1.3) = 75. /goals/{goal_id}'s own
+# ceiling (33) did not move: the fixture's picked goal_id is still a plain metric goal (the sleep
+# goal, seeded before the horizon), so the plan section's own extra queries never run for it --
+# ruling 5's own bounded-cost proof for a horizon's detail view lives in this file's
+# PlanPantallaCostIndependentOfSpanTest instead of here.
 _CEILINGS = {
     "/": 101,
     "/ajustes/asistente": 16,
@@ -65,7 +73,7 @@ _CEILINGS = {
     "/day/{day}": 62,
     "/experiments/{experiment_id}": 27,
     "/garmin": 9,
-    "/goals": 50,
+    "/goals": 75,
     "/goals/new": 20,
     "/goals/{goal_id}": 33,
     "/healthz": 3,
@@ -183,6 +191,75 @@ class RouteCostIndependentOfCatalogSizeTest(unittest.TestCase):
                 r2 = client.get("/trends")
         self.assertEqual((r1.status_code, r2.status_code), (200, 200))
         self.assertEqual(before["statements"], after["statements"])
+
+
+def _horizonte_milestone(conn, person_id: int, start_day: str, deadline: str, titulo: str) -> int:
+    return goals.propose(conn, person_id, titulo, start_day, kind="milestone", deadline=deadline)
+
+
+class PlanPantallaCostIndependentOfSpanTest(unittest.TestCase):
+    """BODY-PLAN-PANTALLA-1 ruling 5: /goals/{goal_id}'s own cost for a horizon, viewing its
+    current week, stays the same whether the horizon spans 1 week or 12, and whether that week
+    carries 1 weekly target line or 8 -- horizonte.semana()'s own queries are scoped to the one
+    week being viewed, never to the horizon's whole span or every line it has ever carried."""
+
+    HOY = date(2026, 11, 5)
+    MONDAY = fechas.lunes_de(HOY)
+
+    def test_one_week_vs_twelve_weeks_same_statement_count(self):
+        conn = _reset_db(self)
+        gid_short = _horizonte_milestone(
+            conn, 1, self.MONDAY.isoformat(), (self.MONDAY + timedelta(days=6)).isoformat(), "ZZ horizonte corto")
+        db.crear_meta_semanal(conn, 1, gid_short, self.MONDAY.isoformat(), "sesiones_fuerza", "al_menos", 3.0)
+        conn.commit()
+        with patch.object(web_comun, "_today_local", return_value=self.HOY):
+            with contar_sql() as corto:
+                r1 = client.get(f"/goals/{gid_short}")
+
+        gid_long = _horizonte_milestone(
+            conn, 1, self.MONDAY.isoformat(), (self.MONDAY + timedelta(weeks=11, days=6)).isoformat(),
+            "ZZ horizonte largo")
+        semana = self.MONDAY
+        for _ in range(12):
+            db.crear_meta_semanal(conn, 1, gid_long, semana.isoformat(), "sesiones_fuerza", "al_menos", 3.0)
+            semana += timedelta(days=7)
+        conn.commit()
+        with patch.object(web_comun, "_today_local", return_value=self.HOY):
+            with contar_sql() as largo:
+                r2 = client.get(f"/goals/{gid_long}")
+
+        self.assertEqual((r1.status_code, r2.status_code), (200, 200))
+        self.assertEqual(
+            corto["statements"], largo["statements"],
+            f"a 12-week horizon cost more statements than a 1-week one viewing the same current "
+            f"week: {corto['statements']} vs {largo['statements']}")
+
+    def test_one_line_vs_eight_lines_same_statement_count(self):
+        conn = _reset_db(self)
+        gid_one = _horizonte_milestone(
+            conn, 1, self.MONDAY.isoformat(), (self.MONDAY + timedelta(days=6)).isoformat(), "ZZ una linea")
+        db.crear_meta_semanal(conn, 1, gid_one, self.MONDAY.isoformat(), "sesiones_fuerza", "al_menos", 3.0)
+        conn.commit()
+        with patch.object(web_comun, "_today_local", return_value=self.HOY):
+            with contar_sql() as una:
+                r1 = client.get(f"/goals/{gid_one}")
+
+        gid_eight = _horizonte_milestone(
+            conn, 1, self.MONDAY.isoformat(), (self.MONDAY + timedelta(days=6)).isoformat(), "ZZ ocho lineas")
+        medidas = ["sueno_minutos", "hora_acostarse", "hora_levantarse", "sesiones_fuerza",
+                   "sesiones_cardio", "minutos_intensidad", "resting_hr", "steps"]
+        for medida in medidas:
+            db.crear_meta_semanal(conn, 1, gid_eight, self.MONDAY.isoformat(), medida, "al_menos", 1.0)
+        conn.commit()
+        with patch.object(web_comun, "_today_local", return_value=self.HOY):
+            with contar_sql() as ocho:
+                r2 = client.get(f"/goals/{gid_eight}")
+
+        self.assertEqual((r1.status_code, r2.status_code), (200, 200))
+        self.assertEqual(
+            una["statements"], ocho["statements"],
+            f"8 weekly target lines cost more statements than 1 in the same week: "
+            f"{una['statements']} vs {ocho['statements']}")
 
 
 if __name__ == "__main__":

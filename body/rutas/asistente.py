@@ -185,6 +185,15 @@ def _reloj_txt(t: T, medida: str, sentido: str, hora: str) -> str:
     return t(clave, hora=hora)
 
 
+def _minutos_target_txt(t: T, valor) -> str:
+    """Ruling 2 (BODY-PLAN-PANTALLA-1-R): one measure, one unit on a row -- the `min`-unit target
+    said with the SAME formatter its real figure already uses on this row (t.minutes), dropping a
+    whole hour's trailing ":00" (420 -> "7 h", not "7 h 00"; mirrors body/rutas/metas.py's own
+    _plan_minutos_txt, the goal-detail screen's equivalent row)."""
+    txt = t.minutes(valor)
+    return txt[:-3] if txt.endswith(" 00") else txt
+
+
 def _medida_target_txt(t: T, defs: dict, medida: str, sentido: str, valor) -> str:
     """BODY-PLAN-PROPUESTAS-1-R ruling 1a: one natural phrase, the measure's noun said once and the
     unit never repeating it -- session/clock/minute shapes for horizonte.MEDIDAS, the card's own
@@ -196,7 +205,7 @@ def _medida_target_txt(t: T, defs: dict, medida: str, sentido: str, valor) -> st
     if info is not None and info["unit"] == "sesiones":
         return _sesion_txt(t, medida, sentido, valor)
     sentido_txt = t("asistente.propuesta.plan_sentido." + sentido)
-    valor_txt = (t("asistente.propuesta.plan_unidad.min", n=t.num(valor)) if info is not None
+    valor_txt = (_minutos_target_txt(t, valor) if info is not None
                  else comun._fig_unit(t, medida, valor, defs))
     return t("asistente.propuesta.plan_medida_valor", medida=_medida_label(t, medida), sentido=sentido_txt,
               valor=valor_txt)
