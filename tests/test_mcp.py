@@ -374,6 +374,14 @@ class PlanToolsTest(_McpTestCase):
         self.assertIn("propuesta_id", salida)
         self.assertEqual(salida["estado"], "propuesta")
 
+    def test_proponer_plan_description_tells_the_hhmm_convention(self):
+        """BODY-PLAN-HORA-ENTRADA-1 ruling 2: the model is told a clock measure's valor is "HH:MM",
+        and the MCP door is what proves that sentence actually reaches it."""
+        _, listado = self._ejecutar([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
+        descripcion = next(t["description"] for t in listado[0]["result"]["tools"]
+                           if t["name"] == "proponer_plan")
+        self.assertIn("HH:MM", descripcion)
+
     def test_aplicar_propuesta_applies_a_proponer_plan_only_when_aplicar_mcp_is_on(self):
         _, respuestas = self._ejecutar([
             {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
