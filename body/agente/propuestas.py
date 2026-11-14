@@ -451,11 +451,18 @@ def _aplicar_registrar_entreno(conn: sqlite3.Connection, row: sqlite3.Row) -> di
 
 
 def _deshacer_registrar_entreno(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
-    """The manual case deletes the session it created. The Garmin-matched case restores each
-    touched set's exact pre-correction state -- including turning `corrected_by_person` back to
-    0 -- which `correct_exercise_set` cannot express (it only ever moves a set INTO "corrected"),
-    so this is a direct UPDATE/DELETE on `workout_set`. The unmatched active slots `aplicar`
-    excluded are restored to their own pre-propose `excluded_by_person` value the same way."""
+    """The manual case deletes the session it created -- and, first, every row DERIVED from it
+    (BODY-DESHACER-DERIVADOS-1 ruling 1): its own `recuperacion_actividad` row (the hosted pull's
+    recompute, never the person's own write -- recomputable, so simply gone, never a reason to
+    refuse) and any watch activity's `vinculo_manual` that happened to point at this session
+    (sync-time auto-link or a person's `unir_sesiones`) -- UNLINKED, never deleted: that activity
+    is the watch's own and stays. Without this, `activity`'s own FOREIGN KEY from
+    `recuperacion_actividad` (person_id, source, source_id) refuses the DELETE below outright. The
+    Garmin-matched case restores each touched set's exact pre-correction state -- including
+    turning `corrected_by_person` back to 0 -- which `correct_exercise_set` cannot express (it
+    only ever moves a set INTO "corrected"), so this is a direct UPDATE/DELETE on `workout_set`.
+    The unmatched active slots `aplicar` excluded are restored to their own pre-propose
+    `excluded_by_person` value the same way."""
     antes = json.loads(row["antes_json"]) if row["antes_json"] is not None else {}
     despues = json.loads(row["despues_json"])
     person_id = row["person_id"]
@@ -463,6 +470,12 @@ def _deshacer_registrar_entreno(conn: sqlite3.Connection, row: sqlite3.Row) -> N
         source_id = despues.get("source_id")
         if source_id is not None:
             with conn:
+                conn.execute(
+                    "DELETE FROM recuperacion_actividad WHERE person_id = ? AND activity_source = 'manual' "
+                    "AND activity_source_id = ?", (person_id, source_id))
+                conn.execute(
+                    "UPDATE activity SET vinculo_manual = NULL WHERE person_id = ? AND vinculo_manual = ?",
+                    (person_id, source_id))
                 conn.execute(
                     "DELETE FROM workout_set WHERE person_id = ? AND activity_source = 'manual' "
                     "AND activity_source_id = ?", (person_id, source_id))
@@ -1504,7 +1517,14 @@ def deshacer(conn: sqlite3.Connection, person_id: int, propuesta_id: int) -> dic
     if not _marcar(conn, propuesta_id, person_id, "aplicada", "deshecha", ahora_iso):
         conn.rollback()
         return {"estado": "ya_resuelta"}
-    entrada.escribir_deshacer(conn, row)
+    # BODY-DESHACER-DERIVADOS-1 ruling 2: the mark above and the undo writer below are ONE
+    # transaction, explicitly -- a raise from escribir_deshacer rolls the mark back too, so the
+    # proposal stays 'aplicada' rather than reading 'deshecha' with only part of its effect undone.
+    try:
+        entrada.escribir_deshacer(conn, row)
+    except Exception:
+        conn.rollback()
+        raise
     return {"estado": "deshecha"}
 
 
