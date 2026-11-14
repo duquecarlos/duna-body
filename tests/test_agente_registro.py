@@ -96,6 +96,7 @@ def _all_tool_calls():
         "leer_turnos": {}, "leer_costo_turnos": {}, "leer_ajustes": {}, "leer_tutoriales": {},
         "leer_entreno": {"day": "2026-10-05"}, "leer_experimentos": {},
         "leer_serie": {"metricas": ["resting_hr"], "desde": "2026-10-01", "hasta": "2026-10-05", "paso": "dia"},
+        "leer_plan": gid_placeholder, "leer_planes": {},
     }
 
 
@@ -162,7 +163,8 @@ PROPUESTA_NOMBRES = {"proponer_meta", "proponer_cambio_meta", "proponer_confirma
                      "corregir_comida",
                      "registrar_checkin", "marcar_periodo", "cerrar_periodo", "corregir_periodo",
                      "borrar_periodo", "descartar_series", "separar_sesion", "unir_sesiones",
-                     "proponer_objetivo_nutriente"}
+                     "proponer_objetivo_nutriente",
+                     "proponer_plan", "corregir_meta_plan", "ampliar_plan"}
 # Privacy and account controls deliberately NEVER become proposal tools (BODY-ASISTENTE-PROPUESTAS-1
 # approval reason): nivel_datos, consent, export, delete-all, device keys, Garmin connection,
 # household membership all stay on their own screens.
@@ -173,21 +175,22 @@ NUNCA_PROPUESTA = {
 
 
 class RegistryShapeTest(unittest.TestCase):
-    def test_fourteen_lectura_tools_with_expected_levels(self):
-        # BODY-AGENTE-LEER-SERIE-1: extended from thirteen -- leer_serie joined the registry, at
-        # the same nivel leer_tendencias holds (ruling 3), never a loosened count.
+    def test_sixteen_lectura_tools_with_expected_levels(self):
+        # BODY-PLAN-PROPUESTAS-1 ruling 6: extended from fourteen -- leer_plan/leer_planes joined
+        # the registry, at the same nivel leer_experimentos holds, never a loosened count.
         expected_levels = {
             "leer_hoy": "completo", "leer_dia": "completo", "leer_como_calculo": "completo",
             "leer_tendencias": "resumen", "leer_historia": "resumen", "leer_metas": "resumen",
             "leer_meta": "resumen", "leer_turnos": "ninguno", "leer_costo_turnos": "resumen",
             "leer_ajustes": "ninguno", "leer_tutoriales": "ninguno", "leer_entreno": "completo",
             "leer_experimentos": "resumen", "leer_serie": "resumen",
+            "leer_plan": "resumen", "leer_planes": "resumen",
         }
         lectura = [h for h in herramientas.HERRAMIENTAS if h["tipo"] == "lectura"]
-        self.assertEqual(len(lectura), 14)
+        self.assertEqual(len(lectura), 16)
         self.assertEqual({h["nombre"]: h["nivel"] for h in lectura}, expected_levels)
 
-    def test_twentyfour_propuesta_tools_at_nivel_ninguno(self):
+    def test_twentyseven_propuesta_tools_at_nivel_ninguno(self):
         propuesta = [h for h in herramientas.HERRAMIENTAS if h["tipo"] == "propuesta"]
         self.assertEqual({h["nombre"] for h in propuesta}, PROPUESTA_NOMBRES)
         self.assertTrue(all(h["nivel"] == "ninguno" for h in propuesta))
@@ -195,8 +198,9 @@ class RegistryShapeTest(unittest.TestCase):
 
     def test_every_entry_has_a_known_tipo(self):
         self.assertTrue(all(h["tipo"] in ("lectura", "propuesta") for h in herramientas.HERRAMIENTAS))
-        # BODY-AGENTE-LEER-SERIE-1: extended from 37 -- leer_serie is the one new entry.
-        self.assertEqual(len(herramientas.HERRAMIENTAS), 38)
+        # BODY-PLAN-PROPUESTAS-1: extended from 38 -- leer_plan, leer_planes, proponer_plan,
+        # corregir_meta_plan, ampliar_plan are the five new entries.
+        self.assertEqual(len(herramientas.HERRAMIENTAS), 43)
 
 
 class RouteMappingTest(unittest.TestCase):
@@ -243,6 +247,7 @@ class BehaviouralGuardTest(unittest.TestCase):
         gid = _seed(conn)
         casos = _all_tool_calls()
         casos["leer_meta"] = {"goal_id": gid}
+        casos["leer_plan"] = {"goal_id": gid}
         for nombre, params in casos.items():
             before = conn.total_changes
             herramientas.ejecutar(conn, 1, nombre, params, "completo")
@@ -372,6 +377,7 @@ class JsonSerializableTest(unittest.TestCase):
         gid = _seed(conn)
         casos = _all_tool_calls()
         casos["leer_meta"] = {"goal_id": gid}
+        casos["leer_plan"] = {"goal_id": gid}
         lectura_nombres = {h["nombre"] for h in herramientas.HERRAMIENTAS if h["tipo"] == "lectura"}
         self.assertEqual(set(casos), lectura_nombres)
         for nombre, params in casos.items():

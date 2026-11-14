@@ -97,7 +97,8 @@ _PROPUESTA_AGENTE_COLUMNS = """
                          'registrar_ingesta', 'corregir_ingesta', 'borrar_ingesta',
                          'marcar_periodo', 'cerrar_periodo', 'corregir_periodo', 'borrar_periodo',
                          'registrar_comida', 'corregir_comida', 'registrar_checkin', 'descartar_series',
-                         'separar_sesion', 'unir_sesiones', 'proponer_objetivo_nutriente')),
+                         'separar_sesion', 'unir_sesiones', 'proponer_objetivo_nutriente',
+                         'proponer_plan', 'corregir_meta_plan', 'ampliar_plan')),
     objetivo_id     INTEGER REFERENCES goal(id),
     antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
     despues_json    TEXT NOT NULL CHECK (json_valid(despues_json)),
@@ -1425,12 +1426,17 @@ def _rebuild_propuesta_agente_table(conn: sqlite3.Connection) -> None:
         old_rows = conn.execute("SELECT * FROM propuesta_agente").fetchall()
         conn.execute(f"CREATE TABLE propuesta_agente_nuevo ({_PROPUESTA_AGENTE_COLUMNS})")
         for r in old_rows:
+            # BODY-PLAN-PROPUESTAS-1: `aplicada_via` (BODY-MCP-APLICAR-1) is a later, plain ALTER
+            # TABLE ADD COLUMN, so an old row from before this slice's own widening may not have it
+            # in its row keys at all -- carried through when present, NULL when not, rather than
+            # silently dropping a "applied by your personal assistant" marker on every rebuild.
             conn.execute(
                 "INSERT INTO propuesta_agente_nuevo (id, person_id, conversacion_id, accion, objetivo_id, "
-                "antes_json, despues_json, estado, creada_en, expira_en, resuelta_en) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "antes_json, despues_json, estado, creada_en, expira_en, resuelta_en, aplicada_via) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (r["id"], r["person_id"], r["conversacion_id"], r["accion"], r["objetivo_id"], r["antes_json"],
-                 r["despues_json"], r["estado"], r["creada_en"], r["expira_en"], r["resuelta_en"]),
+                 r["despues_json"], r["estado"], r["creada_en"], r["expira_en"], r["resuelta_en"],
+                 r["aplicada_via"] if "aplicada_via" in r.keys() else None),
             )
         new_count = conn.execute("SELECT COUNT(*) FROM propuesta_agente_nuevo").fetchone()[0]
         if new_count != len(old_rows):
@@ -1505,6 +1511,13 @@ def _propuesta_agente_needs_corregir_comida_rebuild(conn: sqlite3.Connection) ->
     return row is not None and "corregir_comida" not in row[0]
 
 
+def _propuesta_agente_needs_plan_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'propuesta_agente'"
+    ).fetchone()
+    return row is not None and "proponer_plan" not in row[0]
+
+
 def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
@@ -1539,6 +1552,10 @@ def _migrate_propuestas(conn: sqlite3.Connection) -> None:
         _rebuild_propuesta_agente_table(conn)
     # BODY-COMIDA-CORREGIR-1: a tenth widening (corregir_comida), same reusable rebuild.
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_corregir_comida_rebuild(conn):
+        _rebuild_propuesta_agente_table(conn)
+    # BODY-PLAN-PROPUESTAS-1: an eleventh widening (proponer_plan, corregir_meta_plan, ampliar_plan),
+    # same reusable rebuild.
+    if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_plan_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
     # BODY-MCP-APLICAR-1: a plain nullable column, never a CHECK widening on `accion` -- a plain
     # ALTER TABLE ADD COLUMN, not the rebuild dance above.
@@ -2499,10 +2516,13 @@ def validar_experimento(metricas, ventana, filtro_dias) -> None:
 
 def crear_experimento(conn: sqlite3.Connection, person_id: int, titulo: str, metricas, ventana, filtro_dias,
                        *, habito_id: int | None = None, dias_prueba_objetivo: int | None = None,
-                       fecha_inicio: str | None = None, fecha_fin: str | None = None, estado: str = "activo") -> int:
+                       fecha_inicio: str | None = None, fecha_fin: str | None = None, estado: str = "activo",
+                       goal_id: int | None = None) -> int:
     """Validates the three JSON shapes, then inserts. If habito_id is given it must already be this
     person's own habit (via habit.goal_id -> goal.person_id) -- checked in SQL, scoped by
-    person_id, same as every other read and write in this section."""
+    person_id, same as every other read and write in this section. `goal_id` (BODY-PLAN-PROPUESTAS-1
+    ruling 5) links this experiment to a plan's horizon goal -- ownership is the caller's job
+    (body/agente/herramientas.py's `_proponer_experimento`), the same division as habito_id above."""
     validar_experimento(metricas, ventana, filtro_dias)
     if habito_id is not None:
         propio = conn.execute(
@@ -2516,10 +2536,10 @@ def crear_experimento(conn: sqlite3.Connection, person_id: int, titulo: str, met
     with conn:
         cur = conn.execute(
             "INSERT INTO experimento (person_id, titulo, habito_id, metricas, ventana, filtro_dias, "
-            "dias_prueba_objetivo, fecha_inicio, fecha_fin, estado, creado_en) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "dias_prueba_objetivo, fecha_inicio, fecha_fin, estado, creado_en, goal_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (person_id, titulo, habito_id, json.dumps(metricas), json.dumps(ventana), json.dumps(filtro_dias),
-             dias_prueba_objetivo, fecha_inicio, fecha_fin, estado, now),
+             dias_prueba_objetivo, fecha_inicio, fecha_fin, estado, now, goal_id),
         )
     return cur.lastrowid
 
@@ -2737,6 +2757,121 @@ def crear_checkpoint_horizonte(conn: sqlite3.Connection, person_id: int, horizon
             (horizonte_goal_id, person_id, day, titulo, json.dumps(criterios), nota, now),
         )
     return cur.lastrowid
+
+
+def crear_plan_horizonte(conn: sqlite3.Connection, person_id: int, plan: dict) -> int:
+    """BODY-PLAN-PROPUESTAS-1 ruling 1: writes a whole plan -- the horizon milestone goal, its
+    child metric goals, its own habits, rules, weeks and checkpoints, and finally its weekly
+    targets -- in ONE transaction: a failure on any insert leaves NOTHING written (sqlite3's own
+    `with conn:` rollback). Every field was already validated by the proposing tool
+    (body/agente/herramientas.py's `_proponer_plan`) before the proposal was ever stored, so this
+    is a straight write, never a second validation pass. Weekly targets are written LAST: a
+    duplicate (week_start, medida) pair is refused at propose time, but the table's own partial
+    unique index (horizonte_meta_semanal, WHERE vigente = 1) is the last-resort guard, and writing
+    it last means that guard can never discard a rule, week or checkpoint this same call already
+    wrote -- the whole transaction rolls back instead. Returns the horizon goal's own id."""
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO goal (person_id, hogar_id, area, title, why, kind, metric_key, direction, "
+            "target_value, baseline_value, start_day, deadline, status, visibility) "
+            "VALUES (?, NULL, 'body', ?, ?, 'milestone', NULL, NULL, NULL, NULL, ?, ?, 'proposed', 'private')",
+            (person_id, plan["titulo"], plan.get("why"), plan["start_day"], plan["deadline"]),
+        )
+        horizonte_goal_id = cur.lastrowid
+        for mf in plan.get("metas_finales") or []:
+            conn.execute(
+                "INSERT INTO goal (person_id, hogar_id, area, title, why, kind, metric_key, direction, "
+                "target_value, baseline_value, start_day, deadline, status, visibility, horizonte_goal_id) "
+                "VALUES (?, NULL, 'body', ?, NULL, 'metric', ?, ?, ?, NULL, ?, ?, 'proposed', 'private', ?)",
+                (person_id, mf["titulo"], mf["metric_key"], mf["direction"], mf["target_value"],
+                 plan["start_day"], plan["deadline"], horizonte_goal_id),
+            )
+        for h in plan.get("habitos") or []:
+            conn.execute(
+                "INSERT INTO habit (goal_id, title, cadence, assignee_person_id, active) "
+                "VALUES (?, ?, ?, NULL, 1)",
+                (horizonte_goal_id, h["titulo"], json.dumps(h["cadencia"])),
+            )
+        for i, r in enumerate(plan.get("reglas") or []):
+            conn.execute(
+                "INSERT INTO horizonte_regla (horizonte_goal_id, person_id, contexto, contexto_valor, texto, "
+                "chequeo, orden, activa, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
+                (horizonte_goal_id, person_id, r["contexto"], r.get("contexto_valor"), r["texto"],
+                 json.dumps(r["chequeo"]) if r.get("chequeo") is not None else None, i, now),
+            )
+        for s in plan.get("semanas") or []:
+            conn.execute(
+                "INSERT INTO horizonte_semana (horizonte_goal_id, person_id, week_start, titulo, nota, creado_en) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (horizonte_goal_id, person_id, s["week_start"], s.get("titulo"), s.get("nota"), now),
+            )
+        for c in plan.get("checkpoints") or []:
+            conn.execute(
+                "INSERT INTO horizonte_checkpoint (horizonte_goal_id, person_id, day, titulo, criterios, nota, "
+                "creado_en) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (horizonte_goal_id, person_id, c["day"], c["titulo"], json.dumps(c["criterios"]), c.get("nota"),
+                 now),
+            )
+        for m in plan.get("metas_semanales") or []:
+            conn.execute(
+                "INSERT INTO horizonte_meta_semanal (horizonte_goal_id, person_id, week_start, medida, sentido, "
+                "valor, nota, vigente, reemplaza_id, origen, creado_en) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 1, NULL, 'asistente', ?)",
+                (horizonte_goal_id, person_id, m["week_start"], m["medida"], m["sentido"], m["valor"],
+                 m.get("nota"), now),
+            )
+    return horizonte_goal_id
+
+
+def ampliar_plan_horizonte(conn: sqlite3.Connection, person_id: int, horizonte_goal_id: int,
+                            adiciones: dict) -> dict:
+    """BODY-PLAN-PROPUESTAS-1 ruling 4: insert-only growth of an existing horizon -- more rules,
+    weeks, checkpoints and weekly targets -- in ONE transaction, the same all-or-nothing writer as
+    crear_plan_horizonte above. Returns every row's own new id (regla_ids, semana_ids,
+    checkpoint_ids, meta_semanal_ids) so the proposal's own undo can delete EXACTLY what this call
+    inserted, never a row the original plan or a different ampliar_plan call wrote. Weekly targets
+    are written last, same reasoning as crear_plan_horizonte's own ordering."""
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    orden_base = conn.execute(
+        "SELECT COALESCE(MAX(orden), -1) + 1 FROM horizonte_regla WHERE horizonte_goal_id = ?",
+        (horizonte_goal_id,),
+    ).fetchone()[0]
+    ids: dict[str, list[int]] = {"regla_ids": [], "semana_ids": [], "checkpoint_ids": [], "meta_semanal_ids": []}
+    with conn:
+        for i, r in enumerate(adiciones.get("reglas") or []):
+            cur = conn.execute(
+                "INSERT INTO horizonte_regla (horizonte_goal_id, person_id, contexto, contexto_valor, texto, "
+                "chequeo, orden, activa, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
+                (horizonte_goal_id, person_id, r["contexto"], r.get("contexto_valor"), r["texto"],
+                 json.dumps(r["chequeo"]) if r.get("chequeo") is not None else None, orden_base + i, now),
+            )
+            ids["regla_ids"].append(cur.lastrowid)
+        for s in adiciones.get("semanas") or []:
+            cur = conn.execute(
+                "INSERT INTO horizonte_semana (horizonte_goal_id, person_id, week_start, titulo, nota, creado_en) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (horizonte_goal_id, person_id, s["week_start"], s.get("titulo"), s.get("nota"), now),
+            )
+            ids["semana_ids"].append(cur.lastrowid)
+        for c in adiciones.get("checkpoints") or []:
+            cur = conn.execute(
+                "INSERT INTO horizonte_checkpoint (horizonte_goal_id, person_id, day, titulo, criterios, nota, "
+                "creado_en) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (horizonte_goal_id, person_id, c["day"], c["titulo"], json.dumps(c["criterios"]), c.get("nota"),
+                 now),
+            )
+            ids["checkpoint_ids"].append(cur.lastrowid)
+        for m in adiciones.get("metas_semanales") or []:
+            cur = conn.execute(
+                "INSERT INTO horizonte_meta_semanal (horizonte_goal_id, person_id, week_start, medida, sentido, "
+                "valor, nota, vigente, reemplaza_id, origen, creado_en) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 1, NULL, 'asistente', ?)",
+                (horizonte_goal_id, person_id, m["week_start"], m["medida"], m["sentido"], m["valor"],
+                 m.get("nota"), now),
+            )
+            ids["meta_semanal_ids"].append(cur.lastrowid)
+    return ids
 
 
 # ---- ingesta (BODY-PROTEINA-1): registrar_ingesta/corregir_ingesta/borrar_ingesta are the ONE

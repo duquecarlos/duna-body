@@ -62,7 +62,7 @@ import statistics
 from datetime import date, timedelta
 
 from .. import anatomia, catalogo_tendencias, compartir, db, enlaces, entreno_historial, errores, experimentos, \
-    fechas, goals, history, household, nutriente_objetivo, profile, pull, readiness, shift_import, \
+    fechas, goals, history, horizonte, household, nutriente_objetivo, profile, pull, readiness, shift_import, \
     turnos_costo, tutoriales
 from ..i18n import LANGS, T
 from . import ajustes, propuestas
@@ -133,6 +133,27 @@ _UNIDADES_METRICA = {d[0]: d[2] for d in db.METRIC_DEFS}
 
 DIRECTIONS = ("raise", "lower", "keep")
 
+# BODY-PLAN-PROPUESTAS-1 ruling 2: a habit on a goal -- the person's own cadence shape
+# (body/rutas/metas.py's `_parse_new_habit`), described here for the model's guidance only; the
+# real enforcement is `_validar_cadencia_habito` below, since `_validar_parametros` never recurses
+# into an array item's own properties (the same limitation _PARAM_CANTIDAD_COMIDA's own comment
+# names).
+_CONTEXTOS_HABITO = ("before_night", "after_night", "off_days")
+_PARAM_HABITO_PLAN = {
+    "type": "object",
+    "properties": {
+        "titulo": {"type": "string"},
+        "cadencia": {
+            "type": "object",
+            "properties": {
+                "per": {"type": "string", "enum": ["day", "week", "month"]},
+                "times": {"type": "integer"},
+                "context": {"type": "string", "enum": list(_CONTEXTOS_HABITO)},
+            },
+        },
+    },
+    "required": ["titulo", "cadencia"],
+}
 _PARAM_PROPONER_META = {
     "type": "object",
     "properties": {
@@ -141,8 +162,15 @@ _PARAM_PROPONER_META = {
         "target_value": {"type": "number"},
         "deadline": {"type": "string", "format": "date"},
         "titulo": {"type": "string"},
+        # BODY-PLAN-PROPUESTAS-1 ruling 2: additive. metric_key/direction/target_value stay out of
+        # "required" below -- `_proponer_meta` itself refuses a 'milestone' that carries them, or
+        # a 'metric' (the default) that lacks any of them, in plain Python, the same division
+        # `_planear_entreno`'s own per-exercise checks already use.
+        "tipo": {"type": "string", "enum": ["metric", "milestone"]},
+        "habitos": {"type": "array", "items": _PARAM_HABITO_PLAN},
+        "horizonte_goal_id": {"type": "integer"},
     },
-    "required": ["metric_key", "direction", "target_value", "deadline", "titulo"],
+    "required": ["deadline", "titulo"],
     "additionalProperties": False,
 }
 _PARAM_PROPONER_CAMBIO_META = {
@@ -184,6 +212,10 @@ _PARAM_PLANEAR_ENTRENO = {
         "titulo": {"type": "string"},
         "time": {"type": "string"},
         "goal_id": {"type": "integer"},
+        # BODY-PLAN-PROPUESTAS-1 ruling 5: additive, distinct from `goal_id` above -- a plan the
+        # person owns specifically (kind='milestone'), checked with `_plan_propio` below, rather
+        # than `goal_id`'s own looser "any owned goal" check. Give at most one of the two.
+        "horizonte_goal_id": {"type": "integer"},
         "ejercicios": {
             "type": "array",
             "items": {
@@ -499,6 +531,8 @@ _PARAM_PROPONER_EXPERIMENTO = {
         "fecha_fin": {"type": "string", "format": "date"},
         "dias_prueba_objetivo": {"type": "integer"},
         "habito_id": {"type": "integer"},
+        # BODY-PLAN-PROPUESTAS-1 ruling 5: additive -- a plan the person owns, otherwise refused.
+        "horizonte_goal_id": {"type": "integer"},
     },
     "required": ["titulo", "metricas", "ventana", "filtro_dias"],
     "additionalProperties": False,
@@ -512,6 +546,119 @@ _PARAM_MARCAR_EXPERIMENTO = {
         "nota": {"type": "string"},
     },
     "required": ["experimento_id", "day", "ocurrio"],
+    "additionalProperties": False,
+}
+
+# BODY-PLAN-PROPUESTAS-1: the whole-plan tools' own item shapes and bounded list sizes (ruling 1).
+# Every cap is a per-call bound on the lists `proponer_plan`/`ampliar_plan` are willing to validate
+# and write in one go, named here rather than left as a bare number -- generous enough for a real
+# plan (a year of weekly targets, a couple of dozen rules or checkpoints), never unbounded.
+_PLAN_MAX_METAS_FINALES = 10
+_PLAN_MAX_HABITOS = 10
+_PLAN_MAX_REGLAS = 20
+_PLAN_MAX_SEMANAS = 104
+_PLAN_MAX_METAS_SEMANALES = 300
+_PLAN_MAX_CHECKPOINTS = 30
+
+_PARAM_META_FINAL_PLAN = {
+    "type": "object",
+    "properties": {
+        "titulo": {"type": "string"},
+        "metric_key": {"type": "string"},
+        "direction": {"type": "string", "enum": list(DIRECTIONS)},
+        "target_value": {"type": "number"},
+    },
+    "required": ["titulo", "metric_key", "direction", "target_value"],
+}
+_PARAM_REGLA_PLAN = {
+    "type": "object",
+    "properties": {
+        "contexto": {"type": "string", "enum": ["siempre", "turno", "tras_noche", "periodo", "descanso"]},
+        "contexto_valor": {"type": ["string", "null"]},
+        "texto": {"type": "string"},
+        "chequeo": {"type": ["object", "null"]},
+    },
+    "required": ["contexto", "texto"],
+}
+_PARAM_SEMANA_PLAN = {
+    "type": "object",
+    "properties": {
+        "week_start": {"type": "string", "format": "date"},
+        "titulo": {"type": "string"},
+        "nota": {"type": "string"},
+    },
+    "required": ["week_start"],
+}
+_PARAM_META_SEMANAL_PLAN = {
+    "type": "object",
+    "properties": {
+        "week_start": {"type": "string", "format": "date"},
+        "medida": {"type": "string"},
+        "sentido": {"type": "string", "enum": ["al_menos", "como_maximo", "antes_de", "despues_de"]},
+        "valor": {"type": "number"},
+        "nota": {"type": "string"},
+    },
+    "required": ["week_start", "medida", "sentido", "valor"],
+}
+_PARAM_CHECKPOINT_PLAN = {
+    "type": "object",
+    "properties": {
+        "day": {"type": "string", "format": "date"},
+        "titulo": {"type": "string"},
+        "criterios": {"type": "array"},
+        "nota": {"type": "string"},
+    },
+    "required": ["day", "titulo", "criterios"],
+}
+_PARAM_PROPONER_PLAN = {
+    "type": "object",
+    "properties": {
+        "titulo": {"type": "string"},
+        "why": {"type": "string"},
+        "start_day": {"type": "string", "format": "date"},
+        "deadline": {"type": "string", "format": "date"},
+        "metas_finales": {"type": "array", "items": _PARAM_META_FINAL_PLAN, "maxItems": _PLAN_MAX_METAS_FINALES},
+        "habitos": {"type": "array", "items": _PARAM_HABITO_PLAN, "maxItems": _PLAN_MAX_HABITOS},
+        "reglas": {"type": "array", "items": _PARAM_REGLA_PLAN, "maxItems": _PLAN_MAX_REGLAS},
+        "semanas": {"type": "array", "items": _PARAM_SEMANA_PLAN, "maxItems": _PLAN_MAX_SEMANAS},
+        "metas_semanales": {"type": "array", "items": _PARAM_META_SEMANAL_PLAN,
+                             "maxItems": _PLAN_MAX_METAS_SEMANALES},
+        "checkpoints": {"type": "array", "items": _PARAM_CHECKPOINT_PLAN, "maxItems": _PLAN_MAX_CHECKPOINTS},
+    },
+    "required": ["titulo", "start_day", "deadline"],
+    "additionalProperties": False,
+}
+_PARAM_AMPLIAR_PLAN = {
+    "type": "object",
+    "properties": {
+        "goal_id": {"type": "integer"},
+        "reglas": {"type": "array", "items": _PARAM_REGLA_PLAN, "maxItems": _PLAN_MAX_REGLAS},
+        "semanas": {"type": "array", "items": _PARAM_SEMANA_PLAN, "maxItems": _PLAN_MAX_SEMANAS},
+        "metas_semanales": {"type": "array", "items": _PARAM_META_SEMANAL_PLAN,
+                             "maxItems": _PLAN_MAX_METAS_SEMANALES},
+        "checkpoints": {"type": "array", "items": _PARAM_CHECKPOINT_PLAN, "maxItems": _PLAN_MAX_CHECKPOINTS},
+    },
+    "required": ["goal_id"],
+    "additionalProperties": False,
+}
+_PARAM_CORREGIR_META_PLAN = {
+    "type": "object",
+    "properties": {
+        "meta_id": {"type": "integer"},
+        "valor": {"type": "number"},
+        "nota": {"type": "string"},
+    },
+    "required": ["meta_id", "valor"],
+    "additionalProperties": False,
+}
+_PARAM_LEER_PLAN = {
+    "type": "object",
+    "properties": {
+        "goal_id": {"type": "integer"},
+        "desde": {"type": "string", "format": "date"},
+        "hasta": {"type": "string", "format": "date"},
+    },
+    "required": ["goal_id"],
     "additionalProperties": False,
 }
 
@@ -902,15 +1049,226 @@ def _zonas_periodo(t: T, valor: list) -> list[str] | None:
     return out or None
 
 
+# -- BODY-PLAN-PROPUESTAS-1: shared validation for the whole-plan tools (proponer_plan,
+# ampliar_plan) and for the two additive horizonte_goal_id links (planear_entreno,
+# proponer_experimento) -- every refusal is a ToolError naming the item and why, raised BEFORE
+# `propuestas.crear` ever stores the proposal (the same discipline `_proponer_experimento` already
+# follows with db.validar_experimento).
+
+def _plan_propio(conn: sqlite3.Connection, person_id: int, goal_id: int) -> bool:
+    """A plan is a milestone goal this person created -- never a shared household one, and never a
+    plain metric goal, even one the person owns."""
+    return conn.execute(
+        "SELECT 1 FROM goal WHERE id = ? AND person_id = ? AND kind = 'milestone'", (goal_id, person_id)
+    ).fetchone() is not None
+
+
+def _validar_cadencia_habito(cadencia) -> dict:
+    if not isinstance(cadencia, dict):
+        raise ToolError("cadencia: debe ser un objeto")
+    per = cadencia.get("per", "week")
+    if per not in ("day", "week", "month"):
+        raise ToolError(f"cadencia.per inválido: {per!r}")
+    times = cadencia.get("times", 1)
+    if not isinstance(times, int) or isinstance(times, bool) or times < 1:
+        raise ToolError("cadencia.times debe ser un entero >= 1")
+    context = cadencia.get("context")
+    if context is not None and context not in _CONTEXTOS_HABITO:
+        raise ToolError(f"cadencia.context inválido: {context!r}")
+    out = {"per": per, "times": times}
+    if context is not None:
+        out["context"] = context
+    return out
+
+
+def _validar_habitos_plan(habitos) -> list[dict]:
+    if habitos is None:
+        return []
+    if not isinstance(habitos, list) or len(habitos) > _PLAN_MAX_HABITOS:
+        raise ToolError(f"habitos: lista inválida o con más de {_PLAN_MAX_HABITOS} elementos")
+    out = []
+    for i, h in enumerate(habitos):
+        titulo = (h.get("titulo") or "").strip() if isinstance(h, dict) else ""
+        if not titulo:
+            raise ToolError(f"habitos[{i}].titulo: obligatorio")
+        try:
+            cadencia = _validar_cadencia_habito(h.get("cadencia") if isinstance(h, dict) else None)
+        except ToolError as e:
+            raise ToolError(f"habitos[{i}].{e.args[0]}")
+        out.append({"titulo": titulo, "cadencia": cadencia})
+    return out
+
+
+def _validar_metas_finales_plan(conn: sqlite3.Connection, metas_finales) -> list[dict]:
+    if metas_finales is None:
+        return []
+    if not isinstance(metas_finales, list) or len(metas_finales) > _PLAN_MAX_METAS_FINALES:
+        raise ToolError(f"metas_finales: lista inválida o con más de {_PLAN_MAX_METAS_FINALES} elementos")
+    out = []
+    for i, mf in enumerate(metas_finales):
+        if not isinstance(mf, dict):
+            raise ToolError(f"metas_finales[{i}]: debe ser un objeto")
+        titulo = (mf.get("titulo") or "").strip()
+        if not titulo:
+            raise ToolError(f"metas_finales[{i}].titulo: obligatorio")
+        direction = mf.get("direction")
+        if direction not in DIRECTIONS:
+            raise ToolError(f"metas_finales[{i}].direction inválida: {direction!r}")
+        metric_key = mf.get("metric_key")
+        if conn.execute("SELECT 1 FROM metric_def WHERE key = ?", (metric_key,)).fetchone() is None:
+            raise ToolError(f"metas_finales[{i}].metric_key desconocida: {metric_key!r}")
+        target_value = mf.get("target_value")
+        if not isinstance(target_value, (int, float)) or isinstance(target_value, bool):
+            raise ToolError(f"metas_finales[{i}].target_value debe ser un número")
+        out.append({"titulo": titulo, "metric_key": metric_key, "direction": direction,
+                    "target_value": float(target_value)})
+    return out
+
+
+def _validar_reglas_plan(conn: sqlite3.Connection, reglas) -> list[dict]:
+    if reglas is None:
+        return []
+    if not isinstance(reglas, list) or len(reglas) > _PLAN_MAX_REGLAS:
+        raise ToolError(f"reglas: lista inválida o con más de {_PLAN_MAX_REGLAS} elementos")
+    out = []
+    for i, r in enumerate(reglas):
+        if not isinstance(r, dict):
+            raise ToolError(f"reglas[{i}]: debe ser un objeto")
+        contexto, contexto_valor = r.get("contexto"), r.get("contexto_valor")
+        try:
+            db.validar_regla_horizonte(conn, contexto, contexto_valor)
+        except ValueError as e:
+            raise ToolError(f"reglas[{i}].{e.args[0]}")
+        texto = (r.get("texto") or "").strip()
+        if not texto:
+            raise ToolError(f"reglas[{i}].texto: obligatorio")
+        chequeo = r.get("chequeo")
+        try:
+            horizonte.validar_chequeo(chequeo)
+        except ValueError as e:
+            raise ToolError(f"reglas[{i}].{e.args[0]}")
+        out.append({"contexto": contexto, "contexto_valor": contexto_valor, "texto": texto, "chequeo": chequeo})
+    return out
+
+
+def _validar_semana_en_horizonte(week_start, start_day: str, deadline: str) -> None:
+    if not isinstance(week_start, str):
+        raise ToolError("week_start: obligatorio")
+    try:
+        d = date.fromisoformat(week_start)
+    except ValueError:
+        raise ToolError(f"week_start debe ser una fecha ISO (AAAA-MM-DD): {week_start!r}")
+    if fechas.lunes_de(d) != d:
+        raise ToolError(f"week_start debe ser un lunes: {week_start!r}")
+    if week_start < start_day or week_start > deadline:
+        raise ToolError(f"week_start fuera del horizonte ({start_day!r}..{deadline!r}): {week_start!r}")
+
+
+def _validar_dia_en_horizonte(day, start_day: str, deadline: str) -> None:
+    if not isinstance(day, str):
+        raise ToolError("day: obligatorio")
+    try:
+        date.fromisoformat(day)
+    except ValueError:
+        raise ToolError(f"day debe ser una fecha ISO (AAAA-MM-DD): {day!r}")
+    if day < start_day or day > deadline:
+        raise ToolError(f"day fuera del horizonte ({start_day!r}..{deadline!r}): {day!r}")
+
+
+def _validar_semanas_plan(semanas, start_day: str, deadline: str) -> list[dict]:
+    if semanas is None:
+        return []
+    if not isinstance(semanas, list) or len(semanas) > _PLAN_MAX_SEMANAS:
+        raise ToolError(f"semanas: lista inválida o con más de {_PLAN_MAX_SEMANAS} elementos")
+    out = []
+    for i, s in enumerate(semanas):
+        if not isinstance(s, dict):
+            raise ToolError(f"semanas[{i}]: debe ser un objeto")
+        try:
+            _validar_semana_en_horizonte(s.get("week_start"), start_day, deadline)
+        except ToolError as e:
+            raise ToolError(f"semanas[{i}].{e.args[0]}")
+        out.append({"week_start": s["week_start"], "titulo": s.get("titulo"), "nota": s.get("nota")})
+    return out
+
+
+def _validar_metas_semanales_plan(conn: sqlite3.Connection, metas_semanales, start_day: str, deadline: str, *,
+                                   existentes: set | None = None) -> list[dict]:
+    """`existentes` (ruling 4) is the set of (week_start, medida) pairs that already have a vigente
+    weekly target for this horizon -- ampliar_plan's own duplicate-vs-database check, named
+    'use corregir_meta_plan' instead of a bare 'duplicate'. proponer_plan passes none (the horizon
+    does not exist yet), so only the within-list check ('at most one line per (week, medida)',
+    ruling 1) ever fires for it."""
+    if metas_semanales is None:
+        return []
+    if not isinstance(metas_semanales, list) or len(metas_semanales) > _PLAN_MAX_METAS_SEMANALES:
+        raise ToolError(f"metas_semanales: lista inválida o con más de {_PLAN_MAX_METAS_SEMANALES} elementos")
+    vistos: set = set()
+    out = []
+    for i, m in enumerate(metas_semanales):
+        if not isinstance(m, dict):
+            raise ToolError(f"metas_semanales[{i}]: debe ser un objeto")
+        try:
+            _validar_semana_en_horizonte(m.get("week_start"), start_day, deadline)
+        except ToolError as e:
+            raise ToolError(f"metas_semanales[{i}].{e.args[0]}")
+        medida, sentido = m.get("medida"), m.get("sentido")
+        try:
+            horizonte.validar_medida(conn, medida, sentido)
+        except ValueError as e:
+            raise ToolError(f"metas_semanales[{i}].{e.args[0]}")
+        valor = m.get("valor")
+        if not isinstance(valor, (int, float)) or isinstance(valor, bool):
+            raise ToolError(f"metas_semanales[{i}].valor debe ser un número")
+        clave = (m["week_start"], medida)
+        if existentes and clave in existentes:
+            raise ToolError(f"metas_semanales[{i}]: ya hay una meta vigente para {medida!r} en la semana "
+                            f"{m['week_start']!r} -- usa corregir_meta_plan")
+        if clave in vistos:
+            raise ToolError(f"metas_semanales[{i}]: {medida!r} aparece dos veces en la semana "
+                            f"{m['week_start']!r}")
+        vistos.add(clave)
+        out.append({"week_start": m["week_start"], "medida": medida, "sentido": sentido, "valor": float(valor),
+                    "nota": m.get("nota")})
+    return out
+
+
+def _validar_checkpoints_plan(conn: sqlite3.Connection, checkpoints, start_day: str, deadline: str) -> list[dict]:
+    if checkpoints is None:
+        return []
+    if not isinstance(checkpoints, list) or len(checkpoints) > _PLAN_MAX_CHECKPOINTS:
+        raise ToolError(f"checkpoints: lista inválida o con más de {_PLAN_MAX_CHECKPOINTS} elementos")
+    out = []
+    for i, c in enumerate(checkpoints):
+        if not isinstance(c, dict):
+            raise ToolError(f"checkpoints[{i}]: debe ser un objeto")
+        try:
+            _validar_dia_en_horizonte(c.get("day"), start_day, deadline)
+        except ToolError as e:
+            raise ToolError(f"checkpoints[{i}].{e.args[0]}")
+        titulo = (c.get("titulo") or "").strip()
+        if not titulo:
+            raise ToolError(f"checkpoints[{i}].titulo: obligatorio")
+        criterios = c.get("criterios")
+        try:
+            horizonte.validar_criterios(conn, criterios)
+        except ValueError as e:
+            raise ToolError(f"checkpoints[{i}].{e.args[0]}")
+        out.append({"day": c["day"], "titulo": titulo, "criterios": criterios, "nota": c.get("nota")})
+    return out
+
+
 def _planear_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id: int, day: str, titulo: str,
-                      ejercicios: list, time: str | None = None, goal_id: int | None = None) -> dict:
+                      ejercicios: list, time: str | None = None, goal_id: int | None = None,
+                      horizonte_goal_id: int | None = None) -> dict:
     """Proposes one `plan` row for a day: a title, an optional time and a list of planned
     exercises `{ejercicio, series, reps?, categoria?}` (BODY-ENTRENO-TOOLS-1, Q3; categoria added
     BODY-CUERPO-VISTA-1-M ruling 2, validated at the door against `anatomia.CATEGORIA_ENUM`). Hoy's
     own body view lights its glow groups from this categoria (BODY-CUERPO-VISTA-1 ruling 3).
     Insert-shaped, like `proponer_meta`: there is no 'before'. Unlike `_registrar_entreno`/
     `_registrar_medida`, a future `day` is allowed on purpose here: a plan is for later, not for
-    what already happened."""
+    what already happened. `horizonte_goal_id` (BODY-PLAN-PROPUESTAS-1 ruling 5) is additive: give
+    at most one of `goal_id`/`horizonte_goal_id` -- either becomes the session's own `plan.goal_id`."""
     try:
         date.fromisoformat(day)
     except ValueError:
@@ -928,10 +1286,16 @@ def _planear_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id: 
         if not isinstance(e.get("series"), int) or e["series"] < 1:
             raise ToolError("cada ejercicio necesita 'series' (entero >= 1)")
         e["categoria"] = _categoria_entreno(t, ejercicio, e.get("categoria"))
+    if goal_id is not None and horizonte_goal_id is not None:
+        raise ToolError("usa goal_id o horizonte_goal_id, no los dos")
     if goal_id is not None:
         g = conn.execute("SELECT 1 FROM goal WHERE id = ? AND person_id = ?", (goal_id, person_id)).fetchone()
         if g is None:
             raise ToolError(f"meta desconocida: {goal_id!r}")
+    if horizonte_goal_id is not None:
+        if not _plan_propio(conn, person_id, horizonte_goal_id):
+            raise ToolError(f"plan desconocido: {horizonte_goal_id!r}")
+        goal_id = horizonte_goal_id
     despues = {"day": day, "time": time, "titulo": titulo, "goal_id": goal_id, "ejercicios": ejercicios}
     registro = propuestas.crear(conn, person_id, conversacion_id, "planear_entreno", despues)
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
@@ -1727,14 +2091,49 @@ def _leer_experimentos(conn: sqlite3.Connection, person_id: int, experimento_id:
     return {"experimentos": [_experimento_dict(conn, person_id, r, hoy) for r in filas]}
 
 
+def _leer_planes(conn: sqlite3.Connection, person_id: int) -> dict:
+    """Every horizon this person can see (BODY-PLAN-PROPUESTAS-1 ruling 6) -- their own plus any
+    shared household milestone, active plans first -- each summarised by `horizonte.resumen` (`nivel:
+    'resumen'`, by analogy with `leer_experimentos`: a plan's own figures, never recomputed here).
+    A horizon is any milestone goal with no `horizonte_goal_id` of its own, i.e. not itself a child
+    of another plan."""
+    hh = household.household_of(conn, person_id)
+    where, params = goals.goal_scope_sql(person_id, hh)
+    hoy = fechas.hoy_local(db.person(conn, person_id))
+    filas = conn.execute(
+        f"SELECT id FROM goal WHERE {where} AND kind = 'milestone' AND horizonte_goal_id IS NULL "
+        "ORDER BY (status = 'active') DESC, id DESC", params).fetchall()
+    return {"planes": [horizonte.resumen(conn, r["id"], person_id, hoy=hoy) for r in filas]}
+
+
+def _leer_plan(conn: sqlite3.Connection, person_id: int, goal_id: int, desde: str | None = None,
+                hasta: str | None = None) -> dict:
+    """One horizon's own summary (BODY-PLAN-PROPUESTAS-1 ruling 6), plus `horizonte.plan_vs_real`
+    for [desde, hasta] when both are given. `nivel: 'resumen'`. Access goes through
+    `goals.goal_access` first -- `horizonte.resumen` itself does not check it for the horizon
+    goal, only for its children."""
+    if goals.goal_access(conn, goal_id, person_id) is None:
+        return {"encontrada": False}
+    hoy = fechas.hoy_local(db.person(conn, person_id))
+    plan = horizonte.resumen(conn, goal_id, person_id, hoy=hoy)
+    if plan is None:
+        return {"encontrada": False}
+    out = {"encontrada": True, "plan": plan}
+    if desde and hasta:
+        out["plan_vs_real"] = horizonte.plan_vs_real(conn, goal_id, person_id, desde, hasta, hoy=hoy)
+    return out
+
+
 def _proponer_experimento(conn: sqlite3.Connection, person_id: int, conversacion_id: int, titulo: str,
                            metricas: list, ventana: dict, filtro_dias: dict, fecha_inicio: str | None = None,
                            fecha_fin: str | None = None, dias_prueba_objetivo: int | None = None,
-                           habito_id: int | None = None) -> dict:
+                           habito_id: int | None = None, horizonte_goal_id: int | None = None) -> dict:
     """Proposes a new experiment (BODY-EXPERIMENTOS-REGISTRO-1): insert-shaped, like
     `planear_entreno` -- there is no 'before'. Validated with `db.validar_experimento` and the same
     habit-ownership rule `db.crear_experimento` itself enforces, BEFORE the proposal is stored, so
-    a bad proposal is a ToolError, never a card the person could tap Aplicar on."""
+    a bad proposal is a ToolError, never a card the person could tap Aplicar on.
+    `horizonte_goal_id` (BODY-PLAN-PROPUESTAS-1 ruling 5) is additive: a plan the person owns,
+    stored as `experimento.goal_id`."""
     titulo = (titulo or "").strip()
     if not titulo:
         raise ToolError("falta el título del experimento")
@@ -1748,6 +2147,8 @@ def _proponer_experimento(conn: sqlite3.Connection, person_id: int, conversacion
             (habito_id, person_id)).fetchone()
         if propio is None:
             raise ToolError(f"hábito desconocido: {habito_id!r}")
+    if horizonte_goal_id is not None and not _plan_propio(conn, person_id, horizonte_goal_id):
+        raise ToolError(f"plan desconocido: {horizonte_goal_id!r}")
     fecha_inicio = fecha_inicio or _hoy_local(conn, person_id)
     _dia_no_futuro(conn, person_id, fecha_inicio)
     dias = db.days_with_data(conn, person_id)
@@ -1760,7 +2161,7 @@ def _proponer_experimento(conn: sqlite3.Connection, person_id: int, conversacion
             raise ToolError("fecha_fin debe ser una fecha ISO (AAAA-MM-DD)")
     despues = {"titulo": titulo, "metricas": metricas, "ventana": ventana, "filtro_dias": filtro_dias,
                "fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin, "dias_prueba_objetivo": dias_prueba_objetivo,
-               "habito_id": habito_id}
+               "habito_id": habito_id, "horizonte_goal_id": horizonte_goal_id}
     registro = propuestas.crear(conn, person_id, conversacion_id, "proponer_experimento", despues)
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
@@ -1796,22 +2197,125 @@ def _marcar_experimento(conn: sqlite3.Connection, person_id: int, conversacion_i
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
-def _proponer_meta(conn: sqlite3.Connection, person_id: int, conversacion_id: int, metric_key: str,
-                    direction: str, target_value, deadline: str, titulo: str) -> dict:
+def _proponer_meta(conn: sqlite3.Connection, person_id: int, conversacion_id: int, deadline: str, titulo: str,
+                    tipo: str = "metric", metric_key: str | None = None, direction: str | None = None,
+                    target_value=None, habitos: list | None = None, horizonte_goal_id: int | None = None) -> dict:
+    """BODY-PLAN-PROPUESTAS-1 ruling 2: `tipo`/`habitos`/`horizonte_goal_id` are additive -- a call
+    giving none of them (today's own shape) proposes a metric goal exactly as before. A
+    'milestone' needs a deadline (always required) and no metric fields; a 'metric' (the default)
+    needs all three."""
     titulo = (titulo or "").strip()
     if not titulo:
         raise ToolError("falta el título de la meta")
-    if direction not in DIRECTIONS:
-        raise ToolError(f"direction inválida: {direction!r}; debe ser una de {DIRECTIONS}")
-    if conn.execute("SELECT 1 FROM metric_def WHERE key = ?", (metric_key,)).fetchone() is None:
-        raise ToolError(f"metric_key desconocida: {metric_key!r}")
+    if tipo not in ("metric", "milestone"):
+        raise ToolError(f"tipo inválido: {tipo!r}; debe ser 'metric' o 'milestone'")
     try:
         date.fromisoformat(deadline)
     except ValueError:
         raise ToolError("deadline debe ser una fecha ISO (AAAA-MM-DD)")
-    despues = {"metric_key": metric_key, "direction": direction, "target_value": float(target_value),
-               "deadline": deadline, "titulo": titulo, "start_day": _hoy_local(conn, person_id)}
+    if tipo == "milestone":
+        if metric_key is not None or direction is not None or target_value is not None:
+            raise ToolError("una meta de tipo milestone no lleva metric_key/direction/target_value")
+    else:
+        if direction not in DIRECTIONS:
+            raise ToolError(f"direction inválida: {direction!r}; debe ser una de {DIRECTIONS}")
+        if conn.execute("SELECT 1 FROM metric_def WHERE key = ?", (metric_key,)).fetchone() is None:
+            raise ToolError(f"metric_key desconocida: {metric_key!r}")
+        if target_value is None:
+            raise ToolError("falta target_value")
+    habitos_v = _validar_habitos_plan(habitos)
+    if horizonte_goal_id is not None and not _plan_propio(conn, person_id, horizonte_goal_id):
+        raise ToolError(f"plan desconocido: {horizonte_goal_id!r}")
+    despues = {"tipo": tipo, "metric_key": metric_key, "direction": direction,
+               "target_value": float(target_value) if target_value is not None else None,
+               "deadline": deadline, "titulo": titulo, "start_day": _hoy_local(conn, person_id),
+               "habitos": habitos_v, "horizonte_goal_id": horizonte_goal_id}
     registro = propuestas.crear(conn, person_id, conversacion_id, "proponer_meta", despues)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
+def _proponer_plan(conn: sqlite3.Connection, person_id: int, conversacion_id: int, titulo: str, start_day: str,
+                    deadline: str, why: str | None = None, metas_finales: list | None = None,
+                    habitos: list | None = None, reglas: list | None = None, semanas: list | None = None,
+                    metas_semanales: list | None = None, checkpoints: list | None = None) -> dict:
+    """Ruling 1: a whole plan is ONE card. Validates every part BEFORE the proposal is stored
+    (every list defaults to empty), so a bad plan is a ToolError, never a card the person could
+    tap Aplicar on. Apply writes all of it in one transaction (`db.crear_plan_horizonte`)."""
+    titulo = (titulo or "").strip()
+    if not titulo:
+        raise ToolError("falta el título del plan")
+    try:
+        date.fromisoformat(start_day)
+        date.fromisoformat(deadline)
+    except ValueError:
+        raise ToolError("start_day/deadline deben ser fechas ISO (AAAA-MM-DD)")
+    if deadline <= start_day:
+        raise ToolError("deadline debe ser posterior a start_day")
+    despues = {
+        "titulo": titulo, "why": (why or "").strip() or None, "start_day": start_day, "deadline": deadline,
+        "metas_finales": _validar_metas_finales_plan(conn, metas_finales),
+        "habitos": _validar_habitos_plan(habitos),
+        "reglas": _validar_reglas_plan(conn, reglas),
+        "semanas": _validar_semanas_plan(semanas, start_day, deadline),
+        "metas_semanales": _validar_metas_semanales_plan(conn, metas_semanales, start_day, deadline),
+        "checkpoints": _validar_checkpoints_plan(conn, checkpoints, start_day, deadline),
+    }
+    registro = propuestas.crear(conn, person_id, conversacion_id, "proponer_plan", despues)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
+def _ampliar_plan(conn: sqlite3.Connection, person_id: int, conversacion_id: int, goal_id: int,
+                   reglas: list | None = None, semanas: list | None = None, metas_semanales: list | None = None,
+                   checkpoints: list | None = None) -> dict:
+    """Ruling 4: insert-only additions to an existing owned horizon. A duplicate (week, medida)
+    against an existing vigente weekly line is refused, naming `corregir_meta_plan` instead."""
+    goal = conn.execute(
+        "SELECT start_day, deadline FROM goal WHERE id = ? AND person_id = ? AND kind = 'milestone'",
+        (goal_id, person_id)).fetchone()
+    if goal is None:
+        raise ToolError(f"plan desconocido: {goal_id!r}")
+    start_day, deadline = goal["start_day"], goal["deadline"]
+    reglas_v = _validar_reglas_plan(conn, reglas)
+    semanas_v = _validar_semanas_plan(semanas, start_day, deadline)
+    existentes = {(r["week_start"], r["medida"]) for r in conn.execute(
+        "SELECT week_start, medida FROM horizonte_meta_semanal WHERE horizonte_goal_id = ? AND vigente = 1",
+        (goal_id,))}
+    metas_semanales_v = _validar_metas_semanales_plan(conn, metas_semanales, start_day, deadline,
+                                                        existentes=existentes)
+    checkpoints_v = _validar_checkpoints_plan(conn, checkpoints, start_day, deadline)
+    if not (reglas_v or semanas_v or metas_semanales_v or checkpoints_v):
+        raise ToolError("no hay nada para añadir")
+    despues = {"goal_id": goal_id, "reglas": reglas_v, "semanas": semanas_v,
+               "metas_semanales": metas_semanales_v, "checkpoints": checkpoints_v}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "ampliar_plan", despues, objetivo_id=goal_id)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
+def _corregir_meta_plan(conn: sqlite3.Connection, person_id: int, conversacion_id: int, meta_id: int, valor,
+                         nota: str | None = None) -> dict:
+    """Ruling 3: a correction is another append, never an UPDATE of the weekly target's own value.
+    `antes`/`despues` carry the full before/after so the card can show 'before -> after' with the
+    measure's unit, and so undo can append the restoring third row."""
+    fila = conn.execute(
+        "SELECT horizonte_goal_id, week_start, medida, sentido, valor, nota, vigente FROM horizonte_meta_semanal "
+        "WHERE id = ? AND person_id = ?", (meta_id, person_id)).fetchone()
+    if fila is None:
+        raise ToolError(f"meta semanal desconocida: {meta_id!r}")
+    if not fila["vigente"]:
+        raise ToolError("esa meta semanal ya fue corregida")
+    try:
+        valor = float(valor)
+    except (TypeError, ValueError):
+        raise ToolError("valor debe ser un número")
+    nota = (nota or "").strip() or None
+    antes = {"meta_id": meta_id, "valor": fila["valor"], "nota": fila["nota"], "medida": fila["medida"],
+             "sentido": fila["sentido"], "week_start": fila["week_start"],
+             "horizonte_goal_id": fila["horizonte_goal_id"]}
+    despues = {"meta_id": meta_id, "valor": valor, "nota": nota, "medida": fila["medida"],
+               "sentido": fila["sentido"], "week_start": fila["week_start"],
+               "horizonte_goal_id": fila["horizonte_goal_id"]}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "corregir_meta_plan", despues,
+                                 objetivo_id=fila["horizonte_goal_id"], antes=antes)
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
@@ -1915,13 +2419,31 @@ HERRAMIENTAS = [
                      "paso más grueso o divide el rango.",
      "parametros": _PARAM_LEER_SERIE, "funcion": _leer_serie, "necesita_nivel": True},
     {"nombre": "proponer_meta", "tipo": "propuesta", "nivel": "ninguno",
-     "descripcion": "Propone crear una meta nueva de tipo métrica. No la crea: registra la propuesta "
-                     "para que la persona la apruebe en el chat.",
+     "descripcion": "Propone crear una meta nueva, de tipo métrica (con metric_key/direction/target_value) "
+                     "o de tipo milestone (sin métrica, solo con deadline); puede llevar hábitos y puede "
+                     "colgar de un plan (horizonte_goal_id). No la crea: registra la propuesta para que la "
+                     "persona la apruebe en el chat.",
      "parametros": _PARAM_PROPONER_META, "funcion": _proponer_meta},
     {"nombre": "proponer_cambio_meta", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone cambiar el valor objetivo y/o la fecha de una meta existente de la persona. "
                      "No la cambia: registra la propuesta para que la persona la apruebe en el chat.",
      "parametros": _PARAM_PROPONER_CAMBIO_META, "funcion": _proponer_cambio_meta},
+    {"nombre": "proponer_plan", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone un plan completo: metas finales, hábitos, reglas, semanas, metas semanales y "
+                     "checkpoints, todo en una sola tarjeta. No crea nada: registra la propuesta para que la "
+                     "persona la apruebe en el chat; si la aprueba, todo se guarda junto o nada se guarda.",
+     "parametros": _PARAM_PROPONER_PLAN, "funcion": _proponer_plan},
+    {"nombre": "ampliar_plan", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone añadir reglas, semanas, metas semanales o checkpoints nuevos a un plan que la "
+                     "persona ya tiene. Para cambiar el valor de una meta semanal que ya existe usa "
+                     "corregir_meta_plan, no esta. No añade nada: registra la propuesta para que la persona "
+                     "la apruebe en el chat.",
+     "parametros": _PARAM_AMPLIAR_PLAN, "funcion": _ampliar_plan},
+    {"nombre": "corregir_meta_plan", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone corregir el valor de una meta semanal de un plan (por ejemplo, bajar la meta de "
+                     "una semana difícil). No sobrescribe nada: registra la corrección como un nuevo valor, "
+                     "para que la persona la apruebe en el chat.",
+     "parametros": _PARAM_CORREGIR_META_PLAN, "funcion": _corregir_meta_plan},
     {"nombre": "proponer_confirmar_turnos", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone confirmar todos los lotes de turnos propuestos pendientes. No los confirma: "
                      "registra la propuesta para que la persona la apruebe en el chat.",
@@ -2070,6 +2592,16 @@ HERRAMIENTAS = [
                      "normal. Las palabras del veredicto las muestra la pantalla; usa estos códigos para "
                      "explicarlo con tus propias palabras, nunca como consejo médico.",
      "parametros": _PARAM_LEER_EXPERIMENTOS, "funcion": _leer_experimentos},
+    {"nombre": "leer_planes", "tipo": "lectura", "nivel": "resumen",
+     "descripcion": "Los planes (horizontes) de la persona, activos primero: título, deadline, metas "
+                     "finales con su propio veredicto, experimentos ligados, la semana actual y el próximo "
+                     "checkpoint, nunca el dato crudo de un solo día.",
+     "parametros": _SIN_PARAMETROS, "funcion": _leer_planes},
+    {"nombre": "leer_plan", "tipo": "lectura", "nivel": "resumen",
+     "descripcion": "Un plan (horizonte) de la persona por su id, con lo mismo que leer_planes trae por "
+                     "plan; si además das desde/hasta, agrega semana por semana qué decía el plan contra "
+                     "qué pasó realmente en ese rango.",
+     "parametros": _PARAM_LEER_PLAN, "funcion": _leer_plan},
     {"nombre": "proponer_experimento", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone empezar un experimento: compara los días en que la persona hace algo con sus "
                      "propios días normales, nunca con una tabla de otra gente. Un día que no se marca no "

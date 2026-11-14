@@ -195,25 +195,60 @@ class _Accion:
 # -- proponer_meta ------------------------------------------------------------------------------
 
 def _aplicar_meta(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+    """BODY-PLAN-PROPUESTAS-1 ruling 2: `tipo`/`habitos`/`horizonte_goal_id` are additive -- a
+    pre-slice row carries none of them, so `.get()` here reproduces exactly today's metric-only
+    write. `goals.propose` already accepts `kind='milestone'` (BODY-PLAN-ESQUEMA-1); this is still
+    the one path that creates a goal, never a hand-written INSERT. `horizonte_goal_id` is set by a
+    direct UPDATE after creation: `goals.propose` has no such parameter (goals.py is not this
+    slice's to widen), the same kind of narrow exception `separar_sesion`'s own direct write on
+    `activity` already takes above. Each habit's own id is returned (merged into despues_json by
+    `aplicar`'s generic handling) so `_deshacer_meta` can deactivate exactly those, never every
+    habit of the goal."""
     despues = json.loads(row["despues_json"])
     goal_id = goals.propose(conn, row["person_id"], despues["titulo"], despues["start_day"],
-                             metric_key=despues["metric_key"], direction=despues["direction"],
-                             target_value=despues["target_value"], deadline=despues["deadline"])
-    return {"goal_id": goal_id}
+                             kind=despues.get("tipo", "metric"), metric_key=despues.get("metric_key"),
+                             direction=despues.get("direction"), target_value=despues.get("target_value"),
+                             deadline=despues["deadline"])
+    horizonte_goal_id = despues.get("horizonte_goal_id")
+    if horizonte_goal_id is not None:
+        with conn:
+            conn.execute("UPDATE goal SET horizonte_goal_id = ? WHERE id = ?", (horizonte_goal_id, goal_id))
+    habito_ids = [goals.add_habit(conn, goal_id, h["titulo"], h["cadencia"]) for h in despues.get("habitos") or []]
+    resultado = {"goal_id": goal_id}
+    if habito_ids:
+        resultado["habito_ids"] = habito_ids
+    return resultado
 
 
 def _deshacer_meta(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
     goals.drop(conn, row["objetivo_id"])
+    habito_ids = despues.get("habito_ids") or []
+    if habito_ids:
+        placeholders = ",".join("?" * len(habito_ids))
+        with conn:
+            conn.execute(f"UPDATE habit SET active = 0 WHERE id IN ({placeholders})", habito_ids)
 
 
 # -- proponer_meta / proponer_cambio_meta share one drift-on-undo check: both leave a `goal` row
-# whose target_value/deadline must still match what was applied.
+# whose target_value/deadline must still match what was applied. proponer_meta's own habits
+# (ruling 2) add a second condition: none of them may carry a habit_check yet, the same drift
+# rule ruling 1's own undo uses for a plan's horizon-level habits -- proponer_cambio_meta's own
+# despues_json never has "habito_ids", so this is a no-op for it.
 
 def _drift_deshacer_meta(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
     despues = json.loads(row["despues_json"])
     g = conn.execute("SELECT target_value, deadline FROM goal WHERE id = ? AND person_id = ?",
                      (row["objetivo_id"], row["person_id"])).fetchone()
-    return g is None or g["target_value"] != despues["target_value"] or g["deadline"] != despues["deadline"]
+    if g is None or g["target_value"] != despues["target_value"] or g["deadline"] != despues["deadline"]:
+        return True
+    habito_ids = despues.get("habito_ids") or []
+    if habito_ids:
+        placeholders = ",".join("?" * len(habito_ids))
+        if conn.execute(f"SELECT 1 FROM habit_check WHERE habit_id IN ({placeholders})",
+                        habito_ids).fetchone() is not None:
+            return True
+    return False
 
 
 # -- proponer_cambio_meta -----------------------------------------------------------------------
@@ -674,7 +709,7 @@ def _aplicar_proponer_experimento(conn: sqlite3.Connection, row: sqlite3.Row) ->
     eid = db.crear_experimento(
         conn, row["person_id"], despues["titulo"], despues["metricas"], despues["ventana"], despues["filtro_dias"],
         habito_id=despues.get("habito_id"), dias_prueba_objetivo=despues.get("dias_prueba_objetivo"),
-        fecha_inicio=despues["fecha_inicio"],
+        fecha_inicio=despues["fecha_inicio"], goal_id=despues.get("horizonte_goal_id"),
     )
     return {"experimento_id": eid}
 
@@ -1155,6 +1190,158 @@ def _deshacer_objetivo_nutriente(conn: sqlite3.Connection, row: sqlite3.Row) -> 
                                     antes["kind"], antes["amount"], antes["sentido"])
 
 
+# -- proponer_plan (BODY-PLAN-PROPUESTAS-1 ruling 1: insert-shaped, like planear_entreno -- this
+# module is the one writer of a whole plan, through db.crear_plan_horizonte/a direct multi-table
+# delete+status-drop below; the horizon and every part it created are found by querying
+# horizonte_goal_id / goal_id, never by trusting a hand-kept list) --------------------------------
+
+def _plan_hijos_ids(conn: sqlite3.Connection, horizonte_goal_id: int) -> list[int]:
+    return [r["id"] for r in conn.execute("SELECT id FROM goal WHERE horizonte_goal_id = ?", (horizonte_goal_id,))]
+
+
+def _plan_habito_ids(conn: sqlite3.Connection, horizonte_goal_id: int) -> list[int]:
+    return [r["id"] for r in conn.execute("SELECT id FROM habit WHERE goal_id = ?", (horizonte_goal_id,))]
+
+
+def _aplicar_proponer_plan(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+    despues = json.loads(row["despues_json"])
+    goal_id = db.crear_plan_horizonte(conn, row["person_id"], despues)
+    return {"goal_id": goal_id}
+
+
+def _drift_deshacer_proponer_plan(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    """Drifted -- REFUSES the undo -- the instant anything was recorded against this plan since
+    apply: a correction (every correction, including ampliar_plan's own additions, appends a row,
+    so the row COUNT for each child table no longer matches despues_json's own counts), a habit
+    check on one of the horizon's own habits, a linked plan session or experiment, or a goal_check
+    on the horizon or any of its child goals. A person's later record is never deleted by an undo,
+    so this check runs before anything else does."""
+    despues = json.loads(row["despues_json"])
+    horizonte_goal_id = row["objetivo_id"]
+    if conn.execute("SELECT 1 FROM goal WHERE id = ?", (horizonte_goal_id,)).fetchone() is None:
+        return True
+    hijos = _plan_hijos_ids(conn, horizonte_goal_id)
+    if len(hijos) != len(despues.get("metas_finales") or []):
+        return True
+    habitos = _plan_habito_ids(conn, horizonte_goal_id)
+    if len(habitos) != len(despues.get("habitos") or []):
+        return True
+    for tabla, clave in (("horizonte_regla", "reglas"), ("horizonte_semana", "semanas"),
+                         ("horizonte_meta_semanal", "metas_semanales"),
+                         ("horizonte_checkpoint", "checkpoints")):
+        n = conn.execute(f"SELECT COUNT(*) FROM {tabla} WHERE horizonte_goal_id = ?",
+                         (horizonte_goal_id,)).fetchone()[0]
+        if n != len(despues.get(clave) or []):
+            return True
+    if conn.execute("SELECT 1 FROM plan WHERE goal_id = ?", (horizonte_goal_id,)).fetchone() is not None:
+        return True
+    if conn.execute("SELECT 1 FROM experimento WHERE goal_id = ?", (horizonte_goal_id,)).fetchone() is not None:
+        return True
+    if habitos:
+        placeholders = ",".join("?" * len(habitos))
+        if conn.execute(f"SELECT 1 FROM habit_check WHERE habit_id IN ({placeholders})",
+                        habitos).fetchone() is not None:
+            return True
+    ids_goal_check = [horizonte_goal_id] + hijos
+    placeholders = ",".join("?" * len(ids_goal_check))
+    if conn.execute(f"SELECT 1 FROM goal_check WHERE goal_id IN ({placeholders})",
+                    ids_goal_check).fetchone() is not None:
+        return True
+    return False
+
+
+def _deshacer_proponer_plan(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    """The horizon and its child goals follow `_deshacer_meta`'s own precedent (goals.drop, soft);
+    the habits it created go `active = 0`; the horizonte_* rows it inserted are deleted outright
+    (they carry no status of their own). The drift check above already proved nothing else touched
+    any of this, so a plain delete/update by horizonte_goal_id is exactly what this proposal wrote,
+    all in one transaction."""
+    horizonte_goal_id = row["objetivo_id"]
+    hijos = _plan_hijos_ids(conn, horizonte_goal_id)
+    habitos = _plan_habito_ids(conn, horizonte_goal_id)
+    with conn:
+        for tabla in ("horizonte_regla", "horizonte_semana", "horizonte_meta_semanal", "horizonte_checkpoint"):
+            conn.execute(f"DELETE FROM {tabla} WHERE horizonte_goal_id = ?", (horizonte_goal_id,))
+        if habitos:
+            placeholders = ",".join("?" * len(habitos))
+            conn.execute(f"UPDATE habit SET active = 0 WHERE id IN ({placeholders})", habitos)
+        for hijo_id in hijos:
+            conn.execute("UPDATE goal SET status = 'dropped' WHERE id = ?", (hijo_id,))
+        conn.execute("UPDATE goal SET status = 'dropped' WHERE id = ?", (horizonte_goal_id,))
+
+
+# -- corregir_meta_plan (BODY-PLAN-PROPUESTAS-1 ruling 3: this module calls db.corregir_meta_semanal
+# directly, append-only like Finanzas' own presupuesto revision -- nothing here ever UPDATEs valor)
+
+def _drift_aplicar_corregir_meta_plan(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    antes = json.loads(row["antes_json"])
+    actual = conn.execute("SELECT valor, vigente FROM horizonte_meta_semanal WHERE id = ? AND person_id = ?",
+                          (antes["meta_id"], row["person_id"])).fetchone()
+    return actual is None or not actual["vigente"] or actual["valor"] != antes["valor"]
+
+
+def _aplicar_corregir_meta_plan(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+    despues = json.loads(row["despues_json"])
+    nuevo_id = db.corregir_meta_semanal(conn, row["person_id"], despues["meta_id"], despues["valor"],
+                                        sentido=despues["sentido"], nota=despues.get("nota"), origen="asistente")
+    return {"meta_semanal_id": nuevo_id}
+
+
+def _drift_deshacer_corregir_meta_plan(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    actual = conn.execute(
+        "SELECT valor, vigente FROM horizonte_meta_semanal WHERE id = ? AND person_id = ?",
+        (despues.get("meta_semanal_id"), row["person_id"])).fetchone()
+    return actual is None or not actual["vigente"] or actual["valor"] != despues["valor"]
+
+
+def _deshacer_corregir_meta_plan(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    """Undo is ANOTHER APPEND, never a rewrite: a third row restoring the old valor, replacing the
+    correction (reemplaza_id -> the correction's own id) -- the history reads in order and nothing
+    already written is ever changed."""
+    antes = json.loads(row["antes_json"])
+    despues = json.loads(row["despues_json"])
+    db.corregir_meta_semanal(conn, row["person_id"], despues["meta_semanal_id"], antes["valor"],
+                              sentido=antes["sentido"], nota=antes.get("nota"), origen="asistente")
+
+
+# -- ampliar_plan (BODY-PLAN-PROPUESTAS-1 ruling 4: insert-only growth of an existing horizon,
+# through db.ampliar_plan_horizonte -- undo deletes EXACTLY the rows that call returned, never a
+# row the original plan or a different ampliar_plan call wrote) -----------------------------------
+
+def _aplicar_ampliar_plan(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+    despues = json.loads(row["despues_json"])
+    return db.ampliar_plan_horizonte(conn, row["person_id"], despues["goal_id"], despues)
+
+
+def _drift_deshacer_ampliar_plan(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    for tabla, clave in (("horizonte_regla", "regla_ids"), ("horizonte_semana", "semana_ids"),
+                         ("horizonte_checkpoint", "checkpoint_ids")):
+        for rid in despues.get(clave) or []:
+            if conn.execute(f"SELECT 1 FROM {tabla} WHERE id = ?", (rid,)).fetchone() is None:
+                return True
+    # A weekly target this call inserted must still be vigente -- a later correction replacing it
+    # is drift, the same rule corregir_meta_plan's own undo follows.
+    for rid in despues.get("meta_semanal_ids") or []:
+        fila = conn.execute("SELECT vigente FROM horizonte_meta_semanal WHERE id = ?", (rid,)).fetchone()
+        if fila is None or not fila["vigente"]:
+            return True
+    return False
+
+
+def _deshacer_ampliar_plan(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    with conn:
+        for tabla, clave in (("horizonte_regla", "regla_ids"), ("horizonte_semana", "semana_ids"),
+                             ("horizonte_meta_semanal", "meta_semanal_ids"),
+                             ("horizonte_checkpoint", "checkpoint_ids")):
+            ids = despues.get(clave) or []
+            if ids:
+                placeholders = ",".join("?" * len(ids))
+                conn.execute(f"DELETE FROM {tabla} WHERE id IN ({placeholders})", ids)
+
+
 TABLA: dict[str, _Accion] = {
     "proponer_meta": _Accion(_sin_drift, _drift_deshacer_meta, _aplicar_meta, _deshacer_meta),
     "proponer_cambio_meta": _Accion(_drift_aplicar_cambio_meta, _drift_deshacer_meta, _aplicar_cambio_meta,
@@ -1202,6 +1389,12 @@ TABLA: dict[str, _Accion] = {
                               _aplicar_unir_sesiones, _deshacer_unir_sesiones),
     "proponer_objetivo_nutriente": _Accion(_drift_aplicar_objetivo_nutriente, _drift_deshacer_objetivo_nutriente,
                                             _aplicar_objetivo_nutriente, _deshacer_objetivo_nutriente),
+    "proponer_plan": _Accion(_sin_drift, _drift_deshacer_proponer_plan, _aplicar_proponer_plan,
+                              _deshacer_proponer_plan),
+    "corregir_meta_plan": _Accion(_drift_aplicar_corregir_meta_plan, _drift_deshacer_corregir_meta_plan,
+                                   _aplicar_corregir_meta_plan, _deshacer_corregir_meta_plan),
+    "ampliar_plan": _Accion(_sin_drift, _drift_deshacer_ampliar_plan, _aplicar_ampliar_plan,
+                             _deshacer_ampliar_plan),
 }
 
 SIN_DESHACER = tuple(nombre for nombre, entrada in TABLA.items() if not entrada.tiene_deshacer)
@@ -1261,9 +1454,16 @@ def aplicar(conn: sqlite3.Connection, person_id: int, propuesta_id: int) -> dict
             with conn:
                 conn.execute("UPDATE propuesta_agente SET objetivo_id = ? WHERE id = ?",
                              (creado["goal_id"], propuesta_id))
-        else:
+        # BODY-PLAN-PROPUESTAS-1: any OTHER key `creado` carries (alongside "goal_id" or on its
+        # own) is merged into despues_json -- generalised from an either/or so `_aplicar_meta`
+        # can return both a goal_id (recorded as objetivo_id, above) AND the ids of the habits it
+        # created (merged here, for `_deshacer_meta` to deactivate). Every existing action returns
+        # EITHER "goal_id" alone OR some other key(s) alone, never both, so this is additive: their
+        # own behaviour is unchanged.
+        resto = {k: v for k, v in creado.items() if k != "goal_id"}
+        if resto:
             nuevo_despues = json.loads(row["despues_json"])
-            nuevo_despues.update(creado)
+            nuevo_despues.update(resto)
             with conn:
                 conn.execute("UPDATE propuesta_agente SET despues_json = ? WHERE id = ?",
                              (json.dumps(nuevo_despues, ensure_ascii=False), propuesta_id))
