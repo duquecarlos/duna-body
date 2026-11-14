@@ -10,7 +10,7 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import cuenta, db, enlaces, fechas, goals, household, identity, profile
+from .. import cuenta, db, enlaces, fechas, goals, horizonte, household, identity, profile
 from ..baselines import baselines
 from ..i18n import T
 from . import comun, experimentos
@@ -21,6 +21,13 @@ AREAS = ["body", "money", "adventure", "growth", "work", "home"]
 DIRECTIONS = ["raise", "lower", "keep"]
 CONTEXTS = ("before_night", "after_night", "off_days")
 BETTER_TO_DIRECTION = {"higher": "raise", "lower": "lower", "neutral": "keep"}
+
+# BODY-PLAN-PANTALLA-1 ruling 2: every estado a weekly target line or a checkpoint criterion can
+# carry, mapped to the design's own "good / neutral / bad / muted" chip colours -- reused here
+# from the readiness-band family (ok=good, warn=amber/caution, low=red/bad, off=muted gray),
+# never a new chip colour. 'pendiente' is a checkpoint-only extra (a criterion not due yet).
+PLAN_ESTADOS = ("cumple", "en_curso", "no_cumple", "sin_dato", "pendiente")
+_PLAN_ESTADO_CLS = {"cumple": "ok", "en_curso": "warn", "no_cumple": "low", "sin_dato": "off", "pendiente": "off"}
 
 
 def _cadence_text(t: T, cadence: dict) -> str:
@@ -223,6 +230,218 @@ def _verdict_sentence(t: T, defs: dict, g, check: dict) -> str:
     return verdict
 
 
+def _plan_estado_chip(t: T, estado: str) -> tuple[str, str]:
+    return _PLAN_ESTADO_CLS.get(estado, ""), t("goals.plan.estado." + estado)
+
+
+def _plan_hora_desde_minutos(total: float) -> str:
+    """Duplicated from body/rutas/asistente.py's `_hora_desde_minutos` (that module is outside
+    this slice's touches, same reasoning its own docstrings already give for duplicating out of
+    this one): the inverse of horizonte._minutos_despues_mediodia's convention (minutes after
+    12:00 noon, wrapping across midnight) -- 690 -> 23:30, 765 -> 00:45."""
+    total = int(round(total))
+    hh = ((total // 60) + 12) % 24
+    mm = total % 60
+    return f"{hh:02d}:{mm:02d}"
+
+
+def _plan_medida_label(t: T, medida: str) -> str:
+    if medida in horizonte.MEDIDAS:
+        return t("asistente.propuesta.plan_medida." + medida)
+    return t("metric." + medida)
+
+
+def _plan_target_txt(t: T, defs: dict, medida: str, sentido: str, valor) -> str:
+    """The weekly target in plain words, reusing the same asistente.propuesta.plan_* vocabulary
+    BODY-PLAN-PROPUESTAS-1-R already built for this exact phrasing (session/clock/minute shapes
+    for horizonte.MEDIDAS, comun._fig_unit for any other metric_def key)."""
+    info = horizonte.MEDIDAS.get(medida)
+    sentido_txt = t("asistente.propuesta.plan_sentido." + sentido)
+    if info is not None and info["unit"] == "hora":
+        hora = _plan_hora_desde_minutos(valor)
+        if medida == "hora_acostarse":
+            clave = ("asistente.propuesta.plan_reloj_acostarse_antes" if sentido == "antes_de"
+                     else "asistente.propuesta.plan_reloj_acostarse_despues")
+        else:
+            clave = ("asistente.propuesta.plan_reloj_levantarse_antes" if sentido == "antes_de"
+                     else "asistente.propuesta.plan_reloj_levantarse_despues")
+        return t(clave, hora=hora)
+    if info is not None and info["unit"] == "sesiones":
+        uno = valor == 1
+        if medida == "sesiones_fuerza":
+            nombre = (t("asistente.propuesta.plan_sesion_fuerza_one") if uno
+                      else t("asistente.propuesta.plan_sesion_fuerza"))
+        else:
+            nombre = (t("asistente.propuesta.plan_sesion_cardio_one") if uno
+                      else t("asistente.propuesta.plan_sesion_cardio"))
+        return t("asistente.propuesta.plan_sesion_valor", sentido=sentido_txt, n=t.num(valor), medida=nombre)
+    if info is not None:  # unit 'min'
+        valor_txt = t("asistente.propuesta.plan_unidad.min", n=t.num(valor))
+    else:
+        valor_txt = comun._fig_unit(t, medida, valor, defs)
+    return t("asistente.propuesta.plan_medida_valor", medida=_plan_medida_label(t, medida), sentido=sentido_txt,
+              valor=valor_txt)
+
+
+def _plan_real_txt(t: T, defs: dict, medida: str, real) -> str:
+    """The real figure in plain words, or the honest gap (DESIGN rule 6) when nothing was measured
+    -- "2 so far" for a session count, "23:10 typical" for a clock-time median, a plain minutes
+    figure for a sum/average, never 0 standing in for "no data"."""
+    if real is None:
+        return t("goals.plan.sin_dato_reloj")
+    info = horizonte.MEDIDAS.get(medida)
+    if info is not None and info["unit"] == "hora":
+        return t("goals.plan.real_hora", hora=_plan_hora_desde_minutos(real))
+    if info is not None and info["unit"] == "sesiones":
+        return t("goals.plan.real_sesiones", n=t.num(real))
+    if info is not None:  # unit 'min'
+        return t("goals.plan.real_minutos", valor=t.minutes(real))
+    return comun._fig_unit(t, medida, real, defs)
+
+
+def _plan_zona_nota(t: T, linea: dict) -> str | None:
+    """DESIGN rule 6 / ruling 2: a cardio line is counted by session, never by heart-rate zone
+    (horizonte._real_medida's own `zona_medida: False`) -- said once, plainly, not left implicit."""
+    return t("goals.plan.zona_no_medida") if linea.get("zona_medida") is False else None
+
+
+def _plan_regla_txt(t: T, r: dict) -> str | None:
+    """Ruling 2: a measurable rule gets its own "N of M days" this week; a text-only one (no
+    chequeo) is never judged -- the person's own words stand alone."""
+    if r["solo_texto"]:
+        return None
+    return t("goals.plan.rule_progress", cumple=t.num(r["dias_cumple"]), aplica=t.num(r["dias_aplica"]))
+
+
+def _plan_sesiones_dias(t: T, sesiones: list[dict]) -> list[dict]:
+    """Groups this week's planned `plan` rows by day, in day order (already guaranteed by
+    horizonte.semana's own Monday..Sunday iteration) -- each group a short weekday+day label and
+    its sessions, done/not done (ruling 2)."""
+    out: list[dict] = []
+    grupos: dict[str, dict] = {}
+    for s in sesiones:
+        grupo = grupos.get(s["day"])
+        if grupo is None:
+            d = date.fromisoformat(s["day"])
+            # BODY-PLAN-PANTALLA-1: 'sesiones', never 'items' -- a dict's own `.items` method
+            # shadows a same-named key under Jinja's attribute-then-item lookup, so
+            # `{% for it in d.items %}` would iterate the builtin method, not this list.
+            grupo = {"label": f"{t('date.days')[d.weekday()]} {d.day}", "sesiones": []}
+            grupos[s["day"]] = grupo
+            out.append(grupo)
+        grupo["sesiones"].append({"title": s["title"], "time": s["time"], "done": s["status"] == "done"})
+    return out
+
+
+def _plan_checkpoint_ctx(t: T, defs: dict, c: dict) -> dict:
+    cls, chip = _plan_estado_chip(t, c["estado"])
+    criterios = []
+    for crit in c["criterios"]:
+        ccls, cchip = _plan_estado_chip(t, crit["estado"] or "pendiente")
+        criterios.append({
+            "target": _plan_target_txt(t, defs, crit["medida"], crit["sentido"], crit["valor"]),
+            "real": _plan_real_txt(t, defs, crit["medida"], crit["real"]) if crit["estado"] else None,
+            "cls": ccls, "chip": cchip,
+        })
+    return {"id": c["id"], "date": comun._short_date(t, date.fromisoformat(c["day"])), "titulo": c["titulo"],
+            "nota": c.get("nota"), "cls": cls, "chip": chip, "criterios": criterios}
+
+
+def _es_horizonte(conn, goal_id: int) -> bool:
+    """Ruling 1: a milestone goal is a horizon once it carries ANY plan row -- a child goal, a
+    rule, a week, a weekly target line or a checkpoint. One bounded EXISTS (ruling 5), independent
+    of how many of any of those this goal has."""
+    return bool(conn.execute(
+        "SELECT EXISTS("
+        "SELECT 1 FROM goal WHERE horizonte_goal_id = ? "
+        "UNION SELECT 1 FROM horizonte_regla WHERE horizonte_goal_id = ? "
+        "UNION SELECT 1 FROM horizonte_semana WHERE horizonte_goal_id = ? "
+        "UNION SELECT 1 FROM horizonte_meta_semanal WHERE horizonte_goal_id = ? "
+        "UNION SELECT 1 FROM horizonte_checkpoint WHERE horizonte_goal_id = ?"
+        ")", (goal_id,) * 5).fetchone()[0])
+
+
+def _build_plan_ctx(conn, t: T, defs: dict, g, person_id: int, today: date, semana_q: str | None) -> dict:
+    """Ruling 1-3: the plan section's whole context, built ONLY from horizonte.semana and
+    horizonte.checkpoints -- never a second horizonte_* read. `semana_q` is the `?semana=` query
+    param (a date, clamped to the horizon's own start_day..deadline, ruling 2's week navigation)."""
+    goal_id = g["id"]
+    start_monday = fechas.lunes_de(date.fromisoformat(g["start_day"]))
+    end_monday = fechas.lunes_de(date.fromisoformat(g["deadline"]))
+    this_monday = fechas.lunes_de(today)
+    try:
+        chosen = fechas.lunes_de(date.fromisoformat(semana_q)) if semana_q else this_monday
+    except ValueError:
+        chosen = this_monday
+    chosen = max(start_monday, min(chosen, end_monday))
+
+    semana_data = horizonte.semana(conn, goal_id, person_id, chosen.isoformat(), hoy=today)
+    checkpoints_data = horizonte.checkpoints(conn, goal_id, person_id, hoy=today)
+
+    lineas = []
+    for linea in semana_data["lineas"]:
+        cls, chip = _plan_estado_chip(t, linea["estado"])
+        lineas.append({
+            "target": _plan_target_txt(t, defs, linea["medida"], linea["sentido"], linea["valor"]),
+            "real": _plan_real_txt(t, defs, linea["medida"], linea["real"]),
+            "cls": cls, "chip": chip, "zona_nota": _plan_zona_nota(t, linea), "nota": linea.get("nota"),
+        })
+
+    reglas = [{"texto": r["texto"], "progreso": _plan_regla_txt(t, r)}
+              for r in semana_data["reglas"] if r["dias_aplica"] > 0]
+
+    n = (date.fromisoformat(g["deadline"]) - today).days
+    if n < 0:
+        days_left_text = t("goals.plan.ended")
+    elif n == 1:
+        days_left_text = t("goals.plan.days_left_one")
+    else:
+        days_left_text = t("goals.plan.days_left", n=t.num(n))
+
+    targets = []
+    for h in conn.execute("SELECT id, title FROM goal WHERE horizonte_goal_id = ? ORDER BY id", (goal_id,)):
+        check = _current_week_check(conn, h["id"], person_id, this_monday.isoformat())
+        cls, verdict = _verdict(t, check["on_track"])
+        targets.append({"id": h["id"], "title": h["title"], "cls": cls, "verdict": verdict})
+
+    experiments = [dict(r) for r in conn.execute(
+        "SELECT id, titulo FROM experimento WHERE goal_id = ? AND person_id = ? ORDER BY id",
+        (goal_id, person_id))]
+
+    siguiente = next((c for c in checkpoints_data if c["estado"] == "pendiente"), None)
+    pasados = [c for c in checkpoints_data if c["estado"] != "pendiente"]
+
+    prev_monday, next_monday = chosen - timedelta(7), chosen + timedelta(7)
+
+    return {
+        "days_left_text": days_left_text,
+        "week": {
+            "label": t("goals.week_of", date=comun._short_date(t, chosen)),
+            "titulo": semana_data["titulo"], "nota": semana_data["nota"], "lineas": lineas,
+            "dias": _plan_sesiones_dias(t, semana_data["sesiones_planeadas"]), "reglas": reglas,
+            "prev": prev_monday.isoformat() if prev_monday >= start_monday else None,
+            "next": next_monday.isoformat() if next_monday <= end_monday else None,
+        },
+        "targets": targets,
+        "checkpoint_next": _plan_checkpoint_ctx(t, defs, siguiente) if siguiente else None,
+        "checkpoints_past": [_plan_checkpoint_ctx(t, defs, c) for c in pasados],
+        "experiments": experiments,
+    }
+
+
+def _nest_horizontes(rows, built_cards: list[dict]) -> list[dict]:
+    """Ruling 4: within this SAME /goals section, a horizon's own child goals nest under its card
+    (`c['children']`) instead of standing as separate top-level rows -- no extra query, `rows` is
+    already this section's own fetched goal rows. A child whose horizon is not in this same list
+    (not accessible to this viewer, or sitting in a different status section) is simply never
+    matched here, so it stays top-level."""
+    by_id = {r["id"]: r for r in rows}
+    cards_by_id = {c["id"]: c for c in built_cards}
+    for c in built_cards:
+        c["children"] = [cards_by_id[rid] for rid, r in by_id.items() if r["horizonte_goal_id"] == c["id"]]
+    return [c for c in built_cards if by_id[c["id"]]["horizonte_goal_id"] not in by_id]
+
+
 @router.get("/goals")
 @comun._cierra_conexion
 def goals_list(person_id: int = Depends(identity.current_person_id)):
@@ -264,6 +483,10 @@ def goals_list(person_id: int = Depends(identity.current_person_id)):
     archived_cards = [{"id": g["id"], "title": g["title"], "status_text": t("goals.status." + g["status"]),
                        "shared_line": _shared_line(conn, t, g, person_id)} for g in archived]
     experiments_active, experiments_closed = experimentos.resumen_metas(conn, t, person_id, today)
+
+    cards = _nest_horizontes(active, cards)
+    proposed_cards = _nest_horizontes(proposed, proposed_cards)
+    archived_cards = _nest_horizontes(archived, archived_cards)
 
     return comun._render("goals.html", t=t, tab="goals", cards=cards, proposed=proposed_cards, archived=archived_cards,
                    empty=not (active or proposed or archived), turnos=db.trabaja_turnos_si(conn, person_id),
@@ -441,13 +664,29 @@ def goal_detail(goal_id: int, request: Request, person_id: int = Depends(identit
     if request.query_params.get("enlace") != "invalido" or enlace_error_app not in enlaces.APPS:
         enlace_error_app = None
 
+    # Ruling 1: the plan lives IN goal detail -- only for a milestone goal that is itself a
+    # horizon (_es_horizonte); a metric goal never is, so it costs this view nothing extra.
+    plan = None
+    if g["kind"] == "milestone" and _es_horizonte(conn, goal_id):
+        plan = _build_plan_ctx(conn, t, defs, g, person_id, today, request.query_params.get("semana"))
+
+    # Ruling 4: a child goal's own "part of the plan" line, linking back to its horizon -- only
+    # when this viewer can also see that horizon (goals.goal_access, the same check every other
+    # cross-goal link in this app already goes through).
+    part_of = None
+    if g["horizonte_goal_id"] is not None:
+        hrow = conn.execute("SELECT id, title FROM goal WHERE id = ?", (g["horizonte_goal_id"],)).fetchone()
+        if hrow is not None and goals.goal_access(conn, hrow["id"], person_id) is not None:
+            part_of = {"id": hrow["id"], "title": hrow["title"]}
+
     return comun._render("goal.html", t=t, tab="goals", goal=g, cls=cls, verdict=verdict, chart=chart,
                    chart_sin_puntos=chart_sin_puntos,
                    history=history_list, habits=habit_rows, members=members, shared_line=shared_line,
                    is_creator=(access == "creator"), enlaces=enlaces.enlaces_de(conn, goal_id),
                    apps_por_enlazar=enlaces.apps_por_enlazar(conn, goal_id), enlace_error_app=enlace_error_app,
                    target_text=_goal_target_text(t, defs, g), area_label=t("goals.area." + g["area"]),
-                   today=today.isoformat(), turnos=db.trabaja_turnos_si(conn, person_id))
+                   today=today.isoformat(), turnos=db.trabaja_turnos_si(conn, person_id),
+                   plan=plan, part_of=part_of)
 
 
 def _require_creator(conn, goal_id: int, person_id: int) -> None:

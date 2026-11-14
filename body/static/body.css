@@ -112,6 +112,12 @@ a.card:active{background:var(--wash)}
 .chip.off{background:var(--wash);color:var(--ink2)}
 .bar{height:6px;background:var(--inset);border-radius:999px;overflow:hidden;margin:8px 0 4px}
 .bar span{display:block;height:100%;background:var(--body)}
+.card-group{margin-bottom:10px}
+.card-group .card{margin-bottom:6px}
+.card-group .card:last-child{margin-bottom:0}
+.plan-children{margin:0 0 6px 14px}
+.plan-children .card{padding:9px 11px}
+.plan-children .card .q{font-size:13px}
 .plan{list-style:none;margin:0;padding:0}
 .plan li{display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-top:1px solid var(--soft)}
 .plan li:first-child{border-top:0}
