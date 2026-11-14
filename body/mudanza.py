@@ -5,11 +5,13 @@ points at (BODY-MUDANZA-HERRAMIENTA-1, following BODY-MUDANZA-SERVIDOR-1-INV's r
     python -m body.mudanza importar --origen <pc.sqlite> --cuenta-sub <sub> --apply      # writes
 
 The source file is opened READ-ONLY, the same way `body.backup snapshot` opens its source
-(`backup.open_readonly`), and is never written to. The destination is whatever `db.connect()`
-resolves to (the host's own database, when this runs on the host). The destination person is
-found by Cuenta `sub`; if none exists yet it is created exactly as a first Cuenta sign-in would
-create it, through `cuenta.resolve_person` -- never by a hand-written INSERT that could drift
-from that path (ruling 1).
+(`backup.open_readonly`), and is never written to -- it is COPIED to a temporary file and that
+copy, never the upload, is brought to today's schema before any row is read (BODY-MUDANZA-
+ORIGEN-ANTIGUO-1, ruling 1: any person's PC can be behind the host's code). The destination is
+whatever `db.connect()` resolves to (the host's own database, when this runs on the host). The
+destination person is found by Cuenta `sub`; if none exists yet it is created exactly as a first
+Cuenta sign-in would create it, through `cuenta.resolve_person` -- never by a hand-written INSERT
+that could drift from that path (ruling 1 of BODY-MUDANZA-HERRAMIENTA-1).
 
 Never prints a value from any row -- table names and counts only (ORCH-CARLOS-DELEGATES-TIER-1-1,
 this slice's own privacy rule).
@@ -17,13 +19,16 @@ this slice's own privacy rule).
 from __future__ import annotations
 
 import argparse
+import contextlib
+import os
 import sqlite3
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import backup, cuenta, db, errores
+from . import backup, config, cuenta, db, errores
 
 _MISSING = object()
 
@@ -176,6 +181,11 @@ class TableReport:
     skipped_table: bool = False
     reason: str | None = None
     counts: TableCounts | None = None
+    # Set only on the synthetic "origen" report `importar` inserts first (BODY-MUDANZA-ORIGEN-
+    # ANTIGUO-1, ruling 2): the number of tables the source copy's own schema migration added.
+    # skipped_table is also True on this entry, so code that only checks skipped_table to decide
+    # "not a real per-table count" (the existing no-op-second-run census) still skips it correctly.
+    origen_tablas_nuevas: int | None = None
 
 
 def _where(cols: tuple[str, ...], row: dict) -> tuple[str, list]:
@@ -449,6 +459,9 @@ def _print_personas(rows: list[dict]) -> None:
 def _print_report(reports: list[TableReport], apply: bool) -> None:
     label = "done" if apply else "would"
     for r in reports:
+        if r.origen_tablas_nuevas is not None:
+            print(f"origen: esquema actualizado en la copia ({r.origen_tablas_nuevas} tablas nuevas)")
+            continue
         if r.skipped_table:
             print(f"{r.name}: skipped ({r.reason})")
             continue
@@ -460,12 +473,57 @@ def _print_report(reports: list[TableReport], apply: bool) -> None:
         )
 
 
+def _table_names(conn: sqlite3.Connection) -> set[str]:
+    return {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+
+
+@contextlib.contextmanager
+def _migrated_source(origen: Path):
+    """Any person's PC can be behind the host's code, so `origen` is never read as-is (BODY-
+    MUDANZA-ORIGEN-ANTIGUO-1, ruling 1). It is copied -- opened read-only, the same way
+    `body.backup snapshot` copies its own source, via sqlite's backup API -- into a temporary
+    file beside the destination database (same filesystem, same owner as the data user, mode
+    0600, best effort), then `db.init` runs on that COPY to bring it to today's schema: never a
+    hand-written CREATE that could drift from the one real migration path. Yields (a read-only
+    connection on the migrated copy, the count of tables the migration added). `origen` itself is
+    never opened for writing, and the copy is deleted in this generator's own `finally` on every
+    exit -- a dry run, an apply, or an exception raised while the caller reads the migrated
+    rows."""
+    config.ensure_home()
+    fd, tmp_name = tempfile.mkstemp(dir=config.DB_PATH.parent, prefix=".mudanza-origen-",
+                                     suffix=".sqlite")
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    try:
+        with contextlib.suppress(OSError):
+            tmp_path.chmod(0o600)
+        src = backup.open_readonly(origen)
+        try:
+            copy_conn = sqlite3.connect(tmp_path)
+            try:
+                src.backup(copy_conn)
+                before = _table_names(copy_conn)
+                db.init(copy_conn)
+                tablas_nuevas = len(_table_names(copy_conn) - before)
+            finally:
+                copy_conn.close()
+        finally:
+            src.close()
+        migrated = backup.open_readonly(tmp_path)
+        try:
+            yield migrated, tablas_nuevas
+        finally:
+            migrated.close()
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
 def importar(origen: Path, cuenta_sub: str, apply: bool) -> tuple[list[TableReport], bool]:
     """Runs the import, dry run by default. Returns (reports, integrity_ok). `integrity_ok` is
-    always True for a dry run (nothing was written)."""
-    source_conn = backup.open_readonly(origen)
+    always True for a dry run (nothing was written). `reports[0]` is always the synthetic
+    "origen" entry `_migrated_source` reports (ruling 2)."""
     integrity_ok = True
-    try:
+    with _migrated_source(origen) as (source_conn, tablas_nuevas):
         dest_conn = db.connect()
         try:
             db.ensure_ready(dest_conn)
@@ -478,8 +536,7 @@ def importar(origen: Path, cuenta_sub: str, apply: bool) -> tuple[list[TableRepo
                 integrity_ok = integrity == "ok" and not fk_problems
         finally:
             dest_conn.close()
-    finally:
-        source_conn.close()
+    reports.insert(0, TableReport("origen", skipped_table=True, origen_tablas_nuevas=tablas_nuevas))
     return reports, integrity_ok
 
 
