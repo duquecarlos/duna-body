@@ -982,6 +982,146 @@ def _seed_goals_and_habits(conn, db, goals, rng: random.Random, all_days: list[d
     return checks, habit_checks, racha_sesiones
 
 
+# BODY-PLAN-PANTALLA-1 ruling 6: one invented plan (a horizon milestone, its own child goals,
+# habits, rules, a week title/note and two checkpoints) -- generic, never a city, sport, employer,
+# shift code or real figure, the same "template, not one person" contract every other demo fixture
+# here already follows.
+_PLAN_TEXTOS = {
+    "es": {
+        "horizonte": "Mejorar el sueño y la fuerza",
+        "hijo_hrv": "Mejorar mi variabilidad del pulso",
+        "hijo_estres": "Bajar mi estrés",
+        "habito_caminar": "Caminar después del almuerzo",
+        "habito_revisar": "Revisar el plan los domingos",
+        "regla_siempre": "Mantén una hora de dormir estable, incluso los días libres.",
+        "regla_turno": "Antes de un turno de noche, acuéstate temprano.",
+        "regla_tras_noche": "El día después de una noche, duerme al menos 7 horas.",
+        "regla_periodo": "Mientras dure la lesión, evita sesiones de fuerza.",
+        "semana_titulo": "Semana de referencia",
+        "semana_nota": "Ajusta el entrenamiento según cómo te sientas.",
+        "checkpoint_pasado": "Revisión de mitad de plan",
+        "checkpoint_futuro": "Revisión final",
+        "sesion_fuerza": "Entrenamiento de fuerza",
+        "sesion_caminata": "Caminata",
+        "experimento": "Dormir media hora más temprano",
+    },
+    "en": {
+        "horizonte": "Improve sleep and strength",
+        "hijo_hrv": "Improve my heart-rate variability",
+        "hijo_estres": "Lower my stress",
+        "habito_caminar": "Walk after lunch",
+        "habito_revisar": "Review the plan on Sundays",
+        "regla_siempre": "Keep a steady bedtime, even on days off.",
+        "regla_turno": "Before a night shift, go to bed early.",
+        "regla_tras_noche": "The day after a night, sleep at least 7 hours.",
+        "regla_periodo": "While the injury lasts, skip strength sessions.",
+        "semana_titulo": "Reference week",
+        "semana_nota": "Adjust training to how you feel.",
+        "checkpoint_pasado": "Mid-plan review",
+        "checkpoint_futuro": "Final review",
+        "sesion_fuerza": "Strength training",
+        "sesion_caminata": "Walk",
+        "experimento": "Go to sleep half an hour earlier",
+    },
+}
+# horizonte._minutos_despues_mediodia's own convention: 23:00 -> ((23-12) % 24) * 60 = 660.
+_PLAN_HORA_ACOSTARSE_VALOR = 660.0
+
+
+def _seed_plan_horizonte(conn, db, goals, person_id: int, anchor: date, anchor_monday: date,
+                          idioma: str) -> dict:
+    """Ruling 6: a horizon from 3 weeks ago to 5 weeks ahead -- two child metric goals, two habits
+    on the horizon itself, four rules (one per contexto kind the demo's shifts/periods allow:
+    siempre, turno, tras_noche, periodo -- 'siempre' text-only, chequeo=None), a weekly line set
+    for every week (strength sessions, cardio sessions, a bedtime, sleep minutes), one corrected
+    line (db.corregir_meta_semanal, so the history has a replaced row), two checkpoints (one past,
+    one ahead), two planned sessions this week linked to the horizon, and one linked experiment --
+    all through db.crear_plan_horizonte / db.corregir_meta_semanal / goals.activate /
+    db.crear_experimento, never a hand-written INSERT for any of those. The `plan` table's own two
+    sessions are the one exception: it has no db.py writer of its own, the same gap
+    `_seed_plan_hoy` above already lives with."""
+    txt = _PLAN_TEXTOS[idioma]
+    start_monday = anchor_monday - timedelta(weeks=3)
+    end_monday = anchor_monday + timedelta(weeks=5)
+    start_day, deadline = start_monday.isoformat(), (end_monday + timedelta(6)).isoformat()
+
+    semanas_medidas = []
+    m = start_monday
+    while m <= end_monday:
+        ws = m.isoformat()
+        semanas_medidas += [
+            {"week_start": ws, "medida": "sesiones_fuerza", "sentido": "al_menos", "valor": 3.0},
+            {"week_start": ws, "medida": "sesiones_cardio", "sentido": "al_menos", "valor": 2.0},
+            {"week_start": ws, "medida": "hora_acostarse", "sentido": "antes_de",
+             "valor": _PLAN_HORA_ACOSTARSE_VALOR},
+            {"week_start": ws, "medida": "sueno_minutos", "sentido": "al_menos", "valor": 420.0},
+        ]
+        m += timedelta(7)
+
+    plan = {
+        "titulo": txt["horizonte"], "start_day": start_day, "deadline": deadline,
+        "metas_finales": [
+            {"titulo": txt["hijo_hrv"], "metric_key": "hrv_last_night", "direction": "raise", "target_value": 70.0},
+            {"titulo": txt["hijo_estres"], "metric_key": "stress_avg", "direction": "lower", "target_value": 25.0},
+        ],
+        "habitos": [
+            {"titulo": txt["habito_caminar"], "cadencia": {"per": "week", "times": 3}},
+            {"titulo": txt["habito_revisar"], "cadencia": {"per": "week", "times": 1}},
+        ],
+        "reglas": [
+            {"contexto": "siempre", "contexto_valor": None, "texto": txt["regla_siempre"], "chequeo": None},
+            {"contexto": "turno", "contexto_valor": "night", "texto": txt["regla_turno"],
+             "chequeo": {"tipo": "acostarse_antes", "hora": "21:30"}},
+            {"contexto": "tras_noche", "contexto_valor": "1", "texto": txt["regla_tras_noche"],
+             "chequeo": {"tipo": "sueno_minimo", "minutos": 420}},
+            {"contexto": "periodo", "contexto_valor": "lesion", "texto": txt["regla_periodo"],
+             "chequeo": {"tipo": "sin_sesion", "clase": "fuerza"}},
+        ],
+        "semanas": [{"week_start": anchor_monday.isoformat(), "titulo": txt["semana_titulo"],
+                     "nota": txt["semana_nota"]}],
+        "checkpoints": [
+            {"day": (anchor - timedelta(10)).isoformat(), "titulo": txt["checkpoint_pasado"],
+             "criterios": [{"medida": "sesiones_fuerza", "sentido": "al_menos", "valor": 3.0, "ventana": "semana"}]},
+            {"day": (anchor + timedelta(20)).isoformat(), "titulo": txt["checkpoint_futuro"],
+             "criterios": [{"medida": "sueno_minutos", "sentido": "al_menos", "valor": 420.0, "ventana": "semana"}]},
+        ],
+        "metas_semanales": semanas_medidas,
+    }
+    horizonte_id = db.crear_plan_horizonte(conn, person_id, plan)
+    conn.commit()
+
+    corregido = conn.execute(
+        "SELECT id FROM horizonte_meta_semanal WHERE horizonte_goal_id = ? AND week_start = ? "
+        "AND medida = 'sesiones_fuerza' AND vigente = 1",
+        (horizonte_id, (anchor_monday - timedelta(weeks=2)).isoformat()),
+    ).fetchone()
+    db.corregir_meta_semanal(conn, person_id, corregido["id"], 4.0)
+
+    hijo_ids = [r["id"] for r in conn.execute(
+        "SELECT id FROM goal WHERE horizonte_goal_id = ? ORDER BY id", (horizonte_id,))]
+    goals.activate(conn, horizonte_id)
+    for hid in hijo_ids:
+        goals.activate(conn, hid)
+
+    martes, jueves = anchor_monday + timedelta(1), anchor_monday + timedelta(3)
+    conn.execute(
+        "INSERT INTO plan (person_id, goal_id, day, time, title, status) VALUES (?, ?, ?, ?, ?, 'done')",
+        (person_id, horizonte_id, martes.isoformat(), "18:00", txt["sesion_fuerza"]))
+    conn.execute(
+        "INSERT INTO plan (person_id, goal_id, day, time, title, status) VALUES (?, ?, ?, ?, ?, 'accepted')",
+        (person_id, horizonte_id, jueves.isoformat(), "07:00", txt["sesion_caminata"]))
+    conn.commit()
+
+    experimento_id = db.crear_experimento(
+        conn, person_id, txt["experimento"], ["sleep_minutes"], {"tipo": "dia"},
+        {"turno_en": None, "turno_fuera": None, "excluir_tras_noche": False},
+        fecha_inicio=start_day, goal_id=horizonte_id)
+    conn.commit()
+
+    return {"goal_id": horizonte_id, "hijos": len(hijo_ids), "metas_semanales": len(semanas_medidas),
+            "checkpoints": 2, "experimento_id": experimento_id}
+
+
 _PLAN_HOY_HORA = "15:30"  # BODY-MOCK-R2-HOY-1 ruling 8: "a planned session with a time".
 
 
@@ -1174,6 +1314,8 @@ def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[st
     checks, habit_checks, racha_sesiones = _seed_goals_and_habits(
         conn, db, goals, rng, all_days, anchor, first_monday, anchor_monday, person_id, idioma)
 
+    plan_horizonte = _seed_plan_horizonte(conn, db, goals, person_id, anchor, anchor_monday, idioma)
+
     ana_metric_rows, hogar_checks, hogar_habit_checks, comidas_compartidas_pendientes = _seed_household(
         conn, db, goals, enlaces, compartir, comida_compartida, rng, all_days, anchor, first_monday,
         anchor_monday, person_id, idioma)
@@ -1183,7 +1325,10 @@ def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[st
         "personas": 2, "dias_sembrados": dias, "valores_diarios": metric_rows, "actividades": activity_rows,
         "lotes_turnos_confirmados": 1 if confirmed_id is not None else 0,
         "lotes_turnos_propuestos": 1 if proposed_id is not None else 0,
-        "semanas_nocturnas": night_weeks, "bloques_turno_noche": night_blocks, "metas_activas": 4, "habitos": 4,
+        "semanas_nocturnas": night_weeks, "bloques_turno_noche": night_blocks,
+        "metas_activas": 4 + 1 + plan_horizonte["hijos"], "habitos": 4 + 2,
+        "plan_horizonte_metas_semanales": plan_horizonte["metas_semanales"],
+        "plan_horizonte_checkpoints": plan_horizonte["checkpoints"],
         "verificaciones_semanales": checks + hogar_checks, "chequeos_habito": habit_checks + hogar_habit_checks,
         "racha_fuerza_sesiones": racha_sesiones,
         "entradas_ingesta": entradas_ingesta, "comidas": comidas_ingesta,
