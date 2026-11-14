@@ -20520,3 +20520,100 @@ migration change; no cross-repo contract.
   renders all four, and confirm the existing leak sweeps still pass with them counted.
 - The Hoy hook for the plan (a readiness-style card on `/` surfacing this week's plan) is the
   orchestrator's own next slice, per the dispatch.
+
+### BODY-PLAN-PANTALLA-1-R -- the orchestrator's 375 px look: layout approved, two text defects fixed (2026-11-14)
+
+**The look.** The orchestrator looked at `body-web-demo` at 375 px (`/goals` and `/goals/4`, the
+demo horizon). **Layout approved**: the plan card, chips, notes, sessions, rules, week arrows, end
+targets, checkpoint and experiments all fit at 375 px; children nest under the horizon on
+`/goals`. **The checkpoint criterios deviation from the parent entry is ACCEPTED**: the bare-string
+fixture that crashed the new reader was given the real criterion shape, a one-line data
+correction, no new assertions.
+
+Two text defects found, both fixed here:
+
+**Ruling 1 -- Spanish says `chequeo`, not `checkpoint`.** The three plan-section strings that said
+"checkpoint" now match BODY-PLAN-PROPUESTAS-1-R's own card wording:
+- `goals.plan.checkpoint_title`: "Próximo checkpoint" -> **"Próximo chequeo"**
+- `goals.plan.checkpoint_none`: "No hay un próximo checkpoint." -> **"No hay un próximo chequeo."**
+- `goals.plan.checkpoints_past_title`: "Checkpoints pasados" -> **"Chequeos pasados"**
+
+English keeps "checkpoint" unchanged. Grepping `es.json` for every other plan-related
+"checkpoint" found no further occurrence (the proposal cards already said `chequeo`/`chequeos`).
+
+**Ruling 2 -- one measure, one unit on a row.** A `min`-unit weekly target (`sueno_minutos`,
+`minutos_intensidad`) now reuses `t.minutes` -- the SAME formatter its real figure already uses
+on that row (`body/i18n/__init__.py:54`) -- instead of a bare `"{n} min"`
+(`asistente.propuesta.plan_unidad.min`, now unused by any call site but left in place, harmless).
+Two tiny wrapper functions call it and trim its own trailing `" 00"` so a whole hour reads
+cleanly:
+- `body/rutas/metas.py`'s `_plan_minutos_txt` (goal detail's target/real row).
+- `body/rutas/asistente.py`'s `_minutos_target_txt` (the proposal cards: `proponer_plan`'s
+  first-week line, `ampliar_plan`'s new weekly lines, `corregir_meta_plan`'s before/after --
+  all three funnel through the one shared `_medida_target_txt`).
+
+Final strings (es/en), `sueno_minutos` `al_menos`:
+- `420` -> `"al menos 7 h"` / `"at least 7 h"` (the `:00` dropped)
+- `400` -> `"al menos 6 h 40"` / `"at least 6 h 40"` (unaffected, no trim needed)
+- `450` -> `"7 h 30"`; `45` -> `"45 min"` (both unaffected; covered by
+  `tests/test_plan_pantalla.py::MinuteUnitTargetCardTest`)
+
+So the goal-detail row now reads `"sueño: al menos 7 h"` beside its real figure `"6 h 51 de
+media"` (`goals.plan.real_minutos`, unchanged) -- one unit, not two.
+
+**New/updated tests**, invented demo data only:
+- `tests/test_plan_pantalla.py::CheckpointsCardTest` -- "Chequeos pasados" / "No hay un próximo
+  chequeo." (es); the English assertions ("Next checkpoint"/"Past checkpoints") are unchanged.
+- `tests/test_plan_pantalla.py::MinuteUnitTargetCardTest` (3 new tests) -- `sueno_minutos` 420 ->
+  "al menos 7 h" beside "6 h 51 de media" (es and en), and `minutos_intensidad` 90/45 -> "al menos
+  1 h 30" beside "45 min de media" (the sum-metodo's real figure keeps the same "de media" i18n
+  wording as the mean-metodo one; that label is outside this slice's rulings).
+- `tests/test_plan_propuestas.py::PlanTextRulingsTest::test_corregir_meta_plan_minuto_measure_exact`
+  and `CardsTest::test_corregir_meta_plan_card_shows_before_and_after_with_unit` -- updated from
+  the old `"420 min"`/`"400 min"` to `"7 h"`/`"6 h 40"`.
+- `tests/test_persona_fuga.py`'s `_markers_of` promotes `REGLA` (`horizonte_regla.texto`), `SEMANA`
+  (`horizonte_semana.titulo`), `META-SEMANAL` (`horizonte_meta_semanal.nota`) and `CHECKPOINT`
+  (`horizonte_checkpoint.titulo`) into its active cross-person marker list, closing
+  BODY-PLAN-PANTALLA-FUGA-1. `UnlinkedSweepTest` and `LinkedSharingSweepTest` both re-ran green
+  with all four counted: no leak found.
+
+**`touches` held exactly**: `body/rutas/metas.py`, `body/templates/goal.html` (read, not edited --
+no template change was needed, every string comes from i18n/the context dict), `body/rutas/
+asistente.py`, `body/i18n/es.json`, `body/i18n/en.json` (read, not edited -- English strings were
+already correct), `tests/test_plan_pantalla.py`, `tests/test_plan_propuestas.py`,
+`tests/test_persona_fuga.py`, `tests/test_i18n_paridad.py` (read, not edited -- the now-unused
+`asistente.propuesta.plan_unidad.+` dynamic-prefix entry is tolerated as stale by its own `if
+prefix not in dynamic_prefixes: continue`), `DECISIONS.md` this entry.
+
+No password, token, session secret or health figure of a real person was read, printed or written
+anywhere; every fixture is invented demo data; no network call was made.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry, after
+this entry's own commit). The exact command is
+`.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 9 sequential chunks of
+`tests/test_*.py` modules in alphabetical order (the same set `discover` would walk), each in the
+foreground:
+
+    chunk 1 (test_accesibilidad..test_baselines_lote):                   Ran 351 tests, OK (skipped=1)
+    chunk 2 (test_borrar_reauth..test_entreno_racha):                    Ran 512 tests, OK
+    chunk 3 (test_entreno_schema..test_garmin_parse):                    Ran 342 tests, OK
+    chunk 4 (test_get_sin_escritura..test_importar_garmin):              Ran 466 tests, OK
+    chunk 5 (test_installer..test_periodo_analisis):                     Ran 451 tests, OK
+    chunk 6 (test_periodo_herramientas..test_pull):                      Ran 475 tests, OK
+    chunk 7 (test_pull_intradia_experimentos..test_tap_44):              Ran 267 tests, OK
+    chunk 8 (test_tendencias_kpi..test_ventana_comida):                  Ran 475 tests, OK
+    chunk 9 (test_vida_dia..test_web_entry):                             Ran 84 tests, OK
+
+Sum: 3423 run, 0 failures, 0 errors, 1 skipped. Reconciled against an independent collect-only
+count (`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`): 3423 --
+matching exactly (3420 before this slice + 3 new `MinuteUnitTargetCardTest` methods). **GREEN.**
+
+**Merge policy, this slice's own diff: changes customer-facing bytes, merge pre-authorised.** The
+three es.json strings and the minute-unit target/real wording are bytes a customer reads --
+Merge policy A's condition trips on that alone. But the dispatch explicitly authorised exactly
+this merge in advance (ORCH-CARLOS-DELEGATES-TIER-1-1: the layout was looked at and approved at
+375 px; the text changes are exactly rulings 1-2's own sentences, asserted EXACTLY by the tests
+above) -- no string built here departs from rulings 1-2's wording, so this entry proceeds to merge
+rather than stopping AWAITING_APPROVAL. No schema or migration change; no cross-repo contract.
+
+**Open follow-ups, not this slice's to do:** none found.
