@@ -251,6 +251,16 @@ def _plan_medida_label(t: T, medida: str) -> str:
     return t("metric." + medida)
 
 
+def _plan_minutos_txt(t: T, valor) -> str:
+    """Ruling 2 (BODY-PLAN-PANTALLA-1-R): one measure, one unit on a row -- the weekly target for
+    a `min`-unit measure is written with the SAME formatter its real figure already uses on this
+    row (t.minutes), so "sueño: al menos 420 min" beside "6 h 51 de media" becomes "al menos 7 h"
+    beside it instead -- never two units on one row. A whole hour drops t.minutes' own trailing
+    ":00" (420 -> "7 h", not "7 h 00")."""
+    txt = t.minutes(valor)
+    return txt[:-3] if txt.endswith(" 00") else txt
+
+
 def _plan_target_txt(t: T, defs: dict, medida: str, sentido: str, valor) -> str:
     """The weekly target in plain words, reusing the same asistente.propuesta.plan_* vocabulary
     BODY-PLAN-PROPUESTAS-1-R already built for this exact phrasing (session/clock/minute shapes
@@ -276,7 +286,7 @@ def _plan_target_txt(t: T, defs: dict, medida: str, sentido: str, valor) -> str:
                       else t("asistente.propuesta.plan_sesion_cardio"))
         return t("asistente.propuesta.plan_sesion_valor", sentido=sentido_txt, n=t.num(valor), medida=nombre)
     if info is not None:  # unit 'min'
-        valor_txt = t("asistente.propuesta.plan_unidad.min", n=t.num(valor))
+        valor_txt = _plan_minutos_txt(t, valor)
     else:
         valor_txt = comun._fig_unit(t, medida, valor, defs)
     return t("asistente.propuesta.plan_medida_valor", medida=_plan_medida_label(t, medida), sentido=sentido_txt,

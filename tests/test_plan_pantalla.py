@@ -205,9 +205,9 @@ class CheckpointsCardTest(unittest.TestCase):
         text = r.text
         self.assertIn("ZZ checkpoint siguiente", text)
         self.assertIn("ZZ primer checkpoint", text)
-        self.assertLess(text.index("ZZ checkpoint siguiente"), text.index("Checkpoints pasados"))
-        self.assertGreater(text.index("ZZ primer checkpoint"), text.index("Checkpoints pasados"))
-        m = re.search(r'<details class="files[^>]*>\s*<summary[^>]*>Checkpoints pasados', text)
+        self.assertLess(text.index("ZZ checkpoint siguiente"), text.index("Chequeos pasados"))
+        self.assertGreater(text.index("ZZ primer checkpoint"), text.index("Chequeos pasados"))
+        m = re.search(r'<details class="files[^>]*>\s*<summary[^>]*>Chequeos pasados', text)
         self.assertIsNotNone(m)
         self.assertNotIn("open", m.group(0))
 
@@ -233,8 +233,56 @@ class CheckpointsCardTest(unittest.TestCase):
         conn.commit()
         r = _get(f"/goals/{gid}")
         self.assertEqual(r.status_code, 200)
-        self.assertIn("No hay un próximo checkpoint.", r.text)
+        self.assertIn("No hay un próximo chequeo.", r.text)
         self.assertIn("ZZ unico checkpoint", r.text)
+
+
+class MinuteUnitTargetCardTest(unittest.TestCase):
+    """Ruling 2 (BODY-PLAN-PANTALLA-1-R): a `min`-unit weekly target (sueno_minutos,
+    minutos_intensidad) is written in the same hours-and-minutes shape its real figure already
+    uses on the row -- never "420 min" beside "6 h 51 de media"."""
+
+    def test_sueno_minutos_whole_hour_target_drops_the_bare_00(self):
+        conn = _reset_db(self)
+        gid = _horizonte(conn, titulo="ZZ Horizonte con meta de sueño")
+        db.crear_meta_semanal(conn, 1, gid, MONDAY_CURRENT.isoformat(), "sueno_minutos", "al_menos", 420.0)
+        for i in range(3):
+            day = MONDAY_CURRENT + timedelta(i)
+            db.set_metric(conn, day.isoformat(), "sleep_minutes", 411.0, "garmin", 1)
+        conn.commit()
+        r = _get(f"/goals/{gid}")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("sueño: al menos 7 h", r.text)
+        self.assertIn("6 h 51 de media", r.text)
+        self.assertNotIn("7 h 00", r.text)
+        self.assertNotIn("420 min", r.text)
+
+    def test_sueno_minutos_whole_hour_target_in_english(self):
+        conn = _reset_db(self)
+        gid = _horizonte(conn, titulo="ZZ Horizon with a sleep target")
+        db.crear_meta_semanal(conn, 1, gid, MONDAY_CURRENT.isoformat(), "sueno_minutos", "al_menos", 420.0)
+        for i in range(3):
+            day = MONDAY_CURRENT + timedelta(i)
+            db.set_metric(conn, day.isoformat(), "sleep_minutes", 411.0, "garmin", 1)
+        db.set_language(conn, "en", 1)
+        conn.commit()
+        r = _get(f"/goals/{gid}")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("sleep: at least 7 h", r.text)
+        self.assertIn("6 h 51 on average", r.text)
+
+    def test_minutos_intensidad_keeps_minutes_above_and_below_an_hour(self):
+        conn = _reset_db(self)
+        gid = _horizonte(conn, titulo="ZZ Horizonte con meta de intensidad")
+        db.crear_meta_semanal(conn, 1, gid, MONDAY_CURRENT.isoformat(), "minutos_intensidad", "al_menos", 90.0)
+        for i in range(2):
+            day = MONDAY_CURRENT + timedelta(i)
+            db.set_metric(conn, day.isoformat(), "intensity_minutes", 22.5, "garmin", 1)
+        conn.commit()
+        r = _get(f"/goals/{gid}")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("minutos de intensidad: al menos 1 h 30", r.text)
+        self.assertIn("45 min de media", r.text)
 
 
 class ExperimentsLinkedCardTest(unittest.TestCase):
