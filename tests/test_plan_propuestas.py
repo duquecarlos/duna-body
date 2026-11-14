@@ -677,5 +677,113 @@ class PlanTextRulingsTest(PlanPropuestasTestCase):
                     self.assertNotIn(prohibido, texto, f"[{lang}] {prohibido!r} found in {texto!r}")
 
 
+class HoraEntradaToolTest(PlanPropuestasTestCase):
+    """BODY-PLAN-HORA-ENTRADA-1 ruling 1: a clock measure's (hora_acostarse, hora_levantarse)
+    `valor` crosses the tool boundary as "HH:MM" -- converted to horizonte's own
+    minutes-after-noon storage on the way in, and back to "HH:MM" on the way out through
+    leer_plan. A raw number, or a string outside HH:MM, is refused naming the field; every other
+    measure keeps taking a plain number, unchanged."""
+
+    def _despues(self, pid: int) -> dict:
+        row = self.conn.execute(
+            "SELECT despues_json FROM propuesta_agente WHERE id = ?", (pid,)).fetchone()
+        return json.loads(row["despues_json"])
+
+    def test_hhmm_in_meta_semanal_is_stored_as_minutes_after_noon(self):
+        pid = self._proponer_plan(metas_semanales=[
+            {"week_start": "2026-11-02", "medida": "hora_acostarse", "sentido": "antes_de", "valor": "23:00"},
+        ])
+        self.assertEqual(self._despues(pid)["metas_semanales"][0]["valor"], 660.0)
+
+    def test_hhmm_wrapping_past_midnight_is_stored_as_minutes_after_noon(self):
+        pid = self._proponer_plan(metas_semanales=[
+            {"week_start": "2026-11-02", "medida": "hora_levantarse", "sentido": "despues_de", "valor": "00:45"},
+        ])
+        self.assertEqual(self._despues(pid)["metas_semanales"][0]["valor"], 765.0)
+
+    def test_proponer_plan_card_renders_the_hhmm_target_in_both_languages(self):
+        pid = self._proponer_plan(metas_semanales=[
+            {"week_start": "2026-11-02", "medida": "hora_acostarse", "sentido": "antes_de", "valor": "23:00"},
+        ])
+        despues = self._despues(pid)
+        defs = comun._defs(self.conn)
+        for lang, esperado in (("es", "acostarse antes de las 23:00"), ("en", "in bed before 23:00")):
+            _, texto, _ = asistente.TARJETAS["proponer_plan"](T(lang), defs, despues, None, self.conn, 1)
+            self.assertIn(esperado, texto, f"[{lang}]")
+
+    def test_numero_for_non_clock_measure_is_still_accepted(self):
+        pid = self._proponer_plan(metas_semanales=[
+            {"week_start": "2026-11-02", "medida": "sueno_minutos", "sentido": "al_menos", "valor": 420},
+        ])
+        self.assertEqual(self._despues(pid)["metas_semanales"][0]["valor"], 420.0)
+
+    def test_numero_for_clock_measure_in_meta_semanal_is_refused_naming_the_item(self):
+        cid = _cid(self.conn)
+        with self.assertRaisesRegex(ToolError, r"metas_semanales\[0\]\.valor"):
+            herramientas.ejecutar(self.conn, 1, "proponer_plan", dict(PLAN_BASE, metas_semanales=[
+                {"week_start": "2026-11-02", "medida": "hora_acostarse", "sentido": "antes_de", "valor": 1380},
+            ]), "ninguno", cid)
+
+    def test_numero_for_clock_measure_in_ampliar_plan_is_refused_naming_the_item(self):
+        pid, goal_id = self._proponer_y_aplicar_plan()
+        cid = _cid(self.conn)
+        with self.assertRaisesRegex(ToolError, r"metas_semanales\[0\]\.valor"):
+            herramientas.ejecutar(self.conn, 1, "ampliar_plan", {
+                "goal_id": goal_id,
+                "metas_semanales": [
+                    {"week_start": "2026-11-02", "medida": "hora_acostarse", "sentido": "antes_de", "valor": 1380},
+                ],
+            }, "ninguno", cid)
+
+    def test_numero_for_clock_measure_in_checkpoint_criterio_is_refused_naming_the_item(self):
+        cid = _cid(self.conn)
+        with self.assertRaisesRegex(ToolError, r"checkpoints\[0\]\.criterios\[0\]\.valor"):
+            herramientas.ejecutar(self.conn, 1, "proponer_plan", dict(PLAN_BASE, checkpoints=[
+                {"day": "2026-12-01", "titulo": "Chequeo", "criterios": [
+                    {"medida": "hora_acostarse", "sentido": "antes_de", "valor": 1380, "ventana": "semana"}]},
+            ]), "ninguno", cid)
+
+    def test_numero_for_clock_measure_in_corregir_meta_plan_is_refused(self):
+        pid, goal_id = self._proponer_y_aplicar_plan(metas_semanales=[
+            {"week_start": "2026-11-02", "medida": "hora_acostarse", "sentido": "antes_de", "valor": "23:00"},
+        ])
+        meta_id = self.conn.execute(
+            "SELECT id FROM horizonte_meta_semanal WHERE horizonte_goal_id = ?", (goal_id,)).fetchone()["id"]
+        cid = _cid(self.conn)
+        with self.assertRaisesRegex(ToolError, "valor"):
+            herramientas.ejecutar(self.conn, 1, "corregir_meta_plan",
+                                  {"meta_id": meta_id, "valor": 1380}, "ninguno", cid)
+
+    def test_hhmm_in_corregir_meta_plan_is_accepted_and_converted(self):
+        pid, goal_id = self._proponer_y_aplicar_plan(metas_semanales=[
+            {"week_start": "2026-11-02", "medida": "hora_acostarse", "sentido": "antes_de", "valor": "23:00"},
+        ])
+        meta_id = self.conn.execute(
+            "SELECT id FROM horizonte_meta_semanal WHERE horizonte_goal_id = ?", (goal_id,)).fetchone()["id"]
+        cid = _cid(self.conn)
+        corr_pid = herramientas.ejecutar(self.conn, 1, "corregir_meta_plan",
+                                         {"meta_id": meta_id, "valor": "22:30"}, "ninguno", cid)["propuesta_id"]
+        self.assertEqual(self._despues(corr_pid)["valor"], 630.0)
+
+    def test_bad_hhmm_strings_are_refused(self):
+        cid = _cid(self.conn)
+        for valor in ("24:00", "7pm", ""):
+            with self.assertRaisesRegex(ToolError, r"metas_semanales\[0\]\.valor", msg=repr(valor)):
+                herramientas.ejecutar(self.conn, 1, "proponer_plan", dict(PLAN_BASE, metas_semanales=[
+                    {"week_start": "2026-11-02", "medida": "hora_acostarse", "sentido": "antes_de", "valor": valor},
+                ]), "ninguno", cid)
+
+    def test_leer_plan_returns_hhmm_for_the_targets_clock_line(self):
+        pid, goal_id = self._proponer_y_aplicar_plan(metas_semanales=[
+            {"week_start": "2026-11-02", "medida": "hora_acostarse", "sentido": "antes_de", "valor": "23:00"},
+        ])
+        out = herramientas.ejecutar(self.conn, 1, "leer_plan",
+                                    {"goal_id": goal_id, "desde": "2026-11-02", "hasta": "2026-11-02"},
+                                    "resumen", None)
+        linea = out["plan_vs_real"][0]["lineas"][0]
+        self.assertEqual(linea["medida"], "hora_acostarse")
+        self.assertEqual(linea["valor"], "23:00")
+
+
 if __name__ == "__main__":
     unittest.main()
