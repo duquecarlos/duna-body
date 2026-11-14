@@ -20711,3 +20711,5 @@ contract or DTO change. All three of merge policy A's conditions are clear, so t
 stopping.
 
 **Open follow-ups, not this slice's to do:** none found.
+
+-- merged 7de9a3de2f4bb2f7436acae4312ea0e7d920d94a
