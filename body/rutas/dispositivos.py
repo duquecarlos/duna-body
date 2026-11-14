@@ -20,7 +20,8 @@ router = APIRouter()
 # ---- Device keys (hosted only): «Conexión del PC» on Ajustes, BODY-DISPOSITIVO-1 -----------------
 
 _ALCANCE_LABELS = {"turnos:subir": "dispositivos.scope.turnos", "vida:leer": "dispositivos.scope.vida",
-                    "desplazamiento:subir": "dispositivos.scope.desplazamiento"}
+                    "desplazamiento:subir": "dispositivos.scope.desplazamiento",
+                    "asistente:mcp": "dispositivos.scope.asistente_mcp"}
 
 
 def _dispositivo_row(t: T, d: dict) -> dict:
@@ -66,6 +67,8 @@ async def dispositivos_crear(request: Request, person_id: int = Depends(identity
         alcances.add("vida:leer")
     if f.get("alcance_desplazamiento") == "1":
         alcances.add("desplazamiento:subir")
+    if f.get("alcance_asistente_mcp") == "1":
+        alcances.add("asistente:mcp")
     new_key = dispositivo.crear(conn, person_id, nombre, alcances)
     items = [_dispositivo_row(t, d) for d in dispositivo.listar(conn, person_id)]
     resp = comun._render("dispositivos.html", t=t, tab="settings", items=items, new_key=new_key,

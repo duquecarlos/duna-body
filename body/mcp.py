@@ -69,6 +69,10 @@ from .i18n import T
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_INFO = {"name": "body-local", "version": "1"}
 CALLER = "mcp-local"
+# BODY-MCP-REMOTO-SERVIDOR-1: the hosted routes' own caller tag, so an audit row names which door
+# made the call -- the cap query below (ruling 4) deliberately does NOT filter on this column: it
+# is one shared, cross-door budget per person, never a separate one per door.
+CALLER_REMOTO = "mcp-remoto"
 ORIGEN = "mcp"
 
 # BODY-MCP-APLICAR-1 (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2): the one apply tool, listed only
@@ -126,8 +130,32 @@ _DESCRIPCION_DESCARTAR_PROPUESTA = (
 LIMITES = {"ventana_min": agente_propuestas.EXPIRA_MINUTOS, "lecturas": bucle.MAX_LECTURAS,
            "propuestas": bucle.MAX_RONDAS, "aplicaciones": bucle.MAX_LECTURAS}
 
+# BODY-MCP-REMOTO-SERVIDOR-1 ruling 4: every tool name that counts as "lectura"/"propuesta" for
+# the DB-backed remote caps, read off the SAME registry the local in-memory _Tope's own dispatch
+# already keys on (herramientas.tipo_de) -- never a second, hand-typed list. NOMBRE_APLICAR is its
+# own cap (one tool, not a set); NOMBRE_DESCARTAR is uncapped, same as the local door.
+_NOMBRES_LECTURA = frozenset(h["nombre"] for h in herramientas.HERRAMIENTAS if h["tipo"] == "lectura")
+_NOMBRES_PROPUESTA = frozenset(h["nombre"] for h in herramientas.HERRAMIENTAS if h["tipo"] == "propuesta")
+
 _PARSE_ERROR = {"code": -32700, "message": "Parse error"}
 _METHOD_NOT_FOUND = {"code": -32601, "message": "Method not found"}
+
+
+class RehusoMCP(herramientas.ToolError):
+    """A refusal the shared core (below) raises for one of ITS OWN named reasons (a cap, the
+    aplicar_mcp setting, a proposal that is not this caller's own) -- carrying a machine `codigo`
+    and raw, unlocalized `campos` alongside the usual localized message. IS-A `herramientas.
+    ToolError`, so the local stdio door's existing `except herramientas.ToolError` handling (and
+    its `errores.texto_propio(e)` text) needs no change (BODY-MCP-REMOTO-SERVIDOR-1 ruling 2): the
+    message is still exactly what it always raised. The remote door (body/rutas/mcp_remoto.py)
+    reads `codigo`/`campos` instead -- `campos` carries only a raw ISO timestamp or a plain count,
+    never pre-localised text, so the PC's own future client can render it with these same
+    `_mensaje_*` functions, reading the person's OWN language setting locally."""
+
+    def __init__(self, mensaje: str, codigo: str, **campos):
+        super().__init__(mensaje)
+        self.codigo = codigo
+        self.campos = campos
 
 
 class _Tope:
@@ -164,7 +192,14 @@ class _Tope:
 class _Sesion:
     """One MCP session's own state: the connection and person it serves, the one conversation its
     proposals land in (created lazily), and this session's own rolling-window caps (BODY-MCP-
-    LOCAL-1-B) plus a plain running total of each, for main()'s own stderr summary."""
+    LOCAL-1-B) plus a plain running total of each, for main()'s own stderr summary.
+
+    This is the local stdio door's own half of the shared core's duck-typed contract (conn,
+    person_id, caller, conversacion(), tope_lecturas/tope_propuestas/tope_aplicaciones, contar_*)
+    -- `_SesionRemota` below is the remote door's other half, read by the exact same functions
+    (BODY-MCP-REMOTO-SERVIDOR-1 ruling 2: one implementation, two doors)."""
+
+    caller = CALLER
 
     def __init__(self, conn, person_id: int, reloj=None):
         self.conn = conn
@@ -182,6 +217,108 @@ class _Sesion:
         if self.conversacion_id is None:
             self.conversacion_id = agente_conversacion.crear(self.conn, self.person_id, origen=ORIGEN)
         return self.conversacion_id
+
+    def contar_lectura(self) -> None:
+        self.total_lecturas += 1
+
+    def contar_propuesta(self) -> None:
+        self.total_propuestas += 1
+
+    def contar_aplicacion(self) -> None:
+        self.total_aplicaciones += 1
+
+
+class _TopeDB:
+    """A cap backed by the audit table itself (BODY-MCP-REMOTO-SERVIDOR-1 ruling 4) rather than an
+    in-memory window: one bounded query -- COUNT and the oldest matching row's timestamp together,
+    cached on first use so `permite()` followed by `minutos_para_reintentar()` costs one query, not
+    two -- counting ALL of this person's `uso_herramienta_externa` rows (either door, ruling 4
+    deliberately gives both doors ONE shared budget) whose `herramienta` is one of `nombres`, in
+    the trailing `ventana_min` minutes.
+
+    `_llamar_herramienta`'s own first line writes THIS call's own audit row before any cap is ever
+    consulted (the same order the local stdio door already used, ruling 5's "every call, refused
+    or not, is audited"), so the count this query reads already includes the current attempt --
+    `permite()` allows it through at `<= cupo`, not `< cupo`, for exactly that reason. `registrar()`
+    is a no-op: the write that already happened is the count."""
+
+    def __init__(self, conn, person_id: int, nombres, ventana_min: int, cupo: int, reloj):
+        self._conn = conn
+        self._person_id = person_id
+        self._nombres = tuple(nombres)
+        self._ventana_min = ventana_min
+        self._cupo = cupo
+        self._reloj = reloj
+        self._consultado = False
+        self._n = 0
+        self._oldest: str | None = None
+        self._ahora: datetime | None = None
+
+    def _consultar(self) -> None:
+        if self._consultado:
+            return
+        self._ahora = self._reloj()
+        corte = (self._ahora - timedelta(minutes=self._ventana_min)).isoformat(timespec="seconds")
+        placeholders = ",".join("?" * len(self._nombres))
+        row = self._conn.execute(
+            f"SELECT COUNT(*) AS n, MIN(llamada_en) AS oldest FROM uso_herramienta_externa "
+            f"WHERE person_id = ? AND llamada_en >= ? AND herramienta IN ({placeholders})",
+            (self._person_id, corte, *self._nombres),
+        ).fetchone()
+        self._n, self._oldest = row["n"], row["oldest"]
+        self._consultado = True
+
+    def permite(self) -> bool:
+        self._consultar()
+        return self._n <= self._cupo
+
+    def registrar(self) -> None:
+        pass
+
+    def minutos_para_reintentar(self) -> int:
+        self._consultar()
+        if self._oldest is None:
+            return 0
+        resto = (datetime.fromisoformat(self._oldest) + timedelta(minutes=self._ventana_min)) - self._ahora
+        return max(1, math.ceil(resto.total_seconds() / 60))
+
+
+class _SesionRemota:
+    """One HTTP call's own context for the shared MCP core (BODY-MCP-REMOTO-SERVIDOR-1 ruling 2):
+    the same shape `_Sesion` carries, so `_lista_herramientas`/`_llamar_herramienta`/
+    `_aplicar_propuesta_mcp`/`_descartar_propuesta_mcp` run UNCHANGED for either door -- but every
+    cap is a `_TopeDB` read from the audit table instead of an in-memory window, and
+    `conversacion_id` is the CLIENT's own, already verified by the route (ruling 3) before this is
+    ever built -- `conversacion()` only ever creates one when the client sent none, exactly once,
+    never twice, for this one call."""
+
+    caller = CALLER_REMOTO
+
+    def __init__(self, conn, person_id: int, conversacion_id: int | None, reloj=None):
+        self.conn = conn
+        self.person_id = person_id
+        self.conversacion_id = conversacion_id
+        reloj = reloj or (lambda: datetime.now(timezone.utc))
+        self.tope_lecturas = _TopeDB(conn, person_id, _NOMBRES_LECTURA, LIMITES["ventana_min"],
+                                      LIMITES["lecturas"], reloj)
+        self.tope_propuestas = _TopeDB(conn, person_id, _NOMBRES_PROPUESTA, LIMITES["ventana_min"],
+                                        LIMITES["propuestas"], reloj)
+        self.tope_aplicaciones = _TopeDB(conn, person_id, (NOMBRE_APLICAR,), LIMITES["ventana_min"],
+                                          LIMITES["aplicaciones"], reloj)
+
+    def conversacion(self) -> int:
+        if self.conversacion_id is None:
+            self.conversacion_id = agente_conversacion.crear(self.conn, self.person_id, origen=ORIGEN)
+        return self.conversacion_id
+
+    def contar_lectura(self) -> None:
+        pass
+
+    def contar_propuesta(self) -> None:
+        pass
+
+    def contar_aplicacion(self) -> None:
+        pass
 
 
 def _herramienta_mcp(especificacion: dict) -> dict:
@@ -217,19 +354,16 @@ def _idioma(sesion: _Sesion) -> str:
     return db.person(sesion.conn, sesion.person_id)["language"]
 
 
-def _mensaje_tope_lecturas(sesion: _Sesion) -> str:
-    t = T(_idioma(sesion))
-    return t("asistente.mcp.limite_lecturas", minutos=sesion.tope_lecturas.minutos_para_reintentar())
+def _mensaje_tope_lecturas(idioma: str, minutos: int) -> str:
+    return T(idioma)("asistente.mcp.limite_lecturas", minutos=minutos)
 
 
-def _mensaje_tope_propuestas(sesion: _Sesion) -> str:
-    t = T(_idioma(sesion))
-    return t("asistente.mcp.limite_propuestas", minutos=sesion.tope_propuestas.minutos_para_reintentar())
+def _mensaje_tope_propuestas(idioma: str, minutos: int) -> str:
+    return T(idioma)("asistente.mcp.limite_propuestas", minutos=minutos)
 
 
-def _mensaje_tope_aplicaciones(sesion: _Sesion) -> str:
-    t = T(_idioma(sesion))
-    return t("asistente.mcp.limite_aplicaciones", minutos=sesion.tope_aplicaciones.minutos_para_reintentar())
+def _mensaje_tope_aplicaciones(idioma: str, minutos: int) -> str:
+    return T(idioma)("asistente.mcp.limite_aplicaciones", minutos=minutos)
 
 
 def _mensaje_aplicar_apagado(sesion: _Sesion) -> str:
@@ -269,9 +403,10 @@ def _aplicar_propuesta_mcp(sesion: _Sesion, argumentos: dict) -> dict:
     through the SAME `agente_propuestas.aplicar` the web route uses, then ties the row to this
     outside apply (db.marcar_aplicada_via_mcp) for the panel's own label."""
     if not db.get_aplicar_mcp(sesion.conn, sesion.person_id):
-        raise herramientas.ToolError(_mensaje_aplicar_apagado(sesion))
+        raise RehusoMCP(_mensaje_aplicar_apagado(sesion), "aplicar_apagado")
     if not sesion.tope_aplicaciones.permite():
-        raise herramientas.ToolError(_mensaje_tope_aplicaciones(sesion))
+        minutos = sesion.tope_aplicaciones.minutos_para_reintentar()
+        raise RehusoMCP(_mensaje_tope_aplicaciones(_idioma(sesion), minutos), "limite", minutos=minutos)
     propuesta_id = argumentos.get("propuesta_id")
     if not isinstance(propuesta_id, int):
         raise herramientas.ToolError("propuesta_id debe ser un entero")
@@ -280,15 +415,16 @@ def _aplicar_propuesta_mcp(sesion: _Sesion, argumentos: dict) -> dict:
         (propuesta_id, sesion.person_id),
     ).fetchone()
     if fila is None or agente_conversacion.origen_de(sesion.conn, fila["conversacion_id"]) != ORIGEN:
-        raise herramientas.ToolError(_mensaje_aplicar_no_propia(sesion))
+        raise RehusoMCP(_mensaje_aplicar_no_propia(sesion), "aplicar_no_propia")
     resultado = agente_propuestas.aplicar(sesion.conn, sesion.person_id, propuesta_id)
     if resultado["estado"] == "expirada":
-        raise herramientas.ToolError(_mensaje_aplicar_expirada(sesion, resultado["expira_en"]))
+        raise RehusoMCP(_mensaje_aplicar_expirada(sesion, resultado["expira_en"]), "aplicar_expirada",
+                         expira_en=resultado["expira_en"])
     if resultado["estado"] != "aplicada":
-        raise herramientas.ToolError(_mensaje_aplicar_no_vigente(sesion))
+        raise RehusoMCP(_mensaje_aplicar_no_vigente(sesion), "aplicar_no_vigente")
     db.marcar_aplicada_via_mcp(sesion.conn, propuesta_id)
     sesion.tope_aplicaciones.registrar()
-    sesion.total_aplicaciones += 1
+    sesion.contar_aplicacion()
     return {"propuesta_id": propuesta_id, "estado": resultado["estado"]}
 
 
@@ -303,7 +439,7 @@ def _descartar_propuesta_mcp(sesion: _Sesion, argumentos: dict) -> dict:
     data itself, so it carries no drift check and needs no "the person already said yes"
     precondition."""
     if not db.get_aplicar_mcp(sesion.conn, sesion.person_id):
-        raise herramientas.ToolError(_mensaje_descartar_apagado(sesion))
+        raise RehusoMCP(_mensaje_descartar_apagado(sesion), "descartar_apagado")
     propuesta_id = argumentos.get("propuesta_id")
     if not isinstance(propuesta_id, int):
         raise herramientas.ToolError("propuesta_id debe ser un entero")
@@ -312,10 +448,10 @@ def _descartar_propuesta_mcp(sesion: _Sesion, argumentos: dict) -> dict:
         (propuesta_id, sesion.person_id),
     ).fetchone()
     if fila is None or agente_conversacion.origen_de(sesion.conn, fila["conversacion_id"]) != ORIGEN:
-        raise herramientas.ToolError(_mensaje_aplicar_no_propia(sesion))
+        raise RehusoMCP(_mensaje_aplicar_no_propia(sesion), "aplicar_no_propia")
     resultado = agente_propuestas.descartar(sesion.conn, sesion.person_id, propuesta_id)
     if resultado["estado"] != "descartada":
-        raise herramientas.ToolError(_mensaje_aplicar_no_vigente(sesion))
+        raise RehusoMCP(_mensaje_aplicar_no_vigente(sesion), "aplicar_no_vigente")
     return {"propuesta_id": propuesta_id, "estado": resultado["estado"]}
 
 
@@ -332,7 +468,7 @@ def _llamar_herramienta(sesion: _Sesion, nombre, argumentos: dict) -> tuple[str,
     proposal whose own watch-sets read failed, so the caller can add the one extra line telling
     the person's sets were saved without the watch's."""
     nombre_str = nombre if isinstance(nombre, str) else str(nombre)
-    db.registrar_uso_herramienta_externa(sesion.conn, sesion.person_id, nombre_str, CALLER)
+    db.registrar_uso_herramienta_externa(sesion.conn, sesion.person_id, nombre_str, sesion.caller)
     if nombre_str == NOMBRE_APLICAR:
         return "aplicacion", _aplicar_propuesta_mcp(sesion, argumentos), False
     if nombre_str == NOMBRE_DESCARTAR:
@@ -343,19 +479,21 @@ def _llamar_herramienta(sesion: _Sesion, nombre, argumentos: dict) -> tuple[str,
         raise herramientas.ToolError(f"herramienta desconocida: {nombre_str!r}")
     if tipo == "lectura":
         if not sesion.tope_lecturas.permite():
-            raise herramientas.ToolError(_mensaje_tope_lecturas(sesion))
+            minutos = sesion.tope_lecturas.minutos_para_reintentar()
+            raise RehusoMCP(_mensaje_tope_lecturas(_idioma(sesion), minutos), "limite", minutos=minutos)
         salida = herramientas.ejecutar(sesion.conn, sesion.person_id, nombre, argumentos, nivel)
         sesion.tope_lecturas.registrar()
-        sesion.total_lecturas += 1
+        sesion.contar_lectura()
         return tipo, salida, False
     if not sesion.tope_propuestas.permite():
-        raise herramientas.ToolError(_mensaje_tope_propuestas(sesion))
+        minutos = sesion.tope_propuestas.minutos_para_reintentar()
+        raise RehusoMCP(_mensaje_tope_propuestas(_idioma(sesion), minutos), "limite", minutos=minutos)
     conversacion_id = sesion.conversacion()
     salida = herramientas.ejecutar(sesion.conn, sesion.person_id, nombre, argumentos, nivel, conversacion_id)
     registro = salida.pop("_registro", None)
     aviso_reloj = bool(registro and registro.get("despues_json", {}).get("reloj_fallo"))
     sesion.tope_propuestas.registrar()
-    sesion.total_propuestas += 1
+    sesion.contar_propuesta()
     return tipo, salida, aviso_reloj
 
 

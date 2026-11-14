@@ -582,6 +582,7 @@
   "dispositivos.scope.turnos": "Upload shifts",
   "dispositivos.scope.vida": "Read weekly summary",
   "dispositivos.scope.desplazamiento": "Upload commute",
+  "dispositivos.scope.asistente_mcp": "Personal assistant (MCP): read and propose, like Body's assistant",
   "dispositivos.scope_fixed_note": "A PC you already connected only has the permissions you checked at the time. To add a new one, connect it again with a new key.",
   "unit.min": "min",
   "unit.h": "h",

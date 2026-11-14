@@ -67,6 +67,7 @@ _CEILINGS = {
     "/": 101,
     "/ajustes/asistente": 16,
     "/ajustes/dispositivos": 9,
+    "/api/asistente/mcp/herramientas": 3,
     "/api/vida/semana": 3,
     "/asistente/conversacion/{conversacion_id}": 17,
     "/ayuda": 15,
