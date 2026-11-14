@@ -20368,3 +20368,155 @@ this entry proceeds to merge without waiting for approval.
 **Open follow-ups, not this slice's to do:** none found.
 
 -- merged bcd49c69dc6a324e5fdccc0d9d2603684187729f
+
+## BODY-PLAN-PANTALLA-1 -- the plan vs real screen (2026-11-14)
+
+**Ruling 1 -- the plan lives in goal detail, not a new tab.** A milestone goal is a "horizon" once
+it carries any plan row -- a child goal, a rule, a week, a weekly target line or a checkpoint,
+`body/rutas/metas.py`'s `_es_horizonte` (one bounded `SELECT EXISTS(... UNION ...)`, gated on
+`kind == "milestone"` first so a metric goal costs nothing extra). `goal_detail` builds the plan
+section ONLY from `horizonte.semana`/`horizonte.checkpoints` (`_build_plan_ctx`), plus small direct
+reads on `goal`/`experimento` for the end-targets and linked-experiments cards -- never a second
+`horizonte_*` read and never `horizonte.resumen` (which would duplicate `semana`/`checkpoints`
+internally). `body/horizonte.py` was not edited.
+
+**Ruling 2 -- "this week of your plan".** A card with the week's own title/note, one row per
+vigente weekly line (target in plain words reusing `asistente.propuesta.plan_*`'s own vocabulary,
+real figure or the honest gap `goals.plan.sin_dato_reloj`, an estado chip `cumple`/`en_curso`/
+`no_cumple`/`sin_dato` mapped onto the existing `ok`/`warn`/`low`/`off` chip classes -- never a new
+chip colour), the cardio zone note (`goals.plan.zona_no_medida`) when a line's `zona_medida` is
+`False`, this week's planned sessions grouped by day with done/not-done, this week's rules (a
+measurable one gets "N of M days"; `solo_texto` ones render nothing judged), and week navigation
+(`?semana=YYYY-MM-DD`, clamped to the horizon's own `start_day..deadline`, current week the
+default). The head card gains "N days to end date" / "ended".
+
+**Ruling 3 -- end targets, next checkpoint, experiments.** Child goals as links with a verdict
+chip; the next checkpoint (date/title/criteria with estados), past checkpoints inside a closed
+`<details>`; linked experiments as links to `/experiments/{id}`.
+
+**Ruling 4 -- a child names its horizon; `/goals` nests them.** A child goal's detail shows "Part
+of the plan: <title>", linking back only when `goals.goal_access` also allows this viewer to see
+that horizon. `/goals` nests a horizon's own child goals under its card within the same status
+section (`_nest_horizontes`, pure Python over rows already fetched -- no extra query); a child
+whose horizon is not in this same accessible list (another person's private horizon, or a
+different section) simply stays top-level, unmatched.
+
+**Ruling 5 -- bounded regardless of plan size, proven.**
+`tests/test_rendimiento.py::PlanPantallaCostIndependentOfSpanTest` builds a 1-week horizon with 1
+weekly line against a 12-week horizon with 1 line per week (12 total), and a 1-line week against
+an 8-line week (the six `horizonte.MEDIDAS` keys plus two plain `metric_def` keys) -- `GET
+/goals/{goal_id}` costs the identical statement count in both pairs, proving `horizonte.semana`'s
+own per-week scoping (confirmed by reading `plan_vs_real`: every data source is read once over the
+padded range of the WEEK being viewed, never the horizon's whole span).
+
+**Ruling 6 -- the demo seeds one invented, generic plan.** `body/demo.py`'s `_seed_plan_horizonte`:
+a horizon from three weeks before the anchor day to five weeks after, two child metric goals, two
+habits on the horizon, four rules (one per contexto kind the demo allows -- `siempre`, `turno`,
+`tras_noche`, `periodo` -- the last one text-only), a weekly line set for every week (strength
+sessions, cardio sessions, bedtime, sleep minutes) with one corrected via
+`db.corregir_meta_semanal`, two checkpoints (one past, one ahead), this week's planned sessions
+linked to the horizon, and one linked experiment -- all through `goals.propose`/`goals.activate`
+and `db.py`'s own `horizonte_*` writers, except the two `plan` rows (that table has no `db.py`
+writer, the same exception `_seed_plan_hoy` already takes). No real city, sport, employer, shift
+code or figure. Consumes zero `rng` draws, so it does not shift the deterministic sequence any
+later call depends on; placed right after `_seed_goals_and_habits` so sleep/rhr/steps/hogar ids are
+unaffected. `tests/test_demo.py`'s `PlanHorizonteSeedTest` checks the horizon by title (in es and
+en), its 2 active children, 2 habits, all 4 rule contextos, 1 week row, >0 vigente lines and exactly
+1 corrected one, 2 checkpoints, 2 plan rows, 1 experimento row; `test_has_seven_active_goals_with_checks`
+and `test_has_six_habits` updated for the +3 goals / +2 habits this adds.
+
+**A real bug, found by this slice's own tests and fixed.** `_plan_sesiones_dias` grouped a day's
+planned sessions into a dict keyed `"items"`; Jinja's attribute-then-item lookup on a dict resolves
+`d.items` to the dict's own bound `.items` method before ever trying the key, so
+`{% for it in d.items %}` raised `TypeError: 'builtin_function_or_method' object is not iterable`
+for any horizon with a planned session that week. Renamed the key to `"sesiones"` in both
+`_plan_sesiones_dias` (`body/rutas/metas.py`) and `goal.html`'s loop. Found by
+`tests/test_plan_pantalla.py`'s own fixture (which plants two planned sessions this week) before
+this entry's gate ever ran -- confirmed by reproducing it directly against `goal_detail` (bypassing
+`body/request_log.py`'s `RequestLogMiddleware`, which answers an unhandled exception with a plain
+500 page and never re-raises it, by its own design, host-deploy-v1-amendment-sensitive-data rule 5).
+
+**Measured ceiling, ruling 5's own file.** `/goals`' statement ceiling moved from 50 to 75
+(`tests/test_rendimiento.py`): the demo fixture's horizon and its two child goals give person 1
+three more active goals to render and nest. Measured 57, `ceil(57 * 1.3) = 75`.
+`/goals/{goal_id}`'s own ceiling (33) did not move -- that route's shared fixture still picks a
+plain metric goal (sleep, seeded before the horizon), so the plan section's own extra queries never
+run for it; the bounded-cost proof for a horizon's own detail view is
+`PlanPantallaCostIndependentOfSpanTest` instead (ruling 5 above).
+
+**New tests**, invented demo data only, never a real figure:
+- `tests/test_plan_pantalla.py` (28 tests): the plan section appears only on a horizon, never on a
+  plain milestone or a metric goal; every estado chip (`cumple`/`no_cumple` in a terminated past
+  week, `en_curso`/`sin_dato` in the open current week) and the cardio zone note; the honest gap
+  text; a measurable rule judged, a text-only one not; planned sessions shown done/not-done; end
+  targets as links with a verdict chip; the next checkpoint shown, a past one inside a closed,
+  un-`open`ed `<details>`, the empty note shown only when there IS a past checkpoint but no next
+  one (never when there are no checkpoints at all, which omits the whole card); a linked
+  experiment as a link; "N days to end date" / "Ended"; week navigation clamped to the horizon's
+  own span (`?semana=` before start or after deadline renders byte-identical to the clamped week),
+  no prev link on the first week, no next link on the last; a child's "part of the plan" link, and
+  its absence on a plain goal; `_nest_horizontes` directly (two unit tests) and through `/goals`
+  (nesting, and the access-fallback case: a child whose horizon belongs to another person with no
+  shared household stays top-level); another person's horizon 404s like any goal; es and en
+  coverage for the plan section, the part-of link and `/goals` nesting.
+- `tests/test_rendimiento.py::PlanPantallaCostIndependentOfSpanTest` (2 tests, ruling 5 above).
+
+**`touches` -- one deviation, flagged.** Held exactly: `body/rutas/metas.py`,
+`body/templates/goal.html`, `body/templates/goals.html`, `body/static/body.css`,
+`body/i18n/es.json`, `body/i18n/en.json`, `body/demo.py`, `tests/test_plan_pantalla.py`,
+`tests/test_rendimiento.py`, `tests/test_demo.py`, `tests/test_i18n_paridad.py`. `DECISIONS.md`
+this entry. `tests/test_goals_web.py` was in the allowed set but did not need a change.
+`body/horizonte.py`, `body/goals.py` and `body/db.py` were read but not edited.
+
+Deviation: `tests/test_persona_fuga.py` was edited, outside this slice's touches. Its
+`gid_proposed` fixture already seeded a full `horizonte_*` set (rule, week, weekly line,
+checkpoint) under a prior slice's own comment anticipating this one -- "the plan module,
+proposals, screen and Hoy hook are later slices" -- but its checkpoint's `criterios` was
+`[f"ZZ{tag}-CRITERIO"]`, a bare marker string, harmless while nothing read it. This slice's own
+checkpoint card calls `horizonte.checkpoints()` for every horizon, including that one, and a bare
+string where a criterion dict is expected raised a `TypeError` -- reproduced on this branch's gate
+(`tests.test_persona_fuga.LinkedSharingSweepTest`/`UnlinkedSweepTest`, three failures, `500 != 200`
+on `GET /goals/{gid_proposed}`), never reachable on `main` since no route read `horizonte_*`
+content before this slice. Fixed to the real shape (`{"medida": "resting_hr", "sentido":
+"al_menos", "valor": 50.0, "ventana": "semana"}`) -- a one-line data correction, not new
+assertions or new coverage. The marker text itself (`ZZ{tag}-REGLA`/`-SEMANA`/`-META-SEMANAL`/
+`-CHECKPOINT`) is still NOT in `_markers_of`'s active list even though this slice's plan section now
+renders all four; promoting them is its own small slice (open follow-up below), not folded in here.
+
+No password, token, session secret or health figure of a real person was read, printed or written
+anywhere; every fixture is invented demo data; no network call was made.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry, after this
+entry's own commit). The exact command is
+`.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 9 sequential chunks of
+`tests/test_*.py` modules in alphabetical order (the same set `discover` would walk), each in the
+foreground (chunk 6 shown after the `test_persona_fuga.py` fix above; it first failed with exactly
+those 3 errors, fixed, then re-run green before this count):
+
+    chunk 1 (test_accesibilidad..test_baselines_lote):                   Ran 351 tests, OK (skipped=1)
+    chunk 2 (test_borrar_reauth..test_entreno_racha):                    Ran 512 tests, OK
+    chunk 3 (test_entreno_schema..test_garmin_parse):                    Ran 342 tests, OK
+    chunk 4 (test_get_sin_escritura..test_importar_garmin):              Ran 466 tests, OK
+    chunk 5 (test_installer..test_periodo_analisis):                     Ran 451 tests, OK
+    chunk 6 (test_periodo_herramientas..test_pull):                      Ran 472 tests, OK
+    chunk 7 (test_pull_intradia_experimentos..test_tap_44):               Ran 267 tests, OK
+    chunk 8 (test_tendencias_kpi..test_ventana_comida):                  Ran 475 tests, OK
+    chunk 9 (test_vida_dia..test_web_entry):                             Ran 84 tests, OK
+
+Sum: 3420 run, 0 failures, 0 errors, 1 skipped. Reconciled against an independent collect-only
+count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted by walking its
+`TestSuite`): 3420 -- matching exactly. **GREEN.**
+
+**Merge policy, this slice's own diff: STOPS at customer-facing bytes.** New i18n keys
+(`goals.plan.*`, ~29 per language) and the new markup they fill (the plan section's four cards and
+chips on goal detail, `/goals`' nested child cards) are bytes a customer reads -- merge policy A's
+condition is tripped, so this entry stops here, on the branch, unmerged, for approval. No schema or
+migration change; no cross-repo contract.
+
+**Open follow-ups, not this slice's to do:**
+- BODY-PLAN-PANTALLA-FUGA-1: promote `horizonte_regla.texto`, `horizonte_semana.titulo`,
+  `horizonte_meta_semanal.nota` and `horizonte_checkpoint.titulo` into
+  `tests/test_persona_fuga.py`'s `_markers_of` active list, now that this slice's plan section
+  renders all four, and confirm the existing leak sweeps still pass with them counted.
+- The Hoy hook for the plan (a readiness-style card on `/` surfacing this week's plan) is the
+  orchestrator's own next slice, per the dispatch.
