@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
@@ -822,6 +823,172 @@ class PersonasTest(MudanzaTestCase):
         self.assertIn("creado=", printed)
         self.assertNotIn("trabaja_turnos", printed)
         self.assertNotIn("language", printed)
+
+
+class OrigenAntiguoMudanzaTest(MudanzaTestCase):
+    """BODY-MUDANZA-ORIGEN-ANTIGUO-1: the uploaded source can be at an OLDER schema than this
+    process's own code -- any person's PC can be behind the host's code. `importar` must bring a
+    COPY of it to today's schema before reading a single row, never the upload itself. The
+    fixture here is the current schema minus exactly what BODY-PLAN-ESQUEMA-1 added: the four
+    horizonte_* tables and the two additive columns goal.horizonte_goal_id and
+    experimento.goal_id."""
+
+    def _new_older_source(self) -> sqlite3.Connection:
+        conn = db.connect(path=self.source_path)
+        db.init(conn)
+        conn.execute("PRAGMA foreign_keys = OFF")
+        for table in ("horizonte_checkpoint", "horizonte_meta_semanal", "horizonte_semana",
+                      "horizonte_regla"):
+            conn.execute(f"DROP TABLE {table}")
+        conn.execute(
+            "CREATE TABLE goal_old ("
+            "id INTEGER PRIMARY KEY, person_id INTEGER NOT NULL REFERENCES person(id), "
+            "hogar_id TEXT, "
+            "area TEXT NOT NULL DEFAULT 'body' CHECK (area IN ('body', 'money', 'adventure', "
+            "'growth', 'work', 'home')), "
+            "title TEXT NOT NULL, why TEXT, "
+            "kind TEXT NOT NULL DEFAULT 'metric' CHECK (kind IN ('metric', 'milestone')), "
+            "metric_key TEXT REFERENCES metric_def(key), "
+            "direction TEXT CHECK (direction IN ('raise', 'lower', 'keep') OR direction IS NULL), "
+            "target_value REAL, baseline_value REAL, start_day TEXT NOT NULL, deadline TEXT, "
+            "status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('proposed', 'active', "
+            "'paused', 'done', 'dropped')), "
+            "visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', "
+            "'household')), "
+            "CHECK ((kind = 'metric' AND metric_key IS NOT NULL AND direction IS NOT NULL) OR "
+            "(kind = 'milestone' AND metric_key IS NULL AND deadline IS NOT NULL)))"
+        )
+        conn.execute(
+            "INSERT INTO goal_old SELECT id, person_id, hogar_id, area, title, why, kind, "
+            "metric_key, direction, target_value, baseline_value, start_day, deadline, status, "
+            "visibility FROM goal"
+        )
+        conn.execute("DROP TABLE goal")
+        conn.execute("ALTER TABLE goal_old RENAME TO goal")
+
+        conn.execute(
+            "CREATE TABLE experimento_old ("
+            "id INTEGER PRIMARY KEY, person_id INTEGER NOT NULL REFERENCES person(id), "
+            "titulo TEXT NOT NULL, habito_id INTEGER REFERENCES habit(id), "
+            "metricas TEXT NOT NULL CHECK (json_valid(metricas)), "
+            "ventana TEXT NOT NULL CHECK (json_valid(ventana)), "
+            "filtro_dias TEXT NOT NULL CHECK (json_valid(filtro_dias)), "
+            "dias_prueba_objetivo INTEGER, fecha_inicio TEXT NOT NULL, fecha_fin TEXT, "
+            "estado TEXT NOT NULL CHECK (estado IN ('activo', 'cerrado')), "
+            "creado_en TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO experimento_old SELECT id, person_id, titulo, habito_id, metricas, "
+            "ventana, filtro_dias, dias_prueba_objetivo, fecha_inicio, fecha_fin, estado, "
+            "creado_en FROM experimento"
+        )
+        conn.execute("DROP TABLE experimento")
+        conn.execute("ALTER TABLE experimento_old RENAME TO experimento")
+        conn.commit()
+
+        live_tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )}
+        self.assertFalse(any(t.startswith("horizonte_") for t in live_tables))
+        goal_cols = {r[1] for r in conn.execute("PRAGMA table_info(goal)")}
+        self.assertNotIn("horizonte_goal_id", goal_cols)
+        exp_cols = {r[1] for r in conn.execute("PRAGMA table_info(experimento)")}
+        self.assertNotIn("goal_id", exp_cols)
+        return conn
+
+    def setUp(self):
+        super().setUp()
+        source = self._new_older_source()
+        self.ids = _populate_full(source, db.DEFAULT_PERSON_ID)
+        source.close()
+
+    def test_dry_run_completes_and_reports_the_tables_the_copy_gained(self):
+        reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=False)
+        self.assertTrue(ok)
+        by_name = self._reports_by_name(reports)
+        self.assertEqual(by_name["origen"].origen_tablas_nuevas, 4)
+
+        goal = by_name["goal"].counts
+        self.assertEqual((goal.rows_source, goal.insert, goal.other_person), (2, 1, 1))
+        habit = by_name["habit"].counts
+        self.assertEqual(habit.insert, 1)
+        plan = by_name["plan"].counts
+        self.assertEqual((plan.rows_source, plan.insert, plan.other_person), (2, 1, 1))
+
+        # Still a dry run: nothing written.
+        dest = db.connect()
+        self.assertEqual(dest.execute("SELECT COUNT(*) FROM goal").fetchone()[0], 0)
+
+    def test_apply_imports_the_rows(self):
+        reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok)
+        by_name = self._reports_by_name(reports)
+        self.assertEqual(by_name["goal"].counts.insert, 1)
+        self.assertEqual(by_name["habit"].counts.insert, 1)
+        self.assertEqual(by_name["checkin"].counts.insert, 1)
+        self.assertEqual(by_name["checkin_nota"].counts.insert, 1)
+
+        dest = db.connect()
+        self.assertEqual(dest.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+        self.assertEqual(dest.execute("PRAGMA foreign_key_check").fetchall(), [])
+        person_id = dest.execute(
+            "SELECT id FROM person WHERE cuenta_sub = ?", (CUENTA_SUB,)
+        ).fetchone()[0]
+        self.assertEqual(
+            dest.execute(
+                "SELECT COUNT(*) FROM goal WHERE person_id = ?", (person_id,)
+            ).fetchone()[0], 1,
+        )
+
+    def test_report_line_names_the_tables_the_migration_added(self):
+        reports, _ = mudanza.importar(self.source_path, CUENTA_SUB, apply=False)
+        out = []
+        with mock.patch("builtins.print", out.append):
+            mudanza._print_report(reports, apply=False)
+        self.assertEqual(out[0], "origen: esquema actualizado en la copia (4 tablas nuevas)")
+
+    def test_uploaded_file_bytes_are_unchanged_after_apply(self):
+        before = self.source_path.read_bytes()
+        mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        after = self.source_path.read_bytes()
+        self.assertEqual(before, after)
+
+    def test_uploaded_file_bytes_are_unchanged_after_a_dry_run(self):
+        before = self.source_path.read_bytes()
+        mudanza.importar(self.source_path, CUENTA_SUB, apply=False)
+        after = self.source_path.read_bytes()
+        self.assertEqual(before, after)
+
+    def test_no_temp_copy_is_left_behind_after_a_dry_run(self):
+        mudanza.importar(self.source_path, CUENTA_SUB, apply=False)
+        leftover = [p.name for p in self.tmp.iterdir() if p.name.startswith(".mudanza-origen-")]
+        self.assertEqual(leftover, [])
+
+    def test_no_temp_copy_is_left_behind_after_an_apply(self):
+        mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        leftover = [p.name for p in self.tmp.iterdir() if p.name.startswith(".mudanza-origen-")]
+        self.assertEqual(leftover, [])
+
+    def test_no_temp_copy_is_left_behind_when_the_import_raises_mid_way(self):
+        with mock.patch.object(mudanza, "_run", side_effect=RuntimeError("injected")):
+            with self.assertRaises(RuntimeError):
+                mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        leftover = [p.name for p in self.tmp.iterdir() if p.name.startswith(".mudanza-origen-")]
+        self.assertEqual(leftover, [])
+
+
+class OrigenActualMudanzaTest(MudanzaTestCase):
+    """A source already AT today's schema gains no table from the copy's own migration step --
+    proving the migration is a genuine no-op for the common case, not something that always adds
+    something."""
+
+    def test_current_schema_source_reports_zero_tables_added(self):
+        source = self._new_source()
+        source.close()
+        reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=False)
+        self.assertTrue(ok)
+        by_name = self._reports_by_name(reports)
+        self.assertEqual(by_name["origen"].origen_tablas_nuevas, 0)
 
 
 if __name__ == "__main__":
