@@ -20829,3 +20829,131 @@ merge without stopping.
 
 -- merged 798c1e0dfdcacc0664f408cd5f8f7b7ef24722f8
 
+## BODY-DESHACER-DERIVADOS-1 -- an undo also removes what was derived from the row it deletes (2026-11-14)
+
+Live on body.duna.solutions (a5a8cce), 2026-11-14 22:01:49 UTC, measured by the orchestrator in the host's own web
+journal (route templates only): `POST /asistente/propuestas/{propuesta_id}/deshacer 500 IntegrityError`. The
+person's desk tapped Deshacer on an applied `registrar_entreno` card (a manual workout logged twice); the card then
+showed nothing and the session stayed applied.
+
+**Cause.** `_deshacer_registrar_entreno` (`body/agente/propuestas.py`)'s manual case deleted the session's own
+`workout_set` rows and then its `activity` row, but `recuperacion_actividad` (`body/db.py`'s
+`_RECUPERACION_ACTIVIDAD_COLUMNS`) holds a FOREIGN KEY to `activity(person_id, source, source_id)`, and the hosted
+pull computes a recovery row for a session right after it is logged (`body/pull.py`'s `_recalcular_recuperacion_
+seguro` -> `body/recuperacion.py`'s `recalcular`). Connections run `PRAGMA foreign_keys = ON` (`db.connect`), so the
+DELETE on `activity` was refused outright. `assistant.js`'s `llamarPropuesta` called `resp.json()` on the 500 and
+swallowed the failure (`.catch(function () {})`), so the refused undo was invisible on the card. A `propuesta_
+desactualizada` refusal (on either /aplicar or /deshacer) also read the same single sentence, not naming which path
+or what actually changed.
+
+**Census (BODY-DESHACER-DERIVADOS-1 ruling 1): every `escribir_deshacer` in `body/agente/propuestas.py` that
+DELETEs a row**, the tables holding a FOREIGN KEY (or a plain id column used as a link) to it (read from
+`body/db.py`'s own `REFERENCES`/`FOREIGN KEY` clauses), and what the undo does about each:
+
+| action (TABLA key) | deleted table | dependent table(s) | what the undo now does |
+|---|---|---|---|
+| `registrar_entreno` (manual) | `activity` (+ `workout_set`) | `recuperacion_actividad` (FK to `activity`, DERIVED -- the hosted pull's own recompute); any other `activity` row's `vinculo_manual` TEXT link (not a FK, but a dangling reference) | **Fixed.** Deletes `recuperacion_actividad` first (recomputable, never a reason to refuse), unlinks any watch activity's `vinculo_manual` pointing at the deleted session (`UPDATE ... SET vinculo_manual = NULL`, never deleting that watch row), then deletes `workout_set` and `activity` as before -- all in the same `with conn:` transaction. |
+| `registrar_entreno` (Garmin-matched, a watch slot that did not exist pre-correction) | one `workout_set` row | none found (nothing REFERENCES `workout_set`) | Unchanged -- no dependent row exists. |
+| `planear_entreno` | `plan` | none found (nothing REFERENCES `plan`) | Unchanged. |
+| `marcar_habito` (no prior row) | `habit_check` | none found | Unchanged. |
+| `proponer_experimento` | `experimento` (via `db.borrar_experimento`) | `experimento_registro` (FK to `experimento`; PERSON-written, via `marcar_experimento`) | Already guarded: `db.borrar_experimento` itself refuses (`ValueError`) once any `experimento_registro` row exists, and `_drift_deshacer_proponer_experimento` checks the same condition first, so a dependent person row reads as the ordinary `propuesta_desactualizada` refusal, never a raised exception. No change needed. |
+| `marcar_experimento` (no prior row) | `experimento_registro` | none found | Unchanged. |
+| `registrar_ingesta` | `ingesta` (via `db.borrar_ingesta`) | none found (`ingesta` points outward to `comida`, nothing points inward to `ingesta`) | Unchanged. |
+| `registrar_comida` | `comida` (via `db.borrar_comida` / `comida_compartida.deshacer_autor`) | `ingesta.comida_id`, `comida_compartida_porcion.comida_id` (both FK to `comida`; both DERIVED children of the same meal, never a separate person write) | Already correct: `db._borrar_comida_tx` deletes the meal's own `ingesta` children before `comida`; `comida_compartida.deshacer_autor` clears `comida_compartida_porcion.comida_id` to NULL before deleting `comida`. No change needed. |
+| `registrar_checkin` | `checkin` (via `db.borrar_checkin`) | `checkin_nota` (same id as `checkin`, FK-shaped) | Already correct: `db.borrar_checkin` deletes `checkin_nota` before `checkin`, in one `with conn:`. No change needed. |
+| `marcar_periodo` | `period` (via `db.borrar_periodo`) | none found | Unchanged. |
+| `proponer_objetivo_nutriente` (no prior row) | `nutrient_target` (via `db.borrar_nutrient_target`) | none found | Unchanged. |
+| `proponer_plan` | `horizonte_regla`/`horizonte_semana`/`horizonte_meta_semanal`/`horizonte_checkpoint` (by `horizonte_goal_id`) | `horizonte_meta_semanal.reemplaza_id` (self-referencing FK -- a later `corregir_meta_plan` correction row pointing at an earlier one; PERSON-written) | Already guarded: `_drift_deshacer_proponer_plan` refuses (drift) the instant any child table's row count no longer matches what was applied -- including a correction, which appends a row -- before the delete ever runs. No change needed. |
+| `ampliar_plan` | same four tables, by the specific ids that call created | same self-referencing FK on `horizonte_meta_semanal` | Already guarded: `_drift_deshacer_ampliar_plan` checks each created id still exists and, for `horizonte_meta_semanal`, is still `vigente` (not replaced by a later correction) before deleting. No change needed. |
+
+Only `registrar_entreno`'s manual case needed a fix: it is the one undo that deletes an `activity` row, and
+`recuperacion_actividad` is the one derived table keyed to `activity`. Every other DELETE-shaped undo either has no
+dependent table, or already refuses/clears the dependency correctly (the comida/checkin cases pre-date this slice;
+the experimento/proponer_plan/ampliar_plan cases rely on their existing drift checks, which already implement this
+same rule -- "a person's later record is never deleted by an undo, so this check runs before anything else does",
+`_drift_deshacer_proponer_plan`'s own words).
+
+**Ruling 2, as built.** `deshacer()` now wraps `entrada.escribir_deshacer(conn, row)` in `try`/`except Exception:
+conn.rollback(); raise` -- the mark (`_marcar`'s UPDATE to `'deshecha'`) and the undo writer share one transaction
+explicitly, rather than relying on whatever nesting of `with conn:` a given writer happens to use. Measured to be
+necessary, not merely defensive: with the fix REVERTED and a writer that raises immediately (no nested `with conn:`
+at all), the unfixed `deshacer()` left the proposal reading `'deshecha'` in the SAME connection's own next read --
+the UPDATE had never been rolled back. `body/rutas/asistente.py`'s `_propuesta_respuesta` (shared by
+/aplicar, /descartar, /deshacer) now catches any exception from the action, calls `conn.rollback()`, and returns
+`JSONResponse({"estado": "error"}, status_code=500)` -- never FastAPI's default HTML error page.
+
+**Ruling 3, as built.** `assistant.js`'s `llamarPropuesta` now disables the tapped button, and on a non-OK
+response, a body that fails to parse as JSON, or a network failure, re-enables that button and shows
+`asistente.propuesta.fallo` on the card ("No se pudo completar. Inténtalo de nuevo." / "That didn't go through. Try
+again.") instead of failing silently. The four call sites (the card's initial Aplicar/Descartar buttons, and the
+Deshacer button created either at card-build time or after a successful Aplicar) each now pass the button they
+created.
+
+**Ruling 4, as built.** `_propuesta_respuesta` takes the route's own name (`ruta="aplicar"|"descartar"|"deshacer"`);
+when the action's result is `propuesta_desactualizada` AND `ruta == "deshacer"`, it relabels the response's `estado`
+to `deshacer_desactualizado` before returning -- the route is the one place that already knows which path was
+called, so the JS card never has to guess. The apply side is untouched (`_drift_aplicar_cambio_meta`, etc. still
+read as `propuesta_desactualizada`). New i18n keys (both es.json and en.json):
+`asistente.propuesta.deshacer_desactualizado` = "No lo deshice: algo registrado después depende de esto." / "Not
+undone: something recorded later depends on this."; `asistente.propuesta.fallo` = "No se pudo completar. Inténtalo
+de nuevo." / "That didn't go through. Try again." Both are read off `_ETIQUETA_KEYS` (a dict, never a literal
+`t("...")` call), so `tests/test_i18n_paridad.py`'s own generic scan cannot see them; a new test names both keys
+directly instead.
+
+**Proof, red then green (`tests/test_deshacer_derivados.py`).** With the ruling-1 fix in `_deshacer_registrar_
+entreno` and the ruling-2 `try`/`except` in `deshacer()` both reverted to `HEAD` (`git checkout HEAD --
+body/agente/propuestas.py`) and the new test module run against that pre-fix code:
+
+    test_deshacer_removes_the_session_and_its_derived_recovery_row ... ERROR: sqlite3.IntegrityError: FOREIGN KEY constraint failed
+    test_deshacer_unlinks_a_watch_activity_that_pointed_at_the_deleted_session ... ERROR: sqlite3.IntegrityError: FOREIGN KEY constraint failed
+    test_the_mark_stays_aplicada_when_escribir_deshacer_raises ... FAIL: AssertionError: 'deshecha' != 'aplicada'
+    Ran 3 tests in 0.515s -- FAILED (failures=1, errors=2)
+
+the first two ERRORs reproduce the exact live 500 (`sqlite3.IntegrityError: FOREIGN KEY constraint failed`) byte for
+byte; the FAIL independently proves ruling 2 was not already true (a writer that raises with no nested `with conn:`
+left the mark committed to `'deshecha'` with the session still present). With the fix restored (the two edits
+re-applied), the same module:
+
+    Ran 3 tests in 0.519s -- OK
+
+Each session used a manually-applied `registrar_entreno` proposal, with its own `recuperacion_actividad` row written
+by `body/recuperacion.py`'s `recalcular` itself (never a hand INSERT) -- the same function the hosted pull calls, so
+the fixture cannot drift from what that module actually writes. `tests/test_agente_propuestas.py` gains four route-
+level tests: ruling 4's distinct `deshacer_desactualizado` estado via `/deshacer`, the apply side's unchanged
+`propuesta_desactualizada` via `/aplicar`, and ruling 2's `{"estado": "error"}`/500 JSON body (never an HTML page)
+on an unexpected exception, with the proposal confirmed still `'aplicada'` afterward.
+
+No password, token, session secret or health figure of a real person was read, printed, or written anywhere in this
+run; every fixture is invented demo data (a manual "Pierna en casa" session, sentadilla sets), and the live 500 is
+described by route and exception class only, never by a row value.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry). The exact command is
+`.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 9 sequential chunks of the same `tests/test_*.py`
+modules in alphabetical order (the same set `discover` would walk), each in the foreground:
+
+    chunk 1 (test_accesibilidad..test_baselines_lote):            Ran 354 tests, OK (skipped=1)
+    chunk 2 (test_borrar_reauth..test_entreno_numeros):            Ran 489 tests, OK
+    chunk 3 (test_entreno_racha..test_garmin_host):                Ran 320 tests, OK
+    chunk 4 (test_garmin_parse..test_i18n_paridad):                Ran 503 tests, OK
+    chunk 5 (test_importar_garmin..test_periodo):                  Ran 470 tests, OK
+    chunk 6 (test_periodo_analisis..test_pulido_3):                Ran 471 tests, OK
+    chunk 7 (test_pull..test_sueno_respiracion_vista):             Ran 265 tests, OK
+    chunk 8 (test_tap_44..test_tutoriales_puertas):                Ran 466 tests, OK
+    chunk 9 (test_ventana_comida..test_web_entry):                 Ran 106 tests, OK
+
+Sum: 3444 run, 0 failures, 0 errors, 1 skipped. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`): 3444 -- matching exactly. **GREEN.**
+
+**Merge policy, this slice.** The diff touches `body/agente/propuestas.py`, `body/rutas/asistente.py`,
+`body/static/assistant.js`, `body/i18n/es.json`, `body/i18n/en.json`, `tests/test_deshacer_derivados.py`,
+`tests/test_agente_propuestas.py`, `tests/test_i18n_paridad.py` (plus this ledger). Checked against the actual
+diff: no schema or migration change (`body/db.py` is untouched -- the new deletes/updates run against existing
+columns and tables, no `ALTER`/`CREATE`). Customer-facing bytes DID change: two new i18n sentences (es/en) and one
+JS error-handling branch -- exactly the bytes ORCH-CARLOS-DELEGATES-TIER-1-1 pre-approved for this slice ("a live
+undo is broken for the person now; the only customer-facing bytes are the two sentences named in rulings 3-4 and a
+JS error branch"), named in rulings 3-4 above, and no other customer-facing string changed. No cross-repo contract
+or DTO change. Per that advance approval, this entry proceeds to merge without stopping on the customer-bytes
+condition.
+
+**Open follow-ups, not this slice's to do:** none found.
+
