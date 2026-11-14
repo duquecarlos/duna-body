@@ -20619,3 +20619,95 @@ rather than stopping AWAITING_APPROVAL. No schema or migration change; no cross-
 **Open follow-ups, not this slice's to do:** none found.
 
 -- merged deda7ae97c1ed61da580f760f725820fcbe2e417
+
+## BODY-MUDANZA-ORIGEN-ANTIGUO-1 -- the uploaded source can be at an older schema than the host's code (2026-11-14)
+
+Measured live by the orchestrator (BODY-MUDANZA-PC-A-SERVIDOR-1) while running the first real dry run against a PC
+snapshot: `duna-deploy-body importar-pc --cuenta-sub <sub> --archivo /srv/duna/data/body/mudanza-pc.sqlite` crashed
+before writing anything -- `sqlite3.OperationalError: no such table: horizonte_regla` at `body/mudanza.py`'s
+`_source_rows` (`SELECT * FROM "<table>"`), reached via `_process_table` -> `_run` -> `importar`. Cause: the PC
+database was last opened by `body.backup snapshot` (which copies a database byte-for-byte, migrating nothing), and
+nothing running today's code had opened it since BODY-PLAN-ESQUEMA-1 added the four `horizonte_*` tables --
+`importar` opened the upload with `backup.open_readonly` and read it as if it already carried today's schema. Any
+person's PC can be behind the host's code by design (BODY-MUDANZA-HERRAMIENTA-1's own module docstring already said
+so), so the importer has to accept an older source, not assume the upload matches `body/db.py`'s current `SCHEMA`.
+
+**Rulings, as built.**
+
+1. **The importer reads a source brought to today's schema by the one migration path, never the upload itself.**
+   `importar` no longer opens `origen` as the live source. A new generator, `_migrated_source(origen)`, opens it
+   read-only (`backup.open_readonly`, the same way `body.backup snapshot` opens its own source) and copies it --
+   sqlite's own backup API, never a plain file copy -- into a temporary file created with `tempfile.mkstemp` in
+   `config.DB_PATH.parent` (the same directory the destination database lives in: same filesystem, same owner as the
+   data user), `chmod`ed to 0600 best-effort. `db.init` -- the one function every fresh or existing database goes
+   through to reach today's schema, never a hand-written `CREATE` that could drift from it -- runs on that COPY.
+   Every source row `_run`/`_process_table`/`_source_rows` reads comes from the migrated copy, opened read-only in
+   turn. `origen` is opened only for reading; nothing is ever written to it. The copy is deleted in
+   `_migrated_source`'s own `finally`, on every exit path -- a dry run, an apply, or an exception raised while the
+   caller is still reading the migrated rows (`importar`'s own `with _migrated_source(origen) as (source_conn,
+   tablas_nuevas):` block covers the whole of `_run`, so a crash mid-way still unwinds through that `finally`).
+2. **The report says it happened, with counts only.** `importar` inserts a synthetic `TableReport("origen",
+   skipped_table=True, origen_tablas_nuevas=N)` as `reports[0]`, where N is the number of tables present in the copy
+   after `db.init` that were absent before it ran (by name count only -- `_table_names` is a plain `SELECT name FROM
+   sqlite_master WHERE type = 'table'`). `_print_report` recognises this entry before its normal per-table branch and
+   prints `origen: esquema actualizado en la copia (N tablas nuevas)` as the first line, ahead of every per-table
+   line. `skipped_table=True` on this entry also means code that already treats "skipped" as "not a real per-table
+   count" (`ApplyTest.test_second_apply_is_a_no_op`'s blanket `for r in reports: if r.skipped_table: continue`) keeps
+   working unchanged -- no existing test needed editing for this.
+3. **Nothing else changed.** The matching, the remap, the self-ref pass, the person resolution and
+   `deploy/host/body-import-pc.sh`'s own order (integrity check on the UPLOADED file, rollback snapshot, timers
+   paused, file deleted after `--apply`) are exactly as BODY-MUDANZA-HERRAMIENTA-1 and BODY-MUDANZA-HOST-VERBO-1 left
+   them; `deploy/` is outside this slice's `touches` and was not opened. `tests/test_host_import.py` asserts only on
+   the shell script's text, never on `importar`'s own report lines, so it needed no edit.
+
+**Tests** (`tests/test_mudanza.py`, invented data only, every fixture built in an isolated temp dir via
+`MudanzaTestCase`): `OrigenAntiguoMudanzaTest` builds a source at the schema just before BODY-PLAN-ESQUEMA-1 -- its
+own `_new_older_source` takes a fresh `db.init`-built database, drops the four `horizonte_*` tables, and rebuilds
+`goal` and `experimento` without `horizonte_goal_id`/`goal_id` (a `CREATE ... AS SELECT` swap under `PRAGMA
+foreign_keys = OFF`, the same technique `body/db.py`'s own column-drop migrations use) -- and proves: the dry run and
+the apply both complete and import the rows (`test_dry_run_completes_and_reports_the_tables_the_copy_gained`,
+`test_apply_imports_the_rows`); the report's first line is exactly `origen: esquema actualizado en la copia (4 tablas
+nuevas)` (`test_report_line_names_the_tables_the_migration_added`); the uploaded file's bytes are byte-for-byte
+unchanged after a dry run and after an apply (`test_uploaded_file_bytes_are_unchanged_after_a_dry_run`/`_after_apply`,
+compared with `Path.read_bytes()` before and after -- never a value printed); no temp copy survives a normal dry run
+or apply (`test_no_temp_copy_is_left_behind_after_a_dry_run`/`_after_an_apply`, scanning the temp `BODY_HOME` for
+`.mudanza-origen-*` names); no temp copy survives an import that raises mid-way, injected by patching
+`mudanza._run` to raise `RuntimeError` (`test_no_temp_copy_is_left_behind_when_the_import_raises_mid_way`).
+`OrigenActualMudanzaTest` proves a source already at today's schema reports zero tables added
+(`test_current_schema_source_reports_zero_tables_added`) -- the migration step is a genuine no-op for the common
+case, not something that always claims to have changed something. Every one of the existing 25 tests in this file
+(current-schema sources, built via the unchanged `_new_source`/`_dest_conn` helpers) stayed green unchanged, proving
+`importar` behaves exactly as before for a source that was already current.
+
+No password, token, session secret or health figure of a real person was read, printed or written anywhere in this
+run; every test fixture is invented demo data, and the crash this entry investigates is described by class and
+location only, never by a row value.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry). The exact command is
+`.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 9 sequential chunks of the same `tests/test_*.py`
+modules in alphabetical order (the same set `discover` would walk), each in the foreground:
+
+    chunk 1 (test_accesibilidad..test_baselines_lote):                   Ran 351 tests, OK (skipped=1)
+    chunk 2 (test_borrar_reauth..test_entreno_racha):                    Ran 512 tests, OK
+    chunk 3 (test_entreno_schema..test_garmin_parse):                    Ran 342 tests, OK
+    chunk 4 (test_get_sin_escritura..test_importar_garmin):              Ran 466 tests, OK
+    chunk 5 (test_installer..test_periodo_analisis):                    Ran 460 tests, OK
+    chunk 6 (test_periodo_herramientas..test_pull):                     Ran 475 tests, OK
+    chunk 7 (test_pull_intradia_experimentos..test_tap_44):             Ran 267 tests, OK
+    chunk 8 (test_tendencias_kpi..test_ventana_comida):                 Ran 475 tests, OK
+    chunk 9 (test_vida_dia..test_web_entry):                           Ran 84 tests, OK
+
+Sum: 3432 run, 0 failures, 0 errors, 1 skipped. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`): 3432 -- matching exactly (3423
+before this slice + this slice's own 9 new tests in `OrigenAntiguoMudanzaTest`/`OrigenActualMudanzaTest`). **GREEN.**
+
+**Merge policy, this slice.** The diff touches `body/mudanza.py` and `tests/test_mudanza.py` (plus this ledger).
+Checked against the actual diff: no schema or migration change (no table or column was added, dropped or renamed in
+`body/db.py`; `db.init` is reused exactly as the one real migration path already works -- this slice only changes
+WHICH connection `importar` reads rows from). No customer-facing bytes: the one new text,
+`origen: esquema actualizado en la copia (N tablas nuevas)`, is a host-side CLI report line read by the operator
+running `body-import-pc.sh`, not a route, template, static asset or i18n string a customer reads. No cross-repo
+contract or DTO change. All three of merge policy A's conditions are clear, so this entry proceeds to merge without
+stopping.
+
+**Open follow-ups, not this slice's to do:** none found.
