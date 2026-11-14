@@ -39,6 +39,10 @@ _ETIQUETA_KEYS = {
     "no_vigente": "asistente.propuesta.no_vigente", "desactualizada": "asistente.propuesta.desactualizada",
     "sin_deshacer": "asistente.propuesta.sin_deshacer",
     "entreno_reloj": "asistente.propuesta.entreno_reloj", "entreno_tu": "asistente.propuesta.entreno_tu",
+    # BODY-DESHACER-DERIVADOS-1 rulings 3, 4: a card whose fetch itself failed (never a label the
+    # backend returned), and /deshacer's own distinct drift sentence.
+    "fallo": "asistente.propuesta.fallo",
+    "deshacer_desactualizado": "asistente.propuesta.deshacer_desactualizado",
 }
 
 
@@ -1004,12 +1008,24 @@ def asistente_conversacion(conversacion_id: str, person_id: int = Depends(identi
     return JSONResponse({"conversacion_id": resuelto, "turnos": turnos, "propuestas": tarjetas})
 
 
-def _propuesta_respuesta(conn, person_id: int, propuesta_id: int, accion) -> JSONResponse:
+def _propuesta_respuesta(conn, person_id: int, propuesta_id: int, accion, *, ruta: str = "") -> JSONResponse:
     try:
         resultado = accion(conn, person_id, propuesta_id)
     except agente_propuestas.PropuestaAjena:
         conn.close()
         raise HTTPException(404)
+    except Exception:
+        # BODY-DESHACER-DERIVADOS-1 ruling 2: a raise from the action's own writer (escribir_
+        # deshacer, most of all) never reaches FastAPI's default HTML error page -- the card
+        # always gets JSON it can parse, even on a 500.
+        conn.rollback()
+        conn.close()
+        return JSONResponse({"estado": "error"}, status_code=500)
+    # Ruling 4: the route is the one place that knows which path was called -- /deshacer's own
+    # drift refusal reads differently from /aplicar's, so it gets its own estado here rather than
+    # the JS card guessing which sentence a shared "propuesta_desactualizada" means.
+    if ruta == "deshacer" and resultado.get("estado") == "propuesta_desactualizada":
+        resultado = {**resultado, "estado": "deshacer_desactualizado"}
     conn.close()
     return JSONResponse(resultado)
 
@@ -1018,18 +1034,18 @@ def _propuesta_respuesta(conn, person_id: int, propuesta_id: int, accion) -> JSO
 @comun._cierra_conexion
 def propuesta_aplicar(propuesta_id: int, person_id: int = Depends(identity.current_person_id)):
     conn, _, _ = comun._ctx(person_id)
-    return _propuesta_respuesta(conn, person_id, propuesta_id, agente_propuestas.aplicar)
+    return _propuesta_respuesta(conn, person_id, propuesta_id, agente_propuestas.aplicar, ruta="aplicar")
 
 
 @router.post("/asistente/propuestas/{propuesta_id}/descartar")
 @comun._cierra_conexion
 def propuesta_descartar(propuesta_id: int, person_id: int = Depends(identity.current_person_id)):
     conn, _, _ = comun._ctx(person_id)
-    return _propuesta_respuesta(conn, person_id, propuesta_id, agente_propuestas.descartar)
+    return _propuesta_respuesta(conn, person_id, propuesta_id, agente_propuestas.descartar, ruta="descartar")
 
 
 @router.post("/asistente/propuestas/{propuesta_id}/deshacer")
 @comun._cierra_conexion
 def propuesta_deshacer(propuesta_id: int, person_id: int = Depends(identity.current_person_id)):
     conn, _, _ = comun._ctx(person_id)
-    return _propuesta_respuesta(conn, person_id, propuesta_id, agente_propuestas.deshacer)
+    return _propuesta_respuesta(conn, person_id, propuesta_id, agente_propuestas.deshacer, ruta="deshacer")

@@ -343,6 +343,51 @@ class RutasPropuestaTest(unittest.TestCase):
         r = self.client.post(f"/asistente/propuestas/{out['propuesta_id']}/deshacer")
         self.assertEqual(r.json()["estado"], "deshecha")
 
+    def test_deshacer_route_drift_gets_its_own_estado(self):
+        """BODY-DESHACER-DERIVADOS-1 ruling 4: the route knows the path was /deshacer, so a drift
+        refusal there reads with its own estado -- never the apply-side 'propuesta_desactualizada'
+        the JS card would otherwise have to guess at."""
+        gid = _seed_goal(self.conn)
+        cid = _cid(self.conn)
+        out = herramientas.ejecutar(self.conn, 1, "proponer_cambio_meta",
+                                    {"goal_id": gid, "target_value": 48.0}, "ninguno", cid)
+        self.client.post(f"/asistente/propuestas/{out['propuesta_id']}/aplicar")
+        db.update_goal_target(self.conn, gid, 1, target_value=47.0)  # drifted again after apply
+        r = self.client.post(f"/asistente/propuestas/{out['propuesta_id']}/deshacer")
+        self.assertEqual(r.json()["estado"], "deshacer_desactualizado")
+
+    def test_aplicar_route_drift_keeps_the_existing_estado(self):
+        """The apply side is untouched by ruling 4 -- same estado as before."""
+        gid = _seed_goal(self.conn)
+        cid = _cid(self.conn)
+        out = herramientas.ejecutar(self.conn, 1, "proponer_cambio_meta",
+                                    {"goal_id": gid, "target_value": 48.0}, "ninguno", cid)
+        db.update_goal_target(self.conn, gid, 1, target_value=47.0)  # drifted before apply
+        r = self.client.post(f"/asistente/propuestas/{out['propuesta_id']}/aplicar")
+        self.assertEqual(r.json()["estado"], "propuesta_desactualizada")
+
+    def test_deshacer_route_returns_json_error_never_an_html_page(self):
+        """Ruling 2's second half: a raise from the action's own writer never reaches FastAPI's
+        default HTML error page -- the route catches it and answers JSON the card can parse."""
+        cid = _cid(self.conn)
+        out = herramientas.ejecutar(self.conn, 1, "proponer_idioma", {"lang": "en"}, "ninguno", cid)
+        self.client.post(f"/asistente/propuestas/{out['propuesta_id']}/aplicar")
+        entrada = propuestas.TABLA["proponer_idioma"]
+
+        def _siempre_falla(conn, row):
+            raise RuntimeError("boom")
+
+        parche = propuestas._Accion(entrada.drift_aplicar, entrada.drift_deshacer,
+                                     entrada.escribir_aplicacion, _siempre_falla)
+        with patch.dict(propuestas.TABLA, {"proponer_idioma": parche}):
+            r = self.client.post(f"/asistente/propuestas/{out['propuesta_id']}/deshacer")
+        self.assertEqual(r.status_code, 500)
+        self.assertEqual(r.json(), {"estado": "error"})
+        self.assertEqual(
+            self.conn.execute("SELECT estado FROM propuesta_agente WHERE id = ?",
+                              (out["propuesta_id"],)).fetchone()[0],
+            "aplicada")
+
     def test_another_persons_id_is_404(self):
         cid = _cid(self.conn, 1)
         out = herramientas.ejecutar(self.conn, 1, "proponer_idioma", {"lang": "en"}, "ninguno", cid)
