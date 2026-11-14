@@ -595,7 +595,7 @@ _PARAM_META_SEMANAL_PLAN = {
         "week_start": {"type": "string", "format": "date"},
         "medida": {"type": "string"},
         "sentido": {"type": "string", "enum": ["al_menos", "como_maximo", "antes_de", "despues_de"]},
-        "valor": {"type": "number"},
+        "valor": {"type": ["number", "string"]},
         "nota": {"type": "string"},
     },
     "required": ["week_start", "medida", "sentido", "valor"],
@@ -645,7 +645,7 @@ _PARAM_CORREGIR_META_PLAN = {
     "type": "object",
     "properties": {
         "meta_id": {"type": "integer"},
-        "valor": {"type": "number"},
+        "valor": {"type": ["number", "string"]},
         "nota": {"type": "string"},
     },
     "required": ["meta_id", "valor"],
@@ -1192,6 +1192,40 @@ def _validar_semanas_plan(semanas, start_day: str, deadline: str) -> list[dict]:
     return out
 
 
+# BODY-PLAN-HORA-ENTRADA-1 ruling 1: every horizonte.MEDIDAS entry whose unit is a clock time
+# (never a hardcoded pair -- read off MEDIDAS itself, so a future clock measure is covered for
+# free). Nothing in this module told the model, or the desk through body/mcp.py, that
+# horizonte.py stores a clock as minutes after 12:00 noon -- the natural guess (minutes since
+# midnight) was silently wrong by 12 hours.
+_MEDIDAS_HORA = frozenset(k for k, v in horizonte.MEDIDAS.items() if v["unit"] == "hora")
+
+
+def _valor_reloj(campo: str, valor) -> float:
+    """A clock measure's `valor` crosses the tool boundary as "HH:MM" (24h) -- converted here to
+    horizonte's own minutes-after-noon storage convention (its own _parse_hhmm/
+    _minutos_despues_mediodia, the only module that knows it; horizonte.py itself is unchanged).
+    Anything else -- a raw number, "24:00", "7pm", "" -- is refused naming `campo`."""
+    if isinstance(valor, str):
+        try:
+            hh, mm = horizonte._parse_hhmm(valor)
+        except ValueError:
+            pass
+        else:
+            return float(horizonte._minutos_despues_mediodia(hh, mm))
+    raise ToolError(f'{campo}: una hora se escribe "HH:MM", p. ej. "23:00"')
+
+
+def _hora_desde_minutos(total: float) -> str:
+    """The inverse conversion, for what a tool returns (ruling 1, out direction) -- the same
+    arithmetic as body/rutas/asistente.py's own `_hora_desde_minutos` (minutes after 12:00 noon,
+    wrapping across midnight): 690 -> "23:30", 765 -> "00:45". Duplicated rather than imported,
+    the same choice every other small helper in this module already makes."""
+    total = int(round(total))
+    hh = ((total // 60) + 12) % 24
+    mm = total % 60
+    return f"{hh:02d}:{mm:02d}"
+
+
 def _validar_metas_semanales_plan(conn: sqlite3.Connection, metas_semanales, start_day: str, deadline: str, *,
                                    existentes: set | None = None) -> list[dict]:
     """`existentes` (ruling 4) is the set of (week_start, medida) pairs that already have a vigente
@@ -1218,7 +1252,9 @@ def _validar_metas_semanales_plan(conn: sqlite3.Connection, metas_semanales, sta
         except ValueError as e:
             raise ToolError(f"metas_semanales[{i}].{e.args[0]}")
         valor = m.get("valor")
-        if not isinstance(valor, (int, float)) or isinstance(valor, bool):
+        if medida in _MEDIDAS_HORA:
+            valor = _valor_reloj(f"metas_semanales[{i}].valor", valor)
+        elif not isinstance(valor, (int, float)) or isinstance(valor, bool):
             raise ToolError(f"metas_semanales[{i}].valor debe ser un número")
         clave = (m["week_start"], medida)
         if existentes and clave in existentes:
@@ -1249,12 +1285,28 @@ def _validar_checkpoints_plan(conn: sqlite3.Connection, checkpoints, start_day: 
         titulo = (c.get("titulo") or "").strip()
         if not titulo:
             raise ToolError(f"checkpoints[{i}].titulo: obligatorio")
-        criterios = c.get("criterios")
+        criterios = _convertir_criterios_reloj(f"checkpoints[{i}].criterios", c.get("criterios"))
         try:
             horizonte.validar_criterios(conn, criterios)
         except ValueError as e:
             raise ToolError(f"checkpoints[{i}].{e.args[0]}")
         out.append({"day": c["day"], "titulo": titulo, "criterios": criterios, "nota": c.get("nota")})
+    return out
+
+
+def _convertir_criterios_reloj(campo: str, criterios):
+    """Ruling 1: a checkpoint criterio's `valor` is "HH:MM" when its medida is a clock measure --
+    converted to minutes-after-noon BEFORE horizonte.validar_criterios sees it (that validator
+    requires a number for every medida and is outside these touches). Anything not a list of
+    dicts is passed through unchanged: horizonte.validar_criterios names that shape error itself."""
+    if not isinstance(criterios, list):
+        return criterios
+    out = []
+    for j, c in enumerate(criterios):
+        if isinstance(c, dict) and c.get("medida") in _MEDIDAS_HORA:
+            c = dict(c)
+            c["valor"] = _valor_reloj(f"{campo}[{j}].valor", c.get("valor"))
+        out.append(c)
     return out
 
 
@@ -2091,6 +2143,30 @@ def _leer_experimentos(conn: sqlite3.Connection, person_id: int, experimento_id:
     return {"experimentos": [_experimento_dict(conn, person_id, r, hoy) for r in filas]}
 
 
+def _convertir_lineas_reloj(lineas) -> None:
+    for linea in lineas or ():
+        if linea.get("medida") not in _MEDIDAS_HORA:
+            continue
+        if linea.get("valor") is not None:
+            linea["valor"] = _hora_desde_minutos(linea["valor"])
+        if linea.get("real") is not None:
+            linea["real"] = _hora_desde_minutos(linea["real"])
+
+
+def _convertir_plan_salida(plan: dict) -> dict:
+    """Ruling 1 (out direction): every clock-measure figure a `horizonte.resumen` dict carries --
+    the current week's lineas and the next checkpoint's criterios, each a `valor`/`real` pair --
+    as "HH:MM", never the raw minutes-after-noon integer horizonte stores and returns.
+    horizonte.resumen itself is unchanged; this is the tool layer's own conversion of its output."""
+    if plan is None:
+        return plan
+    _convertir_lineas_reloj(plan.get("semana_actual", {}).get("lineas"))
+    siguiente = plan.get("siguiente_checkpoint")
+    if siguiente:
+        _convertir_lineas_reloj(siguiente.get("criterios"))
+    return plan
+
+
 def _leer_planes(conn: sqlite3.Connection, person_id: int) -> dict:
     """Every horizon this person can see (BODY-PLAN-PROPUESTAS-1 ruling 6) -- their own plus any
     shared household milestone, active plans first -- each summarised by `horizonte.resumen` (`nivel:
@@ -2103,7 +2179,8 @@ def _leer_planes(conn: sqlite3.Connection, person_id: int) -> dict:
     filas = conn.execute(
         f"SELECT id FROM goal WHERE {where} AND kind = 'milestone' AND horizonte_goal_id IS NULL "
         "ORDER BY (status = 'active') DESC, id DESC", params).fetchall()
-    return {"planes": [horizonte.resumen(conn, r["id"], person_id, hoy=hoy) for r in filas]}
+    return {"planes": [_convertir_plan_salida(horizonte.resumen(conn, r["id"], person_id, hoy=hoy))
+                        for r in filas]}
 
 
 def _leer_plan(conn: sqlite3.Connection, person_id: int, goal_id: int, desde: str | None = None,
@@ -2118,9 +2195,12 @@ def _leer_plan(conn: sqlite3.Connection, person_id: int, goal_id: int, desde: st
     plan = horizonte.resumen(conn, goal_id, person_id, hoy=hoy)
     if plan is None:
         return {"encontrada": False}
-    out = {"encontrada": True, "plan": plan}
+    out = {"encontrada": True, "plan": _convertir_plan_salida(plan)}
     if desde and hasta:
-        out["plan_vs_real"] = horizonte.plan_vs_real(conn, goal_id, person_id, desde, hasta, hoy=hoy)
+        semanas = horizonte.plan_vs_real(conn, goal_id, person_id, desde, hasta, hoy=hoy)
+        for s in semanas:
+            _convertir_lineas_reloj(s.get("lineas"))
+        out["plan_vs_real"] = semanas
     return out
 
 
@@ -2303,10 +2383,13 @@ def _corregir_meta_plan(conn: sqlite3.Connection, person_id: int, conversacion_i
         raise ToolError(f"meta semanal desconocida: {meta_id!r}")
     if not fila["vigente"]:
         raise ToolError("esa meta semanal ya fue corregida")
-    try:
-        valor = float(valor)
-    except (TypeError, ValueError):
-        raise ToolError("valor debe ser un número")
+    if fila["medida"] in _MEDIDAS_HORA:
+        valor = _valor_reloj("valor", valor)
+    else:
+        try:
+            valor = float(valor)
+        except (TypeError, ValueError):
+            raise ToolError("valor debe ser un número")
     nota = (nota or "").strip() or None
     antes = {"meta_id": meta_id, "valor": fila["valor"], "nota": fila["nota"], "medida": fila["medida"],
              "sentido": fila["sentido"], "week_start": fila["week_start"],
@@ -2431,18 +2514,25 @@ HERRAMIENTAS = [
     {"nombre": "proponer_plan", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone un plan completo: metas finales, hábitos, reglas, semanas, metas semanales y "
                      "checkpoints, todo en una sola tarjeta. No crea nada: registra la propuesta para que la "
-                     "persona la apruebe en el chat; si la aprueba, todo se guarda junto o nada se guarda.",
+                     "persona la apruebe en el chat; si la aprueba, todo se guarda junto o nada se guarda. "
+                     "En metas_semanales y en los criterios de un checkpoint, el valor de una medida de reloj "
+                     "(hora_acostarse, hora_levantarse) se escribe \"HH:MM\" en formato 24 horas, por ejemplo "
+                     "\"23:00\"; el valor de cualquier otra medida es un número.",
      "parametros": _PARAM_PROPONER_PLAN, "funcion": _proponer_plan},
     {"nombre": "ampliar_plan", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone añadir reglas, semanas, metas semanales o checkpoints nuevos a un plan que la "
                      "persona ya tiene. Para cambiar el valor de una meta semanal que ya existe usa "
                      "corregir_meta_plan, no esta. No añade nada: registra la propuesta para que la persona "
-                     "la apruebe en el chat.",
+                     "la apruebe en el chat. En metas_semanales y en los criterios de un checkpoint, el valor "
+                     "de una medida de reloj (hora_acostarse, hora_levantarse) se escribe \"HH:MM\" en formato "
+                     "24 horas, por ejemplo \"23:00\"; el valor de cualquier otra medida es un número.",
      "parametros": _PARAM_AMPLIAR_PLAN, "funcion": _ampliar_plan},
     {"nombre": "corregir_meta_plan", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone corregir el valor de una meta semanal de un plan (por ejemplo, bajar la meta de "
                      "una semana difícil). No sobrescribe nada: registra la corrección como un nuevo valor, "
-                     "para que la persona la apruebe en el chat.",
+                     "para que la persona la apruebe en el chat. Si esa meta es de una medida de reloj "
+                     "(hora_acostarse, hora_levantarse), valor se escribe \"HH:MM\" en formato 24 horas, por "
+                     "ejemplo \"23:00\"; si no, valor es un número.",
      "parametros": _PARAM_CORREGIR_META_PLAN, "funcion": _corregir_meta_plan},
     {"nombre": "proponer_confirmar_turnos", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone confirmar todos los lotes de turnos propuestos pendientes. No los confirma: "
