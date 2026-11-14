@@ -1,7 +1,11 @@
 """body/mudanza.py: move one person's data from a PC database into this process's own database
 (BODY-MUDANZA-HERRAMIENTA-1). Invented demo data only -- never a real health figure."""
+import importlib.util
 import json
+import re
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -228,6 +232,224 @@ def _populate_full(conn: sqlite3.Connection, person_id: int) -> dict:
         "INSERT INTO checkin_nota (id, person_id, day, nota, created_at) "
         "VALUES (?, ?, '2026-10-05', 'felt ok', ?)",
         (ids["checkin"], person_id, NOW),
+    )
+    conn.execute(
+        "INSERT INTO figura_compartida (person_id, metric_key, hogar_id, shared_at) "
+        "VALUES (?, 'resting_hr', 'HOGAR-1', ?)",
+        (person_id, NOW),
+    )
+    conn.commit()
+    return ids
+
+
+# BODY-MUDANZA-ORIGEN-ANTIGUO-1-R ruling 2: a GENUINELY older schema, not a hand-trimmed one --
+# body/db.py exactly as it was at commit 3ef9e8e (the build the host ran until 2026-11-14), read
+# from git history and run through its OWN init(), never retyped and never the current init().
+_OLD_SCHEMA_COMMIT = "3ef9e8e"
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load_old_db_module():
+    result = subprocess.run(
+        ["git", "show", f"{_OLD_SCHEMA_COMMIT}:body/db.py"],
+        cwd=_REPO_ROOT, capture_output=True, text=True, check=True,
+    )
+    tmp_dir = Path(tempfile.mkdtemp(prefix="body-mudanza-old-schema-"))
+    tmp_file = tmp_dir / "db_3ef9e8e.py"
+    tmp_file.write_text(result.stdout, encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("body._old_db_3ef9e8e", tmp_file)
+    module = importlib.util.module_from_spec(spec)
+    module.__package__ = "body"  # so its own `from . import config, garmin_adapter` resolves
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _old_propuesta_actions(conn: sqlite3.Connection) -> list[str]:
+    """Read back, from the live schema this seeded source actually has, every `accion` its own
+    CHECK allowed -- not retyped from the source file."""
+    sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'propuesta_agente'"
+    ).fetchone()[0]
+    match = re.search(r"accion IN\s*\(([^)]*)\)", sql, re.DOTALL)
+    return [v.strip().strip("'") for v in match.group(1).split(",")]
+
+
+def _populate_old_schema(conn: sqlite3.Connection, person_id: int, actions: list[str]) -> dict:
+    """Seeds every person-scoped table a GENUINELY older install (commit 3ef9e8e) actually has --
+    comida, ingesta, period, checkin, checkin_nota, nutrient_target, fuente_importacion,
+    uso_herramienta_externa and the four horizonte_* tables do not exist at that schema yet, so
+    none of them are seeded here. A propuesta_agente row for EVERY accion the older CHECK allowed
+    (ruling 2), so the widening rebuild below runs against a non-empty table."""
+    ids: dict = {}
+
+    def last_id() -> int:
+        return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+    conn.execute(
+        "INSERT INTO goal (person_id, hogar_id, area, title, kind, metric_key, direction, "
+        "target_value, baseline_value, start_day, status, visibility) VALUES "
+        "(?, NULL, 'body', 'Lower resting HR', 'metric', 'resting_hr', 'lower', 55, 60, "
+        "'2026-10-01', 'active', 'private')",
+        (person_id,),
+    )
+    ids["goal"] = last_id()
+
+    conn.execute(
+        "INSERT INTO goal (person_id, hogar_id, area, title, kind, metric_key, direction, "
+        "target_value, baseline_value, start_day, status, visibility) VALUES "
+        "(?, 'HOGAR-1', 'body', 'Shared goal', 'metric', 'resting_hr', 'lower', 55, 60, "
+        "'2026-10-01', 'active', 'household')",
+        (person_id,),
+    )
+    ids["goal_hogar"] = last_id()
+
+    conn.execute(
+        "INSERT INTO habit (goal_id, title, cadence, assignee_person_id, active) "
+        "VALUES (?, 'Walk', '{\"per\": \"week\", \"times\": 3}', NULL, 1)",
+        (ids["goal"],),
+    )
+    ids["habit"] = last_id()
+
+    conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Someone else')")
+    conn.execute(
+        "INSERT INTO habit (goal_id, title, cadence, assignee_person_id, active) "
+        "VALUES (?, 'Spouse habit', '{\"per\": \"week\", \"times\": 1}', 2, 1)",
+        (ids["goal"],),
+    )
+    ids["habit_other_person"] = last_id()
+
+    conn.execute(
+        "INSERT INTO habit (goal_id, title, cadence, assignee_person_id, active) "
+        "VALUES (?, 'Household habit', '{\"per\": \"week\", \"times\": 2}', NULL, 1)",
+        (ids["goal_hogar"],),
+    )
+    ids["habit_under_hogar_goal"] = last_id()
+
+    conn.execute(
+        "INSERT INTO habit_check (habit_id, person_id, day, done) VALUES (?, ?, '2026-10-05', 1)",
+        (ids["habit"], person_id),
+    )
+    conn.execute(
+        "INSERT INTO goal_check (goal_id, person_id, week_start, metric_avg, on_track, "
+        "habits_done, habits_due, rule_version) VALUES (?, ?, '2026-10-05', 58.0, 1, 2, 3, 'v1')",
+        (ids["goal"], person_id),
+    )
+    conn.execute(
+        "INSERT INTO goal_enlace (goal_id, app, ref, creado_at) VALUES (?, 'finanzas', 'ref-1', ?)",
+        (ids["goal"], NOW),
+    )
+    conn.execute(
+        "INSERT INTO goal_enlace (goal_id, app, ref, creado_at) VALUES (?, 'finanzas', 'ref-2', ?)",
+        (ids["goal_hogar"], NOW),
+    )
+    conn.execute(
+        "INSERT INTO plan (person_id, hogar_id, goal_id, day, title, status) "
+        "VALUES (?, NULL, ?, '2026-10-06', 'Run', 'proposed')",
+        (person_id, ids["goal"]),
+    )
+    conn.execute(
+        "INSERT INTO plan (person_id, hogar_id, goal_id, day, title, status) "
+        "VALUES (?, 'HOGAR-1', ?, '2026-10-06', 'Shared plan', 'proposed')",
+        (person_id, ids["goal"]),
+    )
+
+    conn.execute(
+        "INSERT INTO conversacion_agente (person_id, creada_en, titulo) VALUES (?, ?, 'Chat 1')",
+        (person_id, NOW),
+    )
+    ids["conv"] = last_id()
+    conn.execute(
+        "INSERT INTO mensaje_agente (conversacion_id, person_id, rol, contenido_json, creado_en) "
+        "VALUES (?, ?, 'usuario', '{}', ?)",
+        (ids["conv"], person_id, NOW),
+    )
+
+    ids["propuestas"] = []
+    for accion in actions:
+        conn.execute(
+            "INSERT INTO propuesta_agente (person_id, conversacion_id, accion, objetivo_id, "
+            "despues_json, estado, creada_en, expira_en) "
+            "VALUES (?, ?, ?, ?, '{}', 'propuesta', ?, ?)",
+            (person_id, ids["conv"], accion, ids["goal"], NOW, NOW),
+        )
+        ids["propuestas"].append(last_id())
+
+    conn.execute(
+        "INSERT INTO uso_agente (person_id, creado_en, proveedor, modelo) VALUES (?, ?, 'anthropic', 'demo')",
+        (person_id, NOW),
+    )
+    conn.execute(
+        "INSERT INTO daily_metric (person_id, day, metric_key, value, source) "
+        "VALUES (?, '2026-10-05', 'resting_hr', 58.0, 'garmin')",
+        (person_id,),
+    )
+    conn.execute(
+        "INSERT INTO sleep_session (person_id, day, start_local, end_local) "
+        "VALUES (?, '2026-10-05', '2026-10-04T23:00:00', '2026-10-05T06:30:00')",
+        (person_id,),
+    )
+    conn.execute(
+        "INSERT INTO raw_payload (person_id, day, kind, source, fetched_at, payload) "
+        "VALUES (?, '2026-10-05', 'user_summary', 'garmin', ?, '{}')",
+        (person_id, NOW),
+    )
+    conn.execute(
+        "INSERT INTO activity (person_id, source_id, day, start_local, type, name, duration_s, source) "
+        "VALUES (?, 'act-1', '2026-10-05', '2026-10-05T07:00:00', 'strength', 'Gym', 1800, 'garmin')",
+        (person_id,),
+    )
+    conn.execute(
+        "INSERT INTO workout_set (person_id, activity_source, activity_source_id, set_order, "
+        "set_type, corrected_by_person, created_at, updated_at) "
+        "VALUES (?, 'garmin', 'act-1', 1, 'active', 0, ?, ?)",
+        (person_id, NOW, NOW),
+    )
+    conn.execute(
+        "INSERT INTO shift_batch (person_id, file_name, received, extracted_at, status, "
+        "day_count, created_at, kind) VALUES (?, 'turnos.pdf', ?, ?, 'confirmed', 1, ?, 'import')",
+        (person_id, NOW, NOW, NOW),
+    )
+    ids["shift_batch"] = last_id()
+    conn.execute(
+        "INSERT INTO shift_batch_item (batch_id, day, kind, start_local, end_local) "
+        "VALUES (?, '2026-10-06', 'night', '2026-10-06T22:00:00', '2026-10-07T06:00:00')",
+        (ids["shift_batch"],),
+    )
+    conn.execute(
+        "INSERT INTO shift (person_id, day, kind, start_local, end_local, source, batch_id) "
+        "VALUES (?, '2026-10-06', 'night', '2026-10-06T22:00:00', '2026-10-07T06:00:00', "
+        "'import', ?)",
+        (person_id, ids["shift_batch"]),
+    )
+    conn.execute(
+        "INSERT INTO shift_pattern (person_id, start_day, cycle, updated_at) "
+        "VALUES (?, '2026-10-01', '[]', ?)",
+        (person_id, NOW),
+    )
+    conn.execute("INSERT INTO ajuste_agente (person_id, updated_at) VALUES (?, ?)", (person_id, NOW))
+    conn.execute("INSERT INTO tope_agente (person_id) VALUES (?)", (person_id,))
+    conn.execute(
+        "INSERT INTO consentimiento (person_id, version, accepted_at) "
+        "VALUES (?, 'consentimiento-v3', ?)",
+        (person_id, NOW),
+    )
+    conn.execute(
+        "INSERT INTO moment (person_id, ts_local, kind, created_at) VALUES (?, ?, 'nota', ?)",
+        (person_id, NOW, NOW),
+    )
+    ids["moment"] = last_id()
+    conn.execute(
+        "INSERT INTO experimento (person_id, titulo, habito_id, metricas, ventana, filtro_dias, "
+        "fecha_inicio, estado, creado_en) VALUES (?, 'Prueba', ?, '[]', '{}', '{}', "
+        "'2026-10-01', 'activo', ?)",
+        (person_id, ids["habit"], NOW),
+    )
+    ids["experimento"] = last_id()
+    conn.execute(
+        "INSERT INTO experimento_registro (experimento_id, person_id, day, ocurrio, momento_id, "
+        "creado_en) VALUES (?, ?, '2026-10-05', 1, ?, ?)",
+        (ids["experimento"], person_id, ids["moment"], NOW),
     )
     conn.execute(
         "INSERT INTO figura_compartida (person_id, metric_key, hogar_id, shared_at) "
@@ -989,6 +1211,80 @@ class OrigenActualMudanzaTest(MudanzaTestCase):
         self.assertTrue(ok)
         by_name = self._reports_by_name(reports)
         self.assertEqual(by_name["origen"].origen_tablas_nuevas, 0)
+
+
+class OrigenGenuinamenteAntiguoMudanzaTest(MudanzaTestCase):
+    """BODY-MUDANZA-ORIGEN-ANTIGUO-1-R: OrigenAntiguoMudanzaTest above trims four tables and two
+    columns off TODAY's schema by hand -- it never held a row in a table a current migration
+    REBUILDS (propuesta_agente's CHECK widening), so it never caught the live crash
+    (`TypeError: tuple indices must be integers or slices, not str` at the rebuild's `r["id"]`,
+    body/db.py:1437, via `_migrated_source`'s bare `sqlite3.connect`, no `row_factory`). This
+    fixture is the schema an older Body install GENUINELY had -- commit 3ef9e8e's own body/db.py,
+    read from git history and run through its own `init()` -- then seeded with rows in every
+    person-scoped table that schema has, including a propuesta_agente row for every `accion` its
+    own CHECK allowed."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.old_db = _load_old_db_module()
+
+    def setUp(self):
+        super().setUp()
+        source = sqlite3.connect(self.source_path)
+        self.old_db.init(source)
+        self.pid = self.old_db.DEFAULT_PERSON_ID
+        self.actions = _old_propuesta_actions(source)
+        self.ids = _populate_old_schema(source, self.pid, self.actions)
+        source.close()
+
+    def test_dry_run_and_apply_complete_without_the_tuple_index_crash(self):
+        reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=False)
+        self.assertTrue(ok)
+        by_name = self._reports_by_name(reports)
+        self.assertGreater(by_name["origen"].origen_tablas_nuevas, 0)
+
+        reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok)
+
+    def test_every_old_propuesta_action_arrives(self):
+        self.assertGreaterEqual(len(self.actions), 10)  # the older CHECK's own action vocabulary
+        _, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok)
+
+        dest = db.connect()
+        person_id = dest.execute(
+            "SELECT id FROM person WHERE cuenta_sub = ?", (CUENTA_SUB,)
+        ).fetchone()[0]
+        rows = dest.execute(
+            "SELECT accion FROM propuesta_agente WHERE person_id = ?", (person_id,)
+        ).fetchall()
+        self.assertEqual(sorted(r["accion"] for r in rows), sorted(self.actions))
+
+    def test_the_tables_a_current_migration_rebuilds_survive_with_integrity_ok(self):
+        reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok)
+        by_name = self._reports_by_name(reports)
+        self.assertEqual(by_name["goal"].counts.insert, 1)
+        self.assertEqual(by_name["goal"].counts.other_person, 1)
+        self.assertEqual(by_name["habit"].counts.insert, 1)
+        self.assertEqual(by_name["habit"].counts.other_person, 2)
+        self.assertEqual(by_name["goal_check"].counts.insert, 1)
+
+        dest = db.connect()
+        self.assertEqual(dest.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+        self.assertEqual(dest.execute("PRAGMA foreign_key_check").fetchall(), [])
+
+    def test_uploaded_file_bytes_are_unchanged_after_apply(self):
+        before = self.source_path.read_bytes()
+        mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        after = self.source_path.read_bytes()
+        self.assertEqual(before, after)
+
+    def test_no_temp_copy_is_left_behind_after_apply(self):
+        mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        leftover = [p.name for p in self.tmp.iterdir() if p.name.startswith(".mudanza-origen-")]
+        self.assertEqual(leftover, [])
 
 
 if __name__ == "__main__":
