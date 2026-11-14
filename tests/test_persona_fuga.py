@@ -218,15 +218,21 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
     # under gid_proposed as the horizon (a milestone goal from this fixture's own goals, never a
     # second container of its own) -- so the table census below covers all four and a future
     # reader's leak sweep has real cross-person rows to find. No marker here moves into
-    # _markers_of's active list: like `moment`'s own text, no route, API or assistant tool reads
-    # horizonte_* yet (the plan module, proposals, screen and Hoy hook are later slices).
+    # _markers_of's active list yet: BODY-PLAN-PANTALLA-1 gave goal detail a plan section that
+    # now reads horizonte_regla.texto, horizonte_semana.titulo, horizonte_meta_semanal.nota and
+    # horizonte_checkpoint.titulo for its own viewer, but promoting them to active cross-person
+    # leak markers is its own small slice, not folded into that one (BODY-PLAN-PANTALLA-FUGA-1,
+    # open follow-up). The checkpoint's own criterios DOES need the real shape
+    # (horizonte.checkpoints, not this fixture, owns it) now that something reads it: a bare
+    # string crashed that read with a TypeError, where a plain criterion dict does not.
     horizonte_week = fechas.lunes_de(TODAY).isoformat()
     db.crear_regla_horizonte(conn, person_id, gid_proposed, "siempre", None, f"ZZ{tag}-REGLA")
     db.crear_semana_horizonte(conn, person_id, gid_proposed, horizonte_week, titulo=f"ZZ{tag}-SEMANA")
     db.crear_meta_semanal(conn, person_id, gid_proposed, horizonte_week, "resting_hr", "al_menos",
                            50.0, nota=f"ZZ{tag}-META-SEMANAL")
-    db.crear_checkpoint_horizonte(conn, person_id, gid_proposed, DAYS[-1], f"ZZ{tag}-CHECKPOINT",
-                                   [f"ZZ{tag}-CRITERIO"])
+    db.crear_checkpoint_horizonte(
+        conn, person_id, gid_proposed, DAYS[-1], f"ZZ{tag}-CHECKPOINT",
+        [{"medida": "resting_hr", "sentido": "al_menos", "valor": 50.0, "ventana": "semana"}])
 
     # Wave 9 (BODY-EXPERIMENTOS-ESQUEMA-1): experimento, experimento_registro and moment are all
     # directly person-keyed (each carries its own person_id column), so they are seeded here like
