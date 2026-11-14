@@ -20617,3 +20617,5 @@ above) -- no string built here departs from rulings 1-2's wording, so this entry
 rather than stopping AWAITING_APPROVAL. No schema or migration change; no cross-repo contract.
 
 **Open follow-ups, not this slice's to do:** none found.
+
+-- merged deda7ae97c1ed61da580f760f725820fcbe2e417
