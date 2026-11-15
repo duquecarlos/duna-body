@@ -1216,6 +1216,8 @@
   "cuerpo.alt.turnos.cuerpo": "El cuerpo entero, vista frontal",
   "cuerpo.caption.hoy_con_sesion": "Iluminado: lo que entrena tu sesión de hoy ({grupos})",
   "cuerpo.caption.hoy_sin_sesion": "Hoy no hay sesión planeada.",
+  "cuerpo.caption.hoy_entrenado": "Entrenado hoy: {grupos}.",
+  "cuerpo.caption.hoy_entrenado_y_pendiente": "Entrenado hoy: {grupos}. Por venir: {pendientes}.",
   "cuerpo.caption.en_recuperacion": "En recuperación: {zonas}",
   "cuerpo.caption.tendencias": "Tendencias gira el cuerpo hacia el corazón y los pulmones: los sistemas que describen estas líneas.",
   "cuerpo.caption.turnos": "Turnos gira el cuerpo hacia el cerebro y los nervios: el sueño y la recuperación son lo que cuesta una noche.",

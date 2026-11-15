@@ -25,6 +25,9 @@
   --danger:#B3472A; --info:#3E5A73; --ok:#406F45;
   --body:#406F45; --night:#3E5A73; --night-tint:#DCE3EA; --day-tint:#FBE9C6;
   --est:#8A6A2E; --focus:#3E5A73; --rail:#121212;
+  /* BODY-HOY-ESCRITORIO-1 ruling 1: Hoy's own top-row right column width, named once rather than
+     repeated as a literal 280px/400px wherever the grid or its figure cap need it. */
+  --hoy-figura-min:280px; --hoy-figura-max:400px;
   color-scheme: light;
 }
 :root[data-theme="dark"]{
@@ -428,9 +431,30 @@ svg.barra{display:block;width:100%;height:6px;margin-top:4px}
   border-radius: 40%;
   mix-blend-mode: normal;
 }
+/* BODY-HOY-ESCRITORIO-1 ruling 3: "still to come" -- a planned group not yet trained. Drawn with
+   the solid glow's own class, so its mix-blend-mode (multiply light / screen dark, the rule two
+   lines above) still applies unchanged ("honours the theme like the solid one") -- only the fill
+   and border are overridden here, to a dashed outline instead of a filled disc. */
+.cuerpo-vista-glow.pendiente{
+  background: transparent;
+  border: 1.5px dashed var(--body);
+}
 .cuerpo-vista-btns{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:12px}
 .cuerpo-vista-btn{min-height:44px;padding:0 14px;border-radius:18px;border:1px solid var(--line);background:transparent;color:var(--ink);font:500 13px inherit;cursor:pointer}
 .cuerpo-vista-btn.on{border:2px solid var(--body);background:color-mix(in srgb,var(--body) 14%,transparent);font-weight:600}
 @media (hover:hover){.cuerpo-vista-btn:not(.on):hover{background:var(--wash)}}
 .cuerpo-vista-swipe{margin-left:auto;font-size:12px;color:var(--muted)}
 .cuerpo-caption{color:var(--muted);font-size:13px;line-height:1.45;margin:10px 0 0}
+
+/* ---------- Hoy's own top block (BODY-HOY-ESCRITORIO-1 rulings 1-2): phone keeps plain DOM order
+   (score hero, "El día por delante", THEN the figure -- Carlos's own words: the figure filling the
+   screen first showed nothing useful); from 768px `.hoy-top` becomes a two-column grid so the
+   figure sits beside the day's own data instead of above it, full width, never squeezed by the
+   figure's own aspect ratio (`.hoy-figura`'s cap below). One DOM order, never the figure rendered
+   twice. ---------- */
+@media (min-width:768px){
+  .hoy-top{display:grid;grid-template-columns:minmax(0,1fr) minmax(var(--hoy-figura-min),var(--hoy-figura-max));gap:16px;align-items:start}
+  .hoy-figura .cuerpo-vista-track{max-height:min(78vh,720px)}
+}
+.hoy-figura .cuerpo-vista-track{max-height:60vh;max-height:60svh}
+.hoy-figura .cuerpo-vista-img{object-fit:contain}

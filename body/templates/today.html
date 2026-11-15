@@ -7,8 +7,6 @@
   <div><h1>{{ t('today.title') }}</h1><p class="sub">{{ date_long }}</p></div>
 </div>
 
-{{ cuerpo_vista(t, cuerpo) }}
-
 {% if turnos %}{{ hoy_turno_card(t, turno, proposed_count) }}{% endif %}
 
 {% if stale %}<div class="aviso">{{ stale }}</div>{% endif %}
@@ -20,7 +18,8 @@
 <div class="aviso"><a class="taplink" href="/?asis_conversacion={{ mcp_aplicado.conversacion_id }}#asis-btn">{{ t('today.mcp_aplicado') if mcp_aplicado.n == 1 else t('today.mcp_aplicado_many', n=mcp_aplicado.n) }}</a></div>
 {% endif %}
 
-<div class="cols-hoy">
+<div class="hoy-top">
+<div class="hoy-top-left">
 <a class="card est" href="/how/{{ day }}">
   <div class="q">{{ t('today.ready_q') }}</div>
   {% if r.score is not none %}
@@ -41,7 +40,7 @@
   <span class="how">{{ t('today.how') }}</span>
   <span class="chev">›</span>
 </a>
-<div>
+
 {% if primeros_pasos %}{{ primeros_pasos_card(t, primeros_pasos) }}{% endif %}
 
 <div class="card">
@@ -98,7 +97,12 @@
   <p class="note mt-6 m-0">{{ t('today.dia.vacio') }}</p>
   {% endif %}
 </div>
+</div>
 
+{{ cuerpo_vista(t, cuerpo, 'hoy-figura') }}
+</div>
+
+<div class="cols-hoy"><div>
 <a class="tellbody taplink" href="#asis-btn">{{ t('today.tell_body') }}</a>
 
 {% if noche_inusual %}
@@ -179,8 +183,7 @@
   <a class="taplink" href="/shifts">{{ t('today.semana_nocturna.enlace') }}</a>
 </div>
 {% endif %}
-</div>
-</div>
+</div></div>
 
 {% if hogar_compartido %}
 <div class="card">
