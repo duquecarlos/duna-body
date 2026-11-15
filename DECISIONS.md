@@ -22647,3 +22647,42 @@ each edit, not a substitute for the full gate above.
 -- not merged, GATE_RED (reproduces identically on `main`, outside `touches`; the screen's own six fixes are
 otherwise green across the other 8 chunks and the targeted runs above)
 
+## BODY-ENTRENO-VISTA-SESION-1-M -- raise `tests/test_vivo.py`'s subprocess timeouts, merge the branch
+
+Continuation of BODY-ENTRENO-VISTA-SESION-1-C (`bf8df8f`/`ed9ddd9`), which returned GATE_RED: chunk 9 of its gate
+failed with two `subprocess.TimeoutExpired` errors from `tests/test_vivo.py`'s own throwaway-repo git fixtures,
+hard-coded at 10s (`tests/test_vivo.py:23`), reproduced identically on `main` by that worker. **Orchestrator's
+ruling, carried into this slice: the fixture timeout is environment (this machine runs several orchestrators at
+once), not the subject of `test_vivo` (what `body.vivo` does); raising it does not weaken any assertion.** Chunks
+1-8 of the -C gate (3345 tests) are not re-run here; this slice changes only `tests/test_vivo.py`.
+
+**The fix.** `tests/test_vivo.py:23`'s `_git` helper hard-coded `timeout=10` for every git invocation in its
+throwaway-repo fixtures. Replaced with one named constant, `_SUBPROCESS_TIMEOUT_S = 120`, with a comment
+explaining why (shared, loaded machine; the timeout guards a hang, not a speed assertion). No assertion changed.
+
+**Deviation, measured, not in the -C or -M spec: a second hard-coded timeout, same root cause.** Running
+`tests.test_vivo` alone after the `_git` fix still failed -- one error, `ProcesoFrescoTest
+.test_un_proceso_fresco_se_actualiza_a_la_nueva_main` (`tests/test_vivo.py:261-264`), a DIFFERENT subprocess call
+(not through `_git`: a fresh `python -m body.vivo subir_turnos --help` interpreter spawn), hard-coded at
+`timeout=30`. Reproduced identically on a second, isolated run of that single test (108.692s elapsed against a
+30s timeout). Same category as the ruling above -- a fresh interpreter spawn is slow on this loaded machine, not a
+correctness question -- so given the same `_SUBPROCESS_TIMEOUT_S = 120` constant. Still inside `touches`
+(`tests/test_vivo.py`), still no assertion changed.
+
+**`tests.test_vivo` alone, foreground, after both timeouts raised:** `Ran 52 tests in 415.763s ... OK`.
+
+**Chunk 9 again** (`test_turnos_opcional_2`..`test_web_entry`, the same alphabetical range the -C run named),
+foreground: `Ran 306 tests in 183.718s ... OK`.
+
+**Targeted run**, foreground: `tests.test_entreno_sesion tests.test_i18n_paridad tests.test_registro_tu
+tests.test_get_sin_escritura tests.test_estados_vacios tests.test_estados_vacios_hosted
+tests.test_estados_vacios_2 tests.test_agente_registro` -- `Ran 93 tests in 25.255s ... OK`.
+
+**Gate command**, recorded per the dispatch's own requirement:
+`.venv/Scripts/python.exe -m unittest discover tests -t .`. Not re-run whole in this slice -- chunks 1-8 (3345
+tests) are carried by reference from the -C run on `95a051c`/`529851e`, which this slice's diff does not touch;
+chunk 9 (306 tests) and the targeted set (93 tests) above are this slice's own foreground measurements on the
+final tree. Smoke run after the merge below, on `main`, is the last foreground confirmation.
+
+**Commits:** `9d9f31e` (the timeout fix, both call sites, `tests/test_vivo.py` only).
+
