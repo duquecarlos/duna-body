@@ -19,9 +19,15 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from body import vivo
 
 
+# Guards a hang, not a speed assertion: this machine runs several orchestrators at once, and a
+# subprocess spawn (git, or a fresh python interpreter) under that load has taken 477-491s for
+# the whole module (BODY-ENTRENO-VISTA-SESION-1-M).
+_SUBPROCESS_TIMEOUT_S = 120
+
+
 def _git(cwd, *args):
     return subprocess.run(
-        ["git", "-C", str(cwd), *args], capture_output=True, text=True, timeout=10
+        ["git", "-C", str(cwd), *args], capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT_S
     )
 
 
@@ -255,7 +261,8 @@ class ProcesoFrescoTest(unittest.TestCase):
         env = {**os.environ, "BODY_HOME": str(self.home)}
         resultado = subprocess.run(
             [sys.executable, "-m", "body.vivo", "subir_turnos", "--help"],
-            cwd=str(self.live), env=env, capture_output=True, text=True, timeout=30,
+            cwd=str(self.live), env=env, capture_output=True, text=True,
+            timeout=_SUBPROCESS_TIMEOUT_S,
         )
         self.assertEqual(resultado.returncode, 0, resultado.stderr)
         self.assertIn("actualizado", resultado.stdout)
