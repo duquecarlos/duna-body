@@ -502,19 +502,28 @@ svg.barra{display:block;width:100%;height:6px;margin-top:4px}
    orchestrator measured six across at 1024px (with the >=1024px left rail, content box ~709px)
    giving each tile only ~110px, where the steps tile's own figure ("10.826 pasos") overflowed it
    (`.fig` scrollWidth > clientWidth) and the other labels wrapped to 3-4 short lines. Six across
-   now starts only at >=1280px; three across runs 768px to 1279.98px, so Lectura's own override
-   below only needs to apply from >=1280px too (768-1279.98px is already 3-across for everyone,
-   Lectura included, via the bare rule). Tile width over 768-1279.98px: capped at ~236px while
-   `main` itself is capped at max-width:760px (768-1023.98px, no rail yet), then ~235px-320px from
-   1024px as the rail/40px-padding layout takes over (viewport-300, 3 tiles, 10px gaps) -- about
-   twice the ~110px tile that overflowed. The steps figure that overflowed a 110px tile (card
-   padding 14px each side leaves ~82px for "10.826"+"pasos", itself ~117px) fits comfortably inside
-   the ~202px a 236px tile leaves, so no `.fig` overflow is possible in this range and no
-   min-width:0/overflow-wrap was added for it. */
+   now starts only at >=1280px; three across runs 768px to 1279.98px. Tile width over
+   768-1279.98px: capped at ~236px while `main` itself is capped at max-width:760px
+   (768-1023.98px, no rail yet), then ~235px-320px from 1024px as the rail/40px-padding layout
+   takes over (viewport-300, 3 tiles, 10px gaps) -- about twice the ~110px tile that overflowed.
+   The steps figure that overflowed a 110px tile (card padding 14px each side leaves ~82px for
+   "10.826"+"pasos", itself ~117px) fits comfortably inside the ~202px a 236px tile leaves, so no
+   `.fig` overflow is possible in this range and no min-width:0/overflow-wrap was added for it.
+
+   The Lectura override below stays in its OWN `@media (min-width:1024px)` block, unbounded, even
+   though the bare 6-across rule now only starts at 1280px: test_ancho_completo.py's
+   ColsAndDataAnchoStayInThe1024QueryTest (BODY-DEPLOY-HOST-1-M) requires every `data-ancho` rule
+   to sit textually inside an exact `@media (min-width:1024px)` block, and that guard's file is
+   outside this slice's touches. Its compound selector (`[data-ancho="lectura"] .hoy-tiles`, two
+   conditions) outranks the bare `.hoy-tiles` column-count rules by specificity regardless of
+   source order or which block comes first, so Lectura still keeps 3-across from 1024px up,
+   including past 1280px, exactly as it did before this slice. */
 @media (min-width:768px) and (max-width:1279.98px){
   .hoy-tiles{grid-template-columns:repeat(3,minmax(0,1fr))}
 }
 @media (min-width:1280px){
   .hoy-tiles{grid-template-columns:repeat(6,minmax(0,1fr))}
+}
+@media (min-width:1024px){
   [data-ancho="lectura"] .hoy-tiles{grid-template-columns:repeat(3,minmax(0,1fr))}
 }
