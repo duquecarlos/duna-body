@@ -21306,3 +21306,161 @@ Deploy stays behind Carlos's go.
 
 -- merged f647768b98d5f0b211536afb73f0efdea206dc88
 
+## BODY-GARMIN-SYNC-CONSISTENTE-1 -- the hosted daily pull heals its own gaps, a Today sync card,
+and /garmin's own progress state (2026-11-15)
+
+**Measured cause.** Before this branch, `body/pull.py`'s hosted daily sweep (the timer in
+`deploy/host/body-pull.service`) pulled a fixed N-day window every run (N defaulted to 2: today
+and yesterday) and never looked further back. A day that failed to save once -- a transient Garmin
+error, a dropped connection -- stayed empty forever unless someone ran an explicit `--days` catch-up
+by hand; the loss on 13 and 14 Nov was exactly that. `BODY-GARMIN-SYNC-CONSISTENTE-1-B`'s own
+follow-up named a second defect in the first fix: ruling 1 as first built only reached the healing
+path when `--days` was left out of the call, but the hosted timer runs `python -m body.pull --days
+2` (an explicit call) every day -- so on the live host the pull would never have healed anything,
+the same loss the slice exists to stop. `-B` amended ruling 1 to close that gap; this entry
+(`-C`) records rulings 1-4/4b as built, `-B`'s amendment, and the two out-of-touches tests `-B`
+correctly stopped BLOCKED on, now updated to the new truth.
+
+**Ruling 1, as built, amended by -B.** `body/pull.py:269`'s `_dias_pendientes_relleno(conn,
+person_id, hoy, n=2)` returns the union of (a) `hoy` and the `n - 1` days before it (the
+always-fetched window; `n` is an explicit `--days` when given, else 2) and (b) every day in the
+last `garmin_cuenta.VENTANA_RELLENO` (14) days with no stored Garmin daily row
+(`garmin_cuenta.dias_sin_datos`, one query per person, never one per day), oldest first, capped at
+`MAX_DIAS_POR_CORRIDA` (16; the always-fetched window never gives way, the cap trims the oldest gap
+days first). `pull_hosted` (`body/pull.py:324`) ALWAYS routes through this helper now
+(`body/pull.py:347`: `_dias_pendientes_relleno(conn, person_id, hoy, n=n_days if n_days is not None
+else 2)`) -- the old branch that gave an explicit `--days N` a plain N-day window with no healing
+is gone. So `python -m body.pull --days 2`, exactly what the hosted timer runs, now heals a gap the
+same as the bare call; `--days 90` still pulls its own 90 days (the gap-fill half of the union then
+adds nothing, already covered). Local mode and the connect-triggered pull (`pull_persona_ahora`,
+ruling 4b) are unaffected -- both call the helper with its default `n=2`. Every per-person day list
+is still built in that person's own zone (`fechas.hoy_local`, BODY-PULL-RELOJ-1).
+
+**Ruling 2, as built.** `body/rutas/hoy.py:122`'s `_garmin_sync_ctx` returns a compact `card`+`chip`
+note on `/` when the person's Garmin account carries a recorded error (`NotSignedIn`'s own
+sentence, any other error's generic one) or is connected with its newest stored day older than
+yesterday in their own zone -- never shown with no connection and no error. It reads
+`garmin_cuenta.estado_conexion` and `dias_sin_datos` (`garmin_cuenta.py:147`, `:159`) the same way
+`pull.py`'s own healing does: `daily_metric` where `source = 'garmin'`, never a second read of
+"newest stored day" duplicated between the card and the healing set. Rendered at
+`body/templates/today.html:13-16`. The card costs one unconditional extra statement on `/`
+(measured 86, was 85); `tests/test_rendimiento.py:76`'s ceiling for `/` is raised to `ceil(86 *
+1.3) = 112`.
+
+**Ruling 3, as built.** `body/agente/herramientas.py:925`'s `_leer_estado_reloj` (nivel `ninguno`,
+no health figure) returns `{conectado, conectado_desde, ultimo_error, ultimo_dia_con_datos,
+dias_sin_datos_14}`, registered at `herramientas.py:2503-2507` so the MCP door lists it
+automatically (`tests/test_mcp.py:99`). `ROUTE_TOOL["/garmin"]` is now `leer_estado_reloj` (was
+`None`); the lectura-tools count is 17 (was 16); the total tool count is 44 (was 43).
+
+**Ruling 4, as built.** The connect form and the MFA-code form (`body/templates/garmin.html:13,32,
+52`) each carry a `data-cargando` attribute on their submit button, its own translated label.
+`body/static/pagina.js` -- the one script every page loads -- disables the button and shows the
+existing `.asis-spin`/`@keyframes asis-pulse` spinner (already `prefers-reduced-motion`-guarded)
+until the response loads; the attribute's presence is a no-op everywhere else, and the forms submit
+plainly with JS off (progressive enhancement).
+
+**Ruling 4b, as built, its timing.** A successful `/garmin/conectar` or `/garmin/codigo` (token
+stored) schedules exactly one background pull of that person's own ruling-1 healing set through
+FastAPI's `BackgroundTasks` (`body/rutas/garmin.py:29` `_lanzar_pull_conexion`, wired at the two
+routes' `background_tasks.add_task(...)` calls right before each returns its `303` redirect) --
+`pull.pull_persona_ahora` (`body/pull.py:305`), the same per-person path `pull_hosted`'s own loop
+uses, never a copy. Its timing: `BackgroundTasks` runs the pull AFTER the `303` response is already
+sent, so the connecting person's page redirect is never held up by their own first pull.
+`_PULL_EN_CURSO` (`garmin.py:25`), an in-process `set[int]`, skips a second connect-triggered pull
+for the same person while one is already running; never persisted, so a crash mid-pull leaves no
+stuck entry.
+
+**New customer-facing strings, es/en verbatim** (`body/i18n/es.json`, `body/i18n/en.json`):
+
+    today.garmin_sync.titulo      es: "Tu reloj"                                            en: "Your watch"
+    today.garmin_sync.chip        es: "revisar"                                             en: "check"
+    today.garmin_sync.not_signed_in  es: "Garmin rechazó el acceso guardado. Vuelve a conectar tu reloj."
+                                      en: "Garmin refused the saved access. Reconnect your watch."
+    today.garmin_sync.failed      es: "La última sincronización con Garmin falló."          en: "The last Garmin sync failed."
+    today.garmin_sync.stale       es: "Sin datos del reloj desde el {date}."                en: "No watch data since {date}."
+    garmin.connect_btn_cargando   es: "Conectando con Garmin…"                              en: "Connecting to Garmin…"
+    garmin.mfa_submit_cargando    es: "Verificando código…"                                 en: "Verifying code…"
+
+`{date}` in `today.garmin_sync.stale` follows the same i18n-parity convention as the existing
+`today.stale` key: both languages carry the identical `{date}` name (`tests/test_i18n_paridad.py`'s
+placeholder-parity check), and both are filled with `comun._short_date(t, ...)`, a localised short
+date, never a raw ISO string -- no deviation from the convention, just reused by the new key.
+
+**-C: the two out-of-touches tests `-B` stopped BLOCKED on, now updated.** `-B` built the amendment
+above correctly and stopped BLOCKED on two assertions outside its own touches that still encoded
+the pre-amendment behaviour (both expect `--days N` to fetch exactly N days on an empty store):
+
+- `tests/test_garmin_host.py:719` `PullHostedPerPersonZoneTest.test_each_person_gets_their_own_today_and_yesterday`
+  protects that each person's today/yesterday are computed in THAT person's own zone. Fixed by
+  seeding stored Garmin daily rows for the other 12 days of each person's own 14-day
+  `VENTANA_RELLENO` window before calling `pull_hosted` -- the healing half of `-B`'s union then
+  adds nothing, so today and yesterday stay the only two days actually fetched per person, in that
+  person's own zone, exactly what this test exists to protect. (Picked over the "assert today and
+  yesterday are in the fetched set, every other fetched day is a gap day" alternative because
+  seeding keeps the test's own exact-list assertions -- `(2, 0, 4)`,
+  `calls_by_token["tok-bogota"] == ["2026-11-07", "2026-11-08"]` -- intact and legible, instead of
+  weakening them to a subset check.)
+- `tests/test_primer_pull_1.py:221` `LockTest.test_daily_hosted_pull_also_takes_the_lock` protects
+  that the daily hosted pull itself holds the lock for its whole run, not that it fetches an exact
+  day count. Fixed by asserting the lock is held (every adapter call observes it already held by
+  this run) and that the fetch happens (at least one call), dropping the old exact
+  `observed_during_run == [None]` single-call assertion -- `--days 1` on this test's fresh, empty
+  database can now touch more than one day once the gap-fill half of the union runs too.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry). Exact
+command: `.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 9 sequential chunks of
+the same `tests/test_*.py` modules in alphabetical order (the same set `discover` would walk), each
+in the foreground:
+
+    chunk 0 (test_accesibilidad..test_baselines):                 Ran 351 tests, OK (skipped=1)
+    chunk 1 (test_baselines_lote..test_ejes_fechas):               Ran 464 tests, OK
+    chunk 2 (test_entreno_historial..test_fit):                    Ran 280 tests, OK
+    chunk 3 (test_fuentes_propias..test_host_deploy):               Ran 525 tests, OK
+    chunk 4 (test_host_import..test_mock_r2_hoy):                  Ran 340 tests, OK
+    chunk 5 (test_modelos_estandar_1..test_primer_dia_1):          Ran 494 tests, OK
+    chunk 6 (test_primer_pull_1..test_rendimiento_red):            Ran 341 tests, OK
+    chunk 7 (test_rendimiento_turnos..test_turno_fc_pantallas):    Ran 340 tests, OK
+    chunk 8 (test_turnos_costo..test_web_entry):                   Ran 403 tests, OK
+
+Sum: 3538 run, 0 failures, 0 errors, 1 skipped (pre-existing, POSIX-only). Reconciled against an
+independent collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')
+.countTestCases()`): 3538 -- matching exactly. **GREEN**, one pass, no fix needed. (The prior
+worker's own partial run, chunk 1 of 9, had counted 3531 against an earlier tree; this slice's two
+test edits above added no new test methods, and `-B`'s own 7 new tests account for the full
+3531 -> 3538 difference.)
+
+**Merge policy, this slice's own diff** (`tests/test_garmin_host.py`, `tests/test_primer_pull_1.py`
+only -- `body/pull.py` and every other file under this surface's `touches:` were already committed
+to this branch by the prior workers before this slice started, and this slice touched neither
+further). Checked against the actual diff this slice made: no schema or migration change, no
+customer-facing bytes (test-only), no cross-repo contract or DTO change -- this slice's OWN diff
+clears merge policy A. Checked against the WHOLE branch diff (`main..HEAD`, every ruling above),
+since that is what the orchestrator will measure in a browser before merging: customer-facing bytes
+DID change across the branch -- Today's sync card (ruling 2), /garmin's connect/MFA-code forms'
+progress state (ruling 4), and the six new i18n strings above are all customer-facing. This trips
+merge policy A's customer-bytes condition for the BRANCH as a whole, so this slice stops before the
+merge with `AWAITING_APPROVAL`, on the branch, tree clean, for the orchestrator to measure Today's
+sync card and /garmin's progress state at 375 and ~1500px before any merge.
+
+**Reviewer's steps to see the two new states on the demo home:**
+
+- Today's sync card (ruling 2): sign in as the demo person, open `/garmin`, connect (any
+  demo/fake flow the test harness exposes) so a `garmin_cuenta` row with an error exists, OR let a
+  connected demo person's newest stored Garmin day fall more than a day behind "today" -- then `/`
+  shows the `.card`/`.chip` note under the readiness hero at both 375px and ~1500px (it is not
+  width-gated; it is presence-gated on connection/error state, same card markup at every width).
+- /garmin's progress state (ruling 4): open `/garmin` on a hosted demo person, submit the connect
+  form (or the MFA-code form once a code is requested) with the devtools network throttled slow
+  enough to see the transition -- the submit button disables and shows the `.asis-spin` spinner
+  (its label switches to the `*_cargando` string) until the response arrives, at both 375px and
+  ~1500px (the button and spinner are unaffected by viewport width; `prefers-reduced-motion` can be
+  toggled in devtools to confirm the spin animation is suppressed there instead).
+
+**Open follow-ups, not this slice's to do:** `deploy/host/body-pull.service`'s hosted timer runs
+`python -m body.pull --days 2` -- per the amendment above, this is now harmless: that call heals
+gaps exactly like the bare call, so no change to the Tier 1 service file is needed. No other
+follow-up found.
+
+-- awaiting approval, feat/body-garmin-sync-consistente-1 at 267045eb2f74f72aa2d2c81bf311494c5c35b552
+
