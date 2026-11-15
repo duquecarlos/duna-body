@@ -21228,5 +21228,67 @@ on the branch, tree clean, for the orchestrator to measure at 1568, 1024 and 375
 
 **Open follow-ups, not this slice's to do:** none found.
 
+**BODY-HOY-ESCRITORIO-1-C -- two measured layout defects fixed (2026-11-14).** The orchestrator measured
+the branch above (`c1588ec`, `AWAITING_APPROVAL`) in a real browser on the demo home and found two
+defects against ruling 1. **(1) The desktop cap never applied.** `body.css:457`'s `.hoy-figura
+.cuerpo-vista-track{max-height:min(78vh,720px)}`, inside the `min-width:768px` block, was followed at
+`body.css:459` by the unscoped phone rule `.hoy-figura .cuerpo-vista-track{max-height:60vh;
+max-height:60svh}` at equal specificity, which won at every width by source order alone -- measured:
+1568x900 track 540px tall (= 60vh; ruling 1 allows up to 702px), 1024x768 computed max-height 460.8px.
+**(2) At 1024 the data column was narrower than the figure column.** `.hoy-top`'s right column
+(`minmax(var(--hoy-figura-min),var(--hoy-figura-max))`) always grows to fill the track, so with the
+260px sidebar `.hoy-top` computed `293.143px 400px` -- the score hero squeezed to 293px while the body
+view kept its 400px maximum, the reverse of the mock (1568: `837px 400px`, right; 375: one column,
+figure 487px/60svh, no horizontal scroll, right).
+
+**Fix 1** (`body/static/body.css:459-463`): wrapped the phone rule in its own `@media
+(max-width:767.98px)` block, placed after the `min-width:768px` block with a comment naming why, so
+the >=768px cap is the one that applies from tablet width up. **Fix 2** (`body/static/body.css:30,457`):
+named the right column's share as a third custom property, `--hoy-figura-parte:36%`, beside the
+existing `--hoy-figura-min`/`--hoy-figura-max`, and changed `.hoy-top`'s grid-template-columns from
+`minmax(var(--hoy-figura-min),var(--hoy-figura-max))` to
+`clamp(var(--hoy-figura-min),var(--hoy-figura-parte),var(--hoy-figura-max))`, so the right column only
+ever takes its named min-max range -- at a ~710px content box (1024 viewport with the sidebar) 36% of
+710 clamps to the 280px floor, leaving ~414px to the left `minmax(0,1fr)` column; at ~1253px 36% of
+1253 clamps to the 400px ceiling. `tests/test_hoy_escritorio.py::HoyTopBlockCssTest` gained
+`test_phone_cap_is_scoped_to_a_max_width_query` (the 60svh rule sits inside the max-width query, exactly
+once in the whole file) and an assertion on `--hoy-figura-parte:36%`, and
+`test_hoy_top_grid_uses_the_named_properties_not_magic_numbers` now checks the `clamp(...)` form; the
+old combined `test_phone_and_desktop_height_caps_present` split into that test plus
+`test_desktop_height_cap_present`. Two commits: `a15ff7e` (fix 1 + its tests), `0a52d83` (fix 2 + its
+tests).
+
+**Targeted tests**, before the full gate: `tests/test_hoy_escritorio.py`, `tests/test_mock_r2_hoy.py`,
+`tests/test_cuerpo_vista.py`, `tests/test_seguridad.py`, `tests/test_accesibilidad.py` -- 120 tests, OK.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry). Exact command:
+`.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 9 sequential chunks of the same
+`tests/test_*.py` modules in alphabetical order (the same set `discover` would walk), each in the
+foreground:
+
+    chunk 1 (test_accesibilidad..test_baselines_lote):            Ran 354 tests, OK (skipped=1)
+    chunk 2 (test_borrar_reauth..test_entreno_numeros):            Ran 489 tests, OK
+    chunk 3 (test_entreno_racha..test_garmin_host):                Ran 320 tests, OK
+    chunk 4 (test_garmin_parse..test_hoy_ventana_comida):          Ran 512 tests, OK
+    chunk 5 (test_i18n_paridad..test_patron_error_ciclo_1):        Ran 435 tests, OK
+    chunk 6 (test_pc_cliente..test_pulido_1):                      Ran 515 tests, OK
+    chunk 7 (test_pulido_2..test_static_version):                 Ran 271 tests, OK
+    chunk 8 (test_sueno_fc..test_tutoriales_catalogo):             Ran 457 tests, OK
+    chunk 9 (test_tutoriales_en..test_web_entry):                  Ran 142 tests, OK
+
+Sum: 3495 run, 0 failures, 0 errors, 1 skipped (pre-existing, POSIX-only) -- the floor the prior slice
+measured (3494) plus the +1 test this slice's own split added. Reconciled against an independent
+collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`):
+3495 -- matching exactly. **GREEN**, one pass, no fix needed.
+
+**Merge policy, this slice's own diff** (`body/static/body.css`, `tests/test_hoy_escritorio.py` only).
+Checked against the actual diff: no schema or migration change, no cross-repo contract or DTO change.
+Customer-facing bytes DID change -- the CSS this slice edited governs the live `.hoy-top` grid and the
+figure's height cap, both rendered to Carlos. This trips merge policy A's customer-bytes condition, so
+this slice stops before the merge with `AWAITING_APPROVAL`, on the branch, tree clean, for the
+orchestrator to re-measure at 1568, 1024 and 375px before merging.
+
+**Open follow-ups, not this slice's to do:** none found.
+
 -- not merged, AWAITING_APPROVAL
 
