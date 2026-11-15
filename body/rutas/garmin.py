@@ -9,14 +9,32 @@ import hashlib
 import time
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import cuenta, db, garmin_adapter, garmin_cuenta, identity
+from .. import cuenta, db, garmin_adapter, garmin_cuenta, identity, pull
 from ..i18n import T
 from . import comun
 
 router = APIRouter()
+
+# BODY-GARMIN-SYNC-CONSISTENTE-1 ruling 4b: person_ids with a connect-triggered pull in flight --
+# an in-process guard, enough for one web worker, so a second connect within the same pull does
+# not start another. Never persisted: a crash mid-pull leaves no stuck entry, the next connect or
+# the next daily pull just tries again.
+_PULL_EN_CURSO: set[int] = set()
+
+
+def _lanzar_pull_conexion(person_id: int) -> None:
+    """The BackgroundTasks target for ruling 4b: runs pull.pull_persona_ahora for this person
+    unless one is already running for them (_PULL_EN_CURSO)."""
+    if person_id in _PULL_EN_CURSO:
+        return
+    _PULL_EN_CURSO.add(person_id)
+    try:
+        pull.pull_persona_ahora(person_id)
+    finally:
+        _PULL_EN_CURSO.discard(person_id)
 
 _MFA_TTL_SECONDS = 600
 _MFA_MAX_ATTEMPTS = 5
@@ -89,7 +107,8 @@ def garmin_view(request: Request, person_id: int = Depends(identity.current_pers
 
 @router.post("/garmin/conectar")
 @comun._cierra_conexion_async
-async def garmin_conectar(request: Request, person_id: int = Depends(identity.current_person_id)):
+async def garmin_conectar(request: Request, background_tasks: BackgroundTasks,
+                           person_id: int = Depends(identity.current_person_id)):
     if not cuenta.hosted():
         raise HTTPException(404)
     f = await comun._form(request)
@@ -120,12 +139,15 @@ async def garmin_conectar(request: Request, person_id: int = Depends(identity.cu
     _SIGNIN_ATTEMPTS.pop(person_id, None)
     conn, _, _ = comun._ctx(person_id)
     garmin_cuenta.guardar(conn, person_id, result)
+    # Ruling 4b: starts this person's own healing pull right away, after the response is sent.
+    background_tasks.add_task(_lanzar_pull_conexion, person_id)
     return RedirectResponse("/garmin", status_code=303)
 
 
 @router.post("/garmin/codigo")
 @comun._cierra_conexion_async
-async def garmin_codigo(request: Request, person_id: int = Depends(identity.current_person_id)):
+async def garmin_codigo(request: Request, background_tasks: BackgroundTasks,
+                         person_id: int = Depends(identity.current_person_id)):
     if not cuenta.hosted():
         raise HTTPException(404)
     f = await comun._form(request)
@@ -155,6 +177,8 @@ async def garmin_codigo(request: Request, person_id: int = Depends(identity.curr
     _SIGNIN_ATTEMPTS.pop(person_id, None)
     conn, _, _ = comun._ctx(person_id)
     garmin_cuenta.guardar(conn, person_id, token)
+    # Ruling 4b: starts this person's own healing pull right away, after the response is sent.
+    background_tasks.add_task(_lanzar_pull_conexion, person_id)
     return RedirectResponse("/garmin", status_code=303)
 
 
