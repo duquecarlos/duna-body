@@ -233,6 +233,16 @@ class HoyTopBlockCssTest(unittest.TestCase):
     def test_pending_glow_class_present(self):
         self.assertIn(".cuerpo-vista-glow.pendiente{", self.css)
 
+    def test_lectura_does_not_collapse_hoy_top(self):
+        """Ruling (BODY-HOY-ESCRITORIO-1-B): Lectura narrows the page to 820px, where the top row's
+        ~400px left column plus the 280-400px body column still fit side by side -- so `.hoy-top`
+        must NOT appear in the `[data-ancho="lectura"]` list that collapses `.cols-*` to one column
+        (those collapse because their LISTS get cramped at 820px; the top row is not a list). This
+        only pins today's choice as deliberate -- a later edit that adds `.hoy-top` there is a
+        decision, not an accident, and must change this test on purpose."""
+        self.assertNotIn('[data-ancho="lectura"].hoy-top', self.compact)
+        self.assertNotIn(',[data-ancho="lectura"].hoy-top', self.compact)
+
 
 if __name__ == "__main__":
     unittest.main()
