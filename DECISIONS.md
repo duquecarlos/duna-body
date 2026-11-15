@@ -21714,5 +21714,96 @@ merge with `AWAITING_APPROVAL`, on the branch, tree clean, for the orchestrator 
 
 **Open follow-ups, not this slice's to do:** none found.
 
+**BODY-HOY-ESCRITORIO-2-B -- six-across never applied; a guard added for the defect class
+(2026-11-15).** The orchestrator measured the branch above (`932b2d8`, `AWAITING_APPROVAL`) in a
+real browser on the demo home and found the order correct at every width, but ONE defect against
+ruling 1: at 1568 and 1024 the tiles were 3 across in two rows, never six. Measured cause
+(`body/static/body.css` on the branch): `.hoy-tiles{grid-template-columns:repeat(6,...)}` sat at
+`:78` inside the `min-width:1024px` block (`:56`), and `.hoy-tiles{grid-template-columns:
+repeat(3,...)}` sat at `:494` inside the LATER, plain `min-width:768px` block (`:461`, no
+max-width) -- equal specificity, so the later, unbounded rule won at every width from 768px up,
+including desktop. The same shape BODY-HOY-ESCRITORIO-1-C fixed for `.hoy-figura
+.cuerpo-vista-track`, the second time in two days a green gate missed it.
+
+**Fix** (`body/static/body.css`, the 3-across rule moved out of the plain `min-width:768px` block
+into its own `@media (min-width:768px) and (max-width:1023.98px)` block, placed right after, with a
+comment naming why): the rule is now tablet-only, so the `min-width:1024px` block's six-across rule
+is the only unbounded `.hoy-tiles` column-count declaration left and wins from 1024px up, as ruling
+1 asked. `tests/test_hoy_escritorio.py`'s two existing CSS-text tests on this pair
+(`test_tiles_three_across_from_768`, `test_tiles_six_across_from_1024`, presence-only) were replaced/
+tightened to check the EFFECTIVE rule per range: `test_tiles_three_across_scoped_below_1024` requires
+the 3-across declaration's own enclosing `@media` header to carry `max-width:1023.98px`;
+`test_tiles_six_across_is_the_effective_rule_from_1024` requires the 6-across declaration to be the
+LAST unbounded (no max-width) bare `.hoy-tiles` column-count declaration in source order (a negative
+lookbehind excludes the separate, higher-specificity Lectura compound selector). Verified against the
+pre-fix tree (`git show 932b2d8:body/static/body.css`) that this tightened test fails there
+(`['6','3']` != `['6']`) and passes after the fix. Commit `f371685`.
+
+**The guard for the class, `tests/test_css_cascada.py` (new file).** Parses `body/static/body.css`
+with the stdlib only (comment-stripping that preserves every position/line number -- this very
+file's own cuerpo-vista comment quotes a CSS snippet containing literal `{`/`}`, which desynced the
+first, naive version of the brace-matcher -- then a small brace-depth block reader, no real CSS
+engine). `find_cascade_inversions` finds every pair of `min-width` media blocks A (larger min) and B
+(smaller min, later in the file, with no max-width bound keeping it below A's min) that declare the
+same property on the same selector (exact text, whitespace-normalised) -- B wins inside A's own
+range by source order alone, so A's declaration never takes effect there.
+
+Run on the branch: **two hits.** `.hoy-tiles`/`grid-template-columns` (the defect this slice's first
+commit just fixed -- confirmed the guard independently catches it by running it against
+`932b2d8`'s pre-fix CSS text directly, not only via the tightened test above) is no longer present
+after the fix (B now carries `max-width:1023.98px`, so the ranges no longer overlap). **One hit
+survives on the fixed tree:** `.grid3`/`grid-template-columns` -- the `min-width:1024px` block's
+`repeat(auto-fill,minmax(150px,1fr))` (`:71`) is permanently overridden by the unbounded, later
+`@media (min-width:640px){.grid3{grid-template-columns:repeat(3,...)}}` (`:109`), so `.grid3` is
+always exactly 3 columns from 640px up and the desktop auto-fill behaviour never applies. Checked
+where `.grid3` is used (`grep` over `body/templates/`): `day.html`, `history.html`, `trends.html` --
+never `today.html` (Hoy). **Not on Hoy**, so per the spec not fixed in this slice (would widen its
+touches); allow-listed in the test as a named `BUG` with its one-line reason, and tracked as a new
+follow-up, BODY-GRID3-CASCADA-1, rather than fixed here.
+
+The guard is proven on synthetic CSS strings, independent of the real file: detects the inversion
+shape; confirms a `max-width` bound below A's min clears it (the exact fix this slice applied);
+confirms a different property on the same selector is not a conflict; confirms order matters (the
+narrower-min block must come AFTER, not before); confirms a comment quoting braces does not desync
+the parser. A second test (`test_allowlist_has_no_stale_entries`) requires every allow-listed pair to
+still be a real, currently-measured hit, so the allowlist cannot silently rot into hiding a future,
+different regression at the same selector/property. Commit `1c0cad3`.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry). Exact
+command: `.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 9 sequential chunks of
+the same `tests/test_*.py` modules in alphabetical order (the same set `discover` would walk, ~20
+modules each), each in the foreground:
+
+    chunk 1 (test_accesibilidad..test_baselines_lote):            Ran 354 tests, OK (skipped=1)
+    chunk 2 (test_borrar_reauth..test_entreno_historial):          Ran 479 tests, OK
+    chunk 3 (test_entreno_numeros..test_garmin_adapter):           Ran 282 tests, OK
+    chunk 4 (test_garmin_estado..test_hoy):                        Ran 551 tests, OK
+    chunk 5 (test_hoy_escritorio..test_nivel_datos_ui):            Ran 407 tests, OK
+    chunk 6 (test_noche_inusual..test_profile_lote):                Ran 524 tests, OK
+    chunk 7 (test_propuesta_vigencia..test_series_orden):          Ran 306 tests, OK
+    chunk 8 (test_series_unidad..test_turnos_opcional_4):          Ran 439 tests, OK
+    chunk 9 (test_turnos_opcional_5..test_web_entry):              Ran 227 tests, OK
+
+Sum: 3569 run, 0 failures, 0 errors, 1 skipped (pre-existing, POSIX-only). Reconciled against an
+independent collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')
+.countTestCases()`): 3569 -- matching exactly, and exactly 8 more than the prior entry's 3561 floor
+(1 net new test in `test_hoy_escritorio.py` -- two presence-only tests replaced by three
+effective-rule tests -- plus 7 new tests in `test_css_cascada.py`). **GREEN**, one pass, no fix
+needed.
+
+**Merge policy, this slice's own diff** (`body/static/body.css`, `tests/test_hoy_escritorio.py`,
+`tests/test_css_cascada.py`). Checked against the actual diff: no schema or migration change, no
+cross-repo contract or DTO change. Customer-facing bytes DID change -- the whole point of this
+slice is the rendered column count of Hoy's tile row from 1024px up. This trips merge policy A's
+customer-bytes condition, so this slice stops before the merge with `AWAITING_APPROVAL`, on the
+branch, tree clean, for the orchestrator to measure at 1568/1024/800/375px before merging.
+
+**Open follow-ups, not this slice's to do:**
+- BODY-GRID3-CASCADA-1: `.grid3`'s `min-width:1024px` auto-fill rule (`body.css:71`) is permanently
+  overridden by the unbounded `min-width:640px` 3-column rule (`body.css:109`), the same cascade-
+  inversion shape this slice fixed for `.hoy-tiles` -- but `.grid3` is used by `day.html`,
+  `history.html` and `trends.html`, never Hoy, so out of this slice's scope. Allow-listed as `BUG`
+  in `tests/test_css_cascada.py`.
+
 -- not merged, AWAITING_APPROVAL
 
