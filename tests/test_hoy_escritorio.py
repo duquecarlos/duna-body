@@ -226,9 +226,17 @@ class HoyTopBlockCssTest(unittest.TestCase):
     def test_image_is_never_cropped_on_hoy(self):
         self.assertIn(".hoy-figura.cuerpo-vista-img{object-fit:contain}", self.compact)
 
-    def test_phone_and_desktop_height_caps_present(self):
-        self.assertIn(".hoy-figura.cuerpo-vista-track{max-height:60vh;max-height:60svh}", self.compact)
+    def test_desktop_height_cap_present(self):
         self.assertIn(".hoy-figura.cuerpo-vista-track{max-height:min(78vh,720px)}", self.compact)
+
+    def test_phone_cap_is_scoped_to_a_max_width_query(self):
+        """BODY-HOY-ESCRITORIO-1-C: the 60svh rule must sit inside a max-width query (below 768px),
+        never unscoped after the >=768px block, or it wins at every width by source order alone."""
+        marker = ("@media(max-width:767.98px){"
+                  ".hoy-figura.cuerpo-vista-track{max-height:60vh;max-height:60svh}}")
+        self.assertIn(marker, self.compact)
+        self.assertEqual(
+            self.compact.count(".hoy-figura.cuerpo-vista-track{max-height:60vh;max-height:60svh}"), 1)
 
     def test_pending_glow_class_present(self):
         self.assertIn(".cuerpo-vista-glow.pendiente{", self.css)

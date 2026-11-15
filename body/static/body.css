@@ -456,5 +456,10 @@ svg.barra{display:block;width:100%;height:6px;margin-top:4px}
   .hoy-top{display:grid;grid-template-columns:minmax(0,1fr) minmax(var(--hoy-figura-min),var(--hoy-figura-max));gap:16px;align-items:start}
   .hoy-figura .cuerpo-vista-track{max-height:min(78vh,720px)}
 }
-.hoy-figura .cuerpo-vista-track{max-height:60vh;max-height:60svh}
+/* Phone-only (BODY-HOY-ESCRITORIO-1-C): scoped by max-width, below the >=768px block above, so the
+   desktop/tablet cap (`min(78vh,720px)`) is the one that wins from 768px -- unscoped, this rule sat
+   AFTER the min-width block at equal specificity and won at every width by source order alone. */
+@media (max-width:767.98px){
+  .hoy-figura .cuerpo-vista-track{max-height:60vh;max-height:60svh}
+}
 .hoy-figura .cuerpo-vista-img{object-fit:contain}
