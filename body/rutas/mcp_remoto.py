@@ -1,20 +1,22 @@
 """The hosted MCP door (BODY-MCP-REMOTO-SERVIDOR-1, surface BODY-MUDANZA-PC-A-SERVIDOR-1): the
-Personal desk's own MCP client, once it moves off the PC (BODY-MCP-REMOTO-CLIENTE-1, a later
-slice), reaches Carlos's health data on body.duna.solutions through these two routes instead of
-body/mcp.py's stdio pipe. Authenticated ONLY by a device key carrying the `asistente:mcp` scope
-(body/identity.py's `person_from_device`, hosted-only -- 404 in local mode, same as every other
-device route) -- never by the signed-in Cuenta session these other screens use.
+Personal desk's own MCP client (BODY-MCP-REMOTO-CLIENTE-1, body/mcp.py's `_SesionCliente`) reaches
+Carlos's health data on body.duna.solutions through these two routes instead of body/mcp.py's old
+stdio pipe to the local database. Authenticated ONLY by a device key carrying the `asistente:mcp`
+scope (body/identity.py's `person_from_device`, hosted-only -- 404 in local mode, same as every
+other device route) -- never by the signed-in Cuenta session these other screens use.
 
 Both routes call body/mcp.py's own shared core (`_lista_herramientas`, `_llamar_herramienta`)
 UNCHANGED -- the local stdio door's own behaviour and tests do not change (ruling 2: refactor,
 don't copy). The one thing that differs between the two doors is the SHAPE a refusal takes:
 local wraps a `RehusoMCP` into its existing localized JSON-RPC text; this module reads `codigo`/
 `campos` off the SAME exception instead, so a refusal never crosses the wire as pre-localised
-text -- the PC's own future client renders it with mcp.py's own `_mensaje_*` functions, reading
-the person's language setting locally. A plain `herramientas.ToolError` with no such fields (an
-unknown tool, a bad parameter, a nivel too low -- the tool registry's own validation, meant for a
-model to read and retry, never localized in the first place) collapses to one generic code,
-`herramienta_rechazada`.
+text -- the PC's own client (`_SesionCliente`) renders it with mcp.py's own i18n keys, reading the
+person's language off this module's own `"idioma"` field (BODY-MCP-REMOTO-CLIENTE-1 ruling 3). A
+plain `herramientas.ToolError` with no such fields (an unknown tool, a bad parameter, a nivel too
+low -- the tool registry's own validation, meant for a model to read and retry, never localized in
+the first place) collapses to the generic code `herramienta_rechazada`, carrying the exception's
+own unlocalized `mensaje` (`errores.texto_propio(e)`) -- the exact same text the local door already
+shows verbatim for the same error, never a new localized sentence.
 """
 from __future__ import annotations
 
@@ -42,10 +44,13 @@ def _sin_cache(data: dict, *, status_code: int = 200) -> JSONResponse:
 @router.get("/api/asistente/mcp/herramientas")
 @comun._cierra_conexion
 def mcp_remoto_herramientas(person_id: int = Depends(identity.person_from_device("asistente:mcp"))):
-    conn, _, _ = comun._ctx(person_id)
+    conn, person, _ = comun._ctx(person_id)
     sesion = mcp._SesionRemota(conn, person_id, None)
     nivel = mcp._nivel(sesion)
-    return _sin_cache({"herramientas": mcp._lista_herramientas(sesion), "nivel": nivel})
+    # BODY-MCP-REMOTO-CLIENTE-1 ruling 3: the PC client has no DB of its own to read the person's
+    # interface language from -- read the same way the web reads it (comun._ctx's own `person`).
+    idioma = person.get("language", "es")
+    return _sin_cache({"herramientas": mcp._lista_herramientas(sesion), "nivel": nivel, "idioma": idioma})
 
 
 def _conversacion_valida(conn, person_id: int, conversacion_id) -> bool:
@@ -96,8 +101,13 @@ async def mcp_remoto_llamar(request: Request,
         tipo, salida, aviso_reloj = mcp._llamar_herramienta(sesion, nombre, argumentos)
     except mcp.RehusoMCP as e:
         return _sin_cache({"error": e.codigo, **e.campos})
-    except herramientas.ToolError:
-        return _sin_cache({"error": "herramienta_rechazada"})
+    except herramientas.ToolError as e:
+        # BODY-MCP-REMOTO-CLIENTE-1 ruling 3: the PC client renders "herramienta_rechazada" with
+        # the exact same text the local stdio door already shows for a plain ToolError
+        # (`errores.texto_propio(e)`) -- never localized to begin with (it is meant for a model to
+        # read and retry), so sending it is not a new customer-facing sentence, only the same
+        # unlocalized text the local door already displays verbatim.
+        return _sin_cache({"error": "herramienta_rechazada", "mensaje": errores.texto_propio(e)})
     except Exception as e:
         conn.rollback()
         nombre_str = nombre if isinstance(nombre, str) else str(nombre)
