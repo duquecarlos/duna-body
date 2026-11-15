@@ -2816,7 +2816,8 @@ def ejecutar(conn: sqlite3.Connection, person_id: int, nombre: str, params: dict
             return entrada["funcion"](conn, person_id, nivel, **params)
         return entrada["funcion"](conn, person_id, **params)
     except sqlite3.OperationalError as e:
-        if "readonly database" not in str(e):
+        mensaje = str(e.args[0]) if e.args else ""
+        if "readonly database" not in mensaje:
             raise
         raise ToolError("lectura_intento_escribir") from None
     finally:
