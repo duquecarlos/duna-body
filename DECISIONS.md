@@ -22395,3 +22395,98 @@ is a DETERMINISTIC consequence of this slice's own change, not flakiness:
 
 -- not merged, GATE_RED
 
+## BODY-ENTRENO-VISTA-SESION-1-B -- the five census collisions, each given the new route's own row
+
+Continuation of BODY-ENTRENO-VISTA-SESION-1 (GATE_RED above, `logs/worker-body-entreno-vista-sesion-1-body-app-
+20261115T114126.json`): the screen itself (de7cbf6, 2e3400e, 5811a0b) was never touched. This slice widens `touches`
+to the five test files the orchestrator's own list above already named, plus this ledger, and fixes each.
+
+**1. `tests/test_agente_registro.py:56` -- `ROUTE_TOOL["/day/{day}/entreno/{source_id}"] = None`.** Checked both
+candidates named by the spec before picking `None`:
+- `leer_entreno` (`body/agente/herramientas.py:960`) reads a day's/range's training sessions, but its own SQL
+  (`type = 'strength_training' OR source = 'manual'`) excludes a Garmin-automatic non-strength activity entirely --
+  the demo's own basketball session (`body/demo.py`'s `_SESION_BASKET_TITULO`, type `'other'`, source `'garmin'`)
+  would never come back through it at all, yet that session gets this exact detail page
+  (`tests/test_entreno_sesion.py`'s own `test_yesterdays_basketball_session_shows_the_honest_line`).
+- `leer_dia` (`body/agente/herramientas.py:694`, via `db.load_day`) DOES return every activity for the day
+  (unfiltered, the same `SELECT * FROM activity WHERE person_id = ? AND day = ?` `entreno_sesion.actividad` itself
+  runs), but its `activities` entries carry no `series` (sets), no habitual-comparison median and no recovery line --
+  the page's own main content for a strength session, and part of its content for every session.
+No existing tool returns BOTH "that day's activities" and "this session's own sets/comparison/recovery" together,
+for every session the route serves. `None`, with the literal comment the spec supplied, matching the orchestrator's
+own prediction in BODY-ENTRENO-VISTA-SESION-1's open-followup #1 ("likely `None`, since no assistant tool reads
+single-session detail yet").
+
+**2. `tests/test_get_sin_escritura.py:63-66` -- `_seed()` now inserts one `activity` row (source_id `"zz-sweep-1"`,
+type `'walking'`, source `'garmin'`) for person 1 on the already-seeded `day`, and returns it as `"source_id"` in the
+`ids` dict `_fill()`'s `path.format(**ids)` already consumes.** The write-free sweep now actually reaches
+`entreno_sesion_view` (200, real id) instead of `KeyError: 'source_id'` on `_fill`.
+
+**3/4. `tests/test_estados_vacios.py` and `tests/test_estados_vacios_hosted.py`, fixed independently (each file's own
+`_paths_for`/`STATES`/ids, no shared helper between them, per the spec).** Each of the seven states' own `_seed_X`
+(`tests/test_estados_vacios.py:127,137,148,157,175,191,205`) gained an `"entreno"` key: a list of `(day, source_id)`
+pairs, `source_id=None` where that state seeds no activity on that day (states A, C, D, D2, E in full; state F's own
+`TODAY` -- the watch's deliberate gap -- also `None` while its `last_day` carries the real id `_full_day` inserted;
+state B's one `_full_day` activity carries its real id). The route's own 200-vs-404 depends on THIS specific
+day/source_id pair, not on the route pattern alone, unlike every other parameterised route here -- so a plain
+`_expected_statuses(route_path, turnos_on)` lookup cannot answer it. Added a sibling `_entreno_expected(route_path,
+path, ids)` (`tests/test_estados_vacios.py:244`, `tests/test_estados_vacios_hosted.py:107`) that returns 200/404 for
+this one route from the exact same `ids["entreno"]` pairs, `None` for every other route (falling back to the
+existing `_expected_statuses`/`_expected_hosted` call unchanged); the hosted file's override only applies once
+`signed_in and consented` (H1 stays 303 regardless, matching the consent gate firing before the activity lookup ever
+runs). `_paths_for` itself (`tests/test_estados_vacios.py:220`, `:86` in the hosted file) kept its PLAIN-STRING
+return shape -- see the deviation below for why that mattered. A sparse state with no such activity now gets this
+route's own real 404, asserted, never exempted; state B/F's real-activity day gets 200.
+
+**5. `tests/test_estados_vacios_2.py:298-299`.** The demo's own ruling-6 strength session today (`body/demo.py`'s
+`_seed_entreno_vista_sesion_actividades`, categories `pecho`/`pierna`) makes Hoy's body view read BOTH layers:
+trained (today's logged session, `grupos` = {pecho, cuadriceps, isquios}) plus still-to-come (today's own plan,
+`body/demo.py`'s `_seed_plan_hoy`, categories hombro/brazo/espalda -> `pendiente` = {hombros, biceps, dorsales,
+espalda_alta, deltoides_post} -- no overlap with `grupos`, so nothing already-trained drops out of "still to come").
+`body/rutas/hoy.py:425`'s `_cuerpo_hoy_ctx` therefore picks `cuerpo.caption.hoy_entrenado_y_pendiente` ("Entrenado
+hoy: {grupos}. Por venir: {pendientes}.") instead of the `hoy_con_sesion` ("planned only") wording the test
+originally asserted. Kept the case's own subject -- the plan's pending groups (hombros, dorsales) are still lit --
+and swapped the caption assertion to the two literal fragments unique to `hoy_entrenado_y_pendiente` ("Entrenado
+hoy:", "Por venir:"), the same bare-literal-copy convention this exact test already used for the caption it replaced.
+Never re-dated the demo.
+
+**Deviation: `_paths_for`'s return shape stayed a plain list of strings, not `(path, has_activity)` tuples.** First
+attempt changed `_paths_for` to return tuples; `tests/test_accesibilidad.py:50` imports this exact function from
+`tests/test_estados_vacios.py` and calls `client.get(path)` on each element unpacked as a bare string --
+`TypeError: Invalid type for url. Expected str or httpx.URL, got <class 'tuple'>`, caught by chunk 1 of the full-
+suite gate below, not by the five targeted modules (which never exercise `test_accesibilidad.py`). Reverted to plain
+strings and moved the 200/404 decision into the separate `_entreno_expected` lookup instead (point 3/4 above). Also
+confirmed harmless: `test_accesibilidad.py`'s own `_LOCAL_STATES = {k: STATES[k] for k in ("A", "D", "E")}` reuses
+the SAME `_seed_A`/`_seed_D`/`_seed_E` this slice edited, so its sweep of those three states now also exercises the
+new route with a real source_id/placeholder instead of the pre-existing literal `"{source_id}"` substring the old
+`_paths_for` left unsubstituted -- a side improvement, not a behaviour this slice needed to preserve, and its own
+`_seed_populated` (lacking an `"entreno"` key) falls through to that exact pre-existing behaviour unchanged.
+
+**Commits:** `931a4fc` (the five fixes, first pass), `7aae9e5` (the `_paths_for` shape correction above).
+
+**Targeted run**, `tests.test_agente_registro tests.test_get_sin_escritura tests.test_estados_vacios
+tests.test_estados_vacios_hosted tests.test_estados_vacios_2 tests.test_entreno_sesion tests.test_accesibilidad`
+(the five touched modules plus `test_entreno_sesion` the spec named plus `test_accesibilidad` once the deviation
+above surfaced it): `Ran 67 tests ... OK`.
+
+**The gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as 9 sequential alphabetical chunks of
+~20 dotted modules each, in the foreground, on the final tree (commit `7aae9e5`):
+
+    chunk 1 (test_accesibilidad..test_baselines):             Ran 377 tests, OK
+    chunk 2 (test_baselines_lote..test_dispositivo):          Ran 476 tests, OK
+    chunk 3 (test_ejes_fechas..test_fechas_semana):           Ran 307 tests, OK
+    chunk 4 (test_fit..test_host_deploy):                     Ran 537 tests, OK
+    chunk 5 (test_host_import..test_modelos_estandar_1):      Ran 361 tests, OK
+    chunk 6 (test_momentos_pull..test_primeros_turnos):       Ran 520 tests, OK
+    chunk 7 (test_privacidad..test_request_log):              Ran 329 tests, OK
+    chunk 8 (test_seguridad..test_turnos_esquema_1):          Ran 427 tests, OK
+    chunk 9 (test_turnos_opcional_2..test_web_entry):         Ran 306 tests, OK
+
+Sum: 3640 run, 0 failures, 0 errors. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`): 3640 -- matching exactly, and
+matching the prior ledger entry's own total (this slice added no new test, only fixed five existing ones). **GREEN.**
+
+-- not merged, AWAITING_APPROVAL (the screen's customer-facing bytes, carried on this branch unchanged since
+de7cbf6, still need the orchestrator's own look in a browser before merge; this slice touched tests and the ledger
+only)
+
