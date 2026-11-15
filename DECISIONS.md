@@ -21807,3 +21807,98 @@ branch, tree clean, for the orchestrator to measure at 1568/1024/800/375px befor
 
 -- not merged, AWAITING_APPROVAL
 
+**BODY-HOY-ESCRITORIO-2-C -- six-across still never applied; the OTHER half of the defect class
+(2026-11-15).** The orchestrator's own browser look at the demo on `d658b79` (`body.css?v=90a0279105`),
+reading `document.styleSheets` and counting rendered tile rows, found the gap BODY-HOY-ESCRITORIO-2-B
+believed it had closed was still there: 1568 and 1024 showed two columns (6 tiles, 3 rows), not six.
+
+**Measured cause** (`body/static/body.css` at `d658b79`): the 6-across rule
+(`.hoy-tiles{grid-template-columns:repeat(6,...)}`, `:78`) sat inside the `min-width:1024px` block
+(`:56`), and the tile container is `<div class="grid2 hoy-tiles mb-10">` -- but the UNCONDITIONAL
+`.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}` sat LATER, at `:107`,
+with EQUAL specificity (one class each) to `.hoy-tiles`' own rule. `.grid2` wins at every width
+>=1024px by source order alone, so the tile grid never left two columns there. `find_cascade_inversions`
+(BODY-HOY-ESCRITORIO-2-B's own guard) could not see this: it only compares the SAME selector text
+across two media blocks, and here it is TWO DIFFERENT classes on ONE element colliding -- a shape the
+spec that measured this gap named explicitly. Before -B, the unbounded plain `min-width:768px` rule
+(`:494`, after `:107`) happened to beat `.grid2` at every width from 768px up by the same accident
+that then hid six-across entirely; -B correctly bounded that rule to below 1024px, which is exactly
+what exposed `.grid2` as the next later, equal-specificity rule still standing at 1024px and up.
+
+**Fix** (`body/static/body.css`): every `.hoy-tiles` column-count rule -- the tablet-only 3-across
+(`:500-502`, unchanged in substance from -B), the 6-across, and the Lectura 3-across override -- now
+lives together in ONE place, in the Hoy section, AFTER `.grid2` (`:101`): `:503-506`. Winning is now a
+property of file position relative to `.grid2`, not of which block happened to come later by accident.
+The stale top-of-file 1024px copy (old `:74-79`) was removed outright. Commits `fb21244`, `1ea5990`
+(a follow-up fix to a stale line-number cross-reference the first commit's own new comment left behind
+after the earlier lines moved `.grid2` from `:107` to `:101`).
+
+**The co-class guard, `tests/test_css_cascada.py` (`find_coclass_collisions`, new).** Parses
+`body/templates/today.html` for every element carrying two or more literal classes in a `class="..."`
+attribute (skipping any attribute containing `{{`/`{%` -- Jinja can change the class list entirely),
+and `body/static/body.css` for every BARE single-class selector's declarations (`.foo`, never
+`.foo.bar` -- the only shape where two classes on one element are equal specificity), each tagged with
+the min/max-width bounds of its enclosing `@media` (a condition that is not purely min/max-width, such
+as `(hover:hover)`, blocks the whole subtree -- the real file's own compound selectors living inside
+such blocks are never bare single-class selectors anyway, so nothing this guard needs is lost). For
+every (class-pair, property) a Hoy element's two classes both declare, it computes the winner -- the
+LAST declaration in file order among the rules whose bounds include a given pixel width -- at four
+sample widths: 375, 800, 1024, 1568.
+
+`test_grid2_hoy_tiles_winner_matches_the_expected_table` asserts the exact table the spec gave:
+`{375: ".grid2", 800: ".hoy-tiles", 1024: ".hoy-tiles", 1568: ".hoy-tiles"}` -- matches, on the fixed
+tree. **Six other co-class hits found on Hoy**, every one reviewed and allow-listed
+(`COCLASS_ALLOWLIST`) rather than fixed: `.row`/`.items-end` (`align-items`), `.row`/`.gap-8` (`gap`)
+and `.row`/`.justify-start` (`justify-content`) are utility-over-component overrides, intentional by
+design (`body.css:309-320`, BODY-ESTILOS-1: utilities sit LAST in the file ON PURPOSE so they always
+beat a component class at equal specificity); `.tellbody`/`.taplink` (`display`, `min-height`,
+`text-decoration`) is `.tellbody` deliberately overriding `.taplink`'s generic inline-flex with its own
+block layout (`today.html:113`). All six are UNCONDITIONAL on both sides (no `@media` at all), so the
+same class wins at every one of the four sample widths -- stable, no width-dependent cascade risk, only
+a documented, intentional override. `test_allowlist_has_no_stale_entries` requires every allow-listed
+entry to still be a real, currently-measured hit.
+
+Proven with a MINIMAL synthetic reproduction of the exact `d658b79` shape (`CoClassCheckerCatchesThe
+MeasuredDefectTest`) rather than embedding the real file's text: a `.hoy-tiles` 6-across rule inside an
+early `min-width:1024px` block, followed by an unconditional `.grid2`, followed by the tablet-only
+3-across block -- `test_grid2_wins_at_1024_and_1568_before_the_fix` confirms the checker reports
+`.grid2` as the (wrong) winner at 1024 and 1568 on that shape, exactly reproducing the measured gap;
+`test_the_fix_shape_gives_hoy_tiles_the_win` confirms the fixed ordering (`.grid2` first, then both
+bounded `.hoy-tiles` blocks) gives the expected table. Commit `2654555`.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry, commit
+`1ea5990`). Exact command: `.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 9
+sequential chunks of the same `tests/test_*.py` modules in alphabetical order (the same set `discover`
+would walk, ~20 modules each), each in the foreground, run TWICE -- once before, once after the
+`1ea5990` comment-only fix, both green with identical counts:
+
+    chunk 1 (test_accesibilidad..test_baselines_lote):            Ran 354 tests, OK (skipped=1)
+    chunk 2 (test_borrar_reauth..test_entreno_historial):          Ran 484 tests, OK
+    chunk 3 (test_entreno_numeros..test_garmin_adapter):           Ran 282 tests, OK
+    chunk 4 (test_garmin_estado..test_hoy):                        Ran 551 tests, OK
+    chunk 5 (test_hoy_escritorio..test_nivel_datos_ui):            Ran 407 tests, OK
+    chunk 6 (test_noche_inusual..test_profile_lote):                Ran 524 tests, OK
+    chunk 7 (test_propuesta_vigencia..test_series_orden):          Ran 306 tests, OK
+    chunk 8 (test_series_unidad..test_turnos_opcional_4):          Ran 439 tests, OK
+    chunk 9 (test_turnos_opcional_5..test_web_entry):              Ran 227 tests, OK
+
+Sum: 3574 run, 0 failures, 0 errors, 1 skipped (pre-existing, POSIX-only). Reconciled against an
+independent collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')
+.countTestCases()`): 3574 -- matching exactly, and exactly 5 more than the prior entry's 3569 floor (5
+new tests in `test_css_cascada.py`: 3 in `CoClassCollisionGuardTest`, 2 in
+`CoClassCheckerCatchesTheMeasuredDefectTest`). **GREEN**, one pass, no fix needed.
+
+**Merge policy, this slice's own diff** (`body/static/body.css`, `tests/test_css_cascada.py`). Checked
+against the actual diff: no schema or migration change, no cross-repo contract or DTO change.
+Customer-facing bytes DID change -- the whole point of this slice is the rendered column count of
+Hoy's tile row at 1024px and 1568px, the exact thing BODY-HOY-ESCRITORIO-2-B believed it had already
+fixed. This trips merge policy A's customer-bytes condition, so this slice stops before the merge with
+`AWAITING_APPROVAL`, on the branch, tree clean, for the orchestrator to measure at
+1568/1024/800/375px before merging -- this time against the live stylesheet, the way the gap itself
+was found.
+
+**Open follow-ups, not this slice's to do:** none found (BODY-GRID3-CASCADA-1, above, carries over
+from BODY-HOY-ESCRITORIO-2-B unchanged -- still not on Hoy, still out of scope).
+
+-- not merged, AWAITING_APPROVAL
+
