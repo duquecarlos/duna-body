@@ -22630,9 +22630,9 @@ not a defect this slice's diff could cause -- this slice's own diff never touche
 **Targeted run** (every file this slice touches plus the guard it tripped), all green:
 `tests.test_entreno_sesion tests.test_i18n_paridad tests.test_rendimiento tests.test_agente_registro
 tests.test_get_sin_escritura tests.test_estados_vacios tests.test_estados_vacios_hosted tests.test_estados_vacios_2
-tests.test_registro_tu` -- `Ran 93 tests ... OK` (36 + 8 + 5 + 44 across the five census files combined... see the
-individual chunk runs above for the authoritative per-module counts; this combined run is the fast confirmation
-sweep after each edit, not a substitute for the full gate above).
+tests.test_registro_tu` -- `Ran 98 tests in 50.824s ... OK`. See the individual chunk runs above for the
+authoritative per-module counts across the WHOLE suite; this combined run is the fast confirmation sweep after
+each edit, not a substitute for the full gate above.
 
 **Commits:** `529851e` (rulings 1-6, the whole fix, with tests), `95a051c` (the deviation above: reword
 `curva_pendiente`'s es copy, with its own test and ledger line updated in the same commit).
