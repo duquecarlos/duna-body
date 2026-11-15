@@ -1,243 +1,483 @@
 [
  {
-  "id": "frente",
-  "tema": "claro",
-  "archivo": "frente-claro.webp",
-  "fuente": "01-frente-2k-v3.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 83222,
-  "sha256": "f93eb10dae4c0f73c9f4cb9d3b5febf2691680dd198b38f6983bc8f42b1df5fe"
- },
- {
-  "id": "frente",
-  "tema": "oscuro",
-  "archivo": "frente-oscuro.webp",
-  "fuente": "01-frente-2k-v3-osc.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 71410,
-  "sha256": "564c49783351229a31859809119d18545c2e9d7073ceb696664052c37529a65d"
- },
- {
-  "id": "corazon",
-  "tema": "claro",
-  "archivo": "corazon-claro.webp",
-  "fuente": "02-corazon.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 85682,
-  "sha256": "cb06a7a6ccf694454c293948422802b37466a81c31ae0907ab6ca17c6b9fae74"
- },
- {
-  "id": "corazon",
-  "tema": "oscuro",
-  "archivo": "corazon-oscuro.webp",
-  "fuente": "02-corazon-oscuro.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 65532,
-  "sha256": "8265e709835e58d196f406c9dc03922c5114feb4456086267c622401780f129a"
- },
- {
-  "id": "nervios",
-  "tema": "claro",
-  "archivo": "nervios-claro.webp",
-  "fuente": "03-nervios.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 75878,
-  "sha256": "1265c834b70bf34d172ef8581ed8ac9d730323be5d21101bd5c1873ce8d96fd5"
- },
- {
-  "id": "nervios",
-  "tema": "oscuro",
-  "archivo": "nervios-oscuro.webp",
-  "fuente": "03-nervios-OSCURO.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 66250,
-  "sha256": "4ab669490f2a7a8d70a16ef2d6962f2dd540689fcbc0fa326c62dc840de44130"
- },
- {
   "id": "cerebro",
   "tema": "claro",
-  "archivo": "cerebro-claro.webp",
+  "archivo": "cerebro-claro-800.webp",
   "fuente": "04-cerebro-v3.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 39272,
-  "sha256": "ba177c536410a58825b735d6095ae0832982e0b8597300e8a0c5fdcd2ae2bffb"
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 29780,
+  "sha256": "50b51bb6fdfa9cbe1308016df38edc3d16b950b7d11c52b63becf2b2907b5cd1"
+ },
+ {
+  "id": "cerebro",
+  "tema": "claro",
+  "archivo": "cerebro-claro-1440.webp",
+  "fuente": "04-cerebro-v3.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 73258,
+  "sha256": "06dcc52c1fe8352d6709dd3a22cbf68f4c4c98959d5bb04bc03695b7eb1f985a"
  },
  {
   "id": "cerebro",
   "tema": "oscuro",
-  "archivo": "cerebro-oscuro.webp",
+  "archivo": "cerebro-oscuro-800.webp",
   "fuente": "04-cerebro-v3-oscuro.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 36900,
-  "sha256": "4cee446cc194eef55d85897dec33220ce11374acd26e55841c9c875d92aaea78"
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 28134,
+  "sha256": "cccc498935d967fbe7c97fc9c34d65e6eba75c21ac1df625d66b6d6dcff27922"
  },
  {
-  "id": "pulmones",
-  "tema": "claro",
-  "archivo": "pulmones-claro.webp",
-  "fuente": "05-pulmones.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 53900,
-  "sha256": "58a7fb05677becd666b0c79b03157d699596f9a361b9b3fd5d1747d49f09fe1c"
- },
- {
-  "id": "pulmones",
+  "id": "cerebro",
   "tema": "oscuro",
-  "archivo": "pulmones-oscuro.webp",
-  "fuente": "05-pulmones-osc.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 40580,
-  "sha256": "a8ae3beb5f989cd2caf9aaaa90178b3854debc55f13d2a5bc75d1243839c8825"
+  "archivo": "cerebro-oscuro-1440.webp",
+  "fuente": "04-cerebro-v3-oscuro.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 64984,
+  "sha256": "321b753861cc3623c9e8798e2dc45d3a545e139d64486a7eca4a1fad0d8b74ae"
  },
  {
-  "id": "musculos",
+  "id": "corazon",
   "tema": "claro",
-  "archivo": "musculos-claro.webp",
-  "fuente": "06-musculos-V2.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 70684,
-  "sha256": "e3314dfb3370640ed9a28c3e85b94be00d207d1906a1378e86ade7f853a2cb56"
+  "archivo": "corazon-claro-800.webp",
+  "fuente": "02-corazon.jpg",
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 62342,
+  "sha256": "2e0b3a3ff3dbebdbea06a5b22c9eaf1d08f5a4945d3f823c2721698b6b59b370"
  },
  {
-  "id": "musculos",
-  "tema": "oscuro",
-  "archivo": "musculos-oscuro.webp",
-  "fuente": "06-musculos-V2-osc.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 70922,
-  "sha256": "234a26620ec605f3f5b6d87a5f63f2fa32cc8e989a060129f8ea8468dfa396e5"
- },
- {
-  "id": "esqueleto",
+  "id": "corazon",
   "tema": "claro",
-  "archivo": "esqueleto-claro.webp",
-  "fuente": "07-esqueleto.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 80282,
-  "sha256": "eedb3441f039af754cddfe87dd50640757797a818520787da1ff2661704cee9e"
+  "archivo": "corazon-claro-1440.webp",
+  "fuente": "02-corazon.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 148442,
+  "sha256": "8179c10d069034ab11a6ffafe0bc3207ff16bc2f349d83fb60a533edfd33c1c4"
  },
  {
-  "id": "esqueleto",
+  "id": "corazon",
   "tema": "oscuro",
-  "archivo": "esqueleto-oscuro.webp",
-  "fuente": "07-esqueleto-oscuro.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 74032,
-  "sha256": "d668a5b70f2618e3dfa16e173e26cc238f5970666e214331a0cf55215eb61710"
+  "archivo": "corazon-oscuro-800.webp",
+  "fuente": "02-corazon-oscuro.jpg",
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 49742,
+  "sha256": "4dec8039a17e21ed5cf2229c591c03ae9c6f8544c65eae62e3f3897e8c580458"
+ },
+ {
+  "id": "corazon",
+  "tema": "oscuro",
+  "archivo": "corazon-oscuro-1440.webp",
+  "fuente": "02-corazon-oscuro.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 113842,
+  "sha256": "f64658575e5c6123ab0b348e8d8744c38aca427110e06bc09992a53caf315879"
  },
  {
   "id": "espalda",
   "tema": "claro",
-  "archivo": "espalda-claro.webp",
+  "archivo": "espalda-claro-800.webp",
   "fuente": "10-espalda.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 72458,
-  "sha256": "2c3bf16d0babaafd8f69072e64995c081f8634766502b4edc7d2b9323d69dd59"
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 55716,
+  "sha256": "58e1221818ff31b51e9ce0e0a549efc31ad2bbcbae92433db1d78e33cdbb2fe3"
+ },
+ {
+  "id": "espalda",
+  "tema": "claro",
+  "archivo": "espalda-claro-1440.webp",
+  "fuente": "10-espalda.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 124860,
+  "sha256": "57e11cd02eb93657e44619136e8e7869e028c6e033853491fb9ef1e6abb060f7"
  },
  {
   "id": "espalda",
   "tema": "oscuro",
-  "archivo": "espalda-oscuro.webp",
+  "archivo": "espalda-oscuro-800.webp",
   "fuente": "10-espalda-osc.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 92376,
-  "sha256": "9a2555f5956fbda8ba0f1cc277ccd02fd50b327fb544b5f67378f2a30f571a58"
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 64544,
+  "sha256": "7d578179f27ce4f5b9c596f7910dbbb071818a20c5b45738868da014c608f30f"
  },
  {
-  "id": "espalda-musculos",
-  "tema": "claro",
-  "archivo": "espalda-musculos-claro.webp",
-  "fuente": "11-espalda-musculos.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 51408,
-  "sha256": "80d2ed96a7e14d3502d036a863f328a3bae1976c39c5cb38a6923d781ec9203d"
- },
- {
-  "id": "espalda-musculos",
+  "id": "espalda",
   "tema": "oscuro",
-  "archivo": "espalda-musculos-oscuro.webp",
-  "fuente": "11-espalda-musculos-osc.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 50378,
-  "sha256": "46535b3b392736aa1b7e2a324e898139e32c0d5a09ca17f3c5abc1c646e1c68d"
+  "archivo": "espalda-oscuro-1440.webp",
+  "fuente": "10-espalda-osc.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 163086,
+  "sha256": "5eb916c994a508ff75b791b298623ba3a6d2c2ccbd1ebfd75af6120462513b48"
  },
  {
   "id": "espalda-columna",
   "tema": "claro",
-  "archivo": "espalda-columna-claro.webp",
+  "archivo": "espalda-columna-claro-800.webp",
   "fuente": "12-espalda-columna.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 57530,
-  "sha256": "e90bcae133776730d5daa0c2e89431b2430d3e5d15a5a6cb9df7fb864eaae0f6"
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 42682,
+  "sha256": "fdfa66c88418e83a3cd86d8bdf334bf342a6272c65e2bbca3b55aa899edf58be"
+ },
+ {
+  "id": "espalda-columna",
+  "tema": "claro",
+  "archivo": "espalda-columna-claro-1440.webp",
+  "fuente": "12-espalda-columna.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 99110,
+  "sha256": "8a62f59832df0614d3f593543c926d880caf8d5aad15a2b3ad3a5c5eaf4953b0"
  },
  {
   "id": "espalda-columna",
   "tema": "oscuro",
-  "archivo": "espalda-columna-oscuro.webp",
+  "archivo": "espalda-columna-oscuro-800.webp",
   "fuente": "12-espalda-columna-osc.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 53726,
-  "sha256": "b698fdf111ec7e9a7f9f388002fe0e8d4a3d59649ca9e6ebbf3456712d96b582"
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 40538,
+  "sha256": "b7ddcb9920b23c431aa629f022b686c53266fb5e28dd7b9bfe7d09cdf496d0d6"
+ },
+ {
+  "id": "espalda-columna",
+  "tema": "oscuro",
+  "archivo": "espalda-columna-oscuro-1440.webp",
+  "fuente": "12-espalda-columna-osc.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 93848,
+  "sha256": "0faa7ad7dd3e3ec43c63a7816033a45e91eec14af06812d3dfdfda41001318b0"
+ },
+ {
+  "id": "espalda-musculos",
+  "tema": "claro",
+  "archivo": "espalda-musculos-claro-800.webp",
+  "fuente": "11-espalda-musculos.jpg",
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 38860,
+  "sha256": "28a0ff49aca570d2e8b3d443edb840f936d7c7d850a975bdd85cdbb085b3c560"
+ },
+ {
+  "id": "espalda-musculos",
+  "tema": "claro",
+  "archivo": "espalda-musculos-claro-1440.webp",
+  "fuente": "11-espalda-musculos.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 91416,
+  "sha256": "99f4f744eb65ea4c3cecfc541fcf08ff19629f1a4e696509e2914a5f894779b0"
+ },
+ {
+  "id": "espalda-musculos",
+  "tema": "oscuro",
+  "archivo": "espalda-musculos-oscuro-800.webp",
+  "fuente": "11-espalda-musculos-osc.jpg",
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 37956,
+  "sha256": "9cd6a057749e59420d57dcf5e3d8293c34ac78a11a57ffe204894217de6c6752"
+ },
+ {
+  "id": "espalda-musculos",
+  "tema": "oscuro",
+  "archivo": "espalda-musculos-oscuro-1440.webp",
+  "fuente": "11-espalda-musculos-osc.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 96998,
+  "sha256": "50bab68b8e278daf4a7571d2a371e29da1af8a1a757742a4f12223bf27d9d5b6"
+ },
+ {
+  "id": "esqueleto",
+  "tema": "claro",
+  "archivo": "esqueleto-claro-800.webp",
+  "fuente": "07-esqueleto.jpg",
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 61586,
+  "sha256": "8e0d1e86a1e3f83d55a2f562e28bf4bc9d447b5afff6a5686c07c4f8495134fc"
+ },
+ {
+  "id": "esqueleto",
+  "tema": "claro",
+  "archivo": "esqueleto-claro-1440.webp",
+  "fuente": "07-esqueleto.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 131970,
+  "sha256": "91321f1e446b8f2457738a35a5f613165ebf84f0060a9faddf40fce7107be2ce"
+ },
+ {
+  "id": "esqueleto",
+  "tema": "oscuro",
+  "archivo": "esqueleto-oscuro-800.webp",
+  "fuente": "07-esqueleto-oscuro.jpg",
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 57658,
+  "sha256": "03d46e7574e169a55abddbef1643ab292f6293a559e00a8ac95698882023c93c"
+ },
+ {
+  "id": "esqueleto",
+  "tema": "oscuro",
+  "archivo": "esqueleto-oscuro-1440.webp",
+  "fuente": "07-esqueleto-oscuro.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 123038,
+  "sha256": "fef7be6b5cc05e3f5cbb35512e062b083b31eb4ed5a26aa7bebf8e67f03edc92"
+ },
+ {
+  "id": "frente",
+  "tema": "claro",
+  "archivo": "frente-claro-800.webp",
+  "fuente": "01-frente-2k-v3.jpg",
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 62088,
+  "sha256": "daa4d1fbf93fafdd380895334abccf80fbbede6d47afe02d4b83b8e003aee46d"
+ },
+ {
+  "id": "frente",
+  "tema": "claro",
+  "archivo": "frente-claro-1440.webp",
+  "fuente": "01-frente-2k-v3.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 143002,
+  "sha256": "7dd0c8d7e69f3d85b05ca323e12316f1dfe49159333d1c9ece44327258ae7f4e"
+ },
+ {
+  "id": "frente",
+  "tema": "oscuro",
+  "archivo": "frente-oscuro-800.webp",
+  "fuente": "01-frente-2k-v3-osc.jpg",
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 51564,
+  "sha256": "53d01a902b1a2ab840aaaf0d90f588048742fa759b29f2e8d5019a250e09ad12"
+ },
+ {
+  "id": "frente",
+  "tema": "oscuro",
+  "archivo": "frente-oscuro-1440.webp",
+  "fuente": "01-frente-2k-v3-osc.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 128990,
+  "sha256": "8acf9aba395ad9649af3b5d07b652d15f8933d688efdf3cdc7b2c01b8283ec14"
+ },
+ {
+  "id": "musculos",
+  "tema": "claro",
+  "archivo": "musculos-claro-800.webp",
+  "fuente": "06-musculos-V2.jpg",
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 54728,
+  "sha256": "ea9099c71f3cc42ca798fe40345d4882831502f473ca056ae2c9794c165815ed"
+ },
+ {
+  "id": "musculos",
+  "tema": "claro",
+  "archivo": "musculos-claro-1440.webp",
+  "fuente": "06-musculos-V2.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 126526,
+  "sha256": "f39f40a40e61ee6b8a3188f3f5a8f17f424654e461f4a693c43745df9df1ef57"
+ },
+ {
+  "id": "musculos",
+  "tema": "oscuro",
+  "archivo": "musculos-oscuro-800.webp",
+  "fuente": "06-musculos-V2-osc.jpg",
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 52790,
+  "sha256": "caf5237075acfbce33e2e093c53d4acac692b140b276da538f19bff5d24b2620"
+ },
+ {
+  "id": "musculos",
+  "tema": "oscuro",
+  "archivo": "musculos-oscuro-1440.webp",
+  "fuente": "06-musculos-V2-osc.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 129776,
+  "sha256": "1566394a02b0e443fa4b72f629b0d0f23fc65f677885ab51de213df5dffa534c"
+ },
+ {
+  "id": "nervios",
+  "tema": "claro",
+  "archivo": "nervios-claro-800.webp",
+  "fuente": "03-nervios.jpg",
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 57020,
+  "sha256": "171faeacf0020cad3f31efb551405dbdf4482ba4e69e0dc71ce0b512e3bbba30"
+ },
+ {
+  "id": "nervios",
+  "tema": "claro",
+  "archivo": "nervios-claro-1440.webp",
+  "fuente": "03-nervios.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 130504,
+  "sha256": "229b377d16f362ca956f248a7ef0c0428bcfc9c17b4a719a702514b175989e1f"
+ },
+ {
+  "id": "nervios",
+  "tema": "oscuro",
+  "archivo": "nervios-oscuro-800.webp",
+  "fuente": "03-nervios-OSCURO.jpg",
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 50720,
+  "sha256": "50ffdeee19658d428ae88a0549d169f1474d87b3b09ab5f1c366b9e1b6aba05a"
+ },
+ {
+  "id": "nervios",
+  "tema": "oscuro",
+  "archivo": "nervios-oscuro-1440.webp",
+  "fuente": "03-nervios-OSCURO.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 114020,
+  "sha256": "7744616a28d8ff3a1cf9877bc34868c1f7c178ade70dc8631e5ba515605c4ed8"
  },
  {
   "id": "perfil",
   "tema": "claro",
-  "archivo": "perfil-claro.webp",
+  "archivo": "perfil-claro-800.webp",
   "fuente": "20-perfil.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 54546,
-  "sha256": "75cefbd5f6d05179ebff624fb9542cf686fbcf152f4d4dd6fb85433a8766c3e0"
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 39220,
+  "sha256": "1e04cee67cbdd22794c65ee2b74cd9077baa9cf78df64402058f5d47aaeeced6"
+ },
+ {
+  "id": "perfil",
+  "tema": "claro",
+  "archivo": "perfil-claro-1440.webp",
+  "fuente": "20-perfil.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 99668,
+  "sha256": "832f61c9140bf2f11b5602ecdb0fcd001ffc0d236761e854e8cf27b2815a45c4"
  },
  {
   "id": "perfil",
   "tema": "oscuro",
-  "archivo": "perfil-oscuro.webp",
+  "archivo": "perfil-oscuro-800.webp",
   "fuente": "20-perfil-oscuro.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 54262,
-  "sha256": "a9c3a10e94f62bc236fd429fbd942535e09a4351b70369bbbc8329ba83b849e9"
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 37358,
+  "sha256": "98e91ee2e4d12f256a41851bdc932cef0312b9a049142f3cd488251b3114e1ba"
+ },
+ {
+  "id": "perfil",
+  "tema": "oscuro",
+  "archivo": "perfil-oscuro-1440.webp",
+  "fuente": "20-perfil-oscuro.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 101316,
+  "sha256": "bec86ae88a71dc7e009904f43088e5cf928c9d1b9a5623d76503939b273576ea"
  },
  {
   "id": "perfil-columna",
   "tema": "claro",
-  "archivo": "perfil-columna-claro.webp",
+  "archivo": "perfil-columna-claro-800.webp",
   "fuente": "21-perfil-columna.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 44078,
-  "sha256": "4eadebec35c685c84df0d3434d91f063f07d62a85f40d4fa3eb647b823e2171e"
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 31788,
+  "sha256": "6fcb5ccfa15a3d0a670912ec67222cb1c8af8614c3dd3be2ef0d197ca807f0eb"
+ },
+ {
+  "id": "perfil-columna",
+  "tema": "claro",
+  "archivo": "perfil-columna-claro-1440.webp",
+  "fuente": "21-perfil-columna.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 78858,
+  "sha256": "5a0a8a29b47e25ea2799e59ae21cd819ab307ace070891783123e93687c05c99"
  },
  {
   "id": "perfil-columna",
   "tema": "oscuro",
-  "archivo": "perfil-columna-oscuro.webp",
+  "archivo": "perfil-columna-oscuro-800.webp",
   "fuente": "21-perfil-columna-oscuro.jpg",
-  "ancho": 1080,
-  "alto": 1935,
-  "bytes": 33952,
-  "sha256": "313c085027ff686f517d6304d70b8e8e97f1a80735379cd108cedc54526dbca9"
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 25516,
+  "sha256": "e47eb72234acd2ff1e06b342503b6de2d1479664d58dfd15f4aed15a1be0b42a"
+ },
+ {
+  "id": "perfil-columna",
+  "tema": "oscuro",
+  "archivo": "perfil-columna-oscuro-1440.webp",
+  "fuente": "21-perfil-columna-oscuro.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 57990,
+  "sha256": "23811526b4fdcab7653cc8a69ba4a86ea2420abae832eb374b88f420b7e7f784"
+ },
+ {
+  "id": "pulmones",
+  "tema": "claro",
+  "archivo": "pulmones-claro-800.webp",
+  "fuente": "05-pulmones.jpg",
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 40730,
+  "sha256": "e4c0365305c6099bef9cd875add8e45f1b518bd2cc5bfa57521ec413fdda8f31"
+ },
+ {
+  "id": "pulmones",
+  "tema": "claro",
+  "archivo": "pulmones-claro-1440.webp",
+  "fuente": "05-pulmones.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 98472,
+  "sha256": "89cd952852d8ec63ce53f3338f896ad0f1f691a4bedb84237d829589599b6200"
+ },
+ {
+  "id": "pulmones",
+  "tema": "oscuro",
+  "archivo": "pulmones-oscuro-800.webp",
+  "fuente": "05-pulmones-osc.jpg",
+  "ancho": 800,
+  "alto": 1433,
+  "bytes": 31522,
+  "sha256": "dfb274a134260234cf562810eeb418990bd2a4efc96c541349f5ffe23b3b53fe"
+ },
+ {
+  "id": "pulmones",
+  "tema": "oscuro",
+  "archivo": "pulmones-oscuro-1440.webp",
+  "fuente": "05-pulmones-osc.jpg",
+  "ancho": 1440,
+  "alto": 2580,
+  "bytes": 74482,
+  "sha256": "42e2ec59bd093e10de1130028786ad4668cf32847a38632cb39702663fd65a46"
  },
  {
   "id": "vias-aereas",
