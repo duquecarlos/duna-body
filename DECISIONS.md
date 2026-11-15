@@ -21114,3 +21114,119 @@ customer-bytes condition.
 
 -- merged 448243c26fa658fd3db5fd80505b1093e953eefd
 
+
+## BODY-HOY-ESCRITORIO-1 -- Hoy's tablet/desktop top block, the trained/still-to-come glow, and the
+phone-order deviation named (2026-11-14)
+
+Surface BODY-HOY-ESCRITORIO-1 (rulings 1-4, built on `feat/body-hoy-escritorio-1`): before this branch
+(main at `0e52f97`), `body/templates/today.html` rendered `{{ cuerpo_vista(t, cuerpo) }}` once, full
+width, directly above `.cols-hoy`, identically at every breakpoint -- no ≥768px treatment existed and
+the figure carried no height cap, so on a short desktop window it could grow past the fold. Rulings 1-2
+close that measured gap with a two-column grid from 768px; ruling 3 splits the body view's single glow
+into a trained (solid) and still-to-come (dashed) layer; ruling 4 bounds the new query's own worst case.
+This entry also records BODY-HOY-ESCRITORIO-1-B's own two rulings: the phone-order deviation from
+BODY-MOCK-R2-HOY-1's figure-first board order, and that Lectura leaves `.hoy-top` uncollapsed.
+
+**Ruling 1-2, as built.** `.hoy-top` (`body/static/body.css:456`) is a CSS grid from `min-width:768px`,
+columns `minmax(0,1fr) minmax(var(--hoy-figura-min),var(--hoy-figura-max))`, the two named custom
+properties `--hoy-figura-min:280px` / `--hoy-figura-max:400px` (`body.css:30`) rather than literals.
+Below 768px the grid rule never applies, so the browser falls back to the plain block flow of
+`body/templates/today.html`'s own DOM order (`today.html:21-103`): the score hero (`class="card est"`,
+synced line inline), "El día por delante"/"The day ahead", then the figure -- never the grid rendering
+anything twice (`tests/test_hoy_escritorio.py::HoyTopBlockMarkupTest::test_figure_rendered_exactly_once`
+counts exactly one `cuerpo-vista-track`). The figure itself is capped on Hoy only, via the `hoy-figura`
+class `_cuerpo_vista.html`'s macro now takes as an `extra_class` param (`_cuerpo_vista.html:1`,
+`today.html:102`): `max-height:60vh`/`60svh` on phone, `min(78vh,720px)` from 768px (`body.css:459,457`),
+`object-fit:contain` so it is never cropped (`body.css:460`).
+
+**Ruling 3, as built.** `body/anatomia.py:126`'s `grupos_entrenado_pendiente(categorias_entrenadas,
+categorias_planeadas)` is the pure union/minus: TRAINED is every logged set's own categoria unioned into
+glow groups, STILL-TO-COME is the planned session's own groups minus TRAINED, so a planned group already
+done shows solid only, never both. `body/anatomia.py:99`'s `contexto()` gained a third per-view-filtered
+list, `pendiente` (`anatomia.py:119`), drawn with the solid glow's own CSS class plus a `.pendiente`
+modifier (`body.css:438`, a dashed border, transparent fill, the same `mix-blend-mode` the solid glow
+already carries). `body/rutas/hoy.py:376`'s `_entrenado_hoy_categorias` is the one bounded query --
+today's own activities merged the same way `_actividades_hoy` already merges a linked pair, then ONE
+`workout_set` query over all of them (never one per activity) filtered the same way `db.exercise_sets`
+already filters (active, not excluded, corrected wins). `hoy.py:403`'s `_cuerpo_hoy_ctx` now reads both
+`_plan_categorias_hoy` (`hoy.py:257`, a plan marked `'done'` now reads as `None` too, same as no plan)
+and `_entrenado_hoy_categorias`, and picks one of four captions. Verbatim (`body/i18n/es.json:1219-1220`,
+`body/i18n/en.json:1219-1220`):
+
+    cuerpo.caption.hoy_entrenado              es: "Entrenado hoy: {grupos}."
+                                               en: "Trained today: {grupos}."
+    cuerpo.caption.hoy_entrenado_y_pendiente  es: "Entrenado hoy: {grupos}. Por venir: {pendientes}."
+                                               en: "Trained today: {grupos}. Still to come: {pendientes}."
+
+(the two existing captions, `hoy_con_sesion`/`hoy_sin_sesion`, are unchanged and still cover
+planned-only/nothing.) Proved end to end by `tests/test_hoy_escritorio.py::EntrenadoPendienteGlowTest`
+(solid only, dashed only, a planned group already trained collapsing to solid only, both captions in
+both languages, a `'done'` plan contributing no pending group, the existing empty caption unchanged, and
+the lesion hatch still drawn above a trained glow).
+
+**Ruling 4, as built.** `tests/test_rendimiento.py`'s own `_seed()` now also logs one manual training
+session for today (`db.create_manual_session` + two `db.correct_exercise_set` calls, espalda/brazo --
+invented demo data, no real figure), so the route sweep measures ruling 3's new bounded `workout_set`
+read against its real worst case (a non-empty id list) instead of the demo's own random activities,
+which rarely land a categorised set on today. Measured: `"/"` 85 statements (was 84, the new query's own
++1), ceiling raised from 101 to `ceil(85 * 1.3) = 111`; `"/day/{day}"` 62 statements (was 60, its existing
+per-activity `zonas_limitadas` read in `body/db.py`'s `load_day` now also covers the new activity),
+ceiling raised from 62 to `ceil(62 * 1.3) = 81`.
+
+**BODY-HOY-ESCRITORIO-1-B ruling -- the phone-order deviation, named.** BODY-MOCK-R2-HOY-1's own ruling 1
+put `cuerpo-vista` FIRST in Today's board order, before the score hero -- the mock's figure-first intent.
+BODY-HOY-ESCRITORIO-1 ruling 2 deliberately replaced that: score hero, "El día por delante"/"The day
+ahead", THEN the body view, on Carlos's own words relayed through the desk -- on the phone the figure
+filled the screen at full size and showed nothing useful on its own. `tests/test_mock_r2_hoy.py`'s
+`BoardOrderTest.test_order_es`/`test_order_en` (the test that names the WHOLE board order on the demo
+person) asserted the OLD, figure-first order and had silently drifted out of date with the branch it was
+meant to prove -- this slice rewrote both tests' `marks` list to the new order (`'class="card est"'`, the
+synced line, "El día por delante"/"The day ahead", `cuerpo-vista`, then the unchanged rest: `tellbody`,
+Body noticed, `grid2`, eating window, night week) and rewrote the class docstring to record why. Every
+other test in that file is unchanged.
+
+**BODY-HOY-ESCRITORIO-1-B ruling -- Lectura does not collapse `.hoy-top`.** Lectura narrows the page to
+820px (`body.css:65`'s `[data-ancho="lectura"] .wrap{max-width:820px}`); at that width the top row's own
+~400px left column plus the 280-400px `--hoy-figura-*` column still fit side by side (the mock draws it
+this way), while `.cols-hoy`/`.cols-tendencias`/`.cols-metas`/`.cols-turnos`/`.cols-historia` collapse to
+one column under Lectura (`body.css:73`) because their LISTS get cramped at 820px -- the top row is not a
+list. `body.css` already left `.hoy-top` out of that selector list, so no CSS change was needed; this
+slice added `tests/test_hoy_escritorio.py::HoyTopBlockCssTest::test_lectura_does_not_collapse_hoy_top`,
+which asserts `.hoy-top` is NOT named inside the `[data-ancho="lectura"]` block, so a later edit that
+collapses it is a decision made on purpose, never an accident that slips through untested.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry). Exact command:
+`.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 9 sequential chunks of the same
+`tests/test_*.py` modules in alphabetical order (the same set `discover` would walk), each in the
+foreground:
+
+    chunk 0 (test_accesibilidad..test_baselines):                Ran 351 tests, OK (skipped=1)
+    chunk 1 (test_baselines_lote..test_ejes_fechas):              Ran 464 tests, OK
+    chunk 2 (test_entreno_historial..test_fit):                   Ran 280 tests, OK
+    chunk 3 (test_fuentes_propias..test_household):               Ran 520 tests, OK
+    chunk 4 (test_hoy..test_momentos_pull):                       Ran 361 tests, OK
+    chunk 5 (test_mudanza..test_privacidad):                      Ran 557 tests, OK
+    chunk 6 (test_profile..test_seguridad):                       Ran 261 tests, OK
+    chunk 7 (test_series_gramos..test_turnos_esquema_1):          Ran 394 tests, OK
+    chunk 8 (test_turnos_opcional_2..test_web_entry):             Ran 306 tests, OK
+
+Sum: 3494 run, 0 failures, 0 errors, 1 skipped (pre-existing, POSIX-only). Reconciled against an
+independent collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')
+.countTestCases()`): 3494 -- matching exactly. **GREEN**, one pass, no fix needed.
+
+**Merge policy, this slice's own diff** (`tests/test_mock_r2_hoy.py`, `tests/test_hoy_escritorio.py`
+only -- `body/anatomia.py`, `body/rutas/hoy.py`, `body/static/body.css`, `body/templates/today.html`,
+`body/templates/_cuerpo_vista.html`, `body/i18n/{es,en}.json`, `tests/test_rendimiento.py` were already
+committed to this branch by the prior worker (`8545dd6`, `017565b`), before this slice started, and this
+slice touched none of them further). Checked against the actual diff this slice made: no schema or
+migration change. No cross-repo contract or DTO change. Checked against the WHOLE branch diff (both
+prior commits plus this slice's two), since that is what the orchestrator will measure in a browser
+before merging: customer-facing bytes DID change -- the `.hoy-top` grid markup and CSS, the two new
+glow/caption i18n strings above, and the board-order change itself are all customer-facing. This trips
+merge policy A's customer-bytes condition, so this slice stops before the merge with `AWAITING_APPROVAL`,
+on the branch, tree clean, for the orchestrator to measure at 1568, 1024 and 375px before merging.
+
+**Open follow-ups, not this slice's to do:** none found.
+
+-- not merged, AWAITING_APPROVAL
+
