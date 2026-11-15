@@ -290,6 +290,7 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
                                         antes={"lang": "es"})
 
     device_key = dispositivo.crear(conn, person_id, f"ZZ{tag}-DISPOSITIVO", {"turnos:subir", "vida:leer"})
+    device_key_mcp = dispositivo.crear(conn, person_id, f"ZZ{tag}-DISPOSITIVO-MCP", {"asistente:mcp"})
     garmin_cuenta.guardar(conn, person_id, f"FAKE-TEST-TOKEN-ZZ{tag}-NOT-REAL")
     cuenta.create_session(conn, person_id, f"sid-zz{tag.lower()}")
 
@@ -319,7 +320,7 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
         "gid": gid, "hid": hid, "gid_proposed": gid_proposed, "gid_archived": gid_archived,
         "conv_id": conv_id, "batch_id": batch_id, "device_id": conn.execute(
             "SELECT id FROM dispositivo WHERE person_id = ?", (person_id,)).fetchone()["id"],
-        "device_key": device_key, "propuesta_id": propuesta["id"], "eid": eid,
+        "device_key": device_key, "device_key_mcp": device_key_mcp, "propuesta_id": propuesta["id"], "eid": eid,
     }
 
 
@@ -343,8 +344,8 @@ def _markers_of(tag: str) -> list[str]:
     plan section its first reader for all four (closing BODY-PLAN-PANTALLA-FUGA-1)."""
     return [f"ZZ{tag}-{suffix}" for suffix in
             ("ACTIVIDAD", "SERIE", "TURNO", "META-PRIVADA", "HABITO", "NOTA", "META-PROPUESTA",
-             "META-ARCHIVADA", "PLAN", "CONVERSACION", "MENSAJE", "DISPOSITIVO", "EXPERIMENTO",
-             "REGISTRO", "COMIDA", "CHECKIN-NOTA", "REGLA", "SEMANA", "META-SEMANAL",
+             "META-ARCHIVADA", "PLAN", "CONVERSACION", "MENSAJE", "DISPOSITIVO", "DISPOSITIVO-MCP",
+             "EXPERIMENTO", "REGISTRO", "COMIDA", "CHECKIN-NOTA", "REGLA", "SEMANA", "META-SEMANAL",
              "CHECKPOINT")] + [ENLACE_REF[tag]]
 
 
@@ -359,6 +360,7 @@ EXPECTED_GET_PATHS = sorted([
     "/", "/how/{day}", "/day/{day}", "/goals", "/goals/new", "/goals/{goal_id}",
     "/experiments/{experiment_id}",
     "/settings", "/ajustes/asistente", "/ajustes/dispositivos", "/api/vida/semana",
+    "/api/asistente/mcp/herramientas",
     "/healthz", "/ayuda", "/garmin", "/history",
     "/privacidad/consentimiento", "/privacidad", "/privacidad/exportar",
     "/sw.js", "/login", "/login/cuenta/start", "/login/cuenta/callback",
@@ -453,6 +455,20 @@ class _BaseFugaTest(unittest.TestCase):
         self.assertEqual(r.status_code, 404, f"{viewer_tag} GET /asistente/conversacion/<{other_tag}'s id> did not 404")
 
         r = client.get("/api/vida/semana", headers={"Authorization": f"Bearer {ids['device_key']}"})
+        n += 1
+        self.assertEqual(r.status_code, 200)
+        texts.append(r.text)
+
+        # BODY-MCP-REMOTO-SERVIDOR-1: the two new device-key routes, swept the same way
+        # /api/vida/semana is above.
+        r = client.get("/api/asistente/mcp/herramientas",
+                        headers={"Authorization": f"Bearer {ids['device_key_mcp']}"})
+        n += 1
+        self.assertEqual(r.status_code, 200)
+        texts.append(r.text)
+        r = client.post("/api/asistente/mcp/llamar",
+                         headers={"Authorization": f"Bearer {ids['device_key_mcp']}"},
+                         json={"nombre": "leer_metas", "argumentos": {}})
         n += 1
         self.assertEqual(r.status_code, 200)
         texts.append(r.text)
