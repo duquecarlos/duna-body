@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}{{ nombre }} · {{ t('app.name') }}{% endblock %}
+{% block main %}
+<div class="top">
+  <div>
+    <a class="btn" href="/day/{{ day }}" aria-label="{{ t('entreno_sesion.volver_dia') }}">‹</a>
+    <h1 class="mt-6">{{ nombre }}</h1>
+    <p class="sub">{% if tipo_label %}{{ tipo_label }} · {% endif %}{{ date_long }}</p>
+  </div>
+</div>
+{% if detalle %}<p class="read mt-0">{{ detalle }}</p>{% endif %}
+{% if recovery %}<p class="note">{{ recovery }}</p>{% endif %}
+
+{% if figuras or sin_historial %}
+<div class="card">
+  <ul class="list">
+  {% for f in figuras %}
+    <li><span class="k">{{ f.label }}</span><br>{{ f.texto }}</li>
+  {% endfor %}
+  </ul>
+  {% if sin_historial %}<p class="note m-0">{{ sin_historial }}</p>{% endif %}
+</div>
+{% endif %}
+
+<h2>{{ t('entreno_sesion.pulso_titulo') }}</h2>
+<div class="card">
+{% if pulso_svg %}
+{{ pulso_svg | safe }}
+{% else %}
+<p class="note m-0">{{ pulso_pendiente }}</p>
+{% endif %}
+</div>
+
+{% if es_fuerza and sets %}
+<h2>{{ t('entreno_sesion.sets_titulo') }}</h2>
+{% for s in sets %}
+{% if s.grupo_nuevo %}{% if not loop.first %}</ul></div>{% endif %}<div class="card"><div class="q">{{ s.exercise }}</div><ul class="plan mt-6">{% endif %}
+  <li class="{{ 'set-excluida' if s.excluida else '' }}">
+    <div>
+      <div class="row flex-wrap gap-8">
+        <span>{% if s.reps %}{{ s.reps }} · {% endif %}{% if s.peso %}{{ s.peso }}{% endif %}</span>
+        {% if s.corregida %}<span class="chip ok">{{ t('entreno_sesion.set_corregida') }}</span>{% endif %}
+        {% if s.excluida %}<span class="chip">{{ t('entreno_sesion.set_excluida') }}</span>{% endif %}
+      </div>
+      <span class="note">{% if s.hora %}{{ s.hora }}{% endif %}{% if s.duracion %} · {{ s.duracion }}{% endif %}</span>
+      {% if s.pico %}<br><span class="note">{{ s.pico }}</span>{% endif %}
+      {% if s.descanso %}<br><span class="note">{{ s.descanso }}{% if s.caida %} · {{ s.caida }}{% endif %}</span>{% endif %}
+    </div>
+  </li>
+{% if loop.last %}</ul></div>{% endif %}
+{% endfor %}
+{% endif %}
+{% endblock %}

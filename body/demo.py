@@ -191,6 +191,188 @@ class _DayData:
     sleep_respiration_high: float | None = None
 
 
+@dataclass
+class _SetData:
+    """Same shape body/db.py's save_exercise_sets() reads from a real adapter's ExerciseSet --
+    kept local to this module, same reason _DayData is (demo.py never imports
+    body/garmin_adapter.py, Tier 1)."""
+    set_type: str = "active"
+    category: str | None = None
+    exercise: str | None = None
+    reps: float | None = None
+    weight_value: float | None = None
+    weight_unit: str | None = None
+    duration_s: float | None = None
+    start_local: str | None = None
+
+
+# BODY-ENTRENO-VISTA-SESION-1 ruling 6: the demo person's own dedicated strength session TODAY
+# (two exercises, real rest gaps, one corrected set, one excluded set, a per-minute heart-rate
+# series covering it) and a basketball session YESTERDAY with no series -- so both of ruling 4's
+# own branches (the curve, and the honest "coming soon" line) show on the demo home regardless of
+# whatever `_day_activity`'s own random draw would otherwise have put on either day. Invented
+# figures only, same contract as every other demo value.
+_SESION_FUERZA_TITULO = _ENTRENO_WATCH_TITULO
+_SESION_BASKET_TITULO = {"es": "Baloncesto", "en": "Basketball"}
+_SESION_FUERZA_EJERCICIOS = {"es": ["press banca", "sentadilla"], "en": ["bench press", "squat"]}
+_SESION_FUERZA_CATEGORIAS = ["pecho", "pierna"]
+# Per set (8, in order): reps, weight_kg, duration_s, rest_after_s (None on the last -- no rest
+# after a session's own final set), the HR peak this set's own window reaches, and the HR this
+# session settles to by the end of the rest that follows (the "valley" the drop is measured
+# against) -- None on the last set, same reason as rest_after_s. Set index 1 (0-based) is the one
+# the person corrects (reps 8 -> 6, a lighter top set); set index 6 is the one the person excludes
+# (the watch logged it, the person says it did not happen).
+_SESION_FUERZA_SETS = [
+    {"reps": 8, "peso": 40.0, "dur": 40, "descanso": 75, "pico": 120, "valle": 108},
+    {"reps": 8, "peso": 40.0, "dur": 40, "descanso": 75, "pico": 124, "valle": 110},
+    {"reps": 8, "peso": 40.0, "dur": 40, "descanso": 75, "pico": 128, "valle": 109},
+    {"reps": 8, "peso": 40.0, "dur": 40, "descanso": 150, "pico": 131, "valle": 115},
+    {"reps": 10, "peso": 60.0, "dur": 45, "descanso": 90, "pico": 138, "valle": 117},
+    {"reps": 10, "peso": 60.0, "dur": 45, "descanso": 90, "pico": 141, "valle": 119},
+    {"reps": 10, "peso": 60.0, "dur": 45, "descanso": 90, "pico": 144, "valle": 121},
+    {"reps": 10, "peso": 60.0, "dur": 45, "descanso": None, "pico": 147, "valle": None},
+]
+_SESION_FUERZA_SET_CORREGIDO = 1  # 0-based: the person's correction lands here (ruling 6)
+_SESION_FUERZA_SET_EXCLUIDO = 6  # 0-based: the person's exclusion lands here (ruling 6)
+_SESION_FUERZA_HORA = "18:00:00"
+_SESION_BASKET_HORA = "18:00:00"
+_SESION_BASKET_DUR_S = 50 * 60
+_SESION_BASKET_HR = {"avg": 128, "max": 162, "kcal": 410}
+
+
+def _sets_sesion_fuerza(dia: date, idioma: str) -> list[dict]:
+    """The 8 sets above, timed back to back from `_SESION_FUERZA_HORA` -- each one's own
+    `start_local`/`duration_s`/`rest_after_s`, the same shape body/entreno_sesion.py's own
+    `series()` computes from stored rows, so the HR curve builder below (`_curva_sesion_fuerza`)
+    can place each set's own window and each rest's own window without recomputing anything."""
+    ejercicios = _SESION_FUERZA_EJERCICIOS[idioma]
+    t = datetime.combine(dia, datetime.min.time()) + timedelta(
+        hours=int(_SESION_FUERZA_HORA[:2]), minutes=int(_SESION_FUERZA_HORA[3:5]))
+    out = []
+    for i, s in enumerate(_SESION_FUERZA_SETS):
+        exercise = ejercicios[0] if i < 4 else ejercicios[1]
+        categoria = _SESION_FUERZA_CATEGORIAS[0] if i < 4 else _SESION_FUERZA_CATEGORIAS[1]
+        out.append({
+            "exercise": exercise, "category": categoria, "reps": s["reps"], "weight_kg": s["peso"],
+            "start_local": t.isoformat(), "duration_s": float(s["dur"]),
+            "rest_after_s": float(s["descanso"]) if s["descanso"] is not None else None,
+            "pico": s["pico"], "valle": s["valle"],
+        })
+        t += timedelta(seconds=s["dur"])
+        if s["descanso"] is not None:
+            t += timedelta(seconds=s["descanso"])
+    return out
+
+
+def _curva_sesion_fuerza(sets: list[dict]) -> list[tuple[datetime, float]]:
+    """BODY-ENTRENO-VISTA-SESION-1 ruling 6: one sample per clock MINUTE (Garmin's own real
+    intraday granularity for heart rate -- garmin_adapter._utc_to_local_iso stores every sample at
+    `timespec='minutes'`, so two samples inside the same minute can never be told apart once
+    stored; a finer step here would silently collapse), interpolated between hand-placed keyframes
+    -- each set's own `pico` at the set's own end, each rest's own `valle` at the rest's own end --
+    so ruling 4's per-set peak and per-rest drop read back these exact numbers wherever a real
+    per-minute sample happens to fall inside that set's or that rest's own window; a set or rest
+    shorter than a minute can honestly fall between two samples and get neither, same as a real
+    watch would read it."""
+    paso = timedelta(minutes=1)
+    keyframes: list[tuple[datetime, float]] = [
+        (datetime.fromisoformat(sets[0]["start_local"]), sets[0]["pico"] - 20.0)]
+    for s in sets:
+        t1 = datetime.fromisoformat(s["start_local"]) + timedelta(seconds=s["duration_s"])
+        keyframes.append((t1, float(s["pico"])))
+        if s["rest_after_s"]:
+            keyframes.append((t1 + timedelta(seconds=s["rest_after_s"]), float(s["valle"])))
+
+    out: list[tuple[datetime, float]] = []
+    t = keyframes[0][0].replace(second=0, microsecond=0)
+    if t < keyframes[0][0]:
+        t += paso
+    idx = 0
+    while t <= keyframes[-1][0]:
+        while idx + 1 < len(keyframes) - 1 and keyframes[idx + 1][0] <= t:
+            idx += 1
+        (ta, va), (tb, vb) = keyframes[idx], keyframes[idx + 1]
+        frac = (t - ta).total_seconds() / (tb - ta).total_seconds() if tb > ta else 0.0
+        out.append((t, round(va + (vb - va) * frac, 1)))
+        t += paso
+    return out
+
+
+def _seed_entreno_vista_sesion_actividades(conn, anchor: date, person_id: int, idioma: str) -> tuple[str, str]:
+    """BODY-ENTRENO-VISTA-SESION-1 ruling 6, phase 1 of 2 (see `_seed_entreno_vista_sesion_detalle`
+    for phase 2): replaces whatever `_seed_days` drew for `anchor` and `anchor - 1 day` with a
+    dedicated strength session (today) and a dedicated basketball session (yesterday) --
+    `INSERT OR REPLACE` on `activity`'s own (person_id, source, source_id) key, the SAME
+    `source_id` pattern (`demo-{day}-1`) `_day_activity` already uses for that day, so this is the
+    one and only activity either day ever ends up with. Called right after `_seed_days`, BEFORE
+    `_seed_periodo` -- its own lesion-period correction picks "the most recent strength_training
+    day before today" (`_seed_periodo`'s own query), and yesterday must already have stopped being
+    one by then, or that pick could land on the basketball day itself (whatever `_day_activity`'s
+    own random draw had put there). Returns (strength day, basketball day) as ISO strings, for
+    `_seed_recuperacion`'s/`_seed_turno_fc`'s own exclusion sets."""
+    dia_fuerza = anchor
+    dia_basket = anchor - timedelta(1)
+    sid_fuerza = f"demo-{dia_fuerza.isoformat()}-1"
+    sid_basket = f"demo-{dia_basket.isoformat()}-1"
+    sets = _sets_sesion_fuerza(dia_fuerza, idioma)
+    duracion_fuerza = (datetime.fromisoformat(sets[-1]["start_local"])
+                        + timedelta(seconds=sets[-1]["duration_s"])
+                        - datetime.fromisoformat(sets[0]["start_local"])).total_seconds()
+    curva = _curva_sesion_fuerza(sets)
+    avg_hr = round(statistics.mean(v for _, v in curva))
+    max_hr = round(max(v for _, v in curva))
+
+    with conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO activity (person_id, source_id, day, start_local, type, name, "
+            "duration_s, distance_m, avg_hr, max_hr, calories, source) "
+            "VALUES (?, ?, ?, ?, 'strength_training', ?, ?, NULL, ?, ?, ?, 'garmin')",
+            (person_id, sid_fuerza, dia_fuerza.isoformat(), sets[0]["start_local"],
+             _SESION_FUERZA_TITULO[idioma], duracion_fuerza, avg_hr, max_hr, 220),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO activity (person_id, source_id, day, start_local, type, name, "
+            "duration_s, distance_m, avg_hr, max_hr, calories, source) "
+            "VALUES (?, ?, ?, ?, 'other', ?, ?, NULL, ?, ?, ?, 'garmin')",
+            (person_id, sid_basket, dia_basket.isoformat(),
+             f"{dia_basket.isoformat()}T{_SESION_BASKET_HORA}", _SESION_BASKET_TITULO[idioma],
+             _SESION_BASKET_DUR_S, _SESION_BASKET_HR["avg"], _SESION_BASKET_HR["max"],
+             _SESION_BASKET_HR["kcal"]),
+        )
+    return dia_fuerza.isoformat(), dia_basket.isoformat()
+
+
+def _seed_entreno_vista_sesion_detalle(conn, db, dia_fuerza: str, person_id: int, idioma: str) -> None:
+    """BODY-ENTRENO-VISTA-SESION-1 ruling 6, phase 2 of 2: the strength day's own sets (one
+    corrected, one excluded) and its hand-placed per-minute heart-rate series. Called AFTER
+    `_seed_periodo`, not before -- `_seed_periodo` may correct an OLDER strength day's own set 1 to
+    its invented lesion zona (`tests/test_demo.py`'s `test_a_past_strength_set_is_corrected_to_the_
+    lesion_zona` reads back whichever `workout_set` row with `corrected_by_person = 1` SQLite
+    returns first, with no ORDER BY -- rowid order, so insertion order). Running this phase after
+    that correction keeps this session's own correction from ever being the one that query
+    happens to read back first. Called BEFORE `_seed_recuperacion`, so its generic model never
+    overwrites the per-minute series this writes."""
+    sid_fuerza = f"demo-{dia_fuerza}-1"
+    sets = _sets_sesion_fuerza(date.fromisoformat(dia_fuerza), idioma)
+    curva = _curva_sesion_fuerza(sets)
+
+    db.save_exercise_sets(conn, person_id, "garmin", sid_fuerza, [
+        _SetData(category=s["category"], exercise=s["exercise"], reps=s["reps"],
+                 weight_value=s["weight_kg"], weight_unit="kg", duration_s=s["duration_s"],
+                 start_local=s["start_local"])
+        for s in sets
+    ])
+    corregido = sets[_SESION_FUERZA_SET_CORREGIDO]
+    db.correct_exercise_set(conn, person_id, "garmin", sid_fuerza, _SESION_FUERZA_SET_CORREGIDO + 1,
+                             exercise=corregido["exercise"], category=corregido["category"],
+                             reps=corregido["reps"] - 2, weight_kg=corregido["weight_kg"])
+    db.set_series_excluida(conn, person_id, "garmin", sid_fuerza, _SESION_FUERZA_SET_EXCLUIDO + 1, True)
+
+    db.guardar_intradia(conn, person_id, dia_fuerza, "intradia_fc",
+                         {"heartRateValues": [[_muestra_ms(t), v] for t, v in curva]})
+    conn.commit()
+
+
 def _refuse(message: str) -> None:
     print(message, file=sys.stderr)
     sys.exit(1)
@@ -457,7 +639,8 @@ _PATRON_RAPIDO = [15.0, 20.0, 25.0, 30.0, 35.0]
 N_ACTIVIDADES_RECUPERACION = 24
 
 
-def _seed_recuperacion(conn, db, recuperacion, person_id: int) -> int:
+def _seed_recuperacion(conn, db, recuperacion, person_id: int,
+                        excluir_dias: frozenset[str] = frozenset()) -> int:
     """Invented minute-by-minute heart rate for the most recent activities `_seed_days` already
     created, so «Tu historia»'s recovery section and Día's own line have something to show on the
     demo server -- never real data, same contract as every other figure in this module.
@@ -470,11 +653,17 @@ def _seed_recuperacion(conn, db, recuperacion, person_id: int) -> int:
     and exactly one has no data at all in its own window ("sin_cobertura") -- so «Tu historia»'s
     own censored count AND at least one tipo_sesion finding both show. Accumulates every day's
     samples (background AND activity) BEFORE writing (db.guardar_intradia replaces a whole day's
-    row), so two sources that touch the same calendar day never erase each other."""
+    row), so two sources that touch the same calendar day never erase each other.
+
+    `excluir_dias` (BODY-ENTRENO-VISTA-SESION-1 ruling 6): the strength/basketball pair
+    `_seed_entreno_vista_sesion` already gave their own hand-placed (or deliberately absent)
+    heart-rate series -- this model's own generic curve must never touch either day's activity."""
+    filtro_excluir = f"AND day NOT IN ({','.join('?' * len(excluir_dias))}) " if excluir_dias else ""
     rows = conn.execute(
         "SELECT source_id, start_local, duration_s, avg_hr, type FROM activity WHERE person_id = ? "
-        "AND start_local IS NOT NULL AND duration_s IS NOT NULL ORDER BY day DESC LIMIT ?",
-        (person_id, N_ACTIVIDADES_RECUPERACION),
+        "AND start_local IS NOT NULL AND duration_s IS NOT NULL " + filtro_excluir +
+        "ORDER BY day DESC LIMIT ?",
+        (person_id, *excluir_dias, N_ACTIVIDADES_RECUPERACION),
     ).fetchall()
     if not rows:
         return 0
@@ -562,7 +751,8 @@ def _dias_actividades_recuperacion(conn, person_id: int, limite: int) -> set[str
     return out
 
 
-def _seed_turno_fc(conn, db, turno_fc, person_id: int, all_days: list[date]) -> int:
+def _seed_turno_fc(conn, db, turno_fc, person_id: int, all_days: list[date],
+                    excluir_dias: frozenset[str] = frozenset()) -> int:
     """Invented minute-by-minute heart rate so «Tu pulso durante el turno» (BODY-TURNO-FC-1) has
     something to show on the demo server: the person's own flat per-hour background
     (`_curva_dia_ordinario`, the SAME curve `_seed_recuperacion`'s own background fill already
@@ -571,12 +761,17 @@ def _seed_turno_fc(conn, db, turno_fc, person_id: int, all_days: list[date]) -> 
     of confirmed 'morning' shifts, clearly BELOW that reference for the same hours (Carlos's own
     study 2 hypothesis), on days outside `_dias_actividades_recuperacion`'s reserved set, so at
     least one finding shows regardless of how much of the history `_seed_recuperacion`'s own
-    background fill already covers. Called AFTER `_seed_recuperacion` and `_seed_shifts`."""
+    background fill already covers. Called AFTER `_seed_recuperacion` and `_seed_shifts`.
+
+    `excluir_dias` (BODY-ENTRENO-VISTA-SESION-1 ruling 6): the basketball day must end the whole
+    seed with NO intraday series at all, so this background fill -- the one write in the whole
+    pipeline that would otherwise reach it even though it holds no activity _seed_recuperacion
+    would recognise -- skips it outright, same as an `off` day that already had data."""
     ya_con_datos = _dias_con_intradia_fc(conn, person_id)
     reservados = _dias_actividades_recuperacion(conn, person_id, N_ACTIVIDADES_RECUPERACION)
 
     for d in all_days:
-        if d.isoformat() in ya_con_datos or _shift_kind_for(d) != "off":
+        if d.isoformat() in ya_con_datos or d.isoformat() in excluir_dias or _shift_kind_for(d) != "off":
             continue
         muestras = _curva_dia_ordinario(d)
         db.guardar_intradia(conn, person_id, d.isoformat(), "intradia_fc",
@@ -1283,6 +1478,7 @@ def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[st
     first_monday, anchor_monday = fechas.lunes_de(all_days[0]), fechas.lunes_de(anchor)
 
     metric_rows, activity_rows = _seed_days(conn, db, rng, all_days, person_id, idioma)
+    dia_fuerza, dia_basket = _seed_entreno_vista_sesion_actividades(conn, anchor, person_id, idioma)
     _seed_entreno_vinculado(conn, db, person_id, idioma)
     metric_rows += _seed_self_metrics(conn, db, rng, all_days, person_id)
     metric_rows += _seed_soreness(conn, db, rng, all_days, person_id)
@@ -1290,6 +1486,9 @@ def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[st
     entradas_ingesta, comidas_ingesta = _seed_ingesta(conn, db, rng, all_days, person_id)
     objetivos_nutriente = _seed_nutriente_objetivo(conn, db, all_days, person_id)
     periodos = _seed_periodo(conn, db, all_days, person_id, idioma)
+    # BODY-ENTRENO-VISTA-SESION-1 ruling 6: AFTER _seed_periodo, not before -- see this function's
+    # own docstring for the rowid-ordering reason.
+    _seed_entreno_vista_sesion_detalle(conn, db, dia_fuerza, person_id, idioma)
     # BODY-PLAN-MODULO-1-R: AFTER _seed_periodo, not before -- baselines.baseline() excludes
     # marked days (BODY-PERIODO-1 ruling 3), so the band this picks `anchor`'s own stress_avg to
     # fall inside must be read once every period that can exclude a day is already seeded, or it
@@ -1300,13 +1499,15 @@ def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[st
     # db.dias_marcados() per activity at computation time, so an activity on a day inside a marked
     # period must only be recomputed once that period's row already exists, or it is scored by its
     # invented curve instead of read honestly as "marcado".
-    recuperacion_rows = _seed_recuperacion(conn, db, recuperacion, person_id)
+    recuperacion_rows = _seed_recuperacion(conn, db, recuperacion, person_id,
+                                            excluir_dias=frozenset({dia_fuerza, dia_basket}))
 
     confirmed_id, proposed_id, night_weeks, night_blocks = _seed_shifts(
         conn, shift_import, turnos_costo, person_id, all_days)
     _seed_turno_hoy_confirmado(conn, anchor, person_id)
     _seed_bloque_noche_futuro(conn, anchor, person_id)
-    turno_fc_turnos = _seed_turno_fc(conn, db, turno_fc, person_id, all_days)
+    turno_fc_turnos = _seed_turno_fc(conn, db, turno_fc, person_id, all_days,
+                                      excluir_dias=frozenset({dia_basket}))
     sueno_fc_noches = _seed_sueno_fc(conn, db, sueno_fc, person_id)
     _seed_noche_inusual(conn, db, anchor, person_id)
     planes_hoy = _seed_plan_hoy(conn, anchor, person_id, idioma)
