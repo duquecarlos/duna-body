@@ -84,6 +84,16 @@ class ToolsListTest(_McpTestCase):
             self.assertIn("inputSchema", t)
             self.assertTrue(t["description"])
 
+    def test_reserved_plan_field_never_reaches_the_mcp_listing(self):
+        # BODY-ASISTENTE-CONFORMIDAD-1 ruling 2 (agent-capabilities-v1 section 5): the field
+        # exists on the registry entry; it is never sent to the caller.
+        _, respuestas = self._ejecutar([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
+        tools = respuestas[0]["result"]["tools"]
+        self.assertGreater(len(tools), 0)
+        for t in tools:
+            self.assertNotIn("plan_minimo", t)
+            self.assertEqual(set(t), {"name", "description", "inputSchema"})
+
 
 class ToolsCallTest(_McpTestCase):
     def test_lectura_call_answers_with_content_and_no_error(self):

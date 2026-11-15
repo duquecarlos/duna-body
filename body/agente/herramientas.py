@@ -2728,6 +2728,13 @@ HERRAMIENTAS = [
      "parametros": _PARAM_MARCAR_EXPERIMENTO, "funcion": _marcar_experimento},
 ]
 
+# BODY-ASISTENTE-CONFORMIDAD-1 ruling 2 (agent-capabilities-v1 section 5): the plan field is
+# reserved on every entry -- nobody fills it, since Body has no plan tiers yet, but `disponibles`
+# already filters on it so a plan tier is data, not a rewrite, the day one exists.
+for _h in HERRAMIENTAS:
+    _h["plan_minimo"] = None
+del _h
+
 _BY_NAME = {h["nombre"]: h for h in HERRAMIENTAS}
 _RANK = {"ninguno": 0, "resumen": 1, "completo": 2}
 
@@ -2740,8 +2747,12 @@ def disponibles(nivel: str) -> list[dict]:
     if nivel not in ajustes.NIVELES:
         raise ToolError(f"nivel inválido: {nivel!r}; debe ser uno de {ajustes.NIVELES}")
     turnos_on = _TURNOS_ACTUAL.get()
+    # BODY-ASISTENTE-CONFORMIDAD-1 ruling 2: a plan tier, the day one exists, is filtered here,
+    # the same place the role filter (Body's one role per person, so every entry passes today)
+    # and the nivel filter already run -- never a second place to keep in step.
     return [h for h in HERRAMIENTAS if _RANK[h["nivel"]] <= _RANK[nivel]
-            and (turnos_on or h["nombre"] not in TURNOS_HERRAMIENTAS)]
+            and (turnos_on or h["nombre"] not in TURNOS_HERRAMIENTAS)
+            and h["plan_minimo"] is None]
 
 
 def tipo_de(nombre: str) -> str | None:
