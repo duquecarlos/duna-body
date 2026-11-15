@@ -449,7 +449,7 @@ class PinnedCopyTest(unittest.TestCase):
         self.assertEqual(_es("entreno_sesion.sin_historial"),
                          "Aún no hay suficientes sesiones de {tipo} para comparar.")
         self.assertEqual(_es("entreno_sesion.curva_pendiente"),
-                         "Body aún no tiene la curva de pulso de esta sesión.")
+                         "Body aún no guarda la curva de pulso de esta sesión.")
         self.assertNotIn("permiso", _es("entreno_sesion.curva_pendiente"))
 
     def test_english_copy(self):

@@ -994,7 +994,7 @@
   "entreno_sesion.pulso_aria": "Pulso de la sesión, entre {min} y {max} {unidad}",
   "entreno_sesion.pico": "Pico {valor}",
   "entreno_sesion.caida": "Bajó {valor} en el descanso",
-  "entreno_sesion.curva_pendiente": "Body aún no tiene la curva de pulso de esta sesión.",
+  "entreno_sesion.curva_pendiente": "Body aún no guarda la curva de pulso de esta sesión.",
   "entreno_sesion.leyenda_pulso": "Pulso",
   "entreno_sesion.leyenda_serie": "Serie",
   "entreno_sesion.leyenda_descanso": "Descanso",
