@@ -21501,3 +21501,91 @@ operator or owner reads. Deploy stays behind Carlos's own go, unaffected by this
 
 -- merged b2f1a03390f34bae7591f1ecb935c94f233d6070
 
+## BODY-PRIMEROS-TURNOS-1 -- Primeros pasos ticks trabajas-por-turnos on inferred shift data too (2026-11-15)
+
+Personal desk's finding, 2026-11-14: on the hosted Body, after a move imported 1,036 shift rows,
+Hoy's "Primeros pasos" card still asked "¿Trabajas por turnos?" with Sí / No even though every
+other screen that shows or hides Turnos already treats the question as answered.
+
+**The measured asymmetry.** `tutoriales.primeros_pasos` (`body/tutoriales.py:182`, before this
+slice) ticked `trabajas-por-turnos` from `db.get_trabaja_turnos(conn, person_id) is not None` --
+the STORED answer only. `db.trabaja_turnos_si` (`body/db.py:2110`) is the one predicate every
+screen slice uses to show or hide Turnos, and it is True when the stored value is 1 OR when it is
+NULL and the person already has at least one row in `shift` or `shift_batch` (BODY-TURNOS-INFERIR-1,
+read-time inference, never a write). `tutoriales.py`'s own docstring recorded the gap as deliberate
+("Primeros pasos keeps asking while it is NULL").
+
+**The ruling (orchestrator).** A question the person's own data has already answered is not an open
+step.
+
+1. `trabajas-por-turnos` ticks when `db.get_trabaja_turnos(...) is not None` OR
+   `db.trabaja_turnos_si(...)` is True -- read-time only, never a write; the stored value stays NULL
+   until the person answers it directly. An explicit "no" (0) stays ticked exactly as before. NULL
+   with no shift data stays open, with Sí / No, exactly as before.
+2. The Sí / No buttons do not show on a ticked step. Measured: `body/templates/base.html`'s
+   `primeros_pasos_card` macro already guards them on `item.id == 'trabajas-por-turnos' and not
+   item.hecho` (line 28) -- no markup change needed; ticking the item in `tutoriales.py` is what
+   hides them, and the person can still change the answer on `/settings` as before.
+3. One reading. `tutoriales.py`'s docstring is updated to the new rule. `db.trabaja_turnos_si`'s own
+   docstring (`body/db.py:2121-2122`, Tier 1, not in `touches:`) still reads "`get_trabaja_turnos` is
+   unchanged: it reports only what is stored, so Primeros pasos keeps asking while it is NULL" -- that
+   last clause is now stale and is left alone here; it is named in `open_followups` below for the next
+   Tier 1 `db.py` slice.
+4. No customer-facing string changes: the diff adds no new strings and no new markup -- it only
+   changes which already-existing branch of the existing `primeros_pasos_card` conditional renders,
+   for a person whose own shift data already answers the question. Customer-facing bytes unchanged
+   (`customer_bytes.changed: false`); merge pre-approved on a green gate.
+
+**The change.** `body/tutoriales.py:179-184` (the `hecho` dict in `primeros_pasos`):
+`"trabajas-por-turnos": db.get_trabaja_turnos(conn, person_id) is not None` became
+`"trabajas-por-turnos": (db.get_trabaja_turnos(conn, person_id) is not None or
+db.trabaja_turnos_si(conn, person_id))`. The function's docstring gained a paragraph naming this
+ruling and the template guard that makes ruling 2 need no markup change.
+
+**Tests**, `tests/test_primeros_turnos.py` (new, imports `tests/_isolate.py` first, invented demo
+data): `HechoFunctionTest` -- NULL + a `shift` row -> ticked, NULL + a `shift_batch` row only ->
+ticked, NULL + nothing -> not ticked, stored 0 -> ticked, stored 1 -> ticked. `CardRenderTest` -- NULL
++ shift rows renders the ticked link on "/" with no Sí/No form, NULL + a shift_batch row renders the
+same, NULL + nothing still renders both Sí/No buttons, and rendering "/" with shift rows present never
+writes `trabaja_turnos` (still `NULL` after the GET). 9 tests, all green.
+
+No test in `touches:` (`tests/test_tutoriales.py`, `tests/test_turnos_opcional_2.py`,
+`tests/test_turnos_opcional_4.py`, `tests/test_primer_dia_1.py`) asserted the OLD asymmetry --
+measured: none of their fixtures leave `trabaja_turnos` NULL while also inserting a `shift` or
+`shift_batch` row, so all 60 of their existing tests ran unchanged and green. No census test outside
+`touches:` was found asserting the old asymmetry either (`trabajas-por-turnos` appears in only four
+test files total: the three above plus `tests/test_ancho_completo.py`, whose one use leaves shift
+data absent).
+
+**Gate**, exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, run once on the
+final tree, as 9 sequential alphabetical chunks of dotted modules (foreground, each read from the
+process):
+
+| chunk | modules (first..last) | tests | result |
+|---|---|---|---|
+| 0/8 | test_accesibilidad .. test_baselines_lote | 354 | OK (skipped=1) |
+| 1/8 | test_borrar_reauth .. test_entreno_numeros | 489 | OK |
+| 2/8 | test_entreno_racha .. test_garmin_estado | 275 | OK |
+| 3/8 | test_garmin_host .. test_hoy_escritorio | 558 | OK |
+| 4/8 | test_hoy_turno .. test_noche_inusual | 401 | OK |
+| 5/8 | test_nutriente_objetivo .. test_propuesta_vigencia | 507 | OK |
+| 6/8 | test_propuestas_tabla .. test_series_unidad | 301 | OK |
+| 7/8 | test_sesion_conexion_1 .. test_turnos_opcional_5 | 474 | OK |
+| 8/8 | test_turnos_perfil .. test_web_entry | 188 | OK |
+
+Sum: 354+489+275+558+401+507+301+474+188 = 3547. Reconciled against an independent collect-only
+count of the same `unittest.TestLoader().discover('tests', top_level_dir='.')` suite, taken on the
+same tree without running any test: **3547**. Equal -- no test silently skipped between the two
+counts. Every chunk: `OK`, zero failures, zero errors.
+
+**Open follow-ups.** `body/db.py:2121-2122`'s `trabaja_turnos_si` docstring ("`get_trabaja_turnos` is
+unchanged: it reports only what is stored, so Primeros pasos keeps asking while it is NULL") is now
+stale -- Primeros pasos no longer keeps asking once `trabaja_turnos_si` is True. `db.py` is Tier 1
+and not in this slice's `touches:`, so the correction is for the next Tier 1 slice that opens
+`db.py`, not this one.
+
+**Merge.** Merge policy A judged against the actual diff (`body/tutoriales.py`,
+`tests/test_primeros_turnos.py`) -- no schema or migration change, no cross-repo contract or DTO
+change, and no customer-facing bytes added or changed (ruling 4 above). Gate green on the branch
+(3547/3547, reconciled above). Merged with `git merge --no-ff` from `main`.
+
