@@ -22686,3 +22686,6 @@ final tree. Smoke run after the merge below, on `main`, is the last foreground c
 
 **Commits:** `9d9f31e` (the timeout fix, both call sites, `tests/test_vivo.py` only).
 
+-- merged `64c028b` (smoke on `main` after merge: `tests.test_entreno_sesion tests.test_vivo tests.test_i18n_paridad`
+-- `Ran 96 tests in 238.887s ... OK`)
+
