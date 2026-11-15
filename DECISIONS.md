@@ -21994,3 +21994,18 @@ unchanged -- still not on Hoy, still out of scope).
 
 -- not merged, AWAITING_APPROVAL
 
+### -M
+
+**BODY-HOY-ESCRITORIO-2-M -- orchestrator's browser look approves -D for merge (2026-11-15).**
+BODY-HOY-ESCRITORIO-2-D returned `AWAITING_APPROVAL` on this branch at `cae5e67` (gate 3574 green,
+reconciled; tree clean). The orchestrator opened the demo home (body-web-demo, es) in a browser and
+counted the tile grid's columns, rows and tile width at five widths, and checked every tile element
+for overflow: at 1568px, 6 columns in 1 row, tiles ~201px wide; at 1280px, 6 columns in 1 row, tiles
+~153px wide; at 1024px, 3 columns in 2 rows, tiles ~230px wide; at 800px, 3 columns in 2 rows, tiles
+~236px wide; at 375px, 2 columns in 3 rows, tiles ~167px wide. No tile element overflowed its tile at
+any of the five widths, and `scrollWidth` never exceeded the viewport. Below the top row, from
+768px up, the desktop order held: tiles, then "ver todo el día", then "Body lo notó" beside "Semana
+nocturna por delante", then the eating window, then the nutrient card, then Tell Body; the phone
+order was unchanged. No defect found. Approved to merge -- layout only, no new strings. Deploy stays
+at the end of the wave (Carlos, 2026-11-15).
+
