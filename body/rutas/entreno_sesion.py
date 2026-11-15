@@ -140,7 +140,7 @@ def _series_ctx(t: T, sets: list[dict], curva_ctx: dict | None) -> list[dict]:
 
 def _curva_svg(t: T, sets: list[dict], curva_ctx: dict, width: int = 320, height: int = 140) -> str:
     """Ruling 4: the session's own HR curve, each active set's window shaded (`.hr-set`) and each
-    rest marked (`.hr-rest`, a lighter shade) -- inline SVG, server-built, no inline `style=`
+    rest marked (`.hr-rest`, a lighter shade) -- inline SVG, server-built, with no inline styling
     (DESIGN rule 13 BODY-ESTILOS-1): every colour comes from a fixed class, never a `var(...)`
     string in markup. The legend names only what is actually drawn (BODY-ESTADOS-VACIOS-2-M2)."""
     puntos = curva_ctx["puntos"]
