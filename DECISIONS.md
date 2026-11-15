@@ -21292,3 +21292,15 @@ orchestrator to re-measure at 1568, 1024 and 375px before merging.
 
 -- not merged, AWAITING_APPROVAL
 
+**BODY-HOY-ESCRITORIO-1-M -- orchestrator's browser look, no defect, approved to merge (2026-11-14).**
+The orchestrator opened the branch above (`56eae6a`, `AWAITING_APPROVAL`, gate green 3495/3495,
+reconciled, tree clean) in a real browser on the demo home (`body-web-demo`, `es`) and measured the
+`.hoy-top` layout at four widths. 1568x900: columns `837px | 400px`, figure `366x656` (the 78vh cap,
+`object-fit:contain`, whole body shown). 1024x768: columns `413px | 280px`, figure `246x441`. 800x1000:
+columns `432px | 280px`. 375x812: single column, score hero first, then "El día por delante", then the
+figure (`272x487`, the 60svh phone cap); `scrollWidth` never exceeds the viewport at any width. The
+demo's planned session showed the dashed "still to come" glow (9) and the lesion hatch, and the
+existing planned-session caption read correctly. No defect found against rulings 1-4 or against -C's two
+fixes. APPROVED to merge the customer-facing layout and the two new captions listed in the -B report.
+Deploy stays behind Carlos's go.
+
