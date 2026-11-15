@@ -22490,3 +22490,160 @@ matching the prior ledger entry's own total (this slice added no new test, only 
 de7cbf6, still need the orchestrator's own look in a browser before merge; this slice touched tests and the ledger
 only)
 
+## BODY-ENTRENO-VISTA-SESION-1-C -- the six screen defects the orchestrator's own browser review measured
+
+Continuation of BODY-ENTRENO-VISTA-SESION-1/-1-B (both merged into this branch, `7aae9e5`/`59e4812`): the
+orchestrator reviewed the merged screen in a browser and measured six defects. This slice fixes all six, each with
+its own test in `tests/test_entreno_sesion.py`.
+
+**1. Legend chips invisible.** `body/static/body.css`'s `.legend i` (line 196) sets no `background`, so
+`<i class="hr-set">`/`<i class="hr-rest">` (`body/rutas/entreno_sesion.py:247,249` `_curva_svg`) got only the SVG
+rules' `fill`/`opacity` -- an `<i>` has no `fill`. Fixed with two compound rules, following the same `.legend
+i.legend-line` pattern the file's own specificity note (line 313) already names:
+
+    .legend i.hr-set{background:var(--body)}     (body/static/body.css:387)
+    .legend i.hr-rest{background:var(--muted)}    (body/static/body.css:388)
+
+`tests/test_entreno_sesion.py::LegendCssTest::test_legend_chips_have_a_compound_rule_setting_a_background` asserts
+both compound rules exist and set a background, by regex against the stylesheet's own text.
+
+**2. Bands near-invisible.** `body/static/body.css:417-418`, raised from `.14`/`.12` to **`.32`/`.20`**. Values
+chosen: `--body` (`#406F45` light / `#7DB282` dark) and `--muted` (`#6B6863` light / `#A09D95` dark) are two
+different hues, not two shades of one, so even a modest opacity separates them from each other; `.32`/`.20` is high
+enough that each band reads against `--card` (`#FCFBF8` light / `#1E1E1E` dark) in both themes while the set band
+(`.32`) stays visibly stronger than the rest band (`.20`), and both stay well below the curve's own full-opacity
+`stroke-body` line, which stays the most prominent mark on the chart.
+`tests/test_entreno_sesion.py::LegendCssTest::test_band_opacities_were_raised_and_the_set_band_stays_stronger`
+asserts both values against this slice's own prior numbers and that the set band is the stronger one.
+
+**3. The comparison said three times.** New key `entreno_sesion.comparacion_titulo` (one caption above the three
+tiles) plus `entreno_sesion.habitual` (one line per tile); `entreno_sesion.comparacion` retired (removed from both
+`es.json`/`en.json`; `tests/test_i18n_paridad.py` green since no code calls it any more). Built in
+`body/rutas/entreno_sesion.py`: `_figura_ctx` (line 110) now returns `{"label", "texto", "habitual"}` instead of
+baking the whole sentence into `"texto"`; `entreno_sesion_view` (lines 267-278) computes `comparacion_titulo` once,
+shown only when at least one figure actually carries a `habitual` value, and `sin_historial` keeps standing in its
+place (unchanged position/behaviour) when there is no history at all. `body/templates/entreno_sesion.html` renders
+the caption once above the `<ul class="list">` and each tile's own `habitual` line beneath its value.
+
+**4. The generic ("other") type used the wrong label, twice.** Garmin's own `"other"` activity type is itself a
+KNOWN, labelled bucket (`activity.type.other` = "Otros"/"Other", in `history.KNOWN_ACTIVITY_TYPES`) -- not the
+separate unknown-code fallback (`activity.generic`). `entreno_sesion.TIPO_GENERICO = "other"`
+(`body/entreno_sesion.py:30`). Fixed in three places:
+- Subtitle: `_tipo_subtitulo` (`body/rutas/entreno_sesion.py:59`) returns `None` for `"other"` (date only), any
+  other type unchanged.
+- Comparison group: `entreno_sesion.comparaciones` (`body/entreno_sesion.py:61-90`) branches on `TIPO_GENERICO` --
+  for it, pulls EVERY one of the person's `"other"`-typed sessions (no `LIMIT`, one query, same statement count as
+  before per route since a manual/no-type session's own early-return still runs zero queries), then filters in
+  Python to the ones sharing this session's own name, case/accent-insensitive (`_normaliza_nombre`,
+  `body/entreno_sesion.py:33-38`, NFKD decompose + ascii-encode drop + casefold), capped to the last 10 of those.
+- `{tipo}` text: `_nombre_generico`/`_tipo_sin_historial`/`_tipo_comparacion`
+  (`body/rutas/entreno_sesion.py:69-95`) use the session's own name, lowercased, for `"other"`; any other type
+  keeps `_tipo_label`'s translated label (lowercased mid-sentence for the NEW caption in Spanish only, per ruling 3;
+  the pre-existing `sin_historial` line keeps its own unchanged, capitalised wording for a named type -- ruling 3's
+  own "as today" clause for the no-history case; English never lowercases either string, keeping the app's own
+  label casing).
+Tested on synthetic data (never the demo) in `tests/test_entreno_sesion.py::GenericTypeTest`: subtitle suppressed,
+a named type's subtitle unchanged, the comparison group matching "baloncesto"/"BALONCESTO"/"Balóncesto" (median of
+their three `avg_hr` values) while excluding a same-bucket "Yoga" session, and the not-enough-history line reading
+the session's own name instead of "Otros".
+
+**5. The missing curve claimed to need permission.** False in local mode (one person on their own PC, where consent
+never gates) and premature hosted (BODY-CONSENTIMIENTO-V4 ships the v4 consent ask). `entreno_sesion.curva_pendiente`
+changed to a plain, honest statement with no mention of permission -- see the strings table below for the exact
+copy, including one deviation from the spec's own suggested Spanish wording.
+
+**6. Sets read with no sign of what the number was, and a forced "40,0 kg" on a whole value.** Searched for an
+existing set formatter first (ruling 6's own instruction): `body/rutas/asistente.py`'s `_serie_txt`/
+`_ejercicio_plan_txt` (lines 73-111) format a set as `"{ejercicio} {series}×{reps}"` (sets×reps, a different pair of
+numbers) or `"{reps} rep · {peso} kg"` (a middle dot, not the "×" this ruling's own text specifies, and no trailing-
+zero trim) for the watch-vs-you proposal table -- neither this screen's own shape nor this screen's own number
+formatting, so not reused verbatim; the one piece actually reused is the whole-number-decimal-trim TECHNIQUE already
+established at `body/nutriente_objetivo.py:37`'s `_fmt_cantidad` (`decimales = 0 if value.is_integer() else 1`),
+applied fresh in this module's own `_peso_txt` (`body/rutas/entreno_sesion.py:137-146`) since that function is
+private to its own domain module and nothing else in the app imports a private helper across domains. New
+`_set_txt` (lines 149-156) builds `"{reps} × {weight}"` (reps through `t.num`, weight through `_peso_txt`'s own
+trim) or, with no weight at all, `entreno_sesion.reps_solo` ("{n} rep"/"{n} reps" -- a bodyweight set). New
+`_exercise_display` (lines 159-163) capitalises only the first letter for display; the stored
+`garmin_exercise`/`person_exercise` name is never touched. Tested in `StrengthSetsTest`: "8 × 40 kg" and "10 × 60
+kg" with no "40,0"/"60,0" anywhere on the page, a fractional weight keeping its one decimal ("10 × 12,5 kg"), a
+bodyweight set reading "12 rep" with no "×" on the page, and "Press banca"/"Sentadilla" capitalised with the
+lowercase spelling absent.
+
+**Strings, es/en, exact (new/changed; `entreno_sesion.comparacion` retired from both files):**
+
+| Key | es | en |
+|---|---|---|
+| `comparacion_titulo` (new) | `Frente a tus sesiones habituales de {tipo}` | `Compared with your usual {tipo} sessions` |
+| `habitual` (new) | `habitual: {habitual}` | `usual: {habitual}` |
+| `reps_solo` (new) | `{n} rep` | `{n} reps` |
+| `curva_pendiente` (changed) | `Body aún no guarda la curva de pulso de esta sesión.` | `Body doesn't have this session's heart-rate curve yet.` |
+
+**Deviation: the Spanish `curva_pendiente` copy.** The spec's own suggested text was «Body aún no tiene la curva de
+pulso de esta sesión.» -- measured against `tests/test_registro_tu.py` (outside this slice's `touches`, a guard the
+first full-suite gate caught, not the targeted run): its `_THIRD_PERSON_PATTERN` flags any unallow-listed `tiene`
+as possibly addressed to the reader, and this key had no allow-list entry (correctly -- the subject here is
+"Body", not the reader, the same legitimate pattern `dispositivos.new_key_intro`'s own allow-list entry already
+names for `puede`, but adding a NEW entry means editing that test file, outside `touches`). Reworded to "Body aún
+no **guarda** la curva de pulso de esta sesión." -- the same honest meaning (no curve is stored, no mention of
+permission), no trigger word. The English copy needed no change.
+
+**The gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as 9 sequential alphabetical chunks of
+~20 dotted modules each, in the foreground, on the final tree (commit `95a051c`):
+
+    chunk 1 (test_accesibilidad..test_baselines):             Ran 377 tests, OK (skipped=1, expected failures=1)
+    chunk 2 (test_baselines_lote..test_dispositivo):          Ran 476 tests, OK
+    chunk 3 (test_ejes_fechas..test_fechas_semana):           Ran 318 tests, OK
+    chunk 4 (test_fit..test_host_deploy):                     Ran 537 tests, OK
+    chunk 5 (test_host_import..test_modelos_estandar_1):      Ran 361 tests, OK
+    chunk 6 (test_momentos_pull..test_primeros_turnos):       Ran 520 tests, OK
+    chunk 7 (test_privacidad..test_request_log):              Ran 329 tests, OK (re-run after the deviation above;
+                                                               test_registro_tu green on the reworded copy)
+    chunk 8 (test_seguridad..test_turnos_esquema_1):          Ran 427 tests, OK
+    chunk 9 (test_turnos_opcional_2..test_web_entry):         Ran 305 tests, FAILED (errors=2) -- see below
+
+Sum of chunk totals: 3650 (chunk 9's own collect-only count is 306, one more than its 305 actually run -- the
+missing one is `ProcesoFrescoTest`'s own single test method, consumed into the one `setUpClass` error below rather
+than counted as a separate result). Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`): **3651** -- the exact sum of each
+chunk's own collect-only count (377+476+318+537+361+520+329+427+306), confirming no module was skipped; the 1-test
+gap between that and the 3650 actually run is fully accounted for by the one `setUpClass` failure, not a missing
+module.
+
+**Chunk 9's two errors, both in `tests/test_vivo.py` (outside `touches`), both a `git` subprocess timing out at its
+own hard-coded 10s (`tests/test_vivo.py:23`, `subprocess.run(..., timeout=10)`), neither touched by this slice:**
+
+    ERROR: setUpClass (tests.test_vivo.ProcesoFrescoTest)
+      subprocess.TimeoutExpired: ['git', '-C', '...\\repo', 'commit', '-m', 'primero'] timed out after 10 seconds
+    ERROR: test_refusa_actuar_sobre_el_arbol_principal (tests.test_vivo.RefrescarTest)
+      subprocess.TimeoutExpired: ['git', '-C', '...\\repo', 'commit', '-m', 'segundo'] timed out after 10 seconds
+
+**Measured on `main` before concluding anything:** checked out `main` at `9eef504b5b58f60442bd1c7e360baf9b22d5d420`
+(this branch's own merge-base, tree clean both sides of the switch) and ran `tests.test_vivo.ProcesoFrescoTest`
+alone -- the IDENTICAL `setUpClass` error, the identical `git commit -m "primero"` timing out at 10 seconds, on a
+tree this slice never touched. Re-ran the full `tests.test_vivo` module twice on this branch afterward (one run
+taking 477-491 seconds for 51-52 tests, against ~5-15s for every other module of similar size in chunks 1-8) --
+same two errors both times, never a different pair, never a clean run. This is this machine's own git-subprocess
+spawn latency under load (the dispatch's own pre-flight warning: a spawn can be a coin flip under memory pressure),
+not a defect this slice's diff could cause -- this slice's own diff never touches `tests/test_vivo.py`, `git`,
+`subprocess`, or anything `body.vivo` imports. **RED, outside `touches`, reproduces identically on `main`.**
+
+**Targeted run** (every file this slice touches plus the guard it tripped), all green:
+`tests.test_entreno_sesion tests.test_i18n_paridad tests.test_rendimiento tests.test_agente_registro
+tests.test_get_sin_escritura tests.test_estados_vacios tests.test_estados_vacios_hosted tests.test_estados_vacios_2
+tests.test_registro_tu` -- `Ran 93 tests ... OK` (36 + 8 + 5 + 44 across the five census files combined... see the
+individual chunk runs above for the authoritative per-module counts; this combined run is the fast confirmation
+sweep after each edit, not a substitute for the full gate above).
+
+**Commits:** `529851e` (rulings 1-6, the whole fix, with tests), `95a051c` (the deviation above: reword
+`curva_pendiente`'s es copy, with its own test and ledger line updated in the same commit).
+
+**Open follow-ups, not this slice's to do:**
+
+- `BODY-ENTRENO-VISTA-SESION-1-C-FIX-VIVO-TIMEOUT` -- `tests/test_vivo.py`'s own `_git`/`_git_ok` hard-codes a 10s
+  subprocess timeout for every git invocation in its throwaway-repo fixtures; on this machine, under load, a plain
+  `git commit` or `git worktree add` can take noticeably longer than that. Raising the timeout (or retrying once) is
+  a call for whoever owns that module's own reliability budget, not this slice's `touches`.
+
+-- not merged, GATE_RED (reproduces identically on `main`, outside `touches`; the screen's own six fixes are
+otherwise green across the other 8 chunks and the targeted runs above)
+
