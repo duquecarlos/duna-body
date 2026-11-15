@@ -21464,3 +21464,38 @@ follow-up found.
 
 -- awaiting approval, feat/body-garmin-sync-consistente-1 at 267045eb2f74f72aa2d2c81bf311494c5c35b552
 
+### -M: orchestrator's review of the surface, approved to merge
+
+**-M** is the orchestrator's own review of the surface `-C` left `AWAITING_APPROVAL`, not a code
+change. It read the branch's customer-facing bytes directly rather than taking `-C`'s report on
+trust.
+
+**What was looked at.** Hoy's new sync card (`body/templates/today.html`): it reuses the existing
+`.card` + `.chip warn` markup and a `.taplink` to `/garmin`, with no new layout class introduced.
+`/garmin`'s submitting state (`body/static/pagina.js`): the existing submit button's own label
+switches to "Conectando con Garmin…" / "Verificando código…" (es) and disables while the request is
+in flight, again no new markup. The six new i18n strings, es/en, both read against
+`body/i18n/es.json` and `body/i18n/en.json`: `today.garmin_sync.titulo` ("Tu reloj" / "Your watch"),
+`today.garmin_sync.chip` ("revisar" / "check"), `today.garmin_sync.not_signed_in` ("Garmin rechazó el
+acceso guardado. Vuelve a conectar tu reloj." / "Garmin refused the saved access. Reconnect your
+watch."), `today.garmin_sync.failed` ("La última sincronización con Garmin falló." / "The last
+Garmin sync failed."), `today.garmin_sync.stale` ("Sin datos del reloj desde el {date}." / "No watch
+data since {date}."), `garmin.connect_btn_cargando` ("Conectando con Garmin…" / "Connecting to
+Garmin…"), `garmin.mfa_submit_cargando` ("Verificando código…" / "Verifying code…").
+
+**Why no browser look happened before this merge.** Both surfaces are gated on `cuenta.hosted()`;
+the local demo never renders either one, so there is no local path to see them rendered. The first
+real look at the card and the submitting state is necessarily LIVE, after the next deploy, at 375px
+and ~1500px -- carried on the deploy checklist rather than attempted here.
+
+**The base-sha slip in `-C`'s report.** `-C` gave its base as a 40-character sha
+(`f9e38cc1f1a5b4...`) that does not exist on this repository. The actual merge base of `main` and
+this branch's HEAD is `f9e38cc5b59fdd0b90d9eb0e001d98e78e355025` (re-measured by `-M`: `git
+merge-base main HEAD` at `-C`'s own HEAD `f6fa836` returns exactly this sha, matching `main`). Every
+commit `-C` reported re-measures true against the real base; the slip is recorded here as a reporting
+error in `-C`'s own transcript, not a defect in any commit's content.
+
+**Verdict: APPROVED to merge** (orchestrator). The strings and markup above are the entire
+customer-facing surface of this branch; nothing else in `main..HEAD` touches what a customer,
+operator or owner reads. Deploy stays behind Carlos's own go, unaffected by this approval.
+
