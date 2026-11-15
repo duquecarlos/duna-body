@@ -1,9 +1,16 @@
 """BODY-GARMIN-SYNC-CONSISTENTE-1 ruling 1: the hosted daily pull heals its own gaps -- today and
 yesterday always, plus every day in the last garmin_cuenta.VENTANA_RELLENO days with no stored
 Garmin daily row (`daily_metric` where `source = 'garmin'`) -- instead of a fixed N-day window that
-never looks further back once the 90-day backfill is done. Invented demo data only, no network;
-tests/_isolate.py guards the real database.
+never looks further back once the 90-day backfill is done.
+
+BODY-GARMIN-SYNC-CONSISTENTE-1-B amends ruling 1: that healing never depends on whether `--days`
+was given -- the hosted timer's own daily call (deploy/host/body-pull.service) runs
+`python -m body.pull --days 2`, so an explicit `--days N` must heal exactly like the bare call,
+union'd with the N-day window it also still asks for. Local mode is unaffected. Invented demo data
+only, no network; tests/_isolate.py guards the real database.
 """
+import contextlib
+import io
 import os
 import tempfile
 import unittest
@@ -15,7 +22,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import db, garmin_adapter, garmin_cuenta, pull
+from body import cuenta, db, garmin_adapter, garmin_cuenta, pull
 
 TOKEN_KEY_HEX = "77" * 32
 HOY = date(2026, 11, 14)
@@ -85,6 +92,15 @@ class DiasPendientesRellenoTest(unittest.TestCase):
             self.conn.set_trace_callback(None)
         self.assertEqual(len(statements), 1, statements)
 
+    def test_an_explicit_n_widens_the_always_fetched_window_but_still_heals(self):
+        """BODY-GARMIN-SYNC-CONSISTENTE-1-B: n=5 (an explicit `--days 5`) always includes today
+        and the 4 days before it, union'd with the same VENTANA_RELLENO gap-fill -- a day in the
+        14-day window never fetched twice even though both halves could name it."""
+        dias = pull._dias_pendientes_relleno(self.conn, self.person_id, HOY, n=5)
+        esperado = sorted((HOY - timedelta(n)).isoformat() for n in range(garmin_cuenta.VENTANA_RELLENO))
+        self.assertEqual(dias, esperado)  # same 14-day set either way; no day repeated
+        self.assertEqual(len(dias), len(set(dias)))
+
 
 def _stub_fetch_day(visitados: list, errores: frozenset = frozenset()):
     def fetch(day, token_str=None):
@@ -145,14 +161,115 @@ class PullHostedHealsGapsTest(unittest.TestCase):
         dias_guardados = set(db.days_with_data(self.conn, self.person_id))
         self.assertEqual(dias_guardados, {d for d in visitados if d != hace_siete})
 
-    def test_an_explicit_days_call_keeps_the_old_plain_behaviour(self):
-        """`--days N` (an explicit call) still pulls exactly today and the N-1 days before it,
-        never the healing set -- ruling 1's own carve-out."""
+    def test_an_explicit_days_call_still_heals_a_gap_outside_its_own_window(self):
+        """BODY-GARMIN-SYNC-CONSISTENTE-1-B: `--days 2` -- the hosted timer's own daily call,
+        deploy/host/body-pull.service -- must heal exactly like the bare call, not just pull
+        today and yesterday."""
+        hace_seis = (HOY - timedelta(6)).isoformat()
         visitados: list[str] = []
         with mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_stub_fetch_day(visitados)):
             ok, failed, saved = pull.pull_hosted(self.conn, n_days=2)
-        self.assertEqual((ok, failed, saved), (1, 0, 2))
-        self.assertEqual(sorted(visitados), [(HOY - timedelta(1)).isoformat(), HOY.isoformat()])
+        self.assertEqual((ok, failed), (1, 0))
+        self.assertIn(hace_seis, visitados)
+        self.assertEqual(saved, garmin_cuenta.VENTANA_RELLENO)  # the same healing set as the bare call
+
+    def test_a_wider_explicit_days_window_still_pulls_its_own_days(self):
+        """`--days 90` still pulls its 90 days -- the always-fetched window just grows past the
+        14-day healing window, which then adds nothing (already covered)."""
+        visitados: list[str] = []
+        with mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_stub_fetch_day(visitados)):
+            ok, failed, saved = pull.pull_hosted(self.conn, n_days=20)
+        self.assertEqual((ok, failed), (1, 0))
+        esperado = {(HOY - timedelta(n)).isoformat() for n in range(20)}
+        self.assertEqual(set(visitados), esperado)
+        self.assertEqual(saved, 20)
+
+    def test_the_union_of_the_days_window_and_the_healing_set_never_repeats_a_day(self):
+        visitados: list[str] = []
+        with mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_stub_fetch_day(visitados)):
+            pull.pull_hosted(self.conn, n_days=5)
+        self.assertEqual(len(visitados), len(set(visitados)))
+
+    def test_hosted_with_no_flag_heals_the_same_six_day_old_gap(self):
+        """The bare call (no --days) reaches the same healing set as an explicit `--days 2`."""
+        hace_seis = (HOY - timedelta(6)).isoformat()
+        visitados: list[str] = []
+        with mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_stub_fetch_day(visitados)):
+            pull.pull_hosted(self.conn)
+        self.assertIn(hace_seis, visitados)
+
+
+class MainDaysHealsHostedTest(unittest.TestCase):
+    """BODY-GARMIN-SYNC-CONSISTENTE-1-B through the CLI entry point: `python -m body.pull --days
+    2` is exactly what the hosted timer runs (deploy/host/body-pull.service) -- it must heal a
+    gap, not just pull today and yesterday."""
+
+    def setUp(self):
+        self.conn = open_conn(self, Path(tempfile.mkdtemp(dir=TMP)) / "main_hosted.db")
+        db.init(self.conn)
+        self.person_id = db.local_person_id(self.conn)
+        env_patcher = mock.patch.dict(os.environ, {
+            garmin_cuenta.KEY_ENV: TOKEN_KEY_HEX, cuenta.ISSUER_ENV: "https://fake-cuenta.test"})
+        env_patcher.start(); self.addCleanup(env_patcher.stop)
+        sleep_patcher = mock.patch("body.pull.time.sleep")
+        sleep_patcher.start(); self.addCleanup(sleep_patcher.stop)
+        instant = datetime(2026, 11, 14, 15, 0, tzinfo=timezone.utc)  # 10:00 in America/Bogota
+        clock_patcher = mock.patch(
+            "body.fechas.datetime", **{"now.side_effect": lambda tz=None: instant.astimezone(tz) if tz else instant})
+        clock_patcher.start(); self.addCleanup(clock_patcher.stop)
+        garmin_cuenta.guardar(self.conn, self.person_id, "tok-demo")
+        self.conn.commit()
+
+    def test_days_two_through_main_still_fetches_a_six_day_old_gap(self):
+        hace_seis = (HOY - timedelta(6)).isoformat()
+        visitados: list[str] = []
+        with mock.patch("body.pull.db.connect", return_value=self.conn), \
+             mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_stub_fetch_day(visitados)), \
+             contextlib.redirect_stdout(io.StringIO()):
+            codigo = pull.main(["--days", "2"])
+        self.assertEqual(codigo, 0)
+        self.assertIn(hace_seis, visitados)
+
+    def test_bare_call_through_main_heals_the_same_six_day_old_gap(self):
+        hace_seis = (HOY - timedelta(6)).isoformat()
+        visitados: list[str] = []
+        with mock.patch("body.pull.db.connect", return_value=self.conn), \
+             mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_stub_fetch_day(visitados)), \
+             contextlib.redirect_stdout(io.StringIO()):
+            codigo = pull.main([])
+        self.assertEqual(codigo, 0)
+        self.assertIn(hace_seis, visitados)
+
+
+class LocalDaysDoesNotHealTest(unittest.TestCase):
+    """BODY-GARMIN-SYNC-CONSISTENTE-1-B reaches only the hosted daily pull -- local mode's own
+    --days window stays exactly N days, never VENTANA_RELLENO's gap-fill, even with an old gap
+    sitting in the local database."""
+
+    def setUp(self):
+        self.conn = open_conn(self, Path(tempfile.mkdtemp(dir=TMP)) / "local_no_heal.db")
+        db.init(self.conn)
+        sleep_patcher = mock.patch("body.pull.time.sleep")
+        sleep_patcher.start(); self.addCleanup(sleep_patcher.stop)
+
+    def test_local_days_two_fetches_only_today_and_yesterday_leaving_an_old_gap_unfilled(self):
+        person_id = db.local_person_id(self.conn)
+        hace_seis = date.today() - timedelta(6)
+        db.set_metric(self.conn, (hace_seis - timedelta(1)).isoformat(), "resting_hr", 55, "garmin", person_id)
+        self.conn.commit()  # a real gap at hace_seis itself -- left alone by local mode
+
+        def fetch(day, token_str=None):
+            visitados.append(day)
+            return garmin_adapter.DayData(day=day, metrics={"resting_hr": 55.0})
+        visitados: list[str] = []
+        with mock.patch("body.pull.db.connect", return_value=self.conn), \
+             mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=fetch), \
+             contextlib.redirect_stdout(io.StringIO()):
+            codigo = pull.main(["--days", "2"])
+        self.assertEqual(codigo, 0)
+        self.assertEqual(sorted(visitados),
+                          sorted({date.today().isoformat(), (date.today() - timedelta(1)).isoformat()}))
+        self.assertNotIn(hace_seis.isoformat(), visitados)
 
 
 if __name__ == "__main__":
