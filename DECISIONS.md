@@ -22159,3 +22159,89 @@ Approved to merge -- images and markup only, no new strings. Deploy stays at the
 
 -- merged c53ff8de98d55114951144bf80f2bb23b750b1ac
 
+## BODY-ASISTENTE-CONFORMIDAD-1 -- Body builds the agent-capabilities-v1 amendment 7 conformance eval (2026-11-15)
+
+**Amendment 7** (`docs/contracts/agent-capabilities-v1.md`, Carlos relayed by the desk 14 Nov ~18:50): every product's
+assistant now carries a CONFORMANCE EVAL in its own repository, run in its own gate, asserting at least: (1) every
+capability declares its kind and the read-only guard holds; (2) a write is only ever a proposal record approved in
+the chat, single-use durably; (3) the provider switch selects among the configured providers per request and a
+provider with no price fails closed; (4) one usage row per request with the section 6 fields; (5) the spend ceiling
+refuses and the quota never does. Body is the first product to build to it.
+
+**Census (ruling 1, commit 8085bf6).** Before this slice, none of Body's 17 `lectura` tools wrote to the database --
+confirmed by the existing `tests.test_agente_registro.BehaviouralGuardTest` and `StaticGuardTest`, both already green
+on `main`: `leer_ajustes, leer_como_calculo, leer_costo_turnos, leer_dia, leer_entreno, leer_estado_reloj,
+leer_experimentos, leer_historia, leer_hoy, leer_meta, leer_metas, leer_plan, leer_planes, leer_serie,
+leer_tendencias, leer_turnos, leer_tutoriales`. The clause 1 guard is now enforced by mechanism, not review alone:
+`herramientas.ejecutar()` runs a `lectura` tool with the connection's `PRAGMA query_only` set `ON`, restored to its
+prior value in a `finally`; a tool that tried to write would raise sqlite3's own "readonly database" error, which
+`ejecutar()` turns into `ToolError("lectura_intento_escribir")` rather than letting a silent write through.
+
+**Clause -> test class -> result** (`tests/test_agente_conformidad.py`, committed e43aff0):
+
+| Clause | Test class | Result |
+|---|---|---|
+| 1 -- kinds + read-only guard | `Clause1KindsTest` | PASS |
+| 1 -- read-only guard by mechanism | `Clause1LecturaGuardMechanismTest` | PASS |
+| 2 -- writes only through an approved proposal | `Clause2WritesOnlyByProposalTest` | PASS |
+| 2 -- single-use (apply twice) | `Clause2ApplyOnceTest` | PASS |
+| 2 -- another person's proposal refused | `Clause2AnotherPersonTest` | PASS |
+| 2 -- expired proposal refused | `Clause2ExpiredTest` | PASS |
+| 2 -- drift refuses on every propuesta tool | `Clause2DriftTest` | PASS |
+| 3 -- provider switch + no-price fails closed | `Clause3ProviderSwitchTest` | PASS |
+| 4 -- one usage row per request, section 6 fields | `Clause4UsageRowTest` | PASS |
+| 5 -- spend ceiling refuses | `Clause5SpendCeilingRefusesTest` | PASS |
+| 5 -- monthly quota never refuses | `Clause5MonthlyQuotaNeverRefusesTest` | `expectedFailure` -- Body has no monthly question quota yet (BODY-ASISTENTE-USO-1 builds it); the marker must be removed the day that quota lands, or an unexpected success turns the gate red. |
+
+**Registry (ruling 2, commit 3e8c491): 43 -> 44, deviation accepted.** The spec's own figure (43) was a count taken
+before this slice; measured on the current `main` tree the registry already carried 44 entries (17 `lectura`, 27
+`propuesta`) before any of this slice's edits -- the extra entry predates this work. Every `HERRAMIENTAS` entry now
+also carries `plan_minimo: None` (section 5); `disponibles()` hides any entry whose `plan_minimo` is not `None`, a
+no-op today since nobody sets it. Confirmed by new tests that the reserved field never reaches a provider tool spec
+(`body/agente/bucle.py`'s `_tool_specs`) or the MCP `tools/list` (`body/mcp.py`'s `_herramienta_mcp`).
+
+**Contract refresh (commit e43aff0).** `docs/contracts/agent-capabilities-v1.md` replaced byte-for-byte with Main's
+current copy (dev-protocol sha `20c94255940a3b10a0adad29f789e2e88bef88f4`), carrying amendments 6 and 7 that Body's
+stale copy was missing. Byte-identity re-confirmed this slice (`cmp` against `C:/Duna/dev-protocol/contracts/
+agent-capabilities-v1.md`, 2026-11-15).
+
+**Commits:** `8085bf6` (ruling 1, read-only guard by mechanism), `3e8c491` (ruling 2, `plan_minimo` reserved),
+`e43aff0` (rulings 3-4, conformance eval + contract refresh).
+
+**The gate** (this slice, `-B`, see below) is the first full run on this tree -- the first pass of this slice left
+chunks 2-9 unmeasured. `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as 9 sequential alphabetical
+chunks of ~20 dotted modules each, in the foreground:
+
+    chunk 1 (test_accesibilidad..test_baselines):            Ran 377 tests, OK (skipped=1, expected failures=1)
+    chunk 2 (test_baselines_lote..test_dispositivo):         Ran 476 tests, OK
+    chunk 3 (test_ejes_fechas..test_fit):                    Ran 294 tests, OK (after fix, see below)
+    chunk 4 (test_fuentes_propias..test_host_import):        Ran 543 tests, OK
+    chunk 5 (test_household..test_momentos_pull):            Ran 380 tests, OK
+    chunk 6 (test_mudanza..test_privacidad):                 Ran 566 tests, OK
+    chunk 7 (test_profile..test_seguridad):                  Ran 279 tests, OK
+    chunk 8 (test_series_gramos..test_turnos_opcional_2):    Ran 421 tests, OK
+    chunk 9 (test_turnos_opcional_3..test_web_entry):        Ran 279 tests, OK
+
+Sum: 3615 run, 0 failures, 0 errors, 1 skipped (pre-existing, POSIX-only `chmod`), 1 expected failure (clause 5's
+monthly quota, by design). Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted recursively): 3615 -- matching exactly.
+**GREEN.**
+
+**`-B` fixed one gate failure inside `touches`.** Chunk 3's first run failed `tests.test_errores_texto.
+GuardaAstTest.test_todo_body_queda_limpio`: ruling 1's new guard in `herramientas.ejecutar` (commit 8085bf6) checked
+`"readonly database" not in str(e)` directly on the caught `sqlite3.OperationalError`, which is exactly the bare
+`str(<except-as name>)` pattern `tests/test_errores_texto.py`'s whole-package AST guard forbids. Not a write a
+lectura tool attempted -- the guard flags the exception-text rendering itself, regardless of whether anything is
+displayed. Fixed in `body/agente/herramientas.py` by reading `e.args[0]` (already a string, and not the bare
+except-bound name) instead of calling `str(e)`; behaviour is unchanged. Committed separately as `ad25853`, inside
+`touches`. Chunk 3 re-run green as shown above.
+
+**Merge policy, this slice's diff** (`body/agente/herramientas.py`, `tests/test_agente_conformidad.py`,
+`tests/test_agente_registro.py`, `tests/test_mcp.py`, `DECISIONS.md`). Checked against the actual diff: no schema or
+migration change, no customer-facing bytes (nothing a signed-in person sees changed; `plan_minimo` is unused and
+invisible, the read-only guard and the error-text fix are both internal), no cross-repo contract or DTO change
+(`docs/contracts/agent-capabilities-v1.md` is a read-only copy of Main's own file, copied byte-for-byte, not
+authored here). All three merge-policy-A conditions clear.
+
+**Open follow-ups, not this slice's to do:** none found.
+
