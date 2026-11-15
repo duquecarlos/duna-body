@@ -16,7 +16,7 @@ from tests._db import open_conn
 from tests._rutas import rutas_planas
 
 from body import db, goals, web
-from body.agente import ajustes, herramientas
+from body.agente import ajustes, bucle, herramientas
 
 # Every GET route in body/web.py, mapped to the tool that answers the same question, or to None with a
 # reason it needs no tool. A new GET route with no entry here fails the test below on purpose.
@@ -202,6 +202,25 @@ class RegistryShapeTest(unittest.TestCase):
         self.assertTrue(all(h["tipo"] in ("lectura", "propuesta") for h in herramientas.HERRAMIENTAS))
         # BODY-GARMIN-SYNC-CONSISTENTE-1: extended from 43 -- leer_estado_reloj is the one new entry.
         self.assertEqual(len(herramientas.HERRAMIENTAS), 44)
+
+    def test_every_entry_carries_the_reserved_plan_field_unset(self):
+        # BODY-ASISTENTE-CONFORMIDAD-1 ruling 2 (agent-capabilities-v1 section 5): the field
+        # exists on every entry; nobody fills it, since Body has no plan tiers yet.
+        self.assertTrue(all("plan_minimo" in h for h in herramientas.HERRAMIENTAS))
+        self.assertTrue(all(h["plan_minimo"] is None for h in herramientas.HERRAMIENTAS))
+
+    def test_reserved_plan_field_never_reaches_the_provider_tool_spec(self):
+        for spec in bucle._tool_specs("completo"):
+            self.assertEqual(set(spec), {"nombre", "descripcion", "parametros"})
+
+    def test_a_plan_gated_entry_is_hidden_by_disponibles(self):
+        nombre = herramientas.HERRAMIENTAS[0]["nombre"]
+        original = herramientas._BY_NAME[nombre]["plan_minimo"]
+        herramientas._BY_NAME[nombre]["plan_minimo"] = "pro"
+        try:
+            self.assertNotIn(nombre, {h["nombre"] for h in herramientas.disponibles("completo")})
+        finally:
+            herramientas._BY_NAME[nombre]["plan_minimo"] = original
 
 
 class RouteMappingTest(unittest.TestCase):

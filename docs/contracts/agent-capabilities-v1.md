@@ -113,7 +113,7 @@ Measured 2026-10-14. **Each product moves on its own queue; nothing here is depl
 | | Kind field | Proposals | Screen actions | Metering | Limits |
 |---|---|---|---|---|---|
 | **Lotes** | `es_escritura` -> `tipo` | signed card; confirm the durable record + single-use (ask) | **built** server side; UI dispatch after Carlos's screen review | per request, no cache split | quota + daily ceiling: conforms |
-| **Pedidos** (orders + owner-ui) | none -> add | **none** (read-only by ruling); keep until a write tool is ruled, then section 2 | none -> places registry in owner-ui, then actions | per call + reservations -> add per-request row, cached tokens | quota, daily, monthly tokens: conforms (tokens = spend) |
+| **Pedidos** (orders + owner-ui) | none -> add | **none** (read-only by ruling); keep until a write tool is ruled, then section 2 | **built** (re-measured 2026-11-09, OWNER-ACCIONES-PANTALLA-CENSO-1: 14-place registry sent on every request, data-lugar + integrity tests on 13, `login` excluded by design; navegar/resaltar/prellenar/recorrido executed) | per call + reservations -> add per-request row, cached tokens | quota, daily, monthly tokens: conforms (tokens = spend) |
 | **Finanzas** | separate registries -> add field | stored row, applied on a separate screen -> **add in-chat approve** | none | per request; split `cacheada` | conforms (daily + monthly) |
 | **Tienda** (Edgar) | separate registries -> add field | stored row + in-chat card + drift: **conforms** | none -> first after Lotes (Carlos: Tienda next) | per round, stored cost -> add per-request view | daily ceiling **fails open** -> fail closed |
 | **Console** | ~22 reads, ~30 `*_propose`, add field | signed card; **single use in memory -> durable record** | proposal row marks only -> places registry | per request via Orders | platform-wide daily -> per admin + total |
@@ -234,3 +234,38 @@ write kinds, approved in the chat (Carlos, ORCH-CARLOS-PEDIDOS-ASISTENTE-PROPONE
 CARD-1, OWNER-AGENT-DESHACER-1), carries a places registry with navegar/resaltar/prellenar, and meters per request; the
 console HAS sections 1-7 and amendments 1-5 except one unlogged failed ceiling read. Measure a product's code, not this
 table.
+
+## AMENDMENT 6 -- 2026-11-11, raised by Duna Finanzas, ADOPTED by Main (section 4, the active screen's filters)
+
+Measured by Finanzas (FIN-API-AGENTE-CONTEXTO-FILTROS-OBS-1): a person who has filtered a list and asks "revisa lo que
+tengo filtrado" gets an assistant that knows only `lugar_actual`. Section 4 says what the UI sends about PLACES; it says
+nothing about the STATE of the current screen. DECIDED, Duna-wide:
+
+* **A request MAY carry one optional object `filtros_actuales`** beside `lugar_actual`: the filters the person has applied
+  on the current screen. Its KEYS are the product's own list query parameters for that screen (Finanzas: its /movimientos
+  params) -- the contract fixes the field and the rules, each product owns the vocabulary.
+* **Validated and bounded server-side, exactly as the screen's own list endpoint would validate the same params**: enums
+  against the door's constants, dates and amounts parsed, a ceiling on keys and lengths; an invalid object is REFUSED
+  with the normal refusal shape, never silently dropped or truncated.
+* **Free text never enters the system prompt or the cached prefix.** A free-text filter (e.g. `q`) reaches the model only
+  as an argument of the read tool that runs the search; structured filters may be summarised in the per-turn message,
+  like `lugar_actual`. Never in the tool schema (amendment 4's byte-identical prefix holds).
+* **Nothing is stored**: it is per-request context, not conversation history, and it grants nothing -- a filter can only
+  narrow what the caller's role may already read.
+* A product whose read tool cannot express a filter the screen offers widens the tool first (internal, no contract change).
+
+Carriers: Finanzas (proposer, first); Pedidos owner assistant, the console, Lotes -- each by its own orchestrator when a
+list screen and its assistant meet. Posted to the hub as a «Para productos» item the same turn.
+
+## AMENDMENT 7 -- 2026-11-14, raised by Body, ADOPTED by Main (the skeleton is a contract plus a conformance eval)
+
+Carlos, relayed by the desk 14 Nov ~18:50, wants Body's assistant on the same structure as Lotes and Finanzas («a lot of
+capabilities and a switch per provider»). Body asked whether a shared core should exist. DECIDED: the shared core is THIS
+contract (with agent-ui-v1 and agent-write-contract-v3), never a shared library -- the products are Python and TypeScript
+and a cross-repo library would couple five deploys. What was missing is enforcement: from this amendment every product's
+assistant carries a CONFORMANCE EVAL in its own repository, run in its own gate, asserting at least: (1) every capability
+declares its kind (section 1) and the read-only guard holds; (2) a write is only ever a proposal record approved in the chat,
+single-use durably (section 2); (3) the provider switch selects among the configured providers per request and a provider
+with no price fails closed (sections 5-7, amendment 5); (4) one usage row per request with the section 6 fields; (5) the
+spend ceiling refuses and the quota never does. A product adds its own cases on top. Body is the first to build to it;
+Lotes, Finanzas and Pedidos add theirs to their own queues.

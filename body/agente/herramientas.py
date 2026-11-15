@@ -2728,6 +2728,13 @@ HERRAMIENTAS = [
      "parametros": _PARAM_MARCAR_EXPERIMENTO, "funcion": _marcar_experimento},
 ]
 
+# BODY-ASISTENTE-CONFORMIDAD-1 ruling 2 (agent-capabilities-v1 section 5): the plan field is
+# reserved on every entry -- nobody fills it, since Body has no plan tiers yet, but `disponibles`
+# already filters on it so a plan tier is data, not a rewrite, the day one exists.
+for _h in HERRAMIENTAS:
+    _h["plan_minimo"] = None
+del _h
+
 _BY_NAME = {h["nombre"]: h for h in HERRAMIENTAS}
 _RANK = {"ninguno": 0, "resumen": 1, "completo": 2}
 
@@ -2740,8 +2747,12 @@ def disponibles(nivel: str) -> list[dict]:
     if nivel not in ajustes.NIVELES:
         raise ToolError(f"nivel inválido: {nivel!r}; debe ser uno de {ajustes.NIVELES}")
     turnos_on = _TURNOS_ACTUAL.get()
+    # BODY-ASISTENTE-CONFORMIDAD-1 ruling 2: a plan tier, the day one exists, is filtered here,
+    # the same place the role filter (Body's one role per person, so every entry passes today)
+    # and the nivel filter already run -- never a second place to keep in step.
     return [h for h in HERRAMIENTAS if _RANK[h["nivel"]] <= _RANK[nivel]
-            and (turnos_on or h["nombre"] not in TURNOS_HERRAMIENTAS)]
+            and (turnos_on or h["nombre"] not in TURNOS_HERRAMIENTAS)
+            and h["plan_minimo"] is None]
 
 
 def tipo_de(nombre: str) -> str | None:
@@ -2791,9 +2802,23 @@ def ejecutar(conn: sqlite3.Connection, person_id: int, nombre: str, params: dict
         if conversacion_id is None:
             raise ToolError(f"{nombre!r} requiere una conversación")
         return entrada["funcion"](conn, person_id, conversacion_id, **params)
-    # BODY-AGENTE-LEER-SERIE-1: a lectura tool whose registry entry asks for `nivel` (leer_serie's
-    # own 'dia' vs 'resumen' split) gets it as its third positional argument -- everybody else's
-    # call shape is unchanged.
-    if entrada.get("necesita_nivel"):
-        return entrada["funcion"](conn, person_id, nivel, **params)
-    return entrada["funcion"](conn, person_id, **params)
+    # BODY-ASISTENTE-CONFORMIDAD-1 ruling 1 (agent-capabilities-v1 section 1): a `lectura` tool
+    # can never write, enforced by the connection itself -- never by review. `query_only` is
+    # restored to whatever it was before, in a `finally`, so a nested call (there is none today)
+    # or a later caller on the same connection never finds it left on.
+    previo = conn.execute("PRAGMA query_only").fetchone()[0]
+    conn.execute("PRAGMA query_only = ON")
+    try:
+        # BODY-AGENTE-LEER-SERIE-1: a lectura tool whose registry entry asks for `nivel` (leer_serie's
+        # own 'dia' vs 'resumen' split) gets it as its third positional argument -- everybody else's
+        # call shape is unchanged.
+        if entrada.get("necesita_nivel"):
+            return entrada["funcion"](conn, person_id, nivel, **params)
+        return entrada["funcion"](conn, person_id, **params)
+    except sqlite3.OperationalError as e:
+        mensaje = str(e.args[0]) if e.args else ""
+        if "readonly database" not in mensaje:
+            raise
+        raise ToolError("lectura_intento_escribir") from None
+    finally:
+        conn.execute(f"PRAGMA query_only = {'ON' if previo else 'OFF'}")
