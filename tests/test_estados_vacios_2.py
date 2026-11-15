@@ -281,7 +281,12 @@ class PersonaCompletaSinCambiosTest(unittest.TestCase):
 
     def test_demo_home_body_view_is_lit_by_todays_plan(self):
         # BODY-CUERPO-VISTA-1-M ruling 4: the gap BODY-CUERPO-VISTA-1 stopped on -- the demo person's
-        # Today session is categorised, so Hoy's body view is actually lit, never "no session".
+        # Today plan is categorised, so Hoy's body view is actually lit, never "no session".
+        # BODY-ENTRENO-VISTA-SESION-1 ruling 6 (kept here, BODY-ENTRENO-VISTA-SESION-1-B): the demo
+        # now also LOGS a real strength session today (pecho/pierna), so the body view reads both
+        # layers -- trained (today's logged session) plus still-to-come (today's plan, hombros/
+        # brazo/espalda, none of which the logged session already covers) -- never the
+        # planned-only caption this case originally asserted.
         demo._seed(self.conn, dias=30, idioma="es")
         person_id = 1
         self.conn.commit()
@@ -290,7 +295,8 @@ class PersonaCompletaSinCambiosTest(unittest.TestCase):
         r = client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertNotIn(t("cuerpo.caption.hoy_sin_sesion"), r.text)
-        self.assertIn("Iluminado: lo que entrena tu sesión de hoy", r.text)
+        self.assertIn("Entrenado hoy:", r.text)
+        self.assertIn("Por venir:", r.text)
         self.assertIn(t("cuerpo.grupo.hombros"), r.text)
         self.assertIn(t("cuerpo.grupo.dorsales"), r.text)
 
