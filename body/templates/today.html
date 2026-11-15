@@ -109,11 +109,11 @@
 {{ cuerpo_vista(t, cuerpo, 'hoy-figura') }}
 </div>
 
-<div class="cols-hoy"><div>
+<div class="hoy-abajo">
 <a class="tellbody taplink" href="#asis-btn">{{ t('today.tell_body') }}</a>
 
 {% if noche_inusual %}
-<div class="card">
+<div class="card hoy-noticed">
   <div class="q">{{ t('today.noche_inusual_titulo') }} <span class="chip night">{{ t('today.noche_inusual_chip') }}</span></div>
   <p class="note mt-6 m-0">{{ noche_inusual.texto }}</p>
   <a class="taplink" href="/day/{{ noche_inusual.day }}">{{ noche_inusual.enlace }}</a>
@@ -136,7 +136,7 @@
 </div>
 {% endif %}
 
-<div class="grid2 mb-10">
+<div class="grid2 hoy-tiles mb-10">
 {% for c in cards %}
   <a class="card" href="/day/{{ day }}#{{ c.key }}">
     <div class="k">{{ c.label }}</div>
@@ -147,9 +147,9 @@
   </a>
 {% endfor %}
 </div>
-<a class="more" href="/day/{{ day }}">{{ t('today.see_day') }}</a>
+<a class="more hoy-tiles-link" href="/day/{{ day }}">{{ t('today.see_day') }}</a>
 
-<div class="card">
+<div class="card hoy-comida">
   <div class="q">{{ t('today.ventana.titulo') }}</div>
   {% if ventana.estado == 'sin_registro' %}
   <p class="note m-0">{{ t('today.ventana.sin_registro') }}</p>
@@ -166,7 +166,7 @@
 </div>
 
 {% if objetivos_nutriente %}
-<div class="card">
+<div class="card hoy-nutriente">
   <div class="q">{{ t('nutriente.hoy.titulo') }}</div>
   <ul class="plan mt-6">
   {% for o in objetivos_nutriente %}
@@ -183,14 +183,14 @@
 {% endif %}
 
 {% if semana_nocturna %}
-<div class="card">
+<div class="card hoy-semana">
   <div class="q">{{ t('today.semana_nocturna.titulo') }}</div>
   <div class="fig">{{ semana_nocturna.fechas }}</div>
   <p class="note mt-6 mb-0">{{ semana_nocturna.recuperacion }}</p>
   <a class="taplink" href="/shifts">{{ t('today.semana_nocturna.enlace') }}</a>
 </div>
 {% endif %}
-</div></div>
+</div>
 
 {% if hogar_compartido %}
 <div class="card">

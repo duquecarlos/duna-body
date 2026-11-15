@@ -1,7 +1,10 @@
 """BODY-HOY-ESCRITORIO-1: Hoy's own top block from tablet width up (rulings 1-2 -- the score hero
 and "El día por delante" beside the body view, never the figure alone filling the screen) and the
 trained/still-to-come glow split (ruling 3 -- solid for what today's logged training actually
-worked, dashed for whatever today's plan still owes)."""
+worked, dashed for whatever today's plan still owes). BODY-HOY-ESCRITORIO-2 adds the block BELOW
+.hoy-top: one row of tiles, then "Body noticed" beside "Night week ahead", then the eating window,
+then the "Tell Body" row, from 768px -- the mock's desktop order, placed with `order`/`flex` on the
+phone's own unchanged DOM (`.hoy-abajo`, which replaces the now-dead `.cols-hoy`)."""
 import json
 import pathlib
 import tempfile
@@ -12,7 +15,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import config, db, fechas, identity, web
+from body import config, db, demo, fechas, identity, web
 
 client = TestClient(web.app, follow_redirects=False)
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -251,6 +254,117 @@ class HoyTopBlockCssTest(unittest.TestCase):
         decision, not an accident, and must change this test on purpose."""
         self.assertNotIn('[data-ancho="lectura"].hoy-top', self.compact)
         self.assertNotIn(',[data-ancho="lectura"].hoy-top', self.compact)
+
+
+def _seed_full_coverage(tc: unittest.TestCase) -> "db.sqlite3.Connection":
+    """A demo-seeded person (id 1): has an unusual night (`Body noticed`), an upcoming night
+    block (`Night week ahead`) and a live nutrient target (`objetivos_nutriente`), so every
+    optional card BODY-HOY-ESCRITORIO-2 ruling 1 places renders at once."""
+    conn = _reset_db(tc)
+    demo._seed(conn, dias=30, idioma="es")
+    conn.commit()
+    _use(db.local_person_id(conn))
+    return conn
+
+
+class HoyAbajoBlockMarkupTest(unittest.TestCase):
+    """Ruling 1/3: every card below `.hoy-top` carries its own class so CSS `order`/`flex` can
+    place it from 768px without the DOM itself changing -- `.cols-hoy` (dead since the figure
+    moved into `.hoy-top`, BODY-HOY-ESCRITORIO-1) is gone."""
+
+    def setUp(self):
+        self.conn = _seed_full_coverage(self)
+
+    def test_cols_hoy_is_gone_hoy_abajo_present(self):
+        r = client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn("cols-hoy", r.text)
+        self.assertIn('class="hoy-abajo"', r.text)
+
+    def test_every_optional_card_carries_its_own_class(self):
+        r = client.get("/")
+        self.assertIn('class="card hoy-noticed"', r.text)
+        self.assertIn('class="card hoy-comida"', r.text)
+        self.assertIn('class="card hoy-nutriente"', r.text)
+        self.assertIn('class="card hoy-semana"', r.text)
+        self.assertIn('class="grid2 hoy-tiles mb-10"', r.text)
+        self.assertIn('class="more hoy-tiles-link"', r.text)
+
+    def test_every_card_rendered_exactly_once(self):
+        r = client.get("/")
+        for marker in ("hoy-noticed", "hoy-comida", "hoy-nutriente", "hoy-semana", "hoy-tiles-link"):
+            self.assertEqual(r.text.count(marker), 1, f"{marker} rendered more than once")
+        self.assertEqual(r.text.count('class="hoy-abajo"'), 1)
+
+    def test_tellbody_markup_unchanged(self):
+        """The talk row needs no new class -- `.tellbody` is already unique to it -- so
+        BODY-MOCK-R2-HOY-1's own exact-string tests on this tag stay valid untouched."""
+        r = client.get("/")
+        self.assertIn('<a class="tellbody taplink" href="#asis-btn">', r.text)
+
+    def test_phone_order_unchanged_dom_order(self):
+        """Ruling 2: below 768px today's order is unchanged -- checked here as the raw DOM/HTML
+        order, same marks BoardOrderTest (tests/test_mock_r2_hoy.py) already asserts, now including
+        the two extra optional cards this fixture also renders."""
+        r = client.get("/")
+        marks = ['class="tellbody', "Body lo notó", 'class="grid2', "Ventana de comida",
+                 "Metas de nutrientes", "Semana nocturna por delante"]
+        positions = [r.text.index(m) for m in marks]
+        self.assertEqual(positions, sorted(positions), f"phone DOM order broken: {marks}")
+
+
+class HoyAbajoBlockCssTest(unittest.TestCase):
+    """Ruling 1/4: the tile row's own column counts per breakpoint, the desktop order, and the
+    noticed/week pairing -- checked as CSS text, the same way HoyTopBlockCssTest above does."""
+
+    def setUp(self):
+        self.css = CSS.read_text(encoding="utf-8")
+        self.compact = self.css.replace(" ", "").replace("\n", "")
+
+    def test_cols_hoy_rule_removed(self):
+        self.assertNotIn(".cols-hoy{", self.compact)
+
+    def test_hoy_abajo_is_a_wrapping_flex_row_from_768(self):
+        idx = self.compact.index(".hoy-abajo{display:flex;flex-direction:row;flex-wrap:wrap")
+        media = self.compact.rindex("@media(min-width:768px){", 0, idx)
+        self.assertGreater(idx, media)
+
+    def test_tiles_three_across_from_768(self):
+        self.assertIn(".hoy-tiles{grid-template-columns:repeat(3,minmax(0,1fr))}", self.compact)
+
+    def test_tiles_six_across_from_1024(self):
+        idx = self.compact.index(".hoy-tiles{grid-template-columns:repeat(6,minmax(0,1fr))}")
+        media = self.compact.rindex("@media(min-width:1024px){", 0, idx)
+        self.assertGreater(idx, media)
+
+    def test_tiles_three_across_under_lectura_even_past_1024(self):
+        self.assertIn(
+            '[data-ancho="lectura"].hoy-tiles{grid-template-columns:repeat(3,minmax(0,1fr))}',
+            self.compact)
+
+    def test_desktop_order_tiles_then_noticed_week_then_comida_then_talk(self):
+        self.assertIn(".hoy-abajo>.hoy-tiles,.hoy-abajo>.hoy-tiles-link{order:1}", self.compact)
+        self.assertIn(".hoy-abajo>.hoy-noticed,.hoy-abajo>.hoy-semana{order:2}", self.compact)
+        self.assertIn(".hoy-abajo>.hoy-comida{order:3}", self.compact)
+        self.assertIn(".hoy-abajo>.hoy-nutriente{order:4}", self.compact)
+        self.assertIn(".hoy-abajo>.tellbody{order:5}", self.compact)
+
+    def test_noticed_and_week_share_the_same_two_column_row(self):
+        """A lone noticed or week card still spans the row -- each is a 280px-basis, flex-grow:1
+        item in a wrapping flex row, so with no sibling sharing its `order` value it is the only
+        item on its line and grows to fill it; no separate "solo" rule is needed."""
+        self.assertIn(".hoy-abajo>.hoy-noticed,.hoy-abajo>.hoy-semana{flex:11280px}", self.compact)
+
+    def test_full_width_rows_use_100_percent_basis(self):
+        self.assertIn(
+            ".hoy-abajo>.hoy-tiles,.hoy-abajo>.hoy-tiles-link,.hoy-abajo>.hoy-comida,"
+            ".hoy-abajo>.hoy-nutriente,.hoy-abajo>.tellbody{flex:11100%}", self.compact)
+
+    def test_lectura_wrap_cap_still_fits_two_280px_columns(self):
+        """Ruling 4: Lectura's own 820px wrap cap is untouched -- two 280px-basis flex-grow items
+        plus the 16px gap (576px) comfortably fit inside it, so noticed/week keep two columns with
+        no extra CSS needed under `[data-ancho="lectura"]` for that pair."""
+        self.assertIn('[data-ancho="lectura"].wrap{max-width:820px', self.compact)
 
 
 if __name__ == "__main__":
