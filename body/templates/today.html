@@ -10,6 +10,13 @@
 {% if turnos %}{{ hoy_turno_card(t, turno, proposed_count) }}{% endif %}
 
 {% if stale %}<div class="aviso">{{ stale }}</div>{% endif %}
+{% if garmin_sync %}
+<div class="card">
+  <div class="q">{{ t('today.garmin_sync.titulo') }} <span class="chip warn">{{ t('today.garmin_sync.chip') }}</span></div>
+  <p class="note mt-6 m-0">{{ garmin_sync.texto }}</p>
+  <a class="taplink mt-6" href="/garmin">{{ t('today.stale_link') }}</a>
+</div>
+{% endif %}
 {% if periodo %}<div class="aviso">{{ periodo.texto }} <a class="taplink" href="#asis-btn">{{ periodo.enlace }}</a></div>{% endif %}
 {% if mcp_pendientes %}
 <div class="aviso"><a class="taplink" href="/?asis_conversacion={{ mcp_pendientes.conversacion_id }}#asis-btn">{{ t('today.mcp_propuestas') if mcp_pendientes.n == 1 else t('today.mcp_propuestas_many', n=mcp_pendientes.n) }}</a></div>

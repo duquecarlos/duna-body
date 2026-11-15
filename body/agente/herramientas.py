@@ -59,11 +59,11 @@ import contextvars
 import json
 import sqlite3
 import statistics
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from .. import anatomia, catalogo_tendencias, compartir, db, enlaces, entreno_historial, errores, experimentos, \
-    fechas, goals, history, horizonte, household, nutriente_objetivo, profile, pull, readiness, shift_import, \
-    turnos_costo, tutoriales
+    fechas, garmin_cuenta, goals, history, horizonte, household, nutriente_objetivo, profile, pull, readiness, \
+    shift_import, turnos_costo, tutoriales
 from ..i18n import LANGS, T
 from . import ajustes, propuestas
 
@@ -920,6 +920,24 @@ def _leer_ajustes(conn: sqlite3.Connection, person_id: int) -> dict:
     p = db.person(conn, person_id)
     return {"nombre": p["display_name"], "zona_horaria": p["timezone"], "idioma": p["language"],
             "nivel_datos": ajustes.nivel_datos(conn, person_id)}
+
+
+def _leer_estado_reloj(conn: sqlite3.Connection, person_id: int) -> dict:
+    """BODY-GARMIN-SYNC-CONSISTENTE-1 ruling 3: the sync state itself -- never a health figure, so
+    nivel 'ninguno' (BODY-ASISTENTE-OBS-1) offers it at every data level, for the assistant and the
+    Personal desk alike. Shares garmin_cuenta.estado_conexion/dias_sin_datos with Hoy's own sync
+    card (ruling 2) and body/pull.py's healing gap-fill (ruling 1), never a copy."""
+    estado = garmin_cuenta.estado_conexion(conn, person_id)
+    hoy = fechas.hoy_local(db.person(conn, person_id))
+    dias = db.days_with_data(conn, person_id)
+    return {
+        "conectado": estado["conectado"],
+        "conectado_desde": (datetime.fromisoformat(estado["conectado_desde"]).date().isoformat()
+                             if estado["conectado_desde"] else None),
+        "ultimo_error": estado["ultimo_error"],
+        "ultimo_dia_con_datos": dias[0] if dias else None,
+        "dias_sin_datos_14": garmin_cuenta.dias_sin_datos(conn, person_id, hoy),
+    }
 
 
 def _hoy_local(conn: sqlite3.Connection, person_id: int) -> str:
@@ -2482,6 +2500,11 @@ HERRAMIENTAS = [
     {"nombre": "leer_ajustes", "tipo": "lectura", "nivel": "ninguno",
      "descripcion": "Tus datos de perfil (nombre, zona horaria, idioma) y tu nivel de datos del asistente.",
      "parametros": _SIN_PARAMETROS, "funcion": _leer_ajustes},
+    {"nombre": "leer_estado_reloj", "tipo": "lectura", "nivel": "ninguno",
+     "descripcion": "Si tu reloj Garmin está conectado, desde cuándo, el último error de sincronización si "
+                     "hay uno, el día más reciente con datos del reloj, y qué días de los últimos 14 no "
+                     "tienen datos. Nunca una cifra de salud: solo el estado de la sincronización.",
+     "parametros": _SIN_PARAMETROS, "funcion": _leer_estado_reloj},
     {"nombre": "leer_tutoriales", "tipo": "lectura", "nivel": "ninguno",
      "descripcion": "Los tutoriales del catálogo de Body: su capítulo, su pantalla, si el asistente ya lo hace "
                      "y si ya existe un video. Úsala para responder cómo se hace algo en la app.",

@@ -13,9 +13,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from markupsafe import Markup
 
-from .. import (anatomia, comida_compartida, compartir, cuenta, db, fuentes, goals, history, household,
-                identity, noche_inusual, nutriente_objetivo, readiness, recuperacion, turnos_costo, tutoriales,
-                ventana_comida)
+from .. import (anatomia, comida_compartida, compartir, cuenta, db, fuentes, garmin_cuenta, goals, history,
+                household, identity, noche_inusual, nutriente_objetivo, readiness, recuperacion, turnos_costo,
+                tutoriales, ventana_comida)
 from ..agente import conversacion as agente_conversacion
 from ..agente import herramientas as agente_herramientas
 from ..agente import propuestas as agente_propuestas
@@ -117,6 +117,28 @@ def _stale_ctx(t: T, day: str, today_local: date) -> Markup | None:
         return Markup(html.escape(text))
     return Markup(html.escape(text) + ' <a class="taplink" href="/garmin">' +
                   html.escape(t("today.stale_link")) + "</a>")
+
+
+def _garmin_sync_ctx(t: T, conn, person_id: int, day: str, today_local: date) -> dict | None:
+    """BODY-GARMIN-SYNC-CONSISTENTE-1 ruling 2: a compact `card`+`chip` note when the person's
+    Garmin account carries a recorded error, OR is connected with its newest stored day older
+    than yesterday in their own zone -- never shown with no Garmin connection and no error (a
+    local person has no garmin_cuenta row at all, so estado["conectado"] is always False and
+    estado["ultimo_error"] always None there, which already reads as "don't show" below). `day`
+    is the caller's own _latest_day() result, already read once per request for the readiness
+    card above -- never a second query for "the newest stored day" here. One query
+    (garmin_cuenta.estado_conexion), shared with the assistant's own leer_estado_reloj (ruling 3)
+    -- never duplicated between them."""
+    estado = garmin_cuenta.estado_conexion(conn, person_id)
+    if estado["ultimo_error"] == "NotSignedIn":
+        texto = t("today.garmin_sync.not_signed_in")
+    elif estado["ultimo_error"]:
+        texto = t("today.garmin_sync.failed")
+    elif estado["conectado"] and date.fromisoformat(day) < today_local - timedelta(1):
+        texto = t("today.garmin_sync.stale", date=comun._short_date(t, date.fromisoformat(day)))
+    else:
+        return None
+    return {"texto": texto}
 
 
 def _synced(conn, person) -> str | None:
@@ -610,7 +632,8 @@ def today(person_id: int = Depends(identity.current_person_id)):
                       "unit": comun._unit(t, defs[k]) if v is not None else "", "delta": delta, "cls": cls,
                       "banda": banda, "caption": caption})
     return comun._render("today.html", t=t, tab="today", day=day, date_long=t.long_date(date.fromisoformat(day)),
-                   synced=synced, stale=_stale_ctx(t, day, today_local), cuerpo=cuerpo_ctx,
+                   synced=synced, stale=_stale_ctx(t, day, today_local),
+                   garmin_sync=_garmin_sync_ctx(t, conn, person_id, day, today_local), cuerpo=cuerpo_ctx,
                    r=r, reading=_reading(t, r), ready_avg=ready_avg,
                    ready_delta=ready_delta, ready_cls=ready_cls, cards=cards,
                    missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_count=proposed_count,

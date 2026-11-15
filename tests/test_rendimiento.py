@@ -69,8 +69,11 @@ client = TestClient(web.app, follow_redirects=False)
 # 111. /day/{day} measured 62 (60 before -- its existing per-activity zonas_limitadas read in
 # body/db.py's load_day now also covers the new activity, inside the demo's own open lesion
 # window), ceil(62 * 1.3) = 81.
+# BODY-GARMIN-SYNC-CONSISTENTE-1 ruling 2: /'s own ceiling, raised for the Garmin sync-status card
+# (body/rutas/hoy.py's _garmin_sync_ctx), one unconditional garmin_cuenta.estado_conexion read.
+# Measured 86 statements (85 before), ceil(86 * 1.3) = 112.
 _CEILINGS = {
-    "/": 111,
+    "/": 112,
     "/ajustes/asistente": 16,
     "/ajustes/dispositivos": 9,
     "/api/asistente/mcp/herramientas": 3,
