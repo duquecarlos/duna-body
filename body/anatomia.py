@@ -97,13 +97,17 @@ def _alt(t: T, pantalla: str, vista_id: str) -> str:
 
 
 def contexto(t: T, pantalla: str, grupos_lit: frozenset[str] = frozenset(),
-             grupos_limitados: frozenset[str] = frozenset()) -> list[dict]:
+             grupos_limitados: frozenset[str] = frozenset(),
+             grupos_pendientes: frozenset[str] = frozenset()) -> list[dict]:
     """This screen's own views (anclajes.json's order), each with its glow ellipses for
     `grupos_lit` -- filtered to whichever pose (front or back) that view's own image actually
     carries them for, so a leg category lights cuádriceps on a front view and glúteos +
     isquiotibiales on a back view of the SAME session, never both on either. `grupos_limitados`
     (BODY-LESION-ZONA-1 ruling 4) is the same per-view filtering, for an open lesion period's own
-    zonas, in its own `limitada` list -- drawn as a quiet hatch, never the training glow."""
+    zonas, in its own `limitada` list -- drawn as a quiet hatch, never the training glow.
+    `grupos_pendientes` (BODY-HOY-ESCRITORIO-1 ruling 3) is the same per-view filtering for a
+    planned-but-not-yet-trained group, in its own `pendiente` list -- the dashed outline, drawn
+    with the solid glow's own class plus a modifier, never the hatch's."""
     out = []
     for v in VISTAS_POR_PANTALLA[pantalla]:
         imagen = v["imagen"]
@@ -112,9 +116,26 @@ def contexto(t: T, pantalla: str, grupos_lit: frozenset[str] = frozenset(),
         permitidos = VISTA_GRUPOS.get((pantalla, v["id"]), frozenset())
         glow = [elipse for g in (grupos_lit & permitidos) for elipse in disponibles.get(g, [])]
         limitada = [elipse for g in (grupos_limitados & permitidos) for elipse in disponibles.get(g, [])]
+        pendiente = [elipse for g in (grupos_pendientes & permitidos) for elipse in disponibles.get(g, [])]
         out.append({"id": v["id"], "imagen": imagen, "glow": glow, "limitada": limitada,
+                    "pendiente": pendiente,
                     "label": t("cuerpo.vista." + v["id"]), "alt": _alt(t, pantalla, v["id"])})
     return out
+
+
+def grupos_entrenado_pendiente(categorias_entrenadas, categorias_planeadas) -> tuple[frozenset[str], frozenset[str]]:
+    """BODY-HOY-ESCRITORIO-1 ruling 3: today's own TRAINED (solid) and STILL TO COME (dashed)
+    groups, as a pure union/minus over category lists -- hoy.py only reads the result, never
+    computes it. TRAINED is every one of today's logged sets' own categoria, unioned into glow
+    groups; STILL TO COME is the planned session's own groups minus whatever is already trained,
+    so a planned group already done shows solid only, never both. `categorias_planeadas` is None
+    when no plan covers today at all (contexto's own "no session" reading) -- read the same as an
+    empty list here (no groups still to come), since the caller keeps the distinction for its own
+    caption wording, not for this union/minus math."""
+    entrenado = grupos_de_categorias(categorias_entrenadas)
+    planeado = grupos_de_categorias(categorias_planeadas) if categorias_planeadas is not None else frozenset()
+    pendiente = planeado - entrenado
+    return entrenado, pendiente
 
 
 def texto_liviano_a_proposito(t: T, zonas) -> str | None:

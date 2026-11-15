@@ -1216,6 +1216,8 @@
   "cuerpo.alt.turnos.cuerpo": "The whole body, front view",
   "cuerpo.caption.hoy_con_sesion": "Lit: what today's session trains ({grupos})",
   "cuerpo.caption.hoy_sin_sesion": "No session planned today.",
+  "cuerpo.caption.hoy_entrenado": "Trained today: {grupos}.",
+  "cuerpo.caption.hoy_entrenado_y_pendiente": "Trained today: {grupos}. Still to come: {pendientes}.",
   "cuerpo.caption.en_recuperacion": "Recovering: {zonas}",
   "cuerpo.caption.tendencias": "Trends turns the body to the heart and lungs: the systems these lines describe.",
   "cuerpo.caption.turnos": "Shifts turns the body to the brain and nerves: sleep and recovery are what a night costs.",

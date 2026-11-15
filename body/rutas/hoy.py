@@ -262,19 +262,23 @@ def _plan_categorias_hoy(conn, person_id: int, today_local: date) -> list | None
     before that validation existed, under the old free-text vocabulary, just reads as unrecognised
     (body/anatomia.py's own CATEGORIA_GRUPOS lights nothing for it). None when no plan with
     exercises covers today at all, so the caption can tell "no session" from "session, no
-    recognised category" (both read as "no session" today, but only the first one really is)."""
+    recognised category" (both read as "no session" today, but only the first one really is).
+    BODY-HOY-ESCRITORIO-1 ruling 3: a plan already marked 'done' reads the same as None here too --
+    its own categories are never "still to come" once the person marked the session finished (the
+    WHERE clause below already drops 'skipped' the same way)."""
     row = _plan_hoy_row(conn, person_id, today_local)
-    if row is None:
+    if row is None or row["status"] == "done":
         return None
     return [e.get("categoria") for e in json.loads(row["ejercicios_json"])]
 
 
 def _plan_hoy_row(conn, person_id: int, today_local: date):
     """The one `plan` row BODY-CUERPO-VISTA-1's body view and BODY-HOY-DIA-POR-DELANTE-1's "day
-    ahead" session row both read -- one query, shared, never two (same row either way)."""
+    ahead" session row both read -- one query, shared, never two (same row either way). `status`
+    rides along for `_plan_categorias_hoy`'s own 'done' check above; `_plan_hoy_item` ignores it."""
     return conn.execute(
-        "SELECT title, time, ejercicios_json FROM plan WHERE person_id = ? AND day = ? AND status != 'skipped' "
-        "AND ejercicios_json IS NOT NULL ORDER BY id LIMIT 1",
+        "SELECT title, time, status, ejercicios_json FROM plan WHERE person_id = ? AND day = ? "
+        "AND status != 'skipped' AND ejercicios_json IS NOT NULL ORDER BY id LIMIT 1",
         (person_id, today_local.isoformat())).fetchone()
 
 
@@ -369,26 +373,65 @@ def _semana_nocturna_ctx(t: T, conn, person_id: int, today_local: date) -> dict 
     return {"fechas": fechas, "recuperacion": recuperacion}
 
 
+def _entrenado_hoy_categorias(conn, person_id: int, today_local: date) -> list:
+    """BODY-HOY-ESCRITORIO-1 ruling 3: every active, not-excluded set's own categoria across ALL of
+    today's logged training -- folded the same way `_actividades_hoy` already folds a linked pair
+    (`db.merge_linked_training`'s own `sets_source`/`sets_source_id`, the manual row's sets win).
+    ONE query over every one of today's activities' own workout_set rows, never one per activity
+    (db.exercise_sets' own set_type/corrected_by_person/excluded_by_person selection, reproduced
+    here rather than looped once per activity, since body/db.py is outside this slice's touches)."""
+    rows = db.merge_linked_training(conn.execute(
+        "SELECT * FROM activity WHERE person_id = ? AND day = ? ORDER BY start_local",
+        (person_id, today_local.isoformat())).fetchall())
+    ids = [a["sets_source_id"] for a in rows]
+    if not ids:
+        return []
+    placeholders = ",".join("?" * len(ids))
+    sets = conn.execute(
+        f"SELECT set_type, corrected_by_person, excluded_by_person, garmin_category, person_category "
+        f"FROM workout_set WHERE person_id = ? AND activity_source_id IN ({placeholders})",
+        (person_id, *ids)).fetchall()
+    out = []
+    for s in sets:
+        corrected = bool(s["corrected_by_person"])
+        if (("active" if corrected else s["set_type"]) != "active") or bool(s["excluded_by_person"]):
+            continue
+        out.append(s["person_category"] if corrected else s["garmin_category"])
+    return out
+
+
 def _cuerpo_hoy_ctx(t: T, conn, person_id: int, today_local: date) -> dict:
-    """Hoy's own body view (BODY-CUERPO-VISTA-1, ruling 4): Músculos/Espalda/Corazón y vasos, lit
-    for today's planned session's own muscle groups -- the empty, "no session" caption with no
-    plan, or with a plan whose categories none are recognised (never an empty parenthesis).
-    BODY-LESION-ZONA-1 ruling 4: a second, quiet layer for any zona an open lesion period names for
-    today -- drawn as a hatch, never the training glow, with its own caption below."""
-    categorias = _plan_categorias_hoy(conn, person_id, today_local)
-    grupos = anatomia.grupos_de_categorias(categorias) if categorias is not None else frozenset()
-    if not grupos:
-        caption = t("cuerpo.caption.hoy_sin_sesion")
-    else:
+    """Hoy's own body view (BODY-CUERPO-VISTA-1, ruling 4; rebuilt by BODY-HOY-ESCRITORIO-1 ruling
+    3): Músculos/Espalda/Corazón y vasos, now TWO glow layers instead of one -- solid for every
+    group today's LOGGED training actually worked, dashed for whatever today's plan still owes
+    (minus whatever is already trained). Four captions: trained only, trained plus still-to-come,
+    planned only (today's existing wording, unchanged -- nothing trained yet, the whole plan is
+    still to come), and nothing at all (the existing empty caption, unchanged).
+    BODY-LESION-ZONA-1 ruling 4: a third, quiet layer for any zona an open lesion period names for
+    today -- drawn as a hatch above both, never the training glow, with its own caption below."""
+    categorias_planeadas = _plan_categorias_hoy(conn, person_id, today_local)
+    categorias_entrenadas = _entrenado_hoy_categorias(conn, person_id, today_local)
+    grupos, pendientes = anatomia.grupos_entrenado_pendiente(categorias_entrenadas, categorias_planeadas)
+    if grupos and pendientes:
         nombres = [t("cuerpo.grupo." + g) for g in anatomia.grupos_ordenados(grupos)]
+        nombres_pend = [t("cuerpo.grupo." + g) for g in anatomia.grupos_ordenados(pendientes)]
+        caption = t("cuerpo.caption.hoy_entrenado_y_pendiente", grupos=_lista_natural(t, nombres),
+                    pendientes=_lista_natural(t, nombres_pend))
+    elif grupos:
+        nombres = [t("cuerpo.grupo." + g) for g in anatomia.grupos_ordenados(grupos)]
+        caption = t("cuerpo.caption.hoy_entrenado", grupos=_lista_natural(t, nombres))
+    elif pendientes:
+        nombres = [t("cuerpo.grupo." + g) for g in anatomia.grupos_ordenados(pendientes)]
         caption = t("cuerpo.caption.hoy_con_sesion", grupos=_lista_natural(t, nombres))
+    else:
+        caption = t("cuerpo.caption.hoy_sin_sesion")
     zonas = db.zonas_en_recuperacion(conn, person_id, today_local.isoformat())
     grupos_limitados = anatomia.grupos_de_categorias(zonas)
     caption_limitada = None
     if grupos_limitados:
         nombres_zonas = [t("entreno.categoria." + z) for z in anatomia.CATEGORIA_ENUM if z in zonas]
         caption_limitada = t("cuerpo.caption.en_recuperacion", zonas=_lista_natural(t, nombres_zonas))
-    return {"vistas": anatomia.contexto(t, "hoy", grupos, grupos_limitados), "caption": caption,
+    return {"vistas": anatomia.contexto(t, "hoy", grupos, grupos_limitados, pendientes), "caption": caption,
             "caption_limitada": caption_limitada, "recorte": "completo"}
 
 
