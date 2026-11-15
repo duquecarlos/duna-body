@@ -22141,3 +22141,19 @@ merge.
 
 -- not merged, AWAITING_APPROVAL
 
+### -M
+
+**BODY-CUERPO-NITIDEZ-1-M -- orchestrator's browser look approves -1 for merge (2026-11-15).**
+BODY-CUERPO-NITIDEZ-1 returned `AWAITING_APPROVAL` on this branch at `326589d` (gate 3588 green,
+reconciled; tree clean; 0bb1fa0 files, 0ed7a26 srcset, 326589d ledger). The orchestrator opened the
+demo (body-web-demo) and looked at Hoy's anatomy figure at two widths: at 1568px (DPR 1), the
+366x656 figure box loaded `musculos-oscuro-800.webp` through a `srcset` of 2 entries and `sizes`
+"(min-width: 768px) 400px, 80vw"; at 375px (DPR 2), the same 800-wide file loaded for a 272x487 box.
+No image failed to load. A headless capture at 1568px, set beside the pre-slice capture, showed
+visibly crisper detail (fibres, face, hands), with the lesion hatch marks on both shoulders in the
+same place -- framing unchanged. Today's demo had no planned session (caption "Hoy no hay sesión
+planeada."), so no solid/dashed glow was on screen to check; glow placement is unchanged code, not
+exercised by this look. `test_seguridad`/`test_rendimiento` unchanged and green. No defect found.
+Approved to merge -- images and markup only, no new strings. Deploy stays at the end of the wave
+(Carlos, 2026-11-15).
+
