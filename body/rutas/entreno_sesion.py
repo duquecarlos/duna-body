@@ -56,6 +56,45 @@ def _tipo_label(t: T, tipo: str | None) -> str | None:
     return t("activity.generic")
 
 
+def _tipo_subtitulo(t: T, tipo: str | None) -> str | None:
+    """Ruling 4: Garmin's generic "other" bucket names nothing useful next to the date ("Otros ·
+    14 de noviembre" says less than the date alone, since the session's own name already carries
+    the real subject) -- the subtitle shows the date only for it. Any other type, known or not,
+    keeps today's label."""
+    if tipo == entreno_sesion.TIPO_GENERICO:
+        return None
+    return _tipo_label(t, tipo)
+
+
+def _nombre_generico(a: dict) -> str | None:
+    """Ruling 4: the session's own name, lowercased, when Garmin typed it generically as "other"
+    -- entreno_sesion.comparaciones groups the history by this same name. None for any other
+    type, and for a nameless generic session (nothing to fall back to)."""
+    if a.get("type") != entreno_sesion.TIPO_GENERICO:
+        return None
+    nombre = (a.get("name") or "").strip()
+    return nombre.lower() if nombre else None
+
+
+def _tipo_sin_historial(t: T, a: dict) -> str | None:
+    """The {tipo} text for the "not enough sessions" line: the generic bucket's own name
+    (lowercased, ruling 4) instead of "Otros"; any other type keeps today's label untouched
+    (ruling 3's own "as today" clause for the no-history case)."""
+    if a.get("type") == entreno_sesion.TIPO_GENERICO:
+        return _nombre_generico(a)
+    return _tipo_label(t, a.get("type"))
+
+
+def _tipo_comparacion(t: T, a: dict) -> str | None:
+    """The {tipo} text for the new comparison caption (ruling 3): the generic bucket's own name
+    (lowercased, ruling 4); the translated type label otherwise, lowercased mid-sentence in
+    Spanish, kept as the app's own label casing in English."""
+    if a.get("type") == entreno_sesion.TIPO_GENERICO:
+        return _nombre_generico(a)
+    label = _tipo_label(t, a.get("type"))
+    return label.lower() if (label and t.lang == "es") else label
+
+
 def _detalle_cabecera(t: T, a: dict) -> str:
     bits = []
     fin = entreno_sesion._fin_local(a["start_local"], a["duration_s"])
@@ -68,36 +107,60 @@ def _detalle_cabecera(t: T, a: dict) -> str:
     return " · ".join(bits)
 
 
-def _figura_ctx(t: T, label_key: str, valor, habitual, tipo_label: str | None, unidad: str) -> dict | None:
+def _figura_ctx(t: T, label_key: str, valor, habitual, unidad: str) -> dict | None:
+    """Ruling 3: the figure's own value, and -- separately -- its "habitual: ..." line when a
+    comparison exists. The comparison sentence itself is said once, above all three tiles
+    (entreno_sesion_view's own comparacion_titulo), never repeated per tile."""
     if valor is None:
         return None
     valor_txt = f"{t.num(valor)} {unidad}" if unidad else t.num(valor)
-    if habitual is not None and tipo_label:
-        habitual_txt = f"{t.num(habitual)} {unidad}" if unidad else t.num(habitual)
-        texto = t("entreno_sesion.comparacion", valor=valor_txt, tipo=tipo_label, habitual=habitual_txt)
-    else:
-        texto = valor_txt
-    return {"label": t(label_key), "texto": texto}
+    habitual_txt = None
+    if habitual is not None:
+        habitual_valor = f"{t.num(habitual)} {unidad}" if unidad else t.num(habitual)
+        habitual_txt = t("entreno_sesion.habitual", habitual=habitual_valor)
+    return {"label": t(label_key), "texto": valor_txt, "habitual": habitual_txt}
 
 
-def _figuras_ctx(t: T, a: dict, comp: dict, tipo_label: str | None) -> list[dict]:
+def _figuras_ctx(t: T, a: dict, comp: dict) -> list[dict]:
     out = []
     for key, label_key, unidad in (
         ("avg_hr", "entreno_sesion.avg_hr", t("unit.bpm")),
         ("max_hr", "entreno_sesion.max_hr", t("unit.bpm")),
         ("calories", "entreno_sesion.calorias", "kcal"),
     ):
-        f = _figura_ctx(t, label_key, a.get(key), comp["valores"].get(key), tipo_label, unidad)
+        f = _figura_ctx(t, label_key, a.get(key), comp["valores"].get(key), unidad)
         if f is not None:
             out.append(f)
     return out
 
 
 def _peso_txt(t: T, s: dict) -> str | None:
+    """Ruling 6: the app's own number formatting -- no decimal at all on a whole value (the same
+    trim body/nutriente_objetivo.py:37's _fmt_cantidad already applies to an amount), one on a
+    fractional one (40 kg, 42.5 kg, never "40,0 kg")."""
     if s["weight_value"] is None:
         return None
     unidad = s["weight_unit"] or "kg"
-    return f"{t.num(s['weight_value'], 1)} {unidad}"
+    valor = s["weight_value"]
+    decimales = 0 if float(valor).is_integer() else 1
+    return f"{t.num(valor, decimales)} {unidad}"
+
+
+def _set_txt(t: T, reps, peso_txt: str | None) -> str | None:
+    """Ruling 6: "8 × 40 kg" (reps × weight); a bodyweight set with no weight reads "8 rep"/"8
+    reps" instead (entreno_sesion.reps_solo) -- never a bare "8" with no sign of what it counts."""
+    if reps is not None and peso_txt is not None:
+        return f"{t.num(reps)} × {peso_txt}"
+    if reps is not None:
+        return t("entreno_sesion.reps_solo", n=t.num(reps))
+    return peso_txt
+
+
+def _exercise_display(nombre: str | None) -> str:
+    """Ruling 6: a capital first letter for display only -- the stored garmin_exercise/
+    person_exercise name is never touched."""
+    texto = nombre or "—"
+    return texto[:1].upper() + texto[1:]
 
 
 def _descanso_txt(t: T, rest_after_s: float | None) -> str | None:
@@ -122,9 +185,8 @@ def _series_ctx(t: T, sets: list[dict], curva_ctx: dict | None) -> list[dict]:
             if v is not None:
                 caida = t("entreno_sesion.caida", valor=f"{t.num(v)} {bpm}")
         out.append({
-            "exercise": s["exercise"] or "—",
-            "reps": s["reps"],
-            "peso": _peso_txt(t, s),
+            "exercise": _exercise_display(s["exercise"]),
+            "detalle": _set_txt(t, s["reps"], _peso_txt(t, s)),
             "hora": s["start_local"][11:16] if s["start_local"] else None,
             "duracion": t.minutes(s["duration_s"] / 60) if s["duration_s"] else None,
             "corregida": s["corrected_by_person"],
@@ -202,13 +264,18 @@ def entreno_sesion_view(day: str, source_id: str, person_id: int = Depends(ident
         raise HTTPException(404)
 
     zona = person.get("timezone") or "America/Bogota"
-    tipo_label = _tipo_label(t, a.get("type"))
+    tipo_label = _tipo_subtitulo(t, a.get("type"))
+    tipo_sin_historial = _tipo_sin_historial(t, a)
+    tipo_comp = _tipo_comparacion(t, a)
     comp = entreno_sesion.comparaciones(conn, person_id, a)
-    figuras = _figuras_ctx(t, a, comp, tipo_label)
+    figuras = _figuras_ctx(t, a, comp)
     sin_historial = None
-    if a.get("type") and comp["n"] < entreno_sesion.HISTORIAL_MIN and any(
+    comparacion_titulo = None
+    if tipo_sin_historial and comp["n"] < entreno_sesion.HISTORIAL_MIN and any(
             a.get(k) is not None for k in entreno_sesion.COMPARABLE_KEYS):
-        sin_historial = t("entreno_sesion.sin_historial", tipo=tipo_label)
+        sin_historial = t("entreno_sesion.sin_historial", tipo=tipo_sin_historial)
+    elif tipo_comp and any(f["habitual"] for f in figuras):
+        comparacion_titulo = t("entreno_sesion.comparacion_titulo", tipo=tipo_comp)
 
     es_fuerza = a.get("type") == "strength_training"
     sets = entreno_sesion.series(conn, person_id, a["sets_source"], a["sets_source_id"]) if es_fuerza else []
@@ -223,6 +290,7 @@ def entreno_sesion_view(day: str, source_id: str, person_id: int = Depends(ident
         "entreno_sesion.html", t=t, tab="today", day=d.isoformat(), turnos=turnos_on,
         nombre=_nombre(t, a), tipo_label=tipo_label, date_long=t.long_date(d),
         detalle=_detalle_cabecera(t, a), figuras=figuras, sin_historial=sin_historial,
+        comparacion_titulo=comparacion_titulo,
         es_fuerza=es_fuerza, sets=_series_ctx(t, sets, curva_ctx) if es_fuerza else [],
         pulso_svg=_curva_svg(t, sets, curva_ctx) if curva_ctx is not None else None,
         pulso_pendiente=t("entreno_sesion.curva_pendiente"),

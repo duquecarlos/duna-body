@@ -12,6 +12,7 @@ things, through the functions body/db.py already has -- no new db function, no s
 from __future__ import annotations
 
 import statistics
+import unicodedata
 from datetime import datetime, timedelta
 
 from . import db
@@ -21,6 +22,20 @@ from . import db
 HISTORIAL_N = 10
 HISTORIAL_MIN = 3
 COMPARABLE_KEYS = ("avg_hr", "max_hr", "calories")
+
+# BODY-ENTRENO-VISTA-SESION-1-C ruling 4: Garmin's own "other" type is itself a known, labelled
+# bucket (activity.type.other -- "Otros"/"Other"), not the generic-code fallback (activity.generic,
+# a raw type body/history.py's KNOWN_ACTIVITY_TYPES has never heard of). A session typed "other"
+# compares only against the person's OTHER sessions that carry the SAME name.
+TIPO_GENERICO = "other"
+
+
+def _normaliza_nombre(nombre: str | None) -> str:
+    """Case- and accent-insensitive fold for ruling 4's "same name" grouping -- NFKD strips each
+    accent to a separate combining mark, which the ascii encode then drops."""
+    if not nombre:
+        return ""
+    return unicodedata.normalize("NFKD", nombre).encode("ascii", "ignore").decode().casefold()
 
 
 def actividad(conn, person_id: int, day: str, source_id: str) -> dict | None:
@@ -47,14 +62,27 @@ def comparaciones(conn, person_id: int, a: dict) -> dict:
     """Ruling 2: {"n": how many of the last 10 other sessions of this type were found (capped at
     HISTORIAL_N), "valores": {key: median or None}} -- the SAME 10 sessions back every key, each
     counting only the sessions among them that actually carry that figure. {} outright for an
-    activity with no type (a manual session the watch never recorded one for)."""
+    activity with no type (a manual session the watch never recorded one for).
+
+    Ruling 4: when `a`'s own type is Garmin's generic "other" bucket, the 10 sessions are drawn
+    from the person's "other" sessions that carry the SAME name (case/accent-insensitive) --
+    "other" alone groups unrelated sports (a basketball game with a yoga class) that happen to
+    share no real type code, which the median would otherwise blend into a meaningless figure."""
     tipo = a.get("type")
     if not tipo:
         return {"n": 0, "valores": {k: None for k in COMPARABLE_KEYS}}
-    filas = conn.execute(
-        "SELECT avg_hr, max_hr, calories FROM activity WHERE person_id = ? AND type = ? AND "
-        "NOT (source = ? AND source_id = ?) ORDER BY day DESC, start_local DESC LIMIT ?",
-        (person_id, tipo, a["source"], a["source_id"], HISTORIAL_N)).fetchall()
+    if tipo == TIPO_GENERICO:
+        nombre_norm = _normaliza_nombre(a.get("name"))
+        candidatas = conn.execute(
+            "SELECT avg_hr, max_hr, calories, name FROM activity WHERE person_id = ? AND type = ? AND "
+            "NOT (source = ? AND source_id = ?) ORDER BY day DESC, start_local DESC",
+            (person_id, tipo, a["source"], a["source_id"])).fetchall()
+        filas = [f for f in candidatas if _normaliza_nombre(f["name"]) == nombre_norm][:HISTORIAL_N]
+    else:
+        filas = conn.execute(
+            "SELECT avg_hr, max_hr, calories FROM activity WHERE person_id = ? AND type = ? AND "
+            "NOT (source = ? AND source_id = ?) ORDER BY day DESC, start_local DESC LIMIT ?",
+            (person_id, tipo, a["source"], a["source_id"], HISTORIAL_N)).fetchall()
     valores = {}
     for k in COMPARABLE_KEYS:
         vals = [f[k] for f in filas if f[k] is not None]

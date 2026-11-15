@@ -380,6 +380,12 @@ svg.barra{display:block;width:100%;height:6px;margin-top:4px}
 .legend i.legend-line{height:3px;vertical-align:3px}
 .legend i.legend-dash{background:none;border-top:1.6px dashed var(--muted);height:0;width:12px}
 .legend i.legend-today{background:var(--line);width:1px;height:12px}
+/* BODY-ENTRENO-VISTA-SESION-1-C ruling 1: the base `.legend i` rule (:196) sets no background, so
+   a chip with no other rule is invisible -- these two give the set/rest chips the same colour as
+   their own band (body.css ruling 2 below), the chip's own opacity left to that one `.hr-set`/
+   `.hr-rest` rule so a chip always reads exactly as its band does. */
+.legend i.hr-set{background:var(--body)}
+.legend i.hr-rest{background:var(--muted)}
 
 /* ---------- fixed data-series palette (BODY-ESTILOS-1): the only colours any template or any
    server-built SVG ever needed were var(--night), the 45%-mixed night tint, var(--body), var(--amber),
@@ -401,9 +407,15 @@ svg.barra{display:block;width:100%;height:6px;margin-top:4px}
    colour from here instead, never from a .c-* class. */
 .stroke-body{stroke:var(--body)}
 /* BODY-ENTRENO-VISTA-SESION-1: the HR curve's own set/rest shading -- a fixed opacity on the same
-   two palette colours above, never a var(...) string in markup. */
-.hr-set{fill:var(--body);opacity:.14}
-.hr-rest{fill:var(--muted);opacity:.12}
+   two palette colours above, never a var(...) string in markup.
+   BODY-ENTRENO-VISTA-SESION-1-C ruling 2: raised from .14/.12 -- too close to the plot background
+   to read in either theme (--card #FCFBF8 light / #1E1E1E dark). At .32/.20 a set band and a rest
+   band are each visible against --card and against EACH OTHER in both themes (--body #406F45
+   light / #7DB282 dark against --muted #6B6863 light / #A09D95 dark -- two different hues, not
+   just two shades of the same one), the set band stays the stronger of the two, and the curve's
+   own stroke-body line (full opacity) stays the most prominent mark on the chart. */
+.hr-set{fill:var(--body);opacity:.32}
+.hr-rest{fill:var(--muted);opacity:.20}
 
 /* ---------- cuerpo-vista (BODY-CUERPO-VISTA-1): one body view per main screen, mock round 2.
    `data-recorte` on the root picks the crop (Hoy shows the whole figure; Tendencias/Turnos crop to

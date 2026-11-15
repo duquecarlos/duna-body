@@ -13,9 +13,10 @@
 
 {% if figuras or sin_historial %}
 <div class="card">
+  {% if comparacion_titulo %}<p class="note mt-0">{{ comparacion_titulo }}</p>{% endif %}
   <ul class="list">
   {% for f in figuras %}
-    <li><span class="k">{{ f.label }}</span><br>{{ f.texto }}</li>
+    <li><span class="k">{{ f.label }}</span><br>{{ f.texto }}{% if f.habitual %}<br><span class="note">{{ f.habitual }}</span>{% endif %}</li>
   {% endfor %}
   </ul>
   {% if sin_historial %}<p class="note m-0">{{ sin_historial }}</p>{% endif %}
@@ -38,7 +39,7 @@
   <li class="{{ 'set-excluida' if s.excluida else '' }}">
     <div>
       <div class="row flex-wrap gap-8">
-        <span>{% if s.reps %}{{ s.reps }} · {% endif %}{% if s.peso %}{{ s.peso }}{% endif %}</span>
+        <span>{% if s.detalle %}{{ s.detalle }}{% endif %}</span>
         {% if s.corregida %}<span class="chip ok">{{ t('entreno_sesion.set_corregida') }}</span>{% endif %}
         {% if s.excluida %}<span class="chip">{{ t('entreno_sesion.set_excluida') }}</span>{% endif %}
       </div>

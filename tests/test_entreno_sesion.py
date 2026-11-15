@@ -19,6 +19,7 @@ Invented fixtures only, never a real figure.
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 import unittest
 from datetime import date, timedelta
@@ -67,12 +68,16 @@ def _activity(conn, person_id: int, source_id: str, day: str, start_local: str |
     conn.commit()
 
 
+def _load_lang(lang: str) -> dict:
+    return json.loads((I18N_DIR / f"{lang}.json").read_text(encoding="utf-8"))
+
+
 def _es(key: str) -> str:
-    return json.loads((I18N_DIR / "es.json").read_text(encoding="utf-8"))[key]
+    return _load_lang("es")[key]
 
 
 def _en(key: str) -> str:
-    return json.loads((I18N_DIR / "en.json").read_text(encoding="utf-8"))[key]
+    return _load_lang("en")[key]
 
 
 class NotFoundTest(unittest.TestCase):
@@ -135,10 +140,16 @@ class HeaderAndFiguresTest(unittest.TestCase):
         r = client.get("/day/2026-11-10/entreno/today")
         t_es = T("es")
         bpm = t_es("unit.bpm")
-        esperado = _es("entreno_sesion.comparacion").format(
-            valor=f"{t_es.num(150)} {bpm}", tipo=t_es("activity.type.running"),
-            habitual=f"{t_es.num(144)} {bpm}")
-        self.assertIn(esperado, r.text)
+        titulo = _es("entreno_sesion.comparacion_titulo").format(tipo=t_es("activity.type.running").lower())
+        self.assertIn(titulo, r.text)
+        habitual = _es("entreno_sesion.habitual").format(habitual=f"{t_es.num(144)} {bpm}")
+        self.assertIn(habitual, r.text)
+
+    def test_the_comparison_caption_is_said_once_not_once_per_tile(self):
+        r = client.get("/day/2026-11-10/entreno/today")
+        t_es = T("es")
+        titulo = _es("entreno_sesion.comparacion_titulo").format(tipo=t_es("activity.type.running").lower())
+        self.assertEqual(r.text.count(titulo), 1)
 
     def test_english_uses_the_english_comparison_sentence(self):
         self.conn.execute("UPDATE person SET language = 'en' WHERE id = 1")
@@ -146,10 +157,10 @@ class HeaderAndFiguresTest(unittest.TestCase):
         r = client.get("/day/2026-11-10/entreno/today")
         t_en = T("en")
         bpm = t_en("unit.bpm")
-        esperado = _en("entreno_sesion.comparacion").format(
-            valor=f"{t_en.num(150)} {bpm}", tipo=t_en("activity.type.running"),
-            habitual=f"{t_en.num(144)} {bpm}")
-        self.assertIn(esperado, r.text)
+        titulo = _en("entreno_sesion.comparacion_titulo").format(tipo=t_en("activity.type.running"))
+        self.assertIn(titulo, r.text)
+        habitual = _en("entreno_sesion.habitual").format(habitual=f"{t_en.num(144)} {bpm}")
+        self.assertIn(habitual, r.text)
 
     def test_calories_with_no_comparable_figure_in_history_shows_the_bare_value(self):
         # The history above never carries distance -- avg_hr/max_hr/calories all do, so instead
@@ -177,7 +188,7 @@ class SinHistorialTest(unittest.TestCase):
         r = client.get("/day/2026-11-10/entreno/today")
         t_es = T("es")
         self.assertIn(_es("entreno_sesion.sin_historial").format(tipo=t_es("activity.type.cycling")), r.text)
-        self.assertNotIn("tu habitual en", r.text)
+        self.assertNotIn("habitual", r.text)
 
     def test_a_manual_session_with_no_type_shows_no_comparison_and_no_sin_historial(self):
         source_id = db.create_manual_session(self.conn, 1, "2026-11-11", "2026-11-11T08:00:00", "A mano",
@@ -225,8 +236,42 @@ class StrengthSetsTest(unittest.TestCase):
     def test_sets_listed_in_order_exercise_reps_weight(self):
         r = client.get(f"/day/{self.DAY}/entreno/s1")
         self.assertEqual(r.status_code, 200)
-        self.assertIn("press banca", r.text)
-        self.assertIn("sentadilla", r.text)
+        # BODY-ENTRENO-VISTA-SESION-1-C ruling 6: capital first letter, display only.
+        self.assertIn("Press banca", r.text)
+        self.assertIn("Sentadilla", r.text)
+        self.assertNotIn("press banca", r.text)
+
+    def test_a_set_reads_reps_times_weight_with_no_trailing_zero_on_a_whole_value(self):
+        r = client.get(f"/day/{self.DAY}/entreno/s1")
+        t_es = T("es")
+        # Set 3 (uncorrected, unexcluded): 8 reps, 40 kg -- a whole value, never "40,0 kg".
+        self.assertIn(f"{t_es.num(8)} × {t_es.num(40)} kg", r.text)
+        self.assertNotIn("40,0", r.text)
+        # Set 5: 10 reps, 60 kg.
+        self.assertIn(f"{t_es.num(10)} × {t_es.num(60)} kg", r.text)
+        self.assertNotIn("60,0", r.text)
+
+    def test_a_fractional_weight_keeps_its_one_decimal(self):
+        _activity(self.conn, 1, "s3", self.DAY, f"{self.DAY}T20:00:00", "strength_training", None, 60.0)
+        db.save_exercise_sets(self.conn, 1, "garmin", "s3", [
+            _watch_set("curl", 10, 12.5, f"{self.DAY}T20:00:00", 40.0),
+        ])
+        r = client.get(f"/day/{self.DAY}/entreno/s3")
+        t_es = T("es")
+        self.assertIn(f"{t_es.num(10)} × {t_es.num(12.5, 1)} kg", r.text)
+
+    def test_a_bodyweight_set_with_no_weight_reads_reps_only(self):
+        # A fresh activity/source_id -- s1's own slot 1 was corrected in setUp, and a correction's
+        # fields survive a later save_exercise_sets() re-read (BODY-ENTRENO-1-INV Q2), so reusing
+        # s1 here would still show the PERSON's earlier correction, not this watch read.
+        _activity(self.conn, 1, "s2", self.DAY, f"{self.DAY}T19:00:00", "strength_training", None, 60.0)
+        db.save_exercise_sets(self.conn, 1, "garmin", "s2", [
+            _watch_set("plancha", 12, None, f"{self.DAY}T19:00:00", 40.0),
+        ])
+        r = client.get(f"/day/{self.DAY}/entreno/s2")
+        t_es = T("es")
+        self.assertIn(_es("entreno_sesion.reps_solo").format(n=t_es.num(12)), r.text)
+        self.assertNotIn("×", r.text)
 
     def test_corrected_set_shows_the_persons_value_and_is_marked(self):
         r = client.get(f"/day/{self.DAY}/entreno/s1")
@@ -328,17 +373,96 @@ class CurvaTest(unittest.TestCase):
         self.assertNotIn('class="chart-svg"', r.text)
 
 
+class LegendCssTest(unittest.TestCase):
+    """BODY-ENTRENO-VISTA-SESION-1-C ruling 1, 2: the legend chips get a background of their own
+    (the base `.legend i` rule at body.css:196 sets none), and the set/rest bands are raised
+    enough to read against the card in both themes."""
+
+    CSS = (ROOT / "body" / "static" / "body.css").read_text(encoding="utf-8")
+
+    def test_legend_chips_have_a_compound_rule_setting_a_background(self):
+        self.assertRegex(self.CSS, r"\.legend\s+i\.hr-set\s*\{[^}]*background\s*:")
+        self.assertRegex(self.CSS, r"\.legend\s+i\.hr-rest\s*\{[^}]*background\s*:")
+
+    def test_band_opacities_were_raised_and_the_set_band_stays_stronger(self):
+        set_op = float(re.search(r"(?<!i)\.hr-set\{[^}]*opacity\s*:\s*([\d.]+)", self.CSS).group(1))
+        rest_op = float(re.search(r"(?<!i)\.hr-rest\{[^}]*opacity\s*:\s*([\d.]+)", self.CSS).group(1))
+        self.assertGreater(set_op, 0.14)   # above BODY-ENTRENO-VISTA-SESION-1's original .14
+        self.assertGreater(rest_op, 0.12)  # above BODY-ENTRENO-VISTA-SESION-1's original .12
+        self.assertGreater(set_op, rest_op)  # the set band stays the stronger of the two
+
+
+class GenericTypeTest(unittest.TestCase):
+    """BODY-ENTRENO-VISTA-SESION-1-C ruling 4: Garmin's generic "other" bucket uses the session's
+    own name instead of the "Otros"/"Other" label."""
+
+    def setUp(self):
+        self.conn = _reset_db(self, "generico.db")
+        _as(self, 1)
+
+    def test_subtitle_shows_the_date_only_never_the_generic_label(self):
+        _activity(self.conn, 1, "basket", "2026-11-14", "2026-11-14T18:00:00", "other", "Baloncesto", 3000.0,
+                  avg_hr=128, max_hr=162, calories=410)
+        r = client.get("/day/2026-11-14/entreno/basket")
+        t_es = T("es")
+        self.assertNotIn(t_es("activity.type.other"), r.text)
+
+    def test_a_named_known_type_keeps_todays_subtitle_behaviour(self):
+        _activity(self.conn, 1, "run1", "2026-11-14", "2026-11-14T18:00:00", "running", None, 1800.0)
+        r = client.get("/day/2026-11-14/entreno/run1")
+        t_es = T("es")
+        self.assertIn(t_es("activity.type.running"), r.text)
+
+    def test_comparison_group_is_the_same_generic_type_with_the_same_name_case_and_accent_insensitive(self):
+        # Three prior "Baloncesto"/"BALONCESTO " sessions (case/accent-insensitive match) and one
+        # prior "Yoga"-named "other" session that must NOT be pulled into the median.
+        for i, (day, nombre, hr) in enumerate((
+                ("2026-11-01", "baloncesto", 120), ("2026-11-03", "BALONCESTO", 124),
+                ("2026-11-05", "Balóncesto", 128), ("2026-11-07", "Yoga", 90))):
+            _activity(self.conn, 1, f"h{i}", day, f"{day}T18:00:00", "other", nombre, 3000.0, avg_hr=hr)
+        _activity(self.conn, 1, "basket", "2026-11-14", "2026-11-14T18:00:00", "other", "Baloncesto", 3000.0,
+                  avg_hr=130, max_hr=162, calories=410)
+        r = client.get("/day/2026-11-14/entreno/basket")
+        t_es = T("es")
+        bpm = t_es("unit.bpm")
+        titulo = _es("entreno_sesion.comparacion_titulo").format(tipo="baloncesto")
+        self.assertIn(titulo, r.text)
+        habitual = _es("entreno_sesion.habitual").format(habitual=f"{t_es.num(124)} {bpm}")  # median 120/124/128
+        self.assertIn(habitual, r.text)
+
+    def test_not_enough_same_named_sessions_shows_the_honest_line_with_the_name_not_otros(self):
+        _activity(self.conn, 1, "basket", "2026-11-14", "2026-11-14T18:00:00", "other", "Baloncesto", 3000.0,
+                  avg_hr=130, max_hr=162, calories=410)
+        r = client.get("/day/2026-11-14/entreno/basket")
+        t_es = T("es")
+        self.assertIn(_es("entreno_sesion.sin_historial").format(tipo="baloncesto"), r.text)
+        self.assertNotIn(t_es("activity.type.other"), r.text)
+
+
 class PinnedCopyTest(unittest.TestCase):
-    """Ruling 5: the exact given copy for the comparison and not-enough-history sentences."""
+    """BODY-ENTRENO-VISTA-SESION-1-C ruling 3, 5: the exact given copy for the comparison caption,
+    the per-tile "habitual" line, the not-enough-history sentence and the curve's honest line."""
 
     def test_spanish_copy(self):
-        self.assertEqual(_es("entreno_sesion.comparacion"), "{valor} — tu habitual en {tipo}: {habitual}")
+        self.assertEqual(_es("entreno_sesion.comparacion_titulo"), "Frente a tus sesiones habituales de {tipo}")
+        self.assertEqual(_es("entreno_sesion.habitual"), "habitual: {habitual}")
         self.assertEqual(_es("entreno_sesion.sin_historial"),
                          "Aún no hay suficientes sesiones de {tipo} para comparar.")
+        self.assertEqual(_es("entreno_sesion.curva_pendiente"),
+                         "Body aún no tiene la curva de pulso de esta sesión.")
+        self.assertNotIn("permiso", _es("entreno_sesion.curva_pendiente"))
 
     def test_english_copy(self):
-        self.assertEqual(_en("entreno_sesion.comparacion"), "{valor} — your usual for {tipo}: {habitual}")
+        self.assertEqual(_en("entreno_sesion.comparacion_titulo"), "Compared with your usual {tipo} sessions")
+        self.assertEqual(_en("entreno_sesion.habitual"), "usual: {habitual}")
         self.assertEqual(_en("entreno_sesion.sin_historial"), "Not enough {tipo} sessions yet to compare.")
+        self.assertEqual(_en("entreno_sesion.curva_pendiente"),
+                         "Body doesn't have this session's heart-rate curve yet.")
+        self.assertNotIn("permission", _en("entreno_sesion.curva_pendiente"))
+
+    def test_the_retired_key_is_gone_from_both_languages(self):
+        self.assertNotIn("entreno_sesion.comparacion", _load_lang("es"))
+        self.assertNotIn("entreno_sesion.comparacion", _load_lang("en"))
 
 
 class DemoBranchesTest(unittest.TestCase):
