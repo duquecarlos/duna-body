@@ -21591,3 +21591,128 @@ change, and no customer-facing bytes added or changed (ruling 4 above). Gate gre
 
 -- merged eb2647f383535c62d50eebb484d753edaed1a2de
 
+## BODY-HOY-ESCRITORIO-2 -- the block below .hoy-top follows the mock's desktop order; `.cols-hoy`
+retired (2026-11-15)
+
+**Measured gap.** After BODY-HOY-ESCRITORIO-1 merged (`f647768`), the mock (`research/mock-r2/
+Today.dc.html`, 1440px) put the row of six metric tiles (sleep, HRV, resting pulse, Body Battery,
+stress, steps) directly under the top row on desktop, in the first view -- then "Body noticed"
+beside "Night week ahead" as two columns, then the eating window, then the "Tell Body" row. The
+build (`body/templates/today.html` on `f647768`) instead rendered, after the "Tell Body" row and
+"Body noticed", a `.grid2` tile block inside `.cols-hoy` -- a single-column wrapper that put every
+card (talk, noticed, tiles, food, nutrient goals, night week) one under another, far below the
+fold, with no desktop treatment of its own. `.cols-hoy`'s own grid rule (`body/static/body.css`,
+pre-slice line 67, `repeat(auto-fit,minmax(280px,1fr))`, min-width:1024px) had been dead since the
+figure moved into `.hoy-top` (BODY-HOY-ESCRITORIO-1): with one child div inside it, auto-fit never
+had a second item to place beside the first.
+
+**Rulings 1-2, as built.** The DOM stays in the phone order (ruling 2: `talk, noticed, tiles, food,
+[nutrient goals,] week`, unchanged -- BoardOrderTest's marks in `tests/test_mock_r2_hoy.py` needed
+no edit at all, confirmed by re-running that file unmodified). `.cols-hoy` is retired and its single
+wrapper `<div>` removed; its direct children now sit straight inside a new `.hoy-abajo`
+(`today.html:112`), each carrying its own class for CSS to find: `.hoy-noticed` (`:116`, the "Body
+noticed" card, only when `noche_inusual`), `.grid2.hoy-tiles` (`:139`, the six tiles -- `.grid2`
+itself is untouched since `day.html`/`history.html`/`trends.html` also use it, so the breakpoints
+below are scoped to the new `.hoy-tiles` class, not `.grid2`), `.more.hoy-tiles-link` (`:150`, the
+existing "ver el día" link, kept directly after the tiles -- ruling 1's "any other card ... keeps
+its place relative to its neighbour"), `.hoy-comida` (`:152`, the eating window), `.hoy-nutriente`
+(`:169`, the nutrient-goal lines, only when `objetivos_nutriente` -- also kept right after its
+neighbour, the eating window), `.hoy-semana` (`:186`, "Night week ahead", only when
+`semana_nocturna`). `.tellbody` (`:113`) needed no new class -- it is already unique to this one
+row, so BODY-MOCK-R2-HOY-1's own exact-string tests on `'<a class="tellbody taplink" href=
+"#asis-btn">'` stayed valid untouched. `hogar_compartido` and `comida_compartida_pendientes`
+(`today.html:195-234`, outside `.hoy-abajo`, both only sometimes present) are untouched -- they sit
+after the whole `.hoy-abajo` block closes on every width, so on desktop they still render right
+after whichever card ends up visually last inside it (now the "Tell Body" row, ruling 1's own `(d)`)
+and on phone right after "Night week ahead" as before; their "neighbour" (the box that renders
+immediately before them) stays the same relationship on both widths.
+
+From `min-width:768px` (`body.css:484`), `.hoy-abajo` becomes a wrapping flex row
+(`display:flex;flex-direction:row;flex-wrap:wrap;gap:16px`, `:485`), and five children get
+`flex:1 1 100%` (their own full-width row each -- `.hoy-tiles`, `.hoy-tiles-link`, `.hoy-comida`,
+`.hoy-nutriente`, `.tellbody`, `:487`) while `.hoy-noticed`/`.hoy-semana` get `flex:1 1 280px`
+(`:488`) so a flex-wrap row holds exactly two of them side by side. `order` places the four desktop
+steps without touching the DOM: tiles+link `order:1` (`:489`), noticed/week `order:2` (`:490`),
+eating window `order:3` (`:491`), nutrient goals `order:4` (`:492`, kept right after the eating
+window, its DOM neighbour), "Tell Body" `order:5` (`:493`, last on desktop -- first on phone, where
+none of this applies below 768px and the plain DOM/block flow governs). A lone noticed or week card
+needs no separate "solo" rule: with no sibling sharing its `order` value on its own line, a
+flex-grow:1 item is the only thing on that line and grows to fill it -- the row-span ruling 1(b)
+asks for falls out of flex-wrap for free. `.hoy-tiles` gets its own column count per breakpoint,
+never touching the shared `.grid2`: 3 across from 768px (`body.css:494`, inside the same
+min-width:768px block), 6 across from 1024px (`body.css:78`, inside the EXISTING min-width:1024px
+block -- placed there, rather than a new query, because its own Lectura override right below it
+(`body.css:79`, `[data-ancho="lectura"] .hoy-tiles{grid-template-columns:repeat(3,...)}`) carries
+`[data-ancho]`, which `tests/test_ancho_completo.py`'s `ColsAndDataAnchoStayInThe1024QueryTest`
+sweeps wherever it sits and requires inside that block -- consistent with Lectura's own 820px wrap
+cap (`body.css:65`) only ever applying from 1024px in the first place).
+
+**Ruling 3, as built -- the DOM choice and why.** Every card in this region is its own independent
+region: each opens with its own `.q` heading or figure, and no sentence continues from one card
+into the next (confirmed by reading `today.html:112-193` -- "Body noticed"'s own paragraph, the
+tiles' own labels, the eating window's own figure, "Night week ahead"'s own dates, the "Tell Body"
+link, each self-contained). So the DOM stays in the phone order (option one of ruling 3) and CSS
+`order`/`flex` places the four desktop steps -- a screen reader or keyboard-only visitor always
+gets the phone order (talk, noticed, tiles, food, [nutrient goals,] week), which stays a sensible
+reading order on every width (WCAG 1.3.2), and `BoardOrderTest` needed no DOM-truth rewrite.
+
+**Ruling 4, as built.** Lectura's own 820px wrap cap (`body.css:65`, untouched) still fits two
+280px-basis flex-grow items plus the 16px gap (576px < 820px), so "Body noticed"/"Night week ahead"
+keep two columns under Lectura with no extra CSS. The tile row's own Lectura override
+(`body.css:79`, three across) replaces what `.cols-hoy`'s generic one-column collapse used to sit
+in for Hoy (`body.css`'s pre-slice line 73 list, `[data-ancho="lectura"] .cols-hoy,...`) -- `.cols-
+hoy` no longer exists, so per the spec's own ruling 4 this is the rule's named replacement, not a
+silent drop; the comma list at `body.css:72` lost its `.cols-hoy` entry and now names only
+`.cols-tendencias`/`.cols-metas`/`.cols-turnos`/`.cols-historia`.
+
+**Out-of-touches census test, in touches, updated to the new truth (not loosened).**
+`tests/test_ancho_completo.py`'s `_COLS_BY_SCREEN` dict (BODY-ANCHO-COMPLETO-1) mapped
+`"today.html": "cols-hoy"`; since `.cols-hoy` is retired and Hoy's block below `.hoy-top` now has
+its own bespoke order/flex layout instead of the generic auto-fit grid every other screen in that
+dict still uses, the entry is removed (4 screens now, `test_five_screens_listed` renamed
+`test_four_screens_listed`, asserting 4) and the dict's own comment records why.
+
+**Tests added**, `tests/test_hoy_escritorio.py`: `HoyAbajoBlockMarkupTest` (6 tests -- `.cols-hoy`
+gone/`.hoy-abajo` present, every optional card's own class rendered with a demo-seeded person who
+has all three optional cards at once, every card rendered exactly once, the "Tell Body" row's exact
+markup unchanged, the phone DOM order including the two extra optional cards) and
+`HoyAbajoBlockCssTest` (9 tests -- the old rule's removal, the flex row sitting inside the 768px
+query, 3-across/6-across/Lectura-3-across for `.hoy-tiles`, the four `order` values, the
+noticed/week 280px pairing, the five 100%-basis rows, the untouched Lectura wrap cap). No change was
+needed in `tests/test_accesibilidad.py`, `tests/test_seguridad.py` or `tests/test_rendimiento.py`
+(no route logic touched, so `/`'s statement count is unchanged; no inline style or script added) --
+all three ran targeted and green, listed in `touches:` only because the spec could not know in
+advance whether this slice's edits would require them.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry). Exact
+command: `.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 9 sequential chunks of
+the same `tests/test_*.py` modules in alphabetical order (the same set `discover` would walk, ~20
+modules each), each in the foreground:
+
+    chunk 0 (test_accesibilidad..test_baselines_lote):            Ran 354 tests, OK (skipped=1)
+    chunk 1 (test_borrar_reauth..test_entreno_numeros):            Ran 489 tests, OK
+    chunk 2 (test_entreno_racha..test_garmin_estado):              Ran 275 tests, OK
+    chunk 3 (test_garmin_host..test_hoy_escritorio):               Ran 572 tests, OK
+    chunk 4 (test_hoy_turno..test_noche_inusual):                  Ran 401 tests, OK
+    chunk 5 (test_nutriente_objetivo..test_propuesta_vigencia):    Ran 507 tests, OK
+    chunk 6 (test_propuestas_tabla..test_series_unidad):           Ran 301 tests, OK
+    chunk 7 (test_sesion_conexion_1..test_turnos_opcional_5):      Ran 474 tests, OK
+    chunk 8 (test_turnos_perfil..test_web_entry):                  Ran 188 tests, OK
+
+Sum: 3561 run, 0 failures, 0 errors, 1 skipped (pre-existing, POSIX-only). Reconciled against an
+independent collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')
+.countTestCases()`): 3561 -- matching exactly. **GREEN**, one pass, no fix needed. No floor was
+supplied for this slice, so this is the first measurement.
+
+**Merge policy, this slice's own diff** (`body/templates/today.html`, `body/static/body.css`,
+`tests/test_hoy_escritorio.py`, `tests/test_ancho_completo.py`). Checked against the actual diff: no
+schema or migration change, no cross-repo contract or DTO change. Customer-facing bytes DID change
+-- the whole point of this slice is the rendered desktop/tablet layout of Hoy's block below
+`.hoy-top`. This trips merge policy A's customer-bytes condition, so this slice stops before the
+merge with `AWAITING_APPROVAL`, on the branch, tree clean, for the orchestrator to look at 1568,
+1024, 800 and 375px before merging.
+
+**Open follow-ups, not this slice's to do:** none found.
+
+-- not merged, AWAITING_APPROVAL
+
