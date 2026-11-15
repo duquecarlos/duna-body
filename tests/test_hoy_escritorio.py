@@ -212,11 +212,12 @@ class HoyTopBlockCssTest(unittest.TestCase):
     def test_custom_properties_defined(self):
         self.assertIn("--hoy-figura-min:280px", self.compact)
         self.assertIn("--hoy-figura-max:400px", self.compact)
+        self.assertIn("--hoy-figura-parte:36%", self.compact)
 
     def test_hoy_top_grid_uses_the_named_properties_not_magic_numbers(self):
         self.assertIn(
             ".hoy-top{display:grid;grid-template-columns:minmax(0,1fr)"
-            "minmax(var(--hoy-figura-min),var(--hoy-figura-max))", self.compact)
+            "clamp(var(--hoy-figura-min),var(--hoy-figura-parte),var(--hoy-figura-max))", self.compact)
 
     def test_grid_sits_inside_the_768_query(self):
         idx = self.compact.index(".hoy-top{display:grid")

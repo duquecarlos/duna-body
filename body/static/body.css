@@ -27,7 +27,7 @@
   --est:#8A6A2E; --focus:#3E5A73; --rail:#121212;
   /* BODY-HOY-ESCRITORIO-1 ruling 1: Hoy's own top-row right column width, named once rather than
      repeated as a literal 280px/400px wherever the grid or its figure cap need it. */
-  --hoy-figura-min:280px; --hoy-figura-max:400px;
+  --hoy-figura-min:280px; --hoy-figura-max:400px; --hoy-figura-parte:36%;
   color-scheme: light;
 }
 :root[data-theme="dark"]{
@@ -453,7 +453,7 @@ svg.barra{display:block;width:100%;height:6px;margin-top:4px}
    figure's own aspect ratio (`.hoy-figura`'s cap below). One DOM order, never the figure rendered
    twice. ---------- */
 @media (min-width:768px){
-  .hoy-top{display:grid;grid-template-columns:minmax(0,1fr) minmax(var(--hoy-figura-min),var(--hoy-figura-max));gap:16px;align-items:start}
+  .hoy-top{display:grid;grid-template-columns:minmax(0,1fr) clamp(var(--hoy-figura-min),var(--hoy-figura-parte),var(--hoy-figura-max));gap:16px;align-items:start}
   .hoy-figura .cuerpo-vista-track{max-height:min(78vh,720px)}
 }
 /* Phone-only (BODY-HOY-ESCRITORIO-1-C): scoped by max-width, below the >=768px block above, so the
