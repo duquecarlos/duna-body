@@ -26,8 +26,9 @@ from . import cuenta, entorno, garmin_cuenta, listen
 from .identity import ConsentRequired, DispositivoNoAutorizado, DispositivoSinAlcance, LoginRequired
 from .request_log import RequestLogMiddleware
 from .seguridad import SeguridadMiddleware
-from .rutas import (ajustes, asistente, ayuda, comun, dispositivos, experimentos, garmin, historial, hoy,
-                     mcp_remoto, metas, privacidad as privacidad_rutas, pwa, sesion, tendencias, turnos)
+from .rutas import (ajustes, asistente, ayuda, comun, dispositivos, entreno_sesion, experimentos, garmin,
+                     historial, hoy, mcp_remoto, metas, privacidad as privacidad_rutas, pwa, sesion, tendencias,
+                     turnos)
 
 HERE = Path(__file__).parent
 
@@ -127,6 +128,7 @@ app.include_router(metas.router)
 app.include_router(experimentos.router)
 app.include_router(turnos.router)
 app.include_router(hoy.router)
+app.include_router(entreno_sesion.router)
 app.include_router(tendencias.router)
 app.include_router(historial.router)
 app.include_router(sesion.router)

@@ -22247,3 +22247,442 @@ authored here). All three merge-policy-A conditions clear.
 
 -- merged 539d30f5c80692f106e198efa3f8c5a6e65c997b
 
+## BODY-ENTRENO-VISTA-SESION-1 -- Día's own per-session detail screen, GET /day/{day}/entreno/{source_id} (2026-11-15)
+
+**The screen.** Each activity row on Día now links to its own page: header (name, type, day, start-end, duration,
+distance -- `body/rutas/entreno_sesion.py:59` `_detalle_cabecera`), avg/max HR and calories each beside the
+person's own median of the last 10 OTHER sessions of that type (`body/entreno_sesion.py:46` `comparaciones`,
+`HISTORIAL_MIN = 3`; fewer than 3 -> ruling 5's exact "not enough history" line, never a guess -- `_figura_ctx` at
+`body/rutas/entreno_sesion.py:71`), the recovery line Día already shows, strength sessions' own sets in order with
+the rest between them (`body/entreno_sesion.py:65` `series()`: the gap between active slots' own start times, NEVER
+a watch rest-slot's own duration -- `tests/test_entreno_sesion.py::StrengthSetsTest::test_rest_is_the_real_gap_
+between_active_sets_not_the_watch_rest_slots_own_duration` proves this with a watch rest slot whose own stored
+duration is deliberately wrong against the true gap), the person's correction shown in place of Garmin's own value
+when present (a chip, `set-excluida`/`chip ok` in `body/templates/entreno_sesion.html:42-43`), an excluded set
+struck and labelled but still listed and still counted for rest timing, and -- only where the day's own per-minute
+heart-rate series is already stored -- the curve across the session (`body/rutas/entreno_sesion.py:141`
+`_curva_svg`, inline SVG, no inline styling, every colour a fixed class: `.hr-set`/`.hr-rest` in
+`body/static/body.css`) with each set's window shaded and each rest marked, each set's own peak and each rest's own
+HR drop below it; where the series is not stored (or none of it falls inside the session's own window), ruling 5's
+exact "coming soon" line, never an empty chart (`tests/test_entreno_sesion.py::CurvaTest`, three cases: no series at
+all, series stored but outside the window, series covering the window).
+
+**Ruling 1, person-scoped.** `entreno_sesion.actividad()` (`body/entreno_sesion.py:26`) resolves `source_id` only
+among the signed-in person's own activities for that exact day; another person's `source_id`, or this person's own
+`source_id` under the wrong day, both 404 (`body/rutas/entreno_sesion.py:193-202`). Added to
+`tests/test_persona_fuga.py`'s cross-person sweep: `_seed_person`'s own `act_id` is now tag-specific (A and B never
+share the literal activity id this route resolves off the URL alone), and `_sweep_routes_as` checks own-day-own-id
+(200), the other person's own id on the SAME day (404), and this person's own id on the WRONG day (404).
+
+**Ruling 4's production fix.** `body/entreno_sesion.py`'s `curva()` originally reported a rest's own HR drop as
+`descanso_inicio - descanso_fin` even when the series caught only ONE sample inside that rest window (so both ends
+were literally the same sample) -- a flat, misleading zero where the honest answer is "not enough samples to tell."
+Fixed (`body/entreno_sesion.py:140-144`) to require two DISTINCT samples inside a rest window before reporting a
+drop at all.
+
+**Ruling 6, the demo.** `body/demo.py` gains a dedicated strength session TODAY (`_seed_entreno_vista_sesion_
+actividades`/`_seed_entreno_vista_sesion_detalle`, two exercises -- press banca/sentadilla -- 8 sets, real rest
+gaps 75-150s, set 2 corrected (reps 8->6), set 7 excluded) with a per-minute heart-rate series built by
+keyframe interpolation at real clock-minute resolution (`_curva_sesion_fuerza`, matching
+`garmin_adapter._utc_to_local_iso`'s own `timespec="minutes"` truncation on read -- a finer step silently collapses
+on read-back, diagnosed this slice with a scratch script before the fix), and a basketball session YESTERDAY with
+no series at all, replacing whatever `_day_activity`'s own random draw had put on either day. Demo URLs (today
+2026-11-15, yesterday 2026-11-14 at the time this slice ran): `/day/2026-11-15/entreno/demo-2026-11-15-1` shows the
+curve branch; `/day/2026-11-14/entreno/demo-2026-11-14-1` shows the honest pending-line branch -- both confirmed by
+`tests/test_entreno_sesion.py::DemoBranchesTest` calling the real route after a real `demo._seed()` run, not by
+inspection. `_seed_recuperacion`'s and `_seed_turno_fc`'s own generic curve-filling models were given an
+`excluir_dias` parameter each so neither ever overwrites or reaches this hand-placed (or deliberately absent) pair.
+
+**Ruling 5, strings (es/en, exact, both through `T`):**
+
+| Key | es | en |
+|---|---|---|
+| `entreno_sesion.comparacion` | `{valor} — tu habitual en {tipo}: {habitual}` | `{valor} — your usual for {tipo}: {habitual}` |
+| `entreno_sesion.sin_historial` | `Aún no hay suficientes sesiones de {tipo} para comparar.` | `Not enough {tipo} sessions yet to compare.` |
+| `entreno_sesion.curva_pendiente` | `La curva de pulso de cada sesión llega pronto: necesita tu permiso para guardar el pulso de cada entreno.` | `The heart-rate curve for each session is coming soon: it needs your permission to keep each workout's heart rate.` |
+
+Plus 15 further keys (`volver_dia`, `avg_hr`, `max_hr`, `calorias`, `sets_titulo`, `set_corregida`, `set_excluida`,
+`descanso`, `pulso_titulo`, `pulso_aria`, `pico`, `caida`, `leyenda_pulso`, `leyenda_serie`, `leyenda_descanso`) --
+all literal, non-dynamic calls, so `tests/test_i18n_paridad.py`'s own auto-scanner needed no manual entry.
+
+**Ruling 7, bounded.** Measured 12 SQL statements for the new route against `tests/test_rendimiento.py`'s own
+fixture (a scratch script using `tests/_rutas.py`'s `contar_sql()`); ceiling `ceil(12 * 1.3) = 16`, recorded in
+`_CEILINGS["/day/{day}/entreno/{source_id}"]`. `curva()`'s own rest/peak computation is the one documented forward
+pass over the series slice against the session's own chronologically-sorted windows (`body/entreno_sesion.py:124-
+138`).
+
+**Tests:** `tests/test_entreno_sesion.py`, new, 25 tests covering every ruling above (404s, header/figures, the
+comparison and no-history sentences in both languages, strength sets including the real-rest-gap and negative-gap-
+never-guessed cases, the curve's three branches with a peak and a two-sample drop, the pinned es/en copy, and the
+demo's own two sessions through the real route). `tests/test_persona_fuga.py`, `tests/test_web_entry.py`,
+`tests/test_rendimiento.py` updated as described above.
+
+**A second, small fix inside touches.** `_curva_svg`'s own docstring literally wrote the text "style=" to describe
+what it does NOT build; `tests/test_seguridad.py`'s `NoInlineStyleInPythonMarkupTest` scans every string constant
+under `body/` (docstrings included) for that exact substring, so it flagged the comment, not any markup assembly.
+Reworded to say the same thing without the literal substring, matching how every other module in this codebase
+already phrases the same rule. Committed separately (`2e3400e`), inside touches.
+
+**Commits:** `de7cbf6` (rulings 1-7, the whole feature -- see Deviation below), `2e3400e` (the docstring fix above).
+
+**Deviation from the work sequence's own three-commit split.** The dispatch's own work sequence asked for three
+separate commits (rulings 1-3,5-6; then ruling 4; then ruling 7), each with its own test run, before the gate.
+Measured: `body/entreno_sesion.py`, `body/rutas/entreno_sesion.py`, `body/templates/entreno_sesion.html` and
+`body/demo.py`'s new seeding functions are one small, tightly-coupled set of new code where ruling 4's curve is
+threaded through the SAME functions rulings 1-3's header/sets logic already uses at the route layer (`_series_ctx`,
+`_curva_svg`, the one route handler) -- splitting a commit mid-function would leave an intermediate commit that does
+not import or pass its own tests. Committed the whole feature together as one slice commit instead, plus the
+unrelated one-line fix above as a second commit.
+
+**The gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as 9 sequential alphabetical chunks of
+~20 dotted modules each, in the foreground, on the final tree (commit 2e3400e):
+
+    chunk 1 (test_accesibilidad..test_baselines):             Ran 377 tests, FAILED (failures=1, skipped=1, expected failures=1)
+    chunk 2 (test_baselines_lote..test_dispositivo):          Ran 476 tests, OK
+    chunk 3 (test_ejes_fechas..test_fechas_semana):           Ran 307 tests, FAILED (failures=3)
+    chunk 4 (test_fit..test_host_deploy):                     Ran 537 tests, FAILED (errors=1)
+    chunk 5 (test_host_import..test_modelos_estandar_1):      Ran 361 tests, OK
+    chunk 6 (test_momentos_pull..test_primeros_turnos):       Ran 520 tests, OK
+    chunk 7 (test_privacidad..test_request_log):              Ran 329 tests, OK
+    chunk 8 (test_seguridad..test_turnos_esquema_1):          Ran 427 tests, OK
+    chunk 9 (test_turnos_opcional_2..test_web_entry):         Ran 306 tests, OK
+
+Sum: 3640 run, 5 failures/errors, 0 unexpected beyond the five diagnosed below, 1 skipped (pre-existing, POSIX-only),
+1 expected failure (pre-existing, clause 5's monthly quota). Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`): 3640 -- matching exactly (up by
+precisely 25 from the 3615 on the last ledger entry's own tree, exactly this slice's own new tests, confirming no
+other module silently grew or shrank). **RED.**
+
+**Five failures, all outside this slice's own `touches`, all root-caused, none fixed (scope discipline).** Every one
+is a DETERMINISTIC consequence of this slice's own change, not flakiness:
+
+1. `tests.test_agente_registro.RouteMappingTest.test_every_get_route_has_a_mapping_decision` -- its hand-maintained
+   `ROUTE_TOOL` dict has no entry for `/day/{day}/entreno/{source_id}`. Fix: add one (likely `None`, since no
+   assistant tool reads single-session detail yet) -- a product call, not this slice's to make.
+2. `tests.test_get_sin_escritura.GetRoutesWriteNothingTest.test_every_get_route_leaves_the_database_unchanged` --
+   `KeyError: 'source_id'`; its own `_seed()`/`_fill()` never learned the new path's placeholder. Fix: add a
+   `"source_id"` key to its returned `ids` dict (the manual "Fuerza" session it already seeds has one).
+3. `tests.test_estados_vacios.EstadosVaciosTest.test_every_sparse_state_sweeps_clean` -- 20 defects, all
+   `unexpected-status: got 404, expected one of {200}` on the new path across every sparse state/language. Fix: add
+   the path to `_ALWAYS_404_LOCAL` or give `_paths_for()` a `{source_id}` branch pointing at a real id per state.
+4. `tests.test_estados_vacios_hosted.HostedEstadosVaciosSweepTest.test_hosted_sweep_every_state_every_language` --
+   same root cause as #3, 22 defects, via its own separate `_paths_for()`/`_expected_hosted()` (does not consult
+   `_ALWAYS_404_LOCAL`, needs the same handling independently).
+5. `tests.test_estados_vacios_2.PersonaCompletaSinCambiosTest.test_demo_home_body_view_is_lit_by_todays_plan` -- a
+   NEWLY surfaced collision, not one of the four anticipated going in. Ruling 6's own dedicated strength session
+   today gives the demo person a genuine LOGGED activity today with real categorised sets (pecho/pierna); Hoy's own
+   body-view caption logic (`body/rutas/hoy.py:425` `_cuerpo_hoy_ctx`) correctly reads this as "already trained
+   today" and switches from the `hoy_con_sesion` ("planned, nothing trained yet") caption to `hoy_entrenado_y_
+   pendiente` ("trained X, still to come Y") -- the MORE accurate caption now that the demo story has a real session
+   today, not a regression in what the caption logic does. The test's own literal assertion
+   (`assertIn("Iluminado: lo que entrena tu sesión de hoy", r.text)`) was written when the demo person's today had
+   only a plan, no logged activity; it is now checking a state ruling 6 deliberately changed. Fix: update the test's
+   own expected caption/groups for the new state, or have it mock `today` to a date before the demo's own dedicated
+   session -- a product/test-ownership call outside this slice's `touches`.
+
+**Open follow-ups, not this slice's to do:**
+
+- `BODY-ENTRENO-VISTA-SESION-1-FIX-AGENTE-REGISTRO` -- add a tool-mapping decision for the new path to
+  `tests/test_agente_registro.py`'s `ROUTE_TOOL`. Not now: outside `touches`.
+- `BODY-ENTRENO-VISTA-SESION-1-FIX-GET-SIN-ESCRITURA` -- add `"source_id"` to `tests/test_get_sin_escritura.py`'s
+  `_seed()`. Not now: outside `touches`.
+- `BODY-ENTRENO-VISTA-SESION-1-FIX-ESTADOS-VACIOS` -- teach `tests/test_estados_vacios.py` the new path. Not now:
+  outside `touches`.
+- `BODY-ENTRENO-VISTA-SESION-1-FIX-ESTADOS-VACIOS-HOSTED` -- the same, independently, in
+  `tests/test_estados_vacios_hosted.py`. Not now: outside `touches`.
+- `BODY-ENTRENO-VISTA-SESION-1-FIX-ESTADOS-VACIOS-2` -- update `tests/test_estados_vacios_2.py`'s own expectation of
+  today's body-view caption/groups to match the now-logged demo session. Not now: outside `touches`.
+
+-- not merged, GATE_RED
+
+## BODY-ENTRENO-VISTA-SESION-1-B -- the five census collisions, each given the new route's own row
+
+Continuation of BODY-ENTRENO-VISTA-SESION-1 (GATE_RED above, `logs/worker-body-entreno-vista-sesion-1-body-app-
+20261115T114126.json`): the screen itself (de7cbf6, 2e3400e, 5811a0b) was never touched. This slice widens `touches`
+to the five test files the orchestrator's own list above already named, plus this ledger, and fixes each.
+
+**1. `tests/test_agente_registro.py:56` -- `ROUTE_TOOL["/day/{day}/entreno/{source_id}"] = None`.** Checked both
+candidates named by the spec before picking `None`:
+- `leer_entreno` (`body/agente/herramientas.py:960`) reads a day's/range's training sessions, but its own SQL
+  (`type = 'strength_training' OR source = 'manual'`) excludes a Garmin-automatic non-strength activity entirely --
+  the demo's own basketball session (`body/demo.py`'s `_SESION_BASKET_TITULO`, type `'other'`, source `'garmin'`)
+  would never come back through it at all, yet that session gets this exact detail page
+  (`tests/test_entreno_sesion.py`'s own `test_yesterdays_basketball_session_shows_the_honest_line`).
+- `leer_dia` (`body/agente/herramientas.py:694`, via `db.load_day`) DOES return every activity for the day
+  (unfiltered, the same `SELECT * FROM activity WHERE person_id = ? AND day = ?` `entreno_sesion.actividad` itself
+  runs), but its `activities` entries carry no `series` (sets), no habitual-comparison median and no recovery line --
+  the page's own main content for a strength session, and part of its content for every session.
+No existing tool returns BOTH "that day's activities" and "this session's own sets/comparison/recovery" together,
+for every session the route serves. `None`, with the literal comment the spec supplied, matching the orchestrator's
+own prediction in BODY-ENTRENO-VISTA-SESION-1's open-followup #1 ("likely `None`, since no assistant tool reads
+single-session detail yet").
+
+**2. `tests/test_get_sin_escritura.py:63-66` -- `_seed()` now inserts one `activity` row (source_id `"zz-sweep-1"`,
+type `'walking'`, source `'garmin'`) for person 1 on the already-seeded `day`, and returns it as `"source_id"` in the
+`ids` dict `_fill()`'s `path.format(**ids)` already consumes.** The write-free sweep now actually reaches
+`entreno_sesion_view` (200, real id) instead of `KeyError: 'source_id'` on `_fill`.
+
+**3/4. `tests/test_estados_vacios.py` and `tests/test_estados_vacios_hosted.py`, fixed independently (each file's own
+`_paths_for`/`STATES`/ids, no shared helper between them, per the spec).** Each of the seven states' own `_seed_X`
+(`tests/test_estados_vacios.py:127,137,148,157,175,191,205`) gained an `"entreno"` key: a list of `(day, source_id)`
+pairs, `source_id=None` where that state seeds no activity on that day (states A, C, D, D2, E in full; state F's own
+`TODAY` -- the watch's deliberate gap -- also `None` while its `last_day` carries the real id `_full_day` inserted;
+state B's one `_full_day` activity carries its real id). The route's own 200-vs-404 depends on THIS specific
+day/source_id pair, not on the route pattern alone, unlike every other parameterised route here -- so a plain
+`_expected_statuses(route_path, turnos_on)` lookup cannot answer it. Added a sibling `_entreno_expected(route_path,
+path, ids)` (`tests/test_estados_vacios.py:244`, `tests/test_estados_vacios_hosted.py:107`) that returns 200/404 for
+this one route from the exact same `ids["entreno"]` pairs, `None` for every other route (falling back to the
+existing `_expected_statuses`/`_expected_hosted` call unchanged); the hosted file's override only applies once
+`signed_in and consented` (H1 stays 303 regardless, matching the consent gate firing before the activity lookup ever
+runs). `_paths_for` itself (`tests/test_estados_vacios.py:220`, `:86` in the hosted file) kept its PLAIN-STRING
+return shape -- see the deviation below for why that mattered. A sparse state with no such activity now gets this
+route's own real 404, asserted, never exempted; state B/F's real-activity day gets 200.
+
+**5. `tests/test_estados_vacios_2.py:298-299`.** The demo's own ruling-6 strength session today (`body/demo.py`'s
+`_seed_entreno_vista_sesion_actividades`, categories `pecho`/`pierna`) makes Hoy's body view read BOTH layers:
+trained (today's logged session, `grupos` = {pecho, cuadriceps, isquios}) plus still-to-come (today's own plan,
+`body/demo.py`'s `_seed_plan_hoy`, categories hombro/brazo/espalda -> `pendiente` = {hombros, biceps, dorsales,
+espalda_alta, deltoides_post} -- no overlap with `grupos`, so nothing already-trained drops out of "still to come").
+`body/rutas/hoy.py:425`'s `_cuerpo_hoy_ctx` therefore picks `cuerpo.caption.hoy_entrenado_y_pendiente` ("Entrenado
+hoy: {grupos}. Por venir: {pendientes}.") instead of the `hoy_con_sesion` ("planned only") wording the test
+originally asserted. Kept the case's own subject -- the plan's pending groups (hombros, dorsales) are still lit --
+and swapped the caption assertion to the two literal fragments unique to `hoy_entrenado_y_pendiente` ("Entrenado
+hoy:", "Por venir:"), the same bare-literal-copy convention this exact test already used for the caption it replaced.
+Never re-dated the demo.
+
+**Deviation: `_paths_for`'s return shape stayed a plain list of strings, not `(path, has_activity)` tuples.** First
+attempt changed `_paths_for` to return tuples; `tests/test_accesibilidad.py:50` imports this exact function from
+`tests/test_estados_vacios.py` and calls `client.get(path)` on each element unpacked as a bare string --
+`TypeError: Invalid type for url. Expected str or httpx.URL, got <class 'tuple'>`, caught by chunk 1 of the full-
+suite gate below, not by the five targeted modules (which never exercise `test_accesibilidad.py`). Reverted to plain
+strings and moved the 200/404 decision into the separate `_entreno_expected` lookup instead (point 3/4 above). Also
+confirmed harmless: `test_accesibilidad.py`'s own `_LOCAL_STATES = {k: STATES[k] for k in ("A", "D", "E")}` reuses
+the SAME `_seed_A`/`_seed_D`/`_seed_E` this slice edited, so its sweep of those three states now also exercises the
+new route with a real source_id/placeholder instead of the pre-existing literal `"{source_id}"` substring the old
+`_paths_for` left unsubstituted -- a side improvement, not a behaviour this slice needed to preserve, and its own
+`_seed_populated` (lacking an `"entreno"` key) falls through to that exact pre-existing behaviour unchanged.
+
+**Commits:** `931a4fc` (the five fixes, first pass), `7aae9e5` (the `_paths_for` shape correction above).
+
+**Targeted run**, `tests.test_agente_registro tests.test_get_sin_escritura tests.test_estados_vacios
+tests.test_estados_vacios_hosted tests.test_estados_vacios_2 tests.test_entreno_sesion tests.test_accesibilidad`
+(the five touched modules plus `test_entreno_sesion` the spec named plus `test_accesibilidad` once the deviation
+above surfaced it): `Ran 67 tests ... OK`.
+
+**The gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as 9 sequential alphabetical chunks of
+~20 dotted modules each, in the foreground, on the final tree (commit `7aae9e5`):
+
+    chunk 1 (test_accesibilidad..test_baselines):             Ran 377 tests, OK
+    chunk 2 (test_baselines_lote..test_dispositivo):          Ran 476 tests, OK
+    chunk 3 (test_ejes_fechas..test_fechas_semana):           Ran 307 tests, OK
+    chunk 4 (test_fit..test_host_deploy):                     Ran 537 tests, OK
+    chunk 5 (test_host_import..test_modelos_estandar_1):      Ran 361 tests, OK
+    chunk 6 (test_momentos_pull..test_primeros_turnos):       Ran 520 tests, OK
+    chunk 7 (test_privacidad..test_request_log):              Ran 329 tests, OK
+    chunk 8 (test_seguridad..test_turnos_esquema_1):          Ran 427 tests, OK
+    chunk 9 (test_turnos_opcional_2..test_web_entry):         Ran 306 tests, OK
+
+Sum: 3640 run, 0 failures, 0 errors. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`): 3640 -- matching exactly, and
+matching the prior ledger entry's own total (this slice added no new test, only fixed five existing ones). **GREEN.**
+
+-- not merged, AWAITING_APPROVAL (the screen's customer-facing bytes, carried on this branch unchanged since
+de7cbf6, still need the orchestrator's own look in a browser before merge; this slice touched tests and the ledger
+only)
+
+## BODY-ENTRENO-VISTA-SESION-1-C -- the six screen defects the orchestrator's own browser review measured
+
+Continuation of BODY-ENTRENO-VISTA-SESION-1/-1-B (both merged into this branch, `7aae9e5`/`59e4812`): the
+orchestrator reviewed the merged screen in a browser and measured six defects. This slice fixes all six, each with
+its own test in `tests/test_entreno_sesion.py`.
+
+**1. Legend chips invisible.** `body/static/body.css`'s `.legend i` (line 196) sets no `background`, so
+`<i class="hr-set">`/`<i class="hr-rest">` (`body/rutas/entreno_sesion.py:247,249` `_curva_svg`) got only the SVG
+rules' `fill`/`opacity` -- an `<i>` has no `fill`. Fixed with two compound rules, following the same `.legend
+i.legend-line` pattern the file's own specificity note (line 313) already names:
+
+    .legend i.hr-set{background:var(--body)}     (body/static/body.css:387)
+    .legend i.hr-rest{background:var(--muted)}    (body/static/body.css:388)
+
+`tests/test_entreno_sesion.py::LegendCssTest::test_legend_chips_have_a_compound_rule_setting_a_background` asserts
+both compound rules exist and set a background, by regex against the stylesheet's own text.
+
+**2. Bands near-invisible.** `body/static/body.css:417-418`, raised from `.14`/`.12` to **`.32`/`.20`**. Values
+chosen: `--body` (`#406F45` light / `#7DB282` dark) and `--muted` (`#6B6863` light / `#A09D95` dark) are two
+different hues, not two shades of one, so even a modest opacity separates them from each other; `.32`/`.20` is high
+enough that each band reads against `--card` (`#FCFBF8` light / `#1E1E1E` dark) in both themes while the set band
+(`.32`) stays visibly stronger than the rest band (`.20`), and both stay well below the curve's own full-opacity
+`stroke-body` line, which stays the most prominent mark on the chart.
+`tests/test_entreno_sesion.py::LegendCssTest::test_band_opacities_were_raised_and_the_set_band_stays_stronger`
+asserts both values against this slice's own prior numbers and that the set band is the stronger one.
+
+**3. The comparison said three times.** New key `entreno_sesion.comparacion_titulo` (one caption above the three
+tiles) plus `entreno_sesion.habitual` (one line per tile); `entreno_sesion.comparacion` retired (removed from both
+`es.json`/`en.json`; `tests/test_i18n_paridad.py` green since no code calls it any more). Built in
+`body/rutas/entreno_sesion.py`: `_figura_ctx` (line 110) now returns `{"label", "texto", "habitual"}` instead of
+baking the whole sentence into `"texto"`; `entreno_sesion_view` (lines 267-278) computes `comparacion_titulo` once,
+shown only when at least one figure actually carries a `habitual` value, and `sin_historial` keeps standing in its
+place (unchanged position/behaviour) when there is no history at all. `body/templates/entreno_sesion.html` renders
+the caption once above the `<ul class="list">` and each tile's own `habitual` line beneath its value.
+
+**4. The generic ("other") type used the wrong label, twice.** Garmin's own `"other"` activity type is itself a
+KNOWN, labelled bucket (`activity.type.other` = "Otros"/"Other", in `history.KNOWN_ACTIVITY_TYPES`) -- not the
+separate unknown-code fallback (`activity.generic`). `entreno_sesion.TIPO_GENERICO = "other"`
+(`body/entreno_sesion.py:30`). Fixed in three places:
+- Subtitle: `_tipo_subtitulo` (`body/rutas/entreno_sesion.py:59`) returns `None` for `"other"` (date only), any
+  other type unchanged.
+- Comparison group: `entreno_sesion.comparaciones` (`body/entreno_sesion.py:61-90`) branches on `TIPO_GENERICO` --
+  for it, pulls EVERY one of the person's `"other"`-typed sessions (no `LIMIT`, one query, same statement count as
+  before per route since a manual/no-type session's own early-return still runs zero queries), then filters in
+  Python to the ones sharing this session's own name, case/accent-insensitive (`_normaliza_nombre`,
+  `body/entreno_sesion.py:33-38`, NFKD decompose + ascii-encode drop + casefold), capped to the last 10 of those.
+- `{tipo}` text: `_nombre_generico`/`_tipo_sin_historial`/`_tipo_comparacion`
+  (`body/rutas/entreno_sesion.py:69-95`) use the session's own name, lowercased, for `"other"`; any other type
+  keeps `_tipo_label`'s translated label (lowercased mid-sentence for the NEW caption in Spanish only, per ruling 3;
+  the pre-existing `sin_historial` line keeps its own unchanged, capitalised wording for a named type -- ruling 3's
+  own "as today" clause for the no-history case; English never lowercases either string, keeping the app's own
+  label casing).
+Tested on synthetic data (never the demo) in `tests/test_entreno_sesion.py::GenericTypeTest`: subtitle suppressed,
+a named type's subtitle unchanged, the comparison group matching "baloncesto"/"BALONCESTO"/"Balóncesto" (median of
+their three `avg_hr` values) while excluding a same-bucket "Yoga" session, and the not-enough-history line reading
+the session's own name instead of "Otros".
+
+**5. The missing curve claimed to need permission.** False in local mode (one person on their own PC, where consent
+never gates) and premature hosted (BODY-CONSENTIMIENTO-V4 ships the v4 consent ask). `entreno_sesion.curva_pendiente`
+changed to a plain, honest statement with no mention of permission -- see the strings table below for the exact
+copy, including one deviation from the spec's own suggested Spanish wording.
+
+**6. Sets read with no sign of what the number was, and a forced "40,0 kg" on a whole value.** Searched for an
+existing set formatter first (ruling 6's own instruction): `body/rutas/asistente.py`'s `_serie_txt`/
+`_ejercicio_plan_txt` (lines 73-111) format a set as `"{ejercicio} {series}×{reps}"` (sets×reps, a different pair of
+numbers) or `"{reps} rep · {peso} kg"` (a middle dot, not the "×" this ruling's own text specifies, and no trailing-
+zero trim) for the watch-vs-you proposal table -- neither this screen's own shape nor this screen's own number
+formatting, so not reused verbatim; the one piece actually reused is the whole-number-decimal-trim TECHNIQUE already
+established at `body/nutriente_objetivo.py:37`'s `_fmt_cantidad` (`decimales = 0 if value.is_integer() else 1`),
+applied fresh in this module's own `_peso_txt` (`body/rutas/entreno_sesion.py:137-146`) since that function is
+private to its own domain module and nothing else in the app imports a private helper across domains. New
+`_set_txt` (lines 149-156) builds `"{reps} × {weight}"` (reps through `t.num`, weight through `_peso_txt`'s own
+trim) or, with no weight at all, `entreno_sesion.reps_solo` ("{n} rep"/"{n} reps" -- a bodyweight set). New
+`_exercise_display` (lines 159-163) capitalises only the first letter for display; the stored
+`garmin_exercise`/`person_exercise` name is never touched. Tested in `StrengthSetsTest`: "8 × 40 kg" and "10 × 60
+kg" with no "40,0"/"60,0" anywhere on the page, a fractional weight keeping its one decimal ("10 × 12,5 kg"), a
+bodyweight set reading "12 rep" with no "×" on the page, and "Press banca"/"Sentadilla" capitalised with the
+lowercase spelling absent.
+
+**Strings, es/en, exact (new/changed; `entreno_sesion.comparacion` retired from both files):**
+
+| Key | es | en |
+|---|---|---|
+| `comparacion_titulo` (new) | `Frente a tus sesiones habituales de {tipo}` | `Compared with your usual {tipo} sessions` |
+| `habitual` (new) | `habitual: {habitual}` | `usual: {habitual}` |
+| `reps_solo` (new) | `{n} rep` | `{n} reps` |
+| `curva_pendiente` (changed) | `Body aún no guarda la curva de pulso de esta sesión.` | `Body doesn't have this session's heart-rate curve yet.` |
+
+**Deviation: the Spanish `curva_pendiente` copy.** The spec's own suggested text was «Body aún no tiene la curva de
+pulso de esta sesión.» -- measured against `tests/test_registro_tu.py` (outside this slice's `touches`, a guard the
+first full-suite gate caught, not the targeted run): its `_THIRD_PERSON_PATTERN` flags any unallow-listed `tiene`
+as possibly addressed to the reader, and this key had no allow-list entry (correctly -- the subject here is
+"Body", not the reader, the same legitimate pattern `dispositivos.new_key_intro`'s own allow-list entry already
+names for `puede`, but adding a NEW entry means editing that test file, outside `touches`). Reworded to "Body aún
+no **guarda** la curva de pulso de esta sesión." -- the same honest meaning (no curve is stored, no mention of
+permission), no trigger word. The English copy needed no change.
+
+**The gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as 9 sequential alphabetical chunks of
+~20 dotted modules each, in the foreground, on the final tree (commit `95a051c`):
+
+    chunk 1 (test_accesibilidad..test_baselines):             Ran 377 tests, OK (skipped=1, expected failures=1)
+    chunk 2 (test_baselines_lote..test_dispositivo):          Ran 476 tests, OK
+    chunk 3 (test_ejes_fechas..test_fechas_semana):           Ran 318 tests, OK
+    chunk 4 (test_fit..test_host_deploy):                     Ran 537 tests, OK
+    chunk 5 (test_host_import..test_modelos_estandar_1):      Ran 361 tests, OK
+    chunk 6 (test_momentos_pull..test_primeros_turnos):       Ran 520 tests, OK
+    chunk 7 (test_privacidad..test_request_log):              Ran 329 tests, OK (re-run after the deviation above;
+                                                               test_registro_tu green on the reworded copy)
+    chunk 8 (test_seguridad..test_turnos_esquema_1):          Ran 427 tests, OK
+    chunk 9 (test_turnos_opcional_2..test_web_entry):         Ran 305 tests, FAILED (errors=2) -- see below
+
+Sum of chunk totals: 3650 (chunk 9's own collect-only count is 306, one more than its 305 actually run -- the
+missing one is `ProcesoFrescoTest`'s own single test method, consumed into the one `setUpClass` error below rather
+than counted as a separate result). Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`): **3651** -- the exact sum of each
+chunk's own collect-only count (377+476+318+537+361+520+329+427+306), confirming no module was skipped; the 1-test
+gap between that and the 3650 actually run is fully accounted for by the one `setUpClass` failure, not a missing
+module.
+
+**Chunk 9's two errors, both in `tests/test_vivo.py` (outside `touches`), both a `git` subprocess timing out at its
+own hard-coded 10s (`tests/test_vivo.py:23`, `subprocess.run(..., timeout=10)`), neither touched by this slice:**
+
+    ERROR: setUpClass (tests.test_vivo.ProcesoFrescoTest)
+      subprocess.TimeoutExpired: ['git', '-C', '...\\repo', 'commit', '-m', 'primero'] timed out after 10 seconds
+    ERROR: test_refusa_actuar_sobre_el_arbol_principal (tests.test_vivo.RefrescarTest)
+      subprocess.TimeoutExpired: ['git', '-C', '...\\repo', 'commit', '-m', 'segundo'] timed out after 10 seconds
+
+**Measured on `main` before concluding anything:** checked out `main` at `9eef504b5b58f60442bd1c7e360baf9b22d5d420`
+(this branch's own merge-base, tree clean both sides of the switch) and ran `tests.test_vivo.ProcesoFrescoTest`
+alone -- the IDENTICAL `setUpClass` error, the identical `git commit -m "primero"` timing out at 10 seconds, on a
+tree this slice never touched. Re-ran the full `tests.test_vivo` module twice on this branch afterward (one run
+taking 477-491 seconds for 51-52 tests, against ~5-15s for every other module of similar size in chunks 1-8) --
+same two errors both times, never a different pair, never a clean run. This is this machine's own git-subprocess
+spawn latency under load (the dispatch's own pre-flight warning: a spawn can be a coin flip under memory pressure),
+not a defect this slice's diff could cause -- this slice's own diff never touches `tests/test_vivo.py`, `git`,
+`subprocess`, or anything `body.vivo` imports. **RED, outside `touches`, reproduces identically on `main`.**
+
+**Targeted run** (every file this slice touches plus the guard it tripped), all green:
+`tests.test_entreno_sesion tests.test_i18n_paridad tests.test_rendimiento tests.test_agente_registro
+tests.test_get_sin_escritura tests.test_estados_vacios tests.test_estados_vacios_hosted tests.test_estados_vacios_2
+tests.test_registro_tu` -- `Ran 98 tests in 50.824s ... OK`. See the individual chunk runs above for the
+authoritative per-module counts across the WHOLE suite; this combined run is the fast confirmation sweep after
+each edit, not a substitute for the full gate above.
+
+**Commits:** `529851e` (rulings 1-6, the whole fix, with tests), `95a051c` (the deviation above: reword
+`curva_pendiente`'s es copy, with its own test and ledger line updated in the same commit).
+
+**Open follow-ups, not this slice's to do:**
+
+- `BODY-ENTRENO-VISTA-SESION-1-C-FIX-VIVO-TIMEOUT` -- `tests/test_vivo.py`'s own `_git`/`_git_ok` hard-codes a 10s
+  subprocess timeout for every git invocation in its throwaway-repo fixtures; on this machine, under load, a plain
+  `git commit` or `git worktree add` can take noticeably longer than that. Raising the timeout (or retrying once) is
+  a call for whoever owns that module's own reliability budget, not this slice's `touches`.
+
+-- not merged, GATE_RED (reproduces identically on `main`, outside `touches`; the screen's own six fixes are
+otherwise green across the other 8 chunks and the targeted runs above)
+
+## BODY-ENTRENO-VISTA-SESION-1-M -- raise `tests/test_vivo.py`'s subprocess timeouts, merge the branch
+
+Continuation of BODY-ENTRENO-VISTA-SESION-1-C (`bf8df8f`/`ed9ddd9`), which returned GATE_RED: chunk 9 of its gate
+failed with two `subprocess.TimeoutExpired` errors from `tests/test_vivo.py`'s own throwaway-repo git fixtures,
+hard-coded at 10s (`tests/test_vivo.py:23`), reproduced identically on `main` by that worker. **Orchestrator's
+ruling, carried into this slice: the fixture timeout is environment (this machine runs several orchestrators at
+once), not the subject of `test_vivo` (what `body.vivo` does); raising it does not weaken any assertion.** Chunks
+1-8 of the -C gate (3345 tests) are not re-run here; this slice changes only `tests/test_vivo.py`.
+
+**The fix.** `tests/test_vivo.py:23`'s `_git` helper hard-coded `timeout=10` for every git invocation in its
+throwaway-repo fixtures. Replaced with one named constant, `_SUBPROCESS_TIMEOUT_S = 120`, with a comment
+explaining why (shared, loaded machine; the timeout guards a hang, not a speed assertion). No assertion changed.
+
+**Deviation, measured, not in the -C or -M spec: a second hard-coded timeout, same root cause.** Running
+`tests.test_vivo` alone after the `_git` fix still failed -- one error, `ProcesoFrescoTest
+.test_un_proceso_fresco_se_actualiza_a_la_nueva_main` (`tests/test_vivo.py:261-264`), a DIFFERENT subprocess call
+(not through `_git`: a fresh `python -m body.vivo subir_turnos --help` interpreter spawn), hard-coded at
+`timeout=30`. Reproduced identically on a second, isolated run of that single test (108.692s elapsed against a
+30s timeout). Same category as the ruling above -- a fresh interpreter spawn is slow on this loaded machine, not a
+correctness question -- so given the same `_SUBPROCESS_TIMEOUT_S = 120` constant. Still inside `touches`
+(`tests/test_vivo.py`), still no assertion changed.
+
+**`tests.test_vivo` alone, foreground, after both timeouts raised:** `Ran 52 tests in 415.763s ... OK`.
+
+**Chunk 9 again** (`test_turnos_opcional_2`..`test_web_entry`, the same alphabetical range the -C run named),
+foreground: `Ran 306 tests in 183.718s ... OK`.
+
+**Targeted run**, foreground: `tests.test_entreno_sesion tests.test_i18n_paridad tests.test_registro_tu
+tests.test_get_sin_escritura tests.test_estados_vacios tests.test_estados_vacios_hosted
+tests.test_estados_vacios_2 tests.test_agente_registro` -- `Ran 93 tests in 25.255s ... OK`.
+
+**Gate command**, recorded per the dispatch's own requirement:
+`.venv/Scripts/python.exe -m unittest discover tests -t .`. Not re-run whole in this slice -- chunks 1-8 (3345
+tests) are carried by reference from the -C run on `95a051c`/`529851e`, which this slice's diff does not touch;
+chunk 9 (306 tests) and the targeted set (93 tests) above are this slice's own foreground measurements on the
+final tree. Smoke run after the merge below, on `main`, is the last foreground confirmation.
+
+**Commits:** `9d9f31e` (the timeout fix, both call sites, `tests/test_vivo.py` only).
+

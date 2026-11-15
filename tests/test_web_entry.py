@@ -59,6 +59,7 @@ class RouteSetTest(unittest.TestCase):
         ("/comida-compartida/{porcion_id}/aplicar", ("POST",)),  # BODY-COMIDA-COMPARTIDA-1
         ("/comida-compartida/{porcion_id}/descartar", ("POST",)),  # BODY-COMIDA-COMPARTIDA-1
         ("/day/{day}", ("GET",)),
+        ("/day/{day}/entreno/{source_id}", ("GET",)),  # BODY-ENTRENO-VISTA-SESION-1
         ("/day/{day}/noche-inusual/visto", ("POST",)),  # BODY-NOCHE-INUSUAL-1
         ("/day/{day}/noche-inusual/nota", ("POST",)),  # BODY-MOCK-R2-HOY-1
         ("/day/{day}/entreno/{source_id}/separar", ("POST",)),  # BODY-ENTRENO-VINCULO-1

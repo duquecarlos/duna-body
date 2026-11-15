@@ -60,8 +60,15 @@ def _seed(conn) -> dict:
         conn, 1, "ZZ-EXPERIMENTO", ["resting_hr"], {"tipo": "dia"},
         {"turno_en": None, "turno_fuera": None, "excluir_tras_noche": False}, fecha_inicio=day)
     db.registrar_dia_experimento(conn, experiment_id, 1, day, True)
+    source_id = "zz-sweep-1"
+    conn.execute(
+        "INSERT INTO activity (person_id, source_id, day, start_local, type, name, duration_s, "
+        "distance_m, avg_hr, max_hr, calories, source) VALUES (1, ?, ?, ?, 'walking', NULL, 1200, "
+        "2000, 100, 115, 150, 'garmin')",
+        (source_id, day, f"{day}T18:00:00"))
     conn.commit()
-    return {"goal_id": goal_id, "day": day, "conversacion_id": conversacion_id, "experiment_id": experiment_id}
+    return {"goal_id": goal_id, "day": day, "conversacion_id": conversacion_id, "experiment_id": experiment_id,
+            "source_id": source_id}
 
 
 def _dump(conn) -> dict:

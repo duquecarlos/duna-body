@@ -72,6 +72,9 @@ client = TestClient(web.app, follow_redirects=False)
 # BODY-GARMIN-SYNC-CONSISTENTE-1 ruling 2: /'s own ceiling, raised for the Garmin sync-status card
 # (body/rutas/hoy.py's _garmin_sync_ctx), one unconditional garmin_cuenta.estado_conexion read.
 # Measured 86 statements (85 before), ceil(86 * 1.3) = 112.
+# BODY-ENTRENO-VISTA-SESION-1: /day/{day}/entreno/{source_id}'s own ceiling, new with this slice.
+# Measured 12 statements against this file's own fixture (the manual "Fuerza" session _seed() logs
+# for `day`, two corrected sets, no intraday series), ceil(12 * 1.3) = 16.
 _CEILINGS = {
     "/": 112,
     "/ajustes/asistente": 16,
@@ -81,6 +84,7 @@ _CEILINGS = {
     "/asistente/conversacion/{conversacion_id}": 17,
     "/ayuda": 15,
     "/day/{day}": 81,
+    "/day/{day}/entreno/{source_id}": 16,  # BODY-ENTRENO-VISTA-SESION-1: measured 12, ceil(12 * 1.3) = 16
     "/experiments/{experiment_id}": 27,
     "/garmin": 9,
     "/goals": 75,
@@ -138,7 +142,8 @@ def _seed(conn) -> dict:
     db.correct_exercise_set(conn, 1, "manual", source_id, 1, category="espalda", exercise="remo con barra")
     db.correct_exercise_set(conn, 1, "manual", source_id, 2, category="brazo", exercise="curl de biceps")
     conn.commit()
-    return {"goal_id": goal_id, "day": day, "conversacion_id": conversacion_id, "experiment_id": experiment_id}
+    return {"goal_id": goal_id, "day": day, "conversacion_id": conversacion_id, "experiment_id": experiment_id,
+            "source_id": source_id}
 
 
 def _fill(path: str, ids: dict) -> str:

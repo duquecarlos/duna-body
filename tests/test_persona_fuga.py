@@ -113,6 +113,11 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
     ACTIVE household to exist at all -- compartir.compartir raises ValueError otherwise; seeded
     separately once A and B are linked). Returns every id/key a sweep needs, plus the markers used."""
     m = METRICS_A if tag == "A" else METRICS_B
+    # BODY-ENTRENO-VISTA-SESION-1: tag-specific (never the other person's string, unlike the
+    # fixture's other ids, which are only ever checked through a person-scoped dependency anyway)
+    # -- /day/{day}/entreno/{source_id} resolves `source_id` alone off the URL, so a genuine
+    # cross-person 404 check (ruling 1) needs A's and B's own activity to carry DIFFERENT ids.
+    act_id = f"act-{tag.lower()}"
     for day in DAYS:
         for key, value in m.items():
             db.set_metric(conn, day, key, value, "garmin", person_id)
@@ -120,17 +125,17 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
 
     conn.execute(
         "INSERT INTO activity (person_id, source_id, day, start_local, type, name, duration_s, "
-        "distance_m, avg_hr, max_hr, calories, source) VALUES (?, 'act-1', ?, ?, NULL, ?, 1800, "
+        "distance_m, avg_hr, max_hr, calories, source) VALUES (?, ?, ?, ?, NULL, ?, 1800, "
         "5000, 130, 150, 300, 'garmin')",
-        (person_id, DAYS[-1], f"{DAYS[-1]}T07:00:00", f"ZZ{tag}-ACTIVIDAD"),
+        (person_id, act_id, DAYS[-1], f"{DAYS[-1]}T07:00:00", f"ZZ{tag}-ACTIVIDAD"),
     )
     # BODY-RECUPERACION-1-B: recuperacion_actividad is person-owned (FK through the activity row
     # just inserted) and has its first census row here -- no marker needed, the census only checks
     # export/delete-all coverage, and motivo is CHECK-constrained to a fixed reason-code set.
     conn.execute(
         "INSERT INTO recuperacion_actividad (person_id, activity_source, activity_source_id, "
-        "modelo_version, minutos, motivo, computed_at) VALUES (?, 'garmin', 'act-1', ?, 12, NULL, ?)",
-        (person_id, recuperacion.MODELO["version"], f"{DAYS[-1]}T07:30:00+00:00"),
+        "modelo_version, minutos, motivo, computed_at) VALUES (?, 'garmin', ?, ?, 12, NULL, ?)",
+        (person_id, act_id, recuperacion.MODELO["version"], f"{DAYS[-1]}T07:30:00+00:00"),
     )
     # BODY-TURNO-FC-1: turno_fc is person-owned (its own person_id column, same shape as
     # recuperacion_actividad above) and has its first census row here -- no marker needed, the
@@ -144,9 +149,9 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
     )
     conn.execute(
         "INSERT INTO workout_set (person_id, activity_source, activity_source_id, set_order, "
-        "set_type, person_exercise, created_at, updated_at) VALUES (?, 'garmin', 'act-1', 1, "
+        "set_type, person_exercise, created_at, updated_at) VALUES (?, 'garmin', ?, 1, "
         "'active', ?, ?, ?)",
-        (person_id, f"ZZ{tag}-SERIE", f"{DAYS[-1]}T07:05:00+00:00", f"{DAYS[-1]}T07:05:00+00:00"),
+        (person_id, act_id, f"ZZ{tag}-SERIE", f"{DAYS[-1]}T07:05:00+00:00", f"{DAYS[-1]}T07:05:00+00:00"),
     )
     # ORCH-CARLOS-DELEGATES-TIER-1-1: fuente_importacion is person-owned (its own person_id column)
     # and has its first census row here -- no marker needed, the census only checks export/
@@ -321,6 +326,7 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
         "conv_id": conv_id, "batch_id": batch_id, "device_id": conn.execute(
             "SELECT id FROM dispositivo WHERE person_id = ?", (person_id,)).fetchone()["id"],
         "device_key": device_key, "device_key_mcp": device_key_mcp, "propuesta_id": propuesta["id"], "eid": eid,
+        "act_id": act_id,
     }
 
 
@@ -357,7 +363,8 @@ def _figures_of(tag: str) -> dict:
 # and is not in EXPECTED_GET_PATHS fails _assert_route_set_unchanged below instead of silently
 # going unswept.
 EXPECTED_GET_PATHS = sorted([
-    "/", "/how/{day}", "/day/{day}", "/goals", "/goals/new", "/goals/{goal_id}",
+    "/", "/how/{day}", "/day/{day}", "/day/{day}/entreno/{source_id}", "/goals", "/goals/new",
+    "/goals/{goal_id}",
     "/experiments/{experiment_id}",
     "/settings", "/ajustes/asistente", "/ajustes/dispositivos", "/api/vida/semana",
     "/api/asistente/mcp/herramientas",
@@ -429,6 +436,21 @@ class _BaseFugaTest(unittest.TestCase):
             n += 1
             self.assertEqual(r.status_code, 200, f"{viewer_tag} GET /day/{day}")
             texts.append(r.text)
+
+        # BODY-ENTRENO-VISTA-SESION-1 ruling 1: own day/source_id renders; the other person's own
+        # source_id, and a day this viewer has no activity under at all, both 404.
+        r = client.get(f"/day/{DAYS[-1]}/entreno/{ids['act_id']}")
+        n += 1
+        self.assertEqual(r.status_code, 200, f"{viewer_tag} GET /day/{{day}}/entreno/{{source_id}}")
+        texts.append(r.text)
+        r = client.get(f"/day/{DAYS[-1]}/entreno/{other_ids['act_id']}")
+        n += 1
+        self.assertEqual(r.status_code, 404,
+                         f"{viewer_tag} GET .../entreno/<{other_tag}'s source_id> did not 404")
+        r = client.get(f"/day/{DAYS[-2]}/entreno/{ids['act_id']}")
+        n += 1
+        self.assertEqual(r.status_code, 404,
+                         f"{viewer_tag} GET .../entreno/<own source_id, wrong day> did not 404")
 
         for key in ("gid", "gid_proposed", "gid_archived"):
             r = client.get(f"/goals/{ids[key]}")

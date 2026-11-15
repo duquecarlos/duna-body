@@ -991,6 +991,10 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
             bits.append(f"{t.num(a['avg_hr'])} {t('unit.bpm')}")
         recovery_row = recuperaciones.get((a["source"], a["source_id"]))
         acts.append({"name": _activity_name(t, a), "detail": " · ".join(bits),
+                     # BODY-ENTRENO-VISTA-SESION-1 ruling 1: the row's own per-session page --
+                     # `source_id` is always the merged (watch) identity for a linked pair, the
+                     # same one body/entreno_sesion.py's own `actividad()` resolves by.
+                     "href": f"/day/{d.isoformat()}/entreno/{a['source_id']}",
                      "recovery": _recovery_line(t, recovery_row),
                      # BODY-LESION-ZONA-1 ruling 2: the one shared plain line, from db.load_day's
                      # own zonas_limitadas (raw zona codes -- never the period's own note).

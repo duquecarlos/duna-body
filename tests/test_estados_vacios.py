@@ -123,7 +123,8 @@ def _full_day(conn, person_id: int, day: str) -> None:
 def _seed_A(conn, lang: str, pid: int | None = None) -> dict:
     pid = _use_or_make(conn, lang, "A", pid)
     conn.commit()
-    return {"person_id": pid, "days": [TODAY.isoformat()], "goal_ids": [], "experiment_ids": [], "turnos_on": False}
+    return {"person_id": pid, "days": [TODAY.isoformat()], "goal_ids": [], "experiment_ids": [], "turnos_on": False,
+            "entreno": [(TODAY.isoformat(), None)]}
 
 
 # ---- B: one day of data, today, every metric a watch can send -------------------------------
@@ -132,7 +133,8 @@ def _seed_B(conn, lang: str, pid: int | None = None) -> dict:
     day = TODAY.isoformat()
     _full_day(conn, pid, day)
     conn.commit()
-    return {"person_id": pid, "days": [day], "goal_ids": [], "experiment_ids": [], "turnos_on": False}
+    return {"person_id": pid, "days": [day], "goal_ids": [], "experiment_ids": [], "turnos_on": False,
+            "entreno": [(day, f"{day}-1")]}  # the one activity _full_day inserts
 
 
 # ---- C: 20 days with ONLY sleep -- a watch/setting that sends some metrics but not others -------
@@ -142,7 +144,8 @@ def _seed_C(conn, lang: str, pid: int | None = None) -> dict:
     for i, day in enumerate(days):
         db.set_metric(conn, day, "sleep_minutes", 400 + i, "garmin", pid)
     conn.commit()
-    return {"person_id": pid, "days": [days[0], days[-1]], "goal_ids": [], "experiment_ids": [], "turnos_on": False}
+    return {"person_id": pid, "days": [days[0], days[-1]], "goal_ids": [], "experiment_ids": [], "turnos_on": False,
+            "entreno": [(days[0], None), (days[-1], None)]}
 
 
 # ---- D: trabaja_turnos = yes, zero shift rows, zero metrics (the honest "sin_datos_reloj" path) -
@@ -150,7 +153,8 @@ def _seed_D(conn, lang: str, pid: int | None = None) -> dict:
     pid = _use_or_make(conn, lang, "D", pid)
     db.set_trabaja_turnos(conn, True, pid)
     conn.commit()
-    return {"person_id": pid, "days": [TODAY.isoformat()], "goal_ids": [], "experiment_ids": [], "turnos_on": True}
+    return {"person_id": pid, "days": [TODAY.isoformat()], "goal_ids": [], "experiment_ids": [], "turnos_on": True,
+            "entreno": [(TODAY.isoformat(), None)]}
 
 
 # ---- D2: one night block, trabaja_turnos = yes, no watch data at all (before or after) -----------
@@ -168,7 +172,7 @@ def _seed_D2(conn, lang: str, pid: int | None = None) -> dict:
     after_day = (start + timedelta(3)).isoformat()
     conn.commit()
     return {"person_id": pid, "days": [start.isoformat(), after_day], "goal_ids": [], "experiment_ids": [],
-            "turnos_on": True}
+            "turnos_on": True, "entreno": [(start.isoformat(), None), (after_day, None)]}
 
 
 # ---- E: an active metric goal on a metric with no data at all, a habit goal with zero checks ----
@@ -184,7 +188,7 @@ def _seed_E(conn, lang: str, pid: int | None = None) -> dict:
     goals.add_habit(conn, gid_habit, "ZZE-HABIT", {"per": "week", "times": 1})
     conn.commit()
     return {"person_id": pid, "days": [today_iso], "goal_ids": [gid_metric, gid_habit], "experiment_ids": [],
-            "turnos_on": False}
+            "turnos_on": False, "entreno": [(today_iso, None)]}
 
 
 # ---- F: data only in the past -- the last day is 40 days ago, the watch stopped syncing ---------
@@ -195,7 +199,10 @@ def _seed_F(conn, lang: str, pid: int | None = None) -> dict:
         _full_day(conn, pid, (last_day - timedelta(9 - i)).isoformat())
     conn.commit()
     return {"person_id": pid, "days": [last_day.isoformat(), TODAY.isoformat()], "goal_ids": [],
-            "experiment_ids": [], "turnos_on": False}
+            "experiment_ids": [], "turnos_on": False,
+            # last_day got a _full_day activity (the loop's own i=9 case); TODAY -- the watch's gap
+            # -- never got one, so the detail route must 404 honestly there, not be exempted.
+            "entreno": [(last_day.isoformat(), f"{last_day.isoformat()}-1"), (TODAY.isoformat(), None)]}
 
 
 STATES = {"A": _seed_A, "B": _seed_B, "C": _seed_C, "D": _seed_D, "D2": _seed_D2, "E": _seed_E, "F": _seed_F}
@@ -211,8 +218,20 @@ def _expected_statuses(path: str, turnos_on: bool) -> set:
 
 
 def _paths_for(route_path: str, ids: dict):
+    """Returns plain path strings, exactly as before (tests/test_accesibilidad.py imports this
+    same function and still expects that shape). The one new branch only fires when the caller's
+    `ids` actually carries "entreno" (every tests/test_estados_vacios.py state does, after this
+    slice); a caller with no such key -- test_accesibilidad.py's own `_seed_populated` -- falls
+    through to the plain "{day}" branch exactly as it always has, leaving "{source_id}" un-
+    substituted (still a 404, never a crash)."""
     if route_path in _SKIPPED_PARAM_ROUTES:
         return []
+    if "{day}" in route_path and "{source_id}" in route_path and "entreno" in ids:
+        out = []
+        for day, source_id in ids["entreno"]:
+            sid = source_id if source_id is not None else "sin-actividad"
+            out.append(route_path.replace("{day}", day).replace("{source_id}", sid))
+        return out
     if "{day}" in route_path:
         return [route_path.replace("{day}", d) for d in ids["days"]]
     if "{goal_id}" in route_path:
@@ -220,6 +239,20 @@ def _paths_for(route_path: str, ids: dict):
     if "{experiment_id}" in route_path:
         return [route_path.replace("{experiment_id}", str(e)) for e in ids.get("experiment_ids", [])]
     return [route_path]
+
+
+def _entreno_expected(route_path: str, path: str, ids: dict) -> int | None:
+    """None for every route but the per-session detail one (its status stays
+    `_expected_statuses`'s call, unchanged); for that one, 200 when `path`'s own source_id is a
+    real activity, the route's own honest 404 when it is the "no such activity" placeholder --
+    looked up from the exact same `ids["entreno"]` pairs `_paths_for` built `path` from above."""
+    if "{day}" not in route_path or "{source_id}" not in route_path or "entreno" not in ids:
+        return None
+    for day, source_id in ids["entreno"]:
+        sid = source_id if source_id is not None else "sin-actividad"
+        if route_path.replace("{day}", day).replace("{source_id}", sid) == path:
+            return 200 if source_id is not None else 404
+    return None
 
 
 class EstadosVaciosTest(unittest.TestCase):
@@ -250,7 +283,11 @@ class EstadosVaciosTest(unittest.TestCase):
                             continue
                         if path == "/":
                             home_results.append((state_key, lang, r.status_code))
-                        expected = _expected_statuses(route.path, ids["turnos_on"])
+                        override = _entreno_expected(route.path, path, ids)
+                        if override is not None:
+                            expected = {override}
+                        else:
+                            expected = _expected_statuses(route.path, ids["turnos_on"])
                         if r.status_code == 500:
                             defects.append((label, "500", r.text[:300]))
                             continue

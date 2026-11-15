@@ -75,7 +75,7 @@
 </div>
 {% if desplazamiento_fuente %}<p class="note mt-6">{{ desplazamiento_fuente }}</p>{% endif %}
 <h2>{{ t('day.activities') }}</h2>
-{% if activities %}<ul class="list">{% for a in activities %}<li><strong>{{ a.name }}</strong><br><span class="note">{{ a.detail }}</span>{% if a.recovery %}<br><span class="note">{{ a.recovery }}</span>{% endif %}{% if a.lesion %}<br><span class="note">{{ a.lesion }}</span>{% endif %}{% if a.vinculado %}<br><span class="note">{{ t('day.entreno.unida') }}</span>
+{% if activities %}<ul class="list">{% for a in activities %}<li><strong><a class="no-underline" href="{{ a.href }}">{{ a.name }}</a></strong><br><span class="note">{{ a.detail }}</span>{% if a.recovery %}<br><span class="note">{{ a.recovery }}</span>{% endif %}{% if a.lesion %}<br><span class="note">{{ a.lesion }}</span>{% endif %}{% if a.vinculado %}<br><span class="note">{{ t('day.entreno.unida') }}</span>
   <form method="post" action="/day/{{ day }}/entreno/{{ a.source_id }}/separar" class="mt-6"><button class="taplink" type="submit">{{ t('day.entreno.separar_boton') }}</button></form>{% endif %}</li>{% endfor %}</ul>
 {% else %}<p class="note">{{ t('day.no_activities') }}</p>{% endif %}
 {% if union_oferta %}

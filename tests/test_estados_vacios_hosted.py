@@ -84,8 +84,17 @@ def _expected_hosted(path: str, *, signed_in: bool, consented: bool, turnos_on: 
 
 
 def _paths_for(route_path: str, ids: dict):
+    """Plain path strings, the same shape as before this slice. The one new branch only fires
+    when `ids` carries "entreno" -- every state built below does, including H1/H2/anon's own
+    manually-built dicts."""
     if route_path in _SKIPPED_PARAM_ROUTES:
         return []
+    if "{day}" in route_path and "{source_id}" in route_path and "entreno" in ids:
+        out = []
+        for day, source_id in ids["entreno"]:
+            sid = source_id if source_id is not None else "sin-actividad"
+            out.append(route_path.replace("{day}", day).replace("{source_id}", sid))
+        return out
     if "{day}" in route_path:
         return [route_path.replace("{day}", d) for d in ids["days"]]
     if "{goal_id}" in route_path:
@@ -93,6 +102,19 @@ def _paths_for(route_path: str, ids: dict):
     if "{experiment_id}" in route_path:
         return [route_path.replace("{experiment_id}", str(e)) for e in ids.get("experiment_ids", [])]
     return [route_path]
+
+
+def _entreno_expected(route_path: str, path: str, ids: dict) -> int | None:
+    """None for every route but the per-session detail one -- see tests/test_estados_vacios.py's
+    own `_entreno_expected` for the identical reasoning; this is the hosted file's own copy since
+    the two files already duplicate `_paths_for` rather than share it."""
+    if "{day}" not in route_path or "{source_id}" not in route_path or "entreno" not in ids:
+        return None
+    for day, source_id in ids["entreno"]:
+        sid = source_id if source_id is not None else "sin-actividad"
+        if route_path.replace("{day}", day).replace("{source_id}", sid) == path:
+            return 200 if source_id is not None else 404
+    return None
 
 
 def _seed_persona_uno(conn) -> None:
@@ -169,6 +191,12 @@ class HostedEstadosVaciosSweepTest(CuentaRpTestCase):
                     expected = _expected_hosted(
                         route.path, signed_in=signed_in, consented=consented, turnos_on=ids["turnos_on"]
                     )
+                    override = _entreno_expected(route.path, path, ids)
+                    if override is not None and signed_in and consented:
+                        # Past the sign-in/consent gates, this route's own 200-vs-404 depends on
+                        # whether THIS day/source_id pair has an activity -- the honest 404 a sparse
+                        # or Garmin-never-connected person must still get, same as the local sweep.
+                        expected = {override}
                     if r.status_code == 500:
                         defects.append((label, "500", r.text[:300]))
                         continue
@@ -207,7 +235,7 @@ class HostedEstadosVaciosSweepTest(CuentaRpTestCase):
             finally:
                 conn.close()
             ids = {"person_id": pid, "days": [TODAY.isoformat()], "goal_ids": [], "experiment_ids": [],
-                   "turnos_on": False}
+                   "turnos_on": False, "entreno": [(TODAY.isoformat(), None)]}
             _sweep_as(client, f"H1/{lang}", ids, signed_in=True, consented=False)
 
         # ---- H2: signed in, consented, Garmin never connected -------------------------------------
@@ -221,13 +249,13 @@ class HostedEstadosVaciosSweepTest(CuentaRpTestCase):
             finally:
                 conn.close()
             ids = {"person_id": pid, "days": [TODAY.isoformat()], "goal_ids": [], "experiment_ids": [],
-                   "turnos_on": False}
+                   "turnos_on": False, "entreno": [(TODAY.isoformat(), None)]}
             _sweep_as(client, f"H2/{lang}", ids, signed_in=True, consented=True)
 
         # ---- unsigned: every person route redirects to sign-in or answers its documented status --
         anon = TestClient(web.app, follow_redirects=False)
         anon_ids = {"person_id": None, "days": [TODAY.isoformat()], "goal_ids": ["1"], "experiment_ids": ["1"],
-                    "turnos_on": False}
+                    "turnos_on": False, "entreno": [(TODAY.isoformat(), "1")]}
         _sweep_as(anon, "anon", anon_ids, signed_in=False, consented=False)
 
         self.assertEqual(defects, [], "defect(s) found by the hosted sweep:\n" +
