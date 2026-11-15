@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -18,6 +18,11 @@ from . import cuenta
 
 KEY_ENV = "BODY_TOKEN_KEY"
 _NONCE_LEN = 12
+
+# BODY-GARMIN-SYNC-CONSISTENTE-1 ruling 1: the window the daily pull's gap-fill heals and the
+# window the sync-status read (ruling 3's leer_estado_reloj, ruling 2's Today card) reports on --
+# one named constant, shared, so the two never drift apart.
+VENTANA_RELLENO = 14
 
 
 def _decode_key(hex_key: str) -> bytes:
@@ -137,3 +142,30 @@ def marcador_backfill(conn: sqlite3.Connection, person_id: int) -> str | None:
 def avanzar_backfill(conn: sqlite3.Connection, person_id: int, hasta: str) -> None:
     with conn:
         conn.execute("UPDATE garmin_cuenta SET backfill_hasta = ? WHERE person_id = ?", (hasta, person_id))
+
+
+def estado_conexion(conn: sqlite3.Connection, person_id: int) -> dict:
+    """One query: whether this person has a Garmin connection, since when, and their last
+    recorded pull error -- shared by Hoy's sync card (ruling 2) and leer_estado_reloj (ruling 3)
+    instead of three separate single-column reads."""
+    row = conn.execute(
+        "SELECT conectado_en, ultimo_error FROM garmin_cuenta WHERE person_id = ?", (person_id,)
+    ).fetchone()
+    if row is None:
+        return {"conectado": False, "conectado_desde": None, "ultimo_error": None}
+    return {"conectado": True, "conectado_desde": row["conectado_en"], "ultimo_error": row["ultimo_error"]}
+
+
+def dias_sin_datos(conn: sqlite3.Connection, person_id: int, hoy: date) -> list[str]:
+    """Every day in the last VENTANA_RELLENO days (today inclusive) with NO stored Garmin daily
+    row (`daily_metric` where `source = 'garmin'`), oldest first -- one query (the window's own
+    stored days), then a plain set difference, never one query per candidate day. Shared by
+    body/pull.py's healing gap-fill (ruling 1) and the sync-status read (ruling 2's Today card,
+    ruling 3's leer_estado_reloj), never duplicated between them."""
+    limite = (hoy - timedelta(VENTANA_RELLENO - 1)).isoformat()
+    almacenados = {r["day"] for r in conn.execute(
+        "SELECT DISTINCT day FROM daily_metric WHERE person_id = ? AND source = 'garmin' AND day >= ?",
+        (person_id, limite)).fetchall()}
+    return [d for d in (
+        (hoy - timedelta(n)).isoformat() for n in range(VENTANA_RELLENO - 1, -1, -1)
+    ) if d not in almacenados]

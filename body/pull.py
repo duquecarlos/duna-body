@@ -1,8 +1,8 @@
 """Pull Garmin data into the local database, then update Body's own estimates.
 
-    python -m body.pull                 # yesterday and today
+    python -m body.pull                 # local: yesterday and today; hosted: heals gaps (below)
     python -m body.pull --date 2026-11-05
-    python -m body.pull --days 90       # pull the last N days
+    python -m body.pull --days 90       # pull the last N days (an explicit call; see below)
     python -m body.pull --all           # whole history: walk back from the oldest stored day until
                                         # 60 empty days in a row (resumable; skips days already stored)
     python -m body.pull --backfill      # hosted mode only: up to 15 more days per connected person,
@@ -16,6 +16,15 @@ runs at a time. --backfill takes it non-blocking and exits 0 quietly if the dail
 the backfill timer runs every 10 minutes, so skipping one run is harmless. The daily hosted pull
 runs once a day, so it WAITS for the lock (up to LOCK_ESPERA_S) if a backfill holds it, and only
 after that bound exits 0 with the same skip line.
+
+BODY-GARMIN-SYNC-CONSISTENTE-1 ruling 1: hosted's own implicit "today" sweep (no explicit --date
+and no explicit --days) heals its own gaps instead of pulling a fixed N days -- today and
+yesterday always, plus every day in the last garmin_cuenta.VENTANA_RELLENO days with no stored
+Garmin daily row (pull_hosted's own `_dias_pendientes_relleno`). An explicit `--days N` still pulls
+exactly today and the N-1 days before it, unchanged, for a one-off call that wants that shape --
+`main`'s own `--days` default is None precisely so a bare `python -m body.pull` reaches the
+healing path rather than always re-running with N=2. Local mode is unaffected (unchanged default
+of 2, ruling 1 only reaches the hosted daily pull); --all and --backfill are unchanged.
 
 On the implicit "today" sweep (no explicit --date), both the default/--days local pull and the
 daily hosted pull also fetch any intraday days an active intraday experiment still needs
@@ -39,6 +48,14 @@ BACKFILL_DIAS = 90  # --backfill's window: the 90 days before today
 BACKFILL_PASO = 15  # at most this many days fetched per person per --backfill run
 LOCK_ESPERA_S = 1800  # the daily hosted pull's bound while it waits for a backfill holding the lock
 LOCK_SONDEO_S = 5  # how often it retries the non-blocking lock while waiting
+
+# BODY-GARMIN-SYNC-CONSISTENTE-1 ruling 1: the daily hosted pull's own cap -- at most this many
+# days fetched per person per run. Never trims in practice today: garmin_cuenta.VENTANA_RELLENO
+# (14) plus today/yesterday already always fall inside it (today and yesterday are themselves
+# inside that 14-day window), so the healing set never exceeds 14 candidates -- kept as a named,
+# independent safety bound rather than derived from the window, so a future wider window still
+# can't runaway a single run.
+MAX_DIAS_POR_CORRIDA = 16
 
 # Garmin's intraday retention, measured 2026-11-09 (BODY-INTRADIA-SPOTCHECK-1): about 130-140
 # days -- a day not pulled before it crosses this line is lost for good. Kept conservative (the
@@ -248,15 +265,74 @@ def _cerrar_semanas_todas(conn, desde_por_persona: dict[int, date] | None = None
         _cerrar_semanas_seguro(conn, person_id, desde=desde_por_persona.get(person_id))
 
 
-def pull_hosted(conn, *, fecha: str | None = None, n_days: int = 2) -> tuple[int, int, int]:
+def _dias_pendientes_relleno(conn, person_id: int, hoy: date) -> list[str]:
+    """BODY-GARMIN-SYNC-CONSISTENTE-1 ruling 1: today and yesterday ALWAYS (Garmin finalises
+    yesterday late) plus every other gap day in garmin_cuenta.dias_sin_datos' own VENTANA_RELLENO-
+    day window (one query per person, never one per day), oldest first. A day already stored is
+    not refetched unless it is today or yesterday. Capped at MAX_DIAS_POR_CORRIDA: today and
+    yesterday never give way (the cap trims the OLDEST gap days first, keeping the newest ones) --
+    never trims anything in practice today, since VENTANA_RELLENO (14) already fits under the cap
+    (16)."""
+    hoy_iso, ayer_iso = hoy.isoformat(), (hoy - timedelta(1)).isoformat()
+    obligatorios = {hoy_iso, ayer_iso}
+    huecos = [d for d in garmin_cuenta.dias_sin_datos(conn, person_id, hoy) if d not in obligatorios]
+    cupo = max(MAX_DIAS_POR_CORRIDA - len(obligatorios), 0)
+    return sorted(obligatorios | set(huecos[-cupo:] if cupo else []))
+
+
+def _pull_persona(conn, person_id: int, days: list[str]) -> dict:
+    """One person's pull-and-postprocess: `_pull_one_person` (which itself handles the token --
+    read, refresh, re-encrypt), the error record/clear, and the three post-pull recalcs -- shared
+    by `pull_hosted`'s own per-person loop and the "connecting starts a pull now" path (ruling 4b),
+    the same per-person path, never a copy. Returns {"estado": "sin_token"|"error"|"ok", "saved":
+    int} -- "sin_token" when the person has no token to pull with (never counted as a failure,
+    same as before this refactor)."""
+    try:
+        n = _pull_one_person(conn, person_id, days)
+    except Exception as e:
+        garmin_cuenta.registrar_error(conn, person_id, type(e).__name__)
+        return {"estado": "error", "saved": getattr(e, "saved", 0)}
+    if n is None:
+        return {"estado": "sin_token", "saved": 0}
+    garmin_cuenta.limpiar_error(conn, person_id)
+    _recalcular_recuperacion_seguro(conn, person_id)
+    _recalcular_turno_fc_seguro(conn, person_id)
+    _recalcular_sueno_fc_seguro(conn, person_id)
+    return {"estado": "ok", "saved": n}
+
+
+def pull_persona_ahora(person_id: int) -> None:
+    """BODY-GARMIN-SYNC-CONSISTENTE-1 ruling 4b: pulls ONE person's healing set (ruling 1) right
+    now -- the same per-person path `pull_hosted`'s own loop uses (`_pull_persona`), never a copy.
+    Called from a FastAPI BackgroundTask after `/garmin/conectar` or `/garmin/codigo` stores a
+    token, so the gap since the person's last data fills in the same run the connect itself
+    triggers, instead of waiting for the next daily pull. Opens and closes its own connection (a
+    background task runs after the request's own connection has already closed). Records the
+    error exactly as the daily timer does; prints counts only, never a health figure."""
+    conn = db.connect()
+    try:
+        db.ensure_ready(conn)
+        hoy = fechas.hoy_local(db.person(conn, person_id))
+        dias = _dias_pendientes_relleno(conn, person_id, hoy)
+        resultado = _pull_persona(conn, person_id, dias)
+        print(f"connect pull: {resultado['estado']}, {resultado['saved']} days stored", flush=True)
+    finally:
+        conn.close()
+
+
+def pull_hosted(conn, *, fecha: str | None = None, n_days: int | None = None) -> tuple[int, int, int]:
     """Loops over every person with a connected Garmin account, pulling `fecha` alone when given
-    (the same one explicit date for everyone, `--date`), or else today and the `n_days - 1` days
-    before it IN THAT PERSON'S OWN ZONE (`fechas.hoy_local`, BODY-PULL-RELOJ-1) -- the hosted timer
-    fires at a fixed server instant, so a server-date list would ask a person far from the
-    server's zone for the wrong "today". Then closes weeks for every person who can see an active
-    goal (`_cerrar_semanas_todas`) -- connected or not, pulled OK or failed today
-    (BODY-SEGURIDAD-3-M). On the implicit "today" sweep (no explicit `fecha`), also fetches any
-    intraday days an active intraday experiment still needs (`_pull_intradia_pendientes`,
+    (the same one explicit date for everyone, `--date`), or else -- with `n_days` given explicitly
+    -- today and the `n_days - 1` days before it (the old plain behaviour, still available for an
+    explicit call), or else (both left out: the default/implicit "today" sweep, the timer's own
+    default run) the healing set ruling 1 defines (`_dias_pendientes_relleno`): today and yesterday
+    always, plus every gap day in the last VENTANA_RELLENO days. Every day list is built IN THAT
+    PERSON'S OWN ZONE (`fechas.hoy_local`, BODY-PULL-RELOJ-1) -- the hosted timer fires at a fixed
+    server instant, so a server-date list would ask a person far from the server's zone for the
+    wrong "today". Then closes weeks for every person who can see an active goal
+    (`_cerrar_semanas_todas`) -- connected or not, pulled OK or failed today (BODY-SEGURIDAD-3-M).
+    On the implicit "today" sweep (no explicit `fecha`), also fetches any intraday days an active
+    intraday experiment still needs (`_pull_intradia_pendientes`,
     BODY-EXPERIMENTOS-INTRADIA-DIAS-FALTANTES-1) -- zero extra calls for a person with none.
     Returns (persons ok, persons failed, days stored). Never prints a health figure -- counts
     only."""
@@ -267,22 +343,16 @@ def pull_hosted(conn, *, fecha: str | None = None, n_days: int = 2) -> tuple[int
             days = [fecha]
         else:
             hoy = fechas.hoy_local(db.person(conn, person_id))
-            days = [(hoy - timedelta(n)).isoformat() for n in range(n_days)]
-        try:
-            n = _pull_one_person(conn, person_id, days)
-        except Exception as e:
-            garmin_cuenta.registrar_error(conn, person_id, type(e).__name__)
+            days = ([(hoy - timedelta(n)).isoformat() for n in range(n_days)] if n_days is not None
+                     else _dias_pendientes_relleno(conn, person_id, hoy))
+        resultado = _pull_persona(conn, person_id, days)
+        saved += resultado["saved"]
+        if resultado["estado"] == "sin_token":
+            continue
+        if resultado["estado"] == "error":
             failed += 1
-            saved += getattr(e, "saved", 0)
             continue
-        if n is None:
-            continue
-        garmin_cuenta.limpiar_error(conn, person_id)
-        saved += n
         ok += 1
-        _recalcular_recuperacion_seguro(conn, person_id)
-        _recalcular_turno_fc_seguro(conn, person_id)
-        _recalcular_sueno_fc_seguro(conn, person_id)
         # BODY-EXPERIMENTOS-INTRADIA-DIAS-FALTANTES-1: only on the implicit "today" sweep (no
         # explicit --date), the same scheduled-pull shape the daily hosted timer runs.
         if hoy is not None:
@@ -514,7 +584,9 @@ def traer_intradia_rango(conn, person_id: int, desde: date, hasta: date, pausa_s
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="python -m body.pull")
     p.add_argument("--date", help="one day, YYYY-MM-DD")
-    p.add_argument("--days", type=int, default=2, help="how many days back from today (default 2)")
+    p.add_argument("--days", type=int, default=None,
+                    help="how many days back from today (an explicit call; left out, hosted heals "
+                         "its own gaps -- ruling 1 -- and local keeps its own default of 2)")
     p.add_argument("--all", action="store_true", help="whole Garmin history (resumable; local mode only)")
     p.add_argument("--backfill", action="store_true",
                     help="hosted mode only: up to 15 more days per person, toward the 90-day window")
@@ -576,8 +648,11 @@ def _run(conn, a) -> int:
             return 2
     elif not a.recompute:
         # Local mode keeps the PC's own date here (it is the person's own machine, not a server
-        # serving several zones) -- BODY-PULL-RELOJ-1 leaves this date.today() as is.
-        days = [a.date] if a.date else [(date.today() - timedelta(n)).isoformat() for n in range(a.days)]
+        # serving several zones) -- BODY-PULL-RELOJ-1 leaves this date.today() as is. Ruling 1's
+        # healing default is hosted-only; local keeps its own plain default of 2 days when --days
+        # is left out (a.days is None).
+        dias_atras = a.days if a.days is not None else 2
+        days = [a.date] if a.date else [(date.today() - timedelta(n)).isoformat() for n in range(dias_atras)]
         for i, d in enumerate(sorted(days)):
             if i:
                 time.sleep(PAUSE_S)
