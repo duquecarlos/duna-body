@@ -22245,3 +22245,5 @@ authored here). All three merge-policy-A conditions clear.
 
 **Open follow-ups, not this slice's to do:** none found.
 
+-- merged 539d30f5c80692f106e198efa3f8c5a6e65c997b
+
