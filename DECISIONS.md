@@ -21499,3 +21499,5 @@ error in `-C`'s own transcript, not a defect in any commit's content.
 customer-facing surface of this branch; nothing else in `main..HEAD` touches what a customer,
 operator or owner reads. Deploy stays behind Carlos's own go, unaffected by this approval.
 
+-- merged b2f1a03390f34bae7591f1ecb935c94f233d6070
+
