@@ -84,24 +84,37 @@ def _expected_hosted(path: str, *, signed_in: bool, consented: bool, turnos_on: 
 
 
 def _paths_for(route_path: str, ids: dict):
-    """Returns (path, has_activity) pairs, the same shape tests/test_estados_vacios.py's own
-    `_paths_for` uses for the same reason -- see that module's docstring on the function."""
+    """Plain path strings, the same shape as before this slice. The one new branch only fires
+    when `ids` carries "entreno" -- every state built below does, including H1/H2/anon's own
+    manually-built dicts."""
     if route_path in _SKIPPED_PARAM_ROUTES:
         return []
-    if "{day}" in route_path and "{source_id}" in route_path:
+    if "{day}" in route_path and "{source_id}" in route_path and "entreno" in ids:
         out = []
-        for day, source_id in ids.get("entreno", []):
+        for day, source_id in ids["entreno"]:
             sid = source_id if source_id is not None else "sin-actividad"
-            path = route_path.replace("{day}", day).replace("{source_id}", sid)
-            out.append((path, source_id is not None))
+            out.append(route_path.replace("{day}", day).replace("{source_id}", sid))
         return out
     if "{day}" in route_path:
-        return [(route_path.replace("{day}", d), None) for d in ids["days"]]
+        return [route_path.replace("{day}", d) for d in ids["days"]]
     if "{goal_id}" in route_path:
-        return [(route_path.replace("{goal_id}", str(g)), None) for g in ids["goal_ids"]]
+        return [route_path.replace("{goal_id}", str(g)) for g in ids["goal_ids"]]
     if "{experiment_id}" in route_path:
-        return [(route_path.replace("{experiment_id}", str(e)), None) for e in ids.get("experiment_ids", [])]
-    return [(route_path, None)]
+        return [route_path.replace("{experiment_id}", str(e)) for e in ids.get("experiment_ids", [])]
+    return [route_path]
+
+
+def _entreno_expected(route_path: str, path: str, ids: dict) -> int | None:
+    """None for every route but the per-session detail one -- see tests/test_estados_vacios.py's
+    own `_entreno_expected` for the identical reasoning; this is the hosted file's own copy since
+    the two files already duplicate `_paths_for` rather than share it."""
+    if "{day}" not in route_path or "{source_id}" not in route_path or "entreno" not in ids:
+        return None
+    for day, source_id in ids["entreno"]:
+        sid = source_id if source_id is not None else "sin-actividad"
+        if route_path.replace("{day}", day).replace("{source_id}", sid) == path:
+            return 200 if source_id is not None else 404
+    return None
 
 
 def _seed_persona_uno(conn) -> None:
@@ -163,7 +176,7 @@ class HostedEstadosVaciosSweepTest(CuentaRpTestCase):
         def _sweep_as(client: TestClient, label_prefix: str, ids: dict, *, signed_in: bool, consented: bool):
             nonlocal swept
             for route in get_routes:
-                for path, has_activity in _paths_for(route.path, ids):
+                for path in _paths_for(route.path, ids):
                     swept += 1
                     label = f"{label_prefix} GET {path}"
                     try:
@@ -178,11 +191,12 @@ class HostedEstadosVaciosSweepTest(CuentaRpTestCase):
                     expected = _expected_hosted(
                         route.path, signed_in=signed_in, consented=consented, turnos_on=ids["turnos_on"]
                     )
-                    if has_activity is not None and signed_in and consented:
+                    override = _entreno_expected(route.path, path, ids)
+                    if override is not None and signed_in and consented:
                         # Past the sign-in/consent gates, this route's own 200-vs-404 depends on
                         # whether THIS day/source_id pair has an activity -- the honest 404 a sparse
                         # or Garmin-never-connected person must still get, same as the local sweep.
-                        expected = {200} if has_activity else {404}
+                        expected = {override}
                     if r.status_code == 500:
                         defects.append((label, "500", r.text[:300]))
                         continue

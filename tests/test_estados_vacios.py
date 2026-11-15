@@ -218,26 +218,41 @@ def _expected_statuses(path: str, turnos_on: bool) -> set:
 
 
 def _paths_for(route_path: str, ids: dict):
-    """Returns (path, has_activity) pairs. `has_activity` is None for every ordinary route (its
-    expected status comes from `_expected_statuses` as before); for the per-session detail route it
-    is True/False, since that route's own 200-vs-404 depends on whether THIS day/source_id pair has
-    an activity, not on the route pattern alone."""
+    """Returns plain path strings, exactly as before (tests/test_accesibilidad.py imports this
+    same function and still expects that shape). The one new branch only fires when the caller's
+    `ids` actually carries "entreno" (every tests/test_estados_vacios.py state does, after this
+    slice); a caller with no such key -- test_accesibilidad.py's own `_seed_populated` -- falls
+    through to the plain "{day}" branch exactly as it always has, leaving "{source_id}" un-
+    substituted (still a 404, never a crash)."""
     if route_path in _SKIPPED_PARAM_ROUTES:
         return []
-    if "{day}" in route_path and "{source_id}" in route_path:
+    if "{day}" in route_path and "{source_id}" in route_path and "entreno" in ids:
         out = []
-        for day, source_id in ids.get("entreno", []):
+        for day, source_id in ids["entreno"]:
             sid = source_id if source_id is not None else "sin-actividad"
-            path = route_path.replace("{day}", day).replace("{source_id}", sid)
-            out.append((path, source_id is not None))
+            out.append(route_path.replace("{day}", day).replace("{source_id}", sid))
         return out
     if "{day}" in route_path:
-        return [(route_path.replace("{day}", d), None) for d in ids["days"]]
+        return [route_path.replace("{day}", d) for d in ids["days"]]
     if "{goal_id}" in route_path:
-        return [(route_path.replace("{goal_id}", str(g)), None) for g in ids["goal_ids"]]
+        return [route_path.replace("{goal_id}", str(g)) for g in ids["goal_ids"]]
     if "{experiment_id}" in route_path:
-        return [(route_path.replace("{experiment_id}", str(e)), None) for e in ids.get("experiment_ids", [])]
-    return [(route_path, None)]
+        return [route_path.replace("{experiment_id}", str(e)) for e in ids.get("experiment_ids", [])]
+    return [route_path]
+
+
+def _entreno_expected(route_path: str, path: str, ids: dict) -> int | None:
+    """None for every route but the per-session detail one (its status stays
+    `_expected_statuses`'s call, unchanged); for that one, 200 when `path`'s own source_id is a
+    real activity, the route's own honest 404 when it is the "no such activity" placeholder --
+    looked up from the exact same `ids["entreno"]` pairs `_paths_for` built `path` from above."""
+    if "{day}" not in route_path or "{source_id}" not in route_path or "entreno" not in ids:
+        return None
+    for day, source_id in ids["entreno"]:
+        sid = source_id if source_id is not None else "sin-actividad"
+        if route_path.replace("{day}", day).replace("{source_id}", sid) == path:
+            return 200 if source_id is not None else 404
+    return None
 
 
 class EstadosVaciosTest(unittest.TestCase):
@@ -258,7 +273,7 @@ class EstadosVaciosTest(unittest.TestCase):
                 person_id = ids["person_id"]
                 web.app.dependency_overrides[identity.current_person_id] = (lambda pid=person_id: pid)
                 for route in get_routes:
-                    for path, has_activity in _paths_for(route.path, ids):
+                    for path in _paths_for(route.path, ids):
                         swept += 1
                         label = f"{state_key}/{lang} GET {path}"
                         try:
@@ -268,8 +283,9 @@ class EstadosVaciosTest(unittest.TestCase):
                             continue
                         if path == "/":
                             home_results.append((state_key, lang, r.status_code))
-                        if has_activity is not None:
-                            expected = {200} if has_activity else {404}
+                        override = _entreno_expected(route.path, path, ids)
+                        if override is not None:
+                            expected = {override}
                         else:
                             expected = _expected_statuses(route.path, ids["turnos_on"])
                         if r.status_code == 500:
