@@ -10,7 +10,7 @@
   <form method="post" action="/garmin/codigo" class="mt-12">
     <input type="text" name="code" class="field mb-12" autocomplete="one-time-code" inputmode="numeric"
            aria-label="{{ t('garmin.mfa_label') }}">
-    <button class="btn" type="submit">{{ t('garmin.mfa_submit') }}</button>
+    <button class="btn" type="submit" data-cargando="{{ t('garmin.mfa_submit_cargando') }}">{{ t('garmin.mfa_submit') }}</button>
   </form>
 </div>
 {% else %}
@@ -29,7 +29,7 @@
     <div class="q">{{ t('garmin.password_label') }}</div>
     <input type="password" name="password" class="field mb-12" autocomplete="current-password"
            aria-label="{{ t('garmin.password_label') }}">
-    <button class="btn" type="submit">{{ t('garmin.connect_btn') }}</button>
+    <button class="btn" type="submit" data-cargando="{{ t('garmin.connect_btn_cargando') }}">{{ t('garmin.connect_btn') }}</button>
   </form>
 </div>
 {% endif %}
@@ -49,7 +49,7 @@
     <div class="q">{{ t('garmin.password_label') }}</div>
     <input type="password" name="password" class="field mb-12" autocomplete="current-password"
            aria-label="{{ t('garmin.password_label') }}">
-    <button class="btn" type="submit">{{ t('garmin.connect_btn') }}</button>
+    <button class="btn" type="submit" data-cargando="{{ t('garmin.connect_btn_cargando') }}">{{ t('garmin.connect_btn') }}</button>
   </form>
 </div>
 {% endif %}

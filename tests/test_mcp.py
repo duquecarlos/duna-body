@@ -96,6 +96,24 @@ class ToolsCallTest(_McpTestCase):
         salida = json.loads(r["content"][0]["text"])
         self.assertIn("nivel_datos", salida)
 
+    def test_leer_estado_reloj_is_offered_and_callable(self):
+        """BODY-GARMIN-SYNC-CONSISTENTE-1 ruling 3: body.mcp lists leer_estado_reloj like any other
+        catalogue tool -- the generic tools/list and tools/call paths need no new code for it
+        either. No Garmin connection here (local person): the answer is honest, never a figure."""
+        _, listado = self._ejecutar([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
+        nombres = {t["name"] for t in listado[0]["result"]["tools"]}
+        self.assertIn("leer_estado_reloj", nombres)
+
+        _, respuestas = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "leer_estado_reloj", "arguments": {}}},
+        ])
+        r = respuestas[0]["result"]
+        self.assertNotIn("isError", r)
+        salida = json.loads(r["content"][0]["text"])
+        self.assertEqual(salida["conectado"], False)
+        self.assertIsNone(salida["ultimo_error"])
+
     def test_propuesta_call_creates_the_conversation_second_proposal_reuses_it(self):
         _, respuestas = self._ejecutar([
             {"jsonrpc": "2.0", "id": 1, "method": "tools/call",

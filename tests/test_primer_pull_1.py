@@ -222,7 +222,13 @@ class LockTest(unittest.TestCase):
         """Proven from the inside: while the daily pull's own adapter call is in flight, a second
         attempt to take the same lock (a fresh handle, same non-blocking primitive) must fail --
         showing the daily pull itself is holding it, not skipping it. It must also let go again
-        once it finishes."""
+        once it finishes.
+
+        BODY-GARMIN-SYNC-CONSISTENTE-1-B amends ruling 1: the hosted day set is now the union of
+        the --days window and the 14-day gap-fill, so `--days 1` on this fresh, empty database
+        can touch more than the one day -- this test asserts the lock, not a day count: every
+        adapter call the run makes must see the lock already held by this same run, and at least
+        one call must happen."""
         garmin_cuenta.guardar(self.conn, 1, "tok-a")
         observed_during_run = []
 
@@ -234,7 +240,9 @@ class LockTest(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 rc = pull.main(["--days", "1"])
         self.assertEqual(rc, 0)
-        self.assertEqual(observed_during_run, [None])
+        self.assertTrue(observed_during_run, "the daily hosted pull made no adapter call")
+        self.assertTrue(all(h is None for h in observed_during_run),
+                         "an adapter call saw the lock free -- the daily pull was not holding it")
 
         f = pull._try_lock()  # released now that the run has finished
         self.assertIsNotNone(f, "the daily hosted pull left the lock held after it finished")
