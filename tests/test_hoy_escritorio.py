@@ -7,6 +7,7 @@ then the "Tell Body" row, from 768px -- the mock's desktop order, placed with `o
 phone's own unchanged DOM (`.hoy-abajo`, which replaces the now-dead `.cols-hoy`)."""
 import json
 import pathlib
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -329,13 +330,44 @@ class HoyAbajoBlockCssTest(unittest.TestCase):
         media = self.compact.rindex("@media(min-width:768px){", 0, idx)
         self.assertGreater(idx, media)
 
-    def test_tiles_three_across_from_768(self):
-        self.assertIn(".hoy-tiles{grid-template-columns:repeat(3,minmax(0,1fr))}", self.compact)
+    _BARE_HOY_TILES_COLS = re.compile(
+        r"(?<!\])\.hoy-tiles\{grid-template-columns:repeat\((\d+),minmax\(0,1fr\)\)\}")
+
+    def test_tiles_three_across_scoped_below_1024(self):
+        """BODY-HOY-ESCRITORIO-2-B: the 3-across rule must carry its own upper bound -- find the
+        @media header immediately wrapping the declaration and require a max-width under 1024px
+        in it, so the rule cannot outlive tablet width (the measured defect: an unbounded 3-across
+        rule inside the plain >=768px block wins at every width from 768px up, including desktop,
+        because it is later in the file than the 6-across rule). The negative lookbehind excludes
+        the Lectura compound `[data-ancho="lectura"] .hoy-tiles` rule, which is a separate,
+        higher-specificity selector, not this one."""
+        m = next(mm for mm in self._BARE_HOY_TILES_COLS.finditer(self.compact) if mm.group(1) == "3")
+        media_start = self.compact.rindex("@media(", 0, m.start())
+        header_end = self.compact.index("){", media_start)
+        header = self.compact[media_start:header_end]
+        self.assertIn("max-width:1023.98px", header)
 
     def test_tiles_six_across_from_1024(self):
         idx = self.compact.index(".hoy-tiles{grid-template-columns:repeat(6,minmax(0,1fr))}")
         media = self.compact.rindex("@media(min-width:1024px){", 0, idx)
         self.assertGreater(idx, media)
+
+    def test_tiles_six_across_is_the_effective_rule_from_1024(self):
+        """The EFFECTIVE rule per range, not only that both declarations exist: the 6-across
+        declaration must be the LAST unbounded (no max-width) bare `.hoy-tiles` column-count
+        declaration in source order -- an equal-specificity rule later in the file with no upper
+        bound would win at >=1024px by source order alone (the defect this slice fixes, same
+        class BODY-HOY-ESCRITORIO-1-C fixed for `.hoy-figura .cuerpo-vista-track`). The Lectura
+        compound selector is excluded (see above) -- it is a separate, more specific rule, not a
+        competing bare declaration."""
+        unbounded = []
+        for m in self._BARE_HOY_TILES_COLS.finditer(self.compact):
+            media_start = self.compact.rindex("@media(", 0, m.start())
+            header_end = self.compact.index("){", media_start)
+            header = self.compact[media_start:header_end]
+            if "max-width" not in header:
+                unbounded.append(m.group(1))
+        self.assertEqual(unbounded, ["6"], unbounded)
 
     def test_tiles_three_across_under_lectura_even_past_1024(self):
         self.assertIn(

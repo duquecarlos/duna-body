@@ -491,5 +491,14 @@ svg.barra{display:block;width:100%;height:6px;margin-top:4px}
   .hoy-abajo>.hoy-comida{order:3}
   .hoy-abajo>.hoy-nutriente{order:4}
   .hoy-abajo>.tellbody{order:5}
+}
+/* BODY-HOY-ESCRITORIO-2-B: the 3-across tile row is tablet-only, bounded above 1024px so it
+   never outlives this block onto desktop widths -- left unbounded (inside the >=768px block
+   above, with no max-width) it is a LATER, wider-range rule at equal specificity than the
+   6-across rule inside the >=1024px block near the top of this file, so it would win at every
+   width from 768px up, including desktop (the measured defect: six-across from 1024px never
+   applied). Same defect class BODY-HOY-ESCRITORIO-1-C fixed for `.hoy-figura .cuerpo-vista-track`
+   -- scope the narrower-range rule instead of relying on source order. */
+@media (min-width:768px) and (max-width:1023.98px){
   .hoy-tiles{grid-template-columns:repeat(3,minmax(0,1fr))}
 }
