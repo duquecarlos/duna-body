@@ -47,15 +47,20 @@ def _seed_demo(case: unittest.TestCase, name: str, idioma: str = "es", today: da
 
 
 class BoardOrderTest(unittest.TestCase):
-    """Ruling 1: body view, score hero (synced time inline), The day ahead, inline "Tell Body"
-    row, Body noticed, tiles, eating window, Night week ahead -- in that order, on a person whose
-    own data makes every optional section present (the demo person)."""
+    """Ruling 1 (BODY-MOCK-R2-HOY-1), order REPLACED by BODY-HOY-ESCRITORIO-1 ruling 2: score hero
+    (synced time inline), The day ahead, THEN the body view, inline "Tell Body" row, Body noticed,
+    tiles, eating window, Night week ahead -- in that order, on a person whose own data makes every
+    optional section present (the demo person). BODY-MOCK-R2-HOY-1's own figure-first order put
+    `cuerpo-vista` before the score hero; on the phone the figure filled the screen at full size and
+    showed nothing useful on its own (Carlos's own words, relayed through the desk), so ruling 2
+    moved it after the day's own data instead -- from 768px the two sit side by side in `.hoy-top`,
+    and on the phone the figure still comes third in plain DOM order, never first."""
 
     def test_order_es(self):
         _seed_demo(self, "orden_es.db", "es")
         page = TestClient(web.app, follow_redirects=False).get("/").text
-        marks = ["cuerpo-vista", 'class="card est"', "Reloj sincronizado",
-                 "El día por delante", 'class="tellbody', "Body lo notó",
+        marks = ['class="card est"', "Reloj sincronizado", "El día por delante",
+                 "cuerpo-vista", 'class="tellbody', "Body lo notó",
                  'class="grid2', "Ventana de comida", "Semana nocturna por delante"]
         positions = [page.index(m) for m in marks]
         self.assertEqual(positions, sorted(positions), f"board order broken: {marks}")
@@ -63,8 +68,8 @@ class BoardOrderTest(unittest.TestCase):
     def test_order_en(self):
         _seed_demo(self, "orden_en.db", "en")
         page = TestClient(web.app, follow_redirects=False).get("/").text
-        marks = ["cuerpo-vista", 'class="card est"', "Watch synced",
-                 "The day ahead", 'class="tellbody', "Body noticed",
+        marks = ['class="card est"', "Watch synced", "The day ahead",
+                 "cuerpo-vista", 'class="tellbody', "Body noticed",
                  'class="grid2', "Eating window", "Night week ahead"]
         positions = [page.index(m) for m in marks]
         self.assertEqual(positions, sorted(positions), f"board order broken: {marks}")
