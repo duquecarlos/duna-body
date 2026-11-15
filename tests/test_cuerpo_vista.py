@@ -46,8 +46,10 @@ class ManifestTest(unittest.TestCase):
     """Ruling 1: every manifest file is in the repo, byte for byte."""
 
     def test_every_manifest_file_matches_its_sha256(self):
+        # BODY-CUERPO-NITIDEZ-1: 12 basenames x 2 themes x 2 widths (48), plus vias-aereas's own
+        # 2 unchanged single-file rows.
         manifest = json.loads((ART_DIR / "manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(len(manifest), 26)
+        self.assertEqual(len(manifest), 50)
         for row in manifest:
             path = ART_DIR / row["archivo"]
             self.assertTrue(path.exists(), f"missing {row['archivo']}")
@@ -62,11 +64,20 @@ class AnatomiaDataTest(unittest.TestCase):
     """Ruling 2: anatomia.py's own data, never hand-placed per template."""
 
     def test_every_view_image_exists_in_both_themes(self):
+        # BODY-CUERPO-NITIDEZ-1: a view whose image carries the 800/1440 pair (every one here --
+        # none of Hoy/Tendencias/Turnos' own views renders vias-aereas) needs both widths; a view
+        # marked not-nitida would need only the single file.
         for pantalla, vistas in anatomia.VISTAS_POR_PANTALLA.items():
             for v in vistas:
+                nitida = v["imagen"] not in anatomia._SIN_SRCSET
                 for tema in ("claro", "oscuro"):
-                    path = ART_DIR / f"{v['imagen']}-{tema}.webp"
-                    self.assertTrue(path.exists(), f"{pantalla}/{v['id']}: missing {path.name}")
+                    if nitida:
+                        for ancho in ("800", "1440"):
+                            path = ART_DIR / f"{v['imagen']}-{tema}-{ancho}.webp"
+                            self.assertTrue(path.exists(), f"{pantalla}/{v['id']}: missing {path.name}")
+                    else:
+                        path = ART_DIR / f"{v['imagen']}-{tema}.webp"
+                        self.assertTrue(path.exists(), f"{pantalla}/{v['id']}: missing {path.name}")
 
     def test_categoria_enum_is_the_one_vocabulary(self):
         # BODY-CUERPO-VISTA-1-M ruling 1: both tools' schemas read this same tuple.

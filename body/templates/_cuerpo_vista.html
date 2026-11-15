@@ -1,12 +1,20 @@
-{% macro cuerpo_vista(t, cuerpo, extra_class='') %}
+{% macro cuerpo_vista(t, cuerpo, extra_class='', sizes='(min-width: 768px) 700px, calc(100vw - 64px)') %}
 <div class="card cuerpo-card{% if extra_class %} {{ extra_class }}{% endif %}">
   <div class="cuerpo-vista" data-recorte="{{ cuerpo.recorte }}">
     <div class="cuerpo-vista-track">
       {% for v in cuerpo.vistas %}
       <div class="cuerpo-vista-capa{% if loop.first %} on{% endif %}">
+        {% if v.nitida %}
+        <img class="cuerpo-vista-img" alt="{{ v.alt }}" sizes="{{ sizes }}"
+             data-claro="{{ static_url('anatomia/' + v.imagen + '-claro-800.webp') }}"
+             data-oscuro="{{ static_url('anatomia/' + v.imagen + '-oscuro-800.webp') }}"
+             data-claro-srcset="{{ static_url('anatomia/' + v.imagen + '-claro-800.webp') }} 800w, {{ static_url('anatomia/' + v.imagen + '-claro-1440.webp') }} 1440w"
+             data-oscuro-srcset="{{ static_url('anatomia/' + v.imagen + '-oscuro-800.webp') }} 800w, {{ static_url('anatomia/' + v.imagen + '-oscuro-1440.webp') }} 1440w">
+        {% else %}
         <img class="cuerpo-vista-img" alt="{{ v.alt }}"
              data-claro="{{ static_url('anatomia/' + v.imagen + '-claro.webp') }}"
              data-oscuro="{{ static_url('anatomia/' + v.imagen + '-oscuro.webp') }}">
+        {% endif %}
         {% for e in v.glow %}
         <span class="cuerpo-vista-glow" aria-hidden="true"
               data-left="{{ e[0] }}" data-top="{{ e[1] }}" data-w="{{ e[2] }}" data-h="{{ e[3] }}"></span>
