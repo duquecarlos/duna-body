@@ -8,7 +8,8 @@ at equal specificity the later declaration wins by source order alone -- so the 
 more-specific-looking block's declaration never actually takes effect at its own, wider
 breakpoint. The fix is always the same: give the later/narrower-range block its own
 `max-width` bound (as `.hoy-tiles`'s 3-across rule now has, scoped to
-`(min-width:768px) and (max-width:1023.98px)`), or reorder so the wider-min block comes last.
+`(min-width:768px) and (max-width:1279.98px)` as of BODY-HOY-ESCRITORIO-2-D), or reorder so the
+wider-min block comes last.
 
 This module parses body/static/body.css with the stdlib only (a small brace-matching reader,
 not a real CSS engine) to find every such pair. It does NOT understand full CSS cascade
@@ -271,7 +272,7 @@ class CascadeInversionDetectorUnitTest(unittest.TestCase):
 # LAST declaration in file order among the rules that apply at a given pixel width -- at each of
 # four sample widths.
 # ---------------------------------------------------------------------------
-SAMPLE_WIDTHS = (375, 800, 1024, 1568)
+SAMPLE_WIDTHS = (375, 800, 1024, 1280, 1568)
 
 _SIMPLE_CLASS_SELECTOR_RE = re.compile(r"^\.[\w-]+$")
 _CLASS_ATTR_RE = re.compile(r'class="([^"]*)"')
@@ -415,7 +416,9 @@ COCLASS_ALLOWLIST = {
     (".tellbody", ".taplink", "text-decoration"): "intended -- .tellbody's own block layout overrides .taplink",
 }
 
-HOY_TILES_EXPECTED_WINNER = {375: ".grid2", 800: ".hoy-tiles", 1024: ".hoy-tiles", 1568: ".hoy-tiles"}
+HOY_TILES_EXPECTED_WINNER = {
+    375: ".grid2", 800: ".hoy-tiles", 1024: ".hoy-tiles", 1280: ".hoy-tiles", 1568: ".hoy-tiles",
+}
 
 
 class CoClassCollisionGuardTest(unittest.TestCase):
