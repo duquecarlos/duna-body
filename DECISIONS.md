@@ -22157,3 +22157,5 @@ exercised by this look. `test_seguridad`/`test_rendimiento` unchanged and green.
 Approved to merge -- images and markup only, no new strings. Deploy stays at the end of the wave
 (Carlos, 2026-11-15).
 
+-- merged c53ff8de98d55114951144bf80f2bb23b750b1ac
+
