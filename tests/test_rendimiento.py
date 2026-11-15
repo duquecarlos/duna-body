@@ -63,15 +63,21 @@ client = TestClient(web.app, follow_redirects=False)
 # goal, seeded before the horizon), so the plan section's own extra queries never run for it --
 # ruling 5's own bounded-cost proof for a horizon's detail view lives in this file's
 # PlanPantallaCostIndependentOfSpanTest instead of here.
+# BODY-HOY-ESCRITORIO-1 ruling 4: / and /day/{day}, remeasured after this file's own `_seed()`
+# started logging one training session for today (above) -- the fixture change both routes share.
+# / measured 85 statements (84 before, the new bounded workout_set read's own +1), ceil(85 * 1.3) =
+# 111. /day/{day} measured 62 (60 before -- its existing per-activity zonas_limitadas read in
+# body/db.py's load_day now also covers the new activity, inside the demo's own open lesion
+# window), ceil(62 * 1.3) = 81.
 _CEILINGS = {
-    "/": 101,
+    "/": 111,
     "/ajustes/asistente": 16,
     "/ajustes/dispositivos": 9,
     "/api/asistente/mcp/herramientas": 3,
     "/api/vida/semana": 3,
     "/asistente/conversacion/{conversacion_id}": 17,
     "/ayuda": 15,
-    "/day/{day}": 62,
+    "/day/{day}": 81,
     "/experiments/{experiment_id}": 27,
     "/garmin": 9,
     "/goals": 75,
@@ -111,7 +117,11 @@ def _reset_db(tc: unittest.TestCase):
 
 def _seed(conn) -> dict:
     """Same populated fixture as tests/test_get_sin_escritura.py's sweep, so every parameterised
-    GET route carries a real id -- demo.py's seed carries no real figure, by its own contract."""
+    GET route carries a real id -- demo.py's seed carries no real figure, by its own contract.
+    BODY-HOY-ESCRITORIO-1 ruling 4: plus one logged (manual) training session for TODAY, so the
+    route sweep below measures "/"'s own bounded workout_set read (body/rutas/hoy.py's
+    _entrenado_hoy_categorias) against its real worst case -- an id list that is not empty --
+    rather than the demo's own random activities, which rarely land a categorised set on today."""
     demo._seed(conn, dias=30, idioma="es")
     goal_id = conn.execute("SELECT id FROM goal WHERE person_id = 1 ORDER BY id LIMIT 1").fetchone()[0]
     day = conn.execute(
@@ -121,6 +131,9 @@ def _seed(conn) -> dict:
         conn, 1, "ZZ-EXPERIMENTO", ["resting_hr"], {"tipo": "dia"},
         {"turno_en": None, "turno_fuera": None, "excluir_tras_noche": False}, fecha_inicio=day)
     db.registrar_dia_experimento(conn, experiment_id, 1, day, True)
+    source_id = db.create_manual_session(conn, 1, day, None, "Fuerza")
+    db.correct_exercise_set(conn, 1, "manual", source_id, 1, category="espalda", exercise="remo con barra")
+    db.correct_exercise_set(conn, 1, "manual", source_id, 2, category="brazo", exercise="curl de biceps")
     conn.commit()
     return {"goal_id": goal_id, "day": day, "conversacion_id": conversacion_id, "experiment_id": experiment_id}
 
