@@ -167,7 +167,17 @@ def primeros_pasos(conn: sqlite3.Connection, person_id: int, hosted: bool, t: T 
     someone who works shifts (`db.trabaja_turnos_si`) may bring files from a PC, and someone who
     already linked one (`dispositivo.listar` non-empty) keeps seeing the step they completed; nobody
     else is asked to run a script (BODY-TURNOS-OPCIONAL-4). `t` (BODY-TUTORIALES-EN-1) picks each
-    item's title language -- see ruling 1 at `_titulo_tarea`."""
+    item's title language -- see ruling 1 at `_titulo_tarea`.
+
+    `trabajas-por-turnos` (BODY-PRIMEROS-TURNOS-1): ticked when the answer is known at all, stored
+    OR inferred -- `db.get_trabaja_turnos` is not None (an explicit "si" or "no" was stored) OR
+    `db.trabaja_turnos_si` is True (NULL, but the person already has shift/shift_batch rows,
+    BODY-TURNOS-INFERIR-1's read-time inference). A question the person's own data has already
+    answered is not an open step; this reads db.py, it never writes it, so the stored value stays
+    NULL until the person answers it directly. NULL with no shift data is still open, with Sí/No,
+    exactly as before. The Sí/No buttons themselves are the template's own `not item.hecho` guard
+    (body/templates/base.html's `primeros_pasos_card`) -- ticking this item here is what hides them,
+    with no markup change needed."""
     tareas = {t["id"]: t for t in catalogo()["tareas"] if t.get("onboarding")}
     inicio = privacidad.has_consented(conn, person_id) if hosted else True
     tiene_datos = conn.execute(
@@ -179,7 +189,9 @@ def primeros_pasos(conn: sqlite3.Connection, person_id: int, hosted: bool, t: T 
     hecho = {
         "iniciar-sesion-y-aceptar": inicio,
         "conectar-garmin": tiene_datos,
-        "trabajas-por-turnos": db.get_trabaja_turnos(conn, person_id) is not None,
+        "trabajas-por-turnos": (
+            db.get_trabaja_turnos(conn, person_id) is not None or db.trabaja_turnos_si(conn, person_id)
+        ),
         "vincular-este-pc": bool(vinculado),
         "primera-mirada-a-hoy": inicio and tiene_datos,
     }
