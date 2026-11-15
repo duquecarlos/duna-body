@@ -21,8 +21,11 @@ I18N_DIR = ROOT / "body" / "i18n"
 
 # BODY-ANCHO-COMPLETO-1 spec step 3: the grid class each screen relies on for its columns. A
 # screen not listed here (goal.html, settings.html) gets the base rule and no columns.
+# today.html carried "cols-hoy" here until BODY-HOY-ESCRITORIO-2 retired it: with the figure moved
+# into .hoy-top (BODY-HOY-ESCRITORIO-1) it wrapped a single child and did nothing, and Hoy's block
+# below .hoy-top now has its own bespoke order/flex layout (`.hoy-abajo`, `.hoy-tiles`) instead of
+# the generic auto-fit grid every other screen here still uses.
 _COLS_BY_SCREEN = {
-    "today.html": "cols-hoy",
     "trends.html": "cols-tendencias",
     "goals.html": "cols-metas",
     "shifts.html": "cols-turnos",
@@ -349,8 +352,8 @@ class SanityCountsTest(unittest.TestCase):
     """Non-vacuous counts: the per-screen census and the i18n additions are not accidentally
     empty, which would make the checks above pass trivially."""
 
-    def test_five_screens_listed(self):
-        self.assertEqual(len(_COLS_BY_SCREEN), 5)
+    def test_four_screens_listed(self):
+        self.assertEqual(len(_COLS_BY_SCREEN), 4)
 
     def test_four_new_i18n_keys(self):
         self.assertEqual(len(_NEW_I18N_KEYS), 4)

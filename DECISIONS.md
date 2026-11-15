@@ -21591,3 +21591,421 @@ change, and no customer-facing bytes added or changed (ruling 4 above). Gate gre
 
 -- merged eb2647f383535c62d50eebb484d753edaed1a2de
 
+## BODY-HOY-ESCRITORIO-2 -- the block below .hoy-top follows the mock's desktop order; `.cols-hoy`
+retired (2026-11-15)
+
+**Measured gap.** After BODY-HOY-ESCRITORIO-1 merged (`f647768`), the mock (`research/mock-r2/
+Today.dc.html`, 1440px) put the row of six metric tiles (sleep, HRV, resting pulse, Body Battery,
+stress, steps) directly under the top row on desktop, in the first view -- then "Body noticed"
+beside "Night week ahead" as two columns, then the eating window, then the "Tell Body" row. The
+build (`body/templates/today.html` on `f647768`) instead rendered, after the "Tell Body" row and
+"Body noticed", a `.grid2` tile block inside `.cols-hoy` -- a single-column wrapper that put every
+card (talk, noticed, tiles, food, nutrient goals, night week) one under another, far below the
+fold, with no desktop treatment of its own. `.cols-hoy`'s own grid rule (`body/static/body.css`,
+pre-slice line 67, `repeat(auto-fit,minmax(280px,1fr))`, min-width:1024px) had been dead since the
+figure moved into `.hoy-top` (BODY-HOY-ESCRITORIO-1): with one child div inside it, auto-fit never
+had a second item to place beside the first.
+
+**Rulings 1-2, as built.** The DOM stays in the phone order (ruling 2: `talk, noticed, tiles, food,
+[nutrient goals,] week`, unchanged -- BoardOrderTest's marks in `tests/test_mock_r2_hoy.py` needed
+no edit at all, confirmed by re-running that file unmodified). `.cols-hoy` is retired and its single
+wrapper `<div>` removed; its direct children now sit straight inside a new `.hoy-abajo`
+(`today.html:112`), each carrying its own class for CSS to find: `.hoy-noticed` (`:116`, the "Body
+noticed" card, only when `noche_inusual`), `.grid2.hoy-tiles` (`:139`, the six tiles -- `.grid2`
+itself is untouched since `day.html`/`history.html`/`trends.html` also use it, so the breakpoints
+below are scoped to the new `.hoy-tiles` class, not `.grid2`), `.more.hoy-tiles-link` (`:150`, the
+existing "ver el día" link, kept directly after the tiles -- ruling 1's "any other card ... keeps
+its place relative to its neighbour"), `.hoy-comida` (`:152`, the eating window), `.hoy-nutriente`
+(`:169`, the nutrient-goal lines, only when `objetivos_nutriente` -- also kept right after its
+neighbour, the eating window), `.hoy-semana` (`:186`, "Night week ahead", only when
+`semana_nocturna`). `.tellbody` (`:113`) needed no new class -- it is already unique to this one
+row, so BODY-MOCK-R2-HOY-1's own exact-string tests on `'<a class="tellbody taplink" href=
+"#asis-btn">'` stayed valid untouched. `hogar_compartido` and `comida_compartida_pendientes`
+(`today.html:195-234`, outside `.hoy-abajo`, both only sometimes present) are untouched -- they sit
+after the whole `.hoy-abajo` block closes on every width, so on desktop they still render right
+after whichever card ends up visually last inside it (now the "Tell Body" row, ruling 1's own `(d)`)
+and on phone right after "Night week ahead" as before; their "neighbour" (the box that renders
+immediately before them) stays the same relationship on both widths.
+
+From `min-width:768px` (`body.css:484`), `.hoy-abajo` becomes a wrapping flex row
+(`display:flex;flex-direction:row;flex-wrap:wrap;gap:16px`, `:485`), and five children get
+`flex:1 1 100%` (their own full-width row each -- `.hoy-tiles`, `.hoy-tiles-link`, `.hoy-comida`,
+`.hoy-nutriente`, `.tellbody`, `:487`) while `.hoy-noticed`/`.hoy-semana` get `flex:1 1 280px`
+(`:488`) so a flex-wrap row holds exactly two of them side by side. `order` places the four desktop
+steps without touching the DOM: tiles+link `order:1` (`:489`), noticed/week `order:2` (`:490`),
+eating window `order:3` (`:491`), nutrient goals `order:4` (`:492`, kept right after the eating
+window, its DOM neighbour), "Tell Body" `order:5` (`:493`, last on desktop -- first on phone, where
+none of this applies below 768px and the plain DOM/block flow governs). A lone noticed or week card
+needs no separate "solo" rule: with no sibling sharing its `order` value on its own line, a
+flex-grow:1 item is the only thing on that line and grows to fill it -- the row-span ruling 1(b)
+asks for falls out of flex-wrap for free. `.hoy-tiles` gets its own column count per breakpoint,
+never touching the shared `.grid2`: 3 across from 768px (`body.css:494`, inside the same
+min-width:768px block), 6 across from 1024px (`body.css:78`, inside the EXISTING min-width:1024px
+block -- placed there, rather than a new query, because its own Lectura override right below it
+(`body.css:79`, `[data-ancho="lectura"] .hoy-tiles{grid-template-columns:repeat(3,...)}`) carries
+`[data-ancho]`, which `tests/test_ancho_completo.py`'s `ColsAndDataAnchoStayInThe1024QueryTest`
+sweeps wherever it sits and requires inside that block -- consistent with Lectura's own 820px wrap
+cap (`body.css:65`) only ever applying from 1024px in the first place).
+
+**Ruling 3, as built -- the DOM choice and why.** Every card in this region is its own independent
+region: each opens with its own `.q` heading or figure, and no sentence continues from one card
+into the next (confirmed by reading `today.html:112-193` -- "Body noticed"'s own paragraph, the
+tiles' own labels, the eating window's own figure, "Night week ahead"'s own dates, the "Tell Body"
+link, each self-contained). So the DOM stays in the phone order (option one of ruling 3) and CSS
+`order`/`flex` places the four desktop steps -- a screen reader or keyboard-only visitor always
+gets the phone order (talk, noticed, tiles, food, [nutrient goals,] week), which stays a sensible
+reading order on every width (WCAG 1.3.2), and `BoardOrderTest` needed no DOM-truth rewrite.
+
+**Ruling 4, as built.** Lectura's own 820px wrap cap (`body.css:65`, untouched) still fits two
+280px-basis flex-grow items plus the 16px gap (576px < 820px), so "Body noticed"/"Night week ahead"
+keep two columns under Lectura with no extra CSS. The tile row's own Lectura override
+(`body.css:79`, three across) replaces what `.cols-hoy`'s generic one-column collapse used to sit
+in for Hoy (`body.css`'s pre-slice line 73 list, `[data-ancho="lectura"] .cols-hoy,...`) -- `.cols-
+hoy` no longer exists, so per the spec's own ruling 4 this is the rule's named replacement, not a
+silent drop; the comma list at `body.css:72` lost its `.cols-hoy` entry and now names only
+`.cols-tendencias`/`.cols-metas`/`.cols-turnos`/`.cols-historia`.
+
+**Out-of-touches census test, in touches, updated to the new truth (not loosened).**
+`tests/test_ancho_completo.py`'s `_COLS_BY_SCREEN` dict (BODY-ANCHO-COMPLETO-1) mapped
+`"today.html": "cols-hoy"`; since `.cols-hoy` is retired and Hoy's block below `.hoy-top` now has
+its own bespoke order/flex layout instead of the generic auto-fit grid every other screen in that
+dict still uses, the entry is removed (4 screens now, `test_five_screens_listed` renamed
+`test_four_screens_listed`, asserting 4) and the dict's own comment records why.
+
+**Tests added**, `tests/test_hoy_escritorio.py`: `HoyAbajoBlockMarkupTest` (6 tests -- `.cols-hoy`
+gone/`.hoy-abajo` present, every optional card's own class rendered with a demo-seeded person who
+has all three optional cards at once, every card rendered exactly once, the "Tell Body" row's exact
+markup unchanged, the phone DOM order including the two extra optional cards) and
+`HoyAbajoBlockCssTest` (9 tests -- the old rule's removal, the flex row sitting inside the 768px
+query, 3-across/6-across/Lectura-3-across for `.hoy-tiles`, the four `order` values, the
+noticed/week 280px pairing, the five 100%-basis rows, the untouched Lectura wrap cap). No change was
+needed in `tests/test_accesibilidad.py`, `tests/test_seguridad.py` or `tests/test_rendimiento.py`
+(no route logic touched, so `/`'s statement count is unchanged; no inline style or script added) --
+all three ran targeted and green, listed in `touches:` only because the spec could not know in
+advance whether this slice's edits would require them.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry). Exact
+command: `.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 9 sequential chunks of
+the same `tests/test_*.py` modules in alphabetical order (the same set `discover` would walk, ~20
+modules each), each in the foreground:
+
+    chunk 0 (test_accesibilidad..test_baselines_lote):            Ran 354 tests, OK (skipped=1)
+    chunk 1 (test_borrar_reauth..test_entreno_numeros):            Ran 489 tests, OK
+    chunk 2 (test_entreno_racha..test_garmin_estado):              Ran 275 tests, OK
+    chunk 3 (test_garmin_host..test_hoy_escritorio):               Ran 572 tests, OK
+    chunk 4 (test_hoy_turno..test_noche_inusual):                  Ran 401 tests, OK
+    chunk 5 (test_nutriente_objetivo..test_propuesta_vigencia):    Ran 507 tests, OK
+    chunk 6 (test_propuestas_tabla..test_series_unidad):           Ran 301 tests, OK
+    chunk 7 (test_sesion_conexion_1..test_turnos_opcional_5):      Ran 474 tests, OK
+    chunk 8 (test_turnos_perfil..test_web_entry):                  Ran 188 tests, OK
+
+Sum: 3561 run, 0 failures, 0 errors, 1 skipped (pre-existing, POSIX-only). Reconciled against an
+independent collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')
+.countTestCases()`): 3561 -- matching exactly. **GREEN**, one pass, no fix needed. No floor was
+supplied for this slice, so this is the first measurement.
+
+**Merge policy, this slice's own diff** (`body/templates/today.html`, `body/static/body.css`,
+`tests/test_hoy_escritorio.py`, `tests/test_ancho_completo.py`). Checked against the actual diff: no
+schema or migration change, no cross-repo contract or DTO change. Customer-facing bytes DID change
+-- the whole point of this slice is the rendered desktop/tablet layout of Hoy's block below
+`.hoy-top`. This trips merge policy A's customer-bytes condition, so this slice stops before the
+merge with `AWAITING_APPROVAL`, on the branch, tree clean, for the orchestrator to look at 1568,
+1024, 800 and 375px before merging.
+
+**Open follow-ups, not this slice's to do:** none found.
+
+**BODY-HOY-ESCRITORIO-2-B -- six-across never applied; a guard added for the defect class
+(2026-11-15).** The orchestrator measured the branch above (`932b2d8`, `AWAITING_APPROVAL`) in a
+real browser on the demo home and found the order correct at every width, but ONE defect against
+ruling 1: at 1568 and 1024 the tiles were 3 across in two rows, never six. Measured cause
+(`body/static/body.css` on the branch): `.hoy-tiles{grid-template-columns:repeat(6,...)}` sat at
+`:78` inside the `min-width:1024px` block (`:56`), and `.hoy-tiles{grid-template-columns:
+repeat(3,...)}` sat at `:494` inside the LATER, plain `min-width:768px` block (`:461`, no
+max-width) -- equal specificity, so the later, unbounded rule won at every width from 768px up,
+including desktop. The same shape BODY-HOY-ESCRITORIO-1-C fixed for `.hoy-figura
+.cuerpo-vista-track`, the second time in two days a green gate missed it.
+
+**Fix** (`body/static/body.css`, the 3-across rule moved out of the plain `min-width:768px` block
+into its own `@media (min-width:768px) and (max-width:1023.98px)` block, placed right after, with a
+comment naming why): the rule is now tablet-only, so the `min-width:1024px` block's six-across rule
+is the only unbounded `.hoy-tiles` column-count declaration left and wins from 1024px up, as ruling
+1 asked. `tests/test_hoy_escritorio.py`'s two existing CSS-text tests on this pair
+(`test_tiles_three_across_from_768`, `test_tiles_six_across_from_1024`, presence-only) were replaced/
+tightened to check the EFFECTIVE rule per range: `test_tiles_three_across_scoped_below_1024` requires
+the 3-across declaration's own enclosing `@media` header to carry `max-width:1023.98px`;
+`test_tiles_six_across_is_the_effective_rule_from_1024` requires the 6-across declaration to be the
+LAST unbounded (no max-width) bare `.hoy-tiles` column-count declaration in source order (a negative
+lookbehind excludes the separate, higher-specificity Lectura compound selector). Verified against the
+pre-fix tree (`git show 932b2d8:body/static/body.css`) that this tightened test fails there
+(`['6','3']` != `['6']`) and passes after the fix. Commit `f371685`.
+
+**The guard for the class, `tests/test_css_cascada.py` (new file).** Parses `body/static/body.css`
+with the stdlib only (comment-stripping that preserves every position/line number -- this very
+file's own cuerpo-vista comment quotes a CSS snippet containing literal `{`/`}`, which desynced the
+first, naive version of the brace-matcher -- then a small brace-depth block reader, no real CSS
+engine). `find_cascade_inversions` finds every pair of `min-width` media blocks A (larger min) and B
+(smaller min, later in the file, with no max-width bound keeping it below A's min) that declare the
+same property on the same selector (exact text, whitespace-normalised) -- B wins inside A's own
+range by source order alone, so A's declaration never takes effect there.
+
+Run on the branch: **two hits.** `.hoy-tiles`/`grid-template-columns` (the defect this slice's first
+commit just fixed -- confirmed the guard independently catches it by running it against
+`932b2d8`'s pre-fix CSS text directly, not only via the tightened test above) is no longer present
+after the fix (B now carries `max-width:1023.98px`, so the ranges no longer overlap). **One hit
+survives on the fixed tree:** `.grid3`/`grid-template-columns` -- the `min-width:1024px` block's
+`repeat(auto-fill,minmax(150px,1fr))` (`:71`) is permanently overridden by the unbounded, later
+`@media (min-width:640px){.grid3{grid-template-columns:repeat(3,...)}}` (`:109`), so `.grid3` is
+always exactly 3 columns from 640px up and the desktop auto-fill behaviour never applies. Checked
+where `.grid3` is used (`grep` over `body/templates/`): `day.html`, `history.html`, `trends.html` --
+never `today.html` (Hoy). **Not on Hoy**, so per the spec not fixed in this slice (would widen its
+touches); allow-listed in the test as a named `BUG` with its one-line reason, and tracked as a new
+follow-up, BODY-GRID3-CASCADA-1, rather than fixed here.
+
+The guard is proven on synthetic CSS strings, independent of the real file: detects the inversion
+shape; confirms a `max-width` bound below A's min clears it (the exact fix this slice applied);
+confirms a different property on the same selector is not a conflict; confirms order matters (the
+narrower-min block must come AFTER, not before); confirms a comment quoting braces does not desync
+the parser. A second test (`test_allowlist_has_no_stale_entries`) requires every allow-listed pair to
+still be a real, currently-measured hit, so the allowlist cannot silently rot into hiding a future,
+different regression at the same selector/property. Commit `1c0cad3`.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry). Exact
+command: `.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 9 sequential chunks of
+the same `tests/test_*.py` modules in alphabetical order (the same set `discover` would walk, ~20
+modules each), each in the foreground:
+
+    chunk 1 (test_accesibilidad..test_baselines_lote):            Ran 354 tests, OK (skipped=1)
+    chunk 2 (test_borrar_reauth..test_entreno_historial):          Ran 479 tests, OK
+    chunk 3 (test_entreno_numeros..test_garmin_adapter):           Ran 282 tests, OK
+    chunk 4 (test_garmin_estado..test_hoy):                        Ran 551 tests, OK
+    chunk 5 (test_hoy_escritorio..test_nivel_datos_ui):            Ran 407 tests, OK
+    chunk 6 (test_noche_inusual..test_profile_lote):                Ran 524 tests, OK
+    chunk 7 (test_propuesta_vigencia..test_series_orden):          Ran 306 tests, OK
+    chunk 8 (test_series_unidad..test_turnos_opcional_4):          Ran 439 tests, OK
+    chunk 9 (test_turnos_opcional_5..test_web_entry):              Ran 227 tests, OK
+
+Sum: 3569 run, 0 failures, 0 errors, 1 skipped (pre-existing, POSIX-only). Reconciled against an
+independent collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')
+.countTestCases()`): 3569 -- matching exactly, and exactly 8 more than the prior entry's 3561 floor
+(1 net new test in `test_hoy_escritorio.py` -- two presence-only tests replaced by three
+effective-rule tests -- plus 7 new tests in `test_css_cascada.py`). **GREEN**, one pass, no fix
+needed.
+
+**Merge policy, this slice's own diff** (`body/static/body.css`, `tests/test_hoy_escritorio.py`,
+`tests/test_css_cascada.py`). Checked against the actual diff: no schema or migration change, no
+cross-repo contract or DTO change. Customer-facing bytes DID change -- the whole point of this
+slice is the rendered column count of Hoy's tile row from 1024px up. This trips merge policy A's
+customer-bytes condition, so this slice stops before the merge with `AWAITING_APPROVAL`, on the
+branch, tree clean, for the orchestrator to measure at 1568/1024/800/375px before merging.
+
+**Open follow-ups, not this slice's to do:**
+- BODY-GRID3-CASCADA-1: `.grid3`'s `min-width:1024px` auto-fill rule (`body.css:71`) is permanently
+  overridden by the unbounded `min-width:640px` 3-column rule (`body.css:109`), the same cascade-
+  inversion shape this slice fixed for `.hoy-tiles` -- but `.grid3` is used by `day.html`,
+  `history.html` and `trends.html`, never Hoy, so out of this slice's scope. Allow-listed as `BUG`
+  in `tests/test_css_cascada.py`.
+
+-- not merged, AWAITING_APPROVAL
+
+**BODY-HOY-ESCRITORIO-2-C -- six-across still never applied; the OTHER half of the defect class
+(2026-11-15).** The orchestrator's own browser look at the demo on `d658b79` (`body.css?v=90a0279105`),
+reading `document.styleSheets` and counting rendered tile rows, found the gap BODY-HOY-ESCRITORIO-2-B
+believed it had closed was still there: 1568 and 1024 showed two columns (6 tiles, 3 rows), not six.
+
+**Measured cause** (`body/static/body.css` at `d658b79`): the 6-across rule
+(`.hoy-tiles{grid-template-columns:repeat(6,...)}`, `:78`) sat inside the `min-width:1024px` block
+(`:56`), and the tile container is `<div class="grid2 hoy-tiles mb-10">` -- but the UNCONDITIONAL
+`.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}` sat LATER, at `:107`,
+with EQUAL specificity (one class each) to `.hoy-tiles`' own rule. `.grid2` wins at every width
+>=1024px by source order alone, so the tile grid never left two columns there. `find_cascade_inversions`
+(BODY-HOY-ESCRITORIO-2-B's own guard) could not see this: it only compares the SAME selector text
+across two media blocks, and here it is TWO DIFFERENT classes on ONE element colliding -- a shape the
+spec that measured this gap named explicitly. Before -B, the unbounded plain `min-width:768px` rule
+(`:494`, after `:107`) happened to beat `.grid2` at every width from 768px up by the same accident
+that then hid six-across entirely; -B correctly bounded that rule to below 1024px, which is exactly
+what exposed `.grid2` as the next later, equal-specificity rule still standing at 1024px and up.
+
+**Fix** (`body/static/body.css`): every `.hoy-tiles` column-count rule -- the tablet-only 3-across
+(`:500-502`, unchanged in substance from -B), the 6-across, and the Lectura 3-across override -- now
+lives together in ONE place, in the Hoy section, AFTER `.grid2` (`:101`): `:503-506`. Winning is now a
+property of file position relative to `.grid2`, not of which block happened to come later by accident.
+The stale top-of-file 1024px copy (old `:74-79`) was removed outright. Commits `fb21244`, `1ea5990`
+(a follow-up fix to a stale line-number cross-reference the first commit's own new comment left behind
+after the earlier lines moved `.grid2` from `:107` to `:101`).
+
+**The co-class guard, `tests/test_css_cascada.py` (`find_coclass_collisions`, new).** Parses
+`body/templates/today.html` for every element carrying two or more literal classes in a `class="..."`
+attribute (skipping any attribute containing `{{`/`{%` -- Jinja can change the class list entirely),
+and `body/static/body.css` for every BARE single-class selector's declarations (`.foo`, never
+`.foo.bar` -- the only shape where two classes on one element are equal specificity), each tagged with
+the min/max-width bounds of its enclosing `@media` (a condition that is not purely min/max-width, such
+as `(hover:hover)`, blocks the whole subtree -- the real file's own compound selectors living inside
+such blocks are never bare single-class selectors anyway, so nothing this guard needs is lost). For
+every (class-pair, property) a Hoy element's two classes both declare, it computes the winner -- the
+LAST declaration in file order among the rules whose bounds include a given pixel width -- at four
+sample widths: 375, 800, 1024, 1568.
+
+`test_grid2_hoy_tiles_winner_matches_the_expected_table` asserts the exact table the spec gave:
+`{375: ".grid2", 800: ".hoy-tiles", 1024: ".hoy-tiles", 1568: ".hoy-tiles"}` -- matches, on the fixed
+tree. **Six other co-class hits found on Hoy**, every one reviewed and allow-listed
+(`COCLASS_ALLOWLIST`) rather than fixed: `.row`/`.items-end` (`align-items`), `.row`/`.gap-8` (`gap`)
+and `.row`/`.justify-start` (`justify-content`) are utility-over-component overrides, intentional by
+design (`body.css:309-320`, BODY-ESTILOS-1: utilities sit LAST in the file ON PURPOSE so they always
+beat a component class at equal specificity); `.tellbody`/`.taplink` (`display`, `min-height`,
+`text-decoration`) is `.tellbody` deliberately overriding `.taplink`'s generic inline-flex with its own
+block layout (`today.html:113`). All six are UNCONDITIONAL on both sides (no `@media` at all), so the
+same class wins at every one of the four sample widths -- stable, no width-dependent cascade risk, only
+a documented, intentional override. `test_allowlist_has_no_stale_entries` requires every allow-listed
+entry to still be a real, currently-measured hit.
+
+Proven with a MINIMAL synthetic reproduction of the exact `d658b79` shape (`CoClassCheckerCatchesThe
+MeasuredDefectTest`) rather than embedding the real file's text: a `.hoy-tiles` 6-across rule inside an
+early `min-width:1024px` block, followed by an unconditional `.grid2`, followed by the tablet-only
+3-across block -- `test_grid2_wins_at_1024_and_1568_before_the_fix` confirms the checker reports
+`.grid2` as the (wrong) winner at 1024 and 1568 on that shape, exactly reproducing the measured gap;
+`test_the_fix_shape_gives_hoy_tiles_the_win` confirms the fixed ordering (`.grid2` first, then both
+bounded `.hoy-tiles` blocks) gives the expected table. Commit `2654555`.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry, commit
+`1ea5990`). Exact command: `.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 9
+sequential chunks of the same `tests/test_*.py` modules in alphabetical order (the same set `discover`
+would walk, ~20 modules each), each in the foreground, run TWICE -- once before, once after the
+`1ea5990` comment-only fix, both green with identical counts:
+
+    chunk 1 (test_accesibilidad..test_baselines_lote):            Ran 354 tests, OK (skipped=1)
+    chunk 2 (test_borrar_reauth..test_entreno_historial):          Ran 484 tests, OK
+    chunk 3 (test_entreno_numeros..test_garmin_adapter):           Ran 282 tests, OK
+    chunk 4 (test_garmin_estado..test_hoy):                        Ran 551 tests, OK
+    chunk 5 (test_hoy_escritorio..test_nivel_datos_ui):            Ran 407 tests, OK
+    chunk 6 (test_noche_inusual..test_profile_lote):                Ran 524 tests, OK
+    chunk 7 (test_propuesta_vigencia..test_series_orden):          Ran 306 tests, OK
+    chunk 8 (test_series_unidad..test_turnos_opcional_4):          Ran 439 tests, OK
+    chunk 9 (test_turnos_opcional_5..test_web_entry):              Ran 227 tests, OK
+
+Sum: 3574 run, 0 failures, 0 errors, 1 skipped (pre-existing, POSIX-only). Reconciled against an
+independent collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')
+.countTestCases()`): 3574 -- matching exactly, and exactly 5 more than the prior entry's 3569 floor (5
+new tests in `test_css_cascada.py`: 3 in `CoClassCollisionGuardTest`, 2 in
+`CoClassCheckerCatchesTheMeasuredDefectTest`). **GREEN**, one pass, no fix needed.
+
+**Merge policy, this slice's own diff** (`body/static/body.css`, `tests/test_css_cascada.py`). Checked
+against the actual diff: no schema or migration change, no cross-repo contract or DTO change.
+Customer-facing bytes DID change -- the whole point of this slice is the rendered column count of
+Hoy's tile row at 1024px and 1568px, the exact thing BODY-HOY-ESCRITORIO-2-B believed it had already
+fixed. This trips merge policy A's customer-bytes condition, so this slice stops before the merge with
+`AWAITING_APPROVAL`, on the branch, tree clean, for the orchestrator to measure at
+1568/1024/800/375px before merging -- this time against the live stylesheet, the way the gap itself
+was found.
+
+**Open follow-ups, not this slice's to do:** none found (BODY-GRID3-CASCADA-1, above, carries over
+from BODY-HOY-ESCRITORIO-2-B unchanged -- still not on Hoy, still out of scope).
+
+-- not merged, AWAITING_APPROVAL
+
+**BODY-HOY-ESCRITORIO-2-D -- six across measured one quality defect at 1024px; moved to 1280px
+(2026-11-15).** BODY-HOY-ESCRITORIO-2-C returned `AWAITING_APPROVAL` on this branch at `43456fd`
+(gate 3574 green, co-class guard added). The orchestrator's own browser look at the demo confirmed
+the fix: tile grid 6 columns in 1 row at 1568 and 1024, 3 at 800, 2 at 375 (phone order unchanged),
+desktop order below the top row `tiles > "ver todo el día" > noticed|week > food > nutrient > Tell
+Body` at 1568/1024/800, `scrollWidth` never over the viewport. **One quality defect at 1024**: with
+the `>=1024px` left rail the content box is ~709px measured, so each of the six tiles was only
+~110px wide, and the steps tile's own figure ("10.826 pasos" on the demo) overflowed it (`.fig`
+`scrollWidth` > `clientWidth`); the other tiles' labels wrapped to 3-4 short lines. The mock draws
+six across at 1440px (~180px a tile).
+
+**Ruling (orchestrator, quality):** six across only from 1280px; three across from 768px to
+1279.98px.
+
+**Fix** (`body/static/body.css`): the bare 3-across rule's upper bound moved from
+`max-width:1023.98px` to `max-width:1279.98px` (`:521-523`); the bare 6-across rule's lower bound
+moved from `min-width:1024px` to `min-width:1280px` (`:524-526`). The Lectura override
+(`[data-ancho="lectura"] .hoy-tiles`) stays in its OWN, separate `@media (min-width:1024px)` block,
+unbounded (`:527-529`) -- moving it to 1280px alongside the bare 6-across rule, as first tried,
+broke `tests/test_ancho_completo.py`'s `ColsAndDataAnchoStayInThe1024QueryTest`
+(BODY-DEPLOY-HOST-1-M, a guard file outside this slice's `touches:`), which requires every
+`data-ancho` rule to sit textually inside an exact `@media (min-width:1024px)` block. Splitting it
+into its own unbounded 1024px block keeps that guard green: its compound selector
+(`[data-ancho="lectura"] .hoy-tiles`, two conditions) outranks the bare `.hoy-tiles` rules by
+specificity regardless of source order, so Lectura still stays 3-across from 1024px up, covering
+both 1024-1279 (where the bare rule already gives 3 anyway) and >=1280 (where the bare rule would
+otherwise give 6). Commits `abbe7a6`, `073aa84` (the second commit fixes exactly this: the first
+attempt also left a literal `{}` inside the new CSS comment's prose, which desynced
+`test_ancho_completo.py`'s own brace-counting parser -- that file does not strip comments the way
+`test_css_cascada.py`'s own parser does -- and was caught by this slice's own full chunk 1 run before
+being committed as a single, corrected change).
+
+**No `.fig` overflow protection added, by measurement, not by rule-of-thumb.** Tile width over
+768-1279.98px: ~236px while `main` itself is capped at `max-width:760px` (768-1023.98px, no rail
+yet, `body.css:48`), then ~235px-320px from 1024px as the rail/40px-padding layout takes over
+(`viewport-300`, 3 tiles, two 10px gaps, `body.css:64`) -- about twice the ~110px tile that
+overflowed. The steps figure that overflowed a 110px tile (card padding 14px each side leaves ~82px
+of content width for "10.826"+"pasos", itself ~117px by the same reasoning) fits comfortably inside
+the ~202px a 236px tile leaves open, so no overflow is possible in the new 3-across range and no
+`min-width:0`/`overflow-wrap:anywhere` was added to `.fig` for it.
+
+**Tests** (`tests/test_hoy_escritorio.py`): the four `HoyAbajoBlockCssTest` methods checking these
+boundaries renamed and updated for the new numbers --
+`test_tiles_three_across_scoped_below_1280` now requires `max-width:1279.98px` in the wrapping
+`@media` header; `test_tiles_six_across_from_1280` and
+`test_tiles_six_across_is_the_effective_rule_from_1280` now require `min-width:1280px`;
+`test_tiles_three_across_under_lectura_even_past_1280` is unchanged in substance (the compact string
+it checks for did not change). (`tests/test_css_cascada.py`): `SAMPLE_WIDTHS` gained `1280`;
+`HOY_TILES_EXPECTED_WINNER` gained `1280: ".hoy-tiles"` -- the winning CLASS at every sample width is
+unchanged from -C (`.grid2` only at 375, `.hoy-tiles` from 800 up), since `.hoy-tiles` carries a rule
+at every width from 768px up either way; what changes underneath that unchanged winner is the actual
+column count the winning rule gives: 375->2, 800->3, 1024->3, 1280->6, 1568->6. The module's own
+historical docstring (describing the fix shape in general terms) was updated to cite
+`max-width:1279.98px` rather than the now-stale `1023.98px`.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry, commit
+`073aa84`). Exact command: `.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 9
+sequential chunks of the same `tests/test_*.py` modules in alphabetical order (the same set
+`discover` would walk, ~20 modules each), each in the foreground:
+
+    chunk 1 (test_accesibilidad..test_baselines_lote):            Ran 354 tests, OK (skipped=1)
+    chunk 2 (test_borrar_reauth..test_entreno_historial):          Ran 484 tests, OK
+    chunk 3 (test_entreno_numeros..test_garmin_adapter):           Ran 282 tests, OK
+    chunk 4 (test_garmin_estado..test_hoy):                        Ran 551 tests, OK
+    chunk 5 (test_hoy_escritorio..test_nivel_datos_ui):            Ran 407 tests, OK
+    chunk 6 (test_noche_inusual..test_profile_lote):               Ran 524 tests, OK
+    chunk 7 (test_propuesta_vigencia..test_series_orden):          Ran 306 tests, OK
+    chunk 8 (test_series_unidad..test_turnos_opcional_4):          Ran 439 tests, OK
+    chunk 9 (test_turnos_opcional_5..test_web_entry):              Ran 227 tests, OK
+
+Chunk 1 was run once more than the rest: the first attempt (before the `073aa84` fix) failed one
+test in `test_ancho_completo.py` (`ColsAndDataAnchoStayInThe1024QueryTest`, not in this slice's
+`touches:`), fixed as described above, then re-run green with the same count (354). Every other
+chunk ran once, green. Sum: 3574 run, 0 failures, 0 errors, 1 skipped (pre-existing, POSIX-only).
+Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`): 3574 -- matching
+exactly, and matching -C's own floor exactly (this slice renames and re-numbers existing tests and
+adds one new table entry to an existing dict; it adds no new test methods). **GREEN**.
+
+**Merge policy, this slice's own diff** (`body/static/body.css`, `tests/test_hoy_escritorio.py`,
+`tests/test_css_cascada.py`). Checked against the actual diff: no schema or migration change, no
+cross-repo contract or DTO change. Customer-facing bytes DID change -- the whole point of this
+slice is the rendered column count of Hoy's tile row between 1024px and 1279px (now 3, was 6) and
+the width at which it becomes 6 (now 1280px, was 1024px). This trips merge policy A's
+customer-bytes condition, so this slice stops before the merge with `AWAITING_APPROVAL`, on the
+branch, tree clean.
+
+**Open follow-ups, not this slice's to do:** none found (BODY-GRID3-CASCADA-1, above, carries over
+unchanged -- still not on Hoy, still out of scope).
+
+-- not merged, AWAITING_APPROVAL
+
+### -M
+
+**BODY-HOY-ESCRITORIO-2-M -- orchestrator's browser look approves -D for merge (2026-11-15).**
+BODY-HOY-ESCRITORIO-2-D returned `AWAITING_APPROVAL` on this branch at `cae5e67` (gate 3574 green,
+reconciled; tree clean). The orchestrator opened the demo home (body-web-demo, es) in a browser and
+counted the tile grid's columns, rows and tile width at five widths, and checked every tile element
+for overflow: at 1568px, 6 columns in 1 row, tiles ~201px wide; at 1280px, 6 columns in 1 row, tiles
+~153px wide; at 1024px, 3 columns in 2 rows, tiles ~230px wide; at 800px, 3 columns in 2 rows, tiles
+~236px wide; at 375px, 2 columns in 3 rows, tiles ~167px wide. No tile element overflowed its tile at
+any of the five widths, and `scrollWidth` never exceeded the viewport. Below the top row, from
+768px up, the desktop order held: tiles, then "ver todo el día", then "Body lo notó" beside "Semana
+nocturna por delante", then the eating window, then the nutrient card, then Tell Body; the phone
+order was unchanged. No defect found. Approved to merge -- layout only, no new strings. Deploy stays
+at the end of the wave (Carlos, 2026-11-15).
+
