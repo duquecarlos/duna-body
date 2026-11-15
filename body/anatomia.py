@@ -56,6 +56,13 @@ CATEGORIA_GRUPOS: dict[str, frozenset[str]] = {
 GRUPOS_ORDEN: list[str] = ["pecho", "hombros", "biceps", "abdomen", "dorsales", "espalda_alta",
                            "deltoides_post", "cuadriceps", "gluteos", "isquios"]
 
+# BODY-CUERPO-NITIDEZ-1: basenames with no 800/1440 responsive pair -- vias-aereas's source is a
+# 2048x2048 square, not a plain crop of the served frame, so it was never re-encoded alongside the
+# other 12. contexto() marks every other view "nitida" so the template emits srcset+sizes for it;
+# this one keeps today's single-file src. The per-view choice is this one field, never a filename
+# test in the template or JS.
+_SIN_SRCSET: frozenset[str] = frozenset({"vias-aereas"})
+
 # Which of BRILLOS' own groups each (pantalla, vista id) may ever light. BRILLOS is keyed by POSE
 # (frente/espalda), not by view -- Hoy's "corazon" view shares its coordinates with "musculos" (both
 # front-posed), so without this a leg category would also glow on the heart view. Each view gets
@@ -107,7 +114,9 @@ def contexto(t: T, pantalla: str, grupos_lit: frozenset[str] = frozenset(),
     zonas, in its own `limitada` list -- drawn as a quiet hatch, never the training glow.
     `grupos_pendientes` (BODY-HOY-ESCRITORIO-1 ruling 3) is the same per-view filtering for a
     planned-but-not-yet-trained group, in its own `pendiente` list -- the dashed outline, drawn
-    with the solid glow's own class plus a modifier, never the hatch's."""
+    with the solid glow's own class plus a modifier, never the hatch's. `nitida`
+    (BODY-CUERPO-NITIDEZ-1) says whether this view's image has the 800/1440 responsive pair -- the
+    template reads it to choose srcset+sizes or the single-file src, never a filename test."""
     out = []
     for v in VISTAS_POR_PANTALLA[pantalla]:
         imagen = v["imagen"]
@@ -118,7 +127,7 @@ def contexto(t: T, pantalla: str, grupos_lit: frozenset[str] = frozenset(),
         limitada = [elipse for g in (grupos_limitados & permitidos) for elipse in disponibles.get(g, [])]
         pendiente = [elipse for g in (grupos_pendientes & permitidos) for elipse in disponibles.get(g, [])]
         out.append({"id": v["id"], "imagen": imagen, "glow": glow, "limitada": limitada,
-                    "pendiente": pendiente,
+                    "pendiente": pendiente, "nitida": imagen not in _SIN_SRCSET,
                     "label": t("cuerpo.vista." + v["id"]), "alt": _alt(t, pantalla, v["id"])})
     return out
 

@@ -3,7 +3,11 @@
    -- and turns a horizontal swipe on the image into the next/previous view (the 2D stand-in for
    the mock's "drag to turn"). tema.js already sets `data-theme` on <html> before paint, so this
    deferred script reads it once; theme does not change without a page reload in this app
-   (settings.html's own theme row navigates there, it never flips <html> on this page). */
+   (settings.html's own theme row navigates there, it never flips <html> on this page).
+   BODY-CUERPO-NITIDEZ-1: a view the template marked "nitida" also carries a per-theme
+   `data-claro-srcset`/`data-oscuro-srcset` (the 800w/1440w pair) alongside its plain `src`
+   fallback -- set here the same way, right after `src`, for whichever view no such pair exists
+   (vias-aereas) that attribute is simply absent and this is a no-op. */
 (function(){
 function tema(){return document.documentElement.dataset.theme==='dark'?'oscuro':'claro'}
 function cargar(capa){
@@ -11,6 +15,8 @@ function cargar(capa){
   if(!img||img.getAttribute('src'))return
   var src=img.dataset[tema()]
   if(src)img.src=src
+  var srcset=img.dataset[tema()+'Srcset']
+  if(srcset)img.srcset=srcset
 }
 document.querySelectorAll('.cuerpo-vista').forEach(function(root){
   var capas=root.querySelectorAll('.cuerpo-vista-capa')

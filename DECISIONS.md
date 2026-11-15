@@ -22011,3 +22011,149 @@ at the end of the wave (Carlos, 2026-11-15).
 
 -- merged 8e212bfadf2ee7139c38b93156659a5724226b95
 
+## BODY-CUERPO-NITIDEZ-1
+
+**Measured cause.** Carlos, relayed by the Personal desk 2026-11-15: "it doesn't look that sharp."
+On `main` 26ebcbe every served anatomy image (`body/static/anatomia/*.webp`, 26 files) was 1080x1935
+at 36-83 KB -- heavily compressed, which is what made the figure soft (BODY-HOY-ESCRITORIO-1 had
+already fixed the upscaling). The orchestrator matched each served file to its source
+(`C:/Duna/body/arte/hoy/*.jpg`, 1536x2752, ~1.5-1.9 MB each) by image similarity (worst same-frame
+difference 0.65 against 7.23 for a 1% shift -- the framing is identical, so every glow position in
+`body/anatomia.py` stays valid) and re-encoded 24 of the 26 files from the originals with PIL
+(Lanczos, WebP quality 82, method 6) at two widths, 800 (800x1433) and 1440 (1440x2580), in
+`research/arte-nitidez/` in the orchestrator's own repository, 48 files, ~1.05 MB total at 800 and
+~2.5 MB at 1440.
+
+**The two `vias-aereas-*.webp` files were NOT re-encoded**: their source is a 2048x2048 square and
+the served 1080x1935 frame is not a plain crop of it (no crop found below a difference of 25), so
+they keep today's single file per theme, unchanged byte for byte.
+
+**Source mapping (FUENTES.txt, 24 lines, orchestrator's `research/arte-nitidez/`):**
+```
+cerebro-claro        <- C:/Duna/body/arte/hoy/04-cerebro-v3.jpg
+cerebro-oscuro       <- C:/Duna/body/arte/hoy/04-cerebro-v3-oscuro.jpg
+corazon-claro        <- C:/Duna/body/arte/hoy/02-corazon.jpg
+corazon-oscuro       <- C:/Duna/body/arte/hoy/02-corazon-oscuro.jpg
+espalda-claro        <- C:/Duna/body/arte/hoy/10-espalda.jpg
+espalda-columna-claro  <- C:/Duna/body/arte/hoy/12-espalda-columna.jpg
+espalda-columna-oscuro <- C:/Duna/body/arte/hoy/12-espalda-columna-osc.jpg
+espalda-musculos-claro  <- C:/Duna/body/arte/hoy/11-espalda-musculos.jpg
+espalda-musculos-oscuro <- C:/Duna/body/arte/hoy/11-espalda-musculos-osc.jpg
+espalda-oscuro       <- C:/Duna/body/arte/hoy/10-espalda-osc.jpg
+esqueleto-claro      <- C:/Duna/body/arte/hoy/07-esqueleto.jpg
+esqueleto-oscuro     <- C:/Duna/body/arte/hoy/07-esqueleto-oscuro.jpg
+frente-claro         <- C:/Duna/body/arte/hoy/01-frente-2k-v3.jpg
+frente-oscuro        <- C:/Duna/body/arte/hoy/01-frente-2k-v3-osc.jpg
+musculos-claro       <- C:/Duna/body/arte/hoy/06-musculos-V2.jpg
+musculos-oscuro      <- C:/Duna/body/arte/hoy/06-musculos-V2-osc.jpg
+nervios-claro        <- C:/Duna/body/arte/hoy/03-nervios.jpg
+nervios-oscuro       <- C:/Duna/body/arte/hoy/03-nervios-OSCURO.jpg
+perfil-claro         <- C:/Duna/body/arte/hoy/20-perfil.jpg
+perfil-columna-claro   <- C:/Duna/body/arte/hoy/21-perfil-columna.jpg
+perfil-columna-oscuro  <- C:/Duna/body/arte/hoy/21-perfil-columna-oscuro.jpg
+perfil-oscuro        <- C:/Duna/body/arte/hoy/20-perfil-oscuro.jpg
+pulmones-claro       <- C:/Duna/body/arte/hoy/05-pulmones.jpg
+pulmones-oscuro      <- C:/Duna/body/arte/hoy/05-pulmones-osc.jpg
+```
+FUENTES.txt itself was not copied into the repository, per the spec -- these 24 lines are its
+record. `body/static/anatomia/manifest.json` was regenerated to describe the 48 new files (sha256,
+byte count, 800x1433/1440x2580 dimensions, same `fuente` per theme) in place of the 24 rows they
+replace; its two `vias-aereas` rows are untouched.
+
+**The copy (commit 0bb1fa0).** The 48 files were copied byte for byte with `shutil.copyfile` (one
+Python loop, size-verified on copy against the source in the orchestrator's `research/
+arte-nitidez/`), the 24 old single-width files removed with `git rm`, and `manifest.json` rewritten
+to match. `anclajes.json` (the glow framing) was not touched -- the orchestrator's own similarity
+measurement proved the framing identical.
+
+**The responsive markup (commit 0ed7a26).** `body/anatomia.py`'s `contexto()` gained one field,
+`nitida` (`body/anatomia.py:130`, driven by `_SIN_SRCSET` at `body/anatomia.py:64` -- `{"vias-
+aereas"}`, true for every other view): the per-view choice between the responsive pair and the
+single file lives there, never a filename test in the template or the JS (both checked by
+`tests/test_cuerpo_nitidez.py`'s own guard). `body/templates/_cuerpo_vista.html`'s `cuerpo_vista`
+macro took a `sizes` argument, default `'(min-width: 768px) 700px, calc(100vw - 64px)'`
+(`body/templates/_cuerpo_vista.html:1`) -- read from `body/static/body.css`: `main` caps at
+max-width:760px with 16px padding each side below the >=1024px sidebar breakpoint, and
+`.cuerpo-card`/`.cuerpo-vista-track` add their own 16px padding, so the full-width card's own
+content tops out a little under 700px from 768px up, and the phone column is the viewport minus
+that same ~64px of padding. A nitida view's `<img>` now carries `sizes`, `data-claro-srcset` and
+`data-oscuro-srcset` (the 800w/1440w pair, `body/templates/_cuerpo_vista.html:8-11`); a non-nitida
+view (vias-aereas) keeps the single-file `data-claro`/`data-oscuro` it always had
+(`body/templates/_cuerpo_vista.html:14-16`).
+
+**`sizes` per include**, read from `body/static/body.css`'s own rules for each (ruling 2):
+- `body/templates/trends.html:25` and `body/templates/shifts.html:7` -- `cuerpo_vista(t, cuerpo)`,
+  the macro's own default (full-width card, no narrower column at any breakpoint).
+- `body/templates/today.html:109` -- `cuerpo_vista(t, cuerpo, 'hoy-figura', sizes='(min-width:
+  768px) 400px, 80vw')`, matching `--hoy-figura-max:400px` (`body/static/body.css:30`) from 768px
+  and the phone-column figure's own ~80vw below it (`body/static/body.css:462-465`).
+
+`body/static/cuerpo-vista.js`'s `cargar()` now also sets `img.srcset` from
+`img.dataset[tema()+'Srcset']` right after it sets `img.src` from `img.dataset[tema()]` -- a no-op
+for a view with no such dataset attribute (vias-aereas).
+
+**Tests.** `tests/test_cuerpo_nitidez.py` (new, 14 tests): disk matches `manifest.json` exactly (no
+old single-width leftover, nothing missing); every nitida basename has both themes/both widths;
+vias-aereas keeps its single file per theme and gains no `-800`/`-1440` variant; every view Hoy/
+Tendencias/Turnos actually renders is nitida; `contexto()`'s `nitida` field; the macro's rendered
+markup for a nitida view (srcset, both widths, `sizes`) and a non-nitida one (plain src, no
+srcset/sizes) -- rendered directly through `body.rutas.comun.env` with a synthetic view list, since
+no current screen wires vias-aereas into a real route; the Hoy-specific `sizes` override in
+`today.html`'s own source; the JS sets `srcset` from the theme dataset; neither the template's nor
+the JS's executable code (comments aside) names `vias-aereas`. `tests/test_cuerpo_vista.py`'s
+`ManifestTest` and `AnatomiaDataTest.test_every_view_image_exists_in_both_themes` were updated for
+the new manifest row count (50) and the 800/1440 naming; its other 30 tests were untouched and stay
+green. `tests/test_seguridad.py` and `tests/test_rendimiento.py` needed no change: their guards
+(style attributes/elements, SQL-statement ceilings) are generic over every template and route, and
+this slice adds neither an inline style nor a database query -- both confirmed green by the gate
+below.
+
+**The gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as 9 sequential
+alphabetical chunks of ~20 dotted modules each, in the foreground, on the final tree (commit
+0ed7a26):
+
+    chunk 1 (test_accesibilidad..test_baselines_lote):        Ran 354 tests, OK (skipped=1)
+    chunk 2 (test_borrar_reauth..test_ejes_fechas):            Ran 487 tests, OK
+    chunk 3 (test_entreno_historial..test_fuentes_propias):    Ran 287 tests, OK
+    chunk 4 (test_garmin_adapter..test_household):             Ran 537 tests, OK
+    chunk 5 (test_hoy..test_mudanza):                          Ran 417 tests, OK
+    chunk 6 (test_nivel_datos_ui..test_profile):                Ran 529 tests, OK
+    chunk 7 (test_profile_lote..test_series_gramos):           Ran 284 tests, OK
+    chunk 8 (test_series_orden..test_turnos_opcional_3):       Ran 455 tests, OK
+    chunk 9 (test_turnos_opcional_4..test_web_entry):          Ran 238 tests, OK
+
+Sum: 3588 run, 0 failures, 0 errors, 1 skipped (pre-existing, POSIX-only). Reconciled against an
+independent collect-only count (`unittest.TestLoader().discover('tests',
+top_level_dir='.').countTestCases()`): 3588 -- matching exactly. **GREEN**.
+
+**Merge policy, this slice's own diff** (`body/static/anatomia/*`, `body/anatomia.py`,
+`body/templates/_cuerpo_vista.html`, `body/templates/today.html`, `body/static/cuerpo-vista.js`,
+`tests/test_cuerpo_vista.py`, `tests/test_cuerpo_nitidez.py`). Checked against the actual diff: no
+schema or migration change, no cross-repo contract or DTO change. Customer-facing bytes DID
+change -- every anatomy image a signed-in person actually sees is now served from a different,
+sharper file (and, on a wide-enough connection/screen, a larger one), and the markup around it
+changed (`srcset`, `sizes`). This trips merge policy A's customer-bytes condition, so this slice
+stops before the merge with `AWAITING_APPROVAL`, on the branch, tree clean -- the orchestrator looks
+at the figure in a real browser (which file each width loads, sharpness, glow alignment) before any
+merge.
+
+**Open follow-ups, not this slice's to do:** none found.
+
+-- not merged, AWAITING_APPROVAL
+
+### -M
+
+**BODY-CUERPO-NITIDEZ-1-M -- orchestrator's browser look approves -1 for merge (2026-11-15).**
+BODY-CUERPO-NITIDEZ-1 returned `AWAITING_APPROVAL` on this branch at `326589d` (gate 3588 green,
+reconciled; tree clean; 0bb1fa0 files, 0ed7a26 srcset, 326589d ledger). The orchestrator opened the
+demo (body-web-demo) and looked at Hoy's anatomy figure at two widths: at 1568px (DPR 1), the
+366x656 figure box loaded `musculos-oscuro-800.webp` through a `srcset` of 2 entries and `sizes`
+"(min-width: 768px) 400px, 80vw"; at 375px (DPR 2), the same 800-wide file loaded for a 272x487 box.
+No image failed to load. A headless capture at 1568px, set beside the pre-slice capture, showed
+visibly crisper detail (fibres, face, hands), with the lesion hatch marks on both shoulders in the
+same place -- framing unchanged. Today's demo had no planned session (caption "Hoy no hay sesión
+planeada."), so no solid/dashed glow was on screen to check; glow placement is unchanged code, not
+exercised by this look. `test_seguridad`/`test_rendimiento` unchanged and green. No defect found.
+Approved to merge -- images and markup only, no new strings. Deploy stays at the end of the wave
+(Carlos, 2026-11-15).
+
