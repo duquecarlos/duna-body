@@ -22009,3 +22009,5 @@ nocturna por delante", then the eating window, then the nutrient card, then Tell
 order was unchanged. No defect found. Approved to merge -- layout only, no new strings. Deploy stays
 at the end of the wave (Carlos, 2026-11-15).
 
+-- merged 8e212bfadf2ee7139c38b93156659a5724226b95
+
