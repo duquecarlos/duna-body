@@ -21589,3 +21589,5 @@ and not in this slice's `touches:`, so the correction is for the next Tier 1 sli
 change, and no customer-facing bytes added or changed (ruling 4 above). Gate green on the branch
 (3547/3547, reconciled above). Merged with `git merge --no-ff` from `main`.
 
+-- merged eb2647f383535c62d50eebb484d753edaed1a2de
+
