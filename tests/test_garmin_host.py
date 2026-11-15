@@ -9,7 +9,7 @@ import os
 import tempfile
 import time
 import unittest
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -717,6 +717,11 @@ class PullHostedPerPersonZoneTest(unittest.TestCase):
         patcher_key.start(); self.addCleanup(patcher_key.stop)
 
     def test_each_person_gets_their_own_today_and_yesterday(self):
+        """BODY-GARMIN-SYNC-CONSISTENTE-1-B amends ruling 1: the hosted day set is the union of
+        the --days window and the 14-day gap-fill (_dias_pendientes_relleno), so this test seeds
+        stored Garmin rows for the other 12 days of each person's own VENTANA_RELLENO window --
+        the healing half of the union then adds nothing, and today/yesterday stay the only two
+        days actually fetched, in that person's own zone."""
         self.conn.execute("UPDATE person SET timezone = 'America/Bogota' WHERE id = 1")
         self.conn.execute("UPDATE person SET timezone = 'Pacific/Auckland' WHERE id = 2")
         self.conn.commit()
@@ -725,6 +730,15 @@ class PullHostedPerPersonZoneTest(unittest.TestCase):
         # One real instant: Nov 8 18:00 in Bogota (UTC-5) but already Nov 9 noon in Auckland
         # (UTC+13 in NZ daylight time) -- the server date and person 2's own date differ.
         instant = datetime(2026, 11, 8, 23, 0, tzinfo=timezone.utc)
+        hoy_bogota, hoy_auckland = date(2026, 11, 8), date(2026, 11, 9)
+        for person_id, hoy, skip in (
+                (1, hoy_bogota, {"2026-11-07", "2026-11-08"}),
+                (2, hoy_auckland, {"2026-11-08", "2026-11-09"})):
+            for n in range(garmin_cuenta.VENTANA_RELLENO):
+                dia = (hoy - timedelta(n)).isoformat()
+                if dia not in skip:
+                    db.set_metric(self.conn, dia, "resting_hr", 55, "garmin", person_id)
+        self.conn.commit()
         calls_by_token: dict[str, list[str]] = {"tok-bogota": [], "tok-auckland": []}
 
         def fetch(day, token_str=None):
