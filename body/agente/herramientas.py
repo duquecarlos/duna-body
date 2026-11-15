@@ -2791,9 +2791,22 @@ def ejecutar(conn: sqlite3.Connection, person_id: int, nombre: str, params: dict
         if conversacion_id is None:
             raise ToolError(f"{nombre!r} requiere una conversación")
         return entrada["funcion"](conn, person_id, conversacion_id, **params)
-    # BODY-AGENTE-LEER-SERIE-1: a lectura tool whose registry entry asks for `nivel` (leer_serie's
-    # own 'dia' vs 'resumen' split) gets it as its third positional argument -- everybody else's
-    # call shape is unchanged.
-    if entrada.get("necesita_nivel"):
-        return entrada["funcion"](conn, person_id, nivel, **params)
-    return entrada["funcion"](conn, person_id, **params)
+    # BODY-ASISTENTE-CONFORMIDAD-1 ruling 1 (agent-capabilities-v1 section 1): a `lectura` tool
+    # can never write, enforced by the connection itself -- never by review. `query_only` is
+    # restored to whatever it was before, in a `finally`, so a nested call (there is none today)
+    # or a later caller on the same connection never finds it left on.
+    previo = conn.execute("PRAGMA query_only").fetchone()[0]
+    conn.execute("PRAGMA query_only = ON")
+    try:
+        # BODY-AGENTE-LEER-SERIE-1: a lectura tool whose registry entry asks for `nivel` (leer_serie's
+        # own 'dia' vs 'resumen' split) gets it as its third positional argument -- everybody else's
+        # call shape is unchanged.
+        if entrada.get("necesita_nivel"):
+            return entrada["funcion"](conn, person_id, nivel, **params)
+        return entrada["funcion"](conn, person_id, **params)
+    except sqlite3.OperationalError as e:
+        if "readonly database" not in str(e):
+            raise
+        raise ToolError("lectura_intento_escribir") from None
+    finally:
+        conn.execute(f"PRAGMA query_only = {'ON' if previo else 'OFF'}")
