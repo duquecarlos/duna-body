@@ -20959,3 +20959,156 @@ condition.
 
 -- merged 60e3c786c3acc9a7e5a2a4bb98c5f1a21b4f5add
 
+
+## BODY-MCP-REMOTO-SERVIDOR-1 -- a hosted MCP door for the Personal desk, one core for both doors (2026-11-14)
+
+Surface BODY-MUDANZA-PC-A-SERVIDOR-1: the Personal desk's MCP client needs to reach Carlos's health data on
+`body.duna.solutions`, not the local PC database. This slice builds the hosted half of `body/mcp.py`'s existing
+local stdio door -- two new HTTP routes, authenticated by a new device-key scope, sharing the exact same tool
+dispatch the local door already runs, never a parallel copy of it.
+
+**Ruling 1, as built.** `body/dispositivo.py`'s `ALCANCES` gains `"asistente:mcp"`, independent of the three
+existing scopes, no schema change. `body/rutas/dispositivos.py`'s `_ALCANCE_LABELS` and `/ajustes/dispositivos`'s
+create form gained one new, unchecked-by-default checkbox for it; `body/i18n/{es,en}.json` gained
+`dispositivos.scope.asistente_mcp` ("Asistente personal (MCP): leer y proponer, como el asistente de Body" /
+"Personal assistant (MCP): read and propose, like Body's assistant").
+
+**Ruling 2, as built -- one core, two doors.** `body/mcp.py`'s dispatch functions -- `_lista_herramientas`
+(mcp.py:344), `_llamar_herramienta` (mcp.py:458), `_aplicar_propuesta_mcp` (mcp.py:397),
+`_descartar_propuesta_mcp` (mcp.py:431) -- now read a duck-typed session instead of the local-only `_Sesion`
+they used before: `conn`, `person_id`, `caller`, `conversacion()`, `tope_lecturas`/`tope_propuestas`/
+`tope_aplicaciones`, `contar_lectura`/`contar_propuesta`/`contar_aplicacion`. `_Sesion` (mcp.py:192, unchanged
+shape, gained only `caller = CALLER` and the three `contar_*` methods) is the local stdio door's half; the new
+`_SesionRemota` (mcp.py:286) is the hosted door's half -- same interface, DB-backed caps (`_TopeDB`, mcp.py:231)
+instead of the in-memory `_Tope` (mcp.py:161), and no-op `contar_*`/`registrar()` since the audit row and the
+running total it would feed are already written by the shared core itself. `body/rutas/mcp_remoto.py` (new) is
+the only caller of `_SesionRemota`; `body/mcp.py`'s `_procesar_mensaje`/`ejecutar`/`main` (the local stdio loop)
+are untouched and still only ever build a `_Sesion` -- `tests/test_mcp.py`'s full 39-test suite re-ran unchanged
+and green, proving the refactor changed no local behaviour.
+
+Refusals the shared core raises for its own named reasons (a cap, the `aplicar_mcp` setting, a proposal that
+is not this caller's own) now raise `RehusoMCP` (mcp.py:144, `herramientas.ToolError` subclass) carrying a
+machine `codigo` and raw `campos` alongside the same localized `mensaje` the local door already showed --
+`except herramientas.ToolError` in the local loop needs no change (it is a subclass), while
+`body/rutas/mcp_remoto.py` catches `RehusoMCP` first and reads `codigo`/`campos` directly, never
+pre-localised text.
+
+**GET /api/asistente/mcp/herramientas** (`body/rutas/mcp_remoto.py:44`), guarded only by
+`identity.person_from_device("asistente:mcp")` (404 in local mode, before any person is resolved). Returns
+`{"herramientas": [...], "nivel": "<nivel>"}`, byte-for-byte what `mcp._lista_herramientas`/`mcp._nivel` already
+produce for the local door's own `_Sesion` on the same person -- proved directly in
+`tests/test_mcp_remoto.py::HerramientasTest.test_list_matches_the_local_core_for_the_same_person` by comparing
+the two outputs.
+
+**POST /api/asistente/mcp/llamar** (`body/rutas/mcp_remoto.py:68`), same auth. Body `{"nombre", "argumentos"?,
+"conversacion_id"?}`, capped at `MAX_BODY_BYTES = 64 * 1024` (`body/rutas/mcp_remoto.py:35`) -- `413` on an
+oversized `Content-Length` header (checked before any body is read) or on the streamed body itself crossing
+the cap; malformed/non-dict JSON is `422 {"error": "esquema"}`. On success: `200 {"tipo", "salida",
+"aviso_reloj", "conversacion_id"}` (`conversacion_id` always present -- the one the client sent back, or the
+one just created). On a refusal: always `200`, body `{"error": "<codigo>", ...campos}` --
+- `"limite"` + `minutos` (int) -- a cap reached, any of the three windows below;
+- `"aplicar_apagado"` / `"descartar_apagado"` -- the person's `aplicar_mcp` setting is off;
+- `"aplicar_no_propia"` -- the proposal is not this person's, or its conversation's `origen` is not `'mcp'`;
+- `"aplicar_no_vigente"` -- found, this caller's own, but no longer `'propuesta'` (already applied/discarded/drifted);
+- `"aplicar_expirada"` + `expira_en` (the raw ISO timestamp `agente_propuestas.aplicar` returned, never
+  pre-localised, so the PC client can render it in the person's own language locally);
+- `"conversacion_ajena"` -- the `conversacion_id` sent back is not an int, not owned by this person, or its
+  `origen` is not `'mcp'` (checked by `body/rutas/mcp_remoto.py:51`'s `_conversacion_valida` BEFORE a
+  `_SesionRemota` is even built, so a foreign id is never looked at by the core at all);
+- `"herramienta_rechazada"` -- the generic code for every other `herramientas.ToolError` the core raises
+  (unknown tool name, a missing required parameter, a nivel-gated tool);
+- `"error_interno"` -- any other exception: `conn.rollback()` runs, and the one line logged
+  (`body/rutas/mcp_remoto.py`'s `logger.info`) carries the exception CLASS and the tool NAME only, never
+  params, results, or the exception's own text. 401/403 (bad/missing/revoked key, key without the scope)
+  are unchanged FastAPI/`identity.person_from_device` behaviour, never rewritten to this JSON shape.
+
+**Ruling 3, as built.** The conversation id is entirely client-held: `_SesionRemota.conversacion()` creates one
+(`origen='mcp'`) only on the first propuesta/aplicar/descartar call that sends none, and returns it in that same
+response's `conversacion_id`; a later call that sends it back keeps using it -- proved in
+`tests/test_mcp_remoto.py::LlamarPropuestaTest` (`test_sending_the_conversacion_id_back_keeps_using_it`), and
+that a second call with NO id creates a genuinely separate conversation, never silently reusing session state
+the remote door does not keep (`test_a_second_call_with_no_conversacion_id_creates_a_separate_one`).
+
+**Ruling 4, as built -- caps, no schema change.** `_TopeDB` (mcp.py:231) runs ONE query per cap check:
+`SELECT COUNT(*) AS n, MIN(llamada_en) AS oldest FROM uso_herramienta_externa WHERE person_id = ? AND
+llamada_en >= ? AND herramienta IN (...)`, cached so `permite()` followed by `minutos_para_reintentar()` costs
+one query, not two. Which `herramienta` names count toward which cap is read off the EXISTING registry
+(`herramientas.HERRAMIENTAS[*]["tipo"]`), never a new column: `_NOMBRES_LECTURA`/`_NOMBRES_PROPUESTA`
+(mcp.py:137-138) are the frozensets of "lectura"/"propuesta" tool names; the apply cap counts only
+`NOMBRE_APLICAR` by name. Reused window/counts, the SAME as the local door's `_Tope` (`LIMITES`, mcp.py:130):
+`ventana_min=15` (`agente_propuestas.EXPIRA_MINUTOS`), `lecturas=5`, `aplicaciones=5` (both
+`bucle.MAX_LECTURAS`), `propuestas=8` (`bucle.MAX_RONDAS`) -- ONE shared budget across both doors, by design
+(ruling 4's own wording): `tests/test_mcp_remoto.py::CapsTest.test_local_calls_count_toward_the_same_remote_cap`
+proves a local stdio call (`mcp._llamar_herramienta` against a plain `_Sesion` on the same connection) counts
+toward the remote door's own cap. Because `_llamar_herramienta`'s first line already writes this call's own
+audit row before any cap is consulted (ruling 5's "every call, refused or not, is audited" -- unchanged),
+`permite()` compares `n <= cupo`, not `n < cupo`, so the row the current attempt just wrote is itself counted
+correctly. `CapsTest` ages a window out by directly rewriting `uso_herramienta_externa.llamada_en`
+(`_envejecer_ventana`) rather than injecting a fake clock, because the audit write itself always uses real
+wall-clock time -- an injected `reloj` would only move the cap's OWN cutoff, not the rows it reads, and was
+proved wrong by a failing test before this fix (`minutos: 457900`, logged in this slice's working notes, not
+reproduced here since it carries no real figure).
+
+**Ruling 5, as built.** Nothing new is logged or stored beyond the existing per-call audit row
+(`db.registrar_uso_herramienta_externa`, template-only, `caller` now `"mcp-remoto"` for this door via
+`_SesionRemota.caller`) and the one `logger.info` exception line described above (class + tool name only).
+`tests/test_mcp.py`'s existing `AuditTest.test_every_call_writes_one_row_with_no_params_or_result` (exact
+column set `{"id", "person_id", "herramienta", "llamada_en", "caller"}`) still passes unchanged, confirming no
+column was added.
+
+**Ruling 6, as built -- isolation.** `tests/test_mcp_remoto.py::AislamientoEntrePersonasTest` seeds two people
+(A, B) with distinct device keys and proves, on every route: A's tool list never names B; A cannot apply or
+discard B's proposal (`aplicar_no_propia` either way); A passing B's own `conversacion_id` back is refused
+(`conversacion_ajena`) and creates no card in B's conversation; and a lectura tool run as A never contains a
+raw figure seeded only for B (resting_hr=187) anywhere in the response text. `tests/test_persona_fuga.py`'s
+existing cross-route sweep also now carries both new routes for its two invented people, swept with the same
+device-key mechanics the existing `/api/vida/semana` case already used.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry). The exact command is
+`.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 9 sequential chunks of the same
+`tests/test_*.py` modules in alphabetical order (the same set `discover` would walk), each in the foreground:
+
+    chunk 1 (test_accesibilidad..test_baselines):                  Ran 351 tests, OK (skipped=1)
+    chunk 2 (test_baselines_lote..test_ejes_fechas):                Ran 464 tests, OK
+    chunk 3 (test_entreno_historial..test_fit):                     Ran 280 tests, OK
+    chunk 4 (test_fuentes_propias..test_household):                 Ran 520 tests, OK
+    chunk 5 (test_hoy..test_mudanza):                                Ran 384 tests, OK
+    chunk 6 (test_nivel_datos_ui..test_profile):                    Ran 520 tests, OK
+    chunk 7 (test_profile_lote..test_series_gramos):                 Ran 266 tests, OK
+    chunk 8 (test_series_orden..test_turnos_opcional_2):             Ran 414 tests, OK
+    chunk 9 (test_turnos_opcional_3..test_web_entry):                Ran 279 tests, OK
+
+Sum: 3478 run, 0 failures, 0 errors, 1 skipped. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`): 3478 -- matching exactly.
+**GREEN** (after fixes, see below).
+
+The first pass of this gate found three tests that keep their own frozen snapshot of the GET/route set and
+needed a deliberate update for the two new routes, never a defect in them: `tests/test_agente_registro.py`'s
+`ROUTE_TOOL` (the new GET mapped to `None`, the same pattern `/api/vida/semana` already uses -- device-key API,
+the assistant never reads or triggers it itself); `tests/test_estados_vacios.py`'s `_ALWAYS_404_LOCAL` and
+`tests/test_estados_vacios_hosted.py`'s `_DEVICE_GATED_401` (both local-mode-404 / hosted-401, the same
+device-key gating `/api/vida/semana` already carries in both sweeps); and `tests/test_web_entry.py`'s
+`RouteSetTest.BEFORE` (the full route-count snapshot, +2 for the new GET and POST). All four are committed
+separately (`1a25218`).
+
+**Merge policy, this slice.** The diff touches `body/dispositivo.py`, `body/rutas/dispositivos.py`,
+`body/templates/dispositivos.html`, `body/i18n/es.json`, `body/i18n/en.json`, `body/mcp.py`,
+`body/rutas/mcp_remoto.py` (new), `body/web.py`, `tests/test_rendimiento.py`, `tests/test_persona_fuga.py`,
+`tests/test_mcp_remoto.py` (new), `tests/test_agente_registro.py`, `tests/test_estados_vacios.py`,
+`tests/test_estados_vacios_hosted.py`, `tests/test_web_entry.py` (plus this ledger). Checked against the
+actual diff: no schema or migration change (`body/db.py` is untouched; ruling 4's caps read the existing
+`uso_herramienta_externa` table with no new column, exactly as ruled). Customer-facing bytes DID change: the
+one new device-scope checkbox label (es/en) named in ruling 1 -- the single exception ruling 1 itself names
+("no schema change" + a labelled checkbox) -- and no other customer-facing string changed (the two new routes
+are a device-key API, never rendered to a person; the i18n keys `asistente.mcp.*` used in `_mensaje_*` above
+already existed from BODY-MCP-LOCAL-1-B/BODY-MCP-APLICAR-1, reused unchanged here). No cross-repo contract or
+DTO change (the two routes are new surface for Personal's own future MCP client, not a change to an existing
+contract). Per ruling 1's own pre-authorization, this entry proceeds to merge without stopping on the
+customer-bytes condition.
+
+**Open follow-ups, not this slice's to do:**
+- BODY-MCP-REMOTO-CLIENTE-1 -- the Personal desk's MCP client itself, switching from the local stdio
+  `body/mcp.py` process to these two hosted routes (device key, `conversacion_id` persisted client-side per
+  ruling 3, the error codes named above rendered in the person's own language locally). Not this slice's to
+  do: this slice is the server side only.
+
