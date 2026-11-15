@@ -52,13 +52,14 @@ _SKIPPED_PARAM_ROUTES = {"/asistente/conversacion/{conversacion_id}"}
 _NO_IDENTITY_200 = {"/healthz", "/sw.js"}
 _NO_IDENTITY_303 = {"/login", "/login/cuenta/start"}
 _CALLBACK_400 = {"/login/cuenta/callback"}
-_DEVICE_GATED_401 = {"/api/vida/semana"}
+_DEVICE_GATED_401 = {"/api/vida/semana", "/api/asistente/mcp/herramientas"}
 _CONSENT_EXEMPT = {"/privacidad/consentimiento"}
 
-# Of the seven hosted-only routes, only these three can ever answer 200 -- the other four's own
+# Of the eight hosted-only routes, only these three can ever answer 200 -- the other five's own
 # documented, correct behaviour is a redirect (/login, /login/cuenta/start) or a refusal
-# (/login/cuenta/callback with no real flow, /api/vida/semana with no device key). See this
-# module's own ledger entry for the deviation this records against the spec's literal wording.
+# (/login/cuenta/callback with no real flow, /api/vida/semana and /api/asistente/mcp/herramientas
+# with no device key). See this module's own ledger entry for the deviation this records against
+# the spec's literal wording.
 _HOSTED_ONLY_CAN_200 = {"/garmin", "/ajustes/dispositivos", "/privacidad/consentimiento"}
 
 

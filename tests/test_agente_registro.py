@@ -46,6 +46,7 @@ ROUTE_TOOL = {
     "/ajustes/dispositivos": None,  # device-key management; the assistant never reads or triggers it
     "/ajustes/asistente": None,   # the setting itself; the assistant reads it through leer_ajustes, never sets it
     "/api/vida/semana": None,     # device-key API for Personal; the assistant never reads or triggers it
+    "/api/asistente/mcp/herramientas": None,  # hosted MCP door; mirrors leer_ajustes'/the registry's own list
     "/asistente/conversacion/{conversacion_id}": None,  # the panel's own history reload, not a tool
     "/ayuda": "leer_tutoriales",
 }
