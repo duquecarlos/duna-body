@@ -254,6 +254,7 @@ class StaticUrlScriptsExistTest(unittest.TestCase):
         self.assertIn("pagina.js", referenced)
         self.assertIn("ajustes_tema.js", referenced)
         self.assertIn("meta_nueva.js", referenced)
+        self.assertIn("reloj-sync.js", referenced)
         missing = [name for name in referenced if not (STATIC_DIR / name).is_file()]
         self.assertEqual(missing, [])
 

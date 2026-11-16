@@ -45,9 +45,9 @@ _INVENTED = {k: round((lo + hi) / 2, 1) for k, (lo, hi) in demo.RANGES.items()}
 # dispositivos}.py all gate on cuenta.hosted() or identity.person_from_device before touching the
 # person at all.
 _ALWAYS_404_LOCAL = {
-    "/garmin", "/ajustes/dispositivos", "/login", "/login/cuenta/start", "/login/cuenta/callback",
-    "/privacidad/consentimiento", "/api/vida/semana", "/api/asistente/mcp/herramientas",
-    "/api/hogar/manana", "/api/hogar/serie",
+    "/garmin", "/garmin/estado-vivo", "/ajustes/dispositivos", "/login", "/login/cuenta/start",
+    "/login/cuenta/callback", "/privacidad/consentimiento", "/api/vida/semana",
+    "/api/asistente/mcp/herramientas", "/api/hogar/manana", "/api/hogar/serie",
 }
 _TURNOS_GATED = {"/shifts", "/shifts/como", "/shifts/patron"}
 # Needs a seeded conversation (body/agente, outside this slice's touches) -- see module docstring.

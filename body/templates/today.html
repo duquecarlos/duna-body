@@ -10,13 +10,8 @@
 {% if turnos %}{{ hoy_turno_card(t, turno, proposed_count) }}{% endif %}
 
 {% if stale %}<div class="aviso">{{ stale }}</div>{% endif %}
-{% if garmin_sync %}
-<div class="card">
-  <div class="q">{{ t('today.garmin_sync.titulo') }} <span class="chip warn">{{ t('today.garmin_sync.chip') }}</span></div>
-  <p class="note mt-6 m-0">{{ garmin_sync.texto }}</p>
-  <a class="taplink mt-6" href="/garmin">{{ t('today.stale_link') }}</a>
-</div>
-{% endif %}
+{% if garmin_sync or reloj_vivo %}{% include "_reloj.html" %}{% endif %}
+{% if reloj_vivo and reloj_vivo.sincronizando %}<script src="{{ static_url('reloj-sync.js') }}" defer></script>{% endif %}
 {% if periodo %}<div class="aviso">{{ periodo.texto }} <a class="taplink" href="#asis-btn">{{ periodo.enlace }}</a></div>{% endif %}
 {% if mcp_pendientes %}
 <div class="aviso"><a class="taplink" href="/?asis_conversacion={{ mcp_pendientes.conversacion_id }}#asis-btn">{{ t('today.mcp_propuestas') if mcp_pendientes.n == 1 else t('today.mcp_propuestas_many', n=mcp_pendientes.n) }}</a></div>
@@ -104,6 +99,29 @@
   <p class="note mt-6 m-0">{{ t('today.dia.vacio') }}</p>
   {% endif %}
 </div>
+
+{% if plan_semana %}
+<div class="card">
+  <div class="q">{{ t('today.plan_semana.titulo') }}</div>
+  <ul class="plan mt-6">
+  {% for b in plan_semana.bloques %}
+    <li class="block">
+      <a class="taplink" href="/goals/{{ b.goal_id }}">{{ b.titulo }}</a>
+      <div class="k mt-6">{{ b.semana }} · {{ b.faltan }}</div>
+      {% if b.cuentas %}
+      <div class="row gap-8 justify-start flex-wrap mt-6">
+      {% for c in b.cuentas %}<span class="chip {{ c.cls }}">{{ c.texto }}</span>{% endfor %}
+      </div>
+      {% else %}
+      <p class="note mt-6 mb-0">{{ t('today.plan_semana.vacio') }}</p>
+      {% endif %}
+      {% if b.checkpoint %}<p class="note mt-6 mb-0">{{ b.checkpoint }}</p>{% endif %}
+    </li>
+  {% endfor %}
+  </ul>
+  {% if plan_semana.mas %}<a class="more mt-6" href="/goals">{{ plan_semana.mas }}</a>{% endif %}
+</div>
+{% endif %}
 </div>
 
 {{ cuerpo_vista(t, cuerpo, 'hoy-figura', sizes='(min-width: 768px) 400px, 80vw') }}

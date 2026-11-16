@@ -86,6 +86,21 @@ def sesiones_fuerza(conn: sqlite3.Connection, person_id: int, desde: date | None
     return sesiones
 
 
+def con_plan_hecho(sesiones: list[dict], dias_plan: list[date]) -> list[dict]:
+    """BODY-PLAN-SESION-HECHA-1 rulings 1/2: `sesiones` (this module's own measured classification)
+    unioned with `dias_plan` (every day carrying a `plan` row the person marked done AND that names
+    its exercises, `ejercicios_json`, the plan's own word about a strength session) -- a day that
+    already has a measured session keeps exactly that count, the watch's record standing as given;
+    a day with none gets one entry per such plan row, so two done rows the same day with no watch
+    session still count twice. A done plan row with no exercises, or any plan row at all for a
+    cardio measure, never reaches this function -- it has no exercises to say what was done, and a
+    plan row can only ever stand in for a STRENGTH session (`racha_semanal`, the watch's own streak,
+    is untouched by this -- a separate subject, never fed a plan day)."""
+    dias_medidos = {s["day"] for s in sesiones}
+    extra = [{"day": d, "start_local": None} for d in dias_plan if d not in dias_medidos]
+    return sesiones + extra
+
+
 def racha_semanal(conn: sqlite3.Connection, person_id: int, *, piso: int | None = None,
                    hoy: date | None = None) -> dict | None:
     hoy = hoy or date.today()

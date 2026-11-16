@@ -1,0 +1,10 @@
+[Unit]
+Description=On-demand "today" sweep, every 30 min (daytime window enforced in code, not here)
+
+[Timer]
+OnCalendar=*-*-* *:00,30:00 UTC
+Persistent=false
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

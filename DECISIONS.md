@@ -22953,6 +22953,762 @@ listed test file are built and gated.
 
 -- merged `9cb2637df5fabdfdf0099422a4a4b29ef31611e3`
 
+## BODY-SYNC-VIVO-ESTADO-1 -- attempt, backoff and the watch's own last sync, now recorded (2026-11-16)
+
+Surfaced by BODY-SYNC-VIVO-1-INV: Body only recorded a successful write, never an attempt time or a
+backoff, and `errores.texto_seguro`'s class-name-only text could not tell a 429 from a 500 even though
+garminconnect's own exception can carry `.response`. Carlos, relayed by the Personal desk, 2026-11-15:
+"I would like to see more like a live thing in the app or when I talk to you." This is the record that
+makes frequent pulls safe (backoff) and honest on screen (last attempt, the watch's own last sync) --
+nothing new leaves Duna; the pull still runs only on the host, after a deploy.
+
+**Ruling 1, as built.** Three nullable columns on `garmin_cuenta` (`body/db.py:685-687`, migration
+`body/db.py:1271-1276`): `ultimo_intento_en` (every attempt, success or not), `reintentar_despues_de`
+(a failed attempt's backoff, NULL meaning no need to wait), `reloj_sincronizo_en` (the watch's own
+last-contact instant, ruling 4). `body/garmin_cuenta.py`: `registrar_intento` (184), `puede_intentar`
+(209), `registrar_reloj_sincronizo` (228), `estado_sync` (240). `guardar()` clears
+`reintentar_despues_de` on a fresh connect/reconnect, the same way it already cleared `ultimo_error`.
+
+**Ruling 2, as built.** `body/garmin_adapter.py:estado_http` (180): 429 by the exception's own type
+(`GarminConnectTooManyRequestsError` carries no `.response` of its own, confirmed against the
+installed garminconnect 0.3.20 source); a real `.response.status_code` when the exception carries one;
+the `0` sentinel for a confirmed `GarminConnectConnectionError` with no response at all
+(connection/timeout); `None` for anything not confirmed (auth failure, `NotSignedIn`, an unrelated
+exception). `_client` (152) now lets `GarminConnectTooManyRequestsError`/`GarminConnectConnectionError`
+propagate with that type intact instead of collapsing every failure into `NotSignedIn`, so the buckets
+above can tell them apart; a genuine auth failure or an unrecognized exception still becomes
+`NotSignedIn`, unchanged. `body/garmin_cuenta.py:registrar_intento` (184) turns `estado_http` into a
+backoff: 429 -> +120 min (`BACKOFF_429_MIN`, 180), 5xx/connection/timeout (a real `.response` or the
+`0` sentinel) -> +15 min (`BACKOFF_TRANSITORIO_MIN`, 181), auth failure (`None`) -> no backoff, today's
+handling unchanged. `body/errores.py:texto_seguro_con_estado` (22) appends that status beside the class
+name, never a message body.
+
+**Ruling 3, as built.** `body/pull.py:_registrar_intento_persona` (306) calls `registrar_intento`
+exactly once per attempt, from `_pull_persona` (317) and from `pull_backfill_hosted`'s per-person loop
+(462), on every path except "no token" and "the backfill window is already complete, nothing was
+attempted" (`n == 0`, no Garmin call made). `pull_hosted` (361) and `pull_backfill_hosted` (462) each
+skip a person still inside a backoff via `garmin_cuenta.puede_intentar` (381, 491) with no Garmin call,
+counted and printed once as `omitido: N personas en espera` (405, 523) -- counts only, never a name or
+a figure. `pull_backfill_hosted` keeps skipping an auth-type error forever (no `reintentar_despues_de`
+was ever set for it, unchanged from before this slice) but now resumes automatically once a
+backoff-governed one's `reintentar_despues_de` has passed. `ESPACIO_MIN_ENTRE_INTENTOS = 0` (58):
+`puede_intentar`'s own minimum-space-between-attempts parameter is real, but a nonzero value here would
+have broken `tests/test_primer_pull_1.py`'s
+`test_repeated_runs_reach_the_window_start_then_make_zero_adapter_calls` (outside this slice's
+`touches:`, six back-to-back calls with no sleep in between) -- the backoff window alone governs these
+two call sites; `puede_intentar`'s recency check never trips at 0 minutes.
+
+**Ruling 4, as built.** `body/garmin_adapter.py:fetch_device_last_sync` (243) reads the watch's own
+last-contact instant via `get_device_last_used()`, the same `token_str` convention as `fetch_sleep`
+(bare value local, `(value, token_after)` hosted); any failure -- the client refusing, the call
+raising, the response being unreadable -- is `None`, never raised, since this runs once per person per
+pull, after the day fetches, and must never fail the pull. `_parse_device_last_sync` (207) is the only
+place the response's shape is assumed, and none of it is confirmed by garminconnect 0.3.20's own types
+(`dict[str, Any]`, no key named) or docstring -- the only key this package confirms ANYWHERE on this
+response is `userDeviceId` (`api/devices.py:96`, an unrelated call). Tried in order, first that parses
+wins: `lastUsedDeviceUploadTime` (epoch ms, a UTC instant), `lastUsedDeviceUploadTimeInSeconds` (the
+same instant, epoch seconds), `deviceLastUsedDate` (ISO 8601 string, a naive one assumed UTC); anything
+else is an honest gap, never guessed. `body/pull.py:_registrar_reloj_si_hay` (177) wires it into both
+`_pull_persona` and `pull_backfill_hosted`'s per-person path.
+
+**Ruling 5, as built -- no code change.** `body/db.py:connect` (1209) already sets
+`PRAGMA busy_timeout = 5000`, and `body/pull.py`'s `pull.lock` file lock (14, 83) already serialises
+every writer -- the daily pull and `--backfill` never run concurrently against the same `BODY_HOME`.
+WAL buys concurrent readers during a writer's transaction; at today's or an hourly pull's run rate, with
+a single writer already serialised by the file lock and every write already short (one person's
+day/sleep/intraday upsert), busy_timeout alone is enough -- WAL would add a second on-disk file
+(`-wal`/`-shm`) and a checkpoint policy for no measured gain here.
+
+**Tests (`tests/test_sync_vivo_estado.py`, new, 60 tests):** schema/migration (fresh columns, a
+migration onto an old-shaped table, an existing row reads as never-attempted), `registrar_intento`'s
+backoff table (success clears, 429/5xx/0-sentinel/auth/non-429-4xx, a new failure overwriting a stale
+backoff), `puede_intentar` (never-attempted, not-yet-expired, expired, the recency throttle,
+espacio_min=0, no row), `estado_sync` (shape with no row, `ultimo_ok_en` reading `db.last_sync`, every
+written field), a reconnect clearing a stale backoff, `estado_http` against the installed garminconnect
+0.3.20 package's own exception classes (429-no-response, a response with/without a status, the 0
+sentinel, auth/NotSignedIn/unrelated exceptions all `None`), `texto_seguro_con_estado` (appends/omits
+the status, never the message), `_client`'s propagation change (429/connection propagate, a plain or
+auth exception still `NotSignedIn`), `_parse_device_last_sync` (ms, seconds, naive/offset ISO,
+not-a-dict, no recognized key, unparseable, non-numeric), `fetch_device_last_sync` (success, every
+failure point, local-mode bare value), and the hosted pull/backfill integration for
+429/5xx/connection-timeout/auth (backoff set and printed, a backed-off person skipped and counted, a
+past-backoff person tried again, a failed watch-last-sync read never failing the pull, the `omitido`
+line's presence/absence). `tests/test_pull.py`, `tests/test_pull_relleno.py` and
+`tests/test_garmin_host.py` stub `fetch_device_last_sync` in the hosted test classes that build a real
+(unmocked) `garminconnect.Garmin` for an unrelated concern (intraday wiring, healing windows, per-zone
+day lists), so this slice's addition stays isolated from theirs.
+
+**Gate command:** `.venv/Scripts/python.exe -m unittest discover tests -t .`. Run as 9 sequential
+alphabetical chunks of 20 dotted test modules (19 in the last), each in the foreground, read from the
+process:
+- chunk 1 (`test_accesibilidad`..`test_baselines`): `Ran 377 tests in 102.076s ... OK (skipped=1,
+  expected failures=1)`
+- chunk 2 (`test_baselines_lote`..`test_dispositivo`): `Ran 481 tests in 479.916s ... OK`
+- chunk 3 (`test_ejes_fechas`..`test_fechas_semana`): `Ran 318 tests in 126.477s ... OK`
+- chunk 4 (`test_fit`..`test_host_backup`): `Ran 502 tests in 498.916s ... OK`
+- chunk 5 (`test_host_deploy`..`test_metas_semana_tira`): `Ran 414 tests in 81.504s ... OK`
+- chunk 6 (`test_mock_r2_hoy`..`test_primer_dia_1`): `Ran 530 tests in 248.945s ... OK`
+- chunk 7 (`test_primer_pull_1`..`test_rendimiento_red`): `Ran 350 tests in 158.919s ... OK`
+- chunk 8 (`test_rendimiento_turnos`..`test_turno_fc_pantallas`): `Ran 400 tests in 95.901s ... OK`
+- chunk 9 (`test_turnos_costo`..`test_web_entry`): `Ran 403 tests in 224.229s ... OK`
+
+Sum: 377+481+318+502+414+530+350+400+403 = 3775. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted without running): `COLLECTED
+3775` -- exact match. Chunk 9's run printed one extra line after its own `OK` --
+`sin_cambio:no_es_arbol_vivo body-app <sha>` -- traced to `body/vivo.py:278`'s `print` inside `main()`,
+reached because `tests/test_vivo.py` runs that module as a real subprocess (`body/vivo.py:253`) whose
+own stdout interleaves after unittest's summary line; pre-existing behavior (BODY-LIVE-CHECKOUT-1),
+unrelated to this slice. All nine chunks green.
+
+**Merge policy A, as applied.** This diff adds a schema change (three nullable `ALTER TABLE` columns)
+but no customer-facing bytes and no cross-repo contract change. The dispatch's own approval-reason
+said, in words, "Merge approved if the gate is green" -- the spec body naming the schema change and
+authorizing a merge through it, so this merges on green rather than stopping AWAITING_APPROVAL.
+
+**Commits:** `c1e44d2` (rulings 1-2 -- `body/db.py`, `body/errores.py`, `body/garmin_adapter.py`,
+`body/garmin_cuenta.py`), `701d064` (rulings 3-5 -- `body/pull.py`, `tests/test_garmin_host.py`,
+`tests/test_pull.py`, `tests/test_pull_relleno.py`, `tests/test_sync_vivo_estado.py` -- new).
+
+**Open follow-ups, not this slice's to do:** none found -- the spec's five rulings and every listed
+test file are built and gated.
+
+-- merged `59592e94aaac011f3fe0f2fbc22b966c6993310c`
+
+## BODY-SYNC-VIVO-2 -- the on-demand pull and the "Tu reloj" freshness read-out (2026-11-16)
+
+Carlos, relayed by the Personal desk, 2026-11-15: "I would like to see more like a live thing in the
+app or when I talk to you." BODY-SYNC-VIVO-ESTADO-1 (merged above) built the watch's own last-sync
+tracking and the attempt/backoff columns but no on-demand pull and no screen reads them yet. This
+slice adds both: a pull that fetches TODAY alone, two triggers that never make Carlos wait for it,
+and a plain-worded freshness line on Hoy and through the assistant.
+
+**Ruling 1, as built.** `body/pull.py:pull_hoy_ahora` (389): hosted mode only (`cuenta.hosted()`
+false -> `"sin_cuenta"`); the shared per-person lock `_PULL_EN_CURSO` (102, lifted out of
+`body/rutas/garmin.py`, which now does `from .. import pull` and reads `pull._PULL_EN_CURSO` --
+`body/rutas/garmin.py:_lanzar_pull_conexion` (23) takes the same set, so a live pull and a
+connect-triggered one for the same person never overlap); `ESPACIO_MIN_HOY = 15` (86) through
+`garmin_cuenta.puede_intentar`; the quiet hours below (ruling 4); records the attempt exactly as the
+daily pull does (`garmin_cuenta.registrar_error`/`_registrar_intento_persona`); fetches the one day
+through `_pull_one_person` (the SAME fetch path `pull_persona_ahora`'s healing loop uses for one day,
+never a copy) -- NOT `_dias_pendientes_relleno`'s healing set, since a live trigger asks for today,
+once. After a successful fetch, recomputes ONLY `_recalcular_sueno_fc_seguro` (454): it is the one
+post-pull derivation that lands in `daily_metric`, the table `leer_hoy`/`leer_estado_reloj`/Hoy's own
+card read; `recuperacion` and `turno_fc` both write to their own tables, read only by the Día and
+Turnos screens, neither of which this trigger ever reaches (ruling 2 names the trigger sites), so
+recomputing them here would cost real work for a card that never reads their result. Never raises:
+the Garmin call sits inside its own try/except that records the error and returns `"iniciado"`
+either way; the whole body sits inside a second try/except that catches anything else unexpected
+(a DB or timezone failure) the same way, printing a counts-only, class-name-only line
+(`errores.texto_seguro`). Opens its own connection with a bare `db.connect()` immediately followed by
+the try/finally that closes it (462) -- the same shape `pull_persona_ahora` already uses, and the
+shape `tests/test_conexiones_cerradas.py`'s static guard requires of every direct-connect function
+under `body/`. Returns `"iniciado"` / `"en_curso"` / `"espera"` / `"sin_cuenta"`, exactly as named.
+
+**Ruling 2, as built.** Hoy: `body/rutas/hoy.py:_debe_lanzar_pull_hoy` (159) checks hosted + connected
++ `puede_intentar`; `today()` (618) takes `background_tasks: BackgroundTasks` and calls
+`background_tasks.add_task(pull.pull_hoy_ahora, person_id)` (624) when that check passes, checked
+before the "no data yet" early return so the very first live pull can start from the empty state.
+The assistant: `body/agente/herramientas.py:HERRAMIENTAS_HOY = frozenset({"leer_hoy",
+"leer_estado_reloj"})` (2761, named explicitly as the ruling asked); `_lanzar_pull_hoy_en_hilo` (2764)
+checks `cuenta.hosted()` cheaply first (so a local-mode tool call spawns no thread at all), then
+`threading.Thread(target=pull.pull_hoy_ahora, args=(person_id,), daemon=True).start()`, never
+awaited; `ejecutar()` calls it (2848) right before the `PRAGMA query_only` read, for every tool
+named in `HERRAMIENTAS_HOY` -- the answer uses whatever is stored right now and says how fresh it is
+itself (ruling 3's `estado_vivo`). The hosted MCP door (`body/rutas/mcp_remoto.py:mcp_remoto_llamar`)
+calls `body.mcp._llamar_herramienta`, which for a `_SesionRemota` dispatches straight to this same
+`ejecutar` -- no separate wiring, proven in `tests/test_mcp_remoto.py:LiveSyncTriggerTest` by POSTing
+to the real route and watching the trigger fire through a real background thread (a
+`threading.Event`, never a sleep; patching `threading.Thread` itself here broke the ASGI machinery
+TestClient's portal thread needs, so this test waits on the real thread instead, same as
+`tests/test_sync_vivo.py:EjecutarLivePullTriggerTest`'s direct-call tests).
+
+**Ruling 3, as built.** `body/pull.py:texto_estado_vivo` (461): one shared formatter, called from both
+Hoy's card and the assistant's `leer_estado_reloj`, so the two can never read differently for the same
+state. Three states, first that applies wins: syncing now (`person_id in _PULL_EN_CURSO`) ->
+`reloj_vivo.sincronizando`; a failed attempt with a backoff still ahead of it
+(`garmin_cuenta.estado_sync`'s `reintentar_despues_de`) -> `reloj_vivo.fallo_reintento` with both
+times in the person's own zone; the watch's own last sync known
+(`estado_sync`'s `reloj_sincronizo_en`) -> `reloj_vivo.ultimo_sync`, with the day prefixed through the
+app's own short-month formatting when it is not today; none of the three -> `None` (no card). New
+strings, es/en, verbatim (`body/i18n/es.json:48-51`, `body/i18n/en.json:48-51`):
+- es: "Tu reloj" / "Sincronizando con Garmin…" / "Garmin no respondió a las {hora}. Lo intentamos de
+  nuevo a las {reintento}." / "Tu reloj se sincronizó con Garmin a las {hora}."
+- en: "Your watch" / "Syncing with Garmin…" / "Garmin didn't answer at {hora}. We'll try again at
+  {reintento}." / "Your watch last synced with Garmin at {hora}."
+
+The existing «Reloj sincronizado HH:MM» card (`today.garmin_sync.*`) is unchanged -- this is a second,
+additive card (`body/templates/_reloj.html`, new; `reloj_vivo.titulo` is also "Tu reloj"/"Your watch",
+a deliberate, flagged-for-browser-review choice: the two cards never share a context, to keep this
+slice's own risk contained, but can look like two headings saying the same thing on the same screen).
+`body/rutas/hoy.py:_reloj_vivo_ctx` (not shown above, beside `_debe_lanzar_pull_hoy`) and
+`body/rutas/garmin.py:_reloj_vivo_ctx` (106) each build the same `{texto, sincronizando}` shape for
+their own screen -- duplicated rather than imported across route modules, matching this codebase's
+existing `_garmin_sync_ctx`-style pattern. `body/rutas/garmin.py:garmin_estado_vivo` (122), `GET
+/garmin/estado-vivo`: 404 in local mode, otherwise renders `_reloj.html` alone -- the poll target
+named in the ruling. `body/static/reloj-sync.js` (new): polls that route every 10s for at most 2
+minutes, only when the card at load carries `data-sincronizando`, and swaps the rendered fragment in
+place each time; stops the moment a fetched fragment no longer carries that attribute, or at the time
+ceiling. No inline `style=`, no inline `<script>` without `src=` -- CSP-clean (`tests/test_seguridad.py`
+checks the file exists and is referenced).
+
+**Ruling 4, as built.** All three ceilings live inside `pull_hoy_ahora` itself (389), since the
+ruling's "at most one per person per 15 min" is exactly what the function's own early-return checks
+already enforce: `ESPACIO_MIN_HOY = 15` (86) through `puede_intentar`; a recorded backoff, also
+through `puede_intentar` (returns `"espera"` for either); `QUIETA_DESDE_HORA = 23` /
+`QUIETA_HASTA_HORA = 6` (91-92) through `_en_horas_quietas` (384), checked in the person's own zone
+(`ZoneInfo(person.get("timezone") or "America/Bogota")`) before any Garmin call.
+
+**Tests (`tests/test_sync_vivo.py`, new, 37 tests; plus one new class each in
+`tests/test_mcp_remoto.py` and updates to `tests/test_garmin_web.py`, `tests/test_agente_registro.py`,
+`tests/test_seguridad.py`, `tests/test_estados_vacios.py`, `tests/test_rendimiento.py`,
+`tests/test_web_entry.py`, `tests/test_persona_fuga.py`):** `pull_hoy_ahora` (local no-op, no
+account, success + `db.last_sync` set, `en_curso` while already running, `espera` on too-soon/backoff,
+a Garmin failure never raising + recording the error class, the lock clearing either way, success
+recomputing ONLY `sueno_fc`, a REAL two-thread test proving the lock stops a second call from ever
+reaching Garmin, and that the lock is SHARED with `_lanzar_pull_conexion`); Hoy's background trigger
+(scheduled/not per state, a REAL unmocked Garmin failure inside the background task never breaking the
+response); the assistant's thread trigger (`leer_hoy`/`leer_estado_reloj` fire it via a real thread +
+`threading.Event`, an unrelated tool never does, local mode spawns no thread at all, a failing live
+pull never breaks the tool's own answer, and the hosted MCP door reaching the same trigger two ways --
+a direct `mcp._llamar_herramienta` call in this file, and a real HTTP POST through
+`test_mcp_remoto.py`); `texto_estado_vivo` (all three states + "none", es/en, syncing winning over a
+scheduled retry); `_en_horas_quietas` boundaries (23:00, 05:59, 06:00, 22:59, 00:00); the Hoy card
+(no card with no connection, syncing shows card+attribute+script, last-synced shows card without
+either, English); the poll route (renders current state, stops carrying the attribute once finished,
+writes nothing -- `tests/_rutas.contar_sql`).
+
+Two test-isolation defects found and fixed while writing these tests, neither in the production code:
+a dev-note HTML comment in `_reloj.html` that was plain `<!-- -->` rather than Jinja `{# #}`, so it
+rendered into the page and tripped a "no script present" assertion that happened to contain the
+comment's own prose ("static/reloj-sync.js can just swap it in place") -- now a Jinja comment, never
+sent to the client. And `herramientas._TURNOS_ACTUAL` (a `contextvars.ContextVar`, set by
+`fijar_turnos_actual` with no token-based reset): TestClient's ASGI transport does not give this
+process's test run a fresh context per request, so a direct `mcp._llamar_herramienta` call or a real
+HTTP call through the hosted MCP door for a turnos-unset person 1 leaked `False` into later test
+modules in the same `unittest discover` process; both new call sites restore it via `addCleanup`.
+Both the real wall-clock sometimes landing inside quiet hours (this run's own: 03:03 in Bogota) and
+the fixture's `DayData` carrying no `raw` payload (so `db.last_sync` stayed `None`) were caught and
+fixed in the test fixtures, not the production code.
+
+**Gate command:** `.venv/Scripts/python.exe -m unittest discover tests -t .`. Run as 9 sequential
+alphabetical chunks of 20 dotted test modules (19 in the ninth, since 180 total), each in the
+foreground, read from the process:
+- chunk 1 (`test_accesibilidad`..`test_baselines`): `Ran 377 tests in 100.914s ... OK (skipped=1,
+  expected failures=1)`
+- chunk 2 (`test_baselines_lote`..`test_dispositivo`): `Ran 481 tests in 477.066s ... OK`
+- chunk 3 (`test_ejes_fechas`..`test_fechas_semana`): `Ran 318 tests in 111.515s ... OK`
+- chunk 4 (`test_fit`..`test_host_backup`): `Ran 502 tests in 486.567s ... OK`
+- chunk 5 (`test_host_deploy`..`test_metas_semana_tira`): `Ran 415 tests in 116.959s ... OK`
+- chunk 6 (`test_mock_r2_hoy`..`test_primer_dia_1`): `Ran 530 tests in 212.680s ... OK`
+- chunk 7 (`test_primer_pull_1`..`test_rendimiento_red`): `Ran 350 tests in 156.354s ... OK`
+- chunk 8 (`test_rendimiento_turnos`..`test_turno_fc`): `Ran 415 tests in 115.875s ... OK`
+- chunk 9 (`test_turno_fc_pantallas`..`test_web_entry`): `Ran 425 tests in 216.563s ... OK`
+
+Sum: 377+481+318+502+415+530+350+415+425 = 3813. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted without running): 3813 -- exact
+match. All nine chunks green.
+
+One failure found and fixed mid-gate, in production code: `pull_hoy_ahora`'s first draft wrapped its
+own `db.connect()` in a try/except (to turn a connection-open failure into a safe return rather than a
+raise) -- `tests/test_conexiones_cerradas.py`'s static guard requires a direct `db.connect()` to be
+followed immediately by the try/finally that closes it, and no other direct-connect function in
+`body/` guards the connect call itself either, so the extra try/except was dropped (`6ba3834`); a
+connect failure now propagates exactly as it already does everywhere else in this codebase.
+
+**Merge policy A, as applied.** This diff adds a new GET route and new customer-facing strings (the
+"Tu reloj" card, both languages) but no schema change and no cross-repo contract change. The spec's
+own body says to merge on green and have the orchestrator review the card in a browser afterward --
+new strings are the orchestrator's own call under ORCH-CARLOS-DELEGATES-TIER-1-1 -- so this merges
+on green rather than stopping AWAITING_APPROVAL.
+
+**Commits:** `90eac79` (rulings 1-2 -- `body/pull.py`, `body/rutas/garmin.py`, `body/rutas/hoy.py`,
+`body/agente/herramientas.py`, `tests/test_sync_vivo.py` -- new, `tests/test_garmin_web.py`,
+`tests/test_mcp_remoto.py`), `fb78118` (ruling 3 -- `body/i18n/es.json`, `body/i18n/en.json`,
+`body/templates/today.html`, `body/templates/_reloj.html` -- new, `body/static/reloj-sync.js` -- new,
+`tests/test_agente_registro.py`, `tests/test_estados_vacios.py`, `tests/test_persona_fuga.py`,
+`tests/test_rendimiento.py`, `tests/test_seguridad.py`, `tests/test_web_entry.py`), `6ba3834` (the
+connection-close fix above -- `body/pull.py`).
+
+**Open follow-ups, not this slice's to do:** none found -- the spec's four rulings and every listed
+test file are built and gated.
+
+-- merged `2b09919673dc54d443095b9066e8a8ecda8947cf`
+
+## BODY-SYNC-VIVO-TIMER-1 -- a scheduled "today" sweep and a `pull` verb (2026-11-16)
+
+Carlos, relayed verbatim by the Personal desk, 2026-11-15: "I would like to see more like a live
+thing in the app or when I talk to you." BODY-SYNC-VIVO-1-INV (OBSERVED) measured that
+`body-pull.timer` ran only once a day and that `duna-deploy-body` had no `pull` verb, so a relayed
+"pull now" (BODY-DEPLOY-9EEF504) could not run. This slice, on ORCH-CARLOS-DELEGATES-TIER-1-1's
+approval: a daytime "today" sweep, its own timer, and the `pull` verb.
+
+**Ruling 1, as built.** `body/pull.py:pull_hoy_todos` (417): loops `garmin_cuenta.every_person_id`,
+sequential, `time.sleep(PAUSE_S)` before every person after the first. Each person is skipped, no
+Garmin call, when `_en_horas_quietas` (the SAME 06:00-23:00-in-their-own-zone check BODY-SYNC-VIVO-2
+ruling 4 already uses) is true -> `fuera_horario`, or when `garmin_cuenta.puede_intentar` is false
+-> `en_espera`; `puede_intentar` is called with `ESPACIO_MIN_HOY` (15, not the scheduled pulls' own
+`ESPACIO_MIN_ENTRE_INTENTOS=0`) so the sweep shares one floor with the on-demand trigger -- the
+floor the README's ruling-4 ceiling math relies on. Otherwise runs `_pull_hoy_persona` (394), the
+fetch+record+recalc sequence factored OUT of `pull_hoy_ahora` so both callers share one path (never
+a copy) -- `pull_hoy_ahora`'s own body (`body/pull.py:510-515`) now just takes `_PULL_EN_CURSO` and
+calls it. `python -m body.pull --hoy` (argparse at `body/pull.py:855`; hosted branch at `895`, with
+the SAME non-blocking `_try_lock()` --backfill already uses -- a daily pull or a backfill holding
+`pull.lock` is a quiet, successful skip, `"another pull is already running; skipping this run."`
+at line 888; local-mode refusal at `909`) prints `hoy: N ok, M en espera, K fuera de horario, F
+fallidas` (`body/pull.py:897`) -- counts only.
+
+**Ruling 2, as built.** `deploy/host/body-pull-hoy.service` (new): the same `User=duna-body`,
+`EnvironmentFile=`, `Type=oneshot` and hardening lines (`NoNewPrivileges`, `ProtectSystem=strict`,
+`ProtectHome=yes`, `ReadWritePaths`, `PrivateTmp`, `UMask=0077`) as `body-pull.service`, only
+`ExecStart=` changed to `python -m body.pull --hoy`. `deploy/host/body-pull-hoy.timer` (new):
+`OnCalendar=*-*-* *:00,30:00 UTC` (line 5), `Persistent=false` (6), `RandomizedDelaySec=120` (7) --
+every 30 minutes, no catch-up run, spread by up to 2 minutes. Both added to
+`deploy/host/body-deploy.sh`'s `UNITS`/`TIMERS` arrays (lines 25-26), so the next `deploy` installs
+and `systemctl enable --now`s the new timer with no hand step -- the daily 09:30 full pull and the
+backfill timer are unchanged.
+
+**Ruling 3, as built.** `deploy/host/duna-deploy-body`: a `pull` case arm (line 136, no extra args
+accepted) and handling block (169-178) that runs `run systemctl start --wait body-pull.service`
+(175, masked with `|| estado=$?` so `set -e` cannot swallow a non-zero exit before it is captured --
+measured necessary: a bare `estado=$?` after an unmasked failing call would exit the script on that
+line, under `set -Eeuo pipefail`, before the journal print ever ran), then
+`journalctl -u body-pull --since "$inicio" -o cat` (176, counts and dates only -- the job's own
+print lines), then `exit "$estado"` (177) -- the service's own exit status. `usage()` updated (line
+28). No sudoers change: the existing line has no argument restriction (confirmed unchanged by
+`SudoersTest`).
+
+**Ruling 4, as built.** `deploy/host/README.md`, new "## Pull now" section: Carlos's one-time
+reinstall step for the entry script (the same `sudo install -o root -g root -m 755 ...` line as the
+existing one-time install, since `duna-deploy-body` itself changed) and the orchestrator's own line,
+`sudo -n /usr/local/sbin/duna-deploy-body pull`. The ceiling paragraph: the 30-minute timer lands
+inside one person's own 17-hour daytime window at most 34 times a day (17 x 2); the on-demand
+trigger can also fire inside that window at most once every 15 minutes (`ESPACIO_MIN_HOY`) -- at
+most 68 times a day (17 x 4); both write the same `ultimo_intento_en` column and, after ruling 1,
+share that same 15-minute floor, so the two never simply add -- the combined ceiling is the
+15-minute floor's own bound over 17 hours, **~68 "today"-pulls a day**, never 34+68. Each
+"today"-pull makes 7 Garmin calls (the 6 feeds `garmin_adapter.fetch_day` reads, plus one read of
+the watch's own last-sync instant) and a person inside a recorded backoff (2h after a 429, 15min
+after a 5xx) makes none until it expires -- ceiling ~68 x 7 = 476 Garmin calls/day/person, a worst
+case the window, the shared floor and any backoff keep well under in practice.
+
+**Tests:** `tests/test_sync_vivo_timer.py` (new, 11 tests) -- `pull_hoy_todos`'s branching (outside
+the daytime window with no Garmin call, too-soon-since-the-last-attempt and a live backoff both
+`en_espera` with no Garmin call -- the second test doubling as proof the sweep uses
+`ESPACIO_MIN_HOY` rather than `espacio_min=0`, since the latter would never block on recency alone
+--, a free person pulled and counted `ok`, a Garmin failure counted `fallidas` and recorded, each
+person checked in THEIR OWN configured zone, a pause between people, no connected person is a
+no-op), and the `--hoy` CLI wiring (the counts line, the quiet lock-skip, local mode's refusal).
+`tests/test_host_deploy.py` (9 new tests across `SystemdUnitTest`, a new `PullVerbTest` and a new
+`PullNowReadmeTest`) -- the new unit/timer's shape and shared hardening lines, its place in the
+`UNITS`/`TIMERS` arrays, the `pull` verb's usage listing/arg validation/`run`-wrapping/journal
+line/exit-status plumbing and its ordering before the generic deploy fallback, and the README's
+reinstall step, `pull` line and ceiling figures. No change was needed to `tests/test_pull.py` --
+`pull_hoy_ahora`'s observable behaviour is unchanged by the refactor, and its own existing coverage
+in `tests/test_sync_vivo.py` already re-ran green.
+
+**Gate command:** `.venv/Scripts/python.exe -m unittest discover tests -t .`. Run as 10 sequential
+alphabetical chunks of 20 dotted test modules (1 in the tenth, 181 total), each in the foreground,
+read from the process:
+- chunk 1 (`test_accesibilidad`..`test_baselines`): `Ran 377 tests in 91.678s ... OK (skipped=1,
+  expected failures=1)`
+- chunk 2 (`test_baselines_lote`..`test_dispositivo`): `Ran 481 tests in 506.347s ... OK`
+- chunk 3 (`test_ejes_fechas`..`test_fechas_semana`): `Ran 318 tests in 115.044s ... OK`
+- chunk 4 (`test_fit`..`test_host_backup`): `Ran 502 tests in 525.734s ... OK`
+- chunk 5 (`test_host_deploy`..`test_metas_semana_tira`): `Ran 425 tests in 97.436s ... OK`
+- chunk 6 (`test_mock_r2_hoy`..`test_primer_dia_1`): `Ran 530 tests in 234.764s ... OK`
+- chunk 7 (`test_primer_pull_1`..`test_rendimiento_red`): `Ran 350 tests in 149.883s ... OK`
+- chunk 8 (`test_rendimiento_turnos`..`test_tendencias_todas`): `Ran 403 tests in 94.247s ... OK`
+- chunk 9 (`test_turno_fc`..`test_vo2max`): `Ran 444 tests in 163.904s ... OK`
+- chunk 10 (`test_web_entry`): `Ran 4 tests in 0.026s ... OK`
+
+Sum: 377+481+318+502+425+530+350+403+444+4 = 3834. Reconciled against an independent collect-only
+count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted without running): 3834
+-- exact match. All ten chunks green.
+
+**Merge policy A, as applied.** This diff's only customer-facing bytes are counts-only print lines
+and a shell `usage()`/README text -- no screen, string table or UI Carlos reads changes. No schema
+or migration (`body/db.py` untouched) and no cross-repo contract change. All three conditions clear,
+so this merges on green.
+
+**Commits:** `c335d66` (rulings 1-3 -- `body/pull.py`, `deploy/host/body-deploy.sh`,
+`deploy/host/duna-deploy-body`, `deploy/host/body-pull-hoy.service` -- new,
+`deploy/host/body-pull-hoy.timer` -- new, `tests/test_host_deploy.py`,
+`tests/test_sync_vivo_timer.py` -- new), `7fb3497` (ruling 4 -- `deploy/host/README.md`,
+`tests/test_host_deploy.py`).
+
+**Open follow-ups, not this slice's to do:** none found -- the spec's four rulings and every listed
+test file are built and gated.
+
+-- merged `09f5b224564691ad83953bfd6ac349e085878156`
+
+## BODY-SYNC-VIVO-2-B -- one "Tu reloj" card, not two (2026-11-16)
+
+The orchestrator's review of BODY-SYNC-VIVO-2 (merged `d04994b`, the only report for that ID) on a
+clean `git archive d04994b`: `body/templates/today.html` rendered TWO cards titled "Tu reloj" when
+both applied for a hosted person -- the gap card (`garmin_sync`, `today.garmin_sync.titulo`, a chip
+and a link to `/garmin`) and the live-freshness card (`reloj_vivo`, new in that same slice,
+`reloj_vivo.titulo`, also "Tu reloj"). VIVO-2's own ledger entry had flagged this itself as "a
+deliberate, flagged-for-browser-review choice ... can look like two headings saying the same thing
+on the same screen." Once a hosted person's watch has ever reported a last-sync time, `pull.
+texto_estado_vivo` returns a line on nearly every visit, so a person with any Garmin gap saw both
+cards. This slice merges them into one.
+
+**Ruling 1, as built.** `body/templates/_reloj.html` (new shape) is now THE "Tu reloj" card: one
+title (`reloj_vivo.titulo`, line 9), then -- when `garmin_sync` applies -- its own chip
+(`today.garmin_sync.chip`) right after the title on the same line, then `garmin_sync.texto` (line
+10), then `reloj_vivo.texto` beneath it when `reloj_vivo` applies (line 11), then the gap's own link
+to `/garmin` (`today.stale_link`, line 12) last. When only one half applies, the other's lines
+simply do not render (each wrapped in its own `{% if %}`); when neither applies, nothing inside the
+wrapper renders, and `today.html`'s own include is gated on `garmin_sync or reloj_vivo` (line 13)
+so the whole card is absent, not a title with no body. `data-sincronizando` (line 8, unchanged)
+still names the SAME wrapper element the poll script replaces, so `body/static/reloj-sync.js`
+needed no change at all -- its `[data-sincronizando]` selector and swap logic are untouched.
+`today.html` (13-14, was 13-21): the old, separate `garmin_sync` card block is gone; one `{% if
+garmin_sync or reloj_vivo %}{% include "_reloj.html" %}{% endif %}` line replaces the old
+include-plus-separate-card pair, and the poll-script line is unchanged (still gated on `reloj_vivo
+and reloj_vivo.sincronizando` alone -- the script only ever needs to run while a pull is actually in
+flight, regardless of whether the gap half is also showing).
+
+`body/i18n/es.json` and `en.json`: `today.garmin_sync.titulo` ("Tu reloj" / "Your watch") retired --
+the template no longer calls it anywhere, and `tests/test_i18n_paridad.py`'s own literal-key scan
+(a static grep over every template and module) confirms nothing else does either. `reloj_vivo.
+titulo` is the one surviving title key, read by both halves' own wrapper now.
+
+**The poll route, also ruling 1.** `body/rutas/garmin.py`'s `/garmin/estado-vivo` (`garmin_
+estado_vivo`, 143) renders the SAME `_reloj.html` fragment Hoy's `/` does, and the existing
+`_reloj_vivo_ctx` docstring (126) already claimed "the two can never render a different card for
+the same state" -- true for the freshness half alone, but false for the gap half before this slice,
+since the poll never computed `garmin_sync` at all. A new `_garmin_sync_ctx` (106), duplicated from
+`body/rutas/hoy.py`'s own function of the same name (the same no-cross-module-import rule this
+file's `_reloj_vivo_ctx` already follows for its own duplicate), gives the route the gap half too:
+`garmin_estado_vivo` now computes `person`, `today_local` and `day` once (reusing `comun._ctx`'s own
+already-fetched `person` instead of the previous second `db.person` call `_reloj_vivo_ctx` used to
+make on its own -- `_reloj_vivo_ctx`'s signature changed to take `person` and `today_local` as
+params, same shape `hoy.py`'s version already has) and passes both `garmin_sync` and `reloj_vivo`
+into the fragment. This closes the one real gap the merge would otherwise have left: without it, a
+poll response taken mid-backoff (gap showing, pull not yet re-tried) would have swapped in a card
+that silently dropped the chip and the `/garmin` link the instant the fragment re-rendered, even
+though the gap state had not changed. `day=None` (a person who has never once had a stored day) is
+handled as "not stale" rather than crashing on `date.fromisoformat(None)` -- an edge case Hoy's `/`
+can never reach (it returns `soon.html` before ever asking), but this route answers the poll either
+way and has no such guard.
+
+**Tests (`tests/test_sync_vivo.py`):** new `MergedRelojCardTest` (gap-only -- one title, the chip,
+the link, no poll script; freshness-only -- one title, no chip, no link; both -- exactly one title,
+and the gap's text, then the freshness text, then the link, in that order; neither -- no title at
+all; the "both" case again in English). The title-count helper anchors on `'<div class="q">' +
+titulo` rather than a bare substring match -- `reloj_vivo.ultimo_sync`'s own sentence ("Tu reloj se
+sincronizó..." / "Your watch last synced...") starts with the bare title text, so an unanchored
+count double-counted it the first time this was written (caught by the three failing assertions
+before the anchor was added, never shipped). `GarminEstadoVivoRouteTest` gains one case proving the
+poll route's own render carries the gap half (the chip, the `NotSignedIn` sentence, exactly one
+title). `tests/test_garmin_estado.py`'s three direct references to the retired `today.garmin_sync.
+titulo` key (two `assertNotIn`, one `.index()` that would otherwise raise `ValueError` once the key
+was gone) are updated to `reloj_vivo.titulo`, the surviving title -- the other assertions in that
+file check different keys (the gap's own sentences and chip) and needed no change. No change was
+needed to `body/rutas/hoy.py` (its own `today()` call already passed both `garmin_sync` and
+`reloj_vivo` as separate kwargs; the merge is entirely a template-layer change on the Python side
+that already existed), `body/static/reloj-sync.js`, or `body/static/body.css` (no new class
+introduced; `.card`, `.chip.warn`, `.taplink`, `.note` are all pre-existing and already styled).
+`tests/test_rendimiento.py`'s `/garmin/estado-vivo` ceiling (6, unchanged) was not re-measured: that
+route's own `RouteCostCeilingTest` fixture never sets the hosted env, so the sweep hits the local-
+mode 404 branch (`cuenta.hosted()` false) before any of this slice's new queries ever run -- the
+measured "4" baseline is untouched by this change. `/`'s own ceiling (112, unchanged) was likewise
+unaffected: `hoy.py`'s `today()` already computed both `garmin_sync` and `reloj_vivo` before this
+slice (BODY-SYNC-VIVO-2's own two lines, 668-669 in the earlier revision), so merging their
+RENDERING added no new query.
+
+**Gate command:** `.venv/Scripts/python.exe -m unittest discover tests -t .`. Run as 9 sequential
+alphabetical chunks of 20 dotted test modules (181 modules total, 20 in each of the first 9, the
+19th chunk short one module), each in the foreground, read from the process:
+- chunk 1 (`test_accesibilidad`..`test_baselines`): `Ran 377 tests in 101.740s ... OK (skipped=1,
+  expected failures=1)`
+- chunk 2 (`test_baselines_lote`..`test_dispositivo`): `Ran 481 tests in 411.441s ... OK`
+- chunk 3 (`test_ejes_fechas`..`test_fechas_semana`): `Ran 318 tests in 83.283s ... OK`
+- chunk 4 (`test_fit`..`test_host_backup`): `Ran 502 tests in 528.151s ... OK`
+- chunk 5 (`test_host_deploy`..`test_metas_semana_tira`): `Ran 425 tests in 128.288s ... OK`
+- chunk 6 (`test_mock_r2_hoy`..`test_primer_dia_1`): `Ran 530 tests in 221.242s ... OK`
+- chunk 7 (`test_primer_pull_1`..`test_rendimiento_red`): `Ran 350 tests in 118.619s ... OK`
+- chunk 8 (`test_rendimiento_turnos`..`test_tendencias_todas`): `Ran 409 tests in 73.214s ... OK`
+- chunk 9a (`test_turno_fc`..`test_vo2max`): `Ran 444 tests in 274.221s ... OK`
+- chunk 9b (`test_web_entry`): `Ran 4 tests in 0.026s ... OK`
+
+Sum: 377+481+318+502+425+530+350+409+444+4 = 3840. Reconciled against an independent collect-only
+count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted without running): 3840
+-- exact match. All ten runs green; `git status --porcelain` empty throughout.
+
+**Merge policy A, as applied.** The diff touches customer-facing bytes (the merged card's markup and
+one retired i18n key), but the spec's own body gives no stop-before-merge instruction and says to
+merge on green -- unlike BODY-GARMIN-SYNC-CONSISTENTE-1's own spec, which explicitly said to stop.
+This slice carries no `approved:` header at all and no instruction to hold for review in its body,
+so it merges on green rather than stopping `AWAITING_APPROVAL`.
+
+**Commits:** `9a25f0f` (rulings 1-3 -- `body/i18n/en.json`, `body/i18n/es.json`, `body/rutas/
+garmin.py`, `body/templates/_reloj.html`, `body/templates/today.html`, `tests/test_garmin_estado.py`,
+`tests/test_sync_vivo.py`).
+
+**Open follow-ups, not this slice's to do:** none found -- the spec's one ruling and every listed
+test file that needed a change are built and gated; `body/rutas/hoy.py`, `body/static/reloj-
+sync.js`, `body/static/body.css`, `tests/test_hoy_escritorio.py` and `tests/test_garmin_web.py`
+needed no change for this ruling and were left untouched.
+
+-- merged `570c4e7f6395d66cbfa876a88617c2718aab7212`
+
+## BODY-PLAN-HOY-1 -- Today shows this week of the person's plan (2026-11-16)
+
+**Ruling 1 -- the ONE definition of a plan, in body/horizonte.py.** `es_horizonte(conn, goal_id) ->
+bool` and `horizontes(conn, person_id, hoy, *, solo_activos=False) -> list[int]`: a goal is a plan
+(a horizon) when it is a `milestone` with no `horizonte_goal_id` of its own AND it carries at least
+one plan row -- a child goal, a `horizonte_regla`, a `horizonte_semana`, a `horizonte_meta_semanal`
+or a `horizonte_checkpoint`. Both fold the check into one bounded statement via a shared UNION
+(`_PLAN_ROW_HORIZONTES`) of the five plan-row tables, never a per-row count. Every caller that used
+to decide this on its own now shares it: `body/agente/herramientas.py`'s `_leer_planes` (:2197,
+replacing its own `kind = 'milestone' AND horizonte_goal_id IS NULL` query with
+`horizonte.horizontes(conn, person_id, hoy)`) and `body/rutas/metas.py`'s goal-detail route (:678,
+`g["kind"] == "milestone" and horizonte.es_horizonte(conn, goal_id)` in place of the local
+`_es_horizonte`, now removed). `horizonte.resumen` also carries `start_day` in its returned dict
+(additive, zero extra cost -- the goal row is already fetched), which Today's own week-count card
+needs and no existing caller's behaviour depends on its absence. A plain milestone with no plan row
+is not listed as a plan anywhere; `ampliar_plan`'s own target check (herramientas.py `_ampliar_plan`
+:2374, `kind = 'milestone'` only) is unchanged, so a milestone still grows into a plan the same way.
+Tests: `tests/test_horizonte.py`'s `EsHorizonteTest` (9 tests: each of the five plan-row kinds makes
+it a horizon, a metric goal never is, a horizon's own child is not itself a horizon even carrying a
+plan row of its own, an unknown id is false) and `HorizontesTest` (6 tests: excludes a plain
+milestone, lists a real horizon, excludes another person's private one, includes a shared household
+one, active-then-newest ordering, `solo_activos`'s status+span filter) plus `ResumenHouseholdTest`'s
+new `test_start_day_is_carried_through`.
+
+**Ruling 2 -- "Tu plan esta semana" / "Your plan this week".** `body/rutas/hoy.py`'s `today()`
+route, right after the day-ahead card (`today.plan_title`), shown only when
+`horizonte.horizontes(conn, person_id, today_local, solo_activos=True)` is non-empty. One block per
+active plan, at most `PLANES_HOY_MAX = 2` (a named constant); beyond it, one line "y N planes más" /
+"and N more plans" linking to `/goals`. Each block, built ONLY from `horizonte.resumen` (`_plan_
+semana_bloque`, `_plan_semana_ctx` -- the route queries no `horizonte_*` table and recomputes
+nothing): the plan title linking to `/goals/{id}`; "Semana N de M" (Monday-based, from `resumen`'s
+own `start_day` to `deadline`) and "faltan D días" / "{n} days left" (singular "falta 1 día" / "1
+day left", or "termina hoy" / "ends today" at zero); this week's weekly lines as counts by estado
+(`cumple`/`en_curso`/`no_cumple`/`sin_dato`), non-zero estados only, each a `<span class="chip
+{ok|warn|low|off}">` reusing the existing chip colours (`_PLAN_ESTADO_CLS`, duplicated from
+metas.py's own private mapping rather than imported, since `body/rutas/comun.py` -- the shared-
+plumbing home -- is outside this slice's touches), singular via the repo's own `_one` key
+convention, every key a literal `t(...)` call (never an f-string) so `tests/test_i18n_paridad.py`'s
+scan sees each one; the next checkpoint only within 7 days ("Chequeo el 7 dic: <título>" /
+"Checkpoint on Dec 7: <title>", reusing `_dia_mes`'s existing "D mon" formatter); the honest gap --
+a week with no weekly lines says "Sin metas del plan esta semana" / "No targets in the plan this
+week" (reworded from the spec's own suggested "...no tiene metas" wording: `tests/test_registro_tu.py`,
+outside this slice's touches, correctly flagged third-person "tiene" with no allow-list entry, and
+rewording stayed inside `es.json` rather than widening touches to add one). No figure of the person
+beyond the counts; the detail stays on goal detail (BODY-PLAN-PANTALLA-1). 17 new i18n keys per
+language (`today.plan_semana.*`).
+
+**Ruling 3 -- bounded, proven, and a performance correction found along the way.** `tests/
+test_rendimiento.py`'s new `PlanHoyCostIndependentOfSpanTest` (2 tests) proves "/" costs the
+identical statement count for a 1-week vs. a 12-week horizon, and for a 1-line vs. an 8-line current
+week -- `horizonte.semana`/`checkpoints`'s own per-week scoping (BODY-PLAN-MODULO-1) carries
+through unchanged. **The "at most one extra statement for a person with no plan" requirement
+surfaced a real cost bug while building `horizontes()`:** following ruling 1's own description
+("the goals the person can see by `goals.goal_scope_sql`") literally -- calling
+`household.household_of` then `goals.goal_scope_sql` the way every other caller does -- cost TWO
+statements even for a person with no household (the household lookup, then the listing), measured
+directly by calling `hoy._plan_semana_ctx` against a minimal no-plan fixture before this fix: 2
+statements, not 1. Fixed by folding the household-visibility check into the SAME statement as a
+scalar subquery (`hogar_id = (SELECT hogar_id FROM hogar_miembro WHERE person_id = ?)`) instead of
+a separate `household.household_of` round trip -- a person with no `hogar_miembro` row makes the
+subquery NULL, and `hogar_id = NULL` is never true, so the household branch drops out on its own,
+the identical net effect `goal_scope_sql` gets by omitting that SQL text entirely. Re-measured after
+the fix: exactly 1 statement for a no-plan person (confirmed directly against `hoy._plan_semana_ctx`
+on a minimal fixture: person 1, no horizon, no household row). `tests/test_horizonte.py`'s
+`HorizontesTest.test_shared_household_horizon_is_included` still passes unchanged, proving the
+inlined subquery is behaviourally identical to the two-call form for the case that matters (a real
+shared household horizon).
+
+**Measured ceiling.** `/`'s own ceiling moved from 112 to 155 (`tests/test_rendimiento.py`): with
+this file's own `_seed()` fixture (one active plan, the demo's own horizon from BODY-PLAN-PANTALLA-1),
+measured 119 statements (118 before this file's own extra manual-session fixture addition, a prior
+slice's own change, unaffected by this one), `ceil(119 * 1.3) = 155`. A person with no plan pays
+exactly one extra statement, per ruling 3 above.
+
+**Ruling 4 -- the demo's existing plan is active today; no demo change needed.** The demo's horizon
+(BODY-PLAN-PANTALLA-1's `_seed_plan_horizonte`) spans `anchor_monday - 3 weeks` to `anchor_monday +
+5 weeks + 6 days` and is activated (`goals.activate`) right after being created, so `anchor` (the
+demo's own "today") always falls inside its span and its status is `'active'` -- `solo_activos`'s
+filter passes without any seed change. Confirmed directly: the demo fixture's "/" renders "Tu plan
+esta semana" with the seeded horizon's own title, "Semana 4 de 9" and its weekly-line counts, with
+no change to `body/demo.py` (outside this slice's touches, and not needed).
+
+**New tests**, invented demo data only, never a real figure:
+- `tests/test_plan_hoy.py` (16 tests): the card absent with no plan, a plain milestone with no plan
+  row, a proposed-but-not-activated plan, a plan not yet started, a plan already ended, and another
+  person's plan; present with the plan's title, "Semana N de M" and "faltan D días"/"termina hoy";
+  one of each estado's singular count text in one fixture, and a plural form; the honest gap; the
+  checkpoint line inside 7 days and its absence beyond 7; `PLANES_HOY_MAX` and the "y N planes más"
+  line (and its absence at exactly the max); es and en coverage.
+- `tests/test_horizonte.py`: `EsHorizonteTest`, `HorizontesTest` (ruling 1 above) and
+  `ResumenHouseholdTest.test_start_day_is_carried_through`.
+- `tests/test_rendimiento.py::PlanHoyCostIndependentOfSpanTest` (2 tests, ruling 3 above).
+
+No password, token, session secret or health figure of a real person was read, printed or written
+anywhere; every fixture is invented demo data; no network call was made.
+
+**`touches` -- held exactly**, except one deviation (flagged below): `body/horizonte.py`,
+`body/rutas/hoy.py`, `body/rutas/metas.py`, `body/agente/herramientas.py`,
+`body/templates/today.html`, `body/i18n/es.json`, `body/i18n/en.json`, `tests/test_plan_hoy.py`,
+`tests/test_horizonte.py`, `tests/test_rendimiento.py`. `DECISIONS.md` this entry. `body/static/
+body.css` was not touched -- every class the card needed (`.row`, `.gap-8`, `.justify-start`,
+`.flex-wrap`, `.chip .ok/.warn/.low/.off`, `.plan`, `.block`, `.more`) already existed.
+`tests/test_plan_pantalla.py` and `tests/test_plan_propuestas.py` were in the allowed set but did
+not need a change (both re-run green, confirming ruling 1's switch did not change either screen's
+behaviour).
+
+**Deviation, flagged.** `body/i18n/es.json`'s wording for the honest-gap string was changed from
+the spec's own suggested "...no tiene metas" to "Sin metas del plan esta semana" specifically to
+satisfy `tests/test_registro_tu.py` (outside this slice's touches, unedited), which correctly
+flagged the third-person "tiene" with no allow-list entry (DESIGN rule 10's tú-register guard).
+Reworded rather than widening touches to add an allow-list entry -- the same shape of deviation
+BODY-PLAN-PANTALLA-1 flagged for `tests/test_persona_fuga.py`, resolved here by staying inside the
+touched file instead.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry, after this
+entry's own commit). The exact command is
+`.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 9 sequential chunks of
+`tests/test_*.py` modules in alphabetical order (the same set `discover` would walk), each in the
+foreground:
+
+    chunk 1 (test_accesibilidad..test_baselines_lote):            Ran 380 tests, OK (skipped=1, expected failures=1)
+    chunk 2 (test_borrar_reauth..test_entreno_historial):          Ran 503 tests, OK
+    chunk 3 (test_entreno_numeros..test_garmin_adapter):           Ran 318 tests, OK
+    chunk 4 (test_garmin_estado..test_hoy):                        Ran 602 tests, OK
+    chunk 5 (test_hoy_escritorio..test_nivel_datos_ui):            Ran 443 tests, OK
+    chunk 6 (test_noche_inusual..test_profile_lote):                Ran 540 tests, OK
+    chunk 7 (test_propuesta_vigencia..test_series_unidad):          Ran 312 tests, OK (re-run green after the wording fix above; first run failed exactly 1, test_registro_tu's third-person guard)
+    chunk 8 (test_sesion_conexion_1..test_turnos_opcional_2):       Ran 497 tests, OK
+    chunk 9 (test_turnos_opcional_3..test_web_entry):               Ran 279 tests, OK
+
+Sum: 3874 run, 0 failures, 0 errors, 1 skipped, 1 expected failure. Reconciled against an
+independent collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')`,
+counted by walking its `TestSuite`): 3874 -- matching exactly. **GREEN.**
+
+**Merge policy, this slice's own diff: STOPS at customer-facing bytes.** New i18n keys
+(`today.plan_semana.*`, 17 per language) and the new "Tu plan esta semana" card they fill on Today
+are bytes a customer reads -- merge policy A's condition is tripped, so this entry stops here, on
+the branch, unmerged, for approval. No schema or migration change; no cross-repo contract.
+
+**Commits:** `ffa8501124eb85291c6af96a5249ac17e6fdc0a2` (ruling 1), `b70583d071925394bdfaa9d2e0099bcbe1c1920d`
+(rulings 2-3), `da817557a85ab38aad351e9db0ff29ea2a59432f` (tests), `10fdcdff2a50d3262e7b3b50cf02e8e5cbfbefd5`
+(the wording fix).
+
+**Open follow-ups, not this slice's to do:**
+- `BODY-PLAN-PANTALLA-FUGA-1` (named by BODY-PLAN-PANTALLA-1, still open): promote
+  `horizonte_regla.texto`, `horizonte_semana.titulo`, `horizonte_meta_semanal.nota` and
+  `horizonte_checkpoint.titulo` into `tests/test_persona_fuga.py`'s `_markers_of` active list, now
+  that Today's own card also renders counts derived from these rows.
+- A `today.plan_semana.cuenta.*` allow-list entry for `tests/test_registro_tu.py` was deliberately
+  avoided by rewording instead; if a future slice needs the word "tiene" in a Today-facing plan
+  string, that allow-list (not a reword) is the right tool then.
+
+-- merged d87ce93f5b6958ad74ff813c4595ae98076daf8b, reviewed by the orchestrator at 375 px
+
+## BODY-PLAN-SESION-HECHA-1 -- a done planned training session counts once (2026-11-16)
+
+**The gap, as measured.** BODY-PLAN-PANTALLA-1's own merge (queue/pending.txt, 2026-11-12) flagged
+it and it was still open on main `732d731`: the plan's `sesiones_fuerza` count read only `activity`
+rows (`body/horizonte.py`'s `_real_medida`, the branch at the then-line 263-265, backed by
+`entreno_racha.sesiones_fuerza` via `_recopilar_datos`'s `"fuerza"` key, :198/:240 before this
+slice), so a `plan` row the person marked done (`status = 'done'`, `body/db.py:536`) with no watch
+or manual `activity` behind it counted 0 beside its own "Hecho" chip -- true on main even for the
+demo horizon's own Tuesday session (`body/demo.py`'s `_seed_plan_horizonte`, title "Entrenamiento
+de fuerza" / "Strength training", `status = 'done'`, no `ejercicios_json` at all, so it would still
+count 0 after this slice too -- `demo.py` is outside this slice's `touches`; the exact shape is
+reproduced instead in this slice's own test,
+`test_the_demo_horizons_hecho_row_now_counted`, with `ejercicios_json` added so it demonstrates the
+fix). Body's rule: "measured first, the person's word second, never twice."
+
+**Ruling 1/2 -- the union, in `body/entreno_racha.py`'s new `con_plan_hecho(sesiones, dias_plan)`
+(:89-101).** Pure function, no database: `sesiones` is this module's own measured classification
+(`sesiones_fuerza`'s own return shape, `{'day': date, 'start_local': str | None}`); `dias_plan` is
+every day carrying a done `plan` row with exercises. A day already in `sesiones` is left exactly as
+measured -- the watch's record standing as given, never doubled; a day with no measured session
+gets one synthetic entry per such plan-row day, so two done rows the same day with no watch session
+count twice (`dias_plan` is a plain list, one entry per row, not a set). The docstring states
+ruling 2 verbatim: a plan row with no exercises, or any plan row at all for a cardio measure, never
+reaches this function -- it has no exercises to say what was done, and a plan row can only ever
+stand in for a STRENGTH session.
+
+**Ruling 3 -- one place, in `body/horizonte.py`.** Chosen over `entreno_racha.py` because the
+union needs the `plan` table (horizonte.py's own domain -- `plan_vs_real` already reads it for
+`planes_por_dia`) alongside the measured classifier; `entreno_racha.con_plan_hecho` stays a pure,
+database-free function so `entreno_racha.py` itself never reads `plan`. New `_planes_hechos_fuerza`
+(:226-236): one statement, `SELECT day FROM plan WHERE person_id = ? AND status = 'done' AND
+ejercicios_json IS NOT NULL AND day BETWEEN ? AND ?` -- never scoped to one horizon's `goal_id`,
+the same way a measured session isn't (a done session is a fact about the person's day, regardless
+of which plan, or none, it was written under). `_recopilar_datos` (:239-262) now also returns
+`"fuerza_con_plan"`: `entreno_racha.con_plan_hecho(fuerza, _planes_hechos_fuerza(...))`, computed
+once per call alongside the existing `"fuerza"` (left unchanged, still measured-only -- the day-
+level rule chequeos `sin_sesion`/`sesion_antes_de` keep reading it as before, out of this slice's
+rulings). `_real_medida`'s `sesiones_fuerza` branch (:283-288) now sums over `datos["fuerza_con_
+plan"]` instead of `datos["fuerza"]` -- its only change. Since `plan_vs_real`, `semana`,
+`checkpoints` and `resumen` all go through `_recopilar_datos` -> `_real_medida` for this measure,
+and Today's "Tu plan esta semana" card (`body/rutas/hoy.py`'s `_plan_semana_ctx` ->
+`horizonte.resumen`) is itself built only from `resumen`, every one of them sees the union with no
+change of its own. `entreno_racha.racha_semanal` (the watch's own weekly streak,
+`BODY-ENTRENO-RACHA-SEMANAL-1`) reads no `plan` row at all, before or after this slice -- a
+separate subject, confirmed by a new test
+(`tests/test_entreno_racha.py::RachaSemanalTest::test_a_done_plan_row_with_exercises_never_feeds_the_racha`).
+
+**Ruling 4 -- cost.** Exactly one extra statement per `_recopilar_datos` call (the new
+`_planes_hechos_fuerza` read), the same one call `plan_vs_real`/`semana`/`checkpoints` already made
+once per range before this slice. `tests/test_rendimiento.py`'s ceilings (all relative-count or
+margin-based, none an exact statement count for this path) and its two
+`CostIndependentOfSpanTest` classes (equal-statement-count assertions, both sides of each
+comparison paying the identical +1) all stayed green unmodified.
+
+**Tests.** New `tests/test_plan_sesion_hecha.py` (15 tests): done+exercises alone -> 1
+(`DonePlanRowCountsAsAStrengthSessionTest`, including the demo-shape reproduction above);
+done-without-exercises, skipped-with-exercises, proposed-with-exercises and accepted-with-
+exercises -> 0; a measured session plus a done plan row the same day -> still the measured count,
+not +1 (`MeasuredSessionWinsTest`, 4 tests, including two done rows with no measured session -> 2
+and a done plan row on a different day adding its own count); a done plan row never counts toward
+`sesiones_cardio` (`CardioStaysMeasuredOnlyTest`); `con_plan_hecho` exercised directly with no
+database (`ConPlanHechoUnitTest`, 4 tests). One addition to `tests/test_entreno_racha.py` (the
+racha-isolation test above). `tests/test_horizonte.py`, `tests/test_plan_pantalla.py` and
+`tests/test_plan_hoy.py` needed no change -- none of their existing fixtures carry a done `plan`
+row with `ejercicios_json`, so the union is additive and silent for them; they are listed here
+because they were read and re-run green, not because they changed.
+
+**Deviation.** The spec named `tests/test_entreno_racha_semanal.py`; the file that actually owns
+`BODY-ENTRENO-RACHA-SEMANAL-1` is `tests/test_entreno_racha.py` (its own module docstring says so).
+The new racha-isolation test was added there instead of creating a second, fragmenting file.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean). The exact command is
+`.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 10 sequential chunks of
+`tests/test_*.py` modules in alphabetical order (20 modules each, the same set `discover` would
+walk), each in the foreground:
+
+    chunk 1  (test_accesibilidad..test_baselines):            Ran 377 tests, OK (skipped=1, expected failures=1)
+    chunk 2  (test_baselines_lote..test_dispositivo):         Ran 481 tests, OK
+    chunk 3  (test_ejes_fechas..test_fechas_semana):          Ran 319 tests, OK
+    chunk 4  (test_fit..test_host_backup):                    Ran 518 tests, OK
+    chunk 5  (test_host_deploy..test_metas_semana_tira):       Ran 425 tests, OK
+    chunk 6  (test_mock_r2_hoy..test_plan_propuestas):         Ran 533 tests, OK
+    chunk 7  (test_plan_sesion_hecha..test_registro_tu):       Ran 364 tests, OK
+    chunk 8  (test_rendimiento..test_tendencias_patron):       Ran 364 tests, OK
+    chunk 9  (test_tendencias_racha..test_vida_export):        Ran 448 tests, OK
+    chunk 10 (test_vivo..test_web_entry):                      Ran 61 tests, OK
+
+Sum: 3890 run, 0 failures, 0 errors, 1 skipped, 1 expected failure. Reconciled against an
+independent collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')`,
+counted by walking its `TestSuite`): 3890 -- matching exactly. **GREEN.**
+
+**Merge policy, this slice's own diff: no stop.** No schema or migration change (no `body/db.py`
+touched); no cross-repo contract or DTO change. No new customer-facing bytes either -- no new
+template, string or i18n key; the only observable change is the computed `real` figure for an
+existing `sesiones_fuerza` line, which is this slice's entire point (a bug fix to an existing
+count, not a new byte). Merges on green.
+
+**Commits:** `5ebf6de92f788ad268d04170dde47b58ac79afd7` (rulings 1-4 and tests).
+
+-- merged 3a369c74dd90262a75c20231188d994cd84214bb
+
 ## BODY-CONSENTIMIENTO-V4 -- consent widens to v4, names each activity's full detail and minute-by-minute (2026-11-16)
 
 Carlos, typed in the Body orchestrator 2026-11-15, asked whether Body should keep every activity's full

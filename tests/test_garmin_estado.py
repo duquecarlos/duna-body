@@ -82,7 +82,7 @@ class GarminSyncCardTest(unittest.TestCase):
         _use(self.conn, ids["person_id"])
         r = self.client.get("/")
         self.assertEqual(r.status_code, 200)
-        self.assertNotIn(T("es")("today.garmin_sync.titulo"), r.text)
+        self.assertNotIn(T("es")("reloj_vivo.titulo"), r.text)
 
     def test_absent_when_connected_no_error_and_fresh(self):
         ids = _seed_B(self.conn, "es")  # today's own data, not stale
@@ -91,7 +91,7 @@ class GarminSyncCardTest(unittest.TestCase):
         _use(self.conn, ids["person_id"])
         r = self.client.get("/")
         self.assertEqual(r.status_code, 200)
-        self.assertNotIn(T("es")("today.garmin_sync.titulo"), r.text)
+        self.assertNotIn(T("es")("reloj_vivo.titulo"), r.text)
 
     def test_card_uses_the_card_and_chip_classes(self):
         ids = _seed_B(self.conn, "es")
@@ -100,7 +100,7 @@ class GarminSyncCardTest(unittest.TestCase):
         self.conn.commit()
         _use(self.conn, ids["person_id"])
         r = self.client.get("/")
-        start = r.text.index(T("es")("today.garmin_sync.titulo"))
+        start = r.text.index(T("es")("reloj_vivo.titulo"))
         block = r.text[max(0, start - 200):start + 200]
         self.assertIn('class="card"', block)
         self.assertIn('class="chip warn"', block)

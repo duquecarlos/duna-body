@@ -59,11 +59,13 @@ import contextvars
 import json
 import sqlite3
 import statistics
+import threading
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
-from .. import anatomia, catalogo_tendencias, compartir, db, enlaces, entreno_historial, errores, experimentos, \
-    fechas, garmin_cuenta, goals, history, horizonte, household, nutriente_objetivo, profile, pull, readiness, \
-    shift_import, turnos_costo, tutoriales
+from .. import anatomia, catalogo_tendencias, compartir, cuenta, db, enlaces, entreno_historial, errores, \
+    experimentos, fechas, garmin_cuenta, goals, history, horizonte, household, nutriente_objetivo, profile, pull, \
+    readiness, shift_import, turnos_costo, tutoriales
 from ..i18n import LANGS, T
 from . import ajustes, propuestas
 
@@ -926,10 +928,16 @@ def _leer_estado_reloj(conn: sqlite3.Connection, person_id: int) -> dict:
     """BODY-GARMIN-SYNC-CONSISTENTE-1 ruling 3: the sync state itself -- never a health figure, so
     nivel 'ninguno' (BODY-ASISTENTE-OBS-1) offers it at every data level, for the assistant and the
     Personal desk alike. Shares garmin_cuenta.estado_conexion/dias_sin_datos with Hoy's own sync
-    card (ruling 2) and body/pull.py's healing gap-fill (ruling 1), never a copy."""
+    card (ruling 2) and body/pull.py's healing gap-fill (ruling 1), never a copy.
+
+    BODY-SYNC-VIVO-2 ruling 3 adds `estado_vivo`: the SAME plain sentence (or None) Hoy's own «Tu
+    reloj» live card shows -- `pull.texto_estado_vivo`, shared, never a copy -- still never a
+    health figure, so it rides along at this same 'ninguno' level."""
     estado = garmin_cuenta.estado_conexion(conn, person_id)
-    hoy = fechas.hoy_local(db.person(conn, person_id))
+    person = db.person(conn, person_id)
+    hoy = fechas.hoy_local(person)
     dias = db.days_with_data(conn, person_id)
+    tz = ZoneInfo(person.get("timezone") or "America/Bogota")
     return {
         "conectado": estado["conectado"],
         "conectado_desde": (datetime.fromisoformat(estado["conectado_desde"]).date().isoformat()
@@ -937,6 +945,7 @@ def _leer_estado_reloj(conn: sqlite3.Connection, person_id: int) -> dict:
         "ultimo_error": estado["ultimo_error"],
         "ultimo_dia_con_datos": dias[0] if dias else None,
         "dias_sin_datos_14": garmin_cuenta.dias_sin_datos(conn, person_id, hoy),
+        "estado_vivo": pull.texto_estado_vivo(T(person.get("language", "es")), conn, person_id, tz, hoy),
     }
 
 
@@ -2189,16 +2198,11 @@ def _leer_planes(conn: sqlite3.Connection, person_id: int) -> dict:
     """Every horizon this person can see (BODY-PLAN-PROPUESTAS-1 ruling 6) -- their own plus any
     shared household milestone, active plans first -- each summarised by `horizonte.resumen` (`nivel:
     'resumen'`, by analogy with `leer_experimentos`: a plan's own figures, never recomputed here).
-    A horizon is any milestone goal with no `horizonte_goal_id` of its own, i.e. not itself a child
-    of another plan."""
-    hh = household.household_of(conn, person_id)
-    where, params = goals.goal_scope_sql(person_id, hh)
+    `horizonte.horizontes` is the ONE definition of a plan (BODY-PLAN-HOY-1 ruling 1): a milestone
+    goal with no `horizonte_goal_id` of its own AND at least one plan row."""
     hoy = fechas.hoy_local(db.person(conn, person_id))
-    filas = conn.execute(
-        f"SELECT id FROM goal WHERE {where} AND kind = 'milestone' AND horizonte_goal_id IS NULL "
-        "ORDER BY (status = 'active') DESC, id DESC", params).fetchall()
-    return {"planes": [_convertir_plan_salida(horizonte.resumen(conn, r["id"], person_id, hoy=hoy))
-                        for r in filas]}
+    return {"planes": [_convertir_plan_salida(horizonte.resumen(conn, gid, person_id, hoy=hoy))
+                        for gid in horizonte.horizontes(conn, person_id, hoy)]}
 
 
 def _leer_plan(conn: sqlite3.Connection, person_id: int, goal_id: int, desde: str | None = None,
@@ -2743,6 +2747,30 @@ class ToolError(Exception):
     """A lectura tool was unknown, unavailable at this nivel_datos, or given invalid parameters."""
 
 
+# BODY-SYNC-VIVO-2 ruling 2: the `lectura` tools whose answer is TODAY's own figures -- leer_hoy
+# and leer_estado_reloj, named explicitly by the spec. No other tool here qualifies today:
+# leer_dia/leer_entreno answer an arbitrary day or range the caller names, never specifically
+# "today" by their own contract, so a call for today's date through either of them is still an
+# ordinary day query, not this trigger's concern. A future tool whose answer IS specifically
+# today's figures joins this set.
+HERRAMIENTAS_HOY = frozenset({"leer_hoy", "leer_estado_reloj"})
+
+
+def _lanzar_pull_hoy_en_hilo(person_id: int) -> None:
+    """BODY-SYNC-VIVO-2 ruling 2: starts `pull.pull_hoy_ahora(person_id)` on its own thread and
+    returns immediately -- the lectura tool's own answer, called right after this, uses whatever
+    is stored right now; `pull_hoy_ahora`'s own checks (hosted, connected, `puede_intentar`, quiet
+    hours, the shared `_PULL_EN_CURSO` lock) decide for themselves whether anything actually runs,
+    the same as Hoy's own BackgroundTask trigger. A thread, never asyncio: `ejecutar` is called
+    from three different places (the in-app assistant's own sync loop, the local MCP stdio
+    server, and -- through `mcp._llamar_herramienta`'s `_SesionRemota` path -- the hosted MCP
+    door), none of them async. `cuenta.hosted()` is checked here too, cheaply, so a local-mode
+    call never spawns a thread at all -- `pull_hoy_ahora` would just return "sin_cuenta" anyway."""
+    if not cuenta.hosted():
+        return
+    threading.Thread(target=pull.pull_hoy_ahora, args=(person_id,), daemon=True).start()
+
+
 def disponibles(nivel: str) -> list[dict]:
     if nivel not in ajustes.NIVELES:
         raise ToolError(f"nivel inválido: {nivel!r}; debe ser uno de {ajustes.NIVELES}")
@@ -2809,6 +2837,11 @@ def ejecutar(conn: sqlite3.Connection, person_id: int, nombre: str, params: dict
     previo = conn.execute("PRAGMA query_only").fetchone()[0]
     conn.execute("PRAGMA query_only = ON")
     try:
+        # BODY-SYNC-VIVO-2 ruling 2: fired before the tool's own read, never awaited -- the read
+        # below answers with whatever is stored right now, and says how fresh it is itself
+        # (leer_estado_reloj's own `estado_vivo`, ruling 3).
+        if nombre in HERRAMIENTAS_HOY:
+            _lanzar_pull_hoy_en_hilo(person_id)
         # BODY-AGENTE-LEER-SERIE-1: a lectura tool whose registry entry asks for `nivel` (leer_serie's
         # own 'dia' vs 'resumen' split) gets it as its third positional argument -- everybody else's
         # call shape is unchanged.

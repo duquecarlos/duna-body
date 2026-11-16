@@ -1,0 +1,13 @@
+{# BODY-SYNC-VIVO-2-B ruling 1: THE "Tu reloj" card, one title, never two -- the gap half
+   (`garmin_sync`, body/rutas/hoy.py's own _garmin_sync_ctx / body/rutas/garmin.py's own copy) and
+   the freshness half (`reloj_vivo`, BODY-SYNC-VIVO-2 ruling 3) share this one card: gap's chip and
+   text first, then the freshness line, then the gap's own link to /garmin. Rendered both by
+   today.html's own include and by body/rutas/garmin.py's `/garmin/estado-vivo` poll (the SAME
+   fragment, so the poll script can just swap it in place). `data-sincronizando` is present only
+   while a pull for this person is running right now -- the poller's own stop condition. #}
+<div class="card"{% if reloj_vivo and reloj_vivo.sincronizando %} data-sincronizando="1"{% endif %}>
+  <div class="q">{{ t('reloj_vivo.titulo') }}{% if garmin_sync %} <span class="chip warn">{{ t('today.garmin_sync.chip') }}</span>{% endif %}</div>
+  {% if garmin_sync %}<p class="note mt-6 m-0">{{ garmin_sync.texto }}</p>{% endif %}
+  {% if reloj_vivo %}<p class="note mt-6 m-0">{{ reloj_vivo.texto }}</p>{% endif %}
+  {% if garmin_sync %}<a class="taplink mt-6" href="/garmin">{{ t('today.stale_link') }}</a>{% endif %}
+</div>

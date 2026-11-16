@@ -715,6 +715,11 @@ class PullHostedPerPersonZoneTest(unittest.TestCase):
         self.conn.commit()
         patcher_key = mock.patch.dict(os.environ, {garmin_cuenta.KEY_ENV: TOKEN_KEY_HEX})
         patcher_key.start(); self.addCleanup(patcher_key.stop)
+        # BODY-SYNC-VIVO-ESTADO-1 ruling 4: this test's own concern is the per-zone day list, not
+        # the watch's last-sync read -- stubbed to a no-op.
+        reloj_patcher = mock.patch(
+            "body.pull.garmin_adapter.fetch_device_last_sync", side_effect=lambda token_str=None: (None, token_str))
+        reloj_patcher.start(); self.addCleanup(reloj_patcher.stop)
 
     def test_each_person_gets_their_own_today_and_yesterday(self):
         """BODY-GARMIN-SYNC-CONSISTENTE-1-B amends ruling 1: the hosted day set is the union of

@@ -209,6 +209,16 @@ class RachaSemanalTest(unittest.TestCase):
         self.assertIsNotNone(out["actual"])
         self.assertEqual(out["terminadas_en_noche"], {"n": 0, "de": 0})
 
+    def test_a_done_plan_row_with_exercises_never_feeds_the_racha(self):
+        # BODY-PLAN-SESION-HECHA-1 ruling 3: the racha is the watch's own record, a separate
+        # subject from the plan's weekly-target count -- a done plan row (even with exercises)
+        # that this slice now folds into `horizonte`'s own count is never read by this module.
+        self.conn.execute(
+            "INSERT INTO plan (person_id, day, title, status, ejercicios_json) VALUES "
+            "(1, '2026-11-02', 'Sesión de fuerza', 'done', '[{\"ejercicio\": \"sentadilla\"}]')")
+        self.conn.commit()
+        self.assertIsNone(entreno_racha.racha_semanal(self.conn, 1, hoy=date(2026, 11, 9)))
+
     def test_another_persons_activities_are_invisible(self):
         _activity(self.conn, 2, "b1", "2026-11-02", type="strength_training")
         self.conn.commit()

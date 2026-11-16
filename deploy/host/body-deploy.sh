@@ -22,8 +22,8 @@ DATA_USER="duna-body"
 # /srv/duna itself is duna:duna mode 750 (BODY-DEPLOY-HOST-1-INV), so duna-body cannot even
 # traverse into it -- walked up from REPO_DIR, never a second literal.
 PARENT_DIR="$(dirname "$(dirname "$REPO_DIR")")"
-UNITS=(body-web.service body-pull.service body-pull.timer body-backfill.service body-backfill.timer body-backup.service body-backup.timer)
-TIMERS=(body-pull.timer body-backfill.timer body-backup.timer)
+UNITS=(body-web.service body-pull.service body-pull.timer body-pull-hoy.service body-pull-hoy.timer body-backfill.service body-backfill.timer body-backup.service body-backup.timer)
+TIMERS=(body-pull.timer body-pull-hoy.timer body-backfill.timer body-backup.timer)
 RETIRED_UNITS=(body-vida.service body-vida.timer)
 
 # duna-deploy-body sources this file to read UNITS/TIMERS as the single list of Body's live
