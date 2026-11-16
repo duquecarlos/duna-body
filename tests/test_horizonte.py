@@ -510,6 +510,133 @@ class CheckpointsTest(unittest.TestCase):
         self.assertEqual(cps[0]["estado"], "no_cumple")
 
 
+class EsHorizonteTest(unittest.TestCase):
+    """BODY-PLAN-HOY-1 ruling 1: the ONE definition of a plan -- a milestone with no
+    horizonte_goal_id of its own AND at least one plan row."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+
+    def test_plain_milestone_with_no_plan_row_is_not_a_horizon(self):
+        goal_id = _horizonte(self.conn)
+        self.assertFalse(horizonte.es_horizonte(self.conn, goal_id))
+
+    def test_a_weekly_target_line_makes_it_a_horizon(self):
+        goal_id = _horizonte(self.conn)
+        db.crear_meta_semanal(self.conn, 1, goal_id, "2026-10-05", "sesiones_fuerza", "al_menos", 3)
+        self.assertTrue(horizonte.es_horizonte(self.conn, goal_id))
+
+    def test_a_child_goal_makes_it_a_horizon(self):
+        goal_id = _horizonte(self.conn)
+        hijo = goals.propose(self.conn, 1, "Hijo", "2026-10-05", metric_key="steps", direction="raise",
+                             target_value=9000.0, baseline_value=6000.0, deadline="2027-01-04")
+        self.conn.execute("UPDATE goal SET horizonte_goal_id = ? WHERE id = ?", (goal_id, hijo))
+        self.conn.commit()
+        self.assertTrue(horizonte.es_horizonte(self.conn, goal_id))
+
+    def test_a_rule_makes_it_a_horizon(self):
+        goal_id = _horizonte(self.conn)
+        db.crear_regla_horizonte(self.conn, 1, goal_id, "siempre", None, "Texto de la regla")
+        self.assertTrue(horizonte.es_horizonte(self.conn, goal_id))
+
+    def test_a_checkpoint_makes_it_a_horizon(self):
+        goal_id = _horizonte(self.conn)
+        db.crear_checkpoint_horizonte(self.conn, 1, goal_id, "2026-11-20", "Chequeo",
+                                      [{"medida": "sesiones_fuerza", "sentido": "al_menos", "valor": 3.0,
+                                        "ventana": "semana"}])
+        self.assertTrue(horizonte.es_horizonte(self.conn, goal_id))
+
+    def test_a_week_title_row_makes_it_a_horizon(self):
+        goal_id = _horizonte(self.conn)
+        db.crear_semana_horizonte(self.conn, 1, goal_id, "2026-11-09", titulo="Semana de prueba")
+        self.assertTrue(horizonte.es_horizonte(self.conn, goal_id))
+
+    def test_metric_goal_is_never_a_horizon(self):
+        metric_id = goals.propose(self.conn, 1, "Meta metrica", "2026-10-05", metric_key="steps",
+                                  direction="raise", target_value=9000.0, baseline_value=6000.0,
+                                  deadline="2027-01-04")
+        db.crear_meta_semanal(self.conn, 1, metric_id, "2026-10-05", "sesiones_fuerza", "al_menos", 3)
+        self.assertFalse(horizonte.es_horizonte(self.conn, metric_id))
+
+    def test_a_horizons_own_child_is_not_itself_a_horizon_even_with_a_plan_row(self):
+        """A milestone that already names a horizon (horizonte_goal_id is not None) is a CHILD,
+        never a horizon of its own -- even if it happens to carry a plan row of its own (a
+        malformed state no proposal writes, but the rule excludes it regardless)."""
+        padre = _horizonte(self.conn)
+        hijo = goals.propose(self.conn, 1, "Hijo milestone", "2026-10-05", kind="milestone",
+                             deadline="2027-01-04")
+        self.conn.execute("UPDATE goal SET horizonte_goal_id = ? WHERE id = ?", (padre, hijo))
+        db.crear_meta_semanal(self.conn, 1, hijo, "2026-10-05", "sesiones_fuerza", "al_menos", 3)
+        self.conn.commit()
+        self.assertFalse(horizonte.es_horizonte(self.conn, hijo))
+
+    def test_unknown_goal_id_returns_false(self):
+        self.assertFalse(horizonte.es_horizonte(self.conn, 999999))
+
+
+class HorizontesTest(unittest.TestCase):
+    """BODY-PLAN-HOY-1 ruling 1: the listing every caller that used to decide this on its own now
+    shares -- goals.goal_scope_sql's own visibility, filtered to actual horizons."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+
+    def test_a_plain_milestone_with_no_plan_row_is_excluded(self):
+        _horizonte(self.conn)
+        self.assertEqual(horizonte.horizontes(self.conn, 1, HOY), [])
+
+    def test_a_horizon_with_a_weekly_line_is_listed(self):
+        goal_id = _horizonte(self.conn)
+        db.crear_meta_semanal(self.conn, 1, goal_id, "2026-10-05", "sesiones_fuerza", "al_menos", 3)
+        self.assertEqual(horizonte.horizontes(self.conn, 1, HOY), [goal_id])
+
+    def test_another_persons_private_horizon_is_excluded(self):
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Otra')")
+        self.conn.commit()
+        goal_id = _horizonte(self.conn, person_id=2)
+        db.crear_meta_semanal(self.conn, 2, goal_id, "2026-10-05", "sesiones_fuerza", "al_menos", 3)
+        self.assertEqual(horizonte.horizontes(self.conn, 1, HOY), [])
+
+    def test_shared_household_horizon_is_included(self):
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Compa')")
+        self.conn.executemany(
+            "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES (?, ?, '2026-01-01T00:00:00+00:00')",
+            [(1, "h-1"), (2, "h-1")])
+        self.conn.commit()
+        goal_id = _horizonte(self.conn, person_id=2, hogar_id="h-1", visibility="household")
+        db.crear_meta_semanal(self.conn, 2, goal_id, "2026-10-05", "sesiones_fuerza", "al_menos", 3)
+        self.assertEqual(horizonte.horizontes(self.conn, 1, HOY), [goal_id])
+
+    def test_active_plans_listed_before_proposed_ones_then_newest_first(self):
+        propuesto = _horizonte(self.conn, start_day="2026-09-01", deadline="2026-12-31")
+        db.crear_meta_semanal(self.conn, 1, propuesto, "2026-09-07", "sesiones_fuerza", "al_menos", 3)
+        activo_viejo = _horizonte(self.conn, start_day="2026-09-01", deadline="2026-12-31")
+        db.crear_meta_semanal(self.conn, 1, activo_viejo, "2026-09-07", "sesiones_fuerza", "al_menos", 3)
+        goals.activate(self.conn, activo_viejo)
+        activo_nuevo = _horizonte(self.conn, start_day="2026-09-01", deadline="2026-12-31")
+        db.crear_meta_semanal(self.conn, 1, activo_nuevo, "2026-09-07", "sesiones_fuerza", "al_menos", 3)
+        goals.activate(self.conn, activo_nuevo)
+        self.assertEqual(horizonte.horizontes(self.conn, 1, HOY),
+                          [activo_nuevo, activo_viejo, propuesto])
+
+    def test_solo_activos_requires_active_status_and_span_covering_hoy(self):
+        activo = _horizonte(self.conn, start_day="2026-10-05", deadline="2027-01-04")
+        db.crear_meta_semanal(self.conn, 1, activo, "2026-10-05", "sesiones_fuerza", "al_menos", 3)
+        goals.activate(self.conn, activo)
+        propuesto = _horizonte(self.conn, start_day="2026-10-05", deadline="2027-01-04")
+        db.crear_meta_semanal(self.conn, 1, propuesto, "2026-10-05", "sesiones_fuerza", "al_menos", 3)
+        terminado = _horizonte(self.conn, start_day="2026-01-01", deadline="2026-02-01")
+        db.crear_meta_semanal(self.conn, 1, terminado, "2026-01-05", "sesiones_fuerza", "al_menos", 3)
+        goals.activate(self.conn, terminado)
+        futuro = _horizonte(self.conn, start_day="2027-01-01", deadline="2027-06-01")
+        db.crear_meta_semanal(self.conn, 1, futuro, "2027-01-04", "sesiones_fuerza", "al_menos", 3)
+        goals.activate(self.conn, futuro)
+
+        self.assertEqual(horizonte.horizontes(self.conn, 1, HOY, solo_activos=True), [activo])
+        sin_filtro = horizonte.horizontes(self.conn, 1, HOY)
+        self.assertEqual(set(sin_filtro), {activo, propuesto, terminado, futuro})
+
+
 class ResumenHouseholdTest(unittest.TestCase):
     def setUp(self):
         self.conn = _conn(self)
@@ -549,6 +676,12 @@ class ResumenHouseholdTest(unittest.TestCase):
         r = horizonte.resumen(self.conn, self.horizon, 1, hoy=HOY)
         self.assertEqual([e["id"] for e in r["experimentos"]], [exp_id])
         self.assertEqual(r["dias_a_deadline"], (date(2027, 1, 4) - HOY).days)
+
+    def test_start_day_is_carried_through(self):
+        """BODY-PLAN-HOY-1: Today's card builds "Semana N de M" from resumen's own start_day --
+        never a second query against the goal table -- so resumen must carry it."""
+        r = horizonte.resumen(self.conn, self.horizon, 1, hoy=HOY)
+        self.assertEqual(r["start_day"], "2026-10-05")
 
 
 class _ContadorConexion:

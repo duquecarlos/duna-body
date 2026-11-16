@@ -591,6 +591,59 @@ def checkpoints(conn, horizonte_goal_id: int, person_id: int, hoy: date | None =
     return out
 
 
+# BODY-PLAN-HOY-1 ruling 1: the ONE definition of a plan, read by every caller that used to decide
+# this on its own (herramientas.py's `_leer_planes`, metas.py's own "is this a horizon" test). A
+# UNION of every table a plan row can live in, never a per-candidate query -- `es_horizonte` and
+# `horizontes` below each fold it into their own single statement.
+_PLAN_ROW_HORIZONTES = (
+    "SELECT horizonte_goal_id FROM goal WHERE horizonte_goal_id IS NOT NULL "
+    "UNION SELECT horizonte_goal_id FROM horizonte_regla "
+    "UNION SELECT horizonte_goal_id FROM horizonte_semana "
+    "UNION SELECT horizonte_goal_id FROM horizonte_meta_semanal "
+    "UNION SELECT horizonte_goal_id FROM horizonte_checkpoint"
+)
+
+
+def es_horizonte(conn, goal_id: int) -> bool:
+    """A goal is a plan (a horizon) when it is a milestone with no horizonte_goal_id of its own AND
+    it carries at least one plan row -- a child goal, a rule, a week, a weekly target line or a
+    checkpoint. One bounded statement, independent of how many plan rows this goal or any other
+    one has."""
+    return bool(conn.execute(
+        f"SELECT EXISTS(SELECT 1 FROM goal WHERE id = ? AND kind = 'milestone' "
+        f"AND horizonte_goal_id IS NULL AND id IN ({_PLAN_ROW_HORIZONTES}))",
+        (goal_id,),
+    ).fetchone()[0])
+
+
+def horizontes(conn, person_id: int, hoy: date, *, solo_activos: bool = False) -> list[int]:
+    """Every goal id `person_id` can see -- their own, plus any shared household milestone, the
+    same visibility rule `goals.goal_scope_sql` names -- that is a horizon by `es_horizonte`'s own
+    rule, active plans first, then newest. `solo_activos` additionally requires status 'active' and
+    the horizon's own span to cover `hoy`.
+
+    BODY-PLAN-HOY-1 ruling 3: Today calls this on every view, so a person with no plan must pay at
+    most one extra statement for it -- too little room for `goals.goal_scope_sql`'s own two-call
+    shape (`household.household_of` first, then the listing). The household lookup is folded into
+    this SAME statement instead, as a scalar subquery: a person with no household row makes it
+    NULL, and 'hogar_id = NULL' is never true, so the OR's household branch drops out on its own --
+    the identical net effect goal_scope_sql gets by skipping that branch's SQL text entirely when
+    `household_of` returns None."""
+    extra = ""
+    params: tuple = (person_id, person_id)
+    if solo_activos:
+        extra = " AND status = 'active' AND start_day <= ? AND deadline >= ?"
+        params = params + (hoy.isoformat(), hoy.isoformat())
+    rows = conn.execute(
+        "SELECT id FROM goal WHERE (person_id = ? OR (visibility = 'household' AND kind = 'milestone' "
+        "AND hogar_id = (SELECT hogar_id FROM hogar_miembro WHERE person_id = ?))) "
+        f"AND kind = 'milestone' AND horizonte_goal_id IS NULL{extra} "
+        f"AND id IN ({_PLAN_ROW_HORIZONTES}) ORDER BY (status = 'active') DESC, id DESC",
+        params,
+    ).fetchall()
+    return [r["id"] for r in rows]
+
+
 def resumen(conn, horizonte_goal_id: int, person_id: int, hoy: date | None = None) -> dict | None:
     """Ruling 8: the horizon goal, its child goals (each with their OWN existing
     goals.evaluar_semana verdict -- never recomputed here), its experiments, this week (ruling 3),
@@ -621,7 +674,8 @@ def resumen(conn, horizonte_goal_id: int, person_id: int, hoy: date | None = Non
     dias_a_deadline = (_parse(goal["deadline"]) - hoy).days if goal["deadline"] else None
 
     return {
-        "goal_id": horizonte_goal_id, "titulo": goal["title"], "deadline": goal["deadline"],
-        "dias_a_deadline": dias_a_deadline, "hijos": hijos, "experimentos": experimentos,
-        "semana_actual": semana_actual, "siguiente_checkpoint": siguiente_checkpoint,
+        "goal_id": horizonte_goal_id, "titulo": goal["title"], "start_day": goal["start_day"],
+        "deadline": goal["deadline"], "dias_a_deadline": dias_a_deadline, "hijos": hijos,
+        "experimentos": experimentos, "semana_actual": semana_actual,
+        "siguiente_checkpoint": siguiente_checkpoint,
     }

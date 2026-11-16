@@ -357,20 +357,6 @@ def _plan_checkpoint_ctx(t: T, defs: dict, c: dict) -> dict:
             "nota": c.get("nota"), "cls": cls, "chip": chip, "criterios": criterios}
 
 
-def _es_horizonte(conn, goal_id: int) -> bool:
-    """Ruling 1: a milestone goal is a horizon once it carries ANY plan row -- a child goal, a
-    rule, a week, a weekly target line or a checkpoint. One bounded EXISTS (ruling 5), independent
-    of how many of any of those this goal has."""
-    return bool(conn.execute(
-        "SELECT EXISTS("
-        "SELECT 1 FROM goal WHERE horizonte_goal_id = ? "
-        "UNION SELECT 1 FROM horizonte_regla WHERE horizonte_goal_id = ? "
-        "UNION SELECT 1 FROM horizonte_semana WHERE horizonte_goal_id = ? "
-        "UNION SELECT 1 FROM horizonte_meta_semanal WHERE horizonte_goal_id = ? "
-        "UNION SELECT 1 FROM horizonte_checkpoint WHERE horizonte_goal_id = ?"
-        ")", (goal_id,) * 5).fetchone()[0])
-
-
 def _build_plan_ctx(conn, t: T, defs: dict, g, person_id: int, today: date, semana_q: str | None) -> dict:
     """Ruling 1-3: the plan section's whole context, built ONLY from horizonte.semana and
     horizonte.checkpoints -- never a second horizonte_* read. `semana_q` is the `?semana=` query
@@ -674,10 +660,11 @@ def goal_detail(goal_id: int, request: Request, person_id: int = Depends(identit
     if request.query_params.get("enlace") != "invalido" or enlace_error_app not in enlaces.APPS:
         enlace_error_app = None
 
-    # Ruling 1: the plan lives IN goal detail -- only for a milestone goal that is itself a
-    # horizon (_es_horizonte); a metric goal never is, so it costs this view nothing extra.
+    # Ruling 1 (BODY-PLAN-HOY-1): the plan lives IN goal detail -- only for a milestone goal that
+    # is itself a horizon (horizonte.es_horizonte, the ONE definition of a plan); a metric goal
+    # never is, so it costs this view nothing extra.
     plan = None
-    if g["kind"] == "milestone" and _es_horizonte(conn, goal_id):
+    if g["kind"] == "milestone" and horizonte.es_horizonte(conn, goal_id):
         plan = _build_plan_ctx(conn, t, defs, g, person_id, today, request.query_params.get("semana"))
 
     # Ruling 4: a child goal's own "part of the plan" line, linking back to its horizon -- only
