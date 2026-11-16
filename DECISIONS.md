@@ -23074,3 +23074,161 @@ test file are built and gated.
 
 -- merged `59592e94aaac011f3fe0f2fbc22b966c6993310c`
 
+## BODY-SYNC-VIVO-2 -- the on-demand pull and the "Tu reloj" freshness read-out (2026-11-16)
+
+Carlos, relayed by the Personal desk, 2026-11-15: "I would like to see more like a live thing in the
+app or when I talk to you." BODY-SYNC-VIVO-ESTADO-1 (merged above) built the watch's own last-sync
+tracking and the attempt/backoff columns but no on-demand pull and no screen reads them yet. This
+slice adds both: a pull that fetches TODAY alone, two triggers that never make Carlos wait for it,
+and a plain-worded freshness line on Hoy and through the assistant.
+
+**Ruling 1, as built.** `body/pull.py:pull_hoy_ahora` (389): hosted mode only (`cuenta.hosted()`
+false -> `"sin_cuenta"`); the shared per-person lock `_PULL_EN_CURSO` (102, lifted out of
+`body/rutas/garmin.py`, which now does `from .. import pull` and reads `pull._PULL_EN_CURSO` --
+`body/rutas/garmin.py:_lanzar_pull_conexion` (23) takes the same set, so a live pull and a
+connect-triggered one for the same person never overlap); `ESPACIO_MIN_HOY = 15` (86) through
+`garmin_cuenta.puede_intentar`; the quiet hours below (ruling 4); records the attempt exactly as the
+daily pull does (`garmin_cuenta.registrar_error`/`_registrar_intento_persona`); fetches the one day
+through `_pull_one_person` (the SAME fetch path `pull_persona_ahora`'s healing loop uses for one day,
+never a copy) -- NOT `_dias_pendientes_relleno`'s healing set, since a live trigger asks for today,
+once. After a successful fetch, recomputes ONLY `_recalcular_sueno_fc_seguro` (454): it is the one
+post-pull derivation that lands in `daily_metric`, the table `leer_hoy`/`leer_estado_reloj`/Hoy's own
+card read; `recuperacion` and `turno_fc` both write to their own tables, read only by the Día and
+Turnos screens, neither of which this trigger ever reaches (ruling 2 names the trigger sites), so
+recomputing them here would cost real work for a card that never reads their result. Never raises:
+the Garmin call sits inside its own try/except that records the error and returns `"iniciado"`
+either way; the whole body sits inside a second try/except that catches anything else unexpected
+(a DB or timezone failure) the same way, printing a counts-only, class-name-only line
+(`errores.texto_seguro`). Opens its own connection with a bare `db.connect()` immediately followed by
+the try/finally that closes it (462) -- the same shape `pull_persona_ahora` already uses, and the
+shape `tests/test_conexiones_cerradas.py`'s static guard requires of every direct-connect function
+under `body/`. Returns `"iniciado"` / `"en_curso"` / `"espera"` / `"sin_cuenta"`, exactly as named.
+
+**Ruling 2, as built.** Hoy: `body/rutas/hoy.py:_debe_lanzar_pull_hoy` (159) checks hosted + connected
++ `puede_intentar`; `today()` (618) takes `background_tasks: BackgroundTasks` and calls
+`background_tasks.add_task(pull.pull_hoy_ahora, person_id)` (624) when that check passes, checked
+before the "no data yet" early return so the very first live pull can start from the empty state.
+The assistant: `body/agente/herramientas.py:HERRAMIENTAS_HOY = frozenset({"leer_hoy",
+"leer_estado_reloj"})` (2761, named explicitly as the ruling asked); `_lanzar_pull_hoy_en_hilo` (2764)
+checks `cuenta.hosted()` cheaply first (so a local-mode tool call spawns no thread at all), then
+`threading.Thread(target=pull.pull_hoy_ahora, args=(person_id,), daemon=True).start()`, never
+awaited; `ejecutar()` calls it (2848) right before the `PRAGMA query_only` read, for every tool
+named in `HERRAMIENTAS_HOY` -- the answer uses whatever is stored right now and says how fresh it is
+itself (ruling 3's `estado_vivo`). The hosted MCP door (`body/rutas/mcp_remoto.py:mcp_remoto_llamar`)
+calls `body.mcp._llamar_herramienta`, which for a `_SesionRemota` dispatches straight to this same
+`ejecutar` -- no separate wiring, proven in `tests/test_mcp_remoto.py:LiveSyncTriggerTest` by POSTing
+to the real route and watching the trigger fire through a real background thread (a
+`threading.Event`, never a sleep; patching `threading.Thread` itself here broke the ASGI machinery
+TestClient's portal thread needs, so this test waits on the real thread instead, same as
+`tests/test_sync_vivo.py:EjecutarLivePullTriggerTest`'s direct-call tests).
+
+**Ruling 3, as built.** `body/pull.py:texto_estado_vivo` (461): one shared formatter, called from both
+Hoy's card and the assistant's `leer_estado_reloj`, so the two can never read differently for the same
+state. Three states, first that applies wins: syncing now (`person_id in _PULL_EN_CURSO`) ->
+`reloj_vivo.sincronizando`; a failed attempt with a backoff still ahead of it
+(`garmin_cuenta.estado_sync`'s `reintentar_despues_de`) -> `reloj_vivo.fallo_reintento` with both
+times in the person's own zone; the watch's own last sync known
+(`estado_sync`'s `reloj_sincronizo_en`) -> `reloj_vivo.ultimo_sync`, with the day prefixed through the
+app's own short-month formatting when it is not today; none of the three -> `None` (no card). New
+strings, es/en, verbatim (`body/i18n/es.json:48-51`, `body/i18n/en.json:48-51`):
+- es: "Tu reloj" / "Sincronizando con Garmin…" / "Garmin no respondió a las {hora}. Lo intentamos de
+  nuevo a las {reintento}." / "Tu reloj se sincronizó con Garmin a las {hora}."
+- en: "Your watch" / "Syncing with Garmin…" / "Garmin didn't answer at {hora}. We'll try again at
+  {reintento}." / "Your watch last synced with Garmin at {hora}."
+
+The existing «Reloj sincronizado HH:MM» card (`today.garmin_sync.*`) is unchanged -- this is a second,
+additive card (`body/templates/_reloj.html`, new; `reloj_vivo.titulo` is also "Tu reloj"/"Your watch",
+a deliberate, flagged-for-browser-review choice: the two cards never share a context, to keep this
+slice's own risk contained, but can look like two headings saying the same thing on the same screen).
+`body/rutas/hoy.py:_reloj_vivo_ctx` (not shown above, beside `_debe_lanzar_pull_hoy`) and
+`body/rutas/garmin.py:_reloj_vivo_ctx` (106) each build the same `{texto, sincronizando}` shape for
+their own screen -- duplicated rather than imported across route modules, matching this codebase's
+existing `_garmin_sync_ctx`-style pattern. `body/rutas/garmin.py:garmin_estado_vivo` (122), `GET
+/garmin/estado-vivo`: 404 in local mode, otherwise renders `_reloj.html` alone -- the poll target
+named in the ruling. `body/static/reloj-sync.js` (new): polls that route every 10s for at most 2
+minutes, only when the card at load carries `data-sincronizando`, and swaps the rendered fragment in
+place each time; stops the moment a fetched fragment no longer carries that attribute, or at the time
+ceiling. No inline `style=`, no inline `<script>` without `src=` -- CSP-clean (`tests/test_seguridad.py`
+checks the file exists and is referenced).
+
+**Ruling 4, as built.** All three ceilings live inside `pull_hoy_ahora` itself (389), since the
+ruling's "at most one per person per 15 min" is exactly what the function's own early-return checks
+already enforce: `ESPACIO_MIN_HOY = 15` (86) through `puede_intentar`; a recorded backoff, also
+through `puede_intentar` (returns `"espera"` for either); `QUIETA_DESDE_HORA = 23` /
+`QUIETA_HASTA_HORA = 6` (91-92) through `_en_horas_quietas` (384), checked in the person's own zone
+(`ZoneInfo(person.get("timezone") or "America/Bogota")`) before any Garmin call.
+
+**Tests (`tests/test_sync_vivo.py`, new, 37 tests; plus one new class each in
+`tests/test_mcp_remoto.py` and updates to `tests/test_garmin_web.py`, `tests/test_agente_registro.py`,
+`tests/test_seguridad.py`, `tests/test_estados_vacios.py`, `tests/test_rendimiento.py`,
+`tests/test_web_entry.py`, `tests/test_persona_fuga.py`):** `pull_hoy_ahora` (local no-op, no
+account, success + `db.last_sync` set, `en_curso` while already running, `espera` on too-soon/backoff,
+a Garmin failure never raising + recording the error class, the lock clearing either way, success
+recomputing ONLY `sueno_fc`, a REAL two-thread test proving the lock stops a second call from ever
+reaching Garmin, and that the lock is SHARED with `_lanzar_pull_conexion`); Hoy's background trigger
+(scheduled/not per state, a REAL unmocked Garmin failure inside the background task never breaking the
+response); the assistant's thread trigger (`leer_hoy`/`leer_estado_reloj` fire it via a real thread +
+`threading.Event`, an unrelated tool never does, local mode spawns no thread at all, a failing live
+pull never breaks the tool's own answer, and the hosted MCP door reaching the same trigger two ways --
+a direct `mcp._llamar_herramienta` call in this file, and a real HTTP POST through
+`test_mcp_remoto.py`); `texto_estado_vivo` (all three states + "none", es/en, syncing winning over a
+scheduled retry); `_en_horas_quietas` boundaries (23:00, 05:59, 06:00, 22:59, 00:00); the Hoy card
+(no card with no connection, syncing shows card+attribute+script, last-synced shows card without
+either, English); the poll route (renders current state, stops carrying the attribute once finished,
+writes nothing -- `tests/_rutas.contar_sql`).
+
+Two test-isolation defects found and fixed while writing these tests, neither in the production code:
+a dev-note HTML comment in `_reloj.html` that was plain `<!-- -->` rather than Jinja `{# #}`, so it
+rendered into the page and tripped a "no script present" assertion that happened to contain the
+comment's own prose ("static/reloj-sync.js can just swap it in place") -- now a Jinja comment, never
+sent to the client. And `herramientas._TURNOS_ACTUAL` (a `contextvars.ContextVar`, set by
+`fijar_turnos_actual` with no token-based reset): TestClient's ASGI transport does not give this
+process's test run a fresh context per request, so a direct `mcp._llamar_herramienta` call or a real
+HTTP call through the hosted MCP door for a turnos-unset person 1 leaked `False` into later test
+modules in the same `unittest discover` process; both new call sites restore it via `addCleanup`.
+Both the real wall-clock sometimes landing inside quiet hours (this run's own: 03:03 in Bogota) and
+the fixture's `DayData` carrying no `raw` payload (so `db.last_sync` stayed `None`) were caught and
+fixed in the test fixtures, not the production code.
+
+**Gate command:** `.venv/Scripts/python.exe -m unittest discover tests -t .`. Run as 9 sequential
+alphabetical chunks of 20 dotted test modules (19 in the ninth, since 180 total), each in the
+foreground, read from the process:
+- chunk 1 (`test_accesibilidad`..`test_baselines`): `Ran 377 tests in 100.914s ... OK (skipped=1,
+  expected failures=1)`
+- chunk 2 (`test_baselines_lote`..`test_dispositivo`): `Ran 481 tests in 477.066s ... OK`
+- chunk 3 (`test_ejes_fechas`..`test_fechas_semana`): `Ran 318 tests in 111.515s ... OK`
+- chunk 4 (`test_fit`..`test_host_backup`): `Ran 502 tests in 486.567s ... OK`
+- chunk 5 (`test_host_deploy`..`test_metas_semana_tira`): `Ran 415 tests in 116.959s ... OK`
+- chunk 6 (`test_mock_r2_hoy`..`test_primer_dia_1`): `Ran 530 tests in 212.680s ... OK`
+- chunk 7 (`test_primer_pull_1`..`test_rendimiento_red`): `Ran 350 tests in 156.354s ... OK`
+- chunk 8 (`test_rendimiento_turnos`..`test_turno_fc`): `Ran 415 tests in 115.875s ... OK`
+- chunk 9 (`test_turno_fc_pantallas`..`test_web_entry`): `Ran 425 tests in 216.563s ... OK`
+
+Sum: 377+481+318+502+415+530+350+415+425 = 3813. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted without running): 3813 -- exact
+match. All nine chunks green.
+
+One failure found and fixed mid-gate, in production code: `pull_hoy_ahora`'s first draft wrapped its
+own `db.connect()` in a try/except (to turn a connection-open failure into a safe return rather than a
+raise) -- `tests/test_conexiones_cerradas.py`'s static guard requires a direct `db.connect()` to be
+followed immediately by the try/finally that closes it, and no other direct-connect function in
+`body/` guards the connect call itself either, so the extra try/except was dropped (`6ba3834`); a
+connect failure now propagates exactly as it already does everywhere else in this codebase.
+
+**Merge policy A, as applied.** This diff adds a new GET route and new customer-facing strings (the
+"Tu reloj" card, both languages) but no schema change and no cross-repo contract change. The spec's
+own body says to merge on green and have the orchestrator review the card in a browser afterward --
+new strings are the orchestrator's own call under ORCH-CARLOS-DELEGATES-TIER-1-1 -- so this merges
+on green rather than stopping AWAITING_APPROVAL.
+
+**Commits:** `90eac79` (rulings 1-2 -- `body/pull.py`, `body/rutas/garmin.py`, `body/rutas/hoy.py`,
+`body/agente/herramientas.py`, `tests/test_sync_vivo.py` -- new, `tests/test_garmin_web.py`,
+`tests/test_mcp_remoto.py`), `fb78118` (ruling 3 -- `body/i18n/es.json`, `body/i18n/en.json`,
+`body/templates/today.html`, `body/templates/_reloj.html` -- new, `body/static/reloj-sync.js` -- new,
+`tests/test_agente_registro.py`, `tests/test_estados_vacios.py`, `tests/test_persona_fuga.py`,
+`tests/test_rendimiento.py`, `tests/test_seguridad.py`, `tests/test_web_entry.py`), `6ba3834` (the
+connection-close fix above -- `body/pull.py`).
+
+**Open follow-ups, not this slice's to do:** none found -- the spec's four rulings and every listed
+test file are built and gated.
+
