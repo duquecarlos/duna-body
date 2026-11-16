@@ -24174,3 +24174,49 @@ commits, for the next step to merge once those are reviewed.
   key door (`body/rutas/mcp_remoto.py`'s own routes) -- or keep it deliberately, and say why, rather than
   carrying two doors by default.
 
+## BODY-MCP-HTTP-1-M
+
+Resolves `BODY-MCP-HTTP-1`'s AWAITING_APPROVAL stop above on the customer-facing-bytes condition, for the
+two 401 message strings only (the wire-contract condition on `docs/contracts/mcp-http-v1.md` is unchanged
+and not touched by this slice). Merge authorisation: the orchestrator, under
+`ORCH-CARLOS-DELEGATES-TIER-1-1`, reviewed the person-facing text on the branch
+(`body/rutas/mcp_http.py:49-54` at the time) and supplied the approval itself, with two wording fixes --
+`_MENSAJE_401` said "Clave" where Cuenta Duna's own screen says "Llaves de asistente" (one word for one
+thing across Duna), and `_MENSAJE_401_SIN_PERSONA`'s Spanish half spoke about "nadie" in the third person
+instead of to the reader, against Body's tu register. Carlos's go for the deploy that will carry this
+(`BODY-DEPLOY-2`; this slice does not deploy), relayed verbatim by the Personal desk 2026-11-16: "Push
+everything, deploy everything, and keep working on everything. See you in a couple of hours."
+
+**The two strings, before and after** (`body/rutas/mcp_http.py:49` and `:50-54`):
+
+Before:
+```
+_MENSAJE_401 = "Clave de asistente inválida o ausente. / Missing or invalid assistant key."
+_MENSAJE_401_SIN_PERSONA = (
+    "Esta clave es válida, pero nadie ha iniciado sesión todavía en Body con esa misma cuenta: "
+    "entra a Body una vez con Cuenta Duna para enlazarla. / This key is valid, but nobody has "
+    "signed in to Body yet with that same account: sign in to Body once with Cuenta Duna to link it."
+)
+```
+
+After:
+```
+_MENSAJE_401 = "Llave de asistente inválida o ausente. / Missing or invalid assistant key."
+_MENSAJE_401_SIN_PERSONA = (
+    "Esta llave es válida, pero todavía no has entrado a Body con esa cuenta: entra una vez a "
+    "Body con Cuenta Duna para vincularla. / This key is valid, but you haven't signed in to "
+    "Body with that account yet: sign in to Body once with Cuenta Duna to link it."
+)
+```
+
+No test asserted the old wording; the contract doc does not quote either string, so neither needed a
+follow-on change.
+
+**Checks**, run in the foreground from the repository root, read from the process:
+
+    .venv/Scripts/python.exe -m unittest tests.test_mcp_http tests.test_llave_asistente tests.test_mcp_remoto tests.test_mcp tests.test_mcp_cliente_remoto tests.test_registro_tu tests.test_i18n_paridad tests.test_conexiones_cerradas
+
+    Ran 183 tests in 38.663s, OK
+
+**Commit:** `27b46ca` (`body/rutas/mcp_http.py`).
+
