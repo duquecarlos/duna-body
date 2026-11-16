@@ -10,6 +10,7 @@ turns the result into JSON, the same split vida_export.py and horizonte.py alrea
 """
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
 
 from . import db, fechas
@@ -43,13 +44,21 @@ def _figuras(conn, person_id: int, dia: date) -> list[dict]:
 
 
 def _plan_dias(conn, person_id: int, dia: date) -> list[dict]:
-    """`dia`'s and `dia`+1's plan rows (ruling 2), any goal, unfiltered."""
+    """`dia`'s and `dia`+1's plan rows (ruling 2), any goal, unfiltered. `ejercicios`
+    (BODY-HOGAR-EJERCICIOS-1 ruling 5) is the row's own `ejercicios_json` parsed and passed
+    verbatim -- the exact list `planear_entreno` stored -- or None when the column is null."""
     siguiente = (dia + timedelta(1)).isoformat()
     rows = conn.execute(
-        "SELECT id, day, time, title, status FROM plan WHERE person_id = ? AND day IN (?, ?) "
-        "ORDER BY day, time", (person_id, dia.isoformat(), siguiente),
+        "SELECT id, day, time, title, status, ejercicios_json FROM plan WHERE person_id = ? "
+        "AND day IN (?, ?) ORDER BY day, time", (person_id, dia.isoformat(), siguiente),
     ).fetchall()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        d = dict(r)
+        ejercicios_json = d.pop("ejercicios_json")
+        d["ejercicios"] = json.loads(ejercicios_json) if ejercicios_json is not None else None
+        out.append(d)
+    return out
 
 
 def _horizonte_actual(conn, person_id: int, dia: date) -> dict | None:
@@ -73,14 +82,52 @@ def _horizonte_actual(conn, person_id: int, dia: date) -> dict | None:
             "semana": semana, "semanas": semanas}
 
 
+def turnos_alrededor(conn, person_id: int, dia: date) -> list[dict]:
+    """Every shift that touches `dia` -- BODY-HOGAR-TURNOS-1 ruling 1: rows with `day` = `dia` or
+    `dia`+1, plus a row with `day` = `dia`-1 whose `end_local` falls on `dia` or later (last
+    night's shift still running this morning). The item shape is the row's own columns, as
+    stored -- no `source`, no person id."""
+    dia_iso = dia.isoformat()
+    siguiente = (dia + timedelta(1)).isoformat()
+    anterior = (dia - timedelta(1)).isoformat()
+    rows = conn.execute(
+        "SELECT day, kind, code, start_local, end_local FROM shift WHERE person_id = ? "
+        "AND (day IN (?, ?) OR (day = ? AND end_local >= ?)) ORDER BY day, start_local",
+        (person_id, dia_iso, siguiente, anterior, dia_iso),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def turnos_rango(conn, person_id: int, desde: str, hasta: str) -> list[dict]:
+    """Every shift row with `day` in [desde, hasta] (BODY-HOGAR-TURNOS-1 ruling 2), same item
+    shape as `turnos_alrededor`."""
+    rows = conn.execute(
+        "SELECT day, kind, code, start_local, end_local FROM shift WHERE person_id = ? "
+        "AND day BETWEEN ? AND ? ORDER BY day, start_local",
+        (person_id, desde, hasta),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def turnos(conn, person_id: int, desde: str, hasta: str) -> dict:
+    """GET /api/hogar/turnos's own shape (BODY-HOGAR-TURNOS-1 ruling 2). Raises
+    RangoDemasiadoLargo for the route to turn into 400 -- same MAX_SERIE_DIAS rule as `serie`."""
+    dias = (date.fromisoformat(hasta) - date.fromisoformat(desde)).days + 1
+    if dias > MAX_SERIE_DIAS:
+        raise RangoDemasiadoLargo(dias)
+    return {"desde": desde, "hasta": hasta, "turnos": turnos_rango(conn, person_id, desde, hasta)}
+
+
 def manana(conn, person_id: int, dia: date) -> dict:
     """GET /api/hogar/manana's own shape, Hogar's draft (C:/Duna/hogar/dev-protocol/contracts/
-    body-v1.md), ruling 2: `dia`'s figures, plan and the active horizon's current week."""
+    body-v1.md), ruling 2: `dia`'s figures, plan and the active horizon's current week.
+    BODY-HOGAR-TURNOS-1 ruling 1 adds `turnos`."""
     return {
         "dia": dia.isoformat(),
         "figuras": _figuras(conn, person_id, dia),
         "plan": _plan_dias(conn, person_id, dia),
         "horizonte": _horizonte_actual(conn, person_id, dia),
+        "turnos": turnos_alrededor(conn, person_id, dia),
     }
 
 
