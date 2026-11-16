@@ -23341,3 +23341,114 @@ test file are built and gated.
 
 -- merged `09f5b224564691ad83953bfd6ac349e085878156`
 
+## BODY-SYNC-VIVO-2-B -- one "Tu reloj" card, not two (2026-11-16)
+
+The orchestrator's review of BODY-SYNC-VIVO-2 (merged `d04994b`, the only report for that ID) on a
+clean `git archive d04994b`: `body/templates/today.html` rendered TWO cards titled "Tu reloj" when
+both applied for a hosted person -- the gap card (`garmin_sync`, `today.garmin_sync.titulo`, a chip
+and a link to `/garmin`) and the live-freshness card (`reloj_vivo`, new in that same slice,
+`reloj_vivo.titulo`, also "Tu reloj"). VIVO-2's own ledger entry had flagged this itself as "a
+deliberate, flagged-for-browser-review choice ... can look like two headings saying the same thing
+on the same screen." Once a hosted person's watch has ever reported a last-sync time, `pull.
+texto_estado_vivo` returns a line on nearly every visit, so a person with any Garmin gap saw both
+cards. This slice merges them into one.
+
+**Ruling 1, as built.** `body/templates/_reloj.html` (new shape) is now THE "Tu reloj" card: one
+title (`reloj_vivo.titulo`, line 9), then -- when `garmin_sync` applies -- its own chip
+(`today.garmin_sync.chip`) right after the title on the same line, then `garmin_sync.texto` (line
+10), then `reloj_vivo.texto` beneath it when `reloj_vivo` applies (line 11), then the gap's own link
+to `/garmin` (`today.stale_link`, line 12) last. When only one half applies, the other's lines
+simply do not render (each wrapped in its own `{% if %}`); when neither applies, nothing inside the
+wrapper renders, and `today.html`'s own include is gated on `garmin_sync or reloj_vivo` (line 13)
+so the whole card is absent, not a title with no body. `data-sincronizando` (line 8, unchanged)
+still names the SAME wrapper element the poll script replaces, so `body/static/reloj-sync.js`
+needed no change at all -- its `[data-sincronizando]` selector and swap logic are untouched.
+`today.html` (13-14, was 13-21): the old, separate `garmin_sync` card block is gone; one `{% if
+garmin_sync or reloj_vivo %}{% include "_reloj.html" %}{% endif %}` line replaces the old
+include-plus-separate-card pair, and the poll-script line is unchanged (still gated on `reloj_vivo
+and reloj_vivo.sincronizando` alone -- the script only ever needs to run while a pull is actually in
+flight, regardless of whether the gap half is also showing).
+
+`body/i18n/es.json` and `en.json`: `today.garmin_sync.titulo` ("Tu reloj" / "Your watch") retired --
+the template no longer calls it anywhere, and `tests/test_i18n_paridad.py`'s own literal-key scan
+(a static grep over every template and module) confirms nothing else does either. `reloj_vivo.
+titulo` is the one surviving title key, read by both halves' own wrapper now.
+
+**The poll route, also ruling 1.** `body/rutas/garmin.py`'s `/garmin/estado-vivo` (`garmin_
+estado_vivo`, 143) renders the SAME `_reloj.html` fragment Hoy's `/` does, and the existing
+`_reloj_vivo_ctx` docstring (126) already claimed "the two can never render a different card for
+the same state" -- true for the freshness half alone, but false for the gap half before this slice,
+since the poll never computed `garmin_sync` at all. A new `_garmin_sync_ctx` (106), duplicated from
+`body/rutas/hoy.py`'s own function of the same name (the same no-cross-module-import rule this
+file's `_reloj_vivo_ctx` already follows for its own duplicate), gives the route the gap half too:
+`garmin_estado_vivo` now computes `person`, `today_local` and `day` once (reusing `comun._ctx`'s own
+already-fetched `person` instead of the previous second `db.person` call `_reloj_vivo_ctx` used to
+make on its own -- `_reloj_vivo_ctx`'s signature changed to take `person` and `today_local` as
+params, same shape `hoy.py`'s version already has) and passes both `garmin_sync` and `reloj_vivo`
+into the fragment. This closes the one real gap the merge would otherwise have left: without it, a
+poll response taken mid-backoff (gap showing, pull not yet re-tried) would have swapped in a card
+that silently dropped the chip and the `/garmin` link the instant the fragment re-rendered, even
+though the gap state had not changed. `day=None` (a person who has never once had a stored day) is
+handled as "not stale" rather than crashing on `date.fromisoformat(None)` -- an edge case Hoy's `/`
+can never reach (it returns `soon.html` before ever asking), but this route answers the poll either
+way and has no such guard.
+
+**Tests (`tests/test_sync_vivo.py`):** new `MergedRelojCardTest` (gap-only -- one title, the chip,
+the link, no poll script; freshness-only -- one title, no chip, no link; both -- exactly one title,
+and the gap's text, then the freshness text, then the link, in that order; neither -- no title at
+all; the "both" case again in English). The title-count helper anchors on `'<div class="q">' +
+titulo` rather than a bare substring match -- `reloj_vivo.ultimo_sync`'s own sentence ("Tu reloj se
+sincronizó..." / "Your watch last synced...") starts with the bare title text, so an unanchored
+count double-counted it the first time this was written (caught by the three failing assertions
+before the anchor was added, never shipped). `GarminEstadoVivoRouteTest` gains one case proving the
+poll route's own render carries the gap half (the chip, the `NotSignedIn` sentence, exactly one
+title). `tests/test_garmin_estado.py`'s three direct references to the retired `today.garmin_sync.
+titulo` key (two `assertNotIn`, one `.index()` that would otherwise raise `ValueError` once the key
+was gone) are updated to `reloj_vivo.titulo`, the surviving title -- the other assertions in that
+file check different keys (the gap's own sentences and chip) and needed no change. No change was
+needed to `body/rutas/hoy.py` (its own `today()` call already passed both `garmin_sync` and
+`reloj_vivo` as separate kwargs; the merge is entirely a template-layer change on the Python side
+that already existed), `body/static/reloj-sync.js`, or `body/static/body.css` (no new class
+introduced; `.card`, `.chip.warn`, `.taplink`, `.note` are all pre-existing and already styled).
+`tests/test_rendimiento.py`'s `/garmin/estado-vivo` ceiling (6, unchanged) was not re-measured: that
+route's own `RouteCostCeilingTest` fixture never sets the hosted env, so the sweep hits the local-
+mode 404 branch (`cuenta.hosted()` false) before any of this slice's new queries ever run -- the
+measured "4" baseline is untouched by this change. `/`'s own ceiling (112, unchanged) was likewise
+unaffected: `hoy.py`'s `today()` already computed both `garmin_sync` and `reloj_vivo` before this
+slice (BODY-SYNC-VIVO-2's own two lines, 668-669 in the earlier revision), so merging their
+RENDERING added no new query.
+
+**Gate command:** `.venv/Scripts/python.exe -m unittest discover tests -t .`. Run as 9 sequential
+alphabetical chunks of 20 dotted test modules (181 modules total, 20 in each of the first 9, the
+19th chunk short one module), each in the foreground, read from the process:
+- chunk 1 (`test_accesibilidad`..`test_baselines`): `Ran 377 tests in 101.740s ... OK (skipped=1,
+  expected failures=1)`
+- chunk 2 (`test_baselines_lote`..`test_dispositivo`): `Ran 481 tests in 411.441s ... OK`
+- chunk 3 (`test_ejes_fechas`..`test_fechas_semana`): `Ran 318 tests in 83.283s ... OK`
+- chunk 4 (`test_fit`..`test_host_backup`): `Ran 502 tests in 528.151s ... OK`
+- chunk 5 (`test_host_deploy`..`test_metas_semana_tira`): `Ran 425 tests in 128.288s ... OK`
+- chunk 6 (`test_mock_r2_hoy`..`test_primer_dia_1`): `Ran 530 tests in 221.242s ... OK`
+- chunk 7 (`test_primer_pull_1`..`test_rendimiento_red`): `Ran 350 tests in 118.619s ... OK`
+- chunk 8 (`test_rendimiento_turnos`..`test_tendencias_todas`): `Ran 409 tests in 73.214s ... OK`
+- chunk 9a (`test_turno_fc`..`test_vo2max`): `Ran 444 tests in 274.221s ... OK`
+- chunk 9b (`test_web_entry`): `Ran 4 tests in 0.026s ... OK`
+
+Sum: 377+481+318+502+425+530+350+409+444+4 = 3840. Reconciled against an independent collect-only
+count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted without running): 3840
+-- exact match. All ten runs green; `git status --porcelain` empty throughout.
+
+**Merge policy A, as applied.** The diff touches customer-facing bytes (the merged card's markup and
+one retired i18n key), but the spec's own body gives no stop-before-merge instruction and says to
+merge on green -- unlike BODY-GARMIN-SYNC-CONSISTENTE-1's own spec, which explicitly said to stop.
+This slice carries no `approved:` header at all and no instruction to hold for review in its body,
+so it merges on green rather than stopping `AWAITING_APPROVAL`.
+
+**Commits:** `9a25f0f` (rulings 1-3 -- `body/i18n/en.json`, `body/i18n/es.json`, `body/rutas/
+garmin.py`, `body/templates/_reloj.html`, `body/templates/today.html`, `tests/test_garmin_estado.py`,
+`tests/test_sync_vivo.py`).
+
+**Open follow-ups, not this slice's to do:** none found -- the spec's one ruling and every listed
+test file that needed a change are built and gated; `body/rutas/hoy.py`, `body/static/reloj-
+sync.js`, `body/static/body.css`, `tests/test_hoy_escritorio.py` and `tests/test_garmin_web.py`
+needed no change for this ruling and were left untouched.
+
