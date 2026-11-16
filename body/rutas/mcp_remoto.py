@@ -29,6 +29,7 @@ from fastapi.responses import JSONResponse
 from .. import db, errores, identity, mcp
 from ..agente import conversacion as agente_conversacion
 from ..agente import herramientas
+from ..agente import propuestas as agente_propuestas
 from . import comun
 
 router = APIRouter()
@@ -41,16 +42,81 @@ def _sin_cache(data: dict, *, status_code: int = 200) -> JSONResponse:
     return JSONResponse(data, status_code=status_code, headers={"Cache-Control": "no-store"})
 
 
+def listar_herramientas(conn, person_id: int, idioma: str, *, puede_aplicar: bool,
+                         puede_escribir: bool = True) -> dict:
+    """The shared core behind GET /herramientas (BODY-MCP-HTTP-1 ruling 2): builds the SAME tool
+    list body/mcp.py's local stdio door and this hosted door already share, now also reusable by
+    body/rutas/mcp_http.py -- `puede_aplicar` decides whether `aplicar_propuesta`/
+    `descartar_propuesta` are listed (this door passes its own `aplicar_mcp` setting; /mcp passes
+    `permiso == "escritura"`); `puede_escribir` (new, /mcp-only -- this door always passes the
+    default True, so its own behaviour does not change) additionally hides every write-type tool
+    (every `propuesta` tool, plus apply/discard) for a read-only caller."""
+    sesion = mcp._SesionRemota(conn, person_id, None, puede_aplicar)
+    nivel = mcp._nivel(sesion)
+    tools = mcp._lista_herramientas(sesion)
+    if not puede_escribir:
+        tools = [t for t in tools if herramientas.tipo_de(t["name"]) == "lectura"]
+    return {"herramientas": tools, "nivel": nivel, "idioma": idioma}
+
+
+def llamar_herramienta(conn, person_id: int, nombre, argumentos: dict, conversacion_id, *,
+                        puede_aplicar: bool, puede_escribir: bool = True, auto_aplicar: bool = False) -> dict:
+    """The shared core behind POST /llamar (BODY-MCP-HTTP-1 ruling 2): returns the EXACT same
+    shape this door already puts on the wire -- `{"tipo", "salida", "aviso_reloj",
+    "conversacion_id"}` on success, `{"error": codigo, ...campos}` on a refusal -- so
+    body/rutas/mcp_http.py can build its own MCP envelope from it without this door's own JSON
+    response shape changing at all. `puede_escribir=False` (lectura, /mcp-only) refuses any
+    write-type tool (a `propuesta` tool, or apply/discard) with the new `solo_lectura` code,
+    BEFORE the shared dispatch ever runs it -- never a read tool, which stays allowed either way.
+
+    `auto_aplicar=True` (/mcp-only, escritura: "a write applies directly") immediately applies a
+    proposal this SAME call just created, through the plain `agente_propuestas.aplicar` the web
+    route's own Aplicar button uses -- never through `mcp._aplicar_propuesta_mcp`'s own "is this
+    caller's own proposal" check, which has nothing to verify here: it is always the proposal this
+    exact call just made. This door's own default (False) keeps its existing propuesta-then-
+    manual-apply flow -- ruling 3, nothing about it changes."""
+    if not _conversacion_valida(conn, person_id, conversacion_id):
+        return {"error": "conversacion_ajena"}
+    nombre_str = nombre if isinstance(nombre, str) else str(nombre)
+    if not puede_escribir and (nombre_str in (mcp.NOMBRE_APLICAR, mcp.NOMBRE_DESCARTAR)
+                                or herramientas.tipo_de(nombre_str) == "propuesta"):
+        return {"error": "solo_lectura"}
+    sesion = mcp._SesionRemota(conn, person_id, conversacion_id, puede_aplicar)
+    try:
+        tipo, salida, aviso_reloj = mcp._llamar_herramienta(sesion, nombre, argumentos)
+    except mcp.RehusoMCP as e:
+        return {"error": e.codigo, **e.campos}
+    except herramientas.ToolError as e:
+        # BODY-MCP-REMOTO-CLIENTE-1 ruling 3: the PC client renders "herramienta_rechazada" with
+        # the exact same text the local stdio door already shows for a plain ToolError
+        # (`errores.texto_propio(e)`) -- never localized to begin with (it is meant for a model to
+        # read and retry), so sending it is not a new customer-facing sentence, only the same
+        # unlocalized text the local door already displays verbatim.
+        return {"error": "herramienta_rechazada", "mensaje": errores.texto_propio(e)}
+    except Exception as e:
+        conn.rollback()
+        logger.info("mcp remoto error interno: %s herramienta=%r", errores.texto_seguro(e), nombre_str)
+        return {"error": "error_interno"}
+    if auto_aplicar and tipo == "propuesta":
+        propuesta_id = salida.get("propuesta_id")
+        if isinstance(propuesta_id, int):
+            resultado = agente_propuestas.aplicar(conn, person_id, propuesta_id)
+            if resultado["estado"] == "aplicada":
+                db.marcar_aplicada_via_mcp(conn, propuesta_id)
+                salida = {**salida, "estado": resultado["estado"]}
+                tipo = "aplicacion"
+    return {"tipo": tipo, "salida": salida, "aviso_reloj": aviso_reloj, "conversacion_id": sesion.conversacion_id}
+
+
 @router.get("/api/asistente/mcp/herramientas")
 @comun._cierra_conexion
 def mcp_remoto_herramientas(person_id: int = Depends(identity.person_from_device("asistente:mcp"))):
     conn, person, _ = comun._ctx(person_id)
-    sesion = mcp._SesionRemota(conn, person_id, None)
-    nivel = mcp._nivel(sesion)
     # BODY-MCP-REMOTO-CLIENTE-1 ruling 3: the PC client has no DB of its own to read the person's
     # interface language from -- read the same way the web reads it (comun._ctx's own `person`).
     idioma = person.get("language", "es")
-    return _sin_cache({"herramientas": mcp._lista_herramientas(sesion), "nivel": nivel, "idioma": idioma})
+    puede_aplicar = db.get_aplicar_mcp(conn, person_id)
+    return _sin_cache(listar_herramientas(conn, person_id, idioma, puede_aplicar=puede_aplicar))
 
 
 def _conversacion_valida(conn, person_id: int, conversacion_id) -> bool:
@@ -93,25 +159,6 @@ async def mcp_remoto_llamar(request: Request,
     conversacion_id = cuerpo.get("conversacion_id")
 
     conn, _, _ = comun._ctx(person_id)
-    if not _conversacion_valida(conn, person_id, conversacion_id):
-        return _sin_cache({"error": "conversacion_ajena"})
-
-    sesion = mcp._SesionRemota(conn, person_id, conversacion_id)
-    try:
-        tipo, salida, aviso_reloj = mcp._llamar_herramienta(sesion, nombre, argumentos)
-    except mcp.RehusoMCP as e:
-        return _sin_cache({"error": e.codigo, **e.campos})
-    except herramientas.ToolError as e:
-        # BODY-MCP-REMOTO-CLIENTE-1 ruling 3: the PC client renders "herramienta_rechazada" with
-        # the exact same text the local stdio door already shows for a plain ToolError
-        # (`errores.texto_propio(e)`) -- never localized to begin with (it is meant for a model to
-        # read and retry), so sending it is not a new customer-facing sentence, only the same
-        # unlocalized text the local door already displays verbatim.
-        return _sin_cache({"error": "herramienta_rechazada", "mensaje": errores.texto_propio(e)})
-    except Exception as e:
-        conn.rollback()
-        nombre_str = nombre if isinstance(nombre, str) else str(nombre)
-        logger.info("mcp remoto error interno: %s herramienta=%r", errores.texto_seguro(e), nombre_str)
-        return _sin_cache({"error": "error_interno"})
-    return _sin_cache({"tipo": tipo, "salida": salida, "aviso_reloj": aviso_reloj,
-                        "conversacion_id": sesion.conversacion_id})
+    puede_aplicar = db.get_aplicar_mcp(conn, person_id)
+    data = llamar_herramienta(conn, person_id, nombre, argumentos, conversacion_id, puede_aplicar=puede_aplicar)
+    return _sin_cache(data)

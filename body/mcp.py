@@ -221,6 +221,13 @@ class _Sesion:
         self.total_propuestas = 0
         self.total_aplicaciones = 0
 
+    @property
+    def puede_aplicar(self) -> bool:
+        """BODY-MCP-HTTP-1: read fresh every time (never cached on the session), exactly as
+        before -- turning the person's own `aplicar_mcp` setting off takes effect on this
+        long-lived process's very next `tools/list` or `tools/call` (mcp.py's own ruling 2)."""
+        return db.get_aplicar_mcp(self.conn, self.person_id)
+
     def conversacion(self) -> int:
         if self.conversacion_id is None:
             self.conversacion_id = agente_conversacion.crear(self.conn, self.person_id, origen=ORIGEN)
@@ -302,10 +309,17 @@ class _SesionRemota:
 
     caller = CALLER_REMOTO
 
-    def __init__(self, conn, person_id: int, conversacion_id: int | None, reloj=None):
+    def __init__(self, conn, person_id: int, conversacion_id: int | None,
+                 puede_aplicar: bool | None = None, reloj=None):
         self.conn = conn
         self.person_id = person_id
         self.conversacion_id = conversacion_id
+        # BODY-MCP-HTTP-1 ruling 2: None (every call site this slice did not touch) keeps the
+        # ORIGINAL behaviour -- read the person's own `aplicar_mcp` setting fresh -- while an
+        # explicit bool lets a caller (the hosted device door's own `aplicar_mcp`, or /mcp's own
+        # `permiso == "escritura"`) decide it instead, without this session reading the DB setting
+        # at all.
+        self._puede_aplicar = puede_aplicar
         reloj = reloj or (lambda: datetime.now(timezone.utc))
         self.tope_lecturas = _TopeDB(conn, person_id, _NOMBRES_LECTURA, LIMITES["ventana_min"],
                                       LIMITES["lecturas"], reloj)
@@ -313,6 +327,12 @@ class _SesionRemota:
                                         LIMITES["propuestas"], reloj)
         self.tope_aplicaciones = _TopeDB(conn, person_id, (NOMBRE_APLICAR,), LIMITES["ventana_min"],
                                           LIMITES["aplicaciones"], reloj)
+
+    @property
+    def puede_aplicar(self) -> bool:
+        if self._puede_aplicar is not None:
+            return self._puede_aplicar
+        return db.get_aplicar_mcp(self.conn, self.person_id)
 
     def conversacion(self) -> int:
         if self.conversacion_id is None:
@@ -385,14 +405,15 @@ def _mensaje_aplicar_expirada_remoto(idioma: str, expira_en, zona=None) -> str:
              hora=f"{local.hour:02d}:{local.minute:02d}")
 
 
-def _error_remoto_a_rehuso(sesion: _SesionCliente, nombre_str: str, data: dict) -> _RehusoClienteMCP:
+def _error_remoto_a_rehuso(idioma: str, nombre_str: str, data: dict) -> _RehusoClienteMCP:
     """Maps one POST /llamar refusal body `{"error": codigo, ...campos}` to the SAME localized
     text the local door already shows for that reason (ruling 3) -- `_mensaje_tope_*` already take
     a bare `idioma`, reused verbatim; the others normally take a `_Sesion` to read its `.conn` for
     the language (and, for `aplicar_expirada`, the timezone) -- this side has neither, so it reads
     the same i18n keys directly instead of calling those `_Sesion`-shaped functions. Byte-identical
-    output text either way."""
-    idioma = sesion.idioma
+    output text either way. BODY-MCP-HTTP-1: takes a bare `idioma` (not a `_SesionCliente`) so
+    body/rutas/mcp_http.py, which knows the signed-in person's language but builds no
+    `_SesionCliente` of its own, can call this too."""
     t = T(idioma)
     codigo = data.get("error")
     if codigo == "limite":
@@ -472,7 +493,7 @@ def _llamar_herramienta_remota(sesion: _SesionCliente, nombre, argumentos: dict)
         print(f"mcp remoto tools/call error: status={status} herramienta={nombre_str!r}", file=sys.stderr)
         raise _RehusoClienteMCP(T(sesion.idioma)("mcp.remoto.error_interno"))
     if "error" in data:
-        raise _error_remoto_a_rehuso(sesion, nombre_str, data)
+        raise _error_remoto_a_rehuso(sesion.idioma, nombre_str, data)
     conversacion_id = data.get("conversacion_id")
     if isinstance(conversacion_id, int):
         sesion.conversacion_id = conversacion_id
@@ -514,7 +535,7 @@ def _lista_herramientas(sesion) -> list[dict]:
         return _lista_herramientas_remota(sesion)
     nivel = _nivel(sesion)
     tools = [_herramienta_mcp(e) for e in bucle._tool_specs(nivel)]
-    if db.get_aplicar_mcp(sesion.conn, sesion.person_id):
+    if sesion.puede_aplicar:
         tools.append(_herramienta_aplicar())
         tools.append(_herramienta_descartar())
     return tools
@@ -572,7 +593,7 @@ def _aplicar_propuesta_mcp(sesion: _Sesion, argumentos: dict) -> dict:
     is no longer in state 'propuesta' (already applied, discarded, expired, or drifted). Applies
     through the SAME `agente_propuestas.aplicar` the web route uses, then ties the row to this
     outside apply (db.marcar_aplicada_via_mcp) for the panel's own label."""
-    if not db.get_aplicar_mcp(sesion.conn, sesion.person_id):
+    if not sesion.puede_aplicar:
         raise RehusoMCP(_mensaje_aplicar_apagado(sesion), "aplicar_apagado")
     if not sesion.tope_aplicaciones.permite():
         minutos = sesion.tope_aplicaciones.minutos_para_reintentar()
@@ -608,7 +629,7 @@ def _descartar_propuesta_mcp(sesion: _Sesion, argumentos: dict) -> dict:
     `agente_propuestas.descartar` the web route's own Descartar button uses; writes no health
     data itself, so it carries no drift check and needs no "the person already said yes"
     precondition."""
-    if not db.get_aplicar_mcp(sesion.conn, sesion.person_id):
+    if not sesion.puede_aplicar:
         raise RehusoMCP(_mensaje_descartar_apagado(sesion), "descartar_apagado")
     propuesta_id = argumentos.get("propuesta_id")
     if not isinstance(propuesta_id, int):

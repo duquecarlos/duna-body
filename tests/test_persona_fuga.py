@@ -20,11 +20,13 @@ from unittest import mock
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
+import httpx
 from fastapi.testclient import TestClient
 
 from body import (
     compartir, config, cuenta, db, dispositivo, enlaces, fechas, garmin_cuenta, goals, household,
-    identity, noche_inusual, patron_turnos, privacidad, readiness, recuperacion, shift_import, vida_export, web,
+    identity, llave_asistente, noche_inusual, patron_turnos, privacidad, readiness, recuperacion,
+    shift_import, vida_export, web,
 )
 from body.agente import ajustes as agente_ajustes
 from body.agente import conversacion as agente_conversacion
@@ -106,6 +108,20 @@ def _reset_db(tc: unittest.TestCase):
 
 def _as(person_id: int) -> None:
     web.app.dependency_overrides[identity.current_person_id] = lambda: person_id
+
+
+def _fake_introspect(key: str) -> httpx.Response:
+    """BODY-MCP-HTTP-1: stands in for Cuenta's own /oauth/introspect -- no network, ever. Answers
+    only the two fake keys _seed_person mints (`zzllave-a` / `zzllave-b`), each resolving to that
+    same tag's own `person.cuenta_sub` (`sub-zza` / `sub-zzb`) -- escritura, so the sweep below can
+    exercise the full tool list exactly like the existing device-key door's own sweep does."""
+    if key in ("zzllave-a", "zzllave-b"):
+        tag_lower = key.rsplit("-", 1)[-1]
+        return httpx.Response(200, json={
+            "active": True, "producto": "body", "persona_id": f"sub-zz{tag_lower}",
+            "permiso": "escritura", "llave_id": f"zzllave-id-{tag_lower}",
+        })
+    return httpx.Response(200, json={"active": False})
 
 
 def _seed_person(conn, person_id: int, tag: str) -> dict:
@@ -307,6 +323,9 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
     device_key_mcp = dispositivo.crear(conn, person_id, f"ZZ{tag}-DISPOSITIVO-MCP", {"asistente:mcp"})
     garmin_cuenta.guardar(conn, person_id, f"FAKE-TEST-TOKEN-ZZ{tag}-NOT-REAL")
     cuenta.create_session(conn, person_id, f"sid-zz{tag.lower()}")
+    # BODY-MCP-HTTP-1: /mcp authenticates through Cuenta introspection, never body/dispositivo.py --
+    # cuenta_sub links this person to the fake assistant key _fake_introspect (below) answers for.
+    conn.execute("UPDATE person SET cuenta_sub = ? WHERE id = ?", (f"sub-zz{tag.lower()}", person_id))
 
     now = f"{DAYS[-1]}T12:00:00+00:00"
     conn.execute(
@@ -335,7 +354,7 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
         "conv_id": conv_id, "batch_id": batch_id, "device_id": conn.execute(
             "SELECT id FROM dispositivo WHERE person_id = ?", (person_id,)).fetchone()["id"],
         "device_key": device_key, "device_key_mcp": device_key_mcp, "propuesta_id": propuesta["id"], "eid": eid,
-        "act_id": act_id,
+        "act_id": act_id, "llave_asistente": f"zzllave-{tag.lower()}",
     }
 
 
@@ -410,6 +429,11 @@ class _BaseFugaTest(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, env)
         patcher.start()
         self.addCleanup(patcher.stop)
+        patcher_introspect = mock.patch.object(llave_asistente, "_post_introspect", _fake_introspect)
+        patcher_introspect.start()
+        self.addCleanup(patcher_introspect.stop)
+        llave_asistente.reset_cache()
+        self.addCleanup(llave_asistente.reset_cache)
         self.ids = {"A": _seed_person(self.conn, PERSON_A, "A"), "B": _seed_person(self.conn, PERSON_B, "B")}
 
     def _sweep_routes_as(self, viewer_tag: str, other_tag: str,
@@ -512,6 +536,16 @@ class _BaseFugaTest(unittest.TestCase):
         r = client.post("/api/asistente/mcp/llamar",
                          headers={"Authorization": f"Bearer {ids['device_key_mcp']}"},
                          json={"nombre": "leer_metas", "argumentos": {}})
+        n += 1
+        self.assertEqual(r.status_code, 200)
+        texts.append(r.text)
+
+        # BODY-MCP-HTTP-1: the real MCP endpoint, authenticated by a Cuenta assistant key
+        # (_fake_introspect, never a real network call) instead of a device key -- swept the same
+        # way as the existing door just above.
+        r = client.post("/mcp", headers={"Authorization": f"Bearer {ids['llave_asistente']}"},
+                         json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                               "params": {"name": "leer_metas", "arguments": {}}})
         n += 1
         self.assertEqual(r.status_code, 200)
         texts.append(r.text)
