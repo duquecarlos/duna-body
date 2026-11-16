@@ -24218,5 +24218,5 @@ follow-on change.
 
     Ran 183 tests in 38.663s, OK
 
-**Commit:** `27b46ca` (`body/rutas/mcp_http.py`).
+**Commit:** `27b46ca` (`body/rutas/mcp_http.py`) -- merged `0052198e1cc51c845a0c1c6eeb84adc116aa5d6a`.
 
