@@ -2198,16 +2198,11 @@ def _leer_planes(conn: sqlite3.Connection, person_id: int) -> dict:
     """Every horizon this person can see (BODY-PLAN-PROPUESTAS-1 ruling 6) -- their own plus any
     shared household milestone, active plans first -- each summarised by `horizonte.resumen` (`nivel:
     'resumen'`, by analogy with `leer_experimentos`: a plan's own figures, never recomputed here).
-    A horizon is any milestone goal with no `horizonte_goal_id` of its own, i.e. not itself a child
-    of another plan."""
-    hh = household.household_of(conn, person_id)
-    where, params = goals.goal_scope_sql(person_id, hh)
+    `horizonte.horizontes` is the ONE definition of a plan (BODY-PLAN-HOY-1 ruling 1): a milestone
+    goal with no `horizonte_goal_id` of its own AND at least one plan row."""
     hoy = fechas.hoy_local(db.person(conn, person_id))
-    filas = conn.execute(
-        f"SELECT id FROM goal WHERE {where} AND kind = 'milestone' AND horizonte_goal_id IS NULL "
-        "ORDER BY (status = 'active') DESC, id DESC", params).fetchall()
-    return {"planes": [_convertir_plan_salida(horizonte.resumen(conn, r["id"], person_id, hoy=hoy))
-                        for r in filas]}
+    return {"planes": [_convertir_plan_salida(horizonte.resumen(conn, gid, person_id, hoy=hoy))
+                        for gid in horizonte.horizontes(conn, person_id, hoy)]}
 
 
 def _leer_plan(conn: sqlite3.Connection, person_id: int, goal_id: int, desde: str | None = None,
