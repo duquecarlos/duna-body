@@ -254,7 +254,7 @@
   "today.plan_semana.faltan": "faltan {n} días",
   "today.plan_semana.faltan_one": "falta 1 día",
   "today.plan_semana.termina_hoy": "termina hoy",
-  "today.plan_semana.vacio": "Esta semana el plan no tiene metas",
+  "today.plan_semana.vacio": "Sin metas del plan esta semana",
   "today.plan_semana.checkpoint": "Chequeo el {fecha}: {titulo}",
   "today.plan_semana.mas": "y {n} planes más",
   "today.plan_semana.mas_one": "y 1 plan más",

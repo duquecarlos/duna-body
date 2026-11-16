@@ -192,7 +192,7 @@ class HonestGapTest(unittest.TestCase):
         conn.commit()
         page = _get().text
         self.assertIn("Tu plan esta semana", page)
-        self.assertIn("Esta semana el plan no tiene metas", page)
+        self.assertIn("Sin metas del plan esta semana", page)
 
 
 class CheckpointTest(unittest.TestCase):
