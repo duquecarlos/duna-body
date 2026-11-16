@@ -23339,3 +23339,5 @@ so this merges on green.
 **Open follow-ups, not this slice's to do:** none found -- the spec's four rulings and every listed
 test file are built and gated.
 
+-- merged `09f5b224564691ad83953bfd6ac349e085878156`
+
