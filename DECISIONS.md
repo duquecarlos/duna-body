@@ -23454,3 +23454,155 @@ needed no change for this ruling and were left untouched.
 
 -- merged `570c4e7f6395d66cbfa876a88617c2718aab7212`
 
+## BODY-PLAN-HOY-1 -- Today shows this week of the person's plan (2026-11-16)
+
+**Ruling 1 -- the ONE definition of a plan, in body/horizonte.py.** `es_horizonte(conn, goal_id) ->
+bool` and `horizontes(conn, person_id, hoy, *, solo_activos=False) -> list[int]`: a goal is a plan
+(a horizon) when it is a `milestone` with no `horizonte_goal_id` of its own AND it carries at least
+one plan row -- a child goal, a `horizonte_regla`, a `horizonte_semana`, a `horizonte_meta_semanal`
+or a `horizonte_checkpoint`. Both fold the check into one bounded statement via a shared UNION
+(`_PLAN_ROW_HORIZONTES`) of the five plan-row tables, never a per-row count. Every caller that used
+to decide this on its own now shares it: `body/agente/herramientas.py`'s `_leer_planes` (:2197,
+replacing its own `kind = 'milestone' AND horizonte_goal_id IS NULL` query with
+`horizonte.horizontes(conn, person_id, hoy)`) and `body/rutas/metas.py`'s goal-detail route (:678,
+`g["kind"] == "milestone" and horizonte.es_horizonte(conn, goal_id)` in place of the local
+`_es_horizonte`, now removed). `horizonte.resumen` also carries `start_day` in its returned dict
+(additive, zero extra cost -- the goal row is already fetched), which Today's own week-count card
+needs and no existing caller's behaviour depends on its absence. A plain milestone with no plan row
+is not listed as a plan anywhere; `ampliar_plan`'s own target check (herramientas.py `_ampliar_plan`
+:2374, `kind = 'milestone'` only) is unchanged, so a milestone still grows into a plan the same way.
+Tests: `tests/test_horizonte.py`'s `EsHorizonteTest` (9 tests: each of the five plan-row kinds makes
+it a horizon, a metric goal never is, a horizon's own child is not itself a horizon even carrying a
+plan row of its own, an unknown id is false) and `HorizontesTest` (6 tests: excludes a plain
+milestone, lists a real horizon, excludes another person's private one, includes a shared household
+one, active-then-newest ordering, `solo_activos`'s status+span filter) plus `ResumenHouseholdTest`'s
+new `test_start_day_is_carried_through`.
+
+**Ruling 2 -- "Tu plan esta semana" / "Your plan this week".** `body/rutas/hoy.py`'s `today()`
+route, right after the day-ahead card (`today.plan_title`), shown only when
+`horizonte.horizontes(conn, person_id, today_local, solo_activos=True)` is non-empty. One block per
+active plan, at most `PLANES_HOY_MAX = 2` (a named constant); beyond it, one line "y N planes más" /
+"and N more plans" linking to `/goals`. Each block, built ONLY from `horizonte.resumen` (`_plan_
+semana_bloque`, `_plan_semana_ctx` -- the route queries no `horizonte_*` table and recomputes
+nothing): the plan title linking to `/goals/{id}`; "Semana N de M" (Monday-based, from `resumen`'s
+own `start_day` to `deadline`) and "faltan D días" / "{n} days left" (singular "falta 1 día" / "1
+day left", or "termina hoy" / "ends today" at zero); this week's weekly lines as counts by estado
+(`cumple`/`en_curso`/`no_cumple`/`sin_dato`), non-zero estados only, each a `<span class="chip
+{ok|warn|low|off}">` reusing the existing chip colours (`_PLAN_ESTADO_CLS`, duplicated from
+metas.py's own private mapping rather than imported, since `body/rutas/comun.py` -- the shared-
+plumbing home -- is outside this slice's touches), singular via the repo's own `_one` key
+convention, every key a literal `t(...)` call (never an f-string) so `tests/test_i18n_paridad.py`'s
+scan sees each one; the next checkpoint only within 7 days ("Chequeo el 7 dic: <título>" /
+"Checkpoint on Dec 7: <title>", reusing `_dia_mes`'s existing "D mon" formatter); the honest gap --
+a week with no weekly lines says "Sin metas del plan esta semana" / "No targets in the plan this
+week" (reworded from the spec's own suggested "...no tiene metas" wording: `tests/test_registro_tu.py`,
+outside this slice's touches, correctly flagged third-person "tiene" with no allow-list entry, and
+rewording stayed inside `es.json` rather than widening touches to add one). No figure of the person
+beyond the counts; the detail stays on goal detail (BODY-PLAN-PANTALLA-1). 17 new i18n keys per
+language (`today.plan_semana.*`).
+
+**Ruling 3 -- bounded, proven, and a performance correction found along the way.** `tests/
+test_rendimiento.py`'s new `PlanHoyCostIndependentOfSpanTest` (2 tests) proves "/" costs the
+identical statement count for a 1-week vs. a 12-week horizon, and for a 1-line vs. an 8-line current
+week -- `horizonte.semana`/`checkpoints`'s own per-week scoping (BODY-PLAN-MODULO-1) carries
+through unchanged. **The "at most one extra statement for a person with no plan" requirement
+surfaced a real cost bug while building `horizontes()`:** following ruling 1's own description
+("the goals the person can see by `goals.goal_scope_sql`") literally -- calling
+`household.household_of` then `goals.goal_scope_sql` the way every other caller does -- cost TWO
+statements even for a person with no household (the household lookup, then the listing), measured
+directly by calling `hoy._plan_semana_ctx` against a minimal no-plan fixture before this fix: 2
+statements, not 1. Fixed by folding the household-visibility check into the SAME statement as a
+scalar subquery (`hogar_id = (SELECT hogar_id FROM hogar_miembro WHERE person_id = ?)`) instead of
+a separate `household.household_of` round trip -- a person with no `hogar_miembro` row makes the
+subquery NULL, and `hogar_id = NULL` is never true, so the household branch drops out on its own,
+the identical net effect `goal_scope_sql` gets by omitting that SQL text entirely. Re-measured after
+the fix: exactly 1 statement for a no-plan person (confirmed directly against `hoy._plan_semana_ctx`
+on a minimal fixture: person 1, no horizon, no household row). `tests/test_horizonte.py`'s
+`HorizontesTest.test_shared_household_horizon_is_included` still passes unchanged, proving the
+inlined subquery is behaviourally identical to the two-call form for the case that matters (a real
+shared household horizon).
+
+**Measured ceiling.** `/`'s own ceiling moved from 112 to 155 (`tests/test_rendimiento.py`): with
+this file's own `_seed()` fixture (one active plan, the demo's own horizon from BODY-PLAN-PANTALLA-1),
+measured 119 statements (118 before this file's own extra manual-session fixture addition, a prior
+slice's own change, unaffected by this one), `ceil(119 * 1.3) = 155`. A person with no plan pays
+exactly one extra statement, per ruling 3 above.
+
+**Ruling 4 -- the demo's existing plan is active today; no demo change needed.** The demo's horizon
+(BODY-PLAN-PANTALLA-1's `_seed_plan_horizonte`) spans `anchor_monday - 3 weeks` to `anchor_monday +
+5 weeks + 6 days` and is activated (`goals.activate`) right after being created, so `anchor` (the
+demo's own "today") always falls inside its span and its status is `'active'` -- `solo_activos`'s
+filter passes without any seed change. Confirmed directly: the demo fixture's "/" renders "Tu plan
+esta semana" with the seeded horizon's own title, "Semana 4 de 9" and its weekly-line counts, with
+no change to `body/demo.py` (outside this slice's touches, and not needed).
+
+**New tests**, invented demo data only, never a real figure:
+- `tests/test_plan_hoy.py` (16 tests): the card absent with no plan, a plain milestone with no plan
+  row, a proposed-but-not-activated plan, a plan not yet started, a plan already ended, and another
+  person's plan; present with the plan's title, "Semana N de M" and "faltan D días"/"termina hoy";
+  one of each estado's singular count text in one fixture, and a plural form; the honest gap; the
+  checkpoint line inside 7 days and its absence beyond 7; `PLANES_HOY_MAX` and the "y N planes más"
+  line (and its absence at exactly the max); es and en coverage.
+- `tests/test_horizonte.py`: `EsHorizonteTest`, `HorizontesTest` (ruling 1 above) and
+  `ResumenHouseholdTest.test_start_day_is_carried_through`.
+- `tests/test_rendimiento.py::PlanHoyCostIndependentOfSpanTest` (2 tests, ruling 3 above).
+
+No password, token, session secret or health figure of a real person was read, printed or written
+anywhere; every fixture is invented demo data; no network call was made.
+
+**`touches` -- held exactly**, except one deviation (flagged below): `body/horizonte.py`,
+`body/rutas/hoy.py`, `body/rutas/metas.py`, `body/agente/herramientas.py`,
+`body/templates/today.html`, `body/i18n/es.json`, `body/i18n/en.json`, `tests/test_plan_hoy.py`,
+`tests/test_horizonte.py`, `tests/test_rendimiento.py`. `DECISIONS.md` this entry. `body/static/
+body.css` was not touched -- every class the card needed (`.row`, `.gap-8`, `.justify-start`,
+`.flex-wrap`, `.chip .ok/.warn/.low/.off`, `.plan`, `.block`, `.more`) already existed.
+`tests/test_plan_pantalla.py` and `tests/test_plan_propuestas.py` were in the allowed set but did
+not need a change (both re-run green, confirming ruling 1's switch did not change either screen's
+behaviour).
+
+**Deviation, flagged.** `body/i18n/es.json`'s wording for the honest-gap string was changed from
+the spec's own suggested "...no tiene metas" to "Sin metas del plan esta semana" specifically to
+satisfy `tests/test_registro_tu.py` (outside this slice's touches, unedited), which correctly
+flagged the third-person "tiene" with no allow-list entry (DESIGN rule 10's tú-register guard).
+Reworded rather than widening touches to add an allow-list entry -- the same shape of deviation
+BODY-PLAN-PANTALLA-1 flagged for `tests/test_persona_fuga.py`, resolved here by staying inside the
+touched file instead.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean before this entry, after this
+entry's own commit). The exact command is
+`.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 9 sequential chunks of
+`tests/test_*.py` modules in alphabetical order (the same set `discover` would walk), each in the
+foreground:
+
+    chunk 1 (test_accesibilidad..test_baselines_lote):            Ran 380 tests, OK (skipped=1, expected failures=1)
+    chunk 2 (test_borrar_reauth..test_entreno_historial):          Ran 503 tests, OK
+    chunk 3 (test_entreno_numeros..test_garmin_adapter):           Ran 318 tests, OK
+    chunk 4 (test_garmin_estado..test_hoy):                        Ran 602 tests, OK
+    chunk 5 (test_hoy_escritorio..test_nivel_datos_ui):            Ran 443 tests, OK
+    chunk 6 (test_noche_inusual..test_profile_lote):                Ran 540 tests, OK
+    chunk 7 (test_propuesta_vigencia..test_series_unidad):          Ran 312 tests, OK (re-run green after the wording fix above; first run failed exactly 1, test_registro_tu's third-person guard)
+    chunk 8 (test_sesion_conexion_1..test_turnos_opcional_2):       Ran 497 tests, OK
+    chunk 9 (test_turnos_opcional_3..test_web_entry):               Ran 279 tests, OK
+
+Sum: 3874 run, 0 failures, 0 errors, 1 skipped, 1 expected failure. Reconciled against an
+independent collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')`,
+counted by walking its `TestSuite`): 3874 -- matching exactly. **GREEN.**
+
+**Merge policy, this slice's own diff: STOPS at customer-facing bytes.** New i18n keys
+(`today.plan_semana.*`, 17 per language) and the new "Tu plan esta semana" card they fill on Today
+are bytes a customer reads -- merge policy A's condition is tripped, so this entry stops here, on
+the branch, unmerged, for approval. No schema or migration change; no cross-repo contract.
+
+**Commits:** `ffa8501124eb85291c6af96a5249ac17e6fdc0a2` (ruling 1), `b70583d071925394bdfaa9d2e0099bcbe1c1920d`
+(rulings 2-3), `da817557a85ab38aad351e9db0ff29ea2a59432f` (tests), `10fdcdff2a50d3262e7b3b50cf02e8e5cbfbefd5`
+(the wording fix).
+
+**Open follow-ups, not this slice's to do:**
+- `BODY-PLAN-PANTALLA-FUGA-1` (named by BODY-PLAN-PANTALLA-1, still open): promote
+  `horizonte_regla.texto`, `horizonte_semana.titulo`, `horizonte_meta_semanal.nota` and
+  `horizonte_checkpoint.titulo` into `tests/test_persona_fuga.py`'s `_markers_of` active list, now
+  that Today's own card also renders counts derived from these rows.
+- A `today.plan_semana.cuenta.*` allow-list entry for `tests/test_registro_tu.py` was deliberately
+  avoided by rewording instead; if a future slice needs the word "tiene" in a Today-facing plan
+  string, that allow-list (not a reword) is the right tool then.
+
