@@ -22828,7 +22828,9 @@ exact match. All nine chunks green; the one skip and one expected failure in chu
 (unrelated xfail/skip, not touched here).
 
 **Commits:** `ac5eba6` (`body/mcp.py`, `body/rutas/mcp_remoto.py`, `body/i18n/{es,en}.json`,
-`tests/test_mcp_remoto.py`, `tests/test_mcp_cliente_remoto.py` -- new).
+`tests/test_mcp_remoto.py`, `tests/test_mcp_cliente_remoto.py` -- new), `b0157c7` (this entry).
 
 **Open follow-ups, not this slice's to do:** none found.
+
+-- merged `1955bd825be1cfb9a1943967099e6d3af6a9f50d`
 
