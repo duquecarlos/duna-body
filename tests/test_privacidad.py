@@ -1192,5 +1192,42 @@ class ActivityDetailExportDeleteTest(unittest.TestCase):
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM activity_detail").fetchone()[0], 0)
 
 
+class PlanSesionNotaExportDeleteTest(unittest.TestCase):
+    """BODY-HOGAR-ESCRIBE-1 ruling 4/5: nota_sesion/nota_sesion_en are ordinary plan columns,
+    not checkin_nota -- they flow through plan's existing export/delete, generically."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "plan_sesion_nota.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+        self.conn.execute(
+            "INSERT INTO plan (person_id, day, title, status, nota_sesion, nota_sesion_en) "
+            "VALUES (1, '2026-11-16', 'Run', 'done', 'fue dura', '2026-11-16T07:00:00')"
+        )
+        self.plan_id = self.conn.execute("SELECT id FROM plan WHERE person_id = 1").fetchone()[0]
+        self.conn.commit()
+
+    def test_export_includes_the_note_and_its_timestamp(self):
+        data = privacidad.export_person(self.conn, 1)
+        row = next(p for p in data["vida"]["plans"] if p["id"] == self.plan_id)
+        self.assertEqual(row["nota_sesion"], "fue dura")
+        self.assertEqual(row["nota_sesion_en"], "2026-11-16T07:00:00")
+
+    def test_export_of_another_person_sees_nothing(self):
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 2)
+        self.assertEqual(data["vida"]["plans"], [])
+
+    def test_delete_all_removes_the_plan_row(self):
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM plan WHERE id = ?", (self.plan_id,)).fetchone()[0], 0
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

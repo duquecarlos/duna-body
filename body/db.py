@@ -98,7 +98,7 @@ _PROPUESTA_AGENTE_COLUMNS = """
                          'marcar_periodo', 'cerrar_periodo', 'corregir_periodo', 'borrar_periodo',
                          'registrar_comida', 'corregir_comida', 'registrar_checkin', 'descartar_series',
                          'separar_sesion', 'unir_sesiones', 'proponer_objetivo_nutriente',
-                         'proponer_plan', 'corregir_meta_plan', 'ampliar_plan')),
+                         'proponer_plan', 'corregir_meta_plan', 'ampliar_plan', 'anotar_sesion')),
     objetivo_id     INTEGER REFERENCES goal(id),
     antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
     despues_json    TEXT NOT NULL CHECK (json_valid(despues_json)),
@@ -107,11 +107,13 @@ _PROPUESTA_AGENTE_COLUMNS = """
     creada_en       TEXT NOT NULL,
     expira_en       TEXT NOT NULL,
     resuelta_en     TEXT,
-    -- Set to 'mcp' only when body/mcp.py's own `aplicar_propuesta` tool applied this row
-    -- (BODY-MCP-APLICAR-1, ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4): the panel's own "applied by
-    -- your personal assistant" label, never set for an apply through Body's own web route, even
-    -- for a proposal this same outside caller made.
-    aplicada_via    TEXT CHECK (aplicada_via IS NULL OR aplicada_via IN ('mcp'))
+    -- 'mcp' only when body/mcp.py's own `aplicar_propuesta` tool applied this row (BODY-MCP-
+    -- APLICAR-1, ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4): the panel's own "applied by your
+    -- personal assistant" label, never set for an apply through Body's own web route, even for a
+    -- proposal this same outside caller made. 'hogar' (BODY-HOGAR-ESCRIBE-1 ruling 1): the same
+    -- idea for a write Hogar relayed and applied itself -- set only by `marcar_aplicada_via`, the
+    -- same AFTER-the-fact marker, never a second way to apply.
+    aplicada_via    TEXT CHECK (aplicada_via IS NULL OR aplicada_via IN ('mcp', 'hogar'))
 """
 
 # workout_set keys to activity's composite key (person_id, source, source_id): the watch's values
@@ -555,7 +557,12 @@ CREATE TABLE IF NOT EXISTS plan (
     status    TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'accepted', 'done', 'skipped')),
     -- A planned training session's exercise list (BODY-ENTRENO-SCHEMA-1); JSON, shape owned by
     -- the tool that writes it -- nothing here yet.
-    ejercicios_json TEXT CHECK (ejercicios_json IS NULL OR json_valid(ejercicios_json))
+    ejercicios_json TEXT CHECK (ejercicios_json IS NULL OR json_valid(ejercicios_json)),
+    -- BODY-HOGAR-ESCRIBE-1 ruling 4: the session's own note, set by `anotar_sesion` -- nota_sesion_en
+    -- is the UTC instant it was written, not when the session happened (that is `day`/`time` above).
+    -- Both nullable, additive: an existing plan row reads as "no note yet".
+    nota_sesion     TEXT,
+    nota_sesion_en  TEXT
 );
 
 -- How much health data the assistant's tools may read for this person (wave 7, stage one).
@@ -573,13 +580,14 @@ CREATE TABLE IF NOT EXISTS ajuste_agente (
 -- Conversations with Body's assistant (wave 7, stage two: BODY-ASISTENTE-PROVEEDOR-1).
 -- `origen` (BODY-MCP-LOCAL-1): NULL for one started in Body's own chat panel, 'mcp' for one the
 -- local MCP server (body/mcp.py) started -- so the panel can label its proposal cards "from your
--- personal assistant" (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3).
+-- personal assistant" (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3). 'hogar' (BODY-HOGAR-ESCRIBE-1
+-- ruling 1): the same idea for a conversation Hogar started on the person's behalf.
 CREATE TABLE IF NOT EXISTS conversacion_agente (
     id        INTEGER PRIMARY KEY,
     person_id INTEGER NOT NULL REFERENCES person(id),
     creada_en TEXT NOT NULL,
     titulo    TEXT,
-    origen    TEXT CHECK (origen IS NULL OR origen IN ('mcp'))
+    origen    TEXT CHECK (origen IS NULL OR origen IN ('mcp', 'hogar'))
 );
 CREATE INDEX IF NOT EXISTS idx_conversacion_agente_person ON conversacion_agente(person_id);
 
@@ -1207,13 +1215,21 @@ def registrar_uso_herramienta_externa(conn: sqlite3.Connection, person_id: int, 
         )
 
 
-def marcar_aplicada_via_mcp(conn: sqlite3.Connection, propuesta_id: int) -> None:
+def marcar_aplicada_via(conn: sqlite3.Connection, propuesta_id: int, via: str) -> None:
     """Ties a proposal's row to its own outside apply, called ONLY after `agente_propuestas.aplicar`
-    has already marked it 'aplicada' (BODY-MCP-APLICAR-1, ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4):
-    the panel's own "applied by your personal assistant" label. Never set for an apply through
-    Body's own web route."""
+    has already marked it 'aplicada' (BODY-MCP-APLICAR-1, ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4;
+    `via = 'hogar'` added by BODY-HOGAR-ESCRIBE-1 ruling 1): the panel's own "applied by your
+    personal assistant" / "Applied from Hogar" label. Never set for an apply through Body's own
+    web route. `via` is trusted to be one of the column's own CHECK values -- the same contract
+    every other direct UPDATE in this module keeps with its own CHECK-constrained column."""
     with conn:
-        conn.execute("UPDATE propuesta_agente SET aplicada_via = 'mcp' WHERE id = ?", (propuesta_id,))
+        conn.execute("UPDATE propuesta_agente SET aplicada_via = ? WHERE id = ?", (via, propuesta_id))
+
+
+def marcar_aplicada_via_mcp(conn: sqlite3.Connection, propuesta_id: int) -> None:
+    """Thin caller over `marcar_aplicada_via`, kept for every existing call site (body/mcp.py,
+    body/rutas/mcp_remoto.py) -- neither is this slice's to widen."""
+    marcar_aplicada_via(conn, propuesta_id, "mcp")
 
 
 def connect(path: Path | None = None) -> sqlite3.Connection:
@@ -1303,6 +1319,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "ALTER TABLE plan ADD COLUMN ejercicios_json TEXT "
             "CHECK (ejercicios_json IS NULL OR json_valid(ejercicios_json))"
         )
+    # BODY-HOGAR-ESCRIBE-1 ruling 4: two more additive, nullable columns -- every existing plan row
+    # reads as "no session note yet".
+    if plcols and "nota_sesion" not in plcols:
+        conn.execute("ALTER TABLE plan ADD COLUMN nota_sesion TEXT")
+    if plcols and "nota_sesion_en" not in plcols:
+        conn.execute("ALTER TABLE plan ADD COLUMN nota_sesion_en TEXT")
     # BODY-PLAN-ESQUEMA-1: two additive, nullable columns on old databases -- every existing goal
     # and experimento row reads as not-part-of-a-plan (NULL), never backfilled.
     goalcols = {r[1] for r in conn.execute("PRAGMA table_info(goal)")}
@@ -1313,7 +1335,16 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE experimento ADD COLUMN goal_id INTEGER REFERENCES goal(id)")
     ccols = {r[1] for r in conn.execute("PRAGMA table_info(conversacion_agente)")}
     if ccols and "origen" not in ccols:
-        conn.execute("ALTER TABLE conversacion_agente ADD COLUMN origen TEXT CHECK (origen IS NULL OR origen IN ('mcp'))")
+        conn.execute(
+            "ALTER TABLE conversacion_agente ADD COLUMN origen TEXT "
+            "CHECK (origen IS NULL OR origen IN ('mcp', 'hogar'))"
+        )
+    # BODY-HOGAR-ESCRIBE-1 ruling 1: an install whose `origen` column already exists from before
+    # this slice still carries the OLD CHECK (IN ('mcp') only) -- SQLite cannot ALTER an existing
+    # CHECK, so this rebuilds the table the same guarded way metric_def/propuesta_agente's own CHECK
+    # widenings already do, once origen itself is guaranteed to exist (the ALTER just above).
+    if _table_exists(conn, "conversacion_agente") and _conversacion_agente_needs_hogar_rebuild(conn):
+        _rebuild_conversacion_agente_table(conn)
     sbcols = {r[1] for r in conn.execute("PRAGMA table_info(shift_batch)")}
     if sbcols and "kind" not in sbcols:
         conn.execute(
@@ -1409,6 +1440,42 @@ def _rebuild_metric_def_table(conn: sqlite3.Connection) -> None:
             raise RuntimeError(f"metric_def rebuild count mismatch: {len(old_rows)} -> {new_count}")
         conn.execute("DROP TABLE metric_def")
         conn.execute("ALTER TABLE metric_def_nuevo RENAME TO metric_def")
+    _rebuild_with_fk_off(conn, step)
+
+
+def _conversacion_agente_needs_hogar_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'conversacion_agente'"
+    ).fetchone()
+    return row is not None and "'hogar'" not in row[0]
+
+
+def _rebuild_conversacion_agente_table(conn: sqlite3.Connection) -> None:
+    """conversacion_agente.origen gains 'hogar' (BODY-HOGAR-ESCRIBE-1 ruling 1): SQLite cannot
+    ALTER an existing CHECK, so this rebuilds the table in one transaction, the same guarded shape
+    as metric_def/propuesta_agente's own CHECK widenings above. mensaje_agente and propuesta_agente
+    both reference this table's id by FK, so the rebuild runs with foreign keys off, like every
+    other rebuild here. Every existing row survives byte-for-byte."""
+    def step(conn):
+        old_rows = conn.execute("SELECT * FROM conversacion_agente").fetchall()
+        conn.execute(
+            "CREATE TABLE conversacion_agente_nuevo ("
+            "id INTEGER PRIMARY KEY, person_id INTEGER NOT NULL REFERENCES person(id), "
+            "creada_en TEXT NOT NULL, titulo TEXT, "
+            "origen TEXT CHECK (origen IS NULL OR origen IN ('mcp', 'hogar')))"
+        )
+        for r in old_rows:
+            conn.execute(
+                "INSERT INTO conversacion_agente_nuevo (id, person_id, creada_en, titulo, origen) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (r["id"], r["person_id"], r["creada_en"], r["titulo"], r["origen"]),
+            )
+        new_count = conn.execute("SELECT COUNT(*) FROM conversacion_agente_nuevo").fetchone()[0]
+        if new_count != len(old_rows):
+            raise RuntimeError(f"conversacion_agente rebuild count mismatch: {len(old_rows)} -> {new_count}")
+        conn.execute("DROP TABLE conversacion_agente")
+        conn.execute("ALTER TABLE conversacion_agente_nuevo RENAME TO conversacion_agente")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_conversacion_agente_person ON conversacion_agente(person_id)")
     _rebuild_with_fk_off(conn, step)
 
 
@@ -1553,6 +1620,13 @@ def _propuesta_agente_needs_plan_rebuild(conn: sqlite3.Connection) -> bool:
     return row is not None and "proponer_plan" not in row[0]
 
 
+def _propuesta_agente_needs_hogar_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'propuesta_agente'"
+    ).fetchone()
+    return row is not None and "anotar_sesion" not in row[0]
+
+
 def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
@@ -1599,8 +1673,15 @@ def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     if ppcols and "aplicada_via" not in ppcols:
         conn.execute(
             "ALTER TABLE propuesta_agente ADD COLUMN aplicada_via TEXT "
-            "CHECK (aplicada_via IS NULL OR aplicada_via IN ('mcp'))"
+            "CHECK (aplicada_via IS NULL OR aplicada_via IN ('mcp', 'hogar'))"
         )
+    # BODY-HOGAR-ESCRIBE-1: a twelfth widening of `accion` (anotar_sesion) PLUS a widening of the
+    # separate `aplicada_via` CHECK (adds 'hogar') -- both ship in the one current
+    # _PROPUESTA_AGENTE_COLUMNS, so the same reusable rebuild fixes both at once. An install whose
+    # `aplicada_via` column already existed from before this slice (the ALTER above is a no-op for
+    # it) still carries aplicada_via's OLD CHECK (IN ('mcp') only) until this rebuild runs.
+    if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_hogar_rebuild(conn):
+        _rebuild_propuesta_agente_table(conn)
 
 
 def _goal_needs_rebuild(conn: sqlite3.Connection) -> bool:
@@ -3462,3 +3543,23 @@ def borrar_periodo(conn: sqlite3.Connection, person_id: int, period_id: int) -> 
     with conn:
         conn.execute("DELETE FROM period WHERE id = ? AND person_id = ?", (period_id, person_id))
     invalidar_periodos_cache(conn, person_id)
+
+
+def anotar_sesion_plan(conn: sqlite3.Connection, person_id: int, plan_id: int, nota: str | None,
+                        nota_en: str | None, status: str) -> None:
+    """The one writer of `plan.nota_sesion`/`nota_sesion_en` (BODY-HOGAR-ESCRIBE-1 ruling 4): the
+    caller (body/agente/propuestas.py) always resolves the row's FULL new state first -- the new
+    note and its own timestamp on apply, or the exact prior triple on undo -- the same
+    all-or-nothing, caller-resolves-state shape `corregir_comida`/`corregir_periodo` already write
+    with. `status` is always given explicitly (never a sentinel): when the person did not say the
+    session was done, the caller passes the plan's own CURRENT status back unchanged, so this
+    writer never has to guess what "untouched" means. Refuses a plan_id that is not this person's
+    own."""
+    fila = conn.execute("SELECT 1 FROM plan WHERE id = ? AND person_id = ?", (plan_id, person_id)).fetchone()
+    if fila is None:
+        raise ValueError("plan_id: not this person's own plan")
+    with conn:
+        conn.execute(
+            "UPDATE plan SET nota_sesion = ?, nota_sesion_en = ?, status = ? WHERE id = ? AND person_id = ?",
+            (nota, nota_en, status, plan_id, person_id),
+        )

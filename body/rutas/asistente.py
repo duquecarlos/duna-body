@@ -765,6 +765,19 @@ def _tarjeta_corregir_meta_plan(t: T, defs: dict, despues: dict, antes_json: dic
     return antes_txt, despues_txt, None
 
 
+def _tarjeta_anotar_sesion(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
+    """BODY-HOGAR-ESCRIBE-1 ruling 4: the planned session's own title and date, then the note in
+    quotes, then a plain "marked as done" line only when `hecha` was true -- insert-shaped like
+    `registrar_checkin`'s own card, never an antes/despues pair (a note has no prior wording the
+    person is correcting)."""
+    fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
+    lineas = [t("asistente.propuesta.sesion_titulo_fecha", titulo=despues["titulo"], fecha=fecha),
+              t("asistente.propuesta.sesion_nota", nota=despues["nota"])]
+    if despues.get("hecha"):
+        lineas.append(t("asistente.propuesta.sesion_hecha"))
+    return None, "\n".join(lineas), None
+
+
 # One card builder per action (BODY-PROPUESTAS-TABLA-1), keyed exactly like body/agente/
 # propuestas.py's TABLA and body/agente/herramientas.py's `propuesta`-kind tools
 # (tests/test_propuestas_tabla.py enforces the three sets match). Each builder returns
@@ -797,6 +810,7 @@ TARJETAS = {
     "proponer_plan": _tarjeta_proponer_plan,
     "ampliar_plan": _tarjeta_ampliar_plan,
     "corregir_meta_plan": _tarjeta_corregir_meta_plan,
+    "anotar_sesion": _tarjeta_anotar_sesion,
 }
 
 
@@ -834,8 +848,12 @@ def _tarjeta_propuesta(t: T, defs: dict, registro: dict, origen_conversacion: st
     # that applies regardless of who tapped Aplicar.
     if registro["aplicada_via"] == "mcp":
         origen_etiqueta = t("asistente.propuesta.aplicado_mcp")
+    elif registro["aplicada_via"] == "hogar":
+        origen_etiqueta = t("asistente.propuesta.aplicado_hogar")
     elif origen_conversacion == "mcp":
         origen_etiqueta = t("asistente.propuesta.origen_mcp")
+    elif origen_conversacion == "hogar":
+        origen_etiqueta = t("asistente.propuesta.origen_hogar")
     else:
         origen_etiqueta = None
     return {

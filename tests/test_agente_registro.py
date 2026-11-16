@@ -175,7 +175,7 @@ PROPUESTA_NOMBRES = {"proponer_meta", "proponer_cambio_meta", "proponer_confirma
                      "registrar_checkin", "marcar_periodo", "cerrar_periodo", "corregir_periodo",
                      "borrar_periodo", "descartar_series", "separar_sesion", "unir_sesiones",
                      "proponer_objetivo_nutriente",
-                     "proponer_plan", "corregir_meta_plan", "ampliar_plan"}
+                     "proponer_plan", "corregir_meta_plan", "ampliar_plan", "anotar_sesion"}
 # Privacy and account controls deliberately NEVER become proposal tools (BODY-ASISTENTE-PROPUESTAS-1
 # approval reason): nivel_datos, consent, export, delete-all, device keys, Garmin connection,
 # household membership all stay on their own screens.
@@ -201,7 +201,8 @@ class RegistryShapeTest(unittest.TestCase):
         self.assertEqual(len(lectura), 17)
         self.assertEqual({h["nombre"]: h["nivel"] for h in lectura}, expected_levels)
 
-    def test_twentyseven_propuesta_tools_at_nivel_ninguno(self):
+    def test_twentyeight_propuesta_tools_at_nivel_ninguno(self):
+        # BODY-HOGAR-ESCRIBE-1: extended from 27 -- anotar_sesion is the one new entry.
         propuesta = [h for h in herramientas.HERRAMIENTAS if h["tipo"] == "propuesta"]
         self.assertEqual({h["nombre"] for h in propuesta}, PROPUESTA_NOMBRES)
         self.assertTrue(all(h["nivel"] == "ninguno" for h in propuesta))
@@ -209,8 +210,8 @@ class RegistryShapeTest(unittest.TestCase):
 
     def test_every_entry_has_a_known_tipo(self):
         self.assertTrue(all(h["tipo"] in ("lectura", "propuesta") for h in herramientas.HERRAMIENTAS))
-        # BODY-GARMIN-SYNC-CONSISTENTE-1: extended from 43 -- leer_estado_reloj is the one new entry.
-        self.assertEqual(len(herramientas.HERRAMIENTAS), 44)
+        # BODY-HOGAR-ESCRIBE-1: extended from 44 -- anotar_sesion is the one new entry.
+        self.assertEqual(len(herramientas.HERRAMIENTAS), 45)
 
     def test_every_entry_carries_the_reserved_plan_field_unset(self):
         # BODY-ASISTENTE-CONFORMIDAD-1 ruling 2 (agent-capabilities-v1 section 5): the field

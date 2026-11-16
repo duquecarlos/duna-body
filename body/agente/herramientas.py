@@ -259,6 +259,18 @@ _PARAM_REGISTRAR_ENTRENO = {
     "required": ["day", "series"],
     "additionalProperties": False,
 }
+# BODY-HOGAR-ESCRIBE-1 ruling 4: plan_id names an existing PLANNED session row (the id the Hogar
+# feed already returns) -- never a title, which can be misheard.
+_PARAM_ANOTAR_SESION = {
+    "type": "object",
+    "properties": {
+        "plan_id": {"type": "integer"},
+        "nota": {"type": "string"},
+        "hecha": {"type": "boolean"},
+    },
+    "required": ["plan_id", "nota"],
+    "additionalProperties": False,
+}
 _PARAM_DESCARTAR_SERIES = {
     "type": "object",
     "properties": {
@@ -1474,6 +1486,35 @@ def _registrar_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
+def _anotar_sesion(conn: sqlite3.Connection, person_id: int, conversacion_id: int, plan_id: int, nota: str,
+                    hecha: bool | None = None) -> dict:
+    """Proposes a note on an existing PLANNED session row (BODY-HOGAR-ESCRIBE-1 ruling 4): how the
+    session actually went, matched against the plan. `hecha=true` also proposes marking the plan
+    'done' (BODY-PLAN-SESION-HECHA-1 then counts it, once, toward sesiones_fuerza); left out or
+    false, the plan's own status is proposed unchanged. `antes`/`despues` each carry the plan row's
+    FULL note/timestamp/status state, the same update-shaped, caller-resolves-state convention
+    `corregir_comida` already uses, so `propuestas.deshacer` can restore it exactly through the
+    same writer (`db.anotar_sesion_plan`). Refuses a plan_id that is not this person's own, by
+    name -- never silently matched to someone else's session."""
+    nota = (nota or "").strip()
+    if not (1 <= len(nota) <= 2000):
+        raise ToolError("nota debe tener entre 1 y 2000 caracteres")
+    if hecha is not None and not isinstance(hecha, bool):
+        raise ToolError("hecha debe ser verdadero o falso")
+    fila = conn.execute(
+        "SELECT day, title, status, nota_sesion, nota_sesion_en FROM plan WHERE id = ? AND person_id = ?",
+        (plan_id, person_id),
+    ).fetchone()
+    if fila is None:
+        raise ToolError(f"plan desconocido: {plan_id!r}")
+    antes = {"status": fila["status"], "nota_sesion": fila["nota_sesion"], "nota_sesion_en": fila["nota_sesion_en"]}
+    nuevo_status = "done" if hecha else fila["status"]
+    despues = {"plan_id": plan_id, "day": fila["day"], "titulo": fila["title"], "nota": nota,
+               "hecha": bool(hecha), "status": nuevo_status}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "anotar_sesion", despues, antes=antes)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
 def _descartar_series(conn: sqlite3.Connection, person_id: int, conversacion_id: int, day: str,
                        series: list) -> dict:
     """Proposes marking existing watch slots of an already-logged day's strength activity as not
@@ -2585,6 +2626,12 @@ HERRAMIENTAS = [
                      "sesión manual. No lo guarda: registra la propuesta para que la persona la apruebe "
                      "en el chat.",
      "parametros": _PARAM_REGISTRAR_ENTRENO, "funcion": _registrar_entreno},
+    {"nombre": "anotar_sesion", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone una nota sobre cómo fue una sesión de entrenamiento ya planeada (plan_id es el id "
+                     "del plan, nunca su título). Di si la sesión quedó hecha con 'hecha': true -- déjalo en "
+                     "falso o sin dar si la persona todavía no la hizo o solo está comentando el plan. No "
+                     "guarda la nota: registra la propuesta para que la persona la apruebe en el chat.",
+     "parametros": _PARAM_ANOTAR_SESION, "funcion": _anotar_sesion},
     {"nombre": "descartar_series", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone marcar como no hechas una o más series del reloj de un día ya "
                      "registrado (por ejemplo una serie que quedó de un ejercicio que la persona "

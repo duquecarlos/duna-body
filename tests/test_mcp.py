@@ -314,6 +314,33 @@ class ToolsCallTest(_McpTestCase):
         self.assertIn("propuesta_id", salida)
         self.assertEqual(salida["estado"], "propuesta")
 
+    def test_anotar_sesion_is_offered_and_callable(self):
+        """BODY-HOGAR-ESCRIBE-1 ruling 4: same generic `tipo: propuesta` path as registrar_comida
+        above -- body.mcp needs no new code to list or call it. A call with a plan_id proposes the
+        note, never writing it on the call itself."""
+        self.conn.execute(
+            "INSERT INTO plan (person_id, day, title, status) VALUES (?, '2026-11-05', "
+            "'Sesión de piernas', 'proposed')", (self.person_id,))
+        self.conn.commit()
+        plan_id = self.conn.execute("SELECT id FROM plan WHERE person_id = ?", (self.person_id,)).fetchone()["id"]
+
+        _, listado = self._ejecutar([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
+        nombres = {t["name"] for t in listado[0]["result"]["tools"]}
+        self.assertIn("anotar_sesion", nombres)
+
+        _, respuestas = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "anotar_sesion",
+                        "arguments": {"plan_id": plan_id, "nota": "Se sintió fuerte", "hecha": True}}},
+        ])
+        r = respuestas[0]["result"]
+        self.assertNotIn("isError", r)
+        fila = self.conn.execute("SELECT status, nota_sesion FROM plan WHERE id = ?", (plan_id,)).fetchone()
+        self.assertEqual((fila["status"], fila["nota_sesion"]), ("proposed", None))  # still unapplied
+        salida = json.loads(r["content"][-1]["text"])
+        self.assertIn("propuesta_id", salida)
+        self.assertEqual(salida["estado"], "propuesta")
+
     def test_leer_serie_is_offered_and_callable(self):
         """BODY-AGENTE-LEER-SERIE-1 ruling 4: body.mcp lists leer_serie like any other catalogue
         tool -- the generic tools/list and tools/call paths need no new code for it either."""
