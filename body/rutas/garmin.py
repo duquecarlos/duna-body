@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import time
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
@@ -103,15 +103,36 @@ def garmin_view(request: Request, person_id: int = Depends(identity.current_pers
     return comun._render("garmin.html", **_garmin_ctx(t, conn, person_id, form_error=form_error))
 
 
-def _reloj_vivo_ctx(t: T, conn, person_id: int) -> dict | None:
-    """BODY-SYNC-VIVO-2 ruling 3: the «Tu reloj» live card's own context -- shared by Hoy's `/`
-    (body/rutas/hoy.py) and this module's own polling endpoint below, so the two can never render
-    a different card for the same state. None while nothing of the three states applies (no card,
-    no claim) -- the same "honest gap" rule Hoy's other cards already follow."""
-    person = db.person(conn, person_id)
+def _garmin_sync_ctx(t: T, conn, person_id: int, day: str | None, today_local: date) -> dict | None:
+    """BODY-SYNC-VIVO-2-B ruling 1: the gap half of the merged «Tu reloj» card -- the SAME logic
+    body/rutas/hoy.py's own `_garmin_sync_ctx` builds for Hoy's `/`, duplicated here rather than
+    imported (the same no-cross-module-import rule `_reloj_vivo_ctx` below already follows), so
+    this route's poll reload carries the same gap state for the same person, never a merged card
+    that loses its gap half mid-poll. `day` is None for a person with no stored day at all ever --
+    never "stale" here (Hoy's `/` can never ask this with `day=None`, guarded by its own early
+    return to soon.html; this route has no such guard, since it must answer the poll either way)."""
+    estado = garmin_cuenta.estado_conexion(conn, person_id)
+    if estado["ultimo_error"] == "NotSignedIn":
+        texto = t("today.garmin_sync.not_signed_in")
+    elif estado["ultimo_error"]:
+        texto = t("today.garmin_sync.failed")
+    elif estado["conectado"] and day and date.fromisoformat(day) < today_local - timedelta(1):
+        texto = t("today.garmin_sync.stale", date=comun._short_date(t, date.fromisoformat(day)))
+    else:
+        return None
+    return {"texto": texto}
+
+
+def _reloj_vivo_ctx(t: T, conn, person_id: int, person: dict, today_local: date) -> dict | None:
+    """BODY-SYNC-VIVO-2 ruling 3: the «Tu reloj» live card's own freshness half -- shared by Hoy's
+    `/` (body/rutas/hoy.py) and this module's own polling endpoint below, so the two can never
+    render a different card for the same state. None while nothing of the three states applies (no
+    card, no claim) -- the same "honest gap" rule Hoy's other cards already follow. Takes `person`
+    and `today_local` as params (BODY-SYNC-VIVO-2-B) rather than reading them itself, since the
+    poll route below now needs the same two values for `_garmin_sync_ctx` above too -- one read of
+    each, never a duplicate."""
     tz = ZoneInfo(person.get("timezone") or "America/Bogota")
-    hoy_local = comun._today_local(person)
-    texto = pull.texto_estado_vivo(t, conn, person_id, tz, hoy_local)
+    texto = pull.texto_estado_vivo(t, conn, person_id, tz, today_local)
     if texto is None:
         return None
     return {"texto": texto, "sincronizando": person_id in pull._PULL_EN_CURSO}
@@ -120,16 +141,23 @@ def _reloj_vivo_ctx(t: T, conn, person_id: int) -> dict | None:
 @router.get("/garmin/estado-vivo")
 @comun._cierra_conexion
 def garmin_estado_vivo(person_id: int = Depends(identity.current_person_id)):
-    """BODY-SYNC-VIVO-2 ruling 3: the small GET `static/reloj-sync.js` polls while the «Tu reloj»
+    """BODY-SYNC-VIVO-2-B ruling 1: the small GET `static/reloj-sync.js` polls while the «Tu reloj»
     card shows a pull in progress -- renders the SAME partial (`_reloj.html`) Hoy's own card uses,
-    so the browser can just swap the card's markup in place. `reloj_vivo` is None when none of the
-    three live states apply any more (an edge case: a person who has never once watch-synced, and
-    whose last attempt failed with no backoff) -- the partial then renders a plain, textless card,
-    which carries no `data-sincronizando` attribute either, so the poller reads that as "done"."""
+    now the one merged card (gap half + freshness half), so the browser can swap the card's markup
+    in place without ever losing the gap's own chip and /garmin link mid-poll. `reloj_vivo` is None
+    when none of the three live states apply any more (an edge case: a person who has never once
+    watch-synced, and whose last attempt failed with no backoff) -- the partial then renders a card
+    that carries no `data-sincronizando` attribute (even if it still shows the gap half), so the
+    poller reads the missing attribute as "done"."""
     if not cuenta.hosted():
         raise HTTPException(404)
-    conn, _, t = comun._ctx(person_id)
-    return comun._render("_reloj.html", t=t, reloj_vivo=_reloj_vivo_ctx(t, conn, person_id))
+    conn, person, t = comun._ctx(person_id)
+    today_local = comun._today_local(person)
+    day = comun._latest_day(conn, person_id)
+    return comun._render(
+        "_reloj.html", t=t,
+        garmin_sync=_garmin_sync_ctx(t, conn, person_id, day, today_local),
+        reloj_vivo=_reloj_vivo_ctx(t, conn, person_id, person, today_local))
 
 
 @router.post("/garmin/conectar")

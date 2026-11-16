@@ -40,7 +40,6 @@
   "today.recovery": "Day {dia} of ≈ {estimado} to recover from your nights",
   "today.stale": "Latest watch data: {date}, {n} days ago.",
   "today.stale_link": "Check the Garmin connection",
-  "today.garmin_sync.titulo": "Your watch",
   "today.garmin_sync.chip": "check",
   "today.garmin_sync.not_signed_in": "Garmin refused the saved access. Reconnect your watch.",
   "today.garmin_sync.failed": "The last Garmin sync failed.",
