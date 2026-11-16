@@ -423,11 +423,7 @@ def pull_hoy_ahora(person_id: int) -> str:
         return "sin_cuenta"
     if person_id in _PULL_EN_CURSO:
         return "en_curso"
-    try:
-        conn = db.connect()
-    except Exception as e:
-        print(f"pull_hoy_ahora: could not open a connection: {errores.texto_seguro(e)}", flush=True)
-        return "iniciado"
+    conn = db.connect()
     try:
         db.ensure_ready(conn)
         if garmin_cuenta.leer(conn, person_id) is None:
