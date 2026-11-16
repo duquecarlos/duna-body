@@ -22951,3 +22951,5 @@ exact match (3685 on the previous slice's own floor, +30 new: 25 in `tests/test_
 **Open follow-ups, not this slice's to do:** none found -- the spec's four rulings, the contract doc and every
 listed test file are built and gated.
 
+-- merged `9cb2637df5fabdfdf0099422a4a4b29ef31611e3`
+
