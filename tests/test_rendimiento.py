@@ -75,8 +75,17 @@ client = TestClient(web.app, follow_redirects=False)
 # BODY-ENTRENO-VISTA-SESION-1: /day/{day}/entreno/{source_id}'s own ceiling, new with this slice.
 # Measured 12 statements against this file's own fixture (the manual "Fuerza" session _seed() logs
 # for `day`, two corrected sets, no intraday series), ceil(12 * 1.3) = 16.
+# BODY-PLAN-HOY-1: /'s own ceiling, raised for the "Tu plan esta semana" card (body/rutas/hoy.py's
+# _plan_semana_ctx) -- one bounded horizonte.horizontes() listing plus up to PLANES_HOY_MAX
+# horizonte.resumen() calls, ruling 3's own bound. A person with no plan pays exactly one extra
+# statement, measured by calling _plan_semana_ctx directly against a minimal fixture (person 1, no
+# horizon, no household): 1 statement, horizontes()'s own single query -- it folds the household
+# scope in as a subquery rather than taking goals.goal_scope_sql's separate household.household_of
+# call, which would have cost a second statement for nothing. With this file's own _seed() fixture
+# (one active plan, the demo's own horizon), / measured 119 statements (118 before this file's own
+# extra manual-session fixture addition above), ceil(119 * 1.3) = 155.
 _CEILINGS = {
-    "/": 112,
+    "/": 155,
     "/ajustes/asistente": 16,
     "/ajustes/dispositivos": 9,
     "/api/asistente/mcp/herramientas": 3,
@@ -285,6 +294,84 @@ class PlanPantallaCostIndependentOfSpanTest(unittest.TestCase):
         self.assertEqual(
             una["statements"], ocho["statements"],
             f"8 weekly target lines cost more statements than 1 in the same week: "
+            f"{una['statements']} vs {ocho['statements']}")
+
+
+class PlanHoyCostIndependentOfSpanTest(unittest.TestCase):
+    """BODY-PLAN-HOY-1 ruling 3: "/"'s own "Tu plan esta semana" card costs the same number of
+    statements whether the active plan's current week carries 1 weekly target line or 8, and
+    whether the horizon spans 1 week or 12 -- horizonte.resumen's own semana/checkpoints scoping
+    (BODY-PLAN-MODULO-1) stays bounded regardless, and this card never recomputes anything beyond
+    its own PLANES_HOY_MAX resumen calls."""
+
+    HOY = date(2026, 11, 5)
+    MONDAY = fechas.lunes_de(HOY)
+
+    def _minimal_fixture(self):
+        conn = _reset_db(self)
+        db.set_metric(conn, self.HOY.isoformat(), "sleep_minutes", 400, "garmin", 1)
+        conn.commit()
+        return conn
+
+    def test_one_week_vs_twelve_weeks_same_statement_count(self):
+        conn = self._minimal_fixture()
+        gid_short = _horizonte_milestone(
+            conn, 1, self.MONDAY.isoformat(), (self.MONDAY + timedelta(days=6)).isoformat(), "ZZ plan corto")
+        db.crear_meta_semanal(conn, 1, gid_short, self.MONDAY.isoformat(), "sesiones_fuerza", "al_menos", 3.0)
+        goals.activate(conn, gid_short)
+        conn.commit()
+        with patch.object(web_comun, "_today_local", return_value=self.HOY):
+            with contar_sql() as corto:
+                r1 = client.get("/")
+
+        conn2 = self._minimal_fixture()
+        gid_long = _horizonte_milestone(
+            conn2, 1, self.MONDAY.isoformat(), (self.MONDAY + timedelta(weeks=11, days=6)).isoformat(),
+            "ZZ plan largo")
+        semana = self.MONDAY
+        for _ in range(12):
+            db.crear_meta_semanal(conn2, 1, gid_long, semana.isoformat(), "sesiones_fuerza", "al_menos", 3.0)
+            semana += timedelta(days=7)
+        goals.activate(conn2, gid_long)
+        conn2.commit()
+        with patch.object(web_comun, "_today_local", return_value=self.HOY):
+            with contar_sql() as largo:
+                r2 = client.get("/")
+
+        self.assertEqual((r1.status_code, r2.status_code), (200, 200))
+        self.assertEqual(
+            corto["statements"], largo["statements"],
+            f"a 12-week horizon cost more statements than a 1-week one on \"/\": "
+            f"{corto['statements']} vs {largo['statements']}")
+
+    def test_one_line_vs_eight_lines_same_statement_count(self):
+        conn = self._minimal_fixture()
+        gid_one = _horizonte_milestone(
+            conn, 1, self.MONDAY.isoformat(), (self.MONDAY + timedelta(days=6)).isoformat(), "ZZ una linea")
+        db.crear_meta_semanal(conn, 1, gid_one, self.MONDAY.isoformat(), "sesiones_fuerza", "al_menos", 3.0)
+        goals.activate(conn, gid_one)
+        conn.commit()
+        with patch.object(web_comun, "_today_local", return_value=self.HOY):
+            with contar_sql() as una:
+                r1 = client.get("/")
+
+        conn2 = self._minimal_fixture()
+        gid_eight = _horizonte_milestone(
+            conn2, 1, self.MONDAY.isoformat(), (self.MONDAY + timedelta(days=6)).isoformat(), "ZZ ocho lineas")
+        medidas = ["sueno_minutos", "hora_acostarse", "hora_levantarse", "sesiones_fuerza",
+                   "sesiones_cardio", "minutos_intensidad", "resting_hr", "steps"]
+        for medida in medidas:
+            db.crear_meta_semanal(conn2, 1, gid_eight, self.MONDAY.isoformat(), medida, "al_menos", 1.0)
+        goals.activate(conn2, gid_eight)
+        conn2.commit()
+        with patch.object(web_comun, "_today_local", return_value=self.HOY):
+            with contar_sql() as ocho:
+                r2 = client.get("/")
+
+        self.assertEqual((r1.status_code, r2.status_code), (200, 200))
+        self.assertEqual(
+            una["statements"], ocho["statements"],
+            f"8 weekly target lines cost more statements than 1 on \"/\": "
             f"{una['statements']} vs {ocho['statements']}")
 
 
