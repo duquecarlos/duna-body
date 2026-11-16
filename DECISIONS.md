@@ -23232,3 +23232,5 @@ connection-close fix above -- `body/pull.py`).
 **Open follow-ups, not this slice's to do:** none found -- the spec's four rulings and every listed
 test file are built and gated.
 
+-- merged `2b09919673dc54d443095b9066e8a8ecda8947cf`
+
