@@ -23872,3 +23872,142 @@ allow-list line).
 
 -- merged 17a2028e47e88cdc8e05d6dba9d43bc1a9abfe22
 
+## BODY-ENTRENO-DETALLE-1 -- each activity's full heart-rate curve, laps and zones; the day and night minute by minute (GATE_RED, not merged)
+
+Carlos's two quotes, typed in the Body orchestrator, verbatim. 2026-11-15: "Remember my idea of matching my
+heart rate to every activity that I did in the day, to match it exactly, to see the metrics on how I perform
+in each training session or cardio session." Asked the same day whether Body should keep every activity's
+full heart-rate curve and laps, and every night minute by minute: "Yes, everything, man."
+
+**BODY-MINUTO-A-MINUTO-1-INV's findings, in brief.** `activity` is a summary only (`body/db.py:395-415` on
+main); a day's per-minute HR/stress lived in `raw_payload` under kinds `intradia_fc`/`intradia_estres`
+(`db.py:2175-2243` on main), fetched only for days an experiment needed. garminconnect 0.3.20 offers
+`get_activity_details` (maxchart default 2000), `get_activity_splits` (laps) and
+`get_activity_hr_in_timezones` (zones), one call each. It recommended a raw-blob activity-detail table parsed
+on read (the intradia precedent: a parser fix never needs a re-pull) and found `privacidad.guarda_detalle`
+already built by BODY-CONSENTIMIENTO-V4 (merged before this slice ran, verified at Step 0:
+`body/privacidad.py:124`) with "nothing calls this yet" -- this slice is its first caller.
+
+**Ruling 1, storage.** `body/db.py:434` `CREATE TABLE IF NOT EXISTS activity_detail` -- `(person_id,
+activity_source, activity_source_id, kind, fetched_at, payload)`, PRIMARY KEY on the first four, `kind` CHECK
+IN ('detalle', 'vueltas', 'zonas'), added to `SCHEMA`'s own `executescript` (runs on every `init()` call,
+`IF NOT EXISTS`, so an existing home gains the table with no `_migrate` step needed -- the same route
+`horizonte_regla` and friends used, BODY-PLAN-ESQUEMA-1, the newest prior table addition). Functions:
+`guardar_detalle_actividad` (`db.py:2304`), `detalle_actividad_almacenado` (`:2321`, true once all three
+kinds are present, including as an explicit empty marker), `detalle_actividad` (`:2334`, parsed on read
+through the adapter's own parser), `actividades_sin_detalle` (`:2356`, `source = garmin_adapter.SOURCE` only
+-- a manual session has no Garmin id and is never listed -- newest day first). `body/privacidad.py:75` adds
+`"activity_detail"` to `FULLY_HANDLED_TABLES` (full export, unlike `raw_payload`'s own
+PARTIAL_EXPORT_TABLES: this is the person's own per-activity detail, the thing BODY-CONSENTIMIENTO-V4's "yes,
+everything, man" named); `export_person` gains `detalle_actividades` (`:231`); `delete_person` deletes it
+(`:456`) before `activity`/`workout_set`, the same FK-order reasoning those two already carry.
+
+**Ruling 2, the fetch.** `body/garmin_adapter.py:416` `fetch_activity_detail(activity_id, token_str=None)`:
+`get_activity_details`, `get_activity_splits`, `get_activity_hr_in_timezones`, one call each, the
+`fetch_intraday` `_errors` pattern (one failing call never loses the other two), the same dual-return token
+shape as `fetch_exercise_sets`. `ActivityDetailData` (`:112`).
+
+**Ruling 3, the parsers (pure, in the adapter -- every assumed key named).**
+`parse_activity_hr_series(payload, zone)` (`:874`): `metricDescriptors` (the SAME `{"key", "index"}` shape
+the day-level intraday descriptors already use -- reuses `_descriptor_index`/`_heart_rate_valid` unmodified,
+never a positional fallback for this unconfirmed endpoint) and `activityDetailMetrics[].metrics[]`; the
+timestamp is a GMT instant via `_utc_to_local_iso`. `Lap` (`:124`) and `parse_laps(payload, zone)` (`:941`):
+assumed keys `lapDTOs`, `lapIndex`, `startTimeGMT`, `duration`, `averageHR`, `maxHR` -- `startTimeGMT` through
+the new `_gmt_value_to_local_iso` (`:917`, epoch-ms tried first, then a GMT string with no offset).
+`parse_hr_zones(payload)` (`:968`): assumed keys `zoneNumber`, `secsInZone`, `zoneLowBoundary`, a bare list or
+one wrapped under `hrTimeInZones`. None of these six endpoint-and-key assumptions is confirmed by the
+installed garminconnect 0.3.20 package (typed only as `dict[str, Any]`, no docstring naming a key) -- same
+unconfirmed-shape documentation style as `parse_exercise_sets`/`_weight`/`_start_local`. Malformed input is
+always the empty tuple, never an exception (tested in `tests/test_entreno_detalle.py`).
+
+**Ruling 4, the fill.** `body/pull.py:856` `traer_detalle_actividad(conn, person_id, source_id,
+token_str=None)`: stores only the kinds `ActivityDetailData.raw` actually holds (a failed call's kind is
+simply absent, retried by a later run). `body/pull.py:879` `_pull_detalle_pendientes`: `privacidad.
+guarda_detalle` false -> no Garmin call, returns 0; else up to `DETALLE_MAX_POR_CORRIDA = 10` (`:96`) of
+`db.actividades_sin_detalle(conn, person_id, hoy - DETALLE_ALCANCE_DIAS)` (`DETALLE_ALCANCE_DIAS = 90`,
+`:101`), a failure on one logged with `errores.texto_seguro` and never stopping the others, token persisted
+the `_pull_intradia_pendientes` way, prints `detalle: N actividades traídas, M pendientes`. Called right
+after `_pull_intradia_pendientes` in `pull_hosted` (re-reading the token first, since that call may just have
+refreshed and persisted it) and in the local CLI `_run`.
+
+**Ruling 5, the day minute by minute, every day.** `body/pull.py:798` `_dias_intradia_necesarios_todos` --
+lives in `pull.py` (not `experimentos.py`): it needs `pull`'s own `INTRADIA_ALCANCE_DIAS` and `privacidad`,
+and its only caller, `_pull_intradia_pendientes`, already lives here. Unions `experimentos.
+dias_intradia_necesarios`'s own experiment days with, only when `guarda_detalle` agrees, every day from
+`hoy - INTRADIA_ALCANCE_DIAS` to yesterday not yet `db.intradia_almacenado`, sorted newest-first as one
+combined set (not two concatenated newest-first parts, which would not be globally sorted).
+`_pull_intradia_pendientes` itself is otherwise unchanged -- still just caps at `INTRADIA_MAX_POR_CORRIDA` and
+fetches. A person with neither an active experiment nor agreement makes no intraday call
+(`tests/test_pull.py`'s `test_no_active_experiment_and_no_agreement_makes_no_intraday_garmin_call`, local and
+hosted).
+
+**Ruling 6, nights.** `body/garmin_adapter.py:1016` `parse_sleep_series(payload, zone)`: five assumed arrays
+(`:1007` `_SLEEP_SERIES_SPECS`) -- `sleepHeartRate`/`hrvData`/`sleepLevels`/`sleepMovement` each keyed
+`startGMT`+its own value field, `wellnessEpochSPO2DataDTOList` keyed `epochTimestamp`/`spo2Reading` (a
+different underlying sensor pipeline, hence the different key names) -- none confirmed by garminconnect
+0.3.20's `typed.py:229-236`, which names no per-sample key at all, only that these arrays "are large and
+rarely needed in typed form." Returns only the arrays actually present and non-empty. `body/db.py:2371`
+`sueno_minuto_a_minuto(conn, person_id, day, zona)` reads the day's already-stored `kind='sleep'`
+`raw_payload` row -- no fetch of its own. No screen.
+
+**Ruling 7, cost (synthetic data, sizes only).** One 60-minute activity's three payloads at 2000 samples:
+`detalle` alone is 70,130 bytes at a minimal 2-column shape (timestamp + heart rate, what this slice's own
+parser reads) or 226,465 bytes at a more realistic ~15-column shape (speed, distance, elevation, cadence,
+etc., commonly present on an outdoor activity but not read by any parser here); `vueltas` (8 laps) 1,213
+bytes; `zonas` (5 zones) 320 bytes -- one activity totals 71,663 to 227,998 bytes. A full day's two intraday
+kinds (~720 heart-rate + ~480 stress samples, the existing minute-ish sampling convention): 15,240 +
+10,208 = 25,448 bytes. 90 days: intraday alone (every day) is ~2.18 MiB; activity_detail alone (one
+activity/day) is 6.15-19.57 MiB; combined, ~8.34-21.75 MiB added to the database, and the same to a backup of
+it.
+
+**The gate**, exactly `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as 10 sequential
+alphabetical chunks of 185 dotted test modules (~19 each), each in the foreground, read from the process:
+
+    chunk 1  (test_accesibilidad..test_backup):                   Ran 375 tests, OK (skipped=1, expected failures=1)
+    chunk 2  (test_baselines..test_despertar):                    Ran 386 tests, OK
+    chunk 3  (test_desplazamiento_import..test_experimentos_esquema): Ran 380 tests, OK
+    chunk 4  (test_experimentos_intradia..test_hogar_compartir_1): Ran 361 tests, OK
+    chunk 5  (test_hogar_cuenta_1..test_login):                   Ran 477 tests, OK
+    chunk 6  (test_mcp..test_periodo_herramientas):                Ran 515 tests, FAILED (failures=2)
+    chunk 7  (test_periodo_pantallas..test_pulido_1):              Ran 435 tests, FAILED (failures=1)
+    chunk 8  (test_pulido_2..test_shift_import):                  Ran 291 tests, OK
+    chunk 9  (test_sin_friccion..test_turnos_opcional_3):          Ran 495 tests, OK
+    chunk 10 (test_turnos_opcional_4..test_web_entry):             Ran 238 tests, OK
+
+Sum: 375+386+380+361+477+515+435+291+495+238 = 3953. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted without running): 3953 -- exact match.
+3 failures, 0 errors, 1 skipped, 1 expected failure.
+
+**The two failures, named, not fixed -- both outside this slice's `touches:`.**
+1. `tests/test_mudanza.py`'s `RegistryTest.test_every_live_table_is_in_the_registry_or_skipped` and
+   `.test_every_table_with_a_person_id_column_is_covered`: `body/mudanza.py` (the account-move/export
+   registry, `REGISTRY`/`REGISTRY_BY_NAME`/`SKIPPED_TABLES`) has never heard of `activity_detail`. The
+   one-line fix, confirmed by reading but never applied: a `TableSpec("activity_detail", match_cols=
+   ("person_id", "activity_source", "activity_source_id", "kind"))` entry in `body/mudanza.py`'s `REGISTRY`
+   list, the same shape `workout_set`'s own entry already has (`body/mudanza.py:112-113`).
+2. `tests/test_persona_fuga.py`'s `TableCensusTest.test_every_person_table_is_seeded_or_explained`: its own
+   `_seed_person` helper (`tests/test_persona_fuga.py:111`) never seeds a row into `activity_detail`, so the
+   census of "every FULLY_HANDLED_TABLES table got a row in the unlinked-person fixture" now finds a zero
+   count. The fix: one `INSERT INTO activity_detail` there, the same shape its existing `workout_set` insert
+   already has (`:151`).
+
+Neither `body/mudanza.py` nor `tests/test_persona_fuga.py` is in this slice's `touches:` -- the same
+situation BODY-CONSENTIMIENTO-V4 met with `tests/test_registro_tu.py` (recorded as
+`BODY-CONSENTIMIENTO-V4-REGISTRO-TU-1`, fixed later by BODY-CONSENTIMIENTO-V4-M, which carried that file in
+its own `touches:`). Neither fix was applied here, per the same rule: a path not declared is not covered by
+this build's approval, and the spec says to stop and say so rather than widen `touches:` on my own authority.
+
+**GATE_RED. Not merged.** `git checkout main` not run; the branch `feat/body-entreno-detalle-1` stays as is so
+the next worker (carrying `body/mudanza.py` and `tests/test_persona_fuga.py` in its own `touches:`) can apply
+both one-line fixes and re-gate.
+
+**Commits:** `5d49386` (`body/db.py`, `body/garmin_adapter.py`, `body/privacidad.py`,
+`tests/test_entreno_detalle.py` -- new, `tests/test_privacidad.py` -- rulings 1-3 and 6), `73c5fec`
+(`body/pull.py`, `tests/test_pull.py` -- rulings 4-5).
+
+**Open follow-ups, not this slice's to do:**
+- `BODY-ENTRENO-DETALLE-1-MUDANZA-1`: add the `activity_detail` `TableSpec` to `body/mudanza.py`'s
+  `REGISTRY` (finding 1 above) -- clears `tests/test_mudanza.py`'s two failures.
+- `BODY-ENTRENO-DETALLE-1-FUGA-1`: seed one `activity_detail` row in `tests/test_persona_fuga.py`'s
+  `_seed_person` (finding 2 above) -- clears its one failure.
+
