@@ -23823,3 +23823,50 @@ match. Eight of nine chunks green; the ninth carries exactly the one known, name
 `feat/body-consentimiento-v4` left as is; `git checkout main` run as the last act so other slices can run on
 main while he reads.
 
+## BODY-CONSENTIMIENTO-V4-M -- Carlos's approval, the branch brought up to date, the one named gate failure cleared (2026-11-16)
+
+Carlos's words, relayed verbatim by the Personal desk 2026-11-16: "Consent v4 text OK." It approves the v4
+clause and the "cambio" line exactly as written on `feat/body-consentimiento-v4` at `bda237a`; it does not
+approve a deploy, which needs its own go.
+
+**Brought up to date.** `git merge main` on `feat/body-consentimiento-v4` (`2a269ad`): `body/i18n/{es,en}.json`
+auto-merged cleanly, adding this branch's two consent keys beside main's new keys -- verified byte-identical
+to the branch's own `bda237a` text for both `privacidad.consentimiento.que` and `privacidad.consentimiento.cambio`,
+in both catalogs, after the merge. `DECISIONS.md` conflicted (two append-only ledger sections landing at the
+same end of file); resolved by keeping both sides' sections whole, main's first, then this branch's
+BODY-CONSENTIMIENTO-V4 entry, removing only the conflict markers -- no ledger line edited or dropped.
+
+**The one named gate failure, cleared.** `tests/test_registro_tu.py`'s `_THIRD_PERSON_ALLOW` dict gains one
+line, the follow-up's exact fix: `"privacidad.consentimiento.que": "'su detalle completo' refers to 'cada
+actividad' (each activity), not the reader"` (`9073a37`). Not one character of
+`privacidad.consentimiento.que` or `privacidad.consentimiento.cambio`, es or en, was touched.
+
+**The gate**, exactly `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as ten sequential
+alphabetical chunks of dotted modules (184 modules total), each in the foreground:
+
+    chunk 1  (test_accesibilidad..test_baselines):                 Ran 377 tests, OK (skipped=1, expected failures=1)
+    chunk 2  (test_baselines_lote..test_desplazamiento_vista):      Ran 442 tests, OK
+    chunk 3  (test_dispositivo..test_fecha_futura_1):               Ran 360 tests, OK
+    chunk 4  (test_fechas_semana..test_horizonte):                  Ran 472 tests, OK
+    chunk 5  (test_host_backup..test_medida_peso):                  Ran 469 tests, OK
+    chunk 6  (test_metas_semana_tira..test_plan_pantalla):          Ran 489 tests, OK
+    chunk 7  (test_plan_propuestas..test_recuperacion_pantallas):   Ran 405 tests, OK
+    chunk 8  (test_registro_tu..test_tendencias_kpi):               Ran 357 tests, OK
+    chunk 9  (test_tendencias_patron..test_vida_dia):               Ran 449 tests, OK
+    chunk 10 (test_vida_export..test_web_entry):                    Ran 76 tests, OK
+
+Sum: 3896 run, 0 failures, 0 errors, 1 skipped, 1 expected failure. Reconciled against an independent
+collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted by walking its
+`TestSuite`): 3896 -- matching exactly. **GREEN.**
+
+**Merge policy.** This slice's own diff (the merge plus the one-line allow-list fix) carries no schema or
+migration change and no cross-repo contract or DTO change; its only customer-facing bytes are the two
+consent keys Carlos already approved verbatim in BODY-CONSENTIMIENTO-V4 ("Consent v4 text OK."), carried
+forward unedited and reconfirmed byte-identical above. The spec's own body authorises the merge in words
+(step 5); proceeding on green.
+
+**Commits:** `2a269ad` (merge main, resolve `DECISIONS.md`), `9073a37` (`tests/test_registro_tu.py`
+allow-list line).
+
+**Open follow-ups, not this slice's to do:** none found.
+
