@@ -1151,5 +1151,46 @@ class HorizonteExportDeleteTest(unittest.TestCase):
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM experimento WHERE id = ?", (eid,)).fetchone()[0], 1)
 
 
+class ActivityDetailExportDeleteTest(unittest.TestCase):
+    """BODY-ENTRENO-DETALLE-1 ruling 1: unlike raw_payload (a PARTIAL_EXPORT_TABLE, kind/date
+    only), activity_detail is FULLY exported -- the payload too, since it is this person's own
+    watch-measured detail of their own activity. Invented demo content only, no real figures."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "activity_detail.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+        self.conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, name, source) "
+            "VALUES (1, 'a1', '2026-11-01', '2026-11-01T07:00:00', 'running', NULL, 'garmin')"
+        )
+        db.guardar_detalle_actividad(self.conn, 1, "garmin", "a1", "detalle", {"v": 1})
+        self.conn.commit()
+
+    def test_is_a_fully_handled_table(self):
+        self.assertIn("activity_detail", privacidad.FULLY_HANDLED_TABLES)
+
+    def test_export_includes_the_row_and_its_payload(self):
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(len(data["detalle_actividades"]), 1)
+        row = data["detalle_actividades"][0]
+        self.assertEqual((row["activity_source"], row["activity_source_id"], row["kind"]),
+                          ("garmin", "a1", "detalle"))
+        self.assertEqual(json.loads(row["payload"]), {"v": 1})
+
+    def test_export_of_another_person_sees_nothing(self):
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 2)
+        self.assertEqual(data["detalle_actividades"], [])
+
+    def test_delete_all_removes_the_row(self):
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM activity_detail").fetchone()[0], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

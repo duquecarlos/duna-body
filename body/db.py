@@ -422,6 +422,25 @@ CREATE TABLE IF NOT EXISTS workout_set (
 {_WORKOUT_SET_COLUMNS}
 );
 
+-- BODY-ENTRENO-DETALLE-1: one row per (activity, kind) -- the library's own JSON exactly as
+-- fetched, parsed on READ by the adapter's own parsers (the intradia precedent at raw_payload
+-- above, db.detalle_actividad below), so a parser fix never needs a re-pull. kind 'detalle' is
+-- get_activity_details (the full heart-rate curve), 'vueltas' is get_activity_splits (laps),
+-- 'zonas' is get_activity_hr_in_timezones. activity_source/activity_source_id name the same
+-- (source, source_id) pair as `activity`'s own composite key, workout_set's own naming above --
+-- no composite FK, same as workout_set (SQLite's single-column REFERENCES cannot express it). An
+-- explicit empty marker ('{{}}'/'null') for a kind Garmin returned nothing for, so it is never
+-- re-fetched, same convention raw_payload's intraday rows use.
+CREATE TABLE IF NOT EXISTS activity_detail (
+    person_id          INTEGER NOT NULL REFERENCES person(id),
+    activity_source    TEXT NOT NULL,
+    activity_source_id TEXT NOT NULL,
+    kind               TEXT NOT NULL CHECK (kind IN ('detalle', 'vueltas', 'zonas')),
+    fetched_at         TEXT NOT NULL,
+    payload            TEXT NOT NULL,
+    PRIMARY KEY (person_id, activity_source, activity_source_id, kind)
+);
+
 -- Work shifts: a first-class input (the shift-vs-recovery idea).
 -- Arrives later from the Personal desk; codes are whatever the employer uses.
 CREATE TABLE IF NOT EXISTS shift (
@@ -2274,6 +2293,96 @@ def intradia(conn: sqlite3.Connection, person_id: int, day: str, kind: str, zona
     payload = json.loads(row["payload"])
     parser = getattr(garmin_adapter, _INTRADIA_PARSER_NAMES[kind])
     return list(parser(payload, zona))
+
+
+# BODY-ENTRENO-DETALLE-1: one activity's full detail -- heart-rate curve, laps, heart-rate-zone
+# breakdown -- stored raw in activity_detail and parsed on read, the same intradia-table
+# precedent just above (guardar_intradia/intradia_almacenado/intradia).
+DETALLE_KINDS = ("detalle", "vueltas", "zonas")
+
+
+def guardar_detalle_actividad(conn: sqlite3.Connection, person_id: int, source: str, source_id: str,
+                               kind: str, payload) -> None:
+    """INSERT OR REPLACE under activity_detail's own (person_id, activity_source,
+    activity_source_id, kind) key -- the same explicit-empty-marker convention guardar_intradia
+    uses: a kind Garmin returned nothing for is stored as an explicit {}/null, never left
+    unstored, so pull.traer_detalle_actividad never re-fetches it."""
+    if kind not in DETALLE_KINDS:
+        raise ValueError(f"unknown activity detail kind: {kind!r}")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO activity_detail (person_id, activity_source, "
+            "activity_source_id, kind, fetched_at, payload) VALUES (?, ?, ?, ?, ?, ?)",
+            (person_id, source, source_id, kind, now, json.dumps(payload)),
+        )
+
+
+def detalle_actividad_almacenado(conn: sqlite3.Connection, person_id: int, source: str, source_id: str) -> bool:
+    """True once all three kinds (detalle, vueltas, zonas) are stored for this activity --
+    including as an explicit empty marker. False for an activity never fetched, or fetched only
+    partially (one of the three Garmin calls failed -- pull.traer_detalle_actividad's own
+    _errors handling, the fetch_intraday pattern)."""
+    row = conn.execute(
+        "SELECT COUNT(DISTINCT kind) AS n FROM activity_detail WHERE person_id = ? AND "
+        "activity_source = ? AND activity_source_id = ?",
+        (person_id, source, source_id),
+    ).fetchone()
+    return row["n"] == len(DETALLE_KINDS)
+
+
+def detalle_actividad(conn: sqlite3.Connection, person_id: int, source: str, source_id: str, kind: str):
+    """The stored, parsed form of one activity's one detail kind -- parsed on read with the
+    adapter's own parser (garmin_adapter.parse_activity_hr_series/parse_laps/parse_hr_zones), the
+    same db.intradia precedent above. The parser's own empty-tuple return for an activity never
+    stored, or stored as an empty marker."""
+    if kind not in DETALLE_KINDS:
+        raise ValueError(f"unknown activity detail kind: {kind!r}")
+    row = conn.execute(
+        "SELECT payload FROM activity_detail WHERE person_id = ? AND activity_source = ? AND "
+        "activity_source_id = ? AND kind = ?",
+        (person_id, source, source_id, kind),
+    ).fetchone()
+    if row is None:
+        return ()
+    payload = json.loads(row["payload"])
+    if kind == "zonas":
+        return garmin_adapter.parse_hr_zones(payload)
+    zona = person(conn, person_id)["timezone"]
+    parser = garmin_adapter.parse_activity_hr_series if kind == "detalle" else garmin_adapter.parse_laps
+    return parser(payload, zona)
+
+
+def actividades_sin_detalle(conn: sqlite3.Connection, person_id: int, desde_dia: str) -> list[str]:
+    """This person's Garmin activities (source = garmin_adapter.SOURCE -- a manual session has no
+    Garmin id and is never listed) with day >= desde_dia and missing at least one of the three
+    detail kinds, NEWEST day first. Returns each activity's own source_id -- pull._pull_detalle_
+    pendientes fetches them through pull.traer_detalle_actividad."""
+    rows = conn.execute(
+        "SELECT source_id FROM activity WHERE person_id = ? AND source = ? AND day >= ? AND "
+        "source_id NOT IN (SELECT activity_source_id FROM activity_detail WHERE person_id = ? "
+        "AND activity_source = ? GROUP BY activity_source_id HAVING COUNT(DISTINCT kind) = ?) "
+        "ORDER BY day DESC, source_id DESC",
+        (person_id, garmin_adapter.SOURCE, desde_dia, person_id, garmin_adapter.SOURCE, len(DETALLE_KINDS)),
+    ).fetchall()
+    return [r["source_id"] for r in rows]
+
+
+def sueno_minuto_a_minuto(conn: sqlite3.Connection, person_id: int, day: str, zona: str) -> dict:
+    """The night's own per-minute arrays (heart rate, HRV, stages, movement, SpO2), parsed on
+    read from `day`'s already-stored 'sleep' raw_payload (save_day's own kind) with
+    garmin_adapter.parse_sleep_series -- no fetch of its own; the sleep payload is already pulled
+    by every day's ordinary sync (BODY-ENTRENO-DETALLE-1 ruling 6). {} for a day never stored, or
+    with no per-minute array present. Same source precedence as intradia() above, though today
+    only the live API (never body.importar_garmin) ever writes kind='sleep'."""
+    row = conn.execute(
+        "SELECT payload FROM raw_payload WHERE person_id = ? AND day = ? AND kind = 'sleep' "
+        "ORDER BY (source != ?) LIMIT 1",
+        (person_id, day, garmin_adapter.SOURCE),
+    ).fetchone()
+    if row is None:
+        return {}
+    return garmin_adapter.parse_sleep_series(json.loads(row["payload"]), zona)
 
 
 def save_exercise_sets(conn: sqlite3.Connection, person_id: int, source: str, source_id: str, sets) -> None:
