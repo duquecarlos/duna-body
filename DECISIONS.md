@@ -23606,3 +23606,5 @@ the branch, unmerged, for approval. No schema or migration change; no cross-repo
   avoided by rewording instead; if a future slice needs the word "tiene" in a Today-facing plan
   string, that allow-list (not a reword) is the right tool then.
 
+-- merged d87ce93f5b6958ad74ff813c4595ae98076daf8b, reviewed by the orchestrator at 375 px
+
