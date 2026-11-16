@@ -41,9 +41,10 @@ def _fuentes_ctx(t, conn, person_id: int, confirmar: str | None) -> list[dict]:
 def consentimiento_form(request: Request, person_id: int = Depends(identity.current_person_id)):
     if not cuenta.hosted():
         raise HTTPException(404)
-    _, _, t = comun._ctx(person_id)
+    conn, _, t = comun._ctx(person_id)
     return_to = cuenta.safe_return_to(request.query_params.get("return_to"))
-    return comun._render("consentimiento.html", t=t, tab=None, return_to=return_to)
+    cambio = privacidad.acepto_version_anterior(conn, person_id)
+    return comun._render("consentimiento.html", t=t, tab=None, return_to=return_to, cambio=cambio)
 
 
 @router.post("/privacidad/consentimiento")

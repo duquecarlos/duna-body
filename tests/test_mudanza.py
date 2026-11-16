@@ -177,8 +177,8 @@ def _populate_full(conn: sqlite3.Connection, person_id: int) -> dict:
     conn.execute("INSERT INTO tope_agente (person_id) VALUES (?)", (person_id,))
     conn.execute(
         "INSERT INTO consentimiento (person_id, version, accepted_at) "
-        "VALUES (?, 'consentimiento-v3', ?)",
-        (person_id, NOW),
+        "VALUES (?, ?, ?)",
+        (person_id, privacidad.CONSENT_VERSION, NOW),
     )
     conn.execute(
         "INSERT INTO moment (person_id, ts_local, kind, created_at) VALUES (?, ?, 'nota', ?)",
@@ -431,8 +431,8 @@ def _populate_old_schema(conn: sqlite3.Connection, person_id: int, actions: list
     conn.execute("INSERT INTO tope_agente (person_id) VALUES (?)", (person_id,))
     conn.execute(
         "INSERT INTO consentimiento (person_id, version, accepted_at) "
-        "VALUES (?, 'consentimiento-v3', ?)",
-        (person_id, NOW),
+        "VALUES (?, ?, ?)",
+        (person_id, privacidad.CONSENT_VERSION, NOW),
     )
     conn.execute(
         "INSERT INTO moment (person_id, ts_local, kind, created_at) VALUES (?, ?, 'nota', ?)",
