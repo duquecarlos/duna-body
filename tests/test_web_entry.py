@@ -76,6 +76,7 @@ class RouteSetTest(unittest.TestCase):
         ("/garmin/codigo", ("POST",)),
         ("/garmin/conectar", ("POST",)),
         ("/garmin/desconectar", ("POST",)),
+        ("/garmin/estado-vivo", ("GET",)),  # BODY-SYNC-VIVO-2 ruling 3
         ("/goals", ("GET",)),
         ("/goals/new", ("GET",)),
         ("/goals/new", ("POST",)),

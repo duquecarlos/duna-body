@@ -87,20 +87,22 @@ class ConnectTriggersPullTest(GarminHostedTestCase):
 
 class PullGuardTest(unittest.TestCase):
     """Ruling 4b: a second connect while one is already running for that person does not start
-    another (an in-process guard, enough for one web worker)."""
+    another (an in-process guard, enough for one web worker). BODY-SYNC-VIVO-2 ruling 1: the
+    guard set itself now lives in body/pull.py (`pull._PULL_EN_CURSO`), shared with the on-demand
+    live pull -- these tests read and mutate it there, never through `garmin_rutas`."""
 
     def setUp(self):
-        garmin_rutas._PULL_EN_CURSO.clear()
-        self.addCleanup(garmin_rutas._PULL_EN_CURSO.clear)
+        pull._PULL_EN_CURSO.clear()
+        self.addCleanup(pull._PULL_EN_CURSO.clear)
 
     def test_a_second_call_for_the_same_person_while_one_runs_is_skipped(self):
-        garmin_rutas._PULL_EN_CURSO.add(7)
+        pull._PULL_EN_CURSO.add(7)
         with mock.patch("body.rutas.garmin.pull.pull_persona_ahora") as m:
             garmin_rutas._lanzar_pull_conexion(7)
         m.assert_not_called()
 
     def test_a_different_person_is_unaffected(self):
-        garmin_rutas._PULL_EN_CURSO.add(7)
+        pull._PULL_EN_CURSO.add(7)
         with mock.patch("body.rutas.garmin.pull.pull_persona_ahora") as m:
             garmin_rutas._lanzar_pull_conexion(8)
         m.assert_called_once_with(8)
@@ -108,13 +110,13 @@ class PullGuardTest(unittest.TestCase):
     def test_the_guard_clears_once_the_pull_finishes(self):
         with mock.patch("body.rutas.garmin.pull.pull_persona_ahora"):
             garmin_rutas._lanzar_pull_conexion(9)
-        self.assertNotIn(9, garmin_rutas._PULL_EN_CURSO)
+        self.assertNotIn(9, pull._PULL_EN_CURSO)
 
     def test_the_guard_clears_even_if_the_pull_raises(self):
         with mock.patch("body.rutas.garmin.pull.pull_persona_ahora", side_effect=RuntimeError("boom")):
             with self.assertRaises(RuntimeError):
                 garmin_rutas._lanzar_pull_conexion(10)
-        self.assertNotIn(10, garmin_rutas._PULL_EN_CURSO)
+        self.assertNotIn(10, pull._PULL_EN_CURSO)
 
 
 class PullPersonaAhoraTest(unittest.TestCase):

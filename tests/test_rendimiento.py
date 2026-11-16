@@ -89,6 +89,8 @@ _CEILINGS = {
     "/day/{day}/entreno/{source_id}": 16,  # BODY-ENTRENO-VISTA-SESION-1: measured 12, ceil(12 * 1.3) = 16
     "/experiments/{experiment_id}": 27,
     "/garmin": 9,
+    "/garmin/estado-vivo": 6,  # BODY-SYNC-VIVO-2: measured 4 (local mode's early 404, same path as
+                               # /garmin's own), ceil(4 * 1.3) = 6
     "/goals": 75,
     "/goals/new": 20,
     "/goals/{goal_id}": 33,
