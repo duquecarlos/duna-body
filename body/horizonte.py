@@ -16,7 +16,7 @@ import re
 import statistics
 from datetime import date, timedelta
 
-from . import db, entreno_racha, fechas, goals, household
+from . import db, entreno_racha, fechas, goals
 from .turnos_costo import bloques_noche
 
 # Garmin typeKeys this app already classifies (grepped from body/history.py's own
@@ -617,18 +617,27 @@ def es_horizonte(conn, goal_id: int) -> bool:
 
 
 def horizontes(conn, person_id: int, hoy: date, *, solo_activos: bool = False) -> list[int]:
-    """Every goal id `person_id` can see (goals.goal_scope_sql: their own, plus any shared
-    household milestone) that is a horizon by `es_horizonte`'s own rule -- active plans first, then
-    newest. `solo_activos` additionally requires status 'active' and the horizon's own span to
-    cover `hoy`. One bounded statement, independent of how many plan rows any horizon carries."""
-    hh = household.household_of(conn, person_id)
-    where, params = goals.goal_scope_sql(person_id, hh)
+    """Every goal id `person_id` can see -- their own, plus any shared household milestone, the
+    same visibility rule `goals.goal_scope_sql` names -- that is a horizon by `es_horizonte`'s own
+    rule, active plans first, then newest. `solo_activos` additionally requires status 'active' and
+    the horizon's own span to cover `hoy`.
+
+    BODY-PLAN-HOY-1 ruling 3: Today calls this on every view, so a person with no plan must pay at
+    most one extra statement for it -- too little room for `goals.goal_scope_sql`'s own two-call
+    shape (`household.household_of` first, then the listing). The household lookup is folded into
+    this SAME statement instead, as a scalar subquery: a person with no household row makes it
+    NULL, and 'hogar_id = NULL' is never true, so the OR's household branch drops out on its own --
+    the identical net effect goal_scope_sql gets by skipping that branch's SQL text entirely when
+    `household_of` returns None."""
     extra = ""
+    params: tuple = (person_id, person_id)
     if solo_activos:
         extra = " AND status = 'active' AND start_day <= ? AND deadline >= ?"
         params = params + (hoy.isoformat(), hoy.isoformat())
     rows = conn.execute(
-        f"SELECT id FROM goal WHERE {where} AND kind = 'milestone' AND horizonte_goal_id IS NULL{extra} "
+        "SELECT id FROM goal WHERE (person_id = ? OR (visibility = 'household' AND kind = 'milestone' "
+        "AND hogar_id = (SELECT hogar_id FROM hogar_miembro WHERE person_id = ?))) "
+        f"AND kind = 'milestone' AND horizonte_goal_id IS NULL{extra} "
         f"AND id IN ({_PLAN_ROW_HORIZONTES}) ORDER BY (status = 'active') DESC, id DESC",
         params,
     ).fetchall()

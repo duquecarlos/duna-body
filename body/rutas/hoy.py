@@ -13,9 +13,9 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from markupsafe import Markup
 
-from .. import (anatomia, comida_compartida, compartir, cuenta, db, fuentes, garmin_cuenta, goals, history,
-                household, identity, noche_inusual, nutriente_objetivo, pull, readiness, recuperacion,
-                turnos_costo, tutoriales, ventana_comida)
+from .. import (anatomia, comida_compartida, compartir, cuenta, db, fechas, fuentes, garmin_cuenta, goals,
+                history, horizonte, household, identity, noche_inusual, nutriente_objetivo, pull, readiness,
+                recuperacion, turnos_costo, tutoriales, ventana_comida)
 from ..agente import conversacion as agente_conversacion
 from ..agente import herramientas as agente_herramientas
 from ..agente import propuestas as agente_propuestas
@@ -25,6 +25,14 @@ from ..i18n import T
 from . import comun, experimentos
 
 router = APIRouter()
+
+# BODY-PLAN-HOY-1 ruling 2: "Tu plan esta semana" shows at most this many active plans, each its
+# own block; beyond it, one "y N planes más" line instead (a named constant, never a bare 2).
+PLANES_HOY_MAX = 2
+# Ruling 2: the same chip colours goal.html's own plan section already uses (metas.py's own
+# _PLAN_ESTADO_CLS) -- duplicated here, not imported, since metas.py keeps it private and
+# body/rutas/comun.py (the shared-plumbing home) is outside this slice's touches.
+_PLAN_ESTADO_CLS = {"cumple": "ok", "en_curso": "warn", "no_cumple": "low", "sin_dato": "off"}
 
 TODAY_CARDS = ["sleep_minutes", "hrv_last_night", "resting_hr", "body_battery_wake", "stress_avg", "steps"]
 # BODY-HOY-FICHAS-EXTRA-1 (ruling 4): these two tiles get a band word against the person's own
@@ -424,6 +432,92 @@ def _semana_nocturna_ctx(t: T, conn, person_id: int, today_local: date) -> dict 
     return {"fechas": fechas, "recuperacion": recuperacion}
 
 
+def _plan_semana_cuenta_txt(t: T, estado: str, n: int) -> str:
+    """Ruling 2: one count segment ("2 cumplidas", "1 en curso"), singular via the repo's own
+    `_one` key convention -- every key written as a literal t(...) call (not built from an
+    f-string) so tests/test_i18n_paridad.py's own scan can see each one."""
+    if estado == "cumple":
+        return (t("today.plan_semana.cuenta.cumple_one") if n == 1
+                else t("today.plan_semana.cuenta.cumple", n=t.num(n)))
+    if estado == "en_curso":
+        return (t("today.plan_semana.cuenta.en_curso_one") if n == 1
+                else t("today.plan_semana.cuenta.en_curso", n=t.num(n)))
+    if estado == "no_cumple":
+        return (t("today.plan_semana.cuenta.no_cumple_one") if n == 1
+                else t("today.plan_semana.cuenta.no_cumple", n=t.num(n)))
+    return (t("today.plan_semana.cuenta.sin_dato_one") if n == 1
+            else t("today.plan_semana.cuenta.sin_dato", n=t.num(n)))
+
+
+def _plan_semana_cuentas(t: T, lineas: list[dict]) -> list[dict]:
+    """Ruling 2: this week's weekly lines as counts by estado, non-zero estados only, in the
+    design's own fixed order (goals.plan.estado's own chip colours, never a new one)."""
+    conteo: dict[str, int] = {}
+    for linea in lineas:
+        conteo[linea["estado"]] = conteo.get(linea["estado"], 0) + 1
+    out = []
+    for estado in ("cumple", "en_curso", "no_cumple", "sin_dato"):
+        n = conteo.get(estado, 0)
+        if n == 0:
+            continue
+        out.append({"cls": _PLAN_ESTADO_CLS[estado], "texto": _plan_semana_cuenta_txt(t, estado, n)})
+    return out
+
+
+def _plan_semana_bloque(t: T, resumen: dict, today_local: date) -> dict:
+    """Ruling 2: one block of Today's "Tu plan esta semana" card, built ONLY from
+    `horizonte.resumen` -- never a second horizonte_* read. The week position ("Semana N de M"),
+    the days-left line, the current week's line counts by estado, the next checkpoint when it
+    falls within 7 days, and the honest gap when this week carries no weekly lines at all."""
+    start_monday = fechas.lunes_de(date.fromisoformat(resumen["start_day"]))
+    end_monday = fechas.lunes_de(date.fromisoformat(resumen["deadline"]))
+    semanas = max(1, (end_monday - start_monday).days // 7 + 1)
+    esta_monday = date.fromisoformat(resumen["semana_actual"]["week_start"])
+    semana_num = max(1, min((esta_monday - start_monday).days // 7 + 1, semanas))
+
+    dias = resumen["dias_a_deadline"]
+    if dias == 0:
+        faltan = t("today.plan_semana.termina_hoy")
+    elif dias == 1:
+        faltan = t("today.plan_semana.faltan_one")
+    else:
+        faltan = t("today.plan_semana.faltan", n=t.num(dias))
+
+    checkpoint = None
+    siguiente = resumen["siguiente_checkpoint"]
+    if siguiente is not None:
+        dia_cp = date.fromisoformat(siguiente["day"])
+        if (dia_cp - today_local).days <= 7:
+            checkpoint = t("today.plan_semana.checkpoint", fecha=_dia_mes(t, dia_cp), titulo=siguiente["titulo"])
+
+    return {
+        "goal_id": resumen["goal_id"], "titulo": resumen["titulo"],
+        "semana": t("today.plan_semana.semana", n=t.num(semana_num), m=t.num(semanas)), "faltan": faltan,
+        "cuentas": _plan_semana_cuentas(t, resumen["semana_actual"]["lineas"]), "checkpoint": checkpoint,
+    }
+
+
+def _plan_semana_ctx(t: T, conn, person_id: int, today_local: date) -> dict | None:
+    """Ruling 2: Today's "Tu plan esta semana" card -- shown only when the person has at least one
+    active plan (`horizonte.horizontes(..., solo_activos=True)`, ruling 1's own definition), right
+    after the day-ahead card. At most PLANES_HOY_MAX blocks, each from one `horizonte.resumen`
+    call (ruling 3: bounded regardless of that plan's own weekly lines, rules, weeks or
+    checkpoints); the rest collapse into one "y N planes más" line to /goals."""
+    ids = horizonte.horizontes(conn, person_id, today_local, solo_activos=True)
+    if not ids:
+        return None
+    bloques = [_plan_semana_bloque(t, horizonte.resumen(conn, gid, person_id, hoy=today_local), today_local)
+               for gid in ids[:PLANES_HOY_MAX]]
+    extra = len(ids) - PLANES_HOY_MAX
+    if extra == 1:
+        mas = t("today.plan_semana.mas_one")
+    elif extra > 0:
+        mas = t("today.plan_semana.mas", n=t.num(extra))
+    else:
+        mas = None
+    return {"bloques": bloques, "mas": mas}
+
+
 def _entrenado_hoy_categorias(conn, person_id: int, today_local: date) -> list:
     """BODY-HOY-ESCRITORIO-1 ruling 3: every active, not-excluded set's own categoria across ALL of
     today's logged training -- folded the same way `_actividades_hoy` already folds a linked pair
@@ -674,6 +768,7 @@ def today(background_tasks: BackgroundTasks, person_id: int = Depends(identity.c
                    missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_count=proposed_count,
                    turno=turno_ctx, turnos=turnos_on, mcp_pendientes=mcp_pendientes, mcp_aplicado=mcp_aplicado,
                    dia_por_delante=_dia_por_delante_ctx(t, conn, person_id, today_local, turno_de_hoy["hoy"]),
+                   plan_semana=_plan_semana_ctx(t, conn, person_id, today_local),
                    semana_nocturna=_semana_nocturna_ctx(t, conn, person_id, today_local),
                    today_iso=today_local.isoformat(),
                    primeros_pasos=primeros_pasos,
