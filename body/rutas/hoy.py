@@ -9,13 +9,13 @@ import json
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from markupsafe import Markup
 
 from .. import (anatomia, comida_compartida, compartir, cuenta, db, fuentes, garmin_cuenta, goals, history,
-                household, identity, noche_inusual, nutriente_objetivo, readiness, recuperacion, turnos_costo,
-                tutoriales, ventana_comida)
+                household, identity, noche_inusual, nutriente_objetivo, pull, readiness, recuperacion,
+                turnos_costo, tutoriales, ventana_comida)
 from ..agente import conversacion as agente_conversacion
 from ..agente import herramientas as agente_herramientas
 from ..agente import propuestas as agente_propuestas
@@ -139,6 +139,35 @@ def _garmin_sync_ctx(t: T, conn, person_id: int, day: str, today_local: date) ->
     else:
         return None
     return {"texto": texto}
+
+
+def _reloj_vivo_ctx(t: T, conn, person_id: int, person: dict, today_local: date) -> dict | None:
+    """BODY-SYNC-VIVO-2 ruling 3: the «Tu reloj» live-freshness card -- separate from
+    `_garmin_sync_ctx` above (unchanged) and from `_synced`'s own "Reloj sincronizado HH:MM" line
+    below (also unchanged). The SAME logic body/rutas/garmin.py's own `_reloj_vivo_ctx` builds for
+    its `/garmin/estado-vivo` poll -- duplicated here rather than imported, since neither a route
+    module nor another may import one another for one helper (the same choice
+    `_momento_checkin_txt` below already makes). None while none of `pull.texto_estado_vivo`'s
+    three states applies (no card, no claim)."""
+    tz = ZoneInfo(person.get("timezone") or "America/Bogota")
+    texto = pull.texto_estado_vivo(t, conn, person_id, tz, today_local)
+    if texto is None:
+        return None
+    return {"texto": texto, "sincronizando": person_id in pull._PULL_EN_CURSO}
+
+
+def _debe_lanzar_pull_hoy(conn, person_id: int) -> bool:
+    """BODY-SYNC-VIVO-2 ruling 2: whether Hoy's own `GET /` should schedule `pull.pull_hoy_ahora`
+    as a BackgroundTask -- hosted, with a Garmin account, and `puede_intentar` true right now
+    (ESPACIO_MIN_HOY, the same ceiling `pull_hoy_ahora` itself re-checks once the task actually
+    runs). This pre-check only avoids scheduling a background task `pull_hoy_ahora` would
+    immediately refuse anyway on every single request; it does not re-check quiet hours (ruling
+    4), which `pull_hoy_ahora` alone enforces."""
+    if not cuenta.hosted():
+        return False
+    if not garmin_cuenta.conectado(conn, person_id):
+        return False
+    return garmin_cuenta.puede_intentar(conn, person_id, datetime.now(timezone.utc), pull.ESPACIO_MIN_HOY)
 
 
 def _synced(conn, person) -> str | None:
@@ -586,8 +615,13 @@ def _ventana_dia_ctx(t: T, conn, person_id: int, d: date) -> dict:
 
 @router.get("/")
 @comun._cierra_conexion
-def today(person_id: int = Depends(identity.current_person_id)):
+def today(background_tasks: BackgroundTasks, person_id: int = Depends(identity.current_person_id)):
     conn, person, t = comun._ctx(person_id)
+    # BODY-SYNC-VIVO-2 ruling 2: never blocking -- scheduled to run AFTER this response is sent,
+    # on its own connection. Checked before the "no data yet" early return below too, so the very
+    # first live pull can start from the empty state.
+    if _debe_lanzar_pull_hoy(conn, person_id):
+        background_tasks.add_task(pull.pull_hoy_ahora, person_id)
     turnos_on = db.trabaja_turnos_si(conn, person_id)
     day = comun._latest_day(conn, person_id)
     proposed_count = conn.execute(
@@ -633,7 +667,8 @@ def today(person_id: int = Depends(identity.current_person_id)):
                       "banda": banda, "caption": caption})
     return comun._render("today.html", t=t, tab="today", day=day, date_long=t.long_date(date.fromisoformat(day)),
                    synced=synced, stale=_stale_ctx(t, day, today_local),
-                   garmin_sync=_garmin_sync_ctx(t, conn, person_id, day, today_local), cuerpo=cuerpo_ctx,
+                   garmin_sync=_garmin_sync_ctx(t, conn, person_id, day, today_local),
+                   reloj_vivo=_reloj_vivo_ctx(t, conn, person_id, person, today_local), cuerpo=cuerpo_ctx,
                    r=r, reading=_reading(t, r), ready_avg=ready_avg,
                    ready_delta=ready_delta, ready_cls=ready_cls, cards=cards,
                    missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_count=proposed_count,

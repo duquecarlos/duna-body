@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -18,23 +19,20 @@ from . import comun
 
 router = APIRouter()
 
-# BODY-GARMIN-SYNC-CONSISTENTE-1 ruling 4b: person_ids with a connect-triggered pull in flight --
-# an in-process guard, enough for one web worker, so a second connect within the same pull does
-# not start another. Never persisted: a crash mid-pull leaves no stuck entry, the next connect or
-# the next daily pull just tries again.
-_PULL_EN_CURSO: set[int] = set()
-
 
 def _lanzar_pull_conexion(person_id: int) -> None:
     """The BackgroundTasks target for ruling 4b: runs pull.pull_persona_ahora for this person
-    unless one is already running for them (_PULL_EN_CURSO)."""
-    if person_id in _PULL_EN_CURSO:
+    unless one is already running for them. BODY-SYNC-VIVO-2 ruling 1: the guard set itself moved
+    to body/pull.py (`pull._PULL_EN_CURSO`), shared with the on-demand live pull
+    (`pull.pull_hoy_ahora`) -- reached here as `pull._PULL_EN_CURSO`, never re-bound under a local
+    name (tests/test_guardia_parches.py's NoShimAliasGuardTest forbids that shape)."""
+    if person_id in pull._PULL_EN_CURSO:
         return
-    _PULL_EN_CURSO.add(person_id)
+    pull._PULL_EN_CURSO.add(person_id)
     try:
         pull.pull_persona_ahora(person_id)
     finally:
-        _PULL_EN_CURSO.discard(person_id)
+        pull._PULL_EN_CURSO.discard(person_id)
 
 _MFA_TTL_SECONDS = 600
 _MFA_MAX_ATTEMPTS = 5
@@ -103,6 +101,35 @@ def garmin_view(request: Request, person_id: int = Depends(identity.current_pers
     err = request.query_params.get("error")
     form_error = t(_GARMIN_FORM_ERROR_KEYS[err]) if err in _GARMIN_FORM_ERROR_KEYS else None
     return comun._render("garmin.html", **_garmin_ctx(t, conn, person_id, form_error=form_error))
+
+
+def _reloj_vivo_ctx(t: T, conn, person_id: int) -> dict | None:
+    """BODY-SYNC-VIVO-2 ruling 3: the «Tu reloj» live card's own context -- shared by Hoy's `/`
+    (body/rutas/hoy.py) and this module's own polling endpoint below, so the two can never render
+    a different card for the same state. None while nothing of the three states applies (no card,
+    no claim) -- the same "honest gap" rule Hoy's other cards already follow."""
+    person = db.person(conn, person_id)
+    tz = ZoneInfo(person.get("timezone") or "America/Bogota")
+    hoy_local = comun._today_local(person)
+    texto = pull.texto_estado_vivo(t, conn, person_id, tz, hoy_local)
+    if texto is None:
+        return None
+    return {"texto": texto, "sincronizando": person_id in pull._PULL_EN_CURSO}
+
+
+@router.get("/garmin/estado-vivo")
+@comun._cierra_conexion
+def garmin_estado_vivo(person_id: int = Depends(identity.current_person_id)):
+    """BODY-SYNC-VIVO-2 ruling 3: the small GET `static/reloj-sync.js` polls while the «Tu reloj»
+    card shows a pull in progress -- renders the SAME partial (`_reloj.html`) Hoy's own card uses,
+    so the browser can just swap the card's markup in place. `reloj_vivo` is None when none of the
+    three live states apply any more (an edge case: a person who has never once watch-synced, and
+    whose last attempt failed with no backoff) -- the partial then renders a plain, textless card,
+    which carries no `data-sincronizando` attribute either, so the poller reads that as "done"."""
+    if not cuenta.hosted():
+        raise HTTPException(404)
+    conn, _, t = comun._ctx(person_id)
+    return comun._render("_reloj.html", t=t, reloj_vivo=_reloj_vivo_ctx(t, conn, person_id))
 
 
 @router.post("/garmin/conectar")

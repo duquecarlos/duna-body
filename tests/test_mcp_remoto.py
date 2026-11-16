@@ -485,5 +485,40 @@ class AislamientoEntrePersonasTest(_HostedTestCase):
         self.assertNotIn("187", r.text)
 
 
+class LiveSyncTriggerTest(_HostedTestCase):
+    """BODY-SYNC-VIVO-2 ruling 2: the hosted MCP door gets the live-pull trigger through the SAME
+    `herramientas.ejecutar` the local stdio door and the in-app assistant use -- this route's own
+    `mcp_remoto_llamar` calls `mcp._llamar_herramienta`, which for the hosted door's own
+    `_SesionRemota` dispatches straight to `ejecutar`, no separate wiring of its own."""
+
+    def setUp(self):
+        super().setUp()
+        self.key = dispositivo.crear(self.conn, 1, "PC de Carlos", {"asistente:mcp"})
+        # body.mcp's own _llamar_herramienta sets herramientas._TURNOS_ACTUAL for the call (person
+        # 1 here has no shift setting, unlike test_mcp_remoto.py's other, already-seeded fixtures)
+        # -- TestClient's ASGI transport does not give every request its own contextvars.Context,
+        # so this restores the default for whichever test module unittest discover runs next.
+        from body.agente import herramientas
+        self.addCleanup(herramientas.fijar_turnos_actual, True)
+
+    def test_leer_hoy_through_the_hosted_door_triggers_the_live_pull(self):
+        import threading as _threading
+        from unittest import mock as _mock
+
+        evento = _threading.Event()
+        llamadas = []
+
+        def capturar(pid):
+            llamadas.append(pid)
+            evento.set()
+
+        with _mock.patch("body.agente.herramientas.pull.pull_hoy_ahora", side_effect=capturar):
+            r = self.client.post("/api/asistente/mcp/llamar", headers={"Authorization": f"Bearer {self.key}"},
+                                  json={"nombre": "leer_hoy", "argumentos": {}})
+            self.assertTrue(evento.wait(2))
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(llamadas, [1])
+
+
 if __name__ == "__main__":
     unittest.main()

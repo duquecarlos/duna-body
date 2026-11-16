@@ -39,6 +39,7 @@ import sys
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from . import (config, cuenta, db, errores, experimentos, fechas, garmin_adapter, garmin_cuenta, goals, readiness,
                recuperacion, sueno_fc, turno_fc)
@@ -77,6 +78,28 @@ INTRADIA_ALCANCE_DIAS = 130
 # new experiment's test mornings come first, and its baseline window fills in over a few runs
 # rather than one big burst of Garmin calls.
 INTRADIA_MAX_POR_CORRIDA = 14
+
+# BODY-SYNC-VIVO-2 ruling 1: the on-demand pull's own minimum space between attempts for the SAME
+# person -- independent of garmin_cuenta's own backoff window (ESPACIO_MIN_ENTRE_INTENTOS above is
+# 0, the scheduled pulls' own spacing; a live trigger is asked for far more often than once a day,
+# so it needs a real floor of its own).
+ESPACIO_MIN_HOY = 15
+
+# BODY-SYNC-VIVO-2 ruling 4: no on-demand pull between 23:00 and 06:00 in the person's own zone --
+# the watch's own overnight sync has very likely not landed yet and the person is very likely
+# asleep. Checked against the person's own local clock, never the server's (BODY-PULL-RELOJ-1).
+QUIETA_DESDE_HORA = 23
+QUIETA_HASTA_HORA = 6
+
+# BODY-SYNC-VIVO-2 ruling 1: person_ids with an on-demand (pull_hoy_ahora) or connect-triggered
+# (pull_persona_ahora) pull in flight right now -- ONE shared in-process guard, enough for one web
+# worker, so the two triggers never run concurrently for the same person. Lifted here from
+# body/rutas/garmin.py's own BODY-GARMIN-SYNC-CONSISTENTE-1 ruling 4b guard, which now reaches it
+# as `pull._PULL_EN_CURSO` -- never a re-imported or re-bound copy (tests/test_guardia_parches.py's
+# NoShimAliasGuardTest forbids a top-level `_PULL_EN_CURSO = pull._PULL_EN_CURSO` alias in a route
+# module). Never persisted: a crash mid-pull leaves no stuck entry, the next trigger just tries
+# again.
+_PULL_EN_CURSO: set[int] = set()
 
 
 def _lock_path() -> Path:
@@ -356,6 +379,124 @@ def pull_persona_ahora(person_id: int) -> None:
         print(f"connect pull: {resultado['estado']}, {resultado['saved']} days stored", flush=True)
     finally:
         conn.close()
+
+
+def _en_horas_quietas(ahora_local: datetime) -> bool:
+    h = ahora_local.hour
+    return h >= QUIETA_DESDE_HORA or h < QUIETA_HASTA_HORA
+
+
+def pull_hoy_ahora(person_id: int) -> str:
+    """BODY-SYNC-VIVO-2 ruling 1: an on-demand pull of TODAY alone, in the person's own zone,
+    triggered by Hoy's `GET /` or by a `lectura` tool whose answer is today's own figures (ruling
+    2) -- hosted mode only; local mode keeps its own daily scheduled sync and this is a no-op here
+    ("sin_cuenta": there is no hosted account to pull on demand for).
+
+    Fetches exactly one day through `_pull_one_person` -- the SAME fetch path (the Garmin call,
+    `db.save_day`, the token's own re-encryption if Garmin refreshed it) the daily/connect pulls
+    already use for one day -- plus the watch's own last-sync read, which `_pull_one_person`'s own
+    `finally` already does (`_registrar_reloj_si_hay`). NOT the healing set
+    `_dias_pendientes_relleno` builds for the daily/connect pulls: a live trigger asks for today,
+    once, never for the last VENTANA_RELLENO days of gaps.
+
+    After a successful fetch, recomputes ONLY `sueno_fc` (the sleep-window heart rate): it is the
+    one post-pull derivation that lands IN `daily_metric` for last night's own day row, so it is
+    the one thing `leer_hoy`/`leer_estado_reloj`/Hoy's own card could actually read differently
+    right after this call returns. `recuperacion` (per-activity recovery estimate) and `turno_fc`
+    (shift heart rate) both write to their OWN tables, read only by the Día and Turnos screens --
+    neither of which this trigger ever reaches (ruling 2 names the trigger sites) -- so recomputing
+    them on every on-demand pull would cost real work for a card that never reads their result.
+
+    Takes the shared per-person lock (`_PULL_EN_CURSO`) and `garmin_cuenta.puede_intentar`
+    (ESPACIO_MIN_HOY minutes since the last attempt, and outside any recorded backoff) before ever
+    calling Garmin, plus ruling 4's quiet hours (`_en_horas_quietas`, in the person's own zone).
+    Opens and closes its own connection (a BackgroundTask, or the thread a `lectura` tool starts,
+    runs after the request's own connection may already be closing). Never raises into the
+    caller: a Garmin failure is recorded the same way the daily pull records one
+    (`garmin_cuenta.registrar_error`/`registrar_intento`), and any OTHER unexpected failure is
+    swallowed with a counts-only line -- this function always returns, never raises.
+
+    Returns "iniciado" (a pull just ran, whatever its own outcome -- the caller only needs to know
+    one was attempted), "en_curso" (already running for this person), "espera" (too soon, backed
+    off, or inside quiet hours), or "sin_cuenta" (local mode, or no Garmin token for this person)."""
+    if not cuenta.hosted():
+        return "sin_cuenta"
+    if person_id in _PULL_EN_CURSO:
+        return "en_curso"
+    try:
+        conn = db.connect()
+    except Exception as e:
+        print(f"pull_hoy_ahora: could not open a connection: {errores.texto_seguro(e)}", flush=True)
+        return "iniciado"
+    try:
+        db.ensure_ready(conn)
+        if garmin_cuenta.leer(conn, person_id) is None:
+            return "sin_cuenta"
+        person = db.person(conn, person_id)
+        tz = ZoneInfo(person.get("timezone") or "America/Bogota")
+        ahora_local = datetime.now(tz)
+        ahora_utc = datetime.now(timezone.utc)
+        if _en_horas_quietas(ahora_local):
+            return "espera"
+        if not garmin_cuenta.puede_intentar(conn, person_id, ahora_utc, ESPACIO_MIN_HOY):
+            return "espera"
+        _PULL_EN_CURSO.add(person_id)
+        try:
+            dia = ahora_local.date().isoformat()
+            try:
+                _pull_one_person(conn, person_id, [dia])
+            except Exception as e:
+                garmin_cuenta.registrar_error(conn, person_id, type(e).__name__)
+                _registrar_intento_persona(conn, person_id, ahora_utc, e)
+                return "iniciado"
+            garmin_cuenta.limpiar_error(conn, person_id)
+            _registrar_intento_persona(conn, person_id, ahora_utc, None)
+            _recalcular_sueno_fc_seguro(conn, person_id)
+            return "iniciado"
+        finally:
+            _PULL_EN_CURSO.discard(person_id)
+    except Exception as e:
+        print(f"pull_hoy_ahora: unexpected failure: {errores.texto_seguro(e)}", flush=True)
+        return "iniciado"
+    finally:
+        conn.close()
+
+
+def texto_estado_vivo(t, conn, person_id: int, tz: ZoneInfo, hoy_local: date) -> str | None:
+    """BODY-SYNC-VIVO-2 ruling 3: the plain sentence Hoy's own «Tu reloj» live card and the
+    assistant's `leer_estado_reloj` answer both show for the SAME state -- built here once, shared,
+    so the two can never read differently for the same state. Three states, the first that applies
+    wins:
+
+      1. a pull for this person is running right now (`_PULL_EN_CURSO`, the one in-process guard
+         `pull_hoy_ahora`/`pull_persona_ahora` both take) -> "syncing".
+      2. the last recorded attempt failed with a backoff still ahead of it
+         (`garmin_cuenta.estado_sync`'s own `reintentar_despues_de`, set only for a 429/5xx/
+         connection-timeout failure -- `garmin_cuenta.registrar_intento`'s own ruling 2) -> names
+         when it failed and when it tries again, both in the person's own zone.
+      3. the watch's own last-contact instant is known (`reloj_sincronizo_en`) -> names when, with
+         the day spelled out (the app's own abbreviated-month spelling, the same
+         `comun._short_date`/`hoy.py`'s `_dia_mes` already use -- duplicated here rather than
+         imported, since neither a route module nor this one may import the other for one helper)
+         when it is not today.
+
+    None of the three -> None (no card, no claim) -- a person never connected, or connected but
+    never yet attempted and never yet watch-synced."""
+    if person_id in _PULL_EN_CURSO:
+        return t("reloj_vivo.sincronizando")
+    estado = garmin_cuenta.estado_sync(conn, person_id)
+    if estado["reintentar_despues_de"] is not None:
+        hora = datetime.fromisoformat(estado["ultimo_intento_en"]).astimezone(tz).strftime("%H:%M")
+        reintento = datetime.fromisoformat(estado["reintentar_despues_de"]).astimezone(tz).strftime("%H:%M")
+        return t("reloj_vivo.fallo_reintento", hora=hora, reintento=reintento)
+    if estado["reloj_sincronizo_en"] is not None:
+        momento = datetime.fromisoformat(estado["reloj_sincronizo_en"]).astimezone(tz)
+        if momento.date() == hoy_local:
+            hora = momento.strftime("%H:%M")
+        else:
+            hora = f"{momento.day} {t('date.months')[momento.month - 1][:3]}, {momento.strftime('%H:%M')}"
+        return t("reloj_vivo.ultimo_sync", hora=hora)
+    return None
 
 
 def pull_hosted(conn, *, fecha: str | None = None, n_days: int | None = None) -> tuple[int, int, int]:
