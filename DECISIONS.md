@@ -24056,5 +24056,6 @@ match, and the same figure the `BODY-ENTRENO-DETALLE-1` entry above measured bef
 0 failures, 0 errors, 1 skipped, 1 expected failure. Chunk 6 (containing `test_mudanza` and
 `test_persona_fuga`) green.
 
-**Commits:** `f731d64` (`body/mudanza.py`, `tests/test_persona_fuga.py`).
+**Commits:** `f731d64` (`body/mudanza.py`, `tests/test_persona_fuga.py`), `d49f002` (`DECISIONS.md`) --
+merged `6a5d633196419b5f789de1be427faefa912f1d27`.
 
