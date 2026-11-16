@@ -7,6 +7,9 @@
                                         # 60 empty days in a row (resumable; skips days already stored)
     python -m body.pull --backfill      # hosted mode only: up to 15 more days per connected person,
                                         # newest first, toward the 90-day window (BODY-PRIMER-PULL-1)
+    python -m body.pull --hoy           # hosted mode only: one sweep of today alone for every
+                                        # connected person, inside their own 06:00-23:00 window
+                                        # (BODY-SYNC-VIVO-TIMER-1); local mode has no --hoy
     python -m body.pull --recompute     # only recompute readiness for every stored day
     python -m body.pull --intradia --dias N  # intraday heart-rate/stress, last N days (local mode
                                         # only; default and max N: INTRADIA_ALCANCE_DIAS)
@@ -88,6 +91,8 @@ ESPACIO_MIN_HOY = 15
 # BODY-SYNC-VIVO-2 ruling 4: no on-demand pull between 23:00 and 06:00 in the person's own zone --
 # the watch's own overnight sync has very likely not landed yet and the person is very likely
 # asleep. Checked against the person's own local clock, never the server's (BODY-PULL-RELOJ-1).
+# BODY-SYNC-VIVO-TIMER-1 ruling 1 reuses the same window for the --hoy sweep's own per-person
+# daytime check -- one "is it daytime for this person" rule, never two.
 QUIETA_DESDE_HORA = 23
 QUIETA_HASTA_HORA = 6
 
@@ -386,6 +391,72 @@ def _en_horas_quietas(ahora_local: datetime) -> bool:
     return h >= QUIETA_DESDE_HORA or h < QUIETA_HASTA_HORA
 
 
+def _pull_hoy_persona(conn, person_id: int, ahora_local: datetime, ahora_utc: datetime) -> bool:
+    """The fetch+record+recalc sequence for one person's "today" alone -- shared by
+    `pull_hoy_ahora`'s own trigger and the --hoy sweep (`pull_hoy_todos`), never a copy: fetches
+    exactly one day through `_pull_one_person` (the same fetch path, token re-encryption and watch-
+    last-sync read the daily/connect pulls already use for one day), records the attempt
+    (`garmin_cuenta.registrar_error`/`limpiar_error`/`_registrar_intento_persona`, the same shape
+    every other pull uses), and on success recomputes only `sueno_fc` (BODY-SYNC-VIVO-2's own
+    reasoning: the one post-pull derivation a live trigger could actually read right after this
+    call returns). Never raises -- a Garmin failure is recorded, not propagated. Returns True on
+    success, False on a Garmin failure."""
+    dia = ahora_local.date().isoformat()
+    try:
+        _pull_one_person(conn, person_id, [dia])
+    except Exception as e:
+        garmin_cuenta.registrar_error(conn, person_id, type(e).__name__)
+        _registrar_intento_persona(conn, person_id, ahora_utc, e)
+        return False
+    garmin_cuenta.limpiar_error(conn, person_id)
+    _registrar_intento_persona(conn, person_id, ahora_utc, None)
+    _recalcular_sueno_fc_seguro(conn, person_id)
+    return True
+
+
+def pull_hoy_todos(conn) -> tuple[int, int, int, int]:
+    """BODY-SYNC-VIVO-TIMER-1 ruling 1: the --hoy sweep's own per-person loop, for every connected
+    person (`garmin_cuenta.every_person_id`), sequential (PAUSE_S between people, the same
+    politeness pause `_pull_one_person`'s own day loop uses) -- never concurrent, so a slow Garmin
+    reply from one person never piles calls up for the next.
+
+    Each person is skipped, with no Garmin call, when either is true:
+      * it is NOT 06:00-23:00 in THEIR OWN zone right now (`_en_horas_quietas`, the exact window
+        BODY-SYNC-VIVO-2 ruling 4 already uses for the on-demand trigger -- one daytime rule for
+        both) -- counted as `fuera_horario`.
+      * `garmin_cuenta.puede_intentar` is false -- either a recorded backoff has not expired, or
+        fewer than ESPACIO_MIN_HOY minutes have passed since the last attempt OF EITHER KIND for
+        this person (the SAME floor the on-demand trigger enforces on itself, and the SAME
+        `ultimo_intento_en` column both write to -- so a person who was just pulled on demand is
+        not immediately re-pulled by this sweep either, and vice versa; this is what keeps the
+        combined daily ceiling at ESPACIO_MIN_HOY's own bound, the README's ruling 4 math) --
+        counted as `en_espera`.
+
+    Otherwise runs the shared `_pull_hoy_persona` fetch -- counted as `ok` or `fallidas`. Returns
+    (ok, en_espera, fuera_horario, fallidas). Never prints a health figure -- counts only."""
+    ok = en_espera = fuera_horario = fallidas = 0
+    primero = True
+    for person_id in garmin_cuenta.every_person_id(conn):
+        if not primero:
+            time.sleep(PAUSE_S)
+        primero = False
+        person = db.person(conn, person_id)
+        tz = ZoneInfo(person.get("timezone") or "America/Bogota")
+        ahora_local = datetime.now(tz)
+        ahora_utc = datetime.now(timezone.utc)
+        if _en_horas_quietas(ahora_local):
+            fuera_horario += 1
+            continue
+        if not garmin_cuenta.puede_intentar(conn, person_id, ahora_utc, ESPACIO_MIN_HOY):
+            en_espera += 1
+            continue
+        if _pull_hoy_persona(conn, person_id, ahora_local, ahora_utc):
+            ok += 1
+        else:
+            fallidas += 1
+    return ok, en_espera, fuera_horario, fallidas
+
+
 def pull_hoy_ahora(person_id: int) -> str:
     """BODY-SYNC-VIVO-2 ruling 1: an on-demand pull of TODAY alone, in the person's own zone,
     triggered by Hoy's `GET /` or by a `lectura` tool whose answer is today's own figures (ruling
@@ -438,16 +509,7 @@ def pull_hoy_ahora(person_id: int) -> str:
             return "espera"
         _PULL_EN_CURSO.add(person_id)
         try:
-            dia = ahora_local.date().isoformat()
-            try:
-                _pull_one_person(conn, person_id, [dia])
-            except Exception as e:
-                garmin_cuenta.registrar_error(conn, person_id, type(e).__name__)
-                _registrar_intento_persona(conn, person_id, ahora_utc, e)
-                return "iniciado"
-            garmin_cuenta.limpiar_error(conn, person_id)
-            _registrar_intento_persona(conn, person_id, ahora_utc, None)
-            _recalcular_sueno_fc_seguro(conn, person_id)
+            _pull_hoy_persona(conn, person_id, ahora_local, ahora_utc)
             return "iniciado"
         finally:
             _PULL_EN_CURSO.discard(person_id)
@@ -790,6 +852,9 @@ def main(argv=None) -> int:
     p.add_argument("--all", action="store_true", help="whole Garmin history (resumable; local mode only)")
     p.add_argument("--backfill", action="store_true",
                     help="hosted mode only: up to 15 more days per person, toward the 90-day window")
+    p.add_argument("--hoy", action="store_true",
+                    help="hosted mode only: one sweep of today alone for every connected person, "
+                         "inside their own 06:00-23:00 window (BODY-SYNC-VIVO-TIMER-1)")
     p.add_argument("--recompute", action="store_true",
                     help="recompute readiness only, no Garmin calls (local mode only)")
     p.add_argument("--intradia", action="store_true",
@@ -818,7 +883,7 @@ def _run(conn, a) -> int:
         return 0
 
     if cuenta.hosted():
-        lock = _try_lock() if a.backfill else _esperar_lock(LOCK_ESPERA_S)
+        lock = _try_lock() if (a.backfill or a.hoy) else _esperar_lock(LOCK_ESPERA_S)
         if lock is None:
             print("another pull is already running; skipping this run.", flush=True)
             return 0
@@ -826,6 +891,11 @@ def _run(conn, a) -> int:
             if a.backfill:
                 ok, failed, saved = pull_backfill_hosted(conn)
                 print(f"backfill: {ok} ok, {failed} failed, {saved} days stored", flush=True)
+                return 0
+            if a.hoy:
+                ok, espera, fuera, fallidas = pull_hoy_todos(conn)
+                print(f"hoy: {ok} ok, {espera} en espera, {fuera} fuera de horario, {fallidas} fallidas",
+                      flush=True)
                 return 0
             ok, failed, saved = pull_hosted(conn, fecha=a.date, n_days=a.days)
             print(f"{ok} ok, {failed} failed, {saved} days stored", flush=True)
@@ -835,6 +905,9 @@ def _run(conn, a) -> int:
 
     if a.backfill:
         print("local mode has no --backfill; it has --all instead.", flush=True)
+        return 2
+    if a.hoy:
+        print("local mode has no --hoy; it keeps its own daily scheduled sync instead.", flush=True)
         return 2
 
     person_id = db.local_person_id(conn)

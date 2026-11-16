@@ -13,6 +13,8 @@ SUDOERS = HOST_DIR / "duna-deploy-body.sudoers"
 WEB_UNIT = HOST_DIR / "body-web.service"
 PULL_UNIT = HOST_DIR / "body-pull.service"
 PULL_TIMER = HOST_DIR / "body-pull.timer"
+PULL_HOY_UNIT = HOST_DIR / "body-pull-hoy.service"
+PULL_HOY_TIMER = HOST_DIR / "body-pull-hoy.timer"
 BACKFILL_UNIT = HOST_DIR / "body-backfill.service"
 BACKFILL_TIMER = HOST_DIR / "body-backfill.timer"
 CADDYFILE = HOST_DIR / "Caddyfile.body"
@@ -254,7 +256,7 @@ class InstallCaddySiteIfChangedTest(unittest.TestCase):
 
 class ServiceHardeningTest(unittest.TestCase):
     def test_umask_and_protecthome_in_every_service(self):
-        for path in (WEB_UNIT, PULL_UNIT, BACKFILL_UNIT):
+        for path in (WEB_UNIT, PULL_UNIT, PULL_HOY_UNIT, BACKFILL_UNIT):
             text = _read(path)
             self.assertIn("UMask=0077", text, f"{path.name} missing UMask=0077")
             self.assertIn("ProtectHome=yes", text, f"{path.name} missing ProtectHome=yes")
@@ -414,6 +416,35 @@ class SystemdUnitTest(unittest.TestCase):
         self.assertIn("body-backfill.timer", units_line)
         self.assertTrue(any("body-backfill.timer" in l or "TIMERS" in l for l in enable_lines))
 
+    def test_pull_hoy_unit_and_timer(self):
+        """BODY-SYNC-VIVO-TIMER-1 ruling 2: the on-demand "today" sweep's own oneshot unit -- the
+        same user/env/hardening shape as body-pull.service, ExecStart changed to --hoy -- and its
+        timer, every 30 min, no catch-up (Persistent=false) and spread out (RandomizedDelaySec)."""
+        unit = _read(PULL_HOY_UNIT)
+        self.assertIn("User=duna-body", unit)
+        self.assertIn("EnvironmentFile=", unit)
+        self.assertIn("Type=oneshot", unit)
+        exec_starts = [l for l in unit.splitlines() if l.startswith("ExecStart=")]
+        self.assertEqual(len(exec_starts), 1)
+        self.assertIn("body.pull --hoy", exec_starts[0])
+        pull_unit_text = _read(PULL_UNIT)
+        for shared in ("NoNewPrivileges=yes", "ProtectSystem=strict", "ProtectHome=yes",
+                       "ReadWritePaths=/srv/duna/data/body", "PrivateTmp=yes", "UMask=0077"):
+            self.assertIn(shared, unit, f"body-pull-hoy.service missing {shared}")
+            self.assertIn(shared, pull_unit_text, f"body-pull.service missing {shared}")
+        timer = _read(PULL_HOY_TIMER)
+        self.assertIn("OnCalendar=*-*-* *:00,30:00 UTC", timer)
+        self.assertIn("Persistent=false", timer)
+        self.assertIn("RandomizedDelaySec=120", timer)
+
+    def test_pull_hoy_unit_installed_and_enabled(self):
+        text = _read(PRODUCT)
+        units_line = next(l for l in text.splitlines() if l.startswith("UNITS="))
+        enable_lines = [l for l in text.splitlines() if l.startswith("run systemctl enable")]
+        self.assertIn("body-pull-hoy.service", units_line)
+        self.assertIn("body-pull-hoy.timer", units_line)
+        self.assertTrue(any("body-pull-hoy.timer" in l or "TIMERS" in l for l in enable_lines))
+
     def test_vida_unit_retired(self):
         text = _read(PRODUCT)
         units_line = next(l for l in text.splitlines() if l.startswith("UNITS="))
@@ -545,6 +576,49 @@ class RollbackRestartsTimersTest(unittest.TestCase):
         body = text[start:end]
         self.assertIn("systemctl restart", body)
         self.assertIn('"${TIMERS[@]}"', body)
+
+
+class PullVerbTest(unittest.TestCase):
+    """BODY-SYNC-VIVO-TIMER-1 ruling 3: the `pull` verb -- runs today's full Garmin pull now
+    (body-pull.service, the daily 09:30 job) and prints that run's own journal lines."""
+
+    def setUp(self):
+        self.text = _read(ENTRY)
+
+    def test_usage_lists_pull(self):
+        start = self.text.index("usage: duna-deploy-body")
+        end = self.text.index("USAGE", start)
+        self.assertIn("pull", self.text[start:end])
+
+    def test_pull_case_arm_rejects_extra_args(self):
+        m = re.search(r"pull\)\s*\n\s*if \[\[ \$# -ne 0 \]\]; then\s*\n\s*usage\s*\n\s*exit 2", self.text)
+        self.assertIsNotNone(m, "no pull) case arm rejecting extra args found")
+
+    def test_pull_starts_body_pull_service_through_run_and_waits(self):
+        start = self.text.index('if [[ "$cmd" == "pull" ]]; then')
+        end = self.text.index("\nfi\n", start)
+        body = self.text[start:end]
+        self.assertIn("run systemctl start --wait body-pull.service", body)
+
+    def test_pull_prints_only_that_runs_journal_counts_and_dates(self):
+        start = self.text.index('if [[ "$cmd" == "pull" ]]; then')
+        end = self.text.index("\nfi\n", start)
+        body = self.text[start:end]
+        self.assertIn("journalctl -u body-pull", body)
+        self.assertIn("--since", body)
+        self.assertIn("-o cat", body)
+
+    def test_pull_exit_status_is_the_services_own(self):
+        start = self.text.index('if [[ "$cmd" == "pull" ]]; then')
+        end = self.text.index("\nfi\n", start)
+        body = self.text[start:end]
+        self.assertIn("estado=$?", body)
+        self.assertIn('exit "$estado"', body)
+
+    def test_pull_handled_before_the_generic_owner_fallback(self):
+        pull_idx = self.text.index('if [[ "$cmd" == "pull" ]]; then')
+        owner_idx = self.text.rindex('owner="$(stat -c %U "$REPO_DIR")"')
+        self.assertLess(pull_idx, owner_idx)
 
 
 class StatusDerivesUnitListTest(unittest.TestCase):
