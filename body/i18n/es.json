@@ -40,7 +40,6 @@
   "today.recovery": "Día {dia} de ≈ {estimado} para recuperarte de tus noches",
   "today.stale": "Últimos datos del reloj: {date}, hace {n} días.",
   "today.stale_link": "Ver la conexión con Garmin",
-  "today.garmin_sync.titulo": "Tu reloj",
   "today.garmin_sync.chip": "revisar",
   "today.garmin_sync.not_signed_in": "Garmin rechazó el acceso guardado. Vuelve a conectar tu reloj.",
   "today.garmin_sync.failed": "La última sincronización con Garmin falló.",

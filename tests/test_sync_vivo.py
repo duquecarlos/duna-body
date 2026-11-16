@@ -460,8 +460,89 @@ class ReglaVivaHoyCardTest(unittest.TestCase):
         self.assertIn("Your watch last synced with Garmin at", r.text)
 
 
+class MergedRelojCardTest(unittest.TestCase):
+    """BODY-SYNC-VIVO-2-B ruling 1: the gap half (`garmin_sync`) and the freshness half
+    (`reloj_vivo`) share ONE «Tu reloj» card -- never two headings for the same subject, in either
+    language, in every combination of the two states."""
+
+    def setUp(self):
+        self.conn = _fresh_db(self, "reloj_merge.db")
+        patcher_env = mock.patch.dict(os.environ, _HOSTED_ENV)
+        patcher_env.start(); self.addCleanup(patcher_env.stop)
+        web.app.dependency_overrides[identity.current_person_id] = lambda: 1
+        self.addCleanup(web.app.dependency_overrides.clear)
+        self.addCleanup(pull._PULL_EN_CURSO.clear)
+        self.client = TestClient(web.app, follow_redirects=False)
+        self.conn.execute(
+            "INSERT INTO daily_metric (person_id, day, metric_key, value, source) VALUES "
+            "(1, ?, 'resting_hr', 55, 'garmin')", (datetime.now(timezone.utc).date().isoformat(),))
+        self.conn.commit()
+
+    def _get(self):
+        with mock.patch("body.rutas.hoy.pull.pull_hoy_ahora"):
+            return self.client.get("/")
+
+    def _titulo_count(self, text: str, lang: str = "es") -> int:
+        """Counts the card's own HEADING only -- `t('reloj_vivo.titulo')`'s bare value ("Tu
+        reloj"/"Your watch") is also a PREFIX of reloj_vivo.ultimo_sync's own sentence ("Tu reloj
+        se sincronizó..."/"Your watch last synced..."), so a plain substring count double-counts
+        the freshness state; anchored to the heading's own markup instead."""
+        return text.count('<div class="q">' + T(lang)("reloj_vivo.titulo"))
+
+    def test_gap_only_renders_one_title_the_chip_the_link_and_no_script(self):
+        garmin_cuenta.guardar(self.conn, 1, "tok-demo")
+        garmin_cuenta.registrar_error(self.conn, 1, "NotSignedIn")
+        self.conn.commit()
+        r = self._get()
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self._titulo_count(r.text), 1)
+        self.assertIn(T("es")("today.garmin_sync.chip"), r.text)
+        self.assertIn(T("es")("today.garmin_sync.not_signed_in"), r.text)
+        self.assertIn('href="/garmin"', r.text)
+        self.assertNotIn("reloj-sync.js", r.text)
+
+    def test_freshness_only_renders_one_title_no_chip_and_no_garmin_link(self):
+        garmin_cuenta.guardar(self.conn, 1, "tok-demo")
+        garmin_cuenta.registrar_reloj_sincronizo(self.conn, 1, datetime.now(timezone.utc))
+        self.conn.commit()
+        r = self._get()
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self._titulo_count(r.text), 1)
+        self.assertNotIn(T("es")("today.garmin_sync.chip"), r.text)
+        self.assertNotIn('href="/garmin"', r.text)
+
+    def test_both_apply_render_exactly_one_title_gap_then_freshness_then_link(self):
+        garmin_cuenta.guardar(self.conn, 1, "tok-demo")
+        garmin_cuenta.registrar_error(self.conn, 1, "NotSignedIn")
+        garmin_cuenta.registrar_reloj_sincronizo(self.conn, 1, datetime.now(timezone.utc))
+        self.conn.commit()
+        r = self._get()
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self._titulo_count(r.text), 1)
+        gap = r.text.index(T("es")("today.garmin_sync.not_signed_in"))
+        fresco = r.text.index(T("es")("reloj_vivo.ultimo_sync").split("{")[0])
+        enlace = r.text.index('href="/garmin"')
+        self.assertTrue(gap < fresco < enlace, (gap, fresco, enlace))
+
+    def test_neither_applies_renders_no_title_at_all(self):
+        r = self._get()
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self._titulo_count(r.text), 0)
+
+    def test_english_both_apply_renders_exactly_one_title(self):
+        garmin_cuenta.guardar(self.conn, 1, "tok-demo")
+        garmin_cuenta.registrar_error(self.conn, 1, "NotSignedIn")
+        garmin_cuenta.registrar_reloj_sincronizo(self.conn, 1, datetime.now(timezone.utc))
+        self.conn.commit()
+        self.client.post("/settings/language", data={"lang": "en"})
+        r = self._get()
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self._titulo_count(r.text, "en"), 1)
+
+
 class GarminEstadoVivoRouteTest(unittest.TestCase):
-    """body/rutas/garmin.py's small poll endpoint (ruling 3)."""
+    """body/rutas/garmin.py's small poll endpoint (ruling 3; BODY-SYNC-VIVO-2-B ruling 1 adds the
+    gap half to its own reload, so a mid-poll swap never drops it)."""
 
     def setUp(self):
         self.conn = _fresh_db(self, "estado_vivo_route.db")
@@ -499,6 +580,16 @@ class GarminEstadoVivoRouteTest(unittest.TestCase):
             r = self.client.get("/garmin/estado-vivo")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(stats["writes"], 0)
+
+    def test_renders_the_gap_half_too_so_a_mid_poll_swap_never_drops_it(self):
+        garmin_cuenta.guardar(self.conn, 1, "tok-demo")
+        garmin_cuenta.registrar_error(self.conn, 1, "NotSignedIn")
+        self.conn.commit()
+        r = self.client.get("/garmin/estado-vivo")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(T("es")("today.garmin_sync.not_signed_in"), r.text)
+        self.assertIn('class="chip warn"', r.text)
+        self.assertEqual(r.text.count(T("es")("reloj_vivo.titulo")), 1)
 
 
 if __name__ == "__main__":
