@@ -15,6 +15,7 @@
 <div class="shell"><main><div class="wrap">
 <div class="top"><div><h1>{{ t('privacidad.consentimiento.titulo') }}</h1></div></div>
 <div class="card">
+  {% if cambio %}<div class="aviso">{{ t('privacidad.consentimiento.cambio') }}</div>{% endif %}
   <p class="read">{{ t('privacidad.consentimiento.que') }}</p>
   <p class="read">{{ t('privacidad.consentimiento.por_que') }}</p>
   <p class="read">{{ t('privacidad.consentimiento.donde') }}</p>

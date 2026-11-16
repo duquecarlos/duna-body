@@ -11,10 +11,10 @@ from __future__ import annotations
 import sqlite3
 from datetime import date, datetime, timezone
 
-from . import compartir, db, enlaces, fuentes
+from . import compartir, cuenta, db, enlaces, fuentes
 from .agente import ajustes as agente_ajustes
 
-CONSENT_VERSION = "consentimiento-v3"
+CONSENT_VERSION = "consentimiento-v4"
 
 # Every table with a literal `person_id` column, and how this module accounts for its rows.
 # Checked by tests/test_privacidad.py's coverage test: a new person-keyed table that is added to
@@ -109,6 +109,28 @@ def record_consent(conn: sqlite3.Connection, person_id: int, version: str = CONS
             "ON CONFLICT(person_id, version) DO NOTHING",
             (person_id, version, now),
         )
+
+
+def acepto_version_anterior(conn: sqlite3.Connection, person_id: int) -> bool:
+    """True when this person has an accepted `consentimiento` row of some version OTHER than the
+    current one -- the consent page's own "what changed" notice (BODY-CONSENTIMIENTO-V4 ruling 3)
+    shows it only then, never to a first-time person. It never gates by itself; has_consented,
+    above, still decides whether the person may pass."""
+    return conn.execute(
+        "SELECT 1 FROM consentimiento WHERE person_id = ? AND version != ?", (person_id, CONSENT_VERSION)
+    ).fetchone() is not None
+
+
+def guarda_detalle(conn: sqlite3.Connection, person_id: int) -> bool:
+    """The one question every per-activity-detail fetcher (full heart-rate curves, laps, zones,
+    strength sets, and minute-by-minute nights and days) must ask before it stores anything: True
+    in local mode (one person on their own PC -- the same exemption the hosted consent gate
+    already carries), else whether this person has accepted EXACTLY "consentimiento-v4". Pinned to
+    that literal, never to CONSENT_VERSION, so a later v5 widening never silently changes what v4
+    already granted. Nothing calls this yet -- BODY-ENTRENO-DETALLE-1 will."""
+    if not cuenta.hosted():
+        return True
+    return has_consented(conn, person_id, "consentimiento-v4")
 
 
 # ---- export ---------------------------------------------------------------------------------------

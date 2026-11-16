@@ -215,22 +215,31 @@ class ConsentTextLanguageTest(CuentaRpTestCase):
 
 
 class ConsentTextNamesTheNewDataTest(unittest.TestCase):
-    """BODY-EXPERIMENTOS-CONSENTIMIENTO-1: consentimiento.que names the minute-by-minute figures,
-    experiments and logged moments, in both catalogs."""
+    """BODY-CONSENTIMIENTO-V4: consentimiento.que names each activity's full detail (heart-rate
+    curve, laps, zones), night minute by minute and day minute by minute, plus experiments and
+    logged moments, in both catalogs."""
 
     def _que(self, lang: str) -> str:
         path = Path(__file__).resolve().parent.parent / "body" / "i18n" / f"{lang}.json"
         return json.loads(path.read_text(encoding="utf-8"))["privacidad.consentimiento.que"]
 
-    def test_spanish_names_minute_by_minute_experiments_and_moments(self):
+    def test_spanish_names_activity_detail_and_minute_by_minute(self):
         text = self._que("es")
-        self.assertIn("minuto a minuto", text)
+        self.assertIn("curva de pulso", text)
+        self.assertIn("vueltas", text)
+        self.assertIn("zona de pulso", text)
+        self.assertIn("sueño minuto a minuto", text)
+        self.assertIn("pulso y estrés minuto a minuto", text)
         self.assertIn("experimento", text)
         self.assertIn("momentos", text)
 
-    def test_english_names_minute_by_minute_experiments_and_moments(self):
+    def test_english_names_activity_detail_and_minute_by_minute(self):
         text = self._que("en")
-        self.assertIn("minute by minute", text)
+        self.assertIn("heart-rate curve", text)
+        self.assertIn("laps", text)
+        self.assertIn("heart-rate zone", text)
+        self.assertIn("sleep minute by minute", text)
+        self.assertIn("heart rate and stress minute by minute", text)
         self.assertIn("experiment", text)
         self.assertIn("moments", text)
 
