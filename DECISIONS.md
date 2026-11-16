@@ -22834,3 +22834,120 @@ exact match. All nine chunks green; the one skip and one expected failure in chu
 
 -- merged `1955bd825be1cfb9a1943967099e6d3af6a9f50d`
 
+## BODY-SERVICIO-HOGAR-1
+
+Carlos's ruling, dictated 2026-11-15 ~19:45, relayed verbatim by the Personal desk: "don't worry about the
+restriction between apps in body, finances, and [Hogar]. It's all me. It's all my own Duna servers, and I'm my
+own user, my own data. So, drop every restriction. Allow free communication between all of them." This
+replaces the per-unit person->app consent (BODY-COMPARTIR-APP-1, dropped) and the latest-value-only rule, for
+Carlos's own data read by another Duna app on Duna's own host. The one standing grant is the `hogar:leer`
+device key itself (minted and revoked on Body's own device-key page) -- never a new consent table.
+
+**Ruling 1, the scope (`hogar:leer` joins `ALCANCES`):** `body/dispositivo.py:15`. Checkbox and label on the
+device-key page: `body/templates/dispositivos.html:39-40`, wired to the key's own alcances at
+`body/rutas/dispositivos.py:25` (`_ALCANCE_LABELS`) and `body/rutas/dispositivos.py:73-74` (`alcance_hogar` ->
+`"hogar:leer"`).
+
+**Ruling 2, the feed (`body/hogar_feed.py`, new module; routes beside vida's in
+`body/rutas/dispositivos.py`):**
+- `manana` (`body/hogar_feed.py:76`): `dia`'s figures, plan and active horizon. `_figuras`
+  (`body/hogar_feed.py:29`) reads `daily_metric` directly (no existing db.py reader covers "every metric's own
+  latest day at or before X"; `db.series` -- reused in `serie` below -- answers a different question, one
+  metric over a fixed range) -- one SQL statement, a correlated subquery per metric_key, `kind` read off
+  `metric_def`. `_plan_dias` (`body/hogar_feed.py:45`) reads `plan` directly, filtered to `dia` and `dia`+1,
+  any goal (no existing reader is unfiltered by goal_id; `horizonte.py`'s own plan read, `body/horizonte.py:509`,
+  is scoped to one `horizonte_goal_id`). `_horizonte_actual` (`body/hogar_feed.py:55`) reuses the same
+  `kind = 'milestone' AND horizonte_goal_id IS NULL` test `body/agente/herramientas.py:2198`'s `_leer_planes`
+  already uses to find a horizon, narrowed to `status = 'active'`, then computes `semana`/`semanas` with
+  `fechas.lunes_de` -- which week `dia` falls in out of the horizon's whole span, 1-based, clamped to
+  `[1, semanas]`. `null` when the person has no active horizon (deliberately not reusing
+  `horizonte.resumen`/`horizonte.semana`: both return far more than `{goal_id, title, deadline, semana,
+  semanas}` needs, and `horizonte.semana` requires a Monday `week_start`, never a plain `dia`).
+- `serie` (`body/hogar_feed.py:87`) reuses `db.series` (`body/db.py:2032`) for the actual values; its own
+  additions are the metric_key existence check (`MetricDesconocida`, `body/hogar_feed.py:18`) and the
+  366-day bound (`RangoDemasiadoLargo`, `body/hogar_feed.py:22`, `MAX_SERIE_DIAS = 366`).
+- Routes: `GET /api/hogar/manana` (`body/rutas/dispositivos.py:190`), `GET /api/hogar/serie`
+  (`body/rutas/dispositivos.py:206`), both `Depends(identity.person_from_device("hogar:leer"))`
+  (`body/rutas/dispositivos.py:193`, `:209`). No consent filter -- the key is the grant, exactly as spec'd.
+  `desde`/`hasta`/`dia` malformed, or `hasta < desde` -> 400; unknown `metric_key` -> 404; a range over 366
+  days -> 400. `Cache-Control: no-store` on both, same as `/api/vida/semana`.
+
+**Ruling 3, the contract doc:** `docs/contracts/hogar-feed-v1.md` (new) -- base URL/auth, both routes with
+every field, errors, and "Conditions on the reader" (household rules for other people's data; runs on Duna's
+host; vendor clouds get commands only, never a health value; local Voz en Casa needs no separate consent,
+quoting Carlos's 2026-11-15 ~18:50 line verbatim; security hygiene; stops on revoke).
+
+**Ruling 4, tests (`tests/test_hogar_feed.py`, new, 25 tests):** auth matrix (no key/wrong scope/revoked ->
+401/403/401), `manana` shape (every metric at its own latest day, not a single shared day; readiness marked
+`estimated`), plan for `dia` and `dia`+1 only, horizon null and present (with the exact `semana`/`semanas`
+pair, hand-verified: a Monday-start horizon 2026-11-02..2026-12-27 is 8 weeks, and 2026-11-16 falls in week 3),
+`serie` bounds (366 ok, 367 -> 400, unknown key -> 404, `hasta` before `desde` -> 400), another person's data
+never returned (`PersonaFugaTest`), and no write to the person's own tables (`NoWriteTest` -- the only writes
+either route ever causes are `dispositivo.resolver`'s own `usado_en` bookkeeping, the same one every other
+device-key scope already triggers on a successful auth).
+
+**Every new string, es/en (`body/i18n/{es,en}.json`):**
+- `dispositivos.scope.hogar`: es "Hogar: leer tus datos" / en "Hogar: read your data".
+- `dispositivos.scope.hogar_explica`: es "Hogar, tu app de la casa, lee todas tus cifras, planes y metas para
+  preparar tu casa." / en "Hogar, your home app, reads all your figures, plans and goals to get your home
+  ready."
+
+**Deviation, measured:** the spec's own wording for `dispositivos.scope.hogar_explica` (es) used "puede leer"
+("Hogar... puede leer todas tus cifras..."). `tests/test_registro_tu.py` (outside this slice's touches) scans
+every es.json string for `su|sus|tiene|puede` addressed to the reader and refuses any hit not in its own
+allow-list; `"puede"` here tripped it (chunk 8's first run, `FAILED` on
+`test_su_sus_tiene_puede_are_all_allow_listed_third_person`). Rather than widen that guard's allow-list, a
+file this slice does not touch, the string was rephrased to plain present tense ("lee" / "reads") -- same
+meaning, same subject ("Hogar"), no usted-register marker. The English string was aligned the same way for
+consistency, though the guard never scans en.json.
+
+**Existing census tests widened for the two new routes (every one in `touches:`):**
+- `tests/test_agente_registro.py`'s `ROUTE_TOOL`: both routes -> `None`, "the assistant never reads or
+  triggers it" (same reason as `/api/vida/semana`).
+- `tests/test_estados_vacios.py`'s `_ALWAYS_404_LOCAL`: both routes added (local mode 404s before any person
+  is resolved).
+- `tests/test_estados_vacios_hosted.py`'s `_DEVICE_GATED_401`: both routes added (hosted, no device key ->
+  401).
+- `tests/test_persona_fuga.py`: both routes added to `EXPECTED_GET_PATHS`; the shared `device_key` fixture
+  gained `"hogar:leer"` alongside `turnos:subir`/`vida:leer`; both routes swept in `_sweep_routes_as` the same
+  way `/api/vida/semana` already was.
+- `tests/test_web_entry.py`'s `BEFORE` route-set snapshot: both routes added (GET).
+- `tests/test_rendimiento.py`'s `_CEILINGS`: both routes at `3` -- the same cheap-404 ceiling every other
+  device-key/no-auth route carries in this file's LOCAL-mode fixture (`/api/vida/semana`, `/healthz`,
+  `/login`, ...), since `identity.person_from_device` 404s before touching the person at all when
+  `cuenta.hosted()` is false.
+- `tests/test_dispositivo.py`: `test_alcances_includes_hogar_leer`, two scope-checkbox/explanation tests, two
+  local-mode 404 tests for the new routes.
+- `tests/test_get_sin_escritura.py`, `tests/test_i18n_paridad.py`: no edit needed -- both scan/sweep
+  generically and already cover the new routes/strings without a hand-maintained list.
+
+**Gate command:** `.venv/Scripts/python.exe -m unittest discover tests -t .`. Run as 9 sequential alphabetical
+chunks of 178 dotted test modules (~20 each), each in the foreground, read from the process (chunk 8 failed
+once on the register-guard deviation above, fixed, then re-run green):
+- chunk 1 (`test_accesibilidad`..`test_baselines`): `Ran 377 tests in 88.441s ... OK (skipped=1, expected
+  failures=1)`
+- chunk 2 (`test_baselines_lote`..`test_dispositivo`): `Ran 481 tests in 504.959s ... OK`
+- chunk 3 (`test_ejes_fechas`..`test_fechas_semana`): `Ran 318 tests in 111.011s ... OK`
+- chunk 4 (`test_fit`..`test_host_backup`): `Ran 502 tests in 542.262s ... OK`
+- chunk 5 (`test_host_deploy`..`test_metas_semana_tira`): `Ran 414 tests in 104.220s ... OK`
+- chunk 6 (`test_mock_r2_hoy`..`test_primer_dia_1`): `Ran 530 tests in 203.275s ... OK`
+- chunk 7 (`test_primer_pull_1`..`test_rendimiento_red`): `Ran 350 tests in 130.799s ... OK` (first run:
+  `FAILED` with 1 failure, the register-guard deviation above; fixed and re-run)
+- chunk 8 (`test_rendimiento_turnos`..`test_turnos_costo`): `Ran 402 tests in 91.928s ... OK`
+- chunk 9 (`test_turnos_enlaces`..`test_web_entry`): `Ran 341 tests in 752.263s ... OK`
+
+Sum: 377+481+318+502+414+530+350+402+341 = 3715. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted without running): `COLLECTED 3715` --
+exact match (3685 on the previous slice's own floor, +30 new: 25 in `tests/test_hogar_feed.py`, 5 added to
+`tests/test_dispositivo.py`). All nine chunks green.
+
+**Commits:** `34908d1` (`body/dispositivo.py`, `body/hogar_feed.py` -- new, `body/i18n/{es,en}.json`,
+`body/rutas/dispositivos.py`, `body/templates/dispositivos.html`, `docs/contracts/hogar-feed-v1.md` -- new,
+`tests/test_agente_registro.py`, `tests/test_dispositivo.py`, `tests/test_estados_vacios.py`,
+`tests/test_estados_vacios_hosted.py`, `tests/test_hogar_feed.py` -- new, `tests/test_persona_fuga.py`,
+`tests/test_rendimiento.py`, `tests/test_web_entry.py`), `0ac8485` (the register-guard rephrase,
+`body/i18n/{es,en}.json`).
+
+**Open follow-ups, not this slice's to do:** none found -- the spec's four rulings, the contract doc and every
+listed test file are built and gated.
+
