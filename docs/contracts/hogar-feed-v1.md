@@ -39,8 +39,11 @@ Both routes are read-only (GET), `Cache-Control: no-store`.
 {
   "dia": "2026-11-16",
   "figuras": [{"metric_key": "resting_hr", "value": 58.0, "kind": "measured", "day": "2026-11-15"}],
-  "plan": [{"id": 1, "day": "2026-11-16", "time": "18:00", "title": "Fuerza", "status": "proposed"}],
-  "horizonte": {"goal_id": 7, "title": "Media maratón", "deadline": "2027-02-01", "semana": 3, "semanas": 12}
+  "plan": [{"id": 1, "day": "2026-11-16", "time": "18:00", "title": "Fuerza", "status": "proposed",
+            "ejercicios": [{"ejercicio": "sentadilla", "series": 4, "reps": 10, "categoria": "pierna"}]}],
+  "horizonte": {"goal_id": 7, "title": "Media maratón", "deadline": "2027-02-01", "semana": 3, "semanas": 12},
+  "turnos": [{"day": "2026-11-15", "kind": "night", "code": "N", "start_local": "2026-11-15T22:00:00",
+              "end_local": "2026-11-16T06:00:00"}]
 }
 ```
 
@@ -48,10 +51,16 @@ Both routes are read-only (GET), `Cache-Control: no-store`.
   day at or before `dia` (not a single shared day across metrics: a metric synced minutes ago and one not synced in
   days each show their own most recent value). `kind` is `measured` or `estimated` exactly as Body's own screens mark
   it (`readiness` is `estimated`).
-* `plan`: every plan row for `dia` AND `dia`+1, any goal, unfiltered.
+* `plan`: every plan row for `dia` AND `dia`+1, any goal, unfiltered. `ejercicios` (BODY-HOGAR-EJERCICIOS-1) is the
+  row's own planned exercise list, passed VERBATIM -- the exact items `planear_entreno` stored, no reshaping, no
+  renaming, no added keys. Each item always carries `ejercicio` (the exercise name) and `series` (a count); `reps`
+  and `categoria` are present only when the plan gave them. `null` when this plan row has no exercise list.
 * `horizonte`: the person's own active preparation goal (a milestone goal that is not itself a child of another
   plan) and which Monday-starting week `dia` falls in out of the horizon's whole span (`semana` = that week's
   1-based number, `semanas` = the horizon's total week count). `null` when this person has no active horizon.
+* `turnos` (BODY-HOGAR-TURNOS-1): every shift that touches `dia` -- rows with `day` = `dia` or `dia`+1, plus a row
+  with `day` = `dia`-1 whose `end_local` falls on `dia` or later (last night's shift still running this morning).
+  Empty list when none, never omitted, never null. See "Turnos" below for the item shape.
 
 ## `GET /api/hogar/serie?metric_key=K&desde=YYYY-MM-DD&hasta=YYYY-MM-DD`
 
@@ -63,6 +72,44 @@ One metric's daily series over `[desde, hasta]`, at most 366 days per call.
 
 Errors: `desde`/`hasta` not a valid date, or `hasta` before `desde` -> `400`. The range spans more than 366 days ->
 `400`. `metric_key` not a metric Body knows about -> `404`.
+
+## Turnos (BODY-HOGAR-TURNOS-1)
+
+One shift item, the same shape everywhere it appears in this contract -- the `shift` row's own column names, values
+as stored (a null column stays null):
+
+```json
+{"day": "2026-11-15", "kind": "night", "code": "N", "start_local": "2026-11-15T22:00:00",
+ "end_local": "2026-11-16T06:00:00"}
+```
+
+* `kind` is Body's own shift vocabulary, never the employer's own code: one of `morning`, `afternoon`, `night`,
+  `day`, `off`, `other`.
+* `code` is the schedule's own original code (e.g. `"N"`), or `null` when the shift carries none.
+* `start_local`/`end_local` are ISO local datetimes (no timezone offset), or `null` on a shift with no recorded
+  times (an `off` day). A night shift's `end_local` falls on the day after `start_local`.
+
+Lists are ordered by `day`, then by `start_local` (a row with no `start_local` sorts before one that has one, on
+the same day).
+
+### `GET /api/hogar/turnos?desde=YYYY-MM-DD&hasta=YYYY-MM-DD`
+
+Same `hogar:leer` dependency, same `Cache-Control: no-store`, same validation as `/api/hogar/serie`: `desde`/`hasta`
+not a valid date, or `hasta` before `desde` -> `400`; a range over 366 days -> `400`. No shift in the range is not an
+error -- an empty list.
+
+```json
+{"desde": "2026-11-01", "hasta": "2026-11-20", "turnos": [{"day": "2026-11-15", "kind": "night", "code": "N",
+ "start_local": "2026-11-15T22:00:00", "end_local": "2026-11-16T06:00:00"}]}
+```
+
+Every shift row whose `day` is in `[desde, hasta]`, in the ordering above.
+
+### Still v1
+
+Both additions above are additive: `manana`'s four existing keys (`dia`, `figuras`, `plan`, `horizonte`) are
+unchanged byte for byte except for `plan`'s own new `ejercicios` key, and `/api/hogar/serie` is untouched. Adding a
+key to an existing response, or a new route, is not a breaking change to this contract.
 
 ## Conditions on the reader (not an app-to-app consent gate -- these protect people and services outside Carlos's
 own data, and outside Duna)
