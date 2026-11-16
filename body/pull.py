@@ -35,6 +35,13 @@ daily hosted pull also fetch any intraday days an active intraday experiment sti
 (experimentos.dias_intradia_necesarios), capped at INTRADIA_MAX_POR_CORRIDA per person per run --
 BODY-EXPERIMENTOS-INTRADIA-DIAS-FALTANTES-1. A person with no active intraday experiment costs no
 extra Garmin calls.
+
+BODY-ENTRENO-DETALLE-1 ruling 5: once privacidad.guarda_detalle agrees for a person (local mode:
+always; hosted: consentimiento-v4 only), the SAME implicit "today" sweep also widens its intraday
+days to every day in reach, not only its experiments' own windows (_dias_intradia_necesarios_
+todos), and fetches each still-missing activity's full detail (heart-rate curve, laps, zones)
+through _pull_detalle_pendientes, capped at DETALLE_MAX_POR_CORRIDA activities per run. A person
+who has not agreed, and has no active experiment, still costs no extra Garmin call.
 """
 import argparse
 import os
@@ -44,8 +51,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import (config, cuenta, db, errores, experimentos, fechas, garmin_adapter, garmin_cuenta, goals, readiness,
-               recuperacion, sueno_fc, turno_fc)
+from . import (config, cuenta, db, errores, experimentos, fechas, garmin_adapter, garmin_cuenta, goals, privacidad,
+               readiness, recuperacion, sueno_fc, turno_fc)
 
 PAUSE_S = 1.0  # be gentle with Garmin's servers during a backfill
 EMPTY_STOP = 60  # --all stops after this many consecutive days with no watch data
@@ -81,6 +88,17 @@ INTRADIA_ALCANCE_DIAS = 130
 # new experiment's test mornings come first, and its baseline window fills in over a few runs
 # rather than one big burst of Garmin calls.
 INTRADIA_MAX_POR_CORRIDA = 14
+
+# BODY-ENTRENO-DETALLE-1 ruling 4: at most this many activities' full detail (heart-rate curve,
+# laps, zones) fetched per person per scheduled-pull run, newest day first -- a backlog of old
+# activities fills in over several runs rather than one big burst of Garmin calls (three calls
+# per activity, three times the per-call cost of the intraday fetch above).
+DETALLE_MAX_POR_CORRIDA = 10
+
+# BODY-ENTRENO-DETALLE-1 ruling 4: activities older than this many days are never fetched for
+# full detail -- a conservative window well inside Garmin's own activity-detail retention (not
+# measured the way intraday's ~130-140 days was, so kept narrower than INTRADIA_ALCANCE_DIAS).
+DETALLE_ALCANCE_DIAS = 90
 
 # BODY-SYNC-VIVO-2 ruling 1: the on-demand pull's own minimum space between attempts for the SAME
 # person -- independent of garmin_cuenta's own backoff window (ESPACIO_MIN_ENTRE_INTENTOS above is
@@ -600,6 +618,11 @@ def pull_hosted(conn, *, fecha: str | None = None, n_days: int | None = None) ->
             token = garmin_cuenta.leer(conn, person_id)
             if token is not None:
                 _pull_intradia_pendientes(conn, person_id, hoy, token_str=token)
+                # Re-read: _pull_intradia_pendientes may just have refreshed and persisted this
+                # same person's token (garmin_cuenta.guardar) -- this call must use that, not the
+                # value read above.
+                token = garmin_cuenta.leer(conn, person_id)
+                _pull_detalle_pendientes(conn, person_id, hoy, token_str=token)
     if omitidos:
         print(f"omitido: {omitidos} personas en espera", flush=True)
     _cerrar_semanas_todas(conn)
@@ -772,17 +795,43 @@ def traer_intradia(conn, person_id: int, day: str, token_str: str | None = None,
     return (estado, token_after) if token_str is not None else estado
 
 
+def _dias_intradia_necesarios_todos(conn, person_id: int, hoy: date) -> list[str]:
+    """BODY-ENTRENO-DETALLE-1 ruling 5: the full set of intraday days a scheduled pull should
+    fetch this run, newest first -- experimentos.dias_intradia_necesarios' own experiment days
+    UNION, only when privacidad.guarda_detalle agrees for this person, every day from
+    `hoy - INTRADIA_ALCANCE_DIAS` to yesterday not yet stored complete (db.intradia_almacenado).
+    A person who has not agreed (hosted, no consentimiento-v4) gets exactly the experiment days,
+    unchanged -- Carlos's own local machine (guarda_detalle always true there, cuenta.hosted() is
+    False) gets every day in reach, not only its experiments' own test/baseline windows. Lives in
+    pull.py, not experimentos.py (ruling 5's "wherever reads more naturally"): it needs pull's
+    own INTRADIA_ALCANCE_DIAS and privacidad, and its only caller, _pull_intradia_pendientes,
+    already lives here. Capping (INTRADIA_MAX_POR_CORRIDA) stays in that caller -- this only
+    decides WHICH days are candidates."""
+    dias = set(experimentos.dias_intradia_necesarios(conn, person_id, hoy))
+    if privacidad.guarda_detalle(conn, person_id):
+        limite = hoy - timedelta(days=INTRADIA_ALCANCE_DIAS)
+        d = hoy - timedelta(1)
+        while d >= limite:
+            ds = d.isoformat()
+            if ds not in dias and not db.intradia_almacenado(conn, person_id, ds):
+                dias.add(ds)
+            d -= timedelta(1)
+    return sorted(dias, reverse=True)
+
+
 def _pull_intradia_pendientes(conn, person_id: int, hoy: date, token_str: str | None = None) -> int:
     """BODY-EXPERIMENTOS-INTRADIA-DIAS-FALTANTES-1: fetches up to INTRADIA_MAX_POR_CORRIDA of this
-    person's missing intraday days (experimentos.dias_intradia_necesarios, newest first) through
-    the same on-demand traer_intradia this module already has -- a person with no active intraday
-    experiment makes no Garmin call. A failure on one day is logged (counts and dates only,
-    errores.texto_seguro) and does not stop the others or fail the run. With token_str given
-    (hosted), persists the refreshed token (garmin_cuenta.guardar) if traer_intradia changed it,
-    the same pattern _pull_one_person uses. Returns the number of days actually fetched this run;
-    prints 'intradia: N días traídos, M pendientes' (counts and dates only) when at least one day
-    was needed, M counting every day still missing after this run (capped-out or errored alike)."""
-    pendientes = experimentos.dias_intradia_necesarios(conn, person_id, hoy)
+    person's missing intraday days (_dias_intradia_necesarios_todos, newest first -- the active
+    experiments' own days, plus, once BODY-ENTRENO-DETALLE-1's guarda_detalle agrees, every day
+    in reach) through the same on-demand traer_intradia this module already has -- a person with
+    no active experiment AND no agreement makes no Garmin call. A failure on one day is logged
+    (counts and dates only, errores.texto_seguro) and does not stop the others or fail the run.
+    With token_str given (hosted), persists the refreshed token (garmin_cuenta.guardar) if
+    traer_intradia changed it, the same pattern _pull_one_person uses. Returns the number of days
+    actually fetched this run; prints 'intradia: N días traídos, M pendientes' (counts and dates
+    only) when at least one day was needed, M counting every day still missing after this run
+    (capped-out or errored alike)."""
+    pendientes = _dias_intradia_necesarios_todos(conn, person_id, hoy)
     if not pendientes:
         return 0
     dias = pendientes[:INTRADIA_MAX_POR_CORRIDA]
@@ -801,6 +850,65 @@ def _pull_intradia_pendientes(conn, person_id: int, hoy: date, token_str: str | 
     if token_str is not None and token != token_before:
         garmin_cuenta.guardar(conn, person_id, token)
     print(f"intradia: {fetched} días traídos, {len(pendientes) - fetched} pendientes", flush=True)
+    return fetched
+
+
+def traer_detalle_actividad(conn, person_id: int, source_id: str, token_str: str | None = None):
+    """Pulls one activity's full detail through the adapter only (garmin_adapter.fetch_activity_
+    detail) and stores each kind that call actually returned (db.guardar_detalle_actividad) --
+    'detalle'/'vueltas'/'zonas', matching ActivityDetailData.raw's own keys. A kind whose own
+    Garmin call failed is simply absent from raw and is not stored this run (left for a later
+    run's db.actividades_sin_detalle to pick up again), the same `_errors` pattern fetch_intraday
+    already uses -- one failing call never loses the other two. Returns the number of kinds
+    stored (0-3), or (that count, token_after) when token_str is given (hosted, per-person token
+    path, the same dual-return shape fetch_activity_detail/traer_series use."""
+    if token_str is not None:
+        data, token_after = garmin_adapter.fetch_activity_detail(source_id, token_str=token_str)
+    else:
+        data = garmin_adapter.fetch_activity_detail(source_id)
+    stored = 0
+    for kind in db.DETALLE_KINDS:
+        if kind in data.raw:
+            db.guardar_detalle_actividad(conn, person_id, garmin_adapter.SOURCE, source_id, kind, data.raw[kind])
+            stored += 1
+    if token_str is not None:
+        return stored, token_after
+    return stored
+
+
+def _pull_detalle_pendientes(conn, person_id: int, hoy: date, token_str: str | None = None) -> int:
+    """BODY-ENTRENO-DETALLE-1 ruling 4: fetches up to DETALLE_MAX_POR_CORRIDA of this person's
+    activities still missing full detail (db.actividades_sin_detalle, newest day first) through
+    traer_detalle_actividad -- but only when privacidad.guarda_detalle agrees for this person
+    (local mode: always; hosted: consentimiento-v4 only). A person who has not agreed makes NO
+    Garmin call here at all, and this returns 0 immediately. A failure on one activity is logged
+    (counts only, errores.texto_seguro) and does not stop the others or fail the run. With
+    token_str given (hosted), persists the refreshed token (garmin_cuenta.guardar) if traer_
+    detalle_actividad changed it, the same pattern _pull_intradia_pendientes uses. Returns the
+    number of activities actually fetched this run; prints 'detalle: N actividades traídas, M
+    pendientes' (counts only) when at least one activity was pending."""
+    if not privacidad.guarda_detalle(conn, person_id):
+        return 0
+    desde = (hoy - timedelta(days=DETALLE_ALCANCE_DIAS)).isoformat()
+    pendientes = db.actividades_sin_detalle(conn, person_id, desde)
+    if not pendientes:
+        return 0
+    actividades = pendientes[:DETALLE_MAX_POR_CORRIDA]
+    token = token_str
+    token_before = token
+    fetched = 0
+    for source_id in actividades:
+        try:
+            if token is not None:
+                _, token = traer_detalle_actividad(conn, person_id, source_id, token_str=token)
+            else:
+                traer_detalle_actividad(conn, person_id, source_id)
+            fetched += 1
+        except Exception as e:
+            print(f"detalle: fetch failed for one activity: {errores.texto_seguro(e)}", flush=True)
+    if token_str is not None and token != token_before:
+        garmin_cuenta.guardar(conn, person_id, token)
+    print(f"detalle: {fetched} actividades traídas, {len(pendientes) - fetched} pendientes", flush=True)
     return fetched
 
 
@@ -944,6 +1052,7 @@ def _run(conn, a) -> int:
             # explicit --date), the same shape the morning `manana` run and the plain scheduled
             # daily pull both use.
             _pull_intradia_pendientes(conn, person_id, date.today())
+            _pull_detalle_pendientes(conn, person_id, date.today())
     # Baselines depend on earlier days, so recompute every stored day in order (cheap, local).
     n = readiness.recompute_all(conn, person_id)
     print(f"Readiness updated for {n} days.")
