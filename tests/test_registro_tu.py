@@ -77,6 +77,7 @@ _THIRD_PERSON_ALLOW = {
     "agente.error.entreno_unir_ambiguo": "'tiene' subject is 'ese dia' (the day), not the reader",
     "dispositivos.scope_fixed_note": "'tiene' subject is 'un PC' (the device), not the reader",
     "agente.error.comida_sin_consentimiento": "'tiene' subject is {nombre}, a household member, not the reader",
+    "privacidad.consentimiento.que": "'su detalle completo' refers to 'cada actividad' (each activity), not the reader",
 }
 
 
