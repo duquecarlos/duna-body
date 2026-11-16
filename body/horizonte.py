@@ -223,21 +223,41 @@ def _sesiones_cardio(conn, person_id: int, desde: date | None = None, hasta: dat
     return sesiones
 
 
+def _planes_hechos_fuerza(conn, person_id: int, desde: date, hasta: date) -> list[date]:
+    """BODY-PLAN-SESION-HECHA-1 rulings 1/2: every day in [desde, hasta] carrying a `plan` row of
+    this person with status 'done' AND exercises (`ejercicios_json`) -- the plan's own word about a
+    strength session, counted only when there is something to say what was done. One statement,
+    bounded like every other `_recopilar_datos` read; never scoped to one horizon's `goal_id`, the
+    same way a measured session isn't -- a done session is a fact about the person's day,
+    regardless of which plan (or none) it was written under."""
+    return [_parse(r["day"]) for r in conn.execute(
+        "SELECT day FROM plan WHERE person_id = ? AND status = 'done' AND ejercicios_json IS NOT NULL "
+        "AND day BETWEEN ? AND ?", (person_id, desde.isoformat(), hasta.isoformat())
+    )]
+
+
 def _recopilar_datos(conn, person_id: int, desde: date, hasta: date) -> dict:
     """Every raw data source a medida's real figure can come from, fetched ONCE for [desde,
     hasta] -- ruling 1's bounded statement count: one combined daily_metric read (every key, not
-    one query per medida) plus one sleep_session read, one strength-classifier call and one
-    cardio-classifier call, independent of how many weekly lines or checkpoints use them."""
+    one query per medida) plus one sleep_session read, one strength-classifier call, one
+    cardio-classifier call and one done-plan-day read (BODY-PLAN-SESION-HECHA-1), independent of
+    how many weekly lines or checkpoints use them. `fuerza_con_plan` is `fuerza` unioned with those
+    done-plan days (entreno_racha.con_plan_hecho) -- the only one of these `_real_medida` reads for
+    `sesiones_fuerza`; `fuerza` itself stays the watch-only list every other reader (the week's
+    rules) already uses."""
     metricas: dict[str, dict] = {}
     for r in conn.execute(
         "SELECT day, metric_key, value FROM daily_metric WHERE person_id = ? AND day BETWEEN ? AND ?",
         (person_id, desde.isoformat(), hasta.isoformat())
     ):
         metricas.setdefault(r["day"], {})[r["metric_key"]] = r["value"]
+    fuerza = entreno_racha.sesiones_fuerza(conn, person_id, desde, hasta)
     return {
         "metricas": metricas,
         "sueno": _sesiones_sueno(conn, person_id, desde, hasta),
-        "fuerza": entreno_racha.sesiones_fuerza(conn, person_id, desde, hasta),
+        "fuerza": fuerza,
+        "fuerza_con_plan": entreno_racha.con_plan_hecho(
+            fuerza, _planes_hechos_fuerza(conn, person_id, desde, hasta)),
         "cardio": _sesiones_cardio(conn, person_id, desde, hasta),
     }
 
@@ -261,7 +281,11 @@ def _real_medida(datos: dict, medida: str, dias: list[str]) -> dict:
         return {"real": statistics.median(valores), "dias_con_dato": len(valores), "valores": valores,
                 "tipo": "mediana"}
     if medida == "sesiones_fuerza":
-        n = sum(1 for s in datos["fuerza"] if s["day"].isoformat() in dias)
+        # BODY-PLAN-SESION-HECHA-1 ruling 1/2: `fuerza_con_plan`, never the measured-only `fuerza`
+        # -- a done plan row with exercises counts once on a day with no measured session; a
+        # cardio measure has no such fallback, it stays measured only (no plan row ever says
+        # cardio was done, so none reaches `fuerza_con_plan` or this branch).
+        n = sum(1 for s in datos["fuerza_con_plan"] if s["day"].isoformat() in dias)
         return {"real": n, "dias_con_dato": len(dias), "tipo": "cuenta"}
     if medida == "sesiones_cardio":
         n = sum(1 for s in datos["cardio"] if s["day"].isoformat() in dias)
