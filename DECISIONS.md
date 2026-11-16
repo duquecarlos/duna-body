@@ -23072,3 +23072,5 @@ authorizing a merge through it, so this merges on green rather than stopping AWA
 **Open follow-ups, not this slice's to do:** none found -- the spec's five rulings and every listed
 test file are built and gated.
 
+-- merged `59592e94aaac011f3fe0f2fbc22b966c6993310c`
+
