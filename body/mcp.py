@@ -405,15 +405,17 @@ def _mensaje_aplicar_expirada_remoto(idioma: str, expira_en, zona=None) -> str:
              hora=f"{local.hour:02d}:{local.minute:02d}")
 
 
-def _error_remoto_a_rehuso(idioma: str, nombre_str: str, data: dict) -> _RehusoClienteMCP:
+def _error_remoto_a_rehuso(sesion: _SesionCliente, nombre_str: str, data: dict) -> _RehusoClienteMCP:
     """Maps one POST /llamar refusal body `{"error": codigo, ...campos}` to the SAME localized
     text the local door already shows for that reason (ruling 3) -- `_mensaje_tope_*` already take
     a bare `idioma`, reused verbatim; the others normally take a `_Sesion` to read its `.conn` for
     the language (and, for `aplicar_expirada`, the timezone) -- this side has neither, so it reads
     the same i18n keys directly instead of calling those `_Sesion`-shaped functions. Byte-identical
-    output text either way. BODY-MCP-HTTP-1: takes a bare `idioma` (not a `_SesionCliente`) so
-    body/rutas/mcp_http.py, which knows the signed-in person's language but builds no
-    `_SesionCliente` of its own, can call this too."""
+    output text either way. BODY-MCP-HTTP-1: body/rutas/mcp_http.py, which knows the signed-in
+    person's language but keeps no `_SesionCliente` of its own, builds a bare one
+    (`_SesionCliente()`, `.idioma` set) just to call this -- this signature stays exactly as
+    tests/test_mcp_cliente_remoto.py (outside this slice's touches) already calls it."""
+    idioma = sesion.idioma
     t = T(idioma)
     codigo = data.get("error")
     if codigo == "limite":
@@ -493,7 +495,7 @@ def _llamar_herramienta_remota(sesion: _SesionCliente, nombre, argumentos: dict)
         print(f"mcp remoto tools/call error: status={status} herramienta={nombre_str!r}", file=sys.stderr)
         raise _RehusoClienteMCP(T(sesion.idioma)("mcp.remoto.error_interno"))
     if "error" in data:
-        raise _error_remoto_a_rehuso(sesion.idioma, nombre_str, data)
+        raise _error_remoto_a_rehuso(sesion, nombre_str, data)
     conversacion_id = data.get("conversacion_id")
     if isinstance(conversacion_id, int):
         sesion.conversacion_id = conversacion_id

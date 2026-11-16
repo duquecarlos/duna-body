@@ -91,10 +91,15 @@ def _mensaje_error(data: dict, nombre_str: str, idioma: str) -> str:
     """Ruling 2: every refusal becomes an MCP tool result (`isError: true`), never a transport
     error -- `solo_lectura` (new to this endpoint) is picked straight by `idioma`; every other
     code is one mcp.py's own `_error_remoto_a_rehuso` already maps to the SAME localized text the
-    local stdio door and the Personal desk's own PC client already show for it."""
+    local stdio door and the Personal desk's own PC client already show for it. That function
+    takes a `_SesionCliente` (its signature stays untouched -- a test outside this slice's
+    touches calls it directly), so this endpoint builds a bare, throwaway one just to carry
+    `idioma`: it holds no connection and nothing here ever reads anything else off it."""
     if data.get("error") == "solo_lectura":
         return _MENSAJE_SOLO_LECTURA.get(idioma, _MENSAJE_SOLO_LECTURA["es"])
-    rehuso = mcp._error_remoto_a_rehuso(idioma, nombre_str, data)
+    sesion_cliente = mcp._SesionCliente()
+    sesion_cliente.idioma = idioma
+    rehuso = mcp._error_remoto_a_rehuso(sesion_cliente, nombre_str, data)
     return errores.texto_propio(rehuso)
 
 
