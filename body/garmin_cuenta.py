@@ -14,7 +14,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from . import cuenta
+from . import cuenta, db
 
 KEY_ENV = "BODY_TOKEN_KEY"
 _NONCE_LEN = 12
@@ -70,10 +70,10 @@ def guardar(conn: sqlite3.Connection, person_id: int, token_str: str) -> None:
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with conn:
         conn.execute(
-            "INSERT INTO garmin_cuenta (person_id, token_cifrado, nonce, conectado_en, ultimo_error) "
-            "VALUES (?, ?, ?, ?, NULL) "
+            "INSERT INTO garmin_cuenta (person_id, token_cifrado, nonce, conectado_en, ultimo_error, "
+            "reintentar_despues_de) VALUES (?, ?, ?, ?, NULL, NULL) "
             "ON CONFLICT(person_id) DO UPDATE SET token_cifrado = excluded.token_cifrado, "
-            "nonce = excluded.nonce, ultimo_error = NULL",
+            "nonce = excluded.nonce, ultimo_error = NULL, reintentar_despues_de = NULL",
             (person_id, ciphertext, nonce, now),
         )
 
@@ -169,3 +169,93 @@ def dias_sin_datos(conn: sqlite3.Connection, person_id: int, hoy: date) -> list[
     return [d for d in (
         (hoy - timedelta(n)).isoformat() for n in range(VENTANA_RELLENO - 1, -1, -1)
     ) if d not in almacenados]
+
+
+# BODY-SYNC-VIVO-ESTADO-1 ruling 2: a failed attempt's backoff window, chosen from the Garmin-
+# reported HTTP status (body/garmin_adapter.estado_http) a caller passes to registrar_intento.
+# 429 (rate-limited) waits the longest; a 5xx or a confirmed connection/timeout failure (estado_
+# http's own 0 sentinel -- "transient, no numeric status") waits less; anything else (an auth
+# failure, an unrecognised error) sets no backoff at all -- that case keeps today's handling (the
+# token flow asks the person to reconnect; reconnecting is the fix, not a timer).
+BACKOFF_429_MIN = 120
+BACKOFF_TRANSITORIO_MIN = 15
+
+
+def registrar_intento(
+    conn: sqlite3.Connection, person_id: int, ahora: datetime, ok: bool, estado_http: int | None = None,
+) -> None:
+    """Records ONE pull attempt for this person, success or not (BODY-SYNC-VIVO-ESTADO-1 ruling
+    1): ultimo_intento_en is always set to `ahora`. On success, reintentar_despues_de is cleared.
+    On failure, it is set from `estado_http` by ruling 2's table above, or cleared when the
+    failure carries none of those statuses (no backoff -- today's handling applies). Always a
+    full overwrite, never a conditional preserve: one call, one clean record of what just
+    happened."""
+    if ok:
+        espera_min = None
+    elif estado_http == 429:
+        espera_min = BACKOFF_429_MIN
+    elif estado_http is not None and (estado_http == 0 or 500 <= estado_http < 600):
+        espera_min = BACKOFF_TRANSITORIO_MIN
+    else:
+        espera_min = None
+    reintentar = (ahora + timedelta(minutes=espera_min)).isoformat() if espera_min is not None else None
+    with conn:
+        conn.execute(
+            "UPDATE garmin_cuenta SET ultimo_intento_en = ?, reintentar_despues_de = ? WHERE person_id = ?",
+            (ahora.isoformat(), reintentar, person_id),
+        )
+
+
+def puede_intentar(conn: sqlite3.Connection, person_id: int, ahora: datetime, espacio_min: float) -> bool:
+    """False while a backoff set by registrar_intento has not yet expired (`ahora` before
+    reintentar_despues_de), or while the last attempt (any outcome) was less than `espacio_min`
+    minutes ago -- a defensive minimum between attempts, independent of the backoff window. True
+    for a person never attempted (no row, or a row with both columns NULL)."""
+    row = conn.execute(
+        "SELECT ultimo_intento_en, reintentar_despues_de FROM garmin_cuenta WHERE person_id = ?",
+        (person_id,),
+    ).fetchone()
+    if row is None:
+        return True
+    if row["reintentar_despues_de"] is not None and ahora < datetime.fromisoformat(row["reintentar_despues_de"]):
+        return False
+    if row["ultimo_intento_en"] is not None:
+        if ahora - datetime.fromisoformat(row["ultimo_intento_en"]) < timedelta(minutes=espacio_min):
+            return False
+    return True
+
+
+def registrar_reloj_sincronizo(conn: sqlite3.Connection, person_id: int, cuando: datetime) -> None:
+    """The watch's own last-contact instant with Garmin (BODY-SYNC-VIVO-ESTADO-1 ruling 4) --
+    written only when a pull's read of it succeeded; a failed or unparseable read leaves the
+    last known value in place rather than clearing it (the caller only calls this when it has a
+    value)."""
+    with conn:
+        conn.execute(
+            "UPDATE garmin_cuenta SET reloj_sincronizo_en = ? WHERE person_id = ?",
+            (cuando.isoformat(), person_id),
+        )
+
+
+def estado_sync(conn: sqlite3.Connection, person_id: int) -> dict:
+    """One read of everything BODY-SYNC-VIVO-ESTADO-1 adds, plus the existing ultimo_ok_en
+    (db.last_sync, unchanged) and ultimo_error (unchanged) -- shared by the live status views
+    this slice's approval exists for, instead of five separate single-column reads."""
+    row = conn.execute(
+        "SELECT ultimo_intento_en, reintentar_despues_de, reloj_sincronizo_en, ultimo_error "
+        "FROM garmin_cuenta WHERE person_id = ?",
+        (person_id,),
+    ).fetchone()
+    ultimo_ok_en = db.last_sync(conn, person_id)
+    if row is None:
+        return {
+            "ultimo_intento_en": None, "ultimo_ok_en": ultimo_ok_en,
+            "reintentar_despues_de": None, "reloj_sincronizo_en": None, "ultimo_error": None,
+        }
+    return {
+        "ultimo_intento_en": row["ultimo_intento_en"],
+        "ultimo_ok_en": ultimo_ok_en,
+        "reintentar_despues_de": row["reintentar_despues_de"],
+        "reloj_sincronizo_en": row["reloj_sincronizo_en"],
+        "ultimo_error": row["ultimo_error"],
+    }
