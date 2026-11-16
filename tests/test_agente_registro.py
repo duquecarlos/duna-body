@@ -43,6 +43,7 @@ ROUTE_TOOL = {
     "/privacidad": None,          # privacy plumbing; the assistant never reads or triggers it
     "/privacidad/exportar": None,  # privacy plumbing; the assistant never reads or triggers it
     "/garmin": "leer_estado_reloj",  # BODY-GARMIN-SYNC-CONSISTENTE-1 ruling 3: the sync state itself
+    "/garmin/estado-vivo": None,  # BODY-SYNC-VIVO-2 ruling 3: the "Tu reloj" card's own poll fragment, not a tool
     "/ajustes/dispositivos": None,  # device-key management; the assistant never reads or triggers it
     "/ajustes/asistente": None,   # the setting itself; the assistant reads it through leer_ajustes, never sets it
     "/api/vida/semana": None,     # device-key API for Personal; the assistant never reads or triggers it

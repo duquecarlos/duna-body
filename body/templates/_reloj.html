@@ -1,0 +1,8 @@
+{# BODY-SYNC-VIVO-2 ruling 3: Hoy's own «Tu reloj» live-freshness card -- rendered both by
+   today.html's own include and by body/rutas/garmin.py's `/garmin/estado-vivo` poll (the SAME
+   fragment, so the poll script can just swap it in place). `data-sincronizando` is present
+   only while a pull for this person is running right now -- the poller's own stop condition. #}
+<div class="card"{% if reloj_vivo and reloj_vivo.sincronizando %} data-sincronizando="1"{% endif %}>
+  <div class="q">{{ t('reloj_vivo.titulo') }}</div>
+  {% if reloj_vivo %}<p class="note mt-6 m-0">{{ reloj_vivo.texto }}</p>{% endif %}
+</div>

@@ -369,7 +369,7 @@ EXPECTED_GET_PATHS = sorted([
     "/experiments/{experiment_id}",
     "/settings", "/ajustes/asistente", "/ajustes/dispositivos", "/api/vida/semana",
     "/api/asistente/mcp/herramientas", "/api/hogar/manana", "/api/hogar/serie",
-    "/healthz", "/ayuda", "/garmin", "/history",
+    "/healthz", "/ayuda", "/garmin", "/garmin/estado-vivo", "/history",
     "/privacidad/consentimiento", "/privacidad", "/privacidad/exportar",
     "/sw.js", "/login", "/login/cuenta/start", "/login/cuenta/callback",
     "/trends", "/shifts", "/shifts/como", "/shifts/patron",
@@ -379,7 +379,7 @@ EXPECTED_GET_PATHS = sorted([
 # Routes that need no identity-scoped id substitution and are safe to call plainly.
 PLAIN_GET_ROUTES = [
     "/", "/goals", "/goals/new", "/settings", "/ajustes/asistente", "/ajustes/dispositivos",
-    "/healthz", "/ayuda", "/garmin", "/history",
+    "/healthz", "/ayuda", "/garmin", "/garmin/estado-vivo", "/history",
     "/privacidad/consentimiento", "/privacidad", "/privacidad/exportar",
     "/sw.js", "/login", "/login/cuenta/start", "/login/cuenta/callback",
     "/trends", "/shifts", "/shifts/como", "/shifts/patron",
