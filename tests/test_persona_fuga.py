@@ -294,7 +294,8 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
     propuesta = agente_propuestas.crear(conn, person_id, conv_id, "proponer_idioma", {"lang": "en"},
                                         antes={"lang": "es"})
 
-    device_key = dispositivo.crear(conn, person_id, f"ZZ{tag}-DISPOSITIVO", {"turnos:subir", "vida:leer"})
+    device_key = dispositivo.crear(conn, person_id, f"ZZ{tag}-DISPOSITIVO",
+                                    {"turnos:subir", "vida:leer", "hogar:leer"})
     device_key_mcp = dispositivo.crear(conn, person_id, f"ZZ{tag}-DISPOSITIVO-MCP", {"asistente:mcp"})
     garmin_cuenta.guardar(conn, person_id, f"FAKE-TEST-TOKEN-ZZ{tag}-NOT-REAL")
     cuenta.create_session(conn, person_id, f"sid-zz{tag.lower()}")
@@ -367,7 +368,7 @@ EXPECTED_GET_PATHS = sorted([
     "/goals/{goal_id}",
     "/experiments/{experiment_id}",
     "/settings", "/ajustes/asistente", "/ajustes/dispositivos", "/api/vida/semana",
-    "/api/asistente/mcp/herramientas",
+    "/api/asistente/mcp/herramientas", "/api/hogar/manana", "/api/hogar/serie",
     "/healthz", "/ayuda", "/garmin", "/history",
     "/privacidad/consentimiento", "/privacidad", "/privacidad/exportar",
     "/sw.js", "/login", "/login/cuenta/start", "/login/cuenta/callback",
@@ -477,6 +478,18 @@ class _BaseFugaTest(unittest.TestCase):
         self.assertEqual(r.status_code, 404, f"{viewer_tag} GET /asistente/conversacion/<{other_tag}'s id> did not 404")
 
         r = client.get("/api/vida/semana", headers={"Authorization": f"Bearer {ids['device_key']}"})
+        n += 1
+        self.assertEqual(r.status_code, 200)
+        texts.append(r.text)
+
+        # BODY-SERVICIO-HOGAR-1: Hogar's own device-key routes, swept the same way as vida above.
+        r = client.get(f"/api/hogar/manana?dia={DAYS[-1]}",
+                        headers={"Authorization": f"Bearer {ids['device_key']}"})
+        n += 1
+        self.assertEqual(r.status_code, 200)
+        texts.append(r.text)
+        r = client.get(f"/api/hogar/serie?metric_key=resting_hr&desde={DAYS[0]}&hasta={DAYS[-1]}",
+                        headers={"Authorization": f"Bearer {ids['device_key']}"})
         n += 1
         self.assertEqual(r.status_code, 200)
         texts.append(r.text)

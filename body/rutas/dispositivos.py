@@ -11,7 +11,7 @@ from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from .. import cuenta, db, desplazamiento_import, dispositivo, identity, shift_import, vida_export
+from .. import cuenta, db, desplazamiento_import, dispositivo, hogar_feed, identity, shift_import, vida_export
 from ..i18n import T
 from . import comun
 
@@ -21,7 +21,8 @@ router = APIRouter()
 
 _ALCANCE_LABELS = {"turnos:subir": "dispositivos.scope.turnos", "vida:leer": "dispositivos.scope.vida",
                     "desplazamiento:subir": "dispositivos.scope.desplazamiento",
-                    "asistente:mcp": "dispositivos.scope.asistente_mcp"}
+                    "asistente:mcp": "dispositivos.scope.asistente_mcp",
+                    "hogar:leer": "dispositivos.scope.hogar"}
 
 
 def _dispositivo_row(t: T, d: dict) -> dict:
@@ -69,6 +70,8 @@ async def dispositivos_crear(request: Request, person_id: int = Depends(identity
         alcances.add("desplazamiento:subir")
     if f.get("alcance_asistente_mcp") == "1":
         alcances.add("asistente:mcp")
+    if f.get("alcance_hogar") == "1":
+        alcances.add("hogar:leer")
     new_key = dispositivo.crear(conn, person_id, nombre, alcances)
     items = [_dispositivo_row(t, d) for d in dispositivo.listar(conn, person_id)]
     resp = comun._render("dispositivos.html", t=t, tab="settings", items=items, new_key=new_key,
@@ -178,4 +181,44 @@ def api_vida_semana(semana: str | None = None,
     else:
         monday = vida_export.current_week_monday(hoy=comun._today_local(person))
     data = vida_export.week_section(conn, monday, person_id)
+    return JSONResponse(data, headers={"Cache-Control": "no-store"})
+
+
+# ---- Hogar's own feed (hosted only): BODY-SERVICIO-HOGAR-1, Carlos's ruling -- a full,
+# unfiltered read of his own data, gated only by the hogar:leer device key itself ------------------
+
+@router.get("/api/hogar/manana")
+@comun._cierra_conexion
+def api_hogar_manana(dia: str | None = None,
+                      person_id: int = Depends(identity.person_from_device("hogar:leer"))):
+    conn, person, _ = comun._ctx(person_id)
+    if dia:
+        try:
+            d = date.fromisoformat(dia)
+        except ValueError:
+            raise HTTPException(400)
+    else:
+        d = comun._today_local(person)
+    data = hogar_feed.manana(conn, person_id, d)
+    return JSONResponse(data, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/api/hogar/serie")
+@comun._cierra_conexion
+def api_hogar_serie(metric_key: str, desde: str, hasta: str,
+                     person_id: int = Depends(identity.person_from_device("hogar:leer"))):
+    conn, _, _ = comun._ctx(person_id)
+    try:
+        date.fromisoformat(desde)
+        date.fromisoformat(hasta)
+    except ValueError:
+        raise HTTPException(400)
+    if hasta < desde:
+        raise HTTPException(400)
+    try:
+        data = hogar_feed.serie(conn, person_id, metric_key, desde, hasta)
+    except hogar_feed.MetricDesconocida:
+        raise HTTPException(404)
+    except hogar_feed.RangoDemasiadoLargo:
+        raise HTTPException(400)
     return JSONResponse(data, headers={"Cache-Control": "no-store"})
