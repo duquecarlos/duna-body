@@ -108,6 +108,32 @@ class ExerciseSetsData:
     raw: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class ActivityDetailData:
+    """Per-activity detail, unparsed (BODY-ENTRENO-DETALLE-1): the three raw payloads
+    fetch_activity_detail pulls, stored exactly as fetched (db.guardar_detalle_actividad) and
+    parsed on read (parse_activity_hr_series/parse_laps/parse_hr_zones below) -- the intradia
+    precedent, so a parser fix never needs a re-pull. `raw` holds "detalle"/"vueltas"/"zonas"
+    keys; a key is absent when its own call failed (see fetch_activity_detail's own `_errors`)."""
+    activity_id: str
+    source: str = SOURCE
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Lap:
+    """One lap from get_activity_splits. BODY-ENTRENO-DETALLE-1: every field reads a key the
+    installed garminconnect 0.3.20 package does not confirm (typed only as dict[str, Any], no
+    docstring naming a key) -- assumed from this family of endpoints' well-known "lapDTOs" shape,
+    the same unconfirmed-key documentation style ExerciseSet already uses. A value this module
+    cannot find or make sense of is None, an honest gap, never guessed and never a 0."""
+    index: int | None = None
+    start_local: str | None = None
+    duration_s: float | None = None
+    avg_hr: float | None = None
+    max_hr: float | None = None
+
+
 class NotSignedIn(RuntimeError):
     pass
 
@@ -382,6 +408,44 @@ def fetch_exercise_sets(activity_id: int | str, token_str: str | None = None):
         raw["_errors"] = errors
     sets = parse_exercise_sets(raw.get("exercise_sets"))
     data = ExerciseSetsData(activity_id=str(activity_id), sets=sets, raw=raw)
+    if token_str is None:
+        return data
+    return data, api.client.dumps()
+
+
+def fetch_activity_detail(activity_id: int | str, token_str: str | None = None):
+    """Pull one activity's full detail: the per-sample heart-rate curve (get_activity_details,
+    api/activities.py:584, the library's own default maxchart=2000 samples), its laps
+    (get_activity_splits, :526) and its heart-rate-zone breakdown (get_activity_hr_in_timezones,
+    :560) -- one call each, same session/token pattern as fetch_day/fetch_exercise_sets,
+    including the hosted per-person token path. One failing call does not lose the other two
+    (the `_errors` pattern fetch_intraday uses, :223-258 -- the slice's own line numbers for that
+    pattern as it stood then).
+
+    garminconnect 0.3.20 types all three calls' return only as dict[str, Any], with no docstring
+    naming a single key. parse_activity_hr_series/parse_laps/parse_hr_zones below parse
+    defensively and document each key they assume, the same unconfirmed-shape style
+    fetch_exercise_sets/parse_exercise_sets already use for this same activities family.
+
+    BODY-ENTRENO-DETALLE-1 ruling 4: called on demand only, from pull.traer_detalle_actividad --
+    nothing in pull_all/pull_hosted/pull_backfill_hosted calls this directly; pull._pull_detalle_
+    pendientes is what walks the list of activities still missing detail."""
+    api = _client(token_str)
+    raw: dict[str, Any] = {}
+    calls = {
+        "detalle": lambda: api.get_activity_details(str(activity_id)),
+        "vueltas": lambda: api.get_activity_splits(str(activity_id)),
+        "zonas": lambda: api.get_activity_hr_in_timezones(str(activity_id)),
+    }
+    errors = {}
+    for kind, call in calls.items():
+        try:
+            raw[kind] = call()
+        except Exception as e:  # one failing call should not lose the other two
+            errors[kind] = type(e).__name__
+    if errors:
+        raw["_errors"] = errors
+    data = ActivityDetailData(activity_id=str(activity_id), raw=raw)
     if token_str is None:
         return data
     return data, api.client.dumps()
@@ -803,3 +867,177 @@ def parse_exercise_sets(payload: Any) -> tuple[ExerciseSet, ...]:
             start_local=_start_local(row),
         ))
     return tuple(sets)
+
+
+# ---------------------------------------------------------- activity detail parsing (BODY-ENTRENO-DETALLE-1)
+
+def parse_activity_hr_series(payload: Any, zone: str) -> tuple[tuple[str, float], ...]:
+    """One activity's heart-rate curve, parsed from a stored get_activity_details payload.
+    Assumed shape (this family's well-known convention, unconfirmed by the installed
+    garminconnect 0.3.20 package -- typed only as dict[str, Any]): a dict holding
+    "metricDescriptors" (a descriptor list naming each column of "activityDetailMetrics"[]
+    ."metrics"[] by key -- the SAME {"key": ..., "index": ...} shape the day-level intraday
+    descriptors already use, e.g. {"key": "directTimestamp", "index": 0}) and
+    "activityDetailMetrics" (a list of {"metrics": [...]} rows). The timestamp and heart-rate
+    columns are found BY KEY (_descriptor_index, reused unmodified from the day-level intraday
+    parsing above -- "directtimestamp"/"timestamp" and "directheartrate"/"heartrate"), NEVER by a
+    fixed position: unlike the day-level intraday arrays (whose 0/1 fallback was itself measured,
+    BODY-INTRADIA-SPOTCHECK-1), no position is confirmed for this different, unconfirmed
+    endpoint, so a descriptor list this function cannot read gives the empty tuple rather than a
+    guessed column. The timestamp is a UTC instant (confirmed convention on every other Garmin
+    intraday-style array this adapter reads), shifted to `zone` with _utc_to_local_iso. A sample
+    with no heart-rate reading (_heart_rate_valid) or no timestamp is dropped, never kept as 0."""
+    if not isinstance(payload, dict):
+        return ()
+    descriptors = payload.get("metricDescriptors")
+    ts_idx = _descriptor_index(descriptors, ("directtimestamp", "timestamp"))
+    hr_idx = _descriptor_index(descriptors, ("directheartrate", "heartrate"))
+    if ts_idx is None or hr_idx is None:
+        return ()
+    metrics = payload.get("activityDetailMetrics")
+    if not isinstance(metrics, list):
+        return ()
+    out = []
+    for entry in metrics:
+        if not isinstance(entry, dict):
+            continue
+        row = entry.get("metrics")
+        if not isinstance(row, list) or len(row) <= max(ts_idx, hr_idx):
+            continue
+        value = _num(row[hr_idx])
+        if value is None or not _heart_rate_valid(value):
+            continue
+        local_time = _utc_to_local_iso(row[ts_idx], zone)
+        if local_time is None:
+            continue
+        out.append((local_time, value))
+    return tuple(out)
+
+
+def _gmt_value_to_local_iso(value: Any, zone: str) -> str | None:
+    """A timestamp in this activity-detail family of endpoints (a lap's own start, one of a
+    night's per-minute sleep samples) is seen as either an epoch-ms GMT instant -- the same
+    convention _utc_to_local_iso already applies elsewhere in this module -- or a GMT string
+    with no UTC offset (e.g. "2026-11-09 06:15:00.0"), tried in that order since garminconnect
+    0.3.20 confirms neither for these particular calls."""
+    iso = _utc_to_local_iso(value, zone)
+    if iso is not None:
+        return iso
+    if not isinstance(value, str):
+        return None
+    try:
+        tz = ZoneInfo(zone)
+    except Exception:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace(" ", "T"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(tz).replace(tzinfo=None).isoformat(timespec="minutes")
+
+
+def parse_laps(payload: Any, zone: str) -> tuple[Lap, ...]:
+    """Parse one get_activity_splits response into an ordered tuple of Lap. Assumed shape
+    (unconfirmed, this family's well-known "lapDTOs" convention, same documentation style as
+    parse_exercise_sets): a dict holding a "lapDTOs" list, each entry naming "lapIndex",
+    "startTimeGMT", "duration" (seconds), "averageHR", "maxHR". Anything else -- a missing key, a
+    null, a non-list "lapDTOs", a non-dict payload -- is the empty tuple, never a crash."""
+    if not isinstance(payload, dict):
+        return ()
+    rows = payload.get("lapDTOs")
+    if not isinstance(rows, list):
+        return ()
+    out = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        idx = row.get("lapIndex")
+        index = int(idx) if isinstance(idx, (int, float)) and not isinstance(idx, bool) else None
+        out.append(Lap(
+            index=index,
+            start_local=_gmt_value_to_local_iso(row.get("startTimeGMT"), zone),
+            duration_s=_num(row.get("duration")),
+            avg_hr=_num(row.get("averageHR")),
+            max_hr=_num(row.get("maxHR")),
+        ))
+    return tuple(out)
+
+
+def parse_hr_zones(payload: Any) -> tuple[tuple[int, float, float], ...]:
+    """Parse one get_activity_hr_in_timezones response into (zone_number, seconds_in_zone,
+    zone_low_bpm) tuples, in payload order. Assumed shape (unconfirmed -- the installed
+    garminconnect 0.3.20 package types the call dict[str, Any], but the endpoint itself returns a
+    JSON array): a list of dicts naming "zoneNumber", "secsInZone", "zoneLowBoundary" (this
+    family's well-known field names). A dict payload wrapping that same list under
+    "hrTimeInZones" is also accepted, in case the response is wrapped differently than the
+    stub's own type hint suggests. A row missing any of the three fields, or any other shape, is
+    dropped, never guessed."""
+    rows = payload.get("hrTimeInZones") if isinstance(payload, dict) else payload
+    if not isinstance(rows, list):
+        return ()
+    out = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        zone_number = row.get("zoneNumber")
+        seconds = _num(row.get("secsInZone"))
+        low = _num(row.get("zoneLowBoundary"))
+        if not isinstance(zone_number, (int, float)) or isinstance(zone_number, bool) \
+                or seconds is None or low is None:
+            continue
+        out.append((int(zone_number), seconds, low))
+    return tuple(out)
+
+
+# ---------------------------------------------------------- sleep minute-by-minute (ruling 6)
+
+# BODY-ENTRENO-DETALLE-1 ruling 6: each present array in a stored get_sleep_data payload, by
+# name -> (its own list key, its own per-sample time key, its own per-sample value key). None of
+# these five keys is confirmed by the installed garminconnect 0.3.20 package -- typed.py:229-236
+# names no per-sample key, only says the per-minute arrays live in the raw dict, "since those
+# arrays are large and rarely needed in typed form". Assumed from this family's well-known
+# convention (the same unconfirmed-key documentation style used throughout this module): Garmin's
+# sleepHeartRate/hrvData/sleepLevels/sleepMovement entries each carry "startGMT" (a GMT string
+# with no offset, the same convention _gmt_value_to_local_iso already parses) beside their own
+# value key; the per-minute SpO2 array is commonly named differently ("wellnessEpochSPO2DataDTO
+# List", keyed by "epochTimestamp"/"spo2Reading") since it comes from a different underlying
+# sensor pipeline.
+_SLEEP_SERIES_SPECS = (
+    ("heart_rate", "sleepHeartRate", "startGMT", "value"),
+    ("hrv", "hrvData", "startGMT", "value"),
+    ("stages", "sleepLevels", "startGMT", "activityLevel"),
+    ("movement", "sleepMovement", "startGMT", "activityLevel"),
+    ("spo2", "wellnessEpochSPO2DataDTOList", "epochTimestamp", "spo2Reading"),
+)
+
+
+def parse_sleep_series(payload: Any, zone: str) -> dict[str, tuple[tuple[str, float], ...]]:
+    """One night's per-minute arrays, parsed from the day's already-stored get_sleep_data
+    payload (db.sueno_minuto_a_minuto) -- see _SLEEP_SERIES_SPECS above for exactly which key is
+    assumed where. Returns a dict with ONLY the arrays actually present and non-empty after
+    parsing (e.g. {"heart_rate": (...), "movement": (...)}) -- a key absent from the payload, or
+    present but empty once malformed/unparseable samples are dropped, is left out entirely,
+    never an empty tuple under its own key. {} for a non-dict payload."""
+    if not isinstance(payload, dict):
+        return {}
+    out: dict[str, tuple[tuple[str, float], ...]] = {}
+    for name, list_key, time_key, value_key in _SLEEP_SERIES_SPECS:
+        rows = payload.get(list_key)
+        if not isinstance(rows, list):
+            continue
+        series = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            value = _num(row.get(value_key))
+            if value is None:
+                continue
+            local_time = _gmt_value_to_local_iso(row.get(time_key), zone)
+            if local_time is None:
+                continue
+            series.append((local_time, value))
+        if series:
+            out[name] = tuple(series)
+    return out

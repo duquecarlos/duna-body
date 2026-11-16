@@ -67,6 +67,12 @@ FULLY_HANDLED_TABLES = {
     # BODY-PLAN-ESQUEMA-1: the plan's own parts, each a child row under a horizon goal -- the
     # person's own wording (horizonte_regla.texto), weekly targets and checkpoints.
     "horizonte_regla", "horizonte_semana", "horizonte_meta_semanal", "horizonte_checkpoint",
+    # BODY-ENTRENO-DETALLE-1 ruling 1: one row per (activity, kind) -- the watch's own
+    # heart-rate-curve/laps/zones detail for one of this person's own activities, never typed by
+    # them. Unlike raw_payload below (a PARTIAL_EXPORT_TABLE, kind/date only), the full payload
+    # is exported here -- the same per-activity detail Carlos asked this slice to keep
+    # ("yes, everything, man.", 2026-11-15), about his own body, from his own account.
+    "activity_detail",
 }
 # raw_payload: kind/date only, never the stored JSON payload. garmin_cuenta: the connected-since
 # date only, never the encrypted token (BODY-GARMIN-HOST-1). dispositivo: name/scopes/dates only,
@@ -221,6 +227,9 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         (person_id,))]
     sueno = [dict(r) for r in conn.execute(
         "SELECT * FROM sleep_session WHERE person_id = ? ORDER BY day", (person_id,))]
+    detalle_actividades = [dict(r) for r in conn.execute(
+        "SELECT activity_source, activity_source_id, kind, fetched_at, payload FROM activity_detail "
+        "WHERE person_id = ? ORDER BY activity_source, activity_source_id, kind", (person_id,))]
     recuperacion_actividades = [dict(r) for r in conn.execute(
         "SELECT activity_source, activity_source_id, modelo_version, minutos, motivo, computed_at "
         "FROM recuperacion_actividad WHERE person_id = ? ORDER BY computed_at", (person_id,))]
@@ -312,6 +321,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "dias": dias,
         "actividades": actividades,
         "sets_entreno": sets_entreno,
+        "detalle_actividades": detalle_actividades,
         "sueno": sueno,
         "recuperacion_actividades": recuperacion_actividades,
         "turno_fc": turno_fc_filas,
@@ -439,8 +449,11 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         conn.execute("DELETE FROM sleep_session WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM raw_payload WHERE person_id = ?", (person_id,))
         # workout_set's FK targets activity's composite key -- deleted first, same as every other
-        # table that references a row this sweep is about to remove.
+        # table that references a row this sweep is about to remove. activity_detail has no
+        # formal FK (same as workout_set, above) but names the same (source, source_id) pair --
+        # deleted first for the same reason.
         conn.execute("DELETE FROM workout_set WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM activity_detail WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM recuperacion_actividad WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM turno_fc WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM activity WHERE person_id = ?", (person_id,))

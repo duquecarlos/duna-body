@@ -111,6 +111,8 @@ REGISTRY: tuple[TableSpec, ...] = (
     TableSpec("activity", match_cols=("person_id", "source", "source_id")),
     TableSpec("workout_set",
               match_cols=("person_id", "activity_source", "activity_source_id", "set_order")),
+    TableSpec("activity_detail",
+              match_cols=("person_id", "activity_source", "activity_source_id", "kind")),
     TableSpec("shift_batch", match_cols=("person_id", "file_name", "received", "extracted_at"),
               id_exported=True),
     TableSpec("shift_batch_item", scope="parent", parent_fk="batch_id", parent_table="shift_batch",
