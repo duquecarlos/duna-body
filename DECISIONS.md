@@ -23234,3 +23234,108 @@ test file are built and gated.
 
 -- merged `2b09919673dc54d443095b9066e8a8ecda8947cf`
 
+## BODY-SYNC-VIVO-TIMER-1 -- a scheduled "today" sweep and a `pull` verb (2026-11-16)
+
+Carlos, relayed verbatim by the Personal desk, 2026-11-15: "I would like to see more like a live
+thing in the app or when I talk to you." BODY-SYNC-VIVO-1-INV (OBSERVED) measured that
+`body-pull.timer` ran only once a day and that `duna-deploy-body` had no `pull` verb, so a relayed
+"pull now" (BODY-DEPLOY-9EEF504) could not run. This slice, on ORCH-CARLOS-DELEGATES-TIER-1-1's
+approval: a daytime "today" sweep, its own timer, and the `pull` verb.
+
+**Ruling 1, as built.** `body/pull.py:pull_hoy_todos` (417): loops `garmin_cuenta.every_person_id`,
+sequential, `time.sleep(PAUSE_S)` before every person after the first. Each person is skipped, no
+Garmin call, when `_en_horas_quietas` (the SAME 06:00-23:00-in-their-own-zone check BODY-SYNC-VIVO-2
+ruling 4 already uses) is true -> `fuera_horario`, or when `garmin_cuenta.puede_intentar` is false
+-> `en_espera`; `puede_intentar` is called with `ESPACIO_MIN_HOY` (15, not the scheduled pulls' own
+`ESPACIO_MIN_ENTRE_INTENTOS=0`) so the sweep shares one floor with the on-demand trigger -- the
+floor the README's ruling-4 ceiling math relies on. Otherwise runs `_pull_hoy_persona` (394), the
+fetch+record+recalc sequence factored OUT of `pull_hoy_ahora` so both callers share one path (never
+a copy) -- `pull_hoy_ahora`'s own body (`body/pull.py:510-515`) now just takes `_PULL_EN_CURSO` and
+calls it. `python -m body.pull --hoy` (argparse at `body/pull.py:855`; hosted branch at `895`, with
+the SAME non-blocking `_try_lock()` --backfill already uses -- a daily pull or a backfill holding
+`pull.lock` is a quiet, successful skip, `"another pull is already running; skipping this run."`
+at line 888; local-mode refusal at `909`) prints `hoy: N ok, M en espera, K fuera de horario, F
+fallidas` (`body/pull.py:897`) -- counts only.
+
+**Ruling 2, as built.** `deploy/host/body-pull-hoy.service` (new): the same `User=duna-body`,
+`EnvironmentFile=`, `Type=oneshot` and hardening lines (`NoNewPrivileges`, `ProtectSystem=strict`,
+`ProtectHome=yes`, `ReadWritePaths`, `PrivateTmp`, `UMask=0077`) as `body-pull.service`, only
+`ExecStart=` changed to `python -m body.pull --hoy`. `deploy/host/body-pull-hoy.timer` (new):
+`OnCalendar=*-*-* *:00,30:00 UTC` (line 5), `Persistent=false` (6), `RandomizedDelaySec=120` (7) --
+every 30 minutes, no catch-up run, spread by up to 2 minutes. Both added to
+`deploy/host/body-deploy.sh`'s `UNITS`/`TIMERS` arrays (lines 25-26), so the next `deploy` installs
+and `systemctl enable --now`s the new timer with no hand step -- the daily 09:30 full pull and the
+backfill timer are unchanged.
+
+**Ruling 3, as built.** `deploy/host/duna-deploy-body`: a `pull` case arm (line 136, no extra args
+accepted) and handling block (169-178) that runs `run systemctl start --wait body-pull.service`
+(175, masked with `|| estado=$?` so `set -e` cannot swallow a non-zero exit before it is captured --
+measured necessary: a bare `estado=$?` after an unmasked failing call would exit the script on that
+line, under `set -Eeuo pipefail`, before the journal print ever ran), then
+`journalctl -u body-pull --since "$inicio" -o cat` (176, counts and dates only -- the job's own
+print lines), then `exit "$estado"` (177) -- the service's own exit status. `usage()` updated (line
+28). No sudoers change: the existing line has no argument restriction (confirmed unchanged by
+`SudoersTest`).
+
+**Ruling 4, as built.** `deploy/host/README.md`, new "## Pull now" section: Carlos's one-time
+reinstall step for the entry script (the same `sudo install -o root -g root -m 755 ...` line as the
+existing one-time install, since `duna-deploy-body` itself changed) and the orchestrator's own line,
+`sudo -n /usr/local/sbin/duna-deploy-body pull`. The ceiling paragraph: the 30-minute timer lands
+inside one person's own 17-hour daytime window at most 34 times a day (17 x 2); the on-demand
+trigger can also fire inside that window at most once every 15 minutes (`ESPACIO_MIN_HOY`) -- at
+most 68 times a day (17 x 4); both write the same `ultimo_intento_en` column and, after ruling 1,
+share that same 15-minute floor, so the two never simply add -- the combined ceiling is the
+15-minute floor's own bound over 17 hours, **~68 "today"-pulls a day**, never 34+68. Each
+"today"-pull makes 7 Garmin calls (the 6 feeds `garmin_adapter.fetch_day` reads, plus one read of
+the watch's own last-sync instant) and a person inside a recorded backoff (2h after a 429, 15min
+after a 5xx) makes none until it expires -- ceiling ~68 x 7 = 476 Garmin calls/day/person, a worst
+case the window, the shared floor and any backoff keep well under in practice.
+
+**Tests:** `tests/test_sync_vivo_timer.py` (new, 11 tests) -- `pull_hoy_todos`'s branching (outside
+the daytime window with no Garmin call, too-soon-since-the-last-attempt and a live backoff both
+`en_espera` with no Garmin call -- the second test doubling as proof the sweep uses
+`ESPACIO_MIN_HOY` rather than `espacio_min=0`, since the latter would never block on recency alone
+--, a free person pulled and counted `ok`, a Garmin failure counted `fallidas` and recorded, each
+person checked in THEIR OWN configured zone, a pause between people, no connected person is a
+no-op), and the `--hoy` CLI wiring (the counts line, the quiet lock-skip, local mode's refusal).
+`tests/test_host_deploy.py` (9 new tests across `SystemdUnitTest`, a new `PullVerbTest` and a new
+`PullNowReadmeTest`) -- the new unit/timer's shape and shared hardening lines, its place in the
+`UNITS`/`TIMERS` arrays, the `pull` verb's usage listing/arg validation/`run`-wrapping/journal
+line/exit-status plumbing and its ordering before the generic deploy fallback, and the README's
+reinstall step, `pull` line and ceiling figures. No change was needed to `tests/test_pull.py` --
+`pull_hoy_ahora`'s observable behaviour is unchanged by the refactor, and its own existing coverage
+in `tests/test_sync_vivo.py` already re-ran green.
+
+**Gate command:** `.venv/Scripts/python.exe -m unittest discover tests -t .`. Run as 10 sequential
+alphabetical chunks of 20 dotted test modules (1 in the tenth, 181 total), each in the foreground,
+read from the process:
+- chunk 1 (`test_accesibilidad`..`test_baselines`): `Ran 377 tests in 91.678s ... OK (skipped=1,
+  expected failures=1)`
+- chunk 2 (`test_baselines_lote`..`test_dispositivo`): `Ran 481 tests in 506.347s ... OK`
+- chunk 3 (`test_ejes_fechas`..`test_fechas_semana`): `Ran 318 tests in 115.044s ... OK`
+- chunk 4 (`test_fit`..`test_host_backup`): `Ran 502 tests in 525.734s ... OK`
+- chunk 5 (`test_host_deploy`..`test_metas_semana_tira`): `Ran 425 tests in 97.436s ... OK`
+- chunk 6 (`test_mock_r2_hoy`..`test_primer_dia_1`): `Ran 530 tests in 234.764s ... OK`
+- chunk 7 (`test_primer_pull_1`..`test_rendimiento_red`): `Ran 350 tests in 149.883s ... OK`
+- chunk 8 (`test_rendimiento_turnos`..`test_tendencias_todas`): `Ran 403 tests in 94.247s ... OK`
+- chunk 9 (`test_turno_fc`..`test_vo2max`): `Ran 444 tests in 163.904s ... OK`
+- chunk 10 (`test_web_entry`): `Ran 4 tests in 0.026s ... OK`
+
+Sum: 377+481+318+502+425+530+350+403+444+4 = 3834. Reconciled against an independent collect-only
+count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted without running): 3834
+-- exact match. All ten chunks green.
+
+**Merge policy A, as applied.** This diff's only customer-facing bytes are counts-only print lines
+and a shell `usage()`/README text -- no screen, string table or UI Carlos reads changes. No schema
+or migration (`body/db.py` untouched) and no cross-repo contract change. All three conditions clear,
+so this merges on green.
+
+**Commits:** `c335d66` (rulings 1-3 -- `body/pull.py`, `deploy/host/body-deploy.sh`,
+`deploy/host/duna-deploy-body`, `deploy/host/body-pull-hoy.service` -- new,
+`deploy/host/body-pull-hoy.timer` -- new, `tests/test_host_deploy.py`,
+`tests/test_sync_vivo_timer.py` -- new), `7fb3497` (ruling 4 -- `deploy/host/README.md`,
+`tests/test_host_deploy.py`).
+
+**Open follow-ups, not this slice's to do:** none found -- the spec's four rulings and every listed
+test file are built and gated.
+
