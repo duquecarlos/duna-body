@@ -135,7 +135,7 @@ class NoProponibleTest(unittest.TestCase):
                                     "marcar_periodo", "cerrar_periodo", "corregir_periodo", "borrar_periodo",
                                     "descartar_series", "separar_sesion", "unir_sesiones",
                                     "proponer_objetivo_nutriente",
-                                    "proponer_plan", "corregir_meta_plan", "ampliar_plan"})
+                                    "proponer_plan", "corregir_meta_plan", "ampliar_plan", "anotar_sesion"})
 
 
 class UnaPropuestaPorRondaTest(unittest.TestCase):

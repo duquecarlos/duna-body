@@ -1267,6 +1267,21 @@ def _migrate(conn: sqlite3.Connection) -> None:
         )
     if _table_exists(conn, "metric_def") and _metric_def_needs_vida_rebuild(conn):
         _rebuild_metric_def_table(conn)
+    ccols = {r[1] for r in conn.execute("PRAGMA table_info(conversacion_agente)")}
+    if ccols and "origen" not in ccols:
+        conn.execute(
+            "ALTER TABLE conversacion_agente ADD COLUMN origen TEXT "
+            "CHECK (origen IS NULL OR origen IN ('mcp', 'hogar'))"
+        )
+    # BODY-HOGAR-ESCRIBE-1 ruling 1: an install whose `origen` column already exists from before
+    # this slice still carries the OLD CHECK (IN ('mcp') only) -- SQLite cannot ALTER an existing
+    # CHECK, so this rebuilds the table the same guarded way metric_def/propuesta_agente's own CHECK
+    # widenings already do, once origen itself is guaranteed to exist (the ALTER just above). Placed
+    # here, before this function's first DML statement (the person/timezone UPDATE below) -- every
+    # other `_rebuild_with_fk_off` call in this function runs with no transaction yet open; one
+    # placed after that UPDATE would collide with the `BEGIN` that helper itself issues.
+    if _table_exists(conn, "conversacion_agente") and _conversacion_agente_needs_hogar_rebuild(conn):
+        _rebuild_conversacion_agente_table(conn)
     pcols = {r[1] for r in conn.execute("PRAGMA table_info(person)")}
     if pcols and "language" not in pcols:
         conn.execute("ALTER TABLE person ADD COLUMN language TEXT NOT NULL DEFAULT 'es'")
@@ -1333,18 +1348,6 @@ def _migrate(conn: sqlite3.Connection) -> None:
     expcols = {r[1] for r in conn.execute("PRAGMA table_info(experimento)")}
     if expcols and "goal_id" not in expcols:
         conn.execute("ALTER TABLE experimento ADD COLUMN goal_id INTEGER REFERENCES goal(id)")
-    ccols = {r[1] for r in conn.execute("PRAGMA table_info(conversacion_agente)")}
-    if ccols and "origen" not in ccols:
-        conn.execute(
-            "ALTER TABLE conversacion_agente ADD COLUMN origen TEXT "
-            "CHECK (origen IS NULL OR origen IN ('mcp', 'hogar'))"
-        )
-    # BODY-HOGAR-ESCRIBE-1 ruling 1: an install whose `origen` column already exists from before
-    # this slice still carries the OLD CHECK (IN ('mcp') only) -- SQLite cannot ALTER an existing
-    # CHECK, so this rebuilds the table the same guarded way metric_def/propuesta_agente's own CHECK
-    # widenings already do, once origen itself is guaranteed to exist (the ALTER just above).
-    if _table_exists(conn, "conversacion_agente") and _conversacion_agente_needs_hogar_rebuild(conn):
-        _rebuild_conversacion_agente_table(conn)
     sbcols = {r[1] for r in conn.execute("PRAGMA table_info(shift_batch)")}
     if sbcols and "kind" not in sbcols:
         conn.execute(
