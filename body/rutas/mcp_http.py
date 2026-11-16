@@ -30,7 +30,7 @@ from fastapi.responses import JSONResponse, Response
 
 from .. import cuenta, db, errores, llave_asistente, mcp
 from ..i18n import T
-from . import mcp_remoto
+from . import comun, mcp_remoto
 
 router = APIRouter()
 logger = logging.getLogger("body.mcp_http")
@@ -169,6 +169,7 @@ def _procesar_uno(item, conn, person_id: int, idioma: str, *, puede_aplicar: boo
 
 
 @router.post("/mcp")
+@comun._cierra_conexion_async
 async def mcp_http(request: Request):
     if not cuenta.hosted():
         return JSONResponse({"error": "no_disponible"}, status_code=404)
@@ -177,43 +178,50 @@ async def mcp_http(request: Request):
         return _401(_MENSAJE_401)
     key = auth[len("Bearer "):]
 
-    conn = db.connect()
+    # BODY-WEB-ESTRUCTURA-1/BODY-CONEXIONES-CERRADAS-2: a key resolves to a person only AFTER
+    # Cuenta answers -- there is no person_id yet for comun._ctx to scope by, the same reason
+    # body/rutas/sesion.py's own routes open a plain connection of their own instead (its module
+    # docstring). This one closes itself right here; the SEPARATE connection comun._ctx opens
+    # below, once person_id is known, is the one this route's own @comun._cierra_conexion_async
+    # decorator closes.
+    conn_auth = db.connect()
     try:
-        db.ensure_ready(conn)
+        db.ensure_ready(conn_auth)
         try:
-            autorizacion = llave_asistente.verificar(conn, key)
+            autorizacion = llave_asistente.verificar(conn_auth, key)
         except llave_asistente.CuentaNoDisponible as e:
             return _503(e.retry_after)
         except llave_asistente.PersonaSinBody:
             return _401(_MENSAJE_401_SIN_PERSONA)
         except llave_asistente.LlaveInvalida:
             return _401(_MENSAJE_401)
-
-        person_id = autorizacion.person_id
-        puede_escribir = autorizacion.permiso == "escritura"
-        puede_aplicar = puede_escribir
-        idioma = db.person(conn, person_id).get("language", "es")
-
-        try:
-            cuerpo = json.loads((await request.body()).decode("utf-8"))
-        except (UnicodeDecodeError, ValueError):
-            return _sin_cache(_responder(None, error=_PARSE_ERROR))
-
-        if isinstance(cuerpo, list):
-            if not cuerpo:
-                return _sin_cache(_responder(None, error=_INVALID_REQUEST))
-            respuestas = [r for r in (
-                _procesar_uno(item, conn, person_id, idioma, puede_aplicar=puede_aplicar,
-                              puede_escribir=puede_escribir) for item in cuerpo) if r is not None]
-            if not respuestas:
-                return Response(status_code=202)
-            return _sin_cache(respuestas)
-        if isinstance(cuerpo, dict):
-            respuesta = _procesar_uno(cuerpo, conn, person_id, idioma, puede_aplicar=puede_aplicar,
-                                       puede_escribir=puede_escribir)
-            if respuesta is None:
-                return Response(status_code=202)
-            return _sin_cache(respuesta)
-        return _sin_cache(_responder(None, error=_INVALID_REQUEST))
     finally:
-        conn.close()
+        conn_auth.close()
+
+    person_id = autorizacion.person_id
+    puede_escribir = autorizacion.permiso == "escritura"
+    puede_aplicar = puede_escribir
+    conn, persona, _ = comun._ctx(person_id)
+    idioma = persona.get("language", "es")
+
+    try:
+        cuerpo = json.loads((await request.body()).decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return _sin_cache(_responder(None, error=_PARSE_ERROR))
+
+    if isinstance(cuerpo, list):
+        if not cuerpo:
+            return _sin_cache(_responder(None, error=_INVALID_REQUEST))
+        respuestas = [r for r in (
+            _procesar_uno(item, conn, person_id, idioma, puede_aplicar=puede_aplicar,
+                          puede_escribir=puede_escribir) for item in cuerpo) if r is not None]
+        if not respuestas:
+            return Response(status_code=202)
+        return _sin_cache(respuestas)
+    if isinstance(cuerpo, dict):
+        respuesta = _procesar_uno(cuerpo, conn, person_id, idioma, puede_aplicar=puede_aplicar,
+                                   puede_escribir=puede_escribir)
+        if respuesta is None:
+            return Response(status_code=202)
+        return _sin_cache(respuesta)
+    return _sin_cache(_responder(None, error=_INVALID_REQUEST))
