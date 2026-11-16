@@ -24011,3 +24011,50 @@ both one-line fixes and re-gate.
 - `BODY-ENTRENO-DETALLE-1-FUGA-1`: seed one `activity_detail` row in `tests/test_persona_fuga.py`'s
   `_seed_person` (finding 2 above) -- clears its one failure.
 
+## BODY-ENTRENO-DETALLE-1-B
+
+Closes `BODY-ENTRENO-DETALLE-1-MUDANZA-1` and `BODY-ENTRENO-DETALLE-1-FUGA-1`, the two follow-ups the
+`BODY-ENTRENO-DETALLE-1` entry above left open after its GATE_RED.
+
+**The two registrations, exactly as those follow-ups guessed them** (`body/db.py:434-441`'s
+`activity_detail` PRIMARY KEY is `(person_id, activity_source, activity_source_id, kind)`, confirming the
+guessed `match_cols` without needing the fallback real-unique-key reading):
+
+1. `body/mudanza.py:114-115`: `TableSpec("activity_detail", match_cols=("person_id", "activity_source",
+   "activity_source_id", "kind"))`, placed in `REGISTRY` directly after `workout_set`'s own entry (no
+   `fk_remap`/`fk_table` -- same as `workout_set`, which names the same `(activity_source,
+   activity_source_id)` pair with no formal FK, SQLite's single-column `REFERENCES` being unable to
+   express the composite one).
+2. `tests/test_persona_fuga.py:151-157`: one `INSERT INTO activity_detail` in `_seed_person`, placed
+   directly after the `workout_set` insert beside it, shaped the same way (`person_id`, `'garmin'`,
+   `act_id`, `'detalle'`, a timestamp, and `'{}'` for `payload` -- no real health figure, no marker needed,
+   the census only checks export/delete-all coverage).
+
+`tests/test_mudanza.py` needed no change: its two failing tests (`test_every_live_table_is_in_the_
+registry_or_skipped`, `test_every_table_with_a_person_id_column_is_covered`) both derive their expected set
+from `mudanza.REGISTRY_BY_NAME` dynamically, so registering the table in `body/mudanza.py` alone clears
+both; no test in that file names `activity_detail` (or any other table) by hand.
+
+**The gate**, exactly `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as 10 sequential
+alphabetical chunks of 185 dotted test modules (20 each, last chunk 5), each in the foreground, read from
+the process:
+
+    chunk 1  (test_accesibilidad..test_baselines):            Ran 377 tests, OK (skipped=1, expected failures=1)
+    chunk 2  (test_baselines_lote..test_desplazamiento_vista): Ran 442 tests, OK
+    chunk 3  (test_dispositivo..test_experimentos_pantalla):   Ran 376 tests, OK
+    chunk 4  (test_fecha_futura_1..test_hogar_miembro_1):      Ran 419 tests, OK
+    chunk 5  (test_horizonte..test_mcp_visible):                Ran 511 tests, OK
+    chunk 6  (test_medida_peso..test_plan_hoy):                 Ran 486 tests, OK
+    chunk 7  (test_plan_pantalla..test_recuperacion):           Ran 445 tests, OK
+    chunk 8  (test_recuperacion_pantallas..test_tap_44):        Ran 338 tests, OK
+    chunk 9  (test_tendencias_kpi..test_ventana_comida):        Ran 475 tests, OK
+    chunk 10 (test_vida_dia..test_web_entry):                   Ran 84 tests, OK
+
+Sum: 377+442+376+419+511+486+445+338+475+84 = 3953. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted without running): 3953 -- exact
+match, and the same figure the `BODY-ENTRENO-DETALLE-1` entry above measured before this slice's two fixes.
+0 failures, 0 errors, 1 skipped, 1 expected failure. Chunk 6 (containing `test_mudanza` and
+`test_persona_fuga`) green.
+
+**Commits:** `f731d64` (`body/mudanza.py`, `tests/test_persona_fuga.py`).
+
