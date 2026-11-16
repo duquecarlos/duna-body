@@ -43,6 +43,41 @@ reinstalls, restarts, and exits non-zero naming the step that failed.
 `body-pull.service` runs only the Garmin pull, not the shift import: shift files reach the host
 through an uploader that is not built yet (BODY-SHIFT-UPLOAD-1).
 
+## Pull now (BODY-SYNC-VIVO-TIMER-1)
+
+A relayed "pull now" needs the `pull` verb, which this slice adds to `duna-deploy-body`. It needs
+the updated entry script installed once, by hand -- the same line as the one-time install above:
+
+    sudo install -o root -g root -m 755 deploy/host/duna-deploy-body /usr/local/sbin/duna-deploy-body
+
+Then, as Carlos himself or an orchestrator relaying his own go:
+
+    sudo -n /usr/local/sbin/duna-deploy-body pull
+
+This runs today's full Garmin pull right now -- `body-pull.service`, the exact job
+`body-pull.timer` already runs at 09:30 America/Bogota, today plus its own healing window -- waits
+for it to finish, then prints that run's own journal lines (`journalctl -u body-pull`, counts and
+dates only, the job's own print lines) and exits with the service's own exit status.
+
+### The on-demand sweep's own ceiling
+
+`body-pull-hoy.timer` (ruling 2, this slice) sweeps today alone for every connected person every
+30 minutes (`body-pull-hoy.service`, `python -m body.pull --hoy`); each person's own 06:00-23:00
+daytime window is enforced in `body/pull.py`, not by the timer, so one timer safely covers several
+zones. Inside that 17-hour window, the 30-minute timer can land for one person at most 34 times a
+day (17 x 2). The live, in-app trigger (`pull_hoy_ahora`, BODY-SYNC-VIVO-2) can also fire inside
+that same window, at most once every 15 minutes (`ESPACIO_MIN_HOY`) -- at most 68 times a day
+(17 x 4, 60/15). Both write the SAME `garmin_cuenta.ultimo_intento_en` column, and this slice gives
+the scheduled sweep that SAME 15-minute floor (never the scheduled pulls' own `espacio_min=0`), so
+the two mechanisms share one clock instead of adding up: the combined daily ceiling for one
+person, scheduled plus on-demand together, is the stricter bound that shared 15-minute floor sets
+over the 17-hour window -- **at most ~68 "today"-pulls a day**. Each "today"-pull makes 7 Garmin
+calls (the 6 feeds `garmin_adapter.fetch_day` reads, plus one read of the watch's own last-sync
+instant), and a person inside a recorded backoff (2 hours after a 429, 15 minutes after a 5xx)
+makes none of them until it expires -- so the ceiling this gives is ~68 x 7 = 476 Garmin calls a
+day per person, a worst case the daytime window, the shared floor and any backoff together keep
+the practical count well under.
+
 ## Off-host backup (BODY-HOST-BACKUP-1)
 
 A daily timer runs `duna-deploy-body backup`, which execs `deploy/host/body-backup.sh` (no pull):
