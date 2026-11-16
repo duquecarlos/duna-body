@@ -24330,3 +24330,177 @@ and gated.
 
 -- merged `5ce2015873420c71f5e6c7c1c1f715caa08c8113`
 
+## BODY-HOGAR-ESCRIBE-1
+
+The Personal desk, relayed verbatim 2026-11-16, for a Hogar feature that detects who is cooking or
+eating and registers meals and training-session feedback into Body, asking for missing data per
+person. Carlos's standing rule `BODY-APPS-SIN-RESTRICCIONES-1` applies: "It's all me ... drop every
+restriction. Allow free communication between all of them." This slice is the schema and tool half
+only -- routes and screens are BODY-HOGAR-ESCRIBE-2.
+
+**Ruling 1, origin 'hogar' (`body/db.py`):** `propuesta_agente.aplicada_via` and
+`conversacion_agente.origen` both widen their CHECK from `('mcp')` to `('mcp', 'hogar')`, via the
+existing guarded table-rebuild pattern -- `_rebuild_conversacion_agente_table` (`body/db.py:1453`),
+and `propuesta_agente`'s already-reusable `_rebuild_propuesta_agente_table` triggered by the new
+`_propuesta_agente_needs_hogar_rebuild` (`body/db.py:1623`). `db.marcar_aplicada_via(conn,
+propuesta_id, via)` (`body/db.py:1218`) replaces the mcp-only writer; `marcar_aplicada_via_mcp`
+(`:1229`) is now a thin caller over it. New i18n: `asistente.propuesta.origen_hogar` (es "Desde
+Hogar" / en "From Hogar"), `asistente.propuesta.aplicado_hogar` (es "Aplicado desde Hogar" / en
+"Applied from Hogar"), rendered by `_tarjeta_propuesta`'s `origen_etiqueta` (`body/rutas/
+asistente.py:849-856`) alongside the existing mcp labels, same precedence (an apply THIS caller
+made itself beats the conversation's own origin label).
+
+**Rulings 2 and 3 (meal moments as per-person data; a meal can say its moment) -- NOT BUILT, see
+the ruling below.**
+
+**Ruling 4, a training note on a planned session (`body/db.py`, `body/agente/herramientas.py`,
+`body/agente/propuestas.py`, `body/rutas/asistente.py`):** `plan` gains nullable `nota_sesion TEXT,
+nota_sesion_en TEXT` (`body/db.py:564-565`, additive ALTER in `_migrate` for an old database). New
+tool `anotar_sesion(plan_id, nota, hecha?)` (`body/agente/herramientas.py:1489` `_anotar_sesion`,
+catalog entry `:2629`): refuses a `nota` outside 1-2000 characters, refuses a `plan_id` that is not
+this person's own by name (`"plan desconocido: {plan_id!r}"`), proposes the resolved `antes`/
+`despues` state pair like `corregir_comida` does. Apply (`_aplicar_anotar_sesion`, `body/agente/
+propuestas.py:544`) calls the one writer `db.anotar_sesion_plan` (`body/db.py:3548`) with a fresh
+timestamp; `hecha=true` also sets `plan.status = 'done'`, picked up by BODY-PLAN-SESION-HECHA-1's
+existing `_planes_hechos_fuerza` count with no new counting code. Undo (`_deshacer_anotar_sesion`,
+`:552`) restores `antes`'s note/timestamp/status exactly through the same writer. Registered in
+`propuestas.TABLA`, `herramientas.HERRAMIENTAS` (nivel `'ninguno'`, same as every other proposal
+tool) and `asistente.TARJETAS` (`_tarjeta_anotar_sesion`, `body/rutas/asistente.py:768`) -- one
+registry, visible to the in-app assistant, stdio MCP and `/mcp` alike. New i18n:
+`asistente.propuesta.sesion_titulo_fecha`, `.sesion_nota`, `.sesion_hecha` (es/en). No screen
+renders a plan row outside the training-session page, and that page shows an ACTIVITY row, not a
+`plan` row (`body/rutas/entreno_sesion.py`) -- open follow-up below.
+
+**Ruling 5, privacy unchanged:** `checkin_nota` untouched. `nota_sesion`/`nota_sesion_en` are
+ordinary `plan` columns; `body/privacidad.py`'s `export_person`/`delete_person` and
+`body/mudanza.py`'s registry both already handle `plan` generically (`SELECT *`, a column-agnostic
+copy) -- no change needed in either file. `tests/test_privacidad.py`'s new
+`PlanSesionNotaExportDeleteTest` and `tests/test_mudanza.py`'s new `PlanSesionNotaMudanzaTest` prove
+the note and its timestamp export, delete and cross-host-copy correctly.
+
+**Tests:** `tests/test_hogar_escribe.py` (new, 11 tests) -- `anotar_sesion` end to end through
+`herramientas.ejecutar`/`propuestas.aplicar`/`deshacer`: note-only apply, `hecha=true` apply (status
+done, counted once in `sesiones_fuerza` via `horizonte.semana`), undo restores exactly from both
+states, another person's `plan_id` refused by name, drift refuses; plus the 'hogar' origin's own
+card label, not-yet-applied and applied-by-Hogar. `tests/test_migraciones.py` (new, 4 tests) -- a
+pre-migration fixture for `propuesta_agente` and for `conversacion_agente` (old CHECKs, no
+`anotar_sesion`/`hogar`), each proving the rebuild widens the CHECK, keeps the existing row's id and
+columns byte-for-byte, and is idempotent. `tests/test_agente_conformidad.py` gained a real planned
+session seeded through `planear_entreno` propose+apply, an `anotar_sesion` entry in `_argumentos`,
+and `test_anotar_sesion_drift_refuses`; its tool-family counts moved 27->28 tools. `tests/
+test_agente_registro.py`'s `PROPUESTA_NOMBRES` and `HERRAMIENTAS` count (44->45) gained
+`anotar_sesion`. `tests/test_mcp.py` gained `test_anotar_sesion_is_offered_and_callable`.
+
+**Census tests widened for the new tool, two outside this slice's `touches:`:** `tests/
+test_agente_bucle.py`'s `NivelDatosEnforcementTest` and `tests/test_agente_propuestas.py`'s
+`NoProponibleTest` each carry a hardcoded set of every `nivel='ninguno'`/`propuesta`-kind tool name
+-- the dispatch's own instruction ("a census test that lists every table, tool or i18n key gets its
+row for the new one -- add it, never exempt") applies verbatim; `anotar_sesion` added to both, one
+line each, test-only. `tests/test_propuestas_tabla.py` self-derives from `propuestas.TABLA` and
+`tests/test_i18n_paridad.py`'s title-key census self-derives the same way -- neither needed an edit.
+
+**A migration bug this slice's own fixture caught (`body/db.py`):** `_rebuild_conversacion_agente_
+table`'s call site originally sat inside `_migrate()` AFTER that function's first DML statement
+(the `person`/`timezone` UPDATE at the time). Python's `sqlite3` module opens an implicit
+transaction before that UPDATE and never closes it before DDL, so `_rebuild_with_fk_off`'s own
+`BEGIN` collided with it ("cannot start a transaction within a transaction") -- but only on an
+install old enough to actually need this specific rebuild; every test anywhere else in the suite
+builds a fresh database, whose `conversacion_agente` is created with `'hogar'` already in its CHECK
+by `SCHEMA` itself, so the rebuild branch is never entered and the bug was invisible until
+`tests/test_migraciones.py`'s pre-migration fixture exercised it. Fixed by moving the ALTER+rebuild
+block earlier in `_migrate()`, beside `metric_def`'s own rebuild, before any DML statement in that
+function -- the same position every other rebuild call already in `_migrate()` holds.
+
+**Gate command:** `.venv/Scripts/python.exe -m unittest discover tests -t .`. Run as 10 sequential
+alphabetical chunks of 189 dotted test modules (~20 each), each in the foreground, read from the
+process, on the final tree (both commits in):
+- chunk 1 (`test_accesibilidad`..`test_baselines`): `Ran 378 tests in 117.508s ... OK (skipped=1,
+  expected failures=1)`
+- chunk 2 (`test_baselines_lote`..`test_desplazamiento_vista`): `Ran 442 tests in 264.070s ... OK`
+- chunk 3 (`test_dispositivo`..`test_experimentos_pantalla`): `Ran 376 tests in 74.260s ... OK`
+- chunk 4 (`test_fecha_futura_1`..`test_hogar_feed`): `Ran 428 tests in 406.270s ... OK`
+- chunk 5 (`test_hogar_miembro_1`..`test_mcp_cliente_remoto`): `Ran 493 tests in 87.161s ... OK`
+- chunk 6 (`test_mcp_http`..`test_person_scope`): `Ran 495 tests in 250.448s ... OK`
+- chunk 7 (`test_persona_fuga`..`test_pull`): `Ran 470 tests in 143.103s ... OK`
+- chunk 8 (`test_pull_intradia_experimentos`..`test_sueno_respiracion_vista`): `Ran 274 tests in
+  55.098s ... OK`
+- chunk 9 (`test_sync_vivo`..`test_tutoriales`): `Ran 531 tests in 75.659s ... OK`
+- chunk 10 (`test_tutoriales_catalogo`..`test_web_entry`): `Ran 155 tests in 36.297s ... OK`
+
+Sum: 378+442+376+428+493+495+470+274+531+155 = 4042. Reconciled against an independent collect-only
+count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted without running):
+`4042` -- exact match. All ten chunks green.
+
+**Commits:** `25b9711` (rulings 1, 4, 5: `body/db.py`, `body/agente/herramientas.py`, `body/agente/
+propuestas.py`, `body/rutas/asistente.py`, `body/i18n/es.json`, `body/i18n/en.json`, `tests/
+test_agente_conformidad.py`, `tests/test_agente_registro.py`, `tests/test_mcp.py`, `tests/
+test_mudanza.py`, `tests/test_privacidad.py`), `2d7bcea` (migration tests, `test_hogar_escribe.py`,
+the two census fixes, and the migration-order bug fix: `body/db.py`, `tests/test_agente_bucle.py`,
+`tests/test_agente_propuestas.py`, `tests/test_hogar_escribe.py`, `tests/test_migraciones.py`).
+
+**Deviations, measured:**
+- `tests/test_agente_bucle.py`, `tests/test_agente_propuestas.py` are outside this slice's declared
+  `touches:` -- see the census-test note above for why they were edited anyway, under the dispatch's
+  own explicit instruction rather than this slice widening its own scope.
+- `tests/test_db.py` (named in `touches:`) was not created -- the writer-level behaviour it would
+  have covered (`db.marcar_aplicada_via`, `db.anotar_sesion_plan`) is already exercised end to end by
+  `tests/test_hogar_escribe.py` and directly by `tests/test_migraciones.py`; a third, thinner file
+  would only have duplicated them.
+
+**RULING NEEDED -- rulings 2 and 3 not built.** Ruling 2 (`momento_comida(person_id, clave,
+desde_hora, hasta_hora, esperado, orden)`, a new table) and ruling 3 (`comida.momento`, a new
+column feeding off it) were drafted, then measured against this slice's own guard: the new table has
+a literal `person_id` column, and BOTH `tests/test_persona_fuga.py`'s `TableCensusTest` and
+`tests/test_mudanza.py`'s `RegistryTest` are exhaustive censuses keyed off `body/privacidad.py` and
+`body/mudanza.py` respectively -- neither file is in this slice's `touches:`. Measured by building
+the table and running both tests directly: both fail by name --
+`tests/test_persona_fuga.py::TableCensusTest::test_every_person_table_is_seeded_or_explained`:
+`"'momento_comida' : a table with a person_id column exists that body/privacidad.py does not
+account for"`; `tests/test_mudanza.py::RegistryTest::test_every_live_table_is_in_the_registry_or_
+skipped` and `::test_every_table_with_a_person_id_column_is_covered`: `"'momento_comida' : a table
+exists that the registry never heard of"`. The dispatch's own instruction is explicit: "YOUR DIFF
+MUST STAY INSIDE touches: ... If the work turns out to need a file outside it, stop and say so --
+do not widen it yourself" -- so the table and column were reverted (confirmed by a clean `git
+status --porcelain` before the ruling-1/4/5 commit) rather than built with a known-broken census.
+
+- Question: should `body/privacidad.py` and `body/mudanza.py` be added to a slice's `touches:` so
+  rulings 2 and 3 can register `momento_comida` the same way `ajuste_agente` (a structurally
+  identical per-person settings table, `PRIMARY KEY person_id`) already is in both -- or should
+  `momento_comida` be deferred to a follow-up slice that is given those files from the start?
+- Why this is a ruling and not a cleanup: classifying a new per-person table's privacy export/delete
+  behaviour and its account-migration copy shape is a judgment call this slice was explicitly told
+  not to make unilaterally outside its own touched files -- unlike the tool-name census fix above
+  (a one-line, no-judgment addition to an already-touched registry's consumers).
+- Options measured:
+  1. Widen `touches:` to add `body/privacidad.py` and `body/mudanza.py` in a continuation of this
+     same branch, following the `ajuste_agente` precedent exactly (one `FULLY_HANDLED_TABLES` entry,
+     one `TableSpec("momento_comida", match_cols=("person_id", "clave"))` entry). Consequence: rulings
+     2/3 complete, same branch, two files touched outside the original list.
+  2. Defer rulings 2/3 to a follow-up slice (e.g. BODY-HOGAR-MOMENTOS-1) whose `touches:` already
+     names both files. Consequence: this slice ships only rulings 1/4/5; `momento_comida`, `body/
+     comidas.py` and `registrar_comida`'s `momento` argument wait for that slice.
+  3. Redesign `momento_comida` to avoid a literal `person_id` column. Consequence: contradicts the
+     ruling's own explicit schema (`PRIMARY KEY (person_id, clave)`) -- not a real option.
+- Blocked: rulings 2 and 3 (the `momento_comida` table, `body/comidas.py`, `registrar_comida`'s
+  `momento` argument, `comida.momento`) until one of the above is chosen.
+- Done anyway: rulings 1, 4 and 5 are complete, tested, gated green on the final tree (above) and
+  committed on `feat/body-hogar-escribe-1` (`25b9711`, `2d7bcea`) -- NOT merged to `main`, since this
+  slice's own "THE WORK" treats all five rulings as one merge and rulings 2/3 are still open.
+
+**Open follow-ups:**
+- `BODY-HOGAR-MOMENTOS-1`: build rulings 2/3 (`momento_comida`, `body/comidas.py`,
+  `registrar_comida`'s `momento` argument) once the ruling above is answered, with `body/
+  privacidad.py` and `body/mudanza.py` in `touches:` from the start.
+- `BODY-MOMENTOS-AJUSTES-1` (named by the original dispatch): a screen to edit a person's own meal
+  moments -- no screen this slice or BODY-HOGAR-MOMENTOS-1 needs to build it.
+- The training-session page (`body/rutas/entreno_sesion.py`) renders an ACTIVITY row, not a `plan`
+  row, so `anotar_sesion`'s note has no screen to show under today -- BODY-HOGAR-ESCRIBE-2 (routes)
+  or a dedicated follow-up decides where it surfaces.
+
+**Merge policy A:** a schema change is present (`plan.nota_sesion`/`nota_sesion_en`, the two widened
+CHECKs) -- the dispatch's own "THE WORK" section explicitly treats `approved: yes` as covering this
+slice's build and names the merge step itself despite it, so the schema condition alone would not
+have stopped this slice at AWAITING_APPROVAL. It does not reach the merge step at all: the slice
+stops at RULING_NEEDED with rulings 2/3 open, per "THE WORK"'s own "merge if green" (all five
+rulings), not yet true.
+
