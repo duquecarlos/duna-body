@@ -153,6 +153,14 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
         "'active', ?, ?, ?)",
         (person_id, act_id, f"ZZ{tag}-SERIE", f"{DAYS[-1]}T07:05:00+00:00", f"{DAYS[-1]}T07:05:00+00:00"),
     )
+    # BODY-ENTRENO-DETALLE-1-B: activity_detail is person-owned (same (person_id, activity_source,
+    # activity_source_id) naming as workout_set above, plus `kind`) -- no marker needed, the census
+    # only checks export/delete-all coverage.
+    conn.execute(
+        "INSERT INTO activity_detail (person_id, activity_source, activity_source_id, kind, "
+        "fetched_at, payload) VALUES (?, 'garmin', ?, 'detalle', ?, '{}')",
+        (person_id, act_id, f"{DAYS[-1]}T07:05:00+00:00"),
+    )
     # ORCH-CARLOS-DELEGATES-TIER-1-1: fuente_importacion is person-owned (its own person_id column)
     # and has its first census row here -- no marker needed, the census only checks export/
     # delete-all coverage, and ultimo_error/ultimo_error_at are both NULL on a successful import.
