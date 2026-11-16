@@ -22953,3 +22953,117 @@ listed test file are built and gated.
 
 -- merged `9cb2637df5fabdfdf0099422a4a4b29ef31611e3`
 
+## BODY-CONSENTIMIENTO-V4 -- consent widens to v4, names each activity's full detail and minute-by-minute (2026-11-16)
+
+Carlos, typed in the Body orchestrator 2026-11-15, asked whether Body should keep every activity's full
+heart-rate curve and laps, and every night minute by minute: "Yes, everything, man." BODY-MINUTO-A-MINUTO-1-INV
+(OBSERVED) found that the v3 clause (`privacidad.consentimiento.que`, widened by `7a3047e`
+BODY-EXPERIMENTOS-CONSENTIMIENTO-1) covers set detail always but per-minute pulse/stress ONLY on experiment
+days, and nothing per activity -- storing per-activity curves, laps, zones and per-minute nights needs a
+consent widening first.
+
+**Ruling 1, the version.** `CONSENT_VERSION = "consentimiento-v4"` (`body/privacidad.py:17`). Every hosted
+person who accepted v3 or earlier is asked once by the existing gate (`body/identity.py:60`, unchanged) --
+nothing in `body/identity.py` changes. Accepted rows of older versions stay in the `consentimiento` table as
+history; export and delete-all already cover it.
+
+**Ruling 2, the new clause, verbatim** -- `privacidad.consentimiento.que` (`body/i18n/es.json:525`,
+`body/i18n/en.json:525`):
+- es: "Guardamos las cifras de tu reloj. Cada día: sueño (con el oxígeno en sangre y la respiración de la
+  noche), pulso, variabilidad del pulso, estrés, Body Battery y actividades. De cada actividad, su detalle
+  completo: la curva de pulso de principio a fin, las vueltas (laps), el tiempo en cada zona de pulso y, en la
+  fuerza, las series, repeticiones y peso. De cada noche, el sueño minuto a minuto: pulso, variabilidad, fases,
+  movimiento y oxígeno. Y de cada día, tu pulso y estrés minuto a minuto, para poner junto a ellos lo que
+  hiciste. Si los agregas, también tu calendario de turnos, tus metas, tus hábitos, tus experimentos, los
+  momentos que anotas (como una ducha fría o una respiración) y las medidas que registras tú, como la
+  flexibilidad o el ronquido."
+- en: "We keep your watch's figures. Every day: sleep (with blood oxygen and breathing at night), heart rate,
+  heart rate variability, stress, Body Battery and activities. For each activity, its full detail: the
+  heart-rate curve from start to finish, the laps, the time in each heart-rate zone and, for strength, the
+  sets, reps and weight. For each night, sleep minute by minute: heart rate, variability, stages, movement and
+  oxygen. And for each day, your heart rate and stress minute by minute, so what you did can sit beside them.
+  If you add them, also your shift calendar, your goals, your habits, your experiments, the moments you log
+  (like a cold shower or a breathing round) and the measures you record yourself, like flexibility or
+  snoring."
+  `por_que`, `donde`, `derechos`, `no_medico`, `aceptar`, `no_aceptar`, `al_no_aceptar` are byte-for-byte
+  unchanged.
+
+**Ruling 3, "what changed, said once."** `privacidad.consentimiento.cambio` (`body/i18n/es.json:526`,
+`body/i18n/en.json:526`):
+- es: "Actualizamos lo que guardamos: ahora también el detalle completo de cada actividad, y tu sueño y tu
+  día minuto a minuto. Léelo y acepta de nuevo para seguir."
+- en: "We've updated what we keep: now also each activity's full detail, and your sleep and your day minute
+  by minute. Read it and accept again to continue."
+  `body/privacidad.py:114` `acepto_version_anterior(conn, person_id)` is True when the person has an accepted
+  row of any version OTHER than the current one. `body/rutas/privacidad.py:46-47`'s `consentimiento_form`
+  calls it and passes a bare `cambio` flag; `body/templates/consentimiento.html:18` reads only that flag,
+  styled with the existing `.aviso` notice class (used already by `day.html`/`today.html`) -- no inline style,
+  no new CSS. A first-time person (no prior row at all) sees no notice.
+
+**Ruling 4, `guarda_detalle`.** `body/privacidad.py:124` `guarda_detalle(conn, person_id)`: True in local mode
+(`cuenta.hosted()` false), else `has_consented(conn, person_id, "consentimiento-v4")` -- pinned to the
+literal string, never to `CONSENT_VERSION`, so a later v5 widening never silently changes what v4 already
+granted. Nothing calls it yet; BODY-ENTRENO-DETALLE-1 will.
+
+**Tests, `tests/test_consentimiento_v4.py` (new, imports `tests/_isolate.py` first):**
+`ConsentPageChangeNoticeTest` -- a v3-only hosted person sees the `cambio` line on the consent page; a
+brand-new person does not; accepting records `consentimiento-v4` and the gate then passes.
+`GuardaDetalleTest` -- false for a v3-only hosted person, true once v4 is accepted.
+`GuardaDetalleLocalModeTest` -- true in local mode with no consent row at all.
+
+`tests/test_privacidad.py`'s `ConsentTextNamesTheNewDataTest` (the test the spec named at its old line 218)
+now checks the v4 clause's own words in both catalogs -- "curva de pulso"/"heart-rate curve", "vueltas"/
+"laps", "zona de pulso"/"heart-rate zone", "sueño minuto a minuto"/"sleep minute by minute", "pulso y estrés
+minuto a minuto"/"heart rate and stress minute by minute", plus "experimento"/"experiment" and
+"momentos"/"moments" -- instead of v3's words. Its subject is restored and widened, never weakened.
+
+**`tests/test_mudanza.py` decision.** Two literal `'consentimiento-v3'` rows (`_populate_full`,
+`_populate_old_schema`) build a complete demo person for move/mudanza fixtures (`DryRunTest`, `ApplyTest`,
+`OrigenAntiguoMudanzaTest`, `OrigenGenuinamenteAntiguoMudanzaTest`, `PersonResolutionTest` via
+`PersonasTest`'s own separate `'v1'` rows, untouched) -- neither function tests version-history behaviour
+(no assertion anywhere in the file compares against the literal `'consentimiento-v3'` string); both model "a
+person who has consented," generically, so both became `privacidad.CONSENT_VERSION`.
+
+**A finding, not fixed by this slice: the verbatim clause (ruling 2) trips `tests/test_registro_tu.py`'s
+register guard, a file outside this slice's `touches:`.** That guard's `_THIRD_PERSON_PATTERN` flags "su"
+("su detalle completo," referring to "cada actividad," third person about a thing, not the reader) unless
+the key is in its `_THIRD_PERSON_ALLOW` dict -- the same pattern as nineteen other allow-listed keys already
+in that file (e.g. `"how.explain": "su peso' refers to 'las demas partes'..."`). The one-line fix is adding
+`"privacidad.consentimiento.que": "'su detalle completo' refers to 'cada actividad' (each activity), not the
+reader"` to that dict -- tried locally, confirmed it clears the one failure, then reverted before committing
+because `tests/test_registro_tu.py` is not in `touches:` and the spec says never to widen that set alone.
+Recorded as `BODY-CONSENTIMIENTO-V4-REGISTRO-TU-1` below.
+
+**Gate command:** `.venv/Scripts/python.exe -m unittest discover tests -t .`. Run as 9 sequential alphabetical
+chunks of 179 dotted test modules (~20 each), each in the foreground, read from the process:
+- chunk 1 (`test_accesibilidad`..`test_baselines`): `Ran 377 tests in 106.396s ... OK (skipped=1, expected
+  failures=1)`
+- chunk 2 (`test_baselines_lote`..`test_desplazamiento_vista`): `Ran 442 tests in 495.061s ... OK`
+- chunk 3 (`test_dispositivo`..`test_fecha_futura_1`): `Ran 359 tests in 119.768s ... OK`
+- chunk 4 (`test_fechas_semana`..`test_horizonte`): `Ran 456 tests in 514.305s ... OK`
+- chunk 5 (`test_host_backup`..`test_medida_peso`): `Ran 458 tests in 116.059s ... OK`
+- chunk 6 (`test_metas_semana_tira`..`test_plan_propuestas`): `Ran 523 tests in 254.409s ... OK`
+- chunk 7 (`test_primer_dia_1`..`test_rendimiento`): `Ran 354 tests in 159.589s ... FAILED (failures=1)` --
+  `test_su_sus_tiene_puede_are_all_allow_listed_third_person`, the finding above. Not fixed (outside
+  `touches:`).
+- chunk 8 (`test_rendimiento_red`..`test_turno_fc_pantallas`): `Ran 349 tests in 110.290s ... OK`
+- chunk 9 (`test_turnos_costo`..`test_web_entry`): `Ran 403 tests in 417.163s ... OK`
+
+Sum: 377+442+359+456+458+523+354+349+403 = 3721. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted without running): `3721` -- exact
+match. Eight of nine chunks green; the ninth carries exactly the one known, named failure above.
+
+**Commits:** `f594c0c` (`body/i18n/{es,en}.json`, `body/privacidad.py`, `body/rutas/privacidad.py`,
+`body/templates/consentimiento.html`, `tests/test_consentimiento_v4.py` -- new, `tests/test_mudanza.py`,
+`tests/test_privacidad.py`).
+
+**Open follow-ups, not this slice's to do:**
+- `BODY-CONSENTIMIENTO-V4-REGISTRO-TU-1`: add `"privacidad.consentimiento.que": "'su detalle completo' refers
+  to 'cada actividad' (each activity), not the reader"` to `tests/test_registro_tu.py`'s
+  `_THIRD_PERSON_ALLOW` dict (one line) -- clears the one gate failure above. Outside this slice's `touches:`,
+  so not applied here; whoever approves or merges this branch should grant it alongside.
+
+**Not merged.** Customer-facing legal text -- Carlos reads the clause before any merge. Branch
+`feat/body-consentimiento-v4` left as is; `git checkout main` run as the last act so other slices can run on
+main while he reads.
+
