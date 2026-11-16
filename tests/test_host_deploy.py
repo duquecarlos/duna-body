@@ -621,6 +621,23 @@ class PullVerbTest(unittest.TestCase):
         self.assertLess(pull_idx, owner_idx)
 
 
+class PullNowReadmeTest(unittest.TestCase):
+    """BODY-SYNC-VIVO-TIMER-1 ruling 3's README step and ruling 4's ceiling paragraph."""
+
+    def setUp(self):
+        self.text = _read(README)
+
+    def test_reinstall_step_and_pull_now_line_present(self):
+        self.assertIn(
+            "sudo install -o root -g root -m 755 deploy/host/duna-deploy-body "
+            "/usr/local/sbin/duna-deploy-body", self.text)
+        self.assertIn("sudo -n /usr/local/sbin/duna-deploy-body pull", self.text)
+
+    def test_ceiling_paragraph_gives_its_figures(self):
+        for figure in ("34", "68", "15 minute", "7 Garmin", "476"):
+            self.assertIn(figure, self.text, f"ceiling paragraph missing {figure!r}")
+
+
 class StatusDerivesUnitListTest(unittest.TestCase):
     def test_status_sources_product_script_and_covers_backfill_not_vida(self):
         text = _read(ENTRY)
