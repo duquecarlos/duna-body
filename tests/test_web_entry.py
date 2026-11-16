@@ -48,6 +48,8 @@ class RouteSetTest(unittest.TestCase):
         ("/api/asistente/mcp/herramientas", ("GET",)),  # BODY-MCP-REMOTO-SERVIDOR-1
         ("/api/asistente/mcp/llamar", ("POST",)),  # BODY-MCP-REMOTO-SERVIDOR-1
         ("/api/desplazamiento", ("POST",)),  # ORCH-CARLOS-DELEGATES-TIER-1-1
+        ("/api/hogar/manana", ("GET",)),  # BODY-SERVICIO-HOGAR-1
+        ("/api/hogar/serie", ("GET",)),  # BODY-SERVICIO-HOGAR-1
         ("/api/turnos", ("POST",)),
         ("/api/vida/semana", ("GET",)),
         ("/asistente/conversacion/{conversacion_id}", ("GET",)),

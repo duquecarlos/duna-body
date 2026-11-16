@@ -590,6 +590,8 @@
   "dispositivos.scope.vida": "Leer resumen semanal",
   "dispositivos.scope.desplazamiento": "Subir desplazamiento",
   "dispositivos.scope.asistente_mcp": "Asistente personal (MCP): leer y proponer, como el asistente de Body",
+  "dispositivos.scope.hogar": "Hogar: leer tus datos",
+  "dispositivos.scope.hogar_explica": "Hogar, tu app de la casa, puede leer todas tus cifras, planes y metas para preparar tu casa.",
   "dispositivos.scope_fixed_note": "Un PC que ya conectaste solo tiene los permisos que marcaste en ese momento. Para añadir uno nuevo, conéctalo otra vez con una clave nueva.",
   "unit.min": "min",
   "unit.h": "h",
