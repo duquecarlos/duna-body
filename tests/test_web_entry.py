@@ -97,6 +97,7 @@ class RouteSetTest(unittest.TestCase):
         ("/login/cuenta/logout-token", ("POST",)),
         ("/login/cuenta/start", ("GET",)),
         ("/logout", ("POST",)),
+        ("/mcp", ("POST",)),  # BODY-MCP-HTTP-1
         ("/privacidad", ("GET",)),
         ("/privacidad/borrar", ("POST",)),
         ("/privacidad/consentimiento", ("GET",)),

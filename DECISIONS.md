@@ -24059,3 +24059,164 @@ match, and the same figure the `BODY-ENTRENO-DETALLE-1` entry above measured bef
 **Commits:** `f731d64` (`body/mudanza.py`, `tests/test_persona_fuga.py`), `d49f002` (`DECISIONS.md`) --
 merged `6a5d633196419b5f789de1be427faefa912f1d27`.
 
+## BODY-MCP-HTTP-1
+
+Carlos, relayed by the Personal desk, 2026-11-16: *"I don't want you to connect with the body version
+local. I want you to fully build a real connection to all my production apps ... you'll be the brain of
+the smart home ... So you should live with the apps."*
+
+A new, real MCP-over-HTTP endpoint -- `https://body.duna.solutions/mcp` -- that any MCP client (a Claude
+session, not only Body's own PC) adds by URL plus a Cuenta Duna assistant key, with no Body code running
+on the client's own machine at all.
+
+**Ruling 1 -- the endpoint itself**, `body/rutas/mcp_http.py` (new, 232 lines), `POST /mcp` (`:176-232`):
+the MCP "Streamable HTTP" transport (spec 2025-03-26) in its stateless form -- one JSON-RPC request or
+batch per POST, one `application/json` response, no SSE, no session id. `GET /mcp` answers 405 with
+`Allow: POST`, Starlette's own default since the router registers POST only. `initialize` (`:137-147`),
+`notifications/initialized` (`:148-149`), `ping` (`:150-151`), `tools/list` (`:152-155`), `tools/call`
+(`:156-170`) in `_procesar_uno` (`:126-173`). Registered in `body/web.py:30,125`
+(`app.include_router(mcp_http.router)`, directly after the existing device-key door's own router).
+
+**Ruling 2 -- auth, and one dispatch for two doors.** Auth is Cuenta Duna introspection
+(`body/llave_asistente.py`, new, 139 lines), never `body/dispositivo.py`'s device-key table, which stays
+the existing hosted door's own auth unchanged. `verificar()` (`:102-138`) posts to
+`{cuenta.issuer()}/oauth/introspect` (`_post_introspect`, `:89-93`) with Body's own client credentials,
+caches only a positive answer for `CACHE_TTL_SEGUNDOS = 60.0` seconds keyed by the key's own sha256
+(`:83-87`, never the key itself), and raises `LlaveInvalida` / `PersonaSinBody` / `CuentaNoDisponible`
+(`:39-62`) for every other case -- wrong `producto`, unknown `permiso`, no `person.cuenta_sub` match
+(`_resolver_person_id`, `:95-100`), Cuenta unreachable or answering 401/429/5xx. A resolved key's
+`permiso` (`lectura`/`escritura`) governs everything downstream: `puede_escribir = permiso ==
+"escritura"`, and that SAME boolean stands in for `puede_aplicar` here (`mcp_http.py:207-208`) -- the
+person's own `aplicar_mcp` setting never gates this endpoint; a write the escritura permission allows
+applies directly (`auto_aplicar=puede_escribir`, `mcp_http.py:165`), with no separate "tap Aplicar" step
+this caller cannot take anyway. One dispatch, two doors: the existing hosted door's own logic was lifted
+into two shared functions in `body/rutas/mcp_remoto.py` -- `listar_herramientas` (`:45-60`) and
+`llamar_herramienta` (`:62-97`, the `auto_aplicar` parameter is new) -- and both `mcp_remoto.py`'s own
+routes and the new `/mcp` now call them, so the existing door's wire shape is unchanged (its own tests,
+untouched, still pass).
+
+**Ruling 3 -- read fresh, never cached on a long-lived session.** `body/mcp.py`'s `_Sesion.puede_aplicar`
+is now a `@property` (`:224-226`) reading `db.get_aplicar_mcp` on every access rather than once at
+construction, so turning the setting off takes effect on this process's very next `tools/list` or
+`tools/call`. `_SesionRemota` gained the same property (`:331-335`), with its constructor's new
+`puede_aplicar: bool | None = None` parameter (`:312-313`) defaulting to "read the DB fresh" so the one
+pre-existing 3-arg call site (`tests/test_sync_vivo.py:326`) stays unchanged.
+
+**Ruling 4 -- the contract doc.** `docs/contracts/mcp-http-v1.md` (new, 92 lines): what the endpoint is,
+the `claude mcp add --transport http body https://body.duna.solutions/mcp --header "Authorization: Bearer
+<key>"` command, the auth outcomes (401/503/404), the lectura/escritura table, the method table, what
+stays unchanged on the existing device-key door.
+
+**Ruling 5 -- the test list.** `tests/test_llave_asistente.py` (new, 206 lines, 16 tests):
+`_post_introspect` request shape, every outcome (active/inactive/wrong-producto/unknown-permiso/
+non-string persona_id/unparseable JSON/no matching `person`), Cuenta faults (timeout/500/401/429, never
+cached), the 60s cache TTL and revocation. `tests/test_mcp_http.py` (new, 322 lines, 31 tests): local
+mode 404, GET→405+Allow, every auth failure with its own message, the full JSON-RPC surface including
+batches and parse errors, the lectura/escritura split (a lectura key never sees write tools; an escritura
+key's write calls apply directly with `aplicar_mcp` off), parity with the stdio door's own tool list,
+cross-person isolation, and a log-capture test proving no key, hash, or persona_id ever reaches a log
+line. `tests/test_persona_fuga.py` (`_seed_person` now links `person.cuenta_sub` and carries an assistant
+key, `:114-120,326-336`; the foreign-marker sweep now also calls `POST /mcp`, `:543-...`).
+`tests/test_web_entry.py:100` adds `/mcp`'s own row to the route census -- never exempted.
+
+**Two measured corrections during the gate**, neither changing any ruling above:
+
+1. `tests/test_conexiones_cerradas.py` (outside `touches:`, read-only) requires every router module
+   with a route to call `comun._ctx(` under its own `@comun._cierra_conexion_async`, or sit in a
+   hardcoded allowlist this slice could not extend. `/mcp` genuinely has no `person_id` before Cuenta
+   answers, so it closes one short-lived `db.connect()` for the auth step alone (`mcp_http.py:192-204`,
+   satisfying the file's OTHER guard, `DirectConnectClosesInFinallyTest`), then uses `comun._ctx(
+   person_id)` for everything after (`mcp_http.py:209`). Commit `29d405f`.
+2. `tests/test_mcp_cliente_remoto.py` (outside `touches:`, read-only) calls
+   `mcp._error_remoto_a_rehuso(sesion, nombre, data)` directly with a real `_SesionCliente`. An earlier
+   version of this slice had changed that function's signature to take a bare `idioma` string, which
+   broke those 11 tests (wrong-language text). Reverted `_error_remoto_a_rehuso` to its original
+   signature (`mcp.py:408`, unchanged); `mcp_http.py`'s own `_mensaje_error` instead builds a throwaway
+   `_SesionCliente()` just to carry `.idioma` (`mcp_http.py:100-102`). Commit `516637b`.
+
+**The gate**, exactly `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as 10 sequential
+alphabetical chunks (187 modules, 9 of 20 plus a last one of 7), each in the foreground, read from the
+process:
+
+    chunk 1  (test_accesibilidad..test_baselines):               Ran 377 tests in 73.905s,  OK
+    chunk 2  (test_baselines_lote..test_desplazamiento_vista):   Ran 442 tests in 457.253s, OK
+                 (first pass: FAILED (failures=1) -- correction 1 above, then rerun green)
+    chunk 3  (test_dispositivo..test_experimentos_pantalla):     Ran 376 tests in 124.934s, OK
+    chunk 4  (test_fecha_futura_1..test_hogar_miembro_1):        Ran 419 tests in 533.554s, OK
+    chunk 5  (test_horizonte..test_mcp_http):                    Ran 500 tests in 59.571s,  OK
+                 (first pass: FAILED (failures=11) -- correction 2 above, then rerun green)
+    chunk 6  (test_mcp_remoto..test_pipeline):                   Ran 474 tests in 189.272s, OK
+    chunk 7  (test_plan_esquema..test_pull_relleno):             Ran 479 tests in 151.706s, OK
+    chunk 8  (test_readiness..test_sync_vivo_estado):            Ran 350 tests in 72.607s,  OK
+    chunk 9  (test_sync_vivo_timer..test_tutoriales_en):         Ran 445 tests in 69.174s,  OK
+    chunk 10 (test_tutoriales_puertas..test_web_entry):          Ran 138 tests in 19.930s,  OK
+
+Sum: 377+442+376+419+500+474+479+350+445+138 = 4000. Reconciled against an independent collect-only
+count (`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`, counted without
+running): 4000 -- exact match. 0 failures, 0 errors, on the final tree. `git status --porcelain` empty.
+
+**AWAITING_APPROVAL. Not merged.** This diff trips merge policy A: `body/rutas/mcp_http.py` shows four
+new bilingual sentences straight to any MCP client that calls `/mcp` (`_MENSAJE_401`,
+`_MENSAJE_401_SIN_PERSONA`, `_MENSAJE_503`, `_MENSAJE_SOLO_LECTURA`) -- customer-facing bytes nobody has
+approved yet -- and `docs/contracts/mcp-http-v1.md` publishes a new wire contract (the `/mcp` JSON-RPC
+surface itself, and the shape this slice expects of Cuenta's own `/oauth/introspect`) that any other
+product or client now has reason to mirror. The branch `feat/body-mcp-http-1` stays as is, with its three
+commits, for the next step to merge once those are reviewed.
+
+**Commits:** `22b1c02` (`body/rutas/mcp_http.py`, `body/llave_asistente.py`, `body/rutas/mcp_remoto.py`,
+`body/mcp.py`, `body/web.py`, `docs/contracts/mcp-http-v1.md`, `tests/test_llave_asistente.py`,
+`tests/test_mcp_http.py`, `tests/test_persona_fuga.py`, `tests/test_web_entry.py` -- rulings 1-5),
+`29d405f` (`body/rutas/mcp_http.py` -- correction 1), `516637b` (`body/mcp.py`, `body/rutas/mcp_http.py`
+-- correction 2).
+
+**Open follow-ups, not this slice's to do:**
+- `BODY-MCP-HTTP-RETIRO-1`: once `/mcp` is live and in use, retire the old `/api/asistente/mcp/*` device-
+  key door (`body/rutas/mcp_remoto.py`'s own routes) -- or keep it deliberately, and say why, rather than
+  carrying two doors by default.
+
+## BODY-MCP-HTTP-1-M
+
+Resolves `BODY-MCP-HTTP-1`'s AWAITING_APPROVAL stop above on the customer-facing-bytes condition, for the
+two 401 message strings only (the wire-contract condition on `docs/contracts/mcp-http-v1.md` is unchanged
+and not touched by this slice). Merge authorisation: the orchestrator, under
+`ORCH-CARLOS-DELEGATES-TIER-1-1`, reviewed the person-facing text on the branch
+(`body/rutas/mcp_http.py:49-54` at the time) and supplied the approval itself, with two wording fixes --
+`_MENSAJE_401` said "Clave" where Cuenta Duna's own screen says "Llaves de asistente" (one word for one
+thing across Duna), and `_MENSAJE_401_SIN_PERSONA`'s Spanish half spoke about "nadie" in the third person
+instead of to the reader, against Body's tu register. Carlos's go for the deploy that will carry this
+(`BODY-DEPLOY-2`; this slice does not deploy), relayed verbatim by the Personal desk 2026-11-16: "Push
+everything, deploy everything, and keep working on everything. See you in a couple of hours."
+
+**The two strings, before and after** (`body/rutas/mcp_http.py:49` and `:50-54`):
+
+Before:
+```
+_MENSAJE_401 = "Clave de asistente inválida o ausente. / Missing or invalid assistant key."
+_MENSAJE_401_SIN_PERSONA = (
+    "Esta clave es válida, pero nadie ha iniciado sesión todavía en Body con esa misma cuenta: "
+    "entra a Body una vez con Cuenta Duna para enlazarla. / This key is valid, but nobody has "
+    "signed in to Body yet with that same account: sign in to Body once with Cuenta Duna to link it."
+)
+```
+
+After:
+```
+_MENSAJE_401 = "Llave de asistente inválida o ausente. / Missing or invalid assistant key."
+_MENSAJE_401_SIN_PERSONA = (
+    "Esta llave es válida, pero todavía no has entrado a Body con esa cuenta: entra una vez a "
+    "Body con Cuenta Duna para vincularla. / This key is valid, but you haven't signed in to "
+    "Body with that account yet: sign in to Body once with Cuenta Duna to link it."
+)
+```
+
+No test asserted the old wording; the contract doc does not quote either string, so neither needed a
+follow-on change.
+
+**Checks**, run in the foreground from the repository root, read from the process:
+
+    .venv/Scripts/python.exe -m unittest tests.test_mcp_http tests.test_llave_asistente tests.test_mcp_remoto tests.test_mcp tests.test_mcp_cliente_remoto tests.test_registro_tu tests.test_i18n_paridad tests.test_conexiones_cerradas
+
+    Ran 183 tests in 38.663s, OK
+
+**Commit:** `27b46ca` (`body/rutas/mcp_http.py`).
+

@@ -27,8 +27,8 @@ from .identity import ConsentRequired, DispositivoNoAutorizado, DispositivoSinAl
 from .request_log import RequestLogMiddleware
 from .seguridad import SeguridadMiddleware
 from .rutas import (ajustes, asistente, ayuda, comun, dispositivos, entreno_sesion, experimentos, garmin,
-                     historial, hoy, mcp_remoto, metas, privacidad as privacidad_rutas, pwa, sesion, tendencias,
-                     turnos)
+                     historial, hoy, mcp_http, mcp_remoto, metas, privacidad as privacidad_rutas, pwa, sesion,
+                     tendencias, turnos)
 
 HERE = Path(__file__).parent
 
@@ -122,6 +122,7 @@ app.include_router(ayuda.router)
 app.include_router(privacidad_rutas.router)
 app.include_router(dispositivos.router)
 app.include_router(mcp_remoto.router)
+app.include_router(mcp_http.router)
 app.include_router(ajustes.router)
 app.include_router(asistente.router)
 app.include_router(metas.router)
