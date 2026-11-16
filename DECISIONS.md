@@ -24220,3 +24220,111 @@ follow-on change.
 
 **Commit:** `27b46ca` (`body/rutas/mcp_http.py`) -- merged `0052198e1cc51c845a0c1c6eeb84adc116aa5d6a`.
 
+## BODY-HOGAR-TURNOS-1
+
+The Personal desk, 2026-11-16, for Hogar (duna-hogar `ee37577`): Hogar's app runs on the host and has no
+shifts, because his schedule lives on his PC; Body's server already holds them (the `shift` table,
+`body/db.py:446-455`). The ask: the shifts in the Hogar feed, same `hogar:leer` scope, in the ~18 Nov deploy.
+Carlos's standing rule, relayed verbatim by the desk 2026-11-16 and recorded as
+`BODY-APPS-SIN-RESTRICCIONES-1` (Main: `ORCH-CARLOS-SUS-DATOS-ENTRE-APPS-1`): "It's all me. It's all my own
+Duna servers, and I'm my own user, my own data. So, drop every restriction. Allow free communication between
+all of them." -- so no new consent and no new scope, the `hogar:leer` key is the one standing grant
+(`BODY-SERVICIO-HOGAR-1`, `docs/contracts/hogar-feed-v1.md`).
+
+**BODY-HOGAR-EJERCICIOS-1 folded in:** Hogar, 2026-11-16, for its TV page (duna-hogar `472527d`), relayed
+verbatim by the desk: "knowing the plan of the workout for today ... leg day or chest day or back day,
+showing there the exercises, maybe through body app interface, if possible showing the TV."
+
+**Ruling 1, `turnos` on `manana` (`body/hogar_feed.py:85` `turnos_alrededor`, wired at `:142`):** every shift
+touching `dia` -- rows with `day` = `dia` or `dia`+1, plus a row with `day` = `dia`-1 whose `end_local` is
+`>= dia` (last night's shift still running this morning; ISO-formatted local datetimes compare correctly as
+plain text for this test). One SQL statement, `person_id` in the WHERE, `ORDER BY day, start_local` (SQLite
+sorts NULL before any value in ascending order, giving "nulls first" with no extra expression). Empty list
+when none, never omitted or null.
+
+**Ruling 2, `GET /api/hogar/turnos?desde=&hasta=` (`body/rutas/dispositivos.py:227-242`, new):** same
+`hogar:leer` dependency, same `Cache-Control: no-store`, same validation as `/api/hogar/serie` (bad date or
+`hasta < desde` -> 400, over 366 days -> 400). `hogar_feed.turnos` (`:112`) does the range-length check and
+shapes `{"desde", "hasta", "turnos"}`; `turnos_rango` (`:101`) is the one-SQL read, same ordering as
+`turnos_alrededor`. No shift in range is not an error -- an empty list.
+
+**Item shape, everywhere (`turnos_alrededor`/`turnos_rango`'s own `SELECT`):** `{"day", "kind", "code",
+"start_local", "end_local"}` -- the `shift` row's own column names, values as stored, null stays null. No
+`source`, no person id.
+
+**Ruling 5 (BODY-HOGAR-EJERCICIOS-1), `ejercicios` on plan rows (`_plan_dias`, `body/hogar_feed.py:46-60`):**
+each row's own `ejercicios_json` (`body/db.py:558`) parsed with `json.loads` and passed verbatim -- the exact
+list `planear_entreno` stores (`ejercicio`/`series` always present, `reps`/`categoria` when given,
+`body/agente/herramientas.py:226-231`) -- or `null` when the column is null. No reshaping, no renaming, no
+added keys; the five existing plan-row keys (`id`, `day`, `time`, `title`, `status`) are unchanged.
+
+**Contract doc (`docs/contracts/hogar-feed-v1.md`):** an additive "Turnos" section (item shape, both routes,
+the `dia`-1 night rule, `kind`'s vocabulary, ordering) plus a line under the plan-row keys for `ejercicios`.
+Says explicitly this is still v1: a new key or a new route is not a breaking change.
+
+**Tests (`tests/test_hogar_feed.py`, 46 tests total, 21 new):** `MananaTest` -- `ejercicios` verbatim vs.
+null with the other plan-row keys checked exactly; a `dia`-1 night shift ending on `dia` included, one ending
+before `dia` excluded; `dia`+1 included, `dia`+2 not; an `off` row with null times included; empty list when
+none; the four old `manana` keys unchanged against a fixture, `turnos` the only addition. New `TurnosTest`
+(pure, no HTTP) for `hogar_feed.turnos`/`turnos_rango`: range + ordering, empty range, 366 ok/367 raises. New
+`ApiHogarTurnosRouteTest`: 200 + no-store, empty range, bad date/hasta-before-desde/367-days -> 400,
+no-header/wrong-scope/revoked -> 401/403/401. `PersonaFugaTest` gained two cross-person checks (the route and
+`manana`'s own `turnos` key). `NoWriteTest` extended to the `shift` table and all three routes (3 requests,
+6 writes -- `dispositivo.resolver`'s own bookkeeping, same rule as before).
+
+**Existing census tests widened for the new route (every one in `touches:`, plus one that isn't):**
+- `tests/test_agente_registro.py`'s `ROUTE_TOOL`: `/api/hogar/turnos` -> `None`, same reason as the other two
+  Hogar routes.
+- `tests/test_estados_vacios.py`'s `_ALWAYS_404_LOCAL`, `tests/test_estados_vacios_hosted.py`'s
+  `_DEVICE_GATED_401`: the new route added to both.
+- `tests/test_persona_fuga.py`: `/api/hogar/turnos` added to `EXPECTED_GET_PATHS`; a third sweep call added
+  to `_sweep_routes_as` alongside `manana`/`serie`.
+- `tests/test_rendimiento.py`'s `_CEILINGS`: `/api/hogar/turnos` at `3`, same cheap-404 ceiling as the other
+  two Hogar routes; measured, not assumed (the full chunk ran green at that figure).
+- `tests/test_web_entry.py`'s `BEFORE` route-set snapshot: **outside this slice's `touches:`**, but the
+  dispatch's own instructions name this exact case verbatim -- "A route census test that lists every route
+  gets its row for the new route -- add it, never exempt." Without it `RouteSetTest` is red (88 routes found,
+  87 expected) on every run, not only this one; one line added, no other change.
+- `tests/test_get_sin_escritura.py`, `tests/test_seguridad.py`: no edit needed -- both discover routes from
+  `web.app.routes` generically (the first via a full-dump write guard, the second via `UNSAFE_METHODS`, and
+  this route is GET-only) and already cover the new route with no hand-maintained list.
+
+**Gate command:** `.venv/Scripts/python.exe -m unittest discover tests -t .`. Run as 10 sequential
+alphabetical chunks of 187 dotted test modules (~20 each), each in the foreground, read from the process
+(chunk 9 failed once on the route-census gap above, fixed, then re-run green):
+- chunk 0 (`test_accesibilidad`..`test_baselines`): `Ran 377 tests in 113.883s ... OK (skipped=1, expected
+  failures=1)`
+- chunk 1 (`test_baselines_lote`..`test_desplazamiento_vista`): `Ran 442 tests in 611.330s ... OK`
+- chunk 2 (`test_dispositivo`..`test_experimentos_pantalla`): `Ran 376 tests in 126.152s ... OK`
+- chunk 3 (`test_fecha_futura_1`..`test_hogar_miembro_1`): `Ran 440 tests in 539.288s ... OK`
+- chunk 4 (`test_horizonte`..`test_mcp_http`): `Ran 500 tests in 68.260s ... OK`
+- chunk 5 (`test_mcp_remoto`..`test_pipeline`): `Ran 474 tests in 189.015s ... OK`
+- chunk 6 (`test_plan_esquema`..`test_pull_relleno`): `Ran 479 tests in 127.909s ... OK`
+- chunk 7 (`test_readiness`..`test_sync_vivo_estado`): `Ran 350 tests in 72.504s ... OK`
+- chunk 8 (`test_sync_vivo_timer`..`test_tutoriales_en`): `Ran 445 tests in 72.557s ... OK`
+- chunk 9 (`test_tutoriales_puertas`..`test_web_entry`): `Ran 138 tests in 19.104s ... OK` (first run: `FAILED`
+  with 1 failure, the route-census gap above; fixed and re-run)
+
+Sum: 377+442+376+440+500+474+479+350+445+138 = 4021. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted without running): `4021` -- exact
+match. All ten chunks green.
+
+**Commits:** `79077da` (`body/hogar_feed.py`, `body/rutas/dispositivos.py`), `903fbf0` (`tests/test_agente_registro.py`,
+`tests/test_estados_vacios.py`, `tests/test_estados_vacios_hosted.py`, `tests/test_hogar_feed.py`,
+`tests/test_persona_fuga.py`, `tests/test_rendimiento.py`), `64c9164` (`docs/contracts/hogar-feed-v1.md`),
+`e63455c` (`tests/test_web_entry.py`).
+
+**Deviation, measured:** `tests/test_web_entry.py` is outside this slice's declared `touches:` -- see the
+census-test note above for why it was edited anyway, under the dispatch's own explicit instruction rather
+than this slice widening its own scope.
+
+**Merge policy A:** no schema or migration change (no new table, no `ALTER TABLE`, no migration function --
+`body/db.py` is untouched); no customer-facing bytes (this feed has no UI, only JSON for Hogar's own device
+key; no i18n string touched); no cross-repo contract break (`docs/contracts/hogar-feed-v1.md`'s own two
+existing routes/keys are unchanged, the additions are additive and the doc says so). All three conditions
+clear -> merge on green, no approval wait.
+
+**Open follow-ups, not this slice's to do:** none found -- every ruling (1, 2, 5), the contract doc and
+every listed test file (plus the one route-census file the dispatch instructions named directly) are built
+and gated.
+

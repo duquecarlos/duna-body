@@ -47,7 +47,7 @@ _INVENTED = {k: round((lo + hi) / 2, 1) for k, (lo, hi) in demo.RANGES.items()}
 _ALWAYS_404_LOCAL = {
     "/garmin", "/garmin/estado-vivo", "/ajustes/dispositivos", "/login", "/login/cuenta/start",
     "/login/cuenta/callback", "/privacidad/consentimiento", "/api/vida/semana",
-    "/api/asistente/mcp/herramientas", "/api/hogar/manana", "/api/hogar/serie",
+    "/api/asistente/mcp/herramientas", "/api/hogar/manana", "/api/hogar/serie", "/api/hogar/turnos",
 }
 _TURNOS_GATED = {"/shifts", "/shifts/como", "/shifts/patron"}
 # Needs a seeded conversation (body/agente, outside this slice's touches) -- see module docstring.

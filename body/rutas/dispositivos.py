@@ -222,3 +222,22 @@ def api_hogar_serie(metric_key: str, desde: str, hasta: str,
     except hogar_feed.RangoDemasiadoLargo:
         raise HTTPException(400)
     return JSONResponse(data, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/api/hogar/turnos")
+@comun._cierra_conexion
+def api_hogar_turnos(desde: str, hasta: str,
+                      person_id: int = Depends(identity.person_from_device("hogar:leer"))):
+    conn, _, _ = comun._ctx(person_id)
+    try:
+        date.fromisoformat(desde)
+        date.fromisoformat(hasta)
+    except ValueError:
+        raise HTTPException(400)
+    if hasta < desde:
+        raise HTTPException(400)
+    try:
+        data = hogar_feed.turnos(conn, person_id, desde, hasta)
+    except hogar_feed.RangoDemasiadoLargo:
+        raise HTTPException(400)
+    return JSONResponse(data, headers={"Cache-Control": "no-store"})

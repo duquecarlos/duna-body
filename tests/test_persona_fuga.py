@@ -395,7 +395,7 @@ EXPECTED_GET_PATHS = sorted([
     "/goals/{goal_id}",
     "/experiments/{experiment_id}",
     "/settings", "/ajustes/asistente", "/ajustes/dispositivos", "/api/vida/semana",
-    "/api/asistente/mcp/herramientas", "/api/hogar/manana", "/api/hogar/serie",
+    "/api/asistente/mcp/herramientas", "/api/hogar/manana", "/api/hogar/serie", "/api/hogar/turnos",
     "/healthz", "/ayuda", "/garmin", "/garmin/estado-vivo", "/history",
     "/privacidad/consentimiento", "/privacidad", "/privacidad/exportar",
     "/sw.js", "/login", "/login/cuenta/start", "/login/cuenta/callback",
@@ -521,6 +521,13 @@ class _BaseFugaTest(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         texts.append(r.text)
         r = client.get(f"/api/hogar/serie?metric_key=resting_hr&desde={DAYS[0]}&hasta={DAYS[-1]}",
+                        headers={"Authorization": f"Bearer {ids['device_key']}"})
+        n += 1
+        self.assertEqual(r.status_code, 200)
+        texts.append(r.text)
+
+        # BODY-HOGAR-TURNOS-1: the new /turnos route, swept the same way as manana/serie above.
+        r = client.get(f"/api/hogar/turnos?desde={DAYS[0]}&hasta={DAYS[-1]}",
                         headers={"Authorization": f"Bearer {ids['device_key']}"})
         n += 1
         self.assertEqual(r.status_code, 200)

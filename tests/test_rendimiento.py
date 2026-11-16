@@ -91,6 +91,7 @@ _CEILINGS = {
     "/api/asistente/mcp/herramientas": 3,
     "/api/hogar/manana": 3,
     "/api/hogar/serie": 3,
+    "/api/hogar/turnos": 3,
     "/api/vida/semana": 3,
     "/asistente/conversacion/{conversacion_id}": 17,
     "/ayuda": 15,

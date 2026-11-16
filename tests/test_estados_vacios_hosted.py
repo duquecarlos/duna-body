@@ -52,7 +52,8 @@ _SKIPPED_PARAM_ROUTES = {"/asistente/conversacion/{conversacion_id}"}
 _NO_IDENTITY_200 = {"/healthz", "/sw.js"}
 _NO_IDENTITY_303 = {"/login", "/login/cuenta/start"}
 _CALLBACK_400 = {"/login/cuenta/callback"}
-_DEVICE_GATED_401 = {"/api/vida/semana", "/api/asistente/mcp/herramientas", "/api/hogar/manana", "/api/hogar/serie"}
+_DEVICE_GATED_401 = {"/api/vida/semana", "/api/asistente/mcp/herramientas", "/api/hogar/manana", "/api/hogar/serie",
+                      "/api/hogar/turnos"}
 _CONSENT_EXEMPT = {"/privacidad/consentimiento"}
 
 # Of the eight hosted-only routes, only these three can ever answer 200 -- the other five's own
