@@ -670,13 +670,21 @@ CREATE TABLE IF NOT EXISTS consentimiento (
 -- Each hosted person's Garmin token, encrypted at rest (BODY-GARMIN-HOST-1). ultimo_error holds
 -- an error CLASS name only (e.g. 'NotSignedIn'), never a message. backfill_hasta (BODY-PRIMER-
 -- PULL-1) is the oldest day --backfill has already attempted for this person; NULL = not started.
+-- BODY-SYNC-VIVO-ESTADO-1 ruling 1: three more UTC-ISO columns, nullable, read and written only
+-- through body/garmin_cuenta.py (the module that owns this table). ultimo_intento_en is every
+-- attempt, success or not; reintentar_despues_de is the backoff a failed attempt may set (ruling
+-- 2), NULL meaning "no need to wait"; reloj_sincronizo_en is the watch's own last-contact instant
+-- with Garmin (ruling 4), never a figure.
 CREATE TABLE IF NOT EXISTS garmin_cuenta (
-    person_id      INTEGER PRIMARY KEY REFERENCES person(id),
-    token_cifrado  BLOB NOT NULL,
-    nonce          BLOB NOT NULL,
-    conectado_en   TEXT NOT NULL,
-    ultimo_error   TEXT,
-    backfill_hasta TEXT
+    person_id           INTEGER PRIMARY KEY REFERENCES person(id),
+    token_cifrado       BLOB NOT NULL,
+    nonce               BLOB NOT NULL,
+    conectado_en        TEXT NOT NULL,
+    ultimo_error        TEXT,
+    backfill_hasta      TEXT,
+    ultimo_intento_en   TEXT,
+    reintentar_despues_de TEXT,
+    reloj_sincronizo_en TEXT
 );
 
 -- A proposal the assistant made: nothing on the target changes until the person taps Aplicar in
@@ -1258,6 +1266,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
     gcols = {r[1] for r in conn.execute("PRAGMA table_info(garmin_cuenta)")}
     if gcols and "backfill_hasta" not in gcols:
         conn.execute("ALTER TABLE garmin_cuenta ADD COLUMN backfill_hasta TEXT")
+    # BODY-SYNC-VIVO-ESTADO-1 ruling 1: three more additive, nullable columns -- every existing
+    # connected person reads as never-attempted (NULL) until their next pull, never backfilled.
+    if gcols and "ultimo_intento_en" not in gcols:
+        conn.execute("ALTER TABLE garmin_cuenta ADD COLUMN ultimo_intento_en TEXT")
+    if gcols and "reintentar_despues_de" not in gcols:
+        conn.execute("ALTER TABLE garmin_cuenta ADD COLUMN reintentar_despues_de TEXT")
+    if gcols and "reloj_sincronizo_en" not in gcols:
+        conn.execute("ALTER TABLE garmin_cuenta ADD COLUMN reloj_sincronizo_en TEXT")
     wscols = {r[1] for r in conn.execute("PRAGMA table_info(workout_set)")}
     if wscols and "excluded_by_person" not in wscols:
         conn.execute("ALTER TABLE workout_set ADD COLUMN excluded_by_person INTEGER NOT NULL DEFAULT 0 "

@@ -128,6 +128,11 @@ class PullHostedHealsGapsTest(unittest.TestCase):
         clock_patcher = mock.patch(
             "body.fechas.datetime", **{"now.side_effect": lambda tz=None: instant.astimezone(tz) if tz else instant})
         clock_patcher.start(); self.addCleanup(clock_patcher.stop)
+        # BODY-SYNC-VIVO-ESTADO-1 ruling 4: stubbed to a no-op -- this test's own concern is the
+        # healing-window wiring, not the watch's last-sync read.
+        reloj_patcher = mock.patch(
+            "body.pull.garmin_adapter.fetch_device_last_sync", side_effect=lambda token_str=None: (None, token_str))
+        reloj_patcher.start(); self.addCleanup(reloj_patcher.stop)
         garmin_cuenta.guardar(self.conn, self.person_id, "tok-demo")
         self.conn.commit()
 
@@ -217,6 +222,9 @@ class MainDaysHealsHostedTest(unittest.TestCase):
         clock_patcher = mock.patch(
             "body.fechas.datetime", **{"now.side_effect": lambda tz=None: instant.astimezone(tz) if tz else instant})
         clock_patcher.start(); self.addCleanup(clock_patcher.stop)
+        reloj_patcher = mock.patch(
+            "body.pull.garmin_adapter.fetch_device_last_sync", side_effect=lambda token_str=None: (None, token_str))
+        reloj_patcher.start(); self.addCleanup(reloj_patcher.stop)
         garmin_cuenta.guardar(self.conn, self.person_id, "tok-demo")
         self.conn.commit()
 

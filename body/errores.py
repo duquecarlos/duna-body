@@ -19,6 +19,15 @@ def texto_seguro(exc: BaseException) -> str:
     return type(exc).__name__
 
 
+def texto_seguro_con_estado(exc: BaseException, estado_http: int | None) -> str:
+    """texto_seguro(exc), with Garmin's own HTTP status appended when known ("GarminConnect
+    ConnectionError 429") -- BODY-SYNC-VIVO-ESTADO-1 ruling 2. Still never a message body: just
+    the class name and a bare number. estado_http=None (nothing to add) returns plain
+    texto_seguro(exc)."""
+    base = texto_seguro(exc)
+    return f"{base} {estado_http}" if estado_http is not None else base
+
+
 def texto_propio(exc: BaseException) -> str:
     """The message of one of Body's OWN exception classes (its type defined in a module under
     `body`), whose text Body itself composed and already decided is safe to show or log. Using

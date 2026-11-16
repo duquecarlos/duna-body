@@ -151,12 +151,20 @@ def finish_sign_in(client_state_json: str, code: str) -> str:
 
 def _client(token_str: str | None = None):
     from garminconnect import Garmin
+    from garminconnect.exceptions import GarminConnectConnectionError, GarminConnectTooManyRequestsError
 
     if token_str is not None:
         api = Garmin(return_on_mfa=False)
         try:
             api.login(token_str)
-        except Exception as e:  # rejected token -> the person must reconnect on /garmin
+        except (GarminConnectTooManyRequestsError, GarminConnectConnectionError):
+            # Garmin itself said something concrete here (rate-limited, down, a timeout) --
+            # BODY-SYNC-VIVO-ESTADO-1 ruling 2 backs off by what it said, which needs the real
+            # type (and, for a GarminConnectConnectionError, its `.response`) preserved rather
+            # than collapsed into NotSignedIn -- that would ask the person to reconnect for a
+            # problem that is Garmin's, not the token's.
+            raise
+        except Exception as e:  # a genuinely rejected/unreadable token -> reconnect
             raise NotSignedIn(f"Garmin token not accepted ({type(e).__name__}).") from None
         return api
     if not has_token():
@@ -167,6 +175,92 @@ def _client(token_str: str | None = None):
     except Exception as e:  # stale/rejected token -> ask for a fresh sign-in
         raise NotSignedIn(f"Garmin token not accepted ({type(e).__name__}). Run: python -m body.login") from None
     return api
+
+
+def estado_http(exc: BaseException) -> int | None:
+    """Garmin's own HTTP status for one failed call, when it is known (BODY-SYNC-VIVO-ESTADO-1
+    ruling 2) -- shown beside the exception's class name (errores.texto_seguro_con_estado),
+    never a message body, and used to choose a backoff window (garmin_cuenta.registrar_intento).
+
+    garminconnect 0.3.20's own exception classes (api/_common.py:539-558, 583-587, SOURCE under
+    .venv): a GarminConnectConnectionError for a 4xx (other than 401/429) or a 5xx DOES carry the
+    original `.response` (read here defensively: a missing attribute, or a response with no
+    `status_code`, is None, never a crash). GarminConnectTooManyRequestsError is raised ONLY for
+    a 429 answer (_common.py:539-542) but is built with NO `.response` of its own -- its status
+    is known from its TYPE, read here directly, not off an attribute it does not carry. Any
+    OTHER GarminConnectConnectionError with no `.response` at all (api/_common.py:583-587, 604,
+    607 -- a connection/timeout failure wrapped with no HTTP response to attach) reads as the
+    sentinel 0: a confirmed transient failure, but no numeric status, distinct from None (nothing
+    confirmed at all -- an auth failure, or an exception this function does not recognise)."""
+    from garminconnect.exceptions import GarminConnectConnectionError, GarminConnectTooManyRequestsError
+
+    if isinstance(exc, GarminConnectTooManyRequestsError):
+        return 429
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if isinstance(status, int):
+        return status
+    if isinstance(exc, GarminConnectConnectionError):
+        return 0
+    return None
+
+
+def _parse_device_last_sync(raw: Any) -> datetime | None:
+    """Parses one get_device_last_used() response (api/devices.py:75-80, "the device that
+    synced last") into a UTC datetime, or None for anything this function cannot read.
+
+    garminconnect 0.3.20 types this call's return only as dict[str, Any], with the docstring
+    naming no key -- the only key this package confirms ANYWHERE on this response is
+    "userDeviceId" (api/devices.py:96, push_workout_to_device's own read of it). No key here is
+    confirmed; each is a guess at Garmin's common naming on this same family of endpoints, tried
+    in order, the first that parses wins:
+      - "lastUsedDeviceUploadTime": epoch milliseconds, a UTC INSTANT (when the watch last
+        reached Garmin's servers, not a wall-clock reading -- unlike the '...TimestampLocal'
+        fields _local_iso parses elsewhere in this module, this is read as the raw epoch, never
+        shifted to a local zone).
+      - "lastUsedDeviceUploadTimeInSeconds": the same instant, epoch seconds instead of ms.
+      - "deviceLastUsedDate": an ISO 8601 string; a naive one (no offset) is assumed UTC.
+    A non-dict response, a missing/unreadable key, or a value none of these three can parse is
+    an honest gap (None), never guessed and never raised -- fetch_device_last_sync below never
+    lets a bad response fail the pull."""
+    if not isinstance(raw, dict):
+        return None
+    ms = _num(raw.get("lastUsedDeviceUploadTime"))
+    if ms is not None:
+        return datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+    secs = _num(raw.get("lastUsedDeviceUploadTimeInSeconds"))
+    if secs is not None:
+        return datetime.fromtimestamp(secs, tz=timezone.utc)
+    iso = raw.get("deviceLastUsedDate")
+    if isinstance(iso, str):
+        try:
+            dt = datetime.fromisoformat(iso)
+        except ValueError:
+            return None
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+    return None
+
+
+def fetch_device_last_sync(token_str: str | None = None):
+    """Pull the watch's own last-contact instant with Garmin, through get_device_last_used()
+    (BODY-SYNC-VIVO-ESTADO-1 ruling 4) -- see _parse_device_last_sync for exactly which key is
+    assumed where, none confirmed. ANY failure -- the client refusing, the call raising, the
+    response being unreadable -- is this same None, never raised: this is called once per
+    person per pull, after the day fetches, and a failure here must never fail the pull.
+
+    Same token_str convention as fetch_sleep: None uses the local TOKEN_DIR flow and returns
+    just the datetime (or None); given (hosted, per-person), returns (datetime_or_None,
+    token_after) -- token_after is token_str's own value, possibly refreshed by Garmin during
+    this call, unchanged when the call failed before reaching that point."""
+    try:
+        api = _client(token_str)
+        raw = api.get_device_last_used()
+        token_after = api.client.dumps()
+    except Exception:
+        return (None, token_str) if token_str is not None else None
+    reloj = _parse_device_last_sync(raw)
+    if token_str is None:
+        return reloj
+    return reloj, token_after
 
 
 def fetch_day(day: str, token_str: str | None = None):
