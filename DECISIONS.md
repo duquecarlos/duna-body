@@ -22953,3 +22953,122 @@ listed test file are built and gated.
 
 -- merged `9cb2637df5fabdfdf0099422a4a4b29ef31611e3`
 
+## BODY-SYNC-VIVO-ESTADO-1 -- attempt, backoff and the watch's own last sync, now recorded (2026-11-16)
+
+Surfaced by BODY-SYNC-VIVO-1-INV: Body only recorded a successful write, never an attempt time or a
+backoff, and `errores.texto_seguro`'s class-name-only text could not tell a 429 from a 500 even though
+garminconnect's own exception can carry `.response`. Carlos, relayed by the Personal desk, 2026-11-15:
+"I would like to see more like a live thing in the app or when I talk to you." This is the record that
+makes frequent pulls safe (backoff) and honest on screen (last attempt, the watch's own last sync) --
+nothing new leaves Duna; the pull still runs only on the host, after a deploy.
+
+**Ruling 1, as built.** Three nullable columns on `garmin_cuenta` (`body/db.py:685-687`, migration
+`body/db.py:1271-1276`): `ultimo_intento_en` (every attempt, success or not), `reintentar_despues_de`
+(a failed attempt's backoff, NULL meaning no need to wait), `reloj_sincronizo_en` (the watch's own
+last-contact instant, ruling 4). `body/garmin_cuenta.py`: `registrar_intento` (184), `puede_intentar`
+(209), `registrar_reloj_sincronizo` (228), `estado_sync` (240). `guardar()` clears
+`reintentar_despues_de` on a fresh connect/reconnect, the same way it already cleared `ultimo_error`.
+
+**Ruling 2, as built.** `body/garmin_adapter.py:estado_http` (180): 429 by the exception's own type
+(`GarminConnectTooManyRequestsError` carries no `.response` of its own, confirmed against the
+installed garminconnect 0.3.20 source); a real `.response.status_code` when the exception carries one;
+the `0` sentinel for a confirmed `GarminConnectConnectionError` with no response at all
+(connection/timeout); `None` for anything not confirmed (auth failure, `NotSignedIn`, an unrelated
+exception). `_client` (152) now lets `GarminConnectTooManyRequestsError`/`GarminConnectConnectionError`
+propagate with that type intact instead of collapsing every failure into `NotSignedIn`, so the buckets
+above can tell them apart; a genuine auth failure or an unrecognized exception still becomes
+`NotSignedIn`, unchanged. `body/garmin_cuenta.py:registrar_intento` (184) turns `estado_http` into a
+backoff: 429 -> +120 min (`BACKOFF_429_MIN`, 180), 5xx/connection/timeout (a real `.response` or the
+`0` sentinel) -> +15 min (`BACKOFF_TRANSITORIO_MIN`, 181), auth failure (`None`) -> no backoff, today's
+handling unchanged. `body/errores.py:texto_seguro_con_estado` (22) appends that status beside the class
+name, never a message body.
+
+**Ruling 3, as built.** `body/pull.py:_registrar_intento_persona` (306) calls `registrar_intento`
+exactly once per attempt, from `_pull_persona` (317) and from `pull_backfill_hosted`'s per-person loop
+(462), on every path except "no token" and "the backfill window is already complete, nothing was
+attempted" (`n == 0`, no Garmin call made). `pull_hosted` (361) and `pull_backfill_hosted` (462) each
+skip a person still inside a backoff via `garmin_cuenta.puede_intentar` (381, 491) with no Garmin call,
+counted and printed once as `omitido: N personas en espera` (405, 523) -- counts only, never a name or
+a figure. `pull_backfill_hosted` keeps skipping an auth-type error forever (no `reintentar_despues_de`
+was ever set for it, unchanged from before this slice) but now resumes automatically once a
+backoff-governed one's `reintentar_despues_de` has passed. `ESPACIO_MIN_ENTRE_INTENTOS = 0` (58):
+`puede_intentar`'s own minimum-space-between-attempts parameter is real, but a nonzero value here would
+have broken `tests/test_primer_pull_1.py`'s
+`test_repeated_runs_reach_the_window_start_then_make_zero_adapter_calls` (outside this slice's
+`touches:`, six back-to-back calls with no sleep in between) -- the backoff window alone governs these
+two call sites; `puede_intentar`'s recency check never trips at 0 minutes.
+
+**Ruling 4, as built.** `body/garmin_adapter.py:fetch_device_last_sync` (243) reads the watch's own
+last-contact instant via `get_device_last_used()`, the same `token_str` convention as `fetch_sleep`
+(bare value local, `(value, token_after)` hosted); any failure -- the client refusing, the call
+raising, the response being unreadable -- is `None`, never raised, since this runs once per person per
+pull, after the day fetches, and must never fail the pull. `_parse_device_last_sync` (207) is the only
+place the response's shape is assumed, and none of it is confirmed by garminconnect 0.3.20's own types
+(`dict[str, Any]`, no key named) or docstring -- the only key this package confirms ANYWHERE on this
+response is `userDeviceId` (`api/devices.py:96`, an unrelated call). Tried in order, first that parses
+wins: `lastUsedDeviceUploadTime` (epoch ms, a UTC instant), `lastUsedDeviceUploadTimeInSeconds` (the
+same instant, epoch seconds), `deviceLastUsedDate` (ISO 8601 string, a naive one assumed UTC); anything
+else is an honest gap, never guessed. `body/pull.py:_registrar_reloj_si_hay` (177) wires it into both
+`_pull_persona` and `pull_backfill_hosted`'s per-person path.
+
+**Ruling 5, as built -- no code change.** `body/db.py:connect` (1209) already sets
+`PRAGMA busy_timeout = 5000`, and `body/pull.py`'s `pull.lock` file lock (14, 83) already serialises
+every writer -- the daily pull and `--backfill` never run concurrently against the same `BODY_HOME`.
+WAL buys concurrent readers during a writer's transaction; at today's or an hourly pull's run rate, with
+a single writer already serialised by the file lock and every write already short (one person's
+day/sleep/intraday upsert), busy_timeout alone is enough -- WAL would add a second on-disk file
+(`-wal`/`-shm`) and a checkpoint policy for no measured gain here.
+
+**Tests (`tests/test_sync_vivo_estado.py`, new, 60 tests):** schema/migration (fresh columns, a
+migration onto an old-shaped table, an existing row reads as never-attempted), `registrar_intento`'s
+backoff table (success clears, 429/5xx/0-sentinel/auth/non-429-4xx, a new failure overwriting a stale
+backoff), `puede_intentar` (never-attempted, not-yet-expired, expired, the recency throttle,
+espacio_min=0, no row), `estado_sync` (shape with no row, `ultimo_ok_en` reading `db.last_sync`, every
+written field), a reconnect clearing a stale backoff, `estado_http` against the installed garminconnect
+0.3.20 package's own exception classes (429-no-response, a response with/without a status, the 0
+sentinel, auth/NotSignedIn/unrelated exceptions all `None`), `texto_seguro_con_estado` (appends/omits
+the status, never the message), `_client`'s propagation change (429/connection propagate, a plain or
+auth exception still `NotSignedIn`), `_parse_device_last_sync` (ms, seconds, naive/offset ISO,
+not-a-dict, no recognized key, unparseable, non-numeric), `fetch_device_last_sync` (success, every
+failure point, local-mode bare value), and the hosted pull/backfill integration for
+429/5xx/connection-timeout/auth (backoff set and printed, a backed-off person skipped and counted, a
+past-backoff person tried again, a failed watch-last-sync read never failing the pull, the `omitido`
+line's presence/absence). `tests/test_pull.py`, `tests/test_pull_relleno.py` and
+`tests/test_garmin_host.py` stub `fetch_device_last_sync` in the hosted test classes that build a real
+(unmocked) `garminconnect.Garmin` for an unrelated concern (intraday wiring, healing windows, per-zone
+day lists), so this slice's addition stays isolated from theirs.
+
+**Gate command:** `.venv/Scripts/python.exe -m unittest discover tests -t .`. Run as 9 sequential
+alphabetical chunks of 20 dotted test modules (19 in the last), each in the foreground, read from the
+process:
+- chunk 1 (`test_accesibilidad`..`test_baselines`): `Ran 377 tests in 102.076s ... OK (skipped=1,
+  expected failures=1)`
+- chunk 2 (`test_baselines_lote`..`test_dispositivo`): `Ran 481 tests in 479.916s ... OK`
+- chunk 3 (`test_ejes_fechas`..`test_fechas_semana`): `Ran 318 tests in 126.477s ... OK`
+- chunk 4 (`test_fit`..`test_host_backup`): `Ran 502 tests in 498.916s ... OK`
+- chunk 5 (`test_host_deploy`..`test_metas_semana_tira`): `Ran 414 tests in 81.504s ... OK`
+- chunk 6 (`test_mock_r2_hoy`..`test_primer_dia_1`): `Ran 530 tests in 248.945s ... OK`
+- chunk 7 (`test_primer_pull_1`..`test_rendimiento_red`): `Ran 350 tests in 158.919s ... OK`
+- chunk 8 (`test_rendimiento_turnos`..`test_turno_fc_pantallas`): `Ran 400 tests in 95.901s ... OK`
+- chunk 9 (`test_turnos_costo`..`test_web_entry`): `Ran 403 tests in 224.229s ... OK`
+
+Sum: 377+481+318+502+414+530+350+400+403 = 3775. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted without running): `COLLECTED
+3775` -- exact match. Chunk 9's run printed one extra line after its own `OK` --
+`sin_cambio:no_es_arbol_vivo body-app <sha>` -- traced to `body/vivo.py:278`'s `print` inside `main()`,
+reached because `tests/test_vivo.py` runs that module as a real subprocess (`body/vivo.py:253`) whose
+own stdout interleaves after unittest's summary line; pre-existing behavior (BODY-LIVE-CHECKOUT-1),
+unrelated to this slice. All nine chunks green.
+
+**Merge policy A, as applied.** This diff adds a schema change (three nullable `ALTER TABLE` columns)
+but no customer-facing bytes and no cross-repo contract change. The dispatch's own approval-reason
+said, in words, "Merge approved if the gate is green" -- the spec body naming the schema change and
+authorizing a merge through it, so this merges on green rather than stopping AWAITING_APPROVAL.
+
+**Commits:** `c1e44d2` (rulings 1-2 -- `body/db.py`, `body/errores.py`, `body/garmin_adapter.py`,
+`body/garmin_cuenta.py`), `701d064` (rulings 3-5 -- `body/pull.py`, `tests/test_garmin_host.py`,
+`tests/test_pull.py`, `tests/test_pull_relleno.py`, `tests/test_sync_vivo_estado.py` -- new).
+
+**Open follow-ups, not this slice's to do:** none found -- the spec's five rulings and every listed
+test file are built and gated.
+
