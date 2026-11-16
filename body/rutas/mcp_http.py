@@ -46,11 +46,11 @@ _METHOD_NOT_FOUND = {"code": -32601, "message": "Method not found"}
 # which one to show. The one tool-level sentence this endpoint invents on its own (NOT an existing
 # body/i18n key: the lectura/escritura split is new to this endpoint) is instead picked by the
 # ALREADY-KNOWN person language, same as every other tool-call message below it.
-_MENSAJE_401 = "Clave de asistente inválida o ausente. / Missing or invalid assistant key."
+_MENSAJE_401 = "Llave de asistente inválida o ausente. / Missing or invalid assistant key."
 _MENSAJE_401_SIN_PERSONA = (
-    "Esta clave es válida, pero nadie ha iniciado sesión todavía en Body con esa misma cuenta: "
-    "entra a Body una vez con Cuenta Duna para enlazarla. / This key is valid, but nobody has "
-    "signed in to Body yet with that same account: sign in to Body once with Cuenta Duna to link it."
+    "Esta llave es válida, pero todavía no has entrado a Body con esa cuenta: entra una vez a "
+    "Body con Cuenta Duna para vincularla. / This key is valid, but you haven't signed in to "
+    "Body with that account yet: sign in to Body once with Cuenta Duna to link it."
 )
 _MENSAJE_503 = (
     "Body no pudo comprobar la llave con Cuenta Duna; intenta de nuevo en un momento. / Body "
