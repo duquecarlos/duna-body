@@ -23608,3 +23608,102 @@ the branch, unmerged, for approval. No schema or migration change; no cross-repo
 
 -- merged d87ce93f5b6958ad74ff813c4595ae98076daf8b, reviewed by the orchestrator at 375 px
 
+## BODY-PLAN-SESION-HECHA-1 -- a done planned training session counts once (2026-11-16)
+
+**The gap, as measured.** BODY-PLAN-PANTALLA-1's own merge (queue/pending.txt, 2026-11-12) flagged
+it and it was still open on main `732d731`: the plan's `sesiones_fuerza` count read only `activity`
+rows (`body/horizonte.py`'s `_real_medida`, the branch at the then-line 263-265, backed by
+`entreno_racha.sesiones_fuerza` via `_recopilar_datos`'s `"fuerza"` key, :198/:240 before this
+slice), so a `plan` row the person marked done (`status = 'done'`, `body/db.py:536`) with no watch
+or manual `activity` behind it counted 0 beside its own "Hecho" chip -- true on main even for the
+demo horizon's own Tuesday session (`body/demo.py`'s `_seed_plan_horizonte`, title "Entrenamiento
+de fuerza" / "Strength training", `status = 'done'`, no `ejercicios_json` at all, so it would still
+count 0 after this slice too -- `demo.py` is outside this slice's `touches`; the exact shape is
+reproduced instead in this slice's own test,
+`test_the_demo_horizons_hecho_row_now_counted`, with `ejercicios_json` added so it demonstrates the
+fix). Body's rule: "measured first, the person's word second, never twice."
+
+**Ruling 1/2 -- the union, in `body/entreno_racha.py`'s new `con_plan_hecho(sesiones, dias_plan)`
+(:89-101).** Pure function, no database: `sesiones` is this module's own measured classification
+(`sesiones_fuerza`'s own return shape, `{'day': date, 'start_local': str | None}`); `dias_plan` is
+every day carrying a done `plan` row with exercises. A day already in `sesiones` is left exactly as
+measured -- the watch's record standing as given, never doubled; a day with no measured session
+gets one synthetic entry per such plan-row day, so two done rows the same day with no watch session
+count twice (`dias_plan` is a plain list, one entry per row, not a set). The docstring states
+ruling 2 verbatim: a plan row with no exercises, or any plan row at all for a cardio measure, never
+reaches this function -- it has no exercises to say what was done, and a plan row can only ever
+stand in for a STRENGTH session.
+
+**Ruling 3 -- one place, in `body/horizonte.py`.** Chosen over `entreno_racha.py` because the
+union needs the `plan` table (horizonte.py's own domain -- `plan_vs_real` already reads it for
+`planes_por_dia`) alongside the measured classifier; `entreno_racha.con_plan_hecho` stays a pure,
+database-free function so `entreno_racha.py` itself never reads `plan`. New `_planes_hechos_fuerza`
+(:226-236): one statement, `SELECT day FROM plan WHERE person_id = ? AND status = 'done' AND
+ejercicios_json IS NOT NULL AND day BETWEEN ? AND ?` -- never scoped to one horizon's `goal_id`,
+the same way a measured session isn't (a done session is a fact about the person's day, regardless
+of which plan, or none, it was written under). `_recopilar_datos` (:239-262) now also returns
+`"fuerza_con_plan"`: `entreno_racha.con_plan_hecho(fuerza, _planes_hechos_fuerza(...))`, computed
+once per call alongside the existing `"fuerza"` (left unchanged, still measured-only -- the day-
+level rule chequeos `sin_sesion`/`sesion_antes_de` keep reading it as before, out of this slice's
+rulings). `_real_medida`'s `sesiones_fuerza` branch (:283-288) now sums over `datos["fuerza_con_
+plan"]` instead of `datos["fuerza"]` -- its only change. Since `plan_vs_real`, `semana`,
+`checkpoints` and `resumen` all go through `_recopilar_datos` -> `_real_medida` for this measure,
+and Today's "Tu plan esta semana" card (`body/rutas/hoy.py`'s `_plan_semana_ctx` ->
+`horizonte.resumen`) is itself built only from `resumen`, every one of them sees the union with no
+change of its own. `entreno_racha.racha_semanal` (the watch's own weekly streak,
+`BODY-ENTRENO-RACHA-SEMANAL-1`) reads no `plan` row at all, before or after this slice -- a
+separate subject, confirmed by a new test
+(`tests/test_entreno_racha.py::RachaSemanalTest::test_a_done_plan_row_with_exercises_never_feeds_the_racha`).
+
+**Ruling 4 -- cost.** Exactly one extra statement per `_recopilar_datos` call (the new
+`_planes_hechos_fuerza` read), the same one call `plan_vs_real`/`semana`/`checkpoints` already made
+once per range before this slice. `tests/test_rendimiento.py`'s ceilings (all relative-count or
+margin-based, none an exact statement count for this path) and its two
+`CostIndependentOfSpanTest` classes (equal-statement-count assertions, both sides of each
+comparison paying the identical +1) all stayed green unmodified.
+
+**Tests.** New `tests/test_plan_sesion_hecha.py` (15 tests): done+exercises alone -> 1
+(`DonePlanRowCountsAsAStrengthSessionTest`, including the demo-shape reproduction above);
+done-without-exercises, skipped-with-exercises, proposed-with-exercises and accepted-with-
+exercises -> 0; a measured session plus a done plan row the same day -> still the measured count,
+not +1 (`MeasuredSessionWinsTest`, 4 tests, including two done rows with no measured session -> 2
+and a done plan row on a different day adding its own count); a done plan row never counts toward
+`sesiones_cardio` (`CardioStaysMeasuredOnlyTest`); `con_plan_hecho` exercised directly with no
+database (`ConPlanHechoUnitTest`, 4 tests). One addition to `tests/test_entreno_racha.py` (the
+racha-isolation test above). `tests/test_horizonte.py`, `tests/test_plan_pantalla.py` and
+`tests/test_plan_hoy.py` needed no change -- none of their existing fixtures carry a done `plan`
+row with `ejercicios_json`, so the union is additive and silent for them; they are listed here
+because they were read and re-run green, not because they changed.
+
+**Deviation.** The spec named `tests/test_entreno_racha_semanal.py`; the file that actually owns
+`BODY-ENTRENO-RACHA-SEMANAL-1` is `tests/test_entreno_racha.py` (its own module docstring says so).
+The new racha-isolation test was added there instead of creating a second, fragmenting file.
+
+**Gate**, on this branch's final tree (`git status --porcelain` clean). The exact command is
+`.venv/Scripts/python.exe -m unittest discover tests -t .`; run as 10 sequential chunks of
+`tests/test_*.py` modules in alphabetical order (20 modules each, the same set `discover` would
+walk), each in the foreground:
+
+    chunk 1  (test_accesibilidad..test_baselines):            Ran 377 tests, OK (skipped=1, expected failures=1)
+    chunk 2  (test_baselines_lote..test_dispositivo):         Ran 481 tests, OK
+    chunk 3  (test_ejes_fechas..test_fechas_semana):          Ran 319 tests, OK
+    chunk 4  (test_fit..test_host_backup):                    Ran 518 tests, OK
+    chunk 5  (test_host_deploy..test_metas_semana_tira):       Ran 425 tests, OK
+    chunk 6  (test_mock_r2_hoy..test_plan_propuestas):         Ran 533 tests, OK
+    chunk 7  (test_plan_sesion_hecha..test_registro_tu):       Ran 364 tests, OK
+    chunk 8  (test_rendimiento..test_tendencias_patron):       Ran 364 tests, OK
+    chunk 9  (test_tendencias_racha..test_vida_export):        Ran 448 tests, OK
+    chunk 10 (test_vivo..test_web_entry):                      Ran 61 tests, OK
+
+Sum: 3890 run, 0 failures, 0 errors, 1 skipped, 1 expected failure. Reconciled against an
+independent collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')`,
+counted by walking its `TestSuite`): 3890 -- matching exactly. **GREEN.**
+
+**Merge policy, this slice's own diff: no stop.** No schema or migration change (no `body/db.py`
+touched); no cross-repo contract or DTO change. No new customer-facing bytes either -- no new
+template, string or i18n key; the only observable change is the computed `real` figure for an
+existing `sesiones_fuerza` line, which is this slice's entire point (a bug fix to an existing
+count, not a new byte). Merges on green.
+
+**Commits:** `5ebf6de92f788ad268d04170dde47b58ac79afd7` (rulings 1-4 and tests).
+
