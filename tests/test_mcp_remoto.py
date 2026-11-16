@@ -109,6 +109,16 @@ class HerramientasTest(_HostedTestCase):
         self.assertEqual(out["nivel"], nivel_esperado)
         self.assertEqual(r.headers.get("cache-control"), "no-store")
 
+    def test_list_includes_the_persons_interface_language(self):
+        # BODY-MCP-REMOTO-CLIENTE-1 ruling 3: the PC client has no DB of its own to read this
+        # from, so the server names it.
+        r = self.client.get("/api/asistente/mcp/herramientas", headers={"Authorization": f"Bearer {self.key}"})
+        self.assertEqual(r.json()["idioma"], "es")
+        db.set_language(self.conn, "en", 1)
+        self.conn.commit()
+        r = self.client.get("/api/asistente/mcp/herramientas", headers={"Authorization": f"Bearer {self.key}"})
+        self.assertEqual(r.json()["idioma"], "en")
+
     def test_aplicar_mcp_on_adds_the_two_extra_tools(self):
         db.set_aplicar_mcp(self.conn, 1, True)
         self.conn.commit()
@@ -140,7 +150,11 @@ class LlamarLecturaTest(_HostedTestCase):
         r = self.client.post("/api/asistente/mcp/llamar", headers={"Authorization": f"Bearer {self.key}"},
                               json={"nombre": "esto_no_existe", "argumentos": {}})
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.json(), {"error": "herramienta_rechazada"})
+        out = r.json()
+        self.assertEqual(out["error"], "herramienta_rechazada")
+        # BODY-MCP-REMOTO-CLIENTE-1 ruling 3: carries the same unlocalized message the local
+        # stdio door already shows verbatim for a plain ToolError (errores.texto_propio(e)).
+        self.assertIn("herramienta desconocida", out["mensaje"])
 
 
 class LlamarPropuestaTest(_HostedTestCase):

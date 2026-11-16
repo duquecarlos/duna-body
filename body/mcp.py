@@ -53,13 +53,15 @@ from __future__ import annotations
 import contextlib
 import json
 import math
+import os
 import sys
+import urllib.error
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import IO
 from zoneinfo import ZoneInfo
 
-from . import db, errores
+from . import db, errores, pc_cliente
 from .agente import ajustes, bucle
 from .agente import conversacion as agente_conversacion
 from .agente import herramientas
@@ -74,6 +76,12 @@ CALLER = "mcp-local"
 # is one shared, cross-door budget per person, never a separate one per door.
 CALLER_REMOTO = "mcp-remoto"
 ORIGEN = "mcp"
+
+# BODY-MCP-REMOTO-CLIENTE-1 ruling 1: the mode is the PC's link, read once at start -- this env var
+# is the one escape hatch, read here in code, never a worker command prefix.
+MODO_ENV = "BODY_MCP_MODO"
+RUTA_HERRAMIENTAS = "/api/asistente/mcp/herramientas"
+RUTA_LLAMAR = "/api/asistente/mcp/llamar"
 
 # BODY-MCP-APLICAR-1 (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2): the one apply tool, listed only
 # while the person's own `aplicar_mcp` setting is ON (checked per tools/list AND per call, so
@@ -321,6 +329,166 @@ class _SesionRemota:
         pass
 
 
+class _SesionCliente:
+    """Remote mode's own half of the shared JSON-RPC envelope (BODY-MCP-REMOTO-CLIENTE-1 ruling 2):
+    no DB connection at all -- the hosted server already audits and caps every call, so this side
+    only needs the device-key HTTP calls through body/pc_cliente.py's `llamar`, this stdio
+    session's own `conversacion_id` (held for the session's life, sent back on every call once the
+    server has returned one), the person's interface language (read off `tools/list`'s own
+    response, ruling 3), and the same running totals `_Sesion` keeps for main()'s stderr summary."""
+
+    caller = CALLER_REMOTO
+
+    def __init__(self):
+        self.conversacion_id: int | None = None
+        self.idioma = "es"
+        self.total_lecturas = 0
+        self.total_propuestas = 0
+        self.total_aplicaciones = 0
+
+
+class _RehusoClienteMCP(herramientas.ToolError):
+    """Remote mode's own refusal (ruling 2): `mensaje` is ALREADY the fully localized text to
+    show -- `_procesar_mensaje`'s existing `except herramientas.ToolError` branch
+    (`errores.texto_propio(e)`) renders it unchanged, so the shared JSON-RPC envelope needs no new
+    branch for the client's own backend."""
+
+
+def _modo_remoto() -> bool:
+    """Ruling 1: read once, at start -- a link on this PC means REMOTE, `EnlaceFaltante` means
+    LOCAL exactly as before. `BODY_MCP_MODO=local` is the one escape hatch, checked first."""
+    if os.environ.get(MODO_ENV) == "local":
+        return False
+    try:
+        pc_cliente.leer_enlace()
+    except pc_cliente.EnlaceFaltante:
+        return False
+    return True
+
+
+def _mensaje_aplicar_expirada_remoto(idioma: str, expira_en, zona=None) -> str:
+    """The remote client's own rendering of `aplicar_expirada` (ruling 3): same i18n key and
+    placeholders as `_mensaje_aplicar_expirada` above, but this side has no DB to read the
+    person's configured timezone from, so it converts the server's raw UTC timestamp using this
+    PC's own local timezone (`astimezone(None)`, the default) instead -- the PC the person's own
+    desk session runs on, same as the message's own "render it locally" intent. `zona`: an
+    explicit override so a test can make the conversion deterministic regardless of the machine
+    it runs on; production never passes one."""
+    t = T(idioma)
+    if not isinstance(expira_en, str):
+        return t("mcp.remoto.error_interno")
+    try:
+        local = datetime.fromisoformat(expira_en).astimezone(zona)
+    except ValueError:
+        return t("mcp.remoto.error_interno")
+    return t("asistente.mcp.aplicar_expirada", fecha=t.long_date(local.date()),
+             hora=f"{local.hour:02d}:{local.minute:02d}")
+
+
+def _error_remoto_a_rehuso(sesion: _SesionCliente, nombre_str: str, data: dict) -> _RehusoClienteMCP:
+    """Maps one POST /llamar refusal body `{"error": codigo, ...campos}` to the SAME localized
+    text the local door already shows for that reason (ruling 3) -- `_mensaje_tope_*` already take
+    a bare `idioma`, reused verbatim; the others normally take a `_Sesion` to read its `.conn` for
+    the language (and, for `aplicar_expirada`, the timezone) -- this side has neither, so it reads
+    the same i18n keys directly instead of calling those `_Sesion`-shaped functions. Byte-identical
+    output text either way."""
+    idioma = sesion.idioma
+    t = T(idioma)
+    codigo = data.get("error")
+    if codigo == "limite":
+        minutos = data.get("minutos")
+        minutos = minutos if isinstance(minutos, int) else 1
+        if nombre_str == NOMBRE_APLICAR:
+            texto = _mensaje_tope_aplicaciones(idioma, minutos)
+        elif herramientas.tipo_de(nombre_str) == "lectura":
+            texto = _mensaje_tope_lecturas(idioma, minutos)
+        else:
+            texto = _mensaje_tope_propuestas(idioma, minutos)
+        return _RehusoClienteMCP(texto)
+    if codigo == "aplicar_apagado":
+        return _RehusoClienteMCP(t("asistente.mcp.aplicar_apagado"))
+    if codigo == "aplicar_no_propia":
+        return _RehusoClienteMCP(t("asistente.mcp.aplicar_no_propia"))
+    if codigo == "aplicar_no_vigente":
+        return _RehusoClienteMCP(t("asistente.mcp.aplicar_no_vigente"))
+    if codigo == "aplicar_expirada":
+        return _RehusoClienteMCP(_mensaje_aplicar_expirada_remoto(idioma, data.get("expira_en")))
+    if codigo == "descartar_apagado":
+        return _RehusoClienteMCP(t("asistente.mcp.descartar_apagado"))
+    if codigo == "conversacion_ajena":
+        return _RehusoClienteMCP(t("mcp.remoto.conversacion_ajena"))
+    if codigo == "herramienta_rechazada":
+        mensaje = data.get("mensaje")
+        return _RehusoClienteMCP(mensaje if isinstance(mensaje, str) else t("mcp.remoto.error_interno"))
+    return _RehusoClienteMCP(t("mcp.remoto.error_interno"))
+
+
+def _lista_herramientas_remota(sesion: _SesionCliente) -> list[dict]:
+    """Ruling 4: tools/list failing never stops `initialize` from answering -- any failure here
+    (network, a non-200 status, a malformed body) is logged (class or status, never the tool
+    name -- there is none for a list call) and answered with an empty tool list, never raised."""
+    try:
+        status, data = pc_cliente.llamar("GET", RUTA_HERRAMIENTAS)
+    except Exception as e:
+        print(f"mcp remoto tools/list error: {type(e).__name__}", file=sys.stderr)
+        return []
+    if status != 200 or not isinstance(data, dict):
+        print(f"mcp remoto tools/list error: status={status}", file=sys.stderr)
+        return []
+    idioma = data.get("idioma")
+    if isinstance(idioma, str):
+        sesion.idioma = idioma
+    tools = data.get("herramientas")
+    return tools if isinstance(tools, list) else []
+
+
+def _llamar_herramienta_remota(sesion: _SesionCliente, nombre, argumentos: dict) -> tuple[str, dict, bool]:
+    """Ruling 5: never a silent fallback to the local database on ANY failure -- every way this
+    can go wrong (a connection failure, a non-200/non-dict response, a refusal the server sent)
+    raises `_RehusoClienteMCP` with the already-localized text instead, so `_procesar_mensaje`'s
+    existing `except herramientas.ToolError` branch (unchanged) is the only path that ever runs
+    for it; stderr carries the exception class or HTTP status and the tool NAME only (ruling 5)."""
+    nombre_str = nombre if isinstance(nombre, str) else str(nombre)
+    cuerpo: dict = {"nombre": nombre_str, "argumentos": argumentos}
+    if sesion.conversacion_id is not None:
+        cuerpo["conversacion_id"] = sesion.conversacion_id
+    body_bytes = json.dumps(cuerpo, ensure_ascii=False).encode("utf-8")
+    try:
+        status, data = pc_cliente.llamar("POST", RUTA_LLAMAR, body=body_bytes,
+                                          headers={"Content-Type": "application/json"})
+    except urllib.error.URLError as e:
+        print(f"mcp remoto tools/call error: {type(e).__name__} herramienta={nombre_str!r}", file=sys.stderr)
+        raise _RehusoClienteMCP(T(sesion.idioma)("mcp.remoto.red_fallo")) from e
+    except Exception as e:
+        print(f"mcp remoto tools/call error: {type(e).__name__} herramienta={nombre_str!r}", file=sys.stderr)
+        raise _RehusoClienteMCP(T(sesion.idioma)("mcp.remoto.error_interno")) from e
+    if status == 401:
+        print(f"mcp remoto tools/call error: status=401 herramienta={nombre_str!r}", file=sys.stderr)
+        raise _RehusoClienteMCP(T(sesion.idioma)("mcp.remoto.clave_invalida"))
+    if status == 403:
+        print(f"mcp remoto tools/call error: status=403 herramienta={nombre_str!r}", file=sys.stderr)
+        raise _RehusoClienteMCP(T(sesion.idioma)("mcp.remoto.sin_permiso"))
+    if status != 200 or not isinstance(data, dict):
+        print(f"mcp remoto tools/call error: status={status} herramienta={nombre_str!r}", file=sys.stderr)
+        raise _RehusoClienteMCP(T(sesion.idioma)("mcp.remoto.error_interno"))
+    if "error" in data:
+        raise _error_remoto_a_rehuso(sesion, nombre_str, data)
+    conversacion_id = data.get("conversacion_id")
+    if isinstance(conversacion_id, int):
+        sesion.conversacion_id = conversacion_id
+    tipo, salida = data.get("tipo"), data.get("salida")
+    if not isinstance(tipo, str) or not isinstance(salida, dict):
+        print(f"mcp remoto tools/call error: esquema herramienta={nombre_str!r}", file=sys.stderr)
+        raise _RehusoClienteMCP(T(sesion.idioma)("mcp.remoto.error_interno"))
+    if tipo == "lectura":
+        sesion.total_lecturas += 1
+    elif tipo == "propuesta":
+        sesion.total_propuestas += 1
+    elif tipo == "aplicacion":
+        sesion.total_aplicaciones += 1
+    return tipo, salida, bool(data.get("aviso_reloj"))
+
+
 def _herramienta_mcp(especificacion: dict) -> dict:
     return {"name": especificacion["nombre"], "description": especificacion["descripcion"],
             "inputSchema": especificacion["parametros"]}
@@ -341,7 +509,9 @@ def _herramienta_descartar() -> dict:
             "inputSchema": _PARAM_DESCARTAR_PROPUESTA}
 
 
-def _lista_herramientas(sesion: _Sesion) -> list[dict]:
+def _lista_herramientas(sesion) -> list[dict]:
+    if isinstance(sesion, _SesionCliente):
+        return _lista_herramientas_remota(sesion)
     nivel = _nivel(sesion)
     tools = [_herramienta_mcp(e) for e in bucle._tool_specs(nivel)]
     if db.get_aplicar_mcp(sesion.conn, sesion.person_id):
@@ -455,7 +625,7 @@ def _descartar_propuesta_mcp(sesion: _Sesion, argumentos: dict) -> dict:
     return {"propuesta_id": propuesta_id, "estado": resultado["estado"]}
 
 
-def _llamar_herramienta(sesion: _Sesion, nombre, argumentos: dict) -> tuple[str, dict, bool]:
+def _llamar_herramienta(sesion, nombre, argumentos: dict) -> tuple[str, dict, bool]:
     """Dispatches one `tools/call` -- every attempt, successful or refused, is audited first
     (ruling 5). A read goes straight to `herramientas.ejecutar`; a proposal gets this session's one
     lazily-created, 'mcp'-tagged conversation; `aplicar_propuesta` (BODY-MCP-APLICAR-1) goes to
@@ -466,7 +636,13 @@ def _llamar_herramienta(sesion: _Sesion, nombre, argumentos: dict) -> tuple[str,
     "you'll see this on Hoy" line (a plain proposal) or the "applied, undo it in Body" line (an
     apply); `aviso_reloj` (BODY-SERIES-UNIDAD-1 ruling 3) is True only for a `registrar_entreno`
     proposal whose own watch-sets read failed, so the caller can add the one extra line telling
-    the person's sets were saved without the watch's."""
+    the person's sets were saved without the watch's.
+
+    BODY-MCP-REMOTO-CLIENTE-1 ruling 2: a `_SesionCliente` has no DB at all, so it dispatches to
+    `_llamar_herramienta_remota` instead -- the one thing that differs between the two backends;
+    the JSON-RPC envelope that calls this function (`_procesar_mensaje`) is unchanged either way."""
+    if isinstance(sesion, _SesionCliente):
+        return _llamar_herramienta_remota(sesion, nombre, argumentos)
     nombre_str = nombre if isinstance(nombre, str) else str(nombre)
     db.registrar_uso_herramienta_externa(sesion.conn, sesion.person_id, nombre_str, sesion.caller)
     if nombre_str == NOMBRE_APLICAR:
@@ -573,14 +749,11 @@ def _procesar_mensaje(sesion: _Sesion, msg: dict) -> dict | None:
     return _responder(id_, error=_METHOD_NOT_FOUND)
 
 
-def ejecutar(entrada: IO[str], salida: IO[str], conn, person_id: int, reloj=None) -> _Sesion:
-    """Reads newline-delimited JSON-RPC requests from `entrada`, writes newline-delimited JSON-RPC
-    responses to `salida`, until `entrada` is exhausted (the caller's pipe closed). Returns the
-    session, so a caller (tests/test_mcp.py, or main() below for its own stderr summary) can read
-    its final counters. `reloj`: BODY-MCP-LOCAL-1-B's injectable clock for the rolling-window caps,
-    real time (the default) in production, a fake in tests that must cross a window without
-    sleeping."""
-    sesion = _Sesion(conn, person_id, reloj)
+def _bucle_jsonrpc(sesion, entrada: IO[str], salida: IO[str]) -> None:
+    """The one JSON-RPC read/respond loop, shared by `ejecutar` (local, a DB-backed `_Sesion`) and
+    `ejecutar_remoto` (a `_SesionCliente`, no DB at all) -- reads newline-delimited requests from
+    `entrada`, writes newline-delimited responses to `salida`, until `entrada` is exhausted (the
+    caller's pipe closed)."""
     for linea in entrada:
         linea = linea.strip()
         if not linea:
@@ -596,6 +769,24 @@ def ejecutar(entrada: IO[str], salida: IO[str], conn, person_id: int, reloj=None
             salida.write(json.dumps(respuesta, ensure_ascii=False))
             salida.write("\n")
             salida.flush()
+
+
+def ejecutar(entrada: IO[str], salida: IO[str], conn, person_id: int, reloj=None) -> _Sesion:
+    """Returns the session, so a caller (tests/test_mcp.py, or main() below for its own stderr
+    summary) can read its final counters. `reloj`: BODY-MCP-LOCAL-1-B's injectable clock for the
+    rolling-window caps, real time (the default) in production, a fake in tests that must cross a
+    window without sleeping."""
+    sesion = _Sesion(conn, person_id, reloj)
+    _bucle_jsonrpc(sesion, entrada, salida)
+    return sesion
+
+
+def ejecutar_remoto(entrada: IO[str], salida: IO[str]) -> _SesionCliente:
+    """BODY-MCP-REMOTO-CLIENTE-1 ruling 1: remote mode's own entry point -- never opens the local
+    database, never touches `db` at all. Returns the session for main()'s own stderr summary,
+    exactly as `ejecutar` does for local mode."""
+    sesion = _SesionCliente()
+    _bucle_jsonrpc(sesion, entrada, salida)
     return sesion
 
 
@@ -609,6 +800,13 @@ def main() -> None:
         sys.stdin.reconfigure(encoding="utf-8", newline="\n")
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", newline="\n")
+    if _modo_remoto():
+        # Ruling 1: remote mode never opens the local database -- no db.connect, no ensure_ready,
+        # no local_person_id.
+        sesion = ejecutar_remoto(sys.stdin, sys.stdout)
+        print(f"body.mcp: {sesion.total_lecturas} lecturas, {sesion.total_propuestas} propuestas, "
+              f"{sesion.total_aplicaciones} aplicaciones", file=sys.stderr)
+        return
     conn = db.connect()
     with contextlib.closing(conn):
         db.ensure_ready(conn)

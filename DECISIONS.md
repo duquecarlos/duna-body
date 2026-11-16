@@ -22689,3 +22689,146 @@ final tree. Smoke run after the merge below, on `main`, is the last foreground c
 -- merged `64c028b` (smoke on `main` after merge: `tests.test_entreno_sesion tests.test_vivo tests.test_i18n_paridad`
 -- `Ran 96 tests in 238.887s ... OK`)
 
+
+## BODY-MCP-REMOTO-CLIENTE-1 -- body.mcp speaks HTTP to the hosted door, PC link permitting (2026-11-15)
+
+Surface BODY-MUDANZA-PC-A-SERVIDOR-1 (Carlos, "build it, 00 first": one database for the web and the desk).
+BODY-MCP-REMOTO-SERVIDOR-1 (merged `448243c`) built the hosted door; this slice is its client half --
+`python -m body.mcp`, the process the Personal desk's own MCP config starts, now reaches it over HTTP instead
+of always opening the PC's local database.
+
+**The mode rule (ruling 1), as built -- `body/mcp.py:357-366` (`_modo_remoto`), read once at the top of
+`main()` (`body/mcp.py:793`).** `pc_cliente.leer_enlace()` succeeding means REMOTE; its `EnlaceFaltante` means
+LOCAL, exactly as every existing local test already exercises. One escape hatch, read in code, never a worker
+command prefix: `BODY_MCP_MODO=local` (the env var name is `mcp.MODO_ENV`) forces LOCAL even with a link,
+checked first. In REMOTE mode `main()` never calls `db.connect`, `db.ensure_ready` or `db.local_person_id` --
+proved by `tests/test_mcp_cliente_remoto.py::MainNuncaAbreLaBaseLocalTest` (`db.connect` patched to raise
+`AssertionError` and never doing so across a real `initialize`/`tools/list`/`tools/call` round trip) and by
+`ModoTest`'s three cases (link present, link absent, env override).
+
+**The interface and its two implementations (ruling 2).** `_procesar_mensaje` (`body/mcp.py`, JSON-RPC
+envelope: `initialize`/`notifications/initialized`/`tools/list`/`tools/call`, content assembly) is
+byte-for-byte unchanged -- it still only ever calls `_lista_herramientas(sesion)` and
+`_llamar_herramienta(sesion, nombre, argumentos)`. Both of those became one-line dispatchers: for a
+`_SesionCliente` (new, `body/mcp.py:332-347`, no DB at all -- just `conversacion_id`, `idioma` and the three
+`total_*` counters `main()`'s stderr summary reads) they delegate to `_lista_herramientas_remota`
+(`body/mcp.py:426-442`, `GET /api/asistente/mcp/herramientas` through `pc_cliente.llamar`) and
+`_llamar_herramienta_remota` (`body/mcp.py:445-489`, `POST /api/asistente/mcp/llamar`); for a `_Sesion`/
+`_SesionRemota` they run exactly the code BODY-MCP-REMOTO-SERVIDOR-1 already proved, untouched. The
+conversation id is held client-side for the stdio session's whole life: no `conversacion_id` is sent until
+the server first returns one, then it is resent on every later call (`tests/test_mcp_cliente_remoto.py::
+LlamarHerramientaRemotaTest.test_conversacion_id_flows_none_then_held_then_resent`). The local `_Tope` caps
+never run for `_SesionCliente` (there is nothing local left to cap) -- the server's own `_TopeDB` is the one
+authority, exactly as BODY-MCP-REMOTO-SERVIDOR-1 ruling 4 designed it; the "double guard" the spec allowed for
+turned out to not be needed, since a `_SesionCliente` call always crosses the wire to the one place the cap
+already lives.
+
+**The error mapping table (rulings 3-4), `_error_remoto_a_rehuso` (`body/mcp.py:388-423`) plus the four status
+branches in `_llamar_herramienta_remota`.** Every refusal is wrapped as `_RehusoClienteMCP` (`body/mcp.py:350
+-354`, a `herramientas.ToolError` subclass whose message is ALREADY the fully localized text) -- so
+`_procesar_mensaje`'s existing `except herramientas.ToolError` branch renders it with no new code path:
+
+| server code / HTTP status | client rendering |
+|---|---|
+| `limite` + `minutos` | `_mensaje_tope_aplicaciones` if the tool is `aplicar_propuesta`, else `_mensaje_tope_lecturas`/`_mensaje_tope_propuestas` by `herramientas.tipo_de(nombre)` -- same functions the local door already uses, unchanged signatures (`idioma`, `minutos`) |
+| `aplicar_apagado` / `aplicar_no_propia` / `aplicar_no_vigente` / `descartar_apagado` | the same i18n key each existing `_mensaje_*` reads, called directly with `idioma` (those functions take a `_Sesion` to read `.conn` for the language; `_SesionCliente` has none, so the client reads the key straight off `T(idioma)` instead -- byte-identical output text) |
+| `aplicar_expirada` + `expira_en` | `_mensaje_aplicar_expirada_remoto` (`body/mcp.py:369-384`) -- same i18n key/placeholders as `_mensaje_aplicar_expirada`, but converts the server's raw UTC timestamp with THIS PC's own local timezone (`astimezone(None)`) instead of a DB lookup, since the client has no DB (deviation, below) |
+| `conversacion_ajena` | new key `mcp.remoto.conversacion_ajena` |
+| `herramienta_rechazada` + `mensaje` | the server's own raw `mensaje` verbatim, no i18n -- see deviation below |
+| unknown/missing code | new key `mcp.remoto.error_interno` (never a silent fallback, ruling 4) |
+| HTTP 401 | new key `mcp.remoto.clave_invalida` |
+| HTTP 403 | new key `mcp.remoto.sin_permiso` |
+| HTTP 5xx / malformed body / non-200 | new key `mcp.remoto.error_interno` |
+| `urllib.error.URLError` (connection failure, timeout) | new key `mcp.remoto.red_fallo` |
+| any other exception from the transport | new key `mcp.remoto.error_interno` (defensive: never lets a non-`ToolError` exception reach `_procesar_mensaje`'s generic handler, which assumes a DB-backed `sesion.conn`) |
+
+`tools/list` failing never stops `initialize` from answering: `_lista_herramientas_remota` catches every
+failure itself and returns `[]`, logging the exception class or HTTP status to stderr (ruling 4;
+`tests/test_mcp_cliente_remoto.py::ListaHerramientasRemotaTest`).
+
+**The five new sentences, exactly the bytes ruling 4 pre-approved**, `mcp.remoto.*` in `body/i18n/{es,en}.json`:
+- `conversacion_ajena`: "Esa conversación no es de esta cuenta. Empieza una nueva." / "That conversation
+  doesn't belong to this account. Start a new one."
+- `error_interno`: "Body no pudo completar eso. Inténtalo de nuevo en un momento." / "Body couldn't complete
+  that. Try again in a moment."
+- `red_fallo`: "No pude conectar con Body. Revisa la conexión e inténtalo de nuevo." / "I couldn't reach Body.
+  Check the connection and try again."
+- `clave_invalida`: "La clave de este PC ya no sirve. Crea una nueva en Ajustes › Dispositivos y conecta el PC
+  otra vez." / "This PC's key no longer works. Create a new one in Settings › Devices and connect the PC
+  again."
+- `sin_permiso`: "Este PC está conectado sin el permiso del asistente. Crea una clave con «Asistente personal
+  (MCP)» y conecta el PC otra vez." / "This PC is connected without the assistant permission. Create a key
+  with \"Personal assistant (MCP)\" and connect the PC again."
+
+**Server-side changes needed to support those (still inside `body/rutas/mcp_remoto.py`, touches-scoped, no new
+customer sentence of their own):**
+- `GET /api/asistente/mcp/herramientas` now also returns `"idioma"` (`person.get("language", "es")`, read the
+  same way `comun._ctx` already does for the web) -- `tests/test_mcp_remoto.py::HerramientasTest::
+  test_list_includes_the_persons_interface_language`.
+- `herramienta_rechazada` now carries `"mensaje": errores.texto_propio(e)` -- the exact same unlocalized text
+  the local stdio door already shows verbatim for a plain `ToolError` (never localized to begin with, per
+  that module's own docstring: meant for a model to read and retry). This is not a new translated sentence,
+  only the same developer-facing text the local door already displays, now also reaching the HTTP door --
+  `tests/test_mcp_remoto.py::LlamarLecturaTest::test_unknown_tool_is_the_generic_code` updated to match.
+
+**Deviations, measured, not literal in the spec:**
+1. `aplicar_expirada`'s rendering needed the person's TIMEZONE, not just their language, and the client has no
+   DB to read either from. Ruling 3 named adding only `"idioma"` to the GET response. Rather than widen that
+   response further, `_mensaje_aplicar_expirada_remoto` converts the server's raw UTC `expira_en` with
+   `datetime.astimezone(None)` -- Python's "this machine's own local timezone" -- matching the hosted route's
+   own doc comment that `expira_en` crosses the wire raw "so the PC client can render it in the person's own
+   language locally" (BODY-MCP-REMOTO-SERVIDOR-1's own wording). Carlos's desk machine's system clock is his
+   own; this is the one case where the client's rendering can differ from `_mensaje_aplicar_expirada`'s DB-read
+   answer if his OS timezone and his `person.timezone` setting ever disagree -- unlikely, never checked, named
+   here rather than silently assumed. `zona` is an explicit, test-only override parameter (never passed in
+   production) so `tests/test_mcp_cliente_remoto.py::AplicarExpiradaRemotoTest` can assert exact bytes without
+   depending on the machine the gate runs on.
+2. `herramienta_rechazada` crossing the wire with a `"mensaje"` field is a small, necessary widening of ruling
+   3's literal "add idioma" instruction, driven by ruling 3's OTHER explicit sentence for this slice:
+   "herramienta_rechazada -> the same text the local path gives for a ToolError (find it)." There is no single
+   canned text to find (the local door's raw `ToolError` messages vary per failure); the server already
+   discarded it. Passing the exception's own unlocalized message through (never a new localized sentence, per
+   the surface's own stated design) was the only way to make that sentence literally true.
+3. `_mensaje_*` functions normally take a `_Sesion` (to read `.conn` for the language, and, for
+   `aplicar_expirada`, the timezone). `_SesionCliente` has neither. `aplicar_apagado`/`aplicar_no_propia`/
+   `aplicar_no_vigente`/`descartar_apagado` are rendered by reading the SAME i18n key directly off `T(idioma)`
+   instead of calling those functions -- byte-identical output text, never a new sentence.
+
+**Cut-over steps for the person** (not run by this slice -- Carlos's own acts, per the approval reason):
+1. In Settings › Devices, mint a device key with the "Asistente personal (MCP)" scope checked, plus Turnos and
+   whichever others he already uses.
+2. On the desk machine, run `python -m body.conectar_pc` with that key (saves `dispositivo.json` under
+   `BODY_HOME`, same as the existing Turnos/vida upload flow).
+3. The Personal desk's own MCP config is UNCHANGED -- it still starts `python -m body.mcp`; that process now
+   reads the link at its own `main()` and switches to REMOTE mode on its own, with no desk-side reconfiguration.
+
+**Tests, test-first per the spec:** `tests/test_mcp_cliente_remoto.py` (new, 33 tests -- mode, the full
+`main()` round trip never opening the local DB, both dispatchers, every error code and HTTP failure in both
+languages, the key never reaching stderr). `tests/test_mcp.py` untouched, its full suite re-ran green,
+proving LOCAL mode's own behaviour did not move. `tests/test_mcp_remoto.py` gained two assertions (the new
+`"idioma"` field; `herramienta_rechazada`'s new `"mensaje"` field) on the two existing tests those fields touch
+-- no other assertion in that file changed.
+
+**Gate command, recorded per the dispatch's own requirement:**
+`.venv/Scripts/python.exe -m unittest discover tests -t .`. Run as 9 sequential alphabetical chunks of 177
+dotted test modules (~20 each), each in the foreground, read from the process:
+- chunk 1 (`test_accesibilidad`..`test_baselines`): `Ran 377 tests ... OK (skipped=1, expected failures=1)`
+- chunk 2 (`test_baselines_lote`..`test_dispositivo`): `Ran 476 tests in 614.437s ... OK`
+- chunk 3 (`test_ejes_fechas`..`test_fechas_semana`): `Ran 318 tests in 116.803s ... OK`
+- chunk 4 (`test_fit`..`test_host_deploy`): `Ran 537 tests in 551.325s ... OK`
+- chunk 5 (`test_host_import`..`test_mock_r2_hoy`): `Ran 390 tests in 230.122s ... OK`
+- chunk 6 (`test_modelos_estandar_1`..`test_primer_pull_1`): `Ran 516 tests in 206.585s ... OK`
+- chunk 7 (`test_primeros_turnos`..`test_rendimiento_turnos`): `Ran 332 tests in 138.909s ... OK`
+- chunk 8 (`test_request_log`..`test_turnos_enlaces`): `Ran 422 tests in 124.950s ... OK`
+- chunk 9 (`test_turnos_esquema_1`..`test_web_entry`): `Ran 317 tests in 441.992s ... OK`
+
+Sum: 377+476+318+537+390+516+332+422+317 = 3685. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted without running): `COLLECTED 3685` --
+exact match. All nine chunks green; the one skip and one expected failure in chunk 1 pre-exist this slice
+(unrelated xfail/skip, not touched here).
+
+**Commits:** `ac5eba6` (`body/mcp.py`, `body/rutas/mcp_remoto.py`, `body/i18n/{es,en}.json`,
+`tests/test_mcp_remoto.py`, `tests/test_mcp_cliente_remoto.py` -- new).
+
+**Open follow-ups, not this slice's to do:** none found.
+
