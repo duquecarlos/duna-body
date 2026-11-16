@@ -138,6 +138,13 @@ class HostedScheduledPullWiringTest(unittest.TestCase):
         sleep_patcher = mock.patch("body.pull.time.sleep")
         sleep_patcher.start()
         self.addCleanup(sleep_patcher.stop)
+        # BODY-SYNC-VIVO-ESTADO-1 ruling 4: _pull_one_person now also calls this once per person;
+        # this test's own concern is the intraday wiring, so it is stubbed to a no-op here rather
+        # than reaching the real (unmocked) garminconnect.Garmin for these tokens.
+        reloj_patcher = mock.patch(
+            "body.pull.garmin_adapter.fetch_device_last_sync", side_effect=lambda token_str=None: (None, token_str))
+        reloj_patcher.start()
+        self.addCleanup(reloj_patcher.stop)
         garmin_cuenta.guardar(self.conn, 1, "tok-before")
         self.conn.commit()
 
