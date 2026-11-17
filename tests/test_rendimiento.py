@@ -17,21 +17,24 @@ math). It now carries the same margin rule as every other route.
 Non-vacuous: the route set checked below must equal the app's whole GET route set, not a sample --
 checked by comparing the two sets directly, not just their counts.
 """
+import os
 import tempfile
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import config, db, demo, fechas, goals, web
+from body import config, cuenta, db, demo, dispositivo, fechas, garmin_cuenta, goals, identity, web
 from body.agente import conversacion as agente_conversacion
 from body.rutas import comun as web_comun
 from body.rutas import tendencias as web_tendencias
 from tests._rutas import contar_sql, rutas_planas
+from tests.test_cuenta_rp import FakeIssuer
 
 client = TestClient(web.app, follow_redirects=False)
 
@@ -129,6 +132,48 @@ _CEILINGS = {
 # this is the rule itself, not a measured-plus-margin figure.
 _MAX_CONNECTIONS = 2
 
+# BODY-RENDIMIENTO-4: the main sweep above calls every GET route with no Authorization header and
+# no hosted env, so the 13 routes that gate on a device key or on `cuenta.hosted()` all answer
+# 401/403/404 before touching more than `identity.current_person_id`'s own local-mode lookup --
+# their ceiling in `_CEILINGS` measures that early refusal, never their own real cost. This table
+# gives each of those 13 routes a SECOND ceiling, measured on its real path: an authorised device
+# key (the same `dispositivo.crear` fixture every device-key route's own tests use) for the seven
+# device-key routes, hosted mode plus `identity.current_person_id` overridden to person 1 (the same
+# mechanism tests/test_garmin_conectar_vivo.py's and tests/test_dispositivo.py's own tests use) for
+# the four routes gated only by sign-in, and a real OIDC round trip through tests/test_cuenta_rp.py's
+# own `FakeIssuer` for the three sign-in routes, which take no `identity.current_person_id`
+# dependency at all. `/login` and `/login/cuenta/start` never answer 200 by design (a successful
+# visit redirects to the issuer, 303); `/login/cuenta/callback` never does either (a successful
+# sign-in redirects to `return_to` or "/", 303) -- their real-path status is 303, not 200, and that
+# is their own documented correct behaviour (tests/test_estados_vacios_hosted.py's own
+# `_NO_IDENTITY_303`/no-200 set for these exact three routes). Every other entry's real path
+# answers 200. Ceiling = ceil(measured * 1.3), the same margin rule as `_CEILINGS`; connections stay
+# under `_MAX_CONNECTIONS`. Measured figures are each entry's own comment; this slice's own ledger
+# entry carries the full table.
+_HOSTED_ENV = {cuenta.ISSUER_ENV: "https://fake-cuenta.test", cuenta.PUBLIC_URL_ENV: "http://127.0.0.1:8771",
+               cuenta.CLIENT_SECRET_ENV: "s3cr3t-test-only", garmin_cuenta.KEY_ENV: "11" * 32}
+
+_CEILINGS_REAL_PATH = {
+    "/ajustes/dispositivos": 10,  # measured 7, ceil(7 * 1.3) = 10
+    "/api/asistente/mcp/herramientas": 24,  # measured 18, ceil(18 * 1.3) = 24
+    "/api/hogar/herramientas": 23,  # measured 17, ceil(17 * 1.3) = 23
+    "/api/hogar/manana": 36,  # measured 27, ceil(27 * 1.3) = 36
+    "/api/hogar/serie": 17,  # measured 13, ceil(13 * 1.3) = 17
+    "/api/hogar/turnos": 16,  # measured 12, ceil(12 * 1.3) = 16
+    "/api/vida/semana": 62,  # measured 47, ceil(47 * 1.3) = 62
+    "/garmin": 16,  # measured 12, ceil(12 * 1.3) = 16 -- the hosted+connected path
+                     # BODY-APERTURA-AUTOMATICA-1's own report named but never measured here
+    "/garmin/estado-vivo": 11,  # measured 8, ceil(8 * 1.3) = 11
+    "/login": 10,  # measured 7, ceil(7 * 1.3) = 10 -- real path answers 303, not 200 (see above)
+    "/login/cuenta/callback": 16,  # measured 12, ceil(12 * 1.3) = 16 -- real path answers 303
+    "/login/cuenta/start": 10,  # measured 7, ceil(7 * 1.3) = 10 -- real path answers 303
+    "/privacidad/consentimiento": 7,  # measured 5, ceil(5 * 1.3) = 7
+}
+
+# Of the 13 routes above, these three never answer 200 on their real path -- a successful visit is
+# a redirect (/login, /login/cuenta/start) or a successful sign-in redirect (/login/cuenta/callback).
+_REAL_PATH_NO_200 = {"/login", "/login/cuenta/start", "/login/cuenta/callback"}
+
 
 def _reset_db(tc: unittest.TestCase):
     orig = config.DB_PATH
@@ -192,6 +237,189 @@ class RouteCostCeilingTest(unittest.TestCase):
         self.assertEqual(over_statements, [], f"route(s) over their statement ceiling: {over_statements}")
         self.assertEqual(over_connections, [],
                           f"route(s) opened more than {_MAX_CONNECTIONS} connections: {over_connections}")
+
+
+def _authorize_params(resp) -> dict:
+    qp = parse_qs(urlparse(resp.headers["location"]).query)
+    return {k: v[0] for k, v in qp.items()}
+
+
+class RouteCostRealPathTest(unittest.TestCase):
+    """BODY-RENDIMIENTO-4: a second ceiling, on each of the 13 routes `_CEILINGS` above can only
+    measure as an early 404, on its own real path. Ruling 2's drift guard lives in
+    `test_the_main_sweeps_404_set_matches_this_tables_keys` below: it is what makes a new
+    device-key or hosted-only GET route fail this file until it gets a real-path ceiling too."""
+
+    def test_the_main_sweeps_404_set_matches_this_tables_keys(self):
+        conn = _reset_db(self)
+        ids = _seed(conn)
+        get_routes = [r for r in rutas_planas(web.app.routes) if "GET" in getattr(r, "methods", ())]
+        non_200 = {route.path for route in get_routes
+                   if client.get(_fill(route.path, ids)).status_code in (401, 403, 404)}
+        self.assertEqual(non_200, set(_CEILINGS_REAL_PATH),
+                          "the main sweep's 401/403/404 route set and this table's keys have drifted apart")
+
+    def test_device_key_routes_on_their_real_path(self):
+        conn = _reset_db(self)
+        ids = _seed(conn)
+        patcher = patch.dict(os.environ, _HOSTED_ENV)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        hclient = TestClient(web.app, follow_redirects=False)
+
+        key_hogar_leer = dispositivo.crear(conn, 1, "PC hogar leer", {"hogar:leer"})
+        key_hogar_escribir = dispositivo.crear(conn, 1, "PC hogar escribir", {"hogar:escribir"})
+        key_vida = dispositivo.crear(conn, 1, "PC vida", {"vida:leer"})
+        key_mcp = dispositivo.crear(conn, 1, "PC mcp", {"asistente:mcp"})
+        conn.commit()
+        day = ids["day"]
+
+        checks = [
+            ("/api/hogar/manana", f"/api/hogar/manana?dia={day}", key_hogar_leer),
+            ("/api/hogar/serie", f"/api/hogar/serie?metric_key=resting_hr&desde={day}&hasta={day}", key_hogar_leer),
+            ("/api/hogar/turnos", f"/api/hogar/turnos?desde={day}&hasta={day}", key_hogar_leer),
+            ("/api/hogar/herramientas", "/api/hogar/herramientas", key_hogar_escribir),
+            ("/api/vida/semana", "/api/vida/semana", key_vida),
+            ("/api/asistente/mcp/herramientas", "/api/asistente/mcp/herramientas", key_mcp),
+        ]
+        over_statements = []
+        over_connections = []
+        for table_key, full_path, key in checks:
+            with contar_sql() as stats:
+                r = hclient.get(full_path, headers={"Authorization": f"Bearer {key}"})
+            self.assertEqual(r.status_code, 200, f"{table_key}'s real path did not answer 200")
+            ceiling = _CEILINGS_REAL_PATH[table_key]
+            if stats["statements"] > ceiling:
+                over_statements.append((table_key, stats["statements"], ceiling))
+            if stats["connections"] > _MAX_CONNECTIONS:
+                over_connections.append((table_key, stats["connections"]))
+        self.assertEqual(over_statements, [], f"route(s) over their real-path ceiling: {over_statements}")
+        self.assertEqual(over_connections, [],
+                          f"route(s) opened more than {_MAX_CONNECTIONS} connections: {over_connections}")
+
+    def test_hosted_only_routes_on_their_real_path(self):
+        conn = _reset_db(self)
+        _seed(conn)
+        patcher = patch.dict(os.environ, _HOSTED_ENV)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(web.app.dependency_overrides.clear)
+        web.app.dependency_overrides[identity.current_person_id] = lambda: 1
+        hclient = TestClient(web.app, follow_redirects=False)
+
+        garmin_cuenta.guardar(conn, 1, "tok-demo")
+        garmin_cuenta.registrar_error(conn, 1, "NotSignedIn")
+        conn.commit()
+
+        over_statements = []
+        over_connections = []
+        for path in ("/garmin", "/garmin/estado-vivo", "/ajustes/dispositivos", "/privacidad/consentimiento"):
+            with contar_sql() as stats:
+                r = hclient.get(path)
+            self.assertEqual(r.status_code, 200, f"{path}'s real path did not answer 200")
+            ceiling = _CEILINGS_REAL_PATH[path]
+            if stats["statements"] > ceiling:
+                over_statements.append((path, stats["statements"], ceiling))
+            if stats["connections"] > _MAX_CONNECTIONS:
+                over_connections.append((path, stats["connections"]))
+        self.assertEqual(over_statements, [], f"route(s) over their real-path ceiling: {over_statements}")
+        self.assertEqual(over_connections, [],
+                          f"route(s) opened more than {_MAX_CONNECTIONS} connections: {over_connections}")
+
+    def test_sign_in_routes_on_their_real_path(self):
+        """`/login` and `/login/cuenta/start` take no `identity.current_person_id` dependency at
+        all (body/rutas/sesion.py) -- a dependency override cannot reach their real cost, so this
+        is a genuine OIDC round trip through tests/test_cuenta_rp.py's own `FakeIssuer`, the same
+        mechanism its own CuentaRpTestCase builds on. Person 1 (this file's own fixture) is linked
+        to the signing-in `sub` beforehand, so the callback's real path is a RETURNING person
+        signing back in -- the common case, and the one that actually exercises this file's own
+        seeded data -- never a brand-new sign-up, which would cost an extra person INSERT no
+        existing user ever pays."""
+        conn = _reset_db(self)
+        _seed(conn)
+        patcher = patch.dict(os.environ, _HOSTED_ENV)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        hclient = TestClient(web.app, follow_redirects=False)
+
+        issuer = FakeIssuer()
+        patcher_get = patch.object(cuenta, "_get_json", issuer._get_json)
+        patcher_post = patch.object(cuenta, "_post_form", issuer._post_form)
+        patcher_get.start()
+        self.addCleanup(patcher_get.stop)
+        patcher_post.start()
+        self.addCleanup(patcher_post.stop)
+        cuenta._reset_caches_for_tests()
+        self.addCleanup(cuenta._reset_caches_for_tests)
+
+        sub = "zz-returning-sub-1"
+        conn.execute("UPDATE person SET cuenta_sub = ? WHERE id = 1", (sub,))
+        conn.commit()
+
+        over_statements = []
+        over_connections = []
+
+        def _check(table_key, stats, status):
+            self.assertEqual(status, 303, f"{table_key}'s real path did not answer 303")
+            ceiling = _CEILINGS_REAL_PATH[table_key]
+            if stats["statements"] > ceiling:
+                over_statements.append((table_key, stats["statements"], ceiling))
+            if stats["connections"] > _MAX_CONNECTIONS:
+                over_connections.append((table_key, stats["connections"]))
+
+        with contar_sql() as stats_login:
+            r_login = hclient.get("/login")
+        _check("/login", stats_login, r_login.status_code)
+
+        auth = _authorize_params(r_login)
+        issuer.next_id_token = issuer.id_token(nonce=auth["nonce"], sub=sub)
+        with contar_sql() as stats_callback:
+            r_callback = hclient.get("/login/cuenta/callback", params={"code": "c-1", "state": auth["state"]})
+        _check("/login/cuenta/callback", stats_callback, r_callback.status_code)
+
+        with contar_sql() as stats_start:
+            r_start = hclient.get("/login/cuenta/start")
+        _check("/login/cuenta/start", stats_start, r_start.status_code)
+
+        self.assertEqual(over_statements, [], f"route(s) over their real-path ceiling: {over_statements}")
+        self.assertEqual(over_connections, [],
+                          f"route(s) opened more than {_MAX_CONNECTIONS} connections: {over_connections}")
+
+
+class HogarMananaCostIndependentOfTargetCountTest(unittest.TestCase):
+    """BODY-RENDIMIENTO-4 ruling 3: tests/test_hogar_feed.py's own
+    `MetasTest.test_cost_does_not_grow_with_the_number_of_targets` proves this at the
+    `hogar_feed.manana` function level, never through the HTTP route -- this is that same proof,
+    through GET /api/hogar/manana itself."""
+
+    def test_one_target_vs_three_same_statement_count_through_the_route(self):
+        conn = _reset_db(self)
+        ids = _seed(conn)
+        patcher = patch.dict(os.environ, _HOSTED_ENV)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        hclient = TestClient(web.app, follow_redirects=False)
+        key = dispositivo.crear(conn, 1, "PC", {"hogar:leer"})
+        day = ids["day"]
+        conn.execute(
+            "INSERT INTO nutrient_target (person_id, metric_key, start_day, kind, amount, sentido, "
+            "created_at) VALUES (1, 'protein_g', '2026-01-01', 'absolute', 130.0, 'al_menos', "
+            "'2026-01-01T00:00:00')")
+        conn.commit()
+        with contar_sql() as uno:
+            r1 = hclient.get(f"/api/hogar/manana?dia={day}", headers={"Authorization": f"Bearer {key}"})
+        for metric_key in ("caffeine_mg", "water_ml"):
+            conn.execute(
+                "INSERT INTO nutrient_target (person_id, metric_key, start_day, kind, amount, sentido, "
+                "created_at) VALUES (1, ?, '2026-01-01', 'absolute', 100.0, 'al_menos', "
+                "'2026-01-01T00:00:00')", (metric_key,))
+        conn.commit()
+        with contar_sql() as tres:
+            r2 = hclient.get(f"/api/hogar/manana?dia={day}", headers={"Authorization": f"Bearer {key}"})
+        self.assertEqual((r1.status_code, r2.status_code), (200, 200))
+        self.assertEqual(uno["statements"], tres["statements"],
+                          f"one nutrient target vs three cost different statement counts through the "
+                          f"route: {uno['statements']} vs {tres['statements']}")
 
 
 def _add_metric_def(conn, key: str) -> None:
