@@ -26477,6 +26477,84 @@ foreground on the final tree:
 Collect-only count on the same tree (`unittest.TestLoader().discover('tests', top_level_dir='.')
 .countTestCases()`) = 4344. Equal -- every test ran exactly once, none skipped by the chunking.
 
+## BODY-TEST-TMP-FUGA-1 -- tests/_isolate.py removes its own throwaway home (2026-11-17)
+
+**Finding** (BODY-TEST-TMP-FUGA-1-INV, OBSERVED, `logs/worker-body-test-tmp-fuga-1-inv-body-app-
+20261117T164205.json`): on 2026-11-17 C: reached 0 bytes (a Finanzas test run died) because `%TEMP%`
+held 1,736 `body-test-*` folders, ~210 GB, from body-app's own test runs since 9 Nov; the
+orchestrator removed them. `tests/_isolate.py:6`'s `TMP = tempfile.mkdtemp(prefix="body-test-")` was
+never removed by anything; ~300 of 329 test temp-creation sites land inside `TMP` and rely on `TMP`'s
+removal, which nothing did; ~35 land directly in the system temp root with their own prefixes (a
+second leak); 7 already cleaned up; no call site passed an explicit `dir=` outside `TMP`.
+
+**The rulings** (verbatim from this slice's spec surface; approval `ORCH-CARLOS-DELEGATES-TIER-1-1`,
+`tests/_isolate.py` is the Tier 1 isolation guard and its guarantee is unchanged):
+1. right after `TMP` is created, `tempfile.tempdir = TMP`, so every later mkdtemp/TemporaryDirectory/
+   mkstemp/NamedTemporaryFile in the run lands inside the run's own home;
+2. `atexit.register(shutil.rmtree, TMP, ignore_errors=True)` removes the whole home when the process
+   ends -- one mechanism, owned by `_isolate`, no per-test fixes;
+3. a hard kill skips atexit, so on import `_isolate` also removes SIBLING `body-test-*` folders in the
+   system temp root last modified more than 24 hours ago (a gate chunk lasts minutes; nothing alive is
+   that old), with errors ignored and only its own prefix ever touched;
+4. the guard's order and assertion are unchanged: `BODY_HOME` and config paths point inside `TMP`
+   before any body module touches a database.
+
+**As built** -- `tests/_isolate.py:19-43` (ruling 1: lines 40-41; ruling 2: line 42; ruling 3: the
+`_sweep_stale_siblings` function, lines 19-38, called before `TMP` exists so it reads the
+un-overridden `tempfile.gettempdir()`; ruling 4: lines 45-51, unchanged in substance from before this
+slice). `tests/test_isolate_limpieza.py` (new, 79 lines): `TmpRemovedAtExitTest` runs a child process
+(`subprocess.run([sys.executable, "-c", ...], cwd=ROOT)`) that imports `tests._isolate`, writes a
+marker file under `TMP` and calls a bare `tempfile.mkdtemp()`, prints `TMP` and exits -- the parent
+asserts the printed path no longer exists. `MkdtempLandsInsideTmpTest` asserts in-process that a bare
+`tempfile.mkdtemp()` and `tempfile.NamedTemporaryFile()` each land with `TMP` as their parent.
+`StaleSiblingSweepTest` builds a scratch root with `body-test-old` (aged 25h via `os.utime`),
+`body-test-new` (aged 1h) and `other-old` (aged 25h), runs a child process whose `-c` code sets
+`tempfile.tempdir` to that scratch root BEFORE importing `tests._isolate` (no environment-assignment
+prefix), and asserts only `body-test-old` was removed. `GuardAssertionStillHoldsTest` asserts
+`config.DB_PATH` still resolves inside `TMP`.
+
+**Before/after body-test-\* counts.** Before this slice's gate run, the system temp root held 15
+pre-existing `body-test-*` folders, all under 1.3 hours old (leaked by gate/test runs that predate
+this slice's fix, including the investigation's own baseline measurement; none older than the
+24-hour sweep threshold, so the sweep correctly left them alone). After the gate's 11 chunks: 16
+folders -- the same 15 plus exactly one new one, left by chunk 10 (`test_turno_dia_plan`..
+`test_vivo`, which includes `tests/test_vivo.py`'s `git worktree` fixtures). Chunks 1-9 and 11 each
+left the system temp root's `body-test-*` set completely unchanged (their own chunk's `TMP` was gone
+immediately after the process exited). Chunk 10's one leftover (`body-test-pv5uo3f7`, containing two
+`git worktree` scratch repos with `.pack` files) is consistent with a brief Windows handle-release
+delay on a just-exited `git` subprocess's memory-mapped pack file -- exactly the residue ruling 3's
+24-hour sweep exists to catch; it was not manually removed, to observe the design's own fallback
+honestly rather than paper over it. It is a `body-test-*` folder in the system temp root only, never
+tracked by git and outside this diff.
+
+**Gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as eleven sequential
+alphabetical chunks of dotted modules (202 modules total, the 201 from the prior slice plus this
+slice's own `tests/test_isolate_limpieza.py`), each run in the foreground on the final tree:
+
+    chunk 1  (test_accesibilidad..test_baselines)                  Ran 381 tests ... OK
+    chunk 2  (test_baselines_lote..test_despertar)                  Ran 420 tests ... OK
+    chunk 3  (test_desplazamiento_import..test_experimentos_intradia) Ran 395 tests ... OK
+    chunk 4  (test_experimentos_modelo..test_habito_veces_1)        Ran 367 tests ... OK
+    chunk 5  (test_history..test_hoy_turno)                         Ran 593 tests ... OK
+    chunk 6  (test_hoy_ventana_comida..test_modelos_estandar_1)     Ran 382 tests ... OK
+    chunk 7  (test_momentos_pull..test_primer_dia_1)                Ran 523 tests ... OK
+    chunk 8  (test_primer_pull_1..test_rendimiento_red)             Ran 395 tests ... OK
+    chunk 9  (test_rendimiento_turnos..test_tendencias_todas)       Ran 412 tests ... OK
+    chunk 10 (test_turno_dia_plan..test_vivo)                       Ran 472 tests ... OK
+    chunk 11 (test_vo2max..test_web_entry)                          Ran 9 tests ... OK
+
+**Reconciliation**: sum of the eleven chunks = 381+420+395+367+593+382+523+395+412+472+9 = 4349.
+Collect-only count on the same tree (`unittest.TestLoader().discover('tests', top_level_dir='.')
+.countTestCases()`) = 4349. Equal -- every test ran exactly once, none skipped by the chunking.
+
+**No schema or migration change, no cross-repo contract change, and no customer-facing bytes at
+all** (test infrastructure only; the only new strings are assertion messages inside the test suite
+itself) -- merges on green per merge policy A.
+
+**Commits** `be093d7b65f5478f277fd10103afbac6419987b0` (`tests/_isolate.py`,
+`tests/test_isolate_limpieza.py`: all four rulings and their tests, one commit), ledger entry (this
+commit).
+
 **No schema or migration change, no cross-repo contract change, and no customer-facing bytes at
 all** (every new/changed string is a server log line: counts only, never a health figure) --
 merges on green per merge policy A.
