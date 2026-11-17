@@ -1033,6 +1033,22 @@ CREATE TABLE IF NOT EXISTS checkin_nota (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_checkin_nota_person_dia ON checkin_nota(person_id, day);
+
+-- BODY-HOGAR-REGISTRAR-IDEMPOTENTE-1: one row per (writer, idempotency key) an outside app sent
+-- alongside a write it wants to be able to retry safely -- generic over every outside writer
+-- (today only 'hogar'), never a column added to the target table itself. `ref` is the writer's own
+-- opaque id for the act, never a health figure. Widen the `origen` CHECK later through the same
+-- guarded table-rebuild pattern propuesta_agente's own CHECK already uses, when a second outside
+-- writer exists.
+CREATE TABLE IF NOT EXISTS escritura_externa (
+    person_id    INTEGER NOT NULL REFERENCES person(id),
+    origen       TEXT NOT NULL CHECK (origen IN ('hogar')),
+    ref          TEXT NOT NULL CHECK (length(ref) BETWEEN 1 AND 128),
+    herramienta  TEXT NOT NULL,
+    propuesta_id INTEGER REFERENCES propuesta_agente(id),
+    creada_en    TEXT NOT NULL,
+    PRIMARY KEY (person_id, origen, ref)
+);
 """
 
 # (key, label, unit, better, kind). 'estimated' = computed by Body, shown with «≈» and "how I calculate it".
@@ -1251,6 +1267,29 @@ def marcar_aplicada_via_mcp(conn: sqlite3.Connection, propuesta_id: int) -> None
     """Thin caller over `marcar_aplicada_via`, kept for every existing call site (body/mcp.py,
     body/rutas/mcp_remoto.py) -- neither is this slice's to widen."""
     marcar_aplicada_via(conn, propuesta_id, "mcp")
+
+
+def buscar_escritura_externa(conn: sqlite3.Connection, person_id: int, origen: str, ref: str) -> sqlite3.Row | None:
+    """BODY-HOGAR-REGISTRAR-IDEMPOTENTE-1 ruling 2: the lookup an outside write makes, keyed by its
+    own (person, origen, ref), before calling its tool at all -- found means a previous call under
+    this exact key already wrote, and the caller answers 'ya_estaba' instead of writing again."""
+    return conn.execute(
+        "SELECT herramienta, propuesta_id FROM escritura_externa WHERE person_id = ? AND origen = ? AND ref = ?",
+        (person_id, origen, ref),
+    ).fetchone()
+
+
+def registrar_escritura_externa(conn: sqlite3.Connection, person_id: int, origen: str, ref: str,
+                                 herramienta: str, propuesta_id: int) -> None:
+    """Ruling 2: written only once the tool's own proposal has already been applied -- a failed or
+    refused write never reaches this call, so the same ref may be retried safely."""
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        conn.execute(
+            "INSERT INTO escritura_externa (person_id, origen, ref, herramienta, propuesta_id, creada_en) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (person_id, origen, ref, herramienta, propuesta_id, now),
+        )
 
 
 def connect(path: Path | None = None) -> sqlite3.Connection:

@@ -353,5 +353,29 @@ class PlanNotaSesionOrigenMigrationTest(unittest.TestCase):
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM plan").fetchone()[0], 1)
 
 
+class EscrituraExternaTableMigrationTest(unittest.TestCase):
+    """BODY-HOGAR-REGISTRAR-IDEMPOTENTE-1 ruling 1: a database that predates escritura_externa
+    gains the table, empty, with no other table's row count disturbed, and is idempotent."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        db.init(self.conn)
+        self.conn.execute("DROP TABLE escritura_externa")
+        self.conn.execute(
+            "INSERT INTO ajuste_agente (person_id, updated_at) VALUES (1, '2026-11-09T00:00:00+00:00')"
+        )
+        self.conn.commit()
+
+    def test_migration_recreates_the_table_empty_without_touching_others(self):
+        db.init(self.conn)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM escritura_externa").fetchone()[0], 0)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM ajuste_agente").fetchone()[0], 1)
+
+    def test_migration_is_idempotent(self):
+        db.init(self.conn)
+        db.init(self.conn)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM escritura_externa").fetchone()[0], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
