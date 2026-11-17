@@ -18,7 +18,7 @@ from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from .. import anatomia, comidas, db, history, horizonte, identity, nutriente_objetivo
+from .. import anatomia, comidas, db, history, horizonte, identity, nutriente_objetivo, turnos_costo
 from ..agente import bucle as agente_bucle
 from ..agente import cliente as agente_cliente
 from ..agente import conversacion as agente_conversacion
@@ -267,10 +267,29 @@ def _tarjeta_idioma(t: T, defs: dict, despues: dict, antes_json: dict | None, co
     return antes_txt, despues_txt, None
 
 
+def _choque_turno_txt(t: T, motivo: dict) -> str:
+    """BODY-TURNO-DIA-PLAN-1 ruling 4: the one plain line under a planear_entreno card's date,
+    from `turnos_costo.motivo_no_libre`'s own dict -- `{turno}` is the existing `shift.kind.<kind>`
+    label, lower-cased the same way `_filtro_dias_txt` above already does."""
+    if motivo["tipo"] == "sale_de_noche":
+        return t("asistente.propuesta.sale_de_noche")
+    turno = t("shift.kind." + motivo["kind"]).lower()
+    if motivo["inicio"] and motivo["fin"]:
+        return t("asistente.propuesta.turno_choque", turno=turno, inicio=motivo["inicio"], fin=motivo["fin"])
+    return t("asistente.propuesta.turno_choque_sin_hora", turno=turno)
+
+
 def _tarjeta_planear_entreno(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     ejercicios_txt = ", ".join(_ejercicio_plan_txt(t, e) for e in despues["ejercicios"])
     despues_txt = t("asistente.propuesta.entreno_plan", titulo=despues["titulo"],
                     fecha=comun._short_date(t, date.fromisoformat(despues["day"])), ejercicios=ejercicios_txt)
+    # BODY-TURNO-DIA-PLAN-1 ruling 4: computed at RENDER time from the current confirmed shifts
+    # (the same "never a stored snapshot" choice the zonas line below already makes) -- never
+    # refuses and never hides Aplicar, just a plain line under the date; a free day shows nothing.
+    if conn is not None:
+        motivo = turnos_costo.motivo_no_libre(conn, person_id, date.fromisoformat(despues["day"]))
+        if motivo is not None:
+            despues_txt += "\n" + _choque_turno_txt(t, motivo)
     return None, despues_txt, None
 
 

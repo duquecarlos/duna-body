@@ -105,7 +105,7 @@ def _all_tool_calls():
         "leer_hoy": {}, "leer_dia": {"day": "2026-10-05"}, "leer_como_calculo": {"day": "2026-10-05"},
         "leer_tendencias": {}, "leer_historia": {}, "leer_metas": {}, "leer_meta": gid_placeholder,
         "leer_turnos": {}, "leer_costo_turnos": {}, "leer_ajustes": {}, "leer_tutoriales": {},
-        "leer_estado_reloj": {},
+        "leer_estado_reloj": {}, "leer_dias_libres": {"desde": "2026-10-01", "dias": 3},
         "leer_entreno": {"day": "2026-10-05"}, "leer_experimentos": {},
         "leer_serie": {"metricas": ["resting_hr"], "desde": "2026-10-01", "hasta": "2026-10-05", "paso": "dia"},
         "leer_plan": gid_placeholder, "leer_planes": {},
@@ -191,6 +191,8 @@ class RegistryShapeTest(unittest.TestCase):
     def test_seventeen_lectura_tools_with_expected_levels(self):
         # BODY-GARMIN-SYNC-CONSISTENTE-1 ruling 3: extended from sixteen -- leer_estado_reloj joined
         # the registry at nivel 'ninguno' (it carries no health figure), never a loosened count.
+        # BODY-TURNO-DIA-PLAN-1 ruling 2: extended from seventeen -- leer_dias_libres is the one
+        # new entry, also at nivel 'ninguno' (shift times carry no health figure either).
         expected_levels = {
             "leer_hoy": "completo", "leer_dia": "completo", "leer_como_calculo": "completo",
             "leer_tendencias": "resumen", "leer_historia": "resumen", "leer_metas": "resumen",
@@ -198,9 +200,10 @@ class RegistryShapeTest(unittest.TestCase):
             "leer_ajustes": "ninguno", "leer_tutoriales": "ninguno", "leer_entreno": "completo",
             "leer_experimentos": "resumen", "leer_serie": "resumen",
             "leer_plan": "resumen", "leer_planes": "resumen", "leer_estado_reloj": "ninguno",
+            "leer_dias_libres": "ninguno",
         }
         lectura = [h for h in herramientas.HERRAMIENTAS if h["tipo"] == "lectura"]
-        self.assertEqual(len(lectura), 17)
+        self.assertEqual(len(lectura), 18)
         self.assertEqual({h["nombre"]: h["nivel"] for h in lectura}, expected_levels)
 
     def test_twentynine_propuesta_tools_at_nivel_ninguno(self):
@@ -215,7 +218,8 @@ class RegistryShapeTest(unittest.TestCase):
         self.assertTrue(all(h["tipo"] in ("lectura", "propuesta") for h in herramientas.HERRAMIENTAS))
         # BODY-HOGAR-ESCRIBE-1: extended from 44 -- anotar_sesion is the one new entry.
         # BODY-CORREGIR-MEDIDA-ENTRENO-1-W: extended from 45 -- corregir_entreno is the one new entry.
-        self.assertEqual(len(herramientas.HERRAMIENTAS), 46)
+        # BODY-TURNO-DIA-PLAN-1: extended from 46 -- leer_dias_libres is the one new entry.
+        self.assertEqual(len(herramientas.HERRAMIENTAS), 47)
 
     def test_every_entry_carries_the_reserved_plan_field_unset(self):
         # BODY-ASISTENTE-CONFORMIDAD-1 ruling 2 (agent-capabilities-v1 section 5): the field
