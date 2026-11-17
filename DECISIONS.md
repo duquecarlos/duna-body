@@ -24842,3 +24842,116 @@ customer-facing string and no other contract section changed. The merge below pr
 
 -- merged `570c7724`
 
+## BODY-CORREGIR-MEDIDA-ENTRENO-1
+
+Three orchestrator rulings for correcting what the assistant already logged: a same-day measurement
+should replace, never double; a second training-day call should correct the same session, never
+create a duplicate; and a dedicated `corregir_entreno` tool should let a specific set be fixed by
+position. Tier 2, `approved: no`.
+
+**Ruling 1, `registrar_medida` replaces a same-day, same-metric pending proposal
+(`body/agente/propuestas.py:1467-1548`):** `ACCIONES_REEMPLAZABLES` changed from a plain set of
+action names to a dict mapping each one to the extra `despues_json` keys (beyond `day`) that must
+also match before a pending sibling is discarded -- empty for the original four
+(`registrar_entreno`, `registrar_comida`, `registrar_ingesta`, `registrar_checkin`, unchanged
+behaviour), `("metric_key",)` for the new entry, `registrar_medida`. A day can carry several
+different self-measured metrics (weight, soreness, resting HR) that are each real, never a
+same-day replacement of each other -- `_reemplazar_pendientes_mismo_dia` now takes the applied
+proposal's own `despues_json` dict and a `claves_extra` tuple, and skips a pending sibling whose
+value differs on any of those extra keys. `registrar_medida`'s own tool `descripcion`
+(`body/agente/herramientas.py:2696-2699`) gained a sentence telling the model to call the tool
+again with the corrected value rather than add a second measurement (es: "Si la persona corrige un
+valor que ya registró ese día, llama a esta misma herramienta con el valor correcto: reemplaza el
+anterior, nunca suma un segundo registro." / en equivalent). Tests:
+`tests/test_propuesta_vigencia.py`'s new `ReemplazoRegistrarMedidaTest` -- two pending proposals
+for the same day and metric leave only the newer one, a pending sibling of a *different* metric the
+same day is left alone, and a pending sibling of the *same* metric a *different* day is left alone.
+
+**Ruling 2, `registrar_entreno` corrects an existing manual session instead of duplicating it
+(`body/agente/herramientas.py:1400-1450`):** new helper `_resolver_sesion_entreno_dia(conn,
+person_id, day)` looks up the day's own training session for a correction -- the watch's own
+strength activity (`type = 'strength_training'`) when there is one, else the person's existing
+manual session for that day, told apart by exactly what `db.create_manual_session` writes
+(`source = 'manual'` with `type IS NULL`) -- never any other watch activity (a run, a ride).
+`_registrar_entreno` now calls this helper in place of its old Garmin-only inline query, and the
+watch-set fetch (`pull.traer_series`) now only runs when `source == "garmin"`, so a manual-session
+correction never attempts a network call. `registrar_entreno`'s own tool `descripcion`
+(`body/agente/herramientas.py:2656-2660`) gained a sentence telling the model to call the tool
+again to correct an already-registered training day rather than create another one (es: "Si la
+persona corrige un entreno que ya registró ese día, llama a esta misma herramienta: corrige ese
+entreno, nunca crea otro." / en equivalent). Tests: `tests/test_agente_entreno.py`'s new
+`RegistrarEntrenoSegundaVezManualTest` -- a second call corrects the same session with no duplicate
+activity row, undoing the second call restores the first call's own corrections, and a day with
+only a run (`source='garmin'`, `type='running'`) is not mistaken for a manual session.
+
+**Ruling 3, `corregir_entreno` -- BLOCKED, Tier 1.** The spec asked for a new id-addressed
+`propuesta` tool (`dia`, `orden`, at least one of `ejercicio`/`reps`/`peso_kg`) applying through
+`db.correct_exercise_set` with exact undo, like `corregir_ingesta`. The full tool, its drift/undo
+writers, its card, both languages' strings, and tests across six files were built once to confirm
+the design, then every value it needs. Both correct in production but `propuesta_agente.accion`
+carries a hardcoded SQL `CHECK` constraint (`body/db.py:93-101`) enumerating every valid action
+name -- widened 12 times before through the established `_migrate_propuestas` ->
+`_propuesta_agente_needs_X_rebuild()` -> `_rebuild_propuesta_agente_table()` pattern -- and it does
+not list `corregir_entreno`. Inserting a row for the new action trips
+`sqlite3.IntegrityError: CHECK constraint failed: accion IN (...)`. `body/db.py` is Tier 1 and this
+slice's `approved: no` confirms no Tier-1 build authorization exists here, so the build stopped and
+every ruling-3 change was reverted: `body/agente/herramientas.py` (`_corregir_entreno`, its
+`_PARAM_CORREGIR_ENTRENO` schema, its registry entry), `body/agente/propuestas.py` (the
+`_CAMPOS_SLOT_ENTRENO`/`_entreno_set_estado`/drift/apply/undo functions, the `TABLA` entry, the
+`_restaurar_slot_entreno` helper un-extracted back to its original inline form in
+`_deshacer_registrar_entreno`), `body/i18n/es.json` and `en.json` (the four new keys), `body/rutas/
+asistente.py` (`_tarjeta_corregir_entreno` and its `TARJETAS` entry), and the test additions in
+`tests/test_series_orden.py` (`CorregirEntrenoOrdenTest`), `tests/test_mcp.py`
+(`test_corregir_entreno_is_offered_and_callable`), `tests/test_agente_conformidad.py` (the fixture
+row and docstring count), `tests/test_agente_registro.py` (the census set/count), and
+`tests/test_agente_bucle.py` (the `ofrecidas` set) -- plus the new file
+`tests/test_corregir_entreno.py`, deleted outright. Grepping the whole tree for `corregir_entreno`
+after the revert returns nothing.
+
+**Gate command:** `.venv/Scripts/python.exe -m unittest discover tests -t .`. Run as 10 sequential
+alphabetical chunks of 190 dotted test modules (~19 each), each read from the process, on the final
+tree (rulings 1 and 2 only, ruling 3 fully reverted):
+- chunk 1 (`test_accesibilidad`..`test_backup`): `Ran 379 tests ... OK (skipped=1, expected
+  failures=1)`
+- chunk 2 (`test_baselines`..`test_despertar`): `Ran 386 tests in 604.211s ... OK`
+- chunk 3 (`test_desplazamiento_import`..`test_experimentos_esquema`): `Ran 385 tests in 170.131s
+  ... OK`
+- chunk 4 (`test_experimentos_intradia`..`test_hogar_compartir_1`): `Ran 361 tests in 984.232s ...
+  OK`
+- chunk 5 (`test_hogar_cuenta_1`..`test_lesion_zona`): `Ran 538 tests in 136.773s ... OK`
+- chunk 6 (`test_listen`..`test_nutriente_objetivo`): `Ran 453 tests in 255.403s ... OK`
+- chunk 7 (`test_patron_error_ciclo_1`..`test_profile`): `Ran 481 tests in 185.912s ... OK`
+- chunk 8 (`test_profile_lote`..`test_seguridad`): `Ran 302 tests in 105.178s ... OK`
+- chunk 9 (`test_series_gramos`..`test_turno_fc_pantallas`): `Ran 411 tests in 80.766s ... OK`
+- chunk 10 (`test_turnos_costo`..`test_web_entry`): `Ran 403 tests in 83.330s ... OK`
+
+Sum: 379+386+385+361+538+453+481+302+411+403 = 4099. Reconciled against an independent collect-only
+count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted without running):
+`4099` -- exact match. All ten chunks green.
+
+**Commits:** `fa24ee5` (ruling 1: `body/agente/propuestas.py`, `body/agente/herramientas.py`'s
+`registrar_medida` descripcion, `tests/test_propuesta_vigencia.py`), `2074561` (ruling 2: the rest
+of `body/agente/herramientas.py`, `tests/test_agente_entreno.py`).
+
+**Deviations, measured:**
+- Ruling 3 could not be built in this slice -- `body/db.py:93-101`'s CHECK constraint is Tier 1 and
+  `approved: no` leaves no authorization to widen it. Open follow-up below.
+- No merge to `main`: the work section's merge step assumes all three rulings land; ruling 3 did
+  not, so this branch stays open for a follow-up slice to finish.
+
+**No schema change.** Rulings 1 and 2 read and write columns/tables that already existed
+(`propuesta_agente.despues_json`, `activity.source`/`type`, `workout_set`); no table or column was
+added or altered.
+
+**No customer-facing bytes changed.** The two new sentences in rulings 1 and 2 are tool
+`descripcion` fields read by the assistant model when deciding which tool to call -- never rendered
+to a person in the app UI -- so merge policy A's customer-bytes condition does not trip. No schema
+change, no cross-repo contract touched. Not merged (ruling 3 incomplete, see above).
+
+**Open follow-up:** a future, Tier-1-authorized slice should widen `propuesta_agente.accion`'s
+CHECK constraint in `body/db.py:93-101` to add `'corregir_entreno'`, following the same
+`_migrate_propuestas` / `_propuesta_agente_needs_X_rebuild` / `_rebuild_propuesta_agente_table`
+pattern used for the prior 12 widenings -- the 13th. Ruling 3's full design (tool, writers, card,
+strings, tests) is described above and in the reverted diff history on this branch, ready to be
+rebuilt once that widening lands.
+
