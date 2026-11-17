@@ -36,7 +36,7 @@ from fastapi.responses import HTMLResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup
 
-from .. import cuenta, db, fechas, garmin_cuenta, history, tutoriales
+from .. import config, cuenta, db, demo, fechas, garmin_cuenta, history, tutoriales
 from ..agente import cliente as agente_cliente
 from ..catalogo_tendencias import TREND_GROUPS, TREND_KEYS
 from ..i18n import T
@@ -69,8 +69,19 @@ def static_url(path: str) -> str:
     return f"/static/{path}?v={STATIC_HASH}"
 
 
+def es_demo() -> bool:
+    """BODY-DEMO-MODO-MARCA-1: whether the database this process serves lives in a demo home --
+    one body/demo.py seeded, marked by the same MARKER_NAME file demo.py itself checks for and
+    refuses to overwrite a real home with (body/demo.py's `_forbidden_home`). A filesystem stat,
+    never a database read, so it costs no route a single statement (tests/test_rendimiento.py's
+    ceilings), and is re-checked on every call rather than cached, so a home seeded while the
+    server is already running is marked on its very next request."""
+    return (config.DB_PATH.parent / demo.MARKER_NAME).exists()
+
+
 env.globals["static_url"] = static_url
 env.globals["hosted"] = cuenta.hosted
+env.globals["es_demo"] = es_demo
 env.globals["asistente_configurado"] = lambda: agente_cliente.proveedor_configurado() is not None
 env.globals["tarea_en_contexto"] = lambda: tutoriales.tarea_en_ruta(_RUTA_ACTUAL.get())
 

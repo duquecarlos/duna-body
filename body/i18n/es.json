@@ -7,6 +7,7 @@
   "nav.settings": "Ajustes",
   "nav.ayuda": "Ayuda",
   "nav.logout": "Cerrar sesión",
+  "base.modo_demo": "Demo · datos inventados",
   "cuenta.down": "No pudimos conectar con Cuenta Duna. Intenta de nuevo en unos minutos.",
   "sin_acceso.title": "Sin acceso",
   "sin_acceso.text": "Tu cuenta Duna no tiene acceso a Body todavía.",
