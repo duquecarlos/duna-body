@@ -2,7 +2,8 @@
 # duna-deploy-body -- root-owned entry point for Body's deploy on duna-prod-1 (host-deploy-v1).
 # Installed to /usr/local/sbin/duna-deploy-body; called only as:
 #   sudo -n /usr/local/sbin/duna-deploy-body <status|deploy [--dry-run]|pull|backup [--dry-run]|
-#     importar-pc --cuenta-sub <sub> --archivo <path> [--apply]|personas|rollback-script>
+#     importar-pc --cuenta-sub <sub> --archivo <path> [--apply]|personas|
+#     diagnostico-personas|relinkar-garmin --desde <id> --hacia <id> [--apply]|rollback-script>
 set -Eeuo pipefail
 
 if [[ "${EUID}" -ne 0 ]]; then
@@ -32,6 +33,12 @@ usage: duna-deploy-body <command>
   importar-pc --cuenta-sub <sub> --archivo <path> [--apply]
                       import one person's PC snapshot into this host (dry run by default)
   personas            list hosted persons by cuenta_sub, display name and first consent
+  diagnostico-personas
+                      per-person counts only -- never a cuenta_sub, a name or a figure
+  relinkar-garmin --desde <id> --hacia <id> [--apply]
+                      move one person's hosted Garmin connection and data to another
+                      (dry run by default); --apply takes a host backup first and is
+                      the account owner's own go, never run on someone else's say alone
   rollback-script     restore the entry script and its sudoers rule from their .prev backups
 USAGE
 }
@@ -174,6 +181,32 @@ case "$cmd" in
       exit 2
     fi
     ;;
+  diagnostico-personas)
+    if [[ $# -ne 0 ]]; then
+      usage
+      exit 2
+    fi
+    ;;
+  relinkar-garmin)
+    # Validated here, in bash, before body-import-pc.sh ever sees them (like body-deploy.sh's
+    # own sha-shape check) -- "$@" itself is read, never shifted, so it still reaches the exec
+    # below untouched.
+    relinkar_desde=""
+    relinkar_hacia=""
+    relinkar_prev=""
+    for relinkar_arg in "$@"; do
+      if [[ "$relinkar_prev" == "--desde" ]]; then
+        relinkar_desde="$relinkar_arg"
+      elif [[ "$relinkar_prev" == "--hacia" ]]; then
+        relinkar_hacia="$relinkar_arg"
+      fi
+      relinkar_prev="$relinkar_arg"
+    done
+    if [[ ! "$relinkar_desde" =~ ^[0-9]+$ ]] || [[ ! "$relinkar_hacia" =~ ^[0-9]+$ ]]; then
+      echo "duna-deploy-body: relinkar-garmin: --desde and --hacia must be positive integers" >&2
+      exit 2
+    fi
+    ;;
   rollback-script)
     if [[ $# -ne 0 ]]; then
       usage
@@ -215,6 +248,14 @@ fi
 
 if [[ "$cmd" == "personas" ]]; then
   exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" personas
+fi
+
+if [[ "$cmd" == "diagnostico-personas" ]]; then
+  exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" diagnostico-personas
+fi
+
+if [[ "$cmd" == "relinkar-garmin" ]]; then
+  exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" relinkar-garmin "$@"
 fi
 
 if [[ "$cmd" == "rollback-script" ]]; then

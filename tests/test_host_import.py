@@ -33,6 +33,11 @@ class BasicsTest(unittest.TestCase):
         self.assertRegex(self.text, r"\n\s*personas\)\n")
         self.assertRegex(self.text, r"\n\s*importar-pc\)\n")
 
+    def test_garmin_persona_actions_present_in_case(self):
+        """BODY-GARMIN-PERSONA-1, ruling 5."""
+        self.assertRegex(self.text, r"\n\s*diagnostico-personas\)\n")
+        self.assertRegex(self.text, r"\n\s*relinkar-garmin\)\n")
+
 
 class PersonasActionTest(unittest.TestCase):
     def setUp(self):
@@ -50,6 +55,72 @@ class PersonasActionTest(unittest.TestCase):
         body = self.text[start:end]
         self.assertIn('runuser -u "$DATA_USER"', body)
         self.assertIn("body.mudanza personas", body)
+
+
+class DiagnosticoPersonasActionTest(unittest.TestCase):
+    """BODY-GARMIN-PERSONA-1, ruling 5."""
+
+    def setUp(self):
+        self.text = _read(IMPORT)
+
+    def test_diagnostico_personas_takes_no_arguments(self):
+        start = self.text.index("diagnostico-personas)")
+        end = self.text.index(";;", start)
+        body = self.text[start:end]
+        self.assertIn("diagnostico-personas takes no arguments", body)
+
+    def test_diagnostico_personas_runs_as_data_user_via_runuser(self):
+        start = self.text.index("diagnostico-personas)")
+        end = self.text.index(";;", start)
+        body = self.text[start:end]
+        self.assertIn('runuser -u "$DATA_USER"', body)
+        self.assertIn("body.persona_garmin diagnostico", body)
+
+
+class RelinkarGarminActionTest(unittest.TestCase):
+    """BODY-GARMIN-PERSONA-1, ruling 5."""
+
+    def setUp(self):
+        self.text = _read(IMPORT)
+
+    def test_desde_and_hacia_required(self):
+        self.assertIn("--desde and --hacia are required", self.text)
+
+    def test_dry_run_never_passes_apply(self):
+        text = self.text
+        apply_check_idx = text.index('if [[ -z "$RELINKAR_APPLY" ]]; then')
+        fi_idx = text.index("\n  fi\n", apply_check_idx)
+        dry_run_body = text[apply_check_idx:fi_idx]
+        self.assertNotIn('--apply"', dry_run_body)
+        self.assertIn("body.persona_garmin relinkar", dry_run_body)
+        self.assertNotIn("systemctl", dry_run_body)
+        self.assertNotIn("body-backup.sh", dry_run_body)
+
+    def test_apply_runs_the_existing_host_backup_before_the_move(self):
+        text = self.text
+        apply_check_idx = text.index('if [[ -z "$RELINKAR_APPLY" ]]; then')
+        backup_idx = text.index('body-backup.sh"', apply_check_idx)
+        apply_move_idx = text.rindex("body.persona_garmin relinkar")
+        self.assertLess(apply_check_idx, backup_idx)
+        self.assertLess(backup_idx, apply_move_idx)
+
+    def test_refuses_and_never_moves_when_the_backup_fails(self):
+        text = self.text
+        backup_call_idx = text.index('if ! /bin/bash "$REPO_DIR/deploy/host/body-backup.sh"; then')
+        exit_idx = text.index("exit 1", backup_call_idx)
+        between = text[backup_call_idx:exit_idx]
+        self.assertIn("refused", between)
+        self.assertIn("did not run", between)
+        apply_move_idx = text.rindex("body.persona_garmin relinkar")
+        self.assertLess(exit_idx, apply_move_idx)
+
+    def test_apply_move_runs_as_data_user_with_apply_flag(self):
+        apply_move_idx = self.text.rindex("body.persona_garmin relinkar")
+        block_end = self.text.index("\n\n", apply_move_idx)
+        preceding = self.text[max(0, apply_move_idx - 300):apply_move_idx]
+        block = self.text[apply_move_idx:block_end]
+        self.assertIn('runuser -u "$DATA_USER"', preceding)
+        self.assertIn("--apply", block)
 
 
 class RequiredArgsTest(unittest.TestCase):

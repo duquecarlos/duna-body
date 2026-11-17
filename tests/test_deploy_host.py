@@ -27,6 +27,11 @@ class UsageTest(unittest.TestCase):
         self.assertIn("importar-pc --cuenta-sub <sub> --archivo <path> [--apply]", self.text)
         self.assertIn("personas", self.text)
 
+    def test_usage_lists_the_garmin_persona_verbs(self):
+        """BODY-GARMIN-PERSONA-1, ruling 5."""
+        self.assertIn("diagnostico-personas", self.text)
+        self.assertIn("relinkar-garmin --desde <id> --hacia <id> [--apply]", self.text)
+
     def test_no_carlos_hardcoded(self):
         self.assertNotIn("carlos", self.text.lower())
 
@@ -47,6 +52,29 @@ class CaseArmsTest(unittest.TestCase):
         body = self.text[start:end]
         self.assertIn("$# -ne 0", body)
         self.assertIn("exit 2", body)
+
+    def test_diagnostico_personas_case_present_and_rejects_arguments(self):
+        self.assertRegex(self.text, r"\n\s*diagnostico-personas\)\n")
+        start = self.text.index("\n  diagnostico-personas)")
+        end = self.text.index(";;", start)
+        body = self.text[start:end]
+        self.assertIn("$# -ne 0", body)
+        self.assertIn("exit 2", body)
+
+    def test_relinkar_garmin_case_present_and_validates_ids_as_positive_integers(self):
+        self.assertRegex(self.text, r"\n\s*relinkar-garmin\)\n")
+        start = self.text.index("\n  relinkar-garmin)")
+        end = self.text.index(";;", start)
+        body = self.text[start:end]
+        self.assertIn("--desde", body)
+        self.assertIn("--hacia", body)
+        self.assertIn("^[0-9]+$", body)
+        self.assertIn("exit 2", body)
+        self.assertIn("positive integers", body)
+        # "$@" is read with a for loop, never consumed with a `shift` builtin, so it still
+        # reaches the exec dispatch below intact.
+        self.assertNotIn("shift 2", body)
+        self.assertNotRegex(body, r"\bshift\b\s*\n")
 
 
 class ExecDispatchTest(unittest.TestCase):
@@ -69,6 +97,12 @@ class ExecDispatchTest(unittest.TestCase):
         pull_idx = self.text.index("pull --ff-only")
         self.assertLess(import_idx, pull_idx)
 
+    def test_diagnostico_personas_execs_with_no_forwarded_args(self):
+        self.assertIn('exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" diagnostico-personas', self.text)
+
+    def test_relinkar_garmin_execs_with_forwarded_args(self):
+        self.assertIn('exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" relinkar-garmin "$@"', self.text)
+
 
 class SudoersUnchangedTest(unittest.TestCase):
     def test_sudoers_still_allows_the_whole_script_not_per_verb(self):
@@ -80,6 +114,8 @@ class SudoersUnchangedTest(unittest.TestCase):
         )
         self.assertNotIn("importar-pc", text)
         self.assertNotIn("personas", text)
+        self.assertNotIn("diagnostico-personas", text)
+        self.assertNotIn("relinkar-garmin", text)
 
 
 class ReadmeImportSectionTest(unittest.TestCase):
@@ -132,6 +168,38 @@ class ReadmeImportSectionTest(unittest.TestCase):
         self.assertIn("rollback snapshot", section)
         self.assertIn("no restore command yet", section)
         self.assertIn("/srv/duna/data/body/body.db", section)
+
+
+class ReadmeGarminPersonaSectionTest(unittest.TestCase):
+    def setUp(self):
+        self.text = _read(README)
+
+    def test_section_present_with_both_verbs(self):
+        self.assertIn("## Garmin connected to the wrong person (BODY-GARMIN-PERSONA-1)", self.text)
+        self.assertIn("duna-deploy-body diagnostico-personas", self.text)
+        self.assertIn(
+            "duna-deploy-body relinkar-garmin --desde <id> --hacia <id>", self.text
+        )
+        self.assertIn(
+            "duna-deploy-body relinkar-garmin --desde <id> --hacia <id> --apply", self.text
+        )
+
+    def test_section_states_refusal_conditions_and_apply_order(self):
+        section_idx = self.text.index("## Garmin connected to the wrong person")
+        next_section_idx = self.text.index("## Host facts")
+        section = self.text[section_idx:next_section_idx]
+        self.assertIn("refuses outright, writing nothing", section)
+        self.assertIn("Carlos's own go, never run on an orchestrator's or an agent's say alone", section)
+        backup_idx = section.index("the existing off-host backup first")
+        transaction_idx = section.index("one database")
+        self.assertLess(backup_idx, transaction_idx)
+
+    def test_section_notes_the_recuperacion_actividad_exception(self):
+        section_idx = self.text.index("## Garmin connected to the wrong person")
+        next_section_idx = self.text.index("## Host facts")
+        section = self.text[section_idx:next_section_idx]
+        self.assertIn("recuperacion_actividad", section)
+        self.assertIn("counted exception", section)
 
 
 if __name__ == "__main__":

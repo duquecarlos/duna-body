@@ -623,6 +623,77 @@ class PullVerbTest(unittest.TestCase):
         self.assertLess(pull_idx, owner_idx)
 
 
+class DiagnosticoPersonasVerbTest(unittest.TestCase):
+    """BODY-GARMIN-PERSONA-1 ruling 5: the `diagnostico-personas` verb -- takes no arguments,
+    forwards to body-import-pc.sh, which runs the counts-only diagnostic as the data user."""
+
+    def setUp(self):
+        self.text = _read(ENTRY)
+
+    def test_usage_lists_diagnostico_personas(self):
+        start = self.text.index("usage: duna-deploy-body")
+        end = self.text.index("USAGE", start)
+        self.assertIn("diagnostico-personas", self.text[start:end])
+
+    def test_diagnostico_personas_case_arm_rejects_extra_args(self):
+        m = re.search(
+            r"diagnostico-personas\)\s*\n\s*if \[\[ \$# -ne 0 \]\]; then\s*\n\s*usage\s*\n\s*exit 2",
+            self.text,
+        )
+        self.assertIsNotNone(m, "no diagnostico-personas) case arm rejecting extra args found")
+
+    def test_diagnostico_personas_execs_the_product_import_script(self):
+        self.assertIn(
+            'exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" diagnostico-personas', self.text
+        )
+
+    def test_diagnostico_personas_handled_before_the_generic_owner_fallback(self):
+        dispatch_idx = self.text.index(
+            'exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" diagnostico-personas'
+        )
+        owner_idx = self.text.rindex('owner="$(stat -c %U "$REPO_DIR")"')
+        self.assertLess(dispatch_idx, owner_idx)
+
+
+class RelinkarGarminVerbTest(unittest.TestCase):
+    """BODY-GARMIN-PERSONA-1 ruling 5: the `relinkar-garmin` verb -- validates --desde/--hacia as
+    positive integers in bash before forwarding every argument, untouched, to body-import-pc.sh."""
+
+    def setUp(self):
+        self.text = _read(ENTRY)
+
+    def test_usage_lists_relinkar_garmin(self):
+        start = self.text.index("usage: duna-deploy-body")
+        end = self.text.index("USAGE", start)
+        self.assertIn(
+            "relinkar-garmin --desde <id> --hacia <id> [--apply]", self.text[start:end]
+        )
+
+    def test_relinkar_garmin_case_arm_present(self):
+        self.assertRegex(self.text, r"\n\s*relinkar-garmin\)\n")
+
+    def test_ids_validated_as_positive_integers_before_dispatch(self):
+        case_idx = self.text.index("relinkar-garmin)")
+        esac_idx = self.text.index(";;", case_idx)
+        body = self.text[case_idx:esac_idx]
+        m = re.search(
+            r'if \[\[ ! "\$relinkar_desde" =~ \^\[0-9\]\+\$ \]\] \|\| '
+            r'\[\[ ! "\$relinkar_hacia" =~ \^\[0-9\]\+\$ \]\]; then\s*\n\s*echo .*\n\s*exit 2',
+            body,
+        )
+        self.assertIsNotNone(m, "no positive-integer validation of --desde/--hacia found")
+
+    def test_args_forwarded_untouched_to_the_product_import_script(self):
+        self.assertIn('exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" relinkar-garmin "$@"', self.text)
+
+    def test_relinkar_garmin_handled_before_the_generic_owner_fallback(self):
+        dispatch_idx = self.text.index(
+            'exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" relinkar-garmin "$@"'
+        )
+        owner_idx = self.text.rindex('owner="$(stat -c %U "$REPO_DIR")"')
+        self.assertLess(dispatch_idx, owner_idx)
+
+
 class PullNowReadmeTest(unittest.TestCase):
     """BODY-SYNC-VIVO-TIMER-1 ruling 3's README step and ruling 4's ceiling paragraph, updated by
     BODY-HOST-AUTOACTUALIZAR-1: the wrapper now updates itself, so the hand-reinstall callout that

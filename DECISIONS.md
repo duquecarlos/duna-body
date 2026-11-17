@@ -26572,3 +26572,242 @@ branch's own tree, empty diff). Post-merge smoke (`tests.test_garmin_relleno_ant
 tests.test_pull_relleno tests.test_garmin_dia_vacio tests.test_garmin_diagnostico`): `Ran 88
 tests ... OK`.
 
+## BODY-GARMIN-PERSONA-1
+
+**Finding this slice builds on** (BODY-GARMIN-LECTURA-VACIA-1-INV, ORCH-CARLOS-DELEGATES-TIER-1-1):
+a hosted Garmin connection can end up attached to a `person` row the Cuenta sign-in key no longer
+reaches -- for instance, a web session minted before a sub moved -- so the person who signed in
+sees an empty "today" even though the host is holding and still pulling their Garmin data under a
+different row. That investigation's own ledger text lives in dev-protocol, not duplicated here;
+`body/persona_garmin.py:1-17`'s own module docstring restates it as the two tools' purpose.
+
+**Ruling 1** -- `diagnostico` prints one line per `person` row, counts and dates only, never a
+`cuenta_sub`, a display name or a health figure: `diagnostico()` (`body/persona_garmin.py:126-165`)
+and `_print_diagnostico()` (`:168-177`). Exact fields, in order:
+`cuenta_sub=si|no, nombre=si|no, garmin=si|no, garmin_desde=..., dias_garmin_14=..., `
+`ultimo_dia_garmin=..., dias_garmin_total=..., filas_propias=..., dispositivos=..., `
+`sesiones_vivas=...`. `nombre` is whether `display_name` differs from `db.init`'s own seed default
+(`'Me'`) -- never the name itself. `dias_garmin_14`/`ultimo_dia_garmin`/`dias_garmin_total` all
+reuse `garmin_cuenta.dias_garmin_con_valor` (one day-definition, no second query shape).
+`filas_propias` is `sum(censo_personas_autoras(...).values())` -- ruling 3's own census, reused
+here for visibility, not just as a refusal trigger. Invented example output (two persons, none of
+it a real sub, name or figure):
+
+    persona 1: cuenta_sub=si, nombre=si, garmin=si, garmin_desde=2026-09-01, dias_garmin_14=12, ultimo_dia_garmin=2026-11-16, dias_garmin_total=60, filas_propias=0, dispositivos=1, sesiones_vivas=2
+    persona 2: cuenta_sub=no, nombre=no, garmin=si, garmin_desde=2026-08-15, dias_garmin_14=14, ultimo_dia_garmin=2026-11-17, dias_garmin_total=94, filas_propias=0, dispositivos=1, sesiones_vivas=0
+
+Person 2 above is the shape this tool exists to find: Garmin connected and still being pulled, no
+`cuenta_sub` to reach it through.
+
+**Ruling 2** -- `relinkar --desde <id> --hacia <id> [--apply]` moves one person's hosted Garmin
+connection and every Garmin-written row to another person, day by day; a day the destination
+already has Garmin data for is skipped WHOLE, never merged or overwritten
+(`_mover_todo`, `body/persona_garmin.py:267-344`, the `day in dias_destino` skip at `:277`).
+
+Both censuses, exactly as implemented:
+
+*Garmin-written, day-keyed tables moved* (`GARMIN_DIA_TABLAS`, `:83-88`, plus activity's own
+dependents `TABLAS_DEPENDIENTES_ACTIVIDAD`, `:89`) -- `db.save_day`'s own four tables plus
+`guarda_detalle`'s extras, which carry no `day` column and move as followers of the `activity` row
+they belong to:
+
+    raw_payload (source = 'garmin')
+    daily_metric (source = 'garmin')
+    sleep_session (no source column -- every row is Garmin-written)
+    activity (source = 'garmin')
+    workout_set (follower of a moved activity, by activity_source/activity_source_id)
+    activity_detail (same)
+
+*DERIVED tables, left at the source, only counted* (`DERIVADOS_TABLAS`, `:71`, plus
+`daily_metric`'s own derived rows counted in `censo_derivados`, `:115-123`):
+
+    recuperacion_actividad
+    turno_fc
+    goal_check
+    daily_metric(estimado)  -- source LIKE 'body-%', e.g. body-sueno-fc-v1 (sueno_fc/readiness)
+
+*Person-authored tables, censused for ruling 3's refusal* (`PERSONA_TABLAS`, `:43-63`,
+`censo_personas_autoras`, `:104-112`):
+
+    daily_metric (source = 'self')         activity (source != 'garmin')
+    workout_set (corrected_by_person = 1)   ingesta       comida        goal
+    plan          shift         shift_batch       shift_pattern       period
+    checkin       checkin_nota  moment
+    conversacion_agente   propuesta_agente   escritura_externa
+    experimento   nutrient_target
+
+`daily_metric.source` genuinely takes three shapes (see Deviations) -- `'garmin'` (moved),
+`'self'` (person-authored, censused above) and `'body-%'` (Body's own derived estimate, counted
+under `daily_metric(estimado)`), and `activity`/`workout_set` hold Garmin and person-authored rows
+in the SAME table, split by `source`/`corrected_by_person` rather than a separate table.
+
+The `garmin_cuenta` token moves too (`_mover_garmin_cuenta`, `:235-264`): decrypted under
+`--desde` with `garmin_cuenta.leer`, re-encrypted under `--hacia` with `garmin_cuenta`'s own
+AESGCM key/nonce/associated-data primitives, INSERTed at the new id, then DELETEd at the old one --
+never an UPDATE of `person_id` (see Deviations: the AEAD associated data binds the ciphertext to
+the id it was encrypted for).
+
+Dry-run output format (invented example, person 3 moving into person 4, 2 of 60 days already
+present at the destination):
+
+    raw_payload: moveria=58 ya_tenia=0
+    daily_metric: moveria=58 ya_tenia=0
+    sleep_session: moveria=58 ya_tenia=0
+    activity: moveria=9 ya_tenia=2
+    workout_set: moveria=7 ya_tenia=0
+    activity_detail: moveria=9 ya_tenia=0
+    dias: moveria=58 omitidos=2
+    garmin_cuenta: moveria
+    recuperacion_actividad (origen, derivado, no se mueve): 4
+    turno_fc (origen, derivado, no se mueve): 3
+    goal_check (origen, derivado, no se mueve): 1
+    daily_metric(estimado) (origen, derivado, no se mueve): 12
+
+Apply output format is identical except `moveria=`/`moveria` become `movidas=`/`movida`, and, only
+when a moved activity's own `recuperacion_actividad` row had to be removed at the source (see
+Deviations), one extra line:
+
+    recuperacion_actividad (origen, huerfana de una actividad movida, eliminada): 9
+
+(`_print_relinkar`, `body/persona_garmin.py:377-390`.)
+
+**Ruling 3** -- `relinkar` refuses outright, before any write, when: the two ids are equal; either
+id does not exist; the destination has no `cuenta_sub`; the source HAS a `cuenta_sub`; the source
+has any row in a person-authored table (named with its own count); or the destination already has
+a `garmin_cuenta` row (`_validar`, `body/persona_garmin.py:190-214`, raising `Refusada`,
+`:93-99`). Every applicable reason is collected and raised together, never just the first one
+found. Exit code 4, nothing written (`main`, `:395-422`, the `except Refusada` branch at `:415-418`
+prints each reason as `refusado: <motivo>` and returns `4` before `relinkar` ever reaches
+`_mover_todo`). Invented example (person 3 still has its own `cuenta_sub`, and person 2 already
+has a Garmin connection):
+
+    refusado: persona 3 (--desde) tiene cuenta_sub
+    refusado: persona 2 (--hacia) ya tiene garmin_cuenta
+
+Merging two real people's Garmin and health data is the one irreversible mistake this tool exists
+to prevent, so it never guesses past this refusal.
+
+**Ruling 4** -- `--apply` runs the whole move -- every table plus the `garmin_cuenta` row -- in one
+transaction: any error rolls back everything, not just the row it failed on (`relinkar`,
+`body/persona_garmin.py:347-361`, `conn.rollback()` on exception at `:355`, `conn.commit()` only
+after `_mover_todo` returns clean at `:358`). After a successful commit, the destination's own
+existing post-pull recomputations are re-run, reusing `pull.py`'s own safe wrappers --
+`_recalcular_recuperacion_seguro`, `_recalcular_turno_fc_seguro`, `_recalcular_sueno_fc_seguro`,
+`_cerrar_semanas_seguro` (`_recompute_destino`, `:364-374`, calling `body/pull.py:449, 464, 479,
+435` respectively) -- and their counts-only prints, which each wrapper already owns, are what
+reaches stdout; never re-run for the source, which lost its Garmin data to move. On the host,
+`--apply` runs only after `body-backup.sh` (the existing off-host backup) succeeds
+(`deploy/host/body-import-pc.sh:103-106`) -- see ruling 5.
+
+**Ruling 5** -- host verbs, dispatched through the same data user and `BODY_HOME` as the existing
+`importar-pc`/`personas` verbs:
+
+* `duna-deploy-body diagnostico-personas` (`deploy/host/duna-deploy-body:184-189, 253-255`) takes
+  no arguments and execs `body-import-pc.sh diagnostico-personas`
+  (`deploy/host/body-import-pc.sh:43-50`), which runs `python -m body.persona_garmin diagnostico`
+  as `duna-body`.
+* `duna-deploy-body relinkar-garmin --desde <id> --hacia <id> [--apply]`
+  (`deploy/host/duna-deploy-body:190-209, 257-259`) validates `--desde`/`--hacia` as positive
+  integers in bash, with a plain `for relinkar_arg in "$@"` read (never `shift`), before
+  `body-import-pc.sh` ever sees them, and forwards every argument untouched; bad or missing ids
+  exit 2 with `relinkar-garmin: --desde and --hacia must be positive integers`.
+  `body-import-pc.sh`'s own `relinkar-garmin` block (`:53-111`) requires both ids, dry-runs by
+  default, and on `--apply` runs `body-backup.sh` FIRST (`:99-106`) -- refusing with
+  `refused -- the host backup failed; relinkar-garmin --apply did not run` and never calling
+  `persona_garmin relinkar --apply` at all if that backup fails.
+* The usage text (`deploy/host/duna-deploy-body:4-6, 24-44`) and
+  `deploy/host/README.md`'s new `## Garmin connected to the wrong person (BODY-GARMIN-PERSONA-1)`
+  section (documenting both verbs, the refusal conditions, the backup-first-on-apply order and the
+  `recuperacion_actividad` exception) were updated.
+* `deploy/host/duna-deploy-body.sudoers` needed **no change**: its one existing rule,
+  `carlos ALL=(root) NOPASSWD: /usr/local/sbin/duna-deploy-body`, already grants the whole entry
+  script, not per-subcommand, so the two new verbs are already covered.
+
+**Tests.** `tests/test_persona_garmin.py` (new, 390 lines, 12 tests): `DiagnosticoTest` (the exact
+field set and values, including a person with no Garmin and a person mid-connection),
+`RelinkarRefusalTest` (each of ruling 3's refusal reasons, singly and combined, exit-4 shape via
+`Refusada.motivos`), `RelinkarMoveTest` (a full dry-run-then-apply move across several days
+including one already-present at the destination, the token's move, the
+`recuperacion_actividad`-orphan deletion and its count, and that the destination's recompute
+wrappers were called -- via `@mock.patch.object` spies on `pull`'s four safe wrappers). Ruling 5's
+verbs got dispatch/argument coverage added, in their existing shape, to `tests/test_deploy_host.py`
+(206 lines, 22 tests: `CaseArmsTest`/`ExecDispatchTest` additions, the `SudoersUnchangedTest`
+extension, a new `ReadmeGarminPersonaSectionTest`), `tests/test_host_import.py` (225 lines, 26
+tests: new `DiagnosticoPersonasActionTest`/`RelinkarGarminActionTest` classes covering required
+args, dry-run-never-applies, the backup-runs-before-the-move order, and refusal-on-backup-failure)
+and `tests/test_host_deploy.py` (756 lines, 79 tests: new `DiagnosticoPersonasVerbTest`/
+`RelinkarGarminVerbTest` classes mirroring `PullVerbTest`'s own pattern -- usage listing, case-arm
+regex, and exec-dispatch-before-the-generic-owner-fallback ordering).
+
+**Gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as eleven sequential
+alphabetical chunks of dotted modules (203 modules total, the 202 from the prior slice plus this
+slice's own `tests/test_persona_garmin.py`), each run in the foreground on the final tree:
+
+    chunk 1  (test_accesibilidad..test_baselines)                       Ran 381 tests ... OK
+    chunk 2  (test_baselines_lote..test_despertar)                      Ran 428 tests ... OK
+    chunk 3  (test_desplazamiento_import..test_experimentos_intradia)   Ran 395 tests ... OK
+    chunk 4  (test_experimentos_modelo..test_habito_veces_1)            Ran 367 tests ... OK
+    chunk 5  (test_history..test_hoy_turno)                             Ran 610 tests ... OK
+    chunk 6  (test_hoy_ventana_comida..test_modelos_estandar_1)         Ran 382 tests ... OK
+    chunk 7  (test_momentos_pull..test_plan_sesion_hecha)               Ran 522 tests ... OK
+    chunk 8  (test_primer_dia_1..test_rendimiento)                      Ran 399 tests ... OK
+    chunk 9  (test_rendimiento_red..test_tendencias_racha)              Ran 405 tests ... OK
+    chunk 10 (test_tendencias_todas..test_vida_export)                  Ran 436 tests ... OK
+    chunk 11 (test_vivo..test_web_entry)                                Ran 61 tests ... OK
+
+**Reconciliation**: sum of the eleven chunks = 381+428+395+367+610+382+522+399+405+436+61 = 4386.
+Collect-only count on the same tree (`unittest.TestLoader().discover('tests', top_level_dir='.')`,
+recursive `countTestCases`) = 4386. Equal -- every test ran exactly once, none skipped by the
+chunking.
+
+**No schema or migration change, no cross-repo contract change, and no customer-facing bytes at
+all** (two host-admin CLIs and their README/usage text; every string that reaches a terminal is a
+host operator's own diagnostic or refusal line, counts-only, never a health figure, a `cuenta_sub`
+or a name) -- merges on green per merge policy A.
+
+**Deviations, each measured before it was made:**
+
+* *`daily_metric.source` is three-way, not two-way.* The spec's own wording for ruling 3 reads "a
+  table holding both Garmin and manual rows counts only its non-Garmin rows" -- an initial
+  `source != 'garmin'` filter on `daily_metric` wrongly caught Body's own derived rows (e.g.
+  `'body-sueno-fc-v1'`, written by `sueno_fc.py`), causing a false-positive refusal in testing.
+  Measured the real three-way split (`'garmin'`/`'self'`/`'body-%'`) and narrowed the
+  person-authored filter to `source = 'self'` exactly, counting the derived rows separately under
+  `daily_metric(estimado)` in `censo_derivados` -- both censuses now agree with ruling 2's own
+  three-way classification of this one column.
+* *A `recuperacion_actividad` row can outlive the activity it was computed from, but SQLite won't
+  let it.* Ruling 2 says derived tables are never moved, only counted, at the source. But
+  `recuperacion_actividad` carries its own foreign key to `activity`
+  (`person_id, activity_source, activity_source_id`), and `db.connect()` sets
+  `PRAGMA foreign_keys = ON` -- deleting a moved activity's source row while its own
+  `recuperacion_actividad` row still pointed at it was refused by SQLite itself. Measured this
+  failure in testing, then deleted the now-orphaned `recuperacion_actividad` row(s) at the source
+  immediately before deleting the activity, tallied separately as
+  `recuperacion_actividad_huerfana_eliminada` -- a counted, printed exception, never silently kept
+  (it cannot be, the FK forbids it) and never silently dropped (its removal is on stdout, in both
+  the dry run's census and the apply's extra line).
+* *A plain row copy collides on `id`.* Copying every column verbatim, `_mover_filas`'s first draft
+  included `workout_set.id`, which collided with the source's own still-present row of the same id
+  (`UNIQUE constraint failed: workout_set.id`, since every other movable table's primary key is
+  composite with no surrogate `id` at all). Measured the collision, excluded `id` alongside
+  `person_id` from every copied row, letting the destination assign a fresh autoincrement value --
+  the column is a plain handle, never part of any identity this move needs to preserve.
+* *The token move can't call `garmin_cuenta.guardar`/`borrar` directly.* Both of those commit
+  internally (`with conn:`), which would break ruling 4's single-transaction guarantee if composed
+  inside the caller's own transaction. Measured this before writing any code (reading
+  `garmin_cuenta.py`'s own shape), and instead reused `garmin_cuenta.leer` (read-only) plus its
+  private key/nonce/associated-data primitives with plain, non-committing `conn.execute()` calls --
+  real encryption machinery, genuinely atomic with the rest of the move, still never an UPDATE of
+  `person_id`.
+* *The usage text almost hardcoded an owner's name.* A first draft of `relinkar-garmin`'s usage
+  line in `duna-deploy-body` read "Carlos's own go, never run on his say alone", which broke the
+  existing `test_no_carlos_hardcoded` (the entry script's own usage text is meant to stay
+  owner-agnostic, since Body is meant as a template, not one person's tool). Measured the failing
+  test, reworded to "the account owner's own go, never run on someone else's say alone".
+
+**Commits** `86a0e91d68e8508127708566e79725d17ca53a90` (`body/persona_garmin.py`,
+`tests/test_persona_garmin.py`: rulings 1-4 and their tests),
+`5576d57424ab705c3b6d2427ebcdef20d4d005f2` (`deploy/host/duna-deploy-body`,
+`deploy/host/body-import-pc.sh`, `deploy/host/README.md`, `tests/test_deploy_host.py`,
+`tests/test_host_import.py`, `tests/test_host_deploy.py`: ruling 5 and its tests).
+

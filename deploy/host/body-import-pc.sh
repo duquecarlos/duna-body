@@ -4,6 +4,11 @@
 # BODY-MUDANZA-HERRAMIENTA-1's tool). Called by duna-deploy-body importar-pc/personas; runs as
 # root, the rollback snapshot and the import itself as duna-body via runuser, exactly as
 # body-backup.sh runs its own snapshot step.
+#
+# diagnostico-personas/relinkar-garmin (BODY-GARMIN-PERSONA-1) are also dispatched here, beside
+# personas -- same data user, same BODY_HOME. relinkar-garmin --apply runs the EXISTING off-host
+# backup (body-backup.sh, not this script's own local rollback snapshot) first and refuses to run
+# the move at all if that backup fails.
 set -Eeuo pipefail
 
 if [[ "${EUID}" -ne 0 ]]; then
@@ -19,7 +24,7 @@ DATA_USER="duna-body"
 DATA_DIR="/srv/duna/data/body"
 
 if [[ $# -lt 1 ]]; then
-  echo "body-import-pc.sh: usage: body-import-pc.sh <importar-pc|personas> [options]" >&2
+  echo "body-import-pc.sh: usage: body-import-pc.sh <importar-pc|personas|diagnostico-personas|relinkar-garmin> [options]" >&2
   exit 2
 fi
 
@@ -35,13 +40,75 @@ case "$action" in
     exec runuser -u "$DATA_USER" -- env -C "$REPO_DIR" "BODY_HOME=$DATA_DIR" \
       "$REPO_DIR/.venv/bin/python" -m body.mudanza personas
     ;;
+  diagnostico-personas)
+    if [[ $# -ne 0 ]]; then
+      echo "body-import-pc.sh: diagnostico-personas takes no arguments" >&2
+      exit 2
+    fi
+    exec runuser -u "$DATA_USER" -- env -C "$REPO_DIR" "BODY_HOME=$DATA_DIR" \
+      "$REPO_DIR/.venv/bin/python" -m body.persona_garmin diagnostico
+    ;;
   importar-pc)
+    ;;
+  relinkar-garmin)
     ;;
   *)
     echo "body-import-pc.sh: unknown action: $action" >&2
     exit 2
     ;;
 esac
+
+if [[ "$action" == "relinkar-garmin" ]]; then
+  RELINKAR_DESDE=""
+  RELINKAR_HACIA=""
+  RELINKAR_APPLY=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --desde)
+        RELINKAR_DESDE="$2"
+        shift 2
+        ;;
+      --hacia)
+        RELINKAR_HACIA="$2"
+        shift 2
+        ;;
+      --apply)
+        RELINKAR_APPLY="1"
+        shift
+        ;;
+      *)
+        echo "body-import-pc.sh: unknown argument: $1" >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  if [[ -z "$RELINKAR_DESDE" || -z "$RELINKAR_HACIA" ]]; then
+    echo "body-import-pc.sh: --desde and --hacia are required" >&2
+    exit 2
+  fi
+
+  if [[ -z "$RELINKAR_APPLY" ]]; then
+    # Dry run: the tool's own dry run. No host backup, no timers touched.
+    exec runuser -u "$DATA_USER" -- env -C "$REPO_DIR" "BODY_HOME=$DATA_DIR" \
+      "$REPO_DIR/.venv/bin/python" -m body.persona_garmin relinkar \
+      --desde "$RELINKAR_DESDE" --hacia "$RELINKAR_HACIA"
+  fi
+
+  # --apply (BODY-GARMIN-PERSONA-1 ruling 4): the EXISTING off-host backup script runs first,
+  # and the move does not run at all if it fails -- this is Body's own body-backup.sh, the same
+  # encrypt-and-upload-to-R2 job the daily timer runs, not importar-pc's own local rollback
+  # snapshot above (that snapshot is this script's own convention for importar-pc alone).
+  if ! /bin/bash "$REPO_DIR/deploy/host/body-backup.sh"; then
+    echo "body-import-pc.sh: refused -- the host backup failed; relinkar-garmin --apply did not run" >&2
+    exit 1
+  fi
+
+  exec runuser -u "$DATA_USER" -- env -C "$REPO_DIR" "BODY_HOME=$DATA_DIR" \
+    "$REPO_DIR/.venv/bin/python" -m body.persona_garmin relinkar \
+    --desde "$RELINKAR_DESDE" --hacia "$RELINKAR_HACIA" --apply
+fi
 
 SUB=""
 ARCHIVO=""
