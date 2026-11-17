@@ -24681,3 +24681,5 @@ to `plan.nota_sesion`/`nota_sesion_en`. No customer-facing bytes changed (no new
 person-facing string -- the four moment labels were already live) and no cross-repo contract
 changed, so all three conditions are clear and the merge below proceeds on green.
 
+-- merged `cd8213a`
+
