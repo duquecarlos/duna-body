@@ -319,8 +319,13 @@ async def api_hogar_registrar(request: Request,
     data = mcp_remoto.llamar_herramienta(conn, person_id, nombre, argumentos, None,
                                           puede_aplicar=False, auto_aplicar=True, origin="hogar")
     if "error" in data:
-        return JSONResponse({"ok": False, "error": _mensaje_error_hogar(data, nombre, idioma)},
-                             headers={"Cache-Control": "no-store"})
+        respuesta = {"ok": False, "error": _mensaje_error_hogar(data, nombre, idioma)}
+        # BODY-HOGAR-NOTA-SESION-GUARD-1 ruling 3: a stable machine word Hogar can branch on
+        # without parsing `error`'s own person-language sentence -- carried straight through from
+        # the shared core's `motivo` (set only when the refusing ToolError carried its own codigo).
+        if "motivo" in data:
+            respuesta["motivo"] = data["motivo"]
+        return JSONResponse(respuesta, headers={"Cache-Control": "no-store"})
     return JSONResponse(
         {"ok": True, "propuesta_id": data["salida"].get("propuesta_id"), "resultado": data["salida"]},
         headers={"Cache-Control": "no-store"})

@@ -563,7 +563,11 @@ CREATE TABLE IF NOT EXISTS plan (
     -- is the UTC instant it was written, not when the session happened (that is `day`/`time` above).
     -- Both nullable, additive: an existing plan row reads as "no note yet".
     nota_sesion     TEXT,
-    nota_sesion_en  TEXT
+    nota_sesion_en  TEXT,
+    -- BODY-HOGAR-NOTA-SESION-GUARD-1 ruling 1: who wrote the CURRENT nota_sesion -- NULL (an
+    -- existing note, or no note at all) reads as "written for the person", the conservative
+    -- reading; db.anotar_sesion_plan is still the one writer.
+    nota_sesion_origen TEXT CHECK (nota_sesion_origen IS NULL OR nota_sesion_origen IN ('persona', 'hogar'))
 );
 
 -- How much health data the assistant's tools may read for this person (wave 7, stage one).
@@ -1357,6 +1361,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE plan ADD COLUMN nota_sesion TEXT")
     if plcols and "nota_sesion_en" not in plcols:
         conn.execute("ALTER TABLE plan ADD COLUMN nota_sesion_en TEXT")
+    # BODY-HOGAR-NOTA-SESION-GUARD-1 ruling 1: one more additive, nullable column, same CHECK-on-
+    # ADD-COLUMN shape as workout_set.excluded_by_person above -- every existing plan row reads as
+    # nota_sesion_origen NULL ("written for the person"), never backfilled.
+    if plcols and "nota_sesion_origen" not in plcols:
+        conn.execute(
+            "ALTER TABLE plan ADD COLUMN nota_sesion_origen TEXT "
+            "CHECK (nota_sesion_origen IS NULL OR nota_sesion_origen IN ('persona', 'hogar'))"
+        )
     # BODY-PLAN-ESQUEMA-1: two additive, nullable columns on old databases -- every existing goal
     # and experimento row reads as not-part-of-a-plan (NULL), never backfilled.
     goalcols = {r[1] for r in conn.execute("PRAGMA table_info(goal)")}
@@ -3585,20 +3597,23 @@ def borrar_periodo(conn: sqlite3.Connection, person_id: int, period_id: int) -> 
 
 
 def anotar_sesion_plan(conn: sqlite3.Connection, person_id: int, plan_id: int, nota: str | None,
-                        nota_en: str | None, status: str) -> None:
-    """The one writer of `plan.nota_sesion`/`nota_sesion_en` (BODY-HOGAR-ESCRIBE-1 ruling 4): the
-    caller (body/agente/propuestas.py) always resolves the row's FULL new state first -- the new
-    note and its own timestamp on apply, or the exact prior triple on undo -- the same
+                        nota_en: str | None, status: str, origen: str | None = None) -> None:
+    """The one writer of `plan.nota_sesion`/`nota_sesion_en`/`nota_sesion_origen` (BODY-HOGAR-
+    ESCRIBE-1 ruling 4, origen added by BODY-HOGAR-NOTA-SESION-GUARD-1 ruling 1-2): the caller
+    (body/agente/propuestas.py) always resolves the row's FULL new state first -- the new note,
+    its own timestamp and who wrote it on apply, or the exact prior triple on undo -- the same
     all-or-nothing, caller-resolves-state shape `corregir_comida`/`corregir_periodo` already write
     with. `status` is always given explicitly (never a sentinel): when the person did not say the
     session was done, the caller passes the plan's own CURRENT status back unchanged, so this
-    writer never has to guess what "untouched" means. Refuses a plan_id that is not this person's
-    own."""
+    writer never has to guess what "untouched" means. `origen` defaults to None (an older caller,
+    or an undo restoring a pre-this-slice proposal's missing key, reads as "written for the
+    person"). Refuses a plan_id that is not this person's own."""
     fila = conn.execute("SELECT 1 FROM plan WHERE id = ? AND person_id = ?", (plan_id, person_id)).fetchone()
     if fila is None:
         raise ValueError("plan_id: not this person's own plan")
     with conn:
         conn.execute(
-            "UPDATE plan SET nota_sesion = ?, nota_sesion_en = ?, status = ? WHERE id = ? AND person_id = ?",
-            (nota, nota_en, status, plan_id, person_id),
+            "UPDATE plan SET nota_sesion = ?, nota_sesion_en = ?, status = ?, nota_sesion_origen = ? "
+            "WHERE id = ? AND person_id = ?",
+            (nota, nota_en, status, origen, plan_id, person_id),
         )

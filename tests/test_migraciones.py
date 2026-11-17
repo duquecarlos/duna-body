@@ -306,5 +306,52 @@ class MomentoComidaTableMigrationTest(unittest.TestCase):
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM momento_comida").fetchone()[0], 0)
 
 
+class PlanNotaSesionOrigenMigrationTest(unittest.TestCase):
+    """BODY-HOGAR-NOTA-SESION-GUARD-1 ruling 1: a database whose plan predates nota_sesion_origen
+    gains it, additive and nullable -- keeping the existing row, and its existing note, byte for
+    byte: an existing nota_sesion reads as nota_sesion_origen NULL ("written for the person")."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        db.init(self.conn)
+        self.conn.execute("PRAGMA foreign_keys = OFF")
+        self.conn.execute("DROP TABLE plan")
+        self.conn.execute(
+            "CREATE TABLE plan (id INTEGER PRIMARY KEY, person_id INTEGER NOT NULL REFERENCES person(id), "
+            "hogar_id TEXT, goal_id INTEGER REFERENCES goal(id), day TEXT NOT NULL, time TEXT, "
+            "title TEXT NOT NULL, booking TEXT, "
+            "status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN "
+            "('proposed', 'accepted', 'done', 'skipped')), "
+            "ejercicios_json TEXT, nota_sesion TEXT, nota_sesion_en TEXT)"
+        )
+        self.conn.execute(
+            "INSERT INTO plan (person_id, day, title, status, nota_sesion, nota_sesion_en) VALUES "
+            "(1, '2026-11-09', 'Vieja', 'proposed', 'Nota previa', '2026-11-09T00:00:00+00:00')"
+        )
+        self.old_id = self.conn.execute("SELECT id FROM plan").fetchone()[0]
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.commit()
+
+    def test_migration_adds_the_column_keeping_the_old_row_and_its_note(self):
+        db.init(self.conn)
+        row = self.conn.execute(
+            "SELECT id, title, nota_sesion, nota_sesion_en, nota_sesion_origen FROM plan"
+        ).fetchone()
+        self.assertEqual(row["id"], self.old_id)
+        self.assertEqual(row["title"], "Vieja")
+        self.assertEqual(row["nota_sesion"], "Nota previa")
+        self.assertEqual(row["nota_sesion_en"], "2026-11-09T00:00:00+00:00")
+        self.assertIsNone(row["nota_sesion_origen"])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM plan").fetchone()[0], 1)
+
+    def test_migration_is_idempotent(self):
+        db.init(self.conn)
+        db.init(self.conn)
+        row = self.conn.execute("SELECT id, nota_sesion_origen FROM plan").fetchone()
+        self.assertEqual(row["id"], self.old_id)
+        self.assertIsNone(row["nota_sesion_origen"])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM plan").fetchone()[0], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

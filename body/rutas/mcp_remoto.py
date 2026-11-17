@@ -105,7 +105,13 @@ def llamar_herramienta(conn, person_id: int, nombre, argumentos: dict, conversac
         # (`errores.texto_propio(e)`) -- never localized to begin with (it is meant for a model to
         # read and retry), so sending it is not a new customer-facing sentence, only the same
         # unlocalized text the local door already displays verbatim.
-        return {"error": "herramienta_rechazada", "mensaje": errores.texto_propio(e)}
+        resultado = {"error": "herramienta_rechazada", "mensaje": errores.texto_propio(e)}
+        # BODY-HOGAR-NOTA-SESION-GUARD-1 ruling 3: when this ToolError carries its own `codigo`
+        # (today, only the session-note overwrite guard does), it rides along as `motivo` -- a
+        # stable word Hogar's own route can branch on without parsing the localized message.
+        if e.codigo is not None:
+            resultado["motivo"] = e.codigo
+        return resultado
     except Exception as e:
         conn.rollback()
         logger.info("mcp remoto error interno: %s herramienta=%r", errores.texto_seguro(e), nombre_str)

@@ -573,12 +573,13 @@ def _deshacer_corregir_entreno(conn: sqlite3.Connection, row: sqlite3.Row) -> No
 
 def _plan_sesion_estado(conn: sqlite3.Connection, person_id: int, plan_id: int) -> dict | None:
     fila = conn.execute(
-        "SELECT status, nota_sesion, nota_sesion_en FROM plan WHERE id = ? AND person_id = ?",
+        "SELECT status, nota_sesion, nota_sesion_en, nota_sesion_origen FROM plan WHERE id = ? AND person_id = ?",
         (plan_id, person_id),
     ).fetchone()
     if fila is None:
         return None
-    return {"status": fila["status"], "nota_sesion": fila["nota_sesion"], "nota_sesion_en": fila["nota_sesion_en"]}
+    return {"status": fila["status"], "nota_sesion": fila["nota_sesion"], "nota_sesion_en": fila["nota_sesion_en"],
+            "nota_sesion_origen": fila["nota_sesion_origen"]}
 
 
 def _drift_aplicar_anotar_sesion(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
@@ -586,7 +587,7 @@ def _drift_aplicar_anotar_sesion(conn: sqlite3.Connection, row: sqlite3.Row) -> 
     despues = json.loads(row["despues_json"])
     actual = _plan_sesion_estado(conn, row["person_id"], despues["plan_id"])
     esperado = {"status": antes["status"], "nota_sesion": antes["nota_sesion"],
-                "nota_sesion_en": antes["nota_sesion_en"]}
+                "nota_sesion_en": antes["nota_sesion_en"], "nota_sesion_origen": antes.get("nota_sesion_origen")}
     return actual != esperado
 
 
@@ -594,7 +595,8 @@ def _drift_deshacer_anotar_sesion(conn: sqlite3.Connection, row: sqlite3.Row) ->
     despues = json.loads(row["despues_json"])
     actual = _plan_sesion_estado(conn, row["person_id"], despues["plan_id"])
     esperado = {"status": despues["status"], "nota_sesion": despues["nota"],
-                "nota_sesion_en": despues.get("nota_sesion_en")}
+                "nota_sesion_en": despues.get("nota_sesion_en"),
+                "nota_sesion_origen": despues.get("nota_sesion_origen")}
     return actual != esperado
 
 
@@ -602,7 +604,7 @@ def _aplicar_anotar_sesion(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     despues = json.loads(row["despues_json"])
     ahora_iso = _iso(_ahora())
     db.anotar_sesion_plan(conn, row["person_id"], despues["plan_id"], despues["nota"], ahora_iso,
-                          despues["status"])
+                          despues["status"], despues.get("nota_sesion_origen"))
     return {"nota_sesion_en": ahora_iso}
 
 
@@ -610,7 +612,7 @@ def _deshacer_anotar_sesion(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
     antes = json.loads(row["antes_json"])
     despues = json.loads(row["despues_json"])
     db.anotar_sesion_plan(conn, row["person_id"], despues["plan_id"], antes["nota_sesion"],
-                          antes["nota_sesion_en"], antes["status"])
+                          antes["nota_sesion_en"], antes["status"], antes.get("nota_sesion_origen"))
 
 
 # -- descartar_series (BODY-SERIES-ORDEN-1 ruling 4: this module writes workout_set.excluded_by_person

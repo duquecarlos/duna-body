@@ -67,7 +67,7 @@ from .. import anatomia, catalogo_tendencias, comidas, compartir, cuenta, db, en
     experimentos, fechas, garmin_cuenta, goals, history, horizonte, household, nutriente_objetivo, profile, pull, \
     readiness, shift_import, turnos_costo, tutoriales
 from ..i18n import LANGS, T
-from . import ajustes, propuestas
+from . import ajustes, conversacion as agente_conversacion, propuestas
 
 # BODY-TURNOS-OPCIONAL-3: whether the CURRENT request's person has said they work shifts, set once by
 # body/web.py (the only caller of body/agente/bucle.py's ejecutar()) before it drives the tool loop --
@@ -1585,25 +1585,41 @@ def _anotar_sesion(conn: sqlite3.Connection, person_id: int, conversacion_id: in
     session actually went, matched against the plan. `hecha=true` also proposes marking the plan
     'done' (BODY-PLAN-SESION-HECHA-1 then counts it, once, toward sesiones_fuerza); left out or
     false, the plan's own status is proposed unchanged. `antes`/`despues` each carry the plan row's
-    FULL note/timestamp/status state, the same update-shaped, caller-resolves-state convention
-    `corregir_comida` already uses, so `propuestas.deshacer` can restore it exactly through the
-    same writer (`db.anotar_sesion_plan`). Refuses a plan_id that is not this person's own, by
-    name -- never silently matched to someone else's session."""
+    FULL note/timestamp/status/origen state, the same update-shaped, caller-resolves-state
+    convention `corregir_comida` already uses, so `propuestas.deshacer` can restore it exactly
+    through the same writer (`db.anotar_sesion_plan`). Refuses a plan_id that is not this person's
+    own, by name -- never silently matched to someone else's session.
+
+    BODY-HOGAR-NOTA-SESION-GUARD-1 rulings 2-3: the writer is resolved from THIS call's own
+    conversation -- 'hogar' when `conversacion_id`'s `conversacion_agente.origen` is 'hogar' (set
+    only by body/rutas/dispositivos.py's own Hogar write-through), 'persona' for the in-app
+    assistant (origen None) and the person's own MCP assistant (origen 'mcp') alike -- never from
+    anything the caller sends. When the writer is Hogar and the plan's CURRENT note is non-empty
+    and was not written by Hogar (including a legacy NULL-origin note, the conservative reading),
+    this refuses BEFORE any proposal is created, with a stable `codigo` an outside caller can
+    branch on without parsing the person-language message."""
     nota = (nota or "").strip()
     if not (1 <= len(nota) <= 2000):
         raise ToolError("nota debe tener entre 1 y 2000 caracteres")
     if hecha is not None and not isinstance(hecha, bool):
         raise ToolError("hecha debe ser verdadero o falso")
     fila = conn.execute(
-        "SELECT day, title, status, nota_sesion, nota_sesion_en FROM plan WHERE id = ? AND person_id = ?",
+        "SELECT day, title, status, nota_sesion, nota_sesion_en, nota_sesion_origen FROM plan "
+        "WHERE id = ? AND person_id = ?",
         (plan_id, person_id),
     ).fetchone()
     if fila is None:
         raise ToolError(f"plan desconocido: {plan_id!r}")
-    antes = {"status": fila["status"], "nota_sesion": fila["nota_sesion"], "nota_sesion_en": fila["nota_sesion_en"]}
+    escribe_hogar = agente_conversacion.origen_de(conn, conversacion_id) == "hogar"
+    if escribe_hogar and (fila["nota_sesion"] or "").strip() and fila["nota_sesion_origen"] != "hogar":
+        t = T(db.person(conn, person_id)["language"])
+        raise ToolError(t("agente.error.nota_sesion_existente"), codigo="nota_de_la_persona")
+    antes = {"status": fila["status"], "nota_sesion": fila["nota_sesion"], "nota_sesion_en": fila["nota_sesion_en"],
+             "nota_sesion_origen": fila["nota_sesion_origen"]}
     nuevo_status = "done" if hecha else fila["status"]
+    nuevo_origen = "hogar" if escribe_hogar else "persona"
     despues = {"plan_id": plan_id, "day": fila["day"], "titulo": fila["title"], "nota": nota,
-               "hecha": bool(hecha), "status": nuevo_status}
+               "hecha": bool(hecha), "status": nuevo_status, "nota_sesion_origen": nuevo_origen}
     registro = propuestas.crear(conn, person_id, conversacion_id, "anotar_sesion", despues, antes=antes)
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
@@ -2899,7 +2915,17 @@ _RANK = {"ninguno": 0, "resumen": 1, "completo": 2}
 
 
 class ToolError(Exception):
-    """A lectura tool was unknown, unavailable at this nivel_datos, or given invalid parameters."""
+    """A lectura tool was unknown, unavailable at this nivel_datos, or given invalid parameters.
+    `codigo`, when given, is a stable machine word an outside caller (never this module's own
+    local-stdio/in-app callers) can branch on without parsing the localized message -- body/
+    rutas/mcp_remoto.py's own `llamar_herramienta` carries it onto the wire as `motivo`
+    (BODY-HOGAR-NOTA-SESION-GUARD-1 ruling 3 is the first raise to set it; every other raise in
+    this module leaves it None, unchanged). mcp.py's own `RehusoMCP` IS-A ToolError and keeps
+    setting `self.codigo` itself, so it is unaffected by this."""
+
+    def __init__(self, mensaje: str, codigo: str | None = None):
+        super().__init__(mensaje)
+        self.codigo = codigo
 
 
 # BODY-SYNC-VIVO-2 ruling 2: the `lectura` tools whose answer is TODAY's own figures -- leer_hoy
