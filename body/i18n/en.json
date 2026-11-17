@@ -7,6 +7,7 @@
   "nav.settings": "Settings",
   "nav.ayuda": "Help",
   "nav.logout": "Log out",
+  "base.modo_demo": "Demo · invented data",
   "cuenta.down": "We could not reach Cuenta Duna. Try again in a few minutes.",
   "sin_acceso.title": "No access",
   "sin_acceso.text": "Your Duna account does not have access to Body yet.",

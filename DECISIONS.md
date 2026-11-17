@@ -25781,3 +25781,80 @@ diff). Post-merge smoke
 (`tests.test_turno_dia_plan tests.test_turnos_costo tests.test_plan_propuestas tests.test_mcp`):
 `Ran 188 tests ... OK`.
 
+## BODY-DEMO-MODO-MARCA-1 -- a demo home says so, in the layout every page shares (2026-11-17)
+
+**The hub principle.** Consola's hub «Para productos» novedad from 2026-11-17
+(`hit_01m7kwxr7ptfahn54evqtz27g1`, «apertura-automatica», Carlos via the desk), point 5: the item
+shows the MODE -- practice vs real. BODY-HUB-PRINCIPIOS-CENSO-1 (OBSERVED,
+`logs/worker-body-hub-principios-censo-1-body-app-20261117T022417.json`) measured: no demo-vs-real
+marker anywhere in Body's screens. Finanzas shipped the same principle as FIN-UI-DEMO-MODO-
+BANNER-1 (hub novedad `hit_01m7ma77khsvmz8h4rpc7hh72f`). BODY-APERTURA-AUTOMATICA-1 (merged
+`3a1261d`) built points 1-2 of the same hub item; this slice is point 5.
+
+**The signal body already carries.** `python -m body.demo --home <folder>` writes a `DEMO` marker
+file next to the seeded `body.db` (`body/demo.py:40` `MARKER_NAME = "DEMO"`, `:1563`) and refuses
+to seed or overwrite a real home (`~/.body-app`, the current `BODY_HOME`, `/srv/duna/data/body`;
+`body/demo.py:381` `_forbidden_home`). This slice reads that same file, never a second flag, an
+environment variable or a `config.py` change (Tier 1).
+
+**The orchestrator's rulings**, built as written:
+
+1. **The signal.** `body/rutas/comun.py:75-82`: `es_demo() -> bool` returns
+   `(config.DB_PATH.parent / demo.MARKER_NAME).exists()`, importing `demo.MARKER_NAME` rather than
+   retyping `"DEMO"`. Registered as a Jinja global beside `hosted` (`comun.py:91`,
+   `env.globals["es_demo"] = es_demo`). A filesystem `stat`, never a database read, so no route's
+   statement count moves (`tests/test_rendimiento.py`'s own ceilings, re-run green below) --
+   evaluated per request, never cached, so a home seeded while the server is already running is
+   marked on its very next request (proven by `tests/test_demo_modo_marca.py`'s
+   `MarkerAddedAfterStartTest`).
+2. **The chip.** `body/templates/base.html`, right inside `<main><div class="wrap">` -- the one
+   wrapper every screen's `{% block main %}` renders inside, on both the phone tab bar layout and
+   the desktop rail layout, since `.wrap` itself carries no layout split between the two (only the
+   nav beside it does): `{% if es_demo() %}<span class="chip mb-6" role="status">{{
+   t('base.modo_demo') }}</span>{% endif %}`. Text, `base.modo_demo`: es «Demo · datos inventados» /
+   en «Demo · invented data» (`body/i18n/es.json`, `body/i18n/en.json`, added next to `nav.logout`).
+   No `aria-label`/`title`: censused every existing `.chip` usage across the templates and none
+   carries one, so this one adds no third string either. Style: reuses the stylesheet's existing
+   `.chip` rule as-is (`body/static/body.css:107`, muted `background:var(--inset)`,
+   `color:var(--ink2)` -- already calm, never red/alarm) plus the existing `.mb-6` margin utility
+   (`body/static/body.css`'s utility block) for its own line -- no new CSS rule at all. A real home
+   (no marker) renders byte-identical HTML for that region (proven by
+   `tests/test_demo_modo_marca.py`'s `MarkerAbsentTest`). The four standalone pages that do not
+   extend `base.html` (`acceso_rechazado.html`, `consentimiento.html`, `origen_rechazado.html`,
+   `sin_acceso.html`) are left alone, as the spec named -- each starts its own `<!doctype html>`
+   rather than `{% extends "base.html" %}` (verified by reading all four).
+
+**Tests**, `tests/test_demo_modo_marca.py` (8 tests): the chip's text on `/`, `/trends`, `/settings`
+in Spanish and in English with the marker present (`MarkerPresentTest`), the chip carrying
+`role="status"`; its absence on the same three routes with no marker (`MarkerAbsentTest`); a marker
+written after the client already started answering requests is absent on the request before and
+present on the one after (`MarkerAddedAfterStartTest`); GET still writes nothing, with and without
+the marker (`GetWritesNothingTest`, via `tests/_rutas.py`'s `contar_sql`); `/`'s own statement count
+identical with and without the marker (`StatementCountUnchangedTest`). The fixture calls
+`db.ensure_ready(conn)` before any route runs (`tests/test_rendimiento.py`'s own pattern), not
+`db.init(conn)` directly -- the first-touch migration inside `db.ensure_ready` would otherwise run
+*during* the measured request and read as a spurious write.
+
+**Other touched test files.** `tests/test_i18n_paridad.py` needed no edit: `base.modo_demo` is a
+literal `t('...')` call inside `base.html`, so the existing generic scan (`_CALL_RE`) picks it up
+and checks it against both `es.json` and `en.json` on its own; no census list names every key by
+hand here. `tests/test_rendimiento.py` and `tests/test_get_sin_escritura.py` needed no edit either
+(no new route, no new statement any existing ceiling or write guard tracks) -- both re-run green
+below as confirmation, not because this slice touched them.
+
+**Deviation from the spec's literal wording: none measured.** Both rulings and the two strings are
+built exactly as the spec and its surface wrote them.
+
+**Gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, ten sequential alphabetical
+chunks of ~20 dotted modules each (197 modules total), all green: `381+420+395+367+575+481+486+339+
+496+317 = 4257`. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted recursively): `4257` -- exact
+match.
+
+**No schema or migration change, no cross-repo contract change, and the only customer-facing bytes
+are the two new strings this spec itself authorised verbatim** -- merges on green per merge policy A.
+
+**Commits** `e1f2eed9f25184ab924b38f508b1a2fff559db34` (`body/rutas/comun.py`, `body/templates/
+base.html`, `body/i18n/{es,en}.json`, `tests/test_demo_modo_marca.py`: both rulings and their tests,
+one commit), plus this ledger entry's own commit.
+
