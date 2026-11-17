@@ -26155,3 +26155,142 @@ tree `78f2bfed20c42b14b00cb87fc1476131730ae0d8` equals the branch's own tree, em
 Post-merge smoke (`tests.test_hogar_registrar_idempotente tests.test_hogar_escribe_rutas
 tests.test_migraciones tests.test_privacidad tests.test_mudanza`): `Ran 180 tests ... OK`.
 
+## BODY-GARMIN-DIAGNOSTICO-1 -- a job line that could not tell "Garmin sent nothing" from "the
+watch has not synced" (2026-11-17)
+
+**Seen live** (counts and dates only, no health figure read). Measured 2026-11-17 after deploy
+`115ea49` (BODY-GARMIN-DIA-VACIO-1): the 18:00 UTC today-sweep printed "hoy: 1 ok, 0 en espera, 0
+fuera de horario, 0 fallidas" for the one hosted person -- the FeedsFallidos rule did not fire.
+The Personal desk, reading Body through `/mcp` (presence only), found every Garmin metric of 13,
+16 and 17 Nov null, no sleep, no activities. The server journal showed the host's Garmin
+connection working on 14 Nov (six backfill runs of "15 days stored" at 17:23-18:14 UTC) and every
+daily pull since printing "1 ok, 0 failed, 2 days stored" -- Garmin answered without an exception
+and Body parsed nothing, and no line named what the six feeds returned that day. Three candidate
+causes (the account, the watch's last upload, or a payload shape `parse_day` does not read) were
+indistinguishable from the journal alone.
+
+**The three rulings, verbatim from the dispatching spec's surface, built exactly as given:**
+
+1. "an empty fetched day prints ONE shape line naming, per feed, only its SHAPE -- the type, its
+   size, how many numeric leaves it holds, or the exception class -- never a value, never a key
+   name, never a name or id." Built as `pull._forma_feeds(raw)` (`body/pull.py:185`), over
+   `pull._FEEDS_ORDEN` (`body/pull.py:147`, the six feeds in their fixed order), each feed's shape
+   from `pull._forma_valor` (`body/pull.py:172`) and `pull._contar_numeros` (`body/pull.py:155`,
+   depth capped at `pull._FORMA_PROFUNDIDAD_MAX = 4`, bools excluded). Printed once per
+   fetched-but-empty day (`pull._dia_vacio`) from the two shared call sites every hosted path
+   funnels through: `_pull_one_person` (`body/pull.py:420`, daily/connect/today-sweep) and
+   `_backfill_one_person` (`body/pull.py:914`, backfill) -- `"dia vacio {d}: {_forma_feeds(data.raw)}"`,
+   flush=True. A day with data prints nothing new (the print sits inside the existing
+   `if _dia_vacio(data):` branch, never the `else`).
+2. "where a hosted pull already reads the watch's last contact with Garmin's cloud, the job line
+   prints its UTC date and time to the minute, or 'desconocido'." Built as `pull._sufijo_reloj`
+   (`body/pull.py:208`), reading this person's own persisted `reloj_sincronizo_en`
+   (`garmin_cuenta.estado_sync` -- the same field Hoy's live card and `leer_estado_reloj` already
+   read, always UTC per `garmin_adapter.fetch_device_last_sync`'s own contract) rather than this
+   run's own fresh read, so a watch that failed to answer THIS run still shows its last known
+   contact from an earlier one. Appended to every job line that already reads the watch's sync
+   (directly, or through `_pull_one_person`/`_backfill_one_person`'s own `finally`): the connect
+   line (`body/pull.py:595-597`), the daily line (`body/pull.py:853-854`), the backfill line
+   (`body/pull.py:1008-1009`), and the --hoy sweep's own line (`body/pull.py:1267-1268`). Each of
+   `pull_hosted`/`pull_backfill_hosted` tracks `ultima_persona` (the last person actually pulled
+   this run) across their own per-person loop, since both loop over potentially several people
+   but print one aggregate line -- a deviation from a literal per-person reading, named below.
+3. "the today-sweep line counts empty days like the daily line." `_pull_hoy_persona`
+   (`body/pull.py:608`) now returns `(ok: bool, vacios: int)`, reading `_pull_one_person`'s own
+   empty count off its return on success or off its `.vacios` attribute on an exception (the same
+   contract every other caller here already reads). `pull_hoy_todos` (`body/pull.py:635`)
+   accumulates it into its own `vacios` and returns it (now a 6-tuple: `ok, en_espera,
+   fuera_horario, fallidas, vacios, ultima_persona`); `_run`'s own `--hoy` branch
+   (`body/pull.py:1267-1268`) prints the new line. `pull_hoy_ahora` (on demand) is unchanged in
+   what it returns to the screen -- it discards `_pull_hoy_persona`'s return value exactly as
+   before, only the logged sweep line changed.
+
+**Every new/changed line, verbatim, with an invented example** (never a real name, id or health
+figure -- every example below is demo data this slice invented for its own tests):
+- Shape line: `dia vacio 2026-11-17: user_summary=dict:1 claves/0 num sleep=ausente hrv=ausente
+  body_battery=ausente activities=ausente max_metrics=ausente` (one real feed call that returned a
+  dict with no numeric leaf, the other five never answered at all this call).
+- Error shape: `... hrv=error:GarminConnectConnectionError ...` (the class name only, never the
+  exception's own message).
+- Daily/backfill/connect job lines gain the reloj suffix: `1 ok, 0 failed, 1 days stored, 0 empty,
+  reloj 2026-11-17 14:32 UTC` or `..., reloj desconocido`; `backfill: 1 ok, 0 failed, 15 days
+  stored, 0 empty, reloj desconocido`; `connect pull: ok, 0 days stored, 14 empty, 14 feeds failed
+  (AttributeError x14), reloj desconocido` (this last one seen for real in this slice's own gate
+  run, chunk 4, `tests.test_garmin_conectar_vivo`'s own fixture -- not invented, but a demo
+  fixture's own AttributeError, never a health figure).
+- The --hoy sweep's line: `hoy: 1 ok, 0 en espera, 0 fuera de horario, 0 fallidas, 0 vacios, reloj
+  desconocido` (unchanged apart from the new `, 0 vacios, reloj ...` tail).
+
+**Tests**, `tests/test_garmin_diagnostico.py` (27 tests, new): `FormaFeedsTest` -- all six shapes
+in their fixed order from one mixed raw dict, an all-ausente empty raw, a dict with zero numeric
+leaves, numeric leaves counted recursively, the depth cap (a leaf at depth 4 counted, one at depth
+5 not), bools never counted as numbers, a list's own shape and count, the error shape naming only
+the class, and an invented device name/id string never appearing in the shape line.
+`DiaVacioShapeLineTest` -- the shape line from a real `pull_hosted`/`pull_persona_ahora`/
+`pull_backfill_hosted`/`pull_hoy_todos` call (every hosted path named by ruling 1), a day with
+data printing none of it, a raised feed's error shape, a partial-failure day that is also empty
+printing both lines, and a full pull's captured output never carrying an invented name or id.
+`ReloSuffixTest` -- the reloj suffix "desconocido" by default and a known timestamp, on the daily,
+connect and backfill lines, plus `_sufijo_reloj(conn, None)` directly. `SweepCuentaVaciosTest` --
+the --hoy sweep's own line naming the empty count and the reloj suffix (both desconocido and
+known), a day with data not counted as vacio, and a Garmin failure's own `.vacios` (0, since the
+sweep fetches exactly one day) read off the exception rather than assumed. Every Garmin call goes
+through a fake `body.pull.garmin_adapter.fetch_day`/`fetch_device_last_sync`; no network, invented
+demo data only.
+
+**Other touched test files**, each named here per the spec's own instruction:
+- `tests/test_sync_vivo_timer.py`: every `ok, espera, fuera, fallidas = pull.pull_hoy_todos(...)`
+  unpack widened to the new 6-tuple (`..., vacios, ultima_persona`), with the two new fields
+  asserted alongside the existing four; `test_no_connected_person_is_a_no_op`'s bare tuple
+  assertion widened to `(0, 0, 0, 0, 0, None)`; `HoyCliTest.test_hoy_flag_prints_the_counts_line_
+  and_returns_zero`'s exact-string assertion gained `, 0 vacios, reloj desconocido`.
+- `tests/test_primer_pull_1.py`: `NoHealthFigureInOutputTest.test_backfill_prints_only_counts`'s
+  exact-string assertion gained `, reloj desconocido` (this test never mocks `fetch_device_last_
+  sync`, so the real adapter's own offline failure handling leaves it unknown).
+- `tests/test_garmin_dia_vacio.py`, `tests/test_sync_vivo_estado.py`, `tests/test_pull_relleno.py`,
+  `tests/test_garmin_host.py`, `tests/test_momentos_pull.py`, `tests/test_rendimiento.py` -- read
+  and re-run green below; none needed an edit (every job-line assertion in them is `assertIn`, a
+  substring check the new trailing suffixes never break; none unpack `pull_hoy_todos`'s tuple).
+
+**Deviations from the spec's literal wording.**
+- *An aggregate line's reloj names one person, not all of them*: `pull_hosted`,
+  `pull_backfill_hosted` and the --hoy sweep each loop over every connected person but print ONE
+  job line for the whole run (unlike the connect line, always one person). Ruling 2's suffix on
+  that aggregate line names the LAST person this run actually pulled (`ultima_persona`), not every
+  person's own reading -- exactly right for today's one hosted person, and still names something
+  real (that one person's own last-known watch contact) for any future multi-person run, rather
+  than nothing. Named here since the spec's own wording ("the job line for that run") does not by
+  itself resolve what a multi-person aggregate's reloj value should be.
+- *A path that reads the watch's sync but was not separately named*: the spec's ruling 2 names
+  `_registrar_reloj_si_hay` (`body/pull.py:299` at the time the spec was written) "and whatever the
+  today-sweep calls" as the two readers -- both turned out to be the SAME function, since the
+  --hoy sweep's `_pull_hoy_persona` calls `_pull_one_person`, whose own `finally` already calls
+  `_registrar_reloj_si_hay`. No separate reloj-reading code was needed for the sweep; only ruling
+  3's own vacios carry-out needed a new return value.
+
+**Gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, ten sequential alphabetical
+chunks of ~20 dotted modules each (200 modules total), all green:
+```
+chunk 1  (test_accesibilidad..test_baselines)             Ran 381 tests ... OK
+chunk 2  (test_baselines_lote..test_despertar)             Ran 420 tests ... OK
+chunk 3  (test_desplazamiento_import..test_experimentos_intradia)  Ran 395 tests ... OK
+chunk 4  (test_experimentos_modelo..test_history)           Ran 375 tests ... OK
+chunk 5  (test_hogar_aplica_aviso..test_hoy_ventana_comida)  Ran 574 tests ... OK
+chunk 6  (test_i18n_paridad..test_mudanza)                   Ran 446 tests ... OK
+chunk 7  (test_nivel_datos_ui..test_primeros_turnos)         Ran 475 tests ... OK
+chunk 8  (test_privacidad..test_request_log)                 Ran 374 tests ... OK
+chunk 9  (test_seguridad..test_turno_fc)                      Ran 458 tests ... OK
+chunk 10 (test_turno_fc_pantallas..test_web_entry)            Ran 425 tests ... OK
+```
+**Reconciliation**: sum of the ten chunks = 381+420+395+375+574+446+475+374+458+425 = 4323.
+Collect-only count on the same tree (`unittest.TestLoader().discover('tests', top_level_dir='.')
+.countTestCases()`) = 4323. Equal -- every test ran exactly once, none skipped by the chunking.
+
+**No schema or migration change, no cross-repo contract change, and no customer-facing bytes at
+all** (every new/changed string is a server log line: counts, class names and a UTC timestamp
+only, never a health figure, a name or an id) -- merges on green per merge policy A.
+
+**Commits** `81a97792beecbae8c21811f86e9193f42dc8de27` (`body/pull.py`,
+`tests/test_garmin_diagnostico.py`, `tests/test_primer_pull_1.py`, `tests/test_sync_vivo_timer.py`:
+all three rulings and their tests, one commit).
+
