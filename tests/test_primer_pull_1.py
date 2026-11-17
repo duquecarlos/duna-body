@@ -408,7 +408,10 @@ class NoHealthFigureInOutputTest(unittest.TestCase):
         # Nobody has a goal in this test's database, so the weekly-check sweep closes nobody and
         # prints nothing (BODY-SEGURIDAD-3-M: the sweep's person list comes from the goal table).
         # BODY-GARMIN-DIA-VACIO-1 ruling 2: the line now also names the empty-day count.
-        self.assertEqual(buf.getvalue().strip(), "backfill: 1 ok, 0 failed, 15 days stored, 0 empty")
+        # BODY-GARMIN-DIAGNOSTICO-1 ruling 2: and the watch's own last-known contact (unknown
+        # here -- this test never mocks fetch_device_last_sync).
+        self.assertEqual(buf.getvalue().strip(),
+                          "backfill: 1 ok, 0 failed, 15 days stored, 0 empty, reloj desconocido")
 
 
 if __name__ == "__main__":
