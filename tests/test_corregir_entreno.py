@@ -332,6 +332,10 @@ class CatalogParityTest(unittest.TestCase, GarminFixture):
     def setUp(self):
         self.conn = _conn(self)
         self._seed_garmin(self.conn)
+        # mcp._lista_herramientas sets herramientas._TURNOS_ACTUAL as a side effect -- restore the
+        # default so this test never leaks state into another test module (tests/test_turnos_
+        # opcional_3.py's own precedent for this same ContextVar).
+        self.addCleanup(herramientas._TURNOS_ACTUAL.set, True)
 
     def test_listed_in_the_in_app_registry(self):
         nombres = {h["nombre"] for h in herramientas.HERRAMIENTAS if h["tipo"] == "propuesta"}
