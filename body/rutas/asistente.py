@@ -18,7 +18,7 @@ from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from .. import anatomia, db, history, horizonte, identity, nutriente_objetivo
+from .. import anatomia, comidas, db, history, horizonte, identity, nutriente_objetivo
 from ..agente import bucle as agente_bucle
 from ..agente import cliente as agente_cliente
 from ..agente import conversacion as agente_conversacion
@@ -324,24 +324,32 @@ def _tarjeta_registrar_medida(t: T, defs: dict, despues: dict, antes_json: dict 
     return antes_txt, despues_txt, None
 
 
-def _momento_ingesta_txt(t: T, ts_local: str | None) -> str | None:
+_MOMENTO_I18N = {
+    "desayuno": "asistente.propuesta.ingesta_momento_desayuno",
+    "almuerzo": "asistente.propuesta.ingesta_momento_almuerzo",
+    "merienda": "asistente.propuesta.ingesta_momento_merienda",
+    "cena": "asistente.propuesta.ingesta_momento_cena",
+}
+
+
+def _momento_clave_txt(t: T, clave: str) -> str:
+    """One of the four default labels, or the clave itself capitalised when it is a custom one with
+    no i18n key (BODY-HOGAR-ESCRIBE-1-W ruling 2)."""
+    key = _MOMENTO_I18N.get(clave)
+    return t(key) if key else clave.capitalize()
+
+
+def _momento_ingesta_txt(t: T, conn, person_id: int, ts_local: str | None) -> str | None:
     """BODY-PROTEINA-1: a plain-word time-of-day label from `ts_local`'s own hour -- "lunch" style,
-    never shown when there is no `ts_local` (the entry is "sometime that day" only)."""
+    never shown when there is no `ts_local` (the entry is "sometime that day" only). BODY-HOGAR-
+    ESCRIBE-1-W ruling 2: rewired to the person's own `comidas.momento_de` windows instead of a
+    hardcoded hour rule -- same labels for the four defaults."""
     if not ts_local:
         return None
-    try:
-        hora = datetime.fromisoformat(ts_local).hour
-    except ValueError:
+    clave = comidas.momento_de(conn, person_id, ts_local)
+    if clave is None:
         return None
-    if 5 <= hora < 11:
-        return t("asistente.propuesta.ingesta_momento_desayuno")
-    if 11 <= hora < 16:
-        return t("asistente.propuesta.ingesta_momento_almuerzo")
-    if 16 <= hora < 19:
-        return t("asistente.propuesta.ingesta_momento_merienda")
-    if 19 <= hora < 23:
-        return t("asistente.propuesta.ingesta_momento_cena")
-    return None
+    return _momento_clave_txt(t, clave)
 
 
 def _ingesta_valor_txt(t: T, defs: dict, metric_key: str, amount: float, estimado: bool, fecha: str) -> str:
@@ -354,7 +362,7 @@ def _ingesta_valor_txt(t: T, defs: dict, metric_key: str, amount: float, estimad
 def _tarjeta_registrar_ingesta(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
     partes = [_ingesta_valor_txt(t, defs, despues["metric_key"], despues["amount"], despues["estimado"], fecha)]
-    momento = _momento_ingesta_txt(t, despues.get("ts_local"))
+    momento = _momento_ingesta_txt(t, conn, person_id, despues.get("ts_local"))
     if momento:
         partes.append(momento)
     if despues.get("descripcion"):
@@ -373,7 +381,7 @@ def _tarjeta_borrar_ingesta(t: T, defs: dict, despues: dict, antes_json: dict | 
     fecha = comun._short_date(t, date.fromisoformat(antes_json["day"]))
     partes = [_ingesta_valor_txt(t, defs, antes_json["metric_key"], antes_json["amount"], antes_json["estimado"],
                                  fecha)]
-    momento = _momento_ingesta_txt(t, antes_json.get("ts_local"))
+    momento = _momento_ingesta_txt(t, conn, person_id, antes_json.get("ts_local"))
     if momento:
         partes.append(momento)
     if antes_json.get("descripcion"):
@@ -402,7 +410,11 @@ def _tarjeta_registrar_comida(t: T, defs: dict, despues: dict, antes_json: dict 
     Never raises on a stored amount this card cannot show (_tarjeta_propuesta_segura's own
     fallback covers any surprise, same as every other card here)."""
     fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
-    momento = _momento_ingesta_txt(t, despues.get("ts_local"))
+    # BODY-HOGAR-ESCRIBE-1-W ruling 3: the person's own stated moment wins over the hour-derived
+    # one, when they gave one.
+    momento_clave = despues.get("momento")
+    momento = _momento_clave_txt(t, momento_clave) if momento_clave \
+        else _momento_ingesta_txt(t, conn, person_id, despues.get("ts_local"))
     linea_fecha = fecha if not momento else fecha + " · " + momento
     por_clave = {c["metric_key"]: c for c in despues["cantidades"]}
     orden = [k for k in agente_herramientas.INGESTA_METRIC_KEYS if k in por_clave]
@@ -765,6 +777,19 @@ def _tarjeta_corregir_meta_plan(t: T, defs: dict, despues: dict, antes_json: dic
     return antes_txt, despues_txt, None
 
 
+def _tarjeta_anotar_sesion(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
+    """BODY-HOGAR-ESCRIBE-1 ruling 4: the planned session's own title and date, then the note in
+    quotes, then a plain "marked as done" line only when `hecha` was true -- insert-shaped like
+    `registrar_checkin`'s own card, never an antes/despues pair (a note has no prior wording the
+    person is correcting)."""
+    fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
+    lineas = [t("asistente.propuesta.sesion_titulo_fecha", titulo=despues["titulo"], fecha=fecha),
+              t("asistente.propuesta.sesion_nota", nota=despues["nota"])]
+    if despues.get("hecha"):
+        lineas.append(t("asistente.propuesta.sesion_hecha"))
+    return None, "\n".join(lineas), None
+
+
 # One card builder per action (BODY-PROPUESTAS-TABLA-1), keyed exactly like body/agente/
 # propuestas.py's TABLA and body/agente/herramientas.py's `propuesta`-kind tools
 # (tests/test_propuestas_tabla.py enforces the three sets match). Each builder returns
@@ -797,6 +822,7 @@ TARJETAS = {
     "proponer_plan": _tarjeta_proponer_plan,
     "ampliar_plan": _tarjeta_ampliar_plan,
     "corregir_meta_plan": _tarjeta_corregir_meta_plan,
+    "anotar_sesion": _tarjeta_anotar_sesion,
 }
 
 
@@ -834,8 +860,12 @@ def _tarjeta_propuesta(t: T, defs: dict, registro: dict, origen_conversacion: st
     # that applies regardless of who tapped Aplicar.
     if registro["aplicada_via"] == "mcp":
         origen_etiqueta = t("asistente.propuesta.aplicado_mcp")
+    elif registro["aplicada_via"] == "hogar":
+        origen_etiqueta = t("asistente.propuesta.aplicado_hogar")
     elif origen_conversacion == "mcp":
         origen_etiqueta = t("asistente.propuesta.origen_mcp")
+    elif origen_conversacion == "hogar":
+        origen_etiqueta = t("asistente.propuesta.origen_hogar")
     else:
         origen_etiqueta = None
     return {

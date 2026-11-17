@@ -63,7 +63,7 @@ import threading
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .. import anatomia, catalogo_tendencias, compartir, cuenta, db, enlaces, entreno_historial, errores, \
+from .. import anatomia, catalogo_tendencias, comidas, compartir, cuenta, db, enlaces, entreno_historial, errores, \
     experimentos, fechas, garmin_cuenta, goals, history, horizonte, household, nutriente_objetivo, profile, pull, \
     readiness, shift_import, turnos_costo, tutoriales
 from ..i18n import LANGS, T
@@ -259,6 +259,18 @@ _PARAM_REGISTRAR_ENTRENO = {
     "required": ["day", "series"],
     "additionalProperties": False,
 }
+# BODY-HOGAR-ESCRIBE-1 ruling 4: plan_id names an existing PLANNED session row (the id the Hogar
+# feed already returns) -- never a title, which can be misheard.
+_PARAM_ANOTAR_SESION = {
+    "type": "object",
+    "properties": {
+        "plan_id": {"type": "integer"},
+        "nota": {"type": "string"},
+        "hecha": {"type": "boolean"},
+    },
+    "required": ["plan_id", "nota"],
+    "additionalProperties": False,
+}
 _PARAM_DESCARTAR_SERIES = {
     "type": "object",
     "properties": {
@@ -362,6 +374,10 @@ _PARAM_COMENSAL_COMPARTIDO = {
     "required": ["nombre", "nutrientes"],
     "additionalProperties": False,
 }
+# BODY-HOGAR-ESCRIBE-1-W ruling 3: `momento` is any clave the PERSON already has (their own
+# momento_comida rows, or the DEFAULT_MOMENTOS claves when they have none) -- checked in CODE
+# against the live `comidas.momentos` at call time, never a hardcoded enum, the same template
+# pattern `registrar_medida`'s metric_key already uses for a per-person live source.
 _PARAM_REGISTRAR_COMIDA = {
     "type": "object",
     "properties": {
@@ -370,6 +386,7 @@ _PARAM_REGISTRAR_COMIDA = {
         "descripcion": {"type": "string"},
         "cantidades": {"type": "array", "items": _PARAM_CANTIDAD_COMIDA, "minItems": 1},
         "compartida_con": {"type": "array", "items": _PARAM_COMENSAL_COMPARTIDO},
+        "momento": {"type": "string"},
     },
     "required": ["descripcion", "cantidades"],
     "additionalProperties": False,
@@ -1474,6 +1491,35 @@ def _registrar_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
+def _anotar_sesion(conn: sqlite3.Connection, person_id: int, conversacion_id: int, plan_id: int, nota: str,
+                    hecha: bool | None = None) -> dict:
+    """Proposes a note on an existing PLANNED session row (BODY-HOGAR-ESCRIBE-1 ruling 4): how the
+    session actually went, matched against the plan. `hecha=true` also proposes marking the plan
+    'done' (BODY-PLAN-SESION-HECHA-1 then counts it, once, toward sesiones_fuerza); left out or
+    false, the plan's own status is proposed unchanged. `antes`/`despues` each carry the plan row's
+    FULL note/timestamp/status state, the same update-shaped, caller-resolves-state convention
+    `corregir_comida` already uses, so `propuestas.deshacer` can restore it exactly through the
+    same writer (`db.anotar_sesion_plan`). Refuses a plan_id that is not this person's own, by
+    name -- never silently matched to someone else's session."""
+    nota = (nota or "").strip()
+    if not (1 <= len(nota) <= 2000):
+        raise ToolError("nota debe tener entre 1 y 2000 caracteres")
+    if hecha is not None and not isinstance(hecha, bool):
+        raise ToolError("hecha debe ser verdadero o falso")
+    fila = conn.execute(
+        "SELECT day, title, status, nota_sesion, nota_sesion_en FROM plan WHERE id = ? AND person_id = ?",
+        (plan_id, person_id),
+    ).fetchone()
+    if fila is None:
+        raise ToolError(f"plan desconocido: {plan_id!r}")
+    antes = {"status": fila["status"], "nota_sesion": fila["nota_sesion"], "nota_sesion_en": fila["nota_sesion_en"]}
+    nuevo_status = "done" if hecha else fila["status"]
+    despues = {"plan_id": plan_id, "day": fila["day"], "titulo": fila["title"], "nota": nota,
+               "hecha": bool(hecha), "status": nuevo_status}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "anotar_sesion", despues, antes=antes)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
 def _descartar_series(conn: sqlite3.Connection, person_id: int, conversacion_id: int, day: str,
                        series: list) -> dict:
     """Proposes marking existing watch slots of an already-logged day's strength activity as not
@@ -1802,7 +1848,7 @@ def _validar_comensal_nutrientes(t: T, nutrientes) -> dict:
 
 def _registrar_comida(conn: sqlite3.Connection, person_id: int, conversacion_id: int, descripcion: str,
                        cantidades: list, day: str | None = None, hora: str | None = None,
-                       compartida_con: list | None = None) -> dict:
+                       compartida_con: list | None = None, momento: str | None = None) -> dict:
     """Proposes one spoken meal as a single call (BODY-COMIDA-1 ruling 3): estimate every nutrient
     you can from the person's own words -- never ask them to weigh food -- say which amounts are
     estimates, and name caffeine/alcohol with the time when the person gives one. Insert-shaped,
@@ -1814,7 +1860,11 @@ def _registrar_comida(conn: sqlite3.Connection, person_id: int, conversacion_id:
     the household, refused BY NAME (`agente.error.comida_sin_consentimiento`) before the proposal
     is even created when one of them has not turned on receiving shared meals, the same "say so
     plainly" rule as every other door here. The proposal is still addressed to the author alone;
-    applying it is what actually shares the meal (body/agente/propuestas.py)."""
+    applying it is what actually shares the meal (body/agente/propuestas.py).
+
+    BODY-HOGAR-ESCRIBE-1-W ruling 3: `momento` names which of the person's own meal moments this
+    is (any clave `comidas.momentos` returns for them); left out, the moment is derived from
+    `ts_local` as before this argument existed. Refused BY NAME when it is not one of theirs."""
     descripcion = (descripcion or "").strip()
     if not descripcion:
         raise ToolError("falta la descripción de la comida")
@@ -1839,10 +1889,12 @@ def _registrar_comida(conn: sqlite3.Connection, person_id: int, conversacion_id:
         if not isinstance(estimado, bool):
             raise ToolError("estimado debe ser verdadero o falso")
         limpias.append({"metric_key": metric_key, "amount": amount, "estimado": estimado})
+    if momento is not None and momento not in {m["clave"] for m in comidas.momentos(conn, person_id)}:
+        raise ToolError(f"momento desconocido: {momento!r}")
     day = day or _hoy_local(conn, person_id)
     _dia_no_futuro(conn, person_id, day)
     despues = {"descripcion": descripcion, "cantidades": limpias, "day": day,
-               "ts_local": _hora_a_ts_local(day, hora)}
+               "ts_local": _hora_a_ts_local(day, hora), "momento": momento}
     if compartida_con:
         comensales_limpios = []
         vistos_pid = set()
@@ -2585,6 +2637,12 @@ HERRAMIENTAS = [
                      "sesión manual. No lo guarda: registra la propuesta para que la persona la apruebe "
                      "en el chat.",
      "parametros": _PARAM_REGISTRAR_ENTRENO, "funcion": _registrar_entreno},
+    {"nombre": "anotar_sesion", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone una nota sobre cómo fue una sesión de entrenamiento ya planeada (plan_id es el id "
+                     "del plan, nunca su título). Di si la sesión quedó hecha con 'hecha': true -- déjalo en "
+                     "falso o sin dar si la persona todavía no la hizo o solo está comentando el plan. No "
+                     "guarda la nota: registra la propuesta para que la persona la apruebe en el chat.",
+     "parametros": _PARAM_ANOTAR_SESION, "funcion": _anotar_sesion},
     {"nombre": "descartar_series", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone marcar como no hechas una o más series del reloj de un día ya "
                      "registrado (por ejemplo una serie que quedó de un ejercicio que la persona "

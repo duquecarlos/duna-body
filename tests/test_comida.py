@@ -51,7 +51,7 @@ class FreshDbTest(unittest.TestCase):
 
     def test_comida_table_exists_with_the_contract_columns(self):
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(comida)")}
-        expected = {"id", "person_id", "day", "ts_local", "descripcion", "created_at", "updated_at"}
+        expected = {"id", "person_id", "day", "ts_local", "descripcion", "created_at", "updated_at", "momento"}
         self.assertEqual(cols, expected)
 
     def test_ingesta_gained_a_nullable_comida_id(self):
