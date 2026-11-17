@@ -25424,3 +25424,124 @@ THE WORK section's own step 5.
 smoke (`tests.test_hogar_aplica_aviso tests.test_garmin_conectar_vivo tests.test_mcp_visible
 tests.test_rendimiento`): `Ran 45 tests ... OK`.
 
+## BODY-RENDIMIENTO-4
+
+**The gap.** `tests/test_rendimiento.py`'s `RouteCostCeilingTest` calls every GET route with no
+`Authorization` header, in LOCAL mode (no `BODY_CUENTA_ISSUER`), against this file's own `_seed()`
+fixture. Every route gated on a device key (`identity.person_from_device`) or on `cuenta.hosted()`
+404s before its own logic ever runs, so `_CEILINGS`' entry for each of them measures that early
+refusal, not the route. The table's own comments already said so for some of them: BODY-HOGAR-
+ESCRIBE-2's comment at the four `/api/hogar/*` routes and `/api/asistente/mcp/herramientas`/
+`/api/vida/semana` ("measured 0 statements"), and BODY-SYNC-VIVO-2's comment at `/garmin/estado-
+vivo` ("local mode's early 404, same path as /garmin's own"). Two slices found this independently
+on 2026-11-17: BODY-HOGAR-METAS-INGESTA-1 (merged `801fc2c`) added `metas` to `/api/hogar/manana`,
+a cost the ceiling could never see; BODY-APERTURA-AUTOMATICA-1 (merged `3a1261d`, ledger entry
+above) raised `/garmin`'s own ceiling for its live-watch card but recorded that "the hosted+
+connected cost path (12 statements) this slice actually added to" was never the path the ceiling
+sweep exercises.
+
+**The rulings** (quality questions; tests only, no Tier 1 path):
+1. A ceiling that measures a 404 is not a ceiling -- every route the main sweep cannot reach gets a
+   SECOND measurement on its real path (an authorised device key for the device-key routes;
+   hosted + connected for `/garmin` and `/garmin/estado-vivo`), with its own measured-plus-30%
+   ceiling, in the same file.
+2. The main sweep's existing table stays as it is (it still proves the early 404 costs nothing),
+   and the drift guard is extended so a NEW device-key or hosted-only GET route cannot join the app
+   without a real-path ceiling too.
+3. For `/api/hogar/manana`, prove the real-path count does not grow with the number of daily
+   intake targets (one vs three) if `tests/test_hogar_feed.py` does not already prove it through
+   the route -- check first, and do not duplicate a proof that exists (name it in the ledger
+   instead).
+
+**Measuring the gap, not guessing it.** A one-off sweep script (never committed) ran the main
+sweep's own fixture and routes with no auth header, in LOCAL mode, and recorded every non-200
+status. Result: 13 routes, not the 8 the spec's own surface named "at minimum" -- also
+`/ajustes/dispositivos`, `/login`, `/login/cuenta/start`, `/login/cuenta/callback` and
+`/privacidad/consentimiento`, every one of which 404s in LOCAL mode behind the identical
+`if not cuenta.hosted(): raise HTTPException(404)` guard the named 8 use. This exact 13-route set
+is `tests/test_estados_vacios.py`'s own `_ALWAYS_404_LOCAL`, confirming the measurement rather than
+the spec's own partial list. Of the 13, `tests/test_estados_vacios_hosted.py`'s own
+`_HOSTED_ONLY_CAN_200` already documents that only `/garmin`, `/ajustes/dispositivos` and
+`/privacidad/consentimiento` can ever answer 200; `/login` and `/login/cuenta/start` always answer
+303 (redirect to the issuer) and `/login/cuenta/callback` always answers 303 on a successful sign-in
+(redirect to `return_to` or "/") or 400 with no real flow -- never 200, by that module's own
+design. Ruling 1's "assert a 200" is read as "assert the route's own real, documented status" for
+these three: 303 for all of them on their real path, never a literal 200 (deviation, below).
+
+**`_CEILINGS_REAL_PATH`** (`tests/test_rendimiento.py`), ceiling = `ceil(measured * 1.3)`, same
+margin rule as `_CEILINGS`:
+
+| route | status | measured | ceiling |
+|---|---|---|---|
+| `/ajustes/dispositivos` | 200 | 7 | 10 |
+| `/api/asistente/mcp/herramientas` | 200 | 18 | 24 |
+| `/api/hogar/herramientas` | 200 | 17 | 23 |
+| `/api/hogar/manana` | 200 | 27 | 36 |
+| `/api/hogar/serie` | 200 | 13 | 17 |
+| `/api/hogar/turnos` | 200 | 12 | 16 |
+| `/api/vida/semana` | 200 | 47 | 62 |
+| `/garmin` | 200 | 12 | 16 |
+| `/garmin/estado-vivo` | 200 | 8 | 11 |
+| `/login` | 303 | 7 | 10 |
+| `/login/cuenta/callback` | 303 | 12 | 16 |
+| `/login/cuenta/start` | 303 | 7 | 10 |
+| `/privacidad/consentimiento` | 200 | 5 | 7 |
+
+Every one of the 13 opens at most 2 connections on its real path (`_MAX_CONNECTIONS`, unchanged).
+`/garmin` measured 12 statements -- the exact figure BODY-APERTURA-AUTOMATICA-1's own report named
+and never measured; this slice is what measures it.
+
+**Mechanism per group**, reusing each route's own existing test fixture (never a second mechanism):
+the four `/api/hogar/*` routes plus `/api/asistente/mcp/herramientas` and `/api/vida/semana` use
+`dispositivo.crear(conn, 1, name, {scope})` + `Authorization: Bearer <key>`, the same fixture
+`tests/test_hogar_feed.py`, `tests/test_hogar_escribe_rutas.py`, `tests/test_mcp_remoto.py` and
+`tests/test_dispositivo.py` each already build. `/garmin`, `/garmin/estado-vivo`,
+`/ajustes/dispositivos` and `/privacidad/consentimiento` use hosted mode
+(`BODY_CUENTA_ISSUER`/`BODY_PUBLIC_URL`/`BODY_CUENTA_CLIENT_SECRET`/`BODY_TOKEN_KEY`) plus
+`identity.current_person_id` overridden to person 1, the same mechanism
+`tests/test_garmin_conectar_vivo.py` and `tests/test_dispositivo.py`'s own `AjustesPageTest` use;
+`/garmin` and `/garmin/estado-vivo` are measured connected with a registered sync error (the
+richest state those routes' own tests exercise). `/login`, `/login/cuenta/start` and
+`/login/cuenta/callback` take no `identity.current_person_id` dependency at all (checked in
+`body/rutas/sesion.py` -- neither route declares it), so a dependency override cannot reach their
+real cost; these three use a genuine OIDC round trip through `tests/test_cuenta_rp.py`'s own
+`FakeIssuer`, with person 1 (this file's own fixture) pre-linked to the signing-in `sub` so the
+callback's real path is a RETURNING person, not a new sign-up (which would pay an extra `person`
+INSERT no existing user ever does).
+
+**The drift guard** (`RouteCostRealPathTest.test_the_main_sweeps_404_set_matches_this_tables_keys`):
+asserts, on a fresh LOCAL-mode fixture, that `{route.path for route in every GET route if the main
+sweep's own no-header call answers 401/403/404}` equals `set(_CEILINGS_REAL_PATH)` -- exactly the
+13 routes in the table above. A new device-key or hosted-only GET route added later will answer
+404/401 in that same sweep and fail this assertion until it gets its own real-path entry.
+
+**Ruling 3.** `tests/test_hogar_feed.py`'s `MetasTest.test_cost_does_not_grow_with_the_number_of_
+targets` already proves the flat-cost claim, but at the `hogar_feed.manana()` function level, never
+through the HTTP route -- so it does not duplicate what ruling 3 asks for. Added
+`HogarMananaCostIndependentOfTargetCountTest.test_one_target_vs_three_same_statement_count_
+through_the_route` in `tests/test_rendimiento.py`: one nutrient target vs three, through
+`GET /api/hogar/manana` with a `hogar:leer` device key, same statement count both times (confirmed
+equal when the test ran).
+
+**Deviation from the spec's literal wording.** The spec's surface named only 8 routes "at minimum"
+and ruling 1 says "assert a 200"; measuring found 13 routes, and 3 of them (`/login`,
+`/login/cuenta/start`, `/login/cuenta/callback`) never answer 200 on any path, by
+`tests/test_estados_vacios_hosted.py`'s own prior documentation of their correct behaviour. Did:
+included all 13 in `_CEILINGS_REAL_PATH` (required by the drift guard matching the main sweep's
+actual 401/403/404 set), and asserted each of those three routes' real, documented status (303)
+rather than a literal 200.
+
+**Gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, ten sequential alphabetical
+chunks of ~20 dotted modules each (194 modules total), all green:
+`381+444+379+379+558+493+459+333+532+238+4(the missed tests.test_login module, run separately and
+folded into chunk 5's own count) = 4200`. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`): `4200` -- exact
+match (4195 before this slice + 5 new: 4 in `RouteCostRealPathTest`, 1 in
+`HogarMananaCostIndependentOfTargetCountTest`).
+
+**No schema change, no cross-repo contract change, no customer-facing bytes** (tests only) -- this
+diff merges on green per merge policy A.
+
+**Commits** `06d8770` (`tests/test_rendimiento.py`: `_CEILINGS_REAL_PATH`, `RouteCostRealPathTest`,
+`HogarMananaCostIndependentOfTargetCountTest`).
+
