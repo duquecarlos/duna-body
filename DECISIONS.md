@@ -25543,5 +25543,7 @@ match (4195 before this slice + 5 new: 4 in `RouteCostRealPathTest`, 1 in
 diff merges on green per merge policy A.
 
 **Commits** `06d8770` (`tests/test_rendimiento.py`: `_CEILINGS_REAL_PATH`, `RouteCostRealPathTest`,
-`HogarMananaCostIndependentOfTargetCountTest`).
+`HogarMananaCostIndependentOfTargetCountTest`), `456589d` (this ledger entry) -- merged
+`dbbfd6fc807aeb49fe1d36df336c12522ba27c98` (`--no-ff`, no conflicts). Post-merge smoke
+(`tests.test_rendimiento`): `Ran 12 tests ... OK`.
 
