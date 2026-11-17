@@ -25084,3 +25084,14 @@ additive, backward-compatible CHECK widening ruling A names (an older build igno
 value, the same reversibility every one of the twelve prior widenings already had). No cross-repo
 contract touched.
 
+**Merged** `8ff9d07` (`--no-ff`, no conflicts). The step-5 smoke test, run literally in the order
+the spec names (`test_corregir_entreno`, `test_migraciones`, `test_agente_entreno`,
+`test_agente_medida`, `test_agente_registro`), first failed: `CatalogParityTest`'s stdio check calls
+`mcp._lista_herramientas`, which sets `herramientas._TURNOS_ACTUAL` as a side effect, and nothing
+reset it, so `test_agente_registro`'s `DisponiblesTest` then saw it still false -- a pre-existing
+gap in that ContextVar's test hygiene (`tests/test_turnos_opcional_3.py` already resets it after its
+own use; nothing else that touches it did) that the full alphabetical gate never exposes, because
+`test_agente_registro` always runs before every file that sets it there. Fixed on `main`, forward,
+with the same `addCleanup` reset (`b8f182f`) -- the merge commit's own tree was not amended. Smoke,
+re-run after the fix: `Ran 125 tests ... OK`.
+
