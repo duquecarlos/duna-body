@@ -25316,3 +25316,109 @@ explicitly authorised the merge in words (step 5: "Merge if green: `git checkout
 **Merged** `801fc2c` (`--no-ff`, no conflicts). Post-merge smoke
 (`tests.test_hogar_feed tests.test_rendimiento`): `Ran 76 tests ... OK`.
 
+## BODY-APERTURA-AUTOMATICA-1
+
+Hub «Para productos» from Consola, 2026-11-17 (`hit_01m7kwxr7ptfahn54evqtz27g1`, «apertura-
+automatica», Carlos via the desk): "when the app does a task people used to do by hand, the ITEM
+shows it -- live steps, proof, where to take over, the mode -- and nothing lands silently."
+
+**Census** (BODY-HUB-PRINCIPIOS-CENSO-1, OBSERVED, `logs/worker-body-hub-principios-censo-1-body-
+app-20261117T022417.json`, the only report for that ID) measured the two smallest gaps: (1) Hoy's
+24h «nothing lands silently» line (`_mcp_aplicado_ctx`, `body/rutas/hoy.py:259-267` as it stood,
+over `agente_conversacion.aplicados_mcp_recientes`, `body/agente/conversacion.py:55-74` as it
+stood) counted only `aplicada_via = 'mcp'`, so a change Hogar applied in Body (`aplicada_via =
+'hogar'`, BODY-HOGAR-ESCRIBE-1/2) landed with no line on Hoy -- only the proposal card's «Aplicado
+desde Hogar» label showed it, and only to someone who opened the conversation; (2) the live «Tu
+reloj» card (`_reloj.html`, included only by `today.html:13` under `{% if garmin_sync or
+reloj_vivo %}`) was absent from `/garmin` (`_garmin_ctx`, `body/rutas/garmin.py:81-92` as it
+stood), so the first pull right after connecting ran where the person could not see it.
+
+**The orchestrator's rulings** (quality questions; no Tier 1 path): (1) one line PER OUTSIDE
+ORIGIN, never merged into one «your assistant» sentence -- the person must know WHICH app changed
+their data (Hogar is not their personal assistant); (2) `/garmin` shows the same live card Hoy
+shows, built by the same context code, never a second copy.
+
+**Ruling 1, as built.** `agente_conversacion.aplicados_mcp_recientes` (`body/agente/
+conversacion.py:55-73`) gained a `via: str = "mcp"` parameter, the SQL's hardcoded `'mcp'`
+replaced by the bound parameter -- every existing caller (default `via='mcp'`) and
+`tests/test_mcp_visible.py`'s own `HoyAplicadoLineaTest` unchanged. `hoy.py`'s new
+`_hogar_aplicado_ctx` (`body/rutas/hoy.py:234-243`) sits beside `_mcp_aplicado_ctx`
+(`:223-232`), same 24h window, same injectable clock, same "no line, no empty count" shape, calling
+`aplicados_mcp_recientes(conn, person_id, ahora, via="hogar")`. `today()` computes it
+(`body/rutas/hoy.py:711`: `hogar_aplicado = _hogar_aplicado_ctx(conn, person_id)`) and passes it to
+the template (`:749`). `today.html` renders Hogar's own line directly after the mcp line
+(`:22-24`), same `.aviso`/`.taplink` markup, same link target (`/?asis_conversacion={{
+hogar_aplicado.conversacion_id }}#asis-btn`) -- one line per outside origin, never merged. The
+person's own tap on a Hogar-origin proposal (`agente_propuestas.aplicar`, which never sets
+`aplicada_via`) never raises it, proven the same way `HoyLineaTest` already proves it for mcp.
+
+**Ruling 2, as built.** `body/rutas/garmin.py`'s own `_garmin_sync_ctx` (`:116-127`) and
+`_reloj_vivo_ctx` (`:137-150`) -- already the ONE place this logic lived, since `/garmin/estado-
+vivo`'s poll already called them -- are now also `hoy.py`'s today() call site: `hoy.py` imports
+`from . import garmin as garmin_rutas` (`:26`) and calls `garmin_rutas._garmin_sync_ctx(...)` /
+`garmin_rutas._reloj_vivo_ctx(...)` (`body/rutas/hoy.py:743-744`) instead of carrying its own
+duplicate copy (the two functions removed from `hoy.py`, where they used to sit at the old
+`:130-164`). `garmin_view` (`body/rutas/garmin.py:95-111`) now reads `person`, computes
+`today_local`/`day` the same way `/garmin/estado-vivo` already does, builds `garmin_sync`/
+`reloj_vivo` from the SAME two functions, and passes them into `_garmin_ctx`'s `**extra`.
+`garmin.html` includes the same `_reloj.html` partial and the same conditional `reloj-sync.js`
+script tag `today.html` uses (`body/templates/garmin.html:5-6`), right after the page's own `<h1>`.
+Not connected -> `garmin_cuenta.estado_conexion`/`estado_sync` both read "no row", both context
+functions return `None`, no card -- no extra guard needed. GET `/garmin` still writes nothing
+(`tests/test_get_sin_escritura.py`'s existing sweep, re-confirmed green; `tests/
+test_garmin_conectar_vivo.py`'s own two write-guard cases, connected and not).
+
+**Strings, verbatim** (`body/i18n/{es,en}.json`, beside `today.mcp_aplicado`): `today.
+hogar_aplicado` es "Hogar aplicó 1 cambio · Ver" / en "Hogar applied 1 change · View";
+`today.hogar_aplicado_many` (`{n}`) es "Hogar aplicó {n} cambios · Ver" / en "Hogar applied {n}
+changes · View". No new strings for ruling 2 -- the card's own text was already shared.
+
+**Query counts, measured with `tests/_rutas.py`'s `contar_sql`** (figures are statement COUNTS,
+never a health figure): `/` (`demo._seed(dias=30)` fixture, no live Garmin connection) -- 115
+statements before this slice, 116 after (checked out the pre-slice `body/rutas/hoy.py` via `git
+checkout 0ccf5f4 -- body/rutas/hoy.py`, measured, restored with `git checkout HEAD --
+body/rutas/hoy.py`; tree confirmed clean both before and after by `git status --porcelain`), a flat
++1 for `_hogar_aplicado_ctx`'s own query, present whether or not a Hogar apply exists (the branch
+only changes what the query returns, never whether it runs). `tests/test_rendimiento.py`'s own
+ceiling for `/` (155) absorbed it with no change needed -- `RouteCostCeilingTest` stayed green
+unedited. `/garmin`, hosted + connected + one recorded error (the state the ceiling-sweep fixture
+never reaches, since that fixture runs un-hosted and 404s before touching any of this route's own
+code) -- 8 statements before this slice, 12 after (same checkout-measure-restore technique against
+`body/rutas/garmin.py` at `40c6bb5`, the commit before ruling 2): +1 `comun._latest_day`
+(`db.days_with_data`), +1 `_garmin_sync_ctx`'s own `garmin_cuenta.estado_conexion`, +2
+`_reloj_vivo_ctx`'s own `garmin_cuenta.estado_sync` (one `garmin_cuenta` row read, one
+`db.last_sync` read). `tests/test_rendimiento.py`'s own ceiling for `/garmin` (9) is measured
+against that un-hosted, 404-before-the-route-runs fixture (4 statements, unchanged by this slice)
+and so never exercised ruling 2's new reads either way -- noted here rather than silently claimed
+covered; `tests/test_garmin_conectar_vivo.py`'s own tests are hosted and connected, and are what
+actually exercises the new reads.
+
+**Tests.** `tests/test_hogar_aplica_aviso.py` (new, 11 cases): no line / singular+link / plural+
+newest-link / English / gone past 24h / the injectable-clock edge / the person's own tap on a
+Hogar-origin proposal never raises it / an mcp apply and a hogar apply each show their own line,
+counting only their own / another person's apply never counted / the hogar line renders directly
+after the mcp line / the `/` statement ceiling unchanged. `tests/test_garmin_conectar_vivo.py`
+(new, 5 cases): connected-with-an-error shows the card's root element / not connected shows no
+card / the same sentence Hoy renders for that state also renders on `/garmin` (proof of "never a
+second copy") / GET writes nothing, connected and not. `tests/test_mcp_visible.py` needed no
+change -- its own `aplicados_mcp_recientes` calls all use the new parameter's default. No census
+list needed a new row: `today.hogar_aplicado`/`_many` are literal `t(...)` calls,
+`tests/test_i18n_paridad.py`'s own scan found them with no edit.
+
+**Gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, ten sequential alphabetical
+chunks of ~20 dotted modules each (194 modules total), all green: `381+444+379+379+558+497+459+
+328+532+238 = 4195`. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`): `4195` -- exact
+match (4179 before this slice + 16 new: 11 in `test_hogar_aplica_aviso.py`, 5 in
+`test_garmin_conectar_vivo.py`).
+
+**No schema change, no cross-repo contract change. Customer-facing bytes changed** (Hoy gained a
+new aviso line, `/garmin` gained a live card) -- **this spec is the merge authorisation for the
+four strings above, exactly as written; no other text changed**, so this diff merges on green per
+THE WORK section's own step 5.
+
+**Commits** `40c6bb5` (ruling 1: `body/agente/conversacion.py`, `body/templates/today.html`,
+`body/i18n/{es,en}.json`, `tests/test_hogar_aplica_aviso.py`), `b3260fc` (ruling 2:
+`body/rutas/hoy.py`, `body/rutas/garmin.py`, `body/templates/garmin.html`,
+`tests/test_garmin_conectar_vivo.py`).
+
