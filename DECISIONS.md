@@ -26292,5 +26292,10 @@ only, never a health figure, a name or an id) -- merges on green per merge polic
 
 **Commits** `81a97792beecbae8c21811f86e9193f42dc8de27` (`body/pull.py`,
 `tests/test_garmin_diagnostico.py`, `tests/test_primer_pull_1.py`, `tests/test_sync_vivo_timer.py`:
-all three rulings and their tests, one commit).
+all three rulings and their tests, one commit),
+`0e571c1ebdb13ff456497e28d4dfc0f19ad1c46c` (this ledger entry) -- merged
+`635874ba797e9f1593514f7c78060d04e0b992a4` (`--no-ff`, no conflicts; tree identity proven, merge
+tree `46b60e459ff0367e878f5076d8c585d260b5f2ad` equals the branch's own tree, empty diff).
+Post-merge smoke (`tests.test_garmin_diagnostico tests.test_garmin_dia_vacio
+tests.test_sync_vivo_estado`): `Ran 109 tests ... OK`.
 
