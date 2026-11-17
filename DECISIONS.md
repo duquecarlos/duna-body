@@ -24504,3 +24504,180 @@ have stopped this slice at AWAITING_APPROVAL. It does not reach the merge step a
 stops at RULING_NEEDED with rulings 2/3 open, per "THE WORK"'s own "merge if green" (all five
 rulings), not yet true.
 
+### BODY-HOGAR-ESCRIBE-1-W -- rulings 2, 3, 6
+
+Dispatched on this same branch (`feat/body-hogar-escribe-1`, at `616bd10`) with the orchestrator's
+own ruling on this entry's RULING_NEEDED above, verbatim:
+
+> ORCH-CARLOS-DELEGATES-TIER-1-1, on BODY-HOGAR-ESCRIBE-1-INV's findings and BODY-HOGAR-ESCRIBE-1's
+> RULING_NEEDED: the same additive schema the original spec approved (one per-person table with
+> defaults, one nullable column, one optional tool argument, undoable), now with the two registry
+> files that classify every per-person table, following the ajuste_agente precedent line for line.
+
+And its own new ruling (6), copied from this slice's spec:
+
+> **Register `momento_comida` the way `ajuste_agente` is registered.** In body/privacidad.py, add it
+> beside `ajuste_agente` in the same structure (`FULLY_HANDLED_TABLES` or whichever set
+> `ajuste_agente` sits in): it is the person's own data, exported and deleted with them. In
+> body/mudanza.py, add a `TableSpec` for it shaped like `ajuste_agente`'s entry (match on `person_id`,
+> `clave`). Read both `ajuste_agente` entries first and mirror them; if `ajuste_agente`'s shape cannot
+> carry `momento_comida` (a different key, a different posture), STOP RULING_NEEDED with the
+> measurement rather than inventing a third shape. Seed one `momento_comida` row wherever the
+> persona_fuga / privacidad / mudanza tests seed `ajuste_agente`, so the export, deletion and move are
+> proven on a real row.
+
+Why this is a ruling and not a cleanup: classifying a new per-person table's privacy export/delete
+behaviour and its account-migration copy shape is the judgment call this entry's own RULING_NEEDED
+raised above -- it needed widening this slice's `touches:` to the two registry files, which the
+original slice was told not to do unilaterally.
+
+**Ruling 2, meal moments as per-person data (`body/db.py`, `body/comidas.py`,
+`body/rutas/asistente.py`):** new table `momento_comida (person_id, clave, desde_hora, hasta_hora,
+esperado, orden, PRIMARY KEY (person_id, clave))` (`body/db.py:583-592`), `clave` CHECK-constrained
+to lowercase ascii (letters, digits, underscore), `desde_hora`/`hasta_hora` CHECK 0-24,
+`esperado` CHECK 0/1 -- additive, created once via `SCHEMA`'s own `CREATE TABLE IF NOT EXISTS`
+(no rebuild needed, a brand-new table). New `body/comidas.py`: `DEFAULT_MOMENTOS` (the one
+constant: desayuno 5-11 esperado 1 orden 1, almuerzo 11-16 esperado 1 orden 2, merienda 16-19
+esperado 0 orden 3, cena 19-23 esperado 1 orden 4 -- today's display rule, now data),
+`momentos(conn, person_id)` (`:20`, a person's own rows when they have any, the defaults otherwise)
+and `momento_de(conn, person_id, ts_local)` (`:31`, the clave whose window contains `ts_local`'s own
+hour, or `None`). The hour-to-moment display helper in `body/rutas/asistente.py`,
+`_momento_ingesta_txt` (`:342`), is rewired to call `momento_de` instead of its old hardcoded
+if/elif ladder; a new `_momento_clave_txt` (`:335`) renders one of the four default i18n labels (the
+same four keys `_momento_ingesta_txt` already used, reused unchanged -- no new i18n key needed) or
+the clave capitalised when it is a custom one with none. `momento_de`/`momentos` tolerate
+`conn is None` (falling back to `DEFAULT_MOMENTOS`, `body/comidas.py:31-44`) because several
+existing card-rendering tests call `_tarjeta_propuesta` with no live connection (the same default
+every `TARJETAS` helper's own `conn`/`person_id` parameters already carry) -- discovered by the
+gate, fixed in the second commit below. No screen writes a person's own custom rows in this slice
+(`BODY-MOMENTOS-AJUSTES-1`, open follow-up, unchanged from the original entry).
+
+**Ruling 3, a meal can say its moment (`body/db.py`, `body/agente/herramientas.py`,
+`body/agente/propuestas.py`, `body/rutas/asistente.py`):** `comida` gains nullable `momento TEXT`
+(`body/db.py:807`, additive `ALTER TABLE comida ADD COLUMN momento TEXT` in `_migrate` for an old
+database, `:1383`). `db.crear_comida`/`db._crear_comida_tx` gain a trailing `momento: str | None =
+None` parameter, stored on insert -- positional-call-compatible (appended last, so
+`tests/test_mcp.py`'s existing positional `db.crear_comida` call is untouched). The tool
+`registrar_comida` gains an optional `momento` argument (`_PARAM_REGISTRAR_COMIDA`,
+`body/agente/herramientas.py:389`, typed as a plain string -- no static JSON-schema enum, since the
+person's own claves are read live from `comidas.momentos` at call time, the same per-person-live-
+source template `registrar_medida`'s own `metric_key` already uses). `_registrar_comida`
+(`:1849`) validates it against `{m["clave"] for m in comidas.momentos(conn, person_id)}` before
+building `despues`, refusing an unknown clave by name (`f"momento desconocido: {momento!r}"`,
+`:1893`); `despues["momento"]` is always present (`None` when not given). Apply
+(`_aplicar_registrar_comida`, `body/agente/propuestas.py:977`) passes `despues.get("momento")` to
+`db.crear_comida` on the plain (non-shared) path only -- `compartida_con`'s own
+`comida_compartida.compartir_comida` path is untouched, outside this slice's `touches:`. Undo is
+unchanged (`db.borrar_comida` removes the whole row, `momento` included). The proposal card
+(`_tarjeta_registrar_comida`, `body/rutas/asistente.py:415-419`) shows the person's own stated
+moment when they gave one (via `_momento_clave_txt`), falling back to the hour-derived one
+(`_momento_ingesta_txt`) otherwise -- so a stored `momento` is not silent data nobody sees. Two
+people at one dinner are still two calls under two identities; Hogar's own writes never touch
+`comida_compartida` (unchanged, its own `origen`/`origen_ref` columns stay unused by this slice).
+
+**Ruling 6, registered like `ajuste_agente` (`body/privacidad.py`, `body/mudanza.py`):**
+`body/privacidad.py`'s `FULLY_HANDLED_TABLES` gains `"momento_comida"` beside `"ajuste_agente"`
+(`:24-27`); `export_person` gains a `momentos_comida` list (clave/desde_hora/hasta_hora/
+esperado/orden, ordered by `orden`) in its returned dict, and `comidas`' own export SELECT gains
+`momento` to its column list (both the same module, `export_person`'s body); `delete_person` gains
+`DELETE FROM momento_comida WHERE person_id = ?` beside the existing `ajuste_agente` delete.
+`body/mudanza.py`'s `REGISTRY` gains `TableSpec("momento_comida", match_cols=("person_id",
+"clave"))` beside `TableSpec("ajuste_agente", match_cols=("person_id",))` (`:125-127`) -- the same
+shape, widened to momento_comida's own two-column natural key, exactly as the ruling asked (no
+third shape was needed; `ajuste_agente`'s shape carried over cleanly).
+
+**Tests:** `tests/test_hogar_escribe.py` gained `MomentosComidaTest` (5: defaults when a person has
+no rows, their own rows win, another person's rows never leak in, `momento_de` at every boundary
+hour 04:59/05:00/10:59/11:00/15:59/16:00/18:59/19:00/22:59/23:00, no `ts_local`) and
+`RegistrarComidaMomentoTest` (5: momento absent stores `NULL`, a given momento is stored, a custom
+clave the person has is accepted, an unknown clave is refused by name, undo removes the row with
+its momento). `tests/test_migraciones.py` gained `ComidaMomentoMigrationTest` (2: an old `comida`
+row gains `momento = NULL` on migration, byte-for-byte otherwise, and idempotence) and
+`MomentoComidaTableMigrationTest` (2: a database that predates the table gains it empty without
+touching another table's row count, and idempotence). `tests/test_privacidad.py` gained
+`MomentoComidaExportDeleteTest` (4: `FULLY_HANDLED_TABLES` membership, export includes the row,
+another person's export sees nothing, delete-all removes it). `tests/test_mudanza.py` gained
+`MomentoComidaMudanzaTest` (1: the row moves matched by its own natural key, a second import never
+duplicates it). `tests/test_persona_fuga.py`'s `_seed_person` gained one `momento_comida` row (its
+own `TableCensusTest` requires every non-household-only person table to have a seeded row).
+
+**A second, outside-`touches:` fix the gate itself caught (`body/comidas.py`,
+`tests/test_comida.py`):** `tests/test_comida.py`'s own `CardTextTest` (not in this slice's
+`touches:`) calls `asistente._tarjeta_propuesta` with no `conn`/`person_id` -- the same default
+every `TARJETAS` card helper's signature already carries, used by several existing tests across
+`test_comida.py`, `test_comida_corregir.py` and `test_proteina.py`. The rewired
+`_momento_ingesta_txt` crashed on that `None` connection (`AttributeError: 'NoneType' object has no
+attribute 'execute'`); `comidas.momento_de`/the call inside it now fall back to `DEFAULT_MOMENTOS`
+when `conn`/`person_id` is `None`, matching the exact behaviour before this slice (the hardcoded
+hour rule needed no connection either). `tests/test_comida.py`'s own exhaustive `comida` column
+census (`test_comida_table_exists_with_the_contract_columns`) also failed by listing `momento` as
+unexpected -- widened to include it, under the dispatch's own explicit instruction ("a census test
+that lists every table, tool or i18n key gets its row for the new one -- add it, never exempt"),
+the same kind of one-line, no-judgment fix the original entry's two out-of-`touches:` census widths
+already used as precedent.
+
+**Gate command:** `.venv/Scripts/python.exe -m unittest discover tests -t .`. Run as 10 sequential
+alphabetical chunks of 189 dotted test modules (same chunking as the prior gate run on this branch),
+each in the foreground, read from the process, on the final tree (both commits in):
+- chunk 1 (`test_accesibilidad`..`test_baselines`): `Ran 378 tests in 128.612s ... OK (skipped=1,
+  expected failures=1)`
+- chunk 2 (`test_baselines_lote`..`test_desplazamiento_vista`): `Ran 442 tests in 393.066s ... OK`
+  (first attempt, before the `comidas.py`/`test_comida.py` fix above, was `FAILED (failures=1,
+  errors=5)` -- the fix above, then a clean re-run of this same chunk, green)
+- chunk 3 (`test_dispositivo`..`test_experimentos_pantalla`): `Ran 376 tests in 114.269s ... OK`
+- chunk 4 (`test_fecha_futura_1`..`test_hogar_feed`): `Ran 438 tests in 534.830s ... OK` (428 + 10
+  new in `test_hogar_escribe.py`)
+- chunk 5 (`test_hogar_miembro_1`..`test_mcp_cliente_remoto`): `Ran 493 tests in 112.090s ... OK`
+- chunk 6 (`test_mcp_http`..`test_person_scope`): `Ran 500 tests in 225.770s ... OK` (495 + 5 new,
+  4 in `test_migraciones.py` and 1 in `test_mudanza.py`)
+- chunk 7 (`test_persona_fuga`..`test_pull`): `Ran 474 tests in 125.609s ... OK` (470 + 4 new in
+  `test_privacidad.py`)
+- chunk 8 (`test_pull_intradia_experimentos`..`test_sueno_respiracion_vista`): `Ran 274 tests in
+  64.268s ... OK`
+- chunk 9 (`test_sync_vivo`..`test_tutoriales`): `Ran 531 tests in 91.535s ... OK`
+- chunk 10 (`test_tutoriales_catalogo`..`test_web_entry`): `Ran 155 tests in 28.287s ... OK`
+
+Sum: 378+442+376+438+493+500+474+274+531+155 = 4061. Reconciled against an independent collect-only
+count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted without running):
+`4061` -- exact match (4042 before this slice + 19 new tests: 10 in `test_hogar_escribe.py`, 4 in
+`test_migraciones.py`, 4 in `test_privacidad.py`, 1 in `test_mudanza.py`). All ten chunks green on
+the final tree.
+
+**Commits:** `28cab48` (rulings 2, 3, 6: `body/db.py`, `body/agente/herramientas.py`,
+`body/agente/propuestas.py`, `body/rutas/asistente.py`, `body/comidas.py` (new),
+`body/privacidad.py`, `body/mudanza.py`, `tests/test_hogar_escribe.py`, `tests/test_migraciones.py`,
+`tests/test_mudanza.py`, `tests/test_persona_fuga.py`, `tests/test_privacidad.py`), `bfad32b` (the
+`conn=None` fix and the `comida` column census widening: `body/comidas.py`, `tests/test_comida.py`).
+
+**Deviations, measured:**
+- `tests/test_comida.py` is outside this slice's declared `touches:` -- see the "second,
+  outside-`touches:` fix" note above for why it was edited anyway, under the dispatch's own explicit
+  instruction, the same reasoning the original entry's own two out-of-`touches:` census fixes used.
+- `body/i18n/es.json`/`body/i18n/en.json` (named in `touches:`) were not touched -- the four moment
+  labels this slice needed already exist (`asistente.propuesta.ingesta_momento_desayuno`/
+  `_almuerzo`/`_merienda`/`_cena`, from BODY-PROTEINA-1), reused by `_momento_clave_txt` unchanged; a
+  custom clave with no i18n key is rendered by capitalising the clave in code instead, per this
+  slice's own ruling 2 text, needing no new string.
+- `tests/test_agente_registro.py`, `tests/test_agente_conformidad.py`, `tests/test_agente_bucle.py`,
+  `tests/test_agente_propuestas.py`, `tests/test_get_sin_escritura.py`, `tests/test_i18n_paridad.py`,
+  `tests/test_registro_tu.py`, `tests/test_mcp.py`, `tests/test_mcp_http.py` (all named in
+  `touches:`) were not touched -- no new TOOL was added (ruling 3 only adds an optional argument to
+  the already-registered `registrar_comida`), so every tool-name census, schema-conformance and
+  per-tool test in these files stays correct unchanged; each was run directly and confirmed green
+  before the full gate (not just assumed).
+
+**Open follow-ups (unchanged from the original entry):**
+- `BODY-MOMENTOS-AJUSTES-1`: a screen to edit a person's own meal moments -- no screen this slice
+  needs to build it.
+- The training-session page (`body/rutas/entreno_sesion.py`) renders an ACTIVITY row, not a `plan`
+  row, so `anotar_sesion`'s note has no screen to show under today -- BODY-HOGAR-ESCRIBE-2 (routes)
+  or a dedicated follow-up decides where it surfaces.
+
+**Merge policy A:** a schema change is present (`momento_comida`, `comida.momento`) -- this slice's
+own spec body names the merge step itself in "THE WORK" step 4 ("Merge if green"), the orchestrator's
+own authorisation for exactly this build, so the schema condition does not stop this slice at
+AWAITING_APPROVAL, the same reasoning the original entry's own merge-policy-A note already applied
+to `plan.nota_sesion`/`nota_sesion_en`. No customer-facing bytes changed (no new or reworded
+person-facing string -- the four moment labels were already live) and no cross-repo contract
+changed, so all three conditions are clear and the merge below proceeds on green.
+
