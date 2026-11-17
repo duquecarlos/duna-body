@@ -53,23 +53,25 @@ def pendientes_mcp(conn: sqlite3.Connection, person_id: int) -> tuple[int, int |
 
 
 def aplicados_mcp_recientes(conn: sqlite3.Connection, person_id: int, ahora: datetime,
-                             horas: int = 24) -> tuple[int, int | None]:
+                             horas: int = 24, via: str = "mcp") -> tuple[int, int | None]:
     """(count, newest conversation id) of proposals this OUTSIDE caller applied itself in the last
-    `horas` hours, through its own `aplicar_propuesta` tool (`aplicada_via = 'mcp'`, set only by
-    body/mcp.py, never by Body's own /asistente/propuestas/{id}/aplicar route) -- BODY-MCP-
-    APLICAR-1, ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5: Hoy's own 24h-wide aviso line after an
-    outside apply, so nothing lands silently. Deliberately NOT "any mcp-origin proposal now in
-    state aplicada" -- the person tapping Aplicar themselves, in Body, on a proposal their
-    assistant merely proposed, is not an outside apply and must never raise this line (a case
-    tests/test_mcp_visible.py's own HoyLineaTest already exercises). `ahora` is the caller's own
-    clock (real time in production, an injectable fake in tests, so a test can cross the 24h edge
-    without sleeping). (0, None) when there is none, or once every such apply has aged past the
-    window."""
+    `horas` hours, through its own `aplicar_propuesta` tool (`aplicada_via = via`, 'mcp' set only by
+    body/mcp.py, 'hogar' set only by Hogar's own write-through -- BODY-HOGAR-ESCRIBE-1/2 -- never by
+    Body's own /asistente/propuestas/{id}/aplicar route) -- BODY-MCP-APLICAR-1, ORCH-CARLOS-
+    DELEGATES-TIER-1-1 ruling 5, widened by BODY-APERTURA-AUTOMATICA-1 ruling 1: Hoy's own 24h-wide
+    aviso line after an outside apply, so nothing lands silently. `via` defaults to 'mcp' so every
+    caller and test that predates this parameter is unchanged. Deliberately NOT "any <via>-origin
+    proposal now in state aplicada" -- the person tapping Aplicar themselves, in Body, on a
+    proposal their assistant or Hogar merely proposed, is not an outside apply and must never raise
+    this line (a case tests/test_mcp_visible.py's own HoyLineaTest and tests/test_hogar_aplica_
+    aviso.py both exercise). `ahora` is the caller's own clock (real time in production, an
+    injectable fake in tests, so a test can cross the 24h edge without sleeping). (0, None) when
+    there is none, or once every such apply has aged past the window."""
     corte = (ahora - timedelta(hours=horas)).isoformat(timespec="seconds")
     row = conn.execute(
         "SELECT COUNT(*) AS n, MAX(conversacion_id) AS id FROM propuesta_agente "
-        "WHERE person_id = ? AND estado = 'aplicada' AND aplicada_via = 'mcp' AND resuelta_en >= ?",
-        (person_id, corte),
+        "WHERE person_id = ? AND estado = 'aplicada' AND aplicada_via = ? AND resuelta_en >= ?",
+        (person_id, via, corte),
     ).fetchone()
     return row["n"], row["id"]
 

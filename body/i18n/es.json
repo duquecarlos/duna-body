@@ -54,6 +54,8 @@
   "today.mcp_propuestas_many": "Tu asistente personal te propone {n} cambios · Revisar",
   "today.mcp_aplicado": "Tu asistente personal aplicó 1 cambio · Ver",
   "today.mcp_aplicado_many": "Tu asistente personal aplicó {n} cambios · Ver",
+  "today.hogar_aplicado": "Hogar aplicó 1 cambio · Ver",
+  "today.hogar_aplicado_many": "Hogar aplicó {n} cambios · Ver",
   "today.noche_inusual": "Anoche dormiste distinto a tu normal: {senales}.",
   "today.noche_inusual_link": "Ver la noche",
   "today.noche_inusual_titulo": "Body lo notó",

@@ -2,6 +2,8 @@
 {% block title %}{{ t('garmin.title') }} · {{ t('app.name') }}{% endblock %}
 {% block main %}
 <div class="top"><div><h1>{{ t('garmin.title') }}</h1></div></div>
+{% if garmin_sync or reloj_vivo %}{% include "_reloj.html" %}{% endif %}
+{% if reloj_vivo and reloj_vivo.sincronizando %}<script src="{{ static_url('reloj-sync.js') }}" defer></script>{% endif %}
 {% if form_error %}<div class="card"><p class="read bad">{{ form_error }}</p></div>{% endif %}
 {% if mfa %}
 <div class="card">

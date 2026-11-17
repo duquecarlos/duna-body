@@ -54,6 +54,8 @@
   "today.mcp_propuestas_many": "Your personal assistant suggests {n} changes · Review",
   "today.mcp_aplicado": "Your personal assistant applied 1 change · View",
   "today.mcp_aplicado_many": "Your personal assistant applied {n} changes · View",
+  "today.hogar_aplicado": "Hogar applied 1 change · View",
+  "today.hogar_aplicado_many": "Hogar applied {n} changes · View",
   "today.noche_inusual": "Last night was different from your normal: {senales}.",
   "today.noche_inusual_link": "See the night",
   "today.noche_inusual_titulo": "Body noticed",
