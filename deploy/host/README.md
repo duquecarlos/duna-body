@@ -187,6 +187,50 @@ is a hand procedure: stop `body-web.service`, `body-pull.timer` and `body-backfi
 the rollback snapshot over `/srv/duna/data/body/body.db` as root, fix its ownership
 (`duna-body:duna-body`) and mode (`0600`), then start the services again.
 
+## Garmin connected to the wrong person (BODY-GARMIN-PERSONA-1)
+
+A hosted Garmin connection can end up attached to a person row the Cuenta sign-in key no longer
+reaches -- for instance, a web session minted before a sub moved. Two verbs exist to see and fix
+this; the wrapper already carries both (see "Self-updating wrapper" above), so no hand reinstall
+is needed first.
+
+**Diagnostic -- counts only, never a `cuenta_sub`, a name or a figure:**
+
+    sudo -n /usr/local/sbin/duna-deploy-body diagnostico-personas
+
+One line per person row: whether it has a `cuenta_sub` and a real display name, whether Garmin is
+connected and since when, how many of the last 14 days and of all time have a stored Garmin value,
+the most recent such day, how many rows this person has typed by hand, and how many device keys
+and live sessions they hold. A person with Garmin connected but no `cuenta_sub` is the shape this
+slice exists to find.
+
+**Repair -- moves one person's hosted Garmin connection and every Garmin-written row to another
+person, day by day; a day the destination already has Garmin data for is skipped whole, never
+merged or overwritten. Dry run by default:**
+
+    sudo -n /usr/local/sbin/duna-deploy-body relinkar-garmin --desde <id> --hacia <id>
+
+This refuses outright, writing nothing, if the two ids are equal or either does not exist, if the
+destination has no `cuenta_sub`, if the source has one (it would be a second real person's own
+sign-in, not a stray connection), if the destination already has its own Garmin connection, or if
+the source has any row it looks like a person typed by hand -- named with its own count, e.g. a
+manual activity, a goal, a shift, a check-in. Merging two real people's data is the one
+irreversible mistake this tool exists to prevent, so it never guesses past that refusal.
+
+**Apply -- this is Carlos's own go, never run on an orchestrator's or an agent's say alone.** It
+takes the existing off-host backup first (`body-backup.sh`, the same job the daily timer runs) and
+refuses to run the move at all if that backup fails; the move itself runs in one database
+transaction, so a failure partway rolls back everything, not just the row it failed on:
+
+    sudo -n /usr/local/sbin/duna-deploy-body relinkar-garmin --desde <id> --hacia <id> --apply
+
+The source person's row, sessions, consents and device keys are never deleted -- only the Garmin
+connection and the Garmin-written rows move. Recovery and shift heart-rate figures derived from the
+moved activities are recomputed for the destination afterwards; the source's own already-computed
+derived rows that are left behind are reported, not touched -- except a `recuperacion_actividad` row
+tied to an activity that just moved, which cannot be left behind (its own foreign key points at that
+activity) and is removed as a counted exception rather than silently kept or left dangling.
+
 ## Host facts, confirmed by Main (2026-11-06)
 
 * the host is Ubuntu 24.04.4, so `python3` is 3.12
