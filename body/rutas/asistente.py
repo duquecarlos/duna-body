@@ -822,6 +822,18 @@ def _tarjeta_anotar_sesion(t: T, defs: dict, despues: dict, antes_json: dict | N
     return None, "\n".join(lineas), None
 
 
+def _tarjeta_importar_desplazamiento(t: T, defs: dict, despues: dict, antes_json: dict | None, conn,
+                                      person_id: int) -> tuple:
+    """BODY-DESPLAZAMIENTO-ASISTENTE-1 ruling 2: counts and dates only -- never a figure from the
+    file itself. Insert-shaped like `_tarjeta_confirmar_turnos`'s own whole-file summary, never an
+    antes/despues pair (the file itself is what changed, not one existing value)."""
+    desde = comun._short_date(t, date.fromisoformat(despues["primer_dia"]))
+    hasta = comun._short_date(t, date.fromisoformat(despues["ultimo_dia"]))
+    despues_txt = t("asistente.propuesta.desplazamiento_importar", dias=t.num(despues["dias"]), desde=desde,
+                    hasta=hasta, cambios=t.num(despues["dias_cambio"]))
+    return None, despues_txt, None
+
+
 # One card builder per action (BODY-PROPUESTAS-TABLA-1), keyed exactly like body/agente/
 # propuestas.py's TABLA and body/agente/herramientas.py's `propuesta`-kind tools
 # (tests/test_propuestas_tabla.py enforces the three sets match). Each builder returns
@@ -856,6 +868,7 @@ TARJETAS = {
     "ampliar_plan": _tarjeta_ampliar_plan,
     "corregir_meta_plan": _tarjeta_corregir_meta_plan,
     "anotar_sesion": _tarjeta_anotar_sesion,
+    "importar_desplazamiento": _tarjeta_importar_desplazamiento,
 }
 
 

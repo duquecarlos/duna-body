@@ -1181,6 +1181,7 @@
   "mcp.remoto.sin_permiso": "This PC is connected without the assistant permission. Create a key with \"Personal assistant (MCP)\" and connect the PC again.",
   "asistente.propuesta.turnos_actual": "{n} proposed shifts waiting to confirm",
   "asistente.propuesta.turnos_nuevo": "Confirm every proposed shift",
+  "asistente.propuesta.desplazamiento_importar": "{dias} days of commute data, from {desde} to {hasta} ({cambios} days would change)",
   "asistente.propuesta.entreno_plan": "{titulo} · {fecha}: {ejercicios}",
   "asistente.propuesta.turno_choque": "You have a shift that day: {turno}, {inicio}–{fin}",
   "asistente.propuesta.turno_choque_sin_hora": "You have a shift that day: {turno}",
