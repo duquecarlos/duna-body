@@ -1397,14 +1397,38 @@ def _planear_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id: 
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
+def _resolver_sesion_entreno_dia(conn: sqlite3.Connection, person_id: int, day: str) -> tuple | None:
+    """The day's own training session for a correction (BODY-CORREGIR-MEDIDA-ENTRENO-1 ruling 2):
+    the watch's own strength activity (`type = 'strength_training'`) when there is one, else the
+    person's existing manual session for that day -- told apart by exactly what
+    `db.create_manual_session` writes, `source = 'manual'` with no `type` (NULL, there is no manual
+    type) -- never any other watch activity (a run, a ride). Returns (source, source_id), or None
+    when the day has neither."""
+    actividad = conn.execute(
+        "SELECT source, source_id FROM activity WHERE person_id = ? AND day = ? AND type = 'strength_training' "
+        "ORDER BY start_local LIMIT 1", (person_id, day),
+    ).fetchone()
+    if actividad is None:
+        actividad = conn.execute(
+            "SELECT source, source_id FROM activity WHERE person_id = ? AND day = ? AND source = 'manual' "
+            "AND type IS NULL ORDER BY start_local LIMIT 1", (person_id, day),
+        ).fetchone()
+    if actividad is None:
+        return None
+    return actividad["source"], actividad["source_id"]
+
+
 def _registrar_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id: int, day: str, series: list,
                         titulo: str | None = None, time: str | None = None) -> dict:
     """Proposes "here is what I did" for a day (BODY-ENTRENO-TOOLS-1, Q3). When that day has a
     Garmin strength activity, maps the spoken `series` onto the watch's sets by order -- fetching
     them with `pull.traer_series` first if they are not stored yet, so the card can show both the
-    watch's value and the spoken correction per set. With no activity, stages a manual session
-    instead. `antes` carries, per set, enough of the pre-existing state (`sets_antes`) for
-    `propuestas.deshacer` to restore it exactly, or nothing for the manual (insert-shaped) case."""
+    watch's value and the spoken correction per set. With no watch activity but an existing MANUAL
+    session for that day, maps onto ITS sets the same way instead (BODY-CORREGIR-MEDIDA-ENTRENO-1
+    ruling 2: a second `registrar_entreno` for a day already logged manually corrects that same
+    session, never a duplicate one). With neither, stages a brand-new manual session. `antes`
+    carries, per set, enough of the pre-existing state (`sets_antes`) for `propuestas.deshacer` to
+    restore it exactly, or nothing for the manual-insert (brand-new session) case."""
     _dia_no_futuro(conn, person_id, day)
     if not series:
         raise ToolError("se necesita al menos una serie")
@@ -1418,15 +1442,12 @@ def _registrar_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id
         s["peso_kg"] = _numero_entreno(t, ejercicio, s.get("peso_kg"), entero=False,
                                         clave_error="agente.error.entreno_peso_invalido")
         s["categoria"] = _categoria_entreno(t, ejercicio, s.get("categoria"))
-    actividad = conn.execute(
-        "SELECT source, source_id FROM activity WHERE person_id = ? AND day = ? AND type = 'strength_training' "
-        "ORDER BY start_local LIMIT 1", (person_id, day),
-    ).fetchone()
-    if actividad is not None:
-        source, source_id = actividad["source"], actividad["source_id"]
+    sesion = _resolver_sesion_entreno_dia(conn, person_id, day)
+    if sesion is not None:
+        source, source_id = sesion
         existentes = db.exercise_sets(conn, person_id, source, source_id)
         reloj_fallo = False
-        if not existentes:
+        if not existentes and source == "garmin":
             try:
                 pull.traer_series(conn, person_id, source_id)
                 existentes = db.exercise_sets(conn, person_id, source, source_id)
@@ -2635,7 +2656,8 @@ HERRAMIENTAS = [
      "descripcion": "Propone registrar lo que la persona hizo en un entrenamiento de un día: si el reloj "
                      "ya tiene una actividad de fuerza ese día, compara serie por serie; si no, crea una "
                      "sesión manual. No lo guarda: registra la propuesta para que la persona la apruebe "
-                     "en el chat.",
+                     "en el chat. Si la persona corrige un entreno que ya registró ese día, llama a esta "
+                     "misma herramienta: corrige ese entreno, nunca crea otro.",
      "parametros": _PARAM_REGISTRAR_ENTRENO, "funcion": _registrar_entreno},
     {"nombre": "anotar_sesion", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone una nota sobre cómo fue una sesión de entrenamiento ya planeada (plan_id es el id "
