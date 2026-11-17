@@ -214,6 +214,20 @@ read for it:
 * Two people in one household each have their OWN `hogar:escribir` key, under their own Cuenta Duna sign-in -- "two
   people ate dinner" is two separate `POST /api/hogar/registrar` calls, each under the eater's own key, never one
   call naming the other person.
+* **`anotar_sesion` never overwrites a note the PERSON wrote (BODY-HOGAR-NOTA-SESION-GUARD-1), even though the API
+  allows it.** Body writes the note only where there is none yet, or where the existing note is itself Hogar's own
+  (Hogar correcting itself) -- a note set through Body's own assistant, in-app or the person's own MCP client, is
+  never replaced by this call, and neither is a note from before this rule existed (read, conservatively, as the
+  person's own). The refusal still answers `200` -- it is the tool saying no, not a transport error -- with the
+  usual person-language sentence AND a stable `motivo` field alongside it, so Hogar can branch on the reason
+  without parsing that sentence:
+
+```json
+{"ok": false, "error": "Ya hay una nota tuya en esta sesión; corrígela en Body.", "motivo": "nota_de_la_persona"}
+```
+
+  Additive within v1: every other shape above is unchanged, and every other `anotar_sesion` call (an empty note,
+  or Hogar correcting a note it wrote itself) keeps applying directly, exactly as before.
 
 ## Conditions on the reader (not an app-to-app consent gate -- these protect people and services outside Carlos's
 own data, and outside Duna)

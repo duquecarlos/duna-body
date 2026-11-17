@@ -1049,6 +1049,7 @@
   "agente.error.comida_sin_consentimiento": "{nombre} no tiene activado recibir comidas compartidas.",
   "agente.error.checkin_valor_invalido": "{metrica} debe ser un número del 1 al 5: envía cómo te sentiste (por ejemplo 4), no un rango ni un texto.",
   "agente.error.checkin_vacio": "Dime al menos una cosa: ánimo, energía, estrés que sentiste o una nota.",
+  "agente.error.nota_sesion_existente": "Ya hay una nota tuya en esta sesión; corrígela en Body.",
   "agente.pensando": "Pensando…",
   "agente.herramienta.leer_hoy": "Mirando tu día…",
   "agente.herramienta.leer_dia": "Revisando ese día…",
