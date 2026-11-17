@@ -25420,5 +25420,7 @@ THE WORK section's own step 5.
 **Commits** `40c6bb5` (ruling 1: `body/agente/conversacion.py`, `body/templates/today.html`,
 `body/i18n/{es,en}.json`, `tests/test_hogar_aplica_aviso.py`), `b3260fc` (ruling 2:
 `body/rutas/hoy.py`, `body/rutas/garmin.py`, `body/templates/garmin.html`,
-`tests/test_garmin_conectar_vivo.py`).
+`tests/test_garmin_conectar_vivo.py`) -- merged `3a1261d` (`--no-ff`, no conflicts). Post-merge
+smoke (`tests.test_hogar_aplica_aviso tests.test_garmin_conectar_vivo tests.test_mcp_visible
+tests.test_rendimiento`): `Ran 45 tests ... OK`.
 
