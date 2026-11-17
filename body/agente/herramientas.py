@@ -207,6 +207,16 @@ _PARAM_LEER_ENTRENO = {
     },
     "additionalProperties": False,
 }
+_LEER_DIAS_LIBRES_MIN_DIAS = 1
+_LEER_DIAS_LIBRES_MAX_DIAS = 14
+_PARAM_LEER_DIAS_LIBRES = {
+    "type": "object",
+    "properties": {
+        "desde": {"type": "string", "format": "date"},
+        "dias": {"type": "integer", "minimum": _LEER_DIAS_LIBRES_MIN_DIAS, "maximum": _LEER_DIAS_LIBRES_MAX_DIAS},
+    },
+    "additionalProperties": False,
+}
 _PARAM_PLANEAR_ENTRENO = {
     "type": "object",
     "properties": {
@@ -926,6 +936,24 @@ def _leer_costo_turnos(conn: sqlite3.Connection, person_id: int) -> dict:
     """Aggregates over a week or more (block counts, lengths, recovery days, per-metric mean
     differences) -- never a single day's value, so nivel 'resumen' may read it (BODY-TURNOS-COSTO-1)."""
     return turnos_costo.resumen(conn, person_id)
+
+
+def _leer_dias_libres(conn: sqlite3.Connection, person_id: int, desde: str | None = None,
+                       dias: int = 7) -> dict:
+    """BODY-TURNO-DIA-PLAN-1 ruling 2: which days of [desde, desde+dias) are free to train
+    according to confirmed shifts, and for each day that is not, the reason -- so planear_entreno
+    (its own description points here first) never proposes a day the person is on shift or just
+    came off a night. `desde` defaults to today in the person's own zone. Shift times are not a
+    health figure (the same reasoning leer_turnos' own nivel 'ninguno' already rests on), so this
+    needs no higher nivel_datos either."""
+    desde = desde or _hoy_local(conn, person_id)
+    try:
+        desde_d = date.fromisoformat(desde)
+    except ValueError:
+        raise ToolError("'desde' debe ser una fecha ISO (AAAA-MM-DD)")
+    if not (_LEER_DIAS_LIBRES_MIN_DIAS <= dias <= _LEER_DIAS_LIBRES_MAX_DIAS):
+        raise ToolError(f"'dias' debe estar entre {_LEER_DIAS_LIBRES_MIN_DIAS} y {_LEER_DIAS_LIBRES_MAX_DIAS}")
+    return {"dias_libres": turnos_costo.dias_libres(conn, person_id, desde_d, dias)}
 
 
 def _leer_tutoriales(conn: sqlite3.Connection, person_id: int, consulta: str | None = None) -> dict:
@@ -2657,6 +2685,11 @@ HERRAMIENTAS = [
                      "noche, y hasta 4 días después), para responder cuándo está más bajo y cuándo vuelve "
                      "a su rango.",
      "parametros": _SIN_PARAMETROS, "funcion": _leer_costo_turnos},
+    {"nombre": "leer_dias_libres", "tipo": "lectura", "nivel": "ninguno",
+     "descripcion": "Qué días de un rango están libres para entrenar según sus turnos confirmados, y "
+                     "para cada día que no lo está, el motivo (un turno ese día, o que sale de un turno "
+                     "de noche esa mañana). Úsalo antes de proponer un día.",
+     "parametros": _PARAM_LEER_DIAS_LIBRES, "funcion": _leer_dias_libres},
     {"nombre": "leer_ajustes", "tipo": "lectura", "nivel": "ninguno",
      "descripcion": "Tus datos de perfil (nombre, zona horaria, idioma) y tu nivel de datos del asistente.",
      "parametros": _SIN_PARAMETROS, "funcion": _leer_ajustes},
@@ -2733,7 +2766,9 @@ HERRAMIENTAS = [
                      "'limitaciones' de leer_hoy: si una zona está en recuperación, mantén la carga de esa "
                      "zona por debajo de lo normal y dilo en el plan -- tú nunca inventas una carga concreta, "
                      "solo dices el límite. No lo crea: registra la propuesta para que la persona la apruebe "
-                     "en el chat.",
+                     "en el chat. Antes de proponer un día, mira leer_dias_libres: propón un día libre. Si "
+                     "ninguno lo está, dilo con el motivo de cada día y deja que la persona elija; nunca "
+                     "inventes una fecha.",
      "parametros": _PARAM_PLANEAR_ENTRENO, "funcion": _planear_entreno},
     {"nombre": "registrar_entreno", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone registrar lo que la persona hizo en un entrenamiento de un día: si el reloj "

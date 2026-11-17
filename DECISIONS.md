@@ -25644,3 +25644,135 @@ tree `5efaa7df390dee14a217ebf8f202d65d46c66ceb` equals the branch's own tree, em
 smoke (`tests.test_hogar_nota_guard tests.test_hogar_escribe tests.test_hogar_escribe_rutas
 tests.test_migraciones`): `Ran 63 tests ... OK`.
 
+## BODY-TURNO-DIA-PLAN-1
+
+**Hub principle** (HOGAR-PLAZA-DEL-MES-1, Hub «Para productos» from Hogar, 2026-11-17,
+`hit_01m7m339b3bgaa8exhvkm1x96k`): "when the app proposes a day for a plan, it checks the person's
+real commitments (shifts, a night shift ending that morning) and proposes only a day that is truly
+free. If none is, it says so with the reason for each skipped day, never a made-up date." Body's own
+analogy, named there: training days vs shifts.
+
+**Census findings** (BODY-HUB-PRINCIPIOS-CENSO-2, OBSERVED): `planear_entreno`
+(`body/agente/herramientas.py`, pre-slice) validated only the ISO date and the description asked the
+model to check injury `limitaciones` but never shifts; `proponer_plan`/`ampliar_plan`/
+`corregir_meta_plan` checked format and order only; no card showed a collision; no "free day, or the
+reason per skipped day" mechanism existed. Reusable pieces already in `body/turnos_costo.py`:
+`_shift_on`, `contexto_dia`, `bloques_noche`; shift kinds `db.SHIFT_KINDS` with labels
+`shift.kind.<kind>`; and `_tarjeta_planear_entreno` (`body/rutas/asistente.py`) already read live
+data at render time (`db.zonas_en_recuperacion`) -- the precedent this slice's own card logic
+follows.
+
+**The rulings, as built:**
+
+1. **One definition of "not free".** `body/turnos_costo.py:455` gains the shared `_motivo_de_turnos`
+   (pure, takes the day's own shift row and the day-before's, returns the motivo dict or None), with
+   `motivo_no_libre(conn, person_id, dia)` (`:471`, two single-day `_shift_on` reads) and the batched
+   `dias_libres(conn, person_id, desde, dias)` (`:482`) both built on it -- never two rules. A shift
+   that day whose `kind != 'off'` -> `{"tipo": "turno", "kind", "inicio", "fin"}` (turno wins even
+   over coming off a night the same morning); else a `kind == 'night'` shift the day before ->
+   `{"tipo": "sale_de_noche"}`; else `None` (free, an `off` day included). `dias_libres` runs exactly
+   TWO statements whatever `dias` is: one `SELECT ... FROM shift WHERE day BETWEEN ...` covering
+   `[desde-1, desde+dias-1]`, and one `bloques_noche` call (its own one `SELECT`) over
+   `[desde-60, desde+dias-1]` (the same 60-day back margin `contexto_dia` already uses) for
+   `tras_noches` -- measured 2 vs 2 for `dias=3` and `dias=14`
+   (`tests/test_turno_dia_plan.py::DiasLibresTest::test_flat_query_count_three_vs_fourteen_days`,
+   `sqlite3.Connection.set_trace_callback` directly, since `tests/_rutas.contar_sql` only traces a
+   connection opened after it starts, not this test's own already-open one). Per day:
+   `{"dia": "YYYY-MM-DD", "libre": bool, "motivo": <the dict above>|None}`, plus `"tras_noches": n`
+   (the same figure `contexto_dia`'s own `despues` case reports) on a free day inside a night block's
+   recovery window -- information, never a reason it is not free.
+2. **The read tool.** `body/agente/herramientas.py:941` gains `_leer_dias_libres(conn, person_id,
+   desde=None, dias=7)` -- `desde` defaults to `_hoy_local(conn, person_id)` (today in the person's
+   own zone); `dias` is refused outside 1-14 by the function itself (`_validar_parametros` does not
+   enforce JSON Schema `minimum`/`maximum`, the same split `_leer_serie`'s own bounds already use).
+   Registered at `:2688` as `leer_dias_libres`, tipo `lectura`, nivel `ninguno` (shift times carry no
+   health figure, the same reasoning `leer_turnos`/`leer_estado_reloj` already rest on). It is
+   deliberately NOT added to `herramientas.TURNOS_HERRAMIENTAS` (`:80`, the gate that hides
+   `leer_turnos`/`leer_costo_turnos`/`proponer_confirmar_turnos` from a person who has not said they
+   work shifts): `planear_entreno`'s own description (ruling 3, always visible, not turno-gated)
+   tells the model to call this tool first for EVERY person, so the tool itself has to stay visible
+   for every person too -- gating it would break that instruction for anyone with `trabaja_turnos`
+   unset or false, for whom every day is free anyway and the read is harmless. Reaches MCP with no
+   new code (`tests/test_turno_dia_plan.py::LeerDiasLibresMcpTest`, the same proof
+   `tests/test_mcp.py::test_leer_estado_reloj_is_offered_and_callable` makes for its own tool); NOT
+   added to `body/rutas/dispositivos.py`'s `_HOGAR_ESCRIBIR_HERRAMIENTAS` (verified unchanged --
+   that allowlist only ever held `propuesta` tools, so a `lectura` tool was never a candidate; that
+   file is outside this slice's `touches:`).
+   Description (es, as committed, `:2689`): «Qué días de un rango están libres para entrenar según
+   sus turnos confirmados, y para cada día que no lo está, el motivo (un turno ese día, o que sale de
+   un turno de noche esa mañana). Úsalo antes de proponer un día.»
+3. **The planner's description.** `planear_entreno`'s own description (`body/agente/
+   herramientas.py:2769`) gained, verbatim: «Antes de proponer un día, mira leer_dias_libres: propón
+   un día libre. Si ninguno lo está, dilo con el motivo de cada día y deja que la persona elija;
+   nunca inventes una fecha.» Census of the other tools that create a `plan` row for a specific day:
+   `_proponer_plan` (`:2523`) and `_ampliar_plan` (`:2553`) write only a horizon's `goal`/`habit`/
+   `horizonte_regla`/`horizonte_semana`/`horizonte_checkpoint`/`horizonte_meta_semanal` rows
+   (`db.crear_plan_horizonte`/`db.ampliar_plan_horizonte`) -- no per-day training session at all, so
+   neither carries the sentence (`tests/test_turno_dia_plan.py::PlannerDescriptionTest`, checked by
+   its absence). `corregir_meta_plan` corrects an existing weekly target's value, same reasoning.
+4. **The card.** `_tarjeta_planear_entreno` (`body/rutas/asistente.py:282`) calls
+   `turnos_costo.motivo_no_libre` for the proposal's own day at RENDER time (never a stored
+   snapshot, the same choice the zonas-en-recuperacion line just above it already made) through the
+   new `_choque_turno_txt` helper (`:270`), appending one line under the date in the card's existing
+   style (`"\n" + ...`, the zonas line's own pattern) when not free. Never refuses, never hides
+   Aplicar; a free day shows nothing new (measured:
+   `tests/test_turno_dia_plan.py::TarjetaPlanearEntrenoTest`).
+   Strings, as committed (`body/i18n/{es,en}.json`, next to `asistente.propuesta.entreno_plan`):
+   `asistente.propuesta.turno_choque`: es «Ese día tienes turno: {turno}, {inicio}–{fin}» / en «You
+   have a shift that day: {turno}, {inicio}–{fin}»; `asistente.propuesta.turno_choque_sin_hora`: es
+   «Ese día tienes turno: {turno}» / en «You have a shift that day: {turno}»;
+   `asistente.propuesta.sale_de_noche`: es «Esa mañana sales de un turno de noche» / en «You come off
+   a night shift that morning». `{turno}` is `shift.kind.<kind>`, lower-cased the way
+   `asistente.py`'s own `_filtro_dias_txt` already does.
+
+**Tests**, `tests/test_turno_dia_plan.py` (33 tests): `motivo_no_libre`/`dias_libres` -- no shifts
+(every day free), an `off` day (free), a shift with hours (turno, inicio/fin set) and without
+(inicio/fin null), a night shift's own day (turno, kind 'night') and the day after (sale_de_noche)
+unless that day has its own shift (turno wins) or is itself an `off` day (still sale_de_noche), two
+days after a night (free), another person's shifts never read (both functions), `dias_libres`
+matches `motivo_no_libre` per day across a 7-day range with mixed shifts, `tras_noches` present
+inside and absent past the recovery window, the flat query count (ruling 1); `leer_dias_libres`
+through the registry -- default `desde`/`dias`, explicit values, `dias` outside 1-14 refused, a bad
+`desde` refused, offered at nivel `ninguno` regardless of the turnos flag, changes nothing; through
+MCP -- offered and callable; the planner-description census (ruling 3); the card -- free day (ruling
+4, nothing new), a shift with hours (es), a shift with no hours (es), the morning after a night (es),
+a shift with hours (en), Aplicar still offered, computed at render time (a shift confirmed AFTER the
+proposal still shows), `GET` writes nothing. `tests/test_turnos_costo.py` carries no census that
+names every function in the module, so it needed no change (verified by reading); left untouched.
+
+**Other touched test files** (censuses extended, never exempted): `tests/test_agente_registro.py` --
+`leer_dias_libres` added to `_all_tool_calls()`, the lectura-tool count 17->18 with its expected
+nivel, the whole-registry count 46->47. `tests/test_agente_bucle.py` --
+`NivelDatosEnforcementTest::test_tool_not_offered_at_the_current_nivel_is_still_refused_by_ejecutar`'s
+own hand-written set of nivel-`ninguno` tool names gained `leer_dias_libres` (found only by running
+the full touched-file sweep below, since this file carries its own independent census of the same
+registry). `tests/test_mcp.py`, `test_mcp_http.py`, `test_mcp_remoto.py`, `test_hogar_escribe_rutas.py`,
+`test_persona_fuga.py`, `test_privacidad.py`, `test_tutoriales_catalogo.py`, `test_i18n_paridad.py`,
+`test_rendimiento.py`, `test_get_sin_escritura.py`, `test_plan_propuestas.py`,
+`test_agente_propuestas.py`, `test_agente_cliente.py`, `test_agente_proveedores.py` -- read for a
+hardcoded census and run after the change; none needed an edit (no hardcoded tool/key count or list
+in any of them touches this slice's additions; verified by reading each and by the green run below).
+
+**Deviation from the spec's literal wording: none measured.** All four rulings and every string are
+built exactly as the spec wrote them. The one judgment call the spec left open --
+whether `leer_dias_libres` joins `TURNOS_HERRAMIENTAS` -- was resolved NOT to (reasoning under
+ruling 2 above), since `planear_entreno`'s own description is unconditional.
+
+**Gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, ten sequential alphabetical
+chunks of ~20 dotted modules each (196 modules total), all green:
+`381+444+379+414+536+499+459+333+528+238 = 4211`, plus 2 modules
+(`tests.test_get_sin_escritura`, `tests.test_shift_import`) missed when the chunk boundaries were
+hand-copied and run separately afterward (`1+37 = 38`), for a grand total of `4249`. Reconciled
+against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted recursively): `4249` -- exact
+match.
+
+**No schema or migration change, no cross-repo contract change, and the only customer-facing bytes
+are the three new strings this spec itself authorised verbatim** -- merges on green per merge policy
+A.
+
+**Commits** `17dccf016adcd9f7f009983f1fd0bd96e69376fc` (`body/turnos_costo.py`,
+`body/agente/herramientas.py`, `body/rutas/asistente.py`, `body/i18n/{es,en}.json`,
+`tests/test_agente_bucle.py`, `tests/test_agente_registro.py`, `tests/test_turno_dia_plan.py`: all
+four rulings and their tests, one commit).
+

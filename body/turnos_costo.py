@@ -452,6 +452,73 @@ def _shift_on(conn, person_id: int, day_iso: str) -> dict | None:
                                       "start_local": row["start_local"], "end_local": row["end_local"]}
 
 
+def _motivo_de_turnos(hoy_shift: dict | None, ayer_shift: dict | None) -> dict | None:
+    """BODY-TURNO-DIA-PLAN-1 ruling 1: the one definition of "not free to train" for a day, given
+    that day's own confirmed shift (if any) and the day BEFORE's (`shift.day` is the day a shift
+    STARTS, so a night shift that ends the next morning is read off the PREVIOUS day's row). A
+    shift that day whose kind is not 'off' -> {"tipo": "turno", ...} (turno wins even over coming
+    off a night the same morning); else a night shift the day before -> {"tipo": "sale_de_noche"};
+    else None (free -- including an 'off' day). `motivo_no_libre` and `dias_libres` below are both
+    pure reads built on this one function, never two definitions of the same rule."""
+    if hoy_shift is not None and hoy_shift["kind"] != "off":
+        return {"tipo": "turno", "kind": hoy_shift["kind"], "inicio": hoy_shift["start_local"],
+                "fin": hoy_shift["end_local"]}
+    if ayer_shift is not None and ayer_shift["kind"] == "night":
+        return {"tipo": "sale_de_noche"}
+    return None
+
+
+def motivo_no_libre(conn, person_id: int, dia: date) -> dict | None:
+    """BODY-TURNO-DIA-PLAN-1 ruling 1: why `dia` is not free to train, or None when it is -- a
+    pure read of confirmed `shift` rows, two single-day lookups via `_shift_on` (the same reader
+    `turno_de_hoy` already uses). Called at RENDER time by the planear_entreno card
+    (body/rutas/asistente.py's `_tarjeta_planear_entreno`), the same "never a stored snapshot"
+    choice `db.zonas_en_recuperacion` already made there -- never store this dict."""
+    hoy_shift = _shift_on(conn, person_id, dia.isoformat())
+    ayer_shift = _shift_on(conn, person_id, (dia - timedelta(1)).isoformat())
+    return _motivo_de_turnos(hoy_shift, ayer_shift)
+
+
+def dias_libres(conn, person_id: int, desde: date, dias: int) -> list[dict]:
+    """BODY-TURNO-DIA-PLAN-1 ruling 1: `motivo_no_libre` batched over `dias` days from `desde`,
+    with a FIXED number of queries whatever `dias` is (one SELECT for every `shift` row touching
+    the range, one `bloques_noche` call for `tras_noches` below -- never one `motivo_no_libre`/
+    `contexto_dia` call per day, which would cost one query per day instead). Per day:
+    {"dia": "YYYY-MM-DD", "libre": bool, "motivo": <motivo_no_libre's own dict>|None}, plus
+    "tras_noches": n (the same figure `contexto_dia`'s own 'despues' case reports) on a FREE day
+    that falls inside a night block's recovery window -- information about a free day, never a
+    reason it is not free."""
+    hasta = desde + timedelta(dias - 1)
+    rows = conn.execute(
+        "SELECT day, kind, start_local, end_local FROM shift WHERE person_id = ? AND day BETWEEN ? AND ? "
+        "ORDER BY day, start_local",
+        (person_id, (desde - timedelta(1)).isoformat(), hasta.isoformat()),
+    ).fetchall()
+    por_dia: dict[str, dict] = {}
+    for r in rows:
+        por_dia.setdefault(r["day"], {"kind": r["kind"], "start_local": r["start_local"],
+                                       "end_local": r["end_local"]})
+    ventana = MODELO["ventana_post"]
+    # contexto_dia's own 60-day back margin (BODY-TURNOS-ENLACES-1), reused here as one call for
+    # the whole range instead of one per day.
+    bloques = bloques_noche(conn, person_id, (desde - timedelta(60)).isoformat(), hasta.isoformat())
+
+    out = []
+    for i in range(dias):
+        dia = desde + timedelta(i)
+        dia_iso = dia.isoformat()
+        motivo = _motivo_de_turnos(por_dia.get(dia_iso), por_dia.get((dia - timedelta(1)).isoformat()))
+        item = {"dia": dia_iso, "libre": motivo is None, "motivo": motivo}
+        if motivo is None:
+            anterior = next((b for b in reversed(bloques) if _parse(b.fin) < dia), None)
+            if anterior is not None:
+                n = (dia - _parse(anterior.fin)).days
+                if n <= ventana:
+                    item["tras_noches"] = n
+        out.append(item)
+    return out
+
+
 def turno_de_hoy(conn, person_id: int, hoy: date) -> dict:
     """Hoy's second promise (BODY-HOY-TURNO-1): today's confirmed shift, the next confirmed shift
     ahead (skipping 'off' days, within 14 days), and -- when the person is still inside a recovery
