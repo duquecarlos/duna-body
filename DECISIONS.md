@@ -26001,6 +26001,10 @@ dispatching spec (the `pull.py:257` site found during this slice, not named by t
 **Commits** `5590876e05c350bc4b617ce4c7a3841574043024` (`body/garmin_cuenta.py`,
 `body/agente/herramientas.py`, `body/pull.py`, `tests/test_garmin_dia_vacio.py`,
 `tests/test_garmin_host.py`, `tests/test_person_scope.py`, `tests/test_primer_pull_1.py`,
-`tests/test_sync_vivo_estado.py`: all six rulings and their tests, one commit), (this ledger entry)
--- merge and post-merge smoke recorded below once landed.
+`tests/test_sync_vivo_estado.py`: all six rulings and their tests, one commit),
+`a79733814b57140665705b05f31d11d4ac79c24b` (this ledger entry) -- merged
+`e868d0737619bbbe09eff483907687ba6417d294` (`--no-ff`, no conflicts; tree identity proven, merge
+tree `fce20da049bec8afacb1d607a8c371f6364b7014` equals the branch's own tree, empty diff).
+Post-merge smoke (`tests.test_garmin_dia_vacio tests.test_pull_relleno tests.test_garmin_estado
+tests.test_sync_vivo_estado`): `Ran 110 tests ... OK`.
 
