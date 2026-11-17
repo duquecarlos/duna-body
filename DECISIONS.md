@@ -25774,5 +25774,10 @@ A.
 **Commits** `17dccf016adcd9f7f009983f1fd0bd96e69376fc` (`body/turnos_costo.py`,
 `body/agente/herramientas.py`, `body/rutas/asistente.py`, `body/i18n/{es,en}.json`,
 `tests/test_agente_bucle.py`, `tests/test_agente_registro.py`, `tests/test_turno_dia_plan.py`: all
-four rulings and their tests, one commit).
+four rulings and their tests, one commit), `b3c44afe2137b64a40a756a0985b500c394c8b72` (this ledger
+entry) -- merged `3b071355d2f4a01e2d7a7607acc0e2fe60bef849` (`--no-ff`, no conflicts; tree identity
+proven, merge tree `c46d48d97870ca07cf878f51e093d3e8fda6fd81` equals the branch's own tree, empty
+diff). Post-merge smoke
+(`tests.test_turno_dia_plan tests.test_turnos_costo tests.test_plan_propuestas tests.test_mcp`):
+`Ran 188 tests ... OK`.
 
