@@ -259,6 +259,20 @@ _PARAM_REGISTRAR_ENTRENO = {
     "required": ["day", "series"],
     "additionalProperties": False,
 }
+# BODY-CORREGIR-MEDIDA-ENTRENO-1-W ruling B: id-addressed like corregir_ingesta -- `orden` names the
+# set's position as the training-session page shows it, never a row id the person never sees.
+_PARAM_CORREGIR_ENTRENO = {
+    "type": "object",
+    "properties": {
+        "dia": {"type": "string", "format": "date"},
+        "orden": {"type": "integer", "minimum": 1},
+        "ejercicio": {"type": "string"},
+        "reps": {"type": ["integer", "null"], "minimum": 0},
+        "peso_kg": {"type": ["number", "null"], "minimum": 0},
+    },
+    "required": ["dia", "orden"],
+    "additionalProperties": False,
+}
 # BODY-HOGAR-ESCRIBE-1 ruling 4: plan_id names an existing PLANNED session row (the id the Hogar
 # feed already returns) -- never a title, which can be misheard.
 _PARAM_ANOTAR_SESION = {
@@ -1512,6 +1526,59 @@ def _registrar_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
+def _corregir_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id: int, dia: str, orden: int,
+                       ejercicio: str | None = None, reps=None, peso_kg=None) -> dict:
+    """Proposes correcting ONE set of a session already logged that day, by its position
+    (BODY-CORREGIR-MEDIDA-ENTRENO-1-W ruling B: id-addressed like corregir_ingesta, so "the third
+    one was 8 reps" fixes just that slot without resending every set). Resolves the day's own
+    session the same way ruling 2's `_resolver_sesion_entreno_dia` does -- a Garmin strength day or
+    an existing manual one, never any other watch activity. `antes` carries that slot's full
+    pre-correction state (both `person_*` and `garmin_*` columns, plus `corrected_by_person`), so
+    `propuestas.deshacer` restores it EXACTLY through the same direct UPDATE on `workout_set`
+    `registrar_entreno`'s own undo already uses for a Garmin-matched slot -- `correct_exercise_set`
+    only ever moves a slot INTO "corrected", never back out of it."""
+    _dia_no_futuro(conn, person_id, dia)
+    if isinstance(orden, bool) or not isinstance(orden, int):
+        raise ToolError("orden debe ser un número entero")
+    if orden < 1:
+        raise ToolError("orden debe ser un número entero mayor o igual a 1")
+    if ejercicio is None and reps is None and peso_kg is None:
+        raise ToolError("se necesita al menos uno de ejercicio, reps o peso_kg")
+    t = T(db.person(conn, person_id)["language"])
+    sesion = _resolver_sesion_entreno_dia(conn, person_id, dia)
+    if sesion is None:
+        raise ToolError(t("agente.error.entreno_sin_sesion"))
+    source, source_id = sesion
+    existentes = db.exercise_sets(conn, person_id, source, source_id)
+    # A rest slot (Garmin alternates active/rest, BODY-SERIES-ORDEN-1) is never a "serie" to
+    # correct -- the same active-only filter `_leer_entreno`/`_registrar_entreno` already apply.
+    actual = next((s for s in existentes if s["set_order"] == orden and s["set_type"] == "active"), None)
+    if actual is None:
+        raise ToolError(t("agente.error.entreno_sin_serie", orden=orden))
+    nombre = (ejercicio or actual["exercise"] or "?").strip() or "?"
+    if ejercicio is not None:
+        ejercicio = ejercicio.strip()
+        if not ejercicio:
+            raise ToolError("ejercicio no puede quedar vacío")
+    reps = (_numero_entreno(t, nombre, reps, entero=True, clave_error="agente.error.entreno_reps_invalidas")
+            if reps is not None else None)
+    peso_kg = (_numero_entreno(t, nombre, peso_kg, entero=False, clave_error="agente.error.entreno_peso_invalido")
+               if peso_kg is not None else None)
+    antes = {
+        "set_order": orden, "existia": True,
+        "person_category": actual["person"]["category"], "person_exercise": actual["person"]["exercise"],
+        "person_reps": actual["person"]["reps"], "person_weight_kg": actual["person"]["weight_kg"],
+        "person_note": actual["person"]["note"], "corrected_by_person": actual["corrected_by_person"],
+        "garmin_exercise": actual["garmin"]["exercise"], "garmin_reps": actual["garmin"]["reps"],
+        "garmin_weight_value": actual["garmin"]["weight_value"], "garmin_weight_unit": actual["garmin"]["weight_unit"],
+        "garmin_category": actual["garmin"]["category"],
+    }
+    despues = {"dia": dia, "source": source, "source_id": source_id, "set_order": orden,
+               "ejercicio": ejercicio, "reps": reps, "peso_kg": peso_kg}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "corregir_entreno", despues, antes=antes)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
 def _anotar_sesion(conn: sqlite3.Connection, person_id: int, conversacion_id: int, plan_id: int, nota: str,
                     hecha: bool | None = None) -> dict:
     """Proposes a note on an existing PLANNED session row (BODY-HOGAR-ESCRIBE-1 ruling 4): how the
@@ -2659,6 +2726,12 @@ HERRAMIENTAS = [
                      "en el chat. Si la persona corrige un entreno que ya registró ese día, llama a esta "
                      "misma herramienta: corrige ese entreno, nunca crea otro.",
      "parametros": _PARAM_REGISTRAR_ENTRENO, "funcion": _registrar_entreno},
+    {"nombre": "corregir_entreno", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Corrige UNA serie de un entreno ya registrado (por ejemplo \"la tercera fueron 8 "
+                     "repeticiones\"), sin repetir las demás. 'orden' es la posición de la serie como la "
+                     "muestra la pantalla del entrenamiento, nunca un id. No la corrige: registra la "
+                     "propuesta para que la persona la apruebe en el chat.",
+     "parametros": _PARAM_CORREGIR_ENTRENO, "funcion": _corregir_entreno},
     {"nombre": "anotar_sesion", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone una nota sobre cómo fue una sesión de entrenamiento ya planeada (plan_id es el id "
                      "del plan, nunca su título). Di si la sesión quedó hecha con 'hecha': true -- déjalo en "

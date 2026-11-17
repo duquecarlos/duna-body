@@ -228,6 +228,15 @@ class PermisoTest(_HostedTestCase):
         self.assertIn(mcp.NOMBRE_DESCARTAR, nombres)
         self.assertTrue(any(herramientas.tipo_de(n) == "propuesta" for n in nombres))
 
+    def test_corregir_entreno_is_offered_over_http(self):
+        """BODY-CORREGIR-MEDIDA-ENTRENO-1-W ruling B: catalog parity -- the same registry entry
+        tools/list already serves over stdio (tests/test_mcp.py) also reaches this HTTP route,
+        through the same `mcp._lista_herramientas`."""
+        self._grant("k", "escritura")
+        r = self._post({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, key="k")
+        nombres = {t["name"] for t in r.json()["result"]["tools"]}
+        self.assertIn("corregir_entreno", nombres)
+
     def test_lectura_calling_a_write_tool_is_iserror_never_a_transport_error(self):
         self._grant("k", "lectura")
         r = self._post({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
