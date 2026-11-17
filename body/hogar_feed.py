@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from datetime import date, datetime, timedelta
 
-from . import comidas, db, fechas
+from . import comidas, db, fechas, nutriente_objetivo
 
 
 class MetricDesconocida(Exception):
@@ -27,11 +27,18 @@ class RangoDemasiadoLargo(Exception):
 MAX_SERIE_DIAS = 366
 
 
-def _figuras(conn, person_id: int, dia: date) -> list[dict]:
+def _metric_defs(conn) -> dict[str, dict]:
+    """Every metric_def row's own `kind` and `unit`, keyed by `key` -- one query, shared by
+    `_figuras` (its `kind`) and `_metas` (its `unit`, BODY-HOGAR-METAS-INGESTA-1 ruling 1) so
+    `manana`'s own metric_def read stays the single one it always was."""
+    return {r["key"]: {"kind": r["kind"], "unit": r["unit"]}
+            for r in conn.execute("SELECT key, kind, unit FROM metric_def")}
+
+
+def _figuras(conn, person_id: int, dia: date, defs: dict[str, dict]) -> list[dict]:
     """Every metric_key's own latest stored day at or before `dia` -- unfiltered (ruling 2), each
     metric independently (a metric synced this morning and one not synced in days both show their
     own most recent value, never forced onto a single shared day)."""
-    defs = {r["key"]: r["kind"] for r in conn.execute("SELECT key, kind FROM metric_def")}
     dia_iso = dia.isoformat()
     rows = conn.execute(
         "SELECT metric_key, value, day FROM daily_metric dm WHERE person_id = ? AND day <= ? "
@@ -39,8 +46,8 @@ def _figuras(conn, person_id: int, dia: date) -> list[dict]:
         "AND metric_key = dm.metric_key AND day <= ?) ORDER BY metric_key",
         (person_id, dia_iso, dia_iso),
     ).fetchall()
-    return [{"metric_key": r["metric_key"], "value": r["value"], "kind": defs[r["metric_key"]], "day": r["day"]}
-            for r in rows]
+    return [{"metric_key": r["metric_key"], "value": r["value"], "kind": defs[r["metric_key"]]["kind"],
+              "day": r["day"]} for r in rows]
 
 
 def _plan_dias(conn, person_id: int, dia: date) -> list[dict]:
@@ -153,19 +160,53 @@ def _comidas(conn, person_id: int, dia: date, ahora: datetime) -> dict:
     return {"momentos": momentos_out, "registradas": registradas, "faltan": faltan}
 
 
+def _metas(conn, person_id: int, dia: date, defs: dict[str, dict]) -> list[dict]:
+    """GET /api/hogar/manana's own `metas` key (BODY-HOGAR-METAS-INGESTA-1, hub ref
+    HOGAR-COCINA-IDEAS-1 ruling 1): one item per metric with a live daily intake target on `dia`,
+    built from `nutriente_objetivo.estado_del_dia`'s own output and nothing else, plus the unit
+    `metric_def` already carries -- never a second computation of the target (the orchestrator's
+    ruling: Hogar's own guessed shape -- goal_id, direction, target_value, deadline -- does not
+    exist in Body, and a second reading of the target would drift from what Today and Día show;
+    Body computes `restante` so Hogar never re-derives per_kg or the floor rule). Ordered by
+    metric_key, `[]` when none -- never omitted, never null. A metric whose latest target is 'off'
+    never appears -- `estado_del_dia` already skips it."""
+    estado = nutriente_objetivo.estado_del_dia(conn, person_id, dia.isoformat())
+    out = []
+    for metric_key in sorted(estado):
+        e = estado[metric_key]
+        o = e["objetivo"]
+        out.append({
+            "metric_key": metric_key,
+            "unidad": defs[metric_key]["unit"],
+            "sentido": o["sentido"],
+            "kind": o["kind"],
+            "amount": o["amount"],
+            "objetivo": o["objetivo"],
+            "falta_peso": o["falta_peso"],
+            "desde": o["start_day"],
+            "total": e["total"],
+            "registros": e["n"],
+            "restante": e["restante"],
+        })
+    return out
+
+
 def manana(conn, person_id: int, dia: date, ahora: datetime) -> dict:
     """GET /api/hogar/manana's own shape, Hogar's draft (C:/Duna/hogar/dev-protocol/contracts/
     body-v1.md), ruling 2: `dia`'s figures, plan and the active horizon's current week.
     BODY-HOGAR-TURNOS-1 ruling 1 adds `turnos`. BODY-HOGAR-ESCRIBE-2 ruling 3 adds `comidas` --
     `ahora` is the person's own local wall-clock now (the route's `_ahora_local`), used only to
-    decide which `comidas.faltan` moments have already passed when `dia` is today."""
+    decide which `comidas.faltan` moments have already passed when `dia` is today.
+    BODY-HOGAR-METAS-INGESTA-1 adds `metas`."""
+    defs = _metric_defs(conn)
     return {
         "dia": dia.isoformat(),
-        "figuras": _figuras(conn, person_id, dia),
+        "figuras": _figuras(conn, person_id, dia, defs),
         "plan": _plan_dias(conn, person_id, dia),
         "horizonte": _horizonte_actual(conn, person_id, dia),
         "turnos": turnos_alrededor(conn, person_id, dia),
         "comidas": _comidas(conn, person_id, dia, ahora),
+        "metas": _metas(conn, person_id, dia, defs),
     }
 
 
