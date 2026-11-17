@@ -26809,5 +26809,10 @@ or a name) -- merges on green per merge policy A.
 `tests/test_persona_garmin.py`: rulings 1-4 and their tests),
 `5576d57424ab705c3b6d2427ebcdef20d4d005f2` (`deploy/host/duna-deploy-body`,
 `deploy/host/body-import-pc.sh`, `deploy/host/README.md`, `tests/test_deploy_host.py`,
-`tests/test_host_import.py`, `tests/test_host_deploy.py`: ruling 5 and its tests).
+`tests/test_host_import.py`, `tests/test_host_deploy.py`: ruling 5 and its tests),
+`650719af17132dc73521456511660e88f42fe051` (this ledger entry) -- merged
+`89f82a1c42add34cd02443e08bb60ee06b584386` (`--no-ff`, no conflicts; tree identity proven, merge
+tree `adc32848b96c7b5941da80e075c59ce33a972634` equals the branch's own tree, empty diff).
+Post-merge smoke (`tests.test_persona_garmin tests.test_deploy_host tests.test_host_import`):
+`Ran 60 tests ... OK`.
 
