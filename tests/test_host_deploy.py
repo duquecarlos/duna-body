@@ -131,6 +131,8 @@ class BeforeShaTest(unittest.TestCase):
         text = _read(ENTRY)
         for line in text.splitlines():
             stripped = line.strip()
+            if "$INSTALLED_SCRIPT_PATH" in stripped:
+                continue  # self re-exec right after an autoactualizar install: it IS the exec bit
             if stripped.startswith("exec ") or '"exec ' in stripped:
                 self.assertIn(
                     "/bin/bash", stripped,
@@ -622,16 +624,22 @@ class PullVerbTest(unittest.TestCase):
 
 
 class PullNowReadmeTest(unittest.TestCase):
-    """BODY-SYNC-VIVO-TIMER-1 ruling 3's README step and ruling 4's ceiling paragraph."""
+    """BODY-SYNC-VIVO-TIMER-1 ruling 3's README step and ruling 4's ceiling paragraph, updated by
+    BODY-HOST-AUTOACTUALIZAR-1: the wrapper now updates itself, so the hand-reinstall callout that
+    used to sit in this section is gone."""
 
     def setUp(self):
         self.text = _read(README)
 
-    def test_reinstall_step_and_pull_now_line_present(self):
-        self.assertIn(
-            "sudo install -o root -g root -m 755 deploy/host/duna-deploy-body "
-            "/usr/local/sbin/duna-deploy-body", self.text)
+    def test_pull_now_line_present_and_no_hand_reinstall_callout(self):
         self.assertIn("sudo -n /usr/local/sbin/duna-deploy-body pull", self.text)
+        section_idx = self.text.index("## Pull now")
+        next_section_idx = self.text.index("## Off-host backup")
+        section = self.text[section_idx:next_section_idx]
+        self.assertNotIn(
+            "sudo install -o root -g root -m 755 deploy/host/duna-deploy-body "
+            "/usr/local/sbin/duna-deploy-body", section)
+        self.assertIn("updates itself", section)
 
     def test_ceiling_paragraph_gives_its_figures(self):
         for figure in ("34", "68", "15 minute", "7 Garmin", "476"):

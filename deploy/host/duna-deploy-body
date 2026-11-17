@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # duna-deploy-body -- root-owned entry point for Body's deploy on duna-prod-1 (host-deploy-v1).
 # Installed to /usr/local/sbin/duna-deploy-body; called only as:
-#   sudo -n /usr/local/sbin/duna-deploy-body <status|deploy [--dry-run]>
+#   sudo -n /usr/local/sbin/duna-deploy-body <status|deploy [--dry-run]|pull|backup [--dry-run]|
+#     importar-pc --cuenta-sub <sub> --archivo <path> [--apply]|personas|rollback-script>
 set -Eeuo pipefail
 
 if [[ "${EUID}" -ne 0 ]]; then
@@ -24,12 +25,14 @@ usage() {
 usage: duna-deploy-body <command>
   status              show unit status, deployed sha, data dir mode;
                       exits 3 if the last backup run failed
-  deploy [--dry-run]  pull the repo and redeploy (--dry-run: print the plan, run nothing)
+  deploy [--dry-run]  pull the repo and redeploy (--dry-run: print the plan, run nothing);
+                      the entry script and its sudoers rule update themselves on every deploy
   pull                run today's full Garmin pull now (body-pull.service), then print its journal
   backup [--dry-run]  snapshot, encrypt and upload to R2, delete the plaintext (--dry-run: print the plan, run nothing)
   importar-pc --cuenta-sub <sub> --archivo <path> [--apply]
                       import one person's PC snapshot into this host (dry run by default)
   personas            list hosted persons by cuenta_sub, display name and first consent
+  rollback-script     restore the entry script and its sudoers rule from their .prev backups
 USAGE
 }
 
@@ -108,16 +111,39 @@ case "$cmd" in
     exit "$status_exit"
     ;;
   deploy)
-    if [[ $# -gt 1 ]]; then
+    AUTOACTUALIZADO_INTERNO=""
+    CARRIED_BEFORE_SHA=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --dry-run)
+          DRY_RUN="1"
+          shift
+          ;;
+        --autoactualizado-interno)
+          AUTOACTUALIZADO_INTERNO="1"
+          shift
+          ;;
+        --before-sha)
+          CARRIED_BEFORE_SHA="${2:-}"
+          shift 2
+          ;;
+        *)
+          usage
+          exit 2
+          ;;
+      esac
+    done
+    if [[ -n "$AUTOACTUALIZADO_INTERNO" && -z "$CARRIED_BEFORE_SHA" ]]; then
       usage
       exit 2
     fi
-    if [[ $# -eq 1 ]]; then
-      if [[ "$1" != "--dry-run" ]]; then
-        usage
-        exit 2
-      fi
-      DRY_RUN="1"
+    if [[ -z "$AUTOACTUALIZADO_INTERNO" && -n "$CARRIED_BEFORE_SHA" ]]; then
+      usage
+      exit 2
+    fi
+    if [[ -n "$AUTOACTUALIZADO_INTERNO" && -n "$DRY_RUN" ]]; then
+      usage
+      exit 2
     fi
     ;;
   backup)
@@ -143,6 +169,12 @@ case "$cmd" in
     # body-import-pc.sh itself validates --cuenta-sub, --archivo and --apply.
     ;;
   personas)
+    if [[ $# -ne 0 ]]; then
+      usage
+      exit 2
+    fi
+    ;;
+  rollback-script)
     if [[ $# -ne 0 ]]; then
       usage
       exit 2
@@ -185,6 +217,22 @@ if [[ "$cmd" == "personas" ]]; then
   exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" personas
 fi
 
+if [[ "$cmd" == "rollback-script" ]]; then
+  source "$REPO_DIR/deploy/host/autoactualizar.sh"
+  if [[ ! -f "$PREV_SCRIPT_PATH" || ! -f "$PREV_SUDOERS_PATH" ]]; then
+    echo "rollback-script: refused -- missing .prev backup" >&2
+    exit 1
+  fi
+  if ! visudo -cf "$PREV_SUDOERS_PATH" >/dev/null 2>&1; then
+    echo "rollback-script: refused -- .prev sudoers file fails visudo -cf" >&2
+    exit 1
+  fi
+  run install -o root -g root -m 0755 "$PREV_SCRIPT_PATH" "$INSTALLED_SCRIPT_PATH"
+  run install -o root -g root -m 0440 "$PREV_SUDOERS_PATH" "$INSTALLED_SUDOERS_PATH"
+  echo "rollback-script: restored $INSTALLED_SCRIPT_PATH and $INSTALLED_SUDOERS_PATH from their .prev backups"
+  exit 0
+fi
+
 owner="$(stat -c %U "$REPO_DIR")"
 
 ensure_system_user
@@ -194,12 +242,26 @@ if [[ -n "$DRY_RUN" ]]; then
   echo "runuser -u \"$owner\" -- git -C \"$REPO_DIR\" rev-parse HEAD"
   echo "runuser -u \"$owner\" -- git -C \"$REPO_DIR\" fetch origin"
   echo "runuser -u \"$owner\" -- git -C \"$REPO_DIR\" pull --ff-only"
+  source "$REPO_DIR/deploy/host/autoactualizar.sh"
+  autoactualizar_plan "$REPO_DIR/deploy/host/duna-deploy-body" "$REPO_DIR/deploy/host/duna-deploy-body.sudoers"
   echo "exec /bin/bash \"$PRODUCT_SCRIPT\" --before-sha <captured-sha>"
   exit 0
 fi
 
-before_sha="$(runuser -u "$owner" -- git -C "$REPO_DIR" rev-parse HEAD)"
-runuser -u "$owner" -- git -C "$REPO_DIR" fetch origin
-runuser -u "$owner" -- git -C "$REPO_DIR" pull --ff-only
+if [[ -z "$AUTOACTUALIZADO_INTERNO" ]]; then
+  before_sha="$(runuser -u "$owner" -- git -C "$REPO_DIR" rev-parse HEAD)"
+  runuser -u "$owner" -- git -C "$REPO_DIR" fetch origin
+  runuser -u "$owner" -- git -C "$REPO_DIR" pull --ff-only
+
+  source "$REPO_DIR/deploy/host/autoactualizar.sh"
+  autoactualizar_comparar "$REPO_DIR/deploy/host/duna-deploy-body" "$REPO_DIR/deploy/host/duna-deploy-body.sudoers"
+  if [[ -n "$SCRIPT_CHANGED" || -n "$SUDOERS_CHANGED" ]]; then
+    autoactualizar_instalar "$REPO_DIR/deploy/host/duna-deploy-body" "$REPO_DIR/deploy/host/duna-deploy-body.sudoers"
+    exec "$INSTALLED_SCRIPT_PATH" deploy --autoactualizado-interno --before-sha "$before_sha"
+  fi
+  echo "entry script: up to date"
+else
+  before_sha="$CARRIED_BEFORE_SHA"
+fi
 
 exec /bin/bash "$PRODUCT_SCRIPT" --before-sha "$before_sha"

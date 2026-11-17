@@ -43,14 +43,40 @@ reinstalls, restarts, and exits non-zero naming the step that failed.
 `body-pull.service` runs only the Garmin pull, not the shift import: shift files reach the host
 through an uploader that is not built yet (BODY-SHIFT-UPLOAD-1).
 
+## Self-updating wrapper (BODY-HOST-AUTOACTUALIZAR-1)
+
+The wrapper updates itself on every `deploy`, right after the pull: it compares the freshly pulled
+`deploy/host/duna-deploy-body` and `deploy/host/duna-deploy-body.sudoers` against what is installed
+at `/usr/local/sbin/duna-deploy-body` and `/etc/sudoers.d/duna-deploy-body`. When both already
+match, it prints `entry script: up to date` and goes straight on to `body-deploy.sh` as before.
+When either changed, it validates the candidate sudoers file (exactly one
+`<user> ALL=(root) NOPASSWD: /usr/local/sbin/duna-deploy-body` line) and runs `visudo -cf` on it --
+either check failing refuses, with nothing installed. Otherwise it prints a diff of each changed
+file, backs up the currently installed copies to `/usr/local/sbin/duna-deploy-body.prev` and
+`/etc/sudoers.d/.duna-deploy-body.prev` (the leading dot keeps sudo from ever reading the backup as
+a live rule), installs the new copies (mode 0755 for the script, 0440 for the sudoers rule), then
+re-execs itself so the rest of that `deploy` runs under the new wrapper. This is the same mechanism
+Lotes and Lugares already run.
+
+`deploy --dry-run` shows the same plan without installing anything (`dry-run: entry script: up to
+date`, or the diffs and `dry-run: sudoers check: would pass|would FAIL: <reason>`). If a bad
+sudoers file ever ends up installed, `rollback-script` restores both files from their `.prev`
+backups:
+
+    sudo -n /usr/local/sbin/duna-deploy-body rollback-script
+
+No hand reinstall is needed any more, for this or any later change to the wrapper: the very first
+`deploy` after this change still runs under the OLD wrapper, so `body-deploy.sh` itself installs the
+new wrapper and sudoers rule (through this same mechanism, as root, with no re-exec) before doing
+anything else.
+
 ## Pull now (BODY-SYNC-VIVO-TIMER-1)
 
-A relayed "pull now" needs the `pull` verb, which this slice adds to `duna-deploy-body`. It needs
-the updated entry script installed once, by hand -- the same line as the one-time install above:
+A relayed "pull now" uses the `pull` verb on `duna-deploy-body`. The wrapper updates itself on every
+`deploy` (see "Self-updating wrapper" above), so no hand reinstall is needed to pick up this verb --
+the first `deploy` after this change installed it through `body-deploy.sh`.
 
-    sudo install -o root -g root -m 755 deploy/host/duna-deploy-body /usr/local/sbin/duna-deploy-body
-
-Then, as Carlos himself or an orchestrator relaying his own go:
+As Carlos himself or an orchestrator relaying his own go:
 
     sudo -n /usr/local/sbin/duna-deploy-body pull
 
@@ -123,38 +149,35 @@ never on the server):
 Moves one person's Body data from the PC's own `body.db` into this host, using the tool
 BODY-MUDANZA-HERRAMIENTA-1 built (`python -m body.mudanza importar`). The snapshot travels by
 `scp` over the same SSH access used for every other admin task here -- never `age`: its private
-half lives on the PC, not on this host, so the host could never decrypt it. Carlos runs each step
-himself, in order:
+half lives on the PC, not on this host, so the host could never decrypt it. The wrapper already
+carries these verbs -- it updates itself on every `deploy` (see "Self-updating wrapper" above), so
+no hand reinstall is needed first. Carlos runs each step himself, in order:
 
-1. Install the updated `duna-deploy-body` (same line as the one-time install above):
-
-       sudo install -o root -g root -m 755 deploy/host/duna-deploy-body /usr/local/sbin/duna-deploy-body
-
-2. On the PC, take a consistent snapshot (never the live file itself), then copy it to the host:
+1. On the PC, take a consistent snapshot (never the live file itself), then copy it to the host:
 
        .venv\Scripts\python.exe -m body.backup snapshot --out pc-snapshot.sqlite
        scp pc-snapshot.sqlite <host-user>@<host>:<staging-path>
 
-3. Find the destination `sub` -- `personas` prints only a `cuenta_sub`, a display name and a
+2. Find the destination `sub` -- `personas` prints only a `cuenta_sub`, a display name and a
    first-consent date, never a health figure:
 
        sudo -n /usr/local/sbin/duna-deploy-body personas
 
-4. Dry run -- prints the tool's per-table counts, writes nothing:
+3. Dry run -- prints the tool's per-table counts, writes nothing:
 
        sudo -n /usr/local/sbin/duna-deploy-body importar-pc --cuenta-sub <sub> --archivo <staging-path>
 
-5. Apply -- takes a host backup first (the rollback point, printed, never uploaded), stops
+4. Apply -- takes a host backup first (the rollback point, printed, never uploaded), stops
    `body-pull.timer` and `body-backfill.timer` for the window, runs the import as `duna-body`,
    then restarts the timers and deletes the uploaded file, whether it succeeds or fails:
 
        sudo -n /usr/local/sbin/duna-deploy-body importar-pc --cuenta-sub <sub> --archivo <staging-path> --apply
 
-6. Check the hosted app is healthy:
+5. Check the hosted app is healthy:
 
        curl -fsS https://body.duna.solutions/healthz
 
-7. Reconnect Garmin on the hosted page -- the Garmin token never travels with the import
+6. Reconnect Garmin on the hosted page -- the Garmin token never travels with the import
    (BODY-GARMIN-HOST-1): sign in again at `https://body.duna.solutions/garmin/conectar`.
 
 **Rollback**: if step 5 fails, the timers are already restarted and the failure names the rollback
@@ -191,8 +214,8 @@ second way to build the venv.
 
 | File | Installed to | By |
 | --- | --- | --- |
-| `duna-deploy-body` | `/usr/local/sbin/duna-deploy-body` | Carlos, by hand |
-| `duna-deploy-body.sudoers` | `/etc/sudoers.d/duna-deploy-body` | Carlos, by hand |
+| `duna-deploy-body` | `/usr/local/sbin/duna-deploy-body` | Carlos, by hand, once; itself on every later `deploy` |
+| `duna-deploy-body.sudoers` | `/etc/sudoers.d/duna-deploy-body` | Carlos, by hand, once; itself on every later `deploy` |
 | `body-deploy.sh` | stays in the checkout | execed by `duna-deploy-body` |
 | `body-web.service` | `/etc/systemd/system/body-web.service` | `body-deploy.sh` |
 | `body-pull.service`, `body-pull.timer` | `/etc/systemd/system/` | `body-deploy.sh` |

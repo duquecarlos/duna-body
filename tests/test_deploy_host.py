@@ -92,25 +92,23 @@ class ReadmeImportSectionTest(unittest.TestCase):
         self.assertIn("duna-deploy-body personas", self.text)
 
     def test_steps_are_in_order(self):
-        install_idx = self.text.index(
-            "sudo install -o root -g root -m 755 deploy/host/duna-deploy-body"
-        )
         section_idx = self.text.index("## Importar desde el PC")
-        install_idx_in_section = self.text.index(
-            "sudo install -o root -g root -m 755 deploy/host/duna-deploy-body", section_idx
+        next_section_idx = self.text.index("## Host facts")
+        section = self.text[section_idx:next_section_idx]
+        self.assertNotIn(
+            "sudo install -o root -g root -m 755 deploy/host/duna-deploy-body", section,
+            "the hand-reinstall step should be gone now the wrapper self-updates",
         )
-        self.assertGreater(install_idx_in_section, section_idx)
-        scp_idx = self.text.index("scp pc-snapshot.sqlite", section_idx)
-        personas_idx = self.text.index("duna-deploy-body personas", section_idx)
-        dry_run_idx = self.text.index(
-            "importar-pc --cuenta-sub <sub> --archivo <staging-path>\n", section_idx
+        scp_idx = section.index("scp pc-snapshot.sqlite")
+        personas_idx = section.index("duna-deploy-body personas")
+        dry_run_idx = section.index(
+            "importar-pc --cuenta-sub <sub> --archivo <staging-path>\n"
         )
-        apply_idx = self.text.index(
-            "importar-pc --cuenta-sub <sub> --archivo <staging-path> --apply", section_idx
+        apply_idx = section.index(
+            "importar-pc --cuenta-sub <sub> --archivo <staging-path> --apply"
         )
-        healthz_idx = self.text.index("/healthz", section_idx)
-        garmin_idx = self.text.index("garmin/conectar", section_idx)
-        self.assertLess(install_idx_in_section, scp_idx)
+        healthz_idx = section.index("/healthz")
+        garmin_idx = section.index("garmin/conectar")
         self.assertLess(scp_idx, personas_idx)
         self.assertLess(personas_idx, dry_run_idx)
         self.assertLess(dry_run_idx, apply_idx)
