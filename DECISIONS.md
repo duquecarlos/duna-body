@@ -25638,5 +25638,9 @@ green per merge policy A.
 **Commits** `ecd8ad2` (`body/db.py`, `tests/test_migraciones.py`: ruling 1's column and writer),
 `f78d1f0` (`body/agente/herramientas.py`, `body/agente/propuestas.py`, `body/rutas/mcp_remoto.py`,
 `body/rutas/dispositivos.py`, `body/i18n/{es,en}.json`, `docs/contracts/hogar-feed-v1.md`: rulings
-2-4), `60e0a70` (`tests/test_hogar_nota_guard.py`: the guard tests).
+2-4), `60e0a70` (`tests/test_hogar_nota_guard.py`: the guard tests) -- merged
+`872606a168ec7bbdcba7070cad86389c3891e47e` (`--no-ff`, no conflicts; tree identity proven, merge
+tree `5efaa7df390dee14a217ebf8f202d65d46c66ceb` equals the branch's own tree, empty diff). Post-merge
+smoke (`tests.test_hogar_nota_guard tests.test_hogar_escribe tests.test_hogar_escribe_rutas
+tests.test_migraciones`): `Ran 63 tests ... OK`.
 
