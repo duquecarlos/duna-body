@@ -175,9 +175,14 @@ class PullHealsAnEmptyDayTest(_HostedPullCase):
     DB_NAME = "heals.db"
 
     def test_an_all_none_day_stays_in_the_gap_list_and_is_refetched_next_time(self):
+        """BODY-GARMIN-RELLENO-ANTIGUO-1: BACKFILL_DIAS patched down to VENTANA_RELLENO so this
+        test's own concern (empty-day healing inside the 14-day window) is isolated from the
+        daily pull's separate older-than-14-day retry, which would otherwise also ask for a
+        couple of days outside `respuestas`."""
         dias = [(HOY - timedelta(n)).isoformat() for n in range(garmin_cuenta.VENTANA_RELLENO)]
         respuestas = {d: _dia(d, metrics={}) for d in dias}
-        with mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_fetch_from(respuestas)):
+        with mock.patch("body.pull.BACKFILL_DIAS", garmin_cuenta.VENTANA_RELLENO), \
+             mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_fetch_from(respuestas)):
             pull.pull_hosted(self.conn)
         self.assertEqual(garmin_cuenta.dias_sin_datos(self.conn, 1, HOY), sorted(respuestas))
 
@@ -187,7 +192,8 @@ class PullHealsAnEmptyDayTest(_HostedPullCase):
             visitados.append(day)
             return _dia(day, metrics={"resting_hr": 55.0}), token_str
 
-        with mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=segunda_vez):
+        with mock.patch("body.pull.BACKFILL_DIAS", garmin_cuenta.VENTANA_RELLENO), \
+             mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=segunda_vez):
             pull.pull_hosted(self.conn)
         self.assertEqual(sorted(visitados), sorted(respuestas))  # every gap day refetched
         self.assertEqual(garmin_cuenta.dias_sin_datos(self.conn, 1, HOY), [])

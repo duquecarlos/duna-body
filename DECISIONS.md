@@ -26299,3 +26299,189 @@ tree `46b60e459ff0367e878f5076d8c585d260b5f2ad` equals the branch's own tree, em
 Post-merge smoke (`tests.test_garmin_diagnostico tests.test_garmin_dia_vacio
 tests.test_sync_vivo_estado`): `Ran 109 tests ... OK`.
 
+## BODY-GARMIN-RELLENO-ANTIGUO-1 -- the daily pull also retries gaps older than the 14-day window
+(2026-11-17)
+
+**The investigation's finding** (BODY-GARMIN-DIA-VACIO-2-INV, OBSERVED): a Garmin day that came
+back empty is refetched only while it sits inside `garmin_cuenta.VENTANA_RELLENO` (14 days,
+`body/garmin_cuenta.py:25`) by the daily pull's `_dias_pendientes_relleno` (`body/pull.py:508` at
+measurement time); the backfill marker advances past an empty day and never revisits it
+(`body/pull.py:858-916`). A day Garmin did not have yet when Body asked becomes a permanent hole
+on its 15th day. The orchestrator left the completeness-versus-call-budget trade to this slice, as
+a quality question with a bounded, reversible cost.
+
+**The four rulings, verbatim from the dispatching spec's surface, built exactly as given:**
+
+1. "the DAILY pull [...] also retries OLDER gap days: days older than the 14-day window and
+   inside the backfill window (BACKFILL_DIAS, 90 days) with no stored Garmin value, newest first,
+   at most RELLENO_ANTIGUO_POR_CORRIDA = 5 per person per run, using the same "has data" rule
+   (`garmin_cuenta.dias_garmin_con_valor`), one query, never one per day." Built as
+   `garmin_cuenta.RELLENO_ANTIGUO_POR_CORRIDA = 5` (`body/garmin_cuenta.py:31`, beside
+   `VENTANA_RELLENO`) and `garmin_cuenta.dias_sin_datos_antiguos(conn, person_id, hoy,
+   limite_dias)` (`body/garmin_cuenta.py:196`): every day from `hoy - (limite_dias - 1)` up to
+   `hoy - VENTANA_RELLENO` (the day before the 14-day window starts) with no stored Garmin value,
+   one query (`dias_garmin_con_valor` narrowed by `desde`), then a plain set difference, newest
+   first. `[]` when `limite_dias` does not reach past `VENTANA_RELLENO` at all.
+2. "they come AFTER today, yesterday and the 14-day gaps and never displace them --
+   MAX_DIAS_POR_CORRIDA still caps the run, and the older retries take only what is left under
+   it, up to their own cap of 5." Built inside `pull._dias_pendientes_relleno`
+   (`body/pull.py:508`), which gains `incluir_antiguos: bool = False`: the always-fetched window
+   and the 14-day gaps are computed exactly as before into `dias`; only then is
+   `cupo_antiguos = max(MAX_DIAS_POR_CORRIDA - len(dias), 0)` computed and, when positive,
+   `garmin_cuenta.dias_sin_datos_antiguos(..., BACKFILL_DIAS)`'s newest-first result sliced to
+   `min(cupo_antiguos, garmin_cuenta.RELLENO_ANTIGUO_POR_CORRIDA)` and unioned in. When
+   `incluir_antiguos` is true the function returns `(dias, antiguos)` instead of a plain list --
+   `antiguos` the subset added for this reason -- so the caller can count them without
+   recomputing which days are "older"; `incluir_antiguos=False` (the default, every other caller)
+   returns the plain list exactly as before this ruling, unchanged shape, unchanged days, so no
+   existing caller's contract moved.
+3. "Measure which callers reach `_dias_pendientes_relleno` today and name them in the ledger
+   [...] NOT the today-sweep (`--hoy`), not connect, not backfill. If `_dias_pendientes_relleno`
+   is also called by a path that runs more than once a day, gate the older retries with an
+   explicit parameter." Measured: exactly two callers at this slice's start, both named in the
+   BODY-GARMIN-SYNC-CONSISTENTE-1-B module docstring: `pull_hosted` (`body/pull.py:808`, the
+   daily/`--days N` path -- the hosted timer's own once-a-day `deploy/host/body-pull.service`
+   call, and any manual `--days N` run through the same CLI entry point) and `pull_persona_ahora`
+   (`body/pull.py:575` at measurement time, the "connecting starts a pull now" path, which can run
+   more than once a day). Local mode's own daily pull does NOT share the function at all --
+   measured, not assumed: local mode's `_run` branch (`body/pull.py:_run`) never calls
+   `pull_hosted`; it walks `pull_all`'s own `_stored` helper (`body/pull.py:257`), a wholly
+   separate gap-tracking mechanism named out of scope by BODY-GARMIN-DIA-VACIO-1's own
+   open-followup. `_pull_hoy_persona`/`pull_hoy_todos` (the `--hoy` sweep) fetch their one day
+   straight through `_pull_one_person` and never call `_dias_pendientes_relleno` at all;
+   `_backfill_one_person` never calls it either (its own marker-based `_dias_pendientes_backfill`
+   is a separate mechanism, unchanged). So the "explicit parameter" gate landed on
+   `pull_persona_ahora`'s own call (`body/pull.py:859` region, unchanged -- it still calls with
+   `incluir_antiguos`'s default, `False`) rather than needing a NEW parameter threaded through a
+   shared helper: only `pull_hosted`'s own implicit-today branch (`body/pull.py:859`) passes
+   `incluir_antiguos=True`. Verified by `tests/test_garmin_relleno_antiguo.py`'s
+   `SoloElPullDiarioTest`, which spies on `pull._dias_pendientes_relleno` (via `wraps=`) through a
+   real `pull_hoy_todos`/`pull_backfill_hosted`/`pull_persona_ahora`/`pull_hosted` call each and
+   asserts not-called / called-without / called-with `incluir_antiguos=True` respectively.
+4. "The daily job line gains `, {k} older retried` after its existing empty count (k = older days
+   fetched this run, 0 printed too) [...] no second path" for the FeedsFallidos rule, the empty
+   count, the shape line and the reloj suffix. Built at `body/pull.py:886`: `pull_hosted`
+   initialises `antiguos = 0` alongside its other counters, adds `len(antiguos_persona)` from each
+   person's `_dias_pendientes_relleno(..., incluir_antiguos=True)` call, and the job line becomes
+   `f"{ok} ok, {failed} failed, {saved} days stored, {vacios} empty, {antiguos} older retried"`
+   before the existing `_sufijo_fallos_parciales`/`_sufijo_reloj` suffixes -- the SAME
+   `_pull_persona`/`_pull_one_person` path every day already uses, so an older day that empties,
+   partially fails or names the watch's own last contact does so through the identical code the
+   14-day gaps already run, never a second path. The `--hoy` sweep, connect and backfill lines are
+   untouched (ruling 3: they never request an older day, so there is nothing new for their own
+   lines to count).
+
+**Every new/changed line, verbatim, with an invented example** (never a real name, id or health
+figure):
+- Daily job line, one older day fetched and stored this run: `1 ok, 0 failed, 16 days stored,
+  0 empty, 2 older retried, reloj desconocido` (this exact line, 2 older retried, is this slice's
+  own `tests.test_garmin_relleno_antiguo.SoloElPullDiarioTest.test_daily_pull_is_the_only_caller_
+  with_older_retries` -- demo data, no real person).
+- Zero older days available (or none fetched): `..., 0 empty, 0 older retried, ...` -- printed
+  every run, never omitted.
+- An older day that also fails every feed still raises FeedsFallidos and counts in "failed", same
+  as a recent one -- no new line, the existing `", {n} feeds failed (...)"` suffix (ruling 6 of
+  BODY-GARMIN-DIA-VACIO-1) applies unchanged.
+
+**Tests**, `tests/test_garmin_relleno_antiguo.py` (22 tests, new): `DiasSinDatosAntiguosTest` --
+a day just past the 14-day window is a candidate, newest-first ordering, a day outside
+`limite_dias` is never a candidate, a stored day is excluded, another person's row and a manual
+row never count, a `limite_dias` not past the window returns `[]`, one query (`set_trace_callback`,
+the `tests/test_garmin_dia_vacio.py` precedent). `DiasPendientesRellenoAntiguosTest` --
+`incluir_antiguos=False` returns the plain list unchanged, a full 14-day gap leaves only the
+remaining cap room for older retries, every 14-day day already stored lets up to
+`RELLENO_ANTIGUO_POR_CORRIDA` older gaps fill in. `GapAntiguoSanadoYNoRefetchedTest` -- a 20-day-old
+gap is fetched by the daily pull and, once stored, left alone next run. `OchoHuecosAntiguosTest` --
+eight older gaps: the five newest fetched this run, the remaining three the next.
+`GapFueraDeHorizonteTest` -- a 95-day-old gap is never fetched, with the real (unpatched)
+`BACKFILL_DIAS`. `PrioridadVentanaSobreAntiguosTest` -- a recent (14-day-window) gap is fetched
+before any older one: under a tight cap (`MAX_DIAS_POR_CORRIDA` patched to 3) the older gap gets no
+room at all. `SoloElPullDiarioTest` -- the measured callers above, each proven by a spy
+(`wraps=pull._dias_pendientes_relleno`): the `--hoy` sweep and backfill never call it, connect
+calls it without `incluir_antiguos`, only `pull_hosted` calls it with `incluir_antiguos=True`.
+`LineaOlderRetriedTest` -- the job line names the older-retried count, including zero. Every
+Garmin call goes through a fake `body.pull.garmin_adapter.fetch_day`/`fetch_device_last_sync`;
+no network, invented demo data only.
+
+**Other touched test files, each named here per the spec's own instruction.**
+- `tests/test_pull_relleno.py`: `PullHostedHealsGapsTest.test_a_brand_new_connection_heals_the_
+  whole_window_in_one_run` and `.test_an_explicit_days_call_still_heals_a_gap_outside_its_own_
+  window` -- both start from a fresh database with a full 14-day gap, so `cupo_antiguos =
+  MAX_DIAS_POR_CORRIDA(16) - VENTANA_RELLENO(14) = 2` now also fetches 2 older retries; their
+  `saved`/stored-count assertions widened from `VENTANA_RELLENO` to `VENTANA_RELLENO +
+  min(MAX_DIAS_POR_CORRIDA - VENTANA_RELLENO, RELLENO_ANTIGUO_POR_CORRIDA)` (computed from the
+  constants, not hardcoded). Every other `pull_hosted` call in that file either uses an explicit
+  `fecha` (no older retries at all) or asserts something order/relative (never an exact day count
+  or list) that the 2 extra older days do not disturb -- read and confirmed, not edited.
+- `tests/test_garmin_dia_vacio.py`: `PullHealsAnEmptyDayTest.test_an_all_none_day_stays_in_the_
+  gap_list_and_is_refetched_next_time` patches `body.pull.BACKFILL_DIAS` down to
+  `garmin_cuenta.VENTANA_RELLENO` for its own `with` block -- its `respuestas` dict only answers
+  the 14 window days by design (BODY-GARMIN-DIA-VACIO-1's own fixture), so without the patch the
+  daily pull's own new older-retry request would ask for 2 days outside it and raise `KeyError`.
+  The patch makes `dias_sin_datos_antiguos`'s range empty (`mas_nuevo < mas_antiguo`), isolating
+  this test's own concern (empty-day healing) from this slice's addition, with no other
+  assertion changed.
+- `tests/test_garmin_host.py`: `PullHostedPerPersonZoneTest.test_each_person_gets_their_own_
+  today_and_yesterday`'s own pre-seed loop widened from `range(garmin_cuenta.VENTANA_RELLENO)` to
+  `range(pull.BACKFILL_DIAS)` -- its stated purpose is the per-zone day list, not older retries,
+  and before this slice the 14-day window alone being fully stored was enough to guarantee
+  "nothing extra fetched"; now the whole 90-day horizon must be stored too, or the daily pull's
+  own `cupo_antiguos = MAX_DIAS_POR_CORRIDA(16) - 2 = 14` (capped at 5) would pull in 5 fresh
+  older-retry days per person and break the test's exact `calls_by_token` lists. No other
+  assertion in that file's `PullHostedTest`/`PullHostedPerPersonZoneTest` needed a change --
+  `test_generic_exception_mid_loop_keeps_the_refreshed_token_and_counts_days_stored`'s mock
+  `side_effect` is consumed positionally by call order, not by which calendar day is requested,
+  so the extra older-retry days this slice adds (fetched first, since `_pull_one_person` sorts
+  `days` ascending and the older ones are chronologically earliest) do not change which call
+  receives the injected failure or the resulting `(ok, failed, saved)` -- verified by running the
+  file, not assumed.
+- `tests/test_garmin_diagnostico.py`, `tests/test_sync_vivo_estado.py`, `tests/test_primer_pull_1.py`,
+  `tests/test_momentos_pull.py`, `tests/test_rendimiento.py`, `tests/test_pull.py` -- read and
+  re-run green below; none needed an edit. Every `pull_hosted` call in the first four either
+  passes an explicit `fecha`/uses `pull_backfill_hosted` (both untouched by this slice) or, in
+  `test_pull.py`'s `HostedScheduledPullWiringTest`/`LocalScheduledPullWiringTest`, asserts only
+  `(ok, failed)`, a mock's own call count/args, or `assert_not_called` -- none of which the extra
+  older-retry Garmin calls (fetched with the same `_empty_fetch_day`/stub already in use) disturb.
+  `test_rendimiento.py` never calls `pull_hosted`/`_dias_pendientes_relleno` at all.
+
+**Deviations from the spec's literal wording.**
+- *A caller measured differently than guessed*: the spec anticipated needing to "gate the older
+  retries with an explicit parameter" on `_dias_pendientes_relleno` for whichever second caller
+  turned out to run more than once a day. Measured: that caller is `pull_persona_ahora` (the
+  connect path), and the gate is simply `incluir_antiguos`'s own default (`False`) -- no change
+  to `pull_persona_ahora`'s call site was needed at all, since it already calls
+  `_dias_pendientes_relleno(conn, person_id, hoy)` with no third argument.
+- *Local mode's own daily pull does not share the function*: the spec's own surface asked this to
+  be measured ("(and the PC daily pull if it shares the function)"). Measured: it does not --
+  local mode never reaches `pull_hosted`/`_dias_pendientes_relleno`, confirmed by reading
+  `body/pull.py`'s `_run` and by `tests/test_pull.py`'s `LocalScheduledPullWiringTest` passing
+  unedited.
+
+**Gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, eleven sequential
+alphabetical chunks of ~20 dotted modules each (201 modules total), all green, run in the
+foreground on the final tree:
+
+    chunk 1  (test_accesibilidad..test_baselines)                    Ran 381 tests ... OK
+    chunk 2  (test_baselines_lote..test_despertar)                    Ran 420 tests ... OK
+    chunk 3  (test_desplazamiento_import..test_experimentos_intradia) Ran 395 tests ... OK
+    chunk 4  (test_experimentos_modelo..test_habito_veces_1)          Ran 367 tests ... OK
+    chunk 5  (test_history..test_hoy_turno)                           Ran 593 tests ... OK
+    chunk 6  (test_hoy_ventana_comida..test_momentos_pull)            Ran 414 tests ... OK
+    chunk 7  (test_mudanza..test_primer_pull_1)                       Ran 508 tests ... OK
+    chunk 8  (test_primeros_turnos..test_rendimiento_turnos)          Ran 377 tests ... OK
+    chunk 9  (test_request_log..test_turno_dia_plan)                  Ran 441 tests ... OK
+    chunk 10 (test_turno_fc..test_vo2max)                             Ran 444 tests ... OK
+    chunk 11 (test_web_entry)                                         Ran 4 tests ... OK
+
+**Reconciliation**: sum of the eleven chunks = 381+420+395+367+593+414+508+377+441+444+4 = 4344.
+Collect-only count on the same tree (`unittest.TestLoader().discover('tests', top_level_dir='.')
+.countTestCases()`) = 4344. Equal -- every test ran exactly once, none skipped by the chunking.
+
+**No schema or migration change, no cross-repo contract change, and no customer-facing bytes at
+all** (every new/changed string is a server log line: counts only, never a health figure) --
+merges on green per merge policy A.
+
+**Commits** `eee02e53d25883444109ae53356e7ba0f109160e` (`body/garmin_cuenta.py`, `body/pull.py`,
+`tests/test_garmin_relleno_antiguo.py`, `tests/test_pull_relleno.py`, `tests/test_garmin_dia_vacio.py`,
+`tests/test_garmin_host.py`: all four rulings and their tests, one commit).
+

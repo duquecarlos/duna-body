@@ -137,13 +137,20 @@ class PullHostedHealsGapsTest(unittest.TestCase):
         self.conn.commit()
 
     def test_a_brand_new_connection_heals_the_whole_window_in_one_run(self):
+        """BODY-GARMIN-RELLENO-ANTIGUO-1: a fresh connection has no stored day anywhere, so once
+        the 14-day window (14 obligatorios+gaps) is full, the room left under MAX_DIAS_POR_CORRIDA
+        (16) also pulls in the newest older-than-14-day gaps, capped at
+        garmin_cuenta.RELLENO_ANTIGUO_POR_CORRIDA -- here min(16-14, 5) = 2."""
         visitados: list[str] = []
         with mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_stub_fetch_day(visitados)):
             ok, failed, saved = pull.pull_hosted(self.conn)
         self.assertEqual((ok, failed), (1, 0))
-        self.assertEqual(saved, garmin_cuenta.VENTANA_RELLENO)
+        extra_antiguos = min(pull.MAX_DIAS_POR_CORRIDA - garmin_cuenta.VENTANA_RELLENO,
+                              garmin_cuenta.RELLENO_ANTIGUO_POR_CORRIDA)
+        esperado = garmin_cuenta.VENTANA_RELLENO + extra_antiguos
+        self.assertEqual(saved, esperado)
         self.assertEqual(visitados, sorted(visitados))  # oldest first
-        self.assertEqual(len(db.days_with_data(self.conn, self.person_id)), garmin_cuenta.VENTANA_RELLENO)
+        self.assertEqual(len(db.days_with_data(self.conn, self.person_id)), esperado)
 
     def test_an_already_stored_gap_day_is_not_refetched(self):
         hace_tres = (HOY - timedelta(3)).isoformat()
@@ -176,7 +183,10 @@ class PullHostedHealsGapsTest(unittest.TestCase):
             ok, failed, saved = pull.pull_hosted(self.conn, n_days=2)
         self.assertEqual((ok, failed), (1, 0))
         self.assertIn(hace_seis, visitados)
-        self.assertEqual(saved, garmin_cuenta.VENTANA_RELLENO)  # the same healing set as the bare call
+        # the same healing set as the bare call, plus BODY-GARMIN-RELLENO-ANTIGUO-1's older retries
+        extra_antiguos = min(pull.MAX_DIAS_POR_CORRIDA - garmin_cuenta.VENTANA_RELLENO,
+                              garmin_cuenta.RELLENO_ANTIGUO_POR_CORRIDA)
+        self.assertEqual(saved, garmin_cuenta.VENTANA_RELLENO + extra_antiguos)
 
     def test_a_wider_explicit_days_window_still_pulls_its_own_days(self):
         """`--days 90` still pulls its 90 days -- the always-fetched window just grows past the
