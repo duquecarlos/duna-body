@@ -505,7 +505,9 @@ def _cerrar_semanas_todas(conn, desde_por_persona: dict[int, date] | None = None
         _cerrar_semanas_seguro(conn, person_id, desde=desde_por_persona.get(person_id))
 
 
-def _dias_pendientes_relleno(conn, person_id: int, hoy: date, n: int = 2) -> list[str]:
+def _dias_pendientes_relleno(
+    conn, person_id: int, hoy: date, n: int = 2, incluir_antiguos: bool = False,
+) -> list[str] | tuple[list[str], set[str]]:
     """BODY-GARMIN-SYNC-CONSISTENTE-1 ruling 1, amended by -1-B: today and the `n - 1` days before
     it ALWAYS (n defaults to 2 -- today and yesterday, since Garmin finalises yesterday late;
     an explicit `--days N` passes n=N so that window still heals too), plus every other gap day in
@@ -513,11 +515,30 @@ def _dias_pendientes_relleno(conn, person_id: int, hoy: date, n: int = 2) -> lis
     per day), oldest first. A day already stored is not refetched unless it falls in the always-
     fetched window. Capped at MAX_DIAS_POR_CORRIDA: the always-fetched window never gives way (the
     cap trims the OLDEST gap days first, keeping the newest ones) -- never trims anything in
-    practice for the default n=2, since VENTANA_RELLENO (14) already fits under the cap (16)."""
+    practice for the default n=2, since VENTANA_RELLENO (14) already fits under the cap (16).
+
+    BODY-GARMIN-RELLENO-ANTIGUO-1 rulings 1-3: `incluir_antiguos=True` -- the daily hosted pull
+    only (`pull_hosted`'s own implicit-today call), never the today-sweep, connect or backfill --
+    also retries gap days OLDER than VENTANA_RELLENO and inside BACKFILL_DIAS
+    (`garmin_cuenta.dias_sin_datos_antiguos`, newest first), AFTER the always-fetched window and
+    the 14-day gaps above and only in the room they leave under MAX_DIAS_POR_CORRIDA, capped at
+    garmin_cuenta.RELLENO_ANTIGUO_POR_CORRIDA. When `incluir_antiguos` is true, returns `(dias,
+    antiguos)` instead of a plain list -- `antiguos` the subset of `dias` added for this reason
+    (empty when there was no room left), so the caller can count them for its own job line without
+    recomputing which days are "older." `incluir_antiguos=False` (the default, every other caller)
+    returns the plain list exactly as before this ruling -- unchanged shape, unchanged days."""
     obligatorios = {(hoy - timedelta(i)).isoformat() for i in range(n)}
     huecos = [d for d in garmin_cuenta.dias_sin_datos(conn, person_id, hoy) if d not in obligatorios]
     cupo = max(MAX_DIAS_POR_CORRIDA - len(obligatorios), 0)
-    return sorted(obligatorios | set(huecos[-cupo:] if cupo else []))
+    dias = obligatorios | set(huecos[-cupo:] if cupo else [])
+    if not incluir_antiguos:
+        return sorted(dias)
+    cupo_antiguos = max(MAX_DIAS_POR_CORRIDA - len(dias), 0)
+    antiguos: set[str] = set()
+    if cupo_antiguos:
+        candidatos = garmin_cuenta.dias_sin_datos_antiguos(conn, person_id, hoy, BACKFILL_DIAS)
+        antiguos = set(candidatos[:min(cupo_antiguos, garmin_cuenta.RELLENO_ANTIGUO_POR_CORRIDA)])
+    return sorted(dias | antiguos), antiguos
 
 
 def _registrar_intento_persona(conn, person_id: int, ahora: datetime, exc: Exception | None) -> None:
@@ -801,13 +822,23 @@ def pull_hosted(conn, *, fecha: str | None = None, n_days: int | None = None) ->
     Returns (persons ok, persons failed, days stored -- BODY-GARMIN-DIA-VACIO-1 ruling 2: an
     empty/all-NULL day never counts here, so this return's own arity and meaning for "saved" stay
     exactly as before for every existing caller). Prints its own job line before returning
-    ("{ok} ok, {failed} failed, {saved} days stored, {vacios} empty", plus ruling 6's feed-
-    failure suffix when any day this run partially failed, plus BODY-GARMIN-DIAGNOSTICO-1 ruling
-    2's own ", reloj <timestamp> UTC"/", reloj desconocido" suffix for the last person this run
-    actually pulled) -- counts, class names and a timestamp only, never a health figure. A
-    fetched-but-empty day also prints its own one-line shape ("dia vacio <day>: ...",
-    BODY-GARMIN-DIAGNOSTICO-1 ruling 1), from the shared `_pull_one_person`."""
-    ok = failed = saved = omitidos = vacios = 0
+    ("{ok} ok, {failed} failed, {saved} days stored, {vacios} empty, {antiguos} older retried",
+    plus ruling 6's feed-failure suffix when any day this run partially failed, plus
+    BODY-GARMIN-DIAGNOSTICO-1 ruling 2's own ", reloj <timestamp> UTC"/", reloj desconocido" suffix
+    for the last person this run actually pulled) -- counts, class names and a timestamp only,
+    never a health figure. A fetched-but-empty day also prints its own one-line shape ("dia vacio
+    <day>: ...", BODY-GARMIN-DIAGNOSTICO-1 ruling 1), from the shared `_pull_one_person`.
+
+    BODY-GARMIN-RELLENO-ANTIGUO-1 ruling 2: this is the ONLY caller of `_dias_pendientes_relleno`
+    that passes `incluir_antiguos=True` -- the once-a-day hosted pull (the host's own
+    deploy/host/body-pull.service timer, and any manual `--days N` run through this same CLI
+    entry point). `pull_persona_ahora` (the "connecting starts a pull now" path, which can run
+    more than once a day) and `_pull_hoy_persona`/`pull_hoy_todos` (the --hoy sweep) both call
+    `_dias_pendientes_relleno` with the default `incluir_antiguos=False` and never retry an older
+    day; `_backfill_one_person` does not call `_dias_pendientes_relleno` at all. Only on the
+    implicit "today" sweep (no explicit `fecha`) -- an explicit `--date` never retries an older
+    gap either, same as it never heals a recent one."""
+    ok = failed = saved = omitidos = vacios = antiguos = 0
     fallos_parciales: dict[str, int] = {}
     ultima_persona = None  # BODY-GARMIN-DIAGNOSTICO-1 ruling 2: the reloj suffix below names
     # the last person this run actually pulled -- a single-scalar approximation that reads
@@ -824,7 +855,9 @@ def pull_hosted(conn, *, fecha: str | None = None, n_days: int | None = None) ->
             days = [fecha]
         else:
             hoy = fechas.hoy_local(db.person(conn, person_id))
-            days = _dias_pendientes_relleno(conn, person_id, hoy, n=n_days if n_days is not None else 2)
+            days, antiguos_persona = _dias_pendientes_relleno(
+                conn, person_id, hoy, n=n_days if n_days is not None else 2, incluir_antiguos=True)
+            antiguos += len(antiguos_persona)
         resultado = _pull_persona(conn, person_id, days)
         ultima_persona = person_id
         saved += resultado["saved"]
@@ -850,7 +883,7 @@ def pull_hosted(conn, *, fecha: str | None = None, n_days: int | None = None) ->
     if omitidos:
         print(f"omitido: {omitidos} personas en espera", flush=True)
     _cerrar_semanas_todas(conn)
-    print(f"{ok} ok, {failed} failed, {saved} days stored, {vacios} empty"
+    print(f"{ok} ok, {failed} failed, {saved} days stored, {vacios} empty, {antiguos} older retried"
           f"{_sufijo_fallos_parciales(fallos_parciales)}{_sufijo_reloj(conn, ultima_persona)}", flush=True)
     return ok, failed, saved
 

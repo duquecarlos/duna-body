@@ -732,7 +732,10 @@ class PullHostedPerPersonZoneTest(unittest.TestCase):
         the --days window and the 14-day gap-fill (_dias_pendientes_relleno), so this test seeds
         stored Garmin rows for the other 12 days of each person's own VENTANA_RELLENO window --
         the healing half of the union then adds nothing, and today/yesterday stay the only two
-        days actually fetched, in that person's own zone."""
+        days actually fetched, in that person's own zone. BODY-GARMIN-RELLENO-ANTIGUO-1: also
+        seeds the whole BACKFILL_DIAS horizon beyond VENTANA_RELLENO, so the daily pull's own
+        older-gap retry (ruling 1) finds nothing to add either -- this test's own concern is the
+        per-zone day list, not the older-retry cap."""
         self.conn.execute("UPDATE person SET timezone = 'America/Bogota' WHERE id = 1")
         self.conn.execute("UPDATE person SET timezone = 'Pacific/Auckland' WHERE id = 2")
         self.conn.commit()
@@ -745,7 +748,7 @@ class PullHostedPerPersonZoneTest(unittest.TestCase):
         for person_id, hoy, skip in (
                 (1, hoy_bogota, {"2026-11-07", "2026-11-08"}),
                 (2, hoy_auckland, {"2026-11-08", "2026-11-09"})):
-            for n in range(garmin_cuenta.VENTANA_RELLENO):
+            for n in range(pull.BACKFILL_DIAS):
                 dia = (hoy - timedelta(n)).isoformat()
                 if dia not in skip:
                     db.set_metric(self.conn, dia, "resting_hr", 55, "garmin", person_id)

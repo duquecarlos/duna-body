@@ -24,6 +24,12 @@ _NONCE_LEN = 12
 # one named constant, shared, so the two never drift apart.
 VENTANA_RELLENO = 14
 
+# BODY-GARMIN-RELLENO-ANTIGUO-1 ruling 1: at most this many gap days OLDER than VENTANA_RELLENO
+# (and still inside the backfill's own 90-day horizon) the daily hosted pull retries per person
+# per run, on top of the 14-day window above -- never displacing it, only taking the room left
+# under pull.MAX_DIAS_POR_CORRIDA.
+RELLENO_ANTIGUO_POR_CORRIDA = 5
+
 
 def _decode_key(hex_key: str) -> bytes:
     """Refuses anything but exactly 32 bytes of hex -- the message names the variable and how to
@@ -185,6 +191,25 @@ def dias_sin_datos(conn: sqlite3.Connection, person_id: int, hoy: date) -> list[
     return [d for d in (
         (hoy - timedelta(n)).isoformat() for n in range(VENTANA_RELLENO - 1, -1, -1)
     ) if d not in almacenados]
+
+
+def dias_sin_datos_antiguos(conn: sqlite3.Connection, person_id: int, hoy: date, limite_dias: int) -> list[str]:
+    """BODY-GARMIN-RELLENO-ANTIGUO-1 ruling 1: every day older than VENTANA_RELLENO's own window
+    and inside the last `limite_dias` days (the caller's own backfill horizon, e.g.
+    pull.BACKFILL_DIAS) with NO stored Garmin daily value -- the same "has data" rule
+    `dias_sin_datos` already uses (`dias_garmin_con_valor`, an all-NULL/empty day still a gap
+    here) -- one query for the whole range (the range's own stored days, `desde` narrowed to the
+    range's oldest day), then a plain set difference, NEWEST first (the daily pull's own retry
+    order, ruling 3 -- the days closest to falling out of the window get tried first). [] once
+    `limite_dias` does not reach past VENTANA_RELLENO at all."""
+    mas_antiguo = hoy - timedelta(limite_dias - 1)
+    mas_nuevo = hoy - timedelta(VENTANA_RELLENO)
+    if mas_nuevo < mas_antiguo:
+        return []
+    almacenados = dias_garmin_con_valor(conn, person_id, desde=mas_antiguo.isoformat())
+    total_dias = (mas_nuevo - mas_antiguo).days + 1
+    candidatos = ((mas_antiguo + timedelta(i)).isoformat() for i in range(total_dias))
+    return [d for d in reversed(list(candidatos)) if d not in almacenados]
 
 
 # BODY-SYNC-VIVO-ESTADO-1 ruling 2: a failed attempt's backoff window, chosen from the Garmin-
