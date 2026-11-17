@@ -25862,3 +25862,145 @@ one commit), `d153a28` (this ledger entry) -- merged `afb3535c7d0309b033e8ac243b
 smoke (`tests.test_demo_modo_marca tests.test_i18n_paridad tests.test_rendimiento`): `Ran 28 tests
 ... OK`.
 
+## BODY-GARMIN-DIA-VACIO-1 -- a fetched-but-empty Garmin day is a gap, never stored data (2026-11-17)
+
+**The bug.** `garmin_cuenta.dias_sin_datos` and `db.days_with_data` (Tier 1, body/db.py, untouched)
+both checked `SELECT DISTINCT day FROM daily_metric WHERE source='garmin'` with no filter on
+`value`, so a day Garmin answered with nothing (no usable metric for any key) counted as "stored,"
+hiding a real data gap -- the watch not yet synced, or every feed call failing outright. Seen live:
+no health figure read, no row count read; only the mechanism (`db.save_day`'s own unconditional
+write of every `day_data.metrics` key, `garmin_adapter.parse_day`'s own filter leaving an empty day
+as `metrics={}`, zero rows -- never a NULL row, since `daily_metric.value` is `REAL NOT NULL`,
+confirmed empirically when a test fixture using `metrics={"key": None}` raised
+`sqlite3.IntegrityError`, corrected before this slice's own tests ran for real).
+
+**The six rulings, built exactly as given:**
+
+1. `garmin_cuenta.dias_garmin_con_valor(conn, person_id, desde=None) -> set[str]`
+   (`body/garmin_cuenta.py:159`): one query, `SELECT DISTINCT day FROM daily_metric WHERE
+   person_id=? AND source='garmin' AND value IS NOT NULL`, narrowed by `desde` when given.
+   `dias_sin_datos` (`body/garmin_cuenta.py:176`) delegates to it over the same window, same
+   one-query shape (verified by `tests/test_garmin_dia_vacio.py`'s `test_one_query`/
+   `test_still_one_query`, a `set_trace_callback` count of 1).
+2. `_pull_one_person` (`body/pull.py:312`) and `_backfill_one_person` (`body/pull.py:769`) split a
+   fetched day into stored vs. empty (`_dia_vacio`, `body/pull.py:137`: no metric value is not
+   None) and return both counts. Daily line (`body/pull.py:748`): `"{ok} ok, {failed} failed,
+   {saved} days stored, {vacios} empty"`; backfill line (`body/pull.py:897`): `"backfill: {ok} ok,
+   {failed} failed, {saved} days stored, {vacios} empty"`; connect line (`body/pull.py:512`):
+   `"connect pull: {estado}, {saved} days stored, {vacios} empty"`. "days stored" counts only
+   non-empty days. The `--hoy` sweep line (`body/pull.py:_run`) is unchanged, per the ruling (its
+   own per-person result carries no such counts to show). The backfill marker still advances past
+   an empty day (an attempt was made and answered; `pull_backfill_hosted`'s own "was an attempt
+   made" check changed from `if n > 0` to `if n + vacios_persona > 0` so an empty-but-fetched day
+   still registers one attempt via `_registrar_intento_persona`, instead of silently never
+   advancing).
+3. `_leer_estado_reloj` (`body/agente/herramientas.py:986-1009`): `dias_sin_datos_14` follows
+   ruling 1 automatically (same function); `ultimo_dia_con_datos` is now `max(dias_con_valor) if
+   dias_con_valor else None` over `garmin_cuenta.dias_garmin_con_valor(conn, person_id)` (no
+   window -- this person's whole history), replacing `db.days_with_data(conn, person_id)`. Four
+   other `db.days_with_data` callers in the same file (`body/agente/herramientas.py:727, 771, 2194,
+   2444`) are left untouched, named below for BODY-GARMIN-DIA-VACIO-2.
+4. `db.days_with_data`, `db.save_day`, Hoy, Historia and readiness are out of scope (Tier 1,
+   `body/db.py` untouched) -- named below for BODY-GARMIN-DIA-VACIO-2.
+5. `FeedsFallidos` (`body/pull.py:111`): when a fetched day's `raw["_errors"]` names every one of
+   `FEEDS_POR_DIA` (6) feeds `garmin_adapter.fetch_day` attempts, the day is NOT saved; a
+   pull-level `FeedsFallidos(fallos)` is raised instead (checked by `sum(fallos.values()) >=
+   FEEDS_POR_DIA`, not `len(fallos)` -- six feeds failing with the SAME class name is still six
+   failures, a bug caught by this slice's own tests and fixed before the gate ran clean; see
+   deviations). `_pull_persona` records it exactly like any other failed pull (counted in
+   "failed", `garmin_cuenta.registrar_error`, `registrar_intento`). Backoff
+   (`_estado_http_de_fallos`, `body/pull.py:157`): classifies by class NAME alone --
+   `GarminConnectTooManyRequestsError` -> 429, `GarminConnectConnectionError` -> 0 (transient
+   backoff), anything else (including an auth failure) -> no backoff -- mirroring
+   `garmin_adapter.estado_http`'s own three cases for a bare instance with no attached `.response`
+   (exactly what a name alone can ever carry) WITHOUT importing `garminconnect` anywhere in
+   `pull.py`: only `body/garmin_adapter.py` may (Tier 1). Failure line
+   (`_registrar_intento_persona`, `body/pull.py:455`): `"pull attempt failed: FeedsFallidos
+   (GarminConnectAuthenticationError x6)"` -- class names and counts only, never a message body.
+6. A partial failure (some but not all feeds raised) saves the day normally; the job line adds
+   `", {n} feeds failed ({Class} x{k}, ...)"` (`_sufijo_fallos_parciales`, `body/pull.py:149`).
+
+**Tests**, `tests/test_garmin_dia_vacio.py` (22 tests): `dias_garmin_con_valor`/`dias_sin_datos`
+treating an all-null day as a gap and a partly-null day as stored, a manual (non-Garmin) row and
+another person's row never counting, `desde` narrowing the window, both staying one query
+(`DiasGarminConValorTest`, `DiasSinDatosTreatsEmptyAsGapTest`); `ultimo_dia_con_datos` skipping a
+newer all-null day and returning `None` when nobody has a value (`UltimoDiaConDatosTest`); a daily
+pull healing an all-empty gap list and re-fetching every gap day next time, a partly-empty day
+still counting as stored, the daily/backfill/connect job lines naming the empty count
+(`PullHealsAnEmptyDayTest`, `BackfillEmptyDayTest`, `ConnectPullEmptyLineTest`); all six feeds
+failing not being saved and counting as a failed attempt, the failure line naming the classes and
+counts, an auth class setting no backoff, a connection class setting the transient backoff, and two
+of six feeds failing being a partial failure that still saves (`FeedsFallidosTest`). Every Garmin
+call goes through a fake `body.pull.garmin_adapter.fetch_day`; the watch's own last-sync read is
+stubbed to a no-op; no network, invented demo data only. The test module's own `_conn` helper
+follows `tests/test_garmin_host.py`'s `_fresh_db` isolation pattern (a fresh temp-dir database per
+test, `config.DB_PATH` restored on cleanup) -- an earlier draft passed a bare relative filename
+straight to `db.connect`, which wrote real `.db` files into the repo root shared across runs (all
+gitignored, since removed).
+
+**Other touched test files.** `tests/test_garmin_host.py`: three `(ok, failed, saved)` assertions
+in `PullHostedTest` corrected from `saved=1` to `saved=0` -- its `FakeGarmin` fixture leaves
+`get_max_metrics` undefined (1 of 6 feeds always fails) and every other feed returns an empty
+payload, so every one of its "success" days is genuinely empty under ruling 2, not stored.
+`tests/test_primer_pull_1.py`: `test_backfill_prints_only_counts`'s exact-string assertion gained
+`, 0 empty`. `tests/test_sync_vivo_estado.py`: `_fake_garmin()`'s fixture gained a real
+`get_user_summary` return (previously all 6 feeds were left undefined, which under ruling 5 would
+have wrongly turned every "successful" test in that file into a `FeedsFallidos` failure instead of
+the partial failure it represents). `tests/test_person_scope.py`: `garmin_cuenta` added to the
+import line and `(garmin_cuenta, "dias_garmin_con_valor")` added to the person-id census.
+`tests/test_pull_relleno.py`, `tests/test_momentos_pull.py`, `tests/test_entreno_sets.py`,
+`tests/test_rendimiento.py`, `tests/test_garmin_estado.py` -- read and re-run green below; none
+needed an edit (no hardcoded `(ok, failed, saved)` tuple or job-line string in any of them touches
+this slice's additions).
+
+**Deviations from the spec's literal wording.**
+- *Measured, not restated*: the spec's own surface text described the bug as `db.save_day` writing
+  "rows of NULL" for an empty day. Measured instead: `daily_metric.value` is `REAL NOT NULL`
+  (`body/db.py` schema), so that INSERT would raise, never write a NULL row -- `parse_day`'s own
+  filter means an empty day reaches `save_day` as `metrics={}` (zero rows), not a dict with a None
+  value. Ruling 1's "value IS NOT NULL" filter is still exactly correct (vacuously true for zero
+  rows) and was built as written; only the test fixtures simulating an empty day were corrected
+  from `metrics={"key": None}` (which crashed `save_day`) to `metrics={}` or a metrics dict that
+  simply omits the null-valued key, matching what `parse_day` actually produces.
+- *A bug caught by this slice's own tests, fixed before the gate ran*: ruling 5's "every one of
+  the six feeds" check was first written as `len(fallos) >= FEEDS_POR_DIA`, where `fallos` is
+  keyed by CLASS NAME -- six feeds failing with the identical class name collapsed to `len==1`,
+  silently never raising `FeedsFallidos`. Caught by `FeedsFallidosTest`, fixed to
+  `sum(fallos.values()) >= FEEDS_POR_DIA` in both `_pull_one_person` and `_backfill_one_person`.
+- *A Tier 1 violation caught by the existing guard, fixed before the gate ran*: `_estado_http_de_
+  fallos`'s first draft `import garminconnect.exceptions as gce` to construct a synthetic instance
+  for `garmin_adapter.estado_http`, which `tests/test_garmin_parse.py`'s
+  `test_no_other_body_module_imports_garminconnect` guard caught immediately (`body/pull.py` is not
+  `body/garmin_adapter.py`). Rewritten to classify by class NAME alone (see ruling 5 above),
+  functionally identical since a bare, argument-less instance never carries the `.response`
+  attribute `estado_http`'s other branch reads -- no garminconnect import anywhere in `pull.py`.
+- *A fifth `db.days_with_data` caller found, not in the spec's own list*: `pull.py`'s `_stored`
+  helper (`body/pull.py:257`, `return set(db.days_with_data(conn, person_id))`), feeding the LOCAL
+  (non-hosted) `pull_all` walk-back loop (`body/pull.py:261`), carries the same stale definition of
+  "has data" and was not named by any of the six rulings or by the spec's own list of deferred
+  callers. Left untouched (not in the six rulings' scope, and `pull_all`/Hoy/Historia/readiness
+  were explicitly named out of scope) -- named below for BODY-GARMIN-DIA-VACIO-2 instead of fixed
+  here.
+
+**Gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, ten sequential alphabetical
+chunks of ~20 dotted modules each (198 modules total), all green:
+`381+420+395+359+573+459+535+314+502+341 = 4279`. Reconciled against an independent collect-only
+count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted recursively): `4279`
+-- exact match.
+
+**No schema or migration change, no cross-repo contract change, and no customer-facing bytes at
+all** (every new/changed string is a server log line: counts and class names only, never a health
+figure) -- merges on green per merge policy A.
+
+**Open follow-up, BODY-GARMIN-DIA-VACIO-2**: the remaining `db.days_with_data` callers that still
+treat an empty Garmin day as stored data -- `body/agente/herramientas.py:727, 771, 2194, 2444` and
+`body/pull.py:257` (`_stored`, feeding the local `pull_all` walk-back loop) -- plus `db.days_with_data`
+and `db.save_day` themselves (Tier 1, `body/db.py`), Hoy, Historia and readiness, all named by the
+dispatching spec (the `pull.py:257` site found during this slice, not named by the spec).
+
+**Commits** `5590876e05c350bc4b617ce4c7a3841574043024` (`body/garmin_cuenta.py`,
+`body/agente/herramientas.py`, `body/pull.py`, `tests/test_garmin_dia_vacio.py`,
+`tests/test_garmin_host.py`, `tests/test_person_scope.py`, `tests/test_primer_pull_1.py`,
+`tests/test_sync_vivo_estado.py`: all six rulings and their tests, one commit), (this ledger entry)
+-- merge and post-merge smoke recorded below once landed.
+

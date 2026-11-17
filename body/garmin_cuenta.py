@@ -156,16 +156,32 @@ def estado_conexion(conn: sqlite3.Connection, person_id: int) -> dict:
     return {"conectado": True, "conectado_desde": row["conectado_en"], "ultimo_error": row["ultimo_error"]}
 
 
+def dias_garmin_con_valor(conn: sqlite3.Connection, person_id: int, desde: str | None = None) -> set[str]:
+    """BODY-GARMIN-DIA-VACIO-1 ruling 1: the days with at least one Garmin `daily_metric` row
+    whose `value IS NOT NULL` -- one query, `desde` narrowing it to that day and later (left out,
+    every day this person was ever pulled). A day Garmin answered with nothing (every metric key
+    None or absent, `db.save_day`'s own INSERT OR REPLACE still runs) does NOT count here, so it
+    stays a gap for the healing pull to retry and for `dias_sin_datos`/`ultimo_dia_con_datos` to
+    skip -- unlike the old `SELECT DISTINCT day ... source = 'garmin'` (no value filter) that
+    counted it as stored. A manual row (`source != 'garmin'`) or another person's row never
+    counts, same as before."""
+    sql = "SELECT DISTINCT day FROM daily_metric WHERE person_id = ? AND source = 'garmin' AND value IS NOT NULL"
+    params: list = [person_id]
+    if desde is not None:
+        sql += " AND day >= ?"
+        params.append(desde)
+    return {r["day"] for r in conn.execute(sql, params).fetchall()}
+
+
 def dias_sin_datos(conn: sqlite3.Connection, person_id: int, hoy: date) -> list[str]:
     """Every day in the last VENTANA_RELLENO days (today inclusive) with NO stored Garmin daily
-    row (`daily_metric` where `source = 'garmin'`), oldest first -- one query (the window's own
-    stored days), then a plain set difference, never one query per candidate day. Shared by
-    body/pull.py's healing gap-fill (ruling 1) and the sync-status read (ruling 2's Today card,
-    ruling 3's leer_estado_reloj), never duplicated between them."""
+    value (`dias_garmin_con_valor`, ruling 1 -- an all-NULL/empty day counts as a gap here too),
+    oldest first -- one query (the window's own stored days), then a plain set difference, never
+    one query per candidate day. Shared by body/pull.py's healing gap-fill (ruling 1) and the
+    sync-status read (ruling 2's Today card, ruling 3's leer_estado_reloj), never duplicated
+    between them."""
     limite = (hoy - timedelta(VENTANA_RELLENO - 1)).isoformat()
-    almacenados = {r["day"] for r in conn.execute(
-        "SELECT DISTINCT day FROM daily_metric WHERE person_id = ? AND source = 'garmin' AND day >= ?",
-        (person_id, limite)).fetchall()}
+    almacenados = dias_garmin_con_valor(conn, person_id, desde=limite)
     return [d for d in (
         (hoy - timedelta(n)).isoformat() for n in range(VENTANA_RELLENO - 1, -1, -1)
     ) if d not in almacenados]

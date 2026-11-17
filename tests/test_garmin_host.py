@@ -651,7 +651,10 @@ class PullHostedTest(unittest.TestCase):
         garmin_cuenta.guardar(self.conn, 2, BAD_TOKEN)
 
         ok, failed, saved = pull.pull_hosted(self.conn, fecha="2026-11-01")
-        self.assertEqual((ok, failed, saved), (1, 1, 1))
+        # BODY-GARMIN-DIA-VACIO-1 ruling 2: FakeGarmin's five defined feeds all answer empty and
+        # get_max_metrics is undefined (a partial feed failure, not all six) -- person 1's day
+        # carries no non-None metric value, so it is an empty day, not a stored one.
+        self.assertEqual((ok, failed, saved), (1, 1, 0))
         self.assertEqual(garmin_cuenta.ultimo_error(self.conn, 2), "NotSignedIn")
         self.assertIsNone(garmin_cuenta.ultimo_error(self.conn, 1))
         self.assertIsNotNone(db.last_sync(self.conn, 1))  # person 1's day was pulled and stored
@@ -683,7 +686,9 @@ class PullHostedTest(unittest.TestCase):
         patcher.start(); self.addCleanup(patcher.stop)
 
         ok, failed, saved = pull.pull_hosted(self.conn, n_days=2)
-        self.assertEqual((ok, failed, saved), (0, 1, 1))
+        # BODY-GARMIN-DIA-VACIO-1 ruling 2: day_one carries no metric at all -- an empty day, so
+        # it is NOT counted as stored even though the mid-loop failure kept it saved to the db.
+        self.assertEqual((ok, failed, saved), (0, 1, 0))
         self.assertEqual(garmin_cuenta.ultimo_error(self.conn, 1), "ValueError")
         self.assertEqual(garmin_cuenta.leer(self.conn, 1), "tok-refreshed-mid")
 
@@ -691,7 +696,8 @@ class PullHostedTest(unittest.TestCase):
         garmin_cuenta.guardar(self.conn, 1, GOOD_TOKEN)
         garmin_cuenta.registrar_error(self.conn, 1, "NotSignedIn")
         ok, failed, saved = pull.pull_hosted(self.conn, fecha="2026-11-01")
-        self.assertEqual((ok, failed, saved), (1, 0, 1))
+        # BODY-GARMIN-DIA-VACIO-1 ruling 2: FakeGarmin's day carries no non-None metric value.
+        self.assertEqual((ok, failed, saved), (1, 0, 0))
         self.assertIsNone(garmin_cuenta.ultimo_error(self.conn, 1))
 
     def test_leer_returning_none_is_not_counted_as_ok(self):

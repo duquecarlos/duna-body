@@ -991,18 +991,22 @@ def _leer_estado_reloj(conn: sqlite3.Connection, person_id: int) -> dict:
 
     BODY-SYNC-VIVO-2 ruling 3 adds `estado_vivo`: the SAME plain sentence (or None) Hoy's own «Tu
     reloj» live card shows -- `pull.texto_estado_vivo`, shared, never a copy -- still never a
-    health figure, so it rides along at this same 'ninguno' level."""
+    health figure, so it rides along at this same 'ninguno' level.
+
+    BODY-GARMIN-DIA-VACIO-1 ruling 3: `ultimo_dia_con_datos` is the newest day of
+    `garmin_cuenta.dias_garmin_con_valor` (no window -- this person's whole history), never
+    `db.days_with_data`, which counts an all-NULL/empty Garmin day as data."""
     estado = garmin_cuenta.estado_conexion(conn, person_id)
     person = db.person(conn, person_id)
     hoy = fechas.hoy_local(person)
-    dias = db.days_with_data(conn, person_id)
+    dias_con_valor = garmin_cuenta.dias_garmin_con_valor(conn, person_id)
     tz = ZoneInfo(person.get("timezone") or "America/Bogota")
     return {
         "conectado": estado["conectado"],
         "conectado_desde": (datetime.fromisoformat(estado["conectado_desde"]).date().isoformat()
                              if estado["conectado_desde"] else None),
         "ultimo_error": estado["ultimo_error"],
-        "ultimo_dia_con_datos": dias[0] if dias else None,
+        "ultimo_dia_con_datos": max(dias_con_valor) if dias_con_valor else None,
         "dias_sin_datos_14": garmin_cuenta.dias_sin_datos(conn, person_id, hoy),
         "estado_vivo": pull.texto_estado_vivo(T(person.get("language", "es")), conn, person_id, tz, hoy),
     }

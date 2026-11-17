@@ -14,8 +14,8 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import baselines, config, cuenta, db, goals, history, privacidad, profile, readiness, shift_import, \
-    vida_export, web
+from body import baselines, config, cuenta, db, garmin_cuenta, goals, history, privacidad, profile, readiness, \
+    shift_import, vida_export, web
 from body import identity
 from body.agente import ajustes
 from body.rutas import turnos
@@ -255,6 +255,7 @@ class PersonIdHasNoDefaultTest(unittest.TestCase):
         targets = [
             (db, "save_day"), (db, "load_day"), (db, "set_metric"), (db, "series"), (db, "person"),
             (db, "set_language"), (db, "day_values"), (db, "last_sync"), (db, "days_with_data"),
+            (garmin_cuenta, "dias_garmin_con_valor"),
             (baselines, "baseline"), (profile, "metric_profile"), (profile, "window"),
             (readiness, "compute"), (readiness, "update"), (readiness, "recompute_all"),
             (history, "coverage"), (history, "training"), (history, "patterns"), (history, "by_shift"),
