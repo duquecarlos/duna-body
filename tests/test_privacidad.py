@@ -673,6 +673,48 @@ class TurnoFcExportDeleteTest(unittest.TestCase):
         )
 
 
+class EscrituraExternaExportDeleteTest(unittest.TestCase):
+    """BODY-HOGAR-REGISTRAR-IDEMPOTENTE-1 ruling 3: an outside writer's own idempotency key is
+    FULLY exported and deleted (before propuesta_agente, since it references that row) -- invented
+    demo content only, no real figures."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "escritura_externa.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+        conv_id = agente_conversacion.crear(self.conn, 1, titulo="Chat Hogar", origen="hogar")
+        registro = agente_propuestas.crear(self.conn, 1, conv_id, "registrar_comida",
+                                            {"descripcion": "Arroz"})
+        self.propuesta_id = registro["id"]
+        db.registrar_escritura_externa(self.conn, 1, "hogar", "zz-ref-1", "registrar_comida",
+                                        self.propuesta_id)
+
+    def test_escritura_externa_is_a_fully_handled_table(self):
+        self.assertIn("escritura_externa", privacidad.FULLY_HANDLED_TABLES)
+
+    def test_export_includes_the_row(self):
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(len(data["asistente"]["escrituras_externas"]), 1)
+        row = data["asistente"]["escrituras_externas"][0]
+        self.assertEqual((row["origen"], row["ref"], row["herramienta"], row["propuesta_id"]),
+                         ("hogar", "zz-ref-1", "registrar_comida", self.propuesta_id))
+
+    def test_export_of_another_person_sees_nothing(self):
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 2)
+        self.assertEqual(data["asistente"]["escrituras_externas"], [])
+
+    def test_delete_all_removes_the_row(self):
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM escritura_externa").fetchone()[0], 0
+        )
+
+
 class CompartidoExportDeleteTest(unittest.TestCase):
     """BODY-HOGAR-COMPARTIR-1: a person's own shares (including withdrawn ones) are FULLY exported
     and deleted -- the metric key and the share's own dates only, never a health figure."""

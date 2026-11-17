@@ -276,6 +276,7 @@ def api_hogar_herramientas(person_id: int = Depends(identity.person_from_device(
 
 
 MAX_HOGAR_REGISTRAR_BODY_BYTES = 64 * 1024
+MAX_REF_LEN = 128
 
 
 def _mensaje_error_hogar(data: dict, nombre_str: str, idioma: str) -> str:
@@ -314,8 +315,26 @@ async def api_hogar_registrar(request: Request,
         raise HTTPException(404)
     argumentos = cuerpo.get("argumentos")
     argumentos = argumentos if isinstance(argumentos, dict) else {}
+    # BODY-HOGAR-REGISTRAR-IDEMPOTENTE-1 ruling 2: an OPTIONAL top-level `ref`, the writer's own
+    # idempotency key for this act -- malformed the same way any other bad field on this wire is,
+    # by name, before anything is looked up or run.
+    ref = cuerpo.get("ref")
+    if ref is not None and not (isinstance(ref, str) and 1 <= len(ref) <= MAX_REF_LEN):
+        raise HTTPException(400)
     conn, person, _ = comun._ctx(person_id)
     idioma = person.get("language", "es")
+    if ref is not None:
+        existente = db.buscar_escritura_externa(conn, person_id, "hogar", ref)
+        if existente is not None:
+            # Ruling 2: the same ref reused under a different tool is a writer bug, not a retry --
+            # refused by name, never silently matched to the wrong act.
+            if existente["herramienta"] != nombre:
+                raise HTTPException(400)
+            return JSONResponse(
+                {"ok": True, "propuesta_id": existente["propuesta_id"],
+                 "resultado": {"propuesta_id": existente["propuesta_id"], "estado": "aplicada"},
+                 "estado": "ya_estaba"},
+                headers={"Cache-Control": "no-store"})
     data = mcp_remoto.llamar_herramienta(conn, person_id, nombre, argumentos, None,
                                           puede_aplicar=False, auto_aplicar=True, origin="hogar")
     if "error" in data:
@@ -325,7 +344,15 @@ async def api_hogar_registrar(request: Request,
         # the shared core's `motivo` (set only when the refusing ToolError carried its own codigo).
         if "motivo" in data:
             respuesta["motivo"] = data["motivo"]
+        # Ruling 2: a failed or refused write records no key here either, so Hogar may retry the
+        # same ref safely -- data["error"] means escritura_externa was never reached below.
         return JSONResponse(respuesta, headers={"Cache-Control": "no-store"})
+    propuesta_id = data["salida"].get("propuesta_id")
+    # Ruling 2: recorded only once the proposal this exact call made is actually applied -- an
+    # auto-apply that did not reach "aplicada" (already resolved, drifted) is itself a write that
+    # did not go through, so it records no key either.
+    if ref is not None and isinstance(propuesta_id, int) and data["salida"].get("estado") == "aplicada":
+        db.registrar_escritura_externa(conn, person_id, "hogar", ref, nombre, propuesta_id)
     return JSONResponse(
-        {"ok": True, "propuesta_id": data["salida"].get("propuesta_id"), "resultado": data["salida"]},
+        {"ok": True, "propuesta_id": propuesta_id, "resultado": data["salida"]},
         headers={"Cache-Control": "no-store"})

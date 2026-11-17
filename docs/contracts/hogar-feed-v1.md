@@ -197,6 +197,23 @@ Runs that tool and applies the result immediately, tagged as Hogar's own write. 
 {"ok": true, "propuesta_id": 412, "resultado": {"propuesta_id": 412, "estado": "aplicada"}}
 ```
 
+**Retrying safely (BODY-HOGAR-REGISTRAR-IDEMPOTENTE-1): an optional top-level `ref`.** A call may carry a `ref`
+(string, 1-128 characters) alongside `herramienta` and `argumentos` -- it should be the writer's own id for the act
+itself (a lost-response retry sends the SAME `ref` again; two people who shared one meal each send their OWN call,
+and each may use the same `ref`, since each is keyed by its own `hogar:escribir` device, independently of the
+other). The first call under a given `ref` runs exactly as above. A later call with that SAME `ref` is never run
+again -- it answers `200` with the FIRST call's own result shape, plus a stable `"estado": "ya_estaba"`:
+
+```json
+{"ok": true, "propuesta_id": 412, "resultado": {"propuesta_id": 412, "estado": "aplicada"}, "estado": "ya_estaba"}
+```
+
+A `ref` sent again under a DIFFERENT `herramienta` than the one it was first recorded with is refused (`400`) -- a
+key reused for another act is a writer bug, not a retry. A `ref` present but not a string of 1-128 characters is
+refused the same way (`400`). A call that is refused, or that fails to apply, records no `ref` at all, so retrying
+it with the SAME `ref` is always safe. Additive within v1: a call with no `ref` behaves exactly as before this
+ruling, byte for byte.
+
 A refusal the tool itself raises (an unknown meal moment, a `plan_id` that is not this person's own session, a bad
 amount) answers `200` -- it is not a transport error, it is the tool saying no -- with the sentence a person would
 read for it:
@@ -228,6 +245,8 @@ read for it:
 
   Additive within v1: every other shape above is unchanged, and every other `anotar_sesion` call (an empty note,
   or Hogar correcting a note it wrote itself) keeps applying directly, exactly as before.
+* **`ref` (BODY-HOGAR-REGISTRAR-IDEMPOTENTE-1) is additive too**: a call with no `ref` is unchanged byte for byte;
+  see "Retrying safely" above.
 
 ## Conditions on the reader (not an app-to-app consent gate -- these protect people and services outside Carlos's
 own data, and outside Duna)

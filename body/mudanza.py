@@ -101,8 +101,17 @@ REGISTRY: tuple[TableSpec, ...] = (
     TableSpec("conversacion_agente", match_cols=None, id_exported=True),
     TableSpec("mensaje_agente", match_cols=None, fk_remap=("conversacion_id",),
               fk_table={"conversacion_id": "conversacion_agente"}),
+    # BODY-HOGAR-REGISTRAR-IDEMPOTENTE-1 ruling 3: id_exported=True (new) so escritura_externa
+    # below can remap its own propuesta_id -- nothing referenced propuesta_agente's own id before
+    # this slice, so this id map was never built until now.
     TableSpec("propuesta_agente", match_cols=None, fk_remap=("conversacion_id", "objetivo_id"),
-              fk_table={"conversacion_id": "conversacion_agente", "objetivo_id": "goal"}),
+              fk_table={"conversacion_id": "conversacion_agente", "objetivo_id": "goal"},
+              id_exported=True),
+    # BODY-HOGAR-REGISTRAR-IDEMPOTENTE-1 ruling 3: matched by its own natural key (no autoincrement
+    # id of its own -- its primary key IS person_id, origen, ref), propuesta_id remapped like any
+    # other table's own FK -- after propuesta_agente above, whose id map it depends on.
+    TableSpec("escritura_externa", match_cols=("person_id", "origen", "ref"), fk_remap=("propuesta_id",),
+              fk_table={"propuesta_id": "propuesta_agente"}),
     TableSpec("uso_agente", match_cols=None),
     TableSpec("uso_herramienta_externa", match_cols=None),
     TableSpec("daily_metric", match_cols=("person_id", "day", "metric_key")),

@@ -756,6 +756,58 @@ class PeriodZonasMudanzaTest(MudanzaTestCase):
         self.assertEqual(json.loads(row["zonas"]), ["hombro"])
 
 
+class EscrituraExternaMudanzaTest(MudanzaTestCase):
+    """BODY-HOGAR-REGISTRAR-IDEMPOTENTE-1 ruling 3: an idempotency-key row moves with the person,
+    matched by its own natural key (person_id, origen, ref) -- its propuesta_id remapped to the
+    destination's own propuesta_agente row, after that table's own id map, like any other FK --
+    and a second import of the same source never duplicates it."""
+
+    def test_row_moves_with_its_propuesta_id_remapped_and_a_second_import_does_not_duplicate_it(self):
+        source = self._new_source()
+        with source:
+            source.execute(
+                "INSERT INTO conversacion_agente (person_id, creada_en, titulo, origen) VALUES "
+                "(?, ?, 'Chat Hogar', 'hogar')", (db.DEFAULT_PERSON_ID, NOW),
+            )
+            conv_id = source.execute("SELECT last_insert_rowid()").fetchone()[0]
+            source.execute(
+                "INSERT INTO propuesta_agente (person_id, conversacion_id, accion, despues_json, "
+                "estado, creada_en, expira_en, aplicada_via) VALUES "
+                "(?, ?, 'registrar_comida', '{}', 'aplicada', ?, ?, 'hogar')",
+                (db.DEFAULT_PERSON_ID, conv_id, NOW, NOW),
+            )
+            propuesta_id = source.execute("SELECT last_insert_rowid()").fetchone()[0]
+            source.execute(
+                "INSERT INTO escritura_externa (person_id, origen, ref, herramienta, propuesta_id, "
+                "creada_en) VALUES (?, 'hogar', 'zz-mudanza-ref', 'registrar_comida', ?, ?)",
+                (db.DEFAULT_PERSON_ID, propuesta_id, NOW),
+            )
+        source.close()
+
+        reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok)
+        by_name = self._reports_by_name(reports)
+        self.assertEqual(by_name["escritura_externa"].counts.insert, 1)
+
+        dest = db.connect()
+        person_id = dest.execute("SELECT id FROM person WHERE cuenta_sub = ?", (CUENTA_SUB,)).fetchone()[0]
+        dest_propuesta = dest.execute(
+            "SELECT id FROM propuesta_agente WHERE person_id = ?", (person_id,)
+        ).fetchone()
+        dest_row = dest.execute(
+            "SELECT propuesta_id, herramienta FROM escritura_externa WHERE person_id = ? AND ref = ?",
+            (person_id, "zz-mudanza-ref"),
+        ).fetchone()
+        self.assertEqual(dest_row["propuesta_id"], dest_propuesta["id"])
+        self.assertEqual(dest_row["herramienta"], "registrar_comida")
+        dest.close()
+
+        reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok)
+        by_name = self._reports_by_name(reports)
+        self.assertEqual(by_name["escritura_externa"].counts.insert, 0)
+
+
 class NutrientTargetMudanzaTest(MudanzaTestCase):
     """BODY-NUTRIENTE-OBJETIVO-1: a daily nutrient target moves with the rest of the person's data,
     matched by its own natural key (person_id, metric_key, start_day) -- a second import of the

@@ -30,6 +30,9 @@ FULLY_HANDLED_TABLES = {
     # BODY-MCP-LOCAL-1: one row per call the local MCP server made against the tool registry --
     # tool name, UTC time, caller id only.
     "uso_herramienta_externa",
+    # BODY-HOGAR-REGISTRAR-IDEMPOTENTE-1: one row per outside writer's own idempotency key -- a
+    # tool name and an opaque ref the writer chose, never a health figure.
+    "escritura_externa",
     "figura_compartida", "workout_set",
     # Wave 9 (BODY-EXPERIMENTOS-ESQUEMA-1): experimento, its "it happened" log and moment.
     "experimento", "experimento_registro", "moment",
@@ -302,10 +305,15 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
     uso_externo_rows = [dict(r) for r in conn.execute(
         "SELECT herramienta, llamada_en, caller FROM uso_herramienta_externa WHERE person_id = ? ORDER BY id",
         (person_id,))]
+    # BODY-HOGAR-REGISTRAR-IDEMPOTENTE-1: one row per outside writer's own idempotency key -- the
+    # tool name and the writer's own opaque ref, never a health figure.
+    escrituras_externas_rows = [dict(r) for r in conn.execute(
+        "SELECT origen, ref, herramienta, propuesta_id, creada_en FROM escritura_externa "
+        "WHERE person_id = ? ORDER BY creada_en", (person_id,))]
     asistente = {
         "conversaciones": conversaciones, "mensajes": mensajes_agente, "uso": uso_agente_rows,
         "tope": dict(tope_agente_row) if tope_agente_row else None, "propuestas": propuestas_agente,
-        "uso_externo": uso_externo_rows,
+        "uso_externo": uso_externo_rows, "escrituras_externas": escrituras_externas_rows,
     }
 
     return {
@@ -415,6 +423,12 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
             "DELETE FROM plan WHERE person_id = ? OR goal_id IN (SELECT id FROM goal WHERE person_id = ?)",
             (person_id, person_id),
         )
+        # BODY-HOGAR-REGISTRAR-IDEMPOTENTE-1 ruling 3: escritura_externa.propuesta_id references
+        # propuesta_agente(id) -- cleared before propuesta_agente itself goes, same FK-order
+        # reasoning as every other table below that references a row this sweep is about to
+        # remove. Scoped by this person's own person_id alone (never objetivo_id): every row here
+        # was written for this exact person's own applied write, never another person's.
+        conn.execute("DELETE FROM escritura_externa WHERE person_id = ?", (person_id,))
         # propuesta_agente.objetivo_id references goal(id) -- cleared before goal itself goes, same
         # as habit/habit_check/goal_check/plan above.
         conn.execute(

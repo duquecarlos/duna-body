@@ -326,6 +326,13 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
     propuesta = agente_propuestas.crear(conn, person_id, conv_id, "proponer_idioma", {"lang": "en"},
                                         antes={"lang": "es"})
 
+    # BODY-HOGAR-REGISTRAR-IDEMPOTENTE-1: escritura_externa is person-owned (its own person_id
+    # column, same census treatment as momento_comida above) -- no marker needed, the census only
+    # checks export/delete-all coverage; ref/herramienta are the writer's own opaque key and a tool
+    # name, never free text about the person.
+    db.registrar_escritura_externa(conn, person_id, "hogar", f"zz-{tag.lower()}-ref", "registrar_comida",
+                                    propuesta["id"])
+
     device_key = dispositivo.crear(conn, person_id, f"ZZ{tag}-DISPOSITIVO",
                                     {"turnos:subir", "vida:leer", "hogar:leer"})
     device_key_mcp = dispositivo.crear(conn, person_id, f"ZZ{tag}-DISPOSITIVO-MCP", {"asistente:mcp"})
