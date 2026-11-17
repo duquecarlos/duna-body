@@ -25206,3 +25206,7 @@ and reversible with `rollback-script`.
 The first deploy after this merge installs the wrapper through `body-deploy.sh`; no hand install,
 ever, from here on.
 
+**Merged** `0671947` (`--no-ff`, no conflicts). Post-merge smoke
+(`tests.test_host_autoactualizar tests.test_host_deploy tests.test_deploy_host`): `Ran 117 tests ...
+OK`.
+
