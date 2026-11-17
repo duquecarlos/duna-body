@@ -25095,3 +25095,114 @@ own use; nothing else that touches it did) that the full alphabetical gate never
 with the same `addCleanup` reset (`b8f182f`) -- the merge commit's own tree was not amended. Smoke,
 re-run after the fix: `Ran 125 tests ... OK`.
 
+## BODY-HOST-AUTOACTUALIZAR-1 -- the entry script updates itself on every deploy (2026-11-16/17)
+
+The Personal desk, 2026-11-16, relayed Carlos's own rule that night: *"we should run this from the
+agent and from the server itself"* -- the installed `duna-deploy-body` had no self-update, so every
+wrapper change needed a hand `sudo install` from Carlos. BODY-HOST-AUTOACTUALIZAR-1-INV (OBSERVED)
+had already measured that main's wrapper was byte-identical to the one on the host, that the deploy
+arm pulls then execs `body-deploy.sh` as root with a before-sha captured before the pull, that the
+sudoers rule is one line, and that README lines told Carlos to hand-reinstall the wrapper after a
+pull-verb and an importar-pc/personas change. The orchestrator read Lotes' own mechanism
+(`duna-deploy-lotes`) and ruled: (a) one shared helper, sourced from the freshly pulled checkout by
+both the wrapper and the product script, so the validation exists once; (b) the self-update runs on
+`deploy` only, since every deploy already leaves the installed wrapper equal to the repo checkout
+for every other verb; (c) a failed deploy that resets the repo does not revert an already-validated
+wrapper, so recovery is a `rollback-script` verb; (d) the bootstrap: the very first deploy after this
+change still runs under the OLD wrapper, so `body-deploy.sh` itself installs the new wrapper and
+sudoers rule through the same helper, as root, with no re-exec -- no hand install, ever, from here on.
+
+**Built, in the rulings' own names:**
+
+* `deploy/host/autoactualizar.sh` (new) -- sourced, never executed. Constants
+  `INSTALLED_SCRIPT_PATH=/usr/local/sbin/duna-deploy-body`,
+  `INSTALLED_SUDOERS_PATH=/etc/sudoers.d/duna-deploy-body`,
+  `PREV_SCRIPT_PATH=/usr/local/sbin/duna-deploy-body.prev`,
+  `PREV_SUDOERS_PATH=/etc/sudoers.d/.duna-deploy-body.prev` (:8-11). The sudoers install path was
+  confirmed by reading the README's own one-time-install section (`README.md:11`, unchanged), not
+  assumed -- it matches `INSTALLED_SUDOERS_PATH` exactly.
+  `validar_sudoers_candidato` (:16-30): strips blank/comment/`\r` lines, requires exactly one
+  remaining line matching `^[a-z_][a-z0-9_-]{0,31} ALL=\(root\) NOPASSWD: ${INSTALLED_SCRIPT_PATH}$`,
+  pure string logic, no `visudo` call. `autoactualizar_comparar` (:32-42) sets `SCRIPT_CHANGED`/
+  `SUDOERS_CHANGED` via `cmp -s` (a missing installed file counts as changed). `autoactualizar_plan`
+  (:44-74) prints the dry-run text, calling `validar_sudoers_candidato` and a read-only `visudo -cf`
+  to decide "would pass"/"would FAIL", installing nothing. `autoactualizar_instalar` (:76-118)
+  validates first (refuses with `exit 1` and nothing installed on either a bad shape or a failing
+  `visudo -cf`), then diffs, backs up each changed installed file to its `.prev` at mode 0440, then
+  installs the new copies (0755 script / 0440 sudoers), and returns 0 having installed -- the caller
+  decides whether to re-exec.
+* `deploy/host/duna-deploy-body` -- header comment (:1-5) now lists every real verb. `usage()`
+  (:23-37) gains the self-update note on `deploy` and a new `rollback-script` line;
+  `--autoactualizado-interno` is never in it. The `deploy)` case arm (:113-148) now loops its own
+  args, accepting `--dry-run`, the internal `--autoactualizado-interno` and `--before-sha <sha>`,
+  and refuses (`usage`/`exit 2`) unless the two internal flags are given together and never with
+  `--dry-run`. A new `rollback-script)` case arm (:177-182) rejects any argument. The bottom flow
+  (:220-267): a new `rollback-script` block sources the helper, refuses if either `.prev` is missing
+  or the `.prev` sudoers fails `visudo -cf`, otherwise `run install`s both back and prints
+  `rollback-script: restored ... from their .prev backups`. The dry-run block now also sources the
+  helper and calls `autoactualizar_plan` between the three echoed pull commands and the echoed final
+  exec. The real flow: when `AUTOACTUALIZADO_INTERNO` is unset, it captures `before_sha`, fetches,
+  pulls, sources the helper, compares, and -- only if either file changed -- calls
+  `autoactualizar_instalar` then `exec "$INSTALLED_SCRIPT_PATH" deploy --autoactualizado-interno
+  --before-sha "$before_sha"` (no `/bin/bash`: it re-execs the freshly installed entry script
+  itself, the one line in this file that intentionally skips the `/bin/bash` convention, noted in
+  the test that checks it); when up to date it just prints `entry script: up to date`. When
+  `AUTOACTUALIZADO_INTERNO` is set, `before_sha` comes from the carried `--before-sha` and the
+  rev-parse/fetch/pull/compare block is skipped entirely, falling through to the same
+  `exec /bin/bash "$PRODUCT_SCRIPT" --before-sha "$before_sha"` line the first pass already used.
+* `deploy/host/body-deploy.sh` (:68-76) -- right after the owner is read and before any function
+  definition or the venv/pip block, sources the same helper, compares, and calls
+  `autoactualizar_instalar` with no re-exec when either file changed (prints `entry script: up to
+  date` otherwise). A refusal there is a plain `exit 1` from inside the sourced function -- the
+  script's existing failure path, the same shape the pre-existing `python3-venv is missing` check
+  already uses before `fail_step`/rollback become relevant, since nothing has been installed or
+  restarted yet at that point.
+* `deploy/host/README.md` -- the hand-reinstall callouts at the old `:48-51` (Pull now) and `:129-131`
+  (Importar desde el PC) are gone, replaced by a new "Self-updating wrapper" section describing the
+  mechanism, the `rollback-script` command, and the bootstrap guarantee; both sections above it now
+  say the wrapper already carries their verbs. The "What installs where" table's two wrapper rows
+  now say "Carlos, by hand, once; itself on every later `deploy`". The one-time install section is
+  unchanged -- it is still how a brand-new host gets its first wrapper.
+* Tests: `tests/test_host_autoactualizar.py` (new, 33 tests) -- functional tests source
+  `autoactualizar.sh` into a temp directory with its four path constants reassigned there and
+  `install`/`visudo` stubbed on PATH (never a real root action, confirmed by checking `install -o
+  root -g root` genuinely fails un-stubbed on this dev machine before relying on the stub), covering
+  `validar_sudoers_candidato`'s acceptance of the repo's own sudoers file and its refusal of two
+  rules, an argument after the path, `ALL` in the command position, a `Defaults` line and another
+  path; `autoactualizar_comparar`'s flags; `autoactualizar_instalar`'s up-to-date/first-install/
+  changed-script/invalid-sudoers/visudo-refusal paths and install modes; `autoactualizar_plan`'s
+  up-to-date/would-pass/would-FAIL text; and `bash -n` on all three scripts. Structural tests on
+  `duna-deploy-body` and `body-deploy.sh` check placement by index (self-update strictly between the
+  pull and the final exec; the bootstrap strictly before the venv/pip block with no `exec` in it),
+  that the second pass skips the rev-parse/pull, that `--autoactualizado-interno` never appears in
+  `usage()`, and the `rollback-script` refusal shape. `tests/test_host_deploy.py`'s
+  `test_exec_line_uses_bin_bash_not_the_exec_bit` now excuses the one line containing
+  `$INSTALLED_SCRIPT_PATH` (the deliberate self re-exec); its `PullNowReadmeTest` now checks the
+  hand-reinstall line is gone from the Pull-now section instead of present.
+  `tests/test_deploy_host.py`'s `ReadmeImportSectionTest.test_steps_are_in_order` drops the removed
+  step-1 install-line check and asserts the remaining five steps stay in order.
+
+**Process deviation from the spec's step list:** the helper, the wrapper, the bootstrap and the
+README were committed together (`01c9926`) because the pieces are mutually dependent (the wrapper's
+self-update and the bootstrap's call both need the finished helper to be meaningful to test), with
+the new test module following in its own commit (`c2942b8`) rather than after each piece -- the
+spec's `THE WORK` section asked for four separate commits. The end state matches what was asked;
+only the commit granularity differs.
+
+**Commits:** `01c9926` (helper, wrapper, bootstrap, README), `c2942b8`
+(`tests/test_host_autoactualizar.py`, new).
+
+**Gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, ten sequential alphabetical
+chunks of ~20 dotted modules each, all green: 381+444+379+420+510+522+485+308+531+188 = 4168.
+Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted without running): `4168` --
+exact match (4135 before this slice + 33 new in `test_host_autoactualizar.py`).
+
+**No other db.py/schema change, no cross-repo contract touched.** This slice's diff is entirely
+`deploy/host/` shell scripts, markdown and tests; nothing here runs on the host by itself -- every
+install still waits for a `deploy` someone runs, and every install is validated first, backed up,
+and reversible with `rollback-script`.
+
+The first deploy after this merge installs the wrapper through `body-deploy.sh`; no hand install,
+ever, from here on.
+
