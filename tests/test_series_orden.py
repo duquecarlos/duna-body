@@ -332,6 +332,41 @@ class DescartarSeriesTest(unittest.TestCase):
             propuestas.aplicar(self.conn, 2, out["propuesta_id"])
 
 
+class CorregirEntrenoOrdenTest(unittest.TestCase):
+    """BODY-CORREGIR-MEDIDA-ENTRENO-1-W ruling B: `orden` addresses the RAW set_order, the same
+    alternating active/rest numbering every other tool here already uses -- a rest slot is never a
+    "serie" to correct, refused the same way a set at an unknown position is."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        self.cid = _cid(self.conn)
+        _insert_activity(self.conn, 1, "a1", "2026-11-09")
+        self.conn.commit()
+        db.save_exercise_sets(self.conn, 1, "garmin", "a1", _alternating(6))
+        self.conn.commit()
+
+    def test_refuses_a_rest_slot(self):
+        with self.assertRaises(herramientas.ToolError):
+            herramientas.ejecutar(self.conn, 1, "corregir_entreno",
+                                  {"dia": "2026-11-09", "orden": 2, "reps": 5}, "ninguno", self.cid)
+
+    def test_refuses_an_unknown_order(self):
+        with self.assertRaises(herramientas.ToolError):
+            herramientas.ejecutar(self.conn, 1, "corregir_entreno",
+                                  {"dia": "2026-11-09", "orden": 99, "reps": 5}, "ninguno", self.cid)
+
+    def test_corrects_the_active_slot_at_its_raw_set_order(self):
+        out = herramientas.ejecutar(self.conn, 1, "corregir_entreno",
+                                    {"dia": "2026-11-09", "orden": 11, "reps": 9}, "ninguno", self.cid)
+        resultado = propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        self.assertEqual(resultado["estado"], "aplicada")
+        fila = self.conn.execute(
+            "SELECT person_reps, corrected_by_person FROM workout_set WHERE person_id = 1 AND set_order = 11"
+        ).fetchone()
+        self.assertEqual(fila["person_reps"], 9)
+        self.assertEqual(fila["corrected_by_person"], 1)
+
+
 _OLD_WORKOUT_SET_SQL = """
 CREATE TABLE workout_set (
     id                  INTEGER PRIMARY KEY,

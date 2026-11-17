@@ -39,8 +39,9 @@ def _actividad(conn, source: str, source_id: str, day: str, tipo: str = "strengt
 
 
 def _seed_todo(conn) -> dict:
-    """Every piece of demo data the 28 `propuesta` tools' valid arguments reference (BODY-HOGAR-
-    ESCRIBE-1: extended from 27 with anotar_sesion) -- real
+    """Every piece of demo data the 29 `propuesta` tools' valid arguments reference (BODY-HOGAR-
+    ESCRIBE-1: extended from 27 with anotar_sesion; BODY-CORREGIR-MEDIDA-ENTRENO-1-W: extended from
+    28 with corregir_entreno) -- real
     production writers only (`goals`, `db.*`), never a hand-typed row for a table one of those
     writers owns."""
     ids: dict = {}
@@ -189,6 +190,7 @@ def _argumentos(ids: dict) -> dict:
                           "semanas": [{"week_start": ids["monday_extra"], "titulo": "Semana extra"}]},
         "corregir_meta_plan": {"meta_id": ids["meta_semanal_id"], "valor": 2},
         "anotar_sesion": {"plan_id": ids["plan_id"], "nota": "Nota de conformidad"},
+        "corregir_entreno": {"dia": ids["dia_a1"], "orden": 1, "reps": 9},
     }
 
 
@@ -205,7 +207,7 @@ def _tabla_conteos(conn) -> dict[str, int]:
 
 class ConformidadTestCase(unittest.TestCase):
     """Shared setUp for every clause (2) test: one fresh database, the full demo seed, and the
-    28-tool arguments table built from it."""
+    29-tool arguments table built from it."""
 
     def setUp(self):
         self.conn, self.orig = _reset_db()
@@ -269,7 +271,7 @@ class Clause1LecturaGuardMechanismTest(unittest.TestCase):
 
 class Clause2WritesOnlyByProposalTest(ConformidadTestCase):
     """Amendment 7 clause (2): a write is only ever a proposal record (agent-capabilities-v1
-    section 2). Calling every one of the 28 `propuesta` tools with valid demo arguments changes no
+    section 2). Calling every one of the 29 `propuesta` tools with valid demo arguments changes no
     table except `propuesta_agente` -- counted over every table sqlite_master names, never a typed
     list."""
 
@@ -286,7 +288,7 @@ class Clause2WritesOnlyByProposalTest(ConformidadTestCase):
 
 
 class Clause2ApplyOnceTest(ConformidadTestCase):
-    """Amendment 7 clause (2): approval is single-use durably. Every one of the 28 tools' proposal
+    """Amendment 7 clause (2): approval is single-use durably. Every one of the 29 tools' proposal
     applies once ('aplicada') and a second `aplicar` on the same id is refused ('ya_resuelta'),
     checked generically because `propuestas.aplicar`'s conditional UPDATE runs the same way for
     every action, before it ever looks at that action's own writer."""
@@ -303,7 +305,7 @@ class Clause2ApplyOnceTest(ConformidadTestCase):
 
 class Clause2AnotherPersonTest(ConformidadTestCase):
     """Amendment 7 clause (2): ownership is checked. `propuestas.aplicar` raises `PropuestaAjena`
-    for every one of the 28 tools when the caller is not the person the proposal was shown to --
+    for every one of the 29 tools when the caller is not the person the proposal was shown to --
     checked BEFORE the row's own state or action, by `_fila_o_ajena`."""
 
     def test_applying_as_another_person_is_refused_for_every_tool(self):
@@ -316,7 +318,7 @@ class Clause2AnotherPersonTest(ConformidadTestCase):
 
 class Clause2ExpiredTest(ConformidadTestCase):
     """Amendment 7 clause (2): expiry is enforced. An expired proposal refuses `aplicar` with
-    'expirada' for every one of the 28 tools -- checked by `_vencida` before the action's own
+    'expirada' for every one of the 29 tools -- checked by `_vencida` before the action's own
     drift function ever runs."""
 
     def test_an_expired_proposal_is_refused_for_every_tool(self):
@@ -335,8 +337,10 @@ class Clause2DriftTest(ConformidadTestCase):
     """Amendment 7 clause (2): a drifted target refuses with 'propuesta_desactualizada'. Six
     update-shaped actions, one per distinct drift-check SHAPE in `propuestas.TABLA` (a goal's own
     field, a daily_metric value, a habit_check row, a workout_set flag, a nutrient_target row, an
-    ingesta amount) -- the other fourteen update-shaped actions (BODY-HOGAR-ESCRIBE-1: extended
-    from thirteen with anotar_sesion, a plan row) share one of these same shapes.
+    ingesta amount) -- the other fifteen update-shaped actions (BODY-HOGAR-ESCRIBE-1: extended
+    from thirteen with anotar_sesion, a plan row; BODY-CORREGIR-MEDIDA-ENTRENO-1-W: extended from
+    fourteen with corregir_entreno, a workout_set slot through correct_exercise_set) share one of
+    these same shapes.
     The eight INSERT-shaped actions (proponer_meta, planear_entreno, proponer_experimento,
     registrar_ingesta, proponer_plan, ampliar_plan, marcar_periodo, registrar_checkin) never drift
     on apply by construction: their `drift_aplicar` IS `propuestas._sin_drift`, asserted below

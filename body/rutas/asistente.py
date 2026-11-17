@@ -312,6 +312,19 @@ def _tarjeta_registrar_entreno(t: T, defs: dict, despues: dict, antes_json: dict
     return None, despues_txt, series_tarjeta
 
 
+def _tarjeta_corregir_entreno(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
+    """BODY-CORREGIR-MEDIDA-ENTRENO-1-W ruling B: one summary line naming the set's own position
+    and what changes -- `{cambios}` built with `_serie_txt`, the same ejercicio/reps/peso_kg
+    vocabulary `_tarjeta_registrar_entreno`'s own card already uses for one set, rather than new
+    i18n keys (the same "formatted like the existing card" choice `_tarjeta_corregir_comida` made
+    with `_comida_cambios_lista`, here with no new per-field keys needed)."""
+    fecha = comun._short_date(t, date.fromisoformat(despues["dia"]))
+    cambios = _serie_txt(t, despues)
+    despues_txt = t("asistente.propuesta.corregir_entreno_resumen", orden=despues["set_order"], dia=fecha,
+                     cambios=cambios)
+    return None, despues_txt, None
+
+
 def _tarjeta_registrar_medida(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     metric_key = despues["metric_key"]
     fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
@@ -801,6 +814,7 @@ TARJETAS = {
     "proponer_idioma": _tarjeta_idioma,
     "planear_entreno": _tarjeta_planear_entreno,
     "registrar_entreno": _tarjeta_registrar_entreno,
+    "corregir_entreno": _tarjeta_corregir_entreno,
     "registrar_medida": _tarjeta_registrar_medida,
     "marcar_habito": _tarjeta_marcar_habito,
     "proponer_experimento": _tarjeta_proponer_experimento,

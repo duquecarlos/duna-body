@@ -377,6 +377,70 @@ class RegistrarEntrenoManualTest(unittest.TestCase):
         self.assertEqual(resultado["estado"], "propuesta_desactualizada")
 
 
+class RegistrarEntrenoSegundaVezManualTest(unittest.TestCase):
+    """BODY-CORREGIR-MEDIDA-ENTRENO-1 ruling 2: a second `registrar_entreno` call for a day that
+    already holds a MANUAL session (source='manual', type IS NULL -- the exact pair
+    `db.create_manual_session` writes) corrects that same session in place, never a duplicate
+    activity."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        self.cid = _cid(self.conn)
+        self.series = [{"ejercicio": "sentadilla", "reps": 10, "peso_kg": 40.0},
+                       {"ejercicio": "zancada", "reps": 12}]
+
+    def _registrar_y_aplicar(self, series):
+        out = herramientas.ejecutar(self.conn, 1, "registrar_entreno",
+                                    {"day": "2026-11-10", "titulo": "Pierna en casa", "series": series},
+                                    "ninguno", self.cid)
+        resultado = propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        self.assertEqual(resultado["estado"], "aplicada")
+        return out
+
+    def test_second_call_corrects_the_same_session_no_duplicate_activity(self):
+        self._registrar_y_aplicar(self.series)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM activity WHERE person_id = 1").fetchone()[0], 1)
+        source_id = self.conn.execute("SELECT source_id FROM activity WHERE person_id = 1").fetchone()["source_id"]
+
+        segunda = [{"ejercicio": "sentadilla", "reps": 11, "peso_kg": 42.0},
+                   {"ejercicio": "zancada", "reps": 14}]
+        self._registrar_y_aplicar(segunda)
+
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM activity WHERE person_id = 1").fetchone()[0], 1)
+        mismo_source_id = self.conn.execute(
+            "SELECT source_id FROM activity WHERE person_id = 1").fetchone()["source_id"]
+        self.assertEqual(mismo_source_id, source_id)
+        sets = db.exercise_sets(self.conn, 1, "manual", source_id)
+        self.assertEqual(len(sets), 2)
+        self.assertEqual([s["reps"] for s in sets], [11, 14])
+
+    def test_undo_of_the_second_call_restores_the_first_corrections(self):
+        self._registrar_y_aplicar(self.series)
+        source_id = self.conn.execute("SELECT source_id FROM activity WHERE person_id = 1").fetchone()["source_id"]
+        out2 = self._registrar_y_aplicar([{"ejercicio": "sentadilla", "reps": 11, "peso_kg": 42.0},
+                                           {"ejercicio": "zancada", "reps": 14}])
+        resultado = propuestas.deshacer(self.conn, 1, out2["propuesta_id"])
+        self.assertEqual(resultado["estado"], "deshecha")
+        sets = db.exercise_sets(self.conn, 1, "manual", source_id)
+        self.assertEqual([s["reps"] for s in sets], [10, 12])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM activity WHERE person_id = 1").fetchone()[0], 1)
+
+    def test_a_day_with_only_a_run_is_not_matched_as_manual(self):
+        _insert_activity(self.conn, 1, "r1", "2026-11-10", type_="running", source="garmin")
+        self.conn.commit()
+        out = herramientas.ejecutar(self.conn, 1, "registrar_entreno",
+                                    {"day": "2026-11-10", "series": self.series}, "ninguno", self.cid)
+        registro = self.conn.execute(
+            "SELECT despues_json FROM propuesta_agente WHERE id = ?", (out["propuesta_id"],)
+        ).fetchone()
+        self.assertTrue(json.loads(registro["despues_json"])["manual"])
+        propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        # the run stays exactly as it was -- a second, separate manual session was created instead.
+        tipos = {r["type"] for r in self.conn.execute("SELECT type FROM activity WHERE person_id = 1")}
+        self.assertEqual(tipos, {"running", None})
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM activity WHERE person_id = 1").fetchone()[0], 2)
+
+
 class RegistrarEntrenoFutureDayTest(unittest.TestCase):
     """BODY-AGENTE-DIA-FUTURO-1: `registrar_entreno` is "what I did" -- an actual record -- so it
     refuses a day its own person has not reached yet, checked in THEIR zone, not the server's.

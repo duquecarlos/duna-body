@@ -510,6 +510,63 @@ def _deshacer_registrar_entreno(conn: sqlite3.Connection, row: sqlite3.Row) -> N
             )
 
 
+# -- corregir_entreno (BODY-CORREGIR-MEDIDA-ENTRENO-1-W ruling B: writes through the SAME
+# db.correct_exercise_set registrar_entreno's own Garmin-matched path uses; undo is the same direct
+# UPDATE on workout_set that path's own undo already uses, since correct_exercise_set only ever
+# moves a slot INTO "corrected", never back out of it. NOT in ACCIONES_REEMPLAZABLES, like every
+# corregir_* -- a second correction of the same slot is its own, separate pending proposal) --------
+
+def _drift_aplicar_corregir_entreno(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    antes = json.loads(row["antes_json"])
+    despues = json.loads(row["despues_json"])
+    actuales = db.exercise_sets(conn, row["person_id"], despues["source"], despues["source_id"])
+    actual = next((s for s in actuales if s["set_order"] == despues["set_order"]), None)
+    if actual is None:
+        return True
+    return (actual["person"]["category"] != antes["person_category"]
+            or actual["person"]["exercise"] != antes["person_exercise"]
+            or actual["person"]["reps"] != antes["person_reps"]
+            or actual["person"]["weight_kg"] != antes["person_weight_kg"]
+            or actual["person"]["note"] != antes["person_note"]
+            or actual["corrected_by_person"] != antes["corrected_by_person"])
+
+
+def _drift_deshacer_corregir_entreno(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    actuales = db.exercise_sets(conn, row["person_id"], despues["source"], despues["source_id"])
+    actual = next((s for s in actuales if s["set_order"] == despues["set_order"]), None)
+    if actual is None or not actual["corrected_by_person"]:
+        return True
+    if despues.get("ejercicio") is not None and actual["person"]["exercise"] != despues["ejercicio"]:
+        return True
+    if despues.get("reps") is not None and actual["person"]["reps"] != despues["reps"]:
+        return True
+    if despues.get("peso_kg") is not None and actual["person"]["weight_kg"] != despues["peso_kg"]:
+        return True
+    return False
+
+
+def _aplicar_corregir_entreno(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    db.correct_exercise_set(conn, row["person_id"], despues["source"], despues["source_id"], despues["set_order"],
+                             exercise=despues.get("ejercicio"), reps=despues.get("reps"),
+                             weight_kg=despues.get("peso_kg"))
+
+
+def _deshacer_corregir_entreno(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    antes = json.loads(row["antes_json"])
+    despues = json.loads(row["despues_json"])
+    with conn:
+        conn.execute(
+            "UPDATE workout_set SET person_category = ?, person_exercise = ?, person_reps = ?, "
+            "person_weight_kg = ?, person_note = ?, corrected_by_person = ? "
+            "WHERE person_id = ? AND activity_source = ? AND activity_source_id = ? AND set_order = ?",
+            (antes["person_category"], antes["person_exercise"], antes["person_reps"], antes["person_weight_kg"],
+             antes["person_note"], int(antes["corrected_by_person"]), row["person_id"], despues["source"],
+             despues["source_id"], despues["set_order"]),
+        )
+
+
 # -- anotar_sesion (BODY-HOGAR-ESCRIBE-1 ruling 4: update-shaped, like corregir_comida -- this
 # module calls db.anotar_sesion_plan directly, the one writer of plan.nota_sesion/nota_sesion_en,
 # apply writes `despues`'s resolved note/status, undo restores `antes`'s exactly) ----------------
@@ -1412,6 +1469,8 @@ TABLA: dict[str, _Accion] = {
                                 _deshacer_planear_entreno),
     "registrar_entreno": _Accion(_drift_aplicar_registrar_entreno, _drift_deshacer_registrar_entreno,
                                   _aplicar_registrar_entreno, _deshacer_registrar_entreno),
+    "corregir_entreno": _Accion(_drift_aplicar_corregir_entreno, _drift_deshacer_corregir_entreno,
+                                 _aplicar_corregir_entreno, _deshacer_corregir_entreno),
     "registrar_medida": _Accion(_drift_aplicar_registrar_medida, _drift_deshacer_registrar_medida,
                                  _aplicar_registrar_medida, _deshacer_registrar_medida),
     "marcar_habito": _Accion(_drift_aplicar_marcar_habito, _drift_deshacer_marcar_habito, _aplicar_marcar_habito,
@@ -1467,12 +1526,22 @@ SIN_DESHACER = tuple(nombre for nombre, entrada in TABLA.items() if not entrada.
 # schema change) -- the replaced row's own despues_json (free-form, only CHECKed for json_valid)
 # gains a 'reemplazada' marker so the card (body/rutas/asistente.py) can tell a replacement apart
 # from a plain discard.
-ACCIONES_REEMPLAZABLES = frozenset({"registrar_entreno", "registrar_comida", "registrar_ingesta",
-                                     "registrar_checkin"})
+#
+# BODY-CORREGIR-MEDIDA-ENTRENO-1 ruling 1: `registrar_medida` joins this table too, but keyed on
+# more than the day -- a day can carry several different self-measured metrics (weight, soreness,
+# resting HR) that are each real, never a same-day replacement of EACH OTHER. The value maps each
+# replaceable accion to the extra despues_json keys (beyond "day") that must also match, empty for
+# the original four (unchanged).
+ACCIONES_REEMPLAZABLES = {
+    "registrar_entreno": (), "registrar_comida": (), "registrar_ingesta": (), "registrar_checkin": (),
+    "registrar_medida": ("metric_key",),
+}
 
 
-def _reemplazar_pendientes_mismo_dia(conn: sqlite3.Connection, person_id: int, accion: str, day: str,
-                                      propuesta_id_aplicada: int, ahora_iso: str) -> None:
+def _reemplazar_pendientes_mismo_dia(conn: sqlite3.Connection, person_id: int, accion: str,
+                                      despues_aplicada: dict, propuesta_id_aplicada: int, ahora_iso: str,
+                                      claves_extra: tuple = ()) -> None:
+    day = despues_aplicada["day"]
     pendientes = conn.execute(
         "SELECT id, despues_json FROM propuesta_agente WHERE person_id = ? AND accion = ? "
         "AND estado = 'propuesta' AND id != ?", (person_id, accion, propuesta_id_aplicada),
@@ -1480,6 +1549,8 @@ def _reemplazar_pendientes_mismo_dia(conn: sqlite3.Connection, person_id: int, a
     for p in pendientes:
         despues = json.loads(p["despues_json"])
         if despues.get("day") != day:
+            continue
+        if any(despues.get(k) != despues_aplicada.get(k) for k in claves_extra):
             continue
         if _marcar(conn, p["id"], person_id, "propuesta", "descartada", ahora_iso):
             despues["reemplazada"] = True
@@ -1529,8 +1600,8 @@ def aplicar(conn: sqlite3.Connection, person_id: int, propuesta_id: int) -> dict
                 conn.execute("UPDATE propuesta_agente SET despues_json = ? WHERE id = ?",
                              (json.dumps(nuevo_despues, ensure_ascii=False), propuesta_id))
     if row["accion"] in ACCIONES_REEMPLAZABLES:
-        _reemplazar_pendientes_mismo_dia(conn, person_id, row["accion"], json.loads(row["despues_json"])["day"],
-                                          propuesta_id, ahora_iso)
+        _reemplazar_pendientes_mismo_dia(conn, person_id, row["accion"], json.loads(row["despues_json"]),
+                                          propuesta_id, ahora_iso, ACCIONES_REEMPLAZABLES[row["accion"]])
     return {"estado": "aplicada"}
 
 
