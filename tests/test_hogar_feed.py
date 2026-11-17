@@ -178,7 +178,148 @@ class MananaTest(unittest.TestCase):
              "status": "proposed", "ejercicios": None, "nota_sesion": None},
         ])
         self.assertIsNone(out["horizonte"])
-        self.assertEqual(set(out.keys()), {"dia", "figuras", "plan", "horizonte", "turnos", "comidas"})
+        self.assertEqual(set(out.keys()), {"dia", "figuras", "plan", "horizonte", "turnos", "comidas", "metas"})
+
+
+# ---- hogar_feed.manana's `metas` key (BODY-HOGAR-METAS-INGESTA-1 ruling 1) ----------------------
+
+class MetasTest(unittest.TestCase):
+    def setUp(self):
+        self.conn = _reset_db(self, "metas.db")
+
+    def test_empty_list_when_no_targets(self):
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
+        self.assertEqual(out["metas"], [])
+
+    def test_key_always_present_even_with_no_targets(self):
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
+        self.assertIn("metas", out)
+
+    def test_absolute_al_menos_with_two_intake_entries(self):
+        self.conn.execute(
+            "INSERT INTO nutrient_target (person_id, metric_key, start_day, kind, amount, sentido, "
+            "created_at) VALUES (1, 'protein_g', '2026-11-01', 'absolute', 130.0, 'al_menos', "
+            "'2026-11-01T00:00:00')")
+        self.conn.commit()
+        db.registrar_ingesta(self.conn, 1, "2026-11-15", "protein_g", 40.0, True)
+        db.registrar_ingesta(self.conn, 1, "2026-11-15", "protein_g", 30.0, True)
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
+        self.assertEqual(out["metas"], [
+            {"metric_key": "protein_g", "unidad": "g", "sentido": "al_menos", "kind": "absolute",
+             "amount": 130.0, "objetivo": 130.0, "falta_peso": False, "desde": "2026-11-01",
+             "total": 70.0, "registros": 2, "restante": 60.0},
+        ])
+
+    def test_per_kg_with_a_recent_weight_is_resolved(self):
+        self.conn.execute(
+            "INSERT INTO nutrient_target (person_id, metric_key, start_day, kind, amount, sentido, "
+            "created_at) VALUES (1, 'protein_g', '2026-11-01', 'per_kg', 1.6, 'al_menos', "
+            "'2026-11-01T00:00:00')")
+        self.conn.commit()
+        db.set_metric(self.conn, "2026-11-12", "body_weight_kg", 80.0, "self", 1)
+        self.conn.commit()
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
+        self.assertEqual(out["metas"], [
+            {"metric_key": "protein_g", "unidad": "g", "sentido": "al_menos", "kind": "per_kg",
+             "amount": 1.6, "objetivo": 128.0, "falta_peso": False, "desde": "2026-11-01",
+             "total": 0.0, "registros": 0, "restante": 128.0},
+        ])
+
+    def test_per_kg_without_a_recent_weight_is_an_honest_gap(self):
+        self.conn.execute(
+            "INSERT INTO nutrient_target (person_id, metric_key, start_day, kind, amount, sentido, "
+            "created_at) VALUES (1, 'protein_g', '2026-11-01', 'per_kg', 1.6, 'al_menos', "
+            "'2026-11-01T00:00:00')")
+        self.conn.commit()
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
+        self.assertEqual(out["metas"], [
+            {"metric_key": "protein_g", "unidad": "g", "sentido": "al_menos", "kind": "per_kg",
+             "amount": 1.6, "objetivo": None, "falta_peso": True, "desde": "2026-11-01",
+             "total": 0.0, "registros": 0, "restante": None},
+        ])
+
+    def test_como_maximo_over_the_limit_is_a_negative_restante(self):
+        self.conn.execute(
+            "INSERT INTO nutrient_target (person_id, metric_key, start_day, kind, amount, sentido, "
+            "created_at) VALUES (1, 'caffeine_mg', '2026-11-01', 'absolute', 400.0, 'como_maximo', "
+            "'2026-11-01T00:00:00')")
+        self.conn.commit()
+        db.registrar_ingesta(self.conn, 1, "2026-11-15", "caffeine_mg", 500.0, True)
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
+        self.assertEqual(out["metas"], [
+            {"metric_key": "caffeine_mg", "unidad": "mg", "sentido": "como_maximo", "kind": "absolute",
+             "amount": 400.0, "objetivo": 400.0, "falta_peso": False, "desde": "2026-11-01",
+             "total": 500.0, "registros": 1, "restante": -100.0},
+        ])
+
+    def test_an_off_target_never_appears(self):
+        self.conn.execute(
+            "INSERT INTO nutrient_target (person_id, metric_key, start_day, kind, amount, sentido, "
+            "created_at) VALUES (1, 'protein_g', '2026-11-01', 'off', NULL, 'al_menos', "
+            "'2026-11-01T00:00:00')")
+        self.conn.commit()
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
+        self.assertEqual(out["metas"], [])
+
+    def test_a_target_starting_after_dia_never_appears(self):
+        self.conn.execute(
+            "INSERT INTO nutrient_target (person_id, metric_key, start_day, kind, amount, sentido, "
+            "created_at) VALUES (1, 'protein_g', '2026-11-20', 'absolute', 130.0, 'al_menos', "
+            "'2026-11-01T00:00:00')")
+        self.conn.commit()
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
+        self.assertEqual(out["metas"], [])
+
+    def test_another_persons_targets_never_present(self):
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.execute(
+            "INSERT INTO nutrient_target (person_id, metric_key, start_day, kind, amount, sentido, "
+            "created_at) VALUES (2, 'protein_g', '2026-11-01', 'absolute', 130.0, 'al_menos', "
+            "'2026-11-01T00:00:00')")
+        self.conn.commit()
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
+        self.assertEqual(out["metas"], [])
+
+    def test_ordered_by_metric_key(self):
+        for key, start in (("water_ml", "2026-11-01"), ("caffeine_mg", "2026-11-01")):
+            self.conn.execute(
+                "INSERT INTO nutrient_target (person_id, metric_key, start_day, kind, amount, sentido, "
+                "created_at) VALUES (1, ?, ?, 'absolute', 100.0, 'al_menos', '2026-11-01T00:00:00')",
+                (key, start))
+        self.conn.commit()
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
+        self.assertEqual([m["metric_key"] for m in out["metas"]], ["caffeine_mg", "water_ml"])
+
+    def test_cost_does_not_grow_with_the_number_of_targets(self):
+        self.conn.execute(
+            "INSERT INTO nutrient_target (person_id, metric_key, start_day, kind, amount, sentido, "
+            "created_at) VALUES (1, 'protein_g', '2026-11-01', 'absolute', 130.0, 'al_menos', "
+            "'2026-11-01T00:00:00')")
+        self.conn.commit()
+        uno = self._contar_statements(
+            lambda: hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA))
+        for key in ("caffeine_mg", "water_ml"):
+            self.conn.execute(
+                "INSERT INTO nutrient_target (person_id, metric_key, start_day, kind, amount, sentido, "
+                "created_at) VALUES (1, ?, '2026-11-01', 'absolute', 100.0, 'al_menos', "
+                "'2026-11-01T00:00:00')", (key,))
+        self.conn.commit()
+        tres = self._contar_statements(
+            lambda: hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA))
+        self.assertEqual(uno, tres,
+                          f"one target vs three cost different statement counts: {uno} vs {tres}")
+
+    def _contar_statements(self, llamada) -> int:
+        """`contar_sql` (tests/_rutas.py) only traces a connection opened AFTER it starts, so it
+        cannot measure `self.conn` -- this file's fixture connection, already open. Same trace
+        callback, applied directly to the one connection this test actually calls through."""
+        contador = {"n": 0}
+        self.conn.set_trace_callback(lambda sql: contador.__setitem__("n", contador["n"] + 1))
+        try:
+            llamada()
+        finally:
+            self.conn.set_trace_callback(None)
+        return contador["n"]
 
 
 # ---- hogar_feed.manana's `comidas` key (BODY-HOGAR-ESCRIBE-2 ruling 3) --------------------------
