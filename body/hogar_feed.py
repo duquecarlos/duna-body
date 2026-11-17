@@ -11,9 +11,9 @@ turns the result into JSON, the same split vida_export.py and horizonte.py alrea
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
-from . import db, fechas
+from . import comidas, db, fechas
 
 
 class MetricDesconocida(Exception):
@@ -46,10 +46,12 @@ def _figuras(conn, person_id: int, dia: date) -> list[dict]:
 def _plan_dias(conn, person_id: int, dia: date) -> list[dict]:
     """`dia`'s and `dia`+1's plan rows (ruling 2), any goal, unfiltered. `ejercicios`
     (BODY-HOGAR-EJERCICIOS-1 ruling 5) is the row's own `ejercicios_json` parsed and passed
-    verbatim -- the exact list `planear_entreno` stored -- or None when the column is null."""
+    verbatim -- the exact list `planear_entreno` stored -- or None when the column is null.
+    `nota_sesion` (BODY-HOGAR-ESCRIBE-2 ruling 3) is the row's own column, verbatim, null when no
+    one has called `anotar_sesion` on it yet -- so Hogar knows which sessions still lack a note."""
     siguiente = (dia + timedelta(1)).isoformat()
     rows = conn.execute(
-        "SELECT id, day, time, title, status, ejercicios_json FROM plan WHERE person_id = ? "
+        "SELECT id, day, time, title, status, ejercicios_json, nota_sesion FROM plan WHERE person_id = ? "
         "AND day IN (?, ?) ORDER BY day, time", (person_id, dia.isoformat(), siguiente),
     ).fetchall()
     out = []
@@ -118,16 +120,52 @@ def turnos(conn, person_id: int, desde: str, hasta: str) -> dict:
     return {"desde": desde, "hasta": hasta, "turnos": turnos_rango(conn, person_id, desde, hasta)}
 
 
-def manana(conn, person_id: int, dia: date) -> dict:
+def _comidas(conn, person_id: int, dia: date, ahora: datetime) -> dict:
+    """GET /api/hogar/manana's `comidas` key (BODY-HOGAR-ESCRIBE-2 ruling 3): the person's own
+    meal moments (their own rows, or the defaults -- `comidas.momentos`), every `comida` already
+    registered on `dia` with its own stored moment or the one `momento_de` derives from `ts_local`
+    (null when neither), and which esperado moment still has no registered meal. `faltan` is every
+    esperado moment on a PAST `dia` (regardless of hour -- the day is over), none on a FUTURE `dia`
+    (nothing is due yet), and on TODAY only those whose `desde_hora` has already passed `ahora`'s
+    own local hour. No meal description, no nutrient -- just the clave and when it was eaten."""
+    lista = comidas.momentos(conn, person_id)
+    momentos_out = [{"clave": m["clave"], "desde_hora": m["desde_hora"], "hasta_hora": m["hasta_hora"],
+                      "esperado": m["esperado"]} for m in lista]
+    rows = conn.execute(
+        "SELECT ts_local, momento FROM comida WHERE person_id = ? AND day = ? ORDER BY id",
+        (person_id, dia.isoformat()),
+    ).fetchall()
+    registradas = []
+    vistas = set()
+    for r in rows:
+        clave = r["momento"] if r["momento"] is not None else comidas.momento_de(conn, person_id, r["ts_local"])
+        registradas.append({"momento": clave, "ts_local": r["ts_local"]})
+        if clave is not None:
+            vistas.add(clave)
+    hoy = ahora.date()
+    if dia < hoy:
+        faltan = [m["clave"] for m in lista if m["esperado"] and m["clave"] not in vistas]
+    elif dia > hoy:
+        faltan = []
+    else:
+        faltan = [m["clave"] for m in lista if m["esperado"] and m["clave"] not in vistas
+                  and m["desde_hora"] <= ahora.hour]
+    return {"momentos": momentos_out, "registradas": registradas, "faltan": faltan}
+
+
+def manana(conn, person_id: int, dia: date, ahora: datetime) -> dict:
     """GET /api/hogar/manana's own shape, Hogar's draft (C:/Duna/hogar/dev-protocol/contracts/
     body-v1.md), ruling 2: `dia`'s figures, plan and the active horizon's current week.
-    BODY-HOGAR-TURNOS-1 ruling 1 adds `turnos`."""
+    BODY-HOGAR-TURNOS-1 ruling 1 adds `turnos`. BODY-HOGAR-ESCRIBE-2 ruling 3 adds `comidas` --
+    `ahora` is the person's own local wall-clock now (the route's `_ahora_local`), used only to
+    decide which `comidas.faltan` moments have already passed when `dia` is today."""
     return {
         "dia": dia.isoformat(),
         "figuras": _figuras(conn, person_id, dia),
         "plan": _plan_dias(conn, person_id, dia),
         "horizonte": _horizonte_actual(conn, person_id, dia),
         "turnos": turnos_alrededor(conn, person_id, dia),
+        "comidas": _comidas(conn, person_id, dia, ahora),
     }
 
 

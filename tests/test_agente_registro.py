@@ -50,6 +50,7 @@ ROUTE_TOOL = {
     "/api/hogar/manana": None,    # device-key API for Hogar; the assistant never reads or triggers it
     "/api/hogar/serie": None,     # device-key API for Hogar; the assistant never reads or triggers it
     "/api/hogar/turnos": None,    # device-key API for Hogar; the assistant never reads or triggers it
+    "/api/hogar/herramientas": None,  # device-key API for Hogar's own writes; mirrors the registry's own list
     "/api/asistente/mcp/herramientas": None,  # hosted MCP door; mirrors leer_ajustes'/the registry's own list
     "/asistente/conversacion/{conversacion_id}": None,  # the panel's own history reload, not a tool
     "/ayuda": "leer_tutoriales",

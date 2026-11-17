@@ -89,6 +89,10 @@ _CEILINGS = {
     "/ajustes/asistente": 16,
     "/ajustes/dispositivos": 9,
     "/api/asistente/mcp/herramientas": 3,
+    # BODY-HOGAR-ESCRIBE-2: this sweep calls every GET route with no Authorization header (same as
+    # every other device-key route above) -- `person_from_device` 404s in this file's LOCAL-mode
+    # fixture before touching the database, measured 0 statements; 3 matches its siblings' own margin.
+    "/api/hogar/herramientas": 3,
     "/api/hogar/manana": 3,
     "/api/hogar/serie": 3,
     "/api/hogar/turnos": 3,

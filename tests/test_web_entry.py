@@ -51,6 +51,8 @@ class RouteSetTest(unittest.TestCase):
         ("/api/hogar/manana", ("GET",)),  # BODY-SERVICIO-HOGAR-1
         ("/api/hogar/serie", ("GET",)),  # BODY-SERVICIO-HOGAR-1
         ("/api/hogar/turnos", ("GET",)),  # BODY-HOGAR-TURNOS-1
+        ("/api/hogar/herramientas", ("GET",)),  # BODY-HOGAR-ESCRIBE-2
+        ("/api/hogar/registrar", ("POST",)),  # BODY-HOGAR-ESCRIBE-2
         ("/api/turnos", ("POST",)),
         ("/api/vida/semana", ("GET",)),
         ("/asistente/conversacion/{conversacion_id}", ("GET",)),

@@ -60,7 +60,8 @@ def listar_herramientas(conn, person_id: int, idioma: str, *, puede_aplicar: boo
 
 
 def llamar_herramienta(conn, person_id: int, nombre, argumentos: dict, conversacion_id, *,
-                        puede_aplicar: bool, puede_escribir: bool = True, auto_aplicar: bool = False) -> dict:
+                        puede_aplicar: bool, puede_escribir: bool = True, auto_aplicar: bool = False,
+                        origin: str = mcp.ORIGEN) -> dict:
     """The shared core behind POST /llamar (BODY-MCP-HTTP-1 ruling 2): returns the EXACT same
     shape this door already puts on the wire -- `{"tipo", "salida", "aviso_reloj",
     "conversacion_id"}` on success, `{"error": codigo, ...campos}` on a refusal -- so
@@ -74,13 +75,25 @@ def llamar_herramienta(conn, person_id: int, nombre, argumentos: dict, conversac
     route's own Aplicar button uses -- never through `mcp._aplicar_propuesta_mcp`'s own "is this
     caller's own proposal" check, which has nothing to verify here: it is always the proposal this
     exact call just made. This door's own default (False) keeps its existing propuesta-then-
-    manual-apply flow -- ruling 3, nothing about it changes."""
+    manual-apply flow -- ruling 3, nothing about it changes.
+
+    `origin` (BODY-HOGAR-ESCRIBE-2 ruling 2, new: every existing call site -- this door's own
+    route below, and /mcp -- keeps the default `mcp.ORIGEN` ("mcp"), unchanged) tags BOTH the
+    conversation a fresh propuesta call lazily creates (`agente_conversacion.crear(...,
+    origen=origin)`, done HERE rather than inside `mcp._SesionRemota.conversacion()` -- the one
+    thing that module still hardcodes to 'mcp', outside this slice's `touches:` -- by pre-creating
+    the conversation whenever the caller sent none and `origin` differs from it) and, on
+    `auto_aplicar`, the proposal's own `aplicada_via` (`db.marcar_aplicada_via`, already general --
+    `db.marcar_aplicada_via_mcp` was always a thin 'mcp'-only caller over it, so this is the one
+    other call site that needed widening, and it already existed for exactly this)."""
     if not _conversacion_valida(conn, person_id, conversacion_id):
         return {"error": "conversacion_ajena"}
     nombre_str = nombre if isinstance(nombre, str) else str(nombre)
     if not puede_escribir and (nombre_str in (mcp.NOMBRE_APLICAR, mcp.NOMBRE_DESCARTAR)
                                 or herramientas.tipo_de(nombre_str) == "propuesta"):
         return {"error": "solo_lectura"}
+    if conversacion_id is None and origin != mcp.ORIGEN and herramientas.tipo_de(nombre_str) == "propuesta":
+        conversacion_id = agente_conversacion.crear(conn, person_id, origen=origin)
     sesion = mcp._SesionRemota(conn, person_id, conversacion_id, puede_aplicar)
     try:
         tipo, salida, aviso_reloj = mcp._llamar_herramienta(sesion, nombre, argumentos)
@@ -102,7 +115,7 @@ def llamar_herramienta(conn, person_id: int, nombre, argumentos: dict, conversac
         if isinstance(propuesta_id, int):
             resultado = agente_propuestas.aplicar(conn, person_id, propuesta_id)
             if resultado["estado"] == "aplicada":
-                db.marcar_aplicada_via_mcp(conn, propuesta_id)
+                db.marcar_aplicada_via(conn, propuesta_id, origin)
                 salida = {**salida, "estado": resultado["estado"]}
                 tipo = "aplicacion"
     return {"tipo": tipo, "salida": salida, "aviso_reloj": aviso_reloj, "conversacion_id": sesion.conversacion_id}

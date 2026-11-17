@@ -329,6 +329,8 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
     device_key = dispositivo.crear(conn, person_id, f"ZZ{tag}-DISPOSITIVO",
                                     {"turnos:subir", "vida:leer", "hogar:leer"})
     device_key_mcp = dispositivo.crear(conn, person_id, f"ZZ{tag}-DISPOSITIVO-MCP", {"asistente:mcp"})
+    device_key_hogar_escribir = dispositivo.crear(conn, person_id, f"ZZ{tag}-DISPOSITIVO-HOGAR-ESCRIBIR",
+                                                   {"hogar:escribir"})
     garmin_cuenta.guardar(conn, person_id, f"FAKE-TEST-TOKEN-ZZ{tag}-NOT-REAL")
     cuenta.create_session(conn, person_id, f"sid-zz{tag.lower()}")
     # BODY-MCP-HTTP-1: /mcp authenticates through Cuenta introspection, never body/dispositivo.py --
@@ -361,7 +363,8 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
         "gid": gid, "hid": hid, "gid_proposed": gid_proposed, "gid_archived": gid_archived,
         "conv_id": conv_id, "batch_id": batch_id, "device_id": conn.execute(
             "SELECT id FROM dispositivo WHERE person_id = ?", (person_id,)).fetchone()["id"],
-        "device_key": device_key, "device_key_mcp": device_key_mcp, "propuesta_id": propuesta["id"], "eid": eid,
+        "device_key": device_key, "device_key_mcp": device_key_mcp,
+        "device_key_hogar_escribir": device_key_hogar_escribir, "propuesta_id": propuesta["id"], "eid": eid,
         "act_id": act_id, "llave_asistente": f"zzllave-{tag.lower()}",
     }
 
@@ -404,6 +407,7 @@ EXPECTED_GET_PATHS = sorted([
     "/experiments/{experiment_id}",
     "/settings", "/ajustes/asistente", "/ajustes/dispositivos", "/api/vida/semana",
     "/api/asistente/mcp/herramientas", "/api/hogar/manana", "/api/hogar/serie", "/api/hogar/turnos",
+    "/api/hogar/herramientas",
     "/healthz", "/ayuda", "/garmin", "/garmin/estado-vivo", "/history",
     "/privacidad/consentimiento", "/privacidad", "/privacidad/exportar",
     "/sw.js", "/login", "/login/cuenta/start", "/login/cuenta/callback",
@@ -537,6 +541,14 @@ class _BaseFugaTest(unittest.TestCase):
         # BODY-HOGAR-TURNOS-1: the new /turnos route, swept the same way as manana/serie above.
         r = client.get(f"/api/hogar/turnos?desde={DAYS[0]}&hasta={DAYS[-1]}",
                         headers={"Authorization": f"Bearer {ids['device_key']}"})
+        n += 1
+        self.assertEqual(r.status_code, 200)
+        texts.append(r.text)
+
+        # BODY-HOGAR-ESCRIBE-2: Hogar's own write-tool listing, swept the same way as manana/serie
+        # above -- read-only (it never applies anything), so the sweep stays free of side effects.
+        r = client.get("/api/hogar/herramientas",
+                        headers={"Authorization": f"Bearer {ids['device_key_hogar_escribir']}"})
         n += 1
         self.assertEqual(r.status_code, 200)
         texts.append(r.text)

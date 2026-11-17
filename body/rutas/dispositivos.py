@@ -7,13 +7,15 @@ from __future__ import annotations
 import json
 import re
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from .. import cuenta, db, desplazamiento_import, dispositivo, hogar_feed, identity, shift_import, vida_export
+from .. import cuenta, db, desplazamiento_import, dispositivo, errores, hogar_feed, identity, mcp, \
+    shift_import, vida_export
 from ..i18n import T
-from . import comun
+from . import comun, mcp_remoto
 
 router = APIRouter()
 
@@ -22,7 +24,8 @@ router = APIRouter()
 _ALCANCE_LABELS = {"turnos:subir": "dispositivos.scope.turnos", "vida:leer": "dispositivos.scope.vida",
                     "desplazamiento:subir": "dispositivos.scope.desplazamiento",
                     "asistente:mcp": "dispositivos.scope.asistente_mcp",
-                    "hogar:leer": "dispositivos.scope.hogar"}
+                    "hogar:leer": "dispositivos.scope.hogar",
+                    "hogar:escribir": "dispositivos.scope.hogar_escribir"}
 
 
 def _dispositivo_row(t: T, d: dict) -> dict:
@@ -72,6 +75,8 @@ async def dispositivos_crear(request: Request, person_id: int = Depends(identity
         alcances.add("asistente:mcp")
     if f.get("alcance_hogar") == "1":
         alcances.add("hogar:leer")
+    if f.get("alcance_hogar_escribir") == "1":
+        alcances.add("hogar:escribir")
     new_key = dispositivo.crear(conn, person_id, nombre, alcances)
     items = [_dispositivo_row(t, d) for d in dispositivo.listar(conn, person_id)]
     resp = comun._render("dispositivos.html", t=t, tab="settings", items=items, new_key=new_key,
@@ -187,6 +192,15 @@ def api_vida_semana(semana: str | None = None,
 # ---- Hogar's own feed (hosted only): BODY-SERVICIO-HOGAR-1, Carlos's ruling -- a full,
 # unfiltered read of his own data, gated only by the hogar:leer device key itself ------------------
 
+def _ahora_local(person: dict) -> datetime:
+    """Local wall-clock 'now' for `manana`'s own `comidas.faltan` boundary (BODY-HOGAR-ESCRIBE-2
+    ruling 3) -- a route-local twin of `comun._today_local`'s own `fechas.hoy_local` wrapper, kept
+    here (not in `comun.py`, outside this slice's `touches:`) since no existing helper returns the
+    person's local time of day, only their local date."""
+    tz = ZoneInfo(person.get("timezone") or "America/Bogota")
+    return datetime.now(tz).replace(tzinfo=None)
+
+
 @router.get("/api/hogar/manana")
 @comun._cierra_conexion
 def api_hogar_manana(dia: str | None = None,
@@ -199,7 +213,7 @@ def api_hogar_manana(dia: str | None = None,
             raise HTTPException(400)
     else:
         d = comun._today_local(person)
-    data = hogar_feed.manana(conn, person_id, d)
+    data = hogar_feed.manana(conn, person_id, d, _ahora_local(person))
     return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
 
@@ -241,3 +255,72 @@ def api_hogar_turnos(desde: str, hasta: str,
     except hogar_feed.RangoDemasiadoLargo:
         raise HTTPException(400)
     return JSONResponse(data, headers={"Cache-Control": "no-store"})
+
+
+# ---- Hogar's own writes (hosted only): BODY-HOGAR-ESCRIBE-2 ruling 2 -- gated by the separate
+# `hogar:escribir` device-key scope, dispatching through the SAME shared core GET /api/asistente/
+# mcp/herramientas and POST /api/asistente/mcp/llamar already use (body/rutas/mcp_remoto.py), never
+# a copied tool schema or a second dispatch path. ------------------------------------------------
+
+_HOGAR_ESCRIBIR_HERRAMIENTAS = {"registrar_comida", "anotar_sesion"}
+
+
+@router.get("/api/hogar/herramientas")
+@comun._cierra_conexion
+def api_hogar_herramientas(person_id: int = Depends(identity.person_from_device("hogar:escribir"))):
+    conn, person, _ = comun._ctx(person_id)
+    idioma = person.get("language", "es")
+    todas = mcp_remoto.listar_herramientas(conn, person_id, idioma, puede_aplicar=False)
+    filtradas = [h for h in todas["herramientas"] if h["name"] in _HOGAR_ESCRIBIR_HERRAMIENTAS]
+    return JSONResponse({"herramientas": filtradas}, headers={"Cache-Control": "no-store"})
+
+
+MAX_HOGAR_REGISTRAR_BODY_BYTES = 64 * 1024
+
+
+def _mensaje_error_hogar(data: dict, nombre_str: str, idioma: str) -> str:
+    """The person-language sentence for a refusal off `mcp_remoto.llamar_herramienta`'s wire shape
+    -- the same mapping body/rutas/mcp_http.py's own `_mensaje_error` already builds for its own
+    refusals off that exact shape (mcp_http.py is outside this slice's `touches:`, so this is a
+    twin, not an import); `mcp._error_remoto_a_rehuso`'s own signature stays untouched, read by a
+    test outside this slice too."""
+    sesion_cliente = mcp._SesionCliente()
+    sesion_cliente.idioma = idioma
+    rehuso = mcp._error_remoto_a_rehuso(sesion_cliente, nombre_str, data)
+    return errores.texto_propio(rehuso)
+
+
+@router.post("/api/hogar/registrar")
+@comun._cierra_conexion_async
+async def api_hogar_registrar(request: Request,
+                               person_id: int = Depends(identity.person_from_device("hogar:escribir"))):
+    content_length = request.headers.get("content-length")
+    if content_length is not None and content_length.isdigit() \
+            and int(content_length) > MAX_HOGAR_REGISTRAR_BODY_BYTES:
+        raise HTTPException(413)
+    chunks = bytearray()
+    async for chunk in request.stream():
+        chunks.extend(chunk)
+        if len(chunks) > MAX_HOGAR_REGISTRAR_BODY_BYTES:
+            raise HTTPException(413)
+    try:
+        cuerpo = json.loads(bytes(chunks).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise HTTPException(400)
+    if not isinstance(cuerpo, dict):
+        raise HTTPException(400)
+    nombre = cuerpo.get("herramienta")
+    if not isinstance(nombre, str) or nombre not in _HOGAR_ESCRIBIR_HERRAMIENTAS:
+        raise HTTPException(404)
+    argumentos = cuerpo.get("argumentos")
+    argumentos = argumentos if isinstance(argumentos, dict) else {}
+    conn, person, _ = comun._ctx(person_id)
+    idioma = person.get("language", "es")
+    data = mcp_remoto.llamar_herramienta(conn, person_id, nombre, argumentos, None,
+                                          puede_aplicar=False, auto_aplicar=True, origin="hogar")
+    if "error" in data:
+        return JSONResponse({"ok": False, "error": _mensaje_error_hogar(data, nombre, idioma)},
+                             headers={"Cache-Control": "no-store"})
+    return JSONResponse(
+        {"ok": True, "propuesta_id": data["salida"].get("propuesta_id"), "resultado": data["salida"]},
+        headers={"Cache-Control": "no-store"})

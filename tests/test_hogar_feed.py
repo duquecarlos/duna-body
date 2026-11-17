@@ -6,7 +6,7 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from unittest import mock
 
@@ -17,6 +17,11 @@ from fastapi.testclient import TestClient
 from body import config, cuenta, db, dispositivo, goals, hogar_feed, web
 from body.rutas import comun
 from tests._rutas import contar_sql
+
+# A fixed "now" far in the past of every `dia` this file's older tests (none of which check
+# `comidas`) pass -- keeps `comidas.faltan` always `[]` (every `dia` reads as still in the future)
+# rather than reading the real wall clock, so these calls stay deterministic.
+_AHORA = datetime(2020, 1, 1, 0, 0)
 
 
 def _reset_db(tc: unittest.TestCase, name: str):
@@ -40,7 +45,7 @@ class MananaTest(unittest.TestCase):
         db.set_metric(self.conn, "2026-11-12", "resting_hr", 55.0, "garmin", 1)
         db.set_metric(self.conn, "2026-11-11", "hrv_last_night", 60.0, "garmin", 1)
         self.conn.commit()
-        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15))
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
         by_key = {f["metric_key"]: f for f in out["figuras"]}
         self.assertEqual(by_key["resting_hr"],
                           {"metric_key": "resting_hr", "value": 55.0, "kind": "measured", "day": "2026-11-12"})
@@ -50,7 +55,7 @@ class MananaTest(unittest.TestCase):
         db.set_metric(self.conn, "2026-11-10", "resting_hr", 58.0, "garmin", 1)
         db.set_metric(self.conn, "2026-11-12", "resting_hr", 55.0, "garmin", 1)
         self.conn.commit()
-        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 11))
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 11), _AHORA)
         by_key = {f["metric_key"]: f for f in out["figuras"]}
         self.assertEqual(by_key["resting_hr"]["value"], 58.0)
         self.assertEqual(by_key["resting_hr"]["day"], "2026-11-10")
@@ -58,7 +63,7 @@ class MananaTest(unittest.TestCase):
     def test_readiness_marked_estimated(self):
         db.set_metric(self.conn, "2026-11-10", "readiness", 70.0, "garmin", 1)
         self.conn.commit()
-        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15))
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
         by_key = {f["metric_key"]: f for f in out["figuras"]}
         self.assertEqual(by_key["readiness"]["kind"], "estimated")
 
@@ -73,19 +78,19 @@ class MananaTest(unittest.TestCase):
             "INSERT INTO plan (person_id, day, time, title, status) VALUES (1, '2026-11-17', '07:00', "
             "'ZZ-FUERA-DE-VENTANA', 'proposed')")
         self.conn.commit()
-        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15))
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
         titles = {p["title"] for p in out["plan"]}
         self.assertEqual(titles, {"ZZ-HOY", "ZZ-MANANA"})
 
     def test_horizonte_null_when_no_active_milestone(self):
-        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15))
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
         self.assertIsNone(out["horizonte"])
 
     def test_horizonte_present_with_week_number_out_of_the_total(self):
         gid = goals.propose(self.conn, 1, "ZZ-HORIZONTE", "2026-11-02", kind="milestone", deadline="2026-12-27")
         goals.activate(self.conn, gid)
         self.conn.commit()
-        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 16))
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 16), _AHORA)
         self.assertEqual(out["horizonte"],
                           {"goal_id": gid, "title": "ZZ-HORIZONTE", "deadline": "2026-12-27",
                            "semana": 3, "semanas": 8})
@@ -100,17 +105,17 @@ class MananaTest(unittest.TestCase):
             "INSERT INTO plan (person_id, day, time, title, status) VALUES "
             "(1, '2026-11-15', '19:00', 'ZZ-SIN-EJERCICIOS', 'proposed')")
         self.conn.commit()
-        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15))
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
         by_title = {p["title"]: p for p in out["plan"]}
         self.assertEqual(by_title["ZZ-CON-EJERCICIOS"]["ejercicios"], ejercicios)
         self.assertIsNone(by_title["ZZ-SIN-EJERCICIOS"]["ejercicios"])
         self.assertEqual(set(by_title["ZZ-CON-EJERCICIOS"].keys()),
-                          {"id", "day", "time", "title", "status", "ejercicios"})
+                          {"id", "day", "time", "title", "status", "ejercicios", "nota_sesion"})
 
     # ---- turnos (BODY-HOGAR-TURNOS-1 ruling 1) --------------------------------------------------
 
     def test_turnos_empty_list_when_none(self):
-        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15))
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
         self.assertEqual(out["turnos"], [])
 
     def test_turnos_night_started_dia_minus_1_ending_dia_is_included(self):
@@ -118,7 +123,7 @@ class MananaTest(unittest.TestCase):
             "INSERT INTO shift (person_id, day, kind, code, start_local, end_local) VALUES "
             "(1, '2026-11-14', 'night', 'N', '2026-11-14T22:00:00', '2026-11-15T06:00:00')")
         self.conn.commit()
-        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15))
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
         self.assertEqual(out["turnos"], [
             {"day": "2026-11-14", "kind": "night", "code": "N",
              "start_local": "2026-11-14T22:00:00", "end_local": "2026-11-15T06:00:00"},
@@ -129,7 +134,7 @@ class MananaTest(unittest.TestCase):
             "INSERT INTO shift (person_id, day, kind, code, start_local, end_local) VALUES "
             "(1, '2026-11-13', 'night', 'N', '2026-11-13T22:00:00', '2026-11-14T06:00:00')")
         self.conn.commit()
-        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15))
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
         self.assertEqual(out["turnos"], [])
 
     def test_turnos_dia_plus_1_included_dia_plus_2_not(self):
@@ -140,7 +145,7 @@ class MananaTest(unittest.TestCase):
             "INSERT INTO shift (person_id, day, kind, code, start_local, end_local) VALUES "
             "(1, '2026-11-17', 'morning', 'M2', '2026-11-17T06:00:00', '2026-11-17T14:00:00')")
         self.conn.commit()
-        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15))
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
         self.assertEqual([t["day"] for t in out["turnos"]], ["2026-11-16"])
 
     def test_turnos_off_row_with_null_times_is_included(self):
@@ -148,7 +153,7 @@ class MananaTest(unittest.TestCase):
             "INSERT INTO shift (person_id, day, kind, code, start_local, end_local) VALUES "
             "(1, '2026-11-15', 'off', NULL, NULL, NULL)")
         self.conn.commit()
-        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15))
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
         self.assertEqual(out["turnos"], [
             {"day": "2026-11-15", "kind": "off", "code": None, "start_local": None, "end_local": None},
         ])
@@ -162,7 +167,7 @@ class MananaTest(unittest.TestCase):
             "INSERT INTO shift (person_id, day, kind, code, start_local, end_local) VALUES "
             "(1, '2026-11-15', 'morning', 'M', '2026-11-15T06:00:00', '2026-11-15T14:00:00')")
         self.conn.commit()
-        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15))
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
         self.assertEqual(out["dia"], "2026-11-15")
         self.assertEqual([{"metric_key": f["metric_key"], "value": f["value"], "kind": f["kind"], "day": f["day"]}
                            for f in out["figuras"]],
@@ -170,10 +175,97 @@ class MananaTest(unittest.TestCase):
         plan_id = out["plan"][0]["id"]
         self.assertEqual(out["plan"], [
             {"id": plan_id, "day": "2026-11-15", "time": "18:00", "title": "ZZ-HOY",
-             "status": "proposed", "ejercicios": None},
+             "status": "proposed", "ejercicios": None, "nota_sesion": None},
         ])
         self.assertIsNone(out["horizonte"])
-        self.assertEqual(set(out.keys()), {"dia", "figuras", "plan", "horizonte", "turnos"})
+        self.assertEqual(set(out.keys()), {"dia", "figuras", "plan", "horizonte", "turnos", "comidas"})
+
+
+# ---- hogar_feed.manana's `comidas` key (BODY-HOGAR-ESCRIBE-2 ruling 3) --------------------------
+
+class ComidasTest(unittest.TestCase):
+    def setUp(self):
+        self.conn = _reset_db(self, "comidas.db")
+
+    def _comida(self, day="2026-11-15", ts_local=None, momento=None):
+        self.conn.execute(
+            "INSERT INTO comida (person_id, day, ts_local, descripcion, created_at, updated_at, momento) "
+            "VALUES (1, ?, ?, 'x', '2026-11-15T00:00:00', '2026-11-15T00:00:00', ?)",
+            (day, ts_local, momento))
+        self.conn.commit()
+
+    def test_momentos_are_the_defaults_when_the_person_has_none_of_their_own(self):
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), datetime(2026, 11, 15, 12, 0))
+        self.assertEqual(out["comidas"]["momentos"], [
+            {"clave": "desayuno", "desde_hora": 5, "hasta_hora": 11, "esperado": 1},
+            {"clave": "almuerzo", "desde_hora": 11, "hasta_hora": 16, "esperado": 1},
+            {"clave": "merienda", "desde_hora": 16, "hasta_hora": 19, "esperado": 0},
+            {"clave": "cena", "desde_hora": 19, "hasta_hora": 23, "esperado": 1},
+        ])
+
+    def test_before_desayunos_desde_hora_today_nothing_missing(self):
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), datetime(2026, 11, 15, 4, 59))
+        self.assertEqual(out["comidas"]["faltan"], [])
+
+    def test_at_desayunos_desde_hora_today_it_is_already_missing(self):
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), datetime(2026, 11, 15, 5, 0))
+        self.assertEqual(out["comidas"]["faltan"], ["desayuno"])
+
+    def test_after_cenas_desde_hora_today_every_unlogged_esperado_is_missing(self):
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), datetime(2026, 11, 15, 20, 0))
+        self.assertEqual(out["comidas"]["faltan"], ["desayuno", "almuerzo", "cena"])
+
+    def test_a_past_day_every_esperado_missing_regardless_of_hour(self):
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 10), datetime(2026, 11, 15, 0, 0))
+        self.assertEqual(out["comidas"]["faltan"], ["desayuno", "almuerzo", "cena"])
+
+    def test_a_future_day_nothing_missing(self):
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 20), datetime(2026, 11, 15, 23, 0))
+        self.assertEqual(out["comidas"]["faltan"], [])
+
+    def test_a_meal_with_its_own_stored_momento(self):
+        self._comida(ts_local="2026-11-15T07:00:00", momento="desayuno")
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), datetime(2026, 11, 15, 20, 0))
+        self.assertEqual(out["comidas"]["registradas"], [{"momento": "desayuno", "ts_local": "2026-11-15T07:00:00"}])
+        self.assertEqual(out["comidas"]["faltan"], ["almuerzo", "cena"])
+
+    def test_a_meal_with_its_momento_derived_from_ts_local(self):
+        self._comida(ts_local="2026-11-15T12:00:00")
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), datetime(2026, 11, 15, 20, 0))
+        self.assertEqual(out["comidas"]["registradas"], [{"momento": "almuerzo", "ts_local": "2026-11-15T12:00:00"}])
+        self.assertEqual(out["comidas"]["faltan"], ["desayuno", "cena"])
+
+    def test_a_meal_with_neither_stored_nor_derivable_momento_is_null(self):
+        self._comida(ts_local=None)
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), datetime(2026, 11, 15, 20, 0))
+        self.assertEqual(out["comidas"]["registradas"], [{"momento": None, "ts_local": None}])
+        self.assertEqual(out["comidas"]["faltan"], ["desayuno", "almuerzo", "cena"])
+
+    def test_a_person_with_custom_moments(self):
+        self.conn.execute(
+            "INSERT INTO momento_comida (person_id, clave, desde_hora, hasta_hora, esperado, orden) "
+            "VALUES (1, 'brunch', 9, 13, 1, 1)")
+        self.conn.commit()
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), datetime(2026, 11, 15, 14, 0))
+        self.assertEqual(out["comidas"]["momentos"], [{"clave": "brunch", "desde_hora": 9, "hasta_hora": 13,
+                                                        "esperado": 1}])
+        self.assertEqual(out["comidas"]["faltan"], ["brunch"])
+
+    def test_no_description_or_nutrient_leaks_into_registradas(self):
+        self._comida(ts_local="2026-11-15T07:00:00", momento="desayuno")
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), datetime(2026, 11, 15, 20, 0))
+        self.assertEqual(set(out["comidas"]["registradas"][0].keys()), {"momento", "ts_local"})
+
+    def test_another_persons_meal_never_leaks_in(self):
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.execute(
+            "INSERT INTO comida (person_id, day, ts_local, descripcion, created_at, updated_at, momento) "
+            "VALUES (2, '2026-11-15', '2026-11-15T07:00:00', 'x', '2026-11-15T00:00:00', "
+            "'2026-11-15T00:00:00', 'desayuno')")
+        self.conn.commit()
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), datetime(2026, 11, 15, 20, 0))
+        self.assertEqual(out["comidas"]["registradas"], [])
+        self.assertEqual(out["comidas"]["faltan"], ["desayuno", "almuerzo", "cena"])
 
 
 # ---- hogar_feed.serie, no HTTP ------------------------------------------------------------------
