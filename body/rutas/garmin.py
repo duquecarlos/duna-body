@@ -97,20 +97,31 @@ def _garmin_ctx(t: T, conn, person_id: int, **extra) -> dict:
 def garmin_view(request: Request, person_id: int = Depends(identity.current_person_id)):
     if not cuenta.hosted():
         raise HTTPException(404)
-    conn, _, t = comun._ctx(person_id)
+    conn, person, t = comun._ctx(person_id)
     err = request.query_params.get("error")
     form_error = t(_GARMIN_FORM_ERROR_KEYS[err]) if err in _GARMIN_FORM_ERROR_KEYS else None
-    return comun._render("garmin.html", **_garmin_ctx(t, conn, person_id, form_error=form_error))
+    # BODY-APERTURA-AUTOMATICA-1 ruling 2: the SAME «Tu reloj» card Hoy shows, fed by the SAME
+    # context code (body/rutas/hoy.py's own today() calls these same two functions) -- so the
+    # first pull right after connecting is visible right here, on the connect screen, never a
+    # second copy of the card or its logic. None/None when the person has never connected (no row
+    # in garmin_cuenta at all), which already reads as "no card" below -- no extra guard needed.
+    today_local = comun._today_local(person)
+    day = comun._latest_day(conn, person_id)
+    garmin_sync = _garmin_sync_ctx(t, conn, person_id, day, today_local)
+    reloj_vivo = _reloj_vivo_ctx(t, conn, person_id, person, today_local)
+    return comun._render("garmin.html", **_garmin_ctx(t, conn, person_id, form_error=form_error,
+                                                        garmin_sync=garmin_sync, reloj_vivo=reloj_vivo))
 
 
 def _garmin_sync_ctx(t: T, conn, person_id: int, day: str | None, today_local: date) -> dict | None:
-    """BODY-SYNC-VIVO-2-B ruling 1: the gap half of the merged «Tu reloj» card -- the SAME logic
-    body/rutas/hoy.py's own `_garmin_sync_ctx` builds for Hoy's `/`, duplicated here rather than
-    imported (the same no-cross-module-import rule `_reloj_vivo_ctx` below already follows), so
-    this route's poll reload carries the same gap state for the same person, never a merged card
-    that loses its gap half mid-poll. `day` is None for a person with no stored day at all ever --
-    never "stale" here (Hoy's `/` can never ask this with `day=None`, guarded by its own early
-    return to soon.html; this route has no such guard, since it must answer the poll either way)."""
+    """BODY-SYNC-VIVO-2-B ruling 1: the gap half of the merged «Tu reloj» card. BODY-APERTURA-
+    AUTOMATICA-1 ruling 2 made this the ONE shared implementation -- body/rutas/hoy.py's own
+    today() now calls this same function (as `garmin_rutas._garmin_sync_ctx`) for Hoy's `/`,
+    rather than carrying its own duplicate, so this route's poll reload, Hoy's own card and
+    /garmin's own connect-screen card can never drift apart. `day` is None for a person with no
+    stored day at all ever -- never "stale" here (Hoy's `/` can never ask this with `day=None`,
+    guarded by its own early return to soon.html; this route has no such guard, since it must
+    answer the poll, and now the connect screen, either way)."""
     estado = garmin_cuenta.estado_conexion(conn, person_id)
     if estado["ultimo_error"] == "NotSignedIn":
         texto = t("today.garmin_sync.not_signed_in")
@@ -125,11 +136,12 @@ def _garmin_sync_ctx(t: T, conn, person_id: int, day: str | None, today_local: d
 
 def _reloj_vivo_ctx(t: T, conn, person_id: int, person: dict, today_local: date) -> dict | None:
     """BODY-SYNC-VIVO-2 ruling 3: the «Tu reloj» live card's own freshness half -- shared by Hoy's
-    `/` (body/rutas/hoy.py) and this module's own polling endpoint below, so the two can never
-    render a different card for the same state. None while nothing of the three states applies (no
-    card, no claim) -- the same "honest gap" rule Hoy's other cards already follow. Takes `person`
-    and `today_local` as params (BODY-SYNC-VIVO-2-B) rather than reading them itself, since the
-    poll route below now needs the same two values for `_garmin_sync_ctx` above too -- one read of
+    `/` (body/rutas/hoy.py's own today(), as `garmin_rutas._reloj_vivo_ctx`), this module's own
+    polling endpoint below, AND /garmin's own connect-screen card (BODY-APERTURA-AUTOMATICA-1
+    ruling 2), so none of the three can ever render a different card for the same state. None
+    while nothing of the three states applies (no card, no claim) -- the same "honest gap" rule
+    Hoy's other cards already follow. Takes `person` and `today_local` as params (BODY-SYNC-
+    VIVO-2-B) rather than reading them itself, since every caller already has both -- one read of
     each, never a duplicate."""
     tz = ZoneInfo(person.get("timezone") or "America/Bogota")
     texto = pull.texto_estado_vivo(t, conn, person_id, tz, today_local)

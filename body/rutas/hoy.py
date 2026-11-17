@@ -23,6 +23,7 @@ from ..baselines import baseline
 from ..desplazamiento_import import FUENTE as _FUENTE_COMMUTE
 from ..i18n import T
 from . import comun, experimentos
+from . import garmin as garmin_rutas
 
 router = APIRouter()
 
@@ -127,43 +128,6 @@ def _stale_ctx(t: T, day: str, today_local: date) -> Markup | None:
                   html.escape(t("today.stale_link")) + "</a>")
 
 
-def _garmin_sync_ctx(t: T, conn, person_id: int, day: str, today_local: date) -> dict | None:
-    """BODY-GARMIN-SYNC-CONSISTENTE-1 ruling 2: a compact `card`+`chip` note when the person's
-    Garmin account carries a recorded error, OR is connected with its newest stored day older
-    than yesterday in their own zone -- never shown with no Garmin connection and no error (a
-    local person has no garmin_cuenta row at all, so estado["conectado"] is always False and
-    estado["ultimo_error"] always None there, which already reads as "don't show" below). `day`
-    is the caller's own _latest_day() result, already read once per request for the readiness
-    card above -- never a second query for "the newest stored day" here. One query
-    (garmin_cuenta.estado_conexion), shared with the assistant's own leer_estado_reloj (ruling 3)
-    -- never duplicated between them."""
-    estado = garmin_cuenta.estado_conexion(conn, person_id)
-    if estado["ultimo_error"] == "NotSignedIn":
-        texto = t("today.garmin_sync.not_signed_in")
-    elif estado["ultimo_error"]:
-        texto = t("today.garmin_sync.failed")
-    elif estado["conectado"] and date.fromisoformat(day) < today_local - timedelta(1):
-        texto = t("today.garmin_sync.stale", date=comun._short_date(t, date.fromisoformat(day)))
-    else:
-        return None
-    return {"texto": texto}
-
-
-def _reloj_vivo_ctx(t: T, conn, person_id: int, person: dict, today_local: date) -> dict | None:
-    """BODY-SYNC-VIVO-2 ruling 3: the «Tu reloj» live-freshness card -- separate from
-    `_garmin_sync_ctx` above (unchanged) and from `_synced`'s own "Reloj sincronizado HH:MM" line
-    below (also unchanged). The SAME logic body/rutas/garmin.py's own `_reloj_vivo_ctx` builds for
-    its `/garmin/estado-vivo` poll -- duplicated here rather than imported, since neither a route
-    module nor another may import one another for one helper (the same choice
-    `_momento_checkin_txt` below already makes). None while none of `pull.texto_estado_vivo`'s
-    three states applies (no card, no claim)."""
-    tz = ZoneInfo(person.get("timezone") or "America/Bogota")
-    texto = pull.texto_estado_vivo(t, conn, person_id, tz, today_local)
-    if texto is None:
-        return None
-    return {"texto": texto, "sincronizando": person_id in pull._PULL_EN_CURSO}
-
-
 def _debe_lanzar_pull_hoy(conn, person_id: int) -> bool:
     """BODY-SYNC-VIVO-2 ruling 2: whether Hoy's own `GET /` should schedule `pull.pull_hoy_ahora`
     as a BackgroundTask -- hosted, with a Garmin account, and `puede_intentar` true right now
@@ -264,6 +228,20 @@ def _mcp_aplicado_ctx(conn, person_id: int, ahora: datetime | None = None) -> di
     that must cross the 24h edge without sleeping; real UTC now in production."""
     ahora = ahora or datetime.now(timezone.utc)
     n, conversacion_id = agente_conversacion.aplicados_mcp_recientes(conn, person_id, ahora)
+    return {"n": n, "conversacion_id": conversacion_id} if n else None
+
+
+def _hogar_aplicado_ctx(conn, person_id: int, ahora: datetime | None = None) -> dict | None:
+    """BODY-APERTURA-AUTOMATICA-1 ruling 1: Hoy's own 24 h aviso line after Hogar applied a change
+    on its own (`aplicada_via = 'hogar'`, BODY-HOGAR-ESCRIBE-1/2) -- its OWN line, directly after
+    _mcp_aplicado_ctx's, never merged into one "your assistant" sentence: Hogar is a different
+    outside app, not the person's personal assistant, so the hub's own «one line per outside
+    origin» ruling applies. Same "no line, no empty count" shape, the same 24h window and the same
+    injectable clock as _mcp_aplicado_ctx above; the person's own tap on a Hogar-origin proposal
+    (`aplicada_via` left NULL by Body's own /asistente/propuestas/{id}/aplicar route) never raises
+    this line either, for the same reason it never raises the mcp one."""
+    ahora = ahora or datetime.now(timezone.utc)
+    n, conversacion_id = agente_conversacion.aplicados_mcp_recientes(conn, person_id, ahora, via="hogar")
     return {"n": n, "conversacion_id": conversacion_id} if n else None
 
 
@@ -730,6 +708,7 @@ def today(background_tasks: BackgroundTasks, person_id: int = Depends(identity.c
     cuerpo_ctx = _cuerpo_hoy_ctx(t, conn, person_id, today_local)
     mcp_pendientes = _mcp_pendientes_ctx(conn, person_id)
     mcp_aplicado = _mcp_aplicado_ctx(conn, person_id)
+    hogar_aplicado = _hogar_aplicado_ctx(conn, person_id)
     if not day:
         return comun._render("soon.html", t=t, tab="today", title=t("today.title"),
                        text=comun._sync_status_text(conn, person, t), primeros_pasos=primeros_pasos,
@@ -761,12 +740,13 @@ def today(background_tasks: BackgroundTasks, person_id: int = Depends(identity.c
                       "banda": banda, "caption": caption})
     return comun._render("today.html", t=t, tab="today", day=day, date_long=t.long_date(date.fromisoformat(day)),
                    synced=synced, stale=_stale_ctx(t, day, today_local),
-                   garmin_sync=_garmin_sync_ctx(t, conn, person_id, day, today_local),
-                   reloj_vivo=_reloj_vivo_ctx(t, conn, person_id, person, today_local), cuerpo=cuerpo_ctx,
+                   garmin_sync=garmin_rutas._garmin_sync_ctx(t, conn, person_id, day, today_local),
+                   reloj_vivo=garmin_rutas._reloj_vivo_ctx(t, conn, person_id, person, today_local), cuerpo=cuerpo_ctx,
                    r=r, reading=_reading(t, r), ready_avg=ready_avg,
                    ready_delta=ready_delta, ready_cls=ready_cls, cards=cards,
                    missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_count=proposed_count,
                    turno=turno_ctx, turnos=turnos_on, mcp_pendientes=mcp_pendientes, mcp_aplicado=mcp_aplicado,
+                   hogar_aplicado=hogar_aplicado,
                    dia_por_delante=_dia_por_delante_ctx(t, conn, person_id, today_local, turno_de_hoy["hoy"]),
                    plan_semana=_plan_semana_ctx(t, conn, person_id, today_local),
                    semana_nocturna=_semana_nocturna_ctx(t, conn, person_id, today_local),
