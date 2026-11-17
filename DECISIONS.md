@@ -25305,7 +25305,14 @@ Reconciled against an independent collect-only count
 (`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted without running): `4179` --
 exact match (4168 before this slice + 11 new in `MetasTest`).
 
-**No schema change, no cross-repo contract break, no customer-facing bytes** (this is a JSON wire
-read only by Hogar's own device key, additive to `hogar-feed-v1` -- merge policy A's three
-conditions all clear).
+**No schema change, no customer-facing bytes** (this is a JSON wire read only by Hogar's own device
+key, no person-facing string touched). **This diff DOES touch a cross-repo contract**
+(`docs/contracts/hogar-feed-v1.md`, the wire Hogar mirrors) -- additive only (a new key, no existing
+byte changed), pre-coordinated through the hub ask this entry opens with (Hogar's own side already
+built, `ideas.meta_de`), and merged anyway because THE WORK section of this slice's own spec
+explicitly authorised the merge in words (step 5: "Merge if green: `git checkout main`, `git merge
+--no-ff ...`"), not because the condition failed to trip.
+
+**Merged** `801fc2c` (`--no-ff`, no conflicts). Post-merge smoke
+(`tests.test_hogar_feed tests.test_rendimiento`): `Ran 76 tests ... OK`.
 
