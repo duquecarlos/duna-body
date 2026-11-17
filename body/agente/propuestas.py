@@ -1467,12 +1467,22 @@ SIN_DESHACER = tuple(nombre for nombre, entrada in TABLA.items() if not entrada.
 # schema change) -- the replaced row's own despues_json (free-form, only CHECKed for json_valid)
 # gains a 'reemplazada' marker so the card (body/rutas/asistente.py) can tell a replacement apart
 # from a plain discard.
-ACCIONES_REEMPLAZABLES = frozenset({"registrar_entreno", "registrar_comida", "registrar_ingesta",
-                                     "registrar_checkin"})
+#
+# BODY-CORREGIR-MEDIDA-ENTRENO-1 ruling 1: `registrar_medida` joins this table too, but keyed on
+# more than the day -- a day can carry several different self-measured metrics (weight, soreness,
+# resting HR) that are each real, never a same-day replacement of EACH OTHER. The value maps each
+# replaceable accion to the extra despues_json keys (beyond "day") that must also match, empty for
+# the original four (unchanged).
+ACCIONES_REEMPLAZABLES = {
+    "registrar_entreno": (), "registrar_comida": (), "registrar_ingesta": (), "registrar_checkin": (),
+    "registrar_medida": ("metric_key",),
+}
 
 
-def _reemplazar_pendientes_mismo_dia(conn: sqlite3.Connection, person_id: int, accion: str, day: str,
-                                      propuesta_id_aplicada: int, ahora_iso: str) -> None:
+def _reemplazar_pendientes_mismo_dia(conn: sqlite3.Connection, person_id: int, accion: str,
+                                      despues_aplicada: dict, propuesta_id_aplicada: int, ahora_iso: str,
+                                      claves_extra: tuple = ()) -> None:
+    day = despues_aplicada["day"]
     pendientes = conn.execute(
         "SELECT id, despues_json FROM propuesta_agente WHERE person_id = ? AND accion = ? "
         "AND estado = 'propuesta' AND id != ?", (person_id, accion, propuesta_id_aplicada),
@@ -1480,6 +1490,8 @@ def _reemplazar_pendientes_mismo_dia(conn: sqlite3.Connection, person_id: int, a
     for p in pendientes:
         despues = json.loads(p["despues_json"])
         if despues.get("day") != day:
+            continue
+        if any(despues.get(k) != despues_aplicada.get(k) for k in claves_extra):
             continue
         if _marcar(conn, p["id"], person_id, "propuesta", "descartada", ahora_iso):
             despues["reemplazada"] = True
@@ -1529,8 +1541,8 @@ def aplicar(conn: sqlite3.Connection, person_id: int, propuesta_id: int) -> dict
                 conn.execute("UPDATE propuesta_agente SET despues_json = ? WHERE id = ?",
                              (json.dumps(nuevo_despues, ensure_ascii=False), propuesta_id))
     if row["accion"] in ACCIONES_REEMPLAZABLES:
-        _reemplazar_pendientes_mismo_dia(conn, person_id, row["accion"], json.loads(row["despues_json"])["day"],
-                                          propuesta_id, ahora_iso)
+        _reemplazar_pendientes_mismo_dia(conn, person_id, row["accion"], json.loads(row["despues_json"]),
+                                          propuesta_id, ahora_iso, ACCIONES_REEMPLAZABLES[row["accion"]])
     return {"estado": "aplicada"}
 
 

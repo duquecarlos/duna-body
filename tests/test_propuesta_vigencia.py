@@ -148,5 +148,52 @@ class ReemplazoMismoDiaTest(_VigenciaTestCase):
         self.assertEqual(aplicar_de_nuevo.json()["estado"], "ya_resuelta")
 
 
+class ReemplazoRegistrarMedidaTest(_VigenciaTestCase):
+    """BODY-CORREGIR-MEDIDA-ENTRENO-1 ruling 1: registrar_medida joins the replaceable table too,
+    but keyed on the metric_key as well as the day -- a correction of the SAME metric the same day
+    replaces the older pending proposal; a DIFFERENT metric, or a different day, is left alone."""
+
+    def test_two_pending_for_one_day_and_metric_only_the_newer_remains(self):
+        cid = _cid(self.conn)
+        out1 = herramientas.ejecutar(self.conn, 1, "registrar_medida",
+                                      {"metric_key": "flex_alcance_cm", "value": 10.0, "day": "2026-11-11"},
+                                      "ninguno", cid)
+        out2 = herramientas.ejecutar(self.conn, 1, "registrar_medida",
+                                      {"metric_key": "flex_alcance_cm", "value": 12.0, "day": "2026-11-11"},
+                                      "ninguno", cid)
+        resultado = propuestas.aplicar(self.conn, 1, out2["propuesta_id"])
+        self.assertEqual(resultado["estado"], "aplicada")
+        fila = self.conn.execute("SELECT estado, despues_json FROM propuesta_agente WHERE id = ?",
+                                  (out1["propuesta_id"],)).fetchone()
+        self.assertEqual(fila["estado"], "descartada")
+        self.assertTrue(json.loads(fila["despues_json"])["reemplazada"])
+
+    def test_pending_sibling_of_a_different_metric_the_same_day_is_left_alone(self):
+        cid = _cid(self.conn)
+        out1 = herramientas.ejecutar(self.conn, 1, "registrar_medida",
+                                      {"metric_key": "flex_alcance_cm", "value": 10.0, "day": "2026-11-11"},
+                                      "ninguno", cid)
+        out2 = herramientas.ejecutar(self.conn, 1, "registrar_medida",
+                                      {"metric_key": "snoring_min", "value": 5.0, "day": "2026-11-11"},
+                                      "ninguno", cid)
+        propuestas.aplicar(self.conn, 1, out2["propuesta_id"])
+        fila = self.conn.execute("SELECT estado FROM propuesta_agente WHERE id = ?",
+                                  (out1["propuesta_id"],)).fetchone()
+        self.assertEqual(fila["estado"], "propuesta")
+
+    def test_pending_sibling_of_the_same_metric_a_different_day_is_left_alone(self):
+        cid = _cid(self.conn)
+        out1 = herramientas.ejecutar(self.conn, 1, "registrar_medida",
+                                      {"metric_key": "flex_alcance_cm", "value": 10.0, "day": "2026-11-10"},
+                                      "ninguno", cid)
+        out2 = herramientas.ejecutar(self.conn, 1, "registrar_medida",
+                                      {"metric_key": "flex_alcance_cm", "value": 12.0, "day": "2026-11-11"},
+                                      "ninguno", cid)
+        propuestas.aplicar(self.conn, 1, out2["propuesta_id"])
+        fila = self.conn.execute("SELECT estado FROM propuesta_agente WHERE id = ?",
+                                  (out1["propuesta_id"],)).fetchone()
+        self.assertEqual(fila["estado"], "propuesta")
+
+
 if __name__ == "__main__":
     unittest.main()

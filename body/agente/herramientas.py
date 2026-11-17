@@ -2674,7 +2674,9 @@ HERRAMIENTAS = [
                      "cada grupo que mencione. Por convención esa lectura es cómo se siente al día "
                      "siguiente de la sesión, nunca el día del entrenamiento: usa el día en que la "
                      "persona dice sentir el dolor, nunca lo infiere del día en que entrenó. No lo "
-                     "guarda: registra la propuesta para que la persona la apruebe en el chat.",
+                     "guarda: registra la propuesta para que la persona la apruebe en el chat. Si la "
+                     "persona corrige un valor que ya registró ese día, llama a esta misma herramienta "
+                     "con el valor correcto: reemplaza el anterior, nunca suma un segundo registro.",
      "parametros": _PARAM_REGISTRAR_MEDIDA, "funcion": _registrar_medida},
     {"nombre": "registrar_ingesta", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone registrar algo que la persona comió o bebió, para un día: estima los gramos a "
