@@ -24955,3 +24955,132 @@ pattern used for the prior 12 widenings -- the 13th. Ruling 3's full design (too
 strings, tests) is described above and in the reverted diff history on this branch, ready to be
 rebuilt once that widening lands.
 
+### BODY-CORREGIR-MEDIDA-ENTRENO-1-W
+
+The follow-up this branch's own entry above asked for: ORCH-CARLOS-DELEGATES-TIER-1-1, on
+BODY-CORREGIR-MEDIDA-ENTRENO-1-INV's findings and BODY-CORREGIR-MEDIDA-ENTRENO-1's BLOCKED report --
+"one more value in the propuesta_agente.accion CHECK, through the same reusable rebuild used for
+the twelve prior widenings, so the already-specified corregir_entreno tool can store its
+proposal" -- finishing ruling 3 of the original spec on this same branch, so all three rulings land
+in one merge.
+
+**Ruling A, the thirteenth widening (`body/db.py:93-102`):** `'corregir_entreno'` added to the
+`accion IN (...)` list of `_PROPUESTA_AGENTE_COLUMNS`. `_propuesta_agente_needs_corregir_entreno_rebuild`
+(`body/db.py:1655-1659`), shaped exactly like `_propuesta_agente_needs_hogar_rebuild`, and a call to
+`_rebuild_propuesta_agente_table(conn)` for it at the end of `_migrate_propuestas`
+(`body/db.py:1717-1718`), with the one-line comment `# BODY-CORREGIR-MEDIDA-ENTRENO-1: a thirteenth
+widening (corregir_entreno), same reusable rebuild.`. Nothing else in `db.py` changed. Tests in
+`tests/test_migraciones.py`'s new `PropuestaAgenteCorregirEntrenoMigrationTest` (a database whose
+propuesta_agente predates `corregir_entreno` keeps its two existing rows' ids and count, then
+accepts a `corregir_entreno` row; running the migration twice is a no-op) and
+`PropuestaAgenteCorregirEntrenoFreshDbTest` (a fresh database accepts it directly).
+
+**Ruling B, `corregir_entreno` built on top of A** -- a propuesta tool addressed by position, like
+`corregir_ingesta`, beside `registrar_entreno` in the one registry (in-app, stdio MCP, `/mcp`):
+
+- **Arguments** (`_PARAM_CORREGIR_ENTRENO`, `body/agente/herramientas.py:264-277`): `dia` (required,
+  ISO date), `orden` (required, integer, minimum 1 -- the set's raw `set_order`, the same number
+  already shown on `registrar_entreno`'s own card, never a renumbered ordinal), `ejercicio`, `reps`,
+  `peso_kg` (each optional, at least one required).
+- **`_corregir_entreno`** (`body/agente/herramientas.py:1529-1575`): refuses a future `dia`
+  (`_dia_no_futuro`); refuses a non-integer or sub-1 `orden`; refuses when none of
+  `ejercicio`/`reps`/`peso_kg` is given; resolves the day's session through the same
+  `_resolver_sesion_entreno_dia` ruling 2 built (a Garmin strength day, else an existing manual one,
+  scoped to this `person_id` by that helper's own WHERE clause -- another person's same-calendar-day
+  session is never seen); refuses with `agente.error.entreno_sin_sesion` when the day has neither.
+  Looks up the set at `orden` among that session's sets filtered to `set_type == 'active'` (a rest
+  slot -- Garmin alternates active/rest, BODY-SERIES-ORDEN-1 -- is never a "serie" to correct, the
+  same filter `_leer_entreno`/`_registrar_entreno` already apply); refuses with
+  `agente.error.entreno_sin_serie` (`orden={orden}`) when there is none. `reps`/`peso_kg` validated
+  through the existing `_numero_entreno` (reused, not duplicated); a blank `ejercicio` refused.
+  `antes` carries that slot's full pre-correction state -- every `person_*` and `garmin_*` column
+  plus `corrected_by_person` -- the identical shape ruling 2's own `sets_antes` entries already
+  carry. `despues` carries `dia`, `source`, `source_id`, `set_order` and the given fields (`None` for
+  the rest, read by `db.correct_exercise_set`'s own `COALESCE` as "leave unchanged").
+- **Apply/undo/drift** (`body/agente/propuestas.py:519-562`, registered in `TABLA` at
+  `:1472-1473`): `_aplicar_corregir_entreno` writes through `db.correct_exercise_set` --
+  the SAME writer `registrar_entreno`'s own Garmin-matched path uses. `_deshacer_corregir_entreno`
+  restores `antes` EXACTLY (including `corrected_by_person` back to 0 when the slot had never been
+  corrected before) through the identical direct `UPDATE workout_set` SQL
+  `_deshacer_registrar_entreno`'s own Garmin-matched restoration already uses -- `correct_exercise_set`
+  only ever moves a slot INTO "corrected", never back out, so no new `db.py` writer was needed (the
+  spec's own STOP-BLOCKED condition on that point never tripped). `_drift_aplicar_corregir_entreno`/
+  `_drift_deshacer_corregir_entreno` compare the slot's current `person_*`/`corrected_by_person`
+  state against `antes` (on apply) or `despues` (on undo), the same shape `descartar_series`'s own
+  drift checks use. `corregir_entreno` is NOT in `ACCIONES_REEMPLAZABLES` (asserted by
+  `tests/test_corregir_entreno.py`'s `CatalogParityTest`), like every `corregir_*` tool -- a second
+  correction of the same slot is its own, separate pending proposal.
+- **Registry** (`body/agente/herramientas.py:2729-2734`): `descripcion` (es, matching the registry's
+  existing Spanish-only convention) -- "Corrige UNA serie de un entreno ya registrado (por ejemplo
+  \"la tercera fueron 8 repeticiones\"), sin repetir las demás. 'orden' es la posición de la serie
+  como la muestra la pantalla del entrenamiento, nunca un id. No la corrige: registra la propuesta
+  para que la persona la apruebe en el chat."
+- **Card** (`_tarjeta_corregir_entreno`, `body/rutas/asistente.py:315-325`, registered in `TARJETAS`
+  at `:817`): the summary's `{cambios}` is built with `_serie_txt` -- the identical
+  ejercicio/reps/peso_kg vocabulary `_tarjeta_registrar_entreno`'s own card already uses for one set
+  (`asistente.propuesta.entreno_reps_peso`/`entreno_reps`/`entreno_peso`) -- rather than new per-field
+  i18n keys, since this spec authorises only the strings named in it.
+- **Strings, as committed** (`body/i18n/es.json`/`en.json`): `agente.error.entreno_sin_sesion`
+  es "No hay un entreno registrado ese día." / en "There is no workout logged that day.";
+  `agente.error.entreno_sin_serie` es "Ese entreno no tiene una serie {orden}." / en "That workout
+  has no set {orden}."; `asistente.propuesta.titulo.corregir_entreno` es "Corregir serie" / en
+  "Correct set"; `asistente.propuesta.corregir_entreno_resumen` es "Corregir la serie {orden} del
+  {dia}: {cambios}" / en "Correct set {orden} on {dia}: {cambios}". No other text changed. The
+  `entreno_sin_serie` key's own `tiene` is allow-listed in `tests/test_registro_tu.py`'s
+  `_THIRD_PERSON_ALLOW` ("'tiene' subject is 'ese entreno' (the workout), not the reader").
+- **Tests:** `tests/test_corregir_entreno.py` (new, 28 tests across `ArgumentValidationTest`,
+  `SessionResolutionTest`, `ApplyUndoGarminTest`, `ApplyUndoManualTest`, `DriftTest`, `CardTextTest`,
+  `CatalogParityTest` -- each argument alone; nothing-to-change refused; no session; no set at
+  orden; future day; another person's day never touched; a watch day preferred over a manual one;
+  apply/undo exact on a Garmin slot, including restoring a prior person correction, and on a manual
+  slot; drift on apply and on undo; card title/summary es/en; in-app and stdio catalog parity);
+  `tests/test_series_orden.py`'s new `CorregirEntrenoOrdenTest` (a rest slot and an unknown order
+  both refused; the active slot is corrected at its own raw `set_order`); `tests/test_mcp.py`'s new
+  `test_corregir_entreno_is_offered_and_callable`; `tests/test_mcp_http.py`'s new
+  `test_corregir_entreno_is_offered_over_http`; census rows in `tests/test_agente_conformidad.py`
+  (29-tool `_argumentos`, counts 28->29), `tests/test_agente_registro.py` (`PROPUESTA_NOMBRES`,
+  `HERRAMIENTAS` count 45->46), `tests/test_agente_bucle.py` (`ofrecidas` set) and
+  `tests/test_agente_propuestas.py` (`NoProponibleTest`'s set -- the one census list ruling B's own
+  test pass missed, caught by the gate's first chunk and fixed before the gate was re-run).
+
+**Gate command:** `.venv/Scripts/python.exe -m unittest discover tests -t .`. Run as 10 sequential
+alphabetical chunks of 191 dotted test modules (~19-20 each), each read from the process, on the
+final tree:
+- chunk 1 (`test_accesibilidad`..`test_backup`): `Ran 379 tests ... OK (skipped=1, expected
+  failures=1)`
+- chunk 2 (`test_baselines`..`test_deshacer_derivados`): `Ran 406 tests in 675.499s ... OK`
+- chunk 3 (`test_despertar`..`test_estados_vacios_hosted`): `Ran 358 tests in 162.932s ... OK`
+- chunk 4 (`test_experimentos_esquema`..`test_history`): `Ran 366 tests in 917.180s ... OK`
+- chunk 5 (`test_hogar_compartir_1`..`test_installer`): `Ran 547 tests in 174.516s ... OK`
+- chunk 6 (`test_lesion_zona`..`test_noche_inusual`): `Ran 425 tests in 353.046s ... OK`
+- chunk 7 (`test_nutriente_objetivo`..`test_privacidad`): `Ran 533 tests in 277.514s ... OK`
+- chunk 8 (`test_profile`..`test_request_log`): `Ran 271 tests in 141.712s ... OK`
+- chunk 9 (`test_seguridad`..`test_turno_fc`): `Ran 425 tests in 120.734s ... OK`
+- chunk 10 (`test_turno_fc_pantallas`..`test_web_entry`): `Ran 425 tests in 161.588s ... OK`
+
+Sum: 379+406+358+366+547+425+533+271+425+425 = 4135. Reconciled against an independent collect-only
+count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted without running):
+`4135` -- exact match (4099 before this slice + 36 new: 28 in `test_corregir_entreno.py`, 3 in
+`test_migraciones.py`, 3 in `test_series_orden.py`, 1 in `test_mcp.py`, 1 in `test_mcp_http.py`).
+All ten chunks green.
+
+**Commits:** `2834a4a` (ruling A: `body/db.py`, `tests/test_migraciones.py`), `908cf74` (ruling B:
+`body/agente/herramientas.py`, `body/agente/propuestas.py`, `body/rutas/asistente.py`,
+`body/i18n/es.json`, `body/i18n/en.json`, `tests/test_corregir_entreno.py` (new),
+`tests/test_agente_bucle.py`, `tests/test_agente_conformidad.py`, `tests/test_agente_registro.py`,
+`tests/test_mcp.py`, `tests/test_mcp_http.py`, `tests/test_registro_tu.py`,
+`tests/test_series_orden.py`), `6f58800` (the one census fix the gate's first chunk caught:
+`tests/test_agente_propuestas.py`).
+
+**No other db.py change.** Only what ruling A names (`body/db.py:93-102`, `:1655-1659`,
+`:1717-1718`) -- no other line in that file touched.
+
+**No customer-facing bytes beyond what this spec names.** Every new string is one this spec's
+surface authorised verbatim (two error keys, a card title, a card summary) or the tool's own
+`descripcion` (read by the assistant model when deciding which tool to call, never rendered to a
+person) -- `{cambios}` inside the summary reuses `registrar_entreno`'s own existing
+entreno_reps_peso/entreno_reps/entreno_peso keys, no new ones. No schema change beyond the
+additive, backward-compatible CHECK widening ruling A names (an older build ignores the widened
+value, the same reversibility every one of the twelve prior widenings already had). No cross-repo
+contract touched.
+
