@@ -25856,5 +25856,9 @@ are the two new strings this spec itself authorised verbatim** -- merges on gree
 
 **Commits** `e1f2eed9f25184ab924b38f508b1a2fff559db34` (`body/rutas/comun.py`, `body/templates/
 base.html`, `body/i18n/{es,en}.json`, `tests/test_demo_modo_marca.py`: both rulings and their tests,
-one commit), plus this ledger entry's own commit.
+one commit), `d153a28` (this ledger entry) -- merged `afb3535c7d0309b033e8ac243b6f7c0df8bc9ea2`
+(`--no-ff`, no conflicts; tree identity proven, merge tree
+`3398e2665c4e2caab98c187018b9f81796b9c539` equals the branch's own tree, empty diff). Post-merge
+smoke (`tests.test_demo_modo_marca tests.test_i18n_paridad tests.test_rendimiento`): `Ran 28 tests
+... OK`.
 
