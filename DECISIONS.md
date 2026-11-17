@@ -26553,7 +26553,10 @@ itself) -- merges on green per merge policy A.
 
 **Commits** `be093d7b65f5478f277fd10103afbac6419987b0` (`tests/_isolate.py`,
 `tests/test_isolate_limpieza.py`: all four rulings and their tests, one commit), ledger entry (this
-commit).
+commit) -- merged `1e7d7e1dd72e706c85c46a175f32b1b7525eb75a` (`--no-ff`, no conflicts; tree identity
+proven, merge tree `7f220fa633bf5889abccf7c9b775b6692911c7a1` equals the branch's own tree, empty
+diff). Post-merge smoke (`tests.test_isolate_limpieza tests.test_garmin_dia_vacio`): `Ran 27 tests
+... OK`.
 
 **No schema or migration change, no cross-repo contract change, and no customer-facing bytes at
 all** (every new/changed string is a server log line: counts only, never a health figure) --
