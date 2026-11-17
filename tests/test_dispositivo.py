@@ -83,6 +83,9 @@ class DispositivoModuleTest(unittest.TestCase):
     def test_alcances_includes_hogar_leer(self):
         self.assertIn("hogar:leer", dispositivo.ALCANCES)
 
+    def test_alcances_includes_hogar_escribir(self):
+        self.assertIn("hogar:escribir", dispositivo.ALCANCES)
+
     def test_revocar_on_another_persons_id_changes_nothing(self):
         dispositivo.crear(self.conn, 2, "B's PC", {"turnos:subir"})
         row = self.conn.execute("SELECT id FROM dispositivo WHERE person_id = 2").fetchone()
@@ -144,6 +147,12 @@ class LocalModeDeviceRoutesTest(unittest.TestCase):
             self.client.get("/api/hogar/serie?metric_key=resting_hr&desde=2026-01-01&hasta=2026-01-02").status_code,
             404)
 
+    def test_api_hogar_herramientas_404(self):
+        self.assertEqual(self.client.get("/api/hogar/herramientas").status_code, 404)
+
+    def test_api_hogar_registrar_404(self):
+        self.assertEqual(self.client.post("/api/hogar/registrar", content=b"{}").status_code, 404)
+
 
 class AjustesPageTest(DispositivoHostedTestCase):
     def test_key_renders_once_then_not_on_a_later_get(self):
@@ -194,6 +203,23 @@ class AjustesPageTest(DispositivoHostedTestCase):
         self.assertIn('name="alcance_hogar"', r.text)
         self.assertIn("Hogar: leer tus datos", r.text)
         self.assertIn("Hogar, tu app de la casa", r.text)
+
+    def test_hogar_escribir_scope_is_separate_from_hogar_leer(self):
+        web.app.dependency_overrides[identity.current_person_id] = lambda: 1
+        r = self.client.post(
+            "/ajustes/dispositivos",
+            data={"nombre": "Mi PC", "alcance_hogar_escribir": "1"},
+        )
+        self.assertEqual(r.status_code, 200)
+        key = re.search(r"bdy_[A-Za-z0-9_-]+", r.text).group(0)
+        self.assertEqual(dispositivo.resolver(self.conn, key), (1, {"hogar:escribir"}))
+
+    def test_hogar_escribir_scope_checkbox_and_explanation_are_offered(self):
+        web.app.dependency_overrides[identity.current_person_id] = lambda: 1
+        r = self.client.get("/ajustes/dispositivos")
+        self.assertIn('name="alcance_hogar_escribir"', r.text)
+        self.assertIn("Hogar: registrar comidas y notas de entreno", r.text)
+        self.assertIn("Hogar anota en Body lo que le cuentas en casa", r.text)
 
     def test_revocar_only_affects_the_callers_own_row(self):
         web.app.dependency_overrides[identity.current_person_id] = lambda: 2

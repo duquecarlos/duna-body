@@ -40,10 +40,19 @@ Both routes are read-only (GET), `Cache-Control: no-store`.
   "dia": "2026-11-16",
   "figuras": [{"metric_key": "resting_hr", "value": 58.0, "kind": "measured", "day": "2026-11-15"}],
   "plan": [{"id": 1, "day": "2026-11-16", "time": "18:00", "title": "Fuerza", "status": "proposed",
-            "ejercicios": [{"ejercicio": "sentadilla", "series": 4, "reps": 10, "categoria": "pierna"}]}],
+            "ejercicios": [{"ejercicio": "sentadilla", "series": 4, "reps": 10, "categoria": "pierna"}],
+            "nota_sesion": null}],
   "horizonte": {"goal_id": 7, "title": "Media maratón", "deadline": "2027-02-01", "semana": 3, "semanas": 12},
   "turnos": [{"day": "2026-11-15", "kind": "night", "code": "N", "start_local": "2026-11-15T22:00:00",
-              "end_local": "2026-11-16T06:00:00"}]
+              "end_local": "2026-11-16T06:00:00"}],
+  "comidas": {
+    "momentos": [{"clave": "desayuno", "desde_hora": 5, "hasta_hora": 11, "esperado": 1},
+                 {"clave": "almuerzo", "desde_hora": 11, "hasta_hora": 16, "esperado": 1},
+                 {"clave": "merienda", "desde_hora": 16, "hasta_hora": 19, "esperado": 0},
+                 {"clave": "cena", "desde_hora": 19, "hasta_hora": 23, "esperado": 1}],
+    "registradas": [{"momento": "desayuno", "ts_local": "2026-11-16T07:30:00"}],
+    "faltan": ["almuerzo"]
+  }
 }
 ```
 
@@ -55,6 +64,18 @@ Both routes are read-only (GET), `Cache-Control: no-store`.
   row's own planned exercise list, passed VERBATIM -- the exact items `planear_entreno` stored, no reshaping, no
   renaming, no added keys. Each item always carries `ejercicio` (the exercise name) and `series` (a count); `reps`
   and `categoria` are present only when the plan gave them. `null` when this plan row has no exercise list.
+  `nota_sesion` (BODY-HOGAR-ESCRIBE-2) is the row's own note on how the session actually went, set by
+  `anotar_sesion` below -- `null` when no one has noted it yet, so Hogar knows which planned sessions still lack
+  one, and can ask about them, matched against the plan.
+* `comidas` (BODY-HOGAR-ESCRIBE-2): what is missing today, no meal description, no nutrient.
+  * `momentos`: this person's own meal moments, in order -- their own custom windows when they have any, Body's
+    own defaults otherwise (`desayuno` 5-11, `almuerzo` 11-16, `merienda` 16-19, `cena` 19-23). `esperado` (0 or 1)
+    marks a moment the person is expected to eat at (every default except `merienda`).
+  * `registradas`: every meal already registered on `dia`, each with the moment the person stated when they
+    registered it, or the one Body derives from its own time when they did not -- `null` when neither.
+  * `faltan`: the claves of every `esperado` moment on `dia` with no registered meal. On a day before today, every
+    one of them (the day is over); on a day after today, none (nothing is due yet); on today, only the ones whose
+    `desde_hora` has already passed the current local hour.
 * `horizonte`: the person's own active preparation goal (a milestone goal that is not itself a child of another
   plan) and which Monday-starting week `dia` falls in out of the horizon's whole span (`semana` = that week's
   1-based number, `semanas` = the horizon's total week count). `null` when this person has no active horizon.
@@ -109,7 +130,58 @@ Every shift row whose `day` is in `[desde, hasta]`, in the ordering above.
 
 Both additions above are additive: `manana`'s four existing keys (`dia`, `figuras`, `plan`, `horizonte`) are
 unchanged byte for byte except for `plan`'s own new `ejercicios` key, and `/api/hogar/serie` is untouched. Adding a
-key to an existing response, or a new route, is not a breaking change to this contract.
+key to an existing response, or a new route, is not a breaking change to this contract. BODY-HOGAR-ESCRIBE-2's own
+additions below (`manana`'s `comidas` key, `plan`'s `nota_sesion` key, and the two write routes) are additive too.
+
+## Escribir (hogar:escribir)
+
+A second, separate scope -- a person can grant `hogar:leer` without `hogar:escribir`, or either alone. Minted and
+revoked on the same device-key page, same 401/403 shape as every other scope. Writes apply DIRECTLY (never a
+pending state Hogar has to poll or re-confirm) and are undoable in Body exactly like a write the in-app assistant
+made -- the Hoy screen's own card for it shows "Aplicado desde Hogar" and carries the usual Deshacer.
+
+### `GET /api/hogar/herramientas`
+
+The exact two tools Hogar may call, in the same schema shape Body's own `tools/list` already returns (`name`,
+`description`, `inputSchema`) -- Hogar's own model fills the arguments from these schemas, as any assistant does;
+this contract does not restate their shape, since this response is self-describing and the schema is Body's own to
+change.
+
+```json
+{"herramientas": [{"name": "registrar_comida", "description": "...", "inputSchema": {"...": "..."}},
+                   {"name": "anotar_sesion", "description": "...", "inputSchema": {"...": "..."}}]}
+```
+
+### `POST /api/hogar/registrar`
+
+```json
+{"herramienta": "registrar_comida", "argumentos": {"descripcion": "Arroz con pollo",
+ "cantidades": [{"metric_key": "protein_g", "amount": 35}]}}
+```
+
+Runs that tool and applies the result immediately, tagged as Hogar's own write. Response:
+
+```json
+{"ok": true, "propuesta_id": 412, "resultado": {"propuesta_id": 412, "estado": "aplicada"}}
+```
+
+A refusal the tool itself raises (an unknown meal moment, a `plan_id` that is not this person's own session, a bad
+amount) answers `200` -- it is not a transport error, it is the tool saying no -- with the sentence a person would
+read for it:
+
+```json
+{"ok": false, "error": "momento desconocido: 'brunch'"}
+```
+
+`herramienta` outside the two names `/herramientas` lists -> `404`. A malformed body (not JSON, not an object) ->
+`400`.
+
+* `anotar_sesion`'s `plan_id` names one of `manana`'s own `plan` row ids -- NEVER a title: two sessions can share a
+  title, only the id is this one planned session. A `plan_id` that does not resolve to this person's own plan row
+  is refused the same way any other tool-level refusal is, by name.
+* Two people in one household each have their OWN `hogar:escribir` key, under their own Cuenta Duna sign-in -- "two
+  people ate dinner" is two separate `POST /api/hogar/registrar` calls, each under the eater's own key, never one
+  call naming the other person.
 
 ## Conditions on the reader (not an app-to-app consent gate -- these protect people and services outside Carlos's
 own data, and outside Duna)

@@ -613,6 +613,8 @@
   "dispositivos.scope.asistente_mcp": "Personal assistant (MCP): read and propose, like Body's assistant",
   "dispositivos.scope.hogar": "Hogar: read your data",
   "dispositivos.scope.hogar_explica": "Hogar, your home app, reads all your figures, plans and goals to get your home ready.",
+  "dispositivos.scope.hogar_escribir": "Hogar: log meals and workout notes",
+  "dispositivos.scope.hogar_escribir_explica": "Hogar logs in Body what you tell it at home: what you ate and how your workout went. It applies directly and you can undo it in Body.",
   "dispositivos.scope_fixed_note": "A PC you already connected only has the permissions you checked at the time. To add a new one, connect it again with a new key.",
   "unit.min": "min",
   "unit.h": "h",

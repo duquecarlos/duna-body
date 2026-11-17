@@ -613,6 +613,8 @@
   "dispositivos.scope.asistente_mcp": "Asistente personal (MCP): leer y proponer, como el asistente de Body",
   "dispositivos.scope.hogar": "Hogar: leer tus datos",
   "dispositivos.scope.hogar_explica": "Hogar, tu app de la casa, lee todas tus cifras, planes y metas para preparar tu casa.",
+  "dispositivos.scope.hogar_escribir": "Hogar: registrar comidas y notas de entreno",
+  "dispositivos.scope.hogar_escribir_explica": "Hogar anota en Body lo que le cuentas en casa: qué comiste y cómo te fue en el entreno. Se aplica directo y puedes deshacerlo en Body.",
   "dispositivos.scope_fixed_note": "Un PC que ya conectaste solo tiene los permisos que marcaste en ese momento. Para añadir uno nuevo, conéctalo otra vez con una clave nueva.",
   "unit.min": "min",
   "unit.h": "h",

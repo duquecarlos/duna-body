@@ -24683,3 +24683,160 @@ changed, so all three conditions are clear and the merge below proceeds on green
 
 -- merged `cd8213a`
 
+## BODY-HOGAR-ESCRIBE-2
+
+The second half of BODY-HOGAR-ESCRIBE-1 (Carlos, relayed verbatim to Hogar 2026-11-16: "register
+all that into the body app ... for each user, knowing like if any data is missing, you can ask
+for it ... asking about the training session to see how it matched the plan"; his standing rule
+`BODY-APPS-SIN-RESTRICCIONES-1`: "drop every restriction. Allow free communication between all of
+them." and "I want everything to be automated as much as possible."). Routes and screens for the
+schema and tools BODY-HOGAR-ESCRIBE-1/-1-W already built.
+
+**Ruling 1, scope `hogar:escribir` (`body/dispositivo.py:15`, `body/rutas/dispositivos.py:22-28,
+73-79`, `body/templates/dispositivos.html`, `body/i18n/es.json`, `body/i18n/en.json`):** a separate
+checkbox from `hogar:leer` -- `dispositivo.ALCANCES` gains `"hogar:escribir"`, the Ajustes form
+gains its own `alcance_hogar_escribir` checkbox right after `hogar:leer`'s, same template pattern.
+New i18n: `dispositivos.scope.hogar_escribir` (es "Hogar: registrar comidas y notas de entreno" /
+en "Hogar: log meals and workout notes") and `dispositivos.scope.hogar_escribir_explica` (es
+"Hogar anota en Body lo que le cuentas en casa: qué comiste y cómo te fue en el entreno. Se aplica
+directo y puedes deshacerlo en Body." / en "Hogar logs in Body what you tell it at home: what you
+ate and how your workout went. It applies directly and you can undo it in Body."), exactly the
+strings the spec named.
+
+**Ruling 2, two routes, one registry (`body/rutas/dispositivos.py:261-320`, `body/rutas/
+mcp_remoto.py:62-120`):** `GET /api/hogar/herramientas` (`api_hogar_herramientas`, `:270`) calls the
+shared `mcp_remoto.listar_herramientas(conn, person_id, idioma, puede_aplicar=False)` -- the SAME
+function `/mcp` and the hosted MCP door already use for `tools/list` -- then filters its own
+`"herramientas"` list down to `_HOGAR_ESCRIBIR_HERRAMIENTAS = {"registrar_comida",
+"anotar_sesion"}` (`:265`) by name; never a copied schema. `POST /api/hogar/registrar`
+(`api_hogar_registrar`, `:295`) reads `{"herramienta", "argumentos"}`, refuses any name outside
+those two with `404` and a malformed body with `400`, then calls `mcp_remoto.llamar_herramienta(...,
+auto_aplicar=True, origin="hogar")`.
+
+`llamar_herramienta` gained the `origin` parameter (`body/rutas/mcp_remoto.py:62-64`, default
+`mcp.ORIGEN` i.e. `"mcp"` -- the door's own route and `/mcp` both call it with no `origin` argument,
+so their own behaviour is byte-for-byte unchanged). Rather than touching `body/mcp.py`'s
+`_SesionRemota` (outside this slice's `touches:`, and the ledger's own BODY-HOGAR-ESCRIBE-1-W entry
+already widened `conversacion_agente`'s CHECK to accept `'hogar'`), the function pre-creates the
+conversation itself when the caller sent none and `origin` differs from `"mcp"`, through the already
+general `agente_conversacion.crear(conn, person_id, origen=origin)` (`:96`) -- `_SesionRemota`'s own
+`conversacion()` then just returns that id, never creating a second one. On `auto_aplicar`, the
+apply call now reads `db.marcar_aplicada_via(conn, propuesta_id, origin)` (`:118`) in place of the
+mcp-only `db.marcar_aplicada_via_mcp` -- that general writer already existed (BODY-HOGAR-ESCRIBE-1
+ruling 1), so no change to `body/db.py` was needed either. A tool-level refusal
+(`herramienta_rechazada`, `conversacion_ajena`, …) is turned into the person-language sentence a
+viewer would read through `_mensaje_error_hogar` (`body/rutas/dispositivos.py:281`), a twin of
+`body/rutas/mcp_http.py`'s own `_mensaje_error` (outside `touches:`) built off the same
+`mcp._error_remoto_a_rehuso`/`errores.texto_propio` pair, answered with `200` -- a tool-level no is
+not a transport error. Each applied write is undoable in Body exactly like any other proposal
+(`agente_propuestas.deshacer`), proven directly in `tests/test_hogar_escribe_rutas.py`.
+
+**Ruling 3, "what is missing today" (`body/hogar_feed.py:123-186`, `body/rutas/
+dispositivos.py:195-213`):** `manana` gained a required `ahora: datetime` parameter (the route's own
+local wall-clock now, `_ahora_local` at `body/rutas/dispositivos.py:195` -- a route-local twin of
+`comun._today_local`'s own `fechas.hoy_local` wrapper, kept here since `comun.py`/`fechas.py` are
+outside this slice's `touches:`) and a new `comidas` key (`_comidas`, `body/hogar_feed.py:123`):
+`momentos` (the person's own `comidas.momentos`, stripped to `clave`/`desde_hora`/`hasta_hora`/
+`esperado`), `registradas` (every `comida` row on `dia`, its own stored `momento` or the one
+`comidas.momento_de` derives from `ts_local`, `null` when neither -- no description, no nutrient),
+and `faltan` (every `esperado` moment still unregistered: all of them on a day before today, none
+on a day after, and on today only the ones whose `desde_hora` has already passed `ahora`'s own
+hour). `_plan_dias` (`:50-61`) now also selects `nota_sesion` and carries it verbatim (`null` when
+no one has called `anotar_sesion` yet) on each plan row.
+
+**Ruling 4, the contract (`docs/contracts/hogar-feed-v1.md`):** a new "Escribir (hogar:escribir)"
+section documents both scope and both routes, their request/response shapes, that writes apply
+directly tagged Hogar and are undoable in Body, that two people means two separate calls under
+each person's own key, and that `anotar_sesion`'s `plan_id` names one of `manana`'s own plan rows,
+never a title. The "Mañana" section's own example response gained `comidas` and `plan`'s
+`nota_sesion`, and its bullet list documents both. "Still v1" notes both additions as additive.
+
+**Tests:** `tests/test_hogar_escribe_rutas.py` (new, 15 tests) -- auth (no header 401, a
+`hogar:leer`-only key 403, a revoked key 401) for both routes; `GET /api/hogar/herramientas`
+returns exactly the two names with the same schema shape `tools/list` returns; `POST
+/api/hogar/registrar` applies `registrar_comida` directly with `aplicada_via = 'hogar'` and the
+conversation's `origen = 'hogar'`, and undo removes the row; `anotar_sesion` with another person's
+`plan_id` is refused by name with `ok: false` and `200`; an allowed-but-not-offered tool name
+(`leer_hoy`, `aplicar_propuesta`) 404s; a malformed body and a non-object body both 400; two
+people's calls under their own keys each only write their own `comida` row. `tests/
+test_hogar_feed.py` gained `ComidasTest` (12 tests) -- the boundary set the dispatch asked for:
+before/at/after a moment's own `desde_hora` on today, a past day (every esperado missing
+regardless of hour), a future day (nothing missing), a stored momento, a derived momento, neither,
+a custom-moments person, no description/nutrient leak, another person's meal never leaking in --
+plus its existing eleven `MananaTest`/`turnos` cases updated for `manana`'s new `ahora` parameter
+and `plan`'s new `nota_sesion` key. `tests/test_dispositivo.py` gained the ruling-1 tests (scope
+membership, the checkbox+explainer text, granting it at creation, and both new routes' local-mode
+404s) -- the spec named this file as `tests/test_dispositivos.py` (plural); the file that already
+holds every other device-key test is `test_dispositivo.py` (singular, BODY-DISPOSITIVO-1's own
+name), so the ruling-1 tests went there rather than create a second, parallel file.
+
+**Census tests widened for the two new routes, one outside this slice's own `touches:`:**
+`tests/test_web_entry.py`'s route-set snapshot, `tests/test_agente_registro.py`'s
+`ROUTE_TOOL` GET-route mapping, `tests/test_estados_vacios.py`'s/`test_estados_vacios_hosted.py`'s
+always-404/device-gated-401 sets, and `tests/test_persona_fuga.py`'s `EXPECTED_GET_PATHS` and its
+own leak sweep (a new `device_key_hogar_escribir` per seeded person, swept the same way `vida:leer`
+and `asistente:mcp` already are) all gained the new `GET /api/hogar/herramientas` (and, where the
+census is route-shaped, `POST /api/hogar/registrar`) rows -- the dispatch's own instruction ("a
+route census test that lists every route gets its row for the new route -- add it, never exempt")
+applies verbatim to each. `tests/test_rendimiento.py` (NOT in this slice's declared `touches:`) is
+the same kind of census -- its `_CEILINGS` dict asserts the app's whole GET-route set against a
+hand-maintained table, and failed by set difference the moment `/api/hogar/herramientas` existed.
+Measured directly (`contar_sql` against this file's own fixture, no Authorization header -- the
+same unauthenticated 404 every other device-key route in that table is measured against): `0`
+statements, `0` connections; given the entry `"/api/hogar/herramientas": 3` matching every sibling
+device route's own small buffer (BODY-HOGAR-ESCRIBE-1's own precedent for `test_agente_bucle.py`/
+`test_agente_propuestas.py` -- a one-line, no-judgment addition to an already-generic registry
+census, not this slice widening its own scope).
+
+**Gate command:** `.venv/Scripts/python.exe -m unittest discover tests -t .`. Run as 10 sequential
+alphabetical chunks of 190 dotted test modules (~20 each, the one new module --
+`test_hogar_escribe_rutas` -- added to chunk 4), each in the foreground, read from the process, on
+the final tree:
+- chunk 1 (`test_accesibilidad`..`test_baselines`): `Ran 378 tests in 147.717s ... OK (skipped=1,
+  expected failures=1)`
+- chunk 2 (`test_baselines_lote`..`test_desplazamiento_vista`): `Ran 442 tests in 669.016s ... OK`
+- chunk 3 (`test_dispositivo`..`test_experimentos_pantalla`): `Ran 381 tests in 190.144s ... OK`
+  (376 + 5 new in `test_dispositivo.py`)
+- chunk 4 (`test_fecha_futura_1`..`test_hogar_feed`): `Ran 465 tests in 807.589s ... OK` (438 + 15
+  new in `test_hogar_escribe_rutas.py` + 12 new in `test_hogar_feed.py`'s `ComidasTest`)
+- chunk 5 (`test_hogar_miembro_1`..`test_mcp_cliente_remoto`): `Ran 493 tests in 105.090s ... OK`
+- chunk 6 (`test_mcp_http`..`test_person_scope`): `Ran 500 tests in 284.717s ... OK`
+- chunk 7 (`test_persona_fuga`..`test_pull`): `Ran 474 tests in 184.550s ... OK`
+- chunk 8 (`test_pull_intradia_experimentos`..`test_sueno_respiracion_vista`): `Ran 274 tests in
+  89.273s ... OK`
+- chunk 9 (`test_sync_vivo`..`test_tutoriales`): `Ran 531 tests in 144.802s ... OK`
+- chunk 10 (`test_tutoriales_catalogo`..`test_web_entry`): `Ran 155 tests in 29.762s ... OK`
+
+Sum: 378+442+381+465+493+500+474+274+531+155 = 4093. Reconciled against an independent collect-only
+count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted without running):
+`4093` -- exact match (4061 before this slice + 32 new tests: 15 in `test_hogar_escribe_rutas.py`,
+12 in `test_hogar_feed.py`'s `ComidasTest`, 5 in `test_dispositivo.py`). All ten chunks green.
+
+**Commits:** `d3048c8` (all four rulings: `body/dispositivo.py`, `body/hogar_feed.py`, `body/i18n/
+en.json`, `body/i18n/es.json`, `body/rutas/dispositivos.py`, `body/rutas/mcp_remoto.py`, `body/
+templates/dispositivos.html`, `docs/contracts/hogar-feed-v1.md`, `tests/test_agente_registro.py`,
+`tests/test_dispositivo.py`, `tests/test_estados_vacios.py`, `tests/test_estados_vacios_hosted.py`,
+`tests/test_hogar_feed.py`, `tests/test_persona_fuga.py`, `tests/test_rendimiento.py`, `tests/
+test_web_entry.py`, `tests/test_hogar_escribe_rutas.py` (new)).
+
+**Deviations, measured:**
+- `tests/test_dispositivos.py` (named in `touches:`) does not exist; the device-key test file this
+  repository already has is `tests/test_dispositivo.py` (singular) -- the ruling-1 tests went
+  there, beside every other device-key scope test.
+- `tests/test_rendimiento.py` is outside this slice's declared `touches:` -- widened anyway, one
+  line, for the reason given above (the dispatch's own route-census instruction).
+- `tests/test_db.py` (not named in this slice's `touches:` either) was not created; no writer
+  function needed one -- `db.marcar_aplicada_via` and `agente_conversacion.crear` already existed
+  and are exercised end to end by `tests/test_hogar_escribe_rutas.py`.
+
+**No schema change.** No table or column was added or altered -- `manana`'s `ahora` parameter and
+`comidas`/`nota_sesion` keys all read columns BODY-HOGAR-ESCRIBE-1/-1-W already built.
+
+**Merge policy A:** customer-facing bytes changed (the two new i18n strings, `dispositivos.scope.
+hogar_escribir`/`hogar_escribir_explica`, in both languages) and a cross-repo contract changed
+(`docs/contracts/hogar-feed-v1.md`, Hogar's own doc) -- both conditions trip, but this slice's own
+spec body is the merge authorisation it names for exactly these: "THIS SPEC IS THE MERGE
+AUTHORISATION for the person-facing strings it names, exactly as written, and for the cross-repo
+doc section it names," and "THE WORK" step 7 says "Merge if green" in words. No other
+customer-facing string and no other contract section changed. The merge below proceeds on green.
+

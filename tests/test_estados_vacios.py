@@ -48,6 +48,7 @@ _ALWAYS_404_LOCAL = {
     "/garmin", "/garmin/estado-vivo", "/ajustes/dispositivos", "/login", "/login/cuenta/start",
     "/login/cuenta/callback", "/privacidad/consentimiento", "/api/vida/semana",
     "/api/asistente/mcp/herramientas", "/api/hogar/manana", "/api/hogar/serie", "/api/hogar/turnos",
+    "/api/hogar/herramientas",
 }
 _TURNOS_GATED = {"/shifts", "/shifts/como", "/shifts/patron"}
 # Needs a seeded conversation (body/agente, outside this slice's touches) -- see module docstring.
