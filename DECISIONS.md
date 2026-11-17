@@ -26148,5 +26148,10 @@ addition hogar-feed-v1.md itself already owns.
 `body/mudanza.py`, `tests/test_migraciones.py`, `tests/test_privacidad.py`, `tests/test_mudanza.py`,
 `tests/test_persona_fuga.py`: ruling 1 and 3, with tests), `459ce50567b1733a07cb762d04bc98b0dc089557`
 (`body/rutas/dispositivos.py`, `docs/contracts/hogar-feed-v1.md`,
-`tests/test_hogar_registrar_idempotente.py`: ruling 2 and 4, with tests).
+`tests/test_hogar_registrar_idempotente.py`: ruling 2 and 4, with tests),
+`77639e63440a72101391ca2468670f8995f9fc86` (this ledger entry) -- merged
+`5e26394cf32796a5d5c7d21a0e7d55f03a839399` (`--no-ff`, no conflicts; tree identity proven, merge
+tree `78f2bfed20c42b14b00cb87fc1476131730ae0d8` equals the branch's own tree, empty diff).
+Post-merge smoke (`tests.test_hogar_registrar_idempotente tests.test_hogar_escribe_rutas
+tests.test_migraciones tests.test_privacidad tests.test_mudanza`): `Ran 180 tests ... OK`.
 
