@@ -28,17 +28,20 @@ def momentos(conn: sqlite3.Connection, person_id: int) -> list[dict]:
     return [dict(d) for d in DEFAULT_MOMENTOS]
 
 
-def momento_de(conn: sqlite3.Connection, person_id: int, ts_local: str | None) -> str | None:
+def momento_de(conn: sqlite3.Connection | None, person_id: int | None, ts_local: str | None) -> str | None:
     """The clave whose [desde_hora, hasta_hora) window contains `ts_local`'s own hour, or None when
     there is no `ts_local` or its hour falls inside no window -- the same "sometime that day only"
-    silence the old hardcoded rule always had."""
+    silence the old hardcoded rule always had. `conn`/`person_id` may be None (a card rendered with
+    no live connection, same as every other TARJETAS helper in body/rutas/asistente.py) -- then only
+    DEFAULT_MOMENTOS applies, since a person's own custom rows cannot be read without one."""
     if not ts_local:
         return None
     try:
         hora = datetime.fromisoformat(ts_local).hour
     except ValueError:
         return None
-    for m in momentos(conn, person_id):
+    rows = momentos(conn, person_id) if conn is not None and person_id is not None else DEFAULT_MOMENTOS
+    for m in rows:
         if m["desde_hora"] <= hora < m["hasta_hora"]:
             return m["clave"]
     return None
