@@ -25547,3 +25547,96 @@ diff merges on green per merge policy A.
 `dbbfd6fc807aeb49fe1d36df336c12522ba27c98` (`--no-ff`, no conflicts). Post-merge smoke
 (`tests.test_rendimiento`): `Ran 12 tests ... OK`.
 
+## BODY-HOGAR-NOTA-SESION-GUARD-1
+
+**Hub principle** (HOGAR-NOTA-SESION-1, Hub «Para productos» from Hogar, 2026-11-17,
+`hit_01m7m55gvj08ce4gfpwkthdzxk`): "an app writing into another app must not overwrite human-entered
+data even when the API allows it" -- Hogar found Body's API overwrites an existing session note and
+now checks first on its side.
+
+**Census findings** (BODY-HUB-PRINCIPIOS-CENSO-2, OBSERVED, the only report for that id): the one
+real gap in the census was `plan.nota_sesion` (`body/db.py`) -- no author column, its one writer
+`db.anotar_sesion_plan` an unconditional UPDATE, and `_anotar_sesion`
+(`body/agente/herramientas.py`) reached identically by the person's own assistant and by Hogar's
+`POST /api/hogar/registrar` (`body/rutas/dispositivos.py`, auto-applied, origin "hogar" tagged only
+on the conversation and `propuesta_agente.aplicada_via`, never on the plan row). Everything else in
+the census already followed the keep-apart pattern (`workout_set`'s `garmin_*`/`person_*`,
+`shift_import`'s `source='manual'`, `registrar_comida` insert-only).
+
+**The rulings, as built:**
+
+1. **Who wrote the note.** `plan` gains `nota_sesion_origen TEXT CHECK (nota_sesion_origen IS NULL
+   OR nota_sesion_origen IN ('persona', 'hogar'))` -- `body/db.py:566` (schema) and `body/db.py`'s
+   migration block (plain `ALTER TABLE ... ADD COLUMN ... CHECK (...)`, the same shape
+   `workout_set.excluded_by_person` already uses, never a table rebuild -- no existing enum needed
+   widening). `db.anotar_sesion_plan` (`body/db.py:3587`) takes the new `origen` kwarg (default
+   `None`) and writes it alongside `nota_sesion`/`nota_sesion_en`/`status`, still the one writer.
+   Migration tests in `tests/test_migraciones.py` (`PlanNotaSesionOrigenMigrationTest`): a
+   pre-existing `plan` row (with an existing note) gains the column reading NULL, keeps its note
+   byte for byte, and a second `db.init()` is a no-op.
+2. **The origin is the conversation's, resolved by Body.** `_anotar_sesion`
+   (`body/agente/herramientas.py:1582`) reads `agente_conversacion.origen_de(conn,
+   conversacion_id)` -- 'hogar' when that conversation's `origen` is 'hogar' (set only by
+   `body/rutas/dispositivos.py`'s `api_hogar_registrar`, through `mcp_remoto.llamar_herramienta`'s
+   pre-existing `origin="hogar"` tagging), 'persona' for the in-app assistant (`origen` None) and
+   the person's own MCP assistant (`origen` 'mcp') alike -- never from anything the caller sends.
+   The resolved value travels in `despues["nota_sesion_origen"]`/`antes["nota_sesion_origen"]`,
+   same caller-resolves-state convention as the note/timestamp/status triple. `propuestas.py`'s
+   apply/undo writers (`_aplicar_anotar_sesion`/`_deshacer_anotar_sesion`, line 601/609) pass it to
+   `db.anotar_sesion_plan`; the drift checks (`_drift_aplicar_anotar_sesion`/
+   `_drift_deshacer_anotar_sesion`, line 584/593, via `_plan_sesion_estado`, line 574) compare it
+   too. An older proposal's `antes_json` lacking the key restores NULL through `.get()`, exactly as
+   ruled.
+3. **The guard.** In `_anotar_sesion`: when the writer is Hogar and the plan's current
+   `nota_sesion` is non-empty and `nota_sesion_origen != 'hogar'` (including NULL), refuses BEFORE
+   `propuestas.crear` is ever called, raising `ToolError(t("agente.error.nota_sesion_existente"),
+   codigo="nota_de_la_persona")`. `ToolError` (`body/agente/herramientas.py:2901`) gained an
+   optional `codigo` kwarg (default None) for this; `mcp.RehusoMCP` (which IS-A `ToolError`) is
+   unaffected -- it keeps setting `self.codigo` itself. `mcp_remoto.llamar_herramienta`'s existing
+   `except herramientas.ToolError` branch (`body/rutas/mcp_remoto.py:102`) now adds `"motivo":
+   e.codigo` to its JSON when `e.codigo` is set; `api_hogar_registrar`
+   (`body/rutas/dispositivos.py:293`) copies that `motivo` onto its own refusal response when
+   present. The person's own assistant (in-app or MCP) is never refused -- the guard's own first
+   condition (`escribe_hogar`) is false for both.
+   Strings, in the existing `agente.error.*` family `_anotar_sesion` already raises from (new key
+   `agente.error.nota_sesion_existente`, no placeholders): es «Ya hay una nota tuya en esta sesión;
+   corrígela en Body.» (`body/i18n/es.json`), en «There is already a note of yours on this session;
+   edit it in Body.» (`body/i18n/en.json`).
+4. **The contract.** `docs/contracts/hogar-feed-v1.md`'s `POST /api/hogar/registrar` section gained
+   a bullet stating the rule, the refusal's JSON shape (`{"ok": false, "error": "...", "motivo":
+   "nota_de_la_persona"}`), and that it is additive within v1.
+
+**Tests**, `tests/test_hogar_nota_guard.py` (14 tests, all through the real paths): Hogar on an
+empty note -> applied, `nota_sesion_origen` 'hogar'; Hogar over its own note -> applied; Hogar over
+the person's note -> `ToolError` with `codigo == "nota_de_la_persona"`, note and origen unchanged,
+no new `propuesta_agente` row; Hogar over a legacy NULL-origin note -> same refusal; the person's
+in-app assistant over a Hogar note -> proposed then applied, origen 'persona'; the person's own MCP
+assistant (conversation origen 'mcp') over a Hogar note -> same; the person's own assistant never
+refused by this guard; `deshacer` after a Hogar apply restores note/timestamp/status/origen all to
+NULL; `deshacer` after a persona apply over a Hogar note restores the Hogar note and origen exactly;
+another person's plan never reachable (by name, unchanged). Through the real
+`POST /api/hogar/registrar` route (`HogarNotaGuardRouteTest`): applies directly with `hogar` origen;
+the es and en refusal text plus `"motivo": "nota_de_la_persona"`, each measured byte for byte; Hogar
+correcting its own note carries no `motivo` key at all.
+
+**Deviation from the spec's literal wording: none measured.** The guard, the column, the strings
+and the contract text match the spec as written; the only choice left open by the spec (which
+`ToolError`-based mechanism carries `codigo` onto the wire) was resolved by extending the base
+`ToolError` itself rather than importing `mcp.RehusoMCP` into `body/agente/herramientas.py`, which
+would have created a circular import (`body/mcp.py` imports `body/agente/herramientas.py`).
+
+**Gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, ten sequential alphabetical
+chunks of ~20 dotted modules each (195 modules total), all green:
+`381+444+379+379+568+464+494+331+497+279 = 4216`. Reconciled against an independent collect-only
+count (`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`): `4216` --
+exact match.
+
+**No schema-breaking change (additive-only column), no cross-repo contract break (additive within
+v1), no new customer-facing bytes beyond the two strings this spec itself authorised** -- merges on
+green per merge policy A.
+
+**Commits** `ecd8ad2` (`body/db.py`, `tests/test_migraciones.py`: ruling 1's column and writer),
+`f78d1f0` (`body/agente/herramientas.py`, `body/agente/propuestas.py`, `body/rutas/mcp_remoto.py`,
+`body/rutas/dispositivos.py`, `body/i18n/{es,en}.json`, `docs/contracts/hogar-feed-v1.md`: rulings
+2-4), `60e0a70` (`tests/test_hogar_nota_guard.py`: the guard tests).
+
