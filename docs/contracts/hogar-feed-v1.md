@@ -52,7 +52,15 @@ Both routes are read-only (GET), `Cache-Control: no-store`.
                  {"clave": "cena", "desde_hora": 19, "hasta_hora": 23, "esperado": 1}],
     "registradas": [{"momento": "desayuno", "ts_local": "2026-11-16T07:30:00"}],
     "faltan": ["almuerzo"]
-  }
+  },
+  "metas": [
+    {"metric_key": "protein_g", "unidad": "g", "sentido": "al_menos", "kind": "per_kg", "amount": 1.6,
+     "objetivo": 128.0, "falta_peso": false, "desde": "2026-10-01", "total": 42.0, "registros": 2,
+     "restante": 86.0},
+    {"metric_key": "caffeine_mg", "unidad": "mg", "sentido": "como_maximo", "kind": "absolute", "amount": 400.0,
+     "objetivo": 400.0, "falta_peso": false, "desde": "2026-10-01", "total": 500.0, "registros": 3,
+     "restante": -100.0}
+  ]
 }
 ```
 
@@ -82,6 +90,29 @@ Both routes are read-only (GET), `Cache-Control: no-store`.
 * `turnos` (BODY-HOGAR-TURNOS-1): every shift that touches `dia` -- rows with `day` = `dia` or `dia`+1, plus a row
   with `day` = `dia`-1 whose `end_local` falls on `dia` or later (last night's shift still running this morning).
   Empty list when none, never omitted, never null. See "Turnos" below for the item shape.
+* `metas` (BODY-HOGAR-METAS-INGESTA-1): the person's own daily intake targets that are live on `dia` -- the same
+  targets Ajustes' "Metas diarias" card sets and the assistant's `proponer_objetivo_nutriente` proposes, one item per
+  metric with a live target, ordered by `metric_key`. Empty list when none, never omitted, never null. A metric whose
+  latest target is `off` never appears.
+  * `metric_key`: the `suma_ingesta` metric this target covers (`protein_g`, `caffeine_mg`, ...).
+  * `unidad`: that metric's own unit (`metric_def.unit`) -- a resolved `protein_g` target is GRAMS PER DAY.
+  * `sentido`: `al_menos` (reach at least) or `como_maximo` (stay at or under).
+  * `kind`: `absolute` (a flat daily amount) or `per_kg` (a ratio against the person's own body weight).
+  * `amount`: the stored figure -- grams for `absolute`, grams per kg of body weight for `per_kg`.
+  * `objetivo`: the resolved per-day target, in `unidad`. For `per_kg`, this is `amount` times the person's own
+    latest weight within Body's own recency window. `null` when `falta_peso` is `true` -- an honest gap, never a
+    guessed weight. Never recompute this from `amount` and a weight Hogar reads elsewhere: Body is the one place
+    that resolves a target, and a second computation would drift from what Body's own Today and Día screens show.
+  * `falta_peso`: `true` only for a `per_kg` target with no recent-enough weight on record -- show "sin peso
+    reciente" (or the equivalent), never a guess.
+  * `desde`: the day this target's current value took effect (`start_day`) -- a changed target is a new row, so a
+    target active for months still carries its own real start day here, not `dia`.
+  * `total`: what the person has logged for this metric on `dia` so far.
+  * `registros`: how many intake entries made up that total.
+  * `restante`: `objetivo` minus `total` -- floored at `0` for `al_menos` (never negative: "there is nothing left
+    to reach" rather than a negative deficit), and free to go negative for `como_maximo` (over the limit). `null`
+    when `objetivo` is `null`. Body computes this; Hogar never re-derives the `per_kg` resolution or the floor
+    rule itself.
 
 ## `GET /api/hogar/serie?metric_key=K&desde=YYYY-MM-DD&hasta=YYYY-MM-DD`
 
@@ -132,6 +163,7 @@ Both additions above are additive: `manana`'s four existing keys (`dia`, `figura
 unchanged byte for byte except for `plan`'s own new `ejercicios` key, and `/api/hogar/serie` is untouched. Adding a
 key to an existing response, or a new route, is not a breaking change to this contract. BODY-HOGAR-ESCRIBE-2's own
 additions below (`manana`'s `comidas` key, `plan`'s `nota_sesion` key, and the two write routes) are additive too.
+BODY-HOGAR-METAS-INGESTA-1's own addition, `manana`'s `metas` key, is additive as well.
 
 ## Escribir (hogar:escribir)
 
