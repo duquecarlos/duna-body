@@ -26483,5 +26483,11 @@ merges on green per merge policy A.
 
 **Commits** `eee02e53d25883444109ae53356e7ba0f109160e` (`body/garmin_cuenta.py`, `body/pull.py`,
 `tests/test_garmin_relleno_antiguo.py`, `tests/test_pull_relleno.py`, `tests/test_garmin_dia_vacio.py`,
-`tests/test_garmin_host.py`: all four rulings and their tests, one commit).
+`tests/test_garmin_host.py`: all four rulings and their tests, one commit),
+`67c25996c8af145f13f90715b9b4cd4ba612fb5c` (this ledger entry) -- merged
+`bad8a6e5059a6835b3c39218e70876880f2d1352` (`--no-ff`, no
+conflicts; tree identity proven, merge tree `0b7bbb096985bed5e9e010450d91f7cc6b7795b0` equals the
+branch's own tree, empty diff). Post-merge smoke (`tests.test_garmin_relleno_antiguo
+tests.test_pull_relleno tests.test_garmin_dia_vacio tests.test_garmin_diagnostico`): `Ran 88
+tests ... OK`.
 
