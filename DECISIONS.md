@@ -26008,3 +26008,145 @@ tree `fce20da049bec8afacb1d607a8c371f6364b7014` equals the branch's own tree, em
 Post-merge smoke (`tests.test_garmin_dia_vacio tests.test_pull_relleno tests.test_garmin_estado
 tests.test_sync_vivo_estado`): `Ran 110 tests ... OK`.
 
+## BODY-HOGAR-REGISTRAR-IDEMPOTENTE-1
+
+**Hub principle** (HOGAR-COCINA-COMIDA-1, Hub «Para productos» from Hogar, 2026-11-17,
+`hit_01m7m0nwpe0t7pjzmnwmh57rpe`): "a meal two people ate is entered ONCE, then written to each
+person's own record with that person's own key [...] if one fails, [...] retries only that person,
+never the one who already succeeded; if the record already has it, that person is skipped with
+'ya estaba'." Body is the RECEIVING side.
+
+**Census finding** (BODY-HUB-PRINCIPIOS-CENSO-1, OBSERVED): `POST /api/hogar/registrar` had NO
+de-duplication -- its wire was exactly `{herramienta, argumentos}`, `registrar_comida` insert-only
+(`body/agente/herramientas.py:1981-2050`, `comida` table `body/db.py:802-814`), so a Hogar retry
+after a lost response wrote a SECOND meal, and nothing in the response let Hogar say «ya estaba».
+Each person's write was already independent (one call per person under that person's own device
+key).
+
+**The orchestrator's rulings** (ORCH-CARLOS-DELEGATES-TIER-1-1, Tier 1 because `body/db.py`'s
+schema moves; CENSO-1 was the investigation): (1) "already there" is decided by an IDEMPOTENCY KEY
+the writer sends, never by matching content -- two identical coffees on the same morning are two
+real meals, and content matching would silently drop the second; (2) the key lives in ONE generic
+table for every outside writer, `escritura_externa`, not a column per target table -- a Hogar meal,
+a Hogar session note and any future outside writer reuse the same mechanism; (3) the key is
+optional and additive -- a call without it behaves exactly as today, so hogar-feed-v1 stays v1;
+(4) a repeat answers with the FIRST write's own result and a stable word, `"estado": "ya_estaba"`,
+never a second proposal and never an error.
+
+**The rulings, as built:**
+
+1. **The table** -- `escritura_externa`, `body/db.py:1043-1056` (SCHEMA, created through the
+   repo's own `CREATE TABLE IF NOT EXISTS` migration path -- a brand-new table, so no rebuild was
+   needed):
+
+   ```sql
+   CREATE TABLE IF NOT EXISTS escritura_externa (
+       person_id    INTEGER NOT NULL REFERENCES person(id),
+       origen       TEXT NOT NULL CHECK (origen IN ('hogar')),
+       ref          TEXT NOT NULL CHECK (length(ref) BETWEEN 1 AND 128),
+       herramienta  TEXT NOT NULL,
+       propuesta_id INTEGER REFERENCES propuesta_agente(id),
+       creada_en    TEXT NOT NULL,
+       PRIMARY KEY (person_id, origen, ref)
+   );
+   ```
+
+   Two helpers, `body/db.py:1272` (`buscar_escritura_externa`, the lookup) and `body/db.py:1282`
+   (`registrar_escritura_externa`, the insert, written only once the tool's own proposal has
+   already been applied). Migration tests in `tests/test_migraciones.py`
+   (`EscrituraExternaTableMigrationTest`): a pre-existing database gains the table empty, with no
+   other table's row count disturbed, and a second `db.init()` is a no-op.
+2. **The wire** -- `POST /api/hogar/registrar`, `body/rutas/dispositivos.py:293-360`. An optional
+   top-level `"ref"` (`body/rutas/dispositivos.py:321-322`, string 1-128 chars via `MAX_REF_LEN`,
+   `body/rutas/dispositivos.py:279` -- anything else refused `400`, by name, before anything is
+   looked up or run, the same `400` every other malformed field on this wire already answers with).
+   Without `ref`: unchanged. With `ref`: the lookup (`body/rutas/dispositivos.py:327`) runs BEFORE
+   the tool is ever called. Not found -> the tool runs as today, and once its proposal is actually
+   applied (`data["salida"]["estado"] == "aplicada"`), `registrar_escritura_externa` records the
+   key with the resulting `propuesta_id` (`body/rutas/dispositivos.py:352-355`) -- a refused write,
+   or a write whose auto-apply did not reach `"aplicada"`, records nothing, so the same `ref` can be
+   retried. Found with the SAME `herramienta` -> the tool is never called; the response is built
+   straight from the stored row. Found with a DIFFERENT `herramienta` -> refused `400`, by name (a
+   key reused for another act is a writer bug, not a retry). The lookup and the insert are both
+   scoped by `person_id` (the device key's own), so the same `ref` sent for two people is two
+   independent rows -- neither blocks or skips the other. Response shapes, verbatim:
+
+   First write (unchanged):
+   ```json
+   {"ok": true, "propuesta_id": 412, "resultado": {"propuesta_id": 412, "estado": "aplicada"}}
+   ```
+   A repeat under the same `ref`:
+   ```json
+   {"ok": true, "propuesta_id": 412, "resultado": {"propuesta_id": 412, "estado": "aplicada"},
+    "estado": "ya_estaba"}
+   ```
+   `body/rutas/mcp_remoto.py` was read (BODY-HOGAR-NOTA-SESION-GUARD-1's ledger entry and the
+   shared-core docstring) but not touched: the lookup, the herramienta-match check and the
+   post-apply insert all fit inside `dispositivos.py`'s own route, using `data["salida"]` already
+   returned by the existing shared call -- the MCP door (`/api/asistente/mcp/llamar`) never sends a
+   `ref` and is byte-for-byte unchanged.
+3. **Privacy and moving.**
+   * `body/privacidad.py`: `escritura_externa` added to `FULLY_HANDLED_TABLES` (`:35`); exported
+     under `asistente.escrituras_externas` (`:307-313`); deleted in `delete_person` BEFORE
+     `propuesta_agente` (`:426-431`), scoped by `person_id` alone (every row's `propuesta_id`
+     already shares that same person, so no other row is ever orphaned).
+   * `body/mudanza.py`: a new `TableSpec("escritura_externa", ...)` (`:113-114`), matched by its
+     own natural key `(person_id, origen, ref)` (it carries no autoincrement id of its own),
+     `propuesta_id` remapped like any other FK. Placed after `propuesta_agente`'s own spec, which
+     gained `id_exported=True` (`:109`, new -- nothing referenced `propuesta_agente`'s own id before
+     this slice, so that id map was never built until now).
+4. **The contract.** `docs/contracts/hogar-feed-v1.md`'s `POST /api/hogar/registrar` section: a new
+   "Retrying safely" block with the optional `ref`, the `ya_estaba` shape, the different-herramienta
+   refusal, the malformed-`ref` refusal, "a refused write records no `ref`", and a line in "Still
+   v1" marking the whole addition additive.
+
+**Tests**, through the real route (`tests/test_hogar_registrar_idempotente.py`, 10 tests): a `ref`
+runs the tool once; the same call again is `ya_estaba` with the same `propuesta_id` and writes no
+second meal or proposal; no `ref` twice still writes two meals; the same `ref` for two people is two
+independent rows; another person's `ref` is never visible; a refused write records no key and a
+retry for that person then succeeds (the one who already succeeded is never touched); the same
+`ref` under a different tool is refused by name; a malformed `ref` (int, empty, 129 chars, list,
+dict, bool) is refused; the export contains the row and delete removes it. Plus: migration
+(`tests/test_migraciones.py`), export/delete (`tests/test_privacidad.py`,
+`EscrituraExternaExportDeleteTest`), move with FK remap (`tests/test_mudanza.py`,
+`EscrituraExternaMudanzaTest`), and the census seed in `tests/test_persona_fuga.py` (one row per
+invented person, no marker needed -- `ref`/`herramienta` carry no free text).
+
+**Deviation from the spec's literal wording: none measured in the rulings themselves.** One
+necessary addition the spec did not spell out: `propuesta_agente`'s own `TableSpec` in
+`body/mudanza.py` needed `id_exported=True` for `escritura_externa.propuesta_id` to be remappable
+at all -- measured as a test failure (`EscrituraExternaMudanzaTest` inserted 0 rows instead of 1
+until this was added), not guessed.
+
+**Gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, ten sequential alphabetical
+chunks of ~20 dotted modules each (199 modules total), all green, run in the foreground on the
+final tree:
+
+    chunk 1  (test_accesibilidad..test_baselines)                Ran 381 tests ... OK
+    chunk 2  (test_baselines_lote..test_despertar)                Ran 420 tests ... OK
+    chunk 3  (test_desplazamiento_import..test_experimentos_intradia)  Ran 395 tests ... OK
+    chunk 4  (test_experimentos_modelo..test_hogar_aplica_aviso)  Ran 359 tests ... OK
+    chunk 5  (test_hogar_compartir_1..test_i18n_paridad)          Ran 571 tests ... OK
+    chunk 6  (test_importar_garmin..test_nivel_datos_ui)          Ran 448 tests ... OK
+    chunk 7  (test_noche_inusual..test_privacidad)                Ran 563 tests ... OK
+    chunk 8  (test_profile..test_seguridad)                       Ran 309 tests ... OK
+    chunk 9  (test_series_gramos..test_turno_fc_pantallas)        Ran 447 tests ... OK
+    chunk 10 (test_turnos_costo..test_web_entry)                  Ran 403 tests ... OK
+
+**Reconciliation**: sum of the ten chunks = 381+420+395+359+571+448+563+309+447+403 = 4296.
+Collect-only count on the same tree (`unittest.TestLoader().discover('tests', top_level_dir='.')
+.countTestCases()`) = 4296. Equal -- every test ran exactly once, none skipped by the chunking.
+
+**Merge policy A**: this diff DOES carry a schema change (`escritura_externa`, additive, no
+existing table touched) -- condition 1 fails. The spec's own body (THE WORK, step 5) says in words
+to merge if green regardless, so the merge below is authorised by the spec text, not by silence.
+No customer-facing bytes (every new/changed string is JSON wire or a contract doc Hogar's own
+developers read, never a Body screen) and no cross-repo DTO change beyond the additive contract
+addition hogar-feed-v1.md itself already owns.
+
+**Commits** `b9157dd84feb4f147310450f87989820d8fd675c` (`body/db.py`, `body/privacidad.py`,
+`body/mudanza.py`, `tests/test_migraciones.py`, `tests/test_privacidad.py`, `tests/test_mudanza.py`,
+`tests/test_persona_fuga.py`: ruling 1 and 3, with tests), `459ce50567b1733a07cb762d04bc98b0dc089557`
+(`body/rutas/dispositivos.py`, `docs/contracts/hogar-feed-v1.md`,
+`tests/test_hogar_registrar_idempotente.py`: ruling 2 and 4, with tests).
+
