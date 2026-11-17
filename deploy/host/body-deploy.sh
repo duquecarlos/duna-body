@@ -67,6 +67,14 @@ if [[ ! -d "$REPO_DIR" ]]; then
 fi
 owner="$(stat -c %U "$REPO_DIR")"
 
+source "$REPO_DIR/deploy/host/autoactualizar.sh"
+autoactualizar_comparar "$REPO_DIR/deploy/host/duna-deploy-body" "$REPO_DIR/deploy/host/duna-deploy-body.sudoers"
+if [[ -n "$SCRIPT_CHANGED" || -n "$SUDOERS_CHANGED" ]]; then
+  autoactualizar_instalar "$REPO_DIR/deploy/host/duna-deploy-body" "$REPO_DIR/deploy/host/duna-deploy-body.sudoers"
+else
+  echo "entry script: up to date"
+fi
+
 fail_step() {
   echo "body-deploy.sh: FAILED at step: $1 (service restarted: $2)" >&2
   exit 1
