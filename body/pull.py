@@ -100,6 +100,82 @@ DETALLE_MAX_POR_CORRIDA = 10
 # measured the way intraday's ~130-140 days was, so kept narrower than INTRADIA_ALCANCE_DIAS).
 DETALLE_ALCANCE_DIAS = 90
 
+# BODY-GARMIN-DIA-VACIO-1 ruling 5: garmin_adapter.fetch_day (Tier 1, not edited from here) always
+# attempts exactly this many feed calls (its own `calls` dict) and catches each one separately
+# into raw['_errors'] -- a fetched day whose '_errors' names every one of these is a request
+# failure (the watch not yet synced to Garmin Connect, most likely), never an honest empty day
+# Garmin genuinely answered with nothing.
+FEEDS_POR_DIA = 6
+
+
+class FeedsFallidos(Exception):
+    """Raised by _pull_one_person/_backfill_one_person when a fetched day's raw['_errors'] names
+    every one of FEEDS_POR_DIA feeds -- the day is NOT saved (its metrics would be empty anyway)
+    and the per-person caller records this exactly like any other failed attempt (counted in
+    'failed', garmin_cuenta.registrar_error/registrar_intento). Carries `nombres`, {exception
+    class name: count}, never a message body a library composed."""
+
+    def __init__(self, nombres: dict[str, int]):
+        self.nombres = dict(nombres)
+        super().__init__(_detalle_fallos(self.nombres))
+
+
+def _detalle_fallos(nombres: dict[str, int]) -> str:
+    return ", ".join(f"{nombre} x{n}" for nombre, n in sorted(nombres.items()))
+
+
+def _fallos_de_dia(data) -> dict[str, int]:
+    """{exception class name: count} from one fetched day's raw['_errors'] (garmin_adapter.
+    fetch_day's own per-feed catch) -- {} when every feed answered."""
+    errores = data.raw.get("_errors") or {}
+    conteo: dict[str, int] = {}
+    for nombre in errores.values():
+        conteo[nombre] = conteo.get(nombre, 0) + 1
+    return conteo
+
+
+def _dia_vacio(data) -> bool:
+    """BODY-GARMIN-DIA-VACIO-1 rulings 1-2: True when this fetched day carries no non-None metric
+    value at all -- an honest Garmin gap, judged from the fetched DayData itself (db.save_day
+    stays as it is), independently of raw['_errors'] (rulings 5-6, a request failure)."""
+    return not any(v is not None for v in data.metrics.values())
+
+
+def _sumar_fallos(total: dict[str, int], nuevos: dict[str, int]) -> None:
+    for nombre, n in nuevos.items():
+        total[nombre] = total.get(nombre, 0) + n
+
+
+def _sufijo_fallos_parciales(fallos: dict[str, int]) -> str:
+    """Ruling 6: ', {n} feeds failed ({Class} x{k}, ...)' appended to a job line that would
+    otherwise read as a plain success -- '' when nothing partially failed this run."""
+    if not fallos:
+        return ""
+    return f", {sum(fallos.values())} feeds failed ({_detalle_fallos(fallos)})"
+
+
+def _estado_http_de_fallos(nombres: dict[str, int]) -> int | None:
+    """Ruling 5's backoff choice for a FeedsFallidos attempt: None (today's auth handling -- no
+    backoff, reconnecting is the fix) when ANY recorded class is one garmin_adapter.estado_http's
+    own rules read that way; otherwise the first recognised numeric status. Only the class NAME
+    survives past garmin_adapter.fetch_day's own per-feed catch -- never the instance -- so this
+    mirrors estado_http's own three cases for a bare, argument-less instance of a class named here
+    (which never carries a `.response` of its own, so that branch of estado_http's rule never
+    applies either way) BY NAME alone, never importing garminconnect: only
+    body/garmin_adapter.py may (Tier 1)."""
+    estados = []
+    for nombre in sorted(nombres):
+        if nombre == "GarminConnectTooManyRequestsError":
+            estados.append(429)
+        elif nombre == "GarminConnectConnectionError":
+            estados.append(0)
+        else:
+            estados.append(None)
+    if any(e is None for e in estados):
+        return None
+    return estados[0]
+
+
 # BODY-SYNC-VIVO-2 ruling 1: the on-demand pull's own minimum space between attempts for the SAME
 # person -- independent of garmin_cuenta's own backoff window (ESPACIO_MIN_ENTRE_INTENTOS above is
 # 0, the scheduled pulls' own spacing; a live trigger is asked for far more often than once a day,
@@ -233,32 +309,47 @@ def _registrar_reloj_si_hay(conn, person_id: int, token: str) -> None:
         garmin_cuenta.registrar_reloj_sincronizo(conn, person_id, reloj)
 
 
-def _pull_one_person(conn, person_id: int, days: list[str]) -> int | None:
+def _pull_one_person(conn, person_id: int, days: list[str]) -> tuple[int, int, dict[str, int]] | None:
     """Pulls `days` for one hosted person, re-encrypting the stored token only if Garmin refreshed
-    it -- even when a later day raises, via the try/finally below. Returns the number of days
-    actually stored, or None when the person has no token to pull with. Raises whatever the
-    adapter or Garmin raise, with the days-saved-so-far attached as `.saved` on the exception so
-    the caller can still count them; the caller records the error and moves on to the next person."""
+    it -- even when a later day raises, via the try/finally below. Returns (days actually stored,
+    days fetched but empty, {feed failure class: count} across every partially-failed day this
+    run -- BODY-GARMIN-DIA-VACIO-1 rulings 1-2 and 6), or None when the person has no token to
+    pull with. A day whose raw['_errors'] names every feed attempted (ruling 5) is NOT saved and
+    raises FeedsFallidos instead of being counted at all. Raises whatever the adapter, Garmin or
+    FeedsFallidos raise, with the counts-so-far attached as `.saved`/`.vacios`/`.fallos_parciales`
+    on the exception so the caller can still record them; the caller records the error and moves
+    on to the next person."""
     token = garmin_cuenta.leer(conn, person_id)
     if token is None:
         return None
     token_before = token
-    saved = 0
+    saved = vacios = 0
+    fallos_parciales: dict[str, int] = {}
     try:
         for i, d in enumerate(sorted(days)):
             if i:
                 time.sleep(PAUSE_S)
             data, token = garmin_adapter.fetch_day(d, token_str=token)
+            fallos = _fallos_de_dia(data)
+            if sum(fallos.values()) >= FEEDS_POR_DIA:
+                raise FeedsFallidos(fallos)
+            if fallos:
+                _sumar_fallos(fallos_parciales, fallos)
             db.save_day(conn, data, person_id)
-            saved += 1
+            if _dia_vacio(data):
+                vacios += 1
+            else:
+                saved += 1
     except Exception as e:
         e.saved = saved
+        e.vacios = vacios
+        e.fallos_parciales = fallos_parciales
         raise
     finally:
         if token != token_before:
             garmin_cuenta.guardar(conn, person_id, token)
         _registrar_reloj_si_hay(conn, person_id, token)
-    return saved
+    return saved, vacios, fallos_parciales
 
 
 def _cerrar_semanas_seguro(conn, person_id: int, *, desde: date | None = None) -> None:
@@ -353,7 +444,17 @@ def _registrar_intento_persona(conn, person_id: int, ahora: datetime, exc: Excep
     """BODY-SYNC-VIVO-ESTADO-1 ruling 3: one garmin_cuenta.registrar_intento call per person per
     attempt -- `exc` is the exception the attempt raised, or None on success. Prints a counts/
     class-only line on failure (errores.texto_seguro_con_estado), never a message body, never a
-    health figure."""
+    health figure.
+
+    BODY-GARMIN-DIA-VACIO-1 ruling 5: a FeedsFallidos attempt (every feed a fetched day attempted
+    raised) is special-cased -- the backoff comes from `_estado_http_de_fallos` (which class names
+    the day carried, not FeedsFallidos' own type), and the printed line names those classes and
+    their counts directly, never the generic class-plus-status line."""
+    if isinstance(exc, FeedsFallidos):
+        estado = _estado_http_de_fallos(exc.nombres)
+        garmin_cuenta.registrar_intento(conn, person_id, ahora, ok=False, estado_http=estado)
+        print(f"pull attempt failed: FeedsFallidos ({_detalle_fallos(exc.nombres)})", flush=True)
+        return
     estado = garmin_adapter.estado_http(exc) if exc is not None else None
     garmin_cuenta.registrar_intento(conn, person_id, ahora, ok=exc is None, estado_http=estado)
     if exc is not None:
@@ -365,24 +466,30 @@ def _pull_persona(conn, person_id: int, days: list[str]) -> dict:
     read, refresh, re-encrypt), the error record/clear, and the three post-pull recalcs -- shared
     by `pull_hosted`'s own per-person loop and the "connecting starts a pull now" path (ruling 4b),
     the same per-person path, never a copy. Returns {"estado": "sin_token"|"error"|"ok", "saved":
-    int} -- "sin_token" when the person has no token to pull with (never counted as a failure,
-    same as before this refactor). Records exactly one attempt (BODY-SYNC-VIVO-ESTADO-1 ruling 3)
-    -- never for "sin_token", which never reached Garmin at all."""
+    int, "vacios": int, "fallos_parciales": dict[str, int]} -- "sin_token" when the person has no
+    token to pull with (never counted as a failure, same as before this refactor); "saved" counts
+    only non-empty days (BODY-GARMIN-DIA-VACIO-1 ruling 2), "vacios" the empty ones, and
+    "fallos_parciales" every partially-failed day's feed-failure classes (ruling 6) -- all three
+    default to 0/{} on "sin_token"/"error" when `_pull_one_person` never got that far. Records
+    exactly one attempt (BODY-SYNC-VIVO-ESTADO-1 ruling 3) -- never for "sin_token", which never
+    reached Garmin at all."""
     ahora = datetime.now(timezone.utc)
     try:
-        n = _pull_one_person(conn, person_id, days)
+        resultado = _pull_one_person(conn, person_id, days)
     except Exception as e:
         garmin_cuenta.registrar_error(conn, person_id, type(e).__name__)
         _registrar_intento_persona(conn, person_id, ahora, e)
-        return {"estado": "error", "saved": getattr(e, "saved", 0)}
-    if n is None:
-        return {"estado": "sin_token", "saved": 0}
+        return {"estado": "error", "saved": getattr(e, "saved", 0), "vacios": getattr(e, "vacios", 0),
+                "fallos_parciales": getattr(e, "fallos_parciales", {})}
+    if resultado is None:
+        return {"estado": "sin_token", "saved": 0, "vacios": 0, "fallos_parciales": {}}
+    n, vacios, fallos_parciales = resultado
     garmin_cuenta.limpiar_error(conn, person_id)
     _registrar_intento_persona(conn, person_id, ahora, None)
     _recalcular_recuperacion_seguro(conn, person_id)
     _recalcular_turno_fc_seguro(conn, person_id)
     _recalcular_sueno_fc_seguro(conn, person_id)
-    return {"estado": "ok", "saved": n}
+    return {"estado": "ok", "saved": n, "vacios": vacios, "fallos_parciales": fallos_parciales}
 
 
 def pull_persona_ahora(person_id: int) -> None:
@@ -392,14 +499,19 @@ def pull_persona_ahora(person_id: int) -> None:
     token, so the gap since the person's last data fills in the same run the connect itself
     triggers, instead of waiting for the next daily pull. Opens and closes its own connection (a
     background task runs after the request's own connection has already closed). Records the
-    error exactly as the daily timer does; prints counts only, never a health figure."""
+    error exactly as the daily timer does; prints counts only, never a health figure.
+
+    BODY-GARMIN-DIA-VACIO-1 ruling 2: the printed line also names the empty-day count and, when
+    any day this run partially failed, which feeds and how many times (ruling 6)."""
     conn = db.connect()
     try:
         db.ensure_ready(conn)
         hoy = fechas.hoy_local(db.person(conn, person_id))
         dias = _dias_pendientes_relleno(conn, person_id, hoy)
         resultado = _pull_persona(conn, person_id, dias)
-        print(f"connect pull: {resultado['estado']}, {resultado['saved']} days stored", flush=True)
+        print(f"connect pull: {resultado['estado']}, {resultado['saved']} days stored, "
+              f"{resultado['vacios']} empty{_sufijo_fallos_parciales(resultado['fallos_parciales'])}",
+              flush=True)
     finally:
         conn.close()
 
@@ -589,9 +701,14 @@ def pull_hosted(conn, *, fecha: str | None = None, n_days: int | None = None) ->
     On the implicit "today" sweep (no explicit `fecha`), also fetches any intraday days an active
     intraday experiment still needs (`_pull_intradia_pendientes`,
     BODY-EXPERIMENTOS-INTRADIA-DIAS-FALTANTES-1) -- zero extra calls for a person with none.
-    Returns (persons ok, persons failed, days stored). Never prints a health figure -- counts
-    only."""
-    ok = failed = saved = omitidos = 0
+    Returns (persons ok, persons failed, days stored -- BODY-GARMIN-DIA-VACIO-1 ruling 2: an
+    empty/all-NULL day never counts here, so this return's own arity and meaning for "saved" stay
+    exactly as before for every existing caller). Prints its own job line before returning
+    ("{ok} ok, {failed} failed, {saved} days stored, {vacios} empty", plus ruling 6's feed-
+    failure suffix when any day this run partially failed) -- counts and class names only, never
+    a health figure."""
+    ok = failed = saved = omitidos = vacios = 0
+    fallos_parciales: dict[str, int] = {}
     for person_id in garmin_cuenta.every_person_id(conn):
         # BODY-SYNC-VIVO-ESTADO-1 ruling 3: a person still inside a backoff window is skipped
         # with no Garmin call at all -- never counted as failed, since nothing was attempted.
@@ -606,6 +723,8 @@ def pull_hosted(conn, *, fecha: str | None = None, n_days: int | None = None) ->
             days = _dias_pendientes_relleno(conn, person_id, hoy, n=n_days if n_days is not None else 2)
         resultado = _pull_persona(conn, person_id, days)
         saved += resultado["saved"]
+        vacios += resultado["vacios"]
+        _sumar_fallos(fallos_parciales, resultado["fallos_parciales"])
         if resultado["estado"] == "sin_token":
             continue
         if resultado["estado"] == "error":
@@ -626,6 +745,8 @@ def pull_hosted(conn, *, fecha: str | None = None, n_days: int | None = None) ->
     if omitidos:
         print(f"omitido: {omitidos} personas en espera", flush=True)
     _cerrar_semanas_todas(conn)
+    print(f"{ok} ok, {failed} failed, {saved} days stored, {vacios} empty"
+          f"{_sufijo_fallos_parciales(fallos_parciales)}", flush=True)
     return ok, failed, saved
 
 
@@ -645,40 +766,59 @@ def _dias_pendientes_backfill(conn, person_id: int, hoy: date) -> list[str]:
     return dias
 
 
-def _backfill_one_person(conn, person_id: int, hoy: date) -> tuple[int, date | None] | None:
+def _backfill_one_person(
+    conn, person_id: int, hoy: date,
+) -> tuple[int, int, date | None, dict[str, int]] | None:
     """Fetches this person's next backfill batch (at most BACKFILL_PASO days, newest first),
     advancing their backfill marker after each day so a day already tried -- with or without
-    data -- is never asked again. Returns (days fetched, oldest day fetched this run or None), or
-    None when the person has no token to pull with. Raises whatever the adapter or Garmin raise,
-    with the days-fetched-so-far attached as `.saved` and the oldest of those as `.oldest`
+    data -- is never asked again, EVEN an empty one (BODY-GARMIN-DIA-VACIO-1 ruling 2: the daily
+    pull's own 14-day window is what heals recent gaps; an older empty backfill day is named in
+    open_followups, not solved here). A day whose raw['_errors'] names every feed attempted
+    (ruling 5) is the one exception -- it is NOT saved and the marker does NOT advance past it,
+    raising FeedsFallidos instead. Returns (days stored, days fetched but empty, oldest day
+    fetched this run or None, {feed failure class: count} across every partially-failed day this
+    run -- ruling 6), or None when the person has no token to pull with. Raises whatever the
+    adapter, Garmin or FeedsFallidos raise, with the counts-so-far attached as
+    `.saved`/`.vacios`/`.fallos_parciales` and the oldest of those as `.oldest`
     (BODY-SEMANAS-TARDIAS-1), the same `.saved` contract `_pull_one_person` uses."""
     token = garmin_cuenta.leer(conn, person_id)
     if token is None:
         return None
     dias = _dias_pendientes_backfill(conn, person_id, hoy)
     if not dias:
-        return 0, None
+        return 0, 0, None, {}
     token_before = token
-    saved = 0
+    saved = vacios = 0
     oldest = None
+    fallos_parciales: dict[str, int] = {}
     try:
         for i, d in enumerate(dias):
             if i:
                 time.sleep(PAUSE_S)
             data, token = garmin_adapter.fetch_day(d, token_str=token)
+            fallos = _fallos_de_dia(data)
+            if sum(fallos.values()) >= FEEDS_POR_DIA:
+                raise FeedsFallidos(fallos)
+            if fallos:
+                _sumar_fallos(fallos_parciales, fallos)
             db.save_day(conn, data, person_id)
-            saved += 1
             oldest = d
             garmin_cuenta.avanzar_backfill(conn, person_id, d)
+            if _dia_vacio(data):
+                vacios += 1
+            else:
+                saved += 1
     except Exception as e:
         e.saved = saved
+        e.vacios = vacios
         e.oldest = oldest
+        e.fallos_parciales = fallos_parciales
         raise
     finally:
         if token != token_before:
             garmin_cuenta.guardar(conn, person_id, token)
         _registrar_reloj_si_hay(conn, person_id, token)
-    return saved, oldest
+    return saved, vacios, oldest, fallos_parciales
 
 
 def pull_backfill_hosted(conn, *, hoy: date | None = None) -> tuple[int, int, int]:
@@ -703,9 +843,14 @@ def pull_backfill_hosted(conn, *, hoy: date | None = None) -> tuple[int, int, in
     stored verdict (BODY-SEGURIDAD-3-M); a day backfilled further back than that re-closes that
     older week too (BODY-SEMANAS-TARDIAS-1), via the oldest day fetched this run for that person
     (`desde_por_persona`), on success or on a mid-run failure alike. Returns (persons ok, persons
-    failed, days stored). Never prints a health figure -- counts only."""
-    ok = failed = saved = omitidos = 0
+    failed, days stored -- BODY-GARMIN-DIA-VACIO-1 ruling 2: an empty/all-NULL day never counts
+    here, so this return's own arity and meaning for "saved" stay exactly as before for every
+    existing caller). Prints its own job line before returning ("backfill: {ok} ok, {failed}
+    failed, {saved} days stored, {vacios} empty", plus ruling 6's feed-failure suffix when any
+    day this run partially failed) -- counts and class names only, never a health figure."""
+    ok = failed = saved = omitidos = vacios = 0
     desde_por_persona: dict[int, date] = {}
+    fallos_parciales: dict[str, int] = {}
     for person_id in garmin_cuenta.every_person_id(conn):
         estado = garmin_cuenta.estado_sync(conn, person_id)
         if estado["ultimo_error"] is not None and estado["reintentar_despues_de"] is None:
@@ -722,19 +867,24 @@ def pull_backfill_hosted(conn, *, hoy: date | None = None) -> tuple[int, int, in
             _registrar_intento_persona(conn, person_id, ahora, e)
             failed += 1
             saved += getattr(e, "saved", 0)
+            vacios += getattr(e, "vacios", 0)
+            _sumar_fallos(fallos_parciales, getattr(e, "fallos_parciales", {}))
             oldest = getattr(e, "oldest", None)
             if oldest is not None:
                 desde_por_persona[person_id] = date.fromisoformat(oldest)
             continue
         if result is None:
             continue
-        n, oldest = result
+        n, vacios_persona, oldest, fallos_persona = result
         garmin_cuenta.limpiar_error(conn, person_id)
-        if n > 0:  # n == 0 is "this person's backfill window is already complete" -- no Garmin
-            # call was made (BACKFILL_PASO's loop always saves at least one day when it runs at
-            # all), so there is no attempt to record.
+        if n + vacios_persona > 0:  # both zero is "this person's backfill window is already
+            # complete" -- no Garmin call was made this run, so there is no attempt to record; a
+            # day actually fetched (even one Garmin answered empty, ruling 1-2) always counts
+            # toward one of the two.
             _registrar_intento_persona(conn, person_id, ahora, None)
         saved += n
+        vacios += vacios_persona
+        _sumar_fallos(fallos_parciales, fallos_persona)
         ok += 1
         _recalcular_recuperacion_seguro(conn, person_id)
         _recalcular_turno_fc_seguro(conn, person_id)
@@ -744,6 +894,8 @@ def pull_backfill_hosted(conn, *, hoy: date | None = None) -> tuple[int, int, in
     if omitidos:
         print(f"omitido: {omitidos} personas en espera", flush=True)
     _cerrar_semanas_todas(conn, desde_por_persona)
+    print(f"backfill: {ok} ok, {failed} failed, {saved} days stored, {vacios} empty"
+          f"{_sufijo_fallos_parciales(fallos_parciales)}", flush=True)
     return ok, failed, saved
 
 
@@ -997,16 +1149,14 @@ def _run(conn, a) -> int:
             return 0
         try:
             if a.backfill:
-                ok, failed, saved = pull_backfill_hosted(conn)
-                print(f"backfill: {ok} ok, {failed} failed, {saved} days stored", flush=True)
+                pull_backfill_hosted(conn)  # prints its own job line (ruling 2)
                 return 0
             if a.hoy:
                 ok, espera, fuera, fallidas = pull_hoy_todos(conn)
                 print(f"hoy: {ok} ok, {espera} en espera, {fuera} fuera de horario, {fallidas} fallidas",
                       flush=True)
                 return 0
-            ok, failed, saved = pull_hosted(conn, fecha=a.date, n_days=a.days)
-            print(f"{ok} ok, {failed} failed, {saved} days stored", flush=True)
+            pull_hosted(conn, fecha=a.date, n_days=a.days)  # prints its own job line (ruling 2)
             return 0
         finally:
             _unlock(lock)

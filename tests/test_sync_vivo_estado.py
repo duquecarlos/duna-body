@@ -416,9 +416,11 @@ class FetchDeviceLastSyncTest(unittest.TestCase):
 def _fake_garmin(token_exc: dict | None = None, last_used: dict | None = None):
     """Replaces garminconnect.Garmin for a hosted pull: login(tokenstore) raises token_exc[token]
     when the token names a configured failure, else succeeds; get_device_last_used() returns
-    last_used[token] when the login succeeded. Every other call (get_user_summary etc.) is left
-    undefined -- fetch_day's own per-call try/except (AttributeError) makes that an honest empty
-    feed, exactly as an unconfirmed feed would read for a real account."""
+    last_used[token] when the login succeeded. get_user_summary returns one real value (so a
+    successful login never also trips BODY-GARMIN-DIA-VACIO-1's all-six-feeds-failed rule); every
+    other feed call is left undefined -- fetch_day's own per-call try/except (AttributeError)
+    makes those an honest partial failure, exactly as an unconfirmed feed would read for a real
+    account."""
     token_exc = token_exc or {}
     last_used = last_used or {}
 
@@ -444,6 +446,9 @@ def _fake_garmin(token_exc: dict | None = None, last_used: dict | None = None):
 
         def get_device_last_used(self):
             return last_used.get(self.client.token)
+
+        def get_user_summary(self, day):
+            return {"restingHeartRate": 55}
 
     return _Fake
 

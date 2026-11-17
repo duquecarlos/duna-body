@@ -407,7 +407,8 @@ class NoHealthFigureInOutputTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         # Nobody has a goal in this test's database, so the weekly-check sweep closes nobody and
         # prints nothing (BODY-SEGURIDAD-3-M: the sweep's person list comes from the goal table).
-        self.assertEqual(buf.getvalue().strip(), "backfill: 1 ok, 0 failed, 15 days stored")
+        # BODY-GARMIN-DIA-VACIO-1 ruling 2: the line now also names the empty-day count.
+        self.assertEqual(buf.getvalue().strip(), "backfill: 1 ok, 0 failed, 15 days stored, 0 empty")
 
 
 if __name__ == "__main__":
