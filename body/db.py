@@ -98,7 +98,8 @@ _PROPUESTA_AGENTE_COLUMNS = """
                          'marcar_periodo', 'cerrar_periodo', 'corregir_periodo', 'borrar_periodo',
                          'registrar_comida', 'corregir_comida', 'registrar_checkin', 'descartar_series',
                          'separar_sesion', 'unir_sesiones', 'proponer_objetivo_nutriente',
-                         'proponer_plan', 'corregir_meta_plan', 'ampliar_plan', 'anotar_sesion')),
+                         'proponer_plan', 'corregir_meta_plan', 'ampliar_plan', 'anotar_sesion',
+                         'corregir_entreno')),
     objetivo_id     INTEGER REFERENCES goal(id),
     antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
     despues_json    TEXT NOT NULL CHECK (json_valid(despues_json)),
@@ -1651,6 +1652,13 @@ def _propuesta_agente_needs_hogar_rebuild(conn: sqlite3.Connection) -> bool:
     return row is not None and "anotar_sesion" not in row[0]
 
 
+def _propuesta_agente_needs_corregir_entreno_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'propuesta_agente'"
+    ).fetchone()
+    return row is not None and "corregir_entreno" not in row[0]
+
+
 def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
@@ -1705,6 +1713,9 @@ def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     # `aplicada_via` column already existed from before this slice (the ALTER above is a no-op for
     # it) still carries aplicada_via's OLD CHECK (IN ('mcp') only) until this rebuild runs.
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_hogar_rebuild(conn):
+        _rebuild_propuesta_agente_table(conn)
+    # BODY-CORREGIR-MEDIDA-ENTRENO-1: a thirteenth widening (corregir_entreno), same reusable rebuild.
+    if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_corregir_entreno_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
 
 
