@@ -53,8 +53,8 @@ class PullHoyTodosTest(_PullHoyTodosTestCase):
     def test_outside_daytime_window_is_fuera_horario_with_no_garmin_call(self):
         with mock.patch("body.pull._en_horas_quietas", return_value=True), \
              mock.patch("body.pull.garmin_adapter.fetch_day") as m:
-            ok, espera, fuera, fallidas = pull.pull_hoy_todos(self.conn)
-        self.assertEqual((ok, espera, fuera, fallidas), (0, 0, 1, 0))
+            ok, espera, fuera, fallidas, vacios, ultima = pull.pull_hoy_todos(self.conn)
+        self.assertEqual((ok, espera, fuera, fallidas, vacios, ultima), (0, 0, 1, 0, 0, None))
         m.assert_not_called()
 
     def test_too_soon_since_the_last_attempt_is_en_espera(self):
@@ -64,31 +64,31 @@ class PullHoyTodosTest(_PullHoyTodosTestCase):
         garmin_cuenta.registrar_intento(self.conn, 1, datetime.now(timezone.utc), ok=True)
         with mock.patch("body.pull._en_horas_quietas", return_value=False), \
              mock.patch("body.pull.garmin_adapter.fetch_day") as m:
-            ok, espera, fuera, fallidas = pull.pull_hoy_todos(self.conn)
-        self.assertEqual((ok, espera, fuera, fallidas), (0, 1, 0, 0))
+            ok, espera, fuera, fallidas, vacios, ultima = pull.pull_hoy_todos(self.conn)
+        self.assertEqual((ok, espera, fuera, fallidas, vacios, ultima), (0, 1, 0, 0, 0, None))
         m.assert_not_called()
 
     def test_inside_a_recorded_backoff_is_en_espera(self):
         garmin_cuenta.registrar_intento(self.conn, 1, datetime.now(timezone.utc), ok=False, estado_http=429)
         with mock.patch("body.pull._en_horas_quietas", return_value=False), \
              mock.patch("body.pull.garmin_adapter.fetch_day") as m:
-            ok, espera, fuera, fallidas = pull.pull_hoy_todos(self.conn)
-        self.assertEqual((ok, espera, fuera, fallidas), (0, 1, 0, 0))
+            ok, espera, fuera, fallidas, vacios, ultima = pull.pull_hoy_todos(self.conn)
+        self.assertEqual((ok, espera, fuera, fallidas, vacios, ultima), (0, 1, 0, 0, 0, None))
         m.assert_not_called()
 
     def test_free_and_in_window_pulls_today_and_counts_ok(self):
         with mock.patch("body.pull._en_horas_quietas", return_value=False), \
              mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_fetch_day_ok) as m:
-            ok, espera, fuera, fallidas = pull.pull_hoy_todos(self.conn)
-        self.assertEqual((ok, espera, fuera, fallidas), (1, 0, 0, 0))
+            ok, espera, fuera, fallidas, vacios, ultima = pull.pull_hoy_todos(self.conn)
+        self.assertEqual((ok, espera, fuera, fallidas, vacios, ultima), (1, 0, 0, 0, 0, 1))
         m.assert_called_once()
         self.assertIsNotNone(db.last_sync(self.conn, 1))
 
     def test_a_garmin_failure_counts_as_fallidas_and_records_the_error(self):
         with mock.patch("body.pull._en_horas_quietas", return_value=False), \
              mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=RuntimeError("demo failure")):
-            ok, espera, fuera, fallidas = pull.pull_hoy_todos(self.conn)
-        self.assertEqual((ok, espera, fuera, fallidas), (0, 0, 0, 1))
+            ok, espera, fuera, fallidas, vacios, ultima = pull.pull_hoy_todos(self.conn)
+        self.assertEqual((ok, espera, fuera, fallidas, vacios, ultima), (0, 0, 0, 1, 0, 1))
         self.assertEqual(garmin_cuenta.ultimo_error(self.conn, 1), "RuntimeError")
 
     def test_each_person_is_checked_in_their_own_zone(self):
@@ -116,7 +116,7 @@ class PullHoyTodosTest(_PullHoyTodosTestCase):
         self.conn.commit()
         with mock.patch("body.pull.garmin_adapter.fetch_day") as m:
             result = pull.pull_hoy_todos(self.conn)
-        self.assertEqual(result, (0, 0, 0, 0))
+        self.assertEqual(result, (0, 0, 0, 0, 0, None))
         m.assert_not_called()
         self.m_sleep.assert_not_called()
 
@@ -132,7 +132,11 @@ class HoyCliTest(_PullHoyTodosTestCase):
              contextlib.redirect_stdout(buf):
             codigo = pull.main(["--hoy"])
         self.assertEqual(codigo, 0)
-        self.assertIn("hoy: 1 ok, 0 en espera, 0 fuera de horario, 0 fallidas", buf.getvalue())
+        # BODY-GARMIN-DIAGNOSTICO-1 ruling 3: the sweep line now also counts empty days and
+        # names the watch's own last-known contact (ruling 2) -- unknown here, this test never
+        # mocks fetch_device_last_sync.
+        self.assertIn("hoy: 1 ok, 0 en espera, 0 fuera de horario, 0 fallidas, 0 vacios, "
+                      "reloj desconocido", buf.getvalue())
 
     def test_hoy_skips_quietly_when_another_pull_holds_the_lock(self):
         """Ruling 1: --hoy takes pull.lock non-blocking, exactly as --backfill does -- a daily

@@ -141,6 +141,85 @@ def _dia_vacio(data) -> bool:
     return not any(v is not None for v in data.metrics.values())
 
 
+# BODY-GARMIN-DIAGNOSTICO-1 ruling 1: DayData.raw's six feed keys, in the fixed order the shape
+# line always prints them -- never derived from raw's own key order, which a dict carries for
+# whichever feeds happened to succeed or fail this call.
+_FEEDS_ORDEN = ("user_summary", "sleep", "hrv", "body_battery", "activities", "max_metrics")
+
+# Ruling 1: a numeric leaf past this depth (the feed's own top-level value is depth 0) is never
+# counted -- bounds the cost of a pathological payload and keeps the shape line from ever growing
+# with the data's own size.
+_FORMA_PROFUNDIDAD_MAX = 4
+
+
+def _contar_numeros(valor, profundidad: int = 0) -> int:
+    """Ruling 1's 'k num': numeric leaves found recursively inside one feed's raw value -- a bool
+    is never a number here (Python's bool is an int subclass), and nothing past
+    _FORMA_PROFUNDIDAD_MAX deep is ever examined."""
+    if profundidad > _FORMA_PROFUNDIDAD_MAX:
+        return 0
+    if isinstance(valor, bool):
+        return 0
+    if isinstance(valor, (int, float)):
+        return 1
+    if isinstance(valor, dict):
+        return sum(_contar_numeros(v, profundidad + 1) for v in valor.values())
+    if isinstance(valor, list):
+        return sum(_contar_numeros(v, profundidad + 1) for v in valor)
+    return 0
+
+
+def _forma_valor(valor) -> str:
+    """Ruling 1's shape for one feed's own raw value -- never a value, never a key name: 'None',
+    'dict:<n> claves/<k> num', 'list:<n>/<k> num' (n = top-level length, k = _contar_numeros), or
+    the bare type name for anything else (a string, a bool, a number on its own)."""
+    if valor is None:
+        return "None"
+    if isinstance(valor, dict):
+        return f"dict:{len(valor)} claves/{_contar_numeros(valor)} num"
+    if isinstance(valor, list):
+        return f"list:{len(valor)}/{_contar_numeros(valor)} num"
+    return type(valor).__name__
+
+
+def _forma_feeds(raw: dict) -> str:
+    """BODY-GARMIN-DIAGNOSTICO-1 ruling 1: 'name=<shape>' for each of _FEEDS_ORDEN's six feeds, in
+    that order, space-separated -- printed once for a fetched-but-empty day (every hosted path,
+    via the two call sites below) so the operator can tell an honest 'Garmin sent nothing'
+    (ausente/None) from 'Garmin sent a shape Body does not read' (an unrecognised dict/list) from
+    'the feed call itself raised' (error:<Class>, from raw['_errors'] -- the class NAME only,
+    never the exception's own message). A feed present in neither raw nor raw['_errors'] is
+    'ausente' -- never produced by garmin_adapter.fetch_day itself today (every one of its six
+    calls lands in exactly one of the two), kept for any raw a test or a future caller hands in
+    with a feed simply missing."""
+    errores = raw.get("_errors") or {}
+    partes = []
+    for nombre in _FEEDS_ORDEN:
+        if nombre in errores:
+            forma = f"error:{errores[nombre]}"
+        elif nombre not in raw:
+            forma = "ausente"
+        else:
+            forma = _forma_valor(raw[nombre])
+        partes.append(f"{nombre}={forma}")
+    return " ".join(partes)
+
+
+def _sufijo_reloj(conn, person_id: int | None) -> str:
+    """BODY-GARMIN-DIAGNOSTICO-1 ruling 2: ', reloj <YYYY-MM-DD HH:MM> UTC' from this person's own
+    persisted reloj_sincronizo_en (garmin_cuenta.estado_sync -- the same field Hoy's live card and
+    the assistant's leer_estado_reloj already read; always UTC, garmin_adapter.fetch_device_last_
+    sync's own contract), or ', reloj desconocido' when `person_id` is None (no person was
+    actually pulled this run) or nothing has ever been recorded for them -- a timestamp only,
+    never a health figure."""
+    if person_id is not None:
+        reloj = garmin_cuenta.estado_sync(conn, person_id).get("reloj_sincronizo_en")
+        if reloj is not None:
+            momento = datetime.fromisoformat(reloj).astimezone(timezone.utc)
+            return f", reloj {momento.strftime('%Y-%m-%d %H:%M')} UTC"
+    return ", reloj desconocido"
+
+
 def _sumar_fallos(total: dict[str, int], nuevos: dict[str, int]) -> None:
     for nombre, n in nuevos.items():
         total[nombre] = total.get(nombre, 0) + n
@@ -338,6 +417,7 @@ def _pull_one_person(conn, person_id: int, days: list[str]) -> tuple[int, int, d
             db.save_day(conn, data, person_id)
             if _dia_vacio(data):
                 vacios += 1
+                print(f"dia vacio {d}: {_forma_feeds(data.raw)}", flush=True)
             else:
                 saved += 1
     except Exception as e:
@@ -502,7 +582,10 @@ def pull_persona_ahora(person_id: int) -> None:
     error exactly as the daily timer does; prints counts only, never a health figure.
 
     BODY-GARMIN-DIA-VACIO-1 ruling 2: the printed line also names the empty-day count and, when
-    any day this run partially failed, which feeds and how many times (ruling 6)."""
+    any day this run partially failed, which feeds and how many times (ruling 6).
+    BODY-GARMIN-DIAGNOSTICO-1 ruling 2: it also names this person's own last known watch-contact
+    instant (a timestamp, or "desconocido"); a fetched-but-empty day also prints its own one-line
+    shape (ruling 1), from the shared `_pull_one_person`."""
     conn = db.connect()
     try:
         db.ensure_ready(conn)
@@ -510,7 +593,8 @@ def pull_persona_ahora(person_id: int) -> None:
         dias = _dias_pendientes_relleno(conn, person_id, hoy)
         resultado = _pull_persona(conn, person_id, dias)
         print(f"connect pull: {resultado['estado']}, {resultado['saved']} days stored, "
-              f"{resultado['vacios']} empty{_sufijo_fallos_parciales(resultado['fallos_parciales'])}",
+              f"{resultado['vacios']} empty{_sufijo_fallos_parciales(resultado['fallos_parciales'])}"
+              f"{_sufijo_reloj(conn, person_id)}",
               flush=True)
     finally:
         conn.close()
@@ -521,7 +605,7 @@ def _en_horas_quietas(ahora_local: datetime) -> bool:
     return h >= QUIETA_DESDE_HORA or h < QUIETA_HASTA_HORA
 
 
-def _pull_hoy_persona(conn, person_id: int, ahora_local: datetime, ahora_utc: datetime) -> bool:
+def _pull_hoy_persona(conn, person_id: int, ahora_local: datetime, ahora_utc: datetime) -> tuple[bool, int]:
     """The fetch+record+recalc sequence for one person's "today" alone -- shared by
     `pull_hoy_ahora`'s own trigger and the --hoy sweep (`pull_hoy_todos`), never a copy: fetches
     exactly one day through `_pull_one_person` (the same fetch path, token re-encryption and watch-
@@ -529,22 +613,26 @@ def _pull_hoy_persona(conn, person_id: int, ahora_local: datetime, ahora_utc: da
     (`garmin_cuenta.registrar_error`/`limpiar_error`/`_registrar_intento_persona`, the same shape
     every other pull uses), and on success recomputes only `sueno_fc` (BODY-SYNC-VIVO-2's own
     reasoning: the one post-pull derivation a live trigger could actually read right after this
-    call returns). Never raises -- a Garmin failure is recorded, not propagated. Returns True on
-    success, False on a Garmin failure."""
+    call returns). Never raises -- a Garmin failure is recorded, not propagated. Returns (True,
+    days empty) on success, (False, days empty) on a Garmin failure -- BODY-GARMIN-DIAGNOSTICO-1
+    ruling 3: the empty count `_pull_one_person` already returns (or attaches to its own
+    exception as `.vacios`, the same contract every other caller here reads), carried out so the
+    --hoy sweep's own line can count it too."""
     dia = ahora_local.date().isoformat()
     try:
-        _pull_one_person(conn, person_id, [dia])
+        resultado = _pull_one_person(conn, person_id, [dia])
     except Exception as e:
         garmin_cuenta.registrar_error(conn, person_id, type(e).__name__)
         _registrar_intento_persona(conn, person_id, ahora_utc, e)
-        return False
+        return False, getattr(e, "vacios", 0)
     garmin_cuenta.limpiar_error(conn, person_id)
     _registrar_intento_persona(conn, person_id, ahora_utc, None)
     _recalcular_sueno_fc_seguro(conn, person_id)
-    return True
+    _, vacios, _ = resultado
+    return True, vacios
 
 
-def pull_hoy_todos(conn) -> tuple[int, int, int, int]:
+def pull_hoy_todos(conn) -> tuple[int, int, int, int, int, int | None]:
     """BODY-SYNC-VIVO-TIMER-1 ruling 1: the --hoy sweep's own per-person loop, for every connected
     person (`garmin_cuenta.every_person_id`), sequential (PAUSE_S between people, the same
     politeness pause `_pull_one_person`'s own day loop uses) -- never concurrent, so a slow Garmin
@@ -562,9 +650,15 @@ def pull_hoy_todos(conn) -> tuple[int, int, int, int]:
         combined daily ceiling at ESPACIO_MIN_HOY's own bound, the README's ruling 4 math) --
         counted as `en_espera`.
 
-    Otherwise runs the shared `_pull_hoy_persona` fetch -- counted as `ok` or `fallidas`. Returns
-    (ok, en_espera, fuera_horario, fallidas). Never prints a health figure -- counts only."""
-    ok = en_espera = fuera_horario = fallidas = 0
+    Otherwise runs the shared `_pull_hoy_persona` fetch -- counted as `ok` or `fallidas`, its own
+    empty-day count carried into `vacios` (BODY-GARMIN-DIAGNOSTICO-1 ruling 3 -- VACIO-1 left this
+    sweep's own line without an empty count, unlike every other hosted job line). Returns (ok,
+    en_espera, fuera_horario, fallidas, vacios, last person actually pulled this run or None --
+    ruling 2's own `_sufijo_reloj` input, read by `_run`'s own printed line). Never prints a
+    health figure -- counts only, and never prints anything itself; the caller (`_run`) owns the
+    one printed line for this whole sweep."""
+    ok = en_espera = fuera_horario = fallidas = vacios = 0
+    ultima_persona = None
     primero = True
     for person_id in garmin_cuenta.every_person_id(conn):
         if not primero:
@@ -580,11 +674,14 @@ def pull_hoy_todos(conn) -> tuple[int, int, int, int]:
         if not garmin_cuenta.puede_intentar(conn, person_id, ahora_utc, ESPACIO_MIN_HOY):
             en_espera += 1
             continue
-        if _pull_hoy_persona(conn, person_id, ahora_local, ahora_utc):
+        exito, vacios_persona = _pull_hoy_persona(conn, person_id, ahora_local, ahora_utc)
+        vacios += vacios_persona
+        ultima_persona = person_id
+        if exito:
             ok += 1
         else:
             fallidas += 1
-    return ok, en_espera, fuera_horario, fallidas
+    return ok, en_espera, fuera_horario, fallidas, vacios, ultima_persona
 
 
 def pull_hoy_ahora(person_id: int) -> str:
@@ -705,10 +802,17 @@ def pull_hosted(conn, *, fecha: str | None = None, n_days: int | None = None) ->
     empty/all-NULL day never counts here, so this return's own arity and meaning for "saved" stay
     exactly as before for every existing caller). Prints its own job line before returning
     ("{ok} ok, {failed} failed, {saved} days stored, {vacios} empty", plus ruling 6's feed-
-    failure suffix when any day this run partially failed) -- counts and class names only, never
-    a health figure."""
+    failure suffix when any day this run partially failed, plus BODY-GARMIN-DIAGNOSTICO-1 ruling
+    2's own ", reloj <timestamp> UTC"/", reloj desconocido" suffix for the last person this run
+    actually pulled) -- counts, class names and a timestamp only, never a health figure. A
+    fetched-but-empty day also prints its own one-line shape ("dia vacio <day>: ...",
+    BODY-GARMIN-DIAGNOSTICO-1 ruling 1), from the shared `_pull_one_person`."""
     ok = failed = saved = omitidos = vacios = 0
     fallos_parciales: dict[str, int] = {}
+    ultima_persona = None  # BODY-GARMIN-DIAGNOSTICO-1 ruling 2: the reloj suffix below names
+    # the last person this run actually pulled -- a single-scalar approximation that reads
+    # exactly right for today's one hosted person, and names something real (that one person's
+    # own last-known watch contact) rather than nothing for any future multi-person run.
     for person_id in garmin_cuenta.every_person_id(conn):
         # BODY-SYNC-VIVO-ESTADO-1 ruling 3: a person still inside a backoff window is skipped
         # with no Garmin call at all -- never counted as failed, since nothing was attempted.
@@ -722,6 +826,7 @@ def pull_hosted(conn, *, fecha: str | None = None, n_days: int | None = None) ->
             hoy = fechas.hoy_local(db.person(conn, person_id))
             days = _dias_pendientes_relleno(conn, person_id, hoy, n=n_days if n_days is not None else 2)
         resultado = _pull_persona(conn, person_id, days)
+        ultima_persona = person_id
         saved += resultado["saved"]
         vacios += resultado["vacios"]
         _sumar_fallos(fallos_parciales, resultado["fallos_parciales"])
@@ -746,7 +851,7 @@ def pull_hosted(conn, *, fecha: str | None = None, n_days: int | None = None) ->
         print(f"omitido: {omitidos} personas en espera", flush=True)
     _cerrar_semanas_todas(conn)
     print(f"{ok} ok, {failed} failed, {saved} days stored, {vacios} empty"
-          f"{_sufijo_fallos_parciales(fallos_parciales)}", flush=True)
+          f"{_sufijo_fallos_parciales(fallos_parciales)}{_sufijo_reloj(conn, ultima_persona)}", flush=True)
     return ok, failed, saved
 
 
@@ -806,6 +911,7 @@ def _backfill_one_person(
             garmin_cuenta.avanzar_backfill(conn, person_id, d)
             if _dia_vacio(data):
                 vacios += 1
+                print(f"dia vacio {d}: {_forma_feeds(data.raw)}", flush=True)
             else:
                 saved += 1
     except Exception as e:
@@ -847,10 +953,14 @@ def pull_backfill_hosted(conn, *, hoy: date | None = None) -> tuple[int, int, in
     here, so this return's own arity and meaning for "saved" stay exactly as before for every
     existing caller). Prints its own job line before returning ("backfill: {ok} ok, {failed}
     failed, {saved} days stored, {vacios} empty", plus ruling 6's feed-failure suffix when any
-    day this run partially failed) -- counts and class names only, never a health figure."""
+    day this run partially failed, plus BODY-GARMIN-DIAGNOSTICO-1 ruling 2's own reloj suffix for
+    the last person this run actually pulled) -- counts, class names and a timestamp only, never
+    a health figure. A fetched-but-empty day also prints its own one-line shape (ruling 1), from
+    the shared `_backfill_one_person`."""
     ok = failed = saved = omitidos = vacios = 0
     desde_por_persona: dict[int, date] = {}
     fallos_parciales: dict[str, int] = {}
+    ultima_persona = None  # BODY-GARMIN-DIAGNOSTICO-1 ruling 2: see pull_hosted's own comment.
     for person_id in garmin_cuenta.every_person_id(conn):
         estado = garmin_cuenta.estado_sync(conn, person_id)
         if estado["ultimo_error"] is not None and estado["reintentar_despues_de"] is None:
@@ -860,6 +970,7 @@ def pull_backfill_hosted(conn, *, hoy: date | None = None) -> tuple[int, int, in
             continue
         hoy_persona = hoy or fechas.hoy_local(db.person(conn, person_id))
         ahora = datetime.now(timezone.utc)
+        ultima_persona = person_id
         try:
             result = _backfill_one_person(conn, person_id, hoy_persona)
         except Exception as e:
@@ -895,7 +1006,7 @@ def pull_backfill_hosted(conn, *, hoy: date | None = None) -> tuple[int, int, in
         print(f"omitido: {omitidos} personas en espera", flush=True)
     _cerrar_semanas_todas(conn, desde_por_persona)
     print(f"backfill: {ok} ok, {failed} failed, {saved} days stored, {vacios} empty"
-          f"{_sufijo_fallos_parciales(fallos_parciales)}", flush=True)
+          f"{_sufijo_fallos_parciales(fallos_parciales)}{_sufijo_reloj(conn, ultima_persona)}", flush=True)
     return ok, failed, saved
 
 
@@ -1152,8 +1263,9 @@ def _run(conn, a) -> int:
                 pull_backfill_hosted(conn)  # prints its own job line (ruling 2)
                 return 0
             if a.hoy:
-                ok, espera, fuera, fallidas = pull_hoy_todos(conn)
-                print(f"hoy: {ok} ok, {espera} en espera, {fuera} fuera de horario, {fallidas} fallidas",
+                ok, espera, fuera, fallidas, vacios, ultima_persona = pull_hoy_todos(conn)
+                print(f"hoy: {ok} ok, {espera} en espera, {fuera} fuera de horario, {fallidas} fallidas, "
+                      f"{vacios} vacios{_sufijo_reloj(conn, ultima_persona)}",
                       flush=True)
                 return 0
             pull_hosted(conn, fecha=a.date, n_days=a.days)  # prints its own job line (ruling 2)
