@@ -21,7 +21,11 @@ CONSENT_VERSION = "consentimiento-v4"
 # neither set fails that test, so it can never slip past export or delete-all unnoticed.
 FULLY_HANDLED_TABLES = {
     "daily_metric", "sleep_session", "activity", "shift", "shift_batch", "shift_pattern",
-    "goal", "habit_check", "goal_check", "plan", "ajuste_agente", "consentimiento", "hogar_miembro",
+    "goal", "habit_check", "goal_check", "plan", "ajuste_agente",
+    # BODY-HOGAR-ESCRIBE-1-W ruling 2/6: a person's own meal-moment windows -- settings, no free
+    # text, registered the same way as ajuste_agente right above it.
+    "momento_comida",
+    "consentimiento", "hogar_miembro",
     "conversacion_agente", "mensaje_agente", "uso_agente", "tope_agente", "propuesta_agente",
     # BODY-MCP-LOCAL-1: one row per call the local MCP server made against the tool registry --
     # tool name, UTC time, caller id only.
@@ -201,8 +205,13 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "SELECT id, day, ts_local, metric_key, amount, estimado, descripcion, comida_id, created_at, "
         "updated_at FROM ingesta WHERE person_id = ? ORDER BY day, id", (person_id,))]
     comidas = [dict(r) for r in conn.execute(
-        "SELECT id, day, ts_local, descripcion, created_at, updated_at "
+        "SELECT id, day, ts_local, descripcion, momento, created_at, updated_at "
         "FROM comida WHERE person_id = ? ORDER BY day, id", (person_id,))]
+    # BODY-HOGAR-ESCRIBE-1-W ruling 2/6: this person's own meal-moment windows, registered like
+    # ajuste_agente (the `ajustes` dict below) -- settings, no free text.
+    momentos_comida = [dict(r) for r in conn.execute(
+        "SELECT clave, desde_hora, hasta_hora, esperado, orden FROM momento_comida "
+        "WHERE person_id = ? ORDER BY orden", (person_id,))]
     periodos = [dict(r) for r in conn.execute(
         "SELECT id, kind, start_day, end_day, note, zonas, created_at, updated_at "
         "FROM period WHERE person_id = ? ORDER BY start_day, id", (person_id,))]
@@ -314,6 +323,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "horizonte": horizonte,
         "ingesta": ingesta,
         "comidas": comidas,
+        "momentos_comida": momentos_comida,
         "periodos": periodos,
         "objetivos_nutriente": objetivos_nutriente,
         "fuentes_importacion": fuentes_importacion,
@@ -465,6 +475,7 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         conn.execute("DELETE FROM shift WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM shift_pattern WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM ajuste_agente WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM momento_comida WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM consentimiento WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM garmin_cuenta WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM dispositivo WHERE person_id = ?", (person_id,))

@@ -63,7 +63,7 @@ import threading
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .. import anatomia, catalogo_tendencias, compartir, cuenta, db, enlaces, entreno_historial, errores, \
+from .. import anatomia, catalogo_tendencias, comidas, compartir, cuenta, db, enlaces, entreno_historial, errores, \
     experimentos, fechas, garmin_cuenta, goals, history, horizonte, household, nutriente_objetivo, profile, pull, \
     readiness, shift_import, turnos_costo, tutoriales
 from ..i18n import LANGS, T
@@ -374,6 +374,10 @@ _PARAM_COMENSAL_COMPARTIDO = {
     "required": ["nombre", "nutrientes"],
     "additionalProperties": False,
 }
+# BODY-HOGAR-ESCRIBE-1-W ruling 3: `momento` is any clave the PERSON already has (their own
+# momento_comida rows, or the DEFAULT_MOMENTOS claves when they have none) -- checked in CODE
+# against the live `comidas.momentos` at call time, never a hardcoded enum, the same template
+# pattern `registrar_medida`'s metric_key already uses for a per-person live source.
 _PARAM_REGISTRAR_COMIDA = {
     "type": "object",
     "properties": {
@@ -382,6 +386,7 @@ _PARAM_REGISTRAR_COMIDA = {
         "descripcion": {"type": "string"},
         "cantidades": {"type": "array", "items": _PARAM_CANTIDAD_COMIDA, "minItems": 1},
         "compartida_con": {"type": "array", "items": _PARAM_COMENSAL_COMPARTIDO},
+        "momento": {"type": "string"},
     },
     "required": ["descripcion", "cantidades"],
     "additionalProperties": False,
@@ -1843,7 +1848,7 @@ def _validar_comensal_nutrientes(t: T, nutrientes) -> dict:
 
 def _registrar_comida(conn: sqlite3.Connection, person_id: int, conversacion_id: int, descripcion: str,
                        cantidades: list, day: str | None = None, hora: str | None = None,
-                       compartida_con: list | None = None) -> dict:
+                       compartida_con: list | None = None, momento: str | None = None) -> dict:
     """Proposes one spoken meal as a single call (BODY-COMIDA-1 ruling 3): estimate every nutrient
     you can from the person's own words -- never ask them to weigh food -- say which amounts are
     estimates, and name caffeine/alcohol with the time when the person gives one. Insert-shaped,
@@ -1855,7 +1860,11 @@ def _registrar_comida(conn: sqlite3.Connection, person_id: int, conversacion_id:
     the household, refused BY NAME (`agente.error.comida_sin_consentimiento`) before the proposal
     is even created when one of them has not turned on receiving shared meals, the same "say so
     plainly" rule as every other door here. The proposal is still addressed to the author alone;
-    applying it is what actually shares the meal (body/agente/propuestas.py)."""
+    applying it is what actually shares the meal (body/agente/propuestas.py).
+
+    BODY-HOGAR-ESCRIBE-1-W ruling 3: `momento` names which of the person's own meal moments this
+    is (any clave `comidas.momentos` returns for them); left out, the moment is derived from
+    `ts_local` as before this argument existed. Refused BY NAME when it is not one of theirs."""
     descripcion = (descripcion or "").strip()
     if not descripcion:
         raise ToolError("falta la descripción de la comida")
@@ -1880,10 +1889,12 @@ def _registrar_comida(conn: sqlite3.Connection, person_id: int, conversacion_id:
         if not isinstance(estimado, bool):
             raise ToolError("estimado debe ser verdadero o falso")
         limpias.append({"metric_key": metric_key, "amount": amount, "estimado": estimado})
+    if momento is not None and momento not in {m["clave"] for m in comidas.momentos(conn, person_id)}:
+        raise ToolError(f"momento desconocido: {momento!r}")
     day = day or _hoy_local(conn, person_id)
     _dia_no_futuro(conn, person_id, day)
     despues = {"descripcion": descripcion, "cantidades": limpias, "day": day,
-               "ts_local": _hora_a_ts_local(day, hora)}
+               "ts_local": _hora_a_ts_local(day, hora), "momento": momento}
     if compartida_con:
         comensales_limpios = []
         vistos_pid = set()

@@ -122,6 +122,9 @@ REGISTRY: tuple[TableSpec, ...] = (
               fk_remap=("batch_id",), fk_table={"batch_id": "shift_batch"}),
     TableSpec("shift_pattern", match_cols=("person_id",)),
     TableSpec("ajuste_agente", match_cols=("person_id",)),
+    # BODY-HOGAR-ESCRIBE-1-W ruling 2/6: a person's own meal-moment windows -- matched by its own
+    # natural key (person_id, clave), the same shape as ajuste_agente's single-column one above.
+    TableSpec("momento_comida", match_cols=("person_id", "clave")),
     TableSpec("tope_agente", match_cols=("person_id",)),
     TableSpec("consentimiento", match_cols=("person_id", "version")),
     TableSpec("moment", match_cols=None, id_exported=True),

@@ -142,5 +142,67 @@ class ConversacionAgenteHogarMigrationTest(unittest.TestCase):
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM conversacion_agente").fetchone()[0], 1)
 
 
+class ComidaMomentoMigrationTest(unittest.TestCase):
+    """BODY-HOGAR-ESCRIBE-1-W ruling 3: a database whose comida predates the momento column gains
+    it, additive and nullable -- keeping the existing row byte-for-byte."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        db.init(self.conn)
+        self.conn.execute("PRAGMA foreign_keys = OFF")
+        self.conn.execute("DROP TABLE comida")
+        self.conn.execute(
+            "CREATE TABLE comida (id INTEGER PRIMARY KEY, person_id INTEGER NOT NULL REFERENCES person(id), "
+            "day TEXT NOT NULL, ts_local TEXT, descripcion TEXT, created_at TEXT NOT NULL, "
+            "updated_at TEXT NOT NULL)"
+        )
+        self.conn.execute(
+            "INSERT INTO comida (person_id, day, descripcion, created_at, updated_at) VALUES "
+            "(1, '2026-11-09', 'Vieja', '2026-11-09T00:00:00+00:00', '2026-11-09T00:00:00+00:00')"
+        )
+        self.old_id = self.conn.execute("SELECT id FROM comida").fetchone()[0]
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.commit()
+
+    def test_migration_adds_momento_keeping_the_old_row(self):
+        db.init(self.conn)
+        row = self.conn.execute("SELECT id, descripcion, momento FROM comida").fetchone()
+        self.assertEqual(row["id"], self.old_id)
+        self.assertEqual(row["descripcion"], "Vieja")
+        self.assertIsNone(row["momento"])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM comida").fetchone()[0], 1)
+
+    def test_migration_is_idempotent(self):
+        db.init(self.conn)
+        db.init(self.conn)
+        row = self.conn.execute("SELECT id FROM comida").fetchone()
+        self.assertEqual(row["id"], self.old_id)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM comida").fetchone()[0], 1)
+
+
+class MomentoComidaTableMigrationTest(unittest.TestCase):
+    """BODY-HOGAR-ESCRIBE-1-W ruling 2: a database that predates momento_comida gains the table,
+    empty, with no other table's row count disturbed, and is idempotent."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        db.init(self.conn)
+        self.conn.execute("DROP TABLE momento_comida")
+        self.conn.execute(
+            "INSERT INTO ajuste_agente (person_id, updated_at) VALUES (1, '2026-11-09T00:00:00+00:00')"
+        )
+        self.conn.commit()
+
+    def test_migration_recreates_the_table_empty_without_touching_others(self):
+        db.init(self.conn)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM momento_comida").fetchone()[0], 0)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM ajuste_agente").fetchone()[0], 1)
+
+    def test_migration_is_idempotent(self):
+        db.init(self.conn)
+        db.init(self.conn)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM momento_comida").fetchone()[0], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -814,6 +814,36 @@ class PlanSesionNotaMudanzaTest(MudanzaTestCase):
         dest.close()
 
 
+class MomentoComidaMudanzaTest(MudanzaTestCase):
+    """BODY-HOGAR-ESCRIBE-1-W ruling 2/6: momento_comida moves with the person, matched by its own
+    natural key (person_id, clave) -- a second import of the same source never duplicates it."""
+
+    def test_row_moves_and_a_second_import_does_not_duplicate_it(self):
+        source = self._new_source()
+        with source:
+            source.execute(
+                "INSERT INTO momento_comida (person_id, clave, desde_hora, hasta_hora, esperado, orden) "
+                "VALUES (?, 'brunch', 9, 12, 1, 1)", (db.DEFAULT_PERSON_ID,))
+        source.close()
+
+        reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok)
+        by_name = self._reports_by_name(reports)
+        self.assertEqual(by_name["momento_comida"].counts.insert, 1)
+
+        dest = db.connect()
+        row = dest.execute(
+            "SELECT desde_hora, hasta_hora, esperado, orden FROM momento_comida WHERE clave = 'brunch'"
+        ).fetchone()
+        self.assertEqual((row["desde_hora"], row["hasta_hora"], row["esperado"], row["orden"]), (9, 12, 1, 1))
+        dest.close()
+
+        reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok)
+        by_name = self._reports_by_name(reports)
+        self.assertEqual(by_name["momento_comida"].counts.insert, 0)
+
+
 class SelfRefRoundTripTest(MudanzaTestCase):
     """BODY-PLAN-ESQUEMA-1-R: the plan's own parts move with the person -- goal's self-reference
     (horizonte_goal_id) and horizonte_meta_semanal's append-only correction chain (reemplaza_id)

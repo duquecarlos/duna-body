@@ -974,7 +974,7 @@ def _aplicar_registrar_comida(conn: sqlite3.Connection, row: sqlite3.Row) -> dic
         ).fetchone()
         return {"comida_id": autor_porcion["comida_id"], "comida_compartida_id": resultado["comida_compartida_id"]}
     cid = db.crear_comida(conn, row["person_id"], despues["day"], despues["cantidades"],
-                           despues.get("descripcion"), despues.get("ts_local"))
+                           despues.get("descripcion"), despues.get("ts_local"), despues.get("momento"))
     return {"comida_id": cid}
 
 

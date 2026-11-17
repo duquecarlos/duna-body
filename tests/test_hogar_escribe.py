@@ -8,7 +8,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import anatomia, config, db, goals, horizonte, identity, web
+from body import anatomia, comidas, config, db, goals, horizonte, identity, web
 from body.agente import conversacion as agente_conversacion
 from body.agente import herramientas, propuestas
 from body.agente.herramientas import ToolError
@@ -167,6 +167,108 @@ class AnotarSesionTest(unittest.TestCase):
                               "2020-05-11T00:00:00+00:00", "proposed")
         resultado = propuestas.aplicar(self.conn, 1, out["propuesta_id"])
         self.assertEqual(resultado["estado"], "propuesta_desactualizada")
+
+
+class MomentosComidaTest(unittest.TestCase):
+    """Ruling 2: defaults when a person has no rows of their own; their own rows win once they
+    have any; momento_de at each boundary hour."""
+
+    def setUp(self):
+        self.conn, self.orig = _reset_db()
+        self.addCleanup(self.conn.close)
+        self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig))
+
+    def test_defaults_when_no_rows_of_their_own(self):
+        claves = [m["clave"] for m in comidas.momentos(self.conn, 1)]
+        self.assertEqual(claves, ["desayuno", "almuerzo", "merienda", "cena"])
+
+    def test_own_rows_win_over_the_defaults(self):
+        self.conn.execute(
+            "INSERT INTO momento_comida (person_id, clave, desde_hora, hasta_hora, esperado, orden) "
+            "VALUES (1, 'brunch', 9, 12, 1, 1)")
+        self.conn.commit()
+        claves = [m["clave"] for m in comidas.momentos(self.conn, 1)]
+        self.assertEqual(claves, ["brunch"])
+
+    def test_another_persons_rows_never_affect_this_one(self):
+        self.conn.execute(
+            "INSERT INTO momento_comida (person_id, clave, desde_hora, hasta_hora, esperado, orden) "
+            "VALUES (2, 'brunch', 9, 12, 1, 1)")
+        self.conn.commit()
+        claves = [m["clave"] for m in comidas.momentos(self.conn, 1)]
+        self.assertEqual(claves, ["desayuno", "almuerzo", "merienda", "cena"])
+
+    def test_momento_de_at_each_boundary_hour(self):
+        casos = [
+            ("2026-11-10T04:59:00", None),
+            ("2026-11-10T05:00:00", "desayuno"),
+            ("2026-11-10T10:59:00", "desayuno"),
+            ("2026-11-10T11:00:00", "almuerzo"),
+            ("2026-11-10T15:59:00", "almuerzo"),
+            ("2026-11-10T16:00:00", "merienda"),
+            ("2026-11-10T18:59:00", "merienda"),
+            ("2026-11-10T19:00:00", "cena"),
+            ("2026-11-10T22:59:00", "cena"),
+            ("2026-11-10T23:00:00", None),
+        ]
+        for ts_local, esperado in casos:
+            with self.subTest(ts_local=ts_local):
+                self.assertEqual(comidas.momento_de(self.conn, 1, ts_local), esperado)
+
+    def test_momento_de_with_no_ts_local_is_none(self):
+        self.assertIsNone(comidas.momento_de(self.conn, 1, None))
+
+
+class RegistrarComidaMomentoTest(unittest.TestCase):
+    """Ruling 3: registrar_comida's optional momento argument, stored on apply -- absent -> null
+    and derived from ts_local as before; a clave the person does not have is refused by name."""
+
+    def setUp(self):
+        self.conn, self.orig = _reset_db()
+        self.addCleanup(self.conn.close)
+        self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig))
+
+    def _registrar(self, person_id: int = 1, **kwargs) -> dict:
+        cid = _cid(self.conn, person_id)
+        args = {"descripcion": "Pollo con arroz",
+                "cantidades": [{"metric_key": "kcal", "amount": 500.0}]}
+        args.update(kwargs)
+        return herramientas.ejecutar(self.conn, person_id, "registrar_comida", args, "ninguno", cid)
+
+    def test_absent_momento_is_stored_as_null(self):
+        out = self._registrar(day="2026-11-10", hora="20:00")
+        propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        row = self.conn.execute("SELECT momento FROM comida WHERE person_id = 1").fetchone()
+        self.assertIsNone(row["momento"])
+
+    def test_given_momento_is_stored(self):
+        out = self._registrar(day="2026-11-10", hora="20:00", momento="cena")
+        propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        row = self.conn.execute("SELECT momento FROM comida WHERE person_id = 1").fetchone()
+        self.assertEqual(row["momento"], "cena")
+
+    def test_a_custom_momento_the_person_has_is_accepted(self):
+        self.conn.execute(
+            "INSERT INTO momento_comida (person_id, clave, desde_hora, hasta_hora, esperado, orden) "
+            "VALUES (1, 'brunch', 9, 12, 1, 1)")
+        self.conn.commit()
+        out = self._registrar(momento="brunch")
+        propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        row = self.conn.execute("SELECT momento FROM comida WHERE person_id = 1").fetchone()
+        self.assertEqual(row["momento"], "brunch")
+
+    def test_a_clave_the_person_does_not_have_is_refused_by_name(self):
+        with self.assertRaisesRegex(ToolError, "brunch"):
+            self._registrar(momento="brunch")
+
+    def test_undo_removes_the_row_with_its_momento(self):
+        out = self._registrar(momento="cena")
+        pid = out["propuesta_id"]
+        propuestas.aplicar(self.conn, 1, pid)
+        propuestas.deshacer(self.conn, 1, pid)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM comida WHERE person_id = 1").fetchone()[0], 0
+        )
 
 
 if __name__ == "__main__":

@@ -577,6 +577,19 @@ CREATE TABLE IF NOT EXISTS ajuste_agente (
     updated_at TEXT NOT NULL
 );
 
+-- BODY-HOGAR-ESCRIBE-1-W ruling 2: a person's own meal-moment windows -- a person with no rows
+-- reads the defaults (body/comidas.py's own DEFAULT_MOMENTOS), today's display rule as data. No
+-- screen writes this in this slice (BODY-MOMENTOS-AJUSTES-1, open follow-up).
+CREATE TABLE IF NOT EXISTS momento_comida (
+    person_id  INTEGER NOT NULL REFERENCES person(id),
+    clave      TEXT NOT NULL CHECK (clave = lower(clave) AND clave NOT GLOB '*[^a-z0-9_]*'),
+    desde_hora INTEGER NOT NULL CHECK (desde_hora BETWEEN 0 AND 24),
+    hasta_hora INTEGER NOT NULL CHECK (hasta_hora BETWEEN 0 AND 24),
+    esperado   INTEGER NOT NULL CHECK (esperado IN (0, 1)),
+    orden      INTEGER NOT NULL,
+    PRIMARY KEY (person_id, clave)
+);
+
 -- Conversations with Body's assistant (wave 7, stage two: BODY-ASISTENTE-PROVEEDOR-1).
 -- `origen` (BODY-MCP-LOCAL-1): NULL for one started in Body's own chat panel, 'mcp' for one the
 -- local MCP server (body/mcp.py) started -- so the panel can label its proposal cards "from your
@@ -788,7 +801,10 @@ CREATE TABLE IF NOT EXISTS comida (
     ts_local    TEXT,
     descripcion TEXT,
     created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
+    updated_at  TEXT NOT NULL,
+    -- BODY-HOGAR-ESCRIBE-1-W ruling 3: the clave the person named this meal's own moment, if any --
+    -- nullable, additive; NULL means "derive it from ts_local", like before this column existed.
+    momento     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_comida_person_dia ON comida(person_id, day);
 
@@ -1360,6 +1376,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
     icols = {r[1] for r in conn.execute("PRAGMA table_info(ingesta)")}
     if icols and "comida_id" not in icols:
         conn.execute("ALTER TABLE ingesta ADD COLUMN comida_id INTEGER REFERENCES comida(id)")
+    # BODY-HOGAR-ESCRIBE-1-W ruling 3: a plain nullable ADD COLUMN, like comida_id above -- every
+    # existing comida row reads as momento NULL ("derive it from ts_local"), never backfilled.
+    comcols = {r[1] for r in conn.execute("PRAGMA table_info(comida)")}
+    if comcols and "momento" not in comcols:
+        conn.execute("ALTER TABLE comida ADD COLUMN momento TEXT")
     # BODY-LESION-ZONA-1 ruling 1: a plain nullable ADD COLUMN, like comida_id above -- every
     # existing period reads as zonas IS NULL ("no part named"), no data step.
     pecols = {r[1] for r in conn.execute("PRAGMA table_info(period)")}
@@ -3162,14 +3183,17 @@ def borrar_nutrient_target(conn: sqlite3.Connection, person_id: int, metric_key:
 # daily_metric exactly like a standalone intake entry does.
 
 def _crear_comida_tx(conn: sqlite3.Connection, person_id: int, day: str, cantidades: list[dict],
-                      descripcion: str | None = None, ts_local: str | None = None) -> int:
+                      descripcion: str | None = None, ts_local: str | None = None,
+                      momento: str | None = None) -> int:
     """`crear_comida`'s own body, without its own `with conn:` -- for a caller (body/comida_compartida.py)
-    that must write several rows of its own alongside this one, in ONE transaction."""
+    that must write several rows of its own alongside this one, in ONE transaction. `momento`
+    (BODY-HOGAR-ESCRIBE-1-W ruling 3): the clave the person named this meal's own moment, or None to
+    derive it from ts_local, as before this argument existed."""
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     cur = conn.execute(
-        "INSERT INTO comida (person_id, day, ts_local, descripcion, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (person_id, day, ts_local, descripcion, now, now),
+        "INSERT INTO comida (person_id, day, ts_local, descripcion, created_at, updated_at, momento) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (person_id, day, ts_local, descripcion, now, now, momento),
     )
     comida_id = cur.lastrowid
     for c in cantidades:
@@ -3184,12 +3208,13 @@ def _crear_comida_tx(conn: sqlite3.Connection, person_id: int, day: str, cantida
 
 
 def crear_comida(conn: sqlite3.Connection, person_id: int, day: str, cantidades: list[dict],
-                  descripcion: str | None = None, ts_local: str | None = None) -> int:
+                  descripcion: str | None = None, ts_local: str | None = None,
+                  momento: str | None = None) -> int:
     """`cantidades`: a list of {metric_key, amount, estimado}, already validated by the caller
     (herramientas._registrar_comida) -- one per key, amount > 0. Writes the `comida` row and every
     child `ingesta` row in one transaction, recalculating each touched key's day total."""
     with conn:
-        return _crear_comida_tx(conn, person_id, day, cantidades, descripcion, ts_local)
+        return _crear_comida_tx(conn, person_id, day, cantidades, descripcion, ts_local, momento)
 
 
 def _borrar_comida_tx(conn: sqlite3.Connection, person_id: int, comida_id: int) -> None:

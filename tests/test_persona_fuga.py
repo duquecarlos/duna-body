@@ -295,6 +295,14 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
     db.crear_comida(conn, person_id, DAYS[-1], [{"metric_key": "kcal", "amount": 500.0, "estimado": True}],
                      descripcion=f"ZZ{tag}-COMIDA")
 
+    # BODY-HOGAR-ESCRIBE-1-W: momento_comida is person-owned (its own person_id column, same census
+    # treatment as turno_fc/recuperacion_actividad above) -- no marker needed, the census only
+    # checks export/delete-all coverage, and its columns carry no free text.
+    conn.execute(
+        "INSERT INTO momento_comida (person_id, clave, desde_hora, hasta_hora, esperado, orden) "
+        "VALUES (?, 'desayuno', 5, 11, 1, 1)", (person_id,),
+    )
+
     # BODY-PERIODO-1: period is person-keyed and, through leer_dia's new `periodos` list, has its
     # FIRST reader this slice -- same treatment as ingesta above, not the route-only active list
     # (the screens that will show it are a separate, later slice).

@@ -1229,5 +1229,45 @@ class PlanSesionNotaExportDeleteTest(unittest.TestCase):
         )
 
 
+class MomentoComidaExportDeleteTest(unittest.TestCase):
+    """BODY-HOGAR-ESCRIBE-1-W ruling 2/6: a person's own meal-moment settings are fully exported and
+    deleted -- the same FULLY_HANDLED_TABLES membership ajuste_agente already has."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "momento_comida.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+        self.conn.execute(
+            "INSERT INTO momento_comida (person_id, clave, desde_hora, hasta_hora, esperado, orden) "
+            "VALUES (1, 'brunch', 9, 12, 1, 1)"
+        )
+        self.conn.commit()
+
+    def test_is_a_fully_handled_table(self):
+        self.assertIn("momento_comida", privacidad.FULLY_HANDLED_TABLES)
+
+    def test_export_includes_the_row(self):
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(len(data["momentos_comida"]), 1)
+        row = data["momentos_comida"][0]
+        self.assertEqual(row["clave"], "brunch")
+        self.assertEqual((row["desde_hora"], row["hasta_hora"], row["esperado"], row["orden"]), (9, 12, 1, 1))
+
+    def test_export_of_another_person_sees_nothing(self):
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 2)
+        self.assertEqual(data["momentos_comida"], [])
+
+    def test_delete_all_removes_the_row(self):
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM momento_comida WHERE person_id = 1").fetchone()[0], 0
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
