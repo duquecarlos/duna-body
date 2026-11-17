@@ -25210,3 +25210,102 @@ ever, from here on.
 (`tests.test_host_autoactualizar tests.test_host_deploy tests.test_deploy_host`): `Ran 117 tests ...
 OK`.
 
+## BODY-HOGAR-METAS-INGESTA-1
+
+Hub «Para productos» from Hogar, 2026-11-17 (`hit_01m7m260nxvpnm6qfk81gbtbxy`, ref
+`HOGAR-COCINA-IDEAS-1`, targets body only): "Hogar's meal ideas need the person's own intake goal to
+say how much protein is still missing today. Ask: add 'metas' to GET /api/hogar/manana [...] from
+goal WHERE kind='metric' AND status='active' AND metric_key IN (suma_ingesta keys). Empty list when
+none, never omitted. Please confirm target_value for protein_g is grams per day. Additive to
+hogar-feed-v1. Hogar side is ready (ideas.meta_de)."
+
+**What the orchestrator measured:** Body does NOT keep a daily intake target in `goal`. It keeps it
+in `nutrient_target` (`body/db.py:904-914`: person_id, metric_key, start_day, kind IN ('absolute',
+'per_kg', 'off'), amount, sentido IN ('al_menos', 'como_maximo')), and the one resolver every screen
+already uses is `nutriente_objetivo.estado_del_dia(conn, person_id, day)` (`body/
+nutriente_objetivo.py:115`), which returns, per metric with a live target, `{total, n, objetivo:
+{kind, amount, sentido, objetivo (resolved in the metric's unit, None with falta_peso), start_day,
+falta_peso}, restante}` -- `per_kg` resolved against the person's latest `body_weight_kg` within
+`PESO_DIAS_VENTANA` days, an honest gap without one; `restante` floored at 0 for `al_menos`, may go
+negative for `como_maximo`. `protein_g`'s unit is `'g'` (`body/db.py:1095`) and its aggregation is
+`suma_ingesta`, so a resolved target is grams per day -- confirming Hogar's own question.
+
+**Ruling 1, `metas` on `manana` (`body/hogar_feed.py:163-191, 194-210`):** `hogar_feed.manana`
+gains a sixth key, `metas`: a list, one item per metric with a live target on `dia` (exactly the
+keys `nutriente_objetivo.estado_del_dia` returns), ordered by `metric_key`, `[]` when none -- never
+omitted, never null. `_metas` (`:163`) builds each item from `estado_del_dia`'s own output and
+nothing else, plus the unit read from `metric_def.unit`. `_metric_defs` (`:30-35`) is a new helper,
+one query (`key, kind, unit`), shared by `_figuras` (its own `kind`, unchanged behaviour) and
+`_metas` (its `unit`) so `manana`'s metric_def read stays the single one it always was -- no new SQL
+for the unit lookup. Never a second computation of the target: Hogar's own guessed shape (`goal_id`,
+`direction`, `target_value`, `deadline`) does not exist in Body, and a second reading of the target
+would drift from what Today and Día show; Body computes `restante` so Hogar never re-derives
+`per_kg` or the floor rule.
+
+Item shape, verbatim as committed:
+
+```
+{"metric_key": str, "unidad": str, "sentido": "al_menos"|"como_maximo", "kind": "absolute"|"per_kg",
+ "amount": float, "objetivo": float|null, "falta_peso": bool, "desde": "YYYY-MM-DD", "total": float,
+ "registros": int, "restante": float|null}
+```
+
+`amount` is the stored figure (grams for `absolute`, grams per kg for `per_kg`); `objetivo` is the
+resolved per-day target in `unidad` (null with `falta_peso` true); `desde` is the target's own
+`start_day`; `total`/`registros` are `estado_del_dia`'s own `total`/`n`; `restante` is its own
+`restante` verbatim. A metric whose latest target is `'off'` never appears -- `estado_del_dia`
+already skips it.
+
+**Ruling 2, the contract (`docs/contracts/hogar-feed-v1.md`):** the `manana` example gained a
+`metas` array (invented numbers, one `per_kg` protein_g item and one `como_maximo` caffeine_mg item
+over its limit) and a 24-line bullet documenting every field above: that `metas` comes from Body's
+own daily intake targets (Ajustes' "Metas diarias" card, the assistant's own
+`proponer_objetivo_nutriente`), that a resolved `protein_g` target is GRAMS PER DAY, that a `per_kg`
+target with no recent weight gives `objetivo: null, falta_peso: true` ("sin peso reciente", never a
+guess), and that `restante` floors at 0 for `al_menos` and may go negative for `como_maximo`. "Still
+v1" gained one line naming `metas` as additive.
+
+**Ruling 3, cost (measured, no ceiling change needed):** `tests/test_rendimiento.py`'s own
+`/api/hogar/manana` ceiling (3) did NOT fail -- that sweep calls every GET route with no
+`Authorization` header, so the device-key route 404s before touching `hogar_feed` at all, the same
+reason its sibling Hogar routes already carry a ceiling of 3 (confirmed green,
+`tests.test_rendimiento`: `Ran 7 tests ... OK`). Measured instead with real device-key auth
+(scratch script, numbers below are query COUNTS, never a health figure): the route cost 19
+statements with no live target (18 before this slice, +1 for `_metas`'s own `_vigentes` read that
+returns early), 21 with one absolute target (+3: `_vigentes`, the batched `totales`, the batched
+`conteos` -- `estado_del_dia`'s own fixed cost, BODY-RENDIMIENTO-1's own per-route ceiling reason),
+and 22 once any live target is `kind = 'per_kg'` (+1 more for the one shared `body_weight_kg`
+lookup) -- each fixed regardless of how many metrics carry a target: 1 absolute target and 3
+absolute targets both cost exactly 21 statements (measured via the real route, confirmed again
+inside `tests/test_hogar_feed.py`'s own `MetasTest.test_cost_does_not_grow_with_the_number_of_
+targets`, which traces `self.conn` directly since `tests/_rutas.py`'s `contar_sql` only traces a
+connection opened after it starts).
+
+**Tests (`tests/test_hogar_feed.py`, new `MetasTest`, 11 tests, `:186-316`):** `test_
+empty_list_when_no_targets`, `test_key_always_present_even_with_no_targets`, `test_absolute_
+al_menos_with_two_intake_entries` (total/registros/restante from two `registrar_ingesta` rows),
+`test_per_kg_with_a_recent_weight_is_resolved`, `test_per_kg_without_a_recent_weight_is_an_
+honest_gap` (`objetivo: null, falta_peso: true, restante: null`), `test_como_maximo_over_the_
+limit_is_a_negative_restante`, `test_an_off_target_never_appears`, `test_a_target_starting_
+after_dia_never_appears`, `test_another_persons_targets_never_present`, `test_ordered_by_
+metric_key`, `test_cost_does_not_grow_with_the_number_of_targets` (ruling 3's own proof, one
+target vs three). `MananaTest.test_four_old_keys_unchanged_with_turnos_present`'s key-set
+assertion widened to include `metas`. `tests/test_persona_fuga.py` needed no change: its
+`_seed_persona`-style fixture already seeds `nutrient_target` per person (BODY-NUTRIENTE-
+OBJETIVO-1's own earlier addition, `:284-289`) with a numeric `amount` that differs by tag, never
+a marker string its leak-check scans for, and `estado_del_dia`'s own `_vigentes` query already
+scopes by `person_id` -- re-ran green unchanged (`tests.test_persona_fuga`: `Ran 12 tests ... OK`).
+
+**Commits:** `0393eee` (`body/hogar_feed.py`, `tests/test_hogar_feed.py` -- ruling 1 and ruling 3's
+test), `78f2986` (`docs/contracts/hogar-feed-v1.md` -- ruling 2).
+
+**Gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, ten sequential alphabetical
+chunks of ~20 dotted modules each, all green: `381+444+379+420+521+522+485+308+531+188 = 4179`.
+Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted without running): `4179` --
+exact match (4168 before this slice + 11 new in `MetasTest`).
+
+**No schema change, no cross-repo contract break, no customer-facing bytes** (this is a JSON wire
+read only by Hogar's own device key, additive to `hogar-feed-v1` -- merge policy A's three
+conditions all clear).
+
