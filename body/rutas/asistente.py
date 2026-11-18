@@ -855,6 +855,35 @@ def _tarjeta_importar_desplazamiento(t: T, defs: dict, despues: dict, antes_json
     return None, despues_txt, None
 
 
+# BODY-DESPERTAR-REAL-4 ruling 2: despertar_real._eventos' own three source names
+# (body/despertar_real.py), each a plain noun -- never the event's own content (never a meal's
+# words, a check-in's mood, an activity's type).
+_FUENTE_EVIDENCIA_KEYS = {
+    "comida": "asistente.propuesta.despertar_fuente.comida",
+    "checkin": "asistente.propuesta.despertar_fuente.checkin",
+    "actividad": "asistente.propuesta.despertar_fuente.actividad",
+}
+
+
+def _tarjeta_corregir_despertar(t: T, defs: dict, despues: dict, antes_json: dict | None, conn,
+                                 person_id: int) -> tuple:
+    """BODY-DESPERTAR-REAL-4 ruling 2: the card says in plain words what will change, Garmin's own
+    recorded end alongside it -- Garmin's own row is never edited, this is Body's own correction
+    beside it. One more line naming the evidence by source, only when despertar_real.estimar found
+    any event evidence for that day (`despues["evidencia"]`, stored on the proposal itself)."""
+    hora = despues["hora_local"]
+    fin = despues["sueno_fin"][11:16]
+    clave = ("asistente.propuesta.despertar_sueno_resumen" if despues["tipo"] == "sueno"
+             else "asistente.propuesta.despertar_levantado_resumen")
+    despues_txt = t(clave, hora=hora, fin=fin)
+    eventos = (despues.get("evidencia") or {}).get("eventos") or []
+    fuentes = sorted({e["fuente"] for e in eventos if e.get("fuente") in _FUENTE_EVIDENCIA_KEYS})
+    if fuentes:
+        texto_fuentes = ", ".join(t(_FUENTE_EVIDENCIA_KEYS[f]) for f in fuentes)
+        despues_txt += "\n" + t("asistente.propuesta.despertar_evidencia", fuentes=texto_fuentes)
+    return None, despues_txt, None
+
+
 # One card builder per action (BODY-PROPUESTAS-TABLA-1), keyed exactly like body/agente/
 # propuestas.py's TABLA and body/agente/herramientas.py's `propuesta`-kind tools
 # (tests/test_propuestas_tabla.py enforces the three sets match). Each builder returns
@@ -891,6 +920,7 @@ TARJETAS = {
     "anotar_sesion": _tarjeta_anotar_sesion,
     "importar_desplazamiento": _tarjeta_importar_desplazamiento,
     "proponer_practica": _tarjeta_proponer_practica,
+    "corregir_despertar": _tarjeta_corregir_despertar,
 }
 
 

@@ -103,7 +103,8 @@ _PROPUESTA_AGENTE_COLUMNS = """
                          'registrar_comida', 'corregir_comida', 'registrar_checkin', 'descartar_series',
                          'separar_sesion', 'unir_sesiones', 'proponer_objetivo_nutriente',
                          'proponer_plan', 'corregir_meta_plan', 'ampliar_plan', 'anotar_sesion',
-                         'corregir_entreno', 'importar_desplazamiento', 'proponer_practica')),
+                         'corregir_entreno', 'importar_desplazamiento', 'proponer_practica',
+                         'corregir_despertar')),
     objetivo_id     INTEGER REFERENCES goal(id),
     antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
     despues_json    TEXT NOT NULL CHECK (json_valid(despues_json)),
@@ -1505,6 +1506,24 @@ def _migrate(conn: sqlite3.Connection) -> None:
     hcols = {r[1] for r in conn.execute("PRAGMA table_info(habit)")}
     if hcols and "practica_id" not in hcols:
         conn.execute("ALTER TABLE habit ADD COLUMN practica_id INTEGER REFERENCES practica(id)")
+    # BODY-DESPERTAR-REAL-4 ruling 1 (ORCH-CARLOS-DELEGATES-TIER-1-1, Carlos's own ruling relayed
+    # BODY-DESPERTAR-REAL-RULING): the person's own correction to one night, beside Garmin's own
+    # sleep_session row, never a sibling column on it (BODY-DESPERTAR-REAL-1-INV: save_day's own
+    # column-list INSERT OR REPLACE on sleep_session would blank a sibling column on the next
+    # sync). One row per (person_id, day), applied only with the person's own tap and undoable --
+    # the same guarded-CREATE convention as racha_piso above, additive, no schema_version.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS despertar_correccion ("
+        "id INTEGER PRIMARY KEY, "
+        "person_id INTEGER NOT NULL REFERENCES person(id), "
+        "day TEXT NOT NULL, "
+        "tipo TEXT NOT NULL CHECK (tipo IN ('sueno', 'levantado')), "
+        "hora_local TEXT NOT NULL, "
+        "modelo_version TEXT, "
+        "origen TEXT NOT NULL CHECK (origen IN ('persona', 'asistente')), "
+        "creada_en TEXT NOT NULL, "
+        "UNIQUE (person_id, day))"
+    )
 
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
@@ -1754,6 +1773,13 @@ def _propuesta_agente_needs_proponer_practica_rebuild(conn: sqlite3.Connection) 
     return row is not None and "proponer_practica" not in row[0]
 
 
+def _propuesta_agente_needs_corregir_despertar_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'propuesta_agente'"
+    ).fetchone()
+    return row is not None and "corregir_despertar" not in row[0]
+
+
 def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
@@ -1817,6 +1843,10 @@ def _migrate_propuestas(conn: sqlite3.Connection) -> None:
         _rebuild_propuesta_agente_table(conn)
     # BODY-HISTORIA-VIDA-2 ruling 3: a fifteenth widening (proponer_practica), same reusable rebuild.
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_proponer_practica_rebuild(conn):
+        _rebuild_propuesta_agente_table(conn)
+    # BODY-DESPERTAR-REAL-4 ruling 2 (ORCH-CARLOS-DELEGATES-TIER-1-1): a sixteenth widening
+    # (corregir_despertar), same reusable rebuild.
+    if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_corregir_despertar_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
 
 
@@ -2600,6 +2630,36 @@ def sueno_minuto_a_minuto(conn: sqlite3.Connection, person_id: int, day: str, zo
     if row is None:
         return {}
     return garmin_adapter.parse_sleep_series(json.loads(row["payload"]), zona)
+
+
+def despertar_correccion(conn: sqlite3.Connection, person_id: int, day: str) -> dict | None:
+    """BODY-DESPERTAR-REAL-4 ruling 1: this person's own correction for one day, read beside
+    Garmin's own sleep_session row (never merged into it). None for a day with no correction."""
+    row = conn.execute(
+        "SELECT tipo, hora_local, modelo_version, origen, creada_en FROM despertar_correccion "
+        "WHERE person_id = ? AND day = ?", (person_id, day),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def guardar_despertar_correccion(conn: sqlite3.Connection, person_id: int, day: str, tipo: str, hora_local: str,
+                                  modelo_version: str | None, origen: str) -> None:
+    """Replaces this day's own correction -- one row per (person_id, day), Garmin's own
+    sleep_session row untouched either way."""
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        conn.execute(
+            "INSERT INTO despertar_correccion (person_id, day, tipo, hora_local, modelo_version, origen, "
+            "creada_en) VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(person_id, day) DO UPDATE SET tipo = excluded.tipo, hora_local = excluded.hora_local, "
+            "modelo_version = excluded.modelo_version, origen = excluded.origen, creada_en = excluded.creada_en",
+            (person_id, day, tipo, hora_local, modelo_version, origen, now),
+        )
+
+
+def borrar_despertar_correccion(conn: sqlite3.Connection, person_id: int, day: str) -> None:
+    with conn:
+        conn.execute("DELETE FROM despertar_correccion WHERE person_id = ? AND day = ?", (person_id, day))
 
 
 def save_exercise_sets(conn: sqlite3.Connection, person_id: int, source: str, source_id: str, sets) -> None:

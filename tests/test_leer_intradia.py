@@ -179,6 +179,32 @@ class SleepWindowTest(unittest.TestCase):
         self.assertIsNone(out["sueno"])
 
 
+class CorreccionTest(unittest.TestCase):
+    """BODY-DESPERTAR-REAL-4 ruling 3: the day's own correction, shown next to Garmin's own sleep,
+    both labelled as which is which -- never a second source of truth for the sleep window."""
+
+    def test_correction_shown_next_to_garmin_sleep(self):
+        conn = _conn(self)
+        _sesion(conn, 1, DIA, "2026-10-04T23:00:00", f"{DIA}T06:30:00")
+        _guardar_sueno(conn, 1, DIA, hr=[(f"{DIA}T06:00:00", 58)])
+        db.guardar_despertar_correccion(conn, 1, DIA, "levantado", "07:00", "despertar-real-v1", "asistente")
+        conn.commit()
+        out = _ejecutar(conn, 1, desde="05:30", hasta="07:00")
+        self.assertIsNotNone(out["sueno"])
+        self.assertEqual(out["sueno"]["fin"], f"{DIA}T06:30:00")  # Garmin's own record, untouched
+        self.assertEqual(out["sueno"]["correccion"]["tipo"], "levantado")
+        self.assertEqual(out["sueno"]["correccion"]["hora_local"], "07:00")
+
+    def test_no_correction_leaves_the_key_absent(self):
+        conn = _conn(self)
+        _sesion(conn, 1, DIA, "2026-10-04T23:00:00", f"{DIA}T06:30:00")
+        _guardar_sueno(conn, 1, DIA, hr=[(f"{DIA}T06:00:00", 58)])
+        conn.commit()
+        out = _ejecutar(conn, 1, desde="05:30", hasta="07:00")
+        self.assertIsNotNone(out["sueno"])
+        self.assertNotIn("correccion", out["sueno"])
+
+
 class SinDatosTest(unittest.TestCase):
     def test_empty_window_says_watch_off_when_not_connected(self):
         conn = _conn(self)

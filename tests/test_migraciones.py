@@ -709,5 +709,163 @@ class PracticaFreshDbTest(unittest.TestCase):
         self.assertIsNotNone(idx)
 
 
+# BODY-DESPERTAR-REAL-4 ruling 2 (ORCH-CARLOS-DELEGATES-TIER-1-1): the sixteenth widening of
+# propuesta_agente.accion (corregir_despertar), through the SAME reusable rebuild -- this is
+# exactly today's shape, minus 'corregir_despertar', the same "old == current, minus the newest
+# value" convention every prior widening test in this file already follows.
+_OLD_PROPUESTA_AGENTE_COLUMNS_SIN_CORREGIR_DESPERTAR = """
+    id              INTEGER PRIMARY KEY,
+    person_id       INTEGER NOT NULL REFERENCES person(id),
+    conversacion_id INTEGER NOT NULL REFERENCES conversacion_agente(id),
+    accion          TEXT NOT NULL CHECK (accion IN
+                        ('proponer_meta', 'proponer_cambio_meta', 'proponer_confirmar_turnos', 'proponer_idioma',
+                         'planear_entreno', 'registrar_entreno', 'registrar_medida', 'marcar_habito',
+                         'proponer_experimento', 'marcar_experimento',
+                         'registrar_ingesta', 'corregir_ingesta', 'borrar_ingesta',
+                         'marcar_periodo', 'cerrar_periodo', 'corregir_periodo', 'borrar_periodo',
+                         'registrar_comida', 'corregir_comida', 'registrar_checkin', 'descartar_series',
+                         'separar_sesion', 'unir_sesiones', 'proponer_objetivo_nutriente',
+                         'proponer_plan', 'corregir_meta_plan', 'ampliar_plan', 'anotar_sesion',
+                         'corregir_entreno', 'importar_desplazamiento', 'proponer_practica')),
+    objetivo_id     INTEGER REFERENCES goal(id),
+    antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
+    despues_json    TEXT NOT NULL CHECK (json_valid(despues_json)),
+    estado          TEXT NOT NULL DEFAULT 'propuesta'
+                        CHECK (estado IN ('propuesta', 'aplicada', 'descartada', 'expirada', 'deshecha')),
+    creada_en       TEXT NOT NULL,
+    expira_en       TEXT NOT NULL,
+    resuelta_en     TEXT,
+    aplicada_via    TEXT CHECK (aplicada_via IS NULL OR aplicada_via IN ('mcp', 'hogar'))
+"""
+
+
+class PropuestaAgenteCorregirDespertarMigrationTest(unittest.TestCase):
+    """BODY-DESPERTAR-REAL-4 ruling 2: a database whose propuesta_agente predates
+    'corregir_despertar' gains the widening in one rebuild, keeping its existing rows byte-for-byte,
+    and then accepts a 'corregir_despertar' row."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        db.init(self.conn)
+        self.cid = agente_conversacion.crear(self.conn, 1)
+        self.conn.execute("PRAGMA foreign_keys = OFF")
+        self.conn.execute("DROP TABLE propuesta_agente")
+        self.conn.execute(
+            f"CREATE TABLE propuesta_agente ({_OLD_PROPUESTA_AGENTE_COLUMNS_SIN_CORREGIR_DESPERTAR})"
+        )
+        self.conn.execute(
+            "INSERT INTO propuesta_agente (person_id, conversacion_id, accion, despues_json, estado, "
+            "creada_en, expira_en) VALUES (1, ?, 'proponer_plan', '{}', 'aplicada', "
+            "'2026-11-18T00:00:00+00:00', '2026-11-18T00:10:00+00:00')",
+            (self.cid,),
+        )
+        self.conn.execute(
+            "INSERT INTO propuesta_agente (person_id, conversacion_id, accion, despues_json, estado, "
+            "creada_en, expira_en) VALUES (1, ?, 'proponer_practica', '{}', 'propuesta', "
+            "'2026-11-18T00:00:00+00:00', '2026-11-18T00:10:00+00:00')",
+            (self.cid,),
+        )
+        self.old_ids = [
+            r["id"] for r in self.conn.execute(
+                "SELECT id FROM propuesta_agente WHERE conversacion_id = ? ORDER BY id", (self.cid,)
+            ).fetchall()
+        ]
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.commit()
+
+    def test_migration_widens_accion_keeping_the_old_rows(self):
+        db.init(self.conn)
+        rows = self.conn.execute(
+            "SELECT id FROM propuesta_agente WHERE conversacion_id = ? ORDER BY id", (self.cid,)
+        ).fetchall()
+        self.assertEqual([r["id"] for r in rows], self.old_ids)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM propuesta_agente").fetchone()[0], 2)
+
+        insert_despertar = self.conn.execute(
+            "INSERT INTO propuesta_agente (person_id, conversacion_id, accion, despues_json, creada_en, "
+            "expira_en) VALUES (1, ?, 'corregir_despertar', '{}', '2026-11-18T00:00:00+00:00', "
+            "'2026-11-18T00:10:00+00:00')", (self.cid,),
+        )
+        self.conn.commit()
+        self.assertEqual(insert_despertar.rowcount, 1)
+
+    def test_migration_is_idempotent(self):
+        db.init(self.conn)
+        db.init(self.conn)
+        rows = self.conn.execute(
+            "SELECT id FROM propuesta_agente WHERE conversacion_id = ? ORDER BY id", (self.cid,)
+        ).fetchall()
+        self.assertEqual([r["id"] for r in rows], self.old_ids)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM propuesta_agente").fetchone()[0], 2)
+
+
+class PropuestaAgenteCorregirDespertarFreshDbTest(unittest.TestCase):
+    """A fresh database (built with the current _PROPUESTA_AGENTE_COLUMNS) accepts a
+    'corregir_despertar' row directly, with no rebuild needed."""
+
+    def test_fresh_database_accepts_corregir_despertar(self):
+        conn = _conn(self)
+        db.init(conn)
+        cid = agente_conversacion.crear(conn, 1)
+        insert_despertar = conn.execute(
+            "INSERT INTO propuesta_agente (person_id, conversacion_id, accion, despues_json, creada_en, "
+            "expira_en) VALUES (1, ?, 'corregir_despertar', '{}', '2026-11-18T00:00:00+00:00', "
+            "'2026-11-18T00:10:00+00:00')", (cid,),
+        )
+        conn.commit()
+        self.assertEqual(insert_despertar.rowcount, 1)
+
+
+class DespertarCorreccionTableMigrationTest(unittest.TestCase):
+    """BODY-DESPERTAR-REAL-4 ruling 1: a database built before despertar_correccion existed gains
+    the table on its next init(), additive, keeping every other table's row untouched; a fresh
+    database gets the exact same shape; running init() twice is a no-op either way."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        db.init(self.conn)
+        self.conn.execute("DROP TABLE despertar_correccion")
+        self.conn.execute(
+            "INSERT INTO sleep_session (person_id, day, start_local, end_local) VALUES "
+            "(1, '2026-11-10', '2026-11-09T23:00:00', '2026-11-10T06:00:00')"
+        )
+        self.conn.commit()
+
+    def test_migration_recreates_the_table_without_touching_others(self):
+        db.init(self.conn)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM despertar_correccion").fetchone()[0], 0)
+        row = self.conn.execute("SELECT * FROM sleep_session WHERE person_id = 1").fetchone()
+        self.assertEqual((row["day"], row["start_local"], row["end_local"]),
+                         ("2026-11-10", "2026-11-09T23:00:00", "2026-11-10T06:00:00"))
+
+    def test_migration_is_idempotent(self):
+        db.init(self.conn)
+        db.init(self.conn)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM despertar_correccion").fetchone()[0], 0)
+
+    def test_migrated_database_accepts_a_row_and_enforces_one_per_day(self):
+        db.init(self.conn)
+        self.conn.execute(
+            "INSERT INTO despertar_correccion (person_id, day, tipo, hora_local, origen, creada_en) "
+            "VALUES (1, '2026-11-10', 'levantado', '06:30', 'asistente', '2026-11-10T00:00:00+00:00')"
+        )
+        self.conn.commit()
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM despertar_correccion").fetchone()[0], 1)
+        with self.assertRaises(db.sqlite3.IntegrityError):
+            self.conn.execute(
+                "INSERT INTO despertar_correccion (person_id, day, tipo, hora_local, origen, creada_en) "
+                "VALUES (1, '2026-11-10', 'sueno', '06:15', 'persona', '2026-11-10T00:05:00+00:00')"
+            )
+
+
+class DespertarCorreccionFreshDbTest(unittest.TestCase):
+    """A fresh database already carries despertar_correccion -- no migration needed."""
+
+    def test_fresh_database_has_the_table(self):
+        conn = _conn(self)
+        db.init(conn)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM despertar_correccion").fetchone()[0], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

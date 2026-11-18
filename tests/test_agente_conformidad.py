@@ -47,11 +47,11 @@ def _actividad(conn, source: str, source_id: str, day: str, tipo: str = "strengt
 
 
 def _seed_todo(conn) -> dict:
-    """Every piece of demo data the 30 `propuesta` tools' valid arguments reference (BODY-HOGAR-
+    """Every piece of demo data the 31 `propuesta` tools' valid arguments reference (BODY-HOGAR-
     ESCRIBE-1: extended from 27 with anotar_sesion; BODY-CORREGIR-MEDIDA-ENTRENO-1-W: extended from
     28 with corregir_entreno; BODY-DESPLAZAMIENTO-ASISTENTE-1-W: extended from 29 with
-    importar_desplazamiento) -- real
-    production writers only (`goals`, `db.*`), never a hand-typed row for a table one of those
+    importar_desplazamiento; BODY-DESPERTAR-REAL-4: extended from 30 with corregir_despertar) --
+    real production writers only (`goals`, `db.*`), never a hand-typed row for a table one of those
     writers owns."""
     ids: dict = {}
 
@@ -99,6 +99,14 @@ def _seed_todo(conn) -> dict:
     _actividad(conn, "garmin", "a3", ids["dia_a3"])
     conn.commit()
     db.create_manual_session(conn, 1, ids["dia_a3"], f"{ids['dia_a3']}T08:00:00", "Sesión manual m3")
+
+    # corregir_despertar: a Garmin sleep session to correct against.
+    ids["dia_sueno"] = "2020-04-20"
+    conn.execute(
+        "INSERT INTO sleep_session (person_id, day, start_local, end_local) VALUES "
+        "(1, ?, '2020-04-19T23:00:00', ?)", (ids["dia_sueno"], f"{ids['dia_sueno']}T06:00:00"),
+    )
+    conn.commit()
 
     ids["ingesta_a"] = db.registrar_ingesta(conn, 1, "2020-02-10", db.INGESTA_METRIC_KEYS[0], 30.0, True)
     ids["ingesta_b"] = db.registrar_ingesta(conn, 1, "2020-02-11", db.INGESTA_METRIC_KEYS[0], 40.0, True)
@@ -203,6 +211,7 @@ def _argumentos(ids: dict) -> dict:
         "importar_desplazamiento": {"contenido": _commute_csv()},
         "proponer_practica": {"titulo": "Práctica conformidad", "fuente": "actividad",
                                "regla": {"tipos": ["running"]}},
+        "corregir_despertar": {"fecha": ids["dia_sueno"], "tipo": "levantado", "hora": "07:00"},
     }
 
 
@@ -219,7 +228,7 @@ def _tabla_conteos(conn) -> dict[str, int]:
 
 class ConformidadTestCase(unittest.TestCase):
     """Shared setUp for every clause (2) test: one fresh database, the full demo seed, and the
-    30-tool arguments table built from it."""
+    31-tool arguments table built from it."""
 
     def setUp(self):
         self.conn, self.orig = _reset_db()

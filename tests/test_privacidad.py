@@ -499,6 +499,59 @@ class PropuestaExportDeleteTest(unittest.TestCase):
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM goal WHERE id = ?", (gid,)).fetchone()[0], 0)
 
 
+class DespertarCorreccionExportDeleteTest(unittest.TestCase):
+    """BODY-DESPERTAR-REAL-4 ruling 1: the person's own correction to one night is FULLY exported,
+    beside Garmin's own sleep, and fully deleted -- Garmin's own sleep_session row untouched
+    either way, invented demo content only."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "despertar.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+        self.conn.execute(
+            "INSERT INTO sleep_session (person_id, day, start_local, end_local) VALUES "
+            "(1, '2026-11-17', '2026-11-16T23:00:00', '2026-11-17T06:00:00')"
+        )
+        self.conn.commit()
+
+    def test_despertar_correccion_is_a_fully_handled_table(self):
+        self.assertIn("despertar_correccion", privacidad.FULLY_HANDLED_TABLES)
+
+    def test_export_includes_the_correction_beside_the_sleep(self):
+        db.guardar_despertar_correccion(self.conn, 1, "2026-11-17", "levantado", "06:45",
+                                        "despertar-real-v1", "asistente")
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(len(data["despertar_correcciones"]), 1)
+        row = data["despertar_correcciones"][0]
+        self.assertEqual((row["day"], row["tipo"], row["hora_local"], row["origen"]),
+                         ("2026-11-17", "levantado", "06:45", "asistente"))
+        self.assertEqual(len(data["sueno"]), 1)  # Garmin's own row, still there, untouched
+
+    def test_export_of_another_person_sees_nothing(self):
+        db.guardar_despertar_correccion(self.conn, 1, "2026-11-17", "levantado", "06:45",
+                                        "despertar-real-v1", "asistente")
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 2)
+        self.assertEqual(data["despertar_correcciones"], [])
+
+    def test_saving_the_correction_never_touches_garmins_sleep_row(self):
+        antes = dict(self.conn.execute("SELECT * FROM sleep_session WHERE person_id = 1").fetchone())
+        db.guardar_despertar_correccion(self.conn, 1, "2026-11-17", "levantado", "06:45",
+                                        "despertar-real-v1", "asistente")
+        despues = dict(self.conn.execute("SELECT * FROM sleep_session WHERE person_id = 1").fetchone())
+        self.assertEqual(antes, despues)
+
+    def test_delete_all_removes_the_correction(self):
+        db.guardar_despertar_correccion(self.conn, 1, "2026-11-17", "levantado", "06:45",
+                                        "despertar-real-v1", "asistente")
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM despertar_correccion").fetchone()[0], 0)
+
+
 class PeriodExportDeleteTest(unittest.TestCase):
     """BODY-PERIODO-1: a marked period (illness, travel, injury) is FULLY exported, with its own
     note, and fully deleted -- invented demo content only, no real figures."""

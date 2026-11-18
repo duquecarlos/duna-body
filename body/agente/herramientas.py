@@ -70,9 +70,10 @@ import threading
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .. import anatomia, catalogo_tendencias, comidas, compartir, cuenta, db, desplazamiento_import, enlaces, \
-    entreno_historial, errores, experimentos, fechas, garmin_adapter, garmin_cuenta, goals, history, horizonte, \
-    household, nutriente_objetivo, practicas, profile, pull, readiness, shift_import, turnos_costo, tutoriales
+from .. import anatomia, catalogo_tendencias, comidas, compartir, cuenta, db, despertar_real, \
+    desplazamiento_import, enlaces, entreno_historial, errores, experimentos, fechas, garmin_adapter, \
+    garmin_cuenta, goals, history, horizonte, household, nutriente_objetivo, practicas, profile, pull, \
+    readiness, shift_import, turnos_costo, tutoriales
 from ..i18n import LANGS, T
 from . import ajustes, conversacion as agente_conversacion, propuestas
 
@@ -157,6 +158,21 @@ _PARAM_LEER_INTRADIA = {
 # BODY-DESPERTAR-REAL-2 ruling 1: the three honest reasons an empty window can have -- never a
 # hand-typed list anywhere else (test_i18n_paridad.py's own dynamic-prefix census reads this one).
 MOTIVOS_INTRADIA_SIN_DATOS = ("fuera_de_alcance", "reloj_apagado", "no_traido")
+
+# BODY-DESPERTAR-REAL-4 ruling 2: the two things a person can correct -- never 'ninguna'
+# (despertar_real.PROPUESTA_TIPOS' own third value), which means "no correction to propose", not
+# something a person taps to apply.
+TIPOS_CORREGIR_DESPERTAR = ("sueno", "levantado")
+_PARAM_CORREGIR_DESPERTAR = {
+    "type": "object",
+    "properties": {
+        "fecha": {"type": "string", "format": "date"},
+        "tipo": {"type": "string", "enum": list(TIPOS_CORREGIR_DESPERTAR)},
+        "hora": {"type": "string"},
+    },
+    "required": ["fecha", "tipo", "hora"],
+    "additionalProperties": False,
+}
 
 DIRECTIONS = ("raise", "lower", "keep")
 
@@ -792,6 +808,14 @@ def _leer_dia(conn: sqlite3.Connection, person_id: int, day: str) -> dict:
         zonas = a.pop("zonas_limitadas", [])
         a["liviano_a_proposito"] = anatomia.texto_liviano_a_proposito(t, zonas) if zonas else None
     data["objetivos_nutriente"] = nutriente_objetivo.estado_del_dia(conn, person_id, day)
+    # BODY-DESPERTAR-REAL-4 ruling 3: the day's own correction, next to Garmin's own sleep --
+    # both shown, labelled as which is which. Only when Garmin's own sleep exists (a correction
+    # cannot exist without one, ruling 2's own refusal at creation), never a second source of
+    # truth for the sleep window itself.
+    if data["sleep"] is not None:
+        correccion = db.despertar_correccion(conn, person_id, day)
+        if correccion is not None:
+            data["sleep"] = {**data["sleep"], "correccion": correccion}
     return data
 
 
@@ -977,6 +1001,12 @@ def _leer_intradia(conn: sqlite3.Connection, person_id: int, fecha: str, desde: 
                           if (filtrado := [[ts[11:16], v] for ts, v in serie if _en_ventana(ts)])}
         if sueno_ventana:
             sueno = {"inicio": fila_sueno["start_local"], "fin": fila_sueno["end_local"], **sueno_ventana}
+    # BODY-DESPERTAR-REAL-4 ruling 3: the day's own correction, next to Garmin's own sleep window
+    # above -- both shown, labelled as which is which.
+    if sueno is not None:
+        correccion = db.despertar_correccion(conn, person_id, fecha)
+        if correccion is not None:
+            sueno["correccion"] = correccion
 
     out = {"dia": fecha, "desde": desde, "hasta": hasta, "zona": zona,
            "frecuencia_cardiaca": fc, "estres": estres, "sueno": sueno}
@@ -986,6 +1016,44 @@ def _leer_intradia(conn: sqlite3.Connection, person_id: int, fecha: str, desde: 
     if actualizacion_fallo:
         out["actualizacion"] = t("asistente.intradia.no_actualizado")
     return out
+
+
+def _corregir_despertar(conn: sqlite3.Connection, person_id: int, conversacion_id: int, fecha: str, tipo: str,
+                         hora: str) -> dict:
+    """Proposes Body's own correction to Garmin's own recorded sleep for one night (Carlos's own
+    ruling, dev-protocol DECISIONS.md BODY-DESPERTAR-REAL-RULING: the evidence decides, dozing
+    read as real sleep, quiet awake time in bed only bounds the get-up time, Garmin's own record
+    never edited). 'sueno' extends sleep to `hora`; 'levantado' names the actual get-up time.
+    Refuses a day with no Garmin sleep, an `hora` at or before Garmin's own recorded end, or past
+    despertar_real.MODELO['horizonte_horas'] -- the same horizon despertar_real.estimar itself
+    never looks past. The proposal carries despertar_real.estimar's own classification and
+    confidence for that day (BODY-DESPERTAR-REAL-4 ruling 2), for the card's own evidence line.
+    `antes` carries the day's own EXISTING correction, if any, so `deshacer` restores exactly
+    that row, or removes it when there was none."""
+    _dia_no_futuro(conn, person_id, fecha)
+    t = T(db.person(conn, person_id)["language"])
+    fila = conn.execute(
+        "SELECT end_local FROM sleep_session WHERE person_id = ? AND day = ?", (person_id, fecha),
+    ).fetchone()
+    if fila is None or fila["end_local"] is None:
+        raise ToolError(t("agente.error.despertar_sin_sueno"))
+    sueno_fin = fila["end_local"]
+    sleep_end_dt = experimentos._sin_offset(sueno_fin)
+    hora_t = _hora_local(hora)
+    hora_dt = datetime.combine(date.fromisoformat(fecha), hora_t)
+    if hora_dt <= sleep_end_dt:
+        raise ToolError(t("agente.error.despertar_hora_no_posterior"))
+    horizonte_fin_dt = sleep_end_dt + timedelta(hours=despertar_real.MODELO["horizonte_horas"])
+    if hora_dt > horizonte_fin_dt:
+        raise ToolError(t("agente.error.despertar_hora_fuera_horizonte"))
+    resultado = despertar_real.estimar(conn, person_id, fecha)
+    antes_fila = db.despertar_correccion(conn, person_id, fecha)
+    antes = {"existia": antes_fila is not None, **(antes_fila or {})}
+    despues = {"fecha": fecha, "tipo": tipo, "hora_local": hora_dt.strftime("%H:%M"),
+               "modelo_version": despertar_real.MODELO["version"], "sueno_fin": sueno_fin,
+               "confianza": resultado["confianza"], "evidencia": resultado["evidencia"]}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "corregir_despertar", despues, antes=antes)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
 def _leer_historia(conn: sqlite3.Connection, person_id: int) -> dict:
@@ -3224,6 +3292,17 @@ HERRAMIENTAS = [
                      "por día, si se cumplió -- nunca algo que la persona marca ella misma, eso es un hábito. "
                      "No la crea: registra la propuesta para que la persona la apruebe en el chat.",
      "parametros": _PARAM_PROPONER_PRACTICA, "funcion": _proponer_practica},
+    {"nombre": "corregir_despertar", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone corregir el sueño o la hora de despertar que registró el reloj, cuando la "
+                     "persona cuenta que en realidad seguía dormitando o que se levantó antes/después de lo "
+                     "que marcó Garmin. 'sueno' cuenta como sueño real hasta 'hora' (dormitó, no estaba "
+                     "despierta). 'levantado' dice que a esa hora ya estaba levantada (el rato en la cama no "
+                     "cuenta como sueño). 'hora' es local HH:MM, siempre posterior al fin de sueño que "
+                     "registró Garmin y dentro de las horas que ese mismo día todavía puede corregir -- nunca "
+                     "antes ni muchas horas después. No la aplica: registra la propuesta para que la persona "
+                     "la apruebe en el chat. Garmin nunca se modifica, esto es la corrección de la persona al "
+                     "lado de su dato.",
+     "parametros": _PARAM_CORREGIR_DESPERTAR, "funcion": _corregir_despertar},
 ]
 
 # BODY-ASISTENTE-CONFORMIDAD-1 ruling 2 (agent-capabilities-v1 section 5): the plan field is

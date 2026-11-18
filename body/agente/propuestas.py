@@ -895,6 +895,46 @@ def _deshacer_proponer_practica(conn: sqlite3.Connection, row: sqlite3.Row) -> N
             conn.execute("DELETE FROM practica WHERE id = ? AND person_id = ?", (pid, row["person_id"]))
 
 
+# -- corregir_despertar (BODY-DESPERTAR-REAL-4 ruling 2: this module calls
+# db.guardar_despertar_correccion/db.borrar_despertar_correccion directly, the one writer of
+# despertar_correccion -- Garmin's own sleep_session row is never touched either way) -----------
+
+def _drift_aplicar_corregir_despertar(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    antes = json.loads(row["antes_json"]) if row["antes_json"] is not None else {"existia": False}
+    despues = json.loads(row["despues_json"])
+    actual = db.despertar_correccion(conn, row["person_id"], despues["fecha"])
+    if not antes.get("existia"):
+        return actual is not None
+    return (actual is None or actual["tipo"] != antes.get("tipo")
+            or actual["hora_local"] != antes.get("hora_local")
+            or actual["modelo_version"] != antes.get("modelo_version") or actual["origen"] != antes.get("origen"))
+
+
+def _drift_deshacer_corregir_despertar(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    actual = db.despertar_correccion(conn, row["person_id"], despues["fecha"])
+    if actual is None:
+        return True
+    return (actual["tipo"] != despues["tipo"] or actual["hora_local"] != despues["hora_local"]
+            or actual["modelo_version"] != despues.get("modelo_version") or actual["origen"] != "asistente")
+
+
+def _aplicar_corregir_despertar(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    db.guardar_despertar_correccion(conn, row["person_id"], despues["fecha"], despues["tipo"],
+                                     despues["hora_local"], despues["modelo_version"], "asistente")
+
+
+def _deshacer_corregir_despertar(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    antes = json.loads(row["antes_json"]) if row["antes_json"] is not None else {"existia": False}
+    despues = json.loads(row["despues_json"])
+    if antes.get("existia"):
+        db.guardar_despertar_correccion(conn, row["person_id"], despues["fecha"], antes["tipo"],
+                                         antes["hora_local"], antes.get("modelo_version"), antes["origen"])
+    else:
+        db.borrar_despertar_correccion(conn, row["person_id"], despues["fecha"])
+
+
 # -- marcar_experimento (this module calls db.registrar_dia_experimento directly) ---------------
 
 def _drift_aplicar_marcar_experimento(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
@@ -1654,6 +1694,8 @@ TABLA: dict[str, _Accion] = {
                                         _aplicar_importar_desplazamiento, _deshacer_importar_desplazamiento),
     "proponer_practica": _Accion(_sin_drift, _drift_deshacer_proponer_practica,
                                   _aplicar_proponer_practica, _deshacer_proponer_practica),
+    "corregir_despertar": _Accion(_drift_aplicar_corregir_despertar, _drift_deshacer_corregir_despertar,
+                                   _aplicar_corregir_despertar, _deshacer_corregir_despertar),
 }
 
 SIN_DESHACER = tuple(nombre for nombre, entrada in TABLA.items() if not entrada.tiene_deshacer)

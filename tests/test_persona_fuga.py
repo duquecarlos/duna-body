@@ -190,6 +190,11 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
         "INSERT INTO sleep_session (person_id, day, start_local, end_local) VALUES (?, ?, ?, ?)",
         (person_id, DAYS[-1], f"{DAYS[-2]}T{sleep_start}:00", f"{DAYS[-1]}T{sleep_end}:00"),
     )
+    # BODY-DESPERTAR-REAL-4 ruling 1: despertar_correccion is person-owned (its own person_id
+    # column, same census treatment as sleep_session above) -- no marker needed, the census only
+    # checks export/delete-all coverage, and tipo/origen are both CHECK-constrained enums.
+    db.guardar_despertar_correccion(conn, person_id, DAYS[-1], "levantado",
+                                     "06:45" if tag == "A" else "07:50", "despertar-real-v1", "asistente")
     conn.execute(
         "INSERT INTO shift (person_id, day, kind, code, start_local, end_local, source) "
         "VALUES (?, ?, 'night', ?, ?, ?, 'manual')",
