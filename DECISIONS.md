@@ -28211,3 +28211,89 @@ proven, branch tree == merge tree == `7b6fc7beff9ec003bce1bf15a429539a8c7148f3`)
 (`tests.test_practicas_web tests.test_goals_web tests.test_metas_semana_tira tests.test_i18n_paridad`):
 `Ran 79 tests ... OK`.
 
+## BODY-INSTALL-DESDE-VIVO-1
+
+**The incident (2026-11-17):** the installer was run from the LIVE tree (`body-app-live`, a linked
+worktree that BODY-LIVE-CHECKOUT-1's installer itself creates, detached at `main`) instead of from
+`body-app`. `scripts/install-daily-sync.ps1:32` takes `$repo = Split-Path $PSScriptRoot -Parent`, so
+`$repo` became the live tree: `$py`/`$pyw` pointed at a `.venv` that does not exist there, every
+scheduled task was registered on that missing interpreter, and `$LiveDir` defaulted to `"$repo-live"`,
+so a second worktree `body-app-live-live` was created. Nothing refused. The preamble already measured
+worktree identity for `$LiveDir` (`git rev-parse --git-common-dir`) but never for `$repo` itself.
+
+**The rulings (Tier 2, quality; "anything off the normal flow raises a flag"):**
+
+1. Before anything else runs -- before `$LiveDir` is defaulted, before any `git worktree add`, before
+   any `Register-ScheduledTask` -- the installer checks that `$repo` is the MAIN working tree of its
+   repository: `git -C $repo rev-parse --git-dir` and `--git-common-dir`, both resolved to full paths,
+   must be the same directory; if they differ, it prints one line in Spanish naming the main tree's
+   path (the common dir's parent) and the exact command to run instead, and `exit 1`, registering
+   nothing.
+2. Right after, it checks that `$py` exists; if not, one line naming the missing interpreter path and
+   `exit 1` -- a scheduled task is never registered on an interpreter that is not there.
+3. The messages follow the script's existing ASCII-Spanish style; no absolute personal path is written
+   into the script.
+
+**Built, file:line:**
+
+* Ruling 1 -- `scripts/install-daily-sync.ps1:34-44`: `$repoGitDirRaw`/`$repoCommonDirRaw` from
+  `git -C $repo rev-parse --git-dir` / `--git-common-dir`, resolved to full paths with
+  `Join-Path`/`Resolve-Path`; a mismatch sets `$mainTree = Split-Path $repoCommonDirFull -Parent` and
+  exits. This sits before the `$LiveDir` default (`:46`), before `git -C $repo worktree add --detach`
+  (`:63` after the insertion) and before the first `Register-ScheduledTask` (hosted branch, well
+  after).
+* Ruling 2 -- `scripts/install-daily-sync.ps1:48-51`: `if (-not (Test-Path -LiteralPath $py))`, right
+  after `$py` is assigned (`:47`) and before `$pyw` (`:52`) -- also before the first
+  `Register-ScheduledTask`.
+
+**The exact messages as committed:**
+
+* Main-tree mismatch (`:42`): `"Este es el arbol vivo (una copia que el instalador mantiene), no el
+  repo. Corre el instalador desde: $mainTree\scripts\install-daily-sync.ps1"`
+* Missing interpreter (`:49`): `"No encuentro el interprete Python en $py. No registro nada."`
+
+Both are plain ASCII (no accents), matching the script's existing style (`:54`, `:60`, `:65` as they
+stood before this slice). No absolute personal path (`C:\Duna`, `C:\Users`) appears in either block --
+`$mainTree` and `$py` are runtime variables, never literals.
+
+**Tests added**, `tests/test_installer.py` (read the script as text, like the existing classes):
+`InstallerMainTreeGuardTest` (order before `$LiveDir` default, before `worktree add`, before the first
+`Register-ScheduledTask`; the mismatch block has `exit 1`, names `arbol vivo` and
+`install-daily-sync.ps1`; no absolute personal path), `InstallerPyExistsGuardTest` (same order/exit/no-
+personal-path checks for the `$py` guard), and `InstallerMainTreeVsWorktreeGitBehaviourTest` -- runs
+ONLY `git rev-parse --git-dir` / `--git-common-dir` against a throwaway repo and a
+`git worktree add --detach` of it under the test's own temp dir, proving the two values match on the
+main tree and differ on the worktree; it never invokes the script itself.
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run as 11
+sequential alphabetical chunks of dotted modules (20 modules each except the last, 209 modules total):
+
+1. `test_accesibilidad`..`test_baselines`: `Ran 385 tests in 63.104s` -- OK (skipped=1, expected
+   failures=1)
+2. `test_baselines_lote`..`test_despertar`: `Ran 429 tests in 250.176s` -- OK
+3. `test_desplazamiento_asistente`..`test_experimentos_esquema`: `Ran 402 tests in 73.896s` -- OK
+4. `test_experimentos_intradia`..`test_guardia_parches`: `Ran 372 tests in 415.269s` -- OK
+5. `test_habito_veces_1`..`test_hoy_escritorio`: `Ran 611 tests in 116.048s` -- OK
+6. `test_hoy_turno`..`test_metas_semana_tira`: `Ran 380 tests in 66.645s` -- OK
+7. `test_migraciones`..`test_plan_hoy`: `Ran 499 tests in 133.184s` -- OK
+8. `test_plan_pantalla`..`test_pull_intradia_experimentos`: `Ran 507 tests in 125.966s` -- OK
+9. `test_pull_relleno`..`test_sync_vivo`: `Ran 321 tests in 67.705s` -- OK
+10. `test_sync_vivo_estado`..`test_tutoriales`: `Ran 521 tests in 72.288s` -- OK
+11. `test_tutoriales_catalogo`..`test_web_entry`: `Ran 155 tests in 31.896s` -- OK
+
+Sum: 385+429+402+372+611+380+499+507+321+521+155 = **4582**. Collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`, taken before the
+chunked run): **4582**. Exact match -- the +12 over BODY-DIA-LETRA-1-R's last recorded total of 4570 is
+this slice's own 12 new test methods. No password, token, session secret, device key or health figure
+was read, printed or written anywhere in this slice's own work or the gate's own stdout (the
+`GarminConnect*Error`, `NotSignedIn`, `AttributeError`, `RuntimeError`, `dia vacio ... =ausente` and
+`weekly checks: 0 rows` lines are expected log output from tests exercising synthetic error/empty
+paths); no network call was made, and the installer itself was never run.
+
+**customer_bytes:** not changed -- this slice only edits a PowerShell installer script (an operator
+tool Carlos runs himself from a terminal), its tests and the ledger; no template, i18n string or route
+response changed.
+
+**Commits:** `6a6b3beafb620a7db1af85b9c16c16d16f9213ea` (step 1: the two guards +
+`tests/test_installer.py` additions).
+
