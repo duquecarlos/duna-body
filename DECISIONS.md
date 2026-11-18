@@ -29038,3 +29038,38 @@ BODY-DESPERTAR-REAL-1-INV and still outstanding, are unaffected by this one.
 `tests/test_rendimiento.py`'s cost comment, `tests/test_web_entry.py`'s route census) -- this ledger entry is
 the next commit. No merge commit: AWAITING_APPROVAL on the customer-bytes condition above.
 
+## BODY-DESPERTAR-REAL-7-M
+
+Lands BODY-DESPERTAR-REAL-7 above, after the orchestrator's own review in a real browser at 375px on the demo
+home (invented data), 2026-11-18. Reviewed on `/day/2026-11-09`: the line "Parece que te levantaste alrededor
+de las 07:00 (Garmin marcó 03:41)." renders in the sleep card under "Pulso durmiendo"; the curve SVG is
+313x100px inside the 375px viewport (document scrollWidth 375, no horizontal scroll), `aria-label` "Pulso
+desde las 03:11 hasta las 07:30", two labelled marks 03:41 and 07:00; "¿Corregir?" creates the proposal and
+the card shows "Te levantaste a las 07:00 (Garmin marcó tu despertar a las 03:41)" with Aplicar / Descartar;
+Aplicar shows "Garmin marcó el fin del sueño a las 03:41." + "Tu corrección: te levantaste a las 07:00" +
+Deshacer; Deshacer returns the line; no 'None' anywhere. Every customer string listed in BODY-DESPERTAR-REAL-7
+above (es/en) is accepted as committed, unchanged by this slice.
+
+**One defect found, fixed here:** a `<button class="taplink">` rendered as a grey filled block with underlined
+text -- the browser's default button chrome under `.taplink` (`body/static/body.css:179`, a rule written for
+`a.taplink`) -- visible on "¿Corregir?" (`body/templates/day.html:23`), and the same defect already existed on
+main's own "Descartar" buttons (`day.html:26`, `:104`; `today.html:256`) and the training "separar" button
+(`day.html:92`). **The fix, as committed** (`body/static/body.css:180`, Tier 2, no template change):
+
+    button.taplink{background:none;border:0;padding:0;color:inherit;font:inherit;cursor:pointer}
+
+No background, no border, no padding beyond the `.taplink` rule's own `min-height:44px`, inherited color and
+font, cursor pointer; `:focus-visible{outline:2px solid var(--focus);...}` (line 43, unscoped) already covers
+every element including a button, so the visible focus outline is kept untouched. `tests/test_despertar_pantalla.py`
+gains `TaplinkBotonTest`, asserting `body.css` carries this exact rule text.
+
+**Targeted tests, verbatim:** `.venv/Scripts/python.exe -m unittest tests.test_despertar_pantalla
+tests.test_i18n_paridad tests.test_web_entry` -> `Ran 27 tests in 4.275s` -- `OK`.
+
+**customer_bytes: approved: yes, by this spec.** The CSS-chrome fix changes how existing and new `.taplink`
+buttons render (no grey block, no border) but not their text, structure, or behaviour; it is the one defect
+this spec's approval covers, approved verbatim by `ORCH-CARLOS-DELEGATES-TIER-1-1`: "the one defect found is
+fixed here. Reversible, no schema change, nothing deployed. This spec approves the merge."
+
+**Commits:** `4524892` (the CSS fix and its test) -- this ledger entry is the next commit, then the merge.
+
