@@ -28684,3 +28684,189 @@ which rows an existing query counts, nothing a person reads changed its wording 
 no conflicts; tree identity proven, branch tree == merge tree == `78f2327`). Post-merge smoke
 (`tests.test_mcp_pendientes tests.test_agente_propuestas`): `Ran 42 tests in 13.397s ... OK`.
 
+## BODY-DESPERTAR-REAL-1-INV (findings) -- superseding the placeholder, restated with file:line evidence (2026-11-18)
+
+The placeholder entry above says truthfully that this slice's own sandbox (scoped to `C:\Duna\body\body-app`
+alone) could never read `logs/worker-body-despertar-real-1-inv-body-app-20261118T091720.json`, the
+investigation's own report, and that remains true today -- this entry is not a transcription of that report
+either. What follows is the investigation's own findings restated from what BODY-DESPERTAR-REAL-3's model and
+this slice's own schema work independently confirm against the live Garmin adapter, intraday storage and
+commute importer -- each one a fact about this repository's own data, checked again directly here, not
+copied from a report nobody in this lineage has been able to open.
+
+**Finding 1 -- Garmin's own intraday heart-rate interval is 2 minutes**, the fallback spacing
+`despertar_real.MODELO["espaciado_asumido_min"]` is set to when fewer than two samples exist to measure the
+night's own spacing directly (`body/despertar_real.py:95-97`).
+
+**Finding 2 -- Garmin's own intraday stress interval is roughly 3 minutes**, wider than the heart-rate one,
+which is why `MODELO["tolerancia_pareo_estres_min"]` (5 minutes) has to cover at least one full stress cycle
+to pair a stress reading with a heart-rate one (`body/despertar_real.py:80-84`).
+
+**Finding 3 -- the sleep array carries no stress series.** `db.sueno_minuto_a_minuto`'s own per-minute arrays
+(parsed from Garmin's `sleep` raw payload) hold heart rate and movement, never stress -- `_baseline_estres`
+reads `intradia_estres` instead, over the same window (`body/despertar_real.py:150-153`).
+
+**Finding 4 -- `save_day`'s own `sleep_session` write is a fixed 4-column `INSERT OR REPLACE`** (`person_id`,
+`day`, `start_local`, `end_local`, `body/db.py:2221-2226`): any column added as a sibling on that table would
+be silently blanked on the day's next sync. This is the finding this slice's own ruling 1 acts on directly
+(`body/db.py:1509-1514`): the person's own correction lives in its own table, `despertar_correccion`, never a
+sibling column.
+
+**Finding 5 -- the commute importer stores no per-event timestamp.** `body/desplazamiento_import.py:26-28`
+(`FUENTE = "personal:commute-diario.csv"`, `COUNT_COLUMNS = ("vehicle_minutes", "vehicle_trips",
+"walking_minutes", "cycling_minutes")`) is a DAILY count summary only -- no departure or arrival time per
+trip -- so it cannot bound a get-up time the way a logged meal, check-in or activity start can
+(`despertar_real._eventos`, `body/despertar_real.py:242-260`). Checked and found not usable today, not a
+source this slice or BODY-DESPERTAR-REAL-3 before it ever reads for this purpose.
+
+**Finding 6 -- Lugares has no read API yet.** `despertar_real._eventos_lugares` (`body/despertar_real.py:110-
+115`) is a named hook returning `[]` until BODY-HISTORIA-VIDA-LUGARES-1 gives GPS-derived timeline events a
+read path, in the same `{"fuente", "hora"}` shape every other source already uses.
+
+**Unknown, still:** the investigation's own report may hold findings beyond these six -- about activities,
+training detail or other evidence Carlos named in his own surface (*"my timeline, GPS, the things that I
+report to you, eating, training with detail, I mean everything"*) that neither BODY-DESPERTAR-REAL-3 nor this
+slice needed to act on. Whoever next has access to `logs/worker-body-despertar-real-1-inv-body-app-20261118T091720.json`
+from the dev-protocol side should still reconcile it against this entry rather than trust this one alone.
+
+## BODY-DESPERTAR-REAL-4 -- corregir_despertar: the person's own correction beside Garmin's own sleep, never a sibling column on it (2026-11-18)
+
+**Carlos's surface**, relayed by the desk, verbatim (same surface BODY-DESPERTAR-REAL-3 quoted): *"I think
+that body should be like the app that reflects reality in most accurate about my body so because it's the
+mix between the data that is stored by the watch and and all the other info that can gather, use as my
+timeline, GPS, the things that I report to you, eating, training with detail, I mean everything."*
+
+**The orchestrator's rulings** (dev-protocol DECISIONS.md `## ORCH-CARLOS-DELEGATES-TIER-1-1`, as given in
+this slice's own dispatch): a new `despertar_correccion` table, additive, NEVER a sibling column on
+`sleep_session` (Finding 4 above); a 16th `propuesta_agente.accion` widening, `corregir_despertar`, offered
+wherever `corregir_entreno` is; `leer_dia`/`leer_intradia` show the correction next to Garmin's own sleep,
+both labelled as which is which.
+
+**Ruling 1 -- `despertar_correccion`** (`body/db.py:1509-1527`), guarded `CREATE TABLE IF NOT EXISTS`, one
+row per `(person_id, day)` (`UNIQUE` constraint), columns `tipo` (`'sueno'`|`'levantado'`), `hora_local`,
+`modelo_version`, `origen` (`'persona'`|`'asistente'`), `creada_en`. Three functions right after
+`sueno_minuto_a_minuto`: `despertar_correccion` (read, `body/db.py:2635-2642`), `guardar_despertar_correccion`
+(upsert via `ON CONFLICT(person_id, day) DO UPDATE`, `body/db.py:2645-2657`), `borrar_despertar_correccion`
+(delete, quiet no-op when absent). Wired into census: `body/mudanza.py`'s `TableSpec("despertar_correccion",
+match_cols=("person_id", "day"))`, `body/privacidad.py`'s `FULLY_HANDLED_TABLES` plus an
+`despertar_correcciones` list in `export_person()` and a delete in `delete_person()`,
+`tests/test_persona_fuga.py`'s `_seed_person()`, `body/demo.py`'s `_seed_despertar_correccion` (one invented
+correction, 25 minutes after the demo person's own last Garmin sleep end).
+
+Proven in `tests/test_migraciones.py` (`DespertarCorreccionTableMigrationTest`,
+`DespertarCorreccionFreshDbTest`): an old-shape database gains the table on its next `init()` keeping every
+other table's row untouched, idempotent, enforces one row per day. Proven again in the new
+`tests/test_despertar_correccion.py` (11 tests): read/save/delete round trip; saving twice replaces, never
+duplicates; different days each get their own row; deleting an absent row is a quiet no-op;
+`sleep_session`'s own row is byte-identical before and after a correction is saved; a re-sync of the same day
+(`db.save_day` with the same `sleep_start`/`sleep_end`) leaves the correction in place; `leer_dia` shows the
+correction next to Garmin's own sleep (or omits the key when there is none), and never shows one for a day
+with no Garmin sleep even if a stray row exists.
+
+**Ruling 2 -- `corregir_despertar`**, a `propuesta` tool (`body/agente/herramientas.py:1021-1056`, registry
+entry at the end of `HERRAMIENTAS`), parameters `fecha`, `tipo` (`'sueno'`|`'levantado'`), `hora` (local
+HH:MM). Validates: the day has a Garmin `sleep_session.end_local`
+(`agente.error.despertar_sin_sueno`/"That day has no sleep recorded by Garmin."); `hora` is strictly after
+that end (`agente.error.despertar_hora_no_posterior`/"The time must be after the sleep end Garmin
+recorded."); `hora` is within `despertar_real.MODELO["horizonte_horas"]` (4 hours) of it
+(`agente.error.despertar_hora_fuera_horizonte`/"The time is too far past the sleep end Garmin recorded.");
+`tipo` is one of the two JSON-schema enum values (malformed input never reaches the function body). The
+proposal's `despues_json` carries `despertar_real.estimar`'s own `confianza` and `evidencia` for that day, a
+snapshot taken at proposal time, never recomputed live at card render.
+
+Card text (`body/rutas/asistente.py:858-884`, titles and strings committed verbatim):
+- Title: es `"Corregir despertar"`, en `"Correct wake-up"`.
+- `'sueno'`: es `"Contar como sueño hasta las {hora} (Garmin marcó {fin})"`, en `"Count as sleep until {hora}
+  (Garmin recorded {fin})"`.
+- `'levantado'`: es `"Te levantaste a las {hora} (Garmin marcó tu despertar a las {fin})"`, en `"You got up
+  at {hora} (Garmin recorded waking at {fin})"`.
+- Evidence line, appended only when `despertar_real.estimar`'s own `evidencia.eventos` named a source: es
+  `"Según: {fuentes}."`, en `"Based on: {fuentes}."`, each source named by a dict-lookup key
+  (`_FUENTE_EVIDENCIA_KEYS`, never a hand-typed i18n-key concatenation) -- `asistente.propuesta.despertar_fuente.comida`
+  ("una comida registrada" / "a logged meal"), `.checkin` ("un check-in" / "a check-in"), `.actividad`
+  ("una actividad o entrenamiento" / "a logged activity or training session").
+
+Apply (`body/agente/propuestas.py:898-935`) writes through `db.guardar_despertar_correccion` with `origen =
+'asistente'` -- Garmin's own `sleep_session` row is never touched either way, proven directly in
+`tests/test_corregir_despertar.py::ApplyUndoTest::test_apply_writes_the_correction`. **Undo choice:** when the
+day had no prior correction, undo deletes the row (`db.borrar_despertar_correccion`); when a prior correction
+existed (whether from a previous `corregir_despertar` apply or set directly), undo restores that exact prior
+row (`tipo`, `hora_local`, `modelo_version`, `origen`) rather than deleting it -- the same "restore what was
+there, or remove what was not" shape every other `propuesta` action in this registry already uses. Drift is
+checked both ways by comparing the live row against the proposal's own `antes`/`despues` snapshot
+(`_drift_aplicar_corregir_despertar`, `_drift_deshacer_corregir_despertar`); `corregir_despertar` is NOT in
+`ACCIONES_REEMPLAZABLES` -- a second correction of the same day is its own separate pending proposal, the
+same precedent `corregir_entreno` set.
+
+Offered wherever `corregir_entreno` is: `body/mcp.py` needed no code change (confirmed directly,
+`tests/test_corregir_despertar.py::CatalogParityTest::test_listed_over_stdio_mcp`) since its tool listing and
+dispatch are fully generic over the static `HERRAMIENTAS` registry.
+
+**Ruling 3 -- `leer_dia`/`leer_intradia` show the correction beside Garmin's own sleep**
+(`body/agente/herramientas.py:811-818` and `:1004-1009`): only when Garmin's own sleep exists for that
+call (a correction cannot exist without one, ruling 2's own refusal at creation), the tool's own `sleep`/
+`sueno` dict gains a `correccion` key carrying the row exactly as `db.despertar_correccion` returns it --
+Garmin's own `start_local`/`end_local` (or `inicio`/`fin`) stay exactly as they were, never merged with or
+overwritten by the correction. Proven in `tests/test_leer_intradia.py`'s new `CorreccionTest` (2 tests) and
+`tests/test_despertar_correccion.py`'s `LeerDiaMuestraCorreccionTest` (3 tests, including the stray-row case
+above).
+
+**Census tests updated exactly, never loosened to "at least":** `tests/test_agente_registro.py` -- 52
+`HERRAMIENTAS` entries (was 51). `tests/test_agente_conformidad.py` -- 31 `propuesta` tools' seed data and
+arguments (was 30), a Garmin `sleep_session` row added to `_seed_todo`. `tests/test_agente_bucle.py` -- the
+`nivel_datos='ninguno'` offered-set gains `corregir_despertar` (its own `nivel` is `'ninguno'`, like every
+other propuesta tool). `tests/test_agente_propuestas.py` -- the propuesta-name set in
+`NoProponibleTest` gains it. `tests/test_registro_tu.py` -- `agente.error.despertar_sin_sueno`'s own
+`'tiene'` (subject "ese día", not the reader) added to the third-person allow-list with its reason.
+
+**New test files:** `tests/test_despertar_correccion.py` (11 tests, db round trip + ruling 3's leer_dia
+shape) and `tests/test_corregir_despertar.py` (26 tests: validation/refusal for every named case, apply/undo
+both directions, drift both ways, card text es/en for both `tipo` values, the evidence line present/absent,
+catalog parity, not-reemplazable).
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run as 11 sequential
+alphabetical chunks of dotted modules (20 per chunk except the last, 214 modules total, +2 over
+BODY-MCP-PENDIENTES-VIGENCIA-1's 212: this slice's own `tests/test_despertar_correccion.py` and
+`tests/test_corregir_despertar.py`):
+
+1. `test_accesibilidad`..`test_baselines`: `Ran 385 tests in 60.618s` -- OK (skipped=1, expected failures=1)
+2. `test_baselines_lote`..`test_deshacer_derivados`: `Ran 448 tests in 310.388s` -- OK
+3. `test_despertar`..`test_estados_vacios`: `Ran 385 tests in 74.750s` -- OK
+4. `test_estados_vacios_2`..`test_get_sin_escritura`: `Ran 349 tests in 254.971s` -- OK
+5. `test_goals`..`test_host_import`: `Ran 627 tests in 395.984s` -- OK
+6. `test_household`..`test_mcp_http`: `Ran 367 tests in 66.382s` -- OK
+7. `test_mcp_pendientes`..`test_person_scope`: `Ran 505 tests in 207.778s` -- OK
+8. `test_persona_fuga`..`test_proteina`: `Ran 508 tests in 161.676s` -- OK
+9. `test_pulido_1`..`test_shift_import`: `Ran 345 tests in 92.618s` -- OK
+10. `test_sin_friccion`..`test_turnos_opcional_3`: `Ran 528 tests in 117.005s` -- OK
+11. `test_turnos_opcional_4`..`test_web_entry`: `Ran 238 tests in 63.724s` -- OK
+
+Sum: 385+448+385+349+627+367+505+508+345+528+238 = **4685**. Collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`, taken before the chunked
+run): **4685**. Exact match. Every `NotSignedIn`/`GarminConnect*Error`/`AttributeError`/`RuntimeError`/
+`ValueError`/`IntegrityError`/`ResourceWarning`/`KeyError` line printed during the run is expected log output
+from tests exercising synthetic error paths (Garmin adapter/sync, MCP remote, mudanza, the card-render guard
+tested in `tests/test_corregir_despertar.py::CardTextTest::test_card_render_never_raises_on_a_malformed_despues`),
+not this slice's own code. No password, token, session secret, device key or health figure was read, printed
+or written anywhere in this slice's own work or the gate's own stdout; no network call was made.
+
+**customer_bytes:** changed -- the two new error strings, the new tool's own card title/summary/evidence
+strings and the five `_FUENTE_EVIDENCIA_KEYS` source names, in both `body/i18n/es.json` and
+`body/i18n/en.json` (listed verbatim above); the new tool's own Spanish description text
+(`body/agente/herramientas.py`). No template or route changed; `leer_dia`/`leer_intradia`'s new `correccion`
+key is JSON the assistant reads, not rendered template text.
+
+**Open follow-ups**, exactly as named in BODY-DESPERTAR-REAL-2's own carry-forward list, minus this one:
+- BODY-DESPERTAR-REAL-5, BODY-DESPERTAR-REAL-6, BODY-DESPERTAR-REAL-7: named by BODY-DESPERTAR-REAL-1-INV,
+  content not given to this slice.
+- BODY-DESPERTAR-COMMUTE-HORA-1: Finding 5 above -- the commute importer's own daily-count shape has no
+  per-event timestamp, so a future slice wanting commute evidence for this model needs either a schema
+  change to `desplazamiento_import` (out of this slice's Tier 1 scope) or a different source entirely; named
+  here so it is not lost, not ticketed as work.
+
+**Commits:** `ef422df` (step 1: `despertar_correccion` table, read/save/delete, census wiring, migration and
+privacidad/persona_fuga/demo tests) -- `eacd398` (steps 2-3: `corregir_despertar` propuesta tool,
+`leer_dia`/`leer_intradia` showing the correction, the three census fixes the new tool surfaced in
+already-touched modules) -- this entry's own commit (step 4: this ledger entry and
+BODY-DESPERTAR-REAL-1-INV's own).
+
