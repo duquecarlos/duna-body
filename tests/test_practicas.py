@@ -373,6 +373,54 @@ class ContextoTest(unittest.TestCase):
         self.assertEqual(contexto["turnos"], {})  # no shift rows seeded -- an honest empty dict
 
 
+# ---- ruling 1 (BODY-HISTORIA-VIDA-2-R2): resumen() byte-identical to estado() -------------------
+
+class ResumenTest(unittest.TestCase):
+    """practicas.resumen()'s racha_actual/ultima_semana must be byte-identical to estado()'s own
+    racha_actual/semanas[-1] for the same practica -- on a home with several practices of every
+    fuente, including one with no data at all."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        base = date(2026, 10, 1)
+        self.dias = [(base + timedelta(i)).isoformat() for i in range(21)]
+        d = self.dias
+        for i, dia in enumerate(d):
+            if i % 7 < 5:
+                _activity(self.conn, 1, f"run-{i}", dia, type="running")
+            if i % 3 == 0:
+                db.set_metric(self.conn, dia, "steps", 9000, "garmin", 1)
+            else:
+                db.set_metric(self.conn, dia, "steps", 5000, "garmin", 1)
+            if i % 5 != 0:
+                _sleep(self.conn, 1, dia, f"{dia}T22:30:00", f"{dia}T06:00:00")
+        self.pid_actividad = practicas.crear(self.conn, 1, "Correr", "actividad", {"tipos": ["running"]})
+        self.pid_metrica = practicas.crear(self.conn, 1, "Pasos", "metrica_umbral",
+                                            {"metric_key": "steps", "op": ">=", "valor": 8000})
+        self.pid_sueno = practicas.crear(self.conn, 1, "Acostarse", "sueno_horario",
+                                          {"campo": "inicio", "op": "antes", "hora": "23:00"})
+        self.pid_sin_datos = practicas.crear(self.conn, 1, "HRV", "metrica_umbral",
+                                             {"metric_key": "hrv_last_night", "op": ">=", "valor": 50})
+        self.conn.commit()
+
+    def test_byte_identical_to_estado_for_every_fuente(self):
+        resumen_por_id = {p["id"]: p for p in practicas.resumen(self.conn, 1)}
+        for pid in (self.pid_actividad, self.pid_metrica, self.pid_sueno, self.pid_sin_datos):
+            e = practicas.estado(self.conn, 1, pid)
+            r = resumen_por_id[pid]
+            self.assertEqual(r["racha_actual"], e["racha_actual"], f"racha_actual differs for {pid}")
+            esperado_semana = e["semanas"][-1] if e["semanas"] else None
+            self.assertEqual(r["ultima_semana"], esperado_semana, f"ultima_semana differs for {pid}")
+
+    def test_no_data_practica_gives_none_for_both_fields(self):
+        resumen_por_id = {p["id"]: p for p in practicas.resumen(self.conn, 1)}
+        self.assertIsNone(resumen_por_id[self.pid_sin_datos]["racha_actual"])
+        self.assertIsNone(resumen_por_id[self.pid_sin_datos]["ultima_semana"])
+
+    def test_empty_for_a_person_with_no_active_practicas(self):
+        self.assertEqual(practicas.resumen(self.conn, 2), [])
+
+
 # ---- ruling 6: suggestions, 7 vs 8 weeks, omitted when already covered --------------------------
 
 class SugerenciasTest(unittest.TestCase):

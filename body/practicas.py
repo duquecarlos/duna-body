@@ -201,18 +201,11 @@ def _estados_de(desde: date, hasta: date, hecho: set[str], tiene_dato: set[str])
     return out
 
 
-def _calcular_actividad(conn, person_id: int, desde: date, hasta: date, regla: dict) -> dict[str, str]:
-    """"Has data": any Garmin daily_metric row OR any activity row (the watch was worn). "Hecho":
-    the linked-manual-half drop `history.training` applies (history.py:135-140) -- a linked pair
-    counts through its watch half -- then a matching `type` of at least `min_minutos`, if given."""
-    desde_s, hasta_s = desde.isoformat(), hasta.isoformat()
-    metric_days = {r["day"] for r in conn.execute(
-        "SELECT DISTINCT day FROM daily_metric WHERE person_id = ? AND source = 'garmin' "
-        "AND day BETWEEN ? AND ?", (person_id, desde_s, hasta_s))}
-    act_rows = conn.execute(
-        "SELECT day, type, duration_s, source, source_id, vinculo_manual FROM activity "
-        "WHERE person_id = ? AND day BETWEEN ? AND ?", (person_id, desde_s, hasta_s),
-    ).fetchall()
+def _estados_actividad(regla: dict, desde: date, hasta: date, metric_days: set[str],
+                        act_rows: list) -> dict[str, str]:
+    """Ruling 1 (BODY-HISTORIA-VIDA-2-R2): the pure compute half of `_calcular_actividad`, shared
+    with `resumen()` below, which fetches `metric_days`/`act_rows` ONCE for every active 'actividad'
+    practica together instead of once per practica."""
     vinculadas = {r["vinculo_manual"] for r in act_rows if r["vinculo_manual"]}
     tipos = set(regla["tipos"])
     min_minutos = regla.get("min_minutos")
@@ -230,16 +223,36 @@ def _calcular_actividad(conn, person_id: int, desde: date, hasta: date, regla: d
     return _estados_de(desde, hasta, hecho, metric_days | act_days)
 
 
+def _calcular_actividad(conn, person_id: int, desde: date, hasta: date, regla: dict) -> dict[str, str]:
+    """"Has data": any Garmin daily_metric row OR any activity row (the watch was worn). "Hecho":
+    the linked-manual-half drop `history.training` applies (history.py:135-140) -- a linked pair
+    counts through its watch half -- then a matching `type` of at least `min_minutos`, if given."""
+    desde_s, hasta_s = desde.isoformat(), hasta.isoformat()
+    metric_days = {r["day"] for r in conn.execute(
+        "SELECT DISTINCT day FROM daily_metric WHERE person_id = ? AND source = 'garmin' "
+        "AND day BETWEEN ? AND ?", (person_id, desde_s, hasta_s))}
+    act_rows = conn.execute(
+        "SELECT day, type, duration_s, source, source_id, vinculo_manual FROM activity "
+        "WHERE person_id = ? AND day BETWEEN ? AND ?", (person_id, desde_s, hasta_s),
+    ).fetchall()
+    return _estados_actividad(regla, desde, hasta, metric_days, act_rows)
+
+
+def _estados_metrica_umbral(regla: dict, desde: date, hasta: date, rows: list) -> dict[str, str]:
+    """Ruling 1's pure compute half of `_calcular_metrica_umbral`, shared with `resumen()`."""
+    op, valor = regla["op"], regla["valor"]
+    tiene_dato = {r["day"] for r in rows}
+    hecho = {r["day"] for r in rows if (r["value"] >= valor if op == ">=" else r["value"] <= valor)}
+    return _estados_de(desde, hasta, hecho, tiene_dato)
+
+
 def _calcular_metrica_umbral(conn, person_id: int, desde: date, hasta: date, regla: dict) -> dict[str, str]:
     """"Has data": a daily_metric row for `metric_key`, any source."""
     rows = conn.execute(
         "SELECT day, value FROM daily_metric WHERE person_id = ? AND metric_key = ? AND day BETWEEN ? AND ?",
         (person_id, regla["metric_key"], desde.isoformat(), hasta.isoformat()),
     ).fetchall()
-    op, valor = regla["op"], regla["valor"]
-    tiene_dato = {r["day"] for r in rows}
-    hecho = {r["day"] for r in rows if (r["value"] >= valor if op == ">=" else r["value"] <= valor)}
-    return _estados_de(desde, hasta, hecho, tiene_dato)
+    return _estados_metrica_umbral(regla, desde, hasta, rows)
 
 
 def _hora_a_minutos(hhmm: str) -> int:
@@ -254,24 +267,31 @@ def _campo_a_minutos(ts: str | None) -> int | None:
     return dt.hour * 60 + dt.minute
 
 
-def _calcular_sueno_horario(conn, person_id: int, desde: date, hasta: date, regla: dict) -> dict[str, str]:
-    """"Has data": a sleep_session row -- the wake day is the day, as stored (ruling 2)."""
-    col = "start_local" if regla["campo"] == "inicio" else "end_local"
-    rows = conn.execute(
-        f"SELECT day, {col} AS v FROM sleep_session WHERE person_id = ? AND day BETWEEN ? AND ?",
-        (person_id, desde.isoformat(), hasta.isoformat()),
-    ).fetchall()
+def _estados_sueno_horario(regla: dict, desde: date, hasta: date, rows: list) -> dict[str, str]:
+    """Ruling 1's pure compute half of `_calcular_sueno_horario`, shared with `resumen()`. `rows`
+    carries BOTH `start_local` and `end_local` (resumen() fetches once for every active
+    'sueno_horario' practica together, whichever `campo` each one's own regla picks)."""
+    campo = "start_local" if regla["campo"] == "inicio" else "end_local"
     limite = _hora_a_minutos(regla["hora"])
     op = regla["op"]
     tiene_dato = {r["day"] for r in rows}
     hecho: set[str] = set()
     for r in rows:
-        minutos = _campo_a_minutos(r["v"])
+        minutos = _campo_a_minutos(r[campo])
         if minutos is None:
             continue
         if (op == "antes" and minutos <= limite) or (op == "despues" and minutos >= limite):
             hecho.add(r["day"])
     return _estados_de(desde, hasta, hecho, tiene_dato)
+
+
+def _calcular_sueno_horario(conn, person_id: int, desde: date, hasta: date, regla: dict) -> dict[str, str]:
+    """"Has data": a sleep_session row -- the wake day is the day, as stored (ruling 2)."""
+    rows = conn.execute(
+        "SELECT day, start_local, end_local FROM sleep_session WHERE person_id = ? AND day BETWEEN ? AND ?",
+        (person_id, desde.isoformat(), hasta.isoformat()),
+    ).fetchall()
+    return _estados_sueno_horario(regla, desde, hasta, rows)
 
 
 _CALCULADORAS = {
@@ -460,6 +480,95 @@ def estado(conn: sqlite3.Connection, person_id: int, practica_id: int, desde: da
         "racha_actual": racha_actual, "racha_mas_larga": racha_mas_larga, "n_rachas": n_rachas,
         "temporadas": temporadas, "baseline": baseline, "modelo_version": MODELO["version"],
     }
+
+
+# ---- ruling 1 (BODY-HISTORIA-VIDA-2-R2, ORCH-CARLOS-DELEGATES-TIER-1-1): a batched summary -------
+
+def _primero_ultimo_de(dias: set[str]) -> tuple[date | None, date | None]:
+    if not dias:
+        return None, None
+    ordenados = sorted(dias)
+    return date.fromisoformat(ordenados[0]), date.fromisoformat(ordenados[-1])
+
+
+def resumen(conn: sqlite3.Connection, person_id: int) -> list[dict]:
+    """/history's own per-practice summary (`body/rutas/historial.py`'s `_practicas_resumen_ctx`):
+    for every active practice, its current streak and most recent week -- the SAME figures
+    `estado()["racha_actual"]` and `estado()["semanas"][-1]` give, but reading each SOURCE FAMILY
+    at MOST ONCE for all active practices together (activity rows once, daily_metric rows once per
+    distinct metric_key the active practices actually use, sleep rows once), then running the SAME
+    day-state calculators and the SAME run-detection helper (`_rachas_dia`/`_semanas`) as `estado()`
+    in Python. `estado()` itself -- the drill-down -- is untouched and still reads per practica,
+    scoped to that practica's own [desde, hasta]. This function's own statement count stays
+    constant whether the person tracks 1 practice or many of the same family (tests/
+    test_rendimiento.py's own guard); its racha_actual/ultima_semana are byte-identical to
+    estado()'s own racha_actual/semanas[-1] for the same practica (tests/test_practicas.py's own
+    guard)."""
+    activas = listar(conn, person_id)
+    if not activas:
+        return []
+
+    actividad_practicas = [p for p in activas if p["fuente"] == "actividad"]
+    datos_actividad = None
+    if actividad_practicas:
+        metric_days = {r["day"] for r in conn.execute(
+            "SELECT DISTINCT day FROM daily_metric WHERE person_id = ? AND source = 'garmin'", (person_id,))}
+        act_rows = conn.execute(
+            "SELECT day, type, duration_s, source, source_id, vinculo_manual FROM activity "
+            "WHERE person_id = ?", (person_id,),
+        ).fetchall()
+        datos_actividad = (metric_days, act_rows)
+
+    filas_por_metric_key: dict[str, list] = {}
+    for p in activas:
+        if p["fuente"] != "metrica_umbral":
+            continue
+        mk = p["regla"]["metric_key"]
+        if mk not in filas_por_metric_key:
+            filas_por_metric_key[mk] = conn.execute(
+                "SELECT day, value FROM daily_metric WHERE person_id = ? AND metric_key = ?",
+                (person_id, mk),
+            ).fetchall()
+
+    sueno_practicas = [p for p in activas if p["fuente"] == "sueno_horario"]
+    filas_sueno = None
+    if sueno_practicas:
+        filas_sueno = conn.execute(
+            "SELECT day, start_local, end_local FROM sleep_session WHERE person_id = ?", (person_id,),
+        ).fetchall()
+
+    out = []
+    for p in activas:
+        fuente, regla = p["fuente"], p["regla"]
+        if fuente == "actividad":
+            metric_days, act_rows = datos_actividad
+            primero, ultimo = _primero_ultimo_de(metric_days | {r["day"] for r in act_rows})
+        elif fuente == "metrica_umbral":
+            filas = filas_por_metric_key[regla["metric_key"]]
+            primero, ultimo = _primero_ultimo_de({r["day"] for r in filas})
+        else:
+            primero, ultimo = _primero_ultimo_de({r["day"] for r in filas_sueno})
+
+        if primero is None:
+            out.append({"id": p["id"], "titulo": p["titulo"], "meta_dias_semana": p["meta_dias_semana"],
+                        "racha_actual": None, "ultima_semana": None})
+            continue
+
+        dias_ordenados = _dias_rango(primero, ultimo)
+        if fuente == "actividad":
+            estados = _estados_actividad(regla, primero, ultimo, *datos_actividad)
+        elif fuente == "metrica_umbral":
+            estados = _estados_metrica_umbral(regla, primero, ultimo, filas_por_metric_key[regla["metric_key"]])
+        else:
+            estados = _estados_sueno_horario(regla, primero, ultimo, filas_sueno)
+
+        racha_actual, _, _ = _rachas_dia(dias_ordenados, estados)
+        semanas = _semanas(dias_ordenados, estados, p["meta_dias_semana"])
+        out.append({
+            "id": p["id"], "titulo": p["titulo"], "meta_dias_semana": p["meta_dias_semana"],
+            "racha_actual": racha_actual, "ultima_semana": semanas[-1] if semanas else None,
+        })
+    return out
 
 
 # ---- ruling 6: suggestions, as data, never auto-created -----------------------------------------

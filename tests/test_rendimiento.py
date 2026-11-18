@@ -436,6 +436,29 @@ class HogarMananaCostIndependentOfTargetCountTest(unittest.TestCase):
                           f"route: {uno['statements']} vs {tres['statements']}")
 
 
+class PracticasResumenCostIndependentOfCountTest(unittest.TestCase):
+    """BODY-HISTORIA-VIDA-2-R2 ruling 2: /history's "Tus prácticas" section reads each source
+    family once for ALL active practices together (practicas.resumen), so its statement count
+    stays the same whether the person tracks 1 practice or 6."""
+
+    def test_one_practica_vs_six_same_statement_count(self):
+        conn = _reset_db(self)
+        db.set_metric(conn, "2026-11-01", "resting_hr", 55.0, "garmin", 1)  # so /history leaves soon.html
+        practicas.crear(conn, 1, "ZZ Correr", "actividad", {"tipos": ["running"]})
+        conn.commit()
+        with contar_sql() as uno:
+            r1 = client.get("/history")
+        for tipo in ("cycling", "swimming", "walking", "hiking", "yoga"):
+            practicas.crear(conn, 1, f"ZZ {tipo}", "actividad", {"tipos": [tipo]})
+        conn.commit()
+        with contar_sql() as seis:
+            r2 = client.get("/history")
+        self.assertEqual((r1.status_code, r2.status_code), (200, 200))
+        self.assertEqual(uno["statements"], seis["statements"],
+                          f"1 practica vs 6 cost different statement counts through /history: "
+                          f"{uno['statements']} vs {seis['statements']}")
+
+
 def _add_metric_def(conn, key: str) -> None:
     conn.execute(
         "INSERT INTO metric_def (key, label, unit, better, kind, origen) "

@@ -216,11 +216,13 @@ def _sugerencia_label(t: T, s: dict) -> str:
 
 
 def _practicas_resumen_ctx(t: T, conn, person_id: int) -> list[dict]:
+    """BODY-HISTORIA-VIDA-2-R2 ruling 1: `practicas.resumen()` reads each source family once for
+    every active practice together, so this section's own cost is a constant, never one that grows
+    with the number of practices (tests/test_rendimiento.py's own guard)."""
     out = []
-    for p in practicas.listar(conn, person_id):
-        e = practicas.estado(conn, person_id, p["id"])
-        racha = e["racha_actual"] if e else None
-        semana = e["semanas"][-1] if e and e["semanas"] else None
+    for p in practicas.resumen(conn, person_id):
+        racha = p["racha_actual"]
+        semana = p["ultima_semana"]
         partes = []
         if racha:
             key = "history.practicas_streak_one" if racha["dias"] == 1 else "history.practicas_streak"
