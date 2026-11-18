@@ -27207,3 +27207,131 @@ habit back to a practice so a person can "bring a habit back" once the data show
 (`tests.test_practicas tests.test_entreno_racha tests.test_migraciones tests.test_privacidad
 tests.test_mudanza`): `Ran 229 tests ... OK`.
 
+## BODY-MCP-COPIA-PC-1
+
+**Finding, verbatim from the dispatch's own surface:** Found 2026-11-17/18 (BODY-DEPLOY-E6E76C2 in the
+orchestrator's ledger). For a whole day the Personal desk reported, as Carlos's Body data, nulls for every
+Garmin metric after 12 Nov, `vehicle_minutes` 0 days, and leer_estado_reloj missing. That led to a wrong
+"second person" theory and a repair tool built for it. The hosted diagnostic showed his data was complete on
+the server. The desk's session had been reading the stdio door `body/mcp.py` in LOCAL mode (no PC link ->
+`_modo_remoto()` False) over the PC's own home, `C:\Duna\body\body-app-live`, many merges behind and holding
+Garmin only up to the last PC import. Nothing in any answer said so: `initialize` returned only `serverInfo
+{"name": "body-local"}`, and every tool result was the bare tool text. The desk's own words: "a PC-local Body
+MCP that lags the server should refuse, or warn loudly ... a «PC copy, last sync <date>» line in every read.
+Then no assistant can mistake it again."
+
+**Rulings (the orchestrator's, quality, Tier 2):**
+1. In LOCAL mode only, every `tools/call` result (success, refusal and error alike) begins with ONE line
+   naming where the data lives and how fresh it is -- es "Body en este PC (no el servidor) -- datos del
+   reloj hasta {fecha}", en "Body on this PC (not the server) -- watch data up to {date}" -- {fecha} being
+   the person's last day with Garmin data, and "sin datos del reloj" / "no watch data" when there is none.
+2. The same sentence goes into `initialize`'s result as `instructions`, and `serverInfo` gains `"title"`
+   with the same short label.
+3. WARN, never refuse.
+4. If this home can tell it was ever moved or exported to a server, the line says so; if no such marker
+   exists, say so in the ledger and keep ruling 1's sentence. One query per call at most for the date.
+
+**As built:**
+- Ruling 1, `_con_copia_pc` (`body/mcp.py:579-588`), threaded through `_procesar_mensaje`'s three
+  `tools/call` return points: the `herramientas.ToolError` branch (`body/mcp.py:781`), the generic-exception
+  branch (`body/mcp.py:793`), and the success branch's final `return` (`body/mcp.py:820`) -- so a read, a
+  propuesta, `aplicar_propuesta`, `descartar_propuesta`, an unknown-tool refusal, a cap refusal and an
+  internal error all begin with the line. `isinstance(sesion, _Sesion)` (`body/mcp.py:586`) is the LOCAL-mode
+  gate: a `_SesionCliente` (REMOTE stdio client, BODY-MCP-REMOTO-CLIENTE-1) returns `contenido` unchanged.
+  The hosted `/mcp` (`body/rutas/mcp_http.py`) never reaches `_procesar_mensaje` at all -- it carries its own
+  `_procesar_uno` and its own `SERVER_INFO` (BODY-MCP-HTTP-1) -- so it was not touched and needed no check.
+- Ruling 2, `_procesar_mensaje`'s `initialize` branch (`body/mcp.py:753-764`): for a `_Sesion`,
+  `serverInfo` gains `"title"` (`_titulo_copia_pc`, `body/mcp.py:560-563`) and the result gains
+  `"instructions"` (`_linea_copia_pc`, `body/mcp.py:566-577`); a `_SesionCliente` falls through to the
+  original, unchanged branch.
+- Ruling 3: every path is a WARN, never a refusal -- `_con_copia_pc` only ever prepends a line, it never
+  raises or blocks a call; the same `_Sesion` that gets the line is the one the PC-only home already serves
+  reads and propuestas from.
+- Ruling 4, the marker census (read, nothing new built): `body/mudanza.py`'s `importar` runs reading a PC's
+  database as the READ-ONLY *source* and writing into the DESTINATION (the host's own database, per
+  `db.connect()`) -- it never writes anything back onto the PC-side file it read from, so a PC that was once
+  migrated to the server carries no trace of that on itself. `body/conectar_pc.py --olvidar` /
+  `pc_cliente.borrar_enlace()` deletes `dispositivo.json` outright, leaving no file or row behind once a link
+  is forgotten. No `fuente_importacion`-like row, no `exportado_en`-like column, and no other marker exists
+  anywhere in this home's own schema (`body/db.py`) or code that would let LOCAL mode tell it was ever moved
+  or exported to a server. So ruling 1's sentence is the only one built; no "copia del PC; la fuente es el
+  servidor" / "PC copy; the server is the source" variant exists, since nothing could ever select it.
+  `_dia_mas_reciente_garmin` (`body/mcp.py:551-557`) reads `garmin_cuenta.dias_garmin_con_valor` (one query,
+  no window -- this person's whole history), never `db.days_with_data` (counts an all-NULL/empty Garmin day
+  as data) -- the ceiling is proven by `tests/test_rendimiento.py::McpCopiaPcDateCeilingTest` (one query, with
+  30 days of Garmin history and with none).
+
+**Both sentences, as committed** (`body/i18n/es.json:1178-1180`, `body/i18n/en.json:1178-1180`):
+- `asistente.mcp.copia_pc_titulo`: es "Body en este PC (no el servidor)" / en "Body on this PC (not the
+  server)".
+- `asistente.mcp.copia_pc_con_fecha`: es "Body en este PC (no el servidor) -- datos del reloj hasta {fecha}"
+  / en "Body on this PC (not the server) -- watch data up to {fecha}".
+- `asistente.mcp.copia_pc_sin_fecha`: es "Body en este PC (no el servidor) -- sin datos del reloj" / en
+  "Body on this PC (not the server) -- no watch data".
+- The date itself goes through `body/rutas/comun.py`'s own `_short_date` (day, abbreviated month, year --
+  the same helper `body/seguridad.py` and every route module already import for this), never a new date
+  formatter.
+
+**Tests (`tests/test_mcp_copia_pc.py`, new, 13 tests):** `initialize`'s own `instructions`/`title` with and
+without Garmin history, and in English; a lectura result with and without data; a propuesta result;
+`aplicar_propuesta`; `descartar_propuesta`; an unknown-tool refusal; a cap refusal; an internal error
+(a patched `herramientas.ejecutar` raising `IntegrityError`); REMOTE mode (`_SesionCliente`) adding nothing to
+either `initialize` or a `tools/call` result. Existing MCP tests widened to account for the new line rather
+than deleted (every index that used to read `content[0]` as the tool's own payload now reads `content[-1]`,
+and every length assertion grew by one): `tests/test_mcp.py` (10 tests: `ToolsCallTest`'s lectura/leer_serie/
+leer_estado_reloj/caps/proposal-wording/no-extra-sentence tests, `PlanToolsTest`'s leer_planes/leer_plan test,
+`RegistrarEntrenoRelojFalloTest`'s two tests, `ToolCallInternalErrorTest`'s test, `VentanaRotanteTest`'s
+language test, `AplicarExpiradaTest`'s test, `DescartarPropuestaTest::test_refuses_an_in_app_proposal_naming_
+why`) and `tests/test_mcp_aplicar.py` (2 tests: `test_applies_its_own_mcp_origin_proposal`,
+`test_cap_reached_is_a_tool_error`). `tests/test_mcp_cliente_remoto.py`, `tests/test_mcp_visible.py` and
+`tests/test_i18n_paridad.py` needed no edit: the first two exercise REMOTE mode or the web screen, neither
+touched by this ruling; the i18n parity test's own generic `t("...")` scan picked up the three new literal
+keys with no hand-maintained list to update.
+
+**GATE_RED, not merged.** The full gate, `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as
+11 sequential alphabetical chunks of ~20 dotted modules each, in the foreground, read from the process:
+
+    chunk 1  (test_accesibilidad..test_baselines):                 Ran 381 tests in 118.766s, OK (skipped=1, expected failures=1)
+    chunk 2  (test_baselines_lote..test_despertar):                Ran 428 tests in 329.668s, OK
+    chunk 3  (test_desplazamiento_asistente..test_experimentos_esquema): Ran 402 tests in 86.535s, OK
+    chunk 4  (test_experimentos_intradia..test_guardia_parches):    Ran 363 tests in 668.024s, OK
+    chunk 5  (test_habito_veces_1..test_hoy_escritorio):            Ran 611 tests in 217.724s, OK
+    chunk 6  (test_hoy_turno..test_migraciones):                    Ran 374 tests in 144.234s, OK
+    chunk 7  (test_mock_r2_hoy..test_plan_pantalla):                Ran 500 tests in 249.423s, OK
+    chunk 8  (test_plan_propuestas..test_recuperacion):             Ran 467 tests in 131.162s, OK
+    chunk 9  (test_recuperacion_pantallas..test_tap_44):            Ran 349 tests in 72.040s, OK
+    chunk 10 (test_tendencias_kpi..test_tutoriales_puertas):        Ran 486 tests in 89.409s, FAILED (errors=1)
+    chunk 11 (test_ventana_comida..test_web_entry):                 Ran 106 tests in 24.457s, OK
+
+Sum: 381+428+402+363+611+374+500+467+349+486+106 = 4467. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`, counted without running):
+`COLLECTED 4467` -- exact match.
+
+**The one error, outside this slice's `touches:`:** `tests/test_turno_dia_plan.py::LeerDiasLibresMcpTest::
+test_offered_and_callable_through_mcp` (BODY-TURNO-DIA-PLAN-1) drives `mcp.ejecutar` directly (the full
+JSON-RPC stdio round trip, the same shape `tests/test_mcp.py` uses) and reads a lectura tool's payload off
+`r["content"][0]["text"]` -- the same assumption ruling 1 above breaks in every other such test. This file is
+not in this slice's `touches:` (`body/mcp.py, body/i18n/es.json, body/i18n/en.json, tests/test_mcp.py,
+tests/test_mcp_aplicar.py, tests/test_mcp_cliente_remoto.py, tests/test_mcp_visible.py,
+tests/test_mcp_copia_pc.py, tests/test_i18n_paridad.py, tests/test_rendimiento.py, DECISIONS.md`), so this
+slice did not edit it -- the diff must stay inside `touches:`, and this file turned out to need widening it
+did not have. The fix is the same one-line, zero-semantic-risk change already made in ten other places this
+slice touched: `r["content"][0]["text"]` -> `r["content"][-1]["text"]` at `tests/test_turno_dia_plan.py:259`.
+A grep for every OTHER place a test drives `mcp.ejecutar`/`mcp._procesar_mensaje` directly
+(`mcp\.ejecutar\(|mcp\._procesar_mensaje\(` across `tests/`) found exactly this one file outside `touches:`
+plus the five already inside it or already unaffected (`tests/test_mcp.py`, `tests/test_mcp_aplicar.py`,
+`tests/test_mcp_copia_pc.py`, `tests/test_mcp_cliente_remoto.py` call `_llamar_herramienta` directly in two
+OTHER files, `tests/test_mcp_remoto.py` and `tests/test_sync_vivo.py`, which bypass `_procesar_mensaje`
+entirely and are unaffected).
+
+**Commits:** `dd8a175` (`body/mcp.py`, `body/i18n/es.json`, `body/i18n/en.json`, `tests/test_mcp.py`,
+`tests/test_mcp_aplicar.py`, `tests/test_rendimiento.py`, `tests/test_mcp_copia_pc.py` -- new -- rulings 1-4),
+this ledger entry its own commit.
+
+**Open follow-ups:**
+- `BODY-INSTALL-DESDE-VIVO-1`: refresh the PC's own live checkout (`C:\Duna\body\body-app-live`), many merges
+  behind -- the proximate cause this finding's own LOCAL-mode read landed on stale data in the first place,
+  separate from this slice's own warning line.
+- Widen this slice's own `touches:` by exactly `tests/test_turno_dia_plan.py` (one line,
+  `content[0]` -> `content[-1]`) and re-run the gate, or direct otherwise.
+
