@@ -3131,9 +3131,9 @@ def crear_plan_horizonte(conn: sqlite3.Connection, person_id: int, plan: dict) -
             )
         for h in plan.get("habitos") or []:
             conn.execute(
-                "INSERT INTO habit (goal_id, title, cadence, assignee_person_id, active) "
-                "VALUES (?, ?, ?, NULL, 1)",
-                (horizonte_goal_id, h["titulo"], json.dumps(h["cadencia"])),
+                "INSERT INTO habit (goal_id, title, cadence, assignee_person_id, active, practica_id) "
+                "VALUES (?, ?, ?, NULL, 1, ?)",
+                (horizonte_goal_id, h["titulo"], json.dumps(h["cadencia"]), h.get("practica_id")),
             )
         for i, r in enumerate(plan.get("reglas") or []):
             conn.execute(

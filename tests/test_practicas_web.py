@@ -170,6 +170,15 @@ class DetailTest(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("Archivada", r.text)
         self.assertNotIn(f'/history/practica/{pid}/archive', r.text)
+        self.assertNotIn("/goals/new?practica_id=", r.text)
+
+    def test_an_active_practica_shows_a_retomar_link(self):
+        conn = _reset_db(self)
+        pid = practicas.crear(conn, 1, "Correr", "actividad", {"tipos": ["running"]})
+        conn.commit()
+        r = client.get(f"/history/practica/{pid}")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(f'href="/goals/new?practica_id={pid}"', r.text)
 
     def test_seasons_section_lists_a_season_with_context_and_day_links(self):
         conn = _reset_db(self)

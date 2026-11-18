@@ -156,11 +156,20 @@ class SeededContentTest(unittest.TestCase):
         checks = self.conn.execute("SELECT COUNT(*) FROM goal_check").fetchone()[0]
         self.assertGreater(checks, 0)
 
-    def test_has_six_habits(self):
+    def test_has_seven_habits(self):
         # BODY-PLAN-PANTALLA-1 ruling 6: the four habits this test used to count, plus the
-        # horizon's own two habits.
+        # horizon's own two habits, plus BODY-HISTORIA-VIDA-2 ruling 5's own steps-goal habit.
         habits = self.conn.execute("SELECT COUNT(*) FROM habit").fetchone()[0]
-        self.assertEqual(habits, 6)
+        self.assertEqual(habits, 7)
+
+    def test_the_steps_habit_cites_the_pasos_practica_as_evidence(self):
+        habit = self.conn.execute(
+            "SELECT practica_id FROM habit WHERE title = ?", (demo._HABIT_PASOS_TITLE["es"],)).fetchone()
+        self.assertIsNotNone(habit)
+        self.assertIsNotNone(habit["practica_id"])
+        practica = self.conn.execute(
+            "SELECT titulo FROM practica WHERE id = ?", (habit["practica_id"],)).fetchone()
+        self.assertEqual(practica["titulo"], demo._PRACTICA_TITULOS["es"]["pasos"])
 
     def test_the_demo_person_has_their_own_strength_floor_pick(self):
         # BODY-TENDENCIAS-RACHA-GRAFICO-1 ruling 4.

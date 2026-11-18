@@ -55,6 +55,7 @@
 {% endif %}
 
 {% if not practica.archivada %}
+<a class="btn w-100 mt-10" href="/goals/new?practica_id={{ practica.id }}">{{ t('practica.retomar_btn') }}</a>
 <form method="post" action="/history/practica/{{ practica.id }}/archive" class="mt-10">
   <button type="submit" class="btn w-100">{{ t('practica.archivar_btn') }}</button>
 </form>

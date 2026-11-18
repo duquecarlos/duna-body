@@ -2322,10 +2322,13 @@ def _marcar_habito(conn: sqlite3.Connection, person_id: int, conversacion_id: in
     its evidence (BODY-ENTRENO-HABITO-AUTO-1, BODY-ENTRENO-1-INV slice 5): ball sports is one use
     of this generic tool, never a hardcoded activity-type list. `antes` carries that day's existing
     habit_check row for this person (done, note) or None, so `propuestas.deshacer` can restore it
-    exactly."""
+    exactly. When the habit cites a practice (BODY-HISTORIA-VIDA-2 ruling 4), `despues` also carries
+    that practice's own latest week as `practica_evidencia` -- what the watch already shows, never
+    a reason to mark it: the person's own tap is what this tool proposes either way."""
     _dia_no_futuro(conn, person_id, day)
     h = conn.execute(
-        "SELECT id, goal_id, title, assignee_person_id, active FROM habit WHERE id = ?", (habit_id,)).fetchone()
+        "SELECT id, goal_id, title, assignee_person_id, active, practica_id FROM habit WHERE id = ?",
+        (habit_id,)).fetchone()
     if h is None:
         raise ToolError(f"hábito desconocido: {habit_id!r}")
     if goals.goal_access(conn, h["goal_id"], person_id) is None:
@@ -2349,8 +2352,14 @@ def _marcar_habito(conn: sqlite3.Connection, person_id: int, conversacion_id: in
         "SELECT done, note FROM habit_check WHERE habit_id = ? AND person_id = ? AND day = ?",
         (habit_id, person_id, day)).fetchone()
     antes = {"done": bool(anterior["done"]), "note": anterior["note"]} if anterior is not None else None
+    practica_evidencia = None
+    if h["practica_id"] is not None and practicas.propia_activa(conn, person_id, h["practica_id"]):
+        e = practicas.estado(conn, person_id, h["practica_id"])
+        if e["semanas"]:
+            s = e["semanas"][-1]
+            practica_evidencia = {"hecho": s["hecho"], "meta": e["definicion"]["meta_dias_semana"]}
     despues = {"habit_id": habit_id, "day": day, "done": True, "note": nota, "habito_titulo": h["title"],
-               "actividad": actividad_despues}
+               "actividad": actividad_despues, "practica_evidencia": practica_evidencia}
     registro = propuestas.crear(conn, person_id, conversacion_id, "marcar_habito", despues, antes=antes)
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 

@@ -708,6 +708,10 @@ def _tarjeta_marcar_habito(t: T, defs: dict, despues: dict, antes_json: dict | N
                         actividad=_actividad_txt(t, despues["actividad"]))
     else:
         despues_txt = t("asistente.propuesta.habito_hecho", habito=habito, fecha=fecha)
+    if despues.get("practica_evidencia"):
+        ev = despues["practica_evidencia"]
+        despues_txt += t("asistente.propuesta.habito_evidencia_practica", hecho=t.num(ev["hecho"]),
+                          meta=t.num(ev["meta"]))
     antes_txt = None
     if antes_json is not None and antes_json.get("done") is False:
         antes_txt = t("asistente.propuesta.habito_no_marcado", habito=habito, fecha=fecha)

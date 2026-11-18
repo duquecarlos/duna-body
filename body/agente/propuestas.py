@@ -220,7 +220,8 @@ def _aplicar_meta(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     if horizonte_goal_id is not None:
         with conn:
             conn.execute("UPDATE goal SET horizonte_goal_id = ? WHERE id = ?", (horizonte_goal_id, goal_id))
-    habito_ids = [goals.add_habit(conn, goal_id, h["titulo"], h["cadencia"]) for h in despues.get("habitos") or []]
+    habito_ids = [goals.add_habit(conn, goal_id, h["titulo"], h["cadencia"], practica_id=h.get("practica_id"))
+                  for h in despues.get("habitos") or []]
     resultado = {"goal_id": goal_id}
     if habito_ids:
         resultado["habito_ids"] = habito_ids
