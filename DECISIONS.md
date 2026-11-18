@@ -27635,3 +27635,149 @@ internal reads and extended tests.
 **Open follow-up carried forward:** `BODY-HISTORIA-VIDA-LUGARES-1` -- a season-context read of
 trips and places per day from Lugares, once Main names Lugares' own read API.
 
+## BODY-IDIOMA-HOGAR-1 -- one-tap language switch in the shared header, the assistant's own answer-in-my-language sentence (2026-11-18)
+
+Two Hogar (Main) `para_productos` principles, read against Body by this orchestrator: `HOGAR-
+IDIOMA-1` (hub `hit_01m7p4bvnyne4pgx8rzp9639kw`) -- "Each person picks their language with one
+tap": es/en catalogs, the language stored per person, a second person's default from their
+browser, one-tap English/Español in the header with `<html lang>` following, data never
+translated. `HOGAR-IDIOMA-2` (hub `hit_01m7p735wdza6artajrjax4r0z`) -- "the in-app assistant gets
+one line telling it to answer in the person's chosen language", while what is stored for or sent
+to another system stays as it is.
+
+**The orchestrator's census, verbatim from the spec's surface:** Body already stored
+`person.language` (`body/db.py:346`), took a new person's language from Accept-Language on first
+sign-in (`body/cuenta.py:439`, `body/rutas/sesion.py:64`), and rendered `<html lang="{{ t.lang
+}}">` (`body/templates/base.html:49`); the switch existed only on `/settings`
+(`body/rutas/ajustes.py:139-146`, `settings.html:7`, which always redirected to `/settings`); and
+the assistant's system prompt `agente.sistema` carried no sentence telling the model which
+language to answer in, so a message typed in the other language could pull the answer into it.
+
+**Ruling 1 -- the one-tap switch, as built:** `body/templates/base.html:76-86`, inside
+`<main><div class="wrap">`, gated by `{% if tab %}` (every real screen passes a `tab`; the one
+base.html page rendered with no signed-in person -- `body/rutas/sesion.py`'s `_cuenta_down_page`,
+Cuenta Duna unreachable mid sign-in -- passes `tab=None`, so the switch never renders there; the
+other rejected-access pages, `sin_acceso.html`/`acceso_rechazado.html`/
+`origen_rechazado.html`/`consentimiento.html`, never extend base.html at all). It shows only the
+OTHER language's button (`t.lang=='es'` shows "English", else "Español") and posts a real `<form
+method="post" action="/settings/language">` with a `<button type="submit">` -- no script, so it
+works with JavaScript off. Its hidden `volver` field is the current tab's own root path, read off
+the SAME tab->path map the nav links beside it already use literally (`today`->`/`,
+`shifts`->`/shifts`, `trends`->`/trends`, `goals`->`/goals`, else `/settings`) -- `comun.py` is not
+in this slice's `touches:`, so the exact sub-path (e.g. `/history`) is not threaded through a new
+Jinja global; the ROUTE itself (next paragraph) accepts any same-site path regardless of where the
+rendered button sends it, proven directly by `tests/test_idioma_hogar.py`'s
+`LanguageSwitchRedirectTest.test_volver_to_a_same_site_path_is_honoured` (`volver=/history` ->
+`/history`). CSS: `body/static/body.css:150-151` (`.idioma-switch`/`.idioma-switch-btn`, the same
+`.ayuda-ctx`/`.foot-logout-btn` shapes already used for a top-right, 44px, underlined tap target).
+
+`/settings/language` (`body/rutas/ajustes.py:139-160`): a new `_safe_volver` (`:139-149`) --
+starts with `/`, not `//` or `/\` (a browser reads a backslash as a forward slash), and never
+carries a `://` scheme separator, else `/settings` -- the same allow-list idea
+`set_trabaja_turnos`'s own `volver` (`:157-159`, unchanged) uses, broadened from `{'/',
+'/settings'}` to any such same-site path. `set_language` (`:152-160`) now reads `volver` from the
+POST body and redirects there instead of always to `/settings`. `settings.html`'s own
+Español/English pair (unchanged, no `volver` field) still redirects to `/settings` -- an absent
+`volver` is the same "falls back to `/settings`" case `_safe_volver` already covers.
+
+**Ruling 2 -- the assistant's own sentence, as built:** appended to `agente.sistema` in each
+catalog (`body/i18n/es.json:1076`, `body/i18n/en.json:1076`), as committed:
+
+    es: "Responde siempre en español, aunque la persona te escriba en otro idioma; los nombres de
+    herramientas y los datos se quedan como están."
+    en: "Always answer in English, even if the person writes in another language; tool names and
+    data stay as they are."
+
+Nothing else in `agente.sistema` changed; the sentence lands at the end, after the existing
+`marcar_habito` sentence. `tests/test_registro_tu.py` flagged the Spanish sentence's own
+"escriba" as an usted-register word-list hit (`_USTED_WORDS` includes it as the formal-imperative
+spelling) -- a false positive: here it is third-person subjunctive ("aunque LA PERSONA te
+escriba"), never a command to the reader. Fixed by a new `_USTED_WORD_ALLOW` dict
+(`tests/test_registro_tu.py`, next to `_USTED_PHRASES`) with a reasoned
+`"agente.sistema"` entry, mirroring the existing `_THIRD_PERSON_ALLOW` pattern one guard down, plus
+its own stale-entry test (`test_usted_word_allow_list_has_no_stale_entries`) -- never widening the
+word list itself, never deleting the guard.
+
+`tests/test_seguridad.py`'s static redirect-target guard (`RedirectTargetsAreSafeTest`) does not
+recognise a call through a local helper as sanitized -- it only credits a direct
+`cuenta.safe_return_to(...)` call or a bare variable assigned from one. `set_language`'s `volver`
+goes through this module's own `_safe_volver` instead, so it needed a named, reasoned `ALLOWLIST`
+entry (`("body/rutas/ajustes.py", "set_language", "volver")`), added right beside the existing
+`set_trabaja_turnos` entry it already names as its model -- the guard itself was not weakened.
+
+**Ruling 3 -- the census of what is stored for or sent to another system, every one found
+language-independent (expected: all), none changed:**
+
+- `body/vida_export.py`'s weekly `summary` (`:61`, `week_section` at `:47`) is built from hardcoded
+  English sentences ("No watch data this week.", the night-shift/recovery additions at `:75` and
+  `:80`) -- never run through `t()`/i18n, so it is always English regardless of the person's
+  screen language. `metrics`/`goals`/`goal_checks` carry only keys, numbers and booleans; a goal
+  check's own `note` (`:98`) is the person's own typed words, not a translated catalog string.
+- `body/hogar_feed.py` carries no `t()`/i18n call anywhere in the module -- every field is a date,
+  a key or a number (`_metric_defs` `:30`, `_figuras` `:38`, `_plan_dias` `:53`,
+  `_horizonte_actual` `:73`, `turnos_alrededor` `:94`).
+- The hub/MCP tool registry: `herramientas.HERRAMIENTAS`' own `"descripcion"` per tool
+  (`body/agente/herramientas.py:2815` on) is a hardcoded Spanish string for every tool, never
+  `t()`-wrapped -- `body/mcp.py:517` (`_lista_herramientas_remota`) and `:536`
+  (`_lista_herramientas`) both put that same fixed text on the wire as `"description"` regardless
+  of the caller's `idioma`. `body/rutas/mcp_remoto.py:59`'s `listar_herramientas` returns that same
+  fixed-description tool list alongside an `"idioma"` field -- that field only steers the PC
+  client's own HUMAN-FACING refusal messages (`mcp.py`'s `_mensaje_*` functions, read back through
+  `mcp_http.py`'s `idioma` parameter), never the tool names or descriptions themselves, matching
+  the ruling's own distinction between "messages for other agents" (which stay fixed) and messages
+  read back to the person (which may follow their language).
+- Consent records: `body/privacidad.py`'s `record_consent` (`:121`, `CONSENT_VERSION` at `:17`)
+  writes only `(person_id, version, accepted_at)` to `consentimiento` -- a fixed version string and
+  a timestamp, no language field at all.
+
+No follow-up opened: all four are language-independent as expected, so `open_followups` is empty
+for this ruling.
+
+**Tests**, `tests/test_idioma_hogar.py` (new, synthetic homes only): `HeaderSwitchShowsOnlyTheOtherLanguageTest`
+(the other language's button on a Spanish and on an English `/` page; the `volver` field's value on
+`/` and on `/settings`), `LanguageSwitchRedirectTest` (`volver=/history` honoured; `//evil.example`,
+`https://evil.example/`, `javascript:x` and an absent `volver` all fall back to `/settings`),
+`NoButtonWithoutASignedInPersonTest` (`sesion._cuenta_down_page()` carries no `idioma-switch`),
+`FormWorksWithoutJavaScriptTest` (the plain `<form>`/`<button type="submit">` markup, read straight
+from `base.html`'s own source), `AgenteSistemaEndsWithTheLanguageSentenceTest` (each catalog's
+`agente.sistema` ends with its own exact sentence, as committed).
+
+**The gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as 11 sequential
+alphabetical chunks of the 209 `tests/test_*.py` modules (19 per chunk) on the final tree, each
+read from the process, all in the foreground:
+
+    chunk 1  (test_accesibilidad..test_backup):                Ran 383 tests in  65.387s, OK (skipped=1, expected failures=1)
+    chunk 2  (test_baselines..test_deploy_host):                Ran 420 tests in 265.930s, OK
+    chunk 3  (test_deshacer_derivados..test_estados_vacios):    Ran 367 tests in  67.354s, OK
+    chunk 4  (test_estados_vacios_2..test_garmin_web):          Ran 348 tests in 246.627s, OK
+    chunk 5  (test_get_sin_escritura..test_host_backup):        Ran 522 tests in 325.950s, OK
+    chunk 6  (test_host_deploy..test_mcp_cliente_remoto):       Ran 385 tests in  38.833s, OK
+    chunk 7  (test_mcp_copia_pc..test_periodo_herramientas):    Ran 506 tests in 158.374s, OK
+    chunk 8  (test_periodo_pantallas..test_profile_lote):       Ran 456 tests in 133.997s, OK
+    chunk 9  (test_propuesta_vigencia..test_series_gramos):     Ran 314 tests in  66.089s, OK
+    chunk 10 (test_series_orden..test_turno_fc_pantallas):      Ran 440 tests in  69.247s, OK
+    chunk 11 (test_turnos_costo..test_web_entry):               Ran 403 tests in  74.915s, OK
+
+All 11 chunks GREEN, including chunk 6 (`test_idioma_hogar`, `test_i18n_paridad`) and chunk 9
+(`test_registro_tu`, `test_seguridad`). Every stderr line printed during the run (`asistente:
+propuesta ... no se pudo mostrar`, `pull attempt failed: ...`, `dia vacio ...`, the `mudanza.py`
+`ResourceWarning`s, a deliberately raised `RuntimeError: boom` inside `test_sync_vivo`) is an
+existing test deliberately exercising a logged error path or a pre-existing unclosed-connection
+warning, not a failure -- each chunk's own final line reads `OK`.
+
+**Reconciliation:** sum of the 11 chunks = 383+420+367+348+522+385+506+456+314+440+403 = **4544**,
+equal to an independent collect-only count (`unittest.TestLoader().discover('tests',
+top_level_dir='.')`, counted without running, taken before the chunked run): **4544**. Exact match.
+No password, token, session secret, device key or health figure was read, printed or written
+anywhere in this slice's own work or the gate's own stdout; no network call was made.
+
+**customer_bytes:** changed -- the header's "English"/"Español" one-tap switch button (both
+language spellings, on every signed-in page) and its two hidden field values (`lang`, `volver`);
+the assistant's own system-prompt sentence is not person-facing (it is sent to the model, never
+rendered on screen).
+
+**Commits:** `46bdebf` (`body/templates/base.html`, `body/rutas/ajustes.py`,
+`body/static/body.css`, `body/i18n/es.json`, `body/i18n/en.json`, `tests/test_idioma_hogar.py`
+(new), `tests/test_registro_tu.py`, `tests/test_seguridad.py`: rulings 1-2, step 1) -- this entry
+(ruling 3's census, the gate, step 4) committed next, on the same branch.
+
