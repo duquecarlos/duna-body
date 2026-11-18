@@ -28439,3 +28439,142 @@ BODY-DESPERTAR-REAL-6, BODY-DESPERTAR-REAL-7.
 smoke (`tests.test_leer_intradia tests.test_agente_registro tests.test_mcp tests.test_persona_fuga`):
 `Ran 105 tests in 22.246s ... OK`.
 
+## BODY-DESPERTAR-REAL-3 -- the model: dormitando/despierto_quieto/levantado/sin_dato, relative to his own baseline (2026-11-18)
+
+**Carlos's surface**, relayed by the desk, verbatim: *"I think that body should be like the app that reflects
+reality in most accurate about my body so because it's the mix between the data that is stored by the watch
+and and all the other info that can gather, use as my timeline, GPS, the things that I report to you, eating,
+training with detail, I mean everything."*
+
+**The orchestrator's reading** (dev-protocol DECISIONS.md `## BODY-DESPERTAR-REAL-RULING`, as given in this
+slice's own dispatch): the evidence decides -- dozing after Garmin's own sleep end is proposed as SLEEP, quiet
+awake time in bed only as the GET-UP time, and "cannot tell" is said plainly; Garmin's own record is never
+edited.
+
+**This slice is the MODEL only** -- no screen, no tool, no schema (BODY-DESPERTAR-REAL-4..7 below). New module
+`body/despertar_real.py`, a pure read over a connection and a person id (no web imports, no writes, no network),
+the same shape as `body/recuperacion.py`, `body/turno_fc.py` and `body/sueno_fc.py`.
+
+**`MODELO`** (`body/despertar_real.py:59-104`), every threshold a named model parameter, as committed:
+
+| parameter | value | meaning |
+|---|---|---|
+| `version` | `"despertar-real-v1"` | |
+| `horizonte_horas` | `4` | how far past Garmin's own sleep end the model ever looks |
+| `ventana_base_min` | `30` | minutes before Garmin's own end used to read the baseline |
+| `cobertura_min_base` | `3` | fewest baseline samples trusted before falling back |
+| `margen_dormitando_bpm` | `5` | bpm over baseline still read as dozing |
+| `margen_levantado_bpm` | `15` | bpm over baseline that is a CANDIDATE rise |
+| `margen_estres_descanso` | `10` | stress points over baseline still the night's own rest range |
+| `tolerancia_pareo_estres_min` | `5` | minutes a stress reading may sit from a heart-rate reading to be paired |
+| `minutos_sostenidos` | `10` | minutes a candidate rise must hold to read as 'levantado' |
+| `factor_hueco_espaciado` | `3` | gap, as a multiple of the night's own observed spacing, that is 'sin_dato' |
+| `espaciado_asumido_min` | `2` | assumed spacing only when fewer than two samples exist to measure it |
+| `cobertura_sin_dato_max_alta` | `0.1` | share of the horizon as 'sin_dato' still allowed for 'alta' |
+| `cobertura_sin_dato_max_media` | `0.5` | share above which the evidence is thin -- 'baja' and 'ninguna' unless an event bounds it |
+
+None are a bare constant tuned to Carlos: every margin is relative to the person's own baseline, read fresh
+for each call.
+
+**Rulings, as built:**
+
+1. `estimar(conn, person_id, day) -> dict` (`body/despertar_real.py:286`): Garmin's own `sueno_inicio`/
+   `sueno_fin` (straight from `sleep_session`), `segmentos` (each `tipo` one of `dormitando` |
+   `despierto_quieto` | `levantado` | `sin_dato`, with its own `inicio`/`fin`), `primera_levantada`,
+   `propuesta` (`sueno` with a later end, `levantado` with a get-up time, or `ninguna`), `confianza`
+   (`alta`/`media`/`baja`), and `evidencia` by source. Honest gaps return the same shape with `segmentos: []`
+   and `evidencia: {"motivo": ...}` (`sin_sesion` or `sin_linea_base`, `body/despertar_real.py:262-276`).
+
+2. Baseline relative to the person's OWN heart rate near the end of that night's sleep
+   (`_baseline`, `body/despertar_real.py:117-141`): median of `db.sueno_minuto_a_minuto`'s own
+   `heart_rate` array over `ventana_base_min` minutes before Garmin's own end (preferred), falling back to
+   `db.intradia`'s `intradia_fc` over the same window, falling back again to `daily_metric.resting_hr` ONLY
+   where neither gives `cobertura_min_base` points -- never an absolute bpm anywhere. Stress baseline the
+   same window, `intradia_estres` only (the sleep array carries no stress series),
+   `body/despertar_real.py:150-164`. Classification (`_clasificar_punto`, `body/despertar_real.py:176-189`):
+   dozing = heart rate within `margen_dormitando_bpm` of baseline AND stress inside `margen_estres_descanso`
+   (or no paired stress at all); a CANDIDATE rise = heart rate at/over `margen_levantado_bpm` AND stress having
+   left that range; everything else is `despierto_quieto`. A candidate run confirms as `levantado` only once
+   it holds for `minutos_sostenidos` (`_segmentos`, `body/despertar_real.py:204-239`) -- shorter, it is a blip
+   and stays `despierto_quieto`. Gaps wider than `factor_hueco_espaciado` times the night's own observed
+   spacing are `sin_dato` and never classified; a horizon with no heart-rate point at all is one whole
+   `sin_dato` run.
+
+3. Every source Body already has (`_eventos`, `body/despertar_real.py:242-260`), read by one query per
+   source regardless of day or event count: a logged meal (`comida.ts_local`, `body/db.py:810`), a check-in
+   (`checkin.ts_local`, `body/db.py:1016`), a training session or activity start (`activity.start_local`,
+   `body/db.py:406`) -- time and source name only, never the meal's words, the check-in's
+   mood/energy/stress_felt, or the activity's own type. Used as an upper bound on the get-up time in
+   `estimar`'s own decision (`body/despertar_real.py:316-335`): the EARLIEST of a confirmed HR rise and a
+   logged event wins, and the chosen `confianza` is capped at `media` when an event is what decided it.
+   **Checked and found not usable today:** `body/desplazamiento_import.py:26-28`
+   (`FUENTE = "personal:commute-diario.csv"`, `COUNT_COLUMNS`) stores only a DAILY count summary
+   (vehicle_minutes/vehicle_trips/walking_minutes/cycling_minutes) with no per-event departure timestamp --
+   a named gap, not a source used here. **Named hook:** `_eventos_lugares`
+   (`body/despertar_real.py:110-115`) returns `[]` until Lugares' own read API exists
+   (BODY-HISTORIA-VIDA-LUGARES-1), in the same `{"fuente", "hora"}` shape every other source uses.
+
+4. Honest output (`body/despertar_real.py:316-357`): no baseline at all, or a `sin_dato` share of the
+   horizon over `cobertura_sin_dato_max_media` with no logged event to bound it, reads `confianza: "baja"`
+   and `propuesta: {"tipo": "ninguna"}` -- never a guess. An immediate rise right at Garmin's own end also
+   reads `propuesta: "ninguna"` (Garmin was already right, nothing to add). Every figure the model reads is
+   the one person's own (`tests/test_persona_fuga.py`'s new `DespertarRealFugaTest` below).
+
+**Tests, `tests/test_despertar_real.py`** (10 tests, invented nights only -- a dozing tail, synthetic baseline
+levels, no real figure): a dozing tail with no later rise proposes `sueno` with the later end
+(`DozingTailTest`); quiet-awake-then-rise proposes `levantado` at the rise, never at the start of the quiet
+stretch (`QuietAwakeThenRiseTest`); an immediate rise proposes `ninguna` (`ImmediateRiseTest`); a watch-off
+gap over the whole horizon is one `sin_dato` segment with `confianza: "baja"` (`WatchOffGapTest`); a logged
+meal, or a check-in/activity, before any HR-detected rise bounds the get-up time and appears in `evidencia`
+by source, confidence capped at `media` (`EventoAcotaLevantadoTest`, 2 tests); the SAME night shape at two
+different baselines (shifted +40 bpm) classifies identically -- same segment kinds, same relative timing
+(`RelativeBaselineTest`); a heart-rate rise with stress staying in its own rest range never confirms as
+`levantado` (`EstresFueraDeDescansoRequeridoTest`); `sin_sesion`/`sin_linea_base` honest gaps
+(`SinSesionYSinLineaBaseTest`, 2 tests).
+
+**Cross-person sweep, `tests/test_persona_fuga.py`'s new `DespertarRealFugaTest`:** this module has no
+assistant tool yet (ruling, no tool this slice), so it is swept directly rather than through `READ_TOOLS` --
+person A gets a confident rise, person B (same day) gets only a `sleep_session` row and nothing else;
+`estimar(conn, PERSON_B, day)` reads `segmentos: []`, `confianza: "baja"`, `propuesta: "ninguna"`, never A's
+rise.
+
+**Bounded queries, `tests/test_rendimiento.py`'s new `DespertarRealCostTest`:** a sparse day (a handful of
+points) and a dense one (120 heart-rate points, 80 stress points, one logged meal) cost the SAME number of
+statements -- measured 8 on the dense fixture, ceiling `ceil(8 * 1.3) = 11` (this file's own margin rule).
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run as 11 sequential
+alphabetical chunks of dotted modules (20 per chunk except the last, 211 modules total, +1 over
+BODY-DESPERTAR-REAL-2's 210: this slice's own `tests/test_despertar_real.py`):
+
+1. `test_accesibilidad`..`test_baselines`: `Ran 385 tests in 71.291s` -- OK (skipped=1, expected failures=1)
+2. `test_baselines_lote`..`test_despertar`: `Ran 429 tests in 312.725s` -- OK
+3. `test_despertar_real`..`test_estados_vacios_hosted`: `Ran 377 tests in 84.646s` -- OK
+4. `test_experimentos_esquema`..`test_goals_web`: `Ran 399 tests in 257.898s` -- OK
+5. `test_guardia_parches`..`test_hoy`: `Ran 587 tests in 442.306s` -- OK
+6. `test_hoy_escritorio`..`test_mcp_visible`: `Ran 401 tests in 133.630s` -- OK
+7. `test_medida_peso`..`test_pipeline`: `Ran 464 tests in 213.979s` -- OK
+8. `test_plan_esquema`..`test_pulido_3`: `Ran 537 tests in 141.724s` -- OK
+9. `test_pull`..`test_sueno_fc`: `Ran 322 tests in 74.263s` -- OK
+10. `test_sueno_respiracion_vista`..`test_turnos_perfil`: `Ran 552 tests in 86.190s` -- OK
+11. `test_turnos_ultima_semana`..`test_web_entry`: `Ran 174 tests in 36.953s` -- OK
+
+Sum: 385+429+377+399+587+401+464+537+322+552+174 = **4627**. Collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`, taken before the chunked run):
+**4627**. Exact match -- 12 more than BODY-DESPERTAR-REAL-2's 4615 (10 new `test_despertar_real` tests + 1
+`test_persona_fuga` + 1 `test_rendimiento`). No password, token, session secret, device key or health figure
+was read, printed or written anywhere in this slice's own work or the gate's own stdout -- every
+`NotSignedIn`/`GarminConnect*Error`/`AttributeError`/`RuntimeError` line is expected log output from tests
+exercising synthetic error paths, not this slice's own code.
+
+**customer_bytes:** unchanged -- no template, route, i18n string or schema touched. This slice is a pure
+Python module and its tests only.
+
+**Open follow-ups**, exactly as named in this slice's own dispatch:
+- BODY-DESPERTAR-REAL-4: a screen for this model's own output, carrying a table of kind `sueno` | `levantado`
+  and the model version (`despertar-real-v1`).
+- BODY-DESPERTAR-REAL-5, BODY-DESPERTAR-REAL-6, BODY-DESPERTAR-REAL-7: named by the dispatch, content not
+  given to this slice.
+
+**Commits:** `a785bf5` (step 1: `body/despertar_real.py`, `tests/test_despertar_real.py`, the
+`tests/test_persona_fuga.py` and `tests/test_rendimiento.py` additions).
+
