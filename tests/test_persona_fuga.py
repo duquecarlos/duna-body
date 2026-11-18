@@ -289,10 +289,11 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
                             200.0 if tag == "A" else 300.0, "como_maximo")
 
     # BODY-HISTORIA-VIDA-1: practica is person-owned (its own person_id column, same census
-    # treatment as turno_fc/recuperacion_actividad above) -- no marker needed, the census only
-    # checks export/delete-all coverage; no screen or tool renders `titulo` yet
-    # (BODY-HISTORIA-VIDA-2's own screen is a later slice).
-    practicas.crear(conn, person_id, f"ZZ{tag}-PRACTICA", "actividad", {"tipos": ["running"]})
+    # treatment as turno_fc/recuperacion_actividad above). BODY-HISTORIA-VIDA-2 gave it its first
+    # readers -- /history's "Tus prácticas" section, /history/practica/{practica_id} and the
+    # leer_practicas tool all render `titulo` -- so its marker moved into _markers_of's active
+    # list below (BODY-HISTORIA-VIDA-2-R2 ruling 4).
+    practica_id = practicas.crear(conn, person_id, f"ZZ{tag}-PRACTICA", "actividad", {"tipos": ["running"]})
 
     # BODY-COMIDA-1: comida is person-keyed and has its FIRST reader this slice -- Día's own
     # "Comidas" section (body/rutas/hoy.py's _comidas_dia_ctx) renders its descripcion directly, so
@@ -378,7 +379,7 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
             "SELECT id FROM dispositivo WHERE person_id = ?", (person_id,)).fetchone()["id"],
         "device_key": device_key, "device_key_mcp": device_key_mcp,
         "device_key_hogar_escribir": device_key_hogar_escribir, "propuesta_id": propuesta["id"], "eid": eid,
-        "act_id": act_id, "llave_asistente": f"zzllave-{tag.lower()}",
+        "act_id": act_id, "llave_asistente": f"zzllave-{tag.lower()}", "practica_id": practica_id,
     }
 
 
@@ -404,7 +405,7 @@ def _markers_of(tag: str) -> list[str]:
             ("ACTIVIDAD", "SERIE", "TURNO", "META-PRIVADA", "HABITO", "NOTA", "META-PROPUESTA",
              "META-ARCHIVADA", "PLAN", "CONVERSACION", "MENSAJE", "DISPOSITIVO", "DISPOSITIVO-MCP",
              "EXPERIMENTO", "REGISTRO", "COMIDA", "CHECKIN-NOTA", "REGLA", "SEMANA", "META-SEMANAL",
-             "CHECKPOINT")] + [ENLACE_REF[tag]]
+             "CHECKPOINT", "PRACTICA")] + [ENLACE_REF[tag]]
 
 
 def _figures_of(tag: str) -> dict:
@@ -439,8 +440,8 @@ PLAIN_GET_ROUTES = [
 ]
 
 READ_TOOLS = ["leer_hoy", "leer_dia", "leer_como_calculo", "leer_tendencias", "leer_historia",
-              "leer_metas", "leer_meta", "leer_turnos", "leer_costo_turnos", "leer_ajustes",
-              "leer_tutoriales"]
+              "leer_metas", "leer_meta", "leer_practicas", "leer_turnos", "leer_costo_turnos",
+              "leer_ajustes", "leer_tutoriales"]
 
 
 class _BaseFugaTest(unittest.TestCase):
@@ -527,6 +528,16 @@ class _BaseFugaTest(unittest.TestCase):
         n += 1
         r = client.get(f"/experiments/{other_ids['eid']}")
         self.assertEqual(r.status_code, 404, f"{viewer_tag} GET /experiments/<{other_tag}'s id> did not 404")
+
+        # BODY-HISTORIA-VIDA-2-R2 ruling 4: own practica detail renders; the other person's own
+        # practica id 404s, same shape as goals/experiments above.
+        r = client.get(f"/history/practica/{ids['practica_id']}")
+        n += 1
+        self.assertEqual(r.status_code, 200, f"{viewer_tag} GET /history/practica/{{practica_id}}")
+        texts.append(r.text)
+        n += 1
+        r = client.get(f"/history/practica/{other_ids['practica_id']}")
+        self.assertEqual(r.status_code, 404, f"{viewer_tag} GET /history/practica/<{other_tag}'s id> did not 404")
 
         r = client.get(f"/asistente/conversacion/{ids['conv_id']}")
         n += 1
@@ -640,6 +651,15 @@ class _BaseFugaTest(unittest.TestCase):
         out_foreign_meta = agente_herramientas.ejecutar(self.conn, viewer_id, "leer_meta",
                                                          {"goal_id": other_ids["gid"]}, "completo")
         self.assertFalse(out_foreign_meta["encontrada"])
+
+        # BODY-HISTORIA-VIDA-2-R2 ruling 4: leer_practicas with a real practica_id, same
+        # own-found/foreign-refused shape as leer_meta just above.
+        out_own_practica = agente_herramientas.ejecutar(self.conn, viewer_id, "leer_practicas",
+                                                         {"practica_id": ids["practica_id"]}, "completo")
+        self.assertTrue(out_own_practica["encontrada"])
+        out_foreign_practica = agente_herramientas.ejecutar(self.conn, viewer_id, "leer_practicas",
+                                                             {"practica_id": other_ids["practica_id"]}, "completo")
+        self.assertFalse(out_foreign_practica["encontrada"])
         return n
 
 
