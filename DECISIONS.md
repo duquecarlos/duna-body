@@ -27335,3 +27335,60 @@ this ledger entry its own commit.
 - Widen this slice's own `touches:` by exactly `tests/test_turno_dia_plan.py` (one line,
   `content[0]` -> `content[-1]`) and re-run the gate, or direct otherwise.
 
+## BODY-MCP-COPIA-PC-1-R
+
+**Finding, verbatim from the dispatch's own surface:** BODY-MCP-COPIA-PC-1 stopped GATE_RED on
+`feat/body-mcp-copia-pc-1` at `d09b684` (logs/worker-body-mcp-copia-pc-1-body-app-20261117T215413.json, the only
+report for that ID): rulings 1-4 are built and tested (`dd8a175`), the gate ran 4466 with ONE error, in
+`tests/test_turno_dia_plan.py`'s `LeerDiasLibresMcpTest.test_offered_and_callable_through_mcp`, which drives
+`mcp.ejecutar()` in LOCAL mode and reads a lectura tool's payload off `content[0]` -- where the new label now
+sits, the payload being the last content item. The file was outside that slice's touches, so the worker rightly
+stopped.
+
+**The orchestrator's ruling (Tier 2):** widen the touches by exactly that file and account for the label the
+way every in-touches MCP test already does (the payload is `content[-1]`; additionally assert `content[0]` is
+the label, so the test pins the new contract rather than only stepping around it). Nothing else changes; the
+rulings of BODY-MCP-COPIA-PC-1 stand as built.
+
+**The change (`tests/test_turno_dia_plan.py:257-261`):** in `LeerDiasLibresMcpTest.test_offered_and_callable_
+through_mcp`, after the `assertNotIn("isError", r)` line, added
+`self.assertEqual(r["content"][0]["text"], "Body en este PC (no el servidor) -- sin datos del reloj")` (this
+test's `_mkconn` seeds no Garmin data, so the LOCAL-mode label is the no-date sentence, `body/i18n/es.json:
+1180`'s `asistente.mcp.copia_pc_sin_fecha`), then read the lectura payload off `r["content"][-1]["text"]`
+instead of `r["content"][0]["text"]` -- the exact pattern `tests/test_mcp_copia_pc.py::ReadToolResultTest`
+already uses for a lectura result.
+
+Run alone first (`.venv/Scripts/python.exe -m unittest tests.test_turno_dia_plan -v`): `Ran 33 tests in 5.959s,
+OK`.
+
+**The gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as 11 sequential alphabetical
+chunks of ~20 dotted modules each, in the foreground, read from the process:
+
+    chunk 1  (test_accesibilidad..test_baselines):                      Ran 381 tests in 83.831s, OK (skipped=1, expected failures=1)
+    chunk 2  (test_baselines_lote..test_despertar):                     Ran 428 tests in 495.947s, OK
+    chunk 3  (test_desplazamiento_asistente..test_experimentos_esquema): Ran 402 tests in 82.752s, OK
+    chunk 4  (test_experimentos_intradia..test_guardia_parches):        Ran 363 tests in 539.604s, OK
+    chunk 5  (test_habito_veces_1..test_hoy_escritorio):                Ran 611 tests in 131.811s, OK
+    chunk 6  (test_hoy_turno..test_migraciones):                        Ran 374 tests in 93.837s, OK
+    chunk 7  (test_mock_r2_hoy..test_plan_pantalla):                    Ran 500 tests in 218.171s, OK
+    chunk 8  (test_plan_propuestas..test_recuperacion):                 Ran 467 tests in 180.776s, OK
+    chunk 9  (test_recuperacion_pantallas..test_tap_44):                Ran 349 tests in 93.276s, OK
+    chunk 10 (test_tendencias_kpi..test_tutoriales_puertas):            Ran 486 tests in 123.439s, OK
+    chunk 11 (test_ventana_comida..test_web_entry):                     Ran 106 tests in 38.026s, OK
+
+All 11 chunks GREEN, including chunk 6 (every in-touches `tests/test_mcp*.py` and `tests/test_i18n_paridad.py`
+module) and chunk 10 (`tests/test_turno_dia_plan.py` itself).
+
+Sum: 381+428+402+363+611+374+500+467+349+486+106 = 4467. Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`, counted without running):
+`4467` -- exact match. (The prior report's own "4466 with ONE error" is one short of this slice's own 4467-OK
+figure; BODY-MCP-COPIA-PC-1's own ledger entry above already sums its eleven chunks to 4467 as well, so the
+"4466" in that report's prose does not reconcile against either run and is not explained by this slice's
+one-line diff -- noted, not chased further, since both of this slice's own counts, the chunked sum and the
+collect-only, agree with each other.)
+
+**Commits:** `1425f51` (`tests/test_turno_dia_plan.py` -- the ruling), this ledger entry its own commit, then
+the merge into `main`.
+
+**Open follow-ups:** `BODY-INSTALL-DESDE-VIVO-1` carried forward unchanged (see BODY-MCP-COPIA-PC-1 above).
+
