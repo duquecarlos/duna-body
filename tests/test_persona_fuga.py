@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -894,6 +894,36 @@ class RouteSetUnchangedTest(unittest.TestCase):
             if hasattr(r, "methods") and r.methods and "GET" in r.methods
         })
         self.assertEqual(discovered, EXPECTED_GET_PATHS)
+
+
+class DespertarRealFugaTest(unittest.TestCase):
+    """BODY-DESPERTAR-REAL-3: body/despertar_real.py is a pure module with no assistant tool yet
+    (no screen, no tool, no schema -- this slice's own surface), so it is swept here directly
+    rather than through READ_TOOLS above. Person A gets a rich, confidently-classified morning;
+    person B, on the SAME day, gets a sleep session and nothing else. If `estimar` ever read
+    across person_id, B's own result would pick up A's data and show A's rise -- it must not."""
+
+    def test_person_b_never_sees_person_as_rise(self):
+        from tests.test_despertar_real import BASE_FC, BASE_MUESTRAS, DAY, END_LOCAL, START_LOCAL, _guardar_fc, _sesion
+        from body import despertar_real
+
+        conn = _reset_db(self)
+        _sesion(conn, PERSON_A, DAY, START_LOCAL, END_LOCAL)
+        _guardar_fc(conn, PERSON_A, DAY, BASE_MUESTRAS
+                    + [((datetime.fromisoformat(f"{DAY}T05:00:00") + timedelta(minutes=2 * i)).isoformat(),
+                        BASE_FC + 20.0) for i in range(120)])
+        _sesion(conn, PERSON_B, DAY, START_LOCAL, END_LOCAL)  # a sleep session, and NOTHING else
+        conn.commit()
+
+        resultado_a = despertar_real.estimar(conn, PERSON_A, DAY)
+        resultado_b = despertar_real.estimar(conn, PERSON_B, DAY)
+
+        self.assertEqual(resultado_a["segmentos"][0]["tipo"], "levantado")
+        self.assertEqual(resultado_b["segmentos"], [])  # no baseline of B's own -- never A's rise
+        self.assertEqual(resultado_b["confianza"], "baja")
+        self.assertEqual(resultado_b["propuesta"], {"tipo": "ninguna", "hora": None})
+        self.assertIsNone(resultado_b["primera_levantada"])
+        self.assertEqual(resultado_b["evidencia"]["motivo"], "sin_linea_base")
 
 
 if __name__ == "__main__":
