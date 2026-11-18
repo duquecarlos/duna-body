@@ -30,8 +30,25 @@
 #   .\install-daily-sync.ps1 -Hosted -ShiftsDir "C:\path\to\your\shifts\folder" -CommuteFile "C:\path\to\commute-diario.csv"
 param([string]$At, [string]$SundayAt = "18:00", [string[]]$MorningAt = @("04:40", "07:40", "12:40"), [string]$ShiftsDir, [string]$CommuteFile, [int]$Port = 8770, [switch]$Lan, [switch]$Hosted, [string]$LiveDir)
 $repo = Split-Path $PSScriptRoot -Parent
+
+$repoGitDirRaw = (& git -C $repo rev-parse --git-dir).Trim()
+$repoCommonDirRaw = (& git -C $repo rev-parse --git-common-dir).Trim()
+if (-not [System.IO.Path]::IsPathRooted($repoGitDirRaw)) { $repoGitDirRaw = Join-Path $repo $repoGitDirRaw }
+if (-not [System.IO.Path]::IsPathRooted($repoCommonDirRaw)) { $repoCommonDirRaw = Join-Path $repo $repoCommonDirRaw }
+$repoGitDirFull = (Resolve-Path -LiteralPath $repoGitDirRaw).Path
+$repoCommonDirFull = (Resolve-Path -LiteralPath $repoCommonDirRaw).Path
+if ($repoGitDirFull -ine $repoCommonDirFull) {
+    $mainTree = Split-Path $repoCommonDirFull -Parent
+    Write-Host "Este es el arbol vivo (una copia que el instalador mantiene), no el repo. Corre el instalador desde: $mainTree\scripts\install-daily-sync.ps1"
+    exit 1
+}
+
 if (-not $LiveDir) { $LiveDir = "$repo-live" }
 $py = "$repo\.venv\Scripts\python.exe"
+if (-not (Test-Path -LiteralPath $py)) {
+    Write-Host "No encuentro el interprete Python en $py. No registro nada."
+    exit 1
+}
 $pyw = "$repo\.venv\Scripts\pythonw.exe"
 $webPy = if (Test-Path $pyw) { $pyw } else { $py }
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RunOnlyIfNetworkAvailable

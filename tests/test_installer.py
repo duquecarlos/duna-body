@@ -1,10 +1,26 @@
+import os
 import re
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "install-daily-sync.ps1"
+
+
+def _git(*args, cwd):
+    result = subprocess.run(
+        ["git", *args], cwd=str(cwd), capture_output=True, text=True, check=True
+    )
+    return result.stdout.strip()
+
+
+def _resolved(raw, base):
+    if not os.path.isabs(raw):
+        raw = os.path.join(str(base), raw)
+    return Path(raw).resolve()
 
 
 class InstallerWebTaskTest(unittest.TestCase):
@@ -255,6 +271,115 @@ class InstallerLocalCommuteImportTest(unittest.TestCase):
     def test_header_has_a_local_commute_example(self):
         self.assertIn("Example with commute import on:", self.text)
         self.assertIn("-CommuteFile", self.text.split("-Hosted:")[0])
+
+
+class InstallerMainTreeGuardTest(unittest.TestCase):
+    """BODY-INSTALL-DESDE-VIVO-1 ruling 1: $repo must be the main tree -- checked before
+    $LiveDir defaults, before any worktree add, and before the first scheduled task."""
+
+    def setUp(self):
+        self.text = SCRIPT.read_text(encoding="utf-8")
+
+    def test_uses_git_dir_and_git_common_dir_on_repo(self):
+        self.assertIn("git -C $repo rev-parse --git-dir", self.text)
+        self.assertIn("git -C $repo rev-parse --git-common-dir", self.text)
+
+    def test_check_appears_before_livedir_default(self):
+        check_at = self.text.index("git -C $repo rev-parse --git-dir")
+        default_at = self.text.index('if (-not $LiveDir) { $LiveDir = "$repo-live" }')
+        self.assertLess(check_at, default_at)
+
+    def test_check_appears_before_worktree_add(self):
+        check_at = self.text.index("git -C $repo rev-parse --git-dir")
+        worktree_at = self.text.index("git -C $repo worktree add --detach")
+        self.assertLess(check_at, worktree_at)
+
+    def test_check_appears_before_first_register_scheduled_task(self):
+        check_at = self.text.index("git -C $repo rev-parse --git-dir")
+        register_at = self.text.index("Register-ScheduledTask -TaskName")
+        self.assertLess(check_at, register_at)
+
+    def _mismatch_block(self):
+        start = self.text.index("git -C $repo rev-parse --git-dir")
+        close = self.text.index('if (-not $LiveDir) { $LiveDir = "$repo-live" }')
+        return self.text[start:close]
+
+    def test_mismatch_branch_prints_one_line_and_exits_1(self):
+        block = self._mismatch_block()
+        self.assertIn("exit 1", block)
+        self.assertIn("arbol vivo", block)
+        self.assertIn("install-daily-sync.ps1", block)
+
+    def test_no_absolute_personal_path(self):
+        block = self._mismatch_block()
+        self.assertNotIn("C:\\Duna", block)
+        self.assertNotIn("C:\\Users", block)
+
+
+class InstallerPyExistsGuardTest(unittest.TestCase):
+    """BODY-INSTALL-DESDE-VIVO-1 ruling 2: $py must exist before any scheduled task is
+    registered on it."""
+
+    def setUp(self):
+        self.text = SCRIPT.read_text(encoding="utf-8")
+
+    def test_checks_py_exists(self):
+        self.assertIn("if (-not (Test-Path -LiteralPath $py))", self.text)
+
+    def test_check_appears_before_first_register_scheduled_task(self):
+        check_at = self.text.index("if (-not (Test-Path -LiteralPath $py))")
+        register_at = self.text.index("Register-ScheduledTask -TaskName")
+        self.assertLess(check_at, register_at)
+
+    def _missing_block(self):
+        start = self.text.index("if (-not (Test-Path -LiteralPath $py))")
+        close = self.text.index("$pyw = ", start)
+        return self.text[start:close]
+
+    def test_missing_branch_names_py_path_and_exits_1(self):
+        block = self._missing_block()
+        self.assertIn("exit 1", block)
+        self.assertIn("$py", block)
+
+    def test_no_absolute_personal_path(self):
+        block = self._missing_block()
+        self.assertNotIn("C:\\Duna", block)
+        self.assertNotIn("C:\\Users", block)
+
+
+class InstallerMainTreeVsWorktreeGitBehaviourTest(unittest.TestCase):
+    """BODY-INSTALL-DESDE-VIVO-1: proves the two git commands the installer compares
+    actually differ on a worktree and match on the main tree -- never the script itself."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = Path(self.tmp.name) / "repo"
+        self.repo.mkdir()
+        _git("init", "-q", cwd=self.repo)
+        _git("config", "user.email", "test@example.invalid", cwd=self.repo)
+        _git("config", "user.name", "Test", cwd=self.repo)
+        (self.repo / "a.txt").write_text("x", encoding="utf-8")
+        _git("add", "a.txt", cwd=self.repo)
+        _git("commit", "-q", "-m", "initial", cwd=self.repo)
+        self.worktree = Path(self.tmp.name) / "repo-live"
+        _git("worktree", "add", "--detach", str(self.worktree), "HEAD", cwd=self.repo)
+
+    def test_main_tree_git_dir_and_common_dir_match(self):
+        git_dir = _git("rev-parse", "--git-dir", cwd=self.repo)
+        common_dir = _git("rev-parse", "--git-common-dir", cwd=self.repo)
+        self.assertEqual(
+            _resolved(git_dir, self.repo),
+            _resolved(common_dir, self.repo),
+        )
+
+    def test_worktree_git_dir_and_common_dir_differ(self):
+        git_dir = _git("rev-parse", "--git-dir", cwd=self.worktree)
+        common_dir = _git("rev-parse", "--git-common-dir", cwd=self.worktree)
+        self.assertNotEqual(
+            _resolved(git_dir, self.worktree),
+            _resolved(common_dir, self.worktree),
+        )
 
 
 if __name__ == "__main__":
