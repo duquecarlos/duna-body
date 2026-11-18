@@ -5,6 +5,7 @@ BODY-HISTORIA-VIDA-3: the drill-down's own main visual is the whole history in w
 an edit form for titulo/meta_dias_semana (ruling 2), the weekly-target label and the "En toda tu
 historia" sentence with shift counts (rulings 3-4). Invented demo data only, never a real figure."""
 import json
+import re
 import tempfile
 import unittest
 from datetime import date, timedelta
@@ -394,6 +395,118 @@ class BaselineSentenceTest(unittest.TestCase):
         r = client.get(f"/history/practica/{pid}")
         self.assertIn("Across your whole history:", r.text)
         self.assertIn("3 days off", r.text)
+
+    def test_baseline_sentence_uses_turno_de_dia_for_day_shift_counts(self):
+        """BODY-HISTORIA-VIDA-4 ruling 1: the day-shift noun reads as a shift, not a calendar day
+        ('turno de día' / 'turnos de día'), unlike the other es nouns, unchanged."""
+        conn = _reset_db(self)
+        pid = practicas.crear(conn, 1, "Steps", "metrica_umbral", {"metric_key": "steps", "op": ">=", "valor": 8000})
+        for day in ("2026-11-01", "2026-11-02"):
+            db.set_metric(conn, day, "steps", 9000.0, "garmin", 1)
+            conn.execute("INSERT INTO shift (person_id, day, kind, source) VALUES (1, ?, 'day', 'manual')", (day,))
+        conn.commit()
+        r = client.get(f"/history/practica/{pid}")
+        self.assertIn("2 turnos de día", r.text)
+
+    def test_english_baseline_sentence_uses_shift_nouns_for_day_and_night(self):
+        """BODY-HISTORIA-VIDA-4 ruling 1: every working kind gets 'shift' in English, including
+        the night-shift count the surface's gap (a) named explicitly."""
+        conn = _reset_db(self)
+        db.set_language(conn, "en", 1)
+        pid = practicas.crear(conn, 1, "Steps", "metrica_umbral", {"metric_key": "steps", "op": ">=", "valor": 8000})
+        db.set_metric(conn, "2026-11-01", "steps", 9000.0, "garmin", 1)
+        conn.execute("INSERT INTO shift (person_id, day, kind, source) VALUES (1, '2026-11-01', 'day', 'manual')")
+        db.set_metric(conn, "2026-11-02", "steps", 9000.0, "garmin", 1)
+        conn.execute("INSERT INTO shift (person_id, day, kind, source) VALUES (1, '2026-11-02', 'night', 'manual')")
+        conn.commit()
+        r = client.get(f"/history/practica/{pid}")
+        self.assertIn("1 day shift", r.text)
+        self.assertIn("1 night shift", r.text)
+
+
+class DayGridHeaderTest(unittest.TestCase):
+    """BODY-HISTORIA-VIDA-4 ruling 2: a weekday-initial header row, Monday first, above the day
+    grid, and the leading pad cell drawn as no cell at all (no visible border class)."""
+
+    def test_header_has_seven_letters_monday_first_es(self):
+        conn = _reset_db(self)
+        pid = practicas.crear(conn, 1, "Correr", "actividad", {"tipos": ["running"]})
+        _activity(conn, 1, "r1", "2026-11-10", type="running")
+        conn.commit()
+        r = client.get(f"/history/practica/{pid}")
+        header = re.findall(r'<div class="strip-header" aria-hidden="true">(.*?)</div>', r.text, re.S)
+        self.assertEqual(len(header), 1)
+        self.assertEqual(re.findall(r'<span>([^<]*)</span>', header[0]), ["L", "M", "M", "J", "V", "S", "D"])
+
+    def test_header_has_seven_letters_monday_first_en(self):
+        conn = _reset_db(self)
+        db.set_language(conn, "en", 1)
+        pid = practicas.crear(conn, 1, "Correr", "actividad", {"tipos": ["running"]})
+        _activity(conn, 1, "r1", "2026-11-10", type="running")
+        conn.commit()
+        r = client.get(f"/history/practica/{pid}")
+        header = re.findall(r'<div class="strip-header" aria-hidden="true">(.*?)</div>', r.text, re.S)
+        self.assertEqual(len(header), 1)
+        self.assertEqual(re.findall(r'<span>([^<]*)</span>', header[0]), ["M", "T", "W", "T", "F", "S", "S"])
+
+    def test_pad_cell_has_no_visible_border_class(self):
+        # "2026-11-10" is a Tuesday (weekday()==1), so the day grid starts with one pad cell.
+        conn = _reset_db(self)
+        pid = practicas.crear(conn, 1, "Correr", "actividad", {"tipos": ["running"]})
+        _activity(conn, 1, "r1", "2026-11-10", type="running")
+        conn.commit()
+        r = client.get(f"/history/practica/{pid}")
+        self.assertIn('<span class="strip-cell pad" aria-hidden="true"></span>', r.text)
+
+
+class WeeklyStripLegendTest(unittest.TestCase):
+    """BODY-HISTORIA-VIDA-4 ruling 3: a legend under the weekly strip, four swatches without a
+    season and a fifth, outlined one when the practice has at least one."""
+
+    def test_legend_has_four_swatches_with_no_season(self):
+        conn = _reset_db(self)
+        pid = practicas.crear(conn, 1, "Correr", "actividad", {"tipos": ["running"]}, meta_dias_semana=3)
+        base = date(2026, 11, 2)
+        monday0 = base - timedelta(days=base.weekday())
+        for i in range(4):
+            _activity(conn, 1, f"met{i}", (monday0 + timedelta(days=i)).isoformat(), type="running")
+        conn.commit()
+        r = client.get(f"/history/practica/{pid}")
+        self.assertIn("Objetivo cumplido", r.text)
+        self.assertIn("Parte del objetivo", r.text)
+        self.assertIn("Ningún día", r.text)
+        self.assertIn("Pocos datos", r.text)
+        self.assertNotIn("Temporada</span>", r.text)
+        self.assertNotIn('class="dot w-season"', r.text)
+
+    def test_legend_has_a_fifth_season_swatch_when_a_season_exists(self):
+        conn = _reset_db(self)
+        pid = practicas.crear(conn, 1, "Correr", "actividad", {"tipos": ["running"]}, meta_dias_semana=3)
+        monday = date(2026, 8, 3)
+        for week in range(4):
+            wk_monday = monday + timedelta(weeks=week)
+            for i in range(4):
+                _activity(conn, 1, f"r{week}-{i}", (wk_monday + timedelta(days=i)).isoformat(), type="running")
+        conn.commit()
+        r = client.get(f"/history/practica/{pid}")
+        self.assertIn("Temporada</span>", r.text)
+        self.assertIn('class="dot w-season"', r.text)
+
+    def test_english_legend_labels(self):
+        conn = _reset_db(self)
+        db.set_language(conn, "en", 1)
+        pid = practicas.crear(conn, 1, "Correr", "actividad", {"tipos": ["running"]}, meta_dias_semana=3)
+        base = date(2026, 11, 2)
+        monday0 = base - timedelta(days=base.weekday())
+        for i in range(4):
+            _activity(conn, 1, f"met{i}", (monday0 + timedelta(days=i)).isoformat(), type="running")
+        conn.commit()
+        r = client.get(f"/history/practica/{pid}")
+        self.assertIn("Target met", r.text)
+        self.assertIn("Part of the target", r.text)
+        self.assertIn("No days", r.text)
+        self.assertIn("Little data", r.text)
+        self.assertNotRegex(r.text, r"\bNone\b")
 
 
 class LanguageTest(unittest.TestCase):

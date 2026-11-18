@@ -407,6 +407,7 @@ def _practica_detail_ctx(t: T, e: dict) -> dict:
         "racha_mas_larga": racha_larga_txt,
         "semanas": _semanas_strip_ctx(t, e),
         "dias": _dias_strip_ctx(t, e["dias"]),
+        "dias_letras": comun._week_letters(t),
         "temporadas": [_temporada_ctx(t, tp) for tp in e["temporadas"]],
         "sin_temporadas": t("practica.sin_temporadas") if e["desde"] is not None and not e["temporadas"] else None,
         "baseline": t("practica.baseline_sentence", contexto=baseline_contexto) if baseline_contexto else None,

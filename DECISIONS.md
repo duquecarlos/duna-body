@@ -28001,3 +28001,121 @@ conflicts; tree identity proven, branch tree == merge tree ==
 `e341c88580b4ffc187927e5711afbb1b83b7d41a`). Post-merge smoke (`tests.test_practicas
 tests.test_practicas_web tests.test_idioma_hogar tests.test_history`): `Ran 114 tests ... OK`.
 
+## BODY-HISTORIA-VIDA-4 -- the day-shift noun reads as a shift, the day grid's Monday-first header and pad cell, the weekly strip's own legend (2026-11-18)
+
+**Measurement, from the dispatch's own surface** (`specs/body-historia-vida-4.md`, not in this
+repository; reconstructed here from the commit that built it, `4d9cbfc`, since the slice that ran it
+stopped BLOCKED before writing this entry -- BODY-HISTORIA-VIDA-4-R below closes that gap):
+
+Three rulings against `/history/practica/{id}`: (1) the English baseline sentence's shift nouns
+("1 morning", "3 nights") read as calendar words, not shifts -- every working kind needed 'shift' in
+its own noun, and Spanish's `día` noun alone needed the same fix (`mañana`/`tarde`/`noche` already
+read as shifts); (2) the drill-down's recent-days grid had no weekday header and its leading pad cell
+(a short first week) drew as a visible empty cell; (3) the weekly strip (BODY-HISTORIA-VIDA-3 ruling
+1) had no legend for its four classes, and no fifth swatch for a season.
+
+**Ruling 1 -- the day-shift noun, as built:** `body/i18n/en.json:1050-1061` -- every
+`shift.kind.noun.*`/`noun_plural.*` English string gains the word "shift" (`"morning"`->`"morning
+shift"`, `"afternoon"`->`"afternoon shift"`, `"night"`->`"night shift"`, `"day"`->`"day shift"`, and
+their plurals), `shift.kind.noun.off`/`noun_plural.off` ("day off"/"days off") unchanged -- already
+reads as a shift. `body/i18n/es.json:1050-1061` -- only `shift.kind.noun.day`/`noun_plural.day`
+change (`"día"`->`"turno de día"`, `"días"`->`"turnos de día"`); `mañana`/`tarde`/`noche` already read
+as shifts in Spanish. Tests: `tests/test_practicas_web.py`'s `BaselineSentenceTest` (`:351-427`) --
+`test_baseline_sentence_uses_turno_de_dia_for_day_shift_counts`,
+`test_english_baseline_sentence_uses_shift_nouns_for_day_and_night`, plus the pre-existing
+plural-agreement and no-shift-clause cases re-run against the new nouns.
+
+**Ruling 2 -- the Monday-first weekday header and the transparent pad cell, as built:**
+`body/rutas/comun.py:154-157`'s new `_week_letters(t)` reads `t('date.days')` into Monday-first
+initials -- lifted out of `body/rutas/metas.py`'s habit week strip (`:97-123`, `_week_strip` now
+calls `comun._week_letters(t)` at `:104` and indexes it at `:123` instead of hand-typing
+`name[:1].upper()` a second time) so the habit week strip and the practice day grid header share one
+helper, never two hardcoded letter lists. `body/rutas/historial.py:410`'s `_practica_detail_ctx`
+exposes `"dias_letras": comun._week_letters(t)`. `body/templates/practica.html:46-48` renders a
+`strip-header` row of those letters, `aria-hidden` (purely visual); `:52`'s pad cell (no `c.day`)
+becomes `<span class="strip-cell pad" aria-hidden="true">` in place of a bare `.strip-cell`.
+`body/static/body.css:322-323`'s `.strip-cell.pad`/`::after` both `background:transparent` (no
+visible cell at all); `:327-330`'s `.strip-header` is the same 7-column grid as `.strip` so each
+letter sits over its own column. Tests: `tests/test_practicas_web.py`'s `DayGridHeaderTest`
+(`:427-462`) -- `test_header_has_seven_letters_monday_first_en`,
+`test_header_has_seven_letters_monday_first_es`, `test_pad_cell_has_no_visible_border_class` -- plus
+`tests/test_goals_web.py`'s `test_habit_week_strip_renders_monday_first_letters` (the habit week
+strip, reading the SAME helper, still renders `["L","M","M","J","V","S","D"]`).
+
+**Ruling 3 -- the weekly strip's own legend, as built:** `body/i18n/es.json`/`en.json:1018-1022` --
+`practica.leyenda_cumplido` ("Objetivo cumplido"/"Target met"), `practica.leyenda_parte` ("Parte del
+objetivo"/"Part of the target"), `practica.leyenda_ninguno` ("Ninguno"/"None" -- corrected to "Ningún
+día"/"No days" by BODY-HISTORIA-VIDA-4-R below), `practica.leyenda_pocos_datos` ("Pocos
+datos"/"Little data"), `practica.leyenda_temporada` ("Temporada"/"Season").
+`body/templates/practica.html:35-41`'s `strip-legend` renders the four always-shown swatches plus a
+fifth, `{% if practica.temporadas %}`-gated `w-season` swatch. `body/static/body.css:347-351`'s
+`.strip-legend .dot.w-met`/`w-partial`/`w-empty`/`w-gap`/`w-season` match the `.week-cell` rules each
+swatch stands for. Tests: `tests/test_practicas_web.py`'s `WeeklyStripLegendTest` (`:462-512`) --
+`test_legend_has_four_swatches_with_no_season`, `test_legend_has_a_fifth_season_swatch_when_a_season_
+exists`, `test_english_legend_labels` (this last one is the test BODY-HISTORIA-VIDA-4-R below had to
+fix).
+
+**Deviations:** `specs/body-historia-vida-4.md` is not in this repository (the same pattern
+BODY-HISTORIA-VIDA-3's entry recorded for `specs/body-historia-vida-2.md`), so the measurement above
+is reconstructed from the commit that built it (`4d9cbfc`) rather than quoted from the spec itself.
+
+**Gate:** not run standalone for this entry -- BODY-HISTORIA-VIDA-4-R's gate below covers the final
+tree, which includes every file this entry lists.
+
+**Commits:** `4d9cbfc` (`body/i18n/en.json`, `body/i18n/es.json`, `body/rutas/comun.py`,
+`body/rutas/historial.py`, `body/rutas/metas.py`, `body/static/body.css`,
+`body/templates/practica.html`, `tests/test_goals_web.py`, `tests/test_practicas_web.py`: rulings
+1-3, steps 1-2).
+
+## BODY-HISTORIA-VIDA-4-R -- the legend's third swatch stops leaking "None" into the English page (2026-11-18)
+
+**Finding:** BODY-HISTORIA-VIDA-4 stopped BLOCKED on `feat/body-historia-vida-4` at `4d9cbfc`
+(`logs/worker-body-historia-vida-4-body-app-20261118T055946.json`, the only report for that ID):
+rulings 1-3 were built and committed, but the gate's chunk 3 went red because ruling 3's English
+legend word "None" (`practica.leyenda_ninguno`) put the bare word "None" into the rendered English
+page, and `tests/test_estados_vacios.py`'s leak guard (and its hosted twin) rightly reads a bare
+"None" in HTML as a leaked Python `None`.
+
+**The orchestrator's ruling (Tier 2, quality):** the guard stays exactly as it is -- it is right, and
+an exception for one word would blind it. The legend's third swatch says what it means instead: es
+"Ningún día", en "No days". Nothing else in BODY-HISTORIA-VIDA-4's rulings changes; they stand as
+built (above).
+
+**The change, as built:** `body/i18n/es.json:1020` -- `practica.leyenda_ninguno`: `"Ninguno"` ->
+`"Ningún día"`. `body/i18n/en.json:1020` -- `practica.leyenda_ninguno`: `"None"` -> `"No days"`.
+`tests/test_practicas_web.py`: `WeeklyStripLegendTest.test_legend_has_four_swatches_with_no_season`
+(`:477`) now asserts `"Ningún día"` in place of `"Ninguno"`;
+`WeeklyStripLegendTest.test_english_legend_labels` (`:507`) now asserts `"No days"` in place of
+`"None"`, plus a new `assertNotRegex(r.text, r"\bNone\b")` (`:508`) on the same English response, so
+this test itself would catch a future leak of the bare word, not only the shared guard.
+
+**Targeted runs, each alone:** `tests.test_practicas_web` -- `Ran 39 tests ... OK`.
+`tests.test_estados_vacios` -- `Ran 1 test ... OK`. `tests.test_estados_vacios_hosted` -- `Ran 1 test
+... OK`.
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run as 11
+sequential alphabetical chunks of dotted modules (19 modules each, 209 modules total):
+
+1. `test_accesibilidad`..`test_backup`: `Ran 383 tests in 71.635s` -- OK (skipped=1, expected
+   failures=1)
+2. `test_baselines`..`test_deploy_host`: `Ran 420 tests in 284.809s` -- OK
+3. `test_deshacer_derivados`..`test_estados_vacios`: `Ran 367 tests in 70.249s` -- OK
+4. `test_estados_vacios_2`..`test_garmin_web`: `Ran 348 tests in 246.641s` -- OK
+5. `test_get_sin_escritura`..`test_host_backup`: `Ran 523 tests in 295.247s` -- OK
+6. `test_host_deploy`..`test_mcp_cliente_remoto`: `Ran 389 tests in 35.643s` -- OK
+7. `test_mcp_copia_pc`..`test_periodo_herramientas`: `Ran 506 tests in 136.662s` -- OK
+8. `test_periodo_pantallas`..`test_profile_lote`: `Ran 477 tests in 125.395s` -- OK
+9. `test_propuesta_vigencia`..`test_series_gramos`: `Ran 314 tests in 61.469s` -- OK
+10. `test_series_orden`..`test_turno_fc_pantallas`: `Ran 440 tests in 63.277s` -- OK
+11. `test_turnos_costo`..`test_web_entry`: `Ran 403 tests in 70.196s` -- OK
+
+Sum: 383+420+367+348+523+389+506+477+314+440+403 = **4570**. Collect-only count
+(`unittest.defaultTestLoader.discover('tests', top_level_dir='.').countTestCases()`, taken before the
+chunked run): **4570**. Exact match. No password, token, session secret, device key or health figure
+was read, printed or written anywhere in this slice's own work or the gate's own stdout; no network
+call was made.
+
+**customer_bytes:** changed -- the legend's third swatch's own text, in both languages, is
+person-facing. Per this slice's own WORK step 4 ("merge if green"), the merge below proceeds despite
+the change rather than stopping `AWAITING_APPROVAL`.
+

@@ -1,4 +1,5 @@
 """The Metas screens: /goals, /goals/<id>, /goals/new, habit check-off, and the Hoy plan card."""
+import re
 import tempfile
 import unittest
 from datetime import date
@@ -121,6 +122,20 @@ class ActivateAndHabitTest(unittest.TestCase):
 
         detail = client.get(f"/goals/{gid}")
         self.assertIn("Dormir temprano", detail.text)
+
+    def test_habit_week_strip_renders_monday_first_letters(self):
+        """BODY-HISTORIA-VIDA-4: the weekday-letter helper moved to comun._week_letters, shared
+        with the practice day grid header -- the habit week strip still renders the same
+        Monday-first letters, in order."""
+        conn = _reset_db(self)
+        gid = goals.propose(conn, 1, "Dormir mejor", "2026-11-02", metric_key="sleep_minutes",
+                            direction="raise", target_value=420.0, baseline_value=350.0,
+                            deadline="2026-12-31")
+        client.post(f"/goals/{gid}/activate")
+        client.post(f"/goals/{gid}/habits", data={"title": "Dormir temprano", "per": "week", "times": "3"})
+        r = client.get(f"/goals/{gid}")
+        cells = re.findall(r'class="habit-week-cell[^"]*"[^>]*>([^<]*)</span>', r.text)
+        self.assertEqual(cells, ["L", "M", "M", "J", "V", "S", "D"])
 
 
 class ContextHabitOnHoyTest(unittest.TestCase):

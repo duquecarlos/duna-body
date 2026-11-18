@@ -32,14 +32,24 @@
   </div>
   {% endfor %}
 </div>
+<div class="strip-legend">
+  <span><span class="dot w-met"></span>{{ t('practica.leyenda_cumplido') }}</span>
+  <span><span class="dot w-partial"></span>{{ t('practica.leyenda_parte') }}</span>
+  <span><span class="dot w-empty"></span>{{ t('practica.leyenda_ninguno') }}</span>
+  <span><span class="dot w-gap"></span>{{ t('practica.leyenda_pocos_datos') }}</span>
+  {% if practica.temporadas %}<span><span class="dot w-season"></span>{{ t('practica.leyenda_temporada') }}</span>{% endif %}
+</div>
 {% endif %}
 
 {% if practica.dias %}
 <h2>{{ t('practica.semanas_recientes_title') }}</h2>
+<div class="strip-header" aria-hidden="true">
+  {% for l in practica.dias_letras %}<span>{{ l }}</span>{% endfor %}
+</div>
 <div class="strip">
   {% for c in practica.dias %}
   {% if c.day %}<a class="strip-cell p-{{ c.estado }}" href="/day/{{ c.day }}" aria-label="{{ c.aria }}"></a>
-  {% else %}<span class="strip-cell" aria-hidden="true"></span>{% endif %}
+  {% else %}<span class="strip-cell pad" aria-hidden="true"></span>{% endif %}
   {% endfor %}
 </div>
 <div class="strip-legend">
