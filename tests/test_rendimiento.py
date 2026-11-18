@@ -108,6 +108,13 @@ client = TestClient(web.app, follow_redirects=False)
 # estimar call, the curve's own intraday query and the pending-propuesta check) costs 11 -- both
 # within ceil(8 * 1.3) = 11, the SAME margin rule this file's own ceilings use, read here as
 # "estimar's own measured ceiling" (ruling 5).
+# BODY-DESPERTAR-REAL-6A-R2 ruling 3: re-measured on the SAME file's own `_seed_ambos_alta` (a
+# morning offering BOTH kinds, neither corrected yet) -- unchanged at 8 statements for
+# `despertar_real.estimar` itself (ruling 1 added no new query) and 9 for `_despertar_hoy_ctx`
+# (it still reads only the first propuesta in the list, sueno-first ordering). `_despertar_dia_
+# ctx` now costs 12 (was 11 with one kind): ruling 4's per-kind loop runs one extra pending-
+# propuesta check for the second kind, so its own ceiling moves to ceil(12 * 1.3) = 16, named
+# here rather than carried over from the single-kind figure above.
 _CEILINGS = {
     "/": 155,
     "/ajustes/asistente": 16,
@@ -773,6 +780,30 @@ class DespertarRealCostTest(unittest.TestCase):
         # Measured 8 statements on this file's own dense fixture; ceil(8 * 1.3) = 11, the same
         # margin rule every other ceiling in this file carries.
         self.assertLessEqual(densa, 11, f"estimar cost {densa} statements, over its ceiling of 11")
+
+    def test_dia_and_hoy_ctx_cost_with_both_kinds_offered(self):
+        """BODY-DESPERTAR-REAL-6A-R2 ruling 3: `_despertar_dia_ctx`'s and `_despertar_hoy_ctx`'s
+        own ceilings, re-measured on a morning offering BOTH kinds (neither corrected yet) -- see
+        this file's own comment block above for the figures."""
+        from datetime import date as _date
+
+        from body.i18n import T
+        from body.rutas import hoy
+        from tests.test_despertar_pantalla import _seed_ambos_alta
+        from tests.test_despertar_real import DAY
+
+        conn = _reset_db(self)
+        _seed_ambos_alta(conn)
+        t = T("es")
+        sleep_end_local = conn.execute(
+            "SELECT end_local FROM sleep_session WHERE person_id = 1 AND day = ?", (DAY,)).fetchone()["end_local"]
+
+        n_hoy = self._contar(conn, lambda: hoy._despertar_hoy_ctx(t, conn, 1, DAY, _date.fromisoformat(DAY)))
+        self.assertLessEqual(n_hoy, 11, f"_despertar_hoy_ctx cost {n_hoy} statements, over its ceiling of 11")
+
+        n_dia = self._contar(
+            conn, lambda: hoy._despertar_dia_ctx(t, conn, 1, "America/Bogota", DAY, sleep_end_local))
+        self.assertLessEqual(n_dia, 16, f"_despertar_dia_ctx cost {n_dia} statements, over its ceiling of 16")
 
 
 if __name__ == "__main__":

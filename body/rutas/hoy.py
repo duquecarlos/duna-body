@@ -1030,12 +1030,13 @@ def _entreno_vinculo_txt(t: T, accion: str, despues: dict) -> str:
     return t("asistente.propuesta.entreno_unir", reloj=despues["reloj_titulo"], manual=despues["manual_titulo"])
 
 
-def _despertar_propuesta_pendiente(conn, person_id: int, day: str) -> dict | None:
-    """BODY-DESPERTAR-REAL-7 ruling 1: the most recent still-PENDING `corregir_despertar` propuesta
-    for this day, if any -- its own card then shows inline with Aplicar/Descartar. An already
-    APPLIED one is never read here: its own correction row (db.despertar_correccion) is what ruling
-    2's state reads instead, which also covers a correction with no propuesta behind it at all
-    (body/demo.py's own `_seed_despertar_correccion`, written directly, never through this flow)."""
+def _despertar_propuesta_pendiente(conn, person_id: int, day: str, tipo: str) -> dict | None:
+    """BODY-DESPERTAR-REAL-7 ruling 1, widened by BODY-DESPERTAR-REAL-6A-R2 ruling 4: the most
+    recent still-PENDING `corregir_despertar` propuesta for this day AND this tipo, if any -- its
+    own card then shows inline with Aplicar/Descartar. An already APPLIED one is never read here:
+    its own correction row (db.despertar_correcciones) is what ruling 2's state reads instead,
+    which also covers a correction with no propuesta behind it at all (body/demo.py's own
+    `_seed_despertar_correccion`, written directly, never through this flow)."""
     filas = conn.execute(
         "SELECT id, despues_json FROM propuesta_agente WHERE person_id = ? AND accion = 'corregir_despertar' "
         "AND estado = 'propuesta' ORDER BY creada_en DESC",
@@ -1043,7 +1044,7 @@ def _despertar_propuesta_pendiente(conn, person_id: int, day: str) -> dict | Non
     ).fetchall()
     for f in filas:
         despues = json.loads(f["despues_json"])
-        if despues.get("fecha") == day:
+        if despues.get("fecha") == day and despues.get("tipo") == tipo:
             return {"id": f["id"], "despues": despues}
     return None
 
@@ -1076,17 +1077,19 @@ def _despertar_curva_puntos(conn, person_id: int, zona: str, desde: datetime, ha
 
 
 def _despertar_curva_svg(t: T, puntos: list[tuple[datetime, float]], desde: datetime, hasta: datetime,
-                          garmin_dt: datetime, marca_dt: datetime, width: int = 320, height: int = 100
+                          garmin_dt: datetime, marcas: list[datetime], width: int = 320, height: int = 100
                           ) -> str | None:
-    """Ruling 3: the same inline-SVG, server-built shape body/rutas/entreno_sesion.py's own
+    """Ruling 3, widened by BODY-DESPERTAR-REAL-6A-R2 ruling 4 ("the curve shows Garmin's end plus
+    up to two marks"): the same inline-SVG, server-built shape body/rutas/entreno_sesion.py's own
     `_curva_svg` and body/profile.py's own `window_svg` already use -- one polyline per unbroken
     run, a lone point as a dot, a gap wider than the night's own observed spacing (the same
     `factor_hueco_espaciado`/`espaciado_asumido_min` convention despertar_real.MODELO already
     defines) left undrawn rather than bridged, never a line across it. Garmin's own recorded end
-    and the proposed/corrected time each get a dashed vertical mark and a plain HH:MM label --
-    `.tick`, no other axis numbers (DESIGN rule 13 BODY-ESTILOS-1: every colour a fixed class).
-    None when there is no heart-rate point in the window at all -- the caller shows nothing, never
-    an empty chart inviting a tap over nothing (DESIGN rule 6)."""
+    gets a dashed vertical mark; `marcas` (up to one per tipo -- the proposed/corrected time for
+    sueno, for levantado, or both) each get their own, every mark a plain HH:MM label -- `.tick`,
+    no other axis numbers (DESIGN rule 13 BODY-ESTILOS-1: every colour a fixed class). None when
+    there is no heart-rate point in the window at all -- the caller shows nothing, never an empty
+    chart inviting a tap over nothing (DESIGN rule 6)."""
     if not puntos:
         return None
     lo = min(v for _, v in puntos)
@@ -1140,78 +1143,92 @@ def _despertar_curva_svg(t: T, puntos: list[tuple[datetime, float]], desde: date
                f'{html.escape(dt.strftime("%H:%M"))}</text>')
 
     shapes.append(marca(garmin_dt, "stroke-muted"))
-    shapes.append(marca(marca_dt, "stroke-body"))
+    for marca_dt in marcas:
+        shapes.append(marca(marca_dt, "stroke-body"))
 
     aria = html.escape(t("day.despertar.curva_aria", desde=desde.strftime("%H:%M"), hasta=hasta.strftime("%H:%M")))
     return (f'<svg viewBox="0 0 {width} {top + h + 20}" width="100%" height="{height}" role="img" '
             f'aria-label="{aria}" preserveAspectRatio="none" class="chart-svg">{"".join(shapes)}</svg>')
 
 
-def _despertar_correccion_lineas(t: T, correccion: dict, sleep_end_local: str) -> tuple[str, str]:
-    """Ruling 2: Garmin's own figure as recorded, and the person's own correction beside it --
-    labelled as which is which, Garmin's own `sleep_session` row never touched either way."""
-    sleep_end_dt = datetime.fromisoformat(sleep_end_local)
+def _despertar_correccion_linea(t: T, correccion: dict) -> str:
+    """Ruling 2: the person's own correction, labelled by kind -- Garmin's own `sleep_session` row
+    never touched either way."""
     clave = ("day.despertar.correccion_sueno" if correccion["tipo"] == "sueno"
              else "day.despertar.correccion_levantado")
-    return (t("day.despertar.garmin_linea", hora=sleep_end_dt.strftime("%H:%M")),
-            t(clave, hora=correccion["hora_local"]))
+    return t(clave, hora=correccion["hora_local"])
 
 
 def _despertar_dia_ctx(t: T, conn, person_id: int, zona: str, day: str, sleep_end_local: str | None) -> dict | None:
-    """BODY-DESPERTAR-REAL-7 ruling 1-3: Día's own inline card beside `sueno_fc_linea` -- Garmin's
-    own figure and the person's own correction (ruling 2) when one exists, mutually exclusive with
-    the model's own explanatory line and "¿Corregir?" button (ruling 1, confianza alta/media only),
-    which itself gives way to the pending proposal's own card once the person has tapped the
-    button. `despertar_real.estimar` runs at most once per view, and only when there is no
-    correction yet to read instead (tests/test_rendimiento.py)."""
+    """BODY-DESPERTAR-REAL-7 rulings 1-3, widened by BODY-DESPERTAR-REAL-6A-R2 ruling 4: Día's own
+    inline card beside `sueno_fc_linea` -- EACH kind (sueno first, then levantado) gets its own
+    line/button, or its own correction line and Deshacer, mutually exclusive per kind the same way
+    ruling 1-2 already were per morning. ONE shared "Garmin marcó..." line when at least one kind
+    is already corrected, and ONE curve for the whole morning -- Garmin's own end plus up to one
+    mark per kind present (ruling 4's own "Garmin's end plus up to two marks"). `despertar_real.
+    estimar` runs at most once per view, and only when at least one kind still has nothing applied
+    (tests/test_rendimiento.py)."""
     if sleep_end_local is None:
         return None
     sleep_end_dt = datetime.fromisoformat(sleep_end_local)
     horizonte_fin_dt = sleep_end_dt + timedelta(hours=despertar_real.MODELO["horizonte_horas"])
-    correccion = db.despertar_correccion(conn, person_id, day)
-    if correccion is not None:
-        garmin_linea, correccion_linea = _despertar_correccion_lineas(t, correccion, sleep_end_local)
-        marca_dt = datetime.combine(date.fromisoformat(day),
-                                     datetime.strptime(correccion["hora_local"], "%H:%M").time())
-        ventana_fin = min(horizonte_fin_dt, marca_dt + timedelta(minutes=30))
-        puntos = _despertar_curva_puntos(conn, person_id, zona, sleep_end_dt - timedelta(minutes=30), ventana_fin)
-        curva = _despertar_curva_svg(t, puntos, sleep_end_dt - timedelta(minutes=30), ventana_fin,
-                                      sleep_end_dt, marca_dt)
-        return {"garmin_linea": garmin_linea, "correccion_linea": correccion_linea, "linea": None,
-                "propuesta_texto": None, "propuesta_id": None, "boton": False, "deshacer": True, "curva": curva}
+    correcciones = db.despertar_correcciones(conn, person_id, day)
+    resultado = despertar_real.estimar(conn, person_id, day) if len(correcciones) < 2 else None
+    propuestas_por_tipo = {p["tipo"]: p for p in (resultado["propuestas"] if resultado else [])}
+    confianza = resultado["confianza"] if resultado else None
 
-    resultado = despertar_real.estimar(conn, person_id, day)
-    propuesta = resultado["propuesta"]
-    if propuesta["tipo"] == "ninguna" or resultado["confianza"] == "baja":
+    tarjetas: list[dict] = []
+    marcas: list[datetime] = []
+    hay_correccion = False
+    for tipo in ("sueno", "levantado"):
+        correccion = correcciones.get(tipo)
+        if correccion is not None:
+            hay_correccion = True
+            marcas.append(datetime.combine(date.fromisoformat(day),
+                                            datetime.strptime(correccion["hora_local"], "%H:%M").time()))
+            tarjetas.append({"tipo": tipo, "correccion_linea": _despertar_correccion_linea(t, correccion),
+                              "linea": None, "propuesta_texto": None, "propuesta_id": None,
+                              "boton": False, "deshacer": True})
+            continue
+        propuesta = propuestas_por_tipo.get(tipo)
+        if propuesta is None or confianza == "baja":
+            continue
+        hora_txt = propuesta["hora"][11:16]
+        clave_linea = "day.despertar.sueno_linea" if tipo == "sueno" else "day.despertar.levantado_linea"
+        linea = t(clave_linea, hora=hora_txt, fin=sleep_end_dt.strftime("%H:%M"))
+        marcas.append(datetime.fromisoformat(propuesta["hora"]))
+        pendiente = _despertar_propuesta_pendiente(conn, person_id, day, tipo)
+        if pendiente is not None:
+            tarjetas.append({"tipo": tipo, "correccion_linea": None, "linea": linea,
+                              "propuesta_texto": _despertar_propuesta_txt(t, pendiente["despues"]),
+                              "propuesta_id": pendiente["id"], "boton": False, "deshacer": False})
+        else:
+            tarjetas.append({"tipo": tipo, "correccion_linea": None, "linea": linea, "propuesta_texto": None,
+                              "propuesta_id": None, "boton": True, "deshacer": False})
+
+    if not tarjetas:
         return None
-    hora_txt = propuesta["hora"][11:16]
-    clave_linea = "day.despertar.sueno_linea" if propuesta["tipo"] == "sueno" else "day.despertar.levantado_linea"
-    linea = t(clave_linea, hora=hora_txt, fin=sleep_end_dt.strftime("%H:%M"))
-    marca_dt = datetime.fromisoformat(propuesta["hora"])
-    ventana_fin = min(horizonte_fin_dt, marca_dt + timedelta(minutes=30))
-    puntos = _despertar_curva_puntos(conn, person_id, zona, sleep_end_dt - timedelta(minutes=30), ventana_fin)
-    curva = _despertar_curva_svg(t, puntos, sleep_end_dt - timedelta(minutes=30), ventana_fin, sleep_end_dt, marca_dt)
 
-    pendiente = _despertar_propuesta_pendiente(conn, person_id, day)
-    if pendiente is not None:
-        return {"garmin_linea": None, "correccion_linea": None, "linea": linea,
-                "propuesta_texto": _despertar_propuesta_txt(t, pendiente["despues"]), "propuesta_id": pendiente["id"],
-                "boton": False, "deshacer": False, "curva": curva}
-    return {"garmin_linea": None, "correccion_linea": None, "linea": linea, "propuesta_texto": None,
-            "propuesta_id": None, "boton": True, "deshacer": False, "curva": curva}
+    ventana_fin = min(horizonte_fin_dt, (max(marcas) if marcas else sleep_end_dt) + timedelta(minutes=30))
+    puntos = _despertar_curva_puntos(conn, person_id, zona, sleep_end_dt - timedelta(minutes=30), ventana_fin)
+    curva = _despertar_curva_svg(t, puntos, sleep_end_dt - timedelta(minutes=30), ventana_fin, sleep_end_dt, marcas)
+    garmin_linea = t("day.despertar.garmin_linea", hora=sleep_end_dt.strftime("%H:%M")) if hay_correccion else None
+    return {"garmin_linea": garmin_linea, "tarjetas": tarjetas, "curva": curva}
 
 
 def _despertar_hoy_ctx(t: T, conn, person_id: int, day: str, today_local: date) -> dict | None:
     """Ruling 4: the same explanatory line as Día's own ruling 1, today's sleep only -- no button,
-    no curve, nothing once a correction exists (ruling 2 belongs to Día alone)."""
+    no curve, nothing once ANY correction exists (ruling 2 belongs to Día alone).
+    BODY-DESPERTAR-REAL-6A-R2 ruling 4: "Hoy keeps one line, the sueno one when present, else the
+    levantado one" -- `propuestas` is already ordered that way."""
     if day != today_local.isoformat():
         return None
-    if db.despertar_correccion(conn, person_id, day) is not None:
+    if db.despertar_correcciones(conn, person_id, day):
         return None
     resultado = despertar_real.estimar(conn, person_id, day)
-    propuesta = resultado["propuesta"]
-    if propuesta["tipo"] == "ninguna" or resultado["confianza"] == "baja":
+    if not resultado["propuestas"] or resultado["confianza"] == "baja":
         return None
+    propuesta = resultado["propuestas"][0]
     hora_txt = propuesta["hora"][11:16]
     fin_txt = datetime.fromisoformat(resultado["sueno_fin"]).strftime("%H:%M")
     clave = "day.despertar.sueno_linea" if propuesta["tipo"] == "sueno" else "day.despertar.levantado_linea"
@@ -1458,26 +1475,28 @@ async def entreno_propuesta_deshacer(day: str, propuesta_id: int, request: Reque
 @router.post("/day/{day}/despertar/proponer")
 @comun._cierra_conexion_async
 async def despertar_proponer(day: str, request: Request, person_id: int = Depends(identity.current_person_id)):
-    """BODY-DESPERTAR-REAL-7 ruling 1: Día's own "¿Corregir?" button -- raises the SAME
-    `corregir_despertar` propuesta a chat/MCP call would, through `herramientas._corregir_despertar`
-    and `agente_propuestas.crear`, in a fresh conversation this one control owns, the exact
-    precedent `/settings/nutriente/proponer` (body/rutas/ajustes.py) already sets. tipo/hora come
-    from `despertar_real.estimar`'s own CURRENT propuesta, never typed by the person. A day that no
-    longer offers one (already corrected meanwhile, or the model's own read of it changed) is a
-    quiet no-op redirect, never a 500 -- the same defensive shape `entreno_separar`/`entreno_unir`
-    above already use."""
+    """BODY-DESPERTAR-REAL-7 ruling 1, widened by BODY-DESPERTAR-REAL-6A-R2 ruling 4: Día's own
+    "¿Corregir?" button, now one per kind -- `tipo` (a hidden form field, which kind's own card the
+    person tapped) raises the SAME `corregir_despertar` propuesta a chat/MCP call would, through
+    `herramientas._corregir_despertar` and `agente_propuestas.crear`, in a fresh conversation this
+    one control owns, the exact precedent `/settings/nutriente/proponer` (body/rutas/ajustes.py)
+    already sets. The hora comes from `despertar_real.estimar`'s own CURRENT propuesta for that
+    tipo, never typed by the person. A day/tipo that no longer offers one (already corrected
+    meanwhile, or the model's own read of it changed) is a quiet no-op redirect, never a 500 --
+    the same defensive shape `entreno_separar`/`entreno_unir` above already use."""
     d = _parse_day(day)
     conn, _, _ = comun._ctx(person_id)
+    f = await comun._form(request)
+    tipo = f.get("tipo")
     resultado = despertar_real.estimar(conn, person_id, d.isoformat())
-    propuesta = resultado["propuesta"]
-    if propuesta["tipo"] != "ninguna":
+    propuesta = next((p for p in resultado["propuestas"] if p["tipo"] == tipo), None)
+    if propuesta is not None:
         conversacion_id = agente_conversacion.crear(conn, person_id)
         try:
             agente_herramientas._corregir_despertar(conn, person_id, conversacion_id, d.isoformat(),
                                                       propuesta["tipo"], propuesta["hora"][11:16])
         except agente_herramientas.ToolError:
             pass
-    f = await comun._form(request)
     back = cuenta.safe_return_to(f.get("back") or f"/day/{day}")
     return RedirectResponse(back, status_code=303)
 
@@ -1485,16 +1504,19 @@ async def despertar_proponer(day: str, request: Request, person_id: int = Depend
 @router.post("/day/{day}/despertar/deshacer")
 @comun._cierra_conexion_async
 async def despertar_deshacer(day: str, request: Request, person_id: int = Depends(identity.current_person_id)):
-    """BODY-DESPERTAR-REAL-7 ruling 2: "Deshacer" deletes this person's own correction row directly
-    (`db.borrar_despertar_correccion` is already a quiet no-op on an absent row) -- never through
+    """BODY-DESPERTAR-REAL-7 ruling 2, widened by BODY-DESPERTAR-REAL-6A-R2 ruling 4: "Deshacer"
+    deletes THIS kind's own correction row directly (`tipo`, a hidden form field --
+    `db.borrar_despertar_correccion` is already a quiet no-op on an absent row) -- never through
     the propuesta undo path, since a demo-seeded or chat-written correction may have no propuesta
     behind it at all. This button's only job is "the row is gone", never "restore whatever came
     before" (that is the propuesta `deshacer` action's own job, unaffected, still reachable from
-    chat/MCP)."""
+    chat/MCP); the OTHER kind's own row, if any, is untouched."""
     d = _parse_day(day)
     conn, _, _ = comun._ctx(person_id)
-    db.borrar_despertar_correccion(conn, person_id, d.isoformat())
     f = await comun._form(request)
+    tipo = f.get("tipo")
+    if tipo in ("sueno", "levantado"):
+        db.borrar_despertar_correccion(conn, person_id, d.isoformat(), tipo)
     back = cuenta.safe_return_to(f.get("back") or f"/day/{day}")
     return RedirectResponse(back, status_code=303)
 

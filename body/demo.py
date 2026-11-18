@@ -883,7 +883,10 @@ def _seed_despertar_correccion(conn, db, person_id: int) -> int:
     """BODY-DESPERTAR-REAL-4 ruling 1: one invented correction, on the most recent night this
     person has a Garmin sleep session for -- a plain "got up a little after Garmin's own record"
     demo row, never a real figure. Called AFTER `_seed_sueno_fc`, which is what gives most of this
-    history its own sleep_session rows in the first place."""
+    history its own sleep_session rows in the first place. BODY-DESPERTAR-REAL-6A-R2 ruling 1's
+    own census: a SECOND, earlier night (so the most-recent one above stays the single-kind
+    fixture existing tests already read) gets BOTH kinds -- dozed past Garmin's own end (sueno),
+    then got up later still (levantado), the exact shape a morning can now hold."""
     row = conn.execute(
         "SELECT day, end_local FROM sleep_session WHERE person_id = ? AND end_local IS NOT NULL "
         "ORDER BY day DESC LIMIT 1", (person_id,),
@@ -893,9 +896,24 @@ def _seed_despertar_correccion(conn, db, person_id: int) -> int:
     fin = datetime.fromisoformat(row["end_local"])
     hora_local = (fin + timedelta(minutes=25)).strftime("%H:%M")
     db.guardar_despertar_correccion(conn, person_id, row["day"], "levantado", hora_local,
-                                     "despertar-real-v1", "asistente")
+                                     "despertar-real-v2", "asistente")
+    count = 1
+
+    otra = conn.execute(
+        "SELECT day, end_local FROM sleep_session WHERE person_id = ? AND end_local IS NOT NULL "
+        "AND day != ? ORDER BY day DESC LIMIT 1", (person_id, row["day"]),
+    ).fetchone()
+    if otra is not None:
+        fin2 = datetime.fromisoformat(otra["end_local"])
+        sueno_hora = (fin2 + timedelta(minutes=20)).strftime("%H:%M")
+        levantado_hora = (fin2 + timedelta(minutes=55)).strftime("%H:%M")
+        db.guardar_despertar_correccion(conn, person_id, otra["day"], "sueno", sueno_hora,
+                                         "despertar-real-v2", "persona")
+        db.guardar_despertar_correccion(conn, person_id, otra["day"], "levantado", levantado_hora,
+                                         "despertar-real-v2", "persona")
+        count += 2
     conn.commit()
-    return 1
+    return count
 
 
 def _seed_self_metrics(conn, db, rng: random.Random, all_days: list[date], person_id: int) -> int:
