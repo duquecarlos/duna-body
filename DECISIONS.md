@@ -27512,7 +27512,7 @@ slice's own touches went red (the new tools/routes unlisted in their hand-kept i
 section's per-practica `estado()` calls grew `/history`'s own cost with the number of practices.
 
 -- not merged standalone; its work is carried into `feat/body-historia-vida-2` and merged by
-BODY-HISTORIA-VIDA-2-R2's merge below.
+BODY-HISTORIA-VIDA-2-R2's merge below -- merged `8e4a78b`
 
 ## BODY-HISTORIA-VIDA-2-R -- the census modules the gate found red outside this slice's touches, BLOCKED (2026-11-18)
 
@@ -27545,7 +27545,7 @@ statements and the "Tus prácticas" section pushed it to 30 -- a performance-sha
 (ORCH-CARLOS-DELEGATES-TIER-1-1's own Tier 1 continuation), not a census-shape one, so this slice
 stopped BLOCKED rather than widening its own narrow test-census approval.
 
--- not merged standalone; carried into BODY-HISTORIA-VIDA-2-R2 below.
+-- not merged standalone; carried into BODY-HISTORIA-VIDA-2-R2 below -- merged `8e4a78b`
 
 ## BODY-HISTORIA-VIDA-2-R2 -- `practicas.resumen()`, the raised ceiling, the privacy sweep closed, merged (2026-11-18)
 
@@ -27623,8 +27623,11 @@ anywhere in this slice's own work or the gate's own stdout; no network call was 
 
 **Commits:** `9c02969` (`body/practicas.py`, `body/rutas/historial.py`, `tests/test_practicas.py`,
 `tests/test_rendimiento.py`, `tests/test_recuperacion_pantallas.py`: rulings 1-3), `0121d3f`
-(`tests/test_persona_fuga.py`: ruling 4), this ledger entry its own commit -- merged into `main`
-(sha below).
+(`tests/test_persona_fuga.py`: ruling 4), `3348f06` (this ledger entry) -- merged `8e4a78b`
+(`--no-ff`, no conflicts; tree identity proven, branch tree == merge tree ==
+`9ff285b347e7f75c064af199ff3608c018bbab2d`). Post-merge smoke
+(`tests.test_practicas tests.test_practicas_web tests.test_practicas_asistente tests.test_migraciones
+tests.test_history tests.test_agente_registro tests.test_web_entry`): `Ran 165 tests ... OK`.
 
 **customer_bytes:** unchanged -- this slice touched no person-facing string; it only reorganised
 internal reads and extended tests.
