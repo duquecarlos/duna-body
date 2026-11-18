@@ -27,7 +27,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import config, db, demo, fechas, goals, identity, web
+from body import config, db, demo, fechas, goals, identity, practicas, web
 from tests._rutas import rutas_planas
 
 client = TestClient(web.app, follow_redirects=False)
@@ -108,6 +108,15 @@ def _use_or_make(conn, lang: str, name: str, pid: int | None) -> int:
     return _mk_person(conn, lang, name)
 
 
+def _seed_practica(conn, person_id: int) -> int:
+    """BODY-HISTORIA-VIDA-2-R: one practice per state, however sparse -- practicas.estado itself
+    returns an honest "no data yet" dict rather than None for a practice with zero matching days
+    (its own ruling), so /history/practica/{practica_id} is seeded with a real id in every state
+    instead of being skipped, the same way _full_day/goals.propose already give every other
+    parametrised route a real id to exercise."""
+    return practicas.crear(conn, person_id, "ZZ-PRACTICA", "actividad", {"tipos": ["running"]})
+
+
 def _full_day(conn, person_id: int, day: str) -> None:
     for key in _FULL_METRIC_KEYS:
         db.set_metric(conn, day, key, _INVENTED[key], "garmin", person_id)
@@ -124,9 +133,10 @@ def _full_day(conn, person_id: int, day: str) -> None:
 # ---- A: brand new -- a person row only ----------------------------------------------------------
 def _seed_A(conn, lang: str, pid: int | None = None) -> dict:
     pid = _use_or_make(conn, lang, "A", pid)
+    practica_id = _seed_practica(conn, pid)
     conn.commit()
     return {"person_id": pid, "days": [TODAY.isoformat()], "goal_ids": [], "experiment_ids": [], "turnos_on": False,
-            "entreno": [(TODAY.isoformat(), None)]}
+            "entreno": [(TODAY.isoformat(), None)], "practica_ids": [practica_id]}
 
 
 # ---- B: one day of data, today, every metric a watch can send -------------------------------
@@ -134,9 +144,11 @@ def _seed_B(conn, lang: str, pid: int | None = None) -> dict:
     pid = _use_or_make(conn, lang, "B", pid)
     day = TODAY.isoformat()
     _full_day(conn, pid, day)
+    practica_id = _seed_practica(conn, pid)
     conn.commit()
     return {"person_id": pid, "days": [day], "goal_ids": [], "experiment_ids": [], "turnos_on": False,
-            "entreno": [(day, f"{day}-1")]}  # the one activity _full_day inserts
+            "entreno": [(day, f"{day}-1")],  # the one activity _full_day inserts
+            "practica_ids": [practica_id]}
 
 
 # ---- C: 20 days with ONLY sleep -- a watch/setting that sends some metrics but not others -------
@@ -145,18 +157,20 @@ def _seed_C(conn, lang: str, pid: int | None = None) -> dict:
     days = [(TODAY - timedelta(19 - i)).isoformat() for i in range(20)]
     for i, day in enumerate(days):
         db.set_metric(conn, day, "sleep_minutes", 400 + i, "garmin", pid)
+    practica_id = _seed_practica(conn, pid)
     conn.commit()
     return {"person_id": pid, "days": [days[0], days[-1]], "goal_ids": [], "experiment_ids": [], "turnos_on": False,
-            "entreno": [(days[0], None), (days[-1], None)]}
+            "entreno": [(days[0], None), (days[-1], None)], "practica_ids": [practica_id]}
 
 
 # ---- D: trabaja_turnos = yes, zero shift rows, zero metrics (the honest "sin_datos_reloj" path) -
 def _seed_D(conn, lang: str, pid: int | None = None) -> dict:
     pid = _use_or_make(conn, lang, "D", pid)
     db.set_trabaja_turnos(conn, True, pid)
+    practica_id = _seed_practica(conn, pid)
     conn.commit()
     return {"person_id": pid, "days": [TODAY.isoformat()], "goal_ids": [], "experiment_ids": [], "turnos_on": True,
-            "entreno": [(TODAY.isoformat(), None)]}
+            "entreno": [(TODAY.isoformat(), None)], "practica_ids": [practica_id]}
 
 
 # ---- D2: one night block, trabaja_turnos = yes, no watch data at all (before or after) -----------
@@ -172,9 +186,11 @@ def _seed_D2(conn, lang: str, pid: int | None = None) -> dict:
             "VALUES (?, ?, 'night', 'N', ?, ?, 'manual')",
             (pid, d, f"{d}T22:00:00", f"{nd}T06:00:00"))
     after_day = (start + timedelta(3)).isoformat()
+    practica_id = _seed_practica(conn, pid)
     conn.commit()
     return {"person_id": pid, "days": [start.isoformat(), after_day], "goal_ids": [], "experiment_ids": [],
-            "turnos_on": True, "entreno": [(start.isoformat(), None), (after_day, None)]}
+            "turnos_on": True, "entreno": [(start.isoformat(), None), (after_day, None)],
+            "practica_ids": [practica_id]}
 
 
 # ---- E: an active metric goal on a metric with no data at all, a habit goal with zero checks ----
@@ -188,9 +204,10 @@ def _seed_E(conn, lang: str, pid: int | None = None) -> dict:
     gid_habit = goals.propose(conn, pid, "ZZE-HABIT-GOAL", today_iso, kind="milestone", deadline=deadline)
     goals.activate(conn, gid_habit)
     goals.add_habit(conn, gid_habit, "ZZE-HABIT", {"per": "week", "times": 1})
+    practica_id = _seed_practica(conn, pid)
     conn.commit()
     return {"person_id": pid, "days": [today_iso], "goal_ids": [gid_metric, gid_habit], "experiment_ids": [],
-            "turnos_on": False, "entreno": [(today_iso, None)]}
+            "turnos_on": False, "entreno": [(today_iso, None)], "practica_ids": [practica_id]}
 
 
 # ---- F: data only in the past -- the last day is 40 days ago, the watch stopped syncing ---------
@@ -199,12 +216,14 @@ def _seed_F(conn, lang: str, pid: int | None = None) -> dict:
     last_day = TODAY - timedelta(40)
     for i in range(10):
         _full_day(conn, pid, (last_day - timedelta(9 - i)).isoformat())
+    practica_id = _seed_practica(conn, pid)
     conn.commit()
     return {"person_id": pid, "days": [last_day.isoformat(), TODAY.isoformat()], "goal_ids": [],
             "experiment_ids": [], "turnos_on": False,
             # last_day got a _full_day activity (the loop's own i=9 case); TODAY -- the watch's gap
             # -- never got one, so the detail route must 404 honestly there, not be exempted.
-            "entreno": [(last_day.isoformat(), f"{last_day.isoformat()}-1"), (TODAY.isoformat(), None)]}
+            "entreno": [(last_day.isoformat(), f"{last_day.isoformat()}-1"), (TODAY.isoformat(), None)],
+            "practica_ids": [practica_id]}
 
 
 STATES = {"A": _seed_A, "B": _seed_B, "C": _seed_C, "D": _seed_D, "D2": _seed_D2, "E": _seed_E, "F": _seed_F}
@@ -240,6 +259,8 @@ def _paths_for(route_path: str, ids: dict):
         return [route_path.replace("{goal_id}", str(g)) for g in ids["goal_ids"]]
     if "{experiment_id}" in route_path:
         return [route_path.replace("{experiment_id}", str(e)) for e in ids.get("experiment_ids", [])]
+    if "{practica_id}" in route_path:
+        return [route_path.replace("{practica_id}", str(p)) for p in ids.get("practica_ids", [])]
     return [route_path]
 
 

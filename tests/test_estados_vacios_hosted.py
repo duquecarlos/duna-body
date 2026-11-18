@@ -32,7 +32,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import db, goals, privacidad, web
+from body import db, goals, practicas, privacidad, web
 from tests._rutas import rutas_planas
 from tests.test_cuenta_rp import CuentaRpTestCase
 from tests.test_estados_vacios import _ALWAYS_404_LOCAL, _TURNOS_GATED, STATES, TODAY, _leaks_in
@@ -102,6 +102,8 @@ def _paths_for(route_path: str, ids: dict):
         return [route_path.replace("{goal_id}", str(g)) for g in ids["goal_ids"]]
     if "{experiment_id}" in route_path:
         return [route_path.replace("{experiment_id}", str(e)) for e in ids.get("experiment_ids", [])]
+    if "{practica_id}" in route_path:
+        return [route_path.replace("{practica_id}", str(p)) for p in ids.get("practica_ids", [])]
     return [route_path]
 
 
@@ -232,11 +234,12 @@ class HostedEstadosVaciosSweepTest(CuentaRpTestCase):
             conn = db.connect()
             try:
                 conn.execute("UPDATE person SET language = ? WHERE id = ?", (lang, pid))
+                practica_id = practicas.crear(conn, pid, "ZZ-PRACTICA-H1", "actividad", {"tipos": ["running"]})
                 conn.commit()
             finally:
                 conn.close()
             ids = {"person_id": pid, "days": [TODAY.isoformat()], "goal_ids": [], "experiment_ids": [],
-                   "turnos_on": False, "entreno": [(TODAY.isoformat(), None)]}
+                   "turnos_on": False, "entreno": [(TODAY.isoformat(), None)], "practica_ids": [practica_id]}
             _sweep_as(client, f"H1/{lang}", ids, signed_in=True, consented=False)
 
         # ---- H2: signed in, consented, Garmin never connected -------------------------------------
@@ -246,17 +249,18 @@ class HostedEstadosVaciosSweepTest(CuentaRpTestCase):
             try:
                 conn.execute("UPDATE person SET language = ? WHERE id = ?", (lang, pid))
                 privacidad.record_consent(conn, pid)
+                practica_id = practicas.crear(conn, pid, "ZZ-PRACTICA-H2", "actividad", {"tipos": ["running"]})
                 conn.commit()
             finally:
                 conn.close()
             ids = {"person_id": pid, "days": [TODAY.isoformat()], "goal_ids": [], "experiment_ids": [],
-                   "turnos_on": False, "entreno": [(TODAY.isoformat(), None)]}
+                   "turnos_on": False, "entreno": [(TODAY.isoformat(), None)], "practica_ids": [practica_id]}
             _sweep_as(client, f"H2/{lang}", ids, signed_in=True, consented=True)
 
         # ---- unsigned: every person route redirects to sign-in or answers its documented status --
         anon = TestClient(web.app, follow_redirects=False)
         anon_ids = {"person_id": None, "days": [TODAY.isoformat()], "goal_ids": ["1"], "experiment_ids": ["1"],
-                    "turnos_on": False, "entreno": [(TODAY.isoformat(), "1")]}
+                    "turnos_on": False, "entreno": [(TODAY.isoformat(), "1")], "practica_ids": ["1"]}
         _sweep_as(anon, "anon", anon_ids, signed_in=False, consented=False)
 
         self.assertEqual(defects, [], "defect(s) found by the hosted sweep:\n" +

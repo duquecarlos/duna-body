@@ -94,6 +94,9 @@ class RouteSetTest(unittest.TestCase):
         ("/habits/{habit_id}/check", ("POST",)),
         ("/healthz", ("GET",)),
         ("/history", ("GET",)),
+        ("/history/practica/{practica_id}", ("GET",)),  # BODY-HISTORIA-VIDA-2
+        ("/history/practica/{practica_id}/archive", ("POST",)),  # BODY-HISTORIA-VIDA-2
+        ("/history/practicas", ("POST",)),  # BODY-HISTORIA-VIDA-2
         ("/how/{day}", ("GET",)),
         ("/login", ("GET",)),
         ("/login/cuenta/callback", ("GET",)),
