@@ -28300,3 +28300,138 @@ step 3) -- merged `149bcd83e6f29fc03848d294fc72bdd21b149d87` (`--no-ff`, no conf
 proven, branch tree == merge tree == `2284fd38588ea94930b1dd8c24488c973953a9b0`). Post-merge smoke
 (`tests.test_installer`): `Ran 44 tests in 1.406s ... OK`.
 
+## BODY-DESPERTAR-REAL-1-INV -- this slice could not read the investigation's own report (2026-11-18)
+
+BODY-DESPERTAR-REAL-2's own dispatch asked this slice to read
+`logs/worker-body-despertar-real-1-inv-body-app-20261118T091720.json` and write this ledger entry
+summarizing BODY-DESPERTAR-REAL-1-INV's findings, since that investigation wrote no entry itself.
+
+That path does not exist anywhere under this repository (`body-app` has no `logs/` directory at all),
+and the same filename is unreachable under `C:\Duna\body\dev-protocol\logs\` too -- this worker's own
+sandbox is scoped to `C:\Duna\body\body-app` alone for this slice, and a read outside it had no one
+available to approve it. So this entry cannot summarize findings it was never able to read; writing a
+summary from guesswork would be worse than none.
+
+What IS carried forward, because the dispatch named the IDs directly rather than asking this slice to
+derive them from the report: the open follow-ups BODY-DESPERTAR-REAL-3 through BODY-DESPERTAR-REAL-7,
+listed in BODY-DESPERTAR-REAL-2's own report below exactly as named, with their own `what`/`why_not_now`
+marked unknown -- content this slice never saw, not content it is asserting.
+
+**Unknown, for whoever next has access to that report:** read it from the dev-protocol side and give
+this investigation its real ledger entry; this one is a placeholder saying truthfully that the
+read failed, not a substitute for it.
+
+## BODY-DESPERTAR-REAL-2 -- leer_intradia: a few hours of one day, local time, refreshed on demand (2026-11-18)
+
+**Ruling 1** -- a new `lectura` tool, `leer_intradia` (`body/agente/herramientas.py:2921-2928`, function
+`_leer_intradia` at `:932` plus helpers `_hora_local` at `:914` and `_motivo_intradia_sin_datos` at
+`:921`), gated at `nivel: "completo"`, the same gate `leer_dia` itself enforces. Parameters `fecha`
+(a day), `desde`/`hasta` (local HH:MM, normalized via `strftime("%H:%M")` after parsing so an
+unpadded `"6:00"` still compares correctly against a stored `"06:05"`). The window is capped at
+`_LEER_INTRADIA_MAX_MIN = 4 * 60` minutes; longer is refused with the cap stated in the message
+(`"leer_intradia admite hasta 4 horas por llamada (...); divide el rango"`). Returns, for that window
+only: heart-rate and stress points as `[hora_local, valor]` via `db.intradia`, and -- for the part of
+the window inside Garmin's own sleep session (`sleep_session.start_local/end_local` for that day) --
+the sleep minute arrays via `db.sueno_minuto_a_minuto` plus that start/end. A minute with no stored
+value is simply absent, never a 0 (both db functions' own contract; `_leer_intradia` never fills a
+gap). An empty window explains why via `MOTIVOS_INTRADIA_SIN_DATOS = ("fuera_de_alcance",
+"reloj_apagado", "no_traido")`: out of Garmin's own 130-day retention (`pull.INTRADIA_ALCANCE_DIAS`),
+the watch never connected, or it is connected but that part of the day was not fetched yet.
+
+Offered wherever `leer_dia` is offered with no separate wiring: the in-app assistant and both MCP
+tool lists (local `body/mcp.py`, hosted `body/mcp.py`'s same path) all derive their listings from the
+static `HERRAMIENTAS` registry this entry extends, confirmed by `tests/test_mcp.py`'s new
+`test_leer_intradia_is_offered_and_callable`. The tool's own description (committed verbatim, Spanish,
+`es.json`-register-guard-clean) tells the model this is for a few hours of one day and points
+elsewhere for a range of days: *"El pulso y el estrés minuto a minuto en una ventana de hasta 4 horas
+dentro de un día (...), con el sueño minuto a minuto para la parte de la ventana que cae dentro de esa
+noche. Para un rango de varios días usa leer_serie; para el resto de ese mismo día usa leer_dia. Pasada
+la ventana de 4 horas se rechaza sin leer nada: divide el rango."* A `lectura` permission key sees it
+like any other lectura tool (`tests/test_llave_asistente.py`, unchanged -- it derives its own list the
+same dynamic way).
+
+**Ruling 2 (freshness on demand)** -- `body/pull.py`'s new `actualizar_intradia_si_corresponde(person_id,
+day)` (added after `_pull_intradia_pendientes`). When `day` is today or yesterday in the person's own
+zone and `db.intradia_almacenado` is false, it refreshes that one day through
+`traer_intradia(..., forzar=True)` using the SAME per-person Garmin-session path the scheduled pull
+already uses for that mode: hosted (`garmin_cuenta.leer`/`.guardar`) or local (the adapter's own stored
+token) -- never a new token path. Called from `ejecutar()` in `body/agente/herramientas.py` (the
+`necesita_actualizacion` branch), never from `_leer_intradia`'s own body: a `lectura` tool must never
+write (enforced both by `PRAGMA query_only` and the static writer-guard that walks every lectura tool's
+own call graph), the same place `HERRAMIENTAS_HOY`'s own `_lanzar_pull_hoy_en_hilo` already runs its
+write trigger from -- but SYNCHRONOUS here, since the just-asked-about window must already be filled
+before the read that follows in the same tool call.
+
+The guard: at most one attempt per `(person_id, day)` every `INTRADIA_FRESCURA_ESPACIO_MIN = 30`
+minutes, kept in an in-process dict (`_ULTIMO_INTENTO_FRESCURA_INTRADIA`) -- a worker's choice: a
+restart loses the guard, which only costs one extra on-demand fetch, never a wrong answer. Deliberately
+NOT `garmin_cuenta`'s own `ultimo_intento_en`/`reintentar_despues_de` (BODY-SYNC-VIVO-ESTADO-1): an
+intraday refresh failure must never show up as a daily-sync backoff on Hoy's own "Tu reloj" card
+(`texto_estado_vivo` reads exactly those two columns) or delay the next scheduled pull's own
+`puede_intentar` check. A refresh that fails or is refused never raises -- every exception is caught
+and reported back as `True` ("an attempt was made and it did not succeed"), which `ejecutar()` threads
+through as `actualizacion_fallo`, surfacing `t("asistente.intradia.no_actualizado")` ("No pude traer
+los datos más recientes justo ahora; aquí tienes lo último que ya tengo guardado.") in the result with
+the stored data still returned -- never an exception to the model.
+
+**Ruling 3** -- no figure in the result belongs to anyone but the person asking (`db.person`'s own
+`person_id` scoping, proven by `tests/test_persona_fuga.py`'s cross-person sweep, which now names
+`leer_intradia` in `READ_TOOLS`); every time in the result is local, with the zone named once
+(`out["zona"]`), never repeated per point.
+
+**Census tests updated exactly, never loosened to "at least":** `tests/test_agente_registro.py` --
+20 lectura tools (was 19), 51 `HERRAMIENTAS` entries total (was 50), `leer_intradia` at nivel
+`'completo'` in `expected_levels`. `tests/test_persona_fuga.py` -- `leer_intradia` added to
+`READ_TOOLS` and to `_sweep_tools_as`'s per-tool param branch. `tests/test_mcp.py` -- new
+`test_leer_intradia_is_offered_and_callable` (tools/list membership + a tools/call round trip).
+`tests/test_i18n_paridad.py` -- the dynamic prefix `"asistente.intradia.sin_datos.+"` registered in
+`_FIXED_DYNAMIC` against `herramientas.MOTIVOS_INTRADIA_SIN_DATOS` itself, never a hand-typed list.
+
+**New test file**, `tests/test_leer_intradia.py` (22 tests): the 4-hour window returns only its own
+points in local time; a 5-hour window is refused with "4 horas" in the message; minutes without data
+are simply absent; the sleep arrays appear only for the part of the window inside the sleep session;
+an empty window names each of the three `sin_datos` reasons; `nivel_datos` below `'completo'` refuses
+the tool; a `lectura` permission key sees it; the registry entry's own shape (`tipo`, `nivel`,
+`parametros`) is asserted directly; another person's figures never appear. `tests/test_pull.py`'s new
+`ActualizarIntradiaSiCorrespondeTest` (11 tests): exactly one forced fetch for a missing today/
+yesterday, the 30-minute guard holding then releasing after it is pushed back, a complete day never
+fetching, an older or future day never fetching, a failing fetch reporting `True` without raising, and
+the hosted path reading and persisting the person's own token.
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run as 11
+sequential alphabetical chunks of dotted modules (20 modules each except the last, 210 modules total,
++1 over BODY-INSTALL-DESDE-VIVO-1's 209: this slice's own `tests/test_leer_intradia.py`):
+
+1. `test_accesibilidad`..`test_baselines`: `Ran 385 tests in 59.930s` -- OK (skipped=1, expected
+   failures=1)
+2. `test_baselines_lote`..`test_despertar`: `Ran 429 tests in 244.658s` -- OK
+3. `test_desplazamiento_asistente`..`test_experimentos_esquema`: `Ran 402 tests in 70.572s` -- OK
+4. `test_experimentos_intradia`..`test_guardia_parches`: `Ran 372 tests in 541.071s` -- OK
+5. `test_habito_veces_1`..`test_hoy_escritorio`: `Ran 611 tests in 144.660s` -- OK
+6. `test_hoy_turno`..`test_medida_peso`: `Ran 397 tests in 89.486s` -- OK
+7. `test_metas_semana_tira`..`test_plan_esquema`: `Ran 489 tests in 169.388s` -- OK
+8. `test_plan_hoy`..`test_pull`: `Ran 524 tests in 146.547s` -- OK
+9. `test_pull_intradia_experimentos`..`test_sueno_respiracion_vista`: `Ran 287 tests in 74.188s` -- OK
+10. `test_sync_vivo`..`test_turnos_ultima_semana`: `Ran 555 tests in 89.187s` -- OK
+11. `test_tutoriales`..`test_web_entry`: `Ran 164 tests in 30.866s` -- OK
+
+Sum: 385+429+402+372+611+397+489+524+287+555+164 = **4615**. Collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`, taken before the
+chunked run): **4615**. Exact match. No password, token, session secret, device key or health figure
+was read, printed or written anywhere in this slice's own work or the gate's own stdout; no network
+call was made (every `NotSignedIn`/`GarminConnect*Error`/`AttributeError` line is expected log output
+from tests exercising synthetic error paths).
+
+**customer_bytes:** changed -- 4 new strings in `body/i18n/es.json` and `body/i18n/en.json`
+(`asistente.intradia.no_actualizado` and the three `asistente.intradia.sin_datos.*` keys), plus the
+new tool's own description text; all are assistant-chat copy, register-guard-clean, no URL-adjacent
+punctuation. No template, route or schema changed.
+
+**Open follow-ups carried forward from BODY-DESPERTAR-REAL-1-INV**, named in that investigation's own
+report (unreadable from this slice's own sandbox, see the ledger entry above) and repeated here
+unchanged, by ID only: BODY-DESPERTAR-REAL-3, BODY-DESPERTAR-REAL-4, BODY-DESPERTAR-REAL-5,
+BODY-DESPERTAR-REAL-6, BODY-DESPERTAR-REAL-7.
+
+**Commits:** `924c408` (step 1: `leer_intradia` + its census tests + `tests/test_leer_intradia.py`)
+-- `ef48173` (step 2: `actualizar_intradia_si_corresponde` + `tests/test_pull.py`'s new class).
+
