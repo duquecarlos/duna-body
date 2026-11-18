@@ -28126,3 +28126,84 @@ tree == merge tree == `5b5709f0414295cfa5471fbe0165db4d30195850`). Post-merge sm
 (`tests.test_practicas_web tests.test_goals_web tests.test_i18n_paridad tests.test_estados_vacios`):
 `Ran 74 tests ... OK`.
 
+## BODY-DIA-LETRA-1 -- date.days_letter catalog entry per language, _week_letters reads it (2026-11-18)
+
+Never written until now: this slice stopped BLOCKED on a red gate before its own ledger entry was
+committed (see BODY-DIA-LETRA-1-R below). `specs/body-dia-letra-1.md` is not present in this
+repository -- specs live with the orchestrator at `C:\Duna\body\dev-protocol`, not in body-app -- so
+the measurement and ruling below are transcribed verbatim from commit `f3c8f79`'s own message, the
+only record of them held in this repository.
+
+**Measurement and ruling, verbatim from the commit:** "comun._week_letters took the first letter of
+t('date.days') -- in Spanish martes and miercoles both start with 'M', so the practice drill-down's
+day header and the goal page's habit week showed an ambiguous third column (L M M J V S D).
+date.days_letter is now its own seven-item Monday-first catalog entry (es: L M X J V S D, en: M T W
+T F S S), and _week_letters returns it directly so a language decides its own initials."
+
+**The change:**
+- `body/i18n/es.json:708` -- new `date.days_letter` key: `["L", "M", "X", "J", "V", "S", "D"]`.
+- `body/i18n/en.json:708` -- new `date.days_letter` key: `["M", "T", "W", "T", "F", "S", "S"]`.
+- `body/rutas/comun.py:154` -- `_week_letters(t)` now returns `t("date.days_letter")` directly
+  instead of `[name[:1].upper() for name in t("date.days")]`.
+- `tests/test_goals_web.py:138` -- habit-week-cell letters assertion updated to
+  `["L", "M", "X", "J", "V", "S", "D"]`.
+- `tests/test_practicas_web.py:439` -- practice day grid header letters assertion updated to the
+  same list.
+
+Commit: `f3c8f79` (`body/i18n/en.json`, `body/i18n/es.json`, `body/rutas/comun.py`,
+`tests/test_goals_web.py`, `tests/test_practicas_web.py`). This slice's own gate run was never
+completed before it stopped BLOCKED; BODY-DIA-LETRA-1-R's gate below covers the full suite on top of
+this change.
+
+## BODY-DIA-LETRA-1-R -- the goal page's habit week letters catch up to date.days_letter (2026-11-18)
+
+**The finding:** BODY-DIA-LETRA-1 stopped BLOCKED on `feat/body-dia-letra-1` at `f3c8f79`
+(`logs/worker-body-dia-letra-1-body-app-20261118T072605.json`, the only report for that ID): the
+ruling above was built and committed, but the gate's chunk 6 went red at
+`tests/test_metas_semana_tira.py:75`, which asserted the goal page's habit week letters as
+`["L", "M", "M", "J", "V", "S", "D"]` -- the exact ambiguity BODY-DIA-LETRA-1 was ruled to remove.
+That file was outside the stopped slice's touches, so it rightly stopped rather than widening itself.
+
+**This ruling (verbatim from the dispatch):** "widen the touches by that file (and by the other
+modules that render weekday letters, so a red of the same shape there can be fixed in place:
+tests/test_entreno_sesion.py, tests/test_hogar_enlace_1.py), and update each such assertion to the
+new contract -- es ['L', 'M', 'X', 'J', 'V', 'S', 'D'] -- never loosening it. Only assertions that
+pin the Spanish Wednesday letter change; a red of any other shape -> STOP BLOCKED naming it.
+BODY-DIA-LETRA-1's ruling stands as built."
+
+**Each assertion changed:** `tests/test_metas_semana_tira.py:75` -- updated from
+`["L", "M", "M", "J", "V", "S", "D"]` to `["L", "M", "X", "J", "V", "S", "D"]`.
+`tests/test_entreno_sesion.py` and `tests/test_hogar_enlace_1.py` were grepped for `"M", "M"` and for
+any weekday-letter assertion and carry none of this shape -- both already ran green, unmodified, both
+before and after the fix, so no change was needed in either.
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run as 11
+sequential alphabetical chunks of dotted modules (20 modules each except the last, 209 modules
+total):
+
+1. `test_accesibilidad`..`test_baselines`: `Ran 385 tests in 90.076s` -- OK (skipped=1, expected
+   failures=1)
+2. `test_baselines_lote`..`test_despertar`: `Ran 429 tests in 310.334s` -- OK
+3. `test_desplazamiento_asistente`..`test_experimentos_esquema`: `Ran 402 tests in 88.003s` -- OK
+4. `test_experimentos_intradia`..`test_guardia_parches`: `Ran 372 tests in 457.302s` -- OK
+5. `test_habito_veces_1`..`test_hoy_escritorio`: `Ran 611 tests in 121.657s` -- OK
+6. `test_hoy_turno`..`test_metas_semana_tira`: `Ran 368 tests in 68.770s` -- OK
+7. `test_migraciones`..`test_plan_hoy`: `Ran 499 tests in 146.761s` -- OK
+8. `test_plan_pantalla`..`test_pull_intradia_experimentos`: `Ran 507 tests in 148.468s` -- OK
+9. `test_pull_relleno`..`test_sync_vivo`: `Ran 321 tests in 90.793s` -- OK
+10. `test_sync_vivo_estado`..`test_tutoriales`: `Ran 521 tests in 95.173s` -- OK
+11. `test_tutoriales_catalogo`..`test_web_entry`: `Ran 155 tests in 35.239s` -- OK
+
+Sum: 385+429+402+372+611+368+499+507+321+521+155 = **4570**. Collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`, taken before the
+chunked run): **4570**. Exact match. No password, token, session secret, device key or health figure
+was read, printed or written anywhere in this slice's own work or the gate's own stdout (the
+`GarminConnect*Error`, `NotSignedIn`, `AttributeError`, `RuntimeError` and `dia vacio ... =ausente`
+lines are expected log output from tests exercising synthetic error/empty paths); no network call was
+made.
+
+**customer_bytes:** not changed -- this slice only moved test assertions to match strings that
+BODY-DIA-LETRA-1 already shipped; no template, i18n string or route response changed here.
+
+**Commits:** `c374362` (`tests/test_metas_semana_tira.py`, step 1) -- this ledger entry (step 3).
+
