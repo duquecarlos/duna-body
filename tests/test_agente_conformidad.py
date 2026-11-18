@@ -11,7 +11,7 @@ from pathlib import Path
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
-from body import anatomia, config, db, fechas, garmin_adapter, goals
+from body import anatomia, config, db, desplazamiento_import as di_commute, fechas, garmin_adapter, goals
 from body.agente import ajustes, cliente, herramientas, propuestas, uso
 from body.agente import conversacion as agente_conversacion
 
@@ -31,6 +31,14 @@ def _cid(conn, person_id: int = 1) -> int:
     return agente_conversacion.crear(conn, person_id)
 
 
+def _commute_csv() -> str:
+    """BODY-DESPLAZAMIENTO-ASISTENTE-1-W: a one-day, invented commute-summary CSV -- the
+    `importar_desplazamiento` tool's own `contenido` argument, built from the shared
+    `desplazamiento_import.HEADER` rather than a hand-typed header that could drift from it."""
+    header = ",".join(di_commute.HEADER)
+    return f"{header}\n2020-02-20,20,1,5,0,2020-02-20T06:00:00+00:00\n"
+
+
 def _actividad(conn, source: str, source_id: str, day: str, tipo: str = "strength_training") -> None:
     conn.execute(
         "INSERT INTO activity (person_id, source_id, day, start_local, type, name, source) "
@@ -39,9 +47,10 @@ def _actividad(conn, source: str, source_id: str, day: str, tipo: str = "strengt
 
 
 def _seed_todo(conn) -> dict:
-    """Every piece of demo data the 29 `propuesta` tools' valid arguments reference (BODY-HOGAR-
+    """Every piece of demo data the 30 `propuesta` tools' valid arguments reference (BODY-HOGAR-
     ESCRIBE-1: extended from 27 with anotar_sesion; BODY-CORREGIR-MEDIDA-ENTRENO-1-W: extended from
-    28 with corregir_entreno) -- real
+    28 with corregir_entreno; BODY-DESPLAZAMIENTO-ASISTENTE-1-W: extended from 29 with
+    importar_desplazamiento) -- real
     production writers only (`goals`, `db.*`), never a hand-typed row for a table one of those
     writers owns."""
     ids: dict = {}
@@ -191,6 +200,7 @@ def _argumentos(ids: dict) -> dict:
         "corregir_meta_plan": {"meta_id": ids["meta_semanal_id"], "valor": 2},
         "anotar_sesion": {"plan_id": ids["plan_id"], "nota": "Nota de conformidad"},
         "corregir_entreno": {"dia": ids["dia_a1"], "orden": 1, "reps": 9},
+        "importar_desplazamiento": {"contenido": _commute_csv()},
     }
 
 
@@ -207,7 +217,7 @@ def _tabla_conteos(conn) -> dict[str, int]:
 
 class ConformidadTestCase(unittest.TestCase):
     """Shared setUp for every clause (2) test: one fresh database, the full demo seed, and the
-    29-tool arguments table built from it."""
+    30-tool arguments table built from it."""
 
     def setUp(self):
         self.conn, self.orig = _reset_db()
@@ -271,7 +281,7 @@ class Clause1LecturaGuardMechanismTest(unittest.TestCase):
 
 class Clause2WritesOnlyByProposalTest(ConformidadTestCase):
     """Amendment 7 clause (2): a write is only ever a proposal record (agent-capabilities-v1
-    section 2). Calling every one of the 29 `propuesta` tools with valid demo arguments changes no
+    section 2). Calling every one of the 30 `propuesta` tools with valid demo arguments changes no
     table except `propuesta_agente` -- counted over every table sqlite_master names, never a typed
     list."""
 

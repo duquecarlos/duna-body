@@ -14,6 +14,8 @@ from tests._db import open_conn
 from body import db, desplazamiento_import as di
 from body.agente import conversacion as agente_conversacion
 from body.agente import herramientas, propuestas
+from body.i18n import T
+from body.rutas import asistente, comun
 
 
 def _csv(rows, computed_at="2026-11-01T06:00:00+00:00", header=True):
@@ -113,6 +115,76 @@ class ProponerTest(unittest.TestCase):
                                    "ninguno", _cid(self.conn))
 
 
+# ---- ruling B: the card agrees in number in both languages ------------------------------------
+
+class TarjetaTest(unittest.TestCase):
+    """BODY-DESPLAZAMIENTO-ASISTENTE-1-W ruling B: the day count and the changed-days count each
+    read singular at 1, and a one-day file names its single date rather than a range 'from X to X'."""
+
+    def setUp(self):
+        self.conn = _conn(self, "tarjeta.db")
+
+    def _proponer(self, texto):
+        return herramientas.ejecutar(self.conn, 1, "importar_desplazamiento", {"contenido": texto},
+                                      "resumen", _cid(self.conn))
+
+    def _despues(self, texto):
+        return self._proponer(texto)["_registro"]["despues_json"]
+
+    def _tarjeta(self, lang, despues):
+        defs = comun._defs(self.conn)
+        _, texto, _ = asistente.TARJETAS["importar_desplazamiento"](T(lang), defs, despues, None, self.conn, 1)
+        return texto
+
+    def test_thirty_days_range_plural_in_both_languages(self):
+        despues = self._despues(_treinta_dias())
+        self.assertEqual(
+            self._tarjeta("es", despues),
+            "30 días de desplazamiento, del 1 oct 2026 al 30 oct 2026 (30 días cambiarían)",
+        )
+        self.assertEqual(
+            self._tarjeta("en", despues),
+            "30 days of commute data, from 1 Oct 2026 to 30 Oct 2026 (30 days would change)",
+        )
+
+    def test_one_day_file_names_its_single_date_not_a_range(self):
+        texto = _csv([("2026-10-01", 20, 1, 5, 0)])
+        despues = self._despues(texto)
+        self.assertEqual(despues["dias"], 1)
+        self.assertEqual(despues["dias_cambio"], 1)
+        self.assertEqual(
+            self._tarjeta("es", despues),
+            "1 día de desplazamiento, el 1 oct 2026 (1 día cambiaría)",
+        )
+        self.assertEqual(
+            self._tarjeta("en", despues),
+            "1 day of commute data, on 1 Oct 2026 (1 day would change)",
+        )
+
+    def test_reimport_with_one_changed_day_reads_singular_for_cambios_only(self):
+        texto_viejo = _treinta_dias(computed_at="2026-11-01T06:00:00+00:00")
+        out_viejo = self._proponer(texto_viejo)
+        propuestas.aplicar(self.conn, 1, out_viejo["propuesta_id"])
+
+        from datetime import date, timedelta
+        inicio = date.fromisoformat("2026-10-01")
+        filas = [((inicio + timedelta(days=i)).isoformat(), 20 + i, 1 + (i % 3), 5 + (i % 7), i % 4)
+                 for i in range(30)]
+        filas[0] = (filas[0][0], 999, filas[0][2], filas[0][3], filas[0][4])
+        texto_nuevo = _csv(filas, computed_at="2026-12-01T06:00:00+00:00")
+        despues = self._despues(texto_nuevo)
+        self.assertEqual(despues["dias"], 30)
+        self.assertEqual(despues["dias_cambio"], 1)
+        self.assertEqual(
+            self._tarjeta("es", despues),
+            "30 días de desplazamiento, del 1 oct 2026 al 30 oct 2026 (1 día cambiaría)",
+        )
+        self.assertEqual(
+            self._tarjeta("en", despues),
+            "30 days of commute data, from 1 Oct 2026 to 30 Oct 2026 (1 day would change)",
+        )
+
+
 # ---- ruling 2: applying writes the SAME rows the device route writes --------------------------
 
 class AplicarTest(unittest.TestCase):
@@ -205,8 +277,9 @@ class DeshacerTest(unittest.TestCase):
         propuestas.aplicar(self.conn, 1, pid)
 
         # Something else re-imports a different file afterwards -- the undo must refuse, never
-        # overwrite that later, real import.
-        texto2 = _treinta_dias(computed_at="2027-01-01T06:00:00+00:00", start="2026-11-15")
+        # overwrite that later, real import. A start safely before `texto`'s own range, never a
+        # future day regardless of when this test runs.
+        texto2 = _treinta_dias(computed_at="2027-01-01T06:00:00+00:00", start="2026-08-01")
         di.importar(self.conn, 1, texto2)
         self.conn.commit()
 
