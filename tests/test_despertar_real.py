@@ -109,7 +109,7 @@ class SinSesionYSinLineaBaseTest(unittest.TestCase):
         conn = _mkconn(self)
         resultado = despertar_real.estimar(conn, 1, DAY)
         self.assertEqual(resultado["confianza"], "baja")
-        self.assertEqual(resultado["propuesta"], {"tipo": "ninguna", "hora": None})
+        self.assertEqual(resultado["propuestas"], [])
         self.assertEqual(resultado["evidencia"]["motivo"], "sin_sesion")
         self.assertEqual(resultado["segmentos"], [])
 
@@ -118,7 +118,7 @@ class SinSesionYSinLineaBaseTest(unittest.TestCase):
         conn.commit()
         resultado = despertar_real.estimar(conn, 1, DAY)
         self.assertEqual(resultado["confianza"], "baja")
-        self.assertEqual(resultado["propuesta"], {"tipo": "ninguna", "hora": None})
+        self.assertEqual(resultado["propuestas"], [])
         self.assertEqual(resultado["evidencia"]["motivo"], "sin_linea_base")
 
 
@@ -133,8 +133,7 @@ class DozingTailTest(unittest.TestCase):
                     + _serie(DAY, 6 * 60 + 30, 9 * 60, 2, BASE_FC + 8.0))
         conn.commit()
         resultado = despertar_real.estimar(conn, 1, DAY)
-        self.assertEqual(resultado["propuesta"]["tipo"], "sueno")
-        self.assertEqual(resultado["propuesta"]["hora"], f"{DAY}T06:30:00")
+        self.assertEqual(resultado["propuestas"], [{"tipo": "sueno", "hora": f"{DAY}T06:30:00"}])
         tipos = [s["tipo"] for s in resultado["segmentos"]]
         self.assertEqual(tipos[0], "dormitando")
         self.assertIn("despierto_quieto", tipos)
@@ -151,7 +150,7 @@ class QuietAwakeThenRiseTest(unittest.TestCase):
                     + _serie(DAY, 6 * 60, 9 * 60, 2, BASE_FC + 20.0))
         conn.commit()
         resultado = despertar_real.estimar(conn, 1, DAY)
-        self.assertEqual(resultado["propuesta"], {"tipo": "levantado", "hora": f"{DAY}T06:00:00"})
+        self.assertEqual(resultado["propuestas"], [{"tipo": "levantado", "hora": f"{DAY}T06:00:00"}])
         self.assertEqual(resultado["primera_levantada"], f"{DAY}T06:00:00")
         tipos = [s["tipo"] for s in resultado["segmentos"]]
         self.assertEqual(tipos, ["despierto_quieto", "levantado"])
@@ -166,7 +165,7 @@ class ImmediateRiseTest(unittest.TestCase):
         _guardar_fc(conn, 1, DAY, BASE_MUESTRAS + _serie(DAY, 5 * 60, 9 * 60, 2, BASE_FC + 20.0))
         conn.commit()
         resultado = despertar_real.estimar(conn, 1, DAY)
-        self.assertEqual(resultado["propuesta"], {"tipo": "ninguna", "hora": None})
+        self.assertEqual(resultado["propuestas"], [])
         self.assertEqual(resultado["segmentos"][0]["tipo"], "levantado")
 
 
@@ -182,7 +181,7 @@ class WatchOffGapTest(unittest.TestCase):
         self.assertEqual(resultado["segmentos"], [
             {"tipo": "sin_dato", "inicio": f"{DAY}T05:00:00", "fin": f"{DAY}T09:00:00"}])
         self.assertEqual(resultado["confianza"], "baja")
-        self.assertEqual(resultado["propuesta"], {"tipo": "ninguna", "hora": None})
+        self.assertEqual(resultado["propuestas"], [])
 
 
 class EventoAcotaLevantadoTest(unittest.TestCase):
@@ -195,7 +194,7 @@ class EventoAcotaLevantadoTest(unittest.TestCase):
         _comida(conn, 1, DAY, f"{DAY}T07:15:00")
         conn.commit()
         resultado = despertar_real.estimar(conn, 1, DAY)
-        self.assertEqual(resultado["propuesta"], {"tipo": "levantado", "hora": f"{DAY}T07:15:00"})
+        self.assertEqual(resultado["propuestas"], [{"tipo": "levantado", "hora": f"{DAY}T07:15:00"}])
         self.assertEqual(resultado["confianza"], "media")
         self.assertEqual(resultado["evidencia"]["eventos"], [{"fuente": "comida", "hora": f"{DAY}T07:15:00"}])
 
@@ -207,7 +206,7 @@ class EventoAcotaLevantadoTest(unittest.TestCase):
         conn.commit()
         resultado = despertar_real.estimar(conn, 1, DAY)
         # the EARLIEST logged event is the tighter upper bound.
-        self.assertEqual(resultado["propuesta"], {"tipo": "levantado", "hora": f"{DAY}T07:00:00"})
+        self.assertEqual(resultado["propuestas"], [{"tipo": "levantado", "hora": f"{DAY}T07:00:00"}])
         fuentes = {e["fuente"] for e in resultado["evidencia"]["eventos"]}
         self.assertEqual(fuentes, {"checkin", "actividad"})
 
@@ -238,7 +237,38 @@ class RelativeBaselineTest(unittest.TestCase):
         hora_b = datetime.fromisoformat(alto_resultado["primera_levantada"])
         fin_sueno_b = datetime.fromisoformat(alto_resultado["sueno_fin"])
         self.assertEqual(hora_a - fin_sueno_a, hora_b - fin_sueno_b)
-        self.assertEqual(base_resultado["propuesta"]["tipo"], alto_resultado["propuesta"]["tipo"])
+        self.assertEqual([p["tipo"] for p in base_resultado["propuestas"]],
+                          [p["tipo"] for p in alto_resultado["propuestas"]])
+
+
+class DozingThenQuietThenRiseTest(unittest.TestCase):
+    """BODY-DESPERTAR-REAL-6A-R2 ruling 2: a morning can truly have BOTH -- dozed past Garmin's
+    own end (sueno), then quiet awake time, then a later sustained rise (levantado), neither one
+    dropping the other."""
+
+    def test_proposes_both_sueno_and_levantado(self):
+        conn = _fixture(self)
+        _guardar_fc(conn, 1, DAY, BASE_MUESTRAS + _serie(DAY, 5 * 60, 6 * 60 + 28, 2, BASE_FC + 2.0)
+                    + _serie(DAY, 6 * 60 + 30, 6 * 60 + 58, 2, BASE_FC + 8.0)
+                    + _serie(DAY, 7 * 60, 9 * 60, 2, BASE_FC + 20.0))
+        conn.commit()
+        resultado = despertar_real.estimar(conn, 1, DAY)
+        self.assertEqual(resultado["propuestas"], [
+            {"tipo": "sueno", "hora": f"{DAY}T06:30:00"},
+            {"tipo": "levantado", "hora": f"{DAY}T07:00:00"},
+        ])
+        tipos = [s["tipo"] for s in resultado["segmentos"]]
+        self.assertEqual(tipos, ["dormitando", "despierto_quieto", "levantado"])
+
+    def test_dozing_only_proposes_sueno_alone(self):
+        """The same shape DozingTailTest uses -- no rise ever follows the dozing tail, so only
+        'sueno' is proposed, never a 'levantado' entry invented from nothing."""
+        conn = _fixture(self)
+        _guardar_fc(conn, 1, DAY, BASE_MUESTRAS + _serie(DAY, 5 * 60, 6 * 60 + 28, 2, BASE_FC + 2.0)
+                    + _serie(DAY, 6 * 60 + 30, 9 * 60, 2, BASE_FC + 8.0))
+        conn.commit()
+        resultado = despertar_real.estimar(conn, 1, DAY)
+        self.assertEqual(resultado["propuestas"], [{"tipo": "sueno", "hora": f"{DAY}T06:30:00"}])
 
 
 class EstresFueraDeDescansoRequeridoTest(unittest.TestCase):

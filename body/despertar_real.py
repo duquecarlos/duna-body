@@ -20,9 +20,12 @@ The orchestrator's rulings this module is built to (Tier 2, quality):
   (1) `estimar(conn, person_id, day) -> dict`: Garmin's own sleep start/end, a list of `segmentos`
       from Garmin's own end up to MODELO['horizonte_horas'] (each one `tipo` 'dormitando' |
       'despierto_quieto' | 'levantado' | 'sin_dato', with its own `inicio`/`fin`),
-      `primera_levantada` (the first 'levantado' moment, if any), a `propuesta` ('sueno' with a
-      later end, 'levantado' with a get-up time, or 'ninguna'), a `confianza` ('alta' | 'media' |
-      'baja'), and the `evidencia` used, by source.
+      `primera_levantada` (the first 'levantado' moment, if any), `propuestas` (BODY-DESPERTAR-
+      REAL-6A-R2 ruling 2: a list, at most one of each tipo, ordered sueno then levantado -- a
+      'sueno' entry when the first segment after Garmin's own end is a dormitando run, a
+      'levantado' entry when a sustained rise or a bounding event exists, dropped when its own
+      hora would equal the sueno entry's hora, [] when neither applies), a `confianza` ('alta' |
+      'media' | 'baja') for the whole morning, and the `evidencia` used, by source.
   (2) thresholds relative to the person's OWN heart rate near the end of that night's sleep (the
       sleep-window array, `db.sueno_minuto_a_minuto`) -- falling back to their resting heart rate
       (`daily_metric`, 'resting_hr') ONLY where that sleep-window baseline itself cannot be read,
@@ -54,7 +57,7 @@ from datetime import datetime, timedelta
 from . import db, intradia_horario
 from .experimentos import _sin_offset
 
-VERSION = "despertar-real-v1"
+VERSION = "despertar-real-v2"
 MODELO = {
     "version": VERSION,
     # How far past Garmin's own sleep end this model ever looks.
@@ -103,7 +106,9 @@ MODELO = {
 }
 
 SEGMENT_KINDS = ("dormitando", "despierto_quieto", "levantado", "sin_dato")
-PROPUESTA_TIPOS = ("sueno", "levantado", "ninguna")
+# BODY-DESPERTAR-REAL-6A-R2 ruling 2: the two kinds a `propuestas` entry can carry -- 'ninguna'
+# (despertar-real-v1's own third value, "nothing to propose") is now simply [] (ruling 2).
+PROPUESTA_TIPOS = ("sueno", "levantado")
 CONFIANZAS = ("alta", "media", "baja")
 
 
@@ -277,7 +282,7 @@ def _resultado_vacio(sueno_inicio: str | None, sueno_fin: str | None, motivo: st
         "horizonte_hasta": None,
         "segmentos": [],
         "primera_levantada": None,
-        "propuesta": {"tipo": "ninguna", "hora": None},
+        "propuestas": [],
         "confianza": "baja",
         "evidencia": {"motivo": motivo},
     }
@@ -350,26 +355,33 @@ def estimar(conn, person_id: int, day: str) -> dict:
     else:
         confianza = "alta"
 
+    # BODY-DESPERTAR-REAL-6A-R2 ruling 2: the two kinds computed independently -- a morning can
+    # truly have BOTH (dozed past Garmin's own end, then got up later still).
     primer_tipo = segmentos[0]["tipo"]
+    sueno_hora_dt = segmentos[0]["fin"] if primer_tipo == "dormitando" else None
+
     if primer_tipo == "levantado":
-        # Ruling: an immediate rise means Garmin's own recorded end already matches reality --
-        # nothing to propose.
-        propuesta = {"tipo": "ninguna", "hora": None}
+        # Ruling: an immediate rise right at Garmin's own end means Garmin was already right --
+        # nothing to propose for 'levantado'.
+        levantado_hora_dt = None
     elif primera_levantada_dt is not None:
-        hora_dt, fuente_hora = primera_levantada_dt, "intradia"
-        if evento_dt is not None and evento_dt < hora_dt:
-            hora_dt, fuente_hora = evento_dt, "evento"
-        propuesta = {"tipo": "levantado", "hora": hora_dt.isoformat()}
+        levantado_hora_dt, fuente_hora = primera_levantada_dt, "intradia"
+        if evento_dt is not None and evento_dt < levantado_hora_dt:
+            levantado_hora_dt, fuente_hora = evento_dt, "evento"
         if fuente_hora == "evento" and confianza == "alta":
             confianza = "media"
     elif evento_dt is not None:
-        propuesta = {"tipo": "levantado", "hora": evento_dt.isoformat()}
+        levantado_hora_dt = evento_dt
         if confianza == "alta":
             confianza = "media"
-    elif primer_tipo == "dormitando":
-        propuesta = {"tipo": "sueno", "hora": segmentos[0]["fin"].isoformat()}
     else:
-        propuesta = {"tipo": "ninguna", "hora": None}
+        levantado_hora_dt = None
+
+    propuestas: list[dict] = []
+    if sueno_hora_dt is not None:
+        propuestas.append({"tipo": "sueno", "hora": sueno_hora_dt.isoformat()})
+    if levantado_hora_dt is not None and levantado_hora_dt != sueno_hora_dt:
+        propuestas.append({"tipo": "levantado", "hora": levantado_hora_dt.isoformat()})
 
     return {
         "version": MODELO["version"],
@@ -381,7 +393,7 @@ def estimar(conn, person_id: int, day: str) -> dict:
             for s in segmentos
         ],
         "primera_levantada": primera_levantada_dt.isoformat() if primera_levantada_dt else None,
-        "propuesta": propuesta,
+        "propuestas": propuestas,
         "confianza": confianza,
         "evidencia": {
             "linea_base": {"fuente": fuente_base},

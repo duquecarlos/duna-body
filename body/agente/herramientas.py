@@ -159,9 +159,9 @@ _PARAM_LEER_INTRADIA = {
 # hand-typed list anywhere else (test_i18n_paridad.py's own dynamic-prefix census reads this one).
 MOTIVOS_INTRADIA_SIN_DATOS = ("fuera_de_alcance", "reloj_apagado", "no_traido")
 
-# BODY-DESPERTAR-REAL-4 ruling 2: the two things a person can correct -- never 'ninguna'
-# (despertar_real.PROPUESTA_TIPOS' own third value), which means "no correction to propose", not
-# something a person taps to apply.
+# BODY-DESPERTAR-REAL-4 ruling 2: the two things a person can correct -- the same pair
+# despertar_real.PROPUESTA_TIPOS lists (BODY-DESPERTAR-REAL-6A-R2 ruling 2: an empty `propuestas`
+# list is "nothing to propose" now, never a third tipo value here).
 TIPOS_CORREGIR_DESPERTAR = ("sueno", "levantado")
 _PARAM_CORREGIR_DESPERTAR = {
     "type": "object",
@@ -808,14 +808,14 @@ def _leer_dia(conn: sqlite3.Connection, person_id: int, day: str) -> dict:
         zonas = a.pop("zonas_limitadas", [])
         a["liviano_a_proposito"] = anatomia.texto_liviano_a_proposito(t, zonas) if zonas else None
     data["objetivos_nutriente"] = nutriente_objetivo.estado_del_dia(conn, person_id, day)
-    # BODY-DESPERTAR-REAL-4 ruling 3: the day's own correction, next to Garmin's own sleep --
-    # both shown, labelled as which is which. Only when Garmin's own sleep exists (a correction
-    # cannot exist without one, ruling 2's own refusal at creation), never a second source of
-    # truth for the sleep window itself.
+    # BODY-DESPERTAR-REAL-4 ruling 3, widened by BODY-DESPERTAR-REAL-6A-R2 ruling 5: the day's own
+    # correction(s), next to Garmin's own sleep -- both shown, each labelled by kind. Only when
+    # Garmin's own sleep exists (a correction cannot exist without one, ruling 2's own refusal at
+    # creation), never a second source of truth for the sleep window itself.
     if data["sleep"] is not None:
-        correccion = db.despertar_correccion(conn, person_id, day)
-        if correccion is not None:
-            data["sleep"] = {**data["sleep"], "correccion": correccion}
+        correcciones = db.despertar_correcciones(conn, person_id, day)
+        if correcciones:
+            data["sleep"] = {**data["sleep"], "correcciones": correcciones}
     return data
 
 
@@ -1001,12 +1001,12 @@ def _leer_intradia(conn: sqlite3.Connection, person_id: int, fecha: str, desde: 
                           if (filtrado := [[ts[11:16], v] for ts, v in serie if _en_ventana(ts)])}
         if sueno_ventana:
             sueno = {"inicio": fila_sueno["start_local"], "fin": fila_sueno["end_local"], **sueno_ventana}
-    # BODY-DESPERTAR-REAL-4 ruling 3: the day's own correction, next to Garmin's own sleep window
-    # above -- both shown, labelled as which is which.
+    # BODY-DESPERTAR-REAL-4 ruling 3, widened by BODY-DESPERTAR-REAL-6A-R2 ruling 5: the day's own
+    # correction(s), next to Garmin's own sleep window above -- both shown, each labelled by kind.
     if sueno is not None:
-        correccion = db.despertar_correccion(conn, person_id, fecha)
-        if correccion is not None:
-            sueno["correccion"] = correccion
+        correcciones = db.despertar_correcciones(conn, person_id, fecha)
+        if correcciones:
+            sueno["correcciones"] = correcciones
 
     out = {"dia": fecha, "desde": desde, "hasta": hasta, "zona": zona,
            "frecuencia_cardiaca": fc, "estres": estres, "sueno": sueno}
@@ -1018,18 +1018,40 @@ def _leer_intradia(conn: sqlite3.Connection, person_id: int, fecha: str, desde: 
     return out
 
 
+def _despertar_hora_opuesta(conn: sqlite3.Connection, person_id: int, fecha: str, tipo_opuesto: str,
+                             correcciones: dict) -> datetime | None:
+    """BODY-DESPERTAR-REAL-6A-R2 ruling 3: the OTHER tipo's own hora for this day, whether already
+    applied (`correcciones`, read once by the caller) or still a PENDING, unapplied propuesta
+    ('co-proposed') -- the ordering check below must see either."""
+    fila = correcciones.get(tipo_opuesto)
+    if fila is not None:
+        return datetime.combine(date.fromisoformat(fecha), _hora_local(fila["hora_local"]))
+    filas = conn.execute(
+        "SELECT despues_json FROM propuesta_agente WHERE person_id = ? AND accion = 'corregir_despertar' "
+        "AND estado = 'propuesta' ORDER BY creada_en DESC", (person_id,),
+    ).fetchall()
+    for f in filas:
+        despues = json.loads(f["despues_json"])
+        if despues.get("fecha") == fecha and despues.get("tipo") == tipo_opuesto:
+            return datetime.combine(date.fromisoformat(fecha), _hora_local(despues["hora_local"]))
+    return None
+
+
 def _corregir_despertar(conn: sqlite3.Connection, person_id: int, conversacion_id: int, fecha: str, tipo: str,
                          hora: str) -> dict:
     """Proposes Body's own correction to Garmin's own recorded sleep for one night (Carlos's own
     ruling, dev-protocol DECISIONS.md BODY-DESPERTAR-REAL-RULING: the evidence decides, dozing
     read as real sleep, quiet awake time in bed only bounds the get-up time, Garmin's own record
     never edited). 'sueno' extends sleep to `hora`; 'levantado' names the actual get-up time.
-    Refuses a day with no Garmin sleep, an `hora` at or before Garmin's own recorded end, or past
-    despertar_real.MODELO['horizonte_horas'] -- the same horizon despertar_real.estimar itself
-    never looks past. The proposal carries despertar_real.estimar's own classification and
-    confidence for that day (BODY-DESPERTAR-REAL-4 ruling 2), for the card's own evidence line.
-    `antes` carries the day's own EXISTING correction, if any, so `deshacer` restores exactly
-    that row, or removes it when there was none."""
+    Refuses a day with no Garmin sleep, an `hora` at or before Garmin's own recorded end, past
+    despertar_real.MODELO['horizonte_horas'] (the same horizon despertar_real.estimar itself never
+    looks past), or one tipo's hora crossing the OTHER tipo's own hora for that day --
+    BODY-DESPERTAR-REAL-6A-R2 ruling 3: a 'levantado' hora earlier than an existing or co-proposed
+    'sueno' hora, or a 'sueno' hora later than an existing or co-proposed 'levantado' hora. The
+    proposal carries despertar_real.estimar's own classification and confidence for that day
+    (BODY-DESPERTAR-REAL-4 ruling 2), for the card's own evidence line. `antes` carries the day's
+    own EXISTING correction for THIS tipo, if any, so `deshacer` restores exactly that row, or
+    removes it when there was none -- the OTHER tipo's own row is never touched."""
     _dia_no_futuro(conn, person_id, fecha)
     t = T(db.person(conn, person_id)["language"])
     fila = conn.execute(
@@ -1046,8 +1068,14 @@ def _corregir_despertar(conn: sqlite3.Connection, person_id: int, conversacion_i
     horizonte_fin_dt = sleep_end_dt + timedelta(hours=despertar_real.MODELO["horizonte_horas"])
     if hora_dt > horizonte_fin_dt:
         raise ToolError(t("agente.error.despertar_hora_fuera_horizonte"))
+    correcciones = db.despertar_correcciones(conn, person_id, fecha)
+    tipo_opuesto = "levantado" if tipo == "sueno" else "sueno"
+    hora_opuesta_dt = _despertar_hora_opuesta(conn, person_id, fecha, tipo_opuesto, correcciones)
+    if hora_opuesta_dt is not None:
+        if (tipo == "levantado" and hora_dt < hora_opuesta_dt) or (tipo == "sueno" and hora_dt > hora_opuesta_dt):
+            raise ToolError(t("agente.error.despertar_levantado_antes_de_sueno"))
     resultado = despertar_real.estimar(conn, person_id, fecha)
-    antes_fila = db.despertar_correccion(conn, person_id, fecha)
+    antes_fila = correcciones.get(tipo)
     antes = {"existia": antes_fila is not None, **(antes_fila or {})}
     despues = {"fecha": fecha, "tipo": tipo, "hora_local": hora_dt.strftime("%H:%M"),
                "modelo_version": despertar_real.MODELO["version"], "sueno_fin": sueno_fin,

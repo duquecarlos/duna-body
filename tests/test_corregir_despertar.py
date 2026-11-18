@@ -101,6 +101,56 @@ class ValidationTest(unittest.TestCase):
                                   {"fecha": DAY, "tipo": "levantado", "hora": "07:00"}, "ninguno", self.cid)
         self.assertEqual(ctx.exception.args[0], T("es")("agente.error.despertar_sin_sueno"))
 
+    # ---- ruling 3: a get-up time may never land before the extended sleep end --------------------
+
+    def test_levantado_before_an_existing_sueno_correction_is_refused(self):
+        _sesion(self.conn)
+        db.guardar_despertar_correccion(self.conn, 1, DAY, "sueno", "07:00", "despertar-real-v2", "persona")
+        self.conn.commit()
+        with self.assertRaises(herramientas.ToolError) as ctx:
+            herramientas.ejecutar(self.conn, 1, "corregir_despertar",
+                                  {"fecha": DAY, "tipo": "levantado", "hora": "06:30"}, "ninguno", self.cid)
+        self.assertEqual(ctx.exception.args[0], T("es")("agente.error.despertar_levantado_antes_de_sueno"))
+
+    def test_levantado_before_a_co_proposed_sueno_is_refused(self):
+        _sesion(self.conn)
+        herramientas.ejecutar(self.conn, 1, "corregir_despertar",
+                              {"fecha": DAY, "tipo": "sueno", "hora": "07:00"}, "ninguno", self.cid)
+        with self.assertRaises(herramientas.ToolError) as ctx:
+            herramientas.ejecutar(self.conn, 1, "corregir_despertar",
+                                  {"fecha": DAY, "tipo": "levantado", "hora": "06:30"}, "ninguno", self.cid)
+        self.assertEqual(ctx.exception.args[0], T("es")("agente.error.despertar_levantado_antes_de_sueno"))
+
+    def test_sueno_after_an_existing_levantado_correction_is_refused(self):
+        _sesion(self.conn)
+        db.guardar_despertar_correccion(self.conn, 1, DAY, "levantado", "07:00", "despertar-real-v2", "persona")
+        self.conn.commit()
+        with self.assertRaises(herramientas.ToolError) as ctx:
+            herramientas.ejecutar(self.conn, 1, "corregir_despertar",
+                                  {"fecha": DAY, "tipo": "sueno", "hora": "07:30"}, "ninguno", self.cid)
+        self.assertEqual(ctx.exception.args[0], T("es")("agente.error.despertar_levantado_antes_de_sueno"))
+
+    def test_sueno_after_a_co_proposed_levantado_is_refused(self):
+        _sesion(self.conn)
+        herramientas.ejecutar(self.conn, 1, "corregir_despertar",
+                              {"fecha": DAY, "tipo": "levantado", "hora": "07:00"}, "ninguno", self.cid)
+        with self.assertRaises(herramientas.ToolError) as ctx:
+            herramientas.ejecutar(self.conn, 1, "corregir_despertar",
+                                  {"fecha": DAY, "tipo": "sueno", "hora": "07:30"}, "ninguno", self.cid)
+        self.assertEqual(ctx.exception.args[0], T("es")("agente.error.despertar_levantado_antes_de_sueno"))
+
+    def test_correctly_ordered_sueno_and_levantado_both_succeed(self):
+        _sesion(self.conn)
+        out_sueno = herramientas.ejecutar(self.conn, 1, "corregir_despertar",
+                                          {"fecha": DAY, "tipo": "sueno", "hora": "06:30"}, "ninguno", self.cid)
+        out_levantado = herramientas.ejecutar(self.conn, 1, "corregir_despertar",
+                                              {"fecha": DAY, "tipo": "levantado", "hora": "07:00"},
+                                              "ninguno", self.cid)
+        self.assertEqual(out_sueno["estado"], "propuesta")
+        self.assertEqual(out_levantado["estado"], "propuesta")
+        self.assertEqual(propuestas.aplicar(self.conn, 1, out_sueno["propuesta_id"])["estado"], "aplicada")
+        self.assertEqual(propuestas.aplicar(self.conn, 1, out_levantado["propuesta_id"])["estado"], "aplicada")
+
 
 # ---- apply / undo ---------------------------------------------------------------------------------
 
@@ -115,8 +165,7 @@ class ApplyUndoTest(unittest.TestCase):
                                     {"fecha": DAY, "tipo": "levantado", "hora": "07:00"}, "ninguno", self.cid)
         resultado = propuestas.aplicar(self.conn, 1, out["propuesta_id"])
         self.assertEqual(resultado["estado"], "aplicada")
-        fila = db.despertar_correccion(self.conn, 1, DAY)
-        self.assertEqual(fila["tipo"], "levantado")
+        fila = db.despertar_correcciones(self.conn, 1, DAY)["levantado"]
         self.assertEqual(fila["hora_local"], "07:00")
         self.assertEqual(fila["origen"], "asistente")
         # Garmin's own row is never touched
@@ -130,18 +179,31 @@ class ApplyUndoTest(unittest.TestCase):
         propuestas.aplicar(self.conn, 1, out["propuesta_id"])
         resultado = propuestas.deshacer(self.conn, 1, out["propuesta_id"])
         self.assertEqual(resultado["estado"], "deshecha")
-        self.assertIsNone(db.despertar_correccion(self.conn, 1, DAY))
+        self.assertEqual(db.despertar_correcciones(self.conn, 1, DAY), {})
 
-    def test_undo_restores_a_prior_correction(self):
-        db.guardar_despertar_correccion(self.conn, 1, DAY, "sueno", "06:20", "despertar-real-v1", "persona")
+    def test_undo_restores_a_prior_correction_of_the_same_tipo(self):
+        db.guardar_despertar_correccion(self.conn, 1, DAY, "levantado", "06:30", "despertar-real-v1", "persona")
         self.conn.commit()
         out = herramientas.ejecutar(self.conn, 1, "corregir_despertar",
                                     {"fecha": DAY, "tipo": "levantado", "hora": "07:00"}, "ninguno", self.cid)
         propuestas.aplicar(self.conn, 1, out["propuesta_id"])
         resultado = propuestas.deshacer(self.conn, 1, out["propuesta_id"])
         self.assertEqual(resultado["estado"], "deshecha")
-        fila = db.despertar_correccion(self.conn, 1, DAY)
-        self.assertEqual((fila["tipo"], fila["hora_local"], fila["origen"]), ("sueno", "06:20", "persona"))
+        fila = db.despertar_correcciones(self.conn, 1, DAY)["levantado"]
+        self.assertEqual((fila["hora_local"], fila["origen"]), ("06:30", "persona"))
+
+    def test_a_pre_existing_sueno_row_survives_untouched_through_a_levantado_apply_and_undo(self):
+        """BODY-DESPERTAR-REAL-6A-R2 ruling 1: apply/undo write only THEIR OWN tipo -- the other
+        tipo's row is never read, written or restored by them."""
+        db.guardar_despertar_correccion(self.conn, 1, DAY, "sueno", "06:20", "despertar-real-v1", "persona")
+        self.conn.commit()
+        out = herramientas.ejecutar(self.conn, 1, "corregir_despertar",
+                                    {"fecha": DAY, "tipo": "levantado", "hora": "07:00"}, "ninguno", self.cid)
+        propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        self.assertEqual(set(db.despertar_correcciones(self.conn, 1, DAY)), {"sueno", "levantado"})
+        propuestas.deshacer(self.conn, 1, out["propuesta_id"])
+        fila = db.despertar_correcciones(self.conn, 1, DAY)["sueno"]
+        self.assertEqual((fila["hora_local"], fila["origen"]), ("06:20", "persona"))
 
     def test_applying_twice_the_second_is_refused(self):
         out = herramientas.ejecutar(self.conn, 1, "corregir_despertar",
@@ -162,7 +224,7 @@ class DriftTest(unittest.TestCase):
     def test_drift_on_apply_refuses(self):
         out = herramientas.ejecutar(self.conn, 1, "corregir_despertar",
                                     {"fecha": DAY, "tipo": "levantado", "hora": "07:00"}, "ninguno", self.cid)
-        db.guardar_despertar_correccion(self.conn, 1, DAY, "sueno", "06:20", "despertar-real-v1", "persona")
+        db.guardar_despertar_correccion(self.conn, 1, DAY, "levantado", "06:20", "despertar-real-v1", "persona")
         self.conn.commit()
         resultado = propuestas.aplicar(self.conn, 1, out["propuesta_id"])
         self.assertEqual(resultado["estado"], "propuesta_desactualizada")
@@ -171,10 +233,22 @@ class DriftTest(unittest.TestCase):
         out = herramientas.ejecutar(self.conn, 1, "corregir_despertar",
                                     {"fecha": DAY, "tipo": "levantado", "hora": "07:00"}, "ninguno", self.cid)
         propuestas.aplicar(self.conn, 1, out["propuesta_id"])
-        db.guardar_despertar_correccion(self.conn, 1, DAY, "sueno", "06:20", "despertar-real-v1", "persona")
+        db.guardar_despertar_correccion(self.conn, 1, DAY, "levantado", "06:20", "despertar-real-v1", "persona")
         self.conn.commit()
         resultado = propuestas.deshacer(self.conn, 1, out["propuesta_id"])
         self.assertEqual(resultado["estado"], "propuesta_desactualizada")
+
+    def test_a_write_to_the_other_tipo_is_not_drift(self):
+        """BODY-DESPERTAR-REAL-6A-R2 ruling 1: drift is scoped to the propuesta's own tipo --
+        a write to the OTHER tipo never blocks apply or undo."""
+        out = herramientas.ejecutar(self.conn, 1, "corregir_despertar",
+                                    {"fecha": DAY, "tipo": "levantado", "hora": "07:00"}, "ninguno", self.cid)
+        db.guardar_despertar_correccion(self.conn, 1, DAY, "sueno", "06:20", "despertar-real-v1", "persona")
+        self.conn.commit()
+        resultado = propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        self.assertEqual(resultado["estado"], "aplicada")
+        resultado = propuestas.deshacer(self.conn, 1, out["propuesta_id"])
+        self.assertEqual(resultado["estado"], "deshecha")
 
 
 # ---- card: title and summary, es/en ----------------------------------------------------------------

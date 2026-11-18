@@ -902,20 +902,19 @@ def _deshacer_proponer_practica(conn: sqlite3.Connection, row: sqlite3.Row) -> N
 def _drift_aplicar_corregir_despertar(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
     antes = json.loads(row["antes_json"]) if row["antes_json"] is not None else {"existia": False}
     despues = json.loads(row["despues_json"])
-    actual = db.despertar_correccion(conn, row["person_id"], despues["fecha"])
+    actual = db.despertar_correcciones(conn, row["person_id"], despues["fecha"]).get(despues["tipo"])
     if not antes.get("existia"):
         return actual is not None
-    return (actual is None or actual["tipo"] != antes.get("tipo")
-            or actual["hora_local"] != antes.get("hora_local")
+    return (actual is None or actual["hora_local"] != antes.get("hora_local")
             or actual["modelo_version"] != antes.get("modelo_version") or actual["origen"] != antes.get("origen"))
 
 
 def _drift_deshacer_corregir_despertar(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
     despues = json.loads(row["despues_json"])
-    actual = db.despertar_correccion(conn, row["person_id"], despues["fecha"])
+    actual = db.despertar_correcciones(conn, row["person_id"], despues["fecha"]).get(despues["tipo"])
     if actual is None:
         return True
-    return (actual["tipo"] != despues["tipo"] or actual["hora_local"] != despues["hora_local"]
+    return (actual["hora_local"] != despues["hora_local"]
             or actual["modelo_version"] != despues.get("modelo_version") or actual["origen"] != "asistente")
 
 
@@ -929,10 +928,10 @@ def _deshacer_corregir_despertar(conn: sqlite3.Connection, row: sqlite3.Row) -> 
     antes = json.loads(row["antes_json"]) if row["antes_json"] is not None else {"existia": False}
     despues = json.loads(row["despues_json"])
     if antes.get("existia"):
-        db.guardar_despertar_correccion(conn, row["person_id"], despues["fecha"], antes["tipo"],
+        db.guardar_despertar_correccion(conn, row["person_id"], despues["fecha"], despues["tipo"],
                                          antes["hora_local"], antes.get("modelo_version"), antes["origen"])
     else:
-        db.borrar_despertar_correccion(conn, row["person_id"], despues["fecha"])
+        db.borrar_despertar_correccion(conn, row["person_id"], despues["fecha"], despues["tipo"])
 
 
 # -- marcar_experimento (this module calls db.registrar_dia_experimento directly) ---------------
