@@ -71,8 +71,8 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .. import anatomia, catalogo_tendencias, comidas, compartir, cuenta, db, desplazamiento_import, enlaces, \
-    entreno_historial, errores, experimentos, fechas, garmin_cuenta, goals, history, horizonte, household, \
-    nutriente_objetivo, practicas, profile, pull, readiness, shift_import, turnos_costo, tutoriales
+    entreno_historial, errores, experimentos, fechas, garmin_adapter, garmin_cuenta, goals, history, horizonte, \
+    household, nutriente_objetivo, practicas, profile, pull, readiness, shift_import, turnos_costo, tutoriales
 from ..i18n import LANGS, T
 from . import ajustes, conversacion as agente_conversacion, propuestas
 
@@ -139,6 +139,24 @@ _PARAM_LEER_SERIE = {
 }
 # key -> unit, off db.METRIC_DEFS itself (template, not a second hand-typed table).
 _UNIDADES_METRICA = {d[0]: d[2] for d in db.METRIC_DEFS}
+
+# BODY-DESPERTAR-REAL-2 ruling 1: the window cap -- a few hours of one day (waking, a workout, a
+# stressful moment), never a whole day's own minute-by-minute dump (leer_dia's own bare figures are
+# for that; leer_serie is for a range of days).
+_LEER_INTRADIA_MAX_MIN = 4 * 60
+_PARAM_LEER_INTRADIA = {
+    "type": "object",
+    "properties": {
+        "fecha": {"type": "string", "format": "date"},
+        "desde": {"type": "string"},
+        "hasta": {"type": "string"},
+    },
+    "required": ["fecha", "desde", "hasta"],
+    "additionalProperties": False,
+}
+# BODY-DESPERTAR-REAL-2 ruling 1: the three honest reasons an empty window can have -- never a
+# hand-typed list anywhere else (test_i18n_paridad.py's own dynamic-prefix census reads this one).
+MOTIVOS_INTRADIA_SIN_DATOS = ("fuera_de_alcance", "reloj_apagado", "no_traido")
 
 DIRECTIONS = ("raise", "lower", "keep")
 
@@ -891,6 +909,83 @@ def _leer_serie(conn: sqlite3.Connection, person_id: int, nivel: str, metricas: 
         "metricas": {m: {"unidad": _UNIDADES_METRICA.get(m), "puntos": _agrupar_serie(por_metrica[m], paso)}
                      for m in metricas},
     }
+
+
+def _hora_local(valor: str):
+    try:
+        return datetime.strptime(valor, "%H:%M").time()
+    except ValueError:
+        raise ToolError(f"{valor!r} debe ser una hora local HH:MM")
+
+
+def _motivo_intradia_sin_datos(conn: sqlite3.Connection, person_id: int, fecha: str, hoy: date) -> str:
+    """BODY-DESPERTAR-REAL-2 ruling 1: the three honest reasons an empty window can have, read-only
+    (never the refresh attempt itself, which `ejecutar()` already ran before this function sees the
+    database -- see `pull.actualizar_intradia_si_corresponde`)."""
+    dia_d = date.fromisoformat(fecha)
+    if dia_d < hoy - timedelta(days=pull.INTRADIA_ALCANCE_DIAS):
+        return "fuera_de_alcance"
+    conectado = (garmin_cuenta.leer(conn, person_id) is not None) if cuenta.hosted() else garmin_adapter.has_token()
+    return "no_traido" if conectado else "reloj_apagado"
+
+
+def _leer_intradia(conn: sqlite3.Connection, person_id: int, fecha: str, desde: str, hasta: str,
+                    actualizacion_fallo: bool = False) -> dict:
+    """BODY-DESPERTAR-REAL-2 ruling 1: the heart-rate and stress points for a window of up to
+    `_LEER_INTRADIA_MAX_MIN` inside one day (local time), plus -- for the part of the window inside
+    Garmin's own sleep session -- the sleep minute arrays and Garmin's sleep start/end for that day.
+    `desde`/`hasta` are local HH:MM; every minute without a stored value is simply absent, never
+    a 0 (db.intradia/db.sueno_minuto_a_minuto's own contract). `actualizacion_fallo` is set by
+    `ejecutar()` (ruling 2's on-demand refresh, never run from here -- a `lectura` tool must never
+    write)."""
+    person = db.person(conn, person_id)
+    zona = person["timezone"]
+    t = T(person["language"])
+    hoy = fechas.hoy_local(person)
+    try:
+        dia_d = date.fromisoformat(fecha)
+    except ValueError:
+        raise ToolError("'fecha' debe ser una fecha ISO (AAAA-MM-DD)")
+    if dia_d > hoy:
+        raise ToolError("'fecha' no puede ser una fecha futura")
+    desde_t, hasta_t = _hora_local(desde), _hora_local(hasta)
+    # Normalized to zero-padded "HH:MM" -- the form every stored timestamp's own [11:16] slice
+    # already carries -- so a caller's "6:00" compares correctly against "06:05", not just "06:00".
+    desde, hasta = desde_t.strftime("%H:%M"), hasta_t.strftime("%H:%M")
+    if hasta_t <= desde_t:
+        raise ToolError("'hasta' debe ser posterior a 'desde'")
+    minutos = (hasta_t.hour * 60 + hasta_t.minute) - (desde_t.hour * 60 + desde_t.minute)
+    if minutos > _LEER_INTRADIA_MAX_MIN:
+        raise ToolError(f"leer_intradia admite hasta {_LEER_INTRADIA_MAX_MIN // 60} horas por llamada "
+                         f"({minutos / 60:.1f} horas pedidas); divide el rango")
+
+    def _en_ventana(ts: str) -> bool:
+        return desde <= ts[11:16] < hasta
+
+    fc = [[ts[11:16], v] for ts, v in db.intradia(conn, person_id, fecha, "intradia_fc", zona) if _en_ventana(ts)]
+    estres = [[ts[11:16], v] for ts, v in db.intradia(conn, person_id, fecha, "intradia_estres", zona)
+              if _en_ventana(ts)]
+
+    fila_sueno = conn.execute(
+        "SELECT start_local, end_local FROM sleep_session WHERE person_id = ? AND day = ?",
+        (person_id, fecha),
+    ).fetchone()
+    sueno = None
+    if fila_sueno is not None and fila_sueno["start_local"] and fila_sueno["end_local"]:
+        arrays = db.sueno_minuto_a_minuto(conn, person_id, fecha, zona)
+        sueno_ventana = {nombre: filtrado for nombre, serie in arrays.items()
+                          if (filtrado := [[ts[11:16], v] for ts, v in serie if _en_ventana(ts)])}
+        if sueno_ventana:
+            sueno = {"inicio": fila_sueno["start_local"], "fin": fila_sueno["end_local"], **sueno_ventana}
+
+    out = {"dia": fecha, "desde": desde, "hasta": hasta, "zona": zona,
+           "frecuencia_cardiaca": fc, "estres": estres, "sueno": sueno}
+    if not fc and not estres and sueno is None:
+        motivo = _motivo_intradia_sin_datos(conn, person_id, fecha, hoy)
+        out["sin_datos"] = {"motivo": motivo, "mensaje": t("asistente.intradia.sin_datos." + motivo)}
+    if actualizacion_fallo:
+        out["actualizacion"] = t("asistente.intradia.no_actualizado")
+    return out
 
 
 def _leer_historia(conn: sqlite3.Connection, person_id: int) -> dict:
@@ -2823,6 +2918,14 @@ HERRAMIENTAS = [
     {"nombre": "leer_como_calculo", "tipo": "lectura", "nivel": "completo",
      "descripcion": "Cómo se calculó el puntaje de preparación de un día: cada parte, su peso y su valor.",
      "parametros": _PARAM_DIA, "funcion": _leer_como_calculo},
+    {"nombre": "leer_intradia", "tipo": "lectura", "nivel": "completo",
+     "descripcion": "El pulso y el estrés minuto a minuto en una ventana de hasta 4 horas dentro de un día "
+                     "(por ejemplo, el momento de despertar, un entrenamiento o un momento de estrés), con el "
+                     "sueño minuto a minuto para la parte de la ventana que cae dentro de esa noche. Para un "
+                     "rango de varios días usa leer_serie; para el resto de ese mismo día usa leer_dia. Pasada "
+                     f"la ventana de {_LEER_INTRADIA_MAX_MIN // 60} horas se rechaza sin leer nada: divide el "
+                     "rango.",
+     "parametros": _PARAM_LEER_INTRADIA, "funcion": _leer_intradia, "necesita_actualizacion": True},
     {"nombre": "leer_tendencias", "tipo": "lectura", "nivel": "resumen",
      "descripcion": "Promedios de un rango de días frente a tu historia, sin bajar al dato de un día.",
      "parametros": _PARAM_TENDENCIAS, "funcion": _leer_tendencias},
@@ -3248,6 +3351,13 @@ def ejecutar(conn: sqlite3.Connection, person_id: int, nombre: str, params: dict
         # call shape is unchanged.
         if entrada.get("necesita_nivel"):
             return entrada["funcion"](conn, person_id, nivel, **params)
+        # BODY-DESPERTAR-REAL-2 ruling 2: leer_intradia's own on-demand refresh, SYNCHRONOUS (unlike
+        # HERRAMIENTAS_HOY's fire-and-forget thread above) so the window just asked about is filled
+        # before the read below runs -- called here, never from the tool's own body, for the same
+        # reason ruling 2's docstring on pull.actualizar_intradia_si_corresponde gives.
+        if entrada.get("necesita_actualizacion"):
+            fallo = pull.actualizar_intradia_si_corresponde(person_id, params["fecha"])
+            return entrada["funcion"](conn, person_id, actualizacion_fallo=fallo, **params)
         return entrada["funcion"](conn, person_id, **params)
     except sqlite3.OperationalError as e:
         mensaje = str(e.args[0]) if e.args else ""

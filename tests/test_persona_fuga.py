@@ -441,7 +441,7 @@ PLAIN_GET_ROUTES = [
 
 READ_TOOLS = ["leer_hoy", "leer_dia", "leer_como_calculo", "leer_tendencias", "leer_historia",
               "leer_metas", "leer_meta", "leer_practicas", "leer_turnos", "leer_costo_turnos",
-              "leer_ajustes", "leer_tutoriales"]
+              "leer_ajustes", "leer_tutoriales", "leer_intradia"]
 
 
 class _BaseFugaTest(unittest.TestCase):
@@ -620,6 +620,8 @@ class _BaseFugaTest(unittest.TestCase):
                 params = {"day": DAYS[-1]}
             elif nombre == "leer_meta":
                 params = {"goal_id": ids["gid"]}
+            elif nombre == "leer_intradia":
+                params = {"fecha": DAYS[-1], "desde": "00:00", "hasta": "04:00"}
             else:
                 params = {}
             out = agente_herramientas.ejecutar(self.conn, viewer_id, nombre, params, "completo")

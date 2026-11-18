@@ -1149,6 +1149,71 @@ def _pull_intradia_pendientes(conn, person_id: int, hoy: date, token_str: str | 
     return fetched
 
 
+# BODY-DESPERTAR-REAL-2 ruling 2: an in-process guard only -- a worker restart loses it, which
+# only costs one extra on-demand fetch, never a wrong answer. Deliberately NOT garmin_cuenta's own
+# ultimo_intento_en/reintentar_despues_de (BODY-SYNC-VIVO-ESTADO-1): an intraday refresh failure
+# must never show up as a daily-sync backoff on Hoy's own "Tu reloj" card (texto_estado_vivo reads
+# exactly those two columns) or delay the next scheduled pull's own puede_intentar check.
+_ULTIMO_INTENTO_FRESCURA_INTRADIA: dict[tuple[int, str], datetime] = {}
+INTRADIA_FRESCURA_ESPACIO_MIN = 30
+
+
+def actualizar_intradia_si_corresponde(person_id: int, day: str) -> bool:
+    """BODY-DESPERTAR-REAL-2 ruling 2: called from body/agente/herramientas.py's `ejecutar()`,
+    never from `_leer_intradia`'s own body -- a `lectura` tool must never write (BODY-ASISTENTE-
+    OBS-1), the same place BODY-SYNC-VIVO-2's own `_lanzar_pull_hoy_en_hilo` already does this for
+    leer_hoy/leer_estado_reloj. Opens its OWN connection: the caller's `conn` sits under PRAGMA
+    query_only for the whole tool call, so a write through it would simply fail.
+
+    Refreshes `day` through `traer_intradia(forzar=True)` -- the SAME per-person token path
+    `_pull_intradia_pendientes` already uses: hosted (`garmin_cuenta.leer`/`.guardar`), else the
+    local adapter's own stored token -- but only when `day` is today or yesterday in the person's
+    own zone and not yet stored complete (`db.intradia_almacenado`), and at most once per
+    (person_id, day) every `INTRADIA_FRESCURA_ESPACIO_MIN` minutes (the in-process dict above).
+
+    Returns False whenever no on-demand fetch was attempted (an older day, a future day, an
+    already-complete day, the 30-minute guard, or anything that keeps this from even deciding --
+    an unknown person, say) OR one was attempted and it succeeded -- the stored data already
+    answers either way. Returns True -- never raises -- when one was attempted and failed or was
+    refused (no Garmin connection, a Garmin error, any other unexpected failure)."""
+    conn = db.connect()
+    try:
+        db.ensure_ready(conn)
+        try:
+            fecha = date.fromisoformat(day)
+            person = db.person(conn, person_id)
+            hoy = fechas.hoy_local(person)
+            necesita = (hoy - timedelta(days=1) <= fecha <= hoy
+                        and not db.intradia_almacenado(conn, person_id, day))
+        except Exception:
+            return False
+        if not necesita:
+            return False
+        clave = (person_id, day)
+        ahora = datetime.now(timezone.utc)
+        ultimo = _ULTIMO_INTENTO_FRESCURA_INTRADIA.get(clave)
+        if ultimo is not None and (ahora - ultimo).total_seconds() < INTRADIA_FRESCURA_ESPACIO_MIN * 60:
+            return False
+        _ULTIMO_INTENTO_FRESCURA_INTRADIA[clave] = ahora
+        try:
+            if cuenta.hosted():
+                token = garmin_cuenta.leer(conn, person_id)
+                if token is None:
+                    return True
+                _, token_after = traer_intradia(conn, person_id, day, token_str=token, forzar=True)
+                if token_after != token:
+                    garmin_cuenta.guardar(conn, person_id, token_after)
+            else:
+                traer_intradia(conn, person_id, day, forzar=True)
+            return False
+        except Exception as e:
+            print(f"actualizar_intradia_si_corresponde: fetch failed for {day}: {errores.texto_seguro(e)}",
+                  flush=True)
+            return True
+    finally:
+        conn.close()
+
+
 def traer_detalle_actividad(conn, person_id: int, source_id: str, token_str: str | None = None):
     """Pulls one activity's full detail through the adapter only (garmin_adapter.fetch_activity_
     detail) and stores each kind that call actually returned (db.guardar_detalle_actividad) --

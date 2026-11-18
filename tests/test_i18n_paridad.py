@@ -11,7 +11,7 @@ from unittest import mock
 
 from body import anatomia, db, history, horizonte, noche_inusual, tutoriales
 from body import turnos_costo
-from body.agente import propuestas
+from body.agente import herramientas, propuestas
 from body.rutas import comun, metas, tendencias, turnos
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -185,6 +185,9 @@ _FIXED_DYNAMIC = {
     # body/rutas/historial.py _regla_texto(): a sueno_horario practica's own two fields
     # (practicas.py's own _validar_sueno_horario CHECK).
     "practica.campo_+": ["inicio", "fin"],
+    # body/agente/herramientas.py _leer_intradia(): the three honest reasons leer_intradia's own
+    # empty-window explanation can name (BODY-DESPERTAR-REAL-2 ruling 1).
+    "asistente.intradia.sin_datos.+": list(herramientas.MOTIVOS_INTRADIA_SIN_DATOS),
 }
 
 # body/web.py _finding_text(): key = f"history.find.{axis}_better_{better}", then t(key, ...) -- a

@@ -411,5 +411,114 @@ class TraerDetalleActividadTest(unittest.TestCase):
         self.assertEqual((n, token_after), (3, "tok-after"))
 
 
+class ActualizarIntradiaSiCorrespondeTest(unittest.TestCase):
+    """BODY-DESPERTAR-REAL-2 ruling 2: leer_intradia's own on-demand refresh. `body.pull.fechas.
+    hoy_local` is pinned so "today"/"yesterday"/"older" are fixed facts, never the real wall clock;
+    `body.pull.db.connect` is mocked to open a FRESH connection to this test's own db file on every
+    call (never the same object twice), matching the function's own `db.connect()`/`finally:
+    conn.close()` in real use -- a test calling it twice (the 30-minute guard tests) must not be
+    handed back a connection the first call already closed."""
+
+    HOY = date(2026, 11, 18)
+
+    def setUp(self):
+        self.db_path = Path(tempfile.mkdtemp(dir=TMP)) / "frescura.db"
+        self.conn = open_conn(self, self.db_path)
+        db.init(self.conn)
+        self.person_id = db.local_person_id(self.conn)
+        pull._ULTIMO_INTENTO_FRESCURA_INTRADIA.clear()
+        self.addCleanup(pull._ULTIMO_INTENTO_FRESCURA_INTRADIA.clear)
+        # A fresh connection per call, like the function's own `db.connect()` in real use --
+        # `actualizar_intradia_si_corresponde` closes what it opens, so a test calling it more
+        # than once (the 30-minute guard tests) must not be handed back an already-closed one.
+        # `db.connect` captured BEFORE patching: "body.pull.db" and "body.db" are the same module
+        # object, so patching "body.pull.db.connect" replaces body.db.connect globally too.
+        conectar_real = db.connect
+        patcher = mock.patch("body.pull.db.connect", side_effect=lambda: conectar_real(self.db_path))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        hoy_patcher = mock.patch("body.pull.fechas.hoy_local", return_value=self.HOY)
+        hoy_patcher.start()
+        self.addCleanup(hoy_patcher.stop)
+
+    def test_todays_missing_day_triggers_exactly_one_forced_fetch(self):
+        dia = self.HOY.isoformat()
+        with mock.patch("body.pull.traer_intradia") as m_traer:
+            fallo = pull.actualizar_intradia_si_corresponde(self.person_id, dia)
+        self.assertFalse(fallo)
+        m_traer.assert_called_once_with(mock.ANY, self.person_id, dia, forzar=True)
+
+    def test_a_second_call_within_30_minutes_does_not_fetch_again(self):
+        dia = self.HOY.isoformat()
+        with mock.patch("body.pull.traer_intradia") as m_traer:
+            pull.actualizar_intradia_si_corresponde(self.person_id, dia)
+            fallo = pull.actualizar_intradia_si_corresponde(self.person_id, dia)
+        self.assertFalse(fallo)
+        self.assertEqual(m_traer.call_count, 1)
+
+    def test_a_call_past_the_30_minute_guard_fetches_again(self):
+        dia = self.HOY.isoformat()
+        with mock.patch("body.pull.traer_intradia") as m_traer:
+            pull.actualizar_intradia_si_corresponde(self.person_id, dia)
+            clave = (self.person_id, dia)
+            pull._ULTIMO_INTENTO_FRESCURA_INTRADIA[clave] -= timedelta(minutes=31)
+            pull.actualizar_intradia_si_corresponde(self.person_id, dia)
+        self.assertEqual(m_traer.call_count, 2)
+
+    def test_a_complete_stored_day_never_fetches(self):
+        dia = self.HOY.isoformat()
+        with mock.patch("body.pull.db.intradia_almacenado", return_value=True), \
+             mock.patch("body.pull.traer_intradia") as m_traer:
+            fallo = pull.actualizar_intradia_si_corresponde(self.person_id, dia)
+        self.assertFalse(fallo)
+        m_traer.assert_not_called()
+
+    def test_yesterday_missing_also_triggers_a_fetch(self):
+        dia = (self.HOY - timedelta(days=1)).isoformat()
+        with mock.patch("body.pull.traer_intradia") as m_traer:
+            pull.actualizar_intradia_si_corresponde(self.person_id, dia)
+        m_traer.assert_called_once_with(mock.ANY, self.person_id, dia, forzar=True)
+
+    def test_a_day_older_than_yesterday_never_fetches(self):
+        dia = (self.HOY - timedelta(days=2)).isoformat()
+        with mock.patch("body.pull.traer_intradia") as m_traer:
+            fallo = pull.actualizar_intradia_si_corresponde(self.person_id, dia)
+        self.assertFalse(fallo)
+        m_traer.assert_not_called()
+
+    def test_a_future_day_never_fetches(self):
+        dia = (self.HOY + timedelta(days=1)).isoformat()
+        with mock.patch("body.pull.traer_intradia") as m_traer:
+            fallo = pull.actualizar_intradia_si_corresponde(self.person_id, dia)
+        self.assertFalse(fallo)
+        m_traer.assert_not_called()
+
+    def test_a_failing_fetch_reports_true_and_never_raises(self):
+        dia = self.HOY.isoformat()
+        with mock.patch("body.pull.traer_intradia", side_effect=garmin_adapter.NotSignedIn("no token")):
+            fallo = pull.actualizar_intradia_si_corresponde(self.person_id, dia)
+        self.assertTrue(fallo)
+
+    def test_hosted_path_uses_the_persons_own_token_and_persists_a_refreshed_one(self):
+        dia = self.HOY.isoformat()
+        with mock.patch("body.pull.cuenta.hosted", return_value=True), \
+             mock.patch("body.pull.garmin_cuenta.leer", return_value="tok-before"), \
+             mock.patch("body.pull.traer_intradia", return_value=("fetched", "tok-after")) as m_traer, \
+             mock.patch("body.pull.garmin_cuenta.guardar") as m_guardar:
+            fallo = pull.actualizar_intradia_si_corresponde(self.person_id, dia)
+        self.assertFalse(fallo)
+        m_traer.assert_called_once_with(mock.ANY, self.person_id, dia, token_str="tok-before", forzar=True)
+        m_guardar.assert_called_once_with(mock.ANY, self.person_id, "tok-after")
+
+    def test_hosted_path_with_no_stored_token_is_refused_without_a_garmin_call(self):
+        dia = self.HOY.isoformat()
+        with mock.patch("body.pull.cuenta.hosted", return_value=True), \
+             mock.patch("body.pull.garmin_cuenta.leer", return_value=None), \
+             mock.patch("body.pull.traer_intradia") as m_traer:
+            fallo = pull.actualizar_intradia_si_corresponde(self.person_id, dia)
+        self.assertTrue(fallo)
+        m_traer.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

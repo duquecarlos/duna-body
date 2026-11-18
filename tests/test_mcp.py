@@ -392,6 +392,24 @@ class ToolsCallTest(_McpTestCase):
         salida = json.loads(r["content"][-1]["text"])
         self.assertIn("resting_hr", salida["metricas"])
 
+    def test_leer_intradia_is_offered_and_callable(self):
+        """BODY-DESPERTAR-REAL-2 ruling 1: body.mcp lists leer_intradia like any other catalogue
+        tool -- the generic tools/list and tools/call paths need no new code for it either. A date
+        well before today skips ruling 2's on-demand refresh, so this needs no Garmin mock."""
+        _, listado = self._ejecutar([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
+        nombres = {t["name"] for t in listado[0]["result"]["tools"]}
+        self.assertIn("leer_intradia", nombres)
+
+        _, respuestas = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "leer_intradia",
+                        "arguments": {"fecha": "2026-10-01", "desde": "06:00", "hasta": "08:00"}}},
+        ])
+        r = respuestas[0]["result"]
+        self.assertNotIn("isError", r)
+        salida = json.loads(r["content"][-1]["text"])
+        self.assertEqual(salida["sin_datos"]["motivo"], "reloj_apagado")
+
     def test_one_leer_serie_call_counts_as_one_lectura_not_one_per_day(self):
         """BODY-AGENTE-LEER-SERIE-1: the bug report this tool answers -- a desk helper calling
         leer_dia once per day hit this same 5-reads-per-15-minutes cap on a long history. ONE
