@@ -27783,3 +27783,218 @@ rendered on screen).
 (`--no-ff`, no conflicts). Post-merge smoke (`tests.test_idioma_hogar tests.test_i18n_paridad
 tests.test_web_entry`): `Ran 24 tests ... OK`.
 
+## BODY-HISTORIA-VIDA-3 -- the drill-down's weekly strip, an edit form, the weekly-target and baseline sentences, the header switch's real `volver` (2026-11-18)
+
+The orchestrator's own review of BODY-HISTORIA-VIDA-2 (merged `8e4a78b`) and BODY-IDIOMA-HOGAR-1
+(merged `72564fb`), six problems found on `/history/practica/{id}` and the header language switch.
+
+**Measurement, verbatim from the dispatch's own surface:**
+
+(a) the drill-down's day grid (`practica.dias_title`, `_PRACTICAS_DIAS_RECIENTES = 90`) painted
+every `no_hecho` day `--danger` red, so a 5-day/week practice looked like constant failure for the
+other two days every week -- the same "never a colour of failure" rule BODY-HISTORIA-VIDA-2's own
+`ruling 1 UNKNOWN` gap (above, `specs/body-historia-vida-2.md` not in this repository) should have
+covered for this screen, had it been found there; (b) no way to retitle or retarget a practica once
+created; (c) `practica.meta_dias` ("Meta: {n} días por semana") read as a command, not a label; (d)
+`practica.baseline_title`/the context sentence under it had no subject or units ("En general" alone,
+then a bare metric-only sentence) and the shift list had no plural agreement ("1 noches"-shaped
+output); (e) `base.html`'s `idioma_volver` was a fixed tab-root map (`history`->`/history`), so
+posting the language switch from `/history/practica/1` sent the person back to `/history`'s own
+root -- actually `/trends` per the dispatch's own wording -- never the page they were reading; (f)
+`goals.retomar_nota` used straight quotes (`"X"`/`"X"`) instead of the project's own guillemets/curly
+pair.
+
+**Ruling 1 -- the weekly strip replaces the day grid as the drill-down's own main visual, as
+built:** `body/practicas.py`'s existing `_semanas` rollup (unchanged) already carries `hecho`,
+`semana_sin_dato` (`hecho+no_hecho < MODELO["MIN_DIAS_CON_DATO"]`, i.e. 4) and `cumple` per week --
+no new SQL. `body/rutas/historial.py:347-359`'s `_semana_clase(semana, meta)` maps each week to
+exactly one of four classes, never a failure colour: `w-gap` (too little data to judge),
+`w-met` (`hecho >= meta`), `w-partial` (`hecho > 0`), `w-empty` (0 days). `:334-345`'s
+`_semanas_en_temporada` turns each temporada's own `[desde, hasta]` into the set of Mondays it
+covers, so a season's own weeks can be outlined. `:327-332`'s `_mes_anio_corto` labels each row with
+a 3-letter month + year (`t('date.months')[...][:3]`). `:361-382`'s `_semanas_strip_ctx` builds rows
+of `_SEMANAS_POR_FILA = 13` (`:26`, a quarter) weeks, each cell carrying `clase`, `en_temporada`
+and an `aria` string (`practica.semana_aria`/`semana_aria_gap`). `:384-414`'s `_practica_detail_ctx`
+exposes the result as `practica.semanas`. `body/templates/practica.html:21-35` renders it under
+`practica.semanas_title` ("Tu historia, semana a semana" / "Your history, week by week"); the
+recent-days grid below it (`:37-50`) is now explicitly the SECOND, more granular view, bounded to
+`_PRACTICAS_DIAS_RECIENTES = 28` days (`:24`, was 90) under its own renamed heading
+`practica.semanas_recientes_title` ("Últimas 4 semanas" / "Last 4 weeks"). `body/static/body.css`:
+every `--danger` reference on a practice/day-grid rule removed -- `.strip-cell.p-no_hecho`'s
+`::after`/legend dot now use `var(--muted)` (`:313,317`), `.strip-cell.p-sin_dato` is dimmed AND
+dashed (`:314-315,318`, an honest gap, never a failure); the new `.week-cell` states
+(`:325-333`): `w-empty` transparent, `w-partial` a `color-mix` of `var(--ok)` at 40%, `w-met` solid
+`var(--ok)`, `w-gap` dashed, `w-season` an inset outline -- no `--danger` anywhere in either block.
+Tests: `tests/test_practicas_web.py`'s `WeeklyStripTest.test_met_partial_empty_and_gap_weeks_each_
+render_their_class` (`:215-241`, all four classes present from one fixture), the pre-existing
+`DetailTest.test_seasons_section_lists_a_season_with_context_and_day_links` (`:191-208`) extended
+to assert `w-season`, `NoFailureColorInPracticeStylesTest.test_no_danger_variable_in_practice_or_
+weekly_styles` (`:247-254`, reads `body.css`, fails if any actual rule line -- `"{" in line` --
+co-occurs with `--danger` on a practice/week selector), and the renamed
+`DetailTest.test_detail_bounds_the_recent_day_grid_to_the_last_4_weeks` (`:157-...`, asserts "Últimas
+4 semanas" and the 28-day bound). Both fixtures needed 4 activity days a week, not 3, to clear
+`MIN_DIAS_CON_DATO`; the PRE-EXISTING seasons test had been passing on an unrelated match (the
+header text, not an actual detected temporada) before this slice's fixture fix -- recorded as a
+deviation below.
+
+**Ruling 2 -- an edit form for `titulo`/the weekly target, as built:** `body/practicas.py:154-168`'s
+`editar(conn, person_id, practica_id, titulo, meta_dias_semana)` -- the same `titulo`/`meta_dias_
+semana` validation `crear` applies, against an existing row: `UPDATE practica SET titulo = ?,
+meta_dias_semana = ? WHERE id = ? AND person_id = ? AND archivada_en IS NULL`; `fuente`/`regla`
+never change here. `body/rutas/historial.py:427-444`'s `POST /history/practica/{practica_id}` --
+404 via `practicas.propia_activa` before any write (another person's id, or an archived practica),
+reads `titulo`/`meta_dias_semana` from the form, redirects back to the same detail page
+(`303`). `body/templates/practica.html:73-87`: the edit form (`practica.editar_titulo_label`,
+`practica.editar_meta_label`, `practica.editar_guardar`) and the existing Retomar/Archivar actions
+all now sit inside one `{% if not practica.archivada %}` block, so none of the three shows on an
+archived practica. `tests/test_web_entry.py`'s `RouteSetTest.BEFORE` gained
+`("/history/practica/{practica_id}", ("POST",))`. Tests: `tests/test_practicas_web.py`'s
+`EditActionTest` (`:286-348`, six cases -- title+target change together, an out-of-range target
+refused, an empty title refused, another person's id 404, an archived practica's id 404, the form
+present only while the practica is active).
+
+**Ruling 3 -- the weekly-target label, as built:** `body/i18n/es.json`/`en.json:999-1000` --
+`practica.objetivo_semanal`/`_one` ("Objetivo semanal: {n} días" / "Objetivo semanal: 1 día"; en
+"Weekly target: {n} days" / "Weekly target: 1 day"), replacing `practica.meta_dias` ("Meta: {n} días
+por semana" / "Goal: {n} days a week"), removed. `body/rutas/historial.py:384-414`'s
+`_practica_detail_ctx` picks the `_one` sibling when `meta_dias_semana == 1`; `practica.html:11`
+reads `practica.objetivo_semanal` in place of the removed string. The `/history` card line
+(`history.practicas_week`, "{hecho} de {meta} días esta semana" / "{hecho} of {meta} days this
+week") never used the word "Meta"/"Goal" in the first place, so it already matched this ruling's
+own words with no change needed -- confirmed by grep, not assumed. Test:
+`tests/test_practicas_web.py`'s `LanguageTest.test_english_weekly_target_label` (`:416-...`) plus
+the pre-existing assertion at `:148` updated from "Meta: 3 días por semana" to "Objetivo semanal: 3
+días".
+
+**Ruling 4 -- the "En toda tu historia" sentence, as built:** `body/i18n/es.json`/`en.json:1022` --
+`practica.baseline_sentence` ("En toda tu historia: {contexto}" / "Across your whole history:
+{contexto}"), wrapping the existing metric/shift context instead of standing alone under
+`practica.baseline_title` ("En general"/"Overall", unchanged as the section heading).
+`body/rutas/historial.py:281-290`'s new `_turnos_listado(t, turnos)` gives every shift kind its own
+singular/plural noun, chosen by count (`v == 1` -> `t('shift.kind.noun.' + k)`, else
+`t('shift.kind.noun_plural.' + k)`, written as direct literal-concat calls so
+`tests/test_i18n_paridad.py`'s regex scanner can see both dynamic prefixes -- registered in
+`_FIXED_DYNAMIC` as `"shift.kind.noun.+"`/`"shift.kind.noun_plural.+"` against `db.SHIFT_KINDS`).
+`body/i18n/es.json`/`en.json:1045-1056` -- a singular and a plural noun for each of
+`db.SHIFT_KINDS` (`morning`/`afternoon`/`night`/`day`/`off`/`other`), e.g. es `off` -> "día
+libre"/"días libres", en `off` -> "day off"/"days off". `:292-301`'s `_contexto_texto` now calls
+`_turnos_listado` for the shift clause (omitted entirely when the person has no shifts, unchanged
+from before) and joins it with the sleep-average clause exactly as before; `_practica_detail_ctx`
+wraps that same string in `practica.baseline_sentence` for both the overall baseline and each
+season's own `contexto` (`_temporada_ctx`, `:318-325`, unchanged call site, same wrapped string) --
+one sentence shape used everywhere a context string is shown, per the ruling's own "each season's
+own context sentence uses the same words". Tests: `tests/test_practicas_web.py`'s
+`BaselineSentenceTest` (`:350-397`) -- plural agreement across mixed shift counts
+(`test_baseline_sentence_lists_shift_counts_with_plural_agreement`), the singular noun for exactly
+one shift (`test_baseline_sentence_uses_the_singular_noun_for_one_shift`), the shift clause omitted
+with none (`test_baseline_sentence_omits_the_shift_clause_when_there_are_none`, seeded via
+`db.set_metric(conn, "2026-11-01", "sleep_minutes", 400.0, "garmin", 1)` -- `practicas.py`'s own
+`_contexto()` reads sleep from `daily_metric`, never `sleep_session`, corrected after an initial
+wrong-table fixture), and the English wording (`test_english_baseline_sentence`).
+
+**Ruling 5 -- the header switch's `volver` is the request's own path, as built:**
+`body/rutas/comun.py:91` -- `env.globals["ruta_actual"] = lambda: _RUTA_ACTUAL.get()`, next to the
+existing `env.globals` entries (`static_url`, `hosted`, `es_demo`, `tarea_en_contexto`). This is a
+dict-SUBSCRIPT assignment on `comun.py`'s own `env` object, not an `ast.Attribute` assignment
+targeting another module, so `tests/test_guardia_parches.py`'s `NoReverseShimGuardTest` does not
+flag it -- the same pattern the four existing globals already use. `_RUTA_ACTUAL`
+(`body/rutas/comun.py:51`) is set in `body/web.py`'s middleware from the raw ASGI `scope["path"]` --
+the concrete path actually requested, never a route template -- so `GET /goals/new?practica_id=5`
+carries `/goals/new` with no query string at all (FastAPI/Starlette separate `path` from
+`query_string` at the ASGI layer), meaning the ruling's own "path only, no query string"
+requirement needed no extra stripping logic. `body/templates/base.html:79` --
+`{% set idioma_volver = ruta_actual() or '/settings' %}`, replacing the fixed
+`{'today': '/', 'shifts': '/shifts', ...}.get(tab, '/settings')` map that BODY-IDIOMA-HOGAR-1's own
+ledger entry (ruling 1, above) had already named as sending `/history`'s own tab root rather than
+the page itself -- this is that gap, closed. `ajustes.py`'s own `_safe_volver` same-site check on
+the posted `volver` value is unchanged by this. Tests: `tests/test_idioma_hogar.py`'s
+`HeaderSwitchShowsOnlyTheOtherLanguageTest.test_volver_field_holds_the_practica_detail_path`/
+`test_volver_field_holds_the_goals_new_path`, and `LanguageSwitchRedirectTest.test_volver_from_
+practica_detail_returns_there`/`test_volver_from_goals_new_returns_there`.
+
+**Ruling 6 -- the retomar quote style, as built:** `body/i18n/es.json:321` --
+`"Estás retomando «{titulo}»."` (guillemets); `body/i18n/en.json:321` --
+`"You're bringing back “{titulo}”."` (curly double quotes), both replacing the straight-quote
+versions. `tests/test_goals_web.py`'s `PracticaRetomarPrefillTest` (unchanged) still passes, so no
+other test held a hidden exact-string dependency on the old punctuation.
+
+**Person-facing strings as committed, es and en** (`body/i18n/es.json`/`en.json:321, 999-1000,
+1008-1011, 1022, 1025-1027, 1045-1056`; `practica.meta_dias` and `practica.dias_title` removed):
+
+| key | es | en |
+|---|---|---|
+| goals.retomar_nota | Estás retomando «{titulo}». | You're bringing back "{titulo}". (curly) |
+| practica.objetivo_semanal(_one) | Objetivo semanal: {n} días / Objetivo semanal: 1 día | Weekly target: {n} days / Weekly target: 1 day |
+| practica.semanas_title | Tu historia, semana a semana | Your history, week by week |
+| practica.semana_aria | {desde}: {hecho} de {meta} días | {desde}: {hecho} of {meta} days |
+| practica.semana_aria_gap | {desde}: pocos datos para saber si cumpliste | {desde}: not enough data to tell |
+| practica.semanas_recientes_title | Últimas 4 semanas | Last 4 weeks |
+| practica.baseline_sentence | En toda tu historia: {contexto} | Across your whole history: {contexto} |
+| practica.editar_titulo_label | Título | Title |
+| practica.editar_meta_label | Objetivo semanal (días por semana) | Weekly target (days a week) |
+| practica.editar_guardar | Guardar cambios | Save changes |
+| shift.kind.noun.morning/afternoon/night/day/off/other | mañana/tarde/noche/día/día libre/otro turno | morning/afternoon/night/day/day off/other shift |
+| shift.kind.noun_plural.morning/afternoon/night/day/off/other | mañanas/tardes/noches/días/días libres/otros turnos | mornings/afternoons/nights/days/days off/other shifts |
+
+**Routes added:** `POST /history/practica/{practica_id}` (edit; the existing GET detail and POST
+.../archive routes are unchanged).
+
+**Statement count:** `/history/practica/{practica_id}`'s GET ceiling in
+`tests/test_rendimiento.py`'s `RouteCostCeilingTest` stayed at 23 (measured 17, unchanged) -- the
+weekly strip and the baseline sentence both run entirely on the already-fetched `practicas.estado()`
+result (`e`), no new SQL.
+
+**Deviations, not guessed:** (1) measurement point (a)'s "a 5-day/week practice looked like constant
+failure" names the same screen BODY-HISTORIA-VIDA-2's own ledger entry (above) flagged as
+`ruling 1 UNKNOWN` -- `specs/body-historia-vida-2.md` was never in this repository and no commit
+cited a "ruling 1" there; this slice's ruling 1 is this screen's actual fix, so that earlier gap is
+hereby recorded as CLOSED by this entry, not left open. (2) the `WeeklyStripTest` "met" week and the
+pre-existing seasons-section fixture both originally seeded only 3 activity days/week (matching
+`meta_dias_semana=3`) against `MODELO["MIN_DIAS_CON_DATO"]=4` -- every week was silently forced into
+`semana_sin_dato`/`w-gap`, so the pre-existing test had never actually exercised a real temporada;
+both fixtures were corrected to 4 days/week.
+
+**The gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as 11 sequential
+alphabetical chunks of the 209 `tests/test_*.py` modules (20 per chunk, last chunk 9) on the final
+tree, each read from the process, all in the foreground:
+
+    chunk 0  (test_accesibilidad..test_baselines):                 Ran 385 tests in  58.622s, OK (skipped=1, expected failures=1)
+    chunk 1  (test_baselines_lote..test_despertar):                Ran 429 tests in 242.877s, OK
+    chunk 2  (test_desplazamiento_asistente..test_experimentos_esquema): Ran 402 tests in  68.644s, OK
+    chunk 3  (test_experimentos_intradia..test_guardia_parches):   Ran 371 tests in 432.725s, OK
+    chunk 4  (test_habito_veces_1..test_hoy_escritorio):           Ran 611 tests in 111.367s, OK
+    chunk 5  (test_hoy_turno..test_metas_semana_tira):             Ran 368 tests in  72.821s, OK
+    chunk 6  (test_migraciones..test_plan_hoy):                    Ran 499 tests in 151.803s, OK
+    chunk 7  (test_plan_pantalla..test_pull_intradia_experimentos): Ran 499 tests in 149.332s, OK
+    chunk 8  (test_pull_relleno..test_sync_vivo):                  Ran 321 tests in  87.584s, OK
+    chunk 9  (test_sync_vivo_estado..test_tutoriales):             Ran 521 tests in 100.976s, OK
+    chunk 10 (test_tutoriales_catalogo..test_web_entry):            Ran 155 tests in  35.880s, OK
+
+All 11 chunks GREEN, including chunk 3 (`test_guardia_parches`, `test_i18n_paridad`,
+`test_goals_web`) and chunk 6 (`test_migraciones`..`test_plan_hoy`, which holds no practica module by
+name but confirms nothing elsewhere broke). `tests/test_practicas_web.py` and
+`tests/test_idioma_hogar.py` both ran inside chunk 6's own alphabetic span alongside the rest of the
+`p`/`i` modules captured by the 20-per-chunk split. Every stderr line printed during the run
+(`asistente: propuesta ... no se pudo mostrar`, `pull attempt failed: ...`, `dia vacio ...`,
+`refusado: persona 1 ...`, a deliberately raised `RuntimeError: boom` inside `test_sync_vivo`, mcp
+`401`/`403`/`500` lines) is an existing test deliberately exercising a logged error path, not a
+failure -- each chunk's own final line reads `OK`.
+
+**Reconciliation:** sum of the 11 chunks = 385+429+402+371+611+368+499+499+321+521+155 = **4561**,
+equal to an independent collect-only count (`unittest.TestLoader().discover('tests',
+top_level_dir='.')`, counted without running, taken before the chunked run): **4561**. Exact match.
+No password, token, session secret, device key or health figure was read, printed or written
+anywhere in this slice's own work or the gate's own stdout; no network call was made.
+
+**customer_bytes:** changed -- every string in the table above is person-facing (labels, an aria
+string, a sentence shape, a quote style); the weekly strip and the edit form are new on-screen
+elements. Per this slice's own WORK step 6 ("merge if green"), the merge below proceeds despite the
+change rather than stopping `AWAITING_APPROVAL`.
+
+**Commits:** `e72871e` (`body/practicas.py`, `body/rutas/historial.py`,
+`body/templates/practica.html`, `body/static/body.css`, `body/i18n/es.json`, `body/i18n/en.json`,
+`tests/test_practicas_web.py`, `tests/test_web_entry.py`, `tests/test_i18n_paridad.py`: rulings
+1-4, steps 1-2) -- `72e6e01` (`body/rutas/comun.py`, `body/templates/base.html`,
+`tests/test_idioma_hogar.py`: ruling 5, step 3) -- this ledger entry: ruling 6, the deviations, the
+gate, step 5.
+

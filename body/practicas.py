@@ -151,6 +151,27 @@ def archivar(conn: sqlite3.Connection, person_id: int, practica_id: int) -> bool
     return cur.rowcount > 0
 
 
+def editar(conn: sqlite3.Connection, person_id: int, practica_id: int, titulo: str,
+           meta_dias_semana: int) -> bool | str:
+    """BODY-HISTORIA-VIDA-3 ruling 2: the same titulo/meta_dias_semana validation `crear` applies,
+    against an existing row instead of an inserted one -- fuente and regla never change here, a
+    person retitles or retargets a practice, never reclassifies its source. Returns True on
+    success, a REASON_CODES string on bad input (nothing written), or False when there is no such
+    live row for this person (the route's own 404, same as `archivar`)."""
+    if not isinstance(titulo, str) or not titulo.strip():
+        return "titulo_invalido"
+    if (not isinstance(meta_dias_semana, int) or isinstance(meta_dias_semana, bool)
+            or not (1 <= meta_dias_semana <= 7)):
+        return "meta_dias_semana_invalida"
+    with conn:
+        cur = conn.execute(
+            "UPDATE practica SET titulo = ?, meta_dias_semana = ? "
+            "WHERE id = ? AND person_id = ? AND archivada_en IS NULL",
+            (titulo.strip(), meta_dias_semana, practica_id, person_id),
+        )
+    return cur.rowcount > 0
+
+
 def propia_activa(conn: sqlite3.Connection, person_id: int, practica_id: int) -> bool:
     """BODY-HISTORIA-VIDA-2 ruling 4: true only for this person's own, un-archived practice --
     the one check every habit-practica link (proponer_meta/proponer_plan habitos, goal page

@@ -84,6 +84,11 @@ env.globals["hosted"] = cuenta.hosted
 env.globals["es_demo"] = es_demo
 env.globals["asistente_configurado"] = lambda: agente_cliente.proveedor_configurado() is not None
 env.globals["tarea_en_contexto"] = lambda: tutoriales.tarea_en_ruta(_RUTA_ACTUAL.get())
+# BODY-HISTORIA-VIDA-3 ruling 5: base.html's language switch posts back to the page the person is
+# actually on -- the raw ASGI path _RUTA_ACTUAL already carries (web.py's middleware sets it from
+# `scope["path"]`, the concrete path, never a route template), not a per-tab root. Path only, no
+# query string; ajustes.py's own same-site check on `volver` is unchanged by this.
+env.globals["ruta_actual"] = lambda: _RUTA_ACTUAL.get()
 
 
 # BODY-CONEXIONES-CERRADAS-1: _ctx() opens one connection per route call and stores it here so a

@@ -1,11 +1,13 @@
 """Historial (BODY-WEB-ESTRUCTURA-7): the `/history` screen -- coverage, training, patterns and
 the by-shift breakdown. BODY-HISTORIA-VIDA-2 ruling 2 added "Tus prácticas" to `/history` itself
-and its own drill-down, `/history/practica/{practica_id}` (+ its archive action).
+and its own drill-down, `/history/practica/{practica_id}` (+ its archive action). BODY-HISTORIA-
+VIDA-3 made the drill-down's own main visual the whole history in WEEKS (ruling 1) and added an
+edit form (ruling 2).
 """
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -16,11 +18,12 @@ from . import comun
 
 router = APIRouter()
 
-# BODY-HISTORIA-VIDA-2 ruling 2: the drill-down's own day grid is bounded the same 90 days
-# leer_practicas' own detail call is, so the person never pays for (or scrolls through) a year of
-# per-day cells -- the streaks/temporadas/baseline below it are still the practice's own whole
-# history, practicas.estado's own default range.
-_PRACTICAS_DIAS_RECIENTES = 90
+# BODY-HISTORIA-VIDA-3 ruling 1: "Últimas 4 semanas" bounds the drill-down's own RECENT day grid to
+# the last 4 weeks -- the whole history's own per-week rollup (practicas.estado()'s own "semanas",
+# never bounded) is now the main visual above it.
+_PRACTICAS_DIAS_RECIENTES = 28
+# Ruling 1: rows of 13 weeks (a quarter) each, labelled at their own start.
+_SEMANAS_POR_FILA = 13
 
 # BODY-RECUPERACION-1: each factor's "peor" group label, read through its own i18n key -- 'turno'
 # and 'tipo_sesion' are handled separately below (their group key is data: a shift kind or a
@@ -275,12 +278,21 @@ def _regla_texto(t: T, fuente: str, regla: dict) -> str:
     return t("practica.regla_sueno", campo=campo, op=op, hora=regla["hora"])
 
 
+def _turnos_listado(t: T, turnos: dict[str, int]) -> str:
+    """BODY-HISTORIA-VIDA-3 ruling 4: each shift kind with its own count and the matching singular
+    ("1 día libre") or plural ("32 días libres") noun -- never the bare kind label the ruling found
+    reading as a unit-less count ("32 descanso"). Highest count first, same order as before."""
+    def nombre(k: str, v: int) -> str:
+        if v == 1:
+            return f"{t.num(v)} {t('shift.kind.noun.' + k)}"
+        return f"{t.num(v)} {t('shift.kind.noun_plural.' + k)}"
+    return ", ".join(nombre(k, v) for k, v in sorted(turnos.items(), key=lambda kv: -kv[1]))
+
+
 def _contexto_texto(t: T, ctx: dict) -> str | None:
     partes = []
     if ctx["turnos"]:
-        nombres = ", ".join(f"{t.num(v)} {t('shift.kind.' + k).lower()}"
-                             for k, v in sorted(ctx["turnos"].items(), key=lambda kv: -kv[1]))
-        partes.append(nombres)
+        partes.append(_turnos_listado(t, ctx["turnos"]))
     if ctx.get("sleep_minutes") is not None:
         partes.append(t("practica.contexto_sueno", minutos=t.minutes(ctx["sleep_minutes"])))
     if ctx.get("readiness") is not None:
@@ -312,6 +324,63 @@ def _temporada_ctx(t: T, tp: dict) -> dict:
             "primer_dia": tp["desde"], "ultimo_dia": tp["hasta"]}
 
 
+def _mes_anio_corto(t: T, d: date) -> str:
+    """BODY-HISTORIA-VIDA-3 ruling 1: a weekly-strip row's own start label -- the same 3-letter
+    month abbreviation comun._short_date already uses, without the day (a row is a stretch of
+    weeks, not one date)."""
+    return f"{t('date.months')[d.month - 1][:3]} {d.year}"
+
+
+def _semanas_en_temporada(temporadas: list[dict]) -> set[str]:
+    """Every week (by its own Monday, ISO) that falls inside any of `temporadas` -- ruling 1's "a
+    season's weeks are outlined on the strip so a season is visible where it sits"."""
+    out: set[str] = set()
+    for tp in temporadas:
+        lunes = date.fromisoformat(tp["desde"])
+        hasta = date.fromisoformat(tp["hasta"])
+        while lunes <= hasta:
+            out.add(lunes.isoformat())
+            lunes += timedelta(weeks=1)
+    return out
+
+
+def _semana_clase(semana: dict, meta: int) -> str:
+    """Ruling 1's four week states, never a colour of failure: w-gap (too little watch coverage
+    that week to say whether the goal was met -- the SAME `semana_sin_dato` flag practicas.py's own
+    weekly rollup already carries), w-empty (0 done), w-partial (some, short of the goal), w-met
+    (the goal or more)."""
+    if semana["semana_sin_dato"]:
+        return "w-gap"
+    if semana["hecho"] >= meta:
+        return "w-met"
+    if semana["hecho"] > 0:
+        return "w-partial"
+    return "w-empty"
+
+
+def _semanas_strip_ctx(t: T, e: dict) -> list[dict]:
+    semanas = e["semanas"]
+    if not semanas:
+        return []
+    meta = e["definicion"]["meta_dias_semana"]
+    en_temporada = _semanas_en_temporada(e["temporadas"])
+    celdas = []
+    for s in semanas:
+        lunes = s["lunes"]
+        clase = _semana_clase(s, meta)
+        if clase == "w-gap":
+            aria = t("practica.semana_aria_gap", desde=comun._short_date(t, date.fromisoformat(lunes)))
+        else:
+            aria = t("practica.semana_aria", desde=comun._short_date(t, date.fromisoformat(lunes)),
+                     hecho=t.num(s["hecho"]), meta=t.num(meta))
+        celdas.append({"clase": clase, "en_temporada": lunes in en_temporada, "aria": aria})
+    filas = []
+    for i in range(0, len(celdas), _SEMANAS_POR_FILA):
+        fila = celdas[i:i + _SEMANAS_POR_FILA]
+        filas.append({"label": _mes_anio_corto(t, date.fromisoformat(semanas[i]["lunes"])), "celdas": fila})
+    return filas
+
+
 def _practica_detail_ctx(t: T, e: dict) -> dict:
     d = e["definicion"]
     racha_actual = e["racha_actual"]
@@ -326,17 +395,21 @@ def _practica_detail_ctx(t: T, e: dict) -> dict:
         racha_larga_txt = t(key, n=t.num(racha_mas_larga["dias"]),
                              desde=comun._short_date(t, date.fromisoformat(racha_mas_larga["desde"])),
                              hasta=comun._short_date(t, date.fromisoformat(racha_mas_larga["hasta"])))
+    objetivo_key = "practica.objetivo_semanal_one" if d["meta_dias_semana"] == 1 else "practica.objetivo_semanal"
+    baseline_contexto = _contexto_texto(t, e["baseline"]) if e["baseline"] else None
     return {
         "id": d["id"], "titulo": d["titulo"], "regla_texto": _regla_texto(t, d["fuente"], d["regla"]),
-        "meta_dias": t("practica.meta_dias", n=t.num(d["meta_dias_semana"])),
+        "meta_dias_semana": d["meta_dias_semana"],
+        "objetivo_semanal": t(objetivo_key, n=t.num(d["meta_dias_semana"])),
         "archivada": d["archivada_en"] is not None,
         "sin_datos": e["desde"] is None,
         "racha_actual": racha_actual_txt,
         "racha_mas_larga": racha_larga_txt,
+        "semanas": _semanas_strip_ctx(t, e),
         "dias": _dias_strip_ctx(t, e["dias"]),
         "temporadas": [_temporada_ctx(t, tp) for tp in e["temporadas"]],
         "sin_temporadas": t("practica.sin_temporadas") if e["desde"] is not None and not e["temporadas"] else None,
-        "baseline": _contexto_texto(t, e["baseline"]) if e["baseline"] else None,
+        "baseline": t("practica.baseline_sentence", contexto=baseline_contexto) if baseline_contexto else None,
     }
 
 
@@ -349,6 +422,25 @@ def history_practica_detail(practica_id: int, person_id: int = Depends(identity.
         raise HTTPException(404)
     return comun._render("practica.html", t=t, tab="trends", practica=_practica_detail_ctx(t, e),
                    turnos=db.trabaja_turnos_si(conn, person_id))
+
+
+@router.post("/history/practica/{practica_id}")
+@comun._cierra_conexion_async
+async def history_practica_editar(practica_id: int, request: Request,
+                                   person_id: int = Depends(identity.current_person_id)):
+    """BODY-HISTORIA-VIDA-3 ruling 2: titulo and the weekly target, validated like `crear`
+    (practicas.editar) -- fuente/regla never change here, that would be a different practice."""
+    conn, person, t = comun._ctx(person_id)
+    if not practicas.propia_activa(conn, person_id, practica_id):
+        raise HTTPException(404)
+    f = await comun._form(request)
+    titulo = (f.get("titulo") or "").strip()
+    try:
+        meta_dias_semana = int(f.get("meta_dias_semana", ""))
+    except ValueError:
+        meta_dias_semana = -1
+    practicas.editar(conn, person_id, practica_id, titulo, meta_dias_semana)
+    return RedirectResponse(f"/history/practica/{practica_id}", status_code=303)
 
 
 @router.post("/history/practica/{practica_id}/archive")
