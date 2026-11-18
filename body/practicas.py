@@ -270,7 +270,7 @@ def _estados_metrica_umbral(regla: dict, desde: date, hasta: date, rows: list) -
 def _calcular_metrica_umbral(conn, person_id: int, desde: date, hasta: date, regla: dict) -> dict[str, str]:
     """"Has data": a daily_metric row for `metric_key`, any source."""
     rows = conn.execute(
-        "SELECT day, value FROM daily_metric WHERE person_id = ? AND metric_key = ? AND day BETWEEN ? AND ?",
+        "SELECT day, value FROM daily_metric_efectiva WHERE person_id = ? AND metric_key = ? AND day BETWEEN ? AND ?",
         (person_id, regla["metric_key"], desde.isoformat(), hasta.isoformat()),
     ).fetchall()
     return _estados_metrica_umbral(regla, desde, hasta, rows)
@@ -445,7 +445,7 @@ def _contexto(conn, person_id: int, desde: str, hasta: str) -> dict:
     medias: dict[str, float | None] = {}
     for key in CONTEXTO_KEYS:
         rows = conn.execute(
-            "SELECT value FROM daily_metric WHERE person_id = ? AND metric_key = ? AND day BETWEEN ? AND ?",
+            "SELECT value FROM daily_metric_efectiva WHERE person_id = ? AND metric_key = ? AND day BETWEEN ? AND ?",
             (person_id, key, desde, hasta),
         ).fetchall()
         medias[key] = statistics.fmean(r["value"] for r in rows) if rows else None
@@ -547,7 +547,7 @@ def resumen(conn: sqlite3.Connection, person_id: int) -> list[dict]:
         mk = p["regla"]["metric_key"]
         if mk not in filas_por_metric_key:
             filas_por_metric_key[mk] = conn.execute(
-                "SELECT day, value FROM daily_metric WHERE person_id = ? AND metric_key = ?",
+                "SELECT day, value FROM daily_metric_efectiva WHERE person_id = ? AND metric_key = ?",
                 (person_id, mk),
             ).fetchall()
 
@@ -627,7 +627,7 @@ def sugerencias(conn: sqlite3.Connection, person_id: int) -> list[dict]:
 
     for metric_key in ("walking_minutes", "cycling_minutes"):
         rows = conn.execute(
-            "SELECT day FROM daily_metric WHERE person_id = ? AND metric_key = ? AND value > 0",
+            "SELECT day FROM daily_metric_efectiva WHERE person_id = ? AND metric_key = ? AND value > 0",
             (person_id, metric_key),
         ).fetchall()
         semanas = {lunes_de(date.fromisoformat(r["day"])) for r in rows}

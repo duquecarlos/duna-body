@@ -58,7 +58,7 @@ def baselines(conn, keys: list[str], day: str, window: int = WINDOW_DAYS, *,
     start, end = (d - timedelta(window)).isoformat(), (d - timedelta(1)).isoformat()
     placeholders = ",".join("?" * len(keys))
     rows = conn.execute(
-        f"SELECT metric_key, day, value FROM daily_metric WHERE person_id=? AND metric_key IN ({placeholders}) "
+        f"SELECT metric_key, day, value FROM daily_metric_efectiva WHERE person_id=? AND metric_key IN ({placeholders}) "
         "AND day BETWEEN ? AND ?",
         (person_id, *keys, start, end)).fetchall()
     marcados = db.dias_marcados(conn, person_id, start, end)

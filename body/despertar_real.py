@@ -144,7 +144,7 @@ def _baseline(conn, person_id: int, day: str, zona: str, sleep_end_dt: datetime,
         return round(statistics.median(muestras_fc), 1), "intradia_fc"
 
     row = conn.execute(
-        "SELECT value FROM daily_metric WHERE person_id = ? AND day = ? AND metric_key = 'resting_hr'",
+        "SELECT value FROM daily_metric_efectiva WHERE person_id = ? AND day = ? AND metric_key = 'resting_hr'",
         (person_id, day),
     ).fetchone()
     if row is not None:

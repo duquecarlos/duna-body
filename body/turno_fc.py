@@ -232,7 +232,7 @@ def estudio(conn, person_id: int) -> dict:
     dias = sorted({r["day"] for r in rows})
     placeholders = ",".join("?" * len(dias))
     sleep_rows = conn.execute(
-        f"SELECT day, value FROM daily_metric WHERE person_id = ? AND metric_key = 'sleep_minutes' "
+        f"SELECT day, value FROM daily_metric_efectiva WHERE person_id = ? AND metric_key = 'sleep_minutes' "
         f"AND day IN ({placeholders})",
         (person_id, *dias),
     ).fetchall()

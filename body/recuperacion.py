@@ -289,7 +289,7 @@ def estudio(conn, person_id: int) -> dict:
         kind_por_dia.setdefault(r["day"], r["kind"])
 
     metric_rows = conn.execute(
-        f"SELECT day, metric_key, value FROM daily_metric WHERE person_id = ? "
+        f"SELECT day, metric_key, value FROM daily_metric_efectiva WHERE person_id = ? "
         f"AND metric_key IN ('sleep_minutes', 'hrv_last_night') AND day IN ({placeholders})",
         (person_id, *dias),
     ).fetchall()

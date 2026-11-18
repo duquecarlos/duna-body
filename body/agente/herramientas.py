@@ -816,6 +816,13 @@ def _leer_dia(conn: sqlite3.Connection, person_id: int, day: str) -> dict:
         correcciones = db.despertar_correcciones(conn, person_id, day)
         if correcciones:
             data["sleep"] = {**data["sleep"], "correcciones": correcciones}
+            # BODY-DESPERTAR-REAL-6B ruling 4: `data["metrics"]`' own sleep_minutes value already
+            # came back corrected (db.load_day reads daily_metric_efectiva); Garmin's own total is
+            # given alongside it, labelled, so the assistant never states only one figure.
+            if "sueno" in correcciones:
+                garmin_total = db.series_garmin(conn, "sleep_minutes", day, day, person_id).get(day)
+                if garmin_total is not None:
+                    data["sleep"]["sleep_minutes_garmin"] = garmin_total
     return data
 
 
@@ -921,7 +928,7 @@ def _leer_serie(conn: sqlite3.Connection, person_id: int, nivel: str, metricas: 
                              f"llamada ({semanas_pedidas} pedidas); usa paso='mes' o divide el rango")
     placeholders = ",".join("?" * len(metricas))
     filas = conn.execute(
-        f"SELECT metric_key, day, value FROM daily_metric WHERE person_id = ? "
+        f"SELECT metric_key, day, value FROM daily_metric_efectiva WHERE person_id = ? "
         f"AND metric_key IN ({placeholders}) AND day BETWEEN ? AND ? ORDER BY metric_key, day",
         (person_id, *metricas, desde, hasta),
     ).fetchall()

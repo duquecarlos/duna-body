@@ -2099,6 +2099,41 @@ def _migrate_despertar_correccion(conn: sqlite3.Connection) -> None:
         _rebuild_despertar_correccion_table(conn)
 
 
+# BODY-DESPERTAR-REAL-6B ruling 1 (ORCH-CARLOS-DELEGATES-TIER-1-1): the one seam between Garmin's
+# own `daily_metric` (never edited -- byte-identical before and after) and the person's own
+# correction (`despertar_correccion`, applied only with their tap). Every `daily_metric` row as
+# stored, `corregido` 0, EXCEPT a 'sleep_minutes' row whose person and day have a 'sueno'
+# correction AND a `sleep_session` row with a non-NULL `end_local`: its `value` becomes Garmin's
+# own value plus the whole minutes from `end_local` to that day's own date (the date `end_local`
+# itself falls on, not necessarily the `daily_metric.day` wake-day label) at `hora_local`,
+# rounded, never negative -- a correction at or before `end_local` adds 0 (MAX(0, ...), SQLite's
+# 2-argument scalar form, not the aggregate). A 'levantado' correction changes no figure: the
+# join below only matches tipo = 'sueno'. Dropped and recreated every start, so a later change to
+# this definition lands on the next start -- no table is altered, no row is written here. Must
+# run AFTER despertar_correccion exists (this function runs last in init(), once SCHEMA and every
+# guarded migration above have already created every table and column it reads).
+def _migrar_vista_daily_metric_efectiva(conn: sqlite3.Connection) -> None:
+    conn.execute("DROP VIEW IF EXISTS daily_metric_efectiva")
+    conn.execute(
+        "CREATE VIEW daily_metric_efectiva AS "
+        "SELECT dm.person_id AS person_id, dm.day AS day, dm.metric_key AS metric_key, "
+        "CASE WHEN dm.metric_key = 'sleep_minutes' AND dc.hora_local IS NOT NULL "
+        "          AND ss.end_local IS NOT NULL "
+        "     THEN dm.value + MAX(0, CAST(ROUND("
+        "              (julianday(date(ss.end_local) || ' ' || dc.hora_local) "
+        "               - julianday(ss.end_local)) * 1440.0) AS INTEGER)) "
+        "     ELSE dm.value END AS value, "
+        "dm.source AS source, "
+        "CASE WHEN dm.metric_key = 'sleep_minutes' AND dc.hora_local IS NOT NULL "
+        "          AND ss.end_local IS NOT NULL "
+        "     THEN 1 ELSE 0 END AS corregido "
+        "FROM daily_metric dm "
+        "LEFT JOIN despertar_correccion dc ON dc.person_id = dm.person_id AND dc.day = dm.day "
+        "    AND dc.tipo = 'sueno' AND dm.metric_key = 'sleep_minutes' "
+        "LEFT JOIN sleep_session ss ON ss.person_id = dm.person_id AND ss.day = dm.day"
+    )
+
+
 def init(conn: sqlite3.Connection) -> None:
     _migrate_metas(conn)
     _migrate_cuenta(conn)
@@ -2124,6 +2159,9 @@ def init(conn: sqlite3.Connection) -> None:
     conn.execute(
         "INSERT OR IGNORE INTO person (id, display_name) VALUES (?, 'Me')", (DEFAULT_PERSON_ID,)
     )
+    # BODY-DESPERTAR-REAL-6B ruling 1: last, so despertar_correccion (and every other table/column
+    # above) already exists by the time this view is defined over them.
+    _migrar_vista_daily_metric_efectiva(conn)
     conn.commit()
 
 
@@ -2299,9 +2337,12 @@ def save_day(conn: sqlite3.Connection, day_data, person_id: int) -> None:
 
 
 def load_day(conn: sqlite3.Connection, day: str, person_id: int) -> dict:
+    """BODY-DESPERTAR-REAL-6B ruling 2/4: the corrected reading, through `daily_metric_efectiva`
+    -- Día's own cards (generic grid and the dedicated sleep card) show the person's own corrected
+    sleep total, never Garmin's own raw figure directly."""
     metrics = conn.execute(
         "SELECT m.key, m.label, m.unit, m.kind, d.value FROM metric_def m "
-        "LEFT JOIN daily_metric d ON d.metric_key = m.key AND d.person_id = ? AND d.day = ? "
+        "LEFT JOIN daily_metric_efectiva d ON d.metric_key = m.key AND d.person_id = ? AND d.day = ? "
         "ORDER BY m.rowid",
         (person_id, day),
     ).fetchall()
@@ -2362,7 +2403,19 @@ def set_metric(conn, day: str, key: str, value, source: str, person_id: int) -> 
 
 
 def series(conn, key: str, start: str, end: str, person_id: int) -> dict[str, float]:
-    """Values of one metric for start <= day <= end."""
+    """Values of one metric for start <= day <= end -- the corrected reading (BODY-DESPERTAR-
+    REAL-6B ruling 2), through `daily_metric_efectiva`."""
+    rows = conn.execute(
+        "SELECT day, value FROM daily_metric_efectiva WHERE person_id=? AND metric_key=? AND day BETWEEN ? AND ?",
+        (person_id, key, start, end),
+    ).fetchall()
+    return {r["day"]: r["value"] for r in rows}
+
+
+def series_garmin(conn, key: str, start: str, end: str, person_id: int) -> dict[str, float]:
+    """Same as `series`, but Garmin's own record, uncorrected -- for a caller that names it wants
+    that (BODY-DESPERTAR-REAL-6B ruling 2): today body/vida_dia.py, so Personal's morning brief
+    keeps Garmin's own sleep total until BODY-DESPERTAR-REAL-6C labels the corrected one."""
     rows = conn.execute(
         "SELECT day, value FROM daily_metric WHERE person_id=? AND metric_key=? AND day BETWEEN ? AND ?",
         (person_id, key, start, end),
@@ -2486,8 +2539,9 @@ def update_goal_target(conn, goal_id: int, person_id: int, *, target_value: floa
 
 
 def day_values(conn, day: str, person_id: int) -> dict[str, float]:
+    """The corrected reading (BODY-DESPERTAR-REAL-6B ruling 2), through `daily_metric_efectiva`."""
     return {r["metric_key"]: r["value"] for r in conn.execute(
-        "SELECT metric_key, value FROM daily_metric WHERE person_id=? AND day=?", (person_id, day))}
+        "SELECT metric_key, value FROM daily_metric_efectiva WHERE person_id=? AND day=?", (person_id, day))}
 
 
 def last_sync(conn, person_id: int) -> str | None:

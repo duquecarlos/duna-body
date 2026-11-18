@@ -56,7 +56,7 @@ def ultimo_valor(conn: sqlite3.Connection, person_id: int, metric_key: str, day:
     target can reuse it unchanged)."""
     desde = (date.fromisoformat(day) - timedelta(days=dias)).isoformat()
     row = conn.execute(
-        "SELECT value FROM daily_metric WHERE person_id = ? AND metric_key = ? AND day <= ? AND day >= ? "
+        "SELECT value FROM daily_metric_efectiva WHERE person_id = ? AND metric_key = ? AND day <= ? AND day >= ? "
         "ORDER BY day DESC LIMIT 1",
         (person_id, metric_key, day, desde),
     ).fetchone()
@@ -127,7 +127,7 @@ def estado_del_dia(conn: sqlite3.Connection, person_id: int, day: str) -> dict[s
     claves = tuple(con_objetivo)
     marcadores = ",".join("?" * len(claves))
     totales = {r["metric_key"]: r["value"] for r in conn.execute(
-        f"SELECT metric_key, value FROM daily_metric WHERE person_id = ? AND day = ? AND metric_key IN ({marcadores})",
+        f"SELECT metric_key, value FROM daily_metric_efectiva WHERE person_id = ? AND day = ? AND metric_key IN ({marcadores})",
         (person_id, day, *claves))}
     conteos = {r["metric_key"]: r["n"] for r in conn.execute(
         f"SELECT metric_key, COUNT(*) AS n FROM ingesta WHERE person_id = ? AND day = ? "
