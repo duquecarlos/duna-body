@@ -28433,5 +28433,9 @@ unchanged, by ID only: BODY-DESPERTAR-REAL-3, BODY-DESPERTAR-REAL-4, BODY-DESPER
 BODY-DESPERTAR-REAL-6, BODY-DESPERTAR-REAL-7.
 
 **Commits:** `924c408` (step 1: `leer_intradia` + its census tests + `tests/test_leer_intradia.py`)
--- `ef48173` (step 2: `actualizar_intradia_si_corresponde` + `tests/test_pull.py`'s new class).
+-- `ef48173` (step 2: `actualizar_intradia_si_corresponde` + `tests/test_pull.py`'s new class) --
+`b370fae` (step 4: this ledger entry and BODY-DESPERTAR-REAL-1-INV's own) -- merged `efe7d79`
+(`--no-ff`, no conflicts; tree identity proven, branch tree == merge tree == `fcce0ac0`). Post-merge
+smoke (`tests.test_leer_intradia tests.test_agente_registro tests.test_mcp tests.test_persona_fuga`):
+`Ran 105 tests in 22.246s ... OK`.
 
