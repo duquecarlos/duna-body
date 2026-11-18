@@ -679,6 +679,14 @@ def _tarjeta_proponer_experimento(t: T, defs: dict, despues: dict, antes_json: d
     return None, despues_txt, None
 
 
+def _tarjeta_proponer_practica(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
+    """BODY-HISTORIA-VIDA-2 ruling 3: insert-shaped, like `_tarjeta_proponer_experimento` -- one line,
+    no 'antes'."""
+    n = despues["meta_dias_semana"]
+    despues_txt = _frag(t, "asistente.propuesta.practica_nueva", n, titulo=despues["titulo"], n=t.num(n))
+    return None, despues_txt, None
+
+
 def _tarjeta_marcar_experimento(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     titulo = despues["titulo"]
     fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
@@ -878,6 +886,7 @@ TARJETAS = {
     "corregir_meta_plan": _tarjeta_corregir_meta_plan,
     "anotar_sesion": _tarjeta_anotar_sesion,
     "importar_desplazamiento": _tarjeta_importar_desplazamiento,
+    "proponer_practica": _tarjeta_proponer_practica,
 }
 
 

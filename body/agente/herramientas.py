@@ -72,7 +72,7 @@ from zoneinfo import ZoneInfo
 
 from .. import anatomia, catalogo_tendencias, comidas, compartir, cuenta, db, desplazamiento_import, enlaces, \
     entreno_historial, errores, experimentos, fechas, garmin_cuenta, goals, history, horizonte, household, \
-    nutriente_objetivo, profile, pull, readiness, shift_import, turnos_costo, tutoriales
+    nutriente_objetivo, practicas, profile, pull, readiness, shift_import, turnos_costo, tutoriales
 from ..i18n import LANGS, T
 from . import ajustes, conversacion as agente_conversacion, propuestas
 
@@ -160,6 +160,11 @@ _PARAM_HABITO_PLAN = {
                 "context": {"type": "string", "enum": list(_CONTEXTOS_HABITO)},
             },
         },
+        # BODY-HISTORIA-VIDA-2 ruling 4: additive -- the practice this habit's own evidence comes
+        # from, when the person is bringing one back. Described here for the model's guidance only;
+        # the real enforcement is `_validar_habitos_plan` below (own, active practice), the same
+        # limitation `cadencia`'s own comment names.
+        "practica_id": {"type": "integer"},
     },
     "required": ["titulo", "cadencia"],
 }
@@ -544,6 +549,27 @@ _PARAM_MARCAR_HABITO = {
 _PARAM_LEER_EXPERIMENTOS = {
     "type": "object",
     "properties": {"experimento_id": {"type": "integer"}},
+    "additionalProperties": False,
+}
+
+_PARAM_LEER_PRACTICAS = {
+    "type": "object",
+    "properties": {"practica_id": {"type": "integer"}},
+    "additionalProperties": False,
+}
+# regla is one of practicas.FUENTES' own three shapes -- described here for the model's guidance
+# only; the real enforcement is practicas.FUENTES[fuente](regla) itself, called from
+# _proponer_practica before anything is stored (same convention as _PARAM_VENTANA/_PARAM_FILTRO_DIAS
+# above).
+_PARAM_PROPONER_PRACTICA = {
+    "type": "object",
+    "properties": {
+        "titulo": {"type": "string"},
+        "fuente": {"type": "string", "enum": list(practicas.FUENTES)},
+        "regla": {"type": "object"},
+        "meta_dias_semana": {"type": "integer", "minimum": 1, "maximum": 7},
+    },
+    "required": ["titulo", "fuente", "regla"],
     "additionalProperties": False,
 }
 
@@ -1178,7 +1204,7 @@ def _validar_cadencia_habito(cadencia) -> dict:
     return out
 
 
-def _validar_habitos_plan(habitos) -> list[dict]:
+def _validar_habitos_plan(conn: sqlite3.Connection, person_id: int, habitos) -> list[dict]:
     if habitos is None:
         return []
     if not isinstance(habitos, list) or len(habitos) > _PLAN_MAX_HABITOS:
@@ -1192,7 +1218,15 @@ def _validar_habitos_plan(habitos) -> list[dict]:
             cadencia = _validar_cadencia_habito(h.get("cadencia") if isinstance(h, dict) else None)
         except ToolError as e:
             raise ToolError(f"habitos[{i}].{e.args[0]}")
-        out.append({"titulo": titulo, "cadencia": cadencia})
+        item = {"titulo": titulo, "cadencia": cadencia}
+        # BODY-HISTORIA-VIDA-2 ruling 4: optional, validated the person's own, active practice --
+        # never another person's, never an archived one.
+        practica_id = h.get("practica_id") if isinstance(h, dict) else None
+        if practica_id is not None:
+            if not practicas.propia_activa(conn, person_id, practica_id):
+                raise ToolError(f"habitos[{i}].practica_id desconocida: {practica_id!r}")
+            item["practica_id"] = practica_id
+        out.append(item)
     return out
 
 
@@ -2463,6 +2497,67 @@ def _proponer_experimento(conn: sqlite3.Connection, person_id: int, conversacion
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
+_LEER_PRACTICAS_DIAS_RECIENTES = 90
+
+
+def _practica_resumen_lista(conn: sqlite3.Connection, person_id: int, p: dict) -> dict:
+    """One entry per active practice for the no-id list shape: its own definition plus the current
+    streak and the most recent week's days -- `practicas.estado`'s own figures, never recomputed
+    here, by analogy with `_leer_experimentos`/`_leer_planes`."""
+    e = practicas.estado(conn, person_id, p["id"])
+    return {
+        **p,
+        "racha_actual": e["racha_actual"] if e else None,
+        "semana_actual": e["semanas"][-1] if e and e["semanas"] else None,
+    }
+
+
+def _leer_practicas(conn: sqlite3.Connection, person_id: int, practica_id: int | None = None) -> dict:
+    """BODY-HISTORIA-VIDA-2 ruling 2: without `practica_id`, every active practice (`nivel:
+    'resumen'`, by analogy with `leer_experimentos`/`leer_plan`) with its current streak and most
+    recent week, plus not-yet-created suggestions (`practicas.sugerencias`) -- nothing is written.
+    With `practica_id`, the full detail -- weeks, streaks, temporadas, baseline, all computed over
+    `practicas.estado`'s own [desde, hasta] -- bounded here to the last
+    `_LEER_PRACTICAS_DIAS_RECIENTES` days, so a long-lived practice does not hand the model a year
+    of per-day entries it did not ask to see. `encontrada: False` for another person's practica or
+    an unknown id, never a ToolError, by analogy with `_leer_plan`."""
+    if practica_id is not None:
+        hoy = fechas.hoy_local(db.person(conn, person_id))
+        desde = hoy - timedelta(days=_LEER_PRACTICAS_DIAS_RECIENTES - 1)
+        e = practicas.estado(conn, person_id, practica_id, desde=desde, hasta=hoy)
+        if e is None:
+            return {"encontrada": False}
+        return {"encontrada": True, "practica": e}
+    activas = practicas.listar(conn, person_id)
+    return {
+        "practicas": [_practica_resumen_lista(conn, person_id, p) for p in activas],
+        "sugerencias": practicas.sugerencias(conn, person_id),
+    }
+
+
+def _proponer_practica(conn: sqlite3.Connection, person_id: int, conversacion_id: int, titulo: str,
+                        fuente: str, regla: dict, meta_dias_semana: int = 5) -> dict:
+    """BODY-HISTORIA-VIDA-2 ruling 3: proposes a new practice -- insert-shaped, like
+    `proponer_experimento`, there is no 'before'. Validated with `practicas.FUENTES` and the same
+    bounds `practicas.crear` itself checks, BEFORE the proposal is stored, so a bad proposal is a
+    ToolError, never a card the person could tap Aplicar on. Apply calls `practicas.crear` with
+    `origen='asistente'` (ruling 3)."""
+    titulo = (titulo or "").strip()
+    if not titulo:
+        raise ToolError("falta el título de la práctica")
+    if fuente not in practicas.FUENTES:
+        raise ToolError(f"fuente inválida: {fuente!r}")
+    razon = practicas.FUENTES[fuente](regla)
+    if razon:
+        raise ToolError(f"regla inválida: {razon}")
+    if (not isinstance(meta_dias_semana, int) or isinstance(meta_dias_semana, bool)
+            or not (1 <= meta_dias_semana <= 7)):
+        raise ToolError("meta_dias_semana debe ser un entero entre 1 y 7")
+    despues = {"titulo": titulo, "fuente": fuente, "regla": regla, "meta_dias_semana": meta_dias_semana}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "proponer_practica", despues)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
 def _marcar_experimento(conn: sqlite3.Connection, person_id: int, conversacion_id: int, experimento_id: int,
                          day: str, ocurrio: bool, nota: str | None = None) -> dict:
     """Proposes marking, for a day, whether an experiment's own practice happened
@@ -2520,7 +2615,7 @@ def _proponer_meta(conn: sqlite3.Connection, person_id: int, conversacion_id: in
             raise ToolError(f"metric_key desconocida: {metric_key!r}")
         if target_value is None:
             raise ToolError("falta target_value")
-    habitos_v = _validar_habitos_plan(habitos)
+    habitos_v = _validar_habitos_plan(conn, person_id, habitos)
     if horizonte_goal_id is not None and not _plan_propio(conn, person_id, horizonte_goal_id):
         raise ToolError(f"plan desconocido: {horizonte_goal_id!r}")
     despues = {"tipo": tipo, "metric_key": metric_key, "direction": direction,
@@ -2551,7 +2646,7 @@ def _proponer_plan(conn: sqlite3.Connection, person_id: int, conversacion_id: in
     despues = {
         "titulo": titulo, "why": (why or "").strip() or None, "start_day": start_day, "deadline": deadline,
         "metas_finales": _validar_metas_finales_plan(conn, metas_finales),
-        "habitos": _validar_habitos_plan(habitos),
+        "habitos": _validar_habitos_plan(conn, person_id, habitos),
         "reglas": _validar_reglas_plan(conn, reglas),
         "semanas": _validar_semanas_plan(semanas, start_day, deadline),
         "metas_semanales": _validar_metas_semanales_plan(conn, metas_semanales, start_day, deadline),
@@ -3004,6 +3099,19 @@ HERRAMIENTAS = [
                      "cuántos días cubre, desde cuándo hasta cuándo, y cuántos días cambiarían (0 si es el mismo "
                      "archivo que ya se importó).",
      "parametros": _PARAM_IMPORTAR_DESPLAZAMIENTO, "funcion": _importar_desplazamiento},
+    {"nombre": "leer_practicas", "tipo": "lectura", "nivel": "resumen",
+     "descripcion": "Sin id: las prácticas activas de la persona (lo que el reloj muestra que hace, nunca lo "
+                     "que se comprometió a hacer) con su racha actual y la semana más reciente, más sugerencias "
+                     "de prácticas que todavía no existen como tales. Con id: el detalle de una, acotado a los "
+                     "últimos 90 días -- estado por día, semanas, racha, temporadas y la base de toda su "
+                     "historia. encontrada: false si el id no es suyo o no existe, nunca un error.",
+     "parametros": _PARAM_LEER_PRACTICAS, "funcion": _leer_practicas},
+    {"nombre": "proponer_practica", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone crear una práctica nueva: una regla sobre lo que el reloj ya mide (un tipo de "
+                     "actividad, un umbral de métrica, un horario de sueño) para que la pantalla muestre, día "
+                     "por día, si se cumplió -- nunca algo que la persona marca ella misma, eso es un hábito. "
+                     "No la crea: registra la propuesta para que la persona la apruebe en el chat.",
+     "parametros": _PARAM_PROPONER_PRACTICA, "funcion": _proponer_practica},
 ]
 
 # BODY-ASISTENTE-CONFORMIDAD-1 ruling 2 (agent-capabilities-v1 section 5): the plan field is

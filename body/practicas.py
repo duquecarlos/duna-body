@@ -151,6 +151,18 @@ def archivar(conn: sqlite3.Connection, person_id: int, practica_id: int) -> bool
     return cur.rowcount > 0
 
 
+def propia_activa(conn: sqlite3.Connection, person_id: int, practica_id: int) -> bool:
+    """BODY-HISTORIA-VIDA-2 ruling 4: true only for this person's own, un-archived practice --
+    the one check every habit-practica link (proponer_meta/proponer_plan habitos, goal page
+    'Retomar') goes through, so a habit can never cite another person's practice or an archived
+    one as its evidence source."""
+    row = conn.execute(
+        "SELECT 1 FROM practica WHERE id = ? AND person_id = ? AND archivada_en IS NULL",
+        (practica_id, person_id),
+    ).fetchone()
+    return row is not None
+
+
 def listar(conn: sqlite3.Connection, person_id: int, incluir_archivadas: bool = False) -> list[dict]:
     where = "person_id = ?" + ("" if incluir_archivadas else " AND archivada_en IS NULL")
     rows = conn.execute(
