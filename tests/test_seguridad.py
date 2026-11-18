@@ -315,6 +315,10 @@ ALLOWLIST = {
     ("body/rutas/ajustes.py", "set_trabaja_turnos", "volver"):
         "ajustes' own stricter allow-list: volver is narrowed to {'/', '/settings'} two lines above "
         "(body/rutas/ajustes.py's set_trabaja_turnos) -- left as is, per this slice's spec",
+    ("body/rutas/ajustes.py", "set_language", "volver"):
+        "BODY-IDIOMA-HOGAR-1 ruling 1: volver is sanitized by this module's own _safe_volver, "
+        "defined just above set_language -- the same allow-list idea as set_trabaja_turnos's own "
+        "entry above, broadened to accept any same-site path rather than only {'/', '/settings'}",
 }
 
 

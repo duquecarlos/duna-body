@@ -73,6 +73,17 @@
   {% if hosted() %}<form method="post" action="/logout" class="rail-foot mt-auto"><button type="submit" class="rail-logout-btn"><svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" fill="none" stroke-width="1.8" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>{{ t('nav.logout') }}</button></form>{% endif %}
 </nav>
 <main><div class="wrap">
+{% if tab %}
+{% set idioma_otro_tag = 'en' if t.lang == 'es' else 'es' %}
+{% set idioma_otro_label = 'English' if t.lang == 'es' else 'Español' %}
+{% set idioma_volver = {'today': '/', 'shifts': '/shifts', 'trends': '/trends', 'goals': '/goals',
+                        'settings': '/settings'}.get(tab, '/settings') %}
+<form method="post" action="/settings/language" class="idioma-switch">
+  <input type="hidden" name="lang" value="{{ idioma_otro_tag }}">
+  <input type="hidden" name="volver" value="{{ idioma_volver }}">
+  <button type="submit" class="idioma-switch-btn">{{ idioma_otro_label }}</button>
+</form>
+{% endif %}
 {% if es_demo() %}<span class="chip mb-6" role="status">{{ t('base.modo_demo') }}</span>{% endif %}
 {% set tarea_ctx = tarea_en_contexto() %}
 {% if tarea_ctx %}<a class="ayuda-ctx" href="/ayuda#{{ tarea_ctx.id }}">{{ t('ayuda.como_se_hace') }}</a>{% endif %}

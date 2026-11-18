@@ -51,6 +51,13 @@ _USTED_WORD_PATTERN = re.compile(r"\b(?:" + "|".join(_USTED_WORDS) + r")\b", re.
 _USTED_PHRASES = ("le recomendamos", "le enviamos", "lo invitamos", "le pedimos", "le sugerimos")
 _USTED_PHRASE_PATTERN = re.compile("|".join(re.escape(p) for p in _USTED_PHRASES), re.I)
 
+# Every real occurrence of an otherwise-usted word in es.json that is not actually an usted
+# address, with the reason -- same idea as _THIRD_PERSON_ALLOW below, for Guard 1's own word list.
+_USTED_WORD_ALLOW = {
+    "agente.sistema": "'escriba' subject is 'la persona' (third person subjunctive: 'aunque la "
+                       "persona te escriba'), not an usted imperative addressed to the reader",
+}
+
 # su / sus / tiene / puede addressed to the reader read as usted. Every real occurrence in es.json
 # is listed here, each with the reason it is third person about a thing and not the reader.
 _THIRD_PERSON_PATTERN = re.compile(r"\b(?:su|sus|tiene|puede)\b", re.I)
@@ -94,8 +101,16 @@ class TestRegistroTuEsJson(unittest.TestCase):
         strings = self._strings()
         self.assertGreater(len(strings), 0, "no es.json strings were scanned")
         hits = [(k, v) for k, v in strings
-                if _USTED_WORD_PATTERN.search(v) or _USTED_PHRASE_PATTERN.search(v)]
+                if k not in _USTED_WORD_ALLOW
+                and (_USTED_WORD_PATTERN.search(v) or _USTED_PHRASE_PATTERN.search(v))]
         self.assertEqual(hits, [], f"usted-register marker(s) found in es.json: {hits}")
+
+    def test_usted_word_allow_list_has_no_stale_entries(self):
+        strings = dict(self._strings())
+        matched = {k for k, v in strings.items()
+                   if _USTED_WORD_PATTERN.search(v) or _USTED_PHRASE_PATTERN.search(v)}
+        stale = sorted(set(_USTED_WORD_ALLOW) - matched)
+        self.assertEqual(stale, [], f"allow-listed key(s) no longer match an usted word/phrase: {stale}")
 
     def test_su_sus_tiene_puede_are_all_allow_listed_third_person(self):
         strings = self._strings()

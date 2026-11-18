@@ -136,14 +136,29 @@ async def set_recibir_comidas_compartidas(request: Request,
     return RedirectResponse("/settings", status_code=303)
 
 
+def _safe_volver(raw: str) -> str:
+    """BODY-IDIOMA-HOGAR-1 ruling 1: `volver` may be any same-site path -- starts with "/" and not
+    "//" or "/\\" (a browser reads a backslash as a forward slash, so "/\\evil.example" is a
+    protocol-relative redirect off this site exactly like "//evil.example"), and never carries a
+    "://" scheme separator -- falling back to /settings. The same allow-list idea
+    set_trabaja_turnos's own `volver` below uses, broadened to accept any such path rather than
+    only "/" and "/settings"."""
+    if raw and raw.startswith("/") and (len(raw) == 1 or raw[1] not in ("/", "\\")) \
+            and "\\" not in raw and "://" not in raw:
+        return raw
+    return "/settings"
+
+
 @router.post("/settings/language")
 @comun._cierra_conexion_async
 async def set_language(request: Request, person_id: int = Depends(identity.current_person_id)):
-    lang = parse_qs((await request.body()).decode()).get("lang", [""])[0]
+    f = parse_qs((await request.body()).decode())
+    lang = f.get("lang", [""])[0]
     if lang in LANGS:
         conn, _, _ = comun._ctx(person_id)
         db.set_language(conn, lang, person_id)
-    return RedirectResponse("/settings", status_code=303)
+    volver = _safe_volver(f.get("volver", [""])[0])
+    return RedirectResponse(volver, status_code=303)
 
 
 @router.post("/settings/trabaja_turnos")
