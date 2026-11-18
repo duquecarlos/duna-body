@@ -28812,8 +28812,10 @@ overwritten by the correction. Proven in `tests/test_leer_intradia.py`'s new `Co
 above).
 
 **Census tests updated exactly, never loosened to "at least":** `tests/test_agente_registro.py` -- 52
-`HERRAMIENTAS` entries (was 51). `tests/test_agente_conformidad.py` -- 31 `propuesta` tools' seed data and
-arguments (was 30), a Garmin `sleep_session` row added to `_seed_todo`. `tests/test_agente_bucle.py` -- the
+`HERRAMIENTAS` entries (was 51). `tests/test_agente_conformidad.py` -- 32 `propuesta` tools' seed data and
+arguments (was 31, not 30 as a first draft of this entry miscounted -- `herramientas.HERRAMIENTAS` measured
+directly: `len([h for h in herramientas.HERRAMIENTAS if h["tipo"] == "propuesta"]) == 32`), a Garmin
+`sleep_session` row added to `_seed_todo`. `tests/test_agente_bucle.py` -- the
 `nivel_datos='ninguno'` offered-set gains `corregir_despertar` (its own `nivel` is `'ninguno'`, like every
 other propuesta tool). `tests/test_agente_propuestas.py` -- the propuesta-name set in
 `NoProponibleTest` gains it. `tests/test_registro_tu.py` -- `agente.error.despertar_sin_sueno`'s own

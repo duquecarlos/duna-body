@@ -47,12 +47,12 @@ def _actividad(conn, source: str, source_id: str, day: str, tipo: str = "strengt
 
 
 def _seed_todo(conn) -> dict:
-    """Every piece of demo data the 31 `propuesta` tools' valid arguments reference (BODY-HOGAR-
+    """Every piece of demo data the 32 `propuesta` tools' valid arguments reference (BODY-HOGAR-
     ESCRIBE-1: extended from 27 with anotar_sesion; BODY-CORREGIR-MEDIDA-ENTRENO-1-W: extended from
     28 with corregir_entreno; BODY-DESPLAZAMIENTO-ASISTENTE-1-W: extended from 29 with
-    importar_desplazamiento; BODY-DESPERTAR-REAL-4: extended from 30 with corregir_despertar) --
-    real production writers only (`goals`, `db.*`), never a hand-typed row for a table one of those
-    writers owns."""
+    importar_desplazamiento; BODY-HISTORIA-VIDA-2: extended from 30 with proponer_practica;
+    BODY-DESPERTAR-REAL-4: extended from 31 with corregir_despertar) -- real production writers
+    only (`goals`, `db.*`), never a hand-typed row for a table one of those writers owns."""
     ids: dict = {}
 
     gid = goals.propose(conn, 1, "Bajar FC en reposo", "2020-01-01", metric_key="resting_hr",
@@ -228,7 +228,7 @@ def _tabla_conteos(conn) -> dict[str, int]:
 
 class ConformidadTestCase(unittest.TestCase):
     """Shared setUp for every clause (2) test: one fresh database, the full demo seed, and the
-    31-tool arguments table built from it."""
+    32-tool arguments table built from it."""
 
     def setUp(self):
         self.conn, self.orig = _reset_db()
