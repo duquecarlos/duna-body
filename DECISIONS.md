@@ -29234,6 +29234,9 @@ own reports.
 `707eb9e` (screen + read path: rulings 4-5, `body/rutas/hoy.py`, `body/templates/day.html`,
 `body/demo.py`, `tests/test_despertar_pantalla.py`, `tests/test_leer_intradia.py`,
 `tests/test_rendimiento.py`, `tests/test_demo.py`, `tests/test_despertar_correccion.py`) --
-`20df556` (the register-guard allow-list fix, found by this slice's own gate) -- this ledger entry
-is the next commit, then the merge.
+`20df556` (the register-guard allow-list fix, found by this slice's own gate) -- `dd0db34` (this
+ledger entry) -- merged `c6f9795` into `main` (`--no-ff`, no conflicts; tree identity proven,
+branch tree == merge tree == `0be6da57`, diff empty). Post-merge smoke
+(`tests.test_despertar_correccion tests.test_despertar_real tests.test_despertar_pantalla
+tests.test_migraciones tests.test_leer_intradia`): `Ran 109 tests in 19.239s` -- `OK`.
 
