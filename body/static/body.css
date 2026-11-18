@@ -303,19 +303,34 @@ figure.chart:focus-visible{outline:2px solid var(--focus);outline-offset:4px;bor
 .strip-legend .dot.off,.strip-legend .dot.none{background:var(--line)}
 .strip-legend .dot.other{background:var(--ink2)}
 
-/* BODY-HISTORIA-VIDA-2: a practice's own day grid reuses .strip/.strip-cell's 7-per-row layout
+/* BODY-HISTORIA-VIDA-2/3: a practice's own day grid reuses .strip/.strip-cell's 7-per-row layout
    with its own three states -- p-hecho/p-no_hecho/p-sin_dato, never night/day/off (those carry a
-   shift-kind meaning here, not this). sin_dato stays muted, like .futuro above: an honest gap,
-   never styled as a failure. */
+   shift-kind meaning here, not this). BODY-HISTORIA-VIDA-3 ruling 1: "a missing day is not a
+   failed day" -- p-no_hecho is a plain neutral cell, no --danger anywhere in these rules, and
+   p-sin_dato is dimmed AND dashed: an honest gap, never styled as a failure. */
 .strip-cell.p-hecho{background:color-mix(in srgb,var(--ok) 16%,transparent)}
 .strip-cell.p-hecho::after{background:var(--ok)}
-.strip-cell.p-no_hecho{background:color-mix(in srgb,var(--danger) 10%,transparent)}
-.strip-cell.p-no_hecho::after{background:var(--danger)}
-.strip-cell.p-sin_dato{opacity:.45}
+.strip-cell.p-no_hecho::after{background:var(--muted)}
+.strip-cell.p-sin_dato{opacity:.45;border:1px dashed var(--line)}
 .strip-cell.p-sin_dato::after{background:var(--line)}
 .strip-legend .dot.p-hecho{background:var(--ok)}
-.strip-legend .dot.p-no_hecho{background:var(--danger)}
+.strip-legend .dot.p-no_hecho{background:var(--muted)}
 .strip-legend .dot.p-sin_dato{background:var(--line)}
+
+/* BODY-HISTORIA-VIDA-3 ruling 1: the drill-down's own MAIN visual -- the whole history in weeks,
+   13 per row (a quarter), a cell's fill proportional to hecho/meta_dias_semana. w-gap (too little
+   watch coverage that week to say whether the goal was met) is a dashed outline, never a colour of
+   failure -- the same honest-gap rule as p-sin_dato above. w-season outlines a week that falls
+   inside one of the practice's own temporadas, so a season is visible where it sits. */
+.season-row{margin:4px 0 8px}
+.season-row-label{font-size:11.5px;color:var(--muted);font-weight:600;margin-bottom:3px}
+.season-row-cells{display:grid;grid-template-columns:repeat(13,minmax(0,1fr));gap:3px}
+.week-cell{display:block;aspect-ratio:1;min-height:14px;border-radius:3px;background:transparent;border:1px solid var(--line)}
+.week-cell.w-empty{background:transparent}
+.week-cell.w-partial{background:color-mix(in srgb,var(--ok) 40%,transparent);border-color:transparent}
+.week-cell.w-met{background:var(--ok);border-color:transparent}
+.week-cell.w-gap{background:transparent;border-style:dashed}
+.week-cell.w-season{box-shadow:inset 0 0 0 1px var(--ink)}
 
 /* ---------- utilities (BODY-ESTILOS-1): every inline style="..." in a template or in server-built
    markup is replaced by one of these, so style-src can drop 'unsafe-inline'. Appended last on purpose:

@@ -8,7 +8,7 @@
     <p class="sub">{{ practica.regla_texto }}</p>
   </div>
 </div>
-<p class="note mt-0 mb-10">{{ practica.meta_dias }}</p>
+<p class="note mt-0 mb-10">{{ practica.objetivo_semanal }}</p>
 
 {% if practica.sin_datos %}
 <div class="card empty">{{ t('practica.sin_datos') }}</div>
@@ -18,8 +18,24 @@
   {% if practica.racha_mas_larga %}<p class="read m-0">{{ practica.racha_mas_larga }}</p>{% endif %}
 </div>
 
+{% if practica.semanas %}
+<h2>{{ t('practica.semanas_title') }}</h2>
+<div class="season-strip">
+  {% for fila in practica.semanas %}
+  <div class="season-row">
+    <div class="season-row-label">{{ fila.label }}</div>
+    <div class="season-row-cells">
+      {% for c in fila.celdas %}
+      <span class="week-cell {{ c.clase }}{{ ' w-season' if c.en_temporada }}" aria-label="{{ c.aria }}"></span>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
 {% if practica.dias %}
-<h2>{{ t('practica.dias_title') }}</h2>
+<h2>{{ t('practica.semanas_recientes_title') }}</h2>
 <div class="strip">
   {% for c in practica.dias %}
   {% if c.day %}<a class="strip-cell p-{{ c.estado }}" href="/day/{{ c.day }}" aria-label="{{ c.aria }}"></a>
@@ -55,6 +71,15 @@
 {% endif %}
 
 {% if not practica.archivada %}
+<form method="post" action="/history/practica/{{ practica.id }}" class="card mt-10">
+  <div class="q">{{ t('practica.editar_titulo_label') }}</div>
+  <input type="text" name="titulo" class="field" required value="{{ practica.titulo }}"
+         aria-label="{{ t('practica.editar_titulo_label') }}">
+  <div class="q mt-10">{{ t('practica.editar_meta_label') }}</div>
+  <input type="number" name="meta_dias_semana" class="field" min="1" max="7" required
+         value="{{ practica.meta_dias_semana }}" aria-label="{{ t('practica.editar_meta_label') }}">
+  <button type="submit" class="btn w-100 mt-10">{{ t('practica.editar_guardar') }}</button>
+</form>
 <a class="btn w-100 mt-10" href="/goals/new?practica_id={{ practica.id }}">{{ t('practica.retomar_btn') }}</a>
 <form method="post" action="/history/practica/{{ practica.id }}/archive" class="mt-10">
   <button type="submit" class="btn w-100">{{ t('practica.archivar_btn') }}</button>

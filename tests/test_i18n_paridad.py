@@ -79,6 +79,11 @@ _FIXED_DYNAMIC = {
     # body/web.py, body/templates/shift_pattern.html: t("shift.kind." + k) / t('shift.kind.' + k) --
     # _STRIP_KIND_ORDER is the superset (it also covers the strip's "no shift" legend entry).
     "shift.kind.+": turnos._STRIP_KIND_ORDER,
+    # body/rutas/historial.py _turnos_listado() (BODY-HISTORIA-VIDA-3 ruling 4): the singular and
+    # plural noun for each shift kind a `shift` row can actually carry (db.SHIFT_KINDS) -- never
+    # the bare, un-pluralised shift.kind.+ label above.
+    "shift.kind.noun.+": list(db.SHIFT_KINDS),
+    "shift.kind.noun_plural.+": list(db.SHIFT_KINDS),
     # body/rutas/hoy.py _dia_por_delante_ctx(): t("shift.kind.title." + k) -- the day-ahead row's
     # own shift title, reading as a shift ("Day shift"/"Turno de día") rather than the bare kind
     # (BODY-MOCK-R2-HOY-1-M fix 3). Same kind set as shift.kind.+ above.
