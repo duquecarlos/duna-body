@@ -27995,6 +27995,9 @@ change rather than stopping `AWAITING_APPROVAL`.
 `body/templates/practica.html`, `body/static/body.css`, `body/i18n/es.json`, `body/i18n/en.json`,
 `tests/test_practicas_web.py`, `tests/test_web_entry.py`, `tests/test_i18n_paridad.py`: rulings
 1-4, steps 1-2) -- `72e6e01` (`body/rutas/comun.py`, `body/templates/base.html`,
-`tests/test_idioma_hogar.py`: ruling 5, step 3) -- this ledger entry: ruling 6, the deviations, the
-gate, step 5.
+`tests/test_idioma_hogar.py`: ruling 5, step 3) -- `24c4359` (this ledger entry: ruling 6, the
+deviations, the gate, step 5) -- merged `b303395580eedf8601f427361b0f0b59de6cda21` (`--no-ff`, no
+conflicts; tree identity proven, branch tree == merge tree ==
+`e341c88580b4ffc187927e5711afbb1b83b7d41a`). Post-merge smoke (`tests.test_practicas
+tests.test_practicas_web tests.test_idioma_hogar tests.test_history`): `Ran 114 tests ... OK`.
 
