@@ -538,6 +538,20 @@ class DespertarCorreccionExportDeleteTest(unittest.TestCase):
         data = privacidad.export_person(self.conn, 2)
         self.assertEqual(data["despertar_correcciones"], [])
 
+    def test_export_includes_both_kinds_when_both_exist(self):
+        """BODY-DESPERTAR-REAL-6A-R2 ruling 1: a morning can hold BOTH a sueno and a levantado
+        row -- both exported, both deleted."""
+        db.guardar_despertar_correccion(self.conn, 1, "2026-11-17", "sueno", "06:20",
+                                        "despertar-real-v2", "persona")
+        db.guardar_despertar_correccion(self.conn, 1, "2026-11-17", "levantado", "06:45",
+                                        "despertar-real-v2", "asistente")
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(len(data["despertar_correcciones"]), 2)
+        tipos = {row["tipo"] for row in data["despertar_correcciones"]}
+        self.assertEqual(tipos, {"sueno", "levantado"})
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM despertar_correccion").fetchone()[0], 0)
+
     def test_saving_the_correction_never_touches_garmins_sleep_row(self):
         antes = dict(self.conn.execute("SELECT * FROM sleep_session WHERE person_id = 1").fetchone())
         db.guardar_despertar_correccion(self.conn, 1, "2026-11-17", "levantado", "06:45",

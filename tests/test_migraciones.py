@@ -843,19 +843,79 @@ class DespertarCorreccionTableMigrationTest(unittest.TestCase):
         db.init(self.conn)
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM despertar_correccion").fetchone()[0], 0)
 
-    def test_migrated_database_accepts_a_row_and_enforces_one_per_day(self):
+    def test_migrated_database_accepts_one_row_per_day_and_tipo(self):
+        """BODY-DESPERTAR-REAL-6A-R2 ruling 1: a morning holds one sueno AND one levantado row --
+        the UNIQUE is now (person_id, day, tipo), not (person_id, day)."""
         db.init(self.conn)
         self.conn.execute(
             "INSERT INTO despertar_correccion (person_id, day, tipo, hora_local, origen, creada_en) "
             "VALUES (1, '2026-11-10', 'levantado', '06:30', 'asistente', '2026-11-10T00:00:00+00:00')"
         )
+        self.conn.execute(
+            "INSERT INTO despertar_correccion (person_id, day, tipo, hora_local, origen, creada_en) "
+            "VALUES (1, '2026-11-10', 'sueno', '06:15', 'persona', '2026-11-10T00:05:00+00:00')"
+        )
         self.conn.commit()
-        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM despertar_correccion").fetchone()[0], 1)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM despertar_correccion").fetchone()[0], 2)
         with self.assertRaises(db.sqlite3.IntegrityError):
             self.conn.execute(
                 "INSERT INTO despertar_correccion (person_id, day, tipo, hora_local, origen, creada_en) "
-                "VALUES (1, '2026-11-10', 'sueno', '06:15', 'persona', '2026-11-10T00:05:00+00:00')"
+                "VALUES (1, '2026-11-10', 'sueno', '06:20', 'persona', '2026-11-10T00:10:00+00:00')"
             )
+
+
+class DespertarCorreccionUniqueWideningRebuildTest(unittest.TestCase):
+    """BODY-DESPERTAR-REAL-6A-R2 ruling 1 (ORCH-CARLOS-DELEGATES-TIER-1-1): a database at -4's own
+    shape (UNIQUE(person_id, day)) rebuilds to UNIQUE(person_id, day, tipo), keeping every row --
+    the existing rows are all one-per-day, so the copy is exact."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        db.init(self.conn)
+        self.conn.execute("DROP TABLE despertar_correccion")
+        self.conn.execute(
+            "CREATE TABLE despertar_correccion (id INTEGER PRIMARY KEY, "
+            "person_id INTEGER NOT NULL REFERENCES person(id), day TEXT NOT NULL, "
+            "tipo TEXT NOT NULL CHECK (tipo IN ('sueno', 'levantado')), hora_local TEXT NOT NULL, "
+            "modelo_version TEXT, origen TEXT NOT NULL CHECK (origen IN ('persona', 'asistente')), "
+            "creada_en TEXT NOT NULL, UNIQUE (person_id, day))"
+        )
+        self.conn.execute(
+            "INSERT INTO despertar_correccion (person_id, day, tipo, hora_local, modelo_version, origen, "
+            "creada_en) VALUES (1, '2026-11-10', 'levantado', '06:30', 'despertar-real-v1', 'asistente', "
+            "'2026-11-10T00:00:00+00:00')"
+        )
+        self.conn.execute(
+            "INSERT INTO sleep_session (person_id, day, start_local, end_local) VALUES "
+            "(1, '2026-11-10', '2026-11-09T23:00:00', '2026-11-10T06:00:00')"
+        )
+        self.conn.commit()
+
+    def test_rebuild_widens_the_unique_and_keeps_the_row(self):
+        antes = dict(self.conn.execute(
+            "SELECT * FROM sleep_session WHERE person_id = 1 AND day = '2026-11-10'").fetchone())
+        db.init(self.conn)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM despertar_correccion").fetchone()[0], 1)
+        fila = dict(self.conn.execute("SELECT * FROM despertar_correccion").fetchone())
+        self.assertEqual((fila["person_id"], fila["day"], fila["tipo"], fila["hora_local"],
+                           fila["modelo_version"], fila["origen"]),
+                          (1, "2026-11-10", "levantado", "06:30", "despertar-real-v1", "asistente"))
+        despues = dict(self.conn.execute(
+            "SELECT * FROM sleep_session WHERE person_id = 1 AND day = '2026-11-10'").fetchone())
+        self.assertEqual(antes, despues, "Garmin's own sleep_session row must stay byte-identical")
+        # now accepts the OTHER tipo for the same day, the whole point of the widening.
+        self.conn.execute(
+            "INSERT INTO despertar_correccion (person_id, day, tipo, hora_local, modelo_version, origen, "
+            "creada_en) VALUES (1, '2026-11-10', 'sueno', '06:15', 'despertar-real-v2', 'persona', "
+            "'2026-11-10T00:05:00+00:00')"
+        )
+        self.conn.commit()
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM despertar_correccion").fetchone()[0], 2)
+
+    def test_rebuild_is_idempotent(self):
+        db.init(self.conn)
+        db.init(self.conn)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM despertar_correccion").fetchone()[0], 1)
 
 
 class DespertarCorreccionFreshDbTest(unittest.TestCase):

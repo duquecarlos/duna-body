@@ -16,16 +16,18 @@
   {% if sueno_fc_linea %}<p class="mt-6 mb-0">{{ sueno_fc_linea }}</p>{% endif %}
   {% if despertar %}
   {% if despertar.garmin_linea %}<p class="mt-6 mb-0">{{ despertar.garmin_linea }}</p>{% endif %}
-  {% if despertar.correccion_linea %}<p class="mt-2 mb-0">{{ despertar.correccion_linea }}</p>{% endif %}
-  {% if despertar.linea %}<p class="mt-6 mb-0">{{ despertar.linea }}</p>{% endif %}
-  {% if despertar.propuesta_texto %}<p class="note mt-2 mb-0">{{ despertar.propuesta_texto }}</p>{% endif %}
-  {% if despertar.curva %}{{ despertar.curva | safe }}{% endif %}
-  {% if despertar.boton %}<form method="post" action="/day/{{ day }}/despertar/proponer" class="mt-6"><button class="taplink" type="submit">{{ t('day.despertar.corregir_boton') }}</button></form>{% endif %}
-  {% if despertar.propuesta_id %}
-  <form method="post" action="/day/{{ day }}/despertar/propuestas/{{ despertar.propuesta_id }}/aplicar" class="mt-6"><button class="btn" type="submit">{{ t('asistente.propuesta.aplicar') }}</button></form>
-  <form method="post" action="/day/{{ day }}/despertar/propuestas/{{ despertar.propuesta_id }}/descartar" class="mt-6"><button class="taplink" type="submit">{{ t('asistente.propuesta.descartar') }}</button></form>
+  {% for tarjeta in despertar.tarjetas %}
+  {% if tarjeta.correccion_linea %}<p class="mt-2 mb-0">{{ tarjeta.correccion_linea }}</p>{% endif %}
+  {% if tarjeta.linea %}<p class="mt-6 mb-0">{{ tarjeta.linea }}</p>{% endif %}
+  {% if tarjeta.propuesta_texto %}<p class="note mt-2 mb-0">{{ tarjeta.propuesta_texto }}</p>{% endif %}
+  {% if tarjeta.boton %}<form method="post" action="/day/{{ day }}/despertar/proponer" class="mt-6"><input type="hidden" name="tipo" value="{{ tarjeta.tipo }}"><button class="taplink" type="submit">{{ t('day.despertar.corregir_boton') }}</button></form>{% endif %}
+  {% if tarjeta.propuesta_id %}
+  <form method="post" action="/day/{{ day }}/despertar/propuestas/{{ tarjeta.propuesta_id }}/aplicar" class="mt-6"><button class="btn" type="submit">{{ t('asistente.propuesta.aplicar') }}</button></form>
+  <form method="post" action="/day/{{ day }}/despertar/propuestas/{{ tarjeta.propuesta_id }}/descartar" class="mt-6"><button class="taplink" type="submit">{{ t('asistente.propuesta.descartar') }}</button></form>
   {% endif %}
-  {% if despertar.deshacer %}<form method="post" action="/day/{{ day }}/despertar/deshacer" class="mt-6"><button class="btn" type="submit">{{ t('asistente.propuesta.deshacer') }}</button></form>{% endif %}
+  {% if tarjeta.deshacer %}<form method="post" action="/day/{{ day }}/despertar/deshacer" class="mt-6"><input type="hidden" name="tipo" value="{{ tarjeta.tipo }}"><button class="btn" type="submit">{{ t('asistente.propuesta.deshacer') }}</button></form>{% endif %}
+  {% endfor %}
+  {% if despertar.curva %}{{ despertar.curva | safe }}{% endif %}
   {% endif %}
   {% if sueno_resp_linea %}<p class="mt-6 mb-0">{{ sueno_resp_linea }}</p><p class="note mt-2 mb-0">{{ t('sueno_respiracion.caveat') }}</p>{% endif %}
   {% if noche_inusual %}<p class="mt-6 mb-0">{{ noche_inusual.texto }}</p>

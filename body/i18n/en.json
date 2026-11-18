@@ -1143,6 +1143,7 @@
   "agente.error.despertar_sin_sueno": "That day has no sleep recorded by Garmin.",
   "agente.error.despertar_hora_no_posterior": "The time must be after the sleep end Garmin recorded.",
   "agente.error.despertar_hora_fuera_horizonte": "The time is too far past the sleep end Garmin recorded.",
+  "agente.error.despertar_levantado_antes_de_sueno": "The get-up time can't be before the end of sleep.",
   "agente.pensando": "Thinking…",
   "agente.herramienta.leer_hoy": "Looking at your day…",
   "agente.herramienta.leer_dia": "Checking that day…",

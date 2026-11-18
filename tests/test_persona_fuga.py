@@ -194,7 +194,7 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
     # column, same census treatment as sleep_session above) -- no marker needed, the census only
     # checks export/delete-all coverage, and tipo/origen are both CHECK-constrained enums.
     db.guardar_despertar_correccion(conn, person_id, DAYS[-1], "levantado",
-                                     "06:45" if tag == "A" else "07:50", "despertar-real-v1", "asistente")
+                                     "06:45" if tag == "A" else "07:50", "despertar-real-v2", "asistente")
     conn.execute(
         "INSERT INTO shift (person_id, day, kind, code, start_local, end_local, source) "
         "VALUES (?, ?, 'night', ?, ?, ?, 'manual')",
@@ -926,7 +926,7 @@ class DespertarRealFugaTest(unittest.TestCase):
         self.assertEqual(resultado_a["segmentos"][0]["tipo"], "levantado")
         self.assertEqual(resultado_b["segmentos"], [])  # no baseline of B's own -- never A's rise
         self.assertEqual(resultado_b["confianza"], "baja")
-        self.assertEqual(resultado_b["propuesta"], {"tipo": "ninguna", "hora": None})
+        self.assertEqual(resultado_b["propuestas"], [])
         self.assertIsNone(resultado_b["primera_levantada"])
         self.assertEqual(resultado_b["evidencia"]["motivo"], "sin_linea_base")
 

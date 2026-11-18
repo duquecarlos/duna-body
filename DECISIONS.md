@@ -29078,3 +29078,162 @@ fixed here. Reversible, no schema change, nothing deployed. This spec approves t
 tests.test_despertar_pantalla tests.test_hoy tests.test_get_sin_escritura tests.test_rendimiento` ->
 `Ran 53 tests in 19.214s` -- `OK`.
 
+## BODY-DESPERTAR-REAL-6A, BODY-DESPERTAR-REAL-6A-R, BODY-DESPERTAR-REAL-6A-R2 -- a morning can carry both a sueno and a levantado correction at once (2026-11-18)
+
+**The gap this slice closes:** BODY-DESPERTAR-REAL-3's own ruling (dev-protocol DECISIONS.md's
+`## BODY-DESPERTAR-REAL-RULING`, not re-quoted verbatim here -- this slice's own context does not
+hold that repository's text) reads dozing past Garmin's own recorded sleep end as SLEEP, and quiet
+awake time in bed only as the GET-UP time. BODY-DESPERTAR-REAL-4/-7 built `corregir_despertar` and
+its screen on top of that ruling, but `despertar_correccion`'s own schema carried `UNIQUE (person_id,
+day)` -- one row per morning, one `tipo` at a time -- so a morning that both dozed past Garmin's end
+AND had a separate, later, sustained rise could only ever be corrected as ONE of the two, never both.
+BODY-DESPERTAR-REAL-6A/-6A-R named this gap; this slice (R2) is the one that closes it, under one
+ledger entry naming all three IDs as the dispatch asked. Invented demo data throughout; no real
+health figure, password, token or secret read, stored or logged by any file this slice touched; no
+network call.
+
+**Ruling 1 -- schema widens to `UNIQUE (person_id, day, tipo)`** (`body/db.py:1528`, the guarded
+rebuild at `body/db.py:2056-2110`: `_despertar_correccion_needs_rebuild`, `_rebuild_despertar_
+correccion_table` -- create/copy/verify-count/drop/rename via `_rebuild_with_fk_off`, the same
+pattern every other `CHECK`/`UNIQUE` widening in this file uses -- and `_migrate_despertar_
+correccion`, wired into `init()` right after `_migrate_propuestas`). The one-row reader/writer/
+deleter are replaced by four tipo-aware functions: `despertar_correcciones` (`body/db.py:2685`,
+`{tipo: row}` for one day), `despertar_correcciones_rango` (`:2696`, the same shape across a range,
+one query), `guardar_despertar_correccion` (`:2710`, an `INSERT ... ON CONFLICT(person_id, day,
+tipo) DO UPDATE`, so saving one tipo never touches the other) and `borrar_despertar_correccion`
+(`:2725`, deletes exactly one `(day, tipo)` row). `body/mudanza.py:129`'s `TableSpec`'s natural key
+widens to `("person_id", "day", "tipo")` to match. `tests/test_migraciones.py`'s
+`DespertarCorreccionUniqueWideningRebuildTest` proves the rebuild widens the constraint, keeps every
+existing row, and is idempotent; `tests/test_mudanza.py` and `tests/test_privacidad.py` gain
+both-kinds coverage for the household-move and export/delete paths.
+
+**Ruling 2 -- the model proposes both, independently** (`body/despertar_real.py`: `VERSION =
+"despertar-real-v2"` at line 60, `PROPUESTA_TIPOS = ("sueno", "levantado")` at line 111 --
+`"ninguna"` removed, since "no correction offered" is now simply an empty list rather than a third
+tipo). `estimar`'s own closing block (`:361-384`) computes `sueno_hora_dt` (the dozing segment's own
+end, if the day opens dormitando) and `levantado_hora_dt` (the first sustained rise, event-bound the
+same way the single-propuesta model already was) **independently of each other**, then returns a
+`propuestas` list, sueno first, holding whichever of the two exist and differ. No new query: the
+same intraday series already read once, through the same cache, costs the same 8 statements
+whether it yields zero, one or two proposals (`tests/test_rendimiento.py::DespertarRealCostTest`,
+unchanged). `tests/test_despertar_real.py::DozingThenQuietThenRiseTest` proves the exact case this
+slice exists for: dormitando 05:00-06:30, despierto_quieto 06:30-07:00, levantado 07:00-09:00 yields
+`[{"tipo": "sueno", "hora": "...T06:30:00"}, {"tipo": "levantado", "hora": "...T07:00:00"}]`.
+
+**Ruling 3 -- a get-up time may never land before the sleep it would widen, and vice versa**
+(`body/agente/herramientas.py:1021`, `_despertar_hora_opuesta`: reads the OTHER tipo's hora from an
+existing applied correction first, falling back to a still-pending, unapplied `corregir_despertar`
+propuesta for that same day/tipo; `:1071-1076`, wired into `_corregir_despertar`, raising the new
+`agente.error.despertar_levantado_antes_de_sueno` when a `levantado` hora is earlier than, or a
+`sueno` hora later than, the opposite tipo's hora). Covers all four combinations --
+existing-correction and co-proposed-pending, in both directions -- plus a positive case proving two
+correctly-ordered propuestas both apply (`tests/test_corregir_despertar.py::ValidationTest`, five new
+tests). Apply/undo's own drift detection (`body/agente/propuestas.py:902-927`,
+`_drift_aplicar_corregir_despertar`/`_drift_deshacer_corregir_despertar`/`_deshacer_corregir_
+despertar`) moves from the old single-row comparison to `db.despertar_correcciones(...).get(tipo)`,
+scoped to the propuesta's OWN tipo -- so a write to the other tipo is never drift, and a write to
+the SAME tipo still is (`tests/test_corregir_despertar.py::DriftTest`, both proved). A pre-existing
+correction of one tipo is never read, written or restored by an apply/undo of the other
+(`ApplyUndoTest::test_a_pre_existing_sueno_row_survives_untouched_through_a_levantado_apply_and_
+undo`).
+
+**Ruling 4 -- Dia renders one card per kind, Hoy keeps one line** (`body/rutas/hoy.py:1162`,
+`_despertar_dia_ctx`, rewritten around a `for tipo in ("sueno", "levantado")` loop building one
+"tarjeta" per kind that still has something to show: its own correction line + Deshacer, OR its own
+propuesta line + ¿Corregir?/pending-propuesta card -- mutually exclusive per kind, the same way
+ruling 1-2 of BODY-DESPERTAR-REAL-7 were mutually exclusive per morning. The shared "Garmin marcó..."
+line (`:1215`) shows ONCE when ANY kind is corrected, never twice. ONE curve for the whole morning
+(`_despertar_curva_svg`, `:1079`, signature widened from one `marca_dt` to a `marcas: list[datetime]`
+-- Garmin's own end plus up to one mark per kind present, per the ruling's own "Garmin's end plus up
+to two marks"). `_despertar_hoy_ctx` (`:1219`) is UNCHANGED in shape -- it still reads only
+`resultado["propuestas"][0]`, and sueno-first ordering (ruling 2) gives it the same precedence Hoy
+already had: the sueno line when both are offered, else the levantado one. `body/templates/day.html`
+(`:17-30`) loops `{% for tarjeta in despertar.tarjetas %}`, each piece (`correccion_linea`, `linea`,
+`propuesta_texto`, `boton`, `propuesta_id`, `deshacer`) guarded by its own `{% if %}` -- no 'None'
+ever rendered (`tests/test_despertar_pantalla.py::SinNoneTest`, unchanged, still green). The two POST
+routes Dia already had (`/day/{day}/despertar/proponer`, `/despertar/deshacer`) now carry a `tipo`
+hidden form field instead of a new route each (`tests/test_web_entry.py::RouteSetTest`: route count
+unchanged, confirmed by this slice's own run). `body/demo.py`'s `_seed_despertar_correccion`
+(`:882`) now also seeds a second, earlier night with both kinds at once, alongside the existing
+single-kind night (`tests/test_demo.py`, both nights asserted).
+
+**Ruling 5 -- the read path surfaces both** (`body/agente/herramientas.py:816` `_leer_dia` and
+`:1007` `_leer_intradia`: both now call `db.despertar_correcciones` and, when non-empty, nest the
+result under a plural `correcciones` key -- `{tipo: row}` -- replacing the old singular `correccion`
+key. `tests/test_leer_intradia.py::CorreccionTest` gains `test_both_kinds_of_correction_are_shown_
+together`, proving both rows surface side by side, each labelled by its own tipo, Garmin's own
+`sueno.fin` untouched either way. Statement cost, re-measured on `tests/test_despertar_pantalla.py`'s
+own `_seed_ambos_alta` fixture (a morning offering BOTH kinds, neither corrected yet) rather than the
+single-kind fixture BODY-DESPERTAR-REAL-7 measured on: `despertar_real.estimar` itself unchanged at 8
+statements; `_despertar_hoy_ctx`'s own full run unchanged at 9 (it still reads only the first
+proposal); `_despertar_dia_ctx`'s own full run now costs 12, not 11 -- the per-kind loop's own extra
+pending-propuesta check for the second kind -- so its own ceiling moves to `ceil(12 * 1.3) = 16`,
+named in `tests/test_rendimiento.py`'s own comment block and asserted by its new
+`DespertarRealCostTest::test_dia_and_hoy_ctx_cost_with_both_kinds_offered`. The route-level ceilings
+(`/`: 155, `/day/{day}`: 81) are UNCHANGED -- that file's own fixture never reaches a two-kind
+morning, confirmed by its own 18 tests, all green.
+
+**New string, es/en parity, verbatim as committed** (`body/i18n/es.json:1146`,
+`body/i18n/en.json:1146`):
+
+| key | es | en |
+|---|---|---|
+| `agente.error.despertar_levantado_antes_de_sueno` | La hora de levantarte no puede ser antes del fin del sueño. | The get-up time can't be before the end of sleep. |
+
+`tests/test_registro_tu.py`'s register guard flagged this string's `puede` as a possible usted
+address on the first full gate run (chunk 9); allow-listed at `tests/test_registro_tu.py`'s
+`_THIRD_PERSON_ALLOW` with the reason (`puede`'s subject is "la hora de levantarte", the time, not
+the reader) -- the one red this slice's own gate run found, fixed in its own commit, not carried
+forward. `tests/test_i18n_paridad.py` confirmed clean afterward.
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run as 11
+sequential alphabetical chunks of dotted modules (20 per chunk except the last, 215 modules total),
+after the register-guard fix above:
+
+1. `test_accesibilidad`..`test_baselines`: `Ran 385 tests in 84.969s` -- OK (skipped=1, expected failures=1)
+2. `test_baselines_lote`..`test_deshacer_derivados`: `Ran 456 tests in 435.018s` -- OK
+3. `test_despertar`..`test_errores_texto`: `Ran 409 tests in 114.652s` -- OK
+4. `test_estados_vacios`..`test_garmin_web`: `Ran 349 tests in 295.229s` -- OK
+5. `test_get_sin_escritura`..`test_host_deploy`: `Ran 602 tests in 346.060s` -- OK
+6. `test_host_import`..`test_mcp_copia_pc`: `Ran 362 tests in 44.150s` -- OK
+7. `test_mcp_http`..`test_periodo_pantallas`: `Ran 527 tests in 152.843s` -- OK
+8. `test_person_scope`..`test_propuestas_tabla`: `Ran 480 tests in 127.675s` -- OK
+9. `test_proteina`..`test_sesion_conexion_1`: `Ran 350 tests in 73.177s` -- OK (after the
+   register-guard fix; red on the first attempt, see above)
+10. `test_shift_import`..`test_turnos_opcional_2`: `Ran 524 tests in 81.850s` -- OK
+11. `test_turnos_opcional_3`..`test_web_entry`: `Ran 279 tests in 64.248s` -- OK
+
+Sum: 385+456+409+349+602+362+527+480+350+524+279 = **4723**. Collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`, taken before the
+chunked run): **4723**. Exact match. Every `NotSignedIn`/`GarminConnect*Error`/`RuntimeError`/
+`ValueError`/`AttributeError`/`ResourceWarning`/`IntegrityError` line printed during the run is
+expected log output from tests exercising synthetic error paths, unrelated to this slice's own code.
+No password, token, session secret, device key or real health figure was read, printed or written
+anywhere in this slice's own work or the gate's own stdout; no network call was made. Two chunks
+(2 and 5) ran past the harness's own foreground timeout on the first attempt and were re-run with the
+tool's maximum foreground timeout rather than backgrounded or polled; both completed in the
+foreground on the retry, the figures above.
+
+**customer_bytes: changed, on purpose, approved by this spec.** The new error string above is the
+only new customer-facing text; every other visible change (two tarjetas instead of one on a
+both-kinds morning, the shared curve carrying two marks) is the SAME existing strings rendered
+per-kind rather than once, not new copy. Ruling 4 is deliberately a customer-bytes change, and this
+slice's own dispatch said so in words: "This slice changes customer bytes on purpose (ruling 4) and
+this spec approves them: merge if green." Per that explicit authorization, this slice merges on a
+green gate rather than stopping for review.
+
+**Open follow-ups carried forward**, by ID only, unaffected by this slice: BODY-DESPERTAR-REAL-5,
+BODY-DESPERTAR-REAL-6, BODY-DESPERTAR-REAL-6B, BODY-DESPERTAR-REAL-6C, named by earlier slices'
+own reports.
+
+**Commits:** `9476763` (schema: ruling 1, `body/db.py`, `body/mudanza.py`,
+`tests/test_migraciones.py`, `tests/test_mudanza.py`, `tests/test_privacidad.py`) -- `de0e881`
+(model + validation: rulings 2-3, `body/despertar_real.py`, `body/agente/herramientas.py`,
+`body/agente/propuestas.py`, the new i18n string, `tests/test_despertar_real.py`,
+`tests/test_corregir_despertar.py`, `tests/test_persona_fuga.py`, `tests/test_mcp.py`) --
+`707eb9e` (screen + read path: rulings 4-5, `body/rutas/hoy.py`, `body/templates/day.html`,
+`body/demo.py`, `tests/test_despertar_pantalla.py`, `tests/test_leer_intradia.py`,
+`tests/test_rendimiento.py`, `tests/test_demo.py`, `tests/test_despertar_correccion.py`) --
+`20df556` (the register-guard allow-list fix, found by this slice's own gate) -- this ledger entry
+is the next commit, then the merge.
+

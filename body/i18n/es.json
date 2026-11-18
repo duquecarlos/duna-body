@@ -1143,6 +1143,7 @@
   "agente.error.despertar_sin_sueno": "Ese día no tiene un sueño registrado por Garmin.",
   "agente.error.despertar_hora_no_posterior": "La hora debe ser posterior al fin de sueño que registró Garmin.",
   "agente.error.despertar_hora_fuera_horizonte": "La hora está demasiado lejos del fin de sueño que registró Garmin.",
+  "agente.error.despertar_levantado_antes_de_sueno": "La hora de levantarte no puede ser antes del fin del sueño.",
   "agente.pensando": "Pensando…",
   "agente.herramienta.leer_hoy": "Mirando tu día…",
   "agente.herramienta.leer_dia": "Revisando ese día…",

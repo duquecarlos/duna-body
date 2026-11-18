@@ -180,12 +180,27 @@ class SeededContentTest(unittest.TestCase):
         self.assertEqual(habit["title"], demo._HABIT_FUERZA_TITLE["es"])
         self.assertEqual(json.loads(habit["cadence"]), {"per": "week", "times": 3})
 
-    def test_the_demo_person_has_one_invented_despertar_correction(self):
+    def test_the_demo_person_has_one_invented_despertar_correction_on_the_most_recent_night(self):
         # BODY-DESPERTAR-REAL-4 ruling 1.
-        row = self.conn.execute(
-            "SELECT tipo, origen FROM despertar_correccion WHERE person_id = 1").fetchone()
-        self.assertIsNotNone(row)
-        self.assertEqual((row["tipo"], row["origen"]), ("levantado", "asistente"))
+        dia_reciente = self.conn.execute(
+            "SELECT day FROM sleep_session WHERE person_id = 1 AND end_local IS NOT NULL "
+            "ORDER BY day DESC LIMIT 1").fetchone()["day"]
+        filas = self.conn.execute(
+            "SELECT tipo, origen FROM despertar_correccion WHERE person_id = 1 AND day = ?",
+            (dia_reciente,)).fetchall()
+        self.assertEqual(len(filas), 1)
+        self.assertEqual((filas[0]["tipo"], filas[0]["origen"]), ("levantado", "asistente"))
+
+    def test_the_demo_person_also_has_one_earlier_night_with_both_kinds(self):
+        # BODY-DESPERTAR-REAL-6A-R2 ruling 1's own census: a morning can hold BOTH a sueno and a
+        # levantado row.
+        filas = self.conn.execute(
+            "SELECT day, tipo, origen FROM despertar_correccion WHERE person_id = 1").fetchall()
+        por_dia: dict = {}
+        for f in filas:
+            por_dia.setdefault(f["day"], set()).add(f["tipo"])
+        dias_con_ambos = [dia for dia, tipos in por_dia.items() if tipos == {"sueno", "levantado"}]
+        self.assertEqual(len(dias_con_ambos), 1)
 
     def test_has_one_household_goal_created_by_ana(self):
         row = self.conn.execute(

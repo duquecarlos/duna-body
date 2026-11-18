@@ -1510,8 +1510,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # BODY-DESPERTAR-REAL-RULING): the person's own correction to one night, beside Garmin's own
     # sleep_session row, never a sibling column on it (BODY-DESPERTAR-REAL-1-INV: save_day's own
     # column-list INSERT OR REPLACE on sleep_session would blank a sibling column on the next
-    # sync). One row per (person_id, day), applied only with the person's own tap and undoable --
-    # the same guarded-CREATE convention as racha_piso above, additive, no schema_version.
+    # sync). Applied only with the person's own tap and undoable -- the same guarded-CREATE
+    # convention as racha_piso above, additive, no schema_version. BODY-DESPERTAR-REAL-6A-R2
+    # ruling 1 (ORCH-CARLOS-DELEGATES-TIER-1-1): the UNIQUE widens from (person_id, day) to
+    # (person_id, day, tipo) -- a morning can hold BOTH a 'sueno' and a 'levantado' row (dozing is
+    # sleep, a later rise is the real get-up time) -- through the guarded rebuild below.
     conn.execute(
         "CREATE TABLE IF NOT EXISTS despertar_correccion ("
         "id INTEGER PRIMARY KEY, "
@@ -1522,7 +1525,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         "modelo_version TEXT, "
         "origen TEXT NOT NULL CHECK (origen IN ('persona', 'asistente')), "
         "creada_en TEXT NOT NULL, "
-        "UNIQUE (person_id, day))"
+        "UNIQUE (person_id, day, tipo))"
     )
 
 
@@ -2050,11 +2053,58 @@ def _migrate_precios(conn: sqlite3.Connection) -> None:
         _rebuild_precio_modelo_table(conn)
 
 
+def _despertar_correccion_needs_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'despertar_correccion'"
+    ).fetchone()
+    return row is not None and "UNIQUE (person_id, day, tipo)" not in row[0]
+
+
+def _rebuild_despertar_correccion_table(conn: sqlite3.Connection) -> None:
+    """BODY-DESPERTAR-REAL-6A-R2 ruling 1 (ORCH-CARLOS-DELEGATES-TIER-1-1): widens the UNIQUE from
+    (person_id, day) to (person_id, day, tipo) -- a morning can hold BOTH a 'sueno' and a
+    'levantado' row. Every existing row is already one-per-day, so the copy is exact -- the same
+    guarded-rebuild shape as precio_modelo/goal above."""
+    def step(conn):
+        old_rows = conn.execute("SELECT * FROM despertar_correccion").fetchall()
+        conn.execute(
+            "CREATE TABLE despertar_correccion_nuevo ("
+            "id INTEGER PRIMARY KEY, "
+            "person_id INTEGER NOT NULL REFERENCES person(id), "
+            "day TEXT NOT NULL, "
+            "tipo TEXT NOT NULL CHECK (tipo IN ('sueno', 'levantado')), "
+            "hora_local TEXT NOT NULL, "
+            "modelo_version TEXT, "
+            "origen TEXT NOT NULL CHECK (origen IN ('persona', 'asistente')), "
+            "creada_en TEXT NOT NULL, "
+            "UNIQUE (person_id, day, tipo))"
+        )
+        for r in old_rows:
+            conn.execute(
+                "INSERT INTO despertar_correccion_nuevo (id, person_id, day, tipo, hora_local, "
+                "modelo_version, origen, creada_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (r["id"], r["person_id"], r["day"], r["tipo"], r["hora_local"], r["modelo_version"],
+                 r["origen"], r["creada_en"]),
+            )
+        new_count = conn.execute("SELECT COUNT(*) FROM despertar_correccion_nuevo").fetchone()[0]
+        if new_count != len(old_rows):
+            raise RuntimeError(f"despertar_correccion rebuild count mismatch: {len(old_rows)} -> {new_count}")
+        conn.execute("DROP TABLE despertar_correccion")
+        conn.execute("ALTER TABLE despertar_correccion_nuevo RENAME TO despertar_correccion")
+    _rebuild_with_fk_off(conn, step)
+
+
+def _migrate_despertar_correccion(conn: sqlite3.Connection) -> None:
+    if _table_exists(conn, "despertar_correccion") and _despertar_correccion_needs_rebuild(conn):
+        _rebuild_despertar_correccion_table(conn)
+
+
 def init(conn: sqlite3.Connection) -> None:
     _migrate_metas(conn)
     _migrate_cuenta(conn)
     _migrate_precios(conn)
     _migrate_propuestas(conn)
+    _migrate_despertar_correccion(conn)
     _ensure_hogar_miembro(conn)
     _migrate_hogar(conn)
     conn.executescript(SCHEMA)
@@ -2632,34 +2682,52 @@ def sueno_minuto_a_minuto(conn: sqlite3.Connection, person_id: int, day: str, zo
     return garmin_adapter.parse_sleep_series(json.loads(row["payload"]), zona)
 
 
-def despertar_correccion(conn: sqlite3.Connection, person_id: int, day: str) -> dict | None:
-    """BODY-DESPERTAR-REAL-4 ruling 1: this person's own correction for one day, read beside
-    Garmin's own sleep_session row (never merged into it). None for a day with no correction."""
-    row = conn.execute(
+def despertar_correcciones(conn: sqlite3.Connection, person_id: int, day: str) -> dict[str, dict]:
+    """BODY-DESPERTAR-REAL-6A-R2 ruling 1: both kinds of this person's own correction for one day,
+    read beside Garmin's own sleep_session row (never merged into it), in one statement -- keyed
+    by tipo. {} for a day with neither."""
+    rows = conn.execute(
         "SELECT tipo, hora_local, modelo_version, origen, creada_en FROM despertar_correccion "
         "WHERE person_id = ? AND day = ?", (person_id, day),
-    ).fetchone()
-    return dict(row) if row else None
+    ).fetchall()
+    return {r["tipo"]: dict(r) for r in rows}
+
+
+def despertar_correcciones_rango(conn: sqlite3.Connection, person_id: int, desde: str, hasta: str
+                                  ) -> dict[str, dict[str, dict]]:
+    """The same, over a range of days in one statement (BODY-DESPERTAR-REAL-6B's own seam) --
+    keyed by day, then by tipo."""
+    rows = conn.execute(
+        "SELECT day, tipo, hora_local, modelo_version, origen, creada_en FROM despertar_correccion "
+        "WHERE person_id = ? AND day BETWEEN ? AND ?", (person_id, desde, hasta),
+    ).fetchall()
+    out: dict[str, dict[str, dict]] = {}
+    for r in rows:
+        out.setdefault(r["day"], {})[r["tipo"]] = dict(r)
+    return out
 
 
 def guardar_despertar_correccion(conn: sqlite3.Connection, person_id: int, day: str, tipo: str, hora_local: str,
                                   modelo_version: str | None, origen: str) -> None:
-    """Replaces this day's own correction -- one row per (person_id, day), Garmin's own
-    sleep_session row untouched either way."""
+    """Replaces this day's own correction for `tipo` only -- one row per (person_id, day, tipo);
+    the OTHER tipo's row (if any) and Garmin's own sleep_session row are both untouched."""
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with conn:
         conn.execute(
             "INSERT INTO despertar_correccion (person_id, day, tipo, hora_local, modelo_version, origen, "
             "creada_en) VALUES (?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(person_id, day) DO UPDATE SET tipo = excluded.tipo, hora_local = excluded.hora_local, "
+            "ON CONFLICT(person_id, day, tipo) DO UPDATE SET hora_local = excluded.hora_local, "
             "modelo_version = excluded.modelo_version, origen = excluded.origen, creada_en = excluded.creada_en",
             (person_id, day, tipo, hora_local, modelo_version, origen, now),
         )
 
 
-def borrar_despertar_correccion(conn: sqlite3.Connection, person_id: int, day: str) -> None:
+def borrar_despertar_correccion(conn: sqlite3.Connection, person_id: int, day: str, tipo: str) -> None:
     with conn:
-        conn.execute("DELETE FROM despertar_correccion WHERE person_id = ? AND day = ?", (person_id, day))
+        conn.execute(
+            "DELETE FROM despertar_correccion WHERE person_id = ? AND day = ? AND tipo = ?",
+            (person_id, day, tipo),
+        )
 
 
 def save_exercise_sets(conn: sqlite3.Connection, person_id: int, source: str, source_id: str, sets) -> None:

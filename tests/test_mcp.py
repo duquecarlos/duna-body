@@ -391,7 +391,7 @@ class ToolsCallTest(_McpTestCase):
         ])
         r = respuestas[0]["result"]
         self.assertNotIn("isError", r)
-        self.assertIsNone(db.despertar_correccion(self.conn, self.person_id, "2026-11-05"))  # still unapplied
+        self.assertEqual(db.despertar_correcciones(self.conn, self.person_id, "2026-11-05"), {})  # still unapplied
         salida = json.loads(r["content"][-1]["text"])
         self.assertIn("propuesta_id", salida)
         self.assertEqual(salida["estado"], "propuesta")

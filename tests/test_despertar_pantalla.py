@@ -3,6 +3,7 @@
 (rulings 1-3), Hoy's own line (ruling 4), and their cost (ruling 5). Invented demo data only, no
 real health figures.
 """
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -68,13 +69,25 @@ def _seed_ninguna_alta(conn) -> None:
     conn.commit()
 
 
-def _propuesta_id(conn) -> int:
-    row = conn.execute(
-        "SELECT id FROM propuesta_agente WHERE person_id = 1 AND accion = 'corregir_despertar' "
-        "AND estado = 'propuesta' ORDER BY creada_en DESC LIMIT 1",
-    ).fetchone()
-    assert row is not None, "no pending corregir_despertar propuesta found"
-    return row["id"]
+def _seed_ambos_alta(conn) -> None:
+    """BODY-DESPERTAR-REAL-6A-R2's own DozingThenQuietThenRiseTest shape (tests/test_despertar_
+    real.py): dozed past Garmin's own end (sueno at 06:30), quiet awake, then a later sustained
+    rise (levantado at 07:00) -- a morning that offers BOTH."""
+    _sesion(conn, 1, DAY, START_LOCAL, END_LOCAL)
+    _guardar_fc(conn, 1, DAY, BASE_MUESTRAS + _serie(DAY, 5 * 60, 6 * 60 + 28, 2, BASE_FC + 2.0)
+                + _serie(DAY, 6 * 60 + 30, 6 * 60 + 58, 2, BASE_FC + 8.0)
+                + _serie(DAY, 7 * 60, 9 * 60, 2, BASE_FC + 20.0))
+    db.set_metric(conn, DAY, "sleep_minutes", 420.0, "garmin", 1)
+    conn.commit()
+
+
+def _propuesta_id(conn, tipo: str | None = None) -> int:
+    sql = ("SELECT id, despues_json FROM propuesta_agente WHERE person_id = 1 AND "
+           "accion = 'corregir_despertar' AND estado = 'propuesta' ORDER BY creada_en DESC")
+    for f in conn.execute(sql).fetchall():
+        if tipo is None or json.loads(f["despues_json"]).get("tipo") == tipo:
+            return f["id"]
+    raise AssertionError(f"no pending corregir_despertar propuesta found for tipo={tipo!r}")
 
 
 class LineaYBotonTest(unittest.TestCase):
@@ -131,7 +144,7 @@ class ProponerAplicarDeshacerTest(unittest.TestCase):
         page = client.get(f"/day/{DAY}").text
         self.assertIn("¿Corregir?", page)
 
-        r = client.post(f"/day/{DAY}/despertar/proponer")
+        r = client.post(f"/day/{DAY}/despertar/proponer", data={"tipo": "levantado"})
         self.assertEqual(r.status_code, 303)
         self.assertEqual(r.headers["location"], f"/day/{DAY}")
         n = conn.execute(
@@ -151,9 +164,8 @@ class ProponerAplicarDeshacerTest(unittest.TestCase):
         propuesta_id = _propuesta_id(conn)
         r = client.post(f"/day/{DAY}/despertar/propuestas/{propuesta_id}/aplicar")
         self.assertEqual(r.status_code, 303)
-        correccion = db.despertar_correccion(conn, 1, DAY)
+        correccion = db.despertar_correcciones(conn, 1, DAY).get("levantado")
         self.assertIsNotNone(correccion)
-        self.assertEqual(correccion["tipo"], "levantado")
         self.assertEqual(correccion["hora_local"], "07:15")
 
         page = client.get(f"/day/{DAY}").text
@@ -165,12 +177,12 @@ class ProponerAplicarDeshacerTest(unittest.TestCase):
         self.assertIn("Deshacer", page)
         self.assertNotIn("None", page)
 
-        r = client.post(f"/day/{DAY}/despertar/deshacer")
+        r = client.post(f"/day/{DAY}/despertar/deshacer", data={"tipo": "levantado"})
         self.assertEqual(r.status_code, 303)
-        self.assertIsNone(db.despertar_correccion(conn, 1, DAY))
+        self.assertEqual(db.despertar_correcciones(conn, 1, DAY), {})
 
         # back to the model's own line and button -- the one leftover 'aplicada' propuesta row
-        # from before is never read again (ruling 2 reads db.despertar_correccion directly).
+        # from before is never read again (ruling 2 reads db.despertar_correcciones directly).
         page = client.get(f"/day/{DAY}").text
         self.assertIn("¿Corregir?", page)
         self.assertIn("Parece que te levantaste alrededor de las 07:15", page)
@@ -179,14 +191,66 @@ class ProponerAplicarDeshacerTest(unittest.TestCase):
         conn = _web_conn(self, "descartar.db")
         _seed_levantado_media(conn)
         client = TestClient(web.app, follow_redirects=False)
-        client.post(f"/day/{DAY}/despertar/proponer")
+        client.post(f"/day/{DAY}/despertar/proponer", data={"tipo": "levantado"})
         propuesta_id = _propuesta_id(conn)
         r = client.post(f"/day/{DAY}/despertar/propuestas/{propuesta_id}/descartar")
         self.assertEqual(r.status_code, 303)
-        self.assertIsNone(db.despertar_correccion(conn, 1, DAY))
+        self.assertEqual(db.despertar_correcciones(conn, 1, DAY), {})
         page = client.get(f"/day/{DAY}").text
         self.assertIn("¿Corregir?", page)
         self.assertNotIn("Aplicar", page)
+
+
+class AmbosTiposTest(unittest.TestCase):
+    """BODY-DESPERTAR-REAL-6A-R2 ruling 4: a two-kind morning shows two lines and two buttons,
+    then two "Tu corrección" lines and two Deshacer buttons once both are applied; undoing one
+    leaves the other."""
+
+    def test_dos_lineas_y_dos_botones(self):
+        conn = _web_conn(self, "ambos_lineas.db")
+        _seed_ambos_alta(conn)
+        page = TestClient(web.app, follow_redirects=False).get(f"/day/{DAY}").text
+        self.assertIn("Parece que seguiste durmiendo hasta las 06:30 (Garmin marcó 05:00).", page)
+        self.assertIn("Parece que te levantaste alrededor de las 07:00 (Garmin marcó 05:00).", page)
+        self.assertEqual(page.count("¿Corregir?"), 2)
+        self.assertNotIn("None", page)
+
+    def test_aplicar_ambos_muestra_dos_correcciones_y_dos_deshacer(self):
+        conn = _web_conn(self, "ambos_aplicar.db")
+        _seed_ambos_alta(conn)
+        client = TestClient(web.app, follow_redirects=False)
+        client.post(f"/day/{DAY}/despertar/proponer", data={"tipo": "sueno"})
+        client.post(f"/day/{DAY}/despertar/proponer", data={"tipo": "levantado"})
+        client.post(f"/day/{DAY}/despertar/propuestas/{_propuesta_id(conn, 'sueno')}/aplicar")
+        client.post(f"/day/{DAY}/despertar/propuestas/{_propuesta_id(conn, 'levantado')}/aplicar")
+
+        correcciones = db.despertar_correcciones(conn, 1, DAY)
+        self.assertEqual(set(correcciones), {"sueno", "levantado"})
+
+        page = client.get(f"/day/{DAY}").text
+        self.assertIn("Tu corrección: dormiste hasta las 06:30", page)
+        self.assertIn("Tu corrección: te levantaste a las 07:00", page)
+        self.assertEqual(page.count("Deshacer"), 2)
+        self.assertNotIn("¿Corregir?", page)
+        self.assertNotIn("None", page)
+
+    def test_deshacer_uno_deja_el_otro(self):
+        conn = _web_conn(self, "ambos_deshacer.db")
+        _seed_ambos_alta(conn)
+        client = TestClient(web.app, follow_redirects=False)
+        client.post(f"/day/{DAY}/despertar/proponer", data={"tipo": "sueno"})
+        client.post(f"/day/{DAY}/despertar/proponer", data={"tipo": "levantado"})
+        client.post(f"/day/{DAY}/despertar/propuestas/{_propuesta_id(conn, 'sueno')}/aplicar")
+        client.post(f"/day/{DAY}/despertar/propuestas/{_propuesta_id(conn, 'levantado')}/aplicar")
+
+        client.post(f"/day/{DAY}/despertar/deshacer", data={"tipo": "sueno"})
+        correcciones = db.despertar_correcciones(conn, 1, DAY)
+        self.assertEqual(set(correcciones), {"levantado"})
+
+        page = client.get(f"/day/{DAY}").text
+        self.assertIn("Tu corrección: te levantaste a las 07:00", page)
+        self.assertNotIn("Tu corrección: dormiste", page)
+        self.assertEqual(page.count("Deshacer"), 1)
 
 
 class OtraPersonaTest(unittest.TestCase):
@@ -198,14 +262,14 @@ class OtraPersonaTest(unittest.TestCase):
         conn.commit()
         _seed_levantado_media(conn)
         client = TestClient(web.app, follow_redirects=False)
-        client.post(f"/day/{DAY}/despertar/proponer")
+        client.post(f"/day/{DAY}/despertar/proponer", data={"tipo": "levantado"})
         propuesta_id = _propuesta_id(conn)
 
         web.app.dependency_overrides[identity.current_person_id] = lambda: 2
         r = TestClient(web.app, follow_redirects=False).post(
             f"/day/{DAY}/despertar/propuestas/{propuesta_id}/aplicar")
         self.assertEqual(r.status_code, 303)
-        self.assertIsNone(db.despertar_correccion(conn, 1, DAY))
+        self.assertEqual(db.despertar_correcciones(conn, 1, DAY), {})
         fila = conn.execute("SELECT estado FROM propuesta_agente WHERE id = ?", (propuesta_id,)).fetchone()
         self.assertEqual(fila["estado"], "propuesta", "another person's apply must not touch it")
 
@@ -289,7 +353,7 @@ class CurvaSvgTest(unittest.TestCase):
         while dt <= hasta:
             puntos.append((dt, 58.0))
             dt += timedelta(minutes=2)
-        svg = _despertar_curva_svg(t, puntos, desde, hasta, garmin_dt, marca_dt)
+        svg = _despertar_curva_svg(t, puntos, desde, hasta, garmin_dt, [marca_dt])
         self.assertIsNotNone(svg)
         self.assertEqual(svg.count("<polyline"), 2, "the gap must split the line into two runs")
         self.assertEqual(svg.count('stroke-dasharray="2 3"'), 2, "two dashed vertical marks")
@@ -307,7 +371,7 @@ class SinNoneTest(unittest.TestCase):
         _seed_levantado_media(conn)
         client = TestClient(web.app, follow_redirects=False)
         self.assertNotIn("None", client.get(f"/day/{DAY}").text)
-        client.post(f"/day/{DAY}/despertar/proponer")
+        client.post(f"/day/{DAY}/despertar/proponer", data={"tipo": "levantado"})
         self.assertNotIn("None", client.get(f"/day/{DAY}").text)
         propuesta_id = _propuesta_id(conn)
         client.post(f"/day/{DAY}/despertar/propuestas/{propuesta_id}/aplicar")

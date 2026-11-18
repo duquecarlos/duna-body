@@ -180,8 +180,10 @@ class SleepWindowTest(unittest.TestCase):
 
 
 class CorreccionTest(unittest.TestCase):
-    """BODY-DESPERTAR-REAL-4 ruling 3: the day's own correction, shown next to Garmin's own sleep,
-    both labelled as which is which -- never a second source of truth for the sleep window."""
+    """BODY-DESPERTAR-REAL-4 ruling 3 / BODY-DESPERTAR-REAL-6A-R2 ruling 5: the day's own
+    correction(s), shown next to Garmin's own sleep, each labelled as which is which -- never a
+    second source of truth for the sleep window. A morning can carry both 'sueno' and 'levantado'
+    at once."""
 
     def test_correction_shown_next_to_garmin_sleep(self):
         conn = _conn(self)
@@ -192,8 +194,21 @@ class CorreccionTest(unittest.TestCase):
         out = _ejecutar(conn, 1, desde="05:30", hasta="07:00")
         self.assertIsNotNone(out["sueno"])
         self.assertEqual(out["sueno"]["fin"], f"{DIA}T06:30:00")  # Garmin's own record, untouched
-        self.assertEqual(out["sueno"]["correccion"]["tipo"], "levantado")
-        self.assertEqual(out["sueno"]["correccion"]["hora_local"], "07:00")
+        self.assertEqual(set(out["sueno"]["correcciones"]), {"levantado"})
+        self.assertEqual(out["sueno"]["correcciones"]["levantado"]["hora_local"], "07:00")
+
+    def test_both_kinds_of_correction_are_shown_together(self):
+        conn = _conn(self)
+        _sesion(conn, 1, DIA, "2026-10-04T23:00:00", f"{DIA}T06:30:00")
+        _guardar_sueno(conn, 1, DIA, hr=[(f"{DIA}T06:00:00", 58)])
+        db.guardar_despertar_correccion(conn, 1, DIA, "sueno", "06:45", "despertar-real-v2", "asistente")
+        db.guardar_despertar_correccion(conn, 1, DIA, "levantado", "07:00", "despertar-real-v2", "asistente")
+        conn.commit()
+        out = _ejecutar(conn, 1, desde="05:30", hasta="07:00")
+        self.assertIsNotNone(out["sueno"])
+        self.assertEqual(set(out["sueno"]["correcciones"]), {"sueno", "levantado"})
+        self.assertEqual(out["sueno"]["correcciones"]["sueno"]["hora_local"], "06:45")
+        self.assertEqual(out["sueno"]["correcciones"]["levantado"]["hora_local"], "07:00")
 
     def test_no_correction_leaves_the_key_absent(self):
         conn = _conn(self)
@@ -202,7 +217,7 @@ class CorreccionTest(unittest.TestCase):
         conn.commit()
         out = _ejecutar(conn, 1, desde="05:30", hasta="07:00")
         self.assertIsNotNone(out["sueno"])
-        self.assertNotIn("correccion", out["sueno"])
+        self.assertNotIn("correcciones", out["sueno"])
 
 
 class SinDatosTest(unittest.TestCase):

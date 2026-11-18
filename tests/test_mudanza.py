@@ -135,6 +135,18 @@ def _populate_full(conn: sqlite3.Connection, person_id: int) -> dict:
         "VALUES (?, '2026-10-05', '2026-10-04T23:00:00', '2026-10-05T06:30:00')",
         (person_id,),
     )
+    # BODY-DESPERTAR-REAL-6A-R2 ruling 1: match_cols now includes `tipo`, so these two rows for the
+    # same day are distinct records, never a collision.
+    conn.execute(
+        "INSERT INTO despertar_correccion (person_id, day, tipo, hora_local, modelo_version, origen, "
+        "creada_en) VALUES (?, '2026-10-05', 'sueno', '06:15', 'despertar-real-v2', 'persona', ?)",
+        (person_id, NOW),
+    )
+    conn.execute(
+        "INSERT INTO despertar_correccion (person_id, day, tipo, hora_local, modelo_version, origen, "
+        "creada_en) VALUES (?, '2026-10-05', 'levantado', '07:00', 'despertar-real-v2', 'persona', ?)",
+        (person_id, NOW),
+    )
     conn.execute(
         "INSERT INTO raw_payload (person_id, day, kind, source, fetched_at, payload) "
         "VALUES (?, '2026-10-05', 'user_summary', 'garmin', ?, '{}')",
@@ -650,6 +662,9 @@ class ApplyTest(MudanzaTestCase):
         self.assertEqual(by_name["ingesta"].counts.insert, 1)
         self.assertEqual(by_name["checkin"].counts.insert, 1)
         self.assertEqual(by_name["checkin_nota"].counts.insert, 1)
+        # BODY-DESPERTAR-REAL-6A-R2 ruling 1: the sueno row and the levantado row for the same day
+        # both migrate -- the widened match_cols never collides them.
+        self.assertEqual(by_name["despertar_correccion"].counts.insert, 2)
 
         dest = db.connect()
         person_id = dest.execute("SELECT id FROM person WHERE cuenta_sub = ?", (CUENTA_SUB,)).fetchone()[0]
