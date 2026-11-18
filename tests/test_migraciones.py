@@ -309,6 +309,184 @@ class PropuestaAgenteImportarDesplazamientoFreshDbTest(unittest.TestCase):
         self.assertEqual(insert_importar.rowcount, 1)
 
 
+# BODY-HISTORIA-VIDA-2 ruling 3: the fifteenth widening of propuesta_agente.accion (proponer_practica),
+# through the SAME reusable rebuild (_rebuild_propuesta_agente_table) -- this is exactly today's
+# shape, minus 'proponer_practica', the same "old == current, minus the newest value" convention
+# every prior widening test in this file already follows.
+_OLD_PROPUESTA_AGENTE_COLUMNS_SIN_PROPONER_PRACTICA = """
+    id              INTEGER PRIMARY KEY,
+    person_id       INTEGER NOT NULL REFERENCES person(id),
+    conversacion_id INTEGER NOT NULL REFERENCES conversacion_agente(id),
+    accion          TEXT NOT NULL CHECK (accion IN
+                        ('proponer_meta', 'proponer_cambio_meta', 'proponer_confirmar_turnos', 'proponer_idioma',
+                         'planear_entreno', 'registrar_entreno', 'registrar_medida', 'marcar_habito',
+                         'proponer_experimento', 'marcar_experimento',
+                         'registrar_ingesta', 'corregir_ingesta', 'borrar_ingesta',
+                         'marcar_periodo', 'cerrar_periodo', 'corregir_periodo', 'borrar_periodo',
+                         'registrar_comida', 'corregir_comida', 'registrar_checkin', 'descartar_series',
+                         'separar_sesion', 'unir_sesiones', 'proponer_objetivo_nutriente',
+                         'proponer_plan', 'corregir_meta_plan', 'ampliar_plan', 'anotar_sesion',
+                         'corregir_entreno', 'importar_desplazamiento')),
+    objetivo_id     INTEGER REFERENCES goal(id),
+    antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
+    despues_json    TEXT NOT NULL CHECK (json_valid(despues_json)),
+    estado          TEXT NOT NULL DEFAULT 'propuesta'
+                        CHECK (estado IN ('propuesta', 'aplicada', 'descartada', 'expirada', 'deshecha')),
+    creada_en       TEXT NOT NULL,
+    expira_en       TEXT NOT NULL,
+    resuelta_en     TEXT,
+    aplicada_via    TEXT CHECK (aplicada_via IS NULL OR aplicada_via IN ('mcp', 'hogar'))
+"""
+
+
+class PropuestaAgenteProponerPracticaMigrationTest(unittest.TestCase):
+    """BODY-HISTORIA-VIDA-2 ruling 3: a database whose propuesta_agente predates 'proponer_practica'
+    gains the widening in one rebuild, keeping its existing rows byte-for-byte, and then accepts a
+    'proponer_practica' row."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        db.init(self.conn)
+        self.cid = agente_conversacion.crear(self.conn, 1)
+        self.conn.execute("PRAGMA foreign_keys = OFF")
+        self.conn.execute("DROP TABLE propuesta_agente")
+        self.conn.execute(
+            f"CREATE TABLE propuesta_agente ({_OLD_PROPUESTA_AGENTE_COLUMNS_SIN_PROPONER_PRACTICA})"
+        )
+        self.conn.execute(
+            "INSERT INTO propuesta_agente (person_id, conversacion_id, accion, despues_json, estado, "
+            "creada_en, expira_en) VALUES (1, ?, 'proponer_plan', '{}', 'aplicada', "
+            "'2026-11-09T00:00:00+00:00', '2026-11-09T00:10:00+00:00')",
+            (self.cid,),
+        )
+        self.conn.execute(
+            "INSERT INTO propuesta_agente (person_id, conversacion_id, accion, despues_json, estado, "
+            "creada_en, expira_en) VALUES (1, ?, 'importar_desplazamiento', '{}', 'propuesta', "
+            "'2026-11-09T00:00:00+00:00', '2026-11-09T00:10:00+00:00')",
+            (self.cid,),
+        )
+        self.old_ids = [
+            r["id"] for r in self.conn.execute(
+                "SELECT id FROM propuesta_agente WHERE conversacion_id = ? ORDER BY id", (self.cid,)
+            ).fetchall()
+        ]
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.commit()
+
+    def test_migration_widens_accion_keeping_the_old_rows(self):
+        db.init(self.conn)
+        rows = self.conn.execute(
+            "SELECT id FROM propuesta_agente WHERE conversacion_id = ? ORDER BY id", (self.cid,)
+        ).fetchall()
+        self.assertEqual([r["id"] for r in rows], self.old_ids)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM propuesta_agente").fetchone()[0], 2)
+
+        insert_practica = self.conn.execute(
+            "INSERT INTO propuesta_agente (person_id, conversacion_id, accion, despues_json, creada_en, "
+            "expira_en) VALUES (1, ?, 'proponer_practica', '{}', '2026-11-09T00:00:00+00:00', "
+            "'2026-11-09T00:10:00+00:00')", (self.cid,),
+        )
+        self.conn.commit()
+        self.assertEqual(insert_practica.rowcount, 1)
+
+    def test_migration_is_idempotent(self):
+        db.init(self.conn)
+        db.init(self.conn)
+        rows = self.conn.execute(
+            "SELECT id FROM propuesta_agente WHERE conversacion_id = ? ORDER BY id", (self.cid,)
+        ).fetchall()
+        self.assertEqual([r["id"] for r in rows], self.old_ids)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM propuesta_agente").fetchone()[0], 2)
+
+
+class PropuestaAgenteProponerPracticaFreshDbTest(unittest.TestCase):
+    """A fresh database (built with the current _PROPUESTA_AGENTE_COLUMNS) accepts a
+    'proponer_practica' row directly, with no rebuild needed."""
+
+    def test_fresh_database_accepts_proponer_practica(self):
+        conn = _conn(self)
+        db.init(conn)
+        cid = agente_conversacion.crear(conn, 1)
+        insert_practica = conn.execute(
+            "INSERT INTO propuesta_agente (person_id, conversacion_id, accion, despues_json, creada_en, "
+            "expira_en) VALUES (1, ?, 'proponer_practica', '{}', '2026-11-09T00:00:00+00:00', "
+            "'2026-11-09T00:10:00+00:00')", (cid,),
+        )
+        conn.commit()
+        self.assertEqual(insert_practica.rowcount, 1)
+
+
+class HabitPracticaIdMigrationTest(unittest.TestCase):
+    """BODY-HISTORIA-VIDA-2 ruling 4: a database whose habit predates practica_id gains it,
+    additive and nullable -- keeping the existing row byte-for-byte: an existing habit reads as
+    practica_id NULL ("not linked to any practice")."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        db.init(self.conn)
+        self.conn.execute("PRAGMA foreign_keys = OFF")
+        self.conn.execute("DROP TABLE habit")
+        self.conn.execute(
+            "CREATE TABLE habit (id INTEGER PRIMARY KEY, goal_id INTEGER NOT NULL REFERENCES goal(id), "
+            "title TEXT NOT NULL, cadence TEXT NOT NULL CHECK (json_valid(cadence)), "
+            "cadence_text_legacy TEXT, assignee_person_id INTEGER REFERENCES person(id), "
+            "active INTEGER NOT NULL DEFAULT 1)"
+        )
+        self.conn.execute(
+            "INSERT INTO goal (person_id, hogar_id, area, title, kind, metric_key, direction, "
+            "target_value, baseline_value, start_day, status, visibility) VALUES "
+            "(1, NULL, 'body', 'Vieja', 'metric', 'resting_hr', 'lower', 55, 60, "
+            "'2026-11-09', 'active', 'private')"
+        )
+        self.goal_id = self.conn.execute("SELECT id FROM goal").fetchone()[0]
+        self.conn.execute(
+            "INSERT INTO habit (goal_id, title, cadence, active) VALUES (?, 'Caminar', "
+            "'{\"per\": \"week\", \"times\": 3}', 1)", (self.goal_id,),
+        )
+        self.old_id = self.conn.execute("SELECT id FROM habit").fetchone()[0]
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.commit()
+
+    def test_migration_adds_the_column_keeping_the_old_row(self):
+        db.init(self.conn)
+        row = self.conn.execute("SELECT id, title, practica_id FROM habit").fetchone()
+        self.assertEqual(row["id"], self.old_id)
+        self.assertEqual(row["title"], "Caminar")
+        self.assertIsNone(row["practica_id"])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM habit").fetchone()[0], 1)
+
+    def test_migration_is_idempotent(self):
+        db.init(self.conn)
+        db.init(self.conn)
+        row = self.conn.execute("SELECT id, practica_id FROM habit").fetchone()
+        self.assertEqual(row["id"], self.old_id)
+        self.assertIsNone(row["practica_id"])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM habit").fetchone()[0], 1)
+
+    def test_migrated_habit_accepts_a_practica_link(self):
+        db.init(self.conn)
+        self.conn.execute(
+            "INSERT INTO practica (person_id, titulo, fuente, regla_json, meta_dias_semana, origen, "
+            "creada_en) VALUES (1, 'ZZ', 'actividad', '{\"tipos\": [\"running\"]}', 5, 'persona', "
+            "'2026-11-09T00:00:00+00:00')"
+        )
+        pid = self.conn.execute("SELECT id FROM practica").fetchone()[0]
+        self.conn.execute("UPDATE habit SET practica_id = ? WHERE id = ?", (pid, self.old_id))
+        self.conn.commit()
+        row = self.conn.execute("SELECT practica_id FROM habit WHERE id = ?", (self.old_id,)).fetchone()
+        self.assertEqual(row["practica_id"], pid)
+
+
+class HabitPracticaIdFreshDbTest(unittest.TestCase):
+    """A fresh database's habit table already carries practica_id -- no migration needed."""
+
+    def test_fresh_database_has_the_column(self):
+        conn = _conn(self)
+        db.init(conn)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(habit)")}
+        self.assertIn("practica_id", cols)
+
+
 class ConversacionAgenteHogarMigrationTest(unittest.TestCase):
     """A database whose conversacion_agente predates 'hogar' as an origen value gains the widened
     CHECK in one rebuild, keeping its existing row byte-for-byte."""

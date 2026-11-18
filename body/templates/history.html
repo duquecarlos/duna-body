@@ -12,6 +12,35 @@
   {% if periodo_line %}<p class="note mt-6 mb-0">{{ periodo_line }}</p>{% endif %}
 </div>
 
+<h2>{{ t('history.practicas_title') }}</h2>
+{% if practicas %}
+<div class="card">
+  {% for p in practicas %}
+  <a class="block no-underline{{ '' if loop.first else ' mt-10' }}" href="/history/practica/{{ p.id }}">
+    <div class="row k"><span>{{ p.titulo }}</span><span>›</span></div>
+    {% if p.detalle %}<p class="note m-0">{{ p.detalle }}</p>{% endif %}
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card empty">{{ t('history.practicas_empty') }}</div>
+{% endif %}
+{% if sugerencias %}
+<div class="card mt-10">
+  <div class="q">{{ t('history.practicas_suggest_q') }}</div>
+  {% for s in sugerencias %}
+  <form method="post" action="/history/practicas" class="row gap-8 {{ 'mt-0' if loop.first else 'mt-10' }}">
+    <input type="hidden" name="fuente" value="{{ s.fuente }}">
+    <input type="hidden" name="regla" value='{{ s.regla_json }}'>
+    <input type="text" name="titulo" value="{{ s.label }}" class="field flex-1"
+           aria-label="{{ t('history.practicas_suggest_title_ph') }}">
+    <button type="submit" class="btn on flex-none">{{ t('history.practicas_suggest_cta') }}</button>
+  </form>
+  <p class="note mt-4">{{ s.weeks }}</p>
+  {% endfor %}
+</div>
+{% endif %}
+
 {% macro month_row(m) %}
 <a href="{{ m.href }}" class="block mt-10 no-underline month-row">
   <div class="row k"><span>{{ m.month }}</span><span>{{ m.minutes }} · {{ m.sessions }}</span></div>

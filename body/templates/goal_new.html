@@ -2,6 +2,7 @@
 {% block title %}{{ t('goals.new_title') }} · {{ t('app.name') }}{% endblock %}
 {% block main %}
 <div class="top"><div><h1>{{ t('goals.new_title') }}</h1></div></div>
+{% if practica_prefill %}<p class="note mt-0">{{ t('goals.retomar_nota', titulo=practica_prefill.titulo) }}</p>{% endif %}
 <form method="post" action="/goals/new">
   <div class="card">
     <div class="q">{{ t('goals.field_kind') }}</div>
@@ -11,7 +12,8 @@
 
   <div class="card">
     <div class="q">{{ t('goals.field_title') }}</div>
-    <input type="text" name="title" class="field" required aria-label="{{ t('goals.field_title') }}">
+    <input type="text" name="title" class="field" required aria-label="{{ t('goals.field_title') }}"
+           {% if practica_prefill %}value="{{ t('goals.retomar_titulo', titulo=practica_prefill.titulo) }}"{% endif %}>
   </div>
 
   <div class="card">
@@ -71,11 +73,13 @@
   </fieldset>
 
   <div class="card">
-    <details class="files">
+    <details class="files" {% if practica_prefill %}open{% endif %}>
       <summary class="k">{{ t('goals.add_habit') }}</summary>
       <div class="mt-8">
+        {% if practica_prefill %}<input type="hidden" name="habit_practica_id" value="{{ practica_prefill.id }}">{% endif %}
         <input type="text" name="habit_title" class="field" placeholder="{{ t('goals.habit_title_ph') }}"
-               aria-label="{{ t('goals.habit_title_ph') }}">
+               aria-label="{{ t('goals.habit_title_ph') }}"
+               {% if practica_prefill %}value="{{ practica_prefill.titulo }}"{% endif %}>
         <div class="row mt-8 gap-8 justify-start">
           <input type="number" name="habit_times" class="field flex-70" min="1" value="1"
                  aria-label="{{ t('a11y.habit_times') }}">

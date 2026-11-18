@@ -177,6 +177,9 @@ _FIXED_DYNAMIC = {
     # body/rutas/metas.py _plan_estado_chip(): every estado a weekly target line or a checkpoint
     # criterion can carry (BODY-PLAN-PANTALLA-1), read from metas.PLAN_ESTADOS rather than retyped.
     "goals.plan.estado.+": list(metas.PLAN_ESTADOS),
+    # body/rutas/historial.py _regla_texto(): a sueno_horario practica's own two fields
+    # (practicas.py's own _validar_sueno_horario CHECK).
+    "practica.campo_+": ["inicio", "fin"],
 }
 
 # body/web.py _finding_text(): key = f"history.find.{axis}_better_{better}", then t(key, ...) -- a

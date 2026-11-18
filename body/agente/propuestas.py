@@ -78,7 +78,8 @@ from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from .. import comida_compartida, compartir, db, desplazamiento_import, fechas, goals, household, shift_import
+from .. import comida_compartida, compartir, db, desplazamiento_import, fechas, goals, household, practicas, \
+    shift_import
 from ..i18n import T
 from . import conversacion as agente_conversacion
 
@@ -219,7 +220,8 @@ def _aplicar_meta(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     if horizonte_goal_id is not None:
         with conn:
             conn.execute("UPDATE goal SET horizonte_goal_id = ? WHERE id = ?", (horizonte_goal_id, goal_id))
-    habito_ids = [goals.add_habit(conn, goal_id, h["titulo"], h["cadencia"]) for h in despues.get("habitos") or []]
+    habito_ids = [goals.add_habit(conn, goal_id, h["titulo"], h["cadencia"], practica_id=h.get("practica_id"))
+                  for h in despues.get("habitos") or []]
     resultado = {"goal_id": goal_id}
     if habito_ids:
         resultado["habito_ids"] = habito_ids
@@ -843,6 +845,54 @@ def _deshacer_proponer_experimento(conn: sqlite3.Connection, row: sqlite3.Row) -
     eid = despues.get("experimento_id")
     if eid is not None:
         db.borrar_experimento(conn, row["person_id"], eid)
+
+
+# -- proponer_practica (BODY-HISTORIA-VIDA-2 ruling 3: this module is the one caller of
+# practicas.crear with origen='asistente') -------------------------------------------------------
+
+def _drift_deshacer_proponer_practica(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    """Drifted only on a genuine field mismatch -- never on whether a habit has since linked to
+    this practica as its evidence. That is what decides archive-vs-hard-delete inside
+    `_deshacer_proponer_practica` itself, not a reason to refuse the whole undo."""
+    despues = json.loads(row["despues_json"])
+    pid = despues.get("practica_id")
+    p = conn.execute(
+        "SELECT titulo, fuente, regla_json, meta_dias_semana FROM practica WHERE id = ? AND person_id = ?",
+        (pid, row["person_id"])).fetchone()
+    if p is None:
+        return True
+    return (p["titulo"] != despues["titulo"] or p["fuente"] != despues["fuente"]
+            or json.loads(p["regla_json"]) != despues["regla"]
+            or p["meta_dias_semana"] != despues["meta_dias_semana"])
+
+
+def _aplicar_proponer_practica(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+    despues = json.loads(row["despues_json"])
+    pid = practicas.crear(
+        conn, row["person_id"], despues["titulo"], despues["fuente"], despues["regla"],
+        meta_dias_semana=despues["meta_dias_semana"], origen="asistente",
+    )
+    return {"practica_id": pid}
+
+
+def _deshacer_proponer_practica(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    """Ruling 3's own choice: archived, never hard-deleted, once a habit has linked to it as
+    evidence -- the same 'never remove something depended-upon' rule goals/habits already follow
+    for undo (`_deshacer_meta`'s own habits are deactivated, not dropped). A fresh,
+    still-unreferenced insert is removed outright instead, the same rule
+    `_deshacer_proponer_experimento` follows via `db.borrar_experimento`. Either way the habit's
+    own citation keeps working: `practicas.estado`/`dias_estado` never filter on `archivada_en`
+    (only `listar` does)."""
+    despues = json.loads(row["despues_json"])
+    pid = despues.get("practica_id")
+    if pid is None:
+        return
+    referenciada = conn.execute("SELECT 1 FROM habit WHERE practica_id = ?", (pid,)).fetchone()
+    if referenciada is not None:
+        practicas.archivar(conn, row["person_id"], pid)
+    else:
+        with conn:
+            conn.execute("DELETE FROM practica WHERE id = ? AND person_id = ?", (pid, row["person_id"]))
 
 
 # -- marcar_experimento (this module calls db.registrar_dia_experimento directly) ---------------
@@ -1602,6 +1652,8 @@ TABLA: dict[str, _Accion] = {
                               _aplicar_anotar_sesion, _deshacer_anotar_sesion),
     "importar_desplazamiento": _Accion(_drift_aplicar_importar_desplazamiento, _drift_deshacer_importar_desplazamiento,
                                         _aplicar_importar_desplazamiento, _deshacer_importar_desplazamiento),
+    "proponer_practica": _Accion(_sin_drift, _drift_deshacer_proponer_practica,
+                                  _aplicar_proponer_practica, _deshacer_proponer_practica),
 }
 
 SIN_DESHACER = tuple(nombre for nombre, entrada in TABLA.items() if not entrada.tiene_deshacer)

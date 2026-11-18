@@ -137,7 +137,7 @@ class NoProponibleTest(unittest.TestCase):
                                     "descartar_series", "separar_sesion", "unir_sesiones",
                                     "proponer_objetivo_nutriente",
                                     "proponer_plan", "corregir_meta_plan", "ampliar_plan", "anotar_sesion",
-                                    "importar_desplazamiento"})
+                                    "importar_desplazamiento", "proponer_practica"})
 
 
 class UnaPropuestaPorRondaTest(unittest.TestCase):

@@ -97,11 +97,17 @@ def drop(conn, goal_id) -> None:
     _set_status(conn, goal_id, "dropped")
 
 
-def add_habit(conn, goal_id, title, cadence: dict, *, assignee_person_id=None, active=True) -> int:
+def add_habit(conn, goal_id, title, cadence: dict, *, assignee_person_id=None, active=True,
+              practica_id: int | None = None) -> int:
+    """`practica_id` (BODY-HISTORIA-VIDA-2 ruling 4): the practice this habit's own evidence comes
+    from, when the person is bringing one back -- additive, never validated here (the caller's
+    own job: body/agente/herramientas.py's `_validar_habitos_plan` for the assistant's two
+    whole-habit proposals, body/rutas/metas.py's own "Retomar" flow for the web form)."""
     with conn:
         cur = conn.execute(
-            "INSERT INTO habit (goal_id, title, cadence, assignee_person_id, active) VALUES (?, ?, ?, ?, ?)",
-            (goal_id, title, json.dumps(cadence), assignee_person_id, 1 if active else 0),
+            "INSERT INTO habit (goal_id, title, cadence, assignee_person_id, active, practica_id) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (goal_id, title, json.dumps(cadence), assignee_person_id, 1 if active else 0, practica_id),
         )
     return cur.lastrowid
 

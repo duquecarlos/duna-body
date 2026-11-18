@@ -10,7 +10,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import db, goals, household, vida_export
+from body import db, goals, household, practicas, vida_export
 
 
 def _conn(case: unittest.TestCase):
@@ -177,6 +177,25 @@ class MilestoneHabitsTest(unittest.TestCase):
             goals.check_habit(conn, hid, 1, f"2026-11-{2 + i:02d}", True, hoy=date(2026, 11, 4))
         r = goals.weekly_check(conn, gid, 1, "2026-11-02")
         self.assertFalse(r["on_track"])
+
+
+class HabitPracticaIdTest(unittest.TestCase):
+    def test_add_habit_without_practica_id_defaults_to_none(self):
+        conn = _conn(self)
+        db.init(conn)
+        gid = goals.propose(conn, 1, "Walk more", "2026-11-02", kind="milestone", deadline="2026-12-14")
+        hid = goals.add_habit(conn, gid, "Walk", {"per": "day", "times": 1})
+        row = conn.execute("SELECT practica_id FROM habit WHERE id = ?", (hid,)).fetchone()
+        self.assertIsNone(row["practica_id"])
+
+    def test_add_habit_stores_the_given_practica_id(self):
+        conn = _conn(self)
+        db.init(conn)
+        pid = practicas.crear(conn, 1, "Caminar", "metrica_umbral", {"metric_key": "steps", "op": ">=", "valor": 8000})
+        gid = goals.propose(conn, 1, "Walk more", "2026-11-02", kind="milestone", deadline="2026-12-14")
+        hid = goals.add_habit(conn, gid, "Walk", {"per": "day", "times": 1}, practica_id=pid)
+        row = conn.execute("SELECT practica_id FROM habit WHERE id = ?", (hid,)).fetchone()
+        self.assertEqual(row["practica_id"], pid)
 
 
 class HabitContextTest(unittest.TestCase):

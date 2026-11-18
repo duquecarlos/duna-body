@@ -27396,3 +27396,239 @@ the merge into `main`.
 
 -- merged `fbe07c4`
 
+## BODY-HISTORIA-VIDA-2 -- the screen, the two assistant tools, habit-practica linking (2026-11-17/18)
+
+ORCH-CARLOS-DELEGATES-TIER-1-1, the open follow-up BODY-HISTORIA-VIDA-1 named in its own ledger
+entry above: the "Tus prácticas" screen section, `leer_practicas`/`proponer_practica`, and linking
+a habit back to a practice so a person can "bring a habit back" once the watch data shows it
+slipped. Built over four commits on `feat/body-historia-vida-2` (`8e9eb09`, `1a0b251`, `8f7db09`,
+`c4e0367`), merged by BODY-HISTORIA-VIDA-2-R2 below; this entry was never written at the time, so
+it is written now, from those commits and the code as it stands.
+
+**Rulings 2-5, each as built.** (Ruling 1 is UNKNOWN -- `specs/body-historia-vida-2.md` is not in
+this repository and no in-code comment or commit message cites a "ruling 1" for this slice; every
+citation found, in the code and in all four build commits, starts at ruling 2. Noted as a
+deviation, not guessed.)
+
+- **Ruling 2 -- "Tus prácticas" on `/history` + its drill-down:** `body/rutas/historial.py`'s
+  `_practicas_resumen_ctx`/`_sugerencias_ctx` (originally `:218-241`, now rewritten by
+  BODY-HISTORIA-VIDA-2-R2 below) feed `/history` (`:364-396`) every active practica's current
+  streak and most recent week, plus not-yet-created suggestions with a one-tap create form
+  (`POST /history/practicas`, `:244-259`, `practicas.crear` with the person's own `origen`, never
+  through the assistant). The drill-down, `GET /history/practica/{practica_id}` (`:343-349`, 404
+  for an unknown id or another person's) renders the rule in words, current/longest streak, a
+  90-day day grid (`_PRACTICAS_DIAS_RECIENTES = 90`, `:23`), temporadas with context and an archive
+  action (`POST .../archive`, `:352-359`, `practicas.propia_activa`). The assistant's own
+  `leer_practicas` (`body/agente/herramientas.py:2524-2544`, nivel `resumen`): no id -> every active
+  practice via `_practica_resumen_lista` (`:2512-2521`) plus `practicas.sugerencias()`; with id ->
+  full detail bounded to the last 90 days (`_LEER_PRACTICAS_DIAS_RECIENTES`, `:2509`) via
+  `practicas.estado`'s own `[desde, hasta]`; `encontrada: False` for another person's practica or
+  an unknown id, never a `ToolError`, by analogy with `_leer_plan`. Tests:
+  `tests/test_practicas_web.py`, `tests/test_practicas_asistente.py`.
+- **Ruling 3 -- `proponer_practica`, insert-shaped:** `body/agente/herramientas.py:2547-2567` --
+  validated with `practicas.FUENTES` and `practicas.crear`'s own bounds BEFORE the proposal is
+  stored, so a bad proposal is a `ToolError`, never a card the person could tap Aplicar on; apply
+  calls `practicas.crear` with `origen='asistente'`. `body/db.py`'s `_PROPUESTA_AGENTE_COLUMNS`
+  gained `'proponer_practica'` (the fifteenth `accion` widening, same reusable rebuild every prior
+  widening used, `:1818`). `body/agente/propuestas.py`'s own TABLA entry for it: drift only on a
+  genuine field mismatch; undo archives the practica once a habit cites it as evidence (the
+  never-remove-what's-depended-upon rule goals/habits already follow), hard-deletes it otherwise.
+  `body/rutas/asistente.py:683` renders the one-line insert-shaped card
+  (`asistente.propuesta.titulo.proponer_practica`, `asistente.propuesta.practica_nueva(_one)`).
+  Tests: `tests/test_practicas_asistente.py`, `tests/test_migraciones.py`
+  (`PropuestaAgenteAccionWideningTest`-style fresh-db/existing-db paths), `tests/test_agente_propuestas.py`
+  (`NoProponibleTest`), `tests/test_agente_conformidad.py`, `tests/test_agente_bucle.py`.
+- **Ruling 4 -- linking a habit back to a practice:** `body/db.py`'s `_HABIT_COLUMNS` gained a
+  nullable `practica_id` (`:87`, guarded `ALTER TABLE ADD COLUMN` for an existing habit table,
+  `:1501`), additive, never validated at the schema layer -- the caller's own job.
+  `body/practicas.py:154-163`'s `propia_activa` is the ONE check every such link goes through
+  (`_validar_habitos_plan` at proposal time, `body/agente/herramientas.py:1222-1227`;
+  `goals.add_habit`/`db.crear_plan_horizonte`'s habit insert, `body/goals.py:100-...`; the web
+  form, `body/rutas/metas.py:38-...`'s `_parse_practica_id`; read-time again at
+  `body/rutas/metas.py:671-672`, never trusting write-time validation alone) -- a habit can never
+  cite another person's practica or an archived one. `body/rutas/metas.py:125-133`'s
+  `_evidencia_practica` renders the linked practice's own most recent week as a goal-detail evidence
+  line (`goals.habit_evidencia`, i18n below) -- what the watch shows, never a reason to mark the
+  habit; `marcar_habito` (`body/agente/herramientas.py:2325,2356-2357`) cites the same evidence
+  automatically in its own proposal. `body/rutas/metas.py:518,546`'s `goal_new_form` reads
+  `?practica_id=` and prefills the new goal/habit form ("Retomar"); `body/templates/practica.html`'s
+  "Retomar como meta" link (`practica.retomar_btn`) is `/goals/new?practica_id=`. `body/mudanza.py`
+  moved `practica` ahead of `habit` in `REGISTRY` (habit.practica_id now remaps through
+  `fk_remap`); `body/privacidad.py:442`'s comment records that habit's own delete already runs
+  before practica's, so no dangling reference is ever left. Tests: `tests/test_goals.py`,
+  `tests/test_goals_web.py`, `tests/test_agente_habito.py`, `tests/test_practicas_web.py`,
+  `tests/test_migraciones.py`, `tests/test_mudanza.py`, `tests/test_privacidad.py`.
+- **Ruling 5 -- the demo home shows the shape:** `body/demo.py:1240-...`'s `_seed_practicas`
+  returns `(count, pasos_id)`; a new habit under the steps goal cites the "pasos" demo practice as
+  its evidence (`practica_id=practica_pasos_id`, `:1149`), so the demo home's own goal page shows
+  the watch-evidence line without inventing a real figure. Test: `tests/test_demo.py` (seven
+  habits, the steps habit's link).
+
+**Person-facing strings as committed, es and en** (`body/i18n/es.json`/`en.json:976-1022, 365,
+1153, 1277-1278`):
+
+| key | es | en |
+|---|---|---|
+| history.practicas_title | Tus prácticas | Your practices |
+| history.practicas_empty | Todavía no tienes ninguna práctica. | You don't have any practice yet. |
+| history.practicas_streak(_one) | {n} días seguidos / 1 día seguido | {n} days in a row / 1 day in a row |
+| history.practicas_week | {hecho} de {meta} días esta semana | {hecho} of {meta} days this week |
+| history.practicas_suggest_q | El reloj muestra esto casi todas las semanas. ¿Lo convertimos en una práctica? | Your watch shows this most weeks. Turn it into a practice? |
+| history.practicas_suggest_weeks(_one) | {n} semanas distintas / 1 semana | {n} different weeks / 1 week |
+| history.practicas_suggest_title_ph | Título de la práctica | Practice title |
+| history.practicas_suggest_cta | Crear | Create |
+| practica.regla_actividad(_min) | Actividad: {tipos} / · al menos {min} min | Activity: {tipos} / · at least {min} min |
+| practica.regla_metrica / regla_sueno | {metric} {op} {valor} / {campo} {op} {hora} | same |
+| practica.op_mayor/menor/antes/despues | al menos / como mucho / antes de / después de | at least / at most / before / after |
+| practica.campo_inicio/fin | Te duermes / Te despiertas | You fall asleep / You wake up |
+| practica.meta_dias | Meta: {n} días por semana | Goal: {n} days a week |
+| practica.archivada | Archivada | Archived |
+| practica.sin_datos | Todavía no hay datos de tu reloj para esta práctica. | No watch data for this practice yet. |
+| practica.sin_racha | Sin racha abierta | No open streak |
+| practica.racha_actual(_one) | Racha actual: {n} días / 1 día | Current streak: {n} days / 1 day |
+| practica.racha_mas_larga(_one) | Racha más larga: {n} días (del {desde} al {hasta}) | Longest streak: {n} days ({desde} to {hasta}) |
+| practica.dias_title | Últimos días | Last days |
+| practica.dia_hecho/no_hecho/sin_dato | hecho / no hecho / sin dato | done / not done / no data |
+| practica.leyenda_* | Hecho / No hecho / Sin dato | Done / Not done / No data |
+| practica.temporadas_title | Temporadas | Seasons |
+| practica.temporada_resumen | {hecho} de {total} días · {desde} – {hasta} | {hecho} of {total} days · {desde} – {hasta} |
+| practica.sin_temporadas | Todavía no hay una temporada de al menos unas semanas seguidas. | No season of at least a few weeks in a row yet. |
+| practica.baseline_title | En general | Overall |
+| practica.contexto_sueno/readiness | sueño medio {minutos} / readiness medio {valor} | average sleep {minutos} / average readiness {valor} |
+| practica.archivar_btn | Archivar esta práctica | Archive this practice |
+| practica.retomar_btn | Retomar como meta | Make it a goal |
+| practica.volver | ‹ Tu historia | ‹ Your history |
+| goals.habit_evidencia | Tu reloj: {hecho} de {meta} días esta semana | Your watch: {hecho} of {meta} days this week |
+| asistente.propuesta.titulo.proponer_practica | Nueva práctica | New practice |
+| asistente.propuesta.practica_nueva(_one) | "{titulo}" · {n} días por semana / · 1 día por semana | "{titulo}" · {n} days a week / · 1 day a week |
+
+**Routes added:** `GET /history/practica/{practica_id}`, `POST /history/practica/{practica_id}/archive`,
+`POST /history/practicas`.
+
+**Known defects at the time this slice stopped** (diagnosed, not fixed here -- closed by
+BODY-HISTORIA-VIDA-2-R and BODY-HISTORIA-VIDA-2-R2 below): seven census modules outside this
+slice's own touches went red (the new tools/routes unlisted in their hand-kept inventories),
+`tests/test_persona_fuga.py`'s own cross-person census had the same gap, and the "Tus prácticas"
+section's per-practica `estado()` calls grew `/history`'s own cost with the number of practices.
+
+-- not merged standalone; its work is carried into `feat/body-historia-vida-2` and merged by
+BODY-HISTORIA-VIDA-2-R2's merge below.
+
+## BODY-HISTORIA-VIDA-2-R -- the census modules the gate found red outside this slice's touches, BLOCKED (2026-11-18)
+
+**Finding, verbatim from the dispatch's own surface:** continuing BODY-HISTORIA-VIDA-2 on the same
+branch: seven census modules outside that slice's own touches went red once its new tools/routes
+existed, plus `tests/test_persona_fuga.py`'s own census gap.
+
+**As built (`defd6a0`):** `tests/test_agente_registro.py` (lectura 18->19 for `leer_practicas`
+nivel `resumen`, propuesta 30->31 for `proponer_practica` nivel `ninguno`, `HERRAMIENTAS` 48->50,
+`ROUTE_TOOL` gets `/history/practica/{practica_id}` -> `leer_practicas`, `_all_tool_calls()`
+exercises `leer_practicas`); `tests/test_get_sin_escritura.py` (`_seed()` seeds a `practica_id`
+from `demo.py`'s own seed so the GET sweep exercises the new detail route with a real id);
+`tests/test_estados_vacios.py`/`test_estados_vacios_hosted.py` (every sparse state seeds or names
+a practica id, `_paths_for()` gets a `{practica_id}` branch); `tests/test_web_entry.py`
+(`RouteSetTest.BEFORE` gets the three new routes); `tests/test_agente_conformidad.py` (`_argumentos()`
+gets a `proponer_practica` entry); `tests/test_agente_bucle.py` (the nivel `'ninguno'` offered set
+gets `proponer_practica`).
+
+**As built (`397b5c4`):** `tests/test_persona_fuga.py`'s own census (ruling 2 of the same shape,
+found during the gate rather than in the spec's enumerated list) -- `EXPECTED_GET_PATHS` gets
+`/history/practica/{practica_id}`. Named, not fixed here (this module's docstring: a leak found
+here is reported, never patched in this module): `practica.titulo` now has its first screen
+readers but carried no marker in `_markers_of`/`READ_TOOLS` for the cross-person leak sweep --
+open follow-up `BODY-HISTORIA-VIDA-PRACTICA-MARCADOR-1`, closed by BODY-HISTORIA-VIDA-2-R2 ruling 4
+below.
+
+**Where it stopped:** gate chunks 1-9 of 11 ran; chunk 9 red --
+`tests/test_recuperacion_pantallas.py`'s `StatementCeilingTest` pinned `/history` at <=29
+statements and the "Tus prácticas" section pushed it to 30 -- a performance-shape question
+(ORCH-CARLOS-DELEGATES-TIER-1-1's own Tier 1 continuation), not a census-shape one, so this slice
+stopped BLOCKED rather than widening its own narrow test-census approval.
+
+-- not merged standalone; carried into BODY-HISTORIA-VIDA-2-R2 below.
+
+## BODY-HISTORIA-VIDA-2-R2 -- `practicas.resumen()`, the raised ceiling, the privacy sweep closed, merged (2026-11-18)
+
+ORCH-CARLOS-DELEGATES-TIER-1-1, continuing BODY-HISTORIA-VIDA-2-R's BLOCKED report: a
+performance-shape fix inside `body/practicas.py`'s own module, a ceiling raised by its measured
+cost, and a privacy sweep extended to the new route and tool.
+
+**Ruling 1 -- `practicas.resumen(conn, person_id)`, one SELECT per source family for every active
+practice together:** `body/practicas.py`. The three day-state calculators
+(`_calcular_actividad`/`_calcular_metrica_umbral`/`_calcular_sueno_horario`) were split into a
+fetch half (unchanged, still used by `estado()`) and a pure-compute half shared with the new
+function -- `_estados_actividad` (`:62-80`), `_estados_metrica_umbral` (`:97-102`),
+`_estados_sueno_horario` (`:245-260`). `resumen()` (`:494-563`) lists active practicas once
+(`listar`), then for the whole set together: activity rows + `daily_metric(source='garmin')` days
+ONCE for every `actividad` practica regardless of its own `regla`; `daily_metric` rows ONCE PER
+DISTINCT `metric_key` any `metrica_umbral` practica actually uses (never once per practica sharing
+a key); `sleep_session` rows ONCE for every `sueno_horario` practica -- then runs the SAME pure
+calculators plus the SAME `_rachas_dia`/`_semanas` helpers `estado()` uses, in Python, for each
+practica's own `{id, titulo, meta_dias_semana, racha_actual, ultima_semana}`. `estado()` itself is
+untouched. `body/rutas/historial.py`'s `_practicas_resumen_ctx` (`:218-232`) now calls `resumen()`
+instead of `estado()` per practica. Byte-identity: `tests/test_practicas.py`'s `ResumenTest`
+(`:379-417`) -- one practica of every fuente plus one with no data at all, `resumen()`'s
+`racha_actual`/`ultima_semana` compared field-for-field against `estado()`'s own
+`racha_actual`/`semanas[-1]` for the same id.
+
+**Ruling 2 -- cost independent of practice count:** `tests/test_rendimiento.py`'s
+`PracticasResumenCostIndependentOfCountTest` (`:403-421`) -- 1 active practica vs 6 (same family,
+`actividad`, six different `tipos`) cost `/history` the SAME statement count. Measured and verified
+equal in this slice's own run (both counted via `contar_sql()`, not asserted blind).
+
+**Ruling 3 -- `tests/test_recuperacion_pantallas.py`'s stale `/history` pin, raised by exactly its
+measured cost:** this file's own `StatementCeilingTest` (`:305-324`) predates `practica` entirely
+(written for BODY-RECUPERACION-1) and was never touched when BODY-HISTORIA-VIDA-2 added "Tus
+prácticas" -- its fixture seeds zero practicas, so the section's own constant cost here is
+`practicas.resumen()`'s single `listar()` call (`practicas.sugerencias()`'s own queries were
+already running, unaccounted for, before this slice). Measured 30 (was 29) -- raised by exactly
+that +1, with a comment naming this ruling; never padded beyond the measurement.
+
+**Ruling 4 -- `tests/test_persona_fuga.py`'s sweep extended to the new route and tool, closing
+`BODY-HISTORIA-VIDA-PRACTICA-MARCADOR-1`:** `_seed_person` (`:295`) now captures and returns the
+created practica's id; `_sweep_routes_as` (`:531-538`) checks `GET /history/practica/{practica_id}`
+-- own id 200, the other person's id 404 -- the same shape as goals/experiments just above it;
+`_sweep_tools_as` (`:645-651`) checks `leer_practicas` with a real `practica_id` -- own id
+`encontrada: True`, the other person's `encontrada: False` -- the same shape as `leer_meta` just
+above it. `leer_practicas` added to `READ_TOOLS` (`:441-443`) for the generic marker sweep.
+`ZZ{tag}-PRACTICA` moved into `_markers_of`'s active marker list (`:403-407`); its stale comment
+(the one BODY-HISTORIA-VIDA-2-R's `397b5c4` named, ~line 291-294) corrected to say practica now has
+three readers (`/history`, the drill-down, `leer_practicas`). No leak found --
+`UnlinkedSweepTest`/`LinkedSharingSweepTest` stayed green.
+
+**The gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as 11 sequential
+alphabetical chunks of the 208 `tests/test_*.py` modules (~19 per chunk) on the final tree, each
+read from the process, all in the foreground:
+
+    chunk 1  (test_accesibilidad..test_backup):              Ran 383 tests in  58.984s, OK (skipped=1, expected failures=1)
+    chunk 2  (test_baselines..test_deploy_host):              Ran 420 tests in 243.961s, OK
+    chunk 3  (test_deshacer_derivados..test_estados_vacios):  Ran 367 tests in  62.782s, OK
+    chunk 4  (test_estados_vacios_2..test_garmin_web):        Ran 348 tests in 243.482s, OK
+    chunk 5  (test_get_sin_escritura..test_host_backup):      Ran 522 tests in 283.620s, OK
+    chunk 6  (test_host_deploy..test_mcp_copia_pc):            Ran 386 tests in  36.486s, OK
+    chunk 7  (test_mcp_http..test_periodo_pantallas):          Ran 513 tests in 133.522s, OK
+    chunk 8  (test_person_scope..test_propuesta_vigencia):     Ran 448 tests in 115.278s, OK
+    chunk 9  (test_propuestas_tabla..test_series_orden):       Ran 331 tests in  70.527s, OK
+    chunk 10 (test_series_unidad..test_turnos_costo):          Ran 472 tests in  73.594s, OK
+    chunk 11 (test_turnos_enlaces..test_web_entry):            Ran 341 tests in  75.371s, OK
+
+All 11 chunks GREEN, including chunk 5 (`test_history`, `test_guardia_parches`) and chunk 8
+(`test_practicas`, `test_practicas_asistente`, `test_practicas_web`, `test_persona_fuga`).
+
+**Reconciliation:** sum of the 11 chunks = 383+420+367+348+522+386+513+448+331+472+341 = **4531**,
+equal to an independent collect-only count (`unittest.TestLoader().discover('tests',
+top_level_dir='.')`, counted without running, taken before the chunked run): **4531**. Exact match.
+No password, token, session secret, device key or health figure was read, printed or written
+anywhere in this slice's own work or the gate's own stdout; no network call was made.
+
+**Commits:** `9c02969` (`body/practicas.py`, `body/rutas/historial.py`, `tests/test_practicas.py`,
+`tests/test_rendimiento.py`, `tests/test_recuperacion_pantallas.py`: rulings 1-3), `0121d3f`
+(`tests/test_persona_fuga.py`: ruling 4), this ledger entry its own commit -- merged into `main`
+(sha below).
+
+**customer_bytes:** unchanged -- this slice touched no person-facing string; it only reorganised
+internal reads and extended tests.
+
+**Open follow-up carried forward:** `BODY-HISTORIA-VIDA-LUGARES-1` -- a season-context read of
+trips and places per day from Lugares, once Main names Lugares' own read API.
+

@@ -170,6 +170,7 @@
           {% for c in h.week_strip %}<span class="habit-week-cell {{ c.state }}" aria-label="{{ c.aria }}">{{ c.letter }}</span>{% endfor %}
         </div>
         {% endif %}
+        {% if h.evidencia %}<div class="k c-muted">{{ h.evidencia }}</div>{% endif %}
         {% else %}
         <div class="k">{{ h.cadence }} · <span class="chip">{{ h.assignee_name }}</span></div>
         {% endif %}

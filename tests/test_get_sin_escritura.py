@@ -66,9 +66,11 @@ def _seed(conn) -> dict:
         "distance_m, avg_hr, max_hr, calories, source) VALUES (1, ?, ?, ?, 'walking', NULL, 1200, "
         "2000, 100, 115, 150, 'garmin')",
         (source_id, day, f"{day}T18:00:00"))
+    practica_id = conn.execute(
+        "SELECT id FROM practica WHERE person_id = 1 ORDER BY id LIMIT 1").fetchone()[0]
     conn.commit()
     return {"goal_id": goal_id, "day": day, "conversacion_id": conversacion_id, "experiment_id": experiment_id,
-            "source_id": source_id}
+            "source_id": source_id, "practica_id": practica_id}
 
 
 def _dump(conn) -> dict:

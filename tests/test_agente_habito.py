@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from tests._db import open_conn
 
-from body import config, db, goals, identity, web
+from body import config, db, goals, identity, practicas, web
 from body.agente import cliente as agente_cliente
 from body.agente import conversacion as agente_conversacion
 from body.agente import herramientas, propuestas
@@ -36,11 +36,12 @@ def _cid(conn, person_id: int = 1) -> int:
     return agente_conversacion.crear(conn, person_id)
 
 
-def _seed_habito(conn, person_id: int = 1, *, assignee_person_id=None, active: bool = True) -> tuple[int, int]:
+def _seed_habito(conn, person_id: int = 1, *, assignee_person_id=None, active: bool = True,
+                  practica_id=None) -> tuple[int, int]:
     gid = goals.propose(conn, person_id, "Jugar más deporte", "2026-01-01", kind="milestone",
                         deadline="2026-12-30")
     hid = goals.add_habit(conn, gid, "Jugar pádel", {"per": "week", "times": 1},
-                          assignee_person_id=assignee_person_id, active=active)
+                          assignee_person_id=assignee_person_id, active=active, practica_id=practica_id)
     conn.commit()
     return gid, hid
 
@@ -157,6 +158,37 @@ class ProposeApplyUndoTest(unittest.TestCase):
         self.assertEqual(despues["actividad"]["nombre"], "Pádel")
         resultado = propuestas.aplicar(self.conn, 1, out["propuesta_id"])
         self.assertEqual(resultado["estado"], "aplicada")
+
+    def test_a_linked_practica_with_data_is_cited_as_evidence(self):
+        pid = practicas.crear(self.conn, 1, "Pádel", "actividad", {"tipos": ["other"]})
+        _, hid = _seed_habito(self.conn, practica_id=pid)
+        _insert_activity(self.conn, 1, "a1", "2026-01-15")
+        self.conn.commit()
+        out = herramientas.ejecutar(self.conn, 1, "marcar_habito", {"habit_id": hid, "day": "2026-01-15"},
+                                    "ninguno", self.cid)
+        registro = self.conn.execute("SELECT despues_json FROM propuesta_agente WHERE id = ?",
+                                     (out["propuesta_id"],)).fetchone()
+        despues = json.loads(registro["despues_json"])
+        self.assertEqual(despues["practica_evidencia"], {"hecho": 1, "meta": 5})
+
+    def test_a_habit_with_no_linked_practica_has_no_evidence(self):
+        _, hid = _seed_habito(self.conn)
+        out = herramientas.ejecutar(self.conn, 1, "marcar_habito", {"habit_id": hid, "day": "2026-01-15"},
+                                    "ninguno", self.cid)
+        registro = self.conn.execute("SELECT despues_json FROM propuesta_agente WHERE id = ?",
+                                     (out["propuesta_id"],)).fetchone()
+        self.assertIsNone(json.loads(registro["despues_json"])["practica_evidencia"])
+
+    def test_an_archived_linked_practica_has_no_evidence(self):
+        pid = practicas.crear(self.conn, 1, "Pádel", "actividad", {"tipos": ["other"]})
+        _, hid = _seed_habito(self.conn, practica_id=pid)
+        practicas.archivar(self.conn, 1, pid)
+        self.conn.commit()
+        out = herramientas.ejecutar(self.conn, 1, "marcar_habito", {"habit_id": hid, "day": "2026-01-15"},
+                                    "ninguno", self.cid)
+        registro = self.conn.execute("SELECT despues_json FROM propuesta_agente WHERE id = ?",
+                                     (out["propuesta_id"],)).fetchone()
+        self.assertIsNone(json.loads(registro["despues_json"])["practica_evidencia"])
 
 
 class RefusalsTest(unittest.TestCase):
@@ -291,6 +323,15 @@ class CardTextTest(unittest.TestCase):
         self.conn.commit()
         datos = self._marcar({"habit_id": hid, "day": "2026-01-15"}, pregunta="check off my habit")
         self.assertEqual(datos["despues"], "Proposal: Jugar pádel · done on 15 Jan 2026")
+
+    def test_card_shows_the_linked_practica_s_evidence(self):
+        pid = practicas.crear(self.conn, 1, "Pádel", "actividad", {"tipos": ["other"]})
+        _, hid = _seed_habito(self.conn, practica_id=pid)
+        _insert_activity(self.conn, 1, "a1", "2026-01-15")
+        self.conn.commit()
+        datos = self._marcar({"habit_id": hid, "day": "2026-01-15"})
+        self.assertEqual(datos["despues"],
+                         "Propuesta: Jugar pádel · hecho el 15 ene 2026 · tu reloj: 1 de 5 días esta semana")
 
     def test_card_shows_antes_when_the_day_already_had_a_not_done_row(self):
         _, hid = _seed_habito(self.conn)

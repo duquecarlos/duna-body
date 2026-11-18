@@ -28,6 +28,7 @@ ROUTE_TOOL = {
     "/shifts/como": "leer_costo_turnos",
     "/trends": "leer_tendencias",
     "/history": "leer_historia",
+    "/history/practica/{practica_id}": "leer_practicas",
     "/goals": "leer_metas",
     "/goals/new": None,          # a creation form, not a data screen
     "/goals/{goal_id}": "leer_meta",
@@ -108,7 +109,7 @@ def _all_tool_calls():
         "leer_estado_reloj": {}, "leer_dias_libres": {"desde": "2026-10-01", "dias": 3},
         "leer_entreno": {"day": "2026-10-05"}, "leer_experimentos": {},
         "leer_serie": {"metricas": ["resting_hr"], "desde": "2026-10-01", "hasta": "2026-10-05", "paso": "dia"},
-        "leer_plan": gid_placeholder, "leer_planes": {},
+        "leer_plan": gid_placeholder, "leer_planes": {}, "leer_practicas": {},
     }
 
 
@@ -178,7 +179,7 @@ PROPUESTA_NOMBRES = {"proponer_meta", "proponer_cambio_meta", "proponer_confirma
                      "borrar_periodo", "descartar_series", "separar_sesion", "unir_sesiones",
                      "proponer_objetivo_nutriente",
                      "proponer_plan", "corregir_meta_plan", "ampliar_plan", "anotar_sesion",
-                     "importar_desplazamiento"}
+                     "importar_desplazamiento", "proponer_practica"}
 # Privacy and account controls deliberately NEVER become proposal tools (BODY-ASISTENTE-PROPUESTAS-1
 # approval reason): nivel_datos, consent, export, delete-all, device keys, Garmin connection,
 # household membership all stay on their own screens.
@@ -194,6 +195,8 @@ class RegistryShapeTest(unittest.TestCase):
         # the registry at nivel 'ninguno' (it carries no health figure), never a loosened count.
         # BODY-TURNO-DIA-PLAN-1 ruling 2: extended from seventeen -- leer_dias_libres is the one
         # new entry, also at nivel 'ninguno' (shift times carry no health figure either).
+        # BODY-HISTORIA-VIDA-2: extended from eighteen -- leer_practicas is the one new entry, at
+        # nivel 'resumen' (counts and streaks, no daily figure).
         expected_levels = {
             "leer_hoy": "completo", "leer_dia": "completo", "leer_como_calculo": "completo",
             "leer_tendencias": "resumen", "leer_historia": "resumen", "leer_metas": "resumen",
@@ -201,10 +204,10 @@ class RegistryShapeTest(unittest.TestCase):
             "leer_ajustes": "ninguno", "leer_tutoriales": "ninguno", "leer_entreno": "completo",
             "leer_experimentos": "resumen", "leer_serie": "resumen",
             "leer_plan": "resumen", "leer_planes": "resumen", "leer_estado_reloj": "ninguno",
-            "leer_dias_libres": "ninguno",
+            "leer_dias_libres": "ninguno", "leer_practicas": "resumen",
         }
         lectura = [h for h in herramientas.HERRAMIENTAS if h["tipo"] == "lectura"]
-        self.assertEqual(len(lectura), 18)
+        self.assertEqual(len(lectura), 19)
         self.assertEqual({h["nombre"]: h["nivel"] for h in lectura}, expected_levels)
 
     def test_thirty_propuesta_tools_with_one_at_nivel_resumen(self):
@@ -214,6 +217,8 @@ class RegistryShapeTest(unittest.TestCase):
         # entry, and the first `propuesta` tool not gated at 'ninguno': ruling 4 sets it at 'resumen',
         # the same nivel_datos the commute data it imports is itself shown at -- counts and dates
         # only, never a day's own figure.
+        # BODY-HISTORIA-VIDA-2: extended from 30 -- proponer_practica is the one new entry, at nivel
+        # 'ninguno' like every other propuesta tool except importar_desplazamiento.
         propuesta = [h for h in herramientas.HERRAMIENTAS if h["tipo"] == "propuesta"]
         self.assertEqual({h["nombre"] for h in propuesta}, PROPUESTA_NOMBRES)
         niveles = {h["nombre"]: h["nivel"] for h in propuesta}
@@ -227,7 +232,8 @@ class RegistryShapeTest(unittest.TestCase):
         # BODY-CORREGIR-MEDIDA-ENTRENO-1-W: extended from 45 -- corregir_entreno is the one new entry.
         # BODY-TURNO-DIA-PLAN-1: extended from 46 -- leer_dias_libres is the one new entry.
         # BODY-DESPLAZAMIENTO-ASISTENTE-1: extended from 47 -- importar_desplazamiento is the one new entry.
-        self.assertEqual(len(herramientas.HERRAMIENTAS), 48)
+        # BODY-HISTORIA-VIDA-2: extended from 48 -- leer_practicas and proponer_practica are the two new entries.
+        self.assertEqual(len(herramientas.HERRAMIENTAS), 50)
 
     def test_every_entry_carries_the_reserved_plan_field_unset(self):
         # BODY-ASISTENTE-CONFORMIDAD-1 ruling 2 (agent-capabilities-v1 section 5): the field

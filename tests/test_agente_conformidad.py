@@ -201,6 +201,8 @@ def _argumentos(ids: dict) -> dict:
         "anotar_sesion": {"plan_id": ids["plan_id"], "nota": "Nota de conformidad"},
         "corregir_entreno": {"dia": ids["dia_a1"], "orden": 1, "reps": 9},
         "importar_desplazamiento": {"contenido": _commute_csv()},
+        "proponer_practica": {"titulo": "Práctica conformidad", "fuente": "actividad",
+                               "regla": {"tipos": ["running"]}},
     }
 
 

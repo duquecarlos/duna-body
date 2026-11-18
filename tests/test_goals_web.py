@@ -9,7 +9,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import config, db, goals, identity, web
+from body import config, db, goals, identity, practicas, web
 from body.rutas import comun
 
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "body" / "static"
@@ -272,6 +272,86 @@ class MetricHouseholdFormTest(unittest.TestCase):
         gid = int(resp.headers["location"].rsplit("/", 1)[1])
         self.assertEqual(conn.execute("SELECT visibility FROM goal WHERE id = ?", (gid,)).fetchone()[0],
                          "household")
+
+
+class PracticaRetomarPrefillTest(unittest.TestCase):
+    """BODY-HISTORIA-VIDA-2 ruling 4: /goals/new?practica_id=X prefills the goal/habit title and
+    links the new habit's practica_id, but only for the person's own, active practice."""
+
+    def test_own_active_practica_prefills_the_form(self):
+        conn = _reset_db(self)
+        pid = practicas.crear(conn, 1, "Correr", "actividad", {"tipos": ["running"]})
+        r = client.get(f"/goals/new?practica_id={pid}")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("Correr", r.text)
+        self.assertIn(f'name="habit_practica_id" value="{pid}"', r.text)
+
+    def test_unknown_practica_id_shows_the_plain_empty_form(self):
+        _reset_db(self)
+        r = client.get("/goals/new?practica_id=999")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn("habit_practica_id", r.text)
+
+    def test_submitting_the_prefilled_form_links_the_new_habit(self):
+        conn = _reset_db(self)
+        pid = practicas.crear(conn, 1, "Correr", "actividad", {"tipos": ["running"]})
+        resp = client.post("/goals/new", data={
+            "kind": "milestone", "title": "Retomar correr", "area": "body", "deadline": "2027-03-31",
+            "habit_title": "Correr", "habit_times": "3", "habit_per": "week", "habit_practica_id": str(pid),
+        })
+        self.assertEqual(resp.status_code, 303)
+        gid = int(resp.headers["location"].rsplit("/", 1)[1])
+        habit = conn.execute("SELECT practica_id FROM habit WHERE goal_id = ?", (gid,)).fetchone()
+        self.assertEqual(habit["practica_id"], pid)
+
+    def test_a_tampered_practica_id_on_submit_is_dropped_not_rejected(self):
+        conn = _reset_db(self)
+        resp = client.post("/goals/new", data={
+            "kind": "milestone", "title": "Retomar correr", "area": "body", "deadline": "2027-03-31",
+            "habit_title": "Correr", "habit_times": "3", "habit_per": "week", "habit_practica_id": "999",
+        })
+        self.assertEqual(resp.status_code, 303)
+        gid = int(resp.headers["location"].rsplit("/", 1)[1])
+        habit = conn.execute("SELECT practica_id FROM habit WHERE goal_id = ?", (gid,)).fetchone()
+        self.assertIsNone(habit["practica_id"])
+
+
+class HabitEvidenceLineTest(unittest.TestCase):
+    """BODY-HISTORIA-VIDA-2 ruling 4: a habit that cites a practice shows that practice's own latest
+    week on the goal page -- what the watch shows, never a reason to mark the habit."""
+
+    def test_linked_habit_shows_the_watch_evidence_line(self):
+        conn = _reset_db(self)
+        pid = practicas.crear(conn, 1, "Correr", "actividad", {"tipos": ["running"]})
+        conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, name, duration_s, "
+            "distance_m, avg_hr, max_hr, calories, source) VALUES "
+            "(1, 'a1', '2026-11-02', '2026-11-02T07:00:00', 'running', 'Carrera', 1800, 5000, 140, 160, 300, 'garmin')")
+        conn.commit()
+        gid = goals.propose(conn, 1, "Retomar correr", "2026-11-02", kind="milestone", deadline="2027-03-31")
+        goals.activate(conn, gid)
+        goals.add_habit(conn, gid, "Correr", {"per": "week", "times": 3}, practica_id=pid)
+
+        r = client.get(f"/goals/{gid}")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("Tu reloj: 1 de 5 días esta semana", r.text)
+
+    def test_an_archived_practica_stops_showing_evidence(self):
+        conn = _reset_db(self)
+        pid = practicas.crear(conn, 1, "Correr", "actividad", {"tipos": ["running"]})
+        conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, name, duration_s, "
+            "distance_m, avg_hr, max_hr, calories, source) VALUES "
+            "(1, 'a1', '2026-11-02', '2026-11-02T07:00:00', 'running', 'Carrera', 1800, 5000, 140, 160, 300, 'garmin')")
+        conn.commit()
+        gid = goals.propose(conn, 1, "Retomar correr", "2026-11-02", kind="milestone", deadline="2027-03-31")
+        goals.activate(conn, gid)
+        goals.add_habit(conn, gid, "Correr", {"per": "week", "times": 3}, practica_id=pid)
+        practicas.archivar(conn, 1, pid)
+
+        r = client.get(f"/goals/{gid}")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn("Tu reloj:", r.text)
 
 
 class GoalNewFormMilestoneOnlyVisibilityTest(unittest.TestCase):

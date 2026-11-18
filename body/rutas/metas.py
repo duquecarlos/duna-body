@@ -10,7 +10,7 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import cuenta, db, enlaces, fechas, goals, horizonte, household, identity, profile
+from .. import cuenta, db, enlaces, fechas, goals, horizonte, household, identity, practicas, profile
 from ..baselines import baselines
 from ..i18n import T
 from . import comun, experimentos
@@ -33,6 +33,19 @@ _PLAN_ESTADO_CLS = {"cumple": "ok", "en_curso": "warn", "no_cumple": "low", "sin
 def _cadence_text(t: T, cadence: dict) -> str:
     per = t("goals.cadence.per." + cadence.get("per", "week"))
     return t("goals.cadence", n=cadence.get("times", 1), per=per)
+
+
+def _parse_practica_id(conn, person_id: int, raw) -> int | None:
+    """BODY-HISTORIA-VIDA-2 ruling 4: a habit's own practica_id, from a form field -- the
+    person's own, active practice, or None (never raised: a tampered or stale id just means no
+    link, the same quiet fallback every other optional field on this form already takes)."""
+    if not raw:
+        return None
+    try:
+        pid = int(raw)
+    except ValueError:
+        return None
+    return pid if practicas.propia_activa(conn, person_id, pid) else None
 
 
 def _parse_new_habit(f: dict, prefix: str = "") -> tuple[str | None, dict | None]:
@@ -107,6 +120,17 @@ def _week_strip(t: T, monday: date, today: date, done_days: set[str]) -> list[di
         cells.append({"letter": name[:1].upper(), "state": state,
                       "aria": t("goals.week_strip.cell_aria", day=name, state=state_words[state])})
     return cells
+
+
+def _evidencia_practica(t: T, conn, person_id: int, practica_id: int) -> str | None:
+    """BODY-HISTORIA-VIDA-2 ruling 4: the linked practice's own most recent week -- what the
+    watch shows, cited as evidence for this habit, never a reason to mark it (marcar_habito stays
+    the person's own tap either way). None when the practice has no data yet."""
+    e = practicas.estado(conn, person_id, practica_id)
+    if not e or not e["semanas"]:
+        return None
+    s = e["semanas"][-1]
+    return t("goals.habit_evidencia", hecho=t.num(s["hecho"]), meta=t.num(e["definicion"]["meta_dias_semana"]))
 
 
 def _shared_line(conn, t: T, g, person_id: int) -> str | None:
@@ -490,9 +514,25 @@ def goals_list(person_id: int = Depends(identity.current_person_id)):
                    experiments_empty=not (experiments_active or experiments_closed))
 
 
+def _practica_prefill(conn, person_id: int, raw) -> dict | None:
+    """BODY-HISTORIA-VIDA-2 ruling 4: the "Retomar" flow's own entry point -- /goals/new?practica_id=X
+    prefills a new goal and habit from that practice, the person's own and active only (a stale or
+    tampered id just shows the plain empty form, never an error)."""
+    if not raw:
+        return None
+    try:
+        pid = int(raw)
+    except ValueError:
+        return None
+    if not practicas.propia_activa(conn, person_id, pid):
+        return None
+    row = conn.execute("SELECT titulo FROM practica WHERE id = ?", (pid,)).fetchone()
+    return {"id": pid, "titulo": row["titulo"]}
+
+
 @router.get("/goals/new")
 @comun._cierra_conexion
-def goal_new_form(person_id: int = Depends(identity.current_person_id)):
+def goal_new_form(request: Request, person_id: int = Depends(identity.current_person_id)):
     conn, person, t = comun._ctx(person_id)
     defs = comun._defs(conn)
     today = comun._today_local(person).isoformat()
@@ -503,8 +543,10 @@ def goal_new_form(person_id: int = Depends(identity.current_person_id)):
         metrics.append({"key": k, "label": t("metric." + k), "unit": comun._unit(t, d),
                         "direction": BETTER_TO_DIRECTION[d["better"]], "baseline": b.mean if b else None})
     hh = household.household_of(conn, person_id)
+    practica_prefill = _practica_prefill(conn, person_id, request.query_params.get("practica_id"))
     return comun._render("goal_new.html", t=t, tab="goals", metrics=metrics, areas=AREAS, directions=DIRECTIONS,
-                   has_household=bool(hh and len(hh.member_ids) > 1), turnos=db.trabaja_turnos_si(conn, person_id))
+                   has_household=bool(hh and len(hh.member_ids) > 1), turnos=db.trabaja_turnos_si(conn, person_id),
+                   practica_prefill=practica_prefill)
 
 
 @router.post("/goals/new")
@@ -546,7 +588,8 @@ async def goal_new_create(request: Request, person_id: int = Depends(identity.cu
                             deadline=f["deadline"], hogar_id=hogar_id, visibility=visibility)
     habit_title, habit_cadence = _parse_new_habit(f, "habit_")
     if habit_title:
-        goals.add_habit(conn, gid, habit_title, habit_cadence)
+        practica_id = _parse_practica_id(conn, person_id, f.get("habit_practica_id"))
+        goals.add_habit(conn, gid, habit_title, habit_cadence, practica_id=practica_id)
     return RedirectResponse(f"/goals/{gid}", status_code=303)
 
 
@@ -624,11 +667,15 @@ def goal_detail(goal_id: int, request: Request, person_id: int = Depends(identit
             else:
                 checked_today = comun._habit_checked(conn, h["id"], person_id, today.isoformat())
                 week_strip = None
+            evidencia = None
+            if h["practica_id"] is not None and practicas.propia_activa(conn, person_id, h["practica_id"]):
+                evidencia = _evidencia_practica(t, conn, person_id, h["practica_id"])
             row.update({
                 "progress": progress,
                 "due_today": goals.habit_due_today(conn, h, person_id, today),
                 "checked_today": checked_today,
                 "week_strip": week_strip,
+                "evidencia": evidencia,
             })
         else:
             other = conn.execute("SELECT display_name FROM person WHERE id = ?",

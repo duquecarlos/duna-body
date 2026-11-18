@@ -1,17 +1,26 @@
 """Historial (BODY-WEB-ESTRUCTURA-7): the `/history` screen -- coverage, training, patterns and
-the by-shift breakdown. Pure move: path, method, templates and body identical.
+the by-shift breakdown. BODY-HISTORIA-VIDA-2 ruling 2 added "Tus prácticas" to `/history` itself
+and its own drill-down, `/history/practica/{practica_id}` (+ its archive action).
 """
 from __future__ import annotations
 
+import json
 from datetime import date
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
 
-from .. import db, history, identity, recuperacion
+from .. import db, history, identity, practicas, recuperacion
 from ..i18n import T
 from . import comun
 
 router = APIRouter()
+
+# BODY-HISTORIA-VIDA-2 ruling 2: the drill-down's own day grid is bounded the same 90 days
+# leer_practicas' own detail call is, so the person never pays for (or scrolls through) a year of
+# per-day cells -- the streaks/temporadas/baseline below it are still the practice's own whole
+# history, practicas.estado's own default range.
+_PRACTICAS_DIAS_RECIENTES = 90
 
 # BODY-RECUPERACION-1: each factor's "peor" group label, read through its own i18n key -- 'turno'
 # and 'tipo_sesion' are handled separately below (their group key is data: a shift kind or a
@@ -197,6 +206,161 @@ def _shift_ctx(t: T, defs: dict, shift_data: dict) -> dict:
     return {"has_shifts": True, "kinds": kinds}
 
 
+# ---- "Tus prácticas" (BODY-HISTORIA-VIDA-2 ruling 2): what the watch shows the person does,
+# never what they committed to -- that is a habit, body/rutas/metas.py's own screen. -------------
+
+def _sugerencia_label(t: T, s: dict) -> str:
+    if s["fuente"] == "actividad":
+        return _kind_label(t, history._kind_info(s["clave"]))
+    return t("metric." + s["clave"])
+
+
+def _practicas_resumen_ctx(t: T, conn, person_id: int) -> list[dict]:
+    """BODY-HISTORIA-VIDA-2-R2 ruling 1: `practicas.resumen()` reads each source family once for
+    every active practice together, so this section's own cost is a constant, never one that grows
+    with the number of practices (tests/test_rendimiento.py's own guard)."""
+    out = []
+    for p in practicas.resumen(conn, person_id):
+        racha = p["racha_actual"]
+        semana = p["ultima_semana"]
+        partes = []
+        if racha:
+            key = "history.practicas_streak_one" if racha["dias"] == 1 else "history.practicas_streak"
+            partes.append(t(key, n=t.num(racha["dias"])))
+        if semana:
+            partes.append(t("history.practicas_week", hecho=t.num(semana["hecho"]), meta=t.num(p["meta_dias_semana"])))
+        out.append({"id": p["id"], "titulo": p["titulo"], "detalle": " · ".join(partes) or None})
+    return out
+
+
+def _sugerencias_ctx(t: T, conn, person_id: int) -> list[dict]:
+    out = []
+    for s in practicas.sugerencias(conn, person_id):
+        label = _sugerencia_label(t, s)
+        key = "history.practicas_suggest_weeks_one" if s["semanas"] == 1 else "history.practicas_suggest_weeks"
+        out.append({"label": label, "fuente": s["fuente"], "regla_json": json.dumps(s["regla"], sort_keys=True),
+                    "weeks": t(key, n=t.num(s["semanas"]))})
+    return out
+
+
+@router.post("/history/practicas")
+@comun._cierra_conexion_async
+async def history_practica_create(request: Request, person_id: int = Depends(identity.current_person_id)):
+    """One tap from a suggestion `_sugerencias_ctx` already computed, as the person's own, direct
+    creation (origen 'persona', practicas.crear's own default) -- never through the assistant."""
+    conn, person, t = comun._ctx(person_id)
+    f = await comun._form(request)
+    fuente = f.get("fuente")
+    titulo = (f.get("titulo") or "").strip()
+    try:
+        regla = json.loads(f.get("regla") or "")
+    except ValueError:
+        return RedirectResponse("/history", status_code=303)
+    if fuente in practicas.FUENTES and titulo:
+        practicas.crear(conn, person_id, titulo, fuente, regla)
+    return RedirectResponse("/history", status_code=303)
+
+
+def _regla_texto(t: T, fuente: str, regla: dict) -> str:
+    if fuente == "actividad":
+        tipos = ", ".join(_kind_label(t, history._kind_info(tp)) for tp in regla["tipos"])
+        if regla.get("min_minutos"):
+            return t("practica.regla_actividad_min", tipos=tipos, min=t.num(regla["min_minutos"]))
+        return t("practica.regla_actividad", tipos=tipos)
+    if fuente == "metrica_umbral":
+        op = t("practica.op_mayor") if regla["op"] == ">=" else t("practica.op_menor")
+        return t("practica.regla_metrica", metric=t("metric." + regla["metric_key"]), op=op, valor=t.num(regla["valor"]))
+    campo = t("practica.campo_" + regla["campo"])
+    op = t("practica.op_antes") if regla["op"] == "antes" else t("practica.op_despues")
+    return t("practica.regla_sueno", campo=campo, op=op, hora=regla["hora"])
+
+
+def _contexto_texto(t: T, ctx: dict) -> str | None:
+    partes = []
+    if ctx["turnos"]:
+        nombres = ", ".join(f"{t.num(v)} {t('shift.kind.' + k).lower()}"
+                             for k, v in sorted(ctx["turnos"].items(), key=lambda kv: -kv[1]))
+        partes.append(nombres)
+    if ctx.get("sleep_minutes") is not None:
+        partes.append(t("practica.contexto_sueno", minutos=t.minutes(ctx["sleep_minutes"])))
+    if ctx.get("readiness") is not None:
+        partes.append(t("practica.contexto_readiness", valor=t.num(ctx["readiness"])))
+    return " · ".join(partes) if partes else None
+
+
+def _dias_strip_ctx(t: T, dias: dict[str, str]) -> list[dict]:
+    if not dias:
+        return []
+    recientes = sorted(dias)[-_PRACTICAS_DIAS_RECIENTES:]
+    estado_word = {"hecho": t("practica.dia_hecho"), "no_hecho": t("practica.dia_no_hecho"),
+                   "sin_dato": t("practica.dia_sin_dato")}
+    primera = date.fromisoformat(recientes[0])
+    cells = [{"day": None, "estado": None, "aria": None} for _ in range(primera.weekday())]
+    for d in recientes:
+        estado = dias[d]
+        cells.append({"day": d, "estado": estado,
+                      "aria": f"{comun._short_date(t, date.fromisoformat(d))}: {estado_word[estado]}"})
+    return cells
+
+
+def _temporada_ctx(t: T, tp: dict) -> dict:
+    total = tp["semanas"] * 7
+    resumen = t("practica.temporada_resumen", hecho=t.num(tp["dias_hecho"]), total=t.num(total),
+                desde=comun._short_date(t, date.fromisoformat(tp["desde"])),
+                hasta=comun._short_date(t, date.fromisoformat(tp["hasta"])))
+    return {"resumen": resumen, "contexto": _contexto_texto(t, tp["contexto"]),
+            "primer_dia": tp["desde"], "ultimo_dia": tp["hasta"]}
+
+
+def _practica_detail_ctx(t: T, e: dict) -> dict:
+    d = e["definicion"]
+    racha_actual = e["racha_actual"]
+    racha_mas_larga = e["racha_mas_larga"]
+    racha_actual_txt = t("practica.sin_racha")
+    if racha_actual:
+        key = "practica.racha_actual_one" if racha_actual["dias"] == 1 else "practica.racha_actual"
+        racha_actual_txt = t(key, n=t.num(racha_actual["dias"]))
+    racha_larga_txt = None
+    if racha_mas_larga:
+        key = "practica.racha_mas_larga_one" if racha_mas_larga["dias"] == 1 else "practica.racha_mas_larga"
+        racha_larga_txt = t(key, n=t.num(racha_mas_larga["dias"]),
+                             desde=comun._short_date(t, date.fromisoformat(racha_mas_larga["desde"])),
+                             hasta=comun._short_date(t, date.fromisoformat(racha_mas_larga["hasta"])))
+    return {
+        "id": d["id"], "titulo": d["titulo"], "regla_texto": _regla_texto(t, d["fuente"], d["regla"]),
+        "meta_dias": t("practica.meta_dias", n=t.num(d["meta_dias_semana"])),
+        "archivada": d["archivada_en"] is not None,
+        "sin_datos": e["desde"] is None,
+        "racha_actual": racha_actual_txt,
+        "racha_mas_larga": racha_larga_txt,
+        "dias": _dias_strip_ctx(t, e["dias"]),
+        "temporadas": [_temporada_ctx(t, tp) for tp in e["temporadas"]],
+        "sin_temporadas": t("practica.sin_temporadas") if e["desde"] is not None and not e["temporadas"] else None,
+        "baseline": _contexto_texto(t, e["baseline"]) if e["baseline"] else None,
+    }
+
+
+@router.get("/history/practica/{practica_id}")
+@comun._cierra_conexion
+def history_practica_detail(practica_id: int, person_id: int = Depends(identity.current_person_id)):
+    conn, person, t = comun._ctx(person_id)
+    e = practicas.estado(conn, person_id, practica_id)
+    if e is None:
+        raise HTTPException(404)
+    return comun._render("practica.html", t=t, tab="trends", practica=_practica_detail_ctx(t, e),
+                   turnos=db.trabaja_turnos_si(conn, person_id))
+
+
+@router.post("/history/practica/{practica_id}/archive")
+@comun._cierra_conexion
+def history_practica_archive(practica_id: int, person_id: int = Depends(identity.current_person_id)):
+    conn, person, t = comun._ctx(person_id)
+    if not practicas.propia_activa(conn, person_id, practica_id):
+        raise HTTPException(404)
+    practicas.archivar(conn, person_id, practica_id)
+    return RedirectResponse("/history", status_code=303)
+
+
 @router.get("/history")
 @comun._cierra_conexion
 def history_view(person_id: int = Depends(identity.current_person_id)):
@@ -229,4 +393,6 @@ def history_view(person_id: int = Depends(identity.current_person_id)):
                    training=_training_ctx(t, train) if train else None,
                    patterns=_pattern_rows(t, defs, pat),
                    findings=[_finding_text(t, defs, f) for f in pat["findings"][1:]],
-                   shift=_shift_ctx(t, defs, shift_data), turnos=turnos_on, recovery=recovery)
+                   shift=_shift_ctx(t, defs, shift_data), turnos=turnos_on, recovery=recovery,
+                   practicas=_practicas_resumen_ctx(t, conn, person_id),
+                   sugerencias=_sugerencias_ctx(t, conn, person_id))

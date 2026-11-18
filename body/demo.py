@@ -119,6 +119,10 @@ _HABIT_TITLE = {"es": "Dormir antes de un turno nocturno", "en": "Sleep before a
 # is weekly-strength-shaped.
 _HABIT_FUERZA_TITLE = {"es": "Entrenar fuerza", "en": "Strength training"}
 
+# BODY-HISTORIA-VIDA-2 ruling 5: a habit under the steps goal that cites the "pasos" demo practice
+# as its evidence (habit.practica_id), so the demo home shows the goal page's watch-evidence line.
+_HABIT_PASOS_TITLE = {"es": "Caminar bastante casi todos los días", "en": "Walk a lot most days"}
+
 # BODY-HOGAR-MIEMBRO-1: a second, invented demo person ("Ana") in one household with the demo
 # person, and a shared goal SHE creates, so the demo person -- browsing as themselves -- sees the
 # member view (BODY-HOGAR-PLAN-1 rulings 1-2).
@@ -1106,8 +1110,8 @@ def _seed_shifts(conn, shift_import, turnos_costo, person_id: int,
 
 def _seed_goals_and_habits(conn, db, goals, rng: random.Random, all_days: list[date], anchor: date,
                             first_monday: date, anchor_monday: date, person_id: int,
-                            idioma: str) -> tuple[int, int, int]:
-    """The demo person's three metric goals, two habits, their weekly checks and the habits'
+                            idioma: str, practica_pasos_id: int) -> tuple[int, int, int]:
+    """The demo person's three metric goals, three habits, their weekly checks and the habits'
     checks -- returns (goal weekly checks, habit checks, invented strength sessions)."""
     window = all_days[:14]
     base_sleep = _avg_metric(conn, db, "sleep_minutes", window, person_id) or 420.0
@@ -1141,6 +1145,8 @@ def _seed_goals_and_habits(conn, db, goals, rng: random.Random, all_days: list[d
     # (racha_semanal treats the current and the immediately-previous week as still open).
     habit_fuerza_id = goals.add_habit(conn, gid_rhr, _HABIT_FUERZA_TITLE[idioma], {"per": "week", "times": 3})
     db.set_racha_piso(conn, person_id, habit_fuerza_id)
+    goals.add_habit(conn, gid_steps, _HABIT_PASOS_TITLE[idioma], {"per": "week", "times": 5},
+                     practica_id=practica_pasos_id)
     racha_sesiones = 0
     for semanas_atras in (2, 3, 4):
         lunes = anchor_monday - timedelta(7 * semanas_atras)
@@ -1231,13 +1237,15 @@ _PRACTICA_TITULOS = {
 }
 
 
-def _seed_practicas(conn, practicas, person_id: int, idioma: str) -> int:
+def _seed_practicas(conn, practicas, person_id: int, idioma: str) -> tuple[int, int]:
+    """Returns (count, pasos_id) -- `pasos_id` is BODY-HISTORIA-VIDA-2 ruling 5's own link target,
+    the "Caminar bastante" practice that the demo's steps-goal habit cites as evidence."""
     txt = _PRACTICA_TITULOS[idioma]
     practicas.crear(conn, person_id, txt["correr"], "actividad", {"tipos": ["running"]})
-    practicas.crear(conn, person_id, txt["pasos"], "metrica_umbral",
-                     {"metric_key": "steps", "op": ">=", "valor": 8000})
+    pasos_id = practicas.crear(conn, person_id, txt["pasos"], "metrica_umbral",
+                                {"metric_key": "steps", "op": ">=", "valor": 8000})
     conn.commit()
-    return 2
+    return 2, pasos_id
 
 
 def _seed_plan_horizonte(conn, db, goals, person_id: int, anchor: date, anchor_monday: date,
@@ -1529,11 +1537,13 @@ def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[st
     _seed_noche_inusual(conn, db, anchor, person_id)
     planes_hoy = _seed_plan_hoy(conn, anchor, person_id, idioma)
 
+    practicas_count, practica_pasos_id = _seed_practicas(conn, practicas, person_id, idioma)
+
     checks, habit_checks, racha_sesiones = _seed_goals_and_habits(
-        conn, db, goals, rng, all_days, anchor, first_monday, anchor_monday, person_id, idioma)
+        conn, db, goals, rng, all_days, anchor, first_monday, anchor_monday, person_id, idioma,
+        practica_pasos_id)
 
     plan_horizonte = _seed_plan_horizonte(conn, db, goals, person_id, anchor, anchor_monday, idioma)
-    practicas_count = _seed_practicas(conn, practicas, person_id, idioma)
 
     ana_metric_rows, hogar_checks, hogar_habit_checks, comidas_compartidas_pendientes = _seed_household(
         conn, db, goals, enlaces, compartir, comida_compartida, rng, all_days, anchor, first_monday,
@@ -1545,7 +1555,7 @@ def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[st
         "lotes_turnos_confirmados": 1 if confirmed_id is not None else 0,
         "lotes_turnos_propuestos": 1 if proposed_id is not None else 0,
         "semanas_nocturnas": night_weeks, "bloques_turno_noche": night_blocks,
-        "metas_activas": 4 + 1 + plan_horizonte["hijos"], "habitos": 4 + 2,
+        "metas_activas": 4 + 1 + plan_horizonte["hijos"], "habitos": 4 + 2 + 1,
         "plan_horizonte_metas_semanales": plan_horizonte["metas_semanales"],
         "plan_horizonte_checkpoints": plan_horizonte["checkpoints"],
         "verificaciones_semanales": checks + hogar_checks, "chequeos_habito": habit_checks + hogar_habit_checks,

@@ -1,8 +1,9 @@
 """BODY-RECUPERACION-1, BODY-RECUPERACION-1-C: the screens -- «Tu historia»'s "Recuperación
 después de entrenar" section and Día's own line under an activity, in both languages, plus a
-direct statement-count check on /history and /day/{d} (test_rendimiento.py's own ceilings, 29 and
-45, are not in this slice's touches -- this test pins the same budget independently so a future
-regression is caught here too). Invented demo data only, no real health figures.
+direct statement-count check on /history and /day/{d}, independent of test_rendimiento.py's own
+(much higher, demo-fixture-scaled) ceilings for the same two routes -- this file is not in that
+module's touches, so this test pins its own smaller, fixture-specific budget so a future
+regression is caught here too. Invented demo data only, no real health figures.
 """
 import tempfile
 import unittest
@@ -303,11 +304,18 @@ class DayRecoveryLineTest(unittest.TestCase):
 
 
 class StatementCeilingTest(unittest.TestCase):
-    """Pins the same budget test_rendimiento.py's own ceiling table gives /history (29) and
-    /day/{day} (45) -- that file is not in this slice's touches, so this is this slice's own
-    guard against the section or the Día line raising either route's statement count."""
+    """This file's own, fixture-specific statement budget for /history (30) and /day/{day} (45) --
+    independent of test_rendimiento.py's own, much higher ceiling table for the same routes (that
+    file is not in this slice's touches) -- this is this slice's own guard against the section or
+    the Día line raising either route's statement count.
 
-    def test_history_with_a_finding_stays_within_29_statements(self):
+    BODY-HISTORIA-VIDA-2-R2 ruling 3: this pin was stale since before BODY-HISTORIA-VIDA-2 added
+    "Tus prácticas" to /history -- this fixture seeds no practicas, so the section's own constant
+    cost here is `practicas.resumen()`'s single `listar()` call (practicas.sugerencias()'s own
+    queries were already running unaccounted for). Measured 30 (was 29), raised by exactly that
+    +1 -- never more than measured."""
+
+    def test_history_with_a_finding_stays_within_30_statements(self):
         conn = _reset_db(self)
         for i in range(5):
             day = f"2026-09-0{i + 1}"
@@ -321,7 +329,7 @@ class StatementCeilingTest(unittest.TestCase):
         with contar_sql() as stats:
             r = client.get("/history")
         self.assertEqual(r.status_code, 200)
-        self.assertLessEqual(stats["statements"], 29)
+        self.assertLessEqual(stats["statements"], 30)
 
     def test_day_with_an_activity_stays_within_45_statements(self):
         conn = _reset_db(self)

@@ -83,7 +83,11 @@ _HABIT_COLUMNS = """
     cadence             TEXT NOT NULL CHECK (json_valid(cadence)),
     cadence_text_legacy TEXT,
     assignee_person_id  INTEGER REFERENCES person(id),
-    active              INTEGER NOT NULL DEFAULT 1
+    active              INTEGER NOT NULL DEFAULT 1,
+    -- BODY-HISTORIA-VIDA-2 ruling 4: the practice this habit's own evidence comes from, when the
+    -- person linked one ("Retomar" from a practice's drill-down, or the practice_id a proponer_meta/
+    -- proponer_plan habit item names) -- additive, nullable, never backfilled.
+    practica_id         INTEGER REFERENCES practica(id)
 """
 
 _PROPUESTA_AGENTE_COLUMNS = """
@@ -99,7 +103,7 @@ _PROPUESTA_AGENTE_COLUMNS = """
                          'registrar_comida', 'corregir_comida', 'registrar_checkin', 'descartar_series',
                          'separar_sesion', 'unir_sesiones', 'proponer_objetivo_nutriente',
                          'proponer_plan', 'corregir_meta_plan', 'ampliar_plan', 'anotar_sesion',
-                         'corregir_entreno', 'importar_desplazamiento')),
+                         'corregir_entreno', 'importar_desplazamiento', 'proponer_practica')),
     objetivo_id     INTEGER REFERENCES goal(id),
     antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
     despues_json    TEXT NOT NULL CHECK (json_valid(despues_json)),
@@ -1494,6 +1498,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
         "habit_id INTEGER REFERENCES habit(id), "
         "updated_at TEXT NOT NULL)"
     )
+    # BODY-HISTORIA-VIDA-2 ruling 4: a plain nullable ADD COLUMN, like comida_id above -- every
+    # existing habit row reads as practica_id NULL ("not linked to any practice"), never
+    # backfilled. Guarded the same way: a fresh database already has it through _HABIT_COLUMNS, so
+    # this is a no-op there.
+    hcols = {r[1] for r in conn.execute("PRAGMA table_info(habit)")}
+    if hcols and "practica_id" not in hcols:
+        conn.execute("ALTER TABLE habit ADD COLUMN practica_id INTEGER REFERENCES practica(id)")
 
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
@@ -1736,6 +1747,13 @@ def _propuesta_agente_needs_importar_desplazamiento_rebuild(conn: sqlite3.Connec
     return row is not None and "importar_desplazamiento" not in row[0]
 
 
+def _propuesta_agente_needs_proponer_practica_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'propuesta_agente'"
+    ).fetchone()
+    return row is not None and "proponer_practica" not in row[0]
+
+
 def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
@@ -1796,6 +1814,9 @@ def _migrate_propuestas(conn: sqlite3.Connection) -> None:
         _rebuild_propuesta_agente_table(conn)
     # BODY-DESPLAZAMIENTO-ASISTENTE-1: a fourteenth widening (importar_desplazamiento), same reusable rebuild.
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_importar_desplazamiento_rebuild(conn):
+        _rebuild_propuesta_agente_table(conn)
+    # BODY-HISTORIA-VIDA-2 ruling 3: a fifteenth widening (proponer_practica), same reusable rebuild.
+    if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_proponer_practica_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
 
 
@@ -3110,9 +3131,9 @@ def crear_plan_horizonte(conn: sqlite3.Connection, person_id: int, plan: dict) -
             )
         for h in plan.get("habitos") or []:
             conn.execute(
-                "INSERT INTO habit (goal_id, title, cadence, assignee_person_id, active) "
-                "VALUES (?, ?, ?, NULL, 1)",
-                (horizonte_goal_id, h["titulo"], json.dumps(h["cadencia"])),
+                "INSERT INTO habit (goal_id, title, cadence, assignee_person_id, active, practica_id) "
+                "VALUES (?, ?, ?, NULL, 1, ?)",
+                (horizonte_goal_id, h["titulo"], json.dumps(h["cadencia"]), h.get("practica_id")),
             )
         for i, r in enumerate(plan.get("reglas") or []):
             conn.execute(
