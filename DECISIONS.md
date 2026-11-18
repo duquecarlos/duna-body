@@ -28875,3 +28875,166 @@ merged `f671ba8` (`--no-ff`, no conflicts; tree identity proven, branch tree == 
 tests.test_corregir_despertar tests.test_despertar_real tests.test_leer_intradia tests.test_migraciones`):
 `Ran 107 tests in 38.846s ... OK`.
 
+
+## BODY-DESPERTAR-REAL-7
+
+Carlos's own surface, relayed by the desk 2026-11-18, verbatim: *"I think that body should be like the app
+that reflects reality in most accurate about my body so because it's the mix between the data that is
+stored by the watch and and all the other info that can gather, use as my timeline, GPS, the things that I
+report to you, eating, training with detail, I mean everything."* Until this slice, `despertar_real.estimar`
+(BODY-DESPERTAR-REAL-3) and the `corregir_despertar` propuesta tool (BODY-DESPERTAR-REAL-4) existed only for
+chat/MCP -- no screen showed either one. This slice is that screen, built to the orchestrator's own rulings
+(`BODY-DESPERTAR-RULING` in dev-protocol's own DECISIONS.md: the evidence decides, Garmin's record is never
+edited, the correction is Body's own layer applied only on the person's own tap, undoable) and to five
+specific rulings given in the dispatch.
+
+**Ruling 1 -- Día's own line and button** (`body/rutas/hoy.py:_despertar_dia_ctx`, wired into `day_view()`;
+rendered in `body/templates/day.html` right after the `sueno_fc_linea` paragraph in the sleep card): when
+`despertar_real.estimar` returns a `propuesta` other than `'ninguna'` at `confianza` `'alta'`/`'media'` and
+the day has no correction yet, shows one line (`day.despertar.sueno_linea` or `day.despertar.levantado_linea`,
+both es/en below) plus a "¿Corregir?"/"Correct it?" button (`day.despertar.corregir_boton`). The button posts
+to the new `/day/{day}/despertar/proponer` route, which raises the SAME `corregir_despertar` propuesta a
+chat/MCP call would, through `agente_herramientas._corregir_despertar` -- the exact precedent
+`/settings/nutriente/proponer` (`body/rutas/ajustes.py`) already sets: a conversation created, the tool
+function called directly, `ToolError` swallowed. Confianza `'baja'` or `propuesta.tipo == 'ninguna'` -> no
+line, matching the ruling. The pending proposal's own card (once raised) shows inline with its own summary
+text (`_despertar_propuesta_txt`, duplicating the `asistente.propuesta.despertar_sueno_resumen`/
+`despertar_levantado_resumen` wording already used by the chat card -- read, never written, by this slice)
+and Aplicar/Descartar buttons. **The card-reuse choice, recorded as the dispatch asked:** Aplicar/Descartar
+post to two new routes (`/day/{day}/despertar/propuestas/{id}/aplicar|descartar`) that both delegate straight
+to the existing, accion-agnostic `_entreno_propuesta_resolver` (no new resolver logic written) -- the same
+function `/day/{day}/entreno/propuestas/{id}/aplicar|descartar` already uses for a different accion, proven
+accion-agnostic by this reuse.
+
+**Ruling 2 -- once a correction exists** (same `_despertar_dia_ctx`, the `correccion is not None` branch):
+shows Garmin's own recorded figure (`day.despertar.garmin_linea`, Garmin's `sleep_end_local` formatted
+`%H:%M` -- the row itself is never touched) beside "Tu corrección: ..."/"Your correction: ..."
+(`day.despertar.correccion_sueno`/`correccion_levantado`), with a "Deshacer" button. **The second choice
+recorded, as asked:** Deshacer is its own POST route (`/day/{day}/despertar/deshacer`) calling
+`db.borrar_despertar_correccion` directly, NOT routed through `agente_propuestas.deshacer` on a
+`propuesta_id` -- because a correction can exist with no propuesta behind it at all (`body/demo.py`'s own
+`_seed_despertar_correccion` writes the row directly, and a chat-made correction can outlive its own
+propuesta row), so the propuesta-based undo mechanism cannot always reach it; a direct delete reaches every
+case the same way. Sleep TOTAL (`sleep_minutes`, the `sueno_fc_linea`/duration figures above this block)
+stays Garmin's own, untouched by any of this -- confirmed by `tests/test_despertar_pantalla.py`'s own
+`SinNoneTest` and by reading `_despertar_dia_ctx`, which never writes to `sleep_minutes` or any metric row.
+
+**Ruling 3 -- the curve** (`body/rutas/hoy.py:_despertar_curva_puntos` + `_despertar_curva_svg`, rendered
+`| safe` in `day.html` right after the proposal/correction lines): an inline SVG, no new library or JS
+dependency, following the file's own existing inline-chart precedent. Window: from Garmin's own sleep end
+minus 30 minutes to the shorter of the model's own horizon (`sleep_end + despertar_real.MODELO
+["horizonte_horas"]`) or the proposed/corrected time plus 30 minutes. Points come from `db.intradia(...,
+"intradia_fc", zona)` across the one or two calendar days the window spans. Gaps: points are split into
+separate `<polyline>` runs wherever the gap between two consecutive points exceeds
+`despertar_real.MODELO["factor_hueco_espaciado"]` times the window's own median observed spacing (the
+model's own constants, imported, never duplicated) -- `sin_dato` gaps are drawn as gaps, never bridged, by
+construction (a lone point left between two such runs becomes its own `<circle>`, never a connecting line).
+Two labelled vertical marks: Garmin's own sleep end (dashed, muted) and the proposed/corrected time (dashed,
+body color), each with its own `HH:MM` text label -- no other axis numbers. `role="img"
+aria-label="{day.despertar.curva_aria}"` (`Pulso desde las {desde} hasta las {hasta}` / `Heart rate from
+{desde} to {hasta}`, the window's own two endpoints). Returns `None`, hidden by the template's own `{% if
+despertar.curva %}`, when the window holds no points (`tests/test_despertar_pantalla.py::CurvaSvgTest`
+proves both the drawn and the no-points cases, and that a `sin_dato` gap never produces one continuous
+polyline across it).
+
+**Ruling 4 -- Hoy's own line** (`body/rutas/hoy.py:_despertar_hoy_ctx`, wired into `today()`; rendered in
+`body/templates/today.html` right before the tiles grid): for today's sleep only, repeats the SAME sentence
+(the identical `day.despertar.sueno_linea`/`levantado_linea` keys, so the wording matches Día's line exactly)
+with a link to `/day/{today}` (`today.despertar.link`, "Ver el día"/"See the day") -- no button, no curve,
+per the ruling. Nothing shown once a correction exists for today (`db.despertar_correccion` checked first,
+short-circuiting before `estimar` ever runs) and nothing for any other day (`day != today_local.isoformat()`
+returns `None` immediately).
+
+**Ruling 5 -- cost:** `despertar_real.estimar` is called at most once per request, for the one day that
+route is already showing (`/` calls it only for today via `_despertar_hoy_ctx`; `/day/{day}` calls it only
+for that day via `_despertar_dia_ctx`) -- never for a range. In the common case (a correction already
+exists) it is never called at all, both context builders checking `db.despertar_correccion` first.
+`tests/test_rendimiento.py`'s own `/` and `/day/{day}` ceilings (155 and 81 statements) are UNCHANGED by this
+slice -- measured on that file's own fixture at 124 and 59 respectively (comment added at
+`tests/test_rendimiento.py` right above `_CEILINGS`, explaining the fixture's own most-recent-sleep-night
+timing leaves `_despertar_dia_ctx` costing 0 there). On the richer fixture this slice's own tests build (a
+real propuesta, no correction yet): `estimar` alone costs 8 statements measured by
+`conn.set_trace_callback`; `_despertar_hoy_ctx`'s own full run (correction check + that `estimar` call) costs
+9; `_despertar_dia_ctx`'s own full run (correction check + `estimar` + the curve's own intraday query + the
+pending-propuesta check) costs 11 -- both within `ceil(8 * 1.3) = 11`, the same margin rule
+`tests/test_rendimiento.py` itself already uses for `estimar`'s own ceiling, read here as "estimar's own
+measured ceiling" per the ruling's own wording. Every new string has es/en parity
+(`tests/test_i18n_paridad.py`, unchanged, still green). No 'None' is ever rendered: every optional piece
+(`garmin_linea`, `correccion_linea`, `linea`, `propuesta_texto`, `curva`) is `None` or omitted by its own
+context builder rather than rendered, each guarded by its own `{% if %}` in the template --
+`tests/test_despertar_pantalla.py::SinNoneTest` renders every branch and asserts the literal string `"None"`
+never appears in the response body.
+
+**New strings, es/en parity, verbatim as committed:**
+
+| key | es | en |
+|---|---|---|
+| `today.despertar.link` | Ver el día | See the day |
+| `day.despertar.sueno_linea` | Parece que seguiste durmiendo hasta las {hora} (Garmin marcó {fin}). | You seem to have kept sleeping until {hora} (Garmin recorded {fin}). |
+| `day.despertar.levantado_linea` | Parece que te levantaste alrededor de las {hora} (Garmin marcó {fin}). | You seem to have got up around {hora} (Garmin recorded {fin}). |
+| `day.despertar.corregir_boton` | ¿Corregir? | Correct it? |
+| `day.despertar.garmin_linea` | Garmin marcó el fin del sueño a las {hora}. | Garmin recorded the sleep end at {hora}. |
+| `day.despertar.correccion_sueno` | Tu corrección: dormiste hasta las {hora} | Your correction: slept until {hora} |
+| `day.despertar.correccion_levantado` | Tu corrección: te levantaste a las {hora} | Your correction: got up at {hora} |
+| `day.despertar.curva_aria` | Pulso desde las {desde} hasta las {hasta} | Heart rate from {desde} to {hasta} |
+
+**New routes** (`tests/test_web_entry.py::RouteSetTest.BEFORE`, 94 -> 98 routes): `POST
+/day/{day}/despertar/proponer`, `POST /day/{day}/despertar/deshacer`, `POST
+/day/{day}/despertar/propuestas/{propuesta_id}/aplicar`, `POST
+/day/{day}/despertar/propuestas/{propuesta_id}/descartar`.
+
+**New test file:** `tests/test_despertar_pantalla.py` (6 classes: `LineaYBotonTest`,
+`ProponerAplicarDeshacerTest`, `OtraPersonaTest`, `HoyLineaTest`, `CurvaSvgTest`, `SinNoneTest`), reusing the
+fixture helpers already built for the model itself (`tests.test_despertar_real`'s `BASE_FC, BASE_MUESTRAS,
+DAY, END_LOCAL, START_LOCAL, _comida, _guardar_fc, _serie, _sesion`) rather than duplicating them.
+`OtraPersonaTest` proves a second person's own propuesta/correction never leaks into or is reachable from the
+first person's own day (`PropuestaAjena` swallowed on apply/discard/undo, matching every other propuesta
+route's own cross-person scoping). Three touches named in the dispatch -- `tests/test_dia.py`,
+`tests/test_rutas_post.py`, `tests/test_csrf.py` -- do not exist in this repository (confirmed by `Glob`);
+per the dispatch's own fallback, their coverage lives in `tests/test_despertar_pantalla.py` instead, and the
+equivalent CSRF/redirect census already in `tests/test_seguridad.py` was run and confirmed green (33 tests,
+unchanged by this slice).
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run as 11 sequential
+alphabetical chunks of dotted modules (20 per chunk except the last, 215 modules total):
+
+1. `test_accesibilidad`..`test_baselines`: `Ran 385 tests in 112.659s` -- OK (skipped=1, expected failures=1)
+2. `test_baselines_lote`..`test_deshacer_derivados`: `Ran 448 tests in 608.224s` -- OK
+3. `test_despertar`..`test_errores_texto`: `Ran 398 tests in 184.052s` -- OK
+4. `test_estados_vacios`..`test_garmin_web`: `Ran 349 tests in 391.399s` -- OK
+5. `test_get_sin_escritura`..`test_host_deploy`: `Ran 602 tests in 887.070s` -- OK
+6. `test_host_import`..`test_mcp_copia_pc`: `Ran 361 tests in 99.237s` -- OK
+7. `test_mcp_http`..`test_periodo_pantallas`: `Ran 525 tests in 322.709s` -- OK
+8. `test_person_scope`..`test_propuestas_tabla`: `Ran 479 tests in 230.077s` -- OK
+9. `test_proteina`..`test_sesion_conexion_1`: `Ran 349 tests in 112.630s` -- OK
+10. `test_shift_import`..`test_turnos_opcional_2`: `Ran 524 tests in 95.351s` -- OK
+11. `test_turnos_opcional_3`..`test_web_entry`: `Ran 279 tests in 67.398s` -- OK
+
+Sum: 385+448+398+349+602+361+525+479+349+524+279 = **4699**. Collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`, taken before the chunked
+run): **4699**. Exact match. Every `NotSignedIn`/`GarminConnect*Error`/`RuntimeError`/`ValueError`/
+`AttributeError`/`ResourceWarning` line printed during the run is expected log output from tests exercising
+synthetic error paths in the Garmin adapter/sync/pull machinery and unrelated to this slice's own code. No
+password, token, session secret, device key or health figure of a real person was read, printed or written
+anywhere in this slice's own work or the gate's own stdout; no network call was made; the two existing
+chunks that ran past the harness's own 600s foreground limit (chunks 2 and 5 above) were polled from their
+own output file to completion, never backgrounded past that poll.
+
+**customer_bytes: changed.** This slice's entire purpose is a new screen: new rendered text (the eight
+strings above, in both `day.html` and `today.html`), a new button ("¿Corregir?"/"Correct it?"), a new inline
+chart, and new Aplicar/Descartar/Deshacer controls on `/` and `/day/{day}` -- surfaces Carlos reads directly.
+That trips Merge Policy A's customer-bytes condition. The dispatch's own work-plan step 5 said "merge to
+main if green," but named no merge-policy condition and did not say in words that merging past a tripped
+customer-bytes condition is authorized -- and the spec header carried `approved: no`. Per the standing rule
+that a bare "merge if green" in a work plan is not that explicit authorization, this slice stops before the
+merge: **build complete, gate green and reconciled, merge held for review.** The branch
+`feat/body-despertar-real-7` is left as is, not merged, not deleted.
+
+**Open follow-ups:** none newly named by this slice; BODY-DESPERTAR-REAL-5/6, already named by
+BODY-DESPERTAR-REAL-1-INV and still outstanding, are unaffected by this one.
+
+**Commits:** `c3fba4d` (steps 1-2 combined: rulings 1-5, `body/rutas/hoy.py`, `body/templates/day.html`,
+`body/templates/today.html`, `body/i18n/es.json`+`en.json`, `tests/test_despertar_pantalla.py`,
+`tests/test_rendimiento.py`'s cost comment, `tests/test_web_entry.py`'s route census) -- this ledger entry is
+the next commit. No merge commit: AWAITING_APPROVAL on the customer-bytes condition above.
+
