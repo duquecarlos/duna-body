@@ -1347,6 +1347,27 @@ class PracticaExportDeleteTest(unittest.TestCase):
             self.conn.execute("SELECT COUNT(*) FROM practica WHERE person_id = 1").fetchone()[0], 0
         )
 
+    def test_delete_all_with_a_habit_linked_to_the_practica_raises_no_fk_violation(self):
+        """BODY-HISTORIA-VIDA-2 ruling 4: habit's own delete (scoped by this person's goals) runs
+        before practica's -- by the time practica goes, no row still references it."""
+        self.conn.execute(
+            "INSERT INTO goal (person_id, hogar_id, area, title, kind, metric_key, direction, "
+            "target_value, baseline_value, start_day, status, visibility) VALUES "
+            "(1, NULL, 'body', 'ZZ-META', 'metric', 'resting_hr', 'lower', 55, 60, "
+            "'2026-11-09', 'active', 'private')"
+        )
+        gid = self.conn.execute("SELECT id FROM goal WHERE title = 'ZZ-META'").fetchone()["id"]
+        self.conn.execute(
+            "INSERT INTO habit (goal_id, title, cadence, active, practica_id) VALUES "
+            "(?, 'ZZ-HABITO', '{\"per\": \"week\", \"times\": 3}', 1, ?)", (gid, self.pid),
+        )
+        self.conn.commit()
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM practica WHERE person_id = 1").fetchone()[0], 0
+        )
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM habit").fetchone()[0], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

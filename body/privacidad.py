@@ -439,8 +439,12 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         # remove. Scoped by this person's own person_id alone (never objetivo_id): every row here
         # was written for this exact person's own applied write, never another person's.
         conn.execute("DELETE FROM escritura_externa WHERE person_id = ?", (person_id,))
-        # BODY-HISTORIA-VIDA-1 ruling 8: this person's own practices -- no other table's FK points
-        # at `practica` (no later slice has linked a habit to one yet), so a plain delete suffices.
+        # BODY-HISTORIA-VIDA-1 ruling 8, widened by BODY-HISTORIA-VIDA-2 ruling 4: habit.practica_id
+        # now references `practica`, but it is never a dangling reference by this point -- every
+        # habit this person owns (through a goal they created, shared or not) was already deleted
+        # above, and a habit can only ever carry a practica_id pointing at ITS OWN creator's own
+        # practica (validated at creation: "the person's own, active practice"), never another
+        # member's. A plain delete suffices.
         conn.execute("DELETE FROM practica WHERE person_id = ?", (person_id,))
         # propuesta_agente.objetivo_id references goal(id) -- cleared before goal itself goes, same
         # as habit/habit_check/goal_check/plan above.

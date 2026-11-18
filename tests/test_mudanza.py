@@ -932,6 +932,62 @@ class PracticaMudanzaTest(MudanzaTestCase):
         self.assertEqual(by_name["practica"].counts.insert, 0)
         dest = db.connect()
         self.assertEqual(dest.execute("SELECT COUNT(*) FROM practica").fetchone()[0], 1)
+
+
+class HabitPracticaIdMudanzaTest(MudanzaTestCase):
+    """BODY-HISTORIA-VIDA-2 ruling 4: a habit linked to a practice remaps practica_id to the
+    practice's NEW id at the destination -- practica is processed before habit in REGISTRY exactly
+    so its id map is ready when habit's own fk_remap needs it."""
+
+    def test_practica_id_remaps_to_the_destination_row(self):
+        source = self._new_source()
+        with source:
+            source.execute(
+                "INSERT INTO goal (person_id, hogar_id, area, title, kind, metric_key, direction, "
+                "target_value, baseline_value, start_day, status, visibility) VALUES "
+                "(?, NULL, 'body', 'Lower resting HR', 'metric', 'resting_hr', 'lower', 55, 60, "
+                "'2026-10-01', 'active', 'private')", (db.DEFAULT_PERSON_ID,),
+            )
+            goal_id = source.execute("SELECT id FROM goal").fetchone()[0]
+            source.execute(
+                "INSERT INTO practica (person_id, titulo, fuente, regla_json, meta_dias_semana, "
+                "origen, creada_en) VALUES (?, 'Correr', 'actividad', '{\"tipos\": [\"running\"]}', "
+                "5, 'persona', '2026-10-01T00:00:00+00:00')", (db.DEFAULT_PERSON_ID,),
+            )
+            practica_id_source = source.execute("SELECT id FROM practica").fetchone()[0]
+            source.execute(
+                "INSERT INTO habit (goal_id, title, cadence, assignee_person_id, active, practica_id) "
+                "VALUES (?, 'Retomar correr', '{\"per\": \"week\", \"times\": 3}', NULL, 1, ?)",
+                (goal_id, practica_id_source),
+            )
+        source.close()
+
+        # A pre-existing practica already at the destination (another table's row, or Cuenta's own
+        # resolve_person creating the person first) pushes the newly-migrated one to a DIFFERENT id
+        # than the source had -- so the assertion below proves the remap actually ran, not a
+        # coincidence of both starting empty.
+        dest = self._dest_conn()
+        dest.execute("INSERT INTO person (id, display_name) VALUES (2, 'Other')")
+        dest.execute(
+            "INSERT INTO practica (person_id, titulo, fuente, regla_json, meta_dias_semana, origen, "
+            "creada_en) VALUES (2, 'Ya existía', 'actividad', '{\"tipos\": [\"cycling\"]}', 5, "
+            "'persona', '2026-10-01T00:00:00+00:00')"
+        )
+        dest.commit()
+        dest.close()
+
+        reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok)
+        by_name = self._reports_by_name(reports)
+        self.assertEqual(by_name["practica"].counts.insert, 1)
+        self.assertEqual(by_name["habit"].counts.insert, 1)
+
+        dest = db.connect()
+        practica_id_dest = dest.execute("SELECT id FROM practica WHERE titulo = 'Correr'").fetchone()["id"]
+        habit_row = dest.execute("SELECT practica_id FROM habit WHERE title = 'Retomar correr'").fetchone()
+        self.assertEqual(habit_row["practica_id"], practica_id_dest)
+        self.assertNotEqual(practica_id_dest, practica_id_source)
+        dest.close()
         dest.close()
 
 

@@ -87,8 +87,14 @@ SKIPPED_TABLES = {
 REGISTRY: tuple[TableSpec, ...] = (
     TableSpec("goal", match_cols=None, id_exported=True, other_person_filter=_hogar_filter,
               self_ref_cols=("horizonte_goal_id",)),
+    # BODY-HISTORIA-VIDA-2 ruling 4: moved ahead of `habit` below (was last in this REGISTRY,
+    # BODY-HISTORIA-VIDA-1 ruling 8) -- habit.practica_id now remaps through fk_remap, which needs
+    # practica's own id map already built, so practica must be processed (and id_exported) before
+    # any table whose fk_remap points at it.
+    TableSpec("practica", match_cols=None, id_exported=True),
     TableSpec("habit", scope="parent", parent_fk="goal_id", parent_table="goal",
-              match_cols=None, fk_remap=("goal_id",), fk_table={"goal_id": "goal"},
+              match_cols=None, fk_remap=("goal_id", "practica_id"),
+              fk_table={"goal_id": "goal", "practica_id": "practica"},
               person_ref_cols=("assignee_person_id",), id_exported=True),
     TableSpec("habit_check", match_cols=("habit_id", "person_id", "day"),
               fk_remap=("habit_id",), fk_table={"habit_id": "habit"}),
@@ -168,10 +174,6 @@ REGISTRY: tuple[TableSpec, ...] = (
     # Explicitly shared with a household (BODY-HOGAR-COMPARTIR-1) -- every row names another
     # person's visibility, so every row is counted as "other person" (ruling 5), never copied.
     TableSpec("figura_compartida", match_cols=None, other_person_filter=lambda row: True),
-    # BODY-HISTORIA-VIDA-1 ruling 8: a practice is this person's own title and rule
-    # (body/practicas.py) -- moved like any other of their own rows, no FK dependency on anything
-    # above.
-    TableSpec("practica", match_cols=None),
 )
 
 REGISTRY_BY_NAME = {spec.name: spec for spec in REGISTRY}
