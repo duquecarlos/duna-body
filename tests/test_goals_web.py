@@ -135,7 +135,7 @@ class ActivateAndHabitTest(unittest.TestCase):
         client.post(f"/goals/{gid}/habits", data={"title": "Dormir temprano", "per": "week", "times": "3"})
         r = client.get(f"/goals/{gid}")
         cells = re.findall(r'class="habit-week-cell[^"]*"[^>]*>([^<]*)</span>', r.text)
-        self.assertEqual(cells, ["L", "M", "M", "J", "V", "S", "D"])
+        self.assertEqual(cells, ["L", "M", "X", "J", "V", "S", "D"])
 
 
 class ContextHabitOnHoyTest(unittest.TestCase):

@@ -436,7 +436,7 @@ class DayGridHeaderTest(unittest.TestCase):
         r = client.get(f"/history/practica/{pid}")
         header = re.findall(r'<div class="strip-header" aria-hidden="true">(.*?)</div>', r.text, re.S)
         self.assertEqual(len(header), 1)
-        self.assertEqual(re.findall(r'<span>([^<]*)</span>', header[0]), ["L", "M", "M", "J", "V", "S", "D"])
+        self.assertEqual(re.findall(r'<span>([^<]*)</span>', header[0]), ["L", "M", "X", "J", "V", "S", "D"])
 
     def test_header_has_seven_letters_monday_first_en(self):
         conn = _reset_db(self)

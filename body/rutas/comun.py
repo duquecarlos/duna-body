@@ -152,10 +152,12 @@ def _short_date(t: T, d: date) -> str:
 
 
 def _week_letters(t: T) -> list[str]:
-    """Monday-first weekday initials, read off the SAME t('date.days') list the habit week strip
-    (metas.py _week_strip) and the practice day grid header (historial.py) both need -- never a
-    second, hand-typed letter list (BODY-HISTORIA-VIDA-4 ruling 2)."""
-    return [name[:1].upper() for name in t("date.days")]
+    """Monday-first weekday initials, read off t('date.days_letter') -- its own catalog entry per
+    language, not a slice of t('date.days') (BODY-DIA-LETRA-1: slicing names left Spanish martes
+    and miércoles both reading "M"; a language decides its own initials, e.g. miércoles as "X").
+    Shared by the habit week strip (metas.py _week_strip) and the practice day grid header
+    (historial.py)."""
+    return t("date.days_letter")
 
 
 UNITS = {"bpm": "unit.bpm", "ms": "unit.ms", "pts": "unit.pts", "steps": "unit.steps", "kcal": "unit.kcal",
