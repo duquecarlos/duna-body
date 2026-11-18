@@ -705,6 +705,15 @@
     "Saturday",
     "Sunday"
   ],
+  "date.days_letter": [
+    "M",
+    "T",
+    "W",
+    "T",
+    "F",
+    "S",
+    "S"
+  ],
   "date.months": [
     "January",
     "February",
