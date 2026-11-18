@@ -147,6 +147,8 @@ form:has(input[name=kind][value=milestone]:checked) .milestone-only{display:bloc
 @media (hover:hover){.more:hover{background:var(--wash);border-color:var(--line)}}
 .note{color:var(--muted);font-size:14px}
 .ayuda-ctx{display:flex;justify-content:flex-end;align-items:center;min-height:44px;font-size:12.5px;font-weight:600;color:var(--ink2);text-decoration:underline;text-underline-offset:3px;margin-bottom:6px}
+.idioma-switch{display:flex;justify-content:flex-end;margin-bottom:6px}
+.idioma-switch-btn{all:unset;display:inline-flex;align-items:center;min-height:44px;font-size:12.5px;font-weight:600;color:var(--ink2);text-decoration:underline;text-underline-offset:3px;cursor:pointer;font-family:inherit}
 .confirm-actions{display:flex;gap:8px;margin-top:12px}
 .confirm-actions form{flex:1}
 .confirm-actions .btn{width:100%}
