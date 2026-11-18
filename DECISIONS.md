@@ -27335,6 +27335,8 @@ this ledger entry its own commit.
 - Widen this slice's own `touches:` by exactly `tests/test_turno_dia_plan.py` (one line,
   `content[0]` -> `content[-1]`) and re-run the gate, or direct otherwise.
 
+-- merged `fbe07c4`
+
 ## BODY-MCP-COPIA-PC-1-R
 
 **Finding, verbatim from the dispatch's own surface:** BODY-MCP-COPIA-PC-1 stopped GATE_RED on
@@ -27391,4 +27393,6 @@ collect-only, agree with each other.)
 the merge into `main`.
 
 **Open follow-ups:** `BODY-INSTALL-DESDE-VIVO-1` carried forward unchanged (see BODY-MCP-COPIA-PC-1 above).
+
+-- merged `fbe07c4`
 
