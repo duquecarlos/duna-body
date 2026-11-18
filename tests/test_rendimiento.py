@@ -53,7 +53,9 @@ client = TestClient(web.app, follow_redirects=False)
 # ~30% margin rule), and /, remeasured after BODY-NUTRIENTE-OBJETIVO-1 added the "Metas de
 # nutrientes" card's own read (one vigentes-targets query, plus -- only once a per_kg target is
 # live -- a weight lookup and two batched totals/counts queries) --
-# each in that slice's own ledger entry.
+# each in that slice's own ledger entry. BODY-HISTORIA-VIDA-1 ruling 8: /privacidad/exportar's
+# ceiling, remeasured after this slice's own practica export query (one extra SELECT) -- 59
+# measured, ceil(59 * 1.3) = 77.
 # BODY-TENDENCIAS-RACHA-GRAFICO-1-M2: /trends' own ceiling, raised for the strength-session study
 # card (BODY-TENDENCIAS-RACHA-GRAFICO-1-M's 3 statements, a fixed cost independent of history
 # length -- tests/test_tendencias_racha.py's own guard). Measured 18 statements without the card
@@ -119,7 +121,7 @@ _CEILINGS = {
     "/login/cuenta/start": 3,
     "/privacidad": 16,
     "/privacidad/consentimiento": 9,
-    "/privacidad/exportar": 58,
+    "/privacidad/exportar": 77,
     "/settings": 24,
     "/shifts": 42,
     "/shifts/como": 20,
