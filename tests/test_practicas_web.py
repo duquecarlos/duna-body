@@ -474,7 +474,7 @@ class WeeklyStripLegendTest(unittest.TestCase):
         r = client.get(f"/history/practica/{pid}")
         self.assertIn("Objetivo cumplido", r.text)
         self.assertIn("Parte del objetivo", r.text)
-        self.assertIn("Ninguno", r.text)
+        self.assertIn("Ningún día", r.text)
         self.assertIn("Pocos datos", r.text)
         self.assertNotIn("Temporada</span>", r.text)
         self.assertNotIn('class="dot w-season"', r.text)
@@ -504,8 +504,9 @@ class WeeklyStripLegendTest(unittest.TestCase):
         r = client.get(f"/history/practica/{pid}")
         self.assertIn("Target met", r.text)
         self.assertIn("Part of the target", r.text)
-        self.assertIn("None", r.text)
+        self.assertIn("No days", r.text)
         self.assertIn("Little data", r.text)
+        self.assertNotRegex(r.text, r"\bNone\b")
 
 
 class LanguageTest(unittest.TestCase):
