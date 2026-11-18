@@ -29037,6 +29037,8 @@ BODY-DESPERTAR-REAL-1-INV and still outstanding, are unaffected by this one.
 `body/templates/today.html`, `body/i18n/es.json`+`en.json`, `tests/test_despertar_pantalla.py`,
 `tests/test_rendimiento.py`'s cost comment, `tests/test_web_entry.py`'s route census) -- this ledger entry is
 the next commit. No merge commit: AWAITING_APPROVAL on the customer-bytes condition above.
+-- merged `dd93015` (BODY-DESPERTAR-REAL-7-M, 2026-11-18): the orchestrator's own browser review
+accepted these customer bytes verbatim and approved the merge per `ORCH-CARLOS-DELEGATES-TIER-1-1`.
 
 ## BODY-DESPERTAR-REAL-7-M
 
@@ -29072,4 +29074,7 @@ this spec's approval covers, approved verbatim by `ORCH-CARLOS-DELEGATES-TIER-1-
 fixed here. Reversible, no schema change, nothing deployed. This spec approves the merge."
 
 **Commits:** `4524892` (the CSS fix and its test) -- this ledger entry is the next commit, then the merge.
+-- merged `dd93015` into `main`, post-merge smoke `.venv/Scripts/python.exe -m unittest
+tests.test_despertar_pantalla tests.test_hoy tests.test_get_sin_escritura tests.test_rendimiento` ->
+`Ran 53 tests in 19.214s` -- `OK`.
 
