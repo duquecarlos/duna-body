@@ -180,6 +180,13 @@ class SeededContentTest(unittest.TestCase):
         self.assertEqual(habit["title"], demo._HABIT_FUERZA_TITLE["es"])
         self.assertEqual(json.loads(habit["cadence"]), {"per": "week", "times": 3})
 
+    def test_the_demo_person_has_one_invented_despertar_correction(self):
+        # BODY-DESPERTAR-REAL-4 ruling 1.
+        row = self.conn.execute(
+            "SELECT tipo, origen FROM despertar_correccion WHERE person_id = 1").fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual((row["tipo"], row["origen"]), ("levantado", "asistente"))
+
     def test_has_one_household_goal_created_by_ana(self):
         row = self.conn.execute(
             "SELECT person_id FROM goal WHERE visibility = 'household'").fetchone()

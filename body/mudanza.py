@@ -122,6 +122,9 @@ REGISTRY: tuple[TableSpec, ...] = (
     TableSpec("uso_herramienta_externa", match_cols=None),
     TableSpec("daily_metric", match_cols=("person_id", "day", "metric_key")),
     TableSpec("sleep_session", match_cols=("person_id", "day")),
+    # BODY-DESPERTAR-REAL-4 ruling 1: the person's own correction to one night, same natural key
+    # shape as sleep_session right above.
+    TableSpec("despertar_correccion", match_cols=("person_id", "day")),
     TableSpec("raw_payload", match_cols=("person_id", "day", "kind", "source")),
     TableSpec("activity", match_cols=("person_id", "source", "source_id")),
     TableSpec("workout_set",

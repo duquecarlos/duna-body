@@ -84,6 +84,10 @@ FULLY_HANDLED_TABLES = {
     # (body/practicas.py) -- the person's own title and rule, exported and deleted like any other
     # of their own rows.
     "practica",
+    # BODY-DESPERTAR-REAL-4 ruling 1: one row per (day, correction) -- the person's own tap,
+    # exported and deleted like any other of their own rows, Garmin's own sleep_session row
+    # untouched either way.
+    "despertar_correccion",
 }
 # raw_payload: kind/date only, never the stored JSON payload. garmin_cuenta: the connected-since
 # date only, never the encrypted token (BODY-GARMIN-HOST-1). dispositivo: name/scopes/dates only,
@@ -243,6 +247,11 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         (person_id,))]
     sueno = [dict(r) for r in conn.execute(
         "SELECT * FROM sleep_session WHERE person_id = ? ORDER BY day", (person_id,))]
+    # BODY-DESPERTAR-REAL-4 ruling 1: this person's own correction for each day, beside Garmin's
+    # own sleep above -- never merged into it.
+    despertar_correcciones = [dict(r) for r in conn.execute(
+        "SELECT day, tipo, hora_local, modelo_version, origen, creada_en FROM despertar_correccion "
+        "WHERE person_id = ? ORDER BY day", (person_id,))]
     detalle_actividades = [dict(r) for r in conn.execute(
         "SELECT activity_source, activity_source_id, kind, fetched_at, payload FROM activity_detail "
         "WHERE person_id = ? ORDER BY activity_source, activity_source_id, kind", (person_id,))]
@@ -350,6 +359,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "sets_entreno": sets_entreno,
         "detalle_actividades": detalle_actividades,
         "sueno": sueno,
+        "despertar_correcciones": despertar_correcciones,
         "recuperacion_actividades": recuperacion_actividades,
         "turno_fc": turno_fc_filas,
         "sincronizaciones": sincronizaciones,
@@ -488,6 +498,7 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         conn.execute("DELETE FROM goal WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM daily_metric WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM sleep_session WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM despertar_correccion WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM raw_payload WHERE person_id = ?", (person_id,))
         # workout_set's FK targets activity's composite key -- deleted first, same as every other
         # table that references a row this sweep is about to remove. activity_detail has no

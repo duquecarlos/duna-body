@@ -879,6 +879,25 @@ def _seed_sueno_fc(conn, db, sueno_fc, person_id: int) -> int:
     return len(rows)
 
 
+def _seed_despertar_correccion(conn, db, person_id: int) -> int:
+    """BODY-DESPERTAR-REAL-4 ruling 1: one invented correction, on the most recent night this
+    person has a Garmin sleep session for -- a plain "got up a little after Garmin's own record"
+    demo row, never a real figure. Called AFTER `_seed_sueno_fc`, which is what gives most of this
+    history its own sleep_session rows in the first place."""
+    row = conn.execute(
+        "SELECT day, end_local FROM sleep_session WHERE person_id = ? AND end_local IS NOT NULL "
+        "ORDER BY day DESC LIMIT 1", (person_id,),
+    ).fetchone()
+    if row is None:
+        return 0
+    fin = datetime.fromisoformat(row["end_local"])
+    hora_local = (fin + timedelta(minutes=25)).strftime("%H:%M")
+    db.guardar_despertar_correccion(conn, person_id, row["day"], "levantado", hora_local,
+                                     "despertar-real-v1", "asistente")
+    conn.commit()
+    return 1
+
+
 def _seed_self_metrics(conn, db, rng: random.Random, all_days: list[date], person_id: int) -> int:
     """The four generic self-measured metric_def rows (BODY-ENTRENO-SCHEMA-1, BODY-MEDIDA-PESO-1),
     sparser than the watch's daily figures: a flexibility reach, a weigh-in and a waist reading
@@ -1534,6 +1553,7 @@ def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[st
     turno_fc_turnos = _seed_turno_fc(conn, db, turno_fc, person_id, all_days,
                                       excluir_dias=frozenset({dia_basket}))
     sueno_fc_noches = _seed_sueno_fc(conn, db, sueno_fc, person_id)
+    despertar_correcciones = _seed_despertar_correccion(conn, db, person_id)
     _seed_noche_inusual(conn, db, anchor, person_id)
     planes_hoy = _seed_plan_hoy(conn, anchor, person_id, idioma)
 
@@ -1565,6 +1585,7 @@ def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[st
         "checkins": checkins,
         "recuperacion_actividades": recuperacion_rows,
         "turno_fc_turnos": turno_fc_turnos, "sueno_fc_noches": sueno_fc_noches,
+        "despertar_correcciones": despertar_correcciones,
         "planes_hoy": planes_hoy, "desplazamiento_dias": desplazamiento_dias,
         "comidas_compartidas_pendientes": comidas_compartidas_pendientes,
         "practicas": practicas_count,
