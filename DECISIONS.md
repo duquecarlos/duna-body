@@ -28295,5 +28295,8 @@ tool Carlos runs himself from a terminal), its tests and the ledger; no template
 response changed.
 
 **Commits:** `6a6b3beafb620a7db1af85b9c16c16d16f9213ea` (step 1: the two guards +
-`tests/test_installer.py` additions).
+`tests/test_installer.py` additions) -- `36291794e21d06b4659731fc3edf88d89aaeffa8` (this ledger entry,
+step 3) -- merged `149bcd83e6f29fc03848d294fc72bdd21b149d87` (`--no-ff`, no conflicts; tree identity
+proven, branch tree == merge tree == `2284fd38588ea94930b1dd8c24488c973953a9b0`). Post-merge smoke
+(`tests.test_installer`): `Ran 44 tests in 1.406s ... OK`.
 
