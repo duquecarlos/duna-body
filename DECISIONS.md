@@ -27778,6 +27778,8 @@ rendered on screen).
 
 **Commits:** `46bdebf` (`body/templates/base.html`, `body/rutas/ajustes.py`,
 `body/static/body.css`, `body/i18n/es.json`, `body/i18n/en.json`, `tests/test_idioma_hogar.py`
-(new), `tests/test_registro_tu.py`, `tests/test_seguridad.py`: rulings 1-2, step 1) -- this entry
-(ruling 3's census, the gate, step 4) committed next, on the same branch.
+(new), `tests/test_registro_tu.py`, `tests/test_seguridad.py`: rulings 1-2, step 1) -- `f7743e1`
+(this ledger entry: ruling 3's census, the gate, step 4) -- merged `72564fb223ca4167618876abb82354009f8f4197`
+(`--no-ff`, no conflicts). Post-merge smoke (`tests.test_idioma_hogar tests.test_i18n_paridad
+tests.test_web_entry`): `Ran 24 tests ... OK`.
 
