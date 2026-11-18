@@ -112,8 +112,10 @@ class OnTest(_McpAplicarTestCase):
         r = respuestas[0]["result"]
         self.assertNotIn("isError", r)
         contenido = r["content"]
-        self.assertEqual(len(contenido), 2)
-        self.assertIn("Hoy", contenido[0]["text"])
+        # BODY-MCP-COPIA-PC-1: contenido[0] is now the copia-pc freshness line, so the
+        # "Hoy" sentence moved to [1].
+        self.assertEqual(len(contenido), 3)
+        self.assertIn("Hoy", contenido[1]["text"])
         salida = json.loads(contenido[-1]["text"])
         self.assertEqual(salida["estado"], "aplicada")
         row = self.conn.execute("SELECT estado, aplicada_via FROM propuesta_agente WHERE id = ?",
@@ -239,7 +241,7 @@ class OnTest(_McpAplicarTestCase):
         for i in range(tope):
             self.assertNotIn("isError", respuestas[i]["result"], f"apply {i} should not have errored yet")
         self.assertTrue(respuestas[tope]["result"]["isError"])
-        self.assertIn("min", respuestas[tope]["result"]["content"][0]["text"])
+        self.assertIn("min", respuestas[tope]["result"]["content"][-1]["text"])
 
 
 class TurningOffMidSessionTest(_McpAplicarTestCase):
