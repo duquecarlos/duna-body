@@ -28153,7 +28153,7 @@ T F S S), and _week_letters returns it directly so a language decides its own in
 Commit: `f3c8f79` (`body/i18n/en.json`, `body/i18n/es.json`, `body/rutas/comun.py`,
 `tests/test_goals_web.py`, `tests/test_practicas_web.py`). This slice's own gate run was never
 completed before it stopped BLOCKED; BODY-DIA-LETRA-1-R's gate below covers the full suite on top of
-this change.
+this change. -- merged `401725cfd2284d2897fad134280d38d62e8429eb`.
 
 ## BODY-DIA-LETRA-1-R -- the goal page's habit week letters catch up to date.days_letter (2026-11-18)
 
@@ -28205,5 +28205,9 @@ made.
 **customer_bytes:** not changed -- this slice only moved test assertions to match strings that
 BODY-DIA-LETRA-1 already shipped; no template, i18n string or route response changed here.
 
-**Commits:** `c374362` (`tests/test_metas_semana_tira.py`, step 1) -- this ledger entry (step 3).
+**Commits:** `c374362` (`tests/test_metas_semana_tira.py`, step 1) -- `be1c3f6` (this ledger entry,
+step 3) -- merged `401725cfd2284d2897fad134280d38d62e8429eb` (`--no-ff`, no conflicts; tree identity
+proven, branch tree == merge tree == `7b6fc7beff9ec003bce1bf15a429539a8c7148f3`). Post-merge smoke
+(`tests.test_practicas_web tests.test_goals_web tests.test_metas_semana_tira tests.test_i18n_paridad`):
+`Ran 79 tests ... OK`.
 
