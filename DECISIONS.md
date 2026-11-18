@@ -28576,5 +28576,8 @@ Python module and its tests only.
   given to this slice.
 
 **Commits:** `a785bf5` (step 1: `body/despertar_real.py`, `tests/test_despertar_real.py`, the
-`tests/test_persona_fuga.py` and `tests/test_rendimiento.py` additions).
+`tests/test_persona_fuga.py` and `tests/test_rendimiento.py` additions) -- `cec8a2c` (step 3: this ledger
+entry) -- merged `89e6f76` (`--no-ff`, no conflicts; tree identity proven, branch tree == merge tree ==
+`1ba3793`). Post-merge smoke (`tests.test_despertar_real tests.test_persona_fuga`): `Ran 23 tests in 7.314s
+... OK`.
 
