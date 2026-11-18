@@ -28867,6 +28867,9 @@ key is JSON the assistant reads, not rendered template text.
 **Commits:** `ef422df` (step 1: `despertar_correccion` table, read/save/delete, census wiring, migration and
 privacidad/persona_fuga/demo tests) -- `eacd398` (steps 2-3: `corregir_despertar` propuesta tool,
 `leer_dia`/`leer_intradia` showing the correction, the three census fixes the new tool surfaced in
-already-touched modules) -- this entry's own commit (step 4: this ledger entry and
-BODY-DESPERTAR-REAL-1-INV's own).
+already-touched modules) -- `8464cd2` (step 4: this ledger entry and BODY-DESPERTAR-REAL-1-INV's own) --
+merged `f671ba8` (`--no-ff`, no conflicts; tree identity proven, branch tree == merge tree ==
+`337a973490fe8633b3a980b4716d75c1fc0d3a6f`). Post-merge smoke (`tests.test_despertar_correccion
+tests.test_corregir_despertar tests.test_despertar_real tests.test_leer_intradia tests.test_migraciones`):
+`Ran 107 tests in 38.846s ... OK`.
 
