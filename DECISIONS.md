@@ -28581,3 +28581,104 @@ entry) -- merged `89e6f76` (`--no-ff`, no conflicts; tree identity proven, branc
 `1ba3793`). Post-merge smoke (`tests.test_despertar_real tests.test_persona_fuga`): `Ran 23 tests in 7.314s
 ... OK`.
 
+## BODY-MCP-PENDIENTES-VIGENCIA-1 -- `pendientes_mcp` stops counting an expired proposal nobody ever opened (2026-11-18)
+
+**The desk's surface**, 2026-11-18: Carlos's Today page showed «Your personal assistant suggests 3 changes ·
+Review» and asked whether they were stale. Reading the code: the count comes from
+`agente_conversacion.pendientes_mcp` (`body/agente/conversacion.py:39-52` before this slice), which counts
+every `propuesta_agente` row with `estado = 'propuesta'` in an 'mcp' conversation -- but a proposal's expiry
+is LAZY: it gets `expira_en` at creation (`body/agente/propuestas.py:133-135`, `EXPIRA_MINUTOS = 15` at
+`:86`, or the end of the next local day for an mcp-origin one) and is only marked 'expirada' when something
+touches it (`:156`, `:1707`). So a proposal nobody opened stayed 'propuesta' forever and Today kept
+announcing it, and its link opened a panel full of proposals that could no longer be applied.
+`pendientes_mcp`'s own docstring already said both Hoy's line and the assistant panel's default read it.
+
+**The orchestrator's rulings** (Tier 2, quality; "anything off the normal flow raises a flag -- and a stale
+flag is a false one"), each as built:
+
+1. **`pendientes_mcp` counts only proposals still in force** -- `estado = 'propuesta' AND expira_en >
+   <now>`, now in the same ISO form `_ahora()`/`_iso()` already write elsewhere in this codebase, one
+   statement, the same cost; the newest conversation id comes from the same filtered set (one `WHERE`
+   clause feeds both the `COUNT` and the `MAX`); `ahora` is an injectable parameter for tests, real UTC
+   `datetime.now(timezone.utc)` by default -- as built: `body/agente/conversacion.py:39-56`. Its only two
+   callers, `body/rutas/hoy.py:219` (`_mcp_pendientes_ctx`, Hoy's own line) and
+   `body/rutas/asistente.py:1082` (the panel's `pendiente` sentinel), needed no change: both call it with no
+   `ahora`, so both pick up the real-clock filter for free.
+2. **The panel and Today never show an expired proposal as waiting; nothing is deleted and the lazy
+   'expirada' marking stays as built.** `body/agente/propuestas.py` untouched: `aplicar`/`descartar` still
+   mark 'expirada' only lazily, the next time something touches a row (`:1707`, `:1752` in the merged
+   numbering) -- this slice adds a read-side filter, not a write-side sweep.
+3. **Every other reader of `estado = 'propuesta'`, found by grep, and its disposition:**
+   - `body/agente/propuestas.py:1686` (`_reemplazar_pendientes_mismo_dia`): finds a still-'propuesta'
+     sibling of the SAME tool and day to mark 'descartada'/replaced when a new one of the same kind is
+     applied. Not touched: it is not a "pending proposals for Hoy or the panel" display -- it feeds no
+     count or badge -- and leaving an expired-but-untouched sibling to be marked 'descartada' instead of
+     lazily 'expirada' changes nothing any screen shows, since `pendientes_mcp`'s own filter already
+     excludes it by `expira_en` regardless of which terminal state it ends up in.
+   - `body/rutas/ajustes.py:53` (`_nutriente_pendientes_ctx`): Ajustes' own "Metas diarias" listing of
+     still-pending `proponer_objetivo_nutriente` proposals. **Not touched: `ajustes.py` is outside this
+     slice's `touches:` list** -- widening to it would need its own approval. Named here as a known,
+     unfixed instance of the same lazy-expiry pattern, for a future slice.
+   - `body/rutas/hoy.py:1037-1038` (`_propuestas_vinculo_dia_ctx`): Día's (`/day/{day}`) own inline cards
+     for a pending or applied `separar_sesion`/`unir_sesiones` proposal. **Not touched**, deliberately: the
+     orchestrator's ruling names "Hoy or the panel" -- the Today screen's own line and the assistant panel's
+     default -- and this reader serves Día, a third screen with its own card shape (`propuesta` and
+     `aplicada` rows together, decided by an `aplicada_via`/estado label on each card, not a stale
+     count); it is not in the validated surface report. Named here, file:line, as the surface asked, for
+     the same reason: a stale `separar_sesion`/`unir_sesiones` card would show the same false-pending
+     problem, and a future slice can widen the fix there with its own review.
+
+**Tests, as built** (`tests/test_mcp_pendientes.py`, new -- `test_mcp_pendientes.py` did not exist before
+this slice, so the new tests went there per the dispatch's own fallback):
+- `test_still_in_force_is_counted_and_linked`: an mcp proposal created 10 minutes before `ahora`, still 5
+  minutes from its own `expira_en`, is counted and its conversation id returned.
+- `test_expired_sixteen_minutes_in_is_not_counted_and_today_shows_no_line`: the same shape but 16 minutes
+  before `ahora`, 1 minute past its own `expira_en`, is not counted (`(0, None)`); the same row's
+  `expira_en` is then set 1 minute before the REAL wall clock and `GET /` carries no `asis_conversacion`
+  line, with no sleeping.
+- `test_next_day_expiry_kind_is_counted_until_its_own_expira_en`: an mcp proposal created through the real
+  `propuestas.crear` (next-local-day rule, untouched) is counted 1 minute before its own computed
+  `expira_en` and not counted 1 minute after.
+- `test_newest_conversation_id_skips_an_expired_newer_one`: an older, still-in-force proposal and a newer,
+  already-expired one; `pendientes_mcp` returns the older conversation's id, not the newer.
+- `test_statement_count_of_today_does_not_grow`: `GET /` with one in-force mcp proposal stays at or under
+  `_CEILINGS["/"]` (155, `tests/test_rendimiento.py`) -- the fix adds one bound parameter to the existing
+  query, not a second statement.
+
+**The gate**, exactly `.venv/Scripts/python.exe -m unittest discover tests -t .` from the repository root,
+run as 11 sequential alphabetical chunks of ~20 dotted test modules each, in the foreground, each chunk's
+`Ran`/`OK` line read from the process:
+
+```
+chunk  1 (20 modules, test_accesibilidad..test_baselines):          Ran 385 tests in  67.079s -- OK (skipped=1, expected failures=1)
+chunk  2 (20 modules, test_baselines_lote..test_despertar):         Ran 429 tests in 398.942s -- OK
+chunk  3 (20 modules, test_despertar_real..test_estados_vacios_hosted): Ran 377 tests in 146.999s -- OK
+chunk  4 (20 modules, test_experimentos_esquema..test_goals_web):   Ran 399 tests in 271.426s -- OK
+chunk  5 (20 modules, test_guardia_parches..test_hoy):              Ran 587 tests in 392.456s -- OK
+chunk  6 (20 modules, test_hoy_escritorio..test_mcp_remoto):        Ran 384 tests in  80.687s -- OK
+chunk  7 (20 modules, test_mcp_visible..test_persona_garmin):       Ran 483 tests in 189.776s -- OK
+chunk  8 (20 modules, test_pipeline..test_pulido_2):                Ran 520 tests in 160.175s -- OK
+chunk  9 (20 modules, test_pulido_3..test_static_version):          Ran 322 tests in  98.157s -- OK
+chunk 10 (20 modules, test_sueno_fc..test_turnos_opcional_5):       Ran 558 tests in 112.059s -- OK
+chunk 11 (12 modules, test_turnos_perfil..test_web_entry):          Ran 188 tests in  42.699s -- OK
+```
+
+Sum: 385+429+377+399+587+384+483+520+322+558+188 = **4632**. Collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted by walking the suite, taken before
+the chunked run): **4632**. Exact match. Every `NotSignedIn`/`GarminConnect*Error`/`AttributeError`/
+`RuntimeError`/`ResourceWarning`/traceback line printed during the run is expected log output from tests
+exercising synthetic error paths (Garmin adapter, sync, mudanza), not this slice's own code. No password,
+token, session secret, device key or health figure was read, printed or written anywhere in this slice's
+own work or the gate's own stdout.
+
+**customer_bytes:** unchanged -- no template, i18n string, route shape or schema touched; the fix narrows
+which rows an existing query counts, nothing a person reads changed its wording or layout.
+
+**Open follow-ups:**
+- The two other lazy-expiry readers named in ruling 3 above (`body/rutas/ajustes.py:53`,
+  `body/rutas/hoy.py:1037-1038`) are not fixed by this slice -- `ajustes.py` is outside `touches:`, and
+  Día's own card is outside the validated surface. Named, not ticketed: no ledger ID coined here.
+
+**Commits:** `7b7f0d8` (step 1: `body/agente/conversacion.py`'s `pendientes_mcp` filtered on `expira_en`,
+`tests/test_mcp_pendientes.py` new) -- this entry (step 3).
+

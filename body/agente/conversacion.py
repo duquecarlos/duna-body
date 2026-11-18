@@ -36,18 +36,23 @@ def origen_de(conn: sqlite3.Connection, conversacion_id: int) -> str | None:
     return row["origen"] if row else None
 
 
-def pendientes_mcp(conn: sqlite3.Connection, person_id: int) -> tuple[int, int | None]:
-    """(count, newest conversation id) of proposals still in state 'propuesta' sitting in a
-    conversation whose `origen` is the outside caller ('mcp') -- BODY-MCP-LOCAL-1-B, the person's
-    own visibility into what their personal assistant proposed through the local MCP server. Hoy's
-    own line and the assistant panel's default both read this, one statement, so the route cost
-    the same person-level fact reaches two screens from costs only once. (0, None) when there is
-    none."""
+def pendientes_mcp(conn: sqlite3.Connection, person_id: int, ahora: datetime | None = None) -> tuple[int, int | None]:
+    """(count, newest conversation id) of proposals still in state 'propuesta' AND still in force --
+    `expira_en` strictly after `ahora` -- sitting in a conversation whose `origen` is the outside
+    caller ('mcp') -- BODY-MCP-LOCAL-1-B, the person's own visibility into what their personal
+    assistant proposed through the local MCP server, widened by BODY-MCP-PENDIENTES-VIGENCIA-1: a
+    proposal's expiry is set at creation (propuestas.py's own EXPIRA_MINUTOS or next-local-day
+    rule) but only marked 'expirada' lazily, the next time something touches it -- so without this
+    filter a proposal nobody ever opened would count and link here forever, past its own expira_en.
+    Hoy's own line and the assistant panel's default both read this, one statement, so the route
+    cost the same person-level fact reaches two screens from costs only once. `ahora`: real UTC now
+    by default, an injectable clock for tests. (0, None) when there is none still in force."""
+    ahora_iso = (ahora or datetime.now(timezone.utc)).isoformat(timespec="seconds")
     row = conn.execute(
         "SELECT COUNT(*) AS n, MAX(p.conversacion_id) AS id FROM propuesta_agente p "
         "JOIN conversacion_agente c ON c.id = p.conversacion_id "
-        "WHERE p.person_id = ? AND p.estado = 'propuesta' AND c.origen = 'mcp'",
-        (person_id,),
+        "WHERE p.person_id = ? AND p.estado = 'propuesta' AND p.expira_en > ? AND c.origen = 'mcp'",
+        (person_id, ahora_iso),
     ).fetchone()
     return row["n"], row["id"]
 
