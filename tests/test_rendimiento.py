@@ -95,6 +95,19 @@ client = TestClient(web.app, follow_redirects=False)
 # /history/practica/{practica_id}'s own ceiling, new with this slice: one practicas.estado() call
 # against this file's own fixture (one of the demo's two seeded practicas, no linked habit yet).
 # Measured 17 statements, ceil(17 * 1.3) = 23.
+# BODY-DESPERTAR-REAL-7: / and /day/{day} each gained Día/Hoy's own inline despertar card (ruling
+# 1-4) -- both ceilings stay UNCHANGED, measured comfortably under them. On this file's own fixture
+# (demo._seed(dias=30), whose most recent sleep night sits a day before the most recent metric day,
+# so `_despertar_hoy_ctx`'s own correction check finds none and `despertar_real.estimar` runs but
+# exits at its own first query, no sleep_session that later day): / measured 124 (ceiling 155),
+# /day/{day} measured 59 (ceiling 81) -- `_despertar_dia_ctx` costs 0 there (no sleep that day, its
+# own first check). On the richer fixture tests/test_despertar_pantalla.py's own
+# `_seed_levantado_media` builds (a real propuesta, no correction yet): `despertar_real.estimar`
+# alone costs 8 statements; `_despertar_hoy_ctx`'s own full run (the correction check plus that
+# estimar call) costs 9; `_despertar_dia_ctx`'s own full run (the correction check, that same
+# estimar call, the curve's own intraday query and the pending-propuesta check) costs 11 -- both
+# within ceil(8 * 1.3) = 11, the SAME margin rule this file's own ceilings use, read here as
+# "estimar's own measured ceiling" (ruling 5).
 _CEILINGS = {
     "/": 155,
     "/ajustes/asistente": 16,
