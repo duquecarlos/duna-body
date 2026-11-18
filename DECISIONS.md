@@ -28680,5 +28680,7 @@ which rows an existing query counts, nothing a person reads changed its wording 
   Día's own card is outside the validated surface. Named, not ticketed: no ledger ID coined here.
 
 **Commits:** `7b7f0d8` (step 1: `body/agente/conversacion.py`'s `pendientes_mcp` filtered on `expira_en`,
-`tests/test_mcp_pendientes.py` new) -- this entry (step 3).
+`tests/test_mcp_pendientes.py` new) -- `22c9f5e` (step 3: this ledger entry) -- merged `e23b4c3` (`--no-ff`,
+no conflicts; tree identity proven, branch tree == merge tree == `78f2327`). Post-merge smoke
+(`tests.test_mcp_pendientes tests.test_agente_propuestas`): `Ran 42 tests in 13.397s ... OK`.
 
