@@ -62,7 +62,13 @@ the automatic sync-time link (`db.save_day`) also writes through a narrower help
 the same match; its undo restores the link and clears that flag. `unir_sesiones`'s apply sets the
 link (clearing `vinculo_separado`, overriding any earlier split); its undo clears it back to plain
 unlinked -- never `vinculo_separado`, since joining was never the same as a person-made split.
-"""
+
+`importar_desplazamiento` (BODY-DESPLAZAMIENTO-ASISTENTE-1) calls `desplazamiento_import.importar`
+directly -- the SAME function the device route (POST /api/desplazamiento) already calls, one
+import path, two doors. Its `antes_json` snapshots the `fuente_importacion` row and every (day,
+key) value the file touches, so `deshacer` can restore exactly what was there through a direct
+write -- `desplazamiento_import.importar` only ever writes forward, with no writer of its own that
+undoes one whole import."""
 from __future__ import annotations
 
 import json
@@ -72,7 +78,7 @@ from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from .. import comida_compartida, compartir, db, fechas, goals, household, shift_import
+from .. import comida_compartida, compartir, db, desplazamiento_import, fechas, goals, household, shift_import
 from ..i18n import T
 from . import conversacion as agente_conversacion
 
@@ -1460,6 +1466,83 @@ def _deshacer_ampliar_plan(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
                 conn.execute(f"DELETE FROM {tabla} WHERE id IN ({placeholders})", ids)
 
 
+# -- importar_desplazamiento (BODY-DESPLAZAMIENTO-ASISTENTE-1: this module is the one caller of
+# desplazamiento_import.importar from the assistant's own side -- the SAME function the device
+# route POST /api/desplazamiento calls, one import path, two doors. `antes_json` carries the
+# `fuente_importacion` row as it stood before (or None), whether this would truly be a no-op
+# (`sin_cambios`, the same shortcut `importar` itself takes on a matching computed_at) and, unless
+# it is a no-op, every (day, key) value the file touches as it stood before -- so `deshacer`
+# (ruling 3) can restore exactly what was there, or remove the row when there was none, through a
+# direct write: `desplazamiento_import.importar` only ever writes forward, with no symmetric
+# "undo this exact import" of its own.) -------------------------------------------------------
+
+def _fuente_desplazamiento_actual(conn: sqlite3.Connection, person_id: int) -> dict | None:
+    fila = conn.execute(
+        "SELECT primer_dia, ultimo_dia, computed_at, dias, importado_at, ultimo_error, ultimo_error_at "
+        "FROM fuente_importacion WHERE person_id = ? AND fuente = ?",
+        (person_id, desplazamiento_import.FUENTE),
+    ).fetchone()
+    return dict(fila) if fila is not None else None
+
+
+def _drift_aplicar_importar_desplazamiento(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    antes = json.loads(row["antes_json"])
+    if _fuente_desplazamiento_actual(conn, row["person_id"]) != antes["fuente"]:
+        return True
+    if not antes["valores"]:
+        return False
+    dias = sorted({v["day"] for v in antes["valores"]})
+    actuales = desplazamiento_import.valores_commute(conn, row["person_id"], dias[0], dias[-1])
+    return any(actuales.get((v["day"], v["key"])) != v["value"] for v in antes["valores"])
+
+
+def _drift_deshacer_importar_desplazamiento(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    antes = json.loads(row["antes_json"])
+    despues = json.loads(row["despues_json"])
+    actual_fuente = _fuente_desplazamiento_actual(conn, row["person_id"])
+    if antes["sin_cambios"]:
+        # Apply was a true no-op (importar's own shortcut): still drifted if the row no longer
+        # reads exactly as it did before.
+        return actual_fuente != antes["fuente"]
+    try:
+        rows = desplazamiento_import.validar(despues["contenido"])
+    except desplazamiento_import.ImportRefused:
+        return True
+    if actual_fuente is None or actual_fuente["computed_at"] != rows[0]["computed_at"]:
+        return True
+    dias = sorted(r["day"] for r in rows)
+    actuales = desplazamiento_import.valores_commute(conn, row["person_id"], dias[0], dias[-1])
+    return any(actuales.get((r["day"], k)) != r[k] for r in rows for k in desplazamiento_import.COUNT_COLUMNS)
+
+
+def _aplicar_importar_desplazamiento(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    desplazamiento_import.importar(conn, row["person_id"], despues["contenido"])
+
+
+def _deshacer_importar_desplazamiento(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    antes = json.loads(row["antes_json"])
+    person_id = row["person_id"]
+    with conn:
+        for v in antes["valores"]:
+            db.set_metric(conn, v["day"], v["key"], v["value"], desplazamiento_import.FUENTE, person_id)
+        if antes["fuente"] is None:
+            conn.execute("DELETE FROM fuente_importacion WHERE person_id = ? AND fuente = ?",
+                         (person_id, desplazamiento_import.FUENTE))
+        else:
+            f = antes["fuente"]
+            conn.execute(
+                "INSERT INTO fuente_importacion (person_id, fuente, primer_dia, ultimo_dia, computed_at, "
+                "dias, importado_at, ultimo_error, ultimo_error_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(person_id, fuente) DO UPDATE SET primer_dia = excluded.primer_dia, "
+                "ultimo_dia = excluded.ultimo_dia, computed_at = excluded.computed_at, dias = excluded.dias, "
+                "importado_at = excluded.importado_at, ultimo_error = excluded.ultimo_error, "
+                "ultimo_error_at = excluded.ultimo_error_at",
+                (person_id, desplazamiento_import.FUENTE, f["primer_dia"], f["ultimo_dia"], f["computed_at"],
+                 f["dias"], f["importado_at"], f["ultimo_error"], f["ultimo_error_at"]),
+            )
+
+
 TABLA: dict[str, _Accion] = {
     "proponer_meta": _Accion(_sin_drift, _drift_deshacer_meta, _aplicar_meta, _deshacer_meta),
     "proponer_cambio_meta": _Accion(_drift_aplicar_cambio_meta, _drift_deshacer_meta, _aplicar_cambio_meta,
@@ -1517,6 +1600,8 @@ TABLA: dict[str, _Accion] = {
                              _deshacer_ampliar_plan),
     "anotar_sesion": _Accion(_drift_aplicar_anotar_sesion, _drift_deshacer_anotar_sesion,
                               _aplicar_anotar_sesion, _deshacer_anotar_sesion),
+    "importar_desplazamiento": _Accion(_drift_aplicar_importar_desplazamiento, _drift_deshacer_importar_desplazamiento,
+                                        _aplicar_importar_desplazamiento, _deshacer_importar_desplazamiento),
 }
 
 SIN_DESHACER = tuple(nombre for nombre, entrada in TABLA.items() if not entrada.tiene_deshacer)

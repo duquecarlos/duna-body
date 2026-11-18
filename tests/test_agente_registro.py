@@ -177,7 +177,8 @@ PROPUESTA_NOMBRES = {"proponer_meta", "proponer_cambio_meta", "proponer_confirma
                      "registrar_checkin", "marcar_periodo", "cerrar_periodo", "corregir_periodo",
                      "borrar_periodo", "descartar_series", "separar_sesion", "unir_sesiones",
                      "proponer_objetivo_nutriente",
-                     "proponer_plan", "corregir_meta_plan", "ampliar_plan", "anotar_sesion"}
+                     "proponer_plan", "corregir_meta_plan", "ampliar_plan", "anotar_sesion",
+                     "importar_desplazamiento"}
 # Privacy and account controls deliberately NEVER become proposal tools (BODY-ASISTENTE-PROPUESTAS-1
 # approval reason): nivel_datos, consent, export, delete-all, device keys, Garmin connection,
 # household membership all stay on their own screens.
@@ -206,12 +207,18 @@ class RegistryShapeTest(unittest.TestCase):
         self.assertEqual(len(lectura), 18)
         self.assertEqual({h["nombre"]: h["nivel"] for h in lectura}, expected_levels)
 
-    def test_twentynine_propuesta_tools_at_nivel_ninguno(self):
+    def test_thirty_propuesta_tools_with_one_at_nivel_resumen(self):
         # BODY-HOGAR-ESCRIBE-1: extended from 27 -- anotar_sesion is the one new entry.
         # BODY-CORREGIR-MEDIDA-ENTRENO-1-W: extended from 28 -- corregir_entreno is the one new entry.
+        # BODY-DESPLAZAMIENTO-ASISTENTE-1: extended from 29 -- importar_desplazamiento is the one new
+        # entry, and the first `propuesta` tool not gated at 'ninguno': ruling 4 sets it at 'resumen',
+        # the same nivel_datos the commute data it imports is itself shown at -- counts and dates
+        # only, never a day's own figure.
         propuesta = [h for h in herramientas.HERRAMIENTAS if h["tipo"] == "propuesta"]
         self.assertEqual({h["nombre"] for h in propuesta}, PROPUESTA_NOMBRES)
-        self.assertTrue(all(h["nivel"] == "ninguno" for h in propuesta))
+        niveles = {h["nombre"]: h["nivel"] for h in propuesta}
+        self.assertEqual(niveles.pop("importar_desplazamiento"), "resumen")
+        self.assertTrue(all(nivel == "ninguno" for nivel in niveles.values()))
         self.assertFalse(PROPUESTA_NOMBRES & NUNCA_PROPUESTA)
 
     def test_every_entry_has_a_known_tipo(self):
@@ -219,7 +226,8 @@ class RegistryShapeTest(unittest.TestCase):
         # BODY-HOGAR-ESCRIBE-1: extended from 44 -- anotar_sesion is the one new entry.
         # BODY-CORREGIR-MEDIDA-ENTRENO-1-W: extended from 45 -- corregir_entreno is the one new entry.
         # BODY-TURNO-DIA-PLAN-1: extended from 46 -- leer_dias_libres is the one new entry.
-        self.assertEqual(len(herramientas.HERRAMIENTAS), 47)
+        # BODY-DESPLAZAMIENTO-ASISTENTE-1: extended from 47 -- importar_desplazamiento is the one new entry.
+        self.assertEqual(len(herramientas.HERRAMIENTAS), 48)
 
     def test_every_entry_carries_the_reserved_plan_field_unset(self):
         # BODY-ASISTENTE-CONFORMIDAD-1 ruling 2 (agent-capabilities-v1 section 5): the field

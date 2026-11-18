@@ -5,6 +5,11 @@ rewritten on each Personal run (about monthly); `validar` refuses the WHOLE file
 same all-or-nothing rule body/shift_import.py's own `_validate` applies, and `importar` writes
 nothing on refusal, recording only the reason CLASS -- never a figure or a date -- in
 fuente_importacion.ultimo_error.
+
+`valores_commute`/`preview` (BODY-DESPLAZAMIENTO-ASISTENTE-1) are pure, read-only helpers for the
+assistant's own `importar_desplazamiento` proposal (body/agente/herramientas.py): neither writes,
+and `preview`'s own counts are exactly what the device route's own JSON already answers with --
+`validar`/`importar` themselves are unchanged.
 """
 from __future__ import annotations
 
@@ -147,6 +152,38 @@ def importar(conn: Connection, person_id: int, texto: str) -> dict:
             (person_id, FUENTE, dias[0], dias[-1], computed_at, len(rows), now),
         )
     return {"ok": True, "sin_cambios": False, "dias": len(rows), "primer_dia": dias[0], "ultimo_dia": dias[-1]}
+
+
+def valores_commute(conn: Connection, person_id: int, dia_inicio: str, dia_fin: str) -> dict:
+    """Every (day, key) -> value this person already has for the four commute keys, day BETWEEN
+    dia_inicio AND dia_fin -- one batched query (BODY-DESPLAZAMIENTO-ASISTENTE-1), read by the
+    assistant's own preview/drift/undo instead of one query per day: the difference that matters
+    on a real multi-year file."""
+    filas = conn.execute(
+        "SELECT day, metric_key, value FROM daily_metric WHERE person_id = ? AND metric_key IN "
+        "(?, ?, ?, ?) AND day BETWEEN ? AND ?",
+        (person_id, *COUNT_COLUMNS, dia_inicio, dia_fin),
+    ).fetchall()
+    return {(f["day"], f["metric_key"]): f["value"] for f in filas}
+
+
+def preview(conn: Connection, person_id: int, texto: str) -> dict:
+    """Validates exactly like `importar` and writes nothing (BODY-DESPLAZAMIENTO-ASISTENTE-1
+    ruling 2): the counts a proposal card may show -- `dias`, `primer_dia`, `ultimo_dia`, and
+    `dias_cambio`, the number of days whose four values would actually change. 0 when this is the
+    same file already imported, the same shortcut `importar` itself takes on a matching
+    computed_at -- never a figure. Raises ImportRefused exactly like `validar`."""
+    rows = validar(texto)
+    dias = sorted(r["day"] for r in rows)
+    existing = conn.execute(
+        "SELECT computed_at FROM fuente_importacion WHERE person_id = ? AND fuente = ?",
+        (person_id, FUENTE),
+    ).fetchone()
+    if existing is not None and existing["computed_at"] == rows[0]["computed_at"]:
+        return {"dias": len(rows), "primer_dia": dias[0], "ultimo_dia": dias[-1], "dias_cambio": 0}
+    actuales = valores_commute(conn, person_id, dias[0], dias[-1])
+    cambios = sum(1 for r in rows if any(actuales.get((r["day"], k)) != r[k] for k in COUNT_COLUMNS))
+    return {"dias": len(rows), "primer_dia": dias[0], "ultimo_dia": dias[-1], "dias_cambio": cambios}
 
 
 def main(argv: list[str] | None = None) -> int:

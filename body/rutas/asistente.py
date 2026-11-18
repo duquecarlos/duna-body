@@ -822,6 +822,27 @@ def _tarjeta_anotar_sesion(t: T, defs: dict, despues: dict, antes_json: dict | N
     return None, "\n".join(lineas), None
 
 
+def _tarjeta_importar_desplazamiento(t: T, defs: dict, despues: dict, antes_json: dict | None, conn,
+                                      person_id: int) -> tuple:
+    """BODY-DESPLAZAMIENTO-ASISTENTE-1 ruling 2: counts and dates only -- never a figure from the
+    file itself. Insert-shaped like `_tarjeta_confirmar_turnos`'s own whole-file summary, never an
+    antes/despues pair (the file itself is what changed, not one existing value).
+    BODY-DESPLAZAMIENTO-ASISTENTE-1-W ruling B: the day count and the changed-days count each agree
+    in number through `_frag`'s own `_one` sibling-key convention, and a one-day file names its
+    single date (`desplazamiento_dia_unico`) rather than a range of the same day to itself."""
+    desde = comun._short_date(t, date.fromisoformat(despues["primer_dia"]))
+    hasta = comun._short_date(t, date.fromisoformat(despues["ultimo_dia"]))
+    dias_txt = _frag(t, "asistente.propuesta.desplazamiento_dias_n", despues["dias"], n=t.num(despues["dias"]))
+    if despues["primer_dia"] == despues["ultimo_dia"]:
+        rango_txt = t("asistente.propuesta.desplazamiento_dia_unico", desde=desde)
+    else:
+        rango_txt = t("asistente.propuesta.desplazamiento_rango", desde=desde, hasta=hasta)
+    cambios_txt = _frag(t, "asistente.propuesta.desplazamiento_cambios_n", despues["dias_cambio"],
+                         n=t.num(despues["dias_cambio"]))
+    despues_txt = f"{dias_txt}, {rango_txt} ({cambios_txt})"
+    return None, despues_txt, None
+
+
 # One card builder per action (BODY-PROPUESTAS-TABLA-1), keyed exactly like body/agente/
 # propuestas.py's TABLA and body/agente/herramientas.py's `propuesta`-kind tools
 # (tests/test_propuestas_tabla.py enforces the three sets match). Each builder returns
@@ -856,6 +877,7 @@ TARJETAS = {
     "ampliar_plan": _tarjeta_ampliar_plan,
     "corregir_meta_plan": _tarjeta_corregir_meta_plan,
     "anotar_sesion": _tarjeta_anotar_sesion,
+    "importar_desplazamiento": _tarjeta_importar_desplazamiento,
 }
 
 

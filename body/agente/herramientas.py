@@ -52,6 +52,13 @@ with the usual. `kind` is any live `period_kind` row, never a hardcoded pair of 
 template pattern `registrar_medida`/`registrar_ingesta` use for their own enums. The person's own
 note is kept like `moment.note` and `ingesta.descripcion` -- never printed, logged or exported off
 the PC.
+
+`importar_desplazamiento` (BODY-DESPLAZAMIENTO-ASISTENTE-1) is the one `propuesta` tool not at
+`nivel` 'ninguno': it is gated at 'resumen', the same nivel_datos the commute data it imports is
+itself shown at (Tendencias' own `leer_tendencias`) -- counts and dates only, never a day's own
+figure, matching `ajustes.py`'s own definition of 'resumen'. It validates with the SAME
+`desplazamiento_import.validar` the device route (POST /api/desplazamiento) calls, before any
+proposal exists, so a refused file never becomes a card.
 """
 from __future__ import annotations
 
@@ -63,9 +70,9 @@ import threading
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .. import anatomia, catalogo_tendencias, comidas, compartir, cuenta, db, enlaces, entreno_historial, errores, \
-    experimentos, fechas, garmin_cuenta, goals, history, horizonte, household, nutriente_objetivo, profile, pull, \
-    readiness, shift_import, turnos_costo, tutoriales
+from .. import anatomia, catalogo_tendencias, comidas, compartir, cuenta, db, desplazamiento_import, enlaces, \
+    entreno_historial, errores, experimentos, fechas, garmin_cuenta, goals, history, horizonte, household, \
+    nutriente_objetivo, profile, pull, readiness, shift_import, turnos_costo, tutoriales
 from ..i18n import LANGS, T
 from . import ajustes, conversacion as agente_conversacion, propuestas
 
@@ -2655,6 +2662,52 @@ def _proponer_idioma(conn: sqlite3.Connection, person_id: int, conversacion_id: 
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
+_PARAM_IMPORTAR_DESPLAZAMIENTO = {
+    "type": "object",
+    "properties": {"contenido": {"type": "string"}},
+    "required": ["contenido"],
+    "additionalProperties": False,
+}
+
+
+def _importar_desplazamiento(conn: sqlite3.Connection, person_id: int, conversacion_id: int,
+                              contenido: str) -> dict:
+    """Proposes importing Personal's whole commute-summary CSV (BODY-DESPLAZAMIENTO-ASISTENTE-1
+    ruling 1): validated by the SAME `desplazamiento_import.validar` the device route (POST
+    /api/desplazamiento) itself calls, before any proposal exists -- a refused file answers only
+    its reason CLASS, never a figure or a date, and no proposal is created. The card (ruling 2)
+    names only counts and dates -- the day count, the first and last day, and how many days would
+    actually change, 0 when this is the file already imported, the same shortcut `importar` itself
+    takes on a matching computed_at. `antes` snapshots the current `fuente_importacion` row (or
+    None) and, unless this is that no-op, every (day, key) value the file would touch, so
+    `propuestas.deshacer` (ruling 3) can restore exactly what was there. Applying it calls the SAME
+    `desplazamiento_import.importar` the device route calls -- one import path, two doors."""
+    try:
+        vista = desplazamiento_import.preview(conn, person_id, contenido)
+    except desplazamiento_import.ImportRefused as e:
+        raise ToolError(e.motivo, codigo=e.motivo)
+    rows = desplazamiento_import.validar(contenido)
+    dias = sorted(r["day"] for r in rows)
+    fuente_fila = conn.execute(
+        "SELECT primer_dia, ultimo_dia, computed_at, dias, importado_at, ultimo_error, ultimo_error_at "
+        "FROM fuente_importacion WHERE person_id = ? AND fuente = ?",
+        (person_id, desplazamiento_import.FUENTE),
+    ).fetchone()
+    fuente_antes = dict(fuente_fila) if fuente_fila is not None else None
+    sin_cambios = fuente_antes is not None and fuente_antes["computed_at"] == rows[0]["computed_at"]
+    if sin_cambios:
+        valores = []
+    else:
+        actuales = desplazamiento_import.valores_commute(conn, person_id, dias[0], dias[-1])
+        valores = [{"day": r["day"], "key": k, "value": actuales.get((r["day"], k))}
+                   for r in rows for k in desplazamiento_import.COUNT_COLUMNS]
+    despues = {"contenido": contenido, "dias": vista["dias"], "primer_dia": vista["primer_dia"],
+               "ultimo_dia": vista["ultimo_dia"], "dias_cambio": vista["dias_cambio"]}
+    antes = {"fuente": fuente_antes, "sin_cambios": sin_cambios, "valores": valores}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "importar_desplazamiento", despues, antes=antes)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
 HERRAMIENTAS = [
     {"nombre": "leer_hoy", "tipo": "lectura", "nivel": "completo",
      "descripcion": "Qué tan listo estás hoy: el puntaje de preparación, los valores del día más reciente y "
@@ -2940,6 +2993,17 @@ HERRAMIENTAS = [
                      "vinculado (uno con hábito se marca con marcar_habito, que es su registro). No lo marca: "
                      "registra la propuesta para que la persona la apruebe en el chat.",
      "parametros": _PARAM_MARCAR_EXPERIMENTO, "funcion": _marcar_experimento},
+    {"nombre": "importar_desplazamiento", "tipo": "propuesta", "nivel": "resumen",
+     "descripcion": "Propone importar el archivo de resumen diario de desplazamiento que entrega el escritorio "
+                     "personal de la persona: un CSV con un día por fila (minutos y viajes en vehículo, minutos "
+                     "caminando, minutos en bicicleta). 'contenido' es el texto completo del archivo, sin "
+                     "cambios. Rechaza el archivo COMPLETO si tiene cualquier defecto (encabezado distinto, una "
+                     "fecha mala, un día repetido, un conteo no entero o negativo, un día futuro, o el archivo "
+                     "mismo demasiado grande) -- nombrando solo el motivo, nunca guarda nada en ese caso. No lo "
+                     "importa: registra la propuesta para que la persona la apruebe en el chat, mostrando solo "
+                     "cuántos días cubre, desde cuándo hasta cuándo, y cuántos días cambiarían (0 si es el mismo "
+                     "archivo que ya se importó).",
+     "parametros": _PARAM_IMPORTAR_DESPLAZAMIENTO, "funcion": _importar_desplazamiento},
 ]
 
 # BODY-ASISTENTE-CONFORMIDAD-1 ruling 2 (agent-capabilities-v1 section 5): the plan field is
