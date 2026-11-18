@@ -27027,5 +27027,9 @@ above is a count or an invented demo date, same convention as every prior ledger
 `tests/test_migraciones.py`: ruling A and its tests), `66d7b3f449fcca5e7b14e558a88859d6bb3a26db`
 (`body/i18n/es.json`, `body/i18n/en.json`, `body/rutas/asistente.py`,
 `tests/test_agente_conformidad.py`, `tests/test_desplazamiento_asistente.py`: rulings B and C,
-the census rows, and the drift-test date fix).
+the census rows, and the drift-test date fix),
+`570ec55f153dae2847bdf6fb8cd7446d3754fa39` (this ledger entry) -- merged
+`6982a5e367db6ff7c6bff8620757bf6371fd9c5f` (`--no-ff`, no conflicts). Post-merge smoke
+(`tests.test_desplazamiento_asistente tests.test_desplazamiento_import tests.test_migraciones
+tests.test_agente_registro tests.test_propuestas_tabla`): `Ran 98 tests ... OK`.
 
