@@ -301,6 +301,20 @@ figure.chart:focus-visible{outline:2px solid var(--focus);outline-offset:4px;bor
 .strip-legend .dot.off,.strip-legend .dot.none{background:var(--line)}
 .strip-legend .dot.other{background:var(--ink2)}
 
+/* BODY-HISTORIA-VIDA-2: a practice's own day grid reuses .strip/.strip-cell's 7-per-row layout
+   with its own three states -- p-hecho/p-no_hecho/p-sin_dato, never night/day/off (those carry a
+   shift-kind meaning here, not this). sin_dato stays muted, like .futuro above: an honest gap,
+   never styled as a failure. */
+.strip-cell.p-hecho{background:color-mix(in srgb,var(--ok) 16%,transparent)}
+.strip-cell.p-hecho::after{background:var(--ok)}
+.strip-cell.p-no_hecho{background:color-mix(in srgb,var(--danger) 10%,transparent)}
+.strip-cell.p-no_hecho::after{background:var(--danger)}
+.strip-cell.p-sin_dato{opacity:.45}
+.strip-cell.p-sin_dato::after{background:var(--line)}
+.strip-legend .dot.p-hecho{background:var(--ok)}
+.strip-legend .dot.p-no_hecho{background:var(--danger)}
+.strip-legend .dot.p-sin_dato{background:var(--line)}
+
 /* ---------- utilities (BODY-ESTILOS-1): every inline style="..." in a template or in server-built
    markup is replaced by one of these, so style-src can drop 'unsafe-inline'. Appended last on purpose:
    a plain class above (.q, .card, .read, .plan, .chev, .box, .legend i, table.parts td, .grid2 .card,

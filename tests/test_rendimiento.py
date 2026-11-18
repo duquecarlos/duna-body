@@ -89,6 +89,12 @@ client = TestClient(web.app, follow_redirects=False)
 # call, which would have cost a second statement for nothing. With this file's own _seed() fixture
 # (one active plan, the demo's own horizon), / measured 119 statements (118 before this file's own
 # extra manual-session fixture addition above), ceil(119 * 1.3) = 155.
+# BODY-HISTORIA-VIDA-2: /history's own ceiling, raised for the "Tus prácticas" section --
+# practicas.listar plus practicas.estado() for each active practica (demo's own fixture seeds two)
+# plus practicas.sugerencias(). Measured 44 statements (29 before), ceil(44 * 1.3) = 58.
+# /history/practica/{practica_id}'s own ceiling, new with this slice: one practicas.estado() call
+# against this file's own fixture (one of the demo's two seeded practicas, no linked habit yet).
+# Measured 17 statements, ceil(17 * 1.3) = 23.
 _CEILINGS = {
     "/": 155,
     "/ajustes/asistente": 16,
@@ -114,7 +120,8 @@ _CEILINGS = {
     "/goals/new": 20,
     "/goals/{goal_id}": 33,
     "/healthz": 3,
-    "/history": 29,
+    "/history": 58,
+    "/history/practica/{practica_id}": 23,  # BODY-HISTORIA-VIDA-2: measured 17, ceil(17 * 1.3) = 23
     "/how/{day}": 21,
     "/login": 3,
     "/login/cuenta/callback": 3,
@@ -206,9 +213,14 @@ def _seed(conn) -> dict:
     source_id = db.create_manual_session(conn, 1, day, None, "Fuerza")
     db.correct_exercise_set(conn, 1, "manual", source_id, 1, category="espalda", exercise="remo con barra")
     db.correct_exercise_set(conn, 1, "manual", source_id, 2, category="brazo", exercise="curl de biceps")
+    # BODY-HISTORIA-VIDA-2: demo._seed() already seeds two practicas (body/demo.py's own
+    # _seed_practicas, BODY-HISTORIA-VIDA-1 ruling 8) -- the first one picked here for
+    # /history/practica/{practica_id}'s own real path.
+    practica_id = conn.execute(
+        "SELECT id FROM practica WHERE person_id = 1 ORDER BY id LIMIT 1").fetchone()[0]
     conn.commit()
     return {"goal_id": goal_id, "day": day, "conversacion_id": conversacion_id, "experiment_id": experiment_id,
-            "source_id": source_id}
+            "source_id": source_id, "practica_id": practica_id}
 
 
 def _fill(path: str, ids: dict) -> str:

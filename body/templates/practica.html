@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}{{ practica.titulo }} · {{ t('app.name') }}{% endblock %}
+{% block main %}
+<div class="top">
+  <div>
+    <a class="btn" href="/history" aria-label="{{ t('practica.volver') }}">‹</a>
+    <h1 class="mt-6">{{ practica.titulo }}{% if practica.archivada %} <span class="chip off">{{ t('practica.archivada') }}</span>{% endif %}</h1>
+    <p class="sub">{{ practica.regla_texto }}</p>
+  </div>
+</div>
+<p class="note mt-0 mb-10">{{ practica.meta_dias }}</p>
+
+{% if practica.sin_datos %}
+<div class="card empty">{{ t('practica.sin_datos') }}</div>
+{% else %}
+<div class="card">
+  <p class="read mt-0 mb-4">{{ practica.racha_actual }}</p>
+  {% if practica.racha_mas_larga %}<p class="read m-0">{{ practica.racha_mas_larga }}</p>{% endif %}
+</div>
+
+{% if practica.dias %}
+<h2>{{ t('practica.dias_title') }}</h2>
+<div class="strip">
+  {% for c in practica.dias %}
+  {% if c.day %}<a class="strip-cell p-{{ c.estado }}" href="/day/{{ c.day }}" aria-label="{{ c.aria }}"></a>
+  {% else %}<span class="strip-cell" aria-hidden="true"></span>{% endif %}
+  {% endfor %}
+</div>
+<div class="strip-legend">
+  <span><span class="dot p-hecho"></span>{{ t('practica.leyenda_hecho') }}</span>
+  <span><span class="dot p-no_hecho"></span>{{ t('practica.leyenda_no_hecho') }}</span>
+  <span><span class="dot p-sin_dato"></span>{{ t('practica.leyenda_sin_dato') }}</span>
+</div>
+{% endif %}
+
+<h2>{{ t('practica.temporadas_title') }}</h2>
+{% if practica.temporadas %}
+<div class="card">
+  {% for tp in practica.temporadas %}
+  <p class="read {{ 'mt-0' if loop.first else 'mt-10' }} mb-0">{{ tp.resumen }}</p>
+  {% if tp.contexto %}<p class="note mt-2 mb-0">{{ tp.contexto }}</p>{% endif %}
+  <p class="note mt-2 mb-0">
+    <a class="taplink" href="/day/{{ tp.primer_dia }}">{{ tp.primer_dia }}</a> · <a class="taplink" href="/day/{{ tp.ultimo_dia }}">{{ tp.ultimo_dia }}</a>
+  </p>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card empty">{{ practica.sin_temporadas }}</div>
+{% endif %}
+
+{% if practica.baseline %}
+<h2>{{ t('practica.baseline_title') }}</h2>
+<div class="card"><p class="read m-0">{{ practica.baseline }}</p></div>
+{% endif %}
+{% endif %}
+
+{% if not practica.archivada %}
+<form method="post" action="/history/practica/{{ practica.id }}/archive" class="mt-10">
+  <button type="submit" class="btn w-100">{{ t('practica.archivar_btn') }}</button>
+</form>
+{% endif %}
+{% endblock %}
