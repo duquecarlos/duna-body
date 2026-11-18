@@ -317,6 +317,16 @@ figure.chart:focus-visible{outline:2px solid var(--focus);outline-offset:4px;bor
 .strip-legend .dot.p-no_hecho{background:var(--muted)}
 .strip-legend .dot.p-sin_dato{background:var(--line)}
 
+/* BODY-HISTORIA-VIDA-4 ruling 2: the day grid's own leading pad cell (a short first week) is drawn
+   as no cell at all -- no background, no border, not even the base .strip-cell::after line. */
+.strip-cell.pad{background:transparent}
+.strip-cell.pad::after{background:transparent}
+
+/* BODY-HISTORIA-VIDA-4 ruling 2: a weekday-initial header row above the day grid, same 7-per-row
+   grid as .strip so each letter sits over its own column; purely visual, so aria-hidden. */
+.strip-header{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;margin:0 0 2px;
+  font-size:11px;font-weight:600;color:var(--muted);text-align:center}
+
 /* BODY-HISTORIA-VIDA-3 ruling 1: the drill-down's own MAIN visual -- the whole history in weeks,
    13 per row (a quarter), a cell's fill proportional to hecho/meta_dias_semana. w-gap (too little
    watch coverage that week to say whether the goal was met) is a dashed outline, never a colour of
@@ -331,6 +341,14 @@ figure.chart:focus-visible{outline:2px solid var(--focus);outline-offset:4px;bor
 .week-cell.w-met{background:var(--ok);border-color:transparent}
 .week-cell.w-gap{background:transparent;border-style:dashed}
 .week-cell.w-season{box-shadow:inset 0 0 0 1px var(--ink)}
+
+/* BODY-HISTORIA-VIDA-4 ruling 3: the weekly strip's own legend, same four states as the week-cell
+   rules above plus a fifth, outlined swatch for a season -- shown only when the practice has one. */
+.strip-legend .dot.w-met{background:var(--ok)}
+.strip-legend .dot.w-partial{background:color-mix(in srgb,var(--ok) 40%,transparent)}
+.strip-legend .dot.w-empty{background:transparent;border:1px solid var(--line)}
+.strip-legend .dot.w-gap{background:transparent;border:1px dashed var(--line)}
+.strip-legend .dot.w-season{background:transparent;border:1px solid var(--ink)}
 
 /* ---------- utilities (BODY-ESTILOS-1): every inline style="..." in a template or in server-built
    markup is replaced by one of these, so style-src can drop 'unsafe-inline'. Appended last on purpose:

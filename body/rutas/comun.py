@@ -151,6 +151,13 @@ def _short_date(t: T, d: date) -> str:
     return f"{d.day} {t('date.months')[d.month - 1][:3]} {d.year}"
 
 
+def _week_letters(t: T) -> list[str]:
+    """Monday-first weekday initials, read off the SAME t('date.days') list the habit week strip
+    (metas.py _week_strip) and the practice day grid header (historial.py) both need -- never a
+    second, hand-typed letter list (BODY-HISTORIA-VIDA-4 ruling 2)."""
+    return [name[:1].upper() for name in t("date.days")]
+
+
 UNITS = {"bpm": "unit.bpm", "ms": "unit.ms", "pts": "unit.pts", "steps": "unit.steps", "kcal": "unit.kcal",
          "brpm": "unit.brpm", "ml/kg/min": "unit.ml_kg_min", "years": "unit.years", "%": "unit.percent",
          "of5": "unit.of5"}

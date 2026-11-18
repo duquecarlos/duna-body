@@ -94,11 +94,14 @@ def _week_checks(conn, habit_ids: list[int], person_id: int, monday: date, sunda
 
 def _week_strip(t: T, monday: date, today: date, done_days: set[str]) -> list[dict]:
     """Ruling 1: Monday..Sunday day cells for a weekly habit's own progress line. The visible
-    letter reuses t('date.days') -- en 'M T W T F S S', es whatever that same list's own initials
-    give -- never a second, hand-typed letter list. A done=1 check always wins the cell's state,
-    even on today or (inside the one-day tolerance) a near-future day; otherwise today/future/past
-    decide it. The accessible text names the day and the state in words, never just the letter."""
+    letter comes from comun._week_letters (BODY-HISTORIA-VIDA-4 ruling 2: shared with the practice
+    day grid header), itself reading t('date.days') -- en 'M T W T F S S', es whatever that same
+    list's own initials give -- never a second, hand-typed letter list. A done=1 check always wins
+    the cell's state, even on today or (inside the one-day tolerance) a near-future day; otherwise
+    today/future/past decide it. The accessible text names the day and the state in words, never
+    just the letter."""
     names = t("date.days")
+    letters = comun._week_letters(t)
     state_words = {
         "hecho": t("goals.week_strip.done"),
         "hoy": t("goals.week_strip.today"),
@@ -117,7 +120,7 @@ def _week_strip(t: T, monday: date, today: date, done_days: set[str]) -> list[di
             state = "futuro"
         else:
             state = "pasado"
-        cells.append({"letter": name[:1].upper(), "state": state,
+        cells.append({"letter": letters[i], "state": state,
                       "aria": t("goals.week_strip.cell_aria", day=name, state=state_words[state])})
     return cells
 
