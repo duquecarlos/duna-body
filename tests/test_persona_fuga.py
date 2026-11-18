@@ -422,6 +422,7 @@ EXPECTED_GET_PATHS = sorted([
     "/api/asistente/mcp/herramientas", "/api/hogar/manana", "/api/hogar/serie", "/api/hogar/turnos",
     "/api/hogar/herramientas",
     "/healthz", "/ayuda", "/garmin", "/garmin/estado-vivo", "/history",
+    "/history/practica/{practica_id}",  # BODY-HISTORIA-VIDA-2
     "/privacidad/consentimiento", "/privacidad", "/privacidad/exportar",
     "/sw.js", "/login", "/login/cuenta/start", "/login/cuenta/callback",
     "/trends", "/shifts", "/shifts/como", "/shifts/patron",
