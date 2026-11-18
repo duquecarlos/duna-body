@@ -1049,6 +1049,25 @@ CREATE TABLE IF NOT EXISTS escritura_externa (
     creada_en    TEXT NOT NULL,
     PRIMARY KEY (person_id, origen, ref)
 );
+
+-- BODY-HISTORIA-VIDA-1 (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling A/B): a practice is what the watch
+-- data SHOWS the person did, kept apart from a habit (what they COMMIT to) -- body/practicas.py is
+-- the only module that reads or writes this table. No CHECK on `fuente` or `origen` (ruling B: a
+-- CHECK enumerating kinds costs a table rebuild per new kind, propuesta_agente.accion needed
+-- fourteen) -- both are validated in Python, in body/practicas.py. `titulo` is the person's own
+-- words, or the assistant's, proposed and accepted -- never a hardcoded habit name.
+CREATE TABLE IF NOT EXISTS practica (
+    id               INTEGER PRIMARY KEY,
+    person_id        INTEGER NOT NULL REFERENCES person(id),
+    titulo           TEXT NOT NULL,
+    fuente           TEXT NOT NULL,
+    regla_json       TEXT NOT NULL,
+    meta_dias_semana INTEGER NOT NULL DEFAULT 5,
+    origen           TEXT NOT NULL,
+    creada_en        TEXT NOT NULL,
+    archivada_en     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_practica_person ON practica(person_id);
 """
 
 # (key, label, unit, better, kind). 'estimated' = computed by Body, shown with «≈» and "how I calculate it".

@@ -29,7 +29,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import config, cuenta, db, demo, dispositivo, fechas, garmin_cuenta, goals, identity, web
+from body import config, cuenta, db, demo, dispositivo, fechas, garmin_cuenta, goals, identity, practicas, web
 from body.agente import conversacion as agente_conversacion
 from body.rutas import comun as web_comun
 from body.rutas import tendencias as web_tendencias
@@ -53,7 +53,9 @@ client = TestClient(web.app, follow_redirects=False)
 # ~30% margin rule), and /, remeasured after BODY-NUTRIENTE-OBJETIVO-1 added the "Metas de
 # nutrientes" card's own read (one vigentes-targets query, plus -- only once a per_kg target is
 # live -- a weight lookup and two batched totals/counts queries) --
-# each in that slice's own ledger entry.
+# each in that slice's own ledger entry. BODY-HISTORIA-VIDA-1 ruling 8: /privacidad/exportar's
+# ceiling, remeasured after this slice's own practica export query (one extra SELECT) -- 59
+# measured, ceil(59 * 1.3) = 77.
 # BODY-TENDENCIAS-RACHA-GRAFICO-1-M2: /trends' own ceiling, raised for the strength-session study
 # card (BODY-TENDENCIAS-RACHA-GRAFICO-1-M's 3 statements, a fixed cost independent of history
 # length -- tests/test_tendencias_racha.py's own guard). Measured 18 statements without the card
@@ -119,7 +121,7 @@ _CEILINGS = {
     "/login/cuenta/start": 3,
     "/privacidad": 16,
     "/privacidad/consentimiento": 9,
-    "/privacidad/exportar": 58,
+    "/privacidad/exportar": 77,
     "/settings": 24,
     "/shifts": 42,
     "/shifts/como": 20,
@@ -606,6 +608,46 @@ class PlanHoyCostIndependentOfSpanTest(unittest.TestCase):
             una["statements"], ocho["statements"],
             f"8 weekly target lines cost more statements than 1 on \"/\": "
             f"{una['statements']} vs {ocho['statements']}")
+
+
+class PracticasDiasEstadoCostTest(unittest.TestCase):
+    """BODY-HISTORIA-VIDA-1 ruling 3: `practicas.dias_estado`'s own cost is ONE SELECT per source
+    family for the whole range (the `entreno_racha.sesiones_fuerza` shape) -- never one per day or
+    per week, so it costs the SAME whether the range spans 30 days or 300."""
+
+    def _contar(self, conn, llamada) -> int:
+        """`contar_sql` (tests/_rutas.py) only traces a connection opened AFTER it starts -- this
+        file's own fixture connection is already open, so the trace callback is applied directly
+        to it, the same way tests/test_hogar_feed.py's `_contar_statements` does."""
+        contador = {"n": 0}
+        conn.set_trace_callback(lambda sql: contador.__setitem__("n", contador["n"] + 1))
+        try:
+            llamada()
+        finally:
+            conn.set_trace_callback(None)
+        return contador["n"]
+
+    def test_cost_independent_of_range_length(self):
+        conn = _reset_db(self)
+        base = date(2026, 1, 5)
+        for i in range(0, 300, 3):
+            conn.execute(
+                "INSERT INTO activity (person_id, source_id, day, type, duration_s, source) "
+                "VALUES (1, ?, ?, 'running', 1800, 'garmin')",
+                (f"zz-a{i}", (base + timedelta(i)).isoformat()),
+            )
+        conn.commit()
+        regla = {"tipos": ["running"]}
+        corto = self._contar(conn, lambda: practicas.dias_estado(
+            conn, 1, "actividad", regla, base, base + timedelta(29)))
+        largo = self._contar(conn, lambda: practicas.dias_estado(
+            conn, 1, "actividad", regla, base, base + timedelta(299)))
+        self.assertEqual(
+            corto, largo,
+            f"a 300-day range cost more statements than a 30-day one: {corto} vs {largo}")
+        # The actividad family's own ceiling: one daily_metric SELECT plus one activity SELECT,
+        # ceil(2 * 1.3) = 3 -- the same margin rule every other ceiling in this file carries.
+        self.assertLessEqual(largo, 3, f"dias_estado cost {largo} statements, over its ceiling of 3")
 
 
 if __name__ == "__main__":

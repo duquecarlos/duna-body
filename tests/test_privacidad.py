@@ -15,7 +15,9 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from fastapi.testclient import TestClient
 
 from body import comida_compartida as cc
-from body import compartir, config, cuenta, db, dispositivo, goals, identity, noche_inusual, privacidad, web
+from body import (
+    compartir, config, cuenta, db, dispositivo, goals, identity, noche_inusual, practicas, privacidad, web,
+)
 from body.agente import conversacion as agente_conversacion
 from body.agente import propuestas as agente_propuestas
 from body.agente import uso as agente_uso
@@ -1308,6 +1310,41 @@ class MomentoComidaExportDeleteTest(unittest.TestCase):
         privacidad.delete_person(self.conn, 1)
         self.assertEqual(
             self.conn.execute("SELECT COUNT(*) FROM momento_comida WHERE person_id = 1").fetchone()[0], 0
+        )
+
+
+class PracticaExportDeleteTest(unittest.TestCase):
+    """BODY-HISTORIA-VIDA-1 ruling 8: a person's own practices are fully exported and deleted,
+    the same FULLY_HANDLED_TABLES membership every other person-owned table already has."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "practica.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+        self.pid = practicas.crear(self.conn, 1, "ZZ-PRACTICA", "actividad", {"tipos": ["running"]})
+        self.conn.commit()
+
+    def test_is_a_fully_handled_table(self):
+        self.assertIn("practica", privacidad.FULLY_HANDLED_TABLES)
+
+    def test_export_includes_the_row(self):
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(len(data["practicas"]), 1)
+        self.assertEqual(data["practicas"][0]["titulo"], "ZZ-PRACTICA")
+
+    def test_export_of_another_person_sees_nothing(self):
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 2)
+        self.assertEqual(data["practicas"], [])
+
+    def test_delete_all_removes_the_row(self):
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM practica WHERE person_id = 1").fetchone()[0], 0
         )
 
 

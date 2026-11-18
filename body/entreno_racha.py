@@ -21,7 +21,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import date, timedelta
 
-from .fechas import lunes_de
+from .fechas import lunes_de, rachas_de_estados
 from .turnos_costo import bloques_noche
 
 TIPOS_FUERZA = {"strength_training"}
@@ -148,17 +148,13 @@ def racha_semanal(conn: sqlite3.Connection, person_id: int, *, piso: int | None 
     if piso is None:
         return out
 
-    runs: list[tuple[int, int]] = []
-    inicio_idx = None
-    for i, s in enumerate(semanas):
-        if s["alcanza"]:
-            if inicio_idx is None:
-                inicio_idx = i
-        elif inicio_idx is not None:
-            runs.append((inicio_idx, i - 1))
-            inicio_idx = None
-    if inicio_idx is not None:
-        runs.append((inicio_idx, len(semanas) - 1))
+    # BODY-HISTORIA-VIDA-1 ruling 4: the run-detection itself now lives in fechas.rachas_de_estados
+    # (shared with body/practicas.py) -- bridge_max=0 here, so it behaves exactly as this loop
+    # always has: a week that does not "alcanza" ends the run outright, nothing bridged.
+    runs: list[tuple[int, int]] = [
+        (r["inicio"], r["fin"])
+        for r in rachas_de_estados(["on" if s["alcanza"] else "off" for s in semanas])
+    ]
 
     rachas = []
     for inicio_idx, fin_idx in runs:

@@ -27033,3 +27033,173 @@ the census rows, and the drift-test date fix),
 (`tests.test_desplazamiento_asistente tests.test_desplazamiento_import tests.test_migraciones
 tests.test_agente_registro tests.test_propuestas_tabla`): `Ran 98 tests ... OK`.
 
+## BODY-HISTORIA-VIDA-1 -- the `practica` table: what the watch data shows, kept apart from a habit (2026-11-17)
+
+ORCH-CARLOS-DELEGATES-TIER-1-1, on BODY-HISTORIA-VIDA-1-INV's own finding: a **habit**
+(`goals.add_habit`) is what a person COMMITS to and checks off; nothing in this app answered the
+other half of the question Carlos's "human body" idea keeps coming back to -- what did the data
+itself show he actually did, streaks and seasons included, independent of whether he ever checked
+a box. A **practice** is that other half: a rule over the person's own Garmin/self data
+(an activity type, a metric threshold, a sleep-timing rule), computed on read, never on a commit.
+This slice built the foundation only -- the table, the module, the shared run-detection helper, and
+every census a new person-owned table must join (ruling 8). The screen, the two assistant tools
+(`leer_practicas`, `proponer_practica`) and linking a habit back to a practice are
+BODY-HISTORIA-VIDA-2 (named in `open_followups` below).
+
+**Ruling A/B -- `practica`, additive, no CHECK on `fuente`/`origen`:** `body/db.py:1051-1070`, a new
+table in `SCHEMA` (not `_migrate()` -- a fresh database gets it the same way every existing table
+arrives) plus `idx_practica_person`. No `CHECK` enumerates `fuente` or `origen` (ruling B: a CHECK
+widened per new kind costs a table rebuild every time -- `propuesta_agente.accion` needed fourteen
+such rebuilds before this slice); both are validated in Python instead, in
+`body/practicas.py`'s `FUENTES`/`ORIGENES` and the `REASON_CODES` string-return convention
+(`recuperacion.py`, `turno_fc.py`, `turnos_costo.py`, `sueno_fc.py` all already use it, never
+raising on bad input). `titulo` is the person's own words, or the assistant's own proposal once
+accepted -- never a hardcoded habit name, so the table serves any practice, not six fixed ones.
+Tests: `PracticaTableMigrationTest` and `PracticaFreshDbTest` (`tests/test_migraciones.py`, mirroring
+`EscrituraExternaTableMigrationTest`'s own pattern -- `DROP TABLE practica` then `db.init()`
+recreates it empty and idempotent, and a fresh database already has it).
+
+**Ruling 2 -- three FUENTES, each a rule shape and a validator, never a free-text rule:**
+`body/practicas.py:62-166` -- `actividad` (`{"tipos": [...], "min_minutos"?}`), `metrica_umbral`
+(`{"metric_key", "op": ">="|"<=", "valor"}`), `sueno_horario`
+(`{"campo": "inicio"|"fin", "op": "antes"|"despues", "hora": "HH:MM"}`). `crear`/`archivar`/`listar`
+(`:117-166`) are the only writers -- `archivar` sets `archivada_en`, never deletes.
+`ValidacionActividadTest`, `ValidacionMetricaUmbralTest`, `ValidacionSuenoHorarioTest`,
+`ValidacionGeneralTest`, `PersonScopeTest`, `ArchivarTest` (`tests/test_practicas.py`) cover every
+reason code and that `person_id` scopes every read and write.
+
+**Ruling 3 -- three states a day, one SELECT per source family for the whole range, never per day:**
+`body/practicas.py:169-277` -- `hecho` / `no_hecho` / `sin_dato` (`_estados_de`, `:180-189`); a day
+with no watch/self data at all (a commute day not yet imported, a sensor off) is `sin_dato`, never
+counting against the person. "Has data" per family (`:192-262`): `actividad` = any
+`daily_metric(source='garmin')` row OR any `activity` row for that day, union of both;
+`metrica_umbral` = any `daily_metric` row for that key, any source; `sueno_horario` = any
+`sleep_session` row. `_calcular_actividad` (`:192-218`) applies the SAME linked-manual-half drop
+`history.training` already uses (`history.py:135-140`, BODY-ENTRENO-VINCULO-1): a manual row
+linked to a watch row via `vinculo_manual` is dropped from `hecho`, counted only through its watch
+half, so a linked pair is never double-counted and never silently miscounts as `no_hecho`.
+`EstadosActividadTest` (including `test_linked_manual_half_is_dropped`), `EstadosMetricaUmbralTest`,
+`EstadosSuenoHorarioTest` (`tests/test_practicas.py`) cover all three. Cost measured directly
+(`tests/test_rendimiento.py`'s `PracticasDiasEstadoCostTest`, `set_trace_callback` on an open
+connection, the same technique `tests/test_hogar_feed.py` uses): `dias_estado` costs exactly 2
+statements for a 30-day range and the SAME 2 for a 300-day range -- never one query per day.
+
+**Ruling 4 -- day-level racha with bridging, weekly rollup, temporada, through one shared helper:**
+`fechas.rachas_de_estados` (`body/fechas.py:33-71`) is the run-detection
+`entreno_racha.racha_semanal` has always done inline (consecutive weeks meeting its own floor),
+generalised rather than copied a second time: consecutive runs of an `on` state, bridging up to
+`bridge_max` consecutive `bridge` states inside a run without breaking or extending it, each run
+`{"inicio", "fin", "puentes", "abierta"}`. `entreno_racha.py:151-158` now calls it with
+`bridge_max=0` (behaves exactly as its own old inline loop always did -- verified by running
+`tests.test_entreno_racha` and `tests.test_tendencias_racha` unchanged, both still green, byte-
+identical output). `body/practicas.py`'s own two callers: `_rachas_dia` (`:311-323`, days,
+`on="hecho"`, `bridge="sin_dato"`, `bridge_max=MODELO["PUENTE_SIN_DATO"]=2`) and
+`_temporadas_crudas` (`:349-369`, weeks, `on="cumple"`, `bridge="semana_sin_dato"`,
+`bridge_max=1`, requiring >= `MODELO["MIN_SEMANAS_TEMPORADA"]=3` consecutive weeks). A week needs
+>= `MODELO["MIN_DIAS_CON_DATO"]=4` days with data (hecho+no_hecho) to be judged `cumple` at all --
+fewer than that and it is `semana_sin_dato`, bridged like a `sin_dato` day, never counted as a
+miss. `RachaDiaTest` (a bridged 2-day gap stays one streak, a 3-day gap or any `no_hecho` breaks
+it immediately) and `SemanaYTemporadaTest` (the `semana_sin_dato` floor, a bridged temporada) cover
+both callers.
+
+**Ruling 5 -- context, on read, never stored, baseline always the whole history:** `_contexto`
+(`body/practicas.py:389-399`) reads shift-kind counts (`_turnos_en_rango`, first-wins per day, the
+same resolution `history.by_shift` already applies) and mean `sleep_minutes`/`readiness`
+(`CONTEXTO_KEYS`) over a range, returning `None` for a key with no rows rather than a false zero.
+Every `temporada` carries its own `contexto` over its own span; `estado()`'s own `baseline` is
+ALWAYS computed over the practice's true whole-history range (`primero`/`ultimo` from
+`_primero_ultimo_dato`), even when a caller passes a narrower `desde`/`hasta` -- a context key is
+only ever `None` for genuine absence, never for a caller's own override. `ContextoTest` covers
+both the `None`-key case and a populated baseline.
+
+**Ruling 7 -- one entry point, default range = whole history, nothing stored:** `estado()`
+(`body/practicas.py:404-450`) returns the definition, per-day states, weekly rollup, day-level
+racha_actual/racha_mas_larga/n_rachas, temporadas with context, the whole-history baseline, and
+`MODELO["version"]` -- or a `None`-shaped result when the practice has no data at all yet, or
+plain `None` when the id does not belong to this person. Nothing it computes is ever written back;
+every number is live on every call, versioned so a later model change never silently reinterprets
+an old one.
+
+**Ruling 6 -- suggestions, as data, never auto-created:** `sugerencias()` (`:455-499`) offers any
+`activity.type` (after the same linked-half drop) or `walking_minutes`/`cycling_minutes` day
+present in >= `MODELO["MIN_SEMANAS_SUGERENCIA"]=8` distinct weeks, as a ready-to-create
+`{fuente, regla, clave, semanas}` -- never a title, never written -- omitting anything already
+covered by an active practica of the exact same `(fuente, regla)` pair. `SugerenciasTest` covers
+the 7-vs-8-week boundary and the omission.
+
+**MODELO, verbatim** (`body/practicas.py:30-44`):
+
+    MODELO = {
+        "version": "practicas-v1",
+        "PUENTE_SIN_DATO": 2,
+        "MIN_DIAS_CON_DATO": 4,
+        "MIN_SEMANAS_TEMPORADA": 3,
+        "MIN_SEMANAS_SUGERENCIA": 8,
+    }
+
+**Ruling 8 -- wired into every place a person's data is enumerated:** `body/privacidad.py`
+(`practica` added to `FULLY_HANDLED_TABLES`; export returns the person's own
+id/titulo/fuente/regla_json/meta_dias_semana/origen/creada_en/archivada_en rows, never the derived
+math computed on read; delete removes them, no FK points at `practica` yet) --
+`PracticaExportDeleteTest` (`tests/test_privacidad.py`). `body/mudanza.py`'s `REGISTRY` gains
+`TableSpec("practica", match_cols=None)` (matched by full row content, moved like any other of a
+person's own rows) -- `PracticaMudanzaTest` (`tests/test_mudanza.py`, insert then re-run dedup).
+`body/persona_garmin.py`'s `PERSONA_TABLAS` gains `("practica", None)` (a `sugerida`-origin row
+still makes a person look real, refusing `relinkar` the same as any other authored row) --
+`RelinkarRefusalTest.test_source_with_a_suggested_practica_refused_naming_table_and_count`
+(`tests/test_persona_garmin.py`). `body/demo.py` seeds two invented practices on the demo person
+(`_seed_practicas`, one `actividad` and one `metrica_umbral`, titles only, both languages) so the
+demo home shows the shape; `_seed()`'s returned counts gain `"practicas": 2`.
+`tests/test_persona_fuga.py`'s cross-person leak census gains a practica row for both invented
+people A and B (no marker added to `_markers_of`'s active list -- no screen or tool renders
+`titulo` yet, the same convention `turno_fc`/`recuperacion_actividad`/`momento_comida` already
+use) -- `TableCensusTest.test_every_person_table_is_seeded_or_explained` stays green rather than
+silently passing on an unseeded table.
+
+**One regression caught and fixed, not a ruling:** ruling 8's export query added one `SELECT` to
+`/privacidad/exportar`, pushing its measured statement count from 58 to 59 and failing
+`tests/test_rendimiento.py`'s `RouteCostCeilingTest` ceiling. Raised to `ceil(59 * 1.3) = 77`
+(`tests/test_rendimiento.py:122`, comment at `:51-53` updated), the same ~30% margin rule every
+other ceiling in that file already follows -- not a new rule, a measurement.
+
+**The gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as 11 sequential
+alphabetical chunks of the 205 `tests/test_*.py` modules (about 20 per chunk) on the final tree,
+each read from the process (chunk 3 exceeded the 590s foreground cap and was moved to the
+background by the harness; its own result was read from its output file, not inferred):
+
+    chunk 0  (test_accesibilidad .. test_baselines):                       Ran 381 tests ... OK
+    chunk 1  (test_baselines_lote .. test_despertar):                      Ran 428 tests ... OK
+    chunk 2  (test_desplazamiento_asistente .. test_experimentos_esquema): Ran 402 tests ... OK
+    chunk 3  (test_experimentos_intradia .. test_guardia_parches):         Ran 363 tests ... OK
+    chunk 4  (test_habito_veces_1 .. test_hoy_escritorio):                 Ran 611 tests ... OK
+    chunk 5  (test_hoy_turno .. test_mock_r2_hoy):                         Ran 397 tests ... OK
+    chunk 6  (test_modelos_estandar_1 .. test_plan_propuestas):            Ran 514 tests ... OK
+    chunk 7  (test_plan_sesion_hecha .. test_recuperacion_pantallas):      Ran 432 tests ... OK
+    chunk 8  (test_registro_tu .. test_tendencias_kpi):                    Ran 366 tests ... OK
+    chunk 9  (test_tendencias_patron .. test_ventana_comida):              Ran 474 tests ... OK
+    chunk 10 (test_vida_dia .. test_web_entry):                            Ran 84 tests ... OK
+
+**Reconciliation:** sum of the 11 chunks = 381+428+402+363+611+397+514+432+366+474+84 = **4452**,
+equal to a separate whole-suite collect-only count (`unittest.TestLoader().discover('tests',
+top_level_dir='.')`, counted without running) taken before the chunked run: **4452**. Exact match,
+every chunk OK, no skips beyond the two pre-existing ones already named in earlier ledger entries
+(one `skipped`, two `expected failures`, both inside chunk 0, neither touched by this slice). No
+password, token, session secret, device key or health/location figure was read, printed, or
+written anywhere in this slice's own work or in the gate's own stdout (every log line above is a
+count or an invented demo date, same convention as every prior ledger entry); no network call was
+made (the Garmin adapter was never imported by any new or touched module).
+
+**Open follow-up, named here so it is not forgotten:** BODY-HISTORIA-VIDA-2 -- the "Tus prácticas"
+screen section, the `leer_practicas` and `proponer_practica` assistant tools (`proponer_practica`
+needs `propuesta_agente.accion` widened, Tier 1, per BODY-PROPUESTA-ES-TIER1-1), and linking a
+habit back to a practice so a person can "bring a habit back" once the data shows it slipped.
+
+**Commits** `04365127efe73fb61cfb0ca3fe75e3a5326e310b` (`body/db.py`, `body/fechas.py`,
+`body/entreno_racha.py`, `body/practicas.py`, `tests/test_practicas.py`,
+`tests/test_migraciones.py`: rulings A/B, 4, the shared helper, and rulings 2-7), `6c4dc185b90115a006d72243102918b7e96784ac`
+(`tests/test_rendimiento.py`: the `dias_estado` statement-count ceiling), `9e5f30657857f8758e393067870112a5712a23dc`
+(`body/privacidad.py`, `body/mudanza.py`, `body/persona_garmin.py`, `body/demo.py`,
+`tests/test_privacidad.py`, `tests/test_mudanza.py`, `tests/test_persona_garmin.py`,
+`tests/test_persona_fuga.py`: ruling 8), `341239cdebeb58e3196ff99a70a11d24bc201756`
+(`tests/test_rendimiento.py`: the `/privacidad/exportar` ceiling fix).
+

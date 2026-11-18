@@ -1222,6 +1222,23 @@ _PLAN_TEXTOS = {
 # horizonte._minutos_despues_mediodia's own convention: 23:00 -> ((23-12) % 24) * 60 = 660.
 _PLAN_HORA_ACOSTARSE_VALOR = 660.0
 
+# BODY-HISTORIA-VIDA-1 ruling 8: two invented practices on the demo person, one `actividad` and
+# one `metrica_umbral`, so the demo home shows the shape -- titles only, no computed state
+# (practicas.estado's own job on read, BODY-HISTORIA-VIDA-2's screen).
+_PRACTICA_TITULOS = {
+    "es": {"correr": "Correr", "pasos": "Caminar bastante"},
+    "en": {"correr": "Running", "pasos": "Walk a lot"},
+}
+
+
+def _seed_practicas(conn, practicas, person_id: int, idioma: str) -> int:
+    txt = _PRACTICA_TITULOS[idioma]
+    practicas.crear(conn, person_id, txt["correr"], "actividad", {"tipos": ["running"]})
+    practicas.crear(conn, person_id, txt["pasos"], "metrica_umbral",
+                     {"metric_key": "steps", "op": ">=", "valor": 8000})
+    conn.commit()
+    return 2
+
 
 def _seed_plan_horizonte(conn, db, goals, person_id: int, anchor: date, anchor_monday: date,
                           idioma: str) -> dict:
@@ -1468,7 +1485,7 @@ def _seed_today_stress(conn, db, baselines, anchor: date, person_id: int) -> int
 
 def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[str, int]:
     from . import (baselines, comida_compartida, compartir, db, desplazamiento_import, enlaces, goals,
-                   recuperacion, shift_import, sueno_fc, turno_fc, turnos_costo)
+                   practicas, recuperacion, shift_import, sueno_fc, turno_fc, turnos_costo)
 
     person_id = _seed_person(conn, db, idioma)
 
@@ -1516,6 +1533,7 @@ def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[st
         conn, db, goals, rng, all_days, anchor, first_monday, anchor_monday, person_id, idioma)
 
     plan_horizonte = _seed_plan_horizonte(conn, db, goals, person_id, anchor, anchor_monday, idioma)
+    practicas_count = _seed_practicas(conn, practicas, person_id, idioma)
 
     ana_metric_rows, hogar_checks, hogar_habit_checks, comidas_compartidas_pendientes = _seed_household(
         conn, db, goals, enlaces, compartir, comida_compartida, rng, all_days, anchor, first_monday,
@@ -1539,6 +1557,7 @@ def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[st
         "turno_fc_turnos": turno_fc_turnos, "sueno_fc_noches": sueno_fc_noches,
         "planes_hoy": planes_hoy, "desplazamiento_dias": desplazamiento_dias,
         "comidas_compartidas_pendientes": comidas_compartidas_pendientes,
+        "practicas": practicas_count,
     }
 
 

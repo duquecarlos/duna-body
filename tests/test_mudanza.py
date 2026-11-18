@@ -896,6 +896,45 @@ class MomentoComidaMudanzaTest(MudanzaTestCase):
         self.assertEqual(by_name["momento_comida"].counts.insert, 0)
 
 
+class PracticaMudanzaTest(MudanzaTestCase):
+    """BODY-HISTORIA-VIDA-1 ruling 8: a practice moves with the rest of the person's data, matched
+    by its own full row content (no natural key) -- a second import of the same source never
+    duplicates it."""
+
+    def test_row_moves_and_a_second_import_does_not_duplicate_it(self):
+        source = self._new_source()
+        with source:
+            source.execute(
+                "INSERT INTO practica (person_id, titulo, fuente, regla_json, meta_dias_semana, "
+                "origen, creada_en) VALUES (?, 'Correr', 'actividad', '{\"tipos\": [\"running\"]}', "
+                "5, 'persona', '2026-10-01T00:00:00+00:00')", (db.DEFAULT_PERSON_ID,))
+        source.close()
+
+        reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok)
+        by_name = self._reports_by_name(reports)
+        self.assertEqual(by_name["practica"].counts.insert, 1)
+
+        dest = db.connect()
+        row = dest.execute(
+            "SELECT titulo, fuente, regla_json, meta_dias_semana, origen, archivada_en FROM practica"
+        ).fetchone()
+        self.assertEqual(
+            (row["titulo"], row["fuente"], row["regla_json"], row["meta_dias_semana"], row["origen"],
+             row["archivada_en"]),
+            ("Correr", "actividad", '{"tipos": ["running"]}', 5, "persona", None),
+        )
+        dest.close()
+
+        reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok)
+        by_name = self._reports_by_name(reports)
+        self.assertEqual(by_name["practica"].counts.insert, 0)
+        dest = db.connect()
+        self.assertEqual(dest.execute("SELECT COUNT(*) FROM practica").fetchone()[0], 1)
+        dest.close()
+
+
 class SelfRefRoundTripTest(MudanzaTestCase):
     """BODY-PLAN-ESQUEMA-1-R: the plan's own parts move with the person -- goal's self-reference
     (horizonte_goal_id) and horizonte_meta_semanal's append-only correction chain (reemplaza_id)
