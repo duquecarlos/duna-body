@@ -103,7 +103,7 @@ class ToolsCallTest(_McpTestCase):
         ])
         r = respuestas[0]["result"]
         self.assertNotIn("isError", r)
-        salida = json.loads(r["content"][0]["text"])
+        salida = json.loads(r["content"][-1]["text"])
         self.assertIn("nivel_datos", salida)
 
     def test_leer_estado_reloj_is_offered_and_callable(self):
@@ -120,7 +120,7 @@ class ToolsCallTest(_McpTestCase):
         ])
         r = respuestas[0]["result"]
         self.assertNotIn("isError", r)
-        salida = json.loads(r["content"][0]["text"])
+        salida = json.loads(r["content"][-1]["text"])
         self.assertEqual(salida["conectado"], False)
         self.assertIsNone(salida["ultimo_error"])
 
@@ -199,7 +199,7 @@ class ToolsCallTest(_McpTestCase):
         for i in range(tope):
             self.assertNotIn("isError", respuestas[i]["result"], f"call {i} should not have errored yet")
         self.assertTrue(respuestas[tope]["result"]["isError"])
-        self.assertIn("min", respuestas[tope]["result"]["content"][0]["text"])
+        self.assertIn("min", respuestas[tope]["result"]["content"][-1]["text"])
 
     def test_result_of_a_proposal_says_where_the_person_will_see_it(self):
         _, respuestas = self._ejecutar([
@@ -208,9 +208,11 @@ class ToolsCallTest(_McpTestCase):
                         "arguments": {"kind": "viaje", "start_day": "2020-01-01"}}},
         ])
         contenido = respuestas[0]["result"]["content"]
-        self.assertEqual(len(contenido), 2)
-        self.assertIn("Hoy", contenido[0]["text"])
-        self.assertIn("Aplicar", contenido[0]["text"])
+        # BODY-MCP-COPIA-PC-1: contenido[0] is now the copia-pc freshness line (every LOCAL
+        # result's own, tests/test_mcp_copia_pc.py), so the Hoy/Aplicar sentence moved to [1].
+        self.assertEqual(len(contenido), 3)
+        self.assertIn("Hoy", contenido[1]["text"])
+        self.assertIn("Aplicar", contenido[1]["text"])
         salida = json.loads(contenido[-1]["text"])
         self.assertIn("propuesta_id", salida)
         self.assertIn("estado", salida)
@@ -220,7 +222,9 @@ class ToolsCallTest(_McpTestCase):
             {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
              "params": {"name": "leer_ajustes", "arguments": {}}},
         ])
-        self.assertEqual(len(respuestas[0]["result"]["content"]), 1)
+        # BODY-MCP-COPIA-PC-1: "no extra sentence" now means none BEYOND the copia-pc freshness
+        # line every LOCAL result carries (tests/test_mcp_copia_pc.py covers that line itself).
+        self.assertEqual(len(respuestas[0]["result"]["content"]), 2)
 
     def test_registrar_comida_is_offered_and_callable(self):
         """BODY-COMIDA-1: body.mcp lists registrar_comida (it is a `tipo: propuesta` tool like
@@ -385,7 +389,7 @@ class ToolsCallTest(_McpTestCase):
         ])
         r = respuestas[0]["result"]
         self.assertNotIn("isError", r)
-        salida = json.loads(r["content"][0]["text"])
+        salida = json.loads(r["content"][-1]["text"])
         self.assertIn("resting_hr", salida["metricas"])
 
     def test_one_leer_serie_call_counts_as_one_lectura_not_one_per_day(self):
@@ -431,9 +435,9 @@ class PlanToolsTest(_McpTestCase):
              "params": {"name": "leer_plan", "arguments": {"goal_id": 999999}}},
         ])
         self.assertNotIn("isError", respuestas[0]["result"])
-        self.assertEqual(json.loads(respuestas[0]["result"]["content"][0]["text"]), {"planes": []})
+        self.assertEqual(json.loads(respuestas[0]["result"]["content"][-1]["text"]), {"planes": []})
         self.assertNotIn("isError", respuestas[1]["result"])
-        self.assertEqual(json.loads(respuestas[1]["result"]["content"][0]["text"]), {"encontrada": False})
+        self.assertEqual(json.loads(respuestas[1]["result"]["content"][-1]["text"]), {"encontrada": False})
 
     def test_proponer_plan_is_offered_and_callable(self):
         _, listado = self._ejecutar([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
@@ -522,9 +526,11 @@ class RegistrarEntrenoRelojFalloTest(_McpTestCase):
         r = respuestas[0]["result"]
         self.assertNotIn("isError", r)
         contenido = r["content"]
-        self.assertEqual(len(contenido), 3)
-        self.assertEqual(contenido[0]["text"], "No pude leer las series del reloj; guardé las que me contaste.")
-        self.assertIn("Hoy", contenido[1]["text"])
+        # BODY-MCP-COPIA-PC-1: contenido[0] is now the copia-pc freshness line, so the
+        # reloj-fallo/Hoy sentences each shifted one position right.
+        self.assertEqual(len(contenido), 4)
+        self.assertEqual(contenido[1]["text"], "No pude leer las series del reloj; guardé las que me contaste.")
+        self.assertIn("Hoy", contenido[2]["text"])
         salida = json.loads(contenido[-1]["text"])
         self.assertEqual(salida["estado"], "propuesta")
 
@@ -538,7 +544,7 @@ class RegistrarEntrenoRelojFalloTest(_McpTestCase):
                                                       "peso_kg": 55.0}]}}},
             ])
         contenido = respuestas[0]["result"]["content"]
-        self.assertEqual(len(contenido), 2)
+        self.assertEqual(len(contenido), 3)
 
 
 class ToolCallInternalErrorTest(_McpTestCase):
@@ -568,12 +574,14 @@ class ToolCallInternalErrorTest(_McpTestCase):
         primera = respuestas[0]["result"]
         self.assertTrue(primera["isError"])
         self.assertEqual(
-            primera["content"][0]["text"],
+            # BODY-MCP-COPIA-PC-1: content[0] is now the copia-pc freshness line; the internal
+            # error sentence moved to content[-1].
+            primera["content"][-1]["text"],
             "Body tuvo un error interno con esta herramienta; no se guardó nada. Intenta de nuevo o avísale al equipo.",
         )
         segunda = respuestas[1]["result"]
         self.assertNotIn("isError", segunda)
-        self.assertIn("nivel_datos", json.loads(segunda["content"][0]["text"]))
+        self.assertIn("nivel_datos", json.loads(segunda["content"][-1]["text"]))
 
         # the exception's TYPE and the tool's own name reached stderr -- never its message
         self.assertIn("IntegrityError", buf.getvalue())
@@ -635,7 +643,7 @@ class VentanaRotanteTest(_McpTestCase):
         salida = io.StringIO()
         mcp.ejecutar(entrada, salida, self.conn, self.person_id, reloj=reloj)
         respuestas = _respuestas(salida)
-        texto = respuestas[tope]["result"]["content"][0]["text"]
+        texto = respuestas[tope]["result"]["content"][-1]["text"]
         self.assertIn(str(mcp.LIMITES["ventana_min"]), texto)
 
         db.set_language(self.conn, "en", self.person_id)
@@ -649,7 +657,7 @@ class VentanaRotanteTest(_McpTestCase):
         salida_en = io.StringIO()
         mcp.ejecutar(entrada_en, salida_en, self.conn, self.person_id, reloj=reloj)
         respuestas_en = _respuestas(salida_en)
-        texto_en = respuestas_en[tope]["result"]["content"][0]["text"]
+        texto_en = respuestas_en[tope]["result"]["content"][-1]["text"]
         self.assertIn("min", texto_en)
         self.assertIn(str(mcp.LIMITES["ventana_min"]), texto_en)
 
@@ -775,7 +783,8 @@ class AplicarExpiradaTest(_McpTestCase):
         ])
         r = respuestas2[0]["result"]
         self.assertTrue(r["isError"])
-        texto = r["content"][0]["text"]
+        # BODY-MCP-COPIA-PC-1: content[0] is now the copia-pc freshness line.
+        texto = r["content"][-1]["text"]
         self.assertIn("03:30", texto)  # 08:30 UTC -> 03:30 local (America/Bogota, UTC-5)
         self.assertIn("noviembre", texto)
         self.assertNotEqual(texto, "Esa propuesta ya no está pendiente.")
@@ -842,7 +851,7 @@ class DescartarPropuestaTest(_McpTestCase):
         ])
         r = respuestas[0]["result"]
         self.assertTrue(r["isError"])
-        self.assertTrue(r["content"][0]["text"])
+        self.assertTrue(r["content"][-1]["text"])
         row = self.conn.execute("SELECT estado FROM propuesta_agente WHERE id = ?",
                                 (registro["id"],)).fetchone()
         self.assertEqual(row["estado"], "propuesta")

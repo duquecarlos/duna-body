@@ -256,7 +256,9 @@ class LeerDiasLibresMcpTest(unittest.TestCase):
         ])
         r = respuestas[0]["result"]
         self.assertNotIn("isError", r)
-        salida = json.loads(r["content"][0]["text"])
+        # BODY-MCP-COPIA-PC-1: content[0] is the copia-pc freshness line; the payload is content[-1].
+        self.assertEqual(r["content"][0]["text"], "Body en este PC (no el servidor) -- sin datos del reloj")
+        salida = json.loads(r["content"][-1]["text"])
         self.assertEqual(len(salida["dias_libres"]), 3)
 
 

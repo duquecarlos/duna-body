@@ -57,16 +57,17 @@ import os
 import sys
 import urllib.error
 from collections import deque
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import IO
 from zoneinfo import ZoneInfo
 
-from . import db, errores, pc_cliente
+from . import db, errores, garmin_cuenta, pc_cliente
 from .agente import ajustes, bucle
 from .agente import conversacion as agente_conversacion
 from .agente import herramientas
 from .agente import propuestas as agente_propuestas
 from .i18n import T
+from .rutas import comun
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_INFO = {"name": "body-local", "version": "1"}
@@ -547,6 +548,46 @@ def _idioma(sesion: _Sesion) -> str:
     return db.person(sesion.conn, sesion.person_id)["language"]
 
 
+def _dia_mas_reciente_garmin(conn, person_id: int) -> str | None:
+    """BODY-MCP-COPIA-PC-1 ruling 1: `garmin_cuenta.dias_garmin_con_valor`'s own shape (no window
+    -- this person's whole history, one query), never `db.days_with_data` (counts an all-NULL/
+    empty Garmin day as data -- the same distinction body/agente/herramientas.py:1004-1005 already
+    draws). `None` when this home has never stored a Garmin value at all."""
+    dias = garmin_cuenta.dias_garmin_con_valor(conn, person_id)
+    return max(dias) if dias else None
+
+
+def _titulo_copia_pc(sesion: "_Sesion") -> str:
+    """Ruling 2: serverInfo's own `title`, the same short label `_linea_copia_pc` below opens
+    with, in the person's own language."""
+    return T(_idioma(sesion))("asistente.mcp.copia_pc_titulo")
+
+
+def _linea_copia_pc(sesion: "_Sesion") -> str:
+    """Ruling 1, 2: this home's own data is this PC's own copy, never the server's -- every LOCAL
+    tools/call result (`_con_copia_pc` below) and `initialize`'s own `instructions` open with this
+    one line, naming the person's last day with a stored Garmin value (ruling 4's marker census,
+    DECISIONS.md BODY-MCP-COPIA-PC-1: this home carries no marker that it was ever moved or
+    exported to a server, so this sentence is the only one built)."""
+    t = T(_idioma(sesion))
+    dia = _dia_mas_reciente_garmin(sesion.conn, sesion.person_id)
+    if dia is None:
+        return t("asistente.mcp.copia_pc_sin_fecha")
+    return t("asistente.mcp.copia_pc_con_fecha", fecha=comun._short_date(t, date.fromisoformat(dia)))
+
+
+def _con_copia_pc(sesion, contenido: list[dict]) -> list[dict]:
+    """Ruling 1: every LOCAL-mode tools/call result -- a read, a proposal, an apply, a discard, a
+    refusal or an internal error alike -- begins with `_linea_copia_pc`'s own line. REMOTE mode
+    (`_SesionCliente`) never reaches this function with anything but `False` from the isinstance
+    check below, and the hosted `/mcp` (`body/rutas/mcp_http.py`) has its own `_procesar_uno`, so
+    it never reaches `_procesar_mensaje` at all -- ruling 1's "REMOTE mode and the hosted /mcp add
+    nothing"."""
+    if not isinstance(sesion, _Sesion):
+        return contenido
+    return [{"type": "text", "text": _linea_copia_pc(sesion)}] + contenido
+
+
 def _mensaje_tope_lecturas(idioma: str, minutos: int) -> str:
     return T(idioma)("asistente.mcp.limite_lecturas", minutos=minutos)
 
@@ -710,6 +751,14 @@ def _procesar_mensaje(sesion: _Sesion, msg: dict) -> dict | None:
     es_notificacion = "id" not in msg
     metodo = msg.get("method")
     if metodo == "initialize":
+        if isinstance(sesion, _Sesion):
+            # BODY-MCP-COPIA-PC-1 ruling 2: LOCAL mode only -- the same line as every tools/call
+            # result, so the very first thing a client reads already says where the data lives.
+            return _responder(id_, resultado={
+                "protocolVersion": PROTOCOL_VERSION,
+                "serverInfo": {**SERVER_INFO, "title": _titulo_copia_pc(sesion)},
+                "capabilities": {"tools": {}}, "instructions": _linea_copia_pc(sesion),
+            })
         return _responder(id_, resultado={
             "protocolVersion": PROTOCOL_VERSION, "serverInfo": SERVER_INFO,
             "capabilities": {"tools": {}},
@@ -728,7 +777,8 @@ def _procesar_mensaje(sesion: _Sesion, msg: dict) -> dict | None:
             tipo, salida, aviso_reloj = _llamar_herramienta(sesion, nombre, argumentos)
         except herramientas.ToolError as e:
             texto = errores.texto_propio(e)
-            return _responder(id_, resultado={"content": [{"type": "text", "text": texto}], "isError": True})
+            return _responder(id_, resultado={
+                "content": _con_copia_pc(sesion, [{"type": "text", "text": texto}]), "isError": True})
         except Exception as e:
             # Ruling 4 (BODY-SERIES-UNIDAD-1): the server never dies on a tool call -- anything
             # else `_llamar_herramienta` raises (a bad Garmin payload, a DB error, ...) answers
@@ -740,7 +790,8 @@ def _procesar_mensaje(sesion: _Sesion, msg: dict) -> dict | None:
             print(f"mcp tools/call error: {errores.texto_seguro(e)} herramienta={nombre_str!r}", file=sys.stderr)
             t = T(_idioma(sesion))
             return _responder(id_, resultado={
-                "content": [{"type": "text", "text": t("asistente.mcp.error_interno")}], "isError": True,
+                "content": _con_copia_pc(sesion, [{"type": "text", "text": t("asistente.mcp.error_interno")}]),
+                "isError": True,
             })
         contenido = [{"type": "text", "text": json.dumps(salida, ensure_ascii=False)}]
         if tipo == "propuesta":
@@ -766,7 +817,7 @@ def _procesar_mensaje(sesion: _Sesion, msg: dict) -> dict | None:
             # is told the old proposal is gone.
             t = T(_idioma(sesion))
             contenido.insert(0, {"type": "text", "text": t("asistente.mcp.descartar_resultado")})
-        return _responder(id_, resultado={"content": contenido})
+        return _responder(id_, resultado={"content": _con_copia_pc(sesion, contenido)})
     if es_notificacion:
         return None
     return _responder(id_, error=_METHOD_NOT_FOUND)

@@ -29,7 +29,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import config, cuenta, db, demo, dispositivo, fechas, garmin_cuenta, goals, identity, practicas, web
+from body import config, cuenta, db, demo, dispositivo, fechas, garmin_cuenta, goals, identity, mcp, practicas, web
 from body.agente import conversacion as agente_conversacion
 from body.rutas import comun as web_comun
 from body.rutas import tendencias as web_tendencias
@@ -648,6 +648,39 @@ class PracticasDiasEstadoCostTest(unittest.TestCase):
         # The actividad family's own ceiling: one daily_metric SELECT plus one activity SELECT,
         # ceil(2 * 1.3) = 3 -- the same margin rule every other ceiling in this file carries.
         self.assertLessEqual(largo, 3, f"dias_estado cost {largo} statements, over its ceiling of 3")
+
+
+class McpCopiaPcDateCeilingTest(unittest.TestCase):
+    """BODY-MCP-COPIA-PC-1 ruling 1: the person's last Garmin day, read for every LOCAL body/mcp.py
+    tools/call result's own freshness line, costs at most ONE query -- never a second one that
+    would grow with this person's history length. `conn.set_trace_callback` applied directly, the
+    same way PracticasDiasEstadoCostTest._contar above does, since this file's own fixture
+    connection is already open before `contar_sql()` could trace it."""
+
+    def _contar(self, conn, llamada) -> int:
+        contador = {"n": 0}
+        conn.set_trace_callback(lambda sql: contador.__setitem__("n", contador["n"] + 1))
+        try:
+            llamada()
+        finally:
+            conn.set_trace_callback(None)
+        return contador["n"]
+
+    def test_one_query_at_most_with_garmin_history(self):
+        conn = _reset_db(self)
+        person_id = db.local_person_id(conn)
+        for i in range(30):
+            db.set_metric(conn, (date(2026, 10, 1) + timedelta(i)).isoformat(), "resting_hr", 58,
+                          "garmin", person_id)
+        conn.commit()
+        n = self._contar(conn, lambda: mcp._dia_mas_reciente_garmin(conn, person_id))
+        self.assertLessEqual(n, 1, f"the last Garmin day cost {n} statements, over its ceiling of 1")
+
+    def test_one_query_at_most_with_no_data(self):
+        conn = _reset_db(self)
+        person_id = db.local_person_id(conn)
+        n = self._contar(conn, lambda: mcp._dia_mas_reciente_garmin(conn, person_id))
+        self.assertLessEqual(n, 1, f"the last Garmin day cost {n} statements, over its ceiling of 1")
 
 
 if __name__ == "__main__":
