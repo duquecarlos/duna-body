@@ -480,5 +480,56 @@ class EscrituraExternaTableMigrationTest(unittest.TestCase):
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM escritura_externa").fetchone()[0], 0)
 
 
+class PracticaTableMigrationTest(unittest.TestCase):
+    """BODY-HISTORIA-VIDA-1 ruling 1: a database that predates `practica` gains the table (and its
+    (person_id) index), empty, with no other table's row count disturbed; a fresh database gets
+    the exact same shape (fresh == migrated); and running init() twice is a no-op either way."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        db.init(self.conn)
+        self.conn.execute("DROP TABLE practica")
+        self.conn.execute(
+            "INSERT INTO ajuste_agente (person_id, updated_at) VALUES (1, '2026-11-09T00:00:00+00:00')"
+        )
+        self.conn.commit()
+
+    def test_migration_recreates_the_table_empty_without_touching_others(self):
+        db.init(self.conn)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM practica").fetchone()[0], 0)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM ajuste_agente").fetchone()[0], 1)
+
+    def test_migration_is_idempotent(self):
+        db.init(self.conn)
+        db.init(self.conn)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM practica").fetchone()[0], 0)
+
+    def test_migrated_database_accepts_a_row_and_keeps_its_index(self):
+        db.init(self.conn)
+        self.conn.execute(
+            "INSERT INTO practica (person_id, titulo, fuente, regla_json, meta_dias_semana, origen, "
+            "creada_en) VALUES (1, 'ZZ', 'actividad', '{}', 5, 'persona', '2026-11-09T00:00:00+00:00')"
+        )
+        self.conn.commit()
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM practica").fetchone()[0], 1)
+        idx = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_practica_person'"
+        ).fetchone()
+        self.assertIsNotNone(idx)
+
+
+class PracticaFreshDbTest(unittest.TestCase):
+    """A fresh database already carries `practica` and its index -- no migration needed."""
+
+    def test_fresh_database_has_the_table_and_index(self):
+        conn = _conn(self)
+        db.init(conn)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM practica").fetchone()[0], 0)
+        idx = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_practica_person'"
+        ).fetchone()
+        self.assertIsNotNone(idx)
+
+
 if __name__ == "__main__":
     unittest.main()
