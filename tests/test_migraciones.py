@@ -927,5 +927,58 @@ class DespertarCorreccionFreshDbTest(unittest.TestCase):
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM despertar_correccion").fetchone()[0], 0)
 
 
+class VistaDailyMetricEfectivaMigrationTest(unittest.TestCase):
+    """BODY-DESPERTAR-REAL-6B ruling 1: a database that predates `despertar_correccion` AND the
+    view it later gains -- the "previous shape" this slice adds to -- migrates to both in one
+    db.init() call, in the right order (the view is created last, after despertar_correccion
+    exists), keeping Garmin's own rows byte-for-byte. tests/test_sueno_corregido.py's own
+    MigracionVistaTest covers the narrower "just the view is missing" case."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        db.init(self.conn)
+        self.conn.execute("PRAGMA foreign_keys = OFF")
+        self.conn.execute("DROP VIEW daily_metric_efectiva")
+        self.conn.execute("DROP TABLE despertar_correccion")
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.execute(
+            "INSERT INTO sleep_session (person_id, day, start_local, end_local) VALUES "
+            "(1, '2026-11-10', '2026-11-09T22:00:00', '2026-11-10T03:41:00')"
+        )
+        self.conn.execute(
+            "INSERT OR REPLACE INTO daily_metric (person_id, day, metric_key, value, source) "
+            "VALUES (1, '2026-11-10', 'sleep_minutes', 322, 'garmin')"
+        )
+        self.conn.commit()
+        self.antes_dm = dict(self.conn.execute(
+            "SELECT * FROM daily_metric WHERE person_id = 1 AND day = '2026-11-10'").fetchone())
+        self.antes_ss = dict(self.conn.execute(
+            "SELECT * FROM sleep_session WHERE person_id = 1 AND day = '2026-11-10'").fetchone())
+
+    def test_one_init_gains_both_the_table_and_the_view(self):
+        self.assertIsNone(self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE name = 'despertar_correccion'").fetchone())
+        self.assertIsNone(self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE name = 'daily_metric_efectiva'").fetchone())
+        db.init(self.conn)
+        self.assertIsNotNone(self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE name = 'despertar_correccion'").fetchone())
+        self.assertIsNotNone(self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE name = 'daily_metric_efectiva'").fetchone())
+        db.guardar_despertar_correccion(self.conn, 1, "2026-11-10", "sueno", "06:00",
+                                         "despertar-real-v2", "persona")
+        row = self.conn.execute(
+            "SELECT value, corregido FROM daily_metric_efectiva WHERE person_id = 1 AND "
+            "day = '2026-11-10' AND metric_key = 'sleep_minutes'"
+        ).fetchone()
+        self.assertEqual((row["value"], row["corregido"]), (322 + 139, 1))
+        despues_dm = dict(self.conn.execute(
+            "SELECT * FROM daily_metric WHERE person_id = 1 AND day = '2026-11-10'").fetchone())
+        despues_ss = dict(self.conn.execute(
+            "SELECT * FROM sleep_session WHERE person_id = 1 AND day = '2026-11-10'").fetchone())
+        self.assertEqual(self.antes_dm, despues_dm)
+        self.assertEqual(self.antes_ss, despues_ss)
+
+
 if __name__ == "__main__":
     unittest.main()

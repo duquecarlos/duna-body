@@ -2135,6 +2135,13 @@ def _migrar_vista_daily_metric_efectiva(conn: sqlite3.Connection) -> None:
 
 
 def init(conn: sqlite3.Connection) -> None:
+    # BODY-DESPERTAR-REAL-6B ruling 1: dropped FIRST, before any guarded rebuild below that could
+    # DROP/rename `despertar_correccion` (or `daily_metric`/`sleep_session`) -- SQLite resolves a
+    # view's own definition against the CURRENT schema at the moment a table it names is
+    # renamed/dropped, so a stale view surviving from an earlier `init()` call would otherwise
+    # break that very rebuild ("no such table") the instant the table it depends on disappears
+    # mid-step. Recreated at the very end, once every migration above has run.
+    conn.execute("DROP VIEW IF EXISTS daily_metric_efectiva")
     _migrate_metas(conn)
     _migrate_cuenta(conn)
     _migrate_precios(conn)
