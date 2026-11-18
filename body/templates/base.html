@@ -76,8 +76,7 @@
 {% if tab %}
 {% set idioma_otro_tag = 'en' if t.lang == 'es' else 'es' %}
 {% set idioma_otro_label = 'English' if t.lang == 'es' else 'Español' %}
-{% set idioma_volver = {'today': '/', 'shifts': '/shifts', 'trends': '/trends', 'goals': '/goals',
-                        'settings': '/settings'}.get(tab, '/settings') %}
+{% set idioma_volver = ruta_actual() or '/settings' %}
 <form method="post" action="/settings/language" class="idioma-switch">
   <input type="hidden" name="lang" value="{{ idioma_otro_tag }}">
   <input type="hidden" name="volver" value="{{ idioma_volver }}">

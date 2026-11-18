@@ -11,7 +11,7 @@ import unittest
 
 from fastapi.testclient import TestClient
 
-from body import config, db, web
+from body import config, db, practicas, web
 from body.rutas import sesion
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -54,6 +54,21 @@ class HeaderSwitchShowsOnlyTheOtherLanguageTest(unittest.TestCase):
         r = self.client.get("/settings")
         self.assertIn('name="volver" value="/settings"', r.text)
 
+    def test_volver_field_holds_the_practica_detail_path(self):
+        """BODY-HISTORIA-VIDA-3 ruling 5: `volver` is the request's OWN path -- previously a
+        fixed tab->root map, which sent every /history/practica/{id} switch back to /trends
+        instead of the page the person was actually reading."""
+        conn = db.connect()
+        pid = practicas.crear(conn, 1, "Correr", "actividad", {"tipos": ["running"]})
+        conn.commit()
+        conn.close()
+        r = self.client.get(f"/history/practica/{pid}")
+        self.assertIn(f'name="volver" value="/history/practica/{pid}"', r.text)
+
+    def test_volver_field_holds_the_goals_new_path(self):
+        r = self.client.get("/goals/new")
+        self.assertIn('name="volver" value="/goals/new"', r.text)
+
 
 class LanguageSwitchRedirectTest(unittest.TestCase):
     def setUp(self):
@@ -63,6 +78,20 @@ class LanguageSwitchRedirectTest(unittest.TestCase):
         r = self.client.post("/settings/language", data={"lang": "en", "volver": "/history"})
         self.assertEqual(r.status_code, 303)
         self.assertEqual(r.headers["location"], "/history")
+
+    def test_volver_from_practica_detail_returns_there(self):
+        conn = db.connect()
+        pid = practicas.crear(conn, 1, "Correr", "actividad", {"tipos": ["running"]})
+        conn.commit()
+        conn.close()
+        r = self.client.post("/settings/language",
+                             data={"lang": "en", "volver": f"/history/practica/{pid}"})
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(r.headers["location"], f"/history/practica/{pid}")
+
+    def test_volver_from_goals_new_returns_there(self):
+        r = self.client.post("/settings/language", data={"lang": "en", "volver": "/goals/new"})
+        self.assertEqual(r.headers["location"], "/goals/new")
 
     def test_protocol_relative_volver_falls_back_to_settings(self):
         r = self.client.post("/settings/language", data={"lang": "en", "volver": "//evil.example"})
