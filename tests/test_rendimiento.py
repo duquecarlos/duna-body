@@ -20,7 +20,7 @@ checked by comparing the two sets directly, not just their counts.
 import os
 import tempfile
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
@@ -716,6 +716,50 @@ class McpCopiaPcDateCeilingTest(unittest.TestCase):
         person_id = db.local_person_id(conn)
         n = self._contar(conn, lambda: mcp._dia_mas_reciente_garmin(conn, person_id))
         self.assertLessEqual(n, 1, f"the last Garmin day cost {n} statements, over its ceiling of 1")
+
+
+class DespertarRealCostTest(unittest.TestCase):
+    """BODY-DESPERTAR-REAL-3: body/despertar_real.py's `estimar` reads a day's own intraday series
+    through body/intradia_horario.py's per-(day, kind) cache, so its own statement count stays
+    the same whether a day holds a handful of samples or a dense one -- never one query per
+    sample, never one per point evaluated."""
+
+    def _contar(self, conn, llamada) -> int:
+        contador = {"n": 0}
+        conn.set_trace_callback(lambda sql: contador.__setitem__("n", contador["n"] + 1))
+        try:
+            llamada()
+        finally:
+            conn.set_trace_callback(None)
+        return contador["n"]
+
+    def test_cost_independent_of_sample_density(self):
+        from tests.test_despertar_real import BASE_MUESTRAS, DAY, END_LOCAL, START_LOCAL, _comida, _guardar_estres, _guardar_fc, _sesion
+        from body import despertar_real
+
+        conn = _reset_db(self)
+        _sesion(conn, 1, DAY, START_LOCAL, END_LOCAL)
+        _guardar_fc(conn, 1, DAY, BASE_MUESTRAS + [
+            (f"{DAY}T05:02:00", 58.0), (f"{DAY}T05:04:00", 58.0), (f"{DAY}T05:06:00", 58.0)])
+        conn.commit()
+        escaso = self._contar(conn, lambda: despertar_real.estimar(conn, 1, DAY))
+
+        conn2 = _reset_db(self)
+        _sesion(conn2, 1, DAY, START_LOCAL, END_LOCAL)
+        base = datetime.fromisoformat(f"{DAY}T05:00:00")
+        densa_fc = BASE_MUESTRAS + [((base + timedelta(minutes=2 * i)).isoformat(), 58.0) for i in range(120)]
+        densa_estres = [((base + timedelta(minutes=3 * i)).isoformat(), 20.0) for i in range(80)]
+        _guardar_fc(conn2, 1, DAY, densa_fc)
+        _guardar_estres(conn2, 1, DAY, densa_estres)
+        _comida(conn2, 1, DAY, f"{DAY}T07:00:00")
+        conn2.commit()
+        densa = self._contar(conn2, lambda: despertar_real.estimar(conn2, 1, DAY))
+
+        self.assertEqual(escaso, densa,
+                          f"a sparse day vs a dense one cost different statement counts: {escaso} vs {densa}")
+        # Measured 8 statements on this file's own dense fixture; ceil(8 * 1.3) = 11, the same
+        # margin rule every other ceiling in this file carries.
+        self.assertLessEqual(densa, 11, f"estimar cost {densa} statements, over its ceiling of 11")
 
 
 if __name__ == "__main__":
