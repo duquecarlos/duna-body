@@ -72,7 +72,7 @@ class WeekStripStatesAndOrderTest(unittest.TestCase):
 
         cells = _cells(r.text)
         self.assertEqual(len(cells), 7)
-        self.assertEqual([c[2] for c in cells], ["L", "M", "M", "J", "V", "S", "D"])
+        self.assertEqual([c[2] for c in cells], ["L", "M", "X", "J", "V", "S", "D"])
         self.assertEqual([c[0] for c in cells],
                          ["pasado", "hecho", "hoy", "futuro", "futuro", "futuro", "futuro"])
         self.assertEqual([c[1] for c in cells], [
