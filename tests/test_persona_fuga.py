@@ -25,8 +25,8 @@ from fastapi.testclient import TestClient
 
 from body import (
     compartir, config, cuenta, db, dispositivo, enlaces, fechas, garmin_cuenta, goals, household,
-    identity, llave_asistente, noche_inusual, patron_turnos, privacidad, readiness, recuperacion,
-    shift_import, vida_export, web,
+    identity, llave_asistente, noche_inusual, patron_turnos, practicas, privacidad, readiness,
+    recuperacion, shift_import, vida_export, web,
 )
 from body.agente import ajustes as agente_ajustes
 from body.agente import conversacion as agente_conversacion
@@ -287,6 +287,12 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
     # census only checks export/delete-all coverage.
     db.set_nutrient_target(conn, person_id, "caffeine_mg", DAYS[0], "absolute",
                             200.0 if tag == "A" else 300.0, "como_maximo")
+
+    # BODY-HISTORIA-VIDA-1: practica is person-owned (its own person_id column, same census
+    # treatment as turno_fc/recuperacion_actividad above) -- no marker needed, the census only
+    # checks export/delete-all coverage; no screen or tool renders `titulo` yet
+    # (BODY-HISTORIA-VIDA-2's own screen is a later slice).
+    practicas.crear(conn, person_id, f"ZZ{tag}-PRACTICA", "actividad", {"tipos": ["running"]})
 
     # BODY-COMIDA-1: comida is person-keyed and has its FIRST reader this slice -- Día's own
     # "Comidas" section (body/rutas/hoy.py's _comidas_dia_ctx) renders its descripcion directly, so

@@ -12,7 +12,7 @@ from unittest import mock
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
-from body import config, db, garmin_cuenta, goals, persona_garmin, pull, recuperacion, sueno_fc, turno_fc
+from body import config, db, garmin_cuenta, goals, persona_garmin, practicas, pull, recuperacion, sueno_fc, turno_fc
 
 NOW = "2026-11-10T08:00:00+00:00"
 
@@ -193,6 +193,15 @@ class RelinkarRefusalTest(_Base):
         motivos = "; ".join(ctx.exception.motivos)
         self.assertIn("2 fila(s) propias en goal", motivos)
         self.assertIn("1 fila(s) propias en checkin", motivos)
+
+    def test_source_with_a_suggested_practica_refused_naming_table_and_count(self):
+        """BODY-HISTORIA-VIDA-1 ruling 8: `origen = 'sugerida'` is still a person-authored row --
+        relinkar refuses on it, same as any other practica."""
+        practicas.crear(self.conn, 1, "ZZ-PRACTICA", "actividad", {"tipos": ["running"]}, origen="sugerida")
+        self.conn.commit()
+        with self.assertRaises(persona_garmin.Refusada) as ctx:
+            persona_garmin.relinkar(self.conn, 1, 2, apply=False)
+        self.assertTrue(any("1 fila(s) propias en practica" in m for m in ctx.exception.motivos))
 
     def test_destination_already_has_garmin_cuenta_refused(self):
         _conectar_garmin(self.conn, 2, "FAKE-TOKEN-DEST-ALREADY")

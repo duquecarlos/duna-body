@@ -60,6 +60,9 @@ PERSONA_TABLAS: tuple[tuple[str, str | None], ...] = (
     ("escritura_externa", None),
     ("experimento", None),
     ("nutrient_target", None),
+    # BODY-HISTORIA-VIDA-1 ruling 8: a practice row (`origen` IN persona/asistente/sugerida, all
+    # counted) makes a person look real -- the same census treatment as every other table here.
+    ("practica", None),
 )
 
 # ---- ruling 2's DERIVED tables -- never moved, left at the source and only counted. `turno_fc`

@@ -80,6 +80,10 @@ FULLY_HANDLED_TABLES = {
     # is exported here -- the same per-activity detail Carlos asked this slice to keep
     # ("yes, everything, man.", 2026-11-15), about his own body, from his own account.
     "activity_detail",
+    # BODY-HISTORIA-VIDA-1 ruling 8: a practice is what the watch data shows the person did
+    # (body/practicas.py) -- the person's own title and rule, exported and deleted like any other
+    # of their own rows.
+    "practica",
 }
 # raw_payload: kind/date only, never the stored JSON payload. garmin_cuenta: the connected-since
 # date only, never the encrypted token (BODY-GARMIN-HOST-1). dispositivo: name/scopes/dates only,
@@ -310,6 +314,11 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
     escrituras_externas_rows = [dict(r) for r in conn.execute(
         "SELECT origen, ref, herramienta, propuesta_id, creada_en FROM escritura_externa "
         "WHERE person_id = ? ORDER BY creada_en", (person_id,))]
+    # BODY-HISTORIA-VIDA-1 ruling 8: this person's own practices (body/practicas.py) -- their own
+    # title and rule, never the derived math (computed on read, never stored).
+    practicas_rows = [dict(r) for r in conn.execute(
+        "SELECT id, titulo, fuente, regla_json, meta_dias_semana, origen, creada_en, archivada_en "
+        "FROM practica WHERE person_id = ? ORDER BY id", (person_id,))]
     asistente = {
         "conversaciones": conversaciones, "mensajes": mensajes_agente, "uso": uso_agente_rows,
         "tope": dict(tope_agente_row) if tope_agente_row else None, "propuestas": propuestas_agente,
@@ -349,6 +358,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "garmin": garmin,
         "dispositivos": dispositivos,
         "asistente": asistente,
+        "practicas": practicas_rows,
     }
 
 
@@ -429,6 +439,9 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         # remove. Scoped by this person's own person_id alone (never objetivo_id): every row here
         # was written for this exact person's own applied write, never another person's.
         conn.execute("DELETE FROM escritura_externa WHERE person_id = ?", (person_id,))
+        # BODY-HISTORIA-VIDA-1 ruling 8: this person's own practices -- no other table's FK points
+        # at `practica` (no later slice has linked a habit to one yet), so a plain delete suffices.
+        conn.execute("DELETE FROM practica WHERE person_id = ?", (person_id,))
         # propuesta_agente.objetivo_id references goal(id) -- cleared before goal itself goes, same
         # as habit/habit_check/goal_check/plan above.
         conn.execute(

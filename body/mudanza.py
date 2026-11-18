@@ -168,6 +168,10 @@ REGISTRY: tuple[TableSpec, ...] = (
     # Explicitly shared with a household (BODY-HOGAR-COMPARTIR-1) -- every row names another
     # person's visibility, so every row is counted as "other person" (ruling 5), never copied.
     TableSpec("figura_compartida", match_cols=None, other_person_filter=lambda row: True),
+    # BODY-HISTORIA-VIDA-1 ruling 8: a practice is this person's own title and rule
+    # (body/practicas.py) -- moved like any other of their own rows, no FK dependency on anything
+    # above.
+    TableSpec("practica", match_cols=None),
 )
 
 REGISTRY_BY_NAME = {spec.name: spec for spec in REGISTRY}
