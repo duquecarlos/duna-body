@@ -314,5 +314,15 @@ class SinNoneTest(unittest.TestCase):
         self.assertNotIn("None", client.get(f"/day/{DAY}").text)
 
 
+class TaplinkBotonTest(unittest.TestCase):
+    """BODY-DESPERTAR-REAL-7-M: a `<button class="taplink">` ('¿Corregir?' here, and the existing
+    'Descartar'/'separar' buttons elsewhere) must look exactly like an `a.taplink` -- no grey
+    button chrome -- so body.css carries its own reset rule, not just the shared `.taplink` one."""
+
+    def test_body_css_resetea_el_boton_taplink(self):
+        css = Path("body/static/body.css").read_text(encoding="utf-8")
+        self.assertIn("button.taplink{background:none;border:0;padding:0;", css)
+
+
 if __name__ == "__main__":
     unittest.main()
