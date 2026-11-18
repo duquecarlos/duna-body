@@ -27201,5 +27201,9 @@ habit back to a practice so a person can "bring a habit back" once the data show
 (`body/privacidad.py`, `body/mudanza.py`, `body/persona_garmin.py`, `body/demo.py`,
 `tests/test_privacidad.py`, `tests/test_mudanza.py`, `tests/test_persona_garmin.py`,
 `tests/test_persona_fuga.py`: ruling 8), `341239cdebeb58e3196ff99a70a11d24bc201756`
-(`tests/test_rendimiento.py`: the `/privacidad/exportar` ceiling fix).
+(`tests/test_rendimiento.py`: the `/privacidad/exportar` ceiling fix),
+`5ec036fc8b858fba0feece76be854e9fd1c69ca2` (this ledger entry) -- merged
+`9ff3663eb614dd7e8c960f41d9d03b9ac4bc945e` (`--no-ff`, no conflicts). Post-merge smoke
+(`tests.test_practicas tests.test_entreno_racha tests.test_migraciones tests.test_privacidad
+tests.test_mudanza`): `Ran 229 tests ... OK`.
 
