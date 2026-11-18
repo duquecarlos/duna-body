@@ -28065,7 +28065,7 @@ tree, which includes every file this entry lists.
 **Commits:** `4d9cbfc` (`body/i18n/en.json`, `body/i18n/es.json`, `body/rutas/comun.py`,
 `body/rutas/historial.py`, `body/rutas/metas.py`, `body/static/body.css`,
 `body/templates/practica.html`, `tests/test_goals_web.py`, `tests/test_practicas_web.py`: rulings
-1-3, steps 1-2).
+1-3, steps 1-2) -- merged `e01a90638f1ddf3c4991272dafc9d3ed9a7334ea`.
 
 ## BODY-HISTORIA-VIDA-4-R -- the legend's third swatch stops leaking "None" into the English page (2026-11-18)
 
@@ -28118,4 +28118,11 @@ call was made.
 **customer_bytes:** changed -- the legend's third swatch's own text, in both languages, is
 person-facing. Per this slice's own WORK step 4 ("merge if green"), the merge below proceeds despite
 the change rather than stopping `AWAITING_APPROVAL`.
+
+**Commits:** `93dcf74` (`body/i18n/en.json`, `body/i18n/es.json`, `tests/test_practicas_web.py`: the
+ruling, step 1) -- `5ff26b9` (this ledger entry, step 3) -- merged
+`e01a90638f1ddf3c4991272dafc9d3ed9a7334ea` (`--no-ff`, no conflicts; tree identity proven, branch
+tree == merge tree == `5b5709f0414295cfa5471fbe0165db4d30195850`). Post-merge smoke
+(`tests.test_practicas_web tests.test_goals_web tests.test_i18n_paridad tests.test_estados_vacios`):
+`Ran 74 tests ... OK`.
 
