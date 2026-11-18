@@ -157,6 +157,13 @@
 </div>
 {% endif %}
 
+{% if despertar %}
+<div class="card">
+  <p class="note m-0">{{ despertar.texto }}</p>
+  <a class="taplink" href="/day/{{ despertar.day }}">{{ t('today.despertar.link') }}</a>
+</div>
+{% endif %}
+
 <div class="grid2 hoy-tiles mb-10">
 {% for c in cards %}
   <a class="card" href="/day/{{ day }}#{{ c.key }}">

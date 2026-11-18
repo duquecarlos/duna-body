@@ -14,6 +14,19 @@
   {% if sleep.stages %}<svg class="stage" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true">{% set ns = namespace(x=0) %}{% for s in sleep.stages %}<rect x="{{ ns.x }}" y="0" width="{{ s.pct }}" height="10" class="{{ s.cls }}"><title>{{ s.label }}</title></rect>{% set ns.x = ns.x + s.pct %}{% endfor %}</svg>
   <div class="legend">{% for s in sleep.stages %}<span><i class="{{ s.cls }}"></i>{{ s.label }} {{ s.value }}</span>{% endfor %}</div>{% endif %}
   {% if sueno_fc_linea %}<p class="mt-6 mb-0">{{ sueno_fc_linea }}</p>{% endif %}
+  {% if despertar %}
+  {% if despertar.garmin_linea %}<p class="mt-6 mb-0">{{ despertar.garmin_linea }}</p>{% endif %}
+  {% if despertar.correccion_linea %}<p class="mt-2 mb-0">{{ despertar.correccion_linea }}</p>{% endif %}
+  {% if despertar.linea %}<p class="mt-6 mb-0">{{ despertar.linea }}</p>{% endif %}
+  {% if despertar.propuesta_texto %}<p class="note mt-2 mb-0">{{ despertar.propuesta_texto }}</p>{% endif %}
+  {% if despertar.curva %}{{ despertar.curva | safe }}{% endif %}
+  {% if despertar.boton %}<form method="post" action="/day/{{ day }}/despertar/proponer" class="mt-6"><button class="taplink" type="submit">{{ t('day.despertar.corregir_boton') }}</button></form>{% endif %}
+  {% if despertar.propuesta_id %}
+  <form method="post" action="/day/{{ day }}/despertar/propuestas/{{ despertar.propuesta_id }}/aplicar" class="mt-6"><button class="btn" type="submit">{{ t('asistente.propuesta.aplicar') }}</button></form>
+  <form method="post" action="/day/{{ day }}/despertar/propuestas/{{ despertar.propuesta_id }}/descartar" class="mt-6"><button class="taplink" type="submit">{{ t('asistente.propuesta.descartar') }}</button></form>
+  {% endif %}
+  {% if despertar.deshacer %}<form method="post" action="/day/{{ day }}/despertar/deshacer" class="mt-6"><button class="btn" type="submit">{{ t('asistente.propuesta.deshacer') }}</button></form>{% endif %}
+  {% endif %}
   {% if sueno_resp_linea %}<p class="mt-6 mb-0">{{ sueno_resp_linea }}</p><p class="note mt-2 mb-0">{{ t('sueno_respiracion.caveat') }}</p>{% endif %}
   {% if noche_inusual %}<p class="mt-6 mb-0">{{ noche_inusual.texto }}</p>
   <form method="post" action="/day/{{ day }}/noche-inusual/visto" class="mt-6"><button class="btn" type="submit">{{ t('day.noche_inusual_vista') }}</button></form>
