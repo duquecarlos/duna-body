@@ -51,8 +51,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import (config, cuenta, db, errores, experimentos, fechas, garmin_adapter, garmin_cuenta, goals, privacidad,
-               readiness, recuperacion, sueno_fc, turno_fc)
+from . import (config, cuenta, db, errores, experimentos, fechas, garmin_adapter, garmin_cuenta, goals, lugares,
+               privacidad, readiness, recuperacion, sueno_fc, turno_fc)
 
 PAUSE_S = 1.0  # be gentle with Garmin's servers during a backfill
 EMPTY_STOP = 60  # --all stops after this many consecutive days with no watch data
@@ -490,6 +490,28 @@ def _recalcular_sueno_fc_seguro(conn, person_id: int) -> None:
         print(f"sueno_fc failed: {errores.texto_seguro(e)}", flush=True)
 
 
+def _sincronizar_lugares_seguro(conn, person_id: int) -> None:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5: at most once per person per calendar day (skipped,
+    silently, when `lugares_sync.intento_at` already names today -- never a second network
+    attempt the same day); never for `--backfill`. A failure here is never a Garmin failure and
+    never stops the pull for this or the next person (same safe-wrapper shape as
+    `_recalcular_turno_fc_seguro`): caught, printed as a counts-only line, nothing else happens."""
+    try:
+        hoy = datetime.now(timezone.utc).date()  # same clock `sincronizar`'s own `ahora` uses
+        estado = db.lugares_estado(conn, person_id)
+        if estado["intento_at"] and estado["intento_at"][:10] == hoy.isoformat():
+            return
+        resultado = lugares.sincronizar(conn, person_id, hoy)
+        if resultado["estado"] == "sin_conectar":
+            print("lugares: sin conectar", flush=True)
+        elif resultado["estado"] == "ok":
+            print(f"lugares: {resultado['viajes']} viajes", flush=True)
+        else:
+            print(f"lugares: {resultado['motivo']}", flush=True)
+    except Exception as e:
+        print(f"lugares failed: {errores.texto_seguro(e)}", flush=True)
+
+
 def _cerrar_semanas_todas(conn, desde_por_persona: dict[int, date] | None = None) -> None:
     """Closes weeks, once each, for EVERY person who can see an active goal (own or shared
     household milestone, `goals.personas_con_meta_activa`) -- connected to Garmin or not, pulled
@@ -859,6 +881,7 @@ def pull_hosted(conn, *, fecha: str | None = None, n_days: int | None = None) ->
                 conn, person_id, hoy, n=n_days if n_days is not None else 2, incluir_antiguos=True)
             antiguos += len(antiguos_persona)
         resultado = _pull_persona(conn, person_id, days)
+        _sincronizar_lugares_seguro(conn, person_id)
         ultima_persona = person_id
         saved += resultado["saved"]
         vacios += resultado["vacios"]
@@ -1424,6 +1447,7 @@ def _run(conn, a) -> int:
     _recalcular_recuperacion_seguro(conn, person_id)
     _recalcular_turno_fc_seguro(conn, person_id)
     _recalcular_sueno_fc_seguro(conn, person_id)
+    _sincronizar_lugares_seguro(conn, person_id)
     return 0
 
 
