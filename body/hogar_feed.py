@@ -50,16 +50,18 @@ def _figuras(conn, person_id: int, dia: date, defs: dict[str, dict]) -> list[dic
               "day": r["day"]} for r in rows]
 
 
-def _plan_dias(conn, person_id: int, dia: date) -> list[dict]:
-    """`dia`'s and `dia`+1's plan rows (ruling 2), any goal, unfiltered. `ejercicios`
-    (BODY-HOGAR-EJERCICIOS-1 ruling 5) is the row's own `ejercicios_json` parsed and passed
-    verbatim -- the exact list `planear_entreno` stored -- or None when the column is null.
-    `nota_sesion` (BODY-HOGAR-ESCRIBE-2 ruling 3) is the row's own column, verbatim, null when no
-    one has called `anotar_sesion` on it yet -- so Hogar knows which sessions still lack a note."""
-    siguiente = (dia + timedelta(1)).isoformat()
+def _plan_filas(conn, person_id: int, desde: str, hasta: str) -> list[dict]:
+    """Plan rows with `day` in [`desde`, `hasta`], any goal, unfiltered, ordered by day then time --
+    the one shared reader `_plan_dias` (today/tomorrow) and `_plan_bloque` (BODY-HOGAR-PLAN-RANGO-1's
+    fuller training block) both read through, so the field list -- id, day, time, title, status,
+    ejercicios, nota_sesion -- lives in exactly one place. `ejercicios` (BODY-HOGAR-EJERCICIOS-1
+    ruling 5) is the row's own `ejercicios_json` parsed and passed verbatim -- the exact list
+    `planear_entreno` stored -- or None when the column is null. `nota_sesion` (BODY-HOGAR-ESCRIBE-2
+    ruling 3) is the row's own column, verbatim, null when no one has called `anotar_sesion` on it
+    yet -- so Hogar knows which sessions still lack a note."""
     rows = conn.execute(
         "SELECT id, day, time, title, status, ejercicios_json, nota_sesion FROM plan WHERE person_id = ? "
-        "AND day IN (?, ?) ORDER BY day, time", (person_id, dia.isoformat(), siguiente),
+        "AND day BETWEEN ? AND ? ORDER BY day, time", (person_id, desde, hasta),
     ).fetchall()
     out = []
     for r in rows:
@@ -68,6 +70,32 @@ def _plan_dias(conn, person_id: int, dia: date) -> list[dict]:
         d["ejercicios"] = json.loads(ejercicios_json) if ejercicios_json is not None else None
         out.append(d)
     return out
+
+
+def _plan_dias(conn, person_id: int, dia: date) -> list[dict]:
+    """`dia`'s and `dia`+1's plan rows (ruling 2) -- `_plan_filas` over that two-day range."""
+    return _plan_filas(conn, person_id, dia.isoformat(), (dia + timedelta(1)).isoformat())
+
+
+def _plan_bloque(conn, person_id: int, dia: date, horizonte: dict | None) -> dict:
+    """BODY-HOGAR-PLAN-RANGO-1: the whole training block from `dia` to the active horizon's
+    deadline, so Hogar's high-mountain hike pilot can show it rather than just `dia` and `dia`+1.
+    `horizonte` is `manana`'s own `_horizonte_actual` result, passed in rather than re-queried.
+    `hasta` is that deadline when it is on or after `dia` (`hasta_por` "horizonte"), else `dia`+27
+    (`hasta_por` "28_dias"). Either way the span is capped at MAX_SERIE_DIAS counting `dia`: a
+    farther deadline is cut there and `hasta_por` stays "horizonte" -- `hasta` itself says where it
+    was cut. `filas` is `_plan_filas` over [`dia`, `hasta`] -- the same reader, same shape, `plan`
+    already uses."""
+    tope = dia + timedelta(MAX_SERIE_DIAS - 1)
+    deadline = date.fromisoformat(horizonte["deadline"]) if horizonte is not None else None
+    if deadline is not None and deadline >= dia:
+        hasta_por = "horizonte"
+        hasta = min(deadline, tope)
+    else:
+        hasta_por = "28_dias"
+        hasta = dia + timedelta(27)
+    return {"desde": dia.isoformat(), "hasta": hasta.isoformat(), "hasta_por": hasta_por,
+            "filas": _plan_filas(conn, person_id, dia.isoformat(), hasta.isoformat())}
 
 
 def _horizonte_actual(conn, person_id: int, dia: date) -> dict | None:
@@ -197,13 +225,16 @@ def manana(conn, person_id: int, dia: date, ahora: datetime) -> dict:
     BODY-HOGAR-TURNOS-1 ruling 1 adds `turnos`. BODY-HOGAR-ESCRIBE-2 ruling 3 adds `comidas` --
     `ahora` is the person's own local wall-clock now (the route's `_ahora_local`), used only to
     decide which `comidas.faltan` moments have already passed when `dia` is today.
-    BODY-HOGAR-METAS-INGESTA-1 adds `metas`."""
+    BODY-HOGAR-METAS-INGESTA-1 adds `metas`. BODY-HOGAR-PLAN-RANGO-1 adds `plan_bloque` -- `plan`
+    itself is unchanged."""
     defs = _metric_defs(conn)
+    horizonte = _horizonte_actual(conn, person_id, dia)
     return {
         "dia": dia.isoformat(),
         "figuras": _figuras(conn, person_id, dia, defs),
         "plan": _plan_dias(conn, person_id, dia),
-        "horizonte": _horizonte_actual(conn, person_id, dia),
+        "plan_bloque": _plan_bloque(conn, person_id, dia, horizonte),
+        "horizonte": horizonte,
         "turnos": turnos_alrededor(conn, person_id, dia),
         "comidas": _comidas(conn, person_id, dia, ahora),
         "metas": _metas(conn, person_id, dia, defs),

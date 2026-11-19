@@ -186,7 +186,8 @@ _CEILINGS_REAL_PATH = {
     "/ajustes/dispositivos": 10,  # measured 7, ceil(7 * 1.3) = 10
     "/api/asistente/mcp/herramientas": 24,  # measured 18, ceil(18 * 1.3) = 24
     "/api/hogar/herramientas": 23,  # measured 17, ceil(17 * 1.3) = 23
-    "/api/hogar/manana": 36,  # measured 27, ceil(27 * 1.3) = 36
+    "/api/hogar/manana": 37,  # BODY-HOGAR-PLAN-RANGO-1: measured 28 (plan_bloque's one extra SELECT
+                              # for its own filas), ceil(28 * 1.3) = 37 -- was measured 27, ceil = 36
     "/api/hogar/serie": 17,  # measured 13, ceil(13 * 1.3) = 17
     "/api/hogar/turnos": 16,  # measured 12, ceil(12 * 1.3) = 16
     "/api/vida/semana": 62,  # measured 47, ceil(47 * 1.3) = 62
