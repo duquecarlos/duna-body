@@ -18,6 +18,8 @@ ENTRY = HOST_DIR / "duna-deploy-body"
 PRODUCT = HOST_DIR / "body-deploy.sh"
 SUDOERS = HOST_DIR / "duna-deploy-body.sudoers"
 
+_BASH_TIMEOUT_S = 300
+
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
@@ -34,9 +36,16 @@ def _run_bash(script_text: str) -> subprocess.CompletedProcess:
     with tempfile.TemporaryDirectory() as tmp:
         script_path = Path(tmp) / "run.sh"
         script_path.write_text(script_text, encoding="utf-8", newline="\n")
-        return subprocess.run(
-            ["bash", str(script_path)], capture_output=True, text=True, timeout=30
-        )
+        try:
+            return subprocess.run(
+                ["bash", str(script_path)], capture_output=True, text=True,
+                timeout=_BASH_TIMEOUT_S,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise AssertionError(
+                f"bash did not finish inside _BASH_TIMEOUT_S={_BASH_TIMEOUT_S}s; "
+                f"stderr so far: {e.stderr!r}"
+            ) from e
 
 
 class BashHarness(unittest.TestCase):

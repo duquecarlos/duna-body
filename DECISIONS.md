@@ -30401,3 +30401,132 @@ entry) -- merged `2758070` into `main` (`--no-ff`, no conflicts). Post-merge smo
 (`tests.test_turnos_deshacer tests.test_shift_import tests.test_rendimiento_turnos`): `Ran 68 tests
 in 21.774s` -- `OK`.
 
+## BODY-NOCHE-LECTURA-1
+
+**Note on sourcing:** the worker that ran this entry's own merge slice (BODY-NOCHE-LECTURA-1-M)
+could not read `../dev-protocol/specs/body-noche-lectura-1.md` or
+`../dev-protocol/logs/worker-body-noche-lectura-1-body-app-20261119T094644.json` -- both outside
+this repository's sandbox, permission denied on every attempt (`Read`, `Grep`, direct and via `..`).
+Carlos's own words for this slice and the report's own first-gate-line text are therefore not
+reproduced verbatim here; what follows is built from the two commits this slice itself left on
+`feat/body-noche-lectura-1` (`6e34f8a`, `9e343ff`) and the dispatching merge spec's own account of
+the stop, re-measured against the repository rather than copied blind.
+
+**Surface:** Garmin's own sleep payload spans two calendar dates, and `leer_intradia`'s window
+filter (`_en_ventana` in `body/agente/herramientas.py`) checked only the clock-time slice
+`ts[11:16]` against `[desde, hasta)`, with no date check -- a sleep-array minute from the day BEFORE
+the requested `fecha` could pass as if it belonged to that day's own evening window whenever its
+clock time happened to land inside the range. Separately, no single tool call returned a whole
+night's own readings (HR, stress, sleep stages, corrections, derived facts) in one shot; the
+assistant had to stitch `leer_intradia` calls across midnight itself.
+
+**Ruling 1 (cross-midnight leak in `leer_intradia`, verdict: REAL), as built:** `_en_ventana`
+(`body/agente/herramientas.py:1018-1019`, comment at `:1011-1017`) now requires the FULL local
+timestamp, `ts[:10] == fecha and desde <= ts[11:16] < hasta`, not clock time alone -- closing the
+leak for every series it filters (fc, estres, every `sueno_minuto_a_minuto` array), at no cost: all
+of them already carry `fecha` as their own date (`BODY-INTRADIA-SPOTCHECK-1`'s day-scoped fetch).
+`tests/test_leer_intradia.py::CrossMidnightSleepTest` (added by `6e34f8a`) proves the defect and the
+fix.
+
+**Ruling 2 (new tool `leer_noche`), as built:** a `tipo: lectura, nivel: completo` tool
+(`body/agente/herramientas.py:1118` `_leer_noche`, registry entry `:3196-3206`) returns a whole
+night in one call -- Garmin's own sleep start minus 60 min to its own end plus 120 min, capped at
+16h, crossing midnight -- carrying the HR/stress minute points (full local timestamp, both calendar
+dates), the sleep minute arrays, the person's own corrections, and five derived facts
+(`fc_minima`, `fc_minima_vs_rango`, `vfc_noche`, `despertar_modelo`, `minutos_despierto_tras_fin`),
+each null when its own input is missing. `tests/test_leer_noche.py` (new, 444 lines, 32 tests --
+re-run alone on this slice's own final tree: `Ran 32 tests in 11.127s` -- `OK`) covers the window
+shape, the 16h cap, `sin_datos`, a future `fecha`, all five derived facts, persona isolation and a
+bounded statement-count ceiling. `9e343ff` additionally censused every registry/MCP/`persona_fuga`
+test that enumerates tool names (`tests/test_mcp.py`, `tests/test_agente_registro.py`,
+`tests/test_persona_fuga.py`) so each names `leer_noche` explicitly, never "at least".
+
+**NOCHE's own first gate (the dispatching merge spec's account, not re-read from the original
+report):** its own work green -- ruling 1 confirmed and fixed, `leer_noche` built with 32 tests,
+every targeted module passed alone and inside its chunk; 11 of 12 chunks `OK` and the total
+reconciled (4902 collected = 4902 run). The one red: `tests/test_host_autoactualizar.py`, 8 errors
+in chunk 5b, every one a `subprocess.TimeoutExpired` from the module's own `_run_bash` helper
+(`timeout=30` on a `bash run.sh` subprocess) on a busy machine -- reproduced on `main` too, not a
+regression, and neither `body/host_autoactualizar.py` nor that test is in this slice's own diff.
+That flake, and this slice's own full gate re-run, are BODY-NOCHE-LECTURA-1-M's entry below.
+
+**Deviation:** none in NOCHE's own work. The merge slice's inability to read the original spec/report
+files (above) is its own deviation, not this slice's.
+
+**Open follow-ups:** none beyond the flake BODY-NOCHE-LECTURA-1-M fixes.
+
+**Commits:** `6e34f8a` (step 1-2: ruling 1 fix, `leer_noche` built) -- `9e343ff` (step 3: ruling 5
+census) -- merged into `main` as part of BODY-NOCHE-LECTURA-1-M below (same merge commit covers
+both).
+
+## BODY-NOCHE-LECTURA-1-M
+
+**Surface:** BODY-NOCHE-LECTURA-1 stopped GATE_RED on one flake, not on its own work (see entry
+above). ORCH-CARLOS-DELEGATES-TIER-1-1 ruled (Tier 2, test-only): name the ceiling, raise it for a
+busy box, with no assertion weakened; census the same shape elsewhere; then land NOCHE as its own
+spec said.
+
+**Census (ruling 2), as run:** `git grep -n "timeout=30\|TimeoutExpired\|_run_bash" -- tests/`
+matched only `tests/test_host_autoactualizar.py` (the `_run_bash` definition and its ten call
+sites). A second, wider pass (`git grep -n "timeout=" -- tests/`) found three more modules with a
+timeout on a subprocess -- `tests/test_demo.py` (`timeout=timeout`, spawns
+`sys.executable -m body.demo`), `tests/test_isolate_limpieza.py` (`timeout=60`, spawns
+`sys.executable -c`), `tests/test_vivo.py` (`_SUBPROCESS_TIMEOUT_S = 120`, spawns `git`) -- none of
+them spawn `bash`, so none is the same shape; none edited.
+
+**Ruling 1 (named ceiling), as built:** `tests/test_host_autoactualizar.py` gained a module constant
+`_BASH_TIMEOUT_S = 300` (replacing the literal `30`), and `_run_bash` (`tests/test_host_autoactualizar.py:33-46`
+after this slice) now catches `subprocess.TimeoutExpired` and re-raises it as an `AssertionError`
+naming the constant and carrying `e.stderr`. No assertion in the module was removed, loosened or
+skipped; no test was marked `skip`/`expectedFailure`.
+
+**Flake verdict:** `tests.test_host_autoactualizar` run alone, three times on the fixed tree, all
+`OK`, 33 tests each run: `490.688s`, `267.209s`, `368.590s`. No `TimeoutExpired` in any of the three,
+and none reappeared when the module ran again inside this slice's own full-suite gate (chunk 5b
+below, 434 tests `OK` in `436.356s`, host tests grouped together as their own ~12-module chunk).
+Old ceiling `30s` per `bash` subprocess call; new ceiling `300s`. Not re-raised again per ruling 2's
+own instruction -- no `TimeoutExpired` recurred, so there was nothing to re-raise against.
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run as 12
+sequential alphabetical chunks of dotted modules (220 modules total, ~20 per chunk; the chunk
+holding all four `test_host_*` modules split into two of ~12 so the host tests run together as
+their own chunk):
+
+| # | Range | Ran | Result |
+|---|-------|-----|--------|
+| 1 | test_accesibilidad .. test_baselines | 388 | OK (skipped=1, expected failures=1) |
+| 2 | test_baselines_lote .. test_deshacer_derivados | 459 | OK |
+| 3 | test_despertar .. test_errores_texto | 416 | OK |
+| 4 | test_estados_vacios .. test_garmin_web | 349 | OK |
+| 5a | test_get_sin_escritura .. test_hogar_escribe_rutas | 254 | OK |
+| 5b | test_hogar_feed .. test_hoy_escritorio (incl. all 4 test_host_*) | 434 | OK |
+| 7 | test_hoy_turno .. test_mcp_pendientes | 405 | OK |
+| 8 | test_mcp_remoto .. test_persona_fuga | 523 | OK |
+| 9 | test_persona_garmin .. test_pulido_1 | 528 | OK |
+| 10 | test_pulido_2 .. test_sin_friccion | 345 | OK |
+| 11 | test_static_version .. test_turnos_opcional_2 | 514 | OK |
+| 12 | test_turnos_opcional_3 .. test_web_entry | 287 | OK |
+
+Sum: 388+459+416+349+254+434+405+523+528+345+514+287 = **4902**. Reconciled against a separate
+collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, same tree) =
+**4902** -- exact match, also matching NOCHE's own report figure (4902 collected = 4902 run). All
+12 chunks `OK`, no `TimeoutExpired` anywhere, including chunk 5b where the flake previously fired.
+Every `NotSignedIn`/`ResourceWarning`/`Exception in thread`/"pull attempt failed"/"AttributeError"/
+"dia vacio"/`KeyError` line printed mid-run is a pre-existing fixture exercising a synthetic error
+path or an expected-failure test, not a gate failure, and none are in a file this slice touched. No
+password, token, session secret, device key or real health figure was read, printed or written
+anywhere in this slice's own work or the gate's own stdout; no network call was made.
+
+**customer_bytes: unchanged.** This slice's own diff touches only test files
+(`tests/test_host_autoactualizar.py`) and this ledger; no template, route or user-facing string was
+touched. Merge policy A: no schema change, no customer-facing bytes, no cross-repo contract --
+merging on green, no separate approval wait, per `approved: yes` and the spec's own "This spec
+approves the merge" (ORCH-CARLOS-DELEGATES-TIER-1-1).
+
+**Open follow-ups:** none. The three other modules the wider census found
+(`tests/test_demo.py`, `tests/test_isolate_limpieza.py`, `tests/test_vivo.py`) spawn `python`/`git`,
+not `bash`, so they are not the same shape ruling 2 named and needed no follow-up.
+
+**Commits:** `3c5531d` (step 1-2: name the ceiling, raise it, three isolated runs) -- this ledger
+entry, committed before the merge per this slice's own step order.
+

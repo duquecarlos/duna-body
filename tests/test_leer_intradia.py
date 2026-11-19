@@ -179,6 +179,39 @@ class SleepWindowTest(unittest.TestCase):
         self.assertIsNone(out["sueno"])
 
 
+# A night crossing midnight: PREV's own evening through DIA's own morning -- Garmin files the
+# sleep session's day under DIA (the wake day), but its own minute arrays carry BOTH calendar
+# dates (BODY-NOCHE-LECTURA-1 ruling 1).
+PREV = "2026-10-04"
+
+
+class CrossMidnightSleepTest(unittest.TestCase):
+    """BODY-NOCHE-LECTURA-1 ruling 1 (verdict: REAL, the suspected defect confirmed): `_en_ventana`
+    used to filter every series by `ts[11:16]` (clock time) alone, with no date check. A query for
+    `fecha`'s own EVENING window (22:00-23:00, e.g. checking in before THAT night's own sleep) used
+    to pick up PREV's own sleep-array minute at the same clock time -- a minute from the night
+    BEFORE, stamped as if it were this day's own. Fixed by filtering the full local timestamp
+    (`ts[:10] == fecha`, date and time) for every series here, fc/estres included."""
+
+    def test_the_night_befores_sleep_minute_never_answers_for_todays_own_evening(self):
+        conn = _conn(self)
+        _sesion(conn, 1, DIA, f"{PREV}T22:40:00", f"{DIA}T06:50:00")
+        _guardar_sueno(conn, 1, DIA, hr=[(f"{PREV}T22:45:00", 70), (f"{DIA}T06:00:00", 55)])
+        conn.commit()
+        out = _ejecutar(conn, 1, desde="22:00", hasta="23:00")
+        self.assertIsNone(out["sueno"],
+                          "PREV's own 22:45 sleep sample answered for DIA's own 22:00-23:00 window")
+
+    def test_the_same_nights_morning_window_is_unaffected_by_the_date_filter(self):
+        conn = _conn(self)
+        _sesion(conn, 1, DIA, f"{PREV}T22:40:00", f"{DIA}T06:50:00")
+        _guardar_sueno(conn, 1, DIA, hr=[(f"{PREV}T22:45:00", 70), (f"{DIA}T06:00:00", 55)])
+        conn.commit()
+        out = _ejecutar(conn, 1, desde="05:30", hasta="06:30")
+        self.assertIsNotNone(out["sueno"])
+        self.assertEqual(out["sueno"]["heart_rate"], [["06:00", 55.0]])
+
+
 class CorreccionTest(unittest.TestCase):
     """BODY-DESPERTAR-REAL-4 ruling 3 / BODY-DESPERTAR-REAL-6A-R2 ruling 5: the day's own
     correction(s), shown next to Garmin's own sleep, each labelled as which is which -- never a
