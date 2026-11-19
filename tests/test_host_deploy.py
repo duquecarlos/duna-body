@@ -502,6 +502,7 @@ class EnvExampleTest(unittest.TestCase):
         "BODY_AGENTE_GEMINI_API_KEY",
         "BODY_AGENTE_MODELO_GEMINI",
         "BODY_TUTORIALES_BASE_URL",
+        "BODY_LUGARES_TOKEN",
     ]
     FIXED = {
         "BODY_CUENTA_ISSUER": "https://cuenta.duna.solutions",
