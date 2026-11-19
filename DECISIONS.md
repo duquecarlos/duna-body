@@ -29634,3 +29634,86 @@ proven, branch tree == merge tree == `5000b4d`, diff empty). Post-merge smoke
 (`tests.test_lugares tests.test_migraciones tests.test_mudanza tests.test_privacidad tests.test_pull`):
 `Ran 276 tests in 73.936s` -- `OK`.
 
+## BODY-HISTORIA-VIDA-LUGARES-1-WINDOW -- the one-range window corrected to two requests inside Lugares' own cap (2026-11-18)
+
+**Surface, verbatim:** BODY-HISTORIA-VIDA-LUGARES-1 (merged `765010b`) built `lugares.sincronizar`
+asking ONE range `[hoy - 3650, hoy + 365]` because the orchestrator's spec said so; its worker
+measured and flagged that this span is 4015 days, OVER Lugares' own maximum (Main's wire, verbatim:
+"desde and hasta are INCLUSIVE calendar dates; a trip appears if its [start, end] intersects [desde,
+hasta]; max hasta - desde = 3660 days; reversed, missing or invalid dates -> 422"), so every live sync
+would get 422 `rango_invalido`. The orchestrator's arithmetic error, not the worker's own.
+
+**The orchestrator's ruling (ORCH-CARLOS-DELEGATES-TIER-1-1), as built:** Carlos asked for «all my
+historical data», so the past is not shortened. `sincronizar` (`body/lugares.py:104-167`) now makes
+TWO requests, each inside the maximum -- the past `[hoy - 3650, hoy]` (3650 days) and the planned
+`[hoy + 1, hoy + 365]` (364 days) (`body/lugares.py:123-124`) -- with the same `person`, Bearer header
+and seam (`body/lugares.py:98-101`, `_url`, asserts `desde <= hasta` and `hasta - desde <=
+MAX_SPAN_DIAS` on every URL it builds). The two answers are checked in order
+(`body/lugares.py:128-135`): any failing call (401/422/503, a network error, or a malformed body
+without an `eventos` list) keeps the cache as it is and records THAT call's own `motivo`
+(`body/lugares.py:129-142`), same mapping as BODY-HISTORIA-VIDA-LUGARES-1
+(`_MOTIVO_POR_ESTADO = {401: "token_invalido", 422: "rango_invalido", 503: "vida_no_configurado"}`,
+`body/lugares.py:65`). Only when BOTH answers are 200 and valid are the events merged by `ref` into a
+dict (`body/lugares.py:145-153`, a trip whose ref appears in both -- one spanning today -- stored
+once, its dates as Lugares sent them) and the person's cache REPLACED in one transaction
+(`body/lugares.py:155-166`). A module constant names the maximum, citing Main's wire:
+`MAX_SPAN_DIAS = 3660` (`body/lugares.py:36`, comment at `body/lugares.py:35`). The comment at the old
+`body/lugares.py:25-30` (the one-range-is-over-cap deviation note) is replaced by the ruling's own
+reason (`body/lugares.py:26-31`). The statement count, the once-per-day rule
+(`body/pull.py::_sincronizar_lugares_seguro`) and the pull wrapper's printed line (counts only) are
+unchanged -- this slice touched only `body/lugares.py` and `tests/test_lugares.py`.
+
+**Tests, verbatim (all in `tests/test_lugares.py`):**
+
+- `RequestShapeTest.test_makes_exactly_two_requests_with_the_exact_ranges` (line 167): asserts
+  exactly two `_get_json` calls, the first `[hoy - VENTANA_PASADO_DIAS, hoy]`, the second
+  `[hoy + 1, hoy + VENTANA_FUTURO_DIAS]`, same token on both.
+- `RequestShapeTest.test_every_request_stays_inside_the_maximum_span_and_desde_le_hasta` (line 194):
+  parses `desde`/`hasta` back out of both built URLs and asserts `desde <= hasta` and
+  `hasta - desde <= lugares.MAX_SPAN_DIAS` for each.
+- `MergedWindowTest.test_a_trip_present_in_both_answers_is_stored_once` (line 216): a trip spanning
+  `HOY` present in both the past and planned answers is stored once; `viajes: 3` for 101+999+202, not
+  4.
+- `MergedWindowTest.test_both_200_replaces_the_cache` (line 228): two disjoint trips, one per
+  answer, both stored.
+- `MergedWindowTest.test_past_401_planned_200_keeps_cache_and_records_past_motivo` (line 248) and
+  `test_past_200_planned_401_keeps_cache_and_records_planned_motivo` (line 257): either call failing
+  with 401 keeps the previously cached trip and records `token_invalido`, regardless of which call
+  failed.
+- `MergedWindowTest.test_network_error_on_past_keeps_cache` (line 266) and
+  `test_network_error_on_planned_keeps_cache` (line 274): a `(0, {})` network error on either call
+  keeps the cache and records `red`.
+- Two pre-existing tests were updated for the new two-call shape, not re-specified:
+  `SafeWrapperTest.test_second_call_the_same_day_makes_no_second_request` now expects
+  `m.call_count == 2` (one `sincronizar`, two requests) on the first call and none on the second
+  (once-per-day unchanged); `SyncSuccessTest.test_an_invalid_event_is_skipped_and_counted` now feeds
+  the invalid-event batch to only the past call (`side_effect=[...]`) so the four-invalid count is not
+  doubled by the planned call's own identical mock return.
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest tests.test_lugares tests.test_pull
+tests.test_privacidad tests.test_mudanza tests.test_persona_fuga tests.test_demo` -- `Ran 291 tests in
+400.021s` -- `OK`. No password, token, Cuenta sub or real health figure was read, printed or written;
+no network call was made (`lugares._get_json` patched in every test).
+
+**Deviation, measured, carried forward rather than silently dropped:** `VENTANA_PASADO_DIAS = 3650`
+and `VENTANA_FUTURO_DIAS = 365` are unchanged in name and value from BODY-HISTORIA-VIDA-LUGARES-1; what
+changed is that they now drive TWO separate windows (`[hoy-3650, hoy]` = 3650 days, `[hoy+1,
+hoy+365]` = 364 days) instead of one combined `[hoy-3650, hoy+365]` = 4015-day window. Both new
+windows are inside `MAX_SPAN_DIAS = 3660`. This is a Tier 2 build per the dispatch's own ruling, not a
+new product-shape question -- the previously open "which direction to narrow" ruling from
+BODY-HISTORIA-VIDA-LUGARES-1's own open follow-ups is answered: neither direction narrows, both
+requests happen.
+
+**customer_bytes: none.** No `settings.lugares.*` string, no route, no schema change. Only
+`body/lugares.py`'s internal request shape and `tests/test_lugares.py` changed.
+
+**Open follow-ups carried forward:** BODY-HISTORIA-VIDA-LUGARES-2 (season context, Tendencias
+shading, a Día line on a trip day, and whether `despertar_real._eventos_lugares` should stay empty --
+unchanged by this slice). Carlos's three deploy-time hand steps from BODY-HISTORIA-VIDA-LUGARES-1
+(set `BODY_LUGARES_TOKEN`, run `python -m body.vincular_cuenta` once, Lugares' own
+LUGARES-VIDA-VIAJES-LECTURA-1 deploy) are still the gate to anything going live; nothing here changes
+them.
+
+**Commits:** `d1a39c5` (the two-request fix in `body/lugares.py` and its tests) -- this ledger entry
+-- merged into `main` (`--no-ff`).
+
