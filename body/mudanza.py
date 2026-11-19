@@ -81,6 +81,11 @@ SKIPPED_TABLES = {
     # (the same choice as consentimiento_comida_compartida above; its habit_id would need the same
     # id remap habit itself gets, for one setting that costs nothing to re-pick).
     "racha_piso": "re-settable from Tendencias after the move, never hand-copied",
+    # BODY-HISTORIA-VIDA-LUGARES-1 ruling 4: both re-fetched from Lugares on the destination's own
+    # next pull (at most once per person per calendar day) -- never hand-copied, the same choice
+    # racha_piso just above makes for a setting that costs nothing to re-derive.
+    "viaje_lugares": "re-fetched from Lugares, never hand-copied",
+    "lugares_sync": "re-fetched from Lugares, never hand-copied",
 }
 
 # The person-scoped tables, in FK-safe order: every table a row above depends on appears earlier.
