@@ -29240,3 +29240,211 @@ branch tree == merge tree == `0be6da57`, diff empty). Post-merge smoke
 (`tests.test_despertar_correccion tests.test_despertar_real tests.test_despertar_pantalla
 tests.test_migraciones tests.test_leer_intradia`): `Ran 109 tests in 19.239s` -- `OK`.
 
+## BODY-DESPERTAR-REAL-6B, BODY-DESPERTAR-REAL-6B-R -- the sleep TOTAL itself becomes corrected, through one view, never by editing Garmin's record (2026-11-18)
+
+**Carlos's words, verbatim, relayed by the desk 2026-11-18:** "I think that body should be like the
+app that reflects reality in most accurate about my body so because it's the mix between the data
+that is stored by the watch and and all the other info that can gather, use as my timeline, GPS, the
+things that I report to you, eating, training with detail, I mean everything."
+
+**The orchestrator's reading (dev-protocol DECISIONS.md's own `## BODY-DESPERTAR-REAL-RULING`, not
+re-quoted verbatim here -- this slice's own context does not hold that repository's text):** dozing
+after Garmin's recorded sleep end is SLEEP; quiet awake time in bed changes only the GET-UP time;
+Garmin's record is never edited; the correction is Body's own versioned layer, applied with the
+person's tap.
+
+**The gap this pair closes:** BODY-DESPERTAR-REAL-6-INV (OBSERVED) found that `save_day`'s own
+`INSERT OR REPLACE` into `daily_metric` per `(person, day, metric_key)` rules out ever storing a
+corrected value there -- the next sync would silently overwrite it, and it would edit Garmin's own
+record, which the product ruling above forbids. Readiness was computed live and stored after sync,
+carrying the same problem one layer up. BODY-DESPERTAR-REAL-6B built rulings 1-4 and landed them on
+this branch (commits below); 6B-R is the continuation that verified ruling 5, re-measured the
+statement ceilings, ran the full gate in 11 chunks, wrote this entry and merged. Invented demo data
+throughout; no real health figure, password, token or secret read, stored or logged by any file this
+pair touched; no network call.
+
+**The orchestrator's rulings (ORCH-CARLOS-DELEGATES-TIER-1-1):**
+
+**Ruling 1 -- ONE SEAM, IN THE SCHEMA** (`body/db.py:2115-2134`, `_migrar_vista_daily_metric_
+efectiva`, run LAST in `init()` at `:2171`, after `despertar_correccion` and every other table/
+column already exist; dropped FIRST at `:2144`, before any guarded table rebuild could otherwise
+break on a stale view referencing a table mid-rename -- this slice's own `d5111d5`). The view's exact
+SQL, as committed:
+
+```sql
+DROP VIEW IF EXISTS daily_metric_efectiva;
+CREATE VIEW daily_metric_efectiva AS
+SELECT dm.person_id AS person_id, dm.day AS day, dm.metric_key AS metric_key,
+CASE WHEN dm.metric_key = 'sleep_minutes' AND dc.hora_local IS NOT NULL
+          AND ss.end_local IS NOT NULL
+     THEN dm.value + MAX(0, CAST(ROUND(
+              (julianday(date(ss.end_local) || ' ' || dc.hora_local)
+               - julianday(ss.end_local)) * 1440.0) AS INTEGER))
+     ELSE dm.value END AS value,
+dm.source AS source,
+CASE WHEN dm.metric_key = 'sleep_minutes' AND dc.hora_local IS NOT NULL
+          AND ss.end_local IS NOT NULL
+     THEN 1 ELSE 0 END AS corregido
+FROM daily_metric dm
+LEFT JOIN despertar_correccion dc ON dc.person_id = dm.person_id AND dc.day = dm.day
+    AND dc.tipo = 'sueno' AND dm.metric_key = 'sleep_minutes'
+LEFT JOIN sleep_session ss ON ss.person_id = dm.person_id AND ss.day = dm.day;
+```
+
+Every `daily_metric` row as stored, `corregido` 0, except a `sleep_minutes` row whose person/day
+carries a `sueno` correction AND a `sleep_session` row with a non-NULL `end_local`: its `value`
+becomes Garmin's own value plus the whole minutes from `end_local` to that day's own date (the date
+`end_local` itself falls on) at `hora_local`, rounded, never negative (`MAX(0, ...)`, SQLite's
+2-argument scalar form). A `levantado` correction changes no figure -- the join only matches
+`tipo = 'sueno'`. `daily_metric`, `sleep_session` and every Garmin row are never written by this
+view (proved byte-identical before/after, `tests/test_sueno_corregido.py::ViewBehaviourTest::
+test_garmins_raw_rows_are_byte_identical_before_and_after`). `tests/test_sueno_corregido.py::
+MigracionVistaTest` proves a database missing the view gains it additively on the next `init()`,
+and that `init()` is idempotent.
+
+**Ruling 2 -- READERS MOVE** (census re-run at the start of this continuation, `git grep -n
+"daily_metric" -- body/ tests/`, confirming the moved set matches what 6B already built): `db.series`,
+`db.day_values`, `body.lector.Lector` and `body/baselines.py:61` now read `daily_metric_efectiva`;
+`db.series_garmin` (new, named) keeps `body/vida_dia.py` on Garmin's own figure, through
+`db.series(..., registro=True)`'s sibling, until BODY-DESPERTAR-REAL-6C. Every other direct SQL
+reader of a `daily_metric.value` figure from the dispatch's own census (`body/agente/herramientas.py`,
+`body/compartir.py`, `body/despertar_real.py`, `body/desplazamiento_import.py`, `body/history.py`,
+`body/hogar_feed.py`, `body/horizonte.py`, `body/nutriente_objetivo.py`, `body/practicas.py`,
+`body/profile.py`, `body/recuperacion.py`, `body/sueno_fc.py`, `body/turno_fc.py`,
+`body/rutas/tendencias.py`) moved to the view. `tests/test_sueno_corregido.py::AllowListCensusTest`
+is the new census test: it enumerates every `(FROM|JOIN)\s+daily_metric\b(?!_efectiva)` occurrence
+under `body/*.py` and fails on any one not named in its own `ALLOW_LIST`, each entry with its
+one-line reason -- the allow-list, verbatim as committed (`tests/test_sueno_corregido.py:211-243`):
+
+| file | reason |
+|---|---|
+| `body/db.py` | `save_day`'s own INSERT OR REPLACE -- the one writer |
+| `body/db.py` | `set_metric`'s own INSERT OR REPLACE / DELETE -- the one writer |
+| `body/db.py` | `series_garmin` -- a caller that names it wants Garmin's own record, uncorrected |
+| `body/db.py` | `days_with_data` -- a Garmin-day existence check, reads no value |
+| `body/agente/herramientas.py` | `_registrar_medida`'s own antes-snapshot for `registrar_medida`'s undo, which calls `db.set_metric` directly on the raw table |
+| `body/agente/propuestas.py` | `registrar_medida`'s own drift-on-apply/drift-on-undo, comparing against exactly what `db.set_metric` wrote or will restore |
+| `body/garmin_cuenta.py` | existence check, reads no value |
+| `body/persona_garmin.py` | count/scrub specs, read no value |
+| `body/tutoriales.py` | existence check, reads no value |
+| `body/practicas.py` | `_calcular_actividad`/`_primero_ultimo_dato`/`resumen`'s own 'has data' day existence and MIN/MAX(day) range reads -- no value column |
+| `body/sueno_fc.py` | `recalcular`'s own idempotency check (NOT EXISTS, a different metric_key, `sleep_hr_avg`) -- reads no value |
+| `body/rutas/tendencias.py` | `_trend_days_have`'s own COUNT(*) per metric_key -- a count, never a figure (the worker's own choice, ruling 2) |
+| `body/privacidad.py` | export (the record as stored), deletes, and `person_tables`'s own `type='table'` schema scan (a view is never a table) |
+| `body/mudanza.py` | row-for-row migration between databases -- the raw record, named in its own `TableSpec` list, never the `sqlite_master` wildcard |
+| `body/backup.py` | `type='table'` only -- a view is never backed up or counted as one |
+| `body/vida_dia.py` | keeps Garmin's own figure through `db.series_garmin`, named, until BODY-DESPERTAR-REAL-6C |
+| `body/vida_export.py` | keeps Garmin's own figure -- BODY-DESPERTAR-REAL-6C, not this slice |
+
+**Ruling 3 -- READINESS** (`body/readiness.py:136-146`, `recompute_desde`: re-stores readiness for
+`day` itself and every later day within `baselines.WINDOW_DAYS` after it that has data, since only
+those days' own trailing baseline window can reach back far enough to include `day`'s now-corrected
+sleep figure. `compute`'s own weights and `VERSION` are UNCHANGED -- the model is the same, its input
+is truer. Wired into `body/agente/propuestas.py:921-928` (`_aplicar_corregir_despertar`) and
+`:931-940` (`_deshacer_corregir_despertar`): both call `readiness.recompute_desde` ONLY when
+`despues["tipo"] == "sueno"` -- a `levantado` apply/undo recomputes nothing, since it changes no
+figure. `tests/test_readiness.py` gained `RecomputeDesdeTest` proving the day-forward window, the
+`WINDOW_DAYS` bound, and that a day before the correction is untouched.
+
+**Ruling 4 -- PROVENANCE ON SCREEN.** Día's sleep card (`body/rutas/hoy.py:1306-1334`,
+`body/templates/day.html:12-14`): `vals["sleep_minutes"]` already reads corrected (`db.load_day`
+reads `daily_metric_efectiva`); the window's own END shown becomes the `sueno` correction's
+`hora_local`; when a `sueno` correction exists, one plain line under the card
+(`sleep.incluye_correccion`) states Garmin's own total and end, so both figures stay visible. A
+`levantado`-only correction changes neither (ruling 3's own guard mirrored here). Hoy's sleep tile
+(`body/rutas/hoy.py:744-747`) carries `corregido = k == "sleep_minutes" and correcciones_hoy.get
+("sueno") is not None`, rendered as a short mark at `body/templates/today.html:175`. The assistant's
+`leer_dia` (`body/agente/herramientas.py:815-824`) states the already-corrected total and, when a
+`sueno` correction exists, also gives Garmin's own total via `db.series_garmin`, labelled.
+`tests/test_despertar_pantalla.py` gained the screen-level tests for this corrected total/window
+(this continuation's own commit `981c294`).
+
+**Ruling 5 -- THE DESK'S ENGLISH COPY, verbatim as committed** (`body/i18n/en.json:135-136`; es
+unchanged, same wording as BODY-DESPERTAR-REAL-6A/-6A-R2 left it):
+
+| key | en (as committed) |
+|---|---|
+| `day.despertar.sueno_linea` | Looks like you slept until {hora} (Garmin says {fin}). |
+| `day.despertar.levantado_linea` | Looks like you got up around {hora} (Garmin says {fin}). |
+
+Plus the two new provenance strings from ruling 4, es/en verbatim as committed
+(`body/i18n/es.json:134,291`, `body/i18n/en.json:134,291`):
+
+| key | es | en |
+|---|---|---|
+| `day.sueno.incluye_correccion` | Incluye tu corrección: Garmin marcó {total} hasta las {fin}. | Includes your correction: Garmin recorded {total} until {fin}. |
+| `today.tile.corregido` | incluye tu corrección | includes your correction |
+
+This continuation verified both of ruling 5's en strings were already in place exactly as the
+desk's copy specified and that es was untouched; no edit was needed for ruling 5 itself.
+
+**Ruling 6 -- COST, re-measured this continuation** (`.venv/Scripts/python.exe -m unittest
+tests.test_rendimiento tests.test_rendimiento_red tests.test_rendimiento_turnos
+tests.test_agente_leer_serie`): `Ran 51 tests in 36.169s` -- `OK`. No ceiling moved; none re-measured
+or renamed. The recompute on apply/undo is bounded by `WINDOW_DAYS + 1` days (ruling 3).
+
+**Three deviations, accepted by the orchestrator as built (named in this continuation's own
+dispatch):**
+
+(a) `body/agente/herramientas.py:2038` and `body/agente/propuestas.py:735,744` stay on the raw
+`daily_metric` table -- `registrar_medida`'s own write-target/drift/undo snapshots, never figure
+reads; each is in the allow-list above with its own reason.
+
+(b) `readiness.recompute_desde` is also called from the direct `/day/{day}/despertar/deshacer` route
+(`body/rutas/hoy.py:1560`), sueno-only, the same guard as the propuesta-table apply/undo -- this
+bypasses the propuesta table entirely and would otherwise leave a stale readiness score behind for a
+direct Deshacer tap.
+
+(c) `db.init()` drops the view FIRST (`body/db.py:2144`), before any guarded table rebuild, and
+recreates it only at the very end (`:2171`) -- not only at the end as ruling 1 first described it --
+because SQLite resolves a view's own definition against the CURRENT schema at the moment a table it
+names is renamed, so a stale view surviving from an earlier `init()` call would otherwise break the
+very rebuild it depends on the instant that table disappears mid-step (commit `d5111d5`).
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run as 11
+sequential alphabetical chunks of dotted modules (20 per chunk except the last, 216 modules total):
+
+1. `test_accesibilidad`..`test_baselines`: `Ran 387 tests in 136.941s` -- OK (skipped=1, expected failures=1)
+2. `test_baselines_lote`..`test_deshacer_derivados`: `Ran 456 tests in 586.881s` -- OK
+3. `test_despertar`..`test_errores_texto`: `Ran 413 tests in 115.839s` -- OK
+4. `test_estados_vacios`..`test_garmin_web`: `Ran 349 tests in 301.534s` -- OK
+5. `test_get_sin_escritura`..`test_host_deploy`: first attempt `Ran 602 tests in 743.714s` --
+   `FAILED (errors=1)`, a `subprocess.TimeoutExpired` inside
+   `tests.test_host_autoactualizar.ValidarSudoersCandidatoTest.test_refuses_an_argument_after_the_path`
+   (a 30s `bash` subprocess call under process contention, outside this pair's own `touches`).
+   Re-run of `tests.test_host_autoactualizar` alone: `Ran 33 tests in 150.428s` -- OK. Full chunk
+   re-run: `Ran 602 tests in 774.991s` -- OK. Confirmed flake, not a red this pair caused.
+6. `test_host_import`..`test_mcp_copia_pc`: `Ran 362 tests in 124.038s` -- OK
+7. `test_mcp_http`..`test_periodo_pantallas`: `Ran 528 tests in 345.123s` -- OK
+8. `test_person_scope`..`test_propuestas_tabla`: `Ran 480 tests in 258.019s` -- OK
+9. `test_proteina`..`test_sesion_conexion_1`: `Ran 353 tests in 193.695s` -- OK
+10. `test_shift_import`..`test_turnos_esquema_1`: `Ran 513 tests in 189.970s` -- OK
+11. `test_turnos_opcional_2`..`test_web_entry`: `Ran 306 tests in 258.780s` -- OK
+
+Sum: 387+456+413+349+602+362+528+480+353+513+306 = **4749**. Collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted before the chunked run, same
+turn): **4749**. Exact match. Every `NotSignedIn`/`GarminConnect*Error`/`RuntimeError`/`ValueError`/
+`AttributeError`/`ResourceWarning`/`IntegrityError`/`KeyError` line printed during the run is expected
+log output from tests exercising synthetic error paths, unrelated to this pair's own code. No
+password, token, session secret, device key or real health figure was read, printed or written
+anywhere in this pair's own work or the gate's own stdout; no network call was made.
+
+**customer_bytes: changed, on purpose, approved by this spec.** Día's new provenance line
+(`day.sueno.incluye_correccion`), Hoy's tile mark (`today.tile.corregido`), and the corrected
+total/window figures themselves replacing Garmin's raw ones on-screen are rulings 4-5, deliberately
+customer-facing, and this pair's own dispatch said so in words: "This slice changes customer bytes on
+purpose (rulings 4-5) and this spec approves them: merge if green." Per that explicit authorization,
+this pair merges on a green gate rather than stopping for review.
+
+**Open follow-ups carried forward:** BODY-DESPERTAR-REAL-6C (Tier 1, next) -- `body/vida_dia.py` and
+`body/vida_export.py` send the corrected sleep total with vida-v1 `kind: "corrected"` and Garmin's own
+beside it, re-copying `docs/contracts/vida-v1.md` from Main's `contracts/vida-v1.md` first. Also
+unaffected by this pair, named by earlier slices' own reports: BODY-DESPERTAR-REAL-5,
+BODY-DESPERTAR-REAL-6.
+
+**Commits (BODY-DESPERTAR-REAL-6B, landed before this continuation started):** `9a2cc21` (rulings
+1-4: the view, corrected readers, readiness recompute, Día/Hoy/leer_dia's corrected figures) --
+`d5111d5` (drop-the-view-first fix, deviation (c)) -- `9fed8c2` (tests for
+`readiness.recompute_desde`) -- `eee0b98` (wire `recompute_desde` into apply/undo, sueno-only) --
+`981c294` (screen-level tests for the corrected total/window).
+
