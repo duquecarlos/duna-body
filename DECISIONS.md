@@ -29714,6 +29714,7 @@ unchanged by this slice). Carlos's three deploy-time hand steps from BODY-HISTOR
 LUGARES-VIDA-VIAJES-LECTURA-1 deploy) are still the gate to anything going live; nothing here changes
 them.
 
-**Commits:** `d1a39c5` (the two-request fix in `body/lugares.py` and its tests) -- this ledger entry
--- merged into `main` (`--no-ff`).
+**Commits:** `d1a39c5` (the two-request fix in `body/lugares.py` and its tests) -- `88f6fc9` (this
+ledger entry) -- merged `32d3509` into `main` (`--no-ff`, no conflicts). Post-merge smoke
+(`tests.test_lugares tests.test_pull`): `Ran 91 tests in 27.159s` -- `OK`.
 
