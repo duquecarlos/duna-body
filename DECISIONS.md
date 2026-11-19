@@ -29446,5 +29446,9 @@ BODY-DESPERTAR-REAL-6.
 1-4: the view, corrected readers, readiness recompute, Día/Hoy/leer_dia's corrected figures) --
 `d5111d5` (drop-the-view-first fix, deviation (c)) -- `9fed8c2` (tests for
 `readiness.recompute_desde`) -- `eee0b98` (wire `recompute_desde` into apply/undo, sueno-only) --
-`981c294` (screen-level tests for the corrected total/window).
+`981c294` (screen-level tests for the corrected total/window) -- `9a04522` (this ledger entry) --
+merged `04b07c1` into `main` (`--no-ff`, no conflicts; tree identity proven, branch tree == merge
+tree == `4f70db2`, diff empty). Post-merge smoke (`tests.test_sueno_corregido tests.test_readiness
+tests.test_despertar_pantalla tests.test_migraciones tests.test_rendimiento`): `Ran 105 tests in
+79.610s` -- `OK`.
 
