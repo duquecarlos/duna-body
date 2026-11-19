@@ -2444,13 +2444,25 @@ def series(conn, key: str, start: str, end: str, person_id: int) -> dict[str, fl
 
 def series_garmin(conn, key: str, start: str, end: str, person_id: int) -> dict[str, float]:
     """Same as `series`, but Garmin's own record, uncorrected -- for a caller that names it wants
-    that (BODY-DESPERTAR-REAL-6B ruling 2): today body/vida_dia.py, so Personal's morning brief
-    keeps Garmin's own sleep total until BODY-DESPERTAR-REAL-6C labels the corrected one."""
+    that (BODY-DESPERTAR-REAL-6B ruling 2): body/agente/herramientas.py's own undo/compare path."""
     rows = conn.execute(
         "SELECT day, value FROM daily_metric WHERE person_id=? AND metric_key=? AND day BETWEEN ? AND ?",
         (person_id, key, start, end),
     ).fetchall()
     return {r["day"]: r["value"] for r in rows}
+
+
+def series_origen(conn, key: str, start: str, end: str, person_id: int) -> dict[str, tuple[float, bool]]:
+    """Same window as `series`, but WITH provenance: (value, corregido) from `daily_metric_efectiva`
+    in one statement (BODY-DESPERTAR-REAL-6C ruling 1) -- for a caller that must label a corrected
+    figure differently from a measured one (vida-v1's `kind: "corrected"`, Main's contract ruling
+    2026-11-18)."""
+    rows = conn.execute(
+        "SELECT day, value, corregido FROM daily_metric_efectiva "
+        "WHERE person_id=? AND metric_key=? AND day BETWEEN ? AND ?",
+        (person_id, key, start, end),
+    ).fetchall()
+    return {r["day"]: (r["value"], bool(r["corregido"])) for r in rows}
 
 
 def person(conn, person_id: int) -> dict:

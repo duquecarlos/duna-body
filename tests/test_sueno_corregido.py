@@ -187,6 +187,15 @@ class ReadersMoveTest(unittest.TestCase):
     def test_db_series_garmin_reads_garmins_own_value(self):
         self.assertEqual(db.series_garmin(self.conn, "sleep_minutes", DIA, DIA, 1), {DIA: 322})
 
+    def test_db_series_origen_reads_the_corrected_value_with_provenance(self):
+        """BODY-DESPERTAR-REAL-6C ruling 1: value AND corregido, from one statement."""
+        self.assertEqual(db.series_origen(self.conn, "sleep_minutes", DIA, DIA, 1), {DIA: (322 + 139, True)})
+
+    def test_db_series_origen_marks_an_uncorrected_day_as_such(self):
+        otro = "2026-11-11"
+        _metrica(self.conn, 1, otro, "sleep_minutes", 300)
+        self.assertEqual(db.series_origen(self.conn, "sleep_minutes", otro, otro, 1), {otro: (300, False)})
+
     def test_db_day_values_reads_the_corrected_value(self):
         self.assertEqual(db.day_values(self.conn, DIA, 1)["sleep_minutes"], 322 + 139)
 
@@ -236,10 +245,9 @@ ALLOW_LIST = {
     ("body/mudanza.py", "row-for-row migration between databases -- the raw record, named in its "
                          "own TableSpec list, never the sqlite_master wildcard"),
     ("body/backup.py", "type='table' only -- a view is never backed up or counted as one"),
-    # vida-v1, until BODY-DESPERTAR-REAL-6C labels the corrected figure.
-    ("body/vida_dia.py", "keeps Garmin's own figure through db.series_garmin, named, until "
-                          "BODY-DESPERTAR-REAL-6C"),
-    ("body/vida_export.py", "keeps Garmin's own figure -- BODY-DESPERTAR-REAL-6C, not this slice"),
+    # vida-v1: body/vida_dia.py and body/vida_export.py read the corrected value WITH provenance
+    # through db.series_origen (BODY-DESPERTAR-REAL-6C ruling 1), named there -- neither reads a
+    # bare table or the view directly, so neither is listed here any more.
 }
 
 
