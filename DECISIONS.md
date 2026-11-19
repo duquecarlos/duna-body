@@ -30290,6 +30290,8 @@ LOTE-1/2/3 together close the undo gap this thread opened.
 
 **Commits:** `846ca42` (step 1: ruling 1-2, history list and Deshacer disclosure) --
 `cef46d0` (step 2: ruling 3, assistant undo for `proponer_confirmar_turnos`) --
-`5284dfd` (step 3: ruling 4, naming /shifts' re-measured ceiling) -- this ledger entry, next --
-merged into `main` (`--no-ff`), next.
+`5284dfd` (step 3: ruling 4, naming /shifts' re-measured ceiling) -- `a427b67` (this ledger entry)
+-- merged `0f9ed27` into `main` (`--no-ff`, no conflicts). Post-merge smoke
+(`tests.test_turnos_deshacer tests.test_shift_import tests.test_agente_propuestas
+tests.test_rendimiento_turnos`): `Ran 100 tests in 36.893s` -- `OK`.
 
