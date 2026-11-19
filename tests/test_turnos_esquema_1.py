@@ -10,7 +10,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import db, privacidad
+from body import config, db, mudanza, privacidad
 
 
 def _db(case: unittest.TestCase, name: str) -> "db.sqlite3.Connection":
@@ -330,6 +330,66 @@ class PrivacyCoverageTest(unittest.TestCase):
 
         self.assertEqual(
             self.conn.execute("SELECT COUNT(*) FROM shift_pattern WHERE person_id = 1").fetchone()[0], 0
+        )
+
+
+class CarriesTheUndoneStatusTest(unittest.TestCase):
+    """BODY-TURNOS-DESHACER-LOTE-2 census point 4: mudanza and privacidad carry the new 'undone'
+    status value with no other change -- both already copy/export shift_batch rows generically,
+    by column, never by an enumerated list of status values."""
+
+    def setUp(self):
+        self._orig_home, self._orig_db = config.BODY_HOME, config.DB_PATH
+        self.tmp = Path(tempfile.mkdtemp(dir=TMP, prefix="undone-mudanza-"))
+        config.BODY_HOME = self.tmp
+        config.DB_PATH = self.tmp / "host.db"
+        self.source_path = self.tmp / "pc.db"
+
+    def tearDown(self):
+        config.BODY_HOME, config.DB_PATH = self._orig_home, self._orig_db
+
+    def test_mudanza_carries_an_undone_batch_through(self):
+        source = db.connect(path=self.source_path)
+        db.init(source)
+        source.execute(
+            "INSERT INTO shift_batch (person_id, file_name, received, extracted_at, status, "
+            "day_count, created_at, decided_at) VALUES "
+            "(1, 'turnos.pdf', '2026-11-01T00:00:00+00:00', '2026-11-01T00:00:00+00:00', "
+            "'undone', 1, '2026-11-01T00:00:00+00:00', '2026-11-02T00:00:00+00:00')"
+        )
+        source.commit()
+        source.close()
+
+        reports, ok = mudanza.importar(self.source_path, "sub-undone-test-1", apply=True)
+        self.assertTrue(ok)
+
+        dest = db.connect()
+        person_id = dest.execute(
+            "SELECT id FROM person WHERE cuenta_sub = ?", ("sub-undone-test-1",)
+        ).fetchone()[0]
+        status = dest.execute(
+            "SELECT status FROM shift_batch WHERE person_id = ?", (person_id,)
+        ).fetchone()["status"]
+        self.assertEqual(status, "undone")
+
+    def test_privacidad_exports_and_deletes_an_undone_batch(self):
+        conn = _db(self, "privacy_undone.db")
+        db.init(conn)
+        conn.execute(
+            "INSERT INTO shift_batch (person_id, file_name, received, extracted_at, status, "
+            "day_count, created_at) VALUES "
+            "(1, 'turnos.pdf', '2026-11-01T00:00:00+00:00', '2026-11-01T00:00:00+00:00', "
+            "'undone', 1, '2026-11-01T00:00:00+00:00')"
+        )
+        conn.commit()
+
+        data = privacidad.export_person(conn, 1)
+        self.assertEqual(len(data["vida"]["shift_batches"]), 1)
+        self.assertEqual(data["vida"]["shift_batches"][0]["status"], "undone")
+
+        privacidad.delete_person(conn, 1)
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM shift_batch WHERE person_id = 1").fetchone()[0], 0
         )
 
 
