@@ -124,6 +124,11 @@ client = TestClient(web.app, follow_redirects=False)
 # ctx` now costs 12 (was 11 with one kind): ruling 4's per-kind loop runs one extra pending-
 # propuesta check for the second kind, so its own ceiling moves to ceil(12 * 1.3) = 16, named
 # here rather than carried over from the single-kind figure above.
+# BODY-TURNOS-DESHACER-LOTE-3-R: /shifts' own history section (ORCH-CARLOS-DELEGATES-TIER-1-1
+# ruling 1, one combined SELECT) adds its one statement only on the no-pending-proposals path --
+# this file's own fixture always carries a pending proposed batch (demo._seed_shifts), so the
+# route returns before that path runs and this shared ceiling stays UNCHANGED at 42, re-measured.
+# tests/test_turnos_deshacer.py's own HistorialCostoTest measures that path's +1 directly.
 _CEILINGS = {
     "/": 155,
     "/ajustes/asistente": 16,
