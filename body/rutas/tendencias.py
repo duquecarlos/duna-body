@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import anatomia, baselines, db, entreno_racha, fuentes, goals, identity, profile, turnos_costo
+from .. import anatomia, baselines, db, entreno_racha, fuentes, goals, identity, profile, turnos_costo, viajes
 from ..catalogo_tendencias import TODAS
 from ..desplazamiento_import import FUENTE as _FUENTE_COMMUTE
 from ..i18n import T
@@ -429,8 +429,8 @@ def _racha_ctx(t: T, conn, person_id: int, turnos_on: bool, hoy: date) -> dict |
     }
 
 
-def _trend_card(t: T, defs: dict, k: str, start, end, month, nights, marcas, profiles: dict, windows_by_key: dict,
-                 patrones: dict):
+def _trend_card(t: T, defs: dict, k: str, start, end, month, nights, marcas, viaje_dias, profiles: dict,
+                 windows_by_key: dict, patrones: dict):
     """One card -- own baseline, honest gaps, night shading, the month tap -- built the same way for the
     default 9 and every extra metric behind "Ver todas las medidas" (DESIGN rules 3, 6, 7). A
     self-measured key (BODY-ENTRENO-MEDIDA-1) gets a card from its first value instead of waiting
@@ -461,7 +461,7 @@ def _trend_card(t: T, defs: dict, k: str, start, end, month, nights, marcas, pro
         aria = _chart_aria(t, metric_label, etiqueta_dia(w.start), etiqueta_dia(w.end))
         fig, svg = w.mean, profile.window_svg(w, p.low, p.high, nights, etiqueta_dia=etiqueta_dia, aria_label=aria,
                                               valor_fmt=valor_fmt, link_label=t("trends.chart_open_day"),
-                                              banda=not pocas, marcas=marcas)
+                                              banda=not pocas, marcas=marcas, viajes=viaje_dias)
     else:
         delta, cls = ("", "flat") if pocas else _compare(t, k, d, p.last30, p.all_mean, spread, "trends.vs_hist")
         etiqueta_mes = lambda m: t.month_year(date.fromisoformat(m + "-01"))
@@ -547,6 +547,9 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
         start = end - timedelta(int(r) - 1)
     nights = _nights(conn, start, end, person_id) if start and turnos_on else set()
     marcas = _marcas(conn, start, end, person_id) if start else set()
+    # BODY-HISTORIA-VIDA-LUGARES-2-R ruling 2, 7: one trip read for the whole route (start/end is
+    # the one window every card below shares), never a read per card.
+    viaje_dias = viajes.dias_de_viaje(conn, person_id, start.isoformat(), end.isoformat()) if start else set()
     windows_by_key = profile.windows(conn, todas_keys, start, end, person_id=person_id) if start else {}
     cards, since, days = [], None, 0
     # BODY-TENDENCIAS-KPI-MINI-1 ruling 1: every card this route builds, by key -- the strip reads
@@ -554,7 +557,8 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
     # built it, rather than a third call to _trend_card.
     card_by_key: dict[str, dict] = {}
     for k in comun.TREND_KEYS:
-        card, p = _trend_card(t, defs, k, start, end, month, nights, marcas, profiles, windows_by_key, patrones)
+        card, p = _trend_card(t, defs, k, start, end, month, nights, marcas, viaje_dias, profiles, windows_by_key,
+                              patrones)
         if not card:
             continue
         since = since or p.first_day
@@ -574,7 +578,8 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
     for group_key, keys in comun.TREND_GROUPS:
         group_cards = []
         for k in keys:
-            card, p = _trend_card(t, defs, k, start, end, month, nights, marcas, profiles, windows_by_key, patrones)
+            card, p = _trend_card(t, defs, k, start, end, month, nights, marcas, viaje_dias, profiles,
+                                  windows_by_key, patrones)
             if not card:
                 continue
             since = since or p.first_day
@@ -627,6 +632,7 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
     return comun._render("trends.html", t=t, tab="trends", cards=cards, week=week if r == "all" else None,
                    since=t.long_date(date.fromisoformat(since)) if since else "", days=t.num(days),
                    r=r, ranges=RANGES, fig_label=fig_label, nights=bool(nights), marcas=bool(marcas),
+                   viajes=bool(viaje_dias),
                    month_title=t.month_year(month) if month else None, racha=racha, kpi_tiles=kpi_tiles,
                    extra_groups=extra_groups, extra_count=extra_count, todas=todas == "1",
                    desde=desde, dia=desde_dia, back_href=back_href, back_label=back_label, turnos=turnos_on,

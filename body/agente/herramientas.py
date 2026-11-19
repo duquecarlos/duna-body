@@ -73,7 +73,7 @@ from zoneinfo import ZoneInfo
 from .. import anatomia, catalogo_tendencias, comidas, compartir, cuenta, db, despertar_real, \
     desplazamiento_import, enlaces, entreno_historial, errores, experimentos, fechas, garmin_adapter, \
     garmin_cuenta, goals, history, horizonte, household, nutriente_objetivo, practicas, profile, pull, \
-    readiness, shift_import, turnos_costo, tutoriales
+    readiness, shift_import, turnos_costo, tutoriales, viajes
 from ..i18n import LANGS, T
 from . import ajustes, conversacion as agente_conversacion, propuestas
 
@@ -804,6 +804,9 @@ def _leer_hoy(conn: sqlite3.Connection, person_id: int) -> dict:
 def _leer_dia(conn: sqlite3.Connection, person_id: int, day: str) -> dict:
     data = db.load_day(conn, day, person_id)
     t = T(db.person(conn, person_id)["language"])
+    # BODY-HISTORIA-VIDA-LUGARES-2-R ruling 4: this one day against the person's own cached
+    # trips -- the same one-statement helper every trip-aware screen goes through (ruling 0).
+    data["de_viaje"] = day in viajes.dias_de_viaje(conn, person_id, day, day)
     for a in data["activities"]:
         zonas = a.pop("zonas_limitadas", [])
         a["liviano_a_proposito"] = anatomia.texto_liviano_a_proposito(t, zonas) if zonas else None

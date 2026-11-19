@@ -16,7 +16,7 @@ from markupsafe import Markup
 
 from .. import (anatomia, comida_compartida, compartir, cuenta, db, despertar_real, fechas, fuentes, garmin_cuenta,
                 goals, history, horizonte, household, identity, noche_inusual, nutriente_objetivo, pull, readiness,
-                recuperacion, turnos_costo, tutoriales, ventana_comida)
+                recuperacion, turnos_costo, tutoriales, ventana_comida, viajes)
 from ..agente import conversacion as agente_conversacion
 from ..agente import herramientas as agente_herramientas
 from ..agente import propuestas as agente_propuestas
@@ -1280,6 +1280,9 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
     today_local = comun._today_local(person)
     key = d.isoformat()
     periodo_dia = _periodo_dia_ctx(t, conn, person_id, key)
+    # BODY-HISTORIA-VIDA-LUGARES-2-R ruling 3: this one day against the person's own cached trips
+    # -- one statement, through the same helper ruling 0 names for every trip-aware screen.
+    de_viaje = key in viajes.dias_de_viaje(conn, person_id, key, key)
     data = db.load_day(conn, key, person_id)
     vals = {m["key"]: m["value"] for m in data["metrics"]}
     defs = comun._defs(conn)
@@ -1334,6 +1337,12 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
                  "incluye_correccion": incluye_correccion}
     despertar_ctx = _despertar_dia_ctx(t, conn, person_id, person["timezone"], d.isoformat(),
                                         win.get("end_local") if sleep is not None else None, correcciones)
+    # BODY-DESPERTAR-REAL-6B polish (ruling 6, ORCH-CARLOS-DELEGATES-TIER-1-1): with the sleep
+    # card's own provenance line showing, Garmin's end is already said once there -- the older
+    # shared line here would repeat it. No 'sueno' correction (incluye_correccion is None) leaves
+    # despertar_ctx exactly as `_despertar_dia_ctx` built it.
+    if despertar_ctx is not None and sleep is not None and sleep["incluye_correccion"] is not None:
+        despertar_ctx = {**despertar_ctx, "garmin_linea": None}
     recuperaciones = _recovery_lookup(conn, person_id, data["activities"])
     acts = []
     for a in data["activities"]:
@@ -1386,6 +1395,7 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
                    sync_text=None if has_data else comun._sync_status_text(conn, person, t),
                    prev=(d - timedelta(1)).isoformat(), next=(d + timedelta(1)).isoformat(),
                    turnos=turnos_on, ventana=_ventana_dia_ctx(t, conn, person_id, d), periodo=periodo_dia,
+                   de_viaje=de_viaje,
                    comidas=_comidas_dia_ctx(t, conn, person_id, defs, d.isoformat()),
                    checkin=_checkins_dia_ctx(t, conn, person_id, defs, vals, d.isoformat()),
                    objetivos_nutriente=_objetivos_nutriente_ctx(t, conn, defs, person_id, d.isoformat(),

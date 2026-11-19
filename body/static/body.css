@@ -24,7 +24,7 @@
   --amber:#F59E0B; --amber-deep:#7A4E00; --amber-tint:#FBE9C6;
   --danger:#B3472A; --info:#3E5A73; --ok:#406F45;
   --body:#406F45; --night:#3E5A73; --night-tint:#DCE3EA; --day-tint:#FBE9C6;
-  --est:#8A6A2E; --focus:#3E5A73; --rail:#121212;
+  --est:#8A6A2E; --viaje:#6B4FA0; --focus:#3E5A73; --rail:#121212;
   /* BODY-HOY-ESCRITORIO-1 ruling 1: Hoy's own top-row right column width, named once rather than
      repeated as a literal 280px/400px wherever the grid or its figure cap need it. */
   --hoy-figura-min:280px; --hoy-figura-max:400px; --hoy-figura-parte:36%;
@@ -34,6 +34,7 @@
   --paper:#161616; --card:#1E1E1E; --wash:#262626; --inset:#2A2A2A; --line:#3E3E3E; --soft:#2E2E2E;
   --ink:#F2F1EC; --ink2:#C9C6BF; --muted:#A09D95; --amber-deep:#E0A33A; --amber-tint:#3A2E17;
   --night-tint:#26313C; --day-tint:#3A2E17; --ok:#7DB282; --body:#7DB282; --danger:#E07A5F; --est:#D9B26A;
+  --viaje:#B79CE8;
   --focus:#9DB7CF; color-scheme: dark;
 }
 *{box-sizing:border-box}
@@ -450,6 +451,7 @@ svg.barra{display:block;width:100%;height:6px;margin-top:4px}
 .c-amber{background:var(--amber);fill:var(--amber)}
 .c-info{background:var(--info);fill:var(--info)}
 .c-est{background:var(--est);fill:var(--est)}
+.c-viaje{background:var(--viaje);fill:var(--viaje)}
 .c-other{background:var(--muted);fill:var(--muted)}
 .c-inset{background:var(--inset);fill:var(--inset)}
 /* stroke-only: a polyline/line keeps its own fill="none" attribute, which a `fill` in .c-* would

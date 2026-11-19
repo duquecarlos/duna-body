@@ -289,10 +289,16 @@ def _turnos_listado(t: T, turnos: dict[str, int]) -> str:
     return ", ".join(nombre(k, v) for k, v in sorted(turnos.items(), key=lambda kv: -kv[1]))
 
 
+def _viaje_dias_txt(t: T, n: int) -> str:
+    return t("practica.contexto_viaje_one") if n == 1 else t("practica.contexto_viaje_other", n=n)
+
+
 def _contexto_texto(t: T, ctx: dict) -> str | None:
     partes = []
     if ctx["turnos"]:
         partes.append(_turnos_listado(t, ctx["turnos"]))
+    if ctx.get("viaje_dias"):
+        partes.append(_viaje_dias_txt(t, ctx["viaje_dias"]))
     if ctx.get("sleep_minutes") is not None:
         partes.append(t("practica.contexto_sueno", minutos=t.minutes(ctx["sleep_minutes"])))
     if ctx.get("readiness") is not None:

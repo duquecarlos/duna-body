@@ -24,7 +24,7 @@ import statistics
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 
-from . import db
+from . import db, viajes
 from .fechas import lunes_de, rachas_de_estados
 
 MODELO = {
@@ -439,9 +439,13 @@ def _turnos_en_rango(conn, person_id: int, desde: str, hasta: str) -> dict[str, 
     return dict(counts)
 
 
-def _contexto(conn, person_id: int, desde: str, hasta: str) -> dict:
+def _contexto(conn, person_id: int, desde: str, hasta: str, viaje_dias_totales: set[str]) -> dict:
+    """viaje_dias_totales is BODY-HISTORIA-VIDA-LUGARES-2-R ruling 7's own one-read-per-route trip
+    set (the caller's whole span, read once by `estado()`) -- this just counts the slice of it
+    inside [desde, hasta], never a second statement."""
     dias = (date.fromisoformat(hasta) - date.fromisoformat(desde)).days + 1
     turnos = _turnos_en_rango(conn, person_id, desde, hasta)
+    viaje_dias = sum(1 for d in viaje_dias_totales if desde <= d <= hasta)
     medias: dict[str, float | None] = {}
     for key in CONTEXTO_KEYS:
         rows = conn.execute(
@@ -449,7 +453,7 @@ def _contexto(conn, person_id: int, desde: str, hasta: str) -> dict:
             (person_id, key, desde, hasta),
         ).fetchall()
         medias[key] = statistics.fmean(r["value"] for r in rows) if rows else None
-    return {"dias": dias, "turnos": turnos, **medias}
+    return {"dias": dias, "turnos": turnos, "viaje_dias": viaje_dias, **medias}
 
 
 # ---- ruling 7: one entry point for slice 2 ------------------------------------------------------
@@ -488,11 +492,15 @@ def estado(conn: sqlite3.Connection, person_id: int, practica_id: int, desde: da
 
     racha_actual, racha_mas_larga, n_rachas = _rachas_dia(dias_ordenados, estados)
     semanas = _semanas(dias_ordenados, estados, row["meta_dias_semana"])
+    # Ruling 7: one trip read for this whole call, covering every temporada AND the baseline (the
+    # baseline's own [primero, ultimo] is always the widest span either could ask for) -- never a
+    # read per temporada.
+    viaje_dias_totales = viajes.dias_de_viaje(conn, person_id, primero.isoformat(), ultimo.isoformat())
     temporadas = []
     for t in _temporadas_crudas(semanas):
-        contexto = _contexto(conn, person_id, t["_primer_dia"], t["_ultimo_dia"])
+        contexto = _contexto(conn, person_id, t["_primer_dia"], t["_ultimo_dia"], viaje_dias_totales)
         temporadas.append({k: v for k, v in t.items() if not k.startswith("_")} | {"contexto": contexto})
-    baseline = _contexto(conn, person_id, primero.isoformat(), ultimo.isoformat())
+    baseline = _contexto(conn, person_id, primero.isoformat(), ultimo.isoformat(), viaje_dias_totales)
 
     return {
         "definicion": definicion,

@@ -42,6 +42,19 @@ class ProfileTest(unittest.TestCase):
         self.assertEqual(svg.count("<polyline"), 2)        # the missing day breaks the line, no zero drawn
         self.assertIn('href="/day/2026-03-16"', svg)       # every day, even the gap, opens its day
         self.assertIn("c-night", svg)                      # night shift shaded
+        self.assertNotIn("c-viaje", svg)                   # no viajes passed -- byte-identical otherwise
+
+    def test_window_svg_shades_trip_days(self):
+        """BODY-HISTORIA-VIDA-LUGARES-2-R ruling 2: `viajes` draws its own distinct mark, additive
+        to nights/marcas -- the default (no callers before this slice pass it) stays unshaded."""
+        conn = open_conn(self, Path(tempfile.mkdtemp()) / "w2.db")
+        db.init(conn)
+        for i in range(20):
+            db.set_metric(conn, (date(2026, 3, 1) + timedelta(i)).isoformat(), "resting_hr", 50, "garmin", 1)
+        conn.commit()
+        w = profile.window(conn, "resting_hr", date(2026, 3, 11), date(2026, 3, 20), 1)
+        svg = profile.window_svg(w, 49, 52, viajes={"2026-03-13"})
+        self.assertIn("c-viaje", svg)
 
 
 if __name__ == "__main__":

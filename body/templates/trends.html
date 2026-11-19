@@ -60,6 +60,7 @@
     {% if not c.pocas %}<span><i class="c-inset"></i>{{ t('trends.normal', low=c.low, high=c.high) }}</span>{% endif %}
     {% if nights %}<span><i class="c-night op-35"></i>{{ t('trends.nights') }}</span>{% endif %}
     {% if marcas %}<span><i class="c-amber op-35"></i>{{ t('trends.periodos') }}</span>{% endif %}
+    {% if viajes %}<span><i class="c-viaje op-35"></i>{{ t('trends.viaje') }}</span>{% endif %}
   </div>
 </div>
 {% endmacro %}

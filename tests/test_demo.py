@@ -293,6 +293,77 @@ class SeededContentTest(unittest.TestCase):
         self.assertIn("seed", meta)
 
 
+class ViajesDemoSeedTest(unittest.TestCase):
+    """BODY-HISTORIA-VIDA-LUGARES-2-R: the demo's own invented trips (_seed_lugares, BODY-HISTORIA-
+    VIDA-LUGARES-1) must show up through this slice's own rulings -- the Tendencias mark, the Día
+    line, and the Historia count -- on the real anchor (today), the same as a live demo run."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.folder = _fresh_dir()
+        result = _run(["--home", cls.folder, "--dias", str(demo.DIAS_DEFAULT)])
+        assert result.returncode == 0, result.stderr
+        cls.conn = sqlite3.connect(str(Path(cls.folder) / "body.db"))
+        cls.conn.row_factory = sqlite3.Row
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.conn.close()
+
+    def setUp(self):
+        from body import config, web
+        self.orig = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig))
+        config.DB_PATH = Path(self.folder) / "body.db"
+        from fastapi.testclient import TestClient
+        self.client = TestClient(web.app, follow_redirects=False)
+
+    def _trips(self) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT ref, starts_at, ends_at FROM viaje_lugares WHERE person_id = 1 ORDER BY starts_at"
+        ).fetchall()
+
+    def _trip_of_2_or_more_days_in_the_past(self) -> sqlite3.Row:
+        hoy = date.today()
+        for row in self._trips():
+            s, e = date.fromisoformat(row["starts_at"]), date.fromisoformat(row["ends_at"])
+            if (e - s).days + 1 >= 2 and e <= hoy:
+                return row
+        self.fail("demo seed has no past trip of 2+ days (body/demo.py's own _seed_lugares)")
+
+    def test_trends_shows_the_trip_mark(self):
+        trip = self._trip_of_2_or_more_days_in_the_past()
+        s = date.fromisoformat(trip["starts_at"])
+        dias_desde_hoy = (date.today() - s).days
+        rango = next(r for r in ("7", "30", "90") if dias_desde_hoy < int(r))
+        r = self.client.get(f"/trends?r={rango}")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("De viaje", r.text)
+        self.assertIn('class="c-viaje op-35"', r.text)
+
+    def test_day_inside_the_past_trip_shows_the_line(self):
+        trip = self._trip_of_2_or_more_days_in_the_past()
+        s = date.fromisoformat(trip["starts_at"])
+        r = self.client.get(f"/day/{s.isoformat()}")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("De viaje (Lugares).", r.text)
+
+    def test_historia_names_the_trip_days_for_the_practica_whose_history_covers_it(self):
+        from body import practicas
+        trip = self._trip_of_2_or_more_days_in_the_past()
+        practica_ids = [r[0] for r in self.conn.execute("SELECT id FROM practica WHERE person_id = 1")]
+        found, n = None, 0
+        for pid in practica_ids:
+            out = practicas.estado(self.conn, 1, pid)
+            if out["baseline"] and out["baseline"]["viaje_dias"] > 0:
+                found, n = pid, out["baseline"]["viaje_dias"]
+                break
+        self.assertIsNotNone(found, f"no seeded practica's baseline covers the demo's own trip {dict(trip)}")
+        r = self.client.get(f"/history/practica/{found}")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("día de viaje" if n == 1 else "días de viaje", r.text)
+
+
 class PlanHorizonteSeedTest(unittest.TestCase):
     """BODY-PLAN-PANTALLA-1 ruling 6: the demo's own invented plan exists, in both languages."""
 

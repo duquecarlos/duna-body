@@ -130,6 +130,57 @@ class DiaPeriodoTest(unittest.TestCase):
         self.assertNotIn(_t("es", "day.periodo", kind=_t("es", "periodo.kind.viaje")), r.text)
 
 
+class DiaViajeLugaresTest(unittest.TestCase):
+    """BODY-HISTORIA-VIDA-LUGARES-2-R ruling 3: a day inside a 2+ day cached Lugares trip gets its
+    own plain line -- separate from day.periodo above, which is the person's own hand-marked
+    period, never the same mechanism."""
+    client = TestClient(web.app, follow_redirects=False)
+
+    def _reset_db(self, name: str):
+        orig = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
+        self.addCleanup(web.app.dependency_overrides.clear)
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / name
+        conn = db.connect()
+        self.addCleanup(conn.close)
+        db.init(conn)
+        return conn
+
+    def test_day_inside_a_2_day_trip_shows_the_line(self):
+        conn = self._reset_db("dia_viaje.db")
+        dia = date(2026, 6, 10)
+        conn.execute(
+            "INSERT INTO viaje_lugares (person_id, ref, starts_at, ends_at, fetched_at) VALUES "
+            "(?, 'zz-trip', ?, ?, '2026-06-01T00:00:00+00:00')",
+            (PERSON_A, dia.isoformat(), (dia + timedelta(1)).isoformat()),
+        )
+        conn.commit()
+        r = self.client.get(f"/day/{dia.isoformat()}")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(_t("es", "day.de_viaje"), r.text)
+
+    def test_day_inside_a_1_day_trip_shows_nothing(self):
+        conn = self._reset_db("dia_viaje_1dia.db")
+        dia = date(2026, 6, 10)
+        conn.execute(
+            "INSERT INTO viaje_lugares (person_id, ref, starts_at, ends_at, fetched_at) VALUES "
+            "(?, 'zz-trip', ?, ?, '2026-06-01T00:00:00+00:00')",
+            (PERSON_A, dia.isoformat(), dia.isoformat()),
+        )
+        conn.commit()
+        r = self.client.get(f"/day/{dia.isoformat()}")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn(_t("es", "day.de_viaje"), r.text)
+
+    def test_day_outside_any_trip_shows_nothing(self):
+        conn = self._reset_db("dia_sin_viaje.db")
+        dia = date(2026, 6, 10)
+        conn.commit()
+        r = self.client.get(f"/day/{dia.isoformat()}")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn(_t("es", "day.de_viaje"), r.text)
+
+
 class DiaLesionZonaTest(unittest.TestCase):
     """BODY-LESION-ZONA-1 ruling 2: Día's own training section marks a set in an open lesion
     period's own zonas as deliberate, never the period's note."""
@@ -257,6 +308,37 @@ class TrendsPeriodoRouteTest(unittest.TestCase):
         r = self.client.get("/trends?r=7")
         self.assertEqual(r.status_code, 200)
         self.assertNotIn(_t("es", "trends.periodos"), r.text)
+
+    def test_legend_shown_only_when_window_has_a_trip_of_2_or_more_days(self):
+        """BODY-HISTORIA-VIDA-LUGARES-2-R ruling 2: a 2+ day trip inside the window shades its own
+        c-viaje mark and the legend names it; a 1-day trip, like a 1-day period, does neither."""
+        conn = self._reset_db("trends_viaje.db")
+        hoy = date(2026, 6, 20)
+        self._seed_window(conn, hoy)
+        conn.execute(
+            "INSERT INTO viaje_lugares (person_id, ref, starts_at, ends_at, fetched_at) VALUES "
+            "(?, 'zz-trip', ?, ?, '2026-06-01T00:00:00+00:00')",
+            (PERSON_A, (hoy - timedelta(2)).isoformat(), (hoy - timedelta(1)).isoformat()),
+        )
+        conn.commit()
+        r = self.client.get("/trends?r=7")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(_t("es", "trends.viaje"), r.text)
+        self.assertIn('class="c-viaje op-35"', r.text)
+
+    def test_legend_absent_for_a_1_day_trip(self):
+        conn = self._reset_db("trends_viaje_1dia.db")
+        hoy = date(2026, 6, 20)
+        self._seed_window(conn, hoy)
+        conn.execute(
+            "INSERT INTO viaje_lugares (person_id, ref, starts_at, ends_at, fetched_at) VALUES "
+            "(?, 'zz-trip', ?, ?, '2026-06-01T00:00:00+00:00')",
+            (PERSON_A, (hoy - timedelta(1)).isoformat(), (hoy - timedelta(1)).isoformat()),
+        )
+        conn.commit()
+        r = self.client.get("/trends?r=7")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn(_t("es", "trends.viaje"), r.text)
 
 
 class PatternsExclusionTest(unittest.TestCase):

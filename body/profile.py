@@ -224,7 +224,8 @@ def window_svg(w: Window, low: float, high: float, nights: set[str] = frozenset(
                valor_fmt: Callable[[float], str] | None = None,
                link_label: str | None = None,
                banda: bool = True,
-               marcas: set[str] = frozenset()) -> str:
+               marcas: set[str] = frozenset(),
+               viajes: set[str] = frozenset()) -> str:
     """Daily line over the window with your normal range as a band; night shifts shaded; a missing day breaks the
     line (honest gaps, never a zero). Every day is a tap target that opens that day.
 
@@ -236,7 +237,10 @@ def window_svg(w: Window, low: float, high: float, nights: set[str] = frozenset(
     range band and scales the chart to the plotted points alone -- low/high are not yet a trustworthy range.
     marcas (BODY-PERIODO-PANTALLAS-1): days the person marked (illness, travel, injury), shaded in a tone
     distinct from `nights` -- both rects can draw on the same day, same as the figure itself never excludes
-    a marked day from this chart (only baselines/patterns do that)."""
+    a marked day from this chart (only baselines/patterns do that).
+    viajes (BODY-HISTORIA-VIDA-LUGARES-2-R ruling 2): this person's own trip days (viajes.dias_de_viaje,
+    2+ day trips only), shaded in their own tone -- defaults to empty, so every caller that does not pass
+    it renders byte-identical to before this parameter existed."""
     days = [w.start + timedelta(i) for i in range((w.end - w.start).days + 1)]
     pts = list(w.values.values())
     if len(pts) < 2:
@@ -260,6 +264,9 @@ def window_svg(w: Window, low: float, high: float, nights: set[str] = frozenset(
         if d.isoformat() in marcas:
             out.append(f'<rect x="{max(0, i * step - step / 2):.1f}" y="0" width="{step:.1f}" height="{full:.1f}" '
                        f'class="c-amber op-35"/>')
+        if d.isoformat() in viajes:
+            out.append(f'<rect x="{max(0, i * step - step / 2):.1f}" y="0" width="{step:.1f}" height="{full:.1f}" '
+                       f'class="c-viaje op-35"/>')
     runs, cur = [], []
     for i, d in enumerate(days):
         v = w.values.get(d.isoformat())
