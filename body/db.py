@@ -1073,6 +1073,29 @@ CREATE TABLE IF NOT EXISTS practica (
     archivada_en     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_practica_person ON practica(person_id);
+
+-- BODY-HISTORIA-VIDA-LUGARES-1: nothing Lugares did not send, no names, no coordinates -- ref/
+-- starts_at/ends_at are its own trip id and the two dates body/lugares.py's sincronizar() already
+-- validated. Replaced whole, per person, on every successful sync (a trip missing from a later
+-- answer is gone).
+CREATE TABLE IF NOT EXISTS viaje_lugares (
+    person_id  INTEGER NOT NULL REFERENCES person(id),
+    ref        TEXT NOT NULL,
+    starts_at  TEXT NOT NULL,
+    ends_at    TEXT NOT NULL,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (person_id, ref)
+);
+
+-- One row per person: the last sync attempt and the last one that actually succeeded. motivo is
+-- the error's own class only (never a body or a token) -- 'red' (network), 'formato' (malformed
+-- body) or the wire's own `motivo` string (token_invalido/rango_invalido/vida_no_configurado).
+CREATE TABLE IF NOT EXISTS lugares_sync (
+    person_id  INTEGER PRIMARY KEY REFERENCES person(id),
+    intento_at TEXT NOT NULL,
+    ok_at      TEXT,
+    motivo     TEXT
+);
 """
 
 # (key, label, unit, better, kind). 'estimated' = computed by Body, shown with «≈» and "how I calculate it".
@@ -2497,6 +2520,29 @@ def racha_piso_habit_id(conn, person_id: int) -> int | None:
     tendencias.py re-checks the habit itself (active, weekly, readable) every time it reads this."""
     row = conn.execute("SELECT habit_id FROM racha_piso WHERE person_id = ?", (person_id,)).fetchone()
     return row["habit_id"] if row else None
+
+
+def viajes_lugares(conn, person_id: int, desde: str, hasta: str) -> list[dict]:
+    """BODY-HISTORIA-VIDA-LUGARES-1 ruling 4: this person's own cached trips whose own
+    [starts_at, ends_at] intersects [desde, hasta] (ISO dates, both inclusive) -- one statement,
+    oldest first. body/lugares.py's own sincronizar() is the only writer of viaje_lugares."""
+    return [dict(r) for r in conn.execute(
+        "SELECT ref, starts_at, ends_at, fetched_at FROM viaje_lugares WHERE person_id = ? "
+        "AND starts_at <= ? AND ends_at >= ? ORDER BY starts_at",
+        (person_id, hasta, desde),
+    )]
+
+
+def lugares_estado(conn, person_id: int) -> dict:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 6: Ajustes' own one read -- the sync row, if any
+    (intento_at/ok_at/motivo all None when this person has never been attempted), plus how many of
+    this person's trips are cached right now."""
+    row = conn.execute(
+        "SELECT intento_at, ok_at, motivo FROM lugares_sync WHERE person_id = ?", (person_id,)
+    ).fetchone()
+    n = conn.execute("SELECT COUNT(*) FROM viaje_lugares WHERE person_id = ?", (person_id,)).fetchone()[0]
+    return {"intento_at": row["intento_at"] if row else None, "ok_at": row["ok_at"] if row else None,
+            "motivo": row["motivo"] if row else None, "n_viajes": n}
 
 
 def trabaja_turnos_si(conn, person_id: int) -> bool:

@@ -1434,6 +1434,31 @@ def _seed_bloque_noche_futuro(conn, anchor: date, person_id: int) -> None:
     conn.commit()
 
 
+def _seed_lugares(conn, person_id: int, anchor: date) -> int:
+    """Invented demo trips, written directly (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4) -- the demo
+    never touches Lugares or the network: one past trip of 2+ days, one past single day, and one
+    planned trip ahead of `anchor`, plus a lugares_sync row recording that sync as if it had just
+    succeeded."""
+    ahora = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    viajes = (
+        ("demo-viaje-1", anchor - timedelta(20), anchor - timedelta(16)),
+        ("demo-viaje-2", anchor - timedelta(8), anchor - timedelta(8)),
+        ("demo-viaje-3", anchor + timedelta(10), anchor + timedelta(13)),
+    )
+    for ref, inicio, fin in viajes:
+        conn.execute(
+            "INSERT INTO viaje_lugares (person_id, ref, starts_at, ends_at, fetched_at) VALUES "
+            "(?, ?, ?, ?, ?)",
+            (person_id, ref, inicio.isoformat(), fin.isoformat(), ahora),
+        )
+    conn.execute(
+        "INSERT INTO lugares_sync (person_id, intento_at, ok_at, motivo) VALUES (?, ?, ?, NULL)",
+        (person_id, ahora, ahora),
+    )
+    conn.commit()
+    return len(viajes)
+
+
 def _seed_household(conn, db, goals, enlaces, compartir, comida_compartida, rng: random.Random,
                      all_days: list[date], anchor: date,
                      first_monday: date, anchor_monday: date, person_id: int,
@@ -1576,6 +1601,7 @@ def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[st
     planes_hoy = _seed_plan_hoy(conn, anchor, person_id, idioma)
 
     practicas_count, practica_pasos_id = _seed_practicas(conn, practicas, person_id, idioma)
+    viajes_lugares = _seed_lugares(conn, person_id, anchor)
 
     checks, habit_checks, racha_sesiones = _seed_goals_and_habits(
         conn, db, goals, rng, all_days, anchor, first_monday, anchor_monday, person_id, idioma,
@@ -1607,6 +1633,7 @@ def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[st
         "planes_hoy": planes_hoy, "desplazamiento_dias": desplazamiento_dias,
         "comidas_compartidas_pendientes": comidas_compartidas_pendientes,
         "practicas": practicas_count,
+        "viajes_lugares": viajes_lugares,
     }
 
 

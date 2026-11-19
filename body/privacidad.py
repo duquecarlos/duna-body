@@ -88,6 +88,9 @@ FULLY_HANDLED_TABLES = {
     # exported and deleted like any other of their own rows, Garmin's own sleep_session row
     # untouched either way.
     "despertar_correccion",
+    # BODY-HISTORIA-VIDA-LUGARES-1 ruling 4: this person's own trips, re-fetched from Lugares --
+    # nothing Lugares did not send, no names, no coordinates.
+    "viaje_lugares",
 }
 # raw_payload: kind/date only, never the stored JSON payload. garmin_cuenta: the connected-since
 # date only, never the encrypted token (BODY-GARMIN-HOST-1). dispositivo: name/scopes/dates only,
@@ -99,8 +102,10 @@ FULLY_HANDLED_TABLES = {
 PARTIAL_EXPORT_TABLES = {"raw_payload", "garmin_cuenta", "dispositivo"}
 # BODY-CHECKIN-1 ruling 4: checkin_nota is the strictest privacy level -- never in this module's own
 # export, never in body/vida_export.py, never shared with a household. sesion is session plumbing,
-# not data about the person's body or life.
-NEVER_EXPORTED_TABLES = {"sesion", "checkin_nota"}
+# not data about the person's body or life. lugares_sync is this module's own sync bookkeeping
+# (attempt/success timestamps and an error CLASS, BODY-HISTORIA-VIDA-LUGARES-1 ruling 4) -- same
+# treatment as sesion, deleted below but never exported.
+NEVER_EXPORTED_TABLES = {"sesion", "checkin_nota", "lugares_sync"}
 
 
 def person_tables(conn: sqlite3.Connection) -> set[str]:
@@ -328,6 +333,11 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
     practicas_rows = [dict(r) for r in conn.execute(
         "SELECT id, titulo, fuente, regla_json, meta_dias_semana, origen, creada_en, archivada_en "
         "FROM practica WHERE person_id = ? ORDER BY id", (person_id,))]
+    # BODY-HISTORIA-VIDA-LUGARES-1 ruling 4: this person's own trips, re-fetched from Lugares --
+    # nothing Lugares did not send, no names, no coordinates.
+    viajes_lugares_rows = [dict(r) for r in conn.execute(
+        "SELECT ref, starts_at, ends_at, fetched_at FROM viaje_lugares WHERE person_id = ? ORDER BY starts_at",
+        (person_id,))]
     asistente = {
         "conversaciones": conversaciones, "mensajes": mensajes_agente, "uso": uso_agente_rows,
         "tope": dict(tope_agente_row) if tope_agente_row else None, "propuestas": propuestas_agente,
@@ -369,6 +379,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "dispositivos": dispositivos,
         "asistente": asistente,
         "practicas": practicas_rows,
+        "viajes_lugares": viajes_lugares_rows,
     }
 
 
@@ -500,6 +511,11 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         conn.execute("DELETE FROM sleep_session WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM despertar_correccion WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM raw_payload WHERE person_id = ?", (person_id,))
+        # BODY-HISTORIA-VIDA-LUGARES-1 ruling 4: this person's own cached trips and sync state,
+        # both re-fetched from Lugares, never hand-copied -- same census treatment as every other
+        # plain person-keyed table above.
+        conn.execute("DELETE FROM viaje_lugares WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM lugares_sync WHERE person_id = ?", (person_id,))
         # workout_set's FK targets activity's composite key -- deleted first, same as every other
         # table that references a row this sweep is about to remove. activity_detail has no
         # formal FK (same as workout_set, above) but names the same (source, source_id) pair --

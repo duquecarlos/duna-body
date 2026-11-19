@@ -376,6 +376,19 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
     # delete-all coverage, and its own columns (tool name, UTC time, caller id) carry nothing a
     # screen or export could leak between A and B beyond the generic row-count check.
     db.registrar_uso_herramienta_externa(conn, person_id, "leer_hoy", "mcp-local")
+    # BODY-HISTORIA-VIDA-LUGARES-1: viaje_lugares/lugares_sync are both person-owned (their own
+    # person_id column, same census treatment as uso_herramienta_externa above) -- no marker
+    # needed, the census only checks export/delete-all coverage; ref is Lugares' own opaque trip
+    # id, never a place name.
+    conn.execute(
+        "INSERT INTO viaje_lugares (person_id, ref, starts_at, ends_at, fetched_at) VALUES "
+        "(?, ?, ?, ?, ?)",
+        (person_id, f"zz-{tag.lower()}-viaje", DAYS[-3], DAYS[-1], f"{DAYS[-1]}T07:30:00+00:00"),
+    )
+    conn.execute(
+        "INSERT INTO lugares_sync (person_id, intento_at, ok_at, motivo) VALUES (?, ?, ?, NULL)",
+        (person_id, f"{DAYS[-1]}T07:30:00+00:00", f"{DAYS[-1]}T07:30:00+00:00"),
+    )
     conn.commit()
 
     return {

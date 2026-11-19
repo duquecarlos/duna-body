@@ -29452,3 +29452,182 @@ tree == `4f70db2`, diff empty). Post-merge smoke (`tests.test_sueno_corregido te
 tests.test_despertar_pantalla tests.test_migraciones tests.test_rendimiento`): `Ran 105 tests in
 79.610s` -- `OK`.
 
+## BODY-HISTORIA-VIDA-LUGARES-1
+
+**Carlos, relayed by the desk (his words):** «remember that I want in body all my historical
+data...», and on 2026-11-18 he ruled what Body is for: «I think that body should be like the app
+that reflects reality in most accurate about my body so because it's the mix between the data that
+is stored by the watch and and all the other info that can gather, use as my timeline, GPS, the
+things that I report to you, eating, training with detail, I mean everything.»
+
+**Main built Lugares' read API** (LUGARES-VIDA-VIAJES-LECTURA-1, duna-lugares main `e5f5cdc`). **THE
+WIRE, verbatim from Main's message of 2026-11-18**, quoting `src/app/api/vida/eventos/route.ts` +
+`src/lib/store/servicioVida.ts`: REQUEST `GET /api/vida/eventos?person=<cuenta sub>&desde=YYYY-MM-DD&hasta=YYYY-MM-DD`
+with header `Authorization: Bearer <token>`; hosted base `https://lugares.duna.solutions`, local
+`http://127.0.0.1:3060`; token: env `DUNA_LUGARES_TOKEN_BODY` on the Lugares side, Body holds the
+same value. RANGE: desde and hasta are INCLUSIVE calendar dates; a trip appears if its [start, end]
+intersects [desde, hasta]; max hasta - desde = 3660 days; reversed, missing or invalid dates -> 422.
+200: `{"eventos":[{"id","person","hogar_id":null,"kind":"trip","starts_at":"YYYY-MM-DD","ends_at":"YYYY-MM-DD","all_day":true,"timezone":"America/Bogota","source":"lugares","ref":<viaje id>,"data":{}}]}`
+-- one event per trip on the person's lists; a trip with no end date has ends_at = starts_at; trips
+with no start date are left out; data is always {}. ERRORS: 401 `{"motivo":"token_invalido"}`, 422
+`{"motivo":"rango_invalido"}`, 503 `{"motivo":"vida_no_configurado"}` when Lugares has no token set.
+No coordinates, no place names.
+
+**Main's answer on the person (2026-11-18):** `person` is ONE value everywhere (Cuenta's single
+issuer); a local Body calls the HOSTED Lugares; if no sub is configured Body sends nothing and shows
+Lugares as «sin conectar», and never falls back to vida-v1's local key.
+
+**The orchestrator's rulings (ORCH-CARLOS-DELEGATES-TIER-1-1), as built:**
+
+(1) **PERSON** -- the sub sent to Lugares is `person.cuenta_sub` and nothing else: never a config
+value, never an email, never `BODY_PERSON_KEY` or vida-v1's local key. Built `body/lugares.py:57`
+(`_cuenta_sub`, one read of `person.cuenta_sub`); a person with no `cuenta_sub` is «sin conectar» and
+no request is made (`body/lugares.py:103-105`).
+
+(2) **CONFIG** -- `config.lugares_token()` reads env `BODY_LUGARES_TOKEN` (`body/config.py:22,25-29`;
+`None` when unset, never logged, never stored in the DB, never in a URL); the base URL is the one
+`enlaces` already owns, exposed as a public `enlaces.origen("lugares")` (renamed from `_origin`,
+`body/enlaces.py:38-43`; both internal callers in `url_de` and `ref_desde_entrada` moved) so the one
+override `DUNA_LUGARES_ORIGEN` serves both the trip links and this client; `deploy/host/body.env.example`
+names `BODY_LUGARES_TOKEN=` empty with a one-line comment. No token -> «sin conectar», no request.
+
+(3) **CLIENT** -- new module `body/lugares.py`, the ONLY module that talks to Lugares (its own
+docstring says so, like `garmin_adapter.py`): network seam `_get_json(url, token) -> (status, dict)`
+(`body/lugares.py:41-55`), patched in every test; `sincronizar(conn, person_id, hoy) -> dict`
+(`body/lugares.py:95-150`) asks ONE range `[hoy - 3650 days, hoy + 365 days]`
+(`VENTANA_PASADO_DIAS`/`VENTANA_FUTURO_DIAS`, `body/lugares.py:32-33,110-111`), validates each event
+(`_validar_evento`, `body/lugares.py:65-83`: `kind == "trip"`, ISO dates, `starts_at <= ends_at`, `ref`
+present -- an invalid event is skipped and counted, never stored), and on 200 REPLACES that person's
+cached rows in one transaction (`body/lugares.py:139-146`, DELETE then INSERT inside `with conn:`); on
+401/422/503, a network error (`estado_http == 0`) or a malformed body it keeps the cache as-is and
+records only the error's own class in `lugares_sync.motivo` via `_registrar_intento`
+(`body/lugares.py:85-93`): `red` for network, `formato` for a malformed body, or the wire's own
+`motivo` string (`token_invalido`/`rango_invalido`/`vida_no_configurado`) via `_MOTIVO_POR_ESTADO`
+(`body/lugares.py:62`). Returns counts only.
+
+(4) **STORAGE** -- two additive tables, `body/db.py:1081-1098`:
+
+```sql
+CREATE TABLE IF NOT EXISTS viaje_lugares (
+    person_id  INTEGER NOT NULL REFERENCES person(id),
+    ref        TEXT NOT NULL,
+    starts_at  TEXT NOT NULL,
+    ends_at    TEXT NOT NULL,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (person_id, ref)
+);
+
+CREATE TABLE IF NOT EXISTS lugares_sync (
+    person_id  INTEGER PRIMARY KEY REFERENCES person(id),
+    intento_at TEXT NOT NULL,
+    ok_at      TEXT,
+    motivo     TEXT
+);
+```
+
+Nothing Lugares did not send: no names, no coordinates. db readers: `viajes_lugares(conn, person_id,
+desde, hasta)` (`body/db.py:2525-2534`, trips intersecting the range, one statement) and
+`lugares_estado(conn, person_id)` (`body/db.py:2536-2544`). Census: both tables in
+`mudanza.SKIPPED_TABLES` with the reason "re-fetched from Lugares, never hand-copied"
+(`body/mudanza.py:87-88`); `privacidad`'s export includes `viaje_lugares`
+(`FULLY_HANDLED_TABLES`/`body/privacidad.py:93`, the rows at `:338-339,382`) and the delete sweep
+removes both (`body/privacidad.py:517-518`); `lugares_sync` is its own sync bookkeeping, never
+exported (`NEVER_EXPORTED_TABLES`, `body/privacidad.py:108`); `tests/test_persona_fuga.py`'s
+`_seed_person` seeds one row in each table so the leak sweep's own table census stays satisfied;
+`body/demo.py`'s seed (`_seed_lugares`, `:1438-1456`, wired at `:1604,1636`) gains three invented
+trips (one past 2+ day trip, one past 1-day trip, one planned trip ahead of `anchor`) and a
+`lugares_sync` ok row, written directly -- the demo never touches the network.
+
+(5) **JOB** -- one safe wrapper `_sincronizar_lugares_seguro(conn, person_id)`
+(`body/pull.py:493-511`), beside `_recalcular_turno_fc_seguro`: skips silently once
+`lugares_sync.intento_at` already names today (same UTC clock as the write, so the gate does not
+race local-vs-UTC midnight), otherwise calls `lugares.sincronizar` and prints one count-only line
+(`lugares: N viajes` / `lugares: sin conectar` / `lugares: <motivo>`), catching every exception and
+never raising. Called once per person in the hosted daily pull (`body/pull.py:884`) and once in the
+local CLI path (`body/pull.py:1450`). `pull_backfill_hosted` never calls it.
+
+(6) **STATE ON SCREEN** -- Ajustes shows one Lugares row beside the Garmin one, in both local and
+hosted modes (`_lugares_estado_texto`, `body/rutas/ajustes.py:76-91`, wired into the settings route
+at `:107`; the row in `body/templates/settings.html`, right after the Garmin/dispositivos block).
+Three states, es/en as committed (`body/i18n/es.json:498-502`, `body/i18n/en.json:498-502`):
+
+| key | es | en |
+|---|---|---|
+| `settings.lugares.conectado` | Lugares: conectado · {n} viajes | Lugares: connected · {n} trips |
+| `settings.lugares.conectado_one` | Lugares: conectado · {n} viaje | Lugares: connected · {n} trip |
+| `settings.lugares.sin_conectar` | Lugares: sin conectar | Lugares: not connected |
+| `settings.lugares.sin_datos` | Lugares: sin datos desde {fecha} | Lugares: no data since {fecha} |
+| `settings.lugares.nunca` | nunca | never |
+
+GET routes write nothing. No other screen reads trips in this slice (BODY-HISTORIA-VIDA-LUGARES-2,
+below).
+
+**One deviation, implemented literally as the surface's own ruling (3) directed, not silently
+narrowed:** the wire's own RANGE line caps `hasta - desde` at 3660 days, but ruling (3) sets the
+window to `[hoy - 3650, hoy + 365]`, i.e. `hasta - desde = 4015` days -- 355 days OVER that cap, while
+the same ruling's own parenthetical calls it "inside the 3660-day maximum." Built exactly as
+specified (`VENTANA_PASADO_DIAS = 3650`, `VENTANA_FUTURO_DIAS = 365`, `body/lugares.py:32-33`): once
+Lugares is live, every `sincronizar()` call will receive a 422 `rango_invalido` and `lugares_sync`
+will show that motivo on every person, never "conectado," until this window is narrowed to fit inside
+3660 days (for example 3285/365 or 3650/0). Flagged here rather than fixed unilaterally, since
+narrowing it is a product choice (which direction to shrink) outside this ruling's own wording.
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run as 11
+sequential alphabetical chunks of dotted modules (20 per chunk except the last, 217 modules total):
+
+1. `test_accesibilidad`..`test_baselines`: `Ran 387 tests in 144.647s` -- OK (skipped=1, expected failures=1)
+2. `test_baselines_lote`..`test_deshacer_derivados`: `Ran 456 tests in 668.737s` -- OK
+3. `test_despertar`..`test_errores_texto`: `Ran 413 tests in 151.829s` -- OK
+4. `test_estados_vacios`..`test_garmin_web`: `Ran 349 tests in 345.056s` -- OK
+5. `test_get_sin_escritura`..`test_host_deploy`: `Ran 602 tests in 846.532s` -- `FAILED (failures=1)`,
+   `EnvExampleTest.test_every_name_present_and_values_blank_except_fixed` (`tests/test_host_deploy.py:520`):
+   its hand-written `NAMES` census of `deploy/host/body.env.example` had not been told about
+   `BODY_LUGARES_TOKEN` (added by this slice, ruling 2). Fixed by adding it to `NAMES`
+   (`tests/test_host_deploy.py:505`, commit `8172f0c`); re-run of `tests.test_host_deploy` alone:
+   `Ran 79 tests in 0.672s` -- OK. Chunk total unaffected elsewhere.
+6. `test_host_import`..`test_mcp_cliente_remoto`: `Ran 392 tests in 134.547s` -- OK
+7. `test_mcp_copia_pc`..`test_periodo_herramientas`: `Ran 521 tests in 234.128s` -- OK
+8. `test_periodo_pantallas`..`test_propuesta_vigencia`: `Ran 496 tests in 192.008s` -- OK
+9. `test_propuestas_tabla`..`test_series_unidad`: `Ran 351 tests in 102.458s` -- OK
+10. `test_sesion_conexion_1`..`test_turnos_enlaces`: `Ran 508 tests in 109.969s` -- OK
+11. `test_turnos_esquema_1`..`test_web_entry`: `Ran 317 tests in 109.831s` -- OK
+
+Sum: 387+456+413+349+602+392+521+496+351+508+317 = **4792**. Collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted before the chunked run, same
+turn): **4792**. Exact match. Every `NotSignedIn`/`GarminConnect*Error`/`RuntimeError`/`ValueError`/
+`AttributeError`/`ResourceWarning`/`KeyError`/`lugares: sin conectar`/`lugares: N viajes` line printed
+during the run is expected log output -- counts and states only, from tests exercising synthetic error
+paths and this slice's own safe wrapper. No password, token, session secret, device key, Cuenta sub
+or real health figure was read, printed or written anywhere in this slice's own work or the gate's own
+stdout; no network call was made (`lugares._get_json` patched in every test, per the surface's own
+ban).
+
+**customer_bytes: changed, on purpose, approved by this spec.** The new Ajustes/Settings row
+(`settings.lugares.*`, five keys, es and en) is ruling 6, deliberately customer-facing, and the
+surface said so in words: "This slice changes customer bytes on purpose (ruling 6) and this spec
+approves them: merge if green." Per that explicit authorization, this slice merges on a green gate
+rather than stopping for review.
+
+**Carlos's deploy-time hand steps (nothing here is live until these happen):**
+
+1. Set `BODY_LUGARES_TOKEN` in `/srv/duna/env/body.env` to the SAME value Lugares holds as its own
+   `DUNA_LUGARES_TOKEN_BODY`.
+2. On the PC, run `python -m body.vincular_cuenta` once, so his own `person` row carries a
+   `cuenta_sub`.
+3. A Lugares deploy of LUGARES-VIDA-VIAJES-LECTURA-1 itself, which has not happened yet.
+
+Until all three, every person shows "Lugares: sin conectar" and `sincronizar()` never sends a
+request.
+
+**Open follow-ups carried forward (BODY-HISTORIA-VIDA-LUGARES-2, next):** the uses -- season context
+«N días de viaje» for trips of 2+ days in `practicas._contexto` (`body/practicas.py:427-452`),
+Tendencias shading beside nights (`body/rutas/tendencias.py:100`), a Día line on a trip day, `leer_dia`
+-- and whether `despertar_real._eventos_lugares` (`body/despertar_real.py:115-119`) should stay empty:
+a trip day is context, not a timed event. Also open: the window-vs-cap deviation above needs a product
+ruling on which direction to narrow before BODY-HISTORIA-VIDA-LUGARES-2 or any live deploy.
+
+**Commits:** `3be28fe` (rulings 1-2: `config.lugares_token`, `enlaces.origen`) -- `b9d2abe` (rulings
+3-4: `body/lugares.py`, the two tables and readers, census wiring) -- `b65653e` (rulings 5-6: the pull
+wrapper, the Ajustes row, i18n) -- `8172f0c` (gate fix: `test_host_deploy`'s env-example census) --
+this ledger entry.
+

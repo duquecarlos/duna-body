@@ -10,7 +10,7 @@ from urllib.parse import parse_qs
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import comida_compartida, compartir, cuenta, db, household, identity, nutriente_objetivo
+from .. import comida_compartida, compartir, config, cuenta, db, household, identity, nutriente_objetivo
 from ..agente import ajustes as agente_ajustes
 from ..agente import cliente as agente_cliente
 from ..agente import conversacion as agente_conversacion
@@ -73,6 +73,24 @@ def _nutriente_pendientes_ctx(t, conn, defs: dict, person_id: int) -> list[dict]
     return out
 
 
+def _lugares_estado_texto(t, conn, person: dict, person_id: int) -> str:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 6: the one Lugares row Ajustes shows. «sin conectar»
+    when this person has no Cuenta sub, or the host has no `BODY_LUGARES_TOKEN` configured --
+    never a request attempted (body/lugares.py rulings 1-2); «sin datos desde {fecha}» when the
+    last sync attempt failed (the last SUCCESSFUL sync's date, or "nunca"/"never"); otherwise the
+    cached trip count."""
+    if not person.get("cuenta_sub") or not config.lugares_token():
+        return t("settings.lugares.sin_conectar")
+    estado = db.lugares_estado(conn, person_id)
+    if estado["motivo"]:
+        fecha = (comun._short_date(t, date.fromisoformat(estado["ok_at"][:10]))
+                 if estado["ok_at"] else t("settings.lugares.nunca"))
+        return t("settings.lugares.sin_datos", fecha=fecha)
+    n = estado["n_viajes"]
+    key = "settings.lugares.conectado_one" if n == 1 else "settings.lugares.conectado"
+    return t(key, n=n)
+
+
 @router.get("/settings")
 @comun._cierra_conexion
 def settings(person_id: int = Depends(identity.current_person_id)):
@@ -86,6 +104,7 @@ def settings(person_id: int = Depends(identity.current_person_id)):
     defs = comun._defs(conn)
     return comun._render("settings.html", t=t, tab="settings", nivel_datos=nivel_datos,
                    trabaja_turnos=trabaja_turnos, turnos=db.trabaja_turnos_si(conn, person_id),
+                   lugares_estado_texto=_lugares_estado_texto(t, conn, person, person_id),
                    has_household=bool(hh), metrics_compartir=metrics_compartir,
                    aplicar_mcp=db.get_aplicar_mcp(conn, person_id),
                    recibir_comidas_compartidas=compartir.recibe_comidas(conn, person_id, hh=hh),

@@ -17,3 +17,13 @@ def commute_file() -> Path | None:
     literal naming any person's own folder."""
     value = os.environ.get("BODY_COMMUTE_FILE")
     return Path(value).expanduser() if value else None
+
+
+LUGARES_TOKEN_ENV = "BODY_LUGARES_TOKEN"
+
+
+def lugares_token() -> str | None:
+    """BODY_LUGARES_TOKEN (BODY-HISTORIA-VIDA-LUGARES-1 ruling 2): the same value Lugares holds
+    as its own DUNA_LUGARES_TOKEN_BODY. None when unset -- body/lugares.py sends no request at
+    all without it. Never logged, never stored in the database, never put in a URL."""
+    return os.environ.get(LUGARES_TOKEN_ENV) or None

@@ -35,7 +35,10 @@ APPS = {
 }
 
 
-def _origin(app: str) -> str:
+def origen(app: str) -> str:
+    """BODY-HISTORIA-VIDA-LUGARES-1 ruling 2: public (was `_origin`) so body/lugares.py's own
+    outbound client reads the same one override (DUNA_LUGARES_ORIGEN) this goal-link builder
+    already does, instead of a second origin reader."""
     spec = APPS[app]
     return os.environ.get(spec["origin_env"]) or spec["origin_default"]
 
@@ -46,7 +49,7 @@ def url_de(app: str, ref: str) -> str | None:
     spec = APPS.get(app)
     if spec is None or not spec["ref_pattern"].match(ref):
         return None
-    return _origin(app) + spec["path"].format(ref=quote(ref, safe=""))
+    return origen(app) + spec["path"].format(ref=quote(ref, safe=""))
 
 
 def ref_desde_entrada(app: str, texto: str | None) -> str | None:
@@ -60,7 +63,7 @@ def ref_desde_entrada(app: str, texto: str | None) -> str | None:
     if spec["ref_pattern"].match(texto):
         return texto
     parsed = urlparse(texto)
-    origin_parsed = urlparse(_origin(app))
+    origin_parsed = urlparse(origen(app))
     if parsed.scheme != origin_parsed.scheme or parsed.netloc != origin_parsed.netloc:
         return None
     prefix = spec["path"].split("{ref}")[0]
