@@ -30178,5 +30178,7 @@ assistant's own undo of `confirmar_turnos` removed from SIN_DESHACER.
 
 **Commits:** `6986898` (step 1: ruling 1, `shift_batch.status` migration and tests) --
 `b84b68c` (step 2: ruling 2, `shift_import.undo()` and tests) -- `1c69d05` (census point 4 tests)
--- (this ledger entry) -- merge into `main` (`--no-ff`) to follow.
+-- `9127896` (this ledger entry) -- merged `b855bb3` into `main` (`--no-ff`, no conflicts).
+Post-merge smoke (`tests.test_shift_import tests.test_turno_fc tests.test_turnos_esquema_1
+tests.test_migraciones`): `Ran 128 tests in 46.500s` -- `OK`.
 
