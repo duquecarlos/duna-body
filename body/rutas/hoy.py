@@ -725,6 +725,7 @@ def today(background_tasks: BackgroundTasks, person_id: int = Depends(identity.c
         ready_delta, ready_cls = _delta(conn, t, defs["readiness"], day, r.score, person_id)
     synced = _synced(conn, person)
     es_hoy = day == today_local.isoformat()
+    correcciones_hoy = db.despertar_correcciones(conn, person_id, day)
     cards = []
     for k in TODAY_CARDS:
         v = vals.get(k)
@@ -736,9 +737,14 @@ def today(background_tasks: BackgroundTasks, person_id: int = Depends(identity.c
             banda = _nivel_label(t, _nivel_tile(b, v))
             if es_hoy and synced:
                 caption = t("today.tile.hasta", hora=synced)
+        # BODY-DESPERTAR-REAL-6B ruling 4: a short mark, never a second line, on the sleep tile
+        # alone -- the figure itself (`v`) already came back corrected (db.day_values reads
+        # daily_metric_efectiva); a 'levantado'-only correction leaves this False (changes no
+        # figure, ruling 3).
+        corregido = k == "sleep_minutes" and correcciones_hoy.get("sueno") is not None
         cards.append({"key": k, "label": label, "value": comun._value(t, k, v),
                       "unit": comun._unit(t, defs[k]) if v is not None else "", "delta": delta, "cls": cls,
-                      "banda": banda, "caption": caption})
+                      "banda": banda, "caption": caption, "corregido": corregido})
     return comun._render("today.html", t=t, tab="today", day=day, date_long=t.long_date(date.fromisoformat(day)),
                    synced=synced, stale=_stale_ctx(t, day, today_local),
                    garmin_sync=garmin_rutas._garmin_sync_ctx(t, conn, person_id, day, today_local),
@@ -757,7 +763,7 @@ def today(background_tasks: BackgroundTasks, person_id: int = Depends(identity.c
                    ventana=_ventana_ctx(t, conn, person, person_id, today_local),
                    periodo=_periodo_hoy_ctx(t, conn, person_id, today_local),
                    noche_inusual=_noche_inusual_hoy_ctx(t, conn, person_id, day, vals),
-                   despertar=_despertar_hoy_ctx(t, conn, person_id, day, today_local),
+                   despertar=_despertar_hoy_ctx(t, conn, person_id, day, today_local, correcciones_hoy),
                    objetivos_nutriente=_objetivos_nutriente_ctx(t, conn, defs, person_id, day, es_hoy),
                    comida_compartida_pendientes=_comida_compartida_pendientes_ctx(t, conn, defs, person_id))
 
@@ -1159,7 +1165,8 @@ def _despertar_correccion_linea(t: T, correccion: dict) -> str:
     return t(clave, hora=correccion["hora_local"])
 
 
-def _despertar_dia_ctx(t: T, conn, person_id: int, zona: str, day: str, sleep_end_local: str | None) -> dict | None:
+def _despertar_dia_ctx(t: T, conn, person_id: int, zona: str, day: str, sleep_end_local: str | None,
+                        correcciones: dict | None = None) -> dict | None:
     """BODY-DESPERTAR-REAL-7 rulings 1-3, widened by BODY-DESPERTAR-REAL-6A-R2 ruling 4: Día's own
     inline card beside `sueno_fc_linea` -- EACH kind (sueno first, then levantado) gets its own
     line/button, or its own correction line and Deshacer, mutually exclusive per kind the same way
@@ -1167,12 +1174,16 @@ def _despertar_dia_ctx(t: T, conn, person_id: int, zona: str, day: str, sleep_en
     is already corrected, and ONE curve for the whole morning -- Garmin's own end plus up to one
     mark per kind present (ruling 4's own "Garmin's end plus up to two marks"). `despertar_real.
     estimar` runs at most once per view, and only when at least one kind still has nothing applied
-    (tests/test_rendimiento.py)."""
+    (tests/test_rendimiento.py). `correcciones`, when given (BODY-DESPERTAR-REAL-6B: `day_view`
+    already reads this day's own corrections for the sleep card's provenance line), is used as is
+    instead of a second query for the same row -- None (the default) keeps the original query, for
+    a caller with no corrections of its own to reuse (tests/test_rendimiento.py's own isolated
+    call)."""
     if sleep_end_local is None:
         return None
     sleep_end_dt = datetime.fromisoformat(sleep_end_local)
     horizonte_fin_dt = sleep_end_dt + timedelta(hours=despertar_real.MODELO["horizonte_horas"])
-    correcciones = db.despertar_correcciones(conn, person_id, day)
+    correcciones = correcciones if correcciones is not None else db.despertar_correcciones(conn, person_id, day)
     resultado = despertar_real.estimar(conn, person_id, day) if len(correcciones) < 2 else None
     propuestas_por_tipo = {p["tipo"]: p for p in (resultado["propuestas"] if resultado else [])}
     confianza = resultado["confianza"] if resultado else None
@@ -1216,14 +1227,19 @@ def _despertar_dia_ctx(t: T, conn, person_id: int, zona: str, day: str, sleep_en
     return {"garmin_linea": garmin_linea, "tarjetas": tarjetas, "curva": curva}
 
 
-def _despertar_hoy_ctx(t: T, conn, person_id: int, day: str, today_local: date) -> dict | None:
+def _despertar_hoy_ctx(t: T, conn, person_id: int, day: str, today_local: date,
+                        correcciones: dict | None = None) -> dict | None:
     """Ruling 4: the same explanatory line as Día's own ruling 1, today's sleep only -- no button,
     no curve, nothing once ANY correction exists (ruling 2 belongs to Día alone).
     BODY-DESPERTAR-REAL-6A-R2 ruling 4: "Hoy keeps one line, the sueno one when present, else the
-    levantado one" -- `propuestas` is already ordered that way."""
+    levantado one" -- `propuestas` is already ordered that way. `correcciones`, when given
+    (BODY-DESPERTAR-REAL-6B: `today()` already read this day's own corrections for the sleep
+    tile's own mark), is used as is instead of a second query -- None (the default) keeps the
+    original query, for tests/test_rendimiento.py's own isolated call."""
     if day != today_local.isoformat():
         return None
-    if db.despertar_correcciones(conn, person_id, day):
+    correcciones = correcciones if correcciones is not None else db.despertar_correcciones(conn, person_id, day)
+    if correcciones:
         return None
     resultado = despertar_real.estimar(conn, person_id, day)
     if not resultado["propuestas"] or resultado["confianza"] == "baja":
@@ -1287,6 +1303,7 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
     sueno_resp_linea = _sueno_resp_linea(t, vals, defs)
     sueno_fc_linea = _sueno_fc_linea(t, vals, defs)
     noche_inusual_ctx = _noche_inusual_dia_ctx(t, conn, person_id, key, vals)
+    correcciones = db.despertar_correcciones(conn, person_id, key)
     sleep = None
     if vals.get("sleep_minutes") is not None:
         total_stage = sum(vals.get(s[0]) or 0 for s in STAGES)
@@ -1294,10 +1311,29 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
                    "pct": round(100 * vals[k] / total_stage, 1)}
                   for k, lbl, cls in STAGES if vals.get(k)] if total_stage else []
         win = data["sleep"] or {}
-        window = " → ".join(x[11:16] for x in (win.get("start_local"), win.get("end_local")) if x)
-        sleep = {"total": t.minutes(vals["sleep_minutes"]), "window": window, "stages": stages}
+        # BODY-DESPERTAR-REAL-6B ruling 4: vals["sleep_minutes"] already came back corrected
+        # (db.load_day reads daily_metric_efectiva); the window's own END shown here becomes the
+        # 'sueno' correction's own hora_local too (the exact wall-clock time the view's figure is
+        # built from), and Garmin's own total/end -- never edited, both always visible -- go in
+        # one plain line under the card. A 'levantado'-only correction changes neither (ruling 3).
+        sueno_corr = correcciones.get("sueno")
+        incluye_correccion = None
+        end_local = win.get("end_local")
+        end_display = end_local
+        if sueno_corr is not None and end_local is not None:
+            fin_garmin_dt = datetime.fromisoformat(end_local)
+            corr_dt = datetime.combine(fin_garmin_dt.date(),
+                                        datetime.strptime(sueno_corr["hora_local"], "%H:%M").time())
+            delta_min = max(0, round((corr_dt - fin_garmin_dt).total_seconds() / 60))
+            end_display = corr_dt.isoformat()
+            garmin_total = vals["sleep_minutes"] - delta_min
+            incluye_correccion = t("day.sueno.incluye_correccion", total=t.minutes(garmin_total),
+                                    fin=fin_garmin_dt.strftime("%H:%M"))
+        window = " → ".join(x[11:16] for x in (win.get("start_local"), end_display) if x)
+        sleep = {"total": t.minutes(vals["sleep_minutes"]), "window": window, "stages": stages,
+                 "incluye_correccion": incluye_correccion}
     despertar_ctx = _despertar_dia_ctx(t, conn, person_id, person["timezone"], d.isoformat(),
-                                        win.get("end_local") if sleep is not None else None)
+                                        win.get("end_local") if sleep is not None else None, correcciones)
     recuperaciones = _recovery_lookup(conn, person_id, data["activities"])
     acts = []
     for a in data["activities"]:
@@ -1517,6 +1553,11 @@ async def despertar_deshacer(day: str, request: Request, person_id: int = Depend
     tipo = f.get("tipo")
     if tipo in ("sueno", "levantado"):
         db.borrar_despertar_correccion(conn, person_id, d.isoformat(), tipo)
+        # BODY-DESPERTAR-REAL-6B ruling 3: this button deletes the row directly, outside the
+        # propuesta apply/undo table -- the same re-store readiness needs either way, so a
+        # removed 'sueno' correction never leaves a stale, too-high score behind.
+        if tipo == "sueno":
+            readiness.recompute_desde(conn, person_id, d.isoformat())
     back = cuenta.safe_return_to(f.get("back") or f"/day/{day}")
     return RedirectResponse(back, status_code=303)
 

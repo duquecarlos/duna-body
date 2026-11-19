@@ -242,7 +242,7 @@ def patterns(conn, person_id: int, marcados: set[str] | None = None) -> dict:
     candidates: list[dict] = []
     for key in PATTERN_KEYS:
         rows = conn.execute(
-            "SELECT day, value FROM daily_metric WHERE person_id = ? AND metric_key = ?", (person_id, key)
+            "SELECT day, value FROM daily_metric_efectiva WHERE person_id = ? AND metric_key = ?", (person_id, key)
         ).fetchall()
         if rows:
             propios = (marcados if marcados is not None else
@@ -293,7 +293,7 @@ def by_shift(conn, person_id: int, marcados: set[str] | None = None) -> dict:
 
     placeholders = ",".join("?" for _ in PATTERN_KEYS)
     metric_rows = conn.execute(
-        f"SELECT day, metric_key, value FROM daily_metric WHERE person_id = ? AND metric_key IN ({placeholders})",
+        f"SELECT day, metric_key, value FROM daily_metric_efectiva WHERE person_id = ? AND metric_key IN ({placeholders})",
         (person_id, *PATTERN_KEYS),
     ).fetchall()
     values_by_kind: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))

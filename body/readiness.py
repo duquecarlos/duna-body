@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 from . import db
-from .baselines import baseline
+from .baselines import WINDOW_DAYS, baseline
 
 VERSION = "body-v1"
 METRIC = "readiness"
@@ -78,8 +78,7 @@ def compute(conn, day: str, person_id: int, *, lector=None) -> Readiness:
     if lector is not None:
         vals = lector.day_values(day)
     else:
-        vals = {r["metric_key"]: r["value"] for r in conn.execute(
-            "SELECT metric_key, value FROM daily_metric WHERE person_id=? AND day=?", (person_id, day))}
+        vals = db.day_values(conn, day, person_id)
     yesterday = (date.fromisoformat(day) - timedelta(1)).isoformat()
     y_series = lector.series("stress_avg", yesterday, yesterday) if lector is not None \
         else db.series(conn, "stress_avg", yesterday, yesterday, person_id)
@@ -129,6 +128,19 @@ def update(conn, day: str, person_id: int) -> Readiness:
 
 def recompute_all(conn, person_id: int) -> int:
     days = sorted(db.days_with_data(conn, person_id))
+    for d in days:
+        update(conn, d, person_id)
+    return len(days)
+
+
+def recompute_desde(conn, person_id: int, day: str) -> int:
+    """BODY-DESPERTAR-REAL-6B ruling 3: re-stores readiness for `day` itself and every later day
+    within `baselines.WINDOW_DAYS` after it that has data -- the only days whose own 30-day
+    trailing baseline window can reach back far enough to include `day`'s now-corrected sleep
+    figure. Called by body/agente/propuestas.py's corregir_despertar apply/undo for a 'sueno'
+    correction; a 'levantado' apply/undo recomputes nothing, since levantado changes no figure."""
+    hasta = (date.fromisoformat(day) + timedelta(WINDOW_DAYS)).isoformat()
+    days = [d for d in sorted(db.days_with_data(conn, person_id)) if day <= d <= hasta]
     for d in days:
         update(conn, d, person_id)
     return len(days)

@@ -247,7 +247,7 @@ def _recopilar_datos(conn, person_id: int, desde: date, hasta: date) -> dict:
     rules) already uses."""
     metricas: dict[str, dict] = {}
     for r in conn.execute(
-        "SELECT day, metric_key, value FROM daily_metric WHERE person_id = ? AND day BETWEEN ? AND ?",
+        "SELECT day, metric_key, value FROM daily_metric_efectiva WHERE person_id = ? AND day BETWEEN ? AND ?",
         (person_id, desde.isoformat(), hasta.isoformat())
     ):
         metricas.setdefault(r["day"], {})[r["metric_key"]] = r["value"]

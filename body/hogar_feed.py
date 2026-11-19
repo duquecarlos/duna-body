@@ -41,8 +41,8 @@ def _figuras(conn, person_id: int, dia: date, defs: dict[str, dict]) -> list[dic
     own most recent value, never forced onto a single shared day)."""
     dia_iso = dia.isoformat()
     rows = conn.execute(
-        "SELECT metric_key, value, day FROM daily_metric dm WHERE person_id = ? AND day <= ? "
-        "AND day = (SELECT MAX(day) FROM daily_metric WHERE person_id = dm.person_id "
+        "SELECT metric_key, value, day FROM daily_metric_efectiva dm WHERE person_id = ? AND day <= ? "
+        "AND day = (SELECT MAX(day) FROM daily_metric_efectiva WHERE person_id = dm.person_id "
         "AND metric_key = dm.metric_key AND day <= ?) ORDER BY metric_key",
         (person_id, dia_iso, dia_iso),
     ).fetchall()

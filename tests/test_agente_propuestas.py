@@ -226,6 +226,46 @@ class AplicarEscribeTest(unittest.TestCase):
         self.assertEqual(row["estado"], "propuesta")
 
 
+class CorregirDespertarReadinessRecomputeTest(unittest.TestCase):
+    """BODY-DESPERTAR-REAL-6B ruling 3: corregir_despertar's own apply/undo re-store readiness for
+    a 'sueno' correction, through readiness.recompute_desde; a 'levantado' one recomputes
+    nothing, since levantado changes no figure."""
+
+    def setUp(self):
+        self.conn, self.orig = _reset_db()
+        self.addCleanup(self.conn.close)
+        self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig))
+        self.conn.execute(
+            "INSERT INTO sleep_session (person_id, day, start_local, end_local) VALUES "
+            "(1, '2026-11-05', '2026-11-04T23:00:00', '2026-11-05T06:00:00')"
+        )
+        self.conn.commit()
+
+    def test_sueno_apply_and_undo_each_call_recompute_desde_once(self):
+        cid = _cid(self.conn)
+        out = herramientas.ejecutar(self.conn, 1, "corregir_despertar",
+                                     {"fecha": "2026-11-05", "tipo": "sueno", "hora": "07:00"},
+                                     "ninguno", cid)
+        with patch("body.agente.propuestas.readiness.recompute_desde") as mock_recompute:
+            propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+            mock_recompute.assert_called_once_with(self.conn, 1, "2026-11-05")
+        with patch("body.agente.propuestas.readiness.recompute_desde") as mock_recompute:
+            propuestas.deshacer(self.conn, 1, out["propuesta_id"])
+            mock_recompute.assert_called_once_with(self.conn, 1, "2026-11-05")
+
+    def test_levantado_apply_and_undo_recompute_nothing(self):
+        cid = _cid(self.conn)
+        out = herramientas.ejecutar(self.conn, 1, "corregir_despertar",
+                                     {"fecha": "2026-11-05", "tipo": "levantado", "hora": "07:00"},
+                                     "ninguno", cid)
+        with patch("body.agente.propuestas.readiness.recompute_desde") as mock_recompute:
+            propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+            mock_recompute.assert_not_called()
+        with patch("body.agente.propuestas.readiness.recompute_desde") as mock_recompute:
+            propuestas.deshacer(self.conn, 1, out["propuesta_id"])
+            mock_recompute.assert_not_called()
+
+
 class RegistrarEntrenoWeightUnitDriftTest(unittest.TestCase):
     """BODY-REVISION-9B-1-INV finding 3 (fixed here): a watch set's weight UNIT is compared too,
     not just its value -- a unit-only change between proposal and apply must be caught as drift

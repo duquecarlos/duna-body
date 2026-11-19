@@ -79,7 +79,7 @@ from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from .. import comida_compartida, compartir, db, desplazamiento_import, fechas, goals, household, practicas, \
-    shift_import
+    readiness, shift_import
 from ..i18n import T
 from . import conversacion as agente_conversacion
 
@@ -922,6 +922,10 @@ def _aplicar_corregir_despertar(conn: sqlite3.Connection, row: sqlite3.Row) -> N
     despues = json.loads(row["despues_json"])
     db.guardar_despertar_correccion(conn, row["person_id"], despues["fecha"], despues["tipo"],
                                      despues["hora_local"], despues["modelo_version"], "asistente")
+    # BODY-DESPERTAR-REAL-6B ruling 3: only a 'sueno' correction can change a sleep_minutes
+    # figure (the view's own join) -- 'levantado' recomputes nothing.
+    if despues["tipo"] == "sueno":
+        readiness.recompute_desde(conn, row["person_id"], despues["fecha"])
 
 
 def _deshacer_corregir_despertar(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
@@ -932,6 +936,8 @@ def _deshacer_corregir_despertar(conn: sqlite3.Connection, row: sqlite3.Row) -> 
                                          antes["hora_local"], antes.get("modelo_version"), antes["origen"])
     else:
         db.borrar_despertar_correccion(conn, row["person_id"], despues["fecha"], despues["tipo"])
+    if despues["tipo"] == "sueno":
+        readiness.recompute_desde(conn, row["person_id"], despues["fecha"])
 
 
 # -- marcar_experimento (this module calls db.registrar_dia_experimento directly) ---------------

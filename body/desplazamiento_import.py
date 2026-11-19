@@ -160,7 +160,7 @@ def valores_commute(conn: Connection, person_id: int, dia_inicio: str, dia_fin: 
     assistant's own preview/drift/undo instead of one query per day: the difference that matters
     on a real multi-year file."""
     filas = conn.execute(
-        "SELECT day, metric_key, value FROM daily_metric WHERE person_id = ? AND metric_key IN "
+        "SELECT day, metric_key, value FROM daily_metric_efectiva WHERE person_id = ? AND metric_key IN "
         "(?, ?, ?, ?) AND day BETWEEN ? AND ?",
         (person_id, *COUNT_COLUMNS, dia_inicio, dia_fin),
     ).fetchall()

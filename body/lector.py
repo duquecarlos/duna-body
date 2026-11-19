@@ -5,8 +5,9 @@ bounds, same missing-day behaviour, same value types) from memory, loaded by ONE
 at construction time (`metric_key IN (...)`, BODY-TENDENCIAS-LEYENDA-PATRON-1-M fix 2 -- a caller
 that needs several metrics at once, such as `perfiles_patron` or a readiness strip, used to cost
 one statement per metric; this reader costs the route one statement regardless of how many metrics
-it carries) -- its own read-only query against `daily_metric`, the same columns `db.series` reads,
-so this module never imports `body/db.py` (Tier 1).
+it carries) -- its own read-only query against `daily_metric_efectiva` (BODY-DESPERTAR-REAL-6B
+ruling 2: the corrected reading, the same view `db.series` reads), the same columns `db.series`
+reads, so this module never imports `body/db.py` (Tier 1).
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ class Lector:
             return
         placeholders = ",".join("?" * len(metrics))
         rows = conn.execute(
-            f"SELECT metric_key, day, value FROM daily_metric WHERE person_id = ? "
+            f"SELECT metric_key, day, value FROM daily_metric_efectiva WHERE person_id = ? "
             f"AND metric_key IN ({placeholders}) AND day BETWEEN ? AND ?",
             (person_id, *metrics, desde, hasta),
         ).fetchall()

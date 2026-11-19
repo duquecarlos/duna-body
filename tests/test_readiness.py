@@ -66,6 +66,118 @@ class ReadinessTest(unittest.TestCase):
         self.assertEqual(kind, "estimated")
 
 
+def _make_sin_necesidad(case: unittest.TestCase, days: int):
+    """Every day's own `sleep_need_min` is absent on purpose, so the "sleep" part's own `need`
+    always falls back to `baseline(conn, "sleep_minutes", day, ...)` (BODY-DESPERTAR-REAL-6B
+    ruling 3's own dependency: a day's readiness leans on OTHER days' sleep_minutes through this
+    baseline, which is exactly how a correction on one night can move a LATER day's own score)."""
+    conn = open_conn(case, Path(tempfile.mkdtemp()) / "t.db")
+    db.init(conn)
+    start = date(2026, 10, 1)
+    for i in range(days):
+        d = (start + timedelta(i)).isoformat()
+        wobble = (-1) ** i
+        for k, v in (("hrv_last_night", 50 + 2 * wobble), ("resting_hr", 55 + wobble),
+                     ("stress_avg", 30 + 3 * wobble), ("sleep_minutes", 450),
+                     ("body_battery_wake", 75)):
+            db.set_metric(conn, d, k, v, "garmin", 1)
+    conn.commit()
+    return conn, start
+
+
+class RecomputeDesdeTest(unittest.TestCase):
+    """BODY-DESPERTAR-REAL-6B ruling 3: applying or undoing a 'sueno' correction re-stores
+    readiness for that day and every later day with data within baselines.WINDOW_DAYS after it."""
+
+    def _score(self, conn, day):
+        row = conn.execute(
+            "SELECT value FROM daily_metric WHERE person_id=1 AND day=? AND metric_key='readiness'", (day,)
+        ).fetchone()
+        return row["value"] if row else None
+
+    def _bajar_sueno(self, conn, corrected_day: str, boundary_day: str):
+        """`corrected_day`'s and `boundary_day`'s own sleep_minutes, lowered BEFORE
+        `readiness.recompute_all` runs -- well BELOW the usual 450-minute baseline (ratio < 1),
+        off the sleep part's own ceiling, where a correction would otherwise show no change at
+        all (a ratio already >= 1 just clamps)."""
+        db.set_metric(conn, corrected_day, "sleep_minutes", 200, "garmin", 1)
+        db.set_metric(conn, boundary_day, "sleep_minutes", 250, "garmin", 1)
+
+    def _aplicar_correccion(self, conn, corrected_day: str):
+        """A big correction (07:30 -> 20:30, 780 minutes -- invented data, never checked against
+        despertar_real's own horizon here since this writes the row directly) pushes
+        `corrected_day`'s own ratio back up, and the same swing moves a LATER day's own 30-day
+        trailing baseline mean (780 / 30 = 26 min) enough to move ITS rounded score too."""
+        conn.execute(
+            "INSERT INTO sleep_session (person_id, day, start_local, end_local) VALUES (1, ?, ?, ?)",
+            (corrected_day, f"{corrected_day}T22:00:00", f"{corrected_day}T07:30:00"))
+        conn.commit()
+        db.guardar_despertar_correccion(conn, 1, corrected_day, "sueno", "20:30", "despertar-real-v2", "persona")
+
+    def test_recomputes_the_day_and_the_window_after_it_not_beyond(self):
+        days = 42
+        conn, start = _make_sin_necesidad(self, days)
+        corrected_day = (start + timedelta(10)).isoformat()
+        boundary_day = (start + timedelta(10 + baselines.WINDOW_DAYS)).isoformat()   # 10 + 30 = 40, inside
+        outside_day = (start + timedelta(10 + baselines.WINDOW_DAYS + 1)).isoformat()  # 41, outside
+        self._bajar_sueno(conn, corrected_day, boundary_day)
+        readiness.recompute_all(conn, 1)
+        stale_corrected = self._score(conn, corrected_day)
+        stale_boundary = self._score(conn, boundary_day)
+        stale_outside = self._score(conn, outside_day)
+
+        self._aplicar_correccion(conn, corrected_day)
+        # The TRUE figures right now, computed live (never written until recompute_desde runs) --
+        # the fixture must actually move these, or the assertions below would be vacuous.
+        live_corrected = readiness.compute(conn, corrected_day, 1).score
+        live_boundary = readiness.compute(conn, boundary_day, 1).score
+        live_outside = readiness.compute(conn, outside_day, 1).score
+        self.assertNotEqual(stale_corrected, live_corrected, "fixture must move the corrected day")
+        self.assertNotEqual(stale_boundary, live_boundary, "fixture must move the boundary day")
+        self.assertEqual(stale_outside, live_outside, "the day outside the window must be untouched either way")
+
+        # Still stale right before recompute_desde runs -- the write only happens there.
+        self.assertEqual(self._score(conn, corrected_day), stale_corrected)
+        self.assertEqual(self._score(conn, boundary_day), stale_boundary)
+
+        n = readiness.recompute_desde(conn, 1, corrected_day)
+        self.assertEqual(n, baselines.WINDOW_DAYS + 1)  # idx 10..40 inclusive, every day has data
+
+        self.assertEqual(self._score(conn, corrected_day), live_corrected)
+        self.assertEqual(self._score(conn, boundary_day), live_boundary)
+        self.assertEqual(self._score(conn, outside_day), stale_outside)  # recompute_desde never reached it
+
+    def test_undo_restores_the_pre_correction_scores(self):
+        days = 42
+        conn, start = _make_sin_necesidad(self, days)
+        corrected_day = (start + timedelta(10)).isoformat()
+        boundary_day = (start + timedelta(10 + baselines.WINDOW_DAYS)).isoformat()
+        self._bajar_sueno(conn, corrected_day, boundary_day)
+        readiness.recompute_all(conn, 1)
+        before_corrected = self._score(conn, corrected_day)
+        before_boundary = self._score(conn, boundary_day)
+
+        self._aplicar_correccion(conn, corrected_day)
+        readiness.recompute_desde(conn, 1, corrected_day)
+        self.assertNotEqual(before_corrected, self._score(conn, corrected_day))
+
+        db.borrar_despertar_correccion(conn, 1, corrected_day, "sueno")
+        readiness.recompute_desde(conn, 1, corrected_day)
+        self.assertEqual(before_corrected, self._score(conn, corrected_day))
+        self.assertEqual(before_boundary, self._score(conn, boundary_day))
+
+    def test_statement_count_is_bounded_by_the_window(self):
+        """Ruling 6: the recompute on apply is bounded by WINDOW_DAYS + 1 days -- one update()
+        call per day in range, never a query whose cost tracks the WHOLE database's history."""
+        days = 42
+        conn, start = _make_sin_necesidad(self, days)
+        readiness.recompute_all(conn, 1)
+        corrected_day = (start + timedelta(10)).isoformat()
+        self._aplicar_correccion(conn, corrected_day)
+        n = readiness.recompute_desde(conn, 1, corrected_day)
+        self.assertLessEqual(n, baselines.WINDOW_DAYS + 1)
+
+
 class ReadinessLectorEqualityTest(unittest.TestCase):
     """`readiness.compute` with a `body/lector.py` Lector must give EXACTLY the same `Readiness`
     as the original per-call query path (BODY-RENDIMIENTO-2)."""

@@ -40,7 +40,7 @@ def metric_profile(conn, key: str, today: str | None = None, *, person_id: int,
     key (BODY-MEDIDA-PESO-1-M2) never reaches 7 points in a month, so every month would be dropped
     and the monthly chart would never draw at all -- the caller passes a lower min_month_points for
     a self-measured key, same as min_days above."""
-    rows = conn.execute("SELECT day, value FROM daily_metric WHERE person_id=? AND metric_key=? ORDER BY day",
+    rows = conn.execute("SELECT day, value FROM daily_metric_efectiva WHERE person_id=? AND metric_key=? ORDER BY day",
                         (person_id, key)).fetchall()
     return _build_profile(key, rows, today, min_days, min_month_points)
 
@@ -88,7 +88,7 @@ def metric_profiles(conn, keys: list[str], today: str | None = None, *, person_i
         return {}
     placeholders = ",".join("?" * len(keys))
     rows = conn.execute(
-        f"SELECT metric_key, day, value FROM daily_metric WHERE person_id=? AND metric_key IN ({placeholders}) "
+        f"SELECT metric_key, day, value FROM daily_metric_efectiva WHERE person_id=? AND metric_key IN ({placeholders}) "
         "ORDER BY metric_key, day",
         (person_id, *keys)).fetchall()
     by_key: dict[str, list] = {k: [] for k in keys}
@@ -201,7 +201,7 @@ def windows(conn, keys: list[str], start: date, end: date, *, person_id: int) ->
     start_iso = start.isoformat()
     placeholders = ",".join("?" * len(keys))
     rows = conn.execute(
-        f"SELECT metric_key, day, value FROM daily_metric WHERE person_id=? AND metric_key IN ({placeholders}) "
+        f"SELECT metric_key, day, value FROM daily_metric_efectiva WHERE person_id=? AND metric_key IN ({placeholders}) "
         "AND day BETWEEN ? AND ?",
         (person_id, *keys, prev_start.isoformat(), end.isoformat())).fetchall()
     by_key: dict[str, dict[str, float]] = {k: {} for k in keys}

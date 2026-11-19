@@ -106,7 +106,7 @@ def visibles_para(conn: sqlite3.Connection, viewer_id: int) -> list[dict]:
         name = name_row["display_name"] if name_row else "?"
         for s in shares:
             latest = conn.execute(
-                "SELECT day, value FROM daily_metric WHERE person_id = ? AND metric_key = ? "
+                "SELECT day, value FROM daily_metric_efectiva WHERE person_id = ? AND metric_key = ? "
                 "ORDER BY day DESC LIMIT 1",
                 (member_id, s["metric_key"]),
             ).fetchone()
