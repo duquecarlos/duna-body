@@ -1051,6 +1051,8 @@
   "practica.baseline_sentence": "Across your whole history: {contexto}",
   "practica.contexto_sueno": "average sleep {minutos}",
   "practica.contexto_readiness": "average readiness {valor}",
+  "practica.contexto_viaje_one": "1 day travelling",
+  "practica.contexto_viaje_other": "{n} days travelling",
   "practica.editar_titulo_label": "Title",
   "practica.editar_meta_label": "Weekly target (days a week)",
   "practica.editar_guardar": "Save changes",

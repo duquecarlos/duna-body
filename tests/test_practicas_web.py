@@ -207,6 +207,27 @@ class DetailTest(unittest.TestCase):
         self.assertIn(f"/day/{monday.isoformat()}", r.text)
         self.assertIn("w-season", r.text)  # BODY-HISTORIA-VIDA-3 ruling 1: outlined on the weekly strip
 
+    def test_season_context_names_its_travel_days(self):
+        """BODY-HISTORIA-VIDA-LUGARES-2-R ruling 1: a season with 2+ days inside a cached trip
+        shows its own count in the context line, singular when it is exactly one day."""
+        conn = _reset_db(self)
+        pid = practicas.crear(conn, 1, "Correr", "actividad", {"tipos": ["running"]}, meta_dias_semana=3)
+        monday = date(2026, 8, 3)
+        for week in range(4):
+            wk_monday = monday + timedelta(weeks=week)
+            for i in range(4):
+                _activity(conn, 1, f"r{week}-{i}", (wk_monday + timedelta(days=i)).isoformat(), type="running")
+        # A 3-day trip entirely inside the season's first week -- 2+ days, so it counts.
+        conn.execute(
+            "INSERT INTO viaje_lugares (person_id, ref, starts_at, ends_at, fetched_at) VALUES "
+            "(1, 'zz-trip', ?, ?, '2026-08-01T00:00:00+00:00')",
+            (monday.isoformat(), (monday + timedelta(days=2)).isoformat()),
+        )
+        conn.commit()
+        r = client.get(f"/history/practica/{pid}")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("3 días de viaje", r.text)
+
 
 class WeeklyStripTest(unittest.TestCase):
     """BODY-HISTORIA-VIDA-3 ruling 1: the drill-down's own main visual -- the whole history in

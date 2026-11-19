@@ -1051,6 +1051,8 @@
   "practica.baseline_sentence": "En toda tu historia: {contexto}",
   "practica.contexto_sueno": "sueño medio {minutos}",
   "practica.contexto_readiness": "readiness medio {valor}",
+  "practica.contexto_viaje_one": "1 día de viaje",
+  "practica.contexto_viaje_other": "{n} días de viaje",
   "practica.editar_titulo_label": "Título",
   "practica.editar_meta_label": "Objetivo semanal (días por semana)",
   "practica.editar_guardar": "Guardar cambios",
