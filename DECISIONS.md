@@ -29629,5 +29629,8 @@ ruling on which direction to narrow before BODY-HISTORIA-VIDA-LUGARES-2 or any l
 **Commits:** `3be28fe` (rulings 1-2: `config.lugares_token`, `enlaces.origen`) -- `b9d2abe` (rulings
 3-4: `body/lugares.py`, the two tables and readers, census wiring) -- `b65653e` (rulings 5-6: the pull
 wrapper, the Ajustes row, i18n) -- `8172f0c` (gate fix: `test_host_deploy`'s env-example census) --
-this ledger entry.
+`20d78b1` (this ledger entry) -- merged `765010b` into `main` (`--no-ff`, no conflicts; tree identity
+proven, branch tree == merge tree == `5000b4d`, diff empty). Post-merge smoke
+(`tests.test_lugares tests.test_migraciones tests.test_mudanza tests.test_privacidad tests.test_pull`):
+`Ran 276 tests in 73.936s` -- `OK`.
 
