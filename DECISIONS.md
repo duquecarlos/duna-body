@@ -30034,3 +30034,9 @@ every one of them ruled in this slice's own surface, reversible, no schema chang
 
 **Open follow-ups:** none raised by this slice.
 
+**Commits:** `55a06cc` (step 1: ruling 0, practicas/historial, es/en) -- `39771c5` (steps 2-3:
+rulings 2-7) -- `c390cc1` (this ledger entry) -- merged `ab8157c` into `main` (`--no-ff`, no
+conflicts). Post-merge smoke
+(`tests.test_viajes tests.test_despertar_pantalla tests.test_rendimiento tests.test_i18n_paridad`):
+`Ran 54 tests in 36.200s` -- `OK`.
+
