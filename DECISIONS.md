@@ -30396,5 +30396,8 @@ if green." -- merging on green, no separate approval wait.
 **Open follow-ups:** none identified beyond what this slice itself completes.
 
 **Commits:** `83458c2` (step 1: rulings 1-2, history in every branch + result line at the top) --
-`0f83cf0` (step 2: ruling 3, /shifts' re-measured statement ceilings).
+`0f83cf0` (step 2: ruling 3, /shifts' re-measured statement ceilings) -- `17b593b` (this ledger
+entry) -- merged `2758070` into `main` (`--no-ff`, no conflicts). Post-merge smoke
+(`tests.test_turnos_deshacer tests.test_shift_import tests.test_rendimiento_turnos`): `Ran 68 tests
+in 21.774s` -- `OK`.
 
