@@ -30295,3 +30295,106 @@ LOTE-1/2/3 together close the undo gap this thread opened.
 (`tests.test_turnos_deshacer tests.test_shift_import tests.test_agente_propuestas
 tests.test_rendimiento_turnos`): `Ran 100 tests in 36.893s` -- `OK`.
 
+## BODY-TURNOS-DESHACER-LOTE-4
+
+**Surface (polish found by the orchestrator in the browser on BODY-TURNOS-DESHACER-LOTE-3, MERGED
+`0f9ed27`, demo home, `/shifts` at 375 px, 2026-11-19):** the undo flow worked end to end but two
+layout defects hid it exactly when it mattered most. (A) History hidden while a proposal waits --
+`shifts` (`body/rutas/turnos.py`) had three render branches (many proposals, one proposal, none);
+only the no-proposal branch passed `historial`/`confirmed_date`, so the moment a new file or
+pattern was proposed the person lost sight of what was already applied and could not undo a wrong
+import. (B) Result line at the foot -- `result_msg` rendered after the cost cards and the strip
+(`body/templates/shifts.html:204-206` before this slice), below the fold on a phone: a tap on
+Quitar looked like nothing happened. ORCH-CARLOS-DELEGATES-TIER-1-1 ruled on both (Tier 2, quality).
+
+**Ruling 1 (history in every branch), as built:** `shifts` (`body/rutas/turnos.py`) now calls
+`_historial_filas(t, conn, person_id)` exactly ONCE per request, right before the three render
+branches (`body/rutas/turnos.py:532-536`), and passes that same `historial` value into all three
+`comun._render("shifts.html", ...)` calls -- the `many=True` branch, the single-`batch` branch and
+the no-proposal branch alike. The template itself needed no change for ordering: its
+`{% if historial %}` card (`body/templates/shifts.html:75-97`, with its own per-row Deshacer
+`<details>`) already sat textually AFTER the `{% if many %}...{% elif batch %}...{% elif
+confirmed_date %}...{% endif %}` block (lines 9-73) and BEFORE the "change pattern" link (lines
+99-101) -- it was only ever starved of data, not misplaced. `shifts.last_confirmed`
+(`body/templates/shifts.html:67`) keeps its existing place and its existing `{% elif confirmed_date
+%}` condition (no proposal pending); the history's own rows carry their dates regardless. No
+history -> the card still does not render, in every branch (new `HistorialAbsentWithoutHistoryTest`
+below), because `historial` is an empty list in that case, same as before.
+
+**Ruling 2 (result line at the top), as built:** `body/templates/shifts.html:5-9` now renders
+`result_msg` directly under `<div class="top">...</div>`, as `<p class="k mt-8"
+role="status">{{ result_msg }}</p>`, before `{{ cuerpo_vista(t, cuerpo) }}` and every card. The old
+foot placement (after the strip legend, before the `<script>` tag) is removed outright -- same
+`result_msg` value, same query params (`done=1`, `undo_done=1`, `undo_refused=1`), same redirect
+targets in `body/rutas/turnos.py`'s `shifts_undo`/`shifts_confirm_all`; nothing else on the page
+moved.
+
+**Tests (`tests/test_turnos_deshacer.py`, new, 11 tests):** `HistorialAlongsideProposalTest` --
+one applied batch + one pending proposal shows the proposal card then the history (index order
+asserted on `shifts.confirm_badge` vs `shifts.historial.deshacer`), the same with two pending
+proposals (es and en), and `POST /shifts/undo` while a proposal is pending undoes the applied batch
+and redirects (303 to `/shifts?undo_done=1...`) with the proposal still shown after. No `"None"`
+leaks into any of these pages. `HistorialAbsentWithoutHistoryTest` -- no history card with one or
+with two pending proposals. `ResultMsgPositionTest` -- the confirm-all result, the undo result (es
+and en) and the undo-refused message each appear EXACTLY ONCE, strictly before the first literal
+`class="card"` and before the `cuerpo-card` markup, inside a `<p ... role="status">`.
+`HistorialCostoTest`'s own docstring is corrected: the one-pending-proposal state now DOES reach
+`_historial_filas` (ruling 1 made the call unconditional), so its "never reached" claim from
+BODY-TURNOS-DESHACER-LOTE-3-R no longer holds; the +1-statement measurement itself is unchanged
+(`_historial_filas` is still one combined SELECT).
+
+**Ruling 3 (statement-cost ceilings, re-measured and named), as built:** `tests/test_rendimiento.py`
+-- the shared `/shifts` ceiling (its own fixture, `demo._seed(dias=30)`, always carries exactly one
+pending proposed batch, BODY-TURNOS-DESHACER-LOTE-3-R's own comment at the time) now reaches
+`_historial_filas` too. Measured 33 statements (32 before this slice), `ceil(33 * 1.3) = 43` --
+`_CEILINGS["/shifts"]` moved from 42 to 43 (`tests/test_rendimiento.py:167`, comment at `:127-131`
+naming both the old and new measurement). The many-pending-proposals state is never exercised by
+that shared fixture (it seeds exactly one proposal); it gets its own named ceiling in a new
+`ManyProposalShiftsCostTest` (`tests/test_rendimiento.py`, same `_seed` fixture plus one extra
+pending batch via `shift_import.propose_data`) -- measured 38 statements, ceiling 50
+(`ceil(38 * 1.3) = 50`). The no-proposal state's ceiling is untouched (it already called
+`_historial_filas` before this slice). `tests/test_i18n_paridad.py` -- unaffected: no new string was
+added by this slice (ran green, 8/8). No `"None"` found on any page these tests rendered.
+
+**Deviation:** none -- every file this slice needed to touch (`body/rutas/turnos.py`,
+`body/templates/shifts.html`, `tests/test_turnos_deshacer.py`, `tests/test_rendimiento.py`) was
+already named in `touches`; `body/static/body.css` was not touched (no new CSS class was needed --
+`role="status"` on the existing `.k` paragraph class was enough).
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run as 11
+sequential alphabetical chunks of dotted modules (219 modules total, ~20 per chunk):
+
+| # | Range | Ran | Result |
+|---|-------|-----|--------|
+| 1 | test_accesibilidad .. test_baselines | 388 | OK (skipped=1, expected failures=1) |
+| 2 | test_baselines_lote .. test_deshacer_derivados | 459 | OK |
+| 3 | test_despertar .. test_errores_texto | 416 | OK |
+| 4 | test_estados_vacios .. test_garmin_web | 349 | OK |
+| 5 | test_get_sin_escritura .. test_host_deploy | 609 | OK |
+| 6 | test_host_import .. test_mcp_cliente_remoto | 399 | OK |
+| 7 | test_mcp_copia_pc .. test_periodo_herramientas | 521 | OK |
+| 8 | test_periodo_pantallas .. test_propuesta_vigencia | 505 | OK |
+| 9 | test_propuestas_tabla .. test_series_unidad | 352 | OK |
+| 10 | test_sesion_conexion_1 .. test_turnos_deshacer | 516 | OK |
+| 11 | test_turnos_enlaces .. test_web_entry | 353 | OK |
+
+Sum: 388+459+416+349+609+399+521+505+352+516+353 = **4867**. Reconciled against a separate
+collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, same tree, counted
+by walking the suite recursively) = **4867** -- exact match. All 11 chunks `OK`. Every
+`NotSignedIn`/`ResourceWarning`/`Exception in thread`/"pull attempt failed"/"AttributeError"/
+"dia vacio" line printed mid-run is a pre-existing fixture exercising a synthetic error path or an
+expected-failure test, not a gate failure, and none are in a file this slice touched. No password,
+token, session secret, device key or real health figure was read, printed or written anywhere in
+this slice's own work or the gate's own stdout; no network call was made.
+
+**customer_bytes: changed, pre-approved.** Placement only -- the history card and the result line
+move; no string's TEXT changed, no new string was added, es/en parity unchanged. Merge policy A: no
+schema change, no cross-repo contract change; the dispatching spec explicitly pre-approved this:
+"This slice changes customer bytes (placement only) on purpose and this spec approves them: merge
+if green." -- merging on green, no separate approval wait.
+
+**Open follow-ups:** none identified beyond what this slice itself completes.
+
+**Commits:** `83458c2` (step 1: rulings 1-2, history in every branch + result line at the top) --
+`0f83cf0` (step 2: ruling 3, /shifts' re-measured statement ceilings).
+
