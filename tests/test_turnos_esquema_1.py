@@ -193,6 +193,109 @@ class FreshShapeTest(unittest.TestCase):
         self.assertEqual(kind, "import")
 
 
+_PRE_UNDONE_SHIFT_BATCH_SQL = """
+CREATE TABLE shift_batch (
+    id              INTEGER PRIMARY KEY,
+    person_id       INTEGER NOT NULL REFERENCES person(id),
+    file_name       TEXT NOT NULL,
+    received        TEXT NOT NULL,
+    extracted_at    TEXT NOT NULL,
+    source_person   TEXT,
+    source_timezone TEXT,
+    status          TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'confirmed', 'dismissed', 'superseded')),
+    day_count       INTEGER NOT NULL,
+    created_at      TEXT NOT NULL,
+    decided_at      TEXT,
+    kind            TEXT NOT NULL DEFAULT 'import' CHECK (kind IN ('import', 'pattern')),
+    UNIQUE (person_id, file_name, received, extracted_at)
+);
+"""
+
+
+def _pre_undone_db(case: unittest.TestCase, name: str) -> "db.sqlite3.Connection":
+    """The shape BODY-TURNOS-DESHACER-LOTE-2 migrates from: every other current piece (shift_pattern,
+    trabaja_turnos, shift_batch.kind, shift.batch_id) already in place -- only shift_batch.status
+    still carries the OLD four-value CHECK. SQLite's ALTER TABLE DROP COLUMN refuses a column named
+    by a CHECK constraint, so shift_batch is dropped and recreated in its pre-'undone' shape, the
+    same technique this file's own `_old_db` uses for its own older shape; `shift.batch_id` is added
+    by hand since SCHEMA's own `shift` CREATE TABLE never carries it (body/db.py's `_migrate` ALTERs
+    it in, idempotently, on every call)."""
+    conn = _db(case, name)
+    conn.executescript(db.SCHEMA)
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("DROP TABLE shift_batch")
+    conn.execute(_PRE_UNDONE_SHIFT_BATCH_SQL)
+    conn.execute("ALTER TABLE shift ADD COLUMN batch_id INTEGER REFERENCES shift_batch(id)")
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.commit()
+    return conn
+
+
+class UndoneStatusMigrationTest(unittest.TestCase):
+    """BODY-TURNOS-DESHACER-LOTE-2 ruling 1: shift_batch.status gains a fifth value 'undone'
+    through a guarded, row-preserving rebuild -- a database at the previous shape, with batches in
+    all four old statuses and shift/shift_batch_item rows pointing at them, migrates with every row
+    and id kept and every foreign key still resolving."""
+
+    def test_migration_preserves_every_batch_row_id_and_fk_and_accepts_undone(self):
+        conn = _pre_undone_db(self, "undone_migration.db")
+        conn.execute("INSERT INTO person (id, display_name) VALUES (1, 'A')")
+        statuses = ["proposed", "confirmed", "dismissed", "superseded"]
+        for i, status in enumerate(statuses, start=1):
+            conn.execute(
+                "INSERT INTO shift_batch (id, person_id, file_name, received, extracted_at, "
+                "source_person, source_timezone, status, day_count, created_at, decided_at) "
+                "VALUES (?, 1, ?, '2026-11-01', '2026-11-01T00:00:00+00:00', "
+                "NULL, NULL, ?, 1, '2026-11-01T00:00:00+00:00', '2026-11-02T00:00:00+00:00')",
+                (i, f"turnos{i}.pdf", status),
+            )
+        conn.execute(
+            "INSERT INTO shift_batch_item (batch_id, day, kind, start_local, end_local) "
+            "VALUES (2, '2026-11-05', 'night', '22:00', '06:00')"
+        )
+        conn.execute(
+            "INSERT INTO shift (person_id, day, kind, start_local, source, batch_id) "
+            "VALUES (1, '2026-11-05', 'night', '22:00', 'personal:turnos2.pdf', 2)"
+        )
+        conn.commit()
+
+        db.init(conn)
+
+        rows = {r["id"]: r["status"] for r in conn.execute("SELECT id, status FROM shift_batch")}
+        self.assertEqual(rows, {1: "proposed", 2: "confirmed", 3: "dismissed", 4: "superseded"})
+        self.assertEqual(
+            {r["kind"] for r in conn.execute("SELECT kind FROM shift_batch")}, {"import"}
+        )
+        self.assertEqual(
+            conn.execute("SELECT batch_id FROM shift WHERE person_id = 1").fetchone()["batch_id"], 2
+        )
+        self.assertEqual(
+            conn.execute("SELECT batch_id FROM shift_batch_item WHERE day = '2026-11-05'").fetchone()["batch_id"],
+            2,
+        )
+        self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+
+        conn.execute("UPDATE shift_batch SET status = 'undone' WHERE id = 2")
+        conn.commit()
+        self.assertEqual(
+            conn.execute("SELECT status FROM shift_batch WHERE id = 2").fetchone()["status"], "undone"
+        )
+
+    def test_a_rejected_status_still_refuses_after_migration(self):
+        conn = _pre_undone_db(self, "undone_migration_reject.db")
+        conn.execute("INSERT INTO person (id, display_name) VALUES (1, 'A')")
+        conn.commit()
+        db.init(conn)
+
+        with self.assertRaises(db.sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO shift_batch (person_id, file_name, received, extracted_at, status, "
+                "day_count, created_at) VALUES "
+                "(1, 'x.pdf', '2026-11-01', '2026-11-01T00:00:00+00:00', 'bogus', 1, "
+                "'2026-11-01T00:00:00+00:00')"
+            )
+
+
 class PrivacyCoverageTest(unittest.TestCase):
     def setUp(self):
         self.conn = _db(self, "privacy.db")
