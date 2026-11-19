@@ -29810,5 +29810,7 @@ ORCH-CARLOS-DELEGATES-TIER-1-1's own approval reason.
 shipped) is the orchestrator's, after the merge, per the dispatch.
 
 **Commits:** `7f03592` (the ruling, `_plan_filas`/`_plan_bloque`, tests, wire doc, re-measured
-ceiling).
+ceiling) -- `ae087b4` (this ledger entry) -- merged `aed5e75` into `main` (`--no-ff`, no conflicts).
+Post-merge smoke (`tests.test_hogar_feed tests.test_rendimiento tests.test_dispositivo`): `Ran 144
+tests in 77.882s` -- `OK`.
 
