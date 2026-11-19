@@ -72,6 +72,30 @@
 </div>
 {% endif %}
 
+{% if historial %}
+<div class="card">
+  <ul class="list mt-0">
+  {% for h in historial %}
+    <li>
+      <p class="read mt-0">{{ h.linea }}</p>
+      {% if h.deshacer %}
+      <details class="files mt-6">
+        <summary class="taplink">{{ t('shifts.historial.deshacer') }}</summary>
+        <form method="post" action="/shifts/undo" class="mt-6">
+          <input type="hidden" name="batch_id" value="{{ h.batch_id }}">
+          <div class="confirm-actions">
+            <button type="submit" class="btn on">{{ h.quitar_txt }}</button>
+          </div>
+        </form>
+        <p class="mt-6"><a class="taplink" href="/shifts">{{ t('shifts.historial.cancelar') }}</a></p>
+      </details>
+      {% endif %}
+    </li>
+  {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 {% if many or batch or confirmed_date %}
 <p class="k mt-n4 mb-10"><a class="taplink" href="/shifts/patron">{{ t('patron.door_change') if tiene_patron else t('patron.door_new') }}</a></p>
 {% endif %}

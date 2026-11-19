@@ -29,6 +29,42 @@ def _owned_batch_or_404(conn, batch_id: int, person_id: int) -> None:
         raise HTTPException(404)
 
 
+# ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: the person's last _HISTORIAL_LIMITE non-proposed
+# batches -- 'dismissed' never joins this tuple (it never touched the schedule, never shown).
+# tests/test_i18n_paridad.py's own dynamic-prefix coverage for t("shifts.historial.estado." + ...)
+# reads this list, not a hand-typed one.
+_HISTORIAL_ESTADOS = ("confirmed", "superseded", "undone")
+_HISTORIAL_DESHACER_ESTADOS = ("confirmed", "superseded")
+_HISTORIAL_LIMITE = 10
+
+
+def _historial_filas(t: T, conn, person_id: int) -> list[dict]:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: newest `received` first, each row's {n} the
+    batch's CURRENT shift rows (by batch_id, never its original day_count) -- one combined SELECT
+    (a LEFT JOIN + GROUP BY) so the history never costs more than one extra statement over the
+    page's own existing cost. Deshacer (ruling 2) is offered only on a 'confirmed'/'superseded'
+    row that still has at least one current row."""
+    placeholders = ",".join("?" * len(_HISTORIAL_ESTADOS))
+    rows = conn.execute(
+        f"SELECT b.id AS id, b.received AS received, b.file_name AS file_name, b.kind AS kind, "
+        f"b.status AS status, COUNT(s.day) AS n FROM shift_batch b LEFT JOIN shift s ON s.batch_id = b.id "
+        f"WHERE b.person_id = ? AND b.status IN ({placeholders}) "
+        f"GROUP BY b.id ORDER BY b.received DESC, b.extracted_at DESC LIMIT ?",
+        (person_id, *_HISTORIAL_ESTADOS, _HISTORIAL_LIMITE),
+    ).fetchall()
+    filas = []
+    for r in rows:
+        n = r["n"]
+        origen = t("shifts.historial.patron") if r["kind"] == "pattern" else r["file_name"]
+        linea = t("shifts.historial.linea", fecha=_batch_date(t, r["received"]), origen=origen,
+                  n_frag=_frag(t, "shifts.historial.turnos", n, n=n),
+                  estado=t("shifts.historial.estado." + r["status"]))
+        filas.append({"linea": linea, "batch_id": r["id"],
+                      "deshacer": r["status"] in _HISTORIAL_DESHACER_ESTADOS and n >= 1,
+                      "quitar_txt": _frag(t, "shifts.historial.quitar", n, n=n)})
+    return filas
+
+
 _STRIP_WEEKS = 8
 _STRIP_DAYS = _STRIP_WEEKS * 7
 _STRIP_KIND_ORDER = ["morning", "afternoon", "night", "day", "off", "other", "none"]
@@ -466,6 +502,13 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
                        applied_frag=_frag(t, "shifts.confirm_all_applied", applied_n, applied=applied_n))
         if kept:
             result_msg += " " + t(_singular_key("shifts.confirm_all_kept", kept), n=kept)
+    elif qp.get("undo_done") == "1":
+        quitados, restaurados = int(qp.get("quitados", 0)), int(qp.get("restaurados", 0))
+        result_msg = t("shifts.undo_result",
+                       quitados_frag=_frag(t, "shifts.undo_quitados", quitados, quitados=quitados),
+                       restaurados_frag=_frag(t, "shifts.undo_restaurados", restaurados, restaurados=restaurados))
+    elif qp.get("undo_refused") == "1":
+        result_msg = t("shifts.undo_refused")
     today_local = comun._today_local(person)
     resumen = turnos_costo.resumen(conn, person_id, hoy=today_local)
     strip, strip_legend = _turnos_strip(conn, person_id, today_local, t)
@@ -513,9 +556,11 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
                        received_date=_batch_date(t, proposed["received"]), preview=prev, result_msg=result_msg,
                        turnos=turnos_on, tiene_patron=tiene_patron, **costo_ctx)
     confirmed = shift_import.latest_confirmed(conn, person_id)
+    historial = _historial_filas(t, conn, person_id)
     return comun._render("shifts.html", t=t, tab="shifts", batch=None, many=False,
                    confirmed_date=_batch_date(t, confirmed["received"]) if confirmed else None,
-                   result_msg=result_msg, turnos=turnos_on, tiene_patron=tiene_patron, **costo_ctx)
+                   historial=historial, result_msg=result_msg, turnos=turnos_on, tiene_patron=tiene_patron,
+                   **costo_ctx)
 
 
 def _patron_preview_ctx(t: T, prev: dict) -> dict:
@@ -614,6 +659,27 @@ async def shifts_dismiss(request: Request, person_id: int = Depends(identity.cur
         _owned_batch_or_404(conn, int(batch_id), person_id)
         shift_import.dismiss(conn, int(batch_id))
     return RedirectResponse("/shifts", status_code=303)
+
+
+@router.post("/shifts/undo")
+@comun._cierra_conexion_async
+async def shifts_undo(request: Request, person_id: int = Depends(identity.current_person_id)):
+    conn, _, _ = comun._ctx(person_id)
+    if not db.trabaja_turnos_si(conn, person_id):
+        raise HTTPException(404)
+    batch_id = parse_qs((await request.body()).decode()).get("batch_id", [""])[0]
+    if not batch_id.isdigit():
+        return RedirectResponse("/shifts", status_code=303)
+    _owned_batch_or_404(conn, int(batch_id), person_id)
+    try:
+        resultado = shift_import.undo(conn, person_id, int(batch_id))
+    except shift_import.UndoRefused:
+        return RedirectResponse("/shifts?undo_refused=1", status_code=303)
+    quitados = resultado["days_restored"] + resultado["days_emptied"] + resultado["days_kept_manual"]
+    return RedirectResponse(
+        f"/shifts?undo_done=1&quitados={quitados}&restaurados={resultado['days_restored']}",
+        status_code=303,
+    )
 
 
 _PATRON_DEFAULT_DIAS = 7
