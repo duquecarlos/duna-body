@@ -29718,3 +29718,97 @@ them.
 ledger entry) -- merged `32d3509` into `main` (`--no-ff`, no conflicts). Post-merge smoke
 (`tests.test_lugares tests.test_pull`): `Ran 91 tests in 27.159s` -- `OK`.
 
+## BODY-HOGAR-PLAN-RANGO-1 -- `manana` gains `plan_bloque`, the whole training block to the horizon (2026-11-19)
+
+**Hogar's ask, verbatim, hub ref HOGAR-PIDE-BODY-PLAN-RANGO-1 (2026-11-19):**
+
+> Asked 17 Nov: GET /api/hogar/serie (or manana) to return the training plan rows from today up to
+> the horizon deadline (or 28 days), same fields as today's plan rows. Hogar's high-mountain hike
+> pilot (HOGAR-PILOTO-MONTANA-1, building now) shows the whole training block toward the hike date;
+> today Body sends only dia and dia+1, so the block shows two days plus an honest note. Please reply
+> with a slice id and ETA, or the field you prefer.
+
+Carlos's own direction behind it, HOGAR-PLAN-VIVO-1, his words relayed by Main: Hogar should «know my
+plans ... so we can schedule weekly events ... reducing the friction».
+
+**The orchestrator's ruling (Tier 2, build; the field was Body's to choose, Hogar said so):**
+`manana` gains ONE new key, `plan_bloque`; `plan` stays exactly as it is. `plan_bloque` =
+`{"desde": dia, "hasta": <date>, "hasta_por": "horizonte" | "28_dias", "filas": [...]}` where `hasta`
+is the active horizon's `deadline` when `_horizonte_actual` returns one and that deadline is on or
+after `dia` (`hasta_por` "horizonte"), else `dia` + 27 days (`hasta_por` "28_dias"); the span is
+capped at `MAX_SERIE_DIAS` counting `dia` (a farther deadline is cut there and `hasta_por` stays
+"horizonte" -- `hasta` says where it was cut); `filas` are every plan row with `day` in
+`[desde, hasta]`, any goal, ordered by day then time, in exactly `_plan_dias`'s item shape -- one
+shared row reader over a range, no second copy of the field list. No health figure added. Body's own
+copy of the wire, `docs/contracts/hogar-feed-v1.md`, documents `plan_bloque` with the same words. The
+route's statement ceiling is re-measured and named.
+
+**As built:**
+* `body/hogar_feed.py:53` -- `_plan_filas(conn, person_id, desde, hasta)`: the one shared SQL
+  reader (`day BETWEEN ? AND ?`), replacing the old `day IN (?, ?)` query -- same field list (`id`,
+  `day`, `time`, `title`, `status`, `ejercicios`, `nota_sesion`), same `ejercicios_json` parse, in
+  exactly one place.
+* `body/hogar_feed.py:75` -- `_plan_dias(conn, person_id, dia)`: now a thin call into `_plan_filas`
+  over `[dia, dia+1]` -- unchanged output.
+* `body/hogar_feed.py:80` -- `_plan_bloque(conn, person_id, dia, horizonte)`: `horizonte` is passed
+  in (`manana`'s own `_horizonte_actual` result, never re-queried). `tope = dia + (MAX_SERIE_DIAS -
+  1)`; `deadline` is parsed from `horizonte["deadline"]` when `horizonte` is not `None`. When
+  `deadline is not None and deadline >= dia`: `hasta_por = "horizonte"`, `hasta = min(deadline,
+  tope)`. Otherwise: `hasta_por = "28_dias"`, `hasta = dia + 27 days`. `filas` is `_plan_filas` over
+  `[dia, hasta]`.
+* `body/hogar_feed.py:222` -- `manana`: computes `horizonte` once, adds `"plan_bloque":
+  _plan_bloque(conn, person_id, dia, horizonte)` alongside the unchanged `"plan": _plan_dias(...)`.
+* `MAX_SERIE_DIAS` (`body/hogar_feed.py:27`, unchanged at 366) is the one cap `serie`, `turnos` and
+  now `plan_bloque` all read.
+
+**Tests, `tests/test_hogar_feed.py` (synthetic home, invented plan, no real health figure):**
+new `PlanBloqueTest` class -- an active horizon 40 days out covers `dia..deadline`, `hasta_por`
+"horizonte", rows in order, item shape equal to `plan`'s own keys; no horizon defaults to
+`dia..dia+27`, "28_dias"; a deadline already past also answers "28_dias"; a deadline 500 days out is
+cut at `dia + (MAX_SERIE_DIAS - 1)`, `hasta_por` still "horizonte"; another person's plan rows never
+appear in `plan_bloque.filas`; `plan` stays byte-for-byte identical with `plan_bloque` present;
+`plan_bloque`'s own statement cost does not grow with the number of matched rows (one query, not
+one-per-row). `MananaTest.test_four_old_keys_unchanged_with_turnos_present`'s own key-set assertion
+was updated to include `plan_bloque`.
+
+**Wire doc, `docs/contracts/hogar-feed-v1.md`:** the `manana` example response gained a `plan_bloque`
+example; a new bullet documents `desde`/`hasta`/`hasta_por`/`filas` under the `plan` bullet; the
+"Still v1" additive paragraph now names `plan_bloque` as additive, `plan` unchanged.
+
+**Statement ceiling, re-measured and named:** `/api/hogar/manana`'s real path
+(`tests/test_rendimiento.py`'s `_CEILINGS_REAL_PATH`) measured 28 statements (was 27 before this
+slice, `plan_bloque`'s own one extra `SELECT` for its `filas`) -- `ceil(28 * 1.3) = 37` (was 36).
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as 11
+sequential alphabetical chunks of dotted modules (~20 each), each in the foreground, read from the
+process:
+
+| chunk | modules (first..last) | tests | result |
+|---|---|---|---|
+| 0 | test_accesibilidad .. test_baselines | 387 | OK |
+| 1 | test_baselines_lote .. test_deshacer_derivados | 456 | OK |
+| 2 | test_despertar .. test_errores_texto | 413 | OK |
+| 3 | test_estados_vacios .. test_garmin_web | 349 | OK |
+| 4 | test_get_sin_escritura .. test_host_deploy | 609 | OK |
+| 5 | test_host_import .. test_mcp_cliente_remoto | 399 | OK |
+| 6 | test_mcp_copia_pc .. test_periodo_herramientas | 521 | OK |
+| 7 | test_periodo_pantallas .. test_propuesta_vigencia | 496 | OK |
+| 8 | test_propuestas_tabla .. test_series_unidad | 351 | OK |
+| 9 | test_sesion_conexion_1 .. test_turnos_enlaces | 508 | OK |
+| 10 | test_turnos_esquema_1 .. test_web_entry | 317 | OK |
+
+Sum = 4806. Reconciled against a separate collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`) = 4806 -- exact
+match, no drift. All 11 chunks `OK`; the warnings and "pull attempt failed"/"NotSignedIn" lines
+printed mid-run are pre-existing fixtures logging expected synthetic failures, not test failures.
+
+**customer_bytes: none.** No route added, no scope added, no schema change, no customer-facing
+screen string. An additive key on a device-key feed Hogar already reads, per
+ORCH-CARLOS-DELEGATES-TIER-1-1's own approval reason.
+
+**Open follow-ups:** none raised by this slice. The reply to Hogar on the hub (slice id, what
+shipped) is the orchestrator's, after the merge, per the dispatch.
+
+**Commits:** `7f03592` (the ruling, `_plan_filas`/`_plan_bloque`, tests, wire doc, re-measured
+ceiling).
+
