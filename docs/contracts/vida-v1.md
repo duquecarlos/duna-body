@@ -1,4 +1,5 @@
-> Main owns this contract; the source is `C:\Duna\dev-protocol\contracts\vida-v1.md`. This is a read-only copy taken at FORK-1 (22f2b79e): re-copy it from the source, never edit it here.
+> Main owns this contract; the source is `C:\Duna\dev-protocol\contracts\vida-v1.md`. Re-copied 2026-11-18
+> (BODY-DESPERTAR-REAL-6C) for `corrected`, at 7d0285ec: re-copy it from the source, never edit it here.
 
 # vida-v1 — the shared building blocks of Carlos's life coach
 
@@ -10,7 +11,7 @@ hub as hit_01m6rx9x0p7q5nvmzbxrhc9kc6. It starts from what exists: Personal's `e
 EXCHANGED between apps: files, API payloads, and what one app reads from another. It does not dictate any app's own
 tables. An app may store the data however it likes, as long as what it writes out and reads in has this shape.
 
-**Where it applies now.** Personal (C:\Personal), Body (C:\Duna\body-app), and Finanzas for the money block. Other Duna
+**Where it applies now.** Personal (C:\Personal), Body (C:\Duna\body\body-app; moved 2026-11-08, BODY-FOLDER-MOVE-1), and Finanzas for the money block. Other Duna
 products adopt it only when they have a reason; the hub item tells them it exists.
 
 ## Common to every block
@@ -30,7 +31,7 @@ Dates are `YYYY-MM-DD`. A local time with no offset is `YYYY-MM-DDTHH:MM`, read 
 ## Metric — a number over time
 
 * `metric_def`: `key` (namespaced: `body.resting_hr`, `finanzas.net_pay`, `vida.nature_days`), `label`, `unit`,
-  `better` = `higher` | `lower` | `neutral`, `kind` = `measured` | `estimated` (an estimated value shows «≈» plus
+  `better` = `higher` | `lower` | `neutral`, `kind` = `measured` | `estimated` | `corrected` (`corrected`, added 2026-11-18 by Main for Body: a device's measured figure that the person themself corrected, for example «I was still asleep until 8:00». It shows as «tu corrección» wherever it appears. The app that holds the correction keeps the device's original figure, and `source` stays the app that wrote the value. An estimated value shows «≈» plus
   "cómo lo calculo" wherever it appears).
 * `metric_value`: `person`, `day`, `key`, `value` (number), `source`, `visibility`.
 
@@ -38,7 +39,7 @@ Dates are `YYYY-MM-DD`. A local time with no offset is `YYYY-MM-DDTHH:MM`, read 
 
 `id, person, hogar_id, kind, starts_at, ends_at, all_day, timezone, source, ref, data`
 
-* `kind` is namespaced: `work.shift`, `trip.day` (Lugares), `money.payslip` (Finanzas), `body.workout`,
+* `kind` is namespaced: `work.shift`, `trip` (Lugares: one event per trip spanning its days, amended 2026-11-18 by Main, LUGARES-VIDA-VIAJES-LECTURA-1), `money.payslip` (Finanzas), `body.workout`,
   `body.race`, and so on.
 * `ref` is the source's own id (file + row, Lugares viaje id, Finanzas comprobante id).
 * `data` holds the kind's own fields. For `work.shift` it holds EXACTLY Personal's FORMATO.md fields: `shift_kind` =
