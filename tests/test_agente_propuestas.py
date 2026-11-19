@@ -14,7 +14,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import config, db, garmin_adapter, goals, identity, web
+from body import config, db, garmin_adapter, goals, identity, shift_import, web
 from body.agente import bucle as agente_bucle
 from body.agente import cliente as agente_cliente
 from body.agente import conversacion as agente_conversacion
@@ -51,6 +51,19 @@ def _seed_turnos(conn, person_id: int = 1) -> None:
         "'2026-10-05T22:00:00')", (cur.lastrowid,),
     )
     conn.commit()
+
+
+def _seed_turnos_batch(conn, person_id: int, file_name: str, received: str, day: str, kind: str = "night") -> int:
+    cur = conn.execute(
+        "INSERT INTO shift_batch (person_id, file_name, received, extracted_at, status, day_count, created_at) "
+        "VALUES (?, ?, ?, ?, 'proposed', 1, ?)", (person_id, file_name, received, received, received),
+    )
+    conn.execute(
+        "INSERT INTO shift_batch_item (batch_id, day, kind, start_local) VALUES (?, ?, ?, ?)",
+        (cur.lastrowid, day, kind, f"{day}T22:00:00" if kind != "off" else None),
+    )
+    conn.commit()
+    return cur.lastrowid
 
 
 def _cid(conn, person_id: int = 1) -> int:
@@ -345,13 +358,47 @@ class DeshacerTest(unittest.TestCase):
         self.assertEqual(resultado["estado"], "propuesta_desactualizada")
         self.assertEqual(self.conn.execute("SELECT target_value FROM goal WHERE id = ?", (gid,)).fetchone()[0], 47.0)
 
-    def test_confirmar_turnos_has_no_undo(self):
-        _seed_turnos(self.conn)
+    def test_confirmar_turnos_undo_restores_the_schedule(self):
+        """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3: a two-batch confirm_all applied through the
+        assistant, then undone through the same propuesta -- the schedule ends exactly as it was
+        before the apply (BODY-TURNOS-DESHACER-LOTE-3-R)."""
+        a_id = _seed_turnos_batch(self.conn, 1, "turnos-a.json", "2026-10-01T00:00:00", "2026-10-01")
+        b_id = _seed_turnos_batch(self.conn, 1, "turnos-b.json", "2026-10-02T00:00:00", "2026-10-02")
+        cid = _cid(self.conn)
+        out = herramientas.ejecutar(self.conn, 1, "proponer_confirmar_turnos", {}, "ninguno", cid)
+        resultado_aplicar = propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        self.assertEqual(resultado_aplicar["estado"], "aplicada")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM shift WHERE person_id = 1").fetchone()[0], 2)
+
+        resultado = propuestas.deshacer(self.conn, 1, out["propuesta_id"])
+        self.assertEqual(resultado["estado"], "deshecha")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM shift WHERE person_id = 1").fetchone()[0], 0)
+        for bid in (a_id, b_id):
+            self.assertEqual(
+                self.conn.execute("SELECT status FROM shift_batch WHERE id = ?", (bid,)).fetchone()[0], "undone")
+
+    def test_confirmar_turnos_undo_refuses_when_a_later_batch_was_confirmed_after_the_apply(self):
+        """Ruling 3's second drift condition: a batch none of this propuesta's own batch_ids name
+        got confirmed AFTER this apply -- refused, nothing written."""
+        a_id = _seed_turnos_batch(self.conn, 1, "turnos-a.json", "2026-10-01T00:00:00", "2026-10-01")
         cid = _cid(self.conn)
         out = herramientas.ejecutar(self.conn, 1, "proponer_confirmar_turnos", {}, "ninguno", cid)
         propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        decided_a = self.conn.execute("SELECT decided_at FROM shift_batch WHERE id = ?", (a_id,)).fetchone()[0]
+
+        c_id = _seed_turnos_batch(self.conn, 1, "turnos-c.json", "2026-10-03T00:00:00", "2026-10-03")
+        shift_import.confirm(self.conn, c_id)
+        # Force decided_at strictly after A's own -- this test's own wall-clock granularity
+        # (one-second ISO timestamps) could otherwise tie the two confirms in the same second.
+        later = (datetime.fromisoformat(decided_a) + timedelta(seconds=1)).isoformat(timespec="seconds")
+        self.conn.execute("UPDATE shift_batch SET decided_at = ? WHERE id = ?", (later, c_id))
+        self.conn.commit()
+
         resultado = propuestas.deshacer(self.conn, 1, out["propuesta_id"])
-        self.assertEqual(resultado["estado"], "sin_deshacer")
+        self.assertEqual(resultado["estado"], "propuesta_desactualizada")
+        self.assertEqual(
+            self.conn.execute("SELECT status FROM shift_batch WHERE id = ?", (a_id,)).fetchone()[0], "confirmed")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM shift WHERE person_id = 1").fetchone()[0], 2)
 
 
 class RutasPropuestaTest(unittest.TestCase):

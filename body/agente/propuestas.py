@@ -170,15 +170,17 @@ def _marcar(conn: sqlite3.Connection, propuesta_id: int, person_id: int, desde: 
 def _sin_drift(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
     """The explicit no-op drift check, named rather than a missing branch: `proponer_meta` and
     `planear_entreno` are insert-shaped and have no value before (amendment 1a), so their
-    drift-on-apply never fires; `proponer_confirmar_turnos` has no undo writer at all (below), so
-    its drift-on-undo slot is filled but never actually called."""
+    drift-on-apply never fires."""
     return False
 
 
 def _sin_escritura_deshacer(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
-    """The explicit marker for an action with no undo writer (ex-SIN_DESHACER). `deshacer` never
-    calls this -- `_Accion.tiene_deshacer` is False for any entry that names it as its undo
-    writer, and `deshacer` returns "sin_deshacer" before reaching the call."""
+    """The explicit marker for an action with no undo writer. `deshacer` never calls this --
+    `_Accion.tiene_deshacer` is False for any entry that names it as its undo writer, and
+    `deshacer` returns "sin_deshacer" before reaching the call. BODY-TURNOS-DESHACER-LOTE-3-R:
+    `proponer_confirmar_turnos` (ex-SIN_DESHACER, the only entry that ever named this) gained a
+    real undo writer below -- no TABLA entry names this marker any more, kept for the next
+    one-way action that needs it."""
     return None
 
 
@@ -280,15 +282,73 @@ def _deshacer_cambio_meta(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
                            deadline=antes["deadline"])
 
 
-# -- proponer_confirmar_turnos (SIN_DESHACER: no undo writer) ----------------------------------
+# -- proponer_confirmar_turnos (BODY-TURNOS-DESHACER-LOTE-3-R, ORCH-CARLOS-DELEGATES-TIER-1-1
+# ruling 3: gained a real undo writer. `_aplicar_confirmar_turnos` records which batch ids
+# confirm_all() confirmed -- every batch 'proposed' right before it ran, in the same (received,
+# extracted_at, id) order confirm_all() itself applies them in -- as `batch_ids` in its own
+# return dict, the same mechanism `_aplicar_meta`'s own `habito_ids` uses (aplicar's generic
+# `resto` merge into despues_json) so `deshacer` later knows exactly which batches to reverse.) --
 
 def _drift_aplicar_confirmar_turnos(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
     antes = json.loads(row["antes_json"]) if row["antes_json"] is not None else {}
     return shift_import.summary_proposed(conn, row["person_id"]) != antes.get("resumen")
 
 
-def _aplicar_confirmar_turnos(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
-    shift_import.confirm_all(conn, row["person_id"])
+def _aplicar_confirmar_turnos(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+    person_id = row["person_id"]
+    batch_ids = [
+        r["id"] for r in conn.execute(
+            "SELECT id FROM shift_batch WHERE person_id = ? AND status = 'proposed' "
+            "ORDER BY received, extracted_at, id", (person_id,),
+        ).fetchall()
+    ]
+    shift_import.confirm_all(conn, person_id)
+    return {"batch_ids": batch_ids}
+
+
+def _drift_deshacer_confirmar_turnos(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    """Drifted when any batch this apply confirmed is no longer 'confirmed'/'superseded', or when
+    a batch NONE of these ids name was itself confirmed or superseded after this apply's own
+    latest `decided_at` -- ruling 3's own two conditions, read straight off shift_batch rather
+    than re-derived from shift rows."""
+    despues = json.loads(row["despues_json"])
+    ids = despues.get("batch_ids") or []
+    if not ids:
+        return False
+    placeholders = ",".join("?" * len(ids))
+    rows = conn.execute(
+        f"SELECT id, status, decided_at FROM shift_batch WHERE id IN ({placeholders}) AND person_id = ?",
+        (*ids, row["person_id"]),
+    ).fetchall()
+    por_id = {r["id"]: r for r in rows}
+    if len(por_id) != len(ids) or any(por_id[i]["status"] not in ("confirmed", "superseded") for i in ids):
+        return True
+    ultimo_decided = max(por_id[i]["decided_at"] for i in ids)
+    otra = conn.execute(
+        f"SELECT 1 FROM shift_batch WHERE person_id = ? AND id NOT IN ({placeholders}) "
+        "AND status IN ('confirmed', 'superseded') AND decided_at > ? LIMIT 1",
+        (row["person_id"], *ids, ultimo_decided),
+    ).fetchone()
+    return otra is not None
+
+
+def _deshacer_confirmar_turnos(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    """Reverses confirm_all()'s own apply order: shift_import.undo(), newest batch first -- the
+    mirror of confirm_all()'s own oldest-first (received, extracted_at) application, and the same
+    one-transaction-per-batch shape confirm_all() itself already carries (its own docstring's
+    "One transaction PER BATCH, not one for the whole set")."""
+    despues = json.loads(row["despues_json"])
+    ids = despues.get("batch_ids") or []
+    if not ids:
+        return
+    placeholders = ",".join("?" * len(ids))
+    ordenados = conn.execute(
+        f"SELECT id FROM shift_batch WHERE id IN ({placeholders}) AND person_id = ? "
+        "ORDER BY received DESC, extracted_at DESC, id DESC",
+        (*ids, row["person_id"]),
+    ).fetchall()
+    for r in ordenados:
+        shift_import.undo(conn, row["person_id"], r["id"])
 
 
 # -- proponer_idioma -----------------------------------------------------------------------------
@@ -1642,8 +1702,8 @@ TABLA: dict[str, _Accion] = {
     "proponer_meta": _Accion(_sin_drift, _drift_deshacer_meta, _aplicar_meta, _deshacer_meta),
     "proponer_cambio_meta": _Accion(_drift_aplicar_cambio_meta, _drift_deshacer_meta, _aplicar_cambio_meta,
                                      _deshacer_cambio_meta),
-    "proponer_confirmar_turnos": _Accion(_drift_aplicar_confirmar_turnos, _sin_drift, _aplicar_confirmar_turnos,
-                                          _sin_escritura_deshacer),
+    "proponer_confirmar_turnos": _Accion(_drift_aplicar_confirmar_turnos, _drift_deshacer_confirmar_turnos,
+                                          _aplicar_confirmar_turnos, _deshacer_confirmar_turnos),
     "proponer_idioma": _Accion(_drift_aplicar_idioma, _drift_deshacer_idioma, _aplicar_idioma, _deshacer_idioma),
     "planear_entreno": _Accion(_sin_drift, _drift_deshacer_planear_entreno, _aplicar_planear_entreno,
                                 _deshacer_planear_entreno),

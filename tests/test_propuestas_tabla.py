@@ -2,7 +2,8 @@
 places must name the exact same set of actions -- body/agente/propuestas.py's TABLA, body/rutas/
 asistente.py's TARJETAS, and the `propuesta`-kind tools in body/agente/herramientas.py's
 HERRAMIENTAS -- and every TABLA entry must carry all four of its callables, with "no undo writer"
-limited to exactly the old SIN_DESHACER set.
+limited to exactly SIN_DESHACER -- EMPTY since BODY-TURNOS-DESHACER-LOTE-3-R gave
+`proponer_confirmar_turnos` (the set's only member) a real undo writer.
 """
 import unittest
 
@@ -32,9 +33,13 @@ class PropuestasTablaTests(unittest.TestCase):
                 self.assertTrue(callable(entrada.escribir_deshacer))
 
     def test_sin_deshacer_es_exactamente_las_entradas_sin_escritor_de_deshacer(self):
+        """BODY-TURNOS-DESHACER-LOTE-3-R: `proponer_confirmar_turnos` gained a real undo writer,
+        so SIN_DESHACER is now EMPTY -- asserted by name, never loosened to 'at least', since the
+        `_sin_escritura_deshacer` marker (tests/test_propuestas_tabla.py's own docstring: "no undo
+        writer") stays in place for the next one-way action that needs it."""
         sin_deshacer = {nombre for nombre, entrada in propuestas.TABLA.items() if not entrada.tiene_deshacer}
         self.assertEqual(sin_deshacer, set(propuestas.SIN_DESHACER))
-        self.assertEqual(sin_deshacer, {"proponer_confirmar_turnos"})
+        self.assertEqual(sin_deshacer, set())
 
     def test_cada_tarjeta_es_invocable(self):
         for nombre, constructor in asistente.TARJETAS.items():
