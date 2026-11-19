@@ -23,14 +23,17 @@ from . import config, enlaces
 
 _HTTP_TIMEOUT = 5.0
 
-# ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3: one range, past and planned trips, inside Lugares' own
-# 3660-day maximum span (hasta - desde). 3650 + 365 = 4015 is OVER that maximum as literally
-# spelled out in this slice's own dispatch -- recorded as a deviation in DECISIONS.md rather than
-# silently narrowed, since the dispatch names these two figures twice, including as a test
-# requirement; every test here patches the network seam, so this never trips a 422 in THIS gate,
-# only (once Lugares is live) a real request's own range.
+# BODY-HISTORIA-VIDA-LUGARES-1-WINDOW: a single [hoy - 3650, hoy + 365] request is 4015 days,
+# OVER Lugares' own maximum span (Main's wire, verbatim: "max hasta - desde = 3660 days"), which
+# would get every live sync a 422 `rango_invalido`. Carlos asked for «all my historical data», so
+# the past is not shortened -- instead `sincronizar` makes TWO requests, each inside the maximum:
+# the past [hoy - 3650, hoy] (3650 days) and the planned [hoy + 1, hoy + 365] (364 days). See
+# MAX_SPAN_DIAS below.
 VENTANA_PASADO_DIAS = 3650
 VENTANA_FUTURO_DIAS = 365
+
+# Main's wire, verbatim: "max hasta - desde = 3660 days".
+MAX_SPAN_DIAS = 3660
 
 MOTIVO_RED = "red"
 MOTIVO_FORMATO = "formato"
@@ -92,14 +95,24 @@ def _registrar_intento(conn: sqlite3.Connection, person_id: int, ahora: str, mot
         )
 
 
+def _url(sub: str, desde: date, hasta: date) -> str:
+    assert desde <= hasta and (hasta - desde).days <= MAX_SPAN_DIAS
+    return (f"{enlaces.origen('lugares')}/api/vida/eventos?person={quote(sub, safe='')}"
+            f"&desde={desde.isoformat()}&hasta={hasta.isoformat()}")
+
+
 def sincronizar(conn: sqlite3.Connection, person_id: int, hoy: date) -> dict:
-    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3: {"estado": "sin_conectar"} with no request at all
-    when this person has no Cuenta sub or the host has no token configured; otherwise one GET for
-    `[hoy - VENTANA_PASADO_DIAS, hoy + VENTANA_FUTURO_DIAS]`. On 200, every event is validated
-    (invalid ones are skipped and counted, never stored) and this person's cached rows are REPLACED
-    in one transaction -- {"estado": "ok", "viajes": n, "invalidos": n}. On 401/422/503, a network
-    error (`_get_json`'s own (0, {})) or a malformed body (no `eventos` list), the cache is left as
-    it is and the attempt is recorded -- {"estado": "error", "motivo": ...}. Never raises."""
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3, corrected by
+    BODY-HISTORIA-VIDA-LUGARES-1-WINDOW: {"estado": "sin_conectar"} with no request at all when
+    this person has no Cuenta sub or the host has no token configured; otherwise TWO GETs, each
+    inside Lugares' MAX_SPAN_DIAS -- the past `[hoy - VENTANA_PASADO_DIAS, hoy]` and the planned
+    `[hoy + 1, hoy + VENTANA_FUTURO_DIAS]` -- with the same person, Bearer header and seam. Both
+    must answer 200 with a valid body for the person's cache to be REPLACED, in one transaction; a
+    trip whose ref appears in both answers (one that spans today) is stored once, its dates as
+    Lugares sent them -- {"estado": "ok", "viajes": n, "invalidos": n}. If either call returns
+    401/422/503, a network error (`_get_json`'s own (0, {})) or a malformed body (no `eventos`
+    list), the cache is left as it is and that failing call's motivo is recorded --
+    {"estado": "error", "motivo": ...}. Never raises."""
     sub = _cuenta_sub(conn, person_id)
     if not sub:
         return {"estado": "sin_conectar", "viajes": 0}
@@ -107,40 +120,43 @@ def sincronizar(conn: sqlite3.Connection, person_id: int, hoy: date) -> dict:
     if not token:
         return {"estado": "sin_conectar", "viajes": 0}
 
-    desde = (hoy - timedelta(days=VENTANA_PASADO_DIAS)).isoformat()
-    hasta = (hoy + timedelta(days=VENTANA_FUTURO_DIAS)).isoformat()
-    url = (f"{enlaces.origen('lugares')}/api/vida/eventos?person={quote(sub, safe='')}"
-           f"&desde={desde}&hasta={hasta}")
-    estado_http, body = _get_json(url, token)
+    url_pasado = _url(sub, hoy - timedelta(days=VENTANA_PASADO_DIAS), hoy)
+    url_planeado = _url(sub, hoy + timedelta(days=1), hoy + timedelta(days=VENTANA_FUTURO_DIAS))
+    respuestas = [_get_json(url_pasado, token), _get_json(url_planeado, token)]
     ahora = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-    if estado_http == 0:
-        _registrar_intento(conn, person_id, ahora, MOTIVO_RED)
-        return {"estado": "error", "viajes": 0, "motivo": MOTIVO_RED}
-    if estado_http != 200:
-        motivo = _MOTIVO_POR_ESTADO.get(estado_http, str(estado_http))
-        _registrar_intento(conn, person_id, ahora, motivo)
-        return {"estado": "error", "viajes": 0, "motivo": motivo}
+    for estado_http, _ in respuestas:
+        if estado_http == 0:
+            _registrar_intento(conn, person_id, ahora, MOTIVO_RED)
+            return {"estado": "error", "viajes": 0, "motivo": MOTIVO_RED}
+        if estado_http != 200:
+            motivo = _MOTIVO_POR_ESTADO.get(estado_http, str(estado_http))
+            _registrar_intento(conn, person_id, ahora, motivo)
+            return {"estado": "error", "viajes": 0, "motivo": motivo}
 
-    eventos = body.get("eventos") if isinstance(body, dict) else None
-    if not isinstance(eventos, list):
-        _registrar_intento(conn, person_id, ahora, MOTIVO_FORMATO)
-        return {"estado": "error", "viajes": 0, "motivo": MOTIVO_FORMATO}
+    eventos_combinados = []
+    for _, body in respuestas:
+        eventos = body.get("eventos") if isinstance(body, dict) else None
+        if not isinstance(eventos, list):
+            _registrar_intento(conn, person_id, ahora, MOTIVO_FORMATO)
+            return {"estado": "error", "viajes": 0, "motivo": MOTIVO_FORMATO}
+        eventos_combinados.extend(eventos)
 
-    validos: list[tuple[str, str, str]] = []
+    validos: dict[str, tuple[str, str, str]] = {}
     invalidos = 0
-    for ev in eventos:
+    for ev in eventos_combinados:
         fila = _validar_evento(ev)
         if fila is None:
             invalidos += 1
         else:
-            validos.append(fila)
+            ref, s, e = fila
+            validos[ref] = (ref, s, e)
 
     with conn:
         conn.execute("DELETE FROM viaje_lugares WHERE person_id = ?", (person_id,))
         conn.executemany(
             "INSERT INTO viaje_lugares (person_id, ref, starts_at, ends_at, fetched_at) VALUES (?, ?, ?, ?, ?)",
-            [(person_id, ref, s, e, ahora) for ref, s, e in validos],
+            [(person_id, ref, s, e, ahora) for ref, s, e in validos.values()],
         )
         conn.execute(
             "INSERT INTO lugares_sync (person_id, intento_at, ok_at, motivo) VALUES (?, ?, ?, NULL) "
