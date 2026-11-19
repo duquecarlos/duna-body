@@ -70,10 +70,10 @@ import threading
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .. import anatomia, catalogo_tendencias, comidas, compartir, cuenta, db, despertar_real, \
+from .. import anatomia, baselines, catalogo_tendencias, comidas, compartir, cuenta, db, despertar_real, \
     desplazamiento_import, enlaces, entreno_historial, errores, experimentos, fechas, garmin_adapter, \
     garmin_cuenta, goals, history, horizonte, household, nutriente_objetivo, practicas, profile, pull, \
-    readiness, shift_import, turnos_costo, tutoriales, viajes
+    readiness, shift_import, sueno_fc, turnos_costo, tutoriales, viajes
 from ..i18n import LANGS, T
 from . import ajustes, conversacion as agente_conversacion, propuestas
 
@@ -158,6 +158,21 @@ _PARAM_LEER_INTRADIA = {
 # BODY-DESPERTAR-REAL-2 ruling 1: the three honest reasons an empty window can have -- never a
 # hand-typed list anywhere else (test_i18n_paridad.py's own dynamic-prefix census reads this one).
 MOTIVOS_INTRADIA_SIN_DATOS = ("fuera_de_alcance", "reloj_apagado", "no_traido")
+
+# BODY-NOCHE-LECTURA-1 ruling 2: leer_noche's own window around Garmin's own sleep session --
+# enough margin before sleep start and after sleep end to show the fall-asleep and the wake-up,
+# capped so a corrupt or missing `end_local` can never make the window unbounded. Carlos's own
+# words (relayed by the desk 2026-11-19): "I was thinking on just one big reading, and there it
+# will be all the info."
+_LEER_NOCHE_ANTES_MIN = 60
+_LEER_NOCHE_DESPUES_MIN = 120
+_LEER_NOCHE_MAX_MIN = 16 * 60
+_PARAM_LEER_NOCHE = {
+    "type": "object",
+    "properties": {"fecha": {"type": "string", "format": "date"}},
+    "required": ["fecha"],
+    "additionalProperties": False,
+}
 
 # BODY-DESPERTAR-REAL-4 ruling 2: the two things a person can correct -- the same pair
 # despertar_real.PROPUESTA_TIPOS lists (BODY-DESPERTAR-REAL-6A-R2 ruling 2: an empty `propuestas`
@@ -993,8 +1008,15 @@ def _leer_intradia(conn: sqlite3.Connection, person_id: int, fecha: str, desde: 
         raise ToolError(f"leer_intradia admite hasta {_LEER_INTRADIA_MAX_MIN // 60} horas por llamada "
                          f"({minutos / 60:.1f} horas pedidas); divide el rango")
 
+    # BODY-NOCHE-LECTURA-1 ruling 1 (verdict: REAL): filtering by ts[11:16] alone, with no date
+    # check, let a sleep array's own minute from the CALENDAR DATE BEFORE `fecha` (Garmin's sleep
+    # payload spans two dates; db.intradia's own fc/estres rows never do) pass as if it belonged
+    # to this day's own window whenever its clock time happened to fall inside [desde, hasta) --
+    # tests/test_leer_intradia.py's own CrossMidnightSleepTest proves it. Filtering the FULL local
+    # timestamp (date + time) closes it for every series here, fc/estres included, at no cost: both
+    # already carry `fecha` as their own date (BODY-INTRADIA-SPOTCHECK-1's own day-scoped fetch).
     def _en_ventana(ts: str) -> bool:
-        return desde <= ts[11:16] < hasta
+        return ts[:10] == fecha and desde <= ts[11:16] < hasta
 
     fc = [[ts[11:16], v] for ts, v in db.intradia(conn, person_id, fecha, "intradia_fc", zona) if _en_ventana(ts)]
     estres = [[ts[11:16], v] for ts, v in db.intradia(conn, person_id, fecha, "intradia_estres", zona)
@@ -1023,6 +1045,145 @@ def _leer_intradia(conn: sqlite3.Connection, person_id: int, fecha: str, desde: 
     if not fc and not estres and sueno is None:
         motivo = _motivo_intradia_sin_datos(conn, person_id, fecha, hoy)
         out["sin_datos"] = {"motivo": motivo, "mensaje": t("asistente.intradia.sin_datos." + motivo)}
+    if actualizacion_fallo:
+        out["actualizacion"] = t("asistente.intradia.no_actualizado")
+    return out
+
+
+def _fc_minima_noche(sueno_arrays: dict, inicio_dt: datetime, fin_dt: datetime) -> dict | None:
+    """BODY-NOCHE-LECTURA-1 ruling 2: the single lowest heart-rate minute strictly inside Garmin's
+    own sleep window [inicio_dt, fin_dt] -- never the window's own padding (ruling 2's before/after
+    margin), and never sueno_fc.py's own robust 10th-percentile `sleep_hr_min` (a different, already
+    -smoothed figure for Tendencias/baselines); this one keeps the actual minute and its own hora,
+    the thing the surface asked for. None when the sleep payload carries no heart_rate array, or
+    none of it falls inside the window."""
+    candidatos = [(v, ts) for ts, v in (sueno_arrays.get("heart_rate") or ())
+                  if inicio_dt <= experimentos._sin_offset(ts) <= fin_dt]
+    if not candidatos:
+        return None
+    valor, hora = min(candidatos, key=lambda par: par[0])
+    return {"valor": valor, "hora": hora}
+
+
+def _minutos_despierto_tras_fin(resultado_modelo: dict) -> float | None:
+    """BODY-NOCHE-LECTURA-1 ruling 2: how many minutes past Garmin's own sleep end
+    `despertar_real.estimar` still read as 'dormitando' (dozing, still asleep) before its own
+    first non-sleep segment -- 0.0 when the model's first segment is already something else (an
+    immediate, confirmed wake), None when the model exposes no segment at all (ruling 4's honest
+    'sin_linea_base'/'sin_sesion' gap -- nothing to derive this from)."""
+    segmentos = resultado_modelo.get("segmentos")
+    if not segmentos:
+        return None
+    primero = segmentos[0]
+    if primero["tipo"] != "dormitando":
+        return 0.0
+    delta = datetime.fromisoformat(primero["fin"]) - datetime.fromisoformat(primero["inicio"])
+    return round(delta.total_seconds() / 60, 1)
+
+
+def _derivados_noche(conn: sqlite3.Connection, person_id: int, fecha: str, sueno_arrays: dict,
+                      inicio_dt: datetime, fin_dt: datetime) -> dict:
+    """BODY-NOCHE-LECTURA-1 ruling 2: the facts Body already knows how to compute for this one
+    night, each independently `None` when ITS OWN input is missing -- never invented, and never
+    gated on whether a sibling fact could be computed. `fc_minima_vs_rango` and `vfc_noche`'s own
+    usual range reuse `baselines.baseline` (body/baselines.py), the SAME helper every screen that
+    shows a person's own normal already calls (body/goals.py, body/rutas/tendencias.py,
+    body/noche_inusual.py) -- never a second range computed here. `despertar_modelo` is
+    `despertar_real.estimar`'s own, unedited dict (body/despertar_real.py) -- never reimplemented."""
+    fc_minima = _fc_minima_noche(sueno_arrays, inicio_dt, fin_dt)
+    fc_minima_vs_rango = None
+    if fc_minima is not None:
+        base_fc = baselines.baseline(conn, sueno_fc.CLAVE_MIN, fecha, person_id=person_id)
+        if base_fc is not None:
+            fc_minima_vs_rango = {"bajo": base_fc.low, "alto": base_fc.high, "z": base_fc.z(fc_minima["valor"])}
+
+    vfc_valor = db.day_values(conn, fecha, person_id).get("hrv_last_night")
+    vfc_noche = None
+    if vfc_valor is not None:
+        base_vfc = baselines.baseline(conn, "hrv_last_night", fecha, person_id=person_id)
+        vfc_noche = {"valor": vfc_valor,
+                     "rango": {"bajo": base_vfc.low, "alto": base_vfc.high} if base_vfc is not None else None}
+
+    despertar_modelo = despertar_real.estimar(conn, person_id, fecha)
+
+    return {
+        "fc_minima": fc_minima,
+        "fc_minima_vs_rango": fc_minima_vs_rango,
+        "vfc_noche": vfc_noche,
+        "despertar_modelo": despertar_modelo,
+        "minutos_despierto_tras_fin": _minutos_despierto_tras_fin(despertar_modelo),
+    }
+
+
+def _leer_noche(conn: sqlite3.Connection, person_id: int, fecha: str, actualizacion_fallo: bool = False) -> dict:
+    """BODY-NOCHE-LECTURA-1 ruling 2: Carlos's own words (relayed by the desk 2026-11-19): "please,
+    can you check my sleep each day more deeply ... Can you analyze and check my heart rate minute
+    by minute and tell me interesting stuff? ... So I'm wide with several calls per night. I was
+    thinking on just one big reading, and there it will be all the info." ONE call for the whole
+    night Garmin files under `fecha` (the WAKE day): the window from Garmin's own sleep start minus
+    `_LEER_NOCHE_ANTES_MIN` to its own end plus `_LEER_NOCHE_DESPUES_MIN`, capped at
+    `_LEER_NOCHE_MAX_MIN` and crossing midnight on purpose -- the heart-rate/stress minute points in
+    it, each with its OWN FULL local timestamp (ruling 1: never just HH:MM, since this window spans
+    two calendar dates), the sleep minute arrays, Garmin's own start/end, the person's own
+    correction(s), and the derived facts (`_derivados_noche`). No sleep session at all for `fecha`
+    -> `sin_datos`, the SAME three reasons (`MOTIVOS_INTRADIA_SIN_DATOS`) leer_intradia already
+    gives, read by the same `_motivo_intradia_sin_datos`. `actualizacion_fallo` set by `ejecutar()`
+    exactly like leer_intradia's own (never run from here -- a `lectura` tool must never write)."""
+    person = db.person(conn, person_id)
+    zona = person["timezone"]
+    t = T(person["language"])
+    hoy = fechas.hoy_local(person)
+    try:
+        dia_d = date.fromisoformat(fecha)
+    except ValueError:
+        raise ToolError("'fecha' debe ser una fecha ISO (AAAA-MM-DD)")
+    if dia_d > hoy:
+        raise ToolError("'fecha' no puede ser una fecha futura")
+
+    fila_sueno = conn.execute(
+        "SELECT start_local, end_local FROM sleep_session WHERE person_id = ? AND day = ?",
+        (person_id, fecha),
+    ).fetchone()
+    if fila_sueno is None or not fila_sueno["start_local"] or not fila_sueno["end_local"]:
+        motivo = _motivo_intradia_sin_datos(conn, person_id, fecha, hoy)
+        out = {"dia": fecha, "zona": zona,
+               "sin_datos": {"motivo": motivo, "mensaje": t("asistente.intradia.sin_datos." + motivo)}}
+        if actualizacion_fallo:
+            out["actualizacion"] = t("asistente.intradia.no_actualizado")
+        return out
+
+    sueno_inicio_dt = experimentos._sin_offset(fila_sueno["start_local"])
+    sueno_fin_dt = experimentos._sin_offset(fila_sueno["end_local"])
+    ventana_inicio_dt = sueno_inicio_dt - timedelta(minutes=_LEER_NOCHE_ANTES_MIN)
+    ventana_fin_dt = min(sueno_fin_dt + timedelta(minutes=_LEER_NOCHE_DESPUES_MIN),
+                          ventana_inicio_dt + timedelta(minutes=_LEER_NOCHE_MAX_MIN))
+
+    def _en_ventana(ts: str) -> bool:
+        return ventana_inicio_dt <= experimentos._sin_offset(ts) <= ventana_fin_dt
+
+    # BODY-NOCHE-LECTURA-1 ruling 3: at most two calendar dates regardless of the window's own
+    # span (capped under 24h), so this stays two statements per series whether the night is 2
+    # hours or the full 16-hour cap -- tests/test_leer_noche.py's own statement-count guard.
+    dias = sorted({ventana_inicio_dt.date().isoformat(), ventana_fin_dt.date().isoformat()})
+    fc: list = []
+    estres: list = []
+    for dia in dias:
+        fc.extend([ts, v] for ts, v in db.intradia(conn, person_id, dia, "intradia_fc", zona) if _en_ventana(ts))
+        estres.extend([ts, v] for ts, v in db.intradia(conn, person_id, dia, "intradia_estres", zona)
+                       if _en_ventana(ts))
+    fc.sort(key=lambda p: p[0])
+    estres.sort(key=lambda p: p[0])
+
+    sueno_arrays = db.sueno_minuto_a_minuto(conn, person_id, fecha, zona)
+    sueno = {"inicio": fila_sueno["start_local"], "fin": fila_sueno["end_local"],
+             **{nombre: [[ts, v] for ts, v in serie] for nombre, serie in sueno_arrays.items()}}
+    correcciones = db.despertar_correcciones(conn, person_id, fecha)
+    if correcciones:
+        sueno["correcciones"] = correcciones
+
+    out = {"dia": fecha, "zona": zona, "desde": ventana_inicio_dt.isoformat(), "hasta": ventana_fin_dt.isoformat(),
+           "frecuencia_cardiaca": fc, "estres": estres, "sueno": sueno,
+           **_derivados_noche(conn, person_id, fecha, sueno_arrays, sueno_inicio_dt, sueno_fin_dt)}
     if actualizacion_fallo:
         out["actualizacion"] = t("asistente.intradia.no_actualizado")
     return out
@@ -3032,6 +3193,17 @@ HERRAMIENTAS = [
                      f"la ventana de {_LEER_INTRADIA_MAX_MIN // 60} horas se rechaza sin leer nada: divide el "
                      "rango.",
      "parametros": _PARAM_LEER_INTRADIA, "funcion": _leer_intradia, "necesita_actualizacion": True},
+    {"nombre": "leer_noche", "tipo": "lectura", "nivel": "completo",
+     "descripcion": "La noche completa de un día de despertar, en una sola llamada: el pulso y el estrés "
+                     "minuto a minuto desde antes de dormirse hasta después de despertar (cruzando la "
+                     "medianoche), el sueño minuto a minuto, el inicio y el fin que registró el reloj, tus "
+                     "propias correcciones, y lo que Body ya sabe calcular sobre esa noche (el pulso más bajo "
+                     "y cómo se compara con tu rango habitual, tu VFC nocturna y su rango habitual, y el "
+                     "modelo de despertar real). Para esa misma noche úsala en vez de leer_intradia -- ella "
+                     "sola reemplaza varias llamadas de leer_intradia. Para un momento puntual de hasta 4 "
+                     "horas (no una noche completa) usa leer_intradia; para varios días usa leer_dia o "
+                     "leer_serie.",
+     "parametros": _PARAM_LEER_NOCHE, "funcion": _leer_noche, "necesita_actualizacion": True},
     {"nombre": "leer_tendencias", "tipo": "lectura", "nivel": "resumen",
      "descripcion": "Promedios de un rango de días frente a tu historia, sin bajar al dato de un día.",
      "parametros": _PARAM_TENDENCIAS, "funcion": _leer_tendencias},
