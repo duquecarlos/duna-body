@@ -29913,6 +29913,8 @@ deployed; deploying stays Carlos's").
 
 **Open follow-ups:** none raised by this slice.
 
-**Commits:** `5180c40` (rulings 1-3, tests) -- `9d11e9b` (ruling 4, the contract re-copy) -- this
-ledger entry, to follow -- merge into `main` to follow.
+**Commits:** `5180c40` (rulings 1-3, tests) -- `9d11e9b` (ruling 4, the contract re-copy) --
+`a3c45a9` (this ledger entry) -- merged `c5c77bb` into `main` (`--no-ff`, no conflicts). Post-merge
+smoke (`tests.test_vida_export tests.test_vida_dia tests.test_sueno_corregido tests.test_persona_fuga`):
+`Ran 59 tests in 25.539s` -- `OK`.
 
