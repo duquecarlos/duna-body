@@ -4,6 +4,10 @@
 {% block main %}
 <div class="top"><div><h1>{{ t('nav.shifts') }}</h1></div></div>
 
+{% if result_msg %}
+<p class="k mt-8" role="status">{{ result_msg }}</p>
+{% endif %}
+
 {{ cuerpo_vista(t, cuerpo) }}
 
 {% if many %}
@@ -201,8 +205,5 @@
   {% endfor %}
 </div>
 
-{% if result_msg %}
-<p class="k mt-8">{{ result_msg }}</p>
-{% endif %}
 <script src="{{ static_url('cuerpo-vista.js') }}" defer></script>
 {% endblock %}

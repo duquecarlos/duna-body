@@ -189,10 +189,10 @@ class UndoRouteTest(_WebCase):
 
 class HistorialCostoTest(_WebCase):
     """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4: _historial_filas is ONE combined SELECT (a LEFT
-    JOIN + GROUP BY), measured directly here -- tests/test_rendimiento.py's own shared /shifts
-    ceiling never reaches this code path (its fixture always carries a pending proposed batch,
-    which returns before the history is ever computed), so this is this feature's own, named
-    measurement rather than a change to that shared table."""
+    JOIN + GROUP BY), measured directly here. BODY-TURNOS-DESHACER-LOTE-4 ruling 1 made the route
+    call it exactly once per request regardless of branch, so tests/test_rendimiento.py's own
+    shared /shifts ceiling now reaches this code path too (its fixture always carries a pending
+    proposed batch, the one-proposal branch) -- re-measured and named there."""
 
     def test_historial_filas_costs_exactly_one_statement(self):
         _insert_batch(self.conn, PERSON_ID, "turnos-costo.json", "2026-11-01T12:00:00-05:00", "confirmed")
@@ -204,6 +204,143 @@ class HistorialCostoTest(_WebCase):
         finally:
             self.conn.set_trace_callback(None)
         self.assertEqual(contador["n"], 1)
+
+
+def _propose(conn, day: str, file_name: str) -> int:
+    data = {"source": {"received": f"{day}T12:00:00-05:00", "extracted_at": f"{day}T12:00:00-05:00"},
+            "shifts": [{"day": day, "kind": "night", "start_local": f"{day}T22:00:00"}]}
+    return shift_import.propose_data(conn, data, file_name, PERSON_ID)
+
+
+class HistorialAlongsideProposalTest(_WebCase):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1 (BODY-TURNOS-DESHACER-LOTE-4): the history card --
+    with its own Deshacer -- renders after the proposal card(s), not only once the inbox is
+    empty, so a wrong import can be compared and undone while another is still pending."""
+
+    def _applied_batch(self) -> int:
+        bid = _insert_batch(self.conn, PERSON_ID, "turnos-aplicado.json", "2026-11-01T12:00:00-05:00", "confirmed")
+        _insert_shift_row(self.conn, PERSON_ID, "2026-11-01", bid)
+        return bid
+
+    def test_one_pending_proposal_shows_the_proposal_then_the_history(self):
+        self._applied_batch()
+        _propose(self.conn, "2026-11-10", "turnos-propuesto.json")
+        self.conn.commit()
+
+        page = self.client.get("/shifts").text
+        self.assertIn(T("es")("shifts.confirm_badge"), page)
+        deshacer = T("es")("shifts.historial.deshacer")
+        self.assertIn(deshacer, page)
+        self.assertLess(page.index(T("es")("shifts.confirm_badge")), page.index(deshacer))
+        self.assertNotIn("None", page)
+
+    def test_two_pending_proposals_show_the_proposals_then_the_history(self):
+        self._applied_batch()
+        _propose(self.conn, "2026-11-10", "turnos-propuesto-a.json")
+        _propose(self.conn, "2026-11-20", "turnos-propuesto-b.json")
+        self.conn.commit()
+
+        page = self.client.get("/shifts").text
+        self.assertIn(T("es")("shifts.confirm_badge"), page)
+        deshacer = T("es")("shifts.historial.deshacer")
+        self.assertIn(deshacer, page)
+        self.assertLess(page.index(T("es")("shifts.confirm_badge")), page.index(deshacer))
+        self.assertNotIn("None", page)
+
+        self.client.post("/settings/language", data={"lang": "en"})
+        try:
+            page_en = self.client.get("/shifts").text
+            deshacer_en = T("en")("shifts.historial.deshacer")
+            self.assertIn(deshacer_en, page_en)
+            self.assertLess(page_en.index(T("en")("shifts.confirm_badge")), page_en.index(deshacer_en))
+        finally:
+            self.client.post("/settings/language", data={"lang": "es"})
+
+    def test_undo_while_a_proposal_is_pending_undoes_and_redirects(self):
+        applied_id = self._applied_batch()
+        _propose(self.conn, "2026-11-10", "turnos-propuesto.json")
+        self.conn.commit()
+
+        resp = self.client.post("/shifts/undo", data={"batch_id": str(applied_id)}, follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertTrue(resp.headers["location"].startswith("/shifts?undo_done=1"))
+        self.assertEqual(
+            self.conn.execute("SELECT status FROM shift_batch WHERE id = ?", (applied_id,)).fetchone()[0],
+            "undone")
+
+        page = self.client.get(resp.headers["location"]).text
+        self.assertIn(T("es")("shifts.confirm_badge"), page)  # the proposal is still pending
+
+
+class HistorialAbsentWithoutHistoryTest(_WebCase):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: no history -> no history card, in every branch."""
+
+    def test_no_history_card_with_one_pending_proposal(self):
+        _propose(self.conn, "2026-11-10", "turnos-propuesto.json")
+        self.conn.commit()
+        page = self.client.get("/shifts").text
+        self.assertNotIn(T("es")("shifts.historial.deshacer"), page)
+
+    def test_no_history_card_with_two_pending_proposals(self):
+        _propose(self.conn, "2026-11-10", "turnos-propuesto-a.json")
+        _propose(self.conn, "2026-11-20", "turnos-propuesto-b.json")
+        self.conn.commit()
+        page = self.client.get("/shifts").text
+        self.assertNotIn(T("es")("shifts.historial.deshacer"), page)
+
+
+class ResultMsgPositionTest(_WebCase):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2 (BODY-TURNOS-DESHACER-LOTE-4): the result line
+    renders exactly once, directly under the page header, before cuerpo_vista and every card --
+    never at the foot, below the fold, where a tap on Quitar used to look like nothing happened."""
+
+    def _assert_before_everything(self, page: str, msg: str) -> None:
+        self.assertEqual(page.count(msg), 1)
+        msg_index = page.index(msg)
+        self.assertLess(msg_index, page.index('class="card"'))
+        self.assertLess(msg_index, page.index("cuerpo-card"))
+        tag_start = page.rindex("<p", 0, msg_index)
+        self.assertIn('role="status"', page[tag_start:msg_index])
+        self.assertNotIn("None", page)
+
+    def test_confirm_all_result_before_the_first_card_with_a_proposal_pending(self):
+        _propose(self.conn, "2026-11-10", "turnos-propuesto.json")
+        self.conn.commit()
+        t = T("es")
+        msg = t("shifts.confirm_all_result",
+                batches_frag=turnos._frag(t, "shifts.confirm_all_batches", 1, batches=1),
+                applied_frag=turnos._frag(t, "shifts.confirm_all_applied", 1, applied=1))
+        page = self.client.get("/shifts?done=1&batches=1&applied=1").text
+        self._assert_before_everything(page, msg)
+
+    def test_undo_result_before_the_first_card(self):
+        applied_id = _insert_batch(self.conn, PERSON_ID, "turnos-aplicado.json", "2026-11-01T12:00:00-05:00",
+                                   "confirmed")
+        _insert_shift_row(self.conn, PERSON_ID, "2026-11-01", applied_id)
+        self.conn.commit()
+        resp = self.client.post("/shifts/undo", data={"batch_id": str(applied_id)}, follow_redirects=False)
+        page = self.client.get(resp.headers["location"]).text
+        t = T("es")
+        msg = t("shifts.undo_result",
+                quitados_frag=turnos._frag(t, "shifts.undo_quitados", 1, quitados=1),
+                restaurados_frag=turnos._frag(t, "shifts.undo_restaurados", 0, restaurados=0))
+        self._assert_before_everything(page, msg)
+
+        self.client.post("/settings/language", data={"lang": "en"})
+        try:
+            resp2 = self.client.get("/shifts?undo_done=1&quitados=1&restaurados=0", follow_redirects=False)
+            page_en = resp2.text
+            t_en = T("en")
+            msg_en = t_en("shifts.undo_result",
+                          quitados_frag=turnos._frag(t_en, "shifts.undo_quitados", 1, quitados=1),
+                          restaurados_frag=turnos._frag(t_en, "shifts.undo_restaurados", 0, restaurados=0))
+            self._assert_before_everything(page_en, msg_en)
+        finally:
+            self.client.post("/settings/language", data={"lang": "es"})
+
+    def test_undo_refused_before_the_first_card(self):
+        page = self.client.get("/shifts?undo_refused=1").text
+        self._assert_before_everything(page, T("es")("shifts.undo_refused"))
 
 
 if __name__ == "__main__":

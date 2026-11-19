@@ -530,6 +530,10 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
                  "filas": filas, "costo_vacio": costo_vacio, "strip": strip, "strip_legend": strip_legend,
                  "ultima": ultima, "pulso": pulso, "perfil_hrv": perfil_hrv, "cuerpo": cuerpo_ctx}
     tiene_patron = patron_turnos.leer(conn, person_id) is not None
+    # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: the same _historial_filas call, made ONCE per
+    # request regardless of which branch below renders -- the history must stay visible (with its
+    # own Deshacer) while a proposal is pending, not only once the inbox is empty.
+    historial = _historial_filas(t, conn, person_id)
     if len(rows) > 1:
         summary = shift_import.summary_proposed(conn, person_id)
         batches = [
@@ -548,15 +552,16 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
                                                days=summary["day_count"]),
                        summary_nights_frag=_frag(t, "shifts.confirm_nights", summary["night_count"],
                                                  nights=summary["night_count"]),
-                       result_msg=result_msg, turnos=turnos_on, tiene_patron=tiene_patron, **costo_ctx)
+                       historial=historial, result_msg=result_msg, turnos=turnos_on,
+                       tiene_patron=tiene_patron, **costo_ctx)
     if rows:
         proposed = rows[0]
         prev = _patron_preview_ctx(t, shift_import.preview(conn, proposed["id"]))
         return comun._render("shifts.html", t=t, tab="shifts", batch=dict(proposed), many=False,
-                       received_date=_batch_date(t, proposed["received"]), preview=prev, result_msg=result_msg,
+                       received_date=_batch_date(t, proposed["received"]), preview=prev,
+                       historial=historial, result_msg=result_msg,
                        turnos=turnos_on, tiene_patron=tiene_patron, **costo_ctx)
     confirmed = shift_import.latest_confirmed(conn, person_id)
-    historial = _historial_filas(t, conn, person_id)
     return comun._render("shifts.html", t=t, tab="shifts", batch=None, many=False,
                    confirmed_date=_batch_date(t, confirmed["received"]) if confirmed else None,
                    historial=historial, result_msg=result_msg, turnos=turnos_on, tiene_patron=tiene_patron,
