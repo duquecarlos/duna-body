@@ -42,6 +42,10 @@ Both routes are read-only (GET), `Cache-Control: no-store`.
   "plan": [{"id": 1, "day": "2026-11-16", "time": "18:00", "title": "Fuerza", "status": "proposed",
             "ejercicios": [{"ejercicio": "sentadilla", "series": 4, "reps": 10, "categoria": "pierna"}],
             "nota_sesion": null}],
+  "plan_bloque": {"desde": "2026-11-16", "hasta": "2027-02-01", "hasta_por": "horizonte",
+                  "filas": [{"id": 1, "day": "2026-11-16", "time": "18:00", "title": "Fuerza",
+                             "status": "proposed", "ejercicios": [{"ejercicio": "sentadilla", "series": 4,
+                             "reps": 10, "categoria": "pierna"}], "nota_sesion": null}]},
   "horizonte": {"goal_id": 7, "title": "Media maratón", "deadline": "2027-02-01", "semana": 3, "semanas": 12},
   "turnos": [{"day": "2026-11-15", "kind": "night", "code": "N", "start_local": "2026-11-15T22:00:00",
               "end_local": "2026-11-16T06:00:00"}],
@@ -75,6 +79,18 @@ Both routes are read-only (GET), `Cache-Control: no-store`.
   `nota_sesion` (BODY-HOGAR-ESCRIBE-2) is the row's own note on how the session actually went, set by
   `anotar_sesion` below -- `null` when no one has noted it yet, so Hogar knows which planned sessions still lack
   one, and can ask about them, matched against the plan.
+* `plan_bloque` (BODY-HOGAR-PLAN-RANGO-1): the whole training block, not just `dia` and `dia`+1 -- built for
+  Hogar's own high-mountain hike pilot, which shows the full block toward the hike date rather than two days plus
+  a note that the rest is missing.
+  * `desde`: always `dia`.
+  * `hasta`: the active horizon's own `deadline` when there is one and it falls on or after `dia`; otherwise
+    `dia` plus 27 days.
+  * `hasta_por`: `"horizonte"` when `hasta` came from the active horizon's deadline (even when that deadline was
+    cut short by the 366-day cap below -- `hasta` itself says where), `"28_dias"` when there is no active horizon
+    or its deadline has already passed `dia`.
+  * `filas`: every plan row with `day` in `[desde, hasta]`, any goal, unfiltered, ordered by day then time -- the
+    EXACT same item shape as `plan` above (same reader, same fields). The span itself is capped at 366 days
+    counting `dia`, the same `MAX_SERIE_DIAS` rule `serie` and `turnos` use.
 * `comidas` (BODY-HOGAR-ESCRIBE-2): what is missing today, no meal description, no nutrient.
   * `momentos`: this person's own meal moments, in order -- their own custom windows when they have any, Body's
     own defaults otherwise (`desayuno` 5-11, `almuerzo` 11-16, `merienda` 16-19, `cena` 19-23). `esperado` (0 or 1)
@@ -163,7 +179,8 @@ Both additions above are additive: `manana`'s four existing keys (`dia`, `figura
 unchanged byte for byte except for `plan`'s own new `ejercicios` key, and `/api/hogar/serie` is untouched. Adding a
 key to an existing response, or a new route, is not a breaking change to this contract. BODY-HOGAR-ESCRIBE-2's own
 additions below (`manana`'s `comidas` key, `plan`'s `nota_sesion` key, and the two write routes) are additive too.
-BODY-HOGAR-METAS-INGESTA-1's own addition, `manana`'s `metas` key, is additive as well.
+BODY-HOGAR-METAS-INGESTA-1's own addition, `manana`'s `metas` key, is additive as well. BODY-HOGAR-PLAN-RANGO-1's
+own addition, `manana`'s `plan_bloque` key, is additive too -- `plan` itself stays exactly as it was.
 
 ## Escribir (hogar:escribir)
 

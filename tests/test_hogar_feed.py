@@ -6,7 +6,7 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -178,7 +178,121 @@ class MananaTest(unittest.TestCase):
              "status": "proposed", "ejercicios": None, "nota_sesion": None},
         ])
         self.assertIsNone(out["horizonte"])
-        self.assertEqual(set(out.keys()), {"dia", "figuras", "plan", "horizonte", "turnos", "comidas", "metas"})
+        self.assertEqual(set(out.keys()),
+                          {"dia", "figuras", "plan", "plan_bloque", "horizonte", "turnos", "comidas", "metas"})
+
+
+# ---- hogar_feed.manana's `plan_bloque` key (BODY-HOGAR-PLAN-RANGO-1) ----------------------------
+
+class PlanBloqueTest(unittest.TestCase):
+    def setUp(self):
+        self.conn = _reset_db(self, "plan_bloque.db")
+
+    def _goal(self, deadline: str, start_day: str = "2026-11-01") -> int:
+        gid = goals.propose(self.conn, 1, "ZZ-HORIZONTE", start_day, kind="milestone", deadline=deadline)
+        goals.activate(self.conn, gid)
+        self.conn.commit()
+        return gid
+
+    def test_horizon_40_days_out_covers_dia_to_deadline_rows_in_order(self):
+        dia = date(2026, 11, 15)
+        deadline = (dia + timedelta(days=40)).isoformat()
+        self._goal(deadline)
+        self.conn.execute(
+            "INSERT INTO plan (person_id, day, time, title, status) VALUES (1, '2026-11-16', '07:00', "
+            "'ZZ-SEGUNDO', 'proposed')")
+        self.conn.execute(
+            "INSERT INTO plan (person_id, day, time, title, status) VALUES (1, '2026-11-15', '18:00', "
+            "'ZZ-PRIMERO', 'proposed')")
+        self.conn.execute(
+            "INSERT INTO plan (person_id, day, time, title, status) VALUES (1, ?, '09:00', 'ZZ-FUERA', "
+            "'proposed')", ((dia + timedelta(days=41)).isoformat(),))
+        self.conn.commit()
+        out = hogar_feed.manana(self.conn, 1, dia, _AHORA)
+        bloque = out["plan_bloque"]
+        self.assertEqual(bloque["desde"], dia.isoformat())
+        self.assertEqual(bloque["hasta"], deadline)
+        self.assertEqual(bloque["hasta_por"], "horizonte")
+        self.assertEqual([f["title"] for f in bloque["filas"]], ["ZZ-PRIMERO", "ZZ-SEGUNDO"])
+        self.assertEqual(set(bloque["filas"][0].keys()),
+                          {"id", "day", "time", "title", "status", "ejercicios", "nota_sesion"})
+
+    def test_no_horizon_defaults_to_dia_plus_27_28_dias(self):
+        dia = date(2026, 11, 15)
+        out = hogar_feed.manana(self.conn, 1, dia, _AHORA)
+        bloque = out["plan_bloque"]
+        self.assertEqual(bloque["desde"], dia.isoformat())
+        self.assertEqual(bloque["hasta"], (dia + timedelta(days=27)).isoformat())
+        self.assertEqual(bloque["hasta_por"], "28_dias")
+        self.assertEqual(bloque["filas"], [])
+
+    def test_deadline_already_past_is_28_dias(self):
+        dia = date(2026, 11, 15)
+        self._goal("2026-11-10", start_day="2026-10-01")
+        out = hogar_feed.manana(self.conn, 1, dia, _AHORA)
+        bloque = out["plan_bloque"]
+        self.assertEqual(bloque["hasta_por"], "28_dias")
+        self.assertEqual(bloque["hasta"], (dia + timedelta(days=27)).isoformat())
+
+    def test_deadline_500_days_out_is_cut_at_366_counting_dia(self):
+        dia = date(2026, 11, 15)
+        self._goal((dia + timedelta(days=500)).isoformat())
+        out = hogar_feed.manana(self.conn, 1, dia, _AHORA)
+        bloque = out["plan_bloque"]
+        self.assertEqual(bloque["hasta_por"], "horizonte")
+        self.assertEqual(bloque["hasta"], (dia + timedelta(days=hogar_feed.MAX_SERIE_DIAS - 1)).isoformat())
+
+    def test_another_persons_plan_rows_never_appear(self):
+        dia = date(2026, 11, 15)
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.execute(
+            "INSERT INTO plan (person_id, day, time, title, status) VALUES (2, '2026-11-16', '07:00', "
+            "'ZZB-AJENO', 'proposed')")
+        self.conn.commit()
+        out = hogar_feed.manana(self.conn, 1, dia, _AHORA)
+        titles = {f["title"] for f in out["plan_bloque"]["filas"]}
+        self.assertNotIn("ZZB-AJENO", titles)
+
+    def test_plan_key_unchanged_byte_for_byte_with_plan_bloque_present(self):
+        dia = date(2026, 11, 15)
+        self._goal((dia + timedelta(days=40)).isoformat())
+        self.conn.execute(
+            "INSERT INTO plan (person_id, day, time, title, status) VALUES (1, '2026-11-15', '18:00', "
+            "'ZZ-HOY', 'proposed')")
+        self.conn.execute(
+            "INSERT INTO plan (person_id, day, time, title, status) VALUES (1, '2026-11-20', '07:00', "
+            "'ZZ-FUERA-DE-PLAN', 'proposed')")
+        self.conn.commit()
+        out = hogar_feed.manana(self.conn, 1, dia, _AHORA)
+        plan_id = out["plan"][0]["id"]
+        self.assertEqual(out["plan"], [
+            {"id": plan_id, "day": "2026-11-15", "time": "18:00", "title": "ZZ-HOY",
+             "status": "proposed", "ejercicios": None, "nota_sesion": None},
+        ])
+
+    def test_plan_bloque_filas_cost_does_not_grow_with_row_count(self):
+        dia = date(2026, 11, 15)
+        self._goal((dia + timedelta(days=40)).isoformat())
+        uno = self._contar_statements(lambda: hogar_feed.manana(self.conn, 1, dia, _AHORA))
+        for i in range(5):
+            self.conn.execute(
+                "INSERT INTO plan (person_id, day, time, title, status) VALUES (1, ?, '07:00', "
+                "'ZZ-MAS', 'proposed')", ((dia + timedelta(days=i + 2)).isoformat(),))
+        self.conn.commit()
+        varios = self._contar_statements(lambda: hogar_feed.manana(self.conn, 1, dia, _AHORA))
+        self.assertEqual(uno, varios,
+                          f"plan_bloque's cost grew with row count: {uno} vs {varios}")
+
+    def _contar_statements(self, llamada) -> int:
+        """Same direct-trace technique as MetasTest's own helper below -- `contar_sql` cannot trace
+        `self.conn`, already open before it starts."""
+        contador = {"n": 0}
+        self.conn.set_trace_callback(lambda sql: contador.__setitem__("n", contador["n"] + 1))
+        try:
+            llamada()
+        finally:
+            self.conn.set_trace_callback(None)
+        return contador["n"]
 
 
 # ---- hogar_feed.manana's `metas` key (BODY-HOGAR-METAS-INGESTA-1 ruling 1) ----------------------
