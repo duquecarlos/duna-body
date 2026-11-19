@@ -13,7 +13,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from body import config, db, shift_import, web  # noqa: E402
+from body import config, db, shift_import, turno_fc, web  # noqa: E402
 from body.i18n import T  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -382,6 +382,289 @@ class ShiftImportTest(unittest.TestCase):
             shift_import.confirm(conn, batch_id)
         # confirm refused before touching anything
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM shift").fetchone()[0], 2)
+
+
+class UndoTest(unittest.TestCase):
+    """BODY-TURNOS-DESHACER-LOTE-2 ruling 2: shift_import.undo() on invented rosters only."""
+
+    def setUp(self):
+        self.assertTrue(str(TMP))  # guard present
+        path = Path(tempfile.mkdtemp(prefix="body-shift-undo-")) / "test.db"
+        self.conn = db.connect(path)
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+
+    def _batch(self, name, received, shifts):
+        return _write({
+            "source": {"mail_subject": "T", "received": received, "attachment": "t.xlsx",
+                       "extracted_at": received},
+            "person": "carlos", "timezone": "America/Bogota", "shifts": shifts,
+        }, name)
+
+    def test_undo_restores_the_overlap_and_empties_the_rest_and_flips_a_back_to_confirmed(self):
+        a_path = self._batch("turnos-undo-a.json", "2026-11-01T12:00:00-05:00", [
+            {"day": "2026-11-01", "kind": "off", "code": "D", "start_local": None, "end_local": None,
+             "holiday": False, "sunday": False, "note": ""},
+            {"day": "2026-11-02", "kind": "night", "code": "N", "start_local": "2026-11-02T22:00",
+             "end_local": "2026-11-03T06:00", "holiday": False, "sunday": False, "note": ""},
+        ])
+        a_id = shift_import.propose(self.conn, a_path, 1)
+        shift_import.confirm(self.conn, a_id)
+
+        b_path = self._batch("turnos-undo-b.json", "2026-11-02T12:00:00-05:00", [
+            {"day": "2026-11-01", "kind": "off", "code": "D", "start_local": None, "end_local": None,
+             "holiday": False, "sunday": False, "note": "ajustado"},
+            {"day": "2026-11-02", "kind": "night", "code": "N", "start_local": "2026-11-02T21:30",
+             "end_local": "2026-11-03T05:30", "holiday": False, "sunday": False, "note": "ajustado"},
+            {"day": "2026-11-03", "kind": "day", "code": "C", "start_local": "2026-11-03T08:00",
+             "end_local": "2026-11-03T16:00", "holiday": False, "sunday": False, "note": ""},
+            {"day": "2026-11-04", "kind": "night", "code": "N", "start_local": "2026-11-04T22:00",
+             "end_local": "2026-11-05T06:00", "holiday": False, "sunday": False, "note": ""},
+        ])
+        b_id = shift_import.propose(self.conn, b_path, 1)
+        shift_import.confirm(self.conn, b_id)
+
+        self.assertEqual(
+            self.conn.execute("SELECT status FROM shift_batch WHERE id = ?", (a_id,)).fetchone()["status"],
+            "superseded",
+        )
+        for day in ("2026-11-01", "2026-11-02", "2026-11-03", "2026-11-04"):
+            self.conn.execute(
+                "INSERT INTO turno_fc (person_id, day, kind, modelo_version, computed_at) "
+                "VALUES (1, ?, 'night', 'test-v1', '2026-11-05T00:00:00+00:00')", (day,)
+            )
+        self.conn.commit()
+
+        result = shift_import.undo(self.conn, 1, b_id)
+
+        self.assertEqual(result["days_restored"], 2)
+        self.assertEqual(result["days_emptied"], 2)
+        self.assertEqual(result["batches_flipped_back"], 1)
+        self.assertEqual(result["turno_fc_eliminadas"], 4)
+
+        row1 = self.conn.execute(
+            "SELECT batch_id, start_local FROM shift WHERE person_id = 1 AND day = '2026-11-01'"
+        ).fetchone()
+        self.assertEqual(row1["batch_id"], a_id)
+        row2 = self.conn.execute(
+            "SELECT batch_id, start_local FROM shift WHERE person_id = 1 AND day = '2026-11-02'"
+        ).fetchone()
+        self.assertEqual(row2["batch_id"], a_id)
+        self.assertEqual(row2["start_local"], "2026-11-02T22:00")
+        self.assertIsNone(
+            self.conn.execute("SELECT 1 FROM shift WHERE person_id = 1 AND day = '2026-11-03'").fetchone()
+        )
+        self.assertIsNone(
+            self.conn.execute("SELECT 1 FROM shift WHERE person_id = 1 AND day = '2026-11-04'").fetchone()
+        )
+        self.assertEqual(
+            self.conn.execute("SELECT status FROM shift_batch WHERE id = ?", (a_id,)).fetchone()["status"],
+            "confirmed",
+        )
+        self.assertEqual(
+            self.conn.execute("SELECT status FROM shift_batch WHERE id = ?", (b_id,)).fetchone()["status"],
+            "undone",
+        )
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM turno_fc WHERE person_id = 1").fetchone()[0], 0
+        )
+        applied_left = self.conn.execute(
+            "SELECT COUNT(*) FROM shift_batch_item WHERE batch_id = ? AND outcome = 'applied'", (b_id,)
+        ).fetchone()[0]
+        self.assertEqual(applied_left, 0)
+
+        recalculo = turno_fc.recalcular(self.conn, 1)
+        self.assertGreater(recalculo["nuevas"], 0)
+
+    def test_undo_of_a_first_ever_batch_leaves_its_days_empty(self):
+        path = self._batch("turnos-undo-first.json", "2026-11-01T12:00:00-05:00", [
+            {"day": "2026-11-01", "kind": "night", "code": "N", "start_local": "2026-11-01T22:00",
+             "end_local": "2026-11-02T06:00", "holiday": False, "sunday": False, "note": ""},
+        ])
+        batch_id = shift_import.propose(self.conn, path, 1)
+        shift_import.confirm(self.conn, batch_id)
+
+        result = shift_import.undo(self.conn, 1, batch_id)
+
+        self.assertEqual(result["days_restored"], 0)
+        self.assertEqual(result["days_emptied"], 1)
+        self.assertIsNone(
+            self.conn.execute("SELECT 1 FROM shift WHERE person_id = 1 AND day = '2026-11-01'").fetchone()
+        )
+        self.assertEqual(
+            self.conn.execute("SELECT status FROM shift_batch WHERE id = ?", (batch_id,)).fetchone()["status"],
+            "undone",
+        )
+
+    def test_manual_row_on_an_affected_day_is_kept_and_never_overwritten(self):
+        path = self._batch("turnos-undo-manual.json", "2026-11-01T12:00:00-05:00", [
+            {"day": "2026-11-06", "kind": "night", "code": "N", "start_local": "2026-11-06T22:00",
+             "end_local": "2026-11-07T06:00", "holiday": False, "sunday": False, "note": ""},
+        ])
+        batch_id = shift_import.propose(self.conn, path, 1)
+        shift_import.confirm(self.conn, batch_id)
+        # a manual row added afterwards at a different slot on the same day, simulating an
+        # out-of-band manual edit that never collided with this batch's own PK slot.
+        self.conn.execute(
+            "INSERT INTO shift (person_id, day, kind, start_local, end_local, source) "
+            "VALUES (1, '2026-11-06', 'off', NULL, NULL, 'manual')"
+        )
+        self.conn.commit()
+
+        result = shift_import.undo(self.conn, 1, batch_id)
+
+        # neither restored (no fallback written) nor emptied (the manual row is still there) --
+        # the manual day is simply left alone.
+        self.assertEqual(result["days_restored"], 0)
+        self.assertEqual(result["days_emptied"], 0)
+        self.assertEqual(result["days_kept_manual"], 1)
+        manual_row = self.conn.execute(
+            "SELECT source FROM shift WHERE person_id = 1 AND day = '2026-11-06' AND start_local IS NULL"
+        ).fetchone()
+        self.assertEqual(manual_row["source"], "manual")
+        self.assertIsNone(
+            self.conn.execute(
+                "SELECT 1 FROM shift WHERE person_id = 1 AND day = '2026-11-06' AND start_local = '2026-11-06T22:00'"
+            ).fetchone()
+        )
+
+    def test_pattern_batch_and_file_batch_behave_the_same(self):
+        pattern_data = {
+            "source": {"received": "2026-11-01", "extracted_at": "2026-11-01T00:00:00-05:00"},
+            "shifts": [
+                {"day": "2026-11-20", "kind": "day", "code": None, "start_local": "2026-11-20T08:00",
+                 "end_local": "2026-11-20T16:00", "holiday": False, "sunday": False, "note": None},
+            ],
+        }
+        batch_id = shift_import.propose_data(self.conn, pattern_data, "patron", 1, kind="pattern")
+        shift_import.confirm(self.conn, batch_id)
+        row = self.conn.execute(
+            "SELECT source FROM shift WHERE person_id = 1 AND day = '2026-11-20'"
+        ).fetchone()
+        self.assertTrue(row["source"].startswith("patron:"))
+
+        result = shift_import.undo(self.conn, 1, batch_id)
+
+        self.assertEqual(result["days_emptied"], 1)
+        self.assertIsNone(
+            self.conn.execute("SELECT 1 FROM shift WHERE person_id = 1 AND day = '2026-11-20'").fetchone()
+        )
+
+    def test_fallback_from_a_pattern_batch_uses_the_patron_prefix(self):
+        pattern_data = {
+            "source": {"received": "2026-11-01", "extracted_at": "2026-11-01T00:00:00-05:00"},
+            "shifts": [
+                {"day": "2026-11-21", "kind": "day", "code": None, "start_local": "2026-11-21T08:00",
+                 "end_local": "2026-11-21T16:00", "holiday": False, "sunday": False, "note": None},
+            ],
+        }
+        pattern_id = shift_import.propose_data(self.conn, pattern_data, "patron", 1, kind="pattern")
+        shift_import.confirm(self.conn, pattern_id)
+
+        file_path = self._batch("turnos-undo-override.json", "2026-11-02T12:00:00-05:00", [
+            {"day": "2026-11-21", "kind": "night", "code": "N", "start_local": "2026-11-21T22:00",
+             "end_local": "2026-11-22T06:00", "holiday": False, "sunday": False, "note": ""},
+        ])
+        file_id = shift_import.propose(self.conn, file_path, 1)
+        shift_import.confirm(self.conn, file_id)
+
+        shift_import.undo(self.conn, 1, file_id)
+
+        row = self.conn.execute(
+            "SELECT source, batch_id FROM shift WHERE person_id = 1 AND day = '2026-11-21'"
+        ).fetchone()
+        self.assertEqual(row["batch_id"], pattern_id)
+        self.assertTrue(row["source"].startswith("patron:"))
+
+    def test_undo_refuses_a_proposed_batch(self):
+        path = self._batch("turnos-undo-proposed.json", "2026-11-01T12:00:00-05:00", [
+            {"day": "2026-11-01", "kind": "off", "code": "D", "start_local": None, "end_local": None,
+             "holiday": False, "sunday": False, "note": ""},
+        ])
+        batch_id = shift_import.propose(self.conn, path, 1)
+        with self.assertRaises(shift_import.UndoRefused):
+            shift_import.undo(self.conn, 1, batch_id)
+        self.assertEqual(
+            self.conn.execute("SELECT status FROM shift_batch WHERE id = ?", (batch_id,)).fetchone()["status"],
+            "proposed",
+        )
+
+    def test_undo_refuses_a_dismissed_batch(self):
+        path = self._batch("turnos-undo-dismissed.json", "2026-11-01T12:00:00-05:00", [
+            {"day": "2026-11-01", "kind": "off", "code": "D", "start_local": None, "end_local": None,
+             "holiday": False, "sunday": False, "note": ""},
+        ])
+        batch_id = shift_import.propose(self.conn, path, 1)
+        shift_import.dismiss(self.conn, batch_id)
+        with self.assertRaises(shift_import.UndoRefused):
+            shift_import.undo(self.conn, 1, batch_id)
+
+    def test_undo_refuses_an_already_undone_batch(self):
+        path = self._batch("turnos-undo-twice.json", "2026-11-01T12:00:00-05:00", [
+            {"day": "2026-11-01", "kind": "night", "code": "N", "start_local": "2026-11-01T22:00",
+             "end_local": "2026-11-02T06:00", "holiday": False, "sunday": False, "note": ""},
+        ])
+        batch_id = shift_import.propose(self.conn, path, 1)
+        shift_import.confirm(self.conn, batch_id)
+        shift_import.undo(self.conn, 1, batch_id)
+        with self.assertRaises(shift_import.UndoRefused):
+            shift_import.undo(self.conn, 1, batch_id)
+
+    def test_undo_refuses_another_persons_batch(self):
+        path = self._batch("turnos-undo-other.json", "2026-11-01T12:00:00-05:00", [
+            {"day": "2026-11-01", "kind": "off", "code": "D", "start_local": None, "end_local": None,
+             "holiday": False, "sunday": False, "note": ""},
+        ])
+        batch_id = shift_import.propose(self.conn, path, 1)
+        shift_import.confirm(self.conn, batch_id)
+        with self.assertRaises(shift_import.UndoRefused):
+            shift_import.undo(self.conn, 2, batch_id)
+        self.assertEqual(
+            self.conn.execute("SELECT status FROM shift_batch WHERE id = ?", (batch_id,)).fetchone()["status"],
+            "confirmed",
+        )
+
+    def test_undo_refuses_on_a_legacy_batchless_row(self):
+        path = self._batch("turnos-undo-legacy.json", "2026-11-01T12:00:00-05:00", [
+            {"day": "2026-11-07", "kind": "night", "code": "N", "start_local": "2026-11-07T22:00",
+             "end_local": "2026-11-08T06:00", "holiday": False, "sunday": False, "note": ""},
+        ])
+        batch_id = shift_import.propose(self.conn, path, 1)
+        shift_import.confirm(self.conn, batch_id)
+        # a pre-batch_id-tracking row on the same day, a different slot, that this undo cannot
+        # account for (BODY-TURNOS-DESHACER-LOTE-1-INV's own unknown).
+        self.conn.execute(
+            "INSERT INTO shift (person_id, day, kind, start_local, end_local, source, batch_id) "
+            "VALUES (1, '2026-11-07', 'off', NULL, NULL, 'personal:legacy.json', NULL)"
+        )
+        self.conn.commit()
+
+        with self.assertRaises(shift_import.UndoRefused):
+            shift_import.undo(self.conn, 1, batch_id)
+
+        self.assertEqual(
+            self.conn.execute("SELECT status FROM shift_batch WHERE id = ?", (batch_id,)).fetchone()["status"],
+            "confirmed",
+        )
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM shift WHERE person_id = 1 AND day = '2026-11-07'").fetchone()[0],
+            2,
+        )
+
+    def test_undo_then_reconfirm_is_refused(self):
+        path = self._batch("turnos-undo-reconfirm.json", "2026-11-01T12:00:00-05:00", [
+            {"day": "2026-11-01", "kind": "night", "code": "N", "start_local": "2026-11-01T22:00",
+             "end_local": "2026-11-02T06:00", "holiday": False, "sunday": False, "note": ""},
+        ])
+        batch_id = shift_import.propose(self.conn, path, 1)
+        shift_import.confirm(self.conn, batch_id)
+        shift_import.undo(self.conn, 1, batch_id)
+
+        with self.assertRaises(shift_import.ImportRefused):
+            shift_import.confirm(self.conn, batch_id)
+        self.assertIsNone(
+            self.conn.execute("SELECT 1 FROM shift WHERE person_id = 1 AND day = '2026-11-01'").fetchone()
+        )
 
 
 class ShiftWebTest(unittest.TestCase):

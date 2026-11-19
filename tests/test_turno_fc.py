@@ -257,6 +257,59 @@ class RecalcularTest(unittest.TestCase):
             self.assertIsInstance(v, int)
 
 
+class EliminarDiasTest(unittest.TestCase):
+    """BODY-TURNOS-DESHACER-LOTE-2 ruling 2(g): the one helper that deletes `turno_fc` rows by day,
+    so an undo never issues a raw DELETE against this table itself."""
+
+    def setUp(self):
+        self.conn = _mkconn(self)
+
+    def _insertar(self, day: str, version: str = "turno-fc-v1") -> None:
+        self.conn.execute(
+            "INSERT INTO turno_fc (person_id, day, kind, modelo_version, computed_at) "
+            "VALUES (1, ?, 'night', ?, '2026-11-01T00:00:00+00:00')", (day, version)
+        )
+
+    def test_deletes_only_the_named_days_for_this_person(self):
+        self._insertar("2026-11-01")
+        self._insertar("2026-11-02")
+        self._insertar("2026-11-03")
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Otra')")
+        self.conn.execute(
+            "INSERT INTO turno_fc (person_id, day, kind, modelo_version, computed_at) "
+            "VALUES (2, '2026-11-01', 'night', 'turno-fc-v1', '2026-11-01T00:00:00+00:00')"
+        )
+        self.conn.commit()
+
+        n = turno_fc.eliminar_dias(self.conn, 1, ["2026-11-01", "2026-11-02"])
+
+        self.assertEqual(n, 2)
+        left = {r["day"] for r in self.conn.execute("SELECT day FROM turno_fc WHERE person_id = 1")}
+        self.assertEqual(left, {"2026-11-03"})
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM turno_fc WHERE person_id = 2").fetchone()[0], 1
+        )
+
+    def test_deletes_every_modelo_version_for_the_day(self):
+        self._insertar("2026-11-05", version="turno-fc-v1")
+        self._insertar("2026-11-05", version="turno-fc-v2")
+        self.conn.commit()
+
+        n = turno_fc.eliminar_dias(self.conn, 1, ["2026-11-05"])
+
+        self.assertEqual(n, 2)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM turno_fc").fetchone()[0], 0)
+
+    def test_empty_list_is_a_no_op(self):
+        self._insertar("2026-11-01")
+        self.conn.commit()
+
+        n = turno_fc.eliminar_dias(self.conn, 1, [])
+
+        self.assertEqual(n, 0)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM turno_fc").fetchone()[0], 1)
+
+
 class CacheUnaSolaLecturaTest(unittest.TestCase):
     """A day touched by several shifts' own windows or look-back is read via db.intradia AT MOST
     ONCE per (day, kind) in a single `recalcular` run."""

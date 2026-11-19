@@ -471,7 +471,7 @@ CREATE TABLE IF NOT EXISTS shift_batch (
     extracted_at    TEXT NOT NULL,
     source_person   TEXT,
     source_timezone TEXT,
-    status          TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'confirmed', 'dismissed', 'superseded')),
+    status          TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'confirmed', 'dismissed', 'superseded', 'undone')),
     day_count       INTEGER NOT NULL,
     created_at      TEXT NOT NULL,
     decided_at      TEXT,
@@ -1389,6 +1389,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # placed after that UPDATE would collide with the `BEGIN` that helper itself issues.
     if _table_exists(conn, "conversacion_agente") and _conversacion_agente_needs_hogar_rebuild(conn):
         _rebuild_conversacion_agente_table(conn)
+    # BODY-TURNOS-DESHACER-LOTE-2 ruling 1: shift_batch.status gains 'undone', same guarded-rebuild
+    # shape and the same "before this function's first DML statement" placement as the
+    # conversacion_agente rebuild just above -- its own column copy reads `kind` defensively (that
+    # column's own ALTER, further down this function, may not have run yet on an old database).
+    if _table_exists(conn, "shift_batch") and _shift_batch_needs_undone_rebuild(conn):
+        _rebuild_shift_batch_table(conn)
     pcols = {r[1] for r in conn.execute("PRAGMA table_info(person)")}
     if pcols and "language" not in pcols:
         conn.execute("ALTER TABLE person ADD COLUMN language TEXT NOT NULL DEFAULT 'es'")
@@ -1591,6 +1597,59 @@ def _rebuild_metric_def_table(conn: sqlite3.Connection) -> None:
             raise RuntimeError(f"metric_def rebuild count mismatch: {len(old_rows)} -> {new_count}")
         conn.execute("DROP TABLE metric_def")
         conn.execute("ALTER TABLE metric_def_nuevo RENAME TO metric_def")
+    _rebuild_with_fk_off(conn, step)
+
+
+def _shift_batch_needs_undone_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'shift_batch'"
+    ).fetchone()
+    return row is not None and "'undone'" not in row[0]
+
+
+def _rebuild_shift_batch_table(conn: sqlite3.Connection) -> None:
+    """shift_batch.status gains a fifth value 'undone' (BODY-TURNOS-DESHACER-LOTE-2 ruling 1):
+    SQLite cannot ALTER an existing CHECK, so this rebuilds the table in one transaction, the same
+    guarded shape as metric_def/propuesta_agente's own CHECK widenings above. `shift.batch_id` and
+    `shift_batch_item.batch_id` both reference this table's id by FK, so the rebuild runs with
+    foreign keys off, like every other rebuild here. Every existing row, and its own id (every FK
+    that points at it), survives byte-for-byte. Called before this slice's own `kind` ALTER (both
+    placed before this function's first DML, per the comment above), so an old row may not have
+    `kind` in its row keys at all -- carried through when present, 'import' (its own column
+    default) when not, the same optional-column shape as propuesta_agente's aplicada_via above."""
+    def step(conn):
+        old_rows = conn.execute("SELECT * FROM shift_batch").fetchall()
+        conn.execute(
+            "CREATE TABLE shift_batch_nuevo ("
+            "id INTEGER PRIMARY KEY, "
+            "person_id INTEGER NOT NULL REFERENCES person(id), "
+            "file_name TEXT NOT NULL, "
+            "received TEXT NOT NULL, "
+            "extracted_at TEXT NOT NULL, "
+            "source_person TEXT, "
+            "source_timezone TEXT, "
+            "status TEXT NOT NULL DEFAULT 'proposed' "
+            "CHECK (status IN ('proposed', 'confirmed', 'dismissed', 'superseded', 'undone')), "
+            "day_count INTEGER NOT NULL, "
+            "created_at TEXT NOT NULL, "
+            "decided_at TEXT, "
+            "kind TEXT NOT NULL DEFAULT 'import' CHECK (kind IN ('import', 'pattern')), "
+            "UNIQUE (person_id, file_name, received, extracted_at))"
+        )
+        for r in old_rows:
+            conn.execute(
+                "INSERT INTO shift_batch_nuevo (id, person_id, file_name, received, extracted_at, "
+                "source_person, source_timezone, status, day_count, created_at, decided_at, kind) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (r["id"], r["person_id"], r["file_name"], r["received"], r["extracted_at"],
+                 r["source_person"], r["source_timezone"], r["status"], r["day_count"], r["created_at"],
+                 r["decided_at"], r["kind"] if "kind" in r.keys() else "import"),
+            )
+        new_count = conn.execute("SELECT COUNT(*) FROM shift_batch_nuevo").fetchone()[0]
+        if new_count != len(old_rows):
+            raise RuntimeError(f"shift_batch rebuild count mismatch: {len(old_rows)} -> {new_count}")
+        conn.execute("DROP TABLE shift_batch")
+        conn.execute("ALTER TABLE shift_batch_nuevo RENAME TO shift_batch")
     _rebuild_with_fk_off(conn, step)
 
 

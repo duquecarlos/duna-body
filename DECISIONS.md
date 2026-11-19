@@ -30040,3 +30040,143 @@ conflicts). Post-merge smoke
 (`tests.test_viajes tests.test_despertar_pantalla tests.test_rendimiento tests.test_i18n_paridad`):
 `Ran 54 tests in 36.200s` -- `OK`.
 
+## BODY-TURNOS-DESHACER-LOTE-2
+
+**Surface (dev-protocol queue BODY-TURNOS-DESHACER-LOTE-1, 2026-11-17):** an APPLIED shift batch
+could not be undone -- `confirmar_turnos` is explicitly SIN_DESHACER
+(`body/agente/propuestas.py:283`) and `/shifts` showed only "last confirmed on \<date\>". Every
+other write Body makes on the person's own tap has an Undo, and Carlos's standing rule is that
+anything off the normal flow is shown and reversible.
+
+**BODY-TURNOS-DESHACER-LOTE-1-INV's findings (OBSERVED, dev-protocol logs/worker-body-turnos-
+deshacer-lote-1-inv-body-app-20261119T040251.json), as relied on here:** `confirm()` per day keeps
+a manual row (outcome `'manual_kept'`), keeps a row from a higher-order batch (`'newer_kept'`), else
+DELETEs the prior `personal:`/`patron:` row(s) for that day and INSERTs a shift row with
+`source = f'{personal|patron}:{file_name}'` and `batch_id` = this batch (`'applied'`); every apply
+path funnels through `confirm()`/`confirm_all()` in `body/shift_import.py`; `shift.batch_id`
+identifies exactly the rows a batch wrote; `shift_batch_item` keeps every batch's full per-day
+record forever; batch precedence is `(received, extracted_at)`; the one STORED derived data that
+goes stale is `turno_fc`.
+
+**ORCH-CARLOS-DELEGATES-TIER-1-1's rulings, as built:**
+
+1. **Status** -- a fifth value, `'undone'`, in `shift_batch.status`'s CHECK (`body/db.py:474`),
+   through the same guarded, row-preserving rebuild shape every other CHECK widening in this file
+   already uses (`_shift_batch_needs_undone_rebuild`/`_rebuild_shift_batch_table`, `body/db.py:
+   1603-1653`; wired into `_migrate` at `body/db.py:1396-1397`, placed before this function's first
+   DML the same way `_rebuild_conversacion_agente_table`'s own call is -- `_rebuild_with_fk_off`'s
+   own `BEGIN` collides with the already-open implicit transaction otherwise). `shift.batch_id` and
+   `shift_batch_item.batch_id` both reference this table's id by FK; the rebuild runs with foreign
+   keys off, every row and id preserved. No `undone_at` column: `shift_batch` has no existing column
+   that column's own name would reuse (its closest sibling, `decided_at`, already serves confirm/
+   dismiss's own decision moment and is reused for undo too, see ruling 2 below) -- the ruling's own
+   "only if a column for it already exists" bar is not met, so no new column; the status value
+   itself is enough (tests/test_turnos_esquema_1.py's own `UndoneStatusMigrationTest`).
+2. **Undo** -- `shift_import.undo(conn, person_id, batch_id) -> dict` (`body/shift_import.py:240`,
+   counts only). Refused (`UndoRefused`, `body/shift_import.py:34`, nothing written) unless the
+   batch is this person's own and its status is `'confirmed'` or `'superseded'`
+   (`body/shift_import.py:269-275`), and refused the same way when an affected day carries a legacy
+   `shift` row -- a `personal:`/`patron:` source with `batch_id IS NULL` -- the INV's own unknown,
+   never silently skipped (`body/shift_import.py:282-292`). In one transaction
+   (`body/shift_import.py:297-342`): (a) the affected days are read from `shift.batch_id` itself,
+   never from `shift_batch_item`'s own historical outcome (which can list a day this batch never
+   actually wrote to -- a `manual_kept`/`newer_kept` day is exactly a day `confirm()` skipped, so it
+   is never in this set to begin with); (b) `DELETE FROM shift WHERE batch_id = ?`
+   (`body/shift_import.py:298`); (c) each day falls back to the most recent OTHER batch of this
+   person by `confirm()`'s own `(received, extracted_at)` precedence, among `'confirmed'`/
+   `'superseded'` batches only -- never `'undone'`/`'dismissed'`/`'proposed'` -- whose
+   `shift_batch_item` has that day, written with the exact `source`/`batch_id` shape `confirm()`
+   itself uses (`body/shift_import.py:306-328`), unless a manual row exists for that day (the same
+   query `confirm()` uses, manual always wins, nothing written, counted separately as
+   `days_kept_manual`); (d) a day with no such batch ends with no shift row at all -- what the
+   person had before this batch was ever confirmed (`days_emptied`); (e) a fallback batch that
+   regains a row this way, and is currently `'superseded'`, flips back to `'confirmed'`
+   (`body/shift_import.py:330-333`) -- the exact mirror of `_mark_superseded`'s own check
+   (`body/shift_import.py:228-237`), which flips `'confirmed'` -> `'superseded'` the moment a
+   batch's own rows all disappear; only a batch that actually gained a row this run is touched, so
+   this never reaches a batch superseded for an unrelated reason; (f) the undone batch moves to
+   `'undone'` with `decided_at` stamped now, the same convention `confirm()`/`dismiss()` already use
+   for their own decision moment (`body/shift_import.py:335-337`); its own `shift_batch_item` rows
+   marked `'applied'` are reset to `NULL` (`body/shift_import.py:338-341`) -- ruling 1 widens only
+   `shift_batch.status`, never `shift_batch_item.outcome`'s own CHECK (`'applied', 'manual_kept',
+   'newer_kept'` only, `body/db.py:496`), so there is no `'undone'` value to set there; `NULL`
+   already reads as "not currently applied," and the parent batch's own status is what says
+   `'undone'` -- no screen reads this field standalone in this slice (ruling 3) to disagree with
+   that choice; (g) `turno_fc` rows for every affected day are deleted through the new
+   `turno_fc.eliminar_dias(conn, person_id, days)` (`body/turno_fc.py:213`, every `modelo_version`,
+   a no-op on an empty list) -- the one place outside `body/privacidad.py`'s own person-wide wipe
+   that touches this table, so `undo()` never issues a raw DELETE against it itself. `confirm()`
+   additionally refuses an already-`'undone'` batch (`body/shift_import.py:179-180`): undo then
+   re-confirm of the same batch is refused -- a new import is the way back, never a second undo of
+   the same batch either (status is `'undone'`, not `'confirmed'`/`'superseded'`,
+   `body/shift_import.py:274-275`).
+3. **No screen, no assistant in this slice** -- the button, the history list and the assistant's own
+   undo of `confirmar_turnos` (removing it from SIN_DESHACER) are BODY-TURNOS-DESHACER-LOTE-3, next.
+4. **Census** -- `body/mudanza.py`'s `shift_batch` `TableSpec` (`body/mudanza.py:141-142`) and
+   `body/privacidad.py`'s `shift_batches` export/delete (`body/privacidad.py:184-185`, `:529-532`)
+   both already copy/export rows by column, never by an enumerated list of status values, so no
+   code change was needed in either file; `tests/test_turnos_esquema_1.py`'s own
+   `CarriesTheUndoneStatusTest` proves an `'undone'` batch moves through `mudanza.importar()` and
+   `privacidad.export_person()`/`delete_person()` untouched.
+
+**Tests (invented rosters only, no real health figures):** `tests/test_turnos_esquema_1.py` --
+`UndoneStatusMigrationTest` (a database at the previous shape, batches in all four old statuses
+plus `shift`/`shift_batch_item` rows pointing at them, migrates with every row and id kept, every
+`PRAGMA foreign_key_check` clean, the widened CHECK accepts `'undone'` and still rejects a bogus
+value) and `CarriesTheUndoneStatusTest` (census point 4, above). `tests/test_shift_import.py`'s new
+`UndoTest`: the overlap/empty/flip-back scenario (batch A applied two days, batch B overlapping
+both of A's days plus two of its own -> undo B restores A's two rows, empties B's other two, flips
+A back to `'confirmed'`, deletes exactly the four affected `turno_fc` rows, and a `recalcular()`
+afterward refills them); a first-ever batch's undo leaves its day empty; a manual row on an
+affected day is kept and never overwritten (`days_kept_manual`); a pattern batch and a file batch
+behave the same, both as the undone batch and as a fallback (the `patron:`/`personal:` prefix
+follows the FALLBACK batch's own kind); every refusal -- a `'proposed'`/`'dismissed'`/already-
+`'undone'`/another person's batch, and a legacy batch-less row on an affected day; undo-then-
+reconfirm refused. `tests/test_turno_fc.py`'s new `EliminarDiasTest`: deletes only the named days
+for the named person, every `modelo_version` for a day, and a no-op on an empty list.
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run as 11
+sequential alphabetical chunks of dotted modules (218 modules total, ~20 per chunk):
+
+| # | Range | Ran | Result |
+|---|-------|-----|--------|
+| 1 | test_accesibilidad .. test_baselines | 387 | OK (skipped=1, expected failures=1) |
+| 2 | test_baselines_lote .. test_deshacer_derivados | 459 | OK |
+| 3 | test_despertar .. test_errores_texto | 416 | OK |
+| 4 | test_estados_vacios .. test_garmin_web | 349 | OK |
+| 5 | test_get_sin_escritura .. test_host_deploy | 609 | OK |
+| 6 | test_host_import .. test_mcp_cliente_remoto | 399 | OK |
+| 7 | test_mcp_copia_pc .. test_periodo_herramientas | 521 | OK |
+| 8 | test_periodo_pantallas .. test_propuesta_vigencia | 504 | OK |
+| 9 | test_propuestas_tabla .. test_series_unidad | 351 | OK |
+| 10 | test_sesion_conexion_1 .. test_turnos_enlaces | 524 | OK |
+| 11 | test_turnos_esquema_1 .. test_web_entry | 329 | OK |
+
+Sum: 387+459+416+349+609+399+521+504+351+524+329 = **4848**. Reconciled against a separate
+collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted the same
+session, before the chunked run) = **4848** -- exact match, no drift (+18 over the 4830 base
+BODY-HISTORIA-VIDA-LUGARES-2-R left, matching the tests this slice added: 2 in
+`UndoneStatusMigrationTest` + 2 in `CarriesTheUndoneStatusTest` in `test_turnos_esquema_1.py`, 11 in
+`UndoTest` in `test_shift_import.py`, 3 in `EliminarDiasTest` in `test_turno_fc.py`). All 11 chunks
+`OK`; every `KeyError`/`AttributeError`/`ValueError`/`RuntimeError`/`NotSignedIn`/`ResourceWarning`
+line printed mid-run is a pre-existing fixture exercising a synthetic error path, not a test
+failure, and none of them are in a file this slice touched. No password, token, session secret,
+device key or real health figure was read, printed or written anywhere in this slice's own work or
+the gate's own stdout; no network call was made.
+
+**customer_bytes: none.** No route, template or string touched -- ruling 3 explicitly defers the
+screen and the assistant's own undo to BODY-TURNOS-DESHACER-LOTE-3. Merge policy A's three
+conditions: a schema change (yes, ruling 1's CHECK widening, row-preserving, reversible) but no
+customer-facing bytes and no cross-repo contract change -- per BODY-TURNOS-DESHACER-LOTE-2's own
+approval (ORCH-CARLOS-DELEGATES-TIER-1-1 on the INV's OBSERVED report), merging on green is
+authorised in words: "One schema change, a CHECK widened by a row-preserving rebuild; one new
+function nothing calls until -3 wires the person's tap. Reversible; deploying stays Carlos's."
+
+**Open follow-ups:** BODY-TURNOS-DESHACER-LOTE-3 (Tier 2, next) -- the `/shifts` history list of
+confirmed/superseded/undone batches and a two-step "Deshacer" button calling `undo()`, plus the
+assistant's own undo of `confirmar_turnos` removed from SIN_DESHACER.
+
+**Commits:** `6986898` (step 1: ruling 1, `shift_batch.status` migration and tests) --
+`b84b68c` (step 2: ruling 2, `shift_import.undo()` and tests) -- `1c69d05` (census point 4 tests)
+-- (this ledger entry) -- merge into `main` (`--no-ff`) to follow.
+

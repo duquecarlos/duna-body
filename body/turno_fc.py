@@ -210,6 +210,24 @@ def recalcular(conn, person_id: int) -> dict:
     return {"nuevas": nuevas, "motivos": motivos}
 
 
+def eliminar_dias(conn, person_id: int, days: list[str]) -> int:
+    """BODY-TURNOS-DESHACER-LOTE-2 ruling 2(g): the one stored derivative an undo can make stale --
+    deletes this person's own `turno_fc` rows for exactly these days (every modelo_version; a
+    reversed shift's old figure is never left behind under a stale version either), so the next
+    `recalcular` call fills them again from whatever shift row (or none) undo left there. The one
+    place outside body/privacidad.py's own person-wide wipe that touches this table, so
+    body/shift_import.py's own `undo` calls this instead of a raw DELETE. A no-op on an empty list,
+    never a DELETE with no WHERE."""
+    if not days:
+        return 0
+    placeholders = ",".join("?" * len(days))
+    cur = conn.execute(
+        f"DELETE FROM turno_fc WHERE person_id = ? AND day IN ({placeholders})",
+        (person_id, *days),
+    )
+    return cur.rowcount
+
+
 def estudio(conn, person_id: int) -> dict:
     """Over this person's own derived rows (current MODELO version): per shift kind, the median
     heart rate against the days-off reference for the same hours (ruling 2, read straight from
