@@ -110,6 +110,40 @@ class DaySectionShapeTest(unittest.TestCase):
         self.assertEqual(s["events"], [])
 
 
+class DaySectionCorrectedTest(unittest.TestCase):
+    """BODY-DESPERTAR-REAL-6C ruling 2: a corrected sleep_minutes value carries kind "corrected";
+    every other metric (readiness among them) keeps metric_def's own kind."""
+
+    def test_corrected_night_marks_sleep_minutes_corrected(self):
+        conn = open_conn(self, Path(tempfile.mkdtemp()) / "d6.db")
+        db.init(conn)
+        db.set_metric(conn, DAY, "sleep_minutes", 322.0, "garmin", 1)
+        db.set_metric(conn, DAY, "readiness", 70.0, "body-v1", 1)
+        conn.execute(
+            "INSERT INTO sleep_session (person_id, day, start_local, end_local) VALUES (?, ?, ?, ?)",
+            (1, DAY, f"{DAY}T22:00:00", f"{DAY}T03:41:00"),
+        )
+        conn.commit()
+        db.guardar_despertar_correccion(conn, 1, DAY, "sueno", "06:00", "despertar-real-v2", "persona")
+
+        s = vida_dia.day_section(conn, DAY, 1)
+        by_key = {m["key"]: m for m in s["metrics"]}
+        self.assertEqual(by_key["body.sleep_minutes"]["value"], 322.0 + 139)
+        self.assertEqual(by_key["body.sleep_minutes"]["kind"], "corrected")
+        self.assertEqual(by_key["body.sleep_minutes"]["source"], "garmin")
+        self.assertEqual(by_key["body.readiness"]["kind"], "estimated")
+
+    def test_no_correction_keeps_measured_kind(self):
+        conn = open_conn(self, Path(tempfile.mkdtemp()) / "d7.db")
+        db.init(conn)
+        db.set_metric(conn, DAY, "sleep_minutes", 400.0, "garmin", 1)
+        conn.commit()
+        s = vida_dia.day_section(conn, DAY, 1)
+        by_key = {m["key"]: m for m in s["metrics"]}
+        self.assertEqual(by_key["body.sleep_minutes"]["value"], 400.0)
+        self.assertEqual(by_key["body.sleep_minutes"]["kind"], "measured")
+
+
 class DayMetricsConstantTest(unittest.TestCase):
     def test_module_constant_is_a_list_of_four_keys(self):
         self.assertEqual(vida_dia.DAY_METRICS,

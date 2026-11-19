@@ -874,6 +874,21 @@ class VidaExportNoLeakTest(_BaseFugaTest):
         self._check_both_states("A", "B")
         self._check_both_states("B", "A")
 
+    def test_bs_sueno_correction_never_marks_as_week_corrected(self):
+        """BODY-DESPERTAR-REAL-6C ruling 1: db.series_origen is person-scoped like every other
+        reader -- B's own 'sueno' correction (on top of _seed_person's shared 'levantado' one)
+        never reaches A's week_section as a corrected kind or a corrected value."""
+        monday = vida_export.current_week_monday(hoy=TODAY)
+        db.guardar_despertar_correccion(self.conn, PERSON_B, DAYS[-1], "sueno", "09:00",
+                                         "despertar-real-v2", "persona")
+        data_a = vida_export.week_section(self.conn, monday, PERSON_A)
+        by_key_a = {m["key"]: m for m in data_a["metrics"]}
+        self.assertEqual(by_key_a["body.sleep_minutes"]["kind"], "measured")
+
+        data_b = vida_export.week_section(self.conn, monday, PERSON_B)
+        by_key_b = {m["key"]: m for m in data_b["metrics"]}
+        self.assertEqual(by_key_b["body.sleep_minutes"]["kind"], "corrected")
+
 
 class TableCensusTest(_BaseFugaTest):
     """Every person-owned table either got a seeded row in _seed_person, or is accounted for here

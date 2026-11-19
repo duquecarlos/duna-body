@@ -50,13 +50,15 @@ def day_section(conn, day: str, person_id: int) -> dict:
     metrics = []
     missing = []
     for key in DAY_METRICS:
-        value = db.series_garmin(conn, key, day, day, person_id).get(day)
-        if value is None:
+        origen = db.series_origen(conn, key, day, day, person_id).get(day)
+        if origen is None:
             missing.append(f"body.{key}")
             continue
+        value, corregido = origen
+        kind = "corrected" if corregido else defs[key]["kind"]
         metrics.append({
             "person": person, "day": day, "key": f"body.{key}", "value": value,
-            "source": _metric_source(key), "visibility": "owner", "kind": defs[key]["kind"],
+            "source": _metric_source(key), "visibility": "owner", "kind": kind,
         })
 
     events = []

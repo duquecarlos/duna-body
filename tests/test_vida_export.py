@@ -215,6 +215,48 @@ class RecoverySectionTest(unittest.TestCase):
         self.assertNotIn("body.recovery_days_est", keys)
 
 
+class CorrectedWeekTest(unittest.TestCase):
+    """BODY-DESPERTAR-REAL-6C ruling 3: a week averaging through db.series_origen carries kind
+    "corrected" when any averaged day was corrected; every other metric keeps metric_def's kind,
+    and a week with no correction at all is unchanged."""
+
+    def test_one_corrected_night_marks_the_weeks_sleep_average_corrected(self):
+        conn = open_conn(self, Path(tempfile.mkdtemp()) / "cw1.db")
+        db.init(conn)
+        monday = date(2026, 11, 2)
+        for i in range(7):
+            day = (monday + timedelta(i)).isoformat()
+            db.set_metric(conn, day, "sleep_minutes", 400.0, "garmin", 1)
+            db.set_metric(conn, day, "resting_hr", 55.0, "garmin", 1)
+        corrected_day = monday.isoformat()
+        conn.execute(
+            "INSERT INTO sleep_session (person_id, day, start_local, end_local) VALUES (?, ?, ?, ?)",
+            (1, corrected_day, f"{corrected_day}T22:00:00", f"{corrected_day}T03:41:00"),
+        )
+        conn.commit()
+        db.guardar_despertar_correccion(conn, 1, corrected_day, "sueno", "06:00", "despertar-real-v2", "persona")
+
+        s = vida_export.week_section(conn, monday, 1)
+        by_key = {m["key"]: m for m in s["metrics"]}
+        self.assertEqual(by_key["body.sleep_minutes"]["kind"], "corrected")
+        self.assertAlmostEqual(by_key["body.sleep_minutes"]["value"], round((400 * 6 + 400 + 139) / 7, 1))
+        self.assertEqual(by_key["body.resting_hr"]["kind"], "measured")
+        self.assertEqual(by_key["body.resting_hr"]["value"], 55.0)
+
+    def test_week_with_no_correction_keeps_measured_kind_and_value(self):
+        conn = open_conn(self, Path(tempfile.mkdtemp()) / "cw2.db")
+        db.init(conn)
+        monday = date(2026, 11, 2)
+        for i in range(7):
+            day = (monday + timedelta(i)).isoformat()
+            db.set_metric(conn, day, "sleep_minutes", 400.0, "garmin", 1)
+        conn.commit()
+        s = vida_export.week_section(conn, monday, 1)
+        by_key = {m["key"]: m for m in s["metrics"]}
+        self.assertEqual(by_key["body.sleep_minutes"]["kind"], "measured")
+        self.assertEqual(by_key["body.sleep_minutes"]["value"], 400.0)
+
+
 class VidaPersonTest(unittest.TestCase):
     def test_hosted_person_with_a_sub_gets_the_sub(self):
         conn = open_conn(self, Path(tempfile.mkdtemp()) / "p1.db")

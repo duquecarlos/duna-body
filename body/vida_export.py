@@ -50,11 +50,13 @@ def week_section(conn, monday: date, person_id: int) -> dict:
     defs = {r["key"]: dict(r) for r in conn.execute("SELECT * FROM metric_def")}
     metrics = []
     for key in WEEK_METRICS:
-        vals = list(db.series(conn, key, monday.isoformat(), sunday.isoformat(), person_id).values())
-        if not vals:
+        origen = db.series_origen(conn, key, monday.isoformat(), sunday.isoformat(), person_id)
+        if not origen:
             continue
+        vals = [v for v, _ in origen.values()]
         avg = statistics.fmean(vals)
-        metrics.append({"key": f"body.{key}", "value": round(avg, 1), "kind": defs[key]["kind"],
+        kind = "corrected" if any(corregido for _, corregido in origen.values()) else defs[key]["kind"]
+        metrics.append({"key": f"body.{key}", "value": round(avg, 1), "kind": kind,
                         "days": len(vals), "visibility": "owner"})
 
     days = max((m["days"] for m in metrics), default=0)

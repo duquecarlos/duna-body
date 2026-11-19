@@ -261,6 +261,7 @@ class PersonIdHasNoDefaultTest(unittest.TestCase):
             (history, "coverage"), (history, "training"), (history, "patterns"), (history, "by_shift"),
             (shift_import, "propose"), (shift_import, "confirm_all"), (shift_import, "summary_proposed"),
             (shift_import, "latest_proposed"), (shift_import, "latest_confirmed"),
+            (db, "series_origen"),
             (vida_export, "week_section"), (ajustes, "nivel_datos"),
         ]
         for module, name in targets:
