@@ -133,6 +133,7 @@ class RouteSetTest(unittest.TestCase):
         ("/shifts/patron", ("GET",)),
         ("/shifts/patron", ("POST",)),
         ("/shifts/patron/quitar", ("POST",)),
+        ("/shifts/undo", ("POST",)),  # BODY-TURNOS-DESHACER-LOTE-3-R
         ("/static", ()),
         ("/sw.js", ("GET",)),
         ("/trends", ("GET",)),

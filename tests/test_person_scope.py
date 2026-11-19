@@ -181,6 +181,19 @@ class WebScopeTest(unittest.TestCase):
         self.assertEqual(r.status_code, 404)
         self.assertEqual(self._batch_status(self.batch_a), "proposed")  # A's batch: untouched
 
+    def test_shifts_undo_404_on_the_other_persons_batch(self):
+        """BODY-TURNOS-DESHACER-LOTE-3-R ruling 2: /shifts/undo is guarded by the same
+        _owned_batch_or_404 as confirm/dismiss."""
+        _as(PERSON_A)
+        r = client.post("/shifts/undo", data={"batch_id": str(self.batch_b)})
+        self.assertEqual(r.status_code, 404)
+        self.assertEqual(self._batch_status(self.batch_b), "proposed")  # B's batch: untouched
+
+        _as(PERSON_B)
+        r = client.post("/shifts/undo", data={"batch_id": str(self.batch_a)})
+        self.assertEqual(r.status_code, 404)
+        self.assertEqual(self._batch_status(self.batch_a), "proposed")  # A's batch: untouched
+
 
 class HostedPersonScopeTest(unittest.TestCase):
     """BODY-CUENTA-RP-1: with real Cuenta sessions (not dependency_overrides), two persons signed

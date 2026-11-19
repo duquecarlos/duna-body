@@ -30182,3 +30182,114 @@ assistant's own undo of `confirmar_turnos` removed from SIN_DESHACER.
 Post-merge smoke (`tests.test_shift_import tests.test_turno_fc tests.test_turnos_esquema_1
 tests.test_migraciones`): `Ran 128 tests in 46.500s` -- `OK`.
 
+## BODY-TURNOS-DESHACER-LOTE-3
+
+**Surface (dev-protocol queue BODY-TURNOS-DESHACER-LOTE-2's own follow-up):** `shift_import.undo()`
+(merged in BODY-TURNOS-DESHACER-LOTE-2) had no caller -- `/shifts` still showed only "last confirmed
+on \<date\>" with no history and no way back, and the assistant's `proponer_confirmar_turnos` was
+`/shifts`'s only `SIN_DESHACER` entry. ORCH-CARLOS-DELEGATES-TIER-1-1 ruled on both.
+
+**Ruling 1-2 (history list and Deshacer), as built:** `_historial_filas` (`body/rutas/turnos.py:41-64`)
+reads the person's last `_HISTORIAL_LIMITE` = 10 (`body/rutas/turnos.py:38`) batches whose status is
+in `_HISTORIAL_ESTADOS` = `confirmed`/`superseded`/`undone` (`body/rutas/turnos.py:36`), newest
+`received` first, each with its CURRENT `shift` row count (`LEFT JOIN shift ... GROUP BY b.id`,
+`COUNT(s.day)` -- `shift` has no surrogate `id`, composite PK `(person_id, day, start_local)`) and
+state word (`shifts.historial.estado.<status>`). A `confirmed`/`superseded` row with >=1 current row
+(`_HISTORIAL_DESHACER_ESTADOS`, `body/rutas/turnos.py:37`) offers a two-step, no-JavaScript
+`<details>`/`<summary>` disclosure (`body/templates/shifts.html:75-93`, reusing the existing
+`.files`/`.taplink` CSS -- no stylesheet change) posting to the new `POST /shifts/undo`
+(`body/rutas/turnos.py:664-681`): guarded by the same `_owned_batch_or_404` as confirm/dismiss (404 on
+another person's batch, proven by `tests/test_person_scope.py`'s new
+`test_shifts_undo_404_on_the_other_persons_batch`), calls `shift_import.undo()`, and on
+`UndoRefused` redirects to `/shifts?undo_refused=1` (writes nothing) rather than 500ing. `GET /shifts`
+only renders the list (`body/rutas/turnos.py:558-563`); it is hidden entirely when there is no
+non-proposed batch. "Cancelar" is a plain `<a href="/shifts">` navigation, never a script-based close.
+Every new string carries es/en parity (`body/i18n/es.json:165-181`, `body/i18n/en.json:165-181`):
+`shifts.historial.linea/turnos(_one)/patron/estado.{confirmed,superseded,undone}/deshacer/
+quitar(_one)/cancelar`, `shifts.undo_result/undo_quitados(_one)/undo_restaurados(_one)/undo_refused`;
+the dynamic key `t("shifts.historial.estado." + status)` is registered in
+`tests/test_i18n_paridad.py:97` against the exact fixed value list `_HISTORIAL_ESTADOS` can produce.
+Tests: `tests/test_turnos_deshacer.py` (new, 8 tests) -- `HistorialHiddenTest` (no card when nothing
+to show), `HistorialRenderTest` (states/counts/origin/newest-first/dismissed excluded, limited to 10,
+Deshacer offered only on confirmed/superseded with >=1 current row), `UndoRouteTest` (success restores
+the older batch and shows the es/en result line, a refused undo on a proposed batch writes nothing,
+`GET /shifts` with history present writes nothing), `HistorialCostoTest` (measured below).
+
+**Ruling 3 (assistant undo), as built:** `_aplicar_confirmar_turnos` (`body/agente/propuestas.py:
+297-306`) now records, as `batch_ids`, every batch that was `'proposed'` right before
+`confirm_all()` ran, in `confirm_all()`'s own `(received, extracted_at, id)` order -- the
+`_aplicar_meta`/`habito_ids` precedent: `aplicar()`'s own generic `resto` merge folds any extra apply-
+writer key into `despues_json` (no schema change). `_drift_deshacer_confirmar_turnos`
+(`body/agente/propuestas.py:309-332`) refuses (returns drifted) if any of those batches is no longer
+`confirmed`/`superseded`, OR a batch NONE of those ids name was itself confirmed/superseded after this
+apply's own latest `decided_at` -- ruling 3's exact two conditions, read off `shift_batch` rows
+directly. `_deshacer_confirmar_turnos` (`body/agente/propuestas.py:335-350`) calls
+`shift_import.undo()` once per recorded batch, NEWEST first (`ORDER BY received DESC, extracted_at
+DESC, id DESC`) -- the mirror of `confirm_all()`'s own oldest-first apply order, one transaction per
+batch (matching `confirm_all()`'s own "one transaction PER BATCH" shape). `TABLA`'s
+`proponer_confirmar_turnos` entry now carries all four callables
+(`body/agente/propuestas.py:1705-1706`); `SIN_DESHACER` is **empty**, asserted by name in
+`tests/test_propuestas_tabla.py:42` (`test_sin_deshacer_es_exactamente_las_entradas_sin_escritor_de_
+deshacer`, was `{"proponer_confirmar_turnos"}`). No code change was needed in
+`body/rutas/asistente.py`'s own `"deshacer": accion not in agente_propuestas.SIN_DESHACER` -- every
+propuesta card now shows Deshacer automatically. Tests: `tests/test_agente_propuestas.py`'s new
+`test_confirmar_turnos_undo_restores_the_schedule` and
+`test_confirmar_turnos_undo_refuses_when_a_later_batch_was_confirmed_after_the_apply` (lines 361, 380)
+replace the removed `test_confirmar_turnos_has_no_undo`.
+
+**Ruling 4 (statement-cost ceiling), as built:** the history section's own extra SELECT runs ONLY on
+`/shifts`' no-pending-proposals branch (`body/rutas/turnos.py:558-559`) -- the branch
+`tests/test_rendimiento.py`'s own shared `/shifts: 42` fixture never reaches (that fixture always
+carries a pending proposed batch, which returns earlier, at `body/rutas/turnos.py:551`). Re-measured
+and confirmed still exactly 42 (`tests/test_rendimiento.py:167`, comment at `:127` naming why);
+the feature's own real cost (+1 statement, the single combined `LEFT JOIN` + `GROUP BY`) is measured
+and named directly by `tests/test_turnos_deshacer.py`'s `HistorialCostoTest.
+test_historial_filas_costs_exactly_one_statement` rather than folded silently into the shared number.
+
+**Deviation:** the dispatching spec said the `/shifts` ceiling lives in
+`tests/test_rendimiento_turnos.py`; measured and found it is actually in `tests/test_rendimiento.py`
+(`tests/test_rendimiento_turnos.py` exists and is in `touches` but holds unrelated turnos-costo
+rendimiento tests, not the shared route-ceiling table). Both files were in the spec's `touches` list,
+so this was acted on rather than reported BLOCKED.
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run as 11
+sequential alphabetical chunks of dotted modules (219 modules total, ~20 per chunk):
+
+| # | Range | Ran | Result |
+|---|-------|-----|--------|
+| 1 | test_accesibilidad .. test_baselines | 388 | OK (skipped=1, expected failures=1) |
+| 2 | test_baselines_lote .. test_deshacer_derivados | 459 | OK |
+| 3 | test_despertar .. test_errores_texto | 416 | OK |
+| 4 | test_estados_vacios .. test_garmin_web | 349 | OK |
+| 5 | test_get_sin_escritura .. test_host_deploy | 609 | OK |
+| 6 | test_host_import .. test_mcp_cliente_remoto | 399 | OK |
+| 7 | test_mcp_copia_pc .. test_periodo_herramientas | 521 | OK |
+| 8 | test_periodo_pantallas .. test_propuesta_vigencia | 505 | OK |
+| 9 | test_propuestas_tabla .. test_series_unidad | 351 | OK |
+| 10 | test_sesion_conexion_1 .. test_turnos_deshacer | 508 | OK |
+| 11 | test_turnos_enlaces .. test_web_entry | 353 | OK |
+
+Sum: 388+459+416+349+609+399+521+505+351+508+353 = **4858**. Reconciled against a separate
+collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`,
+same session, after all 11 chunks) = **4858** -- exact match (+10 over the 4848 BODY-TURNOS-DESHACER-
+LOTE-2 left: 8 in `test_turnos_deshacer.py` + 1 new test in `test_person_scope.py` + 1 net new in
+`test_agente_propuestas.py`, which replaced one removed test with two). All 11 chunks `OK`. Every
+`NotSignedIn`/`ResourceWarning`/`Exception in thread`/"pull attempt failed" line printed mid-run is a
+pre-existing fixture exercising a synthetic error path, not a test failure, and none are in a file
+this slice touched. No password, token, session secret, device key or real health figure was read,
+printed or written anywhere in this slice's own work or the gate's own stdout; no network call was
+made.
+
+**customer_bytes: changed, pre-approved.** New strings listed above under ruling 1-2, both es and en.
+Merge policy A: no schema change, no cross-repo contract change; customer-facing text changed on
+purpose, and the dispatching spec explicitly pre-approved it: "This slice changes customer bytes on
+purpose and this spec approves them: merge if green." -- merging on green, no separate approval wait.
+
+**Open follow-ups:** none identified beyond what this slice itself completes; BODY-TURNOS-DESHACER-
+LOTE-1/2/3 together close the undo gap this thread opened.
+
+**Commits:** `846ca42` (step 1: ruling 1-2, history list and Deshacer disclosure) --
+`cef46d0` (step 2: ruling 3, assistant undo for `proponer_confirmar_turnos`) --
+`5284dfd` (step 3: ruling 4, naming /shifts' re-measured ceiling) -- this ledger entry, next --
+merged into `main` (`--no-ff`), next.
+

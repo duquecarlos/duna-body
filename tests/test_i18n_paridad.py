@@ -92,6 +92,9 @@ _FIXED_DYNAMIC = {
     "shifts.cost_sub.+": turnos_costo.MODELO["metricas"],
     # body/turnos_costo.py diferencia_y_palabra(): the only three words it returns.
     "shifts.word.+": ["mas", "menos", "igual"],
+    # body/rutas/turnos.py _historial_filas(): t("shifts.historial.estado." + status) -- the exact
+    # non-proposed shift_batch statuses the history query selects (turnos._HISTORIAL_ESTADOS).
+    "shifts.historial.estado.+": list(turnos._HISTORIAL_ESTADOS),
     # body/turnos_costo.py _motivo(): the only four reasons it returns.
     "shifts.reason.~": ["sin_turnos", "sin_noches", "pocos_bloques", "sin_datos_reloj"],
     # body/patron_turnos.py validar(): per-row error codes. Its whole-cycle "largo_invalido" (index
