@@ -3,7 +3,8 @@
 # Installed to /usr/local/sbin/duna-deploy-body; called only as:
 #   sudo -n /usr/local/sbin/duna-deploy-body <status|deploy [--dry-run]|pull|backup [--dry-run]|
 #     importar-pc --cuenta-sub <sub> --archivo <path> [--apply]|personas|
-#     diagnostico-personas|relinkar-garmin --desde <id> --hacia <id> [--apply]|rollback-script>
+#     diagnostico-personas|cobertura --cuenta-sub <sub> [--json]|
+#     relinkar-garmin --desde <id> --hacia <id> [--apply]|rollback-script>
 set -Eeuo pipefail
 
 if [[ "${EUID}" -ne 0 ]]; then
@@ -32,9 +33,14 @@ usage: duna-deploy-body <command>
   backup [--dry-run]  snapshot, encrypt and upload to R2, delete the plaintext (--dry-run: print the plan, run nothing)
   importar-pc --cuenta-sub <sub> --archivo <path> [--apply]
                       import one person's PC snapshot into this host (dry run by default)
-  personas            list hosted persons by cuenta_sub, display name and first consent
+  personas [--conteo] list hosted persons by cuenta_sub, display name and first consent;
+                      --conteo prints only two counts -- consented, and active in the last
+                      30 days -- never a cuenta_sub, a name or an email
   diagnostico-personas
                       per-person counts only -- never a cuenta_sub, a name or a figure
+  cobertura --cuenta-sub <sub> [--json]
+                      read-only: what is actually stored for one person's minute-by-minute
+                      history -- counts and dates only, never a health figure
   relinkar-garmin --desde <id> --hacia <id> [--apply]
                       move one person's hosted Garmin connection and data to another
                       (dry run by default); --apply takes a host backup first and is
@@ -176,7 +182,9 @@ case "$cmd" in
     # body-import-pc.sh itself validates --cuenta-sub, --archivo and --apply.
     ;;
   personas)
-    if [[ $# -ne 0 ]]; then
+    if [[ $# -eq 1 && "$1" == "--conteo" ]]; then
+      :
+    elif [[ $# -ne 0 ]]; then
       usage
       exit 2
     fi
@@ -186,6 +194,9 @@ case "$cmd" in
       usage
       exit 2
     fi
+    ;;
+  cobertura)
+    # body-import-pc.sh itself validates --cuenta-sub and --json.
     ;;
   relinkar-garmin)
     # Validated here, in bash, before body-import-pc.sh ever sees them (like body-deploy.sh's
@@ -247,11 +258,15 @@ if [[ "$cmd" == "importar-pc" ]]; then
 fi
 
 if [[ "$cmd" == "personas" ]]; then
-  exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" personas
+  exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" personas "$@"
 fi
 
 if [[ "$cmd" == "diagnostico-personas" ]]; then
   exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" diagnostico-personas
+fi
+
+if [[ "$cmd" == "cobertura" ]]; then
+  exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" cobertura "$@"
 fi
 
 if [[ "$cmd" == "relinkar-garmin" ]]; then

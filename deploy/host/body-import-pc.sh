@@ -24,7 +24,7 @@ DATA_USER="duna-body"
 DATA_DIR="/srv/duna/data/body"
 
 if [[ $# -lt 1 ]]; then
-  echo "body-import-pc.sh: usage: body-import-pc.sh <importar-pc|personas|diagnostico-personas|relinkar-garmin> [options]" >&2
+  echo "body-import-pc.sh: usage: body-import-pc.sh <importar-pc|personas|diagnostico-personas|cobertura|relinkar-garmin> [options]" >&2
   exit 2
 fi
 
@@ -33,6 +33,14 @@ shift
 
 case "$action" in
   personas)
+    # BODY-HISTORIA-MINUTO-2 ruling 3: --conteo is the ONE extra argument this arm accepts --
+    # the standing-deploy-go census, two counts only. Anything else, including any other
+    # argument, keeps the exact original refusal below; the plain (no-argument) mode is
+    # unchanged.
+    if [[ $# -eq 1 && "$1" == "--conteo" ]]; then
+      exec runuser -u "$DATA_USER" -- env -C "$REPO_DIR" "BODY_HOME=$DATA_DIR" \
+        "$REPO_DIR/.venv/bin/python" -m body.cobertura --conteo
+    fi
     if [[ $# -ne 0 ]]; then
       echo "body-import-pc.sh: personas takes no arguments" >&2
       exit 2
@@ -47,6 +55,36 @@ case "$action" in
     fi
     exec runuser -u "$DATA_USER" -- env -C "$REPO_DIR" "BODY_HOME=$DATA_DIR" \
       "$REPO_DIR/.venv/bin/python" -m body.persona_garmin diagnostico
+    ;;
+  cobertura)
+    COBERTURA_SUB=""
+    COBERTURA_JSON=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --cuenta-sub)
+          COBERTURA_SUB="$2"
+          shift 2
+          ;;
+        --json)
+          COBERTURA_JSON="1"
+          shift
+          ;;
+        *)
+          echo "body-import-pc.sh: unknown argument: $1" >&2
+          exit 2
+          ;;
+      esac
+    done
+    if [[ -z "$COBERTURA_SUB" ]]; then
+      echo "body-import-pc.sh: cobertura requires --cuenta-sub" >&2
+      exit 2
+    fi
+    if [[ -n "$COBERTURA_JSON" ]]; then
+      exec runuser -u "$DATA_USER" -- env -C "$REPO_DIR" "BODY_HOME=$DATA_DIR" \
+        "$REPO_DIR/.venv/bin/python" -m body.cobertura --cuenta-sub "$COBERTURA_SUB" --json
+    fi
+    exec runuser -u "$DATA_USER" -- env -C "$REPO_DIR" "BODY_HOME=$DATA_DIR" \
+      "$REPO_DIR/.venv/bin/python" -m body.cobertura --cuenta-sub "$COBERTURA_SUB"
     ;;
   importar-pc)
     ;;

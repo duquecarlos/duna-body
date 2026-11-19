@@ -1,4 +1,5 @@
 """python -m body.cobertura [--cuenta-sub <sub>] [--json]
+   python -m body.cobertura --conteo
 
 Read-only, counts-and-dates-only coverage report of what is actually stored for one person's
 minute-by-minute history (BODY-HISTORIA-MINUTO-2, following BODY-HISTORIA-MINUTO-1-INV's own
@@ -18,6 +19,10 @@ creating a row, never the create-on-first-sign-in half of it: this command is re
 end, so it can only ever find an existing person, never make one. Required when hosted
 (body.cuenta.hosted()); optional on a single-person install, where the local person
 (db.default_person_id()) is used when it is left out.
+
+`--conteo` prints a different, cross-person report instead: ORCH-CARLOS-DELEGATES-TIER-1-1
+ruling 3's standing-deploy-go census (conteo_personas) -- two counts only, never a cuenta_sub,
+a name or an email.
 """
 from __future__ import annotations
 
@@ -25,7 +30,7 @@ import argparse
 import json
 import sqlite3
 import statistics
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from . import backup, config, cuenta, db, fechas, garmin_adapter, pull
@@ -177,6 +182,26 @@ def _bloque_keeper(conn: sqlite3.Connection, person_id: int, zona: str) -> dict:
     return out
 
 
+def conteo_personas(conn: sqlite3.Connection) -> dict:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3: the standing deploy go's own expiry condition
+    ("until someone other than me uses Body", dev-protocol BODY-STANDING-DEPLOY-GO-RELAYED-1)
+    measured as two counts, never a name, a sub or an email -- hosted persons (person.cuenta_sub
+    IS NOT NULL) with an accepted consent, and hosted persons with any activity in the last 30
+    days. Activity is `sesion.last_seen_at` -- body.cuenta.resolve_session updates it on every
+    page view (throttled), the cheapest honest activity signal already stored."""
+    consentidos = conn.execute(
+        "SELECT COUNT(DISTINCT p.id) FROM person p JOIN consentimiento c ON c.person_id = p.id "
+        "WHERE p.cuenta_sub IS NOT NULL"
+    ).fetchone()[0]
+    limite = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat(timespec="seconds")
+    activos_30d = conn.execute(
+        "SELECT COUNT(DISTINCT p.id) FROM person p JOIN sesion s ON s.person_id = p.id "
+        "WHERE p.cuenta_sub IS NOT NULL AND s.last_seen_at >= ?",
+        (limite,),
+    ).fetchone()[0]
+    return {"consentidos": consentidos, "activos_30d": activos_30d}
+
+
 def recopilar(conn: sqlite3.Connection, cuenta_sub: str | None = None) -> dict:
     person_id = _resolver_persona(conn, cuenta_sub)
     zona = db.person(conn, person_id)["timezone"]
@@ -217,7 +242,19 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="python -m body.cobertura")
     p.add_argument("--cuenta-sub", help="the hosted person's Cuenta sub (required when hosted)")
     p.add_argument("--json", action="store_true", help="print the same report as JSON")
+    p.add_argument("--conteo", action="store_true",
+                    help="print only two counts: hosted persons consented, and active in the "
+                         "last 30 days -- never a cuenta_sub, a name or a health figure")
     a = p.parse_args(argv)
+
+    if a.conteo:
+        conn = backup.open_readonly(config.DB_PATH)
+        try:
+            out = conteo_personas(conn)
+        finally:
+            conn.close()
+        print(f"consentidos={out['consentidos']} activos_30d={out['activos_30d']}")
+        return 0
 
     conn = backup.open_readonly(config.DB_PATH)
     try:

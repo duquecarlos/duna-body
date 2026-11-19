@@ -32,6 +32,14 @@ class UsageTest(unittest.TestCase):
         self.assertIn("diagnostico-personas", self.text)
         self.assertIn("relinkar-garmin --desde <id> --hacia <id> [--apply]", self.text)
 
+    def test_usage_lists_cobertura(self):
+        """BODY-HISTORIA-MINUTO-2, ruling 2."""
+        self.assertIn("cobertura --cuenta-sub <sub> [--json]", self.text)
+
+    def test_usage_lists_personas_conteo(self):
+        """BODY-HISTORIA-MINUTO-2, ruling 3."""
+        self.assertIn("--conteo", self.text)
+
     def test_no_carlos_hardcoded(self):
         self.assertNotIn("carlos", self.text.lower())
 
@@ -76,6 +84,19 @@ class CaseArmsTest(unittest.TestCase):
         self.assertNotIn("shift 2", body)
         self.assertNotRegex(body, r"\bshift\b\s*\n")
 
+    def test_cobertura_case_present(self):
+        """BODY-HISTORIA-MINUTO-2, ruling 2."""
+        self.assertRegex(self.text, r"\n\s*cobertura\)\n")
+
+    def test_personas_case_still_rejects_other_arguments_but_now_accepts_conteo(self):
+        """BODY-HISTORIA-MINUTO-2, ruling 3."""
+        start = self.text.index("\n  personas)")
+        end = self.text.index(";;", start)
+        body = self.text[start:end]
+        self.assertIn('"$1" == "--conteo"', body)
+        self.assertIn("$# -ne 0", body)
+        self.assertIn("exit 2", body)
+
 
 class ExecDispatchTest(unittest.TestCase):
     def setUp(self):
@@ -92,6 +113,10 @@ class ExecDispatchTest(unittest.TestCase):
     def test_personas_execs_with_no_forwarded_args(self):
         self.assertIn('exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" personas', self.text)
 
+    def test_personas_forwards_args_for_conteo(self):
+        """BODY-HISTORIA-MINUTO-2, ruling 3."""
+        self.assertIn('exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" personas "$@"', self.text)
+
     def test_import_dispatch_never_pulls(self):
         import_idx = self.text.index('exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" importar-pc')
         pull_idx = self.text.index("pull --ff-only")
@@ -102,6 +127,10 @@ class ExecDispatchTest(unittest.TestCase):
 
     def test_relinkar_garmin_execs_with_forwarded_args(self):
         self.assertIn('exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" relinkar-garmin "$@"', self.text)
+
+    def test_cobertura_execs_with_forwarded_args(self):
+        """BODY-HISTORIA-MINUTO-2, ruling 2."""
+        self.assertIn('exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" cobertura "$@"', self.text)
 
 
 class SudoersUnchangedTest(unittest.TestCase):
@@ -116,6 +145,7 @@ class SudoersUnchangedTest(unittest.TestCase):
         self.assertNotIn("personas", text)
         self.assertNotIn("diagnostico-personas", text)
         self.assertNotIn("relinkar-garmin", text)
+        self.assertNotIn("cobertura", text)
 
 
 class ReadmeImportSectionTest(unittest.TestCase):
@@ -200,6 +230,33 @@ class ReadmeGarminPersonaSectionTest(unittest.TestCase):
         section = self.text[section_idx:next_section_idx]
         self.assertIn("recuperacion_actividad", section)
         self.assertIn("counted exception", section)
+
+
+class ReadmeCoverageSectionTest(unittest.TestCase):
+    """BODY-HISTORIA-MINUTO-2, ruling 2."""
+
+    def setUp(self):
+        self.text = _read(README)
+
+    def test_section_present_with_both_forms(self):
+        self.assertIn("## Coverage", self.text)
+        self.assertIn("duna-deploy-body cobertura --cuenta-sub", self.text)
+        self.assertIn("cobertura --cuenta-sub <sub> --json", self.text)
+
+    def test_section_states_read_only_and_no_health_figure(self):
+        section_idx = self.text.index("## Coverage")
+        next_section_idx = self.text.index("## Host facts")
+        section = self.text[section_idx:next_section_idx]
+        self.assertIn("Read-only", section)
+        self.assertIn("never a health figure", section)
+        self.assertIn("never stops a timer, never takes", section)
+
+    def test_section_covers_personas_conteo_ruling_3(self):
+        section_idx = self.text.index("## Coverage")
+        next_section_idx = self.text.index("## Host facts")
+        section = self.text[section_idx:next_section_idx]
+        self.assertIn("duna-deploy-body personas --conteo", section)
+        self.assertIn("never a `cuenta_sub`, a name or an email", section)
 
 
 if __name__ == "__main__":

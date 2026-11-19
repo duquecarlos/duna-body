@@ -8,6 +8,7 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -273,6 +274,86 @@ class PersonScopeTest(unittest.TestCase):
         after = self.conn.execute("SELECT COUNT(*) FROM person").fetchone()[0]
         self.assertEqual(before, after)  # a read-only resolution never creates a person
         self.assertIn("keeper", out)
+
+
+# ----------------------------------------------- ruling 3: the standing-go census (--conteo)
+
+
+class ConteoPersonasTest(unittest.TestCase):
+    def setUp(self):
+        self.conn = _db(self, "conteo.db")
+
+    def test_consentidos_counts_only_hosted_persons_with_a_consent(self):
+        p_hosted = cuenta.resolve_person(self.conn, {"sub": "sub-a", "duna_productos": ["body"]})
+        p_hosted_sin_consentir = cuenta.resolve_person(
+            self.conn, {"sub": "sub-b", "duna_productos": ["body"]})
+        p_local = db.local_person_id(self.conn)
+        for p in (p_hosted, p_local):
+            self.conn.execute(
+                "INSERT INTO consentimiento (person_id, version, accepted_at) VALUES (?, ?, ?)",
+                (p, "consentimiento-v4", "2026-01-01T00:00:00+00:00"),
+            )
+        self.conn.commit()
+        self.assertIsNotNone(p_hosted_sin_consentir)
+
+        out = cobertura.conteo_personas(self.conn)
+        # Only the hosted, consented person counts -- the local install's own person is never
+        # hosted (no cuenta_sub), and the hosted-but-not-consented person has no consent row.
+        self.assertEqual(out["consentidos"], 1)
+
+    def test_activos_30d_counts_recent_sessions_only(self):
+        p_reciente = cuenta.resolve_person(self.conn, {"sub": "sub-c", "duna_productos": ["body"]})
+        p_viejo = cuenta.resolve_person(self.conn, {"sub": "sub-d", "duna_productos": ["body"]})
+        cuenta.create_session(self.conn, p_reciente, None)
+        cuenta.create_session(self.conn, p_viejo, None)
+        reciente = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat(timespec="seconds")
+        viejo = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat(timespec="seconds")
+        self.conn.execute("UPDATE sesion SET last_seen_at = ? WHERE person_id = ?", (reciente, p_reciente))
+        self.conn.execute("UPDATE sesion SET last_seen_at = ? WHERE person_id = ?", (viejo, p_viejo))
+        self.conn.commit()
+
+        out = cobertura.conteo_personas(self.conn)
+        self.assertEqual(out["activos_30d"], 1)
+
+    def test_no_hosted_persons_is_zero_and_zero(self):
+        db.local_person_id(self.conn)
+        out = cobertura.conteo_personas(self.conn)
+        self.assertEqual(out, {"consentidos": 0, "activos_30d": 0})
+
+
+class ConteoPersonasCliTest(unittest.TestCase):
+    def setUp(self):
+        self.orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "conteo-cli.db"
+        conn = open_conn(self, config.DB_PATH)
+        db.init(conn)
+        p = cuenta.resolve_person(conn, {"sub": "sub-secret-xyz", "duna_productos": ["body"]})
+        conn.execute(
+            "INSERT INTO consentimiento (person_id, version, accepted_at) VALUES (?, ?, ?)",
+            (p, "consentimiento-v4", "2026-01-01T00:00:00+00:00"),
+        )
+        conn.commit()
+        conn.close()
+
+    def test_cli_conteo_prints_only_two_counts_never_a_sub(self):
+        buf = []
+        with mock.patch("builtins.print", side_effect=lambda *a: buf.append(" ".join(str(x) for x in a))):
+            rc = cobertura.main(["--conteo"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(buf), 1)
+        self.assertIn("consentidos=1", buf[0])
+        self.assertIn("activos_30d=0", buf[0])
+        self.assertNotIn("sub-secret-xyz", buf[0])
+
+    def test_cli_conteo_leaves_the_database_unchanged(self):
+        path = config.DB_PATH
+        before_bytes = path.read_bytes()
+        before_mtime = os.stat(path).st_mtime_ns
+        with mock.patch("builtins.print"):
+            cobertura.main(["--conteo"])
+        self.assertEqual(path.read_bytes(), before_bytes)
+        self.assertEqual(os.stat(path).st_mtime_ns, before_mtime)
 
 
 # --------------------------------------------------------------------------------------- the CLI
