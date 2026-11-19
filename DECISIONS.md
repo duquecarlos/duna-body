@@ -30726,6 +30726,9 @@ data, which this slice does not do.
 
 **Commits:** `17e7deb` (step 1: `body/cobertura.py` and `tests/test_cobertura.py`) -- `7c9f77d`
 (step 2: the `cobertura` host verb, ruling 3's `--conteo` census, and their tests) -- `314c547`
-(the AST-guard fix the gate found) -- merged `<pending>` into `main` (BODY-HISTORIA-MINUTO-2-M below,
-if a separate merge step is needed, or appended to this entry on merge).
+(the AST-guard fix the gate found) -- `75aea84` (this ledger entry) -- merged `d20dc31` into `main`
+(`--no-ff`, no conflict: main had not moved since the branch forked, so the merge tree is identical
+to the branch tree -- `git diff d20dc31 feat/body-historia-minuto-2` is empty). Post-merge smoke
+(`tests.test_cobertura tests.test_host_import tests.test_deploy_host tests.test_host_deploy`, the
+four modules this slice touched or added): `Ran 169 tests in 7.429s`, `OK`.
 
