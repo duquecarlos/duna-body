@@ -29918,3 +29918,119 @@ deployed; deploying stays Carlos's").
 smoke (`tests.test_vida_export tests.test_vida_dia tests.test_sueno_corregido tests.test_persona_fuga`):
 `Ran 59 tests in 25.539s` -- `OK`.
 
+## BODY-HISTORIA-VIDA-LUGARES-2-R
+
+**Carlos's own words, relayed by the desk, carried into this slice verbatim (surface):** «remember
+that I want in body all my historical data...», and on 2026-11-18: «I think that body should be
+like the app that reflects reality in most accurate about my body so because it's the mix between
+the data that is stored by the watch and and all the other info that can gather, use as my
+timeline, GPS, the things that I report to you, eating, training with detail, I mean everything.»
+
+**What this slice built on:** BODY-HISTORIA-VIDA-LUGARES-1 (MERGED `765010b`) and -1-WINDOW
+(MERGED `32d3509`) cached each person's Lugares trips in `viaje_lugares`, read by
+`db.viajes_lugares` (`body/db.py:2537`) -- nothing read a trip yet. BODY-HISTORIA-VIDA-LUGARES-1-INV
+ranked the uses; BODY-HISTORIA-VIDA-LUGARES-2's own worker stopped at its census (missing
+`body/profile.py` from its touches) and the orchestrator ruled the continuation below before this
+slice started.
+
+**ORCH-CARLOS-DELEGATES-TIER-1-1's rulings, as built:**
+
+0. **The one helper** -- `viajes.dias_de_viaje(conn, person_id, desde, hasta) -> set[str]`
+   (`body/viajes.py:14`), one statement over `db.viajes_lugares`, every day of a trip whose own
+   span (`ends_at - starts_at + 1`) is 2 or more days, clipped to `[desde, hasta]` -- a 1-day trip
+   contributes nothing. Every ruling below goes through it, never a second trip query.
+1. **Seasons** -- `practicas._contexto` (`body/practicas.py:442`) gains `viaje_dias` (a count) next
+   to `turnos`, read from a `viaje_dias_totales` set `estado()` (`body/practicas.py:498`) reads ONCE
+   over `[primero, ultimo]` (the baseline's own widest span) and hands to every temporada's and the
+   baseline's own `_contexto` call -- never a read per temporada. Historia/Temporada's context line
+   (`body/rutas/historial.py:296-301`, new helper `_viaje_dias_txt` at `:292`) adds one part when
+   `viaje_dias > 0`: es «{n} días de viaje» / en «{n} days travelling», with `_one` siblings («1 día
+   de viaje» / «1 day travelling»).
+2. **Tendencias** -- `profile.window_svg` (`body/profile.py:220`) gains a `viajes: set[str] =
+   frozenset()` parameter (default empty, so every caller that does not pass it renders
+   byte-identical) and draws a `c-viaje` mark per trip day exactly as it draws nights/marcas
+   (`body/profile.py:267`). `/trends` (`body/rutas/tendencias.py:552`) reads the window's own trip
+   days ONCE, only when a range or month is picked (never for the "all" monthly view, which has no
+   daily window to mark), and hands it through `_trend_card` (`body/rutas/tendencias.py:432`) to
+   `window_svg`. The legend (`body/templates/trends.html`) adds an entry, es «De viaje» / en
+   «Travelling», drawn only when the window has trip days. `.c-viaje` is a new fixed-palette class
+   (`body/static/body.css`, `--viaje` token in both themes) -- never a `var(...)` string in markup
+   (BODY-ESTILOS-1).
+3. **Día** -- `day_view` (`body/rutas/hoy.py:1285`) reads this one day against the person's own
+   trips, unconditionally (one statement, every call). `day.html` shows one plain line near the top,
+   right after the marked-period line: es «De viaje (Lugares).» / en «Travelling (Lugares).»;
+   nothing when the day is not inside a 2+ day trip.
+4. **Assistant** -- `_leer_dia` (`body/agente/herramientas.py:809`) sets `de_viaje: true|false` for
+   the day asked, through the same helper, still `lectura`-only (no write).
+5. **Wake model** -- `despertar_real._eventos_lugares` (`body/despertar_real.py:115`) STAYS EMPTY;
+   its docstring now cites this ruling directly (a trip day is context, never a timed event that
+   could bound a get-up time) and confirms it returns `[]` even with a qualifying trip in range
+   (`tests/test_despertar_real.py::EventosLugaresTest`).
+6. **Día polish** (found by the orchestrator in the browser, BODY-DESPERTAR-REAL-6B) --
+   `day_view` (`body/rutas/hoy.py:1345`) sets `despertar_ctx["garmin_linea"] = None` whenever the
+   sleep card's own `incluye_correccion` provenance line is showing (a `sueno` correction applied):
+   Garmin's end is said once, never twice. With no `sueno` correction, `despertar_ctx` is passed
+   through exactly as `_despertar_dia_ctx` built it -- byte-identical to before this ruling.
+7. **Cost** -- each route reads trips at most once. Measured on `tests/test_rendimiento.py`'s own
+   fixture: `/history/practica/{practica_id}` 17 -> 18 statements (ceiling 23, unchanged);
+   `/day/{day}` 67 -> 68 (ceiling 81, unchanged, the read is unconditional); `/trends?r=7` 24 -> 25
+   (ceiling 28, unchanged, the read only runs when a window is picked). No ceiling moved --
+   `tests/test_rendimiento.py`'s own comments near each ceiling now record both figures. Every new
+   string carries es/en parity (`tests/test_i18n_paridad.py`), no `'None'` rendered anywhere a trip
+   mark or line can show.
+
+**Every new string, as committed (es / en):**
+- `practica.contexto_viaje_one` -- "1 día de viaje" / "1 day travelling"
+- `practica.contexto_viaje_other` -- "{n} días de viaje" / "{n} days travelling"
+- `trends.viaje` -- "De viaje" / "Travelling"
+- `day.de_viaje` -- "De viaje (Lugares)." / "Travelling (Lugares)."
+
+**Tests:** `tests/test_viajes.py` (new -- a 5-day trip counts every day, a 1-day trip is ignored, a
+trip straddling a range edge is clipped, another person's trips never counted);
+`tests/test_practicas_web.py` (a season's context names its travel days); `tests/test_profile.py`
+(`window_svg`'s own `viajes` mark, additive, absent by default); `tests/test_periodo_pantallas.py`
+(`/trends`' legend and `c-viaje` mark only for a 2+ day trip in the window; `/day/{day}`'s own line
+for a 2+ day trip, nothing for a 1-day trip or no trip); `tests/test_despertar_pantalla.py`
+(`leer_dia`'s `de_viaje`; the sleep-card-showing case never also renders the older shared Garmin
+line); `tests/test_despertar_real.py` (`_eventos_lugares` stays `[]` with a qualifying trip in
+range); `tests/test_demo.py` (`ViajesDemoSeedTest`, new -- the demo's own already-seeded trips
+(BODY-HISTORIA-VIDA-LUGARES-1's `_seed_lugares`: one past 5-day trip, one past 1-day trip, one
+future 4-day trip) show the Tendencias mark, the Día line, and the Historia count, on the real
+anchor (today), the same as a live demo run).
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run as 11
+sequential alphabetical chunks of dotted modules (218 modules total, ~20 per chunk):
+
+| # | Range | Ran | Result |
+|---|-------|-----|--------|
+| 1 | test_accesibilidad .. test_baselines | 387 | OK (skipped=1, expected failures=1) |
+| 2 | test_baselines_lote .. test_deshacer_derivados | 459 | OK |
+| 3 | test_despertar .. test_errores_texto | 416 | OK |
+| 4 | test_estados_vacios .. test_garmin_web | 349 | OK |
+| 5 | test_get_sin_escritura .. test_host_deploy | 609 | OK |
+| 6 | test_host_import .. test_mcp_cliente_remoto | 399 | OK |
+| 7 | test_mcp_copia_pc .. test_periodo_herramientas | 521 | OK |
+| 8 | test_periodo_pantallas .. test_propuesta_vigencia | 504 | OK |
+| 9 | test_propuestas_tabla .. test_series_unidad | 351 | OK |
+| 10 | test_sesion_conexion_1 .. test_turnos_enlaces | 510 | OK |
+| 11 | test_turnos_esquema_1 .. test_web_entry | 325 | OK |
+
+Sum: 387+459+416+349+609+399+521+504+351+510+325 = **4830**. Reconciled against a separate
+collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`,
+counted the same session, before the chunked run) = **4830** -- exact match, no drift (+17 over the
+4813 base BODY-DESPERTAR-REAL-6C left, matching the tests this slice added: 4 in `test_viajes.py`
+plus the new cases across `test_practicas_web.py`, `test_profile.py`, `test_periodo_pantallas.py`,
+`test_despertar_pantalla.py`, `test_despertar_real.py` and `test_demo.py`). All 11 chunks `OK`;
+every `KeyError`/`AttributeError`/`ValueError`/`RuntimeError`/`NotSignedIn`/`ResourceWarning` line
+printed mid-run is a pre-existing fixture exercising a synthetic error path, not a test failure,
+and none of them are in a file this slice touched. No password, token, session secret, device key
+or real health figure was read, printed or written anywhere in this slice's own work or the gate's
+own stdout; no network call was made (Lugares was never reached -- every trip in every test is an
+invented row written directly into `viaje_lugares`).
+
+**customer_bytes: yes, approved by this spec.** New strings (above) and a new SVG mark/legend on
+`/trends`, a new plain line on `/day/{day}`, a new context phrase on `/history/practica/{id}` --
+every one of them ruled in this slice's own surface, reversible, no schema change, no network.
+
+**Open follow-ups:** none raised by this slice.
+
