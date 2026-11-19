@@ -274,6 +274,9 @@ class SuenoCorregidoTotalTest(unittest.TestCase):
         self.assertIn("8 h 30", page)   # 420 + 90 minutes, the corrected total
         self.assertIn("06:30", page)    # the corrected window end (== the correction's own hora)
         self.assertIn("Incluye tu corrección: Garmin marcó 7 h 00 hasta las 05:00.", page)
+        # BODY-HISTORIA-VIDA-LUGARES-2-R ruling 6: Garmin's own end is said once -- the older
+        # shared "despertar" line never repeats it once the sleep card's own provenance line shows.
+        self.assertNotIn("Garmin marcó el fin del sueño a las", page)
         self.assertNotIn("None", page)
 
     def test_leer_dia_states_the_corrected_total_and_garmins_own_labelled(self):
@@ -309,6 +312,29 @@ class SuenoCorregidoTotalTest(unittest.TestCase):
         page = client.get(f"/day/{DAY}").text
         self.assertIn("7 h 00", page)   # 420 minutes, unchanged
         self.assertNotIn("Incluye tu corrección", page)
+
+
+class LeerDiaDeViajeTest(unittest.TestCase):
+    """BODY-HISTORIA-VIDA-LUGARES-2-R ruling 4: leer_dia states de_viaje for the day asked,
+    through the same one-statement helper every trip-aware screen uses (ruling 0)."""
+
+    def test_de_viaje_true_inside_a_2_day_trip(self):
+        from body.agente import herramientas
+        conn = _web_conn(self, "leer_dia_viaje.db")
+        conn.execute(
+            "INSERT INTO viaje_lugares (person_id, ref, starts_at, ends_at, fetched_at) VALUES "
+            "(1, 'zz-trip', ?, ?, '2026-11-01T00:00:00+00:00')",
+            (DAY, "2026-11-12"),
+        )
+        conn.commit()
+        out = herramientas.ejecutar(conn, 1, "leer_dia", {"day": DAY}, "completo")
+        self.assertIs(out["de_viaje"], True)
+
+    def test_de_viaje_false_with_no_trip(self):
+        from body.agente import herramientas
+        conn = _web_conn(self, "leer_dia_sin_viaje.db")
+        out = herramientas.ejecutar(conn, 1, "leer_dia", {"day": DAY}, "completo")
+        self.assertIs(out["de_viaje"], False)
 
 
 class OtraPersonaTest(unittest.TestCase):

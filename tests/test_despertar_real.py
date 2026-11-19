@@ -285,5 +285,23 @@ class EstresFueraDeDescansoRequeridoTest(unittest.TestCase):
         self.assertNotIn("levantado", tipos)
 
 
+class EventosLugaresTest(unittest.TestCase):
+    """BODY-HISTORIA-VIDA-LUGARES-2-R ruling 5: a trip day is context, never a timed event that
+    could bound a get-up time -- `_eventos_lugares` stays [] even with a qualifying cached trip
+    covering the horizon it is asked about."""
+
+    def test_stays_empty_even_with_a_qualifying_trip_in_range(self):
+        conn = _mkconn(self)
+        conn.execute(
+            "INSERT INTO viaje_lugares (person_id, ref, starts_at, ends_at, fetched_at) VALUES "
+            "(1, 'zz-trip', ?, ?, ?)",
+            (DAY, (datetime.fromisoformat(DAY) + timedelta(days=2)).date().isoformat(), DAY + "T00:00:00+00:00"),
+        )
+        conn.commit()
+        desde = datetime.fromisoformat(DAY)
+        hasta = desde + timedelta(hours=4)
+        self.assertEqual(despertar_real._eventos_lugares(conn, 1, desde, hasta), [])
+
+
 if __name__ == "__main__":
     unittest.main()

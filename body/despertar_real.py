@@ -113,9 +113,12 @@ CONFIANZAS = ("alta", "media", "baja")
 
 
 def _eventos_lugares(conn, person_id: int, desde: datetime, hasta: datetime) -> list[dict]:
-    """Named hook (ruling 3): once Lugares' own read API exists (BODY-HISTORIA-VIDA-LUGARES-1),
-    timeline/GPS evidence plugs in here, in the same {"fuente", "hora"} shape every other event
-    source below uses. [] until then -- Body imports no per-event Timeline/GPS today."""
+    """Named hook (ruling 3). Lugares' own read API now exists (BODY-HISTORIA-VIDA-LUGARES-1) and
+    is read elsewhere (body/viajes.py) -- STAYS EMPTY here by BODY-HISTORIA-VIDA-LUGARES-2-R ruling
+    5: a trip day is context (Historia, Tendencias, Día, the assistant), never a timed event with
+    an hour that could bound a get-up time. A future per-event Timeline/GPS source, if Lugares ever
+    offers one, would plug in here in the same {"fuente", "hora"} shape every other event source
+    below uses; a whole-day trip cannot, so this returns [] regardless."""
     return []
 
 
