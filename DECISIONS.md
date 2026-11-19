@@ -29814,3 +29814,105 @@ ceiling) -- `ae087b4` (this ledger entry) -- merged `aed5e75` into `main` (`--no
 Post-merge smoke (`tests.test_hogar_feed tests.test_rendimiento tests.test_dispositivo`): `Ran 144
 tests in 77.882s` -- `OK`.
 
+## BODY-DESPERTAR-REAL-6C
+
+**Carlos's own words, relayed by the desk 2026-11-18, carried into this slice verbatim (surface):**
+«I think that body should be like the app that reflects reality in most accurate about my body so
+because it's the mix between the data that is stored by the watch and and all the other info that
+can gather, use as my timeline, GPS, the things that I report to you, eating, training with detail,
+I mean everything.»
+
+**Main's contract ruling, vida-v1, verbatim (hub `hit_01m7r7f4wh1w4zq01e1crvny0k`, 2026-11-18,
+`contracts/vida-v1.md`):** «`kind` = `measured` | `estimated` | `corrected` (`corrected`, added
+2026-11-18 by Main for Body: a device's measured figure that the person themself corrected, for
+example «I was still asleep until 8:00». It shows as «tu corrección» wherever it appears. The app
+that holds the correction keeps the device's original figure, and `source` stays the app that wrote
+the value.»
+
+**The defect this slice fixes (BODY-DESPERTAR-REAL-6-INV, OBSERVED):** BODY-DESPERTAR-REAL-6B's seam
+(`daily_metric_efectiva`) turned `db.series`'s sleep figure into the person's own corrected value
+everywhere it is read, but `body/vida_export.py`'s `week_section` (Tier 1, untouched by -6B) still
+read through `db.series` and labelled the result with `metric_def`'s own `kind` ("measured") --
+a mislabel on the wire, never deployed. `body/vida_dia.py`'s `day_section` read Garmin's own figure
+through `db.series_garmin`, named, so it carried no mislabel but also never showed a correction that
+existed.
+
+**ORCH-CARLOS-DELEGATES-TIER-1-1's rulings, as built:**
+
+1. **Reader** -- `db.series_origen(conn, key, start, end, person_id) -> dict[day, (value, corregido)]`
+   (`body/db.py:2456`), one statement over `daily_metric_efectiva`, returning the corrected value WITH
+   its provenance. `db.series_garmin` (`body/db.py:2445`) census: still has one named caller,
+   `body/agente/herramientas.py:823` (`_registrar_medida`'s undo/compare path) -- kept, not removed,
+   per the ruling's own condition. Its docstring updated to name that caller instead of the stale
+   "until BODY-DESPERTAR-REAL-6C" forward reference.
+2. **Day** (`body/vida_dia.py:52-60`, `day_section`) -- every `DAY_METRICS` key reads through
+   `db.series_origen`; a corrected day carries `kind: "corrected"`, every other kind unchanged
+   (`readiness`, never touched by the view's `CASE`, keeps `"estimated"`). Garmin's original figure is
+   not sent -- Body keeps it in `daily_metric`, read only through `db.series_garmin`'s one remaining
+   caller. The `body.sleep` event's `ends_at` is untouched: still `sleep_session.end_local`, Garmin's
+   own session record, as the surface required absent contract text saying otherwise (none found).
+3. **Week** (`body/vida_export.py:52-58`, `week_section`) -- every `WEEK_METRICS` key averages through
+   `db.series_origen`; a week whose averaged days include at least one corrected value carries
+   `kind: "corrected"` on that metric item, every other metric's kind unchanged. No new field on the
+   item -- the contract's item shape is unchanged.
+4. **Contract copy** -- `docs/contracts/vida-v1.md` re-copied byte-for-byte from
+   `C:\Duna\dev-protocol\contracts\vida-v1.md` at `7d0285ec8878a679f64cb7727a83666f09222219` (read via
+   `git -C`/`git show`, never edited there). Only the first-line provenance note changed; it also
+   carries the `trip` event rename (LUGARES-VIDA-VIAJES-LECTURA-1) and the Body folder-move note
+   (BODY-FOLDER-MOVE-1) the stale FORK-1 copy was missing, both pre-existing upstream changes this
+   re-copy picks up as a side effect of catching the copy up, not separately ruled on here.
+5. **Tests** -- `db.series_origen`'s own provenance read and its uncorrected case
+   (`tests/test_sueno_corregido.py`, `ReadersMoveTest`); `day_section` with and without a correction,
+   `readiness` keeping `"estimated"` (`tests/test_vida_dia.py`, `DaySectionCorrectedTest`);
+   `week_section` with one corrected night (kind `"corrected"`, every other metric unchanged) and with
+   none (kind `"measured"`, value unchanged) (`tests/test_vida_export.py`, `CorrectedWeekTest`);
+   another person's `"sueno"` correction never marks the viewer's own week corrected
+   (`tests/test_persona_fuga.py`, `VidaExportNoLeakTest.test_bs_sueno_correction_never_marks_as_week_corrected`);
+   `db.series_origen` added to the no-default-`person_id` census (`tests/test_person_scope.py`). The
+   allow-list in `tests/test_sueno_corregido.py` drops its two stale `vida_dia.py`/`vida_export.py`
+   entries by name (neither reads a bare table or the view directly; the regex that owns that census
+   never matched either file's Python-level call either before or after this slice).
+
+**Statement ceiling:** not touched by this slice -- no route changed, no new SQL added to a route's
+own hot path (`db.series_origen` is a new function, not a new call site inside an existing ceiling-
+checked route).
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run as 11
+sequential alphabetical chunks of dotted modules (217 modules total, ~20 per chunk):
+
+| # | Range | Ran | Result |
+|---|-------|-----|--------|
+| 1 | test_accesibilidad .. test_baselines | 387 | OK (skipped=1, expected failures=1) |
+| 2 | test_baselines_lote .. test_deshacer_derivados | 456 | OK |
+| 3 | test_despertar .. test_errores_texto | 413 | OK |
+| 4 | test_estados_vacios .. test_garmin_web | 349 | OK |
+| 5 | test_get_sin_escritura .. test_host_deploy | 609 | OK |
+| 6 | test_host_import .. test_mcp_cliente_remoto | 399 | OK |
+| 7 | test_mcp_copia_pc .. test_periodo_herramientas | 521 | OK |
+| 8 | test_periodo_pantallas .. test_propuesta_vigencia | 497 | OK |
+| 9 | test_propuestas_tabla .. test_series_unidad | 351 | OK |
+| 10 | test_sesion_conexion_1 .. test_turnos_enlaces | 510 | OK |
+| 11 | test_turnos_esquema_1 .. test_web_entry | 321 | OK |
+
+Sum: 387+456+413+349+609+399+521+497+351+510+321 = **4813**. Reconciled against a separate
+collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted the same
+turn, before the chunked run) = **4813** -- exact match, no drift (+7 over the 4806 base this slice
+started from, matching the 7 tests this slice added). All 11 chunks `OK`; every
+`NotSignedIn`/`GarminConnect*Error`/`RuntimeError`/`ValueError`/`AttributeError`/`ResourceWarning`/
+`IntegrityError`/`KeyError` line and the one injected-mock thread traceback printed mid-run are
+pre-existing fixtures exercising synthetic error paths, not test failures, and none of them are in a
+file this slice touched. No password, token, session secret, device key or real health figure was
+read, printed or written anywhere in this slice's own work or the gate's own stdout; no network call
+was made.
+
+**customer_bytes: none.** No route, no screen string, no schema change. `vida_export.py` and
+`vida_dia.py` write a local JSON file Personal reads (vida-v1), and this slice only changes the
+`kind` value on an existing field of an existing item shape -- the contract's own item shape is
+unchanged, and nothing deployed reads this file yet (BODY-DESPERTAR-REAL-6-INV's surface: "Nothing
+deployed; deploying stays Carlos's").
+
+**Open follow-ups:** none raised by this slice.
+
+**Commits:** `5180c40` (rulings 1-3, tests) -- `9d11e9b` (ruling 4, the contract re-copy) -- this
+ledger entry, to follow -- merge into `main` to follow.
+
