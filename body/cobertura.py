@@ -33,7 +33,7 @@ import statistics
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from . import backup, config, cuenta, db, fechas, garmin_adapter, pull
+from . import backup, config, cuenta, db, errores, fechas, garmin_adapter, pull
 
 # list_key (the raw payload key parse_sleep_series reads) -> its own short name in that
 # function's output dict -- derived from the single source of truth so this never drifts from it.
@@ -260,7 +260,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         out = recopilar(conn, a.cuenta_sub)
     except ValueError as exc:
-        print(f"refused: {exc}")
+        print(f"refused: {errores.texto_seguro(exc)}")
         return 1
     finally:
         conn.close()
