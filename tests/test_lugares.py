@@ -155,26 +155,129 @@ class TokenNeverLeaksTest(unittest.TestCase):
                 self.fail("expected RuntimeError to propagate out of sincronizar (the safe wrapper catches it)")
 
 
+def _parse_rango(url: str) -> tuple[date, date]:
+    """Pulls desde/hasta back out of a URL this module built, for the span assertions below."""
+    partes = dict(p.split("=", 1) for p in url.split("?", 1)[1].split("&"))
+    return date.fromisoformat(partes["desde"]), date.fromisoformat(partes["hasta"])
+
+
 class RequestShapeTest(unittest.TestCase):
-    def test_request_carries_exactly_person_desde_hasta_and_bearer_header(self):
+    """BODY-HISTORIA-VIDA-LUGARES-1-WINDOW: TWO requests, each within Lugares' own maximum span."""
+
+    def test_makes_exactly_two_requests_with_the_exact_ranges(self):
         conn = _conn(self)
-        captured = {}
+        llamadas = []
 
         def _fake(url, token):
-            captured["url"] = url
-            captured["token"] = token
+            llamadas.append((url, token))
             return 200, {"eventos": []}
 
         with _patch_token(), mock.patch("body.lugares._get_json", side_effect=_fake):
             lugares.sincronizar(conn, 2, HOY)
-        url = captured["url"]
-        self.assertTrue(url.startswith("https://lugares.duna.solutions/api/vida/eventos?"))
-        self.assertIn(f"person={SUB_A}", url)
-        desde = (HOY - timedelta(days=lugares.VENTANA_PASADO_DIAS)).isoformat()
-        hasta = (HOY + timedelta(days=lugares.VENTANA_FUTURO_DIAS)).isoformat()
-        self.assertIn(f"desde={desde}", url)
-        self.assertIn(f"hasta={hasta}", url)
-        self.assertEqual(captured["token"], TOKEN)
+        self.assertEqual(len(llamadas), 2)
+
+        url_pasado, token_pasado = llamadas[0]
+        self.assertTrue(url_pasado.startswith("https://lugares.duna.solutions/api/vida/eventos?"))
+        self.assertIn(f"person={SUB_A}", url_pasado)
+        desde_pasado = (HOY - timedelta(days=lugares.VENTANA_PASADO_DIAS)).isoformat()
+        self.assertIn(f"desde={desde_pasado}", url_pasado)
+        self.assertIn(f"hasta={HOY.isoformat()}", url_pasado)
+        self.assertEqual(token_pasado, TOKEN)
+
+        url_planeado, token_planeado = llamadas[1]
+        desde_planeado = (HOY + timedelta(days=1)).isoformat()
+        hasta_planeado = (HOY + timedelta(days=lugares.VENTANA_FUTURO_DIAS)).isoformat()
+        self.assertIn(f"desde={desde_planeado}", url_planeado)
+        self.assertIn(f"hasta={hasta_planeado}", url_planeado)
+        self.assertEqual(token_planeado, TOKEN)
+
+    def test_every_request_stays_inside_the_maximum_span_and_desde_le_hasta(self):
+        conn = _conn(self)
+        llamadas = []
+
+        def _fake(url, token):
+            llamadas.append(url)
+            return 200, {"eventos": []}
+
+        with _patch_token(), mock.patch("body.lugares._get_json", side_effect=_fake):
+            lugares.sincronizar(conn, 2, HOY)
+        self.assertEqual(len(llamadas), 2)
+        for url in llamadas:
+            desde, hasta = _parse_rango(url)
+            self.assertLessEqual(desde, hasta)
+            self.assertLessEqual((hasta - desde).days, lugares.MAX_SPAN_DIAS)
+
+
+class MergedWindowTest(unittest.TestCase):
+    """BODY-HISTORIA-VIDA-LUGARES-1-WINDOW: the two answers are merged by ref; a trip present in
+    both is stored once; the cache is replaced only when BOTH answers are 200 and valid; a failure
+    on either call keeps the cache and records that call's own motivo."""
+
+    def test_a_trip_present_in_both_answers_is_stored_once(self):
+        conn = _conn(self)
+        comun_evento = _evento(999, "2026-11-15", "2026-11-20")  # spans HOY, in both ranges
+        pasado = {"eventos": [_evento(101, "2026-10-01", "2026-10-05"), comun_evento]}
+        planeado = {"eventos": [comun_evento, _evento(202, "2026-12-01", "2026-12-03")]}
+        with _patch_token(), mock.patch("body.lugares._get_json",
+                                         side_effect=[(200, pasado), (200, planeado)]):
+            resultado = lugares.sincronizar(conn, 2, HOY)
+        self.assertEqual(resultado, {"estado": "ok", "viajes": 3, "invalidos": 0})
+        refs = {r["ref"] for r in conn.execute("SELECT ref FROM viaje_lugares WHERE person_id = 2")}
+        self.assertEqual(refs, {"101", "999", "202"})
+
+    def test_both_200_replaces_the_cache(self):
+        conn = _conn(self)
+        pasado = {"eventos": [_evento(101, "2026-10-01", "2026-10-05")]}
+        planeado = {"eventos": [_evento(202, "2026-12-01", "2026-12-03")]}
+        with _patch_token(), mock.patch("body.lugares._get_json",
+                                         side_effect=[(200, pasado), (200, planeado)]):
+            resultado = lugares.sincronizar(conn, 2, HOY)
+        self.assertEqual(resultado, {"estado": "ok", "viajes": 2, "invalidos": 0})
+
+    def _seed_one_trip(self, conn):
+        with _patch_token(), mock.patch("body.lugares._get_json",
+                                         return_value=(200, {"eventos": [_evento(101, "2026-10-01", "2026-10-05")]})):
+            lugares.sincronizar(conn, 2, HOY)
+
+    def _assert_kept(self, conn, motivo_esperado):
+        refs = {r["ref"] for r in conn.execute("SELECT ref FROM viaje_lugares WHERE person_id = 2")}
+        self.assertEqual(refs, {"101"})
+        row = conn.execute("SELECT motivo FROM lugares_sync WHERE person_id = 2").fetchone()
+        self.assertEqual(row["motivo"], motivo_esperado)
+
+    def test_past_401_planned_200_keeps_cache_and_records_past_motivo(self):
+        conn = _conn(self)
+        self._seed_one_trip(conn)
+        with _patch_token(), mock.patch("body.lugares._get_json",
+                                         side_effect=[(401, {}), (200, {"eventos": []})]):
+            resultado = lugares.sincronizar(conn, 2, HOY)
+        self.assertEqual(resultado, {"estado": "error", "viajes": 0, "motivo": "token_invalido"})
+        self._assert_kept(conn, "token_invalido")
+
+    def test_past_200_planned_401_keeps_cache_and_records_planned_motivo(self):
+        conn = _conn(self)
+        self._seed_one_trip(conn)
+        with _patch_token(), mock.patch("body.lugares._get_json",
+                                         side_effect=[(200, {"eventos": []}), (401, {})]):
+            resultado = lugares.sincronizar(conn, 2, HOY)
+        self.assertEqual(resultado, {"estado": "error", "viajes": 0, "motivo": "token_invalido"})
+        self._assert_kept(conn, "token_invalido")
+
+    def test_network_error_on_past_keeps_cache(self):
+        conn = _conn(self)
+        self._seed_one_trip(conn)
+        with _patch_token(), mock.patch("body.lugares._get_json",
+                                         side_effect=[(0, {}), (200, {"eventos": []})]):
+            lugares.sincronizar(conn, 2, HOY)
+        self._assert_kept(conn, "red")
+
+    def test_network_error_on_planned_keeps_cache(self):
+        conn = _conn(self)
+        self._seed_one_trip(conn)
+        with _patch_token(), mock.patch("body.lugares._get_json",
+                                         side_effect=[(200, {"eventos": []}), (0, {})]):
+            lugares.sincronizar(conn, 2, HOY)
+        self._assert_kept(conn, "red")
 
 
 class SyncSuccessTest(unittest.TestCase):
@@ -208,7 +311,8 @@ class SyncSuccessTest(unittest.TestCase):
             {"kind": "trip", "ref": 104},                     # no dates at all
             _evento(105, "2026-10-01", "2026-10-05", kind="stay"),  # wrong kind
         ]}
-        with _patch_token(), mock.patch("body.lugares._get_json", return_value=(200, eventos)):
+        with _patch_token(), mock.patch("body.lugares._get_json",
+                                         side_effect=[(200, eventos), (200, {"eventos": []})]):
             resultado = lugares.sincronizar(conn, 2, HOY)
         self.assertEqual(resultado, {"estado": "ok", "viajes": 1, "invalidos": 4})
 
@@ -372,7 +476,7 @@ class SafeWrapperTest(unittest.TestCase):
                                          return_value=(200, {"eventos": []})) as m:
             pull._sincronizar_lugares_seguro(conn, 2)
             pull._sincronizar_lugares_seguro(conn, 2)
-        self.assertEqual(m.call_count, 1)
+        self.assertEqual(m.call_count, 2, "one sincronizar (two requests: past + planned), not two")
 
     def test_backfill_never_calls_it(self):
         """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5: --backfill does not call it."""
