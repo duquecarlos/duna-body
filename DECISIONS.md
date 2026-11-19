@@ -30456,8 +30456,8 @@ files (above) is its own deviation, not this slice's.
 **Open follow-ups:** none beyond the flake BODY-NOCHE-LECTURA-1-M fixes.
 
 **Commits:** `6e34f8a` (step 1-2: ruling 1 fix, `leer_noche` built) -- `9e343ff` (step 3: ruling 5
-census) -- merged into `main` as part of BODY-NOCHE-LECTURA-1-M below (same merge commit covers
-both).
+census) -- merged `4256c83` into `main` (BODY-NOCHE-LECTURA-1-M below covers the merge and its
+post-merge finding).
 
 ## BODY-NOCHE-LECTURA-1-M
 
@@ -30527,6 +30527,45 @@ approves the merge" (ORCH-CARLOS-DELEGATES-TIER-1-1).
 (`tests/test_demo.py`, `tests/test_isolate_limpieza.py`, `tests/test_vivo.py`) spawn `python`/`git`,
 not `bash`, so they are not the same shape ruling 2 named and needed no follow-up.
 
-**Commits:** `3c5531d` (step 1-2: name the ceiling, raise it, three isolated runs) -- this ledger
-entry, committed before the merge per this slice's own step order.
+**Commits:** `3c5531d` (step 1-2: name the ceiling, raise it, three isolated runs) -- `b574d36`
+(step 3: this and the above ledger entry) -- merged `4256c83` into `main` (`--no-ff`, no textual
+conflicts). Tree identity: merge tree `8f700ecb...` equals branch tree `8f700ecb...`, diff empty.
+
+**Post-merge smoke, as specified
+(`tests.test_leer_noche tests.test_leer_intradia tests.test_mcp tests.test_agente_registro
+tests.test_host_autoactualizar`), literal result:** `Ran 165 tests in 577.070s` -- `FAILED
+(failures=3)`, all three in `tests.test_agente_registro.DisponiblesTest`
+(`test_completo_allows_every_tool`, `test_resumen_allows_resumen_and_ninguno`,
+`test_ninguno_allows_only_ninguno`), each missing `proponer_confirmar_turnos`/`leer_turnos`/
+`leer_costo_turnos` from the computed `disponibles()` set.
+
+**Root cause, isolated:** `tests/test_mcp.py:71` calls
+`herramientas.fijar_turnos_actual(db.trabaja_turnos_si(...))`, which sets module-level ContextVar
+`_TURNOS_ACTUAL` (`body/agente/herramientas.py:86`, default `True`) via a bare `.set()` with no
+token/reset (`:91-92`). Run in the same process AFTER `test_mcp` but BEFORE
+`test_agente_registro.DisponiblesTest`, that leaked `False` value hides the three shift tools from
+`disponibles()`. **Confirmed pre-existing on bare `main` (406ecfc, before this slice and before
+BODY-NOCHE-LECTURA-1 touched either file):** a temporary local branch at `406ecfc` running only
+`.venv/Scripts/python.exe -m unittest tests.test_mcp tests.test_agente_registro` (that exact order,
+the minimal reproduction) fails identically -- `Ran 72 tests in 17.175s` -- `FAILED (failures=3)`,
+same three tests, same missing names. Neither `tests/test_mcp.py:71` nor the `_TURNOS_ACTUAL`
+pattern is in this slice's `touches`; NOCHE's own edit to `tests/test_mcp.py` (`9e343ff`, +17 lines
+at `:437-453`) only adds a new test method after the existing ones and never touches line 71. The
+mandated gate command itself (`unittest discover tests -t .`, alphabetical module order) never
+triggers this leak -- `test_agente_registro` runs in chunk 1, long before `test_mcp` in chunk 7, each
+chunk its own process -- which is exactly why this slice's 12-chunk gate above was green. The smoke
+command's own module order (not alphabetical) is what exposed it. Not re-ordered to dodge it, per
+"a reproducing failure is never re-run into green" -- reported as found instead.
+
+**Open follow-up coined here: `BODY-TURNOS-ACTUAL-CONTEXTVAR-LEAK-1`** -- give `_TURNOS_ACTUAL`
+test isolation (a `contextvars.Token`-based reset in `tests/test_mcp.py`'s own
+tearDown/fixture, or a context-manager wrapper around `fijar_turnos_actual` in
+`body/agente/herramientas.py:91-92`) so one test module's call can never leak into a module that
+runs after it in the same process. Not fixed here: outside `touches`, pre-existing on `main`, and
+this slice's own mandated gate (the thing merge policy actually gates on) is green.
+
+**Verdict: merge stands.** The failure is not a regression from this slice's or NOCHE's diff, it
+reproduces identically on `main` before either existed, it is outside `touches`, and the full
+mandated gate (alphabetical, reconciled 4902=4902) found nothing. Reverting a proven-safe merge over
+a pre-existing, order-dependent flake in an unrelated file would not make the tree any more correct.
 
