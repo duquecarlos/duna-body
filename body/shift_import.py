@@ -21,7 +21,7 @@ from collections import defaultdict
 from datetime import date, datetime
 from pathlib import Path
 
-from . import db, errores
+from . import db, errores, turno_fc
 
 VALID_KINDS = set(db.SHIFT_KINDS)
 SLOT_INDEX_NAME = "idx_shift_slot"
@@ -29,6 +29,11 @@ SLOT_INDEX_NAME = "idx_shift_slot"
 
 class ImportRefused(Exception):
     """The whole file failed validation, or the batch could not be found; nothing was written."""
+
+
+class UndoRefused(Exception):
+    """The batch cannot be undone -- not this person's, not 'confirmed'/'superseded', or a legacy
+    row on an affected day this undo cannot account for; nothing was written."""
 
 
 class SlotIndexMissing(Exception):
@@ -171,6 +176,8 @@ def confirm(conn: sqlite3.Connection, batch_id: int) -> None:
     batch = conn.execute("SELECT * FROM shift_batch WHERE id = ?", (batch_id,)).fetchone()
     if batch is None:
         raise ImportRefused(f"no such batch {batch_id}")
+    if batch["status"] == "undone":
+        raise ImportRefused(f"batch {batch_id} was undone; propose a new import instead")
     person_id = batch["person_id"]
     order = (batch["received"], batch["extracted_at"])
     items = conn.execute("SELECT * FROM shift_batch_item WHERE batch_id = ? ORDER BY day", (batch_id,)).fetchall()
@@ -228,6 +235,119 @@ def _mark_superseded(conn: sqlite3.Connection, person_id: int, just_confirmed: i
         bid = r["batch_id"]
         if conn.execute("SELECT 1 FROM shift WHERE batch_id = ?", (bid,)).fetchone() is None:
             conn.execute("UPDATE shift_batch SET status = 'superseded' WHERE id = ?", (bid,))
+
+
+def undo(conn: sqlite3.Connection, person_id: int, batch_id: int) -> dict:
+    """BODY-TURNOS-DESHACER-LOTE-2 ruling 2 (ORCH-CARLOS-DELEGATES-TIER-1-1): reverses confirm() for
+    exactly this batch's own days, day by day, in one transaction. Refused outright, writing
+    nothing, unless the batch is this person's own and its status is 'confirmed' or 'superseded' --
+    and refused the same way if an affected day carries a legacy `shift` row (a personal:/patron:
+    source with no batch_id at all, BODY-TURNOS-DESHACER-LOTE-1-INV's own unknown) this undo cannot
+    account for, rather than silently leaving that day as it is.
+
+    The affected days are read from `shift.batch_id` itself (never from shift_batch_item's own
+    historical outcome, which can list a day this batch never actually wrote to -- manual_kept/
+    newer_kept days are exactly the days confirm() skipped). Each day falls back to the most recent
+    OTHER batch of this person (confirm()'s own (received, extracted_at) precedence) among
+    'confirmed'/'superseded' batches -- never 'undone'/'dismissed'/'proposed' -- whose
+    shift_batch_item has that day, written with the exact source/batch_id shape confirm() itself
+    uses; a day with no such batch ends with no shift row at all (what the person had before this
+    batch was ever confirmed), and a manual row on a day is never touched either way. A fallback
+    batch that regains a row this way, and was 'superseded' only because this batch had replaced
+    it, flips back to 'confirmed' -- the exact mirror of `_mark_superseded`'s own check, which flips
+    'confirmed' -> 'superseded' the moment a batch's own rows all disappear.
+
+    The undone batch's own shift_batch_item rows marked 'applied' are reset to NULL (ruling 1 widens
+    only shift_batch.status, not shift_batch_item's own outcome CHECK, so there is no 'undone' value
+    to set there -- NULL already means "not currently applied" and the parent batch's own status is
+    what says 'undone'). The undone batch's `decided_at` is stamped now, the same convention
+    confirm()/dismiss() already use for their own decision moment.
+
+    turno_fc rows for every affected day are deleted through turno_fc.eliminar_dias (never a raw
+    DELETE here, ruling 2(g)), so the next recalcular() fills them again from whatever this undo
+    left in `shift`. Returns counts only -- never a health figure."""
+    batch = conn.execute(
+        "SELECT * FROM shift_batch WHERE id = ? AND person_id = ?", (batch_id, person_id)
+    ).fetchone()
+    if batch is None:
+        raise UndoRefused(f"no such batch {batch_id} for this person")
+    if batch["status"] not in ("confirmed", "superseded"):
+        raise UndoRefused(f"batch {batch_id} is {batch['status']!r}, not confirmed or superseded")
+
+    days = sorted({
+        r["day"] for r in conn.execute(
+            "SELECT DISTINCT day FROM shift WHERE batch_id = ?", (batch_id,)
+        ).fetchall()
+    })
+    if days:
+        placeholders = ",".join("?" * len(days))
+        legacy = conn.execute(
+            f"SELECT 1 FROM shift WHERE person_id = ? AND day IN ({placeholders}) AND batch_id IS NULL "
+            "AND (source LIKE 'personal:%' OR source LIKE 'patron:%') LIMIT 1",
+            (person_id, *days),
+        ).fetchone()
+        if legacy:
+            raise UndoRefused(
+                f"batch {batch_id} has a legacy shift row with no batch_id on an affected day"
+            )
+
+    days_restored = days_emptied = days_kept_manual = 0
+    flipped_back: set[int] = set()
+    now = datetime.now().isoformat(timespec="seconds")
+    with conn:
+        conn.execute("DELETE FROM shift WHERE batch_id = ?", (batch_id,))
+        for day in days:
+            manual = conn.execute(
+                "SELECT 1 FROM shift WHERE person_id = ? AND day = ? AND source = 'manual'", (person_id, day)
+            ).fetchone()
+            if manual:
+                days_kept_manual += 1
+                continue
+            fallback = conn.execute(
+                "SELECT b.id, b.kind, b.file_name FROM shift_batch b "
+                "JOIN shift_batch_item i ON i.batch_id = b.id "
+                "WHERE b.person_id = ? AND b.id != ? AND b.status IN ('confirmed', 'superseded') "
+                "AND i.day = ? ORDER BY b.received DESC, b.extracted_at DESC LIMIT 1",
+                (person_id, batch_id, day),
+            ).fetchone()
+            if fallback is None:
+                days_emptied += 1
+                continue
+            fb_items = conn.execute(
+                "SELECT * FROM shift_batch_item WHERE batch_id = ? AND day = ?", (fallback["id"], day)
+            ).fetchall()
+            source_prefix = "patron" if fallback["kind"] == "pattern" else "personal"
+            for it in fb_items:
+                conn.execute(
+                    "INSERT INTO shift (person_id, day, kind, code, start_local, end_local, source, batch_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (person_id, day, it["kind"], it["code"], it["start_local"], it["end_local"],
+                     f"{source_prefix}:{fallback['file_name']}", fallback["id"]),
+                )
+            days_restored += 1
+            flipped_back.add(fallback["id"])
+
+        for bid in flipped_back:
+            status = conn.execute("SELECT status FROM shift_batch WHERE id = ?", (bid,)).fetchone()["status"]
+            if status == "superseded":
+                conn.execute("UPDATE shift_batch SET status = 'confirmed' WHERE id = ?", (bid,))
+
+        conn.execute(
+            "UPDATE shift_batch SET status = 'undone', decided_at = ? WHERE id = ?", (now, batch_id)
+        )
+        conn.execute(
+            "UPDATE shift_batch_item SET outcome = NULL WHERE batch_id = ? AND outcome = 'applied'",
+            (batch_id,),
+        )
+        turno_fc_eliminadas = turno_fc.eliminar_dias(conn, person_id, days)
+
+    return {
+        "days_restored": days_restored,
+        "days_emptied": days_emptied,
+        "days_kept_manual": days_kept_manual,
+        "batches_flipped_back": len(flipped_back),
+        "turno_fc_eliminadas": turno_fc_eliminadas,
+    }
 
 
 def dismiss(conn: sqlite3.Connection, batch_id: int) -> None:
