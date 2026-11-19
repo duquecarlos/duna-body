@@ -29,7 +29,8 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import config, cuenta, db, demo, dispositivo, fechas, garmin_cuenta, goals, identity, mcp, practicas, web
+from body import config, cuenta, db, demo, dispositivo, fechas, garmin_cuenta, goals, identity, mcp, practicas, \
+    shift_import, web
 from body.agente import conversacion as agente_conversacion
 from body.rutas import comun as web_comun
 from body.rutas import tendencias as web_tendencias
@@ -125,10 +126,16 @@ client = TestClient(web.app, follow_redirects=False)
 # propuesta check for the second kind, so its own ceiling moves to ceil(12 * 1.3) = 16, named
 # here rather than carried over from the single-kind figure above.
 # BODY-TURNOS-DESHACER-LOTE-3-R: /shifts' own history section (ORCH-CARLOS-DELEGATES-TIER-1-1
-# ruling 1, one combined SELECT) adds its one statement only on the no-pending-proposals path --
+# ruling 1, one combined SELECT) added its one statement only on the no-pending-proposals path --
 # this file's own fixture always carries a pending proposed batch (demo._seed_shifts), so the
-# route returns before that path runs and this shared ceiling stays UNCHANGED at 42, re-measured.
+# route returned before that path ran and this shared ceiling stayed UNCHANGED at 42.
 # tests/test_turnos_deshacer.py's own HistorialCostoTest measures that path's +1 directly.
+# BODY-TURNOS-DESHACER-LOTE-4 ruling 1: the route now calls _historial_filas ONCE per request
+# regardless of branch, so this file's own fixture's one-pending-proposal state reaches it too --
+# measured 33 statements (32 before), ceil(33 * 1.3) = 43. The many-proposals state is never
+# reached by this shared fixture (it seeds exactly one pending batch); it is named separately as
+# tests/test_rendimiento.py's own ManyProposalShiftsCostTest below, on the SAME demo fixture plus
+# one extra pending batch -- measured 38 statements, ceil(38 * 1.3) = 50.
 _CEILINGS = {
     "/": 155,
     "/ajustes/asistente": 16,
@@ -164,7 +171,7 @@ _CEILINGS = {
     "/privacidad/consentimiento": 9,
     "/privacidad/exportar": 77,
     "/settings": 24,
-    "/shifts": 42,
+    "/shifts": 43,
     "/shifts/como": 20,
     "/shifts/patron": 16,
     "/sw.js": 3,
@@ -286,6 +293,29 @@ class RouteCostCeilingTest(unittest.TestCase):
         self.assertEqual(over_statements, [], f"route(s) over their statement ceiling: {over_statements}")
         self.assertEqual(over_connections, [],
                           f"route(s) opened more than {_MAX_CONNECTIONS} connections: {over_connections}")
+
+
+class ManyProposalShiftsCostTest(unittest.TestCase):
+    """BODY-TURNOS-DESHACER-LOTE-4 ruling 3: /shifts' many-pending-proposals state, never reached
+    by `_CEILINGS`'s own shared sweep (its fixture seeds exactly one pending batch) -- its own
+    named ceiling, on the SAME `_seed` fixture plus one extra pending batch. Measured 38
+    statements, ceil(38 * 1.3) = 50."""
+
+    _CEILING = 50
+
+    def test_stays_within_its_own_ceiling(self):
+        conn = _reset_db(self)
+        _seed(conn)
+        data = {"source": {"received": "2026-01-01T12:00:00-05:00", "extracted_at": "2026-01-01T12:00:00-05:00"},
+                "shifts": [{"day": "2026-01-01", "kind": "night", "start_local": "2026-01-01T22:00:00"}]}
+        shift_import.propose_data(conn, data, "turnos-segunda-propuesta.json", 1)
+        conn.commit()
+
+        with contar_sql() as stats:
+            r = client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        self.assertLessEqual(stats["statements"], self._CEILING)
+        self.assertLessEqual(stats["connections"], _MAX_CONNECTIONS)
 
 
 def _authorize_params(resp) -> dict:
