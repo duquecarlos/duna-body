@@ -107,7 +107,7 @@ class LineaYBotonTest(unittest.TestCase):
         db.set_language(conn, "en", 1)
         _seed_levantado_media(conn)
         page = TestClient(web.app, follow_redirects=False).get(f"/day/{DAY}").text
-        self.assertIn("You seem to have got up around 07:15 (Garmin recorded 05:00).", page)
+        self.assertIn("Looks like you got up around 07:15 (Garmin says 05:00).", page)
         self.assertIn("Correct it?", page)
 
     def test_sueno_alta_muestra_linea_es(self):
@@ -251,6 +251,64 @@ class AmbosTiposTest(unittest.TestCase):
         self.assertIn("Tu corrección: te levantaste a las 07:00", page)
         self.assertNotIn("Tu corrección: dormiste", page)
         self.assertEqual(page.count("Deshacer"), 1)
+
+
+class SuenoCorregidoTotalTest(unittest.TestCase):
+    """BODY-DESPERTAR-REAL-6B ruling 4: once a 'sueno' correction is applied, Día's sleep card
+    shows the CORRECTED total and window end, with a plain line under them naming Garmin's own
+    figures -- both always visible. The stage bar and sueno_fc line are untouched by this slice.
+    A 'levantado'-only correction changes neither total nor window (ruling 3: it changes no
+    figure)."""
+
+    def _aplicar_sueno(self, conn, client):
+        client.post(f"/day/{DAY}/despertar/proponer", data={"tipo": "sueno"})
+        client.post(f"/day/{DAY}/despertar/propuestas/{_propuesta_id(conn, 'sueno')}/aplicar")
+
+    def test_dia_shows_the_corrected_total_and_window_end_with_garmins_own_line(self):
+        conn = _web_conn(self, "sueno_corregido_dia.db")
+        _seed_sueno_alta(conn)  # proposes 'sueno' at 06:30, Garmin's own end 05:00, sleep=420
+        client = TestClient(web.app, follow_redirects=False)
+        self._aplicar_sueno(conn, client)
+
+        page = client.get(f"/day/{DAY}").text
+        self.assertIn("8 h 30", page)   # 420 + 90 minutes, the corrected total
+        self.assertIn("06:30", page)    # the corrected window end (== the correction's own hora)
+        self.assertIn("Incluye tu corrección: Garmin marcó 7 h 00 hasta las 05:00.", page)
+        self.assertNotIn("None", page)
+
+    def test_leer_dia_states_the_corrected_total_and_garmins_own_labelled(self):
+        from body.agente import herramientas
+        conn = _web_conn(self, "sueno_corregido_leer_dia.db")
+        _seed_sueno_alta(conn)
+        client = TestClient(web.app, follow_redirects=False)
+        self._aplicar_sueno(conn, client)
+
+        out = herramientas.ejecutar(conn, 1, "leer_dia", {"day": DAY}, "completo")
+        sleep_minutes = next(m for m in out["metrics"] if m["key"] == "sleep_minutes")
+        self.assertEqual(sleep_minutes["value"], 510.0)
+        self.assertEqual(out["sleep"]["sleep_minutes_garmin"], 420.0)
+
+    def test_hoy_tile_carries_the_short_mark_when_corrected(self):
+        conn = _web_conn(self, "sueno_corregido_hoy.db")
+        _seed_sueno_alta(conn)
+        client = TestClient(web.app, follow_redirects=False)
+        page = client.get("/").text
+        self.assertNotIn("incluye tu corrección", page)
+        self._aplicar_sueno(conn, client)
+        page = client.get("/").text
+        self.assertIn("incluye tu corrección", page)
+        self.assertNotIn("None", page)
+
+    def test_levantado_only_leaves_the_total_and_window_untouched(self):
+        conn = _web_conn(self, "levantado_total_sin_cambio.db")
+        _seed_levantado_media(conn)  # proposes 'levantado' at 07:15, sleep=420, Garmin's end 05:00
+        client = TestClient(web.app, follow_redirects=False)
+        client.post(f"/day/{DAY}/despertar/proponer", data={"tipo": "levantado"})
+        client.post(f"/day/{DAY}/despertar/propuestas/{_propuesta_id(conn, 'levantado')}/aplicar")
+
+        page = client.get(f"/day/{DAY}").text
+        self.assertIn("7 h 00", page)   # 420 minutes, unchanged
+        self.assertNotIn("Incluye tu corrección", page)
 
 
 class OtraPersonaTest(unittest.TestCase):
