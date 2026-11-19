@@ -695,6 +695,55 @@ class RelinkarGarminVerbTest(unittest.TestCase):
         self.assertLess(dispatch_idx, owner_idx)
 
 
+class CoberturaVerbTest(unittest.TestCase):
+    """BODY-HISTORIA-MINUTO-2 ruling 2: the `cobertura` verb -- read-only, no timer stopped, no
+    backup taken, forwards every argument untouched to body-import-pc.sh, which validates
+    --cuenta-sub and --json."""
+
+    def setUp(self):
+        self.text = _read(ENTRY)
+
+    def test_usage_lists_cobertura(self):
+        start = self.text.index("usage: duna-deploy-body")
+        end = self.text.index("USAGE", start)
+        self.assertIn("cobertura --cuenta-sub <sub> [--json]", self.text[start:end])
+
+    def test_cobertura_case_arm_present(self):
+        self.assertRegex(self.text, r"\n\s*cobertura\)\n")
+
+    def test_args_forwarded_untouched_to_the_product_import_script(self):
+        self.assertIn('exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" cobertura "$@"', self.text)
+
+    def test_cobertura_handled_before_the_generic_owner_fallback(self):
+        dispatch_idx = self.text.index('exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" cobertura "$@"')
+        owner_idx = self.text.rindex('owner="$(stat -c %U "$REPO_DIR")"')
+        self.assertLess(dispatch_idx, owner_idx)
+
+
+class PersonasConteoVerbTest(unittest.TestCase):
+    """BODY-HISTORIA-MINUTO-2 ruling 3: the standing-deploy-go census -- `personas --conteo` is
+    the one extra argument the existing `personas` verb accepts; the plain mode is unchanged."""
+
+    def setUp(self):
+        self.text = _read(ENTRY)
+
+    def test_usage_mentions_conteo(self):
+        start = self.text.index("usage: duna-deploy-body")
+        end = self.text.index("USAGE", start)
+        self.assertIn("--conteo", self.text[start:end])
+
+    def test_personas_case_arm_accepts_conteo_and_still_rejects_other_args(self):
+        start = self.text.index("\n  personas)")
+        end = self.text.index(";;", start)
+        body = self.text[start:end]
+        self.assertIn('"$1" == "--conteo"', body)
+        self.assertIn("$# -ne 0", body)
+        self.assertIn("exit 2", body)
+
+    def test_personas_dispatch_forwards_args(self):
+        self.assertIn('exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" personas "$@"', self.text)
+
+
 class PullNowReadmeTest(unittest.TestCase):
     """BODY-SYNC-VIVO-TIMER-1 ruling 3's README step and ruling 4's ceiling paragraph, updated by
     BODY-HOST-AUTOACTUALIZAR-1: the wrapper now updates itself, so the hand-reinstall callout that

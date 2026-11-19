@@ -231,6 +231,22 @@ derived rows that are left behind are reported, not touched -- except a `recuper
 tied to an activity that just moved, which cannot be left behind (its own foreign key points at that
 activity) and is removed as a counted exception rather than silently kept or left dangling.
 
+## Coverage -- what is actually stored (BODY-HISTORIA-MINUTO-2)
+
+Read-only: no write, no migration, no network, no Garmin call -- never stops a timer, never takes
+a backup. Prints counts and dates only, one block per stream (intraday heart rate and stress by
+source, the sleep payload's five per-minute keys, the body-battery feed's own array, and the
+keeper's own 130-day gap check), never a health figure:
+
+    sudo -n /usr/local/sbin/duna-deploy-body cobertura --cuenta-sub <sub>
+    sudo -n /usr/local/sbin/duna-deploy-body cobertura --cuenta-sub <sub> --json
+
+**The standing deploy go's own expiry (ruling 3)** -- Carlos's standing go for Body holds "until
+someone other than me uses Body"; `personas --conteo` measures exactly that, read-only, as two
+counts only, never a `cuenta_sub`, a name or an email:
+
+    sudo -n /usr/local/sbin/duna-deploy-body personas --conteo
+
 ## Host facts, confirmed by Main (2026-11-06)
 
 * the host is Ubuntu 24.04.4, so `python3` is 3.12

@@ -30569,3 +30569,163 @@ reproduces identically on `main` before either existed, it is outside `touches`,
 mandated gate (alphabetical, reconciled 4902=4902) found nothing. Reverting a proven-safe merge over
 a pre-existing, order-dependent flake in an unrelated file would not make the tree any more correct.
 
+## BODY-HISTORIA-MINUTO-2
+
+**Surface, Carlos's words, relayed by the desk 2026-11-19:** *"that same detail in minute by minute
+measurements is the thing that we have to build to reconstruct my whole history that body already
+has."* The read-only investigation BODY-HISTORIA-MINUTO-1-INV found the keeper already backfilling
+minute HR/stress for every day in reach (`body/pull.py`), the night's richer minute arrays (HR, HRV,
+stages, movement, SpO2) coming from the `sleep` raw payload with five keys that have never been
+confirmed against a real payload (`body/garmin_adapter.py:994-1043`), the export supplying HR/stress
+only, and no coverage command. The orchestrator added: every daily pull also stores the
+`body_battery` feed raw, whose `bodyBatteryValuesArray` is an intraday series the adapter only
+reduces to high/low (`body/garmin_adapter.py:572-578`). This slice builds the count, not the guess.
+
+**Ruling 1 (`body/cobertura.py`), as built:** `python -m body.cobertura [--cuenta-sub <sub>]
+[--json]` opens the database read-only (`backup.open_readonly`, `body/cobertura.py:255`) and never
+writes, migrates, calls Garmin or opens a plain `sqlite3.connect`. `recopilar` (`:195-204`) resolves
+one person (`_resolver_persona`, `:30-37`: a `SELECT id FROM person WHERE cuenta_sub = ?` only --
+the same lookup `cuenta.resolve_person` runs before it would ever consider creating a row, never the
+create-on-first-sign-in half of it, since a read-only connection could not write that row anyway;
+required when `cuenta.hosted()`, else `db.default_person_id()`) and prints, per stream:
+
+* `intradia_fc`/`intradia_estres` per source (`garmin`, `garmin_export`), `_bloque_intradia`
+  (`:46-68`): days with a row, first/last day, and days whose payload parses to at least one valid
+  minute point via the existing `db._INTRADIA_PARSER_NAMES` parsers -- a payload that will not parse
+  as JSON, or parses but has the wrong shape, is caught and simply never counted toward
+  `dias_validos` (never raises, never guessed).
+* `sleep` (`_bloque_sleep`, `:92-108`): nights stored, first/last, and for EACH of the five raw keys
+  `garmin_adapter.parse_sleep_series` reads (`sleepHeartRate`, `hrvData`, `sleepLevels`,
+  `sleepMovement`, `wellnessEpochSPO2DataDTOList` -- named from `garmin_adapter._SLEEP_SERIES_SPECS`,
+  the single source of truth, never a duplicated list) the nights where it is present and non-empty
+  plus the median sample count across those nights. A night whose payload is not even a dict is
+  still counted as a night stored; it contributes to none of the five keys, exactly like a key that
+  is simply absent.
+* `body_battery` (`_bloque_body_battery`, `:124-142`, `_body_battery_muestras` `:111-121` --
+  the same extraction `garmin_adapter.py:572-578` already uses, counted rather than reduced to
+  high/low): days stored and days with a non-empty `bodyBatteryValuesArray`, plus its median sample
+  count per such day.
+* `keeper` (`_bloque_keeper`, `:145-169`): of the days from `hoy-130` (`pull.INTRADIA_ALCANCE_DIAS`)
+  to yesterday that have a daily pull (a stored `sleep` row from the live API -- the same "already
+  pulled by every day's ordinary sync" signal `db.sueno_minuto_a_minuto`'s own docstring relies on),
+  how many have NO live-API intraday row, fc and estres counted separately, plus the oldest such
+  missing day.
+
+Sample on an invented test home (counts and dates of invented data only; no real figure anywhere in
+this entry):
+
+    intradia_fc.garmin: dias=2 primero=2026-07-01 ultimo=2026-07-02 dias_validos=1
+    intradia_fc.garmin_export: dias=0 primero=None ultimo=None dias_validos=0
+    intradia_estres.garmin: dias=0 primero=None ultimo=None dias_validos=0
+    sleep: noches=1 primero=2026-11-10 ultimo=2026-11-10
+    sleep.sleepHeartRate: noches=1 mediana_muestras=2
+    sleep.hrvData: noches=0 mediana_muestras=None
+    sleep.sleepLevels: noches=1 mediana_muestras=1
+    body_battery: dias=1 dias_con_datos=1 mediana_muestras=2
+    keeper.intradia_fc: dias_con_pull_diario=1 dias_sin_intradia=1 dia_mas_antiguo_faltante=2026-11-10
+    keeper.intradia_estres: dias_con_pull_diario=1 dias_sin_intradia=1 dia_mas_antiguo_faltante=2026-11-10
+
+**Ruling 2 (host verb), as built:** `duna-deploy-body cobertura --cuenta-sub <sub> [--json]` --
+`deploy/host/duna-deploy-body`'s usage text and its `cobertura)` case arm (no bash-level arg
+validation; forwards `"$@"` to `body-import-pc.sh`, the same shape `importar-pc`/`relinkar-garmin`
+use) dispatch to `deploy/host/body-import-pc.sh`'s own `cobertura)` arm, which requires
+`--cuenta-sub`, accepts an optional `--json`, and runs `python -m body.cobertura` as `duna-body` via
+`runuser`, exactly like `personas`. No timer is stopped, no backup is taken, nothing mutates.
+`deploy/host/README.md` gained a "Coverage" section with both forms of the command.
+
+**Ruling 3 (the standing go's expiry, measured), as built:** Carlos's standing deploy go for Body
+(`dev-protocol` DECISIONS `BODY-STANDING-DEPLOY-GO-RELAYED-1`) holds "until someone other than me
+uses Body." `duna-deploy-body personas --conteo` measures exactly that: `body/cobertura.py`'s
+`conteo_personas` (`:175-192`) prints only two integers -- hosted persons (`person.cuenta_sub IS NOT
+NULL`) with an accepted consent, and hosted persons with any activity in the last 30 days, where
+"activity" is `sesion.last_seen_at` (`body.cuenta.resolve_session` updates it on every page view,
+throttled -- the cheapest honest signal already stored, cited in the function's own docstring) --
+never a name, a sub or an email. `--conteo` is the ONE extra argument the existing `personas` case
+arm in `body-import-pc.sh` accepts (`"$1" == "--conteo"` dispatches to `python -m body.cobertura
+--conteo`; anything else keeps the exact original "personas takes no arguments" refusal); the plain
+(no-argument) `personas` mode is byte-for-byte unchanged. `duna-deploy-body`'s own `personas)` case
+arm now forwards `"$@"` (previously exec'd with no arguments) and its validation accepts exactly
+`--conteo` or zero arguments, still rejecting everything else with the original `$# -ne 0` check.
+Usage text and `deploy/host/README.md`'s Coverage section both mention it. Sample on the same
+invented test home: `consentidos=0 activos_30d=0`.
+
+**Ruling 4 (tests), as built:** `tests/test_cobertura.py` (29 tests) on synthetic homes with
+invented payloads: `IntradiaCoverageTest` -- both sources counted apart, a malformed-JSON day and a
+well-formed-but-shapeless day both excluded from `dias_validos`; `SleepCoverageTest` -- each of the
+five keys counted present/missing independently, a non-dict payload counted as a night stored but
+contributing to no key, median sample counts verified by hand; `BodyBatteryCoverageTest` -- an empty
+array and a malformed shape both excluded from `dias_con_datos`; `KeeperGapTest` -- a hole built on
+an invented home, fc and estres given DIFFERENT missing days to prove they are tracked apart, the
+oldest missing day asserted exactly; `PersonScopeTest` -- another person's rows never counted
+(asserts the sentinel `999` never appears in that person's own report), an unknown `--cuenta-sub`
+refused, hosted mode requiring `--cuenta-sub`, and a hosted `--cuenta-sub` resolution proven to
+create no new person row (`COUNT(*) FROM person` unchanged); `ConteoPersonasTest`/
+`ConteoPersonasCliTest` -- consent and activity counted only for hosted persons, a stale (45-day)
+session excluded, the CLI output asserted to never contain the invented `cuenta_sub` string; every
+sentinel health value used anywhere in the module (`173`, `55.5`, `96`, `55`/`54`/`53`) asserted
+absent from `json.dumps(out)`, while its sample count is present; `MainCliTest` -- the database
+file's bytes and `st_mtime_ns` asserted byte-for-byte unchanged after a run (`--json` and `--conteo`
+both). Host verb tests follow how `personas`/`diagnostico-personas` are tested: `tests/
+test_host_import.py` (`CoberturaActionTest`, `--conteo` dispatch assertions on `PersonasActionTest`),
+`tests/test_deploy_host.py` (`CaseArmsTest`, `ExecDispatchTest`, `ReadmeCoverageSectionTest`),
+`tests/test_deploy_host.py` is distinct from the pre-existing `tests/test_host_deploy.py`, which also
+gained `CoberturaVerbTest` and `PersonasConteoVerbTest`.
+
+**AST guard found one defect mid-gate:** the whole-package guard in `tests/test_errores_texto.py`
+flagged `body/cobertura.py:263`, an `except ValueError as exc: print(f"refused: {exc}")` that
+rendered the bound exception text directly. Fixed to `errores.texto_seguro(exc)`, matching
+`body/mudanza.py`'s own identical refusal pattern exactly (commit `314c547`). The CLI's refusal
+message is now just `refused: ValueError` for any `--cuenta-sub` failure, same as `mudanza personas`
+already is -- consistency over a more specific message, per the guard's own whole-package rule.
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run as 12
+sequential alphabetical chunks of dotted modules (221 modules total, ~20 per chunk; the 4
+`test_host_*` modules grouped into their own chunk 6), each read directly from the process:
+
+| # | Range | Ran | Result |
+|---|-------|-----|--------|
+| 1 | test_accesibilidad .. test_baselines | 388 | OK (skipped=1, expected failures=1) |
+| 2 | test_baselines_lote .. test_deploy_host | 485 | OK |
+| 3 | test_deshacer_derivados .. test_env_local_1 | 410 | OK |
+| 4 | test_errores_texto .. test_garmin_relleno_antiguo | 344 | OK |
+| 5 | test_garmin_web .. test_horizonte | 461 | OK |
+| 6 | test_host_autoactualizar .. test_host_import | 201 | OK |
+| 7 | test_household .. test_mcp_cliente_remoto | 408 | OK |
+| 8 | test_mcp_copia_pc .. test_periodo_herramientas | 521 | OK |
+| 9 | test_periodo_pantallas .. test_propuesta_vigencia | 505 | OK |
+| 10 | test_propuestas_tabla .. test_series_unidad | 352 | OK |
+| 11 | test_sesion_conexion_1 .. test_turnos_deshacer | 516 | OK |
+| 12 | test_turnos_enlaces .. test_web_entry | 353 | OK |
+
+Sum: 388+485+410+344+461+201+408+521+505+352+516+353 = **4944**. Reconciled against a separate
+collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, same final tree)
+= **4944** -- exact match. Chunk 4 first ran RED (the AST-guard failure above, `FAILED
+(failures=1)`, `Ran 344 tests in 301.443s`); fixed by commit `314c547` and re-run clean (`Ran 344
+tests in 298.798s`, `OK`) before any later chunk ran. Every `NotSignedIn`/`ResourceWarning`/
+`Exception in thread`/"pull attempt failed"/"dia vacio"/`KeyError`/`AttributeError` line printed
+mid-run is a pre-existing fixture exercising a synthetic error path or an expected-failure test, not
+a gate failure, and none are in a file this slice touched. No password, token, session secret,
+device key or real health figure was read, printed or written anywhere in this slice's own work or
+the gate's own stdout; no network call was made; the Garmin export zip, `~/.body-app/` and
+`C:\Personal` were never opened.
+
+**customer_bytes: unchanged.** This slice's own diff touches `body/cobertura.py` (new), three
+`deploy/host/` scripts (a read-only operator verb and its usage text), `deploy/host/README.md`, four
+test modules and this ledger -- no template, route or end-user-facing string. The operator-facing
+shell text changed is not customer-facing (Body has no i18n obligation for root-only host tooling).
+Merge policy A: no schema change, no customer-facing bytes, no cross-repo contract -- merging on
+green, per `approved: yes` and the spec's own ORCH-CARLOS-DELEGATES-TIER-1-1 approval reason, which
+says in words that deploying the read-only verb follows Carlos's standing go while RUNNING it against
+his hosted data is a separate, later question put to him through the desk -- this slice only builds
+and merges the tool, it does not run it against any real host.
+
+**Open follow-ups:** none coined by this slice's own work. BODY-HISTORIA-MINUTO-1-INV's own open
+question -- whether the five sleep keys actually match a real Garmin payload -- is unresolved by this
+slice too; `cobertura`'s report is exactly the tool that answers it, once run against real hosted
+data, which this slice does not do.
+
+**Commits:** `17e7deb` (step 1: `body/cobertura.py` and `tests/test_cobertura.py`) -- `7c9f77d`
+(step 2: the `cobertura` host verb, ruling 3's `--conteo` census, and their tests) -- `314c547`
+(the AST-guard fix the gate found) -- merged `<pending>` into `main` (BODY-HISTORIA-MINUTO-2-M below,
+if a separate merge step is needed, or appended to this entry on merge).
+

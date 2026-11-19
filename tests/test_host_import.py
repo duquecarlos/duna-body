@@ -38,6 +38,10 @@ class BasicsTest(unittest.TestCase):
         self.assertRegex(self.text, r"\n\s*diagnostico-personas\)\n")
         self.assertRegex(self.text, r"\n\s*relinkar-garmin\)\n")
 
+    def test_cobertura_action_present_in_case(self):
+        """BODY-HISTORIA-MINUTO-2, ruling 2."""
+        self.assertRegex(self.text, r"\n\s*cobertura\)\n")
+
 
 class PersonasActionTest(unittest.TestCase):
     def setUp(self):
@@ -55,6 +59,16 @@ class PersonasActionTest(unittest.TestCase):
         body = self.text[start:end]
         self.assertIn('runuser -u "$DATA_USER"', body)
         self.assertIn("body.mudanza personas", body)
+
+    def test_personas_conteo_dispatches_to_cobertura_conteo(self):
+        """BODY-HISTORIA-MINUTO-2, ruling 3: the plain (no-argument) personas mode is unchanged
+        -- --conteo is the one extra argument this arm accepts."""
+        start = self.text.index("personas)")
+        end = self.text.index("importar-pc)", start)
+        body = self.text[start:end]
+        self.assertIn('"$1" == "--conteo"', body)
+        self.assertIn("body.cobertura --conteo", body)
+        self.assertIn("personas takes no arguments", body)
 
 
 class DiagnosticoPersonasActionTest(unittest.TestCase):
@@ -75,6 +89,36 @@ class DiagnosticoPersonasActionTest(unittest.TestCase):
         body = self.text[start:end]
         self.assertIn('runuser -u "$DATA_USER"', body)
         self.assertIn("body.persona_garmin diagnostico", body)
+
+
+class CoberturaActionTest(unittest.TestCase):
+    """BODY-HISTORIA-MINUTO-2, ruling 2: read-only -- no timer touched, no backup taken."""
+
+    def setUp(self):
+        self.text = _read(IMPORT)
+
+    def _body(self) -> str:
+        start = self.text.index("cobertura)")
+        end = self.text.index("\n  importar-pc)", start)
+        return self.text[start:end]
+
+    def test_cuenta_sub_is_required(self):
+        self.assertIn("cobertura requires --cuenta-sub", self._body())
+
+    def test_runs_as_data_user_via_runuser(self):
+        body = self._body()
+        self.assertIn('runuser -u "$DATA_USER"', body)
+        self.assertIn("body.cobertura --cuenta-sub", body)
+
+    def test_json_flag_is_forwarded_when_given(self):
+        body = self._body()
+        self.assertIn("--json", body)
+
+    def test_touches_no_timer_and_no_backup(self):
+        body = self._body()
+        self.assertNotIn("systemctl", body)
+        self.assertNotIn("body-backup.sh", body)
+        self.assertNotIn("body.backup snapshot", body)
 
 
 class RelinkarGarminActionTest(unittest.TestCase):
