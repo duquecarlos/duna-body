@@ -411,6 +411,28 @@ class CrossPersonTest(unittest.TestCase):
         self.assertNotIn("fc_minima", out_b)
 
 
+class ContextoTest(unittest.TestCase):
+    """BODY-MINUTO-ANALISIS-5-CONTEXTO ruling 3: leer_noche's own `contexto` -- the EVENING's
+    (the day before `fecha`) derived shift/load/alcohol, plus any trip or period covering either
+    calendar date (body/contexto_dia.py's own module docstring)."""
+
+    def test_contexto_carries_the_evenings_shift(self):
+        conn = _conn(self)
+        conn.execute("INSERT INTO shift (person_id, day, kind, source) VALUES (1, ?, 'night', 'manual')",
+                     (PREV,))
+        _sesion(conn, 1, DIA, f"{PREV}T23:00:00", f"{DIA}T06:00:00")
+        conn.commit()
+        out = _ejecutar(conn, 1)
+        self.assertEqual(out["contexto"]["turno"]["tipo"], "night")
+
+    def test_sin_datos_night_has_no_contexto_key(self):
+        conn = _conn(self)
+        conn.commit()
+        out = _ejecutar(conn, 1)
+        self.assertIn("sin_datos", out)
+        self.assertNotIn("contexto", out)
+
+
 class StatementCountTest(unittest.TestCase):
     """BODY-NOCHE-LECTURA-1 ruling 3: the SQL statement count stays the same whether the night's
     own window holds a handful of samples or hundreds -- never one statement per sample, and
@@ -587,9 +609,14 @@ class RangoDobleStatementCountTest(unittest.TestCase):
     StatementCountTest's own invariant above -- never one that grows with the night's own sample
     count. Measured on this fixture at the time this test was written: 22 (both ranges present)
     and 26 (both null, which also pays the wide-window z fallback, once per metric) -- the
-    ceiling below gives both a comfortable, named margin."""
+    ceiling below gives both a comfortable, named margin.
 
-    _CEILING = 30
+    BODY-MINUTO-ANALISIS-5-CONTEXTO ruling 3: re-measured with leer_noche's own new `contexto`
+    (contexto_dia.contexto_noche, a fixed cost independent of this night's own data -- tests/
+    test_contexto_dia.py's own guard): 29 (both ranges present) and 33 (both null). Ceiling
+    raised from 30 to 40 to keep the same comfortable margin."""
+
+    _CEILING = 40
 
     def _contar(self, conn, fn) -> int:
         vistos = []
