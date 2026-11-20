@@ -31509,9 +31509,10 @@ unchanged, and a batch mixing `initialize` with `tools/list` IS verified. `McpIn
    new test) together in one commit, to keep every intermediate commit buildable and green.
 
 **Commit:** `fed83b6` (`body/rutas/mcp_http.py`, `body/i18n/es.json`, `body/i18n/en.json`,
-`tests/test_mcp_http.py`, `tests/test_persona_fuga.py` -- rulings 1-4; 5 files changed, +268/-10).
+`tests/test_mcp_http.py`, `tests/test_persona_fuga.py` -- rulings 1-4; 5 files changed, +268/-10) -- merged
+`8ac3ce692dad5c16e7ab60ab409776c5c4af93f6`.
 
-(The gate, reconciliation and merge are recorded in `BODY-MCP-INICIO-SIN-LLAVE-1-M` below.)
+(The gate and reconciliation are recorded in `BODY-MCP-INICIO-SIN-LLAVE-1-M` below.)
 
 ## BODY-MCP-INICIO-SIN-LLAVE-1-M -- the gate, the ledger and the merge (2026-11-20)
 
@@ -31571,8 +31572,12 @@ spec's own approval-reason names them explicitly: *"Customer bytes are the first
 contract or DTO change, no other customer-facing byte -- merge policy A's three conditions are clear; merging on
 green.
 
-**Commit:** this ledger text, on the branch `feat/body-mcp-inicio-sin-llave-1`.
+**Merge:** `git checkout main`, `git merge --no-ff feat/body-mcp-inicio-sin-llave-1` -- no conflicts (merge tree
+`726a7ce005aae468ae127c2177bbaf76c5459907`, identical to the branch tip's own tree -- proven, not re-run). Smoke
+`.venv/Scripts/python.exe -m unittest tests.test_mcp_http tests.test_llave_asistente tests.test_mcp
+tests.test_persona_fuga`: Ran 131 tests in 39.425s, OK. Branch deleted
+(`git branch -d feat/body-mcp-inicio-sin-llave-1`), main checked out, tree empty.
 
-(The merge step, its smoke test and the merge sha are appended to both entries above in a follow-up commit on
-`main`, per the dispatch's own instruction.)
+**Commit:** `582b31e` (this ledger text, on the branch) -- merged into `main` (`--no-ff`) --
+merged `8ac3ce692dad5c16e7ab60ab409776c5c4af93f6`.
 
