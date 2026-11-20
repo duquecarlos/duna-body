@@ -31287,6 +31287,6 @@ purpose and this spec approves it: merge if green."* -- merging on green.
 
 **Open follow-ups:** none coined by this slice's own work.
 
-**Commits:** `bbdc06b` (ruling 1) -- `81f36b0` (ruling 2) -- `14dd3d9` (ruling 3) -- this ledger entry -- merged into
-`main`.
+**Commits:** `bbdc06b` (ruling 1) -- `81f36b0` (ruling 2) -- `14dd3d9` (ruling 3) -- `d68f73b` (this ledger entry) --
+merged into `main` (`--no-ff`) -- merged 9817d2ae039f35004c91f8a79de008d0a8bd9965.
 
