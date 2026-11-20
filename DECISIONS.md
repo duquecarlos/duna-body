@@ -32074,7 +32074,8 @@ this spec; reworded once more below, in BODY-MINUTO-ANALISIS-2-M.
 the new es string read *"Ese día no tiene una noche registrada por Garmin."* -- a third-person `tiene` the
 tú-register guard only accepts from its own allow-list (`tests/test_registro_tu.py:65-92`); chunks 19-22 never ran.
 Not reconciled at the time (collect-only count: 5188). Worker report:
-`logs/worker-body-minuto-analisis-2-body-app-20261120T125622.json` (dev-protocol), verdict BLOCKED.
+`logs/worker-body-minuto-analisis-2-body-app-20261120T125622.json` (dev-protocol), verdict BLOCKED. -- merged
+`46dcd8ba1418bdbd52e82099e31034c101852cfe`
 
 ## BODY-MINUTO-ANALISIS-2-M -- landing BODY-MINUTO-ANALISIS-2: reword instead of widening the guard (2026-11-20)
 
@@ -32148,5 +32149,6 @@ Carlos's standing go."* -- merging on green.
 **Commits on the branch:** `60291614fc5c32cfecd4999cb0b3d802c2350802` (`body/i18n/en.json`, `body/i18n/es.json`,
 `tests/test_comparar_noche.py` -- ruling 1's reword; 3 files changed, +4/-4), plus the two commits carried over from
 the original BLOCKED slice, `c717a502942c9f6166abfa33441968880d02eba1` and
-`00af7877cabc33389fd6e7af4219d6ee831d3399`, plus this ledger text, on the branch -- merged into `main` (`--no-ff`).
+`00af7877cabc33389fd6e7af4219d6ee831d3399`, plus this ledger text, on the branch -- merged into `main` (`--no-ff`) --
+merged `46dcd8ba1418bdbd52e82099e31034c101852cfe`.
 
