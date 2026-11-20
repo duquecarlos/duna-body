@@ -930,5 +930,48 @@ class CompararNocheCostTest(unittest.TestCase):
                          f"a 365-night comparar() took {transcurrido:.3f}s, over its 2.0s ceiling")
 
 
+class BuscarNochesCostTest(unittest.TestCase):
+    """BODY-MINUTO-ANALISIS-3 (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2): `noche_rasgos.buscar`'s
+    own statement count is independent of how many nights fall inside [desde, hasta] -- it is
+    built on the SAME `rasgos_rango` table CompararNocheCostTest above already measures, filtered
+    and ordered in pure Python. Same 400-night fixture and connection-per-call pattern as
+    CompararNocheCostTest: a 30-night call and a 365-night call over that SAME data cost the SAME
+    number of statements, and the 365-night call answers within a named wall-clock ceiling."""
+
+    _N_NOCHES = CompararNocheCostTest._N_NOCHES
+    _contar = CompararNocheCostTest._contar
+    _seed = CompararNocheCostTest._seed
+
+    def test_cost_independent_of_night_count(self):
+        conn_30 = _reset_db(self)
+        fecha = self._seed(conn_30)
+        desde_30 = (date.fromisoformat(fecha) - timedelta(29)).isoformat()
+        filtros = [{"rasgo": "hrv_last_night", "op": ">=", "valor": 40.0}]
+        treinta = self._contar(
+            conn_30, lambda: noche_rasgos.buscar(conn_30, 1, desde_30, fecha, filtros=filtros))
+
+        conn_365 = _reset_db(self)
+        fecha = self._seed(conn_365)
+        desde_365 = (date.fromisoformat(fecha) - timedelta(364)).isoformat()
+        trescientos_65 = self._contar(
+            conn_365, lambda: noche_rasgos.buscar(conn_365, 1, desde_365, fecha, filtros=filtros))
+
+        self.assertEqual(treinta, trescientos_65,
+                          f"a 365-night range cost more statements than a 30-night one: "
+                          f"{trescientos_65} vs {treinta}")
+
+    def test_within_time_ceiling_for_a_365_night_history(self):
+        conn = _reset_db(self)
+        fecha = self._seed(conn)
+        desde_365 = (date.fromisoformat(fecha) - timedelta(364)).isoformat()
+        filtros = [{"rasgo": "hrv_last_night", "op": ">=", "valor": 40.0}]
+        inicio = time.perf_counter()
+        noche_rasgos.buscar(conn, 1, desde_365, fecha, filtros=filtros, limite=10)
+        transcurrido = time.perf_counter() - inicio
+        # Same 2.0s ceiling as CompararNocheCostTest's own 365-night call, on the same box.
+        self.assertLess(transcurrido, 2.0,
+                         f"a 365-night buscar() took {transcurrido:.3f}s, over its 2.0s ceiling")
+
+
 if __name__ == "__main__":
     unittest.main()

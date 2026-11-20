@@ -498,6 +498,26 @@ class ToolsCallTest(_McpTestCase):
         self.assertIn("rasgos", salida)
         self.assertEqual(salida["rasgos"]["hrv_last_night"]["valor"], 55)
 
+    def test_buscar_noches_is_offered_and_callable(self):
+        """BODY-MINUTO-ANALISIS-3: body.mcp lists buscar_noches like any other catalogue tool --
+        registered like comparar_noche (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2), so the generic
+        tools/list and tools/call paths need no new code for it either."""
+        _, listado = self._ejecutar([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
+        nombres = {t["name"] for t in listado[0]["result"]["tools"]}
+        self.assertIn("buscar_noches", nombres)
+
+        db.set_metric(self.conn, "2026-10-01", "hrv_last_night", 55, "garmin", self.person_id)
+        self.conn.commit()
+        _, respuestas = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "buscar_noches",
+                        "arguments": {"filtros": [{"rasgo": "hrv_last_night", "op": ">=", "valor": 50}]}}},
+        ])
+        r = respuestas[0]["result"]
+        self.assertNotIn("isError", r)
+        salida = json.loads(r["content"][-1]["text"])
+        self.assertEqual(salida["noches"][0]["fecha"], "2026-10-01")
+
     def test_one_leer_serie_call_counts_as_one_lectura_not_one_per_day(self):
         """BODY-AGENTE-LEER-SERIE-1: the bug report this tool answers -- a desk helper calling
         leer_dia once per day hit this same 5-reads-per-15-minutes cap on a long history. ONE

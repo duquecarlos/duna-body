@@ -112,6 +112,7 @@ def _all_tool_calls():
         "leer_intradia": {"fecha": "2026-10-05", "desde": "06:00", "hasta": "08:00"},
         "leer_noche": {"fecha": "2026-10-05"},
         "comparar_noche": {"fecha": "2026-10-05"},
+        "buscar_noches": {},
         "leer_plan": gid_placeholder, "leer_planes": {}, "leer_practicas": {},
     }
 
@@ -206,18 +207,20 @@ class RegistryShapeTest(unittest.TestCase):
         # nivel 'completo' (the same gate leer_intradia itself enforces).
         # BODY-MINUTO-ANALISIS-2: extended from twenty-one -- comparar_noche is the one new entry,
         # also at nivel 'completo' (it reads the same per-minute payloads leer_noche does).
+        # BODY-MINUTO-ANALISIS-3: extended from twenty-two -- buscar_noches is the one new entry,
+        # also at nivel 'completo' (it reads the same per-minute payloads comparar_noche does).
         expected_levels = {
             "leer_hoy": "completo", "leer_dia": "completo", "leer_como_calculo": "completo",
             "leer_tendencias": "resumen", "leer_historia": "resumen", "leer_metas": "resumen",
             "leer_meta": "resumen", "leer_turnos": "ninguno", "leer_costo_turnos": "resumen",
             "leer_ajustes": "ninguno", "leer_tutoriales": "ninguno", "leer_entreno": "completo",
             "leer_experimentos": "resumen", "leer_serie": "resumen", "leer_intradia": "completo",
-            "leer_noche": "completo", "comparar_noche": "completo",
+            "leer_noche": "completo", "comparar_noche": "completo", "buscar_noches": "completo",
             "leer_plan": "resumen", "leer_planes": "resumen", "leer_estado_reloj": "ninguno",
             "leer_dias_libres": "ninguno", "leer_practicas": "resumen",
         }
         lectura = [h for h in herramientas.HERRAMIENTAS if h["tipo"] == "lectura"]
-        self.assertEqual(len(lectura), 22)
+        self.assertEqual(len(lectura), 23)
         self.assertEqual({h["nombre"]: h["nivel"] for h in lectura}, expected_levels)
 
     def test_thirty_propuesta_tools_with_one_at_nivel_resumen(self):
@@ -253,7 +256,8 @@ class RegistryShapeTest(unittest.TestCase):
         # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5: extended from 53 -- registrar_dolor is the one
         # new entry.
         # BODY-MINUTO-ANALISIS-2: extended from 54 -- comparar_noche is the one new entry.
-        self.assertEqual(len(herramientas.HERRAMIENTAS), 55)
+        # BODY-MINUTO-ANALISIS-3: extended from 55 -- buscar_noches is the one new entry.
+        self.assertEqual(len(herramientas.HERRAMIENTAS), 56)
 
     def test_every_entry_carries_the_reserved_plan_field_unset(self):
         # BODY-ASISTENTE-CONFORMIDAD-1 ruling 2 (agent-capabilities-v1 section 5): the field

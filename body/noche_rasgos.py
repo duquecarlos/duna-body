@@ -57,7 +57,22 @@ When to use which assistant tool: `comparar_noche` (this module, through
 body/agente/herramientas.py) for ONE night's features ranked against history, with or without a
 context group; `leer_noche` for that SAME night's own full raw detail (every minute, every stage,
 no ranking); `leer_serie` with paso='minuto' for a short window inside a night or a day, not a
-whole night's own shape.
+whole night's own shape; `buscar_noches` (BODY-MINUTO-ANALISIS-3, ORCH-CARLOS-DELEGATES-TIER-1-1
+ruling 2) for the REVERSE question -- not "how does this night rank" but "WHICH of this person's
+own nights match a feature or a context", e.g. "my 5 worst deep-sleep nights this year and what
+they had in common", "nights after a night shift where the low came late", "every night with more
+than 3 awake segments while travelling".
+
+`rasgos_rango(conn, person_id, desde, hasta)` (ruling 1) is the ONE feature table every night in a
+range needs -- `comparar` and `buscar` both build on it, rather than each reading the bulk tables
+above for itself. Its own per-night dict holds every one of that night's computable features
+(both MODELO families, present only when actually computable, exactly as `comparar`'s own loop
+built them before this refactor) plus a `'contexto'` key: the SAME evening/wake-day merge
+`contexto_dia.contexto_noche` applies to one night, mirrored here over the WHOLE range from the
+bulk `contexto_dia.contexto_dias` instead of calling `contexto_noche` once per night (which would
+re-cost its own `ventana_comida.comida_a_sueno` lookup every time, growing with the range -- the
+exact cost `comparar`'s own module docstring above already explains). `buscar`'s own `grupo`
+filter reads this SAME `'contexto'` key through `_coincide_grupo`, never a second context build.
 """
 from __future__ import annotations
 
@@ -115,6 +130,17 @@ MODELO = {
 }
 
 GRUPO_CLAVES = ("tras_turno", "tras_turno_noche", "viaje", "periodo", "comida_tarde_min_max", "con_alcohol")
+
+# BODY-MINUTO-ANALISIS-3 ruling 2: every name `buscar`'s own 'filtros'/'orden'/'rasgos' may name --
+# both MODELO feature families together, read from MODELO itself so a feature added there is
+# filterable immediately, never a second hand-typed list. The five comparison ops `buscar` accepts.
+RASGOS_CLAVES = frozenset(MODELO["figuras_guardadas"]) | frozenset(MODELO["figuras_forma"])
+OPS_BUSCAR_NOCHES = ("<", "<=", ">", ">=", "=")
+_OPS_BUSCAR_NOCHES = {
+    "<": lambda a, b: a < b, "<=": lambda a, b: a <= b,
+    ">": lambda a, b: a > b, ">=": lambda a, b: a >= b,
+    "=": lambda a, b: a == b,
+}
 
 
 class SinDatos(Exception):
@@ -284,6 +310,59 @@ def _rasgos_forma(sesion: tuple[str, str], arrays: dict) -> dict[str, float]:
     return out
 
 
+def rasgos_rango(conn, person_id: int, desde: str, hasta: str) -> dict[str, dict]:
+    """Every night whose own wake day falls in [desde, hasta] -> every one of its own computable
+    features (both MODELO families, each present only when actually computable) plus its own
+    `'contexto'` -- see the module docstring. One bulk statement per source table below, never one
+    per night, so this stays the same cost whether the range is 30 nights or the person's whole
+    history (tests/test_rendimiento.py's own guard)."""
+    persona = db.person(conn, person_id)
+    zona = persona["timezone"]
+
+    figuras = _figuras_rango(conn, person_id, desde, hasta)
+    sesiones = _sesiones_rango(conn, person_id, desde, hasta)
+    arrays = _arrays_rango(conn, person_id, desde, hasta, zona)
+    desde_tarde = (date.fromisoformat(desde) - timedelta(1)).isoformat()
+    hasta_tarde = (date.fromisoformat(hasta) - timedelta(1)).isoformat()
+    comida_tarde = _comida_ultima_rango(conn, person_id, desde_tarde, hasta_tarde)
+    dias_contexto = contexto_dia.contexto_dias(conn, person_id, desde_tarde, hasta)
+
+    noches = sorted(set(figuras) | set(sesiones))
+    out: dict[str, dict] = {}
+    for dia in noches:
+        valores: dict[str, float] = dict(figuras.get(dia, {}))
+        sesion = sesiones.get(dia)
+        arr = arrays.get(dia)
+        if sesion is not None and arr:
+            valores.update(_rasgos_forma(sesion, arr))
+        evening = (date.fromisoformat(dia) - timedelta(1)).isoformat()
+        entry = dict(dias_contexto.get(evening, {}))
+        wake_entry = dias_contexto.get(dia, {})
+        if "viaje" not in entry and "viaje" in wake_entry:
+            entry["viaje"] = wake_entry["viaje"]
+        if "periodos" in wake_entry:
+            ya = {p["kind"] for p in entry.get("periodos", [])}
+            extra = [p for p in wake_entry["periodos"] if p["kind"] not in ya]
+            if extra:
+                entry["periodos"] = entry.get("periodos", []) + extra
+        ultima = comida_tarde.get(evening)
+        wake_start = sesion[0] if sesion is not None else None
+        if ultima is not None and wake_start is not None:
+            minutos = (_sin_offset(wake_start) - _sin_offset(ultima)).total_seconds() / 60
+            entry["comida_antes_de_dormir"] = {"minutos": round(minutos, 1)}
+        valores["contexto"] = entry
+        out[dia] = valores
+    return out
+
+
+def _sin_minutos(valores: dict) -> bool:
+    """Whether a night's own `rasgos_rango` entry carries NONE of MODELO's own `figuras_forma`
+    keys -- the "no per-minute payload" gap the module docstring and `comparar`'s own
+    `noches_sin_minutos` already name, read here straight off the feature dict instead of a
+    second look at `sesiones`/`arrays`."""
+    return not any(nombre in valores for nombre in MODELO["figuras_forma"])
+
+
 def comparar(conn, person_id: int, fecha: str, desde: str | None = None, grupo: dict | None = None) -> dict:
     """ONE night's own features (`fecha`, the wake day), ranked against this person's own nights
     in [`desde`, `fecha`] -- see the module docstring for the full contract. Raises `SinDatos` when
@@ -297,55 +376,22 @@ def comparar(conn, person_id: int, fecha: str, desde: str | None = None, grupo: 
         desde = fecha
     hasta = fecha
 
-    figuras = _figuras_rango(conn, person_id, desde, hasta)
-    sesiones = _sesiones_rango(conn, person_id, desde, hasta)
-    if fecha not in figuras and fecha not in sesiones:
+    tabla = rasgos_rango(conn, person_id, desde, hasta)
+    if fecha not in tabla:
         raise SinDatos()
 
-    arrays = _arrays_rango(conn, person_id, desde, hasta, zona)
-    desde_tarde = (date.fromisoformat(desde) - timedelta(1)).isoformat()
-    hasta_tarde = (dia_d - timedelta(1)).isoformat()
-    comida_tarde = _comida_ultima_rango(conn, person_id, desde_tarde, hasta_tarde)
-    dias_contexto = contexto_dia.contexto_dias(conn, person_id, desde_tarde, hasta)
-
-    noches = sorted(set(figuras) | set(sesiones))
-    valores_por_noche: dict[str, dict[str, float]] = {}
-    contexto_por_noche: dict[str, dict] = {}
-    for dia in noches:
-        valores: dict[str, float] = dict(figuras.get(dia, {}))
-        sesion = sesiones.get(dia)
-        arr = arrays.get(dia)
-        if sesion is not None and arr:
-            valores.update(_rasgos_forma(sesion, arr))
-        valores_por_noche[dia] = valores
-        evening = (date.fromisoformat(dia) - timedelta(1)).isoformat()
-        entry = dict(dias_contexto.get(evening, {}))
-        wake_entry = dias_contexto.get(dia, {})
-        if "viaje" not in entry and "viaje" in wake_entry:
-            entry["viaje"] = wake_entry["viaje"]
-        if "periodos" in wake_entry:
-            ya = {p["kind"] for p in entry.get("periodos", [])}
-            extra = [p for p in wake_entry["periodos"] if p["kind"] not in ya]
-            if extra:
-                entry["periodos"] = entry.get("periodos", []) + extra
-        ultima = comida_tarde.get(evening)
-        wake_start = sesiones.get(dia, (None, None))[0]
-        if ultima is not None and wake_start is not None:
-            minutos = (_sin_offset(wake_start) - _sin_offset(ultima)).total_seconds() / 60
-            entry["comida_antes_de_dormir"] = {"minutos": round(minutos, 1)}
-        contexto_por_noche[dia] = entry
-
-    noches_sin_minutos = sum(1 for dia in sesiones if not arrays.get(dia))
+    noches = sorted(tabla)
+    noches_sin_minutos = sum(1 for dia in noches if _sin_minutos(tabla[dia]))
 
     rasgos: dict[str, dict] = {}
-    valores_focal = valores_por_noche.get(fecha, {})
+    valores_focal = {k: v for k, v in tabla[fecha].items() if k != "contexto"}
     for nombre, propio in valores_focal.items():
-        valores_todos = [valores_por_noche[d][nombre] for d in noches if nombre in valores_por_noche[d]]
+        valores_todos = [tabla[d][nombre] for d in noches if nombre in tabla[d]]
         rasgos[nombre] = _entrada_rasgo(valores_todos, propio)
         if grupo:
-            noches_grupo = [d for d in noches if nombre in valores_por_noche[d]
-                             and _coincide_grupo(contexto_por_noche.get(d, {}), grupo)]
-            valores_grupo = [valores_por_noche[d][nombre] for d in noches_grupo]
+            noches_grupo = [d for d in noches if nombre in tabla[d]
+                             and _coincide_grupo(tabla[d].get("contexto", {}), grupo)]
+            valores_grupo = [tabla[d][nombre] for d in noches_grupo]
             rasgos[nombre]["grupo"] = _entrada_grupo(valores_grupo, propio)
 
     return {
@@ -410,3 +456,108 @@ def _coincide_grupo(entry: dict, grupo: dict) -> bool:
         if ("alcohol_g" in entry) != grupo["con_alcohol"]:
             return False
     return True
+
+
+def _claves_contexto(entry: dict) -> set[str]:
+    """Which of GRUPO_CLAVES' own six dimensions this night's context carries AT ALL -- a bare
+    presence check (mirroring `_coincide_grupo`'s own reading of each key, loosened from "matches
+    this specific value" to "carries any value"), for `buscar`'s own `en_comun`."""
+    out: set[str] = set()
+    turno = entry.get("turno") or {}
+    if "tipo" in turno:
+        out.add("tras_turno")
+    if "bloque_noche" in turno or "dias_desde_ultimo_turno_noche" in turno:
+        out.add("tras_turno_noche")
+    if "viaje" in entry:
+        out.add("viaje")
+    if entry.get("periodos"):
+        out.add("periodo")
+    if "comida_antes_de_dormir" in entry:
+        out.add("comida_tarde_min_max")
+    if "alcohol_g" in entry:
+        out.add("con_alcohol")
+    return out
+
+
+def _en_comun(tabla: dict[str, dict], noches: list[str], seleccionadas: list[str]) -> dict:
+    """BODY-MINUTO-ANALISIS-3 ruling 2: for each of GRUPO_CLAVES' own six context dimensions, the
+    SHARE of the matching nights (`seleccionadas`) that carry it against the share among EVERY
+    night in the range (`noches`) -- counts and shares only, the "what did these have in common"
+    Carlos himself asked for (relayed by the desk 2026-11-20), never a cause."""
+    n_sel, n_total = len(seleccionadas), len(noches)
+    out: dict[str, dict] = {}
+    for clave in GRUPO_CLAVES:
+        en_sel = sum(1 for d in seleccionadas if clave in _claves_contexto(tabla[d].get("contexto", {})))
+        en_todas = sum(1 for d in noches if clave in _claves_contexto(tabla[d].get("contexto", {})))
+        out[clave] = {
+            "coincidentes": round(en_sel / n_sel, 3) if n_sel else 0.0,
+            "en_rango": round(en_todas / n_total, 3) if n_total else 0.0,
+        }
+    return out
+
+
+def buscar(conn, person_id: int, desde: str, hasta: str, filtros: list[dict] | None = None,
+           grupo: dict | None = None, orden: dict | None = None, limite: int = 10,
+           rasgos: list[str] | None = None) -> dict:
+    """The REVERSE of `comparar`: not "how does this night rank" but "WHICH of this person's own
+    nights match" (BODY-MINUTO-ANALISIS-3, ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2). Built on the
+    SAME `rasgos_rango` table `comparar` itself reads -- filtered, grouped and ordered in pure
+    Python, so this costs no further statement whatever `filtros` holds or how wide [desde, hasta]
+    is. `filtros` is a list of {rasgo, op, valor}; a night missing `rasgo` altogether never matches
+    (RASGOS_CLAVES' own `figuras_forma` names are absent exactly on the nights `_sin_minutos`
+    already counts). `grupo` is `_coincide_grupo`'s own contract, combined with `filtros` by AND.
+    Every rasgo/op/grupo-key name here is trusted already valid -- body/agente/herramientas.py's
+    own wrapper refuses an unknown one by name before this is ever called, the same split
+    `_comparar_noche` already keeps with `_coincide_grupo`'s own grupo keys. `orden` sorts the
+    matching nights ('rasgo', 'dir' asc|desc) before `limite` is applied; a night missing `orden`'s
+    own rasgo sorts after every night that has it, in either direction. `rasgos` picks which
+    features each returned night carries (default: every rasgo named in `filtros`/`orden`)."""
+    tabla = rasgos_rango(conn, person_id, desde, hasta)
+    noches = sorted(tabla)
+    n_en_rango = len(noches)
+    noches_sin_minutos_en_rango = sum(1 for dia in noches if _sin_minutos(tabla[dia]))
+
+    filtros = filtros or []
+    seleccionadas = []
+    for dia in noches:
+        valores = tabla[dia]
+        if not all(f["rasgo"] in valores and _OPS_BUSCAR_NOCHES[f["op"]](valores[f["rasgo"]], f["valor"])
+                   for f in filtros):
+            continue
+        if grupo and not _coincide_grupo(valores.get("contexto", {}), grupo):
+            continue
+        seleccionadas.append(dia)
+    n_coinciden = len(seleccionadas)
+
+    if orden:
+        rasgo_orden = orden["rasgo"]
+        reverse = orden["dir"] == "desc"
+        con_valor = sorted((d for d in seleccionadas if rasgo_orden in tabla[d]),
+                            key=lambda d: tabla[d][rasgo_orden], reverse=reverse)
+        sin_valor = [d for d in seleccionadas if rasgo_orden not in tabla[d]]
+        orden_final = con_valor + sin_valor
+    else:
+        orden_final = sorted(seleccionadas, reverse=True)
+    limitadas = orden_final[:limite]
+
+    rasgos_pedidos = rasgos
+    if rasgos_pedidos is None:
+        rasgos_pedidos = sorted({f["rasgo"] for f in filtros} | ({orden["rasgo"]} if orden else set()))
+
+    noches_salida = []
+    for dia in limitadas:
+        valores = tabla[dia]
+        entrada: dict = {"fecha": dia}
+        for nombre in rasgos_pedidos:
+            if nombre in valores:
+                entrada[nombre] = valores[nombre]
+        entrada["contexto"] = valores.get("contexto", {})
+        noches_salida.append(entrada)
+
+    out = {
+        "noches": noches_salida, "n_coinciden": n_coinciden, "n_en_rango": n_en_rango,
+        "noches_sin_minutos_en_rango": noches_sin_minutos_en_rango,
+    }
+    if n_coinciden >= MIN_NOCHES_GRUPO:
+        out["en_comun"] = _en_comun(tabla, noches, seleccionadas)
+    return out

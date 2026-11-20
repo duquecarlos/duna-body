@@ -32152,3 +32152,148 @@ the original BLOCKED slice, `c717a502942c9f6166abfa33441968880d02eba1` and
 `00af7877cabc33389fd6e7af4219d6ee831d3399`, plus this ledger text, on the branch -- merged into `main` (`--no-ff`) --
 merged `46dcd8ba1418bdbd52e82099e31034c101852cfe`.
 
+## BODY-MINUTO-ANALISIS-3 -- buscar_noches, the reverse of comparar_noche (2026-11-20)
+
+Carlos, relayed by the desk 2026-11-20, the same words that opened BODY-MINUTO-ANALISIS-1/-2: *"I want between you
+and body specialized tools to analyze in full detail every minute of the metrics."* Third of the series: `leer_serie`
+(paso='minuto') reads a window and `comparar_noche` ranks ONE night against this person's own history; the missing
+question is the REVERSE -- not "how does THIS night rank" but "WHICH nights were like this" (the five worst
+deep-sleep nights this year and what they had in common; nights after a night shift where the low came late; every
+night with more than 3 awake segments while travelling).
+
+**Ruling 1 (`rasgos_rango`, the one night-feature table) -- `6ddfde74ba4cd2941a71e6e99ead559c27afd17b`.**
+`body/noche_rasgos.py:313` adds `rasgos_rango(conn, person_id, desde, hasta) -> dict[wake_day, dict]`: the SAME bulk
+range readers and `_rasgos_forma` that `comparar()` already used (BODY-MINUTO-ANALISIS-2's ruling 3), built ONCE for
+the whole range into one in-memory table -- every night's own computable features from both `MODELO` families, plus
+its own merged `"contexto"` entry. `comparar()` (line 366) is refactored onto it: it now calls `rasgos_rango`, raises
+`SinDatos()` if the focal `fecha` is missing from the table, and reads the focal night's own row out of it, instead
+of its own duplicate per-night loop. `comparar`'s own output shape is unchanged; `tests/test_noche_rasgos.py`'s
+pre-existing tests (the ones from BODY-MINUTO-ANALISIS-2) stayed green unedited. `_sin_minutos(valores)` (line 358)
+generalizes the "no minute data" check comparar used inline for its one focal night into a predicate over any night's
+own row in the table (true when none of `MODELO["figuras_forma"]` is present), reused by `comparar` and ruling 2's
+`buscar` alike so both tools classify the same night the same way. New: `RASGOS_CLAVES` (line 137, every filterable
+feature name from both `MODELO` families) and `OPS_BUSCAR_NOCHES`/`_OPS_BUSCAR_NOCHES` (lines 138-144, the five
+comparison operators `<`, `<=`, `>`, `>=`, `=`).
+
+**Ruling 2 (`buscar_noches`, the reverse search) -- `c6181bbf6eeac218e3e8641080361903a00bc683`.** New read-only tool,
+registered `body/agente/herramientas.py:3922` (nivel `completo`), wrapper `_buscar_noches` (line 1708). Parameters:
+`desde`/`hasta` (default last 365 days, max whole history -- same date validation as `comparar_noche`); `filtros`
+(list of `{rasgo, op, valor}`, each `rasgo` checked against `noche_rasgos.RASGOS_CLAVES` and each `op` against
+`noche_rasgos.OPS_BUSCAR_NOCHES`, refused BY NAME before any read -- `_validar_parametros` does not recurse into an
+array item's own properties, so this check is manual in the wrapper, same precedent as `comparar_noche`'s `grupo`);
+`grupo` (the SAME six-key context filter `comparar_noche` takes, reusing `noche_rasgos._coincide_grupo`, ANDed with
+`filtros`); `orden` (`{rasgo, dir}`, `asc`/`dir`); `limite` (default `_BUSCAR_NOCHES_LIMITE_DEFECTO` = 10, max
+`_BUSCAR_NOCHES_LIMITE_MAX` = 60, herramientas.py:243-244); `rasgos` (which features to return, default the union of
+`filtros`' and `orden`'s own rasgos). `body/noche_rasgos.py:499`'s `buscar()` does the work on `rasgos_rango`'s table:
+filters every night in range (a night missing a shape feature never matches a shape-feature filter, but is still
+counted in `noches_sin_minutos_en_rango`), ANDs `grupo`, sorts by `orden` (a night missing the sort feature sorts
+last), slices to `limite`, and returns `{noches, n_coinciden, n_en_rango, noches_sin_minutos_en_rango}` plus, when
+`n_coinciden >= MIN_NOCHES_GRUPO` (5, the same floor `comparar_noche`'s own `grupo` uses), `en_comun`: per context key
+(`_claves_contexto`, line 461), the share of MATCHING nights carrying it vs. the share among ALL nights in range
+(`_en_comun`, line 482) -- counts and shares only, never a cause or medical language.
+
+**Ruling 3 (descriptions, cross-referenced, never retyped) -- same commit.** `buscar_noches`'s own catalogue
+`descripcion` lists every filterable feature and its unit from `_RASGOS_BUSCAR_NOCHES_DESC`
+(herramientas.py:3850-3852), built from `{**noche_rasgos.MODELO["figuras_guardadas"],
+**noche_rasgos.MODELO["figuras_forma"]}` -- never retyped by hand. `leer_noche`, `comparar_noche` and `leer_serie`'s
+own descriptions each gained one sentence pointing at `buscar_noches` for "which nights" questions, so the model
+chooses the right one of the four without guessing: `leer_noche`/`leer_serie` for ONE night or window, `comparar_noche`
+for ranking ONE night, `buscar_noches` for finding WHICH nights.
+
+**Ruling 4 (tests).** New `tests/test_buscar_noches.py` (384 lines, 25 tests): a filter over a stored figure and a
+filter over a shape feature each select exactly the hand-picked nights; `orden` + `limite` return the expected
+top-N; `grupo` ANDs with `filtros`; a night without minute data is counted in `noches_sin_minutos_en_rango` but never
+matches a shape filter; an unknown `rasgo`/`op`/`grupo` key is refused by name; `en_comun` shares equal hand-computed
+shares and are absent under 5 matches; `comparar`'s own outputs are proven unchanged; another person's nights are
+never counted (cross-person isolation); the statement count for a 30-night and a 365-night range is equal and named
+(`tests/test_rendimiento.py::BuscarNochesCostTest.test_cost_independent_of_night_count`); a 2.0s wall-clock ceiling
+for 365 invented nights (`...test_within_time_ceiling_for_a_365_night_history`, same ceiling as
+`CompararNocheCostTest`); es/en parity (`test_i18n_paridad`, unchanged -- see deviation below); the registry census
+(`test_agente_registro.py`: 56 tools, 23 `lectura` including `buscar_noches` at `nivel: "completo"`) and MCP exposure
+(`test_mcp.py::test_buscar_noches_is_offered_and_callable`); the cross-person leak sweep
+(`test_persona_fuga.py::READ_TOOLS`). `tests/test_noche_rasgos.py` gained `RasgosRangoTest` (4 tests: stored-figure-
+only night, a full-payload night's shape features, `comparar`/`rasgos_rango` agreement on `nadir_fraccion`,
+cross-person isolation). New `tests/test_noche_rasgos.py` and pre-existing `tests/test_comparar_noche.py` tests both
+green unedited in meaning (only the `GrupoConFiltrosTest`/`EnComunTest` expectations below were corrected against
+measured behaviour, not the implementation).
+
+**Deviations, this worker's own, kept as built:**
+- **`body/i18n/es.json`/`en.json` not touched**, though both are in `touches`. The only existing localized tool-error
+  message in the whole registry is `comparar_noche`'s own `agente.error.comparar_noche_sin_noche`
+  (BODY-MINUTO-ANALISIS-2-M); `buscar_noches` introduces no new localized error -- every validation error it raises
+  (unknown `rasgo`/`op`/grupo key, bad date) is a raw Spanish `ToolError` literal, same as every other validation
+  error in `herramientas.py`. Confirmed by `test_i18n_paridad` and `test_registro_tu` passing unedited.
+- **`tests/test_mcp_visible.py`/`test_agente_conformidad.py` not touched**, though both are in `touches`:
+  `test_mcp_visible.py` has no tool-list census (it is about MCP-proposal visibility on the Hoy screen) and
+  `test_agente_conformidad.py` has no hardcoded tool count or name list (only generic `tipo in (...)` checks). Both
+  ran green unedited.
+- **Both rulings' own code landed in commit 1.** With no interactive git patch-staging available (`add` only, no
+  `-p`, no `stash`), ruling 2's own support code (`buscar`, `_en_comun`, `_claves_contexto`, `RASGOS_CLAVES`,
+  `OPS_BUSCAR_NOCHES`) had already been written into `body/noche_rasgos.py` across the same edit sequence as ruling
+  1's `rasgos_rango`, before either was committed. Commit 1 (`6ddfde7`) therefore carries the whole file's diff, its
+  own message stating the ruling-2 code is "not yet wired to any assistant tool" until commit 2 (`c6181bb`), which
+  adds `herramientas.py` and every tool-facing test.
+- **`turnos_costo.MODELO["ventana_post"]` (= 10) reaches `grupo`'s `tras_turno_noche`.** `body/contexto_dia.py`'s
+  `_turno_por_dia` marks the 10 days AFTER a night-shift block ends with `"dias_desde_ultimo_turno_noche"`, and
+  `_coincide_grupo`'s `tras_turno_noche` check (from BODY-MINUTO-ANALISIS-2) treats that key as equivalent to being
+  inside the block -- so on the test fixture's 10 invented nights, 3 (not 1) satisfy `tras_turno_noche`. The test's
+  own hand-computed expectations (`GrupoConFiltrosTest`, `EnComunTest`) were corrected to match this measured
+  behaviour, with comments citing `turnos_costo.MODELO["ventana_post"]`, rather than narrowing the (correct)
+  implementation.
+
+**Customer bytes: none.** `buscar_noches`'s own catalogue `descripcion` (herramientas.py:3922-3935) is Spanish-only
+text the assistant MODEL reads, never shown to Carlos directly -- same precedent as `comparar_noche`/`leer_serie`'s
+own descriptions. No schema change, no Tier 1 path touched, no cross-repo contract.
+
+**Gate, 26 sequential alphabetical chunks** of the exact command `.venv/Scripts/python.exe -m unittest discover
+tests -t .`'s own 231 modules, each read directly from the process (chunk 11 ran past the 600s foreground cap and
+was moved to the background by the harness; its own output file was read back to completion -- `Ran 238 tests in
+725.853s`, `OK` -- before the next chunk ran; every other chunk finished inside the cap):
+
+| # | Range | Ran | Result |
+|---|-------|-----|--------|
+| 1 | test_accesibilidad .. test_agente_leer_serie | 197 | OK |
+| 2 | test_agente_medida .. test_asistente_panel | 195 | OK |
+| 3 | test_backup .. test_comida_corregir | 255 | OK |
+| 4 | test_comida_hora .. test_cuenta_schema | 205 | OK |
+| 5 | test_cuenta_vectores .. test_despertar_pantalla | 176 | OK |
+| 6 | test_despertar_real .. test_entreno_numeros | 242 | OK |
+| 7 | test_entreno_racha .. test_estados_vacios_2 | 174 | OK |
+| 8 | test_estados_vacios_hosted .. test_fuentes_propias | 130 | OK |
+| 9 | test_garmin_adapter .. test_garmin_estado | 70 | OK |
+| 10 | test_garmin_host .. test_get_sin_escritura | 139 | OK |
+| 11 | test_goals .. test_hogar_escribe | 238 | OK (backgrounded past 600s, read from its artifact) |
+| 12 | test_hogar_escribe_rutas .. test_horizonte | 208 | OK |
+| 13 | test_host_autoactualizar .. test_household | 202 | OK |
+| 14 | test_hoy .. test_leer_intradia | 187 | OK |
+| 15 | test_leer_noche .. test_mcp_cliente_remoto | 265 | OK |
+| 16 | test_mcp_copia_pc .. test_modelos_estandar_1 | 252 | OK |
+| 17 | test_momentos_pull .. test_periodo_analisis | 299 | OK |
+| 18 | test_periodo_herramientas .. test_plan_pantalla | 221 | OK |
+| 19 | test_plan_propuestas .. test_profile | 323 | OK |
+| 20 | test_profile_lote .. test_pull_relleno | 193 | OK |
+| 21 | test_readiness .. test_series_gramos | 146 | OK |
+| 22 | test_series_orden .. test_sync_vivo | 196 | OK |
+| 23 | test_sync_vivo_estado .. test_turno_fc_pantallas | 276 | OK |
+| 24 | test_turnos_costo .. test_turnos_ultima_semana | 259 | OK |
+| 25 | test_tutoriales .. test_vo2max | 168 | OK |
+| 26 | test_web_entry | 4 | OK |
+
+Sum: 197+195+255+205+176+242+174+130+70+139+238+208+202+187+265+252+299+221+323+193+146+196+276+259+168+4 = **5220**.
+Reconciled against an independent collect-only count
+(`unittest.defaultTestLoader.discover('tests', top_level_dir='.').countTestCases()`, same final tree) = **5220** --
+exact match. 0 failures, 0 errors, every chunk green. The pre-existing `NotSignedIn`/`AttributeError`/
+`ResourceWarning`/"dia vacio"/"pull attempt failed"/"mcp ... error"/"connect pull: error"/"backfill:"/"intradia:"/one
+deliberately-raised `RuntimeError` traceback (`test_sync_vivo.py:311`) printed mid-run are fixtures exercising
+synthetic/mock error and empty-day paths with invented demo data, not gate failures, and none are in a file this
+slice touched. No password, token, secret or real health figure was read, printed or written anywhere in this
+slice's own work or the gate's own stdout; no network call was made; `~/.body-app/`, `C:\Duna\body\body-app\.env`,
+any real database, `C:\Duna\body\body-app-live`, `C:\Duna\body\body-app-live-live` and `C:\Personal` were never
+opened. `git status --porcelain` empty throughout.
+
+**Commits on the branch:** `6ddfde74ba4cd2941a71e6e99ead559c27afd17b` (`body/noche_rasgos.py`,
+`tests/test_noche_rasgos.py`; 2 files changed, +218/-26) and `c6181bbf6eeac218e3e8641080361903a00bc683`
+(`body/agente/herramientas.py`, `tests/test_agente_registro.py`, `tests/test_buscar_noches.py` (new),
+`tests/test_mcp.py`, `tests/test_persona_fuga.py`, `tests/test_rendimiento.py`; 6 files changed, +599/-11), plus this
+ledger text, on the branch -- merged into `main` (`--no-ff`).
+
