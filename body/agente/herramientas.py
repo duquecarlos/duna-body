@@ -860,6 +860,14 @@ def _leer_dia(conn: sqlite3.Connection, person_id: int, day: str) -> dict:
         zonas = a.pop("zonas_limitadas", [])
         a["liviano_a_proposito"] = anatomia.texto_liviano_a_proposito(t, zonas) if zonas else None
     data["objetivos_nutriente"] = nutriente_objetivo.estado_del_dia(conn, person_id, day)
+    # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2: `data["ingesta"]` (from db.load_day) lists each
+    # amount on its own with no description -- a logged meal's own words never reach it, since
+    # registrar_comida stores them on the `comida` row, not on its `ingesta` children. `comidas`
+    # adds `db.comidas_del_dia`'s own grouping (description, time, amounts per meal, a legacy
+    # stand-alone ingesta row as its own one-item meal) -- kept ALONGSIDE `data["ingesta"]`, never
+    # replacing it, since tests/test_proteina.py's own LeerDiaIncludesIngestaTest already reads
+    # that list through this same tool.
+    data["comidas"] = db.comidas_del_dia(conn, person_id, day)
     # BODY-DESPERTAR-REAL-4 ruling 3, widened by BODY-DESPERTAR-REAL-6A-R2 ruling 5: the day's own
     # correction(s), next to Garmin's own sleep -- both shown, each labelled by kind. Only when
     # Garmin's own sleep exists (a correction cannot exist without one, ruling 2's own refusal at
