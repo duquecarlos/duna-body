@@ -17,8 +17,10 @@ math). It now carries the same margin rule as every other route.
 Non-vacuous: the route set checked below must equal the app's whole GET route set, not a sample --
 checked by comparing the two sets directly, not just their counts.
 """
+import json
 import os
 import tempfile
+import time
 import unittest
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -29,8 +31,8 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import config, cuenta, db, demo, dispositivo, fechas, garmin_cuenta, goals, identity, mcp, practicas, \
-    shift_import, web
+from body import config, cuenta, db, demo, dispositivo, fechas, garmin_cuenta, goals, identity, mcp, \
+    noche_rasgos, practicas, shift_import, web
 from body.agente import conversacion as agente_conversacion
 from body.rutas import comun as web_comun
 from body.rutas import tendencias as web_tendencias
@@ -853,6 +855,79 @@ class DespertarRealCostTest(unittest.TestCase):
         n_dia = self._contar(
             conn, lambda: hoy._despertar_dia_ctx(t, conn, 1, "America/Bogota", DAY, sleep_end_local))
         self.assertLessEqual(n_dia, 16, f"_despertar_dia_ctx cost {n_dia} statements, over its ceiling of 16")
+
+
+class CompararNocheCostTest(unittest.TestCase):
+    """BODY-MINUTO-ANALISIS-2 (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3): `noche_rasgos.comparar`'s
+    own statement count is independent of how many nights fall inside [desde, fecha] -- one bulk
+    statement per source table, never one per night. Measured on 400 invented consecutive nights,
+    seeded once: a 30-night call and a 365-night call over that SAME data cost the SAME number of
+    statements, and the 365-night call answers within a named wall-clock ceiling on this test box."""
+
+    _N_NOCHES = 400
+
+    def _contar(self, conn, llamada) -> int:
+        contador = {"n": 0}
+        conn.set_trace_callback(lambda sql: contador.__setitem__("n", contador["n"] + 1))
+        try:
+            llamada()
+        finally:
+            conn.set_trace_callback(None)
+        return contador["n"]
+
+    def _seed(self, conn) -> str:
+        """400 consecutive nights, each with a stored figure, a sleep_session and a tiny 'sleep'
+        raw_payload (two heart-rate samples, two stage points) -- enough to exercise every bulk
+        reader `comparar` calls, never enough to make seeding itself the slow part."""
+        base = date(2025, 1, 1)
+        payload = json.dumps({
+            "sleepHeartRate": [{"startGMT": 0, "value": 60.0}, {"startGMT": 1800000, "value": 55.0}],
+            "sleepLevels": [{"startGMT": 0, "activityLevel": 1}, {"startGMT": 1800000, "activityLevel": 0}],
+        })
+        dia = base.isoformat()
+        for i in range(self._N_NOCHES):
+            dia = (base + timedelta(i)).isoformat()
+            db.set_metric(conn, dia, "hrv_last_night", 40.0 + i % 20, "garmin", 1)
+            conn.execute(
+                "INSERT INTO sleep_session (person_id, day, start_local, end_local) VALUES "
+                "(1, ?, ?, ?)", (dia, f"{dia}T23:00:00", f"{dia}T06:00:00"))
+            conn.execute(
+                "INSERT INTO raw_payload (person_id, day, kind, source, fetched_at, payload) VALUES "
+                "(1, ?, 'sleep', 'garmin', '2026-01-01T00:00:00+00:00', ?)", (dia, payload))
+        conn.commit()
+        return dia  # the last night seeded, this test's own `fecha`
+
+    def test_cost_independent_of_night_count(self):
+        # Two separate connections, exactly DespertarRealCostTest's own pattern just above --
+        # db.periodos's own per-connection cache (body/db.py's `_periodos_de_persona`, "one read
+        # per connection, at most") would otherwise let whichever call runs FIRST on a SHARED
+        # connection pay for that one-time fill and the second one run free, making the two
+        # counts differ for a reason that has nothing to do with night count.
+        conn_30 = _reset_db(self)
+        fecha = self._seed(conn_30)
+        desde_30 = (date.fromisoformat(fecha) - timedelta(29)).isoformat()
+        treinta = self._contar(conn_30, lambda: noche_rasgos.comparar(conn_30, 1, fecha, desde=desde_30))
+
+        conn_365 = _reset_db(self)
+        fecha = self._seed(conn_365)
+        desde_365 = (date.fromisoformat(fecha) - timedelta(364)).isoformat()
+        trescientos_65 = self._contar(conn_365, lambda: noche_rasgos.comparar(conn_365, 1, fecha, desde=desde_365))
+
+        self.assertEqual(treinta, trescientos_65,
+                          f"a 365-night range cost more statements than a 30-night one: "
+                          f"{trescientos_65} vs {treinta}")
+
+    def test_within_time_ceiling_for_a_365_night_history(self):
+        conn = _reset_db(self)
+        fecha = self._seed(conn)
+        desde_365 = (date.fromisoformat(fecha) - timedelta(364)).isoformat()
+        inicio = time.perf_counter()
+        noche_rasgos.comparar(conn, 1, fecha, desde=desde_365)
+        transcurrido = time.perf_counter() - inicio
+        # Measured well under 0.5s on this test box for 365 nights of invented data; a 2s ceiling
+        # leaves ample headroom for a slower CI box without hiding a real regression.
+        self.assertLess(transcurrido, 2.0,
+                         f"a 365-night comparar() took {transcurrido:.3f}s, over its 2.0s ceiling")
 
 
 if __name__ == "__main__":

@@ -74,7 +74,7 @@ from zoneinfo import ZoneInfo
 
 from .. import anatomia, baselines, catalogo_tendencias, comidas, compartir, contexto_dia, cuenta, db, despertar_real, \
     desplazamiento_import, enlaces, entreno_historial, errores, experimentos, fechas, garmin_adapter, \
-    garmin_cuenta, goals, history, horizonte, household, nutriente_objetivo, practicas, profile, pull, \
+    garmin_cuenta, goals, history, horizonte, household, noche_rasgos, nutriente_objetivo, practicas, profile, pull, \
     readiness, shift_import, sueno_fc, turnos_costo, tutoriales, viajes
 from ..i18n import LANGS, T
 from . import ajustes, conversacion as agente_conversacion, propuestas
@@ -208,6 +208,31 @@ _VENTANA_HISTORIA_DIAS = 3650
 _PARAM_LEER_NOCHE = {
     "type": "object",
     "properties": {"fecha": {"type": "string", "format": "date"}},
+    "required": ["fecha"],
+    "additionalProperties": False,
+}
+
+# BODY-MINUTO-ANALISIS-2 (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2): `grupo`'s six optional keys,
+# each checked by body/noche_rasgos.py's own `_coincide_grupo` -- a key never named here is refused
+# by `additionalProperties: False` before the model's own call ever reaches that module.
+_PARAM_COMPARAR_NOCHE = {
+    "type": "object",
+    "properties": {
+        "fecha": {"type": "string", "format": "date"},
+        "desde": {"type": "string", "format": "date"},
+        "grupo": {
+            "type": "object",
+            "properties": {
+                "tras_turno": {"type": "string", "enum": list(db.SHIFT_KINDS)},
+                "tras_turno_noche": {"type": "boolean"},
+                "viaje": {"type": "boolean"},
+                "periodo": {"type": "string"},
+                "comida_tarde_min_max": {"type": "integer"},
+                "con_alcohol": {"type": "boolean"},
+            },
+            "additionalProperties": False,
+        },
+    },
     "required": ["fecha"],
     "additionalProperties": False,
 }
@@ -1609,6 +1634,36 @@ def _leer_noche(conn: sqlite3.Connection, person_id: int, fecha: str, actualizac
     if actualizacion_fallo:
         out["actualizacion"] = t("asistente.intradia.no_actualizado")
     return out
+
+
+def _comparar_noche(conn: sqlite3.Connection, person_id: int, fecha: str, desde: str | None = None,
+                     grupo: dict | None = None) -> dict:
+    """BODY-MINUTO-ANALISIS-2 (ORCH-CARLOS-DELEGATES-TIER-1-1): one night's own features ranked
+    against this person's own history -- body/noche_rasgos.py does every statement; this wrapper
+    only validates the agent-facing date fields the same way `_leer_noche` does, and turns a night
+    with nothing at all to rank into the same kind of ToolError every other lectura tool raises."""
+    person = db.person(conn, person_id)
+    t = T(person["language"])
+    hoy = fechas.hoy_local(person)
+    try:
+        dia_d = date.fromisoformat(fecha)
+    except ValueError:
+        raise ToolError("'fecha' debe ser una fecha ISO (AAAA-MM-DD)")
+    if dia_d > hoy:
+        raise ToolError("'fecha' no puede ser una fecha futura")
+    if desde is not None:
+        try:
+            date.fromisoformat(desde)
+        except ValueError:
+            raise ToolError("'desde' debe ser una fecha ISO (AAAA-MM-DD)")
+    if grupo:
+        extra = sorted(set(grupo) - set(noche_rasgos.GRUPO_CLAVES))
+        if extra:
+            raise ToolError(f"'grupo' tiene clave(s) no reconocida(s): {extra}")
+    try:
+        return noche_rasgos.comparar(conn, person_id, fecha, desde=desde, grupo=grupo)
+    except noche_rasgos.SinDatos:
+        raise ToolError(t("agente.error.comparar_noche_sin_noche"))
 
 
 def _despertar_hora_opuesta(conn: sqlite3.Connection, person_id: int, fecha: str, tipo_opuesto: str,
@@ -3738,6 +3793,29 @@ HERRAMIENTAS = [
                      "varias llamadas de leer_intradia. Para un momento puntual de hasta 4 horas (no una "
                      "noche completa) usa leer_intradia; para varios días usa leer_dia o leer_serie.",
      "parametros": _PARAM_LEER_NOCHE, "funcion": _leer_noche, "necesita_actualizacion": True},
+    {"nombre": "comparar_noche", "tipo": "lectura", "nivel": "completo",
+     "descripcion": "Las características de UNA noche (la fecha de despertar) comparadas con tus propias "
+                     "noches anteriores -- nunca con otras personas. Dos familias de características, cada "
+                     "una presente solo cuando se puede calcular: las cifras ya guardadas de esa noche "
+                     "(pulso bajo robusto, pulso promedio, VFC nocturna, puntaje de sueño, los minutos de "
+                     "cada etapa, el total de sueño y la carga de Body Battery durante la noche si está "
+                     "guardada) y la FORMA de esa noche a partir de su detalle minuto a minuto (hora de "
+                     "dormirse y de despertar, en qué momento de la noche cae el pulso más bajo, el pulso "
+                     "en el primer tercio frente al último, los segmentos despierto y sus minutos, el bloque "
+                     "de sueño profundo más largo sin interrupción, y la VFC de la primera mitad frente a la "
+                     "segunda) -- esta segunda familia solo existe para noches con ese detalle guardado; "
+                     "muchas noches antiguas no lo tienen. Por cada característica devuelve su valor, "
+                     "cuántas noches tuyas la tienen, los percentiles 25/50/75 y en qué percentil (0-100) "
+                     "cae esta noche entre tus propias noches del rango -- 'desde' por defecto son los "
+                     "últimos 365 días. Con 'grupo' (tras_turno, tras_turno_noche, viaje, periodo, "
+                     "comida_tarde_min_max, con_alcohol) repite esos mismos cinco datos solo dentro de las "
+                     "noches que comparten ese mismo contexto, por ejemplo 'las noches después de un turno "
+                     "de noche' -- un grupo con menos de 5 noches no da percentiles, solo su propio conteo. "
+                     "Nunca un dato crudo minuto a minuto ni una causa. Para UNA noche comparada con tu "
+                     "propia historia usa esta herramienta; para el detalle crudo completo de esa misma "
+                     "noche usa leer_noche; para mirar una ventana puntual dentro de una noche o un día usa "
+                     "leer_serie con paso='minuto'.",
+     "parametros": _PARAM_COMPARAR_NOCHE, "funcion": _comparar_noche},
     {"nombre": "leer_tendencias", "tipo": "lectura", "nivel": "resumen",
      "descripcion": "Promedios de un rango de días frente a tu historia, sin bajar al dato de un día.",
      "parametros": _PARAM_TENDENCIAS, "funcion": _leer_tendencias},

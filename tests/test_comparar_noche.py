@@ -1,0 +1,126 @@
+"""BODY-MINUTO-ANALISIS-2: the assistant tool `comparar_noche`, wired through
+body/agente/herramientas.py exactly like leer_noche -- nivel gating, date validation, the
+localized refusal for a night with nothing to rank, and es/en parity of that one new message.
+Invented demo data only, no real health figures, no network.
+"""
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from tests._isolate import TMP  # noqa: F401  (must come before any body import)
+
+from tests._db import open_conn
+
+from body import db
+from body.agente import herramientas
+
+
+def _conn(case: unittest.TestCase):
+    c = open_conn(case, Path(tempfile.mkdtemp(dir=TMP)) / "a.db")
+    db.init(c)
+    return c
+
+
+class RegistroTest(unittest.TestCase):
+    def test_registered_as_lectura_completo(self):
+        self.assertEqual(herramientas.tipo_de("comparar_noche"), "lectura")
+        entrada = herramientas._BY_NAME["comparar_noche"]
+        self.assertEqual(entrada["nivel"], "completo")
+        self.assertIn("comparar_noche", {h["nombre"] for h in herramientas.disponibles("completo")})
+        self.assertNotIn("comparar_noche", {h["nombre"] for h in herramientas.disponibles("resumen")})
+
+
+class EjecutarGuardTest(unittest.TestCase):
+    def test_refused_below_nivel_completo(self):
+        conn = _conn(self)
+        db.set_metric(conn, "2026-10-05", "hrv_last_night", 55.0, "garmin", 1)
+        conn.commit()
+        for nivel in ("resumen", "ninguno"):
+            with self.assertRaises(herramientas.ToolError):
+                herramientas.ejecutar(conn, 1, "comparar_noche", {"fecha": "2026-10-05"}, nivel)
+
+    def test_malformed_fecha_refused(self):
+        conn = _conn(self)
+        with self.assertRaises(herramientas.ToolError):
+            herramientas.ejecutar(conn, 1, "comparar_noche", {"fecha": "no-es-fecha"}, "completo")
+
+    def test_future_fecha_refused(self):
+        conn = _conn(self)
+        with self.assertRaises(herramientas.ToolError):
+            herramientas.ejecutar(conn, 1, "comparar_noche", {"fecha": "2099-01-01"}, "completo")
+
+    def test_malformed_desde_refused(self):
+        conn = _conn(self)
+        db.set_metric(conn, "2026-10-05", "hrv_last_night", 55.0, "garmin", 1)
+        conn.commit()
+        with self.assertRaises(herramientas.ToolError):
+            herramientas.ejecutar(conn, 1, "comparar_noche", {"fecha": "2026-10-05", "desde": "x"}, "completo")
+
+    def test_missing_fecha_refused(self):
+        conn = _conn(self)
+        with self.assertRaises(herramientas.ToolError):
+            herramientas.ejecutar(conn, 1, "comparar_noche", {}, "completo")
+
+    def test_a_night_with_nothing_at_all_is_refused_localized(self):
+        conn = _conn(self)
+        with self.assertRaises(herramientas.ToolError) as ctx:
+            herramientas.ejecutar(conn, 1, "comparar_noche", {"fecha": "2026-10-05"}, "completo")
+        self.assertEqual(str(ctx.exception), "No hay una noche registrada por Garmin para ese día.")
+
+    def test_a_night_with_nothing_at_all_is_refused_localized_in_english(self):
+        conn = _conn(self)
+        db.set_language(conn, "en", 1)
+        conn.commit()
+        with self.assertRaises(herramientas.ToolError) as ctx:
+            herramientas.ejecutar(conn, 1, "comparar_noche", {"fecha": "2026-10-05"}, "completo")
+        self.assertEqual(str(ctx.exception), "There is no night recorded by Garmin for that day.")
+
+    def test_an_unknown_grupo_key_is_refused(self):
+        conn = _conn(self)
+        db.set_metric(conn, "2026-10-05", "hrv_last_night", 55.0, "garmin", 1)
+        conn.commit()
+        with self.assertRaises(herramientas.ToolError):
+            herramientas.ejecutar(conn, 1, "comparar_noche",
+                                   {"fecha": "2026-10-05", "grupo": {"no_existe": 1}}, "completo")
+
+
+class SalidaTest(unittest.TestCase):
+    def test_basic_call_returns_rasgos_contexto_and_noches_sin_minutos(self):
+        conn = _conn(self)
+        db.set_metric(conn, "2026-10-05", "hrv_last_night", 55.0, "garmin", 1)
+        conn.commit()
+        out = herramientas.ejecutar(conn, 1, "comparar_noche", {"fecha": "2026-10-05"}, "completo")
+        self.assertEqual(out["dia"], "2026-10-05")
+        self.assertIn("rasgos", out)
+        self.assertIn("hrv_last_night", out["rasgos"])
+        self.assertEqual(out["rasgos"]["hrv_last_night"]["valor"], 55.0)
+        self.assertIn("noches_sin_minutos", out)
+        self.assertIn("contexto", out)
+        json.dumps(out)  # survives serialization, the same contract every lectura tool keeps
+
+    def test_output_never_carries_a_raw_minute_array(self):
+        conn = _conn(self)
+        db.set_metric(conn, "2026-10-05", "hrv_last_night", 55.0, "garmin", 1)
+        conn.commit()
+        out = herramientas.ejecutar(conn, 1, "comparar_noche", {"fecha": "2026-10-05"}, "completo")
+        self.assertNotIn("frecuencia_cardiaca", out)
+        self.assertNotIn("sueno", out)
+
+
+class StaticGuardTest(unittest.TestCase):
+    """tests/test_agente_registro.py's own StaticGuardTest already walks EVERY `lectura` tool's
+    call graph for a writer, comparar_noche included (BODY-WEB-ESTRUCTURA-1's own "tests patch the
+    module that owns a name" rule applies the same way here) -- this is the same one-tool check
+    its own `test_no_lectura_tool_imports_propuestas` makes, scoped to this new tool alone."""
+
+    def test_source_never_mentions_propuestas(self):
+        import inspect
+        import textwrap
+        entrada = herramientas._BY_NAME["comparar_noche"]
+        src = textwrap.dedent(inspect.getsource(entrada["funcion"]))
+        self.assertNotIn("propuestas", src)
+
+
+if __name__ == "__main__":
+    unittest.main()
