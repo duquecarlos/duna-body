@@ -66,7 +66,7 @@ class EjecutarGuardTest(unittest.TestCase):
         conn = _conn(self)
         with self.assertRaises(herramientas.ToolError) as ctx:
             herramientas.ejecutar(conn, 1, "comparar_noche", {"fecha": "2026-10-05"}, "completo")
-        self.assertEqual(str(ctx.exception), "Ese día no tiene una noche registrada por Garmin.")
+        self.assertEqual(str(ctx.exception), "No hay una noche registrada por Garmin para ese día.")
 
     def test_a_night_with_nothing_at_all_is_refused_localized_in_english(self):
         conn = _conn(self)
@@ -74,7 +74,7 @@ class EjecutarGuardTest(unittest.TestCase):
         conn.commit()
         with self.assertRaises(herramientas.ToolError) as ctx:
             herramientas.ejecutar(conn, 1, "comparar_noche", {"fecha": "2026-10-05"}, "completo")
-        self.assertEqual(str(ctx.exception), "That day has no night recorded by Garmin.")
+        self.assertEqual(str(ctx.exception), "There is no night recorded by Garmin for that day.")
 
     def test_an_unknown_grupo_key_is_refused(self):
         conn = _conn(self)
