@@ -49,8 +49,11 @@ def _guardar_estres(conn, person_id: int, day: str, muestras: list[tuple[str, fl
     db.guardar_intradia(conn, person_id, day, "intradia_estres", _estres_payload(muestras))
 
 
-def _guardar_sueno(conn, person_id: int, day: str, hr: list[tuple[str, float]] = ()) -> None:
+def _guardar_sueno(conn, person_id: int, day: str, hr: list[tuple[str, float]] = (),
+                    etapas: list[tuple[str, float]] = ()) -> None:
     payload = {"sleepHeartRate": [{"startGMT": _ms(ts), "value": v} for ts, v in hr]}
+    if etapas:
+        payload["sleepLevels"] = [{"startGMT": _ms(ts), "activityLevel": c} for ts, c in etapas]
     conn.execute(
         "INSERT OR REPLACE INTO raw_payload (person_id, day, kind, source, fetched_at, payload) "
         "VALUES (?, ?, 'sleep', ?, ?, ?)",
@@ -499,6 +502,64 @@ class RangoDobleTest(unittest.TestCase):
         out = _ejecutar(conn, 1)
         self.assertIsNone(out["fc_minima_vs_rango"]["rango_historia"])
         self.assertEqual(out["fc_minima_vs_rango"]["motivo_sin_rango_30_dias"], "pocos_dias")
+
+
+class EtapaEtiquetaTest(unittest.TestCase):
+    """BODY-NOCHE-LECTURA-2 ruling 2: every stage point carries [hora, codigo, etiqueta]; a code
+    outside ETAPAS_SUENO_GARMIN gets 'desconocido', never a guess."""
+
+    def test_known_codes_get_their_label_and_an_unknown_code_gets_desconocido(self):
+        conn = _conn(self)
+        _sesion(conn, 1, DIA, f"{PREV}T23:00:00", f"{DIA}T06:00:00")
+        _guardar_sueno(conn, 1, DIA, etapas=[(f"{DIA}T00:00:00", 0), (f"{DIA}T01:00:00", 1),
+                                              (f"{DIA}T02:00:00", 2), (f"{DIA}T03:00:00", 3),
+                                              (f"{DIA}T04:00:00", 9)])
+        conn.commit()
+        out = _ejecutar(conn, 1)
+        self.assertEqual(out["sueno"]["stages"], [
+            [f"{DIA}T00:00", 0.0, "profundo"], [f"{DIA}T01:00", 1.0, "ligero"],
+            [f"{DIA}T02:00", 2.0, "rem"], [f"{DIA}T03:00", 3.0, "despierto"],
+            [f"{DIA}T04:00", 9.0, "desconocido"],
+        ])
+
+
+class EtapaVerificacionTest(unittest.TestCase):
+    """BODY-NOCHE-LECTURA-2 ruling 2: etapas_verificacion checks the labelled stages array against
+    the night's own stored totals (the day page's own STAGES keys)."""
+
+    _ETAPAS = [(f"{DIA}T00:00:00", 0), (f"{DIA}T02:00:00", 1), (f"{DIA}T04:00:00", 2),
+               (f"{DIA}T05:30:00", 3)]
+    # The array alone spans 00:00->06:00 (fin_dt): profundo 2h, ligero 2h, rem 1.5h, despierto 0.5h.
+
+    def _sembrar(self, conn, person_id: int, deep=120.0, light=120.0, rem=90.0, awake=30.0) -> None:
+        _sesion(conn, person_id, DIA, f"{PREV}T23:00:00", f"{DIA}T06:00:00")
+        _guardar_sueno(conn, person_id, DIA, etapas=self._ETAPAS)
+        db.set_metric(conn, DIA, "sleep_deep_min", deep, "garmin", person_id)
+        db.set_metric(conn, DIA, "sleep_light_min", light, "garmin", person_id)
+        db.set_metric(conn, DIA, "sleep_rem_min", rem, "garmin", person_id)
+        db.set_metric(conn, DIA, "sleep_awake_min", awake, "garmin", person_id)
+        conn.commit()
+
+    def test_coincide_true_when_the_stored_totals_match_the_labelled_array(self):
+        conn = _conn(self)
+        self._sembrar(conn, 1)
+        out = _ejecutar(conn, 1)
+        self.assertEqual(out["etapas_verificacion"], {"coincide": True, "diferencia_min_max": 0.0})
+
+    def test_coincide_false_when_a_stored_total_does_not_match(self):
+        conn = _conn(self)
+        self._sembrar(conn, 1, deep=10.0)  # the array says 120 minutes of 'profundo', not 10
+        out = _ejecutar(conn, 1)
+        self.assertFalse(out["etapas_verificacion"]["coincide"])
+        self.assertGreater(out["etapas_verificacion"]["diferencia_min_max"], 5)
+
+    def test_coincide_is_null_without_stored_totals(self):
+        conn = _conn(self)
+        _sesion(conn, 1, DIA, f"{PREV}T23:00:00", f"{DIA}T06:00:00")
+        _guardar_sueno(conn, 1, DIA, etapas=self._ETAPAS)
+        conn.commit()
+        out = _ejecutar(conn, 1)
+        self.assertEqual(out["etapas_verificacion"], {"coincide": None, "diferencia_min_max": None})
 
 
 class RangoDobleStatementCountTest(unittest.TestCase):
