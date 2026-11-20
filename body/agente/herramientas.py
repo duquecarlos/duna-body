@@ -860,6 +860,14 @@ def _leer_dia(conn: sqlite3.Connection, person_id: int, day: str) -> dict:
         zonas = a.pop("zonas_limitadas", [])
         a["liviano_a_proposito"] = anatomia.texto_liviano_a_proposito(t, zonas) if zonas else None
     data["objetivos_nutriente"] = nutriente_objetivo.estado_del_dia(conn, person_id, day)
+    # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2: `data["ingesta"]` (from db.load_day) lists each
+    # amount on its own with no description -- a logged meal's own words never reach it, since
+    # registrar_comida stores them on the `comida` row, not on its `ingesta` children. `comidas`
+    # adds `db.comidas_del_dia`'s own grouping (description, time, amounts per meal, a legacy
+    # stand-alone ingesta row as its own one-item meal) -- kept ALONGSIDE `data["ingesta"]`, never
+    # replacing it, since tests/test_proteina.py's own LeerDiaIncludesIngestaTest already reads
+    # that list through this same tool.
+    data["comidas"] = db.comidas_del_dia(conn, person_id, day)
     # BODY-DESPERTAR-REAL-4 ruling 3, widened by BODY-DESPERTAR-REAL-6A-R2 ruling 5: the day's own
     # correction(s), next to Garmin's own sleep -- both shown, each labelled by kind. Only when
     # Garmin's own sleep exists (a correction cannot exist without one, ruling 2's own refusal at
@@ -1185,21 +1193,31 @@ def _verificar_etapas(sueno_arrays: dict, fin_dt: datetime, valores_dia: dict) -
 def _derivados_noche(conn: sqlite3.Connection, person_id: int, fecha: str, sueno_arrays: dict,
                       inicio_dt: datetime, fin_dt: datetime) -> dict:
     """BODY-NOCHE-LECTURA-1 ruling 2 (BODY-NOCHE-LECTURA-2 ruling 1 widens the two range facts and
-    adds `etapas_verificacion`): the facts Body already knows how to compute for this one night,
-    each independently `None` when ITS OWN input is missing -- never invented, and never gated on
-    whether a sibling fact could be computed. `fc_minima_vs_rango` and `vfc_noche`'s own ranges
-    reuse `baselines.baseline` and `profile.metric_profile` (see `_rango_doble_y_z`), the SAME
-    helpers every screen that shows a person's own normal already calls -- never a second range
-    computed here. `despertar_modelo` is `despertar_real.estimar`'s own, unedited dict
+    adds `etapas_verificacion`; ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1 splits the single minute
+    from its comparison): the facts Body already knows how to compute for this one night, each
+    independently `None` when ITS OWN input is missing -- never invented, and never gated on
+    whether a sibling fact could be computed. `fc_minima` is the single lowest HEART-RATE MINUTE
+    inside Garmin's own window (`_fc_minima_noche`) and carries NO range of its own -- a single
+    sample is never compared against sueno_fc.py's own ROBUST low (a percentile of hundreds of
+    samples), the apples-to-oranges bug a real read surfaced (the desk, relayed 2026-11-20).
+    `fc_baja_robusta` is that SAME robust figure for this wake day, read from
+    `daily_metric_efectiva` (`valores_dia`, the same value `leer_serie`/`leer_dia` already show,
+    tagged 'estimated') -- `fc_baja_robusta_vs_rango` is the one comparison against the usual
+    range, moved here from the single minute. `fc_baja_robusta_vs_rango` and `vfc_noche`'s own
+    ranges reuse `baselines.baseline` and `profile.metric_profile` (see `_rango_doble_y_z`), the
+    SAME helpers every screen that shows a person's own normal already calls -- never a second
+    range computed here. `despertar_modelo` is `despertar_real.estimar`'s own, unedited dict
     (body/despertar_real.py) -- never reimplemented."""
     fc_minima = _fc_minima_noche(sueno_arrays, inicio_dt, fin_dt)
-    fc_minima_vs_rango = None
-    if fc_minima is not None:
-        min_days = 1 if sueno_fc.CLAVE_MIN in SELF_METRIC_KEYS else 14
-        fc_minima_vs_rango = _rango_doble_y_z(conn, person_id, fecha, sueno_fc.CLAVE_MIN, min_days,
-                                               fc_minima["valor"])
 
     valores_dia = db.day_values(conn, fecha, person_id)
+    fc_baja_robusta = valores_dia.get(sueno_fc.CLAVE_MIN)
+    fc_baja_robusta_vs_rango = None
+    if fc_baja_robusta is not None:
+        min_days = 1 if sueno_fc.CLAVE_MIN in SELF_METRIC_KEYS else 14
+        fc_baja_robusta_vs_rango = _rango_doble_y_z(conn, person_id, fecha, sueno_fc.CLAVE_MIN,
+                                                      min_days, fc_baja_robusta)
+
     vfc_valor = valores_dia.get("hrv_last_night")
     vfc_noche = None
     if vfc_valor is not None:
@@ -1211,7 +1229,8 @@ def _derivados_noche(conn: sqlite3.Connection, person_id: int, fecha: str, sueno
 
     return {
         "fc_minima": fc_minima,
-        "fc_minima_vs_rango": fc_minima_vs_rango,
+        "fc_baja_robusta": fc_baja_robusta,
+        "fc_baja_robusta_vs_rango": fc_baja_robusta_vs_rango,
         "vfc_noche": vfc_noche,
         "despertar_modelo": despertar_modelo,
         "minutos_despierto_tras_fin": _minutos_despierto_tras_fin(despertar_modelo),
@@ -3356,9 +3375,10 @@ HERRAMIENTAS = [
      "descripcion": "La noche completa de un día de despertar, en una sola llamada: el pulso y el estrés "
                      "minuto a minuto desde antes de dormirse hasta después de despertar (cruzando la "
                      "medianoche), el sueño minuto a minuto, el inicio y el fin que registró el reloj, tus "
-                     "propias correcciones, y lo que Body ya sabe calcular sobre esa noche (el pulso más bajo "
-                     "y cómo se compara con tu rango habitual, tu VFC nocturna y su rango habitual, y el "
-                     "modelo de despertar real). Cada rango habitual viene en dos versiones, cada una ausente "
+                     "propias correcciones, y lo que Body ya sabe calcular sobre esa noche (el pulso mínimo: "
+                     "el minuto más bajo registrado esa noche, sin rango propio; el pulso bajo robusto de esa "
+                     "noche, el que sí se compara con tu rango habitual; tu VFC nocturna y su rango habitual; "
+                     "y el modelo de despertar real). Cada rango habitual viene en dos versiones, cada una ausente "
                      "por su cuenta: rango_30_dias (los 30 días antes de esta noche, sin los días marcados) y "
                      "rango_historia (toda tu historia, la misma que ves en Tendencias). Las etapas del sueño "
                      "llevan su propia etiqueta (profundo/ligero/rem/despierto) junto con una verificación de "

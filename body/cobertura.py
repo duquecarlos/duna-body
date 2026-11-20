@@ -97,6 +97,22 @@ def _sleep_payloads(conn: sqlite3.Connection, person_id: int) -> dict[str, Any]:
     return out
 
 
+def _claves_crudas_sleep(payloads: dict[str, Any]) -> dict[str, int]:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3: every TOP-LEVEL key name any stored sleep payload
+    carries (never walked into a key's own nested content), with the number of nights it is
+    present AND non-empty -- names and counts only, never a value, so the next host run can name
+    the real SpO2 key if `wellnessEpochSPO2DataDTOList` (BODY-COBERTURA-HOST-1: present on 0 of
+    884 stored payloads) is simply the wrong assumed name, not an absent reading."""
+    conteos: dict[str, int] = {}
+    for payload in payloads.values():
+        if not isinstance(payload, dict):
+            continue
+        for clave, valor in payload.items():
+            if valor:
+                conteos[clave] = conteos.get(clave, 0) + 1
+    return conteos
+
+
 def _bloque_sleep(conn: sqlite3.Connection, person_id: int, zona: str) -> dict:
     payloads = _sleep_payloads(conn, person_id)
     dias = sorted(payloads)
@@ -113,6 +129,7 @@ def _bloque_sleep(conn: sqlite3.Connection, person_id: int, zona: str) -> dict:
         "primero": dias[0] if dias else None,
         "ultimo": dias[-1] if dias else None,
         "claves": claves,
+        "claves_crudas": _claves_crudas_sleep(payloads),
     }
 
 
@@ -225,6 +242,8 @@ def _imprimir(out: dict) -> None:
     print(f"sleep: noches={sleep['noches']} primero={sleep['primero']} ultimo={sleep['ultimo']}")
     for clave, datos in sleep["claves"].items():
         print(f"sleep.{clave}: noches={datos['noches']} mediana_muestras={datos['mediana_muestras']}")
+    for clave, noches in sleep["claves_crudas"].items():
+        print(f"sleep.clave_cruda.{clave}: noches={noches}")
     bb = out["body_battery"]
     print(
         f"body_battery: dias={bb['dias']} dias_con_datos={bb['dias_con_datos']} "

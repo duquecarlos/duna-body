@@ -31173,3 +31173,120 @@ assistant's `registrar_dolor` proposal tool) -- `6603ac7` (the tone-guard allow-
 gate) -- `b6cf46a` (this ledger entry) -- `74f7895` (fill in this entry's own sha) -- merged into
 `main` as `0d4ec36` (`--no-ff`).
 
+## BODY-NOCHE-LECTURA-3 -- leer_noche compares like with like, leer_dia groups meals, cobertura names the real sleep keys (2026-11-20)
+
+Three defects the desk's real reads surfaced (relayed 2026-11-20, no figures here) plus one measurement gap, all in
+assistant read paths (ORCH-CARLOS-DELEGATES-TIER-1-1):
+
+**(A) Apples to oranges in leer_noche.** `fc_minima` is the single lowest heart-rate minute inside Garmin's own sleep
+window (`_fc_minima_noche`, by design), but the removed `fc_minima_vs_rango` compared it against the range of
+`sueno_fc.CLAVE_MIN` ('sleep_hr_min'), a ROBUST LOW -- a percentile of the window's samples, never a single sample.
+A single minute reads systematically below a percentile, so nearly every night read "below the usual range" -- the
+desk reported a night as well below his range when it was the comparison itself that was biased, and `leer_serie`/
+`leer_dia` showed that same night's `sleep_hr_min` (the robust figure, tagged estimated) while `leer_noche` showed a
+lower single minute, so the tools seemed to disagree.
+
+**(B) Meals lost their description in leer_dia.** `registrar_comida` stores the meal's own description on the
+`comida` row and its amounts as `ingesta` children with `descripcion` NULL; `leer_dia` listed only the `ingesta`
+rows (through `db.load_day`), so a logged meal's description read null. `db.comidas_del_dia` already grouped
+children under their meal with its description and time -- `leer_dia` simply never called it.
+
+**(C) SpO2 key unknown.** The first coverage run on the host (dev-protocol BODY-COBERTURA-HOST-1) found the assumed
+SpO2 array key `wellnessEpochSPO2DataDTOList` present on 0 of 884 stored sleep payloads, while the other four
+assumed keys were present on 141-142 -- whether the watch records no overnight SpO2 or the key is simply named
+differently could not be told without seeing the payload's own key NAMES.
+
+**Ruling 1 (like with like) -- `bbdc06b`.** `_derivados_noche` (`body/agente/herramientas.py:1193`) keeps `fc_minima`
+{valor, hora} with no range of its own. It adds `fc_baja_robusta` (`herramientas.py:1214`) -- that night's own
+`sleep_hr_min` as stored in `daily_metric_efectiva` for the wake day (`db.day_values`, the same figure `leer_serie`/
+`leer_dia` already return) -- and the range comparison moves to `fc_baja_robusta_vs_rango` (`herramientas.py:1215,
+1218-1219`), the same `rango_30_dias`/`rango_historia`/`motivo`/`z`/`z_base` shape BODY-NOCHE-LECTURA-2 built, reused
+unchanged via `_rango_doble_y_z`. The old key `fc_minima_vs_rango` is removed; a census
+(`git grep -n fc_minima_vs_rango -- body/ tests/`) found no caller outside the tool and the test module, both now
+updated. The tool's own `descripcion` (`herramientas.py:3378-3379`) now names the two facts in one sentence: the
+single minute is the lowest moment; the robust low is what compares with the usual range. Tests:
+`tests/test_leer_noche.py` -- `fc_baja_robusta` equals the stored `sleep_hr_min` and its own range reuses it (renamed
+from `test_fc_minima_vs_rango_reuses_baselines_baseline_on_sleep_hr_min`); `fc_minima` carries no range
+(`assertNotIn("fc_minima_vs_rango", out)`); both independently null with no stored metric; the three `RangoDobleTest`
+cases re-seeded to store `sleep_hr_min` for the wake day itself (one of them re-measured: `rango_historia`'s own
+`dias` moved from 20 to 21, since that stored value is now itself one more day of this person's own history, the
+same as any other past night's -- never excluded just because it is the night being read); the two
+`RangoDobleStatementCountTest` statement-count ceilings unchanged (still <= 30, the same fixture, one `set_metric`
+call substituted for the ad hoc heart-rate array).
+
+**Ruling 2 (meals as meals) -- `81f36b0`.** `_leer_dia` (`herramientas.py:870`) adds `data["comidas"] =
+db.comidas_del_dia(conn, person_id, day)` -- one SQL statement, the same grouping `body/rutas/hoy.py`'s own Día
+screen already uses. The existing per-ingesta `data["ingesta"]` list (from `db.load_day`) STAYS, not replaced: a
+census (`git grep -n '"ingesta"' -- body/ tests/`) found `tests/test_proteina.py`'s own
+`LeerDiaIncludesIngestaTest.test_leer_dia_shows_entries_and_total` already reads `out["ingesta"]` through this same
+tool, and that module is outside this slice's own `touches` -- so `comidas` was added alongside it rather than
+replacing it, named here per the spec's own "say which". New test modules (none of the candidates in `touches` were
+usable off the shelf, so both were created): `tests/test_agente_leer_dia.py` (a meal via `db.crear_comida` groups its
+description and every amount; a legacy stand-alone `ingesta` row reads as its own one-item meal; the existing
+`ingesta` list is unchanged; another person's meals never returned) and `tests/test_agente_comidas.py` (a meal
+proposed through `registrar_comida` and applied via `propuestas.aplicar` reads back in `leer_dia`'s own `comidas`
+with its description and amounts -- the full propose/apply/read round trip). `tests/test_persona_fuga.py` needed no
+edit: `COMIDA` is already in `_markers_of`'s active-marker list, checked generically against every `READ_TOOLS` entry
+including `leer_dia` in `_sweep_tools_as` -- confirmed still green, unchanged.
+
+**Ruling 3 (key names in the coverage count) -- `14dd3d9`.** `body/cobertura.py` gains `_claves_crudas_sleep`
+(`cobertura.py:100`), called from `_bloque_sleep` (`cobertura.py:132`) and printed by `_imprimir`
+(`cobertura.py:245`): for the stored 'sleep' payloads, every TOP-LEVEL key name, with the number of nights it is
+present and non-empty -- names and counts only, never a value, and never walked into a key's own nested content. No
+new SQL statement (it processes the same payloads `_bloque_sleep` already loaded). Tests added to
+`tests/test_cobertura.py`'s new `ClavesCrudasTest`: every top-level key counted including one an assumed spec never
+named (the real-world SpO2 case this ruling answers), an empty array never counted, a non-dict payload contributes
+no key, and the invented sentinel value (999) never appears in the dumped output -- only its key's name and count do.
+
+**Files outside `touches` found NOT needed, named per the spec's own instruction:** `body/i18n/es.json`/`en.json`
+(no user-facing string was added -- `leer_noche`'s `descripcion` is a Spanish-only internal tool-catalogue string,
+never localized, and `sleep_hr_min`'s own i18n label already exists in both files from BODY-SUENO-FC-1);
+`tests/test_i18n_paridad.py`, `tests/test_agente_registro.py`, `tests/test_mcp.py`, `tests/test_rendimiento.py` (each
+re-run green in the gate below, unchanged -- `test_rendimiento.py` measures HTTP route statement counts only, and
+`/day/{day}` already called `db.comidas_del_dia` directly, so ruling 2 never touched its ceiling; the others carry no
+assertion this slice's diff could break).
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run as 12 sequential
+alphabetical chunks of ~19-20 dotted modules (225 modules total; the four `test_host_*` modules kept together in
+chunk 6 alongside `test_horizonte`), each read directly from the process:
+
+| # | Range | Ran | Result |
+|---|-------|-----|--------|
+| 1 | test_accesibilidad .. test_asistente_panel | 385 | OK (expected failures=1) |
+| 2 | test_backup .. test_demo | 459 | OK (skipped=1) |
+| 3 | test_demo_modo_marca .. test_entreno_sets | 442 | OK |
+| 4 | test_entreno_sueno .. test_garmin_estado | 264 | OK |
+| 5 | test_garmin_host .. test_hogar_registrar_idempotente | 515 | OK |
+| 6 | test_horizonte .. test_host_import | 271 | OK |
+| 7 | test_household .. test_mcp_cliente_remoto | 421 | OK |
+| 8 | test_mcp_copia_pc .. test_periodo_herramientas | 537 | OK |
+| 9 | test_periodo_molestia .. test_profile_lote | 507 | OK |
+| 10 | test_propuesta_vigencia .. test_series_orden | 360 | OK |
+| 11 | test_series_unidad .. test_turnos_costo | 504 | OK |
+| 12 | test_turnos_deshacer .. test_web_entry | 369 | OK |
+
+Sum: 385+459+442+264+515+271+421+537+507+360+504+369 = **5034**. Reconciled against a separate collect-only count
+(`unittest.defaultTestLoader.discover('tests', top_level_dir='.')`, same final tree, counted by walking the
+discovered suite without running it) = **5034** -- exact match, no re-run needed. Every chunk ran green on its first
+attempt. The `NotSignedIn`/`AttributeError`/`ResourceWarning`/"dia vacio"/"pull attempt failed"/"mcp ... error"/
+"connect pull: error"/"backfill:" lines printed mid-run are pre-existing fixtures exercising synthetic error paths,
+not gate failures, and none are in a file this slice touched. No password, token, session secret, device key or
+real health figure was read, printed or written anywhere in this slice's own work or the gate's own stdout; no
+network call was made; `~/.body-app/`, `C:\Duna\body\body-app\.env`, any real database, `C:\Duna\body\body-app-live`,
+`C:\Duna\body\body-app-live-live` and `C:\Personal` were never opened.
+
+**customer_bytes: changed, on purpose, approved by this spec.** `leer_noche`'s own `descripcion` string (the tool-
+catalogue text the assistant model reads, Spanish-only, never shown to Carlos directly) is reworded to separate the
+two facts -- the only wording change in this slice. Every other change is a tool OUTPUT shape change (`leer_noche`'s
+`fc_minima_vs_rango` removed, `fc_baja_robusta`/`fc_baja_robusta_vs_rango` added; `leer_dia`'s `comidas` added) and a
+read-only operator count's own new field (`cobertura`'s `claves_crudas`) -- neither renders on a screen a person
+reads. No schema change, no cross-repo contract change. The spec's own body says in words: *"Corrects a biased
+comparison and a lost description in two assistant read tools, and adds key NAMES (never values) to a read-only
+operator count. No schema, no Tier 1 path, no write. Reversible... This slice changes two assistant tools' output on
+purpose and this spec approves it: merge if green."* -- merging on green.
+
+**Open follow-ups:** none coined by this slice's own work.
+
+**Commits:** `bbdc06b` (ruling 1) -- `81f36b0` (ruling 2) -- `14dd3d9` (ruling 3) -- this ledger entry -- merged into
+`main`.
+
