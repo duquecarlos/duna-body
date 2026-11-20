@@ -1324,6 +1324,7 @@
   "asistente.mcp.copia_pc_titulo": "Body on this PC (not the server)",
   "asistente.mcp.copia_pc_con_fecha": "Body on this PC (not the server) -- watch data up to {fecha}",
   "asistente.mcp.copia_pc_sin_fecha": "Body on this PC (not the server) -- no watch data",
+  "asistente.mcp.cuenta_no_disponible": "Cuenta is not responding; retry in {n} s",
   "mcp.remoto.conversacion_ajena": "That conversation doesn't belong to this account. Start a new one.",
   "mcp.remoto.error_interno": "Body couldn't complete that. Try again in a moment.",
   "mcp.remoto.red_fallo": "I couldn't reach Body. Check the connection and try again.",

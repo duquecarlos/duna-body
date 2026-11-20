@@ -926,6 +926,34 @@ class TableCensusTest(_BaseFugaTest):
             self.assertEqual(count, 0, f"{table} unexpectedly has rows before any household link")
 
 
+class McpInitializeCarriesNoPersonTest(_BaseFugaTest):
+    """BODY-MCP-INICIO-SIN-LLAVE-1 ruling 2's own census, proven here: the unauthenticated
+    `initialize` (no call to Cuenta at all, ruling 1) answers server name, version, protocol
+    version and capabilities only -- whichever key's Bearer header rides along (A's, B's, or one
+    Cuenta would refuse outright), the response never carries a name or language marker belonging
+    to anyone."""
+
+    def test_initialize_carries_no_marker_of_either_person(self):
+        for key in (self.ids["A"]["llave_asistente"], self.ids["B"]["llave_asistente"], "never-granted"):
+            r = client.post("/mcp", headers={"Authorization": f"Bearer {key}"},
+                             json={"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+            self.assertEqual(r.status_code, 200, f"initialize with key {key!r}")
+            for marker in _markers_of("A") + _markers_of("B"):
+                self.assertNotIn(marker, r.text, f"initialize with key {key!r} leaked marker {marker!r}")
+            resultado = r.json()["result"]
+            self.assertNotIn("instructions", resultado)
+            self.assertNotIn("title", resultado["serverInfo"])
+
+    def test_initialize_is_identical_regardless_of_key_or_language(self):
+        db.set_language(self.conn, "en", PERSON_B)
+        self.conn.commit()
+        r_a = client.post("/mcp", headers={"Authorization": f"Bearer {self.ids['A']['llave_asistente']}"},
+                           json={"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+        r_b = client.post("/mcp", headers={"Authorization": f"Bearer {self.ids['B']['llave_asistente']}"},
+                           json={"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+        self.assertEqual(r_a.json(), r_b.json())
+
+
 class RouteSetUnchangedTest(unittest.TestCase):
     """If a new GET route is added to body/rutas/*.py and not to EXPECTED_GET_PATHS above, this
     fails loudly instead of the sweep silently covering 25 of 26 routes forever."""

@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from body import config, cuenta, db, llave_asistente, mcp, web
 from body.agente import herramientas
+from body.rutas import mcp_http
 
 SUB_A = "sub-zz-mcp-http-a"
 SUB_B = "sub-zz-mcp-http-b"
@@ -133,6 +134,171 @@ class AuthTest(_HostedTestCase):
             r = self._post({}, key="k")
         self.assertEqual(r.status_code, 503)
         self.assertEqual(r.headers.get("retry-after"), "42")
+
+
+class AllowListCensusTest(_HostedTestCase):
+    """BODY-MCP-INICIO-SIN-LLAVE-1 ruling 1, ruling 4's census: every method
+    body/rutas/mcp_http.py's own dispatcher (`_procesar_uno`) answers, and which of them may skip
+    `llave_asistente.verificar`. Adding `tools/list`, `tools/call` or any other data-returning
+    method to `METODOS_SIN_LLAVE` -- or widening the `notifications/` prefix rule to catch
+    something it should not -- fails this test."""
+
+    # Every method name tests/test_mcp_http.py's own ProtocolTest above already drives through
+    # `_procesar_uno` -- the dispatcher's own full method vocabulary.
+    _METODOS_DEL_DISPATCHER = ("initialize", "notifications/initialized", "ping", "tools/list", "tools/call")
+
+    def test_allow_list_is_exactly_initialize_and_ping(self):
+        self.assertEqual(mcp_http.METODOS_SIN_LLAVE, frozenset({"initialize", "ping"}))
+
+    def test_every_dispatcher_method_is_classified_correctly(self):
+        sin_llave = {m for m in self._METODOS_DEL_DISPATCHER
+                     if mcp_http._metodo_sin_llave({"jsonrpc": "2.0", "id": 1, "method": m})}
+        self.assertEqual(sin_llave, {"initialize", "notifications/initialized", "ping"})
+
+    def test_an_unlisted_notifications_method_is_still_sin_llave_by_prefix(self):
+        self.assertTrue(mcp_http._metodo_sin_llave({"jsonrpc": "2.0", "method": "notifications/cancelled"}))
+
+    def test_an_unknown_method_outside_the_list_is_not_sin_llave(self):
+        self.assertFalse(mcp_http._metodo_sin_llave({"jsonrpc": "2.0", "id": 1, "method": "nope"}))
+
+    def test_a_non_dict_or_methodless_item_is_not_sin_llave(self):
+        self.assertFalse(mcp_http._metodo_sin_llave("not a dict"))
+        self.assertFalse(mcp_http._metodo_sin_llave({"jsonrpc": "2.0", "id": 1}))
+
+    def test_an_empty_batch_is_not_sin_llave(self):
+        self.assertFalse(mcp_http._todos_sin_llave([]))
+
+    def test_a_batch_mixing_initialize_and_tools_list_is_not_sin_llave(self):
+        self.assertFalse(mcp_http._todos_sin_llave([
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        ]))
+
+
+class NoLlaveMethodsTest(_HostedTestCase):
+    """Ruling 1: `initialize`, `ping` and every `notifications/*` message answer even when Cuenta
+    is unreachable -- no call to `llave_asistente.verificar` (no introspection) is ever made for
+    them. The Bearer header is still required (401 at once without it, unchanged)."""
+
+    def test_initialize_answers_at_once_with_no_introspection_call(self):
+        mock_introspect = mock.Mock(side_effect=httpx.ConnectTimeout("boom"))
+        with mock.patch.object(llave_asistente, "_post_introspect", mock_introspect):
+            r = self._post({"jsonrpc": "2.0", "id": 1, "method": "initialize"}, key="k")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["result"]["protocolVersion"], mcp.PROTOCOL_VERSION)
+        mock_introspect.assert_not_called()
+
+    def test_ping_answers_at_once_with_no_introspection_call(self):
+        mock_introspect = mock.Mock(side_effect=httpx.ConnectTimeout("boom"))
+        with mock.patch.object(llave_asistente, "_post_introspect", mock_introspect):
+            r = self._post({"jsonrpc": "2.0", "id": 1, "method": "ping"}, key="k")
+        self.assertEqual(r.json(), {"jsonrpc": "2.0", "id": 1, "result": {}})
+        mock_introspect.assert_not_called()
+
+    def test_notifications_initialized_answers_at_once_with_no_introspection_call(self):
+        mock_introspect = mock.Mock(side_effect=httpx.ConnectTimeout("boom"))
+        with mock.patch.object(llave_asistente, "_post_introspect", mock_introspect):
+            r = self._post({"jsonrpc": "2.0", "method": "notifications/initialized"}, key="k")
+        self.assertEqual(r.status_code, 202)
+        mock_introspect.assert_not_called()
+
+    def test_a_batch_of_only_sin_llave_methods_answers_with_no_introspection_call(self):
+        mock_introspect = mock.Mock(side_effect=httpx.ConnectTimeout("boom"))
+        with mock.patch.object(llave_asistente, "_post_introspect", mock_introspect):
+            r = self._post([
+                {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+                {"jsonrpc": "2.0", "id": 2, "method": "ping"},
+            ], key="k")
+        self.assertEqual(r.status_code, 200)
+        mock_introspect.assert_not_called()
+
+    def test_without_a_bearer_initialize_is_still_401_at_once(self):
+        """The allow-list bypass skips introspection, never the header-presence check."""
+        r = self._post({"jsonrpc": "2.0", "id": 1, "method": "initialize"}, key=None)
+        self.assertEqual(r.status_code, 401)
+        self.assertEqual(r.headers.get("www-authenticate"), "Bearer")
+
+    def test_a_batch_mixing_initialize_and_tools_list_is_verified(self):
+        mock_introspect = mock.Mock(return_value=httpx.Response(200, json={"active": False}))
+        with mock.patch.object(llave_asistente, "_post_introspect", mock_introspect):
+            r = self._post([
+                {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+                {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+            ], key="never-granted")
+        self.assertEqual(r.status_code, 401)
+        mock_introspect.assert_called_once()
+
+    def test_tools_list_alone_is_still_verified(self):
+        mock_introspect = mock.Mock(return_value=httpx.Response(200, json={"active": False}))
+        with mock.patch.object(llave_asistente, "_post_introspect", mock_introspect):
+            r = self._post({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, key="never-granted")
+        self.assertEqual(r.status_code, 401)
+        mock_introspect.assert_called_once()
+
+
+class CuentaDownJsonRpcErrorTest(_HostedTestCase):
+    """Ruling 3: a verified method (tools/list, tools/call) with Cuenta unreachable answers,
+    besides the transport-level 503 and its Retry-After, a JSON-RPC error body with a fixed code
+    and a sentence naming when to retry -- never a bare `{"error": ...}`."""
+
+    def _sin_cuenta(self):
+        def fake(key):
+            raise httpx.ConnectTimeout("boom")
+        return mock.patch.object(llave_asistente, "_post_introspect", fake)
+
+    def test_tools_list_with_cuenta_down_is_503_with_a_jsonrpc_error_body(self):
+        with self._sin_cuenta():
+            r = self._post({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, key="k")
+        self.assertEqual(r.status_code, 503)
+        out = r.json()
+        self.assertEqual(out["jsonrpc"], "2.0")
+        self.assertIsNone(out["id"])
+        self.assertIsInstance(out["error"]["code"], int)
+        self.assertIn("reintenta en", out["error"]["message"])
+        self.assertIn("60", out["error"]["message"])
+
+    def test_tools_call_with_cuenta_down_is_503_with_a_jsonrpc_error_body(self):
+        with self._sin_cuenta():
+            r = self._post({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                             "params": {"name": "leer_ajustes", "arguments": {}}}, key="k")
+        self.assertEqual(r.status_code, 503)
+        self.assertIn("error", r.json())
+
+    def test_message_is_in_english_with_accept_language_en(self):
+        with self._sin_cuenta():
+            r = self.client.post("/mcp", headers={"Authorization": "Bearer k",
+                                                   "Accept-Language": "en-US,en;q=0.9"},
+                                  json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        self.assertEqual(r.status_code, 503)
+        self.assertIn("retry in", r.json()["error"]["message"])
+
+    def test_message_defaults_to_spanish_with_no_accept_language(self):
+        with self._sin_cuenta():
+            r = self._post({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, key="k")
+        self.assertIn("reintenta en", r.json()["error"]["message"])
+
+    def test_cuentas_own_retry_after_number_appears_in_the_message(self):
+        def fake(key):
+            return httpx.Response(429, headers={"retry-after": "42"})
+        with mock.patch.object(llave_asistente, "_post_introspect", fake):
+            r = self._post({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, key="k")
+        self.assertEqual(r.status_code, 503)
+        self.assertEqual(r.headers.get("retry-after"), "42")
+        self.assertIn("42", r.json()["error"]["message"])
+
+
+class PositiveCacheShortCircuitsTest(_HostedTestCase):
+    """Ruling 4: the positive cache (body/llave_asistente.py's own, unchanged) still short-
+    circuits a verified call -- the reordering in this slice must not re-ask Cuenta on a second
+    call with the same key."""
+
+    def test_a_cached_key_is_not_re_introspected_on_a_second_verified_call(self):
+        self._grant("k", "escritura")
+        mock_introspect = mock.Mock(side_effect=self._fake_introspect)
+        with mock.patch.object(llave_asistente, "_post_introspect", mock_introspect):
+            self._post({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, key="k")
+            self._post({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, key="k")
+        mock_introspect.assert_called_once()
 
 
 class ProtocolTest(_HostedTestCase):
