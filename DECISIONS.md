@@ -31003,6 +31003,6 @@ explicitly waived in words by this spec's body, not merely its header -- merging
 **Open follow-ups:** none coined by this slice's own work.
 
 **Commits:** `4feece4` (rulings 1-3: `period_kind`'s two columns, the seed, and the data-driven reads)
--- `9bfd3f2` (rulings 4-5: the screens' own wording and the census) -- this ledger entry, appended
-next -- merged into `main` next.
+-- `9bfd3f2` (rulings 4-5: the screens' own wording and the census) -- `f7cd7cb` (this ledger entry)
+-- merged `959d7b9` into `main`.
 
