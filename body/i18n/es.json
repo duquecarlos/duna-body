@@ -1181,6 +1181,7 @@
   "agente.error.checkin_valor_invalido": "{metrica} debe ser un número del 1 al 5: envía cómo te sentiste (por ejemplo 4), no un rango ni un texto.",
   "agente.error.checkin_vacio": "Dime al menos una cosa: ánimo, energía, estrés que sentiste o una nota.",
   "agente.error.nota_sesion_existente": "Ya hay una nota tuya en esta sesión; corrígela en Body.",
+  "agente.error.comparar_noche_sin_noche": "Ese día no tiene una noche registrada por Garmin.",
   "agente.error.despertar_sin_sueno": "Ese día no tiene un sueño registrado por Garmin.",
   "agente.error.despertar_hora_no_posterior": "La hora debe ser posterior al fin de sueño que registró Garmin.",
   "agente.error.despertar_hora_fuera_horizonte": "La hora está demasiado lejos del fin de sueño que registró Garmin.",

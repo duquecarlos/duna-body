@@ -466,7 +466,7 @@ PLAIN_GET_ROUTES = [
 
 READ_TOOLS = ["leer_hoy", "leer_dia", "leer_como_calculo", "leer_tendencias", "leer_historia",
               "leer_metas", "leer_meta", "leer_practicas", "leer_turnos", "leer_costo_turnos",
-              "leer_ajustes", "leer_tutoriales", "leer_intradia", "leer_noche"]
+              "leer_ajustes", "leer_tutoriales", "leer_intradia", "leer_noche", "comparar_noche"]
 
 
 class _BaseFugaTest(unittest.TestCase):
@@ -647,7 +647,7 @@ class _BaseFugaTest(unittest.TestCase):
                 params = {"goal_id": ids["gid"]}
             elif nombre == "leer_intradia":
                 params = {"fecha": DAYS[-1], "desde": "00:00", "hasta": "04:00"}
-            elif nombre == "leer_noche":
+            elif nombre == "leer_noche" or nombre == "comparar_noche":
                 params = {"fecha": DAYS[-1]}
             else:
                 params = {}
@@ -683,15 +683,15 @@ class _BaseFugaTest(unittest.TestCase):
                 self.assertIn(own_ref, text, f"{viewer_tag}'s own trip ref never rendered by leer_dia")
                 self.assertNotIn(other_ref, text,
                                  f"{viewer_tag} tool leer_dia leaked {other_tag}'s trip ref")
-            if nombre == "leer_noche":
-                # BODY-MINUTO-ANALISIS-5-CONTEXTO: leer_noche's own `contexto` covers both the
-                # evening (DAYS[-2]) and the wake day (DAYS[-1]), both inside this person's own
-                # seeded trip -- same ref check as leer_dia above.
+            if nombre == "leer_noche" or nombre == "comparar_noche":
+                # BODY-MINUTO-ANALISIS-5-CONTEXTO / BODY-MINUTO-ANALISIS-2: both tools' own
+                # `contexto` covers the evening (DAYS[-2]) and the wake day (DAYS[-1]), both inside
+                # this person's own seeded trip -- same ref check as leer_dia above.
                 own_ref = f"zz-{viewer_tag.lower()}-viaje"
                 other_ref = f"zz-{other_tag.lower()}-viaje"
-                self.assertIn(own_ref, text, f"{viewer_tag}'s own trip ref never rendered by leer_noche")
+                self.assertIn(own_ref, text, f"{viewer_tag}'s own trip ref never rendered by {nombre}")
                 self.assertNotIn(other_ref, text,
-                                 f"{viewer_tag} tool leer_noche leaked {other_tag}'s trip ref")
+                                 f"{viewer_tag} tool {nombre} leaked {other_tag}'s trip ref")
         out_own_meta = agente_herramientas.ejecutar(self.conn, viewer_id, "leer_meta", {"goal_id": ids["gid"]},
                                                     "completo")
         self.assertTrue(out_own_meta["encontrada"])

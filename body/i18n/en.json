@@ -1181,6 +1181,7 @@
   "agente.error.checkin_valor_invalido": "{metrica} must be a number from 1 to 5: send how you felt (for example 4), not a range or text.",
   "agente.error.checkin_vacio": "Tell me at least one thing: mood, energy, stress you felt, or a note.",
   "agente.error.nota_sesion_existente": "There is already a note of yours on this session; edit it in Body.",
+  "agente.error.comparar_noche_sin_noche": "That day has no night recorded by Garmin.",
   "agente.error.despertar_sin_sueno": "That day has no sleep recorded by Garmin.",
   "agente.error.despertar_hora_no_posterior": "The time must be after the sleep end Garmin recorded.",
   "agente.error.despertar_hora_fuera_horizonte": "The time is too far past the sleep end Garmin recorded.",
