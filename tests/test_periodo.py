@@ -38,12 +38,16 @@ class FreshDbTest(unittest.TestCase):
 
     def test_period_kind_table_has_the_contract_columns(self):
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(period_kind)")}
-        self.assertEqual(cols, {"key", "sort_order"})
+        self.assertEqual(cols, {"key", "sort_order", "excluye_del_rango", "lleva_zona"})
 
-    def test_period_kind_is_seeded_with_the_three_kinds(self):
-        rows = self.conn.execute("SELECT key, sort_order FROM period_kind ORDER BY sort_order").fetchall()
-        self.assertEqual([(r["key"], r["sort_order"]) for r in rows],
-                          [("malestar", 0), ("viaje", 1), ("lesion", 2)])
+    def test_period_kind_is_seeded_with_the_four_kinds(self):
+        rows = self.conn.execute(
+            "SELECT key, sort_order, excluye_del_rango, lleva_zona FROM period_kind ORDER BY sort_order"
+        ).fetchall()
+        self.assertEqual(
+            [(r["key"], r["sort_order"], r["excluye_del_rango"], r["lleva_zona"]) for r in rows],
+            [("malestar", 0, 1, 0), ("viaje", 1, 1, 0), ("lesion", 2, 1, 1), ("molestia", 3, 0, 1)],
+        )
 
     def test_period_table_has_the_contract_columns(self):
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(period)")}
@@ -94,7 +98,7 @@ class MigrationOnAnExistingDbTest(unittest.TestCase):
     def test_migration_creates_and_seeds_the_tables(self):
         db.init(self.conn)
         rows = self.conn.execute("SELECT key FROM period_kind ORDER BY sort_order").fetchall()
-        self.assertEqual([r["key"] for r in rows], ["malestar", "viaje", "lesion"])
+        self.assertEqual([r["key"] for r in rows], ["malestar", "viaje", "lesion", "molestia"])
 
     def test_migration_is_idempotent(self):
         db.init(self.conn)
@@ -278,6 +282,46 @@ class PeriodosReadTest(unittest.TestCase):
             marcados = db.dias_marcados(self.conn, 1, "2026-11-01", "2026-11-15")
         self.assertIn("2026-11-10", marcados)
         self.assertNotIn("2026-11-11", marcados)
+
+
+# ---- BODY-PLAN-FASES-4 ruling 3: the reads follow period_kind's own data, never a hardcoded kind
+# string -------------------------------------------------------------------------------------------
+
+class KindDataDrivenExclusionTest(unittest.TestCase):
+    """An open 'molestia' period (excluye_del_rango=0) never empties dias_marcados, the exact
+    opposite of 'lesion' (excluye_del_rango=1) covering the same days."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+
+    def test_molestia_period_is_not_marked(self):
+        db.crear_periodo(self.conn, 1, "molestia", "2026-11-05", "2026-11-07")
+        marcados = db.dias_marcados(self.conn, 1, "2026-11-01", "2026-11-10")
+        self.assertEqual(marcados, set())
+
+    def test_lesion_period_covering_the_same_days_is_marked(self):
+        db.crear_periodo(self.conn, 1, "lesion", "2026-11-05", "2026-11-07")
+        marcados = db.dias_marcados(self.conn, 1, "2026-11-01", "2026-11-10")
+        self.assertEqual(marcados, {"2026-11-05", "2026-11-06", "2026-11-07"})
+
+    def test_periodos_still_lists_a_molestia_period_unfiltered(self):
+        db.crear_periodo(self.conn, 1, "molestia", "2026-11-05", "2026-11-07")
+        rows = db.periodos(self.conn, 1, "2026-11-01", "2026-11-10")
+        self.assertEqual([r["kind"] for r in rows], ["molestia"])
+
+    def test_molestia_period_with_zona_appears_in_zonas_en_recuperacion(self):
+        db.crear_periodo(self.conn, 1, "molestia", DAY, None, zonas=["hombro"])
+        self.assertEqual(db.zonas_en_recuperacion(self.conn, 1, DAY), frozenset({"hombro"}))
+
+    def test_closed_molestia_period_contributes_no_zona(self):
+        db.crear_periodo(self.conn, 1, "molestia", "2026-11-01", "2026-11-05", zonas=["hombro"])
+        self.assertEqual(db.zonas_en_recuperacion(self.conn, 1, DAY), frozenset())
+
+    def test_kind_excluye_del_rango_matches_the_seed(self):
+        self.assertTrue(db.kind_excluye_del_rango("malestar"))
+        self.assertTrue(db.kind_excluye_del_rango("viaje"))
+        self.assertTrue(db.kind_excluye_del_rango("lesion"))
+        self.assertFalse(db.kind_excluye_del_rango("molestia"))
 
 
 # ---- BODY-PERIODO-PANTALLAS-1-B: the zone is read once per connection, not once per call --------

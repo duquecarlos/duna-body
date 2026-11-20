@@ -128,8 +128,11 @@ def _periodo_excluido_ctx(t: T, conn, person_id: int, cov: dict, marcados: set[s
     `marcados` is read once by the route (patterns()'s own docstring says why), not re-read here."""
     if not marcados:
         return None
+    # BODY-PLAN-FASES-4 ruling 3/4: `marcados` only ever holds days a kind with excluye_del_rango=1
+    # left out (db.dias_marcados), so a kind that never excludes (today, 'molestia') is left out of
+    # this list too -- never named as a reason for days this very note says were excluded.
     periodos_rows = db.periodos(conn, person_id, cov["first_day"], cov["last_day"])
-    kinds = sorted({t("periodo.kind." + p["kind"]) for p in periodos_rows})
+    kinds = sorted({t("periodo.kind." + p["kind"]) for p in periodos_rows if db.kind_excluye_del_rango(p["kind"])})
     n = len(marcados)
     key = "history.periodo_excluido_one" if n == 1 else "history.periodo_excluido"
     return t(key, n=t.num(n), kinds=", ".join(kinds))

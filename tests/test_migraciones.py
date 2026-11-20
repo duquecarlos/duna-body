@@ -980,5 +980,76 @@ class VistaDailyMetricEfectivaMigrationTest(unittest.TestCase):
         self.assertEqual(self.antes_ss, despues_ss)
 
 
+class PeriodKindColumnsMigrationTest(unittest.TestCase):
+    """BODY-PLAN-FASES-4 ruling 1: a database whose period_kind predates excluye_del_rango/
+    lleva_zona gains both columns, additive, keeping its three existing rows -- and the seed
+    upsert (same ON CONFLICT DO UPDATE as sort_order already goes through) sets 'lesion' own
+    lleva_zona=1 and adds the new 'molestia' row, byte for byte the same shape db.init() gives a
+    fresh database."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        db.init(self.conn)
+        self.conn.execute("PRAGMA foreign_keys = OFF")
+        self.conn.execute("DROP TABLE period_kind")
+        self.conn.execute("CREATE TABLE period_kind (key TEXT PRIMARY KEY, sort_order INTEGER NOT NULL)")
+        self.conn.executemany(
+            "INSERT INTO period_kind (key, sort_order) VALUES (?, ?)",
+            [("malestar", 0), ("viaje", 1), ("lesion", 2)],
+        )
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        self.pid = self.conn.execute(
+            "INSERT INTO period (person_id, kind, start_day, created_at, updated_at) VALUES "
+            "(1, 'lesion', '2026-11-01', '2026-11-01T00:00:00+00:00', '2026-11-01T00:00:00+00:00')"
+        ).lastrowid
+        self.conn.commit()
+
+    def test_migration_adds_the_columns_keeping_the_old_rows(self):
+        db.init(self.conn)
+        rows = self.conn.execute(
+            "SELECT key, sort_order, excluye_del_rango, lleva_zona FROM period_kind ORDER BY sort_order"
+        ).fetchall()
+        self.assertEqual(
+            [(r["key"], r["sort_order"], r["excluye_del_rango"], r["lleva_zona"]) for r in rows],
+            [("malestar", 0, 1, 0), ("viaje", 1, 1, 0), ("lesion", 2, 1, 1), ("molestia", 3, 0, 1)],
+        )
+        row = self.conn.execute("SELECT id, kind, start_day FROM period WHERE id = ?", (self.pid,)).fetchone()
+        self.assertEqual((row["id"], row["kind"], row["start_day"]), (self.pid, "lesion", "2026-11-01"))
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM period").fetchone()[0], 1)
+
+    def test_migration_is_idempotent(self):
+        db.init(self.conn)
+        db.init(self.conn)
+        rows = self.conn.execute(
+            "SELECT key, excluye_del_rango, lleva_zona FROM period_kind ORDER BY sort_order"
+        ).fetchall()
+        self.assertEqual(
+            [(r["key"], r["excluye_del_rango"], r["lleva_zona"]) for r in rows],
+            [("malestar", 1, 0), ("viaje", 1, 0), ("lesion", 1, 1), ("molestia", 0, 1)],
+        )
+
+    def test_migrated_database_leaves_lesion_days_marked_but_not_molestia(self):
+        db.init(self.conn)
+        marcados = db.dias_marcados(self.conn, 1, "2026-10-01", "2026-11-05")
+        self.assertIn("2026-11-01", marcados)
+        db.actualizar_periodo(self.conn, 1, self.pid, kind="molestia")
+        marcados = db.dias_marcados(self.conn, 1, "2026-10-01", "2026-11-05")
+        self.assertNotIn("2026-11-01", marcados)
+
+
+class PeriodKindColumnsFreshDbTest(unittest.TestCase):
+    """A fresh database's period_kind already carries both columns, seeded for all four kinds --
+    no migration needed."""
+
+    def test_fresh_database_has_the_columns_and_seed(self):
+        conn = _conn(self)
+        db.init(conn)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(period_kind)")}
+        self.assertIn("excluye_del_rango", cols)
+        self.assertIn("lleva_zona", cols)
+        row = conn.execute("SELECT excluye_del_rango, lleva_zona FROM period_kind WHERE key = 'molestia'").fetchone()
+        self.assertEqual((row["excluye_del_rango"], row["lleva_zona"]), (0, 1))
+
+
 if __name__ == "__main__":
     unittest.main()

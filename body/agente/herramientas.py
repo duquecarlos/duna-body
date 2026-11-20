@@ -46,12 +46,13 @@ experiment that has a `habito_id`: that experiment's log is its linked habit's `
 current the usual way, through `marcar_habito`.
 
 `marcar_periodo`/`cerrar_periodo`/`corregir_periodo`/`borrar_periodo` (BODY-PERIODO-1) let the
-assistant OFFER -- never silently create -- a stretch of days marked illness, travel or injury, so
-`baselines.baseline` and `experimentos.dias_que_cuentan` leave those days out when they compare
-with the usual. `kind` is any live `period_kind` row, never a hardcoded pair of keys, the same
-template pattern `registrar_medida`/`registrar_ingesta` use for their own enums. The person's own
-note is kept like `moment.note` and `ingesta.descripcion` -- never printed, logged or exported off
-the PC.
+assistant OFFER -- never silently create -- a stretch of days marked illness, travel, injury or
+(BODY-PLAN-FASES-4 ruling 2) training through a mild issue. Whether those days leave the usual
+range `baselines.baseline`/`experimentos.dias_que_cuentan` compare against is the kind's own
+`excluye_del_rango` row, never a hardcoded kind check. `kind` is any live `period_kind` row, never
+a hardcoded pair of keys, the same template pattern `registrar_medida`/`registrar_ingesta` use for
+their own enums. The person's own note is kept like `moment.note` and `ingesta.descripcion` --
+never printed, logged or exported off the PC.
 
 `importar_desplazamiento` (BODY-DESPLAZAMIENTO-ASISTENTE-1) is the one `propuesta` tool not at
 `nivel` 'ninguno': it is gated at 'resumen', the same nivel_datos the commute data it imports is
@@ -547,7 +548,7 @@ _PARAM_PROPONER_OBJETIVO_NUTRIENTE = {
 
 # BODY-PERIODO-1: the seeded period_kind rows, read off the live table's own seed list rather than
 # typed out here a second time -- the same template pattern INGESTA_METRIC_KEYS above uses.
-PERIODO_KIND_KEYS = tuple(k for k, _ in db.PERIOD_KINDS)
+PERIODO_KIND_KEYS = tuple(k for k, *_ in db.PERIOD_KINDS)
 _PARAM_MARCAR_PERIODO = {
     "type": "object",
     "properties": {
@@ -556,8 +557,9 @@ _PARAM_MARCAR_PERIODO = {
         "end_day": {"type": "string", "format": "date"},
         "note": {"type": "string"},
         # BODY-LESION-ZONA-1 ruling 1: set this when the person names a limited body part (today,
-        # that is always kind 'lesion') -- Body then reads a lighter training set in that zona as
-        # deliberate, never a drop (ruling 2), and the next plans respect it (ruling 3).
+        # kind 'lesion' or, BODY-PLAN-FASES-4 ruling 2, 'molestia' -- training through it) -- Body
+        # then reads a lighter training set in that zona as deliberate, never a drop (ruling 2), and
+        # the next plans respect it (ruling 3).
         "zonas": {"type": "array", "items": {"type": "string", "enum": list(anatomia.CATEGORIA_ENUM)}},
     },
     "required": ["kind", "start_day"],
@@ -814,11 +816,12 @@ def _readiness_dict(r: readiness.Readiness) -> dict:
 
 
 def _limitaciones_abiertas(conn: sqlite3.Connection, person_id: int, day: str) -> list[dict]:
-    """BODY-LESION-ZONA-1 ruling 3: this person's own open ('lesion', end_day IS NULL) periods as
-    of `day`, as {tipo, desde, zonas} -- never the note (the same privacy ruling 2 already keeps).
-    Read by leer_hoy and used as the context planear_entreno's own description leans on."""
+    """BODY-LESION-ZONA-1 ruling 3: this person's own open periods of a kind whose lleva_zona=1
+    (BODY-PLAN-FASES-4 ruling 3: 'lesion' or 'molestia' today, data, never a hardcoded kind string)
+    as of `day`, as {tipo, desde, zonas} -- never the note (the same privacy ruling 2 already
+    keeps). Read by leer_hoy and used as the context planear_entreno's own description leans on."""
     return [{"tipo": r["kind"], "desde": r["start_day"], "zonas": json.loads(r["zonas"]) if r["zonas"] else []}
-            for r in db.periodos(conn, person_id, day, day) if r["kind"] == "lesion" and r["end_day"] is None]
+            for r in db.periodos(conn, person_id, day, day) if r["_lleva_zona"] and r["end_day"] is None]
 
 
 def _leer_hoy(conn: sqlite3.Connection, person_id: int) -> dict:
@@ -3511,11 +3514,15 @@ HERRAMIENTAS = [
                      "guarda: registra la propuesta para que la persona la apruebe en el chat.",
      "parametros": _PARAM_REGISTRAR_CHECKIN, "funcion": _registrar_checkin},
     {"nombre": "marcar_periodo", "tipo": "propuesta", "nivel": "ninguno",
-     "descripcion": "Propone marcar unos días como un período especial (malestar, viaje o lesión) para que "
-                     "Body los deje fuera cuando compare con lo habitual, sin leerlos como efecto de un "
-                     "hábito o experimento. Ofrécelo cuando la persona diga que está enferma, de viaje o "
-                     "lesionada -- nunca lo crees en silencio. Si la persona nombra una parte del cuerpo "
-                     "limitada (por ejemplo, un hombro en recuperación), pon esa zona en 'zonas': así Body "
+     "descripcion": "Propone marcar unos días como un período especial (malestar, viaje, lesión o molestia) "
+                     "para que Body sepa si debe dejarlos fuera cuando compare con lo habitual, sin leerlos "
+                     "como efecto de un hábito o experimento. Ofrécelo cuando la persona diga que está "
+                     "enferma, de viaje, lesionada o entrenando con una molestia -- nunca lo crees en "
+                     "silencio. 'lesión' y 'malestar'/'viaje' dejan esos días fuera del rango habitual; "
+                     "'molestia' (entrena igual, solo con una molestia) los deja DENTRO -- úsala cuando la "
+                     "persona siga entrenando a pesar de la molestia, nunca 'lesión' solo porque la sesión "
+                     "fue completa. Si la persona nombra una parte del cuerpo limitada (por ejemplo, un "
+                     "hombro en recuperación), pon esa zona en 'zonas' con 'lesión' o 'molestia': así Body "
                      "lee un entrenamiento más liviano ahí como algo a propósito, nunca como una caída. No "
                      "lo marca: registra la propuesta para que la persona la apruebe en el chat.",
      "parametros": _PARAM_MARCAR_PERIODO, "funcion": _marcar_periodo},

@@ -197,18 +197,24 @@ def _dia_mes(t: T, d: date) -> str:
 
 def _periodo_hoy_ctx(t: T, conn, person_id: int, today_local: date) -> dict | None:
     """BODY-PERIODO-PANTALLAS-1: one plain line on the readiness card while a period (illness,
-    travel, injury) covers today -- open, or closed after today -- naming the kind and when it
-    started, plus a real link to the assistant (the only place a period is closed, BODY-PERIODO-1),
-    never the person's own note text (DESIGN: that stays inside the assistant panel's own card).
-    None when no period covers today. db.periodos' own per-connection cache means this costs no
-    extra SQL on a page that already calls baseline() for the readiness card and TODAY_CARDS."""
+    travel, injury, or BODY-PLAN-FASES-4 ruling 2's training-through-it) covers today -- open, or
+    closed after today -- naming the kind and when it started, plus a real link to the assistant
+    (the only place a period is closed, BODY-PERIODO-1), never the person's own note text (DESIGN:
+    that stays inside the assistant panel's own card). None when no period covers today.
+    db.periodos' own per-connection cache means this costs no extra SQL on a page that already
+    calls baseline() for the readiness card and TODAY_CARDS.
+
+    BODY-PLAN-FASES-4 ruling 4: a kind with excluye_del_rango=1 keeps today's own wording
+    ("today.periodo", which already says those days are left out); one with excluye_del_rango=0
+    uses "today.periodo_incluido" instead, read from the data, never a hardcoded kind check."""
     hoy_iso = today_local.isoformat()
     cubren = db.periodos(conn, person_id, hoy_iso, hoy_iso)
     if not cubren:
         return None
     p = cubren[-1]
     fecha = _dia_mes(t, date.fromisoformat(p["start_day"]))
-    return {"texto": t("today.periodo", kind=t("periodo.kind." + p["kind"]), fecha=fecha),
+    clave = "today.periodo" if db.kind_excluye_del_rango(p["kind"]) else "today.periodo_incluido"
+    return {"texto": t(clave, kind=t("periodo.kind." + p["kind"]), fecha=fecha),
             "enlace": t("today.periodo_enlace")}
 
 

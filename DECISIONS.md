@@ -30856,3 +30856,153 @@ to the branch tree -- `git diff d20dc31 feat/body-historia-minuto-2` is empty). 
 (`tests.test_cobertura tests.test_host_import tests.test_deploy_host tests.test_host_deploy`, the
 four modules this slice touched or added): `Ran 169 tests in 7.429s`, `OK`.
 
+## BODY-PLAN-FASES-4
+
+**Surface, Carlos's words, relayed by the desk 2026-11-19:** *"it's not that serious injury. You can
+have in detail the push session that I did having this, so it's not that bad ... if it were that
+bad, I couldn't have that session. However, next week when I'll do next time push session, we'll get
+into detail into my sensations."* Today every period kind leaves its days out of the person's 30-day
+usual range (`db.dias_marcados`), so a mild issue someone trains through, left open for months,
+empties every 30-day range the same way a real injury does. The read-only investigation
+BODY-PLAN-FASES-1-INV measured: `period_kind` carries only `(key, sort_order)`; the zona logic is
+hardcoded to the string `'lesion'` in `db.zonas_en_recuperacion` and
+`herramientas._limitaciones_abiertas`; the exclusion is computed at READ time, so changing a kind
+brings the days back at once with nothing lost; and `corregir_periodo` already lets a person change
+an open period's kind. The orchestrator's ruling (ORCH-CARLOS-DELEGATES-TIER-1-1): two properties of
+a kind, as data, and a new kind 'molestia' seeded from them.
+
+**Ruling 1 (two properties of a kind, as data), as built:** `period_kind` gains
+`excluye_del_rango INTEGER NOT NULL DEFAULT 1 CHECK (excluye_del_rango IN (0,1))` and
+`lleva_zona INTEGER NOT NULL DEFAULT 0 CHECK (lleva_zona IN (0,1))` (`body/db.py:972-978`, the SCHEMA
+definition, and the additive `ALTER TABLE ... ADD COLUMN` pair in `_migrate` at `body/db.py:1518-1530`
+guarded by `PRAGMA table_info`, the same guarded pattern every other additive column in this module
+already uses). `PERIOD_KINDS` (`body/db.py:1255-1261`) now carries all four values per kind --
+`("malestar", 0, 1, 0)`, `("viaje", 1, 1, 0)`, `("lesion", 2, 1, 1)`, `("molestia", 3, 0, 1)` -- and
+`init()`'s own seed upsert (`body/db.py:2280-2285`) was widened to sync `excluye_del_rango`/
+`lleva_zona` through the SAME `ON CONFLICT DO UPDATE` sort_order already goes through, so a database
+migrating from before this slice gets its three existing kinds' defaults from the `ALTER`
+(`excluye_del_rango=1`, `lleva_zona=0` for all three), then this same upsert sets `lesion`'s own
+`lleva_zona` to 1 and adds the new `molestia` row -- one `db.init()` call, no separate data-fix step.
+
+**Ruling 2 (a new kind 'molestia'), as built:** seeded row `("molestia", 3, 0, 1)` -- training through
+it, days stay IN the usual range, still carries a zona. Labels `periodo.kind.molestia`
+(`body/i18n/es.json`/`en.json`): es *"Molestia (entreno igual)"*, en *"Training through it"*.
+
+**Ruling 3 (the reads follow the data, never a string), as built:** `_periodos_de_persona`
+(`body/db.py:3863-3885`) joins `period_kind` in the SAME statement it already joined `person` for the
+timezone, aliasing `period_kind.excluye_del_rango AS _excluye_del_rango` and
+`period_kind.lleva_zona AS _lleva_zona` -- no extra statement (confirmed by
+`tests.test_periodo.DiasMarcadosNoPerCallReadTest.test_n_calls_on_one_connection_issue_no_more_than_one_statement`,
+unchanged and still green). `db.dias_marcados` (`:3928-3957`) now filters `_solapan(...)` by
+`r["_excluye_del_rango"]` before walking days; `db.zonas_en_recuperacion` (`:3912-3926`) checks
+`r["_lleva_zona"]` instead of `r["kind"] == "lesion"`; `herramientas._limitaciones_abiertas`
+(`body/agente/herramientas.py:818-823`) does the same. Census of every other `'lesion'` string
+literal in `body/` (`git grep -n "'lesion'\|\"lesion\"" -- body/`): every OTHER hit is a comment, a
+docstring, a demo-seed choice (`body/demo.py`'s own invented 'lesion' period and its
+`contexto_valor: "lesion"` goal rule, generic through `period_kind`'s own FK validation, not a
+decision string) or a label key (`periodo.kind.lesion`) -- none decides behaviour, so none needed
+converting; each is listed, not silently left. `herramientas.PERIODO_KIND_KEYS`
+(`:551`) and `tests/test_i18n_paridad.py`'s own `"periodo.kind.+"` dynamic-prefix list (`:137`) both
+switched their `PERIOD_KINDS` unpacking from `for k, _ in ...` to `for k, *_ in ...` for the now
+4-tuple rows. `marcar_periodo`/`corregir_periodo` accept `'molestia'` exactly as `'lesion'`, through
+the same generic `PERIODO_KIND_KEYS` enum and the same `_validar_zonas` path -- no new code branch;
+the tool's own `descripcion` (`body/agente/herramientas.py:3513-3523`) and the `zonas` parameter's
+comment (`:558-562`) now name both kinds and the opposite exclusion each one carries.
+
+**Ruling 4 (the screen says it), as built:** `db.kind_excluye_del_rango(kind)` (`body/db.py:1263-1272`)
+reads the answer off `PERIOD_KINDS` itself (the same seed list period_kind's own rows are built
+from, never a hardcoded kind string), used only by screen text -- `_periodo_txt`
+(`body/rutas/asistente.py:569-581`) appends `asistente.propuesta.periodo_incluido` (es *"Estos días
+siguen contando en tu rango habitual."*, en *"These days still count toward your usual range."*)
+instead of `periodo_excluido` when `excluye_del_rango` is 0; `_periodo_hoy_ctx`
+(`body/rutas/hoy.py:198-216`) picks `today.periodo_incluido` (the same wording, prefixed with
+`{kind} since {fecha} ·`) instead of `today.periodo` for the same case -- a kind with
+`excluye_del_rango=1` keeps both screens' exact prior wording, unchanged. `_periodo_kind_txt`
+(`body/rutas/asistente.py:546-556`) gained a `'molestia'` branch. `historial._periodo_excluido_ctx`
+(`body/rutas/historial.py:123-136`) now filters its own `kinds` label set by
+`db.kind_excluye_del_rango(p["kind"])` before joining them into the excluded-days note, so a
+'molestia' period sharing the window with an excluding one is never credited for days it never
+marked (its own `marcados` count, from `db.dias_marcados`, already excludes 'molestia' entirely --
+this only fixes the LABEL list, which read every overlapping period's kind unfiltered before this
+slice). `historial.py`'s template line itself (`history.html`, outside `touches` for this slice since
+the note's WORDING never changes, only which kinds it names) needed no edit.
+
+**Ruling 5 (census), as built:** `body/mudanza.py`'s `SKIPPED_TABLES["period_kind"] = "catalog"`
+(`:64`, pre-existing) already means no row of either new column ever has to migrate between homes --
+confirmed by the full `tests/test_mudanza.py` run, unedited, green. `body/privacidad.py`'s period
+export/erase touches only the `period` table's own columns (`zonas` and the rest), never
+`period_kind` -- confirmed by the full `tests/test_privacidad.py` run, unedited, green. `vida_export.py`
+carries no period at all (`git grep -n "period" body/vida_export.py` -- no hits); untouched, Tier 1,
+not in `touches`. `body/demo.py`'s own seeded periods (`_seed_periodo`, a closed 'malestar' and an
+open 'lesion') stay exactly as they were -- confirmed by the full `tests/test_demo.py` run (37 tests),
+unedited, green; no demo 'molestia' period was added, since none was asked for and ruling 6's tests
+cover 'molestia' on invented homes of their own.
+
+**Ruling 6 (tests on invented homes), as built:** `tests/test_periodo.py`'s
+`KindDataDrivenExclusionTest` -- an open 'molestia' period is never marked while an open 'lesion' one
+covering the same days is, `periodos()` still lists a 'molestia' period unfiltered, a 'molestia'
+period's zona reaches `zonas_en_recuperacion`, and `db.kind_excluye_del_rango` matches the seed for
+all four kinds; its `FreshDbTest`/`MigrationOnAnExistingDbTest` updated for the new columns/kind.
+`tests/test_migraciones.py`'s new `PeriodKindColumnsMigrationTest`/`PeriodKindColumnsFreshDbTest` --
+the migration on a database built at a pre-this-slice schema preserves the existing 'lesion' row's id/
+dates, adds both columns and the 'molestia' row, is idempotent, and a switch from 'lesion' to
+'molestia' on that migrated row brings `dias_marcados` back. `tests/test_lesion_zona.py` gained
+'molestia' zona-pickup tests in `ZonasEnRecuperacionTest`/`LeerHoyLimitacionesTest`, mirroring the
+existing 'lesion' ones. `tests/test_baselines.py`'s new `PeriodKindBaselineExclusionTest` and
+`tests/test_baselines_lote.py`'s new test -- an open 'molestia' period leaves `baselines.baseline`
+AND `baselines.baselines` at the full window (`n == WINDOW_DAYS`), an open 'lesion' one covering the
+same days empties `baseline()` to `None`. The new `tests/test_periodo_molestia.py` -- `marcar_periodo`/
+`corregir_periodo` accepting 'molestia' with a zona through the real agent tool path; the card text
+(es/en) for 'molestia' vs 'lesion'; `corregir_periodo`'s applier switching an open 'lesion' period to
+'molestia' brings `dias_marcados` back writing no table other than `period`'s own row (asserted by
+row counts on `goal`/`habit`/`daily_metric`/`activity`/`checkin`/`comida` before and after, unchanged);
+Hoy's own line (through the real route, `TestClient`) for an open 'molestia' vs an open 'lesion'
+period, es and en, asserting `"None"` never appears in either rendering. `tests/test_i18n_paridad.py`
+stays green with the `PERIOD_KINDS` unpacking fix (no 'None', es/en parity enforced by the existing
+whole-suite scan plus this slice's own explicit en/es card and screen assertions).
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run as 11
+sequential alphabetical chunks of dotted modules (222 modules total, ~20 per chunk; the 4
+`test_host_*` modules fall inside chunk 5), each read directly from the process:
+
+| # | Range | Ran | Result |
+|---|-------|-----|--------|
+| 1 | test_accesibilidad .. test_baselines | 390 | OK (skipped=1, expected failures=1) |
+| 2 | test_baselines_lote .. test_deploy_host | 486 | OK |
+| 3 | test_deshacer_derivados .. test_env_local_1 | 410 | OK |
+| 4 | test_errores_texto .. test_garmin_relleno_antiguo | 344 | OK |
+| 5 | test_garmin_web .. test_importar_garmin | 774 | OK |
+| 6 | test_installer .. test_migraciones | 492 | OK |
+| 7 | test_mock_r2_hoy .. test_plan_hoy | 494 | OK |
+| 8 | test_plan_pantalla .. test_pull_intradia_experimentos | 525 | OK |
+| 9 | test_pull_relleno .. test_sueno_respiracion_vista | 313 | OK |
+| 10 | test_sync_vivo .. test_turnos_perfil | 568 | OK |
+| 11 | test_turnos_ultima_semana .. test_web_entry | 182 | OK |
+
+Sum: 390+486+410+344+774+492+494+525+313+568+182 = **4978**. Reconciled against a separate
+collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, same final tree,
+counted by walking the discovered suite without running it) = **4978** -- exact match. Every chunk
+ran green on the first attempt; no AST-guard or any other mid-gate failure. The `KeyError`/
+`IntegrityError`/`NotSignedIn`/`ResourceWarning`/"dia vacio"/"pull attempt failed" lines printed
+mid-run are pre-existing fixtures exercising synthetic error paths, not gate failures, and none are
+in a file this slice touched. No password, token, session secret, device key or real health figure
+was read, printed or written anywhere in this slice's own work or the gate's own stdout; no network
+call was made; `~/.body-app/`, `C:\Duna\body\body-app\.env`, any real database and `C:\Personal` were
+never opened.
+
+**customer_bytes: changed, on purpose, approved by this spec.** One new kind label
+(`periodo.kind.molestia`, es/en) and one new line (`asistente.propuesta.periodo_incluido`/
+`today.periodo_incluido`, es/en) that only appears once a person (or the assistant, on their behalf)
+marks a period as 'molestia' -- every existing kind's screen text is byte-for-byte unchanged. The
+spec's own body says in words: *"This slice changes customer bytes ... on purpose and this spec
+approves them: merge if green."* Schema changed too (the additive `period_kind` columns), also named
+and approved by this same spec body (ORCH-CARLOS-DELEGATES-TIER-1-1: "Additive schema ... that keeps
+every existing kind's behaviour byte for byte"). Both merge-policy-A conditions this diff fails are
+explicitly waived in words by this spec's body, not merely its header -- merging on green.
+
+**Open follow-ups:** none coined by this slice's own work.
+
+**Commits:** `4feece4` (rulings 1-3: `period_kind`'s two columns, the seed, and the data-driven reads)
+-- `9bfd3f2` (rulings 4-5: the screens' own wording and the census) -- this ledger entry, appended
+next -- merged into `main` next.
+

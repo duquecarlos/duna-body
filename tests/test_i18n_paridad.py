@@ -134,7 +134,7 @@ _FIXED_DYNAMIC = {
     # body/rutas/experimentos.py _metric_line(): t("experimentos.resultado." + resultado).
     "experimentos.resultado.+": ["mas_bajo", "mas_alto", "sin_cambio", "pocos_dias", "aun_no"],
     # body/rutas/historial.py, body/rutas/hoy.py: t("periodo.kind." + p["kind"]) (body/db.py PERIOD_KINDS).
-    "periodo.kind.+": [k for k, _ in db.PERIOD_KINDS],
+    "periodo.kind.+": [k for k, *_ in db.PERIOD_KINDS],
     # body/rutas/turnos.py _turno_fc_direccion(): the only two words it returns.
     "shifts.pulso.+": list(turnos._PULSO_DIRECCION_WORDS),
     # body/rutas/turnos.py _turno_fc_sueno_lineas(): the fixed corta/normal sleep split (the same
