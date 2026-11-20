@@ -29,7 +29,9 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
 from .. import cuenta, db, errores, llave_asistente, mcp
+from ..i18n import DEFAULT as _IDIOMA_DEFECTO
 from ..i18n import T
+from ..i18n import pick as _idioma_de_accept_language
 from . import comun, mcp_remoto
 
 router = APIRouter()
@@ -40,6 +42,18 @@ SERVER_INFO = {"name": "body", "version": "1"}
 _PARSE_ERROR = {"code": -32700, "message": "Parse error"}
 _INVALID_REQUEST = {"code": -32600, "message": "Invalid Request"}
 _METHOD_NOT_FOUND = {"code": -32601, "message": "Method not found"}
+_CUENTA_NO_DISPONIBLE_CODE = -32001  # implementation-defined server error (JSON-RPC -32000..-32099)
+_REINTENTO_DEFECTO_SEGUNDOS = "60"  # used only when Cuenta's own answer carried no Retry-After
+
+# BODY-MCP-INICIO-SIN-LLAVE-1 ruling 1 (Main's hub item hit_01m7vs9tpsfvzwt372r246srg1, applied to
+# every Duna product): these two methods, plus every notifications/* message, carry nothing
+# personal -- only server name, version, protocol version, capabilities and an empty/no result
+# (ruling 2's own census) -- so they answer even when Cuenta is slow, cold or unreachable, instead
+# of waiting on llave_asistente.verificar's own introspection (up to _HTTP_TIMEOUT, 5 s) before the
+# body is even parsed. ANY other method (tools/list, tools/call, anything unknown) still goes
+# through full verification below, cache included -- tests/test_mcp_http.py's AllowListCensusTest
+# fails the moment a data-returning method joins this set.
+METODOS_SIN_LLAVE = frozenset({"initialize", "ping"})
 
 # Pre-auth and introspection-fault sentences carry no known person language yet (an inactive or
 # unresolved key, or Cuenta itself unreachable) -- both languages together, never a guess at
@@ -51,10 +65,6 @@ _MENSAJE_401_SIN_PERSONA = (
     "Esta llave es válida, pero todavía no has entrado a Body con esa cuenta: entra una vez a "
     "Body con Cuenta Duna para vincularla. / This key is valid, but you haven't signed in to "
     "Body with that account yet: sign in to Body once with Cuenta Duna to link it."
-)
-_MENSAJE_503 = (
-    "Body no pudo comprobar la llave con Cuenta Duna; intenta de nuevo en un momento. / Body "
-    "couldn't check the key with Cuenta Duna; try again in a moment."
 )
 _MENSAJE_SOLO_LECTURA = {
     "es": "Esta llave es de solo lectura: no puede usar herramientas de escritura.",
@@ -73,9 +83,16 @@ def _401(mensaje: str) -> JSONResponse:
     return _sin_cache({"error": mensaje}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
 
 
-def _503(retry_after: str | None) -> JSONResponse:
+def _503(retry_after: str | None, idioma: str) -> JSONResponse:
+    """Ruling 3: besides the transport-level 503 and its Retry-After (unchanged), the body itself
+    is a JSON-RPC error -- never a bare `{"error": ...}` -- so a client reads WHY, not only a
+    status code. No person is resolved yet (this is the introspection call itself failing), so
+    `idioma` is read off the caller's own Accept-Language header, or the default."""
+    n = retry_after or _REINTENTO_DEFECTO_SEGUNDOS
+    mensaje = T(idioma)("asistente.mcp.cuenta_no_disponible", n=n)
     headers = {"Retry-After": retry_after} if retry_after else None
-    return _sin_cache({"error": _MENSAJE_503}, status_code=503, headers=headers)
+    cuerpo = _responder(None, error={"code": _CUENTA_NO_DISPONIBLE_CODE, "message": mensaje})
+    return _sin_cache(cuerpo, status_code=503, headers=headers)
 
 
 def _responder(id_, *, resultado=None, error=None) -> dict:
@@ -121,6 +138,22 @@ def _contenido_llamada(tipo: str, salida: dict, aviso_reloj: bool, idioma: str) 
     elif tipo == "descarte":
         contenido.insert(0, {"type": "text", "text": t("asistente.mcp.descartar_resultado")})
     return contenido
+
+
+def _metodo_sin_llave(item) -> bool:
+    if not isinstance(item, dict):
+        return False
+    metodo = item.get("method")
+    return isinstance(metodo, str) and (metodo in METODOS_SIN_LLAVE or metodo.startswith("notifications/"))
+
+
+def _todos_sin_llave(cuerpo) -> bool:
+    """True only when EVERY message in `cuerpo` (a lone object or every item of a batch) is in
+    the allow-list -- a batch mixing `initialize` with `tools/list` (or anything else) answers
+    False here and goes through full verification unchanged, cache included."""
+    if isinstance(cuerpo, list):
+        return bool(cuerpo) and all(_metodo_sin_llave(item) for item in cuerpo)
+    return _metodo_sin_llave(cuerpo)
 
 
 def _procesar_uno(item, conn, person_id: int, idioma: str, *, puede_aplicar: bool,
@@ -183,6 +216,36 @@ async def mcp_http(request: Request):
         return _401(_MENSAJE_401)
     key = auth[len("Bearer "):]
 
+    # Ruling 1: the body is parsed BEFORE any decision about introspecting the key -- never after,
+    # the way it was before this slice. A parse failure can never be classified as "every message
+    # is in the allow-list" (there IS no message), so it always falls through to full verification
+    # below, same precedence as before: an auth failure (401/503) still wins over a parse error.
+    try:
+        cuerpo = json.loads((await request.body()).decode("utf-8"))
+        parse_error = False
+    except (UnicodeDecodeError, ValueError):
+        cuerpo = None
+        parse_error = True
+
+    if not parse_error and _todos_sin_llave(cuerpo):
+        # Every message is initialize/ping/notifications/* -- answer at once, with NO call to
+        # llave_asistente.verificar (no network reach for Cuenta at all). The Bearer header was
+        # still required above; it is just never introspected for these methods. None of these
+        # branches in `_procesar_uno` reads conn/person_id/idioma (ruling 2's own census: this
+        # endpoint's `initialize` already carries no person-specific text), so the placeholders
+        # below are never seen by them.
+        if isinstance(cuerpo, list):
+            respuestas = [r for r in (
+                _procesar_uno(item, None, None, _IDIOMA_DEFECTO, puede_aplicar=False, puede_escribir=False)
+                for item in cuerpo) if r is not None]
+            if not respuestas:
+                return Response(status_code=202)
+            return _sin_cache(respuestas)
+        respuesta = _procesar_uno(cuerpo, None, None, _IDIOMA_DEFECTO, puede_aplicar=False, puede_escribir=False)
+        if respuesta is None:
+            return Response(status_code=202)
+        return _sin_cache(respuesta)
+
     # BODY-WEB-ESTRUCTURA-1/BODY-CONEXIONES-CERRADAS-2: a key resolves to a person only AFTER
     # Cuenta answers -- there is no person_id yet for comun._ctx to scope by, the same reason
     # body/rutas/sesion.py's own routes open a plain connection of their own instead (its module
@@ -195,7 +258,8 @@ async def mcp_http(request: Request):
         try:
             autorizacion = llave_asistente.verificar(conn_auth, key)
         except llave_asistente.CuentaNoDisponible as e:
-            return _503(e.retry_after)
+            idioma_503 = _idioma_de_accept_language(request.headers.get("accept-language"))
+            return _503(e.retry_after, idioma_503)
         except llave_asistente.PersonaSinBody:
             return _401(_MENSAJE_401_SIN_PERSONA)
         except llave_asistente.LlaveInvalida:
@@ -209,9 +273,7 @@ async def mcp_http(request: Request):
     conn, persona, _ = comun._ctx(person_id)
     idioma = persona.get("language", "es")
 
-    try:
-        cuerpo = json.loads((await request.body()).decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
+    if parse_error:
         return _sin_cache(_responder(None, error=_PARSE_ERROR))
 
     if isinstance(cuerpo, list):
