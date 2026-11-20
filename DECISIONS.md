@@ -31428,6 +31428,6 @@ ranks rather than raw arrays), BODY-MINUTO-ANALISIS-3 (a night/event finder over
 ANALISIS-4 (a read-only investigation of day-context tags: place/altitude, travel, shift, training load, late meal,
 alcohol) are named in the surface this slice was dispatched from, not coined here -- left for their own slices.
 
-**Commits:** `55c9980` (ruling 1 + its tests) -- `a893f53` (ruling 2 + its tests) -- this ledger entry -- merged into
-`main` (`--no-ff`).
+**Commits:** `55c9980` (ruling 1 + its tests) -- `a893f53` (ruling 2 + its tests) -- `b5bb6ab` (this ledger entry) --
+merged into `main` (`--no-ff`) -- merged 7b518039dd001f49629dcfbb7e8596a7965079dc.
 
