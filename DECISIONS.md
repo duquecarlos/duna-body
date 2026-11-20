@@ -31581,3 +31581,150 @@ tests.test_persona_fuga`: Ran 131 tests in 39.425s, OK. Branch deleted
 **Commit:** `582b31e` (this ledger text, on the branch) -- merged into `main` (`--no-ff`) --
 merged `8ac3ce692dad5c16e7ab60ab409776c5c4af93f6`.
 
+## BODY-MINUTO-ANALISIS-5-CONTEXTO -- day and night context, derived on read, for leer_dia/leer_noche (2026-11-20)
+
+Carlos, relayed by the desk 2026-11-20, his words: *"I want between you and body design specialized tools to
+analyze in full detail every minute of the metrics."* The desk asked that comparisons can say "nights after a
+shift", "nights while travelling", "nights after a late meal". `BODY-MINUTO-ANALISIS-4-INV` (OBSERVED) measured
+that every one of those, altitude excepted (out of this slice, `BODY-MINUTO-ANALISIS-6-ALTITUD`), is already
+derivable on read from tables that exist, with three precedents of deriving this kind of thing on read and
+storing nothing new (`body/turnos_costo.py`'s `bloques_noche`, `body/ventana_comida.py`'s `comida_a_sueno`,
+`body/practicas.py`'s `_contexto`) and `body/noche_inusual.py`'s own docstring stating the same rule. The
+orchestrator's ruling (`ORCH-CARLOS-DELEGATES-TIER-1-1`, Tier 2, no schema, `db.py` not edited) authorised one
+derived-on-read module exposed in the two assistant tools that already read a single day/night.
+
+**Rulings 1-2 -- one module, `body/contexto_dia.py`, derived on read, no new table, no stored tag.**
+`contexto_dias(conn, person_id, desde, hasta)` (`:182`) answers for a RANGE of days with exactly 7 bulk
+statements regardless of the range's length -- one per source: `turnos_costo.bloques_noche` (`:86`, called over
+an EXTENDED range so a night block's own recovery tail reaching into `[desde, hasta]` from before `desde` is
+never missed), the day's own `shift.kind` (`_dia_kind_por_dia`, `:67`), `db.viajes_lugares` (`:149`, filtered
+in-module to 2+-day spans -- `body/viajes.py`'s own definition of what counts as "a trip", mirrored rather than
+re-read through it to avoid a second statement), `db.periodos` (`:189`, cached per connection by `db.py` itself,
+so a repeat call on the same connection costs nothing more), `activity` (`_actividad_por_dia`, `:112`),
+`recuperacion_actividad` joined to `activity`, current model version only (`_recuperacion_por_dia`, `:121`, cites
+`recuperacion.VERSION`, never re-defining it), and `daily_metric_efectiva` for `alcohol_g`
+(`_alcohol_por_dia`, `:135`). The per-day dict is built in pure Python over these already-fetched rows (`:195-221`),
+so the loop itself adds no statement whatever the range's length. Each key -- `turno`, `viaje`, `periodos`,
+`carga`, `alcohol_g` -- is present only when that day actually has something to say (never a 0, a False or an
+invented value): `turno.tipo` only with a `shift` row that day, `turno.bloque_noche` only inside a night run
+(`{posicion, largo}`), `turno.dias_desde_ultimo_turno_noche` only inside `turnos_costo.MODELO["ventana_post"]`
+days of the nearest earlier run's own last night (cited, never a new constant); `viaje` from a 2+-day Lugares
+trip (`ref`, 1-based `dia`) or, failing that, a marked `period` of kind `'viaje'` (`dia` alone); `periodos` lists
+every period kind covering the day with its `zonas` when it carries one; `carga.actividades`/`minutos` only with
+an `activity` row that day, `carga.recuperacion_min` added only when at least one of that day's activities has a
+computed figure; `alcohol_g` only when a figure is stored. `contexto_noche(conn, person_id, dia_despertar)`
+(`:224`) answers for the ONE night `sleep_session` files under its own wake day (`body/ventana_comida.py`'s own
+documented convention): `turno`/`carga`/`alcohol_g` are the EVENING's alone (the day before `dia_despertar` --
+the day whose shift and load actually produced that night, per Carlos's own framing above), read via one
+`contexto_dias` call over the two-day evening/wake-day span (still a fixed, range-independent 7 statements);
+`viaje`/`periodos` are read over BOTH calendar dates and merged (a trip or period can start exactly on the wake
+day); `comida_antes_de_dormir.minutos` is literally `ventana_comida.comida_a_sueno(evening)`'s own gap, in
+minutes, added only when it exists -- the one key with no per-day equivalent in `contexto_dias`, since it
+inherently spans two calendar dates. The night-to-evening mapping and every key's exact shape are stated in the
+module's own docstring (`:1-56`). 29 tests in `tests/test_contexto_dia.py`, including the named statement-count
+guard (`StatementCountTest`, a 7-day range vs. a 90-day range cost the identical 7 statements, named ceiling 7)
+and four `another_persons_*_is_never_counted` tests (shift, trip, period, activity, alcohol) proving the
+person-scoping holds for every source.
+
+**Ruling 3 -- the assistant sees it, and its derivation is stated.** `_leer_dia`
+(`body/agente/herramientas.py:874`) gains `data["contexto"] = contexto_dia.contexto_dias(conn, person_id, day,
+day).get(day, {})` (`:898`). `_leer_noche` (`:1486`) gains `"contexto": contexto_dia.contexto_noche(conn,
+person_id, fecha)` (`:1570`). Both tools' Spanish `descripcion` (the only language the registry's `descripcion`
+field has ever carried for any of its 54 entries -- `body/mcp.py`'s `_herramienta_mcp` emits it verbatim, with no
+per-language mechanism anywhere in this codebase) now says in one sentence what the `contexto` keys mean and that
+they are DERIVADO, never entered data. Each tool's own English docstring (this codebase's second, developer-
+facing language track, used throughout) carries the same statement. New tests: `tests/test_agente_leer_dia.py`'s
+`ContextoTest` (the day's own context appears; an empty day's `contexto` is `{}`) and `tests/test_leer_noche.py`'s
+`ContextoTest` (the evening's shift appears; a `sin_datos` night carries no `contexto` key at all).
+`tests/test_persona_fuga.py`'s tool sweep (`_sweep_tools_as`) gained explicit checks for leer_dia's and
+leer_noche's FIRST reader of `viaje_lugares.ref` through `contexto.viaje` -- each viewer's own lower-case trip ref
+renders, the other person's never does, for both tools.
+
+**Ruling 4 -- census and ceilings.** Every context key the module can emit is named once, as a tuple, in
+`contexto_dia.CONTEXT_KEYS` (`:64`) and proven exhaustive by `tests/test_contexto_dia.py::CensusTest` (a rich
+fixture carrying every source at once emits exactly the named keys, for both `contexto_dias` and
+`contexto_noche`). `leer_noche`'s own statement ceiling (`tests/test_leer_noche.py::RangoDobleStatementCountTest`)
+was re-measured with the new `contexto_noche` call: 29 (both ranges present, was 22) and 33 (both null, was 26);
+ceiling raised from 30 to 40 to keep the same comfortable, named margin. `leer_dia` had no statement-ceiling test
+before this slice (its cost lived only inside `/day/{day}`'s own web-route ceiling in `tests/test_rendimiento.py`,
+a different function); a new `tests/test_agente_leer_dia.py::StatementCountTest` gives it its own first ceiling,
+named: 19 on an empty day, 20 on a day carrying every new context source, ceiling `ceil(20 * 1.3) = 26`.
+
+**Two measured deviations, neither changing a ruling:**
+
+1. The spec's surface said "each tool's es/en description" for ruling 3. Measured: `body/agente/herramientas.py`'s
+   tool registry (`HERRAMIENTAS`, 54 entries) has carried a single Spanish `descripcion` string per tool,
+   verbatim, for every one of its entries since the registry was first built -- `body/mcp.py`'s own
+   `_herramienta_mcp`/`_lista_herramientas` (NOT in this slice's `touches:`) emit that one field unchanged, with
+   no per-language branch anywhere in the dispatch path. Introducing a bilingual tool description for only these
+   two of 54 tools would need a new resolution mechanism inside `body/mcp.py`, outside this slice's `touches:`.
+   Did: kept the existing one-language (Spanish) `descripcion` convention and added the same one-sentence
+   statement to each tool's own English docstring -- this codebase's established second track (every module's
+   comments/docstrings are English, every runtime-facing string is Spanish) -- rather than inventing an unused
+   i18n key pair. `body/i18n/es.json`/`en.json` needed no edit: nothing in this slice's output is user-facing
+   template text, and `tests/test_i18n_paridad.py` passed unedited.
+2. The spec's `touches:` named `tests/test_mcp.py`, `tests/test_agente_registro.py`, `tests/test_agente_conformidad.py`
+   and `tests/test_rendimiento.py`. Measured, each already passing unedited against the final tree: `leer_dia`/
+   `leer_noche` are called only through `herramientas.ejecutar` (via `body/agente/bucle.py` and `body/mcp.py`,
+   neither in `touches:`), never from a web route, so `test_rendimiento.py`'s route-ceiling table is untouched by
+   this slice; `test_mcp.py`'s own `leer_noche`/`leer_dia` tests exercise the `sin_datos`/no-params paths only, no
+   `contexto` key to assert on; `test_agente_registro.py`'s static call-graph guard
+   (`StaticGuardTest.test_no_lectura_tool_reaches_a_writer`) is fully generic and already walks into
+   `contexto_dia`'s own call graph, finding only `SELECT`s and other `lectura`-safe readers; `test_agente_
+   conformidad.py`'s clauses concern proposal/apply/usage/provider behaviour, none of it touched here. Did: ran
+   all four modules green against the final tree and left them unedited, named here instead of silently dropped.
+
+**The gate**, exactly `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as 28 sequential
+alphabetical chunks (5-10 dotted modules each, garmin_*/host_* groups kept at <=5 per the dispatch's own
+instruction), every chunk read directly from the foreground process:
+
+    chunk  1 (test_accesibilidad..test_agente_leer_serie):          Ran 194 tests in 48.232s,   OK (1 expected failure)
+    chunk  2 (test_agente_medida..test_asistente_panel):            Ran 195 tests in 34.732s,   OK
+    chunk  3 (test_backup..test_conexiones_cerradas):               Ran 239 tests in 55.654s,   OK (1 skipped)
+    chunk  4 (test_consentimiento_v4..test_cuerpo_vista):           Ran 212 tests in 42.280s,   OK
+    chunk  5 (test_demo..test_desplazamiento_import):               Ran 189 tests in 302.818s,  OK
+    chunk  6 (test_desplazamiento_vista..test_entreno_sesion):      Ran 272 tests in 66.558s,   OK
+    chunk  7 (test_entreno_sets..test_experimentos_intradia):       Ran 128 tests in 35.546s,   OK
+    chunk  8 (test_experimentos_modelo..test_fit):                  Ran 77 tests in 17.643s,    OK
+    chunk  9 (test_fuentes_propias..test_garmin_diagnostico):       Ran 67 tests in 20.340s,    OK
+    chunk 10 (test_garmin_estado..test_garmin_web):                 Ran 148 tests in 212.783s,  OK
+    chunk 11 (test_get_sin_escritura..test_hogar_enlace_1):         Ran 218 tests in 543.708s,  OK
+    chunk 12 (test_hogar_escribe..test_hogar_nota_guard):           Ran 149 tests in 41.654s,   OK
+    chunk 13 (test_hogar_registrar_idempotente..test_host_deploy):  Ran 249 tests in 126.312s,  OK
+    chunk 14 (test_host_import..test_hoy_turno):                    Ran 98 tests in 14.420s,    OK
+    chunk 15 (test_hoy_ventana_comida..test_installer):             Ran 90 tests in 23.369s,    OK
+    chunk 16 (test_isolate_limpieza..test_mcp):                     Ran 238 tests in 54.302s,   OK
+    chunk 17 (test_mcp_aplicar..test_migraciones):                  Ran 257 tests in 98.459s,   OK
+    chunk 18 (test_mock_r2_hoy..test_periodo):                      Ran 300 tests in 142.614s,  OK
+    chunk 19 (test_periodo_analisis..test_person_scope):            Ran 95 tests in 27.280s,    OK
+    chunk 20 (test_persona_fuga..test_plan_hoy):                    Ran 102 tests in 34.395s,   OK
+    chunk 21 (test_plan_pantalla..test_privacidad):                 Ran 351 tests in 130.830s,  OK
+    chunk 22 (test_profile..test_pull_intradia_experimentos):       Ran 178 tests in 52.298s,   OK
+    chunk 23 (test_pull_relleno..test_seguridad):                   Ran 153 tests in 68.469s,   OK
+    chunk 24 (test_series_gramos..test_sueno_respiracion_vista):    Ran 160 tests in 47.447s,   OK
+    chunk 25 (test_sync_vivo..test_turno_fc):                       Ran 297 tests in 64.040s,   OK
+    chunk 26 (test_turno_fc_pantallas..test_turnos_perfil):         Ran 271 tests in 69.821s,   OK
+    chunk 27 (test_turnos_ultima_semana..test_vivo):                Ran 173 tests in 391.566s,  OK
+    chunk 28 (test_vo2max..test_web_entry):                         Ran 9 tests in 1.140s,      OK
+
+Sum: 194+195+239+212+189+272+128+77+67+148+218+149+249+98+90+238+257+300+95+102+351+178+153+160+297+271+173+9 =
+**5109**. Reconciled against an independent collect-only count (`unittest.TestLoader().discover('tests',
+top_level_dir='.')`, counted without running, same final tree) = **5109** -- exact match, no re-run needed. 0
+failures, 0 errors, on the final tree, every chunk green on its first attempt. The `NotSignedIn`/`AttributeError`/
+`ResourceWarning`/"dia vacio"/"pull attempt failed"/"mcp ... error"/"backfill:"/"intradia:"/"sin_cambio:" lines
+printed mid-run are pre-existing fixtures exercising synthetic/mock error and empty-day paths with invented demo
+data, not gate failures. No password, token, secret or real health figure was read, printed or written anywhere
+in this slice's own work or the gate's own stdout; no network call was made; `~/.body-app/`,
+`C:\Duna\body\body-app\.env`, any real database, `C:\Duna\body\body-app-live`, `C:\Duna\body\body-app-live-live`
+and `C:\Personal` were never opened. `git status --porcelain` empty throughout.
+
+**customer_bytes: unchanged.** Every byte this slice adds is either Python source (a tool's own `descripcion`
+sent to a model, never rendered on a screen a person reads) or test code; no template, no i18n string a person
+sees, changed. No schema or migration change (no edit to `body/db.py`), no cross-repo contract or DTO change --
+merge policy A's three conditions are clear; merging on green.
+
+**Commits on the branch:** `27e2c86` (`body/contexto_dia.py`, `tests/test_contexto_dia.py` -- rulings 1-2; 2
+files changed, +581) and `ce0b901` (`body/agente/herramientas.py`, `tests/test_agente_leer_dia.py`,
+`tests/test_leer_noche.py`, `tests/test_persona_fuga.py` -- ruling 3, ruling 4's census/ceilings; 4 files
+changed, +133/-8).
+
