@@ -31869,5 +31869,8 @@ network call was made; `~/.body-app/`, `C:\Duna\body\body-app\.env`, any real da
 **Commits on the branch:** `1e380ca` (`body/agente/herramientas.py`, `body/i18n/es.json`, `body/i18n/en.json`,
 `tests/test_comida_hora.py` -- rulings 1-3 with their own new test module; 4 files changed, +366/-24), `9dd05ed`
 (`tests/test_agente_comidas.py`, `tests/test_agente_leer_dia.py` -- extending the two pre-existing suites named in
-`touches:`; 2 files changed, +53/-3), this ledger text (on the branch) -- merged into `main` (`--no-ff`).
+`touches:`; 2 files changed, +53/-3), `3a4e095` (this ledger text, on the branch) -- merged into `main` (`--no-ff`)
+-- merged `66071fe259274e8a1be552113b103415f16c4b4d`. Post-merge smoke test on `main`
+(`.venv/Scripts/python.exe -m unittest tests.test_agente_comidas tests.test_agente_leer_dia
+tests.test_agente_registro`): Ran 39 tests in 7.620s, OK.
 
