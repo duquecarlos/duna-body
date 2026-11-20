@@ -31990,6 +31990,9 @@ or the gate's own stdout; no network call was made (Cuenta always mocked); `~/.b
 empty throughout.
 
 **Commits on the branch:** `3325eb2` (`body/llave_asistente.py`, `tests/test_llave_asistente.py`,
-`tests/test_mcp_http.py` -- rulings 1-4 with their own tests; 3 files changed, +303/-12), this
-ledger entry on the branch -- merged into `main` (`--no-ff`).
+`tests/test_mcp_http.py` -- rulings 1-4 with their own tests; 3 files changed, +303/-12), `c17cef7`
+(this ledger text, on the branch) -- merged into `main` (`--no-ff`) -- merged
+`65d3b9060bff333517f0c75fc50f3761277a2165`. Post-merge smoke test on `main`
+(`.venv/Scripts/python.exe -m unittest tests.test_llave_asistente tests.test_mcp_http
+tests.test_mcp`): Ran 126 tests in 39.664s, OK.
 
