@@ -31996,3 +31996,157 @@ empty throughout.
 (`.venv/Scripts/python.exe -m unittest tests.test_llave_asistente tests.test_mcp_http
 tests.test_mcp`): Ran 126 tests in 39.664s, OK.
 
+## BODY-MINUTO-ANALISIS-2 -- night features and comparar_noche, ranked against the person's own history (2026-11-20)
+
+Carlos, relayed by the desk 2026-11-20, his own words (the same relay as BODY-MINUTO-ANALISIS-1 above): *"I want
+between you and body specialized tools to analyze in full detail every minute of the metrics."* Second of the series:
+one night's own features, computed on read with no derived table, ranked against this SAME person's own history --
+never a population -- so an assistant that wants to know "was last night's shape unusual for me, and unusual for
+nights like it" no longer has to pull a whole night (`leer_noche`) and compare arrays itself.
+
+**Ruling 1 (night features + `comparar()`) -- `c717a502942c9f6166abfa33441968880d02eba1`.** New module
+`body/noche_rasgos.py` (`VERSION = "noche-rasgos-v1"`, line 70). Two feature families, each documented in `MODELO`
+(lines 83-115) with its own unit and source:
+- `figuras_guardadas` (lines 90-101, 10 features) -- the night's own STORED daily figures, read for the whole range
+  in ONE query over `daily_metric_efectiva`: `sleep_hr_min`/`sleep_hr_avg` (bpm), `hrv_last_night` (ms), `sleep_score`
+  (pts), `sleep_deep_min`/`sleep_light_min`/`sleep_rem_min`/`sleep_awake_min`/`sleep_minutes` (min),
+  `body_battery_sleep_charge` (pts).
+- `figuras_forma` (lines 103-114, 10 features) -- SHAPE features from the night's own per-minute arrays, present
+  only on a night carrying a `'sleep'` `raw_payload` (older nights lack them, counted in `noches_sin_minutos`, never
+  a 0 or an invented value): `inicio_sueno_min_mediodia`/`fin_sueno_min_mediodia` (min since the previous noon,
+  local; `sleep_session`), `nadir_fraccion` (fraction 0-1 of the night; `raw_payload:sleep` heart rate, reusing
+  `sueno_fc.MODELO["percentil_bajo"]`, body/sueno_fc.py:40, for the robust-low rank), `fc_primer_tercio`/
+  `fc_ultimo_tercio` (bpm), `segmentos_despierto` (count), `minutos_despierto` (min), `bloque_profundo_max_min` (min;
+  all three from `raw_payload:sleep` stages), `vfc_primera_mitad`/`vfc_segunda_mitad` (ms; `raw_payload:sleep` HRV).
+
+`comparar()` (line 287) ranks ONE night (`fecha`, the wake day) against every night in `[desde, fecha]` of this same
+person (`desde` default `HISTORIA_DIAS_DEFECTO` = 365 days, line 72): value, `n`, p25/p50/p75, and a percentile rank.
+**Tie rule** (module docstring lines 27-30, code lines 367/381): a night's percentile is `100 * (count of nights with
+a value <= this one, minus one) / (n - 1)` -- the single highest value always reads 100, the single lowest always
+reads 0, and a night tied with the maximum still reads 100 (ties share the higher rank). **Named ceilings:**
+`MIN_NOCHES_PERCENTIL = 2` (line 73, below which a feature carries no rank at all) and `MIN_NOCHES_GRUPO = 5` (line
+74, below which a `grupo` carries only its own `n_grupo`/`motivo`, no percentiles).
+
+**Ruling 2 (`grupo` context filter) -- `00af7877cabc33389fd6e7af4219d6ee831d3399`, folded into the tool
+registration.** `grupo`'s six optional keys (`body/agente/herramientas.py:215-234`: `tras_turno`, `tras_turno_noche`,
+`viaje`, `periodo`, `comida_tarde_min_max`, `con_alcohol`), each checked by `noche_rasgos._coincide_grupo`
+(body/noche_rasgos.py:385) -- a key not named in the JSON schema is refused by `additionalProperties: False` before
+the model's call ever reaches that module; an unknown key inside an allowed object is rejected explicitly in the
+wrapper (`_comparar_noche`, herramientas.py:1659-1662), since `_validar_parametros` does not recurse into a nested
+object schema. `tests/test_noche_rasgos.py::CompararGrupoTest` (line 250) proves the filter with three named
+examples: a night after a night shift, a trip night, a late-meal night, each isolated by its own `grupo` key with
+five matching nights (`MIN_NOCHES_GRUPO`'s own floor) and the other nights (plain weekdays) excluded.
+
+**Ruling 3 (bounded cost) -- `c717a50`, module docstring lines 34-47.** Every bulk reader is ONE statement over the
+WHOLE `[desde, hasta]` range, never one per night: `daily_metric_efectiva` (stored figures), `raw_payload` kind=
+'sleep' (minute payloads, parsed in pure Python per night after one SELECT -- `db.sueno_minuto_a_minuto`,
+body/db.py:2933, is the single-night reader and has no bulk equivalent, so this module issues its own bulk SELECT
+instead of looping it), `sleep_session`, and one `ingesta` aggregate. `grupo` matching merges
+`contexto_dia.contexto_dias` (body/contexto_dia.py:182, already bulk) over the extended range in pure Python;
+`contexto_dia.contexto_noche` (body/contexto_dia.py:224) is called exactly ONCE, for the single focal night's own
+`contexto`, never per night across the range (which would re-cost its own `ventana_comida.comida_a_sueno` lookup
+every time).
+
+`tests/test_rendimiento.py::CompararNocheCostTest` (line 860) measures this on 400 invented consecutive nights: a
+30-night and a 365-night call cost the identical statement count, and the 365-night call answers inside a 2.0s
+ceiling (measured well under 0.5s on the test box). **Deviation, the first worker's, kept as built:** the cost
+comparison runs the 30-night and the 365-night call on TWO SEPARATE connections (`_contar`, lines 906-914), not one
+shared connection -- `db.periodos`'s own per-connection cache (`body/db.py`'s `_periodos_de_persona`, one read per
+connection at most) would otherwise let whichever call runs first on a shared connection pay for that one-time fill
+while the second ran free, making the two counts differ for a reason that has nothing to do with night count. The
+test's own comment (lines 900-905) names this explicitly, mirroring `DespertarRealCostTest`'s identical pattern just
+above it in the same file.
+
+`tests/test_comparar_noche.py` (new module): nivel gating (`completo` only), date/`grupo` validation, the localized
+refusal in both languages, output shape. `tests/test_agente_registro.py`: registry census updated to 55 tools, 22
+`lectura` including `comparar_noche` at `nivel: "completo"`. `tests/test_mcp.py`: `comparar_noche` offered and
+callable through the generic MCP dispatch, no new code needed there. `tests/test_persona_fuga.py`: `comparar_noche`
+swept into the cross-person leak guard like every other read tool.
+
+**Customer bytes:** the tool's own Spanish-only catalogue `descripcion` (herramientas.py:3797-3817, the text the
+assistant MODEL reads, never shown to Carlos directly -- same precedent as `leer_serie`'s own description per
+BODY-MINUTO-ANALISIS-1) and the one new refusal string, `agente.error.comparar_noche_sin_noche` (es/en), approved by
+this spec; reworded once more below, in BODY-MINUTO-ANALISIS-2-M.
+
+**Gate, the first worker's own run (not re-run here, carried forward into BODY-MINUTO-ANALISIS-2-M below):**
+`.venv/Scripts/python.exe -m unittest discover tests -t .`. Chunks 0-17 green (4151 tests); chunk 18 failed ONE test,
+`tests/test_registro_tu.py::TestRegistroTuEsJson::test_su_sus_tiene_puede_are_all_allow_listed_third_person`, because
+the new es string read *"Ese día no tiene una noche registrada por Garmin."* -- a third-person `tiene` the
+tú-register guard only accepts from its own allow-list (`tests/test_registro_tu.py:65-92`); chunks 19-22 never ran.
+Not reconciled at the time (collect-only count: 5188). Worker report:
+`logs/worker-body-minuto-analisis-2-body-app-20261120T125622.json` (dev-protocol), verdict BLOCKED.
+
+## BODY-MINUTO-ANALISIS-2-M -- landing BODY-MINUTO-ANALISIS-2: reword instead of widening the guard (2026-11-20)
+
+ORCH-CARLOS-DELEGATES-TIER-1-1's ruling on the BLOCKED report above: reword the one offending string to the tú
+register instead of widening `tests/test_registro_tu.py`'s own allow-list, then land the slice whose own work was
+committed and green to chunk 17.
+
+**Ruling 1 (reword) -- `60291614fc5c32cfecd4999cb0b3d802c2350802`.** `agente.error.comparar_noche_sin_noche`
+(body/i18n/es.json:1184) becomes *"No hay una noche registrada por Garmin para ese día."*, with `en.json:1184`
+matched in meaning: *"There is no night recorded by Garmin for that day."* -- no third-person `tiene`, so the
+tú-register guard needed no widening. `tests/test_comparar_noche.py` (the two assertions pinning the old wording)
+updated to match. `tests/test_registro_tu.py` and its allow-list left untouched, as ruled. Targeted run, immediately
+after: `.venv/Scripts/python.exe -m unittest tests.test_registro_tu tests.test_comparar_noche
+tests.test_i18n_paridad` -- Ran 30 tests, OK.
+
+**Ruling 2 (the full gate, reconciled) -- 26 sequential alphabetical chunks** of the exact command
+`.venv/Scripts/python.exe -m unittest discover tests -t .`'s own 230 modules, each read directly from the process
+(chunk 11 ran past the 600s foreground cap and was moved to the background by the harness; its own artifact was read
+back to completion before the next chunk ran; every other chunk finished inside the cap):
+
+| # | Range | Ran | Result |
+|---|-------|-----|--------|
+| 1 | test_accesibilidad .. test_agente_leer_serie | 197 | OK (expected failures=1) |
+| 2 | test_agente_medida .. test_asistente_panel | 195 | OK |
+| 3 | test_backup .. test_comida_hora | 251 | OK (skipped=1) |
+| 4 | test_comparar_noche .. test_cuenta_vectores | 187 | OK |
+| 5 | test_cuerpo_nitidez .. test_despertar_real | 186 | OK |
+| 6 | test_desplazamiento_asistente .. test_entreno_racha | 256 | OK |
+| 7 | test_entreno_schema .. test_estados_vacios_hosted | 148 | OK |
+| 8 | test_experimentos_esquema .. test_fuentes_propias | 129 | OK |
+| 9 | test_garmin_adapter .. test_garmin_estado | 70 | OK |
+| 10 | test_garmin_host .. test_garmin_web | 138 | OK |
+| 11 | test_get_sin_escritura .. test_hogar_enlace_1 | 218 | OK (backgrounded past 600s, read from its artifact) |
+| 12 | test_hogar_escribe .. test_horizonte | 229 | OK |
+| 13 | test_host_autoactualizar .. test_host_import | 201 | OK |
+| 14 | test_household .. test_isolate_limpieza | 161 | OK |
+| 15 | test_leer_intradia .. test_mcp_aplicar | 258 | OK |
+| 16 | test_mcp_cliente_remoto .. test_mock_r2_hoy | 280 | OK |
+| 17 | test_modelos_estandar_1 .. test_periodo | 293 | OK |
+| 18 | test_periodo_analisis .. test_plan_hoy | 197 | OK |
+| 19 | test_plan_pantalla .. test_privacidad | 351 | OK |
+| 20 | test_profile .. test_pull_intradia_experimentos | 178 | OK |
+| 21 | test_pull_relleno .. test_seguridad | 155 | OK |
+| 22 | test_series_gramos .. test_sueno_respiracion_vista | 160 | OK |
+| 23 | test_sync_vivo .. test_turno_fc | 297 | OK |
+| 24 | test_turno_fc_pantallas .. test_turnos_perfil | 271 | OK |
+| 25 | test_turnos_ultima_semana .. test_vivo | 173 | OK |
+| 26 | test_vo2max .. test_web_entry | 9 | OK |
+
+Sum: 197+195+251+187+186+256+148+129+70+138+218+229+201+161+258+280+293+197+351+178+155+160+297+271+173+9 = **5188**.
+Reconciled against an independent collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')`,
+same final tree, counted by walking the discovered suite without running it) = **5188** -- exact match, matching the
+first worker's own 5188-collected figure above. 0 failures, 0 errors, every chunk green (one expected failure, one
+skip, both pre-existing and unrelated to this slice's diff). The pre-existing `NotSignedIn`/`AttributeError`/
+`ResourceWarning`/"dia vacio"/"pull attempt failed"/"mcp ... error"/"connect pull: error"/"backfill:"/"intradia:"/
+"asistente: propuesta ... no se pudo mostrar"/one deliberately-raised `RuntimeError` traceback (`test_sync_vivo.py:
+311`) printed mid-run are fixtures exercising synthetic/mock error and empty-day paths with invented demo data, not
+gate failures, and none are in a file this slice touched. No password, token, secret or real health figure was read,
+printed or written anywhere in this slice's own work or the gate's own stdout; no network call was made;
+`~/.body-app/`, `C:\Duna\body\body-app\.env`, any real database, `C:\Duna\body\body-app-live`,
+`C:\Duna\body\body-app-live-live` and `C:\Personal` were never opened. `git status --porcelain` empty throughout.
+
+**customer_bytes: changed, approved by this spec.** The one reworded string, es and en, listed above -- the only
+customer-facing bytes this slice itself touches (the tool's own catalogue `descripcion`, approved under
+BODY-MINUTO-ANALISIS-2 above, is unchanged by this slice). No schema change, no Tier 1 path touched, no cross-repo
+contract. The spec's own approval-reason says in words: *"Rewords one new error string to the tú register instead of
+widening the guard's allow-list, then lands a slice whose own work was committed and green to chunk 17. Customer
+bytes are BODY-MINUTO-ANALISIS-2's tool description and error strings, approved here. Reversible. Deploying follows
+Carlos's standing go."* -- merging on green.
+
+**Commits on the branch:** `60291614fc5c32cfecd4999cb0b3d802c2350802` (`body/i18n/en.json`, `body/i18n/es.json`,
+`tests/test_comparar_noche.py` -- ruling 1's reword; 3 files changed, +4/-4), plus the two commits carried over from
+the original BLOCKED slice, `c717a502942c9f6166abfa33441968880d02eba1` and
+`00af7877cabc33389fd6e7af4219d6ee831d3399`, plus this ledger text, on the branch -- merged into `main` (`--no-ff`).
+
