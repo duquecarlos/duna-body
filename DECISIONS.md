@@ -31731,3 +31731,143 @@ changed, +133/-8), `085f67f` (this ledger text, on the branch) -- merged into `m
 (`.venv/Scripts/python.exe -m unittest tests.test_contexto_dia tests.test_leer_noche tests.test_agente_leer_dia`):
 Ran 81 tests in 27.464s, OK.
 
+## BODY-COMIDA-HORA-1 -- the hour parser validates, momento names its own claves, leer_dia's meals carry an id (2026-11-20)
+
+Reported by the desk 2026-11-20 from real use: `registrar_comida` given `hora` as a full ISO timestamp stored a
+NESTED `ts_local` of the shape `<day>T<day>T<hh:mm:ss><offset>:00` on three applied meals -- the day totals were
+right, the times were broken. `_hora_a_ts_local` (`body/agente/herramientas.py`, old code) was
+`f"{day}T{hora}:00" if hora else None`, no validation, feeding `registrar_comida`, `corregir_comida`,
+`registrar_ingesta` and `registrar_checkin` alike. Second defect: `momento` refused a word the person used
+(`momento desconocido: 'mañana'`) naming neither the person's own allowed claves nor itself in its description.
+Third gap: `leer_dia`'s `comidas` (`db.comidas_del_dia`, Tier 1, not edited) carried no meal id, so an assistant
+could not call `corregir_comida(comida_id, ...)` on a meal it had just read. The orchestrator's ruling
+(`ORCH-CARLOS-DELEGATES-TIER-1-1`, Tier 2, no schema, `body/db.py` NOT edited): validate `hora` once, name
+`momento`'s own values on refusal, and read the meal id through a second, bounded query in
+`body/agente/herramientas.py`.
+
+**Ruling 1 -- one validating parser, shared by every tool that takes `hora`.** `_hora_a_ts_local`
+(`body/agente/herramientas.py:2687-2725`) now accepts `'HH:MM'`/`'H:MM'` (`datetime.strptime(valor, "%H:%M")`,
+which already tolerates a single-digit hour and rejects an out-of-range one like `'25:00'`) or a full ISO
+date-time with or without a UTC offset (`datetime.fromisoformat`, only attempted when the string is longer than
+a bare date, so `'07:55:00'`'s stray seconds never parses as a partial ISO date either) -- an offset is converted
+to the person's own `timezone` (`db.person(...)["timezone"]`, `ZoneInfo`) before the local date/time are read
+off it. It returns `(day, hora_hhmmss)`: `day` is the date-time's own local date when the caller's `day` was
+`None`, checked to MATCH `day` when one was given (a mismatch raises `ToolError` naming both values), and
+`hora_hhmmss` is `None` only when `hora` itself is `None`. The stored `ts_local` is always built by the caller as
+`f"{day}T{hora_hhmmss}"`, never nested again. Anything else (seconds-only, `'25:00'`, an empty string) is refused
+naming `_HORA_FORMATOS_ACEPTADOS` (`:2684`), and the four JSON schemas below name the same two accepted forms in
+`hora`'s own `description` (`_HORA_PARAM_DESCRIPCION`, `:464-469`), as the spec required. Census of every tool
+that shares the parser (`body/agente/herramientas.py`): `_registrar_ingesta` (`:2728`, calls at `:2741-2743`),
+`_registrar_comida` (`:2903`, calls at `:2951-2954`), `_corregir_comida` (`:2978`, calls at `:3003-3005` -- when
+`hora` is a full ISO and the correction's own `day` field is left out, the derived date now MOVES the meal's day,
+matching the general "day omitted" rule even in the correction path, proven by
+`tests/test_comida_hora.py::CorregirComidaHoraTest::test_full_iso_hora_moves_the_day_when_day_is_not_given`), and
+`_registrar_checkin` (`:3082`, calls at `:3100-3103`). `corregir_despertar`'s own `hora` param is OUT of this
+census: it is validated by a separate, already-strict helper (`_hora_local`, `:1257-1261`, bare `HH:MM` only, no
+ISO form, no nesting bug possible), never `_hora_a_ts_local` -- left untouched.
+
+**Ruling 2 -- momento names its own claves, in code, from the person's own data.** `_registrar_comida`'s momento
+check (`:2946-2950`) now reads `comidas.momentos(conn, person_id)` (the person's own `momento_comida` rows, or
+`comidas.DEFAULT_MOMENTOS` when they have none -- never a hardcoded list) and refuses with a new i18n key,
+`agente.error.comida_momento_invalido` (`body/i18n/es.json`/`en.json`, `{momento}`/`{opciones}` placeholders,
+translated through `t()`, the same door-validation pattern `entreno_categoria_invalida` already uses), naming
+every one of that person's own claves. No synonym guessing: `'mañana'` maps to nothing, it is simply refused
+alongside the real claves. `registrar_comida`'s own Spanish `descripcion` and `corregir_comida`'s
+(`body/agente/herramientas.py:3996-4011` in the tool registry) now say `momento` is one of the person's own meal
+moments and that the refusal lists them, and that `corregir_comida`'s own `comida_id` comes from `leer_dia`
+(`body/agente/herramientas.py:3943-3972`, the tool registry). `registrar_checkin`'s own `momento` (a fixed enum,
+`MOMENTOS_CHECKIN`, already JSON-schema-`enum`-guarded, never a per-person value) is OUT of this ruling's scope
+and was left unchanged.
+
+**Ruling 3 -- the meal id is readable, without editing `db.py`.** `_comidas_del_dia_con_id`
+(`body/agente/herramientas.py:876-897`) wraps `db.comidas_del_dia` with a second, bounded query -- `SELECT i.id,
+i.comida_id FROM ingesta i WHERE i.person_id = ? AND i.day = ? ORDER BY COALESCE(i.ts_local, ''), i.id` -- built
+on the EXACT SAME `WHERE`/`ORDER BY` `db.comidas_del_dia` groups its own rows with, so its Nth first-occurrence
+lines up with that function's Nth returned entry without re-reading any descriptive column; each entry then gains
+`comida_id` (a real meal) or `ingesta_id` (a legacy stand-alone row), never both. `_leer_dia` (`:928`) now calls
+it in place of `db.comidas_del_dia` directly. `body/db.py` was not edited.
+
+**The gate re-measured, named (ruling 4's own instruction):** `leer_dia`'s statement count
+(`tests/test_agente_leer_dia.py::StatementCountTest`) moved from 19/20 (empty/full day) to **20/21** -- the one
+bounded extra `SELECT` `_comidas_del_dia_con_id` always issues -- both still comfortably under the unchanged
+ceiling of 26 (`ceil(20 * 1.3)`, from the ceiling's own original measurement, never recomputed since the margin
+still holds). `/day/{day}`'s own web-route ceiling in `tests/test_rendimiento.py` is untouched: that route calls
+`db.comidas_del_dia` directly (`body/rutas/hoy.py`), never through `herramientas.py`, so this slice's new query
+never runs on that path.
+
+**Tests, invented homes only, no real health figures:** a new module, `tests/test_comida_hora.py` (21 tests) --
+every accepted `hora` form (`'07:55'`, `'7:55'`, a full ISO with a matching `-05:00` offset, a full ISO with none)
+storing the identical flat `ts_local`; `day` omitted taking the date-time's own local date; a mismatched local
+date refused by name; garbage (`'07:55:00'`, `'25:00'`, `''`) refused naming `'HH:MM'`; the SAME census proven
+through `registrar_ingesta` and `registrar_checkin` (`ComparteElParserCensoTest`); `corregir_comida`'s three hora
+paths (bare clock keeps the day, full ISO moves it, a mismatched explicit day is refused and leaves the row
+untouched); momento's refusal naming the defaults and a person's own custom clave, never adding synonyms; and
+`leer_dia`'s `comida_id`/`ingesta_id` presence, exclusivity and person-scoping. Extended: `tests/test_agente_
+comidas.py` (the full propose/apply/read round trip with a full-ISO `hora`, the surface's own repro, proven fixed
+end to end) and `tests/test_agente_leer_dia.py` (`comida_id`/`ingesta_id` presence and cross-person scoping, the
+re-measured statement counts above). Reviewed, unedited (already green against the final tree, no gap found):
+`tests/test_mcp.py`, `tests/test_agente_registro.py`, `tests/test_agente_conformidad.py`,
+`tests/test_persona_fuga.py` (the generic marker sweep is text-based and the new numeric ids are already
+person-scoped by the `WHERE person_id = ?` both queries share -- no textual marker could leak through an id),
+`tests/test_i18n_paridad.py` (the new `t()` call and its es/en pair pass the literal-key/placeholder-parity scan
+unedited) and `tests/test_rendimiento.py` (named above: its route ceiling is a different code path). No
+`tests/test_agente_ingesta.py` exists in this repository and none was created -- `registrar_ingesta`'s own
+coverage lives in `tests/test_comida_hora.py` (the census test) and the pre-existing suites that already exercise
+it; the spec's `touches:` named it speculatively.
+
+**customer_bytes: unchanged.** `_HORA_PARAM_DESCRIPCION`, `momento`'s own schema description and the two tool
+`descripcion` edits are strings sent to the model inside the assistant's own tool-calling loop, never rendered on
+a screen a person reads. The new i18n key (`agente.error.comida_momento_invalido`) is a refusal message the
+assistant relays in conversation, in the person's own language, the same channel every other `agente.error.*` key
+already uses -- not a new customer-facing surface, the same kind of byte this product already ships through this
+exact mechanism. No schema or migration change (`body/db.py` untouched), no cross-repo contract or DTO change --
+merge policy A's three conditions are clear; merging on green.
+
+**The gate**, exactly `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as 26 sequential
+alphabetical chunks (one module, `test_llave_asistente`, fell between `test_listen` and `test_login` and was
+missed on the first pass -- caught by the reconciliation below and run on its own as chunk 26), every chunk read
+directly from the foreground process:
+
+    chunk  1 (test_accesibilidad..test_agente_leer_serie):             Ran 197 tests in  51.643s, OK (1 expected failure)
+    chunk  2 (test_agente_medida..test_asistente_panel):                Ran 195 tests in  40.085s, OK
+    chunk  3 (test_backup..test_comida_hora):                           Ran 251 tests in  69.409s, OK (1 skipped)
+    chunk  4 (test_conexiones_cerradas..test_cuerpo_nitidez):           Ran 189 tests in  46.701s, OK
+    chunk  5 (test_cuerpo_vista..test_desplazamiento_asistente):        Ran 189 tests in 328.316s, OK
+    chunk  6 (test_desplazamiento_import..test_entreno_schema):         Ran 260 tests in  59.386s, OK
+    chunk  7 (test_entreno_sesion..test_experimentos_esquema):          Ran 162 tests in  50.800s, OK
+    chunk  8 (test_experimentos_intradia..test_fuentes_propias):        Ran  94 tests in  18.074s, OK
+    chunk  9 (test_garmin_adapter..test_garmin_estado):                 Ran  70 tests in  18.835s, OK
+    chunk 10 (test_garmin_host..test_garmin_web):                       Ran 138 tests in 211.870s, OK
+    chunk 11 (test_get_sin_escritura..test_hogar_enlace_1):             Ran 218 tests in 477.562s, OK
+    chunk 12 (test_hogar_escribe..test_horizonte):                      Ran 229 tests in  48.195s, OK
+    chunk 13 (test_host_autoactualizar..test_host_import):              Ran 201 tests in 175.161s, OK
+    chunk 14 (test_household..test_isolate_limpieza):                   Ran 161 tests in  55.151s, OK
+    chunk 15 (test_leer_intradia..test_mcp_cliente_remoto):             Ran 264 tests in  44.488s, OK
+    chunk 16 (test_mcp_copia_pc..test_modelos_estandar_1):              Ran 251 tests in 144.449s, OK
+    chunk 17 (test_momentos_pull..test_periodo_herramientas):           Ran 306 tests in  75.510s, OK
+    chunk 18 (test_periodo_molestia..test_plan_propuestas):             Ran 231 tests in  78.300s, OK
+    chunk 19 (test_plan_sesion_hecha..test_profile_lote):               Ran 278 tests in 109.482s, OK
+    chunk 20 (test_propuesta_vigencia..test_readiness):                 Ran 198 tests in  55.952s, OK
+    chunk 21 (test_recuperacion..test_series_orden):                    Ran 162 tests in  67.965s, OK
+    chunk 22 (test_series_unidad..test_sync_vivo_estado):               Ran 226 tests in  58.066s, OK
+    chunk 23 (test_sync_vivo_timer..test_turnos_costo):                 Ran 278 tests in  57.293s, OK
+    chunk 24 (test_turnos_deshacer..test_tutoriales):                   Ran 206 tests in  61.146s, OK
+    chunk 25 (test_tutoriales_catalogo..test_web_entry):                Ran 163 tests in 171.845s, OK
+    chunk 26 (test_llave_asistente, the missed module):                 Ran  16 tests in   5.007s, OK
+
+Sum: 197+195+251+189+189+260+162+94+70+138+218+229+201+161+264+251+306+231+278+198+162+226+278+206+163+16 =
+**5133**. Reconciled against an independent collect-only count (`unittest.TestLoader().discover('tests',
+top_level_dir='.')`, counted without running, same final tree) = **5133** -- exact match. 0 failures, 0 errors,
+every chunk green. The `NotSignedIn`/`AttributeError`/`ResourceWarning`/"dia vacio"/"pull attempt
+failed"/`backfill:`/`intradia:`/"mcp ... error" lines printed mid-run are pre-existing fixtures exercising
+synthetic/mock error and empty-day paths with invented demo data, not gate failures. No password, token, secret
+or real health figure was read, printed or written anywhere in this slice's own work or the gate's own stdout; no
+network call was made; `~/.body-app/`, `C:\Duna\body\body-app\.env`, any real database,
+`C:\Duna\body\body-app-live`, `C:\Duna\body\body-app-live-live` and `C:\Personal` were never opened.
+`git status --porcelain` empty throughout.
+
+**Commits on the branch:** `1e380ca` (`body/agente/herramientas.py`, `body/i18n/es.json`, `body/i18n/en.json`,
+`tests/test_comida_hora.py` -- rulings 1-3 with their own new test module; 4 files changed, +366/-24), `9dd05ed`
+(`tests/test_agente_comidas.py`, `tests/test_agente_leer_dia.py` -- extending the two pre-existing suites named in
+`touches:`; 2 files changed, +53/-3), this ledger text (on the branch) -- merged into `main` (`--no-ff`).
+
