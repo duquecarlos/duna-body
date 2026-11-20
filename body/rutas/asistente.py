@@ -544,13 +544,15 @@ def _tarjeta_registrar_checkin(t: T, defs: dict, despues: dict, antes_json: dict
 
 
 def _periodo_kind_txt(t: T, kind: str) -> str:
-    """BODY-PERIODO-1: three literal t() calls, not a concatenated key, so test_i18n_paridad.py's
+    """BODY-PERIODO-1: four literal t() calls, not a concatenated key, so test_i18n_paridad.py's
     dynamic-prefix guard needs no new entry (the same choice BODY-PROTEINA-1 made for
-    _momento_ingesta_txt)."""
+    _momento_ingesta_txt). BODY-PLAN-FASES-4 ruling 2 adds 'molestia'."""
     if kind == "viaje":
         return t("periodo.kind.viaje")
     if kind == "lesion":
         return t("periodo.kind.lesion")
+    if kind == "molestia":
+        return t("periodo.kind.molestia")
     return t("periodo.kind.malestar")
 
 
@@ -565,13 +567,18 @@ def _periodo_dias_txt(t: T, start_day: str, end_day: str | None) -> str:
 
 
 def _periodo_txt(t: T, kind: str, start_day: str, end_day: str | None, note: str | None) -> str:
-    """BODY-PERIODO-1 ruling 2: the card says the kind, the days, and that Body will leave those
-    days out when it compares with the usual -- every period card builder below reuses this."""
+    """BODY-PERIODO-1 ruling 2: the card says the kind, the days, and whether Body will leave those
+    days out when it compares with the usual -- every period card builder below reuses this.
+    BODY-PLAN-FASES-4 ruling 4: a kind with excluye_del_rango=0 (today, 'molestia') says instead
+    that those days still count, read from the data, never a hardcoded kind check."""
     partes = [t("asistente.propuesta.periodo_resumen", kind=_periodo_kind_txt(t, kind),
                 dias=_periodo_dias_txt(t, start_day, end_day))]
     if note:
         partes.append(t("asistente.propuesta.periodo_nota", nota=note))
-    partes.append(t("asistente.propuesta.periodo_excluido"))
+    if db.kind_excluye_del_rango(kind):
+        partes.append(t("asistente.propuesta.periodo_excluido"))
+    else:
+        partes.append(t("asistente.propuesta.periodo_incluido"))
     return " · ".join(partes)
 
 
