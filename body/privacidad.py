@@ -99,7 +99,11 @@ FULLY_HANDLED_TABLES = {
 # habit and goal_enlace carry no literal `person_id` column (person_tables() below would never find
 # them) -- both are owned through goal_id instead, and both are still fully exported and deleted,
 # via a join on goal.person_id (habit above, goal_enlace through body/enlaces.py).
-PARTIAL_EXPORT_TABLES = {"raw_payload", "garmin_cuenta", "dispositivo"}
+# BODY-PLAN-FASES-5: entreno_dolor is a partial-export table -- every column except `movimiento`
+# (the person's own words about what hurt, never logged or exported off the host, same promise
+# checkin_nota's own note keeps at the strictest level, though this one still fully exports its
+# NUMBERS).
+PARTIAL_EXPORT_TABLES = {"raw_payload", "garmin_cuenta", "dispositivo", "entreno_dolor"}
 # BODY-CHECKIN-1 ruling 4: checkin_nota is the strictest privacy level -- never in this module's own
 # export, never in body/vida_export.py, never shared with a household. sesion is session plumbing,
 # not data about the person's body or life. lugares_sync is this module's own sync bookkeeping
@@ -231,6 +235,13 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
     periodos = [dict(r) for r in conn.execute(
         "SELECT id, kind, start_day, end_day, note, zonas, created_at, updated_at "
         "FROM period WHERE person_id = ? ORDER BY start_day, id", (person_id,))]
+    # BODY-PLAN-FASES-5: every number and the exercise/zona naming it, never `movimiento` (the
+    # person's own words about what hurt) -- the one restricted field this table's partial export
+    # leaves out.
+    dolor_entreno = [dict(r) for r in conn.execute(
+        "SELECT id, day, sets_source, sets_source_id, ejercicio, zona, dolor_durante, dolor_despues, "
+        "dolor_manana, manana_registrado_en, creado_en FROM entreno_dolor WHERE person_id = ? "
+        "ORDER BY day, id", (person_id,))]
     objetivos_nutriente = [dict(r) for r in conn.execute(
         "SELECT metric_key, start_day, kind, amount, sentido, created_at FROM nutrient_target "
         "WHERE person_id = ? ORDER BY metric_key, start_day", (person_id,))]
@@ -361,6 +372,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "comidas": comidas,
         "momentos_comida": momentos_comida,
         "periodos": periodos,
+        "dolor_entreno": dolor_entreno,
         "objetivos_nutriente": objetivos_nutriente,
         "fuentes_importacion": fuentes_importacion,
         "checkins": checkins,
@@ -522,6 +534,7 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         # deleted first for the same reason.
         conn.execute("DELETE FROM workout_set WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM activity_detail WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM entreno_dolor WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM recuperacion_actividad WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM turno_fc WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM activity WHERE person_id = ?", (person_id,))

@@ -138,6 +138,11 @@ REGISTRY: tuple[TableSpec, ...] = (
               match_cols=("person_id", "activity_source", "activity_source_id", "set_order")),
     TableSpec("activity_detail",
               match_cols=("person_id", "activity_source", "activity_source_id", "kind")),
+    # BODY-PLAN-FASES-5: matched like workout_set/activity_detail above, by the UNIQUE key the
+    # table's own CHECK already enforces -- sets_source/sets_source_id name an activity by value,
+    # never by a surrogate id, so no fk_remap.
+    TableSpec("entreno_dolor",
+              match_cols=("person_id", "sets_source", "sets_source_id", "ejercicio")),
     TableSpec("shift_batch", match_cols=("person_id", "file_name", "received", "extracted_at"),
               id_exported=True),
     TableSpec("shift_batch_item", scope="parent", parent_fk="batch_id", parent_table="shift_batch",

@@ -29,6 +29,13 @@ SHIFT_KINDS = ("morning", "afternoon", "night", "day", "off", "other")
 NUTRIENT_TARGET_KINDS = ("absolute", "per_kg", "off")
 NUTRIENT_TARGET_SENTIDOS = ("al_menos", "como_maximo")
 
+# ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: the one 0-10 pain scale entreno_dolor's own CHECK
+# constraints below, and every durante/después/mañana select the templates build, share -- never a
+# second hand-typed "10" anywhere else. i18n anchor labels at "dolor.escala.min" (0, "sin dolor")
+# and "dolor.escala.max" (10, "el peor dolor").
+DOLOR_ESCALA_MIN = 0
+DOLOR_ESCALA_MAX = 10
+
 # BODY-RECUPERACION-1: the honest-gap reason codes recuperacion.py's Resultado carries when it has
 # no minutes figure -- shared here (not defined in recuperacion.py) the same way SHIFT_KINDS above
 # is, since recuperacion.py imports db but db must not import recuperacion.py (it would be
@@ -996,6 +1003,37 @@ CREATE TABLE IF NOT EXISTS period (
     CHECK (end_day IS NULL OR end_day >= start_day)
 );
 CREATE INDEX IF NOT EXISTS idx_period_person ON period(person_id);
+
+-- BODY-PLAN-FASES-5 (ORCH-CARLOS-DELEGATES-TIER-1-1): one row per exercise of a session that
+-- loaded an open injury/molestia zona (period_kind.lleva_zona=1), carrying how it actually felt --
+-- real sensations, never advice (Carlos, relayed by the desk 2026-11-19: "next week ... we'll get
+-- into detail into my sensations"). sets_source/sets_source_id name the same activity composite
+-- key workout_set/activity_detail already use; ejercicio is the set's own exercise name verbatim
+-- (never re-typed), zona is the anatomia.CATEGORIA_ENUM word that matched the open period's own
+-- zonas (db.zonas_en_recuperacion). dolor_durante/dolor_despues/dolor_manana are each 0-10 or
+-- unanswered (NULL); UNIQUE below makes a second save for the same exercise an edit, never a
+-- second row. movimiento is the person's own words -- never logged, exported or sent to a model
+-- provider, the same promise period.note already keeps.
+CREATE TABLE IF NOT EXISTS entreno_dolor (
+    id                   INTEGER PRIMARY KEY,
+    person_id            INTEGER NOT NULL REFERENCES person(id),
+    day                  TEXT NOT NULL,
+    sets_source          TEXT NOT NULL,
+    sets_source_id       TEXT NOT NULL,
+    ejercicio            TEXT NOT NULL,
+    zona                 TEXT NOT NULL,
+    dolor_durante        INTEGER CHECK (dolor_durante IS NULL OR
+                                        (dolor_durante BETWEEN 0 AND 10)),
+    dolor_despues        INTEGER CHECK (dolor_despues IS NULL OR
+                                        (dolor_despues BETWEEN 0 AND 10)),
+    movimiento           TEXT,
+    dolor_manana         INTEGER CHECK (dolor_manana IS NULL OR
+                                        (dolor_manana BETWEEN 0 AND 10)),
+    manana_registrado_en TEXT,
+    creado_en            TEXT NOT NULL,
+    UNIQUE (person_id, sets_source, sets_source_id, ejercicio)
+);
+CREATE INDEX IF NOT EXISTS idx_entreno_dolor_person_dia ON entreno_dolor(person_id, day);
 
 -- BODY-RECUPERACION-1: see _RECUPERACION_ACTIVIDAD_COLUMNS above for why.
 CREATE TABLE IF NOT EXISTS recuperacion_actividad (
@@ -3955,6 +3993,74 @@ def dias_marcados(conn: sqlite3.Connection, person_id: int, desde: str, hasta: s
             out.add(d.isoformat())
             d += timedelta(1)
     return out
+
+
+# Ruling 4: the morning-after follow-up stays due through this many days after the trained day --
+# the morning right after (day + 1) is the earliest it becomes due, and it stops appearing once
+# this many days have passed (day + MANANA_VENCE_DIAS + 1 never shows it again).
+MANANA_VENCE_DIAS = 2
+
+
+def registrar_dolor_entreno(conn: sqlite3.Connection, person_id: int, day: str, sets_source: str,
+                             sets_source_id: str, filas: list[dict]) -> None:
+    """Ruling 3: upserts one entreno_dolor row per `filas` item ({"ejercicio", "zona",
+    "dolor_durante", "dolor_despues", "movimiento"}) -- the UNIQUE(person_id, sets_source,
+    sets_source_id, ejercicio) key makes a second save for the same exercise an edit, never a
+    second row (ruling 3's own "editing later is the same form prefilled")."""
+    ahora = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        for f in filas:
+            conn.execute(
+                "INSERT INTO entreno_dolor (person_id, day, sets_source, sets_source_id, ejercicio, "
+                "zona, dolor_durante, dolor_despues, movimiento, creado_en) VALUES (?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(person_id, sets_source, sets_source_id, ejercicio) DO UPDATE SET "
+                "dolor_durante=excluded.dolor_durante, dolor_despues=excluded.dolor_despues, "
+                "movimiento=excluded.movimiento",
+                (person_id, day, sets_source, sets_source_id, f["ejercicio"], f["zona"],
+                 f.get("dolor_durante"), f.get("dolor_despues"), f.get("movimiento"), ahora),
+            )
+
+
+def dolor_de_sesion(conn: sqlite3.Connection, person_id: int, sets_source: str,
+                     sets_source_id: str) -> list[dict]:
+    """This person's own entreno_dolor rows for one session -- read by both the session screen
+    (ruling 3's prefill on edit) and the assistant's own leer_entreno (ruling 5)."""
+    rows = conn.execute(
+        "SELECT * FROM entreno_dolor WHERE person_id = ? AND sets_source = ? AND sets_source_id = ? "
+        "ORDER BY id", (person_id, sets_source, sets_source_id),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def pendientes_dolor_manana(conn: sqlite3.Connection, person_id: int, day: str) -> list[dict]:
+    """Ruling 4: this person's own due 'morning after' follow-ups for `day` -- one entry per
+    (día entrenado, zona) still carrying an entreno_dolor row with dolor_manana NULL, for a día
+    entrenado up to MANANA_VENCE_DIAS days before `day` (ruling 4's own "until answered or until 2
+    days pass"). A small, reusable read -- never a one-off branch -- so a later 'ask tomorrow'
+    follow-up can share it (ruling 4's own instruction)."""
+    hasta_dt = date.fromisoformat(day)
+    desde = (hasta_dt - timedelta(days=MANANA_VENCE_DIAS)).isoformat()
+    hasta = (hasta_dt - timedelta(days=1)).isoformat()
+    rows = conn.execute(
+        "SELECT day, zona, GROUP_CONCAT(DISTINCT ejercicio) AS ejercicios FROM entreno_dolor "
+        "WHERE person_id = ? AND day BETWEEN ? AND ? AND dolor_manana IS NULL "
+        "GROUP BY day, zona ORDER BY day, zona",
+        (person_id, desde, hasta),
+    ).fetchall()
+    return [{"day": r["day"], "zona": r["zona"], "ejercicios": r["ejercicios"].split(",")} for r in rows]
+
+
+def registrar_dolor_manana(conn: sqlite3.Connection, person_id: int, day: str, zona: str,
+                            valor: int) -> None:
+    """Ruling 4: fills dolor_manana + manana_registrado_en on every still-open row of this zona on
+    `day` -- one answer covers every exercise the card named for that zona that day."""
+    ahora = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        conn.execute(
+            "UPDATE entreno_dolor SET dolor_manana = ?, manana_registrado_en = ? WHERE person_id = ? "
+            "AND day = ? AND zona = ? AND dolor_manana IS NULL",
+            (valor, ahora, person_id, day, zona),
+        )
 
 
 def _validar_zonas(zonas: list[str] | None) -> str | None:

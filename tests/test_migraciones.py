@@ -1051,5 +1051,38 @@ class PeriodKindColumnsFreshDbTest(unittest.TestCase):
         self.assertEqual((row["excluye_del_rango"], row["lleva_zona"]), (0, 1))
 
 
+class EntrenoDolorNewTableMigrationTest(unittest.TestCase):
+    """BODY-PLAN-FASES-5: a database built before entreno_dolor existed gains the table additively
+    -- CREATE TABLE IF NOT EXISTS, no ALTER needed since nothing predates it -- and a second
+    init() is a no-op that keeps the first run's own row."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        db.init(self.conn)
+        self.conn.execute("DROP TABLE entreno_dolor")
+        self.conn.commit()
+
+    def test_migration_creates_the_table(self):
+        self.assertIsNone(self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE name = 'entreno_dolor'").fetchone())
+        db.init(self.conn)
+        self.assertIsNotNone(self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE name = 'entreno_dolor'").fetchone())
+        db.registrar_dolor_entreno(self.conn, 1, "2026-11-19", "garmin", "s1", [
+            {"ejercicio": "press militar", "zona": "hombro", "dolor_durante": 3, "dolor_despues": 2,
+             "movimiento": None},
+        ])
+        self.assertEqual(len(db.dolor_de_sesion(self.conn, 1, "garmin", "s1")), 1)
+
+    def test_migration_is_idempotent_and_keeps_existing_rows(self):
+        db.init(self.conn)
+        db.registrar_dolor_entreno(self.conn, 1, "2026-11-19", "garmin", "s1", [
+            {"ejercicio": "press militar", "zona": "hombro", "dolor_durante": 3, "dolor_despues": 2,
+             "movimiento": None},
+        ])
+        db.init(self.conn)
+        self.assertEqual(len(db.dolor_de_sesion(self.conn, 1, "garmin", "s1")), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
