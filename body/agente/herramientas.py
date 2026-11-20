@@ -458,6 +458,14 @@ _PARAM_REGISTRAR_DOLOR = {
 # catalogue order -- db.INGESTA_METRIC_KEYS (BODY-COMIDA-1), read off the live table rather than a
 # second hand-typed list, same template pattern as SELF_METRIC_KEYS above.
 INGESTA_METRIC_KEYS = db.INGESTA_METRIC_KEYS
+# ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: the accepted `hora` forms, named here for the model
+# (every schema below that takes `hora` shares this one description, the same string `_hora_a_ts_local`
+# itself validates against).
+_HORA_PARAM_DESCRIPCION = (
+    "Hora local, en una de dos formas: 'HH:MM' (o 'H:MM'), que usa el día de 'day'/'fecha'; o una "
+    "fecha-hora ISO completa (AAAA-MM-DDTHH:MM:SS), con o sin desplazamiento horario -- se convierte "
+    "a la zona horaria de la persona, y su fecha local debe coincidir con 'day'/'fecha' si se da, o "
+    "lo reemplaza si no se da. Cualquier otra forma se rechaza nombrando estas dos.")
 _PARAM_REGISTRAR_INGESTA = {
     "type": "object",
     "properties": {
@@ -466,7 +474,7 @@ _PARAM_REGISTRAR_INGESTA = {
         "estimado": {"type": "boolean"},
         "descripcion": {"type": "string"},
         "day": {"type": "string", "format": "date"},
-        "hora": {"type": "string"},
+        "hora": {"type": "string", "description": _HORA_PARAM_DESCRIPCION},
     },
     "required": ["metric_key", "amount", "estimado"],
     "additionalProperties": False,
@@ -520,11 +528,16 @@ _PARAM_REGISTRAR_COMIDA = {
     "type": "object",
     "properties": {
         "day": {"type": "string", "format": "date"},
-        "hora": {"type": "string"},
+        "hora": {"type": "string", "description": _HORA_PARAM_DESCRIPCION},
         "descripcion": {"type": "string"},
         "cantidades": {"type": "array", "items": _PARAM_CANTIDAD_COMIDA, "minItems": 1},
         "compartida_con": {"type": "array", "items": _PARAM_COMENSAL_COMPARTIDO},
-        "momento": {"type": "string"},
+        "momento": {"type": "string", "description": (
+            "Una de las claves propias de momento de comida de la persona (comidas.momentos: sus "
+            "propios momentos si ya tiene, o los predeterminados -- desayuno/almuerzo/merienda/cena "
+            "-- si no). Se deja vacío cuando no se da; nunca se adivina a partir de una palabra "
+            "distinta ('mañana' no es un momento). Un valor que no sea una de esas claves se "
+            "rechaza nombrando las que sí son válidas para esa persona.")},
     },
     "required": ["descripcion", "cantidades"],
     "additionalProperties": False,
@@ -536,7 +549,7 @@ _PARAM_CORREGIR_COMIDA = {
     "type": "object",
     "properties": {
         "comida_id": {"type": "integer"},
-        "hora": {"type": "string"},
+        "hora": {"type": "string", "description": _HORA_PARAM_DESCRIPCION},
         "day": {"type": "string", "format": "date"},
         "descripcion": {"type": "string"},
         "cantidades": {"type": "array", "items": _PARAM_CANTIDAD_COMIDA, "minItems": 1},
@@ -555,7 +568,7 @@ _PARAM_REGISTRAR_CHECKIN = {
     "type": "object",
     "properties": {
         "day": {"type": "string", "format": "date"},
-        "hora": {"type": "string"},
+        "hora": {"type": "string", "description": _HORA_PARAM_DESCRIPCION},
         "momento": {"type": "string", "enum": list(MOMENTOS_CHECKIN)},
         "mood": {"type": ["integer", "string", "null"], "minimum": 1, "maximum": 5},
         "energy": {"type": ["integer", "string", "null"], "minimum": 1, "maximum": 5},
@@ -860,6 +873,30 @@ def _limitaciones_abiertas(conn: sqlite3.Connection, person_id: int, day: str) -
             for r in db.periodos(conn, person_id, day, day) if r["_lleva_zona"] and r["end_day"] is None]
 
 
+def _comidas_del_dia_con_id(conn: sqlite3.Connection, person_id: int, day: str) -> list[dict]:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3: `db.comidas_del_dia`'s own grouped list, each entry
+    carrying the id a later `corregir_comida` call needs -- `comida_id` for a real meal, or
+    `ingesta_id` for a legacy stand-alone row (db.py is NOT edited; this is the second, bounded
+    query the spec's own ruling allows). The id list is built from the SAME WHERE and ORDER BY
+    `db.comidas_del_dia` groups with, so its Nth first-occurrence lines up with that function's own
+    Nth entry without re-reading any descriptive column."""
+    comidas = db.comidas_del_dia(conn, person_id, day)
+    filas = conn.execute(
+        "SELECT i.id, i.comida_id FROM ingesta i WHERE i.person_id = ? AND i.day = ? "
+        "ORDER BY COALESCE(i.ts_local, ''), i.id", (person_id, day),
+    ).fetchall()
+    orden: list = []
+    vistos: set = set()
+    for r in filas:
+        clave = ("comida", r["comida_id"]) if r["comida_id"] is not None else ("ingesta", r["id"])
+        if clave not in vistos:
+            vistos.add(clave)
+            orden.append(clave)
+    for entrada, (tipo, id_) in zip(comidas, orden):
+        entrada["comida_id" if tipo == "comida" else "ingesta_id"] = id_
+    return comidas
+
+
 def _leer_hoy(conn: sqlite3.Connection, person_id: int) -> dict:
     dias = db.days_with_data(conn, person_id)
     if not dias:
@@ -888,7 +925,7 @@ def _leer_dia(conn: sqlite3.Connection, person_id: int, day: str) -> dict:
     # stand-alone ingesta row as its own one-item meal) -- kept ALONGSIDE `data["ingesta"]`, never
     # replacing it, since tests/test_proteina.py's own LeerDiaIncludesIngestaTest already reads
     # that list through this same tool.
-    data["comidas"] = db.comidas_del_dia(conn, person_id, day)
+    data["comidas"] = _comidas_del_dia_con_id(conn, person_id, day)
     # BODY-MINUTO-ANALISIS-5-CONTEXTO ruling 3: this day's own derived context -- the shift/night-
     # block standing, a trip or marked period, the day's activity load, its last-meal-to-sleep gap
     # and its alcohol figure, each key present only when that day actually has it (body/
@@ -2644,8 +2681,48 @@ def _registrar_dolor(conn: sqlite3.Connection, person_id: int, conversacion_id: 
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
-def _hora_a_ts_local(day: str, hora: str | None) -> str | None:
-    return f"{day}T{hora}:00" if hora else None
+_HORA_FORMATOS_ACEPTADOS = "'HH:MM' o una fecha-hora ISO completa (con o sin desplazamiento horario)"
+
+
+def _hora_a_ts_local(conn: sqlite3.Connection, person_id: int, day: str | None,
+                      hora: str | None) -> tuple[str | None, str | None]:
+    """ONE validating parser for `hora`, shared by every assistant tool that takes it
+    (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1; census: `_registrar_comida`, `_corregir_comida`,
+    `_registrar_ingesta`, `_registrar_checkin`) -- replacing the old `f"{day}T{hora}:00"`, which
+    stored a NESTED ts_local (`<day>T<day>T<hh:mm:ss><offset>:00`) on three applied meals when
+    `hora` was already a full timestamp. Accepts 'HH:MM'/'H:MM', or a full ISO date-time with or
+    without a UTC offset -- an offset is converted to the person's own `timezone`. Returns
+    (day, hora_hhmmss): `hora_hhmmss` is None only when `hora` is None; `day` is the date-time's own
+    local date when `day` was None, checked to MATCH `day` when one was given (a mismatch is
+    refused BY NAME) -- a bare clock time carries no date, so `day` comes back unchanged (possibly
+    still None; the caller supplies its own default, today or an existing row's day). Anything else
+    (seconds-only, '25:00', an empty string) is refused naming the accepted forms."""
+    if hora is None:
+        return day, None
+    valor = hora.strip() if isinstance(hora, str) else ""
+    if not valor:
+        raise ToolError(f"hora inválida: se acepta {_HORA_FORMATOS_ACEPTADOS}")
+    try:
+        reloj = datetime.strptime(valor, "%H:%M")
+    except ValueError:
+        reloj = None
+    if reloj is not None:
+        return day, reloj.strftime("%H:%M:%S")
+    fecha_hora = None
+    if len(valor) > 10:
+        try:
+            fecha_hora = datetime.fromisoformat(valor)
+        except ValueError:
+            fecha_hora = None
+    if fecha_hora is None:
+        raise ToolError(f"hora inválida: {hora!r}; se acepta {_HORA_FORMATOS_ACEPTADOS}")
+    if fecha_hora.tzinfo is not None:
+        zona = db.person(conn, person_id)["timezone"]
+        fecha_hora = fecha_hora.astimezone(ZoneInfo(zona)).replace(tzinfo=None)
+    dia_local = fecha_hora.date().isoformat()
+    if day is not None and day != dia_local:
+        raise ToolError(f"hora {hora!r} no corresponde al día {day!r} (su fecha local es {dia_local!r})")
+    return dia_local, fecha_hora.strftime("%H:%M:%S")
 
 
 def _registrar_ingesta(conn: sqlite3.Connection, person_id: int, conversacion_id: int, metric_key: str,
@@ -2661,6 +2738,7 @@ def _registrar_ingesta(conn: sqlite3.Connection, person_id: int, conversacion_id
                         (metric_key,)).fetchone()
     if fila is None:
         raise ToolError(f"ingesta desconocida o no acumulable: {metric_key!r}")
+    day, hora_hhmmss = _hora_a_ts_local(conn, person_id, day, hora)
     day = day or _hoy_local(conn, person_id)
     _dia_no_futuro(conn, person_id, day)
     try:
@@ -2672,8 +2750,9 @@ def _registrar_ingesta(conn: sqlite3.Connection, person_id: int, conversacion_id
     if not isinstance(estimado, bool):
         raise ToolError("estimado debe ser verdadero o falso")
     descripcion = (descripcion or "").strip() or None
+    ts_local = f"{day}T{hora_hhmmss}" if hora_hhmmss is not None else None
     despues = {"metric_key": metric_key, "amount": amount, "estimado": estimado, "descripcion": descripcion,
-               "day": day, "ts_local": _hora_a_ts_local(day, hora)}
+               "day": day, "ts_local": ts_local}
     registro = propuestas.crear(conn, person_id, conversacion_id, "registrar_ingesta", despues)
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
@@ -2864,12 +2943,17 @@ def _registrar_comida(conn: sqlite3.Connection, person_id: int, conversacion_id:
         if not isinstance(estimado, bool):
             raise ToolError("estimado debe ser verdadero o falso")
         limpias.append({"metric_key": metric_key, "amount": amount, "estimado": estimado})
-    if momento is not None and momento not in {m["clave"] for m in comidas.momentos(conn, person_id)}:
-        raise ToolError(f"momento desconocido: {momento!r}")
+    if momento is not None:
+        claves_momento = [m["clave"] for m in comidas.momentos(conn, person_id)]
+        if momento not in claves_momento:
+            raise ToolError(t("agente.error.comida_momento_invalido", momento=momento,
+                               opciones=", ".join(claves_momento)))
+    day, hora_hhmmss = _hora_a_ts_local(conn, person_id, day, hora)
     day = day or _hoy_local(conn, person_id)
     _dia_no_futuro(conn, person_id, day)
+    ts_local = f"{day}T{hora_hhmmss}" if hora_hhmmss is not None else None
     despues = {"descripcion": descripcion, "cantidades": limpias, "day": day,
-               "ts_local": _hora_a_ts_local(day, hora), "momento": momento}
+               "ts_local": ts_local, "momento": momento}
     if compartida_con:
         comensales_limpios = []
         vistos_pid = set()
@@ -2916,10 +3000,11 @@ def _corregir_comida(conn: sqlite3.Connection, person_id: int, conversacion_id: 
         for r in conn.execute(
             "SELECT metric_key, amount, estimado FROM ingesta WHERE comida_id = ? ORDER BY id", (comida_id,))
     ]
-    nuevo_day = day if day is not None else fila["day"]
+    day_derivado, hora_hhmmss = _hora_a_ts_local(conn, person_id, day, hora)
+    nuevo_day = day_derivado if day_derivado is not None else fila["day"]
     _dia_no_futuro(conn, person_id, nuevo_day)
-    if hora is not None:
-        nuevo_ts_local = _hora_a_ts_local(nuevo_day, hora)
+    if hora_hhmmss is not None:
+        nuevo_ts_local = f"{nuevo_day}T{hora_hhmmss}"
     elif day is not None and fila["ts_local"]:
         nuevo_ts_local = f"{nuevo_day}T{fila['ts_local'][11:]}"
     elif day is not None:
@@ -3012,9 +3097,11 @@ def _registrar_checkin(conn: sqlite3.Connection, person_id: int, conversacion_id
     nota = (nota or "").strip() or None
     if mood is None and energy is None and stress_felt is None and nota is None:
         raise ToolError(t("agente.error.checkin_vacio"))
+    day, hora_hhmmss = _hora_a_ts_local(conn, person_id, day, hora)
     day = day or _hoy_local(conn, person_id)
     _dia_no_futuro(conn, person_id, day)
-    despues = {"day": day, "ts_local": _hora_a_ts_local(day, hora), "momento": momento,
+    ts_local = f"{day}T{hora_hhmmss}" if hora_hhmmss is not None else None
+    despues = {"day": day, "ts_local": ts_local, "momento": momento,
                "mood": mood, "energy": energy, "stress_felt": stress_felt, "nota": nota}
     registro = propuestas.crear(conn, person_id, conversacion_id, "registrar_checkin", despues)
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
@@ -3862,17 +3949,22 @@ HERRAMIENTAS = [
                      "cafeína y alcohol cuando la persona la dé. Si la persona dice que comió con alguien de "
                      "su hogar, agrega 'compartida_con': una entrada por esa persona (su nombre, su propia "
                      "porción en nutrientes, y el texto de la porción si lo dio, por ejemplo 'la mitad'); esa "
-                     "persona recibe su porción para aplicarla ella misma, nunca entra a su registro sola. No "
-                     "lo guarda: registra la propuesta para que la persona la apruebe en el chat.",
+                     "persona recibe su porción para aplicarla ella misma, nunca entra a su registro sola. "
+                     "'momento', si lo das, debe ser una de las claves propias de la persona (ver la "
+                     "descripción de ese campo); un valor que no sea una de ellas se rechaza nombrando las "
+                     "que sí son válidas para esa persona. No lo guarda: registra la propuesta para que la "
+                     "persona la apruebe en el chat.",
      "parametros": _PARAM_REGISTRAR_COMIDA, "funcion": _registrar_comida},
     {"nombre": "corregir_comida", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone corregir la hora, el día, la descripción o las cantidades de una comida que ya "
-                     "existe -- toda la comida como una sola propuesta, nunca una por cada nutriente. Usa esta "
-                     "herramienta para cambiar la hora, la redacción o las cantidades de una comida; para "
-                     "corregir o eliminar un solo registro de consumo que no forma parte de una comida sigue "
-                     "usando corregir_ingesta/borrar_ingesta. 'cantidades', cuando se da, reemplaza por "
-                     "completo el conjunto de cantidades de la comida -- nunca se combina con lo que ya "
-                     "tenía. No la corrige: registra la propuesta para que la persona la apruebe en el chat.",
+                     "existe -- toda la comida como una sola propuesta, nunca una por cada nutriente. "
+                     "'comida_id' se toma del campo 'comida_id' de una de las entradas de la lista 'comidas' "
+                     "que devuelve leer_dia, nunca inventado. Usa esta herramienta para cambiar la hora, la "
+                     "redacción o las cantidades de una comida; para corregir o eliminar un solo registro de "
+                     "consumo que no forma parte de una comida sigue usando corregir_ingesta/borrar_ingesta. "
+                     "'cantidades', cuando se da, reemplaza por completo el conjunto de cantidades de la "
+                     "comida -- nunca se combina con lo que ya tenía. No la corrige: registra la propuesta "
+                     "para que la persona la apruebe en el chat.",
      "parametros": _PARAM_CORREGIR_COMIDA, "funcion": _corregir_comida},
     {"nombre": "registrar_checkin", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone un chequeo de 10 segundos: ánimo, energía y estrés sentido, cada uno del 1 al 5, "
