@@ -77,5 +77,66 @@ class ComidasGroupedTest(unittest.TestCase):
         self.assertEqual(descripciones, {"propia"})
 
 
+class ContextoTest(unittest.TestCase):
+    """BODY-MINUTO-ANALISIS-5-CONTEXTO ruling 3: leer_dia's own `contexto` -- that one day's own
+    derived shift/night-block standing, trip or marked period, activity load, and alcohol figure
+    (body/contexto_dia.py's own module docstring)."""
+
+    def test_contexto_carries_this_days_own_shift(self):
+        conn = _conn(self)
+        conn.execute("INSERT INTO shift (person_id, day, kind, source) VALUES (1, ?, 'night', 'manual')",
+                     (DAY,))
+        conn.commit()
+        out = herramientas.ejecutar(conn, 1, "leer_dia", {"day": DAY}, "completo")
+        self.assertEqual(out["contexto"]["turno"]["tipo"], "night")
+
+    def test_a_day_with_nothing_derived_has_an_empty_contexto(self):
+        conn = _conn(self)
+        conn.commit()
+        out = herramientas.ejecutar(conn, 1, "leer_dia", {"day": DAY}, "completo")
+        self.assertEqual(out["contexto"], {})
+
+
+class StatementCountTest(unittest.TestCase):
+    """BODY-MINUTO-ANALISIS-5-CONTEXTO ruling 4: leer_dia's own statement count, re-measured with
+    its new `contexto` (contexto_dia.contexto_dias, a fixed cost independent of this day's own
+    data -- tests/test_contexto_dia.py's own guard). Measured on this file's own fixtures: 19 on an
+    empty day, 20 on a day carrying a night shift, an activity, a marked period, an alcohol figure
+    and a meal. Ceiling gives both a comfortable, named margin: ceil(20 * 1.3) = 26."""
+
+    _CEILING = 26
+
+    def _contar(self, conn, fn) -> int:
+        vistos = []
+        conn.set_trace_callback(lambda sql: vistos.append(sql))
+        try:
+            fn()
+        finally:
+            conn.set_trace_callback(None)
+        return len(vistos)
+
+    def test_an_empty_day_stays_within_the_named_ceiling(self):
+        conn = _conn(self)
+        conn.commit()
+        n = self._contar(conn, lambda: herramientas.ejecutar(conn, 1, "leer_dia", {"day": DAY}, "completo"))
+        self.assertLessEqual(n, self._CEILING)
+
+    def test_a_day_carrying_every_new_context_source_stays_within_the_named_ceiling(self):
+        conn = _conn(self)
+        conn.execute("INSERT INTO shift (person_id, day, kind, source) VALUES (1, ?, 'night', 'manual')",
+                     (DAY,))
+        conn.execute(
+            "INSERT INTO activity (person_id, source, source_id, day, start_local, duration_s, type) "
+            "VALUES (1, 'garmin', 'a1', ?, ?, 1800.0, 'running')", (DAY, f"{DAY}T07:00:00"),
+        )
+        db.crear_periodo(conn, 1, "lesion", DAY, None, zonas=["pierna"])
+        db.registrar_ingesta(conn, 1, DAY, "alcohol_g", 5.0, False)
+        db.crear_comida(conn, 1, DAY, [{"metric_key": "protein_g", "amount": 35.0, "estimado": True}],
+                         descripcion="pollo", ts_local=f"{DAY}T13:00:00")
+        conn.commit()
+        n = self._contar(conn, lambda: herramientas.ejecutar(conn, 1, "leer_dia", {"day": DAY}, "completo"))
+        self.assertLessEqual(n, self._CEILING)
+
+
 if __name__ == "__main__":
     unittest.main()

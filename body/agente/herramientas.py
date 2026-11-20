@@ -72,7 +72,7 @@ import threading
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .. import anatomia, baselines, catalogo_tendencias, comidas, compartir, cuenta, db, despertar_real, \
+from .. import anatomia, baselines, catalogo_tendencias, comidas, compartir, contexto_dia, cuenta, db, despertar_real, \
     desplazamiento_import, enlaces, entreno_historial, errores, experimentos, fechas, garmin_adapter, \
     garmin_cuenta, goals, history, horizonte, household, nutriente_objetivo, practicas, profile, pull, \
     readiness, shift_import, sueno_fc, turnos_costo, tutoriales, viajes
@@ -889,6 +889,13 @@ def _leer_dia(conn: sqlite3.Connection, person_id: int, day: str) -> dict:
     # replacing it, since tests/test_proteina.py's own LeerDiaIncludesIngestaTest already reads
     # that list through this same tool.
     data["comidas"] = db.comidas_del_dia(conn, person_id, day)
+    # BODY-MINUTO-ANALISIS-5-CONTEXTO ruling 3: this day's own derived context -- the shift/night-
+    # block standing, a trip or marked period, the day's activity load, its last-meal-to-sleep gap
+    # and its alcohol figure, each key present only when that day actually has it (body/
+    # contexto_dia.py's own module docstring). Never entered data -- every key here is derived on
+    # read from tables the person already fed through Garmin, their shift schedule, Lugares or a
+    # logged meal/period, never a new figure for them to type in.
+    data["contexto"] = contexto_dia.contexto_dias(conn, person_id, day, day).get(day, {})
     # BODY-DESPERTAR-REAL-4 ruling 3, widened by BODY-DESPERTAR-REAL-6A-R2 ruling 5: the day's own
     # correction(s), next to Garmin's own sleep -- both shown, each labelled by kind. Only when
     # Garmin's own sleep exists (a correction cannot exist without one, ruling 2's own refusal at
@@ -1555,6 +1562,12 @@ def _leer_noche(conn: sqlite3.Connection, person_id: int, fecha: str, actualizac
 
     out = {"dia": fecha, "zona": zona, "desde": ventana_inicio_dt.isoformat(), "hasta": ventana_fin_dt.isoformat(),
            "frecuencia_cardiaca": fc, "estres": estres, "sueno": sueno,
+           # BODY-MINUTO-ANALISIS-5-CONTEXTO ruling 3: this night's own derived context -- the
+           # EVENING's shift, load and alcohol (the day that produced this night, body/
+           # contexto_dia.py's own module docstring), plus any trip/period covering either
+           # calendar date and the gap from that evening's last meal to this night's own sleep.
+           # Never entered data -- derived on read, same promise leer_dia's own `contexto` carries.
+           "contexto": contexto_dia.contexto_noche(conn, person_id, fecha),
            **_derivados_noche(conn, person_id, fecha, sueno_arrays, sueno_inicio_dt, sueno_fin_dt)}
     if actualizacion_fallo:
         out["actualizacion"] = t("asistente.intradia.no_actualizado")
@@ -3603,7 +3616,10 @@ HERRAMIENTAS = [
                      "las limitaciones abiertas (una lesión en recuperación, con la zona si se nombró).",
      "parametros": _SIN_PARAMETROS, "funcion": _leer_hoy},
     {"nombre": "leer_dia", "tipo": "lectura", "nivel": "completo",
-     "descripcion": "Las métricas, el sueño, las actividades y los turnos de un día concreto.",
+     "descripcion": "Las métricas, el sueño, las actividades y los turnos de un día concreto, más su "
+                     "'contexto': turno/bloque de noche, viaje o período marcado, carga de actividad, "
+                     "última comida antes de dormir y alcohol -- todo DERIVADO al leer, nunca datos "
+                     "que la persona haya escrito.",
      "parametros": _PARAM_DIA, "funcion": _leer_dia},
     {"nombre": "leer_como_calculo", "tipo": "lectura", "nivel": "completo",
      "descripcion": "Cómo se calculó el puntaje de preparación de un día: cada parte, su peso y su valor.",
@@ -3627,10 +3643,13 @@ HERRAMIENTAS = [
                      "por su cuenta: rango_30_dias (los 30 días antes de esta noche, sin los días marcados) y "
                      "rango_historia (toda tu historia, la misma que ves en Tendencias). Las etapas del sueño "
                      "llevan su propia etiqueta (profundo/ligero/rem/despierto) junto con una verificación de "
-                     "esa etiqueta noche por noche contra tus totales ya guardados. Para esa misma noche "
-                     "úsala en vez de leer_intradia -- ella sola reemplaza varias llamadas de leer_intradia. "
-                     "Para un momento puntual de hasta 4 horas (no una noche completa) usa leer_intradia; "
-                     "para varios días usa leer_dia o leer_serie.",
+                     "esa etiqueta noche por noche contra tus totales ya guardados, y 'contexto': el turno/"
+                     "bloque de noche, el viaje o período marcado, la carga de actividad y el alcohol de la "
+                     "TARDE/NOCHE ANTERIOR (el día que produjo esta noche), más el hueco entre esa última "
+                     "comida y el inicio del sueño -- todo DERIVADO al leer, nunca datos que la persona haya "
+                     "escrito. Para esa misma noche úsala en vez de leer_intradia -- ella sola reemplaza "
+                     "varias llamadas de leer_intradia. Para un momento puntual de hasta 4 horas (no una "
+                     "noche completa) usa leer_intradia; para varios días usa leer_dia o leer_serie.",
      "parametros": _PARAM_LEER_NOCHE, "funcion": _leer_noche, "necesita_actualizacion": True},
     {"nombre": "leer_tendencias", "tipo": "lectura", "nivel": "resumen",
      "descripcion": "Promedios de un rango de días frente a tu historia, sin bajar al dato de un día.",

@@ -674,6 +674,24 @@ class _BaseFugaTest(unittest.TestCase):
                               f"{viewer_tag}'s own period marker never rendered by leer_dia")
                 self.assertNotIn(f"ZZ{other_tag}-PERIODO", text,
                                  f"{viewer_tag} tool leer_dia leaked {other_tag}'s period marker")
+                # BODY-MINUTO-ANALISIS-5-CONTEXTO: leer_dia's new `contexto` is this slice's FIRST
+                # reader of `viaje_lugares.ref` -- same promotion as ingesta/periodo above. DAYS[-1]
+                # sits inside this person's own seeded trip (DAYS[-3]..DAYS[-1]), so their own
+                # lower-case ref must render and the other person's never does.
+                own_ref = f"zz-{viewer_tag.lower()}-viaje"
+                other_ref = f"zz-{other_tag.lower()}-viaje"
+                self.assertIn(own_ref, text, f"{viewer_tag}'s own trip ref never rendered by leer_dia")
+                self.assertNotIn(other_ref, text,
+                                 f"{viewer_tag} tool leer_dia leaked {other_tag}'s trip ref")
+            if nombre == "leer_noche":
+                # BODY-MINUTO-ANALISIS-5-CONTEXTO: leer_noche's own `contexto` covers both the
+                # evening (DAYS[-2]) and the wake day (DAYS[-1]), both inside this person's own
+                # seeded trip -- same ref check as leer_dia above.
+                own_ref = f"zz-{viewer_tag.lower()}-viaje"
+                other_ref = f"zz-{other_tag.lower()}-viaje"
+                self.assertIn(own_ref, text, f"{viewer_tag}'s own trip ref never rendered by leer_noche")
+                self.assertNotIn(other_ref, text,
+                                 f"{viewer_tag} tool leer_noche leaked {other_tag}'s trip ref")
         out_own_meta = agente_herramientas.ejecutar(self.conn, viewer_id, "leer_meta", {"goal_id": ids["gid"]},
                                                     "completo")
         self.assertTrue(out_own_meta["encontrada"])
