@@ -466,7 +466,8 @@ PLAIN_GET_ROUTES = [
 
 READ_TOOLS = ["leer_hoy", "leer_dia", "leer_como_calculo", "leer_tendencias", "leer_historia",
               "leer_metas", "leer_meta", "leer_practicas", "leer_turnos", "leer_costo_turnos",
-              "leer_ajustes", "leer_tutoriales", "leer_intradia", "leer_noche", "comparar_noche"]
+              "leer_ajustes", "leer_tutoriales", "leer_intradia", "leer_noche", "comparar_noche",
+              "buscar_noches"]
 
 
 class _BaseFugaTest(unittest.TestCase):
@@ -649,6 +650,11 @@ class _BaseFugaTest(unittest.TestCase):
                 params = {"fecha": DAYS[-1], "desde": "00:00", "hasta": "04:00"}
             elif nombre == "leer_noche" or nombre == "comparar_noche":
                 params = {"fecha": DAYS[-1]}
+            elif nombre == "buscar_noches":
+                # BODY-MINUTO-ANALISIS-3: an explicit range over this fixture's own seeded days --
+                # never the tool's own "last 365 days" default, which would drift against the
+                # real wall clock instead of this fixture's fixed TODAY.
+                params = {"desde": DAYS[0], "hasta": DAYS[-1]}
             else:
                 params = {}
             out = agente_herramientas.ejecutar(self.conn, viewer_id, nombre, params, "completo")
@@ -683,10 +689,11 @@ class _BaseFugaTest(unittest.TestCase):
                 self.assertIn(own_ref, text, f"{viewer_tag}'s own trip ref never rendered by leer_dia")
                 self.assertNotIn(other_ref, text,
                                  f"{viewer_tag} tool leer_dia leaked {other_tag}'s trip ref")
-            if nombre == "leer_noche" or nombre == "comparar_noche":
-                # BODY-MINUTO-ANALISIS-5-CONTEXTO / BODY-MINUTO-ANALISIS-2: both tools' own
-                # `contexto` covers the evening (DAYS[-2]) and the wake day (DAYS[-1]), both inside
-                # this person's own seeded trip -- same ref check as leer_dia above.
+            if nombre == "leer_noche" or nombre == "comparar_noche" or nombre == "buscar_noches":
+                # BODY-MINUTO-ANALISIS-5-CONTEXTO / BODY-MINUTO-ANALISIS-2 / BODY-MINUTO-ANALISIS-3:
+                # every one of these tools' own `contexto` covers the evening (DAYS[-2]) and the
+                # wake day (DAYS[-1]), both inside this person's own seeded trip -- same ref check
+                # as leer_dia above.
                 own_ref = f"zz-{viewer_tag.lower()}-viaje"
                 other_ref = f"zz-{other_tag.lower()}-viaje"
                 self.assertIn(own_ref, text, f"{viewer_tag}'s own trip ref never rendered by {nombre}")

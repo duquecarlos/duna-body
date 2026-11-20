@@ -237,6 +237,45 @@ _PARAM_COMPARAR_NOCHE = {
     "additionalProperties": False,
 }
 
+# BODY-MINUTO-ANALISIS-3 (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2): buscar_noches' own bounds --
+# 'limite' default/cap, so a model asking for "my worst nights" without a number still gets a
+# short, useful answer, never an unbounded dump.
+_BUSCAR_NOCHES_LIMITE_DEFECTO = 10
+_BUSCAR_NOCHES_LIMITE_MAX = 60
+_PARAM_BUSCAR_NOCHES = {
+    "type": "object",
+    "properties": {
+        "desde": {"type": "string", "format": "date"},
+        "hasta": {"type": "string", "format": "date"},
+        "filtros": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "rasgo": {"type": "string"},
+                    "op": {"type": "string", "enum": list(noche_rasgos.OPS_BUSCAR_NOCHES)},
+                    "valor": {"type": "number"},
+                },
+                "required": ["rasgo", "op", "valor"],
+                "additionalProperties": False,
+            },
+        },
+        "grupo": _PARAM_COMPARAR_NOCHE["properties"]["grupo"],
+        "orden": {
+            "type": "object",
+            "properties": {
+                "rasgo": {"type": "string"},
+                "dir": {"type": "string", "enum": ["asc", "desc"]},
+            },
+            "required": ["rasgo", "dir"],
+            "additionalProperties": False,
+        },
+        "limite": {"type": "integer", "minimum": 1, "maximum": _BUSCAR_NOCHES_LIMITE_MAX},
+        "rasgos": {"type": "array", "items": {"type": "string"}},
+    },
+    "additionalProperties": False,
+}
+
 # BODY-DESPERTAR-REAL-4 ruling 2: the two things a person can correct -- the same pair
 # despertar_real.PROPUESTA_TIPOS lists (BODY-DESPERTAR-REAL-6A-R2 ruling 2: an empty `propuestas`
 # list is "nothing to propose" now, never a third tipo value here).
@@ -1664,6 +1703,59 @@ def _comparar_noche(conn: sqlite3.Connection, person_id: int, fecha: str, desde:
         return noche_rasgos.comparar(conn, person_id, fecha, desde=desde, grupo=grupo)
     except noche_rasgos.SinDatos:
         raise ToolError(t("agente.error.comparar_noche_sin_noche"))
+
+
+def _buscar_noches(conn: sqlite3.Connection, person_id: int, desde: str | None = None, hasta: str | None = None,
+                    filtros: list[dict] | None = None, grupo: dict | None = None, orden: dict | None = None,
+                    limite: int | None = None, rasgos: list[str] | None = None) -> dict:
+    """BODY-MINUTO-ANALISIS-3 (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2): the REVERSE of
+    comparar_noche -- WHICH of this person's own nights match, not how one night ranks.
+    body/noche_rasgos.py's `buscar` does every statement; this wrapper validates every agent-facing
+    field BY NAME before it ever runs, the same way `_comparar_noche` already validates its own
+    'grupo' against `noche_rasgos.GRUPO_CLAVES`."""
+    person = db.person(conn, person_id)
+    hoy = fechas.hoy_local(person)
+    if hasta is not None:
+        try:
+            hasta_d = date.fromisoformat(hasta)
+        except ValueError:
+            raise ToolError("'hasta' debe ser una fecha ISO (AAAA-MM-DD)")
+        if hasta_d > hoy:
+            raise ToolError("'hasta' no puede ser una fecha futura")
+    else:
+        hasta_d = hoy
+        hasta = hasta_d.isoformat()
+    if desde is not None:
+        try:
+            desde_d = date.fromisoformat(desde)
+        except ValueError:
+            raise ToolError("'desde' debe ser una fecha ISO (AAAA-MM-DD)")
+        if desde_d > hasta_d:
+            raise ToolError("'desde' no puede ser posterior a 'hasta'")
+    else:
+        desde = (hasta_d - timedelta(noche_rasgos.HISTORIA_DIAS_DEFECTO)).isoformat()
+
+    for f in (filtros or []):
+        if f["rasgo"] not in noche_rasgos.RASGOS_CLAVES:
+            raise ToolError(f"'filtros' tiene un rasgo desconocido: {f['rasgo']!r}")
+        if f["op"] not in noche_rasgos.OPS_BUSCAR_NOCHES:
+            raise ToolError(f"'filtros' tiene un operador desconocido: {f['op']!r}")
+    if orden is not None and orden["rasgo"] not in noche_rasgos.RASGOS_CLAVES:
+        raise ToolError(f"'orden' tiene un rasgo desconocido: {orden['rasgo']!r}")
+    for nombre in (rasgos or []):
+        if nombre not in noche_rasgos.RASGOS_CLAVES:
+            raise ToolError(f"'rasgos' tiene un rasgo desconocido: {nombre!r}")
+    if grupo:
+        extra = sorted(set(grupo) - set(noche_rasgos.GRUPO_CLAVES))
+        if extra:
+            raise ToolError(f"'grupo' tiene clave(s) no reconocida(s): {extra}")
+
+    limite = limite if limite is not None else _BUSCAR_NOCHES_LIMITE_DEFECTO
+    if not (1 <= limite <= _BUSCAR_NOCHES_LIMITE_MAX):
+        raise ToolError(f"'limite' debe estar entre 1 y {_BUSCAR_NOCHES_LIMITE_MAX}")
+
+    return noche_rasgos.buscar(conn, person_id, desde, hasta, filtros=filtros, grupo=grupo, orden=orden,
+                                limite=limite, rasgos=rasgos)
 
 
 def _despertar_hora_opuesta(conn: sqlite3.Connection, person_id: int, fecha: str, tipo_opuesto: str,
@@ -3752,6 +3844,14 @@ def _importar_desplazamiento(conn: sqlite3.Connection, person_id: int, conversac
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
+# BODY-MINUTO-ANALISIS-3 ruling 3: every filterable rasgo's name and unit, read straight from
+# body/noche_rasgos.py's own MODELO (figuras_guardadas, then figuras_forma) so this sentence can
+# never drift from what buscar_noches actually accepts -- never a second, hand-typed list.
+_RASGOS_BUSCAR_NOCHES_DESC = ", ".join(
+    f"{nombre} ({unidad})" for nombre, (unidad, _fuente) in
+    {**noche_rasgos.MODELO["figuras_guardadas"], **noche_rasgos.MODELO["figuras_forma"]}.items()
+)
+
 HERRAMIENTAS = [
     {"nombre": "leer_hoy", "tipo": "lectura", "nivel": "completo",
      "descripcion": "Qué tan listo estás hoy: el puntaje de preparación, los valores del día más reciente y "
@@ -3791,7 +3891,9 @@ HERRAMIENTAS = [
                      "comida y el inicio del sueño -- todo DERIVADO al leer, nunca datos que la persona haya "
                      "escrito. Para esa misma noche úsala en vez de leer_intradia -- ella sola reemplaza "
                      "varias llamadas de leer_intradia. Para un momento puntual de hasta 4 horas (no una "
-                     "noche completa) usa leer_intradia; para varios días usa leer_dia o leer_serie.",
+                     "noche completa) usa leer_intradia; para varios días usa leer_dia o leer_serie. Para "
+                     "comparar esta misma noche con tu historia usa comparar_noche; para encontrar qué "
+                     "noches cumplen una condición (en vez de mirar una sola) usa buscar_noches.",
      "parametros": _PARAM_LEER_NOCHE, "funcion": _leer_noche, "necesita_actualizacion": True},
     {"nombre": "comparar_noche", "tipo": "lectura", "nivel": "completo",
      "descripcion": "Las características de UNA noche (la fecha de despertar) comparadas con tus propias "
@@ -3814,8 +3916,34 @@ HERRAMIENTAS = [
                      "Nunca un dato crudo minuto a minuto ni una causa. Para UNA noche comparada con tu "
                      "propia historia usa esta herramienta; para el detalle crudo completo de esa misma "
                      "noche usa leer_noche; para mirar una ventana puntual dentro de una noche o un día usa "
-                     "leer_serie con paso='minuto'.",
+                     "leer_serie con paso='minuto'; para encontrar QUÉ noches (no solo esta) cumplen una "
+                     "condición usa buscar_noches.",
      "parametros": _PARAM_COMPARAR_NOCHE, "funcion": _comparar_noche},
+    {"nombre": "buscar_noches", "tipo": "lectura", "nivel": "completo",
+     "descripcion": "Encuentra CUÁLES de tus propias noches cumplen una condición, en vez de clasificar una "
+                     "sola -- por ejemplo 'mis 5 peores noches de sueño profundo este año y qué tenían en "
+                     "común', 'noches después de un turno de noche en las que el pulso bajo llegó tarde', "
+                     "'toda noche con más de 3 segmentos despierto mientras viajabas'. 'filtros' es una "
+                     "lista de objetos {rasgo, op, valor} -- op es uno de <, <=, >, >=, = -- sobre estas "
+                     f"características, cada una con su unidad: {_RASGOS_BUSCAR_NOCHES_DESC}. Un rasgo o un "
+                     "operador no reconocido se rechaza por su nombre, antes de leer nada. Con 'grupo' (los "
+                     "mismos seis datos que comparar_noche: tras_turno, tras_turno_noche, viaje, periodo, "
+                     "comida_tarde_min_max, con_alcohol) solo cuentan las noches que además comparten ese "
+                     "contexto -- se combina con 'filtros' como un Y, nunca un O. 'orden' ({rasgo, dir: "
+                     "asc|desc}) ordena las noches que coinciden antes de aplicar 'limite' (por defecto "
+                     f"{_BUSCAR_NOCHES_LIMITE_DEFECTO}, máximo {_BUSCAR_NOCHES_LIMITE_MAX}). 'rasgos' elige "
+                     "qué características devolver por noche (por defecto, las nombradas en 'filtros'/"
+                     "'orden'). 'desde'/'hasta' acotan la búsqueda (por defecto los últimos 365 días; como "
+                     "máximo, toda tu historia). Cada noche devuelta lleva su fecha, las características "
+                     "pedidas y su 'contexto'. El resultado también da 'n_coinciden' (todas las que cumplen, "
+                     "antes de 'limite'), 'n_en_rango' y 'noches_sin_minutos_en_rango' (sin detalle minuto a "
+                     "minuto -- nunca pueden cumplir un filtro de forma). Con 5 noches coincidentes o más, "
+                     "'en_comun' da, por cada dato de contexto, qué fracción de las noches coincidentes lo "
+                     "lleva frente a qué fracción de todas las noches del rango lo lleva -- solo conteos y "
+                     "fracciones, nunca una causa. Para clasificar UNA noche frente a tu historia usa "
+                     "comparar_noche; para el detalle crudo completo de una noche usa leer_noche; para una "
+                     "ventana puntual dentro de una noche o un día usa leer_serie con paso='minuto'.",
+     "parametros": _PARAM_BUSCAR_NOCHES, "funcion": _buscar_noches},
     {"nombre": "leer_tendencias", "tipo": "lectura", "nivel": "resumen",
      "descripcion": "Promedios de un rango de días frente a tu historia, sin bajar al dato de un día.",
      "parametros": _PARAM_TENDENCIAS, "funcion": _leer_tendencias},
@@ -3875,7 +4003,9 @@ HERRAMIENTAS = [
                      f"estos (nunca otros): {list(LEER_SERIE_MINUTO_METRICAS)}. Úsalo para mirar con "
                      "detalle una ventana concreta dentro de una noche o de un día (por ejemplo, qué pasó "
                      "entre las 04:30 y las 05:10); para TODA una noche de una sola vez usa leer_noche, y "
-                     "para horas de un día que no son de sueño sigue existiendo leer_intradia.",
+                     "para horas de un día que no son de sueño sigue existiendo leer_intradia. Para "
+                     "encontrar qué noches comparten una característica o un contexto (en vez de mirar una "
+                     "ventana) usa buscar_noches.",
      "parametros": _PARAM_LEER_SERIE, "funcion": _leer_serie, "necesita_nivel": True},
     {"nombre": "proponer_meta", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone crear una meta nueva, de tipo métrica (con metric_key/direction/target_value) "
