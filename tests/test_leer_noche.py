@@ -227,9 +227,10 @@ class DerivedFactsTest(unittest.TestCase):
         esperado = baselines.baseline(conn, sueno_fc.CLAVE_MIN, DIA, person_id=1)
         out = _ejecutar(conn, 1)
         self.assertIsNotNone(esperado)
-        self.assertEqual(out["fc_minima_vs_rango"]["bajo"], esperado.low)
-        self.assertEqual(out["fc_minima_vs_rango"]["alto"], esperado.high)
+        self.assertEqual(out["fc_minima_vs_rango"]["rango_30_dias"], {"bajo": esperado.low, "alto": esperado.high})
         self.assertAlmostEqual(out["fc_minima_vs_rango"]["z"], esperado.z(40.0))
+        self.assertEqual(out["fc_minima_vs_rango"]["z_base"], "rango_30_dias")
+        self.assertNotIn("motivo_sin_rango_30_dias", out["fc_minima_vs_rango"])
 
     def test_vfc_noche_reads_the_days_own_hrv_and_its_usual_range(self):
         conn = _conn(self)
@@ -240,7 +241,9 @@ class DerivedFactsTest(unittest.TestCase):
         esperado = baselines.baseline(conn, "hrv_last_night", DIA, person_id=1)
         out = _ejecutar(conn, 1)
         self.assertIsNotNone(esperado)
-        self.assertEqual(out["vfc_noche"], {"valor": 35.0, "rango": {"bajo": esperado.low, "alto": esperado.high}})
+        self.assertEqual(out["vfc_noche"]["valor"], 35.0)
+        self.assertEqual(out["vfc_noche"]["rango_30_dias"], {"bajo": esperado.low, "alto": esperado.high})
+        self.assertEqual(out["vfc_noche"]["z_base"], "rango_30_dias")
 
     def test_despertar_modelo_is_despertar_reals_own_unedited_result(self):
         conn = _conn(self)
@@ -304,7 +307,13 @@ class DerivedFactsNullTest(unittest.TestCase):
         conn.commit()
         out = _ejecutar(conn, 1)
         self.assertIsNotNone(out["fc_minima"])
-        self.assertIsNone(out["fc_minima_vs_rango"])
+        # BODY-NOCHE-LECTURA-2 ruling 1: no baseline days at all is 'pocos_dias', not an entirely
+        # None fact -- both ranges stay independently null and z has nothing to come from either.
+        self.assertEqual(out["fc_minima_vs_rango"]["rango_30_dias"], None)
+        self.assertEqual(out["fc_minima_vs_rango"]["motivo_sin_rango_30_dias"], "pocos_dias")
+        self.assertIsNone(out["fc_minima_vs_rango"]["rango_historia"])
+        self.assertIsNone(out["fc_minima_vs_rango"]["z"])
+        self.assertIsNone(out["fc_minima_vs_rango"]["z_base"])
 
     def test_vfc_noche_is_null_with_no_hrv_stored_for_the_day(self):
         conn = _conn(self)
@@ -438,6 +447,98 @@ class StatementCountTest(unittest.TestCase):
         n_corta = self._contar_raw_payload(conn_corta, lambda: _ejecutar(conn_corta, 1))
         n_larga = self._contar_raw_payload(conn_larga, lambda: _ejecutar(conn_larga, 1))
         self.assertEqual(n_corta, n_larga)
+
+
+class RangoDobleTest(unittest.TestCase):
+    """BODY-NOCHE-LECTURA-2 ruling 1: rango_30_dias and rango_historia, each independently null,
+    with the honest reason when the 30-day one is."""
+
+    def test_an_open_marked_period_covering_the_window_gives_dias_marcados_with_history_present(self):
+        conn = _conn(self)
+        _sesion(conn, 1, DIA, f"{PREV}T23:00:00", f"{DIA}T06:00:00")
+        _guardar_sueno(conn, 1, DIA, hr=[(f"{DIA}T04:30:00", 40)])
+        # Twenty values inside the 30-day window -- enough to clear MIN_DAYS before exclusion
+        # (so the honest reason is 'dias_marcados', never 'pocos_dias') and enough for
+        # profile.metric_profile's own 14-day floor, so rango_historia is present.
+        _seed_baseline_metric(conn, 1, sueno_fc.CLAVE_MIN, DIA, n=20, valor=55.0)
+        # An open ('lesion', end_day IS NULL) period starting long before the window -- covers
+        # every one of those 20 days through today (BODY-PERIODO-1 ruling 3's own exclusion),
+        # the desk's own case (a leer_noche surface, relayed 2026-11-19).
+        conn.execute(
+            "INSERT INTO period (person_id, kind, start_day, created_at, updated_at) "
+            "VALUES (1, 'lesion', '2026-01-01', '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')"
+        )
+        conn.commit()
+        out = _ejecutar(conn, 1)
+        rango = out["fc_minima_vs_rango"]
+        self.assertIsNone(rango["rango_30_dias"])
+        self.assertEqual(rango["motivo_sin_rango_30_dias"], "dias_marcados")
+        self.assertEqual(rango["rango_historia"], {"bajo": 55.0, "alto": 55.0, "dias": 20})
+
+    def test_a_new_person_with_few_days_gives_pocos_dias(self):
+        conn = _conn(self)
+        conn.execute("INSERT INTO person (id, display_name) VALUES (3, 'C')")
+        _sesion(conn, 3, DIA, f"{PREV}T23:00:00", f"{DIA}T06:00:00")
+        _guardar_sueno(conn, 3, DIA, hr=[(f"{DIA}T04:30:00", 40)])
+        _seed_baseline_metric(conn, 3, sueno_fc.CLAVE_MIN, DIA, n=3, valor=55.0)
+        conn.commit()
+        out = _ejecutar(conn, 3)
+        rango = out["fc_minima_vs_rango"]
+        self.assertIsNone(rango["rango_30_dias"])
+        self.assertEqual(rango["motivo_sin_rango_30_dias"], "pocos_dias")
+        self.assertIsNone(rango["rango_historia"])
+
+    def test_another_persons_history_profile_is_never_used(self):
+        conn = _conn(self)
+        conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        _sesion(conn, 1, DIA, f"{PREV}T23:00:00", f"{DIA}T06:00:00")
+        _guardar_sueno(conn, 1, DIA, hr=[(f"{DIA}T04:30:00", 40)])
+        # Person 2 alone has plenty of history for this same key; person 1 has none at all.
+        _seed_baseline_metric(conn, 2, sueno_fc.CLAVE_MIN, DIA, n=30, valor=55.0)
+        conn.commit()
+        out = _ejecutar(conn, 1)
+        self.assertIsNone(out["fc_minima_vs_rango"]["rango_historia"])
+        self.assertEqual(out["fc_minima_vs_rango"]["motivo_sin_rango_30_dias"], "pocos_dias")
+
+
+class RangoDobleStatementCountTest(unittest.TestCase):
+    """BODY-NOCHE-LECTURA-2 ruling 1: reading rango_30_dias, rango_historia and z for BOTH
+    fc_minima_vs_rango and vfc_noche costs a fixed, named number of statements on top of
+    StatementCountTest's own invariant above -- never one that grows with the night's own sample
+    count. Measured on this fixture at the time this test was written: 22 (both ranges present)
+    and 26 (both null, which also pays the wide-window z fallback, once per metric) -- the
+    ceiling below gives both a comfortable, named margin."""
+
+    _CEILING = 30
+
+    def _contar(self, conn, fn) -> int:
+        vistos = []
+        conn.set_trace_callback(lambda sql: vistos.append(sql))
+        try:
+            fn()
+        finally:
+            conn.set_trace_callback(None)
+        return len(vistos)
+
+    def test_both_ranges_present_stays_within_the_named_ceiling(self):
+        conn = _conn(self)
+        _sesion(conn, 1, DIA, f"{PREV}T23:00:00", f"{DIA}T06:00:00")
+        _guardar_sueno(conn, 1, DIA, hr=[(f"{DIA}T04:30:00", 40)])
+        db.set_metric(conn, DIA, "hrv_last_night", 35.0, "garmin", 1)
+        _seed_baseline_metric(conn, 1, sueno_fc.CLAVE_MIN, DIA, n=20, valor=55.0)
+        _seed_baseline_metric(conn, 1, "hrv_last_night", DIA, n=20, valor=50.0)
+        conn.commit()
+        n = self._contar(conn, lambda: _ejecutar(conn, 1))
+        self.assertLessEqual(n, self._CEILING)
+
+    def test_both_ranges_null_stays_within_the_named_ceiling(self):
+        conn = _conn(self)
+        _sesion(conn, 1, DIA, f"{PREV}T23:00:00", f"{DIA}T06:00:00")
+        _guardar_sueno(conn, 1, DIA, hr=[(f"{DIA}T04:30:00", 40)])
+        db.set_metric(conn, DIA, "hrv_last_night", 35.0, "garmin", 1)
+        conn.commit()
+        n = self._contar(conn, lambda: _ejecutar(conn, 1))
+        self.assertLessEqual(n, self._CEILING)
 
 
 if __name__ == "__main__":
