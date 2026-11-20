@@ -31724,7 +31724,10 @@ sees, changed. No schema or migration change (no edit to `body/db.py`), no cross
 merge policy A's three conditions are clear; merging on green.
 
 **Commits on the branch:** `27e2c86` (`body/contexto_dia.py`, `tests/test_contexto_dia.py` -- rulings 1-2; 2
-files changed, +581) and `ce0b901` (`body/agente/herramientas.py`, `tests/test_agente_leer_dia.py`,
+files changed, +581), `ce0b901` (`body/agente/herramientas.py`, `tests/test_agente_leer_dia.py`,
 `tests/test_leer_noche.py`, `tests/test_persona_fuga.py` -- ruling 3, ruling 4's census/ceilings; 4 files
-changed, +133/-8).
+changed, +133/-8), `085f67f` (this ledger text, on the branch) -- merged into `main` (`--no-ff`) -- merged
+`3eb0748e9a1698f1695e2572e2fc5c4ee3c34053`. Post-merge smoke test on `main`
+(`.venv/Scripts/python.exe -m unittest tests.test_contexto_dia tests.test_leer_noche tests.test_agente_leer_dia`):
+Ran 81 tests in 27.464s, OK.
 
