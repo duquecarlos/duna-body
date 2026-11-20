@@ -63,6 +63,7 @@ proposal exists, so a refused file never becomes a card.
 """
 from __future__ import annotations
 
+import bisect
 import contextvars
 import json
 import sqlite3
@@ -122,18 +123,38 @@ _PARAM_TENDENCIAS = {
 
 # BODY-AGENTE-LEER-SERIE-1 ruling 2: bounds so one call stays a read, never a dump. 'mes' is
 # deliberately unbounded -- a whole watch history at that paso is already a handful of months'
-# rows, never worth refusing.
-LEER_SERIE_PASOS = ("dia", "semana", "mes")
+# rows, never worth refusing. ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1 adds 'minuto': a window of
+# full local timestamps (never a plain date, since it may cross midnight) over the minute streams
+# in LEER_SERIE_MINUTO_METRICAS, for analysing a short stretch in detail -- see _leer_serie_minuto.
+LEER_SERIE_PASOS = ("dia", "semana", "mes", "minuto")
 _LEER_SERIE_MAX_METRICAS = 12
 _LEER_SERIE_MAX_DIAS_PASO_DIA = 366
 _LEER_SERIE_MAX_SEMANAS_PASO_SEMANA = 260
+# ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: paso='minuto''s own window cap (a stretch inside a
+# night or a day, never a whole day's own minute-by-minute dump -- leer_dia/leer_noche are for
+# that) and the six minute streams it can return, each present on a row only when that stream
+# actually has data there (never a 0 or an invented value).
+_LEER_SERIE_MAX_MIN_PASO_MINUTO = 360
+LEER_SERIE_MINUTO_METRICAS = ("fc", "estres", "etapa", "vfc", "movimiento", "body_battery")
+# How far a sparse sample may sit from the minute asked about and still count: vfc/hrv is commonly
+# sampled every 5 minutes (forward-filled, ruling 1's own "latest at or before"); body_battery's
+# own sampling is looser still, matched on either side ("nearest").
+_LEER_SERIE_MINUTO_TOL_VFC_MIN = 5
+_LEER_SERIE_MINUTO_TOL_BB_MIN = 15
 _PARAM_LEER_SERIE = {
     "type": "object",
     "properties": {
-        "metricas": {"type": "array", "items": {"type": "string", "enum": list(TENDENCIA_METRICAS)},
+        # paso='minuto' uses LEER_SERIE_MINUTO_METRICAS instead of TENDENCIA_METRICAS -- the union
+        # here is the model's own guidance; `_leer_serie`/`_leer_serie_minuto` enforce which half
+        # applies, the same paso-dependent split 'desde'/'hasta' already needs (a plain date for
+        # 'dia'/'semana'/'mes', a full local timestamp for 'minuto' -- never checked by "format"
+        # here, since the two shapes differ by paso).
+        "metricas": {"type": "array",
+                     "items": {"type": "string",
+                               "enum": list(TENDENCIA_METRICAS) + list(LEER_SERIE_MINUTO_METRICAS)},
                      "minItems": 1, "maxItems": _LEER_SERIE_MAX_METRICAS},
-        "desde": {"type": "string", "format": "date"},
-        "hasta": {"type": "string", "format": "date"},
+        "desde": {"type": "string"},
+        "hasta": {"type": "string"},
         "paso": {"type": "string", "enum": list(LEER_SERIE_PASOS)},
     },
     "required": ["metricas", "desde", "hasta", "paso"],
@@ -961,7 +982,12 @@ def _leer_serie(conn: sqlite3.Connection, person_id: int, nivel: str, metricas: 
     caller is given `nivel` for exactly this reason -- `ejecutar()` passes it only to a tool whose
     registry entry asks for it (`necesita_nivel`), everybody else is unchanged. Ruling 2: refuses
     before touching the database whenever a bound is crossed, and reads `daily_metric` with
-    exactly ONE statement, whatever `desde`..`hasta` spans."""
+    exactly ONE statement, whatever `desde`..`hasta` spans. ORCH-CARLOS-DELEGATES-TIER-1-1 ruling
+    1: paso='minuto' is a different shape entirely (a window of full timestamps over the minute
+    streams, never a day-by-day point), dispatched to `_leer_serie_minuto` before any of the
+    date-only parsing below, which would reject a full timestamp."""
+    if paso == "minuto":
+        return _leer_serie_minuto(conn, person_id, nivel, metricas, desde, hasta)
     if desconocidas := [m for m in metricas if m not in TENDENCIA_METRICAS]:
         raise ToolError(f"métrica(s) desconocida(s): {desconocidas}")
     try:
@@ -1000,6 +1026,225 @@ def _leer_serie(conn: sqlite3.Connection, person_id: int, nivel: str, metricas: 
         "metricas": {m: {"unidad": _UNIDADES_METRICA.get(m), "puntos": _agrupar_serie(por_metrica[m], paso)}
                      for m in metricas},
     }
+
+
+def _bateria_corporal_minuto(conn: sqlite3.Connection, person_id: int, day: str,
+                              zona: str) -> tuple[tuple[str, float], ...]:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: one calendar day's own body-battery minute array,
+    parsed on read from that day's stored 'body_battery' raw_payload -- the SAME extraction
+    garmin_adapter's own high/low fallback uses (garmin_adapter.py:572-578: each sample is
+    [timestamp_ms, value, ...], timestamp an epoch-ms UTC instant like every other intraday array
+    in this family), kept as its own small parser HERE rather than in the adapter (never edited by
+    this slice). () for a day never stored, a malformed payload, or one with no usable sample --
+    never a crash, the same contract garmin_adapter.parse_sleep_series documents for its own
+    arrays. Same source precedence as db.intradia: the live API's own row wins when both exist."""
+    row = conn.execute(
+        "SELECT payload FROM raw_payload WHERE person_id = ? AND day = ? AND kind = 'body_battery' "
+        "ORDER BY (source != ?) LIMIT 1",
+        (person_id, day, garmin_adapter.SOURCE),
+    ).fetchone()
+    if row is None:
+        return ()
+    try:
+        payload = json.loads(row["payload"])
+    except (TypeError, ValueError):
+        return ()
+    if not isinstance(payload, list) or not payload or not isinstance(payload[0], dict):
+        return ()
+    arr = payload[0].get("bodyBatteryValuesArray")
+    if not isinstance(arr, list):
+        return ()
+    out = []
+    for muestra in arr:
+        if not isinstance(muestra, list) or len(muestra) <= 1:
+            continue
+        valor = garmin_adapter._num(muestra[1])
+        if valor is None:
+            continue
+        local_time = garmin_adapter._utc_to_local_iso(muestra[0], zona)
+        if local_time is None:
+            continue
+        out.append((local_time, valor))
+    return tuple(out)
+
+
+def _mas_reciente_dentro(ts_ordenados: list, muestras: list, minuto: datetime, tol_min: int):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: the LAST (ts, value) in `muestras` (parallel to
+    `ts_ordenados`, both sorted ascending) at or before `minuto`, kept only if within `tol_min`
+    minutes -- vfc's own forward-fill, since HRV is commonly sampled every few minutes rather than
+    every one. None past the tolerance, or with nothing at or before `minuto` at all."""
+    idx = bisect.bisect_right(ts_ordenados, minuto)
+    if idx == 0:
+        return None
+    ts, valor = muestras[idx - 1]
+    return valor if minuto - ts <= timedelta(minutes=tol_min) else None
+
+
+def _mas_cercano_dentro(ts_ordenados: list, muestras: list, minuto: datetime, tol_min: int):
+    """The single NEAREST (ts, value) to `minuto` on EITHER side, kept only if within `tol_min`
+    minutes -- body_battery's own match, since its sampling can land a little before or after the
+    minute asked about rather than reliably before it."""
+    idx = bisect.bisect_left(ts_ordenados, minuto)
+    candidatos = []
+    if idx < len(muestras):
+        candidatos.append(muestras[idx])
+    if idx > 0:
+        candidatos.append(muestras[idx - 1])
+    if not candidatos:
+        return None
+    ts, valor = min(candidatos, key=lambda par: abs(par[0] - minuto))
+    return valor if abs(ts - minuto) <= timedelta(minutes=tol_min) else None
+
+
+def _filas_leer_serie_minuto(conn: sqlite3.Connection, person_id: int, zona: str, metricas: list,
+                              desde_dt: datetime, hasta_dt: datetime) -> list[dict]:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: one row per minute in [desde_dt, hasta_dt) that
+    carries data on at least one requested stream, each key present only when THAT stream has a
+    usable sample there. 'fc'/'estres'/'movimiento' are minute-exact joins (db.intradia/the
+    night's own 'movement' array already carry one sample per minute); 'etapa' is the Garmin stage
+    segment covering that minute (ETAPAS_SUENO_GARMIN, the same label leer_noche already shows,
+    each segment's own end being the next segment's start or the night's own end); 'vfc'/
+    'body_battery' are sparser, matched with `_mas_reciente_dentro`/`_mas_cercano_dentro`.
+
+    Bounded statement count independent of window length (tests/test_leer_serie_minuto.py's own
+    guard): the window is capped at `_LEER_SERIE_MAX_MIN_PASO_MINUTO` minutes (under 24h), so the
+    calendar dates it and its own lookup margin touch are always at most two, and the SLEEP-NIGHT
+    candidates (a night's own day may be either side of a calendar date -- Garmin files a night
+    under its WAKE day) are that same small, fixed set read in ONE statement (an IN clause), never
+    one query per candidate. `db.intradia`/`_bateria_corporal_minuto`/`db.sueno_minuto_a_minuto`
+    each cost exactly one statement per calendar day or per overlapping night, never per minute."""
+    margen = timedelta(minutes=max(_LEER_SERIE_MINUTO_TOL_VFC_MIN, _LEER_SERIE_MINUTO_TOL_BB_MIN))
+    dias_ventana = sorted({desde_dt.date(), (hasta_dt - timedelta(minutes=1)).date()})
+    dias_margen = sorted({(desde_dt - margen).date(), (hasta_dt + margen).date()})
+
+    fc_por_ts: dict[str, float] = {}
+    estres_por_ts: dict[str, float] = {}
+    if "fc" in metricas:
+        for dia in dias_ventana:
+            for ts, v in db.intradia(conn, person_id, dia.isoformat(), "intradia_fc", zona):
+                if desde_dt <= experimentos._sin_offset(ts) < hasta_dt:
+                    fc_por_ts[ts] = v
+    if "estres" in metricas:
+        for dia in dias_ventana:
+            for ts, v in db.intradia(conn, person_id, dia.isoformat(), "intradia_estres", zona):
+                if desde_dt <= experimentos._sin_offset(ts) < hasta_dt:
+                    estres_por_ts[ts] = v
+
+    bb_muestras: list[tuple[datetime, float]] = []
+    if "body_battery" in metricas:
+        for dia in dias_margen:
+            for ts, v in _bateria_corporal_minuto(conn, person_id, dia.isoformat(), zona):
+                t = experimentos._sin_offset(ts)
+                if desde_dt - margen <= t <= hasta_dt + margen:
+                    bb_muestras.append((t, v))
+        bb_muestras.sort(key=lambda par: par[0])
+    bb_ts = [t for t, _ in bb_muestras]
+
+    etapa_por_ts: dict[str, str] = {}
+    movimiento_por_ts: dict[str, float] = {}
+    vfc_muestras: list[tuple[datetime, float]] = []
+    if {"etapa", "vfc", "movimiento"} & set(metricas):
+        candidatos_noche = sorted({d + timedelta(days=delta) for d in dias_margen for delta in (0, 1)})
+        placeholders = ",".join("?" * len(candidatos_noche))
+        filas_noche = conn.execute(
+            f"SELECT day, start_local, end_local FROM sleep_session WHERE person_id = ? "
+            f"AND day IN ({placeholders})",
+            (person_id, *[d.isoformat() for d in candidatos_noche]),
+        ).fetchall()
+        for fila in filas_noche:
+            if not fila["start_local"] or not fila["end_local"]:
+                continue
+            inicio_noche = experimentos._sin_offset(fila["start_local"])
+            fin_noche = experimentos._sin_offset(fila["end_local"])
+            if fin_noche < desde_dt - margen or inicio_noche > hasta_dt + margen:
+                continue
+            arrays = db.sueno_minuto_a_minuto(conn, person_id, fila["day"], zona)
+            if "movimiento" in metricas:
+                for ts, v in arrays.get("movement", ()):
+                    if desde_dt <= experimentos._sin_offset(ts) < hasta_dt:
+                        movimiento_por_ts[ts] = v
+            if "vfc" in metricas:
+                for ts, v in arrays.get("hrv", ()):
+                    t = experimentos._sin_offset(ts)
+                    if desde_dt - margen <= t <= hasta_dt + margen:
+                        vfc_muestras.append((t, v))
+            if "etapa" in metricas:
+                puntos = sorted(arrays.get("stages", ()), key=lambda par: par[0])
+                for i, (ts, codigo) in enumerate(puntos):
+                    seg_inicio = experimentos._sin_offset(ts)
+                    seg_fin = (experimentos._sin_offset(puntos[i + 1][0]) if i + 1 < len(puntos)
+                               else fin_noche)
+                    ini, fin = max(seg_inicio, desde_dt), min(seg_fin, hasta_dt)
+                    if ini >= fin:
+                        continue
+                    etiqueta = ETAPAS_SUENO_GARMIN.get(codigo, "desconocido")
+                    minuto_etapa = ini
+                    while minuto_etapa < fin:
+                        etapa_por_ts[minuto_etapa.isoformat(timespec="minutes")] = etiqueta
+                        minuto_etapa += timedelta(minutes=1)
+    vfc_muestras.sort(key=lambda par: par[0])
+    vfc_ts = [t for t, _ in vfc_muestras]
+
+    filas: list[dict] = []
+    minuto = desde_dt
+    while minuto < hasta_dt:
+        ts = minuto.isoformat(timespec="minutes")
+        valores: dict = {}
+        if ts in fc_por_ts:
+            valores["fc"] = fc_por_ts[ts]
+        if ts in estres_por_ts:
+            valores["estres"] = estres_por_ts[ts]
+        if ts in etapa_por_ts:
+            valores["etapa"] = etapa_por_ts[ts]
+        if ts in movimiento_por_ts:
+            valores["movimiento"] = movimiento_por_ts[ts]
+        if "vfc" in metricas:
+            valor = _mas_reciente_dentro(vfc_ts, vfc_muestras, minuto, _LEER_SERIE_MINUTO_TOL_VFC_MIN)
+            if valor is not None:
+                valores["vfc"] = valor
+        if "body_battery" in metricas:
+            valor = _mas_cercano_dentro(bb_ts, bb_muestras, minuto, _LEER_SERIE_MINUTO_TOL_BB_MIN)
+            if valor is not None:
+                valores["body_battery"] = valor
+        if valores:
+            filas.append({"ts": ts, **valores})
+        minuto += timedelta(minutes=1)
+    return filas
+
+
+def _leer_serie_minuto(conn: sqlite3.Connection, person_id: int, nivel: str, metricas: list, desde: str,
+                        hasta: str) -> dict:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: Carlos's own words, relayed by the desk
+    2026-11-20: "I want between you and body design specialized tools to analyze in full detail
+    every minute of the metrics." A bounded window of full LOCAL timestamps (never a plain date,
+    since the window may cross midnight) over the minute streams in LEER_SERIE_MINUTO_METRICAS --
+    see `_filas_leer_serie_minuto`. Needs nivel_datos='completo', the same rule paso='dia' already
+    enforces (the registry's own nivel is 'resumen' so 'semana'/'mes' stay reachable there)."""
+    if nivel == "resumen":
+        raise ToolError("leer_serie con paso='minuto' necesita nivel_datos='completo'; con 'resumen' "
+                         "usa paso='semana' o paso='mes'")
+    if desconocidas := [m for m in metricas if m not in LEER_SERIE_MINUTO_METRICAS]:
+        raise ToolError(f"paso='minuto' solo admite estas métricas: {list(LEER_SERIE_MINUTO_METRICAS)} "
+                         f"(desconocida(s): {desconocidas})")
+    try:
+        desde_dt = experimentos._sin_offset(desde).replace(second=0, microsecond=0)
+        hasta_dt = experimentos._sin_offset(hasta).replace(second=0, microsecond=0)
+    except ValueError:
+        raise ToolError("'desde'/'hasta' deben ser fecha-hora ISO completas (AAAA-MM-DDTHH:MM) "
+                         "con paso='minuto'")
+    if hasta_dt <= desde_dt:
+        raise ToolError("'hasta' debe ser posterior a 'desde'")
+    minutos_pedidos = (hasta_dt - desde_dt).total_seconds() / 60
+    if minutos_pedidos > _LEER_SERIE_MAX_MIN_PASO_MINUTO:
+        raise ToolError(f"paso='minuto' admite hasta {_LEER_SERIE_MAX_MIN_PASO_MINUTO} minutos por "
+                         f"llamada ({minutos_pedidos:.0f} pedidos); divide el rango")
+    person = db.person(conn, person_id)
+    zona = person["timezone"]
+    ahora = datetime.now(ZoneInfo(zona)).replace(tzinfo=None, second=0, microsecond=0)
+    if hasta_dt > ahora:
+        raise ToolError("'hasta' no puede ser una fecha-hora futura")
+    filas = _filas_leer_serie_minuto(conn, person_id, zona, metricas, desde_dt, hasta_dt)
+    return {"paso": "minuto", "desde": desde, "hasta": hasta, "zona": zona, "filas": filas}
 
 
 def _hora_local(valor: str):
@@ -3440,7 +3685,13 @@ HERRAMIENTAS = [
                      f"paso='semana' admite hasta {_LEER_SERIE_MAX_SEMANAS_PASO_SEMANA} semanas; paso='mes' "
                      "no tiene límite -- una historia completa del reloj a paso='mes' es una sola llamada. "
                      "Pasado el límite, o con una fecha futura en 'hasta', se rechaza sin leer nada: usa un "
-                     "paso más grueso o divide el rango.",
+                     "paso más grueso o divide el rango. paso='minuto' es distinto: 'desde'/'hasta' son "
+                     "fecha-hora completas (pueden cruzar la medianoche), hasta "
+                     f"{_LEER_SERIE_MAX_MIN_PASO_MINUTO} minutos, y da una fila por minuto con alguno de "
+                     f"estos (nunca otros): {list(LEER_SERIE_MINUTO_METRICAS)}. Úsalo para mirar con "
+                     "detalle una ventana concreta dentro de una noche o de un día (por ejemplo, qué pasó "
+                     "entre las 04:30 y las 05:10); para TODA una noche de una sola vez usa leer_noche, y "
+                     "para horas de un día que no son de sueño sigue existiendo leer_intradia.",
      "parametros": _PARAM_LEER_SERIE, "funcion": _leer_serie, "necesita_nivel": True},
     {"nombre": "proponer_meta", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone crear una meta nueva, de tipo métrica (con metric_key/direction/target_value) "
