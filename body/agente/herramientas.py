@@ -418,6 +418,21 @@ _PARAM_REGISTRAR_MEDIDA = {
     "additionalProperties": False,
 }
 
+# ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5: durante/despues each 0-10 (db.DOLOR_ESCALA_MIN/MAX),
+# both optional -- the same "each optional" shape the session screen's own card gives.
+_PARAM_REGISTRAR_DOLOR = {
+    "type": "object",
+    "properties": {
+        "dia": {"type": "string", "format": "date"},
+        "ejercicio": {"type": "string"},
+        "dolor_durante": {"type": ["integer", "null"], "minimum": db.DOLOR_ESCALA_MIN, "maximum": db.DOLOR_ESCALA_MAX},
+        "dolor_despues": {"type": ["integer", "null"], "minimum": db.DOLOR_ESCALA_MIN, "maximum": db.DOLOR_ESCALA_MAX},
+        "movimiento": {"type": ["string", "null"]},
+    },
+    "required": ["dia", "ejercicio"],
+    "additionalProperties": False,
+}
+
 # BODY-PROTEINA-1: metric_def rows whose daily total is derived from `ingesta` entries, in
 # catalogue order -- db.INGESTA_METRIC_KEYS (BODY-COMIDA-1), read off the live table rather than a
 # second hand-typed list, same template pattern as SELF_METRIC_KEYS above.
@@ -1521,7 +1536,8 @@ def _leer_entreno(conn: sqlite3.Connection, person_id: int, day: str | None = No
                    hasta: str | None = None) -> dict:
     """A day's or a range's training sessions (with their sets, display values plus whether each
     was corrected) and the planned session for that day, if any (BODY-ENTRENO-TOOLS-1). Reads only
-    -- `db.exercise_sets` and plain SELECTs, never a writer."""
+    -- `db.exercise_sets` and plain SELECTs, never a writer. ORCH-CARLOS-DELEGATES-TIER-1-1 ruling
+    5: each session's own entreno_dolor rows ride along as `dolor`."""
     if day is not None:
         ini, fin = day, day
     elif desde is not None and hasta is not None:
@@ -1561,6 +1577,13 @@ def _leer_entreno(conn: sqlite3.Connection, person_id: int, day: str | None = No
             # same exercise came up, by its effective name, so the assistant can say "last time
             # 3x8 at 40 kg" from data, never from memory.
             "ultima_vez": entreno_historial.ultimas_veces(conn, person_id, a["sets_source"], a["sets_source_id"]),
+            # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5: durante/después/mañana only -- `movimiento`
+            # is the one free-text column this table carries and it never leaves the host (same
+            # line ruling 1 drew for privacidad's own export), so it is left out here too, since
+            # this read can end up in front of a model provider (body/agente/cliente.py).
+            "dolor": [{"ejercicio": d["ejercicio"], "zona": d["zona"], "dolor_durante": d["dolor_durante"],
+                       "dolor_despues": d["dolor_despues"], "dolor_manana": d["dolor_manana"]}
+                      for d in db.dolor_de_sesion(conn, person_id, a["sets_source"], a["sets_source_id"])],
         })
     planes = conn.execute(
         "SELECT * FROM plan WHERE person_id = ? AND day BETWEEN ? AND ? AND ejercicios_json IS NOT NULL "
@@ -2298,6 +2321,49 @@ def _registrar_medida(conn: sqlite3.Connection, person_id: int, conversacion_id:
     antes = {"value": anterior["value"] if anterior else None}
     despues = {"metric_key": metric_key, "value": value, "day": day}
     registro = propuestas.crear(conn, person_id, conversacion_id, "registrar_medida", despues, antes=antes)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
+def _registrar_dolor(conn: sqlite3.Connection, person_id: int, conversacion_id: int, dia: str, ejercicio: str,
+                      dolor_durante=None, dolor_despues=None, movimiento: str | None = None) -> dict:
+    """Proposes how one exercise of a day's own training session felt (ORCH-CARLOS-DELEGATES-
+    TIER-1-1 ruling 5): resolves the day's session the same way `corregir_entreno` does
+    (`_resolver_sesion_entreno_dia`), and `zona` comes from that session's own matching set, never
+    freely typed -- so this can only name an exercise the person actually trained that day. `antes`
+    carries the existing entreno_dolor row's own durante/despues/movimiento (or None), so
+    `propuestas.deshacer` restores it exactly through the same writer `registrar_dolor_entreno`
+    uses. Never medical advice: this only records the number and the person's own words."""
+    t = T(db.person(conn, person_id)["language"])
+    _dia_no_futuro(conn, person_id, dia)
+    sesion = _resolver_sesion_entreno_dia(conn, person_id, dia)
+    if sesion is None:
+        raise ToolError(t("agente.error.dolor_sin_sesion", day=dia))
+    source, source_id = sesion
+    sets = db.exercise_sets(conn, person_id, source, source_id)
+    coincidencia = next((s for s in sets if s["exercise"] and not s["excluded_by_person"]
+                         and s["exercise"].strip().lower() == ejercicio.strip().lower()), None)
+    if coincidencia is None:
+        raise ToolError(t("agente.error.dolor_ejercicio_desconocido", ejercicio=ejercicio, day=dia))
+    if dolor_durante is None and dolor_despues is None and not (movimiento and movimiento.strip()):
+        raise ToolError(t("agente.error.dolor_nada_que_registrar"))
+    for campo, valor in (("dolor_durante", dolor_durante), ("dolor_despues", dolor_despues)):
+        if valor is not None and (isinstance(valor, bool) or not isinstance(valor, int)
+                                   or not (db.DOLOR_ESCALA_MIN <= valor <= db.DOLOR_ESCALA_MAX)):
+            raise ToolError(t("agente.error.dolor_fuera_de_rango", campo=campo, minimo=db.DOLOR_ESCALA_MIN,
+                               maximo=db.DOLOR_ESCALA_MAX))
+    movimiento = movimiento.strip() if movimiento and movimiento.strip() else None
+    ejercicio_exacto, zona = coincidencia["exercise"], coincidencia["category"]
+    anterior = conn.execute(
+        "SELECT dolor_durante, dolor_despues, movimiento FROM entreno_dolor WHERE person_id = ? AND "
+        "sets_source = ? AND sets_source_id = ? AND ejercicio = ?",
+        (person_id, source, source_id, ejercicio_exacto),
+    ).fetchone()
+    antes = {"dolor_durante": anterior["dolor_durante"], "dolor_despues": anterior["dolor_despues"],
+             "movimiento": anterior["movimiento"]} if anterior else None
+    despues = {"sets_source": source, "sets_source_id": source_id, "day": dia, "ejercicio": ejercicio_exacto,
+               "zona": zona, "dolor_durante": dolor_durante, "dolor_despues": dolor_despues,
+               "movimiento": movimiento}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "registrar_dolor", despues, antes=antes)
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
@@ -3463,6 +3529,17 @@ HERRAMIENTAS = [
                      "persona corrige un valor que ya registró ese día, llama a esta misma herramienta "
                      "con el valor correcto: reemplaza el anterior, nunca suma un segundo registro.",
      "parametros": _PARAM_REGISTRAR_MEDIDA, "funcion": _registrar_medida},
+    {"nombre": "registrar_dolor", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone registrar cómo sintió un ejercicio ya entrenado ese día, en una zona que le "
+                     "molesta -- dolor durante y después del ejercicio, cada uno de 0 a 10, y en qué "
+                     "movimiento o ángulo dolió, en sus propias palabras. 'ejercicio' debe ser uno que la "
+                     "persona entrenó ese día; la zona se toma de esa misma serie, nunca se pide. Da al menos "
+                     "un dato (durante, después o el movimiento). Nunca es consejo médico: solo registra el "
+                     "número y sus palabras. Si la persona corrige un valor que ya registró para ese "
+                     "ejercicio ese día, llama a esta misma herramienta con el valor correcto: reemplaza el "
+                     "anterior, nunca suma un segundo registro. No lo guarda: registra la propuesta para que "
+                     "la persona la apruebe en el chat.",
+     "parametros": _PARAM_REGISTRAR_DOLOR, "funcion": _registrar_dolor},
     {"nombre": "registrar_ingesta", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone registrar algo que la persona comió o bebió, para un día: estima los gramos a "
                      "partir de sus palabras cuando no da un número exacto, dice que es una estimación y qué "

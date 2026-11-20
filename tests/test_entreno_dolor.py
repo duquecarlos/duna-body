@@ -17,7 +17,9 @@ from tests._db import open_conn
 
 from fastapi.testclient import TestClient
 
-from body import config, db, identity, web
+from body import config, db, garmin_adapter, identity, web
+from body.agente import herramientas, propuestas
+from body.agente import conversacion as agente_conversacion
 from body.rutas import comun
 
 DAY = "2026-11-19"
@@ -251,6 +253,116 @@ class HoyDolorMananaTest(unittest.TestCase):
         with mock.patch.object(comun, "_today_local", return_value=date(2026, 11, 18)):
             r = client.get("/")
         self.assertNotIn("dolor-manana", r.text)
+
+
+# ---- the assistant's own registrar_dolor proposal tool (ruling 5) -----------------------------
+
+class AgenteRegistrarDolorTest(unittest.TestCase):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5: the proposal tool writes through the same
+    db.registrar_dolor_entreno every other writer uses, only once the person applies it."""
+
+    DIA = "2026-11-10"
+
+    def setUp(self):
+        self.conn = _conn(self)
+        self.conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, name, source) "
+            "VALUES (1, 's-dolor', ?, ?, 'strength_training', NULL, 'garmin')",
+            (self.DIA, f"{self.DIA}T07:00:00"))
+        db.save_exercise_sets(self.conn, 1, "garmin", "s-dolor", [garmin_adapter.ExerciseSet(
+            set_type="active", category="hombro", exercise="press militar", reps=8.0,
+            weight_value=20.0, weight_unit="kg", duration_s=30.0, start_local=f"{self.DIA}T07:00:00",
+        )])
+        self.conn.commit()
+        self.cid = agente_conversacion.crear(self.conn, 1)
+
+    def test_unknown_day_is_refused(self):
+        with self.assertRaises(herramientas.ToolError):
+            herramientas.ejecutar(self.conn, 1, "registrar_dolor",
+                                   {"dia": "2026-01-01", "ejercicio": "press militar", "dolor_durante": 3},
+                                   "completo", self.cid)
+
+    def test_unknown_exercise_that_day_is_refused(self):
+        with self.assertRaises(herramientas.ToolError):
+            herramientas.ejecutar(self.conn, 1, "registrar_dolor",
+                                   {"dia": self.DIA, "ejercicio": "sentadilla", "dolor_durante": 3},
+                                   "completo", self.cid)
+
+    def test_nothing_to_register_is_refused(self):
+        with self.assertRaises(herramientas.ToolError):
+            herramientas.ejecutar(self.conn, 1, "registrar_dolor",
+                                   {"dia": self.DIA, "ejercicio": "press militar"}, "completo", self.cid)
+
+    def test_out_of_range_value_is_refused(self):
+        with self.assertRaises(herramientas.ToolError):
+            herramientas.ejecutar(self.conn, 1, "registrar_dolor",
+                                   {"dia": self.DIA, "ejercicio": "press militar", "dolor_durante": 11},
+                                   "completo", self.cid)
+
+    def test_proposing_writes_nothing_until_applied(self):
+        out = herramientas.ejecutar(self.conn, 1, "registrar_dolor",
+                                     {"dia": self.DIA, "ejercicio": "press militar", "dolor_durante": 3,
+                                      "dolor_despues": 2, "movimiento": "al bajar la barra"},
+                                     "completo", self.cid)
+        self.assertEqual(out["estado"], "propuesta")
+        self.assertEqual(db.dolor_de_sesion(self.conn, 1, "garmin", "s-dolor"), [])
+        resultado = propuestas.aplicar(self.conn, 1, out["propuesta_id"])
+        self.assertEqual(resultado["estado"], "aplicada")
+        filas = db.dolor_de_sesion(self.conn, 1, "garmin", "s-dolor")
+        self.assertEqual(len(filas), 1)
+        self.assertEqual(filas[0]["ejercicio"], "press militar")
+        self.assertEqual(filas[0]["zona"], "hombro")
+        self.assertEqual(filas[0]["dolor_durante"], 3)
+        self.assertEqual(filas[0]["dolor_despues"], 2)
+        self.assertEqual(filas[0]["movimiento"], "al bajar la barra")
+
+    def test_applying_again_edits_the_same_row_never_a_second_one(self):
+        out1 = herramientas.ejecutar(self.conn, 1, "registrar_dolor",
+                                      {"dia": self.DIA, "ejercicio": "press militar", "dolor_durante": 3},
+                                      "completo", self.cid)
+        propuestas.aplicar(self.conn, 1, out1["propuesta_id"])
+        out2 = herramientas.ejecutar(self.conn, 1, "registrar_dolor",
+                                      {"dia": self.DIA, "ejercicio": "press militar", "dolor_durante": 6},
+                                      "completo", self.cid)
+        propuestas.aplicar(self.conn, 1, out2["propuesta_id"])
+        filas = db.dolor_de_sesion(self.conn, 1, "garmin", "s-dolor")
+        self.assertEqual(len(filas), 1)
+        self.assertEqual(filas[0]["dolor_durante"], 6)
+
+    def test_undo_restores_the_prior_value(self):
+        out1 = herramientas.ejecutar(self.conn, 1, "registrar_dolor",
+                                      {"dia": self.DIA, "ejercicio": "press militar", "dolor_durante": 3},
+                                      "completo", self.cid)
+        propuestas.aplicar(self.conn, 1, out1["propuesta_id"])
+        out2 = herramientas.ejecutar(self.conn, 1, "registrar_dolor",
+                                      {"dia": self.DIA, "ejercicio": "press militar", "dolor_durante": 6},
+                                      "completo", self.cid)
+        propuestas.aplicar(self.conn, 1, out2["propuesta_id"])
+        resultado = propuestas.deshacer(self.conn, 1, out2["propuesta_id"])
+        self.assertEqual(resultado["estado"], "deshecha")
+        filas = db.dolor_de_sesion(self.conn, 1, "garmin", "s-dolor")
+        self.assertEqual(filas[0]["dolor_durante"], 3)
+
+    def test_leer_entreno_carries_the_numbers_never_the_movimiento(self):
+        """Ruling 5's own census: _leer_entreno is the one tool that returns a session's sets, and
+        it must include that session's entreno_dolor rows -- numbers only, never the free-text
+        movimiento (the one column that never leaves the host)."""
+        db.registrar_dolor_entreno(self.conn, 1, self.DIA, "garmin", "s-dolor",
+                                    [{"ejercicio": "press militar", "zona": "hombro", "dolor_durante": 4,
+                                      "dolor_despues": 1, "movimiento": "al bajar la barra, secreto"}])
+        self.conn.commit()
+        salida = herramientas.ejecutar(self.conn, 1, "leer_entreno", {"day": self.DIA}, "completo", self.cid)
+        dolor = salida["sesiones"][0]["dolor"]
+        self.assertEqual(dolor, [{"ejercicio": "press militar", "zona": "hombro", "dolor_durante": 4,
+                                   "dolor_despues": 1, "dolor_manana": None}])
+        self.assertNotIn("movimiento", dolor[0])
+        self.assertNotIn("secreto", str(salida))
+
+    def test_another_persons_exercise_is_never_matched(self):
+        with self.assertRaises(herramientas.ToolError):
+            herramientas.ejecutar(self.conn, 2, "registrar_dolor",
+                                   {"dia": self.DIA, "ejercicio": "press militar", "dolor_durante": 3},
+                                   "completo", agente_conversacion.crear(self.conn, 2))
 
 
 if __name__ == "__main__":

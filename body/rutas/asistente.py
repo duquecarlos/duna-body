@@ -391,6 +391,31 @@ def _ingesta_valor_txt(t: T, defs: dict, metric_key: str, amount: float, estimad
     return t("asistente.propuesta.ingesta_valor", metric=t("metric." + metric_key), valor=valor, fecha=fecha)
 
 
+def _tarjeta_registrar_dolor(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5: the exercise and its zona first, then whichever of
+    durante/después/movimiento this proposal carries -- never a line for a field it leaves out.
+    Never medical advice: only the numbers and the person's own words, read back."""
+    fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
+    zona_txt = t("entreno.categoria." + despues["zona"])
+    lineas = [t("asistente.propuesta.dolor_resumen", ejercicio=despues["ejercicio"], zona=zona_txt, fecha=fecha)]
+    if despues.get("dolor_durante") is not None:
+        lineas.append(t("asistente.propuesta.dolor_durante", valor=despues["dolor_durante"]))
+    if despues.get("dolor_despues") is not None:
+        lineas.append(t("asistente.propuesta.dolor_despues", valor=despues["dolor_despues"]))
+    if despues.get("movimiento"):
+        lineas.append(t("asistente.propuesta.dolor_movimiento", texto=despues["movimiento"]))
+    antes_txt = None
+    if antes_json:
+        antes_lineas = []
+        if antes_json.get("dolor_durante") is not None:
+            antes_lineas.append(t("asistente.propuesta.dolor_durante", valor=antes_json["dolor_durante"]))
+        if antes_json.get("dolor_despues") is not None:
+            antes_lineas.append(t("asistente.propuesta.dolor_despues", valor=antes_json["dolor_despues"]))
+        if antes_lineas:
+            antes_txt = "\n".join(antes_lineas)
+    return antes_txt, "\n".join(lineas), None
+
+
 def _tarjeta_registrar_ingesta(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     fecha = comun._short_date(t, date.fromisoformat(despues["day"]))
     partes = [_ingesta_valor_txt(t, defs, despues["metric_key"], despues["amount"], despues["estimado"], fecha)]
@@ -904,6 +929,7 @@ TARJETAS = {
     "registrar_entreno": _tarjeta_registrar_entreno,
     "corregir_entreno": _tarjeta_corregir_entreno,
     "registrar_medida": _tarjeta_registrar_medida,
+    "registrar_dolor": _tarjeta_registrar_dolor,
     "marcar_habito": _tarjeta_marcar_habito,
     "proponer_experimento": _tarjeta_proponer_experimento,
     "marcar_experimento": _tarjeta_marcar_experimento,

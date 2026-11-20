@@ -816,6 +816,112 @@ class PropuestaAgenteCorregirDespertarFreshDbTest(unittest.TestCase):
         self.assertEqual(insert_despertar.rowcount, 1)
 
 
+# ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5: the seventeenth widening of propuesta_agente.accion
+# (registrar_dolor), through the SAME reusable rebuild -- today's shape, minus 'registrar_dolor'.
+_OLD_PROPUESTA_AGENTE_COLUMNS_SIN_REGISTRAR_DOLOR = """
+    id              INTEGER PRIMARY KEY,
+    person_id       INTEGER NOT NULL REFERENCES person(id),
+    conversacion_id INTEGER NOT NULL REFERENCES conversacion_agente(id),
+    accion          TEXT NOT NULL CHECK (accion IN
+                        ('proponer_meta', 'proponer_cambio_meta', 'proponer_confirmar_turnos', 'proponer_idioma',
+                         'planear_entreno', 'registrar_entreno', 'registrar_medida', 'marcar_habito',
+                         'proponer_experimento', 'marcar_experimento',
+                         'registrar_ingesta', 'corregir_ingesta', 'borrar_ingesta',
+                         'marcar_periodo', 'cerrar_periodo', 'corregir_periodo', 'borrar_periodo',
+                         'registrar_comida', 'corregir_comida', 'registrar_checkin', 'descartar_series',
+                         'separar_sesion', 'unir_sesiones', 'proponer_objetivo_nutriente',
+                         'proponer_plan', 'corregir_meta_plan', 'ampliar_plan', 'anotar_sesion',
+                         'corregir_entreno', 'importar_desplazamiento', 'proponer_practica',
+                         'corregir_despertar')),
+    objetivo_id     INTEGER REFERENCES goal(id),
+    antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
+    despues_json    TEXT NOT NULL CHECK (json_valid(despues_json)),
+    estado          TEXT NOT NULL DEFAULT 'propuesta'
+                        CHECK (estado IN ('propuesta', 'aplicada', 'descartada', 'expirada', 'deshecha')),
+    creada_en       TEXT NOT NULL,
+    expira_en       TEXT NOT NULL,
+    resuelta_en     TEXT,
+    aplicada_via    TEXT CHECK (aplicada_via IS NULL OR aplicada_via IN ('mcp', 'hogar'))
+"""
+
+
+class PropuestaAgenteRegistrarDolorMigrationTest(unittest.TestCase):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5: a database whose propuesta_agente predates
+    'registrar_dolor' gains the widening in one rebuild, keeping its existing rows byte-for-byte,
+    and then accepts a 'registrar_dolor' row."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        db.init(self.conn)
+        self.cid = agente_conversacion.crear(self.conn, 1)
+        self.conn.execute("PRAGMA foreign_keys = OFF")
+        self.conn.execute("DROP TABLE propuesta_agente")
+        self.conn.execute(
+            f"CREATE TABLE propuesta_agente ({_OLD_PROPUESTA_AGENTE_COLUMNS_SIN_REGISTRAR_DOLOR})"
+        )
+        self.conn.execute(
+            "INSERT INTO propuesta_agente (person_id, conversacion_id, accion, despues_json, estado, "
+            "creada_en, expira_en) VALUES (1, ?, 'proponer_plan', '{}', 'aplicada', "
+            "'2026-11-18T00:00:00+00:00', '2026-11-18T00:10:00+00:00')",
+            (self.cid,),
+        )
+        self.conn.execute(
+            "INSERT INTO propuesta_agente (person_id, conversacion_id, accion, despues_json, estado, "
+            "creada_en, expira_en) VALUES (1, ?, 'corregir_despertar', '{}', 'propuesta', "
+            "'2026-11-18T00:00:00+00:00', '2026-11-18T00:10:00+00:00')",
+            (self.cid,),
+        )
+        self.old_ids = [
+            r["id"] for r in self.conn.execute(
+                "SELECT id FROM propuesta_agente WHERE conversacion_id = ? ORDER BY id", (self.cid,)
+            ).fetchall()
+        ]
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.commit()
+
+    def test_migration_widens_accion_keeping_the_old_rows(self):
+        db.init(self.conn)
+        rows = self.conn.execute(
+            "SELECT id FROM propuesta_agente WHERE conversacion_id = ? ORDER BY id", (self.cid,)
+        ).fetchall()
+        self.assertEqual([r["id"] for r in rows], self.old_ids)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM propuesta_agente").fetchone()[0], 2)
+
+        insert_dolor = self.conn.execute(
+            "INSERT INTO propuesta_agente (person_id, conversacion_id, accion, despues_json, creada_en, "
+            "expira_en) VALUES (1, ?, 'registrar_dolor', '{}', '2026-11-18T00:00:00+00:00', "
+            "'2026-11-18T00:10:00+00:00')", (self.cid,),
+        )
+        self.conn.commit()
+        self.assertEqual(insert_dolor.rowcount, 1)
+
+    def test_migration_is_idempotent(self):
+        db.init(self.conn)
+        db.init(self.conn)
+        rows = self.conn.execute(
+            "SELECT id FROM propuesta_agente WHERE conversacion_id = ? ORDER BY id", (self.cid,)
+        ).fetchall()
+        self.assertEqual([r["id"] for r in rows], self.old_ids)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM propuesta_agente").fetchone()[0], 2)
+
+
+class PropuestaAgenteRegistrarDolorFreshDbTest(unittest.TestCase):
+    """A fresh database (built with the current _PROPUESTA_AGENTE_COLUMNS) accepts a
+    'registrar_dolor' row directly, with no rebuild needed."""
+
+    def test_fresh_database_accepts_registrar_dolor(self):
+        conn = _conn(self)
+        db.init(conn)
+        cid = agente_conversacion.crear(conn, 1)
+        insert_dolor = conn.execute(
+            "INSERT INTO propuesta_agente (person_id, conversacion_id, accion, despues_json, creada_en, "
+            "expira_en) VALUES (1, ?, 'registrar_dolor', '{}', '2026-11-18T00:00:00+00:00', "
+            "'2026-11-18T00:10:00+00:00')", (cid,),
+        )
+        conn.commit()
+        self.assertEqual(insert_dolor.rowcount, 1)
+
+
 class DespertarCorreccionTableMigrationTest(unittest.TestCase):
     """BODY-DESPERTAR-REAL-4 ruling 1: a database built before despertar_correccion existed gains
     the table on its next init(), additive, keeping every other table's row untouched; a fresh
