@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from body import config, cuenta, db, dispositivo, mcp, web
 from body.agente import conversacion as agente_conversacion
+from body.agente import herramientas
 from body.agente import propuestas as agente_propuestas
 
 
@@ -373,7 +374,9 @@ class CapsTest(_HostedTestCase):
         self.conn.commit()
 
     def test_lectura_cap_reached_then_allowed_again_after_the_window(self):
-        tope = mcp.LIMITES["lecturas"]
+        """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2: this door's own, larger MCP_MAX_LECTURAS --
+        never LIMITES["lecturas"] (that one stays the LOCAL stdio door's own, unchanged cap)."""
+        tope = mcp.MCP_MAX_LECTURAS
         for _ in range(tope):
             r = self._llamar("leer_ajustes", {})
             self.assertEqual(r.status_code, 200)
@@ -388,12 +391,19 @@ class CapsTest(_HostedTestCase):
         self.assertNotIn("error", r_again.json())
 
     def test_local_calls_count_toward_the_same_remote_cap(self):
-        """Ruling 4: ONE shared budget, not one per door -- a local stdio session's own successful
-        reads already used up most of the window, so the remote door hits the cap sooner."""
-        tope = mcp.LIMITES["lecturas"]
+        """Ruling 4: ONE shared budget, not one per door -- a local stdio session's own reads
+        already used up most of the REMOTE door's own (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2:
+        now much larger) window, so the remote door hits ITS cap sooner. The local session's own
+        in-memory cap (bucle.MAX_LECTURAS, unchanged) throttles IT after its first few calls, but
+        every attempt is audited before that check (ruling 5), so the shared count keeps growing
+        regardless -- the same ordering mcp.py's own _TopeDB docstring documents."""
+        tope = mcp.MCP_MAX_LECTURAS
         sesion_local = mcp._Sesion(self.conn, 1)
         for _ in range(tope - 1):
-            mcp._llamar_herramienta(sesion_local, "leer_ajustes", {})
+            try:
+                mcp._llamar_herramienta(sesion_local, "leer_ajustes", {})
+            except herramientas.ToolError:
+                pass
 
         r = self._llamar("leer_ajustes", {})
         self.assertNotIn("error", r.json())
