@@ -12,7 +12,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import db
+from body import db, desplazamiento_import
 from body.agente import herramientas
 
 
@@ -106,6 +106,41 @@ class SalidaTest(unittest.TestCase):
         out = herramientas.ejecutar(conn, 1, "comparar_noche", {"fecha": "2026-10-05"}, "completo")
         self.assertNotIn("frecuencia_cardiaca", out)
         self.assertNotIn("sueno", out)
+
+
+class GrupoConDesplazamientoTest(unittest.TestCase):
+    """BODY-MINUTO-ANALISIS-7 (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1): `grupo`'s seventh key --
+    whether the night's evening day has a commute row. Five "commute evening" nights and five
+    plain ones, the same CompararGrupoTest pattern tests/test_noche_rasgos.py's own module uses for
+    the other six grupo keys."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        for i in range(5):
+            evening = f"2026-09-{i + 1:02d}"
+            wake = f"2026-09-{i + 2:02d}"
+            db.set_metric(self.conn, evening, "vehicle_minutes", 15.0, desplazamiento_import.FUENTE, 1)
+            db.set_metric(self.conn, wake, "hrv_last_night", 40.0 + i, "garmin", 1)
+        for i in range(5):
+            wake = f"2026-10-{i + 1:02d}"
+            db.set_metric(self.conn, wake, "hrv_last_night", 60.0 + i, "garmin", 1)
+        self.conn.commit()
+
+    def test_con_desplazamiento_true_selects_only_the_commute_evening_nights(self):
+        out = herramientas.ejecutar(
+            self.conn, 1, "comparar_noche",
+            {"fecha": "2026-09-06", "desde": "2026-09-01", "grupo": {"con_desplazamiento": True}},
+            "completo",
+        )
+        self.assertEqual(out["rasgos"]["hrv_last_night"]["grupo"]["n_grupo"], 5)
+
+    def test_con_desplazamiento_false_excludes_the_commute_evening_nights(self):
+        out = herramientas.ejecutar(
+            self.conn, 1, "comparar_noche",
+            {"fecha": "2026-10-05", "desde": "2026-09-01", "grupo": {"con_desplazamiento": False}},
+            "completo",
+        )
+        self.assertEqual(out["rasgos"]["hrv_last_night"]["grupo"]["n_grupo"], 5)
 
 
 class StaticGuardTest(unittest.TestCase):
