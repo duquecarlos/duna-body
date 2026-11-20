@@ -820,6 +820,60 @@ def _deshacer_registrar_medida(conn: sqlite3.Connection, row: sqlite3.Row) -> No
         db.set_metric(conn, despues["day"], despues["metric_key"], antes.get("value"), "self", row["person_id"])
 
 
+# -- registrar_dolor (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5: this module calls
+# db.registrar_dolor_entreno, update-shaped like registrar_medida -- the UNIQUE(person_id,
+# sets_source, sets_source_id, ejercicio) key makes both apply and undo an upsert on the same row,
+# never a delete; undo blanks durante/despues/movimiento back to whatever they were before, same
+# as registrar_medida's own undo blanks a metric back to None) ------------------------------------
+
+def _dolor_actual(conn: sqlite3.Connection, row: sqlite3.Row) -> dict | None:
+    despues = json.loads(row["despues_json"])
+    fila = conn.execute(
+        "SELECT dolor_durante, dolor_despues, movimiento FROM entreno_dolor WHERE person_id = ? AND "
+        "sets_source = ? AND sets_source_id = ? AND ejercicio = ?",
+        (row["person_id"], despues["sets_source"], despues["sets_source_id"], despues["ejercicio"]),
+    ).fetchone()
+    return dict(fila) if fila else None
+
+
+def _drift_aplicar_registrar_dolor(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    antes = json.loads(row["antes_json"]) if row["antes_json"] is not None else None
+    esperado = antes if antes is not None else {"dolor_durante": None, "dolor_despues": None, "movimiento": None}
+    actual = _dolor_actual(conn, row)
+    actual = actual if actual is not None else {"dolor_durante": None, "dolor_despues": None, "movimiento": None}
+    return actual != esperado
+
+
+def _drift_deshacer_registrar_dolor(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    esperado = {"dolor_durante": despues.get("dolor_durante"), "dolor_despues": despues.get("dolor_despues"),
+                "movimiento": despues.get("movimiento")}
+    actual = _dolor_actual(conn, row)
+    actual = actual if actual is not None else {"dolor_durante": None, "dolor_despues": None, "movimiento": None}
+    return actual != esperado
+
+
+def _aplicar_registrar_dolor(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    with conn:
+        db.registrar_dolor_entreno(
+            conn, row["person_id"], despues["day"], despues["sets_source"], despues["sets_source_id"],
+            [{"ejercicio": despues["ejercicio"], "zona": despues["zona"],
+              "dolor_durante": despues.get("dolor_durante"), "dolor_despues": despues.get("dolor_despues"),
+              "movimiento": despues.get("movimiento")}])
+
+
+def _deshacer_registrar_dolor(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    antes = json.loads(row["antes_json"]) if row["antes_json"] is not None else {}
+    despues = json.loads(row["despues_json"])
+    with conn:
+        db.registrar_dolor_entreno(
+            conn, row["person_id"], despues["day"], despues["sets_source"], despues["sets_source_id"],
+            [{"ejercicio": despues["ejercicio"], "zona": despues["zona"],
+              "dolor_durante": antes.get("dolor_durante"), "dolor_despues": antes.get("dolor_despues"),
+              "movimiento": antes.get("movimiento")}])
+
+
 # -- marcar_habito (BODY-ENTRENO-HABITO-AUTO-1: this module calls goals.check_habit directly) ---
 
 def _drift_aplicar_marcar_habito(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
@@ -1713,6 +1767,8 @@ TABLA: dict[str, _Accion] = {
                                  _aplicar_corregir_entreno, _deshacer_corregir_entreno),
     "registrar_medida": _Accion(_drift_aplicar_registrar_medida, _drift_deshacer_registrar_medida,
                                  _aplicar_registrar_medida, _deshacer_registrar_medida),
+    "registrar_dolor": _Accion(_drift_aplicar_registrar_dolor, _drift_deshacer_registrar_dolor,
+                                _aplicar_registrar_dolor, _deshacer_registrar_dolor),
     "marcar_habito": _Accion(_drift_aplicar_marcar_habito, _drift_deshacer_marcar_habito, _aplicar_marcar_habito,
                               _deshacer_marcar_habito),
     "proponer_experimento": _Accion(_sin_drift, _drift_deshacer_proponer_experimento,

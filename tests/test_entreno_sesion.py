@@ -505,5 +505,96 @@ class DemoBranchesTest(unittest.TestCase):
         self.assertNotIn('class="chart-svg"', r.text)
 
 
+class DolorCardTest(unittest.TestCase):
+    """BODY-PLAN-FASES-5 rulings 2/3: the session screen's own pain card -- only for an exercise
+    whose category falls inside an open zona period, and only then."""
+
+    DAY = "2026-11-17"
+
+    def setUp(self):
+        self.conn = _reset_db(self, "dolor.db")
+        _as(self, 1)
+        _activity(self.conn, 1, "s1", self.DAY, f"{self.DAY}T18:00:00", "strength_training", None, 600.0)
+        db.save_exercise_sets(self.conn, 1, "garmin", "s1", [
+            garmin_adapter.ExerciseSet(set_type="active", category="hombro", exercise="press militar",
+                                        reps=8, weight_value=20.0, weight_unit="kg", duration_s=40.0,
+                                        start_local=f"{self.DAY}T18:00:00"),
+            garmin_adapter.ExerciseSet(set_type="active", category="pierna", exercise="sentadilla",
+                                        reps=10, weight_value=60.0, weight_unit="kg", duration_s=45.0,
+                                        start_local=f"{self.DAY}T18:02:00"),
+        ])
+
+    def test_no_card_without_an_open_zona_period(self):
+        r = client.get(f"/day/{self.DAY}/entreno/s1")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn('name="ejercicio_0"', r.text)
+
+    def test_card_shows_only_the_exercise_whose_category_is_in_the_open_zona(self):
+        db.crear_periodo(self.conn, 1, "lesion", self.DAY, None, zonas=["hombro"])
+        r = client.get(f"/day/{self.DAY}/entreno/s1")
+        t_es = T("es")
+        self.assertIn(t_es("entreno_sesion.dolor_titulo", zona=t_es("entreno.categoria.hombro")), r.text)
+        self.assertIn("press militar", r.text)
+        self.assertNotIn("sentadilla", r.text)
+
+    def test_closed_period_before_today_shows_no_card(self):
+        db.crear_periodo(self.conn, 1, "lesion", "2026-10-01", "2026-10-05", zonas=["hombro"])
+        r = client.get(f"/day/{self.DAY}/entreno/s1")
+        self.assertNotIn('name="ejercicio_0"', r.text)
+
+    def test_excluded_set_is_never_asked_about(self):
+        # The excluded set is still LISTED (struck) in the sets section, so "press militar" still
+        # appears on the page -- what must be absent is the dolor card itself, since this session
+        # then has no active, non-excluded exercise left in the open zona.
+        db.crear_periodo(self.conn, 1, "lesion", self.DAY, None, zonas=["hombro"])
+        db.set_series_excluida(self.conn, 1, "garmin", "s1", 1, True)
+        r = client.get(f"/day/{self.DAY}/entreno/s1")
+        t_es = T("es")
+        self.assertNotIn(t_es("entreno_sesion.dolor_titulo", zona=t_es("entreno.categoria.hombro")), r.text)
+        self.assertNotIn('name="ejercicio_0"', r.text)
+
+    def test_post_saves_and_redirects_with_a_result_line(self):
+        db.crear_periodo(self.conn, 1, "lesion", self.DAY, None, zonas=["hombro"])
+        r = client.post(f"/day/{self.DAY}/entreno/s1/dolor", data={
+            "n": "1", "ejercicio_0": "press militar", "zona_0": "hombro",
+            "durante_0": "3", "despues_0": "2", "movimiento_0": "al bajar la barra",
+        })
+        self.assertEqual(r.status_code, 303)
+        self.assertIn("dolor_guardado=1", r.headers["location"])
+        filas = db.dolor_de_sesion(self.conn, 1, "garmin", "s1")
+        self.assertEqual(len(filas), 1)
+        self.assertEqual((filas[0]["dolor_durante"], filas[0]["dolor_despues"], filas[0]["movimiento"]),
+                          (3, 2, "al bajar la barra"))
+        r2 = client.get(r.headers["location"])
+        self.assertIn(_es("entreno_sesion.dolor_guardado"), r2.text)
+
+    def test_editing_again_prefills_the_saved_values(self):
+        db.crear_periodo(self.conn, 1, "lesion", self.DAY, None, zonas=["hombro"])
+        db.registrar_dolor_entreno(self.conn, 1, self.DAY, "garmin", "s1", [
+            {"ejercicio": "press militar", "zona": "hombro", "dolor_durante": 4, "dolor_despues": 1,
+             "movimiento": "al final del rango"},
+        ])
+        r = client.get(f"/day/{self.DAY}/entreno/s1")
+        self.assertIn('value="al final del rango"', r.text)
+        self.assertIn('value="4" selected', r.text)
+        self.assertIn('value="1" selected', r.text)
+
+    def test_post_rejects_out_of_range_as_no_answer_never_a_500(self):
+        db.crear_periodo(self.conn, 1, "lesion", self.DAY, None, zonas=["hombro"])
+        r = client.post(f"/day/{self.DAY}/entreno/s1/dolor", data={
+            "n": "1", "ejercicio_0": "press militar", "zona_0": "hombro", "durante_0": "99",
+        })
+        self.assertEqual(r.status_code, 303)
+        filas = db.dolor_de_sesion(self.conn, 1, "garmin", "s1")
+        self.assertIsNone(filas[0]["dolor_durante"])
+
+    def test_another_persons_session_404s_on_post(self):
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        _as(self, 2)
+        r = client.post(f"/day/{self.DAY}/entreno/s1/dolor", data={"n": "0"})
+        self.assertEqual(r.status_code, 404)
+
+
 if __name__ == "__main__":
     unittest.main()

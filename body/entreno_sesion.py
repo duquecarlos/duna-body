@@ -111,6 +111,23 @@ def series(conn, person_id: int, sets_source: str, sets_source_id: str) -> list[
     return out
 
 
+def ejercicios_con_zona_abierta(sets: list[dict], zonas_dia: frozenset[str]) -> list[dict]:
+    """BODY-PLAN-FASES-5 ruling 2: this session's own exercises (active sets the person never
+    excluded) whose categoria falls inside `zonas_dia` -- db.zonas_en_recuperacion's own open-
+    period zonas for this session's day -- each named once, in the order its own exercise first
+    appears. [] outright when none match: no open zona period, or none of this session's own
+    categorias fall inside it, changes nothing on the screen (ruling 2's own "data, never a list
+    of 'pressing' names")."""
+    out = []
+    seen = set()
+    for s in sets:
+        ejercicio, categoria = s["exercise"], s["category"]
+        if ejercicio and categoria in zonas_dia and ejercicio not in seen and not s["excluded_by_person"]:
+            seen.add(ejercicio)
+            out.append({"ejercicio": ejercicio, "zona": categoria})
+    return out
+
+
 def curva(conn, person_id: int, day: str, zona: str, inicio_local: str | None,
           duracion_s: float | None, sets: list[dict]) -> dict | None:
     """Ruling 4: the day's own per-minute heart-rate series, sliced to the session window, with

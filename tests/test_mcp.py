@@ -396,6 +396,33 @@ class ToolsCallTest(_McpTestCase):
         self.assertIn("propuesta_id", salida)
         self.assertEqual(salida["estado"], "propuesta")
 
+    def test_registrar_dolor_is_offered_and_callable(self):
+        """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5: same generic `tipo: propuesta` path as
+        corregir_despertar above -- body.mcp needs no new code to list or call it."""
+        source_id = db.create_manual_session(self.conn, self.person_id, "2026-11-05", None, "Hombro")
+        db.correct_exercise_set(self.conn, self.person_id, "manual", source_id, 1, category="hombro",
+                                 exercise="press militar", reps=8, weight_kg=20.0)
+        self.conn.commit()
+
+        _, listado = self._ejecutar([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
+        nombres = {t["name"] for t in listado[0]["result"]["tools"]}
+        self.assertIn("registrar_dolor", nombres)
+
+        _, respuestas = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "registrar_dolor",
+                        "arguments": {"dia": "2026-11-05", "ejercicio": "press militar",
+                                      "dolor_durante": 3, "dolor_despues": 2}}},
+        ])
+        r = respuestas[0]["result"]
+        self.assertNotIn("isError", r)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM entreno_dolor WHERE person_id = ?",
+                               (self.person_id,)).fetchone()[0], 0)  # still unapplied
+        salida = json.loads(r["content"][-1]["text"])
+        self.assertIn("propuesta_id", salida)
+        self.assertEqual(salida["estado"], "propuesta")
+
     def test_leer_serie_is_offered_and_callable(self):
         """BODY-AGENTE-LEER-SERIE-1 ruling 4: body.mcp lists leer_serie like any other catalogue
         tool -- the generic tools/list and tools/call paths need no new code for it either."""

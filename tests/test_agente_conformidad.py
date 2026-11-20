@@ -87,6 +87,19 @@ def _seed_todo(conn) -> dict:
             weight_value=40.0, weight_unit="kg", duration_s=30.0, start_local=f"{dia}T07:00:00",
         )])
 
+    # registrar_dolor: its own watch strength session, on a day no other tool's own argument
+    # touches -- corregir_entreno's own argument nulls dia_a1's displayed exercise name once
+    # applied (BODY-ENTRENO-1-INV Q2: a correction given with no exercise keeps whatever was
+    # already corrected, NULL the first time), and descartar_series excludes dia_a4's only set, so
+    # neither day is safe to share.
+    ids["dia_dolor"] = "2020-04-22"
+    _actividad(conn, "garmin", "dolor1", ids["dia_dolor"])
+    conn.commit()
+    db.save_exercise_sets(conn, 1, "garmin", "dolor1", [garmin_adapter.ExerciseSet(
+        set_type="active", category="hombro", exercise="press militar", reps=8.0,
+        weight_value=20.0, weight_unit="kg", duration_s=30.0, start_local=f"{ids['dia_dolor']}T07:00:00",
+    )])
+
     # separar_sesion: a watch session already linked to a manual one.
     ids["dia_a2"] = "2020-04-10"
     _actividad(conn, "garmin", "a2", ids["dia_a2"])
@@ -178,6 +191,7 @@ def _argumentos(ids: dict) -> dict:
         "registrar_entreno": {"day": ids["dia_a1"],
                                "series": [{"ejercicio": "press banca", "reps": 8, "peso_kg": 40.0}]},
         "registrar_medida": {"metric_key": "flex_alcance_cm", "value": 10.0, "day": "2020-05-02"},
+        "registrar_dolor": {"dia": ids["dia_dolor"], "ejercicio": "press militar", "dolor_durante": 3},
         "marcar_habito": {"habit_id": ids["habit_id"], "day": "2020-05-03"},
         "proponer_experimento": {"titulo": "Experimento conformidad", "metricas": ["resting_hr"],
                                   "ventana": {"tipo": "dia"},

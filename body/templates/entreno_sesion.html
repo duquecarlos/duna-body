@@ -8,6 +8,7 @@
     <p class="sub">{% if tipo_label %}{{ tipo_label }} · {% endif %}{{ date_long }}</p>
   </div>
 </div>
+{% if dolor_msg %}<p class="note" role="status">{{ dolor_msg }}</p>{% endif %}
 {% if detalle %}<p class="read mt-0">{{ detalle }}</p>{% endif %}
 {% if recovery %}<p class="note">{{ recovery }}</p>{% endif %}
 
@@ -31,6 +32,41 @@
 <p class="note m-0">{{ pulso_pendiente }}</p>
 {% endif %}
 </div>
+
+{% if dolor %}
+<h2>{{ dolor.titulo }}</h2>
+<div class="card">
+<form method="post" action="/day/{{ day }}/entreno/{{ source_id }}/dolor">
+<input type="hidden" name="n" value="{{ dolor.filas|length }}">
+{% for fila in dolor.filas %}
+<div class="q {{ 'mt-12' if not loop.first else '' }}">{{ fila.ejercicio }}</div>
+<input type="hidden" name="ejercicio_{{ loop.index0 }}" value="{{ fila.ejercicio }}">
+<input type="hidden" name="zona_{{ loop.index0 }}" value="{{ fila.zona }}">
+<div class="row flex-wrap gap-8 mt-6">
+  <div class="flex-1">
+    <label class="k" for="durante_{{ loop.index0 }}">{{ t('entreno_sesion.dolor_durante_label') }}</label>
+    <select id="durante_{{ loop.index0 }}" name="durante_{{ loop.index0 }}" class="field">
+      <option value="" {% if fila.durante is none %}selected{% endif %}>—</option>
+      {% for v in escala %}<option value="{{ v }}" {% if fila.durante == v %}selected{% endif %}>{{ v }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="flex-1">
+    <label class="k" for="despues_{{ loop.index0 }}">{{ t('entreno_sesion.dolor_despues_label') }}</label>
+    <select id="despues_{{ loop.index0 }}" name="despues_{{ loop.index0 }}" class="field">
+      <option value="" {% if fila.despues is none %}selected{% endif %}>—</option>
+      {% for v in escala %}<option value="{{ v }}" {% if fila.despues == v %}selected{% endif %}>{{ v }}</option>{% endfor %}
+    </select>
+  </div>
+</div>
+<label class="k mt-6" for="movimiento_{{ loop.index0 }}">{{ t('entreno_sesion.dolor_movimiento_label') }}</label>
+<input type="text" id="movimiento_{{ loop.index0 }}" name="movimiento_{{ loop.index0 }}" class="field"
+       value="{{ fila.movimiento }}">
+{% endfor %}
+<p class="note mt-8">{{ t('entreno_sesion.dolor_escala_ayuda', min=t('dolor.escala.min'), max=t('dolor.escala.max')) }}</p>
+<button class="btn mt-8" type="submit">{{ t('entreno_sesion.dolor_guardar') }}</button>
+</form>
+</div>
+{% endif %}
 
 {% if es_fuerza and sets %}
 <h2>{{ t('entreno_sesion.sets_titulo') }}</h2>

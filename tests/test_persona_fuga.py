@@ -177,6 +177,13 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
         "fetched_at, payload) VALUES (?, 'garmin', ?, 'detalle', ?, '{}')",
         (person_id, act_id, f"{DAYS[-1]}T07:05:00+00:00"),
     )
+    # BODY-PLAN-FASES-5: entreno_dolor is person-owned (its own person_id column, same (person_id,
+    # sets_source, sets_source_id) naming as workout_set/activity_detail above, plus `ejercicio`) --
+    # no marker needed, the census only checks export/delete-all coverage.
+    db.registrar_dolor_entreno(conn, person_id, DAYS[-1], "garmin", act_id, [
+        {"ejercicio": f"ZZ{tag}-EJERCICIO", "zona": "hombro", "dolor_durante": 3, "dolor_despues": 2,
+         "movimiento": None},
+    ])
     # ORCH-CARLOS-DELEGATES-TIER-1-1: fuente_importacion is person-owned (its own person_id column)
     # and has its first census row here -- no marker needed, the census only checks export/
     # delete-all coverage, and ultimo_error/ultimo_error_at are both NULL on a successful import.

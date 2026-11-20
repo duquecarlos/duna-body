@@ -617,6 +617,56 @@ class PeriodExportDeleteTest(unittest.TestCase):
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM period").fetchone()[0], 0)
 
 
+class EntrenoDolorExportDeleteTest(unittest.TestCase):
+    """BODY-PLAN-FASES-5: entreno_dolor is a PARTIAL-export table -- every number and the exercise/
+    zona naming it export, `movimiento` (the person's own words) never does -- and delete-all
+    removes every row. Invented demo content only, no real figures."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "dolor.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+
+    def test_entreno_dolor_is_a_partial_export_table(self):
+        self.assertIn("entreno_dolor", privacidad.PARTIAL_EXPORT_TABLES)
+
+    def test_export_includes_the_numbers_never_the_movement_words(self):
+        db.registrar_dolor_entreno(self.conn, 1, "2026-11-17", "garmin", "s1", [
+            {"ejercicio": "press militar", "zona": "hombro", "dolor_durante": 3, "dolor_despues": 2,
+             "movimiento": "al bajar la barra, palabras del dueño de los datos"},
+        ])
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(len(data["dolor_entreno"]), 1)
+        row = data["dolor_entreno"][0]
+        self.assertEqual((row["ejercicio"], row["zona"], row["dolor_durante"], row["dolor_despues"]),
+                          ("press militar", "hombro", 3, 2))
+        self.assertNotIn("movimiento", row)
+        self.assertNotIn("al bajar la barra", json.dumps(data))
+
+    def test_export_of_another_person_sees_nothing(self):
+        db.registrar_dolor_entreno(self.conn, 1, "2026-11-17", "garmin", "s1", [
+            {"ejercicio": "press militar", "zona": "hombro", "dolor_durante": 3, "dolor_despues": 2,
+             "movimiento": None},
+        ])
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 2)
+        self.assertEqual(data["dolor_entreno"], [])
+
+    def test_delete_all_removes_every_row(self):
+        db.registrar_dolor_entreno(self.conn, 1, "2026-11-17", "garmin", "s1", [
+            {"ejercicio": "press militar", "zona": "hombro", "dolor_durante": 3, "dolor_despues": 2,
+             "movimiento": "secreto"},
+        ])
+        self.conn.commit()
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM entreno_dolor").fetchone()[0], 0)
+
+
 class NutrientTargetExportDeleteTest(unittest.TestCase):
     """BODY-NUTRIENTE-OBJETIVO-1: a daily nutrient target is FULLY exported and fully deleted --
     invented demo amounts only, no real figures."""

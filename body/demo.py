@@ -160,6 +160,11 @@ _PLAN_HOY_EJERCICIOS = {
 # this same categoria and exercise so a registered read shows ruling 2's line too.
 _LESION_ZONA_DEMO = "hombro"
 _LESION_SET_EJERCICIO = {"es": "press militar", "en": "overhead press"}
+# BODY-PLAN-FASES-5 ruling 1: the invented entreno_dolor row _seed_periodo attaches to that same
+# corrected set, already answered (dolor_manana filled) -- so the demo shows the session screen's
+# dolor card prefilled (ruling 3) without ever adding a pending morning-after card to "/" (ruling
+# 4), which would make its own statement ceiling depend on how far back the corrected day lands.
+_LESION_DOLOR_MOVIMIENTO = {"es": "al bajar la barra", "en": "lowering the bar"}
 # BODY-PLAN-MODULO-1-R: how far _seed_periodo's open 'lesion' period may widen to reach the most
 # recent strength_training day -- an unbounded widen can mark most of stress_avg's own 30-day
 # baseline window (baselines.WINDOW_DAYS) on a date whose nearest strength session happens to be
@@ -1102,6 +1107,11 @@ def _seed_periodo(conn, db, all_days: list[date], person_id: int, idioma: str) -
         db.correct_exercise_set(conn, person_id, fuerza["source"], fuerza["source_id"], 1,
                                  category=_LESION_ZONA_DEMO, exercise=_LESION_SET_EJERCICIO[idioma],
                                  reps=8, weight_kg=20.0)
+        db.registrar_dolor_entreno(
+            conn, person_id, fuerza["day"], fuerza["source"], fuerza["source_id"],
+            [{"ejercicio": _LESION_SET_EJERCICIO[idioma], "zona": _LESION_ZONA_DEMO,
+              "dolor_durante": 3, "dolor_despues": 2, "movimiento": _LESION_DOLOR_MOVIMIENTO[idioma]}])
+        db.registrar_dolor_manana(conn, person_id, fuerza["day"], _LESION_ZONA_DEMO, 1)
     db.crear_periodo(conn, person_id, "lesion", inicio_lesion.isoformat(), None, zonas=[_LESION_ZONA_DEMO])
     conn.commit()
     return 2

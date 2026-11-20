@@ -823,6 +823,42 @@ class EscrituraExternaMudanzaTest(MudanzaTestCase):
         self.assertEqual(by_name["escritura_externa"].counts.insert, 0)
 
 
+class EntrenoDolorMudanzaTest(MudanzaTestCase):
+    """BODY-PLAN-FASES-5: a pain-by-exercise row moves with the person, matched by its own
+    natural key (person_id, sets_source, sets_source_id, ejercicio) -- a second import of the
+    same source never duplicates it."""
+
+    def test_row_moves_and_a_second_import_does_not_duplicate_it(self):
+        source = self._new_source()
+        with source:
+            db.registrar_dolor_entreno(source, db.DEFAULT_PERSON_ID, "2026-11-17", "garmin", "s1", [
+                {"ejercicio": "press militar", "zona": "hombro", "dolor_durante": 3,
+                 "dolor_despues": 2, "movimiento": "al bajar la barra"},
+            ])
+        source.close()
+
+        reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok)
+        by_name = self._reports_by_name(reports)
+        self.assertEqual(by_name["entreno_dolor"].counts.insert, 1)
+
+        dest = db.connect()
+        row = dest.execute(
+            "SELECT ejercicio, zona, dolor_durante, dolor_despues, movimiento FROM entreno_dolor"
+        ).fetchone()
+        self.assertEqual((row["ejercicio"], row["zona"], row["dolor_durante"], row["dolor_despues"],
+                           row["movimiento"]),
+                          ("press militar", "hombro", 3, 2, "al bajar la barra"))
+        dest.close()
+
+        reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok)
+        by_name = self._reports_by_name(reports)
+        self.assertEqual(by_name["entreno_dolor"].counts.insert, 0)
+        dest = db.connect()
+        self.assertEqual(dest.execute("SELECT COUNT(*) FROM entreno_dolor").fetchone()[0], 1)
+
+
 class NutrientTargetMudanzaTest(MudanzaTestCase):
     """BODY-NUTRIENTE-OBJETIVO-1: a daily nutrient target moves with the rest of the person's data,
     matched by its own natural key (person_id, metric_key, start_day) -- a second import of the

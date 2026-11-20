@@ -181,7 +181,7 @@ PROPUESTA_NOMBRES = {"proponer_meta", "proponer_cambio_meta", "proponer_confirma
                      "borrar_periodo", "descartar_series", "separar_sesion", "unir_sesiones",
                      "proponer_objetivo_nutriente",
                      "proponer_plan", "corregir_meta_plan", "ampliar_plan", "anotar_sesion",
-                     "importar_desplazamiento", "proponer_practica", "corregir_despertar"}
+                     "importar_desplazamiento", "proponer_practica", "corregir_despertar", "registrar_dolor"}
 # Privacy and account controls deliberately NEVER become proposal tools (BODY-ASISTENTE-PROPUESTAS-1
 # approval reason): nivel_datos, consent, export, delete-all, device keys, Garmin connection,
 # household membership all stay on their own screens.
@@ -228,6 +228,8 @@ class RegistryShapeTest(unittest.TestCase):
         # 'ninguno' like every other propuesta tool except importar_desplazamiento.
         # BODY-DESPERTAR-REAL-4: extended from 31 -- corregir_despertar is the one new entry, also
         # at nivel 'ninguno'.
+        # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5: extended from 32 -- registrar_dolor is the one
+        # new entry, also at nivel 'ninguno'.
         propuesta = [h for h in herramientas.HERRAMIENTAS if h["tipo"] == "propuesta"]
         self.assertEqual({h["nombre"] for h in propuesta}, PROPUESTA_NOMBRES)
         niveles = {h["nombre"]: h["nivel"] for h in propuesta}
@@ -245,7 +247,9 @@ class RegistryShapeTest(unittest.TestCase):
         # BODY-DESPERTAR-REAL-2: extended from 50 -- leer_intradia is the one new entry.
         # BODY-DESPERTAR-REAL-4: extended from 51 -- corregir_despertar is the one new entry.
         # BODY-NOCHE-LECTURA-1: extended from 52 -- leer_noche is the one new entry.
-        self.assertEqual(len(herramientas.HERRAMIENTAS), 53)
+        # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5: extended from 53 -- registrar_dolor is the one
+        # new entry.
+        self.assertEqual(len(herramientas.HERRAMIENTAS), 54)
 
     def test_every_entry_carries_the_reserved_plan_field_unset(self):
         # BODY-ASISTENTE-CONFORMIDAD-1 ruling 2 (agent-capabilities-v1 section 5): the field

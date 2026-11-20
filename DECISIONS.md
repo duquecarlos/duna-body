@@ -31006,3 +31006,169 @@ explicitly waived in words by this spec's body, not merely its header -- merging
 -- `9bfd3f2` (rulings 4-5: the screens' own wording and the census) -- `f7cd7cb` (this ledger entry)
 -- merged `959d7b9` into `main`.
 
+## BODY-PLAN-FASES-5
+
+**Surface, Carlos's words, relayed by the desk:** *"it's not that serious injury. You can have in
+detail the push session that I did having this, so it's not that bad ... if it were that bad, I
+couldn't have that session. However, next week when I'll do next time push session, we'll get into
+detail into my sensations."* The desk's own ask: at the end of a training session, for each
+exercise that loads the injured zone, ask pain 0-10 during and after, plus which movement or angle
+hurt; the next morning, ask how it feels. The orchestrator's ruling (ORCH-CARLOS-DELEGATES-TIER-1-1):
+a new person-scoped record, carried by mudanza and privacidad, written only by the person (form) or
+through a proposal card he confirms; never medical advice.
+
+**Ruling 1 (the record), as built:** `entreno_dolor` (`body/db.py:1017-1033`, additive, guarded by
+`CREATE TABLE IF NOT EXISTS`) -- `id`, `person_id`, `day`, `sets_source`, `sets_source_id`,
+`ejercicio`, `zona`, `dolor_durante`/`dolor_despues`/`dolor_manana` (each `INTEGER CHECK (... IS NULL
+OR ... BETWEEN 0 AND 10)`), `movimiento` TEXT, `manana_registrado_en`, `creado_en`, with
+`UNIQUE(person_id, sets_source, sets_source_id, ejercicio)` so a second save for the same exercise
+edits the same row, never a second one. The one named 0-10 scale constant,
+`db.DOLOR_ESCALA_MIN`/`DOLOR_ESCALA_MAX` (`body/db.py:36`), is the single source every CHECK and
+every template select shares; i18n anchor labels `dolor.escala.min`/`max` (es *"sin dolor"*/*"el peor
+dolor"*, en *"no pain"*/*"the worst pain"*). Writers: `db.registrar_dolor_entreno` (`:4015-4033`, the
+upsert), `db.dolor_de_sesion` (`:4035-4044`, one session's own rows), `db.pendientes_dolor_manana`
+(`:4046-4062`, ruling 4's own reusable read, bounded by `MANANA_VENCE_DIAS = 2` at `:4012`),
+`db.registrar_dolor_manana` (`:4064-4074`, fills every still-open row of a zona/day in one UPDATE).
+Mudanza: `TableSpec("entreno_dolor", match_cols=(person_id, sets_source, sets_source_id, ejercicio))`
+(`body/mudanza.py:144-145`). Privacidad: a `PARTIAL_EXPORT_TABLES` entry (`body/privacidad.py:106`) --
+every column exports except `movimiento`, the one free-text column that never leaves the host
+(`:243` the export SELECT, `:537` the delete).
+
+**Ruling 2-3 (which exercises are asked, session screen), as built:**
+`entreno_sesion.ejercicios_con_zona_abierta` (`body/entreno_sesion.py:114-123`) intersects a
+session's own exercise categorias with `db.zonas_en_recuperacion`'s open-period zonas for that day
+-- direct set intersection, the same vocabulary and the same join an exercise's `categoria` and a
+period's `zonas` already share (precedent: `body/rutas/asistente.py`'s own `categorias & zonas_dia`);
+no open zona period, no question. `body/rutas/entreno_sesion.py`'s `_dolor_ctx` (`:271-294`) builds
+the card's context and `entreno_dolor_registrar` (`:364-`) is the one POST
+(`/day/{day}/entreno/{source_id}/dolor`) that upserts every exercise's row through
+`db.registrar_dolor_entreno` in one call and redirects with a result line (`role="status"`). The
+form uses indexed field names (`ejercicio_0`, `durante_0`, ...) plus a count field, never repeated
+names -- `comun._form`'s own `parse_qs` keeps only the first value per key, so a repeated-name
+design would have silently dropped every exercise past the first. `entreno_sesion.html`'s card title
+`entreno_sesion.dolor_titulo` is `"¿Cómo respondió tu {zona}?"`/`"How did your {zona} respond?"`;
+saving again for the same exercise prefills and edits the same row (ruling 3's own instruction).
+
+**Ruling 4 (next morning, on Hoy), as built:** `body/rutas/hoy.py`'s `_dolor_manana_hoy_ctx`
+(`:306-`) reads `db.pendientes_dolor_manana` and renders one card per (day, zona) still open, up to
+`MANANA_VENCE_DIAS` days back; `dolor_manana_registrar` (`:1470-`) is the one POST
+(`/day/{day}/dolor-manana`) that fills every exercise that zona named that day through
+`db.registrar_dolor_manana`. `today.html` gets one card per pendiente, before the despertar card.
+
+**Ruling 5 (the assistant), as built:** `registrar_dolor` (`body/agente/herramientas.py:2327-2366`,
+catalogue entry `:3542`), a `propuesta`-kind tool following `registrar_medida`/`corregir_entreno`'s
+own template exactly: resolves the day's session through the same `_resolver_sesion_entreno_dia`
+`corregir_entreno` uses, and `zona` comes from that session's own matching set -- never freely typed,
+so it can only name an exercise the person actually trained that day; refuses an unknown day/
+exercise, an empty call (none of durante/despues/movimiento given), and an out-of-range number, each
+in the person's own language (`agente.error.dolor_sin_sesion`/`dolor_ejercicio_desconocido`/
+`dolor_nada_que_registrar`/`dolor_fuera_de_rango`, es/en). `body/agente/propuestas.py`'s
+`registrar_dolor` entry (`:1770-1771`, writers `:839-874`) is update-shaped like `registrar_medida`:
+`antes` carries the existing row's own durante/despues/movimiento (or None), so `deshacer` restores
+it exactly through the same `db.registrar_dolor_entreno` every other writer uses -- never a delete.
+`propuesta_agente.accion`'s CHECK widens to include `'registrar_dolor'` (`body/db.py:114`, the
+seventeenth such widening, through the existing reusable `_rebuild_propuesta_agente_table`
+-- `:1943-1947` detects it, `:2020-2021` runs it -- additive, every existing row survives
+byte-for-byte). `body/rutas/asistente.py`'s `_tarjeta_registrar_dolor` (`:394-414`, registered in
+`TARJETAS` at `:932`) renders the exercise, its zona and whichever of durante/despues/movimiento the
+proposal carries. Census (ruling 5's own instruction, "the session read the assistant already uses
+must include that session's entreno_dolor rows"): `_leer_entreno` (`herramientas.py:1535`) is that
+one tool; it now carries each session's `dolor` list (durante/despues/manana numbers only) --
+`movimiento` is left out even here, since this read can end up in front of a model provider
+(`body/agente/cliente.py`, the only module allowed to send anything to one) and `movimiento` is the
+one column ruling 1 already drew the line at never leaving the host.
+
+**Ruling 6 (tests, census, ceilings), as built:** `tests/test_entreno_dolor.py` -- `SchemaTest`,
+`RegistrarDolorTest`, `PendienteMananaTest` (ruling 1, 14 tests); `HoyDolorMananaTest` (ruling 4, 6
+tests: no card the day trained, due the day after, gone after 2 days, POST fills and the card
+disappears, out-of-range value ignored, cross-person isolation); `AgenteRegistrarDolorTest` (ruling
+5, 9 tests: unknown day/exercise refused, nothing-to-register refused, out-of-range refused, a
+proposal writes nothing until applied, re-applying edits the same row, undo restores the prior
+value, `leer_entreno` carries the numbers never `movimiento`, cross-person isolation).
+`tests/test_entreno_sesion.py`'s `DolorCardTest` (rulings 2-3, 8 tests). `tests/test_migraciones.py`:
+`EntrenoDolorNewTableMigrationTest` (ruling 1's own table) and
+`PropuestaAgenteRegistrarDolorMigrationTest`/`FreshDbTest` (ruling 5's own CHECK widening, on a
+database built at the pre-this-slice schema, preserving existing rows byte-for-byte, idempotent).
+`tests/test_mudanza.py`'s `EntrenoDolorMudanzaTest`, `tests/test_privacidad.py`'s
+`EntrenoDolorExportDeleteTest`, `tests/test_persona_fuga.py`'s seeded row (the table-census guard).
+`tests/test_mcp.py`'s own offered-and-callable test for `registrar_dolor`.
+`tests/test_agente_conformidad.py`'s `ARGUMENTOS` entry, on its own dedicated seeded session (not
+`dia_a1`/`dia_a4` -- `corregir_entreno`'s own argument nulls `dia_a1`'s displayed exercise name once
+applied, and `descartar_series` excludes `dia_a4`'s only set, so sharing either day would have
+matched the wrong tool's own effect, not this slice's). Census updates across
+`tests/test_agente_registro.py` (53->54 tools, 32->33 `propuesta` tools),
+`tests/test_agente_bucle.py`, `tests/test_agente_propuestas.py`, `tests/test_agente_entreno.py`
+(`leer_entreno`'s session dict gains `dolor`), `tests/test_web_entry.py` (the two new POST routes),
+`tests/test_i18n_paridad.py` (`asistente.propuesta.titulo.registrar_dolor`), and
+`tests/test_registro_tu.py` (`agente.error.dolor_ejercicio_desconocido`'s own `'tiene'` allow-listed
+-- subject is `'ese entreno'`, not the reader).
+
+Statement ceilings, re-measured and named: `/day/{day}/entreno/{source_id}` (the session screen) --
+13 statements measured with the dolor card visible (a demo-seeded `strength_training` activity, not
+a manual session, which carries no `type` and never renders the card), ceiling 16 unchanged, ample
+headroom. `/` (Hoy) -- `db.pendientes_dolor_manana` costs exactly one bounded SELECT regardless of
+whether a pending row exists (measured 70 statements on a minimal fixture, identical with and
+without a pending card), never data-size dependent; ceiling 155 unchanged, confirmed green by the
+full `tests.test_rendimiento.RouteCostCeilingTest` run on the demo fixture. `body/demo.py`'s own
+`_LESION_DOLOR_MOVIMIENTO` seed: the entreno_dolor row `_seed_periodo` attaches to the lesion-
+corrected set is seeded already answered (`dolor_manana` filled), so the demo shows the dolor card
+prefilled on the session screen (ruling 3) without ever adding a pending morning-after card to `/`
+(ruling 4) -- keeping `/`'s own statement count independent of how far back the corrected day
+happens to land.
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run as 12
+sequential alphabetical chunks of ~19 dotted modules (223 modules total), each read directly from
+the process:
+
+| # | Range | Ran | Result |
+|---|-------|-----|--------|
+| 1 | test_accesibilidad .. test_backup | 386 | OK (skipped=1, expected failures=1) |
+| 2 | test_baselines .. test_demo | 451 | OK |
+| 3 | test_demo_modo_marca .. test_entreno_sesion | 424 | OK |
+| 4 | test_entreno_sets .. test_garmin_dia_vacio | 245 | OK |
+| 5 | test_garmin_diagnostico .. test_hogar_feed | 505 | OK |
+| 6 | test_hogar_miembro_1 .. test_leer_intradia | 506 | OK |
+| 7 | test_leer_noche .. test_modelos_estandar_1 | 463 | OK |
+| 8 | test_momentos_pull .. test_plan_pantalla | 485 | OK |
+| 9 | test_plan_propuestas .. test_pull_intradia_experimentos | 498 | OK |
+| 10 | test_pull_relleno .. test_sueno_fc | 306 | OK (after allow-listing ruling 5's own new string) |
+| 11 | test_sueno_respiracion_vista .. test_turnos_opcional_4 | 522 | OK |
+| 12 | test_turnos_opcional_5 .. test_web_entry | 235 | OK |
+
+Sum: 386+451+424+245+505+506+463+485+498+306+522+235 = **5026**. Reconciled against a separate
+collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, same final tree,
+counted by walking the discovered suite without running it) = **5026** -- exact match. Chunk 10's
+first run caught one real miss: `tests/test_registro_tu.py`'s tone guard flagged
+`agente.error.dolor_ejercicio_desconocido`'s own `'tiene'` as an unlisted usted-register marker;
+fixed by allow-listing it with the same reason already on file for `agente.error.entreno_sin_serie`
+(`'tiene'` subject is the workout, not the reader), then re-run green. Every other chunk ran green
+on the first attempt. The `KeyError`/`IntegrityError`/`NotSignedIn`/`AttributeError`/`ResourceWarning`/
+"dia vacio"/"pull attempt failed"/"mcp ... error"/"connect pull: error" lines printed mid-run are
+pre-existing fixtures exercising synthetic error paths, not gate failures, and none are in a file
+this slice touched. No password, token, session secret, device key or real health figure was read,
+printed or written anywhere in this slice's own work or the gate's own stdout; no network call was
+made; `~/.body-app/`, `C:\Duna\body\body-app\.env`, any real database and `C:\Personal` were never
+opened.
+
+**customer_bytes: changed, on purpose, approved by this spec.** New screens/cards only -- the
+session screen's dolor card (`entreno_sesion.dolor_*`, es/en) and Hoy's morning-after card
+(`hoy.dolor_manana_*`, es/en), plus the assistant's own new error/card/title strings
+(`agente.error.dolor_*`, `asistente.propuesta.dolor_*`, `asistente.propuesta.titulo.registrar_dolor`,
+es/en) and the two anchor labels (`dolor.escala.min`/`max`). None of these ever appear unless an
+open zona-carrying period exists (rulings 2-4) or the person/assistant actively uses the new tool
+(ruling 5) -- every existing screen's prior wording is byte-for-byte unchanged. Schema changed too:
+the additive `entreno_dolor` table (ruling 1) and the additive widening of
+`propuesta_agente.accion`'s CHECK (ruling 5) -- both named and approved by this same spec body
+(ORCH-CARLOS-DELEGATES-TIER-1-1: *"Additive table, carried by mudanza and privacidad, written only by
+the person (form) or through a proposal card he confirms"*). The spec's own body says in words:
+*"This slice adds customer bytes ... on purpose and this spec approves them: merge if green."* Both
+merge-policy-A conditions this diff fails (schema, customer-bytes) are explicitly waived in words by
+this spec's body, not merely its header -- merging on green.
+
+**Open follow-ups:** none coined by this slice's own work.
+
+**Commits:** `0f50302` (ruling 1: the table, migration, mudanza, privacidad) -- `79c4668` (rulings
+2-4: the session screen's dolor card and Hoy's next-morning card) -- `390131c` (ruling 5: the
+assistant's `registrar_dolor` proposal tool) -- `6603ac7` (the tone-guard allow-list fix found mid-
+gate) -- `b6cf46a` (this ledger entry) -- merged into `main`.
+

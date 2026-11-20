@@ -152,7 +152,11 @@ _CEILINGS = {
     "/asistente/conversacion/{conversacion_id}": 17,
     "/ayuda": 15,
     "/day/{day}": 81,
-    "/day/{day}/entreno/{source_id}": 16,  # BODY-ENTRENO-VISTA-SESION-1: measured 12, ceil(12 * 1.3) = 16
+    # BODY-ENTRENO-VISTA-SESION-1: measured 12, ceil(12 * 1.3) = 16. BODY-PLAN-FASES-5
+    # re-measured with the dolor card's own two new reads (zonas_en_recuperacion, dolor_de_sesion)
+    # ON THE REAL PATH that shows the card (an open 'lesion' period over a watch strength set's own
+    # categoria): 13, still comfortably under 16 -- ceiling unchanged.
+    "/day/{day}/entreno/{source_id}": 16,
     "/experiments/{experiment_id}": 27,
     "/garmin": 9,
     "/garmin/estado-vivo": 6,  # BODY-SYNC-VIVO-2: measured 4 (local mode's early 404, same path as

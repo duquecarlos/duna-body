@@ -534,7 +534,8 @@ class LeerEntrenoUltimaVezTest(unittest.TestCase):
     def test_nothing_else_in_the_output_changes(self):
         out = herramientas.ejecutar(self.conn, 1, "leer_entreno", {"day": "2026-11-10"}, "completo")
         sesion = out["sesiones"][0]
-        self.assertEqual(set(sesion), {"dia", "titulo", "fuente", "hora_inicio", "series", "ultima_vez"})
+        self.assertEqual(set(sesion),
+                         {"dia", "titulo", "fuente", "hora_inicio", "series", "ultima_vez", "dolor"})
         self.assertEqual(sesion["dia"], "2026-11-10")
         self.assertEqual(sesion["series"][0]["ejercicio"], "press banca")
         self.assertEqual(sesion["series"][0]["repeticiones"], 10)

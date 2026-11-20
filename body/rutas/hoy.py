@@ -298,6 +298,23 @@ def _noche_inusual_dia_ctx(t: T, conn, person_id: int, day: str, vals: dict) -> 
     return {"texto": t("day.noche_inusual", senales=_noche_inusual_senales(t, noche))}
 
 
+# BODY-PLAN-FASES-5 ruling 4: the 0-10 scale's own options, read once off db.py's own named
+# constant -- never a second hand-typed "10" in this module.
+_ESCALA_DOLOR_MANANA = list(range(db.DOLOR_ESCALA_MIN, db.DOLOR_ESCALA_MAX + 1))
+
+
+def _dolor_manana_hoy_ctx(t: T, conn, person_id: int, today_local: date) -> list[dict]:
+    """Ruling 4: Hoy's own due 'morning after' cards -- db.pendientes_dolor_manana's own reusable
+    read, one card per (día entrenado, zona) still unanswered, each titled with that zona's own
+    label and the natural list of exercises that loaded it. [] when nothing is due."""
+    out = []
+    for p in db.pendientes_dolor_manana(conn, person_id, today_local.isoformat()):
+        titulo = t("hoy.dolor_manana_titulo", zona=t("entreno.categoria." + p["zona"]),
+                   ejercicios=_lista_natural(t, p["ejercicios"]))
+        out.append({"day": p["day"], "zona": p["zona"], "titulo": titulo})
+    return out
+
+
 def _plan_categorias_hoy(conn, person_id: int, today_local: date) -> list | None:
     """BODY-CUERPO-VISTA-1: today's own training plan, if any -- `plan.ejercicios_json` is "shape
     owned by the tool that writes it" (body/db.py), so an exercise's own `categoria` key is read
@@ -771,7 +788,9 @@ def today(background_tasks: BackgroundTasks, person_id: int = Depends(identity.c
                    noche_inusual=_noche_inusual_hoy_ctx(t, conn, person_id, day, vals),
                    despertar=_despertar_hoy_ctx(t, conn, person_id, day, today_local, correcciones_hoy),
                    objetivos_nutriente=_objetivos_nutriente_ctx(t, conn, defs, person_id, day, es_hoy),
-                   comida_compartida_pendientes=_comida_compartida_pendientes_ctx(t, conn, defs, person_id))
+                   comida_compartida_pendientes=_comida_compartida_pendientes_ctx(t, conn, defs, person_id),
+                   dolor_manana=_dolor_manana_hoy_ctx(t, conn, person_id, today_local),
+                   escala_dolor=_ESCALA_DOLOR_MANANA)
 
 
 # readiness.Part.key -> the Tendencias metric it reads from (readiness.Part carries no metric key of its
@@ -1443,6 +1462,30 @@ async def noche_inusual_nota(day: str, request: Request, person_id: int = Depend
     if texto:
         noche_inusual.guardar_nota(conn, person_id, d.isoformat(), texto)
     back = cuenta.safe_return_to(f.get("back") or f"/day/{day}")
+    return RedirectResponse(back, status_code=303)
+
+
+@router.post("/day/{day}/dolor-manana")
+@comun._cierra_conexion_async
+async def dolor_manana_registrar(day: str, request: Request, person_id: int = Depends(identity.current_person_id)):
+    """BODY-PLAN-FASES-5 ruling 4: Hoy's own due 'morning after' card -- `day` is the TRAINED day
+    the card is about (db.pendientes_dolor_manana's own "day" field, like noche_inusual.day above),
+    never today's own date; `zona` is a hidden field. Fills dolor_manana + manana_registrado_en on
+    every still-open row of that zona on that day, through db.registrar_dolor_manana -- the same
+    writer a later follow-up can share (ruling 4's own "not a one-off branch")."""
+    d = _parse_day(day)
+    conn, _, _ = comun._ctx(person_id)
+    f = await comun._form(request)
+    zona = f.get("zona")
+    valor = f.get("valor")
+    if zona and valor is not None and valor != "":
+        try:
+            v = int(valor)
+        except ValueError:
+            v = None
+        if v is not None and db.DOLOR_ESCALA_MIN <= v <= db.DOLOR_ESCALA_MAX:
+            db.registrar_dolor_manana(conn, person_id, d.isoformat(), zona, v)
+    back = cuenta.safe_return_to(f.get("back") or "/")
     return RedirectResponse(back, status_code=303)
 
 
