@@ -139,6 +139,14 @@ _DESCRIPCION_DESCARTAR_PROPUESTA = (
 LIMITES = {"ventana_min": agente_propuestas.EXPIRA_MINUTOS, "lecturas": bucle.MAX_LECTURAS,
            "propuestas": bucle.MAX_RONDAS, "aplicaciones": bucle.MAX_LECTURAS}
 
+# ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2: LIMITES["lecturas"] above (bucle.MAX_LECTURAS, unchanged)
+# was written for the IN-APP assistant's own per-question budget -- a model call per round, so a
+# tight ceiling. The remote door's own reads cost Body only database time, no model call, and the
+# person's own key already reaches every figure a read could return, so it gets its OWN, much
+# larger per-window ceiling here -- never used by the local stdio door (`_Sesion`, still
+# LIMITES["lecturas"]) or by "propuestas"/"aplicaciones" on either door, both unchanged.
+MCP_MAX_LECTURAS = 120
+
 # BODY-MCP-REMOTO-SERVIDOR-1 ruling 4: every tool name that counts as "lectura"/"propuesta" for
 # the DB-backed remote caps, read off the SAME registry the local in-memory _Tope's own dispatch
 # already keys on (herramientas.tipo_de) -- never a second, hand-typed list. NOMBRE_APLICAR is its
@@ -322,8 +330,10 @@ class _SesionRemota:
         # at all.
         self._puede_aplicar = puede_aplicar
         reloj = reloj or (lambda: datetime.now(timezone.utc))
+        # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2: MCP_MAX_LECTURAS, not LIMITES["lecturas"] -- the
+        # one difference between this door's own reads cap and the local stdio door's below.
         self.tope_lecturas = _TopeDB(conn, person_id, _NOMBRES_LECTURA, LIMITES["ventana_min"],
-                                      LIMITES["lecturas"], reloj)
+                                      MCP_MAX_LECTURAS, reloj)
         self.tope_propuestas = _TopeDB(conn, person_id, _NOMBRES_PROPUESTA, LIMITES["ventana_min"],
                                         LIMITES["propuestas"], reloj)
         self.tope_aplicaciones = _TopeDB(conn, person_id, (NOMBRE_APLICAR,), LIMITES["ventana_min"],

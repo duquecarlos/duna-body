@@ -31290,3 +31290,144 @@ purpose and this spec approves it: merge if green."* -- merging on green.
 **Commits:** `bbdc06b` (ruling 1) -- `81f36b0` (ruling 2) -- `14dd3d9` (ruling 3) -- `d68f73b` (this ledger entry) --
 merged into `main` (`--no-ff`) -- merged 9817d2ae039f35004c91f8a79de008d0a8bd9965.
 
+## BODY-MINUTO-ANALISIS-1 -- leer_serie gains a minute step, and the remote MCP door gets its own read budget (2026-11-20)
+
+Carlos, relayed by the desk 2026-11-20, his own words: *"I want between you and body design specialized tools to
+analyze in full detail every minute of the metrics."* First of a series (BODY-MINUTO-ANALISIS-*); this slice (-1) is
+a read step plus a read-budget fix, measured by the orchestrator (ORCH-CARLOS-DELEGATES-TIER-1-1): (A) `leer_serie`
+only read daily/weekly/monthly steps, so a question about one stretch of a night or a day cost a whole `leer_noche`
+or several `leer_intradia` calls; (B) the remote MCP's own read cap, `LIMITES["lecturas"]` = `bucle.MAX_LECTURAS` = 5
+per window, was written for the IN-APP assistant's own per-question budget (a model call per round) and reused,
+unchanged, for the remote door, whose reads cost Body only database time -- the desk hit "reading limit is reached,
+try again in 15 min" while analysing nights.
+
+**Ruling 1 (a minute step) -- `55c9980`.** `leer_serie` (`body/agente/herramientas.py`) gains `paso='minuto'`
+(`LEER_SERIE_PASOS`, line 129) for a window given by full LOCAL timestamps `desde`/`hasta` (never a plain date, since
+the window may cross midnight), at most `_LEER_SERIE_MAX_MIN_PASO_MINUTO` = 360 minutes (line 137), over the six
+minute streams in `LEER_SERIE_MINUTO_METRICAS` (line 138: fc, estres, etapa, vfc, movimiento, body_battery) --
+`_PARAM_LEER_SERIE`'s own `metricas` enum (line 144) is the union of these and the existing daily `TENDENCIA_
+METRICAS`, the paso-dependent split enforced in Python, the same way its bounds already were; `desde`/`hasta` lose
+their old `"format": "date"` (paso-dependent shape, never checked by the JSON-schema layer). `_leer_serie` dispatches
+to the new `_leer_serie_minuto` (line ~1215 at the time of writing; function body unaffected by the ledger's own line
+drift) before any of the date-only parsing that would reject a full timestamp (line 989: `if paso == "minuto":`).
+`_leer_serie_minuto` needs `nivel_datos='completo'`, the same rule paso='dia' already enforces, and returns ONE row
+per minute present on at least one requested stream (`_filas_leer_serie_minuto`, line 1099), built by:
+- `fc`/`estres`/`movimiento`: minute-exact joins against `db.intradia`/the night's own `arrays["movement"]`
+  (`db.sueno_minuto_a_minuto`, the exact date-safe reader `leer_noche` already uses for both calendar dates a window
+  touches).
+- `etapa`: the Garmin stage segment covering that minute (`ETAPAS_SUENO_GARMIN`, the same label `leer_noche` already
+  shows), each segment's own end being the next segment's start or the night's own stored `end_local`.
+- `vfc`/`body_battery`: the sparser streams, matched with two small helpers (`_mas_reciente_dentro`, line 1071: the
+  latest sample at or before the minute, within `_LEER_SERIE_MINUTO_TOL_VFC_MIN` = 5 minutes -- HRV's own
+  forward-fill; `_mas_cercano_dentro`, line 1083: the nearest sample on EITHER side, within `_LEER_SERIE_MINUTO_
+  TOL_BB_MIN` = 15 minutes -- body_battery's own looser sampling), both bisect-based over a pre-sorted sample list.
+  `body_battery` is parsed on read from its own stored raw_payload by a NEW, small parser kept here, `_bateria_
+  corporal_minuto` (line 1031) -- the SAME extraction `garmin_adapter.py:572-578`'s own high/low fallback uses
+  (`[timestamp_ms, value]` pairs, `garmin_adapter._num`/`garmin_adapter._utc_to_local_iso` called from outside the
+  module exactly as `body/cobertura.py` already does for `_num`, `garmin_adapter.py` itself never edited).
+  A window may touch TWO nights' own arrays (Garmin files a night under its WAKE day, which can sit on either side
+  of the calendar dates a window's own clock time touches): the candidate wake days are read in ONE `sleep_session`
+  statement (an `IN` clause over a small, fixed set), never one query per candidate, so the statement count stays
+  independent of window length -- bounded by the number of CALENDAR DATES and NIGHT CANDIDATES the (capped) window
+  can ever touch, never by how many minutes it spans. Each key is present on a row only when that stream actually
+  has a usable sample there -- never a 0 or an invented value, and a minute with no stream data at all gets no row.
+  The registry's own `descripcion` (near line 3679) now names the minute step and says when to use it (a window
+  inside a night or a day) versus `leer_noche` (the whole night once) and `leer_intradia` (kept, unchanged).
+  Tests (new module `tests/test_leer_serie_minuto.py`, 18 cases): a 40-minute window crossing midnight returns one
+  row per minute with full timestamps from both calendar dates and the half-open `[desde, hasta)` convention
+  `leer_intradia` already uses; `etapa` covers every minute of its own segment and an unmapped code reads
+  'desconocido' (never dropped); `vfc` forward-fills within its 5-minute tolerance and never reads from a sample
+  still in the future; `body_battery` matches the nearer sample on EITHER side within its 15-minute tolerance, and
+  is absent past it on both sides; a stream with no stored data never appears on any row; a window over 360 minutes,
+  `hasta <= desde`, a malformed timestamp, a future window, an unknown paso='minuto' metric and nivel='resumen' are
+  all refused with a `ToolError`; another person's minutes never appear; statement count is identical for a 10-
+  minute and the full 360-minute window (`StatementCountTest`). `tests/test_agente_leer_serie.py` (20 cases) reruns
+  green unchanged -- the existing paso='dia'/'semana'/'mes' path is untouched by the dispatch added at line 989.
+
+**Ruling 2 (the remote door's own read budget) -- `a893f53`.** `body/mcp.py` adds `MCP_MAX_LECTURAS = 120` (line 148)
+as its own named constant, with the reason in its own comment: remote reads cost Body only database time, not a
+model call, and the person's own key already reaches every figure a read could return. `_SesionRemota.__init__`
+(the hosted HTTP door, backed by `_TopeDB`, the audit-table-counted cap) now builds `tope_lecturas` from
+`MCP_MAX_LECTURAS` instead of `LIMITES["lecturas"]` (line 335-336) -- `LIMITES["lecturas"]` itself is UNCHANGED
+(still `bucle.MAX_LECTURAS` = 5), so the LOCAL stdio door (`_Sesion`, backed by the in-memory `_Tope`) keeps its own,
+unchanged cap, exactly as `propuestas`/`aplicaciones` on either door are unchanged. `tests/test_mcp_remoto.py`'s own
+`CapsTest` updated: `test_lectura_cap_reached_then_allowed_again_after_the_window` now loops `mcp.MCP_MAX_LECTURAS`
+(120) remote calls instead of 5 before asserting the next one is refused; `test_local_calls_count_toward_the_same_
+remote_cap` now loops 119 LOCAL calls through `mcp._llamar_herramienta` (swallowing the `ToolError` each one raises
+past the local door's own, still-5 in-memory cap -- every attempt is audited BEFORE that check, per `_TopeDB`'s own
+docstring, so the shared count keeps growing through the refusals) before showing the remote door accepts the 120th
+shared read and refuses the 121st -- the same "one shared budget, not one per door" fact ruling 4 (BODY-MCP-REMOTO-
+SERVIDOR-1) already established, now demonstrated at the new, larger cap. `test_aplicaciones_cap_is_the_tighter_one`
+and `_envejecer_ventana` are untouched (`LIMITES["aplicaciones"]`/`["ventana_min"]` unchanged).
+
+**Ruling 3 (descriptions) -- folded into ruling 1's own commit** (the registry text is one edit alongside the new
+tool parameters, not a separable change): covered above.
+
+**Census run first, as required (no file outside `touches` needed editing):** `git grep -n "LIMITES\|MAX_LECTURAS\|
+_leer_serie\|paso\b\|sueno_minuto_a_minuto\|bodyBatteryValuesArray" -- body/ tests/` located every call site this
+slice needed (`body/mcp.py`'s `LIMITES`/`_TopeDB`/`_Sesion`/`_SesionRemota`, `body/agente/herramientas.py`'s
+`_leer_serie`/`LEER_SERIE_PASOS`, `body/db.py`'s `sueno_minuto_a_minuto`, `body/garmin_adapter.py:572-578`'s
+`bodyBatteryValuesArray` fallback, `body/cobertura.py`'s own precedent for calling `garmin_adapter._num` from
+outside that module) before any edit was made.
+
+**Files in `touches` found NOT needed, named per the spec's own instruction:** `body/i18n/es.json`/`en.json` (no
+user-facing string was added or changed -- `leer_serie`'s `descripcion` is a Spanish-only internal tool-catalogue
+string never localized, like `leer_noche`'s own per BODY-NOCHE-LECTURA-3 above, and the cap-reached message
+`asistente.mcp.limite_lecturas` only ever interpolates `minutos`, never the cap count itself, so ruling 2 needed no
+new or changed key); `tests/test_mcp_http.py`, `tests/test_mcp_cliente_remoto.py`, `tests/test_mcp_visible.py`,
+`tests/test_mcp_pendientes.py`, `tests/test_mcp_aplicar.py`, `tests/test_mcp_copia_pc.py`, `tests/test_agente_
+registro.py`, `tests/test_agente_conformidad.py`, `tests/test_agente_bucle.py`, `tests/test_persona_fuga.py`,
+`tests/test_i18n_paridad.py`, `tests/test_rendimiento.py` (each re-run green below, unchanged -- none pins
+`LIMITES["lecturas"]`'s own VALUE or a `leer_serie` paso='minuto' assertion this slice's diff could break; the
+`test_mcp_*` census for pinned `LIMITES` found only `test_mcp.py` (local door, unchanged value) and `test_mcp_
+remoto.py` (edited above)).
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run as 12 sequential
+alphabetical chunks of ~20 dotted modules (226 modules total, one more than BODY-NOCHE-LECTURA-3's count: this
+slice's own new `tests/test_leer_serie_minuto.py`; the four `test_host_*` modules kept together in chunk 6, a
+10-module chunk, alongside `test_horizonte`/`test_household`/`test_hoy*`), each read directly from the process:
+
+| # | Range | Ran | Result |
+|---|-------|-----|--------|
+| 1 | test_accesibilidad .. test_asistente_panel | 385 | OK (expected failures=1) |
+| 2 | test_backup .. test_demo | 459 | OK (skipped=1) |
+| 3 | test_demo_modo_marca .. test_entreno_sets | 442 | OK |
+| 4 | test_entreno_sueno .. test_garmin_estado | 264 | OK |
+| 5 | test_garmin_host .. test_hogar_registrar_idempotente | 515 | OK |
+| 6 | test_horizonte .. test_hoy_ventana_comida | 347 | OK |
+| 7 | test_i18n_paridad .. test_mcp_remoto | 449 | OK |
+| 8 | test_mcp_visible .. test_persona_fuga | 513 | OK |
+| 9 | test_persona_garmin .. test_pulido_1 | 532 | OK |
+| 10 | test_pulido_2 .. test_sin_friccion | 345 | OK |
+| 11 | test_static_version .. test_turnos_opcional_2 | 514 | OK |
+| 12 | test_turnos_opcional_3 .. test_web_entry | 287 | OK |
+
+Sum: 385+459+442+264+515+347+449+513+532+345+514+287 = **5052**. Reconciled against a separate collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.')`, same final tree, counted by walking the discovered
+suite without running it) = **5052** -- exact match, no re-run needed. Chunk 5 ran past the 600s foreground cap and
+was moved to the background by the harness; its own artifact was read back to completion (980.333s, 515 tests, OK)
+before any further chunk ran. Every other chunk ran green on its first attempt. The `NotSignedIn`/`AttributeError`/
+`ResourceWarning`/"dia vacio"/"pull attempt failed"/"mcp ... error"/"connect pull: error"/"backfill:"/"RuntimeError:
+boom" lines printed mid-run are pre-existing fixtures exercising synthetic error paths, not gate failures, and none
+are in a file this slice touched. No password, token, session secret, device key or real health figure was read,
+printed or written anywhere in this slice's own work or the gate's own stdout; no network call was made;
+`~/.body-app/`, `C:\Duna\body\body-app\.env`, any real database, `C:\Duna\body\body-app-live`,
+`C:\Duna\body\body-app-live-live` and `C:\Personal` were never opened.
+
+**customer_bytes: changed, on purpose, approved by this spec.** `leer_serie`'s own `descripcion` string (the tool-
+catalogue text the assistant MODEL reads, Spanish-only, never shown to Carlos directly) gains the paso='minuto'
+sentence -- the only wording change in this slice. Every other change is either a new assistant tool OUTPUT shape
+(`leer_serie`'s new `paso='minuto'` response) or a server-side rate-limit constant (`MCP_MAX_LECTURAS`) that changes
+WHEN a refusal message appears, never its own wording. No schema change, no Tier 1 path touched, no write path
+anywhere in the diff. The spec's own approval-reason says in words: *"A read-only step on an existing assistant read
+tool and a larger read cap for the person's own remote key; no schema, no Tier 1 path, no write. Reversible...
+Deploying follows his standing go."* -- merging on green.
+
+**Open follow-ups:** BODY-MINUTO-ANALISIS-2 (night features compared against the person's own history, shapes and
+ranks rather than raw arrays), BODY-MINUTO-ANALISIS-3 (a night/event finder over those features) and BODY-MINUTO-
+ANALISIS-4 (a read-only investigation of day-context tags: place/altitude, travel, shift, training load, late meal,
+alcohol) are named in the surface this slice was dispatched from, not coined here -- left for their own slices.
+
+**Commits:** `55c9980` (ruling 1 + its tests) -- `a893f53` (ruling 2 + its tests) -- this ledger entry -- merged into
+`main` (`--no-ff`).
+
