@@ -167,6 +167,22 @@ MOTIVOS_INTRADIA_SIN_DATOS = ("fuera_de_alcance", "reloj_apagado", "no_traido")
 _LEER_NOCHE_ANTES_MIN = 60
 _LEER_NOCHE_DESPUES_MIN = 120
 _LEER_NOCHE_MAX_MIN = 16 * 60
+
+# BODY-NOCHE-LECTURA-2 ruling 2: Garmin's own sleep-stage code, ASSUMED -- never confirmed by the
+# installed garminconnect package, same unconfirmed-key convention garmin_adapter's own
+# _SLEEP_SERIES_SPECS already documents for this array. A code outside this table gets
+# 'desconocido', never a guess; each night leer_noche reads CHECKS the mapping against that
+# night's own stored totals (`_verificar_etapas` below) instead of trusting it blind.
+ETAPAS_SUENO_GARMIN = {0: "profundo", 1: "ligero", 2: "rem", 3: "despierto"}
+# The SAME four keys the day page's own stage bar reads (body/rutas/hoy.py's STAGES) -- never a
+# second name for the same total.
+_ETAPA_METRICA = {"profundo": "sleep_deep_min", "ligero": "sleep_light_min",
+                   "rem": "sleep_rem_min", "despierto": "sleep_awake_min"}
+# BODY-NOCHE-LECTURA-2 ruling 1: when rango_30_dias is null, the z fallback below reuses
+# baselines.baseline's own formula (mean/sd/quantiles) over a window wide enough to reach the
+# person's whole history -- never a second formula, and never what rango_historia itself shows
+# (that one stays profile.metric_profile's own low/high, unexcluded, matching Tendencias exactly).
+_VENTANA_HISTORIA_DIAS = 3650
 _PARAM_LEER_NOCHE = {
     "type": "object",
     "properties": {"fecha": {"type": "string", "format": "date"}},
@@ -1081,28 +1097,97 @@ def _minutos_despierto_tras_fin(resultado_modelo: dict) -> float | None:
     return round(delta.total_seconds() / 60, 1)
 
 
+def _motivo_sin_rango_30_dias(conn: sqlite3.Connection, person_id: int, fecha: str, key: str) -> str:
+    """BODY-NOCHE-LECTURA-2 ruling 1: the two honest reasons `rango_30_dias` can come back null --
+    'pocos_dias' when there were not even `baselines.MIN_DAYS` values in the 30-day window BEFORE
+    marked days were excluded, 'dias_marcados' when there were and the exclusion (BODY-PERIODO-1
+    ruling 3) is what emptied it. One extra COUNT over the same window baselines.baseline already
+    used, never the per-day exclusion math baselines.py owns."""
+    d = date.fromisoformat(fecha)
+    desde = (d - timedelta(baselines.WINDOW_DAYS)).isoformat()
+    hasta = (d - timedelta(1)).isoformat()
+    total = conn.execute(
+        "SELECT COUNT(*) AS n FROM daily_metric_efectiva WHERE person_id = ? AND metric_key = ? "
+        "AND day BETWEEN ? AND ?", (person_id, key, desde, hasta),
+    ).fetchone()["n"]
+    return "pocos_dias" if total < baselines.MIN_DAYS else "dias_marcados"
+
+
+def _rango_doble_y_z(conn: sqlite3.Connection, person_id: int, fecha: str, key: str,
+                      min_days_historia: int, valor: float) -> dict:
+    """BODY-NOCHE-LECTURA-2 ruling 1: both of this metric's own usual ranges for one night, each
+    independently None -- `rango_30_dias` is `baselines.baseline` unchanged (the 30 days before
+    this night, marked days excluded); `rango_historia` is `profile.metric_profile` unchanged (the
+    SAME figure the person's own Tendencias card shows for this key, never excluding marked days)
+    -- never a second range computed here. `z` prefers `rango_30_dias`'s own `.z()`; when that one
+    is null, the fallback reuses `baselines.baseline` again over `_VENTANA_HISTORIA_DIAS` -- a
+    spread to measure against without ever changing what `rango_historia` itself shows. `z_base`
+    names which range `z` actually came from, or None with neither."""
+    base_30 = baselines.baseline(conn, key, fecha, person_id=person_id)
+    perfil = profile.metric_profile(conn, key, person_id=person_id, min_days=min_days_historia)
+    out = {
+        "rango_30_dias": {"bajo": base_30.low, "alto": base_30.high} if base_30 is not None else None,
+        "rango_historia": {"bajo": perfil.low, "alto": perfil.high, "dias": perfil.days}
+                           if perfil is not None else None,
+    }
+    if base_30 is not None:
+        out["z"], out["z_base"] = base_30.z(valor), "rango_30_dias"
+        return out
+    out["motivo_sin_rango_30_dias"] = _motivo_sin_rango_30_dias(conn, person_id, fecha, key)
+    base_amplio = baselines.baseline(conn, key, fecha, window=_VENTANA_HISTORIA_DIAS, person_id=person_id)
+    out["z"] = base_amplio.z(valor) if base_amplio is not None else None
+    out["z_base"] = "rango_historia" if base_amplio is not None else None
+    return out
+
+
+def _verificar_etapas(sueno_arrays: dict, fin_dt: datetime, valores_dia: dict) -> dict:
+    """BODY-NOCHE-LECTURA-2 ruling 2: whether `ETAPAS_SUENO_GARMIN`'s assumed mapping holds for
+    THIS night -- minutes summed per label from the raw 'stages' array (each point's own span to
+    the next one, the LAST point's own span to `fin_dt`, since Garmin's own segments carry no end
+    time here -- garmin_adapter.parse_sleep_series keeps only each segment's start) against the
+    night's own stored totals (sleep_deep_min/sleep_light_min/sleep_rem_min/sleep_awake_min -- the
+    SAME keys the day page's own stage bar reads, body/rutas/hoy.py's STAGES). null when a stored
+    total is missing -- never invented from the array alone. A 'desconocido' stretch counts toward
+    no total, on either side of the comparison."""
+    totales = {metrica: valores_dia.get(metrica) for metrica in _ETAPA_METRICA.values()}
+    if any(v is None for v in totales.values()):
+        return {"coincide": None, "diferencia_min_max": None}
+    puntos = sorted(sueno_arrays.get("stages") or (), key=lambda par: par[0])
+    minutos = {metrica: 0.0 for metrica in _ETAPA_METRICA.values()}
+    for i, (ts, codigo) in enumerate(puntos):
+        inicio = experimentos._sin_offset(ts)
+        fin = experimentos._sin_offset(puntos[i + 1][0]) if i + 1 < len(puntos) else fin_dt
+        metrica = _ETAPA_METRICA.get(ETAPAS_SUENO_GARMIN.get(codigo, "desconocido"))
+        if metrica is not None:
+            minutos[metrica] += max(0.0, (fin - inicio).total_seconds() / 60)
+    diferencia = max(abs(minutos[m] - totales[m]) for m in minutos)
+    return {"coincide": diferencia <= 5, "diferencia_min_max": round(diferencia, 1)}
+
+
 def _derivados_noche(conn: sqlite3.Connection, person_id: int, fecha: str, sueno_arrays: dict,
                       inicio_dt: datetime, fin_dt: datetime) -> dict:
-    """BODY-NOCHE-LECTURA-1 ruling 2: the facts Body already knows how to compute for this one
-    night, each independently `None` when ITS OWN input is missing -- never invented, and never
-    gated on whether a sibling fact could be computed. `fc_minima_vs_rango` and `vfc_noche`'s own
-    usual range reuse `baselines.baseline` (body/baselines.py), the SAME helper every screen that
-    shows a person's own normal already calls (body/goals.py, body/rutas/tendencias.py,
-    body/noche_inusual.py) -- never a second range computed here. `despertar_modelo` is
-    `despertar_real.estimar`'s own, unedited dict (body/despertar_real.py) -- never reimplemented."""
+    """BODY-NOCHE-LECTURA-1 ruling 2 (BODY-NOCHE-LECTURA-2 ruling 1 widens the two range facts and
+    adds `etapas_verificacion`): the facts Body already knows how to compute for this one night,
+    each independently `None` when ITS OWN input is missing -- never invented, and never gated on
+    whether a sibling fact could be computed. `fc_minima_vs_rango` and `vfc_noche`'s own ranges
+    reuse `baselines.baseline` and `profile.metric_profile` (see `_rango_doble_y_z`), the SAME
+    helpers every screen that shows a person's own normal already calls -- never a second range
+    computed here. `despertar_modelo` is `despertar_real.estimar`'s own, unedited dict
+    (body/despertar_real.py) -- never reimplemented."""
     fc_minima = _fc_minima_noche(sueno_arrays, inicio_dt, fin_dt)
     fc_minima_vs_rango = None
     if fc_minima is not None:
-        base_fc = baselines.baseline(conn, sueno_fc.CLAVE_MIN, fecha, person_id=person_id)
-        if base_fc is not None:
-            fc_minima_vs_rango = {"bajo": base_fc.low, "alto": base_fc.high, "z": base_fc.z(fc_minima["valor"])}
+        min_days = 1 if sueno_fc.CLAVE_MIN in SELF_METRIC_KEYS else 14
+        fc_minima_vs_rango = _rango_doble_y_z(conn, person_id, fecha, sueno_fc.CLAVE_MIN, min_days,
+                                               fc_minima["valor"])
 
-    vfc_valor = db.day_values(conn, fecha, person_id).get("hrv_last_night")
+    valores_dia = db.day_values(conn, fecha, person_id)
+    vfc_valor = valores_dia.get("hrv_last_night")
     vfc_noche = None
     if vfc_valor is not None:
-        base_vfc = baselines.baseline(conn, "hrv_last_night", fecha, person_id=person_id)
+        min_days = 1 if "hrv_last_night" in SELF_METRIC_KEYS else 14
         vfc_noche = {"valor": vfc_valor,
-                     "rango": {"bajo": base_vfc.low, "alto": base_vfc.high} if base_vfc is not None else None}
+                     **_rango_doble_y_z(conn, person_id, fecha, "hrv_last_night", min_days, vfc_valor)}
 
     despertar_modelo = despertar_real.estimar(conn, person_id, fecha)
 
@@ -1112,6 +1197,7 @@ def _derivados_noche(conn: sqlite3.Connection, person_id: int, fecha: str, sueno
         "vfc_noche": vfc_noche,
         "despertar_modelo": despertar_modelo,
         "minutos_despierto_tras_fin": _minutos_despierto_tras_fin(despertar_modelo),
+        "etapas_verificacion": _verificar_etapas(sueno_arrays, fin_dt, valores_dia),
     }
 
 
@@ -1175,8 +1261,12 @@ def _leer_noche(conn: sqlite3.Connection, person_id: int, fecha: str, actualizac
     estres.sort(key=lambda p: p[0])
 
     sueno_arrays = db.sueno_minuto_a_minuto(conn, person_id, fecha, zona)
+    # BODY-NOCHE-LECTURA-2 ruling 2: 'stages' carries Garmin's own code AND its assumed label
+    # together ([hora, codigo, etiqueta]) -- every other array keeps its plain [hora, valor] shape.
     sueno = {"inicio": fila_sueno["start_local"], "fin": fila_sueno["end_local"],
-             **{nombre: [[ts, v] for ts, v in serie] for nombre, serie in sueno_arrays.items()}}
+             **{nombre: ([[ts, v, ETAPAS_SUENO_GARMIN.get(v, "desconocido")] for ts, v in serie]
+                         if nombre == "stages" else [[ts, v] for ts, v in serie])
+                for nombre, serie in sueno_arrays.items()}}
     correcciones = db.despertar_correcciones(conn, person_id, fecha)
     if correcciones:
         sueno["correcciones"] = correcciones
@@ -3199,10 +3289,14 @@ HERRAMIENTAS = [
                      "medianoche), el sueño minuto a minuto, el inicio y el fin que registró el reloj, tus "
                      "propias correcciones, y lo que Body ya sabe calcular sobre esa noche (el pulso más bajo "
                      "y cómo se compara con tu rango habitual, tu VFC nocturna y su rango habitual, y el "
-                     "modelo de despertar real). Para esa misma noche úsala en vez de leer_intradia -- ella "
-                     "sola reemplaza varias llamadas de leer_intradia. Para un momento puntual de hasta 4 "
-                     "horas (no una noche completa) usa leer_intradia; para varios días usa leer_dia o "
-                     "leer_serie.",
+                     "modelo de despertar real). Cada rango habitual viene en dos versiones, cada una ausente "
+                     "por su cuenta: rango_30_dias (los 30 días antes de esta noche, sin los días marcados) y "
+                     "rango_historia (toda tu historia, la misma que ves en Tendencias). Las etapas del sueño "
+                     "llevan su propia etiqueta (profundo/ligero/rem/despierto) junto con una verificación de "
+                     "esa etiqueta noche por noche contra tus totales ya guardados. Para esa misma noche "
+                     "úsala en vez de leer_intradia -- ella sola reemplaza varias llamadas de leer_intradia. "
+                     "Para un momento puntual de hasta 4 horas (no una noche completa) usa leer_intradia; "
+                     "para varios días usa leer_dia o leer_serie.",
      "parametros": _PARAM_LEER_NOCHE, "funcion": _leer_noche, "necesita_actualizacion": True},
     {"nombre": "leer_tendencias", "tipo": "lectura", "nivel": "resumen",
      "descripcion": "Promedios de un rango de días frente a tu historia, sin bajar al dato de un día.",
