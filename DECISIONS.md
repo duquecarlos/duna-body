@@ -30691,7 +30691,7 @@ BODY-NOCHE-LECTURA-1-M, a pre-existing module-order-dependent leak in `tests/tes
 this slice; the alphabetical gate order above never triggers it.
 
 **Commits:** `7bae0b7` (step 1: ruling 1 with its tests) -- `9b97265` (step 2: rulings 2-3 with
-their tests).
+their tests) -- merged `9b465061dcc84f33cce9b1173b52fd11e5f8836e` into `main`.
 
 ## BODY-HISTORIA-MINUTO-2
 
