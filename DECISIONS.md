@@ -32295,5 +32295,5 @@ opened. `git status --porcelain` empty throughout.
 `tests/test_noche_rasgos.py`; 2 files changed, +218/-26) and `c6181bbf6eeac218e3e8641080361903a00bc683`
 (`body/agente/herramientas.py`, `tests/test_agente_registro.py`, `tests/test_buscar_noches.py` (new),
 `tests/test_mcp.py`, `tests/test_persona_fuga.py`, `tests/test_rendimiento.py`; 6 files changed, +599/-11), plus this
-ledger text, on the branch -- merged into `main` (`--no-ff`).
+ledger text, on the branch -- merged into `main` (`--no-ff`) -- merged `c298dcfb8ab3e3f50a62241573e6b8b1a23de281`.
 
