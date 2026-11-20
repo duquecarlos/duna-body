@@ -153,6 +153,57 @@ class SleepCoverageTest(unittest.TestCase):
         for datos in sleep["claves"].values():
             self.assertEqual(datos["noches"], 0)
             self.assertIsNone(datos["mediana_muestras"])
+        self.assertEqual(sleep["claves_crudas"], {})
+
+
+# -------------------------------------------------------------- ruling 3: raw top-level key census
+
+
+class ClavesCrudasTest(unittest.TestCase):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3: every top-level key name a stored sleep payload
+    carries, with nights present/non-empty -- names and counts only, so an assumed key that is
+    simply wrong (BODY-COBERTURA-HOST-1's SpO2 census) can be told apart from a key that is
+    genuinely absent, by naming whatever key IS there instead."""
+
+    def setUp(self):
+        self.conn = _db(self, "claves_crudas.db")
+
+    def test_counts_every_top_level_key_including_an_unassumed_one(self):
+        p = db.local_person_id(self.conn)
+        # An invented key no assumed spec names -- the real-world case this ruling answers: the
+        # watch may record SpO2 under a name nobody assumed, and this census must still find it.
+        _raw(self.conn, p, "2026-11-10", "sleep", garmin_adapter.SOURCE, json.dumps({
+            **_sleep_payload(), "unknownSpo2KeyXYZ": [{"epochTimestamp": "t", "spo2Reading": 999}],
+        }))
+        _raw(self.conn, p, "2026-11-11", "sleep", garmin_adapter.SOURCE, json.dumps({
+            "sleepHeartRate": [{"startGMT": "2026-11-11 02:00:00.0", "value": 173}],
+            "unknownSpo2KeyXYZ": [{"epochTimestamp": "t", "spo2Reading": 999}],
+        }))
+        # A third night where the unassumed key is present but EMPTY -- never counted.
+        _raw(self.conn, p, "2026-11-12", "sleep", garmin_adapter.SOURCE, json.dumps({
+            "sleepHeartRate": [{"startGMT": "2026-11-12 02:00:00.0", "value": 173}],
+            "unknownSpo2KeyXYZ": [],
+        }))
+
+        out = cobertura.recopilar(self.conn)
+        crudas = out["sleep"]["claves_crudas"]
+        self.assertEqual(crudas["unknownSpo2KeyXYZ"], 2)  # the third night's empty array never counts
+        self.assertEqual(crudas["sleepHeartRate"], 3)
+        self.assertEqual(crudas["wellnessEpochSPO2DataDTOList"], 1)  # from _sleep_payload()'s own night
+        self.assertEqual(crudas["hrvData"], 1)
+        self.assertEqual(crudas["sleepLevels"], 1)
+        self.assertEqual(crudas["sleepMovement"], 1)
+
+        # Never a value, invented or real: only the key NAME and a count ever reach the output.
+        dumped = json.dumps(out)
+        self.assertNotIn("999", dumped)
+        self.assertNotIn("173", dumped)
+
+    def test_a_payload_that_is_not_a_dict_contributes_no_key(self):
+        p = db.local_person_id(self.conn)
+        _raw(self.conn, p, "2026-11-10", "sleep", garmin_adapter.SOURCE, json.dumps("not-a-dict"))
+        out = cobertura.recopilar(self.conn)
+        self.assertEqual(out["sleep"]["claves_crudas"], {})
 
 
 # ---------------------------------------------------------------------------------- body battery
