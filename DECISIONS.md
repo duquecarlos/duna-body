@@ -31170,5 +31170,6 @@ this spec's body, not merely its header -- merging on green.
 **Commits:** `0f50302` (ruling 1: the table, migration, mudanza, privacidad) -- `79c4668` (rulings
 2-4: the session screen's dolor card and Hoy's next-morning card) -- `390131c` (ruling 5: the
 assistant's `registrar_dolor` proposal tool) -- `6603ac7` (the tone-guard allow-list fix found mid-
-gate) -- `b6cf46a` (this ledger entry) -- merged into `main`.
+gate) -- `b6cf46a` (this ledger entry) -- `74f7895` (fill in this entry's own sha) -- merged into
+`main` as `0d4ec36` (`--no-ff`).
 
