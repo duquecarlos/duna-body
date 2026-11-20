@@ -48,5 +48,37 @@ class BaselineLectorEqualityTest(unittest.TestCase):
         self.assertIsNone(with_lector)
 
 
+class PeriodKindBaselineExclusionTest(unittest.TestCase):
+    """BODY-PLAN-FASES-4 ruling 3/6: a kind's own excluye_del_rango decides whether its days leave
+    baseline()'s window -- an open 'molestia' period never empties it, the exact opposite of an
+    open 'lesion' one covering the same days."""
+
+    def test_open_molestia_period_leaves_the_baseline_intact(self):
+        conn = _mkconn(self)
+        hoy = date(2026, 6, 1)
+        start = hoy - timedelta(baselines.WINDOW_DAYS)
+        d = start
+        while d < hoy:
+            db.set_metric(conn, d.isoformat(), "hrv_last_night", 50.0, "garmin", 1)
+            d += timedelta(1)
+        db.crear_periodo(conn, 1, "molestia", start.isoformat(), None)
+        conn.commit()
+        b = baselines.baseline(conn, "hrv_last_night", hoy.isoformat(), person_id=1)
+        self.assertIsNotNone(b)
+        self.assertEqual(b.n, baselines.WINDOW_DAYS)
+
+    def test_open_lesion_period_covering_the_same_days_empties_it(self):
+        conn = _mkconn(self)
+        hoy = date(2026, 6, 1)
+        start = hoy - timedelta(baselines.WINDOW_DAYS)
+        d = start
+        while d < hoy:
+            db.set_metric(conn, d.isoformat(), "hrv_last_night", 50.0, "garmin", 1)
+            d += timedelta(1)
+        db.crear_periodo(conn, 1, "lesion", start.isoformat(), None)
+        conn.commit()
+        self.assertIsNone(baselines.baseline(conn, "hrv_last_night", hoy.isoformat(), person_id=1))
+
+
 if __name__ == "__main__":
     unittest.main()

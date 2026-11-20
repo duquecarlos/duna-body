@@ -65,6 +65,27 @@ class BatchedBaselineTest(unittest.TestCase):
         conn = _mkconn(self)
         self.assertEqual(baselines.baselines(conn, [], "2026-06-01", person_id=1), {})
 
+    def test_molestia_period_leaves_the_batched_baseline_intact(self):
+        """BODY-PLAN-FASES-4 ruling 3/6: the exact opposite of test_marked_days_excluded_same_as_
+        single_key above -- an open 'molestia' period never empties baselines()'s window."""
+        conn = _mkconn(self)
+        hoy = date(2026, 6, 1)
+        start = hoy - timedelta(baselines.WINDOW_DAYS)
+        keys = ["hrv_last_night", "resting_hr"]
+        d = start
+        while d < hoy:
+            db.set_metric(conn, d.isoformat(), "hrv_last_night", 50.0, "garmin", 1)
+            db.set_metric(conn, d.isoformat(), "resting_hr", 55.0, "garmin", 1)
+            d += timedelta(1)
+        db.crear_periodo(conn, 1, "molestia", (hoy - timedelta(10)).isoformat(), (hoy - timedelta(5)).isoformat())
+        conn.commit()
+
+        batched = baselines.baselines(conn, keys, hoy.isoformat(), person_id=1)
+        for k in keys:
+            single = baselines.baseline(conn, k, hoy.isoformat(), person_id=1)
+            self.assertEqual(batched[k], single)
+            self.assertEqual(single.n, baselines.WINDOW_DAYS)  # nothing left out
+
 
 if __name__ == "__main__":
     unittest.main()

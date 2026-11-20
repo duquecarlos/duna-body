@@ -102,6 +102,12 @@ class ZonasEnRecuperacionTest(unittest.TestCase):
         db.crear_periodo(self.conn, 1, "malestar", DAY, None)
         self.assertEqual(db.zonas_en_recuperacion(self.conn, 1, DAY), frozenset())
 
+    def test_open_molestia_with_zonas_covering_the_day(self):
+        """BODY-PLAN-FASES-4 ruling 2/3: 'molestia' (training through a mild issue) carries
+        lleva_zona=1 the same as 'lesion' -- its own zonas lighten the next training read too."""
+        db.crear_periodo(self.conn, 1, "molestia", DAY, None, zonas=["hombro"])
+        self.assertEqual(db.zonas_en_recuperacion(self.conn, 1, DAY), frozenset({"hombro"}))
+
     def test_period_with_no_zonas_contributes_nothing(self):
         db.crear_periodo(self.conn, 1, "lesion", DAY, None)
         self.assertEqual(db.zonas_en_recuperacion(self.conn, 1, DAY), frozenset())
@@ -232,6 +238,14 @@ class LeerHoyLimitacionesTest(unittest.TestCase):
         self.conn.commit()
         out = self._hoy()
         self.assertEqual(out["limitaciones"], [])
+
+    def test_open_molestia_with_zonas_is_listed(self):
+        """BODY-PLAN-FASES-4 ruling 2/3: 'molestia' carries lleva_zona=1 the same as 'lesion'."""
+        db.set_metric(self.conn, DAY, "resting_hr", 55.0, "garmin", 1)
+        db.crear_periodo(self.conn, 1, "molestia", DAY, None, zonas=["hombro"])
+        self.conn.commit()
+        out = self._hoy()
+        self.assertEqual(out["limitaciones"], [{"tipo": "molestia", "desde": DAY, "zonas": ["hombro"]}])
 
 
 if __name__ == "__main__":

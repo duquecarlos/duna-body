@@ -962,12 +962,18 @@ CREATE INDEX IF NOT EXISTS idx_horizonte_checkpoint_person ON horizonte_checkpoi
 
 -- BODY-PERIODO-1: a kind the person can mark across days (illness, travel, injury) so a baseline's
 -- usual range and an experiment's counted days leave those days out, never re-weight them. Seeded
--- with 'malestar', 'viaje', 'lesion' below -- a kind added later is a row here, never a code
--- change; its label is shown through "periodo.kind." + key in body/i18n/*.json, the same
+-- with 'malestar', 'viaje', 'lesion', 'molestia' below -- a kind added later is a row here, never a
+-- code change; its label is shown through "periodo.kind." + key in body/i18n/*.json, the same
 -- convention metric_def's own key already uses for "metric." + key.
+-- BODY-PLAN-FASES-4 ruling 1: two properties of a kind, as DATA, read by db.dias_marcados,
+-- db.zonas_en_recuperacion and herramientas._limitaciones_abiertas instead of a hardcoded 'lesion'
+-- string -- excluye_del_rango (does this kind's days leave the person's own 30-day usual range?)
+-- and lleva_zona (can this kind carry a limited body part that lightens the next training read?).
 CREATE TABLE IF NOT EXISTS period_kind (
-    key        TEXT PRIMARY KEY,
-    sort_order INTEGER NOT NULL
+    key               TEXT PRIMARY KEY,
+    sort_order        INTEGER NOT NULL,
+    excluye_del_rango INTEGER NOT NULL DEFAULT 1 CHECK (excluye_del_rango IN (0, 1)),
+    lleva_zona        INTEGER NOT NULL DEFAULT 0 CHECK (lleva_zona IN (0, 1))
 );
 
 -- One row per marked stretch of days. end_day NULL = still open -- an open period counts through
@@ -1242,12 +1248,28 @@ ENTEROS_MEDIDA_PERSONAL = frozenset({
 })
 
 # BODY-PERIODO-1 ruling 1: kinds are DATA in period_kind, never code -- a kind added later is just
-# a new row (and an i18n "periodo.kind.<key>" entry for its label), (key, sort_order) in that order.
+# a new row (and an i18n "periodo.kind.<key>" entry for its label).
+# BODY-PLAN-FASES-4 ruling 1-2: (key, sort_order, excluye_del_rango, lleva_zona) in that order --
+# 'molestia' (training through a mild issue) leaves days IN the usual range (excluye_del_rango=0)
+# but still carries a zona, the same as 'lesion' (lleva_zona=1).
 PERIOD_KINDS = [
-    ("malestar", 0),
-    ("viaje", 1),
-    ("lesion", 2),
+    ("malestar", 0, 1, 0),
+    ("viaje", 1, 1, 0),
+    ("lesion", 2, 1, 1),
+    ("molestia", 3, 0, 1),
 ]
+
+
+def kind_excluye_del_rango(kind: str) -> bool:
+    """BODY-PLAN-FASES-4 ruling 4: whether `kind` (any live PERIOD_KINDS row) leaves its days OUT of
+    the person's own 30-day usual range -- read from the same seed list period_kind's own rows are
+    built from, never a hardcoded kind string. Used only by screen text (asistente.py/hoy.py's own
+    one-line note), never by dias_marcados/zonas_en_recuperacion themselves, which read the live
+    period_kind row through periodos()'s own JOIN instead."""
+    for k, _, excluye, _ in PERIOD_KINDS:
+        if k == kind:
+            return bool(excluye)
+    return True
 
 # BODY-MEDIDA-PESO-1-M2: how many decimals a metric's own figure, its "vs. tu historia"/"vs.
 # anterior" difference and its normal-range legend show -- keyed by metric key, every key not
@@ -1491,6 +1513,21 @@ def _migrate(conn: sqlite3.Connection) -> None:
     pecols = {r[1] for r in conn.execute("PRAGMA table_info(period)")}
     if pecols and "zonas" not in pecols:
         conn.execute("ALTER TABLE period ADD COLUMN zonas TEXT CHECK (zonas IS NULL OR json_valid(zonas))")
+    # BODY-PLAN-FASES-4 ruling 1: two additive columns on an old database -- every existing kind
+    # (malestar/viaje/lesion) reads as excluye_del_rango=1 (today's exact behaviour, unchanged) and
+    # lleva_zona=0 until the PERIOD_KINDS seed upsert below (in init()) sets lesion's own
+    # lleva_zona=1, the same ON CONFLICT DO UPDATE sync sort_order already goes through.
+    pkcols = {r[1] for r in conn.execute("PRAGMA table_info(period_kind)")}
+    if pkcols and "excluye_del_rango" not in pkcols:
+        conn.execute(
+            "ALTER TABLE period_kind ADD COLUMN excluye_del_rango INTEGER NOT NULL DEFAULT 1 "
+            "CHECK (excluye_del_rango IN (0, 1))"
+        )
+    if pkcols and "lleva_zona" not in pkcols:
+        conn.execute(
+            "ALTER TABLE period_kind ADD COLUMN lleva_zona INTEGER NOT NULL DEFAULT 0 "
+            "CHECK (lleva_zona IN (0, 1))"
+        )
     # BODY-ENTRENO-VINCULO-1 ruling 1: two additive columns on an old database -- every existing row
     # reads as unlinked (vinculo_manual NULL) and not-split (vinculo_separado 0), never backfilled.
     actcols = {r[1] for r in conn.execute("PRAGMA table_info(activity)")}
@@ -2240,8 +2277,9 @@ def init(conn: sqlite3.Connection) -> None:
         METRIC_DEFS,
     )
     conn.executemany(
-        "INSERT INTO period_kind (key, sort_order) VALUES (?, ?) "
-        "ON CONFLICT(key) DO UPDATE SET sort_order=excluded.sort_order",
+        "INSERT INTO period_kind (key, sort_order, excluye_del_rango, lleva_zona) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET sort_order=excluded.sort_order, "
+        "excluye_del_rango=excluded.excluye_del_rango, lleva_zona=excluded.lleva_zona",
         PERIOD_KINDS,
     )
     # One owner row so a single-person install works; no personal details.
@@ -3828,14 +3866,21 @@ def _periodos_de_persona(conn: sqlite3.Connection, person_id: int) -> tuple[list
     re-reads the timezone on every call while an open period overlaps the range (BODY-PERIODO-
     PANTALLAS-1-B: that per-call read turned /day/{d}'s 38 statements into 55 against a ceiling of
     45). zona is None when this person has no periods at all -- dias_marcados never needs it then,
-    so a person with no periods still pays no timezone lookup, same as before."""
+    so a person with no periods still pays no timezone lookup, same as before.
+
+    BODY-PLAN-FASES-4 ruling 3: the SAME statement also joins period_kind, so every row carries its
+    own kind's _excluye_del_rango/_lleva_zona -- dias_marcados/zonas_en_recuperacion read those
+    instead of a hardcoded kind string, at no extra statement cost."""
     key = (id(conn), person_id)
     with _PERIODOS_LOCK:
         cached = _PERIODOS_CACHE.get(key)
     if cached is None:
         rows = conn.execute(
-            "SELECT period.*, person.timezone AS _zona FROM period "
+            "SELECT period.*, person.timezone AS _zona, "
+            "period_kind.excluye_del_rango AS _excluye_del_rango, period_kind.lleva_zona AS _lleva_zona "
+            "FROM period "
             "JOIN person ON person.id = period.person_id "
+            "JOIN period_kind ON period_kind.key = period.kind "
             "WHERE period.person_id = ? ORDER BY period.start_day",
             (person_id,),
         ).fetchall()
@@ -3865,30 +3910,32 @@ def periodos(conn: sqlite3.Connection, person_id: int, desde: str, hasta: str) -
 
 
 def zonas_en_recuperacion(conn: sqlite3.Connection, person_id: int, day: str) -> frozenset[str]:
-    """BODY-LESION-ZONA-1 ruling 2: the union of zonas from this person's own OPEN ('lesion',
-    end_day IS NULL) periods covering `day` -- a closed period's zonas, a non-lesion period, or a
-    period with no zonas named, never contribute. Used by every training read (leer_entreno,
+    """BODY-LESION-ZONA-1 ruling 2: the union of zonas from this person's own OPEN periods, of a
+    kind whose lleva_zona=1 (BODY-PLAN-FASES-4 ruling 3: 'lesion' or 'molestia' today, data, never a
+    hardcoded kind string), covering `day` -- a closed period's zonas, a kind with lleva_zona=0, or
+    a period with no zonas named, never contribute. Used by every training read (leer_entreno,
     leer_dia, Día's training section, the registrar_entreno card, Hoy's own body view) to mark a
     lighter set as deliberate, never a drop. Never the period's own note (ruling 2's own privacy
     promise)."""
     rows = periodos(conn, person_id, day, day)
     out: set[str] = set()
     for r in rows:
-        if r["kind"] == "lesion" and r["end_day"] is None and r["zonas"]:
+        if r["_lleva_zona"] and r["end_day"] is None and r["zonas"]:
             out |= set(json.loads(r["zonas"]))
     return frozenset(out)
 
 
 def dias_marcados(conn: sqlite3.Connection, person_id: int, desde: str, hasta: str) -> set[str]:
-    """ISO days in [desde, hasta] covered by one of this person's own periods -- an open period
-    (end_day IS NULL) counts through TODAY in the person's own timezone, never past it. The zone
-    comes from _periodos_de_persona's own cache (one read per connection, at most), never a fresh
-    person() call here -- the common case (no periods at all, or only closed ones) still costs no
-    timezone lookup, since zona is only read above when this person has a period at all. "today"
-    itself is always computed fresh from that cached zone at call time, so a midnight crossing
-    still moves it -- only the ZONE is cached, never the date."""
+    """ISO days in [desde, hasta] covered by one of this person's own periods of a kind whose
+    excluye_del_rango=1 (BODY-PLAN-FASES-4 ruling 3: every kind except 'molestia' today, data,
+    never a hardcoded kind string) -- an open period (end_day IS NULL) counts through TODAY in the
+    person's own timezone, never past it. The zone comes from _periodos_de_persona's own cache (one
+    read per connection, at most), never a fresh person() call here -- the common case (no periods
+    at all, or only closed ones) still costs no timezone lookup, since zona is only read above when
+    this person has a period at all. "today" itself is always computed fresh from that cached zone
+    at call time, so a midnight crossing still moves it -- only the ZONE is cached, never the date."""
     rows, zona = _periodos_de_persona(conn, person_id)
-    overlapping = _solapan(rows, desde, hasta)
+    overlapping = [r for r in _solapan(rows, desde, hasta) if r["_excluye_del_rango"]]
     if not overlapping:
         return set()
     hoy: str | None = None
