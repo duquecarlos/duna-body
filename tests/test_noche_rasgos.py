@@ -319,5 +319,46 @@ class SinDatosTest(unittest.TestCase):
             nr.comparar(conn, 1, "2026-08-01")
 
 
+class RasgosRangoTest(unittest.TestCase):
+    """BODY-MINUTO-ANALISIS-3 ruling 1: `rasgos_rango`'s own per-night dict -- every computable
+    feature plus its own 'contexto', the ONE table both `comparar` and `buscar` build on."""
+
+    def test_a_night_with_only_a_stored_figure_carries_it_plus_an_empty_contexto(self):
+        conn = _conn(self)
+        db.set_metric(conn, "2026-09-01", "hrv_last_night", 55.0, "garmin", 1)
+        conn.commit()
+        tabla = nr.rasgos_rango(conn, 1, "2026-08-25", "2026-09-01")
+        self.assertEqual(set(tabla), {"2026-09-01"})
+        self.assertEqual(tabla["2026-09-01"]["hrv_last_night"], 55.0)
+        self.assertIn("contexto", tabla["2026-09-01"])
+
+    def test_a_night_with_a_full_payload_carries_shape_features_too(self):
+        conn = _conn(self)
+        _sesion(conn, 1, "2026-01-03", SESION[0], SESION[1])
+        _guardar_sueno(conn, 1, "2026-01-03", hr=_HR, etapas=_ETAPAS, hrv=_HRV)
+        conn.commit()
+        tabla = nr.rasgos_rango(conn, 1, "2026-01-01", "2026-01-03")
+        self.assertEqual(tabla["2026-01-03"]["nadir_fraccion"], 0.9)
+        self.assertEqual(tabla["2026-01-03"]["segmentos_despierto"], 3)
+
+    def test_comparar_and_rasgos_rango_agree_on_the_same_night(self):
+        conn = _conn(self)
+        _sesion(conn, 1, "2026-01-03", SESION[0], SESION[1])
+        _guardar_sueno(conn, 1, "2026-01-03", hr=_HR, etapas=_ETAPAS, hrv=_HRV)
+        conn.commit()
+        tabla = nr.rasgos_rango(conn, 1, "2026-01-01", "2026-01-03")
+        out = nr.comparar(conn, 1, "2026-01-03", desde="2026-01-01")
+        self.assertEqual(tabla["2026-01-03"]["nadir_fraccion"], out["rasgos"]["nadir_fraccion"]["valor"])
+
+    def test_another_persons_nights_never_appear(self):
+        conn = _conn(self)
+        conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        db.set_metric(conn, "2026-09-05", "hrv_last_night", 999.0, "garmin", 2)
+        db.set_metric(conn, "2026-09-05", "hrv_last_night", 55.0, "garmin", 1)
+        conn.commit()
+        tabla = nr.rasgos_rango(conn, 1, "2026-09-01", "2026-09-05")
+        self.assertEqual(tabla["2026-09-05"]["hrv_last_night"], 55.0)
+
+
 if __name__ == "__main__":
     unittest.main()
