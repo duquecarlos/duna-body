@@ -36,6 +36,11 @@ False or an invented value standing in for "no data":
     them has a computed figure.
   - `alcohol_g`: the day's own stored `alcohol_g` figure (daily_metric_efectiva), present only when
     one exists.
+  - `desplazamiento` (ORCH-CARLOS-DELEGATES-TIER-1-1, BODY-MINUTO-ANALISIS-7): {each of the Personal
+    commute source's own metric keys (fuentes.FUENTES[desplazamiento_import.FUENTE]["metric_keys"],
+    never retyped) that the day actually has, with its stored value} -- read for the whole range in
+    ONE query over `daily_metric_efectiva`, present only when at least one of those keys has a
+    value, never a 0 filled in for a key the day lacks.
 
 `contexto_noche(conn, person_id, dia_despertar)` answers for the ONE night Garmin files under
 `dia_despertar` (body/agente/herramientas.py's `_leer_noche` keys a night by its own wake day, the
@@ -47,9 +52,10 @@ actually followed. `comida_antes_de_dormir` is the one key with no per-day equiv
 last timed meal to THIS night's own sleep start), converted to minutes, added only when that gap
 exists. `viaje`/`periodos` are read over BOTH the evening day and the wake day and merged (a trip or
 a marked period can start exactly on the wake day without yet covering the evening before it), since
-the night itself spans both calendar dates. `turno`/`carga`/`alcohol_g` stay the evening's alone, per
-Carlos's own framing above ("nights after a shift", "nights after a late meal" -- the day that
-produced the night, not the day the night happens to be filed under).
+the night itself spans both calendar dates. `turno`/`carga`/`alcohol_g`/`desplazamiento` stay the
+evening's alone, per Carlos's own framing above ("nights after a shift", "nights after a late meal"
+-- the day that produced the night, not the day the night happens to be filed under): a night takes
+its evening day's commute, the same mapping those other evening-only keys already use.
 
 Nothing here ever reads another person's rows: every statement below is scoped by `person_id`, the
 same as every reader it calls.
@@ -59,9 +65,10 @@ from __future__ import annotations
 import json
 from datetime import date, timedelta
 
-from . import db, recuperacion, turnos_costo, ventana_comida
+from . import db, desplazamiento_import, fuentes, recuperacion, turnos_costo, ventana_comida
 
-CONTEXT_KEYS = ("turno", "viaje", "periodos", "carga", "alcohol_g", "comida_antes_de_dormir")
+CONTEXT_KEYS = ("turno", "viaje", "periodos", "carga", "alcohol_g", "desplazamiento",
+                "comida_antes_de_dormir")
 
 
 def _dia_kind_por_dia(conn, person_id: int, desde: str, hasta: str) -> dict[str, str]:
@@ -141,6 +148,22 @@ def _alcohol_por_dia(conn, person_id: int, desde: str, hasta: str) -> dict[str, 
     return {r["day"]: r["value"] for r in rows}
 
 
+def _desplazamiento_por_dia(conn, person_id: int, desde: str, hasta: str) -> dict[str, dict]:
+    """day -> {metric_key: value}, ONE query over daily_metric_efectiva for the Personal commute
+    source's own metric keys -- read from fuentes.FUENTES[desplazamiento_import.FUENTE]["metric_keys"],
+    never retyped here, so a later change to that source's own key list is picked up automatically."""
+    claves = fuentes.FUENTES[desplazamiento_import.FUENTE]["metric_keys"]
+    filas = conn.execute(
+        "SELECT day, metric_key, value FROM daily_metric_efectiva WHERE person_id = ? AND day BETWEEN ? AND ? "
+        f"AND metric_key IN ({','.join('?' for _ in claves)})",
+        (person_id, desde, hasta, *claves),
+    ).fetchall()
+    out: dict[str, dict] = {}
+    for f in filas:
+        out.setdefault(f["day"], {})[f["metric_key"]] = f["value"]
+    return out
+
+
 def _viajes_2_mas_dias(conn, person_id: int, desde: str, hasta: str) -> list[dict]:
     """db.viajes_lugares's own rows, filtered to 2+-day spans -- body/viajes.py's own definition of
     what counts as "a trip" anywhere in this app, mirrored here (not re-read through viajes.py
@@ -191,6 +214,7 @@ def contexto_dias(conn, person_id: int, desde: str, hasta: str) -> dict[str, dic
     actividad_por_dia = _actividad_por_dia(conn, person_id, desde, hasta)
     recuperacion_por_dia = _recuperacion_por_dia(conn, person_id, desde, hasta)
     alcohol_por_dia = _alcohol_por_dia(conn, person_id, desde, hasta)
+    desplazamiento_por_dia = _desplazamiento_por_dia(conn, person_id, desde, hasta)
 
     out: dict[str, dict] = {}
     d, hasta_d = date.fromisoformat(desde), date.fromisoformat(hasta)
@@ -216,6 +240,9 @@ def contexto_dias(conn, person_id: int, desde: str, hasta: str) -> dict[str, dic
         alcohol = alcohol_por_dia.get(day)
         if alcohol is not None:
             entry["alcohol_g"] = alcohol
+        desplazamiento = desplazamiento_por_dia.get(day)
+        if desplazamiento:
+            entry["desplazamiento"] = desplazamiento
         out[day] = entry
         d += timedelta(1)
     return out

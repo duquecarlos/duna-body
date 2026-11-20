@@ -9,7 +9,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import contexto_dia, db, recuperacion
+from body import contexto_dia, db, desplazamiento_import, recuperacion
 
 PERSON_A = 1
 PERSON_B = 2
@@ -53,6 +53,10 @@ def _viaje(conn, person_id, ref, starts_at, ends_at):
 
 def _meal(conn, person_id, day, ts_local, metric_key="protein_g", amount=20.0):
     return db.registrar_ingesta(conn, person_id, day, metric_key, amount, False, ts_local=ts_local)
+
+
+def _commute(conn, person_id, day, key="vehicle_minutes", value=12.0):
+    db.set_metric(conn, day, key, value, desplazamiento_import.FUENTE, person_id)
 
 
 def _sleep(conn, person_id, day, start_local, end_local):
@@ -236,6 +240,46 @@ class AlcoholTest(unittest.TestCase):
         self.assertNotIn("alcohol_g", out["2026-11-10"])
 
 
+# ---- desplazamiento (BODY-MINUTO-ANALISIS-7) ---------------------------------------------------------
+
+class DesplazamientoTest(unittest.TestCase):
+    def test_a_day_with_commute_rows_carries_exactly_those_keys(self):
+        conn = _conn(self)
+        _commute(conn, PERSON_A, "2026-11-10", "vehicle_minutes", 18.0)
+        _commute(conn, PERSON_A, "2026-11-10", "walking_minutes", 7.0)
+        conn.commit()
+        out = contexto_dia.contexto_dias(conn, PERSON_A, "2026-11-10", "2026-11-10")
+        self.assertEqual(out["2026-11-10"]["desplazamiento"],
+                          {"vehicle_minutes": 18.0, "walking_minutes": 7.0})
+
+    def test_a_day_without_commute_has_no_desplazamiento_key(self):
+        conn = _conn(self)
+        conn.commit()
+        out = contexto_dia.contexto_dias(conn, PERSON_A, "2026-11-10", "2026-11-10")
+        self.assertNotIn("desplazamiento", out["2026-11-10"])
+
+    def test_another_persons_commute_is_never_counted(self):
+        conn = _conn(self)
+        _commute(conn, PERSON_B, "2026-11-10", "vehicle_minutes", 99.0)
+        conn.commit()
+        out = contexto_dia.contexto_dias(conn, PERSON_A, "2026-11-10", "2026-11-10")
+        self.assertNotIn("desplazamiento", out["2026-11-10"])
+
+    def test_a_night_maps_to_its_evenings_commute(self):
+        conn = _conn(self)
+        _commute(conn, PERSON_A, "2026-11-10", "cycling_minutes", 25.0)
+        conn.commit()
+        out = contexto_dia.contexto_noche(conn, PERSON_A, "2026-11-11")
+        self.assertEqual(out["desplazamiento"], {"cycling_minutes": 25.0})
+
+    def test_a_night_whose_evening_has_no_commute_has_no_desplazamiento_key(self):
+        conn = _conn(self)
+        _commute(conn, PERSON_A, "2026-11-11", "vehicle_minutes", 18.0)  # the WAKE day, never the evening
+        conn.commit()
+        out = contexto_dia.contexto_noche(conn, PERSON_A, "2026-11-11")
+        self.assertNotIn("desplazamiento", out)
+
+
 # ---- statement count, bounded and independent of the range's length --------------------------------
 
 class StatementCountTest(unittest.TestCase):
@@ -248,8 +292,9 @@ class StatementCountTest(unittest.TestCase):
         self.assertEqual(n7, n90)
         # One bulk statement per source table: shift (bloques_noche), shift (day->kind), viaje_lugares,
         # period (cached per connection, this call's own first read), activity, recuperacion_actividad,
-        # daily_metric_efectiva -- 7, named here as the ceiling this test guards.
-        self.assertLessEqual(n7, 7, f"contexto_dias cost {n7} statements, over its named ceiling of 7")
+        # daily_metric_efectiva (alcohol_g), daily_metric_efectiva (commute, BODY-MINUTO-ANALISIS-7) --
+        # 8, named here as the ceiling this test guards.
+        self.assertLessEqual(n7, 8, f"contexto_dias cost {n7} statements, over its named ceiling of 8")
 
 
 # ---- contexto_noche: the night takes the evening's own context -------------------------------------
@@ -308,7 +353,7 @@ class CensusTest(unittest.TestCase):
     def test_every_context_key_the_module_can_emit_is_named(self):
         self.assertEqual(
             contexto_dia.CONTEXT_KEYS,
-            ("turno", "viaje", "periodos", "carga", "alcohol_g", "comida_antes_de_dormir"),
+            ("turno", "viaje", "periodos", "carga", "alcohol_g", "desplazamiento", "comida_antes_de_dormir"),
         )
 
     def test_a_rich_fixture_emits_exactly_the_named_keys(self):
@@ -319,15 +364,16 @@ class CensusTest(unittest.TestCase):
         _viaje(conn, PERSON_A, "v1", "2026-11-09", "2026-11-13")
         db.crear_periodo(conn, PERSON_A, "lesion", "2026-11-09", None, zonas=["pierna"])
         db.registrar_ingesta(conn, PERSON_A, "2026-11-10", "alcohol_g", 5.0, False)
+        _commute(conn, PERSON_A, "2026-11-10", "vehicle_minutes", 18.0)
         _meal(conn, PERSON_A, "2026-11-10", "2026-11-10T22:30:00")
         _sleep(conn, PERSON_A, "2026-11-11", "2026-11-11T00:30:00", "2026-11-11T07:00:00")
         conn.commit()
 
         dia = contexto_dia.contexto_dias(conn, PERSON_A, "2026-11-10", "2026-11-10")["2026-11-10"]
-        self.assertEqual(set(dia), {"turno", "viaje", "periodos", "carga", "alcohol_g"})
+        self.assertEqual(set(dia), {"turno", "viaje", "periodos", "carga", "alcohol_g", "desplazamiento"})
 
         noche = contexto_dia.contexto_noche(conn, PERSON_A, "2026-11-11")
-        self.assertEqual(set(noche), {"turno", "viaje", "periodos", "carga", "alcohol_g",
+        self.assertEqual(set(noche), {"turno", "viaje", "periodos", "carga", "alcohol_g", "desplazamiento",
                                        "comida_antes_de_dormir"})
         self.assertTrue(set(noche) <= set(contexto_dia.CONTEXT_KEYS))
 
