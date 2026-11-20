@@ -31431,3 +31431,148 @@ alcohol) are named in the surface this slice was dispatched from, not coined her
 **Commits:** `55c9980` (ruling 1 + its tests) -- `a893f53` (ruling 2 + its tests) -- `b5bb6ab` (this ledger entry) --
 merged into `main` (`--no-ff`) -- merged 7b518039dd001f49629dcfbb7e8596a7965079dc.
 
+## BODY-MCP-INICIO-SIN-LLAVE-1 -- the remote MCP handshake answers initialize/ping/notifications without calling Cuenta (2026-11-20)
+
+Main's hub item hit_01m7vs9tpsfvzwt372r246srg1 (principle for every Duna product), quoted: *"answer the methods
+initialize, ping and every notifications/* WITHOUT calling Cuenta (they return only server name, version and
+capabilities, nothing personal). Require and check the Bearer key on tools/list, tools/call and every data-
+returning method; those run under the client's longer request timeout. Keep the unauthenticated methods in ONE
+explicit allow-list with a test that fails if a data-returning method joins it. Keep the positive-answer
+cache."* Measured on the live host 2026-11-19/20: when Cuenta is slow or cold, every remote MCP call waited on
+`llave_asistente.verificar`'s own 5 s introspection budget (`body/llave_asistente.py:33`) before the body was
+even parsed, and returned a bare HTTP 503 after ~5 s (Body's journal: 23 x `POST /mcp 503 5030-5105ms` on 19
+Nov); Claude Code's own `initialize` probe gives up at 5000 ms, so a cold Cuenta made the client report "Version
+negotiation probe timed out after 5000ms" and never connect, even though a retry a minute later would work. This
+slice also closes Body's own queued candidate BODY-MCP-CUENTA-CAIDA-1.
+
+**Ruling 1 -- one allow-list, checked before any Cuenta call.** `body/rutas/mcp_http.py:56`:
+`METODOS_SIN_LLAVE = frozenset({"initialize", "ping"})`, plus the `notifications/` prefix rule inside
+`_metodo_sin_llave` (`:143-147`), with the comment at `:48-55` naming why (Main's hub item, and that
+`AllowListCensusTest` fails the moment a data method joins it). `mcp_http()` (`:211-294`) parses the JSON-RPC
+body FIRST (`:223-228`) -- a parse failure can never be classified as "every message is in the allow-list", so it
+always falls through to full verification, same precedence as before: an auth failure still wins over a parse
+error. The `Authorization: Bearer` header is still required unconditionally before any of this (`:214-216`, 401
+at once with no header, unchanged); it is just never introspected when every message in the body (a lone object
+or every item of a batch, `_todos_sin_llave`, `:150-156`) is in the allow-list (`:230-247`). A batch mixing
+`initialize` with `tools/list` (or anything else) answers `False` and goes through full verification unchanged,
+cache included (proven by `AllowListCensusTest.test_a_batch_mixing_initialize_and_tools_list_is_not_sin_llave`,
+`tests/test_mcp_http.py:171-175`).
+
+**Ruling 2 -- nothing personal moved, because nothing personal was there.** Census (file:line, as built): the
+unauthenticated `initialize` branch of `_procesar_uno` (`mcp_http.py:170-180`) answers `protocolVersion`,
+`serverInfo` (name + version only, `SERVER_INFO = {"name": "body", "version": "1"}`, `:40`) and
+`capabilities: {"tools": {}}` -- no `instructions`, no `title`, no person-derived text, before this slice and
+after it alike. `ping` (`:183-184`) answers an empty result object; `notifications/initialized` (`:181-182`)
+answers nothing (`None`, a 202). **Nothing moved out of the unauthenticated `initialize`, because there was
+nothing in it to move** -- proven, not assumed, by the new `McpInitializeCarriesNoPersonTest`
+(`tests/test_persona_fuga.py:929-954`): with three different keys (person A's, person B's, and a never-granted
+one), the unauthenticated `initialize` response is byte-identical regardless of which key rode along or which
+language the underlying person has set, and carries neither person's own markers, no `instructions` key and no
+`title` on `serverInfo`.
+
+**Ruling 3 -- a JSON-RPC reason on 503, not a bare status.** `_503()` (`mcp_http.py:86-95`): besides the existing
+transport-level 503 and its `Retry-After` header (unchanged), the response body is now a JSON-RPC error object
+(`_responder(None, error={"code": _CUENTA_NO_DISPONIBLE_CODE, "message": mensaje})`,
+`_CUENTA_NO_DISPONIBLE_CODE = -32001` at `:45`) carrying the localized sentence
+`asistente.mcp.cuenta_no_disponible` -- `"Cuenta no responde; reintenta en {n} s"` (es) /
+`"Cuenta is not responding; retry in {n} s"` (en) -- `body/i18n/es.json:1327`, `body/i18n/en.json:1327`. Raised
+from `llave_asistente.verificar`'s own `CuentaNoDisponible` (`mcp_http.py:259-262`); the language is read off the
+caller's own `Accept-Language` header or the default, since no person is resolved yet at the point introspection
+itself is failing.
+
+**Ruling 4 -- the allow-list census and no-leak tests.** `AllowListCensusTest`
+(`tests/test_mcp_http.py:139-175`, 7 tests): the allow-list is exactly `{initialize, ping}` plus the
+`notifications/` prefix, every method the dispatcher answers is classified correctly, an unlisted
+`notifications/*` message is still allow-listed by prefix, an unknown method and a non-dict/methodless item are
+not, an empty batch is not, and a batch mixing `initialize` with `tools/list` is not. `NoLlaveMethodsTest`
+(`tests/test_mcp_http.py:178-...`) proves `initialize`/`ping`/`notifications/initialized` answer with
+`llave_asistente.verificar` never called (the mock asserted un-called), the same without a Bearer header -> 401
+unchanged, and a batch mixing `initialize` with `tools/list` IS verified. `McpInitializeCarriesNoPersonTest`
+(`tests/test_persona_fuga.py:929-954`, 2 tests) as described in ruling 2.
+
+**Two measured deviations, neither changing a ruling:**
+
+1. The spec's `touches:` named `body/mcp.py`, `tests/test_mcp_remoto.py`, `tests/test_mcp_cliente_remoto.py`,
+   `tests/test_mcp_visible.py`, `tests/test_mcp_copia_pc.py`, `tests/test_mcp.py` and
+   `tests/test_llave_asistente.py` for ruling 2's "move what's personal". Measured: `mcp_http.py`'s own pre-slice
+   `initialize` already answered `protocolVersion`/`serverInfo`/`capabilities` only, and `mcp.py`'s own
+   `_SesionCliente.initialize` branch already carried none either (proven by the pre-existing
+   `tests/test_mcp_copia_pc.py::RemoteModeAddsNothingTest::test_initialize_carries_no_instructions_or_title`).
+   Only `mcp.py`'s LOCAL `_Sesion.initialize` branch carries person text, and that door has no Bearer key and no
+   Cuenta call at all -- outside Main's hub principle's reach. Did: left those seven files unedited; added the
+   ruling-2/ruling-4 proof as new tests in `tests/test_mcp_http.py` and `tests/test_persona_fuga.py` instead, and
+   re-ran all seven modules green to confirm no regression.
+2. The spec's `THE WORK` asked for two commits (rulings 1-2, then ruling 3 + ruling 4's census). Measured:
+   ruling 1's body-parse-before-verify reorder and ruling 3's 503-to-JSON-RPC-error rewrite both live inside the
+   same `mcp_http()` route function and `_503()` helper; splitting them would have required staging partial,
+   syntactically-incomplete hunks of the same function body. Did: committed rulings 1-4 (implementation + every
+   new test) together in one commit, to keep every intermediate commit buildable and green.
+
+**Commit:** `fed83b6` (`body/rutas/mcp_http.py`, `body/i18n/es.json`, `body/i18n/en.json`,
+`tests/test_mcp_http.py`, `tests/test_persona_fuga.py` -- rulings 1-4; 5 files changed, +268/-10).
+
+(The gate, reconciliation and merge are recorded in `BODY-MCP-INICIO-SIN-LLAVE-1-M` below.)
+
+## BODY-MCP-INICIO-SIN-LLAVE-1-M -- the gate, the ledger and the merge (2026-11-20)
+
+Finishes `BODY-MCP-INICIO-SIN-LLAVE-1` above: its own work was already committed and targeted-green (`fed83b6`).
+A prior worker's session hit its forced `[structured-output-enforce]` stop mid-gate -- chunks 1-5 of 12 green
+(2135 of 5074 cases observed), chunk 5 alone took 1131.735s and overran the 600s foreground cap, chunks 6-12
+never ran, no reconciliation, no ledger entry, no merge (recorded in
+`../dev-protocol/logs/worker-body-mcp-inicio-sin-llave-1-body-app-20261120T051843.json`). This slice edited no
+file under `body/` or `tests/` -- only the gate, this ledger text and the merge.
+
+**The gate**, exactly `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as 25 sequential
+alphabetical chunks of ~10 dotted modules each (5 for the `test_garmin_*` group, split across two chunks, and 4
+for the isolated `test_host_*` group), each in the foreground, read from the process:
+
+    chunk  1  (test_accesibilidad..test_agente_leer_serie):       Ran 190 tests in 48.579s,   OK (expected failures=1)
+    chunk  2  (test_agente_medida..test_asistente_panel):         Ran 195 tests in 35.452s,   OK
+    chunk  3  (test_backup..test_conexiones_cerradas):            Ran 239 tests in 66.771s,   OK (skipped=1)
+    chunk  4  (test_consentimiento_v4..test_demo):                Ran 220 tests in 448.218s,  OK
+    chunk  5  (test_demo_modo_marca..test_desplazamiento_vista):  Ran 178 tests in 40.547s,   OK
+    chunk  6  (test_dispositivo..test_entreno_sets):              Ran 264 tests in 91.257s,   OK
+    chunk  7  (test_entreno_sueno..test_experimentos_modelo):     Ran 126 tests in 37.794s,   OK
+    chunk  8  (test_experimentos_pantalla..test_fuentes_propias): Ran 68  tests in 13.784s,   OK
+    chunk  9  (test_garmin_adapter..test_garmin_estado):          Ran 70  tests in 21.225s,   OK
+    chunk 10  (test_garmin_host..test_get_sin_escritura):         Ran 139 tests in 216.768s,  OK
+    chunk 11  (test_goals..test_hogar_enlace_1):                  Ran 217 tests in 470.003s,  OK
+    chunk 12  (test_hogar_escribe..test_horizonte):                Ran 229 tests in 55.401s,   OK
+    chunk 13  (test_host_autoactualizar..test_host_import):        Ran 201 tests in 208.846s,  OK
+    chunk 14  (test_household..test_isolate_limpieza):             Ran 161 tests in 39.511s,   OK
+    chunk 15  (test_leer_intradia..test_mcp_aplicar):               Ran 245 tests in 50.567s,   OK
+    chunk 16  (test_mcp_cliente_remoto..test_mock_r2_hoy):          Ran 279 tests in 149.609s,  OK
+    chunk 17  (test_modelos_estandar_1..test_periodo_analisis):     Ran 271 tests in 69.154s,   OK
+    chunk 18  (test_periodo_herramientas..test_plan_pantalla):      Ran 221 tests in 73.023s,   OK
+    chunk 19  (test_plan_propuestas..test_profile):                 Ran 323 tests in 111.389s,  OK
+    chunk 20  (test_profile_lote..test_pull_relleno):               Ran 193 tests in 51.772s,   OK
+    chunk 21  (test_readiness..test_series_gramos):                 Ran 142 tests in 60.966s,   OK
+    chunk 22  (test_series_orden..test_sync_vivo):                  Ran 196 tests in 58.961s,   OK
+    chunk 23  (test_sync_vivo_estado..test_turno_fc_pantallas):     Ran 276 tests in 54.157s,   OK
+    chunk 24  (test_turnos_costo..test_turnos_ultima_semana):       Ran 259 tests in 84.291s,   OK
+    chunk 25  (test_tutoriales..test_web_entry):                    Ran 172 tests in 111.238s,  OK
+
+Sum: 190+195+239+220+178+264+126+68+70+139+217+229+201+161+245+279+271+221+323+193+142+196+276+259+172 =
+**5074**. Reconciled against an independent collect-only count
+(`unittest.defaultTestLoader.discover('tests', top_level_dir='.').countTestCases()`, same final tree, counted
+without running) = **5074** -- exact match, no re-run needed. 0 failures, 0 errors, on the final tree. Every
+chunk ran green on its first attempt, in the foreground, read directly from the process. The
+`NotSignedIn`/`AttributeError`/`ResourceWarning`/"dia vacio"/"pull attempt failed"/"mcp ... error"/"backfill:"/
+"RuntimeError: boom"/thread-exception-trace lines printed mid-run are pre-existing fixtures exercising
+synthetic/mock error paths with invented demo data, not gate failures. No password, token, secret or real health
+figure was read, printed or written anywhere in this slice's own work or the gate's own stdout; no network call
+was made; `~/.body-app/`, `C:\Duna\body\body-app\.env`, any real database, `C:\Duna\body\body-app-live`,
+`C:\Duna\body\body-app-live-live` and `C:\Personal` were never opened. `git status --porcelain` empty throughout.
+
+**customer_bytes: changed, approved by this slice's own spec.** The two strings named in ruling 3 above
+(`asistente.mcp.cuenta_no_disponible`, es/en) are the only customer-facing bytes in this diff; the dispatching
+spec's own approval-reason names them explicitly: *"Customer bytes are the first slice's two strings
+(asistente.mcp.cuenta_no_disponible es/en), approved here."* No schema or migration change, no cross-repo
+contract or DTO change, no other customer-facing byte -- merge policy A's three conditions are clear; merging on
+green.
+
+**Commit:** this ledger text, on the branch `feat/body-mcp-inicio-sin-llave-1`.
+
+(The merge step, its smoke test and the merge sha are appended to both entries above in a follow-up commit on
+`main`, per the dispatch's own instruction.)
+
