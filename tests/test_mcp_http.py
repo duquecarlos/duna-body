@@ -301,6 +301,36 @@ class PositiveCacheShortCircuitsTest(_HostedTestCase):
         mock_introspect.assert_called_once()
 
 
+class GraciaRouteTest(_HostedTestCase):
+    """BODY-LLAVE-GRACIA-1 rulings 1-2 at the route: a confirmed key answers 200 while Cuenta
+    cannot be reached at all, for up to GRACIA_SEGUNDOS past its last positive answer, and 503
+    once that window has passed."""
+
+    @staticmethod
+    def _fake_timeout(key):
+        raise httpx.ConnectTimeout("boom")
+
+    def test_tools_list_with_a_confirmed_key_answers_200_inside_grace_and_503_after_it(self):
+        self._grant("k", "lectura")
+        r = self._post({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, key="k")
+        self.assertEqual(r.status_code, 200)
+
+        h = llave_asistente._clave_cache("k")
+        del llave_asistente._cache[h]  # force the next call past the positive cache
+
+        with mock.patch.object(llave_asistente, "_post_introspect", self._fake_timeout):
+            r_dentro = self._post({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, key="k")
+        self.assertEqual(r_dentro.status_code, 200)
+
+        desde, autorizacion = llave_asistente._ultimo_bueno[h]
+        llave_asistente._ultimo_bueno[h] = (
+            desde - llave_asistente.GRACIA_SEGUNDOS - 1, autorizacion)
+
+        with mock.patch.object(llave_asistente, "_post_introspect", self._fake_timeout):
+            r_fuera = self._post({"jsonrpc": "2.0", "id": 3, "method": "tools/list"}, key="k")
+        self.assertEqual(r_fuera.status_code, 503)
+
+
 class ProtocolTest(_HostedTestCase):
     def setUp(self):
         super().setUp()

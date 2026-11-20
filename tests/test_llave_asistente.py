@@ -2,6 +2,7 @@
 transport (`llave_asistente._post_introspect`), never a real network call. Invented demo data
 only, no real health figures.
 """
+import logging
 import os
 import tempfile
 import unittest
@@ -25,6 +26,19 @@ def _activa(*, producto: str = "body", persona_id: str = SUB, permiso: str = "le
         "active": True, "producto": producto, "persona_id": persona_id, "permiso": permiso,
         "llave_id": llave_id,
     })
+
+
+def _lanza_timeout(key: str) -> httpx.Response:
+    raise httpx.ConnectTimeout("boom")
+
+
+class _CapturaLog(logging.Handler):
+    def __init__(self, destino: list):
+        super().__init__()
+        self._destino = destino
+
+    def emit(self, record):
+        self._destino.append(record.getMessage())
 
 
 class _LlaveAsistenteTestCase(unittest.TestCase):
@@ -169,7 +183,10 @@ class CuentaFaultTest(_LlaveAsistenteTestCase):
 
 
 class CacheTest(_LlaveAsistenteTestCase):
-    def test_active_answer_is_cached_60s_then_re_asked_and_a_revoked_key_is_then_refused(self):
+    def test_cache_ttl_is_300(self):
+        self.assertEqual(llave_asistente.CACHE_TTL_SEGUNDOS, 300.0)
+
+    def test_active_answer_is_cached_300s_then_re_asked_and_a_revoked_key_is_then_refused(self):
         calls = []
 
         def fake(key):
@@ -187,19 +204,180 @@ class CacheTest(_LlaveAsistenteTestCase):
         self.assertEqual(autorizacion.person_id, 1)
         self.assertEqual(len(calls), 1)
 
-        clock["t"] = 59.0
+        clock["t"] = 299.0
         llave_asistente.verificar(self.conn, "k", reloj=reloj)
-        self.assertEqual(len(calls), 1, "a call inside the 60s window must not re-ask Cuenta")
+        self.assertEqual(len(calls), 1, "a call inside the 300s window must not re-ask Cuenta")
 
-        clock["t"] = 61.0
+        clock["t"] = 301.0
         with self.assertRaises(llave_asistente.LlaveInvalida):
             llave_asistente.verificar(self.conn, "k", reloj=reloj)
-        self.assertEqual(len(calls), 2, "past 60s the revoked key must be re-asked and refused")
+        self.assertEqual(len(calls), 2, "past 300s the revoked key must be re-asked and refused")
 
     def test_a_freshly_granted_key_works_on_its_first_call(self):
         self._patch_introspect(lambda key: _activa(persona_id=SUB))
         autorizacion = llave_asistente.verificar(self.conn, "brand-new-key")
         self.assertEqual(autorizacion.person_id, 1)
+
+
+class GraciaTest(_LlaveAsistenteTestCase):
+    """BODY-LLAVE-GRACIA-1: last-known-good, consulted only when a fresh introspection raises
+    CuentaNoDisponible, and only within GRACIA_SEGUNDOS of the last positive answer."""
+
+    def _conceder(self, reloj):
+        with mock.patch.object(llave_asistente, "_post_introspect",
+                                lambda key: _activa(persona_id=SUB)):
+            llave_asistente.verificar(self.conn, "k", reloj=reloj)
+
+    def test_timeout_within_grace_window_is_accepted_logged_and_counted(self):
+        clock = {"t": 0.0}
+        reloj = lambda: clock["t"]
+        self._conceder(reloj)
+        clock["t"] = 300.5  # past CACHE_TTL_SEGUNDOS, inside GRACIA_SEGUNDOS
+
+        capturados: list = []
+        handler = _CapturaLog(capturados)
+        logger = logging.getLogger("body.llave")
+        logger.addHandler(handler)
+        self.addCleanup(logger.removeHandler, handler)
+        nivel_previo = logger.level
+        logger.setLevel(logging.INFO)
+        self.addCleanup(logger.setLevel, nivel_previo)
+
+        antes = llave_asistente.gracias_usadas
+        with mock.patch.object(llave_asistente, "_post_introspect", _lanza_timeout):
+            autorizacion = llave_asistente.verificar(self.conn, "k", reloj=reloj)
+
+        self.assertEqual(autorizacion.person_id, 1)
+        self.assertEqual(llave_asistente.gracias_usadas, antes + 1)
+        self.assertEqual(len(capturados), 1)
+        self.assertIn("gracia usada", capturados[0])
+        self.assertNotIn("k", capturados[0].split())
+        self.assertNotIn(SUB, capturados[0])
+        self.assertNotIn("llave-1", capturados[0])
+
+    def test_5xx_within_grace_window_is_accepted(self):
+        clock = {"t": 0.0}
+        reloj = lambda: clock["t"]
+        self._conceder(reloj)
+        clock["t"] = 300.5
+
+        with mock.patch.object(llave_asistente, "_post_introspect",
+                                lambda key: httpx.Response(500)):
+            autorizacion = llave_asistente.verificar(self.conn, "k", reloj=reloj)
+        self.assertEqual(autorizacion.person_id, 1)
+
+    def test_beyond_6h_grace_is_cuenta_no_disponible(self):
+        clock = {"t": 0.0}
+        reloj = lambda: clock["t"]
+        self._conceder(reloj)
+        clock["t"] = llave_asistente.GRACIA_SEGUNDOS + 1
+
+        with mock.patch.object(llave_asistente, "_post_introspect", _lanza_timeout):
+            with self.assertRaises(llave_asistente.CuentaNoDisponible):
+                llave_asistente.verificar(self.conn, "k", reloj=reloj)
+
+    def test_active_false_clears_grace_and_a_later_timeout_gets_no_grace(self):
+        clock = {"t": 0.0}
+        reloj = lambda: clock["t"]
+        self._conceder(reloj)
+
+        clock["t"] = 300.5
+        with mock.patch.object(llave_asistente, "_post_introspect",
+                                lambda key: httpx.Response(200, json={"active": False})):
+            with self.assertRaises(llave_asistente.LlaveInvalida):
+                llave_asistente.verificar(self.conn, "k", reloj=reloj)
+
+        clock["t"] = 301.0
+        with mock.patch.object(llave_asistente, "_post_introspect", _lanza_timeout):
+            with self.assertRaises(llave_asistente.CuentaNoDisponible):
+                llave_asistente.verificar(self.conn, "k", reloj=reloj)
+
+    def test_persona_sin_body_clears_grace_likewise(self):
+        clock = {"t": 0.0}
+        reloj = lambda: clock["t"]
+        self._conceder(reloj)
+
+        clock["t"] = 300.5
+        with mock.patch.object(llave_asistente, "_post_introspect",
+                                lambda key: _activa(persona_id="sub-nobody-signed-in-yet")):
+            with self.assertRaises(llave_asistente.PersonaSinBody):
+                llave_asistente.verificar(self.conn, "k", reloj=reloj)
+
+        clock["t"] = 301.0
+        with mock.patch.object(llave_asistente, "_post_introspect", _lanza_timeout):
+            with self.assertRaises(llave_asistente.CuentaNoDisponible):
+                llave_asistente.verificar(self.conn, "k", reloj=reloj)
+
+    def test_never_seen_key_with_timeout_is_cuenta_no_disponible(self):
+        with mock.patch.object(llave_asistente, "_post_introspect", _lanza_timeout):
+            with self.assertRaises(llave_asistente.CuentaNoDisponible):
+                llave_asistente.verificar(self.conn, "nunca-visto")
+
+    def test_reset_cache_clears_the_grace(self):
+        clock = {"t": 0.0}
+        reloj = lambda: clock["t"]
+        self._conceder(reloj)
+
+        llave_asistente.reset_cache()
+
+        clock["t"] = 300.5
+        with mock.patch.object(llave_asistente, "_post_introspect", _lanza_timeout):
+            with self.assertRaises(llave_asistente.CuentaNoDisponible):
+                llave_asistente.verificar(self.conn, "k", reloj=reloj)
+
+
+class TimeoutSeleccionadoTest(_LlaveAsistenteTestCase):
+    """Ruling 2: the introspection call itself uses _HTTP_TIMEOUT_CON_GRACIA (2 s) when a grace
+    entry is live, and _HTTP_TIMEOUT (5 s) otherwise -- asserted on the real httpx.Client, not on
+    a wholesale-patched _post_introspect."""
+
+    def _capturar_timeout(self) -> dict:
+        capturado: dict = {}
+        original_init = httpx.Client.__init__
+
+        def fake_init(self_client, *args, **kwargs):
+            capturado["timeout"] = kwargs.get("timeout")
+            return original_init(self_client, *args, **kwargs)
+
+        patcher_init = mock.patch.object(httpx.Client, "__init__", fake_init)
+        patcher_init.start()
+        self.addCleanup(patcher_init.stop)
+        return capturado
+
+    def test_timeout_is_5s_with_no_grace_entry(self):
+        capturado = self._capturar_timeout()
+
+        def fake_post(self_client, url, data=None, auth=None, **kw):
+            return httpx.Response(200, json={"active": False})
+
+        patcher_post = mock.patch.object(httpx.Client, "post", fake_post)
+        patcher_post.start()
+        self.addCleanup(patcher_post.stop)
+
+        with self.assertRaises(llave_asistente.LlaveInvalida):
+            llave_asistente.verificar(self.conn, "k")
+        self.assertEqual(capturado["timeout"], llave_asistente._HTTP_TIMEOUT)
+
+    def test_timeout_is_2s_with_a_grace_entry_within_the_window(self):
+        clock = {"t": 0.0}
+        reloj = lambda: clock["t"]
+        with mock.patch.object(llave_asistente, "_post_introspect",
+                                lambda key: _activa(persona_id=SUB)):
+            llave_asistente.verificar(self.conn, "k", reloj=reloj)
+
+        clock["t"] = 300.5
+        capturado = self._capturar_timeout()
+
+        def fake_post(self_client, url, data=None, auth=None, **kw):
+            raise httpx.ConnectTimeout("boom")
+
+        patcher_post = mock.patch.object(httpx.Client, "post", fake_post)
+        patcher_post.start()
+        self.addCleanup(patcher_post.stop)
+
+        autorizacion = llave_asistente.verificar(self.conn, "k", reloj=reloj)
+        self.assertEqual(autorizacion.person_id, 1)
+        self.assertEqual(capturado["timeout"], llave_asistente._HTTP_TIMEOUT_CON_GRACIA)
 
 
 if __name__ == "__main__":

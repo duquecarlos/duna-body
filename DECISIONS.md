@@ -31874,3 +31874,122 @@ network call was made; `~/.body-app/`, `C:\Duna\body\body-app\.env`, any real da
 (`.venv/Scripts/python.exe -m unittest tests.test_agente_comidas tests.test_agente_leer_dia
 tests.test_agente_registro`): Ran 39 tests in 7.620s, OK.
 
+## BODY-LLAVE-GRACIA-1 -- last-known-good grace for the assistant key check (2026-11-20)
+
+**The investigation** (BODY-LLAVE-GRACIA-1-INV, OBSERVED) measured `verificar`
+(`body/llave_asistente.py:102-138` on the pre-slice tree): a positive introspection was cached
+`CACHE_TTL_SEGUNDOS = 60` s in process memory keyed by sha256 of the key (`_clave_cache`); a
+negative answer or any fault was never cached; `CuentaNoDisponible` is raised on
+`httpx.HTTPError` (network/timeout) and on 401/429/>=500, with Cuenta's `Retry-After` carried
+through; the introspection timeout was `_HTTP_TIMEOUT = 5.0` s. The orchestrator's own measurement
+on the host's request log (counts and UTC times only, no health figures): ~120 `POST /mcp` 503 at
+~5040 ms in the 12 h before `59b9ab1`, in outages lasting from about half an hour to almost four
+hours (02:11-02:42, 06:04-07:15, 09:08-12:48), every one Cuenta's introspection not answering;
+since `59b9ab1` `initialize` no longer waits on it, but `tools/list` on a fresh session still pays
+a cold introspection. Cuenta's own hang is Main's (`CUENTA-API-DB-CUELGUE-1`).
+
+**The threat:** a key Cuenta confirmed active keeps working for at most `GRACIA_SEGUNDOS` (6 h),
+and ONLY while Cuenta cannot answer at all -- the observed outages ran up to ~4 h, so 6 h covers
+them with headroom. The moment Cuenta answers with anything definite, including a revocation, that
+answer applies at once; the grace never overrides a definite answer, it only survives Cuenta's own
+silence.
+
+**Rulings, as built** (`body/llave_asistente.py`, final tree on the merge commit):
+
+1. **Last-known-good.** A second process-memory dict `_ultimo_bueno: dict[str, tuple[float,
+   Autorizacion]]` (:94), keyed by the same sha256 hash as the positive cache, written at the same
+   moment as the positive cache write (:220-221). `_gracia_vigente` (:123-133) is consulted ONLY
+   from the two `CuentaNoDisponible`-raising branches inside `verificar` -- the `httpx.HTTPError`
+   catch (:183-187) and the 401/429/>=500 branch (:188-191) -- never from any other path. A grace
+   entry past `GRACIA_SEGUNDOS = 6 * 3600` (:52) is deleted and treated as absent (:130-131). Any
+   definite answer from Cuenta (non-200, unparseable JSON, inactive/wrong-producto/unknown-permiso,
+   bad `persona_id`, or `PersonaSinBody` from `_resolver_person_id`) clears `_ultimo_bueno[h]` at
+   once via `_limpiar_gracia` (:145-146, called at :194, :199, :202, :207, :214) and raises exactly
+   as before -- no grace on those paths. Never persisted (no file, no DB table): `reset_cache()`
+   (:112-116) clears `_cache`, `_ultimo_bueno` and the internal `_timeout_pendiente` staging dict
+   together, so a restart (or a test) has no grace carried over.
+2. **A short wait when a grace exists.** `_HTTP_TIMEOUT_CON_GRACIA = 2.0` (:50), vs `_HTTP_TIMEOUT
+   = 5.0` (:49) unchanged. `verificar` stages the timeout for the one `_post_introspect` call it is
+   about to make (:179-181) in a per-key dict `_timeout_pendiente` (:100) rather than changing
+   `_post_introspect`'s own call signature -- every existing test fake across the repo patches
+   `_post_introspect` as a plain `(key) -> httpx.Response`, and changing that signature would have
+   broken fakes in files outside `touches` (`tests/test_persona_fuga.py`). The real
+   `_post_introspect` (:150-154) pops its staged timeout (default `_HTTP_TIMEOUT` when nothing was
+   staged) and passes it to `httpx.Client(timeout=...)` -- asserted directly in
+   `tests/test_llave_asistente.py`'s `TimeoutSeleccionadoTest` by patching `httpx.Client.__init__`
+   itself, not `_post_introspect`.
+3. **Positive cache TTL 60 -> 300 s.** `CACHE_TTL_SEGUNDOS = 300.0` (:51); the module docstring
+   (:15-31) states the new window and the grace invariant verbatim: "last-known-good survives only
+   while Cuenta fails to answer at all; any definite answer replaces or clears it."
+4. **Visible in the log, nothing secret.** One INFO line per grace use, on a dedicated `body.llave`
+   logger (:47), written by `_usar_gracia` (:136-142): `"llave: gracia usada (cuenta no
+   responde), edad %d min"` -- never the key, its hash, the sub or a `llave_id`. The module-level
+   counter `gracias_usadas` (:105) is incremented at the same point (:140) and is readable by tests
+   (never reset by `reset_cache()` -- it is a lifetime diagnostic tally, not per-test state).
+   `mcp_http.py`'s own wire is untouched: `CuentaNoDisponible` still means exactly what it meant;
+   it is simply raised less often now.
+
+**Tests** (`tests/test_llave_asistente.py`, `tests/test_mcp_http.py`; Cuenta always mocked, clock
+injected via `reloj=`): `GraciaTest` covers positive-then-timeout within 6 h (accepted, one log
+line with no key/hash/sub/llave_id, `gracias_usadas` +1), positive-then-5xx within grace (accepted),
+beyond 6 h (`CuentaNoDisponible`), positive-then-`active:false` (clears grace at once, a later
+timeout gets no grace and raises), positive-then-`PersonaSinBody` (clears likewise), a never-seen
+key with a timeout (`CuentaNoDisponible`, no grace to fall back on), and `reset_cache()` clearing
+the grace. `TimeoutSeleccionadoTest` asserts the real `httpx.Client` is constructed with
+`timeout=2.0` when a grace entry is live and `timeout=5.0` when it is not -- against the actual
+constructor argument, not a wholesale-patched `_post_introspect`. `CacheTest` was extended with an
+explicit `CACHE_TTL_SEGUNDOS == 300.0` assertion and its existing 60 s boundary test was moved to
+300 s. At the route level, `tests/test_mcp_http.py`'s new `GraciaRouteTest` grants a key over
+`POST /mcp`, forces the positive cache past its TTL, and shows `tools/list` answering 200 while
+Cuenta times out inside the 6 h grace window and 503 once the grace entry is artificially aged past
+it -- the same real-clock path `mcp_http.py` calls `verificar` through (no `reloj=` injection at
+the route, since `mcp_http.py` itself is outside `touches` and was not edited).
+
+**The gate**, exactly `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as 24
+sequential alphabetical chunks (5-module chunks for `test_garmin_*` and `test_host_*`, 10 for
+everything else, per the dispatch's own guidance), every chunk read directly from the foreground
+process (two chunks ran past the 600 s foreground cap and were read from the harness's own
+background-task artifact once each finished, never inferred from an exit code):
+
+    chunk  0 (test_accesibilidad..test_agente_leer_serie):              Ran 197 tests in  66.279s, OK (1 expected failure)
+    chunk  1 (test_agente_medida..test_asistente_panel):                Ran 195 tests in  46.044s, OK
+    chunk  2 (test_backup..test_comida_hora):                           Ran 251 tests in  73.122s, OK (1 skipped)
+    chunk  3 (test_conexiones_cerradas..test_cuerpo_nitidez):           Ran 189 tests in  61.852s, OK
+    chunk  4 (test_cuerpo_vista..test_desplazamiento_asistente):        Ran 189 tests in 429.206s, OK
+    chunk  5 (test_desplazamiento_import..test_entreno_schema):         Ran 260 tests in  79.097s, OK
+    chunk  6 (test_entreno_sesion..test_experimentos_esquema):          Ran 162 tests in  65.185s, OK
+    chunk  7 (test_experimentos_intradia..test_garmin_dia_vacio):       Ran 127 tests in  46.290s, OK
+    chunk  8 (test_garmin_diagnostico..test_garmin_relleno_antiguo):    Ran 161 tests in 212.714s, OK
+    chunk  9 (test_garmin_web..test_guardia_parches):                   Ran  84 tests in 617.309s, OK (backgrounded past 600s, read from its artifact)
+    chunk 10 (test_habito_veces_1..test_hogar_miembro_1):               Ran 283 tests in  82.221s, OK
+    chunk 11 (test_hogar_nota_guard..test_hoy_escritorio):              Ran 348 tests in 347.334s, OK
+    chunk 12 (test_hoy_turno..test_leer_serie_minuto):                  Ran 197 tests in  41.288s, OK
+    chunk 13 (test_lesion_zona..test_mcp_http):                         Ran 267 tests in  48.074s, OK
+    chunk 14 (test_mcp_pendientes..test_mudanza):                       Ran 268 tests in 152.746s, OK
+    chunk 15 (test_nivel_datos_ui..test_periodo_pantallas):             Ran 259 tests in  57.146s, OK
+    chunk 16 (test_person_scope..test_practicas):                       Ran 249 tests in  67.326s, OK
+    chunk 17 (test_practicas_asistente..test_propuestas_tabla):         Ran 241 tests in  90.124s, OK
+    chunk 18 (test_proteina..test_recuperacion_pantallas):              Ran 226 tests in  64.176s, OK
+    chunk 19 (test_registro_tu..test_sesion_conexion_1):                Ran 128 tests in  43.252s, OK
+    chunk 20 (test_shift_import..test_tap_44):                         Ran 240 tests in  51.452s, OK
+    chunk 21 (test_tendencias_kpi..test_turnos_enlaces):                Ran 294 tests in  58.057s, OK
+    chunk 22 (test_turnos_esquema_1..test_tutoriales_en):               Ran 183 tests in  41.994s, OK
+    chunk 23 (test_tutoriales_puertas..test_web_entry):                 Ran 146 tests in 204.272s, OK
+
+Sum: 197+195+251+189+189+260+162+127+161+84+283+348+197+267+268+259+249+241+226+128+240+294+183+146
+= **5144**. Reconciled against an independent collect-only count (`unittest.TestLoader().discover(
+'tests', top_level_dir='.')`, counted without running, same final tree) = **5144** -- exact match.
+0 failures, 0 errors, every chunk green. The pre-existing `NotSignedIn`/`AttributeError`/
+`ResourceWarning`/"dia vacio"/"pull attempt failed"/`backfill:`/`intradia:`/"mcp ... error" lines
+and one deliberately-raised `RuntimeError` traceback printed mid-run are fixtures exercising
+synthetic/mock error and empty-day paths with invented demo data, not gate failures. No password,
+token, secret or real health figure was read, printed or written anywhere in this slice's own work
+or the gate's own stdout; no network call was made (Cuenta always mocked); `~/.body-app/`,
+`C:\Duna\body\body-app\.env`, any real database, `C:\Duna\body\body-app-live`,
+`C:\Duna\body\body-app-live-live` and `C:\Personal` were never opened. `git status --porcelain`
+empty throughout.
+
+**Commits on the branch:** `3325eb2` (`body/llave_asistente.py`, `tests/test_llave_asistente.py`,
+`tests/test_mcp_http.py` -- rulings 1-4 with their own tests; 3 files changed, +303/-12), this
+ledger entry on the branch -- merged into `main` (`--no-ff`).
+
