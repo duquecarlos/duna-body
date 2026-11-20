@@ -30569,6 +30569,130 @@ reproduces identically on `main` before either existed, it is outside `touches`,
 mandated gate (alphabetical, reconciled 4902=4902) found nothing. Reverting a proven-safe merge over
 a pre-existing, order-dependent flake in an unrelated file would not make the tree any more correct.
 
+## BODY-NOCHE-LECTURA-2
+
+**Surface:** `leer_noche`'s first real read (deployed in `96382dc`, BODY-NOCHE-LECTURA-1) found two
+gaps, relayed 2026-11-19. **(A) ranges came back null:** `_derivados_noche` used
+`baselines.baseline` (`body/baselines.py:32-44`) for `fc_minima_vs_rango` and `vfc_noche`'s own
+usual range -- the 30 days before the night, every MARKED day left out (BODY-PERIODO-1 ruling 3)
+and `None` below `baselines.MIN_DAYS`. An open marked period covering those 30 days emptied it, with
+no reason given, while Tendencias shows a different, longer model
+(`profile.metric_profile(s)`, `body/profile.py:31-45`, used at `body/rutas/tendencias.py:513`: p25-
+p75 over the whole history). **(B) stage codes without labels:** `sueno.stages` carried Garmin's raw
+`activityLevel` codes (`garmin_adapter._SLEEP_SERIES_SPECS`, `body/garmin_adapter.py:1007-1013`)
+with no table saying what 0..3 mean; the common reading (0=deep, 1=light, 2=REM, 3=awake) was never
+confirmed by Body.
+
+**Ruling 1 (both ranges, and the reason), as built:** `_rango_doble_y_z`
+(`body/agente/herramientas.py:1116-1140`) returns `rango_30_dias` (today's `baselines.baseline`,
+unchanged) AND `rango_historia` (`profile.metric_profile`'s own low/high/days, the same figure
+Tendencias shows for that key, never excluding marked days), each independently `None`.
+`_motivo_sin_rango_30_dias` (`:1100-1103`) names why `rango_30_dias` is null -- `'pocos_dias'` when
+a plain `COUNT` over the 30-day window is already below `baselines.MIN_DAYS`, `'dias_marcados'`
+when that count clears it but the SAME window's own marked-day exclusion (reused from
+`baselines.baseline`, never reimplemented) emptied it anyway. `z` prefers `rango_30_dias.z()`; when
+that is null, a fallback `baselines.baseline` call over `_VENTANA_HISTORIA_DIAS = 3650` days
+(`:185`) gives it a spread to measure against without ever changing what `rango_historia` itself
+shows, naming the source in `z_base` (`'rango_30_dias'`/`'rango_historia'`/`None`). Both
+`fc_minima_vs_rango` and `vfc_noche` (`_derivados_noche`, `:1167-1201`) carry this shape. Read with
+a bounded, named statement count: `tests/test_leer_noche.py::RangoDobleStatementCountTest` measured
+22 statements with both ranges present and 26 with both null (the extra fallback query, once per
+metric), against a named ceiling of 30 -- never growing with the night's own sample count
+(`StatementCountTest`'s own pre-existing invariant is unaffected, since none of this adds a
+`raw_payload` read).
+
+**Ruling 2 (labeled stages, verified night by night), as built:** `ETAPAS_SUENO_GARMIN =
+{0: 'profundo', 1: 'ligero', 2: 'rem', 3: 'despierto'}` (`body/agente/herramientas.py:176`),
+documented as Garmin's own convention, ASSUMED. `_leer_noche` (`:1267-1269`) turns every `stages`
+point into `[hora, codigo, etiqueta]`, a code outside the table getting `'desconocido'`, never a
+guess -- every other sleep array keeps its plain `[hora, valor]` shape. `_verificar_etapas`
+(`:1143-1161`) sums minutes per label from that same raw array (each point's own span to the next
+one, the last point's own span to the window's own end, since Garmin's segments here carry no end
+time) and compares them against the night's own stored totals -- `sleep_deep_min`,
+`sleep_light_min`, `sleep_rem_min`, `sleep_awake_min`, the SAME four keys the day page's own stage
+bar reads (`body/rutas/hoy.py:53-56`, `STAGES`) -- returning `etapas_verificacion =
+{'coincide': true|false|null, 'diferencia_min_max': <largest per-stage minute gap>}`, `'coincide'`
+true only when every stage is within 5 minutes, `null` when a stored total is missing. A
+`'desconocido'` stretch counts toward no total.
+
+**Ruling 3 (description), as built:** `leer_noche`'s own `descripcion`
+(`body/agente/herramientas.py:3286-3299`) now names `rango_30_dias` vs `rango_historia` in one
+sentence (the 30 days exclude marked days; the history is what Tendencias shows) and that stage
+labels carry a per-night verification. No user-visible string was added (the tool description is
+model-facing Spanish, like every other entry in this registry, not an i18n string), so
+`body/i18n/es.json`/`en.json` were not touched; no `'None'` anywhere in the new output.
+
+**Tests, as built (`tests/test_leer_noche.py`, 41 tests, up from 32):**
+`RangoDobleTest` -- an open ('lesion', `end_day IS NULL`) period covering the 30-day window with 20
+seeded values gives `rango_30_dias: null`, `motivo_sin_rango_30_dias: 'dias_marcados'`, and
+`rango_historia: {'bajo': 55.0, 'alto': 55.0, 'dias': 20}` present; a new person (id 3) with 3 days
+gives `'pocos_dias'` with `rango_historia: null`; person 2's own 30-day history for the same key is
+never used for person 1's `rango_historia`, confirmed null and `'pocos_dias'` on person 1 despite
+person 2 holding 30 days of it. `EtapaEtiquetaTest` -- codes 0/1/2/3/9 become
+profundo/ligero/rem/despierto/desconocido. `EtapaVerificacionTest` -- a four-segment night
+(profundo 2h, ligero 2h, rem 1.5h, despierto 0.5h) against matching stored totals gives
+`coincide: true, diferencia_min_max: 0.0`; a mismatched `sleep_deep_min` (10.0 instead of 120.0)
+gives `coincide: false` with a gap > 5; no stored totals at all gives
+`{'coincide': None, 'diferencia_min_max': None}`. `RangoDobleStatementCountTest` -- the named
+ceiling above. The three existing tests this surface changed the shape of
+(`test_fc_minima_vs_rango_reuses_baselines_baseline_on_sleep_hr_min`,
+`test_vfc_noche_reads_the_days_own_hrv_and_its_usual_range`,
+`test_fc_minima_vs_rango_is_null_with_too_few_baseline_days`) were updated in place, same scenarios,
+new keys (`rango_30_dias`/`z_base`/`motivo_sin_rango_30_dias` in place of the old flat
+`bajo`/`alto`/single `rango`). `tests/test_agente_registro.py`, `tests/test_mcp.py`,
+`tests/test_i18n_paridad.py`, `tests/test_rendimiento.py` and `tests/test_persona_fuga.py` needed
+no edits -- each re-run green unchanged (none of them assert on `leer_noche`'s own output shape,
+only that it is registered/visible/within its route-ceiling/not leaking across persons).
+
+**Gate, exact command:** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run as 12
+sequential alphabetical chunks of dotted modules (221 modules total, ~20 per chunk, the chunk
+holding all four `test_host_*` modules kept as its own chunk per this slice's own instructions):
+
+| # | Range | Ran | Result |
+|---|-------|-----|--------|
+| 1 | test_accesibilidad .. test_baselines | 388 | OK (skipped=1, expected failures=1) |
+| 2 | test_baselines_lote .. test_deploy_host | 485 | OK |
+| 3 | test_deshacer_derivados .. test_env_local_1 | 410 | OK |
+| 4 | test_errores_texto .. test_garmin_relleno_antiguo | 344 | OK |
+| 5 | test_garmin_web .. test_horizonte | 461 | OK |
+| 6 | test_host_autoactualizar .. test_host_import | 201 | OK |
+| 7 | test_household .. test_mcp_cliente_remoto (incl. test_leer_noche, test_i18n_paridad) | 417 | OK |
+| 8 | test_mcp_copia_pc .. test_periodo_herramientas | 521 | OK |
+| 9 | test_periodo_pantallas .. test_propuesta_vigencia (incl. test_persona_fuga) | 505 | OK |
+| 10 | test_propuestas_tabla .. test_series_unidad (incl. test_rendimiento) | 352 | OK |
+| 11 | test_sesion_conexion_1 .. test_turnos_deshacer | 516 | OK |
+| 12 | test_turnos_enlaces .. test_web_entry | 353 | OK |
+
+Sum: 388+485+410+344+461+201+417+521+505+352+516+353 = **4953**. Reconciled against a separate
+collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, same tree, before
+the gate started) = **4953** -- exact match. All 12 chunks `OK`, no red anywhere. Every
+`NotSignedIn`/`ResourceWarning`/`AttributeError`/"dia vacio"/"pull attempt failed"/`mcp remoto ...
+error`/`KeyError` line printed mid-run is a pre-existing fixture exercising a synthetic error path
+or an expected-failure test, not a gate failure, and none are in a file this slice touched. No
+password, token, session secret or real health figure was read, printed or written anywhere in this
+slice's own work or the gate's own stdout; no network call was made; every home and night used was
+invented.
+
+**customer_bytes: unchanged.** This slice's own diff touches only `body/agente/herramientas.py`
+(an assistant tool's output shape and its own model-facing description) and
+`tests/test_leer_noche.py` -- no template, route or user-facing string was touched, and no
+`body/i18n/*.json` file needed an edit. Merge policy A: no schema change, no customer-facing bytes,
+no cross-repo contract -- merging on green, per `approved: yes` and the spec's own "This spec
+approves the merge if green" (ORCH-CARLOS-DELEGATES-TIER-1-1).
+
+**Deviations:** none. The spec's `touches` list included `body/i18n/es.json`/`en.json`,
+`tests/test_agente_registro.py`, `tests/test_mcp.py`, `tests/test_i18n_paridad.py`,
+`tests/test_rendimiento.py` and `tests/test_persona_fuga.py` as a ceiling; none needed an edit, and
+each was re-run green to confirm rather than assumed.
+
+**Open follow-ups:** none coined. `BODY-TURNOS-ACTUAL-CONTEXTVAR-LEAK-1` (coined by
+BODY-NOCHE-LECTURA-1-M, a pre-existing module-order-dependent leak in `tests/test_mcp.py`/
+`body/agente/herramientas.py:86-92`, outside this slice's `touches`) remains open and untouched by
+this slice; the alphabetical gate order above never triggers it.
+
+**Commits:** `7bae0b7` (step 1: ruling 1 with its tests) -- `9b97265` (step 2: rulings 2-3 with
+their tests).
+
 ## BODY-HISTORIA-MINUTO-2
 
 **Surface, Carlos's words, relayed by the desk 2026-11-19:** *"that same detail in minute by minute
