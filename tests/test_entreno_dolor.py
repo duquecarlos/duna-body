@@ -7,15 +7,37 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
+from unittest import mock
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import db
+from fastapi.testclient import TestClient
+
+from body import config, db, identity, web
+from body.rutas import comun
 
 DAY = "2026-11-19"
+
+client = TestClient(web.app, follow_redirects=False)
+
+
+def _as(tc: unittest.TestCase, person_id: int) -> None:
+    tc.addCleanup(web.app.dependency_overrides.clear)
+    web.app.dependency_overrides[identity.current_person_id] = lambda: person_id
+
+
+def _route_conn(tc: unittest.TestCase, name: str) -> sqlite3.Connection:
+    orig = config.DB_PATH
+    tc.addCleanup(lambda: setattr(config, "DB_PATH", orig))
+    config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / name
+    conn = db.connect()
+    tc.addCleanup(conn.close)
+    db.init(conn)
+    return conn
 
 
 def _conn(case: unittest.TestCase) -> sqlite3.Connection:
@@ -163,6 +185,72 @@ class PendienteMananaTest(unittest.TestCase):
 
     def test_another_persons_pendiente_never_shows(self):
         self.assertEqual(db.pendientes_dolor_manana(self.conn, 2, "2026-11-18"), [])
+
+
+# ---- Hoy's own 'morning after' card (ruling 4) ---------------------------------------------------
+
+class HoyDolorMananaTest(unittest.TestCase):
+    """BODY-PLAN-FASES-5 ruling 4: Hoy's own due 'morning after' card -- appears the day after a
+    trained day with an unanswered entreno_dolor row, stays through the day after that, then
+    disappears; the POST fills dolor_manana and the card is gone next render."""
+
+    TRAINED_DAY = "2026-11-17"
+
+    def setUp(self):
+        self.conn = _route_conn(self, "hoy_dolor.db")
+        _as(self, 1)
+        self.conn.execute(
+            "INSERT INTO daily_metric (person_id, day, metric_key, value, source) VALUES "
+            "(1, ?, 'resting_hr', 55, 'garmin')", (self.TRAINED_DAY,))
+        self.conn.commit()
+        db.registrar_dolor_entreno(self.conn, 1, self.TRAINED_DAY, "garmin", "s1", [
+            {"ejercicio": "press militar", "zona": "hombro", "dolor_durante": 3, "dolor_despues": 2,
+             "movimiento": None},
+        ])
+
+    def test_no_card_the_same_day_it_was_trained(self):
+        with mock.patch.object(comun, "_today_local", return_value=date.fromisoformat(self.TRAINED_DAY)):
+            r = client.get("/")
+        self.assertNotIn("dolor-manana", r.text)
+
+    def test_card_appears_the_day_after(self):
+        with mock.patch.object(comun, "_today_local", return_value=date(2026, 11, 18)):
+            r = client.get("/")
+        self.assertIn(f"/day/{self.TRAINED_DAY}/dolor-manana", r.text)
+        self.assertIn("press militar", r.text)
+
+    def test_card_gone_after_two_days_pass(self):
+        with mock.patch.object(comun, "_today_local", return_value=date(2026, 11, 20)):
+            r = client.get("/")
+        self.assertNotIn("dolor-manana", r.text)
+
+    def test_post_fills_dolor_manana_and_the_card_is_gone(self):
+        r = client.post(f"/day/{self.TRAINED_DAY}/dolor-manana", data={"zona": "hombro", "valor": "4"})
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(r.headers["location"], "/")
+        filas = db.dolor_de_sesion(self.conn, 1, "garmin", "s1")
+        self.assertEqual(filas[0]["dolor_manana"], 4)
+        self.assertIsNotNone(filas[0]["manana_registrado_en"])
+        with mock.patch.object(comun, "_today_local", return_value=date(2026, 11, 18)):
+            r2 = client.get("/")
+        self.assertNotIn("dolor-manana", r2.text)
+
+    def test_out_of_range_value_is_ignored_never_a_500(self):
+        r = client.post(f"/day/{self.TRAINED_DAY}/dolor-manana", data={"zona": "hombro", "valor": "99"})
+        self.assertEqual(r.status_code, 303)
+        filas = db.dolor_de_sesion(self.conn, 1, "garmin", "s1")
+        self.assertIsNone(filas[0]["dolor_manana"])
+
+    def test_another_persons_pendiente_never_shows(self):
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.execute(
+            "INSERT INTO daily_metric (person_id, day, metric_key, value, source) VALUES "
+            "(2, ?, 'resting_hr', 50, 'garmin')", (self.TRAINED_DAY,))
+        self.conn.commit()
+        _as(self, 2)
+        with mock.patch.object(comun, "_today_local", return_value=date(2026, 11, 18)):
+            r = client.get("/")
+        self.assertNotIn("dolor-manana", r.text)
 
 
 if __name__ == "__main__":

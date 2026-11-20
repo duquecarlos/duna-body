@@ -9,9 +9,10 @@ from __future__ import annotations
 import html
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
 
-from .. import db, entreno_sesion, history, identity, recuperacion
+from .. import anatomia, db, entreno_sesion, history, identity, recuperacion
 from ..i18n import T
 from . import comun
 
@@ -25,6 +26,18 @@ _RECOVERY_REASON_KEY = {
     "sin_rango": "day.recovery.reason.sin_rango",
     "fuera_de_horizonte": "day.recovery.reason.fuera_de_horizonte",
 }
+
+# Duplicated from body/rutas/hoy.py's own `_lista_natural` -- same reason as above.
+def _lista_natural(t: T, items: list[str]) -> str:
+    if len(items) == 1:
+        return items[0]
+    if t.lang == "en":
+        if len(items) == 2:
+            return f"{items[0]} and {items[1]}"
+        return ", ".join(items[:-1]) + f", and {items[-1]}"
+    if len(items) == 2:
+        return f"{items[0]} y {items[1]}"
+    return ", ".join(items[:-1]) + f" y {items[-1]}"
 
 
 def _recovery_line(t: T, row) -> str | None:
@@ -250,9 +263,53 @@ def _curva_svg(t: T, sets: list[dict], curva_ctx: dict, width: int = 320, height
     return svg + '<div class="legend mt-4">' + "".join(legend_items) + "</div>"
 
 
+# BODY-PLAN-FASES-5 ruling 3: the 0-10 scale's own options, read once off db.py's own named
+# constant -- never a second hand-typed "10" in this module.
+_ESCALA_OPCIONES = list(range(db.DOLOR_ESCALA_MIN, db.DOLOR_ESCALA_MAX + 1))
+
+
+def _dolor_ctx(t: T, conn, person_id: int, day: str, a: dict, sets: list[dict]) -> dict | None:
+    """Ruling 2/3: the session's own pain card, or None when no exercise of this session loads an
+    open zona -- nothing changes on the screen then. `filas` carries each relevant exercise with
+    its OWN previously-saved durante/despues/movimiento (None the first time), so editing later is
+    the same form, prefilled (ruling 3's own "editing later is the same form prefilled")."""
+    zonas_dia = db.zonas_en_recuperacion(conn, person_id, day)
+    relevantes = entreno_sesion.ejercicios_con_zona_abierta(sets, zonas_dia)
+    if not relevantes:
+        return None
+    guardado = {f["ejercicio"]: f for f in db.dolor_de_sesion(conn, person_id, a["sets_source"], a["sets_source_id"])}
+    zonas_tarjeta = [z for z in anatomia.CATEGORIA_ENUM if z in {e["zona"] for e in relevantes}]
+    zona_txt = _lista_natural(t, [t("entreno.categoria." + z) for z in zonas_tarjeta])
+    filas = []
+    for e in relevantes:
+        prev = guardado.get(e["ejercicio"])
+        filas.append({
+            "ejercicio": e["ejercicio"], "zona": e["zona"],
+            "durante": prev["dolor_durante"] if prev else None,
+            "despues": prev["dolor_despues"] if prev else None,
+            "movimiento": (prev["movimiento"] if prev else None) or "",
+        })
+    return {"titulo": t("entreno_sesion.dolor_titulo", zona=zona_txt), "filas": filas}
+
+
+def _parse_escala(raw: str | None) -> int | None:
+    """A select's own value: '' (ruling 3's own "each optional") is None; anything outside
+    db.DOLOR_ESCALA_MIN..MAX, or not a plain integer, is also None rather than a 500 -- a hand-
+    crafted POST is the only way to reach that path, and the table's own CHECK refuses it either
+    way."""
+    if not raw:
+        return None
+    try:
+        v = int(raw)
+    except ValueError:
+        return None
+    return v if db.DOLOR_ESCALA_MIN <= v <= db.DOLOR_ESCALA_MAX else None
+
+
 @router.get("/day/{day}/entreno/{source_id}")
 @comun._cierra_conexion
-def entreno_sesion_view(day: str, source_id: str, person_id: int = Depends(identity.current_person_id)):
+def entreno_sesion_view(day: str, source_id: str, request: Request,
+                         person_id: int = Depends(identity.current_person_id)):
     try:
         d = date.fromisoformat(day)
     except ValueError:
@@ -286,8 +343,11 @@ def entreno_sesion_view(day: str, source_id: str, person_id: int = Depends(ident
         "activity_source_id = ? AND modelo_version = ?",
         (person_id, a["source"], a["source_id"], recuperacion.MODELO["version"])).fetchone()
 
+    dolor = _dolor_ctx(t, conn, person_id, d.isoformat(), a, sets) if es_fuerza else None
+    dolor_msg = t("entreno_sesion.dolor_guardado") if request.query_params.get("dolor_guardado") == "1" else None
+
     return comun._render(
-        "entreno_sesion.html", t=t, tab="today", day=d.isoformat(), turnos=turnos_on,
+        "entreno_sesion.html", t=t, tab="today", day=d.isoformat(), source_id=source_id, turnos=turnos_on,
         nombre=_nombre(t, a), tipo_label=tipo_label, date_long=t.long_date(d),
         detalle=_detalle_cabecera(t, a), figuras=figuras, sin_historial=sin_historial,
         comparacion_titulo=comparacion_titulo,
@@ -295,4 +355,43 @@ def entreno_sesion_view(day: str, source_id: str, person_id: int = Depends(ident
         pulso_svg=_curva_svg(t, sets, curva_ctx) if curva_ctx is not None else None,
         pulso_pendiente=t("entreno_sesion.curva_pendiente"),
         recovery=_recovery_line(t, recuperacion_row),
+        dolor=dolor, dolor_msg=dolor_msg, escala=_ESCALA_OPCIONES,
     )
+
+
+@router.post("/day/{day}/entreno/{source_id}/dolor")
+@comun._cierra_conexion_async
+async def entreno_dolor_registrar(day: str, source_id: str, request: Request,
+                                   person_id: int = Depends(identity.current_person_id)):
+    """Ruling 3: the session screen's own card -- upserts durante/despues/movimiento for every
+    exercise the card named, through db.registrar_dolor_entreno, the SAME writer the assistant's
+    own `registrar_dolor` proposal applies through (ruling 5). A day/source_id this person has no
+    activity under 404s, same as the GET route above."""
+    try:
+        d = date.fromisoformat(day)
+    except ValueError:
+        raise HTTPException(404)
+    conn, _, _ = comun._ctx(person_id)
+    a = entreno_sesion.actividad(conn, person_id, d.isoformat(), source_id)
+    if a is None:
+        raise HTTPException(404)
+    f = await comun._form(request)
+    try:
+        n = int(f.get("n") or "0")
+    except ValueError:
+        n = 0
+    filas = []
+    for i in range(n):
+        ejercicio = f.get(f"ejercicio_{i}")
+        zona = f.get(f"zona_{i}")
+        if not ejercicio or not zona:
+            continue
+        filas.append({
+            "ejercicio": ejercicio, "zona": zona,
+            "dolor_durante": _parse_escala(f.get(f"durante_{i}")),
+            "dolor_despues": _parse_escala(f.get(f"despues_{i}")),
+            "movimiento": (f.get(f"movimiento_{i}") or "").strip() or None,
+        })
+    if filas:
+        db.registrar_dolor_entreno(conn, person_id, a["day"], a["sets_source"], a["sets_source_id"], filas)
+    return RedirectResponse(f"/day/{day}/entreno/{source_id}?dolor_guardado=1", status_code=303)

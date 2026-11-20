@@ -157,6 +157,22 @@
 </div>
 {% endif %}
 
+{% for pend in dolor_manana %}
+<div class="card">
+  <div class="q">{{ pend.titulo }}</div>
+  <form method="post" action="/day/{{ pend.day }}/dolor-manana" class="mt-6 m-0">
+    <input type="hidden" name="back" value="/">
+    <input type="hidden" name="zona" value="{{ pend.zona }}">
+    <select name="valor" class="field" aria-label="{{ pend.titulo }}">
+      <option value="" selected>—</option>
+      {% for v in escala_dolor %}<option value="{{ v }}">{{ v }}</option>{% endfor %}
+    </select>
+    <p class="note mt-6">{{ t('entreno_sesion.dolor_escala_ayuda', min=t('dolor.escala.min'), max=t('dolor.escala.max')) }}</p>
+    <button type="submit" class="btn mt-6">{{ t('hoy.dolor_manana_guardar') }}</button>
+  </form>
+</div>
+{% endfor %}
+
 {% if despertar %}
 <div class="card">
   <p class="note m-0">{{ despertar.texto }}</p>
