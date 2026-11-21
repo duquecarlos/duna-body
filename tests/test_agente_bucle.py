@@ -135,7 +135,7 @@ class NivelDatosEnforcementTest(unittest.TestCase):
         ofrecidas = {h["nombre"] for h in herramientas.disponibles("ninguno")}
         self.assertEqual(ofrecidas, {
             "leer_turnos", "leer_ajustes", "leer_tutoriales", "leer_estado_reloj", "leer_dias_libres",
-            "leer_altitudes",
+            "leer_altitudes", "leer_pendientes_registro",
             "proponer_meta", "proponer_cambio_meta", "proponer_confirmar_turnos", "proponer_idioma",
             "planear_entreno", "registrar_entreno", "corregir_entreno", "registrar_medida", "marcar_habito",
             "proponer_experimento", "marcar_experimento",

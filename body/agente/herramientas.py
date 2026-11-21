@@ -75,7 +75,7 @@ from zoneinfo import ZoneInfo
 from .. import anatomia, baselines, catalogo_tendencias, comidas, compartir, contexto_dia, cuenta, db, despertar_real, \
     desplazamiento_import, enlaces, entreno_historial, errores, experimentos, fechas, garmin_adapter, \
     garmin_cuenta, goals, history, horizonte, household, noche_rasgos, nutriente_objetivo, practicas, profile, pull, \
-    readiness, reentrada, shift_import, sueno_fc, turnos_costo, tutoriales, viajes
+    readiness, reentrada, registro_cobertura, shift_import, sueno_fc, turnos_costo, tutoriales, viajes
 from ..i18n import LANGS, T
 from . import ajustes, conversacion as agente_conversacion, propuestas
 
@@ -971,6 +971,11 @@ _PARAM_LEER_PLAN = {
         "hasta": {"type": "string", "format": "date"},
     },
     "required": ["goal_id"],
+    "additionalProperties": False,
+}
+_PARAM_LEER_PENDIENTES_REGISTRO = {
+    "type": "object",
+    "properties": {"dia": {"type": "string", "format": "date"}},
     "additionalProperties": False,
 }
 
@@ -3696,7 +3701,29 @@ def _leer_plan(conn: sqlite3.Connection, person_id: int, goal_id: int, desde: st
         for s in semanas:
             _convertir_lineas_reloj(s.get("lineas"))
         out["plan_vs_real"] = semanas
+    # BODY-REGISTRO-COBERTURA-1 ruling 2: the CAPTURE side -- sleep/meals/protein/weight/waist/
+    # training logged so far against this plan's own date range, never this plan's own weekly
+    # targets (plan_vs_real above is a different question).
+    out["registro"] = registro_cobertura.cobertura(conn, person_id, goal_id)
     return out
+
+
+def _leer_pendientes_registro(conn: sqlite3.Connection, person_id: int, dia: str | None = None) -> dict:
+    """BODY-REGISTRO-COBERTURA-1 ruling 2: what the CAPTURE side of every active dated plan is
+    still missing on `dia` (today, in the person's own timezone, when not given) -- the desk's own
+    daily nudge asks this instead of keeping its own copy of what each stream needs. Never a health
+    figure, never a verdict: only which log streams have nothing yet and which have never been used
+    at all (`sin_uso`, never counted as a miss)."""
+    person = db.person(conn, person_id)
+    hoy = fechas.hoy_local(person)
+    if dia is not None:
+        try:
+            dia_d = date.fromisoformat(dia)
+        except ValueError:
+            raise ToolError("'dia' debe ser una fecha ISO (AAAA-MM-DD)")
+    else:
+        dia_d = hoy
+    return registro_cobertura.pendientes(conn, person_id, dia_d)
 
 
 def _proponer_experimento(conn: sqlite3.Connection, person_id: int, conversacion_id: int, titulo: str,
@@ -4547,8 +4574,19 @@ HERRAMIENTAS = [
     {"nombre": "leer_plan", "tipo": "lectura", "nivel": "resumen",
      "descripcion": "Un plan (horizonte) de la persona por su id, con lo mismo que leer_planes trae por "
                      "plan; si además das desde/hasta, agrega semana por semana qué decía el plan contra "
-                     "qué pasó realmente en ese rango.",
+                     "qué pasó realmente en ese rango. 'registro' trae, por corriente (sueño, comidas, "
+                     "proteína, peso, cintura, entreno), cuántos días o semanas ya tienen algo registrado "
+                     "contra cuántos se esperaban desde el inicio del plan, y las fechas que todavía faltan.",
      "parametros": _PARAM_LEER_PLAN, "funcion": _leer_plan},
+    {"nombre": "leer_pendientes_registro", "tipo": "lectura", "nivel": "ninguno",
+     "descripcion": "Qué falta registrar hoy (o en 'dia', si lo da) en cada plan con fecha activo de la "
+                     "persona: sueño y comidas y proteína cuando ese día todavía no tiene nada, peso y "
+                     "cintura y entreno cuando esta semana todavía no tiene nada -- y, por separado, qué "
+                     "corriente nunca se ha usado ('sin_uso'), para no insistir con algo que nunca fue "
+                     "parte de su rutina. Nunca trae una cifra de salud ni un veredicto, solo qué está "
+                     "registrado o qué falta; pensada para que puedas preguntar por lo que falta, nunca "
+                     "para dar consejo médico.",
+     "parametros": _PARAM_LEER_PENDIENTES_REGISTRO, "funcion": _leer_pendientes_registro},
     {"nombre": "proponer_experimento", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone empezar un experimento: compara los días en que la persona hace algo con sus "
                      "propios días normales, nunca con una tabla de otra gente. Un día que no se marca no "
