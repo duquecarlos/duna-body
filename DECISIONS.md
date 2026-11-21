@@ -32932,3 +32932,221 @@ pre-authorizes merging past that condition once the gate is green. No cross-repo
 (BODY-PLAN-FASES-6's own work, above) plus `2b85a4876c6e32c711c4b7292834f81da2930a24` (this ledger text), on the
 branch -- merged into `main` (`--no-ff`) -- merged `d4e7c3569cd3fde875a3f550202f70edf32dd055`.
 
+## BODY-MINUTO-ANALISIS-6-ALTITUD
+
+**Surface:** Carlos, relayed by the desk 2026-11-20, his words: "I want between you and body design specialized
+tools to analyze in full detail every minute of the metrics." The desk added that he sleeps at a lower altitude
+this week than at home, which matters for heart rate, HRV and SpO2, and that what a comparison should group by is
+the CHANGE against the person's own home altitude (going down usually lowers resting / sleeping heart rate; going
+up raises it), never the absolute value alone. The read-only investigation BODY-MINUTO-ANALISIS-4-INV (OBSERVED,
+logs/worker-body-minuto-analisis-4-inv-body-app-20261120T061335.json in ../dev-protocol) measured: NO altitude
+source anywhere in Body -- the vida-v1 trip event reaches Body with `data = {}` (body/lugares.py:68-84 reads only
+ref/starts_at/ends_at; viaje_lugares stores no place, body/db.py:1121-1132), no Garmin field is parsed for
+elevation (body/garmin_adapter.py), and the person row has no home place (body/db.py:354-362); Body keeps
+coordinates and place names out by design (body/desplazamiento_import.py:1-7). The orchestrator decided (dev-
+protocol DECISIONS BODY-MINUTO-ANALISIS-4-INV-READ, under ORCH-CARLOS-DELEGATES-TIER-1-1, nothing foreclosed):
+build the DATA SHAPE now, filled by hand or through an assistant proposal, so a Lugares field (asked on the hub,
+hit_01m7wc3xsnj46b1saned0yqep3, no answer yet) can feed the same shape later without a rewrite.
+
+**The rulings, verbatim from the spec surface, each as built:**
+
+1. **THE RECORD** -- "a new table `altitud_estancia` (id, person_id NOT NULL REFERENCES person(id), es_casa
+   INTEGER NOT NULL CHECK (es_casa IN (0,1)), start_day TEXT NOT NULL, end_day TEXT NULL (open = still current),
+   altitud_m INTEGER NOT NULL CHECK (altitud_m BETWEEN -500 AND 9000), fuente TEXT NOT NULL CHECK (fuente IN
+   ('manual','asistente','lugares')), viaje_ref TEXT NULL (a Lugares trip ref when the stay belongs to one),
+   creado_en TEXT NOT NULL; CHECK (end_day IS NULL OR start_day <= end_day)). NO coordinates, NO place name
+   column -- an altitude and dates only. Home is the es_casa=1 row covering a date (a move is a new home row;
+   home rows never overlap, nor do stay rows -- validated in Python by one validator). Additive migration,
+   indexes by person; mudanza TableSpec; privacidad export + erase; persona-scoped everywhere."
+   As built: table at body/db.py:1186-1197, index `idx_altitud_estancia_person` at body/db.py:1198. The one
+   overlap validator `validar_altitud_sin_solape` at body/db.py:2802-2821 (refuses by name: "se superpone con
+   una de tus fechas de casa" / "...tus estancias"), used by both `crear_altitud_estancia` (body/db.py:2824-2840)
+   and the assistant's own apply path (body/agente/propuestas.py:1391-1397, via `_registrar_altitud` in
+   herramientas.py). Range reader `altitud_estancia_rango` (body/db.py:2778-2787, one statement for the whole
+   range) and single-day home lookup `altitud_casa_en` (body/db.py:2790-2799). Erase: `borrar_altitud_estancia`
+   (body/db.py:2843-2850). Mudanza: `TableSpec("altitud_estancia", match_cols=("person_id","es_casa",
+   "start_day"))` at body/mudanza.py:198. Privacidad: census name at body/privacidad.py:99, export (altitude and
+   dates only, no place, no coordinates) at body/privacidad.py:364-367,411, erase at body/privacidad.py:557.
+
+2. **A NIGHT'S ALTITUDE** -- "`contexto_dia` gains `altitud` {altitud_m, casa_m, cambio_m (signed: stay minus
+   home), fuente} for a day/night when BOTH a home row covers it AND either a stay row covers it or no trip /
+   'viaje' period covers it (then the person is taken to be at home: altitud_m = casa_m, cambio_m = 0). A day
+   inside a trip or 'viaje' period with NO stay row carries NO altitud key (unknown, never guessed as home). A
+   night takes its evening day, like the other evening keys. One query for the range."
+   As built: documented at body/contexto_dia.py:44-52; range read `_altitud_rango` (body/contexto_dia.py:178-186,
+   one `altitud_estancia_rango` call) and per-day pick `_fila_altitud_para_dia` (body/contexto_dia.py:188); wired
+   into the day entry at body/contexto_dia.py:246,275-283; `altitud` added to the day-entry key tuple at
+   body/contexto_dia.py:82.
+
+3. **GROUP FILTERS** -- "`_coincide_grupo` (comparar_noche, buscar_noches) gains `altitud_cambio_min` and
+   `altitud_cambio_max` (metres, signed); a night without `altitud` never matches either; buscar_noches' en_comun
+   reports the share of matching nights with cambio_m < 0, = 0 and > 0."
+   As built: documented at body/noche_rasgos.py:36-40; `altitud_cambio` added to GRUPO_CLAVES at
+   body/noche_rasgos.py:141 and split into the two optional bounds in `GRUPO_FILTRO_CLAVES` at
+   body/noche_rasgos.py:147; matching (a night with no `altitud` never matches) at body/noche_rasgos.py:476-483;
+   en_comun's signed-share reporting at body/noche_rasgos.py:508-509,527-534.
+
+4. **THE ASSISTANT** -- "a proposal tool `registrar_altitud` (es_casa, start_day, optional end_day, altitud_m,
+   optional viaje_ref) applied through the same validator, undone by propuestas.deshacer like every insert-shaped
+   proposal; the card shows 'Casa: <m> m desde <fecha>' or 'Estancia: <m> m, <desde>-<hasta> (<+-cambio> m vs
+   casa)'; a read `leer_altitudes` (the person's home rows and stays in a range). The descriptions say altitude
+   is stored only as metres and dates, never a place, and that comparisons use the change against home. Never
+   medical language."
+   As built: `registrar_altitud` at body/agente/herramientas.py:4492-4503 (tipo='propuesta', nivel='ninguno'),
+   function `_registrar_altitud` at body/agente/herramientas.py:3419-3446 (runs `validar_altitud_sin_solape`
+   before the proposal is even created, per the db.py:2809-2811 docstring); applied by
+   `_aplicar_registrar_altitud` (body/agente/propuestas.py:1391-1397, calls `db.crear_altitud_estancia`), undone
+   by `_deshacer_registrar_altitud` (body/agente/propuestas.py:1399-1404, calls `db.borrar_altitud_estancia`),
+   drift-detected by `_drift_deshacer_registrar_altitud` (body/agente/propuestas.py:1381-1389). Card builder
+   `_tarjeta_registrar_altitud` at body/rutas/asistente.py:680-697, registered at body/rutas/asistente.py:1047.
+   Read tool `leer_altitudes` at body/agente/herramientas.py:4504-4509 (tipo='lectura', nivel='ninguno'),
+   function `_leer_altitudes` at body/agente/herramientas.py:3450ff, scoped to the person's own rows by
+   person_id through `db.altitud_estancia_rango`; both descriptions (body/agente/herramientas.py:4493-4502,
+   4505-4508) say "Solo metros y fechas -- nunca un nombre de lugar ni coordenadas".
+
+   **Customer strings (es/en), every one this slice introduced:**
+   - `asistente.propuesta.titulo.registrar_altitud` (es.json:1256 / en.json:1256): es "Registrar altitud" /
+     en "Record altitude"
+   - `asistente.propuesta.altitud_casa` (es.json:1432 / en.json:1432): es "Casa: {m} m desde {fecha}" /
+     en "Home: {m} m since {fecha}"
+   - `asistente.propuesta.altitud_estancia` (es.json:1433 / en.json:1433): es "Estancia: {m} m, {desde}-{hasta}
+     ({cambio} m vs casa)" / en "Stay: {m} m, {desde}-{hasta} ({cambio} m vs home)"
+   - `asistente.propuesta.altitud_estancia_sin_casa` (es.json:1434 / en.json:1434): es "Estancia: {m} m,
+     {desde}-{hasta}" / en "Stay: {m} m, {desde}-{hasta}"
+   - `asistente.propuesta.altitud_sin_fin` (es.json:1435 / en.json:1435): es "hoy" / en "today"
+
+5. **TESTS** -- "on invented homes: overlapping home rows / overlapping stays refused by name; a night at a
+   stay 1200 m below home carries cambio_m = -1200; a night with no trip and a home row carries cambio_m 0; a
+   trip night with no stay carries no altitud; a night with no home row carries no altitud; the group filters
+   select exactly the expected nights in comparar_noche and buscar_noches; en_comun shares; registrar_altitud
+   applies and deshacer removes; another person's rows never shown, used, exported or proposed; migration on
+   main's schema; mudanza + privacidad census name the table; contexto_dias statement count for 7 vs 90 days
+   still equal (named); es/en parity; tu register (tests/test_registro_tu.py unedited); demo seeds an invented
+   home and one invented lower stay."
+   As built: tests/test_altitud.py (the table/validator/migration/mudanza/privacidad/es-en-parity cases),
+   tests/test_contexto_dia.py, tests/test_comparar_noche.py, tests/test_buscar_noches.py (group filters and
+   en_comun shares), tests/test_agente_registro.py, tests/test_agente_conformidad.py, tests/test_agente_propuestas.py,
+   tests/test_mcp.py (the assistant tool), tests/test_mudanza.py, tests/test_privacidad.py, tests/test_migraciones.py,
+   tests/test_persona_fuga.py, tests/test_person_scope.py (cross-person isolation), tests/test_i18n_paridad.py,
+   tests/test_rendimiento.py (the named statement-count ceiling), tests/test_demo.py. tests/test_registro_tu.py
+   left unedited, per the spec's own restriction.
+
+**Named ceilings:** `contexto_dias`' statement count for 7 vs 90 days stays equal (tests/test_rendimiento.py);
+`altitud_estancia_rango` and `altitud_casa_en` each read in ONE statement for their whole range/lookup
+(body/db.py:2778-2787, :2790-2799).
+
+**Demo:** `_seed_altitud` (body/demo.py:1526-1543) seeds one invented home row and one invented lower stay row
+(both through `today=` injection, per tests/test_demo_fechas.py), wired into the seed result at
+body/demo.py:1692,1725.
+
+**Migration shape:** additive only -- one new table, one new index, no column added to or removed from any
+existing table, no backfill of existing rows (a person with no altitud_estancia rows simply has no `altitud` key
+anywhere downstream).
+
+This slice's own build is carried in commits `d1bf2d4eb1e1e81123e347f17766de78588dc02a` (`-1`: altitud_estancia
+table, mudanza, privacidad), `cae1c23b44d0fdd18d75971855d269aac6530d23` (`-2`: contexto_dia altitud, group
+filters) and `e222a3a58f33105441a7d5e0bc2386ce06019e67` (`-3`: registrar_altitud/leer_altitudes, demo seed), all
+on `feat/body-minuto-analisis-6-altitud` from `main` at `5760b74781a06e41175c44bdbf48e9b54f43f78`. The gate, the
+remaining ledger entries and the merge are carried by BODY-MINUTO-ANALISIS-6-ALTITUD-M and
+BODY-MINUTO-ANALISIS-6-ALTITUD-M2, below.
+
+## BODY-MINUTO-ANALISIS-6-ALTITUD-M
+
+**Surface:** a continuation of BODY-MINUTO-ANALISIS-6-ALTITUD (above), dispatched to check its three inherited,
+uncommitted commits' worth of work against the first spec's five rulings and land them. Report:
+logs/worker-body-minuto-analisis-6-altitud-m-body-app-20261121T084926.json in ../dev-protocol.
+
+**What it checked and committed:** the 24 dirty paths inherited from the first slice's session (23 modified + the
+new tests/test_altitud.py) were checked against each of the five rulings above -- all matched, no defect found --
+and committed in three ruling-group commits: `d1bf2d4eb1e1e81123e347f17766de78588dc02a` (table + mudanza +
+privacidad, 6 files, +595/-1), `cae1c23b44d0fdd18d75971855d269aac6530d23` (contexto_dia altitud + group filters,
+5 files, +228/-9), `e222a3a58f33105441a7d5e0bc2386ce06019e67` (assistant tools + demo seed, 13 files, +295/-13).
+
+**Its targeted run:** `.venv/Scripts/python.exe -m unittest tests.test_altitud tests.test_contexto_dia
+tests.test_buscar_noches tests.test_comparar_noche tests.test_migraciones tests.test_mudanza tests.test_privacidad`
+-- Ran 333 tests, OK.
+
+**Its stop:** started the full gate in 26 alphabetical chunks; chunk 1/26 (`tests.test_accesibilidad` through
+`tests.test_agente_leer_serie`) came back FAILED (Ran 209, 208 passed, 1 failed, 1 pre-existing expectedFailure):
+`tests/test_agente_bucle.py:136`'s exhaustive `nivel_datos='ninguno'` tool census
+(`NivelDatosEnforcementTest.test_tool_not_offered_at_the_current_nivel_is_still_refused_by_ejecutar`) did not list
+the two new tools `leer_altitudes` / `registrar_altitud`, which `body/agente/herramientas.py` gives
+`nivel='ninguno'` (lines 4492, 4504 at that tree). `tests/test_agente_bucle.py` is outside this spec's `touches`,
+so -M stopped BLOCKED rather than editing it, opening follow-up BODY-MINUTO-ANALISIS-6-ALTITUD-BUCLE-CENSUS-1. It
+wrote NO ledger entry of its own; this entry and the rest of BODY-MINUTO-ANALISIS-6-ALTITUD-M2's gate/merge are
+written by the continuation below.
+
+## BODY-MINUTO-ANALISIS-6-ALTITUD-M2
+
+**Surface:** the continuation that closes follow-up BODY-MINUTO-ANALISIS-6-ALTITUD-BUCLE-CENSUS-1, runs the full
+gate to completion, writes all three ledger entries above and merges, under ORCH-CARLOS-DELEGATES-TIER-1-1 (the
+first slice's own approval and BODY-MINUTO-ANALISIS-4-INV's observed-report cover this content).
+
+**Ruling 1, the census edit:** `tests/test_agente_bucle.py:136`'s expected set for `nivel_datos='ninguno'` now
+names `leer_altitudes` and `registrar_altitud` by name (in the file's existing order convention), alongside the
+other lectura/propuesta tools already there. Confirmed fitting the first spec's rulings before editing: `_leer_altitudes`
+(body/agente/herramientas.py:3450-3474ff) reads only this person's own rows, scoped by `person_id` through
+`db.altitud_estancia_rango`, never another person's; `_registrar_altitud` (body/agente/herramientas.py:3419-3446)
+is `tipo='propuesta'` -- it never writes directly, only stages a proposal for the person to approve, and stores
+only metres and dates (ruling 4 above). Both therefore belong in the census exactly as the other read-only/
+proposal-only tools already listed at `nivel='ninguno'`. Targeted run:
+`.venv/Scripts/python.exe -m unittest tests.test_agente_bucle tests.test_altitud` -- Ran 46 tests, OK. Committed
+as `333cb69e5b068856cfb0a6df9e644387866a907a`.
+
+**Ruling 2, the gate:** exact command per chunk `.venv/Scripts/python.exe -m unittest <mod1> <mod2> ...` (the
+same `discover tests -t .` suite as sequential alphabetical chunks of ~10 modules, ~5 for test_garmin_*/
+test_host_*), all 26 chunks run in the foreground on the branch tip (`333cb69e5b068856cfb0a6df9e644387866a907a`):
+
+1. test_accesibilidad..test_agente_leer_serie -- Ran 209, OK (1 expected failure)
+2. test_agente_medida..test_ancho_completo -- Ran 200, OK
+3. test_asistente_panel..test_comida_compartida -- Ran 256, OK (1 skipped)
+4. test_comida_corregir..test_cuenta_rp -- Ran 239, OK
+5. test_cuenta_schema..test_despertar -- Ran 147, OK
+6. test_despertar_correccion..test_entreno_dolor -- Ran 254, OK
+7. test_entreno_historial..test_errores_texto -- Ran 194, OK
+8. test_estados_vacios..test_fuentes_propias -- Ran 141, OK
+9. test_garmin_adapter..test_garmin_estado -- Ran 70, OK
+10. test_garmin_host..test_garmin_web -- Ran 138, OK
+11. test_get_sin_escritura..test_hogar_enlace_1 -- Ran 218, OK
+12. test_hogar_escribe..test_horizonte -- Ran 237, OK
+13. test_host_autoactualizar..test_host_import -- Ran 201, OK
+14. test_household..test_isolate_limpieza -- Ran 161, OK
+15. test_leer_intradia..test_mcp_aplicar -- Ran 262, OK
+16. test_mcp_cliente_remoto..test_mock_r2_hoy -- Ran 290, OK
+17. test_modelos_estandar_1..test_pc_cliente -- Ran 254, OK
+18. test_periodo..test_plan_esquema -- Ran 251, OK
+19. test_plan_hoy..test_primeros_turnos -- Ran 284, OK
+20. test_privacidad..test_pull -- Ran 286, OK
+21. test_pull_intradia_experimentos..test_rendimiento_turnos -- Ran 139, OK
+22. test_request_log..test_sueno_corregido -- Ran 172, OK
+23. test_sueno_fc..test_tendencias_todas -- Ran 265, OK
+24. test_turno_dia_plan..test_turnos_opcional_4 -- Ran 280, OK
+25. test_turnos_opcional_5..test_vida_dia -- Ran 157, OK
+26. test_vida_export..test_web_entry -- Ran 78, OK
+
+Every non-"." character printed inside the runs above (pull/backfill/intradia/mcp-remoto status lines, Garmin
+NotSignedIn/ConnectionError/AuthenticationError/RuntimeError messages, "dia vacio"/"backfill"/"connect pull"
+counts-and-dates fixture lines, ResourceWarning tracebacks, a deliberately-raised "RuntimeError: boom" in a mocked
+thread at tests/test_sync_vivo.py:311, a "refusado"/"series descartadas" guard line) is test-fixture stdout from
+existing tests exercising their own failure or demo-seed paths on purpose, built from invented dates and counts
+only, never a real person's figures; no `FAIL:`/`ERROR:` line appeared in any chunk.
+
+**Reconciliation:** sum of the 26 chunks' `Ran` counts -- 209+200+256+239+147+254+194+141+70+138+218+237+201+161+
+262+290+254+251+284+286+139+172+265+280+157+78 = 5383 -- exactly equal to the independent collect-only count
+(`.venv/Scripts/python.exe -c "import unittest; print(unittest.TestLoader().discover('tests',
+top_level_dir='.').countTestCases())"`: 5383).
+
+**Gate verdict: GREEN.**
+
+**Merge policy A, this diff's own shape:** no schema or migration change (the table, index and all code landed in
+BODY-MINUTO-ANALISIS-6-ALTITUD's own three commits above; this continuation's only diff is the one-set edit to
+`tests/test_agente_bucle.py:136` plus this ledger text). Customer-facing bytes are the five proposal-card strings
+named under ruling 4 above (es/en) -- approved by the first spec's own approval-reason and re-confirmed by this
+continuation's approval-reason (ORCH-CARLOS-DELEGATES-TIER-1-1: "Customer bytes are the first slice's proposal-
+card strings (es/en), approved here"), which pre-authorizes merging past that condition once the gate is green.
+No cross-repo contract touched.
+
+**Commits:** `d1bf2d4eb1e1e81123e347f17766de78588dc02a`, `cae1c23b44d0fdd18d75971855d269aac6530d23`,
+`e222a3a58f33105441a7d5e0bc2386ce06019e67` (BODY-MINUTO-ANALISIS-6-ALTITUD's own work, above) plus
+`333cb69e5b068856cfb0a6df9e644387866a907a` (the census edit) on the branch -- merged into `main` (`--no-ff`).
+
