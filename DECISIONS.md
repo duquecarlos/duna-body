@@ -32867,7 +32867,8 @@ collect-only count 5331; no reconciliation, no ledger entry, no merge.
 
 **Commits:** `11106192f12b228d36d4c681e39033dc678c5f71` (ruling 1, the reentrada module, with tests),
 `12206d3515660961dae0494620f38f6c09e48499` (rulings 2-5: proposals scale/filter, assistant reads, Hoy's own line,
-census and ceilings), on the branch `feat/body-plan-fases-6`.
+census and ceilings), on the branch `feat/body-plan-fases-6` -- merged into `main` (`--no-ff`) -- merged
+`d4e7c3569cd3fde875a3f550202f70edf32dd055`.
 
 ## BODY-PLAN-FASES-6-M
 
@@ -32928,5 +32929,6 @@ approval-reason (ORCH-CARLOS-DELEGATES-TIER-1-1: "Reversible... Deploying follow
 pre-authorizes merging past that condition once the gate is green. No cross-repo contract touched.
 
 **Commits:** `11106192f12b228d36d4c681e39033dc678c5f71`, `12206d3515660961dae0494620f38f6c09e48499`
-(BODY-PLAN-FASES-6's own work, above) plus this ledger text, on the branch.
+(BODY-PLAN-FASES-6's own work, above) plus `2b85a4876c6e32c711c4b7292834f81da2930a24` (this ledger text), on the
+branch -- merged into `main` (`--no-ff`) -- merged `d4e7c3569cd3fde875a3f550202f70edf32dd055`.
 
