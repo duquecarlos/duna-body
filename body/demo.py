@@ -817,10 +817,49 @@ def _seed_turno_fc(conn, db, turno_fc, person_id: int, all_days: list[date],
 NOCHE_INUSUAL_HRV = 18.0
 NOCHE_INUSUAL_SLEEP_SCORE = 12.0
 
+# BODY-PLAN-FASES-5-PULIDO-1-M: both overridden signals above are read against the person's own
+# baselines.MIN_DAYS=7 (over UNMARKED days only -- baselines.py's own "a marked day is left out of
+# the usual range" rule). _seed_periodo's own 'malestar' and 'lesion' periods (above) sit inside
+# this same 30-day lookback, and WHERE they land inside it shifts with whichever real calendar day
+# "today" is (the 'lesion' period's own start reaches back to the most recent strength_training
+# day, itself a function of the shift cycle's fixed, calendar-ABSOLUTE anchor
+# `_CYCLE_ANCHOR_MONDAY`, never of "today" itself). On 2026-11-21, with `--dias 30`, that left only
+# 4 of the window's unmarked days holding a sleep_score sample -- below MIN_DAYS -- so
+# noche_inusual.evaluar saw only ONE signal off and the card silently dropped. Filled in here,
+# AFTER _seed_periodo already placed both periods, so this always backfills against their FINAL
+# ranges: whichever unmarked days in the lookback still lack a value for either signal get one,
+# until each clears MIN_DAYS with margin -- independent of which real day "today" is.
+NOCHE_INUSUAL_MARGEN_DIAS = 3
 
-def _seed_noche_inusual(conn, db, anchor: date, person_id: int) -> None:
+
+def _asegurar_baseline_noche_inusual(conn, db, baselines, anchor: date, person_id: int) -> None:
+    ventana_inicio = anchor - timedelta(baselines.WINDOW_DAYS)
+    ventana_fin = anchor - timedelta(1)
+    marcados = db.dias_marcados(conn, person_id, ventana_inicio.isoformat(), ventana_fin.isoformat())
+    dias_ventana = [ventana_inicio + timedelta(i) for i in range((ventana_fin - ventana_inicio).days + 1)]
+    sin_marcar = [d for d in dias_ventana if d.isoformat() not in marcados]
+    minimo = baselines.MIN_DAYS + NOCHE_INUSUAL_MARGEN_DIAS
+    for key in ("hrv_last_night", "sleep_score"):
+        rows = conn.execute(
+            "SELECT day FROM daily_metric_efectiva WHERE person_id = ? AND metric_key = ? "
+            "AND day BETWEEN ? AND ?",
+            (person_id, key, ventana_inicio.isoformat(), ventana_fin.isoformat())).fetchall()
+        con_valor = {r["day"] for r in rows}
+        con_valor_sin_marcar = con_valor & {d.isoformat() for d in sin_marcar}
+        faltan = minimo - len(con_valor_sin_marcar)
+        if faltan <= 0:
+            continue
+        candidatos = [d for d in sin_marcar if d.isoformat() not in con_valor]
+        lo, hi = RANGES[key]
+        relleno = round((lo + hi) / 2, 1)
+        for d in candidatos[:faltan]:
+            db.set_metric(conn, d.isoformat(), key, relleno, "garmin", person_id)
+
+
+def _seed_noche_inusual(conn, db, baselines, anchor: date, person_id: int) -> None:
     db.set_metric(conn, anchor.isoformat(), "hrv_last_night", NOCHE_INUSUAL_HRV, "garmin", person_id)
     db.set_metric(conn, anchor.isoformat(), "sleep_score", NOCHE_INUSUAL_SLEEP_SCORE, "garmin", person_id)
+    _asegurar_baseline_noche_inusual(conn, db, baselines, anchor, person_id)
     conn.commit()
 
 
@@ -1622,7 +1661,7 @@ def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[st
                                       excluir_dias=frozenset({dia_basket}))
     sueno_fc_noches = _seed_sueno_fc(conn, db, sueno_fc, person_id)
     despertar_correcciones = _seed_despertar_correccion(conn, db, person_id)
-    _seed_noche_inusual(conn, db, anchor, person_id)
+    _seed_noche_inusual(conn, db, baselines, anchor, person_id)
     planes_hoy = _seed_plan_hoy(conn, anchor, person_id, idioma)
 
     practicas_count, practica_pasos_id = _seed_practicas(conn, practicas, person_id, idioma)

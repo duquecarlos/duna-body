@@ -44,7 +44,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import config, db, demo, identity, privacidad, web
+from body import config, db, demo, garmin_adapter, identity, privacidad, web
 from tests._rutas import rutas_planas
 from tests.test_cuenta_rp import CuentaRpTestCase
 from tests.test_estados_vacios import STATES, _paths_for
@@ -398,6 +398,57 @@ class AccesibilidadHostedTest(CuentaRpTestCase):
         self.assertEqual(sweep.violations, [], sweep.fail_message())
         self.assertEqual(sweep.pages_checked, len(_LANGS) * 3,
                           "the hosted sweep did not render every hosted-only page for every language")
+
+
+class DolorCardAriaTest(unittest.TestCase):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: Día's own pain card, with two exercises sharing
+    the same open zona -- the generic rule (e) above already passes with the visible label text
+    alone ("Durante"/"After"), since a `<label for>` matching the control's id is enough for that
+    rule; what it cannot see is that the SAME label text repeats across every row. Each select/
+    input's own aria-label must additionally name its own exercise, so the six controls across
+    the two rows read as six distinct names, not three names said twice."""
+
+    DAY = "2026-11-17"
+
+    def _seed(self, conn, lang: str) -> None:
+        db.local_person_id(conn)
+        conn.execute("UPDATE person SET language = ? WHERE id = 1", (lang,))
+        conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, name, duration_s, source) "
+            "VALUES (1, 's1', ?, ?, 'strength_training', NULL, 600.0, 'garmin')",
+            (self.DAY, f"{self.DAY}T18:00:00"))
+        conn.commit()
+        db.save_exercise_sets(conn, 1, "garmin", "s1", [
+            garmin_adapter.ExerciseSet(set_type="active", category="hombro", exercise="press militar",
+                                        reps=8, weight_value=20.0, weight_unit="kg", duration_s=40.0,
+                                        start_local=f"{self.DAY}T18:00:00"),
+            garmin_adapter.ExerciseSet(set_type="active", category="hombro", exercise="remo",
+                                        reps=10, weight_value=30.0, weight_unit="kg", duration_s=40.0,
+                                        start_local=f"{self.DAY}T18:03:00"),
+        ])
+        db.crear_periodo(conn, 1, "lesion", self.DAY, None, zonas=["hombro"])
+
+    def test_each_rows_controls_are_named_distinctly(self):
+        for lang in _LANGS:
+            conn = _reset_db(self, f"dolor-aria-{lang}.db")
+            self._seed(conn, lang)
+            web.app.dependency_overrides[identity.current_person_id] = lambda: 1
+            self.addCleanup(web.app.dependency_overrides.pop, identity.current_person_id, None)
+            r = _default_client.get(f"/day/{self.DAY}/entreno/s1")
+            self.assertEqual(r.status_code, 200)
+            tree = _TreeBuilder()
+            tree.feed(r.text)
+            nodes = list(_iter_all(tree.root))
+            dolor_controls = [n for n in nodes if n.tag in ("select", "input") and
+                              (n.attrs.get("name") or "").startswith(("durante_", "despues_", "movimiento_"))]
+            self.assertEqual(len(dolor_controls), 6, f"lang={lang}: expected 2 rows x 3 fields")
+            arias = [n.attrs.get("aria-label", "") for n in dolor_controls]
+            self.assertTrue(all(a.strip() for a in arias), f"lang={lang}: every field must carry one: {arias}")
+            self.assertEqual(len(set(arias)), 6, f"lang={lang}: six distinct names, got {arias}")
+            for ejercicio in ("Press militar", "Remo"):
+                self.assertTrue(any(ejercicio in a for a in arias),
+                                 f"lang={lang}: {ejercicio!r} not named in any aria-label: {arias}")
+            web.app.dependency_overrides.pop(identity.current_person_id, None)
 
 
 if __name__ == "__main__":

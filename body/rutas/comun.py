@@ -145,6 +145,20 @@ def _render(name: str, **kw) -> HTMLResponse:
     return HTMLResponse(env.get_template(name).render(**kw))
 
 
+def _ancla(id_destino: str) -> str:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3: a result redirect's own fragment suffix, so the
+    person lands back on the card or result block that just changed rather than at the top of the
+    page or wherever they tapped from -- used by Día's own pain-card POST and Turnos' own
+    confirm-all/undo POSTs (BODY-WEB-ESTRUCTURA-1: called by two or more route domains, so it
+    lives here). Each caller appends this to its OWN redirect target, inside the SAME f-string
+    (tests/test_seguridad.py's guard (f) reads a RedirectResponse target's leading literal prefix
+    to prove it is never request-controlled; `id_destino` is always a hardcoded id, never from the
+    request, but the guard cannot see that through a function call -- folding it into the same
+    literal f-string it already trusts keeps every result redirect provably safe without a new
+    allow-list entry)."""
+    return f"#{id_destino}"
+
+
 def _short_date(t: T, d: date) -> str:
     """19 jun 2024 style: day, abbreviated month, year -- no weekday, unlike t.long_date. Shared by
     two or more route domains (BODY-WEB-ESTRUCTURA-2), so it lives here rather than with any one."""

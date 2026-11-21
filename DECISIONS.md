@@ -32629,3 +32629,167 @@ is touched.
 `tests/test_agente_propuestas.py`; 2 files changed, +2/-2), plus this ledger text, on the branch --
 merged into `main` (`--no-ff`) -- merged `cc29ce309a83c21af782664d39bde57d6606c733`.
 
+## BODY-PLAN-FASES-5-PULIDO-1
+
+**Surface, verbatim (specs/body-plan-fases-5-pulido-1.md, `../dev-protocol`):** *"Found by the
+orchestrator's 375 px browser check of BODY-PLAN-FASES-5 (the session pain card, deployed 3822cf3)
+on the invented demo home, plus one test-order leak, all small. (A) ACCESSIBLE NAMES -- the pain
+card's two 0-10 selects per exercise (body/templates/entreno_sesion.html:48, :55) are labelled only
+«Durante» / «Después» (`entreno_sesion.dolor_durante_label` / `dolor_despues_label`), so with
+several exercises a screen reader hears the same name repeated with no exercise; the movement input
+(:61-62) likewise. (B) EXERCISE NAME CASE -- the card shows the exercise as stored on entreno_dolor
+(`fila.ejercicio`, :42), which can differ in case from how the Series list on the same screen shows
+it; the card must show it exactly as Series shows it (the stored key in the hidden input stays as it
+is). (C) REDIRECT ANCHOR -- after POST /day/{day}/entreno/{source_id}/dolor the redirect reopens the
+page at the top or the tapped offset instead of at the card and its result line (role="status"); the
+same quirk exists on the Turnos screen's result redirect -- census it and fix both with ONE shared
+way of adding a fragment anchor to a result redirect (an id on the card / result block and `#<id>`
+on the redirect URL). (D) BODY-TURNOS-ACTUAL-CONTEXTVAR-LEAK-1 -- tests/test_mcp.py:71 calls
+`herramientas.fijar_turnos_actual(...)` without restoring it, so in a non-alphabetical order a later
+module (test_agente_registro) sees the shift tools hidden; every other test that sets it registers
+`addCleanup(herramientas.fijar_turnos_actual, True)`. THE ORCHESTRATOR'S RULINGS (Tier 2,
+ORCH-CARLOS-DELEGATES-TIER-1-1): (1) each select and the movement input gets an accessible name that
+includes the exercise -- `aria-label` built from a new i18n template «<label> · <ejercicio>» (es/en),
+the visible label unchanged; (2) the card's exercise text comes from the same display form Series
+uses on that screen (census the helper; reuse it, never a new case rule); (3) one helper for result
+redirects with an anchor, used by the pain-card POST and the Turnos result redirect, each target
+block carrying a stable id; (4) tests/test_mcp.py:71's setter gets the same addCleanup restore as its
+siblings, and a test proves test_agente_registro passes when run AFTER test_mcp in one process. (5)
+TESTS: the rendered card's selects carry aria-labels naming each invented exercise (es and en); the
+exercise text equals Series' display form for a mixed-case invented name; both POSTs redirect with
+the fragment and the target id exists in the page; the ordering test; es/en parity; tú register
+(tests/test_registro_tu.py unedited); statement ceilings for the session screen unchanged or
+re-measured and named."*
+
+**Ruling 1-2 (accessible names, exercise display case), as built:** `_dolor_ctx`
+(`body/rutas/entreno_sesion.py:280-303`) resolves each row's exercise once through
+`_exercise_display(e["ejercicio"])` (`:292`, the same helper Series already renders with on this
+screen -- no new case rule), keeps the raw stored key only in the hidden `ejercicio_{{ loop.index0
+}}` input (`body/templates/entreno_sesion.html:40`, unchanged), and builds three per-row
+`aria-label`s from the new i18n template `entreno_sesion.dolor_campo_aria` = `"{campo} ·
+{ejercicio}"` (`body/i18n/es.json:1159`, `body/i18n/en.json:1159`, identical in both languages since
+only `{campo}`/`{ejercicio}` vary) -- `durante_aria`/`despues_aria`/`movimiento_aria`
+(`entreno_sesion.py:298-303`). The template applies them on the two 0-10 `<select>`s and the
+movement `<input>` (`entreno_sesion.html:45,48,52,55,63-64`), visible labels unchanged; the card's
+own title row now renders `fila.ejercicio_display` (`:40`) instead of the raw key.
+
+**Ruling 3 (shared result-redirect anchor), as built:** `comun._ancla(id_destino)`
+(`body/rutas/comun.py:148-160`) returns the literal `f"#{id_destino}"` -- a plain string, not a
+`RedirectResponse` wrapper, because tests/test_seguridad.py's redirect-target guard (ruling f) reads
+a `RedirectResponse` target's own leading literal prefix to prove it is never request-controlled,
+and cannot see through a function call; folding the suffix into each caller's own existing f-string
+target keeps every result redirect provably safe with no new allow-list entry (**this is the
+deviation this slice's own report named**: a string builder, not the `RedirectResponse`-wrapping
+helper a first design would reach for). Callers: the pain-card POST
+(`body/rutas/entreno_sesion.py:410`, `comun._ancla('dolor')`, landing on
+`entreno_sesion.html:38`'s `<div class="card" id="dolor">`), Turnos' confirm-all
+(`body/rutas/turnos.py:652`), and Turnos' undo, both the refused and the done path
+(`turnos.py:683,687`), all landing on `shifts.html:8`'s `<p ... id="resultado">`.
+
+**Ruling 4 (BODY-TURNOS-ACTUAL-CONTEXTVAR-LEAK-1), as built:** `tests/test_mcp.py`'s `ToolsListTest`
+now carries the same `self.addCleanup(herramientas.fijar_turnos_actual, True)` every sibling already
+had (`tests/test_mcp.py:73-74`), and `tests/test_orden_contextvar.py` (new file) proves the exact
+order that exposed the leak -- the leaking test followed by `test_agente_registro`'s
+`DisponiblesTest` in one process -- now passes.
+
+**Every customer string (es/en):** `entreno_sesion.dolor_campo_aria` = `"{campo} · {ejercicio}"`
+(identical literal in both `es.json`/`en.json:1159`; es renders through the existing
+`dolor_durante_label`/`dolor_despues_label`/`dolor_movimiento_label` values, so no new visible text
+is added anywhere -- only `aria-label` attributes an assistive-technology user hears, never seen on
+screen).
+
+**The gate this slice's own worker ran (verbatim from specs/body-plan-fases-5-pulido-1-m.md's
+surface in `../dev-protocol`, that worker's own report, not re-measured here):** *"The gate (26
+chunks, 5306 = collect-only 5306) found THREE reds outside its touches that REPRODUCE ON MAIN:
+tests.test_estados_vacios_2.PersonaCompletaSinCambiosTest.test_demo_person_unchanged (1 failure);
+tests.test_hoy_escritorio.HoyAbajoBlockMarkupTest (2 failures, 1 error, a missing 'hoy-noticed' /
+unusual-night card); tests.test_mock_r2_hoy.BoardOrderTest.test_order_en and test_order_es
+(ValueError: substring not found)."* That worker stopped GATE_RED without writing this entry or
+merging, since all three reds sit outside `touches` -- BODY-PLAN-FASES-5-PULIDO-1-M below finds
+their root cause, fixes it, and lands this entry together with its own.
+
+## BODY-PLAN-FASES-5-PULIDO-1-M
+
+**Surface:** land BODY-PLAN-FASES-5-PULIDO-1 (above), whose own work was green but whose end-of-
+slice gate found three reds outside its touches, reproducing on main, that the dispatching
+orchestrator (ORCH-CARLOS-DELEGATES-TIER-1-1) ruled must be root-caused and fixed rather than
+waived, before this entry and the merge.
+
+**Ruling 1 (root cause), as measured:** All three reds share one mechanism: `tests/test_estados_vacios_2.py:244`,
+`tests/test_hoy_escritorio.py:265` and `tests/test_mock_r2_hoy.py:60,69` each seed the demo with
+`demo._seed(conn, dias=30, idioma=...)` and no `today=`, so `anchor = date.today()`
+(`body/demo.py:1588`, unchanged) -- the REAL calendar date the gate happens to run on.
+`_seed_noche_inusual` (`body/demo.py:821-824`, before this fix) overrides the anchor day's
+`hrv_last_night`/`sleep_score` to a clearly low value so `noche_inusual.evaluar`
+(`body/noche_inusual.py:66-92`) sees both signals off (`MODELO['minimo_senales'] = 2`,
+`noche_inusual.py:45`) and the "Body noticed" card renders. But `baselines.baselines`
+(`body/baselines.py:48-77`) reads each signal's last 30 days EXCLUDING any day `_seed_periodo`
+(`body/demo.py:1076-1117`) marked, and needs `baselines.MIN_DAYS = 7` (`baselines.py:14`) unmarked
+samples or it returns `None` for that signal. `_seed_periodo` places an open-ended `'lesion'` period
+starting at `hoy - 3` or further back (up to `_LESION_MAX_DIAS_ATRAS = 15` days,
+`demo.py:175,1096-1106`) -- reaching back to the most recent `strength_training` activity before
+"today", itself scheduled around the shift cycle's calendar-ABSOLUTE anchor
+(`_CYCLE_ANCHOR_MONDAY = date(2024, 1, 1)`, `demo.py:44`, never relative to "today") -- plus a 3-day
+`'malestar'` period at a FIXED relative offset (`all_days[len(all_days) // 2]`, `demo.py:1093-1095`).
+Measured directly (seeding with `dias=30`, no mock, real `body.db`/`body.baselines`/`body.demo`):
+with `hoy = 2026-11-21`, the `lesion` period landed at `2026-11-11..` (open) and `malestar` at
+`2026-11-07..2026-11-09`; of `sleep_score`'s 15 samples inside the 30-day window
+(`2026-10-22..2026-11-20`), the marked days excluded 11 of them, leaving only 4 -- below
+`MIN_DAYS` -- so `baselines.baselines` returned `sleep_score: None`, only `hrv_last_night` stayed
+off, `noche_inusual.evaluar` returned `None`, and Hoy never rendered the card (reproduced on `main`
+at `64e1e0c`: `test_demo_person_unchanged` FAIL, `HoyAbajoBlockMarkupTest` 2 failures + 1 error,
+`BoardOrderTest.test_order_en`/`test_order_es` ERROR -- all four identical to the first worker's own
+report). This is a seed-data/calendar-alignment collision in the DEMO fixture, never a product bug:
+a real person's Garmin history is continuous and open-ended, with no fixed `dias=30` cutoff tied to
+"today".
+
+**Rulings 2-3 (the fix and the cross-date test), as built:** `_seed_noche_inusual`
+(`body/demo.py:859-863`) now calls `_asegurar_baseline_noche_inusual` (`:832-855`, new) AFTER
+`_seed_periodo` has already placed both periods: it recomputes the 30-day window's unmarked days
+(`db.dias_marcados`, same call `baselines.baseline` itself uses), and for each of
+`hrv_last_night`/`sleep_score`, backfills a plausible mid-range value (`RANGES[key]`'s own midpoint)
+on enough still-missing unmarked days to clear `baselines.MIN_DAYS` plus a
+`NOCHE_INUSUAL_MARGEN_DIAS = 3` margin (`:826-830`) -- independent of which real calendar day seeds
+the demo, and without touching `_seed_periodo`'s own realistic period placement. No test assertion
+was removed, loosened, skipped or marked `expectedFailure`; only `body/demo.py` changed.
+`tests/test_demo_fechas.py` (new file) seeds the demo (`dias=30`, matching the three regressed
+modules) under five injected `today` values -- `2026-11-20`, `2026-11-21` (the date that failed),
+`2026-12-31`/`2027-01-01` (a December/January month boundary), and `2026-02-28` -- and asserts the
+"Body noticed" card (`today.noche_inusual_titulo`) renders on Hoy every time
+(`NocheInusualSurvivesTheCalendarTest.test_card_present_across_injected_todays`); green on all five
+in one run. Confirmed directly (no mock) that `hrv_last_night` and `sleep_score` both clear
+`MIN_DAYS` and `noche_inusual.evaluar` returns both signals off for `2026-11-20`, `2026-11-21`,
+`2026-12-01`, `2026-12-31`, `2027-01-01` and `2026-02-28`.
+
+**Ruling 4 (land PULIDO-1) and the gate:** command `.venv/Scripts/python.exe -m unittest
+discover tests -t .` -- run as 26 sequential alphabetical chunks (10 dotted modules each, 5 for the
+`test_garmin_*`/`test_host_*` groups) on the final tree (commit `217a840`), every chunk read from
+its own process output, reconciled against an independent collect-only count
+(`unittest.defaultTestLoader.discover('tests', top_level_dir='.').countTestCases()` = **5307**):
+chunk sizes 201, 195, 257, 212, 153, 249, 184, 140, 70, 138, 218, 237, 201, 161, 260, 283, 254, 251,
+280, 282, 135, 186, 278, 286, 135, 61 -- sum **5307**, exact match. Every chunk **OK**; the three
+previously-red modules (`test_estados_vacios_2`, `test_hoy_escritorio`, `test_mock_r2_hoy`) are
+green inside chunks 4, 7 and 13/15 respectively, along with `test_demo`, `test_noche_inusual` and
+the new `test_demo_fechas`. 0 failures, 0 errors across the whole run; the `NotSignedIn`/
+"intradia:"/"pull attempt failed:"/`ResourceWarning: unclosed database`/`Exception in thread`
+lines printed mid-run are pre-existing fixtures exercising synthetic/mock error paths and mocked
+background-thread side effects with invented demo data, not gate failures -- none in a file this
+slice touched. `git status --porcelain` empty throughout except for this ledger entry itself.
+
+**Deviations:** none from the orchestrator's rulings. The fix backfills demo baseline history
+(`body/demo.py` only) rather than pinning `today=` in the three regressed test modules, because
+ruling 3 required the card to survive several injected `today` values INCLUDING 2026-11-21 under
+the SAME `dias=30` those modules already use -- pinning the test's clock alone could not have made
+2026-11-21 pass, since the calendar-alignment collision lived in the seed data, not in the tests.
+
+**Merge policy A, this slice's own diff:** no schema or migration change; `body/demo.py` and the two
+test files are demo-fixture/test-only changes, read by nobody as customer-facing bytes; no
+cross-repo contract touched. BODY-PLAN-FASES-5-PULIDO-1's own diff (landed together with this entry)
+is the only customer-facing surface -- the aria-labels and the anchors already approved by this
+spec's own approval-reason, which pre-authorizes merging past that condition once the gate is green.
+
+**Commits on the branch:** `654a3a1` (PULIDO-1 ruling 1-2), `5b2ab89` (PULIDO-1 ruling 3),
+`00eb817` (BODY-TURNOS-ACTUAL-CONTEXTVAR-LEAK-1), `38cc639` (PULIDO-1, stale docstring fix),
+`217a840` (PULIDO-1-M rulings 1-3: `body/demo.py`, `tests/test_demo_fechas.py`), plus this ledger
+text, on the branch.
+

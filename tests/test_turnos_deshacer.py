@@ -169,6 +169,25 @@ class UndoRouteTest(_WebCase):
         finally:
             self.client.post("/settings/language", data={"lang": "es"})
 
+    def test_success_redirects_with_the_result_anchor(self):
+        """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3: the redirect lands back on the result block
+        (`#resultado`, comun._ancla), not at the top of the page."""
+        b_id = self._confirm_overlap_pair("2026-11-03", "2026-11-04")
+        resp = self.client.post("/shifts/undo", data={"batch_id": str(b_id)}, follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertTrue(resp.headers["location"].endswith("#resultado"))
+        page = self.client.get(resp.headers["location"]).text
+        self.assertIn('id="resultado"', page)
+
+    def test_refused_redirects_with_the_result_anchor(self):
+        data = {"source": {"received": "2026-11-06T12:00:00-05:00", "extracted_at": "2026-11-06T12:00:00-05:00"},
+                "shifts": [{"day": "2026-11-06", "kind": "night", "start_local": "2026-11-06T22:00:00"}]}
+        batch_id = shift_import.propose_data(self.conn, data, "turnos-refused-anchor.json", PERSON_ID)
+        self.conn.commit()
+        resp = self.client.post("/shifts/undo", data={"batch_id": str(batch_id)}, follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertEqual(resp.headers["location"], "/shifts?undo_refused=1#resultado")
+
     def test_get_shifts_with_history_present_writes_nothing(self):
         data = {"source": {"received": "2026-11-07T12:00:00-05:00", "extracted_at": "2026-11-07T12:00:00-05:00"},
                 "shifts": [{"day": "2026-11-07", "kind": "night", "start_local": "2026-11-07T22:00:00"}]}
@@ -341,6 +360,16 @@ class ResultMsgPositionTest(_WebCase):
     def test_undo_refused_before_the_first_card(self):
         page = self.client.get("/shifts?undo_refused=1").text
         self._assert_before_everything(page, T("es")("shifts.undo_refused"))
+
+    def test_confirm_all_redirect_carries_the_result_anchor(self):
+        """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3: confirm-all's own success redirect, and the
+        undo/undo-refused redirects above -- the SAME shared helper, the SAME target id."""
+        _propose(self.conn, "2026-11-12", "turnos-ancla.json")
+        self.conn.commit()
+        resp = self.client.post("/shifts/confirm-all", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertTrue(resp.headers["location"].endswith("#resultado"))
+        self.assertIn('id="resultado"', self.client.get(resp.headers["location"]).text)
 
 
 if __name__ == "__main__":

@@ -1156,6 +1156,7 @@
   "entreno_sesion.dolor_durante_label": "Durante",
   "entreno_sesion.dolor_despues_label": "Después",
   "entreno_sesion.dolor_movimiento_label": "¿Qué movimiento o ángulo molestó? (opcional)",
+  "entreno_sesion.dolor_campo_aria": "{campo} · {ejercicio}",
   "entreno_sesion.dolor_escala_ayuda": "0 = {min} · 10 = {max}",
   "entreno_sesion.dolor_guardar": "Guardar",
   "entreno_sesion.dolor_guardado": "Guardado.",

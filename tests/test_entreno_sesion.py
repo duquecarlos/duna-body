@@ -553,6 +553,48 @@ class DolorCardTest(unittest.TestCase):
         self.assertNotIn(t_es("entreno_sesion.dolor_titulo", zona=t_es("entreno.categoria.hombro")), r.text)
         self.assertNotIn('name="ejercicio_0"', r.text)
 
+    def test_card_exercise_text_matches_series_display_case(self):
+        """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2: the card's own exercise text comes from the
+        same display form Series already uses on this screen (ruling 6's _exercise_display: a
+        capital first letter, display only) -- never a second, independent case rule. "press
+        militar" is stored lower-case; both sections must show the identical "Press militar"."""
+        db.crear_periodo(self.conn, 1, "lesion", self.DAY, None, zonas=["hombro"])
+        r = client.get(f"/day/{self.DAY}/entreno/s1")
+        self.assertEqual(r.text.count(">Press militar<"), 2, "Series' own row and the dolor card's row")
+        self.assertNotIn(">press militar<", r.text)
+        # The hidden input the form posts back still carries the RAW stored key, unchanged.
+        self.assertIn('name="ejercicio_0" value="press militar"', r.text)
+
+    def test_each_rows_fields_get_an_aria_label_naming_its_own_exercise(self):
+        """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: with two exercises sharing the same open zona,
+        the visible label text alone ("Durante"/"Después") is identical for every row, so a screen
+        reader needs each select/input's own aria-label naming ITS exercise to tell them apart."""
+        db.crear_periodo(self.conn, 1, "lesion", self.DAY, None, zonas=["hombro", "pierna"])
+        r = client.get(f"/day/{self.DAY}/entreno/s1")
+        t_es = T("es")
+
+        def aria(campo_key: str, ejercicio: str) -> str:
+            return t_es("entreno_sesion.dolor_campo_aria", campo=t_es(campo_key), ejercicio=ejercicio)
+
+        self.assertIn(f'aria-label="{aria("entreno_sesion.dolor_durante_label", "Press militar")}"', r.text)
+        self.assertIn(f'aria-label="{aria("entreno_sesion.dolor_despues_label", "Press militar")}"', r.text)
+        self.assertIn(f'aria-label="{aria("entreno_sesion.dolor_movimiento_label", "Press militar")}"', r.text)
+        self.assertIn(f'aria-label="{aria("entreno_sesion.dolor_durante_label", "Sentadilla")}"', r.text)
+        self.assertIn(f'aria-label="{aria("entreno_sesion.dolor_despues_label", "Sentadilla")}"', r.text)
+        self.assertIn(f'aria-label="{aria("entreno_sesion.dolor_movimiento_label", "Sentadilla")}"', r.text)
+
+    def test_aria_labels_in_english(self):
+        """Ruling 1, English: the same per-exercise aria-label template reads through en.json."""
+        self.conn.execute("UPDATE person SET language = 'en' WHERE id = 1")
+        self.conn.commit()
+        db.crear_periodo(self.conn, 1, "lesion", self.DAY, None, zonas=["hombro"])
+        r = client.get(f"/day/{self.DAY}/entreno/s1")
+        t_en = T("en")
+        aria = t_en("entreno_sesion.dolor_campo_aria", campo=t_en("entreno_sesion.dolor_durante_label"),
+                    ejercicio="Press militar")
+        self.assertIn(f'aria-label="{aria}"', r.text)
+        self.assertIn(">Press militar<", r.text)
+
     def test_post_saves_and_redirects_with_a_result_line(self):
         db.crear_periodo(self.conn, 1, "lesion", self.DAY, None, zonas=["hombro"])
         r = client.post(f"/day/{self.DAY}/entreno/s1/dolor", data={
@@ -561,12 +603,16 @@ class DolorCardTest(unittest.TestCase):
         })
         self.assertEqual(r.status_code, 303)
         self.assertIn("dolor_guardado=1", r.headers["location"])
+        # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3: the redirect lands back on the card itself
+        # (`#dolor`, comun._ancla), not at the top of the page.
+        self.assertTrue(r.headers["location"].endswith("#dolor"))
         filas = db.dolor_de_sesion(self.conn, 1, "garmin", "s1")
         self.assertEqual(len(filas), 1)
         self.assertEqual((filas[0]["dolor_durante"], filas[0]["dolor_despues"], filas[0]["movimiento"]),
                           (3, 2, "al bajar la barra"))
         r2 = client.get(r.headers["location"])
         self.assertIn(_es("entreno_sesion.dolor_guardado"), r2.text)
+        self.assertIn('id="dolor"', r2.text)
 
     def test_editing_again_prefills_the_saved_values(self):
         db.crear_periodo(self.conn, 1, "lesion", self.DAY, None, zonas=["hombro"])

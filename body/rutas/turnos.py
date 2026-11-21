@@ -648,7 +648,8 @@ async def shifts_confirm_all(person_id: int = Depends(identity.current_person_id
         return RedirectResponse("/shifts", status_code=303)
     return RedirectResponse(
         f"/shifts?done=1&batches={result['batches']}&applied={result['days_applied']}"
-        f"&kept_manual={result['days_kept_manual']}&kept_newer={result['days_kept_newer']}",
+        f"&kept_manual={result['days_kept_manual']}&kept_newer={result['days_kept_newer']}"
+        f"{comun._ancla('resultado')}",
         status_code=303,
     )
 
@@ -679,10 +680,11 @@ async def shifts_undo(request: Request, person_id: int = Depends(identity.curren
     try:
         resultado = shift_import.undo(conn, person_id, int(batch_id))
     except shift_import.UndoRefused:
-        return RedirectResponse("/shifts?undo_refused=1", status_code=303)
+        return RedirectResponse(f"/shifts?undo_refused=1{comun._ancla('resultado')}", status_code=303)
     quitados = resultado["days_restored"] + resultado["days_emptied"] + resultado["days_kept_manual"]
     return RedirectResponse(
-        f"/shifts?undo_done=1&quitados={quitados}&restaurados={resultado['days_restored']}",
+        f"/shifts?undo_done=1&quitados={quitados}&restaurados={resultado['days_restored']}"
+        f"{comun._ancla('resultado')}",
         status_code=303,
     )
 

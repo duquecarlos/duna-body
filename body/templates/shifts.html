@@ -5,7 +5,7 @@
 <div class="top"><div><h1>{{ t('nav.shifts') }}</h1></div></div>
 
 {% if result_msg %}
-<p class="k mt-8" role="status">{{ result_msg }}</p>
+<p class="k mt-8" role="status" id="resultado">{{ result_msg }}</p>
 {% endif %}
 
 {{ cuerpo_vista(t, cuerpo) }}
