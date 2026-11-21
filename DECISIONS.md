@@ -32795,3 +32795,138 @@ spec's own approval-reason, which pre-authorizes merging past that condition onc
 text, on the branch -- merged into `main` (`--no-ff`) -- merged
 `a2995a5866426d91e2a30454a6c0999dff1e6bf4`.
 
+## BODY-PLAN-FASES-6
+
+Carlos, relayed by the desk 2026-11-19, his words: «the Greece plan can wait until I got back home ... I didn't
+train for about a week ... Maybe Sunday morning I'll go to play basketball». Two situations Body cannot see today
+when it proposes a session: coming back after a GAP (a week or more without strength training) and the day AFTER A
+HEAVY GAME (a ball game or any activity whose recovery runs long), when heavy legs the next day is a poor choice.
+
+The read-only investigation BODY-PLAN-FASES-1-INV (OBSERVED) measured: `planear_entreno`
+(body/agente/herramientas.py:2454) built its proposal with `leer_dias_libres` (:1944) and
+`_limitaciones_abiertas` (:962) in context but never imported `entreno_racha` or `recuperacion`;
+`entreno_racha.sesiones_fuerza` (body/entreno_racha.py:72) already lists strength sessions by day;
+`recuperacion.recuperacion_actividad` (body/recuperacion.py:109) already measures an activity's minutes-to-recover
+against the person's own usual, and `recuperacion.estudio` (:244) the person's own typical recovery;
+`anatomia.grupos_de_categorias` (body/anatomia.py:81) maps exercise categories to muscle groups and
+`anatomia.texto_liviano_a_proposito` (:150) already says "light on purpose" for injured zones.
+
+THE ORCHESTRATOR'S RULINGS (Tier 2, ORCH-CARLOS-DELEGATES-TIER-1-1; no schema; db.py, entreno_racha.py,
+recuperacion.py and anatomia.py not edited -- called; thresholds a VERSIONED MODEL with the reasoning beside each
+value, the same convention body/noche_inusual.py's MODELO and the readiness model use), each as built:
+
+**(1) ONE MODULE** -- `body/reentrada.py`: `VERSION = "reentrada-v1"` (:47), `MODELO` (:49-65) and
+`senales(conn, person_id, dia) -> dict` (:174, `_reentrada` :128, `_tras_carga` :149). Every `MODELO` value with its
+reason: `gap_dias = 7` -- "a week or more with no strength session reads as a gap worth flagging (Carlos's own
+words, relayed: 'about a week') -- the same natural-week granularity recuperacion.MODELO's own 'dias_historia' and
+body/baselines.py's WINDOW_DAYS already use." `factores = [0.6, 0.8, 1.0]` -- "a gentle ramp, never straight back
+to full load. The 3rd value is 1.0 (back to normal) on purpose: senales omits the 'reentrada' key entirely once the
+factor reaches it." `carga_alta_factor = 1.5` -- "an activity's own recovery minutes counts as a heavy load once
+they run at least this many times the person's OWN typical recovery -- 'half again' reads as a clear outlier for a
+single day without being so high it only ever fires on an extreme one."
+
+**(2) PROPOSALS LISTEN** -- `planear_entreno` (body/agente/herramientas.py:2477-2529) reads `reentrada.senales`
+(:2512), scales every exercise's `series` by the reentrada factor (:2513-2516), drops exercises sharing
+`tras_carga`'s own loaded groups unless that would empty the proposal (:2517-2522), and stores both signals in
+`despues` for the card (:2524-2527). The card words them in body/rutas/asistente.py: `_reentrada_txt` (:317-319)
+and `_tras_carga_txt` (:322-324), wired into the proposal card text (:342-345).
+
+**(3) HOY SAYS IT** -- body/rutas/hoy.py: `_reentrada_o_tras_carga_txt` (:356-369) reads `reentrada` first (it
+speaks to the whole session's volume) then `tras_carga`; wired into the planned-session row (:383-386), computed
+fresh against `reentrada.senales` each render -- never stored on the plan row.
+
+**(4) THE ASSISTANT SEES IT** -- `leer_hoy` carries the signals via `reentrada.senales`
+(body/agente/herramientas.py:1012-1015); `leer_dias_libres`' entries carry them per day the same way (:1965-1969).
+
+**(5) TESTS**: tests/test_reentrada.py (8 tests -- the module's own gap ramp and heavy-day flag, on invented
+homes). tests/test_agente_entreno.py:638-667 -- ruling 4's `leer_hoy` tests and the ruling-5 census
+`test_leer_entreno_nunca_lleva_estas_claves` (:658-667), naming `leer_hoy` (never `leer_entreno`) as the tool with
+a notion of "today". tests/test_agente_propuestas.py and tests/test_plan_hoy.py -- rulings 2-3's card/line tests
+(the latter at the HTTP level through `/`, since ruling 3's daily row is rendered there). tests/test_rendimiento.py:
+the "/" ceiling note (:151-154, re-measured 131 statements, 128 before this slice, named ceiling 155 unchanged) and
+`PlanearEntrenoReentradaCostTest` (:1066-1113: `test_no_signal_stays_within_the_ceiling` :1089 measuring 10
+statements with no signal or reentrada alone, `test_tras_carga_the_costlier_path_stays_within_the_same_ceiling`
+:1101 measuring 15 with tras_carga, named ceiling 20).
+
+**Every customer string, as built** (the spec's own literal card-text example did not generalise across categoria
+genders -- "pesada" agrees only with "pierna" -- so both languages were worded invariant to which categoria
+substitutes in): es `today.dia.reentrada` / `asistente.propuesta.reentrada` (body/i18n/es.json:285,1358): "Vuelta
+tras {dias} días sin fuerza: sesión {n}, volumen al {pct} %."; es `today.dia.tras_carga` /
+`asistente.propuesta.tras_carga` (body/i18n/es.json:286,1359): "Ayer: {actividad}; hoy sin carga pesada de
+{grupo}."; en counterparts (body/i18n/en.json:285-286,1358-1359): "Back after {dias} days without strength: session
+{n}, volume at {pct}%." / "Yesterday: {actividad}; today without a heavy {grupo} load."
+
+**The first worker's gate** (BLOCKED mid-gate, logs/worker-body-plan-fases-6-body-app-20261121T040816.json in
+../dev-protocol): 5 of 24 planned alphabetical chunks of `.venv/Scripts/python.exe -m unittest discover tests -t .`
+run in the foreground before a structured-output-enforce interrupt forced its report -- chunk 1
+(tests.test_accesibilidad..tests.test_agente_leer_serie) Ran 209, chunk 2
+(tests.test_agente_medida..tests.test_asistente_panel) Ran 197, chunk 3 (tests.test_backup..tests.test_comida_corregir)
+Ran 257 (1 skip), chunk 4 (tests.test_comida_hora..tests.test_cuenta_schema) Ran 212, chunk 5
+(tests.test_cuenta_vectores..tests.test_despertar_correccion) Ran 153 (1 expected failure) -- 1028 tests, all green;
+collect-only count 5331; no reconciliation, no ledger entry, no merge.
+
+**Commits:** `11106192f12b228d36d4c681e39033dc678c5f71` (ruling 1, the reentrada module, with tests),
+`12206d3515660961dae0494620f38f6c09e48499` (rulings 2-5: proposals scale/filter, assistant reads, Hoy's own line,
+census and ceilings), on the branch `feat/body-plan-fases-6`.
+
+## BODY-PLAN-FASES-6-M
+
+**Surface:** land BODY-PLAN-FASES-6 (above) -- its own work (commits `1110619`, `12206d3`) carried forward
+unchanged; this run completes the gate, the ledger and the merge, per ORCH-CARLOS-DELEGATES-TIER-1-1 (no product
+change: this slice edited no file under body/ or tests/).
+
+**Gate**, exact command per chunk `.venv/Scripts/python.exe -m unittest <mod1> <mod2> ...` (the same
+`discover tests -t .` suite as sequential alphabetical chunks of ~10 modules, ~5 for test_garmin_*/test_host_*),
+all 26 chunks run in the foreground on the branch tip (`12206d3515660961dae0494620f38f6c09e48499`), each chunk's
+`Ran`/`OK` read from the process:
+
+1. test_accesibilidad..test_agente_leer_serie -- Ran 209, OK (expected failures=1)
+2. test_agente_medida..test_asistente_panel -- Ran 197, OK
+3. test_backup..test_comida_corregir -- Ran 257, OK (skipped=1)
+4. test_comida_hora..test_cuenta_schema -- Ran 212, OK
+5. test_cuenta_vectores..test_despertar_correccion -- Ran 153, OK
+6. test_despertar_pantalla..test_entreno_historial -- Ran 249, OK
+7. test_entreno_numeros..test_estados_vacios -- Ran 184, OK
+8. test_estados_vacios_2..test_fuentes_propias -- Ran 140, OK
+9. test_garmin_adapter..test_garmin_estado -- Ran 70, OK
+10. test_garmin_host..test_garmin_web -- Ran 138, OK
+11. test_get_sin_escritura..test_hogar_enlace_1 -- Ran 218, OK (exceeded the 600s foreground cap at 600.965s,
+    moved to the background by the harness and read complete from its own output file)
+12. test_hogar_escribe..test_horizonte -- Ran 237, OK
+13. test_host_autoactualizar..test_host_import -- Ran 201, OK
+14. test_household..test_isolate_limpieza -- Ran 161, OK
+15. test_leer_intradia..test_mcp_aplicar -- Ran 260, OK
+16. test_mcp_cliente_remoto..test_mock_r2_hoy -- Ran 283, OK
+17. test_modelos_estandar_1..test_pc_cliente -- Ran 254, OK
+18. test_periodo..test_plan_esquema -- Ran 251, OK
+19. test_plan_hoy..test_primeros_turnos -- Ran 284, OK
+20. test_privacidad..test_pull -- Ran 282, OK
+21. test_pull_intradia_experimentos..test_rendimiento_turnos -- Ran 139, OK (includes tests.test_reentrada and
+    tests.test_rendimiento, this slice's own touched modules)
+22. test_request_log..test_sueno_corregido -- Ran 172, OK
+23. test_sueno_fc..test_tendencias_todas -- Ran 265, OK
+24. test_turno_dia_plan..test_turnos_opcional_4 -- Ran 280, OK
+25. test_turnos_opcional_5..test_vida_dia -- Ran 157, OK
+26. test_vida_export..test_web_entry -- Ran 78, OK
+
+Every non-"." character printed inside the runs above (pull/backfill/intradia/mcp-remoto status lines, Garmin
+NotSignedIn/ConnectionError/AuthenticationError messages, ResourceWarning tracebacks, a deliberately-raised
+"RuntimeError: boom" in a mocked thread, a "refusado"/"series descartadas" guard line) is test-fixture stdout from
+existing tests exercising their own failure paths on purpose; no `FAIL:`/`ERROR:` line appeared in any chunk.
+
+**Reconciliation:** sum of the 26 chunks' `Ran` counts -- 209+197+257+212+153+249+184+140+70+138+218+237+201+161+
+260+283+254+251+284+282+139+172+265+280+157+78 = 5331 -- exactly equal to the independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.')`, recursively counted: 5331). No drift from the first
+worker's own chunks 1-5 either (209/197/257/212/153, 1028 tests): this run's identical first five chunks reproduced
+the same counts and the same two by-design markers (1 expected failure, 1 skip).
+
+**Gate verdict: GREEN.**
+
+**Merge policy A, this slice's own diff:** no schema or migration change. Customer-facing bytes are the four
+strings named above (es/en, the reentrada/tras_carga card and Hoy lines) -- approved by this spec's own
+approval-reason (ORCH-CARLOS-DELEGATES-TIER-1-1: "Reversible... Deploying follows Carlos's standing go"), which
+pre-authorizes merging past that condition once the gate is green. No cross-repo contract touched.
+
+**Commits:** `11106192f12b228d36d4c681e39033dc678c5f71`, `12206d3515660961dae0494620f38f6c09e48499`
+(BODY-PLAN-FASES-6's own work, above) plus this ledger text, on the branch.
+
