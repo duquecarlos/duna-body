@@ -33396,3 +33396,58 @@ branch tip tree `ab5aea8f7d5bc5fe01f72ccfb9365090fc3a0565` equals the merge comm
 empty. Smoke test on main, `tests.test_captura_sueno tests.test_leer_noche tests.test_comparar_noche tests.test_demo
 tests.test_i18n_paridad tests.test_registro_tu` -- Ran 136, OK.
 
+## BODY-MCP-503-RETRY-AFTER-1 -- every could-not-ask 503 from the MCP door carries Retry-After (2026-11-21)
+
+Answers Main's hub item `hit_01m7zxb87afdk8qfcnt3jwtcj3` (`ORCH-ASISTENTE-401-CUENTA-LOCK-2026-11-21`): on every
+assistant/MCP door, an introspection that could not COMPLETE answers 503 with its own code AND a `Retry-After`
+header. The orchestrator's census on main `d1bfe7e` found the rest of that rule already true here (a failed
+introspection never reaches 401, a failed check never feeds the grace cache, the auth path writes nothing) and one
+gap: `body/rutas/mcp_http.py`'s `_503` sent `Retry-After` only when Cuenta's own answer carried one -- yet its
+message already names `_REINTENTO_DEFECTO_SEGUNDOS` ("60") to the person, so a timeout or connection error answered
+503 with no header while the sentence still said "60".
+
+**The fix (`body/rutas/mcp_http.py`, `_503`):** the header is now unconditional -- `{"Retry-After": n}` where `n` is
+the same value `n = retry_after or _REINTENTO_DEFECTO_SEGUNDOS` the message already computes. No new constant, no
+other status touched; the 401 paths (`_401`, the inactive-key and invalid-key routes) are untouched.
+
+**Tests (`tests/test_mcp_http.py`):** `test_inactive_key_401_carries_no_retry_after` -- a real `{active: false}`
+answers 401 with no `Retry-After` at all. `test_every_503_case_carries_retry_after_equal_to_the_messages_number` --
+one parametrised case (timeout, connection error, a 500 with no `Retry-After` of its own, a 429 that carried `42`)
+asserting the header always equals the number inside the JSON-RPC message. No existing test pinned the absence of
+`Retry-After` on a 503, so none needed changing. `tests/test_llave_asistente.py` and `tests/test_lugares.py` were
+run, unedited, to confirm the paths this slice may only call still pass (76 tests, OK).
+
+**Census (`git grep -n "_503\|_REINTENTO_DEFECTO_SEGUNDOS\|retry-after\|Retry-After" -- body/ tests/`):** every match
+outside `body/llave_asistente.py` (Tier 1, called not edited) fell inside `body/rutas/mcp_http.py` and
+`tests/test_mcp_http.py`, both in `touches`.
+
+**Commit (branch `feat/body-mcp-503-retry-after-1`, off `main` at `d1bfe7e2ade964704f63adcb5d38070953e4fecf`):**
+`adf237c62d0225a5d8e128023b6fa1b724a5e4b4` -- the header fix and its tests together.
+
+**Gate:** exact command per chunk `.venv/Scripts/python.exe -m unittest <mod1> <mod2> ...` (the same
+`discover tests -t .` suite, run as 24 alphabetical chunks of ~7-10 modules each, all green, no `FAIL:`/`ERROR:`
+line in any chunk), on the branch tip (`adf237c`): chunk `Ran` counts 209, 200, 217, 247, 186, 233, 214, 131, 89,
+251, 264, 355, 204, 287, 273, 257, 305, 245, 226, 158, 226, 278, 209, 163. Non-"." stdout seen throughout (pull/
+backfill/intradia status lines, Garmin NotSignedIn/ConnectionError/AuthenticationError/RuntimeError messages, "dia
+vacio" fixture lines, a deliberately-raised exception in a mocked thread, `mudanza`/`db` `ResourceWarning`s, "asistente:
+propuesta ... no se pudo mostrar" guard lines) is existing tests' own fixture/demo-seed stdout, invented data only,
+unrelated to this slice.
+
+**Reconciliation:** sum of the 24 chunks' `Ran` counts -- 209+200+217+247+186+233+214+131+89+251+264+355+204+287+
+273+257+305+245+226+158+226+278+209+163 = 5427 -- exactly equal to the independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`: 5427).
+
+**Gate verdict: GREEN.**
+
+**Merge policy A, this diff's own shape:** no schema or migration change -- no new table, column or index. Cross-
+repo contract: none -- no DTO shared with another repository is touched (the header name and the JSON-RPC body
+shape are unchanged; only when the header is sent changed). Customer bytes: no -- no i18n string, no template, no
+UI copy changed; the message text for every case that already carried a number is identical, and `Retry-After` is
+read by MCP client software, not rendered to a person. All three conditions hold -- merged on green without
+waiting.
+
+**Merged into `main` (`--no-ff`) -- merged `ab0b62c812bd0e1e191ee7bac2cea5aa1a391a56`.** Tree identity proven:
+branch tip tree `0feab25a0b70cdcad13b008eebdb297bcbd8430d` equals the merge commit's own tree, `git diff` between
+them empty. Smoke test on main, `tests.test_mcp_http tests.test_llave_asistente tests.test_lugares` -- Ran 131,
+OK.
+
