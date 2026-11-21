@@ -1495,5 +1495,41 @@ class PracticaExportDeleteTest(unittest.TestCase):
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM habit").fetchone()[0], 0)
 
 
+class AltitudEstanciaExportDeleteTest(unittest.TestCase):
+    """BODY-MINUTO-ANALISIS-6-ALTITUD ruling 1: a person's own home and stay rows are fully
+    exported and deleted, the same FULLY_HANDLED_TABLES membership every other person-owned table
+    already has -- an altitude and dates only, never a place name or coordinates."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "altitud.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+        self.aid = db.crear_altitud_estancia(self.conn, 1, True, "2020-01-01", 2600, "manual")
+        self.conn.commit()
+
+    def test_is_a_fully_handled_table(self):
+        self.assertIn("altitud_estancia", privacidad.FULLY_HANDLED_TABLES)
+
+    def test_export_includes_the_row(self):
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(len(data["altitudes"]), 1)
+        self.assertEqual(data["altitudes"][0]["altitud_m"], 2600)
+
+    def test_export_of_another_person_sees_nothing(self):
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 2)
+        self.assertEqual(data["altitudes"], [])
+
+    def test_delete_all_removes_the_row(self):
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM altitud_estancia WHERE person_id = 1").fetchone()[0], 0
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

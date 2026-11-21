@@ -94,6 +94,9 @@ FULLY_HANDLED_TABLES = {
     # BODY-HISTORIA-VIDA-LUGARES-1 ruling 4: this person's own trips, re-fetched from Lugares --
     # nothing Lugares did not send, no names, no coordinates.
     "viaje_lugares",
+    # BODY-MINUTO-ANALISIS-6-ALTITUD (ORCH-CARLOS-DELEGATES-TIER-1-1): one row per home/stay
+    # stretch -- an altitude and dates only, no place name, no coordinates.
+    "altitud_estancia",
 }
 # raw_payload: kind/date only, never the stored JSON payload. garmin_cuenta: the connected-since
 # date only, never the encrypted token (BODY-GARMIN-HOST-1). dispositivo: name/scopes/dates only,
@@ -357,6 +360,11 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
     viajes_lugares_rows = [dict(r) for r in conn.execute(
         "SELECT ref, starts_at, ends_at, fetched_at FROM viaje_lugares WHERE person_id = ? ORDER BY starts_at",
         (person_id,))]
+    # BODY-MINUTO-ANALISIS-6-ALTITUD (ORCH-CARLOS-DELEGATES-TIER-1-1): this person's own home and
+    # stay rows -- an altitude and dates only, no place name, no coordinates.
+    altitudes_rows = [dict(r) for r in conn.execute(
+        "SELECT id, es_casa, start_day, end_day, altitud_m, fuente, viaje_ref, creado_en "
+        "FROM altitud_estancia WHERE person_id = ? ORDER BY start_day", (person_id,))]
     asistente = {
         "conversaciones": conversaciones, "mensajes": mensajes_agente, "uso": uso_agente_rows,
         "tope": dict(tope_agente_row) if tope_agente_row else None, "propuestas": propuestas_agente,
@@ -400,6 +408,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "asistente": asistente,
         "practicas": practicas_rows,
         "viajes_lugares": viajes_lugares_rows,
+        "altitudes": altitudes_rows,
     }
 
 
@@ -543,6 +552,9 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         # plain person-keyed table above.
         conn.execute("DELETE FROM viaje_lugares WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM lugares_sync WHERE person_id = ?", (person_id,))
+        # BODY-MINUTO-ANALISIS-6-ALTITUD (ORCH-CARLOS-DELEGATES-TIER-1-1): same census treatment
+        # as viaje_lugares above -- a plain person-keyed table, no row this sweep must clear first.
+        conn.execute("DELETE FROM altitud_estancia WHERE person_id = ?", (person_id,))
         # workout_set's FK targets activity's composite key -- deleted first, same as every other
         # table that references a row this sweep is about to remove. activity_detail has no
         # formal FK (same as workout_set, above) but names the same (source, source_id) pair --

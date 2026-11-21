@@ -111,7 +111,7 @@ _PROPUESTA_AGENTE_COLUMNS = """
                          'separar_sesion', 'unir_sesiones', 'proponer_objetivo_nutriente',
                          'proponer_plan', 'corregir_meta_plan', 'ampliar_plan', 'anotar_sesion',
                          'corregir_entreno', 'importar_desplazamiento', 'proponer_practica',
-                         'corregir_despertar', 'registrar_dolor', 'corregir_fase')),
+                         'corregir_despertar', 'registrar_dolor', 'corregir_fase', 'registrar_altitud')),
     objetivo_id     INTEGER REFERENCES goal(id),
     antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
     despues_json    TEXT NOT NULL CHECK (json_valid(despues_json)),
@@ -1173,6 +1173,29 @@ CREATE TABLE IF NOT EXISTS lugares_sync (
     ok_at      TEXT,
     motivo     TEXT
 );
+
+-- BODY-MINUTO-ANALISIS-6-ALTITUD ruling 1 (ORCH-CARLOS-DELEGATES-TIER-1-1, second stage of
+-- BODY-MINUTO-ANALISIS-4-INV): an altitude and dates only -- no coordinates, no place name column.
+-- es_casa=1 is one of this person's own HOME stretches (a move is a new home row); es_casa=0 is a
+-- STAY away from it. Home rows never overlap each other, nor do stay rows overlap each other
+-- (validated in Python, body/db.py's own validar_altitud_sin_solape -- a cross-table overlap
+-- between a home row and a stay row is fine, even expected: the stay happens WHILE away from
+-- home). end_day NULL means still current. viaje_ref is a Lugares trip's own opaque ref, carried
+-- only when this stay belongs to one -- never a coordinate, never a place name; fuente='lugares'
+-- is reserved for that future writer (not built by this slice) and is never produced today.
+CREATE TABLE IF NOT EXISTS altitud_estancia (
+    id         INTEGER PRIMARY KEY,
+    person_id  INTEGER NOT NULL REFERENCES person(id),
+    es_casa    INTEGER NOT NULL CHECK (es_casa IN (0, 1)),
+    start_day  TEXT NOT NULL,
+    end_day    TEXT,
+    altitud_m  INTEGER NOT NULL CHECK (altitud_m BETWEEN -500 AND 9000),
+    fuente     TEXT NOT NULL CHECK (fuente IN ('manual', 'asistente', 'lugares')),
+    viaje_ref  TEXT,
+    creado_en  TEXT NOT NULL,
+    CHECK (end_day IS NULL OR start_day <= end_day)
+);
+CREATE INDEX IF NOT EXISTS idx_altitud_estancia_person ON altitud_estancia(person_id);
 """
 
 # (key, label, unit, better, kind). 'estimated' = computed by Body, shown with «≈» and "how I calculate it".
@@ -1994,6 +2017,13 @@ def _propuesta_agente_needs_corregir_fase_rebuild(conn: sqlite3.Connection) -> b
     return row is not None and "corregir_fase" not in row[0]
 
 
+def _propuesta_agente_needs_registrar_altitud_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'propuesta_agente'"
+    ).fetchone()
+    return row is not None and "registrar_altitud" not in row[0]
+
+
 def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
@@ -2068,6 +2098,10 @@ def _migrate_propuestas(conn: sqlite3.Connection) -> None:
         _rebuild_propuesta_agente_table(conn)
     # BODY-PLAN-FASES-2 ruling 3: an eighteenth widening (corregir_fase), same reusable rebuild.
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_corregir_fase_rebuild(conn):
+        _rebuild_propuesta_agente_table(conn)
+    # BODY-MINUTO-ANALISIS-6-ALTITUD (ORCH-CARLOS-DELEGATES-TIER-1-1): a nineteenth widening
+    # (registrar_altitud), same reusable rebuild.
+    if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_registrar_altitud_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
 
 
@@ -2739,6 +2773,81 @@ def viajes_lugares(conn, person_id: int, desde: str, hasta: str) -> list[dict]:
         "AND starts_at <= ? AND ends_at >= ? ORDER BY starts_at",
         (person_id, hasta, desde),
     )]
+
+
+def altitud_estancia_rango(conn, person_id: int, desde: str, hasta: str) -> list[dict]:
+    """This person's own altitud_estancia rows (home AND stay together) overlapping [desde, hasta]
+    (ISO dates, both inclusive) -- ONE statement for the whole range, oldest start_day first.
+    body/contexto_dia.py splits the result by es_casa; an open row (end_day NULL) always matches,
+    whatever desde is."""
+    return [dict(r) for r in conn.execute(
+        "SELECT id, es_casa, start_day, end_day, altitud_m, fuente, viaje_ref FROM altitud_estancia "
+        "WHERE person_id = ? AND start_day <= ? AND (end_day IS NULL OR end_day >= ?) ORDER BY start_day",
+        (person_id, hasta, desde),
+    )]
+
+
+def altitud_casa_en(conn, person_id: int, day: str) -> dict | None:
+    """This person's own home row covering `day`, or None -- a single-day lookup (not a bulk
+    reader like altitud_estancia_rango above), for the registrar_altitud card's own "vs casa" line
+    (body/rutas/asistente.py)."""
+    row = conn.execute(
+        "SELECT altitud_m, fuente FROM altitud_estancia WHERE person_id = ? AND es_casa = 1 "
+        "AND start_day <= ? AND (end_day IS NULL OR end_day >= ?)",
+        (person_id, day, day),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def validar_altitud_sin_solape(conn, person_id: int, es_casa: bool, start_day: str,
+                                end_day: str | None, excluir_id: int | None = None) -> None:
+    """Refuses a new or edited altitud_estancia row that would overlap another of this SAME
+    person's own rows of the SAME kind (home with home, stay with stay) -- a home row and a stay
+    row are allowed to overlap (the stay happens WHILE away from home). Reuses `_solapan`'s own
+    interval test (periodos' own overlap rule) against an open end_day by substituting a sentinel
+    far-future date, the same way an open period's own end_day already reads as "covers anything
+    not entirely before its start". The one validator both `crear_altitud_estancia` below and
+    body/agente/herramientas.py's `_registrar_altitud` run against (ORCH-CARLOS-DELEGATES-TIER-1-1
+    ruling 4), so a conflict is refused before a proposal is even created, not only at apply time."""
+    rows = conn.execute(
+        "SELECT id, start_day, end_day FROM altitud_estancia WHERE person_id = ? AND es_casa = ?",
+        (person_id, int(bool(es_casa))),
+    ).fetchall()
+    if excluir_id is not None:
+        rows = [r for r in rows if r["id"] != excluir_id]
+    hasta_efectivo = end_day if end_day is not None else "9999-12-31"
+    for r in _solapan(rows, start_day, hasta_efectivo):
+        kind = "una de tus fechas de casa" if es_casa else "una de tus estancias"
+        raise ValueError(f"altitud_estancia: se superpone con {kind} (id {r['id']})")
+
+
+def crear_altitud_estancia(conn, person_id: int, es_casa: bool, start_day: str, altitud_m: int,
+                            fuente: str, end_day: str | None = None, viaje_ref: str | None = None) -> int:
+    if end_day is not None and end_day < start_day:
+        raise ValueError(f"start_day {start_day!r} is after end_day {end_day!r}")
+    if fuente not in ("manual", "asistente", "lugares"):
+        raise ValueError(f"unknown fuente: {fuente!r}")
+    if not (-500 <= altitud_m <= 9000):
+        raise ValueError(f"altitud_m out of range (-500..9000): {altitud_m!r}")
+    validar_altitud_sin_solape(conn, person_id, es_casa, start_day, end_day)
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO altitud_estancia (person_id, es_casa, start_day, end_day, altitud_m, fuente, "
+            "viaje_ref, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (person_id, int(bool(es_casa)), start_day, end_day, altitud_m, fuente, viaje_ref, now),
+        )
+    return cur.lastrowid
+
+
+def borrar_altitud_estancia(conn, person_id: int, altitud_id: int) -> None:
+    fila = conn.execute(
+        "SELECT 1 FROM altitud_estancia WHERE id = ? AND person_id = ?", (altitud_id, person_id)
+    ).fetchone()
+    if fila is None:
+        raise ValueError("altitud_id: not this person's own row")
+    with conn:
+        conn.execute("DELETE FROM altitud_estancia WHERE id = ? AND person_id = ?", (altitud_id, person_id))
 
 
 def lugares_estado(conn, person_id: int) -> dict:
