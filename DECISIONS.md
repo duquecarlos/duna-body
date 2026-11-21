@@ -33272,3 +33272,6 @@ Customer bytes: none -- no screen reads `registro`/`leer_pendientes_registro` ye
 descriptions are assistant-catalog text, not rendered UI copy); `customer_bytes.changed = false`. No cross-repo
 contract touched (the assistant tool catalog is this repo's own, not a shared DTO). Qualifies for merge-on-green.
 
+**Merged into `main` (`--no-ff`) -- merged `0a761a0458f9b05381fad9355dd55d3854e16f50`.** Smoke test on main,
+`tests.test_registro_cobertura tests.test_agente_registro tests.test_agente_bucle` -- Ran 70, OK.
+
