@@ -276,6 +276,10 @@ class PersonIdHasNoDefaultTest(unittest.TestCase):
             (shift_import, "latest_proposed"), (shift_import, "latest_confirmed"),
             (db, "series_origen"),
             (vida_export, "week_section"), (ajustes, "nivel_datos"),
+            # BODY-MINUTO-ANALISIS-6-ALTITUD (ORCH-CARLOS-DELEGATES-TIER-1-1): the altitude
+            # readers and writers, same guard as every other person-scoped db.py function above.
+            (db, "altitud_estancia_rango"), (db, "altitud_casa_en"), (db, "crear_altitud_estancia"),
+            (db, "borrar_altitud_estancia"), (db, "validar_altitud_sin_solape"),
         ]
         for module, name in targets:
             func = getattr(module, name)

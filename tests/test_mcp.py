@@ -426,6 +426,48 @@ class ToolsCallTest(_McpTestCase):
         self.assertIn("propuesta_id", salida)
         self.assertEqual(salida["estado"], "propuesta")
 
+    def test_registrar_altitud_is_offered_and_callable(self):
+        """BODY-MINUTO-ANALISIS-6-ALTITUD (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4): same generic
+        `tipo: propuesta` path as registrar_dolor above -- body.mcp needs no new code to list or
+        call it."""
+        _, listado = self._ejecutar([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
+        nombres = {t["name"] for t in listado[0]["result"]["tools"]}
+        self.assertIn("registrar_altitud", nombres)
+
+        _, respuestas = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "registrar_altitud",
+                        "arguments": {"es_casa": True, "start_day": "2026-11-01", "altitud_m": 900}}},
+        ])
+        r = respuestas[0]["result"]
+        self.assertNotIn("isError", r)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM altitud_estancia WHERE person_id = ?",
+                               (self.person_id,)).fetchone()[0], 0)  # still unapplied
+        salida = json.loads(r["content"][-1]["text"])
+        self.assertIn("propuesta_id", salida)
+        self.assertEqual(salida["estado"], "propuesta")
+
+    def test_leer_altitudes_is_offered_and_callable(self):
+        """BODY-MINUTO-ANALISIS-6-ALTITUD (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4): body.mcp
+        lists leer_altitudes like any other catalogue tool -- the generic tools/list and
+        tools/call paths need no new code for it either."""
+        db.crear_altitud_estancia(self.conn, self.person_id, True, "2020-01-01", 900, "manual")
+        self.conn.commit()
+        _, listado = self._ejecutar([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
+        nombres = {t["name"] for t in listado[0]["result"]["tools"]}
+        self.assertIn("leer_altitudes", nombres)
+
+        _, respuestas = self._ejecutar([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "leer_altitudes",
+                                                                            "arguments": {}}},
+        ])
+        r = respuestas[0]["result"]
+        self.assertNotIn("isError", r)
+        salida = json.loads(r["content"][-1]["text"])
+        self.assertEqual(len(salida["altitudes"]), 1)
+        self.assertEqual(salida["altitudes"][0]["altitud_m"], 900)
+
     def test_leer_serie_is_offered_and_callable(self):
         """BODY-AGENTE-LEER-SERIE-1 ruling 4: body.mcp lists leer_serie like any other catalogue
         tool -- the generic tools/list and tools/call paths need no new code for it either."""

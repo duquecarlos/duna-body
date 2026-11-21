@@ -1523,6 +1523,29 @@ def _seed_lugares(conn, person_id: int, anchor: date) -> int:
     return len(viajes)
 
 
+def _seed_altitud(conn, person_id: int, anchor: date) -> int:
+    """Invented demo altitude (BODY-MINUTO-ANALISIS-6-ALTITUD, ORCH-CARLOS-DELEGATES-TIER-1-1,
+    second stage of BODY-MINUTO-ANALISIS-4-INV): one open home row, and one past stay LOWER than
+    home over the SAME dates as _seed_lugares' own demo-viaje-1 just above -- so buscar_noches'
+    own `altitud_cambio` grouping (ruling 3) has a real descent to show, not an invented value
+    standing in for one. Metres and dates only, written directly (never through the network, like
+    _seed_lugares above) -- no place name, no coordinates."""
+    ahora = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    home_start = (anchor - timedelta(3650)).isoformat()
+    conn.execute(
+        "INSERT INTO altitud_estancia (person_id, es_casa, start_day, end_day, altitud_m, fuente, "
+        "viaje_ref, creado_en) VALUES (?, 1, ?, NULL, 2600, 'manual', NULL, ?)",
+        (person_id, home_start, ahora),
+    )
+    conn.execute(
+        "INSERT INTO altitud_estancia (person_id, es_casa, start_day, end_day, altitud_m, fuente, "
+        "viaje_ref, creado_en) VALUES (?, 0, ?, ?, 300, 'manual', 'demo-viaje-1', ?)",
+        (person_id, (anchor - timedelta(20)).isoformat(), (anchor - timedelta(16)).isoformat(), ahora),
+    )
+    conn.commit()
+    return 2
+
+
 def _seed_household(conn, db, goals, enlaces, compartir, comida_compartida, rng: random.Random,
                      all_days: list[date], anchor: date,
                      first_monday: date, anchor_monday: date, person_id: int,
@@ -1666,6 +1689,7 @@ def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[st
 
     practicas_count, practica_pasos_id = _seed_practicas(conn, practicas, person_id, idioma)
     viajes_lugares = _seed_lugares(conn, person_id, anchor)
+    altitudes = _seed_altitud(conn, person_id, anchor)
 
     checks, habit_checks, racha_sesiones = _seed_goals_and_habits(
         conn, db, goals, rng, all_days, anchor, first_monday, anchor_monday, person_id, idioma,
@@ -1698,6 +1722,7 @@ def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[st
         "comidas_compartidas_pendientes": comidas_compartidas_pendientes,
         "practicas": practicas_count,
         "viajes_lugares": viajes_lugares,
+        "altitudes": altitudes,
     }
 
 

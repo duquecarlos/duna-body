@@ -114,6 +114,7 @@ def _all_tool_calls():
         "comparar_noche": {"fecha": "2026-10-05"},
         "buscar_noches": {},
         "leer_plan": gid_placeholder, "leer_planes": {}, "leer_practicas": {},
+        "leer_altitudes": {},
     }
 
 
@@ -184,7 +185,7 @@ PROPUESTA_NOMBRES = {"proponer_meta", "proponer_cambio_meta", "proponer_confirma
                      "proponer_objetivo_nutriente",
                      "proponer_plan", "corregir_meta_plan", "ampliar_plan", "anotar_sesion",
                      "importar_desplazamiento", "proponer_practica", "corregir_despertar", "registrar_dolor",
-                     "corregir_fase"}
+                     "corregir_fase", "registrar_altitud"}
 # Privacy and account controls deliberately NEVER become proposal tools (BODY-ASISTENTE-PROPUESTAS-1
 # approval reason): nivel_datos, consent, export, delete-all, device keys, Garmin connection,
 # household membership all stay on their own screens.
@@ -219,9 +220,12 @@ class RegistryShapeTest(unittest.TestCase):
             "leer_noche": "completo", "comparar_noche": "completo", "buscar_noches": "completo",
             "leer_plan": "resumen", "leer_planes": "resumen", "leer_estado_reloj": "ninguno",
             "leer_dias_libres": "ninguno", "leer_practicas": "resumen",
+            # BODY-MINUTO-ANALISIS-6-ALTITUD: extended from twenty-three -- leer_altitudes is the
+            # one new entry, at nivel 'ninguno' (an altitude carries no health figure).
+            "leer_altitudes": "ninguno",
         }
         lectura = [h for h in herramientas.HERRAMIENTAS if h["tipo"] == "lectura"]
-        self.assertEqual(len(lectura), 23)
+        self.assertEqual(len(lectura), 24)
         self.assertEqual({h["nombre"]: h["nivel"] for h in lectura}, expected_levels)
 
     def test_thirty_propuesta_tools_with_one_at_nivel_resumen(self):
@@ -239,6 +243,8 @@ class RegistryShapeTest(unittest.TestCase):
         # new entry, also at nivel 'ninguno'.
         # BODY-PLAN-FASES-2 ruling 3: extended from 33 -- corregir_fase is the one new entry, also
         # at nivel 'ninguno'.
+        # BODY-MINUTO-ANALISIS-6-ALTITUD: extended from 34 -- registrar_altitud is the one new
+        # entry, also at nivel 'ninguno'.
         propuesta = [h for h in herramientas.HERRAMIENTAS if h["tipo"] == "propuesta"]
         self.assertEqual({h["nombre"] for h in propuesta}, PROPUESTA_NOMBRES)
         niveles = {h["nombre"]: h["nivel"] for h in propuesta}
@@ -261,7 +267,9 @@ class RegistryShapeTest(unittest.TestCase):
         # BODY-MINUTO-ANALISIS-2: extended from 54 -- comparar_noche is the one new entry.
         # BODY-MINUTO-ANALISIS-3: extended from 55 -- buscar_noches is the one new entry.
         # BODY-PLAN-FASES-2 ruling 3: extended from 56 -- corregir_fase is the one new entry.
-        self.assertEqual(len(herramientas.HERRAMIENTAS), 57)
+        # BODY-MINUTO-ANALISIS-6-ALTITUD: extended from 57 -- registrar_altitud and leer_altitudes
+        # are the two new entries.
+        self.assertEqual(len(herramientas.HERRAMIENTAS), 59)
 
     def test_every_entry_carries_the_reserved_plan_field_unset(self):
         # BODY-ASISTENTE-CONFORMIDAD-1 ruling 2 (agent-capabilities-v1 section 5): the field
