@@ -247,7 +247,32 @@ _HORIZONTE_REGLA_COLUMNS = """
     chequeo           TEXT CHECK (chequeo IS NULL OR json_valid(chequeo)),
     orden             INTEGER NOT NULL DEFAULT 0,
     activa            INTEGER NOT NULL DEFAULT 1 CHECK (activa IN (0, 1)),
-    creado_en         TEXT NOT NULL
+    creado_en         TEXT NOT NULL,
+    -- BODY-PLAN-FASES-2 ruling 2: additive and nullable, placed last so a fresh install's column
+    -- order matches _migrate()'s own ALTER ADD COLUMN on an existing database (the same convention
+    -- experimento.goal_id/habit.practica_id already follow). NULL means this rule applies in every
+    -- phase (or the plan has none) -- "no phase" is never a fourth CHECK value, just the absence of
+    -- one here. horizonte_fase must exist first (see SCHEMA's own ordering below) for this FK.
+    fase_id           INTEGER REFERENCES horizonte_fase(id)
+"""
+
+# BODY-PLAN-FASES-2 ruling 1: a plan's own phases, each a child row under horizonte_goal_id like
+# its siblings above -- never a second container of its own, never a fixed four-phase CHECK (the
+# person names their own phases; validated in Python by validar_fases_horizonte below: the phases
+# of one plan never overlap and stay inside the plan's own [start_day, deadline]). A day outside
+# every phase is simply "no phase" -- there is no row for that, and no code treats its absence as
+# an error.
+_HORIZONTE_FASE_COLUMNS = """
+    id                INTEGER PRIMARY KEY,
+    horizonte_goal_id INTEGER NOT NULL REFERENCES goal(id),
+    person_id         INTEGER NOT NULL REFERENCES person(id),
+    titulo            TEXT NOT NULL,
+    start_day         TEXT NOT NULL,
+    end_day           TEXT NOT NULL,
+    nota              TEXT,
+    orden             INTEGER NOT NULL,
+    creado_en         TEXT NOT NULL,
+    CHECK (start_day <= end_day)
 """
 
 _HORIZONTE_SEMANA_COLUMNS = """
@@ -941,6 +966,14 @@ CREATE INDEX IF NOT EXISTS idx_experimento_registro_person ON experimento_regist
 
 -- BODY-PLAN-ESQUEMA-1: the plan's own parts, each a child row under horizonte_goal_id (a
 -- milestone goal, never a second container of its own) -- see the column constants above.
+-- BODY-PLAN-FASES-2: horizonte_fase is created FIRST, so horizonte_regla's own fase_id column
+-- (below) can reference it.
+CREATE TABLE IF NOT EXISTS horizonte_fase (
+{_HORIZONTE_FASE_COLUMNS}
+);
+CREATE INDEX IF NOT EXISTS idx_horizonte_fase_goal ON horizonte_fase(horizonte_goal_id);
+CREATE INDEX IF NOT EXISTS idx_horizonte_fase_person ON horizonte_fase(person_id);
+
 CREATE TABLE IF NOT EXISTS horizonte_regla (
 {_HORIZONTE_REGLA_COLUMNS}
 );
@@ -1610,6 +1643,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
     hcols = {r[1] for r in conn.execute("PRAGMA table_info(habit)")}
     if hcols and "practica_id" not in hcols:
         conn.execute("ALTER TABLE habit ADD COLUMN practica_id INTEGER REFERENCES practica(id)")
+    # BODY-PLAN-FASES-2 ruling 2: a plain nullable ADD COLUMN, like practica_id above -- every
+    # existing rule row reads as fase_id NULL ("no phase"), never backfilled. SCHEMA's own
+    # executescript (run just before this function, in init()) has already created horizonte_fase
+    # by this point, so the FK this ALTER names always resolves.
+    hrcols = {r[1] for r in conn.execute("PRAGMA table_info(horizonte_regla)")}
+    if hrcols and "fase_id" not in hrcols:
+        conn.execute("ALTER TABLE horizonte_regla ADD COLUMN fase_id INTEGER REFERENCES horizonte_fase(id)")
     # BODY-DESPERTAR-REAL-4 ruling 1 (ORCH-CARLOS-DELEGATES-TIER-1-1, Carlos's own ruling relayed
     # BODY-DESPERTAR-REAL-RULING): the person's own correction to one night, beside Garmin's own
     # sleep_session row, never a sibling column on it (BODY-DESPERTAR-REAL-1-INV: save_day's own
@@ -3387,9 +3427,33 @@ def validar_regla_horizonte(conn: sqlite3.Connection, contexto: str, contexto_va
         raise ValueError(f"contexto: unknown {contexto!r}")
 
 
+def validar_fases_horizonte(fases: list[dict], plan_start: str, plan_end: str) -> None:
+    """BODY-PLAN-FASES-2 ruling 1: the one validator for a plan's phases -- never four hardcoded
+    phases, never a phase-name constant. Checks that each phase has a non-empty `titulo`, that its
+    `start_day` <= `end_day` (also a table CHECK, checked here first for a named error), that it
+    stays inside [plan_start, plan_end], and that no two phases overlap. Raises ValueError naming
+    the invalid field first. Called with the FULL set for one horizon (its existing phases plus
+    whatever is being proposed/corrected) so a later addition or correction is checked against the
+    phases already there, never only against itself."""
+    ordenadas = sorted(fases, key=lambda f: f["start_day"])
+    anterior = None
+    for f in ordenadas:
+        if not f.get("titulo"):
+            raise ValueError("fases: titulo must not be empty")
+        if f["start_day"] > f["end_day"]:
+            raise ValueError(f"fases: {f['titulo']!r} start_day {f['start_day']!r} is after "
+                              f"end_day {f['end_day']!r}")
+        if f["start_day"] < plan_start or f["end_day"] > plan_end:
+            raise ValueError(f"fases: {f['titulo']!r} falls outside the plan's own dates "
+                              f"({plan_start}..{plan_end})")
+        if anterior is not None and f["start_day"] <= anterior["end_day"]:
+            raise ValueError(f"fases: {f['titulo']!r} overlaps {anterior['titulo']!r}")
+        anterior = f
+
+
 def crear_regla_horizonte(conn: sqlite3.Connection, person_id: int, horizonte_goal_id: int, contexto: str,
                            contexto_valor: str | None, texto: str, *, chequeo=None, orden: int = 0,
-                           activa: bool = True) -> int:
+                           activa: bool = True, fase_id: int | None = None) -> int:
     validar_regla_horizonte(conn, contexto, contexto_valor)
     if not texto:
         raise ValueError("texto: must not be empty")
@@ -3398,11 +3462,76 @@ def crear_regla_horizonte(conn: sqlite3.Connection, person_id: int, horizonte_go
     with conn:
         cur = conn.execute(
             "INSERT INTO horizonte_regla (horizonte_goal_id, person_id, contexto, contexto_valor, texto, "
-            "chequeo, orden, activa, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "chequeo, orden, activa, creado_en, fase_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (horizonte_goal_id, person_id, contexto, contexto_valor, texto, chequeo_json, orden,
-             1 if activa else 0, now),
+             1 if activa else 0, now, fase_id),
         )
     return cur.lastrowid
+
+
+def crear_fase_horizonte(conn: sqlite3.Connection, person_id: int, horizonte_goal_id: int, titulo: str,
+                          start_day: str, end_day: str, *, nota: str | None = None, orden: int = 0) -> int:
+    """BODY-PLAN-FASES-2 ruling 1: a plain writer for one phase. Checks only its own shape
+    (non-empty titulo, start_day <= end_day); the no-overlap/stays-inside-the-plan checks are
+    validar_fases_horizonte's own job, run by the caller against every sibling phase plus this
+    one, since this function alone never knows the plan's own start_day/deadline."""
+    if not titulo:
+        raise ValueError("titulo: must not be empty")
+    if start_day > end_day:
+        raise ValueError(f"start_day {start_day!r} is after end_day {end_day!r}")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO horizonte_fase (horizonte_goal_id, person_id, titulo, start_day, end_day, nota, "
+            "orden, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (horizonte_goal_id, person_id, titulo, start_day, end_day, nota, orden, now),
+        )
+    return cur.lastrowid
+
+
+def actualizar_fase_horizonte(conn: sqlite3.Connection, person_id: int, fase_id: int, titulo: str,
+                               start_day: str, end_day: str, nota: str | None) -> None:
+    """BODY-PLAN-FASES-2 ruling 3: a plain in-place UPDATE of this person's own phase row -- unlike
+    horizonte_meta_semanal's append-only history (a measured target's own record), a phase's dates
+    carry no such history, the same update-shaped writer corregir_meta_plan's OWN card calls this
+    'the same pattern' for. Scoped to person_id, like every other horizonte_* writer."""
+    with conn:
+        conn.execute(
+            "UPDATE horizonte_fase SET titulo = ?, start_day = ?, end_day = ?, nota = ? "
+            "WHERE id = ? AND person_id = ?", (titulo, start_day, end_day, nota, fase_id, person_id),
+        )
+
+
+def quitar_fase_horizonte(conn: sqlite3.Connection, person_id: int, fase_id: int) -> list[int]:
+    """BODY-PLAN-FASES-2 ruling 3: removes this person's own phase row and DETACHES (fase_id ->
+    NULL) every rule that named it -- a removed phase never deletes a rule. Returns the detached
+    rule ids, in one transaction, so the proposal's own undo can re-attach exactly them."""
+    with conn:
+        regla_ids = [r["id"] for r in conn.execute(
+            "SELECT id FROM horizonte_regla WHERE fase_id = ? AND person_id = ?", (fase_id, person_id))]
+        if regla_ids:
+            conn.execute("UPDATE horizonte_regla SET fase_id = NULL WHERE fase_id = ? AND person_id = ?",
+                         (fase_id, person_id))
+        conn.execute("DELETE FROM horizonte_fase WHERE id = ? AND person_id = ?", (fase_id, person_id))
+    return regla_ids
+
+
+def restaurar_fase_horizonte(conn: sqlite3.Connection, person_id: int, fase: dict, regla_ids: list[int]) -> None:
+    """The undo for quitar_fase_horizonte: re-inserts the phase row with its OWN original id
+    (unlike borrar_ingesta's own undo, which re-inserts as a functionally-equivalent new row --
+    here the ORIGINAL id is what regla_ids below must point back at, and nothing else can have
+    taken it in between) and re-attaches exactly the rules it detached."""
+    with conn:
+        conn.execute(
+            "INSERT INTO horizonte_fase (id, horizonte_goal_id, person_id, titulo, start_day, end_day, nota, "
+            "orden, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (fase["id"], fase["horizonte_goal_id"], person_id, fase["titulo"], fase["start_day"],
+             fase["end_day"], fase["nota"], fase["orden"], fase["creado_en"]),
+        )
+        if regla_ids:
+            placeholders = ",".join("?" * len(regla_ids))
+            conn.execute(f"UPDATE horizonte_regla SET fase_id = ? WHERE id IN ({placeholders}) AND person_id = ?",
+                         [fase["id"]] + regla_ids + [person_id])
 
 
 def crear_semana_horizonte(conn: sqlite3.Connection, person_id: int, horizonte_goal_id: int, week_start: str,
@@ -3528,12 +3657,25 @@ def crear_plan_horizonte(conn: sqlite3.Connection, person_id: int, plan: dict) -
                 "VALUES (?, ?, ?, NULL, 1, ?)",
                 (horizonte_goal_id, h["titulo"], json.dumps(h["cadencia"]), h.get("practica_id")),
             )
+        # BODY-PLAN-FASES-2 ruling 1/3: fases are written BEFORE reglas, so a rule naming its
+        # phase by POSITION in plan["fases"] (ruling 3's "fase_index") can be mapped to that
+        # phase's own new id below -- never a fourth hardcoded phase, never a name constant.
+        fase_ids: list[int] = []
+        for i, f in enumerate(plan.get("fases") or []):
+            cur = conn.execute(
+                "INSERT INTO horizonte_fase (horizonte_goal_id, person_id, titulo, start_day, end_day, nota, "
+                "orden, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (horizonte_goal_id, person_id, f["titulo"], f["start_day"], f["end_day"], f.get("nota"), i, now),
+            )
+            fase_ids.append(cur.lastrowid)
         for i, r in enumerate(plan.get("reglas") or []):
+            fase_idx = r.get("fase_index")
             conn.execute(
                 "INSERT INTO horizonte_regla (horizonte_goal_id, person_id, contexto, contexto_valor, texto, "
-                "chequeo, orden, activa, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
+                "chequeo, orden, activa, creado_en, fase_id) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
                 (horizonte_goal_id, person_id, r["contexto"], r.get("contexto_valor"), r["texto"],
-                 json.dumps(r["chequeo"]) if r.get("chequeo") is not None else None, i, now),
+                 json.dumps(r["chequeo"]) if r.get("chequeo") is not None else None, i, now,
+                 fase_ids[fase_idx] if fase_idx is not None else None),
             )
         for s in plan.get("semanas") or []:
             conn.execute(
@@ -3572,14 +3714,35 @@ def ampliar_plan_horizonte(conn: sqlite3.Connection, person_id: int, horizonte_g
         "SELECT COALESCE(MAX(orden), -1) + 1 FROM horizonte_regla WHERE horizonte_goal_id = ?",
         (horizonte_goal_id,),
     ).fetchone()[0]
-    ids: dict[str, list[int]] = {"regla_ids": [], "semana_ids": [], "checkpoint_ids": [], "meta_semanal_ids": []}
+    fase_orden_base = conn.execute(
+        "SELECT COALESCE(MAX(orden), -1) + 1 FROM horizonte_fase WHERE horizonte_goal_id = ?",
+        (horizonte_goal_id,),
+    ).fetchone()[0]
+    ids: dict[str, list[int]] = {"regla_ids": [], "semana_ids": [], "checkpoint_ids": [], "meta_semanal_ids": [],
+                                  "fase_ids": []}
     with conn:
+        # BODY-PLAN-FASES-2 ruling 1/3: fases are written BEFORE reglas, same ordering and same
+        # "fase_index names a position in THIS call's own fases list" rule crear_plan_horizonte
+        # follows -- a rule can only join a phase this same ampliar_plan call is adding, never an
+        # older phase by a second, separate lookup.
+        fase_ids: list[int] = []
+        for i, f in enumerate(adiciones.get("fases") or []):
+            cur = conn.execute(
+                "INSERT INTO horizonte_fase (horizonte_goal_id, person_id, titulo, start_day, end_day, nota, "
+                "orden, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (horizonte_goal_id, person_id, f["titulo"], f["start_day"], f["end_day"], f.get("nota"),
+                 fase_orden_base + i, now),
+            )
+            fase_ids.append(cur.lastrowid)
+            ids["fase_ids"].append(cur.lastrowid)
         for i, r in enumerate(adiciones.get("reglas") or []):
+            fase_idx = r.get("fase_index")
             cur = conn.execute(
                 "INSERT INTO horizonte_regla (horizonte_goal_id, person_id, contexto, contexto_valor, texto, "
-                "chequeo, orden, activa, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
+                "chequeo, orden, activa, creado_en, fase_id) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
                 (horizonte_goal_id, person_id, r["contexto"], r.get("contexto_valor"), r["texto"],
-                 json.dumps(r["chequeo"]) if r.get("chequeo") is not None else None, orden_base + i, now),
+                 json.dumps(r["chequeo"]) if r.get("chequeo") is not None else None, orden_base + i, now,
+                 fase_ids[fase_idx] if fase_idx is not None else None),
             )
             ids["regla_ids"].append(cur.lastrowid)
         for s in adiciones.get("semanas") or []:

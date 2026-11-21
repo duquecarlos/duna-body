@@ -341,11 +341,13 @@ def _linea(datos: dict, medida: str, sentido: str, valor: float, dias: list[str]
 
 def _recopilar_reglas(conn, horizonte_goal_id: int, person_id: int, desde: date, hasta: date) -> dict:
     """Every rule-context input for [desde, hasta], fetched ONCE (ruling 1/6): the horizon's own
-    active rules, the range's confirmed shifts, its marked periods, and -- for every distinct
-    'tras_noche' day count a rule names -- ONE `bloques_noche` call over the range padded by the
-    largest N, never a `contexto_dia` call per day."""
+    active rules, the range's confirmed shifts, its marked periods, every phase of this horizon
+    (BODY-PLAN-FASES-2 ruling 2: ONE read, never scoped to [desde, hasta] -- a plan carries only a
+    handful of phases, so reading every one of them costs less than a second query bounding them),
+    and -- for every distinct 'tras_noche' day count a rule names -- ONE `bloques_noche` call over
+    the range padded by the largest N, never a `contexto_dia` call per day."""
     reglas = conn.execute(
-        "SELECT id, contexto, contexto_valor, texto, chequeo, orden FROM horizonte_regla "
+        "SELECT id, contexto, contexto_valor, texto, chequeo, orden, fase_id FROM horizonte_regla "
         "WHERE horizonte_goal_id = ? AND activa = 1 ORDER BY orden, id",
         (horizonte_goal_id,),
     ).fetchall()
@@ -357,6 +359,8 @@ def _recopilar_reglas(conn, horizonte_goal_id: int, person_id: int, desde: date,
         "AND (end_day IS NULL OR end_day >= ?)",
         (person_id, hasta.isoformat(), desde.isoformat())
     ).fetchall()
+    fases_por_id = {r["id"]: (r["start_day"], r["end_day"]) for r in conn.execute(
+        "SELECT id, start_day, end_day FROM horizonte_fase WHERE horizonte_goal_id = ?", (horizonte_goal_id,))}
 
     max_n = max((int(r["contexto_valor"]) for r in reglas if r["contexto"] == "tras_noche"), default=0)
     bloques = bloques_noche(conn, person_id, (desde - timedelta(max_n)).isoformat(), hasta.isoformat()) \
@@ -372,12 +376,27 @@ def _recopilar_reglas(conn, horizonte_goal_id: int, person_id: int, desde: date,
                     dias.add((fin + timedelta(i)).isoformat())
             tras_noche_dias[r["id"]] = dias
 
-    return {"reglas": reglas, "shifts": shifts, "periodos": periodos, "tras_noche_dias": tras_noche_dias}
+    return {"reglas": reglas, "shifts": shifts, "periodos": periodos, "tras_noche_dias": tras_noche_dias,
+            "fases_por_id": fases_por_id}
+
+
+def _dia_en_fase(fase_id: int | None, dia_iso: str, fases_por_id: dict) -> bool:
+    """BODY-PLAN-FASES-2 ruling 2: a rule with no fase_id applies in every phase (and when the plan
+    has none) -- 'no phase' is never a fourth CHECK value here either, just the absence of one."""
+    if fase_id is None:
+        return True
+    rango = fases_por_id.get(fase_id)
+    return rango is not None and rango[0] <= dia_iso <= rango[1]
 
 
 def _regla_aplica(regla, dia_iso: str, info: dict) -> bool | None:
     """Ruling 6: whether `dia_iso` is one of this rule's days. None only for 'descanso' with no
-    confirmed shift row at all that day -- UNKNOWN, never assumed rest."""
+    confirmed shift row at all that day -- UNKNOWN, never assumed rest. BODY-PLAN-FASES-2 ruling 2:
+    a phase-scoped rule (`regla["fase_id"]` set) applies only on days inside that phase AND when
+    its own contexto matches -- outside the phase it never applies (False), regardless of contexto,
+    so "after a night shift, during re-entry" is the AND of both, one rule."""
+    if not _dia_en_fase(regla["fase_id"], dia_iso, info["fases_por_id"]):
+        return False
     contexto = regla["contexto"]
     if contexto == "siempre":
         return True
@@ -461,7 +480,8 @@ def _evaluar_regla(regla, dias: list[str], info: dict, datos: dict) -> dict:
         detalle.append({"day": d, "cumple": c})
     return {"regla_id": regla["id"], "contexto": regla["contexto"], "contexto_valor": regla["contexto_valor"],
             "texto": regla["texto"], "solo_texto": chequeo is None, "dias_aplica": aplica,
-            "dias_cumple": cumple, "dias_no_cumple": no_cumple, "dias_sin_dato": sin_dato, "dias": detalle}
+            "dias_cumple": cumple, "dias_no_cumple": no_cumple, "dias_sin_dato": sin_dato, "dias": detalle,
+            "fase_id": regla["fase_id"]}
 
 
 def _semana_desde_datos(horizonte_goal_id: int, monday: date, datos: dict, reglas_info: dict,
@@ -668,6 +688,43 @@ def horizontes(conn, person_id: int, hoy: date, *, solo_activos: bool = False) -
     return [r["id"] for r in rows]
 
 
+def fases(conn, horizonte_goal_id: int, hoy: date | None = None) -> list[dict]:
+    """BODY-PLAN-FASES-2 ruling 1/3: every phase of this horizon, in the person's own order, each
+    the person's own words -- `actual` true for the one phase (never more than one, since
+    validar_fases_horizonte refuses an overlap) whose [start_day, end_day] covers `hoy`. One
+    statement, independent of how many phases or how long the horizon spans."""
+    hoy = hoy or date.today()
+    hoy_iso = hoy.isoformat()
+    filas = conn.execute(
+        "SELECT id, titulo, start_day, end_day, nota FROM horizonte_fase "
+        "WHERE horizonte_goal_id = ? ORDER BY orden, id", (horizonte_goal_id,)
+    ).fetchall()
+    return [
+        {"id": f["id"], "titulo": f["titulo"], "start_day": f["start_day"], "end_day": f["end_day"],
+         "nota": f["nota"], "actual": f["start_day"] <= hoy_iso <= f["end_day"]}
+        for f in filas
+    ]
+
+
+def fase_actual(conn, horizonte_goal_id: int, hoy: date | None = None) -> dict | None:
+    """BODY-PLAN-FASES-2 ruling 4: the ONE phase covering `hoy` (never more, same reason as
+    `fases` above), with its own week count for Hoy's "Fase: <titulo> - semana <n> de <m>" line --
+    `semana` counts Mondays since the phase's own start_day (1-based), `semanas_total` is the
+    phase's own span rounded up to a week. None when no phase covers `hoy` -- "no phase" is simply
+    the absence of a result, never an error."""
+    hoy = hoy or date.today()
+    hoy_iso = hoy.isoformat()
+    f = conn.execute(
+        "SELECT titulo, start_day, end_day FROM horizonte_fase WHERE horizonte_goal_id = ? "
+        "AND start_day <= ? AND end_day >= ?", (horizonte_goal_id, hoy_iso, hoy_iso)
+    ).fetchone()
+    if f is None:
+        return None
+    inicio, fin = _parse(f["start_day"]), _parse(f["end_day"])
+    return {"titulo": f["titulo"], "semana": (hoy - inicio).days // 7 + 1,
+            "semanas_total": (fin - inicio).days // 7 + 1}
+
+
 def resumen(conn, horizonte_goal_id: int, person_id: int, hoy: date | None = None) -> dict | None:
     """Ruling 8: the horizon goal, its child goals (each with their OWN existing
     goals.evaluar_semana verdict -- never recomputed here), its experiments, this week (ruling 3),
@@ -701,5 +758,5 @@ def resumen(conn, horizonte_goal_id: int, person_id: int, hoy: date | None = Non
         "goal_id": horizonte_goal_id, "titulo": goal["title"], "start_day": goal["start_day"],
         "deadline": goal["deadline"], "dias_a_deadline": dias_a_deadline, "hijos": hijos,
         "experimentos": experimentos, "semana_actual": semana_actual,
-        "siguiente_checkpoint": siguiente_checkpoint,
+        "siguiente_checkpoint": siguiente_checkpoint, "fases": fases(conn, horizonte_goal_id, hoy=hoy),
     }
