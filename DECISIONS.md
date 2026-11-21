@@ -33275,3 +33275,124 @@ contract touched (the assistant tool catalog is this repo's own, not a shared DT
 **Merged into `main` (`--no-ff`) -- merged `0a761a0458f9b05381fad9355dd55d3854e16f50`.** Smoke test on main,
 `tests.test_registro_cobertura tests.test_agente_registro tests.test_agente_bucle` -- Ran 70, OK.
 
+## BODY-NOCHE-SIN-REM-1 -- a zero-REM night reads as a watch capture gap, not a reading (2026-11-21)
+
+Field note from the Personal desk: a synced night whose stage array carried light/deep/awake and NO REM at all, with
+a long early "awake" block during which heart rate and stress stayed at sleep levels. The orchestrator had the desk
+read that night's `etapas_verificacion` (`leer_noche`): `coincide = true`, so Body's assumed stage-code map
+(`body/agente/herramientas.py:198 ETAPAS_SUENO_GARMIN`) was NOT the cause -- Garmin itself stored a REM total of zero
+for that night (`body/garmin_adapter.py:548` stores `sleep_rem_min` from `remSleepSeconds`, unedited, Tier 1). REM
+recurs in every sleep cycle of roughly 90 minutes, so a full night with no REM at all is, in practice, the watch not
+capturing it (fit, signal), not physiology.
+
+**Ruling 1, the module (`body/captura_sueno.py`, new, Tier 2):** `VERSION = "captura-sueno-v1"`, `MODELO =
+{"version": ..., "rem_minimo_noche_min": 180}` -- two full ~90-minute cycles, each of which normally ends in REM. One
+read, `evaluar(vals: dict) -> dict | None`, taking the day's values dict the caller already holds (`db.day_values`'s
+shape) -- no SQL of its own. Returns `{"rem_no_capturado": True, "version": VERSION}` when `sleep_rem_min` is exactly
+0 AND the night's own deep + light + rem minutes (awake excluded) reach 180; `None` otherwise -- REM missing entirely,
+REM above zero, and a short nap-length night all read as `None` alike, and the function never says which. It never
+names a cause beyond "the watch did not record it," never judges the night, never medical language (CLAUDE.md: "an
+honest gap shown plainly, never as medical advice"). `db.py`, `garmin_adapter.py`, `baselines.py` and
+`noche_inusual.py` were NOT edited -- the stored figure stays what Garmin said.
+
+**Ruling 2, Día (`body/rutas/hoy.py`'s `day_view`, `body/templates/day.html`):** the stage bar's own `if vals.get(k)`
+filter (`hoy.py:1381`) already drops a zero-minute stage from `stages` before this slice -- a night with
+`sleep_rem_min = 0` never drew a zero-width REM segment to begin with, so nothing changed there. What this ruling
+adds is one muted line under the bar, `day.sueno.rem_no_capturado` (es + en, tú register, no cause, no medical
+language), shown only when `captura_sueno.evaluar(vals)` marks the night. Census for a required link
+(`git grep -n "ayuda" -- body/rutas/ body/templates/ | grep -i sue`) found no existing Ayuda chapter on sleep data, so
+the line carries none. The `today()` route ("Hoy") was NOT touched -- it builds no stage bar of its own; only
+`day_view` ("Día") does.
+
+**Ruling 3, the assistant (`body/agente/herramientas.py`):** `_derivados_noche` (feeding `_leer_noche`) and
+`_comparar_noche`'s wrapper (around `noche_rasgos.comparar`, itself unedited) both gain a `captura` key --
+`captura_sueno.evaluar` on the night's own stored values, or `null` -- next to `etapas_verificacion` /
+the ranked features. Both tool descriptions gain one sentence: when `captura.rem_no_capturado` is true, that REM is
+a capture gap, not a reading, and must not be compared or reported as a figure. No new tool, so
+`tests/test_agente_bucle.py`'s own census needed no change -- reran green, unedited.
+
+**Ruling 4, tests:** `tests/test_captura_sueno.py` (new): `evaluar`'s nine value combinations (0 REM on a 6h and a
+2h night, REM missing/None/1 minute, REM above zero on a long night, awake minutes excluded from the minimum, the
+exact-180 boundary on both sides) plus the `MODELO` census, plus three `TestClient` renders of a marked night (es,
+en, each asserting the muted line and no `c-body` class inside the extracted stage-bar SVG+legend block) and one
+unmarked night whose stage block is regex-extracted and asserted byte-identical against the same render with
+`captura_sueno.evaluar` patched to return `None`. `tests/test_leer_noche.py` and `tests/test_comparar_noche.py` each
+gained a small `CapturaTest` class (marked / not-marked). `tests/test_registro_tu.py` and `tests/test_persona_fuga.py`
+passed unedited (es.json's new string uses "tú"/"suele", never "usted" or a bare `su`/`tiene`/`puede`).
+
+**Ruling 5, demo (`body/demo.py`, `tests/test_demo.py`):** one invented night, the day before `anchor` (never
+`anchor` itself, which already carries `_seed_noche_inusual`'s own hrv/sleep_score override), gets
+`sleep_deep_min=110`, `sleep_light_min=200`, `sleep_rem_min=0`, `sleep_awake_min=20` -- deep+light alone already
+clear `captura_sueno.MODELO['rem_minimo_noche_min']` with margin, read from that constant rather than duplicated.
+Computed relative to `anchor`, so it never depends on the real calendar date. `tests/test_demo.py` gained one test
+confirming exactly one night reads `sleep_rem_min = 0` through `daily_metric_efectiva` and that `captura_sueno.evaluar`
+marks it.
+
+**Follow-up, not built here -- BODY-NOCHE-SIN-REM-2:** whether a not-captured REM night should also drop out of the
+REM baseline and Tendencias (`body/db.py`'s `daily_metric_efectiva` view, Tier 1, the same place
+`body/sueno_corregido.py`'s correction lives). Census (`git grep -c sleep_rem_min -- body/`): 11 files under `body/`
+reference `sleep_rem_min`, 20 occurrences total (`agente/herramientas.py` 2, `captura_sueno.py` 3,
+`catalogo_tendencias.py` 1, `db.py` 1, `demo.py` 3, `experimentos.py` 1, `garmin_adapter.py` 1, `i18n/en.json` 3,
+`i18n/es.json` 3, `noche_rasgos.py` 1, `rutas/hoy.py` 1) -- counts only, no figure.
+
+**Commits (branch `feat/body-noche-sin-rem-1`, off `main` at `074fddaa9df523dc8f50429d74f298d9eac4644e`):**
+`b38f849` (ruling 1, the module and its tests), `5e8aa53` (rulings 2-3, Día's line and the two assistant tools),
+`35c5184` (ruling 5, the demo seed).
+
+**Ruling (gate), the gate:** exact command per chunk `.venv/Scripts/python.exe -m unittest <mod1> <mod2> ...` (the
+same `discover tests -t .` suite as sequential alphabetical chunks of ~10 modules, ~5 for the `test_garmin_*`/
+`test_host_*` groups), all 27 chunks run in the foreground on the branch tip (`35c5184`):
+
+1. test_accesibilidad..test_agente_leer_serie -- Ran 209, OK (1 expected failure)
+2. test_agente_medida..test_ancho_completo -- Ran 200, OK
+3. test_asistente_panel..test_comida (incl. test_captura_sueno) -- Ran 217, OK (1 skipped)
+4. test_comida_compartida..test_css_cascada (incl. test_comparar_noche) -- Ran 247, OK
+5. test_cuenta_rp..test_deshacer_derivados (incl. test_demo) -- Ran 186, OK
+6. test_despertar..test_entreno_detalle -- Ran 233, OK
+7. test_entreno_dolor..test_env_local_1 -- Ran 214, OK
+8. test_errores_texto..test_fechas_semana -- Ran 131, OK
+9. test_fit..test_fuentes_propias -- Ran 19, OK
+10. test_garmin_adapter..test_garmin_estado -- Ran 70, OK
+11. test_garmin_host..test_garmin_web -- Ran 138, OK
+12. test_get_sin_escritura..test_hogar_enlace_1 -- Ran 218, OK
+13. test_hogar_escribe..test_horizonte -- Ran 237, OK
+14. test_host_autoactualizar..test_host_import -- Ran 201, OK
+15. test_household..test_isolate_limpieza (incl. test_i18n_paridad) -- Ran 161, OK
+16. test_leer_intradia..test_mcp_aplicar (incl. test_leer_noche) -- Ran 264, OK
+17. test_mcp_cliente_remoto..test_mock_r2_hoy -- Ran 290, OK
+18. test_modelos_estandar_1..test_pc_cliente (incl. test_noche_inusual, test_noche_rasgos) -- Ran 254, OK
+19. test_periodo..test_plan_esquema (incl. test_persona_fuga) -- Ran 251, OK
+20. test_plan_hoy..test_primeros_turnos -- Ran 284, OK
+21. test_privacidad..test_pull -- Ran 286, OK
+22. test_pull_intradia_experimentos..test_rendimiento_red (incl. test_registro_tu) -- Ran 159, OK
+23. test_rendimiento_turnos..test_static_version -- Ran 158, OK
+24. test_sueno_corregido..test_tendencias_racha -- Ran 267, OK
+25. test_tendencias_todas..test_turnos_opcional_3 -- Ran 285, OK
+26. test_turnos_opcional_4..test_viajes -- Ran 158, OK
+27. test_vida_dia..test_web_entry -- Ran 88, OK
+
+No `FAIL:`/`ERROR:` line appeared in any chunk. Non-"." stdout seen (pull/backfill/intradia status lines, Garmin
+NotSignedIn/ConnectionError/AuthenticationError/RuntimeError messages, "dia vacio" fixture lines, a deliberately
+raised error in a mocked thread, "asistente: propuesta ... no se pudo mostrar" / "mcp ... error" guard lines,
+ResourceWarnings from existing fixtures) is existing tests' own fixture/demo-seed stdout, invented data only,
+unrelated to this slice.
+
+**Reconciliation:** sum of the 27 chunks' `Ran` counts -- 209+200+217+247+186+233+214+131+19+70+138+218+237+201+161+
+264+290+254+251+284+286+159+158+267+285+158+88 = 5425 -- exactly equal to the independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`: 5425).
+
+**Gate verdict: GREEN.**
+
+**Merge policy A, this diff's own shape:** no schema or migration change -- no new table, column or index (`db.py`
+untouched). Cross-repo contract: none -- no DTO shared with another repository is touched. Customer bytes: YES,
+changed -- `body/i18n/es.json`/`en.json` gain `day.sueno.rem_no_capturado` and `body/templates/day.html` renders it
+on a marked night's Día page; this trips the "no customer-facing bytes" condition. The spec's own approval reason
+(`ORCH-CARLOS-DELEGATES-TIER-1-1`) names this exact change in words -- "one muted line on Día" -- and closes with
+"Deploying follows his standing go," which this slice reads as the spec body's explicit authorization to merge past
+that trip, per the dispatch's own rule ("a spec whose body says in words that you may merge"). Proceeded to merge.
+
+**Merged into `main` (`--no-ff`) -- merged `7352f3f833153873e8d4a04216d937212e938553`.** Tree identity proven:
+branch tip tree `ab5aea8f7d5bc5fe01f72ccfb9365090fc3a0565` equals the merge commit's own tree, `git diff` between them
+empty. Smoke test on main, `tests.test_captura_sueno tests.test_leer_noche tests.test_comparar_noche tests.test_demo
+tests.test_i18n_paridad tests.test_registro_tu` -- Ran 136, OK.
+
