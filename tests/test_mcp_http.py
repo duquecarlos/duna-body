@@ -135,6 +135,14 @@ class AuthTest(_HostedTestCase):
         self.assertEqual(r.status_code, 503)
         self.assertEqual(r.headers.get("retry-after"), "42")
 
+    def test_inactive_key_401_carries_no_retry_after(self):
+        """A real {active: false} is the 'invalid key' 401 -- never the could-not-ask 503, so it
+        carries no Retry-After at all (BODY-MCP-503-RETRY-AFTER-1)."""
+        self._grants["k"] = {"active": False}
+        r = self._post({}, key="k")
+        self.assertEqual(r.status_code, 401)
+        self.assertIsNone(r.headers.get("retry-after"))
+
 
 class AllowListCensusTest(_HostedTestCase):
     """BODY-MCP-INICIO-SIN-LLAVE-1 ruling 1, ruling 4's census: every method
@@ -284,6 +292,37 @@ class CuentaDownJsonRpcErrorTest(_HostedTestCase):
             r = self._post({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, key="k")
         self.assertEqual(r.status_code, 503)
         self.assertEqual(r.headers.get("retry-after"), "42")
+
+    def test_every_503_case_carries_retry_after_equal_to_the_messages_number(self):
+        """BODY-MCP-503-RETRY-AFTER-1: a could-not-ask 503 -- timeout, connection error, or a 5xx
+        with no Retry-After of its own -- answers the default (`_REINTENTO_DEFECTO_SEGUNDOS`), and
+        a 429 that did carry one passes it through verbatim. The header and the message's own
+        number are always the same `n`."""
+        def timeout(key):
+            raise httpx.ConnectTimeout("boom")
+
+        def connect_error(key):
+            raise httpx.ConnectError("boom")
+
+        def quinientos_sin_retry_after(key):
+            return httpx.Response(500)
+
+        def cuatrocientos_veintinueve_con_retry_after(key):
+            return httpx.Response(429, headers={"retry-after": "42"})
+
+        casos = {
+            "timeout": (timeout, "60"),
+            "connection error": (connect_error, "60"),
+            "500 sin retry-after": (quinientos_sin_retry_after, "60"),
+            "429 con retry-after": (cuatrocientos_veintinueve_con_retry_after, "42"),
+        }
+        for nombre, (fake, esperado) in casos.items():
+            with self.subTest(nombre):
+                with mock.patch.object(llave_asistente, "_post_introspect", fake):
+                    r = self._post({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, key="k")
+                self.assertEqual(r.status_code, 503)
+                self.assertEqual(r.headers.get("retry-after"), esperado)
+                self.assertIn(esperado, r.json()["error"]["message"])
         self.assertIn("42", r.json()["error"]["message"])
 
 

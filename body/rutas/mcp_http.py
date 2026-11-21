@@ -87,12 +87,15 @@ def _503(retry_after: str | None, idioma: str) -> JSONResponse:
     """Ruling 3: besides the transport-level 503 and its Retry-After (unchanged), the body itself
     is a JSON-RPC error -- never a bare `{"error": ...}` -- so a client reads WHY, not only a
     status code. No person is resolved yet (this is the introspection call itself failing), so
-    `idioma` is read off the caller's own Accept-Language header, or the default."""
+    `idioma` is read off the caller's own Accept-Language header, or the default.
+
+    BODY-MCP-503-RETRY-AFTER-1: every 503 carries Retry-After -- Cuenta's own value verbatim when
+    it sent one, else the same default already named in `mensaje`. Header and message always
+    agree on `n`."""
     n = retry_after or _REINTENTO_DEFECTO_SEGUNDOS
     mensaje = T(idioma)("asistente.mcp.cuenta_no_disponible", n=n)
-    headers = {"Retry-After": retry_after} if retry_after else None
     cuerpo = _responder(None, error={"code": _CUENTA_NO_DISPONIBLE_CODE, "message": mensaje})
-    return _sin_cache(cuerpo, status_code=503, headers=headers)
+    return _sin_cache(cuerpo, status_code=503, headers={"Retry-After": n})
 
 
 def _responder(id_, *, resultado=None, error=None) -> dict:
