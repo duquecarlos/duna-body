@@ -283,11 +283,24 @@ def _dolor_ctx(t: T, conn, person_id: int, day: str, a: dict, sets: list[dict]) 
     filas = []
     for e in relevantes:
         prev = guardado.get(e["ejercicio"])
+        # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1/2: the visible exercise text and each field's own
+        # accessible name both read through _exercise_display -- the same display form Series
+        # already uses on this screen (ruling 2) -- while the hidden input below keeps posting the
+        # raw stored `ejercicio` key unchanged. Three fields share one row, so without the exercise
+        # named in each one's own aria-label a screen reader would hear "During" / "After" / the
+        # movement question repeated identically for every exercise on the card.
+        nombre = _exercise_display(e["ejercicio"])
         filas.append({
-            "ejercicio": e["ejercicio"], "zona": e["zona"],
+            "ejercicio": e["ejercicio"], "ejercicio_display": nombre, "zona": e["zona"],
             "durante": prev["dolor_durante"] if prev else None,
             "despues": prev["dolor_despues"] if prev else None,
             "movimiento": (prev["movimiento"] if prev else None) or "",
+            "durante_aria": t("entreno_sesion.dolor_campo_aria",
+                              campo=t("entreno_sesion.dolor_durante_label"), ejercicio=nombre),
+            "despues_aria": t("entreno_sesion.dolor_campo_aria",
+                              campo=t("entreno_sesion.dolor_despues_label"), ejercicio=nombre),
+            "movimiento_aria": t("entreno_sesion.dolor_campo_aria",
+                                 campo=t("entreno_sesion.dolor_movimiento_label"), ejercicio=nombre),
         })
     return {"titulo": t("entreno_sesion.dolor_titulo", zona=zona_txt), "filas": filas}
 
