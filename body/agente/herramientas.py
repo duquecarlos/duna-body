@@ -75,7 +75,7 @@ from zoneinfo import ZoneInfo
 from .. import anatomia, baselines, catalogo_tendencias, comidas, compartir, contexto_dia, cuenta, db, despertar_real, \
     desplazamiento_import, enlaces, entreno_historial, errores, experimentos, fechas, garmin_adapter, \
     garmin_cuenta, goals, history, horizonte, household, noche_rasgos, nutriente_objetivo, practicas, profile, pull, \
-    readiness, shift_import, sueno_fc, turnos_costo, tutoriales, viajes
+    readiness, reentrada, shift_import, sueno_fc, turnos_costo, tutoriales, viajes
 from ..i18n import LANGS, T
 from . import ajustes, conversacion as agente_conversacion, propuestas
 
@@ -1005,10 +1005,15 @@ def _leer_hoy(conn: sqlite3.Connection, person_id: int) -> dict:
     if not dias:
         return {"dia": None, "mensaje": "sin datos aún"}
     dia = dias[0]
-    return {"dia": dia, "listo": _readiness_dict(readiness.compute(conn, dia, person_id)),
-            "valores": db.day_values(conn, dia, person_id),
-            "limitaciones": _limitaciones_abiertas(conn, person_id, dia),
-            "objetivos_nutriente": nutriente_objetivo.estado_del_dia(conn, person_id, dia)}
+    out = {"dia": dia, "listo": _readiness_dict(readiness.compute(conn, dia, person_id)),
+           "valores": db.day_values(conn, dia, person_id),
+           "limitaciones": _limitaciones_abiertas(conn, person_id, dia),
+           "objetivos_nutriente": nutriente_objetivo.estado_del_dia(conn, person_id, dia)}
+    # ORCH-CARLOS-DELEGATES-TIER-1-1 (BODY-PLAN-FASES-6) ruling 4: today's own reentrada/tras_carga
+    # signals, present only when they apply (reentrada.senales' own "no key" omission) -- the same
+    # context planear_entreno's own description leans on, next to `limitaciones` above.
+    out.update(reentrada.senales(conn, person_id, date.fromisoformat(dia)))
+    return out
 
 
 def _leer_dia(conn: sqlite3.Connection, person_id: int, day: str) -> dict:
@@ -1956,7 +1961,13 @@ def _leer_dias_libres(conn: sqlite3.Connection, person_id: int, desde: str | Non
         raise ToolError("'desde' debe ser una fecha ISO (AAAA-MM-DD)")
     if not (_LEER_DIAS_LIBRES_MIN_DIAS <= dias <= _LEER_DIAS_LIBRES_MAX_DIAS):
         raise ToolError(f"'dias' debe estar entre {_LEER_DIAS_LIBRES_MIN_DIAS} y {_LEER_DIAS_LIBRES_MAX_DIAS}")
-    return {"dias_libres": turnos_costo.dias_libres(conn, person_id, desde_d, dias)}
+    entradas = turnos_costo.dias_libres(conn, person_id, desde_d, dias)
+    # ORCH-CARLOS-DELEGATES-TIER-1-1 (BODY-PLAN-FASES-6) ruling 4: each day's own reentrada/
+    # tras_carga signals, present only when they apply -- planear_entreno's own description points
+    # here first, so the model sees them before it ever proposes a day.
+    for entrada in entradas:
+        entrada.update(reentrada.senales(conn, person_id, date.fromisoformat(entrada["dia"])))
+    return {"dias_libres": entradas}
 
 
 def _leer_tutoriales(conn: sqlite3.Connection, person_id: int, consulta: str | None = None) -> dict:
@@ -2461,9 +2472,18 @@ def _planear_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id: 
     Insert-shaped, like `proponer_meta`: there is no 'before'. Unlike `_registrar_entreno`/
     `_registrar_medida`, a future `day` is allowed on purpose here: a plan is for later, not for
     what already happened. `horizonte_goal_id` (BODY-PLAN-PROPUESTAS-1 ruling 5) is additive: give
-    at most one of `goal_id`/`horizonte_goal_id` -- either becomes the session's own `plan.goal_id`."""
+    at most one of `goal_id`/`horizonte_goal_id` -- either becomes the session's own `plan.goal_id`.
+
+    ORCH-CARLOS-DELEGATES-TIER-1-1 (BODY-PLAN-FASES-6) rulings 1-2: `reentrada.senales` for `day`
+    decides, after every exercise is validated -- a qualifying gap scales every exercise's own
+    `series` by its factor (fewer sets, never more than what was asked); a heavy day before `day`
+    drops any exercise whose own categoria shares a loaded group, UNLESS that would leave nothing
+    at all (the model's own list stands rather than an empty session). Either signal, present,
+    rides along in `despues` for the card (`body/rutas/asistente.py`'s own `_tarjeta_planear_entreno`)
+    to word -- never pre-rendered text, the same "structured now, worded at render" split every
+    other `despues` field here already keeps."""
     try:
-        date.fromisoformat(day)
+        dia_d = date.fromisoformat(day)
     except ValueError:
         raise ToolError("day debe ser una fecha ISO (AAAA-MM-DD)")
     titulo = (titulo or "").strip()
@@ -2489,7 +2509,22 @@ def _planear_entreno(conn: sqlite3.Connection, person_id: int, conversacion_id: 
         if not _plan_propio(conn, person_id, horizonte_goal_id):
             raise ToolError(f"plan desconocido: {horizonte_goal_id!r}")
         goal_id = horizonte_goal_id
+    senales = reentrada.senales(conn, person_id, dia_d)
+    if "reentrada" in senales:
+        factor = senales["reentrada"]["factor"]
+        for e in ejercicios:
+            e["series"] = max(1, round(e["series"] * factor))
+    if "tras_carga" in senales:
+        grupos_cargados = frozenset(senales["tras_carga"]["grupos"])
+        filtrados = [e for e in ejercicios
+                     if not (anatomia.grupos_de_categorias([e["categoria"]]) & grupos_cargados)]
+        if filtrados:
+            ejercicios = filtrados
     despues = {"day": day, "time": time, "titulo": titulo, "goal_id": goal_id, "ejercicios": ejercicios}
+    if "reentrada" in senales:
+        despues["reentrada"] = senales["reentrada"]
+    if "tras_carga" in senales:
+        despues["tras_carga"] = senales["tras_carga"]
     registro = propuestas.crear(conn, person_id, conversacion_id, "planear_entreno", despues)
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
@@ -3989,7 +4024,10 @@ _RASGOS_BUSCAR_NOCHES_DESC = ", ".join(
 HERRAMIENTAS = [
     {"nombre": "leer_hoy", "tipo": "lectura", "nivel": "completo",
      "descripcion": "Qué tan listo estás hoy: el puntaje de preparación, los valores del día más reciente y "
-                     "las limitaciones abiertas (una lesión en recuperación, con la zona si se nombró).",
+                     "las limitaciones abiertas (una lesión en recuperación, con la zona si se nombró). "
+                     "Incluye 'reentrada' si vuelves de una semana o más sin entrenar fuerza (con la sesión "
+                     "y el volumen sugerido) y 'tras_carga' si ayer tuvo una actividad de carga alta (con "
+                     "los grupos musculares que cargó) -- ninguna de las dos aparece cuando no aplican.",
      "parametros": _SIN_PARAMETROS, "funcion": _leer_hoy},
     {"nombre": "leer_dia", "tipo": "lectura", "nivel": "completo",
      "descripcion": "Las métricas, el sueño, las actividades y los turnos de un día concreto, sus "
@@ -4109,7 +4147,8 @@ HERRAMIENTAS = [
     {"nombre": "leer_dias_libres", "tipo": "lectura", "nivel": "ninguno",
      "descripcion": "Qué días de un rango están libres para entrenar según sus turnos confirmados, y "
                      "para cada día que no lo está, el motivo (un turno ese día, o que sale de un turno "
-                     "de noche esa mañana). Úsalo antes de proponer un día.",
+                     "de noche esa mañana). Cada día incluye 'reentrada'/'tras_carga' cuando aplican, la "
+                     "misma señal de leer_hoy. Úsalo antes de proponer un día.",
      "parametros": _PARAM_LEER_DIAS_LIBRES, "funcion": _leer_dias_libres},
     {"nombre": "leer_ajustes", "tipo": "lectura", "nivel": "ninguno",
      "descripcion": "Tus datos de perfil (nombre, zona horaria, idioma) y tu nivel de datos del asistente.",
@@ -4207,10 +4246,13 @@ HERRAMIENTAS = [
                      "otro): es lo que ilumina el cuerpo de la persona en la pantalla Hoy. Revisa primero las "
                      "'limitaciones' de leer_hoy: si una zona está en recuperación, mantén la carga de esa "
                      "zona por debajo de lo normal y dilo en el plan -- tú nunca inventas una carga concreta, "
-                     "solo dices el límite. No lo crea: registra la propuesta para que la persona la apruebe "
-                     "en el chat. Antes de proponer un día, mira leer_dias_libres: propón un día libre. Si "
-                     "ninguno lo está, dilo con el motivo de cada día y deja que la persona elija; nunca "
-                     "inventes una fecha.",
+                     "solo dices el límite. Si leer_hoy o leer_dias_libres marcan 'reentrada' (vuelve de una "
+                     "semana o más sin fuerza) o 'tras_carga' (ayer tuvo una carga alta), esta misma "
+                     "herramienta ya ajusta el volumen o quita los ejercicios de esos grupos sola -- no lo "
+                     "hagas tú, solo tenlo en cuenta al elegir qué proponer. No lo crea: registra la "
+                     "propuesta para que la persona la apruebe en el chat. Antes de proponer un día, mira "
+                     "leer_dias_libres: propón un día libre. Si ninguno lo está, dilo con el motivo de cada "
+                     "día y deja que la persona elija; nunca inventes una fecha.",
      "parametros": _PARAM_PLANEAR_ENTRENO, "funcion": _planear_entreno},
     {"nombre": "registrar_entreno", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone registrar lo que la persona hizo en un entrenamiento de un día: si el reloj "

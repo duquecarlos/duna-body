@@ -559,6 +559,55 @@ class EstadoYEventosTest(unittest.TestCase):
         self.assertIn("remo con barra", datos["despues"])
         self.assertIsNone(datos["series"])
 
+    def test_planear_entreno_card_says_why_after_a_gap(self):
+        # ORCH-CARLOS-DELEGATES-TIER-1-1 (BODY-PLAN-FASES-6) ruling 2: the card's own one-line
+        # reason, worded fresh from the structured signal `_planear_entreno` stored.
+        self.conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, source) "
+            "VALUES (1, 'a0', '2026-10-01', '2026-10-01T18:00:00', 'strength_training', 'garmin')")
+        self.conn.commit()
+        guion = [
+            Respuesta(bloques=[LlamadaHerramienta("l1", "planear_entreno", {
+                "day": "2026-10-08", "titulo": "Pecho",
+                "ejercicios": [{"ejercicio": "press banca", "series": 5, "categoria": "pecho"}],
+            })], motivo_fin="tool_use", uso=Uso()),
+            Respuesta(bloques=[BloqueTexto("listo")], motivo_fin="end_turn", uso=Uso()),
+        ]
+        proveedor = FakeProveedor(guion)
+        with patch.object(agente_cliente, "proveedor_configurado", return_value=proveedor):
+            r = self.client.post("/asistente/preguntar",
+                                 json={"pregunta": "plan de pecho", "conversacion_id": None})
+        self.assertEqual(r.status_code, 200)
+        datos = _evento_data(r.text, "propuesta")
+        self.assertIn("Vuelta tras 7 días sin fuerza: sesión 1, volumen al 60 %.", datos["despues"])
+
+    def test_planear_entreno_card_says_why_after_a_heavy_day(self):
+        for i, (day, dur) in enumerate([("2026-10-01", 600.0), ("2026-10-03", 700.0), ("2026-10-05", 800.0)]):
+            self.conn.execute(
+                "INSERT INTO activity (person_id, source_id, day, start_local, type, name, duration_s, source) "
+                "VALUES (1, ?, ?, ?, 'other', 'Yoga', ?, 'garmin')", (f"bg{i}", day, f"{day}T07:00:00", dur))
+        self.conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, name, duration_s, source) "
+            "VALUES (1, 'basket', '2026-10-09', '2026-10-09T18:00:00', 'other', 'Baloncesto', 3000.0, 'garmin')")
+        self.conn.commit()
+        guion = [
+            Respuesta(bloques=[LlamadaHerramienta("l1", "planear_entreno", {
+                "day": "2026-10-10", "titulo": "Full body",
+                "ejercicios": [{"ejercicio": "sentadilla", "series": 4, "categoria": "pierna"},
+                               {"ejercicio": "press banca", "series": 4, "categoria": "pecho"}],
+            })], motivo_fin="tool_use", uso=Uso()),
+            Respuesta(bloques=[BloqueTexto("listo")], motivo_fin="end_turn", uso=Uso()),
+        ]
+        proveedor = FakeProveedor(guion)
+        with patch.object(agente_cliente, "proveedor_configurado", return_value=proveedor):
+            r = self.client.post("/asistente/preguntar",
+                                 json={"pregunta": "plan de cuerpo completo", "conversacion_id": None})
+        self.assertEqual(r.status_code, 200)
+        datos = _evento_data(r.text, "propuesta")
+        self.assertIn("Ayer: Baloncesto; hoy sin carga pesada de pierna.", datos["despues"])
+        self.assertNotIn("sentadilla", datos["despues"])
+        self.assertIn("press banca", datos["despues"])
+
     def test_registrar_entreno_manual_carries_a_per_set_watch_vs_you_table(self):
         guion = [
             Respuesta(bloques=[LlamadaHerramienta("l1", "registrar_entreno", {

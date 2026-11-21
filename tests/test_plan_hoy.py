@@ -296,5 +296,53 @@ class PlanesHoyMaxTest(unittest.TestCase):
         self.assertNotIn("plan más", page)
 
 
+def _plan_hoy_row(conn, day: str = "2026-11-12") -> None:
+    conn.execute(
+        "INSERT INTO plan (person_id, day, time, title, status, ejercicios_json) VALUES "
+        "(1, ?, '15:30', 'Pecho', 'accepted', '[{\"ejercicio\":\"press banca\",\"series\":4,"
+        "\"categoria\":\"pecho\"}]')", (day,))
+    conn.commit()
+
+
+class DiaPorDelanteSenalesTest(unittest.TestCase):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 (BODY-PLAN-FASES-6) ruling 3: Hoy's own planned-session line
+    carries the same one-line reason as the proposal card, only when a session is planned AND a
+    signal applies."""
+
+    def test_reentrada_shows_on_the_planned_session_line(self):
+        conn = _reset_db(self)
+        _plan_hoy_row(conn)
+        _activity(conn, "2026-11-05", "strength_training", "a0")  # 7 days before HOY
+        page = _get().text
+        self.assertIn("Vuelta tras 7 días sin fuerza: sesión 1, volumen al 60 %.", page)
+
+    def test_tras_carga_shows_on_the_planned_session_line(self):
+        conn = _reset_db(self)
+        _plan_hoy_row(conn)
+        for i, (day, dur) in enumerate([("2026-11-01", 600.0), ("2026-11-02", 700.0), ("2026-11-03", 800.0)]):
+            conn.execute(
+                "INSERT INTO activity (person_id, source_id, day, start_local, type, name, duration_s, source) "
+                "VALUES (1, ?, ?, ?, 'other', 'Yoga', ?, 'garmin')", (f"bg{i}", day, f"{day}T07:00:00", dur))
+        conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, name, duration_s, source) "
+            "VALUES (1, 'basket', '2026-11-11', '2026-11-11T18:00:00', 'other', 'Baloncesto', 3000.0, 'garmin')")
+        conn.commit()
+        page = _get().text
+        self.assertIn("Ayer: Baloncesto; hoy sin carga pesada de pierna.", page)
+
+    def test_no_line_when_neither_signal_applies(self):
+        conn = _reset_db(self)
+        _plan_hoy_row(conn)
+        page = _get().text
+        self.assertNotIn("Vuelta tras", page)
+        self.assertNotIn("hoy sin carga pesada", page)
+
+    def test_no_line_when_no_session_is_planned(self):
+        conn = _reset_db(self)
+        _activity(conn, "2026-11-05", "strength_training", "a0")
+        page = _get().text
+        self.assertNotIn("Vuelta tras", page)
+
+
 if __name__ == "__main__":
     unittest.main()

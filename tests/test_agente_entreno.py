@@ -122,6 +122,91 @@ class PlanearEntrenoTest(unittest.TestCase):
             propuestas.aplicar(self.conn, 2, out["propuesta_id"])
 
 
+def _despues(conn, propuesta_id: int) -> dict:
+    return json.loads(conn.execute(
+        "SELECT despues_json FROM propuesta_agente WHERE id = ?", (propuesta_id,)).fetchone()["despues_json"])
+
+
+def _seed_dia_pesado(conn, person_id: int, day_ayer: str) -> None:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 (BODY-PLAN-FASES-6): a heavy day before `day_ayer`'s own
+    tomorrow -- three short 'other' activities to give the duration tercile something to compare
+    against, then a much longer one (a ball game) on `day_ayer` itself. No intraday heart-rate
+    data anywhere, on purpose: `recuperacion_actividad` then reads as 'sin_cobertura' for all of
+    them, so this exercises reentrada.py's own duration-tercile fallback, not its recovery-minutes
+    path (already covered by tests/test_reentrada.py)."""
+    for i, (day, dur) in enumerate([("2026-10-01", 600.0), ("2026-10-03", 700.0), ("2026-10-05", 800.0)]):
+        conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, name, duration_s, source) "
+            "VALUES (?, ?, ?, ?, 'other', 'Yoga', ?, 'garmin')",
+            (person_id, f"bg{i}", day, f"{day}T07:00:00", dur))
+    conn.execute(
+        "INSERT INTO activity (person_id, source_id, day, start_local, type, name, duration_s, source) "
+        "VALUES (?, 'basket', ?, ?, 'other', 'Baloncesto', 3000.0, 'garmin')",
+        (person_id, day_ayer, f"{day_ayer}T18:00:00"))
+    conn.commit()
+
+
+class PlanearEntrenoSenalesTest(unittest.TestCase):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 (BODY-PLAN-FASES-6) rulings 1-2: a qualifying gap scales
+    every exercise's own series; a heavy day before `day` drops the exercises that share its own
+    loaded groups -- either way, stored structured in `despues` for the card to word."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        self.cid = _cid(self.conn)
+
+    def test_reentrada_escala_las_series_y_se_guarda_en_despues(self):
+        _insert_activity(self.conn, 1, "a0", "2026-10-01")  # 7 days before 2026-10-08
+        self.conn.commit()
+        out = herramientas.ejecutar(self.conn, 1, "planear_entreno", {
+            "day": "2026-10-08", "titulo": "Pecho",
+            "ejercicios": [{"ejercicio": "press banca", "series": 5, "categoria": "pecho"}],
+        }, "ninguno", self.cid)
+        despues = _despues(self.conn, out["propuesta_id"])
+        self.assertEqual(despues["ejercicios"][0]["series"], 3)  # round(5 * 0.6)
+        self.assertEqual(despues["reentrada"], {"dias_sin_fuerza": 7, "sesion_n": 1, "factor": 0.6})
+        self.assertNotIn("tras_carga", despues)
+
+    def test_tras_carga_quita_los_ejercicios_de_pierna_y_deja_los_demas(self):
+        _seed_dia_pesado(self.conn, 1, "2026-10-09")  # the day before 2026-10-10
+        out = herramientas.ejecutar(self.conn, 1, "planear_entreno", {
+            "day": "2026-10-10", "titulo": "Full body",
+            "ejercicios": [{"ejercicio": "sentadilla", "series": 4, "categoria": "pierna"},
+                           {"ejercicio": "press banca", "series": 4, "categoria": "pecho"}],
+        }, "ninguno", self.cid)
+        despues = _despues(self.conn, out["propuesta_id"])
+        self.assertEqual([e["ejercicio"] for e in despues["ejercicios"]], ["press banca"])
+        self.assertEqual(despues["tras_carga"]["actividad"], {"tipo": "other", "nombre": "Baloncesto"})
+        self.assertEqual(despues["tras_carga"]["grupos"], ["cuadriceps", "isquios"])
+        self.assertNotIn("reentrada", despues)
+
+    def test_tras_carga_nunca_vacia_la_propuesta(self):
+        _seed_dia_pesado(self.conn, 1, "2026-10-09")
+        out = herramientas.ejecutar(self.conn, 1, "planear_entreno", {
+            "day": "2026-10-10", "titulo": "Pierna",
+            "ejercicios": [{"ejercicio": "sentadilla", "series": 4, "categoria": "pierna"}],
+        }, "ninguno", self.cid)
+        despues = _despues(self.conn, out["propuesta_id"])
+        self.assertEqual([e["ejercicio"] for e in despues["ejercicios"]], ["sentadilla"])
+
+    def test_registrar_entreno_un_dia_ya_pasado_nunca_se_toca(self):
+        """Ruling 2: 'nothing blocks; a logged session is never altered' -- `registrar_entreno` is
+        for what already happened, so it has no notion of 'a lighter session' at all. Same qualifying
+        gap as the reentrada test above, but through `registrar_entreno` instead: series/reps stay
+        exactly as spoken and `despues` carries neither signal key."""
+        _insert_activity(self.conn, 1, "a0", "2026-10-01")  # 7 days before 2026-10-08
+        self.conn.commit()
+        out = herramientas.ejecutar(self.conn, 1, "registrar_entreno", {
+            "day": "2026-10-08", "titulo": "Pecho",
+            "series": [{"ejercicio": "press banca", "reps": 5, "peso_kg": 60.0}],
+        }, "ninguno", self.cid)
+        despues = _despues(self.conn, out["propuesta_id"])
+        self.assertEqual(despues["series"][0]["reps"], 5)
+        self.assertEqual(despues["series"][0]["peso_kg"], 60.0)
+        self.assertNotIn("reentrada", despues)
+        self.assertNotIn("tras_carga", despues)
+
+
 class RegistrarEntrenoGarminTest(unittest.TestCase):
     def setUp(self):
         self.conn = _conn(self)
@@ -547,6 +632,62 @@ class LeerEntrenoUltimaVezTest(unittest.TestCase):
         self.conn.commit()
         out = herramientas.ejecutar(self.conn, 1, "leer_entreno", {"day": "2026-11-12"}, "completo")
         self.assertIsNone(out["sesiones"][0]["ultima_vez"]["curl de bíceps"])
+
+
+class LeerHoySenalesTest(unittest.TestCase):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 (BODY-PLAN-FASES-6) ruling 4: leer_hoy carries today's own
+    reentrada/tras_carga signal, present only when it applies."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        db.set_metric(self.conn, "2026-10-08", "resting_hr", 55.0, "garmin", 1)
+        self.conn.commit()
+
+    def test_incluye_reentrada_cuando_aplica(self):
+        _insert_activity(self.conn, 1, "a0", "2026-10-01")  # 7 days before the latest day with data
+        self.conn.commit()
+        out = herramientas.ejecutar(self.conn, 1, "leer_hoy", {}, "completo")
+        self.assertEqual(out["reentrada"], {"dias_sin_fuerza": 7, "sesion_n": 1, "factor": 0.6})
+        self.assertNotIn("tras_carga", out)
+
+    def test_ninguna_clave_cuando_no_aplican(self):
+        out = herramientas.ejecutar(self.conn, 1, "leer_hoy", {}, "completo")
+        self.assertNotIn("reentrada", out)
+        self.assertNotIn("tras_carga", out)
+
+    def test_leer_entreno_nunca_lleva_estas_claves(self):
+        """Census for the design choice behind ruling 4: `leer_hoy` is the tool with a notion of
+        'today' as a role (it already answers 'limitaciones', the despertar card, the plan-week
+        card) -- `leer_entreno` just reads one day's own logged/planned session by `day`, with no
+        concept of today, so it is never where these signals belong. Same gap fixture as
+        `test_incluye_reentrada_cuando_aplica` above, read through `leer_entreno` instead: the
+        signal never appears there."""
+        _insert_activity(self.conn, 1, "a0", "2026-10-01")
+        self.conn.commit()
+        out = herramientas.ejecutar(self.conn, 1, "leer_entreno", {"day": "2026-10-08"}, "completo")
+        self.assertNotIn("reentrada", out)
+        self.assertNotIn("tras_carga", out)
+
+
+class LeerDiasLibresSenalesTest(unittest.TestCase):
+    """Ruling 4: each of leer_dias_libres' own day entries carries reentrada/tras_carga where it
+    applies -- never every day in the range."""
+
+    def test_solo_el_dia_que_aplica_lleva_tras_carga(self):
+        conn = _conn(self)
+        for i, (day, dur) in enumerate([("2026-10-01", 600.0), ("2026-10-03", 700.0), ("2026-10-05", 800.0)]):
+            conn.execute(
+                "INSERT INTO activity (person_id, source_id, day, start_local, type, name, duration_s, source) "
+                "VALUES (1, ?, ?, ?, 'other', 'Yoga', ?, 'garmin')", (f"bg{i}", day, f"{day}T07:00:00", dur))
+        conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, name, duration_s, source) "
+            "VALUES (1, 'basket', '2026-10-09', '2026-10-09T18:00:00', 'other', 'Baloncesto', 3000.0, 'garmin')")
+        conn.commit()
+        out = herramientas.ejecutar(conn, 1, "leer_dias_libres", {"desde": "2026-10-09", "dias": 3}, "ninguno")
+        por_dia = {d["dia"]: d for d in out["dias_libres"]}
+        self.assertNotIn("tras_carga", por_dia["2026-10-09"])
+        self.assertEqual(por_dia["2026-10-10"]["tras_carga"]["actividad"], {"tipo": "other", "nombre": "Baloncesto"})
+        self.assertNotIn("tras_carga", por_dia["2026-10-11"])
 
 
 if __name__ == "__main__":
