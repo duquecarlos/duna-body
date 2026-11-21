@@ -16,7 +16,7 @@ from markupsafe import Markup
 
 from .. import (anatomia, comida_compartida, compartir, cuenta, db, despertar_real, fechas, fuentes, garmin_cuenta,
                 goals, history, horizonte, household, identity, noche_inusual, nutriente_objetivo, pull, readiness,
-                recuperacion, turnos_costo, tutoriales, ventana_comida, viajes)
+                recuperacion, reentrada, turnos_costo, tutoriales, ventana_comida, viajes)
 from ..agente import conversacion as agente_conversacion
 from ..agente import herramientas as agente_herramientas
 from ..agente import propuestas as agente_propuestas
@@ -343,6 +343,35 @@ def _plan_hoy_row(conn, person_id: int, today_local: date):
         (person_id, today_local.isoformat())).fetchone()
 
 
+def _grupo_cargado_txt(t: T, grupos: list) -> str:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 (BODY-PLAN-FASES-6) ruling 2: `tras_carga`'s own fine-grained
+    anatomy groups, said back as the plain categoria word(s) a person actually plans sessions in
+    (anatomia.CATEGORIA_ENUM's own order) -- the group name from anatomia, never 'pierna'
+    hardcoded, since a different loaded group names itself here instead."""
+    grupos_set = frozenset(grupos)
+    categorias = [c for c in anatomia.CATEGORIA_ENUM if anatomia.CATEGORIA_GRUPOS.get(c, frozenset()) & grupos_set]
+    return _lista_natural(t, [t("entreno.categoria." + c) for c in categorias])
+
+
+def _reentrada_o_tras_carga_txt(t: T, senales: dict) -> str | None:
+    """Ruling 3: Hoy's own planned-session line gains the SAME one-line reason the proposal card
+    (body/rutas/asistente.py's own `_reentrada_txt`/`_tras_carga_txt`) already words -- a role
+    note, not a warning colour. Computed fresh from today's own signals (never stored on the plan
+    row itself), so it stays true even for a plan the person accepted days ago. `reentrada` is
+    checked first when both apply: it speaks to the whole session's own volume, `tras_carga` to
+    one day's own exercises."""
+    if "reentrada" in senales:
+        r = senales["reentrada"]
+        return t("today.dia.reentrada", dias=t.num(r["dias_sin_fuerza"]), n=t.num(r["sesion_n"]),
+                 pct=t.num(round(r["factor"] * 100)))
+    if "tras_carga" in senales:
+        tc = senales["tras_carga"]
+        return t("today.dia.tras_carga",
+                 actividad=_activity_name(t, {"name": tc["actividad"]["nombre"], "type": tc["actividad"]["tipo"]}),
+                 grupo=_grupo_cargado_txt(t, tc["grupos"]))
+    return None
+
+
 def _plan_hoy_item(t: T, conn, person_id: int, today_local: date) -> dict | None:
     """BODY-HOY-DIA-POR-DELANTE-1 (ruling 2): today's own planned session as one "day ahead" row --
     an honest exercise count, never an invented duration the plan row does not carry. None with no
@@ -351,8 +380,10 @@ def _plan_hoy_item(t: T, conn, person_id: int, today_local: date) -> dict | None
     if row is None:
         return None
     ejercicios = json.loads(row["ejercicios_json"])
+    senales = reentrada.senales(conn, person_id, today_local)
     return {"tipo": "sesion", "hora": row["time"], "titulo": row["title"],
-            "linea": t("today.dia.sesion_n", n=len(ejercicios))}
+            "linea": t("today.dia.sesion_n", n=len(ejercicios)),
+            "nota": _reentrada_o_tras_carga_txt(t, senales)}
 
 
 def _actividades_hoy(conn, person_id: int, today_local: date) -> list[dict]:

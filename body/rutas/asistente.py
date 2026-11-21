@@ -279,6 +279,51 @@ def _choque_turno_txt(t: T, motivo: dict) -> str:
     return t("asistente.propuesta.turno_choque_sin_hora", turno=turno)
 
 
+def _lista_natural(t: T, items: list[str]) -> str:
+    """Duplicated from body/rutas/hoy.py's own `_lista_natural` -- same reason every other small
+    helper in this file is duplicated rather than shared."""
+    if len(items) == 1:
+        return items[0]
+    if t.lang == "en":
+        if len(items) == 2:
+            return f"{items[0]} and {items[1]}"
+        return ", ".join(items[:-1]) + f", and {items[-1]}"
+    if len(items) == 2:
+        return f"{items[0]} y {items[1]}"
+    return ", ".join(items[:-1]) + f" y {items[-1]}"
+
+
+def _actividad_nombre_txt(t: T, actividad: dict) -> str:
+    """Duplicated from body/rutas/hoy.py's own `_activity_name` -- an unnamed activity shows its
+    translated kind when Garmin's own type code is one this app knows; an unknown code never
+    prints the raw code, only a plain generic label (DESIGN rule 10)."""
+    if actividad.get("nombre"):
+        return actividad["nombre"]
+    if actividad.get("tipo") in history.KNOWN_ACTIVITY_TYPES:
+        return t("activity.type." + actividad["tipo"])
+    return t("activity.generic")
+
+
+def _grupo_cargado_txt(t: T, grupos: list) -> str:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 (BODY-PLAN-FASES-6) ruling 2: `tras_carga`'s own fine-grained
+    anatomy groups, said back as the plain categoria word(s) a person actually plans sessions in
+    (anatomia.CATEGORIA_ENUM's own order, never set-iteration order) -- the group name from
+    anatomia, never 'pierna' hardcoded, since a different loaded group names itself here instead."""
+    grupos_set = frozenset(grupos)
+    categorias = [c for c in anatomia.CATEGORIA_ENUM if anatomia.CATEGORIA_GRUPOS.get(c, frozenset()) & grupos_set]
+    return _lista_natural(t, [t("entreno.categoria." + c) for c in categorias])
+
+
+def _reentrada_txt(t: T, reentrada: dict) -> str:
+    return t("asistente.propuesta.reentrada", dias=t.num(reentrada["dias_sin_fuerza"]),
+              n=t.num(reentrada["sesion_n"]), pct=t.num(round(reentrada["factor"] * 100)))
+
+
+def _tras_carga_txt(t: T, tras_carga: dict) -> str:
+    return t("asistente.propuesta.tras_carga", actividad=_actividad_nombre_txt(t, tras_carga["actividad"]),
+              grupo=_grupo_cargado_txt(t, tras_carga["grupos"]))
+
+
 def _tarjeta_planear_entreno(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     ejercicios_txt = ", ".join(_ejercicio_plan_txt(t, e) for e in despues["ejercicios"])
     despues_txt = t("asistente.propuesta.entreno_plan", titulo=despues["titulo"],
@@ -290,6 +335,14 @@ def _tarjeta_planear_entreno(t: T, defs: dict, despues: dict, antes_json: dict |
         motivo = turnos_costo.motivo_no_libre(conn, person_id, date.fromisoformat(despues["day"]))
         if motivo is not None:
             despues_txt += "\n" + _choque_turno_txt(t, motivo)
+    # ORCH-CARLOS-DELEGATES-TIER-1-1 (BODY-PLAN-FASES-6) rulings 1-2: the one-line reason, from the
+    # structured signal `_planear_entreno` already stored in `despues` -- never recomputed here,
+    # since the exercises/series it explains are THAT proposal's own stored ones, not whatever is
+    # true of the person's history right now.
+    if despues.get("reentrada") is not None:
+        despues_txt += "\n" + _reentrada_txt(t, despues["reentrada"])
+    if despues.get("tras_carga") is not None:
+        despues_txt += "\n" + _tras_carga_txt(t, despues["tras_carga"])
     return None, despues_txt, None
 
 

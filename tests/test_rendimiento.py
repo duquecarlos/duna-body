@@ -34,6 +34,7 @@ from fastapi.testclient import TestClient
 from body import config, cuenta, db, demo, dispositivo, fechas, garmin_cuenta, goals, identity, mcp, \
     noche_rasgos, practicas, shift_import, web
 from body.agente import conversacion as agente_conversacion
+from body.agente import herramientas
 from body.rutas import comun as web_comun
 from body.rutas import tendencias as web_tendencias
 from tests._rutas import contar_sql, rutas_planas
@@ -147,6 +148,12 @@ client = TestClient(web.app, follow_redirects=False)
 # reached by this shared fixture (it seeds exactly one pending batch); it is named separately as
 # tests/test_rendimiento.py's own ManyProposalShiftsCostTest below, on the SAME demo fixture plus
 # one extra pending batch -- measured 38 statements, ceil(38 * 1.3) = 50.
+# ORCH-CARLOS-DELEGATES-TIER-1-1 (BODY-PLAN-FASES-6) ruling 3: /'s own ceiling, re-measured after
+# `_plan_hoy_item` (body/rutas/hoy.py) started calling `reentrada.senales` for the day ahead's own
+# planned-session row. Measured 131 statements (128 before), still comfortably under 155 --
+# ceiling unchanged. `planear_entreno`'s own cost (rulings 1-2, the same slice) is named
+# separately in this file's own PlanearEntrenoReentradaCostTest below, since it is a tool call,
+# never a GET route, and so cannot sit in this table.
 _CEILINGS = {
     "/": 155,
     "/ajustes/asistente": 16,
@@ -1054,6 +1061,56 @@ class BuscarNochesCostTest(unittest.TestCase):
         # Same 2.0s ceiling as CompararNocheCostTest's own 365-night call, on the same box.
         self.assertLess(transcurrido, 2.0,
                          f"a 365-night buscar() took {transcurrido:.3f}s, over its 2.0s ceiling")
+
+
+class PlanearEntrenoReentradaCostTest(unittest.TestCase):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 (BODY-PLAN-FASES-6): `planear_entreno` now calls
+    `reentrada.senales` unconditionally (rulings 1-2) -- this names that cost rather than leaving
+    it invisible inside the tool's total. `tras_carga` is the costlier of the two signals (one
+    extra activity-table read plus `recuperacion.estudio`'s own query); `reentrada` alone
+    (`entreno_racha.sesiones_fuerza`'s one query) costs the same as calling the tool with neither
+    signal present. Measured 10 statements with no signal or with reentrada alone, 15 with
+    tras_carga (the worst case measured here), ceil(15 * 1.3) = 20 -- the same margin rule every
+    other ceiling in this file uses. `conn.set_trace_callback` applied directly on the fixture's
+    own already-open connection, the same pattern McpCopiaPcDateCeilingTest._contar above uses --
+    the tool reuses the connection it is given rather than opening its own, so `contar_sql()`'s
+    own sqlite3.connect patch would see nothing."""
+
+    _CEILING = 20
+
+    def _contar(self, conn, llamada):
+        contador = {"n": 0}
+        conn.set_trace_callback(lambda sql: contador.__setitem__("n", contador["n"] + 1))
+        try:
+            return llamada(), contador["n"]
+        finally:
+            conn.set_trace_callback(None)
+
+    def test_no_signal_stays_within_the_ceiling(self):
+        from tests.test_agente_entreno import _cid, _conn
+        conn = _conn(self)
+        cid = _cid(conn)
+        out, n = self._contar(conn, lambda: herramientas.ejecutar(conn, 1, "planear_entreno", {
+            "day": "2026-10-10", "titulo": "Full body",
+            "ejercicios": [{"ejercicio": "press banca", "series": 4, "categoria": "pecho"}],
+        }, "ninguno", cid))
+        self.assertEqual(out["estado"], "propuesta")
+        self.assertLessEqual(n, self._CEILING,
+                              f"planear_entreno cost {n} statements, over its ceiling of {self._CEILING}")
+
+    def test_tras_carga_the_costlier_path_stays_within_the_same_ceiling(self):
+        from tests.test_agente_entreno import _cid, _conn, _seed_dia_pesado
+        conn = _conn(self)
+        cid = _cid(conn)
+        _seed_dia_pesado(conn, 1, "2026-10-09")
+        out, n = self._contar(conn, lambda: herramientas.ejecutar(conn, 1, "planear_entreno", {
+            "day": "2026-10-10", "titulo": "Full body",
+            "ejercicios": [{"ejercicio": "sentadilla", "series": 4, "categoria": "pierna"},
+                           {"ejercicio": "press banca", "series": 4, "categoria": "pecho"}],
+        }, "ninguno", cid))
+        self.assertEqual(out["estado"], "propuesta")
+        self.assertLessEqual(n, self._CEILING,
+                              f"planear_entreno cost {n} statements, over its ceiling of {self._CEILING}")
 
 
 if __name__ == "__main__":
