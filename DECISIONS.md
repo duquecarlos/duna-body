@@ -32449,3 +32449,183 @@ printed or written anywhere in this slice's own work or the gate's own stdout; n
 `tests/test_agente_leer_dia.py`, `tests/test_leer_noche.py`; 5 files changed, +142/-19), plus this ledger text, on
 the branch -- merged into `main` (`--no-ff`) -- merged `e071b4da3ee185b7799b7a58fd7efa3f7f4b5b87`.
 
+## BODY-PLAN-FASES-2 -- phases: a plan's own stages, proposed, shown and corrected (2026-11-20)
+
+Built on BODY-PLAN-MODULO-1's horizon model, BODY-PLAN-PANTALLA-1's plan screen and BODY-PLAN-HOY-1's
+Hoy card. Carlos's training plans for Greece, Kilimanjaro and El Cocuy move through stages (a base
+block, a build block, a peak block); the dispatch's six rulings give the plan a `horizonte_fase`
+every rule can optionally belong to, shown wherever the plan already shows. Six rulings, read from
+the branch's own code and commits:
+
+1. **The record -- `horizonte_fase`.** `body/db.py:971` creates it BEFORE `horizonte_regla` (same
+   file, line 969's own comment) so `horizonte_regla.fase_id` can reference it: `id`,
+   `horizonte_goal_id NOT NULL REFERENCES goal(id)`, `person_id NOT NULL REFERENCES person(id)`,
+   `titulo TEXT NOT NULL`, `start_day TEXT NOT NULL`, `end_day TEXT NOT NULL`, `nota TEXT NULL`,
+   `orden INTEGER NOT NULL`, `creado_en TEXT NOT NULL`, `CHECK (start_day <= end_day)`
+   (`_HORIZONTE_FASE_COLUMNS`), indexed by goal and by person
+   (`idx_horizonte_fase_goal`/`idx_horizonte_fase_person`, line 974-975) -- additive, a fresh
+   `CREATE TABLE IF NOT EXISTS`, no rebuild of an existing table. The one validator,
+   `db.validar_fases_horizonte(fases, plan_start, plan_end)` (`body/db.py:3440`), refuses an overlap
+   between any two phases and a phase outside the plan's own `[start_day, end_day]` -- never a
+   hardcoded phase name or count; a day no phase covers is simply "no phase", never an error.
+   Carried through `body/mudanza.py` (its `TableSpec`/`fk_remap` entry) and `body/privacidad.py`
+   (export and erase), person-scoped everywhere -- `tests/test_mudanza.py`, `tests/test_privacidad.py`
+   and `tests/test_persona_fuga.py` all extended. Commit `bb6405c`.
+
+2. **A rule may belong to a phase.** `horizonte_regla` gains a nullable `fase_id INTEGER REFERENCES
+   horizonte_fase(id)` through an ADDITIVE `ALTER TABLE ADD COLUMN` (`body/db.py:1652`), never a CHECK
+   rebuild -- `fase_id` carries no CHECK of its own. A rule with a `fase_id` applies only on a day
+   inside that phase AND when its own `contexto` already matches, with no extra statement per day:
+   `body/horizonte.py`'s rule-matching path reads `fase_id` alongside `contexto`/`contexto_valor` in
+   the SAME row it already fetched. Commit `bb6405c`.
+
+3. **The assistant.** `leer_plan` returns `fases` (`horizonte.fases()`) and each rule's `fase_id`.
+   `proponer_plan`/`ampliar_plan` (`body/agente/herramientas.py`) accept an optional `fases` list
+   (`_PARAM_FASE_PLAN`: `titulo`/`start_day`/`end_day` required, `nota` optional, capped at
+   `_PLAN_MAX_FASES = 20`); a rule names its phase by POSITION in that list through a new
+   `fase_index` field on `_PARAM_REGLA_PLAN`. `_validar_fases_plan` validates shape then calls
+   `db.validar_fases_horizonte`; `ampliar_plan` validates its new phases against the plan's EXISTING
+   ones too, and restricts `fase_index` to only its own call's new phases. New proposal tool
+   `corregir_fase` (`fase_id` required, any of `titulo`/`start_day`/`end_day`/`nota`, or `quitar` to
+   detach -- refused combined with any field) -- `quitar` DETACHES every rule pointing at that phase
+   (their `fase_id` set NULL), never deletes them; `propuestas.py`'s undo (`_deshacer_corregir_fase`)
+   restores the phase under the SAME id via `db.restaurar_fase_horizonte`, since sibling rules'
+   `fase_id` foreign keys still point at that exact id. `propuesta_agente.accion`'s CHECK enum
+   widened for `corregir_fase` -- the 18th such widening, the same guarded-rebuild pattern
+   (`_propuesta_agente_needs_corregir_fase_rebuild`, chained in `_migrate_propuestas()`). Both
+   `proponer_plan`'s and `ampliar_plan`'s own undo logic in `propuestas.py` were extended to clear/
+   delete `horizonte_fase` rows in FK-safe order (`horizonte_regla` first, since its own `fase_id` FK
+   must be gone before the `horizonte_fase` row it points at). Cards: `_tarjeta_proponer_plan`/
+   `_tarjeta_ampliar_plan` show a fases line; `_tarjeta_corregir_fase` shows before/after (or "fase
+   quitada" when detaching). Commit `6818ec6`, plus two stale hardcoded proposal-name sets the full
+   gate (ruling 6, below) turned up in `tests/test_agente_propuestas.py` and
+   `tests/test_agente_bucle.py` -- commit `5927f0b`.
+
+4. **Where Carlos sees it.** `body/horizonte.py`'s `resumen()` now returns `fases` and `fase_actual`
+   from the SAME `fases()` list it already needed (`_fase_actual_de`, a pure helper, factored out of
+   `fase_actual()` so both read one shared statement, zero extra) -- fixed `_PLAN_ROW_HORIZONTES`
+   along the way to add `UNION SELECT horizonte_goal_id FROM horizonte_fase`, so a plan proposed with
+   only phases (no rule, week, weekly target or checkpoint yet) still counts as a horizon.
+   Hoy's plan line (`body/rutas/hoy.py`'s `_plan_semana_bloque`) now names the current phase:
+   "Fase: {titulo} · semana {n} de {m}" (es) / "Phase: {titulo} · week {n} of {m}" (en),
+   nothing when no phase covers today (`body/templates/today.html`). The plan screen
+   (`body/rutas/metas.py`'s new `_plan_fases_ctx`, `body/templates/goal.html`'s new phases card) lists
+   every phase in order with its dates, the current one marked ("Fase actual" / "Current phase"), each
+   phase's own rules nested under it -- a rule with no phase stays where it already was (it still
+   shows in the week's own rules when it applies). `_plan_fases_ctx` costs ONE statement
+   (`horizonte.fases()`) when the plan has no phase at all, TWO total once it has at least one (that
+   same call plus one grouped rule read), regardless of how many phases or rules. Tested at 375px, no
+   horizontal scroll, 44px targets, es-CO and en. Commit `907b9a9`.
+
+5. **Demo.** `body/demo.py`'s invented plan gains three contiguous invented phases spanning its whole
+   63-day horizon with no gap -- "Base"/"Construcción"/"Pico" (es), "Base"/"Build"/"Peak" (en),
+   each 21 days -- and its "siempre" rule is scoped to the first one (`fase_index: 0`). Commit
+   `907b9a9`.
+
+6. **Tests.** Distributed across the domain's own existing test modules, following this codebase's
+   own per-slice convention rather than one new file: `tests/test_horizonte.py` (`FaseReglaTest`,
+   `FasesYFaseActualTest`), `tests/test_plan_esquema.py` (migration/schema), `tests/test_mudanza.py`,
+   `tests/test_privacidad.py`, `tests/test_persona_fuga.py` (ruling 1-2's census),
+   `tests/test_plan_propuestas.py` (`FasesPlanTest`, `CorregirFaseTest`, the cross-person guard, four
+   card tests), `tests/test_agente_registro.py`, `tests/test_agente_conformidad.py`,
+   `tests/test_migraciones.py` (the 18th widening's own fresh-db/migration pair),
+   `tests/test_plan_hoy.py` (`FaseLineTest`, es/en), `tests/test_plan_pantalla.py` (`FasesCardTest`,
+   including `test_a_plan_with_only_a_phase_is_still_a_horizon` for ruling 4's `_PLAN_ROW_HORIZONTES`
+   fix), `tests/test_demo.py` (`PlanHorizonteSeedTest` extended for the three phases and the scoped
+   rule), and `tests/test_rendimiento.py`'s new `PlanFasesCostIndependentTest` (one statement with no
+   phase, two total with one phase or with three phases each carrying its own scoped rule -- proven
+   directly on the horizon's own `/goals/{goal_id}` page, which the shared route sweep's fixture never
+   reaches since its picked `goal_id` is the plain sleep goal). `tests/test_get_sin_escritura.py` and
+   `tests/test_person_scope.py` re-ran green unedited -- both are generic sweeps/census that already
+   cover any new GET read path or person-scoped function without naming one.
+
+**Customer bytes, all six es/en pairs:**
+- `today.plan_semana.fase`: "Fase: {titulo} · semana {n} de {m}" / "Phase: {titulo} · week {n} of {m}"
+- `goals.plan.fases_title`: "Fases del plan" / "Plan phases"
+- `goals.plan.fase_actual`: "Fase actual" / "Current phase"
+- `goals.plan.fase_fechas`: "{desde} – {hasta}" / "{desde} – {hasta}"
+- `asistente.propuesta.plan_fases`: "Fases: {fases}" / "Phases: {fases}"
+- `asistente.propuesta.plan_fase_linea`: "{titulo} ({desde} → {hasta})" (both languages)
+- `asistente.propuesta.plan_fase_quitada`: "Fase quitada: {titulo}" / "Phase removed: {titulo}"
+- `asistente.propuesta.titulo.corregir_fase`: "Corregir fase" / "Correct phase"
+- demo-only invented phase titles (never a real person's data): es "Base"/"Construcción"/"Pico",
+  en "Base"/"Build"/"Peak"
+
+No password, token, secret or real health figure was read, printed or written anywhere in this
+slice's own work or the gate's own stdout; no network call was made; every test fixture is invented
+demo data. `~/.body-app/`, `C:\Duna\body\body-app\.env`, any real database,
+`C:\Duna\body\body-app-live`, `C:\Duna\body\body-app-live-live` and `C:\Personal` were never opened.
+
+**Statement ceilings (ruling 6), re-measured and named in `tests/test_rendimiento.py`.** `horizonte.
+resumen()` now always reads `horizonte_fase` too (one `fases()` call, folded into the dict
+`_plan_semana_ctx`'s `PLANES_HOY_MAX` `resumen()` calls already read) -- `"/"`'s own ceiling stays
+UNCHANGED at 155, measured 128 on this file's own fixture (one active plan, now the demo's own
+horizon with three seeded phases, up from 124 before this slice). `/goals/{goal_id}` itself never
+moves either (ceiling 33): the shared fixture's picked `goal_id` is still the plain sleep goal, so
+`_plan_fases_ctx` never runs for it. The horizon's OWN `/goals/{goal_id}` page is bounded, not swept
+by the shared ceiling table -- `PlanFasesCostIndependentTest` proves it directly: a plan with one
+phase costs exactly 1 statement more than the same plan with none (measured 36 vs 37, both already a
+horizon through an unscoped rule so only the phase itself differs), and three phases with their own
+scoped rule cost the SAME as one phase with its own scoped rule (no measured delta).
+
+**Gate, 12 sequential alphabetical chunks** of the exact command `.venv/Scripts/python.exe -m
+unittest discover tests -t .`'s own 231 modules, each read directly from the process (two chunks ran
+past the 500s/600s foreground cap and were moved to the background by the harness -- their own output
+files were read to completion, `Ran 418 tests in 438.889s OK` and `Ran 218 tests in 670.506s OK`,
+before the next chunk ran; every other chunk finished inside its cap):
+
+| # | Range | Ran | Result |
+|---|-------|-----|--------|
+| 1 | test_accesibilidad .. test_asistente_panel | 395 | OK (expected failures=1) |
+| 2 | test_backup .. test_cuenta_schema | 469 | OK (skipped=1) |
+| 3 | test_cuenta_vectores .. test_entreno_numeros | 418 | OK (backgrounded past 500s, read from its artifact) |
+| 4 | test_entreno_racha .. test_garmin_adapter | 310 | OK |
+| 5a | test_garmin_conectar_vivo .. test_goals | 238 | OK |
+| 5b | test_goals_web .. test_hogar_escribe_rutas | 218 | OK (backgrounded past 500s, read from its artifact) |
+| 6 | test_hogar_feed .. test_leer_intradia | 590 | OK |
+| 7 | test_leer_noche .. test_modelos_estandar_1 | 521 | OK |
+| 8 | test_momentos_pull .. test_plan_pantalla | 555 | OK |
+| 9 | test_plan_propuestas .. test_pull_relleno | 533 | OK |
+| 10 | test_readiness .. test_sync_vivo | 344 | OK |
+| 11 | test_sync_vivo_estado .. test_turnos_ultima_semana | 535 | OK |
+| 12 | test_tutoriales .. test_web_entry | 172 | OK |
+
+Sum: 395+469+418+310+238+218+590+521+555+533+344+535+172 = **5298**. Reconciled against an
+independent collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted
+with a recursive `TestSuite` walk, same final tree) = **5298** -- exact match. 0 real failures, 0
+errors, every chunk green (chunk 1's one `expected failures=1` and chunk 2's one `skipped=1` are
+pre-existing, by-design markers, not in a file this slice touched). The pre-existing `NotSignedIn`/
+"intradia:"/"refusado:"/"sin_cambio:no_es_arbol_vivo" lines printed mid-run are fixtures exercising
+synthetic/mock error and non-live-tree paths with invented demo data, not gate failures. `git status
+--porcelain` empty throughout except for this ledger entry itself.
+
+**Deviations.** The full gate (ruling 6) found two hardcoded proposal-name sets rulings 1-3 missed --
+`tests/test_agente_propuestas.py`'s `NoProponibleTest` and `tests/test_agente_bucle.py`'s
+nivel='ninguno' offered-tools assertion -- both fixed in commit `5927f0b`, the smallest possible
+change (one literal added to each set). No dedicated `tests/test_plan_fases.py` file was created;
+this slice's tests are distributed across the existing per-domain test modules instead, matching
+every prior BODY-PLAN-* slice's own convention.
+
+**Merge policy A, this slice's own diff.** `horizonte_fase` is a new table and `horizonte_regla.
+fase_id` a new column (a schema change) and every string under "Customer bytes" above is read by
+Carlos directly on Hoy, the plan screen or the assistant panel (customer-facing bytes) -- both of
+merge policy A's first two stop conditions. The dispatch's own approval reason pre-authorizes merging
+past them once the gate is green, rather than stopping for AWAITING_APPROVAL; no cross-repo contract
+is touched.
+
+**Commits on the branch:** `bb6405cbdbe32c50eac55f5f81681c1ac38890d6` (ruling 1-2: `body/db.py`,
+`body/horizonte.py`, `body/mudanza.py`, `body/privacidad.py`, `tests/test_horizonte.py`,
+`tests/test_mudanza.py`, `tests/test_persona_fuga.py`, `tests/test_plan_esquema.py`,
+`tests/test_privacidad.py`; 9 files changed, +633/-34), `6818ec6a852d63aa5043cba8fd3ee987d822e761`
+(ruling 3: `body/agente/herramientas.py`, `body/agente/propuestas.py`, `body/db.py`,
+`body/i18n/en.json`, `body/i18n/es.json`, `body/rutas/asistente.py`,
+`tests/test_agente_conformidad.py`, `tests/test_agente_registro.py`, `tests/test_migraciones.py`,
+`tests/test_plan_propuestas.py`; 10 files changed, +637/-40), `907b9a91df27a7bfbe3b4e19313654d18ab3b737`
+(ruling 4-5-6: `body/demo.py`, `body/horizonte.py`, `body/i18n/en.json`, `body/i18n/es.json`,
+`body/rutas/hoy.py`, `body/rutas/metas.py`, `body/templates/goal.html`, `body/templates/today.html`,
+`tests/test_demo.py`, `tests/test_plan_hoy.py`, `tests/test_plan_pantalla.py`,
+`tests/test_rendimiento.py`; 12 files changed, +304/-19), and
+`5927f0bcbc83e6bbbef13e25a79b27b3d78735e6` (gate fix: `tests/test_agente_bucle.py`,
+`tests/test_agente_propuestas.py`; 2 files changed, +2/-2), plus this ledger text, on the branch --
+merged into `main` (`--no-ff`).
+
