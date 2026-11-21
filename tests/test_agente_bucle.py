@@ -135,6 +135,7 @@ class NivelDatosEnforcementTest(unittest.TestCase):
         ofrecidas = {h["nombre"] for h in herramientas.disponibles("ninguno")}
         self.assertEqual(ofrecidas, {
             "leer_turnos", "leer_ajustes", "leer_tutoriales", "leer_estado_reloj", "leer_dias_libres",
+            "leer_altitudes",
             "proponer_meta", "proponer_cambio_meta", "proponer_confirmar_turnos", "proponer_idioma",
             "planear_entreno", "registrar_entreno", "corregir_entreno", "registrar_medida", "marcar_habito",
             "proponer_experimento", "marcar_experimento",
@@ -144,7 +145,7 @@ class NivelDatosEnforcementTest(unittest.TestCase):
             "marcar_periodo", "cerrar_periodo", "corregir_periodo", "borrar_periodo",
             "descartar_series", "separar_sesion", "unir_sesiones", "proponer_objetivo_nutriente",
             "proponer_plan", "corregir_meta_plan", "ampliar_plan", "anotar_sesion", "proponer_practica",
-            "corregir_despertar", "registrar_dolor", "corregir_fase",
+            "corregir_despertar", "registrar_dolor", "corregir_fase", "registrar_altitud",
         })
 
         prov = FakeProveedor([
