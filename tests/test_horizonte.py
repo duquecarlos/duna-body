@@ -388,6 +388,85 @@ class ContextoReglaTest(unittest.TestCase):
         self.assertEqual(dias, {"2026-11-03", "2026-11-04", "2026-11-05"})
 
 
+class FaseReglaTest(unittest.TestCase):
+    """BODY-PLAN-FASES-2 ruling 2: a rule scoped to a phase applies only on the phase's own days,
+    AND only when its own contexto also matches; a day outside every phase is simply absent from
+    any phase -- no error, no special marker, just "no phase"."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        self.horizon = _horizonte(self.conn)
+
+    def test_siempre_rule_scoped_to_a_phase_applies_only_inside_it(self):
+        fid = db.crear_fase_horizonte(self.conn, 1, self.horizon, "Base", "2026-11-02", "2026-11-04")
+        db.crear_regla_horizonte(self.conn, 1, self.horizon, "siempre", None, "Solo en Base", fase_id=fid)
+        s = horizonte.semana(self.conn, self.horizon, 1, "2026-11-02", hoy=HOY)
+        regla = s["reglas"][0]
+        dias = {d["day"] for d in regla["dias"]}
+        self.assertEqual(dias, {"2026-11-02", "2026-11-03", "2026-11-04"})
+
+    def test_phase_scoped_rule_still_honours_its_own_contexto(self):
+        fid = db.crear_fase_horizonte(self.conn, 1, self.horizon, "Base", "2026-11-02", "2026-11-06")
+        _shift(self.conn, 1, "2026-11-02", "night")
+        _shift(self.conn, 1, "2026-11-03", "morning")
+        _shift(self.conn, 1, "2026-11-04", "night")
+        db.crear_regla_horizonte(self.conn, 1, self.horizon, "turno", "night", "Noches en Base", fase_id=fid)
+        s = horizonte.semana(self.conn, self.horizon, 1, "2026-11-02", hoy=HOY)
+        regla = s["reglas"][0]
+        dias = {d["day"] for d in regla["dias"]}
+        self.assertEqual(dias, {"2026-11-02", "2026-11-04"})
+
+    def test_unscoped_rule_still_applies_every_matching_day_regardless_of_phases(self):
+        db.crear_fase_horizonte(self.conn, 1, self.horizon, "Base", "2026-11-02", "2026-11-04")
+        db.crear_regla_horizonte(self.conn, 1, self.horizon, "siempre", None, "Sin fase")
+        s = horizonte.semana(self.conn, self.horizon, 1, "2026-11-02", hoy=HOY)
+        self.assertEqual(s["reglas"][0]["dias_aplica"], 7)
+
+    def test_day_outside_every_phase_is_plain_no_phase_not_an_error(self):
+        db.crear_fase_horizonte(self.conn, 1, self.horizon, "Base", "2026-11-02", "2026-11-04")
+        fases = horizonte.fases(self.conn, self.horizon, hoy=HOY)
+        self.assertEqual(len(fases), 1)
+        f = fases[0]
+        self.assertFalse(f["actual"])  # HOY (2026-11-12) is outside Base's own range
+        self.assertIsNone(horizonte.fase_actual(self.conn, self.horizon, hoy=HOY))
+
+
+class FasesYFaseActualTest(unittest.TestCase):
+    """BODY-PLAN-FASES-2 ruling 3/4: horizonte.fases() and horizonte.fase_actual()."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        self.horizon = _horizonte(self.conn)
+
+    def test_fases_lists_them_in_order_with_actual_marked(self):
+        db.crear_fase_horizonte(self.conn, 1, self.horizon, "Base", "2026-10-05", "2026-11-01", orden=0)
+        db.crear_fase_horizonte(self.conn, 1, self.horizon, "Pico", "2026-11-02", "2026-11-29", orden=1)
+        fases = horizonte.fases(self.conn, self.horizon, hoy=HOY)
+        self.assertEqual([f["titulo"] for f in fases], ["Base", "Pico"])
+        self.assertEqual([f["actual"] for f in fases], [False, True])
+
+    def test_fase_actual_reports_its_own_week_count(self):
+        db.crear_fase_horizonte(self.conn, 1, self.horizon, "Pico", "2026-11-09", "2026-11-29")
+        actual = horizonte.fase_actual(self.conn, self.horizon, hoy=HOY)
+        self.assertEqual(actual["titulo"], "Pico")
+        self.assertEqual(actual["semana"], 1)  # HOY is 3 days into the phase
+        self.assertEqual(actual["semanas_total"], 3)  # 20 days spans 3 weeks
+
+    def test_no_phase_covers_hoy_returns_none(self):
+        db.crear_fase_horizonte(self.conn, 1, self.horizon, "Base", "2026-10-05", "2026-11-01")
+        self.assertIsNone(horizonte.fase_actual(self.conn, self.horizon, hoy=HOY))
+        self.assertEqual(horizonte.fases(self.conn, self.horizon, hoy=HOY), [
+            {"id": 1, "titulo": "Base", "start_day": "2026-10-05", "end_day": "2026-11-01",
+             "nota": None, "actual": False},
+        ])
+
+    def test_resumen_carries_fases_through(self):
+        db.crear_fase_horizonte(self.conn, 1, self.horizon, "Pico", "2026-11-09", "2026-11-29")
+        r = horizonte.resumen(self.conn, self.horizon, 1, hoy=HOY)
+        self.assertEqual([f["titulo"] for f in r["fases"]], ["Pico"])
+        self.assertTrue(r["fases"][0]["actual"])
+
+
 class ChequeoTest(unittest.TestCase):
     def setUp(self):
         self.conn = _conn(self)

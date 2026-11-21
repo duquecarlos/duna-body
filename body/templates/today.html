@@ -111,6 +111,7 @@
     <li class="block">
       <a class="taplink" href="/goals/{{ b.goal_id }}">{{ b.titulo }}</a>
       <div class="k mt-6">{{ b.semana }} · {{ b.faltan }}</div>
+      {% if b.fase %}<div class="k mt-6">{{ b.fase }}</div>{% endif %}
       {% if b.cuentas %}
       <div class="row gap-8 justify-start flex-wrap mt-6">
       {% for c in b.cuentas %}<span class="chip {{ c.cls }}">{{ c.texto }}</span>{% endfor %}

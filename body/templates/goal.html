@@ -77,6 +77,27 @@
   </div>
 </div>
 
+{% if plan.fases %}
+<div class="card">
+  <div class="q">{{ t('goals.plan.fases_title') }}</div>
+  <ul class="plan mt-6">
+  {% for f in plan.fases %}
+    <li class="block">
+      <div class="row"><div>{{ f.titulo }}</div>
+        {% if f.actual %}<span class="chip ok">{{ t('goals.plan.fase_actual') }}</span>{% endif %}</div>
+      <div class="k mt-2">{{ f.fechas }}</div>
+      {% if f.nota %}<p class="read mt-4 mb-0">{{ f.nota }}</p>{% endif %}
+      {% if f.reglas %}
+      <ul class="plan mt-6">
+        {% for texto in f.reglas %}<li>{{ texto }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+    </li>
+  {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 {% if plan.targets %}
 <div class="card">
   <div class="q">{{ t('goals.plan.targets_title') }}</div>

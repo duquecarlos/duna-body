@@ -1226,7 +1226,7 @@ class RachaPisoExportDeleteTest(unittest.TestCase):
 class HorizonteExportDeleteTest(unittest.TestCase):
     """BODY-PLAN-ESQUEMA-1: the plan's own parts (horizonte_regla, horizonte_semana,
     horizonte_meta_semanal, horizonte_checkpoint) are FULLY exported and deleted -- invented demo
-    content only, no real figures."""
+    content only, no real figures. BODY-PLAN-FASES-2 ruling 1: horizonte_fase joins them."""
 
     def setUp(self):
         orig_db_path = config.DB_PATH
@@ -1241,14 +1241,17 @@ class HorizonteExportDeleteTest(unittest.TestCase):
         self.conn.commit()
 
     def _seed(self):
-        db.crear_regla_horizonte(self.conn, 1, self.gid, "turno", "night", "Dormir 20 min antes de un turno de noche")
+        fid = db.crear_fase_horizonte(self.conn, 1, self.gid, "Re-entry", "2026-11-01", "2026-11-14")
+        db.crear_regla_horizonte(self.conn, 1, self.gid, "turno", "night", "Dormir 20 min antes de un turno de noche",
+                                  fase_id=fid)
         db.crear_semana_horizonte(self.conn, 1, self.gid, "2026-11-09", titulo="Semana 1")
         mid = db.crear_meta_semanal(self.conn, 1, self.gid, "2026-11-09", "resting_hr", "al_menos", 50.0)
         db.crear_checkpoint_horizonte(self.conn, 1, self.gid, "2026-11-15", "Chequeo semana 1", ["a"])
         return mid
 
     def test_is_a_fully_handled_table(self):
-        for t in ("horizonte_regla", "horizonte_semana", "horizonte_meta_semanal", "horizonte_checkpoint"):
+        for t in ("horizonte_regla", "horizonte_semana", "horizonte_meta_semanal", "horizonte_checkpoint",
+                  "horizonte_fase"):
             self.assertIn(t, privacidad.FULLY_HANDLED_TABLES)
 
     def test_export_includes_this_persons_own_rows(self):
@@ -1262,18 +1265,22 @@ class HorizonteExportDeleteTest(unittest.TestCase):
         self.assertEqual(data["horizonte"]["metas_semanales"][0]["valor"], 50.0)
         self.assertEqual(len(data["horizonte"]["checkpoints"]), 1)
         self.assertEqual(data["horizonte"]["checkpoints"][0]["titulo"], "Chequeo semana 1")
+        self.assertEqual(len(data["horizonte"]["fases"]), 1)
+        self.assertEqual(data["horizonte"]["fases"][0]["titulo"], "Re-entry")
 
     def test_export_of_another_person_sees_nothing(self):
         self._seed()
         self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
         self.conn.commit()
         data = privacidad.export_person(self.conn, 2)
-        self.assertEqual(data["horizonte"], {"reglas": [], "semanas": [], "metas_semanales": [], "checkpoints": []})
+        self.assertEqual(data["horizonte"],
+                         {"reglas": [], "semanas": [], "metas_semanales": [], "checkpoints": [], "fases": []})
 
     def test_delete_all_removes_the_rows(self):
         self._seed()
         privacidad.delete_person(self.conn, 1)
-        for t in ("horizonte_regla", "horizonte_semana", "horizonte_meta_semanal", "horizonte_checkpoint"):
+        for t in ("horizonte_regla", "horizonte_semana", "horizonte_meta_semanal", "horizonte_checkpoint",
+                  "horizonte_fase"):
             self.assertEqual(self.conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0], 0, t)
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM goal WHERE id = ?", (self.gid,)).fetchone()[0], 0)
 
@@ -1284,8 +1291,10 @@ class HorizonteExportDeleteTest(unittest.TestCase):
         self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
         self.conn.commit()
         db.crear_regla_horizonte(self.conn, 2, self.gid, "siempre", None, "regla de B sobre la meta de A")
+        db.crear_fase_horizonte(self.conn, 2, self.gid, "Fase de B", "2026-11-01", "2026-11-14")
         privacidad.delete_person(self.conn, 1)
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM horizonte_regla").fetchone()[0], 0)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM horizonte_fase").fetchone()[0], 0)
 
     def test_delete_all_clears_a_cross_person_reference_instead_of_failing(self):
         """experimento.goal_id and goal.horizonte_goal_id can point at a goal this person created

@@ -165,8 +165,16 @@ REGISTRY: tuple[TableSpec, ...] = (
     # the day the plan screens ship. Each child's horizonte_goal_id follows goal's own
     # other_person_filter through fk_remap -- a horizon goal filtered out as another person's
     # leaves its children "missing", counted as other_person, same as any other fk_remap.
-    TableSpec("horizonte_regla", match_cols=None, fk_remap=("horizonte_goal_id",),
-              fk_table={"horizonte_goal_id": "goal"}),
+    # BODY-PLAN-FASES-2 ruling 1: a plan's own phases move with it like its other child tables
+    # above -- id_exported=True (new) so horizonte_regla's own fase_id, right below, can remap
+    # through it; processed BEFORE horizonte_regla for the same FK-safe-order reason practica is
+    # processed before habit above.
+    TableSpec("horizonte_fase", match_cols=None, fk_remap=("horizonte_goal_id",),
+              fk_table={"horizonte_goal_id": "goal"}, id_exported=True),
+    # BODY-PLAN-FASES-2 ruling 2: fase_id widens this table's own fk_remap -- nullable (a rule with
+    # no phase), so NULL stays NULL the same way habit.practica_id's own nullable remap above does.
+    TableSpec("horizonte_regla", match_cols=None, fk_remap=("horizonte_goal_id", "fase_id"),
+              fk_table={"horizonte_goal_id": "goal", "fase_id": "horizonte_fase"}),
     TableSpec("horizonte_semana", match_cols=("horizonte_goal_id", "week_start"),
               fk_remap=("horizonte_goal_id",), fk_table={"horizonte_goal_id": "goal"}),
     TableSpec("horizonte_meta_semanal", match_cols=None, fk_remap=("horizonte_goal_id",),

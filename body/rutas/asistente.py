@@ -791,10 +791,19 @@ def _primera_semana_txt(t: T, defs: dict, metas_semanales: list) -> str | None:
     return t("asistente.propuesta.plan_primera_semana", fecha=fecha, targets=targets)
 
 
+def _fase_linea_txt(t: T, fase: dict) -> str:
+    """BODY-PLAN-FASES-2 ruling 3: a phase's own title and dates, the one shape every plan card
+    that shows a phase uses (proponer_plan, ampliar_plan, corregir_fase)."""
+    desde = _dia_mes_corto(t, date.fromisoformat(fase["start_day"]))
+    hasta = _dia_mes_corto(t, date.fromisoformat(fase["end_day"]))
+    return t("asistente.propuesta.plan_fase_linea", titulo=fase["titulo"], desde=desde, hasta=hasta)
+
+
 def _tarjeta_proponer_plan(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     """Ruling 8: a whole plan is one card -- plain-word lines, each only shown when that part of
     the plan is non-empty, never a JSON dump. Text rulings 1a-1e (BODY-PLAN-PROPUESTAS-1-R): the
-    parts count line and the first-week line, below."""
+    parts count line and the first-week line, below. BODY-PLAN-FASES-2 ruling 3: a fases line,
+    each phase's own title and dates, right after hábitos."""
     lineas = [t("asistente.propuesta.plan_nuevo", titulo=despues["titulo"],
                 desde=comun._short_date(t, date.fromisoformat(despues["start_day"])),
                 hasta=comun._short_date(t, date.fromisoformat(despues["deadline"])))]
@@ -812,6 +821,10 @@ def _tarjeta_proponer_plan(t: T, defs: dict, despues: dict, antes_json: dict | N
         habitos_txt = ", ".join(t("asistente.propuesta.plan_habito_linea", titulo=h["titulo"],
                                    cadencia=_cadencia_txt(t, h["cadencia"])) for h in habitos)
         lineas.append(t("asistente.propuesta.plan_habitos", habitos=habitos_txt))
+    fases = despues.get("fases") or []
+    if fases:
+        fases_txt = ", ".join(_fase_linea_txt(t, f) for f in fases)
+        lineas.append(t("asistente.propuesta.plan_fases", fases=fases_txt))
     resumen = _plan_resumen_linea(t, despues)
     if resumen:
         lineas.append(resumen)
@@ -825,11 +838,16 @@ def _tarjeta_ampliar_plan(t: T, defs: dict, despues: dict, antes_json: dict | No
     """Ruling 4: insert-only additions to an existing plan -- one plain line per kind of addition,
     only when that list is non-empty. Text ruling 1d (BODY-PLAN-PROPUESTAS-1-R): agreed-number
     counts and the new weekly lines through ruling 1a; the plain "semanas" notes list is never
-    shown, same reasoning as 1c."""
+    shown, same reasoning as 1c. BODY-PLAN-FASES-2 ruling 3: new fases show their own title and
+    dates, same as proponer_plan's own card, never just a count."""
     partes = []
+    fases = despues.get("fases") or []
     n_reglas = len(despues.get("reglas") or [])
     n_checkpoints = len(despues.get("checkpoints") or [])
     metas_semanales = despues.get("metas_semanales") or []
+    if fases:
+        fases_txt = ", ".join(_fase_linea_txt(t, f) for f in fases)
+        partes.append(t("asistente.propuesta.plan_fases", fases=fases_txt))
     if n_reglas:
         partes.append(_frag(t, "asistente.propuesta.plan_regla_nueva", n_reglas, n=t.num(n_reglas)))
     if metas_semanales:
@@ -850,6 +868,19 @@ def _tarjeta_corregir_meta_plan(t: T, defs: dict, despues: dict, antes_json: dic
                                               antes_json["valor"], despues["week_start"])
     despues_txt = _medida_target_con_semana_txt(t, defs, despues["medida"], despues["sentido"],
                                                 despues["valor"], despues["week_start"])
+    return antes_txt, despues_txt, None
+
+
+def _tarjeta_corregir_fase(t: T, defs: dict, despues: dict, antes_json: dict | None, conn,
+                            person_id: int) -> tuple:
+    """BODY-PLAN-FASES-2 ruling 3: before -> after, the same title+dates shape every phase card
+    uses. `quitar` shows a plain "removed" line instead of an after state -- the rules it detaches
+    are never named here, since they are not deleted, only left without a phase."""
+    antes_txt = _fase_linea_txt(t, antes_json)
+    if despues.get("quitar"):
+        despues_txt = t("asistente.propuesta.plan_fase_quitada", titulo=antes_json["titulo"])
+    else:
+        despues_txt = _fase_linea_txt(t, despues)
     return antes_txt, despues_txt, None
 
 
@@ -950,6 +981,7 @@ TARJETAS = {
     "proponer_plan": _tarjeta_proponer_plan,
     "ampliar_plan": _tarjeta_ampliar_plan,
     "corregir_meta_plan": _tarjeta_corregir_meta_plan,
+    "corregir_fase": _tarjeta_corregir_fase,
     "anotar_sesion": _tarjeta_anotar_sesion,
     "importar_desplazamiento": _tarjeta_importar_desplazamiento,
     "proponer_practica": _tarjeta_proponer_practica,

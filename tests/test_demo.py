@@ -383,9 +383,18 @@ class PlanHorizonteSeedTest(unittest.TestCase):
             self.assertTrue(all(h["status"] == "active" for h in hijos))
             self.assertEqual(
                 conn.execute("SELECT COUNT(*) FROM habit WHERE goal_id = ?", (hid,)).fetchone()[0], 2)
-            reglas = conn.execute("SELECT contexto FROM horizonte_regla WHERE horizonte_goal_id = ?",
+            reglas = conn.execute("SELECT contexto, fase_id FROM horizonte_regla WHERE horizonte_goal_id = ?",
                                    (hid,)).fetchall()
             self.assertEqual(sorted(r["contexto"] for r in reglas), ["periodo", "siempre", "tras_noche", "turno"])
+            fases = conn.execute(
+                "SELECT id, titulo FROM horizonte_fase WHERE horizonte_goal_id = ? ORDER BY orden",
+                (hid,)).fetchall()
+            self.assertEqual(
+                [f["titulo"] for f in fases],
+                [demo._PLAN_TEXTOS[idioma]["fase_base"], demo._PLAN_TEXTOS[idioma]["fase_construccion"],
+                 demo._PLAN_TEXTOS[idioma]["fase_pico"]])
+            siempre_fase_id = next(r["fase_id"] for r in reglas if r["contexto"] == "siempre")
+            self.assertEqual(siempre_fase_id, fases[0]["id"], "the 'siempre' rule should be scoped to the first phase")
             self.assertEqual(
                 conn.execute("SELECT COUNT(*) FROM horizonte_semana WHERE horizonte_goal_id = ?",
                              (hid,)).fetchone()[0], 1)

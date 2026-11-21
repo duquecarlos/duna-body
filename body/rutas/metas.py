@@ -449,7 +449,33 @@ def _build_plan_ctx(conn, t: T, defs: dict, g, person_id: int, today: date, sema
         "checkpoint_next": _plan_checkpoint_ctx(t, defs, siguiente) if siguiente else None,
         "checkpoints_past": [_plan_checkpoint_ctx(t, defs, c) for c in pasados],
         "experiments": experiments,
+        "fases": _plan_fases_ctx(conn, t, goal_id, today),
     }
+
+
+def _plan_fases_ctx(conn, t: T, goal_id: int, today: date) -> list[dict]:
+    """BODY-PLAN-FASES-2 ruling 4: every phase of this plan, in the person's own order, the
+    current one marked, each phase's own rules listed under it -- a rule with no phase stays out
+    of this block entirely (it already shows in `week.reglas` when it applies this week). One
+    statement when the plan has no phase at all (`horizonte.fases`'s own early return below); two
+    total once it has at least one, bounded regardless of how many phases or rules the plan has:
+    `horizonte.fases` (one), then every active rule's own texto/fase_id in one query, grouped in
+    Python."""
+    fases_data = horizonte.fases(conn, goal_id, hoy=today)
+    if not fases_data:
+        return []
+    reglas_por_fase: dict[int, list[str]] = {}
+    for r in conn.execute(
+        "SELECT texto, fase_id FROM horizonte_regla WHERE horizonte_goal_id = ? AND activa = 1 "
+        "AND fase_id IS NOT NULL ORDER BY orden, id", (goal_id,)
+    ):
+        reglas_por_fase.setdefault(r["fase_id"], []).append(r["texto"])
+    return [{
+        "id": f["id"], "titulo": f["titulo"],
+        "fechas": t("goals.plan.fase_fechas", desde=comun._short_date(t, date.fromisoformat(f["start_day"])),
+                    hasta=comun._short_date(t, date.fromisoformat(f["end_day"]))),
+        "nota": f.get("nota"), "actual": f["actual"], "reglas": reglas_por_fase.get(f["id"], []),
+    } for f in fases_data]
 
 
 def _nest_horizontes(rows, built_cards: list[dict]) -> list[dict]:

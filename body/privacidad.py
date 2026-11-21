@@ -74,6 +74,9 @@ FULLY_HANDLED_TABLES = {
     # BODY-PLAN-ESQUEMA-1: the plan's own parts, each a child row under a horizon goal -- the
     # person's own wording (horizonte_regla.texto), weekly targets and checkpoints.
     "horizonte_regla", "horizonte_semana", "horizonte_meta_semanal", "horizonte_checkpoint",
+    # BODY-PLAN-FASES-2 ruling 1: a plan's own phases -- the person's own titulo/nota, like
+    # horizonte_regla.texto above.
+    "horizonte_fase",
     # BODY-ENTRENO-DETALLE-1 ruling 1: one row per (activity, kind) -- the watch's own
     # heart-rate-curve/laps/zones detail for one of this person's own activities, never typed by
     # them. Unlike raw_payload below (a PARTIAL_EXPORT_TABLE, kind/date only), the full payload
@@ -219,6 +222,11 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
             (person_id,))],
         "checkpoints": [dict(r) for r in conn.execute(
             "SELECT * FROM horizonte_checkpoint WHERE person_id = ? ORDER BY horizonte_goal_id, day",
+            (person_id,))],
+        # BODY-PLAN-FASES-2 ruling 1: scoped the same way as the three siblings above -- this
+        # module's own person_id column on the phase row, not the horizon goal's ownership.
+        "fases": [dict(r) for r in conn.execute(
+            "SELECT * FROM horizonte_fase WHERE person_id = ? ORDER BY horizonte_goal_id, orden, id",
             (person_id,))],
     }
     ingesta = [dict(r) for r in conn.execute(
@@ -504,6 +512,13 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         )
         conn.execute(
             "DELETE FROM horizonte_regla WHERE person_id = ? OR horizonte_goal_id IN "
+            "(SELECT id FROM goal WHERE person_id = ?)", (person_id, person_id),
+        )
+        # BODY-PLAN-FASES-2 ruling 1: same cascade as its three siblings above -- a rule pointing
+        # at one of this person's own phases was already cleared (fase_id is just another column
+        # on the row just deleted above), so this delete needs no separate fase_id cleanup.
+        conn.execute(
+            "DELETE FROM horizonte_fase WHERE person_id = ? OR horizonte_goal_id IN "
             "(SELECT id FROM goal WHERE person_id = ?)", (person_id, person_id),
         )
         # experimento.goal_id and goal.horizonte_goal_id can point at a goal this person created

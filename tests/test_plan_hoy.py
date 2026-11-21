@@ -139,6 +139,51 @@ class CardPresentTest(unittest.TestCase):
         self.assertIn("1 met", page)
 
 
+class FaseLineTest(unittest.TestCase):
+    """BODY-PLAN-FASES-2 ruling 4: Hoy's plan line names the current phase, only when one covers
+    today -- "Fase: <titulo> · semana <n> de <m>" (es) / "Phase: <titulo> · week <n> of <m>" (en)."""
+
+    def test_phase_covering_today_shows_its_own_week_count(self):
+        conn = _reset_db(self)
+        gid = _horizonte(conn)
+        db.crear_meta_semanal(conn, 1, gid, MONDAY_CURRENT.isoformat(), "sesiones_fuerza", "al_menos", 1.0)
+        db.crear_fase_horizonte(conn, 1, gid, "ZZ Fase pico", "2026-11-09", "2026-11-22")
+        goals.activate(conn, gid)
+        conn.commit()
+        page = _get().text
+        self.assertIn("Fase: ZZ Fase pico · semana 1 de 2", page)
+
+    def test_no_phase_covering_today_shows_no_fase_line(self):
+        conn = _reset_db(self)
+        gid = _horizonte(conn)
+        db.crear_meta_semanal(conn, 1, gid, MONDAY_CURRENT.isoformat(), "sesiones_fuerza", "al_menos", 1.0)
+        db.crear_fase_horizonte(conn, 1, gid, "ZZ Fase pasada", "2026-10-19", "2026-10-25")
+        goals.activate(conn, gid)
+        conn.commit()
+        page = _get().text
+        self.assertIn("Tu plan esta semana", page)
+        self.assertNotIn("Fase:", page)
+
+    def test_plan_with_no_phases_at_all_shows_no_fase_line(self):
+        conn = _reset_db(self)
+        gid = _horizonte(conn)
+        db.crear_meta_semanal(conn, 1, gid, MONDAY_CURRENT.isoformat(), "sesiones_fuerza", "al_menos", 1.0)
+        goals.activate(conn, gid)
+        conn.commit()
+        self.assertNotIn("Fase:", _get().text)
+
+    def test_english_coverage(self):
+        conn = _reset_db(self)
+        conn.execute("UPDATE person SET language = 'en' WHERE id = 1")
+        gid = _horizonte(conn)
+        db.crear_meta_semanal(conn, 1, gid, MONDAY_CURRENT.isoformat(), "sesiones_fuerza", "al_menos", 1.0)
+        db.crear_fase_horizonte(conn, 1, gid, "ZZ Peak phase", "2026-11-09", "2026-11-22")
+        goals.activate(conn, gid)
+        conn.commit()
+        page = _get().text
+        self.assertIn("Phase: ZZ Peak phase · week 1 of 2", page)
+
+
 class EstadoCountsTest(unittest.TestCase):
     """Ruling 2: this week's weekly lines as counts by estado, singular via the repo's `_one`
     convention -- one of each estado, deterministically: a count-type line already reached (cumple),

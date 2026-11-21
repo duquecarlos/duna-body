@@ -1559,8 +1559,8 @@ def _drift_deshacer_proponer_plan(conn: sqlite3.Connection, row: sqlite3.Row) ->
     habitos = _plan_habito_ids(conn, horizonte_goal_id)
     if len(habitos) != len(despues.get("habitos") or []):
         return True
-    for tabla, clave in (("horizonte_regla", "reglas"), ("horizonte_semana", "semanas"),
-                         ("horizonte_meta_semanal", "metas_semanales"),
+    for tabla, clave in (("horizonte_fase", "fases"), ("horizonte_regla", "reglas"),
+                         ("horizonte_semana", "semanas"), ("horizonte_meta_semanal", "metas_semanales"),
                          ("horizonte_checkpoint", "checkpoints")):
         n = conn.execute(f"SELECT COUNT(*) FROM {tabla} WHERE horizonte_goal_id = ?",
                          (horizonte_goal_id,)).fetchone()[0]
@@ -1593,7 +1593,9 @@ def _deshacer_proponer_plan(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
     hijos = _plan_hijos_ids(conn, horizonte_goal_id)
     habitos = _plan_habito_ids(conn, horizonte_goal_id)
     with conn:
-        for tabla in ("horizonte_regla", "horizonte_semana", "horizonte_meta_semanal", "horizonte_checkpoint"):
+        # horizonte_regla first: its own fase_id FK must be gone before horizonte_fase rows are.
+        for tabla in ("horizonte_regla", "horizonte_fase", "horizonte_semana", "horizonte_meta_semanal",
+                      "horizonte_checkpoint"):
             conn.execute(f"DELETE FROM {tabla} WHERE horizonte_goal_id = ?", (horizonte_goal_id,))
         if habitos:
             placeholders = ",".join("?" * len(habitos))
@@ -1638,6 +1640,58 @@ def _deshacer_corregir_meta_plan(conn: sqlite3.Connection, row: sqlite3.Row) -> 
                               sentido=antes["sentido"], nota=antes.get("nota"), origen="asistente")
 
 
+# -- corregir_fase (BODY-PLAN-FASES-2 ruling 3: update-shaped like corregir_meta_plan, except a
+# phase's dates carry no append-only history -- db.actualizar_fase_horizonte is a plain UPDATE.
+# `despues["quitar"]` switches apply/undo to db.quitar_fase_horizonte/restaurar_fase_horizonte,
+# which detach and re-attach the phase's own rules rather than ever deleting one) ----------------
+
+def _drift_aplicar_corregir_fase(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    antes = json.loads(row["antes_json"])
+    actual = conn.execute(
+        "SELECT titulo, start_day, end_day, nota FROM horizonte_fase WHERE id = ? AND person_id = ?",
+        (antes["fase_id"], row["person_id"])).fetchone()
+    return actual is None or (actual["titulo"], actual["start_day"], actual["end_day"], actual["nota"]) != \
+        (antes["titulo"], antes["start_day"], antes["end_day"], antes["nota"])
+
+
+def _aplicar_corregir_fase(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+    despues = json.loads(row["despues_json"])
+    if despues.get("quitar"):
+        regla_ids = db.quitar_fase_horizonte(conn, row["person_id"], despues["fase_id"])
+        return {"regla_ids": regla_ids}
+    db.actualizar_fase_horizonte(conn, row["person_id"], despues["fase_id"], despues["titulo"],
+                                  despues["start_day"], despues["end_day"], despues.get("nota"))
+    return {}
+
+
+def _drift_deshacer_corregir_fase(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    if despues.get("quitar"):
+        if conn.execute("SELECT 1 FROM horizonte_fase WHERE id = ?", (despues["fase_id"],)).fetchone() is not None:
+            return True
+        for rid in despues.get("regla_ids") or []:
+            fila = conn.execute("SELECT fase_id FROM horizonte_regla WHERE id = ?", (rid,)).fetchone()
+            if fila is None or fila["fase_id"] is not None:
+                return True
+        return False
+    actual = conn.execute(
+        "SELECT titulo, start_day, end_day, nota FROM horizonte_fase WHERE id = ? AND person_id = ?",
+        (despues["fase_id"], row["person_id"])).fetchone()
+    return actual is None or (actual["titulo"], actual["start_day"], actual["end_day"], actual["nota"]) != \
+        (despues["titulo"], despues["start_day"], despues["end_day"], despues.get("nota"))
+
+
+def _deshacer_corregir_fase(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    antes = json.loads(row["antes_json"])
+    despues = json.loads(row["despues_json"])
+    if despues.get("quitar"):
+        db.restaurar_fase_horizonte(conn, row["person_id"], {**antes, "id": antes["fase_id"]},
+                                     despues.get("regla_ids") or [])
+    else:
+        db.actualizar_fase_horizonte(conn, row["person_id"], antes["fase_id"], antes["titulo"],
+                                      antes["start_day"], antes["end_day"], antes.get("nota"))
+
+
 # -- ampliar_plan (BODY-PLAN-PROPUESTAS-1 ruling 4: insert-only growth of an existing horizon,
 # through db.ampliar_plan_horizonte -- undo deletes EXACTLY the rows that call returned, never a
 # row the original plan or a different ampliar_plan call wrote) -----------------------------------
@@ -1649,8 +1703,8 @@ def _aplicar_ampliar_plan(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
 
 def _drift_deshacer_ampliar_plan(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
     despues = json.loads(row["despues_json"])
-    for tabla, clave in (("horizonte_regla", "regla_ids"), ("horizonte_semana", "semana_ids"),
-                         ("horizonte_checkpoint", "checkpoint_ids")):
+    for tabla, clave in (("horizonte_fase", "fase_ids"), ("horizonte_regla", "regla_ids"),
+                         ("horizonte_semana", "semana_ids"), ("horizonte_checkpoint", "checkpoint_ids")):
         for rid in despues.get(clave) or []:
             if conn.execute(f"SELECT 1 FROM {tabla} WHERE id = ?", (rid,)).fetchone() is None:
                 return True
@@ -1666,8 +1720,9 @@ def _drift_deshacer_ampliar_plan(conn: sqlite3.Connection, row: sqlite3.Row) -> 
 def _deshacer_ampliar_plan(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
     despues = json.loads(row["despues_json"])
     with conn:
-        for tabla, clave in (("horizonte_regla", "regla_ids"), ("horizonte_semana", "semana_ids"),
-                             ("horizonte_meta_semanal", "meta_semanal_ids"),
+        # horizonte_regla first: a regla this call wrote may point at a fase_ids row below.
+        for tabla, clave in (("horizonte_regla", "regla_ids"), ("horizonte_fase", "fase_ids"),
+                             ("horizonte_semana", "semana_ids"), ("horizonte_meta_semanal", "meta_semanal_ids"),
                              ("horizonte_checkpoint", "checkpoint_ids")):
             ids = despues.get(clave) or []
             if ids:
@@ -1807,6 +1862,8 @@ TABLA: dict[str, _Accion] = {
                               _deshacer_proponer_plan),
     "corregir_meta_plan": _Accion(_drift_aplicar_corregir_meta_plan, _drift_deshacer_corregir_meta_plan,
                                    _aplicar_corregir_meta_plan, _deshacer_corregir_meta_plan),
+    "corregir_fase": _Accion(_drift_aplicar_corregir_fase, _drift_deshacer_corregir_fase,
+                              _aplicar_corregir_fase, _deshacer_corregir_fase),
     "ampliar_plan": _Accion(_sin_drift, _drift_deshacer_ampliar_plan, _aplicar_ampliar_plan,
                              _deshacer_ampliar_plan),
     "anotar_sesion": _Accion(_drift_aplicar_anotar_sesion, _drift_deshacer_anotar_sesion,

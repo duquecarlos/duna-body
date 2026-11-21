@@ -1306,16 +1306,16 @@ class OrigenAntiguoMudanzaTest(MudanzaTestCase):
     """BODY-MUDANZA-ORIGEN-ANTIGUO-1: the uploaded source can be at an OLDER schema than this
     process's own code -- any person's PC can be behind the host's code. `importar` must bring a
     COPY of it to today's schema before reading a single row, never the upload itself. The
-    fixture here is the current schema minus exactly what BODY-PLAN-ESQUEMA-1 added: the four
-    horizonte_* tables and the two additive columns goal.horizonte_goal_id and
-    experimento.goal_id."""
+    fixture here is the current schema minus exactly what BODY-PLAN-ESQUEMA-1 and BODY-PLAN-
+    FASES-2 added: the five horizonte_* tables (the fifth, horizonte_fase, BODY-PLAN-FASES-2's
+    own) and the two additive columns goal.horizonte_goal_id and experimento.goal_id."""
 
     def _new_older_source(self) -> sqlite3.Connection:
         conn = db.connect(path=self.source_path)
         db.init(conn)
         conn.execute("PRAGMA foreign_keys = OFF")
         for table in ("horizonte_checkpoint", "horizonte_meta_semanal", "horizonte_semana",
-                      "horizonte_regla"):
+                      "horizonte_regla", "horizonte_fase"):
             conn.execute(f"DROP TABLE {table}")
         conn.execute(
             "CREATE TABLE goal_old ("
@@ -1383,7 +1383,7 @@ class OrigenAntiguoMudanzaTest(MudanzaTestCase):
         reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=False)
         self.assertTrue(ok)
         by_name = self._reports_by_name(reports)
-        self.assertEqual(by_name["origen"].origen_tablas_nuevas, 4)
+        self.assertEqual(by_name["origen"].origen_tablas_nuevas, 5)
 
         goal = by_name["goal"].counts
         self.assertEqual((goal.rows_source, goal.insert, goal.other_person), (2, 1, 1))
@@ -1422,7 +1422,7 @@ class OrigenAntiguoMudanzaTest(MudanzaTestCase):
         out = []
         with mock.patch("builtins.print", out.append):
             mudanza._print_report(reports, apply=False)
-        self.assertEqual(out[0], "origen: esquema actualizado en la copia (4 tablas nuevas)")
+        self.assertEqual(out[0], "origen: esquema actualizado en la copia (5 tablas nuevas)")
 
     def test_uploaded_file_bytes_are_unchanged_after_apply(self):
         before = self.source_path.read_bytes()

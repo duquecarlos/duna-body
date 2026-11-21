@@ -274,6 +274,11 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
     db.crear_checkpoint_horizonte(
         conn, person_id, gid_proposed, DAYS[-1], f"ZZ{tag}-CHECKPOINT",
         [{"medida": "resting_hr", "sentido": "al_menos", "valor": 50.0, "ventana": "semana"}])
+    # BODY-PLAN-FASES-2 ruling 1: horizonte_fase joins the four siblings above, same reasoning --
+    # its own titulo marker (FASE) is promoted into _markers_of's active list below (goal detail's
+    # plan section shows every phase's own titulo).
+    db.crear_fase_horizonte(conn, person_id, gid_proposed, f"ZZ{tag}-FASE", horizonte_week,
+                             (date.fromisoformat(horizonte_week) + timedelta(6)).isoformat())
 
     # Wave 9 (BODY-EXPERIMENTOS-ESQUEMA-1): experimento, experimento_registro and moment are all
     # directly person-keyed (each carries its own person_id column), so they are seeded here like
@@ -425,12 +430,14 @@ def _markers_of(tag: str) -> list[str]:
     first reader -- Metas' section and /experiments/{id} render both. REGLA (horizonte_regla.texto),
     SEMANA (horizonte_semana.titulo), META-SEMANAL (horizonte_meta_semanal.nota) and CHECKPOINT
     (horizonte_checkpoint.titulo) move in with BODY-PLAN-PANTALLA-1-R, which gave goal detail's own
-    plan section its first reader for all four (closing BODY-PLAN-PANTALLA-FUGA-1)."""
+    plan section its first reader for all four (closing BODY-PLAN-PANTALLA-FUGA-1). FASE
+    (horizonte_fase.titulo) joins them with BODY-PLAN-FASES-2, which gave the plan screen its own
+    phases block (ruling 4) -- every phase's own titulo renders there."""
     return [f"ZZ{tag}-{suffix}" for suffix in
             ("ACTIVIDAD", "SERIE", "TURNO", "META-PRIVADA", "HABITO", "NOTA", "META-PROPUESTA",
              "META-ARCHIVADA", "PLAN", "CONVERSACION", "MENSAJE", "DISPOSITIVO", "DISPOSITIVO-MCP",
              "EXPERIMENTO", "REGISTRO", "COMIDA", "CHECKIN-NOTA", "REGLA", "SEMANA", "META-SEMANAL",
-             "CHECKPOINT", "PRACTICA")] + [ENLACE_REF[tag]]
+             "CHECKPOINT", "PRACTICA", "FASE")] + [ENLACE_REF[tag]]
 
 
 def _figures_of(tag: str) -> dict:
