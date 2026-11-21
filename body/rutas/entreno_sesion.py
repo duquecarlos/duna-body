@@ -407,4 +407,5 @@ async def entreno_dolor_registrar(day: str, source_id: str, request: Request,
         })
     if filas:
         db.registrar_dolor_entreno(conn, person_id, a["day"], a["sets_source"], a["sets_source_id"], filas)
-    return RedirectResponse(f"/day/{day}/entreno/{source_id}?dolor_guardado=1", status_code=303)
+    return RedirectResponse(f"/day/{day}/entreno/{source_id}?dolor_guardado=1{comun._ancla('dolor')}",
+                            status_code=303)

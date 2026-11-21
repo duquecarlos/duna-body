@@ -603,12 +603,16 @@ class DolorCardTest(unittest.TestCase):
         })
         self.assertEqual(r.status_code, 303)
         self.assertIn("dolor_guardado=1", r.headers["location"])
+        # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3: the redirect lands back on the card itself
+        # (`#dolor`, comun._redirect_con_ancla), not at the top of the page.
+        self.assertTrue(r.headers["location"].endswith("#dolor"))
         filas = db.dolor_de_sesion(self.conn, 1, "garmin", "s1")
         self.assertEqual(len(filas), 1)
         self.assertEqual((filas[0]["dolor_durante"], filas[0]["dolor_despues"], filas[0]["movimiento"]),
                           (3, 2, "al bajar la barra"))
         r2 = client.get(r.headers["location"])
         self.assertIn(_es("entreno_sesion.dolor_guardado"), r2.text)
+        self.assertIn('id="dolor"', r2.text)
 
     def test_editing_again_prefills_the_saved_values(self):
         db.crear_periodo(self.conn, 1, "lesion", self.DAY, None, zonas=["hombro"])
