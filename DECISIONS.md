@@ -32297,3 +32297,155 @@ opened. `git status --porcelain` empty throughout.
 `tests/test_mcp.py`, `tests/test_persona_fuga.py`, `tests/test_rendimiento.py`; 6 files changed, +599/-11), plus this
 ledger text, on the branch -- merged into `main` (`--no-ff`) -- merged `c298dcfb8ab3e3f50a62241573e6b8b1a23de281`.
 
+## BODY-MINUTO-ANALISIS-7 -- commute as night/day context, short meal hour (folds in BODY-COMIDA-HORA-2) (2026-11-20)
+
+Two follow-ups the desk raised on 2026-11-20 after real use (no figures here). (A) The desk imported his daily
+commute history through `importar_desplazamiento` (BODY-DESPLAZAMIENTO-ASISTENTE-1; proposal applied 20 Nov).
+Commute days are stored as the four daily metric keys of the Personal commute source
+(`desplazamiento_import.VIDA_KEYS`, listed through `fuentes.FUENTES[desplazamiento_import.FUENTE]["metric_keys"]`,
+`body/fuentes.py:14-21`; read helper `desplazamiento_import.valores_commute`, `body/desplazamiento_import.py:157`),
+but the day/night context (`contexto_dia.py`'s `contexto_dias`/`contexto_noche`) did not carry them, so
+`comparar_noche`/`buscar_noches` could not group nights by "a commute day" vs "a day at home". (B)
+BODY-COMIDA-HORA-2: `leer_dia`'s `comidas` carry `ts_local` but no short `hora`; the desk reads the clock time out of
+the timestamp each time. ORCH-CARLOS-DELEGATES-TIER-1-1's own rulings, folded into one ledger-id by the dispatch:
+`db.py` and `desplazamiento_import.py` NOT edited.
+
+**Ruling 1 (commute as derived context) -- `05cc0f024cf572ab8b507e499a6c5fb404fda134`.** `body/contexto_dia.py:151`
+adds `_desplazamiento_por_dia(conn, person_id, desde, hasta)`: ONE bulk query over `daily_metric_efectiva`, its
+`metric_key IN (...)` list read from `fuentes.FUENTES[desplazamiento_import.FUENTE]["metric_keys"]` (never retyped),
+returning `day -> {metric_key: value}`. `contexto_dias` (line 205) calls it once per range (line 217) and sets a
+`desplazamiento` key (line 243) on a day's entry only when that day's own dict is non-empty -- never a 0 filled in
+for a key the day lacks. `CONTEXT_KEYS` (line 70) gained `"desplazamiento"`. `contexto_noche` needed NO new code: it
+already builds its entry as `dict(base.get(evening, {}))`, a straight copy of the EVENING day's own `contexto_dias`
+entry, so `desplazamiento` rides along automatically, the same evening-only mapping `turno`/`carga`/`alcohol_g`
+already use -- documented in the module's own docstring rather than re-implemented. `noche_rasgos.rasgos_rango`
+(body/noche_rasgos.py:313) needed no new code either, for the identical reason: its own per-night context merge
+copies `dias_contexto.get(evening, {})` first, and `dias_contexto` is `contexto_dia.contexto_dias`'s own output.
+`GRUPO_CLAVES` (noche_rasgos.py:135-136) gained a seventh key, `con_desplazamiento`; `_coincide_grupo` (line 435)
+checks it at line 462 (`("desplazamiento" in entry) != grupo["con_desplazamiento"]`, the same bare-presence pattern
+as `con_alcohol`); `_claves_contexto` (line 468) adds it to its output set at line 487, so `buscar_noches`'s own
+`en_comun` counts it like every other context dimension. Tests: `tests/test_contexto_dia.py`'s new
+`DesplazamientoTest` (5 tests) -- a day with commute rows carries exactly those keys; a day without has no key; a
+night maps to its EVENING's commute (never the wake day's); another person's commute is never counted; `CensusTest`
+and `StatementCountTest` updated for the new key and the ceiling raised 7 -> 8 (one more bulk statement, named in the
+test's own comment) -- the 7-day/90-day statement count stays equal, re-measured. `tests/test_comparar_noche.py`'s
+new `GrupoConDesplazamientoTest` (2 tests, mirroring `test_noche_rasgos.py`'s own `CompararGrupoTest` pattern for the
+other six keys) proves `con_desplazamiento: true/false` each select exactly the expected 5-night group through
+`herramientas.ejecutar`. `tests/test_buscar_noches.py`'s fixture gained one commute row (D1's own evening); its new
+`ConDesplazamientoTest` (2 tests) proves the filter selects exactly D1 / excludes D1, and `EnComunTest` gained one
+assertion (`en_comun["con_desplazamiento"] == {"coincidentes": 0.2, "en_rango": 0.1}`). `tests/test_agente_leer_dia.py`
+and `tests/test_leer_noche.py` each gained one `ContextoTest` case proving `leer_dia`/`leer_noche` surface the new key
+through the full tool call.
+
+**Ruling 2 (short `hora` on `leer_dia`'s comidas, BODY-COMIDA-HORA-2) -- `89553bee350c9c56d03a77853fa563f09b16f667`.**
+`body/agente/herramientas.py:941`'s `_comidas_del_dia_con_id` gains, at line 956, `entrada["hora"] =
+entrada["ts_local"][11:16]` for every comida whose `ts_local` is present -- the SAME slice
+`body/rutas/asistente.py`'s own `_hora_o_fecha_corta` already takes for the identical field, cited rather than
+re-derived. The key is OMITTED (never `None`) on an untimed meal, since `ts_local` is falsy then and the `if` guards
+the assignment; `ts_local` itself is unchanged, still present and still `None` on an untimed meal. Tests:
+`tests/test_agente_leer_dia.py`'s new `HoraTest` (2 tests) -- `hora` equals the `ts_local` clock exactly
+(`"13:45:00"` -> `"13:45"`), and is absent (not `None`) on a legacy stand-alone `ingesta` row with no `ts_local`.
+
+**Ruling 3 (descriptions) -- same two commits.** `con_desplazamiento` added to `_PARAM_COMPARAR_NOCHE`'s own
+`grupo` schema (herramientas.py:232, boolean, shared by `_PARAM_BUSCAR_NOCHES` through its existing
+`_PARAM_COMPARAR_NOCHE["properties"]["grupo"]` reference). `leer_dia`'s own `descripcion` (herramientas.py:3869)
+gained two clauses: its `comidas` list and their `hora` field (line ~3871), and `desplazamiento diario importado`
+in its context list (line 3873). `leer_noche`'s own `descripcion` gained `el desplazamiento` in its evening-context
+clause (line 3900). `comparar_noche`'s own `descripcion` (line 3925) and `buscar_noches`'s own `descripcion` (line
+3944) each gained `con_desplazamiento` in their `grupo`-key list, the latter's count word corrected `seis` ->
+`siete`. `noche_rasgos.py`'s own `_claves_contexto`/`_en_comun` docstrings (lines 469, 492) were corrected `six` ->
+`seven` dimensions.
+
+**Tests (ruling 4, cross-cutting) -- covered inline above per ruling**, plus: `tests/test_noche_rasgos.py` (not in
+`touches`, read-only sanity), `tests/test_agente_registro.py`, `tests/test_i18n_paridad.py`, `tests/test_rendimiento.py`
+and `tests/test_persona_fuga.py` all ran green UNEDITED (see deviations) -- `tests/test_registro_tu.py` ran green
+unedited (not in this slice's own edited set; re-run as part of the full gate below).
+
+**Deviations, this worker's own, kept as built:**
+- **`body/i18n/es.json`/`en.json` not touched**, though both are in `touches`. Every tool `descripcion` in the
+  registry is a raw Spanish literal the assistant MODEL reads (never shown to Carlos directly, same precedent
+  BODY-MINUTO-ANALISIS-3's own ledger entry already names for `comparar_noche`/`leer_serie`) -- never a `t(...)`
+  call, so adding `con_desplazamiento`/`desplazamiento`/`hora` words to that text introduces no i18n key.
+  `agente.herramienta.*` keys are per-tool LOADING-state strings (e.g. "Revisando ese día…"), unrelated to a tool's
+  own `descripcion`; no new one was needed. Confirmed by `test_i18n_paridad.py` (its own generic `t()`/`T()` call
+  scanner over every `.py`/`.html` file) passing green unedited.
+- **`tests/test_persona_fuga.py`/`test_agente_registro.py`/`test_rendimiento.py` not touched**, though all three are
+  in `touches`. `test_persona_fuga.py`'s own `_seed_person` seeds no commute `daily_metric` row for either invented
+  person, so its generic tool/route sweep exercises no commute data at all -- the person-scoping proof for
+  `desplazamiento` itself is the direct, surgical `test_contexto_dia.py::DesplazamientoTest
+  .test_another_persons_commute_is_never_counted` instead, the SAME file/pattern this module's own
+  `test_another_persons_shift_is_never_counted` etc. already use. `test_agente_registro.py`'s own catalogue census
+  checks tool COUNT and per-tool `nivel`/`tipo` (unchanged here -- no tool added or removed, only two existing tools'
+  `grupo` schema and four tools' `descripcion` text changed) and generic call-graph/no-writer guards, none of which
+  name a `grupo` key or a comida field. `test_rendimiento.py`'s per-route statement ceilings all carry a `ceil(measured
+  * 1.3)` margin comfortably wider than the one extra bulk statement this slice adds to `contexto_dia.contexto_dias`
+  (called from `/day/{day}`, `/`, `leer_dia`, `leer_noche`, `comparar_noche`, `buscar_noches`). All three ran green
+  unedited (also re-run inside the full gate below, which is the authoritative check).
+- **Two commits instead of the spec's four-step split, grouped by file rather than strictly by ruling number.**
+  `body/agente/herramientas.py` carries BOTH ruling 1's `con_desplazamiento` grupo-schema/description wiring and
+  ruling 2/3's `hora` code and the rest of the description edits -- they were written to the same file in one pass
+  before either was committed, and no `git add -p` is in this worker's granted verb list (`add` only, the same
+  constraint BODY-MINUTO-ANALISIS-3's own ledger entry hit). Commit 1 (`05cc0f0`) carries `contexto_dia.py`,
+  `noche_rasgos.py` and `tests/test_contexto_dia.py` -- ruling 1's core derivation, with no tool wired to it yet.
+  Commit 2 (`89553be`) carries `herramientas.py` and the four remaining touched test modules -- the `grupo`
+  schema/filter wiring, `hora`, and every description clause together.
+
+**Customer bytes: none.** Every tool `descripcion` and loading-state string here is Spanish-only text the assistant
+MODEL reads, never rendered to Carlos directly in a screen -- same precedent as BODY-MINUTO-ANALISIS-2/-3's own
+ledger entries for `comparar_noche`/`buscar_noches`. No schema change (no migration, no new table, no new column --
+`desplazamiento`/`hora` are both derived-on-read dict keys), no Tier 1 path touched, no cross-repo contract.
+
+**Gate, 24 sequential alphabetical chunks** of the exact command `.venv/Scripts/python.exe -m unittest discover
+tests -t .`'s own 231 modules (the `test_garmin_*` range split into two 5-module chunks per the dispatch's own
+instruction), each read directly from the process (chunk 10 ran past the 600s foreground cap and was moved to the
+background by the harness; its own output file was read to completion -- `Ran 218 tests in 617.124s`, `OK` -- before
+the next chunk ran; every other chunk finished inside the cap):
+
+| # | Range | Ran | Result |
+|---|-------|-----|--------|
+| 1 | test_accesibilidad .. test_agente_leer_serie | 200 | OK |
+| 2 | test_agente_medida .. test_asistente_panel | 195 | OK |
+| 3 | test_backup .. test_comida_corregir | 257 | OK |
+| 4 | test_comida_hora .. test_cuenta_schema | 212 | OK |
+| 5 | test_cuenta_vectores .. test_despertar_pantalla | 176 | OK |
+| 6 | test_despertar_real .. test_entreno_numeros | 242 | OK |
+| 7 | test_entreno_racha .. test_estados_vacios_2 | 174 | OK |
+| 8 | test_estados_vacios_hosted .. test_garmin_adapter | 136 | OK |
+| 9a | test_garmin_conectar_vivo .. test_garmin_host | 119 | OK |
+| 9b | test_garmin_parse .. test_goals | 119 | OK |
+| 10 | test_goals_web .. test_hogar_escribe_rutas | 218 | OK (backgrounded past 600s, read from its artifact) |
+| 11 | test_hogar_feed .. test_household | 395 | OK |
+| 12 | test_hoy .. test_leer_intradia | 187 | OK |
+| 13 | test_leer_noche .. test_mcp_cliente_remoto | 266 | OK |
+| 14 | test_mcp_copia_pc .. test_modelos_estandar_1 | 252 | OK |
+| 15 | test_momentos_pull .. test_periodo_analisis | 299 | OK |
+| 16 | test_periodo_herramientas .. test_plan_pantalla | 221 | OK |
+| 17 | test_plan_propuestas .. test_profile | 323 | OK |
+| 18 | test_profile_lote .. test_pull_relleno | 193 | OK |
+| 19 | test_readiness .. test_series_gramos | 146 | OK |
+| 20 | test_series_orden .. test_sync_vivo | 196 | OK |
+| 21 | test_sync_vivo_estado .. test_turno_fc_pantallas | 276 | OK |
+| 22 | test_turnos_costo .. test_turnos_ultima_semana | 259 | OK |
+| 23 | test_tutoriales .. test_vo2max | 168 | OK |
+| 24 | test_web_entry | 4 | OK |
+
+Sum: 200+195+257+212+176+242+174+136+119+119+218+395+187+266+252+299+221+323+193+146+196+276+259+168+4 = **5233**.
+Reconciled against an independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`, same final tree) = **5233** -- exact
+match (5220 before this slice + 13 new tests: 5 in `DesplazamientoTest`, 2 in `GrupoConDesplazamientoTest`, 2 in
+`ConDesplazamientoTest`, 2 in `HoraTest`, 1 each in the two `ContextoTest` classes). 0 failures, 0 errors, every
+chunk green. The pre-existing `NotSignedIn`/`AttributeError`/`ResourceWarning`/"dia vacio"/"pull attempt
+failed"/"mcp ... error"/"connect pull: error"/"backfill:"/"intradia:"/"refusado:"/"sin_cambio:no_es_arbol_vivo"/one
+deliberately-raised `RuntimeError` traceback (`test_sync_vivo.py:311`, a mock's own `side_effect`) printed mid-run are
+fixtures exercising synthetic/mock error, empty-day and non-live-tree paths with invented demo data, not gate
+failures, and none are in a file this slice touched. No password, token, secret or real health figure was read,
+printed or written anywhere in this slice's own work or the gate's own stdout; no network call was made;
+`~/.body-app/`, `C:\Duna\body\body-app\.env`, any real database, `C:\Duna\body\body-app-live`,
+`C:\Duna\body\body-app-live-live` and `C:\Personal` were never opened. `git status --porcelain` empty throughout.
+
+**Commits on the branch:** `05cc0f024cf572ab8b507e499a6c5fb404fda134` (`body/contexto_dia.py`, `body/noche_rasgos.py`,
+`tests/test_contexto_dia.py`; 3 files changed, +97/-15) and `89553bee350c9c56d03a77853fa563f09b16f667`
+(`body/agente/herramientas.py`, `tests/test_comparar_noche.py`, `tests/test_buscar_noches.py`,
+`tests/test_agente_leer_dia.py`, `tests/test_leer_noche.py`; 5 files changed, +142/-19), plus this ledger text, on
+the branch -- merged into `main` (`--no-ff`).
+

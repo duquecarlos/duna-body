@@ -12,6 +12,8 @@ A known ten-night history, person 1, 2026-03-01 (D1) .. 2026-03-10 (D10):
   - A single night-shift the evening before D3 (2026-03-02) -- D3 alone carries both 'tras_turno'
     (tipo='night') and 'tras_turno_noche' (its own block day) in its context.
   - `alcohol_g` on the evening before D2 (2026-03-01) -- D2 alone carries 'con_alcohol'.
+  - A commute row on the evening before D1 (2026-02-28, BODY-MINUTO-ANALISIS-7) -- D1 alone
+    carries 'desplazamiento' / 'con_desplazamiento'.
 """
 import json
 import tempfile
@@ -23,7 +25,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import db, garmin_adapter
+from body import db, desplazamiento_import, garmin_adapter
 from body.agente import herramientas
 
 ZONA_OFFSET_H = 5  # America/Bogota, the same fixed offset test_noche_rasgos.py already uses
@@ -91,6 +93,8 @@ def _seed(conn, person_id: int = 1) -> None:
     )
     # D2's own evening (2026-03-01) carries alcohol.
     db.set_metric(conn, "2026-03-01", "alcohol_g", 20.0, "garmin", person_id)
+    # D1's own evening (2026-02-28) carries a commute row.
+    db.set_metric(conn, "2026-02-28", "vehicle_minutes", 15.0, desplazamiento_import.FUENTE, person_id)
     conn.commit()
 
 
@@ -177,6 +181,33 @@ class GrupoConFiltrosTest(unittest.TestCase):
         _seed(conn)
         with self.assertRaises(herramientas.ToolError):
             herramientas.ejecutar(conn, 1, "buscar_noches", {"grupo": {"no_existe": 1}}, "completo")
+
+
+class ConDesplazamientoTest(unittest.TestCase):
+    """BODY-MINUTO-ANALISIS-7: `grupo`'s `con_desplazamiento` key -- D1 alone has a commute row on
+    its own evening (2026-02-28), so it is the only night `con_desplazamiento: True` selects."""
+
+    def test_con_desplazamiento_true_selects_exactly_d1(self):
+        conn = _conn(self)
+        _seed(conn)
+        out = herramientas.ejecutar(
+            conn, 1, "buscar_noches",
+            {"desde": DIAS[0], "hasta": DIAS[-1], "grupo": {"con_desplazamiento": True}},
+            "completo",
+        )
+        self.assertEqual({n["fecha"] for n in out["noches"]}, {DIAS[0]})
+
+    def test_con_desplazamiento_false_excludes_d1(self):
+        conn = _conn(self)
+        _seed(conn)
+        out = herramientas.ejecutar(
+            conn, 1, "buscar_noches",
+            {"desde": DIAS[0], "hasta": DIAS[-1], "grupo": {"con_desplazamiento": False}, "limite": 60},
+            "completo",
+        )
+        fechas = {n["fecha"] for n in out["noches"]}
+        self.assertNotIn(DIAS[0], fechas)
+        self.assertEqual(len(fechas), 9)
 
 
 class OrdenYLimiteTest(unittest.TestCase):
@@ -284,6 +315,8 @@ class EnComunTest(unittest.TestCase):
         self.assertEqual(en_comun["viaje"], {"coincidentes": 0.0, "en_rango": 0.0})
         self.assertEqual(en_comun["periodo"], {"coincidentes": 0.0, "en_rango": 0.0})
         self.assertEqual(en_comun["comida_tarde_min_max"], {"coincidentes": 0.0, "en_rango": 0.0})
+        # 'con_desplazamiento' (BODY-MINUTO-ANALISIS-7): carried only by D1's own evening.
+        self.assertEqual(en_comun["con_desplazamiento"], {"coincidentes": 0.2, "en_rango": 0.1})
 
     def test_en_comun_is_absent_under_five_matches(self):
         conn = _conn(self)

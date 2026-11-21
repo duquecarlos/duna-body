@@ -29,7 +29,10 @@ night's percentile is 100 * (count of nights with a value <= this one, minus one
 the single highest value always reads 100, the single lowest always reads 0, and a night tied with
 the maximum still reads 100 (ties share the higher rank). With `grupo`, the SAME five figures are
 added again, this time only over the nights whose own derived context matches -- a group under 5
-nights carries no percentiles, only its own `n_grupo` and a `motivo`.
+nights carries no percentiles, only its own `n_grupo` and a `motivo`. `con_desplazamiento`
+(BODY-MINUTO-ANALISIS-7, ORCH-CARLOS-DELEGATES-TIER-1-1) is `grupo`'s seventh key: whether the
+night's evening day has (true) or has not (false) a commute row (`contexto_dia.py`'s own
+`desplazamiento` key), matched the same bare-presence way `con_alcohol` already is.
 
 Bounded cost (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3): every bulk reader below is ONE statement
 over the WHOLE [desde, hasta] range, never one per night -- `daily_metric_efectiva` (stored
@@ -129,7 +132,8 @@ MODELO = {
     },
 }
 
-GRUPO_CLAVES = ("tras_turno", "tras_turno_noche", "viaje", "periodo", "comida_tarde_min_max", "con_alcohol")
+GRUPO_CLAVES = ("tras_turno", "tras_turno_noche", "viaje", "periodo", "comida_tarde_min_max", "con_alcohol",
+                 "con_desplazamiento")
 
 # BODY-MINUTO-ANALISIS-3 ruling 2: every name `buscar`'s own 'filtros'/'orden'/'rasgos' may name --
 # both MODELO feature families together, read from MODELO itself so a feature added there is
@@ -455,11 +459,14 @@ def _coincide_grupo(entry: dict, grupo: dict) -> bool:
     if "con_alcohol" in grupo:
         if ("alcohol_g" in entry) != grupo["con_alcohol"]:
             return False
+    if "con_desplazamiento" in grupo:
+        if ("desplazamiento" in entry) != grupo["con_desplazamiento"]:
+            return False
     return True
 
 
 def _claves_contexto(entry: dict) -> set[str]:
-    """Which of GRUPO_CLAVES' own six dimensions this night's context carries AT ALL -- a bare
+    """Which of GRUPO_CLAVES' own seven dimensions this night's context carries AT ALL -- a bare
     presence check (mirroring `_coincide_grupo`'s own reading of each key, loosened from "matches
     this specific value" to "carries any value"), for `buscar`'s own `en_comun`."""
     out: set[str] = set()
@@ -476,11 +483,13 @@ def _claves_contexto(entry: dict) -> set[str]:
         out.add("comida_tarde_min_max")
     if "alcohol_g" in entry:
         out.add("con_alcohol")
+    if "desplazamiento" in entry:
+        out.add("con_desplazamiento")
     return out
 
 
 def _en_comun(tabla: dict[str, dict], noches: list[str], seleccionadas: list[str]) -> dict:
-    """BODY-MINUTO-ANALISIS-3 ruling 2: for each of GRUPO_CLAVES' own six context dimensions, the
+    """BODY-MINUTO-ANALISIS-3 ruling 2: for each of GRUPO_CLAVES' own seven context dimensions, the
     SHARE of the matching nights (`seleccionadas`) that carry it against the share among EVERY
     night in the range (`noches`) -- counts and shares only, the "what did these have in common"
     Carlos himself asked for (relayed by the desk 2026-11-20), never a cause."""

@@ -15,7 +15,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import baselines, db, despertar_real, garmin_adapter, pull, sueno_fc
+from body import baselines, db, desplazamiento_import, despertar_real, garmin_adapter, pull, sueno_fc
 from body.agente import herramientas
 
 ZONA_OFFSET_H = 5  # America/Bogota is UTC-5 year round (tests/test_momentos_pull.py convention)
@@ -431,6 +431,15 @@ class ContextoTest(unittest.TestCase):
         out = _ejecutar(conn, 1)
         self.assertIn("sin_datos", out)
         self.assertNotIn("contexto", out)
+
+    def test_contexto_carries_the_evenings_commute(self):
+        """BODY-MINUTO-ANALISIS-7."""
+        conn = _conn(self)
+        db.set_metric(conn, PREV, "vehicle_minutes", 18.0, desplazamiento_import.FUENTE, 1)
+        _sesion(conn, 1, DIA, f"{PREV}T23:00:00", f"{DIA}T06:00:00")
+        conn.commit()
+        out = _ejecutar(conn, 1)
+        self.assertEqual(out["contexto"]["desplazamiento"], {"vehicle_minutes": 18.0})
 
 
 class StatementCountTest(unittest.TestCase):

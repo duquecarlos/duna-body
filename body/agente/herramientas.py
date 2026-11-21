@@ -229,6 +229,7 @@ _PARAM_COMPARAR_NOCHE = {
                 "periodo": {"type": "string"},
                 "comida_tarde_min_max": {"type": "integer"},
                 "con_alcohol": {"type": "boolean"},
+                "con_desplazamiento": {"type": "boolean"},
             },
             "additionalProperties": False,
         },
@@ -943,8 +944,16 @@ def _comidas_del_dia_con_id(conn: sqlite3.Connection, person_id: int, day: str) 
     `ingesta_id` for a legacy stand-alone row (db.py is NOT edited; this is the second, bounded
     query the spec's own ruling allows). The id list is built from the SAME WHERE and ORDER BY
     `db.comidas_del_dia` groups with, so its Nth first-occurrence lines up with that function's own
-    Nth entry without re-reading any descriptive column."""
+    Nth entry without re-reading any descriptive column.
+
+    BODY-COMIDA-HORA-2 (ORCH-CARLOS-DELEGATES-TIER-1-1, BODY-MINUTO-ANALISIS-7): each entry also
+    gains `hora` ("HH:MM", the same `ts_local[11:16]` slice body/rutas/asistente.py's own
+    `_hora_o_fecha_corta` already takes), beside `ts_local` which stays -- absent, never None, on
+    an untimed meal."""
     comidas = db.comidas_del_dia(conn, person_id, day)
+    for entrada in comidas:
+        if entrada["ts_local"]:
+            entrada["hora"] = entrada["ts_local"][11:16]
     filas = conn.execute(
         "SELECT i.id, i.comida_id FROM ingesta i WHERE i.person_id = ? AND i.day = ? "
         "ORDER BY COALESCE(i.ts_local, ''), i.id", (person_id, day),
@@ -3858,10 +3867,12 @@ HERRAMIENTAS = [
                      "las limitaciones abiertas (una lesión en recuperación, con la zona si se nombró).",
      "parametros": _SIN_PARAMETROS, "funcion": _leer_hoy},
     {"nombre": "leer_dia", "tipo": "lectura", "nivel": "completo",
-     "descripcion": "Las métricas, el sueño, las actividades y los turnos de un día concreto, más su "
-                     "'contexto': turno/bloque de noche, viaje o período marcado, carga de actividad, "
-                     "última comida antes de dormir y alcohol -- todo DERIVADO al leer, nunca datos "
-                     "que la persona haya escrito.",
+     "descripcion": "Las métricas, el sueño, las actividades y los turnos de un día concreto, sus "
+                     "'comidas' registradas (cada una con su propia 'hora' en HH:MM además de "
+                     "'ts_local'), más su 'contexto': turno/bloque de noche, viaje o período marcado, "
+                     "carga de actividad, desplazamiento diario importado, última comida antes de "
+                     "dormir y alcohol -- todo DERIVADO al leer, nunca datos que la persona haya "
+                     "escrito.",
      "parametros": _PARAM_DIA, "funcion": _leer_dia},
     {"nombre": "leer_como_calculo", "tipo": "lectura", "nivel": "completo",
      "descripcion": "Cómo se calculó el puntaje de preparación de un día: cada parte, su peso y su valor.",
@@ -3886,13 +3897,14 @@ HERRAMIENTAS = [
                      "rango_historia (toda tu historia, la misma que ves en Tendencias). Las etapas del sueño "
                      "llevan su propia etiqueta (profundo/ligero/rem/despierto) junto con una verificación de "
                      "esa etiqueta noche por noche contra tus totales ya guardados, y 'contexto': el turno/"
-                     "bloque de noche, el viaje o período marcado, la carga de actividad y el alcohol de la "
-                     "TARDE/NOCHE ANTERIOR (el día que produjo esta noche), más el hueco entre esa última "
-                     "comida y el inicio del sueño -- todo DERIVADO al leer, nunca datos que la persona haya "
-                     "escrito. Para esa misma noche úsala en vez de leer_intradia -- ella sola reemplaza "
-                     "varias llamadas de leer_intradia. Para un momento puntual de hasta 4 horas (no una "
-                     "noche completa) usa leer_intradia; para varios días usa leer_dia o leer_serie. Para "
-                     "comparar esta misma noche con tu historia usa comparar_noche; para encontrar qué "
+                     "bloque de noche, el viaje o período marcado, la carga de actividad, el desplazamiento "
+                     "y el alcohol de la TARDE/NOCHE ANTERIOR (el día que produjo esta noche), más el hueco "
+                     "entre esa última comida y el inicio del sueño -- todo DERIVADO al leer, nunca datos que "
+                     "la persona haya escrito. Para esa misma noche úsala en vez de leer_intradia -- ella "
+                     "sola reemplaza varias llamadas de leer_intradia. Para un momento puntual de hasta 4 "
+                     "horas (no una noche completa) usa leer_intradia; para varios días usa leer_dia o "
+                     "leer_serie. Para comparar esta misma noche con tu historia usa comparar_noche; para "
+                     "encontrar qué "
                      "noches cumplen una condición (en vez de mirar una sola) usa buscar_noches.",
      "parametros": _PARAM_LEER_NOCHE, "funcion": _leer_noche, "necesita_actualizacion": True},
     {"nombre": "comparar_noche", "tipo": "lectura", "nivel": "completo",
@@ -3910,7 +3922,8 @@ HERRAMIENTAS = [
                      "cuántas noches tuyas la tienen, los percentiles 25/50/75 y en qué percentil (0-100) "
                      "cae esta noche entre tus propias noches del rango -- 'desde' por defecto son los "
                      "últimos 365 días. Con 'grupo' (tras_turno, tras_turno_noche, viaje, periodo, "
-                     "comida_tarde_min_max, con_alcohol) repite esos mismos cinco datos solo dentro de las "
+                     "comida_tarde_min_max, con_alcohol, con_desplazamiento) repite esos mismos cinco datos "
+                     "solo dentro de las "
                      "noches que comparten ese mismo contexto, por ejemplo 'las noches después de un turno "
                      "de noche' -- un grupo con menos de 5 noches no da percentiles, solo su propio conteo. "
                      "Nunca un dato crudo minuto a minuto ni una causa. Para UNA noche comparada con tu "
@@ -3927,8 +3940,9 @@ HERRAMIENTAS = [
                      "lista de objetos {rasgo, op, valor} -- op es uno de <, <=, >, >=, = -- sobre estas "
                      f"características, cada una con su unidad: {_RASGOS_BUSCAR_NOCHES_DESC}. Un rasgo o un "
                      "operador no reconocido se rechaza por su nombre, antes de leer nada. Con 'grupo' (los "
-                     "mismos seis datos que comparar_noche: tras_turno, tras_turno_noche, viaje, periodo, "
-                     "comida_tarde_min_max, con_alcohol) solo cuentan las noches que además comparten ese "
+                     "mismos siete datos que comparar_noche: tras_turno, tras_turno_noche, viaje, periodo, "
+                     "comida_tarde_min_max, con_alcohol, con_desplazamiento) solo cuentan las noches que "
+                     "además comparten ese "
                      "contexto -- se combina con 'filtros' como un Y, nunca un O. 'orden' ({rasgo, dir: "
                      "asc|desc}) ordena las noches que coinciden antes de aplicar 'limite' (por defecto "
                      f"{_BUSCAR_NOCHES_LIMITE_DEFECTO}, máximo {_BUSCAR_NOCHES_LIMITE_MAX}). 'rasgos' elige "

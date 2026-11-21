@@ -16,7 +16,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import db
+from body import db, desplazamiento_import
 from body.agente import herramientas
 
 DAY = "2026-11-10"
@@ -102,6 +102,30 @@ class ComidasGroupedTest(unittest.TestCase):
         self.assertNotIn(ajeno_id, {c["comida_id"] for c in out["comidas"]})
 
 
+class HoraTest(unittest.TestCase):
+    """BODY-COMIDA-HORA-2 (ORCH-CARLOS-DELEGATES-TIER-1-1, BODY-MINUTO-ANALISIS-7): each comida
+    entry gains a short `hora` ("HH:MM", from ts_local), beside `ts_local` which stays."""
+
+    def test_hora_equals_the_ts_local_clock(self):
+        conn = _conn(self)
+        db.crear_comida(conn, 1, DAY, [{"metric_key": "protein_g", "amount": 35.0, "estimado": True}],
+                         descripcion="pollo con arroz", ts_local=f"{DAY}T13:45:00")
+        conn.commit()
+        out = herramientas.ejecutar(conn, 1, "leer_dia", {"day": DAY}, "completo")
+        comida = out["comidas"][0]
+        self.assertEqual(comida["hora"], "13:45")
+        self.assertEqual(comida["ts_local"], f"{DAY}T13:45:00")
+
+    def test_hora_is_absent_without_ts_local(self):
+        conn = _conn(self)
+        db.registrar_ingesta(conn, 1, DAY, "protein_g", 20.0, False, "batido")
+        conn.commit()
+        out = herramientas.ejecutar(conn, 1, "leer_dia", {"day": DAY}, "completo")
+        comida = out["comidas"][0]
+        self.assertIsNone(comida["ts_local"])
+        self.assertNotIn("hora", comida)
+
+
 class ContextoTest(unittest.TestCase):
     """BODY-MINUTO-ANALISIS-5-CONTEXTO ruling 3: leer_dia's own `contexto` -- that one day's own
     derived shift/night-block standing, trip or marked period, activity load, and alcohol figure
@@ -120,6 +144,14 @@ class ContextoTest(unittest.TestCase):
         conn.commit()
         out = herramientas.ejecutar(conn, 1, "leer_dia", {"day": DAY}, "completo")
         self.assertEqual(out["contexto"], {})
+
+    def test_contexto_carries_this_days_own_commute(self):
+        """BODY-MINUTO-ANALISIS-7."""
+        conn = _conn(self)
+        db.set_metric(conn, DAY, "vehicle_minutes", 18.0, desplazamiento_import.FUENTE, 1)
+        conn.commit()
+        out = herramientas.ejecutar(conn, 1, "leer_dia", {"day": DAY}, "completo")
+        self.assertEqual(out["contexto"]["desplazamiento"], {"vehicle_minutes": 18.0})
 
 
 class StatementCountTest(unittest.TestCase):
