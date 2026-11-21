@@ -32706,7 +32706,8 @@ tests.test_hoy_escritorio.HoyAbajoBlockMarkupTest (2 failures, 1 error, a missin
 unusual-night card); tests.test_mock_r2_hoy.BoardOrderTest.test_order_en and test_order_es
 (ValueError: substring not found)."* That worker stopped GATE_RED without writing this entry or
 merging, since all three reds sit outside `touches` -- BODY-PLAN-FASES-5-PULIDO-1-M below finds
-their root cause, fixes it, and lands this entry together with its own.
+their root cause, fixes it, and lands this entry together with its own -- merged
+`a2995a5866426d91e2a30454a6c0999dff1e6bf4`.
 
 ## BODY-PLAN-FASES-5-PULIDO-1-M
 
@@ -32791,5 +32792,6 @@ spec's own approval-reason, which pre-authorizes merging past that condition onc
 **Commits on the branch:** `654a3a1` (PULIDO-1 ruling 1-2), `5b2ab89` (PULIDO-1 ruling 3),
 `00eb817` (BODY-TURNOS-ACTUAL-CONTEXTVAR-LEAK-1), `38cc639` (PULIDO-1, stale docstring fix),
 `217a840` (PULIDO-1-M rulings 1-3: `body/demo.py`, `tests/test_demo_fechas.py`), plus this ledger
-text, on the branch.
+text, on the branch -- merged into `main` (`--no-ff`) -- merged
+`a2995a5866426d91e2a30454a6c0999dff1e6bf4`.
 
