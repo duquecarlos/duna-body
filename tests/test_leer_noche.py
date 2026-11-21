@@ -15,7 +15,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import baselines, db, desplazamiento_import, despertar_real, garmin_adapter, pull, sueno_fc
+from body import baselines, captura_sueno, db, desplazamiento_import, despertar_real, garmin_adapter, pull, sueno_fc
 from body.agente import herramientas
 
 ZONA_OFFSET_H = 5  # America/Bogota is UTC-5 year round (tests/test_momentos_pull.py convention)
@@ -610,6 +610,23 @@ class EtapaVerificacionTest(unittest.TestCase):
         conn.commit()
         out = _ejecutar(conn, 1)
         self.assertEqual(out["etapas_verificacion"], {"coincide": None, "diferencia_min_max": None})
+
+
+class CapturaTest(unittest.TestCase):
+    """BODY-NOCHE-SIN-REM-1: `captura` is `captura_sueno.evaluar` applied to this night's own
+    stored totals, next to `etapas_verificacion` -- never a second computation."""
+
+    def test_zero_rem_on_a_long_night_is_marked(self):
+        conn = _conn(self)
+        EtapaVerificacionTest()._sembrar(conn, 1, deep=120.0, light=240.0, rem=0.0, awake=30.0)
+        out = _ejecutar(conn, 1)
+        self.assertEqual(out["captura"], {"rem_no_capturado": True, "version": captura_sueno.VERSION})
+
+    def test_positive_rem_is_not_marked(self):
+        conn = _conn(self)
+        EtapaVerificacionTest()._sembrar(conn, 1)  # rem=90.0 by default
+        out = _ejecutar(conn, 1)
+        self.assertIsNone(out["captura"])
 
 
 class RangoDobleStatementCountTest(unittest.TestCase):

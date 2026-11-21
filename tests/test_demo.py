@@ -16,7 +16,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import db, demo, turnos_costo
+from body import captura_sueno, db, demo, turnos_costo
 from body.db import METRIC_DEFS
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -201,6 +201,21 @@ class SeededContentTest(unittest.TestCase):
             por_dia.setdefault(f["day"], set()).add(f["tipo"])
         dias_con_ambos = [dia for dia, tipos in por_dia.items() if tipos == {"sueno", "levantado"}]
         self.assertEqual(len(dias_con_ambos), 1)
+
+    def test_has_one_night_with_a_captured_zero_rem_the_watch_did_not_record(self):
+        # BODY-NOCHE-SIN-REM-1: _seed_captura_sueno overrides exactly one night (anchor - 1) to a
+        # REM of 0.0 -- the generic per-day random fill (RANGES['sleep_rem_min'] = (40, 100)) never
+        # lands on exactly zero, so this stays a unique, deterministic marker regardless of the
+        # real calendar date the demo runs on.
+        rows = self.conn.execute(
+            "SELECT day, value FROM daily_metric_efectiva WHERE person_id = 1 "
+            "AND metric_key = 'sleep_rem_min' AND value = 0.0").fetchall()
+        self.assertEqual(len(rows), 1)
+        dia = rows[0]["day"]
+        vals = {r["metric_key"]: r["value"] for r in self.conn.execute(
+            "SELECT metric_key, value FROM daily_metric_efectiva WHERE person_id = 1 AND day = ?", (dia,))}
+        self.assertEqual(captura_sueno.evaluar(vals),
+                          {"rem_no_capturado": True, "version": captura_sueno.VERSION})
 
     def test_has_one_household_goal_created_by_ana(self):
         row = self.conn.execute(

@@ -136,6 +136,7 @@
   "day.comidas.vacio": "Sin comidas registradas este día.",
   "day.sueno_fc.linea": "Pulso durmiendo {avg} · mínimo {low}",
   "day.sueno.incluye_correccion": "Incluye tu corrección: Garmin marcó {total} hasta las {fin}.",
+  "day.sueno.rem_no_capturado": "Tu reloj no registró fase REM esta noche. Suele ser por cómo quedó puesto o por la señal, no por cómo dormiste.",
   "day.despertar.sueno_linea": "Parece que seguiste durmiendo hasta las {hora} (Garmin marcó {fin}).",
   "day.despertar.levantado_linea": "Parece que te levantaste alrededor de las {hora} (Garmin marcó {fin}).",
   "day.despertar.corregir_boton": "¿Corregir?",

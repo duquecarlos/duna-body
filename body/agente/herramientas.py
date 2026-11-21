@@ -72,10 +72,11 @@ import threading
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .. import anatomia, baselines, catalogo_tendencias, comidas, compartir, contexto_dia, cuenta, db, despertar_real, \
-    desplazamiento_import, enlaces, entreno_historial, errores, experimentos, fechas, garmin_adapter, \
-    garmin_cuenta, goals, history, horizonte, household, noche_rasgos, nutriente_objetivo, practicas, profile, pull, \
-    readiness, reentrada, registro_cobertura, shift_import, sueno_fc, turnos_costo, tutoriales, viajes
+from .. import anatomia, baselines, captura_sueno, catalogo_tendencias, comidas, compartir, contexto_dia, cuenta, \
+    db, despertar_real, desplazamiento_import, enlaces, entreno_historial, errores, experimentos, fechas, \
+    garmin_adapter, garmin_cuenta, goals, history, horizonte, household, noche_rasgos, nutriente_objetivo, \
+    practicas, profile, pull, readiness, reentrada, registro_cobertura, shift_import, sueno_fc, turnos_costo, \
+    tutoriales, viajes
 from ..i18n import LANGS, T
 from . import ajustes, conversacion as agente_conversacion, propuestas
 
@@ -1662,6 +1663,10 @@ def _derivados_noche(conn: sqlite3.Connection, person_id: int, fecha: str, sueno
         "despertar_modelo": despertar_modelo,
         "minutos_despierto_tras_fin": _minutos_despierto_tras_fin(despertar_modelo),
         "etapas_verificacion": _verificar_etapas(sueno_arrays, fin_dt, valores_dia),
+        # BODY-NOCHE-SIN-REM-1: whether this night's own zero REM is a capture gap (the watch's fit
+        # or signal), never a reading -- None when REM is missing, above zero, or the night is too
+        # short to expect a full cycle. valores_dia is the SAME dict already read above, no second SQL.
+        "captura": captura_sueno.evaluar(valores_dia),
     }
 
 
@@ -1777,9 +1782,14 @@ def _comparar_noche(conn: sqlite3.Connection, person_id: int, fecha: str, desde:
                 and grupo["altitud_cambio_min"] > grupo["altitud_cambio_max"]):
             raise ToolError("'grupo.altitud_cambio_min' no puede ser mayor que 'grupo.altitud_cambio_max'")
     try:
-        return noche_rasgos.comparar(conn, person_id, fecha, desde=desde, grupo=grupo)
+        out = noche_rasgos.comparar(conn, person_id, fecha, desde=desde, grupo=grupo)
     except noche_rasgos.SinDatos:
         raise ToolError(t("agente.error.comparar_noche_sin_noche"))
+    # BODY-NOCHE-SIN-REM-1: the SAME capture-gap key `_leer_noche` carries, for this one focal
+    # night (`fecha`) -- `noche_rasgos.comparar` ranks features, not raw totals, so this reads
+    # the night's own stored values the same way `_derivados_noche` does, no change to that module.
+    out["captura"] = captura_sueno.evaluar(db.day_values(conn, fecha, person_id))
+    return out
 
 
 def _buscar_noches(conn: sqlite3.Connection, person_id: int, desde: str | None = None, hasta: str | None = None,
@@ -4183,7 +4193,10 @@ HERRAMIENTAS = [
                      "por su cuenta: rango_30_dias (los 30 días antes de esta noche, sin los días marcados) y "
                      "rango_historia (toda tu historia, la misma que ves en Tendencias). Las etapas del sueño "
                      "llevan su propia etiqueta (profundo/ligero/rem/despierto) junto con una verificación de "
-                     "esa etiqueta noche por noche contra tus totales ya guardados, y 'contexto': el turno/"
+                     "esa etiqueta noche por noche contra tus totales ya guardados. 'captura' indica si el "
+                     "REM en cero de esa noche es un vacío de captura del reloj, nunca una lectura real -- "
+                     "cuando 'captura.rem_no_capturado' es true, ese REM no debe compararse ni reportarse como "
+                     "una cifra. 'contexto' trae el turno/"
                      "bloque de noche, el viaje o período marcado, la carga de actividad, el desplazamiento "
                      "y el alcohol de la TARDE/NOCHE ANTERIOR (el día que produjo esta noche), más el hueco "
                      "entre esa última comida y el inicio del sueño -- todo DERIVADO al leer, nunca datos que "
@@ -4215,6 +4228,9 @@ HERRAMIENTAS = [
                      "datos solo dentro de las "
                      "noches que comparten ese mismo contexto, por ejemplo 'las noches después de un turno "
                      "de noche' -- un grupo con menos de 5 noches no da percentiles, solo su propio conteo. "
+                     "'captura' indica si el REM en cero de esa noche es un vacío de captura del reloj, "
+                     "nunca una lectura real -- cuando 'captura.rem_no_capturado' es true, ese REM no debe "
+                     "compararse ni reportarse como una cifra. "
                      "Nunca un dato crudo minuto a minuto ni una causa. Para UNA noche comparada con tu "
                      "propia historia usa esta herramienta; para el detalle crudo completo de esa misma "
                      "noche usa leer_noche; para mirar una ventana puntual dentro de una noche o un día usa "

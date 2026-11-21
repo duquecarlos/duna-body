@@ -863,6 +863,29 @@ def _seed_noche_inusual(conn, db, baselines, anchor: date, person_id: int) -> No
     conn.commit()
 
 
+# BODY-NOCHE-SIN-REM-1: the night right before `anchor` (never `anchor` itself -- that night
+# already carries _seed_noche_inusual's own overridden hrv_last_night/sleep_score, and keeping the
+# two demo flags on two different Dia pages makes each easy to show on its own). Deep+light alone
+# already clear captura_sueno.MODELO['rem_minimo_noche_min'] with margin, so the override never
+# duplicates that threshold as a second constant here.
+NOCHE_SIN_REM_DIAS_ATRAS = 1
+NOCHE_SIN_REM_DEEP_MIN = 110.0
+NOCHE_SIN_REM_LIGHT_MIN = 200.0
+NOCHE_SIN_REM_AWAKE_MIN = 20.0
+
+
+def _seed_captura_sueno(conn, db, captura_sueno, anchor: date, person_id: int) -> None:
+    dia = (anchor - timedelta(NOCHE_SIN_REM_DIAS_ATRAS)).isoformat()
+    deep, light, awake = NOCHE_SIN_REM_DEEP_MIN, NOCHE_SIN_REM_LIGHT_MIN, NOCHE_SIN_REM_AWAKE_MIN
+    assert deep + light >= captura_sueno.MODELO["rem_minimo_noche_min"]
+    db.set_metric(conn, dia, "sleep_deep_min", deep, "garmin", person_id)
+    db.set_metric(conn, dia, "sleep_light_min", light, "garmin", person_id)
+    db.set_metric(conn, dia, "sleep_rem_min", 0.0, "garmin", person_id)
+    db.set_metric(conn, dia, "sleep_awake_min", awake, "garmin", person_id)
+    db.set_metric(conn, dia, "sleep_minutes", deep + light + awake, "garmin", person_id)
+    conn.commit()
+
+
 # A handful of the most recent nights, so Dia's own line and the Tendencias "night" card have
 # something to show -- not every night in the history.
 N_NOCHES_SUENO_FC = 5
@@ -1641,8 +1664,8 @@ def _seed_today_stress(conn, db, baselines, anchor: date, person_id: int) -> int
 
 
 def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[str, int]:
-    from . import (baselines, comida_compartida, compartir, db, desplazamiento_import, enlaces, goals,
-                   practicas, recuperacion, shift_import, sueno_fc, turno_fc, turnos_costo)
+    from . import (baselines, captura_sueno, comida_compartida, compartir, db, desplazamiento_import, enlaces,
+                   goals, practicas, recuperacion, shift_import, sueno_fc, turno_fc, turnos_costo)
 
     person_id = _seed_person(conn, db, idioma)
 
@@ -1685,6 +1708,7 @@ def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[st
     sueno_fc_noches = _seed_sueno_fc(conn, db, sueno_fc, person_id)
     despertar_correcciones = _seed_despertar_correccion(conn, db, person_id)
     _seed_noche_inusual(conn, db, baselines, anchor, person_id)
+    _seed_captura_sueno(conn, db, captura_sueno, anchor, person_id)
     planes_hoy = _seed_plan_hoy(conn, anchor, person_id, idioma)
 
     practicas_count, practica_pasos_id = _seed_practicas(conn, practicas, person_id, idioma)

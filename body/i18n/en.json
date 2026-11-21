@@ -136,6 +136,7 @@
   "day.comidas.vacio": "No meals logged this day.",
   "day.sueno_fc.linea": "Sleeping heart rate {avg} · lowest {low}",
   "day.sueno.incluye_correccion": "Includes your correction: Garmin recorded {total} until {fin}.",
+  "day.sueno.rem_no_capturado": "Your watch recorded no REM sleep this night. This is usually how it sat or its signal, not how you slept.",
   "day.despertar.sueno_linea": "Looks like you slept until {hora} (Garmin says {fin}).",
   "day.despertar.levantado_linea": "Looks like you got up around {hora} (Garmin says {fin}).",
   "day.despertar.corregir_boton": "Correct it?",

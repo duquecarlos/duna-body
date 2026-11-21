@@ -14,9 +14,9 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from markupsafe import Markup
 
-from .. import (anatomia, comida_compartida, compartir, cuenta, db, despertar_real, fechas, fuentes, garmin_cuenta,
-                goals, history, horizonte, household, identity, noche_inusual, nutriente_objetivo, pull, readiness,
-                recuperacion, reentrada, turnos_costo, tutoriales, ventana_comida, viajes)
+from .. import (anatomia, captura_sueno, comida_compartida, compartir, cuenta, db, despertar_real, fechas, fuentes,
+                garmin_cuenta, goals, history, horizonte, household, identity, noche_inusual, nutriente_objetivo,
+                pull, readiness, recuperacion, reentrada, turnos_costo, tutoriales, ventana_comida, viajes)
 from ..agente import conversacion as agente_conversacion
 from ..agente import herramientas as agente_herramientas
 from ..agente import propuestas as agente_propuestas
@@ -1399,8 +1399,15 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
             incluye_correccion = t("day.sueno.incluye_correccion", total=t.minutes(garmin_total),
                                     fin=fin_garmin_dt.strftime("%H:%M"))
         window = " → ".join(x[11:16] for x in (win.get("start_local"), end_display) if x)
+        # BODY-NOCHE-SIN-REM-1: a capture gap, not a reading -- the bar itself already drops a
+        # zero-minute stage from `stages` above (never a zero-width real segment); this only adds
+        # the one muted line saying so, never touching what the bar itself draws.
+        captura = captura_sueno.evaluar(vals)
+        rem_no_capturado_linea = (t("day.sueno.rem_no_capturado")
+                                   if captura and captura.get("rem_no_capturado") else None)
         sleep = {"total": t.minutes(vals["sleep_minutes"]), "window": window, "stages": stages,
-                 "incluye_correccion": incluye_correccion}
+                 "incluye_correccion": incluye_correccion,
+                 "rem_no_capturado_linea": rem_no_capturado_linea}
     despertar_ctx = _despertar_dia_ctx(t, conn, person_id, person["timezone"], d.isoformat(),
                                         win.get("end_local") if sleep is not None else None, correcciones)
     # BODY-DESPERTAR-REAL-6B polish (ruling 6, ORCH-CARLOS-DELEGATES-TIER-1-1): with the sleep
