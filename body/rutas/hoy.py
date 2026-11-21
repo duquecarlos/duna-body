@@ -492,10 +492,20 @@ def _plan_semana_bloque(t: T, resumen: dict, today_local: date) -> dict:
         if (dia_cp - today_local).days <= 7:
             checkpoint = t("today.plan_semana.checkpoint", fecha=_dia_mes(t, dia_cp), titulo=siguiente["titulo"])
 
+    # BODY-PLAN-FASES-2 ruling 4: the current phase's own line, from horizonte.resumen's own
+    # "fase_actual" (no second horizonte_* read) -- None, so no line at all, the instant no phase
+    # covers today.
+    fase_actual = resumen.get("fase_actual")
+    fase = None
+    if fase_actual is not None:
+        fase = t("today.plan_semana.fase", titulo=fase_actual["titulo"], n=t.num(fase_actual["semana"]),
+                 m=t.num(fase_actual["semanas_total"]))
+
     return {
         "goal_id": resumen["goal_id"], "titulo": resumen["titulo"],
         "semana": t("today.plan_semana.semana", n=t.num(semana_num), m=t.num(semanas)), "faltan": faltan,
         "cuentas": _plan_semana_cuentas(t, resumen["semana_actual"]["lineas"]), "checkpoint": checkpoint,
+        "fase": fase,
     }
 
 

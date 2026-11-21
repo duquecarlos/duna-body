@@ -132,6 +132,15 @@ client = TestClient(web.app, follow_redirects=False)
 # this file's own fixture always carries a pending proposed batch (demo._seed_shifts), so the
 # route returned before that path ran and this shared ceiling stayed UNCHANGED at 42.
 # tests/test_turnos_deshacer.py's own HistorialCostoTest measures that path's +1 directly.
+# BODY-PLAN-FASES-2 ruling 6: horizonte.resumen() now always reads horizonte_fase too (its own
+# `fases()` call, folded into the one dict `_plan_semana_ctx`'s PLANES_HOY_MAX resumen() calls
+# already read) -- "/"'s own ceiling stays UNCHANGED at 155, measured 128 on this file's own
+# fixture (one active plan, now the demo's own horizon with three seeded phases). /goals/{goal_id}
+# itself never moves (ceiling 33): the fixture's picked goal_id is still the plain sleep goal, so
+# `_plan_fases_ctx` never runs for it. The horizon's OWN /goals/{goal_id} page (metas.py's new
+# `_plan_fases_ctx`) is bounded, not swept here -- tests/test_rendimiento.py's own
+# PlanFasesCostIndependentTest proves it: one statement with no phase at all, two total with one
+# phase or with three phases each carrying one scoped rule, never more.
 # BODY-TURNOS-DESHACER-LOTE-4 ruling 1: the route now calls _historial_filas ONCE per request
 # regardless of branch, so this file's own fixture's one-pending-proposal state reaches it too --
 # measured 33 statements (32 before), ceil(33 * 1.3) = 43. The many-proposals state is never
@@ -636,6 +645,80 @@ class PlanPantallaCostIndependentOfSpanTest(unittest.TestCase):
             una["statements"], ocho["statements"],
             f"8 weekly target lines cost more statements than 1 in the same week: "
             f"{una['statements']} vs {ocho['statements']}")
+
+
+class PlanFasesCostIndependentTest(unittest.TestCase):
+    """BODY-PLAN-FASES-2 ruling 6: /goals/{goal_id}'s own phases block (body/rutas/metas.py's
+    `_plan_fases_ctx`) costs one statement (`horizonte.fases()`) when the plan has no phase at
+    all, and the SAME two statements total -- that same `fases()` call plus one grouped rule read
+    -- whether the plan has one phase and no scoped rule or three phases each with one scoped
+    rule."""
+
+    HOY = date(2026, 11, 5)
+    MONDAY = fechas.lunes_de(HOY)
+
+    def test_no_phase_vs_one_phase_statement_delta_is_exactly_one(self):
+        """Both plans already carry a plain, unscoped rule, so both are a horizon and both render
+        the full plan screen -- the only difference between the two requests is `gid_con`'s one
+        phase. `_plan_fases_ctx` always pays one statement for `horizonte.fases()`; `gid_sin`'s
+        empty result stops there (its own early return), while `gid_con`'s one phase pays a
+        second statement for the grouped rule read -- a delta of exactly 1, the same 2 total
+        `_plan_fases_ctx` pays for any number of phases or rules once it has at least one phase."""
+        conn = _reset_db(self)
+        gid_sin = _horizonte_milestone(
+            conn, 1, self.MONDAY.isoformat(), (self.MONDAY + timedelta(days=20)).isoformat(), "ZZ sin fase")
+        db.crear_regla_horizonte(conn, 1, gid_sin, "siempre", None, "Regla sin fase")
+        conn.commit()
+        with patch.object(web_comun, "_today_local", return_value=self.HOY):
+            with contar_sql() as sin:
+                r1 = client.get(f"/goals/{gid_sin}")
+
+        gid_con = _horizonte_milestone(
+            conn, 1, self.MONDAY.isoformat(), (self.MONDAY + timedelta(days=20)).isoformat(), "ZZ una fase")
+        db.crear_regla_horizonte(conn, 1, gid_con, "siempre", None, "Regla sin fase")
+        db.crear_fase_horizonte(conn, 1, gid_con, "Fase", self.MONDAY.isoformat(),
+                                 (self.MONDAY + timedelta(days=20)).isoformat())
+        conn.commit()
+        with patch.object(web_comun, "_today_local", return_value=self.HOY):
+            with contar_sql() as con:
+                r2 = client.get(f"/goals/{gid_con}")
+
+        self.assertEqual((r1.status_code, r2.status_code), (200, 200))
+        self.assertEqual(
+            con["statements"] - sin["statements"], 1,
+            f"a plan with one phase should cost exactly 1 statement more than one with none: "
+            f"{sin['statements']} vs {con['statements']}")
+
+    def test_one_phase_vs_three_phases_with_scoped_rules_same_statement_count(self):
+        conn = _reset_db(self)
+        gid_una = _horizonte_milestone(
+            conn, 1, self.MONDAY.isoformat(), (self.MONDAY + timedelta(days=62)).isoformat(), "ZZ una fase larga")
+        fid = db.crear_fase_horizonte(conn, 1, gid_una, "Fase unica", self.MONDAY.isoformat(),
+                                       (self.MONDAY + timedelta(days=62)).isoformat())
+        db.crear_regla_horizonte(conn, 1, gid_una, "siempre", None, "Regla de la fase unica", fase_id=fid)
+        conn.commit()
+        with patch.object(web_comun, "_today_local", return_value=self.HOY):
+            with contar_sql() as una:
+                r1 = client.get(f"/goals/{gid_una}")
+
+        gid_tres = _horizonte_milestone(
+            conn, 1, self.MONDAY.isoformat(), (self.MONDAY + timedelta(days=62)).isoformat(), "ZZ tres fases")
+        cortes = [0, 21, 42, 62]
+        for i in range(3):
+            fid_i = db.crear_fase_horizonte(
+                conn, 1, gid_tres, f"Fase {i}", (self.MONDAY + timedelta(days=cortes[i])).isoformat(),
+                (self.MONDAY + timedelta(days=cortes[i + 1])).isoformat(), orden=i)
+            db.crear_regla_horizonte(conn, 1, gid_tres, "siempre", None, f"Regla de la fase {i}", fase_id=fid_i)
+        conn.commit()
+        with patch.object(web_comun, "_today_local", return_value=self.HOY):
+            with contar_sql() as tres:
+                r2 = client.get(f"/goals/{gid_tres}")
+
+        self.assertEqual((r1.status_code, r2.status_code), (200, 200))
+        self.assertEqual(
+            una["statements"], tres["statements"],
+            f"three phases with their own scoped rule cost more statements than one: "
+            f"{una['statements']} vs {tres['statements']}")
 
 
 class PlanHoyCostIndependentOfSpanTest(unittest.TestCase):

@@ -644,15 +644,18 @@ _PLAN_ROW_HORIZONTES = (
     "UNION SELECT horizonte_goal_id FROM horizonte_regla "
     "UNION SELECT horizonte_goal_id FROM horizonte_semana "
     "UNION SELECT horizonte_goal_id FROM horizonte_meta_semanal "
-    "UNION SELECT horizonte_goal_id FROM horizonte_checkpoint"
+    "UNION SELECT horizonte_goal_id FROM horizonte_checkpoint "
+    # BODY-PLAN-FASES-2 ruling 1: a phase is a plan row too -- a plan proposed with phases but no
+    # rule, week, weekly target or checkpoint yet is still a horizon.
+    "UNION SELECT horizonte_goal_id FROM horizonte_fase"
 )
 
 
 def es_horizonte(conn, goal_id: int) -> bool:
     """A goal is a plan (a horizon) when it is a milestone with no horizonte_goal_id of its own AND
-    it carries at least one plan row -- a child goal, a rule, a week, a weekly target line or a
-    checkpoint. One bounded statement, independent of how many plan rows this goal or any other
-    one has."""
+    it carries at least one plan row -- a child goal, a rule, a week, a weekly target line, a
+    checkpoint or a phase. One bounded statement, independent of how many plan rows this goal or
+    any other one has."""
     return bool(conn.execute(
         f"SELECT EXISTS(SELECT 1 FROM goal WHERE id = ? AND kind = 'milestone' "
         f"AND horizonte_goal_id IS NULL AND id IN ({_PLAN_ROW_HORIZONTES}))",
@@ -706,23 +709,24 @@ def fases(conn, horizonte_goal_id: int, hoy: date | None = None) -> list[dict]:
     ]
 
 
-def fase_actual(conn, horizonte_goal_id: int, hoy: date | None = None) -> dict | None:
-    """BODY-PLAN-FASES-2 ruling 4: the ONE phase covering `hoy` (never more, same reason as
-    `fases` above), with its own week count for Hoy's "Fase: <titulo> - semana <n> de <m>" line --
-    `semana` counts Mondays since the phase's own start_day (1-based), `semanas_total` is the
-    phase's own span rounded up to a week. None when no phase covers `hoy` -- "no phase" is simply
-    the absence of a result, never an error."""
-    hoy = hoy or date.today()
-    hoy_iso = hoy.isoformat()
-    f = conn.execute(
-        "SELECT titulo, start_day, end_day FROM horizonte_fase WHERE horizonte_goal_id = ? "
-        "AND start_day <= ? AND end_day >= ?", (horizonte_goal_id, hoy_iso, hoy_iso)
-    ).fetchone()
+def _fase_actual_de(fases_list: list[dict], hoy: date) -> dict | None:
+    """The phase, if any, `fases()` already marked `actual` -- its own week count for Hoy's
+    "Fase: <titulo> - semana <n> de <m>" line: `semana` counts Mondays since the phase's own
+    start_day (1-based), `semanas_total` is the phase's own span rounded up to a week."""
+    f = next((x for x in fases_list if x["actual"]), None)
     if f is None:
         return None
     inicio, fin = _parse(f["start_day"]), _parse(f["end_day"])
     return {"titulo": f["titulo"], "semana": (hoy - inicio).days // 7 + 1,
             "semanas_total": (fin - inicio).days // 7 + 1}
+
+
+def fase_actual(conn, horizonte_goal_id: int, hoy: date | None = None) -> dict | None:
+    """BODY-PLAN-FASES-2 ruling 4: the ONE phase covering `hoy` (never more, same reason as
+    `fases` above). None when no phase covers `hoy` -- "no phase" is simply the absence of a
+    result, never an error. Built from `fases()`'s own list, never a second query of its own."""
+    hoy = hoy or date.today()
+    return _fase_actual_de(fases(conn, horizonte_goal_id, hoy=hoy), hoy)
 
 
 def resumen(conn, horizonte_goal_id: int, person_id: int, hoy: date | None = None) -> dict | None:
@@ -753,10 +757,12 @@ def resumen(conn, horizonte_goal_id: int, person_id: int, hoy: date | None = Non
     siguiente_checkpoint = next((c for c in cps if c["estado"] == "pendiente"), None)
 
     dias_a_deadline = (_parse(goal["deadline"]) - hoy).days if goal["deadline"] else None
+    fases_list = fases(conn, horizonte_goal_id, hoy=hoy)
 
     return {
         "goal_id": horizonte_goal_id, "titulo": goal["title"], "start_day": goal["start_day"],
         "deadline": goal["deadline"], "dias_a_deadline": dias_a_deadline, "hijos": hijos,
         "experimentos": experimentos, "semana_actual": semana_actual,
-        "siguiente_checkpoint": siguiente_checkpoint, "fases": fases(conn, horizonte_goal_id, hoy=hoy),
+        "siguiente_checkpoint": siguiente_checkpoint, "fases": fases_list,
+        "fase_actual": _fase_actual_de(fases_list, hoy),
     }

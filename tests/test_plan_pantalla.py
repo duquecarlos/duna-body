@@ -170,6 +170,56 @@ class RulesCardTest(unittest.TestCase):
         self.assertIn("Duerme cuando puedas.", r.text)
 
 
+class FasesCardTest(unittest.TestCase):
+    """BODY-PLAN-FASES-2 ruling 4: the plan screen lists phases in order with their dates, the
+    current one marked, each phase's own rules under it -- a rule with no phase stays where it
+    already was (this week's "Reglas de esta semana" list), never duplicated here."""
+
+    def test_phases_listed_in_order_with_dates_current_marked_and_rules_nested(self):
+        conn = _reset_db(self)
+        gid = _horizonte(conn)
+        db.crear_fase_horizonte(conn, 1, gid, "ZZ Base", "2026-11-02", "2026-11-08", orden=0)
+        fid_pico = db.crear_fase_horizonte(conn, 1, gid, "ZZ Pico", "2026-11-09", "2026-11-22", orden=1)
+        db.crear_regla_horizonte(conn, 1, gid, "siempre", None, "ZZ Intervalos duros", fase_id=fid_pico)
+        db.crear_regla_horizonte(conn, 1, gid, "siempre", None, "ZZ Sin fase")
+        conn.commit()
+        r = _get(f"/goals/{gid}")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("Fases del plan", r.text)
+        pos_base, pos_pico = r.text.index("ZZ Base"), r.text.index("ZZ Pico")
+        self.assertLess(pos_base, pos_pico)
+        self.assertIn("Fase actual", r.text)
+        self.assertIn("ZZ Intervalos duros", r.text)
+        self.assertIn("ZZ Sin fase", r.text)
+
+    def test_phase_not_covering_today_is_not_marked_current(self):
+        conn = _reset_db(self)
+        gid = _horizonte(conn)
+        db.crear_fase_horizonte(conn, 1, gid, "ZZ Base", "2026-11-02", "2026-11-08")
+        db.crear_meta_semanal(conn, 1, gid, MONDAY_CURRENT.isoformat(), "sesiones_fuerza", "al_menos", 1.0)
+        conn.commit()
+        r = _get(f"/goals/{gid}")
+        self.assertIn("ZZ Base", r.text)
+        self.assertNotIn("Fase actual", r.text)
+
+    def test_no_phases_shows_no_fases_card(self):
+        conn = _reset_db(self)
+        gid = _horizonte(conn)
+        db.crear_meta_semanal(conn, 1, gid, MONDAY_CURRENT.isoformat(), "sesiones_fuerza", "al_menos", 1.0)
+        conn.commit()
+        r = _get(f"/goals/{gid}")
+        self.assertNotIn("Fases del plan", r.text)
+
+    def test_a_plan_with_only_a_phase_is_still_a_horizon(self):
+        conn = _reset_db(self)
+        gid = _horizonte(conn)
+        db.crear_fase_horizonte(conn, 1, gid, "ZZ Sola", "2026-11-02", "2026-11-22")
+        conn.commit()
+        r = _get(f"/goals/{gid}")
+        self.assertIn("Esta semana de tu plan", r.text)
+        self.assertIn("Fases del plan", r.text)
+
+
 class SessionsByDayCardTest(unittest.TestCase):
     def test_planned_sessions_show_done_and_not_done(self):
         conn = _reset_db(self)
@@ -447,6 +497,17 @@ class EnglishCoverageTest(unittest.TestCase):
         self.assertIn("Next checkpoint", r.text)
         self.assertIn("Past checkpoints", r.text)
         self.assertIn("Experiments in your plan", r.text)
+
+    def test_fases_card_in_english(self):
+        conn = _reset_db(self)
+        gid = _horizonte(conn)
+        db.crear_fase_horizonte(conn, 1, gid, "ZZ Pico", "2026-11-09", "2026-11-22")
+        db.crear_meta_semanal(conn, 1, gid, MONDAY_CURRENT.isoformat(), "sesiones_fuerza", "al_menos", 1.0)
+        db.set_language(conn, "en", 1)
+        r = _get(f"/goals/{gid}")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("Plan phases", r.text)
+        self.assertIn("Current phase", r.text)
 
     def test_part_of_the_plan_link_in_english(self):
         conn = _reset_db(self)
