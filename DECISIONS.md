@@ -33048,7 +33048,7 @@ table, mudanza, privacidad), `cae1c23b44d0fdd18d75971855d269aac6530d23` (`-2`: c
 filters) and `e222a3a58f33105441a7d5e0bc2386ce06019e67` (`-3`: registrar_altitud/leer_altitudes, demo seed), all
 on `feat/body-minuto-analisis-6-altitud` from `main` at `5760b74781a06e41175c44bdbf48e9b54f43f78`. The gate, the
 remaining ledger entries and the merge are carried by BODY-MINUTO-ANALISIS-6-ALTITUD-M and
-BODY-MINUTO-ANALISIS-6-ALTITUD-M2, below.
+BODY-MINUTO-ANALISIS-6-ALTITUD-M2, below -- merged `8a755f5351a3ee8d9bfbede28fafe323abd86762`.
 
 ## BODY-MINUTO-ANALISIS-6-ALTITUD-M
 
@@ -33074,7 +33074,7 @@ the two new tools `leer_altitudes` / `registrar_altitud`, which `body/agente/her
 `nivel='ninguno'` (lines 4492, 4504 at that tree). `tests/test_agente_bucle.py` is outside this spec's `touches`,
 so -M stopped BLOCKED rather than editing it, opening follow-up BODY-MINUTO-ANALISIS-6-ALTITUD-BUCLE-CENSUS-1. It
 wrote NO ledger entry of its own; this entry and the rest of BODY-MINUTO-ANALISIS-6-ALTITUD-M2's gate/merge are
-written by the continuation below.
+written by the continuation below -- merged `8a755f5351a3ee8d9bfbede28fafe323abd86762`.
 
 ## BODY-MINUTO-ANALISIS-6-ALTITUD-M2
 
@@ -33148,5 +33148,7 @@ No cross-repo contract touched.
 
 **Commits:** `d1bf2d4eb1e1e81123e347f17766de78588dc02a`, `cae1c23b44d0fdd18d75971855d269aac6530d23`,
 `e222a3a58f33105441a7d5e0bc2386ce06019e67` (BODY-MINUTO-ANALISIS-6-ALTITUD's own work, above) plus
-`333cb69e5b068856cfb0a6df9e644387866a907a` (the census edit) on the branch -- merged into `main` (`--no-ff`).
+`333cb69e5b068856cfb0a6df9e644387866a907a` (the census edit) and `1ad26fa78d2a8899849784c5beab872d22492b9a`
+(this ledger text) on the branch -- merged into `main` (`--no-ff`) -- merged
+`8a755f5351a3ee8d9bfbede28fafe323abd86762`.
 
