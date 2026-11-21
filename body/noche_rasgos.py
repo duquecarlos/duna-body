@@ -33,6 +33,11 @@ nights carries no percentiles, only its own `n_grupo` and a `motivo`. `con_despl
 (BODY-MINUTO-ANALISIS-7, ORCH-CARLOS-DELEGATES-TIER-1-1) is `grupo`'s seventh key: whether the
 night's evening day has (true) or has not (false) a commute row (`contexto_dia.py`'s own
 `desplazamiento` key), matched the same bare-presence way `con_alcohol` already is.
+`altitud_cambio_min`/`altitud_cambio_max` (BODY-MINUTO-ANALISIS-6-ALTITUD, ORCH-CARLOS-DELEGATES-
+TIER-1-1 ruling 3) are the eighth, grouping by the CHANGE against this person's own home
+(`contexto_dia.py`'s own `altitud.cambio_m`, signed metres) -- never the absolute altitude alone,
+per Carlos's own framing relayed by the desk 2026-11-20: going down usually lowers resting/sleeping
+heart rate, going up raises it. A night with no `altitud` never matches either bound.
 
 Bounded cost (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3): every bulk reader below is ONE statement
 over the WHOLE [desde, hasta] range, never one per night -- `daily_metric_efectiva` (stored
@@ -133,7 +138,13 @@ MODELO = {
 }
 
 GRUPO_CLAVES = ("tras_turno", "tras_turno_noche", "viaje", "periodo", "comida_tarde_min_max", "con_alcohol",
-                 "con_desplazamiento")
+                 "con_desplazamiento", "altitud_cambio")
+
+# BODY-MINUTO-ANALISIS-6-ALTITUD: the actual keys a `grupo` dict may carry -- identical to
+# GRUPO_CLAVES except `altitud_cambio` itself is never a filter key: it splits into
+# `altitud_cambio_min`/`altitud_cambio_max` (both optional, either or both may be given), the one
+# dimension `_coincide_grupo`/`_claves_contexto`/`_en_comun` still name "altitud_cambio" by.
+GRUPO_FILTRO_CLAVES = (frozenset(GRUPO_CLAVES) - {"altitud_cambio"}) | {"altitud_cambio_min", "altitud_cambio_max"}
 
 # BODY-MINUTO-ANALISIS-3 ruling 2: every name `buscar`'s own 'filtros'/'orden'/'rasgos' may name --
 # both MODELO feature families together, read from MODELO itself so a feature added there is
@@ -462,11 +473,20 @@ def _coincide_grupo(entry: dict, grupo: dict) -> bool:
     if "con_desplazamiento" in grupo:
         if ("desplazamiento" in entry) != grupo["con_desplazamiento"]:
             return False
+    if "altitud_cambio_min" in grupo or "altitud_cambio_max" in grupo:
+        altitud = entry.get("altitud")
+        if altitud is None:
+            return False
+        cambio = altitud["cambio_m"]
+        if "altitud_cambio_min" in grupo and cambio < grupo["altitud_cambio_min"]:
+            return False
+        if "altitud_cambio_max" in grupo and cambio > grupo["altitud_cambio_max"]:
+            return False
     return True
 
 
 def _claves_contexto(entry: dict) -> set[str]:
-    """Which of GRUPO_CLAVES' own seven dimensions this night's context carries AT ALL -- a bare
+    """Which of GRUPO_CLAVES' own eight dimensions this night's context carries AT ALL -- a bare
     presence check (mirroring `_coincide_grupo`'s own reading of each key, loosened from "matches
     this specific value" to "carries any value"), for `buscar`'s own `en_comun`."""
     out: set[str] = set()
@@ -485,11 +505,13 @@ def _claves_contexto(entry: dict) -> set[str]:
         out.add("con_alcohol")
     if "desplazamiento" in entry:
         out.add("con_desplazamiento")
+    if "altitud" in entry:
+        out.add("altitud_cambio")
     return out
 
 
 def _en_comun(tabla: dict[str, dict], noches: list[str], seleccionadas: list[str]) -> dict:
-    """BODY-MINUTO-ANALISIS-3 ruling 2: for each of GRUPO_CLAVES' own seven context dimensions, the
+    """BODY-MINUTO-ANALISIS-3 ruling 2: for each of GRUPO_CLAVES' own eight context dimensions, the
     SHARE of the matching nights (`seleccionadas`) that carry it against the share among EVERY
     night in the range (`noches`) -- counts and shares only, the "what did these have in common"
     Carlos himself asked for (relayed by the desk 2026-11-20), never a cause."""
@@ -498,10 +520,22 @@ def _en_comun(tabla: dict[str, dict], noches: list[str], seleccionadas: list[str
     for clave in GRUPO_CLAVES:
         en_sel = sum(1 for d in seleccionadas if clave in _claves_contexto(tabla[d].get("contexto", {})))
         en_todas = sum(1 for d in noches if clave in _claves_contexto(tabla[d].get("contexto", {})))
-        out[clave] = {
+        entrada = {
             "coincidentes": round(en_sel / n_sel, 3) if n_sel else 0.0,
             "en_rango": round(en_todas / n_total, 3) if n_total else 0.0,
         }
+        if clave == "altitud_cambio":
+            # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3: Carlos, relayed by the desk 2026-11-20 --
+            # what matters is the CHANGE against his own home, so `en_comun` splits the matching
+            # nights three ways by its SIGN, over the SAME denominator (n_sel) "coincidentes"
+            # already uses -- a night with no `altitud` (not counted in `coincidentes` either)
+            # contributes to none of the three.
+            cambios = [tabla[d]["contexto"]["altitud"]["cambio_m"] for d in seleccionadas
+                       if tabla[d].get("contexto", {}).get("altitud") is not None]
+            entrada["descenso"] = round(sum(1 for c in cambios if c < 0) / n_sel, 3) if n_sel else 0.0
+            entrada["igual"] = round(sum(1 for c in cambios if c == 0) / n_sel, 3) if n_sel else 0.0
+            entrada["ascenso"] = round(sum(1 for c in cambios if c > 0) / n_sel, 3) if n_sel else 0.0
+        out[clave] = entrada
     return out
 
 

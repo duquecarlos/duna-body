@@ -45,7 +45,7 @@ def _row_checksum(conn: sqlite3.Connection) -> str:
     tables = ["person", "daily_metric", "sleep_session", "activity", "shift", "shift_batch",
               "shift_batch_item", "goal", "habit", "habit_check", "goal_check", "goal_enlace", "ingesta",
               "comida_compartida", "comida_compartida_porcion", "consentimiento_comida_compartida",
-              "racha_piso"]
+              "racha_piso", "altitud_estancia"]
     excluded = {"creado_en", "created_at", "creado_at", "decided_at", "extracted_at", "received",
                 "updated_at", "granted_at"}
     for name in tables:
@@ -242,6 +242,19 @@ class SeededContentTest(unittest.TestCase):
                 "WHERE ccp.person_id = ? AND cc.autor_person_id = ?", (recipient, author)).fetchone()
             self.assertIsNotNone(row, f"no pending portion for {recipient} from {author}")
             self.assertEqual(row["estado"], "pendiente")
+
+    def test_has_an_invented_home_and_a_lower_stay(self):
+        """BODY-MINUTO-ANALISIS-6-ALTITUD (ORCH-CARLOS-DELEGATES-TIER-1-1): one open home row and
+        one past stay LOWER than home -- an altitude and dates only, no place name, no coordinates."""
+        rows = self.conn.execute(
+            "SELECT es_casa, altitud_m, end_day FROM altitud_estancia WHERE person_id = 1 ORDER BY es_casa"
+        ).fetchall()
+        self.assertEqual(len(rows), 2)
+        estancia, casa = rows[0], rows[1]
+        self.assertEqual(estancia["es_casa"], 0)
+        self.assertEqual(casa["es_casa"], 1)
+        self.assertIsNone(casa["end_day"])
+        self.assertLess(estancia["altitud_m"], casa["altitud_m"])
 
     def test_ana_s_household_goal_has_a_lugares_link(self):
         row = self.conn.execute(

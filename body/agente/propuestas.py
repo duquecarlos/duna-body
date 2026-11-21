@@ -1374,6 +1374,35 @@ def _deshacer_marcar_periodo(conn: sqlite3.Connection, row: sqlite3.Row) -> None
         db.borrar_periodo(conn, row["person_id"], pid)
 
 
+# -- registrar_altitud (BODY-MINUTO-ANALISIS-6-ALTITUD, ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4:
+# insert-shaped, like marcar_periodo above -- this module is the one writer of altitud_estancia
+# through db.crear_altitud_estancia/db.borrar_altitud_estancia) ---------------------------------
+
+def _drift_deshacer_registrar_altitud(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    aid = despues.get("altitud_id")
+    r = conn.execute(
+        "SELECT es_casa, start_day, end_day, altitud_m FROM altitud_estancia WHERE id = ? AND person_id = ?",
+        (aid, row["person_id"])).fetchone()
+    return (r is None or bool(r["es_casa"]) != despues["es_casa"] or r["start_day"] != despues["start_day"]
+            or r["end_day"] != despues.get("end_day") or r["altitud_m"] != despues["altitud_m"])
+
+
+def _aplicar_registrar_altitud(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+    despues = json.loads(row["despues_json"])
+    aid = db.crear_altitud_estancia(conn, row["person_id"], despues["es_casa"], despues["start_day"],
+                                     despues["altitud_m"], despues["fuente"], end_day=despues.get("end_day"),
+                                     viaje_ref=despues.get("viaje_ref"))
+    return {"altitud_id": aid}
+
+
+def _deshacer_registrar_altitud(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    aid = despues.get("altitud_id")
+    if aid is not None:
+        db.borrar_altitud_estancia(conn, row["person_id"], aid)
+
+
 # -- cerrar_periodo (this module calls db.actualizar_periodo directly, update-shaped like
 # registrar_medida) -----------------------------------------------------------------------------
 
@@ -1842,6 +1871,8 @@ TABLA: dict[str, _Accion] = {
                                 _aplicar_corregir_comida, _deshacer_corregir_comida),
     "registrar_checkin": _Accion(_sin_drift, _drift_deshacer_registrar_checkin, _aplicar_registrar_checkin,
                                   _deshacer_registrar_checkin),
+    "registrar_altitud": _Accion(_sin_drift, _drift_deshacer_registrar_altitud, _aplicar_registrar_altitud,
+                                  _deshacer_registrar_altitud),
     "marcar_periodo": _Accion(_sin_drift, _drift_deshacer_marcar_periodo, _aplicar_marcar_periodo,
                                _deshacer_marcar_periodo),
     "cerrar_periodo": _Accion(_drift_aplicar_cerrar_periodo, _drift_deshacer_cerrar_periodo,

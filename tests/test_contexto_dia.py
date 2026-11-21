@@ -280,6 +280,63 @@ class DesplazamientoTest(unittest.TestCase):
         self.assertNotIn("desplazamiento", out)
 
 
+# ---- altitud (BODY-MINUTO-ANALISIS-6-ALTITUD, ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2) -------------
+
+class AltitudTest(unittest.TestCase):
+    def test_a_stay_below_home_carries_the_signed_change(self):
+        conn = _conn(self)
+        db.crear_altitud_estancia(conn, PERSON_A, True, "2026-01-01", 2600, "manual")
+        db.crear_altitud_estancia(conn, PERSON_A, False, "2026-11-09", 1400, "manual", end_day="2026-11-13")
+        conn.commit()
+        out = contexto_dia.contexto_dias(conn, PERSON_A, "2026-11-10", "2026-11-10")["2026-11-10"]
+        self.assertEqual(out["altitud"], {"altitud_m": 1400, "casa_m": 2600, "cambio_m": -1200, "fuente": "manual"})
+
+    def test_a_stay_above_home_carries_a_positive_change(self):
+        conn = _conn(self)
+        db.crear_altitud_estancia(conn, PERSON_A, True, "2026-01-01", 300, "manual")
+        db.crear_altitud_estancia(conn, PERSON_A, False, "2026-11-09", 2100, "manual", end_day="2026-11-13")
+        conn.commit()
+        out = contexto_dia.contexto_dias(conn, PERSON_A, "2026-11-10", "2026-11-10")["2026-11-10"]
+        self.assertEqual(out["altitud"]["cambio_m"], 1800)
+
+    def test_no_trip_and_a_home_row_means_at_home_with_zero_change(self):
+        conn = _conn(self)
+        db.crear_altitud_estancia(conn, PERSON_A, True, "2026-01-01", 800, "manual")
+        conn.commit()
+        out = contexto_dia.contexto_dias(conn, PERSON_A, "2026-11-10", "2026-11-10")["2026-11-10"]
+        self.assertEqual(out["altitud"], {"altitud_m": 800, "casa_m": 800, "cambio_m": 0, "fuente": "manual"})
+
+    def test_a_trip_day_with_no_stay_row_carries_no_altitud_key(self):
+        conn = _conn(self)
+        db.crear_altitud_estancia(conn, PERSON_A, True, "2026-01-01", 800, "manual")
+        _viaje(conn, PERSON_A, "v1", "2026-11-09", "2026-11-13")
+        conn.commit()
+        out = contexto_dia.contexto_dias(conn, PERSON_A, "2026-11-10", "2026-11-10")["2026-11-10"]
+        self.assertNotIn("altitud", out)
+
+    def test_no_home_row_at_all_carries_no_altitud_key(self):
+        conn = _conn(self)
+        db.crear_altitud_estancia(conn, PERSON_A, False, "2026-11-09", 1400, "manual", end_day="2026-11-13")
+        conn.commit()
+        out = contexto_dia.contexto_dias(conn, PERSON_A, "2026-11-10", "2026-11-10")["2026-11-10"]
+        self.assertNotIn("altitud", out)
+
+    def test_another_persons_altitude_rows_are_never_used(self):
+        conn = _conn(self)
+        db.crear_altitud_estancia(conn, PERSON_B, True, "2026-01-01", 800, "manual")
+        conn.commit()
+        out = contexto_dia.contexto_dias(conn, PERSON_A, "2026-11-10", "2026-11-10")["2026-11-10"]
+        self.assertNotIn("altitud", out)
+
+    def test_a_night_takes_its_evening_days_own_altitud(self):
+        conn = _conn(self)
+        db.crear_altitud_estancia(conn, PERSON_A, True, "2026-01-01", 2600, "manual")
+        db.crear_altitud_estancia(conn, PERSON_A, False, "2026-11-10", 300, "manual", end_day="2026-11-10")
+        conn.commit()
+        out = contexto_dia.contexto_noche(conn, PERSON_A, "2026-11-11")
+        self.assertEqual(out["altitud"]["cambio_m"], -2300)
+
+
 # ---- statement count, bounded and independent of the range's length --------------------------------
 
 class StatementCountTest(unittest.TestCase):
@@ -292,9 +349,10 @@ class StatementCountTest(unittest.TestCase):
         self.assertEqual(n7, n90)
         # One bulk statement per source table: shift (bloques_noche), shift (day->kind), viaje_lugares,
         # period (cached per connection, this call's own first read), activity, recuperacion_actividad,
-        # daily_metric_efectiva (alcohol_g), daily_metric_efectiva (commute, BODY-MINUTO-ANALISIS-7) --
-        # 8, named here as the ceiling this test guards.
-        self.assertLessEqual(n7, 8, f"contexto_dias cost {n7} statements, over its named ceiling of 8")
+        # daily_metric_efectiva (alcohol_g), daily_metric_efectiva (commute, BODY-MINUTO-ANALISIS-7),
+        # altitud_estancia (BODY-MINUTO-ANALISIS-6-ALTITUD, ruling 2's own "one query for the range")
+        # -- 9, named here as the ceiling this test guards.
+        self.assertLessEqual(n7, 9, f"contexto_dias cost {n7} statements, over its named ceiling of 9")
 
 
 # ---- contexto_noche: the night takes the evening's own context -------------------------------------
@@ -353,7 +411,8 @@ class CensusTest(unittest.TestCase):
     def test_every_context_key_the_module_can_emit_is_named(self):
         self.assertEqual(
             contexto_dia.CONTEXT_KEYS,
-            ("turno", "viaje", "periodos", "carga", "alcohol_g", "desplazamiento", "comida_antes_de_dormir"),
+            ("turno", "viaje", "periodos", "carga", "alcohol_g", "desplazamiento", "comida_antes_de_dormir",
+             "altitud"),
         )
 
     def test_a_rich_fixture_emits_exactly_the_named_keys(self):
@@ -370,6 +429,8 @@ class CensusTest(unittest.TestCase):
         conn.commit()
 
         dia = contexto_dia.contexto_dias(conn, PERSON_A, "2026-11-10", "2026-11-10")["2026-11-10"]
+        # No home row in this fixture, so "altitud" stays out -- a day inside a 'viaje' trip
+        # (v1 above) with no stay row of its own carries no altitud key either way.
         self.assertEqual(set(dia), {"turno", "viaje", "periodos", "carga", "alcohol_g", "desplazamiento"})
 
         noche = contexto_dia.contexto_noche(conn, PERSON_A, "2026-11-11")

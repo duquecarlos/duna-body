@@ -234,6 +234,7 @@ def _argumentos(ids: dict) -> dict:
         "proponer_practica": {"titulo": "Práctica conformidad", "fuente": "actividad",
                                "regla": {"tipos": ["running"]}},
         "corregir_despertar": {"fecha": ids["dia_sueno"], "tipo": "levantado", "hora": "07:00"},
+        "registrar_altitud": {"es_casa": True, "start_day": "2020-05-20", "altitud_m": 1200},
     }
 
 
@@ -250,7 +251,7 @@ def _tabla_conteos(conn) -> dict[str, int]:
 
 class ConformidadTestCase(unittest.TestCase):
     """Shared setUp for every clause (2) test: one fresh database, the full demo seed, and the
-    32-tool arguments table built from it."""
+    35-tool arguments table built from it."""
 
     def setUp(self):
         self.conn, self.orig = _reset_db()

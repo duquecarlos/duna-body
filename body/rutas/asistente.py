@@ -677,6 +677,27 @@ def _tarjeta_proponer_objetivo_nutriente(t: T, defs: dict, despues: dict, antes_
     return None, despues_txt, None
 
 
+def _tarjeta_registrar_altitud(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4: "Casa: <m> m desde <fecha>" for a home row, or
+    "Estancia: <m> m, <desde>-<hasta> (<+/-cambio> m vs casa)" for a stay -- the signed CHANGE
+    against this person's own home, read here (db.altitud_casa_en) from the home row covering
+    start_day; never a place name."""
+    if despues["es_casa"]:
+        despues_txt = t("asistente.propuesta.altitud_casa", m=despues["altitud_m"], fecha=despues["start_day"])
+        return None, despues_txt, None
+    hasta = despues.get("end_day") or t("asistente.propuesta.altitud_sin_fin")
+    casa = db.altitud_casa_en(conn, person_id, despues["start_day"])
+    if casa is None:
+        despues_txt = t("asistente.propuesta.altitud_estancia_sin_casa", m=despues["altitud_m"],
+                         desde=despues["start_day"], hasta=hasta)
+        return None, despues_txt, None
+    cambio = despues["altitud_m"] - casa["altitud_m"]
+    cambio_txt = f"+{cambio}" if cambio > 0 else str(cambio)
+    despues_txt = t("asistente.propuesta.altitud_estancia", m=despues["altitud_m"], desde=despues["start_day"],
+                     hasta=hasta, cambio=cambio_txt)
+    return None, despues_txt, None
+
+
 def _tarjeta_marcar_periodo(t: T, defs: dict, despues: dict, antes_json: dict | None, conn, person_id: int) -> tuple:
     despues_txt = _periodo_txt(t, despues["kind"], despues["start_day"], despues.get("end_day"),
                                 despues.get("note"))
@@ -1023,6 +1044,7 @@ TARJETAS = {
     "registrar_comida": _tarjeta_registrar_comida,
     "corregir_comida": _tarjeta_corregir_comida,
     "registrar_checkin": _tarjeta_registrar_checkin,
+    "registrar_altitud": _tarjeta_registrar_altitud,
     "marcar_periodo": _tarjeta_marcar_periodo,
     "cerrar_periodo": _tarjeta_cerrar_periodo,
     "corregir_periodo": _tarjeta_corregir_periodo,

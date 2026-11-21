@@ -192,6 +192,10 @@ REGISTRY: tuple[TableSpec, ...] = (
     TableSpec("recuperacion_actividad",
               match_cols=("person_id", "activity_source", "activity_source_id", "modelo_version")),
     TableSpec("turno_fc", match_cols=("person_id", "day", "modelo_version")),
+    # BODY-MINUTO-ANALISIS-6-ALTITUD (ORCH-CARLOS-DELEGATES-TIER-1-1): one row per home/stay
+    # stretch -- an altitude and dates only, matched by its own natural key (person_id, es_casa,
+    # start_day) since home rows never share a start_day with each other, nor do stay rows.
+    TableSpec("altitud_estancia", match_cols=("person_id", "es_casa", "start_day")),
     TableSpec("checkin", match_cols=None, id_exported=True),
     TableSpec("checkin_nota", match_cols=("id",), own_id_from="checkin"),
     # Explicitly shared with a household (BODY-HOGAR-COMPARTIR-1) -- every row names another

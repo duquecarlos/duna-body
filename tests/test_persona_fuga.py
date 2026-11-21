@@ -401,6 +401,12 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
         "INSERT INTO lugares_sync (person_id, intento_at, ok_at, motivo) VALUES (?, ?, ?, NULL)",
         (person_id, f"{DAYS[-1]}T07:30:00+00:00", f"{DAYS[-1]}T07:30:00+00:00"),
     )
+    # BODY-MINUTO-ANALISIS-6-ALTITUD (ORCH-CARLOS-DELEGATES-TIER-1-1): altitud_estancia is
+    # person-owned (its own person_id column, same census treatment as viaje_lugares above) -- no
+    # marker needed, the census only checks export/delete-all coverage, and its columns (an
+    # altitude, two dates) carry nothing a screen or export could leak between A and B beyond the
+    # generic row-count check.
+    db.crear_altitud_estancia(conn, person_id, True, DAYS[0], 800 + person_id, "manual")
     conn.commit()
 
     return {

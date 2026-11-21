@@ -230,6 +230,8 @@ _PARAM_COMPARAR_NOCHE = {
                 "comida_tarde_min_max": {"type": "integer"},
                 "con_alcohol": {"type": "boolean"},
                 "con_desplazamiento": {"type": "boolean"},
+                "altitud_cambio_min": {"type": "integer"},
+                "altitud_cambio_max": {"type": "integer"},
             },
             "additionalProperties": False,
         },
@@ -677,6 +679,29 @@ _PARAM_MARCAR_PERIODO = {
         "zonas": {"type": "array", "items": {"type": "string", "enum": list(anatomia.CATEGORIA_ENUM)}},
     },
     "required": ["kind", "start_day"],
+    "additionalProperties": False,
+}
+# BODY-MINUTO-ANALISIS-6-ALTITUD (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4): no place name, no
+# coordinates -- only es_casa/start_day/end_day/altitud_m/viaje_ref. `fuente` is never a model-
+# facing field: this tool's own wrapper always records 'asistente'.
+_PARAM_REGISTRAR_ALTITUD = {
+    "type": "object",
+    "properties": {
+        "es_casa": {"type": "boolean"},
+        "start_day": {"type": "string", "format": "date"},
+        "end_day": {"type": "string", "format": "date"},
+        "altitud_m": {"type": "integer", "minimum": -500, "maximum": 9000},
+        "viaje_ref": {"type": "string"},
+    },
+    "required": ["es_casa", "start_day", "altitud_m"],
+    "additionalProperties": False,
+}
+_PARAM_LEER_ALTITUDES = {
+    "type": "object",
+    "properties": {
+        "desde": {"type": "string", "format": "date"},
+        "hasta": {"type": "string", "format": "date"},
+    },
     "additionalProperties": False,
 }
 _PARAM_CERRAR_PERIODO = {
@@ -1740,9 +1765,12 @@ def _comparar_noche(conn: sqlite3.Connection, person_id: int, fecha: str, desde:
         except ValueError:
             raise ToolError("'desde' debe ser una fecha ISO (AAAA-MM-DD)")
     if grupo:
-        extra = sorted(set(grupo) - set(noche_rasgos.GRUPO_CLAVES))
+        extra = sorted(set(grupo) - set(noche_rasgos.GRUPO_FILTRO_CLAVES))
         if extra:
             raise ToolError(f"'grupo' tiene clave(s) no reconocida(s): {extra}")
+        if ("altitud_cambio_min" in grupo and "altitud_cambio_max" in grupo
+                and grupo["altitud_cambio_min"] > grupo["altitud_cambio_max"]):
+            raise ToolError("'grupo.altitud_cambio_min' no puede ser mayor que 'grupo.altitud_cambio_max'")
     try:
         return noche_rasgos.comparar(conn, person_id, fecha, desde=desde, grupo=grupo)
     except noche_rasgos.SinDatos:
@@ -1790,9 +1818,12 @@ def _buscar_noches(conn: sqlite3.Connection, person_id: int, desde: str | None =
         if nombre not in noche_rasgos.RASGOS_CLAVES:
             raise ToolError(f"'rasgos' tiene un rasgo desconocido: {nombre!r}")
     if grupo:
-        extra = sorted(set(grupo) - set(noche_rasgos.GRUPO_CLAVES))
+        extra = sorted(set(grupo) - set(noche_rasgos.GRUPO_FILTRO_CLAVES))
         if extra:
             raise ToolError(f"'grupo' tiene clave(s) no reconocida(s): {extra}")
+        if ("altitud_cambio_min" in grupo and "altitud_cambio_max" in grupo
+                and grupo["altitud_cambio_min"] > grupo["altitud_cambio_max"]):
+            raise ToolError("'grupo.altitud_cambio_min' no puede ser mayor que 'grupo.altitud_cambio_max'")
 
     limite = limite if limite is not None else _BUSCAR_NOCHES_LIMITE_DEFECTO
     if not (1 <= limite <= _BUSCAR_NOCHES_LIMITE_MAX):
@@ -3385,6 +3416,72 @@ def _marcar_periodo(conn: sqlite3.Connection, person_id: int, conversacion_id: i
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
+def _registrar_altitud(conn: sqlite3.Connection, person_id: int, conversacion_id: int, es_casa: bool,
+                        start_day: str, altitud_m: int, end_day: str | None = None,
+                        viaje_ref: str | None = None) -> dict:
+    """Proposes recording one stretch's own altitude -- home (es_casa=True) or a stay away from
+    it (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1/4, second stage of BODY-MINUTO-ANALISIS-4-INV).
+    An altitude and dates only: never a place name, never coordinates. Insert-shaped, like
+    marcar_periodo: there is no 'before'. `fuente` is always 'asistente' here -- never a
+    model-facing field. Refused when it would overlap one of this person's own existing rows of
+    the SAME kind (home with home, stay with stay) -- db.validar_altitud_sin_solape is the one
+    validator both this proposal and its later apply (body/agente/propuestas.py's own
+    _aplicar_registrar_altitud) run against, so a conflict is caught here, before any proposal is
+    even created."""
+    if not isinstance(es_casa, bool):
+        raise ToolError("es_casa debe ser verdadero o falso")
+    _dia_no_futuro(conn, person_id, start_day)
+    if end_day is not None:
+        _dia_no_futuro(conn, person_id, end_day)
+        if end_day < start_day:
+            raise ToolError("end_day no puede ser anterior a start_day")
+    if not isinstance(altitud_m, int) or isinstance(altitud_m, bool) or not (-500 <= altitud_m <= 9000):
+        raise ToolError("altitud_m debe ser un entero entre -500 y 9000")
+    try:
+        db.validar_altitud_sin_solape(conn, person_id, es_casa, start_day, end_day)
+    except ValueError as e:
+        raise ToolError(e.args[0])
+    despues = {"es_casa": es_casa, "start_day": start_day, "end_day": end_day, "altitud_m": altitud_m,
+               "fuente": "asistente", "viaje_ref": viaje_ref}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "registrar_altitud", despues)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
+def _leer_altitudes(conn: sqlite3.Connection, person_id: int, desde: str | None = None,
+                     hasta: str | None = None) -> dict:
+    """This person's own home and stay rows overlapping [desde, hasta] (ORCH-CARLOS-DELEGATES-
+    TIER-1-1 ruling 4) -- an altitude and dates only, read through db.altitud_estancia_rango.
+    'desde' defaults to the same 365-day window comparar_noche/buscar_noches already use; an open
+    row (no end_day) shows regardless of how far back that default reaches."""
+    person = db.person(conn, person_id)
+    hoy = fechas.hoy_local(person)
+    if hasta is not None:
+        try:
+            hasta_d = date.fromisoformat(hasta)
+        except ValueError:
+            raise ToolError("'hasta' debe ser una fecha ISO (AAAA-MM-DD)")
+        if hasta_d > hoy:
+            raise ToolError("'hasta' no puede ser una fecha futura")
+    else:
+        hasta_d = hoy
+        hasta = hasta_d.isoformat()
+    if desde is not None:
+        try:
+            desde_d = date.fromisoformat(desde)
+        except ValueError:
+            raise ToolError("'desde' debe ser una fecha ISO (AAAA-MM-DD)")
+        if desde_d > hasta_d:
+            raise ToolError("'desde' no puede ser posterior a 'hasta'")
+    else:
+        desde = (hasta_d - timedelta(noche_rasgos.HISTORIA_DIAS_DEFECTO)).isoformat()
+    filas = db.altitud_estancia_rango(conn, person_id, desde, hasta)
+    return {"altitudes": [
+        {"id": f["id"], "es_casa": bool(f["es_casa"]), "start_day": f["start_day"], "end_day": f["end_day"],
+         "altitud_m": f["altitud_m"], "fuente": f["fuente"], "viaje_ref": f["viaje_ref"]}
+        for f in filas
+    ]}
+
+
 def _cerrar_periodo(conn: sqlite3.Connection, person_id: int, conversacion_id: int, period_id: int,
                      end_day: str) -> dict:
     """Proposes closing an open period, saying since when the person got better (BODY-PERIODO-1):
@@ -4085,8 +4182,10 @@ HERRAMIENTAS = [
                      "cuántas noches tuyas la tienen, los percentiles 25/50/75 y en qué percentil (0-100) "
                      "cae esta noche entre tus propias noches del rango -- 'desde' por defecto son los "
                      "últimos 365 días. Con 'grupo' (tras_turno, tras_turno_noche, viaje, periodo, "
-                     "comida_tarde_min_max, con_alcohol, con_desplazamiento) repite esos mismos cinco datos "
-                     "solo dentro de las "
+                     "comida_tarde_min_max, con_alcohol, con_desplazamiento, altitud_cambio_min/"
+                     "altitud_cambio_max -- este último agrupa por el CAMBIO de altitud frente a tu propia "
+                     "casa, en metros con signo, nunca la altitud absoluta sola) repite esos mismos cinco "
+                     "datos solo dentro de las "
                      "noches que comparten ese mismo contexto, por ejemplo 'las noches después de un turno "
                      "de noche' -- un grupo con menos de 5 noches no da percentiles, solo su propio conteo. "
                      "Nunca un dato crudo minuto a minuto ni una causa. Para UNA noche comparada con tu "
@@ -4103,8 +4202,9 @@ HERRAMIENTAS = [
                      "lista de objetos {rasgo, op, valor} -- op es uno de <, <=, >, >=, = -- sobre estas "
                      f"características, cada una con su unidad: {_RASGOS_BUSCAR_NOCHES_DESC}. Un rasgo o un "
                      "operador no reconocido se rechaza por su nombre, antes de leer nada. Con 'grupo' (los "
-                     "mismos siete datos que comparar_noche: tras_turno, tras_turno_noche, viaje, periodo, "
-                     "comida_tarde_min_max, con_alcohol, con_desplazamiento) solo cuentan las noches que "
+                     "mismos datos que comparar_noche: tras_turno, tras_turno_noche, viaje, periodo, "
+                     "comida_tarde_min_max, con_alcohol, con_desplazamiento, altitud_cambio_min/"
+                     "altitud_cambio_max) solo cuentan las noches que "
                      "además comparten ese "
                      "contexto -- se combina con 'filtros' como un Y, nunca un O. 'orden' ({rasgo, dir: "
                      "asc|desc}) ordena las noches que coinciden antes de aplicar 'limite' (por defecto "
@@ -4116,7 +4216,9 @@ HERRAMIENTAS = [
                      "antes de 'limite'), 'n_en_rango' y 'noches_sin_minutos_en_rango' (sin detalle minuto a "
                      "minuto -- nunca pueden cumplir un filtro de forma). Con 5 noches coincidentes o más, "
                      "'en_comun' da, por cada dato de contexto, qué fracción de las noches coincidentes lo "
-                     "lleva frente a qué fracción de todas las noches del rango lo lleva -- solo conteos y "
+                     "lleva frente a qué fracción de todas las noches del rango lo lleva -- para altitud_cambio "
+                     "además da qué fracción de las noches coincidentes bajó, se mantuvo igual o subió frente "
+                     "a tu propia casa -- solo conteos y "
                      "fracciones, nunca una causa. Para clasificar UNA noche frente a tu historia usa "
                      "comparar_noche; para el detalle crudo completo de una noche usa leer_noche; para una "
                      "ventana puntual dentro de una noche o un día usa leer_serie con paso='minuto'.",
@@ -4387,6 +4489,24 @@ HERRAMIENTAS = [
                      "lee un entrenamiento más liviano ahí como algo a propósito, nunca como una caída. No "
                      "lo marca: registra la propuesta para que la persona la apruebe en el chat.",
      "parametros": _PARAM_MARCAR_PERIODO, "funcion": _marcar_periodo},
+    {"nombre": "registrar_altitud", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone registrar la altitud de tu casa o de una estancia fuera de ella (de viaje, por "
+                     "ejemplo), para que las comparaciones de sueño puedan agruparse por el CAMBIO de altitud "
+                     "frente a tu propia casa -- bajar suele reducir el pulso en reposo y durante el sueño, "
+                     "subir suele subirlo. 'es_casa'=true registra desde cuándo vives a esa altitud (una "
+                     "mudanza es una nueva fila de casa, nunca reemplaza la anterior); 'es_casa'=false "
+                     "registra una estancia fuera, con 'end_day' si ya terminó. Solo metros y fechas -- nunca "
+                     "un nombre de lugar ni coordenadas, y nunca le pidas esos datos a la persona. Se rechaza "
+                     "si se superpone con otra fila ya registrada del mismo tipo (otra casa, u otra "
+                     "estancia). No lo guarda: registra la propuesta para que la persona la apruebe en el "
+                     "chat.",
+     "parametros": _PARAM_REGISTRAR_ALTITUD, "funcion": _registrar_altitud},
+    {"nombre": "leer_altitudes", "tipo": "lectura", "nivel": "ninguno",
+     "descripcion": "Tus propias filas de altitud -- casa y estancias -- en un rango de fechas ('desde'/"
+                     "'hasta', por defecto los últimos 365 días). Cada fila trae si es casa o estancia, sus "
+                     "fechas, la altitud en metros y de dónde viene el dato. Solo metros y fechas, nunca un "
+                     "nombre de lugar ni coordenadas.",
+     "parametros": _PARAM_LEER_ALTITUDES, "funcion": _leer_altitudes},
     {"nombre": "cerrar_periodo", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone cerrar un período abierto, diciendo desde cuándo mejoró la persona. No lo "
                      "cierra: registra la propuesta para que la persona la apruebe en el chat.",
