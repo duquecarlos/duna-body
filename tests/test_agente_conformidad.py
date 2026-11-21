@@ -47,12 +47,13 @@ def _actividad(conn, source: str, source_id: str, day: str, tipo: str = "strengt
 
 
 def _seed_todo(conn) -> dict:
-    """Every piece of demo data the 32 `propuesta` tools' valid arguments reference (BODY-HOGAR-
+    """Every piece of demo data the `propuesta` tools' valid arguments reference (BODY-HOGAR-
     ESCRIBE-1: extended from 27 with anotar_sesion; BODY-CORREGIR-MEDIDA-ENTRENO-1-W: extended from
     28 with corregir_entreno; BODY-DESPLAZAMIENTO-ASISTENTE-1-W: extended from 29 with
     importar_desplazamiento; BODY-HISTORIA-VIDA-2: extended from 30 with proponer_practica;
-    BODY-DESPERTAR-REAL-4: extended from 31 with corregir_despertar) -- real production writers
-    only (`goals`, `db.*`), never a hand-typed row for a table one of those writers owns."""
+    BODY-DESPERTAR-REAL-4: extended from 31 with corregir_despertar; BODY-PLAN-FASES-2: extended
+    with corregir_fase, its own phase written through db.crear_fase_horizonte) -- real production
+    writers only (`goals`, `db.*`), never a hand-typed row for a table one of those writers owns."""
     ids: dict = {}
 
     gid = goals.propose(conn, 1, "Bajar FC en reposo", "2020-01-01", metric_key="resting_hr",
@@ -158,6 +159,12 @@ def _seed_todo(conn) -> dict:
         (ids["plan_goal_id"],)).fetchone()
     ids["meta_semanal_id"] = meta["id"]
 
+    # corregir_fase (BODY-PLAN-FASES-2): a phase of the seeded plan, written through db.* directly
+    # like every other hand-typed row in this function -- never through a propuesta of its own.
+    ids["fase_id"] = db.crear_fase_horizonte(conn, 1, ids["plan_goal_id"], "Fase conformidad",
+                                              "2020-01-01", "2020-01-31")
+    conn.commit()
+
     # anotar_sesion: a real PLANNED session row (plan table), created and applied through the
     # ordinary planear_entreno propose/apply flow -- never a hand-typed row, same reasoning as the
     # plan-goal seeding just above.
@@ -220,6 +227,7 @@ def _argumentos(ids: dict) -> dict:
         "ampliar_plan": {"goal_id": ids["plan_goal_id"],
                           "semanas": [{"week_start": ids["monday_extra"], "titulo": "Semana extra"}]},
         "corregir_meta_plan": {"meta_id": ids["meta_semanal_id"], "valor": 2},
+        "corregir_fase": {"fase_id": ids["fase_id"], "titulo": "Fase corregida"},
         "anotar_sesion": {"plan_id": ids["plan_id"], "nota": "Nota de conformidad"},
         "corregir_entreno": {"dia": ids["dia_a1"], "orden": 1, "reps": 9},
         "importar_desplazamiento": {"contenido": _commute_csv()},

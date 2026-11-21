@@ -816,6 +816,10 @@ _PLAN_MAX_REGLAS = 20
 _PLAN_MAX_SEMANAS = 104
 _PLAN_MAX_METAS_SEMANALES = 300
 _PLAN_MAX_CHECKPOINTS = 30
+# BODY-PLAN-FASES-2 ruling 3: a plan's own phases, same bounded-list reasoning as the caps above --
+# generous for a real plan (Grecia/Kilimanjaro/El Cocuy run to a handful of training blocks), never
+# unbounded.
+_PLAN_MAX_FASES = 20
 
 _PARAM_META_FINAL_PLAN = {
     "type": "object",
@@ -834,8 +838,19 @@ _PARAM_REGLA_PLAN = {
         "contexto_valor": {"type": ["string", "null"]},
         "texto": {"type": "string"},
         "chequeo": {"type": ["object", "null"]},
+        "fase_index": {"type": "integer"},
     },
     "required": ["contexto", "texto"],
+}
+_PARAM_FASE_PLAN = {
+    "type": "object",
+    "properties": {
+        "titulo": {"type": "string"},
+        "start_day": {"type": "string", "format": "date"},
+        "end_day": {"type": "string", "format": "date"},
+        "nota": {"type": "string"},
+    },
+    "required": ["titulo", "start_day", "end_day"],
 }
 _PARAM_SEMANA_PLAN = {
     "type": "object",
@@ -876,6 +891,7 @@ _PARAM_PROPONER_PLAN = {
         "deadline": {"type": "string", "format": "date"},
         "metas_finales": {"type": "array", "items": _PARAM_META_FINAL_PLAN, "maxItems": _PLAN_MAX_METAS_FINALES},
         "habitos": {"type": "array", "items": _PARAM_HABITO_PLAN, "maxItems": _PLAN_MAX_HABITOS},
+        "fases": {"type": "array", "items": _PARAM_FASE_PLAN, "maxItems": _PLAN_MAX_FASES},
         "reglas": {"type": "array", "items": _PARAM_REGLA_PLAN, "maxItems": _PLAN_MAX_REGLAS},
         "semanas": {"type": "array", "items": _PARAM_SEMANA_PLAN, "maxItems": _PLAN_MAX_SEMANAS},
         "metas_semanales": {"type": "array", "items": _PARAM_META_SEMANAL_PLAN,
@@ -889,6 +905,7 @@ _PARAM_AMPLIAR_PLAN = {
     "type": "object",
     "properties": {
         "goal_id": {"type": "integer"},
+        "fases": {"type": "array", "items": _PARAM_FASE_PLAN, "maxItems": _PLAN_MAX_FASES},
         "reglas": {"type": "array", "items": _PARAM_REGLA_PLAN, "maxItems": _PLAN_MAX_REGLAS},
         "semanas": {"type": "array", "items": _PARAM_SEMANA_PLAN, "maxItems": _PLAN_MAX_SEMANAS},
         "metas_semanales": {"type": "array", "items": _PARAM_META_SEMANAL_PLAN,
@@ -906,6 +923,19 @@ _PARAM_CORREGIR_META_PLAN = {
         "nota": {"type": "string"},
     },
     "required": ["meta_id", "valor"],
+    "additionalProperties": False,
+}
+_PARAM_CORREGIR_FASE = {
+    "type": "object",
+    "properties": {
+        "fase_id": {"type": "integer"},
+        "titulo": {"type": "string"},
+        "start_day": {"type": "string", "format": "date"},
+        "end_day": {"type": "string", "format": "date"},
+        "nota": {"type": ["string", "null"]},
+        "quitar": {"type": "boolean"},
+    },
+    "required": ["fase_id"],
     "additionalProperties": False,
 }
 _PARAM_LEER_PLAN = {
@@ -2204,7 +2234,34 @@ def _validar_metas_finales_plan(conn: sqlite3.Connection, metas_finales) -> list
     return out
 
 
-def _validar_reglas_plan(conn: sqlite3.Connection, reglas) -> list[dict]:
+def _validar_fases_plan(fases, start_day: str, deadline: str) -> list[dict]:
+    """BODY-PLAN-FASES-2 ruling 3: the plan's own phases, in the order the person gave them --
+    that order IS what `reglas[i].fase_index` points into, so `db.validar_fases_horizonte` (the
+    ONE overlap/bounds check, never duplicated here) runs against this exact list before anything
+    is proposed."""
+    if fases is None:
+        return []
+    if not isinstance(fases, list) or len(fases) > _PLAN_MAX_FASES:
+        raise ToolError(f"fases: lista inválida o con más de {_PLAN_MAX_FASES} elementos")
+    out = []
+    for i, f in enumerate(fases):
+        if not isinstance(f, dict):
+            raise ToolError(f"fases[{i}]: debe ser un objeto")
+        titulo = (f.get("titulo") or "").strip()
+        if not titulo:
+            raise ToolError(f"fases[{i}].titulo: obligatorio")
+        start_f, end_f = f.get("start_day"), f.get("end_day")
+        if not isinstance(start_f, str) or not isinstance(end_f, str):
+            raise ToolError(f"fases[{i}]: start_day/end_day obligatorios")
+        out.append({"titulo": titulo, "start_day": start_f, "end_day": end_f, "nota": f.get("nota")})
+    try:
+        db.validar_fases_horizonte(out, start_day, deadline)
+    except ValueError as e:
+        raise ToolError(e.args[0])
+    return out
+
+
+def _validar_reglas_plan(conn: sqlite3.Connection, reglas, n_fases: int = 0) -> list[dict]:
     if reglas is None:
         return []
     if not isinstance(reglas, list) or len(reglas) > _PLAN_MAX_REGLAS:
@@ -2226,7 +2283,12 @@ def _validar_reglas_plan(conn: sqlite3.Connection, reglas) -> list[dict]:
             horizonte.validar_chequeo(chequeo)
         except ValueError as e:
             raise ToolError(f"reglas[{i}].{e.args[0]}")
-        out.append({"contexto": contexto, "contexto_valor": contexto_valor, "texto": texto, "chequeo": chequeo})
+        fase_index = r.get("fase_index")
+        if fase_index is not None:
+            if not isinstance(fase_index, int) or isinstance(fase_index, bool) or not (0 <= fase_index < n_fases):
+                raise ToolError(f"reglas[{i}].fase_index fuera de rango: {fase_index!r}")
+        out.append({"contexto": contexto, "contexto_valor": contexto_valor, "texto": texto, "chequeo": chequeo,
+                    "fase_index": fase_index})
     return out
 
 
@@ -3678,11 +3740,14 @@ def _proponer_meta(conn: sqlite3.Connection, person_id: int, conversacion_id: in
 
 def _proponer_plan(conn: sqlite3.Connection, person_id: int, conversacion_id: int, titulo: str, start_day: str,
                     deadline: str, why: str | None = None, metas_finales: list | None = None,
-                    habitos: list | None = None, reglas: list | None = None, semanas: list | None = None,
-                    metas_semanales: list | None = None, checkpoints: list | None = None) -> dict:
+                    habitos: list | None = None, fases: list | None = None, reglas: list | None = None,
+                    semanas: list | None = None, metas_semanales: list | None = None,
+                    checkpoints: list | None = None) -> dict:
     """Ruling 1: a whole plan is ONE card. Validates every part BEFORE the proposal is stored
     (every list defaults to empty), so a bad plan is a ToolError, never a card the person could
-    tap Aplicar on. Apply writes all of it in one transaction (`db.crear_plan_horizonte`)."""
+    tap Aplicar on. Apply writes all of it in one transaction (`db.crear_plan_horizonte`).
+    BODY-PLAN-FASES-2 ruling 3: fases are validated FIRST, so reglas[i].fase_index can be checked
+    against their own count."""
     titulo = (titulo or "").strip()
     if not titulo:
         raise ToolError("falta el título del plan")
@@ -3693,11 +3758,13 @@ def _proponer_plan(conn: sqlite3.Connection, person_id: int, conversacion_id: in
         raise ToolError("start_day/deadline deben ser fechas ISO (AAAA-MM-DD)")
     if deadline <= start_day:
         raise ToolError("deadline debe ser posterior a start_day")
+    fases_v = _validar_fases_plan(fases, start_day, deadline)
     despues = {
         "titulo": titulo, "why": (why or "").strip() or None, "start_day": start_day, "deadline": deadline,
         "metas_finales": _validar_metas_finales_plan(conn, metas_finales),
         "habitos": _validar_habitos_plan(conn, person_id, habitos),
-        "reglas": _validar_reglas_plan(conn, reglas),
+        "fases": fases_v,
+        "reglas": _validar_reglas_plan(conn, reglas, n_fases=len(fases_v)),
         "semanas": _validar_semanas_plan(semanas, start_day, deadline),
         "metas_semanales": _validar_metas_semanales_plan(conn, metas_semanales, start_day, deadline),
         "checkpoints": _validar_checkpoints_plan(conn, checkpoints, start_day, deadline),
@@ -3707,17 +3774,30 @@ def _proponer_plan(conn: sqlite3.Connection, person_id: int, conversacion_id: in
 
 
 def _ampliar_plan(conn: sqlite3.Connection, person_id: int, conversacion_id: int, goal_id: int,
-                   reglas: list | None = None, semanas: list | None = None, metas_semanales: list | None = None,
-                   checkpoints: list | None = None) -> dict:
+                   fases: list | None = None, reglas: list | None = None, semanas: list | None = None,
+                   metas_semanales: list | None = None, checkpoints: list | None = None) -> dict:
     """Ruling 4: insert-only additions to an existing owned horizon. A duplicate (week, medida)
-    against an existing vigente weekly line is refused, naming `corregir_meta_plan` instead."""
+    against an existing vigente weekly line is refused, naming `corregir_meta_plan` instead.
+    BODY-PLAN-FASES-2 ruling 3: a new phase must also clear the plan's EXISTING phases (never just
+    the other new ones) -- `_validar_fases_plan` checks the new list is internally sound, then this
+    checks it against what the plan already has, through the same ONE validator. reglas[i].fase_index
+    names a position in THIS call's own fases list only, never an older phase (db.ampliar_plan_horizonte's
+    own rule)."""
     goal = conn.execute(
         "SELECT start_day, deadline FROM goal WHERE id = ? AND person_id = ? AND kind = 'milestone'",
         (goal_id, person_id)).fetchone()
     if goal is None:
         raise ToolError(f"plan desconocido: {goal_id!r}")
     start_day, deadline = goal["start_day"], goal["deadline"]
-    reglas_v = _validar_reglas_plan(conn, reglas)
+    fases_v = _validar_fases_plan(fases, start_day, deadline)
+    if fases_v:
+        existentes_fases = [dict(f) for f in conn.execute(
+            "SELECT titulo, start_day, end_day FROM horizonte_fase WHERE horizonte_goal_id = ?", (goal_id,))]
+        try:
+            db.validar_fases_horizonte(existentes_fases + fases_v, start_day, deadline)
+        except ValueError as e:
+            raise ToolError(e.args[0])
+    reglas_v = _validar_reglas_plan(conn, reglas, n_fases=len(fases_v))
     semanas_v = _validar_semanas_plan(semanas, start_day, deadline)
     existentes = {(r["week_start"], r["medida"]) for r in conn.execute(
         "SELECT week_start, medida FROM horizonte_meta_semanal WHERE horizonte_goal_id = ? AND vigente = 1",
@@ -3725,9 +3805,9 @@ def _ampliar_plan(conn: sqlite3.Connection, person_id: int, conversacion_id: int
     metas_semanales_v = _validar_metas_semanales_plan(conn, metas_semanales, start_day, deadline,
                                                         existentes=existentes)
     checkpoints_v = _validar_checkpoints_plan(conn, checkpoints, start_day, deadline)
-    if not (reglas_v or semanas_v or metas_semanales_v or checkpoints_v):
+    if not (fases_v or reglas_v or semanas_v or metas_semanales_v or checkpoints_v):
         raise ToolError("no hay nada para añadir")
-    despues = {"goal_id": goal_id, "reglas": reglas_v, "semanas": semanas_v,
+    despues = {"goal_id": goal_id, "fases": fases_v, "reglas": reglas_v, "semanas": semanas_v,
                "metas_semanales": metas_semanales_v, "checkpoints": checkpoints_v}
     registro = propuestas.crear(conn, person_id, conversacion_id, "ampliar_plan", despues, objetivo_id=goal_id)
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
@@ -3760,6 +3840,51 @@ def _corregir_meta_plan(conn: sqlite3.Connection, person_id: int, conversacion_i
                "sentido": fila["sentido"], "week_start": fila["week_start"],
                "horizonte_goal_id": fila["horizonte_goal_id"]}
     registro = propuestas.crear(conn, person_id, conversacion_id, "corregir_meta_plan", despues,
+                                 objetivo_id=fila["horizonte_goal_id"], antes=antes)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
+def _corregir_fase(conn: sqlite3.Connection, person_id: int, conversacion_id: int, fase_id: int,
+                    titulo: str | None = None, start_day: str | None = None, end_day: str | None = None,
+                    nota: str | None = None, quitar: bool = False) -> dict:
+    """BODY-PLAN-FASES-2 ruling 3: the same update-shaped pattern as `_corregir_meta_plan`, except
+    a phase's dates carry no append-only history of their own (`db.actualizar_fase_horizonte` is a
+    plain UPDATE) -- `antes` carries the full row, so undo restores it exactly either way.
+    `quitar` (never combined with a field edit) detaches this plan's rules from the phase rather
+    than deleting them; the phase itself is removed, not soft-dropped, since nothing else of the
+    person's own history ever points at a phase id the way it points at a goal or a habit."""
+    fila = conn.execute(
+        "SELECT horizonte_goal_id, titulo, start_day, end_day, nota, orden, creado_en FROM horizonte_fase "
+        "WHERE id = ? AND person_id = ?", (fase_id, person_id)).fetchone()
+    if fila is None:
+        raise ToolError(f"fase desconocida: {fase_id!r}")
+    antes = {"fase_id": fase_id, "horizonte_goal_id": fila["horizonte_goal_id"], "titulo": fila["titulo"],
+             "start_day": fila["start_day"], "end_day": fila["end_day"], "nota": fila["nota"],
+             "orden": fila["orden"], "creado_en": fila["creado_en"]}
+    if quitar:
+        if titulo is not None or start_day is not None or end_day is not None or nota is not None:
+            raise ToolError("quitar no se combina con otros campos")
+        despues = {"fase_id": fase_id, "horizonte_goal_id": fila["horizonte_goal_id"], "quitar": True}
+    else:
+        nuevo_titulo = (titulo or fila["titulo"]).strip() if titulo is not None else fila["titulo"]
+        nuevo_inicio = start_day if start_day is not None else fila["start_day"]
+        nuevo_fin = end_day if end_day is not None else fila["end_day"]
+        nueva_nota = nota if nota is not None else fila["nota"]
+        if not nuevo_titulo:
+            raise ToolError("titulo: no puede quedar vacío")
+        hermanas = [dict(f) for f in conn.execute(
+            "SELECT titulo, start_day, end_day FROM horizonte_fase WHERE horizonte_goal_id = ? AND id != ?",
+            (fila["horizonte_goal_id"], fase_id))]
+        hermanas.append({"titulo": nuevo_titulo, "start_day": nuevo_inicio, "end_day": nuevo_fin})
+        goal = conn.execute("SELECT start_day, deadline FROM goal WHERE id = ?",
+                            (fila["horizonte_goal_id"],)).fetchone()
+        try:
+            db.validar_fases_horizonte(hermanas, goal["start_day"], goal["deadline"])
+        except ValueError as e:
+            raise ToolError(e.args[0])
+        despues = {"fase_id": fase_id, "horizonte_goal_id": fila["horizonte_goal_id"], "titulo": nuevo_titulo,
+                   "start_day": nuevo_inicio, "end_day": nuevo_fin, "nota": nueva_nota, "quitar": False}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "corregir_fase", despues,
                                  objetivo_id=fila["horizonte_goal_id"], antes=antes)
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
@@ -4032,20 +4157,27 @@ HERRAMIENTAS = [
                      "No la cambia: registra la propuesta para que la persona la apruebe en el chat.",
      "parametros": _PARAM_PROPONER_CAMBIO_META, "funcion": _proponer_cambio_meta},
     {"nombre": "proponer_plan", "tipo": "propuesta", "nivel": "ninguno",
-     "descripcion": "Propone un plan completo: metas finales, hábitos, reglas, semanas, metas semanales y "
-                     "checkpoints, todo en una sola tarjeta. No crea nada: registra la propuesta para que la "
-                     "persona la apruebe en el chat; si la aprueba, todo se guarda junto o nada se guarda. "
-                     "En metas_semanales y en los criterios de un checkpoint, el valor de una medida de reloj "
-                     "(hora_acostarse, hora_levantarse) se escribe \"HH:MM\" en formato 24 horas, por ejemplo "
-                     "\"23:00\"; el valor de cualquier otra medida es un número.",
+     "descripcion": "Propone un plan completo: metas finales, hábitos, fases, reglas, semanas, metas "
+                     "semanales y checkpoints, todo en una sola tarjeta. No crea nada: registra la propuesta "
+                     "para que la persona la apruebe en el chat; si la aprueba, todo se guarda junto o nada "
+                     "se guarda. Una fase es un bloque del plan con su propio título y fechas (por ejemplo "
+                     "'Base', 'Pico'); no se solapan entre sí y quedan dentro de las fechas del plan. Una "
+                     "regla puede pertenecer a una fase con fase_index: la posición de esa fase (0, 1, 2...) "
+                     "dentro de la lista fases de esta misma llamada, nunca un id; sin fase_index la regla "
+                     "aplica en todo el plan. En metas_semanales y en los criterios de un checkpoint, el "
+                     "valor de una medida de reloj (hora_acostarse, hora_levantarse) se escribe \"HH:MM\" en "
+                     "formato 24 horas, por ejemplo \"23:00\"; el valor de cualquier otra medida es un número.",
      "parametros": _PARAM_PROPONER_PLAN, "funcion": _proponer_plan},
     {"nombre": "ampliar_plan", "tipo": "propuesta", "nivel": "ninguno",
-     "descripcion": "Propone añadir reglas, semanas, metas semanales o checkpoints nuevos a un plan que la "
-                     "persona ya tiene. Para cambiar el valor de una meta semanal que ya existe usa "
-                     "corregir_meta_plan, no esta. No añade nada: registra la propuesta para que la persona "
-                     "la apruebe en el chat. En metas_semanales y en los criterios de un checkpoint, el valor "
-                     "de una medida de reloj (hora_acostarse, hora_levantarse) se escribe \"HH:MM\" en formato "
-                     "24 horas, por ejemplo \"23:00\"; el valor de cualquier otra medida es un número.",
+     "descripcion": "Propone añadir fases, reglas, semanas, metas semanales o checkpoints nuevos a un plan "
+                     "que la persona ya tiene. Para cambiar el valor de una meta semanal que ya existe usa "
+                     "corregir_meta_plan, no esta; para cambiar o quitar una fase que ya existe usa "
+                     "corregir_fase. No añade nada: registra la propuesta para que la persona la apruebe en "
+                     "el chat. Una regla puede unirse a una fase NUEVA de esta misma llamada con fase_index "
+                     "(su posición en la lista fases de esta llamada); no puede unirse a una fase que el "
+                     "plan ya tenía. En metas_semanales y en los criterios de un checkpoint, el valor de una "
+                     "medida de reloj (hora_acostarse, hora_levantarse) se escribe \"HH:MM\" en formato 24 "
+                     "horas, por ejemplo \"23:00\"; el valor de cualquier otra medida es un número.",
      "parametros": _PARAM_AMPLIAR_PLAN, "funcion": _ampliar_plan},
     {"nombre": "corregir_meta_plan", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone corregir el valor de una meta semanal de un plan (por ejemplo, bajar la meta de "
@@ -4054,6 +4186,12 @@ HERRAMIENTAS = [
                      "(hora_acostarse, hora_levantarse), valor se escribe \"HH:MM\" en formato 24 horas, por "
                      "ejemplo \"23:00\"; si no, valor es un número.",
      "parametros": _PARAM_CORREGIR_META_PLAN, "funcion": _corregir_meta_plan},
+    {"nombre": "corregir_fase", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone corregir el título, las fechas o la nota de una fase de un plan, o quitarla "
+                     "(quitar: true, sin ningún otro campo). Quitar una fase nunca borra sus reglas: quedan "
+                     "sin fase, aplicando a todo el plan de nuevo. No lo cambia: registra la propuesta para "
+                     "que la persona la apruebe en el chat.",
+     "parametros": _PARAM_CORREGIR_FASE, "funcion": _corregir_fase},
     {"nombre": "proponer_confirmar_turnos", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone confirmar todos los lotes de turnos propuestos pendientes. No los confirma: "
                      "registra la propuesta para que la persona la apruebe en el chat.",

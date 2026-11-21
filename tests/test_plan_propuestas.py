@@ -388,9 +388,192 @@ class AmpliarPlanTest(PlanPropuestasTestCase):
         self.assertEqual(res["estado"], "propuesta_desactualizada")
 
 
+class FasesPlanTest(PlanPropuestasTestCase):
+    """BODY-PLAN-FASES-2 ruling 3: fases/fase_index through proponer_plan and ampliar_plan."""
+
+    def test_apply_writes_fases_and_fase_index_maps_to_fase_id(self):
+        pid, goal_id = self._proponer_y_aplicar_plan(
+            fases=[
+                {"titulo": "Base", "start_day": "2026-11-02", "end_day": "2026-11-29"},
+                {"titulo": "Pico", "start_day": "2026-11-30", "end_day": "2027-01-10"},
+            ],
+            reglas=[
+                {"contexto": "siempre", "texto": "Correr suave", "fase_index": 0},
+                {"contexto": "siempre", "texto": "Intervalos", "fase_index": 1},
+                {"contexto": "siempre", "texto": "Sin fase"},
+            ],
+        )
+        fases = self.conn.execute(
+            "SELECT id, titulo FROM horizonte_fase WHERE horizonte_goal_id = ? ORDER BY orden",
+            (goal_id,)).fetchall()
+        self.assertEqual([f["titulo"] for f in fases], ["Base", "Pico"])
+        reglas = {r["texto"]: r["fase_id"] for r in self.conn.execute(
+            "SELECT texto, fase_id FROM horizonte_regla WHERE horizonte_goal_id = ?", (goal_id,))}
+        self.assertEqual(reglas["Correr suave"], fases[0]["id"])
+        self.assertEqual(reglas["Intervalos"], fases[1]["id"])
+        self.assertIsNone(reglas["Sin fase"])
+
+    def test_overlap_refused_by_name(self):
+        cid = _cid(self.conn)
+        with self.assertRaisesRegex(ToolError, "overlaps"):
+            herramientas.ejecutar(self.conn, 1, "proponer_plan", dict(PLAN_BASE, fases=[
+                {"titulo": "Base", "start_day": "2026-11-02", "end_day": "2026-11-30"},
+                {"titulo": "Pico", "start_day": "2026-11-20", "end_day": "2026-12-10"},
+            ]), "ninguno", cid)
+
+    def test_outside_plan_dates_refused_by_name(self):
+        cid = _cid(self.conn)
+        with self.assertRaisesRegex(ToolError, "Pico"):
+            herramientas.ejecutar(self.conn, 1, "proponer_plan", dict(PLAN_BASE, fases=[
+                {"titulo": "Pico", "start_day": "2026-10-01", "end_day": "2026-11-05"},
+            ]), "ninguno", cid)
+
+    def test_fase_index_out_of_range_refused(self):
+        cid = _cid(self.conn)
+        with self.assertRaisesRegex(ToolError, "fase_index"):
+            herramientas.ejecutar(self.conn, 1, "proponer_plan", dict(PLAN_BASE, fases=[
+                {"titulo": "Base", "start_day": "2026-11-02", "end_day": "2026-11-10"},
+            ], reglas=[{"contexto": "siempre", "texto": "x", "fase_index": 5}]), "ninguno", cid)
+
+    def test_undo_of_proponer_plan_also_removes_fases(self):
+        pid, goal_id = self._proponer_y_aplicar_plan(fases=[
+            {"titulo": "Base", "start_day": "2026-11-02", "end_day": "2026-11-10"},
+        ])
+        self.assertEqual(propuestas.deshacer(self.conn, 1, pid)["estado"], "deshecha")
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM horizonte_fase WHERE horizonte_goal_id = ?",
+                              (goal_id,)).fetchone()[0], 0)
+
+    def test_ampliar_plan_new_fase_and_rule_apply_then_undo(self):
+        pid, goal_id = self._proponer_y_aplicar_plan()
+        cid = _cid(self.conn)
+        amp_pid = herramientas.ejecutar(self.conn, 1, "ampliar_plan", {
+            "goal_id": goal_id,
+            "fases": [{"titulo": "Pico", "start_day": "2026-12-01", "end_day": "2026-12-31"}],
+            "reglas": [{"contexto": "siempre", "texto": "Intervalos", "fase_index": 0}],
+        }, "ninguno", cid)["propuesta_id"]
+        self.assertEqual(propuestas.aplicar(self.conn, 1, amp_pid)["estado"], "aplicada")
+        fase = self.conn.execute("SELECT id FROM horizonte_fase WHERE horizonte_goal_id = ?",
+                                 (goal_id,)).fetchone()
+        regla = self.conn.execute("SELECT fase_id FROM horizonte_regla WHERE horizonte_goal_id = ? AND texto = ?",
+                                  (goal_id, "Intervalos")).fetchone()
+        self.assertEqual(regla["fase_id"], fase["id"])
+
+        self.assertEqual(propuestas.deshacer(self.conn, 1, amp_pid)["estado"], "deshecha")
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM horizonte_fase WHERE horizonte_goal_id = ?",
+                              (goal_id,)).fetchone()[0], 0)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM horizonte_regla WHERE horizonte_goal_id = ?",
+                              (goal_id,)).fetchone()[0], 0)
+
+    def test_ampliar_plan_new_fase_overlapping_existing_phase_refused(self):
+        pid, goal_id = self._proponer_y_aplicar_plan(fases=[
+            {"titulo": "Base", "start_day": "2026-11-02", "end_day": "2026-11-30"},
+        ])
+        cid = _cid(self.conn)
+        with self.assertRaisesRegex(ToolError, "overlaps"):
+            herramientas.ejecutar(self.conn, 1, "ampliar_plan", {
+                "goal_id": goal_id,
+                "fases": [{"titulo": "Pico", "start_day": "2026-11-20", "end_day": "2026-12-10"}],
+            }, "ninguno", cid)
+
+    def test_ampliar_plan_rule_cannot_join_an_older_phase(self):
+        pid, goal_id = self._proponer_y_aplicar_plan(fases=[
+            {"titulo": "Base", "start_day": "2026-11-02", "end_day": "2026-11-30"},
+        ])
+        cid = _cid(self.conn)
+        with self.assertRaisesRegex(ToolError, "fase_index"):
+            herramientas.ejecutar(self.conn, 1, "ampliar_plan", {
+                "goal_id": goal_id,
+                "reglas": [{"contexto": "siempre", "texto": "x", "fase_index": 0}],
+            }, "ninguno", cid)
+
+
+class CorregirFaseTest(PlanPropuestasTestCase):
+    def _fase(self, goal_id: int) -> int:
+        return self.conn.execute(
+            "SELECT id FROM horizonte_fase WHERE horizonte_goal_id = ?", (goal_id,)).fetchone()["id"]
+
+    def test_update_titulo_and_dates_apply_then_undo(self):
+        pid, goal_id = self._proponer_y_aplicar_plan(fases=[
+            {"titulo": "Base", "start_day": "2026-11-02", "end_day": "2026-11-30"},
+        ])
+        fase_id = self._fase(goal_id)
+        cid = _cid(self.conn)
+        corr_pid = herramientas.ejecutar(self.conn, 1, "corregir_fase", {
+            "fase_id": fase_id, "titulo": "Base extendida", "end_day": "2027-01-01",
+        }, "ninguno", cid)["propuesta_id"]
+        self.assertEqual(propuestas.aplicar(self.conn, 1, corr_pid)["estado"], "aplicada")
+        fila = self.conn.execute("SELECT titulo, start_day, end_day FROM horizonte_fase WHERE id = ?",
+                                 (fase_id,)).fetchone()
+        self.assertEqual(fila["titulo"], "Base extendida")
+        self.assertEqual(fila["end_day"], "2027-01-01")
+        self.assertEqual(fila["start_day"], "2026-11-02")
+
+        self.assertEqual(propuestas.deshacer(self.conn, 1, corr_pid)["estado"], "deshecha")
+        fila = self.conn.execute("SELECT titulo, start_day, end_day FROM horizonte_fase WHERE id = ?",
+                                 (fase_id,)).fetchone()
+        self.assertEqual(fila["titulo"], "Base")
+        self.assertEqual(fila["end_day"], "2026-11-30")
+
+    def test_quitar_detaches_rules_not_deletes_apply_then_undo(self):
+        pid, goal_id = self._proponer_y_aplicar_plan(
+            fases=[{"titulo": "Base", "start_day": "2026-11-02", "end_day": "2026-11-30"}],
+            reglas=[{"contexto": "siempre", "texto": "Correr suave", "fase_index": 0}],
+        )
+        fase_id = self._fase(goal_id)
+        regla_id = self.conn.execute(
+            "SELECT id FROM horizonte_regla WHERE horizonte_goal_id = ?", (goal_id,)).fetchone()["id"]
+        cid = _cid(self.conn)
+        corr_pid = herramientas.ejecutar(self.conn, 1, "corregir_fase",
+                                         {"fase_id": fase_id, "quitar": True}, "ninguno", cid)["propuesta_id"]
+        self.assertEqual(propuestas.aplicar(self.conn, 1, corr_pid)["estado"], "aplicada")
+        self.assertIsNone(self.conn.execute("SELECT 1 FROM horizonte_fase WHERE id = ?", (fase_id,)).fetchone())
+        self.assertIsNone(
+            self.conn.execute("SELECT fase_id FROM horizonte_regla WHERE id = ?", (regla_id,)).fetchone()["fase_id"])
+
+        self.assertEqual(propuestas.deshacer(self.conn, 1, corr_pid)["estado"], "deshecha")
+        fila = self.conn.execute("SELECT titulo FROM horizonte_fase WHERE id = ?", (fase_id,)).fetchone()
+        self.assertEqual(fila["titulo"], "Base")
+        self.assertEqual(
+            self.conn.execute("SELECT fase_id FROM horizonte_regla WHERE id = ?", (regla_id,)).fetchone()["fase_id"],
+            fase_id)
+
+    def test_quitar_combined_with_field_refused(self):
+        pid, goal_id = self._proponer_y_aplicar_plan(fases=[
+            {"titulo": "Base", "start_day": "2026-11-02", "end_day": "2026-11-30"},
+        ])
+        fase_id = self._fase(goal_id)
+        cid = _cid(self.conn)
+        with self.assertRaisesRegex(ToolError, "quitar"):
+            herramientas.ejecutar(self.conn, 1, "corregir_fase",
+                                  {"fase_id": fase_id, "quitar": True, "titulo": "x"}, "ninguno", cid)
+
+    def test_unknown_fase_refused(self):
+        cid = _cid(self.conn)
+        with self.assertRaises(ToolError):
+            herramientas.ejecutar(self.conn, 1, "corregir_fase", {"fase_id": 999999}, "ninguno", cid)
+
+    def test_overlap_with_sibling_refused(self):
+        pid, goal_id = self._proponer_y_aplicar_plan(fases=[
+            {"titulo": "Base", "start_day": "2026-11-02", "end_day": "2026-11-30"},
+            {"titulo": "Pico", "start_day": "2026-12-01", "end_day": "2026-12-31"},
+        ])
+        fases = self.conn.execute(
+            "SELECT id, titulo FROM horizonte_fase WHERE horizonte_goal_id = ? ORDER BY orden",
+            (goal_id,)).fetchall()
+        cid = _cid(self.conn)
+        with self.assertRaisesRegex(ToolError, "overlaps"):
+            herramientas.ejecutar(self.conn, 1, "corregir_fase",
+                                  {"fase_id": fases[0]["id"], "end_day": "2026-12-15"}, "ninguno", cid)
+
+
 class AnotherPersonsPlanTest(PlanPropuestasTestCase):
     def test_another_persons_plan_is_untouchable(self):
-        pid, goal_id = self._proponer_y_aplicar_plan(person_id=1)
+        pid, goal_id = self._proponer_y_aplicar_plan(person_id=1, fases=[
+            {"titulo": "Base", "start_day": "2026-11-02", "end_day": "2026-11-30"},
+        ])
         cid2 = _cid(self.conn, 2)
 
         with self.assertRaises(ToolError):
@@ -401,6 +584,12 @@ class AnotherPersonsPlanTest(PlanPropuestasTestCase):
         meta_id_dummy = 999999
         with self.assertRaises(ToolError):
             herramientas.ejecutar(self.conn, 2, "corregir_meta_plan", {"meta_id": meta_id_dummy, "valor": 1.0},
+                                  "ninguno", cid2)
+
+        fase_id = self.conn.execute(
+            "SELECT id FROM horizonte_fase WHERE horizonte_goal_id = ?", (goal_id,)).fetchone()["id"]
+        with self.assertRaises(ToolError):
+            herramientas.ejecutar(self.conn, 2, "corregir_fase", {"fase_id": fase_id, "titulo": "x"},
                                   "ninguno", cid2)
 
         salida = herramientas.ejecutar(self.conn, 2, "leer_plan", {"goal_id": goal_id}, "resumen")
@@ -454,6 +643,51 @@ class CardsTest(PlanPropuestasTestCase):
         despues = {"goal_id": 1, "reglas": [], "semanas": [], "metas_semanales": [], "checkpoints": []}
         _, despues_txt, _ = self._render("ampliar_plan", despues, None)
         self.assertNotIn("{", despues_txt)
+
+    def test_proponer_plan_card_shows_fase_title_and_dates(self):
+        despues = {
+            "titulo": "Plan", "why": None, "start_day": "2026-11-02", "deadline": "2027-02-01",
+            "metas_finales": [], "habitos": [],
+            "fases": [{"titulo": "Base", "start_day": "2026-11-02", "end_day": "2026-11-29", "nota": None}],
+            "reglas": [], "semanas": [], "metas_semanales": [], "checkpoints": [],
+        }
+        for lang in ("es", "en"):
+            antes, despues_txt, series = self._render("proponer_plan", despues, None, lang)
+            self.assertNotIn("{", despues_txt)
+            self.assertIn("Base", despues_txt)
+
+    def test_ampliar_plan_card_shows_new_fase(self):
+        despues = {"goal_id": 1,
+                   "fases": [{"titulo": "Pico", "start_day": "2026-12-01", "end_day": "2026-12-31",
+                              "nota": None}],
+                   "reglas": [], "semanas": [], "metas_semanales": [], "checkpoints": []}
+        for lang in ("es", "en"):
+            _, despues_txt, _ = self._render("ampliar_plan", despues, None, lang)
+            self.assertNotIn("{", despues_txt)
+            self.assertIn("Pico", despues_txt)
+
+    def test_corregir_fase_card_before_after(self):
+        antes_json = {"fase_id": 1, "horizonte_goal_id": 1, "titulo": "Base", "start_day": "2026-11-02",
+                      "end_day": "2026-11-30", "nota": None, "orden": 0,
+                      "creado_en": "2026-11-01T00:00:00+00:00"}
+        despues = {"fase_id": 1, "horizonte_goal_id": 1, "titulo": "Base extendida", "start_day": "2026-11-02",
+                   "end_day": "2027-01-01", "nota": None, "quitar": False}
+        for lang in ("es", "en"):
+            antes_txt, despues_txt, series = self._render("corregir_fase", despues, antes_json, lang)
+            self.assertNotIn("{", antes_txt)
+            self.assertNotIn("{", despues_txt)
+            self.assertIn("Base", antes_txt)
+            self.assertIn("Base extendida", despues_txt)
+
+    def test_corregir_fase_card_quitar(self):
+        antes_json = {"fase_id": 1, "horizonte_goal_id": 1, "titulo": "Base", "start_day": "2026-11-02",
+                      "end_day": "2026-11-30", "nota": None, "orden": 0,
+                      "creado_en": "2026-11-01T00:00:00+00:00"}
+        despues = {"fase_id": 1, "horizonte_goal_id": 1, "quitar": True}
+        for lang in ("es", "en"):
+            antes_txt, despues_txt, series = self._render("corregir_fase", despues, antes_json, lang)
+            self.assertNotIn("{", despues_txt)
+            self.assertIn("Base", despues_txt)
 
     def test_corregir_meta_plan_card_shows_before_and_after_with_unit(self):
         despues = {"meta_id": 1, "valor": 400.0, "nota": None, "medida": "sueno_minutos",

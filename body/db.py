@@ -111,7 +111,7 @@ _PROPUESTA_AGENTE_COLUMNS = """
                          'separar_sesion', 'unir_sesiones', 'proponer_objetivo_nutriente',
                          'proponer_plan', 'corregir_meta_plan', 'ampliar_plan', 'anotar_sesion',
                          'corregir_entreno', 'importar_desplazamiento', 'proponer_practica',
-                         'corregir_despertar', 'registrar_dolor')),
+                         'corregir_despertar', 'registrar_dolor', 'corregir_fase')),
     objetivo_id     INTEGER REFERENCES goal(id),
     antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
     despues_json    TEXT NOT NULL CHECK (json_valid(despues_json)),
@@ -1987,6 +1987,13 @@ def _propuesta_agente_needs_registrar_dolor_rebuild(conn: sqlite3.Connection) ->
     return row is not None and "registrar_dolor" not in row[0]
 
 
+def _propuesta_agente_needs_corregir_fase_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'propuesta_agente'"
+    ).fetchone()
+    return row is not None and "corregir_fase" not in row[0]
+
+
 def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
@@ -2058,6 +2065,9 @@ def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5: a seventeenth widening (registrar_dolor), same
     # reusable rebuild.
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_registrar_dolor_rebuild(conn):
+        _rebuild_propuesta_agente_table(conn)
+    # BODY-PLAN-FASES-2 ruling 3: an eighteenth widening (corregir_fase), same reusable rebuild.
+    if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_corregir_fase_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
 
 
