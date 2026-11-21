@@ -114,7 +114,7 @@ def _all_tool_calls():
         "comparar_noche": {"fecha": "2026-10-05"},
         "buscar_noches": {},
         "leer_plan": gid_placeholder, "leer_planes": {}, "leer_practicas": {},
-        "leer_altitudes": {},
+        "leer_altitudes": {}, "leer_pendientes_registro": {},
     }
 
 
@@ -223,9 +223,13 @@ class RegistryShapeTest(unittest.TestCase):
             # BODY-MINUTO-ANALISIS-6-ALTITUD: extended from twenty-three -- leer_altitudes is the
             # one new entry, at nivel 'ninguno' (an altitude carries no health figure).
             "leer_altitudes": "ninguno",
+            # BODY-REGISTRO-COBERTURA-1: extended from twenty-four -- leer_pendientes_registro is
+            # the one new entry, at nivel 'ninguno' like leer_dias_libres/leer_altitudes: it carries
+            # no health figure either, only whether a log stream has something or nothing yet.
+            "leer_pendientes_registro": "ninguno",
         }
         lectura = [h for h in herramientas.HERRAMIENTAS if h["tipo"] == "lectura"]
-        self.assertEqual(len(lectura), 24)
+        self.assertEqual(len(lectura), 25)
         self.assertEqual({h["nombre"]: h["nivel"] for h in lectura}, expected_levels)
 
     def test_thirty_propuesta_tools_with_one_at_nivel_resumen(self):
@@ -269,7 +273,8 @@ class RegistryShapeTest(unittest.TestCase):
         # BODY-PLAN-FASES-2 ruling 3: extended from 56 -- corregir_fase is the one new entry.
         # BODY-MINUTO-ANALISIS-6-ALTITUD: extended from 57 -- registrar_altitud and leer_altitudes
         # are the two new entries.
-        self.assertEqual(len(herramientas.HERRAMIENTAS), 59)
+        # BODY-REGISTRO-COBERTURA-1: extended from 59 -- leer_pendientes_registro is the one new entry.
+        self.assertEqual(len(herramientas.HERRAMIENTAS), 60)
 
     def test_every_entry_carries_the_reserved_plan_field_unset(self):
         # BODY-ASISTENTE-CONFORMIDAD-1 ruling 2 (agent-capabilities-v1 section 5): the field

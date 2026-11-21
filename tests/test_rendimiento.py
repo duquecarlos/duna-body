@@ -32,7 +32,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from fastapi.testclient import TestClient
 
 from body import config, cuenta, db, demo, dispositivo, fechas, garmin_cuenta, goals, identity, mcp, \
-    noche_rasgos, practicas, shift_import, web
+    noche_rasgos, practicas, registro_cobertura, shift_import, web
 from body.agente import conversacion as agente_conversacion
 from body.agente import herramientas
 from body.rutas import comun as web_comun
@@ -726,6 +726,38 @@ class PlanFasesCostIndependentTest(unittest.TestCase):
             una["statements"], tres["statements"],
             f"three phases with their own scoped rule cost more statements than one: "
             f"{una['statements']} vs {tres['statements']}")
+
+
+class RegistroCoberturaCostIndependentOfSpanTest(unittest.TestCase):
+    """BODY-REGISTRO-COBERTURA-1 ruling (bounded cost): `cobertura`'s own statement count stays the
+    same whether the window it is asked to cover is 7 days or 90 -- each stream is read with one
+    bounded ranged query over the whole window, never one query per day. `conn.set_trace_callback`
+    applied directly on the fixture's own already-open connection, the same pattern
+    PlanearEntrenoReentradaCostTest._contar above uses -- `cobertura` reuses the connection it is
+    given rather than opening its own, so `contar_sql()`'s own sqlite3.connect patch would see
+    nothing."""
+
+    HOY = date(2026, 11, 5)
+
+    def _contar(self, conn, llamada):
+        contador = {"n": 0}
+        conn.set_trace_callback(lambda sql: contador.__setitem__("n", contador["n"] + 1))
+        try:
+            return llamada(), contador["n"]
+        finally:
+            conn.set_trace_callback(None)
+
+    def test_seven_days_vs_ninety_days_same_statement_count(self):
+        conn = _reset_db(self)
+        gid = _horizonte_milestone(
+            conn, 1, self.HOY.isoformat(), (self.HOY + timedelta(days=120)).isoformat(), "ZZ cobertura")
+        conn.commit()
+        _, corto = self._contar(
+            conn, lambda: registro_cobertura.cobertura(conn, 1, gid, hasta=self.HOY + timedelta(days=7)))
+        _, largo = self._contar(
+            conn, lambda: registro_cobertura.cobertura(conn, 1, gid, hasta=self.HOY + timedelta(days=90)))
+        self.assertEqual(corto, largo,
+                          f"a 90-day cobertura() cost more statements than a 7-day one: {corto} vs {largo}")
 
 
 class PlanHoyCostIndependentOfSpanTest(unittest.TestCase):
