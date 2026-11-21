@@ -604,7 +604,7 @@ class DolorCardTest(unittest.TestCase):
         self.assertEqual(r.status_code, 303)
         self.assertIn("dolor_guardado=1", r.headers["location"])
         # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3: the redirect lands back on the card itself
-        # (`#dolor`, comun._redirect_con_ancla), not at the top of the page.
+        # (`#dolor`, comun._ancla), not at the top of the page.
         self.assertTrue(r.headers["location"].endswith("#dolor"))
         filas = db.dolor_de_sesion(self.conn, 1, "garmin", "s1")
         self.assertEqual(len(filas), 1)

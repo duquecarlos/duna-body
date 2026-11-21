@@ -171,7 +171,7 @@ class UndoRouteTest(_WebCase):
 
     def test_success_redirects_with_the_result_anchor(self):
         """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3: the redirect lands back on the result block
-        (`#resultado`, comun._redirect_con_ancla), not at the top of the page."""
+        (`#resultado`, comun._ancla), not at the top of the page."""
         b_id = self._confirm_overlap_pair("2026-11-03", "2026-11-04")
         resp = self.client.post("/shifts/undo", data={"batch_id": str(b_id)}, follow_redirects=False)
         self.assertEqual(resp.status_code, 303)
