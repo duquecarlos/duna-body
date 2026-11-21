@@ -68,6 +68,9 @@ class InitializeTest(_McpTestCase):
 
 class ToolsListTest(_McpTestCase):
     def test_list_matches_the_in_app_level_and_has_no_apply_undo_delete(self):
+        # BODY-TURNOS-ACTUAL-CONTEXTVAR-LEAK-1: without this restore, a later module run in the
+        # same process (alphabetically after test_mcp) sees whatever this test last set.
+        self.addCleanup(herramientas.fijar_turnos_actual, True)
         herramientas.fijar_turnos_actual(db.trabaja_turnos_si(self.conn, self.person_id))
         nivel = agente_ajustes.nivel_datos(self.conn, self.person_id)
         esperado = {h["nombre"] for h in herramientas.disponibles(nivel)}
