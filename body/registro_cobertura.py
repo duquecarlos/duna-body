@@ -105,9 +105,12 @@ def _cubiertos_proteina(conn, person_id: int, d0: str, d1: str) -> set[str]:
 
 
 def _cubiertos_peso(conn, person_id: int, d0: str, d1: str) -> set[str]:
+    # tests/test_sueno_corregido.py ruling 2: every daily_metric FIGURE read goes through the view,
+    # never the bare table -- harmless here (its CASE only ever touches 'sleep_minutes') but this
+    # keeps the one census clean rather than adding a second allow-list entry for it.
     return _dias_cubiertos(
         conn, person_id,
-        "SELECT DISTINCT day FROM daily_metric WHERE person_id = ? AND metric_key = 'body_weight_kg' "
+        "SELECT DISTINCT day FROM daily_metric_efectiva WHERE person_id = ? AND metric_key = 'body_weight_kg' "
         "AND day BETWEEN ? AND ?",
         (person_id,), d0, d1)
 
@@ -115,7 +118,7 @@ def _cubiertos_peso(conn, person_id: int, d0: str, d1: str) -> set[str]:
 def _cubiertos_cintura(conn, person_id: int, d0: str, d1: str) -> set[str]:
     return _dias_cubiertos(
         conn, person_id,
-        "SELECT DISTINCT day FROM daily_metric WHERE person_id = ? AND metric_key = 'waist_cm' "
+        "SELECT DISTINCT day FROM daily_metric_efectiva WHERE person_id = ? AND metric_key = 'waist_cm' "
         "AND day BETWEEN ? AND ?",
         (person_id,), d0, d1)
 
@@ -157,13 +160,13 @@ def _nunca_proteina(conn, person_id: int) -> bool:
 
 def _nunca_peso(conn, person_id: int) -> bool:
     return not conn.execute(
-        "SELECT EXISTS(SELECT 1 FROM daily_metric WHERE person_id = ? AND metric_key = 'body_weight_kg')",
+        "SELECT EXISTS(SELECT 1 FROM daily_metric_efectiva WHERE person_id = ? AND metric_key = 'body_weight_kg')",
         (person_id,)).fetchone()[0]
 
 
 def _nunca_cintura(conn, person_id: int) -> bool:
     return not conn.execute(
-        "SELECT EXISTS(SELECT 1 FROM daily_metric WHERE person_id = ? AND metric_key = 'waist_cm')",
+        "SELECT EXISTS(SELECT 1 FROM daily_metric_efectiva WHERE person_id = ? AND metric_key = 'waist_cm')",
         (person_id,)).fetchone()[0]
 
 
