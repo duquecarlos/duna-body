@@ -12,7 +12,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import db, desplazamiento_import
+from body import captura_sueno, db, desplazamiento_import
 from body.agente import herramientas
 
 
@@ -106,6 +106,29 @@ class SalidaTest(unittest.TestCase):
         out = herramientas.ejecutar(conn, 1, "comparar_noche", {"fecha": "2026-10-05"}, "completo")
         self.assertNotIn("frecuencia_cardiaca", out)
         self.assertNotIn("sueno", out)
+
+
+class CapturaTest(unittest.TestCase):
+    """BODY-NOCHE-SIN-REM-1: the same capture-gap key `leer_noche` carries, for this one focal
+    night -- read from the night's own stored totals, never from `noche_rasgos.comparar`'s ranked
+    features."""
+
+    def test_zero_rem_on_a_long_night_is_marked(self):
+        conn = _conn(self)
+        db.set_metric(conn, "2026-10-05", "sleep_deep_min", 120.0, "garmin", 1)
+        db.set_metric(conn, "2026-10-05", "sleep_light_min", 240.0, "garmin", 1)
+        db.set_metric(conn, "2026-10-05", "sleep_rem_min", 0.0, "garmin", 1)
+        db.set_metric(conn, "2026-10-05", "sleep_awake_min", 30.0, "garmin", 1)
+        conn.commit()
+        out = herramientas.ejecutar(conn, 1, "comparar_noche", {"fecha": "2026-10-05"}, "completo")
+        self.assertEqual(out["captura"], {"rem_no_capturado": True, "version": captura_sueno.VERSION})
+
+    def test_positive_rem_is_not_marked(self):
+        conn = _conn(self)
+        db.set_metric(conn, "2026-10-05", "hrv_last_night", 55.0, "garmin", 1)
+        conn.commit()
+        out = herramientas.ejecutar(conn, 1, "comparar_noche", {"fecha": "2026-10-05"}, "completo")
+        self.assertIsNone(out["captura"])
 
 
 class GrupoConDesplazamientoTest(unittest.TestCase):
