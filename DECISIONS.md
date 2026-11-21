@@ -32627,5 +32627,5 @@ is touched.
 `tests/test_rendimiento.py`; 12 files changed, +304/-19), and
 `5927f0bcbc83e6bbbef13e25a79b27b3d78735e6` (gate fix: `tests/test_agente_bucle.py`,
 `tests/test_agente_propuestas.py`; 2 files changed, +2/-2), plus this ledger text, on the branch --
-merged into `main` (`--no-ff`).
+merged into `main` (`--no-ff`) -- merged `cc29ce309a83c21af782664d39bde57d6606c733`.
 
