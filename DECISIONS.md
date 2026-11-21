@@ -33152,3 +33152,123 @@ No cross-repo contract touched.
 (this ledger text) on the branch -- merged into `main` (`--no-ff`) -- merged
 `8a755f5351a3ee8d9bfbede28fafe323abd86762`.
 
+## BODY-REGISTRO-COBERTURA-1
+
+**Surface:** ORCH-CARLOS-DELEGATES-TIER-1-1. Carlos, relayed by the desk 2026-11-19 (the "Greece 2027 log" track):
+a dated plan's log must be complete by its date -- sleep, meals with protein, a weekly weight and waist, workouts.
+Training photos are his own call and explicitly out of this slice. The desk keeps its own nudge schedule; it asks
+Body only for what is MISSING. Built GENERIC per docs/DESIGN.md rules 4/5/12 -- never Greece-hardcoded, never one
+person's schedule: a "dated plan" is the milestone goal `body/horizonte.py` already models
+(`horizontes`/`fases`, called, never edited).
+
+**Ruling 1, the module (`body/registro_cobertura.py`, new, `VERSION = "registro-cobertura-v1"`):** a versioned
+`MODELO` (body/registro_cobertura.py:44-73) names each of six log streams' cadence and unit, with its own reason
+written beside it, the same convention `body/reentrada.py` and `body/noche_inusual.py` already keep for their own
+thresholds:
+
+| stream | cadencia | reason |
+|---|---|---|
+| sueno | nightly | one chance per night -- the watch either filed a `sleep_session` or it did not |
+| comidas | daily | at least one logged meal that calendar day -- not a nutrient, just "did you log eating" |
+| proteina | daily | its own stream, not folded into comidas -- a meal can log with no protein amount, and the Greece track is specifically about protein |
+| peso | weekly | self-measured, no daily expectation -- once a week is already this product's own cadence (BODY-MEDIDA-PESO-1-M) |
+| cintura | weekly | same as peso |
+| entreno | weekly | met by ANY session that week, watch-recorded or a plan row marked done -- never a fixed day or count |
+
+Two public functions, both read-only, both calling `body/db.py`/`body/horizonte.py` and never editing them:
+
+- `cobertura(conn, person_id, goal_id, hasta=None) -> dict` (body/registro_cobertura.py:251) -- per stream, over
+  the plan's own date range (`_rango_del_plan`, body/registro_cobertura.py:192: the goal's `start_day`, or its
+  first phase's own `start_day` when `horizonte.fases()` returns any), `{cadencia, cubiertos, esperados, faltan}`,
+  or `{cadencia, sin_uso: True}` for a stream never used at all.
+- `pendientes(conn, person_id, dia) -> dict` (body/registro_cobertura.py:271) -- across every ACTIVE dated plan
+  (`horizonte.horizontes(..., solo_activos=True)`), what is missing today/this-week per stream, split into
+  `faltan` and `sin_uso`.
+
+**Bounded cost (the ruling's own ceiling):** every stream is read with exactly one ranged query over the whole
+window (`entreno` reads two: `activity` plus `horizonte._planes_hechos_fuerza`'s own query, since a done plan
+session is a second source of the same fact) -- a day/week is matched in Python against the returned set of
+day-strings, never one statement per day. The "ever used" check (`sin_uso`) is its own small EXISTS query per
+stream, unbounded by date on purpose. `tests/test_rendimiento.py::RegistroCoberturaCostIndependentOfSpanTest`
+confirms a 7-day and a 90-day `cobertura()` cost the same statement count. `FALTAN_LIMITE = 12`
+(body/registro_cobertura.py:80) caps the newest misses returned per stream.
+
+**A stream never used at all reports `sin_uso`, never a run of misses** (body/registro_cobertura.py:28-31) -- the
+desk must never nag about a stream that was never part of this person's routine. Verified by
+`tests/test_registro_cobertura.py` (23 tests, new file): exact counts over three ISO weeks for every stream
+including a never-used `cintura`, weekly streams covered by any weekday, a done `plan` session alone counting a
+training week with no `activity` row, `hasta` clamping before start / after deadline, two simultaneous active
+plans, strict person isolation, and the `MODELO`/`FALTAN_LIMITE` census.
+
+**Ruling 2, the assistant tools:** `leer_plan` gains a `registro` key (body/agente/herramientas.py:3707) carrying
+`registro_cobertura.cobertura(conn, person_id, goal_id)` for that plan. A new tool `leer_pendientes_registro`
+(body/agente/herramientas.py:3711, catalog entry body/agente/herramientas.py:4581) wraps `pendientes()`, one
+optional `dia` parameter (ISO date, body/agente/herramientas.py:976), `tipo='lectura'`,
+`nivel='ninguno'` -- it carries no health figure, only presence/absence of a log, matching the pattern
+`leer_turnos`/`leer_ajustes`/`leer_dias_libres`/`leer_altitudes`/`leer_estado_reloj` already set at that nivel.
+Census entries updated: `tests/test_agente_bucle.py:138` (the exhaustive nivel='ninguno' list),
+`tests/test_agente_registro.py` (`lectura` count 24->25, `HERRAMIENTAS` count 59->60, `expected_levels`).
+`tests/test_agente_conformidad.py`, `tests/test_mcp.py`, `tests/test_persona_fuga.py`, `body/demo.py`,
+`tests/test_demo.py` were in `touches` but needed no edit -- confirmed green unmodified (no hardcoded tool
+lists/counts there, and no screen reads this data yet in this slice so the demo seed needed nothing new).
+
+**Deviation, found by the gate:** `tests/test_sueno_corregido.py`'s `AllowListCensusTest` (outside this slice's
+`touches`) failed on four bare `daily_metric` reads this module introduced (peso/cintura coverage and
+never-used checks). Rather than edit that file's allow-list, `body/registro_cobertura.py` was changed to read
+those four queries through the existing `daily_metric_efectiva` view instead -- confirmed semantically a no-op
+for `body_weight_kg`/`waist_cm` (the view's own CASE, `body/db.py:2370-2386`, only ever activates for
+`metric_key='sleep_minutes'`). Re-verified green together with `tests/test_sueno_corregido.py` before the wider
+gate.
+
+**Commits (branch `feat/body-registro-cobertura-1`, off `main` at `414ae0867026f3e3a01914e6e9f9f8eb5e165163`):**
+`d57762a` (the module, `MODELO`, the two tools, all census/test edits) and `a2a2342` (the
+`daily_metric_efectiva` fix above).
+
+**Ruling 3, the gate:** exact command per chunk `.venv/Scripts/python.exe -m unittest <mod1> <mod2> ...` (the
+same `discover tests -t .` suite as sequential alphabetical chunks of ~10 modules, ~5 for test_garmin_*/
+test_host_* groups), all 27 chunks run in the foreground on the branch tip (`a2a2342`):
+
+1. test_accesibilidad..test_agente_leer_serie -- Ran 209, OK (1 expected failure)
+2. test_agente_medida..test_ancho_completo -- Ran 200, OK
+3. test_asistente_panel..test_comida_compartida -- Ran 256, OK (1 skipped)
+4. test_comida_corregir..test_cuenta_rp -- Ran 239, OK
+5. test_cuenta_schema..test_despertar -- Ran 147, OK
+6. test_despertar_correccion..test_entreno_dolor -- Ran 254, OK
+7. test_entreno_historial..test_errores_texto -- Ran 194, OK
+8. test_estados_vacios..test_fit -- Ran 134, OK
+9. test_fuentes_propias -- Ran 7, OK
+10. test_garmin_adapter..test_garmin_estado -- Ran 70, OK
+11. test_garmin_host..test_garmin_web -- Ran 138, OK
+12. test_get_sin_escritura..test_hogar_enlace_1 -- Ran 218, OK
+13. test_hogar_escribe..test_horizonte -- Ran 237, OK
+14. test_host_autoactualizar..test_host_import -- Ran 201, OK
+15. test_household..test_isolate_limpieza -- Ran 161, OK
+16. test_leer_intradia..test_mcp_aplicar -- Ran 262, OK
+17. test_mcp_cliente_remoto..test_mock_r2_hoy -- Ran 290, OK
+18. test_modelos_estandar_1..test_pc_cliente -- Ran 254, OK
+19. test_periodo..test_plan_esquema -- Ran 251, OK
+20. test_plan_hoy..test_primeros_turnos -- Ran 284, OK
+21. test_privacidad..test_pull -- Ran 286, OK
+22. test_pull_intradia_experimentos..test_rendimiento_red (incl. test_registro_cobertura) -- Ran 159, OK
+23. test_rendimiento_turnos..test_static_version -- Ran 158, OK
+24. test_sueno_corregido..test_tendencias_racha -- Ran 267, OK
+25. test_tendencias_todas..test_turnos_opcional_3 -- Ran 285, OK
+26. test_turnos_opcional_4..test_viajes -- Ran 158, OK
+27. test_vida_dia..test_web_entry -- Ran 88, OK
+
+No `FAIL:`/`ERROR:` line appeared in any chunk. Non-"." stdout seen (pull/backfill/intradia status lines, Garmin
+NotSignedIn/ConnectionError/AuthenticationError/RuntimeError messages, "dia vacio" fixture lines, a deliberately
+raised error in a mocked thread, "refusado"/"series descartadas" guard lines) is existing tests' own
+fixture/demo-seed stdout, invented data only, unrelated to this slice.
+
+**Reconciliation:** sum of the 27 chunks' `Ran` counts -- 209+200+256+239+147+254+194+134+7+70+138+218+237+201+
+161+262+290+254+251+284+286+159+158+267+285+158+88 = 5407 -- exactly equal to the independent collect-only count
+(`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`: 5407).
+
+**Gate verdict: GREEN.**
+
+**Merge policy A, this diff's own shape:** no schema or migration change -- no new table, column or index.
+Customer bytes: none -- no screen reads `registro`/`leer_pendientes_registro` yet in this slice (the tool
+descriptions are assistant-catalog text, not rendered UI copy); `customer_bytes.changed = false`. No cross-repo
+contract touched (the assistant tool catalog is this repo's own, not a shared DTO). Qualifies for merge-on-green.
+
