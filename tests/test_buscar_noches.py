@@ -14,6 +14,9 @@ A known ten-night history, person 1, 2026-03-01 (D1) .. 2026-03-10 (D10):
   - `alcohol_g` on the evening before D2 (2026-03-01) -- D2 alone carries 'con_alcohol'.
   - A commute row on the evening before D1 (2026-02-28, BODY-MINUTO-ANALISIS-7) -- D1 alone
     carries 'desplazamiento' / 'con_desplazamiento'.
+  - An invented home (BODY-MINUTO-ANALISIS-6-ALTITUD, ORCH-CARLOS-DELEGATES-TIER-1-1) covering the
+    whole range, plus a one-day stay 1200m below it on D1's own evening (2026-02-28) -- every night
+    without a trip carries 'altitud' (cambio_m=0 at home), D1 alone carries a negative cambio_m.
 """
 import json
 import tempfile
@@ -95,6 +98,10 @@ def _seed(conn, person_id: int = 1) -> None:
     db.set_metric(conn, "2026-03-01", "alcohol_g", 20.0, "garmin", person_id)
     # D1's own evening (2026-02-28) carries a commute row.
     db.set_metric(conn, "2026-02-28", "vehicle_minutes", 15.0, desplazamiento_import.FUENTE, person_id)
+    # An invented home covering the whole range, and a one-day stay 1200m below it on D1's own
+    # evening (2026-02-28) -- BODY-MINUTO-ANALISIS-6-ALTITUD.
+    db.crear_altitud_estancia(conn, person_id, True, "2020-01-01", 2600, "manual")
+    db.crear_altitud_estancia(conn, person_id, False, "2026-02-28", 1400, "manual", end_day="2026-02-28")
     conn.commit()
 
 
@@ -210,6 +217,34 @@ class ConDesplazamientoTest(unittest.TestCase):
         self.assertEqual(len(fechas), 9)
 
 
+class AltitudTest(unittest.TestCase):
+    """BODY-MINUTO-ANALISIS-6-ALTITUD (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3): D1 alone has a
+    stay 1200m below the invented home on its own evening, so it is the only night a negative
+    altitud_cambio_max selects; every other night is at home with cambio_m=0."""
+
+    def test_altitud_cambio_max_selects_exactly_d1(self):
+        conn = _conn(self)
+        _seed(conn)
+        out = herramientas.ejecutar(
+            conn, 1, "buscar_noches",
+            {"desde": DIAS[0], "hasta": DIAS[-1], "grupo": {"altitud_cambio_max": -100}},
+            "completo",
+        )
+        self.assertEqual({n["fecha"] for n in out["noches"]}, {DIAS[0]})
+
+    def test_altitud_cambio_min_zero_excludes_d1(self):
+        conn = _conn(self)
+        _seed(conn)
+        out = herramientas.ejecutar(
+            conn, 1, "buscar_noches",
+            {"desde": DIAS[0], "hasta": DIAS[-1], "grupo": {"altitud_cambio_min": 0}, "limite": 60},
+            "completo",
+        )
+        fechas = {n["fecha"] for n in out["noches"]}
+        self.assertNotIn(DIAS[0], fechas)
+        self.assertEqual(len(fechas), 9)
+
+
 class OrdenYLimiteTest(unittest.TestCase):
     def test_orden_desc_and_limite_return_the_expected_top_n(self):
         conn = _conn(self)
@@ -317,6 +352,11 @@ class EnComunTest(unittest.TestCase):
         self.assertEqual(en_comun["comida_tarde_min_max"], {"coincidentes": 0.0, "en_rango": 0.0})
         # 'con_desplazamiento' (BODY-MINUTO-ANALISIS-7): carried only by D1's own evening.
         self.assertEqual(en_comun["con_desplazamiento"], {"coincidentes": 0.2, "en_rango": 0.1})
+        # 'altitud_cambio' (BODY-MINUTO-ANALISIS-6-ALTITUD): the home row covers every night in the
+        # range, so all 5 matching nights (and all 10 in range) carry 'altitud' -- D1 alone below
+        # home, D2..D5 at home with cambio_m=0.
+        self.assertEqual(en_comun["altitud_cambio"],
+                          {"coincidentes": 1.0, "en_rango": 1.0, "descenso": 0.2, "igual": 0.8, "ascenso": 0.0})
 
     def test_en_comun_is_absent_under_five_matches(self):
         conn = _conn(self)
