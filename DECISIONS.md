@@ -33847,3 +33847,36 @@ tree clean.
 pointing at this entry, once `BODY-HOY-PENDIENTES-REGISTRO-1`'s own card is merged -- a one-line fix, blocked
 here only by `touches` scope, not by anything uncertain about the right answer.
 
+## BODY-HOY-PENDIENTES-REGISTRO-1-M
+
+Lands the slice the entry above left `STOP BLOCKED` on. The orchestrator's ruling
+(`ORCH-CARLOS-DELEGATES-TIER-1-1`): the failing test's own SUBJECT is "every assistant link on Hoy reuses the
+one `#asis-btn` anchor, no second chat implementation" -- that subject stands, and the third link (ruling 8's
+pendientes line) honours it exactly as the aviso's link and the Tell Body row do, so the count becomes 3, not
+removed or loosened (no `assertGreaterEqual`). An exact count still catches a fourth link nobody approved.
+This folds `BODY-MOCK-R2-ASIS-BTN-COUNT-1` -- the fix is the one named there, made here instead of as a
+separate slice.
+
+**Customer bytes, measured and re-approved:** the es/en keys (`body/i18n/es.json`, `body/i18n/en.json`) and the
+`today.html` lines already committed on the branch (`c142e0f`) were approved in
+`specs/body-hoy-pendientes-registro-1.md` and approved again here. Hoy measured on the branch tip at 375px on
+the invented demo (en): "Your plan still needs today: protein." then the link "Log it with the assistant",
+inside "Your plan this week" after the blocks, class `note`, muted colour, 14px; `scrollWidth` 375, no element
+past the viewport; three `#asis-btn` links on the page.
+
+**The one-line fix, `tests/test_mock_r2_hoy.py:181`:**
+`TellBodyRowTest.test_asis_btn_anchor_matches_the_existing_convention`'s `assertEqual` now reads
+`page.count('href="#asis-btn"') == 3`, with its message naming all three links -- the period aviso's own
+link, the "Tell Body" row, and `BODY-HOY-PENDIENTES-REGISTRO-1`'s "Log it with the assistant" line. Nothing
+else in the file changed; no docstring named the number two.
+
+**Targeted run (foreground, on the tip after the fix),** exact command
+`.venv/Scripts/python.exe -m unittest tests.test_mock_r2_hoy tests.test_plan_hoy_registro
+tests.test_i18n_paridad tests.test_persona_fuga tests.test_rendimiento tests.test_demo
+tests.test_demo_hoy_fijo`: `Ran 143 tests in 241.970s` -- `OK`. All seven named modules exist; none dropped.
+
+**Merge:** `main` (`f8c7356`) merged with `feat/body-hoy-pendientes-registro-1` (tip after this entry's
+commits) via `--no-ff`, smoke run `.venv/Scripts/python.exe -m unittest tests.test_plan_hoy_registro
+tests.test_mock_r2_hoy tests.test_i18n_paridad` green on the merged tree, branch deleted. Merge sha recorded
+in the next ledger line, per this ledger's append-only rule (never edited into this paragraph).
+
