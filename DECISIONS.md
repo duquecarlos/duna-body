@@ -33657,7 +33657,96 @@ slice's `touches` as literally scoped, and the gap is pre-existing, not introduc
 
 -- merged `6ed876ec6f80fe3468b12e11ed948d0c0c54abd3`
 
-## BODY-REGISTRO-COBERTURA-2-M -- lands BODY-REGISTRO-COBERTURA-2 past the customer-bytes stop (2026-11-22)
+## BODY-DEMO-HOY-FIJO-1 -- pins the calendar in every demo-seeding test, plus a census guard (2026-11-22)
+
+**Diagnosis first, per the orchestrator's own ruling 1:** on the real 2026-11-22 (a Sunday), is
+`tests.test_estados_vacios_2.PersonaCompletaSinCambiosTest.test_demo_person_unchanged`'s empty
+`/shifts` cost card HONEST or a PRODUCT BUG? Measured on a synthetic home: seeded the demo
+(`dias=30`) with `today=` each of 2026-11-16..22 in turn and counted, per anchor, how many night
+blocks `turnos_costo.bloques_noche` finds inside the window: 2026-11-16 through 21 each find 1
+(and `resumen()`'s own `costo_promedio` fills all 5 metrics from that one block); 2026-11-22 finds
+**0**. A direct query of the seeded `shift` table for that anchor's 30-day window confirmed only
+`afternoon`/`day`/`morning`/`off` rows -- no `night` row at all in that particular trailing window.
+**HONEST**: the demo's fixed shift cycle, combined with a 30-day seed window anchored on that one
+calendar date, genuinely holds no night block for `resumen()` to measure; `costo_vacio` there is
+the correct empty state, not a dropped block. Continuing to ruling 2.
+
+**Ruling 2, the calendar pinned in every test the orchestrator's census named:** each of the 14
+files below seeds `demo._seed()`/`demo.generar()` with no `today=` and then exercises a route that
+reads the real clock (`body/rutas/comun.py`'s `_today_local`) -- the suite's own rule
+(`tests/test_demo_fechas.py:35`'s own precedent) is that a demo seed must not depend on the real
+calendar date. Each pinned to an explicit anchor and `comun._today_local` patched to the same
+value for the duration of the route calls those tests make (`mock.patch.object(comun,
+"_today_local", return_value=ANCHOR)`, reusing the existing seam several sibling tests already
+use):
+
+- `tests/test_accesibilidad.py`, `tests/test_garmin_conectar_vivo.py`,
+  `tests/test_get_sin_escritura.py`, `tests/test_hogar_aplica_aviso.py`,
+  `tests/test_hoy_escritorio.py`, `tests/test_mcp_pendientes.py`, `tests/test_mcp_visible.py`,
+  `tests/test_periodo_pantallas.py`, `tests/test_tendencias_kpi.py` -- anchored to 2026-11-20 (a
+  Friday that does carry a night block in the window, already the anchor several sibling test
+  modules pin to).
+- `tests/test_estados_vacios_2.py` (`PersonaCompletaSinCambiosTest`'s two methods, the concrete
+  red the orchestrator's gate report caught) -- same 2026-11-20 anchor. Reproduced the red
+  directly: ran the test with the anchor forced to 2026-11-22 (1 failure, same assertion the real
+  date tripped) and then with the committed anchor (green) -- satisfies ruling 4's own extra
+  check.
+- `tests/test_demo.py`, `tests/test_entreno_sesion.py`, `tests/test_recuperacion.py` -- these three
+  already pinned the seed's own anchor through a `date.today()` monkeypatch
+  (`mock.patch.object(demo, "date", _FakeToday)`) rather than the `today=` keyword, so the census
+  flagged the call site textually even though the test's own calendar was already deterministic;
+  each now also passes the same value through `today=` (no behaviour change, satisfies the new
+  guard).
+- `tests/test_rendimiento.py` -- the module-level `_seed()` helper, used by 9 call sites across 6
+  statement-count-ceiling test methods in `RouteCostCeilingTest`, `ManyProposalShiftsCostTest`,
+  `RouteCostRealPathTest` (4 methods), `HogarMananaCostIndependentOfTargetCountTest` and
+  `RouteCostIndependentOfCatalogSizeTest` (2 methods): a different real-date anchor can route
+  `turnos.py` through a different branch (its own empty-cost-table state) with its own statement
+  count, so these ceilings were exposed to exactly the same red, just never caught because no
+  chunk happened to run on an unlucky day yet.
+
+No test here has the real calendar clock as its own subject -- the allowlist ruling 3's guard
+carries is empty.
+
+**Ruling 3, the census guard (`tests/test_demo_hoy_fijo.py`, new):** scans every `tests/*.py` file
+with `ast` (never a text/regex scan, so a `demo._seed(` mention inside a comment or docstring --
+`tests/test_rendimiento.py`'s own header comments reference the call in prose -- is never mistaken
+for a real call) for a `demo._seed()`/`demo.generar()` call with no `today=` keyword, and fails
+naming file:line. Sanity-checked against a throwaway file with an unpinned call, a commented-out
+one and a pinned one: only the unpinned call was reported. Confirmed it does not trip
+`tests/test_guardia_parches.py`'s own patch-ownership guards.
+
+**No `body/` file changed; no schema; no customer-facing bytes** -- every edit is in `tests/`.
+
+**Commits (branch `feat/body-demo-hoy-fijo-1`, off `main` at
+`bb7f0cefafb91c2ec11dcf69ff3211b61ab3c50e`):**
+- `2d0a532510fd24f5c95bb069af5a84a1e872b9cc` -- batch 1/2, 7 modules (70 insertions, 9 deletions).
+- `ef0edd6cab11209f92b1f086dc349a3270d2ee41` -- batch 2/2, 7 modules (88 insertions, 9 deletions).
+- `badbe6b9cdcdb1d9250e7a42112d7e0bc5d46559` -- the census guard, `tests/test_demo_hoy_fijo.py`
+  (68 insertions, new file).
+
+**Tests:** every edited module run alone, green, including `tests.test_estados_vacios_2` with the
+anchor forced to 2026-11-22 (1 failure, reproducing the orchestrator's own red) and then with the
+committed anchor (green) -- ruling 4.
+
+**Gate:** exact command per chunk `.venv/Scripts/python.exe -m unittest <mod1> <mod2> ...` (the
+same `discover tests -t .` suite, run as 26 alphabetical chunks of 10 -- 5 or fewer for the
+`test_garmin_*`/`test_host_*` groups -- on the branch tip, `badbe6b`): chunk `Ran` counts 209, 200,
+217, 247, 184, 203, 235, 139, 147, 331, 161, 264, 292, 254, 251, 284, 286, 147, 175, 226, 278, 200,
+114, 70, 171, 168. Every chunk `OK`.
+
+**Reconciliation:** sum of the 26 chunks' `Ran` counts = 5453 -- exactly equal to the independent
+collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted by
+walking the suite: 5453 -- one more than BODY-REGISTRO-COBERTURA-2's own 5452, the one test this
+slice adds).
+
+**Merge policy A, this diff's own shape:** no table, column, migration or stored-row change --
+schema: none. No DTO shared with another repository is touched -- cross-repo contract: none. No
+byte a customer, operator or owner reads changed -- every edit is test-only, in `tests/`: customer
+bytes: none. All three conditions clear -- merges on green, no approval needed for the merge
+itself.
+
+
 
 **Approval, `ORCH-CARLOS-DELEGATES-TIER-1-1` (Tier 2):** the customer bytes BODY-REGISTRO-COBERTURA-2 stopped on
 are approved by name and this slice may merge past merge policy A's customer-bytes condition -- the 17 keys per
