@@ -33882,3 +33882,89 @@ in the next ledger line, per this ledger's append-only rule (never edited into t
 
 BODY-HOY-PENDIENTES-REGISTRO-1 and -1-M merged 4e7f8e7c5c7cf8304c20b0c2efc02c282f64d89f.
 
+## BODY-PARTIDO-1
+
+The session card "Tu esfuerzo"/"Your effort", on `body/rutas/entreno_sesion.py` and
+`body/templates/entreno_sesion.html`, backed by a new pure model `body/esfuerzo_sesion.py`
+(no web imports, no `t()` -- a template for any sport or person, not hardcoded to Carlos).
+
+**`MODELO` (`esfuerzo_sesion.VERSION = "esfuerzo-v1"`):** `percentil_pico=80`,
+`separacion_min=3`, `caida_minutos=1`, `caidas_min=3`, `minutos_min=10`, `cobertura_min=0.6`,
+`banda_zona_alta_pts=5`, `banda_pico_ppm=3`, `banda_caida_ppm=3`. `HISTORIAL_N` and
+`HISTORIAL_MIN` are read by reference from `entreno_sesion` (never redefined), and
+`_sesiones_comparables` is proven equal to `entreno_sesion.comparaciones`'s own selection by a
+dedicated test, for named types and for Garmin's generic "other" bucket (same folded name).
+
+**Peak detection:** a minute qualifies when its HR is at or above the session's own 80th
+percentile and strictly exceeds a present, contiguous previous minute, and is at or above a
+present, contiguous next minute -- a missing or non-contiguous neighbour is read as satisfied
+(vacuously true), so a gap in the series never hides a real peak at its edge, though the one
+drop it would have fed is then not counted. Peaks within `separacion_min` collapse to the
+higher one. Recovery is the median of drops, counted only when the literal next minute is
+exactly `caida_minutos` later, and only reported with at least `caidas_min` drops.
+
+**Two open choices, made and recorded here as instructed:**
+- **Ruling 7** (the pulse curve, drawn from the activity's own detail when the day series is
+  absent): `esfuerzo_sesion.curva_actividad()` returns `picos={}`, `caidas={}` -- empty, not
+  keyed by the model's own peaks. A non-strength activity-level fallback curve has no "sets"
+  for a peak to annotate against; the card above it already carries the peak numbers.
+- **Ruling 8** (the historical comparison, for performance): `historial()` reads
+  `activity_detail` directly with one query grouped by `source` (reading `db.py:3086`'s own
+  shape rather than calling `db.detalle_actividad` once per session), parsed with
+  `garmin_adapter.parse_activity_hr_series`/`parse_hr_zones` -- normally one group, one query,
+  for up to `HISTORIAL_N` sessions.
+
+**Zone bar:** reuses the existing fixed palette classes (`c-inset`, `c-other`, `c-info`,
+`c-body`, `c-amber` for zones 1-5) and the `<svg class="stage">` markup already used by the
+sleep-stage bar in `day.html` -- `body/static/body.css` was not in this slice's `touches`, so
+no new CSS.
+
+**A deviation the register guard forced, not in the spec:** the Spanish honest-gap line was
+specified as "Esta sesion tiene pocos datos de pulso para medir como te recuperas entre
+esfuerzos.", but `tests/test_registro_tu.py` (outside this slice's `touches`) requires every
+`tiene`/`su`/`sus`/`puede` addressed to the reader to be allow-listed, and "tiene" here reads
+that way even though its subject is the session, not the reader. Rephrased instead of widening
+the diff into that guard's file: **"Esta sesion no registra suficientes datos de pulso para
+medir como te recuperas entre esfuerzos."** Same meaning, same key, same English counterpart
+unchanged. Commit `0542357`.
+
+**Performance (ruling 8's requirement):** the per-session route's SQL statement count, measured
+with the exact fixture `demo._seed(dias=30, idioma="es", today=date(2026,11,20))` plus a manual
+strength session, via `tests/_rutas.py::contar_sql()`: **13 -> 14 statements** (the one extra
+read is ruling 7's curve-fallback `db.detalle_actividad(..., 'detalle')`; the esfuerzo card
+itself never runs on that fixture, since its session is strength and `es_fuerza` gates the card
+off). 14 is still under `tests/test_rendimiento.py`'s existing ceiling of 16, so that file was
+not touched.
+
+**Demo (`body/demo.py`):** `_seed_esfuerzo_basket_detalle` seeds 'detalle', 'zonas' and an
+explicit empty 'vueltas' marker on the existing anchor-1 basketball game plus four earlier ones
+(anchor-8/-15/-22/-29 days) -- the demo had exactly one basketball-typed activity before this
+slice, so four more were needed for a real historical comparison. Uses its own
+`random.Random(20261122)`, never the module-wide `rng`; `tests/test_demo.py`'s
+`DeterminismTest` still passes, confirming the existing draw order is untouched.
+
+**Tests:** `tests/test_esfuerzo_sesion.py` (new, the model, including the
+`_sesiones_comparables`-matches-`entreno_sesion.comparaciones` proof) and
+`tests/test_entreno_sesion.py` (the card present/absent, zone bar, efforts and recovery lines,
+the honest-gap line, a three-way comparison with one "mas"/"igual"/"menos" each, and the
+pulse-curve fallback -- plus day-level series still winning when both exist). One pre-existing
+test's assertions flipped because this slice's own demo change altered what it measures:
+`DemoBranchesTest.test_yesterdays_basketball_session_shows_the_honest_line` ->
+`test_yesterdays_basketball_session_shows_the_curve_from_its_own_detail_and_the_effort_card`.
+
+**Gate, full, run in 25 foreground chunks of `.venv/Scripts/python.exe -m unittest
+<modules>`** (about 10 dotted modules each, 5 for `test_garmin_*`/`test_host_*`), covering all
+242 `tests/test_*.py` modules: every chunk `OK` (one pre-existing `expectedFailure` in chunk 1,
+one pre-existing `skip` in chunk 3; chunk 20 failed once on `test_registro_tu` before the
+rephrase above, then `OK` on the re-run). Per-chunk `Ran` counts summed to **5507**, reconciled
+against an independent collect-only `unittest.TestLoader().discover("tests", top_level_dir=".")`
+count of the same tree: also **5507**. `tests/test_i18n_paridad.py`,
+`tests/test_demo_hoy_fijo.py`, `tests/test_rendimiento.py` and `tests/test_registro_tu.py` all
+pass unedited (the last one only after the rephrase above).
+
+**Merge:** merge policy A pre-authorized for this slice's own customer-facing bytes (the new
+i18n keys and template lines) by the dispatching spec's own "YOU MAY MERGE" clause. `main`
+merged with `feat/body-partido-1` via `--no-ff`, tree identity verified empty-diff against the
+branch tip, branch deleted, `body-app` left on `main` clean. Merge sha recorded in the next
+ledger line, per this ledger's append-only rule.
+
