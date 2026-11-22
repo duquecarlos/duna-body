@@ -33839,6 +33839,11 @@ a direct, unavoidable consequence of ruling 8's own requirement that the demo sh
 frozen count this test's own author did not anticipate when ruling 8's ledger line was written.
 `tests/test_mock_r2_hoy.py` is NOT in this slice's `touches`, so its own one-line fix (the count moving from 2
 to 3, with a comment pointing here) is not something this slice may make. STOP BLOCKED here, naming the file
-and line; not merged. The branch stays on `feat/body-hoy-pendientes-registro-1`, one commit
-(`c142e0fb3661c171e69bf9c777d67acdafaeed40`) ahead of `main`, tree clean.
+and line; not merged. The branch stays on `feat/body-hoy-pendientes-registro-1`, two commits ahead of `main`,
+tree clean.
+
+**Open follow-up, `BODY-MOCK-R2-ASIS-BTN-COUNT-1`:** update
+`tests/test_mock_r2_hoy.py:181`'s `assertEqual(page.count('href="#asis-btn"'), 2, ...)` to `3`, with a comment
+pointing at this entry, once `BODY-HOY-PENDIENTES-REGISTRO-1`'s own card is merged -- a one-line fix, blocked
+here only by `touches` scope, not by anything uncertain about the right answer.
 
