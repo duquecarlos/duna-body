@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import anatomia, db, entreno_sesion, history, identity, recuperacion
+from .. import anatomia, db, entreno_sesion, esfuerzo_sesion, history, identity, recuperacion
 from ..i18n import T
 from . import comun
 
@@ -263,6 +263,78 @@ def _curva_svg(t: T, sets: list[dict], curva_ctx: dict, width: int = 320, height
     return svg + '<div class="legend mt-4">' + "".join(legend_items) + "</div>"
 
 
+# BODY-PARTIDO-1 ruling 6: zone 1 (quietest) through zone 5 (most intense) mapped onto the app's
+# existing fixed-colour palette (body/static/body.css's own BODY-ESTILOS-1 classes) -- that file is
+# not in this slice's touches, so no new class is added; the ramp runs from the palest/neutral
+# entry to the warmest one already in the palette.
+_ZONA_CLASES = {1: "c-inset", 2: "c-other", 3: "c-info", 4: "c-body", 5: "c-amber"}
+
+
+def _esfuerzo_zonas_svg(filas: list[tuple[int, float]], total_min: float) -> str:
+    """Ruling 6: the zone breakdown's own stacked bar -- same inline-SVG, fixed-class shape as
+    body/templates/day.html's own sleep-stage bar (<svg class="stage"> viewBox 0 0 100 h, one
+    <rect> per segment), server-built, no inline style, no var(...) in markup (DESIGN rule 13, the
+    _curva_svg precedent above)."""
+    if not total_min:
+        return ""
+    shapes = []
+    x = 0.0
+    for n, mins in filas:
+        w = 100 * mins / total_min
+        shapes.append(f'<rect x="{x:.2f}" y="0" width="{w:.2f}" height="10" class="{_ZONA_CLASES[n]}"/>')
+        x += w
+    return f'<svg class="stage" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true">{"".join(shapes)}</svg>'
+
+
+_ESFUERZO_PALABRA = {
+    "zona_alta": {"mas": "entreno_sesion.esfuerzo.zona_alta_mas", "igual": "entreno_sesion.esfuerzo.zona_alta_como",
+                  "menos": "entreno_sesion.esfuerzo.zona_alta_menos"},
+    "pico": {"mas": "entreno_sesion.esfuerzo.pico_mas", "igual": "entreno_sesion.esfuerzo.pico_como",
+             "menos": "entreno_sesion.esfuerzo.pico_menos"},
+    "caida": {"mas": "entreno_sesion.esfuerzo.recuperacion_mas", "igual": "entreno_sesion.esfuerzo.recuperacion_como",
+              "menos": "entreno_sesion.esfuerzo.recuperacion_menos"},
+}
+
+
+def _esfuerzo_ctx(t: T, tarjeta: dict, tipo_comp: str | None) -> dict:
+    """Ruling 6: the effort card's own context -- every row present only when its figure exists.
+    `tarjeta` is esfuerzo_sesion.tarjeta()'s own return (never None here -- the caller already
+    gated the card's presence on that)."""
+    esf, zon, clasificacion = tarjeta["esfuerzos"], tarjeta["zonas"], tarjeta["clasificacion"]
+    bpm = t("unit.bpm")
+
+    zonas_txt = zonas_svg = zona_alta_txt = None
+    if zon is not None:
+        filas = [(n, zon["minutos"][n]) for n in range(1, 6) if zon["minutos"][n] > 0]
+        if filas:
+            zonas_txt = [t("entreno_sesion.esfuerzo.zona", n=n, dur=t.minutes(mins)) for n, mins in filas]
+            zonas_svg = _esfuerzo_zonas_svg(filas, zon["total_min"])
+        if zon["alta_share"] is not None:
+            zona_alta_txt = t("entreno_sesion.esfuerzo.zona_alta", pct=t.num(round(zon["alta_share"] * 100)))
+
+    esfuerzos_txt = None
+    if esf["suficiente"] and esf["n_picos"] >= 1:
+        esfuerzos_txt = t("entreno_sesion.esfuerzo.esfuerzos", n=t.num(esf["n_picos"]),
+                          valor=f"{t.num(round(esf['pico']))} {bpm}")
+    recuperacion_txt = None
+    if esf["suficiente"] and esf["recuperacion"] is not None:
+        recuperacion_txt = t("entreno_sesion.esfuerzo.recuperacion",
+                             valor=f"{t.num(round(esf['recuperacion']))} {bpm}")
+    pocos_datos_txt = (t("entreno_sesion.esfuerzo.pocos_datos")
+                       if tarjeta["tiene_detalle"] and not esf["suficiente"] else None)
+
+    comparacion = [t(_ESFUERZO_PALABRA[figura][codigo]) for figura in ("zona_alta", "pico", "caida")
+                   if (codigo := clasificacion.get(figura)) is not None]
+    comparacion_titulo = (t("entreno_sesion.comparacion_titulo", tipo=tipo_comp)
+                          if comparacion and tipo_comp else None)
+
+    return {
+        "titulo": t("entreno_sesion.esfuerzo.titulo"), "zonas_svg": zonas_svg, "zonas": zonas_txt,
+        "zona_alta": zona_alta_txt, "esfuerzos": esfuerzos_txt, "recuperacion": recuperacion_txt,
+        "pocos_datos": pocos_datos_txt, "comparacion_titulo": comparacion_titulo, "comparacion": comparacion,
+    }
+
+
 # BODY-PLAN-FASES-5 ruling 3: the 0-10 scale's own options, read once off db.py's own named
 # constant -- never a second hand-typed "10" in this module.
 _ESCALA_OPCIONES = list(range(db.DOLOR_ESCALA_MIN, db.DOLOR_ESCALA_MAX + 1))
@@ -350,6 +422,17 @@ def entreno_sesion_view(day: str, source_id: str, request: Request,
     es_fuerza = a.get("type") == "strength_training"
     sets = entreno_sesion.series(conn, person_id, a["sets_source"], a["sets_source_id"]) if es_fuerza else []
     curva_ctx = entreno_sesion.curva(conn, person_id, d.isoformat(), zona, a["start_local"], a["duration_s"], sets)
+    if curva_ctx is None:
+        # BODY-PARTIDO-1 ruling 7: the day-level series is absent -- fall back to the activity's
+        # own stored detail, when it has one, rather than the honest "pending" line.
+        curva_ctx = esfuerzo_sesion.curva_actividad(conn, person_id, a)
+
+    esfuerzo = None
+    if not es_fuerza:
+        # BODY-PARTIDO-1 ruling 6: strength sessions keep their own set/rest view untouched.
+        tarjeta_esfuerzo = esfuerzo_sesion.tarjeta(conn, person_id, a)
+        if tarjeta_esfuerzo is not None:
+            esfuerzo = _esfuerzo_ctx(t, tarjeta_esfuerzo, tipo_comp)
 
     recuperacion_row = conn.execute(
         "SELECT minutos, motivo FROM recuperacion_actividad WHERE person_id = ? AND activity_source = ? AND "
@@ -367,7 +450,7 @@ def entreno_sesion_view(day: str, source_id: str, request: Request,
         es_fuerza=es_fuerza, sets=_series_ctx(t, sets, curva_ctx) if es_fuerza else [],
         pulso_svg=_curva_svg(t, sets, curva_ctx) if curva_ctx is not None else None,
         pulso_pendiente=t("entreno_sesion.curva_pendiente"),
-        recovery=_recovery_line(t, recuperacion_row),
+        recovery=_recovery_line(t, recuperacion_row), esfuerzo=esfuerzo,
         dolor=dolor, dolor_msg=dolor_msg, escala=_ESCALA_OPCIONES,
     )
 

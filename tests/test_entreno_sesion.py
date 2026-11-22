@@ -22,7 +22,7 @@ import json
 import re
 import tempfile
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -30,7 +30,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import config, db, demo, entreno_sesion, garmin_adapter, identity, web
+from body import config, db, demo, entreno_sesion, esfuerzo_sesion, garmin_adapter, identity, web
 from body.i18n import T
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -465,6 +465,214 @@ class PinnedCopyTest(unittest.TestCase):
         self.assertNotIn("entreno_sesion.comparacion", _load_lang("en"))
 
 
+def _detalle_payload(start_local: str, valores: list[float]) -> dict:
+    t0 = datetime.fromisoformat(start_local)
+    # America/Bogota is UTC-5 year round -- demo.py's own _muestra_ms convention.
+    ms0 = int((t0 + timedelta(hours=5)).replace(tzinfo=timezone.utc).timestamp() * 1000)
+    return {
+        "metricDescriptors": [{"key": "directTimestamp", "index": 0}, {"key": "directHeartRate", "index": 1}],
+        "activityDetailMetrics": [{"metrics": [ms0 + i * 60_000, v]} for i, v in enumerate(valores)],
+    }
+
+
+def _zonas_payload(minutos: dict[int, float]) -> list[dict]:
+    return [{"zoneNumber": n, "secsInZone": m * 60.0, "zoneLowBoundary": 100.0 + 10 * n}
+            for n, m in minutos.items()]
+
+
+# Minutes 0-13 (14 points, full coverage): three peaks exactly MODELO['separacion_min'] apart (so
+# none collapse), each with a one-minute drop -- pico 180, median drop 70 (median(55, 80, 70)).
+_TRES_PICOS = [100, 100, 100, 100, 100, 155, 100, 100, 180, 100, 100, 170, 100, 100]
+
+
+class EsfuerzoCardAbsentTest(unittest.TestCase):
+    """Ruling 6: the card's own presence gate -- no stored 'detalle' or 'zonas' at all, no card,
+    the page unchanged; a strength session keeps its own set/rest view even when it DOES carry
+    stored detail."""
+
+    def setUp(self):
+        self.conn = _reset_db(self, "esfuerzo_ausente.db")
+        _as(self, 1)
+
+    def test_non_strength_session_with_no_detail_shows_no_card(self):
+        _activity(self.conn, 1, "r1", "2026-11-10", "2026-11-10T18:00:00", "running", None, 1800.0,
+                  avg_hr=140, max_hr=160, calories=300)
+        r = client.get("/day/2026-11-10/entreno/r1")
+        self.assertEqual(r.status_code, 200)
+        t_es = T("es")
+        self.assertNotIn(t_es("entreno_sesion.esfuerzo.titulo"), r.text)
+
+    def test_strength_session_with_detail_stored_still_shows_no_card(self):
+        _activity(self.conn, 1, "s1", "2026-11-10", "2026-11-10T18:00:00", "strength_training", None, 600.0)
+        db.guardar_detalle_actividad(self.conn, 1, "garmin", "s1", "zonas",
+                                      _zonas_payload({1: 5.0, 2: 5.0, 3: 5.0, 4: 5.0, 5: 5.0}))
+        self.conn.commit()
+        r = client.get("/day/2026-11-10/entreno/s1")
+        self.assertEqual(r.status_code, 200)
+        t_es = T("es")
+        self.assertNotIn(t_es("entreno_sesion.esfuerzo.titulo"), r.text)
+
+
+class EsfuerzoCardTest(unittest.TestCase):
+    """Ruling 6: the effort card's own rows."""
+
+    DAY = "2026-11-18"
+
+    def setUp(self):
+        self.conn = _reset_db(self, "esfuerzo.db")
+        _as(self, 1)
+        _activity(self.conn, 1, "partido", self.DAY, f"{self.DAY}T18:00:00", "other", "Baloncesto", 14 * 60.0,
+                  avg_hr=128, max_hr=180, calories=400)
+        db.guardar_detalle_actividad(self.conn, 1, "garmin", "partido", "detalle",
+                                      _detalle_payload(f"{self.DAY}T18:00:00", _TRES_PICOS))
+        db.guardar_detalle_actividad(self.conn, 1, "garmin", "partido", "zonas",
+                                      _zonas_payload({1: 2.0, 2: 2.0, 3: 4.0, 4: 3.0, 5: 3.0}))
+        self.conn.commit()
+
+    def test_titulo_shown(self):
+        r = client.get(f"/day/{self.DAY}/entreno/partido")
+        self.assertEqual(r.status_code, 200)
+        t_es = T("es")
+        self.assertIn(t_es("entreno_sesion.esfuerzo.titulo"), r.text)
+
+    def test_zone_rows_and_high_share(self):
+        r = client.get(f"/day/{self.DAY}/entreno/partido")
+        t_es = T("es")
+        self.assertIn(t_es("entreno_sesion.esfuerzo.zona", n=3, dur=t_es.minutes(4.0)), r.text)
+        self.assertIn(t_es("entreno_sesion.esfuerzo.zona", n=4, dur=t_es.minutes(3.0)), r.text)
+        pct = round(6.0 / 14.0 * 100)
+        self.assertIn(t_es("entreno_sesion.esfuerzo.zona_alta", pct=t_es.num(pct)), r.text)
+        self.assertIn('class="stage"', r.text)
+
+    def test_efforts_and_recovery_lines(self):
+        r = client.get(f"/day/{self.DAY}/entreno/partido")
+        t_es = T("es")
+        bpm = t_es("unit.bpm")
+        self.assertIn(t_es("entreno_sesion.esfuerzo.esfuerzos", n=t_es.num(3), valor=f"{t_es.num(180)} {bpm}"),
+                      r.text)
+        self.assertIn(t_es("entreno_sesion.esfuerzo.recuperacion", valor=f"{t_es.num(70)} {bpm}"), r.text)
+        self.assertNotIn(t_es("entreno_sesion.esfuerzo.pocos_datos"), r.text)
+
+    def test_english(self):
+        self.conn.execute("UPDATE person SET language = 'en' WHERE id = 1")
+        self.conn.commit()
+        r = client.get(f"/day/{self.DAY}/entreno/partido")
+        t_en = T("en")
+        bpm = t_en("unit.bpm")
+        self.assertIn(t_en("entreno_sesion.esfuerzo.titulo"), r.text)
+        self.assertIn(t_en("entreno_sesion.esfuerzo.esfuerzos", n=t_en.num(3), valor=f"{t_en.num(180)} {bpm}"),
+                      r.text)
+
+
+class EsfuerzoHonestGapCardTest(unittest.TestCase):
+    """Ruling 6: 'detalle' stored but too thin to measure recovery between efforts -- the honest
+    gap line, never a guess."""
+
+    DAY = "2026-11-19"
+
+    def test_pocos_datos_line_shown(self):
+        conn = _reset_db(self, "esfuerzo_pocos.db")
+        _as(self, 1)
+        _activity(conn, 1, "corto", self.DAY, f"{self.DAY}T18:00:00", "other", "Pachanga", 300.0)
+        db.guardar_detalle_actividad(conn, 1, "garmin", "corto", "detalle",
+                                      _detalle_payload(f"{self.DAY}T18:00:00", [100.0, 110.0, 105.0, 95.0]))
+        conn.commit()
+        r = client.get(f"/day/{self.DAY}/entreno/corto")
+        self.assertEqual(r.status_code, 200)
+        t_es = T("es")
+        self.assertIn(t_es("entreno_sesion.esfuerzo.titulo"), r.text)
+        self.assertIn(t_es("entreno_sesion.esfuerzo.pocos_datos"), r.text)
+
+
+class EsfuerzoComparacionTest(unittest.TestCase):
+    """Ruling 5/6: the three-way comparison words, one real example of each ("mas"/"igual"/
+    "menos") against a crafted history."""
+
+    DAY = "2026-11-20"
+
+    # Three peaks exactly 170, settling to 141 after each (a drop of 29 every time) -- used
+    # identically for every one of the four history games, so each figure's median is exact.
+    _CURVA_HISTORIAL = [100, 100, 100, 100, 100, 170, 141, 100, 170, 141, 100, 170, 141, 100]
+    # Lower peaks (120, 140, 130) than the history's own 170 -- today's own "pico" reads 140.
+    _CURVA_HOY = [100, 100, 100, 100, 100, 120, 100, 100, 140, 100, 100, 130, 100, 100]
+
+    def setUp(self):
+        self.conn = _reset_db(self, "esfuerzo_comp.db")
+        _as(self, 1)
+        for i in range(4):
+            day = (date(2026, 11, 1) + timedelta(i)).isoformat()
+            source_id = f"hist-{i}"
+            _activity(self.conn, 1, source_id, day, f"{day}T18:00:00", "other", "Baloncesto", 14 * 60.0)
+            db.guardar_detalle_actividad(self.conn, 1, "garmin", source_id, "detalle",
+                                          _detalle_payload(f"{day}T18:00:00", self._CURVA_HISTORIAL))
+            # alta_share = 4/14 ~= 28.6% for every history game.
+            db.guardar_detalle_actividad(self.conn, 1, "garmin", source_id, "zonas",
+                                          _zonas_payload({1: 2.0, 2: 2.0, 3: 6.0, 4: 2.0, 5: 2.0}))
+        _activity(self.conn, 1, "hoy", self.DAY, f"{self.DAY}T18:00:00", "other", "Baloncesto", 14 * 60.0)
+        db.guardar_detalle_actividad(self.conn, 1, "garmin", "hoy", "detalle",
+                                      _detalle_payload(f"{self.DAY}T18:00:00", self._CURVA_HOY))
+        # alta_share = 7/14 = 50% today -- well above the history's own ~28.6% (+21.4 pts, over
+        # MODELO['banda_zona_alta_pts']).
+        db.guardar_detalle_actividad(self.conn, 1, "garmin", "hoy", "zonas",
+                                      _zonas_payload({1: 2.0, 2: 2.0, 3: 3.0, 4: 4.0, 5: 3.0}))
+        self.conn.commit()
+
+    def test_more_time_in_the_high_zones_higher_peak_is_wrong_lower_peak_and_same_recovery(self):
+        r = client.get(f"/day/{self.DAY}/entreno/hoy")
+        self.assertEqual(r.status_code, 200)
+        t_es = T("es")
+        self.assertIn(t_es("entreno_sesion.esfuerzo.zona_alta_mas"), r.text)
+        self.assertIn(t_es("entreno_sesion.esfuerzo.pico_menos"), r.text)
+        self.assertIn(t_es("entreno_sesion.esfuerzo.recuperacion_como"), r.text)
+        self.assertNotIn(t_es("entreno_sesion.esfuerzo.zona_alta_como"), r.text)
+        self.assertNotIn(t_es("entreno_sesion.esfuerzo.pico_mas"), r.text)
+
+    def test_comparison_heading_reuses_the_existing_key(self):
+        r = client.get(f"/day/{self.DAY}/entreno/hoy")
+        t_es = T("es")
+        titulo = _es("entreno_sesion.comparacion_titulo").format(tipo="baloncesto")
+        self.assertIn(titulo, r.text)
+
+
+class CurvaDesdeDetalleTest(unittest.TestCase):
+    """Ruling 7: the pulse curve drawn from the activity's own stored detail when the day-level
+    series is absent."""
+
+    DAY = "2026-11-21"
+
+    def test_curve_drawn_from_activity_detail_when_day_series_is_absent(self):
+        conn = _reset_db(self, "curva_detalle.db")
+        _as(self, 1)
+        _activity(conn, 1, "partido", self.DAY, f"{self.DAY}T18:00:00", "other", "Baloncesto", 13 * 60.0)
+        db.guardar_detalle_actividad(conn, 1, "garmin", "partido", "detalle",
+                                      _detalle_payload(f"{self.DAY}T18:00:00", _TRES_PICOS))
+        conn.commit()
+        r = client.get(f"/day/{self.DAY}/entreno/partido")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('class="chart-svg"', r.text)
+        self.assertNotIn(_es("entreno_sesion.curva_pendiente"), r.text)
+
+    def test_day_level_series_still_wins_when_present(self):
+        # Both a day-level series AND activity-level detail are stored -- the day-level one
+        # (ruling 4's own, already-existing behaviour) is used, never the fallback.
+        conn = _reset_db(self, "curva_prioridad.db")
+        _as(self, 1)
+        _activity(conn, 1, "partido", self.DAY, f"{self.DAY}T18:00:00", "other", "Baloncesto", 300.0)
+        muestras = [(f"{self.DAY}T18:0{i}", 100.0 + i) for i in range(5)]
+        payload = {"heartRateValues": [
+            [int((datetime.fromisoformat(t) + timedelta(hours=5)).replace(tzinfo=timezone.utc).timestamp() * 1000), v]
+            for t, v in muestras
+        ]}
+        db.guardar_intradia(conn, 1, self.DAY, "intradia_fc", payload)
+        db.guardar_detalle_actividad(conn, 1, "garmin", "partido", "detalle",
+                                      _detalle_payload(f"{self.DAY}T18:00:00", [999.0] * 5))
+        conn.commit()
+        r = client.get(f"/day/{self.DAY}/entreno/partido")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('class="chart-svg"', r.text)
+        self.assertNotIn("999", r.text)  # the activity-level fallback curve never rendered
+
+
 class DemoBranchesTest(unittest.TestCase):
     """Ruling 6: the demo's own strength (today, a curve) and basketball (yesterday, no curve)
     sessions, both reachable the same way Día's own row links to them (ruling 1)."""
@@ -497,12 +705,17 @@ class DemoBranchesTest(unittest.TestCase):
         self.assertIn(t_es("entreno_sesion.set_corregida"), r.text)
         self.assertIn(t_es("entreno_sesion.set_excluida"), r.text)
 
-    def test_yesterdays_basketball_session_shows_the_honest_line(self):
+    def test_yesterdays_basketball_session_shows_the_curve_from_its_own_detail_and_the_effort_card(self):
+        # BODY-PARTIDO-1 ruling 9: the demo now seeds stored 'detalle'/'zonas' for this session (no
+        # day-level series either way) -- ruling 7's own fallback draws the curve from the
+        # activity's own detail instead of the honest "pending" line, and ruling 6's new card shows.
         yesterday = (self.ANCHOR - timedelta(1)).isoformat()
         r = client.get(f"/day/{yesterday}/entreno/demo-{yesterday}-1")
         self.assertEqual(r.status_code, 200)
-        self.assertIn(_es("entreno_sesion.curva_pendiente"), r.text)
-        self.assertNotIn('class="chart-svg"', r.text)
+        self.assertNotIn(_es("entreno_sesion.curva_pendiente"), r.text)
+        self.assertIn('class="chart-svg"', r.text)
+        t_es = T("es")
+        self.assertIn(t_es("entreno_sesion.esfuerzo.titulo"), r.text)
 
 
 class DolorCardTest(unittest.TestCase):
