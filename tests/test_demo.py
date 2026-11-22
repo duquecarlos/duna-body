@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import statistics
 import sys
 import tempfile
 import unittest
@@ -577,6 +578,51 @@ class PerfilHrvReachableTest(unittest.TestCase):
                 if p["vuelta"] is not None:
                     vueltas_vistas += 1
         self.assertGreater(vueltas_vistas, 20)  # a return is the common case, not a rare one
+
+
+class BasketEsfuerzoCurvaCoherenteTest(unittest.TestCase):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4: every demo basketball game's invented curve agrees
+    with that SAME game's own seeded avg_hr/max_hr, and its zone minutes come from that SAME curve
+    (never a separate, disagreeing share)."""
+
+    ANCHOR = date(2026, 11, 15)
+
+    def test_every_basketball_game_s_curve_matches_its_own_avg_max_and_its_own_zones(self):
+        from body import esfuerzo_sesion, garmin_adapter
+
+        conn = _seed_at(self, self.ANCHOR, 60)
+        person_id = conn.execute("SELECT id FROM person LIMIT 1").fetchone()[0]
+        dia_reciente = (self.ANCHOR - timedelta(1)).isoformat()
+        filas = conn.execute(
+            "SELECT source, source_id, start_local, duration_s, avg_hr, max_hr FROM activity "
+            "WHERE person_id = ? AND (source_id = ? OR source_id LIKE 'demo-basket-hist-%')",
+            (person_id, f"demo-{dia_reciente}-1")).fetchall()
+        self.assertEqual(len(filas), 5)  # the anchor game + the 4 earlier ones (ruling 9)
+
+        zona_persona = conn.execute("SELECT timezone FROM person WHERE id = ?", (person_id,)).fetchone()[0]
+        for f in filas:
+            with self.subTest(source_id=f["source_id"]):
+                muestras_raw = conn.execute(
+                    "SELECT payload FROM activity_detail WHERE person_id = ? AND activity_source = ? AND "
+                    "activity_source_id = ? AND kind = 'detalle'", (person_id, f["source"], f["source_id"])
+                ).fetchone()
+                zonas_raw = conn.execute(
+                    "SELECT payload FROM activity_detail WHERE person_id = ? AND activity_source = ? AND "
+                    "activity_source_id = ? AND kind = 'zonas'", (person_id, f["source"], f["source_id"])
+                ).fetchone()
+                muestras = garmin_adapter.parse_activity_hr_series(json.loads(muestras_raw["payload"]), zona_persona)
+                zonas_filas = garmin_adapter.parse_hr_zones(json.loads(zonas_raw["payload"]))
+                serie = esfuerzo_sesion.serie_por_minuto(muestras, f["start_local"], f["duration_s"])
+                valores = [v for _, v in serie]
+
+                media = statistics.fmean(valores)
+                self.assertLessEqual(abs(media - f["avg_hr"]), 3,
+                                      f"mean {media} vs avg_hr {f['avg_hr']}")
+                self.assertTrue(0 <= f["max_hr"] - max(valores) <= 6,
+                                 f"highest minute {max(valores)} vs max_hr {f['max_hr']}")
+
+                z = esfuerzo_sesion.zonas(zonas_filas)
+                self.assertAlmostEqual(z["total_min"], len(serie), places=3)
 
 
 if __name__ == "__main__":

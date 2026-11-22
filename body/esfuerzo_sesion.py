@@ -45,7 +45,6 @@ MODELO = {
     # Three-way comparison bands, one per compared figure (ruling 5): within the band is "as
     # usual", outside it is "more"/"less" (or, for the recovery drop, "faster"/"slower").
     "banda_zona_alta_pts": 5,   # percentage points of the zones-4/5 share
-    "banda_pico_ppm": 3,        # bpm, on the session's own peak-minute heart rate
     "banda_caida_ppm": 3,       # bpm, on the recovery drop
 }
 
@@ -176,16 +175,18 @@ def _sesiones_comparables(conn, person_id: int, a: dict) -> list:
 
 def historial(conn, person_id: int, a: dict) -> dict:
     """Ruling 5/8: the median, across the comparable sessions above that carry stored detail, of
-    each figure the card compares -- zones-4/5 share, session peak-minute heart rate, recovery
-    drop -- or None under HISTORIAL_MIN. Read in ONE query against activity_detail, grouped by
-    `source` (normally one group, since every Garmin activity shares the same source) rather than
-    through db.detalle_actividad per session (ruling 8: up to HISTORIAL_N sessions x 2 kinds would
-    otherwise be one query each) -- parsed with the adapter's own parsers
+    each figure the card compares -- zones-4/5 share, recovery drop -- or None under HISTORIAL_MIN.
+    ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: the session peak-minute heart rate is no longer one of
+    them (the page's own max-HR comparison already covers that ground, with the watch's own true
+    max rather than this model's per-minute mean). Read in ONE query against activity_detail,
+    grouped by `source` (normally one group, since every Garmin activity shares the same source)
+    rather than through db.detalle_actividad per session (ruling 8: up to HISTORIAL_N sessions x 2
+    kinds would otherwise be one query each) -- parsed with the adapter's own parsers
     (garmin_adapter.parse_activity_hr_series/parse_hr_zones), the same db.detalle_actividad
     precedent (db.py:3086) without its per-activity query."""
     filas = _sesiones_comparables(conn, person_id, a)
     if not filas:
-        return {"zona_alta": None, "pico": None, "caida": None}
+        return {"zona_alta": None, "caida": None}
 
     por_fuente: dict[str, list[str]] = {}
     for f in filas:
@@ -202,10 +203,10 @@ def historial(conn, person_id: int, a: dict) -> dict:
             detalle_por_id.setdefault((source, r["source_id"]), []).append(r)
 
     if not detalle_por_id:
-        return {"zona_alta": None, "pico": None, "caida": None}
+        return {"zona_alta": None, "caida": None}
     zona_persona = db.person(conn, person_id)["timezone"]
 
-    alta_vals, pico_vals, caida_vals = [], [], []
+    alta_vals, caida_vals = [], []
     for f in filas:
         rows = detalle_por_id.get((f["source"], f["source_id"]))
         if not rows:
@@ -219,11 +220,8 @@ def historial(conn, person_id: int, a: dict) -> dict:
                 zonas_filas = garmin_adapter.parse_hr_zones(payload)
         if muestras:
             esf = esfuerzos(muestras, f["start_local"], f["duration_s"])
-            if esf["suficiente"]:
-                if esf["pico"] is not None:
-                    pico_vals.append(esf["pico"])
-                if esf["recuperacion"] is not None:
-                    caida_vals.append(esf["recuperacion"])
+            if esf["suficiente"] and esf["recuperacion"] is not None:
+                caida_vals.append(esf["recuperacion"])
         if zonas_filas:
             z = zonas(zonas_filas)
             if z is not None and z["alta_share"] is not None:
@@ -232,7 +230,7 @@ def historial(conn, person_id: int, a: dict) -> dict:
     def _mediana(vals: list[float]) -> float | None:
         return statistics.median(vals) if len(vals) >= HISTORIAL_MIN else None
 
-    return {"zona_alta": _mediana(alta_vals), "pico": _mediana(pico_vals), "caida": _mediana(caida_vals)}
+    return {"zona_alta": _mediana(alta_vals), "caida": _mediana(caida_vals)}
 
 
 def clasifica(actual: dict, habituales: dict) -> dict:
@@ -253,7 +251,6 @@ def clasifica(actual: dict, habituales: dict) -> dict:
     zona_alta_habitual_pct = habituales["zona_alta"] * 100 if habituales["zona_alta"] is not None else None
     return {
         "zona_alta": _codigo(zona_alta_pct, zona_alta_habitual_pct, MODELO["banda_zona_alta_pts"]),
-        "pico": _codigo(actual.get("pico"), habituales["pico"], MODELO["banda_pico_ppm"]),
         "caida": _codigo(actual.get("caida"), habituales["caida"], MODELO["banda_caida_ppm"]),
     }
 
@@ -270,7 +267,6 @@ def tarjeta(conn, person_id: int, a: dict) -> dict | None:
     zon = zonas(zonas_filas)
     actual = {
         "zona_alta": zon["alta_share"] if zon is not None else None,
-        "pico": esf["pico"] if esf["suficiente"] else None,
         "caida": esf["recuperacion"] if esf["suficiente"] else None,
     }
     habituales = historial(conn, person_id, a)

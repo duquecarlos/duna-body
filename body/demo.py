@@ -389,33 +389,50 @@ def _seed_entreno_vista_sesion_detalle(conn, db, dia_fuerza: str, person_id: int
 # (ruling 9's own "nothing else in the demo shifts").
 _ESFUERZO_SEED = 20261122
 _BASKET_HISTORIAL_DIAS_ATRAS = (8, 15, 22, 29)
-# Base zona 1..5 minute shares -- zonas 4-5 together are the plurality, so the card's own
-# "% of the time in zones 4 and 5" line always has something real to say.
-_BASKET_ZONA_REPARTO = (0.05, 0.14, 0.38, 0.30, 0.13)
 _BASKET_ZONA_LOW = {1: 90, 2: 110, 3: 130, 4: 150, 5: 165}
 
 
-def _curva_basket_esfuerzo(rng: random.Random, duracion_min: int, base: float, techo: float) -> list[float]:
-    """BODY-PARTIDO-1 ruling 9: an invented per-minute heart-rate curve with occasional bursts (so
-    ruling 3's peak/drop detection always finds several) and a decay back toward `base` in
-    between -- never a flat line, never a real figure."""
-    out = []
-    v = base
-    for _ in range(duracion_min):
-        if rng.random() < 0.18:
-            v = min(techo, v + rng.uniform(10, 16))
-        else:
-            v = max(base - 8, v - rng.uniform(3, 7))
-        out.append(round(v, 1))
-    return out
+def _curva_basket_esfuerzo(rng: random.Random, duracion_min: int, avg_hr: float, max_hr: float) -> list[float]:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4: an invented per-minute heart-rate curve shaped from
+    THIS game's own avg_hr/max_hr -- a short warm-up, then alternating hard efforts (1-3 minutes
+    climbing) and breaks (1-2 minutes, the first one falling hard) -- so ruling 3's peak/drop
+    detection always finds several, never a flat line. The raw shape is then rescaled (same mean,
+    same peak-to-mean ratio) so its mean lands exactly on `avg_hr` and its highest minute exactly
+    `0`-`6` bpm below `max_hr` (tests/test_demo.py): the SHAPE is random, the two anchors are not."""
+    piso = avg_hr - 20.0
+    out = [piso]
+    calentamiento = rng.randint(3, 5)
+    for _ in range(calentamiento - 1):
+        out.append(min(avg_hr, out[-1] + rng.uniform(4, 8)))
+    while len(out) < duracion_min:
+        for _ in range(rng.randint(1, 3)):
+            if len(out) >= duracion_min:
+                break
+            out.append(min(max_hr, out[-1] + rng.uniform(8, 16)))
+        for j in range(rng.randint(1, 2)):
+            if len(out) >= duracion_min:
+                break
+            caida = rng.uniform(12, 30) if j == 0 else rng.uniform(3, 8)
+            out.append(max(piso, out[-1] - caida))
+    crudo = out[:duracion_min]
+    media_cruda, pico_crudo = statistics.fmean(crudo), max(crudo)
+    pico_objetivo = max_hr - rng.uniform(0, 6)
+    if pico_crudo - media_cruda < 1e-6:
+        return [round(avg_hr, 1)] * duracion_min
+    a = (pico_objetivo - avg_hr) / (pico_crudo - media_cruda)
+    b = avg_hr - a * media_cruda
+    return [round(a * v + b, 1) for v in crudo]
 
 
-def _zonas_basket_esfuerzo(rng: random.Random, duracion_min: int) -> dict[int, float]:
-    jitter = [max(0.01, p + rng.uniform(-0.04, 0.04)) for p in _BASKET_ZONA_REPARTO]
-    total = sum(jitter)
-    minutos = [round(duracion_min * p / total) for p in jitter]
-    minutos[-1] += duracion_min - sum(minutos)
-    return {n: float(m) for n, m in enumerate(minutos, start=1)}
+def _zonas_basket_esfuerzo(curva: list[float]) -> dict[int, float]:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4: each minute's own zone, from THIS SAME curve
+    against `_BASKET_ZONA_LOW` -- so the bar and the curve never disagree. Minutes below zone 1's
+    own floor still count as zone 1, the quietest bucket there is."""
+    minutos = {z: 0.0 for z in range(1, 6)}
+    for v in curva:
+        zona = max((n for n, low in _BASKET_ZONA_LOW.items() if v >= low), default=1)
+        minutos[zona] += 1.0
+    return minutos
 
 
 def _seed_esfuerzo_basket_detalle(conn, db, person_id: int, idioma: str, dia_basket_reciente: str,
@@ -435,6 +452,9 @@ def _seed_esfuerzo_basket_detalle(conn, db, person_id: int, idioma: str, dia_bas
         dia_iso = dia if isinstance(dia, str) else dia.isoformat()
         if i == 0:
             source_id = f"demo-{dia_iso}-1"  # the game already seeded for this day
+            # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4: the SAME avg/max this day's own activity row
+            # was seeded with (_seed_entreno_vista_sesion_actividades), so the curve agrees with it.
+            avg_hr, max_hr = float(_SESION_BASKET_HR["avg"]), float(_SESION_BASKET_HR["max"])
         else:
             source_id = f"demo-basket-hist-{dia_iso}"
             avg_hr = round(rng.uniform(122, 134))
@@ -451,13 +471,13 @@ def _seed_esfuerzo_basket_detalle(conn, db, person_id: int, idioma: str, dia_bas
 
         inicio = datetime.combine(date.fromisoformat(dia_iso), datetime.min.time()) + timedelta(
             hours=int(_SESION_BASKET_HORA[:2]), minutes=int(_SESION_BASKET_HORA[3:5]))
-        curva = _curva_basket_esfuerzo(rng, duracion_min, base=116.0, techo=168.0)
+        curva = _curva_basket_esfuerzo(rng, duracion_min, avg_hr=avg_hr, max_hr=max_hr)
         payload_detalle = {
             "metricDescriptors": [{"key": "directTimestamp", "index": 0}, {"key": "directHeartRate", "index": 1}],
             "activityDetailMetrics": [{"metrics": [_muestra_ms(inicio + timedelta(minutes=m)), v]}
                                        for m, v in enumerate(curva)],
         }
-        reparto_zonas = _zonas_basket_esfuerzo(rng, duracion_min)
+        reparto_zonas = _zonas_basket_esfuerzo(curva)
         payload_zonas = [{"zoneNumber": n, "secsInZone": mins * 60.0, "zoneLowBoundary": _BASKET_ZONA_LOW[n]}
                           for n, mins in reparto_zonas.items()]
         db.guardar_detalle_actividad(conn, person_id, "garmin", source_id, "detalle", payload_detalle)

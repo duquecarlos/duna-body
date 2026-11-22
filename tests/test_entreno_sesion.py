@@ -464,6 +464,15 @@ class PinnedCopyTest(unittest.TestCase):
         self.assertNotIn("entreno_sesion.comparacion", _load_lang("es"))
         self.assertNotIn("entreno_sesion.comparacion", _load_lang("en"))
 
+    def test_the_second_peak_keys_are_gone_from_both_languages(self):
+        # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: the card's own "peak" contradicted the page's
+        # own max-HR comparison -- these three keys are retired, in both languages.
+        es, en = _load_lang("es"), _load_lang("en")
+        for key in ("entreno_sesion.esfuerzo.pico_mas", "entreno_sesion.esfuerzo.pico_como",
+                    "entreno_sesion.esfuerzo.pico_menos"):
+            self.assertNotIn(key, es)
+            self.assertNotIn(key, en)
+
 
 def _detalle_payload(start_local: str, valores: list[float]) -> dict:
     t0 = datetime.fromisoformat(start_local)
@@ -548,20 +557,42 @@ class EsfuerzoCardTest(unittest.TestCase):
         r = client.get(f"/day/{self.DAY}/entreno/partido")
         t_es = T("es")
         bpm = t_es("unit.bpm")
-        self.assertIn(t_es("entreno_sesion.esfuerzo.esfuerzos", n=t_es.num(3), valor=f"{t_es.num(180)} {bpm}"),
-                      r.text)
+        self.assertIn(t_es("entreno_sesion.esfuerzo.esfuerzos", n=t_es.num(3)), r.text)
         self.assertIn(t_es("entreno_sesion.esfuerzo.recuperacion", valor=f"{t_es.num(70)} {bpm}"), r.text)
         self.assertNotIn(t_es("entreno_sesion.esfuerzo.pocos_datos"), r.text)
+
+    def test_no_second_peak_figure_shown(self):
+        # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: the efforts line carries no peak value ("3
+        # esfuerzos fuertes", never "... · pico ..."), and none of the three retired "pico"
+        # phrases render, es or en.
+        r = client.get(f"/day/{self.DAY}/entreno/partido")
+        t_es = T("es")
+        self.assertNotIn("pico", t_es("entreno_sesion.esfuerzo.esfuerzos", n=t_es.num(3)))
+        self.assertNotIn(" · pico ", r.text)
+        for texto in ("Pico más alto que lo habitual", "Pico como lo habitual", "Pico más bajo que lo habitual"):
+            self.assertNotIn(texto, r.text)
+        self.conn.execute("UPDATE person SET language = 'en' WHERE id = 1")
+        self.conn.commit()
+        r = client.get(f"/day/{self.DAY}/entreno/partido")
+        for texto in ("Higher peak than usual", "Peak as usual", "Lower peak than usual"):
+            self.assertNotIn(texto, r.text)
+
+    def test_zone_legend_has_one_swatch_per_zone_and_each_rect_carries_a_title(self):
+        # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3: the sleep-stage-bar precedent -- a <title> per
+        # <rect>, then one swatch per non-empty zone, the SAME class tying bar and swatch.
+        r = client.get(f"/day/{self.DAY}/entreno/partido")
+        self.assertIn('<div class="legend">', r.text)
+        self.assertEqual(r.text.count("<title>Zona"), 5)  # all five zones carry minutes in this fixture
+        for cls in ("c-inset", "c-other", "c-info", "c-body", "c-amber"):
+            self.assertIn(f'<i class="{cls}">', r.text)
 
     def test_english(self):
         self.conn.execute("UPDATE person SET language = 'en' WHERE id = 1")
         self.conn.commit()
         r = client.get(f"/day/{self.DAY}/entreno/partido")
         t_en = T("en")
-        bpm = t_en("unit.bpm")
         self.assertIn(t_en("entreno_sesion.esfuerzo.titulo"), r.text)
-        self.assertIn(t_en("entreno_sesion.esfuerzo.esfuerzos", n=t_en.num(3), valor=f"{t_en.num(180)} {bpm}"),
-                      r.text)
+        self.assertIn(t_en("entreno_sesion.esfuerzo.esfuerzos", n=t_en.num(3)), r.text)
 
 
 class EsfuerzoHonestGapCardTest(unittest.TestCase):
@@ -602,13 +633,18 @@ class EsfuerzoComparacionTest(unittest.TestCase):
         for i in range(4):
             day = (date(2026, 11, 1) + timedelta(i)).isoformat()
             source_id = f"hist-{i}"
-            _activity(self.conn, 1, source_id, day, f"{day}T18:00:00", "other", "Baloncesto", 14 * 60.0)
+            # avg_hr=150 on every game (history and today alike) so the PAGE's own figure/habitual
+            # comparison also has something to say here -- ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2's
+            # own fixture for "the page's heading, said once, is never repeated inside the card".
+            _activity(self.conn, 1, source_id, day, f"{day}T18:00:00", "other", "Baloncesto", 14 * 60.0,
+                      avg_hr=150)
             db.guardar_detalle_actividad(self.conn, 1, "garmin", source_id, "detalle",
                                           _detalle_payload(f"{day}T18:00:00", self._CURVA_HISTORIAL))
             # alta_share = 4/14 ~= 28.6% for every history game.
             db.guardar_detalle_actividad(self.conn, 1, "garmin", source_id, "zonas",
                                           _zonas_payload({1: 2.0, 2: 2.0, 3: 6.0, 4: 2.0, 5: 2.0}))
-        _activity(self.conn, 1, "hoy", self.DAY, f"{self.DAY}T18:00:00", "other", "Baloncesto", 14 * 60.0)
+        _activity(self.conn, 1, "hoy", self.DAY, f"{self.DAY}T18:00:00", "other", "Baloncesto", 14 * 60.0,
+                  avg_hr=150)
         db.guardar_detalle_actividad(self.conn, 1, "garmin", "hoy", "detalle",
                                       _detalle_payload(f"{self.DAY}T18:00:00", self._CURVA_HOY))
         # alta_share = 7/14 = 50% today -- well above the history's own ~28.6% (+21.4 pts, over
@@ -617,21 +653,26 @@ class EsfuerzoComparacionTest(unittest.TestCase):
                                       _zonas_payload({1: 2.0, 2: 2.0, 3: 3.0, 4: 4.0, 5: 3.0}))
         self.conn.commit()
 
-    def test_more_time_in_the_high_zones_higher_peak_is_wrong_lower_peak_and_same_recovery(self):
+    def test_more_time_in_the_high_zones_and_same_recovery(self):
         r = client.get(f"/day/{self.DAY}/entreno/hoy")
         self.assertEqual(r.status_code, 200)
         t_es = T("es")
         self.assertIn(t_es("entreno_sesion.esfuerzo.zona_alta_mas"), r.text)
-        self.assertIn(t_es("entreno_sesion.esfuerzo.pico_menos"), r.text)
         self.assertIn(t_es("entreno_sesion.esfuerzo.recuperacion_como"), r.text)
         self.assertNotIn(t_es("entreno_sesion.esfuerzo.zona_alta_como"), r.text)
-        self.assertNotIn(t_es("entreno_sesion.esfuerzo.pico_mas"), r.text)
 
     def test_comparison_heading_reuses_the_existing_key(self):
         r = client.get(f"/day/{self.DAY}/entreno/hoy")
         t_es = T("es")
         titulo = _es("entreno_sesion.comparacion_titulo").format(tipo="baloncesto")
         self.assertIn(titulo, r.text)
+
+    def test_comparison_heading_is_not_repeated_inside_the_card(self):
+        # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2: the page's own heading says it once, the card's
+        # comparison rows follow the figures directly with no second heading of their own.
+        r = client.get(f"/day/{self.DAY}/entreno/hoy")
+        titulo = _es("entreno_sesion.comparacion_titulo").format(tipo="baloncesto")
+        self.assertEqual(r.text.count(titulo), 1)
 
 
 class CurvaDesdeDetalleTest(unittest.TestCase):
@@ -716,6 +757,17 @@ class DemoBranchesTest(unittest.TestCase):
         self.assertIn('class="chart-svg"', r.text)
         t_es = T("es")
         self.assertIn(t_es("entreno_sesion.esfuerzo.titulo"), r.text)
+        # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4/5: this anchor basketball game's own curve now
+        # agrees with its seeded avg/max, and the 4 earlier games it seeds give it a full history --
+        # a recovery figure and both comparison rows (zona_alta + recuperacion) show.
+        self.assertIn(t_es("unit.bpm"), r.text)
+        self.assertRegex(r.text, r"bajó unos [\d.,]+")
+        comparacion_keys = ("entreno_sesion.esfuerzo.zona_alta_mas", "entreno_sesion.esfuerzo.zona_alta_como",
+                            "entreno_sesion.esfuerzo.zona_alta_menos")
+        self.assertTrue(any(t_es(k) in r.text for k in comparacion_keys))
+        recuperacion_keys = ("entreno_sesion.esfuerzo.recuperacion_mas", "entreno_sesion.esfuerzo.recuperacion_como",
+                             "entreno_sesion.esfuerzo.recuperacion_menos")
+        self.assertTrue(any(t_es(k) in r.text for k in recuperacion_keys))
 
 
 class DolorCardTest(unittest.TestCase):
