@@ -33968,3 +33968,5 @@ merged with `feat/body-partido-1` via `--no-ff`, tree identity verified empty-di
 branch tip, branch deleted, `body-app` left on `main` clean. Merge sha recorded in the next
 ledger line, per this ledger's append-only rule.
 
+BODY-PARTIDO-1 merged 447b567605e5579fdbcd632b1ef7e7422e36ff2b.
+
