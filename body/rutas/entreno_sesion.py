@@ -270,52 +270,58 @@ def _curva_svg(t: T, sets: list[dict], curva_ctx: dict, width: int = 320, height
 _ZONA_CLASES = {1: "c-inset", 2: "c-other", 3: "c-info", 4: "c-body", 5: "c-amber"}
 
 
-def _esfuerzo_zonas_svg(filas: list[tuple[int, float]], total_min: float) -> str:
-    """Ruling 6: the zone breakdown's own stacked bar -- same inline-SVG, fixed-class shape as
-    body/templates/day.html's own sleep-stage bar (<svg class="stage"> viewBox 0 0 100 h, one
-    <rect> per segment), server-built, no inline style, no var(...) in markup (DESIGN rule 13, the
-    _curva_svg precedent above)."""
+def _esfuerzo_zonas_svg(t: T, filas: list[tuple[int, float]], total_min: float) -> str:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3: the zone breakdown's own stacked bar AND its legend
+    -- same shape as body/templates/day.html's own sleep-stage bar/legend pair (<svg class="stage">
+    viewBox 0 0 100 h, one <rect> per segment carrying a <title>, then one `div.legend` of
+    `<span><i class="{zone class}"></i>{label}</span>` entries) -- replacing the heavy boxed
+    `ul.list` the zones used to render as. `_ZONA_CLASES`' own classes (body.css's fixed-colour
+    palette, BODY-ESTILOS-1) already set `background` directly, not scoped to `.stage` or
+    `.legend`, so the same class ties the bar's colour to its legend swatch with no new CSS."""
     if not total_min:
         return ""
-    shapes = []
+    shapes, legend_items = [], []
     x = 0.0
     for n, mins in filas:
         w = 100 * mins / total_min
-        shapes.append(f'<rect x="{x:.2f}" y="0" width="{w:.2f}" height="10" class="{_ZONA_CLASES[n]}"/>')
+        label = html.escape(t("entreno_sesion.esfuerzo.zona", n=n, dur=t.minutes(mins)))
+        cls = _ZONA_CLASES[n]
+        shapes.append(f'<rect x="{x:.2f}" y="0" width="{w:.2f}" height="10" class="{cls}">'
+                      f'<title>{label}</title></rect>')
+        legend_items.append(f'<span><i class="{cls}"></i>{label}</span>')
         x += w
-    return f'<svg class="stage" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true">{"".join(shapes)}</svg>'
+    svg = f'<svg class="stage" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true">{"".join(shapes)}</svg>'
+    return svg + '<div class="legend">' + "".join(legend_items) + "</div>"
 
 
 _ESFUERZO_PALABRA = {
     "zona_alta": {"mas": "entreno_sesion.esfuerzo.zona_alta_mas", "igual": "entreno_sesion.esfuerzo.zona_alta_como",
                   "menos": "entreno_sesion.esfuerzo.zona_alta_menos"},
-    "pico": {"mas": "entreno_sesion.esfuerzo.pico_mas", "igual": "entreno_sesion.esfuerzo.pico_como",
-             "menos": "entreno_sesion.esfuerzo.pico_menos"},
     "caida": {"mas": "entreno_sesion.esfuerzo.recuperacion_mas", "igual": "entreno_sesion.esfuerzo.recuperacion_como",
               "menos": "entreno_sesion.esfuerzo.recuperacion_menos"},
 }
 
 
-def _esfuerzo_ctx(t: T, tarjeta: dict, tipo_comp: str | None) -> dict:
+def _esfuerzo_ctx(t: T, tarjeta: dict) -> dict:
     """Ruling 6: the effort card's own context -- every row present only when its figure exists.
     `tarjeta` is esfuerzo_sesion.tarjeta()'s own return (never None here -- the caller already
-    gated the card's presence on that)."""
+    gated the card's presence on that). ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: no second peak
+    figure here -- the page's own max-HR comparison already covers that ground; ruling 2: no
+    `tipo_comp`-keyed heading repeated inside the card, its comparison rows read on their own."""
     esf, zon, clasificacion = tarjeta["esfuerzos"], tarjeta["zonas"], tarjeta["clasificacion"]
     bpm = t("unit.bpm")
 
-    zonas_txt = zonas_svg = zona_alta_txt = None
+    zonas_svg = zona_alta_txt = None
     if zon is not None:
         filas = [(n, zon["minutos"][n]) for n in range(1, 6) if zon["minutos"][n] > 0]
         if filas:
-            zonas_txt = [t("entreno_sesion.esfuerzo.zona", n=n, dur=t.minutes(mins)) for n, mins in filas]
-            zonas_svg = _esfuerzo_zonas_svg(filas, zon["total_min"])
+            zonas_svg = _esfuerzo_zonas_svg(t, filas, zon["total_min"])
         if zon["alta_share"] is not None:
             zona_alta_txt = t("entreno_sesion.esfuerzo.zona_alta", pct=t.num(round(zon["alta_share"] * 100)))
 
     esfuerzos_txt = None
     if esf["suficiente"] and esf["n_picos"] >= 1:
-        esfuerzos_txt = t("entreno_sesion.esfuerzo.esfuerzos", n=t.num(esf["n_picos"]),
-                          valor=f"{t.num(round(esf['pico']))} {bpm}")
+        esfuerzos_txt = t("entreno_sesion.esfuerzo.esfuerzos", n=t.num(esf["n_picos"]))
     recuperacion_txt = None
     if esf["suficiente"] and esf["recuperacion"] is not None:
         recuperacion_txt = t("entreno_sesion.esfuerzo.recuperacion",
@@ -323,15 +329,13 @@ def _esfuerzo_ctx(t: T, tarjeta: dict, tipo_comp: str | None) -> dict:
     pocos_datos_txt = (t("entreno_sesion.esfuerzo.pocos_datos")
                        if tarjeta["tiene_detalle"] and not esf["suficiente"] else None)
 
-    comparacion = [t(_ESFUERZO_PALABRA[figura][codigo]) for figura in ("zona_alta", "pico", "caida")
+    comparacion = [t(_ESFUERZO_PALABRA[figura][codigo]) for figura in ("zona_alta", "caida")
                    if (codigo := clasificacion.get(figura)) is not None]
-    comparacion_titulo = (t("entreno_sesion.comparacion_titulo", tipo=tipo_comp)
-                          if comparacion and tipo_comp else None)
 
     return {
-        "titulo": t("entreno_sesion.esfuerzo.titulo"), "zonas_svg": zonas_svg, "zonas": zonas_txt,
+        "titulo": t("entreno_sesion.esfuerzo.titulo"), "zonas_svg": zonas_svg,
         "zona_alta": zona_alta_txt, "esfuerzos": esfuerzos_txt, "recuperacion": recuperacion_txt,
-        "pocos_datos": pocos_datos_txt, "comparacion_titulo": comparacion_titulo, "comparacion": comparacion,
+        "pocos_datos": pocos_datos_txt, "comparacion": comparacion,
     }
 
 
@@ -432,7 +436,7 @@ def entreno_sesion_view(day: str, source_id: str, request: Request,
         # BODY-PARTIDO-1 ruling 6: strength sessions keep their own set/rest view untouched.
         tarjeta_esfuerzo = esfuerzo_sesion.tarjeta(conn, person_id, a)
         if tarjeta_esfuerzo is not None:
-            esfuerzo = _esfuerzo_ctx(t, tarjeta_esfuerzo, tipo_comp)
+            esfuerzo = _esfuerzo_ctx(t, tarjeta_esfuerzo)
 
     recuperacion_row = conn.execute(
         "SELECT minutos, motivo FROM recuperacion_actividad WHERE person_id = ? AND activity_source = ? AND "

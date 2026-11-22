@@ -142,24 +142,24 @@ class ClasificaTest(unittest.TestCase):
     """Ruling 5: the three-way band classification, pure."""
 
     def test_within_the_band_is_igual(self):
-        c = esfuerzo_sesion.clasifica({"zona_alta": 0.50, "pico": 150.0, "caida": 20.0},
-                                       {"zona_alta": 0.48, "pico": 148.0, "caida": 19.0})
-        self.assertEqual(c, {"zona_alta": "igual", "pico": "igual", "caida": "igual"})
+        c = esfuerzo_sesion.clasifica({"zona_alta": 0.50, "caida": 20.0},
+                                       {"zona_alta": 0.48, "caida": 19.0})
+        self.assertEqual(c, {"zona_alta": "igual", "caida": "igual"})
 
     def test_above_the_band_is_mas(self):
-        c = esfuerzo_sesion.clasifica({"zona_alta": 0.60, "pico": 160.0, "caida": 30.0},
-                                       {"zona_alta": 0.40, "pico": 140.0, "caida": 10.0})
-        self.assertEqual(c, {"zona_alta": "mas", "pico": "mas", "caida": "mas"})
+        c = esfuerzo_sesion.clasifica({"zona_alta": 0.60, "caida": 30.0},
+                                       {"zona_alta": 0.40, "caida": 10.0})
+        self.assertEqual(c, {"zona_alta": "mas", "caida": "mas"})
 
     def test_below_the_band_is_menos(self):
-        c = esfuerzo_sesion.clasifica({"zona_alta": 0.30, "pico": 130.0, "caida": 5.0},
-                                       {"zona_alta": 0.50, "pico": 150.0, "caida": 20.0})
-        self.assertEqual(c, {"zona_alta": "menos", "pico": "menos", "caida": "menos"})
+        c = esfuerzo_sesion.clasifica({"zona_alta": 0.30, "caida": 5.0},
+                                       {"zona_alta": 0.50, "caida": 20.0})
+        self.assertEqual(c, {"zona_alta": "menos", "caida": "menos"})
 
     def test_missing_either_side_gives_no_classification(self):
-        c = esfuerzo_sesion.clasifica({"zona_alta": None, "pico": 150.0, "caida": None},
-                                       {"zona_alta": 0.4, "pico": None, "caida": 20.0})
-        self.assertEqual(c, {"zona_alta": None, "pico": None, "caida": None})
+        c = esfuerzo_sesion.clasifica({"zona_alta": None, "caida": None},
+                                       {"zona_alta": 0.4, "caida": 20.0})
+        self.assertEqual(c, {"zona_alta": None, "caida": None})
 
 
 def _reset_db(tc: unittest.TestCase, name: str):
@@ -262,7 +262,7 @@ class HistorialTest(unittest.TestCase):
         _activity(self.conn, 1, "hoy", "2026-11-10", "2026-11-10T18:00:00", "other", "Baloncesto", 3000.0)
         a = entreno_sesion.actividad(self.conn, 1, "2026-11-10", "hoy")
         h = esfuerzo_sesion.historial(self.conn, 1, a)
-        self.assertEqual(h, {"zona_alta": None, "pico": None, "caida": None})
+        self.assertEqual(h, {"zona_alta": None, "caida": None})
 
     def test_historial_min_sessions_gives_a_median_per_figure(self):
         self._sembrar_partido("p1", "2026-11-01", alta_min=4.0, pico=150.0)
@@ -271,7 +271,6 @@ class HistorialTest(unittest.TestCase):
         _activity(self.conn, 1, "hoy", "2026-11-10", "2026-11-10T18:00:00", "other", "Baloncesto", 3000.0)
         a = entreno_sesion.actividad(self.conn, 1, "2026-11-10", "hoy")
         h = esfuerzo_sesion.historial(self.conn, 1, a)
-        self.assertEqual(h["pico"], 160.0)  # median(150, 160, 170)
         self.assertAlmostEqual(h["zona_alta"], 6.0 / 12.0)  # median alta share (4,6,8)/12 -> 6/12
         # Each seeded session's own curve gives too few measured drops (caidas_min needs 3, this
         # fixture's own shape gives fewer) for a recovery figure -- so "caida" has no comparison
@@ -282,7 +281,7 @@ class HistorialTest(unittest.TestCase):
         _activity(self.conn, 1, "sola", "2026-11-10", "2026-11-10T18:00:00", "other", "Baloncesto", 3000.0)
         a = entreno_sesion.actividad(self.conn, 1, "2026-11-10", "sola")
         self.assertEqual(esfuerzo_sesion.historial(self.conn, 1, a),
-                          {"zona_alta": None, "pico": None, "caida": None})
+                          {"zona_alta": None, "caida": None})
 
 
 class TarjetaTest(unittest.TestCase):
