@@ -33655,3 +33655,32 @@ dated plan a `sin_uso` stream of its own (matching BODY-PLAN-PANTALLA-1 ruling 6
 widening the global per-day seeding functions other screens and tests depend on. Not done here: out of this
 slice's `touches` as literally scoped, and the gap is pre-existing, not introduced by this diff.
 
+## BODY-REGISTRO-COBERTURA-2-M -- lands BODY-REGISTRO-COBERTURA-2 past the customer-bytes stop (2026-11-22)
+
+**Approval, `ORCH-CARLOS-DELEGATES-TIER-1-1` (Tier 2):** the customer bytes BODY-REGISTRO-COBERTURA-2 stopped on
+are approved by name and this slice may merge past merge policy A's customer-bytes condition -- the 17 keys per
+language under `goals.registro.*` in `body/i18n/es.json` and `body/i18n/en.json` (`title` "Tu registro" / "Your
+log", `rango`, `rango_terminado`, `completo`, `faltan`, `y_mas`, `semana_de`, `sin_uso` "No cuenta lo que no
+registras: {items}." / "Not counted, since you don't log them: {items}.", the three `cadencia.*` keys, the six
+`stream.*` names) and the "Tu registro" / "Your log" card added to `body/templates/goal.html`. The orchestrator
+measured the card on the demo's dated plan (`/goals/4`) at 375px on the branch tip: six rows, the sleep row
+linking to `/day/` of its newest missing night, "Complete" on full weekly streams, no horizontal overflow, no
+element past the card's edge. Text only, no meter (none exists to reuse): accepted.
+
+**Targeted check, branch tip `300efcc`:** `tests.test_metas` named in the spec does not exist in this tree
+(`git ls-tree -r HEAD --name-only tests` shows only `test_metas_semana_tira.py` and
+`test_registro_cobertura_metas.py`) -- dropped, not substituted. `.venv/Scripts/python.exe -m unittest
+tests.test_registro_cobertura_metas tests.test_registro_tu tests.test_i18n_paridad tests.test_persona_fuga
+tests.test_rendimiento`: Ran 78 tests, OK.
+
+**Pre-existing calendar red, handed to `BODY-DEMO-HOY-FIJO-1`:**
+`tests.test_estados_vacios_2.PersonaCompletaSinCambiosTest.test_demo_person_unchanged` seeds the demo with no
+`today=` and depends on the real calendar date -- passes with `today=2026-11-21`, fails with `today=2026-11-22`
+(today's real date), on `main` too. Not in this slice's `touches`; not fixed here.
+
+**Merge:** `main` had not moved since the branch's base (`5c71e172cbc69c0e661561ab647a585754925c97`), so the
+targeted check above stands in place of a full gate re-run, per the branch's own already-reconciled floor (5452
+tests across 28 chunks, recorded above). `git checkout main`; `git merge --no-ff feat/body-registro-cobertura-2`;
+smoke `.venv/Scripts/python.exe -m unittest tests.test_registro_cobertura_metas tests.test_i18n_paridad` on
+`main` post-merge. Branch `feat/body-registro-cobertura-2` deleted after the merge. Not deployed, not pushed.
+
