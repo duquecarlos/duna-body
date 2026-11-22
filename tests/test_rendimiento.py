@@ -258,6 +258,13 @@ def _reset_db(tc: unittest.TestCase):
     return conn
 
 
+# BODY-DEMO-HOY-FIJO-1: _seed below seeds the demo with no `today=` and most of its callers read
+# routes through the real clock (comun._today_local) -- pinned so the module's own statement-count
+# ceilings never depend on which real day the suite runs on (a different anchor can take a route
+# down a different branch, e.g. turnos.py's empty-cost-table state, with its own statement count).
+_ANCHOR = date(2026, 11, 20)
+
+
 def _seed(conn) -> dict:
     """Same populated fixture as tests/test_get_sin_escritura.py's sweep, so every parameterised
     GET route carries a real id -- demo.py's seed carries no real figure, by its own contract.
@@ -265,7 +272,7 @@ def _seed(conn) -> dict:
     route sweep below measures "/"'s own bounded workout_set read (body/rutas/hoy.py's
     _entrenado_hoy_categorias) against its real worst case -- an id list that is not empty --
     rather than the demo's own random activities, which rarely land a categorised set on today."""
-    demo._seed(conn, dias=30, idioma="es")
+    demo._seed(conn, dias=30, idioma="es", today=_ANCHOR)
     goal_id = conn.execute("SELECT id FROM goal WHERE person_id = 1 ORDER BY id LIMIT 1").fetchone()[0]
     day = conn.execute(
         "SELECT day FROM daily_metric WHERE person_id = 1 ORDER BY day DESC LIMIT 1").fetchone()[0]
@@ -293,6 +300,9 @@ def _fill(path: str, ids: dict) -> str:
 
 class RouteCostCeilingTest(unittest.TestCase):
     def test_every_get_route_stays_within_its_ceiling(self):
+        patcher = patch.object(web_comun, "_today_local", return_value=_ANCHOR)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         conn = _reset_db(self)
         ids = _seed(conn)
 
@@ -326,6 +336,9 @@ class ManyProposalShiftsCostTest(unittest.TestCase):
     _CEILING = 50
 
     def test_stays_within_its_own_ceiling(self):
+        patcher = patch.object(web_comun, "_today_local", return_value=_ANCHOR)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         conn = _reset_db(self)
         _seed(conn)
         data = {"source": {"received": "2026-01-01T12:00:00-05:00", "extracted_at": "2026-01-01T12:00:00-05:00"},
@@ -352,6 +365,9 @@ class RouteCostRealPathTest(unittest.TestCase):
     device-key or hosted-only GET route fail this file until it gets a real-path ceiling too."""
 
     def test_the_main_sweeps_404_set_matches_this_tables_keys(self):
+        patcher = patch.object(web_comun, "_today_local", return_value=_ANCHOR)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         conn = _reset_db(self)
         ids = _seed(conn)
         get_routes = [r for r in rutas_planas(web.app.routes) if "GET" in getattr(r, "methods", ())]
@@ -361,6 +377,9 @@ class RouteCostRealPathTest(unittest.TestCase):
                           "the main sweep's 401/403/404 route set and this table's keys have drifted apart")
 
     def test_device_key_routes_on_their_real_path(self):
+        patcher = patch.object(web_comun, "_today_local", return_value=_ANCHOR)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         conn = _reset_db(self)
         ids = _seed(conn)
         patcher = patch.dict(os.environ, _HOSTED_ENV)
@@ -399,6 +418,9 @@ class RouteCostRealPathTest(unittest.TestCase):
                           f"route(s) opened more than {_MAX_CONNECTIONS} connections: {over_connections}")
 
     def test_hosted_only_routes_on_their_real_path(self):
+        patcher = patch.object(web_comun, "_today_local", return_value=_ANCHOR)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         conn = _reset_db(self)
         _seed(conn)
         patcher = patch.dict(os.environ, _HOSTED_ENV)
@@ -436,6 +458,9 @@ class RouteCostRealPathTest(unittest.TestCase):
         signing back in -- the common case, and the one that actually exercises this file's own
         seeded data -- never a brand-new sign-up, which would cost an extra person INSERT no
         existing user ever pays."""
+        clock_patcher = patch.object(web_comun, "_today_local", return_value=_ANCHOR)
+        clock_patcher.start()
+        self.addCleanup(clock_patcher.stop)
         conn = _reset_db(self)
         _seed(conn)
         patcher = patch.dict(os.environ, _HOSTED_ENV)
@@ -494,6 +519,9 @@ class HogarMananaCostIndependentOfTargetCountTest(unittest.TestCase):
     through GET /api/hogar/manana itself."""
 
     def test_one_target_vs_three_same_statement_count_through_the_route(self):
+        patcher = patch.object(web_comun, "_today_local", return_value=_ANCHOR)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         conn = _reset_db(self)
         ids = _seed(conn)
         patcher = patch.dict(os.environ, _HOSTED_ENV)
@@ -560,6 +588,9 @@ class RouteCostIndependentOfCatalogSizeTest(unittest.TestCase):
     BODY-MEDIDA-PESO-1 and BODY-AGUJETAS-1 each did) must cost the route NO extra statement."""
 
     def test_goal_new_form_unaffected_by_an_extra_self_measured_key(self):
+        patcher = patch.object(web_comun, "_today_local", return_value=_ANCHOR)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         conn = _reset_db(self)
         _seed(conn)
         with contar_sql() as before:
@@ -571,6 +602,9 @@ class RouteCostIndependentOfCatalogSizeTest(unittest.TestCase):
         self.assertEqual(before["statements"], after["statements"])
 
     def test_trends_unaffected_by_an_extra_self_measured_key(self):
+        patcher = patch.object(web_comun, "_today_local", return_value=_ANCHOR)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         conn = _reset_db(self)
         _seed(conn)
         with contar_sql() as before:

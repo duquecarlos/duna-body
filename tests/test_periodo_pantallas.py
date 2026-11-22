@@ -26,6 +26,11 @@ from body.rutas import comun
 PERSON_A = 1
 NOTE_SECRETO = "nota-secreta-no-debe-verse-123"
 
+# BODY-DEMO-HOY-FIJO-1: CeilingConSinPeriodoAbiertoDiasAntesTest below seeds the demo with no
+# `today=` and reads routes through the real clock (comun._today_local) -- pinned so the ceiling
+# check never depends on which real day it runs on.
+_ANCHOR = date(2026, 11, 20)
+
 
 def _esc(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&#34;").replace("'", "&#39;")
@@ -478,7 +483,10 @@ class CeilingConSinPeriodoAbiertoDiasAntesTest(unittest.TestCase):
         self.conn = db.connect()
         self.addCleanup(self.conn.close)
         db.ensure_ready(self.conn)
-        demo._seed(self.conn, dias=30, idioma="es")
+        patcher = mock.patch.object(comun, "_today_local", return_value=_ANCHOR)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        demo._seed(self.conn, dias=30, idioma="es", today=_ANCHOR)
         self.day = self.conn.execute(
             "SELECT day FROM daily_metric WHERE person_id = 1 ORDER BY day DESC LIMIT 1").fetchone()[0]
 

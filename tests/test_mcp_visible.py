@@ -6,8 +6,9 @@ Invented demo data only, no real health figures, no network.
 """
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
@@ -16,9 +17,15 @@ from fastapi.testclient import TestClient
 from body import config, db, demo, identity, web
 from body.agente import conversacion as agente_conversacion
 from body.agente import propuestas as agente_propuestas
+from body.rutas import comun
 from body.rutas import hoy as web_hoy
 from tests._rutas import contar_sql
 from tests.test_rendimiento import _CEILINGS
+
+# BODY-DEMO-HOY-FIJO-1: _reset_db below seeds the demo with no `today=` and every test here reads
+# the real clock through comun._today_local -- pinned so the suite never depends on which real
+# day it runs on.
+_ANCHOR = date(2026, 11, 20)
 
 
 def _reset_db():
@@ -26,7 +33,7 @@ def _reset_db():
     config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "mcp_visible.db"
     conn = db.connect()
     db.ensure_ready(conn)
-    demo._seed(conn, dias=30, idioma="es")
+    demo._seed(conn, dias=30, idioma="es", today=_ANCHOR)
     conn.commit()
     return conn, orig
 
@@ -65,6 +72,9 @@ class _BaseTest(unittest.TestCase):
         self.person_id = db.local_person_id(self.conn)
         self.addCleanup(web.app.dependency_overrides.clear)
         web.app.dependency_overrides[identity.current_person_id] = lambda: self.person_id
+        patcher = mock.patch.object(comun, "_today_local", return_value=_ANCHOR)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.client = TestClient(web.app, follow_redirects=False)
 
 
