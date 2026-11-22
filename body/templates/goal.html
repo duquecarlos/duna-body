@@ -149,6 +149,24 @@
 {% endif %}
 {% endif %}
 
+{% if registro %}
+<div class="card">
+  <div class="q">{{ t('goals.registro.title') }}</div>
+  <ul class="plan mt-6">
+  {% for f in registro.filas %}
+    <li class="block">
+      {% if f.link %}<a class="taplink" href="{{ f.link }}">{{ f.nombre }}</a>{% else %}<div>{{ f.nombre }}</div>{% endif %}
+      <div class="k mt-2">{{ f.cuenta }}</div>
+      {% if f.completo %}<div class="k c-muted">{{ t('goals.registro.completo') }}</div>
+      {% elif f.faltan_txt %}<div class="k c-muted">{{ f.faltan_txt }}</div>{% endif %}
+    </li>
+  {% endfor %}
+  </ul>
+  {% if registro.sin_uso %}<p class="note mt-8 mb-0">{{ registro.sin_uso }}</p>{% endif %}
+  <p class="k mt-8 mb-0">{{ registro.rango }}</p>
+</div>
+{% endif %}
+
 {% if members %}
 <div class="card">
   <div class="q">{{ t('goals.household_title') }}</div>
