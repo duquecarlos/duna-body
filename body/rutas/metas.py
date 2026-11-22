@@ -10,7 +10,8 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import cuenta, db, enlaces, fechas, goals, horizonte, household, identity, practicas, profile
+from .. import cuenta, db, enlaces, fechas, goals, horizonte, household, identity, practicas, profile, \
+    registro_cobertura
 from ..baselines import baselines
 from ..i18n import T
 from . import comun, experimentos
@@ -478,6 +479,87 @@ def _plan_fases_ctx(conn, t: T, goal_id: int, today: date) -> list[dict]:
     } for f in fases_data]
 
 
+# BODY-REGISTRO-COBERTURA-2 (ORCH-CARLOS-DELEGATES-TIER-1-1): the SCREEN side of
+# BODY-REGISTRO-COBERTURA-1's own count (body/registro_cobertura.py, called here, never edited).
+# Stream label and count-sentence i18n keys, in MODELO order (registro_cobertura.STREAMS).
+_REGISTRO_LABEL_KEY = {
+    "sueno": "goals.registro.stream.sueno", "comidas": "goals.registro.stream.comidas",
+    "proteina": "goals.registro.stream.proteina", "peso": "goals.registro.stream.peso",
+    "cintura": "goals.registro.stream.cintura", "entreno": "goals.registro.stream.entreno",
+}
+_REGISTRO_CADENCIA_KEY = {
+    "nightly": "goals.registro.cadencia.nightly", "daily": "goals.registro.cadencia.daily",
+    "weekly": "goals.registro.cadencia.weekly",
+}
+# Ruling 2: "the newest missing ones in words ... at most 3 named then «y N más»".
+_REGISTRO_FALTAN_MOSTRADOS = 3
+
+
+def _registro_dia_label(t: T, d: date) -> str:
+    """"lun 17" -- weekday abbreviated the same way `_short_date` abbreviates a month (`[:3]` on
+    the full catalogue word), never a new weekday catalogue."""
+    return f"{t('date.days')[d.weekday()][:3]} {d.day}"
+
+
+def _registro_semana_label(t: T, lunes: date) -> str:
+    return t("goals.registro.semana_de", date=f"{lunes.day} {t('date.months')[lunes.month - 1][:3]}")
+
+
+def _registro_faltan_txt(t: T, faltan: list[str], cadencia: str) -> str | None:
+    if not faltan:
+        return None
+    etiqueta = _registro_semana_label if cadencia == "weekly" else _registro_dia_label
+    nombrados = [etiqueta(t, date.fromisoformat(d)) for d in faltan[:_REGISTRO_FALTAN_MOSTRADOS]]
+    resto = len(faltan) - len(nombrados)
+    items = ", ".join(nombrados)
+    if resto > 0:
+        items = f"{items} {t('goals.registro.y_mas', n=t.num(resto))}"
+    return t("goals.registro.faltan", items=items)
+
+
+def _registro_ctx(conn, t: T, person_id: int, goal_id: int, today: date) -> dict | None:
+    """Ruling 1: one call to `registro_cobertura.cobertura` -- never per stream -- absent entirely
+    (None) when this goal is not a dated plan or has no stream to report, so a non-plan goal's page
+    stays byte-identical (the caller never reaches this function for one, ruling 1's own gate).
+    Ruling 3: a stream never used at all is named in ONE shared muted line, never its own row."""
+    out = registro_cobertura.cobertura(conn, person_id, goal_id, hasta=today)
+    streams = out["streams"]
+    if not streams:
+        return None
+    filas = []
+    sin_uso_nombres = []
+    for stream in registro_cobertura.STREAMS:
+        s = streams.get(stream)
+        if s is None:
+            continue
+        nombre = t(_REGISTRO_LABEL_KEY[stream])
+        if s["sin_uso"]:
+            sin_uso_nombres.append(nombre)
+            continue
+        completo = s["cubiertos"] == s["esperados"]
+        filas.append({
+            "nombre": nombre,
+            "cuenta": t(_REGISTRO_CADENCIA_KEY[s["cadencia"]], n=t.num(s["cubiertos"]), m=t.num(s["esperados"])),
+            "completo": completo,
+            "faltan_txt": None if completo else _registro_faltan_txt(t, s["faltan"], s["cadencia"]),
+            # Ruling 4: sleep has no manual log -- its row links to the Día of the newest missing
+            # night when one is missing, else nothing; the other five streams have no existing
+            # logging route at all (census in this slice's own report), so they never link.
+            "link": f"/day/{s['faltan'][0]}" if stream == "sueno" and s["faltan"] else None,
+        })
+    # Ruling 5: the plan's own range, muted -- "hasta hoy" unless the plan already ended before
+    # today (out["hasta"] is min(hasta, plan end), so a mismatch with today means it ended).
+    terminado = out["hasta"] != today.isoformat()
+    desde_txt = comun._short_date(t, date.fromisoformat(out["desde"]))
+    if terminado:
+        rango = t("goals.registro.rango_terminado", desde=desde_txt,
+                   hasta=comun._short_date(t, date.fromisoformat(out["hasta"])))
+    else:
+        rango = t("goals.registro.rango", desde=desde_txt)
+    return {"filas": filas, "rango": rango,
+            "sin_uso": t("goals.registro.sin_uso", items=", ".join(sin_uso_nombres)) if sin_uso_nombres else None}
+
+
 def _nest_horizontes(rows, built_cards: list[dict]) -> list[dict]:
     """Ruling 4: within this SAME /goals section, a horizon's own child goals nest under its card
     (`c['children']`) instead of standing as separate top-level rows -- no extra query, `rows` is
@@ -743,6 +825,15 @@ def goal_detail(goal_id: int, request: Request, person_id: int = Depends(identit
     if g["kind"] == "milestone" and horizonte.es_horizonte(conn, goal_id):
         plan = _build_plan_ctx(conn, t, defs, g, person_id, today, request.query_params.get("semana"))
 
+    # BODY-REGISTRO-COBERTURA-2 ruling 1: a dated plan is `registro_cobertura`'s own definition --
+    # a milestone with a deadline -- never narrowed to `horizonte.es_horizonte` (a bare dated
+    # milestone with no plan rows at all is still a dated plan this slice's own count covers).
+    # Gated the same way `plan` above is: a goal that fails this check pays no extra statement at
+    # all, so it renders byte-identical to before this slice.
+    registro = None
+    if g["kind"] == "milestone" and g["deadline"]:
+        registro = _registro_ctx(conn, t, person_id, goal_id, today)
+
     # Ruling 4: a child goal's own "part of the plan" line, linking back to its horizon -- only
     # when this viewer can also see that horizon (goals.goal_access, the same check every other
     # cross-goal link in this app already goes through).
@@ -759,7 +850,7 @@ def goal_detail(goal_id: int, request: Request, person_id: int = Depends(identit
                    apps_por_enlazar=enlaces.apps_por_enlazar(conn, goal_id), enlace_error_app=enlace_error_app,
                    target_text=_goal_target_text(t, defs, g), area_label=t("goals.area." + g["area"]),
                    today=today.isoformat(), turnos=db.trabaja_turnos_si(conn, person_id),
-                   plan=plan, part_of=part_of)
+                   plan=plan, part_of=part_of, registro=registro)
 
 
 def _require_creator(conn, goal_id: int, person_id: int) -> None:
