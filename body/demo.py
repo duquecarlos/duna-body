@@ -382,6 +382,90 @@ def _seed_entreno_vista_sesion_detalle(conn, db, dia_fuerza: str, person_id: int
     conn.commit()
 
 
+# BODY-PARTIDO-1 ruling 9: at least 4 EARLIER basketball games (days back from the anchor), on top
+# of the anchor day's own most recent one (`_seed_entreno_vista_sesion_actividades` already seeds
+# that one, yesterday) -- so the per-session page's new effort card can show a full comparison
+# there. Every figure here is drawn from its own `random.Random`, never the module-wide `rng`
+# (ruling 9's own "nothing else in the demo shifts").
+_ESFUERZO_SEED = 20261122
+_BASKET_HISTORIAL_DIAS_ATRAS = (8, 15, 22, 29)
+# Base zona 1..5 minute shares -- zonas 4-5 together are the plurality, so the card's own
+# "% of the time in zones 4 and 5" line always has something real to say.
+_BASKET_ZONA_REPARTO = (0.05, 0.14, 0.38, 0.30, 0.13)
+_BASKET_ZONA_LOW = {1: 90, 2: 110, 3: 130, 4: 150, 5: 165}
+
+
+def _curva_basket_esfuerzo(rng: random.Random, duracion_min: int, base: float, techo: float) -> list[float]:
+    """BODY-PARTIDO-1 ruling 9: an invented per-minute heart-rate curve with occasional bursts (so
+    ruling 3's peak/drop detection always finds several) and a decay back toward `base` in
+    between -- never a flat line, never a real figure."""
+    out = []
+    v = base
+    for _ in range(duracion_min):
+        if rng.random() < 0.18:
+            v = min(techo, v + rng.uniform(10, 16))
+        else:
+            v = max(base - 8, v - rng.uniform(3, 7))
+        out.append(round(v, 1))
+    return out
+
+
+def _zonas_basket_esfuerzo(rng: random.Random, duracion_min: int) -> dict[int, float]:
+    jitter = [max(0.01, p + rng.uniform(-0.04, 0.04)) for p in _BASKET_ZONA_REPARTO]
+    total = sum(jitter)
+    minutos = [round(duracion_min * p / total) for p in jitter]
+    minutos[-1] += duracion_min - sum(minutos)
+    return {n: float(m) for n, m in enumerate(minutos, start=1)}
+
+
+def _seed_esfuerzo_basket_detalle(conn, db, person_id: int, idioma: str, dia_basket_reciente: str,
+                                   anchor: date) -> None:
+    """BODY-PARTIDO-1 ruling 9: invented 'detalle'/'zonas'/'vueltas' (the pull's own explicit-empty
+    marker for the last one, {} -- body/pull.py's traer_detalle_actividad stores exactly whatever
+    Garmin's own call returned) for the demo's own basketball games -- the anchor day's most
+    recent one (`dia_basket_reciente`, already seeded by `_seed_entreno_vista_sesion_actividades`)
+    plus `_BASKET_HISTORIAL_DIAS_ATRAS` new, earlier games under the SAME name, so the per-session
+    page's new effort card (body/esfuerzo_sesion.py) can show a full comparison there. Called
+    AFTER `_seed_entreno_vista_sesion_actividades`, so `dia_basket_reciente`'s own activity row
+    already exists."""
+    rng = random.Random(_ESFUERZO_SEED)
+    duracion_min = _SESION_BASKET_DUR_S // 60
+    dias = (dia_basket_reciente, *(anchor - timedelta(d) for d in _BASKET_HISTORIAL_DIAS_ATRAS))
+    for i, dia in enumerate(dias):
+        dia_iso = dia if isinstance(dia, str) else dia.isoformat()
+        if i == 0:
+            source_id = f"demo-{dia_iso}-1"  # the game already seeded for this day
+        else:
+            source_id = f"demo-basket-hist-{dia_iso}"
+            avg_hr = round(rng.uniform(122, 134))
+            max_hr = round(avg_hr + rng.uniform(28, 36))
+            kcal = round(rng.uniform(370, 430))
+            with conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO activity (person_id, source_id, day, start_local, type, "
+                    "name, duration_s, distance_m, avg_hr, max_hr, calories, source) "
+                    "VALUES (?, ?, ?, ?, 'other', ?, ?, NULL, ?, ?, ?, 'garmin')",
+                    (person_id, source_id, dia_iso, f"{dia_iso}T{_SESION_BASKET_HORA}",
+                     _SESION_BASKET_TITULO[idioma], float(_SESION_BASKET_DUR_S), avg_hr, max_hr, kcal),
+                )
+
+        inicio = datetime.combine(date.fromisoformat(dia_iso), datetime.min.time()) + timedelta(
+            hours=int(_SESION_BASKET_HORA[:2]), minutes=int(_SESION_BASKET_HORA[3:5]))
+        curva = _curva_basket_esfuerzo(rng, duracion_min, base=116.0, techo=168.0)
+        payload_detalle = {
+            "metricDescriptors": [{"key": "directTimestamp", "index": 0}, {"key": "directHeartRate", "index": 1}],
+            "activityDetailMetrics": [{"metrics": [_muestra_ms(inicio + timedelta(minutes=m)), v]}
+                                       for m, v in enumerate(curva)],
+        }
+        reparto_zonas = _zonas_basket_esfuerzo(rng, duracion_min)
+        payload_zonas = [{"zoneNumber": n, "secsInZone": mins * 60.0, "zoneLowBoundary": _BASKET_ZONA_LOW[n]}
+                          for n, mins in reparto_zonas.items()]
+        db.guardar_detalle_actividad(conn, person_id, "garmin", source_id, "detalle", payload_detalle)
+        db.guardar_detalle_actividad(conn, person_id, "garmin", source_id, "zonas", payload_zonas)
+        db.guardar_detalle_actividad(conn, person_id, "garmin", source_id, "vueltas", {})
+    conn.commit()
+
+
 def _refuse(message: str) -> None:
     print(message, file=sys.stderr)
     sys.exit(1)
@@ -1697,6 +1781,10 @@ def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[st
     # BODY-ENTRENO-VISTA-SESION-1 ruling 6: AFTER _seed_periodo, not before -- see this function's
     # own docstring for the rowid-ordering reason.
     _seed_entreno_vista_sesion_detalle(conn, db, dia_fuerza, person_id, idioma)
+    # BODY-PARTIDO-1 ruling 9: the basketball games' own stored detail -- no ordering dependency on
+    # _seed_periodo (unlike the strength day's own correction above), placed here simply to stay
+    # beside the rest of this pair's own seeding.
+    _seed_esfuerzo_basket_detalle(conn, db, person_id, idioma, dia_basket, anchor)
     # BODY-PLAN-MODULO-1-R: AFTER _seed_periodo, not before -- baselines.baseline() excludes
     # marked days (BODY-PERIODO-1 ruling 3), so the band this picks `anchor`'s own stress_avg to
     # fall inside must be read once every period that can exclude a day is already seeded, or it

@@ -24,6 +24,28 @@
 </div>
 {% endif %}
 
+{% if esfuerzo %}
+<h2>{{ esfuerzo.titulo }}</h2>
+<div class="card">
+  {% if esfuerzo.zonas_svg %}{{ esfuerzo.zonas_svg | safe }}{% endif %}
+  {% if esfuerzo.zonas %}
+  <ul class="list">
+  {% for z in esfuerzo.zonas %}<li>{{ z }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+  {% if esfuerzo.zona_alta %}<p class="note">{{ esfuerzo.zona_alta }}</p>{% endif %}
+  {% if esfuerzo.esfuerzos %}<p class="note">{{ esfuerzo.esfuerzos }}</p>{% endif %}
+  {% if esfuerzo.recuperacion %}<p class="note">{{ esfuerzo.recuperacion }}</p>{% endif %}
+  {% if esfuerzo.pocos_datos %}<p class="note m-0">{{ esfuerzo.pocos_datos }}</p>{% endif %}
+  {% if esfuerzo.comparacion_titulo %}
+  <p class="note">{{ esfuerzo.comparacion_titulo }}</p>
+  <ul class="list">
+  {% for c in esfuerzo.comparacion %}<li>{{ c }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+</div>
+{% endif %}
+
 <h2>{{ t('entreno_sesion.pulso_titulo') }}</h2>
 <div class="card">
 {% if pulso_svg %}
