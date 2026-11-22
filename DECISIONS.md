@@ -33451,3 +33451,120 @@ branch tip tree `0feab25a0b70cdcad13b008eebdb297bcbd8430d` equals the merge comm
 them empty. Smoke test on main, `tests.test_mcp_http tests.test_llave_asistente tests.test_lugares` -- Ran 131,
 OK.
 
+## BODY-NOCHE-SIN-REM-3 -- `daily_metric_efectiva` omits a not-captured REM row (2026-11-21)
+
+Implementation of BODY-NOCHE-SIN-REM-2-INV (OBSERVED), recommendation (a), go given under
+`ORCH-CARLOS-DELEGATES-TIER-1-1`. That investigation found every generic reader of `daily_metric_efectiva`
+already treats an ABSENT day as an honest gap, while a captured-but-not-real `sleep_rem_min = 0` was averaged,
+plotted and -- because `better` is "higher" (`db.py:1219`) -- coloured as the worst reading, and that hiding the
+0 inside the view would also silence the BODY-NOCHE-SIN-REM-1 flag at its three call sites, since they read
+through the same view.
+
+**The view (`body/db.py`, `_migrar_vista_daily_metric_efectiva`):** a `sleep_rem_min` row is now OMITTED from
+`daily_metric_efectiva` entirely -- never turned into NULL -- when it is stored exactly 0 AND that same
+person/day's stored deep + light (+ the 0 REM) minutes reach `captura_sueno.umbral_min()`. Two new `LEFT JOIN`s
+against `daily_metric` (deep, light) carry a join condition that only matches when `dm.metric_key =
+'sleep_rem_min'`, so no other metric's row pays for the extra join; `sleep_minutes`'s existing correction is
+untouched (a separate `daily_metric` row, never read by this WHERE clause -- proven by
+`tests/test_rem_efectiva.py`'s `SleepMinutesUnchangedTest`). The threshold is formatted into the `CREATE VIEW`
+string from `captura_sueno.umbral_min()`, asserted `isinstance(..., int)` first -- no second literal. The view
+is still dropped and recreated on every `db.init()`, and no stored row is altered, deleted or rewritten.
+
+**One rule owner (`body/captura_sueno.py`):** a new public `umbral_min() -> int` returns
+`MODELO["rem_minimo_noche_min"]`; `evaluar` is unchanged. `tests/test_rem_efectiva.py`'s `GridTest` proves the
+two agree over an 11-case grid (REM 0 at/above/below the threshold, REM 1, REM missing, deep or light missing
+or both) -- the view omits a night's row if and only if `evaluar` on that night's raw values is truthy.
+
+**The flag reads the raw values (`body/db.py`, `body/agente/herramientas.py`, `body/rutas/hoy.py`):** a new
+`db.valores_etapas_garmin(conn, day, person_id) -> dict[str, float]`, beside `series_garmin`, reads
+`sleep_deep_min`/`sleep_light_min`/`sleep_rem_min`/`sleep_awake_min` straight from `daily_metric`, never the
+view. Without this, feeding the view's own dict to `captura_sueno.evaluar` after the omission would see REM as
+MISSING rather than 0 on exactly the nights the flag exists to catch, and silently stop flagging them --
+`evaluar` reads `vals.get("sleep_rem_min")` and treats a missing key the same as REM-above-zero (`None`). The
+three `evaluar` call sites now pass this raw dict: `_derivados_noche` (`leer_noche`), `_comparar_noche`, and
+Día's `day_view`. `_verificar_etapas` (`herramientas.py`, `etapas_verificacion`) compares the stage array
+against the SAME four stored totals (`_ETAPA_METRICA`'s values are exactly those four keys), so it is fed the
+same raw dict too -- otherwise `coincide` would flip from `true`/`false` to `null` on a marked night purely
+because the view dropped a row, not because anything about the night's own data changed. Día's stage bar
+(`hoy.py`'s `stages` list, built from `db.load_day`'s view-based `vals`) is UNCHANGED: a dropped row and a
+stored 0 both make `vals.get(k)` falsy, so both already drew no REM segment before this slice.
+
+**Census (`git grep -ln daily_metric_efectiva -- body/`):** `herramientas.py`, `baselines.py`, `compartir.py`,
+`contexto_dia.py`, `demo.py`, `despertar_real.py`, `desplazamiento_import.py`, `history.py`, `hogar_feed.py`,
+`horizonte.py`, `lector.py`, `noche_rasgos.py`, `nutriente_objetivo.py`, `practicas.py`, `profile.py`,
+`recuperacion.py`, `registro_cobertura.py`, `rutas/hoy.py`, `turno_fc.py`.
+- Never see `sleep_rem_min` in practice (a fixed, different key list): `despertar_real.py` (`resting_hr` only),
+  `registro_cobertura.py` (`body_weight_kg`/`waist_cm`), `turno_fc.py` (`sleep_minutes` only),
+  `desplazamiento_import.py`/`contexto_dia.py` (commute keys, `desplazamiento_import.VIDA_KEYS`),
+  `history.py` (`PATTERN_KEYS`, no REM), `nutriente_objetivo.py` (restricted to `agregado = 'suma_ingesta'`
+  keys at the one write path, `herramientas.py:3107` -- sleep stages are never nutrient targets).
+- Generic readers that DO see `sleep_rem_min` and already take the honest-gap path (a missing row is simply
+  excluded, never zeroed) -- correct as is, not edited: `baselines.py` (`baseline`/`baselines`, confirmed by
+  `tests/test_rem_efectiva.py`'s `BaselineTest`: a marked night's baseline equals the other nights'),
+  `profile.py` (`metric_profile`, confirmed by `TendenciasGapTest`: `days` excludes the marked night),
+  `horizonte.py` (`_recopilar_datos`'s own docstring: "a day with no reading is left out, never zeroed"),
+  `lector.py` (`Lector`, mirrors `db.series`/`day_values` exactly by its own contract), `recuperacion.py`
+  (`_calcular_metrica_umbral`'s `tiene_dato` set only counts present rows), `practicas.py` (same
+  `tiene_dato`/`_estados_metrica_umbral` pattern; its rule's `metric_key` can be ANY `metric_def` key per
+  `_validar_metrica_umbral`, so `sleep_rem_min` is reachable there, same honest-gap result), `noche_rasgos.py`
+  (confirmed already honest-gap by the investigation).
+- `compartir.py`'s `visibles_para` and `hogar_feed.py`'s `_figuras` both read a shared metric's LATEST stored
+  value as of a day (`ORDER BY day DESC LIMIT 1` / `day = MAX(day) WHERE day <= ...`), so on a marked night a
+  shared REM card shows the PREVIOUS night's value instead of that night's. Neither mislabels it: both queries
+  return `day` alongside `value` and render it (`compartir.py:108-117`, the `day` field at line 116;
+  `hogar_feed.py:43-50`, the `day` field at line 50) -- the card shows an older date, not today's date with a
+  wrong number. Reported per the relaunch's instruction, NOT edited (`compartir.py` is out of `touches`).
+
+**Tests:** `tests/test_rem_efectiva.py` (new) -- the grid above; a marked night's REM absent from
+`day_values`/`load_day`/`series` and present (0.0) through `valores_etapas_garmin`/`series_garmin`;
+`sleep_minutes` unaffected; the baseline and Tendencias honest-gap proofs. `tests/test_demo.py`'s one test on
+this shape is rewritten (RELAUNCH ruling): it now finds the demo's marked night through `daily_metric` (the raw
+row, unaffected by the view change) rather than querying the view for `sleep_rem_min = 0.0` directly, which
+would find nothing once the view omits it; it then asserts the row is absent from the view and present (0.0)
+through `valores_etapas_garmin`. `body/demo.py` itself is NOT edited. `tests/test_captura_sueno.py`,
+`tests/test_leer_noche.py`, `tests/test_comparar_noche.py`, `tests/test_sueno_corregido.py`,
+`tests/test_migraciones.py` and `tests/test_persona_fuga.py` all passed UNEDITED.
+
+**Commit (branch `feat/body-noche-sin-rem-3`, off `main` at `f7157b3ef3652c0bccc50d6abe5bc36e601103a5`):**
+`caee80a89d837875f12b40c2ea088acd2f3c4209` -- the view, the helper, the three call sites, the demo test rewrite
+and `tests/test_rem_efectiva.py` together.
+
+**Gate:** exact command per chunk `.venv/Scripts/python.exe -m unittest <mod1> <mod2> ...` (the same
+`discover tests -t .` suite, run as 30 alphabetical chunks -- 5 or fewer for the `test_garmin_*`/`test_host_*`
+groups and for `test_demo`/`test_guardia_parches` alone, each over 250s on their own -- all green, no
+`FAIL:`/`ERROR:` line in any chunk), on the branch tip (`caee80a8`): chunk `Ran` counts 209, 200, 217, 247, 104,
+39, 153, 275, 128, 84, 70, 138, 62, 8, 283, 102, 201, 161, 264, 292, 254, 251, 284, 286, 159, 161, 228, 289, 195,
+92. Non-"." stdout seen throughout (pull/backfill/intradia status lines, Garmin NotSignedIn/ConnectionError/
+AuthenticationError/RuntimeError/ValueError messages, "dia vacio" fixture lines, a deliberately-raised exception
+in a mocked thread, `mudanza`/`db` `ResourceWarning`s, "asistente: propuesta ... no se pudo mostrar" / "mcp ...
+error" guard lines) is existing tests' own fixture/demo-seed stdout, invented data only, unrelated to this
+slice.
+
+**Reconciliation:** sum of the 30 chunks' `Ran` counts -- 209+200+217+247+104+39+153+275+128+84+70+138+62+8+283+
+102+201+161+264+292+254+251+284+286+159+161+228+289+195+92 = 5436 -- exactly equal to the independent
+collect-only count (`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`: 5436), and
+equal to the prior floor on this same base (`f7157b3`, BODY-MCP-503-RETRY-AFTER-1: 5427) plus the 9 new tests
+`tests/test_rem_efectiva.py` adds.
+
+**Gate verdict: GREEN.**
+
+**Merge policy A, this diff's own shape:** no table, column, migration step or stored row changes -- the only
+schema-adjacent edit is the `daily_metric_efectiva` VIEW's own `CREATE VIEW` text, which is dropped and rebuilt
+on every start and alters no persisted data (reverting the commit restores today's reading on the next start).
+Cross-repo contract: none -- no DTO shared with another repository is touched. Customer bytes: no new string
+(the spec's own requirement) -- no i18n key, template or UI copy added or changed; `day.sueno.rem_no_capturado`
+already existed from BODY-NOCHE-SIN-REM-1, rendered exactly as before. The spec's own approval reason
+(`ORCH-CARLOS-DELEGATES-TIER-1-1`) names this exact db.py change in words and closes with "Deploying follows
+his standing go (backup first: db.py changes)," read as the spec body's explicit authorization to merge this
+Tier 1 view edit past the schema-adjacent condition. Proceeded to merge.
+
+**Merged into `main` (`--no-ff`) -- merged `47422002044dd15e4b88f112fcc59bce94e1fc92`.** Tree identity proven:
+branch tip tree `176b172dd9ecb07a4a14057606586c828b3dbd79` equals the merge commit's own tree, `git diff`
+between them empty. Smoke test on main, `tests.test_captura_sueno tests.test_rem_efectiva tests.test_leer_noche
+tests.test_comparar_noche tests.test_sueno_corregido` -- Ran 106, OK.
+
+**Open follow-up, not built here:** whether `compartir.py`'s and `hogar_feed.py`'s "latest value" household
+cards should be changed too (e.g. a staleness note when the shown day is not the one asked for) is a product
+question about those cards generally, not specific to a marked REM night, and `compartir.py` is out of this
+slice's `touches` -- left for the orchestrator to rule on or fold into a future slice on those cards.
+
