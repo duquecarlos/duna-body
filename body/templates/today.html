@@ -125,6 +125,9 @@
   {% endfor %}
   </ul>
   {% if plan_semana.mas %}<a class="more mt-6" href="/goals">{{ plan_semana.mas }}</a>{% endif %}
+  {% if plan_semana.pendientes %}
+  <p class="note mt-6 mb-0">{{ plan_semana.pendientes.texto }} <a class="taplink" href="#asis-btn">{{ plan_semana.pendientes.enlace }}</a></p>
+  {% endif %}
 </div>
 {% endif %}
 </div>

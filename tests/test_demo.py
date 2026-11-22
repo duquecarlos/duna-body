@@ -400,6 +400,34 @@ class ViajesDemoSeedTest(unittest.TestCase):
         self.assertIn("día de viaje" if n == 1 else "días de viaje", r.text)
 
 
+class DemoHoyPendientesTest(unittest.TestCase):
+    """BODY-HOY-PENDIENTES-REGISTRO-1 ruling 8: the demo person's own shared-meal portion on the
+    anchor day skips protein_g, so registro_cobertura.pendientes() always has a real non-sleep
+    daily stream to report missing on "today" -- Hoy's own card shows the line through the real
+    screen, on whichever day the demo actually runs."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.folder = _fresh_dir()
+        result = _run(["--home", cls.folder, "--dias", str(demo.DIAS_DEFAULT)])
+        assert result.returncode == 0, result.stderr
+
+    def setUp(self):
+        from body import config, web
+        self.orig = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig))
+        config.DB_PATH = Path(self.folder) / "body.db"
+        from fastapi.testclient import TestClient
+        self.client = TestClient(web.app, follow_redirects=False)
+
+    def test_hoy_shows_the_pendientes_line_in_spanish(self):
+        r = self.client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("Para tu plan falta registrar hoy:", r.text)
+        self.assertIn("proteína", r.text)
+        self.assertIn('href="#asis-btn">Regístralo con el asistente</a>', r.text)
+
+
 class PlanHorizonteSeedTest(unittest.TestCase):
     """BODY-PLAN-PANTALLA-1 ruling 6: the demo's own invented plan exists, in both languages."""
 

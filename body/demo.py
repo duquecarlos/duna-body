@@ -1099,6 +1099,7 @@ def _seed_ingesta(conn, db, rng: random.Random, all_days: list[date], person_id:
     rows = 0
     comidas = 0
     forzado_indices = {0: "caffeine_mg", len(all_days) // 2: "water_ml", len(all_days) - 1: "alcohol_g"}
+    anchor_index = len(all_days) - 1
     for i, d in enumerate(all_days):
         if rng.random() < 0.9:
             for lo, hi in _COMIDA_MINUTOS[:rng.randint(3, 4)]:
@@ -1106,6 +1107,13 @@ def _seed_ingesta(conn, db, rng: random.Random, all_days: list[date], person_id:
                 ts_local = f"{d.isoformat()}T{minuto // 60:02d}:{minuto % 60:02d}:00"
                 cantidades = [{"metric_key": k, "amount": _value(rng, k, 0.0), "estimado": True}
                               for k in _COMIDA_NUTRIENTES_DEMO]
+                if i == anchor_index:
+                    # BODY-HOY-PENDIENTES-REGISTRO-1 ruling 8: every rng call above still runs
+                    # (the downstream seed stays the same), but the anchor day's own meals drop
+                    # protein_g -- registro_cobertura.pendientes() then has a real non-sleep daily
+                    # stream to report missing on "today", on whichever day the demo actually runs,
+                    # rather than a hardcoded calendar date.
+                    cantidades = [c for c in cantidades if c["metric_key"] != "protein_g"]
                 db.crear_comida(conn, person_id, d.isoformat(), cantidades, ts_local=ts_local)
                 comidas += 1
                 rows += len(cantidades)
@@ -1602,9 +1610,12 @@ def _seed_household(conn, db, goals, enlaces, compartir, comida_compartida, rng:
     compartir.activar_recibir_comidas(conn, ana_id)
     compartir.activar_recibir_comidas(conn, person_id)
     meal_day = anchor.isoformat()
+    # BODY-HOY-PENDIENTES-REGISTRO-1 ruling 8: the demo person's own portion of this shared meal
+    # drops protein_g (kcal alone still makes a valid comida row) -- ana's own portion keeps it,
+    # since this is the demo person's own anchor-day log, not ana's.
     comida_compartida.compartir_comida(
         conn, person_id, day=meal_day, descripcion=_COMIDA_DEMO_PERSON[idioma],
-        comensales=[{"person_id": person_id, "nutrientes": {"protein_g": 35.0, "kcal": 520.0}},
+        comensales=[{"person_id": person_id, "nutrientes": {"kcal": 520.0}},
                     {"person_id": ana_id, "nutrientes": {"protein_g": 18.0, "kcal": 260.0}}],
         origen="demo", origen_ref="demo-persona-ana")
     comida_compartida.compartir_comida(

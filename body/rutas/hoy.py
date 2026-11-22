@@ -16,7 +16,8 @@ from markupsafe import Markup
 
 from .. import (anatomia, captura_sueno, comida_compartida, compartir, cuenta, db, despertar_real, fechas, fuentes,
                 garmin_cuenta, goals, history, horizonte, household, identity, noche_inusual, nutriente_objetivo,
-                pull, readiness, recuperacion, reentrada, turnos_costo, tutoriales, ventana_comida, viajes)
+                pull, readiness, recuperacion, reentrada, registro_cobertura, turnos_costo, tutoriales,
+                ventana_comida, viajes)
 from ..agente import conversacion as agente_conversacion
 from ..agente import herramientas as agente_herramientas
 from ..agente import propuestas as agente_propuestas
@@ -540,12 +541,56 @@ def _plan_semana_bloque(t: T, resumen: dict, today_local: date) -> dict:
     }
 
 
+# BODY-HOY-PENDIENTES-REGISTRO-1 (ORCH-CARLOS-DELEGATES-TIER-1-1): the lower-case, mid-sentence
+# stream words for the one-line note below -- distinct from metas.py's own capitalised
+# `_REGISTRO_LABEL_KEY` (that one opens a "Falta: ..." line; this one sits inside a sentence).
+# `sueno` carries no key here: ruling 3 excludes it before any label is ever looked up.
+_PENDIENTES_STREAM_KEY = {
+    "comidas": "today.plan_semana.pendientes_stream.comidas",
+    "proteina": "today.plan_semana.pendientes_stream.proteina",
+    "peso": "today.plan_semana.pendientes_stream.peso",
+    "cintura": "today.plan_semana.pendientes_stream.cintura",
+    "entreno": "today.plan_semana.pendientes_stream.entreno",
+}
+
+
+def _plan_semana_pendientes_ctx(t: T, conn, person_id: int, today_local: date) -> dict | None:
+    """Ruling 1-3: one muted line inside "Tu plan esta semana", after its blocks -- what
+    `registro_cobertura.pendientes` says is still missing today and this ISO week, in the
+    person's own register. ONE call to `pendientes` (the caller already knows at least one plan is
+    active); the same {faltan, sin_uso} is repeated under every plan's own goal_id since these
+    streams are the person's, not any one plan's, so only the first value is ever read. `sueno` is
+    dropped before anything else (ruling 3: a missing night is the watch's own sync problem, already
+    surfaced by Hoy's sync card) -- None the instant nothing besides it is missing. `sin_uso`
+    streams are never named (never a nag)."""
+    pendientes = registro_cobertura.pendientes(conn, person_id, today_local)
+    datos = next(iter(pendientes.values()), None)
+    if not datos:
+        return None
+    faltan = [s for s in datos["faltan"] if s != "sueno"]
+    if not faltan:
+        return None
+    cadencia = registro_cobertura.MODELO["cadencia"]
+    hoy_streams = [s for s in faltan if cadencia[s] == "daily"]
+    semana_streams = [s for s in faltan if cadencia[s] == "weekly"]
+    partes = []
+    if hoy_streams:
+        partes.append(t("today.plan_semana.pendientes_hoy",
+                         items=_lista_natural(t, [t(_PENDIENTES_STREAM_KEY[s]) for s in hoy_streams])))
+    if semana_streams:
+        partes.append(t("today.plan_semana.pendientes_semana",
+                         items=_lista_natural(t, [t(_PENDIENTES_STREAM_KEY[s]) for s in semana_streams])))
+    return {"texto": " ".join(partes), "enlace": t("today.plan_semana.pendientes_link")}
+
+
 def _plan_semana_ctx(t: T, conn, person_id: int, today_local: date) -> dict | None:
     """Ruling 2: Today's "Tu plan esta semana" card -- shown only when the person has at least one
     active plan (`horizonte.horizontes(..., solo_activos=True)`, ruling 1's own definition), right
     after the day-ahead card. At most PLANES_HOY_MAX blocks, each from one `horizonte.resumen`
     call (ruling 3: bounded regardless of that plan's own weekly lines, rules, weeks or
-    checkpoints); the rest collapse into one "y N planes más" line to /goals."""
+    checkpoints); the rest collapse into one "y N planes más" line to /goals. BODY-HOY-PENDIENTES-
+    REGISTRO-1: one extra `registro_cobertura.pendientes` call, only reached here (never for a
+    person with no active plan), feeds the card's own trailing note."""
     ids = horizonte.horizontes(conn, person_id, today_local, solo_activos=True)
     if not ids:
         return None
@@ -558,7 +603,7 @@ def _plan_semana_ctx(t: T, conn, person_id: int, today_local: date) -> dict | No
         mas = t("today.plan_semana.mas", n=t.num(extra))
     else:
         mas = None
-    return {"bloques": bloques, "mas": mas}
+    return {"bloques": bloques, "mas": mas, "pendientes": _plan_semana_pendientes_ctx(t, conn, person_id, today_local)}
 
 
 def _entrenado_hoy_categorias(conn, person_id: int, today_local: date) -> list:
