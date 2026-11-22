@@ -34052,3 +34052,5 @@ dispatching spec's own "YOU MAY MERGE" clause. `main` merged with `feat/body-par
 `--no-ff`, tree identity verified empty-diff against the branch tip, branch deleted, `body-app` left
 on `main` clean. Merge sha recorded in the next ledger line, per this ledger's append-only rule.
 
+BODY-PARTIDO-1-PULIDO merged 2ca974c2f49a43417f410f9fef6d03cc99bd1f62.
+
