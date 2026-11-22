@@ -33568,3 +33568,90 @@ cards should be changed too (e.g. a staleness note when the shown day is not the
 question about those cards generally, not specific to a marked REM night, and `compartir.py` is out of this
 slice's `touches` -- left for the orchestrator to rule on or fold into a future slice on those cards.
 
+## BODY-REGISTRO-COBERTURA-2 -- goal page shows the dated plan's log coverage, AWAITING_APPROVAL (2026-11-22)
+
+The screen side of BODY-REGISTRO-COBERTURA-1's own count module (`body/registro_cobertura.py`, called here,
+never edited), go given under `ORCH-CARLOS-DELEGATES-TIER-1-1`. Carlos's "Greece 2027 log track": a dated plan's
+goal page (`/goals/{goal_id}`) now shows one "Tu registro" / "Your log" card telling him whether his own logging
+is keeping up with the plan.
+
+**Where it shows (`body/rutas/metas.py`'s `goal_detail`):** gated on `g["kind"] == "milestone" and g["deadline"]`
+-- `registro_cobertura`'s own "dated plan" definition, deliberately BROADER than `horizonte.es_horizonte` (used
+by the existing `plan` card): a bare milestone with a deadline and no plan row at all still gets the card,
+proven by `BloquePresenteSinHorizonteTest`. A non-dated goal's page is byte-identical to before this slice
+(`BloqueAusenteTest`). `registro_cobertura.cobertura()` is called exactly once per render, never per stream.
+
+**The card (`body/rutas/metas.py`'s `_registro_ctx`, `body/templates/goal.html`):** one row per stream actually
+in use, in `cobertura()`'s own `MODELO` order -- the stream's own name, a plain-words count ("N de M
+noches/días/semanas"), and, if anything is missing, the newest missing ones named in words (at most 3, then "y N
+más"), or "Completo" in a muted note when nothing is missing. No percentage, no red/green judgement, no meter:
+`git grep -n "meter\|progress\|barra" -- body/templates/goal.html docs/DESIGN.md` found no existing count-meter
+component to reuse, so the row is text only. Streams never used at all (`sin_uso`) get no row of their own --
+one shared muted line names them: "No cuenta lo que no registras: {items}." A muted range line closes the card:
+"Desde {desde} hasta hoy", or "hasta {hasta}" once the plan has already ended (`RangoTerminadoTest`), using the
+app's own short-date formatter.
+
+**Where to log, censused against every `@router.get`/`@router.post` in `body/rutas/*.py`:** only `sueno` links
+anywhere -- to `/day/{day}` of its own newest missing night, per the spec's own instruction, or no link at all
+when nothing is missing. `comidas`, `proteina`, `peso`, `cintura` and `entreno` have NO existing web route to log
+them manually (only the assistant/chat can), so none of their five rows link anywhere, exactly as the spec's own
+"name each in the report" branch calls for.
+
+**i18n:** 17 new keys in each of `body/i18n/es.json` and `body/i18n/en.json`, all under `goals.registro.*`
+(`title`, `rango`, `rango_terminado`, `completo`, `faltan`, `y_mas`, `semana_de`, `sin_uso`, three `cadencia.*`
+cadence words, six `stream.*` names). `tests/test_registro_tu.py` and the i18n parity guard both passed unedited.
+
+**Tests (`tests/test_registro_cobertura_metas.py`, new, 16 tests):** absent for a non-plan goal; present for a
+bare dated milestone with no plan rows; the six-stream shape (five own rows, one `sin_uso` line only); the
+3-named-then-"y N más" truncation on both an under- and an over-`FALTAN_LIMITE` miss count; a single missing
+night named with no "y más" suffix; sleep's own link to its newest missing night; the other five streams never
+link; a missing week named in words; a complete stream reading "Completo"; the ended-plan range line; the same
+shapes in English. `tests/test_persona_fuga.py` (its own household-shared milestone fixture already exercises a
+member seeing the goal page) and `tests/test_rendimiento.py` (cost ceilings and the two cost-independence proofs)
+both passed unedited -- the new card pays one extra `cobertura()` call only on a dated-plan page, never on the
+fixtures those tests compare.
+
+**`body/demo.py` -- NOT edited, reported per ruling 7:** the invented dated plan (`goal_id` 4 in a fresh demo)
+already shows one complete registro stream and one with-misses stream once this card renders it, but none of
+its six streams comes out `sin_uso` -- every stream the demo ever seeds is used globally at least once across
+the person's own history, by seeding functions (`_seed_self_metrics`, `_seed_ingesta`, the general sleep/activity
+seeding) shared with many other screens and tests well outside this slice's `touches`. Giving the invented plan a
+`sin_uso` stream of its own, without widening those shared functions, is outside "adjust only the invented plan's
+seeded logs" as literally scoped -- left as a gap, not guessed at.
+
+**Commit (branch `feat/body-registro-cobertura-2`, off `main` at `5c71e172cbc69c0e661561ab647a585754925c97`):**
+`799d508ce021e3ea42a09e2456f8b5bbba440564` -- `_registro_ctx`/`goal_detail`, the template card, both i18n files
+and `tests/test_registro_cobertura_metas.py` together (397 insertions, 2 deletions, 5 files).
+
+**Gate:** exact command per chunk `.venv/Scripts/python.exe -m unittest <mod1> <mod2> ...` (the same
+`discover tests -t .` suite, run as 28 alphabetical chunks -- 5 or fewer for the `test_garmin_*`/`test_host_*`
+groups, each over 250s on their own -- on the branch tip, `799d508`): chunk `Ran` counts 209, 200, 217, 247, 186,
+233, 214, 131, 19, 70, 138, 218, 237, 201, 100, 12, 248, 263, 305, 211, 336, 256, 189, 140, 233, 286, 203, 150.
+
+**Reconciliation:** sum of the 28 chunks' `Ran` counts -- 209+200+217+247+186+233+214+131+19+70+138+218+237+201+
+100+12+248+263+305+211+336+256+189+140+233+286+203+150 = 5452 -- exactly equal to the independent collect-only
+count (`unittest.TestLoader().discover('tests', top_level_dir='.')`, counted by walking the suite: 5452).
+
+**One failure, pre-existing and unrelated, reported not fixed:** chunk 7
+(`tests.test_estados_vacios_2.PersonaCompletaSinCambiosTest.test_demo_person_unchanged`) fails because it seeds
+`demo._seed(conn, dias=30, idioma="es")` with no `today=` injected, so it depends on the real calendar date; the
+real date advanced from 2026-11-21 to 2026-11-22 mid-session. Confirmed calendar-only by re-running it with
+`today=2026-11-21` (passes) and `today=2026-11-22` (fails, same as the real date). `test_estados_vacios_2.py` is
+not in this slice's `touches` and this diff touches none of `/shifts`, shift-cost rendering, or anything that
+test exercises -- unrelated to this change.
+
+**Merge policy A, this diff's own shape:** no table, column, migration or stored-row change -- schema: none. No
+DTO shared with another repository is touched -- cross-repo contract: none. Customer bytes: CHANGED -- a new
+"Tu registro" / "Your log" card with visible text is now on every dated plan's goal page, and 17 new i18n keys
+in each language carry that text. The spec's own approval reason (`ORCH-CARLOS-DELEGATES-TIER-1-1`, "the screen
+for a count that already exists and is live ... words in his own register ... Deploying follows his standing
+go") names this screen but does not say, in words, that this diff may merge past the customer-bytes condition --
+unlike BODY-NOCHE-SIN-REM-3's approval text above, which named that exact db.py edit and said so explicitly.
+**Stopped before merge. `stopped_on: ["customer-bytes"]`, verdict `AWAITING_APPROVAL`.** The branch
+(`feat/body-registro-cobertura-2`, tip `799d508`) is left as is, not merged, not deployed.
+
+**Open follow-up, not built here:** `BODY-REGISTRO-COBERTURA-2-DEMO-SINUSO-1` -- give the demo's own invented
+dated plan a `sin_uso` stream of its own (matching BODY-PLAN-PANTALLA-1 ruling 6's three-shapes intent), without
+widening the global per-day seeding functions other screens and tests depend on. Not done here: out of this
+slice's `touches` as literally scoped, and the gap is pre-existing, not introduced by this diff.
+
