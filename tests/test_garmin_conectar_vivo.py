@@ -16,12 +16,20 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
+from datetime import date
+
 from body import config, cuenta, db, demo, garmin_cuenta, identity, web
 from body.i18n import T
+from body.rutas import comun
 from tests._rutas import contar_sql
 
 _HOSTED_ENV = {cuenta.ISSUER_ENV: "https://fake-cuenta.test", cuenta.PUBLIC_URL_ENV: "http://127.0.0.1:8770",
                cuenta.CLIENT_SECRET_ENV: "s3cr3t-test-only", garmin_cuenta.KEY_ENV: "11" * 32}
+
+# BODY-DEMO-HOY-FIJO-1: this module's own _reset_db seeds the demo with no `today=` and every
+# route it exercises (/garmin, /) reads the real clock (comun._today_local) -- pinned so the
+# suite never depends on which real day it runs on.
+_ANCHOR = date(2026, 11, 20)
 
 
 def _reset_db():
@@ -29,7 +37,7 @@ def _reset_db():
     config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "garmin_conectar_vivo.db"
     conn = db.connect()
     db.ensure_ready(conn)
-    demo._seed(conn, dias=30, idioma="es")
+    demo._seed(conn, dias=30, idioma="es", today=_ANCHOR)
     conn.commit()
     return conn, orig
 
@@ -45,6 +53,9 @@ class _BaseTest(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, _HOSTED_ENV)
         patcher.start()
         self.addCleanup(patcher.stop)
+        clock_patcher = mock.patch.object(comun, "_today_local", return_value=_ANCHOR)
+        clock_patcher.start()
+        self.addCleanup(clock_patcher.stop)
         self.client = TestClient(web.app, follow_redirects=False)
 
 

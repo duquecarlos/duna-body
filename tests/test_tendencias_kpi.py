@@ -333,7 +333,13 @@ class StripAddsNoSqlStatementTest(unittest.TestCase):
         conn = db.connect()
         self.addCleanup(conn.close)
         db.ensure_ready(conn)  # made ready BEFORE either request is measured
-        demo._seed(conn, dias=30, idioma="es")  # seeds hrv/resting_hr/sleep/stress and a floor
+        # BODY-DEMO-HOY-FIJO-1: pinned -- /trends reads the real clock (comun._today_local), and
+        # this test's own statement-count comparison must not depend on which real day it runs on.
+        anchor = date(2026, 11, 20)
+        patcher = mock.patch.object(comun, "_today_local", return_value=anchor)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        demo._seed(conn, dias=30, idioma="es", today=anchor)  # seeds hrv/resting_hr/sleep/stress and a floor
         conn.commit()
         self.addCleanup(web.app.dependency_overrides.clear)
         _as(PERSON_A)

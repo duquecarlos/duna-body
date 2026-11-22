@@ -14,7 +14,9 @@ statement is caught even when it changes nothing.
 """
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
+from unittest import mock
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
@@ -22,9 +24,15 @@ from fastapi.testclient import TestClient
 
 from body import config, db, demo, web
 from body.agente import conversacion as agente_conversacion
+from body.rutas import comun
 from tests._rutas import contar_sql, rutas_planas
 
 client = TestClient(web.app, follow_redirects=False)
+
+# BODY-DEMO-HOY-FIJO-1: the sweep below seeds the demo with no `today=` and then calls every GET
+# route through the real clock (comun._today_local) -- pinned so the sweep never depends on which
+# real day it runs on.
+_ANCHOR = date(2026, 11, 20)
 
 # GET routes that legitimately write. The pre-auth sign-in start stores the PKCE/state row
 # (cuenta.start_login -> inicio_sesion) before any session cookie exists to carry a POST --
@@ -51,7 +59,7 @@ def _seed(conn) -> dict:
     body/demo.py's own seed (two people, three metric goals, a shared household milestone,
     habits, 30 days of metrics and activities, confirmed and proposed shift batches) plus one
     assistant conversation -- demo.py's seed carries no real figure, by its own contract."""
-    demo._seed(conn, dias=30, idioma="es")
+    demo._seed(conn, dias=30, idioma="es", today=_ANCHOR)
     goal_id = conn.execute("SELECT id FROM goal WHERE person_id = 1 ORDER BY id LIMIT 1").fetchone()[0]
     day = conn.execute(
         "SELECT day FROM daily_metric WHERE person_id = 1 ORDER BY day DESC LIMIT 1").fetchone()[0]
@@ -95,6 +103,9 @@ def _fill(path: str, ids: dict) -> str:
 
 class GetRoutesWriteNothingTest(unittest.TestCase):
     def test_every_get_route_leaves_the_database_unchanged(self):
+        patcher = mock.patch.object(comun, "_today_local", return_value=_ANCHOR)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         conn = _reset_db(self)
         ids = _seed(conn)
         dump_conn = db.connect()

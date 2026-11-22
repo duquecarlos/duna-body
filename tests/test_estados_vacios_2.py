@@ -37,6 +37,15 @@ from tests.test_estados_vacios import TODAY, _full_day, _mk_person, _reset_db, _
 _HOSTED_ENV = {cuenta.ISSUER_ENV: "https://fake-cuenta.test", cuenta.PUBLIC_URL_ENV: "http://127.0.0.1:8770",
                cuenta.CLIENT_SECRET_ENV: "s3cr3t-test-only", garmin_cuenta.KEY_ENV: "11" * 32}
 
+# BODY-DEMO-HOY-FIJO-1: PersonaCompletaSinCambiosTest below seeds the demo with no `today=` and
+# then reads /shifts through the real clock (comun._today_local) -- on 2026-11-22, a Sunday, the
+# demo's 30-day window holds zero night blocks (an honest empty state, not a bug: measured by
+# running the same seed across 2026-11-16..22, body/turnos_costo.py's own bloques_noche() finds 0
+# night-shift rows in that particular window), which drops the cost table this test asserts is
+# present. Pinned to an anchor that does carry a night block in the window, like every other test
+# in this module already requires -- 2026-11-20 is the anchor several sibling test modules pin to.
+_PERSONA_COMPLETA_ANCHOR = date(2026, 11, 20)
+
 
 def _aviso_html(page_text: str) -> str:
     start = page_text.index('<div class="aviso">')
@@ -241,7 +250,10 @@ class PersonaCompletaSinCambiosTest(unittest.TestCase):
         self.addCleanup(web.app.dependency_overrides.clear)
 
     def test_demo_person_unchanged(self):
-        demo._seed(self.conn, dias=30, idioma="es")
+        patcher = mock.patch.object(comun, "_today_local", return_value=_PERSONA_COMPLETA_ANCHOR)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        demo._seed(self.conn, dias=30, idioma="es", today=_PERSONA_COMPLETA_ANCHOR)
         person_id = 1
         db.set_trabaja_turnos(self.conn, True, person_id)
         goal_id = self.conn.execute(
@@ -287,7 +299,10 @@ class PersonaCompletaSinCambiosTest(unittest.TestCase):
         # layers -- trained (today's logged session) plus still-to-come (today's plan, hombros/
         # brazo/espalda, none of which the logged session already covers) -- never the
         # planned-only caption this case originally asserted.
-        demo._seed(self.conn, dias=30, idioma="es")
+        patcher = mock.patch.object(comun, "_today_local", return_value=_PERSONA_COMPLETA_ANCHOR)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        demo._seed(self.conn, dias=30, idioma="es", today=_PERSONA_COMPLETA_ANCHOR)
         person_id = 1
         self.conn.commit()
         _use(self.conn, person_id)

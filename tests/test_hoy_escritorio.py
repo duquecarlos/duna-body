@@ -10,17 +10,25 @@ import pathlib
 import re
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
+from unittest import mock
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
 from body import config, db, demo, fechas, identity, web
+from body.rutas import comun
 
 client = TestClient(web.app, follow_redirects=False)
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CSS = ROOT / "body" / "static" / "body.css"
+
+# BODY-DEMO-HOY-FIJO-1: _seed_full_coverage below seeds the demo with no `today=` and
+# HoyAbajoBlockMarkupTest reads "/" through the real clock (comun._today_local) -- pinned so the
+# suite never depends on which real day it runs on.
+_ANCHOR = date(2026, 11, 20)
 
 
 def _reset_db(tc: unittest.TestCase):
@@ -262,7 +270,7 @@ def _seed_full_coverage(tc: unittest.TestCase) -> "db.sqlite3.Connection":
     block (`Night week ahead`) and a live nutrient target (`objetivos_nutriente`), so every
     optional card BODY-HOY-ESCRITORIO-2 ruling 1 places renders at once."""
     conn = _reset_db(tc)
-    demo._seed(conn, dias=30, idioma="es")
+    demo._seed(conn, dias=30, idioma="es", today=_ANCHOR)
     conn.commit()
     _use(db.local_person_id(conn))
     return conn
@@ -274,6 +282,9 @@ class HoyAbajoBlockMarkupTest(unittest.TestCase):
     moved into `.hoy-top`, BODY-HOY-ESCRITORIO-1) is gone."""
 
     def setUp(self):
+        patcher = mock.patch.object(comun, "_today_local", return_value=_ANCHOR)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.conn = _seed_full_coverage(self)
 
     def test_cols_hoy_is_gone_hoy_abajo_present(self):

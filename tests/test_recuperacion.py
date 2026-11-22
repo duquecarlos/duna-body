@@ -486,7 +486,7 @@ class DemoSeedOrderTest(unittest.TestCase):
 
         conn = _mkconn(self, "demo-orden.db")
         with mock.patch.object(demo, "date", _FakeToday):
-            demo._seed(conn, dias=demo.DIAS_DEFAULT, idioma="es")
+            demo._seed(conn, dias=demo.DIAS_DEFAULT, idioma="es", today=date(2026, 11, 10))
 
         periodos = conn.execute(
             "SELECT start_day FROM period WHERE person_id = 1 AND kind = 'lesion'"
