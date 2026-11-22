@@ -33970,3 +33970,85 @@ ledger line, per this ledger's append-only rule.
 
 BODY-PARTIDO-1 merged 447b567605e5579fdbcd632b1ef7e7422e36ff2b.
 
+## BODY-PARTIDO-1-PULIDO
+
+ORCH-CARLOS-DELEGATES-TIER-1-1: the orchestrator's 375 px measurement of BODY-PARTIDO-1 found four
+things wrong on the undeployed card before release. Tier 2, no schema, no Tier 1 path.
+
+**Ruling 1, one peak on the page.** The card's own second heart-rate peak -- the highest per-minute
+MEAN, which can (and in the measurement did) point the opposite way from the page's own max-HR
+comparison, taken off the watch's true max -- is gone. The efforts line drops its `{valor}`: es
+`"{n} esfuerzos fuertes"`, en `"{n} hard efforts"` (same key `entreno_sesion.esfuerzo.esfuerzos`).
+The keys `entreno_sesion.esfuerzo.pico_mas`/`pico_como`/`pico_menos` are removed from both
+languages; `MODELO['banda_pico_ppm']` is removed from `body/esfuerzo_sesion.py`; `clasifica()` and
+`historial()` now return only `zona_alta`/`caida`. Peak DETECTION (`esfuerzos()`'s own `pico`/
+`n_picos`) is untouched -- the recovery drop still needs it. `VERSION` stays `"esfuerzo-v1"`:
+nothing is stored under it, so no migration and no version bump.
+
+**Ruling 2, no repeated heading.** `_esfuerzo_ctx` no longer builds its own
+`entreno_sesion.comparacion_titulo` line; the card's comparison rows (`entreno_sesion.html`) follow
+the figures directly, with no second "Compared with your usual ..." above them. The page's own
+heading, above the avg/max/calories tiles, is untouched.
+
+**Ruling 3, the zone bar's own legend.** `_esfuerzo_zonas_svg` (body/rutas/entreno_sesion.py) now
+builds the SAME shape as `day.html`'s sleep-stage bar: each `<rect>` carries a `<title>` with its
+zone's own label, followed by one `div.legend` of `<span><i class="{zone class}"></i>{label}</span>`
+entries -- one per non-empty zone. `_ZONA_CLASES`'s existing classes (`c-inset`/`c-other`/`c-info`/
+`c-body`/`c-amber`) already set `background` AND `fill` on the bare class selector (body.css's
+BODY-ESTILOS-1 palette), so the same class colours both the bar segment and its legend swatch with
+**no body.css edit** -- the ruling's own "touch body.css only if a class colours one but not the
+other" did not apply here. The template's old boxed `ul.list` for zones is gone; the 2-row
+zona_alta/caida comparison list is unchanged, per the ruling.
+
+**Ruling 4, a coherent demo game.** `_curva_basket_esfuerzo` (body/demo.py) now takes each game's
+own `avg_hr`/`max_hr` instead of a fixed `base=116/techo=168`: it builds a warm-up plus alternating
+effort (1-3 min climbing)/break (1-2 min, the first falling 12-30 bpm) RAW shape, then rescales it
+(one affine transform solved from the raw mean and raw max) so the FINAL curve's mean lands exactly
+on `avg_hr` and its highest minute `0`-`6` bpm below `max_hr` -- exact by construction, not by
+chance. `_zonas_basket_esfuerzo` now takes the curve itself and buckets each minute against
+`_BASKET_ZONA_LOW`, so bar and curve can never disagree; `_BASKET_ZONA_REPARTO` (the old fixed,
+curve-independent share) is deleted, nothing else read it. `_seed_esfuerzo_basket_detalle` now
+carries the anchor game's own seeded `avg_hr`/`max_hr` (`_SESION_BASKET_HR`, 128/162) into the curve
+call instead of the two old constants. The separate `random.Random(_ESFUERZO_SEED)` is unchanged;
+no other rng call in demo.py moved. Report, for the anchor game (invented demo values, measured via
+`body.demo._curva_basket_esfuerzo`/`_zonas_basket_esfuerzo` with the real seed, then confirmed
+through the full `_seed()` path by the new `tests/test_demo.py` test below): curve mean **128.0**,
+highest minute **161.1** (0.9 below the seeded max of 162), zone minutes **{1: 8.0, 2: 18.0,
+3: 17.0, 4: 7.0, 5: 0.0}** (sum 50, the game's own duration).
+
+**Tests.** `tests/test_esfuerzo_sesion.py`: `ClasificaTest`/`HistorialTest` updated to the two-key
+(`zona_alta`/`caida`) shape, no `pico`. `tests/test_entreno_sesion.py`: new
+`test_no_second_peak_figure_shown` and `test_the_second_peak_keys_are_gone_from_both_languages`
+(ruling 1); `test_comparison_heading_is_not_repeated_inside_the_card`, with
+`EsfuerzoComparacionTest`'s fixture given an `avg_hr` so the page's own heading has something to
+say (ruling 2; its absence was masking the fact that the PASSING `test_comparison_heading_reuses_
+the_existing_key` had -- before this slice -- actually been proving the CARD's own duplicate
+heading, not the page's, since this fixture's figures were otherwise empty); new
+`test_zone_legend_has_one_swatch_per_zone_and_each_rect_carries_a_title` (ruling 3);
+`DemoBranchesTest`'s basketball test extended to assert a recovery figure and both comparison rows
+on the anchor game's own card (ruling 4/5). `tests/test_demo.py`: new
+`BasketEsfuerzoCurvaCoherenteTest`, seeding in-process with `today=` pinned, asserting for all 5
+demo basketball games (the anchor + 4 historical) that the curve's mean is within 3 bpm of its own
+`avg_hr`, its highest minute 0-6 bpm below its own `max_hr`, and its zone minutes sum to the curve's
+own minute count. `git grep -n -E "pico_(mas|como|menos)|banda_pico_ppm" -- body/ tests/` returns
+only the new retired-keys test itself. `tests/test_i18n_paridad.py`, `tests/test_persona_fuga.py`
+and `tests/test_registro_tu.py` pass unedited.
+
+**Gate, full, run in 26 foreground chunks of `.venv/Scripts/python.exe -m unittest <modules>`**
+(3 chunks of 5 for `test_garmin_*`/`test_host_*`/`test_demo`, 23 chunks of 10 for the rest),
+covering all 242 `tests/test_*.py` modules: every chunk `OK` (one pre-existing `expectedFailure` in
+the first normal chunk, one pre-existing `skip` in a later chunk; both already present on `main`).
+Per-chunk `Ran` counts summed to **5512**, reconciled against an independent collect-only
+`unittest.TestLoader().discover("tests", top_level_dir=".")` count of the same tree: also **5512**.
+
+**Customer bytes, as approved in this spec's header.** Changed: `entreno_sesion.esfuerzo.esfuerzos`
+(es/en, dropped `· pico {valor}`). Removed (es+en): `entreno_sesion.esfuerzo.pico_mas`,
+`entreno_sesion.esfuerzo.pico_como`, `entreno_sesion.esfuerzo.pico_menos`. Template lines changed:
+`body/templates/entreno_sesion.html`'s effort-card block (no card-level `comparacion_titulo`, no
+`ul.list` for zones). No body.css edit (ruling 3's own classes already colour both bar and legend).
+
+**Merge:** merge policy A pre-authorized for this slice's own customer-facing bytes by the
+dispatching spec's own "YOU MAY MERGE" clause. `main` merged with `feat/body-partido-1-pulido` via
+`--no-ff`, tree identity verified empty-diff against the branch tip, branch deleted, `body-app` left
+on `main` clean. Merge sha recorded in the next ledger line, per this ledger's append-only rule.
+
