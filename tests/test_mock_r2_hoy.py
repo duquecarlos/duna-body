@@ -178,7 +178,12 @@ class TellBodyRowTest(unittest.TestCase):
         _seed_demo(self, "tellbody_anchor.db", "es")
         page = TestClient(web.app, follow_redirects=False).get("/").text
         self.assertIn('href="#asis-btn">', page)
-        self.assertEqual(page.count('href="#asis-btn"'), 2, "the aviso's own link plus the new row")
+        self.assertEqual(
+            page.count('href="#asis-btn"'),
+            3,
+            "the aviso's own link, the Tell Body row, and BODY-HOY-PENDIENTES-REGISTRO-1's"
+            ' "Log it with the assistant" line',
+        )
 
 
 class TellBodyOpensPanelJsTest(unittest.TestCase):
