@@ -33655,6 +33655,8 @@ dated plan a `sin_uso` stream of its own (matching BODY-PLAN-PANTALLA-1 ruling 6
 widening the global per-day seeding functions other screens and tests depend on. Not done here: out of this
 slice's `touches` as literally scoped, and the gap is pre-existing, not introduced by this diff.
 
+-- merged `6ed876ec6f80fe3468b12e11ed948d0c0c54abd3`
+
 ## BODY-REGISTRO-COBERTURA-2-M -- lands BODY-REGISTRO-COBERTURA-2 past the customer-bytes stop (2026-11-22)
 
 **Approval, `ORCH-CARLOS-DELEGATES-TIER-1-1` (Tier 2):** the customer bytes BODY-REGISTRO-COBERTURA-2 stopped on
@@ -33682,5 +33684,8 @@ tests.test_rendimiento`: Ran 78 tests, OK.
 targeted check above stands in place of a full gate re-run, per the branch's own already-reconciled floor (5452
 tests across 28 chunks, recorded above). `git checkout main`; `git merge --no-ff feat/body-registro-cobertura-2`;
 smoke `.venv/Scripts/python.exe -m unittest tests.test_registro_cobertura_metas tests.test_i18n_paridad` on
-`main` post-merge. Branch `feat/body-registro-cobertura-2` deleted after the merge. Not deployed, not pushed.
+`main` post-merge: Ran 24 tests, OK. Branch `feat/body-registro-cobertura-2` deleted after the merge. Not
+deployed, not pushed.
+
+-- merged `6ed876ec6f80fe3468b12e11ed948d0c0c54abd3`
 
