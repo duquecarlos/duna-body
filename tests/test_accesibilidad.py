@@ -37,17 +37,28 @@ from __future__ import annotations
 import tempfile
 import unittest
 from collections import Counter
+from datetime import date
 from html.parser import HTMLParser
 from pathlib import Path
+from unittest import mock
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
 from body import config, db, demo, garmin_adapter, identity, privacidad, web
+from body.rutas import comun
 from tests._rutas import rutas_planas
 from tests.test_cuenta_rp import CuentaRpTestCase
 from tests.test_estados_vacios import STATES, _paths_for
+
+# BODY-DEMO-HOY-FIJO-1: the "populada" fixture below seeds the demo and then sweeps every GET
+# route through the real clock (comun._today_local) -- pinned so the sweep never depends on which
+# real calendar day the suite happens to run on (tests/test_estados_vacios_2.py's own
+# PersonaCompletaSinCambiosTest.test_demo_person_unchanged hit exactly this on 2026-11-22, a
+# Sunday). Chosen for no reason the sparse states below need -- any anchor with the demo's usual
+# night block works, and 2026-11-20 is the anchor several sibling test modules already pin to.
+_ANCHOR = date(2026, 11, 20)
 
 _default_client = TestClient(web.app, follow_redirects=False)
 
@@ -289,7 +300,7 @@ def _reset_db(tc: unittest.TestCase, name: str):
 
 
 def _seed_populated(conn, idioma: str) -> dict:
-    demo._seed(conn, dias=30, idioma=idioma)
+    demo._seed(conn, dias=30, idioma=idioma, today=_ANCHOR)
     goal_id = conn.execute("SELECT id FROM goal WHERE person_id = 1 ORDER BY id LIMIT 1").fetchone()[0]
     day = conn.execute(
         "SELECT day FROM daily_metric WHERE person_id = 1 ORDER BY day DESC LIMIT 1").fetchone()[0]
@@ -307,6 +318,9 @@ class AccesibilidadLocalTest(unittest.TestCase):
     """Local mode: the populated fixture plus sparse states A, D and E, each in es and en."""
 
     def test_sweep_populated_and_sparse_states(self):
+        patcher = mock.patch.object(comun, "_today_local", return_value=_ANCHOR)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         sweep = _Sweep()
         get_routes = [r for r in rutas_planas(web.app.routes) if "GET" in getattr(r, "methods", ())]
         self.assertGreater(len(get_routes), 20)

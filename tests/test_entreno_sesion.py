@@ -479,7 +479,7 @@ class DemoBranchesTest(unittest.TestCase):
     def setUp(self):
         self.conn = _reset_db(self, "demo_ramas.db")
         with mock.patch.object(demo, "date", self._FakeToday):
-            demo._seed(self.conn, dias=60, idioma="es")
+            demo._seed(self.conn, dias=60, idioma="es", today=self.ANCHOR)
         _as(self, 1)
 
     def test_days_activity_row_links_to_the_session_page(self):

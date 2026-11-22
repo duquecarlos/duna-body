@@ -496,7 +496,7 @@ def _seed_at(case: unittest.TestCase, hoy: date, dias: int) -> sqlite3.Connectio
     db.init(conn)
     _FakeToday._valor = hoy
     with mock.patch.object(demo, "date", _FakeToday):
-        demo._seed(conn, dias=dias, idioma="es")
+        demo._seed(conn, dias=dias, idioma="es", today=hoy)
     return conn
 
 
