@@ -1193,7 +1193,7 @@
   "entreno_sesion.esfuerzo.zona_alta": "{pct}% del tiempo en zonas 4 y 5",
   "entreno_sesion.esfuerzo.esfuerzos": "{n} esfuerzos fuertes · pico {valor}",
   "entreno_sesion.esfuerzo.recuperacion": "Tras cada esfuerzo, tu pulso bajó unos {valor} en el primer minuto.",
-  "entreno_sesion.esfuerzo.pocos_datos": "Esta sesión tiene pocos datos de pulso para medir cómo te recuperas entre esfuerzos.",
+  "entreno_sesion.esfuerzo.pocos_datos": "Esta sesión no registra suficientes datos de pulso para medir cómo te recuperas entre esfuerzos.",
   "entreno_sesion.esfuerzo.zona_alta_mas": "Más tiempo en zona alta que lo habitual",
   "entreno_sesion.esfuerzo.zona_alta_como": "Tiempo en zona alta como lo habitual",
   "entreno_sesion.esfuerzo.zona_alta_menos": "Menos tiempo en zona alta que lo habitual",
