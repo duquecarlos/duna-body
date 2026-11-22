@@ -207,13 +207,21 @@ class SeededContentTest(unittest.TestCase):
         # REM of 0.0 -- the generic per-day random fill (RANGES['sleep_rem_min'] = (40, 100)) never
         # lands on exactly zero, so this stays a unique, deterministic marker regardless of the
         # real calendar date the demo runs on.
+        # BODY-NOCHE-SIN-REM-3: found through `daily_metric`, the RAW stored row -- never altered
+        # by the view change -- because `daily_metric_efectiva` now OMITS this exact row (stored
+        # 0 with deep+light already past captura_sueno.umbral_min()), so a query against the view
+        # for value = 0.0 would find nothing.
         rows = self.conn.execute(
-            "SELECT day, value FROM daily_metric_efectiva WHERE person_id = 1 "
+            "SELECT day, value FROM daily_metric WHERE person_id = 1 "
             "AND metric_key = 'sleep_rem_min' AND value = 0.0").fetchall()
         self.assertEqual(len(rows), 1)
         dia = rows[0]["day"]
-        vals = {r["metric_key"]: r["value"] for r in self.conn.execute(
-            "SELECT metric_key, value FROM daily_metric_efectiva WHERE person_id = 1 AND day = ?", (dia,))}
+        ausente = self.conn.execute(
+            "SELECT 1 FROM daily_metric_efectiva WHERE person_id = 1 AND day = ? "
+            "AND metric_key = 'sleep_rem_min'", (dia,)).fetchone()
+        self.assertIsNone(ausente)
+        vals = db.valores_etapas_garmin(self.conn, dia, 1)
+        self.assertEqual(vals["sleep_rem_min"], 0.0)
         self.assertEqual(captura_sueno.evaluar(vals),
                           {"rem_no_capturado": True, "version": captura_sueno.VERSION})
 

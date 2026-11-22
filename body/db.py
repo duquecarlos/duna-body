@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import anatomia, config, fechas, garmin_adapter
+from . import anatomia, captura_sueno, config, fechas, garmin_adapter
 
 _CADENCE_N_PER_WEEK = re.compile(r"^\s*(\d+)\s*x\s*/\s*week\s*$", re.IGNORECASE)
 
@@ -2364,7 +2364,18 @@ def _migrate_despertar_correccion(conn: sqlite3.Connection) -> None:
 # this definition lands on the next start -- no table is altered, no row is written here. Must
 # run AFTER despertar_correccion exists (this function runs last in init(), once SCHEMA and every
 # guarded migration above have already created every table and column it reads).
+#
+# BODY-NOCHE-SIN-REM-3 (ORCH-CARLOS-DELEGATES-TIER-1-1, recommendation (a) of BODY-NOCHE-SIN-REM-2-
+# INV): a second seam, independent of the one above -- a `sleep_rem_min` row the watch never
+# captured (captura_sueno.evaluar's own rule: stored exactly 0 AND that night's own deep + light +
+# 0 reach captura_sueno.umbral_min()) is OMITTED from the view entirely, never turned into NULL, so
+# every reader's existing "a missing day is an honest gap" path is the one this row now takes. The
+# stored `daily_metric` row itself is untouched -- reverting this function restores today's reading
+# on the next start. The deep/light lookup below joins only for a `sleep_rem_min` row (the join
+# condition itself tests dm.metric_key), so no other metric's row pays for an extra join.
 def _migrar_vista_daily_metric_efectiva(conn: sqlite3.Connection) -> None:
+    umbral = captura_sueno.umbral_min()
+    assert isinstance(umbral, int), f"captura_sueno.umbral_min() must be int, got {type(umbral)!r}"
     conn.execute("DROP VIEW IF EXISTS daily_metric_efectiva")
     conn.execute(
         "CREATE VIEW daily_metric_efectiva AS "
@@ -2382,7 +2393,13 @@ def _migrar_vista_daily_metric_efectiva(conn: sqlite3.Connection) -> None:
         "FROM daily_metric dm "
         "LEFT JOIN despertar_correccion dc ON dc.person_id = dm.person_id AND dc.day = dm.day "
         "    AND dc.tipo = 'sueno' AND dm.metric_key = 'sleep_minutes' "
-        "LEFT JOIN sleep_session ss ON ss.person_id = dm.person_id AND ss.day = dm.day"
+        "LEFT JOIN sleep_session ss ON ss.person_id = dm.person_id AND ss.day = dm.day "
+        "LEFT JOIN daily_metric rd ON rd.person_id = dm.person_id AND rd.day = dm.day "
+        "    AND rd.metric_key = 'sleep_deep_min' AND dm.metric_key = 'sleep_rem_min' "
+        "LEFT JOIN daily_metric rl ON rl.person_id = dm.person_id AND rl.day = dm.day "
+        "    AND rl.metric_key = 'sleep_light_min' AND dm.metric_key = 'sleep_rem_min' "
+        f"WHERE NOT (dm.metric_key = 'sleep_rem_min' AND dm.value = 0 "
+        f"           AND (COALESCE(rd.value, 0) + COALESCE(rl.value, 0) + dm.value) >= {umbral})"
     )
 
 
@@ -2680,6 +2697,20 @@ def series_garmin(conn, key: str, start: str, end: str, person_id: int) -> dict[
         (person_id, key, start, end),
     ).fetchall()
     return {r["day"]: r["value"] for r in rows}
+
+
+def valores_etapas_garmin(conn, day: str, person_id: int) -> dict[str, float]:
+    """BODY-NOCHE-SIN-REM-3: the night's own RAW sleep-stage minutes -- sleep_deep_min,
+    sleep_light_min, sleep_rem_min, sleep_awake_min -- read from `daily_metric`, never the view
+    (same precedent as `series_garmin` beside `series`), so a caller that must feed
+    `captura_sueno.evaluar` or the stage-mapping check (`_verificar_etapas`) still sees a marked
+    night's own stored 0 even though `daily_metric_efectiva` now omits that row."""
+    rows = conn.execute(
+        "SELECT metric_key, value FROM daily_metric WHERE person_id = ? AND day = ? "
+        "AND metric_key IN ('sleep_deep_min', 'sleep_light_min', 'sleep_rem_min', 'sleep_awake_min')",
+        (person_id, day),
+    ).fetchall()
+    return {r["metric_key"]: r["value"] for r in rows}
 
 
 def series_origen(conn, key: str, start: str, end: str, person_id: int) -> dict[str, tuple[float, bool]]:

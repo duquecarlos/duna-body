@@ -31,6 +31,14 @@ MODELO = {
 }
 
 
+def umbral_min() -> int:
+    """BODY-NOCHE-SIN-REM-3: the one public number `body/db.py`'s own view formats into its CREATE
+    VIEW statement (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2: one rule owner), so the view and
+    `evaluar` below can never silently drift apart -- a change to `MODELO` here lands in the view
+    on the next start, the same way the view itself is dropped and recreated every start."""
+    return MODELO["rem_minimo_noche_min"]
+
+
 def evaluar(vals: dict) -> dict | None:
     """`vals` is the night's own values dict (db.day_values's shape, or any caller-held dict with the
     same keys) -- never a second read. Returns `{"rem_no_capturado": True, "version": VERSION}` when
