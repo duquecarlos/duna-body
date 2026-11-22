@@ -33754,6 +33754,7 @@ the branch tip's own tree, `git diff <branch tip> <merge commit>` empty. Branch
 
 -- merged `92e6bd4b9db4fd1af0b7992f62b8648048fe36e2`
 
+## BODY-REGISTRO-COBERTURA-2-M -- lands BODY-REGISTRO-COBERTURA-2 past the customer-bytes stop (2026-11-22)
 
 **Approval, `ORCH-CARLOS-DELEGATES-TIER-1-1` (Tier 2):** the customer bytes BODY-REGISTRO-COBERTURA-2 stopped on
 are approved by name and this slice may merge past merge policy A's customer-bytes condition -- the 17 keys per
