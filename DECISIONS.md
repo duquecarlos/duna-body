@@ -33880,3 +33880,5 @@ commits) via `--no-ff`, smoke run `.venv/Scripts/python.exe -m unittest tests.te
 tests.test_mock_r2_hoy tests.test_i18n_paridad` green on the merged tree, branch deleted. Merge sha recorded
 in the next ledger line, per this ledger's append-only rule (never edited into this paragraph).
 
+BODY-HOY-PENDIENTES-REGISTRO-1 and -1-M merged 4e7f8e7c5c7cf8304c20b0c2efc02c282f64d89f.
+
