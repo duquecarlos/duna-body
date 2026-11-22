@@ -33786,3 +33786,59 @@ deployed, not pushed.
 
 -- merged `6ed876ec6f80fe3468b12e11ed948d0c0c54abd3`
 
+## BODY-HOY-PENDIENTES-REGISTRO-1 -- Hoy's own plan card names what the dated plan's log still needs (2026-11-22)
+
+**Continuation (invocation C):** the first launch (20261122T084859) was stopped by the orchestrator around 14:05
+UTC when Carlos restarted the PC -- it had edited `body/i18n/en.json`, `body/i18n/es.json`, `body/rutas/hoy.py`
+and `body/templates/today.html` on `feat/body-hoy-pendientes-registro-1`, uncommitted, gate not started, no
+report. This invocation started on that branch at main's tip (`f8c7356a72461c2090be3062a1dc8eea7edebe5e`), read
+the inherited diff against the spec's rulings first: it already matched rulings 1-4 correctly (one
+`registro_cobertura.pendientes` call per render, reached only once `_plan_semana_ctx` already found an active
+plan; `sueno` dropped before any label lookup; `sin_uso` streams never named; the muted `note` line, the same
+class the card's own checkpoint line uses, joins the daily/weekly misses with the existing `_lista_natural`
+helper and links to `#asis-btn`). Kept it as-is; no rewrite needed.
+
+**Ruling 8 (demo):** `registro_cobertura.pendientes(conn, 1, anchor)` on the stock demo (`dias=90`, person 1)
+came back `{faltan: [], sin_uso: []}` -- nothing missing, checked directly before touching `demo.py`. Two
+independent sources guaranteed `proteina` every anchor day regardless of the per-day 0.9 meal-logging roll: the
+generic ingesta roll itself (it happened to land `True` on the real anchor day) and `_seed_household`'s own
+shared meal between the demo person and Ana, dated `meal_day = anchor.isoformat()`, whose first
+`comida_compartida.compartir_comida` call wrote the demo person's own portion (`protein_g: 35.0`) as an applied
+`ingesta` row through `db._crear_comida_tx`. Fixed both: the anchor day's own meals (both the generic roll and
+the demo person's own shared-meal portion) now drop `protein_g` from what is written (every `rng` call that
+would have run still runs, so nothing else the seed produces shifts); `kcal` alone still makes a valid meal.
+Verified with a direct call across a full 28-day shift cycle (`date(2026,1,5)` + 0..27): `proteina` is the one
+stream missing on every single day of the cycle, regardless of which real weekday the demo happens to run on
+(`sueno` is also occasionally missing on two of the 28 days, harmless since ruling 3 drops it before any label
+lookup). `tests/test_demo_hoy_fijo.py` (Tier 1, not touched) still passes unedited.
+
+**New tests, `tests/test_plan_hoy_registro.py` (14 tests):** absent with no active plan; absent with only
+`sueno` missing or nothing missing at all; the daily-only/weekly-only/both-parts sentences in es and en,
+matching the spec's exact example strings; a `sin_uso` stream (`cintura`) never named even though it is
+missing; exactly one `registro_cobertura.pendientes` call per render (one active plan, two active plans, no
+active plan -- a `mock.patch.object(registro_cobertura, "pendientes", wraps=...)` spy, module-level patch per
+`tests/test_guardia_parches.py`'s own convention); person scope (another person's gap never shows for person
+1). One new test added to `tests/test_demo.py` (`DemoHoyPendientesTest`) proves the demo's own `/` page shows
+the line through the real screen. `tests/test_rendimiento.py`'s own `/` ceiling (155) needed no change -- the
+sweep still measures comfortably under it (`RouteCostCeilingTest.test_every_get_route_stays_within_its_ceiling`
+green); not edited, despite being named in `touches`.
+
+**Gate, exact command `.venv/Scripts/python.exe -m unittest discover tests -t .`, run in 28 foreground chunks
+(the garmin/host groups in chunks of 4-5, `test_demo` alone given its own ~210-410s run) instead of one
+`discover` invocation, per this slice's own dispatch constraints: 5468 tests total (5453 on the prior merge's
+own reconciled floor, `BODY-REGISTRO-COBERTURA-2-M`'s ledger entry above, plus this slice's 14 new
+`test_plan_hoy_registro.py` tests and 1 new `test_demo.py` test -- 5453 + 15 = 5468, matching). One expected
+failure (pre-existing, chunk 1) and one skip (pre-existing, chunk 3), both unrelated to this diff. **One real
+failure, caused by this diff, outside `touches`:**
+`tests.test_mock_r2_hoy.TellBodyRowTest.test_asis_btn_anchor_matches_the_existing_convention`
+(`tests/test_mock_r2_hoy.py:181`) asserts `page.count('href="#asis-btn"') == 2` ("the aviso's own link plus the
+new row") against the stock demo (`dias=30`, person 1, `_seed_demo`) -- the new pendientes line adds a third
+`href="#asis-btn"` link (`Regístralo con el asistente`) to that same page, since the stock demo now always has
+exactly the gap ruling 8 requires. This does not reproduce on `main` (the feature does not exist there); it is
+a direct, unavoidable consequence of ruling 8's own requirement that the demo show a real gap, running into a
+frozen count this test's own author did not anticipate when ruling 8's ledger line was written.
+`tests/test_mock_r2_hoy.py` is NOT in this slice's `touches`, so its own one-line fix (the count moving from 2
+to 3, with a comment pointing here) is not something this slice may make. STOP BLOCKED here, naming the file
+and line; not merged. The branch stays on `feat/body-hoy-pendientes-registro-1`, one commit
+(`c142e0fb3661c171e69bf9c777d67acdafaeed40`) ahead of `main`, tree clean.
+
