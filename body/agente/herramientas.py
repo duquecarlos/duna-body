@@ -1639,6 +1639,11 @@ def _derivados_noche(conn: sqlite3.Connection, person_id: int, fecha: str, sueno
     fc_minima = _fc_minima_noche(sueno_arrays, inicio_dt, fin_dt)
 
     valores_dia = db.day_values(conn, fecha, person_id)
+    # BODY-NOCHE-SIN-REM-3: the RAW stage totals (db.valores_etapas_garmin), never valores_dia --
+    # a marked night's own sleep_rem_min row is now OMITTED from daily_metric_efectiva, so feeding
+    # the view's dict here would silently stop both `etapas_verificacion` and `captura` from ever
+    # seeing the 0 they exist to check.
+    raw_etapas = db.valores_etapas_garmin(conn, fecha, person_id)
     fc_baja_robusta = valores_dia.get(sueno_fc.CLAVE_MIN)
     fc_baja_robusta_vs_rango = None
     if fc_baja_robusta is not None:
@@ -1662,11 +1667,12 @@ def _derivados_noche(conn: sqlite3.Connection, person_id: int, fecha: str, sueno
         "vfc_noche": vfc_noche,
         "despertar_modelo": despertar_modelo,
         "minutos_despierto_tras_fin": _minutos_despierto_tras_fin(despertar_modelo),
-        "etapas_verificacion": _verificar_etapas(sueno_arrays, fin_dt, valores_dia),
-        # BODY-NOCHE-SIN-REM-1: whether this night's own zero REM is a capture gap (the watch's fit
-        # or signal), never a reading -- None when REM is missing, above zero, or the night is too
-        # short to expect a full cycle. valores_dia is the SAME dict already read above, no second SQL.
-        "captura": captura_sueno.evaluar(valores_dia),
+        "etapas_verificacion": _verificar_etapas(sueno_arrays, fin_dt, raw_etapas),
+        # BODY-NOCHE-SIN-REM-1 (BODY-NOCHE-SIN-REM-3: now fed raw_etapas, not valores_dia -- see
+        # above): whether this night's own zero REM is a capture gap (the watch's fit or signal),
+        # never a reading -- None when REM is missing, above zero, or the night is too short to
+        # expect a full cycle.
+        "captura": captura_sueno.evaluar(raw_etapas),
     }
 
 
@@ -1785,10 +1791,12 @@ def _comparar_noche(conn: sqlite3.Connection, person_id: int, fecha: str, desde:
         out = noche_rasgos.comparar(conn, person_id, fecha, desde=desde, grupo=grupo)
     except noche_rasgos.SinDatos:
         raise ToolError(t("agente.error.comparar_noche_sin_noche"))
-    # BODY-NOCHE-SIN-REM-1: the SAME capture-gap key `_leer_noche` carries, for this one focal
-    # night (`fecha`) -- `noche_rasgos.comparar` ranks features, not raw totals, so this reads
-    # the night's own stored values the same way `_derivados_noche` does, no change to that module.
-    out["captura"] = captura_sueno.evaluar(db.day_values(conn, fecha, person_id))
+    # BODY-NOCHE-SIN-REM-1 (BODY-NOCHE-SIN-REM-3: db.valores_etapas_garmin, the RAW totals, not
+    # db.day_values -- a marked night's row is omitted from the view it reads): the SAME capture-
+    # gap key `_leer_noche` carries, for this one focal night (`fecha`) -- `noche_rasgos.comparar`
+    # ranks features, not raw totals, so this reads the night's own stored values the same way
+    # `_derivados_noche` does, no change to that module.
+    out["captura"] = captura_sueno.evaluar(db.valores_etapas_garmin(conn, fecha, person_id))
     return out
 
 

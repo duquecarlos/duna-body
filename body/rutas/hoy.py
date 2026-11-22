@@ -1402,7 +1402,11 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
         # BODY-NOCHE-SIN-REM-1: a capture gap, not a reading -- the bar itself already drops a
         # zero-minute stage from `stages` above (never a zero-width real segment); this only adds
         # the one muted line saying so, never touching what the bar itself draws.
-        captura = captura_sueno.evaluar(vals)
+        # BODY-NOCHE-SIN-REM-3: fed db.valores_etapas_garmin (the RAW stage totals), not `vals` --
+        # `vals` comes from db.load_day, through the view that now OMITS a marked night's own
+        # sleep_rem_min row, so evaluar(vals) would see REM as missing (never flagged) rather than
+        # 0 (flagged) on exactly the nights this line exists to name.
+        captura = captura_sueno.evaluar(db.valores_etapas_garmin(conn, key, person_id))
         rem_no_capturado_linea = (t("day.sueno.rem_no_capturado")
                                    if captura and captura.get("rem_no_capturado") else None)
         sleep = {"total": t.minutes(vals["sleep_minutes"]), "window": window, "stages": stages,
