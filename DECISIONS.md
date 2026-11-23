@@ -34533,3 +34533,26 @@ continuation needs `tests/test_web_entry.py`'s `BEFORE` set widened by one tuple
 `("/day/{day}/entreno/{source_id}/checkin", ("POST",))` -- before the gate and merge can complete.
 That continuation is **BODY-PARTIDO-2-C**.
 
+## BODY-PARTIDO-2-C -- the second red's one tuple added, merged (2026-11-23)
+
+Continuation of BODY-PARTIDO-2 / BODY-PARTIDO-2-B (ORCH-CARLOS-DELEGATES-TIER-1-1). Edited
+`tests/test_web_entry.py` only: `RouteSetTest.BEFORE` gained
+`("/day/{day}/entreno/{source_id}/checkin", ("POST",)),  # BODY-PARTIDO-2`, placed beside the
+existing `.../dolor` entry, in the file's own style. Committed as `53dce1a`.
+
+**Gate.** `tests.test_web_entry` alone: `.venv/Scripts/python.exe -m unittest tests.test_web_entry -v`
+-- `Ran 4 tests in 0.019s`, OK (the route-set test among them). The rest of the full gate did not need
+a re-run: `git diff --stat 2fc6f1c HEAD` shows only `tests/test_web_entry.py` (+1) and `DECISIONS.md`
+(+39, this slice's two ledger entries) changed since BODY-PARTIDO-2-B's own reconciled full-gate run
+(5573 tests, 24/25 chunks OK, the 25th -- `test_web_entry` -- the one red this slice fixes); `git grep
+-n "test_web_entry" -- tests/` finds no import of it from any other test module (one hit, a plain-text
+mention inside a comment in `tests/test_guardia_parches.py`, not a reference). A one-tuple change to a
+module no other module imports cannot move another module's result, so BODY-PARTIDO-2-B's 5573-test
+floor (now all 25/25 chunks green, counting this fix) carries forward unchanged.
+
+**Merge.** Customer-facing bytes, schema and cross-repo contract were all already committed on the
+branch under BODY-PARTIDO-2's own approval; this slice's diff adds nothing beyond the one test tuple
+and the ledger. `git checkout main`; `git merge --no-ff feat/body-partido-2`.
+
+Branch deleted; `body-app` on `main`, clean.
+
