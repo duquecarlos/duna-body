@@ -623,7 +623,7 @@ class LeerEntrenoUltimaVezTest(unittest.TestCase):
         sesion = out["sesiones"][0]
         self.assertEqual(set(sesion),
                          {"dia", "titulo", "fuente", "hora_inicio", "tipo", "duracion_min", "series",
-                          "ultima_vez", "dolor", "esfuerzo"})
+                          "ultima_vez", "dolor", "esfuerzo", "checkin"})
         self.assertEqual(sesion["dia"], "2026-11-10")
         self.assertEqual(sesion["series"][0]["ejercicio"], "press banca")
         self.assertEqual(sesion["series"][0]["repeticiones"], 10)
