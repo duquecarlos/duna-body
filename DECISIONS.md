@@ -34531,4 +34531,5 @@ carries five commits past `main` at `9975801`: `3b61355`, `7d52390`, `9b774ba`, 
 BODY-PARTIDO-2 ledger entry above), `2fc6f1c` (this slice's one-line test fix). A follow-on
 continuation needs `tests/test_web_entry.py`'s `BEFORE` set widened by one tuple --
 `("/day/{day}/entreno/{source_id}/checkin", ("POST",))` -- before the gate and merge can complete.
+That continuation is **BODY-PARTIDO-2-C**.
 
