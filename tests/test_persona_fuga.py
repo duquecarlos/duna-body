@@ -85,7 +85,7 @@ client = TestClient(web.app, follow_redirects=False)
 # ---- table census: every table with a literal person_id column, per body/privacidad.py, plus the
 # three tables owned through another id (habit via goal_id, goal_enlace via goal_id,
 # shift_batch_item via batch_id) -- the full inventory BODY-SEGURIDAD-CENSO-1 named.
-_REACHED_THROUGH_TABLES = {"habit", "goal_enlace", "shift_batch_item"}
+_REACHED_THROUGH_TABLES = {"habit", "goal_enlace", "shift_batch_item", "set_pregunta_item"}
 # need an active household to exist at all (BODY-COMIDA-COMPARTIDA-1: consentimiento_comida_compartida
 # and comida_compartida_porcion are both reached only through one -- compartir.activar_recibir_comidas
 # and comida_compartida.compartir_comida both raise ValueError with none, same as compartir.compartir).
@@ -184,6 +184,15 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
         {"ejercicio": f"ZZ{tag}-EJERCICIO", "zona": "hombro", "dolor_durante": 3, "dolor_despues": 2,
          "movimiento": None},
     ])
+    # ORCH-CARLOS-DELEGATES-TIER-1-1 (BODY-PARTIDO-2): set_pregunta/set_pregunta_item/
+    # set_pregunta_respuesta are person-owned -- set_pregunta_item reached through
+    # set_pregunta_id, not its own person_id column (same census treatment as habit via
+    # goal_id). No marker needed, the census only checks export/delete-all coverage.
+    db.guardar_set_pregunta(conn, person_id, "other", f"zz{tag.lower()}-deporte", [
+        {"clave": "sensacion", "tipo_pregunta": "escala", "texto": "checkin_sesion.pregunta.sensacion",
+         "opciones": None},
+    ])
+    db.registrar_respuestas_sesion(conn, person_id, "garmin", act_id, {"sensacion": "4"})
     # ORCH-CARLOS-DELEGATES-TIER-1-1: fuente_importacion is person-owned (its own person_id column)
     # and has its first census row here -- no marker needed, the census only checks export/
     # delete-all coverage, and ultimo_error/ultimo_error_at are both NULL on a successful import.

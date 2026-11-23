@@ -34362,3 +34362,197 @@ sha recorded in the next ledger line, per this ledger's append-only rule.
 BODY-ESFUERZO-REAL-2 merged 66753ea2ae6483f1e9d8896a0942cc5cc64401ea (branch tree
 682c25481ab50e1f188edc8b6a6152821410074b, merge tree identical, diff empty).
 
+## BODY-PARTIDO-2 -- the post-session check-in, value-keyed, data-driven per sport, BLOCKED on a red outside touches (2026-11-23)
+
+Second stage of BODY-PARTIDO-2-INV (ORCH-CARLOS-DELEGATES-TIER-1-1). Carlos, relayed by the desk
+2026-11-22: "Is basketball improving my cardio, and what kind of game and preparation makes me play
+best?" The watch measures the effort (BODY-PARTIDO-1); it cannot know WHAT KIND of game it was or
+HOW he prepared. His direction the same day: the structure applies to ANY sport, later to other
+people (BODY-PARTIDO-GENERAL).
+
+**Ruling 1 -- storage, the INV's option A, value-keyed.** Three additive tables (`CREATE TABLE IF
+NOT EXISTS`, nothing existing altered):
+
+    CREATE TABLE set_pregunta (
+        id INTEGER PRIMARY KEY, person_id INTEGER NOT NULL REFERENCES person(id),
+        tipo TEXT NOT NULL, nombre_norm TEXT NOT NULL, creado_en TEXT NOT NULL,
+        UNIQUE (person_id, tipo, nombre_norm));
+    CREATE TABLE set_pregunta_item (
+        id INTEGER PRIMARY KEY, set_pregunta_id INTEGER NOT NULL REFERENCES set_pregunta(id),
+        orden INTEGER NOT NULL, clave TEXT NOT NULL, tipo_pregunta TEXT NOT NULL, texto TEXT NOT NULL,
+        opciones_json TEXT CHECK (opciones_json IS NULL OR json_valid(opciones_json)),
+        origen TEXT NOT NULL, UNIQUE (set_pregunta_id, clave));
+    CREATE TABLE set_pregunta_respuesta (
+        id INTEGER PRIMARY KEY, person_id INTEGER NOT NULL REFERENCES person(id),
+        sets_source TEXT NOT NULL, sets_source_id TEXT NOT NULL, pregunta_clave TEXT NOT NULL,
+        valor TEXT NOT NULL, creado_en TEXT NOT NULL, actualizado_en TEXT NOT NULL,
+        UNIQUE (person_id, sets_source, sets_source_id, pregunta_clave));
+
+No CHECK on `tipo_pregunta`/`origen` (validated in Python, body/checkin_sesion.py and db.py's own
+writers -- a CHECK enumerating kinds costs a table rebuild per new kind, the practicas ruling-B
+precedent entreno_dolor already set). `opciones_json`/`valor` carry a stable option KEY, never
+display text. The session key is `(person_id, sets_source, sets_source_id)`, exactly entreno_dolor's
+own. Four db.py functions: `set_de_persona`, `guardar_set_pregunta`, `registrar_respuestas_sesion`,
+`respuestas_de_sesion`. The migration is additive the same way as every `CREATE TABLE IF NOT EXISTS`
+in `SCHEMA` -- no separate migration step, covered by `tests/test_migraciones.py`'s own
+`CheckinSesionNewTableMigrationTest`.
+
+**Ruling 2 -- the default document as data (body/checkin_sesion.py, new, pure).** Kinds v1:
+`opcion_unica`, `escala` (1-5), `si_no`. One shared question bank (`sensacion`, `calentamiento`,
+`comida` ride in every specific set and in GENERICO); specific sets for basketball (`formato`, by
+type code `basketball` and, for Garmin's own generic `other` bucket, the folded names `basketball`/
+`baloncesto`/`basquetbol`), running (`terreno`, by the running type codes body/history.py's own
+`KNOWN_ACTIVITY_TYPES` carries: `running`/`trail_running`/`treadmill_running`/`track_running`), and
+strength_training (`enfoque`, by type code, no `comida`). GENERICO (`sensacion`, `calentamiento`,
+`comida`) for anything that matches none of those. `set_para(tipo, nombre)` is the one matching
+function -- a specific type matches by CODE alone, the generic bucket matches by the FOLDED name
+(entreno_sesion._normaliza_nombre) instead. A session's set is the person's own stored row for its
+(tipo, nombre_norm) if one exists, else the matched default copied in on first SAVE (never on a
+page view).
+
+**Ruling 3 -- the strings, es/en, tú register, under `checkin_sesion.*`.** Every key the spec listed,
+added verbatim to body/i18n/es.json and en.json. No dynamic `t()` prefix was created (the escala-end
+labels 1/3/5 are looked up through a fixed `{1: ..., 3: ..., 5: ...}` dict in
+body/rutas/entreno_sesion.py, never string concatenation), so tests/test_i18n_paridad.py's own
+`_FIXED_DYNAMIC` registry needed no new entry -- confirmed by running it green, unedited.
+tests/test_registro_tu.py ran green unedited too (no usted marker in any new string).
+
+**Ruling 4 -- the form, on the per-session page.** A "Cómo fue" card, body/rutas/entreno_sesion.py's
+new `_checkin_ctx` + two routes (`GET` already existed, extended; new `POST
+/day/{day}/entreno/{source_id}/checkin`), body/templates/entreno_sesion.html. Tap-once pills:
+census (`.pill|.chip|type=radio` over body/static/body.css and body/templates/) found `.chip` (a
+small colored label, not a tap target) and `.radio` (a native radio row, not a pill) -- neither
+fits, so two new selectors, `.pregunta-pills`/`.pregunta-pill`, same shape as the existing
+`.cuerpo-vista-btn` (44px target, 18px radius, flex-wrap, no fixed width) using `:has(input:checked)`
+for the selected state (the same `:has()` goal_new.html's own `.milestone-only` rule already uses
+in this file, so this is not a new CSS feature for the codebase). **Deviation from the spec's own
+text:** the template had the strength sets block rendering AFTER the pain card, not before --
+reordered the sets block ahead of both the new check-in card and the pain card so the required
+"after sets, before pain" position actually holds; no other visible change to the sets block
+itself.
+
+**Ruling 5 -- the assistant reads structured answers.** `_leer_entreno` (body/agente/herramientas.py)
+gains `"checkin": db.respuestas_de_sesion(...)` on every session dict (not only strength ones --
+`sets_source`/`sets_source_id` are computed for every session by `merge_linked_training`), `{}` when
+unanswered. The `leer_entreno` tool's own Spanish description gains one clause naming the check-in
+and its possible keys.
+
+**Ruling 6 -- privacy, export, moves.** `set_pregunta`/`set_pregunta_respuesta` added to
+`privacidad.FULLY_HANDLED_TABLES`; `set_pregunta_item` carries no literal `person_id` (reached
+through `set_pregunta_id`, the habit/goal_enlace precedent) and is exported/deleted by hand, same
+shape. `body/mudanza.py` gains three TableSpecs (`set_pregunta` id_exported, `set_pregunta_item`
+scope=parent, `set_pregunta_respuesta` value-keyed like entreno_dolor) -- **and `_build_parent_ids`
+(mudanza.py), a hand-written dict the spec never mentioned, needed `"set_pregunta"` added alongside
+its existing `"goal"`/`"shift_batch"` entries, or `set_pregunta_item`'s own parent lookup silently
+returns zero rows on import.** Found by a failing `tests/test_mudanza.py` assertion, fixed in
+mudanza.py itself (inside `touches:`). Answers are NOT in body/vida_export.py, NOT in
+body/compartir.py -- a person's own check-in answers stay theirs by default, the same restriction
+turno_fc already carries.
+
+**Ruling 7 -- the demo.** `body/demo.py` gains `_seed_checkin_sesion` (no rng call, fixed invented
+values, called right after `_seed_esfuerzo_basket_detalle` so it never shifts any existing rng
+draw): the anchor basketball game (`demo-{dia_basket_reciente}-1`) carries saved answers
+(`media_cancha`, sensación 4, calentamiento sí, comida `1_3h`); every earlier basketball game
+(`demo-basket-hist-*`) is left untouched, so the blank form still shows there. **Deviation:** the
+spec's own worked example names a literal source_id, `demo-2026-11-21-1`; the actual id is computed
+from `today` (`demo-{anchor - 1 day}-1`), so this slice built against the live pattern rather than
+that literal string. `tests/test_demo_hoy_fijo.py` ran green, unedited.
+
+**Ruling 8 -- tests.** New `tests/test_checkin_sesion.py` (35 tests): `set_para` matching (type
+code, folded other-name with accents/case, basquetbol, running codes, strength, unmatched ->
+generic, unknown type -> generic, options are stable keys); the four db.py functions round-trip,
+upsert-without-disturbing-siblings, cross-person isolation; the GET/POST route (blank form writes
+nothing, first save copies the default then stores answers, partial answers, resave upserts one
+question, invalid option rejected never a 500, answered view shows plain text with a change link,
+`?checkin_editar=1` reopens pre-selected, another person 404s, es/en strings, pill markup has no
+fixed width); a linked strength pair (tests/test_entreno_vinculo.py's own fixture shape) shares one
+check-in; `_leer_entreno`'s own `checkin` carries stable keys only, empty for another person.
+tests/test_migraciones.py gained `CheckinSesionNewTableMigrationTest` (drop all three, `db.init`
+recreates them, idempotent). tests/test_persona_fuga.py: `_REACHED_THROUGH_TABLES` gained
+`set_pregunta_item`, `_seed_person` gained a set+respuesta row (no marker needed, like entreno_dolor
+-- the census only checks export/delete-all coverage); full module ran green. tests/test_mudanza.py
+gained `CheckinSesionMudanzaTest`. tests/test_privacidad.py gained `CheckinSesionExportDeleteTest`.
+No existing assertion changed or removed in test_persona_fuga.py or test_i18n_paridad.py (the
+latter needed no new case at all, confirmed above).
+
+**Where it stopped: gate chunk 1 of 27 (10 modules), red --
+`tests/test_agente_entreno.py:619-626`, `test_nothing_else_in_the_output_changes`, asserts the
+EXACT key set of a `leer_entreno` session dict with no `"checkin"` member. Ruling 5 requires that
+key on every session; this test's own exhaustive `assertEqual(set(sesion), {...})` has no way to
+stay green once it exists. `tests/test_agente_entreno.py` is not in this slice's `touches:`, so per
+the dispatch's own rule ("a red outside touches that your change caused is fixed in a touches file
+if it can be, otherwise STOP BLOCKED naming it"), this slice stops here rather than widening its own
+`touches:`. The red reproduces 100% of the time once ruling 5 is implemented at all -- it is not
+flaky, not load, and does not reproduce on `main` untouched (the key does not exist there). Chunk 0
+of 27 (`tests.test_accesibilidad` .. `tests.test_agente_leer_dia`) is the one that found it; chunks
+2-26 never ran.
+
+**Not merged.** Three commits on `feat/body-partido-2`, branched from `main` at `9975801`:
+`3b61355` (core: db.py, checkin_sesion.py, the route/template/CSS, i18n, privacidad.py, mudanza.py,
+herramientas.py, demo.py, plus their direct mudanza/demo test coverage), `7d52390`
+(test_checkin_sesion.py new, test_migraciones.py and test_persona_fuga.py gained cases),
+`9b774ba` (test_privacidad.py gained CheckinSesionExportDeleteTest). `git status --porcelain` is
+empty. Nothing pushed, nothing deployed.
+
+## BODY-PARTIDO-2-B -- the one known red fixed, the FULL gate found a second one outside touches, BLOCKED again (2026-11-23)
+
+Continuation of BODY-PARTIDO-2 (ORCH-CARLOS-DELEGATES-TIER-1-1). Edited
+`tests/test_agente_entreno.py:626` only: `test_nothing_else_in_the_output_changes`'s exhaustive
+`assertEqual(set(sesion), {...})` gained `"checkin"` alongside the existing keys; the assertion
+still checks nothing else changed. Confirmed green alone first, then as part of the full gate below.
+None of the other five `touches:` test files (`test_agente_registro.py`, `test_entreno_dolor.py`,
+`test_entreno_vinculo.py`, `test_lesion_zona.py`, `test_series_orden.py`) carry the same
+exhaustive-key-set-over-a-`leer_entreno`-session pattern (checked with a grep for
+`assertEqual(set(`), so none needed the same addition. Committed as `2fc6f1c`.
+
+**Gate:** `.venv/Scripts/python.exe -m unittest discover tests -t .`, run in 25 foreground chunks of
+~10 dotted modules each (5 for the two `test_garmin_*` chunks, 4 for `test_host_*`), covering all 244
+test modules under `tests/`, reconciled against an independent collect-only count
+(`unittest.TestLoader().discover(...).countTestCases()`) of 5573 -- the sum of the 25 chunks' own
+`Ran N tests` lines is also 5573, exact match. 24 of the 25 chunks (5569 tests) came back OK (one
+expected failure, one skip, both pre-existing and unrelated). The 25th chunk --
+`tests.test_web_entry` alone -- came back red:
+
+**`tests/test_web_entry.py:145-149`, `RouteSetTest.test_route_set_is_unchanged_by_the_ayuda_move`**,
+an exhaustive `{(path, methods), ...}` set of every route FastAPI serves, captured from `main` before
+the BODY-WEB-ESTRUCTURA-1 move and asserted unchanged ever since (`len(after) != len(self.BEFORE)`:
+102 != 101). BODY-PARTIDO-2's own commit `3b61355` added
+`POST /day/{day}/entreno/{source_id}/checkin` in `body/rutas/entreno_sesion.py` (the check-in's own
+save route) without updating this second, unrelated exhaustive-set test -- the same shape of gap as
+the `test_agente_entreno.py` red this slice was dispatched to fix, but in a file this slice's
+`touches:` does not list and that fixing needs no `body/` edit, only adding one tuple to `BEFORE`.
+Reproduces 100% of the time (not load, not flaky): it is the new route existing at all that trips it,
+confirmed on `main` untouched where the route does not exist and the test is green. `touches:` is
+what the approval for this slice is scoped to, and `tests/test_web_entry.py` is not in it, so per the
+dispatch's own rule this slice stops here rather than widening its own scope.
+
+**Not merged.** `git status --porcelain` empty. Nothing pushed, nothing deployed. The branch now
+carries five commits past `main` at `9975801`: `3b61355`, `7d52390`, `9b774ba`, `46f9b3b` (the
+BODY-PARTIDO-2 ledger entry above), `2fc6f1c` (this slice's one-line test fix). A follow-on
+continuation needs `tests/test_web_entry.py`'s `BEFORE` set widened by one tuple --
+`("/day/{day}/entreno/{source_id}/checkin", ("POST",))` -- before the gate and merge can complete.
+That continuation is **BODY-PARTIDO-2-C**.
+
+## BODY-PARTIDO-2-C -- the second red's one tuple added, merged (2026-11-23)
+
+Continuation of BODY-PARTIDO-2 / BODY-PARTIDO-2-B (ORCH-CARLOS-DELEGATES-TIER-1-1). Edited
+`tests/test_web_entry.py` only: `RouteSetTest.BEFORE` gained
+`("/day/{day}/entreno/{source_id}/checkin", ("POST",)),  # BODY-PARTIDO-2`, placed beside the
+existing `.../dolor` entry, in the file's own style. Committed as `53dce1a`.
+
+**Gate.** `tests.test_web_entry` alone: `.venv/Scripts/python.exe -m unittest tests.test_web_entry -v`
+-- `Ran 4 tests in 0.019s`, OK (the route-set test among them). The rest of the full gate did not need
+a re-run: `git diff --stat 2fc6f1c HEAD` shows only `tests/test_web_entry.py` (+1) and `DECISIONS.md`
+(+39, this slice's two ledger entries) changed since BODY-PARTIDO-2-B's own reconciled full-gate run
+(5573 tests, 24/25 chunks OK, the 25th -- `test_web_entry` -- the one red this slice fixes); `git grep
+-n "test_web_entry" -- tests/` finds no import of it from any other test module (one hit, a plain-text
+mention inside a comment in `tests/test_guardia_parches.py`, not a reference). A one-tuple change to a
+module no other module imports cannot move another module's result, so BODY-PARTIDO-2-B's 5573-test
+floor (now all 25/25 chunks green, counting this fix) carries forward unchanged.
+
+**Merge.** Customer-facing bytes, schema and cross-repo contract were all already committed on the
+branch under BODY-PARTIDO-2's own approval; this slice's diff adds nothing beyond the one test tuple
+and the ledger. `git checkout main`; `git merge --no-ff feat/body-partido-2`.
+
+Branch deleted; `body-app` on `main`, clean.
+

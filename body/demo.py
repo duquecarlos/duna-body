@@ -487,6 +487,28 @@ def _seed_esfuerzo_basket_detalle(conn, db, person_id: int, idioma: str, dia_bas
     conn.commit()
 
 
+# ORCH-CARLOS-DELEGATES-TIER-1-1 (BODY-PARTIDO-2) ruling 7: invented check-in answers for the
+# anchor basketball game only -- the shape the demo's own "Baloncesto" session matches.
+_CHECKIN_BASKET_RESPUESTAS = {"formato": "media_cancha", "sensacion": "4", "calentamiento": "si",
+                              "comida": "1_3h"}
+
+
+def _seed_checkin_sesion(conn, db, checkin_sesion, person_id: int, dia_basket_reciente: str,
+                          idioma: str) -> None:
+    """BODY-PARTIDO-2 ruling 7: the anchor basketball game (`dia_basket_reciente`, already seeded
+    by `_seed_entreno_vista_sesion_actividades`) carries saved check-in answers, so the "answered"
+    view shows; every earlier basketball game (`_seed_esfuerzo_basket_detalle`'s own
+    `demo-basket-hist-*`) is left untouched here, so the blank form shows too. No rng call -- these
+    are fixed invented values, never shaped by the module-wide `rng`."""
+    sid = f"demo-{dia_basket_reciente}-1"
+    tipo, nombre = "other", _SESION_BASKET_TITULO[idioma]
+    nombre_norm = checkin_sesion.entreno_sesion._normaliza_nombre(nombre)
+    preguntas = checkin_sesion.set_para(tipo, nombre)
+    db.guardar_set_pregunta(conn, person_id, tipo, nombre_norm, preguntas)
+    db.registrar_respuestas_sesion(conn, person_id, "garmin", sid, _CHECKIN_BASKET_RESPUESTAS)
+    conn.commit()
+
+
 def _refuse(message: str) -> None:
     print(message, file=sys.stderr)
     sys.exit(1)
@@ -1780,8 +1802,9 @@ def _seed_today_stress(conn, db, baselines, anchor: date, person_id: int) -> int
 
 
 def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[str, int]:
-    from . import (baselines, captura_sueno, comida_compartida, compartir, db, desplazamiento_import, enlaces,
-                   goals, practicas, recuperacion, shift_import, sueno_fc, turno_fc, turnos_costo)
+    from . import (baselines, captura_sueno, checkin_sesion, comida_compartida, compartir, db,
+                   desplazamiento_import, enlaces, goals, practicas, recuperacion, shift_import, sueno_fc,
+                   turno_fc, turnos_costo)
 
     person_id = _seed_person(conn, db, idioma)
 
@@ -1806,6 +1829,10 @@ def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[st
     # _seed_periodo (unlike the strength day's own correction above), placed here simply to stay
     # beside the rest of this pair's own seeding.
     _seed_esfuerzo_basket_detalle(conn, db, person_id, idioma, dia_basket, anchor)
+    # ORCH-CARLOS-DELEGATES-TIER-1-1 (BODY-PARTIDO-2) ruling 7: additive, no rng call -- placed here
+    # simply to stay beside the rest of the basketball pair's own seeding, after the activity row it
+    # answers for already exists.
+    _seed_checkin_sesion(conn, db, checkin_sesion, person_id, dia_basket, idioma)
     # BODY-PLAN-MODULO-1-R: AFTER _seed_periodo, not before -- baselines.baseline() excludes
     # marked days (BODY-PERIODO-1 ruling 3), so the band this picks `anchor`'s own stress_avg to
     # fall inside must be read once every period that can exclude a day is already seeded, or it

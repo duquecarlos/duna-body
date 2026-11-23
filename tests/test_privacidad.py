@@ -667,6 +667,57 @@ class EntrenoDolorExportDeleteTest(unittest.TestCase):
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM entreno_dolor").fetchone()[0], 0)
 
 
+class CheckinSesionExportDeleteTest(unittest.TestCase):
+    """BODY-PARTIDO-2: set_pregunta and set_pregunta_respuesta are FULLY-exported tables;
+    set_pregunta_item carries no literal person_id (reached through set_pregunta_id, like habit)
+    and is exported/deleted by hand -- all three go on delete-all. Invented demo content only."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "checkin_sesion.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+
+    def _seed(self, person_id: int) -> None:
+        db.guardar_set_pregunta(self.conn, person_id, "other", "zz-baloncesto", [
+            {"clave": "sensacion", "tipo_pregunta": "escala",
+             "texto": "checkin_sesion.pregunta.sensacion", "opciones": None},
+        ])
+        db.registrar_respuestas_sesion(self.conn, person_id, "garmin", "s1", {"sensacion": "4"})
+        self.conn.commit()
+
+    def test_set_pregunta_and_respuesta_are_fully_handled_tables(self):
+        self.assertIn("set_pregunta", privacidad.FULLY_HANDLED_TABLES)
+        self.assertIn("set_pregunta_respuesta", privacidad.FULLY_HANDLED_TABLES)
+        self.assertNotIn("set_pregunta_item", privacidad.FULLY_HANDLED_TABLES)
+
+    def test_export_includes_the_set_its_item_and_the_answer(self):
+        self._seed(1)
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(len(data["checkin_sesion"]["sets"]), 1)
+        self.assertEqual(data["checkin_sesion"]["items"][0]["clave"], "sensacion")
+        self.assertEqual(data["checkin_sesion"]["respuestas"],
+                          [{"sets_source": "garmin", "sets_source_id": "s1", "pregunta_clave": "sensacion",
+                            "valor": "4", "creado_en": data["checkin_sesion"]["respuestas"][0]["creado_en"],
+                            "actualizado_en": data["checkin_sesion"]["respuestas"][0]["actualizado_en"]}])
+
+    def test_export_of_another_person_sees_nothing(self):
+        self._seed(1)
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 2)
+        self.assertEqual(data["checkin_sesion"], {"sets": [], "items": [], "respuestas": []})
+
+    def test_delete_all_removes_every_row(self):
+        self._seed(1)
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM set_pregunta").fetchone()[0], 0)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM set_pregunta_item").fetchone()[0], 0)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM set_pregunta_respuesta").fetchone()[0], 0)
+
+
 class NutrientTargetExportDeleteTest(unittest.TestCase):
     """BODY-NUTRIENTE-OBJETIVO-1: a daily nutrient target is FULLY exported and fully deleted --
     invented demo amounts only, no real figures."""

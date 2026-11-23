@@ -1455,5 +1455,47 @@ class EntrenoDolorNewTableMigrationTest(unittest.TestCase):
         self.assertEqual(len(db.dolor_de_sesion(self.conn, 1, "garmin", "s1")), 1)
 
 
+class CheckinSesionNewTableMigrationTest(unittest.TestCase):
+    """BODY-PARTIDO-2: a database built before set_pregunta/set_pregunta_item/
+    set_pregunta_respuesta existed gains the three tables additively -- CREATE TABLE IF NOT
+    EXISTS, no ALTER needed since nothing predates them -- and a second init() is a no-op that
+    keeps the first run's own rows."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        db.init(self.conn)
+        self.conn.execute("DROP TABLE set_pregunta_item")
+        self.conn.execute("DROP TABLE set_pregunta_respuesta")
+        self.conn.execute("DROP TABLE set_pregunta")
+        self.conn.commit()
+
+    def test_migration_creates_the_tables(self):
+        for name in ("set_pregunta", "set_pregunta_item", "set_pregunta_respuesta"):
+            self.assertIsNone(self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE name = ?", (name,)).fetchone())
+        db.init(self.conn)
+        for name in ("set_pregunta", "set_pregunta_item", "set_pregunta_respuesta"):
+            self.assertIsNotNone(self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE name = ?", (name,)).fetchone())
+        db.guardar_set_pregunta(self.conn, 1, "other", "zz-baloncesto", [
+            {"clave": "sensacion", "tipo_pregunta": "escala",
+             "texto": "checkin_sesion.pregunta.sensacion", "opciones": None},
+        ])
+        db.registrar_respuestas_sesion(self.conn, 1, "garmin", "s1", {"sensacion": "4"})
+        self.assertEqual(len(db.set_de_persona(self.conn, 1, "other", "zz-baloncesto")), 1)
+        self.assertEqual(db.respuestas_de_sesion(self.conn, 1, "garmin", "s1"), {"sensacion": "4"})
+
+    def test_migration_is_idempotent_and_keeps_existing_rows(self):
+        db.init(self.conn)
+        db.guardar_set_pregunta(self.conn, 1, "other", "zz-baloncesto", [
+            {"clave": "sensacion", "tipo_pregunta": "escala",
+             "texto": "checkin_sesion.pregunta.sensacion", "opciones": None},
+        ])
+        db.registrar_respuestas_sesion(self.conn, 1, "garmin", "s1", {"sensacion": "4"})
+        db.init(self.conn)
+        self.assertEqual(len(db.set_de_persona(self.conn, 1, "other", "zz-baloncesto")), 1)
+        self.assertEqual(db.respuestas_de_sesion(self.conn, 1, "garmin", "s1"), {"sensacion": "4"})
+
+
 if __name__ == "__main__":
     unittest.main()

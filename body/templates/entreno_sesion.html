@@ -49,6 +49,54 @@
 {% endif %}
 </div>
 
+{% if es_fuerza and sets %}
+<h2>{{ t('entreno_sesion.sets_titulo') }}</h2>
+{% for s in sets %}
+{% if s.grupo_nuevo %}{% if not loop.first %}</ul></div>{% endif %}<div class="card"><div class="q">{{ s.exercise }}</div><ul class="plan mt-6">{% endif %}
+  <li class="{{ 'set-excluida' if s.excluida else '' }}">
+    <div>
+      <div class="row flex-wrap gap-8">
+        <span>{% if s.detalle %}{{ s.detalle }}{% endif %}</span>
+        {% if s.corregida %}<span class="chip ok">{{ t('entreno_sesion.set_corregida') }}</span>{% endif %}
+        {% if s.excluida %}<span class="chip">{{ t('entreno_sesion.set_excluida') }}</span>{% endif %}
+      </div>
+      <span class="note">{% if s.hora %}{{ s.hora }}{% endif %}{% if s.duracion %} · {{ s.duracion }}{% endif %}</span>
+      {% if s.pico %}<br><span class="note">{{ s.pico }}</span>{% endif %}
+      {% if s.descanso %}<br><span class="note">{{ s.descanso }}{% if s.caida %} · {{ s.caida }}{% endif %}</span>{% endif %}
+    </div>
+  </li>
+{% if loop.last %}</ul></div>{% endif %}
+{% endfor %}
+{% endif %}
+
+<h2>{{ checkin.titulo }}</h2>
+<div class="card" id="checkin">
+{% if checkin.editar %}
+<form method="post" action="/day/{{ day }}/entreno/{{ source_id }}/checkin">
+{% if checkin.nota %}<p class="note mt-0">{{ checkin.nota }}</p>{% endif %}
+{% for p in checkin.preguntas %}
+<div class="q {{ 'mt-12' if not loop.first else '' }}">{{ p.texto }}</div>
+<div class="pregunta-pills mt-6">
+{% for o in p.opciones %}
+<label class="pregunta-pill">
+  <input type="radio" name="{{ p.clave }}" value="{{ o.clave }}" {% if o.seleccionada %}checked{% endif %}>
+  <span>{{ o.texto }}</span>
+</label>
+{% endfor %}
+</div>
+{% endfor %}
+<button class="btn mt-8" type="submit">{{ checkin.guardar_txt }}</button>
+</form>
+{% else %}
+<ul class="list">
+{% for p in checkin.preguntas %}
+  <li><span class="k">{{ p.texto }}</span><br>{{ p.respuesta_txt or '—' }}</li>
+{% endfor %}
+</ul>
+<a class="taplink" href="/day/{{ day }}/entreno/{{ source_id }}?checkin_editar=1#checkin">{{ checkin.cambiar_txt }}</a>
+{% endif %}
+</div>
+
 {% if dolor %}
 <h2>{{ dolor.titulo }}</h2>
 <div class="card" id="dolor">
@@ -84,25 +132,5 @@
 <button class="btn mt-8" type="submit">{{ t('entreno_sesion.dolor_guardar') }}</button>
 </form>
 </div>
-{% endif %}
-
-{% if es_fuerza and sets %}
-<h2>{{ t('entreno_sesion.sets_titulo') }}</h2>
-{% for s in sets %}
-{% if s.grupo_nuevo %}{% if not loop.first %}</ul></div>{% endif %}<div class="card"><div class="q">{{ s.exercise }}</div><ul class="plan mt-6">{% endif %}
-  <li class="{{ 'set-excluida' if s.excluida else '' }}">
-    <div>
-      <div class="row flex-wrap gap-8">
-        <span>{% if s.detalle %}{{ s.detalle }}{% endif %}</span>
-        {% if s.corregida %}<span class="chip ok">{{ t('entreno_sesion.set_corregida') }}</span>{% endif %}
-        {% if s.excluida %}<span class="chip">{{ t('entreno_sesion.set_excluida') }}</span>{% endif %}
-      </div>
-      <span class="note">{% if s.hora %}{{ s.hora }}{% endif %}{% if s.duracion %} · {{ s.duracion }}{% endif %}</span>
-      {% if s.pico %}<br><span class="note">{{ s.pico }}</span>{% endif %}
-      {% if s.descanso %}<br><span class="note">{{ s.descanso }}{% if s.caida %} · {{ s.caida }}{% endif %}</span>{% endif %}
-    </div>
-  </li>
-{% if loop.last %}</ul></div>{% endif %}
-{% endfor %}
 {% endif %}
 {% endblock %}
