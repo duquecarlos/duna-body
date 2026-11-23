@@ -8,6 +8,7 @@ list[dict[str, Any]] type hints, so parsing is defensive throughout. Fixtures be
 shapes only, never real health figures.
 """
 import pathlib
+import tempfile
 import unittest
 from datetime import datetime, timezone
 from unittest import mock
@@ -15,7 +16,9 @@ from zoneinfo import ZoneInfo
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
-from body import config, garmin_adapter
+from tests._db import open_conn
+
+from body import config, db, esfuerzo_sesion, garmin_adapter
 
 LIST_RAW = [{
     "generic": {"vo2MaxPreciseValue": 47.3, "vo2MaxValue": 47},
@@ -705,6 +708,96 @@ class FetchSleepFailureTest(unittest.TestCase):
     def test_error_propagates_no_payload_swallowed(self):
         with self.assertRaises(RuntimeError):
             garmin_adapter.fetch_sleep("2026-11-05")
+
+
+# --------------------------------------------- BODY-ESFUERZO-REAL-2: the real activity-details shape
+
+
+def _real_activity_detail_raw(ts_values: list, hr_values: list, campo: str = "metricsIndex") -> dict:
+    """The activity-details endpoint's real top-level shape -- the keys the host census counted
+    (BODY-ESFUERZO-REAL-1-INV) -- with each descriptor naming its column under `campo`:
+    "metricsIndex", confirmed from the installed garminconnect 0.3.20 package's own source
+    (activity_details.py:8-44); "index" only to prove the mismatch the adapter used to have."""
+    return {
+        "activityId": 1234567890123,
+        "measurementCount": len(ts_values),
+        "metricsCount": 2,
+        "totalMetricsCount": len(ts_values),
+        "metricDescriptors": [
+            {"key": "directTimestamp", campo: 0},
+            {"key": "directHeartRate", campo: 1},
+        ],
+        "activityDetailMetrics": [{"metrics": [t, h]} for t, h in zip(ts_values, hr_values)],
+        "geoPolylineDTO": {"polyline": []},
+        "heartRateDTOs": [],
+        "pendingData": False,
+        "detailsAvailable": True,
+    }
+
+
+REAL_ACTIVITY_DETAIL_TS_VALUES = [1762761600000, 1762761660000, 1762761720000]
+REAL_ACTIVITY_DETAIL_HR_VALUES = [118, 124, 121]
+
+REAL_ACTIVITY_DETAIL_RAW = _real_activity_detail_raw(
+    REAL_ACTIVITY_DETAIL_TS_VALUES, REAL_ACTIVITY_DETAIL_HR_VALUES)
+ACTIVITY_DETAIL_WITH_INDEX_INSTEAD_OF_METRICSINDEX_RAW = _real_activity_detail_raw(
+    REAL_ACTIVITY_DETAIL_TS_VALUES, REAL_ACTIVITY_DETAIL_HR_VALUES, campo="index")
+ACTIVITY_DETAIL_GMT_STRING_RAW = _real_activity_detail_raw(["2026-11-10 06:00:00.0"], [118])
+
+
+class ActivityDetailsRealShapeTest(unittest.TestCase):
+    """BODY-ESFUERZO-REAL-2: garminconnect 0.3.20's own activity_details.py:8-44 names an
+    activity-detail descriptor's column field "metricsIndex", never "index" -- the day-level
+    intraday descriptors' own field, which the adapter wrongly reused here before this fix."""
+
+    def test_real_shape_descriptors_parse_to_their_samples(self):
+        series = garmin_adapter.parse_activity_hr_series(REAL_ACTIVITY_DETAIL_RAW, "UTC")
+        self.assertEqual([v for _, v in series], [118.0, 124.0, 121.0])
+
+    def test_the_same_payload_with_index_instead_of_metricsindex_parses_empty(self):
+        self.assertEqual(
+            garmin_adapter.parse_activity_hr_series(
+                ACTIVITY_DETAIL_WITH_INDEX_INSTEAD_OF_METRICSINDEX_RAW, "UTC"),
+            ())
+
+    def test_a_gmt_string_timestamp_cell_parses(self):
+        series = garmin_adapter.parse_activity_hr_series(ACTIVITY_DETAIL_GMT_STRING_RAW, "UTC")
+        self.assertEqual(series, (("2026-11-10T06:00", 118.0),))
+
+    def test_day_level_index_payload_still_parses_exactly_as_before(self):
+        idx = garmin_adapter._descriptor_index(HEART_RATE_RAW["heartRateValueDescriptors"], ("timestamp",))
+        self.assertEqual(idx, 0)
+        d = garmin_adapter.parse_intraday("2026-11-05", {"heart_rate": HEART_RATE_RAW}, "America/Bogota")
+        self.assertEqual(d.heart_rate, (
+            (_expect_local(1762300800000), 58.0),
+            (_expect_local(1762301040000), 61.0),
+        ))
+
+
+class ActivityDetailEndToEndTest(unittest.TestCase):
+    """BODY-ESFUERZO-REAL-2 ruling 5: a real-shape payload, stored through
+    db.guardar_detalle_actividad and read back through db.detalle_actividad (parsed by
+    garmin_adapter.parse_activity_hr_series), gives esfuerzo_sesion.tarjeta's own "esfuerzos"
+    figure as sufficient -- the chain the index/metricsIndex mismatch broke end to end
+    (BODY-ESFUERZO-REAL-1-INV)."""
+
+    def test_real_shape_payload_gives_a_sufficient_effort_card(self):
+        conn = open_conn(self, pathlib.Path(tempfile.mkdtemp(dir=TMP)) / "detalle-real.db")
+        db.init(conn)
+        person_id = db.local_person_id(conn)
+        conn.execute("UPDATE person SET timezone = 'UTC' WHERE id = ?", (person_id,))
+        conn.commit()
+        start_local = "2026-11-10T06:00:00"
+        inicio_ms = int(datetime.fromisoformat(start_local).replace(tzinfo=timezone.utc).timestamp() * 1000)
+        hr_values = [118 + (i % 5) for i in range(20)]
+        ts_values = [inicio_ms + i * 60_000 for i in range(20)]
+        payload = _real_activity_detail_raw(ts_values, hr_values)
+        db.guardar_detalle_actividad(conn, person_id, "garmin", "act-real-1", "detalle", payload)
+
+        a = {"source": "garmin", "source_id": "act-real-1", "start_local": start_local, "duration_s": 1200.0}
+        tarjeta = esfuerzo_sesion.tarjeta(conn, person_id, a)
+        self.assertIsNotNone(tarjeta)
+        self.assertTrue(tarjeta["esfuerzos"]["suficiente"])
 
 
 if __name__ == "__main__":
