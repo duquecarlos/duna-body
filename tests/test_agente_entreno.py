@@ -617,10 +617,13 @@ class LeerEntrenoUltimaVezTest(unittest.TestCase):
         )
 
     def test_nothing_else_in_the_output_changes(self):
+        # ORCH-CARLOS-DELEGATES-TIER-1-1 (BODY-PARTIDO-1-ASIS) ruling 1 adds `tipo`/`duracion_min`;
+        # ruling 2 adds `esfuerzo` -- both present on every session now, this strength one included.
         out = herramientas.ejecutar(self.conn, 1, "leer_entreno", {"day": "2026-11-10"}, "completo")
         sesion = out["sesiones"][0]
         self.assertEqual(set(sesion),
-                         {"dia", "titulo", "fuente", "hora_inicio", "series", "ultima_vez", "dolor"})
+                         {"dia", "titulo", "fuente", "hora_inicio", "tipo", "duracion_min", "series",
+                          "ultima_vez", "dolor", "esfuerzo"})
         self.assertEqual(sesion["dia"], "2026-11-10")
         self.assertEqual(sesion["series"][0]["ejercicio"], "press banca")
         self.assertEqual(sesion["series"][0]["repeticiones"], 10)
