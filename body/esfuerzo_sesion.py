@@ -53,6 +53,7 @@ MODELO = {
 # rather than redefined, so one number still governs both.
 HISTORIAL_N = entreno_sesion.HISTORIAL_N
 HISTORIAL_MIN = entreno_sesion.HISTORIAL_MIN
+HISTORIAL_CANDIDATAS = entreno_sesion.HISTORIAL_CANDIDATAS
 
 
 def _contiguos(a: datetime, b: datetime) -> bool:
@@ -151,42 +152,31 @@ def zonas(filas) -> dict | None:
 
 
 def _sesiones_comparables(conn, person_id: int, a: dict) -> list:
-    """Ruling 5: the SAME selection entreno_sesion.comparaciones already makes (entreno_sesion.
-    py:61) -- same type, or (its own ruling 4) the same folded name for Garmin's generic "other"
-    bucket, the activity itself excluded, newest HISTORIAL_N first. Replicated rather than shared
-    (entreno_sesion.py is not in this slice's touches); tests/test_esfuerzo_sesion.py proves both
-    pick the same sessions for the same fixtures."""
-    tipo = a.get("type")
-    if not tipo:
-        return []
-    if tipo == entreno_sesion.TIPO_GENERICO:
-        nombre_norm = entreno_sesion._normaliza_nombre(a.get("name"))
-        candidatas = conn.execute(
-            "SELECT source, source_id, name, start_local, duration_s FROM activity WHERE person_id = ? "
-            "AND type = ? AND NOT (source = ? AND source_id = ?) ORDER BY day DESC, start_local DESC",
-            (person_id, tipo, a["source"], a["source_id"])).fetchall()
-        return [f for f in candidatas
-                if entreno_sesion._normaliza_nombre(f["name"]) == nombre_norm][:HISTORIAL_N]
-    return conn.execute(
-        "SELECT source, source_id, start_local, duration_s FROM activity WHERE person_id = ? AND type = ? "
-        "AND NOT (source = ? AND source_id = ?) ORDER BY day DESC, start_local DESC LIMIT ?",
-        (person_id, tipo, a["source"], a["source_id"], HISTORIAL_N)).fetchall()
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: the SAME pool entreno_sesion.sesiones_anteriores
+    already selects -- up to HISTORIAL_CANDIDATAS same-kind (ruling 4: same folded name for the
+    generic "other" bucket) sessions that started strictly before this one, newest first. Shared
+    with entreno_sesion.comparaciones rather than replicated (entreno_sesion.py is in THIS slice's
+    touches, unlike the one that first wrote this function) -- tests/test_esfuerzo_sesion.py still
+    proves both read the identical pool."""
+    return entreno_sesion.sesiones_anteriores(conn, person_id, a, "source, source_id, duration_s")
 
 
 def historial(conn, person_id: int, a: dict) -> dict:
-    """Ruling 5/8: the median, across the comparable sessions above that carry stored detail, of
-    each figure the card compares -- zones-4/5 share, recovery drop -- or None under HISTORIAL_MIN.
-    ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: the session peak-minute heart rate is no longer one of
-    them (the page's own max-HR comparison already covers that ground, with the watch's own true
-    max rather than this model's per-minute mean). Read in ONE query against activity_detail,
-    grouped by `source` (normally one group, since every Garmin activity shares the same source)
-    rather than through db.detalle_actividad per session (ruling 8: up to HISTORIAL_N sessions x 2
-    kinds would otherwise be one query each) -- parsed with the adapter's own parsers
-    (garmin_adapter.parse_activity_hr_series/parse_hr_zones), the same db.detalle_actividad
-    precedent (db.py:3086) without its per-activity query."""
+    """Ruling 2/3: the median, per figure, over the newest HISTORIAL_N EARLIER comparable sessions
+    (_sesiones_comparables) that actually carry it -- zones-4/5 share, recovery drop -- None under
+    HISTORIAL_MIN, plus `"n"`: how many backed each median (honest counts, returned rather than
+    recomputed by a caller). ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: the session peak-minute heart
+    rate is no longer one of them (the page's own max-HR comparison already covers that ground,
+    with the watch's own true max rather than this model's per-minute mean). Read in ONE query
+    against activity_detail, grouped by `source` (normally one group, since every Garmin activity
+    shares the same source) rather than through db.detalle_actividad per session (ruling 8: up to
+    HISTORIAL_CANDIDATAS sessions x 2 kinds would otherwise be one query each) -- parsed with the
+    adapter's own parsers (garmin_adapter.parse_activity_hr_series/parse_hr_zones), the same
+    db.detalle_actividad precedent (db.py:3086) without its per-activity query."""
+    sin_comparacion = {"zona_alta": None, "caida": None, "n": {"zona_alta": 0, "caida": 0}}
     filas = _sesiones_comparables(conn, person_id, a)
     if not filas:
-        return {"zona_alta": None, "caida": None}
+        return sin_comparacion
 
     por_fuente: dict[str, list[str]] = {}
     for f in filas:
@@ -203,9 +193,12 @@ def historial(conn, person_id: int, a: dict) -> dict:
             detalle_por_id.setdefault((source, r["source_id"]), []).append(r)
 
     if not detalle_por_id:
-        return {"zona_alta": None, "caida": None}
+        return sin_comparacion
     zona_persona = db.person(conn, person_id)["timezone"]
 
+    # Ruling 2: filas is newest-earlier-first (entreno_sesion.sesiones_anteriores) -- appending in
+    # that same order, skipping a session that does not carry the figure, is what makes the first
+    # HISTORIAL_N entries of each list below the newest HISTORIAL_N earlier sessions carrying it.
     alta_vals, caida_vals = [], []
     for f in filas:
         rows = detalle_por_id.get((f["source"], f["source_id"]))
@@ -227,10 +220,13 @@ def historial(conn, person_id: int, a: dict) -> dict:
             if z is not None and z["alta_share"] is not None:
                 alta_vals.append(z["alta_share"])
 
+    alta_vals, caida_vals = alta_vals[:HISTORIAL_N], caida_vals[:HISTORIAL_N]
+
     def _mediana(vals: list[float]) -> float | None:
         return statistics.median(vals) if len(vals) >= HISTORIAL_MIN else None
 
-    return {"zona_alta": _mediana(alta_vals), "caida": _mediana(caida_vals)}
+    return {"zona_alta": _mediana(alta_vals), "caida": _mediana(caida_vals),
+            "n": {"zona_alta": len(alta_vals), "caida": len(caida_vals)}}
 
 
 def clasifica(actual: dict, habituales: dict) -> dict:
@@ -258,7 +254,8 @@ def clasifica(actual: dict, habituales: dict) -> dict:
 def tarjeta(conn, person_id: int, a: dict) -> dict | None:
     """Ruling 1/6: everything the per-session page's effort card needs, read through
     db.detalle_actividad only -- None when this activity has no stored 'detalle' or 'zonas' at
-    all, the card's own presence gate (ruling 6): the page is then unchanged."""
+    all, the card's own presence gate (ruling 6): the page is then unchanged. Ruling 3: `n` carries
+    `historial`'s own honest counts through, unrecomputed, for the page and the assistant alike."""
     muestras = db.detalle_actividad(conn, person_id, a["source"], a["source_id"], "detalle")
     zonas_filas = db.detalle_actividad(conn, person_id, a["source"], a["source_id"], "zonas")
     if not muestras and not zonas_filas:
@@ -272,7 +269,7 @@ def tarjeta(conn, person_id: int, a: dict) -> dict | None:
     habituales = historial(conn, person_id, a)
     return {
         "tiene_detalle": bool(muestras), "esfuerzos": esf, "zonas": zon,
-        "clasificacion": clasifica(actual, habituales),
+        "clasificacion": clasifica(actual, habituales), "n": habituales["n"],
     }
 
 

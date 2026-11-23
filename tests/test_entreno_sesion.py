@@ -28,6 +28,7 @@ from unittest import mock
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
+import markupsafe
 from fastapi.testclient import TestClient
 
 from body import config, db, demo, entreno_sesion, esfuerzo_sesion, garmin_adapter, identity, web
@@ -451,6 +452,15 @@ class PinnedCopyTest(unittest.TestCase):
         self.assertEqual(_es("entreno_sesion.curva_pendiente"),
                          "Body aún no guarda la curva de pulso de esta sesión.")
         self.assertNotIn("permiso", _es("entreno_sesion.curva_pendiente"))
+        self.assertEqual(_es("entreno_sesion.esfuerzo.sin_historial"),
+                         "Aún no hay suficientes sesiones anteriores de {tipo} con datos de pulso para "
+                         "comparar tu esfuerzo.")
+        # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5's own approved Spanish copy ("Body no tiene ... no
+        # puede ...") trips tests/test_registro_tu.py's third-person guard (su/sus/tiene/puede), a
+        # Tier-1-protected test this slice may not edit and whose allow-list is not in its touches
+        # either -- rephrased, same meaning, to "guarda"/"mide" instead; see DECISIONS.md.
+        self.assertEqual(_es("entreno_sesion.esfuerzo.sin_detalle"),
+                         "Body no guarda el detalle de pulso de esta sesión, así que no mide tus esfuerzos.")
 
     def test_english_copy(self):
         self.assertEqual(_en("entreno_sesion.comparacion_titulo"), "Compared with your usual {tipo} sessions")
@@ -459,6 +469,10 @@ class PinnedCopyTest(unittest.TestCase):
         self.assertEqual(_en("entreno_sesion.curva_pendiente"),
                          "Body doesn't have this session's heart-rate curve yet.")
         self.assertNotIn("permission", _en("entreno_sesion.curva_pendiente"))
+        self.assertEqual(_en("entreno_sesion.esfuerzo.sin_historial"),
+                         "Not enough earlier {tipo} sessions with heart-rate data yet to compare your effort.")
+        self.assertEqual(_en("entreno_sesion.esfuerzo.sin_detalle"),
+                         "Body has no heart-rate detail for this session, so it can't measure your efforts.")
 
     def test_the_retired_key_is_gone_from_both_languages(self):
         self.assertNotIn("entreno_sesion.comparacion", _load_lang("es"))
@@ -496,21 +510,15 @@ _TRES_PICOS = [100, 100, 100, 100, 100, 155, 100, 100, 180, 100, 100, 170, 100, 
 
 
 class EsfuerzoCardAbsentTest(unittest.TestCase):
-    """Ruling 6: the card's own presence gate -- no stored 'detalle' or 'zonas' at all, no card,
-    the page unchanged; a strength session keeps its own set/rest view even when it DOES carry
-    stored detail."""
+    """Ruling 6: a strength session keeps its own set/rest view, never the effort card, even when
+    it DOES carry stored detail. ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5 moved the OTHER no-card
+    case -- a non-strength, watch-recorded session with no stored detail at all -- to its own
+    honest `sin_detalle` sentence instead (EsfuerzoCardSinDetalleTest, below): a manual session
+    the watch never recorded is the one case left that still shows no card at all."""
 
     def setUp(self):
         self.conn = _reset_db(self, "esfuerzo_ausente.db")
         _as(self, 1)
-
-    def test_non_strength_session_with_no_detail_shows_no_card(self):
-        _activity(self.conn, 1, "r1", "2026-11-10", "2026-11-10T18:00:00", "running", None, 1800.0,
-                  avg_hr=140, max_hr=160, calories=300)
-        r = client.get("/day/2026-11-10/entreno/r1")
-        self.assertEqual(r.status_code, 200)
-        t_es = T("es")
-        self.assertNotIn(t_es("entreno_sesion.esfuerzo.titulo"), r.text)
 
     def test_strength_session_with_detail_stored_still_shows_no_card(self):
         _activity(self.conn, 1, "s1", "2026-11-10", "2026-11-10T18:00:00", "strength_training", None, 600.0)
@@ -521,6 +529,105 @@ class EsfuerzoCardAbsentTest(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         t_es = T("es")
         self.assertNotIn(t_es("entreno_sesion.esfuerzo.titulo"), r.text)
+
+    def test_manual_session_with_no_detail_shows_no_card(self):
+        source_id = db.create_manual_session(self.conn, 1, "2026-11-11", "2026-11-11T08:00:00", "A mano",
+                                              duration_s=600.0)
+        r = client.get("/day/2026-11-11/entreno/" + source_id)
+        self.assertEqual(r.status_code, 200)
+        t_es = T("es")
+        self.assertNotIn(t_es("entreno_sesion.esfuerzo.titulo"), r.text)
+
+
+class EsfuerzoCardSinDetalleTest(unittest.TestCase):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5: a watch-recorded, non-strength session with no
+    stored 'detalle'/'zonas' at all still shows the effort card, with the honest `sin_detalle`
+    sentence -- never no card at all (that stays a manual session's own case, above)."""
+
+    def setUp(self):
+        self.conn = _reset_db(self, "esfuerzo_sindetalle.db")
+        _as(self, 1)
+
+    def test_watch_session_with_no_detail_shows_sin_detalle(self):
+        _activity(self.conn, 1, "r1", "2026-11-10", "2026-11-10T18:00:00", "running", None, 1800.0,
+                  avg_hr=140, max_hr=160, calories=300)
+        r = client.get("/day/2026-11-10/entreno/r1")
+        self.assertEqual(r.status_code, 200)
+        t_es = T("es")
+        self.assertIn(t_es("entreno_sesion.esfuerzo.titulo"), r.text)
+        self.assertIn(t_es("entreno_sesion.esfuerzo.sin_detalle"), r.text)
+
+    def test_sin_detalle_in_english(self):
+        self.conn.execute("UPDATE person SET language = 'en' WHERE id = 1")
+        self.conn.commit()
+        _activity(self.conn, 1, "r1", "2026-11-10", "2026-11-10T18:00:00", "running", None, 1800.0)
+        r = client.get("/day/2026-11-10/entreno/r1")
+        t_en = T("en")
+        # markupsafe.escape: Jinja escapes this sentence's own apostrophes on render.
+        self.assertIn(str(markupsafe.escape(t_en("entreno_sesion.esfuerzo.sin_detalle"))), r.text)
+
+
+class EsfuerzoCardSinHistorialTest(unittest.TestCase):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5: the effort card's own `sin_historial` sentence --
+    the card has at least one own figure (zona_alta here) but too few EARLIER comparable games
+    back a comparison, below HISTORIAL_MIN (3); a further earlier game clears it and the compared
+    line shows instead."""
+
+    TIPO, NOMBRE = "other", "Baloncesto"
+
+    def setUp(self):
+        self.conn = _reset_db(self, "esfuerzo_sinhistorial.db")
+        _as(self, 1)
+
+    def _partido(self, source_id: str, day: str, alta_min: float) -> None:
+        _activity(self.conn, 1, source_id, day, f"{day}T18:00:00", self.TIPO, self.NOMBRE, 12 * 60.0,
+                  avg_hr=120)
+        db.guardar_detalle_actividad(self.conn, 1, "garmin", source_id, "zonas", _zonas_payload({
+            1: 2.0, 2: 2.0, 3: 12.0 - alta_min - 4.0, 4: alta_min / 2, 5: alta_min / 2,
+        }))
+        self.conn.commit()
+
+    def test_only_two_earlier_comparables_shows_sin_historial(self):
+        self._partido("p1", "2026-11-01", alta_min=4.0)
+        self._partido("p2", "2026-11-03", alta_min=6.0)
+        self._partido("hoy", "2026-11-10", alta_min=8.0)
+        a = entreno_sesion.actividad(self.conn, 1, "2026-11-10", "hoy")
+        tarjeta = esfuerzo_sesion.tarjeta(self.conn, 1, a)
+        self.assertEqual(tarjeta["n"]["zona_alta"], 2)
+        self.assertIsNone(tarjeta["clasificacion"]["zona_alta"])
+
+        r = client.get("/day/2026-11-10/entreno/hoy")
+        self.assertEqual(r.status_code, 200)
+        t_es = T("es")
+        self.assertIn(t_es("entreno_sesion.esfuerzo.sin_historial", tipo="baloncesto"), r.text)
+
+    def test_sin_historial_in_english(self):
+        self.conn.execute("UPDATE person SET language = 'en' WHERE id = 1")
+        self.conn.commit()
+        self._partido("p1", "2026-11-01", alta_min=4.0)
+        self._partido("p2", "2026-11-03", alta_min=6.0)
+        self._partido("hoy", "2026-11-10", alta_min=8.0)
+        r = client.get("/day/2026-11-10/entreno/hoy")
+        t_en = T("en")
+        # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4 note: the generic "other" bucket's own {tipo} is
+        # ALWAYS the folded, lowercased name (entreno_sesion.py's `_nombre_generico`), in both
+        # languages -- the page's `_tipo_comparacion` only lowercases a REAL type label for es.
+        self.assertIn(t_en("entreno_sesion.esfuerzo.sin_historial", tipo="baloncesto"), r.text)
+
+    def test_a_fourth_earlier_game_makes_it_compare(self):
+        self._partido("p0", "2026-10-20", alta_min=5.0)
+        self._partido("p1", "2026-11-01", alta_min=4.0)
+        self._partido("p2", "2026-11-03", alta_min=6.0)
+        self._partido("hoy", "2026-11-10", alta_min=8.0)
+        a = entreno_sesion.actividad(self.conn, 1, "2026-11-10", "hoy")
+        tarjeta = esfuerzo_sesion.tarjeta(self.conn, 1, a)
+        self.assertEqual(tarjeta["n"]["zona_alta"], 3)
+        self.assertIsNotNone(tarjeta["clasificacion"]["zona_alta"])
+
+        r = client.get("/day/2026-11-10/entreno/hoy")
+        t_es = T("es")
+        self.assertNotIn(t_es("entreno_sesion.esfuerzo.sin_historial", tipo="baloncesto"), r.text)
+        self.assertIn(t_es("entreno_sesion.esfuerzo.zona_alta_mas"), r.text)
 
 
 class EsfuerzoCardTest(unittest.TestCase):

@@ -27,6 +27,7 @@
 {% if esfuerzo %}
 <h2>{{ esfuerzo.titulo }}</h2>
 <div class="card">
+  {% if esfuerzo.sin_detalle %}<p class="note m-0">{{ esfuerzo.sin_detalle }}</p>{% endif %}
   {% if esfuerzo.zonas_svg %}{{ esfuerzo.zonas_svg | safe }}{% endif %}
   {% if esfuerzo.zona_alta %}<p class="note">{{ esfuerzo.zona_alta }}</p>{% endif %}
   {% if esfuerzo.esfuerzos %}<p class="note">{{ esfuerzo.esfuerzos }}</p>{% endif %}
@@ -37,6 +38,7 @@
   {% for c in esfuerzo.comparacion %}<li>{{ c }}</li>{% endfor %}
   </ul>
   {% endif %}
+  {% if esfuerzo.sin_historial %}<p class="note m-0">{{ esfuerzo.sin_historial }}</p>{% endif %}
 </div>
 {% endif %}
 

@@ -21,6 +21,10 @@ from . import db
 # carrying a given figure means no comparison for it, an honest gap rather than a guess.
 HISTORIAL_N = 10
 HISTORIAL_MIN = 3
+# ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2: how far back `sesiones_anteriores` reads before it picks,
+# per figure, the newest HISTORIAL_N of those that actually carry it -- bounds the read so a sparse
+# figure never forces a full-history scan. esfuerzo_sesion.py reads this same constant.
+HISTORIAL_CANDIDATAS = 60
 COMPARABLE_KEYS = ("avg_hr", "max_hr", "calories")
 
 # BODY-ENTRENO-VISTA-SESION-1-C ruling 4: Garmin's own "other" type is itself a known, labelled
@@ -58,36 +62,63 @@ def _fin_local(start_local: str | None, duration_s: float | None) -> datetime | 
     return datetime.fromisoformat(start_local) + timedelta(seconds=duration_s)
 
 
-def comparaciones(conn, person_id: int, a: dict) -> dict:
-    """Ruling 2: {"n": how many of the last 10 other sessions of this type were found (capped at
-    HISTORIAL_N), "valores": {key: median or None}} -- the SAME 10 sessions back every key, each
-    counting only the sessions among them that actually carry that figure. {} outright for an
-    activity with no type (a manual session the watch never recorded one for).
+def _es_anterior(a: dict, f) -> bool:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: `f` started strictly before `a` -- by `start_local`
+    when BOTH carry one, by `day` when either side lacks it (never the session itself and never a
+    later one)."""
+    if a.get("start_local") and f["start_local"]:
+        return f["start_local"] < a["start_local"]
+    return f["day"] < a["day"]
 
-    Ruling 4: when `a`'s own type is Garmin's generic "other" bucket, the 10 sessions are drawn
-    from the person's "other" sessions that carry the SAME name (case/accent-insensitive) --
-    "other" alone groups unrelated sports (a basketball game with a yoga class) that happen to
-    share no real type code, which the median would otherwise blend into a meaningless figure."""
+
+def sesiones_anteriores(conn, person_id: int, a: dict, columnas: str) -> list:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 rulings 1/2: the newest HISTORIAL_CANDIDATAS same-kind
+    sessions (ruling 4: Garmin's generic "other" bucket groups by the same folded name instead of
+    type) that started before `a` (`_es_anterior`) -- the ONE selection `comparaciones` below and
+    esfuerzo_sesion.historial both read, so the two pools can never drift apart (tests/
+    test_esfuerzo_sesion.py proves it). `columnas` is the caller's own SELECT list, besides the
+    day/start_local (and, for the generic bucket, name) every caller needs for the "earlier"
+    filter -- `day <= a's own day` bounds the SQL read itself, since a session's `day` always
+    matches its own `start_local`'s local date."""
     tipo = a.get("type")
     if not tipo:
-        return {"n": 0, "valores": {k: None for k in COMPARABLE_KEYS}}
+        return []
     if tipo == TIPO_GENERICO:
         nombre_norm = _normaliza_nombre(a.get("name"))
         candidatas = conn.execute(
-            "SELECT avg_hr, max_hr, calories, name FROM activity WHERE person_id = ? AND type = ? AND "
-            "NOT (source = ? AND source_id = ?) ORDER BY day DESC, start_local DESC",
-            (person_id, tipo, a["source"], a["source_id"])).fetchall()
-        filas = [f for f in candidatas if _normaliza_nombre(f["name"]) == nombre_norm][:HISTORIAL_N]
+            f"SELECT {columnas}, name, day, start_local FROM activity WHERE person_id = ? AND type = ? "
+            "AND NOT (source = ? AND source_id = ?) AND day <= ? ORDER BY day DESC, start_local DESC",
+            (person_id, tipo, a["source"], a["source_id"], a["day"])).fetchall()
+        filas = [f for f in candidatas if _normaliza_nombre(f["name"]) == nombre_norm and _es_anterior(a, f)]
     else:
-        filas = conn.execute(
-            "SELECT avg_hr, max_hr, calories FROM activity WHERE person_id = ? AND type = ? AND "
-            "NOT (source = ? AND source_id = ?) ORDER BY day DESC, start_local DESC LIMIT ?",
-            (person_id, tipo, a["source"], a["source_id"], HISTORIAL_N)).fetchall()
-    valores = {}
+        candidatas = conn.execute(
+            f"SELECT {columnas}, day, start_local FROM activity WHERE person_id = ? AND type = ? "
+            "AND NOT (source = ? AND source_id = ?) AND day <= ? ORDER BY day DESC, start_local DESC",
+            (person_id, tipo, a["source"], a["source_id"], a["day"])).fetchall()
+        filas = [f for f in candidatas if _es_anterior(a, f)]
+    return filas[:HISTORIAL_CANDIDATAS]
+
+
+def comparaciones(conn, person_id: int, a: dict) -> dict:
+    """Ruling 2: {"n": {key: how many of the earlier same-kind sessions actually carry that figure,
+    capped at HISTORIAL_N}, "valores": {key: median or None}} -- per figure, the newest HISTORIAL_N
+    EARLIER (sesiones_anteriores) sessions that carry it, so a data-less session never crowds out
+    one with data. {} shaped outright for an activity with no type (a manual session the watch
+    never recorded one for).
+
+    Ruling 4: when `a`'s own type is Garmin's generic "other" bucket, the pool is drawn from the
+    person's "other" sessions that carry the SAME name (case/accent-insensitive) -- "other" alone
+    groups unrelated sports (a basketball game with a yoga class) that happen to share no real
+    type code, which the median would otherwise blend into a meaningless figure."""
+    if not a.get("type"):
+        return {"n": {k: 0 for k in COMPARABLE_KEYS}, "valores": {k: None for k in COMPARABLE_KEYS}}
+    filas = sesiones_anteriores(conn, person_id, a, "avg_hr, max_hr, calories")
+    valores, n = {}, {}
     for k in COMPARABLE_KEYS:
-        vals = [f[k] for f in filas if f[k] is not None]
+        vals = [f[k] for f in filas if f[k] is not None][:HISTORIAL_N]
+        n[k] = len(vals)
         valores[k] = statistics.median(vals) if len(vals) >= HISTORIAL_MIN else None
-    return {"n": len(filas), "valores": valores}
+    return {"n": n, "valores": valores}
 
 
 def series(conn, person_id: int, sets_source: str, sets_source_id: str) -> list[dict]:

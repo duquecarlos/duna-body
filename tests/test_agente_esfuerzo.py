@@ -118,7 +118,6 @@ class OtroDeporteConEsfuerzoTest(unittest.TestCase):
         a = entreno_sesion.actividad(conn, 1, "2026-11-10", "b1")
         tarjeta = esfuerzo_sesion.tarjeta(conn, 1, a)
         esf, zon, clasif = tarjeta["esfuerzos"], tarjeta["zonas"], tarjeta["clasificacion"]
-        comparables = esfuerzo_sesion._sesiones_comparables(conn, 1, a)
 
         esfuerzo = sesion["esfuerzo"]
         self.assertIsNotNone(esfuerzo)
@@ -133,7 +132,11 @@ class OtroDeporteConEsfuerzoTest(unittest.TestCase):
                           {"mas": "mas", "menos": "menos", "igual": "como"}.get(clasif["zona_alta"]))
         self.assertEqual(esfuerzo["frente_a_tu_habitual"]["recuperacion"],
                           {"mas": "mas", "menos": "menos", "igual": "como"}.get(clasif["caida"]))
-        self.assertEqual(esfuerzo["sesiones_comparadas"], len(comparables))
+        self.assertNotIn("sesiones_comparadas", esfuerzo)
+        self.assertEqual(esfuerzo["comparadas"],
+                          {"zona_alta": tarjeta["n"]["zona_alta"], "recuperacion": tarjeta["n"]["caida"]})
+        self.assertEqual(esfuerzo["minimo_para_comparar"], esfuerzo_sesion.HISTORIAL_MIN)
+        self.assertEqual(esfuerzo["detalle_guardado"], tarjeta["tiene_detalle"])
         _assert_no_raw_curve(self, esfuerzo, sesion["hora_inicio"])
 
 

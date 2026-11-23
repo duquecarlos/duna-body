@@ -12,7 +12,7 @@ only, never a real figure.
 from __future__ import annotations
 
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
@@ -201,7 +201,8 @@ def _zonas_payload(minutos: dict[int, float]) -> list[dict]:
 
 
 class SesionesComparablesTest(unittest.TestCase):
-    """Ruling 5: the SAME selection entreno_sesion.comparaciones already makes."""
+    """Ruling 1/5: the SAME selection entreno_sesion.comparaciones already makes -- EARLIER
+    same-kind sessions only, a later one excluded from both pools."""
 
     def setUp(self):
         self.conn = _reset_db(self, "comparables.db")
@@ -210,11 +211,13 @@ class SesionesComparablesTest(unittest.TestCase):
         for i, day in enumerate(("2026-11-01", "2026-11-03", "2026-11-05")):
             _activity(self.conn, 1, f"h{i}", day, f"{day}T18:00:00", "running", None, 1800.0, avg_hr=140)
         _activity(self.conn, 1, "hoy", "2026-11-10", "2026-11-10T18:00:00", "running", None, 1800.0, avg_hr=145)
+        # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: a LATER running session never enters either pool.
+        _activity(self.conn, 1, "later", "2026-11-12", "2026-11-12T18:00:00", "running", None, 1800.0, avg_hr=150)
         a = entreno_sesion.actividad(self.conn, 1, "2026-11-10", "hoy")
         filas = esfuerzo_sesion._sesiones_comparables(self.conn, 1, a)
         comp = entreno_sesion.comparaciones(self.conn, 1, a)
         self.assertEqual(len(filas), 3)
-        self.assertEqual(comp["n"], 3)
+        self.assertEqual(comp["n"], {"avg_hr": 3, "max_hr": 0, "calories": 0})
         self.assertEqual({f["source_id"] for f in filas}, {"h0", "h1", "h2"})
 
     def test_matches_comparaciones_for_the_generic_other_bucket_by_folded_name(self):
@@ -223,11 +226,14 @@ class SesionesComparablesTest(unittest.TestCase):
             _activity(self.conn, 1, f"h{i}", day, f"{day}T18:00:00", "other", nombre, 3000.0, avg_hr=120)
         _activity(self.conn, 1, "hoy", "2026-11-10", "2026-11-10T18:00:00", "other", "Baloncesto", 3000.0,
                   avg_hr=130)
+        # A later game under the SAME folded name is excluded too.
+        _activity(self.conn, 1, "later", "2026-11-12", "2026-11-12T18:00:00", "other", "Baloncesto", 3000.0,
+                  avg_hr=135)
         a = entreno_sesion.actividad(self.conn, 1, "2026-11-10", "hoy")
         filas = esfuerzo_sesion._sesiones_comparables(self.conn, 1, a)
         comp = entreno_sesion.comparaciones(self.conn, 1, a)
         self.assertEqual({f["source_id"] for f in filas}, {"h0", "h1"})  # "Yoga" excluded
-        self.assertEqual(comp["n"], 2)
+        self.assertEqual(comp["n"], {"avg_hr": 2, "max_hr": 0, "calories": 0})
 
     def test_no_type_is_no_comparable_sessions(self):
         _activity(self.conn, 1, "manual", "2026-11-10", "2026-11-10T18:00:00", None, "A mano", 1800.0)
@@ -263,7 +269,9 @@ class HistorialTest(unittest.TestCase):
         _activity(self.conn, 1, "hoy", "2026-11-10", "2026-11-10T18:00:00", "other", "Baloncesto", 3000.0)
         a = entreno_sesion.actividad(self.conn, 1, "2026-11-10", "hoy")
         h = esfuerzo_sesion.historial(self.conn, 1, a)
-        self.assertEqual(h, {"zona_alta": None, "caida": None})
+        # Ruling 3: the honest counts -- 2 earlier games backed zona_alta (both carry zonas), none
+        # backed caida (see the next test's own note on why).
+        self.assertEqual(h, {"zona_alta": None, "caida": None, "n": {"zona_alta": 2, "caida": 0}})
 
     def test_historial_min_sessions_gives_a_median_per_figure(self):
         self._sembrar_partido("p1", "2026-11-01", alta_min=4.0, pico=150.0)
@@ -273,16 +281,47 @@ class HistorialTest(unittest.TestCase):
         a = entreno_sesion.actividad(self.conn, 1, "2026-11-10", "hoy")
         h = esfuerzo_sesion.historial(self.conn, 1, a)
         self.assertAlmostEqual(h["zona_alta"], 6.0 / 12.0)  # median alta share (4,6,8)/12 -> 6/12
+        self.assertEqual(h["n"]["zona_alta"], 3)
         # Each seeded session's own curve gives too few measured drops (caidas_min needs 3, this
         # fixture's own shape gives fewer) for a recovery figure -- so "caida" has no comparison
         # either, honestly.
         self.assertIsNone(h["caida"])
+        self.assertEqual(h["n"]["caida"], 0)
 
     def test_no_comparable_sessions_at_all(self):
         _activity(self.conn, 1, "sola", "2026-11-10", "2026-11-10T18:00:00", "other", "Baloncesto", 3000.0)
         a = entreno_sesion.actividad(self.conn, 1, "2026-11-10", "sola")
         self.assertEqual(esfuerzo_sesion.historial(self.conn, 1, a),
-                          {"zona_alta": None, "caida": None})
+                          {"zona_alta": None, "caida": None, "n": {"zona_alta": 0, "caida": 0}})
+
+    def test_a_later_game_is_excluded_from_the_median(self):
+        self._sembrar_partido("p1", "2026-11-01", alta_min=4.0, pico=150.0)
+        self._sembrar_partido("p2", "2026-11-03", alta_min=6.0, pico=160.0)
+        self._sembrar_partido("p3", "2026-11-05", alta_min=8.0, pico=170.0)
+        _activity(self.conn, 1, "hoy", "2026-11-10", "2026-11-10T18:00:00", "other", "Baloncesto", 3000.0)
+        # A LATER game, with its own figure -- never pulled into "hoy"'s own "usual".
+        self._sembrar_partido("despues", "2026-11-20", alta_min=100.0, pico=200.0)
+        a = entreno_sesion.actividad(self.conn, 1, "2026-11-10", "hoy")
+        h = esfuerzo_sesion.historial(self.conn, 1, a)
+        self.assertAlmostEqual(h["zona_alta"], 6.0 / 12.0)
+        self.assertEqual(h["n"]["zona_alta"], 3)
+
+    def test_a_figures_median_skips_dataless_sessions_and_reaches_further_back(self):
+        # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2: the 10 NEAREST earlier games carry no stored
+        # detail/zonas at all (data-less) -- the old pool, capped at exactly HISTORIAL_N (10), would
+        # have found nothing. HISTORIAL_CANDIDATAS (60) is wide enough to reach the 3 games older
+        # than all of them, which DO carry zonas.
+        for i in range(10):
+            day = (date(2026, 10, 1) + timedelta(days=i)).isoformat()
+            _activity(self.conn, 1, f"nodata{i}", day, f"{day}T18:00:00", "other", "Baloncesto", 12 * 60.0)
+        for i, alta in enumerate((4.0, 6.0, 8.0)):
+            day = (date(2026, 9, 1) + timedelta(days=i)).isoformat()
+            self._sembrar_partido(f"older{i}", day, alta_min=alta, pico=150.0)
+        _activity(self.conn, 1, "hoy", "2026-11-10", "2026-11-10T18:00:00", "other", "Baloncesto", 3000.0)
+        a = entreno_sesion.actividad(self.conn, 1, "2026-11-10", "hoy")
+        h = esfuerzo_sesion.historial(self.conn, 1, a)
+        self.assertEqual(h["n"]["zona_alta"], 3)
+        self.assertAlmostEqual(h["zona_alta"], 6.0 / 12.0)
 
 
 class TarjetaTest(unittest.TestCase):
@@ -317,6 +356,9 @@ class TarjetaTest(unittest.TestCase):
         self.assertIsNotNone(tarjeta)
         self.assertTrue(tarjeta["tiene_detalle"])
         self.assertFalse(tarjeta["esfuerzos"]["suficiente"])
+        # Ruling 3: `tarjeta` carries `historial`'s own honest counts through -- no earlier game at
+        # all here, so both are zero.
+        self.assertEqual(tarjeta["n"], {"zona_alta": 0, "caida": 0})
 
 
 class CurvaActividadTest(unittest.TestCase):
