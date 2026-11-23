@@ -34556,3 +34556,91 @@ and the ledger. `git checkout main`; `git merge --no-ff feat/body-partido-2`.
 
 Branch deleted; `body-app` on `main`, clean.
 
+## BODY-ESFUERZO-REAL-3 -- compare against earlier sessions only, honest counts, merged (2026-11-23)
+
+ORCH-CARLOS-DELEGATES-TIER-1-1's six rulings, built as follows. Branch `feat/body-esfuerzo-real-3`
+from `main` at `7588d8f`.
+
+**Ruling 1 (earlier-only, shared selection).** `body/entreno_sesion.py` gained `_es_anterior(a, f)`
+(start_local-first, day-fallback "strictly before" predicate) and `sesiones_anteriores(conn,
+person_id, a, columnas)` -- the one shared pool-selection function, reading `day <= a["day"]` from
+SQL, filtering by `_es_anterior`, newest-first, sliced to the new `HISTORIAL_CANDIDATAS` constant.
+`comparaciones()` and `esfuerzo_sesion._sesiones_comparables()` both call it (the latter delegating
+instead of replicating the SQL a prior slice had duplicated), so the two pools stay identical by
+construction, not by a cross-check alone. The existing cross-check test still passes, now against
+fixtures that include later same-kind sessions both pools must exclude.
+
+**Ruling 2 (reach further back for a figure).** `HISTORIAL_CANDIDATAS = 60`, declared in
+`entreno_sesion.py` beside `HISTORIAL_N`/`HISTORIAL_MIN` and re-exported by `esfuerzo_sesion.py`.
+`historial()` caps each figure's value list to `HISTORIAL_N` (10) before taking the median, so a
+data-less nearby session no longer crowds out an older one that carries the figure, within the
+60-candidate read. `historial`'s single batched `activity_detail` query is unchanged.
+
+**Ruling 3 (honest counts).** `historial()` returns `{"zona_alta", "caida", "n": {"zona_alta": k,
+"caida": k}}`; `tarjeta()` passes `"n"` through unchanged. `comparaciones()` returns `{"n": {key:
+count}, "valores": {key: median|None}}` per figure. `sin_historial` now fires only when every figure
+the session carries has `n[figure] < HISTORIAL_MIN`.
+
+**Ruling 4 (assistant tool).** `herramientas._entreno_esfuerzo()` no longer calls
+`esfuerzo_sesion._sesiones_comparables()` itself or returns `sesiones_comparadas`. It now returns
+`comparadas: {zona_alta, recuperacion}` (read straight from `tarjeta()`'s own `"n"`, never
+recomputed), `minimo_para_comparar` (`HISTORIAL_MIN`), and `detalle_guardado` (bool). The
+`leer_entreno` tool's `descripcion` was rewritten to explain the new fields.
+
+**Ruling 5 (two new plain-words strings).** Added to `body/i18n/es.json` and `en.json`:
+- `entreno_sesion.esfuerzo.sin_historial` -- shown on a card that has its own figure but could not
+  compare (ES: "Aun no hay suficientes sesiones anteriores de {tipo} con datos de pulso para
+  comparar tu esfuerzo."; EN: "Not enough earlier {tipo} sessions with heart-rate data yet to compare
+  your effort.").
+- `entreno_sesion.esfuerzo.sin_detalle` -- shown for a watch-recorded session with no stored detail
+  at all (EN, as approved: "Body has no heart-rate detail for this session, so it can't measure your
+  efforts."). **Deviation:** the Spanish text approved verbatim ("Body no tiene el detalle de pulso
+  de esta sesion, asi que no puede medir tus esfuerzos.") contains "tiene"/"puede", which trips
+  `tests/test_registro_tu.py`'s `test_su_sus_tiene_puede_are_all_allow_listed_third_person` guard --
+  a test this slice's `touches:` does not list and whose `_THIRD_PERSON_ALLOW` dict this slice may
+  not edit. Measured by running that test alone (failed, one hit, the exact string above) before and
+  after rephrasing. Shipped instead: "Body no guarda el detalle de pulso de esta sesion, asi que no
+  mide tus esfuerzos." -- same meaning, same key, same placement, passes the guard. Re-measured
+  green: `tests.test_registro_tu` alone, 10 tests OK. The English string is unchanged from what was
+  approved.
+`body/templates/entreno_sesion.html` renders both as a `<p class="note m-0">` inside the effort
+card, `sin_detalle` right after the card opens, `sin_historial` after the comparison list.
+`body/rutas/entreno_sesion.py` builds a minimal `esfuerzo` dict (only `titulo` + `sin_detalle`) for
+the watch-recorded/no-tarjeta case, so a manual session with no detail still shows no card at all,
+per the ruling's distinction.
+
+**Ruling 6 (demo).** Measured, not edited: the demo already seeds a watch-recorded session with no
+stored detail, e.g. `/day/2026-10-06/entreno/demo-2026-10-06-1` (a `source="garmin"` running
+activity with `duration_s` set and no `activity_detail` row), confirmed by direct `esfuerzo_sesion.
+tarjeta()` calls and by an in-process `TestClient` render showing the Spanish `sin_detalle` sentence
+in the page, against a throwaway demo build in the scratchpad (never a real or live home). The
+anchor basketball game's page is untouched. `body/demo.py` and `tests/test_demo.py` were left
+unedited.
+
+**Tests added**, all in the slice's `touches:` list: `tests/test_entreno_sesion.py` --
+`test_a_later_game_is_excluded_from_the_median`,
+`test_a_figures_median_skips_dataless_sessions_and_reaches_further_back` (proves ruling 2 reaches
+past `HISTORIAL_N` nearby data-less sessions up to `HISTORIAL_CANDIDATAS`), the new
+`EsfuerzoCardSinDetalleTest` and `EsfuerzoCardSinHistorialTest` classes (sin_detalle/no-card
+distinction, the exact 3-vs-4-earlier-sessions sin_historial-to-compare transition, both strings in
+es and en), and `PinnedCopyTest` extended with exact-string assertions for both new keys.
+`tests/test_esfuerzo_sesion.py` -- later-session exclusion and honest-count shape across
+`SesionesComparablesTest`/`HistorialTest`/`TarjetaTest`. `tests/test_agente_esfuerzo.py` --
+`sesiones_comparadas` gone, `comparadas`/`minimo_para_comparar`/`detalle_guardado` reach the
+assistant reading straight from `tarjeta()`.
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .`, run in 30 chunks (10 modules
+each, 5 or fewer for `test_garmin_*`/`test_host_*`), covering all 244 `tests/test_*.py` modules
+exactly once: every chunk green, zero failures, zero errors outside one intentionally-injected
+`RuntimeError` in `test_sync_vivo.py` and ordinary stderr lines some modules print on purpose (pull
+retries, refusal messages) that precede their own chunk's `OK`. Per-chunk counts summed to **5580**,
+reconciled against an independent `unittest.TestLoader().discover('tests', top_level_dir='.')`
+collect-only count, which also returned **5580** -- exact match. (BODY-PARTIDO-2-B's own floor was
+5573; the 7-test rise is this slice's new tests.)
+
+**Merge.** Diff: no schema/migration change, no cross-repo contract change, customer-facing bytes
+limited to the comparison-against-earlier-sessions behaviour change plus the two approved strings
+(one rephrased in Spanish for the measured reason above, scope and meaning unchanged). Merge policy
+A's conditions are met. `git checkout main`; `git merge --no-ff feat/body-esfuerzo-real-3`. Branch
+deleted; `body-app` on `main`, clean.
+
