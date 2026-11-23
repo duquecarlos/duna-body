@@ -34179,3 +34179,95 @@ recorded in the next ledger line, per this ledger's append-only rule.
 
 BODY-PARTIDO-1-ASIS merged f12b6ecd54397eb1882530d15bf5942074a641ee.
 
+## BODY-ESFUERZO-COBERTURA-1
+
+**Surface.** A bug on Carlos's real data, reported by the Personal desk 2026-11-22: over 1 Sep-22
+Nov every Garmin session `esfuerzo_sesion.esfuerzos()` read returns `datos_suficientes` false,
+`esfuerzos_fuertes` 0, `caida_1min_ppm` null -- even a long basketball game -- while `zonas_min`
+fills. `body/esfuerzo_sesion.py` is called, never edited: this slice adds a read-only diagnostic
+block to `body/cobertura.py` (BODY-HISTORIA-MINUTO-2's own report), already run on the host through
+the existing `duna-deploy-body cobertura --cuenta-sub <sub>` command, so one host run can name which
+link of the parsing chain breaks without guessing (candidates: wrong descriptor key names, wrong
+timestamp units, a timestamp offset against the activity's own start, or downsampling).
+
+**Ruling 1 (the new block).** `recopilar`'s own output (and `--json`, and `_imprimir`'s text) gains
+`detalle_actividad`, over this person's own activities whose `day` is within
+`DETALLE_VENTANA_DIAS` (120, a named constant) of today, newest first, capped at
+`DETALLE_VENTANA_MAX` (60). No new flag, no new command -- the existing `cobertura --cuenta-sub`
+prints it.
+
+**Ruling 2 (aggregate, then rows, never a value).** Aggregate keys: `actividades_en_ventana`;
+`con_fila_detalle`/`con_fila_vueltas`/`con_fila_zonas` (activities with ANY stored row for that
+kind, including an explicit empty marker, one count per kind rather than one combined count, so a
+kind-specific gap is visible); `con_muestra_detalle` (activities whose `'detalle'` parses to at
+least one sample); `claves_descriptor` (distinct `metricDescriptors[].key` strings seen across
+every stored `'detalle'` payload in the window, each with how many payloads carry it);
+`tipos_index_descriptor` (`{"int", "other"}`, over every descriptor entry's own `index` field);
+`claves_nivel_superior_detalle` (every top-level key name of a `'detalle'` payload, with how many
+payloads carry it); `tipo_timestamp_crudo` (`{"int", "float", "str", "missing"}`, one classification
+per `'detalle'` row stored in the window -- including a non-dict or no-descriptor-match payload,
+counted as `"missing"`, so this histogram's total always equals `con_fila_detalle`). Per-activity
+keys (`actividades`, ordinal `orden`, newest first): `type`, `day` (no name, no title, no
+source_id); `minutos_sesion` (`duration_s / 60`, rounded); `filas_crudas` (`len`
+of`activityDetailMetrics`); `muestras_parseadas` (`len` of
+`garmin_adapter.parse_activity_hr_series(payload, zona)`); `muestras_en_ventana` and
+`minutos_distintos_en_ventana` (both read off `esfuerzo_sesion.serie_por_minuto`'s own return --
+the raw-sample count is the number of parsed samples whose minute falls in the SET of minute keys
+that function already kept, never a re-derivation of its `inicio`/`fin` window arithmetic);
+`cobertura_pct` (the same ratio `esfuerzos()` computes internally, as a percentage); `desfase_min`
+(`{"inicio", "fin"}`, minutes between the earliest/latest parsed sample and the activity's own
+`start_local`/`start_local + duration_s`, signed); `intervalo_mediano_s` (median seconds between
+consecutive RAW timestamp cells, read directly from the stored JSON at the descriptor's own index,
+numeric ones only); `suficiente` (`esfuerzo_sesion.esfuerzos(...)["suficiente"]`). A heart-rate
+value, a zone's seconds/bpm, a lap figure, an activity name/title/source_id never appear.
+
+**Ruling 3 (same parsers, same window, raw payload read directly).** `garmin_adapter.
+parse_activity_hr_series`, `db.person(...)["timezone"]`, `esfuerzo_sesion.serie_por_minuto` and
+`esfuerzo_sesion.esfuerzos` are called, not reimplemented -- `garmin_adapter._descriptor_index` is
+also called directly (the same cross-module call `body/agente/herramientas.py:1247` already makes
+on `_utc_to_local_iso`) to find the SAME descriptor index the parser itself would pick, for the raw
+timestamp-cell and interval diagnostics. Raw payload inspection (`metricDescriptors[].key`/`index`,
+top-level keys, raw row counts, raw timestamp cell types/intervals) reads the stored JSON directly
+from `activity_detail`, the same style `_claves_crudas_sleep` already uses on `raw_payload`.
+
+**Ruling 4 (tests, `tests/test_cobertura.py`, new `DetalleActividadCoverageTest`/
+`DetalleActividadCliLeakTest`, invented payloads seeded through `activity` inserts and
+`db.guardar_detalle_actividad`, person timezone forced to `'UTC'` so a test's own epoch-ms math
+needs no timezone conversion):**
+- the adapter's assumed shape (`"directTimestamp"`/`"directHeartRate"`) parses normally, 20
+  distinct minutes, 100% coverage, `suficiente` true, `desfase_min` `{0, -1}`.
+- descriptor keys renamed to invented `"ts"`/`"hr"`: zero parsed samples, `claves_descriptor` names
+  `"ts"`/`"hr"`, `tipo_timestamp_crudo` shows `"missing"`.
+- timestamps shifted five hours after the activity's own start: samples still parse, zero land in
+  window, `desfase_min.inicio` reads 300 (signed minutes).
+- timestamps stored in seconds (the parser always divides by 1000): samples still parse (to dates
+  near 1970), `tipo_timestamp_crudo` still shows `"int"` -- the OUTCOME (`desfase_min`, zero
+  coverage), not the type alone, is what tells this case apart from the normal one.
+- `DetalleActividadCliLeakTest` walks both `--json` and the text mode end to end and fails on the
+  seeded heart-rate value, the activity's own name, or its source_id appearing anywhere in the
+  output.
+- Existing `test_cobertura.py` tests pass unchanged (29 tests total in the module, individually:
+  `OK`).
+
+**`touches` census, before any edit.** `git grep -n -E "def (recopilar|_imprimir|main)|_bloque_" --
+body/cobertura.py` named only functions inside the one file in `touches`; `git grep -n -E
+"parse_activity_hr_series|_descriptor_index|_utc_to_local_iso" -- body/` named `body/garmin_adapter.
+py` (called, not edited, per the STOP condition) and `body/agente/herramientas.py` (an existing,
+unrelated caller of `_utc_to_local_iso`, left untouched). No file outside `touches` was edited.
+
+**Gate, full,** exactly `.venv/Scripts/python.exe -m unittest discover tests -t .`, run in 26
+foreground chunks of `.venv/Scripts/python.exe -m unittest <dotted modules>` (2 chunks of 5/4 for
+`test_garmin_*`, 1 chunk of 4 for `test_host_*`, 23 chunks of up to 10 for the rest), covering all
+243 `tests/test_*.py` modules: every chunk `OK` (one pre-existing `expectedFailure`, one pre-existing
+`skip`, both already present on `main`, unrelated to this slice). Per-chunk `Ran` counts summed to
+**5525**, reconciled against an independent collect-only `unittest.TestLoader().discover("tests",
+top_level_dir=".")` count of the same tree: also **5525**.
+
+**Customer bytes:** none -- `detalle_actividad` is operator output printed by a host-run CLI
+command, never rendered on a screen. No schema, no migration, no Tier 1 path (`deploy/` untouched;
+the block rides the existing `cobertura` command), no cross-repo contract, no stored state.
+
+**Merge:** merge policy A applies (no schema/migration, no customer-facing bytes, no cross-repo
+contract) and this spec's own ORCH-CARLOS-DELEGATES-TIER-1-1 ruling pre-authorizes the merge on a
+green gate. Merge sha recorded in the next ledger line, per this ledger's append-only rule.
+

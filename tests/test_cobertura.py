@@ -66,6 +66,34 @@ def _bb_payload(values: list) -> list:
     return [{"bodyBatteryValuesArray": values}]
 
 
+def _actividad(conn, person_id, source_id, day, start_local, duration_s, type_="running",
+                source=None, name="Secret Activity Name"):
+    """A row in `activity` -- `name` is a sentinel that must never reach the block's own output
+    (BODY-ESFUERZO-COBERTURA-1 ruling 2 bans it explicitly)."""
+    conn.execute(
+        "INSERT OR REPLACE INTO activity (person_id, source, source_id, day, start_local, type, "
+        "name, duration_s) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (person_id, source or garmin_adapter.SOURCE, source_id, day, start_local, type_, name, duration_s),
+    )
+    conn.commit()
+
+
+def _detalle_payload(ts_values: list, hr_values: list, key_ts="directTimestamp", key_hr="directHeartRate") -> dict:
+    """The adapter's own assumed shape (garmin_adapter.py:874) -- or, with other key names passed
+    in, a payload whose descriptor keys do not match it at all."""
+    return {
+        "metricDescriptors": [{"key": key_ts, "index": 0}, {"key": key_hr, "index": 1}],
+        "activityDetailMetrics": [{"metrics": [t, h]} for t, h in zip(ts_values, hr_values)],
+    }
+
+
+def _epoch_ms(iso_local: str) -> int:
+    """`iso_local` read as a UTC wall-clock instant -- paired with a person whose own timezone is
+    'UTC' in these tests, so a sample's epoch-ms timestamp and its local ISO string agree exactly,
+    with no timezone arithmetic for the test itself to get wrong."""
+    return int(datetime.fromisoformat(iso_local).replace(tzinfo=timezone.utc).timestamp() * 1000)
+
+
 # ---------------------------------------------------------------------------- intraday fc/estres
 
 
@@ -452,6 +480,182 @@ class MainCliTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(path.read_bytes(), before_bytes)
         self.assertEqual(os.stat(path).st_mtime_ns, before_mtime)
+
+
+# --------------------------------------- BODY-ESFUERZO-COBERTURA-1: detalle_actividad
+
+
+class DetalleActividadCoverageTest(unittest.TestCase):
+    def setUp(self):
+        self.conn = _db(self, "detalle.db")
+        self.person_id = db.local_person_id(self.conn)
+        self.conn.execute("UPDATE person SET timezone = 'UTC' WHERE id = ?", (self.person_id,))
+        self.conn.commit()
+        self.hoy = fechas.hoy_local(db.person(self.conn, self.person_id))
+
+    def _dia(self, back: int) -> str:
+        return (self.hoy - timedelta(days=back)).isoformat()
+
+    def test_assumed_shape_payload_parses_in_window_and_is_sufficient(self):
+        day = self._dia(5)
+        start_local = f"{day}T08:00:00"
+        inicio_ms = _epoch_ms(start_local)
+        ts_values = [inicio_ms + i * 60000 for i in range(20)]
+        hr_values = [120 + (i % 5) for i in range(20)]
+        _actividad(self.conn, self.person_id, "act-1", day, start_local, 1200.0)
+        db.guardar_detalle_actividad(self.conn, self.person_id, garmin_adapter.SOURCE, "act-1",
+                                      "detalle", _detalle_payload(ts_values, hr_values))
+
+        out = cobertura.recopilar(self.conn)
+        da = out["detalle_actividad"]
+        self.assertEqual(da["actividades_en_ventana"], 1)
+        self.assertEqual(da["con_fila_detalle"], 1)
+        self.assertEqual(da["con_fila_vueltas"], 0)
+        self.assertEqual(da["con_fila_zonas"], 0)
+        self.assertEqual(da["con_muestra_detalle"], 1)
+        self.assertEqual(da["claves_descriptor"], {"directTimestamp": 1, "directHeartRate": 1})
+        self.assertEqual(da["tipos_index_descriptor"], {"int": 2, "other": 0})
+        self.assertEqual(da["claves_nivel_superior_detalle"],
+                          {"metricDescriptors": 1, "activityDetailMetrics": 1})
+        self.assertEqual(da["tipo_timestamp_crudo"], {"int": 1, "float": 0, "str": 0, "missing": 0})
+
+        a = da["actividades"][0]
+        self.assertEqual(a["orden"], 1)
+        self.assertEqual(a["type"], "running")
+        self.assertEqual(a["day"], day)
+        self.assertEqual(a["minutos_sesion"], 20)
+        self.assertEqual(a["filas_crudas"], 20)
+        self.assertEqual(a["muestras_parseadas"], 20)
+        self.assertEqual(a["muestras_en_ventana"], 20)
+        self.assertEqual(a["minutos_distintos_en_ventana"], 20)
+        self.assertEqual(a["cobertura_pct"], 100.0)
+        self.assertEqual(a["desfase_min"], {"inicio": 0, "fin": -1})
+        self.assertEqual(a["intervalo_mediano_s"], 60.0)
+        self.assertTrue(a["suficiente"])
+
+        dumped = json.dumps(out)
+        self.assertNotIn("Secret Activity Name", dumped)
+        self.assertNotIn("act-1", dumped)
+
+    def test_unrecognised_descriptor_keys_parse_to_zero_and_name_themselves(self):
+        day = self._dia(6)
+        start_local = f"{day}T08:00:00"
+        inicio_ms = _epoch_ms(start_local)
+        ts_values = [inicio_ms + i * 60000 for i in range(5)]
+        hr_values = [100] * 5
+        _actividad(self.conn, self.person_id, "act-2", day, start_local, 300.0)
+        db.guardar_detalle_actividad(
+            self.conn, self.person_id, garmin_adapter.SOURCE, "act-2", "detalle",
+            _detalle_payload(ts_values, hr_values, key_ts="ts", key_hr="hr"))
+
+        out = cobertura.recopilar(self.conn)
+        da = out["detalle_actividad"]
+        self.assertEqual(da["claves_descriptor"], {"ts": 1, "hr": 1})
+        self.assertEqual(da["tipo_timestamp_crudo"], {"int": 0, "float": 0, "str": 0, "missing": 1})
+
+        a = da["actividades"][0]
+        self.assertEqual(a["muestras_parseadas"], 0)
+        self.assertEqual(a["muestras_en_ventana"], 0)
+        self.assertEqual(a["filas_crudas"], 5)
+        self.assertIsNone(a["intervalo_mediano_s"])
+        self.assertFalse(a["suficiente"])
+        self.assertEqual(a["desfase_min"], {"inicio": None, "fin": None})
+
+    def test_timestamps_five_hours_off_the_start_show_the_offset_and_zero_coverage(self):
+        day = self._dia(7)
+        start_local = f"{day}T08:00:00"
+        inicio_ms = _epoch_ms(start_local) + 5 * 3600 * 1000  # five hours after the activity's own start
+        ts_values = [inicio_ms + i * 60000 for i in range(20)]
+        hr_values = [130] * 20
+        _actividad(self.conn, self.person_id, "act-3", day, start_local, 1200.0)
+        db.guardar_detalle_actividad(self.conn, self.person_id, garmin_adapter.SOURCE, "act-3",
+                                      "detalle", _detalle_payload(ts_values, hr_values))
+
+        out = cobertura.recopilar(self.conn)
+        a = out["detalle_actividad"]["actividades"][0]
+        self.assertEqual(a["muestras_parseadas"], 20)
+        self.assertEqual(a["muestras_en_ventana"], 0)
+        self.assertEqual(a["minutos_distintos_en_ventana"], 0)
+        self.assertEqual(a["desfase_min"]["inicio"], 300)  # five hours, signed
+        self.assertFalse(a["suficiente"])
+
+    def test_seconds_not_milliseconds_timestamps_parse_but_land_nowhere_near_the_window(self):
+        day = self._dia(8)
+        start_local = f"{day}T08:00:00"
+        inicio_ms = _epoch_ms(start_local)
+        # The same instants, but stored as SECONDS -- the parser (which always divides by 1000,
+        # the confirmed convention for every OTHER Garmin intraday array) reads them as if they
+        # were milliseconds, landing near the 1970 epoch.
+        ts_values = [(inicio_ms + i * 60000) // 1000 for i in range(20)]
+        hr_values = [140] * 20
+        _actividad(self.conn, self.person_id, "act-4", day, start_local, 1200.0)
+        db.guardar_detalle_actividad(self.conn, self.person_id, garmin_adapter.SOURCE, "act-4",
+                                      "detalle", _detalle_payload(ts_values, hr_values))
+
+        out = cobertura.recopilar(self.conn)
+        da = out["detalle_actividad"]
+        self.assertEqual(da["tipo_timestamp_crudo"], {"int": 1, "float": 0, "str": 0, "missing": 0})
+        a = da["actividades"][0]
+        self.assertEqual(a["muestras_parseadas"], 20)  # the parser still produces samples -- just wrong ones
+        self.assertEqual(a["muestras_en_ventana"], 0)
+        self.assertFalse(a["suficiente"])
+        self.assertIsNotNone(a["desfase_min"]["inicio"])
+        self.assertGreater(abs(a["desfase_min"]["inicio"]), 1000)  # years off, not minutes
+
+    def test_existing_cobertura_blocks_are_unaffected(self):
+        out = cobertura.recopilar(self.conn)
+        self.assertEqual(out["detalle_actividad"]["actividades_en_ventana"], 0)
+        self.assertIn("keeper", out)
+        self.assertIn("sleep", out)
+
+
+class DetalleActividadCliLeakTest(unittest.TestCase):
+    """Ruling 4's own walk of the whole block, text and --json: neither carries the seeded
+    heart-rate value, the activity's own name, or its source_id."""
+
+    def setUp(self):
+        self.orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "detalle-cli.db"
+        conn = open_conn(self, config.DB_PATH)
+        db.init(conn)
+        person_id = db.local_person_id(conn)
+        conn.execute("UPDATE person SET timezone = 'UTC' WHERE id = ?", (person_id,))
+        conn.commit()
+        hoy = fechas.hoy_local(db.person(conn, person_id))
+        day = (hoy - timedelta(days=9)).isoformat()
+        start_local = f"{day}T08:00:00"
+        inicio_ms = _epoch_ms(start_local)
+        ts_values = [inicio_ms + i * 60000 for i in range(15)]
+        self.sentinel_hr = 173
+        hr_values = [self.sentinel_hr] * 15
+        _actividad(conn, person_id, "SECRET-SOURCE-ID-9", day, start_local, 900.0,
+                   name="Secret Activity Name Nine")
+        db.guardar_detalle_actividad(conn, person_id, garmin_adapter.SOURCE, "SECRET-SOURCE-ID-9",
+                                      "detalle", _detalle_payload(ts_values, hr_values))
+        conn.close()
+
+    def test_json_mode_never_leaks_a_name_source_id_or_heart_rate_value(self):
+        buf = []
+        with mock.patch("builtins.print", side_effect=lambda *a: buf.append(" ".join(str(x) for x in a))):
+            rc = cobertura.main(["--json"])
+        self.assertEqual(rc, 0)
+        self.assertNotIn(str(self.sentinel_hr), buf[0])
+        self.assertNotIn("SECRET-SOURCE-ID-9", buf[0])
+        self.assertNotIn("Secret Activity Name Nine", buf[0])
+        parsed = json.loads(buf[0])
+        self.assertEqual(parsed["detalle_actividad"]["actividades_en_ventana"], 1)
+
+    def test_text_mode_never_leaks_a_name_source_id_or_heart_rate_value(self):
+        buf = []
+        with mock.patch("builtins.print", side_effect=lambda *a: buf.append(" ".join(str(x) for x in a))):
+            rc = cobertura.main([])
+        self.assertEqual(rc, 0)
+        texto = "\n".join(buf)
+        self.assertNotIn(str(self.sentinel_hr), texto)
+        self.assertNotIn("SECRET-SOURCE-ID-9", texto)
+        self.assertNotIn("Secret Activity Name Nine", texto)
+        self.assertIn("detalle_actividad: actividades_en_ventana=1", texto)
 
 
 if __name__ == "__main__":
