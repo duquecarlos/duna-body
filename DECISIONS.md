@@ -34054,3 +34054,126 @@ on `main` clean. Merge sha recorded in the next ledger line, per this ledger's a
 
 BODY-PARTIDO-1-PULIDO merged 2ca974c2f49a43417f410f9fef6d03cc99bd1f62.
 
+## BODY-PARTIDO-1-ASIS
+
+ORCH-CARLOS-DELEGATES-TIER-1-1 (second stage of BODY-PARTIDO-1-INV, question 4): the assistant's
+`leer_entreno` widens from strength/manual sessions only to every session of the person, any sport,
+each carrying the SAME computed effort summary the per-session page's own card shows
+(`body/esfuerzo_sesion.py tarjeta`), read only -- never recomputed.
+
+**Ruling 1.** `_leer_entreno`'s own WHERE clause drops `AND (type = 'strength_training' OR source =
+'manual')` entirely -- every activity of the person in the day/range now reaches
+`db.merge_linked_training`, which still folds a linked watch/manual pair to one session exactly as
+before (its own linking key, `vinculo_manual`, is untouched by the widened WHERE). Each session
+gains `tipo` (the activity's own `type`, `None` for a manual one) and `duracion_min`
+(`duration_s / 60`, `None` when `duration_s` is `None`). The strength-only fields `series`,
+`ultima_vez`, `dolor` keep their exact current content for a strength/manual session (told apart by
+the SAME predicate the old WHERE used: `type == 'strength_training' or source == 'manual'`); for
+any other session they are present and honestly empty (`series`/`dolor` -- `[]`, `ultima_vez` --
+`{}`, the natural empty return of `entreno_historial.ultimas_veces` for a session with no exercise
+sets) -- computed by skipping the four strength-only statements rather than calling them and
+discarding the result, so a range read with many non-strength sessions pays nothing extra for them
+(ruling 6).
+
+**Ruling 2.** Every session also carries `esfuerzo`: `None` when
+`esfuerzo_sesion.tarjeta(conn, person_id, a)` itself returns `None` (no stored `'detalle'` or
+`'zonas'` at all), else a dict built only from that function's return (`body/agente/herramientas.py
+_entreno_esfuerzo`):
+- `modelo` -- `esfuerzo_sesion.VERSION` ("esfuerzo-v1").
+- `zonas_min` -- `{zone number: minutes}` for the non-empty zones of `tarjeta()["zonas"]["minutos"]`
+  (`{}` when `tarjeta()["zonas"]` is `None`).
+- `zona_alta_pct` -- `tarjeta()["zonas"]["alta_share"] * 100`, or `None`.
+- `esfuerzos_fuertes` -- `tarjeta()["esfuerzos"]["n_picos"]`.
+- `caida_1min_ppm` -- `tarjeta()["esfuerzos"]["recuperacion"]` when `suficiente`, else `None` (the
+  honest gap, never a guess).
+- `datos_suficientes` -- `tarjeta()["esfuerzos"]["suficiente"]`.
+- `frente_a_tu_habitual` -- `{"zona_alta": ..., "recuperacion": ...}`, each one of `"mas"`/`"como"`/
+  `"menos"`/`None`, translated from `tarjeta()["clasificacion"]`'s own `"mas"`/`"igual"`/`"menos"`/
+  `None` (`"igual"` -> `"como"`, the same translation `body/rutas/entreno_sesion.py`'s own
+  `_ESFUERZO_PALABRA` needs for the page) -- `"mas"` on `recuperacion` means the pulse fell FASTER
+  than usual, never higher, stated in the tool's own description (ruling 4).
+- `sesiones_comparadas` -- `len(esfuerzo_sesion._sesiones_comparables(conn, person_id, a))`, the
+  SAME comparable-session selection `tarjeta()`'s own `historial()` already draws from internally,
+  read again here only to report its size (its figures are never recomputed).
+
+Deliberate difference from the page, named here as the spec required: the per-session page never
+shows this card for a strength session (`body/rutas/entreno_sesion.py` gates it on `not es_fuerza`);
+this tool carries `esfuerzo` for a strength session too, whenever `tarjeta()` has stored detail for
+it -- it is the same person's data, and Carlos's desk asked about gym sessions as well as games.
+
+**Ruling 3 (never the raw curve).** `esfuerzo` carries no per-minute series, no timestamp list, no
+peak list, no laps -- only the aggregates above. `tests/test_agente_esfuerzo.py` walks the returned
+`esfuerzo` dict recursively and fails on any list longer than 5 (the zone count) or any string that
+parses as an ISO timestamp other than the session's own `hora_inicio`.
+
+**Ruling 4.** The tool's own catalog entry (`body/agente/herramientas.py:4373`, "leer_entreno") is
+rewritten: every session of the day/range, any sport, each with its effort summary when there is
+enough data (zone minutes, zona-alta share, hard-effort count, recovery speed, compared to that
+person's own usual for that kind of session, naming that "más" on the recovery means a faster
+pulse drop), strength sessions also with their own sets, and the day's planned training. No figure
+in the text.
+
+**Ruling 5.** `tests/test_agente_registro.py`'s `ROUTE_TOOL` now maps `/day/{day}/entreno/
+{source_id}` to `"leer_entreno"`; the comment above it names BODY-PARTIDO-1-ASIS. Nothing else in
+that file changed.
+
+**Ruling 6 (performance).** The range read now includes every session, not only strength/manual
+ones; `esfuerzo_sesion.tarjeta` reads two detail rows per session regardless of type (the minimum
+it itself needs), and the four strength-only statements (`db.exercise_sets`,
+`db.zonas_en_recuperacion`, `entreno_historial.ultimas_veces`, `db.dolor_de_sesion`) run only for a
+strength/manual session, same as before ruling 1. No statement-count/time guard covers this tool
+(`git grep -n "leer_entreno" tests/test_rendimiento.py` -- no match), so no STOP applied.
+
+**Ruling 7 (tests).** `tests/test_agente_esfuerzo.py`, new, invented fixtures seeded through
+`db.guardar_detalle_actividad`/raw `activity` inserts/`db.create_manual_session`/`db.save_day`,
+never a real figure:
+- a basketball (`'other'`) session's `esfuerzo` checked figure-for-figure against
+  `esfuerzo_sesion.tarjeta`'s own return and `_sesiones_comparables`'s own count, with
+  `series`/`ultima_vez`/`dolor` honestly empty.
+- a run with no stored detail at all reads `esfuerzo: None`.
+- a strength session keeps its sets exactly, and gains `esfuerzo` once detail is stored for it.
+- too little stored detail (4 minutes) leaves `datos_suficientes: False` and `caida_1min_ppm: None`
+  -- the honest gap, not a guess.
+- ruling 3's own walk, on the basketball fixture's `esfuerzo`.
+- another person's session (person 2) never appears in person 1's read.
+- a linked watch/manual pair (`db.create_manual_session` + `db.correct_exercise_set` +
+  `db.save_day`) still folds to one session, its sets the manual half's, its `esfuerzo` read from
+  the watch half's own stored `'zonas'`.
+
+**Existing tests, unedited as required.** `tests/test_entreno_dolor.py`, `test_entreno_vinculo.py`,
+`test_lesion_zona.py`, `test_series_orden.py` and `test_esfuerzo_sesion.py` pass with no edit (run
+individually: 136 tests, `OK`). `tests/test_agente_entreno.py`'s own `LeerEntrenoUltimaVezTest.
+test_nothing_else_in_the_output_changes` is the one assertion ruling 1/2 themselves change -- its
+expected key set extended with `tipo`, `duracion_min`, `esfuerzo` (comment added naming why);
+nothing else in that file changed beyond that one assertion. `tests/test_agente_registro.py`'s
+`StaticGuardTest.test_no_lectura_tool_reaches_a_writer` still passes: `_entreno_esfuerzo` and
+`_leer_entreno` reach only reads (`esfuerzo_sesion.tarjeta`, `_sesiones_comparables`, the existing
+plain SELECTs) -- the module's own docstring already calls itself "pure reads".
+
+**`touches` census, before any edit:** `git grep -n -E "leer_entreno|_leer_entreno|strength_training'
+OR source"` named `body/db.py`, `body/anatomia.py`, `body/entreno_historial.py` beside the three
+files in `touches` -- all three carry only a comment naming `leer_entreno`, no code to change; none
+were edited.
+
+**Returned shape, by key (`_leer_entreno`'s own session dict):** `dia`, `titulo`, `fuente`,
+`hora_inicio` (unchanged); `tipo`, `duracion_min` (new, ruling 1); `series`, `ultima_vez`, `dolor`
+(unchanged content for strength/manual, honestly empty otherwise); `esfuerzo` (new, ruling 2) --
+`None`, or `{modelo, zonas_min, zona_alta_pct, esfuerzos_fuertes, caida_1min_ppm, datos_suficientes,
+frente_a_tu_habitual: {zona_alta, recuperacion}, sesiones_comparadas}`.
+
+**Gate, full,** exactly `.venv/Scripts/python.exe -m unittest discover tests -t .`, run in 26
+foreground chunks of `.venv/Scripts/python.exe -m unittest <modules>` (2 chunks of 5/4 for
+`test_garmin_*`, 1 chunk of 4 for `test_host_*`, 1 chunk of 4 for `test_demo*`, 22 chunks of up to
+10 for the rest), covering all 243 `tests/test_*.py` modules: every chunk `OK` (one pre-existing
+`expectedFailure`, one pre-existing `skip`, both already present on `main`). Per-chunk `Ran` counts
+summed to **5518**, reconciled against an independent collect-only
+`unittest.TestLoader().discover("tests", top_level_dir=".")` count of the same tree: also **5518**.
+
+**Customer bytes:** none -- the tool catalog's own description text (ruling 4) is model-facing, read
+by `body/agente/bucle.py`'s own `_tool_specs` when calling a provider, never rendered on a screen.
+No schema, no migration, no cross-repo contract.
+
+**Merge:** merge policy A applies (no schema/migration, no customer-facing bytes, no cross-repo
+contract) and this spec's own "YOU MAY MERGE" clause pre-authorizes it on a green gate. Merge sha
+recorded in the next ledger line, per this ledger's append-only rule.
+

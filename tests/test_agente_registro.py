@@ -55,11 +55,9 @@ ROUTE_TOOL = {
     "/api/asistente/mcp/herramientas": None,  # hosted MCP door; mirrors leer_ajustes'/the registry's own list
     "/asistente/conversacion/{conversacion_id}": None,  # the panel's own history reload, not a tool
     "/ayuda": "leer_tutoriales",
-    # No lectura tool returns this screen's own data: leer_entreno's day/range read is restricted to
-    # strength_training/manual sessions (never a Garmin-automatic one like basketball), and leer_dia's
-    # activities carry no sets, no habitual-comparison and no recovery line -- neither is this page's
-    # equivalent for every session it serves (BODY-ENTRENO-VISTA-SESION-1-B).
-    "/day/{day}/entreno/{source_id}": None,  # no assistant tool reads one session yet (BODY-ENTRENO-VISTA-SESION-2)
+    # ORCH-CARLOS-DELEGATES-TIER-1-1 (BODY-PARTIDO-1-ASIS): leer_entreno now reads every session of
+    # the day/range, any sport, each with the same effort summary this page's own card shows.
+    "/day/{day}/entreno/{source_id}": "leer_entreno",
 }
 
 WRITER_NAMES = {

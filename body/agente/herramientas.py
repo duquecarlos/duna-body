@@ -73,10 +73,10 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .. import anatomia, baselines, captura_sueno, catalogo_tendencias, comidas, compartir, contexto_dia, cuenta, \
-    db, despertar_real, desplazamiento_import, enlaces, entreno_historial, errores, experimentos, fechas, \
-    garmin_adapter, garmin_cuenta, goals, history, horizonte, household, noche_rasgos, nutriente_objetivo, \
-    practicas, profile, pull, readiness, reentrada, registro_cobertura, shift_import, sueno_fc, turnos_costo, \
-    tutoriales, viajes
+    db, despertar_real, desplazamiento_import, enlaces, entreno_historial, errores, esfuerzo_sesion, \
+    experimentos, fechas, garmin_adapter, garmin_cuenta, goals, history, horizonte, household, noche_rasgos, \
+    nutriente_objetivo, practicas, profile, pull, readiness, reentrada, registro_cobertura, shift_import, \
+    sueno_fc, turnos_costo, tutoriales, viajes
 from ..i18n import LANGS, T
 from . import ajustes, conversacion as agente_conversacion, propuestas
 
@@ -2097,12 +2097,55 @@ def _dia_no_futuro(conn: sqlite3.Connection, person_id: int, day: str) -> None:
         raise ToolError(f"day no puede ser futuro: {day!r}")
 
 
+# ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2: the tool's own three-way word for a figure that falls
+# inside esfuerzo_sesion.clasifica's own band -- "como" (as usual) in place of that function's own
+# "igual", the same translation body/rutas/entreno_sesion.py's `_ESFUERZO_PALABRA` already needs for
+# the page, kept here as a plain code rather than a rendered sentence.
+_CODIGO_HABITUAL = {"mas": "mas", "menos": "menos", "igual": "como"}
+
+
+def _entreno_esfuerzo(conn: sqlite3.Connection, person_id: int, a: dict) -> dict | None:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2: the SAME effort summary the per-session page's own
+    card shows, read ONLY from `esfuerzo_sesion.tarjeta`'s return -- never recomputed. None when
+    that function itself returns None (no stored 'detalle' or 'zonas' at all). Carried for every
+    session that has one, strength included (ruling 2's own deliberate difference from the page,
+    which never shows this card for a strength session -- Carlos's own gym sessions are this same
+    person's data, and the desk asked about games, not only strength)."""
+    detalle = esfuerzo_sesion.tarjeta(conn, person_id, a)
+    if detalle is None:
+        return None
+    esf, zon, clasificacion = detalle["esfuerzos"], detalle["zonas"], detalle["clasificacion"]
+    zonas_min = {n: zon["minutos"][n] for n in range(1, 6) if zon["minutos"][n] > 0} if zon is not None else {}
+    zona_alta_pct = zon["alta_share"] * 100 if zon is not None and zon["alta_share"] is not None else None
+    # Ruling 5's own comparable-session count -- the same selection `esfuerzo_sesion.historial`
+    # already draws from internally, read again here only to report its size (never its figures).
+    comparables = esfuerzo_sesion._sesiones_comparables(conn, person_id, a)
+    return {
+        "modelo": esfuerzo_sesion.VERSION,
+        "zonas_min": zonas_min,
+        "zona_alta_pct": zona_alta_pct,
+        "esfuerzos_fuertes": esf["n_picos"],
+        "caida_1min_ppm": esf["recuperacion"] if esf["suficiente"] else None,
+        "datos_suficientes": esf["suficiente"],
+        # "mas" en recuperacion significa que el pulso bajó más rápido de lo habitual, nunca más alto.
+        "frente_a_tu_habitual": {
+            "zona_alta": _CODIGO_HABITUAL.get(clasificacion["zona_alta"]),
+            "recuperacion": _CODIGO_HABITUAL.get(clasificacion["caida"]),
+        },
+        "sesiones_comparadas": len(comparables),
+    }
+
+
 def _leer_entreno(conn: sqlite3.Connection, person_id: int, day: str | None = None, desde: str | None = None,
                    hasta: str | None = None) -> dict:
     """A day's or a range's training sessions (with their sets, display values plus whether each
     was corrected) and the planned session for that day, if any (BODY-ENTRENO-TOOLS-1). Reads only
     -- `db.exercise_sets` and plain SELECTs, never a writer. ORCH-CARLOS-DELEGATES-TIER-1-1 ruling
-    5: each session's own entreno_dolor rows ride along as `dolor`."""
+    5: each session's own entreno_dolor rows ride along as `dolor`.
+
+    ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: every session of the person in range, any sport, not
+    only strength/manual -- the WHERE clause below carries no `type` filter any more. Ruling 2 adds
+    `esfuerzo` (see `_entreno_esfuerzo`), read for every session, strength included."""
     if day is not None:
         ini, fin = day, day
     elif desde is not None and hasta is not None:
@@ -2110,45 +2153,57 @@ def _leer_entreno(conn: sqlite3.Connection, person_id: int, day: str | None = No
     else:
         raise ToolError("se necesita 'day', o 'desde' y 'hasta'")
     # BODY-ENTRENO-VINCULO-1 ruling 3: both halves of any linked pair in range are fetched by this
-    # same WHERE (the watch half matches type = 'strength_training', the manual half matches
-    # source = 'manual'), so `db.merge_linked_training` always sees the pair whole and folds it to
-    # one session, same as `db.load_day`.
+    # same WHERE, so `db.merge_linked_training` always sees the pair whole and folds it to one
+    # session, same as `db.load_day` -- unaffected by ruling 1's own widened WHERE, which already
+    # fetches every row either half could be.
     actividades = db.merge_linked_training(conn.execute(
-        "SELECT * FROM activity WHERE person_id = ? AND day BETWEEN ? AND ? "
-        "AND (type = 'strength_training' OR source = 'manual') ORDER BY day, start_local",
+        "SELECT * FROM activity WHERE person_id = ? AND day BETWEEN ? AND ? ORDER BY day, start_local",
         (person_id, ini, fin),
     ).fetchall())
     t = T(db.person(conn, person_id)["language"])
     sesiones = []
     for a in actividades:
-        sets = db.exercise_sets(conn, person_id, a["sets_source"], a["sets_source_id"])
-        zonas_dia = db.zonas_en_recuperacion(conn, person_id, a["day"])
-        sesiones.append({
-            "dia": a["day"], "titulo": a["name"], "fuente": a["source"], "hora_inicio": a["start_local"],
+        # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: the exact predicate the old WHERE clause used,
+        # now applied per session instead of in SQL -- strength-only fields stay real work only for
+        # a strength/manual session; any other sport pays none of these four extra statements.
+        es_fuerza = a["type"] == "strength_training" or a["source"] == "manual"
+        if es_fuerza:
+            sets = db.exercise_sets(conn, person_id, a["sets_source"], a["sets_source_id"])
+            zonas_dia = db.zonas_en_recuperacion(conn, person_id, a["day"])
             # BODY-SERIES-ORDEN-1 rulings 1, 3, 5: a rest slot is never a set, and a slot the
             # person marked as not done is left out too -- `db.exercise_sets` already reads a
             # corrected slot's own `set_type` as 'active', whatever the watch's alternating
             # active/rest said.
-            "series": [{"orden": s["set_order"], "tipo": s["set_type"], "ejercicio": s["exercise"],
-                        "categoria": s["category"], "repeticiones": s["reps"], "peso_kg": s["weight_value"],
-                        "corregido": s["corrected_by_person"],
-                        # BODY-LESION-ZONA-1 ruling 2: the one shared plain line, or None when this
-                        # set's own categoria is not among today's open-lesion zonas.
-                        "liviano_a_proposito": anatomia.texto_liviano_a_proposito(
-                            t, {s["category"]} if s["category"] in zonas_dia else set())}
-                       for s in sets
-                       if s["set_type"] == "active" and not s["excluded_by_person"]],
+            series = [{"orden": s["set_order"], "tipo": s["set_type"], "ejercicio": s["exercise"],
+                       "categoria": s["category"], "repeticiones": s["reps"], "peso_kg": s["weight_value"],
+                       "corregido": s["corrected_by_person"],
+                       # BODY-LESION-ZONA-1 ruling 2: the one shared plain line, or None when this
+                       # set's own categoria is not among today's open-lesion zonas.
+                       "liviano_a_proposito": anatomia.texto_liviano_a_proposito(
+                           t, {s["category"]} if s["category"] in zonas_dia else set())}
+                      for s in sets
+                      if s["set_type"] == "active" and not s["excluded_by_person"]]
             # BODY-ENTRENO-ULTIMA-VEZ-1 ruling 3: additive -- what the person did last time this
             # same exercise came up, by its effective name, so the assistant can say "last time
             # 3x8 at 40 kg" from data, never from memory.
-            "ultima_vez": entreno_historial.ultimas_veces(conn, person_id, a["sets_source"], a["sets_source_id"]),
+            ultima_vez = entreno_historial.ultimas_veces(conn, person_id, a["sets_source"], a["sets_source_id"])
             # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5: durante/después/mañana only -- `movimiento`
             # is the one free-text column this table carries and it never leaves the host (same
             # line ruling 1 drew for privacidad's own export), so it is left out here too, since
             # this read can end up in front of a model provider (body/agente/cliente.py).
-            "dolor": [{"ejercicio": d["ejercicio"], "zona": d["zona"], "dolor_durante": d["dolor_durante"],
-                       "dolor_despues": d["dolor_despues"], "dolor_manana": d["dolor_manana"]}
-                      for d in db.dolor_de_sesion(conn, person_id, a["sets_source"], a["sets_source_id"])],
+            dolor = [{"ejercicio": d["ejercicio"], "zona": d["zona"], "dolor_durante": d["dolor_durante"],
+                      "dolor_despues": d["dolor_despues"], "dolor_manana": d["dolor_manana"]}
+                     for d in db.dolor_de_sesion(conn, person_id, a["sets_source"], a["sets_source_id"])]
+        else:
+            # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: present, honestly empty -- a caller never
+            # branches on a missing key.
+            series, ultima_vez, dolor = [], {}, []
+        sesiones.append({
+            "dia": a["day"], "titulo": a["name"], "fuente": a["source"], "hora_inicio": a["start_local"],
+            "tipo": a["type"],
+            "duracion_min": a["duration_s"] / 60 if a["duration_s"] is not None else None,
+            "series": series, "ultima_vez": ultima_vez, "dolor": dolor,
+            "esfuerzo": _entreno_esfuerzo(conn, person_id, a),
         })
     planes = conn.execute(
         "SELECT * FROM plan WHERE person_id = ? AND day BETWEEN ? AND ? AND ejercicios_json IS NOT NULL "
@@ -4316,8 +4371,13 @@ HERRAMIENTAS = [
                      "y si ya existe un video. Úsala para responder cómo se hace algo en la app.",
      "parametros": _PARAM_LEER_TUTORIALES, "funcion": _leer_tutoriales},
     {"nombre": "leer_entreno", "tipo": "lectura", "nivel": "completo",
-     "descripcion": "Las sesiones de entrenamiento de un día o un rango de días, con sus series, y el "
-                     "plan de entrenamiento de ese día si existe.",
+     "descripcion": "Las sesiones de entrenamiento de un día o un rango de días -- de cualquier deporte, no "
+                     "solo fuerza -- cada una con su resumen de esfuerzo cuando hay datos suficientes: los "
+                     "minutos por zona de frecuencia cardíaca, el porcentaje en zona alta, cuántos esfuerzos "
+                     "fuertes tuvo, qué tan rápido bajó el pulso después de cada uno, y cómo se compara todo "
+                     "eso con lo habitual de esa persona en ese mismo tipo de sesión ('más' en la "
+                     "recuperación significa que el pulso bajó más rápido, nunca más alto). Las sesiones de "
+                     "fuerza llevan además sus series, y el plan de entrenamiento de ese día si existe.",
      "parametros": _PARAM_LEER_ENTRENO, "funcion": _leer_entreno},
     {"nombre": "leer_serie", "tipo": "lectura", "nivel": "resumen",
      "descripcion": "Una o más métricas, día por día (o por semana/mes) a lo largo de un rango de fechas -- "
