@@ -2105,21 +2105,23 @@ _CODIGO_HABITUAL = {"mas": "mas", "menos": "menos", "igual": "como"}
 
 
 def _entreno_esfuerzo(conn: sqlite3.Connection, person_id: int, a: dict) -> dict | None:
-    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2: the SAME effort summary the per-session page's own
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4: the SAME effort summary the per-session page's own
     card shows, read ONLY from `esfuerzo_sesion.tarjeta`'s return -- never recomputed. None when
     that function itself returns None (no stored 'detalle' or 'zonas' at all). Carried for every
     session that has one, strength included (ruling 2's own deliberate difference from the page,
     which never shows this card for a strength session -- Carlos's own gym sessions are this same
-    person's data, and the desk asked about games, not only strength)."""
+    person's data, and the desk asked about games, not only strength).
+
+    Ruling 4 replaces the old, misleading `sesiones_comparadas` (the SQL pool's own size, which
+    could sit well above zero while every comparison was still null) with the honest `comparadas`
+    counts `tarjeta`'s own `n` already carries -- how many EARLIER same-kind sessions actually
+    backed each figure's median, never recomputed here."""
     detalle = esfuerzo_sesion.tarjeta(conn, person_id, a)
     if detalle is None:
         return None
     esf, zon, clasificacion = detalle["esfuerzos"], detalle["zonas"], detalle["clasificacion"]
     zonas_min = {n: zon["minutos"][n] for n in range(1, 6) if zon["minutos"][n] > 0} if zon is not None else {}
     zona_alta_pct = zon["alta_share"] * 100 if zon is not None and zon["alta_share"] is not None else None
-    # Ruling 5's own comparable-session count -- the same selection `esfuerzo_sesion.historial`
-    # already draws from internally, read again here only to report its size (never its figures).
-    comparables = esfuerzo_sesion._sesiones_comparables(conn, person_id, a)
     return {
         "modelo": esfuerzo_sesion.VERSION,
         "zonas_min": zonas_min,
@@ -2132,7 +2134,9 @@ def _entreno_esfuerzo(conn: sqlite3.Connection, person_id: int, a: dict) -> dict
             "zona_alta": _CODIGO_HABITUAL.get(clasificacion["zona_alta"]),
             "recuperacion": _CODIGO_HABITUAL.get(clasificacion["caida"]),
         },
-        "sesiones_comparadas": len(comparables),
+        "comparadas": {"zona_alta": detalle["n"]["zona_alta"], "recuperacion": detalle["n"]["caida"]},
+        "minimo_para_comparar": esfuerzo_sesion.HISTORIAL_MIN,
+        "detalle_guardado": detalle["tiene_detalle"],
     }
 
 
@@ -4378,10 +4382,14 @@ HERRAMIENTAS = [
      "descripcion": "Las sesiones de entrenamiento de un día o un rango de días -- de cualquier deporte, no "
                      "solo fuerza -- cada una con su resumen de esfuerzo cuando hay datos suficientes: los "
                      "minutos por zona de frecuencia cardíaca, el porcentaje en zona alta, cuántos esfuerzos "
-                     "fuertes tuvo, qué tan rápido bajó el pulso después de cada uno, y cómo se compara todo "
-                     "eso con lo habitual de esa persona en ese mismo tipo de sesión ('más' en la "
-                     "recuperación significa que el pulso bajó más rápido, nunca más alto). Las sesiones de "
-                     "fuerza llevan además sus series, y el plan de entrenamiento de ese día si existe. Cada "
+                     "fuertes tuvo, qué tan rápido bajó el pulso después de cada uno, y en 'frente_a_tu_"
+                     "habitual' cómo se compara cada cifra con sesiones ANTERIORES de ese mismo tipo de "
+                     "sesión ('más' en la recuperación significa que el pulso bajó más rápido, nunca más "
+                     "alto). Esa comparación es null para una cifra cuando 'comparadas' (cuántas sesiones "
+                     "anteriores la respaldan, por cifra) está por debajo de 'minimo_para_comparar'; "
+                     "'detalle_guardado' dice si esta sesión tiene el detalle de pulso guardado. Las "
+                     "sesiones de fuerza llevan además sus series, y el plan de entrenamiento de ese día si "
+                     "existe. Cada "
                      "sesión lleva también su check-in post-sesión ('checkin'): las respuestas que la persona "
                      "dio, por clave ('sensacion', 'calentamiento', 'comida' y, según el deporte, 'formato', "
                      "'terreno' o 'enfoque'), vacío cuando no respondió.",

@@ -302,12 +302,17 @@ _ESFUERZO_PALABRA = {
 }
 
 
-def _esfuerzo_ctx(t: T, tarjeta: dict) -> dict:
+def _esfuerzo_ctx(t: T, tarjeta: dict, tipo_comp: str | None) -> dict:
     """Ruling 6: the effort card's own context -- every row present only when its figure exists.
     `tarjeta` is esfuerzo_sesion.tarjeta()'s own return (never None here -- the caller already
     gated the card's presence on that). ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: no second peak
     figure here -- the page's own max-HR comparison already covers that ground; ruling 2: no
-    `tipo_comp`-keyed heading repeated inside the card, its comparison rows read on their own."""
+    `tipo_comp`-keyed heading repeated inside the card, its comparison rows read on their own.
+
+    Ruling 5: `sin_historial` -- the card carries at least one own figure (zona_alta or
+    recuperacion) but NO comparison line could be made for either, because both are under
+    HISTORIAL_MIN earlier comparables. When some figures compare and others do not, the compared
+    lines show and this sentence stays None (the existing `comparacion` list is then non-empty)."""
     esf, zon, clasificacion = tarjeta["esfuerzos"], tarjeta["zonas"], tarjeta["clasificacion"]
     bpm = t("unit.bpm")
 
@@ -331,11 +336,15 @@ def _esfuerzo_ctx(t: T, tarjeta: dict) -> dict:
 
     comparacion = [t(_ESFUERZO_PALABRA[figura][codigo]) for figura in ("zona_alta", "caida")
                    if (codigo := clasificacion.get(figura)) is not None]
+    sin_historial_txt = None
+    if not comparacion and tipo_comp and (zona_alta_txt is not None or recuperacion_txt is not None):
+        sin_historial_txt = t("entreno_sesion.esfuerzo.sin_historial", tipo=tipo_comp)
 
     return {
         "titulo": t("entreno_sesion.esfuerzo.titulo"), "zonas_svg": zonas_svg,
         "zona_alta": zona_alta_txt, "esfuerzos": esfuerzos_txt, "recuperacion": recuperacion_txt,
-        "pocos_datos": pocos_datos_txt, "comparacion": comparacion,
+        "pocos_datos": pocos_datos_txt, "comparacion": comparacion, "sin_historial": sin_historial_txt,
+        "sin_detalle": None,
     }
 
 
@@ -466,10 +475,11 @@ def entreno_sesion_view(day: str, source_id: str, request: Request,
     tipo_comp = _tipo_comparacion(t, a)
     comp = entreno_sesion.comparaciones(conn, person_id, a)
     figuras = _figuras_ctx(t, a, comp)
+    propias = [k for k in entreno_sesion.COMPARABLE_KEYS if a.get(k) is not None]
     sin_historial = None
     comparacion_titulo = None
-    if tipo_sin_historial and comp["n"] < entreno_sesion.HISTORIAL_MIN and any(
-            a.get(k) is not None for k in entreno_sesion.COMPARABLE_KEYS):
+    if tipo_sin_historial and propias and all(
+            comp["n"][k] < entreno_sesion.HISTORIAL_MIN for k in propias):
         sin_historial = t("entreno_sesion.sin_historial", tipo=tipo_sin_historial)
     elif tipo_comp and any(f["habitual"] for f in figuras):
         comparacion_titulo = t("entreno_sesion.comparacion_titulo", tipo=tipo_comp)
@@ -487,7 +497,17 @@ def entreno_sesion_view(day: str, source_id: str, request: Request,
         # BODY-PARTIDO-1 ruling 6: strength sessions keep their own set/rest view untouched.
         tarjeta_esfuerzo = esfuerzo_sesion.tarjeta(conn, person_id, a)
         if tarjeta_esfuerzo is not None:
-            esfuerzo = _esfuerzo_ctx(t, tarjeta_esfuerzo)
+            esfuerzo = _esfuerzo_ctx(t, tarjeta_esfuerzo, tipo_comp)
+        elif a["source"] != "manual" and a["duration_s"] is not None:
+            # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5: a watch-recorded session with no stored
+            # 'detalle'/'zonas' at all still names the gap, rather than showing no effort card
+            # at all -- a manual session the watch never recorded (ruling 5's own distinction,
+            # entreno_sesion.py:65's "source" check) keeps showing none, exactly as before.
+            esfuerzo = {
+                "titulo": t("entreno_sesion.esfuerzo.titulo"), "zonas_svg": None, "zona_alta": None,
+                "esfuerzos": None, "recuperacion": None, "pocos_datos": None, "comparacion": [],
+                "sin_historial": None, "sin_detalle": t("entreno_sesion.esfuerzo.sin_detalle"),
+            }
 
     recuperacion_row = conn.execute(
         "SELECT minutos, motivo FROM recuperacion_actividad WHERE person_id = ? AND activity_source = ? AND "
