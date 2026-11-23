@@ -221,13 +221,31 @@ class CardRouteTest(unittest.TestCase):
         client.post(f"/day/{self.DAY}/entreno/b1/checkin", data={"sensacion": "4"})
         r = client.get(f"/day/{self.DAY}/entreno/b1")
         self.assertNotIn('name="sensacion"', r.text)
-        self.assertIn(f'<br>4</li>', r.text)  # 4 shows the bare number, not a label (ruling 3)
+        self.assertIn(_es("checkin_sesion.escala.respuesta").format(
+            palabra=_es("checkin_sesion.escala.4"), n="4"), r.text)
         self.assertIn(_es("checkin_sesion.cambiar"), r.text)
 
     def test_answered_scale_end_shows_its_own_label(self):
         client.post(f"/day/{self.DAY}/entreno/b1/checkin", data={"sensacion": "5"})
         r = client.get(f"/day/{self.DAY}/entreno/b1")
-        self.assertIn(_es("checkin_sesion.escala.5"), r.text)
+        self.assertIn(_es("checkin_sesion.escala.respuesta").format(
+            palabra=_es("checkin_sesion.escala.5"), n="5"), r.text)
+
+    def test_every_scale_word_appears_as_a_pill_in_es_and_en(self):
+        r = client.get(f"/day/{self.DAY}/entreno/b1")
+        for n in range(1, 6):
+            self.assertIn(_es(f"checkin_sesion.escala.{n}"), r.text)
+        self.conn.execute("UPDATE person SET language = 'en' WHERE id = 1")
+        self.conn.commit()
+        r_en = client.get(f"/day/{self.DAY}/entreno/b1")
+        for n in range(1, 6):
+            self.assertIn(_en(f"checkin_sesion.escala.{n}"), r_en.text)
+
+    def test_answered_one_renders_its_word_with_its_place_on_the_scale(self):
+        client.post(f"/day/{self.DAY}/entreno/b1/checkin", data={"sensacion": "1"})
+        r = client.get(f"/day/{self.DAY}/entreno/b1")
+        self.assertIn(_es("checkin_sesion.escala.respuesta").format(
+            palabra=_es("checkin_sesion.escala.1"), n="1"), r.text)
 
     def test_checkin_editar_query_param_reopens_the_pills_preselected(self):
         client.post(f"/day/{self.DAY}/entreno/b1/checkin", data={"sensacion": "4"})

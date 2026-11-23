@@ -352,10 +352,12 @@ def _esfuerzo_ctx(t: T, tarjeta: dict, tipo_comp: str | None) -> dict:
 # constant -- never a second hand-typed "10" in this module.
 _ESCALA_OPCIONES = list(range(db.DOLOR_ESCALA_MIN, db.DOLOR_ESCALA_MAX + 1))
 
-# BODY-PARTIDO-2 ruling 3: the check-in's own 1-5 scale labels only ends 1/3/5 (2 and 4 show their
-# bare number) -- a fixed i18n key per end, never a dynamically-built t() prefix (tests/
-# test_i18n_paridad.py's own scan only flags string concatenation inside the call itself).
-_ESCALA_CHECKIN_LABEL = {1: "checkin_sesion.escala.1", 3: "checkin_sesion.escala.3",
+# BODY-PARTIDO-2-ESCALA-1 (BODY-PARTIDO-2 ruling 3, widened): the check-in's own 1-5 scale gives a
+# word to every step, not only 1/3/5 -- a fixed i18n key per step, never a dynamically-built t()
+# prefix (tests/test_i18n_paridad.py's own scan only flags string concatenation inside the call
+# itself).
+_ESCALA_CHECKIN_LABEL = {1: "checkin_sesion.escala.1", 2: "checkin_sesion.escala.2",
+                         3: "checkin_sesion.escala.3", 4: "checkin_sesion.escala.4",
                          5: "checkin_sesion.escala.5"}
 
 
@@ -388,7 +390,10 @@ def _checkin_ctx(t: T, conn, person_id: int, a: dict, forzar_editar: bool) -> di
         elif tp == checkin_sesion.KIND_ESCALA:
             fila_ctx["opciones"] = [{"clave": str(n), "texto": _escala_checkin_etiqueta(t, n)}
                                      for n in range(1, 6)]
-            fila_ctx["respuesta_txt"] = _escala_checkin_etiqueta(t, int(valor)) if valor else None
+            fila_ctx["respuesta_txt"] = (
+                t("checkin_sesion.escala.respuesta", palabra=_escala_checkin_etiqueta(t, int(valor)),
+                  n=t.num(int(valor)))
+                if valor else None)
         else:  # si_no
             si_txt, no_txt = t("checkin_sesion.si"), t("checkin_sesion.no")
             fila_ctx["opciones"] = [{"clave": "si", "texto": si_txt}, {"clave": "no", "texto": no_txt}]
