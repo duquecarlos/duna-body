@@ -97,6 +97,12 @@ FULLY_HANDLED_TABLES = {
     # BODY-MINUTO-ANALISIS-6-ALTITUD (ORCH-CARLOS-DELEGATES-TIER-1-1): one row per home/stay
     # stretch -- an altitude and dates only, no place name, no coordinates.
     "altitud_estancia",
+    # BODY-PARTIDO-2 (ORCH-CARLOS-DELEGATES-TIER-1-1): the person's own post-session check-in --
+    # set_pregunta (which set they have, by tipo/nombre_norm) and set_pregunta_respuesta (their own
+    # answers, by stable option key, never display text). set_pregunta_item carries no literal
+    # person_id (reached through set_pregunta_id, like habit/goal_enlace above) and is exported/
+    # deleted by hand, below.
+    "set_pregunta", "set_pregunta_respuesta",
 }
 # raw_payload: kind/date only, never the stored JSON payload. garmin_cuenta: the connected-since
 # date only, never the encrypted token (BODY-GARMIN-HOST-1). dispositivo: name/scopes/dates only,
@@ -256,6 +262,19 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
     objetivos_nutriente = [dict(r) for r in conn.execute(
         "SELECT metric_key, start_day, kind, amount, sentido, created_at FROM nutrient_target "
         "WHERE person_id = ? ORDER BY metric_key, start_day", (person_id,))]
+    # BODY-PARTIDO-2: this person's own check-in sets and answers -- set_pregunta_item carries no
+    # literal person_id (like habit above), joined through set_pregunta_id instead.
+    checkin_sesion_sets = [dict(r) for r in conn.execute(
+        "SELECT id, tipo, nombre_norm, creado_en FROM set_pregunta WHERE person_id = ? ORDER BY id",
+        (person_id,))]
+    checkin_sesion_items = [dict(r) for r in conn.execute(
+        "SELECT si.set_pregunta_id, si.orden, si.clave, si.tipo_pregunta, si.texto, si.opciones_json, "
+        "si.origen FROM set_pregunta_item si JOIN set_pregunta sp ON sp.id = si.set_pregunta_id "
+        "WHERE sp.person_id = ? ORDER BY si.set_pregunta_id, si.orden", (person_id,))]
+    checkin_sesion_respuestas = [dict(r) for r in conn.execute(
+        "SELECT sets_source, sets_source_id, pregunta_clave, valor, creado_en, actualizado_en "
+        "FROM set_pregunta_respuesta WHERE person_id = ? ORDER BY sets_source_id, pregunta_clave",
+        (person_id,))]
     fuentes_importacion = [dict(r) for r in conn.execute(
         "SELECT fuente, primer_dia, ultimo_dia, computed_at, dias, importado_at, ultimo_error, "
         "ultimo_error_at FROM fuente_importacion WHERE person_id = ? ORDER BY fuente", (person_id,))]
@@ -390,6 +409,8 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "periodos": periodos,
         "dolor_entreno": dolor_entreno,
         "objetivos_nutriente": objetivos_nutriente,
+        "checkin_sesion": {"sets": checkin_sesion_sets, "items": checkin_sesion_items,
+                           "respuestas": checkin_sesion_respuestas},
         "fuentes_importacion": fuentes_importacion,
         "checkins": checkins,
         "dias": dias,
@@ -562,6 +583,15 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         conn.execute("DELETE FROM workout_set WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM activity_detail WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM entreno_dolor WHERE person_id = ?", (person_id,))
+        # BODY-PARTIDO-2: set_pregunta_item references set_pregunta(id) -- cleared before
+        # set_pregunta itself goes, same FK-order reasoning as every other table above that
+        # references a row this sweep is about to remove.
+        conn.execute(
+            "DELETE FROM set_pregunta_item WHERE set_pregunta_id IN "
+            "(SELECT id FROM set_pregunta WHERE person_id = ?)", (person_id,),
+        )
+        conn.execute("DELETE FROM set_pregunta WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM set_pregunta_respuesta WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM recuperacion_actividad WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM turno_fc WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM activity WHERE person_id = ?", (person_id,))

@@ -625,5 +625,35 @@ class BasketEsfuerzoCurvaCoherenteTest(unittest.TestCase):
                 self.assertAlmostEqual(z["total_min"], len(serie), places=3)
 
 
+class CheckinSesionDemoTest(unittest.TestCase):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 7: the anchor basketball game carries saved check-in
+    answers (so the "answered" view shows), an earlier basketball game stays unanswered (so the
+    blank form shows too), and the strength/generic sessions carry no answers either."""
+
+    ANCHOR = date(2026, 11, 15)
+
+    def test_anchor_game_is_answered_and_an_earlier_one_is_not(self):
+        from body import db
+
+        conn = _seed_at(self, self.ANCHOR, 60)
+        person_id = conn.execute("SELECT id FROM person LIMIT 1").fetchone()[0]
+        dia_reciente = (self.ANCHOR - timedelta(1)).isoformat()
+        dia_fuerza = self.ANCHOR.isoformat()
+
+        respuestas = db.respuestas_de_sesion(conn, person_id, "garmin", f"demo-{dia_reciente}-1")
+        self.assertEqual(respuestas, {"formato": "media_cancha", "sensacion": "4",
+                                        "calentamiento": "si", "comida": "1_3h"})
+
+        hist = conn.execute(
+            "SELECT source_id FROM activity WHERE person_id = ? AND source_id LIKE "
+            "'demo-basket-hist-%' ORDER BY source_id", (person_id,)).fetchall()
+        self.assertGreater(len(hist), 0)
+        for h in hist:
+            with self.subTest(source_id=h["source_id"]):
+                self.assertEqual(db.respuestas_de_sesion(conn, person_id, "garmin", h["source_id"]), {})
+
+        self.assertEqual(db.respuestas_de_sesion(conn, person_id, "garmin", f"demo-{dia_fuerza}-1"), {})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1068,6 +1068,66 @@ CREATE TABLE IF NOT EXISTS entreno_dolor (
 );
 CREATE INDEX IF NOT EXISTS idx_entreno_dolor_person_dia ON entreno_dolor(person_id, day);
 
+-- BODY-PARTIDO-2 (ORCH-CARLOS-DELEGATES-TIER-1-1, ruling 1, option A value-keyed): a person's own
+-- set of post-session check-in questions, one row per (person_id, tipo, nombre_norm) -- the
+-- matched default (body/checkin_sesion.py's own set_para) copied in on first save, later editable
+-- (a later slice). tipo is the session's own Garmin type; nombre_norm is entreno_sesion's own
+-- folded name, used to tell apart Garmin's generic 'other' bucket (a basketball game and a yoga
+-- class share no real type code otherwise, entreno_sesion.py's own ruling 4 reasoning). tipo_pregunta
+-- and origen are validated in Python (body/checkin_sesion.py, body/db.py's own writer below), never
+-- a CHECK -- ruling 1(a): a CHECK enumerating kinds costs a table rebuild per new kind, the same
+-- reasoning practicas ruling B already gave for entreno_dolor's own neighbor.
+CREATE TABLE IF NOT EXISTS set_pregunta (
+    id          INTEGER PRIMARY KEY,
+    person_id   INTEGER NOT NULL REFERENCES person(id),
+    tipo        TEXT NOT NULL,
+    nombre_norm TEXT NOT NULL,
+    creado_en   TEXT NOT NULL,
+    UNIQUE (person_id, tipo, nombre_norm)
+);
+CREATE INDEX IF NOT EXISTS idx_set_pregunta_person ON set_pregunta(person_id);
+
+-- One question of a set, in order. clave is the shared question-bank key (ruling 2: the SAME
+-- clave for "sensacion" across every sport, so a later slice can compare preparation across
+-- sports). texto holds the question's own i18n KEY when origen='defecto' (resolved through t() at
+-- render, so language follows the person), the person's own literal wording when origen='persona'
+-- (a later slice; never written here). opciones_json is a list of {"clave","texto"} for
+-- opcion_unica only (ruling 1(b): a stable key, never display text) -- NULL for escala/si_no,
+-- whose own option labels are fixed UI strings, not per-question data.
+CREATE TABLE IF NOT EXISTS set_pregunta_item (
+    id              INTEGER PRIMARY KEY,
+    set_pregunta_id INTEGER NOT NULL REFERENCES set_pregunta(id),
+    orden           INTEGER NOT NULL,
+    clave           TEXT NOT NULL,
+    tipo_pregunta   TEXT NOT NULL,
+    texto           TEXT NOT NULL,
+    opciones_json   TEXT CHECK (opciones_json IS NULL OR json_valid(opciones_json)),
+    origen          TEXT NOT NULL,
+    UNIQUE (set_pregunta_id, clave)
+);
+CREATE INDEX IF NOT EXISTS idx_set_pregunta_item_set ON set_pregunta_item(set_pregunta_id);
+
+-- One person's own answer to one question of one session -- the session key is exactly
+-- entreno_dolor's own (person_id, sets_source, sets_source_id). valor is the chosen option's own
+-- `clave` (opcion_unica), the integer 1-5 as text (escala), or "si"/"no" (si_no) -- never display
+-- text (ruling 1(b)). UNIQUE makes a re-save an upsert, one row per question, the entreno_dolor
+-- precedent (ruling 3's own "editing later is the same form prefilled"). No FK to set_pregunta_item:
+-- the stable `pregunta_clave` is the join key, so an answer still reads back even if the person's
+-- own set is edited later (a later slice).
+CREATE TABLE IF NOT EXISTS set_pregunta_respuesta (
+    id              INTEGER PRIMARY KEY,
+    person_id       INTEGER NOT NULL REFERENCES person(id),
+    sets_source     TEXT NOT NULL,
+    sets_source_id  TEXT NOT NULL,
+    pregunta_clave  TEXT NOT NULL,
+    valor           TEXT NOT NULL,
+    creado_en       TEXT NOT NULL,
+    actualizado_en  TEXT NOT NULL,
+    UNIQUE (person_id, sets_source, sets_source_id, pregunta_clave)
+);
+CREATE INDEX IF NOT EXISTS idx_set_pregunta_respuesta_sesion
+    ON set_pregunta_respuesta(person_id, sets_source, sets_source_id);
+
 -- BODY-RECUPERACION-1: see _RECUPERACION_ACTIVIDAD_COLUMNS above for why.
 CREATE TABLE IF NOT EXISTS recuperacion_actividad (
 {_RECUPERACION_ACTIVIDAD_COLUMNS}
@@ -4385,6 +4445,79 @@ def registrar_dolor_manana(conn: sqlite3.Connection, person_id: int, day: str, z
             "AND day = ? AND zona = ? AND dolor_manana IS NULL",
             (valor, ahora, person_id, day, zona),
         )
+
+
+def set_de_persona(conn: sqlite3.Connection, person_id: int, tipo: str, nombre_norm: str) -> list[dict] | None:
+    """BODY-PARTIDO-2 ruling 2: this person's OWN stored check-in set for (tipo, nombre_norm),
+    ordered, or None when they have never saved a check-in for it yet -- the caller then falls back
+    to the matched default (body/checkin_sesion.py's own set_para), never copied until first save."""
+    fila = conn.execute(
+        "SELECT id FROM set_pregunta WHERE person_id = ? AND tipo = ? AND nombre_norm = ?",
+        (person_id, tipo, nombre_norm),
+    ).fetchone()
+    if fila is None:
+        return None
+    rows = conn.execute(
+        "SELECT clave, tipo_pregunta, texto, opciones_json, origen FROM set_pregunta_item "
+        "WHERE set_pregunta_id = ? ORDER BY orden", (fila["id"],),
+    ).fetchall()
+    out = []
+    for r in rows:
+        item = {"clave": r["clave"], "tipo_pregunta": r["tipo_pregunta"], "texto": r["texto"],
+                "origen": r["origen"]}
+        item["opciones"] = json.loads(r["opciones_json"]) if r["opciones_json"] else None
+        out.append(item)
+    return out
+
+
+def guardar_set_pregunta(conn: sqlite3.Connection, person_id: int, tipo: str, nombre_norm: str,
+                          preguntas: list[dict]) -> int:
+    """BODY-PARTIDO-2 ruling 2: copies `preguntas` (checkin_sesion.set_para's own shape --
+    {"clave","tipo_pregunta","texto","opciones"} per item) into this person's own rows, once, the
+    first time they save a check-in for this (tipo, nombre_norm) -- every default item's own
+    `texto` is an i18n KEY, `origen` 'defecto'. Returns the new set_pregunta.id."""
+    ahora = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        set_id = conn.execute(
+            "INSERT INTO set_pregunta (person_id, tipo, nombre_norm, creado_en) VALUES (?, ?, ?, ?)",
+            (person_id, tipo, nombre_norm, ahora),
+        ).lastrowid
+        for i, p in enumerate(preguntas):
+            opciones_json = json.dumps(p["opciones"]) if p.get("opciones") else None
+            conn.execute(
+                "INSERT INTO set_pregunta_item (set_pregunta_id, orden, clave, tipo_pregunta, texto, "
+                "opciones_json, origen) VALUES (?, ?, ?, ?, ?, ?, 'defecto')",
+                (set_id, i, p["clave"], p["tipo_pregunta"], p["texto"], opciones_json),
+            )
+    return set_id
+
+
+def registrar_respuestas_sesion(conn: sqlite3.Connection, person_id: int, sets_source: str,
+                                 sets_source_id: str, respuestas: dict[str, str]) -> None:
+    """BODY-PARTIDO-2 ruling 1: upserts one set_pregunta_respuesta row per clave in `respuestas` --
+    the UNIQUE(person_id, sets_source, sets_source_id, pregunta_clave) key makes a re-save an edit,
+    never a second row (the entreno_dolor precedent)."""
+    ahora = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        for clave, valor in respuestas.items():
+            conn.execute(
+                "INSERT INTO set_pregunta_respuesta (person_id, sets_source, sets_source_id, "
+                "pregunta_clave, valor, creado_en, actualizado_en) VALUES (?,?,?,?,?,?,?) "
+                "ON CONFLICT(person_id, sets_source, sets_source_id, pregunta_clave) DO UPDATE SET "
+                "valor=excluded.valor, actualizado_en=excluded.actualizado_en",
+                (person_id, sets_source, sets_source_id, clave, valor, ahora, ahora),
+            )
+
+
+def respuestas_de_sesion(conn: sqlite3.Connection, person_id: int, sets_source: str,
+                          sets_source_id: str) -> dict[str, str]:
+    """This person's own check-in answers for one session, by question clave -- read by both the
+    session screen (prefill) and the assistant's own leer_entreno (ruling 5)."""
+    rows = conn.execute(
+        "SELECT pregunta_clave, valor FROM set_pregunta_respuesta WHERE person_id = ? AND "
+        "sets_source = ? AND sets_source_id = ?", (person_id, sets_source, sets_source_id),
+    ).fetchall()
+    return {r["pregunta_clave"]: r["valor"] for r in rows}
 
 
 def _validar_zonas(zonas: list[str] | None) -> str | None:

@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import anatomia, db, entreno_sesion, esfuerzo_sesion, history, identity, recuperacion
+from .. import anatomia, checkin_sesion, db, entreno_sesion, esfuerzo_sesion, history, identity, recuperacion
 from ..i18n import T
 from . import comun
 
@@ -343,6 +343,57 @@ def _esfuerzo_ctx(t: T, tarjeta: dict) -> dict:
 # constant -- never a second hand-typed "10" in this module.
 _ESCALA_OPCIONES = list(range(db.DOLOR_ESCALA_MIN, db.DOLOR_ESCALA_MAX + 1))
 
+# BODY-PARTIDO-2 ruling 3: the check-in's own 1-5 scale labels only ends 1/3/5 (2 and 4 show their
+# bare number) -- a fixed i18n key per end, never a dynamically-built t() prefix (tests/
+# test_i18n_paridad.py's own scan only flags string concatenation inside the call itself).
+_ESCALA_CHECKIN_LABEL = {1: "checkin_sesion.escala.1", 3: "checkin_sesion.escala.3",
+                         5: "checkin_sesion.escala.5"}
+
+
+def _escala_checkin_etiqueta(t: T, n: int) -> str:
+    clave = _ESCALA_CHECKIN_LABEL.get(n)
+    return t(clave) if clave else t.num(n)
+
+
+def _checkin_ctx(t: T, conn, person_id: int, a: dict, forzar_editar: bool) -> dict:
+    """Ruling 2/4: the session's own post-session check-in card -- the person's OWN stored set for
+    this (tipo, nombre_norm) if one exists, else the matched default (checkin_sesion.set_para),
+    never copied into their own rows until the first save (ruling 2's own "not on view"). Shows
+    each answered question as plain text with a "Cambiar respuestas" link once any answer exists,
+    unless `?checkin_editar=1` asks for the pills again (the same form, pre-selected)."""
+    tipo = a.get("type") or ""
+    nombre_norm = entreno_sesion._normaliza_nombre(a.get("name"))
+    fila = db.set_de_persona(conn, person_id, tipo, nombre_norm)
+    preguntas = fila if fila is not None else checkin_sesion.set_para(a.get("type"), a.get("name"))
+    respuestas = db.respuestas_de_sesion(conn, person_id, a["sets_source"], a["sets_source_id"])
+    filas = []
+    for p in preguntas:
+        clave, tp = p["clave"], p["tipo_pregunta"]
+        valor = respuestas.get(clave)
+        texto = t(p["texto"])
+        fila_ctx = {"clave": clave, "tipo_pregunta": tp, "texto": texto}
+        if tp == checkin_sesion.KIND_UNICA:
+            opciones = [{"clave": o["clave"], "texto": t(o["texto"])} for o in p["opciones"]]
+            fila_ctx["opciones"] = opciones
+            fila_ctx["respuesta_txt"] = next((o["texto"] for o in opciones if o["clave"] == valor), None)
+        elif tp == checkin_sesion.KIND_ESCALA:
+            fila_ctx["opciones"] = [{"clave": str(n), "texto": _escala_checkin_etiqueta(t, n)}
+                                     for n in range(1, 6)]
+            fila_ctx["respuesta_txt"] = _escala_checkin_etiqueta(t, int(valor)) if valor else None
+        else:  # si_no
+            si_txt, no_txt = t("checkin_sesion.si"), t("checkin_sesion.no")
+            fila_ctx["opciones"] = [{"clave": "si", "texto": si_txt}, {"clave": "no", "texto": no_txt}]
+            fila_ctx["respuesta_txt"] = si_txt if valor == "si" else (no_txt if valor == "no" else None)
+        for o in fila_ctx["opciones"]:
+            o["seleccionada"] = o["clave"] == valor
+        filas.append(fila_ctx)
+    editar = forzar_editar or not respuestas
+    return {
+        "titulo": t("checkin_sesion.titulo"), "nota": t("checkin_sesion.nota") if not respuestas else None,
+        "preguntas": filas, "guardado": bool(respuestas), "editar": editar,
+        "guardar_txt": t("checkin_sesion.guardar"), "cambiar_txt": t("checkin_sesion.cambiar"),
+    }
+
 
 def _dolor_ctx(t: T, conn, person_id: int, day: str, a: dict, sets: list[dict]) -> dict | None:
     """Ruling 2/3: the session's own pain card, or None when no exercise of this session loads an
@@ -445,6 +496,7 @@ def entreno_sesion_view(day: str, source_id: str, request: Request,
 
     dolor = _dolor_ctx(t, conn, person_id, d.isoformat(), a, sets) if es_fuerza else None
     dolor_msg = t("entreno_sesion.dolor_guardado") if request.query_params.get("dolor_guardado") == "1" else None
+    checkin = _checkin_ctx(t, conn, person_id, a, request.query_params.get("checkin_editar") == "1")
 
     return comun._render(
         "entreno_sesion.html", t=t, tab="today", day=d.isoformat(), source_id=source_id, turnos=turnos_on,
@@ -455,8 +507,51 @@ def entreno_sesion_view(day: str, source_id: str, request: Request,
         pulso_svg=_curva_svg(t, sets, curva_ctx) if curva_ctx is not None else None,
         pulso_pendiente=t("entreno_sesion.curva_pendiente"),
         recovery=_recovery_line(t, recuperacion_row), esfuerzo=esfuerzo,
-        dolor=dolor, dolor_msg=dolor_msg, escala=_ESCALA_OPCIONES,
+        dolor=dolor, dolor_msg=dolor_msg, escala=_ESCALA_OPCIONES, checkin=checkin,
     )
+
+
+@router.post("/day/{day}/entreno/{source_id}/checkin")
+@comun._cierra_conexion_async
+async def entreno_checkin_registrar(day: str, source_id: str, request: Request,
+                                     person_id: int = Depends(identity.current_person_id)):
+    """Ruling 4: the session screen's own check-in card -- one POST upserts every answered
+    question (an absent or blank field is simply unanswered, ruling 4's own "partial answers are
+    allowed"). Ruling 2: copies the matched default into this person's own rows on this, their
+    first save for this (tipo, nombre_norm), if they have none yet. A day/source_id this person has
+    no activity under 404s, same as the GET route above."""
+    try:
+        d = date.fromisoformat(day)
+    except ValueError:
+        raise HTTPException(404)
+    conn, _, _ = comun._ctx(person_id)
+    a = entreno_sesion.actividad(conn, person_id, d.isoformat(), source_id)
+    if a is None:
+        raise HTTPException(404)
+    tipo = a.get("type") or ""
+    nombre_norm = entreno_sesion._normaliza_nombre(a.get("name"))
+    preguntas = db.set_de_persona(conn, person_id, tipo, nombre_norm)
+    if preguntas is None:
+        preguntas = checkin_sesion.set_para(a.get("type"), a.get("name"))
+        db.guardar_set_pregunta(conn, person_id, tipo, nombre_norm, preguntas)
+    f = await comun._form(request)
+    respuestas = {}
+    for p in preguntas:
+        clave, tp = p["clave"], p["tipo_pregunta"]
+        valor = (f.get(clave) or "").strip()
+        if not valor:
+            continue
+        if tp == checkin_sesion.KIND_UNICA:
+            if valor in {o["clave"] for o in p["opciones"]}:
+                respuestas[clave] = valor
+        elif tp == checkin_sesion.KIND_ESCALA:
+            if valor in {"1", "2", "3", "4", "5"}:
+                respuestas[clave] = valor
+        elif valor in ("si", "no"):
+            respuestas[clave] = valor
+    if respuestas:
+        db.registrar_respuestas_sesion(conn, person_id, a["sets_source"], a["sets_source_id"], respuestas)
+    return RedirectResponse(f"/day/{day}/entreno/{source_id}{comun._ancla('checkin')}", status_code=303)
 
 
 @router.post("/day/{day}/entreno/{source_id}/dolor")

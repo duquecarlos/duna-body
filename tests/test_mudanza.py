@@ -859,6 +859,58 @@ class EntrenoDolorMudanzaTest(MudanzaTestCase):
         self.assertEqual(dest.execute("SELECT COUNT(*) FROM entreno_dolor").fetchone()[0], 1)
 
 
+class CheckinSesionMudanzaTest(MudanzaTestCase):
+    """BODY-PARTIDO-2: a person's own check-in set (set_pregunta + its items, reached through
+    set_pregunta_id) and their own answers (set_pregunta_respuesta, value-keyed) both move with the
+    person -- a second import of the same source never duplicates either."""
+
+    def test_set_and_item_and_respuesta_move_and_a_second_import_does_not_duplicate_them(self):
+        source = self._new_source()
+        with source:
+            db.guardar_set_pregunta(source, db.DEFAULT_PERSON_ID, "other", "zz-baloncesto", [
+                {"clave": "formato", "tipo_pregunta": "opcion_unica",
+                 "texto": "checkin_sesion.pregunta.formato",
+                 "opciones": [{"clave": "uno_uno", "texto": "checkin_sesion.opcion.formato.uno_uno"}]},
+                {"clave": "sensacion", "tipo_pregunta": "escala",
+                 "texto": "checkin_sesion.pregunta.sensacion", "opciones": None},
+            ])
+            db.registrar_respuestas_sesion(source, db.DEFAULT_PERSON_ID, "garmin", "s1",
+                                            {"formato": "uno_uno", "sensacion": "4"})
+        source.close()
+
+        reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok)
+        by_name = self._reports_by_name(reports)
+        self.assertEqual(by_name["set_pregunta"].counts.insert, 1)
+        self.assertEqual(by_name["set_pregunta_item"].counts.insert, 2)
+        self.assertEqual(by_name["set_pregunta_respuesta"].counts.insert, 2)
+
+        dest = db.connect()
+        person_id = dest.execute("SELECT id FROM person WHERE cuenta_sub = ?", (CUENTA_SUB,)).fetchone()[0]
+        self.assertEqual(db.set_de_persona(dest, person_id, "other", "zz-baloncesto"),
+                          [{"clave": "formato", "tipo_pregunta": "opcion_unica",
+                            "texto": "checkin_sesion.pregunta.formato", "origen": "defecto",
+                            "opciones": [{"clave": "uno_uno",
+                                          "texto": "checkin_sesion.opcion.formato.uno_uno"}]},
+                           {"clave": "sensacion", "tipo_pregunta": "escala",
+                            "texto": "checkin_sesion.pregunta.sensacion", "origen": "defecto",
+                            "opciones": None}])
+        self.assertEqual(db.respuestas_de_sesion(dest, person_id, "garmin", "s1"),
+                          {"formato": "uno_uno", "sensacion": "4"})
+        dest.close()
+
+        reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok)
+        by_name = self._reports_by_name(reports)
+        self.assertEqual(by_name["set_pregunta"].counts.insert, 0)
+        self.assertEqual(by_name["set_pregunta_item"].counts.insert, 0)
+        self.assertEqual(by_name["set_pregunta_respuesta"].counts.insert, 0)
+        dest = db.connect()
+        self.assertEqual(dest.execute("SELECT COUNT(*) FROM set_pregunta").fetchone()[0], 1)
+        self.assertEqual(dest.execute("SELECT COUNT(*) FROM set_pregunta_item").fetchone()[0], 2)
+        self.assertEqual(dest.execute("SELECT COUNT(*) FROM set_pregunta_respuesta").fetchone()[0], 2)
+
+
 class NutrientTargetMudanzaTest(MudanzaTestCase):
     """BODY-NUTRIENTE-OBJETIVO-1: a daily nutrient target moves with the rest of the person's data,
     matched by its own natural key (person_id, metric_key, start_day) -- a second import of the

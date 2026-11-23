@@ -143,6 +143,18 @@ REGISTRY: tuple[TableSpec, ...] = (
     # never by a surrogate id, so no fk_remap.
     TableSpec("entreno_dolor",
               match_cols=("person_id", "sets_source", "sets_source_id", "ejercicio")),
+    # BODY-PARTIDO-2 (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 6): set_pregunta is matched by its own
+    # natural key (person_id, tipo, nombre_norm) -- id_exported=True so set_pregunta_item below can
+    # remap its own set_pregunta_id. set_pregunta_item carries no person_id of its own (reached
+    # through set_pregunta_id, like habit via goal_id above), matched by (set_pregunta_id, clave).
+    # set_pregunta_respuesta is value-keyed like entreno_dolor above, no fk_remap -- its own join
+    # key is the stable `pregunta_clave`, never a surrogate id.
+    TableSpec("set_pregunta", match_cols=("person_id", "tipo", "nombre_norm"), id_exported=True),
+    TableSpec("set_pregunta_item", scope="parent", parent_fk="set_pregunta_id", parent_table="set_pregunta",
+              match_cols=("set_pregunta_id", "clave"), fk_remap=("set_pregunta_id",),
+              fk_table={"set_pregunta_id": "set_pregunta"}),
+    TableSpec("set_pregunta_respuesta",
+              match_cols=("person_id", "sets_source", "sets_source_id", "pregunta_clave")),
     TableSpec("shift_batch", match_cols=("person_id", "file_name", "received", "extracted_at"),
               id_exported=True),
     TableSpec("shift_batch_item", scope="parent", parent_fk="batch_id", parent_table="shift_batch",
@@ -208,7 +220,7 @@ REGISTRY_BY_NAME = {spec.name: spec for spec in REGISTRY}
 # habit, goal_enlace and shift_batch_item carry no literal `person_id` column (the same exception
 # body/privacidad.py's own person_tables() documents) -- they are still in REGISTRY, scoped through
 # their parent instead.
-_NO_PERSON_ID_COLUMN = {"habit", "goal_enlace", "shift_batch_item"}
+_NO_PERSON_ID_COLUMN = {"habit", "goal_enlace", "shift_batch_item", "set_pregunta_item"}
 
 
 @dataclass
@@ -367,6 +379,9 @@ def _build_parent_ids(conn: sqlite3.Connection, person_id: int) -> dict:
         "goal": {r[0] for r in conn.execute("SELECT id FROM goal WHERE person_id = ?", (person_id,))},
         "shift_batch": {r[0] for r in conn.execute(
             "SELECT id FROM shift_batch WHERE person_id = ?", (person_id,))},
+        # BODY-PARTIDO-2: set_pregunta_item's own parent table.
+        "set_pregunta": {r[0] for r in conn.execute(
+            "SELECT id FROM set_pregunta WHERE person_id = ?", (person_id,))},
     }
 
 

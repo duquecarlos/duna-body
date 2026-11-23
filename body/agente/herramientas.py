@@ -2198,11 +2198,15 @@ def _leer_entreno(conn: sqlite3.Connection, person_id: int, day: str | None = No
             # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: present, honestly empty -- a caller never
             # branches on a missing key.
             series, ultima_vez, dolor = [], {}, []
+        # BODY-PARTIDO-2 ruling 5: the person's own structured check-in answers, by stable question
+        # clave -- never display text, never free text (v1 carries none; a future `texto_libre`
+        # kind must stay out of this read, the entreno_dolor.movimiento line just above).
+        checkin = db.respuestas_de_sesion(conn, person_id, a["sets_source"], a["sets_source_id"])
         sesiones.append({
             "dia": a["day"], "titulo": a["name"], "fuente": a["source"], "hora_inicio": a["start_local"],
             "tipo": a["type"],
             "duracion_min": a["duration_s"] / 60 if a["duration_s"] is not None else None,
-            "series": series, "ultima_vez": ultima_vez, "dolor": dolor,
+            "series": series, "ultima_vez": ultima_vez, "dolor": dolor, "checkin": checkin,
             "esfuerzo": _entreno_esfuerzo(conn, person_id, a),
         })
     planes = conn.execute(
@@ -4377,7 +4381,10 @@ HERRAMIENTAS = [
                      "fuertes tuvo, qué tan rápido bajó el pulso después de cada uno, y cómo se compara todo "
                      "eso con lo habitual de esa persona en ese mismo tipo de sesión ('más' en la "
                      "recuperación significa que el pulso bajó más rápido, nunca más alto). Las sesiones de "
-                     "fuerza llevan además sus series, y el plan de entrenamiento de ese día si existe.",
+                     "fuerza llevan además sus series, y el plan de entrenamiento de ese día si existe. Cada "
+                     "sesión lleva también su check-in post-sesión ('checkin'): las respuestas que la persona "
+                     "dio, por clave ('sensacion', 'calentamiento', 'comida' y, según el deporte, 'formato', "
+                     "'terreno' o 'enfoque'), vacío cuando no respondió.",
      "parametros": _PARAM_LEER_ENTRENO, "funcion": _leer_entreno},
     {"nombre": "leer_serie", "tipo": "lectura", "nivel": "resumen",
      "descripcion": "Una o más métricas, día por día (o por semana/mes) a lo largo de un rango de fechas -- "

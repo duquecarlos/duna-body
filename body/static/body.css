@@ -141,6 +141,15 @@ textarea.field{min-height:72px;padding-top:8px}
 fieldset{border:0;margin:0;padding:0}
 .radio{display:flex;align-items:center;gap:8px;min-height:44px}
 .radio input{width:20px;height:20px;flex:none;margin:0}
+/* BODY-PARTIDO-2 (ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4): the check-in's own tap-once pills --
+   census found no existing selector for a radio/checkbox styled as a pill (cuerpo-vista-btn is a
+   plain JS-toggled button, not a form control), so this is new. Same shape as cuerpo-vista-btn
+   (44px target, 18px radius, wraps, no fixed width) so the two read as one visual language. */
+.pregunta-pills{display:flex;gap:6px;flex-wrap:wrap}
+.pregunta-pill{display:inline-flex;align-items:center;min-height:44px;padding:0 14px;border-radius:18px;border:1px solid var(--line);background:transparent;color:var(--ink);font:500 13px inherit;cursor:pointer}
+.pregunta-pill input{position:absolute;opacity:0;width:0;height:0}
+.pregunta-pill:has(input:checked){border:2px solid var(--body);background:color-mix(in srgb,var(--body) 14%,transparent);font-weight:600}
+@media (hover:hover){.pregunta-pill:not(:has(input:checked)):hover{background:var(--wash)}}
 .milestone-only{display:none}
 form:has(input[name=kind][value=milestone]:checked) .metric-only{display:none}
 form:has(input[name=kind][value=milestone]:checked) .milestone-only{display:block}
