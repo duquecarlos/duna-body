@@ -34644,3 +34644,66 @@ limited to the comparison-against-earlier-sessions behaviour change plus the two
 A's conditions are met. `git checkout main`; `git merge --no-ff feat/body-esfuerzo-real-3`. Branch
 deleted; `body-app` on `main`, clean.
 
+## BODY-PARTIDO-2-ESCALA-1 -- every step of BODY-PARTIDO-2's 1-5 check-in scale gets a word, merged (2026-11-23)
+
+ORCH-CARLOS-DELEGATES-TIER-1-1: BODY-PARTIDO-2's own 1-5 "Como te sentiste?" check-in scale gave a
+word to 1, 3 and 5 only; 2 and 4 showed a bare number, both as a pill and as the saved answer. The
+orchestrator measured the anchor basketball game's answered card at 375px on the demo (2026-11-23)
+and found "How did you feel?" followed by a lone "4" -- no word, no "out of 5".
+
+**Ruling 1.** `checkin_sesion.escala.2` / `.4` added beside the existing 1/3/5 keys in both
+`body/i18n/es.json` (es: "Poca energia", "Buena energia") and `body/i18n/en.json` (en: "Low energy",
+"Good energy"), exactly as approved. `body/rutas/entreno_sesion.py`'s `_ESCALA_CHECKIN_LABEL` now
+lists all five steps (still a fixed i18n key per step, never a dynamically-built `t()` key); the
+comment's "only ends 1/3/5" sentence rewritten to say every step now carries a word. The 1/3/5
+strings themselves are unchanged. The fallback to the bare number (`_escala_checkin_etiqueta`) stays
+for any value outside 1-5.
+
+**Ruling 2.** New key `checkin_sesion.escala.respuesta`: es "{palabra} ({n} de 5)", en "{word}
+({n} of 5)" -- same placeholder names (`palabra`, `n`) in both files, as `tests/test_i18n_paridad.
+py`'s `test_placeholders_and_shapes_match` requires. `_checkin_ctx`'s escala branch now builds
+`respuesta_txt` with `t("checkin_sesion.escala.respuesta", palabra=_escala_checkin_etiqueta(t,
+int(valor)), n=t.num(int(valor)))` instead of the bare label -- an answered "4" renders "Buena
+energia (4 de 5)" / "Good energy (4 of 5)". The pills (`opciones`) keep the word alone, unchanged.
+
+**Ruling 3.** Nothing else changed: stored answers stay "1".."5" (`db.registrar_respuestas_sesion`
+untouched); the assistant's `leer_entreno` `checkin` map keeps raw stored values (`herramientas.py`
+untouched); the single-choice (`formato`) and yes/no (`calentamiento`) questions render exactly as
+before. No schema, no stored-value change, no Tier 1 file touched.
+
+**Tests** (`tests/test_checkin_sesion.py`, all within `touches:`): rewrote
+`test_answered_view_shows_plain_text_with_a_change_link` and `test_answered_scale_end_shows_its_own_
+label` to assert the new "{word} ({n} of 5)" rendering instead of the old bare-number string (the
+rendering those two tests checked no longer exists after ruling 2); added
+`test_every_scale_word_appears_as_a_pill_in_es_and_en` (all five words as pills, es and en) and
+`test_answered_one_renders_its_word_with_its_place_on_the_scale` (an answered "1" renders its word
+with "(1 de 5)"). Grepped `tests/test_i18n_paridad.py` and `tests/test_registro_tu.py` first per the
+dispatch's own warning (BODY-PARTIDO-2 stopped twice on guards outside its touches) -- neither
+references the escala keys or dict, confirmed by a scan for `checkin_sesion\.escala` across the
+repo (4 files: the two i18n JSONs, `entreno_sesion.py`, and this test module only).
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .`, run in 27 chunks (10 modules
+each, 5 or fewer for `test_garmin_*`/`test_host_*`), covering all 244 `tests/test_*.py` modules
+exactly once: every chunk OK, zero failures, zero errors outside ordinary stderr lines some modules
+print on purpose (pull retries, refusal messages, one intentionally-injected `RuntimeError` in
+`test_sync_vivo.py`) that precede their own chunk's `OK`. Per-chunk counts summed to **5582**,
+reconciled against an independent `unittest.TestLoader().discover('tests', top_level_dir='.')`
+collect-only count, which also returned **5582** -- exact match. (BODY-ESFUERZO-REAL-3's own floor
+was 5580; the 2-test rise is this slice's new tests.)
+
+**Merge.** Diff: no schema/migration change, no cross-repo contract change. Customer-facing bytes:
+limited to the three approved strings (`checkin_sesion.escala.2`, `.4`, `.respuesta`, es and en) and
+the format they feed on the per-session check-in card -- exactly what the spec's approval-reason
+bounds. Merge policy A's conditions are met; the spec's own WHAT TO DO step 4 says "YOU MAY MERGE".
+`git checkout main`; `git merge --no-ff feat/body-partido-2-escala-1` (commit
+cc72214a70dfb1963729e4c29c576b454556a6ee onto `main`, merge commit
+fe3fa57423522721e5f1b114319c5048323c6bcf) -- tree identity proven: merge tree
+2fcfcc6ef2aed2c2c95a8386cc5878e7d8981b15 equals branch tree 2fcfcc6ef2aed2c2c95a8386cc5878e7d8981b15,
+`git diff` between the branch commit and the merge commit empty. Branch deleted; `body-app` on
+`main`, clean.
+
+**Demo path.** The anchor basketball game with the saved check-in answers (`sensacion: "4"`,
+`body/demo.py`'s `_CHECKIN_BASKET_RESPUESTAS`) is `anchor - 1 day`; for today, 2026-11-23, that is
+`/day/2026-11-22/entreno/demo-2026-11-22-1`, where the answered card now reads "Buena energia
+(4 de 5)" / "Good energy (4 of 5)" instead of the bare "4".
+
