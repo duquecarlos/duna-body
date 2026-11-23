@@ -34494,3 +34494,41 @@ herramientas.py, demo.py, plus their direct mudanza/demo test coverage), `7d5239
 `9b774ba` (test_privacidad.py gained CheckinSesionExportDeleteTest). `git status --porcelain` is
 empty. Nothing pushed, nothing deployed.
 
+## BODY-PARTIDO-2-B -- the one known red fixed, the FULL gate found a second one outside touches, BLOCKED again (2026-11-23)
+
+Continuation of BODY-PARTIDO-2 (ORCH-CARLOS-DELEGATES-TIER-1-1). Edited
+`tests/test_agente_entreno.py:626` only: `test_nothing_else_in_the_output_changes`'s exhaustive
+`assertEqual(set(sesion), {...})` gained `"checkin"` alongside the existing keys; the assertion
+still checks nothing else changed. Confirmed green alone first, then as part of the full gate below.
+None of the other five `touches:` test files (`test_agente_registro.py`, `test_entreno_dolor.py`,
+`test_entreno_vinculo.py`, `test_lesion_zona.py`, `test_series_orden.py`) carry the same
+exhaustive-key-set-over-a-`leer_entreno`-session pattern (checked with a grep for
+`assertEqual(set(`), so none needed the same addition. Committed as `2fc6f1c`.
+
+**Gate:** `.venv/Scripts/python.exe -m unittest discover tests -t .`, run in 25 foreground chunks of
+~10 dotted modules each (5 for the two `test_garmin_*` chunks, 4 for `test_host_*`), covering all 244
+test modules under `tests/`, reconciled against an independent collect-only count
+(`unittest.TestLoader().discover(...).countTestCases()`) of 5573 -- the sum of the 25 chunks' own
+`Ran N tests` lines is also 5573, exact match. 24 of the 25 chunks (5569 tests) came back OK (one
+expected failure, one skip, both pre-existing and unrelated). The 25th chunk --
+`tests.test_web_entry` alone -- came back red:
+
+**`tests/test_web_entry.py:145-149`, `RouteSetTest.test_route_set_is_unchanged_by_the_ayuda_move`**,
+an exhaustive `{(path, methods), ...}` set of every route FastAPI serves, captured from `main` before
+the BODY-WEB-ESTRUCTURA-1 move and asserted unchanged ever since (`len(after) != len(self.BEFORE)`:
+102 != 101). BODY-PARTIDO-2's own commit `3b61355` added
+`POST /day/{day}/entreno/{source_id}/checkin` in `body/rutas/entreno_sesion.py` (the check-in's own
+save route) without updating this second, unrelated exhaustive-set test -- the same shape of gap as
+the `test_agente_entreno.py` red this slice was dispatched to fix, but in a file this slice's
+`touches:` does not list and that fixing needs no `body/` edit, only adding one tuple to `BEFORE`.
+Reproduces 100% of the time (not load, not flaky): it is the new route existing at all that trips it,
+confirmed on `main` untouched where the route does not exist and the test is green. `touches:` is
+what the approval for this slice is scoped to, and `tests/test_web_entry.py` is not in it, so per the
+dispatch's own rule this slice stops here rather than widening its own scope.
+
+**Not merged.** `git status --porcelain` empty. Nothing pushed, nothing deployed. The branch now
+carries five commits past `main` at `9975801`: `3b61355`, `7d52390`, `9b774ba`, `46f9b3b` (the
+BODY-PARTIDO-2 ledger entry above), `2fc6f1c` (this slice's one-line test fix). A follow-on
+continuation needs `tests/test_web_entry.py`'s `BEFORE` set widened by one tuple --
+`("/day/{day}/entreno/{source_id}/checkin", ("POST",))` -- before the gate and merge can complete.
+
