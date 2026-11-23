@@ -34161,3 +34161,19 @@ were edited.
 `None`, or `{modelo, zonas_min, zona_alta_pct, esfuerzos_fuertes, caida_1min_ppm, datos_suficientes,
 frente_a_tu_habitual: {zona_alta, recuperacion}, sesiones_comparadas}`.
 
+**Gate, full,** exactly `.venv/Scripts/python.exe -m unittest discover tests -t .`, run in 26
+foreground chunks of `.venv/Scripts/python.exe -m unittest <modules>` (2 chunks of 5/4 for
+`test_garmin_*`, 1 chunk of 4 for `test_host_*`, 1 chunk of 4 for `test_demo*`, 22 chunks of up to
+10 for the rest), covering all 243 `tests/test_*.py` modules: every chunk `OK` (one pre-existing
+`expectedFailure`, one pre-existing `skip`, both already present on `main`). Per-chunk `Ran` counts
+summed to **5518**, reconciled against an independent collect-only
+`unittest.TestLoader().discover("tests", top_level_dir=".")` count of the same tree: also **5518**.
+
+**Customer bytes:** none -- the tool catalog's own description text (ruling 4) is model-facing, read
+by `body/agente/bucle.py`'s own `_tool_specs` when calling a provider, never rendered on a screen.
+No schema, no migration, no cross-repo contract.
+
+**Merge:** merge policy A applies (no schema/migration, no customer-facing bytes, no cross-repo
+contract) and this spec's own "YOU MAY MERGE" clause pre-authorizes it on a green gate. Merge sha
+recorded in the next ledger line, per this ledger's append-only rule.
+
