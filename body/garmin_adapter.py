@@ -622,12 +622,22 @@ def _utc_to_local_iso(ms: Any, zone: str) -> str | None:
             .astimezone(tz).replace(tzinfo=None).isoformat(timespec="minutes"))
 
 
-def _descriptor_index(descriptors: Any, names: tuple[str, ...]) -> int | None:
+_CAMPO_INDICE_DETALLE = "metricsIndex"
+"""The activity-details descriptor family names its column-index field "metricsIndex", not
+"index" -- confirmed from the installed garminconnect 0.3.20 package's own source
+(activity_details.py:8-44) and the host census, BODY-ESFUERZO-REAL-1-INV."""
+
+
+def _descriptor_index(descriptors: Any, names: tuple[str, ...], campo: str = "index") -> int | None:
     """The column index for a key in `names` (case-insensitive), read from a Garmin descriptor
-    list -- each entry a dict naming its key and its index into the per-sample array, e.g.
+    list -- each entry a dict naming its key and its index into the per-sample array under
+    `campo`, e.g. for the day-level default "index":
     heartRateValueDescriptors: [{"key": "timestamp", "index": 0}, {"key": "heartrate", "index": 1}]
-    (measured 2026-11-09, BODY-INTRADIA-SPOTCHECK-1). Absent, non-list, or no matching entry ->
-    None, so the caller falls back to a fixed position."""
+    (measured 2026-11-09, BODY-INTRADIA-SPOTCHECK-1); activity-details descriptors instead pass
+    campo=_CAMPO_INDICE_DETALLE. Absent, non-list, or no matching entry -> None, so the caller
+    falls back to a fixed position. An index value that is not an int -- including bool, which
+    Python's isinstance treats as an int -- does not count as a match, matching the package's
+    own typing of this field."""
     if not isinstance(descriptors, list):
         return None
     wanted = {n.lower() for n in names}
@@ -635,8 +645,9 @@ def _descriptor_index(descriptors: Any, names: tuple[str, ...]) -> int | None:
         if not isinstance(entry, dict):
             continue
         key = entry.get("key")
-        idx = entry.get("index")
-        if isinstance(key, str) and key.lower() in wanted and isinstance(idx, int):
+        idx = entry.get(campo)
+        if (isinstance(key, str) and key.lower() in wanted
+                and isinstance(idx, int) and not isinstance(idx, bool)):
             return idx
     return None
 
@@ -873,25 +884,23 @@ def parse_exercise_sets(payload: Any) -> tuple[ExerciseSet, ...]:
 
 def parse_activity_hr_series(payload: Any, zone: str) -> tuple[tuple[str, float], ...]:
     """One activity's heart-rate curve, parsed from a stored get_activity_details payload.
-    Assumed shape (this family's well-known convention, unconfirmed by the installed
-    garminconnect 0.3.20 package -- typed only as dict[str, Any]): a dict holding
+    Confirmed shape (the installed garminconnect 0.3.20 package's own source,
+    activity_details.py:8-44, and the host census, BODY-ESFUERZO-REAL-1-INV): a dict holding
     "metricDescriptors" (a descriptor list naming each column of "activityDetailMetrics"[]
-    ."metrics"[] by key -- the SAME {"key": ..., "index": ...} shape the day-level intraday
-    descriptors already use, e.g. {"key": "directTimestamp", "index": 0}) and
-    "activityDetailMetrics" (a list of {"metrics": [...]} rows). The timestamp and heart-rate
-    columns are found BY KEY (_descriptor_index, reused unmodified from the day-level intraday
-    parsing above -- "directtimestamp"/"timestamp" and "directheartrate"/"heartrate"), NEVER by a
-    fixed position: unlike the day-level intraday arrays (whose 0/1 fallback was itself measured,
-    BODY-INTRADIA-SPOTCHECK-1), no position is confirmed for this different, unconfirmed
-    endpoint, so a descriptor list this function cannot read gives the empty tuple rather than a
-    guessed column. The timestamp is a UTC instant (confirmed convention on every other Garmin
-    intraday-style array this adapter reads), shifted to `zone` with _utc_to_local_iso. A sample
-    with no heart-rate reading (_heart_rate_valid) or no timestamp is dropped, never kept as 0."""
+    ."metrics"[] by key -- each entry {"key": ..., "metricsIndex": ...}, NOT the day-level
+    intraday descriptors' "index" field) and "activityDetailMetrics" (a list of
+    {"metrics": [...]} rows). The timestamp and heart-rate columns are found BY KEY
+    (_descriptor_index with campo=_CAMPO_INDICE_DETALLE -- "directtimestamp"/"timestamp" and
+    "directheartrate"/"heartrate"), NEVER by a fixed position: a descriptor list this function
+    cannot read gives the empty tuple rather than a guessed column. The timestamp cell is either
+    an epoch-ms UTC instant or a GMT string with no UTC offset (_gmt_value_to_local_iso, defined
+    below), shifted to `zone`. A sample with no heart-rate reading (_heart_rate_valid) or no
+    timestamp is dropped, never kept as 0."""
     if not isinstance(payload, dict):
         return ()
     descriptors = payload.get("metricDescriptors")
-    ts_idx = _descriptor_index(descriptors, ("directtimestamp", "timestamp"))
-    hr_idx = _descriptor_index(descriptors, ("directheartrate", "heartrate"))
+    ts_idx = _descriptor_index(descriptors, ("directtimestamp", "timestamp"), campo=_CAMPO_INDICE_DETALLE)
+    hr_idx = _descriptor_index(descriptors, ("directheartrate", "heartrate"), campo=_CAMPO_INDICE_DETALLE)
     if ts_idx is None or hr_idx is None:
         return ()
     metrics = payload.get("activityDetailMetrics")
@@ -907,7 +916,7 @@ def parse_activity_hr_series(payload: Any, zone: str) -> tuple[tuple[str, float]
         value = _num(row[hr_idx])
         if value is None or not _heart_rate_valid(value):
             continue
-        local_time = _utc_to_local_iso(row[ts_idx], zone)
+        local_time = _gmt_value_to_local_iso(row[ts_idx], zone)
         if local_time is None:
             continue
         out.append((local_time, value))
