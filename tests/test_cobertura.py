@@ -79,10 +79,12 @@ def _actividad(conn, person_id, source_id, day, start_local, duration_s, type_="
 
 
 def _detalle_payload(ts_values: list, hr_values: list, key_ts="directTimestamp", key_hr="directHeartRate") -> dict:
-    """The adapter's own assumed shape (garmin_adapter.py:874) -- or, with other key names passed
-    in, a payload whose descriptor keys do not match it at all."""
+    """The real activity-details shape, confirmed from the installed garminconnect 0.3.20
+    package's own source (activity_details.py:8-44, BODY-ESFUERZO-REAL-1-INV): each descriptor
+    names its column with "metricsIndex", not the day-level intraday descriptors' "index" --
+    or, with other key names passed in, a payload whose descriptor keys do not match it at all."""
     return {
-        "metricDescriptors": [{"key": key_ts, "index": 0}, {"key": key_hr, "index": 1}],
+        "metricDescriptors": [{"key": key_ts, "metricsIndex": 0}, {"key": key_hr, "metricsIndex": 1}],
         "activityDetailMetrics": [{"metrics": [t, h]} for t, h in zip(ts_values, hr_values)],
     }
 
@@ -496,7 +498,7 @@ class DetalleActividadCoverageTest(unittest.TestCase):
     def _dia(self, back: int) -> str:
         return (self.hoy - timedelta(days=back)).isoformat()
 
-    def test_assumed_shape_payload_parses_in_window_and_is_sufficient(self):
+    def test_real_shape_payload_parses_in_window_and_is_sufficient(self):
         day = self._dia(5)
         start_local = f"{day}T08:00:00"
         inicio_ms = _epoch_ms(start_local)
@@ -514,7 +516,8 @@ class DetalleActividadCoverageTest(unittest.TestCase):
         self.assertEqual(da["con_fila_zonas"], 0)
         self.assertEqual(da["con_muestra_detalle"], 1)
         self.assertEqual(da["claves_descriptor"], {"directTimestamp": 1, "directHeartRate": 1})
-        self.assertEqual(da["tipos_index_descriptor"], {"int": 2, "other": 0})
+        self.assertEqual(da["tipos_index_descriptor"], {"int": 0, "other": 2})
+        self.assertEqual(da["tipos_metricsindex_descriptor"], {"int": 2, "other": 0})
         self.assertEqual(da["claves_nivel_superior_detalle"],
                           {"metricDescriptors": 1, "activityDetailMetrics": 1})
         self.assertEqual(da["tipo_timestamp_crudo"], {"int": 1, "float": 0, "str": 0, "missing": 0})

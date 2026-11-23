@@ -282,7 +282,8 @@ def _fila_detalle_actividad(fila, detalle_payload: Any, zona: str, orden: int) -
             fin_dt = inicio_dt + timedelta(seconds=duration_s)
             desfase_fin = round((max(tiempos) - fin_dt).total_seconds() / 60)
 
-    ts_idx = (garmin_adapter._descriptor_index(descriptores, ("directtimestamp", "timestamp"))
+    ts_idx = (garmin_adapter._descriptor_index(descriptores, ("directtimestamp", "timestamp"),
+                                                campo=garmin_adapter._CAMPO_INDICE_DETALLE)
               if descriptores is not None else None)
     crudos = []
     if ts_idx is not None and isinstance(metrics, list):
@@ -322,6 +323,7 @@ def _bloque_detalle_actividad(conn: sqlite3.Connection, person_id: int, zona: st
     pares = _actividades_con_detalle(conn, person_id, zona)
     claves_descriptor: dict[str, int] = {}
     tipos_index = {"int": 0, "other": 0}
+    tipos_metricsindex = {"int": 0, "other": 0}
     claves_nivel_superior: dict[str, int] = {}
     tipo_timestamp_crudo = {"int": 0, "float": 0, "str": 0, "missing": 0}
     con_fila_detalle = con_fila_vueltas = con_fila_zonas = 0
@@ -356,7 +358,11 @@ def _bloque_detalle_actividad(conn: sqlite3.Connection, person_id: int, zona: st
                         idx = entrada.get("index")
                         etiqueta = "int" if isinstance(idx, int) and not isinstance(idx, bool) else "other"
                         tipos_index[etiqueta] += 1
-            ts_idx = (garmin_adapter._descriptor_index(descriptores, ("directtimestamp", "timestamp"))
+                        idx_mi = entrada.get("metricsIndex")
+                        etiqueta_mi = "int" if isinstance(idx_mi, int) and not isinstance(idx_mi, bool) else "other"
+                        tipos_metricsindex[etiqueta_mi] += 1
+            ts_idx = (garmin_adapter._descriptor_index(descriptores, ("directtimestamp", "timestamp"),
+                                                         campo=garmin_adapter._CAMPO_INDICE_DETALLE)
                       if isinstance(descriptores, list) else None)
             celda = None
             if ts_idx is not None and isinstance(metrics, list) and metrics:
@@ -379,6 +385,7 @@ def _bloque_detalle_actividad(conn: sqlite3.Connection, person_id: int, zona: st
         "con_muestra_detalle": con_muestra_detalle,
         "claves_descriptor": claves_descriptor,
         "tipos_index_descriptor": tipos_index,
+        "tipos_metricsindex_descriptor": tipos_metricsindex,
         "claves_nivel_superior_detalle": claves_nivel_superior,
         "tipo_timestamp_crudo": tipo_timestamp_crudo,
         "actividades": actividades,

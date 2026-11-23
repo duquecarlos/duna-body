@@ -473,7 +473,8 @@ def _seed_esfuerzo_basket_detalle(conn, db, person_id: int, idioma: str, dia_bas
             hours=int(_SESION_BASKET_HORA[:2]), minutes=int(_SESION_BASKET_HORA[3:5]))
         curva = _curva_basket_esfuerzo(rng, duracion_min, avg_hr=avg_hr, max_hr=max_hr)
         payload_detalle = {
-            "metricDescriptors": [{"key": "directTimestamp", "index": 0}, {"key": "directHeartRate", "index": 1}],
+            "metricDescriptors": [{"key": "directTimestamp", "metricsIndex": 0},
+                                   {"key": "directHeartRate", "metricsIndex": 1}],
             "activityDetailMetrics": [{"metrics": [_muestra_ms(inicio + timedelta(minutes=m)), v]}
                                        for m, v in enumerate(curva)],
         }

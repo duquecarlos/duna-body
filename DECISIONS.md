@@ -34274,3 +34274,88 @@ green gate. Merge sha recorded in the next ledger line, per this ledger's append
 BODY-ESFUERZO-COBERTURA-1 merged 4918fefdbbf4e8f126ecb3d78dc380a941c64817 (branch tree
 b7f89348e1b95355d4743b34949117534fd738d2, merge tree identical, diff empty).
 
+## BODY-ESFUERZO-REAL-2
+
+**Surface.** Second stage of BODY-ESFUERZO-REAL-1-INV (OBSERVED,
+`../dev-protocol/logs/worker-body-esfuerzo-real-1-inv-body-app-20261122T222149.json`): CONFIRMED from the
+installed package's own source (`.venv/Lib/site-packages/garminconnect/activity_details.py:8-44`,
+garminconnect 0.3.20), an activity-details descriptor names its column `metricDescriptors[].metricsIndex`,
+not `.index`. `garmin_adapter._descriptor_index` reads `.index` -- correct for the day-level intraday
+arrays (measured, BODY-INTRADIA-SPOTCHECK-1) -- and was reused unmodified on activity details, so
+`parse_activity_hr_series` returned `()` for every real session: the effort card's efforts/recovery, the
+session curve fallback and the assistant's `esfuerzo` figures never filled on real data. Every
+activity-detail fixture in tests and the demo encoded the same wrong `index`, which is why nothing caught
+it.
+
+**Ruling 1 (one helper, the field named by the caller).** `garmin_adapter._descriptor_index` gains a
+`campo: str = "index"` parameter. Every day-level call site (`body/garmin_adapter.py:695-696`) passes
+nothing and behaves byte-for-byte as before. `parse_activity_hr_series` passes
+`campo=_CAMPO_INDICE_DETALLE`, a new module constant `"metricsIndex"` with a comment citing
+`activity_details.py:8-44` and BODY-ESFUERZO-REAL-1-INV. The index match now also excludes `bool`
+(`isinstance(idx, int) and not isinstance(idx, bool)`), matching the package's own `int` typing of this
+field -- day-level behaviour is unaffected since no real descriptor ever carries a bool index.
+
+**Ruling 2 (the timestamp cell).** `parse_activity_hr_series` now reads the timestamp column through
+`_gmt_value_to_local_iso` (epoch-ms first, then a GMT string with no offset) instead of
+`_utc_to_local_iso` alone, so either real cell type parses. Its docstring states the confirmed shape and
+cites the package source instead of calling it "assumed".
+
+**Ruling 3 (cobertura reads the same way).** `body/cobertura.py`'s two direct `_descriptor_index` calls on
+activity-detail descriptors (`_fila_detalle_actividad`, `_bloque_detalle_actividad`) now pass
+`campo=garmin_adapter._CAMPO_INDICE_DETALLE`. `_bloque_detalle_actividad` gains
+`tipos_metricsindex_descriptor` ({int, other}) beside the existing `tipos_index_descriptor` -- the
+post-deploy confirming count the orchestrator will read after the next real host run.
+
+**Ruling 4 (every activity-detail fixture in the real shape).** `metricDescriptors` entries in
+`tests/test_agente_esfuerzo.py`, `tests/test_cobertura.py` (`_detalle_payload`), `tests/test_entreno_detalle.py`,
+`tests/test_entreno_sesion.py`, `tests/test_esfuerzo_sesion.py` and `body/demo.py`
+(`_seed_esfuerzo_basket_detalle`) now carry `{"key": ..., "metricsIndex": ...}`; every day-level intraday
+fixture (`heartRateValueDescriptors`, `stressValueDescriptorsDTOList`) is untouched. `test_cobertura.py`'s
+own `test_assumed_shape_payload_...` test renamed to `test_real_shape_payload_...`, its
+`tipos_index_descriptor`/`tipos_metricsindex_descriptor` assertions updated to match the real field.
+`tests/test_demo.py` and `tests/test_demo_hoy_fijo.py` pass unedited -- the demo page's own rendered
+output (same invented values, same curve) is unchanged.
+
+**Ruling 5 (tests that would have caught it).** `tests/test_garmin_parse.py` gains
+`ActivityDetailsRealShapeTest`: a real-shape payload carrying the host census's own top-level keys
+(`activityId`, `measurementCount`, `metricsCount`, `totalMetricsCount`, `metricDescriptors`,
+`activityDetailMetrics`, `geoPolylineDTO`, `heartRateDTOs`, `pendingData`, `detailsAvailable`) with
+`metricsIndex` descriptors parses to its samples; the same payload with `index` instead parses to `()`;
+a GMT-string timestamp cell parses; a day-level `index` payload still parses exactly as before. And
+`ActivityDetailEndToEndTest`: a real-shape payload stored through `db.guardar_detalle_actividad` and read
+back through `db.detalle_actividad` gives `esfuerzo_sesion.tarjeta(...)["esfuerzos"]["suficiente"]` True --
+invented data only, no network.
+
+**The lesson.** A fixture shaped by the code's own assumption proves the code, never the data -- every
+activity-detail fixture across this codebase copied `garmin_adapter.py`'s own wrong guess (`"index"`)
+instead of the installed package's own source or a measured payload, so a change to the parser and a
+change to its test both moved together and nothing caught the mismatch. Shape fixtures from the package
+source or a measured payload, never from the code under test.
+
+**`touches` census, before any edit.** `git grep -n -E
+"_descriptor_index|parse_activity_hr_series|metricDescriptors|\"index\"" -- body/ tests/` named every
+file this slice edits (all listed in `touches`) plus unrelated `"index"` usage in `body/history.py`,
+`body/patron_turnos.py`, `body/rutas/historial.py`, `body/rutas/turnos.py` and their own tests (shift
+patterns, history axis bucketing -- untouched) and day-level-only descriptor fixtures in
+`tests/test_experimentos_intradia.py`, `tests/test_momentos_pull.py` (untouched). No file outside
+`touches` was edited; `tests/test_i18n_paridad.py`, `tests/test_persona_fuga.py`,
+`tests/test_registro_tu.py` and every Tier 1 path besides `body/garmin_adapter.py` were never opened.
+
+**Gate, full,** exactly `.venv/Scripts/python.exe -m unittest discover tests -t .`, run in 26 foreground
+chunks of `.venv/Scripts/python.exe -m unittest <dotted modules>` (2 chunks of 5/4 for `test_garmin_*`, 1
+chunk of 4 for `test_host_*`, 23 chunks of up to 10 for the rest), covering all 243 `tests/test_*.py`
+modules: every chunk `OK` (the same one pre-existing `expectedFailure` and one pre-existing `skip` already
+on `main`, unrelated to this slice). Per-chunk `Ran` counts summed to **5530**, reconciled against an
+independent collect-only `unittest.TestLoader().discover("tests", top_level_dir=".")` count of the same
+tree: also **5530** (5525 on `main` before this slice, +5 for the new tests in Ruling 5).
+
+**Customer bytes:** none -- `garmin_adapter.py`/`cobertura.py` changes are a parser fix and a diagnostic
+field never rendered on a screen; `body/demo.py`'s change is to an internal seeding fixture's descriptor
+key, not to any template or string, confirmed by `tests/test_demo.py`/`tests/test_demo_hoy_fijo.py`
+passing unedited. No schema, no migration, no cross-repo contract, no stored state rewritten (the stored
+payloads are already right; only their parse changes).
+
+**Merge:** merge policy A applies (no schema/migration, no customer-facing bytes, no cross-repo contract)
+and this spec's own ORCH-CARLOS-DELEGATES-TIER-1-1 ruling pre-authorizes the merge on a green gate. Merge
+sha recorded in the next ledger line, per this ledger's append-only rule.
+
