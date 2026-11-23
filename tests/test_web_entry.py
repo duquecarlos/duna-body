@@ -73,6 +73,7 @@ class RouteSetTest(unittest.TestCase):
         ("/day/{day}/entreno/propuestas/{propuesta_id}/descartar", ("POST",)),  # BODY-ENTRENO-VINCULO-1
         ("/day/{day}/entreno/propuestas/{propuesta_id}/deshacer", ("POST",)),  # BODY-ENTRENO-VINCULO-1
         ("/day/{day}/entreno/{source_id}/dolor", ("POST",)),  # BODY-PLAN-FASES-5
+        ("/day/{day}/entreno/{source_id}/checkin", ("POST",)),  # BODY-PARTIDO-2
         ("/day/{day}/dolor-manana", ("POST",)),  # BODY-PLAN-FASES-5
         ("/day/{day}/despertar/proponer", ("POST",)),  # BODY-DESPERTAR-REAL-7
         ("/day/{day}/despertar/deshacer", ("POST",)),  # BODY-DESPERTAR-REAL-7
