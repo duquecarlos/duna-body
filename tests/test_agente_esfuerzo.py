@@ -49,7 +49,8 @@ def _detalle_payload(start_local: str, valores: list[float]) -> dict:
     t0 = datetime.fromisoformat(start_local)
     ms0 = int((t0 + timedelta(hours=5)).replace(tzinfo=timezone.utc).timestamp() * 1000)
     return {
-        "metricDescriptors": [{"key": "directTimestamp", "index": 0}, {"key": "directHeartRate", "index": 1}],
+        "metricDescriptors": [{"key": "directTimestamp", "metricsIndex": 0},
+                               {"key": "directHeartRate", "metricsIndex": 1}],
         "activityDetailMetrics": [{"metrics": [ms0 + i * 60_000, v]} for i, v in enumerate(valores)],
     }
 

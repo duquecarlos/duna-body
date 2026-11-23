@@ -71,8 +71,8 @@ class ActivityDetailStorageTest(unittest.TestCase):
     def test_detalle_actividad_reads_through_the_adapters_own_parser(self):
         payload = {
             "metricDescriptors": [
-                {"key": "directTimestamp", "index": 0},
-                {"key": "directHeartRate", "index": 1},
+                {"key": "directTimestamp", "metricsIndex": 0},
+                {"key": "directHeartRate", "metricsIndex": 1},
             ],
             "activityDetailMetrics": [
                 {"metrics": [1762765200000, 120]},  # 2025-11-10T06:00:00Z
@@ -228,8 +228,8 @@ class ParseActivityHrSeriesTest(unittest.TestCase):
     def test_finds_columns_by_key_not_position(self):
         payload = {
             "metricDescriptors": [
-                {"key": "directHeartRate", "index": 0},  # deliberately swapped order
-                {"key": "directTimestamp", "index": 1},
+                {"key": "directHeartRate", "metricsIndex": 0},  # deliberately swapped order
+                {"key": "directTimestamp", "metricsIndex": 1},
             ],
             "activityDetailMetrics": [
                 {"metrics": [118, 1762765200000]},
@@ -242,8 +242,8 @@ class ParseActivityHrSeriesTest(unittest.TestCase):
     def test_non_positive_heart_rate_is_dropped(self):
         payload = {
             "metricDescriptors": [
-                {"key": "directTimestamp", "index": 0},
-                {"key": "directHeartRate", "index": 1},
+                {"key": "directTimestamp", "metricsIndex": 0},
+                {"key": "directHeartRate", "metricsIndex": 1},
             ],
             "activityDetailMetrics": [{"metrics": [1762765200000, 0]}],
         }
@@ -251,7 +251,7 @@ class ParseActivityHrSeriesTest(unittest.TestCase):
 
     def test_no_matching_descriptor_is_the_empty_tuple_never_a_guessed_position(self):
         payload = {
-            "metricDescriptors": [{"key": "somethingElse", "index": 0}],
+            "metricDescriptors": [{"key": "somethingElse", "metricsIndex": 0}],
             "activityDetailMetrics": [{"metrics": [1762765200000, 120]}],
         }
         self.assertEqual(garmin_adapter.parse_activity_hr_series(payload, "UTC"), ())
