@@ -34359,3 +34359,6 @@ payloads are already right; only their parse changes).
 and this spec's own ORCH-CARLOS-DELEGATES-TIER-1-1 ruling pre-authorizes the merge on a green gate. Merge
 sha recorded in the next ledger line, per this ledger's append-only rule.
 
+BODY-ESFUERZO-REAL-2 merged 66753ea2ae6483f1e9d8896a0942cc5cc64401ea (branch tree
+682c25481ab50e1f188edc8b6a6152821410074b, merge tree identical, diff empty).
+
