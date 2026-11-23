@@ -10,8 +10,13 @@ point, via db._INTRADIA_PARSER_NAMES); the sleep payload's five per-minute keys
 (garmin_adapter._SLEEP_SERIES_SPECS), each as nights present/non-empty and their median sample
 count; the body-battery feed's own intraday array, the same way, by day; and the keeper check --
 of the days in the keeper's own INTRADIA_ALCANCE_DIAS window (pull.py) that have a daily pull, how
-many have no live-API intraday row, and the oldest such missing day. Never a health figure: every
-number here is a count of rows or samples, never a value from one.
+many have no live-API intraday row, and the oldest such missing day; and a `detalle_actividad` block
+(BODY-ESFUERZO-COBERTURA-1) over the last DETALLE_VENTANA_DIAS days of activities (capped at
+DETALLE_VENTANA_MAX, newest first) naming which link the session-effort card's own parsing chain
+(garmin_adapter.parse_activity_hr_series, esfuerzo_sesion.serie_por_minuto/esfuerzos) breaks on for
+each one -- descriptor key names, raw timestamp cell types, and each activity's own coverage against
+its own window. Never a health figure: every number here is a count of rows or samples, or an
+activity's own type code and day, never a heart-rate value, a name, a title or a source_id.
 
 `--cuenta-sub` resolves the destination person by a plain `SELECT id FROM person WHERE
 cuenta_sub = ?` -- the same lookup body.cuenta.resolve_person runs before it would ever consider
@@ -33,7 +38,12 @@ import statistics
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from . import backup, config, cuenta, db, errores, fechas, garmin_adapter, pull
+from . import backup, config, cuenta, db, errores, esfuerzo_sesion, fechas, garmin_adapter, pull
+
+# BODY-ESFUERZO-COBERTURA-1: the window and cap the new detalle_actividad block reads over --
+# named here so a later slice can widen either without hunting through the function.
+DETALLE_VENTANA_DIAS = 120
+DETALLE_VENTANA_MAX = 60
 
 # list_key (the raw payload key parse_sleep_series reads) -> its own short name in that
 # function's output dict -- derived from the single source of truth so this never drifts from it.
@@ -199,6 +209,182 @@ def _bloque_keeper(conn: sqlite3.Connection, person_id: int, zona: str) -> dict:
     return out
 
 
+def _tipo_celda_cruda(valor: Any) -> str:
+    """int / float / str / missing -- never "bool", since Python's bool is a subclass of int and
+    a Garmin timestamp cell is never a bool."""
+    if valor is None:
+        return "missing"
+    if isinstance(valor, bool):
+        return "other"
+    if isinstance(valor, int):
+        return "int"
+    if isinstance(valor, float):
+        return "float"
+    if isinstance(valor, str):
+        return "str"
+    return "other"
+
+
+def _actividades_con_detalle(conn: sqlite3.Connection, person_id: int, zona: str) -> list[tuple]:
+    """This person's own activities whose day is within DETALLE_VENTANA_DIAS of today, newest
+    first, capped at DETALLE_VENTANA_MAX -- each paired with whatever activity_detail rows it has
+    (kind -> parsed JSON, or None for stored-but-unparseable text), read the same way _sleep_
+    payloads above reads raw_payload directly."""
+    hoy = fechas.hoy_local({"timezone": zona})
+    desde = (hoy - timedelta(days=DETALLE_VENTANA_DIAS)).isoformat()
+    filas = conn.execute(
+        "SELECT source, source_id, type, day, start_local, duration_s FROM activity WHERE "
+        "person_id = ? AND day >= ? ORDER BY day DESC, start_local DESC LIMIT ?",
+        (person_id, desde, DETALLE_VENTANA_MAX),
+    ).fetchall()
+    out = []
+    for fila in filas:
+        detalle_rows = conn.execute(
+            "SELECT kind, payload FROM activity_detail WHERE person_id = ? AND activity_source = ? "
+            "AND activity_source_id = ? AND kind IN ('detalle', 'vueltas', 'zonas')",
+            (person_id, fila["source"], fila["source_id"]),
+        ).fetchall()
+        payloads: dict[str, Any] = {}
+        for r in detalle_rows:
+            try:
+                payloads[r["kind"]] = json.loads(r["payload"])
+            except (TypeError, ValueError):
+                payloads[r["kind"]] = None
+        out.append((fila, payloads))
+    return out
+
+
+def _fila_detalle_actividad(fila, detalle_payload: Any, zona: str, orden: int) -> dict:
+    """Ruling 2/3: one activity's own row, read through the SAME parsers and the SAME window the
+    card uses (garmin_adapter.parse_activity_hr_series, esfuerzo_sesion.serie_por_minuto/
+    esfuerzos) -- never a figure, never a name, never a source_id."""
+    start_local, duration_s = fila["start_local"], fila["duration_s"]
+    descriptores = metrics = None
+    if isinstance(detalle_payload, dict):
+        descriptores = detalle_payload.get("metricDescriptors")
+        metrics = detalle_payload.get("activityDetailMetrics")
+
+    muestras = (garmin_adapter.parse_activity_hr_series(detalle_payload, zona)
+                if detalle_payload is not None else ())
+    serie = esfuerzo_sesion.serie_por_minuto(muestras, start_local, duration_s)
+    minutos_en_serie = {dt for dt, _ in serie}
+    muestras_en_ventana = sum(1 for t, _ in muestras if datetime.fromisoformat(t) in minutos_en_serie)
+    total_min = (duration_s or 0) / 60
+    cobertura_pct = round(len(serie) / total_min * 100, 1) if total_min else None
+    esf = esfuerzo_sesion.esfuerzos(muestras, start_local, duration_s)
+
+    desfase_inicio = desfase_fin = None
+    if muestras and start_local:
+        tiempos = [datetime.fromisoformat(t) for t, _ in muestras]
+        inicio_dt = datetime.fromisoformat(start_local)
+        desfase_inicio = round((min(tiempos) - inicio_dt).total_seconds() / 60)
+        if duration_s is not None:
+            fin_dt = inicio_dt + timedelta(seconds=duration_s)
+            desfase_fin = round((max(tiempos) - fin_dt).total_seconds() / 60)
+
+    ts_idx = (garmin_adapter._descriptor_index(descriptores, ("directtimestamp", "timestamp"))
+              if descriptores is not None else None)
+    crudos = []
+    if ts_idx is not None and isinstance(metrics, list):
+        for entrada in metrics:
+            if not isinstance(entrada, dict):
+                continue
+            fila_cruda = entrada.get("metrics")
+            if isinstance(fila_cruda, list) and len(fila_cruda) > ts_idx:
+                celda = fila_cruda[ts_idx]
+                if isinstance(celda, (int, float)) and not isinstance(celda, bool):
+                    crudos.append(celda)
+    intervalo_mediano_s = (statistics.median(abs(crudos[i + 1] - crudos[i]) / 1000
+                                              for i in range(len(crudos) - 1))
+                            if len(crudos) >= 2 else None)
+
+    return {
+        "orden": orden,
+        "type": fila["type"],
+        "day": fila["day"],
+        "minutos_sesion": round(duration_s / 60) if duration_s is not None else None,
+        "filas_crudas": len(metrics) if isinstance(metrics, list) else 0,
+        "muestras_parseadas": len(muestras),
+        "muestras_en_ventana": muestras_en_ventana,
+        "minutos_distintos_en_ventana": len(serie),
+        "cobertura_pct": cobertura_pct,
+        "desfase_min": {"inicio": desfase_inicio, "fin": desfase_fin},
+        "intervalo_mediano_s": intervalo_mediano_s,
+        "suficiente": esf["suficiente"],
+    }
+
+
+def _bloque_detalle_actividad(conn: sqlite3.Connection, person_id: int, zona: str) -> dict:
+    """BODY-ESFUERZO-COBERTURA-1: the diagnostic the orchestrator's candidates (a), (b), (c), (d)
+    all need the same raw material for -- which descriptor key names and raw timestamp cell types
+    the real payloads actually carry, and where each activity's own parsed samples land against
+    its own window, so one host run can name which link breaks without guessing."""
+    pares = _actividades_con_detalle(conn, person_id, zona)
+    claves_descriptor: dict[str, int] = {}
+    tipos_index = {"int": 0, "other": 0}
+    claves_nivel_superior: dict[str, int] = {}
+    tipo_timestamp_crudo = {"int": 0, "float": 0, "str": 0, "missing": 0}
+    con_fila_detalle = con_fila_vueltas = con_fila_zonas = 0
+    con_muestra_detalle = 0
+    actividades = []
+
+    for orden, (fila, payloads) in enumerate(pares, start=1):
+        if "detalle" in payloads:
+            con_fila_detalle += 1
+        if "vueltas" in payloads:
+            con_fila_vueltas += 1
+        if "zonas" in payloads:
+            con_fila_zonas += 1
+
+        detalle_payload = payloads.get("detalle")
+        if "detalle" in payloads:
+            descriptores = metrics = None
+            if isinstance(detalle_payload, dict):
+                for clave in detalle_payload:
+                    claves_nivel_superior[clave] = claves_nivel_superior.get(clave, 0) + 1
+                descriptores = detalle_payload.get("metricDescriptors")
+                metrics = detalle_payload.get("activityDetailMetrics")
+                if isinstance(descriptores, list):
+                    vistas = set()
+                    for entrada in descriptores:
+                        if not isinstance(entrada, dict):
+                            continue
+                        clave = entrada.get("key")
+                        if isinstance(clave, str) and clave not in vistas:
+                            vistas.add(clave)
+                            claves_descriptor[clave] = claves_descriptor.get(clave, 0) + 1
+                        idx = entrada.get("index")
+                        etiqueta = "int" if isinstance(idx, int) and not isinstance(idx, bool) else "other"
+                        tipos_index[etiqueta] += 1
+            ts_idx = (garmin_adapter._descriptor_index(descriptores, ("directtimestamp", "timestamp"))
+                      if isinstance(descriptores, list) else None)
+            celda = None
+            if ts_idx is not None and isinstance(metrics, list) and metrics:
+                primera = metrics[0]
+                fila_cruda = primera.get("metrics") if isinstance(primera, dict) else None
+                if isinstance(fila_cruda, list) and len(fila_cruda) > ts_idx:
+                    celda = fila_cruda[ts_idx]
+            tipo_timestamp_crudo[_tipo_celda_cruda(celda) if ts_idx is not None else "missing"] += 1
+
+        fila_out = _fila_detalle_actividad(fila, detalle_payload, zona, orden)
+        if fila_out["muestras_parseadas"]:
+            con_muestra_detalle += 1
+        actividades.append(fila_out)
+
+    return {
+        "actividades_en_ventana": len(pares),
+        "con_fila_detalle": con_fila_detalle,
+        "con_fila_vueltas": con_fila_vueltas,
+        "con_fila_zonas": con_fila_zonas,
+        "con_muestra_detalle": con_muestra_detalle,
+        "claves_descriptor": claves_descriptor,
+        "tipos_index_descriptor": tipos_index,
+        "claves_nivel_superior_detalle": claves_nivel_superior,
+        "tipo_timestamp_crudo": tipo_timestamp_crudo,
+        "actividades": actividades,
+    }
+
+
 def conteo_personas(conn: sqlite3.Connection) -> dict:
     """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 3: the standing deploy go's own expiry condition
     ("until someone other than me uses Body", dev-protocol BODY-STANDING-DEPLOY-GO-RELAYED-1)
@@ -228,6 +414,7 @@ def recopilar(conn: sqlite3.Connection, cuenta_sub: str | None = None) -> dict:
     out["sleep"] = _bloque_sleep(conn, person_id, zona)
     out["body_battery"] = _bloque_body_battery(conn, person_id)
     out["keeper"] = _bloque_keeper(conn, person_id, zona)
+    out["detalle_actividad"] = _bloque_detalle_actividad(conn, person_id, zona)
     return out
 
 
@@ -254,6 +441,35 @@ def _imprimir(out: dict) -> None:
             f"keeper.{kind}: dias_con_pull_diario={datos['dias_con_pull_diario']} "
             f"dias_sin_intradia={datos['dias_sin_intradia']} "
             f"dia_mas_antiguo_faltante={datos['dia_mas_antiguo_faltante']}"
+        )
+    da = out["detalle_actividad"]
+    print(
+        f"detalle_actividad: actividades_en_ventana={da['actividades_en_ventana']} "
+        f"con_fila_detalle={da['con_fila_detalle']} con_fila_vueltas={da['con_fila_vueltas']} "
+        f"con_fila_zonas={da['con_fila_zonas']} con_muestra_detalle={da['con_muestra_detalle']}"
+    )
+    for clave, n in da["claves_descriptor"].items():
+        print(f"detalle_actividad.claves_descriptor.{clave}: payloads={n}")
+    print(
+        f"detalle_actividad.tipos_index_descriptor: int={da['tipos_index_descriptor']['int']} "
+        f"other={da['tipos_index_descriptor']['other']}"
+    )
+    for clave, n in da["claves_nivel_superior_detalle"].items():
+        print(f"detalle_actividad.claves_nivel_superior_detalle.{clave}: payloads={n}")
+    tc = da["tipo_timestamp_crudo"]
+    print(
+        f"detalle_actividad.tipo_timestamp_crudo: int={tc['int']} float={tc['float']} "
+        f"str={tc['str']} missing={tc['missing']}"
+    )
+    for a in da["actividades"]:
+        print(
+            f"detalle_actividad.actividad[{a['orden']}]: type={a['type']} day={a['day']} "
+            f"minutos_sesion={a['minutos_sesion']} filas_crudas={a['filas_crudas']} "
+            f"muestras_parseadas={a['muestras_parseadas']} muestras_en_ventana={a['muestras_en_ventana']} "
+            f"minutos_distintos_en_ventana={a['minutos_distintos_en_ventana']} "
+            f"cobertura_pct={a['cobertura_pct']} desfase_min.inicio={a['desfase_min']['inicio']} "
+            f"desfase_min.fin={a['desfase_min']['fin']} intervalo_mediano_s={a['intervalo_mediano_s']} "
+            f"suficiente={a['suficiente']}"
         )
 
 
