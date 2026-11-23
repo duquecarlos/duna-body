@@ -34177,3 +34177,5 @@ No schema, no migration, no cross-repo contract.
 contract) and this spec's own "YOU MAY MERGE" clause pre-authorizes it on a green gate. Merge sha
 recorded in the next ledger line, per this ledger's append-only rule.
 
+BODY-PARTIDO-1-ASIS merged f12b6ecd54397eb1882530d15bf5942074a641ee.
+
