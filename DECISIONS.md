@@ -34851,3 +34851,127 @@ b3fdfb37fbd25da426cb1dd9f1be7df495653c65 onto `main`, merge commit
 e2d4bdd23af6bf6223419cba803ad512401b96e7 equals branch tree e2d4bdd23af6bf6223419cba803ad512401b96e7, `git diff`
 between the branch commit and the merge commit empty. Branch deleted; `body-app` on `main`, clean.
 
+## BODY-COMIDA-PRODUCTO-1 -- products in meals: additive schema, the picker, mudanza coverage, merged (2026-11-24)
+
+One entry for the whole slice across its four launches (BODY-COMIDA-PRODUCTO-1, -B cut off by the usage limit,
+-C BLOCKED on a census oversight, -D this merge). Carlos's own idea, 2026-11-23: a grocery receipt fills Hogar's
+pantry, and "the same will then serve as meals in the body app to store it easily, because we can have all the
+info from the start" (ORCH-CARLOS-DELEGATES-TIER-1-1).
+
+**Schema (additive, body/db.py).** Three new tables. `producto`: a product Body knows, nutrition kept ONCE
+(never re-estimated per meal). **CORRECTED by the orchestrator from the INV's design**: the INV's `producto` had
+no owner, so one person's typed product would be visible to every person on the host. `person_id` (a 'manual'
+product, typed by hand -- this slice's only origin) and `hogar_id` (a 'despensa' product, the next slice) are
+mutually exclusive by CHECK; every read goes through body/productos.py's one scoping function
+(`productos_visibles`, `household.household_of`), never a raw SELECT elsewhere. `producto_nutricion`: one figure
+per (producto_id, metric_key), basis 100g/100ml/unidad, fuente etiqueta/consulta/estimado -- a later value
+REPLACES the old one. `comida_producto`: one line of a meal naming a product and a portion, written by
+`db.crear_comida`/`db.corregir_comida` in the SAME transaction as `comida`/`ingesta`.
+
+**body/productos.py.** The one module for products: `crear_producto_manual` (name required, brand/size/unit
+optional), `establecer_nutricion` (one basis per product, enforced), `productos_visibles` (own manual products
+plus the active household's, ordered recently-eaten-first then alphabetically by own-language name),
+`buscar` (accent/case-insensitive, across nombre/nombre_es/nombre_en/alias), `calcular_lineas` (sums each
+nutrient across the listed products, `amount_per * cantidad / 100` or `* cantidad` for 'unidad'; `estimado`
+false only when every contributing figure's fuente is 'etiqueta'; a unit mismatch or an unseen product is
+refused BY NAME, never silently).
+
+**Meal tools.** `registrar_comida`/`corregir_comida` gain an optional `productos` field, additive to
+`cantidades`. Two new tools: `buscar_productos` (read) and `crear_producto` (a PROPOSAL tool, insert-shaped like
+`registrar_comida`, with apply/undo/drift -- ruling 3's own ask). `crear_producto`'s undo refuses BY NAME once a
+meal names the product (`ProductoEnUso`). `leer_dia`'s meals show their product lines.
+
+**The picker, body/rutas/comida.py, body/templates/comida_productos.html.** `/comida/productos` (search plus
+the person's own products) and `/comida/productos/agregar` (adds a line to the draft), plain HTML GET/POST, no
+JS. Saving (`/comida/productos/guardar`) calls the SAME `db.crear_comida` path the assistant's own
+`registrar_comida` reaches -- never a second writer. `/comida/productos/nuevo` creates a manual product with
+optional label nutrition. Linked from Hoy's meals card.
+
+**Customer strings, shipped verbatim** (the nine approved, plus supporting field labels in the same tone):
+`comida.productos.titulo` ¿Qué comiste?/What did you eat?; `.buscar` Buscar en tus productos/Search your
+products; `.vacio` No encontramos ese producto. Puedes agregarlo a mano./We couldn't find that product. You can
+add it by hand.; `.cantidad_etiqueta` ¿Cuánto comiste?/How much did you eat?; `.agregar` Agregar/Add;
+`.guardar_comida` Guardar comida/Save meal; `.nuevo` Nuevo producto/New product; `.desde_hoy` Registrar desde
+tus productos/Log from your products; `.fuente_etiqueta` Según la etiqueta/From the label; plus
+`.nombre_label`/`.marca_label`/`.tamano_label`/`.unidad_label`/`.draft_titulo`/`.quitar`/`.vaciar`/`.crear_btn`/
+`.sin_productos`/`.error_vacio`/`.unidad.g`/`.unidad.ml`/`.unidad.unidad` for the new product form and draft list.
+
+**Privacy.** `comida_producto` carries no person_id (reached through comida_id -> comida.person_id, the same
+by-hand pattern `comida_compartida_porcion` already uses); `producto_nutricion` likewise through producto_id.
+A person's own MANUAL products and their nutrition are exported and deleted with them; household products are
+not. No vida_export change (totals still flow through ingesta).
+
+**The demo.** `body/demo.py`'s `_seed_productos`: a few invented manual products with label nutrition, one
+invented meal (on the earliest demo day) naming two of them, written through the SAME `db.crear_comida` path
+the picker and the assistant use.
+
+**-C's three deviations, ruled.** (A) The first launch's `_producto_lineas` hidden-key channel on
+`cantidades[0]` is REJECTED -- `productos` is now its own named proposal field on `body/agente/propuestas.py`'s
+rows, `_aplicar_registrar_comida`/`_aplicar_corregir_comida` pass it explicitly, `_deshacer_*` restore the
+previous product-line set, drift checks cover it. `git grep _producto_lineas -- body tests` returns nothing.
+(B) `crear_producto` built as ruling 3 asked (above). (C) the template is `today.html`, not a nonexistent
+`hoy.html` (the first launch's spec had the wrong filename). `tests/test_agente_bucle.py`'s
+`NivelDatosEnforcementTest` widened to cover the two new tools at `nivel_datos='ninguno'`.
+
+**-D, this merge: mudanza and the two ceilings (the only new work in this launch).**
+
+`body/mudanza.py` -- the three tables now move with the person. `producto`: scope "person" (id_exported=True,
+since producto_nutricion/comida_producto point at it), match_cols=None (no natural key -- a manual product's
+name can repeat). The generic scope="person"/"parent" shape has no way to say "my own rows, plus a parent-less
+row one of my children points at": a household pantry mirror row (person_id NULL, hogar_id set) is never swept
+in by the normal `WHERE person_id = ?` query -- structurally the same exclusion goal/plan's own
+`other_person_filter=_hogar_filter` reaches by a post-hoc filter -- but a mirror row that one of THIS person's
+own comida_producto lines names must still move, so no meal line loses its product when they move hosts. Rather
+than widen TableSpec's own scope vocabulary for one table, a new optional `extra_rows_fn` hook was bolted onto
+scope="person": `_producto_rows_alcanzados_por_comida` returns exactly the mirror rows this person's own meals
+reach (a join through comida_producto -> comida.person_id), nothing more. `_remap_row`'s person-scope line
+(`out["person_id"] = dest_person_id`) was guarded to skip a row whose person_id is already NULL, so a migrated
+mirror row stays a mirror (never force-owned by the migrating person) -- every OTHER scope="person" table's
+person_id is NOT NULL by schema, so this guard changes nothing for them. `producto_nutricion`: scope "parent"
+through producto_id -> producto, match_cols=(producto_id, metric_key), fk_remap. `comida_producto`: scope
+"parent" through comida_id -> comida (comida_producto's own `_build_parent_ids` entry added for "comida" and
+"producto"), fk_remap=(comida_id, producto_id), fk_table naming both. All three placed in REGISTRY right after
+comida/ingesta. `_NO_PERSON_ID_COLUMN` widened for producto_nutricion/comida_producto (no literal person_id
+column). A household mirror product's own nutrition rows are NOT reached by this launch (parent_source_ids
+["producto"] only covers this person's own manual products) -- BODY-COMIDA-PRODUCTO-2-DESPENSA rebuilds the
+mirror, and its nutrition, from Hogar directly, so this is not a gap. `tests/test_mudanza.py`'s new
+`ProductoMudanzaTest`: a manual product, its nutrition row and a meal naming it all move with remapped ids
+(decoy rows on the destination prove the ids were really remapped, not copied through by coincidence), a second
+import duplicating none of the three tables.
+
+`tests/test_rendimiento.py` -- the two new GET routes measured and ceilinged (margin rule: ceil(measured * 1.3),
+same as every other row in `_CEILINGS`). `/comida/productos`: measured 22 statements against the file's own
+fixture (demo._seed(dias=30), which also seeds the products/meal above), ceiling 29. `/comida/productos/agregar`:
+measured 13 (the sweep's own no-params call, the early-return path), ceiling 17. Both measured 2 connections,
+within `_MAX_CONNECTIONS`.
+
+**Demo paths** (computed for today, 2026-11-24, the live demo's own default `--dias 120`, no `today=` override):
+the picker is `/comida/productos` (date-independent); the invented meal naming two products seeds on the
+earliest demo day, `all_days[0] = 2026-11-24 - 119 days = 2026-07-28`, reachable at `/day/2026-07-28`.
+
+**Gate (-D's own run).** `.venv/Scripts/python.exe -m unittest discover tests -t .`, run in 27 chunks (24 regular
+chunks of up to 10 of the 237 ordinary `tests/test_*.py` modules, `test_garmin_*` in two chunks of 5/4, and
+`test_host_*` in one chunk of 4). Per-chunk counts summed to **5712**, reconciled against an independent
+`unittest.TestLoader().discover('tests', top_level_dir='.')` collect-only count on the same final tree, which
+also returned **5712** -- exact match (-C's own floor was 5711; this launch's own net +1 test method in
+`tests/test_mudanza.py` accounts for the rise). Every chunk OK; the only non-plain results were pre-existing
+expected failures/skips and scenario-named prints already on `main` (Garmin error paths, "propuesta ... no se
+pudo mostrar" fixtures, etc.), no regression.
+
+**Follow-up, named, not built.** `BODY-COMIDA-PRODUCTO-2-DESPENSA`: the adapter that reads Hogar's pantry into
+`producto`'s despensa origin, a per-person encrypted reader key set by the person (never one host-wide env var),
+sync, and the picker ordering by pantry (the `despensa`-wording customer strings wait for this slice too).
+
+**Merge.** Diff from `main` (whole branch, every launch): schema change (the three additive tables) and
+customer-facing bytes (the picker's own templates and i18n strings) -- merge policy A's conditions are NOT met
+by the branch as a whole, but this launch's own spec body says in words "YOU MAY MERGE: the nine customer
+strings are approved verbatim" (ORCH-CARLOS-DELEGATES-TIER-1-1's own approval, restated by this continuation),
+so the stop is waived by explicit authorisation rather than by the diff meeting policy A. This launch's OWN
+diff (`body/mudanza.py`, `tests/test_mudanza.py`, `tests/test_rendimiento.py`) adds no schema and no
+customer-facing bytes. `git checkout main`; `git merge --no-ff feat/body-comida-producto-1` (branch tip
+9741b186523949e9bfd10b1119cccc1cfbc306b7 onto `main` 0a502bdbc120800e86d423d62ad52bde25c24f54, merge commit
+bbad32e6075776a9da73a17a5c32bb80f6e42e18) -- tree identity proven: merge tree
+c2e71c4a2b4fb442024c5d6cecda2723cd584a50 equals branch tree c2e71c4a2b4fb442024c5d6cecda2723cd584a50, `git diff`
+between the branch commit and the merge commit empty. Branch deleted; `body-app` on `main`, clean. Not deployed
+(deploy follows Carlos's standing go after measurement at 375 px, per the approval reason).
+
